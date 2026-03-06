@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Encargados · Familia del Amor</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="logo">
+        <img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
+      </div>
+    </header>
+    <main>
+      <section class="hero">
+        <div class="eyebrow">Panel interno</div>
+        <h1>Encargados</h1>
+        <p>Gestión diaria del local.</p>
+      </section>
+      <section class="block">
+        <div class="section-head">
+          <h2>Reservas</h2>
+        </div>
+        <div class="panel-filters form">
+          <label><span>Local</span><input type="text" id="encLocal" placeholder="La Tapeta - Blanes" /></label>
+          <div class="form-row">
+            <label><span>Desde (ISO)</span><input type="text" id="encFrom" placeholder="2024-01-01" /></label>
+            <label><span>Hasta (ISO)</span><input type="text" id="encTo" placeholder="2024-12-31" /></label>
+          </div>
+          <div class="panel-actions">
+            <button class="btn" id="encSearch" type="button">Buscar</button>
+          </div>
+        </div>
+        <div class="card" id="encReservas">Cargando reservas...</div>
+      </section>
+      <section class="block">
+        <div class="section-head">
+          <h2>Comunicados a trabajadores</h2>
+        </div>
+        <form id="annForm" class="form">
+          <label><span>Local</span><input name="local" required /></label>
+          <label><span>Mensaje</span><textarea name="mensaje" rows="3" required></textarea></label>
+          <button class="btn" type="submit">Publicar comunicado</button>
+        </form>
+        <div class="cards" id="annListEnc"></div>
+      </section>
+    </main>
+    <footer class="footer">
+      <div class="footer-inner">
+        <span>Volver</span>
+        <a class="btn" href="index.html">Ir al sitio</a>
+      </div>
+    </footer>
+    <script src="encargados.js"></script>
+  </body>
+</html>

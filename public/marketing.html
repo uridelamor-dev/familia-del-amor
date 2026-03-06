@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Marketing · Familia del Amor</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <button class="nav-toggle" id="navToggle" aria-label="Abrir menú" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="logo">
+        <img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
+      </div>
+      <nav class="nav">
+        <a href="index.html">Inicio</a>
+        <a href="index.html#empresas">Empresas</a>
+        <a href="index.html#reservas">Reservas</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="eyebrow">Panel interno</div>
+        <h1>Marketing</h1>
+        <p>Edición web, anuncios, clientes y materiales.</p>
+      </section>
+
+      <div class="panel-tabs">
+        <button class="btn" data-tab="web">Edición web</button>
+        <button class="btn ghost" data-tab="locals">Locales</button>
+        <button class="btn ghost" data-tab="clients">Clientes</button>
+      </div>
+
+      <section class="block panel-section" data-section="web">
+        <div class="section-head">
+          <h2>Contenidos</h2>
+          <p>Editar textos en ES/CA/EN e imagen principal.</p>
+        </div>
+        <form id="contentForm" class="form"></form>
+        <div class="panel-preview">
+          <h3>Vista previa</h3>
+          <label class="edit-toggle">
+            <input type="checkbox" id="editModeToggle" />
+            <span>Modo selección</span>
+          </label>
+          <iframe id="previewFrame" src="index.html"></iframe>
+        </div>
+        <div class="panel-actions">
+          <label class="upload">
+            <input type="file" id="heroUpload" accept="image/*" />
+            <span>Subir imagen hero</span>
+          </label>
+        </div>
+        <div class="panel-actions">
+          <button class="btn" form="contentForm" type="submit">Guardar cambios</button>
+          <span id="contentStatus" class="form-note"></span>
+        </div>
+      </section>
+
+      <section class="block panel-section" data-section="locals">
+        <div class="section-head">
+          <h2>Locales</h2>
+          <p>Instagram, cartas PDF y galerías.</p>
+        </div>
+        <form id="localsForm" class="form"></form>
+        <div class="panel-preview">
+          <h3>Vista previa</h3>
+          <label class="edit-toggle">
+            <input type="checkbox" id="editModeToggleLocals" />
+            <span>Modo selección</span>
+          </label>
+          <iframe id="previewFrameLocals" src="local.html?slug=la-tapeta"></iframe>
+        </div>
+        <div class="panel-actions">
+          <button class="btn" form="contentForm" type="submit">Guardar cambios</button>
+          <span class="form-note">Se guarda junto con contenidos.</span>
+        </div>
+      </section>
+
+      <section class="block panel-section" data-section="clients">
+        <div class="section-head">
+          <h2>Clientes</h2>
+          <p>Filtra y exporta leads.</p>
+        </div>
+        <div class="panel-filters form">
+          <label>
+            <span>Búsqueda</span>
+            <input type="text" id="leadQ" placeholder="Nombre, email o teléfono" />
+          </label>
+          <label>
+            <span>Población</span>
+            <input type="text" id="leadCity" placeholder="Blanes, Tordera..." />
+          </label>
+          <div class="form-row">
+            <label>
+              <span>Desde (ISO)</span>
+              <input type="text" id="leadFrom" placeholder="2024-01-01" />
+            </label>
+            <label>
+              <span>Hasta (ISO)</span>
+              <input type="text" id="leadTo" placeholder="2024-12-31" />
+            </label>
+          </div>
+          <div class="panel-actions">
+            <button class="btn" id="leadSearch" type="button">Buscar</button>
+            <a class="btn ghost" id="leadExport" href="#">Exportar CSV</a>
+          </div>
+        </div>
+        <div class="card" id="leadsTable">Cargando clientes...</div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        <span>Volver</span>
+        <a class="btn" href="index.html">Ir al sitio</a>
+      </div>
+    </footer>
+    <script src="marketing.js"></script>
+  </body>
+</html>

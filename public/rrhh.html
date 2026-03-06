@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RR.HH. · Familia del Amor</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="logo">
+        <img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="eyebrow">Panel interno</div>
+        <h1>RR.HH.</h1>
+        <p>Candidaturas, vacantes y comunicación.</p>
+      </section>
+
+      <section class="block">
+        <div class="section-head">
+          <h2>Vacantes</h2>
+        </div>
+        <form id="jobForm" class="form">
+          <label><span>Título</span><input name="titulo" required /></label>
+          <label><span>Local</span><input name="local" required /></label>
+          <label><span>Tipo</span><input name="tipo" placeholder="Jornada completa / parcial" required /></label>
+          <label><span>Descripción</span><textarea name="descripcion" rows="3" required></textarea></label>
+          <label><span>Activa</span><input type="checkbox" name="activo" checked /></label>
+          <button class="btn" type="submit">Crear vacante</button>
+        </form>
+        <div class="card" id="jobsTable">Cargando vacantes...</div>
+      </section>
+
+      <section class="block">
+        <div class="section-head">
+          <h2>Candidaturas</h2>
+        </div>
+        <div class="panel-filters form">
+          <label><span>Búsqueda</span><input type="text" id="hrQ" /></label>
+          <label><span>Estado</span><input type="text" id="hrEstado" placeholder="nuevo / en_proceso / cerrado" /></label>
+          <div class="form-row">
+            <label><span>Desde (ISO)</span><input type="text" id="hrFrom" placeholder="2024-01-01" /></label>
+            <label><span>Hasta (ISO)</span><input type="text" id="hrTo" placeholder="2024-12-31" /></label>
+          </div>
+          <div class="panel-actions">
+            <button class="btn" id="hrSearch" type="button">Buscar</button>
+          </div>
+        </div>
+        <div class="card" id="hrTable">Cargando candidaturas...</div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        <span>Volver</span>
+        <a class="btn" href="index.html">Ir al sitio</a>
+      </div>
+    </footer>
+    <script src="rrhh.js"></script>
+  </body>
+</html>
