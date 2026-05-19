@@ -1141,6 +1141,67 @@ body {
   .cal-toolbar { flex-direction: column; }
 }
 
+/* ── Trabaja (desplegable) ───────────────────────────────────────────────── */
+
+.trabaja-details {
+  border: 1px solid #eadfce;
+  border-radius: 16px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.trabaja-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.2rem 1.4rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.trabaja-summary::-webkit-details-marker { display: none; }
+
+.trabaja-summary > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.trabaja-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.trabaja-sub {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.trabaja-arrow {
+  font-size: 1.4rem;
+  color: var(--muted);
+  transition: transform 220ms ease;
+  flex-shrink: 0;
+}
+
+.trabaja-details[open] .trabaja-arrow {
+  transform: rotate(90deg);
+}
+
+.trabaja-body {
+  padding: 0 1.4rem 1.4rem;
+  border-top: 1px solid #eadfce;
+  animation: slideDown 220ms ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ── Galería ─────────────────────────────────────────────────────────────── */
 
 .galeria-grid {

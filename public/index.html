@@ -143,25 +143,32 @@
 
       <!-- TRABAJA -->
       <section id="trabaja" class="block">
-        <div class="section-head">
-          <h2 data-i18n="jobs_title" data-content-key="jobs_title">Trabaja con nosotros</h2>
-          <p data-i18n="jobs_text" data-content-key="jobs_text">Envíanos tu CV y cuéntanos en qué área te gustaría aportar.</p>
-        </div>
-        <div class="cards" id="jobsList"></div>
-        <form id="hrForm" class="form">
-          <div class="form-row">
-            <label><span>Nombre</span><input type="text" name="nombre" required /></label>
-            <label><span>Teléfono</span><input type="tel" name="telefono" required /></label>
+        <details class="trabaja-details">
+          <summary class="trabaja-summary">
+            <span>
+              <span class="trabaja-title" data-i18n="jobs_title" data-content-key="jobs_title">Trabaja con nosotros</span>
+              <span class="trabaja-sub" data-i18n="jobs_text" data-content-key="jobs_text">Envíanos tu CV y cuéntanos en qué área te gustaría aportar.</span>
+            </span>
+            <span class="trabaja-arrow" aria-hidden="true">›</span>
+          </summary>
+          <div class="trabaja-body">
+            <div class="cards" id="jobsList"></div>
+            <form id="hrForm" class="form">
+              <div class="form-row">
+                <label><span>Nombre</span><input type="text" name="nombre" required /></label>
+                <label><span>Teléfono</span><input type="tel" name="telefono" required /></label>
+              </div>
+              <div class="form-row">
+                <label><span>Email</span><input type="email" name="email" required /></label>
+                <label><span>Puesto</span><input type="text" name="puesto" required /></label>
+              </div>
+              <label><span>Mensaje (opcional)</span><textarea name="mensaje" rows="2"></textarea></label>
+              <label><span>CV (PDF, opcional)</span><input type="file" name="cv" accept="application/pdf" /></label>
+              <button class="btn" type="submit">Enviar candidatura</button>
+              <p class="form-note" id="hrMsg"></p>
+            </form>
           </div>
-          <div class="form-row">
-            <label><span>Email</span><input type="email" name="email" required /></label>
-            <label><span>Puesto</span><input type="text" name="puesto" required /></label>
-          </div>
-          <label><span>Mensaje (opcional)</span><textarea name="mensaje" rows="2"></textarea></label>
-          <label><span>CV (PDF, opcional)</span><input type="file" name="cv" accept="application/pdf" /></label>
-          <button class="btn" type="submit">Enviar candidatura</button>
-          <p class="form-note" id="hrMsg"></p>
-        </form>
+        </details>
       </section>
 
       <!-- CONTACTO -->
