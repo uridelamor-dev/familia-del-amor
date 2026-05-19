@@ -451,20 +451,35 @@ app.get("/api/reservas/export.csv", requireAuth(["direccion", "encargado", "cont
 // KPIs
 app.get("/api/kpi", requireAuth(["direccion", "contabilidad"]), (req, res) => {
   const result = {};
-  db.get(`SELECT COUNT(*) as total FROM leads`, (err, row) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error KPI leads" });
-    result.leads = row.total;
-    db.get(`SELECT COUNT(*) as total FROM reservas`, (err2, row2) => {
-      if (err2) return res.status(500).json({ ok: false, error: "Error KPI reservas" });
-      result.reservas = row2.total;
-      db.all(
-        `SELECT local, COUNT(*) as total FROM reservas GROUP BY local ORDER BY total DESC`,
-        (err3, rows3) => {
-          if (err3) return res.status(500).json({ ok: false, error: "Error KPI locales" });
-          result.reservas_por_local = rows3;
+  const hoy = new Date().toISOString().slice(0, 10);
+  const mes = hoy.slice(0, 7);
+
+  const queries = [
+    ["leads_total",    `SELECT COUNT(*) as v FROM leads`],
+    ["leads_mes",      `SELECT COUNT(*) as v FROM leads WHERE (creado_en LIKE '${mes}%' OR actualizado_en LIKE '${mes}%')`],
+    ["reservas_total", `SELECT COUNT(*) as v FROM reservas`],
+    ["reservas_hoy",   `SELECT COUNT(*) as v FROM reservas WHERE dia='${hoy}'`],
+    ["reservas_mes",   `SELECT COUNT(*) as v FROM reservas WHERE dia LIKE '${mes}%'`],
+    ["candidaturas",   `SELECT COUNT(*) as v FROM hr_applications`],
+    ["personas_hoy",   `SELECT COALESCE(SUM(CAST(personas AS INTEGER)),0) as v FROM reservas WHERE dia='${hoy}'`],
+    ["personas_mes",   `SELECT COALESCE(SUM(CAST(personas AS INTEGER)),0) as v FROM reservas WHERE dia LIKE '${mes}%'`],
+  ];
+
+  let pending = queries.length;
+  let failed = false;
+
+  queries.forEach(([key, sql]) => {
+    db.get(sql, (err, row) => {
+      if (failed) return;
+      if (err) { failed = true; return res.status(500).json({ ok: false, error: key }); }
+      result[key] = row.v;
+      if (--pending === 0) {
+        db.all(`SELECT local, COUNT(*) as total FROM reservas GROUP BY local ORDER BY total DESC`, (e, rows) => {
+          if (e) return res.status(500).json({ ok: false, error: "kpi_local" });
+          result.reservas_por_local = rows;
           res.json({ ok: true, data: result });
-        }
-      );
+        });
+      }
     });
   });
 });

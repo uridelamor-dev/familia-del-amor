@@ -133,20 +133,38 @@ async function loadKpi() {
   const cards = document.getElementById("kpiCards");
   const byLocal = document.getElementById("kpiByLocal");
   if (!cards || !byLocal) return;
+
+  cards.innerHTML = `<div class="card" style="color:var(--muted)">Cargando...</div>`;
+
   const res = await authFetch("/api/kpi");
   const data = await res.json();
-  if (!data.ok) return;
-  cards.innerHTML = `
-    <div class="card">Leads totales: <strong>${data.data.leads}</strong></div>
-    <div class="card">Reservas totales: <strong>${data.data.reservas}</strong></div>
-  `;
-  const rows = data.data.reservas_por_local
-    .map((r) => `<tr><td>${r.local}</td><td>${r.total}</td></tr>`)
-    .join("");
-  byLocal.innerHTML = `
-    <table class="table">
-      <thead><tr><th>Local</th><th>Reservas</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
+  if (!data.ok) { cards.innerHTML = `<div class="card">Error cargando KPIs.</div>`; return; }
+
+  const d = data.data;
+  const kpis = [
+    { icon: "📅", label: "Reservas hoy",      value: d.reservas_hoy,   sub: `${d.personas_hoy} personas` },
+    { icon: "📆", label: "Reservas este mes",  value: d.reservas_mes,   sub: `${d.personas_mes} personas` },
+    { icon: "📋", label: "Reservas totales",   value: d.reservas_total, sub: "histórico" },
+    { icon: "👥", label: "Leads este mes",     value: d.leads_mes,      sub: `${d.leads_total} en total` },
+    { icon: "📄", label: "Candidaturas",       value: d.candidaturas,   sub: "recibidas" },
+  ];
+
+  cards.innerHTML = kpis.map((k) => `
+    <div class="card" style="display:flex;flex-direction:column;gap:0.25rem">
+      <div style="font-size:1.4rem">${k.icon}</div>
+      <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted)">${k.label}</div>
+      <div style="font-size:2rem;font-weight:700;line-height:1">${k.value}</div>
+      <div style="font-size:0.78rem;color:var(--muted)">${k.sub}</div>
+    </div>`).join("");
+
+  if (d.reservas_por_local.length) {
+    const rows = d.reservas_por_local
+      .map((r) => `<tr><td>${r.local}</td><td><strong>${r.total}</strong></td></tr>`)
+      .join("");
+    byLocal.innerHTML = `
+      <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:0.5rem">Reservas por local</div>
+      <table class="table"><thead><tr><th>Local</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } else {
+    byLocal.innerHTML = `<span style="color:var(--muted);font-size:0.9rem">Sin reservas aún.</span>`;
+  }
 }

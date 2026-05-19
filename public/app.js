@@ -267,8 +267,13 @@ let contentCache = {};
 
 function renderCompanies() {
   const container = document.getElementById("companies");
+  if (!container) return;
   container.innerHTML = "";
   companies.forEach((c) => {
+    const menuUrl = contentCache[`local_${c.slug}_menu_pdf`] || "";
+    const menuLink = menuUrl
+      ? `<a class="btn ghost" href="${menuUrl}" target="_blank" rel="noopener" style="font-size:0.75rem;padding:0.4rem 0.8rem;margin-top:0.5rem">Ver carta</a>`
+      : "";
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `
@@ -279,6 +284,7 @@ function renderCompanies() {
         <h3>${c.name}</h3>
         <p>${c.desc}</p>
       </a>
+      ${menuLink}
     `;
     container.appendChild(card);
   });
@@ -314,6 +320,7 @@ async function loadContent() {
     if (data.ok) {
       contentCache = data.data || {};
       applyContentOverrides();
+      renderCompanies();
     }
   } catch {
     // ignore
