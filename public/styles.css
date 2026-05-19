@@ -793,8 +793,15 @@ body {
 /* Local chips */
 .local-grid {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.35rem;
+  scrollbar-width: none;
+}
+
+.local-grid::-webkit-scrollbar {
+  display: none;
 }
 
 .local-chip {
@@ -808,6 +815,7 @@ body {
   cursor: pointer;
   font-family: inherit;
   line-height: 1.25;
+  flex-shrink: 0;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
 
