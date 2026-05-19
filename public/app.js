@@ -405,7 +405,6 @@ const RESERVA_LOCALS = [
   { value: "Cooperativa - Blanes",         name: "Cooperativa",      sub: "Blanes" },
   { value: "Can Mateu - Tordera",          name: "Can Mateu",        sub: "Tordera" },
   { value: "La Tapa Ibérica - Tordera",    name: "La Tapa Ibérica",  sub: "Tordera" },
-  { value: "Botiga d'en Mateu - Tordera",  name: "Botiga d'en Mateu",sub: "Tordera" },
 ];
 
 function renderLocalPicker() {
