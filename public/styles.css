@@ -302,7 +302,7 @@ body {
 .card-logo {
   background: #6b1f2b;
   border-radius: 10px;
-  padding: 0.75rem;
+  padding: 1.1rem;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -310,7 +310,8 @@ body {
 }
 
 .card-logo img {
-  max-width: 160px;
+  max-width: 220px;
+  width: 100%;
   height: auto;
   display: block;
 }
