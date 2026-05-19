@@ -32,6 +32,34 @@
         <div class="cards" id="kpiCards"></div>
         <div class="card" id="kpiByLocal">Cargando...</div>
       </section>
+
+      <section class="block">
+        <div class="section-head">
+          <h2>Usuarios</h2>
+          <p>Gestión de accesos internos.</p>
+        </div>
+        <form id="newUserForm" class="form" style="margin-bottom:1.5rem">
+          <div class="form-row">
+            <label><span>Usuario</span><input type="text" name="username" required placeholder="uriel" /></label>
+            <label><span>Contraseña</span><input type="password" name="password" required placeholder="••••••••" /></label>
+          </div>
+          <div class="form-row">
+            <label><span>Nombre</span><input type="text" name="nombre" placeholder="Uriel Del Amor" /></label>
+            <label><span>Rol</span>
+              <select name="rol">
+                <option value="direccion">Dirección</option>
+                <option value="encargado">Encargado</option>
+                <option value="trabajador">Trabajador</option>
+                <option value="rrhh">RR.HH.</option>
+                <option value="marketing">Marketing</option>
+                <option value="contabilidad">Contabilidad</option>
+              </select>
+            </label>
+          </div>
+          <button class="btn" type="submit">Crear usuario</button>
+        </form>
+        <div id="userList">Cargando usuarios...</div>
+      </section>
     </main>
 
     <footer class="footer">
