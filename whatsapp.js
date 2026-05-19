@@ -158,7 +158,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl) {
     historial.push({ role: "assistant", content: respuestaCliente });
     return respuestaCliente;
   } catch (err) {
-    console.error("Error IA:", err.message);
+    console.error("Error IA completo:", err.status, err.message, err.error);
     return "¡Hola! 👋 Gracias por escribirnos. En este momento estamos teniendo problemas técnicos. Puedes llamarnos directamente al local más cercano y te atendemos encantados.";
   }
 }
