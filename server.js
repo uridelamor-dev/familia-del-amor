@@ -7,7 +7,7 @@ import multer from "multer";
 import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { initWhatsApp, sendConfirmacionCliente, sendNotificacionGrupo, getGroups, isReady, getQRImage } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendNotificacionGrupo, getGroups, isReady, getQRImage, setOnReserva } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -654,5 +654,23 @@ app.get("/", (req, res) => res.redirect("/login.html"));
 
 app.listen(PORT, () => {
   console.log(`Servidor activo en http://localhost:${PORT}`);
+
+  setOnReserva((reserva) => {
+    const { local, personas, dia, hora, telefono, nombre_reserva } = reserva;
+    if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) return;
+    const creado_en = new Date().toISOString();
+    db.run(
+      `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [local, personas, dia, hora, telefono, nombre_reserva, creado_en],
+      function (err) {
+        if (err) { console.error("Error guardando reserva WhatsApp:", err.message); return; }
+        console.log(`📅 Reserva WhatsApp guardada (id ${this.lastID}): ${nombre_reserva} en ${local}`);
+        db.get(`SELECT value FROM contents WHERE key = ?`, [`whatsapp_group_${local}`], (_, row) => {
+          if (row?.value) sendNotificacionGrupo(row.value, reserva);
+        });
+      }
+    );
+  });
+
   initWhatsApp();
 });

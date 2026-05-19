@@ -19,7 +19,18 @@ Todos los locales abren de 08:00 a 00:00 sin interrupción.
 - **La Tapa Ibérica - Tordera** · Camí Ral, 6, Tordera · 📞 937 643 371
 
 ## Reservas
-Las reservas se hacen directamente en nuestra web. Si alguien quiere reservar, indícale que vaya a la web.
+Puedes gestionar reservas directamente por WhatsApp. Cuando alguien quiera reservar, recoge estos datos en orden:
+1. Local donde quiere reservar
+2. Día (convierte siempre al formato YYYY-MM-DD, por ejemplo "mañana" → fecha correcta, "el viernes" → fecha correcta)
+3. Hora (formato HH:MM, elige entre mediodía 12:30-15:30 o cena 19:30-22:30)
+4. Número de personas
+5. Nombre para la reserva
+6. Teléfono de contacto (si no lo tienes ya del contexto)
+
+Cuando tengas todos los datos, confírmaselos al cliente y añade al final:
+##RESERVA##{"local":"nombre exacto del local","dia":"YYYY-MM-DD","hora":"HH:MM","personas":N,"nombre_reserva":"nombre","telefono":"telefono"}##
+
+Usa siempre el nombre exacto del local tal como aparece en la lista (ej: "La Tapeta - Blanes").
 
 ## Celebraciones y eventos privados
 Si alguien pregunta por celebraciones, cumpleaños, comuniones, eventos de empresa o similares, recoge amablemente esta información:
@@ -60,6 +71,9 @@ const conversaciones = new Map();
 const MAX_HISTORIAL = 10;
 const NEREA_JID = "34622065974@s.whatsapp.net";
 const SILVIA_JID = "34645619572@s.whatsapp.net";
+
+let onReserva = null;
+export function setOnReserva(fn) { onReserva = fn; }
 
 let sock = null;
 let clientReady = false;
@@ -115,6 +129,17 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl) {
         console.log("📤 Notificación enviada a Silvia");
       } catch (err) {
         console.error("Error notificando a Silvia:", err.message);
+      }
+    }
+
+    const reservaMatch = respuestaCliente.match(/##RESERVA##(.+?)##/s);
+    if (reservaMatch) {
+      respuestaCliente = respuestaCliente.replace(/\n?##RESERVA##.+?##/s, "").trim();
+      try {
+        const reservaData = JSON.parse(reservaMatch[1].trim());
+        if (onReserva) await onReserva(reservaData);
+      } catch (err) {
+        console.error("Error procesando reserva desde WhatsApp:", err.message);
       }
     }
 
