@@ -652,8 +652,17 @@ app.post("/api/whatsapp/test", requireAuth(["direccion"]), async (req, res) => {
 
 app.get("/", (req, res) => res.redirect("/login.html"));
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Servidor activo en http://localhost:${PORT}`);
+
+  const shutdown = () => {
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 
   setOnReserva((reserva) => {
     const { local, personas, dia, hora, telefono, nombre_reserva } = reserva;
