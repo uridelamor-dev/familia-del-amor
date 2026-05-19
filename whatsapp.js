@@ -11,14 +11,12 @@ const SYSTEM_PROMPT = `Eres el asistente virtual de Familia del Amor, un grupo d
 ## Nuestros locales, ubicaciones y horarios
 Todos los locales abren de 08:00 a 00:00 sin interrupción.
 
-- **La Tapeta - Blanes** · Carrer de la Muralla, 21, Blanes
-- **Cooperativa - Blanes** · Carrer de la Muralla, 28, Blanes
-- **La Tapeta - Lloret de Mar** · Carrer Sant Pere, 84, Lloret de Mar
-- **La Tapeta - Girona** · Avinguda Sant Francesc, 7, Girona
-- **Can Mateu - Tordera** · Plaça de la Concòrdia, 5, Tordera
-- **La Tapa Ibérica - Tordera** · Camí Ral, 6, Tordera
-
-Para el teléfono exacto de cada local, recomienda buscarlos en Google Maps o en nuestra web.
+- **La Tapeta - Blanes** · Carrer de la Muralla, 21, Blanes · 📞 972 916 341
+- **Cooperativa - Blanes** · Carrer de la Muralla, 28, Blanes · 📞 972 916 341
+- **La Tapeta - Lloret de Mar** · Carrer Sant Pere, 84, Lloret de Mar · 📞 872 266 645
+- **La Tapeta - Girona** · Avinguda Sant Francesc, 7, Girona · 📞 872 071 246
+- **Can Mateu - Tordera** · Plaça de la Concòrdia, 5, Tordera · 📞 930 317 169
+- **La Tapa Ibérica - Tordera** · Camí Ral, 6, Tordera · 📞 937 643 371
 
 ## Reservas
 Las reservas se hacen directamente en nuestra web. Si alguien quiere reservar, indícale que vaya a la web.
