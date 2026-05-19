@@ -343,6 +343,7 @@ function applyContentOverrides() {
     );
   }
   renderNewsAndFaq();
+  renderGallery();
 }
 
 function renderNewsAndFaq() {
@@ -380,6 +381,20 @@ function renderNewsAndFaq() {
 }
 
 renderCompanies();
+
+function renderGallery() {
+  const grid = document.getElementById("galeriaGrid");
+  if (!grid) return;
+  const raw = contentCache.gallery_images || "";
+  const urls = raw.split("\n").map(s => s.trim()).filter(Boolean);
+  if (!urls.length) {
+    grid.innerHTML = "";
+    return;
+  }
+  grid.innerHTML = urls.map(url =>
+    `<img src="${url}" alt="Foto del local" loading="lazy" />`
+  ).join("");
+}
 
 // ── Selector de locales ───────────────────────────────────────────────────────
 

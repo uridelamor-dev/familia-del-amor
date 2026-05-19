@@ -7,20 +7,18 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+
     <header class="top">
       <button class="nav-toggle" id="navToggle" aria-label="Abrir menú" aria-expanded="false">
-        <span></span>
-        <span></span>
-        <span></span>
+        <span></span><span></span><span></span>
       </button>
       <div class="logo">
         <img id="siteLogo" data-edit-key="site_logo_url" src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
       </div>
       <nav class="nav">
-        <a href="#sobre">Sobre nosotros</a>
-        <a href="#empresas">Locales</a>
-        <a href="#reservas">Reserva</a>
-        <a href="#trabaja">Trabaja con nosotros</a>
+        <a href="#locales">Locales</a>
+        <a href="#reservas">Reservar</a>
+        <a href="#trabaja">Trabaja</a>
         <a href="#contacto">Contacto</a>
         <div class="lang">
           <button data-lang="es" class="active">ES</button>
@@ -31,104 +29,85 @@
     </header>
 
     <main>
+
+      <!-- HERO -->
       <section class="hero" data-edit-key="hero_image_url">
-        <div class="eyebrow" data-i18n="hero_eyebrow" data-content-key="hero_eyebrow">Grupo familiar de empresas</div>
-        <h1 data-i18n="hero_title" data-content-key="hero_title">Familia del Amor</h1>
-        <p data-i18n="hero_sub" data-content-key="hero_sub">Sabor, tradición y alegría compartida en cada local.</p>
-        <div class="hero-cta">
-          <a class="btn" href="#reservas" data-i18n="hero_cta">Reservar mesa</a>
-          <a class="btn ghost" href="#empresas" data-i18n="hero_cta_2">Ver locales</a>
+        <div class="hero-inner">
+          <div class="eyebrow" data-i18n="hero_eyebrow" data-content-key="hero_eyebrow">Grupo familiar de restauración</div>
+          <h1 data-i18n="hero_title" data-content-key="hero_title">Familia del Amor</h1>
+          <p data-i18n="hero_sub" data-content-key="hero_sub">Sabor, tradición y alegría compartida en cada local.</p>
+          <div class="hero-cta">
+            <a class="btn" href="#reservas">Reservar mesa</a>
+            <a class="btn ghost" href="#locales">Ver locales</a>
+          </div>
         </div>
       </section>
 
-      <section id="sobre" class="block split">
-        <div>
-          <h2 data-i18n="about_title" data-content-key="about_title">Sobre nosotros</h2>
-          <p data-i18n="about_text" data-content-key="about_text">
-            Somos un grupo familiar de tercera generación, dedicados a la atención al cliente desde los años 70.
-            Llevamos décadas trabajando de cara al público y nuestra obsesión es que cada persona se sienta como en casa:
-            cercana, cuidada y bien atendida.
-          </p>
-        </div>
-        <div class="tile">
-          <p data-i18n="about_tile" data-content-key="about_tile">
-            Bares de tapas con mucho ambiente, cocina honesta y un equipo que cuida cada detalle.
-          </p>
-        </div>
-      </section>
-
-      <section id="historia" class="block">
+      <!-- LOCALES -->
+      <section id="locales" class="block">
         <div class="section-head">
-          <h2 data-i18n="history_title" data-content-key="history_title">Historia y valores</h2>
-          <p data-i18n="history_sub" data-content-key="history_sub">Nuestra manera de hacer las cosas, desde dentro.</p>
-        </div>
-        <div class="cards">
-          <div class="card" data-content-key="history_block_1">Tradición familiar, trato cercano y pasión por el detalle.</div>
-          <div class="card" data-content-key="history_block_2">Equipo estable que conoce a los clientes por su nombre.</div>
-          <div class="card" data-content-key="history_block_3">Cocina honesta y ambientes con alma propia.</div>
-        </div>
-      </section>
-
-      <section id="equipo" class="block split">
-        <div>
-          <h2 data-i18n="team_title" data-content-key="team_title">Equipo y familia</h2>
-          <p data-i18n="team_text" data-content-key="team_text">
-            Somos una familia que crece con cada local y cada historia compartida.
-          </p>
-        </div>
-        <div class="tile" data-content-key="team_tile">Pronto: fotos del equipo y momentos del día a día.</div>
-      </section>
-
-      <section id="empresas" class="block">
-        <div class="section-head">
-          <h2 data-i18n="companies_title" data-content-key="companies_title">Nuestras empresas</h2>
+          <h2 data-i18n="companies_title" data-content-key="companies_title">Nuestros locales</h2>
           <p data-i18n="companies_sub" data-content-key="companies_sub">Cada local con su carácter, historia y sabor.</p>
         </div>
         <div class="cards" id="companies"></div>
       </section>
 
-      <section id="eventos" class="block">
+      <!-- GALERÍA -->
+      <section id="galeria" class="block">
         <div class="section-head">
-          <h2 data-i18n="events_title" data-content-key="events_title">Eventos y experiencias</h2>
-          <p data-i18n="events_text" data-content-key="events_text">Viva la Pepa: fiestas al aire libre y celebraciones a medida.</p>
+          <h2>Galería</h2>
+          <p>Momentos y platos de nuestros locales.</p>
         </div>
-        <a class="btn ghost" href="mailto:hola@familia-del-amor.com" data-i18n="events_cta">Pedir información</a>
+        <div class="galeria-grid" id="galeriaGrid"></div>
       </section>
 
-      <section id="novedades" class="block">
+      <!-- RESEÑAS -->
+      <section id="resenas" class="block">
         <div class="section-head">
-          <h2 data-i18n="news_title" data-content-key="news_title">Anuncios y novedades</h2>
-          <p data-i18n="news_sub" data-content-key="news_sub">Lo último del grupo y sus locales.</p>
+          <h2>Lo que dicen nuestros clientes</h2>
+          <p>⭐⭐⭐⭐⭐ Valoración media en Google</p>
         </div>
-        <div class="cards" id="newsList"></div>
+        <div class="cards resenas-grid" id="resenasList">
+          <div class="card resena">
+            <p>"Un sitio increíble. La comida estupenda y el trato inmejorable. Volveremos sin duda."</p>
+            <strong>— María G., Google</strong>
+          </div>
+          <div class="card resena">
+            <p>"El mejor local de tapas de Blanes. Ambiente familiar y precios muy razonables."</p>
+            <strong>— Jordi P., Google</strong>
+          </div>
+          <div class="card resena">
+            <p>"Reservamos para una celebración y todo perfecto. El equipo muy atento y profesional."</p>
+            <strong>— Laura M., Google</strong>
+          </div>
+        </div>
       </section>
 
-      <section id="reservas" class="block">
+      <!-- RESERVAS -->
+      <section id="reservas" class="block reservas-highlight">
         <div class="section-head">
-          <h2 data-i18n="reservations_title" data-content-key="reservations_title">Reservas</h2>
+          <h2 data-i18n="reservations_title" data-content-key="reservations_title">Reserva tu mesa</h2>
           <p data-i18n="reservations_sub" data-content-key="reservations_sub">Reserva confirmada al instante.</p>
         </div>
         <form id="reservaForm" class="reserva-form">
-
           <div class="reserva-step">
-            <div class="reserva-step-label" data-i18n="reservation_local">¿En qué local?</div>
+            <div class="reserva-step-label">¿En qué local?</div>
             <div class="local-grid" id="localGrid"></div>
             <input type="hidden" name="local" id="localValue" />
           </div>
-
           <div class="reserva-row">
             <div class="reserva-step">
-              <div class="reserva-step-label" data-i18n="reservation_day">¿Qué día?</div>
+              <div class="reserva-step-label">¿Qué día?</div>
               <input type="text" id="diaDisplay" class="reserva-date-input" data-date-input="dia" data-date-mode="future" placeholder="Elige fecha" readonly required />
               <input type="hidden" id="diaValue" name="dia" />
             </div>
             <div class="reserva-step">
-              <div class="reserva-step-label" data-i18n="reservation_time">¿A qué hora?</div>
+              <div class="reserva-step-label">¿A qué hora?</div>
               <div id="timePicker"></div>
               <input type="hidden" name="hora" id="horaValue" />
             </div>
             <div class="reserva-step">
-              <div class="reserva-step-label" data-i18n="reservation_people">¿Cuántos?</div>
+              <div class="reserva-step-label">¿Cuántos?</div>
               <div class="stepper">
                 <button type="button" class="stepper-btn" id="personasMinus">−</button>
                 <span id="personasDisplay">2</span>
@@ -138,23 +117,31 @@
               <input type="hidden" name="personas" id="personasValue" value="2" />
             </div>
           </div>
-
           <div class="reserva-row">
             <div class="reserva-step">
-              <div class="reserva-step-label" data-i18n="reservation_phone">Teléfono</div>
+              <div class="reserva-step-label">Teléfono</div>
               <input type="tel" name="telefono" autocomplete="tel" required placeholder="+34 600 000 000" />
             </div>
             <div class="reserva-step" style="flex:2">
-              <div class="reserva-step-label" data-i18n="reservation_name">Nombre de la reserva</div>
+              <div class="reserva-step-label">Nombre de la reserva</div>
               <input type="text" name="nombre_reserva" autocomplete="name" required placeholder="¿A nombre de quién?" />
             </div>
           </div>
-
-          <button class="btn" type="submit" data-i18n="reservation_submit">Confirmar reserva</button>
+          <button class="btn" type="submit">Confirmar reserva</button>
           <p class="form-note" id="reservaMsg" role="status" aria-live="polite"></p>
         </form>
       </section>
 
+      <!-- EVENTOS -->
+      <section id="eventos" class="block eventos-cta">
+        <div class="section-head">
+          <h2 data-i18n="events_title" data-content-key="events_title">Celebraciones y eventos</h2>
+          <p data-i18n="events_text" data-content-key="events_text">Cumpleaños, comuniones, eventos de empresa… lo organizamos todo.</p>
+        </div>
+        <a class="btn" href="#reservas">Pedir información</a>
+      </section>
+
+      <!-- TRABAJA -->
       <section id="trabaja" class="block">
         <div class="section-head">
           <h2 data-i18n="jobs_title" data-content-key="jobs_title">Trabaja con nosotros</h2>
@@ -162,114 +149,75 @@
         </div>
         <div class="cards" id="jobsList"></div>
         <form id="hrForm" class="form">
-          <label>
-            <span>Nombre</span>
-            <input type="text" name="nombre" required />
-          </label>
-          <label>
-            <span>Email</span>
-            <input type="email" name="email" required />
-          </label>
-          <label>
-            <span>Teléfono</span>
-            <input type="tel" name="telefono" required />
-          </label>
-          <label>
-            <span>Puesto</span>
-            <input type="text" name="puesto" required />
-          </label>
-          <label>
-            <span>Mensaje</span>
-            <textarea name="mensaje" rows="3"></textarea>
-          </label>
-          <label>
-            <span>CV (PDF)</span>
-            <input type="file" name="cv" accept="application/pdf" />
-          </label>
+          <div class="form-row">
+            <label><span>Nombre</span><input type="text" name="nombre" required /></label>
+            <label><span>Teléfono</span><input type="tel" name="telefono" required /></label>
+          </div>
+          <div class="form-row">
+            <label><span>Email</span><input type="email" name="email" required /></label>
+            <label><span>Puesto</span><input type="text" name="puesto" required /></label>
+          </div>
+          <label><span>Mensaje (opcional)</span><textarea name="mensaje" rows="2"></textarea></label>
+          <label><span>CV (PDF, opcional)</span><input type="file" name="cv" accept="application/pdf" /></label>
           <button class="btn" type="submit">Enviar candidatura</button>
           <p class="form-note" id="hrMsg"></p>
         </form>
       </section>
 
-      <section id="faq" class="block">
-        <div class="section-head">
-          <h2 data-i18n="faq_title" data-content-key="faq_title">Preguntas frecuentes</h2>
-          <p data-i18n="faq_sub" data-content-key="faq_sub">Resolvemos las dudas más habituales.</p>
-        </div>
-        <div class="faq" id="faqList"></div>
-      </section>
-
+      <!-- CONTACTO -->
       <section id="contacto" class="block">
         <div class="section-head">
-          <h2 data-i18n="contact_title" data-content-key="contact_title">Contacto</h2>
-          <p data-i18n="contact_text" data-content-key="contact_text">Para cualquier consulta, escríbenos.</p>
+          <h2>Contacto</h2>
+          <p>Para cualquier consulta, escríbenos.</p>
         </div>
         <a class="btn ghost" href="mailto:hola@familia-del-amor.com">hola@familia-del-amor.com</a>
       </section>
 
-      <section id="legal" class="block">
-        <div class="section-head">
-          <h2 data-i18n="legal_title" data-content-key="legal_title">Legal y privacidad</h2>
-          <p data-i18n="legal_text" data-content-key="legal_text">Políticas de privacidad, cookies y condiciones.</p>
-        </div>
-      </section>
     </main>
 
     <footer class="footer">
       <div class="footer-inner">
-        <a class="btn ghost" href="login.html">Acceso interno</a>
+        <span style="font-size:0.8rem;color:var(--muted)">© Familia del Amor</span>
+        <a class="btn ghost" href="login.html" style="font-size:0.75rem;opacity:0.5">Acceso interno</a>
       </div>
     </footer>
 
-    <div class="popup" id="leadPopup" role="dialog" aria-modal="true" aria-labelledby="leadTitle" aria-describedby="leadDesc">
+    <!-- POPUP LEAD (aparece tras 15s o al hacer scroll) -->
+    <div class="popup" id="leadPopup" role="dialog" aria-modal="true" aria-labelledby="leadTitle">
       <div class="popup-card">
         <button class="close" id="closePopup" aria-label="Cerrar">×</button>
-        <h3 id="leadTitle" data-i18n="popup_title" data-content-key="popup_title">¡Bienvenidos a Familia del Amor!</h3>
-        <p id="leadDesc" data-i18n="popup_text" data-content-key="popup_text">Déjanos tus datos y recibe un 10% de descuento.</p>
+        <h3 id="leadTitle" data-i18n="popup_title" data-content-key="popup_title">¡10% de descuento!</h3>
+        <p data-i18n="popup_text" data-content-key="popup_text">Déjanos tus datos y te lo enviamos ahora.</p>
         <form id="leadForm" class="form">
+          <div class="form-row">
+            <label><span>Nombre</span><input type="text" name="nombre" autocomplete="given-name" required /></label>
+            <label><span>Apellidos</span><input type="text" name="apellidos" autocomplete="family-name" required /></label>
+          </div>
           <label>
-            <span data-i18n="lead_name">Nombre</span>
-            <input type="text" name="nombre" autocomplete="given-name" required />
-          </label>
-          <label>
-            <span data-i18n="lead_lastname">Apellidos</span>
-            <input type="text" name="apellidos" autocomplete="family-name" required />
-          </label>
-          <label>
-            <span data-i18n="lead_birth">Fecha de nacimiento</span>
+            <span>Fecha de nacimiento</span>
             <input type="text" id="nacimientoDisplay" data-date-input="nacimiento" data-date-mode="birth" placeholder="dd/mm/aaaa" readonly required />
             <input type="hidden" id="nacimientoValue" name="nacimiento" />
           </label>
-          <label>
-            <span data-i18n="lead_city">Población</span>
-            <input type="text" name="poblacion" autocomplete="address-level2" list="poblaciones" required />
-            <datalist id="poblaciones">
-              <option value="Blanes"></option>
-              <option value="Lloret de Mar"></option>
-              <option value="Girona"></option>
-              <option value="Tordera"></option>
-              <option value="Malgrat de Mar"></option>
-              <option value="Santa Susanna"></option>
-              <option value="Palafolls"></option>
-              <option value="Calella"></option>
-              <option value="Pineda de Mar"></option>
-              <option value="Hostalric"></option>
-              <option value="Sils"></option>
-            </datalist>
-          </label>
-          <label>
-            <span data-i18n="lead_phone">Teléfono</span>
-            <input type="tel" name="telefono" autocomplete="tel" required />
-          </label>
-          <label>
-            <span data-i18n="lead_email">Correo</span>
-            <input type="email" name="correo" autocomplete="email" required />
-          </label>
+          <div class="form-row">
+            <label>
+              <span>Población</span>
+              <input type="text" name="poblacion" autocomplete="address-level2" list="poblaciones" required />
+              <datalist id="poblaciones">
+                <option value="Blanes"></option><option value="Lloret de Mar"></option>
+                <option value="Girona"></option><option value="Tordera"></option>
+                <option value="Malgrat de Mar"></option><option value="Santa Susanna"></option>
+                <option value="Palafolls"></option><option value="Calella"></option>
+                <option value="Pineda de Mar"></option><option value="Hostalric"></option>
+              </datalist>
+            </label>
+            <label><span>Teléfono</span><input type="tel" name="telefono" autocomplete="tel" required /></label>
+          </div>
+          <label><span>Correo</span><input type="email" name="correo" autocomplete="email" required /></label>
           <label class="check">
             <input type="checkbox" required />
-            <span data-i18n="lead_consent">Acepto recibir comunicaciones y la política de privacidad.</span>
+            <span>Acepto recibir comunicaciones y la política de privacidad.</span>
           </label>
-          <button class="btn" type="submit" data-i18n="lead_submit">Recibir premio</button>
+          <button class="btn" type="submit">Recibir mi descuento</button>
           <p class="form-note" id="leadMsg" role="status" aria-live="polite"></p>
         </form>
       </div>

@@ -62,6 +62,7 @@ const i18nFields = [
 const fields = [
   { key: "site_logo_url", label: "Sitio · Logo (URL o ruta)", type: "input" },
   { key: "hero_image_url", label: "Hero · Imagen de fondo (URL o ruta)", type: "input" },
+  { key: "gallery_images", label: "Galería · Imágenes (1 URL por línea)" },
   ...i18nFields.flatMap((f) => [
     { key: `${f.key}_es`, label: `${f.label} (ES)` },
     { key: `${f.key}_ca`, label: `${f.label} (CA)` },
