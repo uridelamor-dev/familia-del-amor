@@ -6,50 +6,106 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `Eres el asistente virtual de Familia del Amor, un grupo de restauración con varios locales en la Costa Brava y el Maresme (Cataluña, España).
+const SYSTEM_PROMPT = `Eres el asistente virtual de Familia del Amor, un grupo de restauración con varios locales en la Costa Brava y el Maresme (Cataluña, España). Respondes siempre en el idioma en que te escriban (español, catalán o inglés). Eres amable, cercano y breve.
 
-Nuestros locales son:
-- La Tapeta - Blanes
-- La Tapeta - Lloret de Mar
-- La Tapeta - Girona
-- Cooperativa - Blanes
-- Can Mateu - Tordera
-- La Tapa Ibérica - Tordera
-- Botiga d'en Mateu - Tordera
+## Nuestros locales, ubicaciones y horarios
+Todos los locales abren de 08:00 a 00:00 sin interrupción.
 
-Tu misión es atender a los clientes con calidez, en el idioma en que te escriban (español, catalán o inglés). Puedes ayudar con:
-- Información sobre los locales y su cocina
-- Cómo hacer una reserva (a través de nuestra web)
-- Dudas sobre eventos, menús o disponibilidad
-- Cualquier pregunta general sobre el grupo
+- **La Tapeta - Blanes** · Carrer de la Muralla, 21, Blanes
+- **Cooperativa - Blanes** · Carrer de la Muralla, 28, Blanes
+- **La Tapeta - Lloret de Mar** · Carrer Sant Pere, 84, Lloret de Mar
+- **La Tapeta - Girona** · Avinguda Sant Francesc, 7, Girona
+- **Can Mateu - Tordera** · Plaça de la Concòrdia, 5, Tordera
+- **La Tapa Ibérica - Tordera** · Camí Ral, 6, Tordera
 
-Cuando alguien quiera hacer una reserva, indícale que puede hacerla directamente en nuestra web. Sé siempre amable, breve y cercano. No inventes información que no tengas — si no sabes algo concreto (horarios exactos, precio de un plato), dilo con naturalidad y ofrece que llamen al local.`;
+Para el teléfono exacto de cada local, recomienda buscarlos en Google Maps o en nuestra web.
+
+## Reservas
+Las reservas se hacen directamente en nuestra web. Si alguien quiere reservar, indícale que vaya a la web.
+
+## Celebraciones y eventos privados
+Si alguien pregunta por celebraciones, cumpleaños, comuniones, eventos de empresa o similares, recoge amablemente esta información:
+1. Nombre completo
+2. Tipo de celebración
+3. Fecha aproximada
+4. Número de personas
+5. Local preferido (o si no tiene preferencia)
+6. Teléfono de contacto
+
+Cuando tengas todos esos datos, responde normalmente al cliente Y añade al final de tu mensaje, en una línea separada, este bloque oculto exactamente así (no lo muestres bonito, ponlo tal cual):
+##NOTIF_NEREA##Celebración: [resumen con todos los datos recogidos]##
+
+## Empleo y trabajo con nosotros
+Si alguien muestra interés en trabajar con nosotros, recoge esta información:
+1. Nombre completo
+2. Puesto o área de interés (cocina, sala, barra, gestión...)
+3. Experiencia previa
+4. Disponibilidad (jornada, horario)
+5. Local preferido o zona
+6. Teléfono de contacto
+
+Si adjuntan un CV o archivo, indícales que lo envíen directamente a este chat y quedará registrado.
+Cuando tengas todos esos datos, responde al cliente Y añade al final:
+##NOTIF_NEREA##Empleo: [resumen con todos los datos recogidos]##
+
+## Facturación y contabilidad
+Si alguien pregunta por facturas, contabilidad o temas fiscales, dale el teléfono de Silvia: 645 619 572.
+
+## Normas generales
+- No inventes información que no tengas.
+- Nunca muestres el bloque ##NOTIF_NEREA## al cliente, ponlo solo al final como instrucción interna.
+- Si no sabes algo, dilo con naturalidad y ofrece alternativas.`;
 
 const conversaciones = new Map();
 const MAX_HISTORIAL = 10;
+const NEREA_JID = "34622065974@s.whatsapp.net";
 
 let sock = null;
 let clientReady = false;
 let lastQR = null;
 
-async function responderConIA(jid, mensajeUsuario) {
+async function notificarNerea(resumen, adjuntoUrl) {
+  if (!clientReady || !sock) return;
+  try {
+    const texto = `📋 *Nueva notificación del chatbot*\n\n${resumen}${adjuntoUrl ? `\n\n📎 Adjunto: ${adjuntoUrl}` : ""}`;
+    await sock.sendMessage(NEREA_JID, { text: texto });
+    console.log("📤 Notificación enviada a Nerea");
+  } catch (err) {
+    console.error("Error notificando a Nerea:", err.message);
+  }
+}
+
+async function responderConIA(jid, mensajeUsuario, adjuntoUrl) {
   if (!conversaciones.has(jid)) conversaciones.set(jid, []);
   const historial = conversaciones.get(jid);
 
-  historial.push({ role: "user", content: mensajeUsuario });
+  const contenidoUsuario = adjuntoUrl
+    ? `${mensajeUsuario} [Ha adjuntado un archivo: ${adjuntoUrl}]`
+    : mensajeUsuario;
+
+  historial.push({ role: "user", content: contenidoUsuario });
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
 
   try {
     const response = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 300,
+      max_tokens: 400,
       system: SYSTEM_PROMPT,
       messages: historial
     });
 
-    const respuesta = response.content[0].text;
-    historial.push({ role: "assistant", content: respuesta });
-    return respuesta;
+    const respuestaCompleta = response.content[0].text;
+
+    // Detectar y procesar notificación para Nerea
+    const notifMatch = respuestaCompleta.match(/##NOTIF_NEREA##(.+?)##/s);
+    let respuestaCliente = respuestaCompleta;
+    if (notifMatch) {
+      respuestaCliente = respuestaCompleta.replace(/\n?##NOTIF_NEREA##.+?##/s, "").trim();
+      await notificarNerea(notifMatch[1].trim(), adjuntoUrl);
+    }
+
+    historial.push({ role: "assistant", content: respuestaCliente });
+    return respuestaCliente;
   } catch (err) {
     console.error("Error IA:", err.message);
     return "Disculpa, en este momento no puedo responderte. Por favor llámanos directamente al local.";
@@ -101,16 +157,26 @@ async function connectToWhatsApp() {
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
         msg.message?.imageMessage?.caption ||
+        msg.message?.documentMessage?.caption ||
         "";
 
-      if (!texto.trim()) continue;
+      const tieneAdjunto = !!(
+        msg.message?.imageMessage ||
+        msg.message?.documentMessage ||
+        msg.message?.audioMessage ||
+        msg.message?.videoMessage
+      );
 
       const jid = msg.key.remoteJid;
-      console.log(`💬 Mensaje de ${jid}: ${texto}`);
+      const textoFinal = texto.trim() || (tieneAdjunto ? "[Archivo adjunto sin texto]" : "");
+      if (!textoFinal) continue;
+
+      console.log(`💬 Mensaje de ${jid}: ${textoFinal}`);
 
       try {
         await sock.sendPresenceUpdate("composing", jid);
-        const respuesta = await responderConIA(jid, texto);
+        const adjuntoInfo = tieneAdjunto ? `[adjunto recibido de ${jid}]` : null;
+        const respuesta = await responderConIA(jid, textoFinal, adjuntoInfo);
         await sock.sendMessage(jid, { text: respuesta });
         console.log(`📤 Respuesta enviada a ${jid}`);
       } catch (err) {
