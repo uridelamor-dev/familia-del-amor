@@ -46,7 +46,7 @@
         return null;
       }
       const bar = document.getElementById("userBar");
-      if (bar) bar.textContent = `${user.nombre || user.username} · ${user.rol}`;
+      if (bar) bar.innerHTML = `<strong>${user.nombre || user.username}</strong>`;
       revealPage();
       return user;
     } catch {
