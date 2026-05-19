@@ -5,3 +5,4 @@ node_modules/
 database.sqlite
 .wwebjs_auth/
 .wwebjs_cache/
+auth_info_baileys/
