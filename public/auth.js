@@ -1,4 +1,11 @@
 (function () {
+  // Si estamos dentro de un iframe, ocultar header y footer
+  if (window !== window.top) {
+    const s = document.createElement("style");
+    s.textContent = "header.top, .footer { display: none !important; } body { padding-top: 0 !important; }";
+    document.head.appendChild(s);
+  }
+
   // Ocultar contenido inmediatamente hasta verificar la sesión
   const _hide = document.createElement("style");
   _hide.id = "_auth_hide";
