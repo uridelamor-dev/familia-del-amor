@@ -67,7 +67,12 @@
             <input type="file" id="heroUpload" accept="image/*" />
             <span>Subir imagen hero</span>
           </label>
+          <label class="upload">
+            <input type="file" id="galleryUpload" accept="image/*" multiple />
+            <span>Subir fotos galería</span>
+          </label>
         </div>
+        <div id="galleryPreview" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.5rem"></div>
         <div class="panel-actions">
           <button class="btn" form="contentForm" type="submit">Guardar cambios</button>
           <span id="contentStatus" class="form-note"></span>

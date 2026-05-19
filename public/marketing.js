@@ -384,6 +384,36 @@ if (heroUpload) {
   });
 }
 
+const galleryUpload = document.getElementById("galleryUpload");
+const galleryPreview = document.getElementById("galleryPreview");
+if (galleryUpload) {
+  galleryUpload.addEventListener("change", async () => {
+    if (!galleryUpload.files.length) return;
+    status.textContent = `Subiendo ${galleryUpload.files.length} foto(s)...`;
+    const urls = await uploadFiles(galleryUpload.files);
+    if (!urls.length) { status.textContent = "Error subiendo fotos."; return; }
+
+    const area = form.querySelector("textarea[name='gallery_images']");
+    if (area) {
+      const current = area.value.trim();
+      area.value = current ? current + "\n" + urls.join("\n") : urls.join("\n");
+      normalizeGallery(area);
+    }
+
+    if (galleryPreview) {
+      urls.forEach((url) => {
+        const img = document.createElement("img");
+        img.src = url;
+        img.style.cssText = "width:80px;height:80px;object-fit:cover;border-radius:8px;";
+        galleryPreview.appendChild(img);
+      });
+    }
+
+    status.textContent = `${urls.length} foto(s) añadidas. Guarda cambios.`;
+    galleryUpload.value = "";
+  });
+}
+
 const navToggle = document.getElementById("navToggle");
 const nav = document.querySelector(".nav");
 if (navToggle && nav) {
