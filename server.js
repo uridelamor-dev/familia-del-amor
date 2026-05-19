@@ -637,6 +637,19 @@ app.get("/api/whatsapp/links", requireAuth(["direccion", "encargado"]), (req, re
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
+app.post("/api/whatsapp/test", requireAuth(["direccion"]), async (req, res) => {
+  const { telefono } = req.body;
+  if (!telefono) return res.status(400).json({ ok: false, error: "Falta telefono" });
+  await sendConfirmacionCliente(telefono, {
+    local: "La Tapeta - Blanes",
+    dia: "2026-05-20",
+    hora: "14:00",
+    personas: 2,
+    nombre_reserva: "Prueba WhatsApp"
+  });
+  res.json({ ok: true, mensaje: `Mensaje de prueba enviado a ${telefono}` });
+});
+
 app.get("/", (req, res) => res.redirect("/login.html"));
 
 app.listen(PORT, () => {
