@@ -108,42 +108,48 @@
           <h2 data-i18n="reservations_title" data-content-key="reservations_title">Reservas</h2>
           <p data-i18n="reservations_sub" data-content-key="reservations_sub">Reserva confirmada al instante.</p>
         </div>
-        <form id="reservaForm" class="form">
-          <label>
-            <span data-i18n="reservation_local">Local</span>
-            <select name="local" required>
-              <option value="La Tapeta - Blanes">La Tapeta - Blanes</option>
-              <option value="La Tapeta - Lloret">La Tapeta - Lloret</option>
-              <option value="La Tapeta - Girona">La Tapeta - Girona</option>
-              <option value="Cooperativa - Blanes">Cooperativa - Blanes</option>
-              <option value="Can Mateu - Tordera">Can Mateu - Tordera</option>
-              <option value="La Tapa Ibérica - Tordera">La Tapa Ibérica - Tordera</option>
-              <option value="Botiga d'en Mateu - Tordera">Botiga d'en Mateu - Tordera</option>
-            </select>
-          </label>
-          <label>
-            <span data-i18n="reservation_people">Personas</span>
-            <select name="personas" id="personasSelect" required></select>
-          </label>
-          <div class="form-row">
-            <label>
-              <span data-i18n="reservation_day">Día</span>
-            <input type="text" id="diaDisplay" data-date-input="dia" data-date-mode="future" placeholder="dd/mm/aaaa" readonly required />
-              <input type="hidden" id="diaValue" name="dia" />
-            </label>
-            <label>
-              <span data-i18n="reservation_time">Hora</span>
-              <select name="hora" id="horaSelect" required></select>
-            </label>
+        <form id="reservaForm" class="reserva-form">
+
+          <div class="reserva-step">
+            <div class="reserva-step-label" data-i18n="reservation_local">¿En qué local?</div>
+            <div class="local-grid" id="localGrid"></div>
+            <input type="hidden" name="local" id="localValue" />
           </div>
-          <label>
-            <span data-i18n="reservation_phone">Teléfono</span>
-            <input type="tel" name="telefono" autocomplete="tel" required />
-          </label>
-          <label>
-            <span data-i18n="reservation_name">Nombre de la reserva</span>
-            <input type="text" name="nombre_reserva" autocomplete="name" required />
-          </label>
+
+          <div class="reserva-row">
+            <div class="reserva-step">
+              <div class="reserva-step-label" data-i18n="reservation_day">¿Qué día?</div>
+              <input type="text" id="diaDisplay" class="reserva-date-input" data-date-input="dia" data-date-mode="future" placeholder="Elige fecha" readonly required />
+              <input type="hidden" id="diaValue" name="dia" />
+            </div>
+            <div class="reserva-step">
+              <div class="reserva-step-label" data-i18n="reservation_time">¿A qué hora?</div>
+              <div id="timePicker"></div>
+              <input type="hidden" name="hora" id="horaValue" />
+            </div>
+            <div class="reserva-step">
+              <div class="reserva-step-label" data-i18n="reservation_people">¿Cuántos?</div>
+              <div class="stepper">
+                <button type="button" class="stepper-btn" id="personasMinus">−</button>
+                <span id="personasDisplay">2</span>
+                <span class="stepper-unit">personas</span>
+                <button type="button" class="stepper-btn" id="personasPlus">+</button>
+              </div>
+              <input type="hidden" name="personas" id="personasValue" value="2" />
+            </div>
+          </div>
+
+          <div class="reserva-row">
+            <div class="reserva-step">
+              <div class="reserva-step-label" data-i18n="reservation_phone">Teléfono</div>
+              <input type="tel" name="telefono" autocomplete="tel" required placeholder="+34 600 000 000" />
+            </div>
+            <div class="reserva-step" style="flex:2">
+              <div class="reserva-step-label" data-i18n="reservation_name">Nombre de la reserva</div>
+              <input type="text" name="nombre_reserva" autocomplete="name" required placeholder="¿A nombre de quién?" />
+            </div>
+          </div>
+
           <button class="btn" type="submit" data-i18n="reservation_submit">Confirmar reserva</button>
           <p class="form-note" id="reservaMsg" role="status" aria-live="polite"></p>
         </form>
@@ -211,16 +217,7 @@
 
     <footer class="footer">
       <div class="footer-inner">
-        <span>Acceso interno</span>
-        <div class="footer-links">
-          <a class="btn" href="marketing.html">Marketing</a>
-          <a class="btn ghost" href="direccion.html">Dirección</a>
-          <a class="btn ghost" href="rrhh.html">RR.HH.</a>
-          <a class="btn ghost" href="mantenimiento.html">Mantenimiento</a>
-          <a class="btn ghost" href="contabilidad.html">Contabilidad</a>
-          <a class="btn ghost" href="encargados.html">Encargados</a>
-          <a class="btn ghost" href="trabajadores.html">Trabajadores</a>
-        </div>
+        <a class="btn ghost" href="login.html">Acceso interno</a>
       </div>
     </footer>
 

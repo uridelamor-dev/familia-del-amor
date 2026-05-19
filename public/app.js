@@ -381,36 +381,82 @@ function renderNewsAndFaq() {
 
 renderCompanies();
 
-function renderPeopleOptions() {
-  const select = document.getElementById("personasSelect");
-  if (!select) return;
-  select.innerHTML = "";
-  for (let i = 1; i <= 20; i += 1) {
-    const opt = document.createElement("option");
-    opt.value = String(i);
-    opt.textContent = String(i);
-    select.appendChild(opt);
-  }
+// ── Selector de locales ───────────────────────────────────────────────────────
+
+const RESERVA_LOCALS = [
+  { value: "La Tapeta - Blanes",           name: "La Tapeta",        sub: "Blanes" },
+  { value: "La Tapeta - Lloret",           name: "La Tapeta",        sub: "Lloret de Mar" },
+  { value: "La Tapeta - Girona",           name: "La Tapeta",        sub: "Girona" },
+  { value: "Cooperativa - Blanes",         name: "Cooperativa",      sub: "Blanes" },
+  { value: "Can Mateu - Tordera",          name: "Can Mateu",        sub: "Tordera" },
+  { value: "La Tapa Ibérica - Tordera",    name: "La Tapa Ibérica",  sub: "Tordera" },
+  { value: "Botiga d'en Mateu - Tordera",  name: "Botiga d'en Mateu",sub: "Tordera" },
+];
+
+function renderLocalPicker() {
+  const grid = document.getElementById("localGrid");
+  if (!grid) return;
+  grid.innerHTML = RESERVA_LOCALS.map((l) => `
+    <button type="button" class="local-chip" data-value="${l.value}">
+      <span class="chip-name">${l.name}</span>
+      <span class="chip-sub">${l.sub}</span>
+    </button>`).join("");
+
+  grid.querySelectorAll(".local-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      grid.querySelectorAll(".local-chip").forEach((b) => b.classList.remove("selected"));
+      btn.classList.add("selected");
+      document.getElementById("localValue").value = btn.dataset.value;
+    });
+  });
 }
 
-function renderTimeOptions() {
-  const select = document.getElementById("horaSelect");
-  if (!select) return;
-  select.innerHTML = "";
-  for (let h = 10; h <= 23; h += 1) {
-    for (let m = 0; m < 60; m += 15) {
-      const hh = String(h).padStart(2, "0");
-      const mm = String(m).padStart(2, "0");
-      const opt = document.createElement("option");
-      opt.value = `${hh}:${mm}`;
-      opt.textContent = `${hh}:${mm}`;
-      select.appendChild(opt);
-    }
-  }
+renderLocalPicker();
+
+// ── Stepper de personas ────────────────────────────────────────────────────────
+
+let personasCount = 2;
+
+function updateStepper() {
+  document.getElementById("personasDisplay").textContent = personasCount;
+  document.getElementById("personasValue").value = personasCount;
 }
 
-renderPeopleOptions();
-renderTimeOptions();
+document.getElementById("personasMinus")?.addEventListener("click", () => {
+  if (personasCount > 1) { personasCount--; updateStepper(); }
+});
+document.getElementById("personasPlus")?.addEventListener("click", () => {
+  if (personasCount < 20) { personasCount++; updateStepper(); }
+});
+
+// ── Selector de hora por turnos ────────────────────────────────────────────────
+
+const TIME_SLOTS = {
+  "Mediodía": ["12:30","13:00","13:30","14:00","14:30","15:00","15:30"],
+  "Cena":     ["19:30","20:00","20:30","21:00","21:30","22:00","22:30"]
+};
+
+function renderTimePicker() {
+  const container = document.getElementById("timePicker");
+  if (!container) return;
+  container.innerHTML = Object.entries(TIME_SLOTS).map(([label, slots]) => `
+    <div class="time-section">
+      <div class="time-section-label">${label}</div>
+      <div class="time-pills">
+        ${slots.map((t) => `<button type="button" class="time-pill" data-time="${t}">${t}</button>`).join("")}
+      </div>
+    </div>`).join("");
+
+  container.querySelectorAll(".time-pill").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      container.querySelectorAll(".time-pill").forEach((b) => b.classList.remove("selected"));
+      btn.classList.add("selected");
+      document.getElementById("horaValue").value = btn.dataset.time;
+    });
+  });
+}
+
+renderTimePicker();
 
 function setupDatePicker() {
   let activeInput = null;
@@ -600,22 +646,29 @@ if ("scrollRestoration" in history) {
 const popup = document.getElementById("leadPopup");
 const closePopup = document.getElementById("closePopup");
 const POPUP_KEY = "lead_popup_next";
-const POPUP_COOLDOWN_MS = 10 * 60 * 1000;
+const POPUP_DONE_KEY = "lead_submitted";
+const POPUP_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 horas
 
 function shouldShowPopup() {
+  if (localStorage.getItem(POPUP_DONE_KEY)) return false;
   const next = Number(localStorage.getItem(POPUP_KEY) || "0");
   return Date.now() > next;
 }
 
-function scheduleNextPopup() {
+function markPopupSeen() {
   localStorage.setItem(POPUP_KEY, String(Date.now() + POPUP_COOLDOWN_MS));
+}
+
+function markLeadSubmitted() {
+  localStorage.setItem(POPUP_DONE_KEY, "1");
+  localStorage.removeItem(POPUP_KEY);
 }
 
 if (shouldShowPopup()) {
   setTimeout(() => {
     popup.classList.add("show");
   }, 1200);
-  scheduleNextPopup();
+  markPopupSeen();
 }
 
 closePopup.addEventListener("click", () => {
@@ -644,8 +697,10 @@ leadForm.addEventListener("submit", async (e) => {
   });
   const data = await res.json();
   if (data.ok) {
+    markLeadSubmitted();
     leadMsg.textContent = `Premio confirmado: ${data.premio}`;
     leadForm.reset();
+    setTimeout(() => popup.classList.remove("show"), 2500);
   } else {
     leadMsg.textContent = "No se pudo guardar. Inténtalo de nuevo.";
   }
@@ -659,24 +714,18 @@ reservaForm.addEventListener("submit", async (e) => {
   reservaMsg.textContent = "";
   const formData = new FormData(reservaForm);
   const payload = Object.fromEntries(formData.entries());
-  const [y, m, d] = payload.dia.split("-").map((n) => Number(n));
-  const dayDate = new Date(y, m - 1, d);
-  dayDate.setHours(0, 0, 0, 0);
-  const nowDate = new Date();
-  nowDate.setHours(0, 0, 0, 0);
-  if (dayDate < nowDate) {
-    reservaMsg.textContent = "La fecha debe ser hoy o futura.";
+
+  if (!payload.local) {
+    reservaMsg.textContent = "Selecciona un local.";
     return;
   }
-  if (dayDate.getTime() === nowDate.getTime()) {
-    const [hh, mm] = payload.hora.split(":").map((n) => Number(n));
-    const now = new Date();
-    const minutes = now.getHours() * 60 + now.getMinutes();
-    const chosen = hh * 60 + mm;
-    if (chosen < minutes) {
-      reservaMsg.textContent = "Selecciona una hora válida.";
-      return;
-    }
+  if (!payload.dia) {
+    reservaMsg.textContent = "Selecciona una fecha.";
+    return;
+  }
+  if (!payload.hora) {
+    reservaMsg.textContent = "Selecciona una hora.";
+    return;
   }
 
   const res = await fetch("/api/reservas", {
@@ -686,10 +735,15 @@ reservaForm.addEventListener("submit", async (e) => {
   });
   const data = await res.json();
   if (data.ok) {
-    reservaMsg.textContent = `Reserva confirmada. Código #${data.reserva_id}`;
+    reservaMsg.textContent = `✓ Reserva confirmada · ${payload.local} · ${payload.dia} a las ${payload.hora}`;
     reservaForm.reset();
+    document.getElementById("localGrid").querySelectorAll(".local-chip").forEach((b) => b.classList.remove("selected"));
+    document.getElementById("localValue").value = "";
+    document.getElementById("timePicker").querySelectorAll(".time-pill").forEach((b) => b.classList.remove("selected"));
+    document.getElementById("horaValue").value = "";
+    personasCount = 2; updateStepper();
   } else {
-    reservaMsg.textContent = "No se pudo confirmar la reserva.";
+    reservaMsg.textContent = data.error || "No se pudo confirmar la reserva.";
   }
 });
 

@@ -1,7 +1,12 @@
+requireRole([]).then((user) => {
+  if (!user) return;
+  loadIssues();
+});
+
 async function loadIssues() {
   const table = document.getElementById("issuesTable");
   if (!table) return;
-  const res = await fetch("/api/maintenance");
+  const res = await authFetch("/api/maintenance");
   const data = await res.json();
   if (!data.ok || data.data.length === 0) {
     table.textContent = "Sin incidencias.";
@@ -33,7 +38,7 @@ async function loadIssues() {
     btn.addEventListener("click", async () => {
       const id = btn.getAttribute("data-id");
       const estado = btn.getAttribute("data-status");
-      await fetch(`/api/maintenance/${id}`, {
+      await authFetch(`/api/maintenance/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ estado })
@@ -49,7 +54,7 @@ if (issueForm) {
     e.preventDefault();
     const formData = new FormData(issueForm);
     const payload = Object.fromEntries(formData.entries());
-    await fetch("/api/maintenance", {
+    await authFetch("/api/maintenance", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -58,5 +63,3 @@ if (issueForm) {
     loadIssues();
   });
 }
-
-loadIssues();

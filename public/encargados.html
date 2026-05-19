@@ -11,47 +11,139 @@
       <div class="logo">
         <img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
       </div>
+      <div class="user-bar">
+        <span id="userBar"></span>
+        <button class="btn ghost" id="logoutBtn">Salir</button>
+      </div>
     </header>
+
     <main>
       <section class="hero">
         <div class="eyebrow">Panel interno</div>
         <h1>Encargados</h1>
         <p>Gestión diaria del local.</p>
       </section>
+
       <section class="block">
         <div class="section-head">
           <h2>Reservas</h2>
         </div>
-        <div class="panel-filters form">
-          <label><span>Local</span><input type="text" id="encLocal" placeholder="La Tapeta - Blanes" /></label>
-          <div class="form-row">
-            <label><span>Desde (ISO)</span><input type="text" id="encFrom" placeholder="2024-01-01" /></label>
-            <label><span>Hasta (ISO)</span><input type="text" id="encTo" placeholder="2024-12-31" /></label>
+
+        <div class="panel-tabs">
+          <button class="btn" id="tabCalendario" data-view="calendario">Calendario</button>
+          <button class="btn ghost" id="tabLista" data-view="lista">Lista</button>
+        </div>
+
+        <!-- Vista calendario -->
+        <div id="vistaCalendario">
+          <div class="cal-toolbar">
+            <label>
+              <span>Local</span>
+              <select id="calLocal">
+                <option value="">Todos los locales</option>
+                <option>La Tapeta - Blanes</option>
+                <option>La Tapeta - Lloret</option>
+                <option>La Tapeta - Girona</option>
+                <option>Cooperativa - Blanes</option>
+                <option>Can Mateu - Tordera</option>
+                <option>La Tapa Ibérica - Tordera</option>
+                <option>Botiga d'en Mateu - Tordera</option>
+              </select>
+            </label>
+            <div class="cal-nav">
+              <button class="btn ghost" id="calPrev">&#8592;</button>
+              <span id="calTitle"></span>
+              <button class="btn ghost" id="calNext">&#8594;</button>
+              <button class="btn ghost" id="calToday">Hoy</button>
+            </div>
           </div>
-          <div class="panel-actions">
-            <button class="btn" id="encSearch" type="button">Buscar</button>
+          <div id="calGrid" class="cal-grid"></div>
+          <div class="cal-legend">
+            <span class="cal-legend-item tapeta">La Tapeta</span>
+            <span class="cal-legend-item cooperativa">Cooperativa</span>
+            <span class="cal-legend-item canmateu">Can Mateu</span>
+            <span class="cal-legend-item latapa">La Tapa Ibérica</span>
+            <span class="cal-legend-item botiga">Botiga d'en Mateu</span>
           </div>
         </div>
-        <div class="card" id="encReservas">Cargando reservas...</div>
+
+        <!-- Vista lista -->
+        <div id="vistaLista" class="hidden">
+          <div class="panel-filters form">
+            <label><span>Local</span><input type="text" id="encLocal" placeholder="La Tapeta - Blanes" /></label>
+            <div class="form-row">
+              <label><span>Desde</span><input type="date" id="encFrom" /></label>
+              <label><span>Hasta</span><input type="date" id="encTo" /></label>
+            </div>
+            <div class="panel-actions">
+              <button class="btn" id="encSearch" type="button">Buscar</button>
+            </div>
+          </div>
+          <div class="card" id="encReservas">Cargando reservas...</div>
+        </div>
       </section>
+
+      <section class="block">
+        <div class="section-head">
+          <h2>WhatsApp</h2>
+          <p>Vincula cada local con su grupo de WhatsApp para recibir notificaciones de reservas.</p>
+        </div>
+        <div class="card" id="waStatus">Comprobando conexión...</div>
+        <div id="waGroupsPanel" class="hidden">
+          <div class="panel-filters form" style="margin-top:1rem">
+            <label><span>Local</span>
+              <select id="waLocal">
+                <option>La Tapeta - Blanes</option>
+                <option>La Tapeta - Lloret</option>
+                <option>La Tapeta - Girona</option>
+                <option>Cooperativa - Blanes</option>
+                <option>Can Mateu - Tordera</option>
+                <option>La Tapa Ibérica - Tordera</option>
+                <option>Botiga d'en Mateu - Tordera</option>
+              </select>
+            </label>
+            <label><span>Grupo de WhatsApp</span>
+              <select id="waGroup"><option value="">Cargando grupos...</option></select>
+            </label>
+            <div class="panel-actions">
+              <button class="btn" id="waSave" type="button">Guardar vinculación</button>
+            </div>
+          </div>
+          <div id="waCurrentLinks" class="cards"></div>
+        </div>
+      </section>
+
       <section class="block">
         <div class="section-head">
           <h2>Comunicados a trabajadores</h2>
         </div>
         <form id="annForm" class="form">
-          <label><span>Local</span><input name="local" required /></label>
+          <label><span>Local</span>
+            <select name="local">
+              <option>La Tapeta - Blanes</option>
+              <option>La Tapeta - Lloret</option>
+              <option>La Tapeta - Girona</option>
+              <option>Cooperativa - Blanes</option>
+              <option>Can Mateu - Tordera</option>
+              <option>La Tapa Ibérica - Tordera</option>
+              <option>Botiga d'en Mateu - Tordera</option>
+              <option value="Todos">Todos los locales</option>
+            </select>
+          </label>
           <label><span>Mensaje</span><textarea name="mensaje" rows="3" required></textarea></label>
           <button class="btn" type="submit">Publicar comunicado</button>
         </form>
         <div class="cards" id="annListEnc"></div>
       </section>
     </main>
+
     <footer class="footer">
       <div class="footer-inner">
-        <span>Volver</span>
-        <a class="btn" href="index.html">Ir al sitio</a>
+        <a class="btn ghost" href="login.html">Volver</a>
       </div>
     </footer>
+
+    <script src="auth.js"></script>
     <script src="encargados.js"></script>
   </body>
 </html>

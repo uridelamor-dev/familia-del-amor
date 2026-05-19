@@ -1,3 +1,5 @@
+requireRole(["marketing", "direccion"]);
+
 const i18nFields = [
   { key: "about_title", label: "Sobre · Título" },
   { key: "history_title", label: "Historia · Título" },
@@ -61,7 +63,7 @@ const status = document.getElementById("contentStatus");
 async function uploadFiles(fileList) {
   const formData = new FormData();
   Array.from(fileList).forEach((f) => formData.append("files", f));
-  const res = await fetch("/api/upload", { method: "POST", body: formData });
+  const res = await authFetch("/api/upload", { method: "POST", body: formData });
   const data = await res.json();
   return data.ok ? data.urls : [];
 }
@@ -234,7 +236,7 @@ async function saveContent(e) {
   const keys = Object.keys(payload);
   for (const key of keys) {
     const value = payload[key] || "";
-    const res = await fetch("/api/content", {
+    const res = await authFetch("/api/content", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key, value })
@@ -278,7 +280,7 @@ function buildQuery() {
 async function loadLeads() {
   leadsTable.textContent = "Cargando clientes...";
   const qs = buildQuery();
-  const res = await fetch(`/api/leads${qs ? "?" + qs : ""}`);
+  const res = await authFetch(`/api/leads${qs ? "?" + qs : ""}`);
   const data = await res.json();
   if (!data.ok) {
     leadsTable.textContent = "Error cargando clientes.";
@@ -322,15 +324,21 @@ async function loadLeads() {
   `;
 }
 
-leadSearch.addEventListener("click", () => {
-  loadLeads();
-  const qs = buildQuery();
-  leadExport.href = `/api/leads/export.csv${qs ? "?" + qs : ""}`;
-});
+leadSearch.addEventListener("click", () => loadLeads());
 
-leadExport.addEventListener("click", () => {
+leadExport.addEventListener("click", async (e) => {
+  e.preventDefault();
   const qs = buildQuery();
-  leadExport.href = `/api/leads/export.csv${qs ? "?" + qs : ""}`;
+  const res = await authFetch(`/api/leads/export.csv${qs ? "?" + qs : ""}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "leads.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 });
 
 loadLeads();
@@ -341,7 +349,7 @@ if (heroUpload) {
     if (!heroUpload.files.length) return;
     const formData = new FormData();
     formData.append("files", heroUpload.files[0]);
-    const res = await fetch("/api/upload", { method: "POST", body: formData });
+    const res = await authFetch("/api/upload", { method: "POST", body: formData });
     const data = await res.json();
     if (data.ok && data.urls[0]) {
       const input = form.querySelector("input[name='hero_image_url']");

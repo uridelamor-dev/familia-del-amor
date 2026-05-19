@@ -1,8 +1,13 @@
+requireRole(["direccion"]).then((user) => {
+  if (!user) return;
+  loadKpi();
+});
+
 async function loadKpi() {
   const cards = document.getElementById("kpiCards");
   const byLocal = document.getElementById("kpiByLocal");
   if (!cards || !byLocal) return;
-  const res = await fetch("/api/kpi");
+  const res = await authFetch("/api/kpi");
   const data = await res.json();
   if (!data.ok) return;
   cards.innerHTML = `
@@ -19,5 +24,3 @@ async function loadKpi() {
     </table>
   `;
 }
-
-loadKpi();

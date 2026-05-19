@@ -1,7 +1,13 @@
+requireRole(["rrhh", "direccion"]).then((user) => {
+  if (!user) return;
+  loadJobsAdmin();
+  loadHrApplications();
+});
+
 async function loadJobsAdmin() {
   const table = document.getElementById("jobsTable");
   if (!table) return;
-  const res = await fetch("/api/hr/jobs/admin");
+  const res = await authFetch("/api/hr/jobs/admin");
   const data = await res.json();
   if (!data.ok || data.data.length === 0) {
     table.textContent = "Sin vacantes.";
@@ -32,10 +38,11 @@ async function loadJobsAdmin() {
     btn.addEventListener("click", async () => {
       const id = btn.getAttribute("data-id");
       const active = btn.getAttribute("data-active") === "1";
-      await fetch(`/api/hr/jobs/${id}`, {
+      const job = data.data.find((j) => String(j.id) === id);
+      await authFetch(`/api/hr/jobs/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data.data.find((j) => String(j.id) === id), activo: !active })
+        body: JSON.stringify({ ...job, activo: !active })
       });
       loadJobsAdmin();
     });
@@ -54,7 +61,7 @@ async function loadHrApplications() {
   if (estado) qs.set("estado", estado);
   if (from) qs.set("from", from);
   if (to) qs.set("to", to);
-  const res = await fetch(`/api/hr/applications${qs.toString() ? "?" + qs.toString() : ""}`);
+  const res = await authFetch(`/api/hr/applications${qs.toString() ? "?" + qs.toString() : ""}`);
   const data = await res.json();
   if (!data.ok || data.data.length === 0) {
     table.textContent = "Sin candidaturas.";
@@ -88,7 +95,7 @@ async function loadHrApplications() {
     btn.addEventListener("click", async () => {
       const id = btn.getAttribute("data-id");
       const estado = btn.getAttribute("data-status");
-      await fetch(`/api/hr/applications/${id}`, {
+      await authFetch(`/api/hr/applications/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ estado })
@@ -105,7 +112,7 @@ if (jobForm) {
     const formData = new FormData(jobForm);
     const payload = Object.fromEntries(formData.entries());
     payload.activo = jobForm.querySelector('input[name="activo"]').checked;
-    await fetch("/api/hr/jobs", {
+    await authFetch("/api/hr/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -116,6 +123,3 @@ if (jobForm) {
 }
 
 document.getElementById("hrSearch")?.addEventListener("click", loadHrApplications);
-
-loadJobsAdmin();
-loadHrApplications();

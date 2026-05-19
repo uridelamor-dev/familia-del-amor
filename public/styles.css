@@ -60,13 +60,22 @@ body {
   z-index: 10;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 0.9rem;
   padding: 0.15rem 1.2rem;
   background: rgba(247, 242, 234, 0.75);
   backdrop-filter: blur(4px);
   border-bottom: 1px solid rgba(226, 215, 200, 0.6);
   flex-wrap: nowrap;
+}
+
+.user-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .logo {
@@ -728,4 +737,385 @@ body {
   .lang {
     margin-left: 0;
   }
+}
+
+/* ── Formulario de reservas rediseñado ──────────────────────────────────── */
+
+.reserva-form {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  max-width: 760px;
+}
+
+.reserva-step {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.reserva-step-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.reserva-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+/* Local chips */
+.local-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.local-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.55rem 1rem;
+  border: 1.5px solid #d4c9b8;
+  border-radius: 999px;
+  background: var(--card);
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.25;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.local-chip:hover {
+  border-color: var(--accent);
+  background: #fff8f6;
+}
+
+.local-chip.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.chip-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.chip-sub {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.local-chip.selected .chip-sub {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Stepper */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+}
+
+.stepper-btn {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1.5px solid #d4c9b8;
+  background: var(--card);
+  cursor: pointer;
+  font-size: 1.1rem;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.stepper-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#personasDisplay {
+  font-size: 1.5rem;
+  font-weight: 700;
+  min-width: 1.5rem;
+  text-align: center;
+}
+
+.stepper-unit {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+/* Time picker */
+.time-section {
+  margin-bottom: 0.5rem;
+}
+
+.time-section-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.time-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.time-pill {
+  padding: 0.3rem 0.6rem;
+  border: 1.5px solid #d4c9b8;
+  border-radius: 6px;
+  background: var(--card);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.78rem;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.time-pill:hover {
+  border-color: var(--accent);
+}
+
+.time-pill.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Date input */
+.reserva-date-input {
+  width: 100%;
+  padding: 0.55rem 0.8rem;
+  border: 1.5px solid #d4c9b8;
+  border-radius: 8px;
+  background: var(--card);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: var(--text);
+  transition: border-color 0.15s;
+}
+
+.reserva-date-input:focus,
+.reserva-date-input:hover {
+  outline: none;
+  border-color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .reserva-row { grid-template-columns: 1fr; gap: 1.25rem; }
+}
+
+/* ── Calendario de reservas ─────────────────────────────────────────────── */
+
+.cal-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.cal-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.cal-toolbar select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #d4c9b8;
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.85rem;
+}
+
+.cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+#calTitle {
+  font-weight: 600;
+  font-size: 0.95rem;
+  min-width: 180px;
+  text-align: center;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.5rem;
+  overflow-x: auto;
+}
+
+.cal-day {
+  background: var(--card);
+  border: 1px solid #e4d9c8;
+  border-radius: 10px;
+  padding: 0.5rem;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.cal-day.is-today {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.cal-day-head {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid #e4d9c8;
+}
+
+.cal-weekday {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.cal-date-num {
+  font-weight: 700;
+  font-size: 1rem;
+  margin-left: auto;
+}
+
+.is-today .cal-date-num {
+  color: var(--accent);
+}
+
+.cal-count {
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0.1rem 0.35rem;
+}
+
+.cal-events {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  flex: 1;
+}
+
+.cal-empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+  padding: 0.6rem 0;
+}
+
+.cal-event {
+  border-left: 3px solid var(--muted);
+  background: var(--bg);
+  border-radius: 0 5px 5px 0;
+  padding: 0.25rem 0.35rem;
+  font-size: 0.72rem;
+  position: relative;
+  cursor: default;
+}
+
+.cal-event.tapeta      { border-left-color: #d36a5f; }
+.cal-event.cooperativa { border-left-color: #8fb6a6; }
+.cal-event.canmateu    { border-left-color: #e0943a; }
+.cal-event.latapa      { border-left-color: #a07cc5; }
+.cal-event.botiga      { border-left-color: #5b9ec9; }
+.cal-event.viva        { border-left-color: #e895b3; }
+
+.cal-time {
+  font-weight: 700;
+  display: block;
+}
+
+.cal-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.cal-meta {
+  display: block;
+  color: var(--muted);
+  font-size: 0.65rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.cal-event:hover .cal-del {
+  opacity: 1;
+}
+
+.cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.cal-legend-item {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border-left: 3px solid var(--muted);
+  background: var(--card);
+}
+
+.cal-legend-item.tapeta      { border-left-color: #d36a5f; }
+.cal-legend-item.cooperativa { border-left-color: #8fb6a6; }
+.cal-legend-item.canmateu    { border-left-color: #e0943a; }
+.cal-legend-item.latapa      { border-left-color: #a07cc5; }
+.cal-legend-item.botiga      { border-left-color: #5b9ec9; }
+.cal-legend-item.viva        { border-left-color: #e895b3; }
+
+@media (max-width: 900px) {
+  .cal-grid { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 600px) {
+  .cal-grid { grid-template-columns: repeat(2, 1fr); }
+  .cal-toolbar { flex-direction: column; }
 }

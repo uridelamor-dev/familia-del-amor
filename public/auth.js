@@ -1,0 +1,72 @@
+(function () {
+  // Ocultar contenido inmediatamente hasta verificar la sesión
+  const _hide = document.createElement("style");
+  _hide.id = "_auth_hide";
+  _hide.textContent = "main, footer { visibility: hidden !important; }";
+  document.head.appendChild(_hide);
+
+  function revealPage() {
+    const s = document.getElementById("_auth_hide");
+    if (s) s.remove();
+  }
+
+  function getToken() {
+    return localStorage.getItem("token");
+  }
+
+  async function authFetch(url, options = {}) {
+    const token = getToken();
+    const headers = { ...(options.headers || {}) };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem("token");
+      window.location.href = "/login.html";
+      throw new Error("No autorizado");
+    }
+    return res;
+  }
+
+  async function requireRole(roles) {
+    const token = getToken();
+    if (!token) {
+      window.location.href = "/login.html";
+      return null;
+    }
+    try {
+      const res = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      if (!data.ok) throw new Error();
+      const user = data.user;
+      if (roles && roles.length && !roles.includes(user.rol)) {
+        window.location.href = "/login.html";
+        return null;
+      }
+      const bar = document.getElementById("userBar");
+      if (bar) bar.textContent = `${user.nombre || user.username} · ${user.rol}`;
+      revealPage();
+      return user;
+    } catch {
+      localStorage.removeItem("token");
+      window.location.href = "/login.html";
+      return null;
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem("token");
+    window.location.href = "/login.html";
+  }
+
+  window.authFetch = authFetch;
+  window.requireRole = requireRole;
+  window.logout = logout;
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("logoutBtn");
+    if (btn) btn.addEventListener("click", logout);
+  });
+})();

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Acceso · Familia del Amor</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      .login-wrap {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg);
+      }
+      .login-box {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 2.5rem 2rem;
+        width: 100%;
+        max-width: 380px;
+      }
+      .login-box .logo {
+        text-align: center;
+        margin-bottom: 2rem;
+      }
+      .login-box .logo img {
+        height: 60px;
+        object-fit: contain;
+      }
+      .login-box h1 {
+        font-size: 1.4rem;
+        margin-bottom: 0.25rem;
+      }
+      .login-box p {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin-bottom: 1.5rem;
+      }
+      #loginError {
+        color: #e53e3e;
+        font-size: 0.875rem;
+        margin-top: 0.75rem;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-wrap">
+      <div class="login-box">
+        <div class="logo">
+          <img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
+        </div>
+        <h1>Panel interno</h1>
+        <p>Accede con tu usuario y contraseña.</p>
+        <a href="/" style="display:block;text-align:center;margin-bottom:1rem;font-size:0.85rem;color:var(--muted);">← Volver al inicio</a>
+        <form id="loginForm" class="form">
+          <label>
+            <span>Usuario</span>
+            <input type="text" name="username" required autocomplete="username" />
+          </label>
+          <label>
+            <span>Contraseña</span>
+            <input type="password" name="password" required autocomplete="current-password" />
+          </label>
+          <button class="btn" type="submit">Entrar</button>
+          <div id="loginError"></div>
+        </form>
+      </div>
+    </div>
+    <script src="login.js"></script>
+  </body>
+</html>
