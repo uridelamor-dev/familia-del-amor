@@ -621,7 +621,7 @@ app.post("/api/whatsapp/link", requireAuth(["direccion", "encargado"]), (req, re
   );
 });
 
-app.get("/api/whatsapp/qr", requireAuth(["direccion", "encargado"]), async (req, res) => {
+app.get("/api/whatsapp/qr", requireAuth(["direccion", "encargado", "marketing"]), async (req, res) => {
   if (isReady()) return res.json({ ok: true, connected: true });
   const dataUrl = await getQRImage();
   if (!dataUrl) return res.json({ ok: true, connected: false, qr: null });

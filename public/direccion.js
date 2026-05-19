@@ -1,9 +1,29 @@
 requireRole(["direccion"]).then((user) => {
   if (!user) return;
   loadKpi();
+  initWhatsAppStatus("waStatus");
   loadUsers();
   initNewUserForm();
 });
+
+async function initWhatsAppStatus(elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  for (let i = 0; i < 20; i++) {
+    const res = await authFetch("/api/whatsapp/qr");
+    const data = await res.json();
+    if (data.connected) { el.innerHTML = `✅ WhatsApp conectado`; return; }
+    if (data.qr) {
+      el.innerHTML = `<p style="margin-bottom:0.75rem">📱 Escanea este QR con WhatsApp:</p>
+        <img src="${data.qr}" style="width:220px;height:220px;border-radius:8px;display:block;margin:0 auto" />
+        <p style="margin-top:0.5rem;font-size:0.85rem;color:var(--muted)">Espera a ver ✅ tras escanearlo.</p>`;
+    } else {
+      el.innerHTML = `⏳ Generando QR${".".repeat(i % 3 + 1)}`;
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  el.innerHTML = `⚠️ No se pudo conectar WhatsApp. Reinicia el servidor.`;
+}
 
 const ROL_LABEL = {
   direccion: "Dirección", encargado: "Encargado", trabajador: "Trabajador",
