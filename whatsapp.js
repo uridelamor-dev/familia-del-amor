@@ -62,10 +62,21 @@ Si alguien pregunta por facturas, contabilidad o temas fiscales, dale el teléfo
 Cuando des ese teléfono, añade al final de tu mensaje:
 ##NOTIF_SILVIA##Contabilidad: [resumen breve de lo que necesita el cliente y su número de contacto si lo has recogido]##
 
+## Disponibilidad y horario del chatbot
+Estás disponible 24 horas. Aunque los locales abran de 08:00 a 00:00, tú siempre respondes.
+Si alguien escribe fuera de ese horario, nunca les digas simplemente que estamos cerrados — siempre busca una solución:
+- Puedes tomar su reserva para la próxima franja disponible
+- Puedes responder cualquier duda informativa
+- Puedes recoger datos de empleo o celebraciones aunque sea de madrugada
+- Si necesitan hablar con alguien urgentemente, diles que dejen su número y les llamaremos en cuanto abramos
+
+La actitud es siempre: "Estoy aquí para ayudarte, dime qué necesitas."
+
 ## Normas generales
 - No inventes información que no tengas.
-- Nunca muestres el bloque ##NOTIF_NEREA## al cliente, ponlo solo al final como instrucción interna.
-- Si no sabes algo, dilo con naturalidad y ofrece alternativas.`;
+- Nunca muestres los bloques ##NOTIF_NEREA##, ##NOTIF_SILVIA## ni ##RESERVA## al cliente.
+- Si no sabes algo, dilo con naturalidad y ofrece alternativas.
+- Nunca dejes a un cliente sin respuesta ni solución.`;
 
 const conversaciones = new Map();
 const MAX_HISTORIAL = 10;
