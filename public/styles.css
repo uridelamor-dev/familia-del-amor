@@ -157,7 +157,7 @@ body {
   padding: 5.2rem 1.5rem 3rem;
   background:
     linear-gradient(rgba(247, 242, 234, 0.85), rgba(247, 242, 234, 0.85)),
-    var(--hero-image, url("9175b3db-0a64-4326-a418-315d777c256b.JPG")) center / cover no-repeat;
+    var(--hero-image, url("9175b3db-0a64-4326-a418-315d777c256b.JPG")) center top / cover no-repeat;
 }
 
 .hero h1 {
