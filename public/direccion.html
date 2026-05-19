@@ -5,77 +5,181 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Dirección · Familia del Amor</title>
     <link rel="stylesheet" href="styles.css" />
+    <style>
+      .dir-shell { display: flex; min-height: 100vh; flex-direction: column; }
+      .dir-body { display: flex; flex: 1; }
+
+      .dir-sidebar {
+        width: 220px;
+        min-width: 220px;
+        background: var(--card);
+        border-right: 1px solid rgba(226,215,200,0.7);
+        display: flex;
+        flex-direction: column;
+        padding: 1.2rem 0.75rem;
+        gap: 0.25rem;
+        position: sticky;
+        top: 56px;
+        height: calc(100vh - 56px);
+        overflow-y: auto;
+      }
+
+      .dir-sidebar-label {
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding: 0.8rem 0.6rem 0.3rem;
+      }
+
+      .dir-nav-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.55rem 0.75rem;
+        border-radius: 8px;
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 0.9rem;
+        color: var(--text);
+        text-align: left;
+        width: 100%;
+        transition: background 0.15s;
+      }
+      .dir-nav-btn:hover { background: rgba(211,106,95,0.08); }
+      .dir-nav-btn.active { background: var(--accent); color: #fff; }
+      .dir-nav-btn .icon { font-size: 1rem; width: 1.2rem; text-align: center; }
+
+      .dir-main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .dir-frame {
+        flex: 1;
+        border: none;
+        width: 100%;
+        height: calc(100vh - 56px);
+      }
+
+      .dir-inline {
+        flex: 1;
+        overflow-y: auto;
+        padding: 2rem;
+      }
+
+      @media (max-width: 700px) {
+        .dir-sidebar { width: 56px; min-width: 56px; padding: 0.75rem 0.3rem; }
+        .dir-sidebar-label, .dir-nav-btn span:not(.icon) { display: none; }
+        .dir-nav-btn { justify-content: center; padding: 0.6rem; }
+      }
+    </style>
   </head>
   <body>
-    <header class="top">
-      <div class="logo">
-        <img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
-      </div>
-      <div class="user-bar">
-        <span id="userBar"></span>
-        <button class="btn ghost" id="logoutBtn">Salir</button>
-      </div>
-    </header>
-
-    <main>
-      <section class="hero">
-        <div class="eyebrow">Panel interno</div>
-        <h1>Dirección</h1>
-        <p>Resumen global por locales y KPI principales.</p>
-      </section>
-
-      <section class="block">
-        <div class="section-head">
-          <h2>KPI</h2>
-          <p>Resumen rápido del negocio.</p>
+    <div class="dir-shell">
+      <header class="top">
+        <div class="logo">
+          <img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
         </div>
-        <div class="cards" id="kpiCards"></div>
-        <div class="card" id="kpiByLocal">Cargando...</div>
-      </section>
-
-      <section class="block">
-        <div class="section-head">
-          <h2>WhatsApp</h2>
-          <p>Estado de la conexión y código QR para vincular el dispositivo.</p>
+        <div class="user-bar">
+          <span id="userBar"></span>
+          <button class="btn ghost" id="logoutBtn">Salir</button>
         </div>
-        <div class="card" id="waStatus">Comprobando conexión...</div>
-      </section>
+      </header>
 
-      <section class="block">
-        <div class="section-head">
-          <h2>Usuarios</h2>
-          <p>Gestión de accesos internos.</p>
-        </div>
-        <form id="newUserForm" class="form" style="margin-bottom:1.5rem">
-          <div class="form-row">
-            <label><span>Usuario</span><input type="text" name="username" required placeholder="uriel" /></label>
-            <label><span>Contraseña</span><input type="password" name="password" required placeholder="••••••••" /></label>
+      <div class="dir-body">
+        <!-- Sidebar -->
+        <nav class="dir-sidebar">
+          <div class="dir-sidebar-label">Dirección</div>
+          <button class="dir-nav-btn active" data-view="kpi">
+            <span class="icon">📊</span><span>KPIs</span>
+          </button>
+          <button class="dir-nav-btn" data-view="usuarios">
+            <span class="icon">⚙️</span><span>Usuarios</span>
+          </button>
+          <button class="dir-nav-btn" data-view="whatsapp">
+            <span class="icon">💬</span><span>WhatsApp</span>
+          </button>
+
+          <div class="dir-sidebar-label">Paneles</div>
+          <button class="dir-nav-btn" data-view="encargados" data-url="encargados.html">
+            <span class="icon">📅</span><span>Encargados</span>
+          </button>
+          <button class="dir-nav-btn" data-view="trabajadores" data-url="trabajadores.html">
+            <span class="icon">👷</span><span>Trabajadores</span>
+          </button>
+          <button class="dir-nav-btn" data-view="marketing" data-url="marketing.html">
+            <span class="icon">📢</span><span>Marketing</span>
+          </button>
+          <button class="dir-nav-btn" data-view="rrhh" data-url="rrhh.html">
+            <span class="icon">👔</span><span>RR.HH.</span>
+          </button>
+          <button class="dir-nav-btn" data-view="contabilidad" data-url="contabilidad.html">
+            <span class="icon">💰</span><span>Contabilidad</span>
+          </button>
+          <button class="dir-nav-btn" data-view="mantenimiento" data-url="mantenimiento.html">
+            <span class="icon">🔧</span><span>Mantenimiento</span>
+          </button>
+        </nav>
+
+        <!-- Contenido principal -->
+        <div class="dir-main">
+          <!-- Vista inline: KPIs -->
+          <div class="dir-inline" id="viewKpi">
+            <section class="block">
+              <div class="section-head"><h2>KPI</h2><p>Resumen rápido del negocio.</p></div>
+              <div class="cards" id="kpiCards"></div>
+              <div class="card" id="kpiByLocal">Cargando...</div>
+            </section>
           </div>
-          <div class="form-row">
-            <label><span>Nombre</span><input type="text" name="nombre" placeholder="Uriel Del Amor" /></label>
-            <label><span>Rol</span>
-              <select name="rol">
-                <option value="direccion">Dirección</option>
-                <option value="encargado">Encargado</option>
-                <option value="trabajador">Trabajador</option>
-                <option value="rrhh">RR.HH.</option>
-                <option value="marketing">Marketing</option>
-                <option value="contabilidad">Contabilidad</option>
-              </select>
-            </label>
-          </div>
-          <button class="btn" type="submit">Crear usuario</button>
-        </form>
-        <div id="userList">Cargando usuarios...</div>
-      </section>
-    </main>
 
-    <footer class="footer">
-      <div class="footer-inner">
-        <span>Volver</span>
-        <a class="btn" href="index.html">Ir al sitio</a>
+          <!-- Vista inline: Usuarios -->
+          <div class="dir-inline hidden" id="viewUsuarios">
+            <section class="block">
+              <div class="section-head"><h2>Usuarios</h2><p>Gestión de accesos internos.</p></div>
+              <form id="newUserForm" class="form" style="margin-bottom:1.5rem">
+                <div class="form-row">
+                  <label><span>Usuario</span><input type="text" name="username" required placeholder="uriel" /></label>
+                  <label><span>Contraseña</span><input type="password" name="password" required placeholder="••••••••" /></label>
+                </div>
+                <div class="form-row">
+                  <label><span>Nombre</span><input type="text" name="nombre" placeholder="Uriel Del Amor" /></label>
+                  <label><span>Rol</span>
+                    <select name="rol">
+                      <option value="direccion">Dirección</option>
+                      <option value="encargado">Encargado</option>
+                      <option value="trabajador">Trabajador</option>
+                      <option value="rrhh">RR.HH.</option>
+                      <option value="marketing">Marketing</option>
+                      <option value="contabilidad">Contabilidad</option>
+                    </select>
+                  </label>
+                </div>
+                <button class="btn" type="submit">Crear usuario</button>
+              </form>
+              <div id="userList">Cargando usuarios...</div>
+            </section>
+          </div>
+
+          <!-- Vista inline: WhatsApp -->
+          <div class="dir-inline hidden" id="viewWhatsapp">
+            <section class="block">
+              <div class="section-head"><h2>WhatsApp</h2><p>Estado de la conexión.</p></div>
+              <div class="card" id="waStatus">Comprobando conexión...</div>
+            </section>
+          </div>
+
+          <!-- Iframe para paneles externos -->
+          <iframe class="dir-frame hidden" id="dirFrame" src=""></iframe>
+        </div>
       </div>
-    </footer>
+    </div>
+
     <script src="auth.js"></script>
     <script src="direccion.js"></script>
   </body>

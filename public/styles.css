@@ -186,6 +186,25 @@ body {
   flex-wrap: wrap;
 }
 
+.hero.compact {
+  padding: 1.2rem 1.5rem 1rem;
+  text-align: left;
+  background: none;
+  border-bottom: 1px solid rgba(226,215,200,0.6);
+}
+.hero.compact h1 {
+  font-size: 1.4rem;
+  margin-bottom: 0.15rem;
+}
+.hero.compact p {
+  font-size: 0.85rem;
+  margin: 0;
+}
+.hero.compact .eyebrow {
+  font-size: 0.65rem;
+  margin-bottom: 0.3rem;
+}
+
 .block {
   padding: 3rem 1.5rem;
   max-width: 1000px;

@@ -1,10 +1,44 @@
 requireRole(["direccion"]).then((user) => {
   if (!user) return;
   loadKpi();
-  initWhatsAppStatus("waStatus");
   loadUsers();
   initNewUserForm();
+  initSidebar();
 });
+
+function initSidebar() {
+  const btns = document.querySelectorAll(".dir-nav-btn");
+  const frame = document.getElementById("dirFrame");
+  const inlineViews = {
+    kpi: document.getElementById("viewKpi"),
+    usuarios: document.getElementById("viewUsuarios"),
+    whatsapp: document.getElementById("viewWhatsapp"),
+  };
+
+  btns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      btns.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+
+      const view = btn.dataset.view;
+      const url = btn.dataset.url;
+
+      // Ocultar todo
+      Object.values(inlineViews).forEach((v) => v?.classList.add("hidden"));
+      frame.classList.add("hidden");
+
+      if (url) {
+        frame.src = url;
+        frame.classList.remove("hidden");
+      } else {
+        inlineViews[view]?.classList.remove("hidden");
+        if (view === "kpi") loadKpi();
+        if (view === "usuarios") loadUsers();
+        if (view === "whatsapp") initWhatsAppStatus("waStatus");
+      }
+    });
+  });
+}
 
 async function initWhatsAppStatus(elId) {
   const el = document.getElementById(elId);
