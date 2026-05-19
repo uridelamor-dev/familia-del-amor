@@ -271,9 +271,12 @@ function renderCompanies() {
   container.innerHTML = "";
   companies.forEach((c) => {
     const menuUrl = contentCache[`local_${c.slug}_menu_pdf`] || "";
-    const menuLink = menuUrl
-      ? `<a class="btn ghost" href="${menuUrl}" target="_blank" rel="noopener" style="font-size:0.75rem;padding:0.4rem 0.8rem;margin-top:0.5rem">Ver carta</a>`
-      : "";
+    const almuUrl = contentCache[`local_${c.slug}_menu_almuerzo_pdf`] || "";
+    const menuBtns = [
+      menuUrl ? `<a class="btn ghost" href="${menuUrl}" target="_blank" rel="noopener" style="font-size:0.75rem;padding:0.4rem 0.8rem">Carta</a>` : "",
+      almuUrl ? `<a class="btn ghost" href="${almuUrl}" target="_blank" rel="noopener" style="font-size:0.75rem;padding:0.4rem 0.8rem">Menú mediodía</a>` : "",
+    ].filter(Boolean).join("");
+    const menuRow = menuBtns ? `<div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.6rem">${menuBtns}</div>` : "";
     const card = document.createElement("div");
     card.className = "card";
     card.innerHTML = `
@@ -284,7 +287,7 @@ function renderCompanies() {
         <h3>${c.name}</h3>
         <p>${c.desc}</p>
       </a>
-      ${menuLink}
+      ${menuRow}
     `;
     container.appendChild(card);
   });

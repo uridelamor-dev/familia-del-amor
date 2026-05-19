@@ -125,16 +125,45 @@ async function loadContent() {
   if (localsForm) {
     localsForm.innerHTML = "";
     locals.forEach((loc) => {
-      const instagramKey = `local_${loc.slug}_instagram`;
-      const menuKey = `local_${loc.slug}_menu_pdf`;
-      const galleryKey = `local_${loc.slug}_gallery`;
-      const hoursKey = `local_${loc.slug}_hours`;
-      const mapKey = `local_${loc.slug}_map`;
-      const historyKey = `local_${loc.slug}_history`;
+      const instagramKey  = `local_${loc.slug}_instagram`;
+      const menuKey       = `local_${loc.slug}_menu_pdf`;
+      const almuKey       = `local_${loc.slug}_menu_almuerzo_pdf`;
+      const galleryKey    = `local_${loc.slug}_gallery`;
+      const hoursKey      = `local_${loc.slug}_hours`;
+      const mapKey        = `local_${loc.slug}_map`;
+      const historyKey    = `local_${loc.slug}_history`;
+
+      const menuUrl  = values[menuKey]  || "";
+      const almuUrl  = values[almuKey]  || "";
+
+      function pdfSlot(label, key, url, uploadClass) {
+        const preview = url
+          ? `<a href="${url}" target="_blank" class="btn ghost" style="font-size:0.75rem;padding:0.35rem 0.8rem">Ver PDF actual</a>`
+          : `<span style="font-size:0.82rem;color:var(--muted)">Sin PDF asignado</span>`;
+        return `
+          <div class="pdf-slot" style="display:flex;flex-direction:column;gap:0.5rem;padding:0.75rem;background:#f9f4ee;border-radius:10px;border:1px solid #eadfce">
+            <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted)">${label}</div>
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+              ${preview}
+              <label class="upload" style="margin:0">
+                <input type="file" class="${uploadClass}" data-target="${key}" accept="application/pdf" />
+                <span>${url ? "Reemplazar PDF" : "Subir PDF"}</span>
+              </label>
+            </div>
+            <input type="hidden" name="${key}" value="${url}" class="pdf-url-field" data-key="${key}" />
+          </div>`;
+      }
+
       const block = document.createElement("div");
       block.className = "card";
       block.innerHTML = `
-        <h3>${loc.name}</h3>
+        <h3 style="margin-top:0">${loc.name}</h3>
+
+        <div style="display:flex;flex-direction:column;gap:0.6rem;margin-bottom:0.75rem">
+          ${pdfSlot("Carta", menuKey, menuUrl, "menuUpload")}
+          ${pdfSlot("Menú mediodía", almuKey, almuUrl, "menuUpload")}
+        </div>
+
         <label>
           <span>Instagram</span>
           <input name="${instagramKey}" value="${values[instagramKey] || ""}" />
@@ -150,14 +179,6 @@ async function loadContent() {
         <label>
           <span>Historia / Curiosidades</span>
           <textarea name="${historyKey}" rows="2">${values[historyKey] || ""}</textarea>
-        </label>
-        <label>
-          <span>Carta PDF (URL o ruta)</span>
-          <input name="${menuKey}" value="${values[menuKey] || ""}" />
-        </label>
-        <label>
-          <span>Subir carta (PDF)</span>
-          <input type="file" class="menuUpload" data-target="${menuKey}" accept="application/pdf" />
         </label>
         <label>
           <span>Galería (una URL por línea)</span>
@@ -195,11 +216,32 @@ async function loadContent() {
     localsForm.querySelectorAll(".menuUpload").forEach((input) => {
       input.addEventListener("change", async () => {
         if (!input.files.length) return;
+        const slot = input.closest(".pdf-slot");
+        if (slot) slot.style.opacity = "0.5";
         const urls = await uploadFiles(input.files);
+        if (slot) slot.style.opacity = "1";
         if (!urls[0]) return;
         const target = input.getAttribute("data-target");
-        const field = localsForm.querySelector(`input[name="${target}"]`);
-        if (field) field.value = urls[0];
+        const hidden = localsForm.querySelector(`input[name="${target}"]`);
+        if (hidden) hidden.value = urls[0];
+        if (slot) {
+          const oldLink = slot.querySelector("a.btn");
+          const noLabel = slot.querySelector("span[style*='Sin PDF']");
+          const uploadLabel = input.closest("label");
+          if (oldLink) {
+            oldLink.href = urls[0];
+          } else {
+            const a = document.createElement("a");
+            a.href = urls[0];
+            a.target = "_blank";
+            a.className = "btn ghost";
+            a.style.cssText = "font-size:0.75rem;padding:0.35rem 0.8rem";
+            a.textContent = "Ver PDF actual";
+            if (noLabel) noLabel.replaceWith(a);
+            else uploadLabel.before(a);
+          }
+          input.closest("label").querySelector("span").textContent = "Reemplazar PDF";
+        }
       });
     });
 
