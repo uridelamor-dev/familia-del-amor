@@ -250,20 +250,45 @@ app.delete("/api/users/:id", requireAuth(["direccion"]), (req, res) => {
   });
 });
 
+// Migración segura: añadir columnas fuente y actualizado_en si no existen
+db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
+db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
+
 // Leads
 app.post("/api/leads", (req, res) => {
-  const { nombre, apellidos, nacimiento, poblacion, telefono, correo } = req.body;
+  const { nombre, apellidos, nacimiento, poblacion, telefono, correo, fuente } = req.body;
   if (!nombre || !apellidos || !nacimiento || !poblacion || !telefono || !correo) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
   const premio = "10% de descuento";
-  const creado_en = new Date().toISOString();
-  db.run(
-    `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, creado_en],
-    function (err) {
-      if (err) return res.status(500).json({ ok: false, error: "Error guardando lead" });
-      return res.json({ ok: true, premio });
+  const ahora = new Date().toISOString();
+  const fuenteVal = fuente || "web";
+
+  // Buscar lead existente por teléfono o correo
+  db.get(
+    `SELECT id FROM leads WHERE telefono = ? OR correo = ?`,
+    [telefono, correo],
+    (err, existing) => {
+      if (existing) {
+        // Actualizar en lugar de duplicar
+        db.run(
+          `UPDATE leads SET nombre=?, apellidos=?, nacimiento=?, poblacion=?, fuente=?, actualizado_en=? WHERE id=?`,
+          [nombre, apellidos, nacimiento, poblacion, fuenteVal, ahora, existing.id],
+          (err2) => {
+            if (err2) return res.status(500).json({ ok: false, error: "Error actualizando lead" });
+            return res.json({ ok: true, premio, actualizado: true });
+          }
+        );
+      } else {
+        db.run(
+          `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuente, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuenteVal, ahora],
+          function (err2) {
+            if (err2) return res.status(500).json({ ok: false, error: "Error guardando lead" });
+            return res.json({ ok: true, premio });
+          }
+        );
+      }
     }
   );
 });
