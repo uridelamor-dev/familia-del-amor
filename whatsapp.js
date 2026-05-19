@@ -48,6 +48,8 @@ Cuando tengas todos esos datos, responde al cliente Y añade al final:
 
 ## Facturación y contabilidad
 Si alguien pregunta por facturas, contabilidad o temas fiscales, dale el teléfono de Silvia: 645 619 572.
+Cuando des ese teléfono, añade al final de tu mensaje:
+##NOTIF_SILVIA##Contabilidad: [resumen breve de lo que necesita el cliente y su número de contacto si lo has recogido]##
 
 ## Normas generales
 - No inventes información que no tengas.
@@ -57,6 +59,7 @@ Si alguien pregunta por facturas, contabilidad o temas fiscales, dale el teléfo
 const conversaciones = new Map();
 const MAX_HISTORIAL = 10;
 const NEREA_JID = "34622065974@s.whatsapp.net";
+const SILVIA_JID = "34645619572@s.whatsapp.net";
 
 let sock = null;
 let clientReady = false;
@@ -94,12 +97,25 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl) {
 
     const respuestaCompleta = response.content[0].text;
 
-    // Detectar y procesar notificación para Nerea
-    const notifMatch = respuestaCompleta.match(/##NOTIF_NEREA##(.+?)##/s);
     let respuestaCliente = respuestaCompleta;
-    if (notifMatch) {
-      respuestaCliente = respuestaCompleta.replace(/\n?##NOTIF_NEREA##.+?##/s, "").trim();
-      await notificarNerea(notifMatch[1].trim(), adjuntoUrl);
+
+    const notifNerea = respuestaCompleta.match(/##NOTIF_NEREA##(.+?)##/s);
+    if (notifNerea) {
+      respuestaCliente = respuestaCliente.replace(/\n?##NOTIF_NEREA##.+?##/s, "").trim();
+      await notificarNerea(notifNerea[1].trim(), adjuntoUrl);
+    }
+
+    const notifSilvia = respuestaCliente.match(/##NOTIF_SILVIA##(.+?)##/s);
+    if (notifSilvia) {
+      respuestaCliente = respuestaCliente.replace(/\n?##NOTIF_SILVIA##.+?##/s, "").trim();
+      try {
+        await sock.sendMessage(SILVIA_JID, {
+          text: `📋 *Consulta de contabilidad via chatbot*\n\n${notifSilvia[1].trim()}`
+        });
+        console.log("📤 Notificación enviada a Silvia");
+      } catch (err) {
+        console.error("Error notificando a Silvia:", err.message);
+      }
     }
 
     historial.push({ role: "assistant", content: respuestaCliente });
