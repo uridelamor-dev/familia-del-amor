@@ -91,12 +91,13 @@ async function notificarNerea(resumen, adjuntoUrl) {
 }
 
 async function responderConIA(jid, mensajeUsuario, adjuntoUrl) {
+  const esPrimerMensaje = !conversaciones.has(jid);
   if (!conversaciones.has(jid)) conversaciones.set(jid, []);
   const historial = conversaciones.get(jid);
 
-  const contenidoUsuario = adjuntoUrl
-    ? `${mensajeUsuario} [Ha adjuntado un archivo: ${adjuntoUrl}]`
-    : mensajeUsuario;
+  const contenidoUsuario = esPrimerMensaje
+    ? `[CONTEXTO INTERNO: Es el primer mensaje de este cliente. Salúdale cordialmente antes de responder a su consulta.] ${mensajeUsuario}${adjuntoUrl ? ` [Ha adjuntado un archivo: ${adjuntoUrl}]` : ""}`
+    : `${mensajeUsuario}${adjuntoUrl ? ` [Ha adjuntado un archivo: ${adjuntoUrl}]` : ""}`;
 
   historial.push({ role: "user", content: contenidoUsuario });
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
@@ -147,7 +148,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl) {
     return respuestaCliente;
   } catch (err) {
     console.error("Error IA:", err.message);
-    return "Disculpa, en este momento no puedo responderte. Por favor llámanos directamente al local.";
+    return "¡Hola! 👋 Gracias por escribirnos. En este momento estamos teniendo problemas técnicos. Puedes llamarnos directamente al local más cercano y te atendemos encantados.";
   }
 }
 
