@@ -30,8 +30,28 @@
         </div>
         <form id="jobForm" class="form">
           <label><span>Título</span><input name="titulo" required /></label>
-          <label><span>Local</span><input name="local" required /></label>
-          <label><span>Tipo</span><input name="tipo" placeholder="Jornada completa / parcial" required /></label>
+          <label><span>Local</span>
+            <select name="local" required>
+              <option value="">Selecciona local</option>
+              <option>La Tapeta - Blanes</option>
+              <option>La Tapeta - Lloret</option>
+              <option>La Tapeta - Girona</option>
+              <option>Cooperativa - Blanes</option>
+              <option>Can Mateu - Tordera</option>
+              <option>La Tapa Ibérica - Tordera</option>
+              <option>Botiga d'en Mateu - Tordera</option>
+              <option value="Todos">Todos los locales</option>
+            </select>
+          </label>
+          <label><span>Tipo</span>
+            <select name="tipo" required>
+              <option value="">Selecciona tipo</option>
+              <option value="Jornada completa">Jornada completa</option>
+              <option value="Jornada parcial">Jornada parcial</option>
+              <option value="Fines de semana">Fines de semana</option>
+              <option value="Temporal">Temporal</option>
+            </select>
+          </label>
           <label><span>Descripción</span><textarea name="descripcion" rows="3" required></textarea></label>
           <label><span>Activa</span><input type="checkbox" name="activo" checked /></label>
           <button class="btn" type="submit">Crear vacante</button>
@@ -45,10 +65,17 @@
         </div>
         <div class="panel-filters form">
           <label><span>Búsqueda</span><input type="text" id="hrQ" /></label>
-          <label><span>Estado</span><input type="text" id="hrEstado" placeholder="nuevo / en_proceso / cerrado" /></label>
+          <label><span>Estado</span>
+            <select id="hrEstado">
+              <option value="">Todos los estados</option>
+              <option value="nuevo">Nuevo</option>
+              <option value="en_proceso">En proceso</option>
+              <option value="cerrado">Cerrado</option>
+            </select>
+          </label>
           <div class="form-row">
-            <label><span>Desde (ISO)</span><input type="text" id="hrFrom" placeholder="2024-01-01" /></label>
-            <label><span>Hasta (ISO)</span><input type="text" id="hrTo" placeholder="2024-12-31" /></label>
+            <label><span>Desde</span><input type="date" id="hrFrom" /></label>
+            <label><span>Hasta</span><input type="date" id="hrTo" /></label>
           </div>
           <div class="panel-actions">
             <button class="btn" id="hrSearch" type="button">Buscar</button>

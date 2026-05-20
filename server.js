@@ -597,6 +597,8 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   if (poblacion) { sql += ` AND c.poblacion LIKE ?`; params.push(`%${poblacion}%`); }
   if (genero) { sql += ` AND c.genero = ?`; params.push(genero); }
   if (cumple_mes) { sql += ` AND strftime('%m', c.nacimiento) = ?`; params.push(cumple_mes.padStart(2, "0")); }
+  if (filtros.from) { sql += ` AND c.ultima_actividad >= ?`; params.push(filtros.from); }
+  if (filtros.to) { sql += ` AND c.ultima_actividad <= ?`; params.push(filtros.to + " 23:59:59"); }
 
   sql += ` ORDER BY c.ultima_actividad DESC`;
   return sql;
@@ -612,28 +614,18 @@ app.get("/api/leads", requireAuth(["direccion", "marketing"]), (req, res) => {
 });
 
 app.get("/api/leads/export.csv", requireAuth(["direccion", "marketing"]), (req, res) => {
-  const { q, poblacion, from, to } = req.query;
-  const where = [];
   const params = [];
-  if (q) {
-    where.push(`(nombre LIKE ? OR apellidos LIKE ? OR correo LIKE ? OR telefono LIKE ?)`);
-    const like = `%${q}%`;
-    params.push(like, like, like, like);
-  }
-  if (poblacion) { where.push(`poblacion LIKE ?`); params.push(`%${poblacion}%`); }
-  if (from) { where.push(`creado_en >= ?`); params.push(from); }
-  if (to) { where.push(`creado_en <= ?`); params.push(to); }
-  const sql = `SELECT * FROM leads ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY creado_en DESC`;
+  const sql = sqlContactosUnificados(req.query, params);
   db.all(sql, params, (err, rows) => {
     if (err) return res.status(500).send("Error exportando");
-    const header = "id,nombre,apellidos,nacimiento,poblacion,telefono,correo,premio,creado_en";
+    const header = "nombre,apellidos,telefono,correo,nacimiento,poblacion,genero,origen,ultima_actividad";
     const lines = rows.map((r) =>
-      [r.id, r.nombre, r.apellidos, r.nacimiento, r.poblacion, r.telefono, r.correo, r.premio, r.creado_en]
-        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+      [r.nombre, r.apellidos, r.telefono, r.correo, r.nacimiento, r.poblacion, r.genero, r.origen, r.ultima_actividad]
+        .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
         .join(",")
     );
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename="leads.csv"`);
+    res.setHeader("Content-Disposition", `attachment; filename="contactos.csv"`);
     res.send([header, ...lines].join("\n"));
   });
 });

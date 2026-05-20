@@ -105,7 +105,38 @@ const i18n = {
     lead_email: "Correo",
     lead_gender: "Género",
     lead_consent: "Acepto recibir comunicaciones y la política de privacidad.",
-    lead_submit: "Recibir premio"
+    lead_submit: "Recibir mi descuento",
+    reservation_local_q: "¿En qué local?",
+    reservation_day_q: "¿Qué día?",
+    reservation_time_q: "¿A qué hora?",
+    reservation_people_q: "¿Cuántos?",
+    reservation_people_unit: "personas",
+    reservation_phone_q: "Teléfono",
+    reservation_name_q: "Nombre de la reserva",
+    time_slot_lunch: "Mediodía",
+    time_slot_dinner: "Cena",
+    nav_locals: "Locales",
+    nav_reservations: "Reservar",
+    nav_jobs: "Trabaja",
+    nav_contact: "Contacto",
+    gallery_title: "Galería",
+    gallery_sub: "Momentos y platos de nuestros locales.",
+    reviews_title: "Lo que dicen nuestros clientes",
+    reviews_sub: "⭐⭐⭐⭐⭐ Valoración media en Google",
+    contact_h: "Contacto",
+    contact_link: "hola@familia-del-amor.com",
+    ph_choose_date: "Elige fecha",
+    ph_birth_date: "dd/mm/aaaa",
+    ph_booking_name: "¿A nombre de quién?",
+    err_select_local: "Selecciona un local.",
+    err_select_date: "Selecciona una fecha.",
+    err_select_time: "Selecciona una hora.",
+    reservation_at: "a las",
+    success_reserva: "Reserva confirmada",
+    err_generic: "No se pudo completar. Inténtalo de nuevo.",
+    success_lead: "¡Descuento activado!",
+    success_hr: "Candidatura enviada. Gracias.",
+    err_hr: "No se pudo enviar. Inténtalo de nuevo."
   },
   ca: {
     hero_eyebrow: "Grup familiar d'empreses",
@@ -158,7 +189,38 @@ const i18n = {
     lead_email: "Correu",
     lead_gender: "Gènere",
     lead_consent: "Accepto rebre comunicacions i la política de privacitat.",
-    lead_submit: "Rebre premi"
+    lead_submit: "Rebre el meu descompte",
+    reservation_local_q: "¿En quin local?",
+    reservation_day_q: "¿Quin dia?",
+    reservation_time_q: "¿A quina hora?",
+    reservation_people_q: "¿Quants?",
+    reservation_people_unit: "persones",
+    reservation_phone_q: "Telèfon",
+    reservation_name_q: "Nom de la reserva",
+    time_slot_lunch: "Migdia",
+    time_slot_dinner: "Sopar",
+    nav_locals: "Locals",
+    nav_reservations: "Reservar",
+    nav_jobs: "Treballa",
+    nav_contact: "Contacte",
+    gallery_title: "Galeria",
+    gallery_sub: "Moments i plats dels nostres locals.",
+    reviews_title: "El que diuen els nostres clients",
+    reviews_sub: "⭐⭐⭐⭐⭐ Valoració mitjana a Google",
+    contact_h: "Contacte",
+    contact_link: "hola@familia-del-amor.com",
+    ph_choose_date: "Tria la data",
+    ph_birth_date: "dd/mm/aaaa",
+    ph_booking_name: "¿A nom de qui?",
+    err_select_local: "Selecciona un local.",
+    err_select_date: "Selecciona una data.",
+    err_select_time: "Selecciona una hora.",
+    reservation_at: "a les",
+    success_reserva: "Reserva confirmada",
+    err_generic: "No s'ha pogut completar. Torna-ho a intentar.",
+    success_lead: "¡Descompte activat!",
+    success_hr: "Candidatura enviada. Gràcies.",
+    err_hr: "No s'ha pogut enviar. Torna-ho a intentar."
   },
   en: {
     hero_eyebrow: "Family business group",
@@ -211,7 +273,38 @@ const i18n = {
     lead_email: "Email",
     lead_gender: "Gender",
     lead_consent: "I accept communications and the privacy policy.",
-    lead_submit: "Get reward"
+    lead_submit: "Claim my discount",
+    reservation_local_q: "Which venue?",
+    reservation_day_q: "Which day?",
+    reservation_time_q: "What time?",
+    reservation_people_q: "How many?",
+    reservation_people_unit: "guests",
+    reservation_phone_q: "Phone",
+    reservation_name_q: "Booking name",
+    time_slot_lunch: "Lunch",
+    time_slot_dinner: "Dinner",
+    nav_locals: "Venues",
+    nav_reservations: "Book",
+    nav_jobs: "Jobs",
+    nav_contact: "Contact",
+    gallery_title: "Gallery",
+    gallery_sub: "Moments and dishes from our venues.",
+    reviews_title: "What our customers say",
+    reviews_sub: "⭐⭐⭐⭐⭐ Average Google rating",
+    contact_h: "Contact",
+    contact_link: "hola@familia-del-amor.com",
+    ph_choose_date: "Choose date",
+    ph_birth_date: "dd/mm/yyyy",
+    ph_booking_name: "Name for the reservation",
+    err_select_local: "Please select a venue.",
+    err_select_date: "Please select a date.",
+    err_select_time: "Please select a time.",
+    reservation_at: "at",
+    success_reserva: "Reservation confirmed",
+    err_generic: "Could not complete. Please try again.",
+    success_lead: "Discount activated!",
+    success_hr: "Application sent. Thank you.",
+    err_hr: "Could not send. Please try again."
   }
 };
 
@@ -313,6 +406,12 @@ function setLang(lang) {
       el.textContent = i18n[lang][key];
     }
   });
+  document.querySelectorAll("[data-i18n-ph]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-ph");
+    if (i18n[lang] && i18n[lang][key]) {
+      el.placeholder = i18n[lang][key];
+    }
+  });
 
   applyContentOverrides();
 
@@ -323,6 +422,7 @@ function setLang(lang) {
   if (datepickerApi) {
     datepickerApi.refresh();
   }
+  renderTimePicker();
   renderNewsAndFaq();
 }
 
@@ -517,19 +617,25 @@ document.getElementById("personasPlus")?.addEventListener("click", () => {
 
 // ── Selector de hora por turnos ────────────────────────────────────────────────
 
-const TIME_SLOTS = {
-  "Mediodía": ["12:30","13:00","13:30","14:00","14:30","15:00","15:30"],
-  "Cena":     ["19:30","20:00","20:30","21:00","21:30","22:00","22:30"]
+const TIME_SLOTS_RAW = {
+  lunch: ["12:30","13:00","13:30","14:00","14:30","15:00","15:30"],
+  dinner: ["19:30","20:00","20:30","21:00","21:30","22:00","22:30"]
 };
 
 function renderTimePicker() {
   const container = document.getElementById("timePicker");
   if (!container) return;
-  container.innerHTML = Object.entries(TIME_SLOTS).map(([label, slots]) => `
+  const selectedTime = document.getElementById("horaValue")?.value;
+  const t = i18n[currentLang] || i18n.es;
+  const sections = [
+    { key: "lunch",  label: t.time_slot_lunch,  slots: TIME_SLOTS_RAW.lunch },
+    { key: "dinner", label: t.time_slot_dinner, slots: TIME_SLOTS_RAW.dinner }
+  ];
+  container.innerHTML = sections.map(({ label, slots }) => `
     <div class="time-section">
       <div class="time-section-label">${label}</div>
       <div class="time-pills">
-        ${slots.map((t) => `<button type="button" class="time-pill" data-time="${t}">${t}</button>`).join("")}
+        ${slots.map((s) => `<button type="button" class="time-pill${selectedTime === s ? " selected" : ""}" data-time="${s}">${s}</button>`).join("")}
       </div>
     </div>`).join("");
 
@@ -858,11 +964,13 @@ leadForm.addEventListener("submit", async (e) => {
   const data = await res.json();
   if (data.ok) {
     markLeadSubmitted();
-    leadMsg.textContent = `Premio confirmado: ${data.premio}`;
+    const t2 = i18n[currentLang] || i18n.es;
+    leadMsg.textContent = `${t2.success_lead}${data.premio ? " — " + data.premio : ""}`;
     leadForm.reset();
     setTimeout(() => popup.classList.remove("show"), 2500);
   } else {
-    leadMsg.textContent = "No se pudo guardar. Inténtalo de nuevo.";
+    const t2 = i18n[currentLang] || i18n.es;
+    leadMsg.textContent = t2.err_generic;
   }
 });
 
@@ -875,16 +983,17 @@ reservaForm.addEventListener("submit", async (e) => {
   const formData = new FormData(reservaForm);
   const payload = Object.fromEntries(formData.entries());
 
+  const t = i18n[currentLang] || i18n.es;
   if (!payload.local) {
-    reservaMsg.textContent = "Selecciona un local.";
+    reservaMsg.textContent = t.err_select_local;
     return;
   }
   if (!payload.dia) {
-    reservaMsg.textContent = "Selecciona una fecha.";
+    reservaMsg.textContent = t.err_select_date;
     return;
   }
   if (!payload.hora) {
-    reservaMsg.textContent = "Selecciona una hora.";
+    reservaMsg.textContent = t.err_select_time;
     return;
   }
 
@@ -895,7 +1004,7 @@ reservaForm.addEventListener("submit", async (e) => {
   });
   const data = await res.json();
   if (data.ok) {
-    reservaMsg.textContent = `✓ Reserva confirmada · ${payload.local} · ${payload.dia} a las ${payload.hora}`;
+    reservaMsg.textContent = `✓ ${t.success_reserva} · ${payload.local} · ${payload.dia} ${t.reservation_at} ${payload.hora}`;
     reservaForm.reset();
     document.getElementById("localGrid").querySelectorAll(".local-chip").forEach((b) => b.classList.remove("selected"));
     document.getElementById("localValue").value = "";
@@ -903,7 +1012,7 @@ reservaForm.addEventListener("submit", async (e) => {
     document.getElementById("horaValue").value = "";
     personasCount = 2; updateStepper();
   } else {
-    reservaMsg.textContent = data.error || "No se pudo confirmar la reserva.";
+    reservaMsg.textContent = data.error || t.err_generic;
   }
 });
 
@@ -985,11 +1094,12 @@ if (hrForm) {
       body: formData
     });
     const data = await res.json();
+    const thr = i18n[currentLang] || i18n.es;
     if (data.ok) {
-      hrMsg.textContent = "Candidatura enviada. Gracias.";
+      hrMsg.textContent = thr.success_hr;
       hrForm.reset();
     } else {
-      hrMsg.textContent = "No se pudo enviar. Inténtalo de nuevo.";
+      hrMsg.textContent = thr.err_hr;
     }
   });
 }

@@ -374,6 +374,9 @@ const leadQ = document.getElementById("leadQ");
 const leadCity = document.getElementById("leadCity");
 const leadFrom = document.getElementById("leadFrom");
 const leadTo = document.getElementById("leadTo");
+const leadGenero = document.getElementById("leadGenero");
+const leadCumple = document.getElementById("leadCumple");
+const leadLocal = document.getElementById("leadLocal");
 const leadSearch = document.getElementById("leadSearch");
 const leadExport = document.getElementById("leadExport");
 
@@ -381,6 +384,9 @@ function buildQuery() {
   const params = new URLSearchParams();
   if (leadQ.value) params.set("q", leadQ.value);
   if (leadCity.value) params.set("poblacion", leadCity.value);
+  if (leadGenero?.value) params.set("genero", leadGenero.value);
+  if (leadCumple?.value) params.set("cumple_mes", leadCumple.value);
+  if (leadLocal?.value) params.set("local", leadLocal.value);
   if (leadFrom.value) params.set("from", leadFrom.value);
   if (leadTo.value) params.set("to", leadTo.value);
   return params.toString();

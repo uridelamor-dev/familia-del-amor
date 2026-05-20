@@ -24,10 +24,11 @@ Todos los locales abren de 08:00 a 00:00 sin interrupción.
 
 - **La Tapeta - Blanes** · Carrer de la Muralla, 21, Blanes · 📞 972 916 341
 - **Cooperativa - Blanes** · Carrer de la Muralla, 28, Blanes · 📞 972 916 341
-- **La Tapeta - Lloret de Mar** · Carrer Sant Pere, 84, Lloret de Mar · 📞 872 266 645
+- **La Tapeta - Lloret** · Carrer Sant Pere, 84, Lloret de Mar · 📞 872 266 645
 - **La Tapeta - Girona** · Avinguda Sant Francesc, 7, Girona · 📞 872 071 246
 - **Can Mateu - Tordera** · Plaça de la Concòrdia, 5, Tordera · 📞 930 317 169
 - **La Tapa Ibérica - Tordera** · Camí Ral, 6, Tordera · 📞 937 643 371
+- **Botiga d'en Mateu - Tordera** · Camí Ral, 6, Tordera · 📞 930 317 169
 
 ## Reservas
 Puedes gestionar reservas directamente por WhatsApp. Cuando alguien quiera reservar, recoge estos datos en orden:

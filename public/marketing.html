@@ -154,7 +154,7 @@
                 <option value="">Cualquier local</option>
                 <option>La Tapeta - Blanes</option>
                 <option>Cooperativa - Blanes</option>
-                <option>La Tapeta - Lloret de Mar</option>
+                <option>La Tapeta - Lloret</option>
                 <option>La Tapeta - Girona</option>
                 <option>Can Mateu - Tordera</option>
                 <option>La Tapa Ibérica - Tordera</option>
@@ -199,18 +199,56 @@
             <span>Búsqueda</span>
             <input type="text" id="leadQ" placeholder="Nombre, email o teléfono" />
           </label>
-          <label>
-            <span>Población</span>
-            <input type="text" id="leadCity" placeholder="Blanes, Tordera..." />
-          </label>
           <div class="form-row">
             <label>
-              <span>Desde (ISO)</span>
-              <input type="text" id="leadFrom" placeholder="2024-01-01" />
+              <span>Población</span>
+              <input type="text" id="leadCity" placeholder="Blanes, Tordera..." />
             </label>
             <label>
-              <span>Hasta (ISO)</span>
-              <input type="text" id="leadTo" placeholder="2024-12-31" />
+              <span>Género</span>
+              <select id="leadGenero">
+                <option value="">Todos</option>
+                <option value="hombre">Hombre</option>
+                <option value="mujer">Mujer</option>
+                <option value="otro">Otro</option>
+              </select>
+            </label>
+          </div>
+          <div class="form-row">
+            <label>
+              <span>Mes de cumpleaños</span>
+              <select id="leadCumple">
+                <option value="">Cualquiera</option>
+                <option value="1">Enero</option><option value="2">Febrero</option>
+                <option value="3">Marzo</option><option value="4">Abril</option>
+                <option value="5">Mayo</option><option value="6">Junio</option>
+                <option value="7">Julio</option><option value="8">Agosto</option>
+                <option value="9">Septiembre</option><option value="10">Octubre</option>
+                <option value="11">Noviembre</option><option value="12">Diciembre</option>
+              </select>
+            </label>
+            <label>
+              <span>Ha reservado en</span>
+              <select id="leadLocal">
+                <option value="">Cualquier local</option>
+                <option>La Tapeta - Blanes</option>
+                <option>La Tapeta - Lloret</option>
+                <option>La Tapeta - Girona</option>
+                <option>Cooperativa - Blanes</option>
+                <option>Can Mateu - Tordera</option>
+                <option>La Tapa Ibérica - Tordera</option>
+                <option>Botiga d'en Mateu - Tordera</option>
+              </select>
+            </label>
+          </div>
+          <div class="form-row">
+            <label>
+              <span>Desde</span>
+              <input type="date" id="leadFrom" />
+            </label>
+            <label>
+              <span>Hasta</span>
+              <input type="date" id="leadTo" />
             </label>
           </div>
           <div class="panel-actions">

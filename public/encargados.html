@@ -70,7 +70,18 @@
         <!-- Vista lista -->
         <div id="vistaLista" class="hidden">
           <div class="panel-filters form">
-            <label><span>Local</span><input type="text" id="encLocal" placeholder="La Tapeta - Blanes" /></label>
+            <label><span>Local</span>
+              <select id="encLocal">
+                <option value="">Todos los locales</option>
+                <option>La Tapeta - Blanes</option>
+                <option>La Tapeta - Lloret</option>
+                <option>La Tapeta - Girona</option>
+                <option>Cooperativa - Blanes</option>
+                <option>Can Mateu - Tordera</option>
+                <option>La Tapa Ibérica - Tordera</option>
+                <option>Botiga d'en Mateu - Tordera</option>
+              </select>
+            </label>
             <div class="form-row">
               <label><span>Desde</span><input type="date" id="encFrom" /></label>
               <label><span>Hasta</span><input type="date" id="encTo" /></label>

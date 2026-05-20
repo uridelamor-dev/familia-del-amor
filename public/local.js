@@ -51,7 +51,7 @@ const locals = {
       "https://familiadelamor.com/wp-content/uploads/elementor/thumbs/464759389_3011549445658838_1759756202266847061_n-ratgrnsw9fmuo8m4uxpz7w4ylw99z3dldxlqcl28og.jpg"
     ]
   },
-  "botiga-mateu": {
+  "botiga-d-en-mateu": {
     name: "Botiga d'en Mateu",
     desc: "Tienda de embutidos y jamonería.",
     type: "Tienda",
@@ -89,7 +89,11 @@ const i18nLocal = {
     section_history_sub: "Curiosidades y recorrido del local.",
     cta_instagram: "Instagram",
     cta_menu: "Carta",
-    empty_gallery: "Sin imágenes todavía."
+    cta_map: "Ver mapa",
+    empty_gallery: "Sin imágenes todavía.",
+    coming_curiosity: "Próximamente: historia, curiosidades y logros del local.",
+    coming_map: "Próximamente: mapa interactivo.",
+    coming_history: "Próximamente: historia del local."
   },
   ca: {
     nav_home: "Inici",
@@ -106,7 +110,11 @@ const i18nLocal = {
     section_history_sub: "Curiositats i recorregut del local.",
     cta_instagram: "Instagram",
     cta_menu: "Carta",
-    empty_gallery: "Encara no hi ha imatges."
+    cta_map: "Veure mapa",
+    empty_gallery: "Encara no hi ha imatges.",
+    coming_curiosity: "Properament: història, curiositats i assoliments del local.",
+    coming_map: "Properament: mapa interactiu.",
+    coming_history: "Properament: història del local."
   },
   en: {
     nav_home: "Home",
@@ -123,7 +131,11 @@ const i18nLocal = {
     section_history_sub: "Curiosities and venue journey.",
     cta_instagram: "Instagram",
     cta_menu: "Menu",
-    empty_gallery: "No images yet."
+    cta_map: "View map",
+    empty_gallery: "No images yet.",
+    coming_curiosity: "Coming soon: history, curiosities and achievements.",
+    coming_map: "Coming soon: interactive map.",
+    coming_history: "Coming soon: venue history."
   }
 };
 
@@ -199,18 +211,16 @@ function renderLocal() {
     return;
   }
 
+  const t = i18nLocal[localLang] || i18nLocal.es;
   document.title = `${data.name} · Familia del Amor`;
-  document.getElementById("localType").textContent =
-    (i18nLocal[localLang] || i18nLocal.es).hero_eyebrow;
+  document.getElementById("localType").textContent = t.hero_eyebrow;
   document.getElementById("localName").textContent = data.name;
   document.getElementById("localDesc").textContent = data.desc;
 
   const locList = document.getElementById("localLocations");
   locList.innerHTML = data.locations.map((l) => `<li>${l}</li>`).join("");
-
   const curiosity = document.getElementById("localCuriosity");
-  curiosity.textContent =
-    "Próximamente: historia, curiosidades y logros del local.";
+  curiosity.textContent = t.coming_curiosity;
 
   const hoursEl = document.getElementById("localHours");
   hoursEl.textContent = data.hours || "08:00 – 00:00";
@@ -221,14 +231,14 @@ function renderLocal() {
     const isEmbed = data.map.includes("google.com/maps") && data.map.includes("embed");
     mapEl.innerHTML = isEmbed
       ? `<iframe src="${data.map}" width="100%" height="220" style="border:0;border-radius:12px;" allowfullscreen="" loading="lazy"></iframe>`
-      : `<a class="btn ghost" href="${data.map}" target="_blank" rel="noreferrer">Ver mapa</a>`;
+      : `<a class="btn ghost" href="${data.map}" target="_blank" rel="noreferrer">${t.cta_map}</a>`;
   } else {
-    mapEl.textContent = "Próximamente: mapa interactivo.";
+    mapEl.textContent = t.coming_map;
   }
   mapEl.setAttribute("data-edit-key", `local_${data.slug}_map`);
 
   const historyEl = document.getElementById("localHistory");
-  historyEl.textContent = data.history || "Próximamente: historia del local.";
+  historyEl.textContent = data.history || t.coming_history;
   historyEl.setAttribute("data-edit-key", `local_${data.slug}_history`);
 
   const ctas = document.getElementById("localCtas");
@@ -239,7 +249,7 @@ function renderLocal() {
     a.href = data.instagram;
     a.target = "_blank";
     a.rel = "noreferrer";
-    a.textContent = (i18nLocal[localLang] || i18nLocal.es).cta_instagram;
+    a.textContent = t.cta_instagram;
     ctas.appendChild(a);
   }
   if (data.menuPdf) {
@@ -248,16 +258,14 @@ function renderLocal() {
     a.href = data.menuPdf;
     a.target = "_blank";
     a.rel = "noreferrer";
-    a.textContent = (i18nLocal[localLang] || i18nLocal.es).cta_menu;
+    a.textContent = t.cta_menu;
     ctas.appendChild(a);
   }
 
   const gallery = document.getElementById("localGallery");
   gallery.setAttribute("data-edit-key", `local_${data.slug}_gallery`);
   if (data.gallery.length === 0) {
-    gallery.innerHTML = `<div class="card">${
-      (i18nLocal[localLang] || i18nLocal.es).empty_gallery
-    }</div>`;
+    gallery.innerHTML = `<div class="card">${t.empty_gallery}</div>`;
     return;
   }
   gallery.innerHTML = data.gallery

@@ -32,10 +32,10 @@
         <img id="siteLogo" data-edit-key="site_logo_url" src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
       </div>
       <nav class="nav">
-        <a href="#locales">Locales</a>
-        <a href="#reservas">Reservar</a>
-        <a href="#trabaja">Trabaja</a>
-        <a href="#contacto">Contacto</a>
+        <a href="#locales" data-i18n="nav_locals">Locales</a>
+        <a href="#reservas" data-i18n="nav_reservations">Reservar</a>
+        <a href="#trabaja" data-i18n="nav_jobs">Trabaja</a>
+        <a href="#contacto" data-i18n="nav_contact">Contacto</a>
         <div class="lang">
           <button data-lang="es" class="active">ES</button>
           <button data-lang="ca">CA</button>
@@ -53,8 +53,8 @@
           <h1 data-i18n="hero_title" data-content-key="hero_title">Familia del Amor</h1>
           <p data-i18n="hero_sub" data-content-key="hero_sub">Sabor, tradición y alegría compartida en cada local.</p>
           <div class="hero-cta">
-            <a class="btn" href="#reservas">Reservar mesa</a>
-            <a class="btn ghost" href="#locales">Ver locales</a>
+            <a class="btn" href="#reservas" data-i18n="hero_cta">Reservar mesa</a>
+            <a class="btn ghost" href="#locales" data-i18n="hero_cta_2">Ver locales</a>
           </div>
         </div>
       </section>
@@ -71,8 +71,8 @@
       <!-- GALERÍA -->
       <section id="galeria" class="block">
         <div class="section-head">
-          <h2>Galería</h2>
-          <p>Momentos y platos de nuestros locales.</p>
+          <h2 data-i18n="gallery_title">Galería</h2>
+          <p data-i18n="gallery_sub">Momentos y platos de nuestros locales.</p>
         </div>
         <div class="galeria-grid" id="galeriaGrid"></div>
       </section>
@@ -80,8 +80,8 @@
       <!-- RESEÑAS -->
       <section id="resenas" class="block">
         <div class="section-head">
-          <h2>Lo que dicen nuestros clientes</h2>
-          <p>⭐⭐⭐⭐⭐ Valoración media en Google</p>
+          <h2 data-i18n="reviews_title">Lo que dicen nuestros clientes</h2>
+          <p data-i18n="reviews_sub">⭐⭐⭐⭐⭐ Valoración media en Google</p>
         </div>
         <div class="cards resenas-grid" id="resenasList">
           <div class="card resena">
@@ -108,27 +108,27 @@
         </div>
         <form id="reservaForm" class="reserva-form">
           <div class="reserva-step">
-            <div class="reserva-step-label">¿En qué local?</div>
+            <div class="reserva-step-label" data-i18n="reservation_local_q">¿En qué local?</div>
             <div class="local-grid" id="localGrid"></div>
             <input type="hidden" name="local" id="localValue" />
           </div>
           <div class="reserva-row">
             <div class="reserva-step">
-              <div class="reserva-step-label">¿Qué día?</div>
-              <input type="text" id="diaDisplay" class="reserva-date-input" data-date-input="dia" data-date-mode="future" placeholder="Elige fecha" readonly required />
+              <div class="reserva-step-label" data-i18n="reservation_day_q">¿Qué día?</div>
+              <input type="text" id="diaDisplay" class="reserva-date-input" data-date-input="dia" data-date-mode="future" placeholder="Elige fecha" data-i18n-ph="ph_choose_date" readonly required />
               <input type="hidden" id="diaValue" name="dia" />
             </div>
             <div class="reserva-step">
-              <div class="reserva-step-label">¿A qué hora?</div>
+              <div class="reserva-step-label" data-i18n="reservation_time_q">¿A qué hora?</div>
               <div id="timePicker"></div>
               <input type="hidden" name="hora" id="horaValue" />
             </div>
             <div class="reserva-step">
-              <div class="reserva-step-label">¿Cuántos?</div>
+              <div class="reserva-step-label" data-i18n="reservation_people_q">¿Cuántos?</div>
               <div class="stepper">
                 <button type="button" class="stepper-btn" id="personasMinus">−</button>
                 <span id="personasDisplay">2</span>
-                <span class="stepper-unit">personas</span>
+                <span class="stepper-unit" data-i18n="reservation_people_unit">personas</span>
                 <button type="button" class="stepper-btn" id="personasPlus">+</button>
               </div>
               <input type="hidden" name="personas" id="personasValue" value="2" />
@@ -136,15 +136,15 @@
           </div>
           <div class="reserva-row">
             <div class="reserva-step">
-              <div class="reserva-step-label">Teléfono</div>
+              <div class="reserva-step-label" data-i18n="reservation_phone_q">Teléfono</div>
               <input type="tel" name="telefono" autocomplete="tel" required placeholder="+34 600 000 000" />
             </div>
             <div class="reserva-step" style="flex:2">
-              <div class="reserva-step-label">Nombre de la reserva</div>
-              <input type="text" name="nombre_reserva" autocomplete="name" required placeholder="¿A nombre de quién?" />
+              <div class="reserva-step-label" data-i18n="reservation_name_q">Nombre de la reserva</div>
+              <input type="text" name="nombre_reserva" autocomplete="name" required placeholder="¿A nombre de quién?" data-i18n-ph="ph_booking_name" />
             </div>
           </div>
-          <button class="btn" type="submit">Confirmar reserva</button>
+          <button class="btn" type="submit" data-i18n="reservation_submit">Confirmar reserva</button>
           <p class="form-note" id="reservaMsg" role="status" aria-live="polite"></p>
         </form>
       </section>
@@ -155,7 +155,7 @@
           <h2 data-i18n="events_title" data-content-key="events_title">Celebraciones y eventos</h2>
           <p data-i18n="events_text" data-content-key="events_text">Cumpleaños, comuniones, eventos de empresa… lo organizamos todo.</p>
         </div>
-        <a class="btn" href="#reservas">Pedir información</a>
+        <a class="btn" href="#reservas" data-i18n="events_cta">Pedir información</a>
       </section>
 
       <!-- TRABAJA -->
@@ -191,8 +191,8 @@
       <!-- CONTACTO -->
       <section id="contacto" class="block">
         <div class="section-head">
-          <h2>Contacto</h2>
-          <p>Para cualquier consulta, escríbenos.</p>
+          <h2 data-i18n="contact_title">Contacto</h2>
+          <p data-i18n="contact_text">Para cualquier consulta, escríbenos.</p>
         </div>
         <a class="btn ghost" href="mailto:hola@familia-del-amor.com">hola@familia-del-amor.com</a>
       </section>
@@ -219,7 +219,7 @@
           </div>
           <label>
             <span>Fecha de nacimiento</span>
-            <input type="text" id="nacimientoDisplay" data-date-input="nacimiento" data-date-mode="birth" placeholder="dd/mm/aaaa" readonly required />
+            <input type="text" id="nacimientoDisplay" data-date-input="nacimiento" data-date-mode="birth" placeholder="dd/mm/aaaa" data-i18n-ph="ph_birth_date" readonly required />
             <input type="hidden" id="nacimientoValue" name="nacimiento" />
           </label>
           <div class="form-row">
@@ -244,7 +244,7 @@
             <input type="checkbox" required />
             <span>Acepto recibir comunicaciones y la política de privacidad.</span>
           </label>
-          <button class="btn" type="submit">Recibir mi descuento</button>
+          <button class="btn" type="submit" data-i18n="lead_submit">Recibir mi descuento</button>
           <p class="form-note" id="leadMsg" role="status" aria-live="polite"></p>
         </form>
       </div>
