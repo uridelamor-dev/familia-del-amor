@@ -1082,7 +1082,7 @@ if (poblacionInput && poblacionSugg) {
 const leadForm = document.getElementById("leadForm");
 const leadMsg = document.getElementById("leadMsg");
 
-leadForm.addEventListener("submit", async (e) => {
+if (leadForm) leadForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   leadMsg.textContent = "";
   const formData = new FormData(leadForm);
@@ -1109,7 +1109,7 @@ leadForm.addEventListener("submit", async (e) => {
 const reservaForm = document.getElementById("reservaForm");
 const reservaMsg = document.getElementById("reservaMsg");
 
-reservaForm.addEventListener("submit", async (e) => {
+if (reservaForm) reservaForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   reservaMsg.textContent = "";
   const formData = new FormData(reservaForm);
