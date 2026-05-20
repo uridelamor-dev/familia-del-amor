@@ -441,6 +441,42 @@ export async function sendNotificacionGrupo(groupId, reserva) {
   }
 }
 
+export async function sendCancelacionCliente(telefono, reserva) {
+  if (!clientReady || !sock) return;
+  try {
+    const jid = formatPhone(telefono);
+    const msg =
+      `❌ *Reserva cancelada*\n\n` +
+      `🏠 ${reserva.local}\n` +
+      `📅 ${formatFecha(reserva.dia)}\n` +
+      `⏰ ${reserva.hora}\n` +
+      `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
+      `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
+      `Tu reserva ha sido cancelada. Si tienes dudas, llámanos.`;
+    await sock.sendMessage(jid, { text: msg });
+    console.log(`📤 Cancelación enviada a ${telefono}`);
+  } catch (err) {
+    console.error("Error enviando cancelación al cliente:", err.message);
+  }
+}
+
+export async function sendCancelacionGrupo(groupId, reserva) {
+  if (!clientReady || !sock || !groupId) return;
+  try {
+    const msg =
+      `❌ *Reserva cancelada*\n\n` +
+      `🪪 ${reserva.nombre_reserva}\n` +
+      `📅 ${formatFecha(reserva.dia)}\n` +
+      `⏰ ${reserva.hora}\n` +
+      `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
+      `📞 ${reserva.telefono}`;
+    await sock.sendMessage(groupId, { text: msg });
+    console.log(`📤 Cancelación enviada al grupo de ${reserva.local}`);
+  } catch (err) {
+    console.error("Error enviando cancelación al grupo:", err.message);
+  }
+}
+
 export async function getGroups() {
   if (!clientReady || !sock) return [];
   try {

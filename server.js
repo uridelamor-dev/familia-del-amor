@@ -7,7 +7,7 @@ import multer from "multer";
 import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { initWhatsApp, sendConfirmacionCliente, sendMensajeLibre, sendNotificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendCancelacionCliente, sendMensajeLibre, sendNotificacionGrupo, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -765,9 +765,18 @@ app.get("/api/reservas", requireAuth(["direccion", "encargado"]), (req, res) => 
 });
 
 app.delete("/api/reservas/:id", requireAuth(["encargado", "direccion"]), (req, res) => {
-  db.run("DELETE FROM reservas WHERE id = ?", [req.params.id], (err) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error eliminando reserva" });
-    res.json({ ok: true });
+  db.get(`SELECT * FROM reservas WHERE id = ?`, [req.params.id], (err, reserva) => {
+    if (err || !reserva) return res.status(404).json({ ok: false, error: "Reserva no encontrada" });
+    db.run("DELETE FROM reservas WHERE id = ?", [req.params.id], (err2) => {
+      if (err2) return res.status(500).json({ ok: false, error: "Error eliminando reserva" });
+      res.json({ ok: true });
+      if (isReady()) {
+        sendCancelacionCliente(reserva.telefono, reserva);
+        db.get(`SELECT group_jid FROM wa_links WHERE local = ?`, [reserva.local], (_, row) => {
+          if (row?.group_jid) sendCancelacionGrupo(row.group_jid, reserva);
+        });
+      }
+    });
   });
 });
 
