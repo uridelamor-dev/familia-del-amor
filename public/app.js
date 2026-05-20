@@ -4,6 +4,7 @@ const companies = [
     desc: "Locales con ambiente y buen rollo.",
     logo: "assets/logos/6.svg",
     slug: "la-tapeta",
+    photo: "",
     locations: [
       "Blanes · Calle Muralla 21",
       "Lloret · Calle Sant Pere 84",
@@ -15,6 +16,7 @@ const companies = [
     desc: "Tradición local y cocina con identidad.",
     logo: "assets/logos/7.svg",
     slug: "cooperativa",
+    photo: "uploads/gallery/Cooperativa_208.jpg",
     locations: ["Blanes · Calle Muralla 28"]
   },
   {
@@ -22,6 +24,7 @@ const companies = [
     desc: "Cocina auténtica en el corazón de Tordera.",
     logo: "assets/logos/3.svg",
     slug: "can-mateu",
+    photo: "uploads/gallery/CanMateu_STR04757.jpg",
     locations: ["Tordera · Plaça Concòrdia 7"]
   },
   {
@@ -29,6 +32,7 @@ const companies = [
     desc: "Sabores ibéricos y tapeo con carácter.",
     logo: "assets/logos/4.svg",
     slug: "la-tapa-iberica",
+    photo: "uploads/gallery/TapaIberica_STR05479.jpg",
     locations: ["Tordera · Camí Ral 6"]
   },
   {
@@ -36,6 +40,7 @@ const companies = [
     desc: "Tienda de embutidos y jamonería.",
     logo: "assets/logos/2.svg",
     slug: "botiga-mateu",
+    photo: "",
     locations: ["Tordera · Camí Ral 8"]
   },
   {
@@ -43,6 +48,7 @@ const companies = [
     desc: "Fiestas al aire libre y eventos memorables.",
     logo: "assets/logos/5.svg",
     slug: "viva-la-pepa",
+    photo: "",
     locations: ["Eventos itinerantes"]
   }
 ];
@@ -279,9 +285,10 @@ function renderCompanies() {
     const menuRow = menuBtns ? `<div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.6rem">${menuBtns}</div>` : "";
     const card = document.createElement("div");
     card.className = "card";
+    const bgStyle = c.photo ? `style="background-image:url('${c.photo}')"` : "";
     card.innerHTML = `
       <a class="card-link" href="local.html?slug=${c.slug}">
-        <div class="card-logo">
+        <div class="card-logo" ${bgStyle}>
           <img src="${c.logo}" alt="${c.name}" />
         </div>
         <h3>${c.name}</h3>
