@@ -396,6 +396,15 @@ export async function sendMensajeLibre(telefono, texto) {
   await sock.sendMessage(jid, { text: texto });
 }
 
+const DIAS_ES = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+const MESES_ES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+
+function formatFecha(dia) {
+  const [y, m, d] = dia.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return `${DIAS_ES[date.getDay()]} ${d} de ${MESES_ES[m - 1]}`;
+}
+
 export async function sendConfirmacionCliente(telefono, reserva) {
   if (!clientReady || !sock) return;
   try {
@@ -403,9 +412,10 @@ export async function sendConfirmacionCliente(telefono, reserva) {
     const msg =
       `✅ *Reserva confirmada*\n\n` +
       `🏠 ${reserva.local}\n` +
-      `📅 ${reserva.dia} a las ${reserva.hora}\n` +
+      `📅 ${formatFecha(reserva.dia)}\n` +
+      `⏰ ${reserva.hora}\n` +
       `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
-      `📛 A nombre de: ${reserva.nombre_reserva}\n\n` +
+      `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
       `¡Te esperamos! Si necesitas cancelar o modificar, llámanos.`;
     await sock.sendMessage(jid, { text: msg });
     console.log(`📤 Confirmación enviada a ${telefono}`);
@@ -419,8 +429,9 @@ export async function sendNotificacionGrupo(groupId, reserva) {
   try {
     const msg =
       `🍽️ *Nueva reserva*\n\n` +
-      `👤 ${reserva.nombre_reserva}\n` +
-      `📅 ${reserva.dia} · ${reserva.hora}\n` +
+      `🪪 ${reserva.nombre_reserva}\n` +
+      `📅 ${formatFecha(reserva.dia)}\n` +
+      `⏰ ${reserva.hora}\n` +
       `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
       `📞 ${reserva.telefono}`;
     await sock.sendMessage(groupId, { text: msg });
