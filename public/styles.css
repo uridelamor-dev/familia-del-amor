@@ -1319,6 +1319,86 @@ body {
   color: var(--text);
 }
 
+/* ── Historia editorial ──────────────────────────────────────────────────── */
+
+.historia-section {
+  max-width: 860px;
+}
+
+.historia-eyebrow {
+  font-family: "Gill Sans", "Trebuchet MS", "Arial", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 0.6rem;
+}
+
+.historia-title {
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0 0 2rem;
+  line-height: 1.15;
+}
+
+.historia-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.historia-body p {
+  margin: 0;
+  line-height: 1.8;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.historia-lead {
+  font-size: 1.22rem !important;
+  font-weight: 600;
+  color: var(--primary) !important;
+  line-height: 1.55 !important;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #eadfce;
+}
+
+.historia-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.historia-cols p {
+  color: var(--muted) !important;
+  font-size: 0.95rem !important;
+}
+
+.historia-quote {
+  margin: 0.5rem 0 0;
+  padding: 1.4rem 1.6rem;
+  border-left: 3px solid var(--accent);
+  background: linear-gradient(135deg, #fff8f5 0%, #fdf4ec 100%);
+  border-radius: 0 12px 12px 0;
+  font-style: italic;
+  font-size: 1.05rem;
+  line-height: 1.75;
+  color: var(--primary);
+}
+
+@media (max-width: 640px) {
+  .historia-cols {
+    grid-template-columns: 1fr;
+  }
+
+  .historia-quote {
+    padding: 1rem 1.1rem;
+    font-size: 0.95rem;
+  }
+}
+
 /* ── Reservas destacadas ─────────────────────────────────────────────────── */
 
 .reservas-highlight {
