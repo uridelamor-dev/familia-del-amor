@@ -163,9 +163,11 @@ db.serialize(() => {
       telefono TEXT NOT NULL,
       mensaje TEXT NOT NULL,
       respuesta TEXT NOT NULL,
+      historico INTEGER DEFAULT 0,
       creado_en TEXT DEFAULT (datetime('now'))
     )
   `);
+  db.run(`ALTER TABLE whatsapp_messages ADD COLUMN historico INTEGER DEFAULT 0`, () => {});
 
   db.run(`
     CREATE TABLE IF NOT EXISTS pending_whatsapp (
@@ -1007,11 +1009,11 @@ const server = app.listen(PORT, () => {
 
   setOnReady(procesarPendientesWA);
 
-  setOnMessage(({ jid, texto, respuesta }) => {
+  setOnMessage(({ jid, texto, respuesta, historico = false }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
     db.run(
-      `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta) VALUES (?, ?, ?, ?)`,
-      [jid, telefono, texto, respuesta],
+      `INSERT OR IGNORE INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico) VALUES (?, ?, ?, ?, ?)`,
+      [jid, telefono, texto, respuesta, historico ? 1 : 0],
       (err) => { if (err) console.error("Error guardando mensaje WA:", err.message); }
     );
   });

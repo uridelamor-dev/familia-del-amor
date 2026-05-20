@@ -53,8 +53,9 @@ async function loadWaMensajes() {
     tbody.innerHTML = data.data.map((m, i) => {
       const fecha = new Date(m.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
       const bg = i % 2 === 0 ? "" : "background:var(--bg)";
+      const badge = m.historico ? `<span style="font-size:0.7rem;background:#e8e0ff;color:#6b3fa0;border-radius:4px;padding:1px 5px;margin-left:4px">historial</span>` : "";
       return `<tr style="${bg}">
-        <td style="padding:8px 12px;white-space:nowrap;color:var(--muted)">${fecha}</td>
+        <td style="padding:8px 12px;white-space:nowrap;color:var(--muted)">${fecha}${badge}</td>
         <td style="padding:8px 12px;white-space:nowrap">${m.telefono}</td>
         <td style="padding:8px 12px;max-width:280px">${m.mensaje}</td>
         <td style="padding:8px 12px;max-width:320px;color:var(--muted)">${m.respuesta}</td>

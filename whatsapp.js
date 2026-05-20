@@ -259,6 +259,42 @@ async function connectToWhatsApp() {
 
   sock.ev.on("creds.update", saveCreds);
 
+  sock.ev.on("messaging-history.set", ({ messages }) => {
+    if (!onMessage) return;
+    const cutoff = Math.floor(Date.now() / 1000) - 5 * 24 * 3600;
+
+    const byJid = {};
+    for (const msg of messages) {
+      const jid = msg.key?.remoteJid;
+      if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
+      const ts = Number(msg.messageTimestamp) || 0;
+      if (ts < cutoff) continue;
+      if (!byJid[jid]) byJid[jid] = [];
+      byJid[jid].push(msg);
+    }
+
+    for (const [jid, msgs] of Object.entries(byJid)) {
+      msgs.sort((a, b) => Number(a.messageTimestamp) - Number(b.messageTimestamp));
+      for (let i = 0; i < msgs.length; i++) {
+        const msg = msgs[i];
+        if (msg.key.fromMe) continue;
+        const texto = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
+        if (!texto.trim()) continue;
+
+        let respuesta = "(sin respuesta registrada)";
+        for (let j = i + 1; j < msgs.length; j++) {
+          const next = msgs[j];
+          if (!next.key.fromMe) break;
+          if (Number(next.messageTimestamp) - Number(msg.messageTimestamp) > 300) break;
+          const t = next.message?.conversation || next.message?.extendedTextMessage?.text || "";
+          if (t) { respuesta = t; break; }
+        }
+        onMessage({ jid, texto: texto.trim(), respuesta, historico: true });
+      }
+    }
+    console.log(`📜 Historial WA procesado: ${Object.keys(byJid).length} conversaciones`);
+  });
+
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify") return;
     for (const msg of messages) {
