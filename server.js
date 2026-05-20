@@ -22,8 +22,27 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, "database.sqlite");
-const db = new sqlite3.Database(dbPath);
+function resolveDbPath() {
+  const configured = process.env.DB_PATH;
+  if (configured) {
+    const dir = path.dirname(configured);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      return configured;
+    } catch {
+      console.warn(`DB_PATH directory inaccesible (${dir}), usando ruta local.`);
+    }
+  }
+  return path.join(__dirname, "database.sqlite");
+}
+const dbPath = resolveDbPath();
+console.log(`Base de datos: ${dbPath}`);
+const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+  if (err) console.error("Error abriendo base de datos:", err.message);
+});
+db.on("error", (err) => {
+  console.error("DB error (no fatal):", err.message);
+});
 
 const uploadsDir = path.join(__dirname, "public", "uploads");
 if (!fs.existsSync(uploadsDir)) {

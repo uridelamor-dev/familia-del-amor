@@ -5,15 +5,25 @@ import pino from "pino";
 import Anthropic from "@anthropic-ai/sdk";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Guardar credenciales junto a la BD (ruta persistente en Replit)
-const DB_DIR = process.env.DB_PATH
-  ? path.dirname(process.env.DB_PATH)
-  : __dirname;
-const AUTH_DIR = path.join(DB_DIR, "baileys_auth");
+function resolveAuthDir() {
+  if (process.env.DB_PATH) {
+    const dir = path.dirname(process.env.DB_PATH);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      return path.join(dir, "baileys_auth");
+    } catch {
+      // directorio inaccesible, usar workspace local
+    }
+  }
+  return path.join(__dirname, "baileys_auth");
+}
+const AUTH_DIR = resolveAuthDir();
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
