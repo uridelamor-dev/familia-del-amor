@@ -616,9 +616,11 @@ app.post("/api/reservas", (req, res) => {
       if (err) return res.status(500).json({ ok: false, error: "Error guardando reserva" });
       const reserva = { local, personas, dia, hora, telefono, nombre_reserva };
       // Confirmación al cliente
+      console.log(`[Reserva] WhatsApp listo: ${isReady()} | Enviando confirmación a ${telefono}`);
       sendConfirmacionCliente(telefono, reserva);
       // Notificación al grupo del local
       db.get(`SELECT value FROM contents WHERE key = ?`, [`whatsapp_group_${local}`], (_, row) => {
+        console.log(`[Reserva] Grupo para "${local}": ${row?.value || "NO CONFIGURADO"}`);
         if (row?.value) sendNotificacionGrupo(row.value, reserva);
       });
       return res.json({ ok: true, reserva_id: this.lastID });
