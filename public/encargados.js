@@ -263,7 +263,7 @@ async function loadCurrentLinks() {
     return;
   }
   container.innerHTML = data.data.map((row) =>
-    `<div class="card"><strong>${row.key.replace("whatsapp_group_", "")}</strong><br><small style="color:var(--muted)">${row.value}</small></div>`
+    `<div class="card"><strong>${row.local}</strong><br><small style="color:var(--muted)">${row.group_jid}</small></div>`
   ).join("");
 }
 

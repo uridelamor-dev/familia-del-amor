@@ -40,30 +40,113 @@ function initSidebar() {
   });
 }
 
+let waAllMessages = [];
+let waSelectedPhone = null;
+
 async function loadWaMensajes() {
-  const tbody = document.getElementById("waMensajesBody");
-  if (!tbody) return;
+  const contactList = document.getElementById("waContactList");
+  if (!contactList) return;
   try {
     const res = await authFetch("/api/whatsapp/mensajes");
     const data = await res.json();
     if (!data.ok || !data.data.length) {
-      tbody.innerHTML = `<tr><td colspan="4" style="padding:12px;color:#888">Sin mensajes registrados aún.</td></tr>`;
+      contactList.innerHTML = `<div class="card" style="color:var(--muted);text-align:center;padding:1rem">Sin conversaciones aún.</div>`;
       return;
     }
-    tbody.innerHTML = data.data.map((m, i) => {
-      const fecha = new Date(m.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
-      const bg = i % 2 === 0 ? "" : "background:var(--bg)";
-      const badge = m.historico ? `<span style="font-size:0.7rem;background:#e8e0ff;color:#6b3fa0;border-radius:4px;padding:1px 5px;margin-left:4px">historial</span>` : "";
-      return `<tr style="${bg}">
-        <td style="padding:8px 12px;white-space:nowrap;color:var(--muted)">${fecha}${badge}</td>
-        <td style="padding:8px 12px;white-space:nowrap">${m.telefono}</td>
-        <td style="padding:8px 12px;max-width:280px">${m.mensaje}</td>
-        <td style="padding:8px 12px;max-width:320px;color:var(--muted)">${m.respuesta}</td>
-      </tr>`;
+
+    waAllMessages = data.data;
+
+    // Agrupar por teléfono, ordenar por último mensaje desc
+    const byPhone = {};
+    data.data.forEach((m) => {
+      if (!byPhone[m.telefono]) byPhone[m.telefono] = { telefono: m.telefono, nombre: m.nombre_contacto, msgs: [] };
+      byPhone[m.telefono].msgs.push(m);
+    });
+    const contacts = Object.values(byPhone).sort((a, b) => {
+      const aLast = a.msgs[a.msgs.length - 1].creado_en;
+      const bLast = b.msgs[b.msgs.length - 1].creado_en;
+      return bLast.localeCompare(aLast);
+    });
+
+    contactList.innerHTML = contacts.map((c) => {
+      const last = c.msgs[c.msgs.length - 1];
+      const fecha = new Date(last.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
+      const preview = (last.mensaje || "").slice(0, 40);
+      return `
+        <div class="card wa-contact-card" data-phone="${c.telefono}" style="cursor:pointer;padding:0.75rem 1rem;transition:background 0.15s">
+          <div style="font-weight:600;font-size:0.9rem">${c.nombre || c.telefono}</div>
+          <div style="font-size:0.75rem;color:var(--muted)">${c.telefono}</div>
+          <div style="font-size:0.78rem;color:var(--muted);margin-top:0.25rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${preview}…</div>
+          <div style="font-size:0.7rem;color:var(--muted);margin-top:0.2rem">${fecha}</div>
+        </div>`;
     }).join("");
+
+    contactList.querySelectorAll(".wa-contact-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        contactList.querySelectorAll(".wa-contact-card").forEach((c) => c.style.background = "");
+        card.style.background = "var(--accent-light, #fdf0ef)";
+        renderWaChat(card.dataset.phone, byPhone[card.dataset.phone]);
+      });
+    });
+
+    // Auto-seleccionar el primero
+    if (contacts.length) {
+      const firstCard = contactList.querySelector(".wa-contact-card");
+      if (firstCard) { firstCard.style.background = "var(--accent-light, #fdf0ef)"; renderWaChat(contacts[0].telefono, byPhone[contacts[0].telefono]); }
+    }
   } catch {
-    tbody.innerHTML = `<tr><td colspan="4" style="padding:12px;color:#888">Error cargando historial.</td></tr>`;
+    contactList.innerHTML = `<div class="card" style="color:var(--muted)">Error cargando conversaciones.</div>`;
   }
+}
+
+function renderWaChat(telefono, contactData) {
+  waSelectedPhone = telefono;
+  const panel = document.getElementById("waChatPanel");
+  if (!panel) return;
+
+  const msgs = contactData.msgs;
+  const nombre = contactData.nombre || telefono;
+
+  const bubbles = msgs.map((m) => {
+    const fecha = new Date(m.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
+    const histBadge = m.historico ? `<span style="font-size:0.65rem;background:#e8e0ff;color:#6b3fa0;border-radius:3px;padding:1px 4px;vertical-align:middle">historial</span> ` : "";
+    return `
+      <!-- Mensaje del cliente -->
+      <div style="display:flex;justify-content:flex-start;margin-bottom:0.25rem">
+        <div style="max-width:70%;background:var(--card);border:1px solid var(--border);border-radius:12px 12px 12px 2px;padding:0.5rem 0.75rem;font-size:0.88rem">
+          <div>${escHtml(m.mensaje)}</div>
+          <div style="font-size:0.68rem;color:var(--muted);margin-top:0.2rem;text-align:right">${histBadge}${fecha}</div>
+        </div>
+      </div>
+      <!-- Respuesta del bot -->
+      <div style="display:flex;justify-content:flex-end;margin-bottom:0.75rem">
+        <div style="max-width:70%;background:var(--accent);color:#fff;border-radius:12px 12px 2px 12px;padding:0.5rem 0.75rem;font-size:0.88rem">
+          <div style="white-space:pre-wrap">${escHtml(m.respuesta)}</div>
+          <div style="font-size:0.68rem;opacity:0.75;margin-top:0.2rem;text-align:right">${fecha}</div>
+        </div>
+      </div>`;
+  }).join("");
+
+  panel.innerHTML = `
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="padding:0.75rem 1rem;background:var(--primary);color:#fff;display:flex;align-items:center;gap:0.75rem">
+        <div>
+          <div style="font-weight:700">${escHtml(nombre)}</div>
+          <div style="font-size:0.78rem;opacity:0.8">${telefono} · ${msgs.length} mensaje${msgs.length !== 1 ? "s" : ""}</div>
+        </div>
+      </div>
+      <div style="padding:1rem;display:flex;flex-direction:column;max-height:520px;overflow-y:auto" id="waChatScroll">
+        ${bubbles}
+      </div>
+    </div>`;
+
+  // Scroll al final
+  const scroll = panel.querySelector("#waChatScroll");
+  if (scroll) scroll.scrollTop = scroll.scrollHeight;
+}
+
+function escHtml(str) {
+  return String(str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
 async function initWhatsAppStatus(elId) {

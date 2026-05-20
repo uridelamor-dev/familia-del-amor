@@ -173,21 +173,18 @@
               <div class="card" id="waStatus">Comprobando conexión...</div>
             </section>
             <section class="block">
-              <div class="section-head"><h2>Historial de conversaciones</h2><p>Últimos 100 mensajes respondidos por el chatbot.</p></div>
-              <div class="card" id="waMensajes" style="padding:0;overflow:hidden">
-                <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
-                  <thead>
-                    <tr style="background:var(--primary);color:#fff">
-                      <th style="padding:8px 12px;text-align:left">Fecha</th>
-                      <th style="padding:8px 12px;text-align:left">Teléfono</th>
-                      <th style="padding:8px 12px;text-align:left">Mensaje</th>
-                      <th style="padding:8px 12px;text-align:left">Respuesta</th>
-                    </tr>
-                  </thead>
-                  <tbody id="waMensajesBody">
-                    <tr><td colspan="4" style="padding:12px;color:#888">Cargando...</td></tr>
-                  </tbody>
-                </table>
+              <div class="section-head"><h2>Conversaciones</h2><p>Historial completo por contacto.</p></div>
+              <div id="waChatLayout" style="display:flex;gap:1rem;align-items:flex-start">
+                <!-- Lista de contactos -->
+                <div id="waContactList" style="width:240px;min-width:200px;display:flex;flex-direction:column;gap:0.5rem">
+                  <div class="card" style="color:var(--muted);text-align:center;padding:1rem">Cargando...</div>
+                </div>
+                <!-- Panel de chat -->
+                <div id="waChatPanel" style="flex:1;min-width:0">
+                  <div class="card" style="color:var(--muted);text-align:center;padding:2rem">
+                    Selecciona un contacto para ver la conversación.
+                  </div>
+                </div>
               </div>
             </section>
           </div>

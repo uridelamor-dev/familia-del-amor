@@ -90,6 +90,27 @@ db.serialize(() => {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS wa_links (
+      local TEXT PRIMARY KEY,
+      group_jid TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `, () => {
+    // Migrar links existentes de la tabla contents a wa_links
+    db.all(`SELECT key, value FROM contents WHERE key LIKE 'whatsapp_group_%'`, (err, rows) => {
+      if (err || !rows?.length) return;
+      const ahora = new Date().toISOString();
+      rows.forEach(({ key, value }) => {
+        const local = key.replace("whatsapp_group_", "");
+        db.run(
+          `INSERT OR IGNORE INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, ?)`,
+          [local, value, ahora]
+        );
+      });
+    });
+  });
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS hr_jobs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       titulo TEXT NOT NULL,
@@ -717,11 +738,11 @@ app.post("/api/reservas", (req, res) => {
       console.log(`[Reserva] WhatsApp listo: ${isReady()} | Confirmación a ${telefono}`);
       if (isReady()) sendConfirmacionCliente(telefono, reserva);
       else guardarPendienteWA("confirmacion", telefono, reserva);
-      db.get(`SELECT value FROM contents WHERE key = ?`, [`whatsapp_group_${local}`], (_, row) => {
-        console.log(`[Reserva] Grupo para "${local}": ${row?.value || "NO CONFIGURADO"}`);
-        if (row?.value) {
-          if (isReady()) sendNotificacionGrupo(row.value, reserva);
-          else guardarPendienteWA("grupo", row.value, reserva);
+      db.get(`SELECT group_jid FROM wa_links WHERE local = ?`, [local], (_, row) => {
+        console.log(`[Reserva] Grupo para "${local}": ${row?.group_jid || "NO CONFIGURADO"}`);
+        if (row?.group_jid) {
+          if (isReady()) sendNotificacionGrupo(row.group_jid, reserva);
+          else guardarPendienteWA("grupo", row.group_jid, reserva);
         }
       });
       return res.json({ ok: true, reserva_id: this.lastID });
@@ -965,12 +986,11 @@ app.get("/api/whatsapp/groups", requireAuth(["direccion", "encargado"]), async (
 app.post("/api/whatsapp/link", requireAuth(["direccion", "encargado"]), (req, res) => {
   const { local, groupId } = req.body;
   if (!local || !groupId) return res.status(400).json({ ok: false, error: "Faltan campos" });
-  const key = `whatsapp_group_${local}`;
   const updated_at = new Date().toISOString();
   db.run(
-    `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
-    [key, groupId, updated_at],
+    `INSERT INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(local) DO UPDATE SET group_jid=excluded.group_jid, updated_at=excluded.updated_at`,
+    [local, groupId, updated_at],
     (err) => {
       if (err) return res.status(500).json({ ok: false, error: "Error guardando" });
       res.json({ ok: true });
@@ -986,7 +1006,7 @@ app.get("/api/whatsapp/qr", requireAuth(["direccion", "encargado", "marketing"])
 });
 
 app.get("/api/whatsapp/links", requireAuth(["direccion", "encargado"]), (req, res) => {
-  db.all(`SELECT key, value FROM contents WHERE key LIKE 'whatsapp_group_%'`, (err, rows) => {
+  db.all(`SELECT local, group_jid FROM wa_links ORDER BY local`, (err, rows) => {
     if (err) return res.status(500).json({ ok: false, error: "Error" });
     res.json({ ok: true, data: rows });
   });
@@ -1078,10 +1098,13 @@ app.get("/api/campanas", requireAuth(["direccion", "marketing"]), (req, res) => 
 });
 
 app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), (req, res) => {
-  const limit = parseInt(req.query.limit) || 100;
+  // Devuelve todos los mensajes con el nombre del lead si existe
   db.all(
-    `SELECT * FROM whatsapp_messages ORDER BY creado_en DESC LIMIT ?`,
-    [limit],
+    `SELECT w.*, COALESCE(l.nombre || ' ' || COALESCE(l.apellidos,''), w.telefono) AS nombre_contacto
+     FROM whatsapp_messages w
+     LEFT JOIN leads l ON l.telefono = w.telefono
+     ORDER BY w.creado_en ASC`,
+    [],
     (err, rows) => {
       if (err) return res.status(500).json({ ok: false });
       res.json({ ok: true, data: rows || [] });
@@ -1144,10 +1167,10 @@ const server = app.listen(PORT, () => {
         if (err) { console.error("Error guardando reserva WhatsApp:", err.message); return; }
         console.log(`📅 Reserva WhatsApp guardada (id ${this.lastID}): ${nombre_reserva} en ${local}`);
         upsertLeadFromReserva({ nombre_reserva, telefono });
-        db.get(`SELECT value FROM contents WHERE key = ?`, [`whatsapp_group_${local}`], (_, row) => {
-          if (row?.value) {
-            if (isReady()) sendNotificacionGrupo(row.value, reserva);
-            else guardarPendienteWA("grupo", row.value, reserva);
+        db.get(`SELECT group_jid FROM wa_links WHERE local = ?`, [local], (_, row) => {
+          if (row?.group_jid) {
+            if (isReady()) sendNotificacionGrupo(row.group_jid, reserva);
+            else guardarPendienteWA("grupo", row.group_jid, reserva);
           }
         });
       }
