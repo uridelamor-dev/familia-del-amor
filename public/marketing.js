@@ -66,53 +66,278 @@ async function initWhatsAppStatus(elId) {
   el.innerHTML = `⚠️ No se pudo conectar WhatsApp. Reinicia el servidor.`;
 }
 
-const i18nFields = [
-  { key: "about_title", label: "Sobre · Título" },
-  { key: "history_title", label: "Historia · Título" },
-  { key: "team_title", label: "Equipo · Título" },
-  { key: "companies_title", label: "Empresas · Título" },
-  { key: "events_title", label: "Eventos · Título" },
-  { key: "news_title", label: "Novedades · Título" },
-  { key: "reservations_title", label: "Reservas · Título" },
-  { key: "jobs_title", label: "Trabaja · Título" },
-  { key: "faq_title", label: "FAQ · Título" },
-  { key: "contact_title", label: "Contacto · Título" },
-  { key: "legal_title", label: "Legal · Título" },
-  { key: "hero_eyebrow", label: "Hero · Eyebrow" },
-  { key: "hero_title", label: "Hero · Título" },
-  { key: "hero_sub", label: "Hero · Subtítulo" },
-  { key: "about_text", label: "Sobre · Texto" },
-  { key: "about_tile", label: "Sobre · Tarjeta" },
-  { key: "companies_sub", label: "Empresas · Subtítulo" },
-  { key: "history_sub", label: "Historia · Subtítulo" },
-  { key: "history_block_1", label: "Historia · Bloque 1" },
-  { key: "history_block_2", label: "Historia · Bloque 2" },
-  { key: "history_block_3", label: "Historia · Bloque 3" },
-  { key: "team_text", label: "Equipo · Texto" },
-  { key: "team_tile", label: "Equipo · Tarjeta" },
-  { key: "events_text", label: "Eventos · Texto" },
-  { key: "news_sub", label: "Novedades · Subtítulo" },
-  { key: "news_items", label: "Novedades · Items (1 por línea)" },
-  { key: "reservations_sub", label: "Reservas · Subtítulo" },
-  { key: "jobs_text", label: "Trabaja · Texto" },
-  { key: "faq_sub", label: "FAQ · Subtítulo" },
-  { key: "faq_items", label: "FAQ · Items (Pregunta|Respuesta por línea)" },
-  { key: "contact_text", label: "Contacto · Texto" },
-  { key: "legal_text", label: "Legal · Texto" },
-  { key: "popup_title", label: "Popup · Título" },
-  { key: "popup_text", label: "Popup · Texto" }
+// ── EDITOR DE CONTENIDOS WEB ──────────────────────────────────────────────
+
+const ceditGroups = [
+  {
+    id: "hero", title: "Hero", icon: "🏠",
+    fields: [
+      { key: "hero_image_url", label: "Imagen de fondo", type: "image" },
+      { key: "site_logo_url",  label: "Logo del sitio",  type: "image" },
+      { key: "hero_eyebrow",   label: "Etiqueta superior", type: "input",    i18n: true },
+      { key: "hero_title",     label: "Título principal",  type: "input",    i18n: true },
+      { key: "hero_sub",       label: "Subtítulo",         type: "textarea", i18n: true },
+    ]
+  },
+  {
+    id: "empresas", title: "Nuestros locales", icon: "🍽",
+    fields: [
+      { key: "companies_title", label: "Título",    type: "input",    i18n: true },
+      { key: "companies_sub",   label: "Subtítulo", type: "textarea", i18n: true },
+    ]
+  },
+  {
+    id: "reservas", title: "Reservas", icon: "📅",
+    fields: [
+      { key: "reservations_title", label: "Título",    type: "input", i18n: true },
+      { key: "reservations_sub",   label: "Subtítulo", type: "input", i18n: true },
+    ]
+  },
+  {
+    id: "popup", title: "Popup de descuento", icon: "🎁",
+    fields: [
+      { key: "popup_title", label: "Título", type: "input",    i18n: true },
+      { key: "popup_text",  label: "Texto",  type: "textarea", i18n: true },
+    ]
+  },
+  {
+    id: "galeria", title: "Galería principal", icon: "🖼",
+    fields: [
+      { key: "gallery_images", label: "Imágenes (1 URL por línea)", type: "gallery" },
+    ]
+  }
 ];
 
-const fields = [
-  { key: "site_logo_url", label: "Sitio · Logo (URL o ruta)", type: "input" },
-  { key: "hero_image_url", label: "Hero · Imagen de fondo (URL o ruta)", type: "input" },
-  { key: "gallery_images", label: "Galería · Imágenes (1 URL por línea)" },
-  ...i18nFields.flatMap((f) => [
-    { key: `${f.key}_es`, label: `${f.label} (ES)` },
-    { key: `${f.key}_ca`, label: `${f.label} (CA)` },
-    { key: `${f.key}_en`, label: `${f.label} (EN)` }
-  ])
-];
+let ceditValues = {};
+let ceditLang = "es";
+let ceditSaveTimer = null;
+
+function ceditKey(field) {
+  return field.i18n ? `${field.key}_${ceditLang}` : field.key;
+}
+
+async function ceditSave(key, value) {
+  try {
+    const r = await authFetch("/api/content", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value })
+    });
+    return (await r.json()).ok;
+  } catch { return false; }
+}
+
+function ceditIndicator(ok) {
+  const el = document.getElementById("ceditSaveInd");
+  if (!el) return;
+  clearTimeout(ceditSaveTimer);
+  el.textContent = ok === "loading" ? "Guardando…" : ok ? "✓ Guardado" : "⚠ Error";
+  el.className = "cedit-save-indicator" + (ok === "loading" ? " loading" : ok ? " ok show" : " err show");
+  if (ok !== "loading") ceditSaveTimer = setTimeout(() => { el.className = "cedit-save-indicator"; }, 2500);
+}
+
+function ceditReload() {
+  document.getElementById("previewFrame")?.contentWindow?.location.reload();
+}
+
+function ceditBuildRow(field) {
+  const row = document.createElement("div");
+
+  /* ── Imagen ── */
+  if (field.type === "image") {
+    const k = ceditKey(field);
+    const val = ceditValues[k] || "";
+    row.className = "cedit-row";
+    row.innerHTML = `
+      <span class="cedit-label">${field.label}</span>
+      <div class="cedit-image-slot">
+        ${val ? `<img src="${val}" class="cedit-img-thumb" alt="" />` : `<div class="cedit-img-empty">Sin imagen</div>`}
+        <label class="cedit-img-btn">
+          <input type="file" accept="image/*" style="display:none" />
+          <span>${val ? "Cambiar imagen" : "Subir imagen"}</span>
+        </label>
+        ${val ? `<a href="${val}" target="_blank" class="cedit-img-link">Ver →</a>` : ""}
+      </div>`;
+    row.querySelector("input[type=file]").addEventListener("change", async function() {
+      if (!this.files[0]) return;
+      ceditIndicator("loading");
+      const fd = new FormData();
+      fd.append("files", this.files[0]);
+      const d = await (await authFetch("/api/upload", { method: "POST", body: fd })).json();
+      this.value = "";
+      if (!d.ok || !d.urls[0]) { ceditIndicator(false); return; }
+      ceditValues[k] = d.urls[0];
+      const ok = await ceditSave(k, d.urls[0]);
+      ceditIndicator(ok);
+      if (ok) {
+        const slot = row.querySelector(".cedit-image-slot");
+        const old = slot.querySelector(".cedit-img-thumb, .cedit-img-empty");
+        const img = Object.assign(document.createElement("img"), { src: d.urls[0], className: "cedit-img-thumb", alt: "" });
+        old?.replaceWith(img);
+        row.querySelector(".cedit-img-btn span").textContent = "Cambiar imagen";
+        const link = slot.querySelector(".cedit-img-link");
+        if (link) link.href = d.urls[0];
+        ceditReload();
+      }
+    });
+    return row;
+  }
+
+  /* ── Galería ── */
+  if (field.type === "gallery") {
+    const k = ceditKey(field);
+    row.className = "cedit-row cedit-gallery-row";
+
+    const label = document.createElement("span");
+    label.className = "cedit-label";
+    label.textContent = field.label;
+
+    const ta = document.createElement("textarea");
+    ta.className = "cedit-gallery-ta";
+    ta.rows = 5;
+    ta.value = ceditValues[k] || "";
+    ta.placeholder = "Una URL por línea";
+
+    const uploadLbl = document.createElement("label");
+    uploadLbl.className = "cedit-gallery-upload";
+    uploadLbl.innerHTML = `<input type="file" accept="image/*" multiple style="display:none"/><span>+ Subir imágenes</span>`;
+
+    let taTimer;
+    ta.addEventListener("input", () => {
+      clearTimeout(taTimer);
+      taTimer = setTimeout(async () => {
+        const v = ta.value.split("\n").map(s => s.trim()).filter(Boolean).join("\n");
+        ceditValues[k] = v;
+        ceditIndicator("loading");
+        ceditIndicator(await ceditSave(k, v));
+        ceditReload();
+      }, 700);
+    });
+
+    uploadLbl.querySelector("input").addEventListener("change", async function() {
+      ceditIndicator("loading");
+      const fd = new FormData();
+      Array.from(this.files).forEach(f => fd.append("files", f));
+      this.value = "";
+      const d = await (await authFetch("/api/upload", { method: "POST", body: fd })).json();
+      if (!d.ok) { ceditIndicator(false); return; }
+      const merged = [...(ta.value.split("\n").map(s => s.trim()).filter(Boolean)), ...d.urls].join("\n");
+      ta.value = merged;
+      ceditValues[k] = merged;
+      ceditIndicator(await ceditSave(k, merged));
+      ceditReload();
+    });
+
+    row.append(label, ta, uploadLbl);
+    return row;
+  }
+
+  /* ── Texto / Textarea — click to edit ── */
+  row.className = "cedit-row cedit-text-row";
+
+  const label = document.createElement("span");
+  label.className = "cedit-label";
+  label.textContent = field.label;
+
+  const display = document.createElement("div");
+  display.className = "cedit-display";
+  display.textContent = ceditValues[ceditKey(field)] || "—";
+  display.title = "Clic para editar";
+
+  const pencil = document.createElement("span");
+  pencil.className = "cedit-pencil";
+  pencil.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>`;
+
+  row.append(label, display, pencil);
+
+  const activate = () => {
+    if (row.classList.contains("cedit-editing")) return;
+    row.classList.add("cedit-editing");
+    pencil.style.display = "none";
+
+    const input = field.type === "textarea" ? Object.assign(document.createElement("textarea"), { rows: 3 }) : Object.assign(document.createElement("input"), { type: "text" });
+    input.className = "cedit-input";
+    input.value = ceditValues[ceditKey(field)] || "";
+    display.replaceWith(input);
+    input.focus();
+    if (input.setSelectionRange) input.setSelectionRange(input.value.length, input.value.length);
+
+    let inputTimer;
+    input.addEventListener("input", () => {
+      clearTimeout(inputTimer);
+      inputTimer = setTimeout(async () => {
+        const k = ceditKey(field);
+        ceditValues[k] = input.value;
+        ceditIndicator("loading");
+        ceditIndicator(await ceditSave(k, input.value));
+        ceditReload();
+      }, 600);
+    });
+
+    const commit = async () => {
+      clearTimeout(inputTimer);
+      const k = ceditKey(field);
+      const v = input.value;
+      if (v !== (ceditValues[k] || "")) {
+        ceditValues[k] = v;
+        ceditIndicator("loading");
+        ceditIndicator(await ceditSave(k, v));
+        ceditReload();
+      }
+      display.textContent = v || "—";
+      input.replaceWith(display);
+      pencil.style.display = "";
+      row.classList.remove("cedit-editing");
+    };
+
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", e => {
+      if (e.key === "Escape") { input.value = ceditValues[ceditKey(field)] || ""; input.blur(); }
+      if (e.key === "Enter" && field.type !== "textarea") { e.preventDefault(); input.blur(); }
+    });
+  };
+
+  display.addEventListener("click", activate);
+  pencil.addEventListener("click", activate);
+  return row;
+}
+
+function renderContentEditor() {
+  const container = document.getElementById("ceditContainer");
+  if (!container) return;
+  container.innerHTML = "";
+  ceditGroups.forEach(group => {
+    const card = document.createElement("div");
+    card.className = "cedit-card";
+    card.innerHTML = `<div class="cedit-card-head"><span>${group.icon}</span><strong>${group.title}</strong></div>`;
+    const body = document.createElement("div");
+    body.className = "cedit-card-body";
+    group.fields.forEach(f => body.appendChild(ceditBuildRow(f)));
+    card.appendChild(body);
+    container.appendChild(card);
+  });
+}
+
+async function loadContentEditor() {
+  const container = document.getElementById("ceditContainer");
+  if (container) container.innerHTML = `<div style="text-align:center;padding:2.5rem;color:var(--muted)">Cargando contenidos…</div>`;
+  try {
+    const r = await fetch("/api/content");
+    const d = await r.json();
+    ceditValues = d.ok ? d.data : {};
+  } catch { ceditValues = {}; }
+  renderContentEditor();
+}
+
+document.querySelectorAll(".cedit-lang").forEach(btn => {
+  btn.addEventListener("click", () => {
+    ceditLang = btn.dataset.lang;
+    document.querySelectorAll(".cedit-lang").forEach(b => b.classList.toggle("active", b === btn));
+    renderContentEditor();
+  });
+});
+
+document.getElementById("ceditRefresh")?.addEventListener("click", ceditReload);
 
 const locals = [
   { slug: "la-tapeta", name: "La Tapeta" },
@@ -123,9 +348,8 @@ const locals = [
   { slug: "viva-la-pepa", name: "Viva la Pepa" }
 ];
 
-const form = document.getElementById("contentForm");
 const localsForm = document.getElementById("localsForm");
-const status = document.getElementById("contentStatus");
+const localsStatus = document.getElementById("localsStatus");
 
 async function uploadFiles(fileList) {
   const formData = new FormData();
@@ -147,24 +371,6 @@ async function loadContent() {
   const res = await fetch("/api/content");
   const data = await res.json();
   const values = data.ok ? data.data : {};
-
-  form.innerHTML = "";
-  fields.forEach((f) => {
-    const wrapper = document.createElement("label");
-    const value = values[f.key] || "";
-    if (f.type === "input") {
-      wrapper.innerHTML = `
-        <span>${f.label}</span>
-        <input name="${f.key}" value="${value}" />
-      `;
-    } else {
-      wrapper.innerHTML = `
-        <span>${f.label}</span>
-        <textarea name="${f.key}" rows="2">${value}</textarea>
-      `;
-    }
-    form.appendChild(wrapper);
-  });
 
   if (localsForm) {
     localsForm.innerHTML = "";
@@ -334,40 +540,29 @@ async function loadContent() {
   }
 }
 
-async function saveContent(e) {
-  e.preventDefault();
-  status.textContent = "Guardando...";
-  const formData = new FormData(form);
-  const entries = Object.fromEntries(formData.entries());
-  const localsData = localsForm ? Object.fromEntries(new FormData(localsForm).entries()) : {};
-  const payload = { ...entries, ...localsData };
-
-  const keys = Object.keys(payload);
-  for (const key of keys) {
-    const value = payload[key] || "";
+async function saveLocals() {
+  if (!localsForm) return;
+  if (localsStatus) localsStatus.textContent = "Guardando…";
+  const payload = Object.fromEntries(new FormData(localsForm).entries());
+  for (const [key, value] of Object.entries(payload)) {
     const res = await authFetch("/api/content", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value })
+      body: JSON.stringify({ key, value: value || "" })
     });
-    const data = await res.json();
-    if (!data.ok) {
-      status.textContent = "Error guardando algunos campos.";
+    const d = await res.json();
+    if (!d.ok) {
+      if (localsStatus) localsStatus.textContent = "Error guardando.";
       return;
     }
   }
-
-  status.textContent = "Cambios guardados.";
-  setTimeout(() => (status.textContent = ""), 2000);
-
-  const preview = document.getElementById("previewFrame");
-  if (preview) preview.contentWindow.location.reload();
-  const previewLocals = document.getElementById("previewFrameLocals");
-  if (previewLocals) previewLocals.contentWindow.location.reload();
+  if (localsStatus) { localsStatus.textContent = "✓ Guardado"; setTimeout(() => (localsStatus.textContent = ""), 2000); }
+  document.getElementById("previewFrameLocals")?.contentWindow?.location.reload();
 }
 
-form.addEventListener("submit", saveContent);
+document.getElementById("localsSubmitBtn")?.addEventListener("click", saveLocals);
 loadContent();
+loadContentEditor();
 
 const leadsTable = document.getElementById("leadsTable");
 const leadQ = document.getElementById("leadQ");
@@ -452,54 +647,6 @@ leadExport.addEventListener("click", async (e) => {
 
 loadLeads();
 
-const heroUpload = document.getElementById("heroUpload");
-if (heroUpload) {
-  heroUpload.addEventListener("change", async () => {
-    if (!heroUpload.files.length) return;
-    const formData = new FormData();
-    formData.append("files", heroUpload.files[0]);
-    const res = await authFetch("/api/upload", { method: "POST", body: formData });
-    const data = await res.json();
-    if (data.ok && data.urls[0]) {
-      const input = form.querySelector("input[name='hero_image_url']");
-      if (input) input.value = data.urls[0];
-      status.textContent = "Imagen subida. Guarda cambios.";
-    } else {
-      status.textContent = "Error subiendo imagen.";
-    }
-  });
-}
-
-const galleryUpload = document.getElementById("galleryUpload");
-const galleryPreview = document.getElementById("galleryPreview");
-if (galleryUpload) {
-  galleryUpload.addEventListener("change", async () => {
-    if (!galleryUpload.files.length) return;
-    status.textContent = `Subiendo ${galleryUpload.files.length} foto(s)...`;
-    const urls = await uploadFiles(galleryUpload.files);
-    if (!urls.length) { status.textContent = "Error subiendo fotos."; return; }
-
-    const area = form.querySelector("textarea[name='gallery_images']");
-    if (area) {
-      const current = area.value.trim();
-      area.value = current ? current + "\n" + urls.join("\n") : urls.join("\n");
-      normalizeGallery(area);
-    }
-
-    if (galleryPreview) {
-      urls.forEach((url) => {
-        const img = document.createElement("img");
-        img.src = url;
-        img.style.cssText = "width:80px;height:80px;object-fit:cover;border-radius:8px;";
-        galleryPreview.appendChild(img);
-      });
-    }
-
-    status.textContent = `${urls.length} foto(s) añadidas. Guarda cambios.`;
-    galleryUpload.value = "";
-  });
-}
-
 const navToggle = document.getElementById("navToggle");
 const nav = document.querySelector(".nav");
 if (navToggle && nav) {
@@ -512,28 +659,6 @@ if (navToggle && nav) {
       nav.classList.remove("open");
       navToggle.setAttribute("aria-expanded", "false");
     });
-  });
-}
-
-const editModeToggle = document.getElementById("editModeToggle");
-const editModeToggleLocals = document.getElementById("editModeToggleLocals");
-const previewFrame = document.getElementById("previewFrame");
-const previewFrameLocals = document.getElementById("previewFrameLocals");
-
-function postEditMode(frame, enabled) {
-  if (!frame) return;
-  frame.contentWindow.postMessage({ type: "edit-mode", enabled }, "*");
-}
-
-if (editModeToggle) {
-  editModeToggle.addEventListener("change", () => {
-    postEditMode(previewFrame, editModeToggle.checked);
-  });
-}
-
-if (editModeToggleLocals) {
-  editModeToggleLocals.addEventListener("change", () => {
-    postEditMode(previewFrameLocals, editModeToggleLocals.checked);
   });
 }
 

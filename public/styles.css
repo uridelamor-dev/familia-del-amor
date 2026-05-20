@@ -441,6 +441,277 @@ body {
   background: #f7f2ea;
 }
 
+/* ── Content Editor (marketing > edición web) ───────────────────────────── */
+
+.cedit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.cedit-lang-bar {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.cedit-lang {
+  padding: 0.35rem 1rem;
+  border-radius: 20px;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1;
+}
+
+.cedit-lang.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.cedit-save-indicator {
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+}
+
+.cedit-save-indicator.show { opacity: 1; }
+.cedit-save-indicator.ok   { color: #2e7d32; }
+.cedit-save-indicator.err  { color: var(--accent); }
+.cedit-save-indicator.loading { color: var(--muted); opacity: 1; }
+
+.cedit-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+  background: var(--surface);
+}
+
+.cedit-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.9rem;
+}
+
+.cedit-card-head strong {
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 0.95rem;
+}
+
+.cedit-card-body {
+  padding: 0;
+}
+
+.cedit-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  min-height: 52px;
+  transition: background 0.12s;
+}
+
+.cedit-row:last-child {
+  border-bottom: none;
+}
+
+.cedit-label {
+  flex: 0 0 150px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  user-select: none;
+}
+
+/* Text rows */
+.cedit-text-row {
+  cursor: default;
+}
+
+.cedit-text-row:not(.cedit-editing):hover {
+  background: rgba(107, 31, 43, 0.03);
+}
+
+.cedit-display {
+  flex: 1;
+  font-size: 0.9rem;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  transition: background 0.12s;
+  word-break: break-word;
+  white-space: pre-wrap;
+  min-height: 1.4em;
+}
+
+.cedit-text-row:not(.cedit-editing):hover .cedit-display {
+  background: rgba(107, 31, 43, 0.06);
+}
+
+.cedit-pencil {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--accent);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.cedit-text-row:not(.cedit-editing):hover .cedit-pencil {
+  opacity: 1;
+}
+
+.cedit-pencil:hover {
+  background: rgba(107, 31, 43, 0.1);
+}
+
+.cedit-input {
+  flex: 1;
+  font-size: 0.9rem;
+  font-family: inherit;
+  border: 1.5px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.45rem 0.7rem;
+  background: #fff;
+  outline: none;
+  resize: vertical;
+  box-shadow: 0 0 0 3px rgba(107, 31, 43, 0.08);
+  transition: box-shadow 0.15s;
+}
+
+.cedit-input:focus {
+  box-shadow: 0 0 0 4px rgba(107, 31, 43, 0.14);
+}
+
+/* Image rows */
+.cedit-image-slot {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.cedit-img-thumb {
+  width: 72px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+}
+
+.cedit-img-empty {
+  width: 72px;
+  height: 44px;
+  border-radius: 7px;
+  border: 1.5px dashed var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.cedit-img-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.38rem 0.9rem;
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: #fff;
+  color: var(--text);
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.cedit-img-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cedit-img-link {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.cedit-img-link:hover {
+  color: var(--accent);
+}
+
+/* Gallery rows */
+.cedit-gallery-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.9rem 1.25rem;
+}
+
+.cedit-gallery-ta {
+  width: 100%;
+  font-size: 0.81rem;
+  font-family: "Courier New", monospace;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+  color: var(--text);
+}
+
+.cedit-gallery-ta:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(107, 31, 43, 0.08);
+}
+
+.cedit-gallery-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.38rem 0.9rem;
+  border: 1.5px dashed var(--accent);
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--accent);
+  background: rgba(107, 31, 43, 0.04);
+  transition: background 0.15s;
+}
+
+.cedit-gallery-upload:hover {
+  background: rgba(107, 31, 43, 0.1);
+}
+
 .edit-toggle {
   display: inline-flex;
   align-items: center;

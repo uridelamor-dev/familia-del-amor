@@ -64,32 +64,27 @@
 
       <section class="block panel-section" data-section="web">
         <div class="section-head">
-          <h2>Contenidos</h2>
-          <p>Editar textos en ES/CA/EN e imagen principal.</p>
+          <h2>Edición web</h2>
+          <p>Haz clic en cualquier campo para editarlo. Los cambios se guardan automáticamente.</p>
         </div>
-        <form id="contentForm" class="form"></form>
-        <div class="panel-preview">
-          <h3>Vista previa</h3>
-          <label class="edit-toggle">
-            <input type="checkbox" id="editModeToggle" />
-            <span>Modo selección</span>
-          </label>
+
+        <div class="cedit-toolbar">
+          <div class="cedit-lang-bar">
+            <button class="cedit-lang active" data-lang="es">🇪🇸 ES</button>
+            <button class="cedit-lang" data-lang="ca">🏴 CA</button>
+            <button class="cedit-lang" data-lang="en">🇬🇧 EN</button>
+          </div>
+          <span class="cedit-save-indicator" id="ceditSaveInd"></span>
+        </div>
+
+        <div id="ceditContainer"></div>
+
+        <div class="panel-preview" style="margin-top:2rem">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+            <h3 style="margin:0;font-size:1rem">Vista previa</h3>
+            <button class="btn ghost" id="ceditRefresh" style="font-size:0.82rem;padding:0.35rem 0.9rem">↻ Refrescar</button>
+          </div>
           <iframe id="previewFrame" src="index.html"></iframe>
-        </div>
-        <div class="panel-actions">
-          <label class="upload">
-            <input type="file" id="heroUpload" accept="image/*" />
-            <span>Subir imagen hero</span>
-          </label>
-          <label class="upload">
-            <input type="file" id="galleryUpload" accept="image/*" multiple />
-            <span>Subir fotos galería</span>
-          </label>
-        </div>
-        <div id="galleryPreview" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.5rem"></div>
-        <div class="panel-actions">
-          <button class="btn" form="contentForm" type="submit">Guardar cambios</button>
-          <span id="contentStatus" class="form-note"></span>
         </div>
       </section>
 
@@ -108,8 +103,8 @@
           <iframe id="previewFrameLocals" src="local.html?slug=la-tapeta"></iframe>
         </div>
         <div class="panel-actions">
-          <button class="btn" form="contentForm" type="submit">Guardar cambios</button>
-          <span class="form-note">Se guarda junto con contenidos.</span>
+          <button class="btn" id="localsSubmitBtn" type="button">Guardar locales</button>
+          <span class="form-note" id="localsStatus"></span>
         </div>
       </section>
 
