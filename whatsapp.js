@@ -129,14 +129,27 @@ async function notificarNerea(resumen, adjuntoUrl) {
   }
 }
 
-async function responderConIA(jid, mensajeUsuario, adjuntoUrl) {
+function getContextoFechaHora() {
+  const ahora = new Date();
+  return ahora.toLocaleString("es-ES", {
+    timeZone: "Europe/Madrid",
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
+    hour: "2-digit", minute: "2-digit"
+  });
+}
+
+async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) {
   const esPrimerMensaje = !conversaciones.has(jid);
   if (!conversaciones.has(jid)) conversaciones.set(jid, []);
   const historial = conversaciones.get(jid);
 
-  const contenidoUsuario = esPrimerMensaje
-    ? `[CONTEXTO INTERNO: Es el primer mensaje de este cliente. Salúdale cordialmente antes de responder a su consulta.] ${mensajeUsuario}${adjuntoUrl ? ` [Ha adjuntado un archivo: ${adjuntoUrl}]` : ""}`
-    : `${mensajeUsuario}${adjuntoUrl ? ` [Ha adjuntado un archivo: ${adjuntoUrl}]` : ""}`;
+  const partesFecha = `[CONTEXTO INTERNO: Fecha y hora actual en España: ${getContextoFechaHora()}.]`;
+  const partesRetraso = contextoRetraso ? ` ${contextoRetraso}` : "";
+  const partesPrimer = esPrimerMensaje ? " Salúdale cordialmente antes de responder a su consulta." : "";
+  const parteAdjunto = adjuntoUrl ? ` [Ha adjuntado un archivo: ${adjuntoUrl}]` : "";
+
+  const contenidoUsuario =
+    `${partesFecha}${partesRetraso}${partesPrimer} ${mensajeUsuario}${parteAdjunto}`;
 
   historial.push({ role: "user", content: contenidoUsuario });
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
@@ -263,12 +276,26 @@ async function connectToWhatsApp() {
       const textoFinal = texto.trim() || (tieneAdjunto ? "[Archivo adjunto sin texto]" : "");
       if (!textoFinal) continue;
 
+      const msgTimestamp = (msg.messageTimestamp || 0) * 1000;
+      const minutosRetraso = Math.round((Date.now() - msgTimestamp) / 60000);
+      let contextoRetraso = null;
+      if (minutosRetraso > 5) {
+        const fechaEnvio = new Date(msgTimestamp).toLocaleString("es-ES", {
+          timeZone: "Europe/Madrid",
+          weekday: "long", day: "numeric", month: "long",
+          hour: "2-digit", minute: "2-digit"
+        });
+        const horasRetraso = minutosRetraso >= 60 ? `${Math.round(minutosRetraso / 60)} horas` : `${minutosRetraso} minutos`;
+        contextoRetraso = `[CONTEXTO INTERNO: Este mensaje fue enviado el ${fechaEnvio} (hace ${horasRetraso}). El chatbot estuvo desconectado. Pide disculpas brevemente por no haber respondido antes. Si el cliente pedía reserva para una fecha que ya ha pasado, ofrécele alternativas amablemente.]`;
+        console.log(`⏰ Mensaje con retraso de ${horasRetraso} de ${jid}`);
+      }
+
       console.log(`💬 Mensaje de ${jid}: ${textoFinal}`);
 
       try {
         await sock.sendPresenceUpdate("composing", jid);
         const adjuntoInfo = tieneAdjunto ? `[adjunto recibido de ${jid}]` : null;
-        const respuesta = await responderConIA(jid, textoFinal, adjuntoInfo);
+        const respuesta = await responderConIA(jid, textoFinal, adjuntoInfo, contextoRetraso);
         await sock.sendMessage(jid, { text: respuesta });
         console.log(`📤 Respuesta enviada a ${jid}`);
       } catch (err) {
