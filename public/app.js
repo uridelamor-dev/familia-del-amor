@@ -392,18 +392,62 @@ function renderNewsAndFaq() {
 
 renderCompanies();
 
+const DEFAULT_GALLERY = [
+  "uploads/gallery/Cooperativa_208.jpg",
+  "uploads/gallery/CanMateu_STR04942.jpg",
+  "uploads/gallery/Cooperativa_181.jpg",
+  "uploads/gallery/CanMateu_STR05254.jpg",
+  "uploads/gallery/Cooperativa_75.jpg",
+  "uploads/gallery/CanMateu_STR04434.jpg",
+  "uploads/gallery/Cooperativa_226.jpg",
+  "uploads/gallery/CanMateu_STR04757.jpg",
+  "uploads/gallery/Cooperativa_1.jpg",
+  "uploads/gallery/CanMateu_STR05013.jpg",
+  "uploads/gallery/Cooperativa_24.jpg",
+  "uploads/gallery/CanMateu_STR04457.jpg",
+  "uploads/gallery/CanMateu_STR04479.jpg",
+  "uploads/gallery/CanMateu_STR05090.jpg",
+  "uploads/gallery/CanMateu_STR04427.jpg",
+];
+
 function renderGallery() {
   const grid = document.getElementById("galeriaGrid");
   if (!grid) return;
   const raw = contentCache.gallery_images || "";
-  const urls = raw.split("\n").map(s => s.trim()).filter(Boolean);
-  if (!urls.length) {
-    grid.innerHTML = "";
-    return;
-  }
-  grid.innerHTML = urls.map(url =>
-    `<img src="${url}" alt="Foto del local" loading="lazy" />`
+  const saved = raw.split("\n").map(s => s.trim()).filter(Boolean);
+  const urls = saved.length ? saved : DEFAULT_GALLERY;
+
+  const imgs = urls.map(url =>
+    `<div class="carousel-slide"><img src="${url}" alt="Foto del local" loading="lazy" /></div>`
   ).join("");
+
+  grid.innerHTML = `
+    <div class="carousel-track" id="carouselTrack">
+      ${imgs}${imgs}
+    </div>`;
+
+  startCarousel();
+}
+
+function startCarousel() {
+  const track = document.getElementById("carouselTrack");
+  if (!track) return;
+  let pos = 0;
+  const speed = 0.4;
+  let paused = false;
+  track.parentElement.addEventListener("mouseenter", () => paused = true);
+  track.parentElement.addEventListener("mouseleave", () => paused = false);
+
+  function step() {
+    if (!paused) {
+      pos += speed;
+      const half = track.scrollWidth / 2;
+      if (pos >= half) pos = 0;
+      track.style.transform = `translateX(-${pos}px)`;
+    }
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
 }
 
 // ── Selector de locales ───────────────────────────────────────────────────────
