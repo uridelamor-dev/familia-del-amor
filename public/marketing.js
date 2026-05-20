@@ -2,8 +2,15 @@ requireRole(["marketing", "direccion"]).then((user) => {
   if (!user) return;
   initWhatsAppStatus("waStatus");
   initGoogleStatus();
-  if (new URLSearchParams(location.search).get("google") === "connected") {
-    document.getElementById("googleMsg").textContent = "✅ Google Business conectado y reseñas importadas.";
+  const params = new URLSearchParams(location.search);
+  const googleParam = params.get("google");
+  const errParam = params.get("err");
+  const msgEl = document.getElementById("googleMsg");
+  if (googleParam === "connected") {
+    msgEl.textContent = "✅ Google Business conectado y reseñas importadas.";
+  } else if (googleParam === "token_ok") {
+    msgEl.style.color = "var(--accent)";
+    msgEl.textContent = "✅ Token guardado" + (errParam ? `. Aviso al importar reseñas: ${decodeURIComponent(errParam)}` : " (reseñas se importarán en breve).");
   }
 });
 
@@ -11,12 +18,15 @@ async function initGoogleStatus() {
   const el = document.getElementById("googleStatus");
   if (!el) return;
   try {
-    const res = await fetch("/api/reviews?limit=1");
+    const res = await fetch("/api/google/status");
     const data = await res.json();
-    if (data.ok && data.data.length) {
-      el.innerHTML = `✅ Conectado · ${data.data.length > 0 ? "Reseñas disponibles" : "Sin reseñas aún"}`;
+    if (data.connected && data.reviews_count > 0) {
+      const fecha = data.last_fetch ? new Date(data.last_fetch).toLocaleString("es") : "—";
+      el.innerHTML = `✅ Conectado · ${data.reviews_count} reseñas · Última sync: ${fecha}`;
+    } else if (data.connected) {
+      el.innerHTML = `✅ Token guardado · Sin reseñas aún. Pulsa "Actualizar reseñas ahora" para importarlas.`;
     } else {
-      el.innerHTML = `⚠️ No conectado o sin reseñas. Pulsa "Conectar Google Business".`;
+      el.innerHTML = `⚠️ No conectado. Pulsa "Conectar Google Business".`;
     }
   } catch {
     el.innerHTML = `⚠️ Error comprobando estado.`;

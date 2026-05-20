@@ -232,7 +232,8 @@ async function fetchAndStoreReviews() {
 
   const accRes = await fetch("https://mybusinessaccountmanagement.googleapis.com/v1/accounts", { headers: h });
   const accData = await accRes.json();
-  if (!accData.accounts?.length) throw new Error("Sin cuentas Google Business");
+  console.log("Google accounts response:", JSON.stringify(accData).slice(0, 500));
+  if (!accData.accounts?.length) throw new Error("Sin cuentas Google Business: " + JSON.stringify(accData).slice(0, 200));
 
   let total = 0;
   for (const account of accData.accounts) {
@@ -241,14 +242,17 @@ async function fetchAndStoreReviews() {
       { headers: h }
     );
     const locData = await locRes.json();
+    console.log("Google locations response:", JSON.stringify(locData).slice(0, 500));
     if (!locData.locations?.length) continue;
 
     for (const loc of locData.locations) {
+      // API v1 de reseñas (v4 está obsoleta)
       const revRes = await fetch(
-        `https://mybusiness.googleapis.com/v4/${account.name}/${loc.name}/reviews?pageSize=50`,
+        `https://mybusinessreviews.googleapis.com/v1/${loc.name}/reviews?pageSize=50`,
         { headers: h }
       );
       const revData = await revRes.json();
+      console.log(`Reviews for ${loc.name}:`, JSON.stringify(revData).slice(0, 300));
       if (!revData.reviews?.length) continue;
 
       for (const rev of revData.reviews) {
@@ -258,7 +262,7 @@ async function fetchAndStoreReviews() {
            ON CONFLICT(id) DO UPDATE SET author=excluded.author, rating=excluded.rating,
              text=excluded.text, fecha=excluded.fecha`,
           [
-            rev.reviewId,
+            rev.reviewId || rev.name,
             loc.title || loc.name,
             rev.reviewer?.displayName || "Cliente",
             STAR[rev.starRating] || 5,
@@ -326,8 +330,16 @@ app.get("/auth/google/callback", async (req, res) => {
     res.redirect("/marketing.html?google=connected");
   } catch (e) {
     console.error("fetchAndStoreReviews:", e.message);
-    res.redirect("/marketing.html?google=token_ok");
+    const msg = encodeURIComponent(e.message.slice(0, 200));
+    res.redirect(`/marketing.html?google=token_ok&err=${msg}`);
   }
+});
+
+app.get("/api/google/status", async (req, res) => {
+  const token = await getConfig("google_refresh_token");
+  const lastFetch = await getConfig("reviews_last_fetch");
+  const count = await dbGet("SELECT COUNT(*) as n FROM google_reviews");
+  res.json({ connected: !!token, reviews_count: count?.n || 0, last_fetch: lastFetch });
 });
 
 app.get("/api/reviews", async (req, res) => {
