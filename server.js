@@ -1106,6 +1106,18 @@ app.get("/api/campanas", requireAuth(["direccion", "marketing"]), (req, res) => 
   });
 });
 
+app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {
+  const { telefono, mensaje } = req.body;
+  if (!telefono || !mensaje) return res.status(400).json({ ok: false, error: "Faltan datos" });
+  if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
+  try {
+    await sendMensajeLibre(telefono, mensaje);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), (req, res) => {
   // Devuelve todos los mensajes con el nombre del lead si existe
   db.all(

@@ -128,21 +128,67 @@ function renderWaChat(telefono, contactData) {
   }).join("");
 
   panel.innerHTML = `
-    <div class="card" style="padding:0;overflow:hidden">
+    <div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column">
       <div style="padding:0.75rem 1rem;background:var(--primary);color:#fff;display:flex;align-items:center;gap:0.75rem">
         <div>
           <div style="font-weight:700">${escHtml(nombre)}</div>
           <div style="font-size:0.78rem;opacity:0.8">${telefono} · ${msgs.length} mensaje${msgs.length !== 1 ? "s" : ""}</div>
         </div>
       </div>
-      <div style="padding:1rem;display:flex;flex-direction:column;max-height:520px;overflow-y:auto" id="waChatScroll">
+      <div style="padding:1rem;display:flex;flex-direction:column;max-height:440px;overflow-y:auto" id="waChatScroll">
         ${bubbles}
+      </div>
+      <div style="padding:0.75rem 1rem;border-top:1px solid var(--border);display:flex;gap:0.5rem;align-items:flex-end">
+        <textarea id="waMsgInput" rows="2" placeholder="Escribe un mensaje..." style="flex:1;resize:none;border:1px solid var(--border);border-radius:8px;padding:0.5rem 0.75rem;font-size:0.88rem;font-family:inherit;line-height:1.4"></textarea>
+        <button id="waMsgSend" class="btn" style="padding:0.5rem 1rem;align-self:flex-end">Enviar</button>
       </div>
     </div>`;
 
-  // Scroll al final
   const scroll = panel.querySelector("#waChatScroll");
   if (scroll) scroll.scrollTop = scroll.scrollHeight;
+
+  const input = panel.querySelector("#waMsgInput");
+  const sendBtn = panel.querySelector("#waMsgSend");
+
+  const doSend = async () => {
+    const texto = input.value.trim();
+    if (!texto) return;
+    sendBtn.disabled = true;
+    sendBtn.textContent = "…";
+    try {
+      const res = await authFetch("/api/whatsapp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ telefono, mensaje: texto })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        input.value = "";
+        // Añadir burbuja manual al chat sin recargar toda la lista
+        const now = new Date().toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
+        const bubble = document.createElement("div");
+        bubble.style.cssText = "display:flex;justify-content:flex-end;margin-bottom:0.75rem";
+        bubble.innerHTML = `<div style="max-width:70%;background:var(--accent);color:#fff;border-radius:12px 12px 2px 12px;padding:0.5rem 0.75rem;font-size:0.88rem">
+          <div style="white-space:pre-wrap">${escHtml(texto)}</div>
+          <div style="font-size:0.68rem;opacity:0.75;margin-top:0.2rem;text-align:right">${now} · tú</div>
+        </div>`;
+        scroll.appendChild(bubble);
+        scroll.scrollTop = scroll.scrollHeight;
+      } else {
+        alert("Error: " + (data.error || "No se pudo enviar"));
+      }
+    } catch {
+      alert("Error de conexión al enviar el mensaje.");
+    }
+    sendBtn.disabled = false;
+    sendBtn.textContent = "Enviar";
+    input.focus();
+  };
+
+  sendBtn.addEventListener("click", doSend);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); }
+  });
 }
 
 function escHtml(str) {
