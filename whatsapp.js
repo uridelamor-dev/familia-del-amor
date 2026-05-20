@@ -114,6 +114,9 @@ async function sendNtfyAlert(title, body, priority = "urgent") {
 let onReserva = null;
 export function setOnReserva(fn) { onReserva = fn; }
 
+let onReady = null;
+export function setOnReady(fn) { onReady = fn; }
+
 let sock = null;
 let clientReady = false;
 let lastQR = null;
@@ -246,6 +249,7 @@ async function connectToWhatsApp() {
           "El chatbot de WhatsApp está de nuevo activo y listo para responder.",
           "default"
         );
+        if (onReady) setTimeout(() => onReady(), 2000);
       }
     }
   });
