@@ -545,6 +545,27 @@ app.post("/api/leads", (req, res) => {
   );
 });
 
+// Captura mínima de lead cuando llega una reserva
+function upsertLeadFromReserva({ nombre_reserva, telefono }) {
+  if (!telefono) return;
+  const nombre = (nombre_reserva || "").split(" ")[0] || nombre_reserva || "";
+  const apellidos = (nombre_reserva || "").split(" ").slice(1).join(" ");
+  const ahora = new Date().toISOString();
+  db.get(`SELECT id FROM leads WHERE telefono = ?`, [telefono], (err, row) => {
+    if (err) return;
+    if (row) {
+      // Lead ya existe — solo actualizamos la fecha de actividad
+      db.run(`UPDATE leads SET actualizado_en = ? WHERE id = ?`, [ahora, row.id]);
+    } else {
+      // Cliente nuevo — creamos lead básico
+      db.run(
+        `INSERT INTO leads (nombre, apellidos, telefono, fuente, creado_en) VALUES (?, ?, ?, 'reserva', ?)`,
+        [nombre, apellidos, telefono, ahora]
+      );
+    }
+  });
+}
+
 // SQL unificado: leads + clientes de reservas sin lead, mergeando por teléfono
 function sqlContactosUnificados(filtros = {}, params = []) {
   const { q, poblacion, genero, cumple_mes, local } = filtros;
@@ -692,6 +713,7 @@ app.post("/api/reservas", (req, res) => {
     function (err) {
       if (err) return res.status(500).json({ ok: false, error: "Error guardando reserva" });
       const reserva = { local, personas, dia, hora, telefono, nombre_reserva };
+      upsertLeadFromReserva({ nombre_reserva, telefono });
       console.log(`[Reserva] WhatsApp listo: ${isReady()} | Confirmación a ${telefono}`);
       if (isReady()) sendConfirmacionCliente(telefono, reserva);
       else guardarPendienteWA("confirmacion", telefono, reserva);
@@ -1121,6 +1143,7 @@ const server = app.listen(PORT, () => {
       function (err) {
         if (err) { console.error("Error guardando reserva WhatsApp:", err.message); return; }
         console.log(`📅 Reserva WhatsApp guardada (id ${this.lastID}): ${nombre_reserva} en ${local}`);
+        upsertLeadFromReserva({ nombre_reserva, telefono });
         db.get(`SELECT value FROM contents WHERE key = ?`, [`whatsapp_group_${local}`], (_, row) => {
           if (row?.value) {
             if (isReady()) sendNotificacionGrupo(row.value, reserva);
