@@ -283,9 +283,9 @@ async function connectToWhatsApp() {
           "El chatbot está de nuevo activo y listo para responder.",
           "default"
         );
-        if (onReady) setTimeout(() => onReady(), 2000);
       }
       hasEverConnected = true;
+      if (onReady) setTimeout(() => onReady(), 2000);
     }
   });
 

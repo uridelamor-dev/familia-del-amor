@@ -580,7 +580,7 @@ function upsertLeadFromReserva({ nombre_reserva, telefono }) {
     } else {
       // Cliente nuevo — creamos lead básico
       db.run(
-        `INSERT INTO leads (nombre, apellidos, telefono, fuente, creado_en) VALUES (?, ?, ?, 'reserva', ?)`,
+        `INSERT INTO leads (nombre, apellidos, telefono, nacimiento, poblacion, correo, premio, fuente, creado_en) VALUES (?, ?, ?, '', '', '', '', 'reserva', ?)`,
         [nombre, apellidos, telefono, ahora]
       );
     }
