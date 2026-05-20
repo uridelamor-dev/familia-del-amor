@@ -223,16 +223,10 @@
             <input type="hidden" id="nacimientoValue" name="nacimiento" />
           </label>
           <div class="form-row">
-            <label>
+            <label style="position:relative">
               <span>Población</span>
-              <input type="text" name="poblacion" autocomplete="address-level2" list="poblaciones" required />
-              <datalist id="poblaciones">
-                <option value="Blanes"></option><option value="Lloret de Mar"></option>
-                <option value="Girona"></option><option value="Tordera"></option>
-                <option value="Malgrat de Mar"></option><option value="Santa Susanna"></option>
-                <option value="Palafolls"></option><option value="Calella"></option>
-                <option value="Pineda de Mar"></option><option value="Hostalric"></option>
-              </datalist>
+              <input type="text" id="poblacionInput" name="poblacion" autocomplete="off" required />
+              <div id="poblacionSuggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:999;max-height:180px;overflow-y:auto"></div>
             </label>
             <label><span>Teléfono</span><input type="tel" name="telefono" autocomplete="tel" required /></label>
           </div>

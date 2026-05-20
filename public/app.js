@@ -559,7 +559,10 @@ function setupDatePicker() {
     picker.innerHTML = `
       <div class="dp-head">
         <button class="dp-nav" data-dir="-1" aria-label="Mes anterior">‹</button>
-        <div class="dp-title" id="dpTitle"></div>
+        <div class="dp-title" id="dpTitle">
+          <select id="dpMonthSel" style="font:inherit;background:transparent;border:none;cursor:pointer;font-weight:600"></select>
+          <select id="dpYearSel" style="font:inherit;background:transparent;border:none;cursor:pointer;font-weight:600"></select>
+        </div>
         <button class="dp-nav" data-dir="1" aria-label="Mes siguiente">›</button>
       </div>
       <div class="dp-grid" id="dpWeekdays"></div>
@@ -608,11 +611,35 @@ function setupDatePicker() {
     return date < today;
   }
 
+  const dpMonthSel = picker.querySelector("#dpMonthSel");
+  const dpYearSel = picker.querySelector("#dpYearSel");
+
+  function populateSelects() {
+    const locale = i18nDates[currentLang] || i18nDates.es;
+    dpMonthSel.innerHTML = locale.months.map((m, i) =>
+      `<option value="${i}">${m}</option>`).join("");
+    const nowYear = new Date().getFullYear();
+    const minYear = activeMode === "birth" ? 1920 : nowYear;
+    const maxYear = activeMode === "birth" ? nowYear : nowYear + 2;
+    let yearHtml = "";
+    for (let y = maxYear; y >= minYear; y--) yearHtml += `<option value="${y}">${y}</option>`;
+    dpYearSel.innerHTML = yearHtml;
+  }
+
+  dpMonthSel.addEventListener("change", () => {
+    current = new Date(current.getFullYear(), Number(dpMonthSel.value), 1);
+    renderCalendar();
+  });
+  dpYearSel.addEventListener("change", () => {
+    current = new Date(Number(dpYearSel.value), current.getMonth(), 1);
+    renderCalendar();
+  });
+
   function renderCalendar() {
     const year = current.getFullYear();
     const month = current.getMonth();
-    const locale = i18nDates[currentLang] || i18nDates.es;
-    dpTitle.textContent = `${locale.months[month]} ${year}`;
+    dpMonthSel.value = month;
+    dpYearSel.value = year;
 
     const first = new Date(year, month, 1);
     const startDay = (first.getDay() + 6) % 7;
@@ -662,6 +689,7 @@ function setupDatePicker() {
       selectedIso = formatIso(current);
     }
 
+    populateSelects();
     renderCalendar();
 
     const rect = input.getBoundingClientRect();
@@ -775,6 +803,43 @@ popup.addEventListener("click", (e) => {
     popup.classList.remove("show");
   }
 });
+
+// ── Autocomplete de población ──────────────────────────────────────────────
+const POBLACIONES = [
+  "Blanes","Lloret de Mar","Girona","Tordera","Malgrat de Mar",
+  "Santa Susanna","Palafolls","Calella","Pineda de Mar","Hostalric",
+  "Barcelona","Tossa de Mar","Sant Celoni","Arenys de Mar","Mataró",
+  "Badalona","Granollers","Vic","Figueres","Olot"
+];
+
+const poblacionInput = document.getElementById("poblacionInput");
+const poblacionSugg = document.getElementById("poblacionSuggestions");
+
+if (poblacionInput && poblacionSugg) {
+  poblacionInput.addEventListener("input", () => {
+    const q = poblacionInput.value.trim().toLowerCase();
+    if (q.length < 2) { poblacionSugg.style.display = "none"; return; }
+    const matches = POBLACIONES.filter(p => p.toLowerCase().startsWith(q));
+    if (!matches.length) { poblacionSugg.style.display = "none"; return; }
+    poblacionSugg.innerHTML = matches.map(p =>
+      `<div style="padding:8px 12px;cursor:pointer;font-size:0.9rem" class="sugg-item">${p}</div>`
+    ).join("");
+    poblacionSugg.style.display = "block";
+    poblacionSugg.querySelectorAll(".sugg-item").forEach(item => {
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        poblacionInput.value = item.textContent;
+        poblacionSugg.style.display = "none";
+      });
+    });
+  });
+  poblacionInput.addEventListener("blur", () => {
+    setTimeout(() => { poblacionSugg.style.display = "none"; }, 150);
+  });
+  poblacionInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") poblacionSugg.style.display = "none";
+  });
+}
 
 const leadForm = document.getElementById("leadForm");
 const leadMsg = document.getElementById("leadMsg");
