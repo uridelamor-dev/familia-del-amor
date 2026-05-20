@@ -389,6 +389,12 @@ function formatPhone(telefono) {
   return `${num}@s.whatsapp.net`;
 }
 
+export async function sendMensajeLibre(telefono, texto) {
+  if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
+  const jid = formatPhone(telefono);
+  await sock.sendMessage(jid, { text: texto });
+}
+
 export async function sendConfirmacionCliente(telefono, reserva) {
   if (!clientReady || !sock) return;
   try {

@@ -237,6 +237,15 @@
             <label><span>Teléfono</span><input type="tel" name="telefono" autocomplete="tel" required /></label>
           </div>
           <label><span>Correo</span><input type="email" name="correo" autocomplete="email" required /></label>
+          <label>
+            <span data-i18n="lead_gender">Género <span style="color:var(--muted);font-size:0.8em">(opcional)</span></span>
+            <select name="genero">
+              <option value="">Prefiero no decirlo</option>
+              <option value="hombre">Hombre</option>
+              <option value="mujer">Mujer</option>
+              <option value="otro">Otro</option>
+            </select>
+          </label>
           <label class="check">
             <input type="checkbox" required />
             <span>Acepto recibir comunicaciones y la política de privacidad.</span>

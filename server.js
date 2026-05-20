@@ -7,7 +7,7 @@ import multer from "multer";
 import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { initWhatsApp, sendConfirmacionCliente, sendNotificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendMensajeLibre, sendNotificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -168,6 +168,22 @@ db.serialize(() => {
     )
   `);
   db.run(`ALTER TABLE whatsapp_messages ADD COLUMN historico INTEGER DEFAULT 0`, () => {});
+  db.run(`ALTER TABLE leads ADD COLUMN genero TEXT`, () => {});
+  db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
+  db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS campanas_wa (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre TEXT NOT NULL,
+      segmento_json TEXT NOT NULL,
+      mensaje TEXT NOT NULL,
+      total_enviados INTEGER DEFAULT 0,
+      total_errores INTEGER DEFAULT 0,
+      creado_en TEXT DEFAULT (datetime('now')),
+      finalizado_en TEXT
+    )
+  `);
 
   db.run(`
     CREATE TABLE IF NOT EXISTS pending_whatsapp (
@@ -493,24 +509,23 @@ db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
 
 // Leads
 app.post("/api/leads", (req, res) => {
-  const { nombre, apellidos, nacimiento, poblacion, telefono, correo, fuente } = req.body;
+  const { nombre, apellidos, nacimiento, poblacion, telefono, correo, fuente, genero } = req.body;
   if (!nombre || !apellidos || !nacimiento || !poblacion || !telefono || !correo) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
   const premio = "10% de descuento";
   const ahora = new Date().toISOString();
   const fuenteVal = fuente || "web";
+  const generoVal = genero || null;
 
-  // Buscar lead existente por teléfono o correo
   db.get(
     `SELECT id FROM leads WHERE telefono = ? OR correo = ?`,
     [telefono, correo],
     (err, existing) => {
       if (existing) {
-        // Actualizar en lugar de duplicar
         db.run(
-          `UPDATE leads SET nombre=?, apellidos=?, nacimiento=?, poblacion=?, fuente=?, actualizado_en=? WHERE id=?`,
-          [nombre, apellidos, nacimiento, poblacion, fuenteVal, ahora, existing.id],
+          `UPDATE leads SET nombre=?, apellidos=?, nacimiento=?, poblacion=?, genero=COALESCE(?,genero), fuente=?, actualizado_en=? WHERE id=?`,
+          [nombre, apellidos, nacimiento, poblacion, generoVal, fuenteVal, ahora, existing.id],
           (err2) => {
             if (err2) return res.status(500).json({ ok: false, error: "Error actualizando lead" });
             return res.json({ ok: true, premio, actualizado: true });
@@ -518,8 +533,8 @@ app.post("/api/leads", (req, res) => {
         );
       } else {
         db.run(
-          `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuente, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuenteVal, ahora],
+          `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuente, genero, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuenteVal, generoVal, ahora],
           function (err2) {
             if (err2) return res.status(500).json({ ok: false, error: "Error guardando lead" });
             return res.json({ ok: true, premio });
@@ -929,6 +944,107 @@ app.post("/api/whatsapp/test", requireAuth(["direccion"]), async (req, res) => {
     nombre_reserva: "Prueba WhatsApp"
   });
   res.json({ ok: true, mensaje: `Mensaje de prueba enviado a ${telefono}` });
+});
+
+// ── CONTACTOS UNIFICADOS ──────────────────────────────────────────────
+app.get("/api/contactos", requireAuth(["direccion", "marketing"]), (req, res) => {
+  const { genero, poblacion, local, cumple_mes, q } = req.query;
+  // Base: leads con consentimiento explícito + clientes de reservas no duplicados
+  let sql = `
+    SELECT
+      l.id, l.nombre, l.apellidos, l.telefono, l.correo,
+      l.nacimiento, l.poblacion, l.genero, l.fuente, l.creado_en,
+      'lead' AS origen
+    FROM leads l
+    WHERE 1=1
+  `;
+  const params = [];
+  if (genero) { sql += ` AND l.genero = ?`; params.push(genero); }
+  if (poblacion) { sql += ` AND l.poblacion LIKE ?`; params.push(`%${poblacion}%`); }
+  if (cumple_mes) { sql += ` AND strftime('%m', l.nacimiento) = ?`; params.push(cumple_mes.padStart(2, "0")); }
+  if (q) {
+    sql += ` AND (l.nombre LIKE ? OR l.apellidos LIKE ? OR l.telefono LIKE ?)`;
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  if (local) {
+    sql += ` AND l.telefono IN (SELECT telefono FROM reservas WHERE local = ?)`;
+    params.push(local);
+  }
+  sql += ` ORDER BY l.creado_en DESC`;
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ ok: false, error: err.message });
+    res.json({ ok: true, data: rows, total: rows.length });
+  });
+});
+
+// ── CAMPAÑAS WHATSAPP ─────────────────────────────────────────────────
+app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), (req, res) => {
+  const { genero, poblacion, local, cumple_mes } = req.body;
+  let sql = `SELECT id, nombre, apellidos, telefono FROM leads WHERE 1=1`;
+  const params = [];
+  if (genero) { sql += ` AND genero = ?`; params.push(genero); }
+  if (poblacion) { sql += ` AND poblacion LIKE ?`; params.push(`%${poblacion}%`); }
+  if (cumple_mes) { sql += ` AND strftime('%m', nacimiento) = ?`; params.push(cumple_mes.padStart(2, "0")); }
+  if (local) { sql += ` AND telefono IN (SELECT telefono FROM reservas WHERE local = ?)`; params.push(local); }
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ ok: false });
+    res.json({ ok: true, total: rows.length, muestra: rows.slice(0, 5) });
+  });
+});
+
+app.post("/api/campanas/enviar", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const { nombre_campana, genero, poblacion, local, cumple_mes, mensaje } = req.body;
+  if (!mensaje || !nombre_campana) return res.status(400).json({ ok: false, error: "Faltan campos" });
+  if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
+
+  let sql = `SELECT nombre, apellidos, telefono FROM leads WHERE 1=1`;
+  const params = [];
+  if (genero) { sql += ` AND genero = ?`; params.push(genero); }
+  if (poblacion) { sql += ` AND poblacion LIKE ?`; params.push(`%${poblacion}%`); }
+  if (cumple_mes) { sql += ` AND strftime('%m', nacimiento) = ?`; params.push(cumple_mes.padStart(2, "0")); }
+  if (local) { sql += ` AND telefono IN (SELECT telefono FROM reservas WHERE local = ?)`; params.push(local); }
+
+  db.all(sql, params, async (err, contactos) => {
+    if (err) return res.status(500).json({ ok: false });
+    if (!contactos.length) return res.json({ ok: false, error: "No hay contactos con ese filtro" });
+
+    const segmento = { genero, poblacion, local, cumple_mes };
+    db.run(
+      `INSERT INTO campanas_wa (nombre, segmento_json, mensaje, total_enviados) VALUES (?, ?, ?, 0)`,
+      [nombre_campana, JSON.stringify(segmento), mensaje],
+      async function(e) {
+        if (e) return res.status(500).json({ ok: false });
+        const campanaId = this.lastID;
+        res.json({ ok: true, total: contactos.length, campana_id: campanaId });
+
+        // Enviar en background con delay
+        let enviados = 0, errores = 0;
+        for (const c of contactos) {
+          try {
+            const texto = mensaje
+              .replace(/\{nombre\}/gi, c.nombre)
+              .replace(/\{apellidos\}/gi, c.apellidos)
+              .replace(/\{nombre_completo\}/gi, `${c.nombre} ${c.apellidos}`);
+            await sendMensajeLibre(c.telefono, texto);
+            enviados++;
+          } catch (_) { errores++; }
+          await new Promise(r => setTimeout(r, 4000));
+        }
+        db.run(
+          `UPDATE campanas_wa SET total_enviados=?, total_errores=?, finalizado_en=datetime('now') WHERE id=?`,
+          [enviados, errores, campanaId]
+        );
+        console.log(`📣 Campaña "${nombre_campana}" completada: ${enviados} enviados, ${errores} errores`);
+      }
+    );
+  });
+});
+
+app.get("/api/campanas", requireAuth(["direccion", "marketing"]), (req, res) => {
+  db.all(`SELECT * FROM campanas_wa ORDER BY creado_en DESC LIMIT 50`, [], (err, rows) => {
+    if (err) return res.status(500).json({ ok: false });
+    res.json({ ok: true, data: rows || [] });
+  });
 });
 
 app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), (req, res) => {

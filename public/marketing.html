@@ -58,6 +58,7 @@
       <div class="panel-tabs">
         <button class="btn" data-tab="web">Edición web</button>
         <button class="btn ghost" data-tab="locals">Locales</button>
+        <button class="btn ghost" data-tab="campanas">Campañas WA</button>
         <button class="btn ghost" data-tab="clients">Clientes</button>
       </div>
 
@@ -109,6 +110,82 @@
         <div class="panel-actions">
           <button class="btn" form="contentForm" type="submit">Guardar cambios</button>
           <span class="form-note">Se guarda junto con contenidos.</span>
+        </div>
+      </section>
+
+      <section class="block panel-section" data-section="campanas">
+        <div class="section-head">
+          <h2>Campañas WhatsApp</h2>
+          <p>Envía mensajes segmentados a tus clientes.</p>
+        </div>
+
+        <div class="card form" style="margin-bottom:1rem">
+          <h3 style="margin:0 0 1rem;font-size:1rem">Nueva campaña</h3>
+          <label><span>Nombre de la campaña</span>
+            <input type="text" id="campNombre" placeholder="Ej: Día de la Madre mayo 2026" />
+          </label>
+          <div class="form-row">
+            <label><span>Género</span>
+              <select id="campGenero">
+                <option value="">Todos</option>
+                <option value="hombre">Hombre</option>
+                <option value="mujer">Mujer</option>
+                <option value="otro">Otro</option>
+              </select>
+            </label>
+            <label><span>Mes de cumpleaños</span>
+              <select id="campCumpleMes">
+                <option value="">Cualquiera</option>
+                <option value="1">Enero</option><option value="2">Febrero</option>
+                <option value="3">Marzo</option><option value="4">Abril</option>
+                <option value="5">Mayo</option><option value="6">Junio</option>
+                <option value="7">Julio</option><option value="8">Agosto</option>
+                <option value="9">Septiembre</option><option value="10">Octubre</option>
+                <option value="11">Noviembre</option><option value="12">Diciembre</option>
+              </select>
+            </label>
+          </div>
+          <div class="form-row">
+            <label><span>Población</span>
+              <input type="text" id="campPoblacion" placeholder="Blanes, Lloret... (vacío = todas)" />
+            </label>
+            <label><span>Han reservado en</span>
+              <select id="campLocal">
+                <option value="">Cualquier local</option>
+                <option>La Tapeta - Blanes</option>
+                <option>Cooperativa - Blanes</option>
+                <option>La Tapeta - Lloret de Mar</option>
+                <option>La Tapeta - Girona</option>
+                <option>Can Mateu - Tordera</option>
+                <option>La Tapa Ibérica - Tordera</option>
+                <option>Botiga d'en Mateu - Tordera</option>
+              </select>
+            </label>
+          </div>
+          <label><span>Mensaje <span style="color:var(--muted);font-size:0.8em">— usa {nombre}, {apellidos}, {nombre_completo}</span></span>
+            <textarea id="campMensaje" rows="5" placeholder="¡Hola {nombre}! 🎉 Este mes es tu mes..."></textarea>
+          </label>
+          <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.5rem">
+            <button class="btn ghost" id="campPreview" type="button">Vista previa</button>
+            <button class="btn" id="campEnviar" type="button">Enviar campaña</button>
+          </div>
+          <div id="campMsg" style="margin-top:0.75rem;font-size:0.9rem"></div>
+        </div>
+
+        <div class="card" style="padding:0;overflow:hidden">
+          <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+            <thead>
+              <tr style="background:var(--primary);color:#fff">
+                <th style="padding:8px 12px;text-align:left">Fecha</th>
+                <th style="padding:8px 12px;text-align:left">Campaña</th>
+                <th style="padding:8px 12px;text-align:left">Enviados</th>
+                <th style="padding:8px 12px;text-align:left">Errores</th>
+              </tr>
+            </thead>
+            <tbody id="campHistorial">
+              <tr><td colspan="4" style="padding:12px;color:#888">Cargando...</td></tr>
+            </tbody>
+          </table>
         </div>
       </section>
 

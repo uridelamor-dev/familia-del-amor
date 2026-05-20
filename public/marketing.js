@@ -548,9 +548,87 @@ function activateTab(name) {
   });
 }
 tabs.forEach((btn) => {
-  btn.addEventListener("click", () => activateTab(btn.getAttribute("data-tab")));
+  btn.addEventListener("click", () => {
+    const tab = btn.getAttribute("data-tab");
+    activateTab(tab);
+    if (tab === "campanas") initCampanas();
+  });
 });
 activateTab("web");
+
+// ── CAMPAÑAS WHATSAPP ─────────────────────────────────────────────────
+async function initCampanas() {
+  loadCampHistorial();
+}
+
+function getCampSegmento() {
+  return {
+    genero: document.getElementById("campGenero").value,
+    poblacion: document.getElementById("campPoblacion").value.trim(),
+    local: document.getElementById("campLocal").value,
+    cumple_mes: document.getElementById("campCumpleMes").value
+  };
+}
+
+async function loadCampHistorial() {
+  const tbody = document.getElementById("campHistorial");
+  if (!tbody) return;
+  const res = await authFetch("/api/campanas");
+  const data = await res.json();
+  if (!data.ok || !data.data.length) {
+    tbody.innerHTML = `<tr><td colspan="4" style="padding:12px;color:#888">Sin campañas enviadas aún.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = data.data.map((c, i) => {
+    const fecha = new Date(c.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" });
+    const bg = i % 2 === 0 ? "" : "background:var(--bg)";
+    const estado = c.finalizado_en ? `${c.total_enviados} ✅` : `⏳ enviando...`;
+    return `<tr style="${bg}">
+      <td style="padding:8px 12px;color:var(--muted);white-space:nowrap">${fecha}</td>
+      <td style="padding:8px 12px">${c.nombre}</td>
+      <td style="padding:8px 12px">${estado}</td>
+      <td style="padding:8px 12px;color:${c.total_errores > 0 ? '#c0392b' : 'var(--muted)'}">${c.total_errores}</td>
+    </tr>`;
+  }).join("");
+}
+
+document.getElementById("campPreview")?.addEventListener("click", async () => {
+  const msg = document.getElementById("campMsg");
+  msg.textContent = "Calculando...";
+  const segmento = getCampSegmento();
+  const res = await authFetch("/api/campanas/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(segmento)
+  });
+  const data = await res.json();
+  if (!data.ok) { msg.textContent = "Error al calcular."; return; }
+  const muestra = data.muestra.map(c => `${c.nombre} ${c.apellidos} (${c.telefono})`).join(", ");
+  msg.innerHTML = `<strong>${data.total} contacto${data.total !== 1 ? "s" : ""}</strong> recibirán este mensaje.<br><span style="color:var(--muted);font-size:0.8em">Muestra: ${muestra}${data.total > 5 ? "..." : ""}</span>`;
+});
+
+document.getElementById("campEnviar")?.addEventListener("click", async () => {
+  const nombre = document.getElementById("campNombre").value.trim();
+  const mensaje = document.getElementById("campMensaje").value.trim();
+  const msg = document.getElementById("campMsg");
+  if (!nombre) { msg.textContent = "Añade un nombre a la campaña."; return; }
+  if (!mensaje) { msg.textContent = "Escribe el mensaje."; return; }
+  if (!confirm(`¿Enviar esta campaña? Los mensajes se enviarán con 4s de delay entre cada uno.`)) return;
+  msg.textContent = "Iniciando envío...";
+  const segmento = getCampSegmento();
+  const res = await authFetch("/api/campanas/enviar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nombre_campana: nombre, mensaje, ...segmento })
+  });
+  const data = await res.json();
+  if (data.ok) {
+    msg.innerHTML = `✅ Campaña iniciada — <strong>${data.total} mensajes</strong> en cola. El envío continúa en segundo plano.`;
+    setTimeout(loadCampHistorial, 3000);
+  } else {
+    msg.textContent = `❌ Error: ${data.error}`;
+  }
+});
 
 window.addEventListener("message", (event) => {
   const msg = event.data;

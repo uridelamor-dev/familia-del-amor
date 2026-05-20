@@ -103,6 +103,7 @@ const i18n = {
     lead_city: "Población",
     lead_phone: "Teléfono",
     lead_email: "Correo",
+    lead_gender: "Género",
     lead_consent: "Acepto recibir comunicaciones y la política de privacidad.",
     lead_submit: "Recibir premio"
   },
@@ -155,6 +156,7 @@ const i18n = {
     lead_city: "Població",
     lead_phone: "Telèfon",
     lead_email: "Correu",
+    lead_gender: "Gènere",
     lead_consent: "Accepto rebre comunicacions i la política de privacitat.",
     lead_submit: "Rebre premi"
   },
@@ -207,6 +209,7 @@ const i18n = {
     lead_city: "City",
     lead_phone: "Phone",
     lead_email: "Email",
+    lead_gender: "Gender",
     lead_consent: "I accept communications and the privacy policy.",
     lead_submit: "Get reward"
   }
@@ -467,12 +470,13 @@ function startCarousel() {
 // ── Selector de locales ───────────────────────────────────────────────────────
 
 const RESERVA_LOCALS = [
-  { value: "La Tapeta - Blanes",           name: "La Tapeta",        sub: "Blanes" },
-  { value: "La Tapeta - Lloret",           name: "La Tapeta",        sub: "Lloret de Mar" },
-  { value: "La Tapeta - Girona",           name: "La Tapeta",        sub: "Girona" },
-  { value: "Cooperativa - Blanes",         name: "Cooperativa",      sub: "Blanes" },
-  { value: "Can Mateu - Tordera",          name: "Can Mateu",        sub: "Tordera" },
-  { value: "La Tapa Ibérica - Tordera",    name: "La Tapa Ibérica",  sub: "Tordera" },
+  { value: "La Tapeta - Blanes",           name: "La Tapeta",           sub: "Blanes" },
+  { value: "La Tapeta - Lloret",           name: "La Tapeta",           sub: "Lloret de Mar" },
+  { value: "La Tapeta - Girona",           name: "La Tapeta",           sub: "Girona" },
+  { value: "Cooperativa - Blanes",         name: "Cooperativa",         sub: "Blanes" },
+  { value: "Can Mateu - Tordera",          name: "Can Mateu",           sub: "Tordera" },
+  { value: "La Tapa Ibérica - Tordera",    name: "La Tapa Ibérica",     sub: "Tordera" },
+  { value: "Botiga d'en Mateu - Tordera",  name: "Botiga d'en Mateu",   sub: "Tordera" },
 ];
 
 function renderLocalPicker() {
