@@ -119,6 +119,7 @@ const i18n = {
     nav_reservations: "Reservar",
     nav_jobs: "Trabaja",
     nav_contact: "Contacto",
+    locales_see_all: "Ver todos los locales →",
     gallery_title: "Galería",
     gallery_sub: "Momentos y platos de nuestros locales.",
     reviews_title: "Lo que dicen nuestros clientes",
@@ -240,6 +241,7 @@ const i18n = {
     nav_locals: "Locals",
     nav_reservations: "Reservar",
     nav_jobs: "Treballa",
+    locales_see_all: "Veure tots els locals →",
     nav_contact: "Contacte",
     gallery_title: "Galeria",
     gallery_sub: "Moments i plats dels nostres locals.",
@@ -361,6 +363,7 @@ const i18n = {
     time_slot_dinner: "Dinner",
     nav_locals: "Venues",
     nav_reservations: "Book",
+    locales_see_all: "See all venues →",
     nav_jobs: "Jobs",
     nav_contact: "Contact",
     gallery_title: "Gallery",
@@ -615,6 +618,21 @@ function renderNewsAndFaq() {
 }
 
 renderCompanies();
+renderLocalesTeaser();
+
+function renderLocalesTeaser() {
+  const container = document.getElementById("localesTeaser");
+  if (!container) return;
+  container.innerHTML = companies
+    .map(
+      (c) =>
+        `<a href="local.html?slug=${c.slug}" class="locales-teaser-chip">
+          <img src="${c.logo}" alt="${c.name}" />
+          <span>${c.name}</span>
+        </a>`
+    )
+    .join("");
+}
 
 const DEFAULT_GALLERY = [
   "uploads/gallery/Cooperativa_208.jpg",
