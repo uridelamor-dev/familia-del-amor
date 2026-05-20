@@ -747,10 +747,19 @@ function markLeadSubmitted() {
 }
 
 if (shouldShowPopup()) {
-  setTimeout(() => {
+  let popupShown = false;
+  function showPopupOnce() {
+    if (popupShown) return;
+    popupShown = true;
     popup.classList.add("show");
-  }, 1200);
-  markPopupSeen();
+    markPopupSeen();
+    window.removeEventListener("scroll", onScroll);
+  }
+  function onScroll() {
+    if (window.scrollY > 300) showPopupOnce();
+  }
+  window.addEventListener("scroll", onScroll);
+  setTimeout(showPopupOnce, 12000);
 }
 
 closePopup.addEventListener("click", () => {
