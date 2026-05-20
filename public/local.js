@@ -5,9 +5,9 @@ const locals = {
     type: "Bar de tapas",
     slug: "la-tapeta",
     locations: [
-      "Blanes · Calle Muralla 21",
-      "Lloret · Calle Sant Pere 84",
-      "Girona · Avinguda Sant Francesc 7"
+      { dir: "Blanes · Carrer de la Muralla 21", tel: "972916341" },
+      { dir: "Lloret · Carrer Sant Pere 84", tel: "872266645" },
+      { dir: "Girona · Avinguda Sant Francesc 7", tel: "872071246" }
     ],
     instagram: "https://www.instagram.com/la.tapeta/",
     menuPdf: "",
@@ -22,7 +22,9 @@ const locals = {
     desc: "Tradición local y cocina con identidad.",
     type: "Restaurante",
     slug: "cooperativa",
-    locations: ["Blanes · Calle Muralla 28"],
+    locations: [
+      { dir: "Blanes · Carrer de la Muralla 28", tel: "972916341" }
+    ],
     instagram: "https://www.instagram.com/lacooperativa1920/",
     menuPdf: "",
     gallery: []
@@ -32,7 +34,9 @@ const locals = {
     desc: "Cocina auténtica en el corazón de Tordera.",
     type: "Restaurante",
     slug: "can-mateu",
-    locations: ["Tordera · Plaça Concòrdia 7"],
+    locations: [
+      { dir: "Tordera · Plaça de la Concòrdia 5", tel: "930317169" }
+    ],
     instagram: "https://www.instagram.com/can_mateu/",
     menuPdf: "",
     gallery: []
@@ -42,7 +46,9 @@ const locals = {
     desc: "Sabores ibéricos y tapeo con carácter.",
     type: "Bar de tapas",
     slug: "la-tapa-iberica",
-    locations: ["Tordera · Camí Ral 6"],
+    locations: [
+      { dir: "Tordera · Camí Ral 6", tel: "937643371" }
+    ],
     instagram: "https://www.instagram.com/la.tapa.iberica/",
     menuPdf: "",
     gallery: [
@@ -56,7 +62,9 @@ const locals = {
     desc: "Tienda de embutidos y jamonería.",
     type: "Tienda",
     slug: "botiga-d-en-mateu",
-    locations: ["Tordera · Camí Ral 8"],
+    locations: [
+      { dir: "Tordera · Camí Ral 6", tel: "930317169" }
+    ],
     instagram: "https://www.instagram.com/labotiga_tordera/",
     menuPdf: "",
     gallery: []
@@ -66,7 +74,9 @@ const locals = {
     desc: "Fiestas al aire libre y eventos memorables.",
     type: "Eventos",
     slug: "viva-la-pepa",
-    locations: ["Eventos itinerantes"],
+    locations: [
+      { dir: "Eventos itinerantes", tel: null }
+    ],
     instagram: "https://www.instagram.com/lapepafest/",
     menuPdf: "",
     gallery: []
@@ -218,7 +228,12 @@ function renderLocal() {
   document.getElementById("localDesc").textContent = data.desc;
 
   const locList = document.getElementById("localLocations");
-  locList.innerHTML = data.locations.map((l) => `<li>${l}</li>`).join("");
+  locList.innerHTML = data.locations.map((l) => {
+    if (typeof l === "string") return `<li>${l}</li>`;
+    const telFmt = l.tel ? l.tel.replace(/(\d{3})(\d{3})(\d{3})/, "$1 $2 $3") : null;
+    const telLink = telFmt ? ` · <a href="tel:+34${l.tel}" style="color:var(--accent);font-weight:600;text-decoration:none;white-space:nowrap">📞 ${telFmt}</a>` : "";
+    return `<li>${l.dir}${telLink}</li>`;
+  }).join("");
   const curiosity = document.getElementById("localCuriosity");
   curiosity.textContent = t.coming_curiosity;
 

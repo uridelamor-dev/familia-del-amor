@@ -100,6 +100,22 @@
       </section>
 
 
+      <!-- HISTORIA -->
+      <section id="historia" class="block">
+        <div class="section-head">
+          <h2 data-i18n="history_title">Historia y valores</h2>
+          <p data-i18n="history_sub">Nuestra manera de hacer las cosas, desde dentro.</p>
+        </div>
+        <div class="card" style="line-height:1.75;font-size:1rem" id="historiaText">
+          <p data-i18n="history_p1">Desde hace tres generaciones, nuestra familia ha vivido de una misma vocación: cuidar de la gente.</p>
+          <p data-i18n="history_p2">Todo empezó con nuestros abuelos, Esteban y Herminia, que después de trabajar durante más de una década en Alemania regresaron a casa para abrir una pequeña tienda de barrio. De esas de toda la vida, donde había un poco de todo, pero sobre todo había cercanía, confianza y una atención al cliente que dejó huella en mucha gente.</p>
+          <p data-i18n="history_p3">Nuestro padre, Mateo, creció entre mostradores, madrugones y viajes a Mercabarna. Con solo 18 años empezó su propio camino en el mundo de la alimentación y la hostelería, llegando a construir una red de tiendas especializadas y restaurantes que durante años formaron parte del día a día de muchas familias. Como tantos otros negocios familiares, la crisis nos obligó a reinventarnos y empezar de nuevo.</p>
+          <p data-i18n="history_p4">Fue entonces cuando decidimos centrarnos plenamente en la restauración, manteniendo intacta la esencia con la que habíamos crecido: ofrecer un producto de calidad, un trato cercano y espacios donde la gente se sintiera como en casa.</p>
+          <p data-i18n="history_p5">Hoy, la tercera generación —Mateo y Pili junto a sus hijos Nerea, Uriel y Boris— seguimos trabajando unidos en cada proyecto, gestionando restaurantes, una tienda especializada y nuestra marca de eventos, Viva la Pepa.</p>
+          <p data-i18n="history_p6" style="font-style:italic;color:var(--muted)">Más allá de los locales o los negocios, lo que realmente nos mueve sigue siendo lo mismo que movía a nuestros abuelos hace tantos años: crear buenos momentos alrededor de una mesa, cuidar cada detalle y conseguir que quien venga una vez, siempre quiera volver.</p>
+        </div>
+      </section>
+
       <!-- RESERVAS -->
       <section id="reservas" class="block reservas-highlight">
         <div class="section-head">
@@ -147,6 +163,14 @@
           <button class="btn" type="submit" data-i18n="reservation_submit">Confirmar reserva</button>
           <p class="form-note" id="reservaMsg" role="status" aria-live="polite"></p>
         </form>
+
+        <!-- Estado de éxito post-reserva -->
+        <div id="reservaSuccess" class="reserva-success hidden">
+          <div class="reserva-success-icon">✅</div>
+          <h3 id="reservaSuccessTitle">Reserva confirmada</h3>
+          <p id="reservaSuccessDetails" class="reserva-success-details"></p>
+          <button class="btn ghost" id="reservaSuccessBack" data-i18n="reservation_success_back">Hacer otra reserva</button>
+        </div>
       </section>
 
       <!-- EVENTOS -->
@@ -156,6 +180,17 @@
           <p data-i18n="events_text" data-content-key="events_text">Cumpleaños, comuniones, eventos de empresa… lo organizamos todo.</p>
         </div>
         <a class="btn" href="#reservas" data-i18n="events_cta">Pedir información</a>
+      </section>
+
+      <!-- FRANJA DESCUENTO (siempre visible) -->
+      <section class="block descuento-strip">
+        <div class="descuento-inner">
+          <div>
+            <strong data-i18n="strip_title">¿Aún no tienes tu 10%?</strong>
+            <p data-i18n="strip_sub">Déjanos tus datos y te enviamos tu descuento ahora.</p>
+          </div>
+          <button class="btn" id="reopenLead" data-i18n="strip_cta">Consigue tu descuento</button>
+        </div>
       </section>
 
       <!-- TRABAJA -->

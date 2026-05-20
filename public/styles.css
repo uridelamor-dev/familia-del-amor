@@ -318,7 +318,7 @@ body {
   content: '';
   position: absolute;
   inset: 0;
-  background: rgba(107, 31, 43, 0.72);
+  background: rgba(107, 31, 43, 0.38);
 }
 
 .card-logo img {
@@ -813,6 +813,8 @@ body {
   overflow-x: auto;
   padding-bottom: 0.35rem;
   scrollbar-width: none;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
 }
 
 .local-grid::-webkit-scrollbar {
@@ -831,6 +833,7 @@ body {
   font-family: inherit;
   line-height: 1.25;
   flex-shrink: 0;
+  scroll-snap-align: start;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
 
@@ -1409,4 +1412,116 @@ body {
 @media (max-width: 700px) {
   .dir-sidebar { width: 150px; }
   .dir-nav-btn { font-size: 0.75rem; padding: 0.45rem 0.6rem; }
+}
+
+/* ── Confirmación de reserva ─────────────────────────────────────────────── */
+
+.reserva-success {
+  text-align: center;
+  padding: 2.5rem 1.5rem;
+  animation: successIn 0.4s ease;
+}
+
+@keyframes successIn {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.reserva-success-icon {
+  font-size: 3.5rem;
+  margin-bottom: 0.75rem;
+  line-height: 1;
+}
+
+.reserva-success h3 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--primary);
+  margin: 0 0 0.5rem;
+}
+
+.reserva-success-details {
+  font-size: 1rem;
+  color: var(--muted);
+  margin: 0 0 1.5rem;
+  line-height: 1.5;
+}
+
+/* ── Franja de descuento (siempre visible) ───────────────────────────────── */
+
+.descuento-strip {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+  border-radius: 24px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.descuento-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.descuento-strip strong {
+  color: #fff;
+  font-size: 1.15rem;
+  display: block;
+  font-family: "Playfair Display", Georgia, serif;
+}
+
+.descuento-strip p {
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0.3rem 0 0;
+  font-size: 0.88rem;
+}
+
+.descuento-strip .btn {
+  background: #fff;
+  color: var(--accent);
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+/* ── Mejoras responsive móvil ────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .block {
+    padding: 2rem 1.1rem;
+  }
+
+  .hero {
+    padding-top: 3rem;
+    padding-bottom: 2.2rem;
+  }
+
+  .hero h1 {
+    font-size: clamp(2rem, 9vw, 2.8rem);
+  }
+
+  .section-head h2 {
+    font-size: clamp(1.4rem, 5vw, 2rem);
+  }
+
+  .reservas-highlight {
+    border-radius: 16px;
+  }
+
+  .eventos-cta {
+    border-radius: 16px;
+  }
+
+  .descuento-strip {
+    border-radius: 16px;
+  }
+
+  .popup-card {
+    padding: 1.75rem 1.1rem 1.25rem;
+    margin-top: 0.5rem;
+  }
+
+  .reserva-success h3 {
+    font-size: 1.35rem;
+  }
 }

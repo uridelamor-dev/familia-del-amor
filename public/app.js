@@ -136,7 +136,19 @@ const i18n = {
     err_generic: "No se pudo completar. Inténtalo de nuevo.",
     success_lead: "¡Descuento activado!",
     success_hr: "Candidatura enviada. Gracias.",
-    err_hr: "No se pudo enviar. Inténtalo de nuevo."
+    err_hr: "No se pudo enviar. Inténtalo de nuevo.",
+    reservation_success_back: "Hacer otra reserva",
+    strip_title: "¿Aún no tienes tu 10%?",
+    strip_sub: "Déjanos tus datos y te enviamos tu descuento ahora.",
+    strip_cta: "Consigue tu descuento",
+    history_title: "Historia y valores",
+    history_sub: "Nuestra manera de hacer las cosas, desde dentro.",
+    history_p1: "Desde hace tres generaciones, nuestra familia ha vivido de una misma vocación: cuidar de la gente.",
+    history_p2: "Todo empezó con nuestros abuelos, Esteban y Herminia, que después de trabajar durante más de una década en Alemania regresaron a casa para abrir una pequeña tienda de barrio. De esas de toda la vida, donde había un poco de todo, pero sobre todo había cercanía, confianza y una atención al cliente que dejó huella en mucha gente.",
+    history_p3: "Nuestro padre, Mateo, creció entre mostradores, madrugones y viajes a Mercabarna. Con solo 18 años empezó su propio camino en el mundo de la alimentación y la hostelería, llegando a construir una red de tiendas especializadas y restaurantes que durante años formaron parte del día a día de muchas familias. Como tantos otros negocios familiares, la crisis nos obligó a reinventarnos y empezar de nuevo.",
+    history_p4: "Fue entonces cuando decidimos centrarnos plenamente en la restauración, manteniendo intacta la esencia con la que habíamos crecido: ofrecer un producto de calidad, un trato cercano y espacios donde la gente se sintiera como en casa.",
+    history_p5: "Hoy, la tercera generación —Mateo y Pili junto a sus hijos Nerea, Uriel y Boris— seguimos trabajando unidos en cada proyecto, gestionando restaurantes, una tienda especializada y nuestra marca de eventos, Viva la Pepa.",
+    history_p6: "Más allá de los locales o los negocios, lo que realmente nos mueve sigue siendo lo mismo que movía a nuestros abuelos hace tantos años: crear buenos momentos alrededor de una mesa, cuidar cada detalle y conseguir que quien venga una vez, siempre quiera volver."
   },
   ca: {
     hero_eyebrow: "Grup familiar d'empreses",
@@ -220,7 +232,19 @@ const i18n = {
     err_generic: "No s'ha pogut completar. Torna-ho a intentar.",
     success_lead: "¡Descompte activat!",
     success_hr: "Candidatura enviada. Gràcies.",
-    err_hr: "No s'ha pogut enviar. Torna-ho a intentar."
+    err_hr: "No s'ha pogut enviar. Torna-ho a intentar.",
+    reservation_success_back: "Fer una altra reserva",
+    strip_title: "Encara no tens el teu 10%?",
+    strip_sub: "Deixa'ns les teves dades i t'enviem el teu descompte ara.",
+    strip_cta: "Aconsegueix el teu descompte",
+    history_title: "Història i valors",
+    history_sub: "La nostra manera de fer les coses, des de dins.",
+    history_p1: "Des de fa tres generacions, la nostra família ha viscut d'una mateixa vocació: cuidar de la gent.",
+    history_p2: "Tot va començar amb els nostres avis, Esteban i Herminia, que després de treballar durant més d'una dècada a Alemanya van tornar a casa per obrir una petita botiga de barri. D'aquelles de tota la vida, on hi havia una mica de tot, però sobretot hi havia proximitat, confiança i una atenció al client que va deixar empremta en molta gent.",
+    history_p3: "El nostre pare, Mateo, va créixer entre mostrador, matinades i viatges a Mercabarna. Amb només 18 anys va iniciar el seu propi camí en el món de l'alimentació i l'hostaleria, fins a construir una xarxa de botigues especialitzades i restaurants que durant anys van formar part del dia a dia de moltes famílies. Com tants altres negocis familiars, la crisi ens va obligar a reinventar-nos i tornar a començar.",
+    history_p4: "Va ser aleshores quan vam decidir centrar-nos plenament en la restauració, mantenint intacta l'essència amb la qual havíem crescut: oferir un producte de qualitat, un tracte proper i espais on la gent se sentís com a casa.",
+    history_p5: "Avui, la tercera generació —Mateo i Pili amb els seus fills Nerea, Uriel i Boris— continuem treballant units en cada projecte, gestionant restaurants, una botiga especialitzada i la nostra marca d'esdeveniments, Viva la Pepa.",
+    history_p6: "Més enllà dels locals o els negocis, el que realment ens mou continua sent el mateix que movia els nostres avis fa tants anys: crear bons moments al voltant d'una taula, cuidar cada detall i aconseguir que qui vingui un cop, sempre vulgui tornar."
   },
   en: {
     hero_eyebrow: "Family business group",
@@ -304,7 +328,19 @@ const i18n = {
     err_generic: "Could not complete. Please try again.",
     success_lead: "Discount activated!",
     success_hr: "Application sent. Thank you.",
-    err_hr: "Could not send. Please try again."
+    err_hr: "Could not send. Please try again.",
+    reservation_success_back: "Make another reservation",
+    strip_title: "Don't have your 10% yet?",
+    strip_sub: "Leave your details and we'll send your discount right away.",
+    strip_cta: "Get my discount",
+    history_title: "History and values",
+    history_sub: "Our way of doing things, from the inside.",
+    history_p1: "For three generations, our family has lived by a single vocation: caring for people.",
+    history_p2: "It all started with our grandparents, Esteban and Herminia, who after working for more than a decade in Germany came back home to open a small neighbourhood shop. The old-fashioned kind, where you could find a bit of everything, but above all there was warmth, trust, and a way of looking after customers that left a lasting impression on many people.",
+    history_p3: "Our father, Mateo, grew up among shop counters, early mornings and trips to the market. At just 18 he began his own path in the world of food and hospitality, eventually building a network of specialised shops and restaurants that for years were part of the daily life of many families. Like so many family businesses, the financial crisis forced us to reinvent ourselves and start again.",
+    history_p4: "That was when we decided to focus entirely on hospitality, keeping intact the essence we had grown up with: offering quality products, a personal touch, and spaces where people felt at home.",
+    history_p5: "Today, the third generation — Mateo and Pili together with their children Nerea, Uriel and Boris — continue working side by side on every project, running restaurants, a specialised shop and our events brand, Viva la Pepa.",
+    history_p6: "Beyond the venues and the businesses, what truly drives us is still the same thing that drove our grandparents all those years ago: creating great moments around a table, caring about every detail, and making sure that whoever comes once always wants to come back."
   }
 };
 
@@ -1004,7 +1040,20 @@ reservaForm.addEventListener("submit", async (e) => {
   });
   const data = await res.json();
   if (data.ok) {
-    reservaMsg.textContent = `✓ ${t.success_reserva} · ${payload.local} · ${payload.dia} ${t.reservation_at} ${payload.hora}`;
+    const successEl = document.getElementById("reservaSuccess");
+    const successTitle = document.getElementById("reservaSuccessTitle");
+    const successDetails = document.getElementById("reservaSuccessDetails");
+    if (successEl) {
+      if (successTitle) successTitle.textContent = t.success_reserva;
+      if (successDetails) successDetails.textContent = `${payload.local} · ${payload.dia} ${t.reservation_at} ${payload.hora} · ${payload.personas} ${t.reservation_people_unit}`;
+      reservaForm.classList.add("hidden");
+      successEl.classList.remove("hidden");
+      successEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      setTimeout(() => {
+        successEl.classList.add("hidden");
+        reservaForm.classList.remove("hidden");
+      }, 8000);
+    }
     reservaForm.reset();
     document.getElementById("localGrid").querySelectorAll(".local-chip").forEach((b) => b.classList.remove("selected"));
     document.getElementById("localValue").value = "";
@@ -1019,6 +1068,15 @@ reservaForm.addEventListener("submit", async (e) => {
 const savedLang = localStorage.getItem(LANG_KEY) || "es";
 setLang(savedLang);
 loadContent();
+
+document.getElementById("reservaSuccessBack")?.addEventListener("click", () => {
+  document.getElementById("reservaSuccess").classList.add("hidden");
+  document.getElementById("reservaForm").classList.remove("hidden");
+});
+
+document.getElementById("reopenLead")?.addEventListener("click", () => {
+  document.getElementById("leadPopup").classList.add("show");
+});
 
 async function loadJobs() {
   const list = document.getElementById("jobsList");
