@@ -93,6 +93,23 @@ const conversaciones = new Map();
 const MAX_HISTORIAL = 10;
 const NEREA_JID = "34622065974@s.whatsapp.net";
 const SILVIA_JID = "34645619572@s.whatsapp.net";
+const NTFY_TOPIC = "familia-del-amor-wa-7k9m2p";
+
+async function sendNtfyAlert(title, body, priority = "urgent") {
+  try {
+    await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
+      method: "POST",
+      headers: {
+        "Title": title,
+        "Priority": priority,
+        "Tags": priority === "urgent" ? "warning,robot" : "white_check_mark,robot"
+      },
+      body
+    });
+  } catch (e) {
+    console.error("ntfy error:", e.message);
+  }
+}
 
 let onReserva = null;
 export function setOnReserva(fn) { onReserva = fn; }
@@ -200,11 +217,23 @@ async function connectToWhatsApp() {
         await connectToWhatsApp();
       } else {
         console.log("❌ Sesión cerrada. Borra auth_info_baileys/ y reinicia para volver a vincular.");
+        await sendNtfyAlert(
+          "⚠️ WhatsApp desconectado",
+          "La sesión de WhatsApp se ha cerrado. Entra en el panel de encargados y escanea el QR para volver a conectar."
+        );
       }
     } else if (connection === "open") {
+      const wasDisconnected = !clientReady;
       clientReady = true;
       lastQR = null;
       console.log("✅ WhatsApp conectado y listo");
+      if (wasDisconnected) {
+        await sendNtfyAlert(
+          "✅ WhatsApp reconectado",
+          "El chatbot de WhatsApp está de nuevo activo y listo para responder.",
+          "default"
+        );
+      }
     }
   });
 
