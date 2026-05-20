@@ -172,6 +172,24 @@
               <div class="section-head"><h2>WhatsApp</h2><p>Estado de la conexión.</p></div>
               <div class="card" id="waStatus">Comprobando conexión...</div>
             </section>
+            <section class="block">
+              <div class="section-head"><h2>Historial de conversaciones</h2><p>Últimos 100 mensajes respondidos por el chatbot.</p></div>
+              <div class="card" id="waMensajes" style="padding:0;overflow:hidden">
+                <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+                  <thead>
+                    <tr style="background:var(--primary);color:#fff">
+                      <th style="padding:8px 12px;text-align:left">Fecha</th>
+                      <th style="padding:8px 12px;text-align:left">Teléfono</th>
+                      <th style="padding:8px 12px;text-align:left">Mensaje</th>
+                      <th style="padding:8px 12px;text-align:left">Respuesta</th>
+                    </tr>
+                  </thead>
+                  <tbody id="waMensajesBody">
+                    <tr><td colspan="4" style="padding:12px;color:#888">Cargando...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </div>
 
           <!-- Iframe para paneles externos -->

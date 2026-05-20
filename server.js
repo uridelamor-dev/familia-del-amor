@@ -7,7 +7,7 @@ import multer from "multer";
 import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { initWhatsApp, sendConfirmacionCliente, sendNotificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendNotificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -152,6 +152,17 @@ db.serialize(() => {
       rating INTEGER,
       text TEXT,
       fecha TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS whatsapp_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      jid TEXT NOT NULL,
+      telefono TEXT NOT NULL,
+      mensaje TEXT NOT NULL,
+      respuesta TEXT NOT NULL,
       creado_en TEXT DEFAULT (datetime('now'))
     )
   `);
@@ -918,6 +929,18 @@ app.post("/api/whatsapp/test", requireAuth(["direccion"]), async (req, res) => {
   res.json({ ok: true, mensaje: `Mensaje de prueba enviado a ${telefono}` });
 });
 
+app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), (req, res) => {
+  const limit = parseInt(req.query.limit) || 100;
+  db.all(
+    `SELECT * FROM whatsapp_messages ORDER BY creado_en DESC LIMIT ?`,
+    [limit],
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false });
+      res.json({ ok: true, data: rows || [] });
+    }
+  );
+});
+
 app.get("/", (req, res) => res.redirect("/login.html"));
 
 const shutdown = (signal) => {
@@ -983,5 +1006,15 @@ const server = app.listen(PORT, () => {
   });
 
   setOnReady(procesarPendientesWA);
+
+  setOnMessage(({ jid, texto, respuesta }) => {
+    const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+    db.run(
+      `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta) VALUES (?, ?, ?, ?)`,
+      [jid, telefono, texto, respuesta],
+      (err) => { if (err) console.error("Error guardando mensaje WA:", err.message); }
+    );
+  });
+
   initWhatsApp();
 });

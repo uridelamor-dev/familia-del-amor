@@ -34,10 +34,35 @@ function initSidebar() {
         inlineViews[view]?.classList.remove("hidden");
         if (view === "kpi") loadKpi();
         if (view === "usuarios") loadUsers();
-        if (view === "whatsapp") initWhatsAppStatus("waStatus");
+        if (view === "whatsapp") { initWhatsAppStatus("waStatus"); loadWaMensajes(); }
       }
     });
   });
+}
+
+async function loadWaMensajes() {
+  const tbody = document.getElementById("waMensajesBody");
+  if (!tbody) return;
+  try {
+    const res = await authFetch("/api/whatsapp/mensajes");
+    const data = await res.json();
+    if (!data.ok || !data.data.length) {
+      tbody.innerHTML = `<tr><td colspan="4" style="padding:12px;color:#888">Sin mensajes registrados aún.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = data.data.map((m, i) => {
+      const fecha = new Date(m.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
+      const bg = i % 2 === 0 ? "" : "background:var(--bg)";
+      return `<tr style="${bg}">
+        <td style="padding:8px 12px;white-space:nowrap;color:var(--muted)">${fecha}</td>
+        <td style="padding:8px 12px;white-space:nowrap">${m.telefono}</td>
+        <td style="padding:8px 12px;max-width:280px">${m.mensaje}</td>
+        <td style="padding:8px 12px;max-width:320px;color:var(--muted)">${m.respuesta}</td>
+      </tr>`;
+    }).join("");
+  } catch {
+    tbody.innerHTML = `<tr><td colspan="4" style="padding:12px;color:#888">Error cargando historial.</td></tr>`;
+  }
 }
 
 async function initWhatsAppStatus(elId) {

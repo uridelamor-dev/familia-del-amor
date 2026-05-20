@@ -117,6 +117,9 @@ export function setOnReserva(fn) { onReserva = fn; }
 let onReady = null;
 export function setOnReady(fn) { onReady = fn; }
 
+let onMessage = null;
+export function setOnMessage(fn) { onMessage = fn; }
+
 let sock = null;
 let clientReady = false;
 let lastQR = null;
@@ -302,6 +305,7 @@ async function connectToWhatsApp() {
         const respuesta = await responderConIA(jid, textoFinal, adjuntoInfo, contextoRetraso);
         await sock.sendMessage(jid, { text: respuesta });
         console.log(`📤 Respuesta enviada a ${jid}`);
+        if (onMessage) onMessage({ jid, texto: textoFinal, respuesta });
       } catch (err) {
         console.error("Error respondiendo:", err.message);
       }
