@@ -3,6 +3,17 @@ import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
 import pino from "pino";
 import Anthropic from "@anthropic-ai/sdk";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Guardar credenciales junto a la BD (ruta persistente en Replit)
+const DB_DIR = process.env.DB_PATH
+  ? path.dirname(process.env.DB_PATH)
+  : __dirname;
+const AUTH_DIR = path.join(DB_DIR, "baileys_auth");
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -164,7 +175,8 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl) {
 }
 
 async function connectToWhatsApp() {
-  const { state, saveCreds } = await useMultiFileAuthState("auth_info_baileys");
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  console.log(`[WhatsApp] Auth dir: ${AUTH_DIR}`);
 
   sock = makeWASocket({
     auth: state,
