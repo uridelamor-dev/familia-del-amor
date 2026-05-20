@@ -401,35 +401,29 @@ async function loadLeads() {
     return;
   }
 
-  const rows = data.data
-    .map(
-      (r) => `
-      <tr>
-        <td>${r.nombre} ${r.apellidos}</td>
-        <td>${r.correo}</td>
-        <td>${r.telefono}</td>
-        <td>${r.poblacion}</td>
-        <td>${r.creado_en.slice(0, 10)}</td>
-      </tr>
-    `
-    )
-    .join("");
+  const origenBadge = o => o === "lead"
+    ? `<span style="font-size:0.72rem;background:#e8f5e9;color:#2e7d32;border-radius:4px;padding:1px 5px">lead</span>`
+    : `<span style="font-size:0.72rem;background:#e3f2fd;color:#1565c0;border-radius:4px;padding:1px 5px">reserva</span>`;
+
+  const rows = data.data.map(r => `
+    <tr>
+      <td>${r.nombre} ${r.apellidos || ""} ${origenBadge(r.origen)}</td>
+      <td>${r.correo || "—"}</td>
+      <td>${r.telefono}</td>
+      <td>${r.poblacion || "—"}</td>
+      <td>${(r.ultima_actividad || "").slice(0, 10)}</td>
+    </tr>`).join("");
 
   leadsTable.innerHTML = `
     <table class="table">
       <thead>
         <tr>
-          <th>Nombre</th>
-          <th>Correo</th>
-          <th>Teléfono</th>
-          <th>Población</th>
-          <th>Fecha</th>
+          <th>Nombre</th><th>Correo</th><th>Teléfono</th><th>Población</th><th>Última actividad</th>
         </tr>
       </thead>
-      <tbody>
-        ${rows}
-      </tbody>
+      <tbody>${rows}</tbody>
     </table>
+    <p style="padding:8px 12px;font-size:0.8rem;color:var(--muted)">${data.data.length} contacto${data.data.length !== 1 ? "s" : ""} en total</p>
   `;
 }
 

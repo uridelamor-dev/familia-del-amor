@@ -545,19 +545,66 @@ app.post("/api/leads", (req, res) => {
   );
 });
 
-app.get("/api/leads", requireAuth(["direccion", "marketing"]), (req, res) => {
-  const { q, poblacion, from, to } = req.query;
-  const where = [];
-  const params = [];
+// SQL unificado: leads + clientes de reservas sin lead, mergeando por teléfono
+function sqlContactosUnificados(filtros = {}, params = []) {
+  const { q, poblacion, genero, cumple_mes, local } = filtros;
+
+  let localFilter = local
+    ? `AND c.telefono IN (SELECT telefono FROM reservas WHERE local = ?)`
+    : "";
+  if (local) params.push(local);
+
+  let sql = `
+    SELECT
+      c.nombre, c.apellidos, c.telefono, c.correo,
+      c.nacimiento, c.poblacion, c.genero, c.origen,
+      c.ultima_actividad
+    FROM (
+      -- Clientes con lead (datos completos)
+      SELECT
+        l.nombre, l.apellidos, l.telefono, l.correo,
+        l.nacimiento, l.poblacion, l.genero,
+        'lead' AS origen,
+        COALESCE(l.actualizado_en, l.creado_en) AS ultima_actividad
+      FROM leads l
+
+      UNION
+
+      -- Clientes solo de reservas (sin lead)
+      SELECT
+        r.nombre_reserva AS nombre,
+        '' AS apellidos,
+        r.telefono,
+        '' AS correo,
+        NULL AS nacimiento,
+        NULL AS poblacion,
+        NULL AS genero,
+        'reserva' AS origen,
+        MAX(r.creado_en) AS ultima_actividad
+      FROM reservas r
+      WHERE r.telefono NOT IN (SELECT telefono FROM leads WHERE telefono IS NOT NULL)
+      GROUP BY r.telefono
+    ) c
+    WHERE 1=1
+    ${localFilter}
+  `;
+
   if (q) {
-    where.push(`(nombre LIKE ? OR apellidos LIKE ? OR correo LIKE ? OR telefono LIKE ?)`);
+    sql += ` AND (c.nombre LIKE ? OR c.apellidos LIKE ? OR c.telefono LIKE ? OR c.correo LIKE ?)`;
     const like = `%${q}%`;
     params.push(like, like, like, like);
   }
-  if (poblacion) { where.push(`poblacion LIKE ?`); params.push(`%${poblacion}%`); }
-  if (from) { where.push(`creado_en >= ?`); params.push(from); }
-  if (to) { where.push(`creado_en <= ?`); params.push(to); }
-  const sql = `SELECT * FROM leads ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY creado_en DESC`;
+  if (poblacion) { sql += ` AND c.poblacion LIKE ?`; params.push(`%${poblacion}%`); }
+  if (genero) { sql += ` AND c.genero = ?`; params.push(genero); }
+  if (cumple_mes) { sql += ` AND strftime('%m', c.nacimiento) = ?`; params.push(cumple_mes.padStart(2, "0")); }
+
+  sql += ` ORDER BY c.ultima_actividad DESC`;
+  return sql;
+}
+
+app.get("/api/leads", requireAuth(["direccion", "marketing"]), (req, res) => {
+  const params = [];
+  const sql = sqlContactosUnificados(req.query, params);
   db.all(sql, params, (err, rows) => {
     if (err) return res.status(500).json({ ok: false, error: "Error leyendo leads" });
     res.json({ ok: true, data: rows });
@@ -946,31 +993,9 @@ app.post("/api/whatsapp/test", requireAuth(["direccion"]), async (req, res) => {
   res.json({ ok: true, mensaje: `Mensaje de prueba enviado a ${telefono}` });
 });
 
-// ── CONTACTOS UNIFICADOS ──────────────────────────────────────────────
 app.get("/api/contactos", requireAuth(["direccion", "marketing"]), (req, res) => {
-  const { genero, poblacion, local, cumple_mes, q } = req.query;
-  // Base: leads con consentimiento explícito + clientes de reservas no duplicados
-  let sql = `
-    SELECT
-      l.id, l.nombre, l.apellidos, l.telefono, l.correo,
-      l.nacimiento, l.poblacion, l.genero, l.fuente, l.creado_en,
-      'lead' AS origen
-    FROM leads l
-    WHERE 1=1
-  `;
   const params = [];
-  if (genero) { sql += ` AND l.genero = ?`; params.push(genero); }
-  if (poblacion) { sql += ` AND l.poblacion LIKE ?`; params.push(`%${poblacion}%`); }
-  if (cumple_mes) { sql += ` AND strftime('%m', l.nacimiento) = ?`; params.push(cumple_mes.padStart(2, "0")); }
-  if (q) {
-    sql += ` AND (l.nombre LIKE ? OR l.apellidos LIKE ? OR l.telefono LIKE ?)`;
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
-  }
-  if (local) {
-    sql += ` AND l.telefono IN (SELECT telefono FROM reservas WHERE local = ?)`;
-    params.push(local);
-  }
-  sql += ` ORDER BY l.creado_en DESC`;
+  const sql = sqlContactosUnificados(req.query, params);
   db.all(sql, params, (err, rows) => {
     if (err) return res.status(500).json({ ok: false, error: err.message });
     res.json({ ok: true, data: rows, total: rows.length });
@@ -979,13 +1004,8 @@ app.get("/api/contactos", requireAuth(["direccion", "marketing"]), (req, res) =>
 
 // ── CAMPAÑAS WHATSAPP ─────────────────────────────────────────────────
 app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), (req, res) => {
-  const { genero, poblacion, local, cumple_mes } = req.body;
-  let sql = `SELECT id, nombre, apellidos, telefono FROM leads WHERE 1=1`;
   const params = [];
-  if (genero) { sql += ` AND genero = ?`; params.push(genero); }
-  if (poblacion) { sql += ` AND poblacion LIKE ?`; params.push(`%${poblacion}%`); }
-  if (cumple_mes) { sql += ` AND strftime('%m', nacimiento) = ?`; params.push(cumple_mes.padStart(2, "0")); }
-  if (local) { sql += ` AND telefono IN (SELECT telefono FROM reservas WHERE local = ?)`; params.push(local); }
+  const sql = sqlContactosUnificados(req.body, params);
   db.all(sql, params, (err, rows) => {
     if (err) return res.status(500).json({ ok: false });
     res.json({ ok: true, total: rows.length, muestra: rows.slice(0, 5) });
@@ -993,16 +1013,12 @@ app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), (req,
 });
 
 app.post("/api/campanas/enviar", requireAuth(["direccion", "marketing"]), async (req, res) => {
-  const { nombre_campana, genero, poblacion, local, cumple_mes, mensaje } = req.body;
+  const { nombre_campana, mensaje } = req.body;
   if (!mensaje || !nombre_campana) return res.status(400).json({ ok: false, error: "Faltan campos" });
   if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
 
-  let sql = `SELECT nombre, apellidos, telefono FROM leads WHERE 1=1`;
   const params = [];
-  if (genero) { sql += ` AND genero = ?`; params.push(genero); }
-  if (poblacion) { sql += ` AND poblacion LIKE ?`; params.push(`%${poblacion}%`); }
-  if (cumple_mes) { sql += ` AND strftime('%m', nacimiento) = ?`; params.push(cumple_mes.padStart(2, "0")); }
-  if (local) { sql += ` AND telefono IN (SELECT telefono FROM reservas WHERE local = ?)`; params.push(local); }
+  const sql = sqlContactosUnificados(req.body, params);
 
   db.all(sql, params, async (err, contactos) => {
     if (err) return res.status(500).json({ ok: false });
