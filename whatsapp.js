@@ -123,6 +123,8 @@ export function setOnMessage(fn) { onMessage = fn; }
 let sock = null;
 let clientReady = false;
 let lastQR = null;
+let reconnectAttempts = 0;
+let hasEverConnected = false;
 
 async function notificarNerea(resumen, adjuntoUrl) {
   if (!clientReady || !sock) return;
@@ -210,14 +212,33 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
   }
 }
 
+function scheduleReconnect() {
+  const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
+  reconnectAttempts++;
+  console.log(`[WhatsApp] Reconectando en ${delay / 1000}s (intento ${reconnectAttempts})...`);
+  setTimeout(() => {
+    connectToWhatsApp().catch(e => console.error("Error reconectando:", e.message));
+  }, delay);
+}
+
 async function connectToWhatsApp() {
+  // Limpiar socket viejo antes de crear uno nuevo
+  if (sock) {
+    try { sock.ws?.close(); } catch (_) {}
+    sock = null;
+  }
+
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  console.log(`[WhatsApp] Auth dir: ${AUTH_DIR}`);
+  console.log(`[WhatsApp] Auth dir: ${AUTH_DIR} | Intento ${reconnectAttempts + 1}`);
 
   sock = makeWASocket({
     auth: state,
     printQRInTerminal: true,
-    logger: pino({ level: "silent" })
+    logger: pino({ level: "silent" }),
+    keepAliveIntervalMs: 25000,   // ping cada 25s para mantener viva la conexión TCP
+    connectTimeoutMs: 60000,
+    browser: ["Familia del Amor Chatbot", "Chrome", "1.0.0"],
+    getMessage: async () => ({ conversation: "" })
   });
 
   sock.ev.on("connection.update", async (update) => {
@@ -230,30 +251,40 @@ async function connectToWhatsApp() {
     if (connection === "close") {
       clientReady = false;
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      const shouldReconnect = code !== DisconnectReason.loggedOut;
-      console.log("Conexión cerrada, código:", code, "— reconectando:", shouldReconnect);
-      if (shouldReconnect) {
-        await connectToWhatsApp();
-      } else {
-        console.log("❌ Sesión cerrada. Borra auth_info_baileys/ y reinicia para volver a vincular.");
+      const reason = lastDisconnect?.error?.message || "desconocido";
+      console.log(`[WhatsApp] Conexión cerrada — código: ${code} | razón: ${reason}`);
+
+      if (code === DisconnectReason.loggedOut) {
+        console.log("❌ Sesión cerrada (loggedOut). Escanea el QR para reconectar.");
         await sendNtfyAlert(
-          "⚠️ WhatsApp desconectado",
-          "La sesión de WhatsApp se ha cerrado. Entra en el panel de encargados y escanea el QR para volver a conectar."
+          "⚠️ WhatsApp desconectado — acción requerida",
+          "La sesión se ha cerrado. Entra en Dirección → WhatsApp y escanea el QR para volver a conectar."
+        );
+        return; // No reconectar automáticamente: se necesita nuevo QR
+      }
+
+      if (reconnectAttempts >= 4) {
+        await sendNtfyAlert(
+          "⚠️ WhatsApp con problemas de conexión",
+          `Lleva ${reconnectAttempts} intentos fallidos. Código: ${code}. Revisa Replit.`
         );
       }
+
+      scheduleReconnect();
     } else if (connection === "open") {
-      const wasDisconnected = !clientReady;
+      reconnectAttempts = 0;
       clientReady = true;
       lastQR = null;
       console.log("✅ WhatsApp conectado y listo");
-      if (wasDisconnected) {
+      if (hasEverConnected) {
         await sendNtfyAlert(
           "✅ WhatsApp reconectado",
-          "El chatbot de WhatsApp está de nuevo activo y listo para responder.",
+          "El chatbot está de nuevo activo y listo para responder.",
           "default"
         );
         if (onReady) setTimeout(() => onReady(), 2000);
       }
+      hasEverConnected = true;
     }
   });
 
