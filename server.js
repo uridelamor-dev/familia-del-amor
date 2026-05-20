@@ -357,6 +357,13 @@ app.get("/api/reviews", async (req, res) => {
 });
 
 app.post("/api/reviews/refresh", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const lastFetch = await getConfig("reviews_last_fetch");
+  if (lastFetch) {
+    const minsAgo = (Date.now() - new Date(lastFetch).getTime()) / 60000;
+    if (minsAgo < 30) {
+      return res.status(429).json({ ok: false, error: `Espera ${Math.ceil(30 - minsAgo)} min antes de volver a actualizar.` });
+    }
+  }
   try {
     await fetchAndStoreReviews();
     res.json({ ok: true });
