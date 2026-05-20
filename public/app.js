@@ -799,6 +799,44 @@ async function loadJobs() {
 
 loadJobs();
 
+async function loadReviews() {
+  const container = document.getElementById("resenasList");
+  if (!container) return;
+  try {
+    const res = await fetch("/api/reviews?limit=6&rating=4");
+    const data = await res.json();
+    if (!data.ok || !data.data.length) return;
+
+    const stars = (n) => "⭐".repeat(Math.min(n, 5));
+    const REVIEWS_KEY = "reviews_shown_idx";
+    const REVIEWS_DATE_KEY = "reviews_shown_date";
+    const today = new Date().toDateString();
+    const lastDate = localStorage.getItem(REVIEWS_DATE_KEY);
+    let startIdx = parseInt(localStorage.getItem(REVIEWS_KEY) || "0");
+    if (lastDate !== today) {
+      startIdx = (startIdx + 3) % data.data.length;
+      localStorage.setItem(REVIEWS_KEY, startIdx);
+      localStorage.setItem(REVIEWS_DATE_KEY, today);
+    }
+
+    const visible = [];
+    for (let i = 0; i < 3 && i < data.data.length; i++) {
+      visible.push(data.data[(startIdx + i) % data.data.length]);
+    }
+
+    container.innerHTML = visible.map((r) => `
+      <div class="card resena">
+        <div style="font-size:0.85rem;margin-bottom:0.4rem">${stars(r.rating)}</div>
+        <p>"${r.text}"</p>
+        <strong>— ${r.author}${r.location_name ? `, ${r.location_name}` : ""}</strong>
+      </div>`).join("");
+  } catch {
+    // mantiene las reseñas hardcodeadas si falla
+  }
+}
+
+loadReviews();
+
 const hrForm = document.getElementById("hrForm");
 const hrMsg = document.getElementById("hrMsg");
 if (hrForm) {

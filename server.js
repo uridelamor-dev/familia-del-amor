@@ -136,6 +136,26 @@ db.serialize(() => {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS config (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS google_reviews (
+      id TEXT PRIMARY KEY,
+      location_name TEXT,
+      author TEXT,
+      rating INTEGER,
+      text TEXT,
+      fecha TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // Seed de usuarios por defecto si la tabla está vacía
   db.get("SELECT COUNT(*) as total FROM users", async (err, row) => {
     if (err || row.total > 0) return;
@@ -158,7 +178,182 @@ db.serialize(() => {
   });
 });
 
-// Middleware de autenticación
+// ── Google Business OAuth ─────────────────────────────────────────────────
+
+const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const GOOGLE_REDIRECT_URI  = (process.env.BASE_URL || "https://familia-del-amor.replit.app") + "/auth/google/callback";
+
+function dbGet(sql, params = []) {
+  return new Promise((res, rej) => db.get(sql, params, (e, r) => e ? rej(e) : res(r)));
+}
+function dbAll(sql, params = []) {
+  return new Promise((res, rej) => db.all(sql, params, (e, r) => e ? rej(e) : res(r)));
+}
+function dbRun(sql, params = []) {
+  return new Promise((res, rej) => db.run(sql, params, (e) => e ? rej(e) : res()));
+}
+
+async function getConfig(key) {
+  const row = await dbGet("SELECT value FROM config WHERE key = ?", [key]);
+  return row ? row.value : null;
+}
+async function setConfig(key, value) {
+  await dbRun(
+    `INSERT INTO config (key, value, updated_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+    [key, String(value)]
+  );
+}
+
+async function getGoogleAccessToken() {
+  const refresh = await getConfig("google_refresh_token");
+  if (!refresh) throw new Error("No hay refresh token de Google guardado");
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      refresh_token: refresh,
+      grant_type: "refresh_token"
+    })
+  });
+  const d = await r.json();
+  if (!d.access_token) throw new Error("Token inválido: " + JSON.stringify(d));
+  return d.access_token;
+}
+
+const STAR = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 };
+
+async function fetchAndStoreReviews() {
+  const token = await getGoogleAccessToken();
+  const h = { Authorization: `Bearer ${token}` };
+
+  const accRes = await fetch("https://mybusinessaccountmanagement.googleapis.com/v1/accounts", { headers: h });
+  const accData = await accRes.json();
+  if (!accData.accounts?.length) throw new Error("Sin cuentas Google Business");
+
+  let total = 0;
+  for (const account of accData.accounts) {
+    const locRes = await fetch(
+      `https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title`,
+      { headers: h }
+    );
+    const locData = await locRes.json();
+    if (!locData.locations?.length) continue;
+
+    for (const loc of locData.locations) {
+      const revRes = await fetch(
+        `https://mybusiness.googleapis.com/v4/${account.name}/${loc.name}/reviews?pageSize=50`,
+        { headers: h }
+      );
+      const revData = await revRes.json();
+      if (!revData.reviews?.length) continue;
+
+      for (const rev of revData.reviews) {
+        await dbRun(
+          `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET author=excluded.author, rating=excluded.rating,
+             text=excluded.text, fecha=excluded.fecha`,
+          [
+            rev.reviewId,
+            loc.title || loc.name,
+            rev.reviewer?.displayName || "Cliente",
+            STAR[rev.starRating] || 5,
+            rev.comment || "",
+            rev.createTime || new Date().toISOString()
+          ]
+        );
+        total++;
+      }
+    }
+  }
+  await setConfig("reviews_last_fetch", new Date().toISOString());
+  console.log(`Google reviews: ${total} reseñas guardadas`);
+}
+
+// Refresco diario de reseñas (cada 24h)
+setInterval(async () => {
+  try {
+    const refresh = await getConfig("google_refresh_token");
+    if (refresh) await fetchAndStoreReviews();
+  } catch (e) {
+    console.error("Auto-refresh reviews:", e.message);
+  }
+}, 24 * 60 * 60 * 1000);
+
+// OAuth routes (sin requireAuth en callback para que Google pueda redirigir)
+app.get("/auth/google", (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(500).send("GOOGLE_CLIENT_ID no configurado");
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
+  url.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", "https://www.googleapis.com/auth/business.manage");
+  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("prompt", "consent");
+  res.redirect(url.toString());
+});
+
+app.get("/auth/google/callback", async (req, res) => {
+  const { code, error } = req.query;
+  if (error) return res.send(`Error Google OAuth: ${error}`);
+  if (!code) return res.send("Sin código de autorización");
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      redirect_uri: GOOGLE_REDIRECT_URI,
+      grant_type: "authorization_code"
+    })
+  });
+  const tokenData = await tokenRes.json();
+
+  if (!tokenData.refresh_token) {
+    return res.send("Error: Google no devolvió refresh_token. Ve a <a href='https://myaccount.google.com/permissions'>https://myaccount.google.com/permissions</a>, revoca el acceso a esta app y vuelve a intentarlo.");
+  }
+
+  await setConfig("google_refresh_token", tokenData.refresh_token);
+
+  try {
+    await fetchAndStoreReviews();
+    res.redirect("/marketing.html?google=connected");
+  } catch (e) {
+    console.error("fetchAndStoreReviews:", e.message);
+    res.redirect("/marketing.html?google=token_ok");
+  }
+});
+
+app.get("/api/reviews", async (req, res) => {
+  const limit  = Math.min(parseInt(req.query.limit)  || 20, 50);
+  const rating = parseInt(req.query.rating) || 4;
+  try {
+    const rows = await dbAll(
+      `SELECT * FROM google_reviews WHERE rating >= ? AND text != '' ORDER BY fecha DESC LIMIT ?`,
+      [rating, limit]
+    );
+    res.json({ ok: true, data: rows });
+  } catch {
+    res.status(500).json({ ok: false, data: [] });
+  }
+});
+
+app.post("/api/reviews/refresh", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    await fetchAndStoreReviews();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Middleware de autenticación
 function requireAuth(roles = []) {
   return (req, res, next) => {
     const auth = req.headers.authorization;

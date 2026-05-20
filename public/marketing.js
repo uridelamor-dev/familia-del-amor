@@ -1,7 +1,41 @@
 requireRole(["marketing", "direccion"]).then((user) => {
   if (!user) return;
   initWhatsAppStatus("waStatus");
+  initGoogleStatus();
+  if (new URLSearchParams(location.search).get("google") === "connected") {
+    document.getElementById("googleMsg").textContent = "✅ Google Business conectado y reseñas importadas.";
+  }
 });
+
+async function initGoogleStatus() {
+  const el = document.getElementById("googleStatus");
+  if (!el) return;
+  try {
+    const res = await fetch("/api/reviews?limit=1");
+    const data = await res.json();
+    if (data.ok && data.data.length) {
+      el.innerHTML = `✅ Conectado · ${data.data.length > 0 ? "Reseñas disponibles" : "Sin reseñas aún"}`;
+    } else {
+      el.innerHTML = `⚠️ No conectado o sin reseñas. Pulsa "Conectar Google Business".`;
+    }
+  } catch {
+    el.innerHTML = `⚠️ Error comprobando estado.`;
+  }
+
+  document.getElementById("refreshReviews")?.addEventListener("click", async () => {
+    const btn = document.getElementById("refreshReviews");
+    const msg = document.getElementById("googleMsg");
+    btn.disabled = true; btn.textContent = "Actualizando...";
+    try {
+      const r = await authFetch("/api/reviews/refresh", { method: "POST" });
+      const d = await r.json();
+      msg.textContent = d.ok ? "✅ Reseñas actualizadas." : "❌ " + d.error;
+    } catch {
+      msg.textContent = "❌ Error de conexión.";
+    }
+    btn.disabled = false; btn.textContent = "Actualizar reseñas ahora";
+  });
+}
 
 async function initWhatsAppStatus(elId) {
   const el = document.getElementById(elId);
