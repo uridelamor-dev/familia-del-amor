@@ -141,6 +141,31 @@ const i18n = {
     strip_title: "¿Aún no tienes tu 10%?",
     strip_sub: "Déjanos tus datos y te enviamos tu descuento ahora.",
     strip_cta: "Consigue tu descuento",
+    nav_events: "Eventos",
+    jobs_eyebrow: "Equipo",
+    jobs_hero_sub: "Buscamos personas con vocación, ganas de crecer y amor por la hostelería. Si quieres formar parte de nuestra familia, aquí es el sitio.",
+    jobs_open_title: "Vacantes activas",
+    jobs_open_sub: "Plazas disponibles ahora mismo en nuestros locales.",
+    jobs_apply_title: "Envía tu candidatura",
+    jobs_apply_sub: "¿No ves tu puesto ideal? Cuéntanos de todas formas — siempre buscamos buen talento.",
+    jobs_position: "Puesto de interés",
+    jobs_message: "Mensaje (opcional)",
+    jobs_cv: "CV (PDF, opcional)",
+    jobs_submit: "Enviar candidatura",
+    events_eyebrow: "Celebraciones",
+    events_hero_sub: "Cumpleaños, comuniones, eventos de empresa, cenas de equipo… lo organizamos todo para que tú solo tengas que disfrutar.",
+    events_types_title: "¿Qué celebramos juntos?",
+    events_wa_cta: "Consultar por WhatsApp",
+    events_mail_cta: "Escribirnos por email",
+    events_contact_title: "Cuéntanos tu idea",
+    events_contact_sub: "Sin compromiso. Te respondemos en menos de 24 horas y buscamos la mejor opción para tu celebración.",
+    event_type_birthday: "Cumpleaños",
+    event_type_birthday_desc: "Celebra tu día rodeado de los tuyos. Menús a medida, decoración y mucho cariño.",
+    event_type_wedding: "Bodas y comuniones",
+    event_type_wedding_desc: "Espacios con encanto para los momentos que no se olvidan. Hablamos y lo diseñamos juntos.",
+    event_type_business: "Eventos de empresa",
+    event_type_business_desc: "Cenas de equipo, presentaciones, team-building… Te ofrecemos el espacio y la experiencia.",
+    event_type_pepa_desc: "Nuestra marca de fiestas al aire libre y eventos a medida para grupos grandes. Siempre con buena música y mejor ambiente.",
     history_title: "Historia y valores",
     history_sub: "Nuestra manera de hacer las cosas, desde dentro.",
     history_p1: "Desde hace tres generaciones, nuestra familia ha vivido de una misma vocación: cuidar de la gente.",
@@ -237,6 +262,31 @@ const i18n = {
     strip_title: "Encara no tens el teu 10%?",
     strip_sub: "Deixa'ns les teves dades i t'enviem el teu descompte ara.",
     strip_cta: "Aconsegueix el teu descompte",
+    nav_events: "Esdeveniments",
+    jobs_eyebrow: "Equip",
+    jobs_hero_sub: "Busquem persones amb vocació, ganes de créixer i amor per l'hostaleria. Si vols formar part de la nostra família, aquí és el lloc.",
+    jobs_open_title: "Vacants actives",
+    jobs_open_sub: "Places disponibles ara mateix als nostres locals.",
+    jobs_apply_title: "Envia la teva candidatura",
+    jobs_apply_sub: "No veus el teu lloc ideal? Explica'ns-ho igualment — sempre busquem bon talent.",
+    jobs_position: "Lloc d'interès",
+    jobs_message: "Missatge (opcional)",
+    jobs_cv: "CV (PDF, opcional)",
+    jobs_submit: "Enviar candidatura",
+    events_eyebrow: "Celebracions",
+    events_hero_sub: "Aniversaris, comunions, esdeveniments d'empresa, sopars d'equip… ho organitzem tot perquè tu només hagis de gaudir.",
+    events_types_title: "Què celebrem junts?",
+    events_wa_cta: "Consultar per WhatsApp",
+    events_mail_cta: "Escriure'ns per correu",
+    events_contact_title: "Explica'ns la teva idea",
+    events_contact_sub: "Sense compromís. Et responem en menys de 24 hores i busquem la millor opció per a la teva celebració.",
+    event_type_birthday: "Aniversaris",
+    event_type_birthday_desc: "Celebra el teu dia envoltat dels teus. Menús a mida, decoració i molt de carinyo.",
+    event_type_wedding: "Bodes i comunions",
+    event_type_wedding_desc: "Espais amb encant per als moments que no s'obliden. Parlem-ne i ho dissenyem junts.",
+    event_type_business: "Esdeveniments d'empresa",
+    event_type_business_desc: "Sopars d'equip, presentacions, team-building… Et oferim l'espai i l'experiència.",
+    event_type_pepa_desc: "La nostra marca de festes a l'aire lliure i esdeveniments a mida per a grups grans. Sempre amb bona música i millor ambient.",
     history_title: "Història i valors",
     history_sub: "La nostra manera de fer les coses, des de dins.",
     history_p1: "Des de fa tres generacions, la nostra família ha viscut d'una mateixa vocació: cuidar de la gent.",
@@ -333,6 +383,31 @@ const i18n = {
     strip_title: "Don't have your 10% yet?",
     strip_sub: "Leave your details and we'll send your discount right away.",
     strip_cta: "Get my discount",
+    nav_events: "Events",
+    jobs_eyebrow: "Team",
+    jobs_hero_sub: "We're looking for people with passion, drive and a love for hospitality. If you want to be part of our family, this is the place.",
+    jobs_open_title: "Current openings",
+    jobs_open_sub: "Positions available right now across our venues.",
+    jobs_apply_title: "Send your application",
+    jobs_apply_sub: "Don't see the perfect role? Tell us anyway — we're always looking for great talent.",
+    jobs_position: "Role of interest",
+    jobs_message: "Message (optional)",
+    jobs_cv: "CV (PDF, optional)",
+    jobs_submit: "Send application",
+    events_eyebrow: "Celebrations",
+    events_hero_sub: "Birthdays, communions, corporate events, team dinners… we organise everything so you only have to enjoy it.",
+    events_types_title: "What shall we celebrate?",
+    events_wa_cta: "Ask on WhatsApp",
+    events_mail_cta: "Email us",
+    events_contact_title: "Tell us your idea",
+    events_contact_sub: "No commitment. We'll get back to you within 24 hours and find the best option for your celebration.",
+    event_type_birthday: "Birthdays",
+    event_type_birthday_desc: "Celebrate your day with the people you love. Custom menus, decoration and lots of care.",
+    event_type_wedding: "Weddings & communions",
+    event_type_wedding_desc: "Charming spaces for unforgettable moments. Let's talk and design it together.",
+    event_type_business: "Corporate events",
+    event_type_business_desc: "Team dinners, presentations, team-building… We provide the space and the experience.",
+    event_type_pepa_desc: "Our outdoor festival and events brand for large groups. Always with great music and even better vibes.",
     history_title: "History and values",
     history_sub: "Our way of doing things, from the inside.",
     history_p1: "For three generations, our family has lived by a single vocation: caring for people.",
@@ -920,7 +995,7 @@ function markLeadSubmitted() {
   localStorage.removeItem(POPUP_KEY);
 }
 
-if (shouldShowPopup()) {
+if (popup && shouldShowPopup()) {
   let popupShown = false;
   function showPopupOnce() {
     if (popupShown) return;
@@ -936,11 +1011,11 @@ if (shouldShowPopup()) {
   setTimeout(showPopupOnce, 12000);
 }
 
-closePopup.addEventListener("click", () => {
-  popup.classList.remove("show");
+closePopup?.addEventListener("click", () => {
+  popup?.classList.remove("show");
 });
 
-popup.addEventListener("click", (e) => {
+popup?.addEventListener("click", (e) => {
   if (e.target === popup) {
     popup.classList.remove("show");
   }

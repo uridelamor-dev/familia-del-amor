@@ -34,7 +34,8 @@
       <nav class="nav">
         <a href="#locales" data-i18n="nav_locals">Locales</a>
         <a href="#reservas" data-i18n="nav_reservations">Reservar</a>
-        <a href="#trabaja" data-i18n="nav_jobs">Trabaja</a>
+        <a href="eventos.html" data-i18n="nav_events">Eventos</a>
+        <a href="trabaja.html" data-i18n="nav_jobs">Trabaja</a>
         <a href="#contacto" data-i18n="nav_contact">Contacto</a>
         <div class="lang">
           <button data-lang="es" class="active">ES</button>
@@ -173,15 +174,6 @@
         </div>
       </section>
 
-      <!-- EVENTOS -->
-      <section id="eventos" class="block eventos-cta">
-        <div class="section-head">
-          <h2 data-i18n="events_title" data-content-key="events_title">Celebraciones y eventos</h2>
-          <p data-i18n="events_text" data-content-key="events_text">Cumpleaños, comuniones, eventos de empresa… lo organizamos todo.</p>
-        </div>
-        <a class="btn" href="#reservas" data-i18n="events_cta">Pedir información</a>
-      </section>
-
       <!-- FRANJA DESCUENTO (siempre visible) -->
       <section class="block descuento-strip">
         <div class="descuento-inner">
@@ -193,34 +185,22 @@
         </div>
       </section>
 
-      <!-- TRABAJA -->
-      <section id="trabaja" class="block">
-        <details class="trabaja-details">
-          <summary class="trabaja-summary">
-            <span>
-              <span class="trabaja-title" data-i18n="jobs_title" data-content-key="jobs_title">Trabaja con nosotros</span>
-              <span class="trabaja-sub" data-i18n="jobs_text" data-content-key="jobs_text">Envíanos tu CV y cuéntanos en qué área te gustaría aportar.</span>
-            </span>
-            <span class="trabaja-arrow" aria-hidden="true">›</span>
-          </summary>
-          <div class="trabaja-body">
-            <div class="cards" id="jobsList"></div>
-            <form id="hrForm" class="form">
-              <div class="form-row">
-                <label><span>Nombre</span><input type="text" name="nombre" required /></label>
-                <label><span>Teléfono</span><input type="tel" name="telefono" required /></label>
-              </div>
-              <div class="form-row">
-                <label><span>Email</span><input type="email" name="email" required /></label>
-                <label><span>Puesto</span><input type="text" name="puesto" required /></label>
-              </div>
-              <label><span>Mensaje (opcional)</span><textarea name="mensaje" rows="2"></textarea></label>
-              <label><span>CV (PDF, opcional)</span><input type="file" name="cv" accept="application/pdf" /></label>
-              <button class="btn" type="submit">Enviar candidatura</button>
-              <p class="form-note" id="hrMsg"></p>
-            </form>
-          </div>
-        </details>
+      <!-- ENLACES A PÁGINAS SECUNDARIAS -->
+      <section class="block">
+        <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
+          <a href="eventos.html" class="card card-link" style="display:flex;flex-direction:column;gap:0.5rem;padding:1.4rem">
+            <div style="font-size:2rem">🎉</div>
+            <strong data-i18n="events_title" style="font-size:1.1rem">Celebraciones y eventos</strong>
+            <p class="muted" style="margin:0;font-size:0.88rem" data-i18n="events_text">Cumpleaños, comuniones, eventos de empresa… lo organizamos todo.</p>
+            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto">Ver más →</span>
+          </a>
+          <a href="trabaja.html" class="card card-link" style="display:flex;flex-direction:column;gap:0.5rem;padding:1.4rem">
+            <div style="font-size:2rem">👷</div>
+            <strong data-i18n="jobs_title" style="font-size:1.1rem">Trabaja con nosotros</strong>
+            <p class="muted" style="margin:0;font-size:0.88rem" data-i18n="jobs_text">Envíanos tu CV y cuéntanos en qué área te gustaría aportar.</p>
+            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto">Ver más →</span>
+          </a>
+        </div>
       </section>
 
       <!-- CONTACTO -->
