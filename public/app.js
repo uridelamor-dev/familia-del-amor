@@ -394,19 +394,26 @@ renderCompanies();
 
 const DEFAULT_GALLERY = [
   "uploads/gallery/Cooperativa_208.jpg",
+  "uploads/gallery/TapaIberica_STR05644.jpg",
   "uploads/gallery/CanMateu_STR04942.jpg",
   "uploads/gallery/Cooperativa_181.jpg",
+  "uploads/gallery/TapaIberica_STR05479.jpg",
   "uploads/gallery/CanMateu_STR05254.jpg",
   "uploads/gallery/Cooperativa_75.jpg",
+  "uploads/gallery/TapaIberica_STR05831.jpg",
   "uploads/gallery/CanMateu_STR04434.jpg",
   "uploads/gallery/Cooperativa_226.jpg",
+  "uploads/gallery/TapaIberica_STR05475.jpg",
   "uploads/gallery/CanMateu_STR04757.jpg",
   "uploads/gallery/Cooperativa_1.jpg",
+  "uploads/gallery/TapaIberica_STR05620.jpg",
   "uploads/gallery/CanMateu_STR05013.jpg",
   "uploads/gallery/Cooperativa_24.jpg",
+  "uploads/gallery/TapaIberica_STR05815.jpg",
   "uploads/gallery/CanMateu_STR04457.jpg",
-  "uploads/gallery/CanMateu_STR04479.jpg",
+  "uploads/gallery/TapaIberica_STR05485.jpg",
   "uploads/gallery/CanMateu_STR05090.jpg",
+  "uploads/gallery/TapaIberica_STR05538.jpg",
   "uploads/gallery/CanMateu_STR04427.jpg",
 ];
 
