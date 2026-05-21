@@ -67,16 +67,18 @@ async function initSeguimiento() {
   renderWorkerList();
 }
 
+// Track which locals are collapsed
+const collapsedLocals = new Set();
+
 function renderWorkerList() {
   const container = document.getElementById("segWorkerList");
   if (!container) return;
 
   if (!segWorkers.length) {
-    container.innerHTML = `<div class="seg-loading">Sin trabajadores registrados.<br><span style="font-size:0.8rem">Añade usuarios con rol "trabajador" desde Dirección.</span></div>`;
+    container.innerHTML = `<div class="seg-loading">Sin trabajadores.<br><span style="font-size:0.8rem">Pulsa + para añadir el primero.</span></div>`;
     return;
   }
 
-  // Group by local
   const byLocal = {};
   segWorkers.forEach(w => {
     const loc = w.local || "Sin local asignado";
@@ -92,25 +94,39 @@ function renderWorkerList() {
       <div class="seg-progress-bar" style="width:${total ? Math.round(llamados / total * 100) : 0}%"></div>
       <span>${llamados}/${total} llamadas este mes</span>
     </div>
-    ${Object.entries(byLocal).map(([local, workers]) => `
-      <div class="seg-group">
-        <div class="seg-group-label">${local}</div>
-        ${workers.map(w => {
-          const llamada = segLlamadasMes[w.id];
-          const done = llamada?.realizada;
-          return `
-            <div class="seg-worker-card ${w.id === segSelectedId ? "active" : ""} ${done ? "done" : "pending"}" data-id="${w.id}">
-              <div class="seg-worker-avatar">${(w.nombre || w.username).charAt(0).toUpperCase()}</div>
-              <div class="seg-worker-info">
-                <span class="seg-worker-name">${w.nombre || w.username}</span>
-                <span class="seg-worker-rol">${w.rol}</span>
-              </div>
-              <span class="seg-call-badge ${done ? "done" : "pending"}">${done ? "✓" : "⏳"}</span>
-            </div>`;
-        }).join("")}
-      </div>
-    `).join("")}
+    ${Object.entries(byLocal).map(([local, workers]) => {
+      const collapsed = collapsedLocals.has(local);
+      const localDone = workers.filter(w => segLlamadasMes[w.id]?.realizada).length;
+      return `
+        <div class="seg-group">
+          <div class="seg-group-label seg-collapsible" data-local="${local}">
+            <span class="seg-collapse-arrow">${collapsed ? "▶" : "▼"}</span>
+            <span class="seg-group-name">${local}</span>
+            <span class="seg-group-count">${localDone}/${workers.length}</span>
+          </div>
+          ${collapsed ? "" : workers.map(w => {
+            const done = segLlamadasMes[w.id]?.realizada;
+            return `
+              <div class="seg-worker-card ${w.id === segSelectedId ? "active" : ""} ${done ? "done" : ""}" data-id="${w.id}">
+                <div class="seg-worker-avatar">${(w.nombre || w.username).charAt(0).toUpperCase()}</div>
+                <div class="seg-worker-info">
+                  <span class="seg-worker-name">${w.nombre || w.username}</span>
+                </div>
+                <span class="seg-call-badge ${done ? "done" : "pending"}">${done ? "✓" : "·"}</span>
+              </div>`;
+          }).join("")}
+        </div>`;
+    }).join("")}
   `;
+
+  container.querySelectorAll(".seg-collapsible").forEach(lbl => {
+    lbl.addEventListener("click", () => {
+      const loc = lbl.dataset.local;
+      if (collapsedLocals.has(loc)) collapsedLocals.delete(loc);
+      else collapsedLocals.add(loc);
+      renderWorkerList();
+    });
+  });
 
   container.querySelectorAll(".seg-worker-card").forEach(card => {
     card.addEventListener("click", () => {
@@ -120,6 +136,93 @@ function renderWorkerList() {
     });
   });
 }
+
+// ── AÑADIR / BORRAR TRABAJADORES ─────────────────────────────────────────
+
+const LOCALES_LIST = [
+  "La Tapeta - Blanes", "La Tapeta - Lloret", "La Tapeta - Girona",
+  "Cooperativa - Blanes", "Can Mateu - Tordera",
+  "La Tapa Ibérica - Tordera", "Botiga d'en Mateu - Tordera"
+];
+
+function openNewWorkerModal() {
+  let modal = document.getElementById("segWorkerModal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "segWorkerModal";
+    modal.className = "seg-modal-overlay";
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div class="seg-modal">
+      <div class="seg-modal-head">
+        <strong>Nuevo trabajador</strong>
+        <button class="seg-modal-close" id="segModalClose">×</button>
+      </div>
+      <div class="seg-modal-body">
+        <label><span>Nombre</span><input id="nwNombre" type="text" placeholder="Nombre completo" /></label>
+        <label><span>Username</span><input id="nwUsername" type="text" placeholder="nombre_local (único)" /></label>
+        <label><span>Local</span>
+          <select id="nwLocal">
+            <option value="">Selecciona local</option>
+            ${LOCALES_LIST.map(l => `<option value="${l}">${l}</option>`).join("")}
+          </select>
+        </label>
+        <label><span>Contraseña inicial</span><input id="nwPassword" type="text" value="tapeta2024" /></label>
+        <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
+          <button class="btn" id="nwGuardar">Crear trabajador</button>
+          <button class="btn ghost" id="segModalClose2">Cancelar</button>
+        </div>
+        <p class="form-note" id="nwMsg"></p>
+      </div>
+    </div>`;
+  modal.classList.add("show");
+
+  // Auto-fill username from nombre + local
+  const nwNombre = modal.querySelector("#nwNombre");
+  const nwLocal = modal.querySelector("#nwLocal");
+  const nwUsername = modal.querySelector("#nwUsername");
+  const autoUsername = () => {
+    const n = nwNombre.value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+    const l = (nwLocal.value || "").split(" - ")[1]?.toLowerCase().replace(/[^a-z]/g, "") || "";
+    if (n && l) nwUsername.value = `${n}_${l}`;
+  };
+  nwNombre.addEventListener("input", autoUsername);
+  nwLocal.addEventListener("change", autoUsername);
+
+  const close = () => modal.classList.remove("show");
+  modal.querySelector("#segModalClose").addEventListener("click", close);
+  modal.querySelector("#segModalClose2").addEventListener("click", close);
+  modal.addEventListener("click", e => { if (e.target === modal) close(); });
+
+  modal.querySelector("#nwGuardar").addEventListener("click", async () => {
+    const nombre = nwNombre.value.trim();
+    const username = nwUsername.value.trim();
+    const local = nwLocal.value;
+    const password = modal.querySelector("#nwPassword").value.trim();
+    const msg = modal.querySelector("#nwMsg");
+    if (!nombre || !username || !local || !password) { msg.textContent = "Rellena todos los campos."; return; }
+    const btn = modal.querySelector("#nwGuardar");
+    btn.disabled = true; btn.textContent = "Guardando…";
+    const res = await authFetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, rol: "trabajador", nombre, local })
+    });
+    const d = await res.json();
+    if (d.ok) {
+      close();
+      await initSeguimiento();
+    } else {
+      msg.textContent = d.error || "Error al crear. ¿Username ya existe?";
+      btn.disabled = false; btn.textContent = "Crear trabajador";
+    }
+  });
+
+  modal.querySelector("#nwNombre").focus();
+}
+
+document.getElementById("btnNewWorker")?.addEventListener("click", openNewWorkerModal);
 
 async function loadWorkerFicha(workerId) {
   const main = document.getElementById("segMain");
@@ -149,13 +252,14 @@ async function loadWorkerFicha(workerId) {
         <div class="seg-ficha-avatar">${(worker.nombre || worker.username).charAt(0).toUpperCase()}</div>
         <div>
           <div class="seg-ficha-name">${worker.nombre || worker.username}</div>
-          <div class="seg-ficha-meta">${worker.rol} · ${worker.local || "Sin local"}</div>
+          <div class="seg-ficha-meta">${worker.local || "Sin local"}</div>
         </div>
         <div class="seg-ficha-mes-badge ${llamadaMes?.realizada ? "done" : "pending"}">
           ${llamadaMes?.realizada
             ? `✅ Llamada realizada · ${new Date(llamadaMes.fecha_llamada).toLocaleDateString("es-ES", { day:"2-digit", month:"short" })}`
             : `⏳ Pendiente llamada de ${getMesLabel(segMes)}`}
         </div>
+        <button class="seg-delete-worker" data-id="${worker.id}" title="Eliminar trabajador">🗑</button>
       </div>
 
       <!-- Llamada mensual -->
@@ -310,6 +414,20 @@ async function loadWorkerFicha(workerId) {
   });
 
   btnCancelarNota?.addEventListener("click", () => addNotaBox?.classList.add("hidden"));
+
+  // Delete worker
+  main.querySelector(".seg-delete-worker")?.addEventListener("click", async () => {
+    if (!confirm(`¿Eliminar a ${worker.nombre || worker.username}? Se borrarán también sus notas.`)) return;
+    const res = await authFetch(`/api/users/${worker.id}`, { method: "DELETE" });
+    const d = await res.json();
+    if (d.ok) {
+      segSelectedId = null;
+      document.getElementById("segMain").innerHTML = `<div class="seg-empty"><div style="font-size:2.5rem;margin-bottom:0.75rem">👤</div><p>Selecciona un trabajador para ver su ficha</p></div>`;
+      await initSeguimiento();
+    } else {
+      alert("Error al eliminar el trabajador.");
+    }
+  });
 
   // Delete nota
   main.querySelectorAll(".seg-nota-delete").forEach(btn => {

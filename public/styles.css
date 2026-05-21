@@ -734,13 +734,38 @@ body {
 }
 
 .seg-sidebar-header {
-  padding: 0.85rem 1rem 0.6rem;
+  padding: 0.7rem 0.75rem 0.6rem 1rem;
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.seg-add-worker-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  background: none;
+  color: var(--accent);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.seg-add-worker-btn:hover {
+  background: var(--accent);
+  color: #fff;
 }
 
 .seg-progress {
@@ -779,7 +804,37 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--muted);
-  padding: 0.3rem 1rem 0.2rem;
+  padding: 0.4rem 0.75rem 0.25rem 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.seg-group-label:hover {
+  color: var(--accent);
+}
+
+.seg-collapse-arrow {
+  font-size: 0.6rem;
+  flex-shrink: 0;
+}
+
+.seg-group-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seg-group-count {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  background: var(--border);
+  border-radius: 10px;
+  padding: 0.05rem 0.45rem;
+  color: var(--muted);
 }
 
 .seg-worker-card {
@@ -929,6 +984,104 @@ body {
 .seg-ficha-mes-badge.pending {
   background: #fff3e0;
   color: #e65100;
+}
+
+.seg-delete-worker {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.25rem;
+  border-radius: 6px;
+  color: var(--muted);
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.seg-delete-worker:hover {
+  color: #c0392b;
+  background: #fce4ec;
+}
+
+/* Modal */
+.seg-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+
+.seg-modal-overlay.show {
+  display: flex;
+}
+
+.seg-modal {
+  background: #fff;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 420px;
+  margin: 1rem;
+  box-shadow: 0 8px 40px rgba(0,0,0,.2);
+  overflow: hidden;
+}
+
+.seg-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem 0.85rem;
+  background: var(--primary);
+  color: #fff;
+}
+
+.seg-modal-head strong {
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 1rem;
+}
+
+.seg-modal-close {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.75);
+  font-size: 1.4rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+
+.seg-modal-close:hover { color: #fff; }
+
+.seg-modal-body {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.seg-modal-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.seg-modal-body input,
+.seg-modal-body select {
+  font-size: 0.88rem;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.65rem;
+  outline: none;
+  font-family: inherit;
+}
+
+.seg-modal-body input:focus,
+.seg-modal-body select:focus {
+  border-color: var(--accent);
 }
 
 .seg-ficha-section {
