@@ -712,6 +712,431 @@ body {
   background: rgba(107, 31, 43, 0.1);
 }
 
+/* ── RRHH Seguimiento ────────────────────────────────────────────────────── */
+
+.seg-layout {
+  display: flex;
+  gap: 0;
+  min-height: 600px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.seg-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.seg-sidebar-header {
+  padding: 0.85rem 1rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.seg-progress {
+  position: relative;
+  height: 28px;
+  background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  padding: 0 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+}
+
+.seg-progress-bar {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: linear-gradient(90deg, #a8ddb5, #4caf50);
+  transition: width 0.4s ease;
+  z-index: 0;
+}
+
+.seg-progress span {
+  position: relative;
+  z-index: 1;
+}
+
+.seg-group {
+  padding: 0.5rem 0;
+}
+
+.seg-group-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  padding: 0.3rem 1rem 0.2rem;
+}
+
+.seg-worker-card {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  transition: background 0.12s;
+  border-left: 3px solid transparent;
+}
+
+.seg-worker-card:hover {
+  background: rgba(107, 31, 43, 0.04);
+}
+
+.seg-worker-card.active {
+  background: rgba(107, 31, 43, 0.07);
+  border-left-color: var(--accent);
+}
+
+.seg-worker-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.seg-worker-card.done .seg-worker-avatar {
+  background: #4caf50;
+}
+
+.seg-worker-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.seg-worker-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seg-worker-rol {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.seg-call-badge {
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.seg-call-badge.done { color: #2e7d32; }
+.seg-call-badge.pending { color: var(--muted); }
+
+.seg-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  background: #fffaf4;
+}
+
+.seg-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 3rem;
+  text-align: center;
+}
+
+.seg-loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+/* Ficha del trabajador */
+.seg-ficha {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.seg-ficha-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.seg-ficha-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.seg-ficha-name {
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-family: "Playfair Display", Georgia, serif;
+}
+
+.seg-ficha-meta {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.seg-ficha-mes-badge {
+  margin-left: auto;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.35rem 0.85rem;
+  border-radius: 20px;
+}
+
+.seg-ficha-mes-badge.done {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.seg-ficha-mes-badge.pending {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.seg-ficha-section {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.seg-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 0.88rem;
+  background: var(--surface);
+}
+
+/* Llamada form */
+.seg-llamada-form {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.seg-llamada-form.hidden { display: none; }
+
+.seg-llamada-preguntas {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.seg-pregunta-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.seg-pregunta-input {
+  font-size: 0.85rem;
+  font-family: inherit;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.65rem;
+  resize: vertical;
+  outline: none;
+}
+
+.seg-pregunta-input:focus {
+  border-color: var(--accent);
+}
+
+.seg-llamada-resumen {
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.seg-llamada-qa {
+  font-size: 0.85rem;
+}
+
+.seg-llamada-qa strong {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.2rem;
+}
+
+.seg-llamada-qa p {
+  margin: 0;
+  padding: 0.4rem 0.65rem;
+  background: #f7f2ea;
+  border-radius: 6px;
+  line-height: 1.5;
+}
+
+.seg-llamada-qa.seg-libre p {
+  background: #f0fdf4;
+}
+
+.seg-llamada-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
+
+/* Añadir nota */
+.seg-add-nota {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.seg-add-nota.hidden { display: none; }
+
+.seg-add-nota textarea {
+  font-size: 0.88rem;
+  font-family: inherit;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  resize: vertical;
+  outline: none;
+}
+
+.seg-add-nota textarea:focus {
+  border-color: var(--accent);
+}
+
+.seg-tipo-btn {
+  padding: 0.3rem 0.75rem;
+  border-radius: 20px;
+  border: 1.5px solid var(--border);
+  background: #fff;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.seg-tipo-btn.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+/* Timeline */
+.seg-empty-timeline {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.seg-nota-card {
+  margin: 0.65rem 1rem;
+  border: 1.5px solid;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.seg-nota-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.75rem;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+
+.seg-nota-tipo {
+  font-weight: 700;
+}
+
+.seg-nota-fecha {
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.seg-nota-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 1rem;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.seg-nota-delete:hover { color: var(--accent); }
+
+.seg-nota-body {
+  padding: 0.6rem 0.75rem;
+  font-size: 0.87rem;
+  line-height: 1.55;
+}
+
+@media (max-width: 700px) {
+  .seg-layout {
+    flex-direction: column;
+  }
+  .seg-sidebar {
+    width: 100%;
+    max-height: 220px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .seg-ficha-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .seg-ficha-mes-badge {
+    margin-left: 0;
+  }
+}
+
 .edit-toggle {
   display: inline-flex;
   align-items: center;

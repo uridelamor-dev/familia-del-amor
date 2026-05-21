@@ -235,6 +235,41 @@ db.serialize(() => {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS hr_worker_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      worker_id INTEGER NOT NULL,
+      tipo TEXT NOT NULL DEFAULT 'nota',
+      contenido TEXT NOT NULL,
+      autor TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS hr_preguntas_mes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mes TEXT NOT NULL,
+      orden INTEGER DEFAULT 0,
+      pregunta TEXT NOT NULL
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS hr_llamadas_mes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      worker_id INTEGER NOT NULL,
+      mes TEXT NOT NULL,
+      realizada INTEGER DEFAULT 0,
+      fecha_llamada TEXT,
+      respuestas TEXT,
+      comentario_libre TEXT,
+      autor TEXT,
+      creado_en TEXT DEFAULT (datetime('now')),
+      UNIQUE(worker_id, mes)
+    )
+  `);
+
   // Seed de usuarios por defecto si la tabla está vacía
   db.get("SELECT COUNT(*) as total FROM users", async (err, row) => {
     if (err || row.total > 0) return;
@@ -936,6 +971,110 @@ app.put("/api/hr/applications/:id", requireAuth(["rrhh", "direccion"]), (req, re
     if (err) return res.status(500).json({ ok: false, error: "Error actualizando estado" });
     res.json({ ok: true });
   });
+});
+
+// ── RRHH: Seguimiento de trabajadores ─────────────────────────────────────
+
+app.get("/api/rrhh/trabajadores", requireAuth(["rrhh", "direccion"]), (req, res) => {
+  db.all(
+    `SELECT id, username, nombre, rol, local FROM users
+     WHERE rol IN ('trabajador','encargado')
+     ORDER BY local ASC, nombre ASC`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false });
+      res.json({ ok: true, data: rows || [] });
+    }
+  );
+});
+
+app.get("/api/rrhh/trabajador/:id/notas", requireAuth(["rrhh", "direccion"]), (req, res) => {
+  db.all(
+    `SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC`,
+    [req.params.id],
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false });
+      res.json({ ok: true, data: rows || [] });
+    }
+  );
+});
+
+app.post("/api/rrhh/trabajador/:id/nota", requireAuth(["rrhh", "direccion"]), (req, res) => {
+  const { tipo = "nota", contenido, autor } = req.body;
+  if (!contenido) return res.status(400).json({ ok: false, error: "Falta contenido" });
+  db.run(
+    `INSERT INTO hr_worker_notes (worker_id, tipo, contenido, autor, creado_en) VALUES (?, ?, ?, ?, ?)`,
+    [req.params.id, tipo, contenido, autor || null, new Date().toISOString()],
+    function (err) {
+      if (err) return res.status(500).json({ ok: false });
+      res.json({ ok: true, id: this.lastID });
+    }
+  );
+});
+
+app.delete("/api/rrhh/nota/:id", requireAuth(["rrhh", "direccion"]), (req, res) => {
+  db.run(`DELETE FROM hr_worker_notes WHERE id = ?`, [req.params.id], (err) => {
+    if (err) return res.status(500).json({ ok: false });
+    res.json({ ok: true });
+  });
+});
+
+app.get("/api/rrhh/preguntas/:mes", requireAuth(["rrhh", "direccion"]), (req, res) => {
+  db.all(
+    `SELECT * FROM hr_preguntas_mes WHERE mes = ? ORDER BY orden ASC`,
+    [req.params.mes],
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false });
+      res.json({ ok: true, data: rows || [] });
+    }
+  );
+});
+
+app.put("/api/rrhh/preguntas/:mes", requireAuth(["rrhh", "direccion"]), (req, res) => {
+  const { preguntas } = req.body;
+  if (!Array.isArray(preguntas)) return res.status(400).json({ ok: false });
+  const mes = req.params.mes;
+  db.run(`DELETE FROM hr_preguntas_mes WHERE mes = ?`, [mes], (err) => {
+    if (err) return res.status(500).json({ ok: false });
+    if (!preguntas.length) return res.json({ ok: true });
+    const stmt = db.prepare(`INSERT INTO hr_preguntas_mes (mes, orden, pregunta) VALUES (?, ?, ?)`);
+    preguntas.forEach((p, i) => stmt.run(mes, i, p));
+    stmt.finalize((err2) => {
+      if (err2) return res.status(500).json({ ok: false });
+      res.json({ ok: true });
+    });
+  });
+});
+
+app.get("/api/rrhh/llamadas/:mes", requireAuth(["rrhh", "direccion"]), (req, res) => {
+  db.all(
+    `SELECT * FROM hr_llamadas_mes WHERE mes = ?`,
+    [req.params.mes],
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false });
+      res.json({ ok: true, data: rows || [] });
+    }
+  );
+});
+
+app.post("/api/rrhh/llamada", requireAuth(["rrhh", "direccion"]), (req, res) => {
+  const { worker_id, mes, respuestas, comentario_libre, autor } = req.body;
+  if (!worker_id || !mes) return res.status(400).json({ ok: false, error: "Faltan datos" });
+  const ahora = new Date().toISOString();
+  const respJson = respuestas ? JSON.stringify(respuestas) : null;
+  db.run(
+    `INSERT INTO hr_llamadas_mes (worker_id, mes, realizada, fecha_llamada, respuestas, comentario_libre, autor, creado_en)
+     VALUES (?, ?, 1, ?, ?, ?, ?, ?)
+     ON CONFLICT(worker_id, mes) DO UPDATE SET
+       realizada=1, fecha_llamada=excluded.fecha_llamada,
+       respuestas=excluded.respuestas, comentario_libre=excluded.comentario_libre,
+       autor=excluded.autor`,
+    [worker_id, mes, ahora, respJson, comentario_libre || null, autor || null, ahora],
+    function (err) {
+      if (err) return res.status(500).json({ ok: false, error: err.message });
+      res.json({ ok: true });
+    }
+  );
 });
 
 // Mantenimiento

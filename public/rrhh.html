@@ -21,10 +21,43 @@
       <section class="hero compact">
         <div class="eyebrow">Panel interno</div>
         <h1>RR.HH.</h1>
-        <p>Candidaturas, vacantes y comunicación.</p>
+        <p>Seguimiento, candidaturas y vacantes.</p>
       </section>
 
-      <section class="block">
+      <div class="panel-tabs">
+        <button class="btn" data-tab="seguimiento">Seguimiento</button>
+        <button class="btn ghost" data-tab="vacantes">Vacantes</button>
+        <button class="btn ghost" data-tab="candidaturas">Candidaturas</button>
+        <button class="btn ghost" data-tab="preguntas">Preguntas del mes</button>
+      </div>
+
+      <!-- ── SEGUIMIENTO ─────────────────────────────────────────────────── -->
+      <section class="panel-section active" data-section="seguimiento">
+        <div class="seg-layout">
+
+          <!-- Sidebar: trabajadores por local -->
+          <div class="seg-sidebar" id="segSidebar">
+            <div class="seg-sidebar-header">
+              <span id="segMesLabel"></span>
+            </div>
+            <div id="segWorkerList">
+              <div class="seg-loading">Cargando trabajadores…</div>
+            </div>
+          </div>
+
+          <!-- Panel principal: ficha del trabajador -->
+          <div class="seg-main" id="segMain">
+            <div class="seg-empty">
+              <div style="font-size:2.5rem;margin-bottom:0.75rem">👤</div>
+              <p>Selecciona un trabajador para ver su ficha</p>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ── VACANTES ────────────────────────────────────────────────────── -->
+      <section class="block panel-section" data-section="vacantes">
         <div class="section-head">
           <h2>Vacantes</h2>
         </div>
@@ -59,7 +92,8 @@
         <div class="card" id="jobsTable">Cargando vacantes...</div>
       </section>
 
-      <section class="block">
+      <!-- ── CANDIDATURAS ───────────────────────────────────────────────── -->
+      <section class="block panel-section" data-section="candidaturas">
         <div class="section-head">
           <h2>Candidaturas</h2>
         </div>
@@ -83,14 +117,39 @@
         </div>
         <div class="card" id="hrTable">Cargando candidaturas...</div>
       </section>
+
+      <!-- ── PREGUNTAS DEL MES ──────────────────────────────────────────── -->
+      <section class="block panel-section" data-section="preguntas">
+        <div class="section-head">
+          <h2>Preguntas del mes</h2>
+          <p>Estas preguntas aparecerán al registrar cada llamada mensual.</p>
+        </div>
+        <div class="card">
+          <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1rem;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.88rem;font-weight:600">
+              Mes:
+              <input type="month" id="preguntasMes" style="font-size:0.88rem;border:1.5px solid var(--border);border-radius:8px;padding:0.3rem 0.6rem" />
+            </label>
+            <button class="btn ghost" id="preguntasCargar" style="font-size:0.85rem">Cargar</button>
+          </div>
+          <div id="preguntasList" style="display:flex;flex-direction:column;gap:0.5rem;margin-bottom:1rem"></div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+            <button class="btn ghost" id="preguntasAdd">+ Añadir pregunta</button>
+            <button class="btn" id="preguntasGuardar">Guardar preguntas</button>
+            <span class="form-note" id="preguntasMsg"></span>
+          </div>
+        </div>
+      </section>
+
     </main>
 
     <footer class="footer">
       <div class="footer-inner">
-        <span>Volver</span>
-        <a class="btn" href="index.html">Ir al sitio</a>
+        <span style="font-size:0.8rem;color:var(--muted)">© Familia del Amor</span>
+        <a class="btn ghost" href="index.html" style="font-size:0.8rem">← Inicio</a>
       </div>
     </footer>
+
     <script src="auth.js"></script>
     <script src="rrhh.js"></script>
   </body>
