@@ -559,6 +559,7 @@ async function loadContent() {
 
 function applyContentOverrides() {
   document.querySelectorAll("[data-content-key]").forEach((el) => {
+    if (document.activeElement === el) return;
     const key = el.getAttribute("data-content-key");
     const langKey = `${key}_${currentLang}`;
     if (contentCache[langKey]) {
@@ -1288,72 +1289,89 @@ let editModeEnabled = false;
 if (window.top !== window) {
   window.addEventListener("message", (event) => {
     const msg = event.data;
-    if (msg && msg.type === "edit-mode") {
+    if (!msg) return;
+
+    if (msg.type === "edit-mode") {
       editModeEnabled = !!msg.enabled;
       document.documentElement.classList.toggle("edit-mode", editModeEnabled);
-      document.querySelectorAll("[data-content-key]").forEach((el) => {
-        el.contentEditable = editModeEnabled ? "true" : "false";
-        if (!editModeEnabled) el.removeAttribute("data-edited");
-      });
+
+      let styleEl = document.getElementById("__edit-styles");
+      if (editModeEnabled) {
+        if (!styleEl) {
+          styleEl = document.createElement("style");
+          styleEl.id = "__edit-styles";
+          document.head.appendChild(styleEl);
+        }
+        styleEl.textContent = `
+          [data-content-key] {
+            border-radius: 3px; outline: none;
+            transition: outline 0.12s, background 0.12s;
+            cursor: text !important; min-height: 1em;
+          }
+          [data-content-key]:hover { outline: 2px dashed rgba(249,115,22,0.65); }
+          [data-content-key]:focus { outline: 2px solid #f97316 !important; background: rgba(249,115,22,0.07) !important; }
+          section[data-edit-key]:hover { box-shadow: inset 0 0 0 3px rgba(249,115,22,0.4); cursor: pointer; }
+          #siteLogo { cursor: pointer; outline: 2px dashed transparent; border-radius:4px; transition: outline 0.15s; }
+          #siteLogo:hover { outline: 2px dashed #f97316; }
+          #leadPopup, .descuento-strip { display: none !important; }
+          .wa-float { display: none !important; }
+        `;
+        document.getElementById("leadPopup")?.classList.remove("show");
+        document.querySelectorAll("[data-content-key]").forEach((el) => {
+          el.contentEditable = "true";
+          el.spellcheck = false;
+        });
+      } else {
+        styleEl?.remove();
+        document.querySelectorAll("[data-content-key]").forEach((el) => {
+          el.contentEditable = "false";
+          el.removeAttribute("data-edited");
+        });
+      }
+    }
+
+    if (msg.type === "set-lang") {
+      setLang(msg.lang);
     }
   });
 
+  // Prevenir navegación y envío de formularios en modo edición
   document.addEventListener("click", (e) => {
     if (!editModeEnabled) return;
-    const target = e.target;
-    const editable = target.closest("[data-content-key], [data-edit-key]");
-    if (!editable) return;
-    if (target.closest("a, button")) {
-      e.preventDefault();
+    const a = e.target.closest("a");
+    if (a) { e.preventDefault(); return; }
+
+    const imgEl = e.target.closest("[data-edit-key]");
+    if (imgEl && !e.target.closest("[data-content-key]")) {
+      window.parent.postMessage({ type: "cedit-image-click", key: imgEl.dataset.editKey }, "*");
     }
-    const key = editable.getAttribute("data-content-key") || editable.getAttribute("data-edit-key");
-    if (!key) return;
-    if (editable.hasAttribute("data-edit-key") && !editable.hasAttribute("data-content-key")) {
-      if (key === "hero_image_url") {
-        const next = window.prompt("Nueva URL de imagen de fondo:", "");
-        if (next) {
-          document.documentElement.style.setProperty("--hero-image", `url(\"${next}\")`);
-          window.parent.postMessage(
-            { type: "edit-update", key, lang: currentLang, value: next },
-            "*"
-          );
-        }
-      } else if (key === "site_logo_url") {
-        const next = window.prompt("Nueva URL del logo:", "");
-        if (next) {
-          const logo = document.getElementById("siteLogo");
-          if (logo) logo.src = next;
-          window.parent.postMessage(
-            { type: "edit-update", key, lang: currentLang, value: next },
-            "*"
-          );
-        }
-      }
-      return;
-    }
+  });
+
+  document.addEventListener("submit", (e) => {
+    if (editModeEnabled) e.preventDefault();
+  });
+
+  // Enviar cambios al padre (debounce en marketing.js)
+  document.addEventListener("input", (e) => {
+    if (!editModeEnabled) return;
+    const el = e.target.closest("[data-content-key]");
+    if (!el) return;
     window.parent.postMessage(
-      {
-        type: "edit-select",
-        key,
-        lang: currentLang,
-        enabled: editModeEnabled
-      },
+      { type: "edit-update", key: el.dataset.contentKey, lang: currentLang, value: el.textContent.trim() },
       "*"
     );
   });
 
-  document.addEventListener("input", (e) => {
+  // Guardar también en blur (captura para que funcione en cualquier elemento)
+  document.addEventListener("blur", (e) => {
     if (!editModeEnabled) return;
-    const editable = e.target.closest("[data-content-key]");
-    if (!editable) return;
-    editable.setAttribute("data-edited", "true");
-    const key = editable.getAttribute("data-content-key");
-    const value = editable.textContent.trim();
+    const el = e.target.closest("[data-content-key]");
+    if (!el) return;
     window.parent.postMessage(
-      { type: "edit-update", key, lang: currentLang, value },
+      { type: "edit-update", key: el.dataset.contentKey, lang: currentLang, value: el.textContent.trim() },
       "*"
     );
-  });
+  }, true);
 }
 
 document.querySelectorAll('a[href^="#"]').forEach((link) => {
