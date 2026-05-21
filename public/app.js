@@ -667,15 +667,37 @@ function renderGallery() {
   const saved = raw.split("\n").map(s => s.trim()).filter(Boolean);
   const urls = saved.length ? saved : DEFAULT_GALLERY;
 
+  if (editModeEnabled) {
+    grid.style.overflow = "visible";
+    grid.innerHTML = urls.map((url, i) => `
+      <div class="gallery-edit-slot">
+        <img src="${url}" alt="" />
+        <div class="gallery-edit-actions">
+          <button class="gallery-edit-btn" data-action="replace" data-idx="${i}">Cambiar</button>
+          <button class="gallery-edit-btn gallery-edit-del" data-action="remove" data-idx="${i}">✕</button>
+        </div>
+      </div>`).join("") +
+      `<div class="gallery-edit-slot gallery-edit-add">
+        <button class="gallery-add-btn" data-action="add">＋ Añadir foto</button>
+      </div>`;
+    grid.querySelectorAll("[data-action]").forEach(btn => {
+      btn.addEventListener("click", e => {
+        e.stopPropagation();
+        window.parent.postMessage({
+          type: "cedit-gallery",
+          action: btn.dataset.action,
+          idx: parseInt(btn.dataset.idx || "-1"),
+          urls
+        }, "*");
+      });
+    });
+    return;
+  }
+
   const imgs = urls.map(url =>
     `<div class="carousel-slide"><img src="${url}" alt="Foto del local" loading="lazy" /></div>`
   ).join("");
-
-  grid.innerHTML = `
-    <div class="carousel-track" id="carouselTrack">
-      ${imgs}${imgs}
-    </div>`;
-
+  grid.innerHTML = `<div class="carousel-track" id="carouselTrack">${imgs}${imgs}</div>`;
   startCarousel();
 }
 
@@ -1313,14 +1335,17 @@ if (window.top !== window) {
           section[data-edit-key]:hover { box-shadow: inset 0 0 0 3px rgba(249,115,22,0.4); cursor: pointer; }
           #siteLogo { cursor: pointer; outline: 2px dashed transparent; border-radius:4px; transition: outline 0.15s; }
           #siteLogo:hover { outline: 2px dashed #f97316; }
-          #leadPopup, .descuento-strip { display: none !important; }
+          #leadPopup { display: none !important; }
           .wa-float { display: none !important; }
+          #galeriaGrid { display: grid !important; grid-template-columns: repeat(auto-fill,minmax(180px,1fr)); gap: 0.75rem; overflow: visible !important; }
+          .galeria-grid { overflow: visible !important; }
         `;
         document.getElementById("leadPopup")?.classList.remove("show");
         document.querySelectorAll("[data-content-key]").forEach((el) => {
           el.contentEditable = "true";
           el.spellcheck = false;
         });
+        renderGallery();
       } else {
         styleEl?.remove();
         document.querySelectorAll("[data-content-key]").forEach((el) => {

@@ -116,16 +116,7 @@ document.querySelectorAll("[data-img-key]").forEach(input => {
     if (!d.ok || !d.urls[0]) { ceditIndicator(false); return; }
     const ok = await ceditSave(key, d.urls[0]);
     ceditIndicator(ok);
-    if (ok) {
-      const frame = document.getElementById("previewFrame");
-      if (frame) {
-        frame.addEventListener("load", function once() {
-          frame.removeEventListener("load", once);
-          frame.contentWindow?.postMessage({ type: "edit-mode", enabled: true }, "*");
-        });
-        frame.contentWindow?.location.reload();
-      }
-    }
+    if (ok) reloadEditFrame();
   });
 });
 
@@ -553,6 +544,44 @@ document.getElementById("campEnviar")?.addEventListener("click", async () => {
 });
 
 let editSaveTimer = null;
+let galleryPending = null; // { action, idx, urls }
+
+// Input oculto para subir fotos de galería
+const galleryUploadInput = Object.assign(document.createElement("input"), {
+  type: "file", accept: "image/*", multiple: true, style: "display:none"
+});
+document.body.appendChild(galleryUploadInput);
+
+galleryUploadInput.addEventListener("change", async function () {
+  if (!this.files.length || !galleryPending) return;
+  const { action, idx, urls } = galleryPending;
+  galleryPending = null;
+  ceditIndicator("loading");
+  const fd = new FormData();
+  Array.from(this.files).forEach(f => fd.append("files", f));
+  this.value = "";
+  const d = await (await authFetch("/api/upload", { method: "POST", body: fd })).json();
+  if (!d.ok || !d.urls.length) { ceditIndicator(false); return; }
+  let newUrls = [...urls];
+  if (action === "replace") {
+    newUrls[idx] = d.urls[0];
+  } else {
+    newUrls = [...newUrls, ...d.urls];
+  }
+  const ok = await ceditSave("gallery_images", newUrls.join("\n"));
+  ceditIndicator(ok);
+  if (ok) reloadEditFrame();
+});
+
+function reloadEditFrame() {
+  const frame = document.getElementById("previewFrame");
+  if (!frame) return;
+  frame.addEventListener("load", function once() {
+    frame.removeEventListener("load", once);
+    frame.contentWindow?.postMessage({ type: "edit-mode", enabled: true }, "*");
+  });
+  frame.contentWindow?.location.reload();
+}
 
 window.addEventListener("message", async (event) => {
   const msg = event.data;
@@ -570,5 +599,18 @@ window.addEventListener("message", async (event) => {
   if (msg.type === "cedit-image-click") {
     const input = document.querySelector(`[data-img-key="${msg.key}"]`);
     if (input) input.click();
+  }
+
+  if (msg.type === "cedit-gallery") {
+    const { action, idx, urls } = msg;
+    if (action === "remove") {
+      const newUrls = urls.filter((_, i) => i !== idx);
+      ceditIndicator("loading");
+      ceditIndicator(await ceditSave("gallery_images", newUrls.join("\n")));
+      reloadEditFrame();
+    } else {
+      galleryPending = { action, idx, urls };
+      galleryUploadInput.click();
+    }
   }
 });
