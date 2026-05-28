@@ -259,7 +259,7 @@ h1, h2, h3 {
 /* Editorial vertical section labels */
 #locales, #galeria, #resenas, #reservas {
   position: relative;
-  padding-left: 5rem;
+  padding-left: 7rem;
 }
 
 #locales .section-head h2,
@@ -267,16 +267,17 @@ h1, h2, h3 {
 #resenas .section-head h2,
 #reservas .section-head h2 {
   position: absolute;
-  left: 1.6rem;
+  left: 2rem;
   top: 3.5rem;
   writing-mode: vertical-rl;
   transform: rotate(180deg);
-  font-family: "Inter", sans-serif;
-  font-size: 0.9rem;
+  font-family: "Playfair Display", Georgia, serif;
+  font-size: 1.5rem;
   font-weight: 700;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--accent);
+  font-style: italic;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--text);
   white-space: nowrap;
   margin: 0;
   line-height: 1;
@@ -2553,6 +2554,7 @@ h1, h2, h3 {
   border-radius: 24px;
   border: 1px solid #f0dfd4;
   max-width: 900px;
+  margin: 0 auto;
 }
 
 /* ── Eventos CTA ─────────────────────────────────────────────────────────── */
@@ -2832,6 +2834,7 @@ h1, h2, h3 {
     writing-mode: horizontal-tb;
     transform: none;
     font-family: "Playfair Display", Georgia, serif;
+    font-style: italic;
     font-size: clamp(1.4rem, 5vw, 2rem);
     font-weight: 700;
     letter-spacing: 0;
