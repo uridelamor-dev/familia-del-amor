@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Lora:ital,wght@0,400;0,600;1,400;1,600&family=Inter:wght@300;400;500;600&display=swap');
 
 :root {
   --bg: #efe6d4;
@@ -268,10 +268,10 @@ h1, h2, h3 {
 #reservas .section-head h2 {
   position: absolute;
   left: 2rem;
-  top: 3.5rem;
+  top: 50%;
   writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  font-family: "Playfair Display", Georgia, serif;
+  transform: translateY(-50%) rotate(180deg);
+  font-family: "Lora", Georgia, serif;
   font-size: 1.5rem;
   font-weight: 700;
   font-style: italic;
@@ -2833,7 +2833,7 @@ h1, h2, h3 {
     position: static;
     writing-mode: horizontal-tb;
     transform: none;
-    font-family: "Playfair Display", Georgia, serif;
+    font-family: "Lora", Georgia, serif;
     font-style: italic;
     font-size: clamp(1.4rem, 5vw, 2rem);
     font-weight: 700;
