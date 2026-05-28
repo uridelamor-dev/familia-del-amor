@@ -619,8 +619,8 @@ function renderNewsAndFaq() {
 }
 
 const teaserCards = [
-  { name: "La Tapeta", loc: "Blanes",       slug: "la-tapeta",      photo: "",                                        logo: "assets/logos/6.svg" },
-  { name: "La Tapeta", loc: "Lloret de Mar", slug: "la-tapeta",      photo: "",                                        logo: "assets/logos/6.svg" },
+  { name: "La Tapeta", loc: "Blanes",       slug: "la-tapeta",      photo: "uploads/gallery/LaTapeta_Blanes_01.jpg",  logo: "assets/logos/6.svg" },
+  { name: "La Tapeta", loc: "Lloret de Mar", slug: "la-tapeta",      photo: "uploads/gallery/LaTapeta_Lloret_01.jpg",  logo: "assets/logos/6.svg" },
   { name: "La Tapeta", loc: "Girona",        slug: "la-tapeta",      photo: "uploads/gallery/LaTapeta_Girona_01.jpg",  logo: "assets/logos/6.svg" },
   { name: "Cooperativa", loc: "Blanes",      slug: "cooperativa",    photo: "uploads/gallery/Cooperativa_208.jpg",     logo: "assets/logos/7.svg" },
   { name: "Can Mateu",   loc: "Tordera",     slug: "can-mateu",      photo: "uploads/gallery/CanMateu_STR04757.jpg",   logo: "assets/logos/3.svg" },
