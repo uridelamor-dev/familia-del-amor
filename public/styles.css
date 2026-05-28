@@ -2110,21 +2110,37 @@ h1, h2, h3 {
 }
 
 /* Date input */
-.reserva-date-input {
+.reserva-date-input,
+.reserva-select,
+.reserva-form input[type="tel"],
+.reserva-form input[type="text"] {
   width: 100%;
   padding: 0.55rem 0.8rem;
   border: 1.5px solid #d4c9b8;
   border-radius: 8px;
   background: var(--card);
-  cursor: pointer;
   font-family: inherit;
   font-size: 0.9rem;
   color: var(--text);
   transition: border-color 0.15s;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
-.reserva-date-input:focus,
-.reserva-date-input:hover {
+.reserva-date-input { cursor: pointer; }
+
+.reserva-select {
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b6560' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  padding-right: 2.2rem;
+}
+
+.reserva-date-input:focus, .reserva-date-input:hover,
+.reserva-select:focus, .reserva-select:hover,
+.reserva-form input[type="tel"]:focus, .reserva-form input[type="tel"]:hover,
+.reserva-form input[type="text"]:focus, .reserva-form input[type="text"]:hover {
   outline: none;
   border-color: var(--accent);
 }

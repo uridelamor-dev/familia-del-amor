@@ -738,20 +738,16 @@ const RESERVA_LOCALS = [
 ];
 
 function renderLocalPicker() {
-  const grid = document.getElementById("localGrid");
-  if (!grid) return;
-  grid.innerHTML = RESERVA_LOCALS.map((l) => `
-    <button type="button" class="local-chip" data-value="${l.value}">
-      <span class="chip-name">${l.name}</span>
-      <span class="chip-sub">${l.sub}</span>
-    </button>`).join("");
-
-  grid.querySelectorAll(".local-chip").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      grid.querySelectorAll(".local-chip").forEach((b) => b.classList.remove("selected"));
-      btn.classList.add("selected");
-      document.getElementById("localValue").value = btn.dataset.value;
-    });
+  const sel = document.getElementById("localSelect");
+  if (!sel) return;
+  RESERVA_LOCALS.forEach((l) => {
+    const opt = document.createElement("option");
+    opt.value = l.value;
+    opt.textContent = `${l.name} — ${l.sub}`;
+    sel.appendChild(opt);
+  });
+  sel.addEventListener("change", () => {
+    document.getElementById("localValue").value = sel.value;
   });
 }
 
@@ -1177,7 +1173,8 @@ if (reservaForm) reservaForm.addEventListener("submit", async (e) => {
       }, 8000);
     }
     reservaForm.reset();
-    document.getElementById("localGrid").querySelectorAll(".local-chip").forEach((b) => b.classList.remove("selected"));
+    const localSel = document.getElementById("localSelect");
+    if (localSel) localSel.value = "";
     document.getElementById("localValue").value = "";
     document.getElementById("timePicker").querySelectorAll(".time-pill").forEach((b) => b.classList.remove("selected"));
     document.getElementById("horaValue").value = "";

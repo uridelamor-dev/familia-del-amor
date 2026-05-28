@@ -114,7 +114,9 @@
         <form id="reservaForm" class="reserva-form">
           <div class="reserva-step">
             <div class="reserva-step-label" data-i18n="reservation_local_q">¿En qué local?</div>
-            <div class="local-grid" id="localGrid"></div>
+            <select id="localSelect" class="reserva-select" aria-label="Local">
+              <option value="">Elige local…</option>
+            </select>
             <input type="hidden" name="local" id="localValue" />
           </div>
           <div class="reserva-row reserva-row--datetime">
