@@ -624,15 +624,21 @@ renderLocalesTeaser();
 function renderLocalesTeaser() {
   const container = document.getElementById("localesTeaser");
   if (!container) return;
-  container.innerHTML = companies
-    .map(
-      (c) =>
-        `<a href="local.html?slug=${c.slug}" class="locales-teaser-chip">
-          <img src="${c.logo}" alt="${c.name}" />
-          <span>${c.name}</span>
-        </a>`
-    )
-    .join("");
+  container.innerHTML = companies.map(c => {
+    const bgStyle = c.photo ? `background-image:url('${c.photo}')` : `background-color:#1a1917`;
+    const logoEl = !c.photo
+      ? `<img class="ltc-logo" src="${c.logo}" alt="${c.name}" />`
+      : "";
+    return `<a href="local.html?slug=${c.slug}" class="ltc">
+      <div class="ltc-bg" style="${bgStyle}"></div>
+      ${logoEl}
+      <div class="ltc-overlay"></div>
+      <div class="ltc-info">
+        <span class="ltc-name">${c.name}</span>
+        <span class="ltc-loc">${c.locations[0]}</span>
+      </div>
+    </a>`;
+  }).join("");
 }
 
 const DEFAULT_GALLERY = [
