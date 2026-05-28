@@ -67,7 +67,7 @@ const i18n = {
       "Somos un grupo familiar de tercera generación, dedicados a la atención al cliente desde los años 70. Llevamos décadas trabajando de cara al público y nuestra obsesión es que cada persona se sienta como en casa: cercana, cuidada y bien atendida.",
     about_tile:
       "Bares de tapas con mucho ambiente, cocina honesta y un equipo que cuida cada detalle.",
-    companies_title: "Nuestras empresas",
+    companies_title: "Locales",
     companies_sub: "Cada local con su carácter, historia y sabor.",
     history_title: "Historia y valores",
     history_sub: "Nuestra manera de hacer las cosas, desde dentro.",
@@ -190,7 +190,7 @@ const i18n = {
       "Som un grup familiar de tercera generació, dedicats a l'atenció al client des dels anys 70. Portem dècades treballant de cara al públic i la nostra obsessió és que cada persona se senti com a casa: propera, cuidada i ben atesa.",
     about_tile:
       "Bars de tapes amb molt ambient, cuina honesta i un equip que cuida cada detall.",
-    companies_title: "Les nostres empreses",
+    companies_title: "Locals",
     companies_sub: "Cada local amb el seu caràcter, història i sabor.",
     history_title: "Història i valors",
     history_sub: "La nostra manera de fer les coses, des de dins.",
@@ -313,7 +313,7 @@ const i18n = {
       "We are a third-generation family business, dedicated to customer care since the 1970s. We have spent decades working face to face, and our obsession is that every person feels at home: welcomed, cared for, and well served.",
     about_tile:
       "Tapas bars with great atmosphere, honest cooking, and a team that cares about every detail.",
-    companies_title: "Our companies",
+    companies_title: "Venues",
     companies_sub: "Each venue with its own character, history, and flavor.",
     history_title: "History and values",
     history_sub: "Our way of doing things, from the inside.",
