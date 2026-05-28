@@ -7,7 +7,7 @@ import multer from "multer";
 import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { initWhatsApp, sendConfirmacionCliente, sendCancelacionCliente, sendMensajeLibre, sendNotificacionGrupo, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendCancelacionCliente, sendMensajeLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, markAwaitingFollowup } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -192,6 +192,19 @@ db.serialize(() => {
       rating INTEGER,
       text TEXT,
       fecha TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS followup_scheduled (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      jid TEXT NOT NULL,
+      nombre TEXT NOT NULL,
+      local TEXT NOT NULL,
+      dia TEXT NOT NULL,
+      send_at TEXT NOT NULL,
+      sent INTEGER DEFAULT 0,
       creado_en TEXT DEFAULT (datetime('now'))
     )
   `);
@@ -1399,7 +1412,7 @@ const server = app.listen(PORT, () => {
   console.log(`Servidor activo en http://localhost:${PORT}`);
 
   setOnReserva((reserva) => {
-    const { local, personas, dia, hora, telefono, nombre_reserva } = reserva;
+    const { local, personas, dia, hora, telefono, nombre_reserva, pendiente } = reserva;
     if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) return;
     const creado_en = new Date().toISOString();
     db.run(
@@ -1407,19 +1420,67 @@ const server = app.listen(PORT, () => {
       [local, personas, dia, hora, telefono, nombre_reserva, creado_en],
       function (err) {
         if (err) { console.error("Error guardando reserva WhatsApp:", err.message); return; }
-        console.log(`📅 Reserva WhatsApp guardada (id ${this.lastID}): ${nombre_reserva} en ${local}`);
+        console.log(`📅 Reserva WhatsApp guardada (id ${this.lastID}): ${nombre_reserva} en ${local}${pendiente ? " [PENDIENTE]" : ""}`);
         upsertLeadFromReserva({ nombre_reserva, telefono });
+
         db.get(`SELECT group_jid FROM wa_links WHERE local = ?`, [local], (_, row) => {
           if (row?.group_jid) {
-            if (isReady()) sendNotificacionGrupo(row.group_jid, reserva);
-            else guardarPendienteWA("grupo", row.group_jid, reserva);
+            if (pendiente) {
+              if (isReady()) sendNotificacionGrupoPendiente(row.group_jid, reserva);
+              else guardarPendienteWA("grupo", row.group_jid, { ...reserva, _pendiente: true });
+            } else {
+              if (isReady()) sendNotificacionGrupo(row.group_jid, reserva);
+              else guardarPendienteWA("grupo", row.group_jid, reserva);
+            }
           }
         });
+
+        // Programar follow-up al día siguiente a las 11h (solo reservas confirmadas)
+        if (!pendiente) {
+          const jid = telefono.replace(/\D/g, "").replace(/^00/, "").replace(/^(?!34)([679])/, "34$1") + "@s.whatsapp.net";
+          const [y, m, d] = dia.split("-").map(Number);
+          const nextDay = new Date(y, m - 1, d + 1);
+          const sendAt = `${nextDay.getFullYear()}-${String(nextDay.getMonth()+1).padStart(2,"0")}-${String(nextDay.getDate()).padStart(2,"0")}T11:00:00`;
+          db.run(
+            `INSERT INTO followup_scheduled (jid, nombre, local, dia, send_at) VALUES (?, ?, ?, ?, ?)`,
+            [jid, nombre_reserva, local, dia, sendAt],
+            (e) => { if (e) console.error("Error programando follow-up:", e.message); }
+          );
+        }
       }
     );
   });
 
   setOnReady(procesarPendientesWA);
+
+  // Enviar mensajes de seguimiento post-visita (cada 5 min)
+  setInterval(async () => {
+    if (!isReady()) return;
+    try {
+      const ahora = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Madrid" }).replace(" ", "T");
+      const pendientes = await dbAll(
+        `SELECT * FROM followup_scheduled WHERE sent = 0 AND send_at <= ?`, [ahora]
+      );
+      for (const row of pendientes) {
+        try {
+          const nombre = row.nombre.split(" ")[0];
+          const msg =
+            `¡Hola ${nombre}! 😊 Soy Sara, del equipo de Familia del Amor.\n\n` +
+            `Ayer estuviste en ${row.local} y queríamos saber cómo te fue. ¿Todo bien? ` +
+            `Si hay algo en lo que podamos mejorar, o simplemente quieres compartir tu experiencia, ` +
+            `aquí estamos 🙏\n\n¡Gracias y hasta pronto!`;
+          await sendMensajeLibre(row.jid.split("@")[0], msg);
+          await dbRun(`UPDATE followup_scheduled SET sent = 1 WHERE id = ?`, [row.id]);
+          markAwaitingFollowup(row.jid, { nombre: row.nombre, local: row.local, dia: row.dia });
+          console.log(`📤 Follow-up enviado a ${row.jid}`);
+        } catch (e) {
+          console.error(`Error enviando follow-up a ${row.jid}:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.error("Error procesando follow-ups:", e.message);
+    }
+  }, 5 * 60 * 1000);
 
   setOnMessage(({ jid, texto, respuesta, historico = false }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");

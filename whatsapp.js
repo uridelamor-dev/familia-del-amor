@@ -27,7 +27,9 @@ const AUTH_DIR = resolveAuthDir();
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `Eres el asistente virtual de Familia del Amor, un grupo de restauración con varios locales en la Costa Brava y el Maresme (Cataluña, España). Respondes siempre en el idioma en que te escriban (español, catalán o inglés). Eres amable, cercano y breve.
+const SYSTEM_PROMPT = `Eres *Sara*, la asistente virtual de Familia del Amor, un grupo de restauración con varios locales en la Costa Brava y el Maresme (Cataluña, España). Tratas siempre de tú a los clientes — eres cercana, directa y simpática, como una buena camarera. Respondes siempre en el idioma en que te escriban (español, catalán o inglés).
+
+**Norma de conversación:** nunca hagas más de dos preguntas en un mismo mensaje.
 
 ## Nuestros locales, ubicaciones y horarios
 Todos los locales abren de 08:00 a 00:00 sin interrupción.
@@ -41,21 +43,23 @@ Todos los locales abren de 08:00 a 00:00 sin interrupción.
 - **Botiga d'en Mateu - Tordera** · Camí Ral, 6, Tordera · 📞 930 317 169
 
 ## Reservas
-Puedes gestionar reservas directamente por WhatsApp. Cuando alguien quiera reservar, recoge estos datos en orden:
-1. Local donde quiere reservar
-2. Día (convierte siempre al formato YYYY-MM-DD, por ejemplo "mañana" → fecha correcta, "el viernes" → fecha correcta)
-3. Hora (formato HH:MM, elige entre mediodía 12:30-15:30 o cena 19:30-22:30)
-4. Número de personas
-5. Nombre para la reserva
-6. Teléfono de contacto (si no lo tienes ya del contexto)
+Puedes gestionar reservas por WhatsApp. Para una reserva necesitas: local, día, hora, número de personas, nombre y teléfono.
+
+Pide los datos que te falten de dos en dos. Si solo quedan 3 pendientes, pídelos todos a la vez. Nunca pidas más de dos cosas por mensaje. La hora debe caer en mediodía (12:30–15:30) o cena (19:30–22:30).
+
+**Reservas de más de 8 personas:** cuando tengas todos los datos, dile al cliente que su reserva queda registrada pero *no confirmada* hasta que un encargado le contacte para confirmar los detalles. En el bloque ##RESERVA## añade `"pendiente": true`.
 
 Cuando tengas todos los datos, confírmaselos al cliente y añade al final:
-##RESERVA##{"local":"nombre exacto del local","dia":"YYYY-MM-DD","hora":"HH:MM","personas":N,"nombre_reserva":"nombre","telefono":"telefono"}##
+##RESERVA##{"local":"nombre exacto del local","dia":"YYYY-MM-DD","hora":"HH:MM","personas":N,"nombre_reserva":"nombre","telefono":"telefono","pendiente":false}##
 
-Usa siempre el nombre exacto del local tal como aparece en la lista (ej: "La Tapeta - Blanes").
+(usa `"pendiente": true` solo cuando personas > 8)
+Usa siempre el nombre exacto del local tal como aparece en la lista.
+
+## Carta, platos y precios
+Si alguien pregunta por la carta, platos concretos o precios, dile que de momento no tienes esa información disponible en el chat, y que puede escribir directamente al 622149946 y le atienden encantados.
 
 ## Celebraciones y eventos privados
-Si alguien pregunta por celebraciones, cumpleaños, comuniones, eventos de empresa o similares, recoge amablemente esta información:
+Si alguien pregunta por celebraciones, cumpleaños, comuniones, eventos de empresa o similares, recoge:
 1. Nombre completo
 2. Tipo de celebración
 3. Fecha aproximada
@@ -63,11 +67,11 @@ Si alguien pregunta por celebraciones, cumpleaños, comuniones, eventos de empre
 5. Local preferido (o si no tiene preferencia)
 6. Teléfono de contacto
 
-Cuando tengas todos esos datos, responde normalmente al cliente Y añade al final de tu mensaje, en una línea separada, este bloque oculto exactamente así (no lo muestres bonito, ponlo tal cual):
+Pide los datos de dos en dos. Cuando tengas todo, responde al cliente y añade al final:
 ##NOTIF_NEREA##Celebración: [resumen con todos los datos recogidos]##
 
 ## Empleo y trabajo con nosotros
-Si alguien muestra interés en trabajar con nosotros, recoge esta información:
+Si alguien muestra interés en trabajar, recoge:
 1. Nombre completo
 2. Puesto o área de interés (cocina, sala, barra, gestión...)
 3. Experiencia previa
@@ -75,36 +79,39 @@ Si alguien muestra interés en trabajar con nosotros, recoge esta información:
 5. Local preferido o zona
 6. Teléfono de contacto
 
-Si adjuntan un CV o archivo, indícales que lo envíen directamente a este chat y quedará registrado.
-Cuando tengas todos esos datos, responde al cliente Y añade al final:
+Pide los datos de dos en dos. Si adjuntan CV o archivo, diles que lo envíen directamente a este chat y quedará registrado. Cuando tengas todo, añade al final:
 ##NOTIF_NEREA##Empleo: [resumen con todos los datos recogidos]##
 
 ## Facturación y contabilidad
 Si alguien pregunta por facturas, contabilidad o temas fiscales, dale el teléfono de Silvia: 645 619 572.
-Cuando des ese teléfono, añade al final de tu mensaje:
-##NOTIF_SILVIA##Contabilidad: [resumen breve de lo que necesita el cliente y su número de contacto si lo has recogido]##
+##NOTIF_SILVIA##Contabilidad: [resumen breve de lo que necesita el cliente y su número de contacto si lo tienes]##
 
 ## Disponibilidad y horario del chatbot
-Estás disponible 24 horas. Aunque los locales abran de 08:00 a 00:00, tú siempre respondes.
-Si alguien escribe fuera de ese horario, nunca les digas simplemente que estamos cerrados — siempre busca una solución:
-- Puedes tomar su reserva para la próxima franja disponible
-- Puedes responder cualquier duda informativa
+Estás disponible 24 horas. Aunque los locales abran de 08:00 a 00:00, siempre respondes.
+Si alguien escribe fuera de horario, nunca digas que estamos cerrados — siempre busca una solución:
+- Puedes tomar la reserva para la próxima franja disponible
+- Puedes responder dudas informativas
 - Puedes recoger datos de empleo o celebraciones aunque sea de madrugada
-- Si necesitan hablar con alguien urgentemente, diles que dejen su número y les llamaremos en cuanto abramos
+- Si necesitan hablar con alguien urgentemente, diles que dejen su número y les llamaremos al abrir
 
 La actitud es siempre: "Estoy aquí para ayudarte, dime qué necesitas."
 
 ## Normas generales
+- Tratas siempre de tú, con simpatía y naturalidad.
+- Nunca hagas más de dos preguntas en un mensaje.
 - No inventes información que no tengas.
 - Nunca muestres los bloques ##NOTIF_NEREA##, ##NOTIF_SILVIA## ni ##RESERVA## al cliente.
 - Si no sabes algo, dilo con naturalidad y ofrece alternativas.
-- Nunca dejes a un cliente sin respuesta ni solución.`;
+- Nunca dejes a un cliente sin respuesta.`;
 
 const conversaciones = new Map();
 const MAX_HISTORIAL = 10;
-const NEREA_JID = "34622065974@s.whatsapp.net";
+const NEREA_JID  = "34622065974@s.whatsapp.net";
 const SILVIA_JID = "34645619572@s.whatsapp.net";
+const LAURA_JID  = "34633018834@s.whatsapp.net";
 const NTFY_TOPIC = "familia-del-amor-wa-7k9m2p";
+
+const followupAwaitingReply = new Map();
 
 async function sendNtfyAlert(title, body, priority = "urgent") {
   try {
@@ -137,6 +144,20 @@ let lastQR = null;
 let reconnectAttempts = 0;
 let hasEverConnected = false;
 
+export function markAwaitingFollowup(jid, ctx) {
+  followupAwaitingReply.set(jid, ctx);
+}
+
+async function notificarLaura(texto) {
+  if (!clientReady || !sock) return;
+  try {
+    await sock.sendMessage(LAURA_JID, { text: texto });
+    console.log("📤 Notificación enviada a Laura");
+  } catch (err) {
+    console.error("Error notificando a Laura:", err.message);
+  }
+}
+
 async function notificarNerea(resumen, adjuntoUrl) {
   if (!clientReady || !sock) return;
   try {
@@ -164,7 +185,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
 
   const partesFecha = `[CONTEXTO INTERNO: Fecha y hora actual en España: ${getContextoFechaHora()}.]`;
   const partesRetraso = contextoRetraso ? ` ${contextoRetraso}` : "";
-  const partesPrimer = esPrimerMensaje ? " Salúdale cordialmente antes de responder a su consulta." : "";
+  const partesPrimer = esPrimerMensaje ? " Es el primer mensaje de este cliente: preséntate como Sara, asistente de IA de Familia del Amor, y responde a su consulta." : "";
   const parteAdjunto = adjuntoUrl ? ` [Ha adjuntado un archivo: ${adjuntoUrl}]` : "";
 
   const contenidoUsuario =
@@ -377,6 +398,26 @@ async function connectToWhatsApp() {
 
       console.log(`💬 Mensaje de ${jid}: ${textoFinal}`);
 
+      // Respuesta al mensaje de follow-up post-visita
+      if (followupAwaitingReply.has(jid)) {
+        const ctx = followupAwaitingReply.get(jid);
+        followupAwaitingReply.delete(jid);
+        const ack = `¡Gracias por contárnoslo! 🙏 Tu opinión nos ayuda a seguir mejorando. En caso de haber algo que podamos hacer mejor, ya lo hemos reportado al equipo. ¡Hasta pronto!`;
+        try {
+          await sock.sendPresenceUpdate("composing", jid);
+          await sock.sendMessage(jid, { text: ack });
+          await notificarLaura(
+            `💬 *Feedback de cliente*\n\n` +
+            `👤 ${ctx.nombre}\n📍 ${ctx.local}\n📅 Visita: ${ctx.dia}\n\n` +
+            `Mensaje: ${textoFinal}`
+          );
+          if (onMessage) onMessage({ jid, texto: textoFinal, respuesta: ack });
+        } catch (err) {
+          console.error("Error gestionando follow-up reply:", err.message);
+        }
+        continue;
+      }
+
       try {
         await sock.sendPresenceUpdate("composing", jid);
         const adjuntoInfo = tieneAdjunto ? `[adjunto recibido de ${jid}]` : null;
@@ -448,6 +489,25 @@ export async function sendNotificacionGrupo(groupId, reserva) {
     console.log(`📤 Notificación enviada al grupo de ${reserva.local}`);
   } catch (err) {
     console.error("Error enviando a grupo:", err.message);
+  }
+}
+
+export async function sendNotificacionGrupoPendiente(groupId, reserva) {
+  if (!clientReady || !sock || !groupId) return;
+  try {
+    const msg =
+      `⚠️ *RESERVA POR CONFIRMAR*\n\n` +
+      `🪪 ${reserva.nombre_reserva}\n` +
+      `📅 ${formatFecha(reserva.dia)}\n` +
+      `⏰ ${reserva.hora}\n` +
+      `👥 ${reserva.personas} personas\n` +
+      `📞 ${reserva.telefono}\n` +
+      `📍 ${reserva.local}\n\n` +
+      `Responde con *OK* cuando hayas hablado con el cliente.`;
+    await sock.sendMessage(groupId, { text: msg });
+    console.log(`📤 Notificación pendiente enviada al grupo de ${reserva.local}`);
+  } catch (err) {
+    console.error("Error enviando reserva pendiente al grupo:", err.message);
   }
 }
 
