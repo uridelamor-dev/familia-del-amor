@@ -2,6 +2,7 @@ requireRole(["marketing", "direccion"]).then((user) => {
   if (!user) return;
   initWhatsAppStatus("waStatus");
   initGoogleStatus();
+  initPlacesConfig();
   const params = new URLSearchParams(location.search);
   const googleParam = params.get("google");
   const errParam = params.get("err");
@@ -64,6 +65,79 @@ async function initWhatsAppStatus(elId) {
     await new Promise((r) => setTimeout(r, 3000));
   }
   el.innerHTML = `⚠️ No se pudo conectar WhatsApp. Reinicia el servidor.`;
+}
+
+// ── GOOGLE PLACES CONFIG ─────────────────────────────────────────────────
+
+const PLACES_LOCALS = [
+  "La Tapeta - Blanes",
+  "Cooperativa - Blanes",
+  "La Tapeta - Lloret",
+  "La Tapeta - Girona",
+  "Can Mateu - Tordera",
+  "La Tapa Ibérica - Tordera",
+  "Botiga d'en Mateu - Tordera"
+];
+
+async function initPlacesConfig() {
+  const fieldsEl = document.getElementById("placesFields");
+  if (!fieldsEl) return;
+
+  let saved = [];
+  try {
+    const r = await authFetch("/api/places/config");
+    const d = await r.json();
+    saved = d.data || [];
+  } catch {}
+
+  const savedMap = Object.fromEntries(saved.map(l => [l.name, l.placeId || ""]));
+
+  fieldsEl.innerHTML = PLACES_LOCALS.map(name => `
+    <label style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">
+      <span style="min-width:200px;font-size:0.88rem">${name}</span>
+      <input type="text" class="cprops-input" data-place-name="${name}"
+        placeholder="ChIJ..." value="${savedMap[name] || ""}"
+        style="flex:1;font-size:0.82rem;font-family:monospace" />
+    </label>
+  `).join("");
+
+  document.getElementById("placesSubmitBtn")?.addEventListener("click", async () => {
+    const btn = document.getElementById("placesSubmitBtn");
+    const msg = document.getElementById("placesMsg");
+    btn.disabled = true;
+    const locations = PLACES_LOCALS.map(name => ({
+      name,
+      placeId: fieldsEl.querySelector(`[data-place-name="${name}"]`)?.value.trim() || ""
+    }));
+    try {
+      const r = await authFetch("/api/places/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locations })
+      });
+      const d = await r.json();
+      msg.textContent = d.ok ? "✅ Guardado" : "❌ " + d.error;
+    } catch {
+      msg.textContent = "❌ Error de conexión";
+    }
+    btn.disabled = false;
+    setTimeout(() => { msg.textContent = ""; }, 3000);
+  });
+
+  document.getElementById("placesRefreshBtn")?.addEventListener("click", async () => {
+    const btn = document.getElementById("placesRefreshBtn");
+    const msg = document.getElementById("placesMsg");
+    btn.disabled = true; btn.textContent = "Importando...";
+    try {
+      const r = await authFetch("/api/reviews/refresh", { method: "POST" });
+      const d = await r.json();
+      msg.textContent = d.ok ? "✅ Reseñas importadas" : "❌ " + d.error;
+    } catch {
+      msg.textContent = "❌ Error de conexión";
+    }
+    btn.disabled = false; btn.textContent = "Importar reseñas ahora";
+    setTimeout(() => { msg.textContent = ""; }, 4000);
+  });
 }
 
 // ── EDITOR DE CONTENIDOS WEB (WYSIWYG) ───────────────────────────────────

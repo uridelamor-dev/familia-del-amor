@@ -55,6 +55,27 @@
         </div>
       </section>
 
+      <section class="block" id="placesSection">
+        <div class="section-head">
+          <h2>Google Places · Place IDs</h2>
+          <p>Alternativa sin aprobación — importa hasta 5 reseñas recientes por local directamente de Google Maps.</p>
+        </div>
+        <div class="card form" id="placesForm">
+          <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem">
+            Necesitas activar la <strong>Places API</strong> en Google Cloud Console y añadir <code>GOOGLE_PLACES_API_KEY</code> en los Secrets de Replit.
+            Para encontrar el Place ID de cada local: busca el restaurante en
+            <a href="https://developers.google.com/maps/documentation/javascript/examples/places-placeid-finder" target="_blank" rel="noopener">este buscador oficial</a>
+            o desde Google Maps → comparte el link → el ID aparece tras <code>place_id:</code>.
+          </p>
+          <div id="placesFields">Cargando...</div>
+          <div class="panel-actions" style="margin-top:1rem">
+            <button class="btn" id="placesSubmitBtn" type="button">Guardar Place IDs</button>
+            <button class="btn ghost" id="placesRefreshBtn" type="button">Importar reseñas ahora</button>
+            <span class="form-note" id="placesMsg"></span>
+          </div>
+        </div>
+      </section>
+
       <div class="panel-tabs">
         <button class="btn" data-tab="web">Edición web</button>
         <button class="btn ghost" data-tab="locals">Locales</button>

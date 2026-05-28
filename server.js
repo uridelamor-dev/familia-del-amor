@@ -297,6 +297,7 @@ db.serialize(() => {
 const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI  = (process.env.BASE_URL || "https://familia-del-amor.replit.app") + "/auth/google/callback";
+const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
 
 function dbGet(sql, params = []) {
   return new Promise((res, rej) => db.get(sql, params, (e, r) => e ? rej(e) : res(r)));
@@ -392,11 +393,48 @@ async function fetchAndStoreReviews() {
   console.log(`Google reviews: ${total} reseñas guardadas`);
 }
 
+async function fetchReviewsViaPlaces() {
+  if (!GOOGLE_PLACES_API_KEY) throw new Error("GOOGLE_PLACES_API_KEY no configurado en Replit Secrets");
+  const idsRaw = await getConfig("places_ids");
+  if (!idsRaw) throw new Error("No hay Place IDs configurados. Ve a Marketing → Google Places.");
+  const locations = JSON.parse(idsRaw).filter(l => l.placeId);
+  if (!locations.length) throw new Error("Ningún Place ID configurado");
+  let total = 0;
+  for (const loc of locations) {
+    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(loc.placeId)}&fields=name,reviews&key=${GOOGLE_PLACES_API_KEY}&language=es&reviews_sort=newest`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.status !== "OK") {
+      console.warn(`Places API error para ${loc.name}: ${data.status} - ${data.error_message || ""}`);
+      continue;
+    }
+    for (const rev of (data.result?.reviews || [])) {
+      const id = `places_${loc.placeId}_${rev.time}`;
+      await dbRun(
+        `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET author=excluded.author, rating=excluded.rating,
+           text=excluded.text, fecha=excluded.fecha`,
+        [id, loc.name, rev.author_name || "Cliente", rev.rating || 5, rev.text || "",
+         new Date(rev.time * 1000).toISOString()]
+      );
+      total++;
+    }
+  }
+  await setConfig("reviews_last_fetch", new Date().toISOString());
+  console.log(`Places API reviews: ${total} reseñas de ${locations.length} locales`);
+  return total;
+}
+
 // Refresco diario de reseñas (cada 24h)
 setInterval(async () => {
   try {
     const refresh = await getConfig("google_refresh_token");
-    if (refresh) await fetchAndStoreReviews();
+    if (refresh) {
+      await fetchAndStoreReviews();
+    } else if (GOOGLE_PLACES_API_KEY) {
+      await fetchReviewsViaPlaces().catch(e => console.error("Auto-refresh Places:", e.message));
+    }
   } catch (e) {
     console.error("Auto-refresh reviews:", e.message);
   }
@@ -453,7 +491,15 @@ app.get("/api/google/status", async (req, res) => {
   const token = await getConfig("google_refresh_token");
   const lastFetch = await getConfig("reviews_last_fetch");
   const count = await dbGet("SELECT COUNT(*) as n FROM google_reviews");
-  res.json({ connected: !!token, reviews_count: count?.n || 0, last_fetch: lastFetch });
+  const placesRaw = await getConfig("places_ids");
+  const placesCount = placesRaw ? JSON.parse(placesRaw).filter(l => l.placeId).length : 0;
+  res.json({
+    connected: !!token,
+    reviews_count: count?.n || 0,
+    last_fetch: lastFetch,
+    places_configured: placesCount,
+    places_key_set: !!GOOGLE_PLACES_API_KEY
+  });
 });
 
 app.get("/api/reviews", async (req, res) => {
@@ -479,11 +525,28 @@ app.post("/api/reviews/refresh", requireAuth(["direccion", "marketing"]), async 
     }
   }
   try {
-    await fetchAndStoreReviews();
+    const refresh = await getConfig("google_refresh_token");
+    if (refresh) {
+      await fetchAndStoreReviews();
+    } else {
+      await fetchReviewsViaPlaces();
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+app.get("/api/places/config", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const raw = await getConfig("places_ids");
+  res.json({ ok: true, data: raw ? JSON.parse(raw) : [] });
+});
+
+app.post("/api/places/config", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const { locations } = req.body;
+  if (!Array.isArray(locations)) return res.status(400).json({ ok: false, error: "locations debe ser array" });
+  await setConfig("places_ids", JSON.stringify(locations));
+  res.json({ ok: true });
 });
 
 // ── Middleware de autenticación
