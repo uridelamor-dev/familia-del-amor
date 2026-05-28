@@ -1891,21 +1891,20 @@ h1, h2, h3 {
 
 @media (max-width: 760px) {
   .top {
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
-    padding: 0.4rem 1rem 0.6rem;
-    gap: 0.4rem;
-    position: relative;
+    justify-content: space-between;
+    padding: 0 1rem;
+    height: 54px;
+    overflow: visible;
+    position: sticky;
   }
   .logo img {
-    height: 120px;
-    margin-top: 0;
+    height: 100px;
+    margin-top: 20px;
   }
   .nav-toggle {
     display: block;
-    position: absolute;
-    left: 0.8rem;
-    top: 0.45rem;
   }
   .nav {
     display: flex;
@@ -1915,20 +1914,24 @@ h1, h2, h3 {
     margin-left: 0;
     position: absolute;
     left: 1rem;
-    top: 3.2rem;
-    background: rgba(247, 242, 234, 0.98);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    box-shadow: 0 12px 24px rgba(27, 24, 22, 0.12);
+    top: 54px;
+    background: rgba(15, 14, 13, 0.97);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 0 0 14px 14px;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3);
     gap: 0.6rem;
-    padding: 0.4rem 0 0.8rem;
+    padding: 0.6rem 0 1rem;
     max-height: 0;
     opacity: 0;
     overflow: hidden;
     transition: max-height 240ms ease, opacity 200ms ease;
+    z-index: 20;
+  }
+  .nav a {
+    color: rgba(255,255,255,0.8);
   }
   .nav.open {
-    max-height: 360px;
+    max-height: 400px;
     opacity: 1;
   }
   .lang {
@@ -2865,13 +2868,22 @@ h1, h2, h3 {
 
 /* ── Mejoras responsive móvil ────────────────────────────────────────────── */
 
+@media (max-width: 900px) {
+  .block {
+    padding: 3rem 2rem;
+  }
+  #locales, #galeria, #resenas, #reservas {
+    padding-left: 5rem;
+  }
+}
+
 @media (max-width: 640px) {
   .block {
     padding: 2rem 1.2rem;
   }
 
   #locales, #galeria, #resenas, #reservas {
-    padding-left: 1.1rem;
+    padding-left: 1.2rem;
   }
 
   #locales .section-head h2,
