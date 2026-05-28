@@ -621,21 +621,28 @@ function renderNewsAndFaq() {
 renderCompanies();
 renderLocalesTeaser();
 
+const teaserCards = [
+  { name: "La Tapeta", loc: "Blanes",       slug: "la-tapeta",      photo: "",                                        logo: "assets/logos/6.svg" },
+  { name: "La Tapeta", loc: "Lloret de Mar", slug: "la-tapeta",      photo: "",                                        logo: "assets/logos/6.svg" },
+  { name: "La Tapeta", loc: "Girona",        slug: "la-tapeta",      photo: "",                                        logo: "assets/logos/6.svg" },
+  { name: "Cooperativa", loc: "Blanes",      slug: "cooperativa",    photo: "uploads/gallery/Cooperativa_208.jpg",     logo: "assets/logos/7.svg" },
+  { name: "Can Mateu",   loc: "Tordera",     slug: "can-mateu",      photo: "uploads/gallery/CanMateu_STR04757.jpg",   logo: "assets/logos/3.svg" },
+  { name: "La Tapa Ibérica", loc: "Tordera", slug: "la-tapa-iberica",photo: "uploads/gallery/TapaIberica_STR05479.jpg",logo: "assets/logos/4.svg" },
+];
+
 function renderLocalesTeaser() {
   const container = document.getElementById("localesTeaser");
   if (!container) return;
-  container.innerHTML = companies.map(c => {
+  container.innerHTML = teaserCards.map(c => {
     const bgStyle = c.photo ? `background-image:url('${c.photo}')` : `background-color:#1a1917`;
-    const logoEl = !c.photo
-      ? `<img class="ltc-logo" src="${c.logo}" alt="${c.name}" />`
-      : "";
+    const logoEl = !c.photo ? `<img class="ltc-logo" src="${c.logo}" alt="${c.name}" />` : "";
     return `<a href="local.html?slug=${c.slug}" class="ltc">
       <div class="ltc-bg" style="${bgStyle}"></div>
       ${logoEl}
       <div class="ltc-overlay"></div>
       <div class="ltc-info">
         <span class="ltc-name">${c.name}</span>
-        <span class="ltc-loc">${c.locations[0]}</span>
+        <span class="ltc-loc">${c.loc}</span>
       </div>
     </a>`;
   }).join("");
