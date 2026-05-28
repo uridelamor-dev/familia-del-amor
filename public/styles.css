@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600&display=swap');
 
 :root {
-  --bg: #f9f8f6;
+  --bg: #efe6d4;
   --text: #0f0e0d;
   --muted: #6b6560;
   --accent: #b8945a;
@@ -252,9 +252,35 @@ h1, h2, h3 {
 }
 
 .block {
-  padding: 4.5rem 2rem;
+  padding: 3rem 2rem;
   max-width: 1080px;
   margin: 0 auto;
+}
+
+/* Editorial vertical section labels */
+#locales, #galeria, #resenas, #reservas {
+  position: relative;
+  padding-left: 5rem;
+}
+
+#locales .section-head h2,
+#galeria .section-head h2,
+#resenas .section-head h2,
+#reservas .section-head h2 {
+  position: absolute;
+  left: 1.6rem;
+  top: 3.5rem;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-family: "Inter", sans-serif;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+  margin: 0;
+  line-height: 1;
 }
 
 .split {
@@ -2793,6 +2819,26 @@ h1, h2, h3 {
 @media (max-width: 640px) {
   .block {
     padding: 2rem 1.1rem;
+  }
+
+  #locales, #galeria, #resenas, #reservas {
+    padding-left: 1.1rem;
+  }
+
+  #locales .section-head h2,
+  #galeria .section-head h2,
+  #resenas .section-head h2,
+  #reservas .section-head h2 {
+    position: static;
+    writing-mode: horizontal-tb;
+    transform: none;
+    font-family: "Playfair Display", Georgia, serif;
+    font-size: clamp(1.4rem, 5vw, 2rem);
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--text);
+    white-space: normal;
   }
 
   .hero {
