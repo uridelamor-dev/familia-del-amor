@@ -174,7 +174,7 @@ h1, h2, h3 {
   padding: 7rem 1.5rem 5.5rem;
   background:
     linear-gradient(rgba(10, 8, 6, 0.58), rgba(10, 8, 6, 0.58)),
-    var(--hero-image, url("9175b3db-0a64-4326-a418-315d777c256b.JPG")) center center / cover no-repeat;
+    var(--hero-image, url("9175b3db-0a64-4326-a418-315d777c256b.JPG")) center 20% / cover no-repeat;
   color: #fff;
 }
 
