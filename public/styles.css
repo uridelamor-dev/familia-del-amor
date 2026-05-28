@@ -1948,9 +1948,19 @@ h1, h2, h3 {
 
 .reserva-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
   align-items: start;
+}
+
+.reserva-row--datetime {
+  grid-template-columns: 1fr 2fr;
+}
+
+.reserva-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 /* Local chips */
@@ -2052,8 +2062,15 @@ h1, h2, h3 {
 }
 
 /* Time picker */
+#timePicker {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
 .time-section {
-  margin-bottom: 0.5rem;
+  flex: 1;
+  min-width: 140px;
 }
 
 .time-section-label {
@@ -2113,6 +2130,8 @@ h1, h2, h3 {
 
 @media (max-width: 640px) {
   .reserva-row { grid-template-columns: 1fr; gap: 1.25rem; }
+  .reserva-row--datetime { grid-template-columns: 1fr; }
+  #timePicker { flex-direction: column; gap: 0.8rem; }
 }
 
 /* ── Calendario de reservas ─────────────────────────────────────────────── */

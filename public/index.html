@@ -117,26 +117,28 @@
             <div class="local-grid" id="localGrid"></div>
             <input type="hidden" name="local" id="localValue" />
           </div>
-          <div class="reserva-row">
-            <div class="reserva-step">
-              <div class="reserva-step-label" data-i18n="reservation_day_q">¿Qué día?</div>
-              <input type="text" id="diaDisplay" class="reserva-date-input" data-date-input="dia" data-date-mode="future" placeholder="Elige fecha" data-i18n-ph="ph_choose_date" readonly required />
-              <input type="hidden" id="diaValue" name="dia" />
+          <div class="reserva-row reserva-row--datetime">
+            <div class="reserva-col">
+              <div class="reserva-step">
+                <div class="reserva-step-label" data-i18n="reservation_day_q">¿Qué día?</div>
+                <input type="text" id="diaDisplay" class="reserva-date-input" data-date-input="dia" data-date-mode="future" placeholder="Elige fecha" data-i18n-ph="ph_choose_date" readonly required />
+                <input type="hidden" id="diaValue" name="dia" />
+              </div>
+              <div class="reserva-step">
+                <div class="reserva-step-label" data-i18n="reservation_people_q">¿Cuántos?</div>
+                <div class="stepper">
+                  <button type="button" class="stepper-btn" id="personasMinus">−</button>
+                  <span id="personasDisplay">2</span>
+                  <span class="stepper-unit" data-i18n="reservation_people_unit">personas</span>
+                  <button type="button" class="stepper-btn" id="personasPlus">+</button>
+                </div>
+                <input type="hidden" name="personas" id="personasValue" value="2" />
+              </div>
             </div>
             <div class="reserva-step">
               <div class="reserva-step-label" data-i18n="reservation_time_q">¿A qué hora?</div>
               <div id="timePicker"></div>
               <input type="hidden" name="hora" id="horaValue" />
-            </div>
-            <div class="reserva-step">
-              <div class="reserva-step-label" data-i18n="reservation_people_q">¿Cuántos?</div>
-              <div class="stepper">
-                <button type="button" class="stepper-btn" id="personasMinus">−</button>
-                <span id="personasDisplay">2</span>
-                <span class="stepper-unit" data-i18n="reservation_people_unit">personas</span>
-                <button type="button" class="stepper-btn" id="personasPlus">+</button>
-              </div>
-              <input type="hidden" name="personas" id="personasValue" value="2" />
             </div>
           </div>
           <div class="reserva-row">
