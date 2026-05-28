@@ -1493,3 +1493,15 @@ const server = app.listen(PORT, () => {
 
   initWhatsApp();
 });
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`Puerto ${PORT} ocupado. Esperando y reintentando...`);
+    setTimeout(() => {
+      server.close();
+      server.listen(PORT);
+    }, 2000);
+  } else {
+    console.error("Error del servidor:", err.message);
+  }
+});
