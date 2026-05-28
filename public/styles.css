@@ -270,6 +270,10 @@ h1, h2, h3 {
   padding-left: 7rem;
 }
 
+#resenas {
+  padding-top: 1rem;
+}
+
 #locales .section-head h2,
 #galeria .section-head h2,
 #resenas .section-head h2,
