@@ -618,9 +618,6 @@ function renderNewsAndFaq() {
   }
 }
 
-renderCompanies();
-renderLocalesTeaser();
-
 const teaserCards = [
   { name: "La Tapeta", loc: "Blanes",       slug: "la-tapeta",      photo: "",                                        logo: "assets/logos/6.svg" },
   { name: "La Tapeta", loc: "Lloret de Mar", slug: "la-tapeta",      photo: "",                                        logo: "assets/logos/6.svg" },
@@ -629,6 +626,9 @@ const teaserCards = [
   { name: "Can Mateu",   loc: "Tordera",     slug: "can-mateu",      photo: "uploads/gallery/CanMateu_STR04757.jpg",   logo: "assets/logos/3.svg" },
   { name: "La Tapa Ibérica", loc: "Tordera", slug: "la-tapa-iberica",photo: "uploads/gallery/TapaIberica_STR05479.jpg",logo: "assets/logos/4.svg" },
 ];
+
+renderCompanies();
+renderLocalesTeaser();
 
 function renderLocalesTeaser() {
   const container = document.getElementById("localesTeaser");
