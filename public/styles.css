@@ -174,7 +174,7 @@ h1, h2, h3 {
   padding: 7rem 1.5rem 5.5rem;
   background:
     linear-gradient(rgba(10, 8, 6, 0.58), rgba(10, 8, 6, 0.58)),
-    var(--hero-image, url("9175b3db-0a64-4326-a418-315d777c256b.JPG")) center 20% / cover no-repeat;
+    var(--hero-image, url("9175b3db-0a64-4326-a418-315d777c256b.JPG")) center 35% / cover no-repeat;
   color: #fff;
 }
 
@@ -273,9 +273,9 @@ h1, h2, h3 {
   writing-mode: vertical-rl;
   transform: rotate(180deg);
   font-family: "Inter", sans-serif;
-  font-size: 0.6rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.26em;
+  letter-spacing: 0.24em;
   text-transform: uppercase;
   color: var(--accent);
   white-space: nowrap;
