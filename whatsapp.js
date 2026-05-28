@@ -25,7 +25,17 @@ function resolveAuthDir() {
 }
 const AUTH_DIR = resolveAuthDir();
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+let anthropic = null;
+function getAnthropic() {
+  if (!anthropic) {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.warn("[WhatsApp] ANTHROPIC_API_KEY no configurada — respuestas IA desactivadas");
+      return null;
+    }
+    anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  }
+  return anthropic;
+}
 
 const SYSTEM_PROMPT = `Eres *Sara*, la asistente virtual de Familia del Amor, un grupo de restauración con varios locales en la Costa Brava y el Maresme (Cataluña, España). Tratas siempre de tú a los clientes — eres cercana, directa y simpática, como una buena camarera. Respondes siempre en el idioma en que te escriban (español, catalán o inglés).
 
@@ -194,8 +204,11 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
   historial.push({ role: "user", content: contenidoUsuario });
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
 
+  const ai = getAnthropic();
+  if (!ai) return "Lo siento, el asistente no está disponible en este momento.";
+
   try {
-    const response = await anthropic.messages.create({
+    const response = await ai.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 400,
       system: SYSTEM_PROMPT,
