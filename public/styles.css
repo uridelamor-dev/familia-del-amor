@@ -97,10 +97,11 @@ h1, h2, h3 {
   padding: 0;
   display: flex;
   align-items: center;
+  overflow: visible;
 }
 
 .logo img {
-  height: 44px;
+  height: 176px;
   display: block;
   filter: invert(1);
   object-fit: contain;
@@ -175,7 +176,7 @@ h1, h2, h3 {
   padding: 7rem 1.5rem 5.5rem;
   background:
     linear-gradient(rgba(10, 8, 6, 0.58), rgba(10, 8, 6, 0.58)),
-    var(--hero-image, url("9175b3db-0a64-4326-a418-315d777c256b.JPG")) center 40% / cover no-repeat;
+    var(--hero-image, url("9175b3db-0a64-4326-a418-315d777c256b.JPG")) center 25% / cover no-repeat;
   color: #fff;
 }
 
@@ -1886,7 +1887,7 @@ h1, h2, h3 {
     position: relative;
   }
   .logo img {
-    height: 38px;
+    height: 120px;
     margin-top: 0;
   }
   .nav-toggle {
