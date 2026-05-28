@@ -670,27 +670,15 @@ function renderGallery() {
   if (editModeEnabled) {
     grid.style.overflow = "visible";
     grid.innerHTML = urls.map((url, i) => `
-      <div class="gallery-edit-slot">
+      <div class="gallery-edit-slot" data-gallery-idx="${i}">
         <img src="${url}" alt="" />
-        <div class="gallery-edit-actions">
-          <button class="gallery-edit-btn" data-action="replace" data-idx="${i}">Cambiar</button>
-          <button class="gallery-edit-btn gallery-edit-del" data-action="remove" data-idx="${i}">✕</button>
+        <div class="gallery-edit-overlay">
+          <span style="color:#fff;font-size:0.78rem;font-weight:700;pointer-events:none">Seleccionar</span>
         </div>
       </div>`).join("") +
-      `<div class="gallery-edit-slot gallery-edit-add">
-        <button class="gallery-add-btn" data-action="add">＋ Añadir foto</button>
+      `<div class="gallery-edit-slot gallery-edit-add" data-gallery-add="true">
+        <span style="font-size:1.5rem;pointer-events:none">＋</span>
       </div>`;
-    grid.querySelectorAll("[data-action]").forEach(btn => {
-      btn.addEventListener("click", e => {
-        e.stopPropagation();
-        window.parent.postMessage({
-          type: "cedit-gallery",
-          action: btn.dataset.action,
-          idx: parseInt(btn.dataset.idx || "-1"),
-          urls
-        }, "*");
-      });
-    });
     return;
   }
 
@@ -1316,7 +1304,6 @@ if (window.top !== window) {
     if (msg.type === "edit-mode") {
       editModeEnabled = !!msg.enabled;
       document.documentElement.classList.toggle("edit-mode", editModeEnabled);
-
       let styleEl = document.getElementById("__edit-styles");
       if (editModeEnabled) {
         if (!styleEl) {
@@ -1325,78 +1312,100 @@ if (window.top !== window) {
           document.head.appendChild(styleEl);
         }
         styleEl.textContent = `
-          [data-content-key] {
-            border-radius: 3px; outline: none;
-            transition: outline 0.12s, background 0.12s;
-            cursor: text !important; min-height: 1em;
-          }
-          [data-content-key]:hover { outline: 2px dashed rgba(249,115,22,0.65); }
-          [data-content-key]:focus { outline: 2px solid #f97316 !important; background: rgba(249,115,22,0.07) !important; }
-          section[data-edit-key]:hover { box-shadow: inset 0 0 0 3px rgba(249,115,22,0.4); cursor: pointer; }
-          #siteLogo { cursor: pointer; outline: 2px dashed transparent; border-radius:4px; transition: outline 0.15s; }
-          #siteLogo:hover { outline: 2px dashed #f97316; }
+          [data-content-key], [data-edit-key], .gallery-edit-slot { cursor: pointer !important; }
+          [data-content-key] { border-radius:3px; transition: outline 0.1s; }
+          [data-content-key]:hover { outline: 2px dashed rgba(249,115,22,0.6); }
+          section[data-edit-key]:hover { box-shadow: inset 0 0 0 2px rgba(249,115,22,0.5); }
+          #siteLogo { cursor:pointer !important; }
+          #siteLogo:hover { outline: 2px dashed #f97316; border-radius:4px; }
+          .canvas-selected { outline: 2px solid #f97316 !important; border-radius:3px; box-shadow: 0 0 0 4px rgba(249,115,22,0.15) !important; }
+          section.canvas-selected { outline: none !important; box-shadow: inset 0 0 0 3px #f97316, 0 0 0 5px rgba(249,115,22,0.15) !important; }
+          #siteLogo.canvas-selected { outline: 2px solid #f97316 !important; border-radius:4px; box-shadow: 0 0 0 4px rgba(249,115,22,0.15) !important; }
           #leadPopup { display: none !important; }
           .wa-float { display: none !important; }
-          #galeriaGrid { display: grid !important; grid-template-columns: repeat(auto-fill,minmax(180px,1fr)); gap: 0.75rem; overflow: visible !important; }
-          .galeria-grid { overflow: visible !important; }
+          #galeriaGrid { display:grid !important; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:0.6rem; overflow:visible !important; }
+          .galeria-grid { overflow:visible !important; }
+          .gallery-edit-slot:hover .gallery-edit-overlay { opacity:1; }
+          .gallery-edit-slot.canvas-selected .gallery-edit-overlay { opacity:1; background:rgba(249,115,22,0.35) !important; }
         `;
         document.getElementById("leadPopup")?.classList.remove("show");
-        document.querySelectorAll("[data-content-key]").forEach((el) => {
-          el.contentEditable = "true";
-          el.spellcheck = false;
-        });
         renderGallery();
       } else {
         styleEl?.remove();
-        document.querySelectorAll("[data-content-key]").forEach((el) => {
-          el.contentEditable = "false";
-          el.removeAttribute("data-edited");
-        });
+        document.querySelectorAll(".canvas-selected").forEach(el => el.classList.remove("canvas-selected"));
       }
     }
 
     if (msg.type === "set-lang") {
       setLang(msg.lang);
+      // Rebroadcast selected element with new lang values
+      setTimeout(() => {
+        const sel = document.querySelector(".canvas-selected");
+        if (!sel) return;
+        const isGallery = sel.classList.contains("gallery-edit-slot");
+        if (isGallery) return; // gallery re-selection not needed on lang change
+        const key = sel.dataset.contentKey || sel.dataset.editKey;
+        if (!key) return;
+        const isImg = sel.dataset.editKey && !sel.dataset.contentKey;
+        window.parent.postMessage({
+          type: "canvas-select", key,
+          elementType: isImg ? "image" : "text",
+          value: isImg ? (sel.src || "") : sel.textContent.trim(),
+          lang: msg.lang
+        }, "*");
+      }, 60);
+    }
+
+    if (msg.type === "canvas-update") {
+      const el = document.querySelector(`[data-content-key="${msg.key}"]`);
+      if (el) el.textContent = msg.value;
     }
   });
 
-  // Prevenir navegación y envío de formularios en modo edición
   document.addEventListener("click", (e) => {
     if (!editModeEnabled) return;
     const a = e.target.closest("a");
-    if (a) { e.preventDefault(); return; }
+    if (a) e.preventDefault();
+    document.addEventListener("submit", ev => ev.preventDefault(), { once: true });
 
-    const imgEl = e.target.closest("[data-edit-key]");
-    if (imgEl && !e.target.closest("[data-content-key]")) {
-      window.parent.postMessage({ type: "cedit-image-click", key: imgEl.dataset.editKey }, "*");
+    // Find the most specific selectable target
+    const gallerySlot = e.target.closest(".gallery-edit-slot");
+    const textEl = !gallerySlot && e.target.closest("[data-content-key]");
+    const imgEl = !gallerySlot && !textEl && e.target.closest("[data-edit-key]");
+    const logoEl = !gallerySlot && !textEl && !imgEl && e.target.id === "siteLogo" ? e.target : null;
+    const target = gallerySlot || textEl || imgEl || logoEl;
+
+    document.querySelectorAll(".canvas-selected").forEach(el => el.classList.remove("canvas-selected"));
+
+    if (!target) {
+      window.parent.postMessage({ type: "canvas-deselect" }, "*");
+      return;
     }
+    target.classList.add("canvas-selected");
+
+    if (gallerySlot) {
+      const raw = contentCache.gallery_images || "";
+      const urls = raw.split("\n").map(s => s.trim()).filter(Boolean);
+      const idx = gallerySlot.dataset.galleryIdx !== undefined ? parseInt(gallerySlot.dataset.galleryIdx) : -1;
+      window.parent.postMessage({
+        type: "canvas-select", key: "gallery_images",
+        elementType: gallerySlot.dataset.galleryAdd ? "gallery-add" : "gallery-item",
+        idx, urls, lang: currentLang
+      }, "*");
+      return;
+    }
+
+    const key = target.dataset.contentKey || target.dataset.editKey || (target.id === "siteLogo" ? "site_logo_url" : null);
+    const isImg = (target.dataset.editKey && !target.dataset.contentKey) || target.id === "siteLogo";
+    window.parent.postMessage({
+      type: "canvas-select", key,
+      elementType: isImg ? "image" : "text",
+      value: isImg ? (target.src || "") : target.textContent.trim(),
+      lang: currentLang
+    }, "*");
   });
 
-  document.addEventListener("submit", (e) => {
-    if (editModeEnabled) e.preventDefault();
-  });
-
-  // Enviar cambios al padre (debounce en marketing.js)
-  document.addEventListener("input", (e) => {
-    if (!editModeEnabled) return;
-    const el = e.target.closest("[data-content-key]");
-    if (!el) return;
-    window.parent.postMessage(
-      { type: "edit-update", key: el.dataset.contentKey, lang: currentLang, value: el.textContent.trim() },
-      "*"
-    );
-  });
-
-  // Guardar también en blur (captura para que funcione en cualquier elemento)
-  document.addEventListener("blur", (e) => {
-    if (!editModeEnabled) return;
-    const el = e.target.closest("[data-content-key]");
-    if (!el) return;
-    window.parent.postMessage(
-      { type: "edit-update", key: el.dataset.contentKey, lang: currentLang, value: el.textContent.trim() },
-      "*"
-    );
-  }, true);
+  document.addEventListener("submit", e => { if (editModeEnabled) e.preventDefault(); });
 }
 
 document.querySelectorAll('a[href^="#"]').forEach((link) => {

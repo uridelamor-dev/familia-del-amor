@@ -103,27 +103,162 @@ function ceditIndicator(ok) {
   frame.addEventListener("load", activateFrame);
 })();
 
-// Subida de imágenes (hero / logo) desde la barra superior
-document.querySelectorAll("[data-img-key]").forEach(input => {
-  input.addEventListener("change", async function () {
-    if (!this.files[0]) return;
-    const key = this.dataset.imgKey;
-    ceditIndicator("loading");
-    const fd = new FormData();
-    fd.append("files", this.files[0]);
-    const d = await (await authFetch("/api/upload", { method: "POST", body: fd })).json();
-    this.value = "";
-    if (!d.ok || !d.urls[0]) { ceditIndicator(false); return; }
-    const ok = await ceditSave(key, d.urls[0]);
-    ceditIndicator(ok);
-    if (ok) reloadEditFrame();
+// ── CANVAS: mapa de etiquetas ─────────────────────────────────────────────
+const ELEMENT_LABELS = {
+  hero_eyebrow:       { label: "Etiqueta superior",      section: "Hero",      i18n: true },
+  hero_title:         { label: "Título principal",        section: "Hero",      i18n: true },
+  hero_sub:           { label: "Subtítulo",               section: "Hero",      i18n: true },
+  hero_cta:           { label: "Botón 'Reservar'",        section: "Hero",      i18n: true },
+  hero_cta_2:         { label: "Botón 'Ver locales'",     section: "Hero",      i18n: true },
+  hero_image_url:     { label: "Imagen de fondo",         section: "Hero",      type: "image" },
+  site_logo_url:      { label: "Logo del sitio",          section: "General",   type: "image" },
+  companies_title:    { label: "Título sección locales",  section: "Locales",   i18n: true },
+  companies_sub:      { label: "Subtítulo locales",       section: "Locales",   i18n: true },
+  gallery_title:      { label: "Título galería",          section: "Galería",   i18n: true },
+  gallery_sub:        { label: "Subtítulo galería",       section: "Galería",   i18n: true },
+  gallery_images:     { label: "Fotos de la galería",     section: "Galería",   type: "gallery" },
+  reservations_title: { label: "Título reservas",         section: "Reservas",  i18n: true },
+  reservations_sub:   { label: "Subtítulo reservas",      section: "Reservas",  i18n: true },
+  reviews_title:      { label: "Título reseñas",          section: "Reseñas",   i18n: true },
+  reviews_sub:        { label: "Valoración Google",       section: "Reseñas",   i18n: true },
+  strip_title:        { label: "Franja: título",          section: "Descuento", i18n: true },
+  strip_sub:          { label: "Franja: texto",           section: "Descuento", i18n: true },
+  strip_cta:          { label: "Franja: botón",           section: "Descuento", i18n: true },
+  popup_title:        { label: "Popup: título",           section: "Popup",     i18n: true },
+  popup_text:         { label: "Popup: texto",            section: "Popup",     i18n: true },
+  contact_title:      { label: "Título contacto",         section: "Contacto",  i18n: true },
+  contact_text:       { label: "Texto contacto",          section: "Contacto",  i18n: true },
+};
+
+const MULTILINE_KEYS = new Set(["hero_sub", "companies_sub", "popup_text", "strip_sub", "contact_text"]);
+
+let canvasSelection = null;
+
+function clearPropsPanel() {
+  const panel = document.getElementById("canvasProps");
+  if (panel) panel.innerHTML = `
+    <div class="cprops-empty">
+      <div class="cprops-empty-icon">👆</div>
+      <p>Haz clic en cualquier elemento de la web para ver sus propiedades</p>
+    </div>`;
+  canvasSelection = null;
+}
+
+async function uploadFile(files, multiple = false) {
+  const fd = new FormData();
+  Array.from(files).forEach(f => fd.append("files", f));
+  const d = await (await authFetch("/api/upload", { method: "POST", body: fd })).json();
+  return d.ok ? d.urls : [];
+}
+
+function renderPropsPanel(msg) {
+  canvasSelection = msg;
+  const panel = document.getElementById("canvasProps");
+  if (!panel) return;
+  const meta = ELEMENT_LABELS[msg.key] || { label: msg.key, section: "—" };
+
+  // ── Imagen ──
+  if (msg.elementType === "image") {
+    panel.innerHTML = `
+      <div class="cprops-header">
+        <span class="cprops-section">${meta.section}</span>
+        <strong class="cprops-label">${meta.label}</strong>
+      </div>
+      <div class="cprops-body">
+        ${msg.value ? `<img src="${msg.value}" class="cprops-img-preview" alt="" />` : `<div class="cprops-img-empty">Sin imagen</div>`}
+        <label class="btn cprops-upload-btn">
+          <input type="file" accept="image/*" style="display:none" />
+          📷 Cambiar imagen
+        </label>
+      </div>`;
+    panel.querySelector("input[type=file]").addEventListener("change", async function () {
+      if (!this.files[0]) return;
+      ceditIndicator("loading");
+      const urls = await uploadFile(this.files);
+      this.value = "";
+      if (!urls[0]) { ceditIndicator(false); return; }
+      ceditIndicator(await ceditSave(msg.key, urls[0]));
+      reloadEditFrame();
+    });
+    return;
+  }
+
+  // ── Foto de galería ──
+  if (msg.elementType === "gallery-item" || msg.elementType === "gallery-add") {
+    const isAdd = msg.elementType === "gallery-add";
+    const { idx = -1, urls = [] } = msg;
+    panel.innerHTML = `
+      <div class="cprops-header">
+        <span class="cprops-section">Galería</span>
+        <strong class="cprops-label">${isAdd ? "Añadir fotos" : `Foto ${idx + 1} de ${urls.length}`}</strong>
+      </div>
+      <div class="cprops-body">
+        ${!isAdd ? `<img src="${urls[idx]}" class="cprops-img-preview" alt="" />` : ""}
+        <label class="btn cprops-upload-btn">
+          <input type="file" accept="image/*" ${isAdd ? "multiple" : ""} style="display:none" />
+          📷 ${isAdd ? "Subir fotos" : "Cambiar esta foto"}
+        </label>
+        ${!isAdd ? `<button class="btn ghost cprops-del-btn" style="width:100%;justify-content:center">✕ Eliminar esta foto</button>` : ""}
+      </div>`;
+    panel.querySelector("input[type=file]").addEventListener("change", async function () {
+      if (!this.files.length) return;
+      ceditIndicator("loading");
+      const newFiles = await uploadFile(this.files);
+      this.value = "";
+      if (!newFiles.length) { ceditIndicator(false); return; }
+      let newUrls = [...urls];
+      if (isAdd) { newUrls = [...newUrls, ...newFiles]; } else { newUrls[idx] = newFiles[0]; }
+      ceditIndicator(await ceditSave("gallery_images", newUrls.join("\n")));
+      reloadEditFrame();
+    });
+    panel.querySelector(".cprops-del-btn")?.addEventListener("click", async () => {
+      ceditIndicator("loading");
+      ceditIndicator(await ceditSave("gallery_images", urls.filter((_, i) => i !== idx).join("\n")));
+      reloadEditFrame();
+    });
+    return;
+  }
+
+  // ── Texto ──
+  const dbKey = meta.i18n ? `${msg.key}_${msg.lang}` : msg.key;
+  const isMulti = MULTILINE_KEYS.has(msg.key);
+  const safeVal = (msg.value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  panel.innerHTML = `
+    <div class="cprops-header">
+      <span class="cprops-section">${meta.section}</span>
+      <strong class="cprops-label">${meta.label}</strong>
+    </div>
+    <div class="cprops-body">
+      ${isMulti
+        ? `<textarea class="cprops-input" rows="4">${msg.value || ""}</textarea>`
+        : `<input class="cprops-input" type="text" value="${safeVal}" />`}
+    </div>`;
+
+  const input = panel.querySelector(".cprops-input");
+  let saveTimer;
+  input.addEventListener("input", () => {
+    clearTimeout(saveTimer);
+    document.getElementById("previewFrame")?.contentWindow?.postMessage(
+      { type: "canvas-update", key: msg.key, value: input.value }, "*");
+    saveTimer = setTimeout(async () => {
+      ceditIndicator("loading");
+      ceditIndicator(await ceditSave(dbKey, input.value));
+    }, 700);
   });
-});
+  input.addEventListener("blur", async () => {
+    clearTimeout(saveTimer);
+    ceditIndicator("loading");
+    ceditIndicator(await ceditSave(dbKey, input.value));
+  });
+  input.focus();
+  if (input.setSelectionRange) input.setSelectionRange(input.value.length, input.value.length);
+}
 
 document.querySelectorAll(".cedit-lang").forEach(btn => {
   btn.addEventListener("click", () => {
     ceditLang = btn.dataset.lang;
     document.querySelectorAll(".cedit-lang").forEach(b => b.classList.toggle("active", b === btn));
+    if (canvasSelection) clearPropsPanel(); // el iframe re-enviará canvas-select tras set-lang
     document.getElementById("previewFrame")?.contentWindow?.postMessage({ type: "set-lang", lang: ceditLang }, "*");
   });
 });
@@ -543,39 +678,11 @@ document.getElementById("campEnviar")?.addEventListener("click", async () => {
   }
 });
 
-let editSaveTimer = null;
-let galleryPending = null; // { action, idx, urls }
-
-// Input oculto para subir fotos de galería
-const galleryUploadInput = Object.assign(document.createElement("input"), {
-  type: "file", accept: "image/*", multiple: true, style: "display:none"
-});
-document.body.appendChild(galleryUploadInput);
-
-galleryUploadInput.addEventListener("change", async function () {
-  if (!this.files.length || !galleryPending) return;
-  const { action, idx, urls } = galleryPending;
-  galleryPending = null;
-  ceditIndicator("loading");
-  const fd = new FormData();
-  Array.from(this.files).forEach(f => fd.append("files", f));
-  this.value = "";
-  const d = await (await authFetch("/api/upload", { method: "POST", body: fd })).json();
-  if (!d.ok || !d.urls.length) { ceditIndicator(false); return; }
-  let newUrls = [...urls];
-  if (action === "replace") {
-    newUrls[idx] = d.urls[0];
-  } else {
-    newUrls = [...newUrls, ...d.urls];
-  }
-  const ok = await ceditSave("gallery_images", newUrls.join("\n"));
-  ceditIndicator(ok);
-  if (ok) reloadEditFrame();
-});
-
 function reloadEditFrame() {
   const frame = document.getElementById("previewFrame");
   if (!frame) return;
+  canvasSelection = null;
+  clearPropsPanel();
   frame.addEventListener("load", function once() {
     frame.removeEventListener("load", once);
     frame.contentWindow?.postMessage({ type: "edit-mode", enabled: true }, "*");
@@ -583,34 +690,9 @@ function reloadEditFrame() {
   frame.contentWindow?.location.reload();
 }
 
-window.addEventListener("message", async (event) => {
+window.addEventListener("message", (event) => {
   const msg = event.data;
   if (!msg) return;
-
-  if (msg.type === "edit-update") {
-    const dbKey = msg.lang ? `${msg.key}_${msg.lang}` : msg.key;
-    clearTimeout(editSaveTimer);
-    editSaveTimer = setTimeout(async () => {
-      ceditIndicator("loading");
-      ceditIndicator(await ceditSave(dbKey, msg.value));
-    }, 600);
-  }
-
-  if (msg.type === "cedit-image-click") {
-    const input = document.querySelector(`[data-img-key="${msg.key}"]`);
-    if (input) input.click();
-  }
-
-  if (msg.type === "cedit-gallery") {
-    const { action, idx, urls } = msg;
-    if (action === "remove") {
-      const newUrls = urls.filter((_, i) => i !== idx);
-      ceditIndicator("loading");
-      ceditIndicator(await ceditSave("gallery_images", newUrls.join("\n")));
-      reloadEditFrame();
-    } else {
-      galleryPending = { action, idx, urls };
-      galleryUploadInput.click();
-    }
-  }
+  if (msg.type === "canvas-select") renderPropsPanel(msg);
+  if (msg.type === "canvas-deselect") clearPropsPanel();
 });

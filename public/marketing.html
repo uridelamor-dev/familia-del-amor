@@ -64,25 +64,25 @@
 
       <section class="block panel-section wysiwyg-panel" data-section="web">
         <div class="wysiwyg-topbar">
-          <span class="wysiwyg-hint">Haz clic en cualquier texto para editarlo directamente</span>
+          <span class="wysiwyg-hint">Haz clic en cualquier elemento para editarlo</span>
           <div class="cedit-lang-bar">
             <button class="cedit-lang active" data-lang="es">🇪🇸 ES</button>
             <button class="cedit-lang" data-lang="ca">🏴 CA</button>
             <button class="cedit-lang" data-lang="en">🇬🇧 EN</button>
           </div>
-          <div class="wysiwyg-img-btns">
-            <label class="btn ghost wysiwyg-img-label" title="Cambiar imagen de fondo del hero">
-              <input type="file" accept="image/*" data-img-key="hero_image_url" style="display:none"/>
-              🖼 Imagen hero
-            </label>
-            <label class="btn ghost wysiwyg-img-label" title="Cambiar logo del sitio">
-              <input type="file" accept="image/*" data-img-key="site_logo_url" style="display:none"/>
-              🏷 Logo
-            </label>
-          </div>
           <span class="cedit-save-indicator" id="ceditSaveInd"></span>
         </div>
-        <iframe id="previewFrame" src="index.html" class="wysiwyg-frame"></iframe>
+        <div class="canvas-layout">
+          <div class="canvas-preview">
+            <iframe id="previewFrame" src="index.html" class="wysiwyg-frame"></iframe>
+          </div>
+          <div class="canvas-props" id="canvasProps">
+            <div class="cprops-empty">
+              <div class="cprops-empty-icon">👆</div>
+              <p>Haz clic en cualquier elemento de la web para ver sus propiedades</p>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="block panel-section" data-section="locals">
