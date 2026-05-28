@@ -174,7 +174,7 @@ h1, h2, h3 {
   padding: 7rem 1.5rem 5.5rem;
   background:
     linear-gradient(rgba(10, 8, 6, 0.58), rgba(10, 8, 6, 0.58)),
-    var(--hero-image, url("9175b3db-0a64-4326-a418-315d777c256b.JPG")) center 35% / cover no-repeat;
+    var(--hero-image, url("9175b3db-0a64-4326-a418-315d777c256b.JPG")) center 55% / cover no-repeat;
   color: #fff;
 }
 
@@ -252,9 +252,8 @@ h1, h2, h3 {
 }
 
 .block {
-  padding: 3rem 2rem;
-  max-width: 1080px;
-  margin: 0 auto;
+  padding: 3rem 4rem;
+  width: 100%;
 }
 
 /* Editorial vertical section labels */
@@ -273,9 +272,9 @@ h1, h2, h3 {
   writing-mode: vertical-rl;
   transform: rotate(180deg);
   font-family: "Inter", sans-serif;
-  font-size: 0.72rem;
+  font-size: 0.9rem;
   font-weight: 700;
-  letter-spacing: 0.24em;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--accent);
   white-space: nowrap;
@@ -2818,7 +2817,7 @@ h1, h2, h3 {
 
 @media (max-width: 640px) {
   .block {
-    padding: 2rem 1.1rem;
+    padding: 2rem 1.2rem;
   }
 
   #locales, #galeria, #resenas, #reservas {
