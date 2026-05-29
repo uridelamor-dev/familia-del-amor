@@ -7,12 +7,75 @@ import multer from "multer";
 import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { execSync } from "child_process";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, markAwaitingFollowup } from "./whatsapp.js";
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ── Backup / Restore en Replit DB (persiste entre redeploys) ──────────────
+const REPLIT_BACKUP_KEY = "latapeta_db_v3";
+
+function tryRestoreFromReplitDB(targetPath) {
+  const dbUrl = process.env.REPLIT_DB_URL;
+  if (!dbUrl) return false;
+  try {
+    console.log("[DB] BD no encontrada, restaurando desde Replit KV...");
+    const raw = execSync(`curl -sf "${dbUrl}/${REPLIT_BACKUP_KEY}"`, {
+      encoding: "utf8", timeout: 20000,
+    }).trim();
+    if (!raw || raw === "null" || raw.length < 200) {
+      console.log("[DB] Sin copia en Replit KV");
+      return false;
+    }
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, Buffer.from(raw, "base64"));
+    console.log(`[DB] BD restaurada (${Math.round(raw.length * 0.75 / 1024)} KB)`);
+    return true;
+  } catch (e) {
+    console.warn("[DB] No se pudo restaurar:", e.message);
+    return false;
+  }
+}
+
+function backupToReplitDBSync() {
+  const dbUrl = process.env.REPLIT_DB_URL;
+  if (!dbUrl) return;
+  try {
+    const tmpFile = "/tmp/latapeta_db_bk.b64";
+    fs.writeFileSync(tmpFile, fs.readFileSync(dbPath).toString("base64"));
+    execSync(`curl -sf -X POST "${dbUrl}" --data-urlencode "${REPLIT_BACKUP_KEY}@${tmpFile}"`, {
+      timeout: 20000, stdio: "pipe",
+    });
+    try { fs.unlinkSync(tmpFile); } catch {}
+    console.log("[DB] BD guardada en Replit KV (sync)");
+  } catch (e) {
+    console.error("[DB] Error guardando sync:", e.message);
+  }
+}
+
+async function backupToReplitDB() {
+  const dbUrl = process.env.REPLIT_DB_URL;
+  if (!dbUrl) return;
+  try {
+    if (!fs.existsSync(dbPath)) return;
+    const b64 = fs.readFileSync(dbPath).toString("base64");
+    const body = new URLSearchParams();
+    body.set(REPLIT_BACKUP_KEY, b64);
+    const resp = await fetch(dbUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+    if (resp.ok) console.log(`[DB] BD guardada en Replit KV (${Math.round(b64.length * 0.75 / 1024)} KB)`);
+    else console.warn("[DB] Error Replit KV:", resp.status);
+  } catch (e) {
+    console.error("[DB] Error guardando async:", e.message);
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -54,6 +117,10 @@ function resolveDbPath() {
 }
 const dbPath = resolveDbPath();
 console.log(`Base de datos: ${dbPath}`);
+// Restaurar desde Replit KV si el archivo local no existe
+if (!fs.existsSync(dbPath)) {
+  tryRestoreFromReplitDB(dbPath);
+}
 const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
   if (err) console.error("Error abriendo base de datos:", err.message);
 });
@@ -717,6 +784,7 @@ app.post("/api/leads", (req, res) => {
           [nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuenteVal, generoVal, ahora],
           function (err2) {
             if (err2) return res.status(500).json({ ok: false, error: "Error guardando lead" });
+            backupToReplitDB(); // Guardar BD al recibir nuevo lead
             return res.json({ ok: true, premio });
           }
         );
@@ -1282,6 +1350,7 @@ app.post("/api/whatsapp/link", requireAuth(["direccion", "encargado"]), (req, re
          ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
         [`whatsapp_group_${local}`, groupId, updated_at]
       );
+      backupToReplitDB(); // Guardar BD al actualizar wa_link
       res.json({ ok: true });
     }
   );
@@ -1416,8 +1485,9 @@ app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), (req, res) => {
 app.get("/", (req, res) => res.redirect("/login.html"));
 
 const shutdown = (signal) => {
-  console.log(`${signal} recibido, cerrando servidor...`);
-  setTimeout(() => { process.exit(0); }, 3000).unref();
+  console.log(`${signal} recibido, guardando BD y cerrando servidor...`);
+  backupToReplitDBSync(); // Guardar BD antes de apagar
+  setTimeout(() => { process.exit(0); }, 5000).unref();
   server.closeAllConnections?.();
   server.close(() => {
     db.close();
@@ -1458,6 +1528,11 @@ async function procesarPendientesWA() {
 
 const server = app.listen(PORT, () => {
   console.log(`Servidor activo en http://localhost:${PORT}`);
+
+  // Backup inicial tras arrancar (30 s para dar tiempo a que la BD termine de inicializarse)
+  setTimeout(() => backupToReplitDB(), 30 * 1000);
+  // Backup periódico cada 5 minutos
+  setInterval(() => backupToReplitDB(), 5 * 60 * 1000);
 
   setOnReserva((reserva) => {
     const { local, personas, dia, hora, telefono, nombre_reserva, pendiente } = reserva;
