@@ -33,6 +33,23 @@ function resolveDbPath() {
       console.warn(`DB_PATH directory inaccesible (${dir}), usando ruta local.`);
     }
   }
+  // En Replit, usar directorio fuera del proyecto para que no se pierda en cada redeploy
+  if (process.env.REPL_ID || process.env.REPL_SLUG) {
+    const persistentDir = "/home/runner/latapeta-data";
+    const persistentPath = path.join(persistentDir, "database.sqlite");
+    try {
+      fs.mkdirSync(persistentDir, { recursive: true });
+      // Migrar DB existente si la hay en el directorio del proyecto
+      const oldPath = path.join(__dirname, "database.sqlite");
+      if (!fs.existsSync(persistentPath) && fs.existsSync(oldPath)) {
+        fs.copyFileSync(oldPath, persistentPath);
+        console.log(`DB migrada de ${oldPath} a ${persistentPath}`);
+      }
+      return persistentPath;
+    } catch (e) {
+      console.warn(`No se pudo usar directorio persistente de Replit (${e.message}), usando ruta local.`);
+    }
+  }
   return path.join(__dirname, "database.sqlite");
 }
 const dbPath = resolveDbPath();
@@ -115,17 +132,29 @@ db.serialize(() => {
       updated_at TEXT NOT NULL
     )
   `, () => {
-    // Migrar links existentes de la tabla contents a wa_links
+    const ahora = new Date().toISOString();
+    // contents → wa_links (restaurar links guardados en el sistema antiguo)
     db.all(`SELECT key, value FROM contents WHERE key LIKE 'whatsapp_group_%'`, (err, rows) => {
-      if (err || !rows?.length) return;
-      const ahora = new Date().toISOString();
-      rows.forEach(({ key, value }) => {
-        const local = key.replace("whatsapp_group_", "");
-        db.run(
-          `INSERT OR IGNORE INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, ?)`,
-          [local, value, ahora]
-        );
-      });
+      if (!err && rows?.length) {
+        rows.forEach(({ key, value }) => {
+          const local = key.replace("whatsapp_group_", "");
+          db.run(
+            `INSERT OR IGNORE INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, ?)`,
+            [local, value, ahora]
+          );
+        });
+      }
+    });
+    // wa_links → contents (asegurar que todos los links estén también en contents como backup)
+    db.all(`SELECT local, group_jid FROM wa_links`, (err, rows) => {
+      if (!err && rows?.length) {
+        rows.forEach(({ local, group_jid }) => {
+          db.run(
+            `INSERT OR IGNORE INTO contents (key, value, updated_at) VALUES (?, ?, ?)`,
+            [`whatsapp_group_${local}`, group_jid, ahora]
+          );
+        });
+      }
     });
   });
 
@@ -1247,6 +1276,12 @@ app.post("/api/whatsapp/link", requireAuth(["direccion", "encargado"]), (req, re
     [local, groupId, updated_at],
     (err) => {
       if (err) return res.status(500).json({ ok: false, error: "Error guardando" });
+      // También guardar en contents para que la migración de startup lo restaure
+      db.run(
+        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        [`whatsapp_group_${local}`, groupId, updated_at]
+      );
       res.json({ ok: true });
     }
   );
