@@ -1162,8 +1162,10 @@ if (reservaForm) reservaForm.addEventListener("submit", async (e) => {
     const successTitle = document.getElementById("reservaSuccessTitle");
     const successDetails = document.getElementById("reservaSuccessDetails");
     if (successEl) {
-      if (successTitle) successTitle.textContent = t.success_reserva;
-      if (successDetails) successDetails.textContent = `${payload.local} · ${payload.dia} ${t.reservation_at} ${payload.hora} · ${payload.personas} ${t.reservation_people_unit}`;
+      if (successTitle) successTitle.textContent = data.pendiente ? "Solicitud recibida" : t.success_reserva;
+      if (successDetails) successDetails.textContent = data.pendiente
+        ? `Hemos recibido tu solicitud para ${payload.local} el ${payload.dia} a las ${payload.hora} (${payload.personas} personas). Un encargado se pondrá en contacto contigo para confirmar.`
+        : `${payload.local} · ${payload.dia} ${t.reservation_at} ${payload.hora} · ${payload.personas} ${t.reservation_people_unit}`;
       reservaForm.classList.add("hidden");
       successEl.classList.remove("hidden");
       successEl.scrollIntoView({ behavior: "smooth", block: "nearest" });

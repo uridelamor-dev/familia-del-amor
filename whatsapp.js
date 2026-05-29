@@ -473,18 +473,41 @@ export async function sendConfirmacionCliente(telefono, reserva) {
   if (!clientReady || !sock) return;
   try {
     const jid = formatPhone(telefono);
+    const nombre = reserva.nombre_reserva.split(" ")[0];
     const msg =
+      `¡Hola ${nombre}! 😊 Soy Sara, la asistente virtual de Familia del Amor. Te escribo para confirmarte la reserva:\n\n` +
       `✅ *Reserva confirmada*\n\n` +
       `🏠 ${reserva.local}\n` +
       `📅 ${formatFecha(reserva.dia)}\n` +
       `⏰ ${reserva.hora}\n` +
       `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
       `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
-      `¡Te esperamos! Si necesitas cancelar o modificar, llámanos.`;
+      `¡Te esperamos! Si necesitas cancelar o modificar, escríbenos aquí o llámanos.`;
     await sock.sendMessage(jid, { text: msg });
     console.log(`📤 Confirmación enviada a ${telefono}`);
   } catch (err) {
     console.error("Error enviando confirmación:", err.message);
+  }
+}
+
+export async function sendConfirmacionPendienteCliente(telefono, reserva) {
+  if (!clientReady || !sock) return;
+  try {
+    const jid = formatPhone(telefono);
+    const nombre = reserva.nombre_reserva.split(" ")[0];
+    const msg =
+      `¡Hola ${nombre}! 😊 Soy Sara, la asistente virtual de Familia del Amor. Te escribo para confirmarte que hemos recibido tu solicitud de reserva:\n\n` +
+      `⏳ *Reserva pendiente de confirmación*\n\n` +
+      `🏠 ${reserva.local}\n` +
+      `📅 ${formatFecha(reserva.dia)}\n` +
+      `⏰ ${reserva.hora}\n` +
+      `👥 ${reserva.personas} personas\n` +
+      `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
+      `Por el número de comensales, un encargado se pondrá en contacto contigo en breve para confirmar todos los detalles. ¡Gracias!`;
+    await sock.sendMessage(jid, { text: msg });
+    console.log(`📤 Confirmación pendiente enviada a ${telefono}`);
+  } catch (err) {
+    console.error("Error enviando confirmación pendiente:", err.message);
   }
 }
 

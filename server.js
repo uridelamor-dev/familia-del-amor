@@ -7,7 +7,7 @@ import multer from "multer";
 import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { initWhatsApp, sendConfirmacionCliente, sendCancelacionCliente, sendMensajeLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, markAwaitingFollowup } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, markAwaitingFollowup } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -863,19 +863,30 @@ app.post("/api/reservas", (req, res) => {
     [local, personas, dia, hora, telefono, nombre_reserva, creado_en],
     function (err) {
       if (err) return res.status(500).json({ ok: false, error: "Error guardando reserva" });
+      const pendiente = parseInt(personas) > 8;
       const reserva = { local, personas, dia, hora, telefono, nombre_reserva };
       upsertLeadFromReserva({ nombre_reserva, telefono });
-      console.log(`[Reserva] WhatsApp listo: ${isReady()} | Confirmación a ${telefono}`);
-      if (isReady()) sendConfirmacionCliente(telefono, reserva);
-      else guardarPendienteWA("confirmacion", telefono, reserva);
+      console.log(`[Reserva] WhatsApp listo: ${isReady()} | ${pendiente ? "PENDIENTE" : "Confirmación"} a ${telefono}`);
+      if (pendiente) {
+        if (isReady()) sendConfirmacionPendienteCliente(telefono, reserva);
+        else guardarPendienteWA("confirmacion_pendiente", telefono, reserva);
+      } else {
+        if (isReady()) sendConfirmacionCliente(telefono, reserva);
+        else guardarPendienteWA("confirmacion", telefono, reserva);
+      }
       db.get(`SELECT group_jid FROM wa_links WHERE local = ?`, [local], (_, row) => {
         console.log(`[Reserva] Grupo para "${local}": ${row?.group_jid || "NO CONFIGURADO"}`);
         if (row?.group_jid) {
-          if (isReady()) sendNotificacionGrupo(row.group_jid, reserva);
-          else guardarPendienteWA("grupo", row.group_jid, reserva);
+          if (pendiente) {
+            if (isReady()) sendNotificacionGrupoPendiente(row.group_jid, reserva);
+            else guardarPendienteWA("grupo_pendiente", row.group_jid, reserva);
+          } else {
+            if (isReady()) sendNotificacionGrupo(row.group_jid, reserva);
+            else guardarPendienteWA("grupo", row.group_jid, reserva);
+          }
         }
       });
-      return res.json({ ok: true, reserva_id: this.lastID });
+      return res.json({ ok: true, reserva_id: this.lastID, pendiente });
     }
   );
 });
@@ -1398,7 +1409,9 @@ async function procesarPendientesWA() {
       try {
         const reserva = JSON.parse(row.reserva_json);
         if (row.tipo === "confirmacion") await sendConfirmacionCliente(row.destino, reserva);
+        else if (row.tipo === "confirmacion_pendiente") await sendConfirmacionPendienteCliente(row.destino, reserva);
         else if (row.tipo === "grupo") await sendNotificacionGrupo(row.destino, reserva);
+        else if (row.tipo === "grupo_pendiente") await sendNotificacionGrupoPendiente(row.destino, reserva);
         db.run(`DELETE FROM pending_whatsapp WHERE id = ?`, [row.id]);
         console.log(`✅ Pendiente WA enviado (id ${row.id})`);
       } catch (e) {
