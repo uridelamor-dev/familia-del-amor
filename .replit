@@ -35,5 +35,5 @@ localPort = 5000
 externalPort = 80
 
 [deployment]
-deploymentTarget = "gce"
+deploymentTarget = "reserved-vm"
 run = ["sh", "-c", "node server.js"]
