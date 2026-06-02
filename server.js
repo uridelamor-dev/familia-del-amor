@@ -1395,7 +1395,7 @@ app.post("/api/whatsapp/link", requireAuth(["direccion", "encargado"]), (req, re
          ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
         [`whatsapp_group_${local}`, groupId, updated_at]
       );
-      backupToReplitDB(); // Guardar BD al actualizar wa_link
+      backupToReplitDBSync(); // Backup síncrono: garantiza que se guarda antes de seguir
       res.json({ ok: true });
     }
   );
