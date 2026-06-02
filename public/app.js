@@ -42,7 +42,7 @@ const companies = [
     desc: "Tienda de embutidos y jamonería.",
     logo: "assets/logos/2.svg",
     slug: "botiga-mateu",
-    photo: "",
+    photo: "uploads/gallery/BotigaMateu_01.jpg",
     locations: ["Tordera · Camí Ral 8"]
   },
   {
