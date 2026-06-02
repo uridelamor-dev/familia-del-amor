@@ -1124,6 +1124,22 @@ app.post("/api/hr/applications", upload.single("cv"), (req, res) => {
     [nombre, email, telefono, puesto, mensaje || "", cv_url, creado_en],
     function (err) {
       if (err) return res.status(500).json({ ok: false, error: "Error guardando candidatura" });
+      // Notificar a Nerea por WhatsApp
+      if (isReady()) {
+        const lineas = [
+          `🆕 *Nueva candidatura recibida*`,
+          ``,
+          `👤 *Nombre:* ${nombre}`,
+          `📞 *Teléfono:* ${telefono}`,
+          `📧 *Email:* ${email}`,
+          `💼 *Puesto:* ${puesto}`,
+        ];
+        if (mensaje) lineas.push(`💬 *Mensaje:* ${mensaje}`);
+        if (cv_url) lineas.push(`📎 *CV:* Ha adjuntado un CV`);
+        sendMensajeLibre("622065974", lineas.join("\n")).catch((e) =>
+          console.error("[HR] Error notificando candidatura a Nerea:", e.message)
+        );
+      }
       res.json({ ok: true });
     }
   );
