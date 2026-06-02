@@ -1136,6 +1136,9 @@ app.post("/api/hr/applications", upload.single("cv"), (req, res) => {
         ];
         if (mensaje) lineas.push(`💬 *Mensaje:* ${mensaje}`);
         if (req.file) lineas.push(`📎 *CV:* adjunto a continuación`);
+        const numLimpio = telefono.replace(/\D/g, "").replace(/^00/, "");
+        const numWA = numLimpio.startsWith("34") ? numLimpio : `34${numLimpio}`;
+        const linkWA = `https://wa.me/${numWA}`;
         sendMensajeLibre("622065974", lineas.join("\n"))
           .then(() => {
             if (req.file) {
@@ -1143,6 +1146,7 @@ app.post("/api/hr/applications", upload.single("cv"), (req, res) => {
               return sendDocumentoLibre("622065974", cvBuffer, req.file.originalname, req.file.mimetype);
             }
           })
+          .then(() => sendMensajeLibre("622065974", `Si quieres escribirle directamente a ${nombre}, haz clic aquí 👇\n${linkWA}`))
           .catch((e) => console.error("[HR] Error notificando candidatura a Nerea:", e.message));
       }
       res.json({ ok: true });
