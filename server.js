@@ -88,35 +88,42 @@ app.use(express.static(path.join(__dirname, "public")));
 function resolveDbPath() {
   const configured = process.env.DB_PATH;
   if (configured) {
-    const dir = path.dirname(configured);
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      return configured;
-    } catch {
-      console.warn(`DB_PATH directory inaccesible (${dir}), usando ruta local.`);
+    // Validar que parece una ruta de archivo SQLite, no un directorio genérico
+    const looksWrong = configured === "/home/user" || configured === "/home/runner" || !configured.endsWith(".sqlite") && !configured.includes(".");
+    if (looksWrong) {
+      console.warn(`[DB] DB_PATH="${configured}" parece incorrecta — ignorando. Elimina esta variable de Secrets en Replit.`);
+    } else {
+      const dir = path.dirname(configured);
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        return configured;
+      } catch {
+        console.warn(`[DB] DB_PATH directory inaccesible (${dir}), usando ruta por defecto.`);
+      }
     }
   }
-  // En Replit, usar directorio fuera del proyecto para que no se pierda en cada redeploy
+  // En Replit Reserved VM, el directorio del proyecto persiste entre redeploys
+  const localPath = path.join(__dirname, "database.sqlite");
+  // Intentar también un directorio fuera del proyecto como respaldo
   if (process.env.REPL_ID || process.env.REPL_SLUG) {
     const persistentDir = "/home/runner/latapeta-data";
     const persistentPath = path.join(persistentDir, "database.sqlite");
     try {
       fs.mkdirSync(persistentDir, { recursive: true });
-      // Migrar DB existente si la hay en el directorio del proyecto
-      const oldPath = path.join(__dirname, "database.sqlite");
+      const oldPath = localPath;
       if (!fs.existsSync(persistentPath) && fs.existsSync(oldPath)) {
         fs.copyFileSync(oldPath, persistentPath);
-        console.log(`DB migrada de ${oldPath} a ${persistentPath}`);
+        console.log(`[DB] BD migrada a ${persistentPath}`);
       }
       return persistentPath;
     } catch (e) {
-      console.warn(`No se pudo usar directorio persistente de Replit (${e.message}), usando ruta local.`);
+      console.warn(`[DB] No se pudo usar ruta persistente (${e.message}), usando directorio local.`);
     }
   }
-  return path.join(__dirname, "database.sqlite");
+  return localPath;
 }
 const dbPath = resolveDbPath();
-console.log(`Base de datos: ${dbPath}`);
+console.log(`[DB] Ruta de base de datos: ${dbPath}`);
 // Restaurar desde Replit KV si el archivo local no existe
 if (!fs.existsSync(dbPath)) {
   tryRestoreFromReplitDB(dbPath);
