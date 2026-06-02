@@ -50,7 +50,7 @@ const companies = [
     desc: "Fiestas al aire libre y eventos memorables.",
     logo: "assets/logos/5.svg",
     slug: "viva-la-pepa",
-    photo: "",
+    photo: "uploads/gallery/VivaLaPepa_01.webp",
     locations: ["Eventos itinerantes"]
   }
 ];
