@@ -1158,7 +1158,10 @@ app.post("/api/hr/applications", (req, res, next) => {
         if (req.file) lineas.push(`📎 *CV:* adjunto a continuación`);
         const numLimpio = telefono.replace(/\D/g, "").replace(/^00/, "");
         const numWA = numLimpio.startsWith("34") ? numLimpio : `34${numLimpio}`;
-        const linkWA = `https://wa.me/${numWA}`;
+        const mensajePrefill = encodeURIComponent(
+          `Hola ${nombre}! 👋 Te escribo en relación a tu candidatura como ${puesto} en Familia del Amor. Cuéntame un poco más sobre ti para que podamos conocernos mejor 😊`
+        );
+        const linkWA = `https://wa.me/${numWA}?text=${mensajePrefill}`;
         sendMensajeLibre("622065974", lineas.join("\n"))
           .then(() => {
             if (req.file) {
