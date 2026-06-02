@@ -63,8 +63,29 @@
           </div>
           <div class="form-row">
             <label><span>Email</span><input type="email" name="email" autocomplete="email" required /></label>
-            <label><span data-i18n="jobs_position">Puesto de interés</span><input type="text" name="puesto" required /></label>
+            <label><span data-i18n="jobs_edad">Edad</span>
+              <select name="edad" id="edadSelect" required>
+                <option value="">—</option>
+              </select>
+            </label>
           </div>
+          <div class="form-row">
+            <label><span data-i18n="jobs_position">Puesto de interés</span>
+              <select name="puesto" required>
+                <option value="">—</option>
+                <option value="Camarero/a">Camarero/a</option>
+                <option value="Cocinero/a">Cocinero/a</option>
+              </select>
+            </label>
+            <label><span data-i18n="jobs_experiencia">Experiencia previa</span>
+              <select name="experiencia" required>
+                <option value="">—</option>
+                <option value="si" data-i18n="jobs_exp_si">Sí</option>
+                <option value="no" data-i18n="jobs_exp_no">No</option>
+              </select>
+            </label>
+          </div>
+          <label><span data-i18n="jobs_poblacion">Población</span><input type="text" name="poblacion" required /></label>
           <label><span data-i18n="jobs_message">Mensaje (opcional)</span><textarea name="mensaje" rows="3"></textarea></label>
           <label><span data-i18n="jobs_cv">CV (PDF, opcional)</span><input type="file" name="cv" accept="application/pdf" /></label>
           <button class="btn" type="submit" data-i18n="jobs_submit">Enviar candidatura</button>

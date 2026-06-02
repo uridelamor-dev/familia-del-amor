@@ -134,7 +134,10 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+    cb(null, uploadsDir);
+  },
   filename: (req, file, cb) => {
     const safe = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
     cb(null, `${Date.now()}-${safe}`);
@@ -320,6 +323,9 @@ db.serialize(() => {
   db.run(`ALTER TABLE leads ADD COLUMN genero TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
+  db.run(`ALTER TABLE hr_applications ADD COLUMN edad INTEGER`, () => {});
+  db.run(`ALTER TABLE hr_applications ADD COLUMN experiencia TEXT`, () => {});
+  db.run(`ALTER TABLE hr_applications ADD COLUMN poblacion TEXT`, () => {});
 
   db.run(`
     CREATE TABLE IF NOT EXISTS campanas_wa (
@@ -1112,20 +1118,30 @@ app.put("/api/hr/jobs/:id", requireAuth(["rrhh", "direccion"]), (req, res) => {
   );
 });
 
-app.post("/api/hr/applications", upload.single("cv"), (req, res) => {
-  const { nombre, email, telefono, puesto, mensaje } = req.body;
-  console.log("[HR] Candidatura recibida:", { nombre, email, telefono, puesto, tieneCV: !!req.file });
-  if (!nombre || !email || !telefono || !puesto) {
+app.post("/api/hr/applications", (req, res, next) => {
+  upload.single("cv")(req, res, (err) => {
+    if (err) {
+      console.error("[HR] Error subiendo CV:", err.message);
+      return res.status(400).json({ ok: false, error: "Error subiendo el CV." });
+    }
+    next();
+  });
+}, (req, res) => {
+  const { nombre, email, telefono, puesto, mensaje, edad, experiencia, poblacion } = req.body;
+  console.log("[HR] Candidatura recibida:", { nombre, email, telefono, puesto, edad, experiencia, poblacion, tieneCV: !!req.file });
+  if (!nombre || !email || !telefono || !puesto || !edad || !experiencia || !poblacion) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
   const cv_url = req.file ? `/uploads/${req.file.filename}` : "";
   const creado_en = new Date().toISOString();
   db.run(
-    `INSERT INTO hr_applications (nombre, email, telefono, puesto, mensaje, cv_url, estado, creado_en) VALUES (?, ?, ?, ?, ?, ?, 'nuevo', ?)`,
-    [nombre, email, telefono, puesto, mensaje || "", cv_url, creado_en],
+    `INSERT INTO hr_applications (nombre, email, telefono, puesto, mensaje, cv_url, edad, experiencia, poblacion, estado, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'nuevo', ?)`,
+    [nombre, email, telefono, puesto, mensaje || "", cv_url, edad || null, experiencia || null, poblacion || null, creado_en],
     function (err) {
-      if (err) return res.status(500).json({ ok: false, error: "Error guardando candidatura" });
-      // Notificar a Nerea por WhatsApp
+      if (err) {
+        console.error("[HR] Error DB:", err.message);
+        return res.status(500).json({ ok: false, error: "Error guardando candidatura" });
+      }
       if (isReady()) {
         const lineas = [
           `🆕 *Nueva candidatura recibida*`,
@@ -1134,6 +1150,9 @@ app.post("/api/hr/applications", upload.single("cv"), (req, res) => {
           `📞 *Teléfono:* ${telefono}`,
           `📧 *Email:* ${email}`,
           `💼 *Puesto:* ${puesto}`,
+          `🎂 *Edad:* ${edad} años`,
+          `🏙️ *Población:* ${poblacion}`,
+          `✅ *Experiencia:* ${experiencia === "si" ? "Sí" : "No"}`,
         ];
         if (mensaje) lineas.push(`💬 *Mensaje:* ${mensaje}`);
         if (req.file) lineas.push(`📎 *CV:* adjunto a continuación`);

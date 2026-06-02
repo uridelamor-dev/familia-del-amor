@@ -156,6 +156,11 @@ const i18n = {
     jobs_message: "Mensaje (opcional)",
     jobs_cv: "CV (PDF, opcional)",
     jobs_submit: "Enviar candidatura",
+    jobs_edad: "Edad",
+    jobs_experiencia: "Experiencia previa",
+    jobs_exp_si: "Sí",
+    jobs_exp_no: "No",
+    jobs_poblacion: "Población",
     events_eyebrow: "Celebraciones",
     events_hero_sub: "Cumpleaños, comuniones, eventos de empresa, cenas de equipo… lo organizamos todo para que tú solo tengas que disfrutar.",
     events_types_title: "¿Qué celebramos juntos?",
@@ -279,6 +284,11 @@ const i18n = {
     jobs_message: "Missatge (opcional)",
     jobs_cv: "CV (PDF, opcional)",
     jobs_submit: "Enviar candidatura",
+    jobs_edad: "Edat",
+    jobs_experiencia: "Experiència prèvia",
+    jobs_exp_si: "Sí",
+    jobs_exp_no: "No",
+    jobs_poblacion: "Població",
     events_eyebrow: "Celebracions",
     events_hero_sub: "Aniversaris, comunions, esdeveniments d'empresa, sopars d'equip… ho organitzem tot perquè tu només hagis de gaudir.",
     events_types_title: "Què celebrem junts?",
@@ -402,6 +412,11 @@ const i18n = {
     jobs_message: "Message (optional)",
     jobs_cv: "CV (PDF, optional)",
     jobs_submit: "Send application",
+    jobs_edad: "Age",
+    jobs_experiencia: "Previous experience",
+    jobs_exp_si: "Yes",
+    jobs_exp_no: "No",
+    jobs_poblacion: "City / Town",
     events_eyebrow: "Celebrations",
     events_hero_sub: "Birthdays, communions, corporate events, team dinners… we organise everything so you only have to enjoy it.",
     events_types_title: "What shall we celebrate?",
@@ -1222,6 +1237,17 @@ async function loadJobs() {
 }
 
 loadJobs();
+
+// Rellena el selector de edad en trabaja.html
+const edadSelect = document.getElementById("edadSelect");
+if (edadSelect) {
+  for (let age = 16; age <= 65; age++) {
+    const opt = document.createElement("option");
+    opt.value = age;
+    opt.textContent = age;
+    edadSelect.appendChild(opt);
+  }
+}
 
 async function loadReviews() {
   const container = document.getElementById("resenasList");
