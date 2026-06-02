@@ -1674,6 +1674,7 @@ h1, h2, h3 {
   display: grid;
   gap: 0.6rem;
   max-width: 560px;
+  margin: 0 auto;
 }
 
 .form-row {
@@ -2522,6 +2523,7 @@ h1, h2, h3 {
 
 .historia-section {
   max-width: 860px;
+  margin: 0 auto;
 }
 
 .historia-eyebrow {
