@@ -6,7 +6,7 @@ const companies = [
     desc: "Locales con ambiente y buen rollo.",
     logo: "assets/logos/6.svg",
     slug: "la-tapeta",
-    photo: "",
+    photo: "uploads/gallery/LaTapeta_Blanes_01.jpg",
     locations: [
       "Blanes · Calle Muralla 21",
       "Lloret · Calle Sant Pere 84",
