@@ -1112,15 +1112,7 @@ app.put("/api/hr/jobs/:id", requireAuth(["rrhh", "direccion"]), (req, res) => {
   );
 });
 
-app.post("/api/hr/applications", (req, res, next) => {
-  upload.single("cv")(req, res, (err) => {
-    if (err) {
-      console.error("[HR] Error en upload:", err.message);
-      return res.status(500).json({ ok: false, error: "Error procesando archivo" });
-    }
-    next();
-  });
-}, (req, res) => {
+app.post("/api/hr/applications", upload.single("cv"), (req, res) => {
   const { nombre, email, telefono, puesto, mensaje } = req.body;
   console.log("[HR] Candidatura recibida:", { nombre, email, telefono, puesto, tieneCV: !!req.file });
   if (!nombre || !email || !telefono || !puesto) {

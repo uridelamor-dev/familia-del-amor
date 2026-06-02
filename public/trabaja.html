@@ -87,31 +87,5 @@
     </a>
 
     <script src="app.js"></script>
-    <script>
-      // Handler dedicado para el formulario de candidatura
-      (function () {
-        var form = document.getElementById("hrForm");
-        var msg  = document.getElementById("hrMsg");
-        if (!form || !msg) return;
-        form.addEventListener("submit", async function (e) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          msg.textContent = "";
-          var btn = form.querySelector("button[type=submit]");
-          if (btn) btn.disabled = true;
-          try {
-            var fd = new FormData(form);
-            var res = await fetch("/api/hr/applications", { method: "POST", body: fd });
-            var data = await res.json();
-            msg.textContent = data.ok ? "✅ Candidatura enviada. ¡Gracias!" : (data.error || "No se pudo enviar. Inténtalo de nuevo.");
-            if (data.ok) form.reset();
-          } catch (err) {
-            msg.textContent = "Error de conexión. Inténtalo de nuevo.";
-          } finally {
-            if (btn) btn.disabled = false;
-          }
-        });
-      })();
-    </script>
   </body>
 </html>
