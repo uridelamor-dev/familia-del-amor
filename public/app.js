@@ -1266,19 +1266,27 @@ const hrMsg = document.getElementById("hrMsg");
 if (hrForm) {
   hrForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    hrMsg.textContent = "";
-    const formData = new FormData(hrForm);
-    const res = await fetch("/api/hr/applications", {
-      method: "POST",
-      body: formData
-    });
-    const data = await res.json();
     const thr = i18n[currentLang] || i18n.es;
-    if (data.ok) {
-      hrMsg.textContent = thr.success_hr;
-      hrForm.reset();
-    } else {
+    hrMsg.textContent = "";
+    const btn = hrForm.querySelector("button[type=submit]");
+    if (btn) btn.disabled = true;
+    try {
+      const formData = new FormData(hrForm);
+      const res = await fetch("/api/hr/applications", {
+        method: "POST",
+        body: formData
+      });
+      const data = await res.json();
+      if (data.ok) {
+        hrMsg.textContent = thr.success_hr;
+        hrForm.reset();
+      } else {
+        hrMsg.textContent = thr.err_hr;
+      }
+    } catch {
       hrMsg.textContent = thr.err_hr;
+    } finally {
+      if (btn) btn.disabled = false;
     }
   });
 }
