@@ -1,4 +1,4 @@
-import makeWASocket, { DisconnectReason, useMultiFileAuthState } from "@whiskeysockets/baileys";
+import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
 import pino from "pino";
@@ -280,7 +280,7 @@ async function connectToWhatsApp() {
     logger: pino({ level: "silent" }),
     keepAliveIntervalMs: 25000,   // ping cada 25s para mantener viva la conexión TCP
     connectTimeoutMs: 60000,
-    browser: ["Familia del Amor Chatbot", "Chrome", "1.0.0"],
+    browser: Browsers.macOS("Chrome"),
     getMessage: async () => ({ conversation: "" })
   });
 
