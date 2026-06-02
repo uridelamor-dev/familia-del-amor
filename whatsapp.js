@@ -10,16 +10,14 @@ import fs from "fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Guardar credenciales junto a la BD (ruta persistente en Replit)
+// Guardar credenciales en ruta persistente en Replit
 function resolveAuthDir() {
-  if (process.env.DB_PATH) {
-    const dir = path.dirname(process.env.DB_PATH);
+  if (process.env.REPL_ID || process.env.REPL_SLUG) {
+    const persistentDir = "/home/runner/latapeta-data/baileys_auth";
     try {
-      fs.mkdirSync(dir, { recursive: true });
-      return path.join(dir, "baileys_auth");
-    } catch {
-      // directorio inaccesible, usar workspace local
-    }
+      fs.mkdirSync(persistentDir, { recursive: true });
+      return persistentDir;
+    } catch { /* usar workspace local */ }
   }
   return path.join(__dirname, "baileys_auth");
 }
