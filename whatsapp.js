@@ -460,6 +460,16 @@ export async function sendMensajeLibre(telefono, texto) {
   await sock.sendMessage(jid, { text: texto });
 }
 
+export async function sendDocumentoLibre(telefono, buffer, filename, mimetype) {
+  if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
+  const jid = formatPhone(telefono);
+  await sock.sendMessage(jid, {
+    document: buffer,
+    mimetype: mimetype || "application/octet-stream",
+    fileName: filename,
+  });
+}
+
 const DIAS_ES = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 const MESES_ES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
 

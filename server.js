@@ -8,7 +8,7 @@ import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync } from "child_process";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, markAwaitingFollowup } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, markAwaitingFollowup } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -1135,10 +1135,15 @@ app.post("/api/hr/applications", upload.single("cv"), (req, res) => {
           `💼 *Puesto:* ${puesto}`,
         ];
         if (mensaje) lineas.push(`💬 *Mensaje:* ${mensaje}`);
-        if (cv_url) lineas.push(`📎 *CV:* Ha adjuntado un CV`);
-        sendMensajeLibre("622065974", lineas.join("\n")).catch((e) =>
-          console.error("[HR] Error notificando candidatura a Nerea:", e.message)
-        );
+        if (req.file) lineas.push(`📎 *CV:* adjunto a continuación`);
+        sendMensajeLibre("622065974", lineas.join("\n"))
+          .then(() => {
+            if (req.file) {
+              const cvBuffer = fs.readFileSync(req.file.path);
+              return sendDocumentoLibre("622065974", cvBuffer, req.file.originalname, req.file.mimetype);
+            }
+          })
+          .catch((e) => console.error("[HR] Error notificando candidatura a Nerea:", e.message));
       }
       res.json({ ok: true });
     }
