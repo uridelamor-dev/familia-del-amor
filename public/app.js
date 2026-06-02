@@ -186,7 +186,7 @@ const i18n = {
   },
   ca: {
     hero_eyebrow: "Grup familiar d'empreses",
-    hero_title: "Família de l'Amor",
+    hero_title: "Familia del Amor",
     hero_sub: "Sabor, tradició i alegria compartida a cada local.",
     hero_cta: "Reservar taula",
     hero_cta_2: "Veure locals",
@@ -225,7 +225,7 @@ const i18n = {
     contact_text: "Per a qualsevol consulta, escriu-nos.",
     legal_title: "Legal i privacitat",
     legal_text: "Polítiques de privacitat, cookies i condicions.",
-    popup_title: "Benvinguts a Família de l'Amor!",
+    popup_title: "Benvinguts a Familia del Amor!",
     popup_text: "Deixa'ns les teves dades i rep un 10% de descompte.",
     lead_name: "Nom",
     lead_lastname: "Cognoms",
