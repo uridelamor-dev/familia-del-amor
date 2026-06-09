@@ -171,6 +171,19 @@ const MAX_HISTORIAL = 10;
 // Hook para rehidratar el historial desde la BD tras un reinicio del proceso
 let historialLoader = null;
 export function setHistorialLoader(fn) { historialLoader = fn; }
+
+// Cola por cliente: si llegan dos mensajes del mismo jid durante un bucle
+// agéntico largo, se procesan en serie para no corromper el historial
+const colasPorJid = new Map();
+function encolarPorJid(jid, fn) {
+  const anterior = colasPorJid.get(jid) || Promise.resolve();
+  const tarea = anterior.catch(() => {}).then(fn);
+  const enCola = tarea.catch(() => {}).finally(() => {
+    if (colasPorJid.get(jid) === enCola) colasPorJid.delete(jid);
+  });
+  colasPorJid.set(jid, enCola);
+  return tarea;
+}
 const NEREA_JID  = "34622065974@s.whatsapp.net";
 const SILVIA_JID = "34645619572@s.whatsapp.net";
 const LAURA_JID  = "34633018834@s.whatsapp.net";
@@ -277,6 +290,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
     // llamada; al historial duradero solo van textos (evita pares huérfanos al recortar)
     const mensajesLoop = [...historial];
     const textos = [];
+    let huboErrorHerramienta = false;
 
     for (let i = 0; i < 5; i++) {
       const response = await ai.messages.create({
@@ -301,20 +315,25 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
       for (const block of response.content) {
         if (block.type !== "tool_use") continue;
         const { content, is_error } = await ejecutarHerramienta(block, adjuntoUrl);
+        if (is_error) huboErrorHerramienta = true;
         resultados.push({ type: "tool_result", tool_use_id: block.id, content, is_error });
       }
       mensajesLoop.push({ role: "user", content: resultados });
     }
 
+    // Si el modelo no emitió texto, no confirmar en falso: depende de si hubo error
     const respuestaCliente = textos.join("\n\n") ||
-      "¡Listo! ¿Puedo ayudarte en algo más? 😊";
+      (huboErrorHerramienta
+        ? "Perdona, ha habido un problema técnico al registrarlo 😔 Llámanos al local y te lo gestionamos al momento."
+        : "¡Listo! ¿Puedo ayudarte en algo más? 😊");
 
 
     historial.push({ role: "assistant", content: respuestaCliente });
     return respuestaCliente;
   } catch (err) {
     console.error("Error IA completo:", err.status, err.message, err.error);
-    if (err instanceof Anthropic.RateLimitError || err instanceof Anthropic.OverloadedError) {
+    // Nota: el SDK 0.97 no exporta OverloadedError como clase; el 529 se detecta por status
+    if (err instanceof Anthropic.RateLimitError || err?.status === 529) {
       return "¡Uy! Ahora mismo estoy atendiendo muchas conversaciones a la vez 😅 Dame un minutito y vuelve a escribirme, porfa.";
     }
     return "¡Hola! 👋 Gracias por escribirnos. En este momento estamos teniendo problemas técnicos. Puedes llamarnos directamente al local más cercano y te atendemos encantados.";
@@ -536,7 +555,7 @@ async function connectToWhatsApp() {
       try {
         await sock.sendPresenceUpdate("composing", jid);
         const adjuntoInfo = tieneAdjunto ? `[adjunto recibido de ${jid}]` : null;
-        const respuesta = await responderConIA(jid, textoFinal, adjuntoInfo, contextoRetraso);
+        const respuesta = await encolarPorJid(jid, () => responderConIA(jid, textoFinal, adjuntoInfo, contextoRetraso));
         await sock.sendMessage(jid, { text: respuesta });
         console.log(`📤 Respuesta enviada a ${jid}`);
         if (onMessage) onMessage({ jid, texto: textoFinal, respuesta });
