@@ -8,7 +8,7 @@ import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync } from "child_process";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, markAwaitingFollowup } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -1667,6 +1667,22 @@ const server = app.listen(PORT, () => {
       [jid, telefono, texto, respuesta, historico ? 1 : 0],
       (err) => { if (err) console.error("Error guardando mensaje WA:", err.message); }
     );
+  });
+
+  // Rehidratar la memoria de Sara tras un reinicio: últimos 10 intercambios del cliente
+  setHistorialLoader(async (jid) => {
+    const rows = await dbAll(
+      `SELECT mensaje, respuesta FROM whatsapp_messages
+       WHERE jid = ? AND respuesta != '(sin respuesta registrada)'
+       ORDER BY id DESC LIMIT 10`,
+      [jid]
+    );
+    const historial = [];
+    for (const r of rows.reverse()) {
+      historial.push({ role: "user", content: r.mensaje });
+      historial.push({ role: "assistant", content: r.respuesta });
+    }
+    return historial;
   });
 
   initWhatsApp();

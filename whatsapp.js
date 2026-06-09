@@ -55,13 +55,9 @@ Puedes gestionar reservas por WhatsApp. Para una reserva necesitas: local, día,
 
 Pide los datos que te falten de dos en dos. Si solo quedan 3 pendientes, pídelos todos a la vez. Nunca pidas más de dos cosas por mensaje. La hora debe caer en mediodía (12:30–15:30) o cena (19:30–22:30).
 
-**Reservas de más de 8 personas:** cuando tengas todos los datos, dile al cliente que su reserva queda registrada pero *no confirmada* hasta que un encargado le contacte para confirmar los detalles. En el bloque ##RESERVA## añade \`"pendiente": true\`.
+Cuando tengas todos los datos, usa la herramienta \`registrar_reserva\` y, según el resultado, confírmale la reserva al cliente (o avísale si hubo un problema).
 
-Cuando tengas todos los datos, confírmaselos al cliente y añade al final:
-##RESERVA##{"local":"nombre exacto del local","dia":"YYYY-MM-DD","hora":"HH:MM","personas":N,"nombre_reserva":"nombre","telefono":"telefono","pendiente":false}##
-
-(usa \`"pendiente": true\` solo cuando personas > 8)
-Usa siempre el nombre exacto del local tal como aparece en la lista.
+**Reservas de más de 8 personas:** regístralas con \`pendiente: true\` y dile al cliente que su reserva queda registrada pero *no confirmada* hasta que un encargado le contacte para confirmar los detalles.
 
 ## Carta, platos y precios
 Si alguien pregunta por la carta, platos concretos o precios, dile que de momento no tienes esa información disponible en el chat, y que puede escribir directamente al 622149946 y le atienden encantados.
@@ -75,8 +71,7 @@ Si alguien pregunta por celebraciones, cumpleaños, comuniones, eventos de empre
 5. Local preferido (o si no tiene preferencia)
 6. Teléfono de contacto
 
-Pide los datos de dos en dos. Cuando tengas todo, responde al cliente y añade al final:
-##NOTIF_NEREA##Celebración: [resumen con todos los datos recogidos]##
+Pide los datos de dos en dos. Cuando tengas todo, usa la herramienta \`notificar_nerea\` (resumen empezando por "Celebración:") y dile al cliente que el equipo le contactará pronto.
 
 ## Empleo y trabajo con nosotros
 Si alguien muestra interés en trabajar, recoge:
@@ -87,12 +82,10 @@ Si alguien muestra interés en trabajar, recoge:
 5. Local preferido o zona
 6. Teléfono de contacto
 
-Pide los datos de dos en dos. Si adjuntan CV o archivo, diles que lo envíen directamente a este chat y quedará registrado. Cuando tengas todo, añade al final:
-##NOTIF_NEREA##Empleo: [resumen con todos los datos recogidos]##
+Pide los datos de dos en dos. Si adjuntan CV o archivo, diles que lo envíen directamente a este chat y quedará registrado. Cuando tengas todo, usa la herramienta \`notificar_nerea\` (resumen empezando por "Empleo:").
 
 ## Facturación y contabilidad
-Si alguien pregunta por facturas, contabilidad o temas fiscales, dale el teléfono de Silvia: 645 619 572.
-##NOTIF_SILVIA##Contabilidad: [resumen breve de lo que necesita el cliente y su número de contacto si lo tienes]##
+Si alguien pregunta por facturas, contabilidad o temas fiscales, dale el teléfono de Silvia: 645 619 572 y usa la herramienta \`notificar_silvia\` con un resumen breve de lo que necesita y su número de contacto si lo tienes.
 
 ## Disponibilidad y horario del chatbot
 Estás disponible 24 horas. Aunque los locales abran de 08:00 a 00:00, siempre respondes.
@@ -108,12 +101,76 @@ La actitud es siempre: "Estoy aquí para ayudarte, dime qué necesitas."
 - Tratas siempre de tú, con simpatía y naturalidad.
 - Nunca hagas más de dos preguntas en un mensaje.
 - No inventes información que no tengas.
-- Nunca muestres los bloques ##NOTIF_NEREA##, ##NOTIF_SILVIA## ni ##RESERVA## al cliente.
+- Las herramientas son internas: nunca le menciones al cliente que usas herramientas o sistemas.
 - Si no sabes algo, dilo con naturalidad y ofrece alternativas.
 - Nunca dejes a un cliente sin respuesta.`;
 
+const LOCALES = [
+  "La Tapeta - Blanes",
+  "Cooperativa - Blanes",
+  "La Tapeta - Lloret",
+  "La Tapeta - Girona",
+  "Can Mateu - Tordera",
+  "La Tapa Ibérica - Tordera",
+  "Botiga d'en Mateu - Tordera"
+];
+
+// Herramientas nativas con strict: la API valida el input contra el esquema,
+// así que nunca llega una reserva malformada ni se filtran marcadores al cliente
+const TOOLS = [
+  {
+    name: "registrar_reserva",
+    description: "Registra una reserva en el sistema. Llámala SOLO cuando tengas los 6 datos: local, día, hora, personas, nombre y teléfono. Tras el resultado, confirma la reserva al cliente.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        local: { type: "string", enum: LOCALES, description: "Nombre exacto del local" },
+        dia: { type: "string", format: "date", description: "Fecha de la reserva (YYYY-MM-DD)" },
+        hora: { type: "string", description: "Hora en formato HH:MM, dentro de mediodía (12:30–15:30) o cena (19:30–22:30)" },
+        personas: { type: "integer", description: "Número de comensales" },
+        nombre_reserva: { type: "string", description: "Nombre de quien hace la reserva" },
+        telefono: { type: "string", description: "Teléfono de contacto del cliente" },
+        pendiente: { type: "boolean", description: "true solo si personas > 8 (queda pendiente de confirmación por un encargado)" }
+      },
+      required: ["local", "dia", "hora", "personas", "nombre_reserva", "telefono", "pendiente"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "notificar_nerea",
+    description: "Avisa a Nerea (responsable de equipo) por WhatsApp. Úsala cuando hayas recogido todos los datos de una celebración o evento privado (resumen empezando por 'Celebración:') o de un candidato de empleo (resumen empezando por 'Empleo:').",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        resumen: { type: "string", description: "Resumen con todos los datos recogidos, empezando por 'Celebración:' o 'Empleo:'" }
+      },
+      required: ["resumen"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "notificar_silvia",
+    description: "Avisa a Silvia (contabilidad) por WhatsApp. Úsala cuando un cliente pregunte por facturas, contabilidad o temas fiscales.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        resumen: { type: "string", description: "Resumen breve de lo que necesita el cliente, con su número de contacto si lo tienes" }
+      },
+      required: ["resumen"],
+      additionalProperties: false
+    }
+  }
+];
+
 const conversaciones = new Map();
 const MAX_HISTORIAL = 10;
+
+// Hook para rehidratar el historial desde la BD tras un reinicio del proceso
+let historialLoader = null;
+export function setHistorialLoader(fn) { historialLoader = fn; }
 const NEREA_JID  = "34622065974@s.whatsapp.net";
 const SILVIA_JID = "34645619572@s.whatsapp.net";
 const LAURA_JID  = "34633018834@s.whatsapp.net";
@@ -187,6 +244,16 @@ function getContextoFechaHora() {
 }
 
 async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) {
+  // Rehidratar memoria desde la BD si el proceso se reinició a mitad de conversación
+  if (!conversaciones.has(jid) && historialLoader) {
+    try {
+      const previo = await historialLoader(jid);
+      if (previo?.length) conversaciones.set(jid, previo);
+    } catch (err) {
+      console.error("Error cargando historial WA:", err.message);
+    }
+  }
+
   const esPrimerMensaje = !conversaciones.has(jid);
   if (!conversaciones.has(jid)) conversaciones.set(jid, []);
   const historial = conversaciones.get(jid);
@@ -206,52 +273,89 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
   if (!ai) return "Lo siento, el asistente no está disponible en este momento.";
 
   try {
-    const response = await ai.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 400,
-      system: SYSTEM_PROMPT,
-      messages: historial
-    });
+    // Bucle agéntico: los tool_use/tool_result intermedios viven solo en esta
+    // llamada; al historial duradero solo van textos (evita pares huérfanos al recortar)
+    const mensajesLoop = [...historial];
+    const textos = [];
 
-    const respuestaCompleta = response.content[0].text;
+    for (let i = 0; i < 5; i++) {
+      const response = await ai.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1024,
+        // El caché se activará cuando el prompt supere el mínimo cacheable de
+        // Haiku 4.5 (4096 tokens), p. ej. al añadir la carta al prompt
+        system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+        tools: TOOLS,
+        messages: mensajesLoop
+      });
 
-    let respuestaCliente = respuestaCompleta;
-
-    const notifNerea = respuestaCompleta.match(/##NOTIF_NEREA##(.+?)##/s);
-    if (notifNerea) {
-      respuestaCliente = respuestaCliente.replace(/\n?##NOTIF_NEREA##.+?##/s, "").trim();
-      await notificarNerea(notifNerea[1].trim(), adjuntoUrl);
-    }
-
-    const notifSilvia = respuestaCliente.match(/##NOTIF_SILVIA##(.+?)##/s);
-    if (notifSilvia) {
-      respuestaCliente = respuestaCliente.replace(/\n?##NOTIF_SILVIA##.+?##/s, "").trim();
-      try {
-        await sock.sendMessage(SILVIA_JID, {
-          text: `📋 *Consulta de contabilidad via chatbot*\n\n${notifSilvia[1].trim()}`
-        });
-        console.log("📤 Notificación enviada a Silvia");
-      } catch (err) {
-        console.error("Error notificando a Silvia:", err.message);
+      for (const block of response.content) {
+        if (block.type === "text" && block.text.trim()) textos.push(block.text.trim());
       }
+
+      if (response.stop_reason !== "tool_use") break;
+
+      mensajesLoop.push({ role: "assistant", content: response.content });
+
+      const resultados = [];
+      for (const block of response.content) {
+        if (block.type !== "tool_use") continue;
+        const { content, is_error } = await ejecutarHerramienta(block, adjuntoUrl);
+        resultados.push({ type: "tool_result", tool_use_id: block.id, content, is_error });
+      }
+      mensajesLoop.push({ role: "user", content: resultados });
     }
 
-    const reservaMatch = respuestaCliente.match(/##RESERVA##(.+?)##/s);
-    if (reservaMatch) {
-      respuestaCliente = respuestaCliente.replace(/\n?##RESERVA##.+?##/s, "").trim();
-      try {
-        const reservaData = JSON.parse(reservaMatch[1].trim());
-        if (onReserva) await onReserva(reservaData);
-      } catch (err) {
-        console.error("Error procesando reserva desde WhatsApp:", err.message);
-      }
-    }
+    const respuestaCliente = textos.join("\n\n") ||
+      "¡Listo! ¿Puedo ayudarte en algo más? 😊";
+
 
     historial.push({ role: "assistant", content: respuestaCliente });
     return respuestaCliente;
   } catch (err) {
     console.error("Error IA completo:", err.status, err.message, err.error);
+    if (err instanceof Anthropic.RateLimitError || err instanceof Anthropic.OverloadedError) {
+      return "¡Uy! Ahora mismo estoy atendiendo muchas conversaciones a la vez 😅 Dame un minutito y vuelve a escribirme, porfa.";
+    }
     return "¡Hola! 👋 Gracias por escribirnos. En este momento estamos teniendo problemas técnicos. Puedes llamarnos directamente al local más cercano y te atendemos encantados.";
+  }
+}
+
+// Ejecuta una herramienta solicitada por el modelo y devuelve el resultado.
+// Si falla, el modelo se entera (is_error) y avisa al cliente — antes las
+// reservas con JSON malformado se perdían en silencio.
+async function ejecutarHerramienta(toolUse, adjuntoUrl) {
+  const { name, input } = toolUse;
+  try {
+    if (name === "registrar_reserva") {
+      if (!onReserva) throw new Error("sistema de reservas no disponible");
+      await onReserva(input);
+      return {
+        content: input.pendiente
+          ? "Reserva registrada como PENDIENTE. Un encargado contactará al cliente para confirmarla."
+          : "Reserva registrada correctamente.",
+        is_error: false
+      };
+    }
+    if (name === "notificar_nerea") {
+      await notificarNerea(input.resumen, adjuntoUrl);
+      return { content: "Notificación enviada a Nerea.", is_error: false };
+    }
+    if (name === "notificar_silvia") {
+      if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
+      await sock.sendMessage(SILVIA_JID, {
+        text: `📋 *Consulta de contabilidad via chatbot*\n\n${input.resumen}`
+      });
+      console.log("📤 Notificación enviada a Silvia");
+      return { content: "Notificación enviada a Silvia.", is_error: false };
+    }
+    return { content: `Herramienta desconocida: ${name}`, is_error: true };
+  } catch (err) {
+    console.error(`Error ejecutando ${name}:`, err.message);
+    return {
+      content: `Error: ${err.message}. Informa al cliente de que ha habido un problema técnico y ofrécele llamar al local.`,
+      is_error: true
+    };
   }
 }
 
