@@ -552,6 +552,17 @@ async function connectToWhatsApp() {
         return; // No reconectar automáticamente: se necesita nuevo QR
       }
 
+      // Código 408 = QR expiró sin ser escaneado.
+      // Tras 3 intentos sin éxito, pausar para no saturar a WhatsApp.
+      if (code === 408 && reconnectAttempts >= 3) {
+        console.log(`[WhatsApp] QR ignorado ${reconnectAttempts} veces — pausando reconexión automática. Escanea el QR manualmente.`);
+        await sendNtfyAlert(
+          "⚠️ WhatsApp esperando QR",
+          "El QR lleva varios intentos sin escanearse. Entra en Dirección → WhatsApp y escanéalo para activar el chatbot."
+        );
+        return; // Parar — esperar acción manual
+      }
+
       if (reconnectAttempts >= 4) {
         await sendNtfyAlert(
           "⚠️ WhatsApp con problemas de conexión",
