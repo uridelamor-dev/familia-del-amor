@@ -167,6 +167,15 @@ const TOOLS = [
 
 const conversaciones = new Map();
 const MAX_HISTORIAL = 10;
+const DEBOUNCE_MS = 2500;
+const batchPorJid = new Map(); // jid → { timer, items[] }
+
+function addSaraToHistorial(jid, texto) {
+  if (!conversaciones.has(jid)) conversaciones.set(jid, []);
+  const historial = conversaciones.get(jid);
+  historial.push({ role: "assistant", content: texto });
+  if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
+}
 
 // Hook para rehidratar el historial desde la BD tras un reinicio del proceso
 let historialLoader = null;
@@ -378,6 +387,52 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl) {
   }
 }
 
+async function procesarBatch(jid, items) {
+  const textoCombinado = items.map(i => i.textoFinal).join("\n");
+  const adjuntoInfo = items.find(i => i.tieneAdjunto) ? `[adjunto recibido de ${jid}]` : null;
+  const contextoRetraso = items.find(i => i.contextoRetraso)?.contextoRetraso || null;
+
+  if (followupAwaitingReply.has(jid)) {
+    const ctx = followupAwaitingReply.get(jid);
+    followupAwaitingReply.delete(jid);
+    const ack = `¡Gracias por contárnoslo! 🙏 Tu opinión nos ayuda a seguir mejorando. En caso de haber algo que podamos hacer mejor, ya lo hemos reportado al equipo. ¡Hasta pronto!`;
+    try {
+      await sock.sendPresenceUpdate("composing", jid);
+      await sock.sendMessage(jid, { text: ack });
+      await notificarLaura(
+        `💬 *Feedback de cliente*\n\n` +
+        `👤 ${ctx.nombre}\n📍 ${ctx.local}\n📅 Visita: ${ctx.dia}\n\n` +
+        `Mensaje: ${textoCombinado}`
+      );
+      if (onMessage) onMessage({ jid, texto: textoCombinado, respuesta: ack });
+    } catch (err) {
+      console.error("Error gestionando follow-up reply:", err.message);
+    }
+    return;
+  }
+
+  try {
+    await sock.sendPresenceUpdate("composing", jid);
+    const respuesta = await encolarPorJid(jid, () => responderConIA(jid, textoCombinado, adjuntoInfo, contextoRetraso));
+    await sock.sendMessage(jid, { text: respuesta });
+    console.log(`📤 Respuesta enviada a ${jid}`);
+    if (onMessage) onMessage({ jid, texto: textoCombinado, respuesta });
+  } catch (err) {
+    console.error("Error respondiendo:", err.message);
+  }
+}
+
+function procesarConDebounce(jid, item) {
+  if (!batchPorJid.has(jid)) batchPorJid.set(jid, { timer: null, items: [] });
+  const batch = batchPorJid.get(jid);
+  clearTimeout(batch.timer);
+  batch.items.push(item);
+  batch.timer = setTimeout(() => {
+    batchPorJid.delete(jid);
+    procesarBatch(jid, batch.items).catch(err => console.error("Error en procesarBatch:", err.message));
+  }, DEBOUNCE_MS);
+}
+
 function scheduleReconnect() {
   const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
   reconnectAttempts++;
@@ -531,37 +586,7 @@ async function connectToWhatsApp() {
       }
 
       console.log(`💬 Mensaje de ${jid}: ${textoFinal}`);
-
-      // Respuesta al mensaje de follow-up post-visita
-      if (followupAwaitingReply.has(jid)) {
-        const ctx = followupAwaitingReply.get(jid);
-        followupAwaitingReply.delete(jid);
-        const ack = `¡Gracias por contárnoslo! 🙏 Tu opinión nos ayuda a seguir mejorando. En caso de haber algo que podamos hacer mejor, ya lo hemos reportado al equipo. ¡Hasta pronto!`;
-        try {
-          await sock.sendPresenceUpdate("composing", jid);
-          await sock.sendMessage(jid, { text: ack });
-          await notificarLaura(
-            `💬 *Feedback de cliente*\n\n` +
-            `👤 ${ctx.nombre}\n📍 ${ctx.local}\n📅 Visita: ${ctx.dia}\n\n` +
-            `Mensaje: ${textoFinal}`
-          );
-          if (onMessage) onMessage({ jid, texto: textoFinal, respuesta: ack });
-        } catch (err) {
-          console.error("Error gestionando follow-up reply:", err.message);
-        }
-        continue;
-      }
-
-      try {
-        await sock.sendPresenceUpdate("composing", jid);
-        const adjuntoInfo = tieneAdjunto ? `[adjunto recibido de ${jid}]` : null;
-        const respuesta = await encolarPorJid(jid, () => responderConIA(jid, textoFinal, adjuntoInfo, contextoRetraso));
-        await sock.sendMessage(jid, { text: respuesta });
-        console.log(`📤 Respuesta enviada a ${jid}`);
-        if (onMessage) onMessage({ jid, texto: textoFinal, respuesta });
-      } catch (err) {
-        console.error("Error respondiendo:", err.message);
-      }
+      procesarConDebounce(jid, { textoFinal, tieneAdjunto, msgTimestamp, contextoRetraso });
     }
   });
 }
@@ -615,6 +640,7 @@ export async function sendConfirmacionCliente(telefono, reserva) {
       `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
       `¡Te esperamos! Si necesitas cancelar o modificar, escríbenos aquí o llámanos.`;
     await sock.sendMessage(jid, { text: msg });
+    addSaraToHistorial(jid, msg);
     console.log(`📤 Confirmación enviada a ${telefono}`);
   } catch (err) {
     console.error("Error enviando confirmación:", err.message);
@@ -636,6 +662,7 @@ export async function sendConfirmacionPendienteCliente(telefono, reserva) {
       `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
       `Por el número de comensales, un encargado se pondrá en contacto contigo en breve para confirmar todos los detalles. ¡Gracias!`;
     await sock.sendMessage(jid, { text: msg });
+    addSaraToHistorial(jid, msg);
     console.log(`📤 Confirmación pendiente enviada a ${telefono}`);
   } catch (err) {
     console.error("Error enviando confirmación pendiente:", err.message);
@@ -691,6 +718,7 @@ export async function sendCancelacionCliente(telefono, reserva) {
       `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
       `Tu reserva ha sido cancelada. Si tienes dudas, llámanos.`;
     await sock.sendMessage(jid, { text: msg });
+    addSaraToHistorial(jid, msg);
     console.log(`📤 Cancelación enviada a ${telefono}`);
   } catch (err) {
     console.error("Error enviando cancelación al cliente:", err.message);
