@@ -8,7 +8,7 @@ import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync } from "child_process";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -327,6 +327,18 @@ db.serialize(() => {
     )
   `);
   db.run(`ALTER TABLE whatsapp_messages ADD COLUMN historico INTEGER DEFAULT 0`, () => {});
+  db.run(`ALTER TABLE whatsapp_messages ADD COLUMN tipo TEXT DEFAULT 'intercambio'`, () => {});
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS wa_clientes (
+      jid TEXT PRIMARY KEY,
+      nombre TEXT,
+      telefono TEXT,
+      notas TEXT DEFAULT '{}',
+      ultima_interaccion INTEGER DEFAULT (strftime('%s', 'now')),
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
   db.run(`ALTER TABLE leads ADD COLUMN genero TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
@@ -1516,6 +1528,19 @@ app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {
   if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
   try {
     await sendMensajeLibre(telefono, mensaje);
+    const jid = telefono.replace(/\D/g, "").replace(/^00/, "").replace(/^(?!34)([679])/, "34$1") + "@s.whatsapp.net";
+    addSaraToHistorial(jid, mensaje);
+    db.run(
+      `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, tipo) VALUES (?, ?, '[Equipo]', ?, 'manual')`,
+      [jid, telefono.replace(/\D/g, ""), mensaje],
+      (err) => { if (err) console.error("Error guardando mensaje manual WA:", err.message); }
+    );
+    db.run(
+      `INSERT INTO wa_clientes (jid, telefono, ultima_interaccion)
+       VALUES (?, ?, strftime('%s','now'))
+       ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = strftime('%s','now')`,
+      [jid, telefono.replace(/\D/g, "")]
+    );
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -1589,7 +1614,7 @@ const server = app.listen(PORT, () => {
   // Backup periódico cada 5 minutos
   setInterval(() => backupToReplitDB(), 5 * 60 * 1000);
 
-  setOnReserva((reserva) => {
+  setOnReserva((reserva, jid) => {
     const { local, personas, dia, hora, telefono, nombre_reserva, pendiente } = reserva;
     if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) return;
     const creado_en = new Date().toISOString();
@@ -1598,6 +1623,19 @@ const server = app.listen(PORT, () => {
       [local, personas, dia, hora, telefono, nombre_reserva, creado_en],
       function (err) {
         if (err) { console.error("Error guardando reserva WhatsApp:", err.message); return; }
+        // Auto-actualizar perfil con nombre y teléfono obtenidos de la reserva
+        if (jid) {
+          db.run(
+            `INSERT INTO wa_clientes (jid, nombre, telefono, ultima_interaccion)
+             VALUES (?, ?, ?, strftime('%s','now'))
+             ON CONFLICT(jid) DO UPDATE SET
+               nombre = COALESCE(wa_clientes.nombre, excluded.nombre),
+               telefono = COALESCE(wa_clientes.telefono, excluded.telefono),
+               ultima_interaccion = excluded.ultima_interaccion`,
+            [jid, nombre_reserva, telefono],
+            (e) => { if (e) console.error("Error actualizando perfil WA:", e.message); }
+          );
+        }
         console.log(`📅 Reserva WhatsApp guardada (id ${this.lastID}): ${nombre_reserva} en ${local}${pendiente ? " [PENDIENTE]" : ""}`);
         upsertLeadFromReserva({ nombre_reserva, telefono });
 
@@ -1663,26 +1701,88 @@ const server = app.listen(PORT, () => {
   setOnMessage(({ jid, texto, respuesta, historico = false }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
     db.run(
-      `INSERT OR IGNORE INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico, tipo) VALUES (?, ?, ?, ?, ?, 'intercambio')`,
       [jid, telefono, texto, respuesta, historico ? 1 : 0],
       (err) => { if (err) console.error("Error guardando mensaje WA:", err.message); }
     );
+    db.run(
+      `INSERT INTO wa_clientes (jid, telefono, ultima_interaccion)
+       VALUES (?, ?, strftime('%s','now'))
+       ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = strftime('%s','now')`,
+      [jid, telefono],
+      (err) => { if (err) console.error("Error actualizando ultima_interaccion:", err.message); }
+    );
   });
 
-  // Rehidratar la memoria de Sara tras un reinicio: últimos 10 intercambios del cliente
+  // Rehidratar la memoria de Sara tras un reinicio: últimos intercambios de las 4h recientes
   setHistorialLoader(async (jid) => {
     const rows = await dbAll(
-      `SELECT mensaje, respuesta FROM whatsapp_messages
-       WHERE jid = ? AND respuesta != '(sin respuesta registrada)'
-       ORDER BY id DESC LIMIT 10`,
+      `SELECT mensaje, respuesta, COALESCE(tipo, 'intercambio') AS tipo
+       FROM whatsapp_messages
+       WHERE jid = ?
+         AND respuesta != '(sin respuesta registrada)'
+         AND creado_en > datetime('now', '-4 hours')
+       ORDER BY id DESC LIMIT 20`,
       [jid]
     );
     const historial = [];
     for (const r of rows.reverse()) {
-      historial.push({ role: "user", content: r.mensaje });
-      historial.push({ role: "assistant", content: r.respuesta });
+      if (r.tipo === "saliente" || r.tipo === "manual") {
+        // Mensaje que Sara inició (confirmación, mensaje del equipo): necesita placeholder de user
+        historial.push({ role: "user", content: "[El cliente recibió un mensaje del equipo de Familia del Amor]" });
+        historial.push({ role: "assistant", content: r.respuesta });
+      } else {
+        historial.push({ role: "user", content: r.mensaje });
+        historial.push({ role: "assistant", content: r.respuesta });
+      }
     }
     return historial;
+  });
+
+  setPerfilLoader(async (jid) => {
+    const row = await dbGet(`SELECT nombre, telefono, notas, ultima_interaccion FROM wa_clientes WHERE jid = ?`, [jid]);
+    return row || null;
+  });
+
+  setOnMensajeSaliente(({ jid, mensaje }) => {
+    const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+    db.run(
+      `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, tipo) VALUES (?, ?, '[Sistema]', ?, 'saliente')`,
+      [jid, telefono, mensaje],
+      (err) => { if (err) console.error("Error guardando mensaje saliente WA:", err.message); }
+    );
+    db.run(
+      `INSERT INTO wa_clientes (jid, telefono, ultima_interaccion)
+       VALUES (?, ?, strftime('%s','now'))
+       ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = strftime('%s','now')`,
+      [jid, telefono]
+    );
+  });
+
+  setOnActualizarPerfil(async (jid, { campo, valor }) => {
+    const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+    if (campo === "nombre") {
+      db.run(
+        `INSERT INTO wa_clientes (jid, telefono, nombre, ultima_interaccion)
+         VALUES (?, ?, ?, strftime('%s','now'))
+         ON CONFLICT(jid) DO UPDATE SET nombre = ?, ultima_interaccion = strftime('%s','now')`,
+        [jid, telefono, valor, valor],
+        (err) => { if (err) console.error("Error guardando nombre cliente WA:", err.message); }
+      );
+    } else if (campo === "nota") {
+      const row = await dbGet(`SELECT notas FROM wa_clientes WHERE jid = ?`, [jid]);
+      let notas = {};
+      if (row?.notas) { try { notas = JSON.parse(row.notas); } catch {} }
+      notas[Date.now()] = valor;
+      const notasJson = JSON.stringify(notas);
+      db.run(
+        `INSERT INTO wa_clientes (jid, telefono, notas, ultima_interaccion)
+         VALUES (?, ?, ?, strftime('%s','now'))
+         ON CONFLICT(jid) DO UPDATE SET notas = ?, ultima_interaccion = strftime('%s','now')`,
+        [jid, telefono, notasJson, notasJson],
+        (err) => { if (err) console.error("Error guardando nota cliente WA:", err.message); }
+      );
+    }
   });
 
   initWhatsApp();

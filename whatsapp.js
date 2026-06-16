@@ -162,15 +162,34 @@ const TOOLS = [
       required: ["resumen"],
       additionalProperties: false
     }
+  },
+  {
+    name: "guardar_dato_cliente",
+    description: "Guarda un dato del cliente en su perfil permanente. Úsala cuando el cliente te diga su nombre durante la conversación, o cuando conozcas otro dato relevante (preferencia de local, alergia, etc.). Solo guarda datos que el cliente te haya comunicado explícitamente.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        campo: {
+          type: "string",
+          enum: ["nombre", "nota"],
+          description: "'nombre' para guardar el nombre del cliente; 'nota' para cualquier otro dato relevante"
+        },
+        valor: { type: "string", description: "Valor a guardar" }
+      },
+      required: ["campo", "valor"],
+      additionalProperties: false
+    }
   }
 ];
 
 const conversaciones = new Map();
 const MAX_HISTORIAL = 10;
 const DEBOUNCE_MS = 2500;
+const SESION_TTL_SEG = 4 * 60 * 60; // nueva sesión tras 4h sin actividad
 const batchPorJid = new Map(); // jid → { timer, items[] }
 
-function addSaraToHistorial(jid, texto) {
+export function addSaraToHistorial(jid, texto) {
   if (!conversaciones.has(jid)) conversaciones.set(jid, []);
   const historial = conversaciones.get(jid);
   historial.push({ role: "assistant", content: texto });
@@ -225,6 +244,15 @@ export function setOnReady(fn) { onReady = fn; }
 let onMessage = null;
 export function setOnMessage(fn) { onMessage = fn; }
 
+let perfilLoader = null;
+export function setPerfilLoader(fn) { perfilLoader = fn; }
+
+let onMensajeSaliente = null;
+export function setOnMensajeSaliente(fn) { onMensajeSaliente = fn; }
+
+let onActualizarPerfil = null;
+export function setOnActualizarPerfil(fn) { onActualizarPerfil = fn; }
+
 let sock = null;
 let clientReady = false;
 let lastQR = null;
@@ -265,8 +293,39 @@ function getContextoFechaHora() {
   });
 }
 
+function buildPerfilContext(perfil) {
+  if (!perfil) return "";
+  const partes = [];
+  if (perfil.nombre) partes.push(`Nombre: ${perfil.nombre}`);
+  if (perfil.telefono) partes.push(`Teléfono: ${perfil.telefono}`);
+  if (perfil.notas && perfil.notas !== "{}") {
+    try {
+      const lista = Object.values(JSON.parse(perfil.notas)).filter(Boolean);
+      if (lista.length) partes.push(`Notas: ${lista.join("; ")}`);
+    } catch {}
+  }
+  return partes.length
+    ? `[PERFIL DEL CLIENTE: ${partes.join(". ")}. Si conoces su nombre, úsalo con naturalidad sin volver a pedírselo.]`
+    : "";
+}
+
 async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) {
-  // Rehidratar memoria desde la BD si el proceso se reinició a mitad de conversación
+  // 1. Cargar perfil permanente del cliente
+  let perfil = null;
+  if (perfilLoader) {
+    try { perfil = await perfilLoader(jid); } catch (e) { console.error("Error cargando perfil WA:", e.message); }
+  }
+
+  // 2. TTL: si llevan más de 4h inactivos, nueva sesión (el perfil persiste)
+  if (perfil?.ultima_interaccion && conversaciones.has(jid)) {
+    const inactividadSeg = Math.floor(Date.now() / 1000) - perfil.ultima_interaccion;
+    if (inactividadSeg > SESION_TTL_SEG) {
+      conversaciones.delete(jid);
+      console.log(`[Sara] Nueva sesión para ${jid} (${Math.round(inactividadSeg / 3600)}h inactivo)`);
+    }
+  }
+
+  // 3. Rehidratar memoria desde la BD si el proceso se reinició a mitad de conversación
   if (!conversaciones.has(jid) && historialLoader) {
     try {
       const previo = await historialLoader(jid);
@@ -282,7 +341,10 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
 
   const partesFecha = `[CONTEXTO INTERNO: Fecha y hora actual en España: ${getContextoFechaHora()}.]`;
   const partesRetraso = contextoRetraso ? ` ${contextoRetraso}` : "";
-  const partesPrimer = esPrimerMensaje ? " Es el primer mensaje de este cliente: preséntate como Sara, asistente de IA de Familia del Amor, y responde a su consulta." : "";
+  // Si es primer contacto y no conocemos al cliente, Sara se presenta
+  const partesPrimer = (esPrimerMensaje && !perfil?.nombre)
+    ? " Es el primer mensaje de este cliente: preséntate como Sara, asistente de IA de Familia del Amor, y responde a su consulta."
+    : "";
   const parteAdjunto = adjuntoUrl ? ` [Ha adjuntado un archivo: ${adjuntoUrl}]` : "";
 
   const contenidoUsuario =
@@ -295,9 +357,11 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
   if (!ai) return "Lo siento, el asistente no está disponible en este momento.";
 
   try {
-    // Bucle agéntico: los tool_use/tool_result intermedios viven solo en esta
-    // llamada; al historial duradero solo van textos (evita pares huérfanos al recortar)
-    const mensajesLoop = [...historial];
+    // Perfil del cliente al inicio del contexto (no se persiste en historial duradero)
+    const perfilCtx = buildPerfilContext(perfil);
+    const mensajesLoop = perfilCtx
+      ? [{ role: "user", content: perfilCtx }, { role: "assistant", content: "Entendido." }, ...historial]
+      : [...historial];
     const textos = [];
     let huboErrorHerramienta = false;
 
@@ -323,7 +387,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
       const resultados = [];
       for (const block of response.content) {
         if (block.type !== "tool_use") continue;
-        const { content, is_error } = await ejecutarHerramienta(block, adjuntoUrl);
+        const { content, is_error } = await ejecutarHerramienta(block, adjuntoUrl, jid);
         if (is_error) huboErrorHerramienta = true;
         resultados.push({ type: "tool_result", tool_use_id: block.id, content, is_error });
       }
@@ -352,12 +416,12 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
 // Ejecuta una herramienta solicitada por el modelo y devuelve el resultado.
 // Si falla, el modelo se entera (is_error) y avisa al cliente — antes las
 // reservas con JSON malformado se perdían en silencio.
-async function ejecutarHerramienta(toolUse, adjuntoUrl) {
+async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
   const { name, input } = toolUse;
   try {
     if (name === "registrar_reserva") {
       if (!onReserva) throw new Error("sistema de reservas no disponible");
-      await onReserva(input);
+      await onReserva(input, jid);
       return {
         content: input.pendiente
           ? "Reserva registrada como PENDIENTE. Un encargado contactará al cliente para confirmarla."
@@ -376,6 +440,10 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl) {
       });
       console.log("📤 Notificación enviada a Silvia");
       return { content: "Notificación enviada a Silvia.", is_error: false };
+    }
+    if (name === "guardar_dato_cliente") {
+      if (onActualizarPerfil) await onActualizarPerfil(jid, input);
+      return { content: "Perfil del cliente actualizado.", is_error: false };
     }
     return { content: `Herramienta desconocida: ${name}`, is_error: true };
   } catch (err) {
@@ -641,6 +709,7 @@ export async function sendConfirmacionCliente(telefono, reserva) {
       `¡Te esperamos! Si necesitas cancelar o modificar, escríbenos aquí o llámanos.`;
     await sock.sendMessage(jid, { text: msg });
     addSaraToHistorial(jid, msg);
+    if (onMensajeSaliente) onMensajeSaliente({ jid, mensaje: msg });
     console.log(`📤 Confirmación enviada a ${telefono}`);
   } catch (err) {
     console.error("Error enviando confirmación:", err.message);
@@ -663,6 +732,7 @@ export async function sendConfirmacionPendienteCliente(telefono, reserva) {
       `Por el número de comensales, un encargado se pondrá en contacto contigo en breve para confirmar todos los detalles. ¡Gracias!`;
     await sock.sendMessage(jid, { text: msg });
     addSaraToHistorial(jid, msg);
+    if (onMensajeSaliente) onMensajeSaliente({ jid, mensaje: msg });
     console.log(`📤 Confirmación pendiente enviada a ${telefono}`);
   } catch (err) {
     console.error("Error enviando confirmación pendiente:", err.message);
@@ -719,6 +789,7 @@ export async function sendCancelacionCliente(telefono, reserva) {
       `Tu reserva ha sido cancelada. Si tienes dudas, llámanos.`;
     await sock.sendMessage(jid, { text: msg });
     addSaraToHistorial(jid, msg);
+    if (onMensajeSaliente) onMensajeSaliente({ jid, mensaje: msg });
     console.log(`📤 Cancelación enviada a ${telefono}`);
   } catch (err) {
     console.error("Error enviando cancelación al cliente:", err.message);
