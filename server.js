@@ -8,7 +8,8 @@ import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync } from "child_process";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo } from "./whatsapp.js";
+import { procesarFactura } from "./facturas.js";
 
 dotenv.config();
 
@@ -330,6 +331,37 @@ db.serialize(() => {
   db.run(`ALTER TABLE whatsapp_messages ADD COLUMN tipo TEXT DEFAULT 'intercambio'`, () => {});
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS facturas_grupos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      local TEXT NOT NULL,
+      group_jid TEXT NOT NULL UNIQUE,
+      sheet_id TEXT,
+      sheet_url TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS facturas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      local TEXT NOT NULL,
+      tipo TEXT,
+      fecha TEXT,
+      numero_factura TEXT,
+      proveedor TEXT,
+      nif TEXT,
+      concepto TEXT,
+      base_imponible REAL,
+      porcentaje_iva REAL,
+      cuota_iva REAL,
+      total REAL,
+      drive_url TEXT,
+      sheet_id TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS wa_clientes (
       jid TEXT PRIMARY KEY,
       nombre TEXT,
@@ -573,6 +605,105 @@ setInterval(async () => {
     console.error("Auto-refresh reviews:", e.message);
   }
 }, 24 * 60 * 60 * 1000);
+
+// ── Google Drive / Sheets OAuth (cuenta separada para facturas) ────────────
+const GOOGLE_REDIRECT_URI_FACTURAS = (process.env.BASE_URL || "https://familia-del-amor.replit.app") + "/auth/google-facturas/callback";
+
+async function getDriveAccessToken() {
+  const refresh = await getConfig("google_drive_refresh_token");
+  if (!refresh) throw new Error("Google Drive no conectado. Ve a Dirección → Facturas y conecta la cuenta.");
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      refresh_token: refresh,
+      grant_type: "refresh_token"
+    })
+  });
+  const data = await r.json();
+  if (!data.access_token) throw new Error("No se pudo renovar token de Drive: " + JSON.stringify(data));
+  return data.access_token;
+}
+
+app.get("/auth/google-facturas", requireAuth(["direccion", "contabilidad"]), (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(500).send("GOOGLE_CLIENT_ID no configurado");
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
+  url.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI_FACTURAS);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/spreadsheets"
+  ].join(" "));
+  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("prompt", "consent");
+  res.redirect(url.toString());
+});
+
+app.get("/auth/google-facturas/callback", async (req, res) => {
+  const { code, error } = req.query;
+  if (error) return res.send(`Error Google OAuth Facturas: ${error}`);
+  if (!code) return res.send("Sin código de autorización");
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      redirect_uri: GOOGLE_REDIRECT_URI_FACTURAS,
+      grant_type: "authorization_code"
+    })
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenData.refresh_token) {
+    return res.send("Error: Google no devolvió refresh_token. Ve a <a href='https://myaccount.google.com/permissions'>myaccount.google.com/permissions</a>, revoca el acceso y vuelve a intentarlo.");
+  }
+  await setConfig("google_drive_refresh_token", tokenData.refresh_token);
+  res.redirect("/direccion.html?facturas=connected");
+});
+
+// ── API: estado y grupos de facturas ───────────────────────────────────────
+app.get("/api/facturas/status", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  const token = await getConfig("google_drive_refresh_token");
+  const grupos = await dbAll("SELECT * FROM facturas_grupos ORDER BY local", []);
+  res.json({ ok: true, conectado: !!token, grupos });
+});
+
+app.get("/api/facturas/grupos", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  const rows = await dbAll("SELECT * FROM facturas_grupos ORDER BY local", []);
+  res.json({ ok: true, data: rows });
+});
+
+app.post("/api/facturas/grupos", requireAuth(["direccion"]), async (req, res) => {
+  const { local, group_jid } = req.body;
+  if (!local || !group_jid) return res.status(400).json({ ok: false, error: "Faltan local o group_jid" });
+  try {
+    await dbRun(
+      "INSERT INTO facturas_grupos (local, group_jid) VALUES (?, ?) ON CONFLICT(group_jid) DO UPDATE SET local = excluded.local",
+      [local, group_jid]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.delete("/api/facturas/grupos/:id", requireAuth(["direccion"]), async (req, res) => {
+  await dbRun("DELETE FROM facturas_grupos WHERE id = ?", [req.params.id]);
+  res.json({ ok: true });
+});
+
+app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  const { local } = req.query;
+  const rows = await dbAll(
+    `SELECT * FROM facturas ${local ? "WHERE local = ?" : ""} ORDER BY creado_en DESC LIMIT 100`,
+    local ? [local] : []
+  );
+  res.json({ ok: true, data: rows });
+});
 
 // OAuth routes (sin requireAuth en callback para que Google pueda redirigir)
 app.get("/auth/google", (req, res) => {
@@ -1782,6 +1913,43 @@ const server = app.listen(PORT, () => {
         [jid, telefono, notasJson, notasJson],
         (err) => { if (err) console.error("Error guardando nota cliente WA:", err.message); }
       );
+    }
+  });
+
+  setOnGroupAttachment(async ({ groupJid, senderJid, buffer, mimeType, filename, caption }) => {
+    const grupo = await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid]);
+    if (!grupo) return; // grupo no registrado como grupo de facturas
+
+    const local = grupo.local;
+    console.log(`[Facturas] Documento recibido en grupo ${local} de ${senderJid}`);
+
+    try {
+      await sendMensajeAGrupo(groupJid, `⏳ Procesando documento para *${local}*...`);
+
+      const result = await procesarFactura({
+        buffer, mimeType, filename, local, caption,
+        getToken: getDriveAccessToken,
+        dbGet, dbRun
+      });
+
+      const { datos, driveUrl, sheetUrl } = result;
+      const tipoLabel = datos.tipo === "albaran" ? "Albarán" : datos.tipo === "ticket" ? "Ticket" : "Factura";
+      const totalStr = datos.total != null ? `${Number(datos.total).toFixed(2)} €` : "importe no detectado";
+      const provStr = datos.proveedor || "proveedor no detectado";
+
+      await sendMensajeAGrupo(groupJid,
+        `✅ *${tipoLabel} registrado · ${local}*\n\n` +
+        `🏢 ${provStr}\n` +
+        `💶 ${totalStr}` + (datos.porcentaje_iva ? ` (IVA ${datos.porcentaje_iva}%)` : "") + `\n` +
+        `📅 ${datos.fecha || "fecha no detectada"}\n\n` +
+        `📁 <a href="${driveUrl}">Ver en Drive</a>\n` +
+        `📊 <a href="${sheetUrl}">Ver hoja</a>`
+      );
+    } catch (err) {
+      console.error("[Facturas] Error procesando documento:", err.message);
+      await sendMensajeAGrupo(groupJid,
+        `❌ No he podido procesar el documento: ${err.message.slice(0, 120)}\n\nRevisa que Google Drive esté conectado en el panel.`
+      ).catch(() => {});
     }
   });
 

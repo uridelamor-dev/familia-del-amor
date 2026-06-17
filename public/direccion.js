@@ -4,6 +4,9 @@ requireRole(["direccion"]).then((user) => {
   loadUsers();
   initNewUserForm();
   initSidebar();
+  if (location.search.includes("facturas=connected")) {
+    document.querySelector('[data-view="facturas"]')?.click();
+  }
 });
 
 function initSidebar() {
@@ -13,6 +16,7 @@ function initSidebar() {
     kpi: document.getElementById("viewKpi"),
     usuarios: document.getElementById("viewUsuarios"),
     whatsapp: document.getElementById("viewWhatsapp"),
+    facturas: document.getElementById("viewFacturas"),
   };
 
   btns.forEach((btn) => {
@@ -35,6 +39,7 @@ function initSidebar() {
         if (view === "kpi") loadKpi();
         if (view === "usuarios") loadUsers();
         if (view === "whatsapp") { initWhatsAppStatus("waStatus"); loadWaMensajes(); }
+        if (view === "facturas") loadFacturasPanel();
       }
     });
   });
@@ -322,4 +327,86 @@ async function loadKpi() {
   } else {
     byLocal.innerHTML = `<span style="color:var(--muted);font-size:0.9rem">Sin reservas aún.</span>`;
   }
+}
+
+// ── Panel de Facturas IA ───────────────────────────────────────────────────
+
+async function loadFacturasPanel() {
+  await Promise.all([loadFacturasStatus(), loadGruposFactura(), loadUltimasFacturas()]);
+  document.getElementById("formAddGrupoFactura")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const res = await authFetch("/api/facturas/grupos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ local: fd.get("local"), group_jid: fd.get("group_jid") })
+    });
+    const data = await res.json();
+    if (data.ok) { e.target.reset(); loadGruposFactura(); }
+    else alert("Error: " + data.error);
+  });
+}
+
+async function loadFacturasStatus() {
+  const el = document.getElementById("facturasStatus");
+  const btn = document.getElementById("btnConectarDrive");
+  try {
+    const res = await authFetch("/api/facturas/status");
+    const data = await res.json();
+    if (data.conectado) {
+      el.innerHTML = `✅ <strong>Google Drive conectado</strong> — los documentos se suben automáticamente.`;
+      btn.style.display = "none";
+    } else {
+      el.innerHTML = `⚠️ Google Drive no conectado. Conecta una cuenta de Google para activar el procesamiento de facturas.`;
+      btn.style.display = "inline-flex";
+    }
+  } catch {
+    el.innerHTML = `Error comprobando estado.`;
+  }
+}
+
+async function loadGruposFactura() {
+  const el = document.getElementById("listaGruposFactura");
+  const res = await authFetch("/api/facturas/grupos");
+  const data = await res.json();
+  if (!data.ok || !data.data.length) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin grupos vinculados aún. Añade un grupo arriba.</p>`;
+    return;
+  }
+  el.innerHTML = `<table class="table"><thead><tr><th>Local</th><th>Group JID</th><th>Sheet</th><th></th></tr></thead><tbody>
+    ${data.data.map(g => `
+      <tr>
+        <td>${g.local}</td>
+        <td style="font-size:0.8rem;font-family:monospace">${g.group_jid}</td>
+        <td>${g.sheet_url ? `<a href="${g.sheet_url}" target="_blank">Ver Sheet</a>` : "—"}</td>
+        <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="eliminarGrupoFactura(${g.id})">Eliminar</button></td>
+      </tr>`).join("")}
+  </tbody></table>`;
+}
+
+window.eliminarGrupoFactura = async function(id) {
+  if (!confirm("¿Eliminar este grupo?")) return;
+  await authFetch(`/api/facturas/grupos/${id}`, { method: "DELETE" });
+  loadGruposFactura();
+};
+
+async function loadUltimasFacturas() {
+  const el = document.getElementById("listaFacturas");
+  const res = await authFetch("/api/facturas");
+  const data = await res.json();
+  if (!data.ok || !data.data.length) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin facturas procesadas aún.</p>`;
+    return;
+  }
+  el.innerHTML = `<table class="table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Local</th><th>Proveedor</th><th>Total</th><th>Drive</th></tr></thead><tbody>
+    ${data.data.map(f => `
+      <tr>
+        <td>${f.fecha || "—"}</td>
+        <td>${f.tipo || "—"}</td>
+        <td>${f.local}</td>
+        <td>${f.proveedor || "—"}</td>
+        <td>${f.total != null ? Number(f.total).toFixed(2) + " €" : "—"}</td>
+        <td>${f.drive_url ? `<a href="${f.drive_url}" target="_blank">Ver</a>` : "—"}</td>
+      </tr>`).join("")}
+  </tbody></table>`;
 }

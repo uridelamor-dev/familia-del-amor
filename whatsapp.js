@@ -1,4 +1,4 @@
-import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers } from "@whiskeysockets/baileys";
+import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, downloadMediaMessage } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
 import pino from "pino";
@@ -252,6 +252,14 @@ export function setOnMensajeSaliente(fn) { onMensajeSaliente = fn; }
 
 let onActualizarPerfil = null;
 export function setOnActualizarPerfil(fn) { onActualizarPerfil = fn; }
+
+let onGroupAttachment = null;
+export function setOnGroupAttachment(fn) { onGroupAttachment = fn; }
+
+export async function sendMensajeAGrupo(groupJid, texto) {
+  if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
+  await sock.sendMessage(groupJid, { text: texto });
+}
 
 let sock = null;
 let clientReady = false;
@@ -630,7 +638,27 @@ async function connectToWhatsApp() {
     if (type !== "notify") return;
     for (const msg of messages) {
       if (msg.key.fromMe) continue;
-      if (msg.key.remoteJid.endsWith("@g.us")) continue; // ignorar grupos
+
+      const jid = msg.key.remoteJid;
+
+      // Grupos: solo procesar si hay adjunto y hay handler registrado
+      if (jid?.endsWith("@g.us")) {
+        if (!onGroupAttachment) continue;
+        const docMsg = msg.message?.documentMessage;
+        const imgMsg = msg.message?.imageMessage;
+        if (!docMsg && !imgMsg) continue;
+        try {
+          const buffer = await downloadMediaMessage(msg, "buffer", {});
+          const mimeType = docMsg?.mimetype || imgMsg?.mimetype || "image/jpeg";
+          const filename = docMsg?.fileName || `imagen_${Date.now()}.jpg`;
+          const caption = docMsg?.caption || imgMsg?.caption || "";
+          const senderJid = msg.key.participant || jid;
+          onGroupAttachment({ groupJid: jid, senderJid, buffer, mimeType, filename, caption });
+        } catch (err) {
+          console.error("[WA] Error descargando adjunto de grupo:", err.message);
+        }
+        continue;
+      }
 
       const texto =
         msg.message?.conversation ||
@@ -646,7 +674,6 @@ async function connectToWhatsApp() {
         msg.message?.videoMessage
       );
 
-      const jid = msg.key.remoteJid;
       const textoFinal = texto.trim() || (tieneAdjunto ? "[Archivo adjunto sin texto]" : "");
       if (!textoFinal) continue;
 

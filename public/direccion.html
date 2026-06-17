@@ -122,6 +122,9 @@
           <button class="dir-nav-btn" data-view="contabilidad" data-url="contabilidad.html">
             <span class="icon">💰</span><span>Contabilidad</span>
           </button>
+          <button class="dir-nav-btn" data-view="facturas">
+            <span class="icon">🧾</span><span>Facturas IA</span>
+          </button>
           <button class="dir-nav-btn" data-view="mantenimiento" data-url="mantenimiento.html">
             <span class="icon">🔧</span><span>Mantenimiento</span>
           </button>
@@ -186,6 +189,49 @@
                   </div>
                 </div>
               </div>
+            </section>
+          </div>
+
+          <!-- Vista inline: Facturas IA -->
+          <div class="dir-inline hidden" id="viewFacturas">
+            <section class="block">
+              <div class="section-head">
+                <h2>Facturas IA</h2>
+                <p>Los encargados envían documentos al grupo de WhatsApp y Sara los registra automáticamente en Drive y Sheets.</p>
+              </div>
+              <div class="card" id="facturasStatus" style="margin-bottom:1rem">Comprobando conexión con Google Drive...</div>
+              <a class="btn" href="/auth/google-facturas" id="btnConectarDrive" style="display:none">Conectar Google Drive</a>
+            </section>
+
+            <section class="block">
+              <div class="section-head"><h2>Grupos de WhatsApp</h2><p>Vincula cada grupo de facturas con su local.</p></div>
+              <form id="formAddGrupoFactura" class="form" style="margin-bottom:1rem">
+                <div class="form-row">
+                  <label>
+                    <span>Local</span>
+                    <select name="local">
+                      <option value="La Tapeta - Blanes">La Tapeta - Blanes</option>
+                      <option value="Cooperativa - Blanes">Cooperativa - Blanes</option>
+                      <option value="La Tapeta - Lloret">La Tapeta - Lloret</option>
+                      <option value="La Tapeta - Girona">La Tapeta - Girona</option>
+                      <option value="Can Mateu - Tordera">Can Mateu - Tordera</option>
+                      <option value="La Tapa Ibérica - Tordera">La Tapa Ibérica - Tordera</option>
+                      <option value="Botiga d'en Mateu - Tordera">Botiga d'en Mateu - Tordera</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>JID del grupo (ej: 34612…@g.us)</span>
+                    <input type="text" name="group_jid" placeholder="1234567890-1234567890@g.us" required />
+                  </label>
+                </div>
+                <button class="btn" type="submit">Añadir grupo</button>
+              </form>
+              <div id="listaGruposFactura">Cargando...</div>
+            </section>
+
+            <section class="block">
+              <div class="section-head"><h2>Últimas facturas procesadas</h2></div>
+              <div id="listaFacturas">Cargando...</div>
             </section>
           </div>
 
