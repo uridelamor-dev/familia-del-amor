@@ -347,6 +347,26 @@ async function loadFacturasPanel() {
     if (data.ok) { loadGruposFactura(); }
     else alert("Error: " + data.error);
   });
+  document.getElementById("btnMigrarEstructura")?.addEventListener("click", async () => {
+    const btn = document.getElementById("btnMigrarEstructura");
+    const status = document.getElementById("migrarStatus");
+    if (!confirm("¿Reorganizar los archivos existentes en Drive a la nueva estructura Local → Mes?\n\nEsto puede tardar unos segundos.")) return;
+    btn.disabled = true;
+    status.textContent = "Reorganizando...";
+    try {
+      const res = await authFetch("/api/facturas/migrar-estructura", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) {
+        status.textContent = `✅ ${data.movidos} movidos, ${data.omitidos} ya correctos${data.errores?.length ? `, ${data.errores.length} errores` : ""}`;
+      } else {
+        status.textContent = `❌ ${data.error}`;
+      }
+    } catch {
+      status.textContent = "❌ Error de conexión";
+    }
+    btn.disabled = false;
+  });
+
   document.getElementById("formAddEmailRegla")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const email = document.getElementById("reglaEmail").value.trim();

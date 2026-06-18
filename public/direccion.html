@@ -200,7 +200,11 @@
                 <p>Los encargados envían documentos al grupo de WhatsApp y Sara los registra automáticamente en Drive y Sheets.</p>
               </div>
               <div class="card" id="facturasStatus" style="margin-bottom:1rem">Comprobando conexión con Google Drive...</div>
-              <a class="btn" href="/auth/google-facturas" id="btnConectarDrive" style="display:none">Conectar Google Drive</a>
+              <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center">
+                <a class="btn" href="/auth/google-facturas" id="btnConectarDrive" style="display:none">Conectar Google Drive</a>
+                <button class="btn ghost" id="btnMigrarEstructura" title="Reorganiza los archivos existentes en Drive a la nueva estructura Local → Mes">Reorganizar carpetas Drive</button>
+                <span id="migrarStatus" style="font-size:0.85rem;color:var(--muted)"></span>
+              </div>
             </section>
 
             <section class="block">

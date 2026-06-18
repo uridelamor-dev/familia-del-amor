@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync } from "child_process";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo } from "./whatsapp.js";
-import { procesarFactura, FacturaDuplicadaError } from "./facturas.js";
+import { procesarFactura, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
 
 dotenv.config();
 
@@ -855,6 +855,15 @@ app.post("/api/facturas/email-reglas", requireAuth(["direccion"]), async (req, r
 app.delete("/api/facturas/email-reglas/:id", requireAuth(["direccion"]), async (req, res) => {
   await dbRun("DELETE FROM facturas_email_reglas WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
+});
+
+app.post("/api/facturas/migrar-estructura", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const resultado = await migrarEstructuraDrive({ getToken: getDriveAccessToken, dbAll, dbGet });
+    res.json({ ok: true, ...resultado });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 app.get("/api/facturas/gmail-status", requireAuth(["direccion", "contabilidad"]), async (req, res) => {

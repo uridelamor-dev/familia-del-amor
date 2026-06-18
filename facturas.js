@@ -225,8 +225,8 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
 
   const fechaDoc = datos.fecha ? new Date(datos.fecha + "T12:00:00") : new Date();
   const mesLabel = `${MESES_ES[fechaDoc.getMonth()]} ${fechaDoc.getFullYear()}`;
-  const mesId = await findOrCreateFolder(token, mesLabel, rootId);
-  const localId = await findOrCreateFolder(token, local, mesId);
+  const localId = await findOrCreateFolder(token, local, rootId);
+  const mesId = await findOrCreateFolder(token, mesLabel, localId);
 
   // 6. Subir archivo a Drive con nuevo formato de nombre
   const ext = mimeType === "application/pdf" ? ".pdf"
@@ -285,4 +285,68 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   );
 
   return { datos, driveUrl: driveFile.url, sheetUrl, sheetId };
+}
+
+// ── Migración retroactiva: Raíz→Mes→Local → Raíz→Local→Mes ─────────────────
+
+function extractDriveFileId(url) {
+  const m = (url || "").match(/(?:file\/d\/|id=)([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+export async function migrarEstructuraDrive({ getToken, dbAll, dbGet }) {
+  const token = await getToken();
+
+  const cfgRaiz = await dbGet("SELECT value FROM config WHERE key = 'drive_facturas_root_id'");
+  if (!cfgRaiz?.value) throw new Error("Sin carpeta raíz configurada en Drive");
+  const rootId = cfgRaiz.value;
+
+  const facturas = await dbAll("SELECT * FROM facturas WHERE drive_url IS NOT NULL ORDER BY id", []);
+  const res = { movidos: 0, omitidos: 0, errores: [], total: facturas.length };
+
+  for (const f of facturas) {
+    const fileId = extractDriveFileId(f.drive_url);
+    if (!fileId) { res.omitidos++; continue; }
+
+    try {
+      // Obtener carpeta padre actual del archivo
+      const metaRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,parents`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const meta = await metaRes.json();
+      if (meta.error) { res.errores.push(`#${f.id}: ${meta.error.message}`); continue; }
+
+      const oldParentId = meta.parents?.[0];
+
+      // Calcular nueva ruta: Raíz → Local → Mes
+      const fechaDoc = f.fecha ? new Date(f.fecha + "T12:00:00") : new Date(f.creado_en);
+      const mesLabel = `${MESES_ES[fechaDoc.getMonth()]} ${fechaDoc.getFullYear()}`;
+      const localId = await findOrCreateFolder(token, f.local, rootId);
+      const mesId   = await findOrCreateFolder(token, mesLabel, localId);
+
+      if (oldParentId === mesId) { res.omitidos++; continue; } // ya en la nueva estructura
+
+      // Mover archivo
+      const moveRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${mesId}&removeParents=${oldParentId}&fields=id`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: "{}"
+        }
+      );
+      const moveData = await moveRes.json();
+      if (moveData.error) {
+        res.errores.push(`#${f.id} (${f.proveedor || "?"}): ${moveData.error.message}`);
+      } else {
+        res.movidos++;
+        console.log(`[Migración] Movido: ${meta.name} → ${f.local}/${mesLabel}`);
+      }
+    } catch (err) {
+      res.errores.push(`#${f.id}: ${err.message}`);
+    }
+  }
+
+  return res;
 }
