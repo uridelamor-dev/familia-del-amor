@@ -629,7 +629,7 @@ async function getDriveAccessToken() {
   return data.access_token;
 }
 
-app.get("/auth/google-facturas", requireAuth(["direccion", "contabilidad"]), (req, res) => {
+app.get("/auth/google-facturas", (req, res) => {
   if (!GOOGLE_DRIVE_CLIENT_ID) return res.status(500).send("GOOGLE_DRIVE_CLIENT_ID no configurado en Replit Secrets");
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.searchParams.set("client_id", GOOGLE_DRIVE_CLIENT_ID);
