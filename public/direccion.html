@@ -234,8 +234,22 @@
                     <span>CIF</span>
                     <input type="text" id="localCif" placeholder="B70799135" style="max-width:140px" />
                   </label>
+                  <label>
+                    <span>Agrupar con (opcional)</span>
+                    <select id="localContable">
+                      <option value="">— mismo nombre —</option>
+                      <option value="La Tapeta - Blanes">La Tapeta - Blanes</option>
+                      <option value="Cooperativa - Blanes">Cooperativa - Blanes</option>
+                      <option value="La Tapeta - Lloret">La Tapeta - Lloret</option>
+                      <option value="La Tapeta - Girona">La Tapeta - Girona</option>
+                      <option value="Can Mateu - Tordera">Can Mateu - Tordera</option>
+                      <option value="La Tapa Ibérica - Tordera">La Tapa Ibérica - Tordera</option>
+                      <option value="Botiga d'en Mateu - Tordera">Botiga d'en Mateu - Tordera</option>
+                    </select>
+                  </label>
                 </div>
-                <button class="btn" type="submit">Guardar</button>
+                <small style="color:var(--muted)">Si dos locales comparten contabilidad (ej. Cooperativa → La Tapeta Blanes), selecciona el local principal en "Agrupar con". Sus facturas irán a la misma carpeta y sheet.</small>
+                <button class="btn" type="submit" style="margin-top:0.5rem">Guardar</button>
               </form>
               <div id="listaLocales">Cargando...</div>
             </section>

@@ -352,13 +352,14 @@ async function loadFacturasPanel() {
     const local = document.getElementById("localNombre").value;
     const empresa = document.getElementById("localEmpresa").value.trim();
     const cif = document.getElementById("localCif").value.trim();
+    const local_contable = document.getElementById("localContable").value;
     const res = await authFetch("/api/facturas/locales", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local, empresa, cif })
+      body: JSON.stringify({ local, empresa, cif, local_contable })
     });
     const data = await res.json();
-    if (data.ok) { document.getElementById("localEmpresa").value = ""; document.getElementById("localCif").value = ""; loadLocalesEmpresas(); }
+    if (data.ok) { document.getElementById("localEmpresa").value = ""; document.getElementById("localCif").value = ""; document.getElementById("localContable").value = ""; loadLocalesEmpresas(); }
     else alert("Error: " + data.error);
   });
 
@@ -466,12 +467,15 @@ async function loadLocalesEmpresas() {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin locales configurados. Añade cada local con su empresa arriba.</p>`;
     return;
   }
-  el.innerHTML = `<table class="table"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th></th></tr></thead><tbody>
+  el.innerHTML = `<table class="table"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th>Agrupa con</th><th></th></tr></thead><tbody>
     ${data.data.map(l => `
       <tr>
         <td>${l.local}</td>
         <td>${l.empresa}</td>
         <td style="font-family:monospace;font-size:0.85rem">${l.cif || "—"}</td>
+        <td style="color:${l.local_contable ? "var(--accent)" : "var(--muted)"}">
+          ${l.local_contable ? `→ ${l.local_contable}` : "—"}
+        </td>
         <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="eliminarLocal('${encodeURIComponent(l.local)}')">Eliminar</button></td>
       </tr>`).join("")}
   </tbody></table>`;

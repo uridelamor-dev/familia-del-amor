@@ -213,8 +213,9 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
 
   // 4. Obtener token de Drive y empresa del local
   const token = await getToken();
-  const localRow = await dbGet("SELECT empresa, cif FROM facturas_locales WHERE local = ?", [local]);
+  const localRow = await dbGet("SELECT empresa, cif, local_contable FROM facturas_locales WHERE local = ?", [local]);
   const empresa = localRow?.empresa || "Sin empresa asignada";
+  const localContable = localRow?.local_contable || local; // nombre unificado para Drive/Sheets
 
   // 5. Estructura de carpetas: Raíz → Empresa → Local → Mes
   const cfgRaiz = await dbGet("SELECT value FROM config WHERE key = 'drive_facturas_root_id'");
@@ -228,7 +229,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   const fechaDoc = datos.fecha ? new Date(datos.fecha + "T12:00:00") : new Date();
   const mesLabel = `${MESES_ES[fechaDoc.getMonth()]} ${fechaDoc.getFullYear()}`;
   const empresaId = await findOrCreateFolder(token, empresa, rootId);
-  const localId   = await findOrCreateFolder(token, local, empresaId);
+  const localId   = await findOrCreateFolder(token, localContable, empresaId);
   const mesId     = await findOrCreateFolder(token, mesLabel, localId);
 
   // 6. Subir archivo a Drive con nuevo formato de nombre
@@ -239,7 +240,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   console.log(`[Facturas] Archivo subido: ${driveFile.url}`);
 
   // 7. Buscar o crear Sheet del local (INSERT OR IGNORE para emails sin grupo WA)
-  const grupoRow = await dbGet("SELECT sheet_id, sheet_url FROM facturas_grupos WHERE local = ?", [local]);
+  const grupoRow = await dbGet("SELECT sheet_id, sheet_url FROM facturas_grupos WHERE local = ?", [localContable]);
   let sheetId = grupoRow?.sheet_id;
   let sheetUrl = grupoRow?.sheet_url;
 
@@ -249,11 +250,11 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
     sheetId = sheet.spreadsheetId;
     sheetUrl = sheet.url;
     if (grupoRow) {
-      await dbRun("UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?", [sheetId, sheetUrl, local]);
+      await dbRun("UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?", [sheetId, sheetUrl, localContable]);
     } else {
       await dbRun(
         "INSERT OR IGNORE INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)",
-        [local, `__email__:${local}`, sheetId, sheetUrl]
+        [localContable, `__email__:${localContable}`, sheetId, sheetUrl]
       );
     }
     console.log(`[Facturas] Sheet creado para ${local}: ${sheetUrl}`);
@@ -322,12 +323,13 @@ export async function migrarEstructuraDrive({ getToken, dbAll, dbGet }) {
       const oldParentId = meta.parents?.[0];
 
       // Nueva ruta: Raíz → Empresa → Local → Mes
-      const localRow = await dbGet("SELECT empresa FROM facturas_locales WHERE local = ?", [f.local]);
+      const localRow = await dbGet("SELECT empresa, local_contable FROM facturas_locales WHERE local = ?", [f.local]);
       const empresa = f.empresa || localRow?.empresa || "Sin empresa asignada";
+      const localContable = localRow?.local_contable || f.local;
       const fechaDoc = f.fecha ? new Date(f.fecha + "T12:00:00") : new Date(f.creado_en);
       const mesLabel = `${MESES_ES[fechaDoc.getMonth()]} ${fechaDoc.getFullYear()}`;
       const empresaId = await findOrCreateFolder(token, empresa, rootId);
-      const localId   = await findOrCreateFolder(token, f.local, empresaId);
+      const localId   = await findOrCreateFolder(token, localContable, empresaId);
       const mesId     = await findOrCreateFolder(token, mesLabel, localId);
 
       if (oldParentId === mesId) { res.omitidos++; continue; }

@@ -403,6 +403,7 @@ db.serialize(() => {
 
   db.run(`ALTER TABLE facturas ADD COLUMN file_hash TEXT`, () => {});
   db.run(`ALTER TABLE facturas ADD COLUMN empresa TEXT`, () => {});
+  db.run(`ALTER TABLE facturas_locales ADD COLUMN local_contable TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN genero TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
@@ -873,12 +874,13 @@ app.get("/api/facturas/locales", requireAuth(["direccion", "contabilidad"]), asy
 });
 
 app.post("/api/facturas/locales", requireAuth(["direccion"]), async (req, res) => {
-  const { local, empresa, cif } = req.body;
+  const { local, empresa, cif, local_contable } = req.body;
   if (!local || !empresa) return res.status(400).json({ ok: false, error: "Faltan local o empresa" });
   try {
     await dbRun(
-      "INSERT INTO facturas_locales (local, empresa, cif) VALUES (?, ?, ?) ON CONFLICT(local) DO UPDATE SET empresa = excluded.empresa, cif = excluded.cif",
-      [local, empresa.trim(), (cif || "").trim() || null]
+      `INSERT INTO facturas_locales (local, empresa, cif, local_contable) VALUES (?, ?, ?, ?)
+       ON CONFLICT(local) DO UPDATE SET empresa = excluded.empresa, cif = excluded.cif, local_contable = excluded.local_contable`,
+      [local, empresa.trim(), (cif || "").trim() || null, (local_contable || "").trim() || null]
     );
     res.json({ ok: true });
   } catch (err) {
