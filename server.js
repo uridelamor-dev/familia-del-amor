@@ -371,6 +371,27 @@ db.serialize(() => {
       creado_en TEXT DEFAULT (datetime('now'))
     )
   `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS facturas_email_reglas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL UNIQUE,
+      local TEXT NOT NULL,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS facturas_emails_procesados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gmail_id TEXT NOT NULL UNIQUE,
+      de_email TEXT,
+      asunto TEXT,
+      local TEXT,
+      adjuntos_procesados INTEGER DEFAULT 0,
+      procesado TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   db.run(`ALTER TABLE leads ADD COLUMN genero TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
@@ -629,6 +650,104 @@ async function getDriveAccessToken() {
   return data.access_token;
 }
 
+// ── Gmail: funciones de polling ────────────────────────────────────────────
+
+function flattenParts(payload, result = []) {
+  if (!payload) return result;
+  if (payload.parts) {
+    for (const part of payload.parts) flattenParts(part, result);
+  } else {
+    result.push(payload);
+  }
+  return result;
+}
+
+async function markGmailRead(token, msgId) {
+  await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/modify`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ removeLabelIds: ["UNREAD"] })
+  });
+}
+
+async function pollGmail() {
+  try {
+    const token = await getDriveAccessToken();
+
+    const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent("is:unread has:attachment")}&maxResults=20`;
+    const listRes = await fetch(listUrl, { headers: { Authorization: `Bearer ${token}` } });
+    const listData = await listRes.json();
+    if (listData.error) { console.error("[Gmail] Error listando:", JSON.stringify(listData.error)); return; }
+    if (!listData.messages || listData.messages.length === 0) return;
+
+    for (const { id: msgId } of listData.messages) {
+      const yaProcesado = await dbGet("SELECT id FROM facturas_emails_procesados WHERE gmail_id = ?", [msgId]);
+      if (yaProcesado) continue;
+
+      const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}?format=full`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const msg = await msgRes.json();
+
+      const headers = msg.payload?.headers || [];
+      const from = headers.find(h => h.name.toLowerCase() === "from")?.value || "";
+      const subject = headers.find(h => h.name.toLowerCase() === "subject")?.value || "Sin asunto";
+      const emailMatch = from.match(/<(.+?)>/);
+      const senderEmail = (emailMatch ? emailMatch[1] : from).trim().toLowerCase();
+
+      const regla = await dbGet("SELECT local FROM facturas_email_reglas WHERE LOWER(email) = ?", [senderEmail]);
+      const local = regla?.local || "Sin asignar";
+
+      const parts = flattenParts(msg.payload);
+      const adjuntos = parts.filter(p =>
+        p.filename && p.body?.attachmentId &&
+        (p.mimeType === "application/pdf" || p.mimeType?.startsWith("image/"))
+      );
+
+      if (adjuntos.length === 0) {
+        await markGmailRead(token, msgId);
+        await dbRun("INSERT OR IGNORE INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, 0)", [msgId, senderEmail, subject, local]);
+        continue;
+      }
+
+      let procesados = 0;
+      for (const parte of adjuntos) {
+        try {
+          const attRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/attachments/${parte.body.attachmentId}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const attData = await attRes.json();
+          const buffer = Buffer.from(attData.data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+
+          await procesarFactura({
+            buffer,
+            mimeType: parte.mimeType,
+            filename: parte.filename || `adjunto_${msgId}`,
+            local,
+            caption: `Email · ${from} · ${subject}`,
+            getToken: getDriveAccessToken,
+            dbGet,
+            dbRun
+          });
+          procesados++;
+        } catch (err) {
+          console.error(`[Gmail] Error procesando adjunto de ${msgId}:`, err.message);
+        }
+      }
+
+      await markGmailRead(token, msgId);
+      await dbRun(
+        "INSERT OR IGNORE INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, ?)",
+        [msgId, senderEmail, subject, local, procesados]
+      );
+      console.log(`[Gmail] ${senderEmail} → ${local} (${procesados} adjunto/s procesado/s)`);
+    }
+  } catch (err) {
+    if (err.message.includes("no conectado")) return;
+    console.error("[Gmail] Error en poll:", err.message);
+  }
+}
+
 app.get("/auth/google-facturas", (req, res) => {
   if (!GOOGLE_DRIVE_CLIENT_ID) return res.status(500).send("GOOGLE_DRIVE_CLIENT_ID no configurado en Replit Secrets");
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -637,7 +756,9 @@ app.get("/auth/google-facturas", (req, res) => {
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", [
     "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/spreadsheets"
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify"
   ].join(" "));
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
@@ -705,6 +826,36 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
     local ? [local] : []
   );
   res.json({ ok: true, data: rows });
+});
+
+app.get("/api/facturas/email-reglas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  const rows = await dbAll("SELECT * FROM facturas_email_reglas ORDER BY email", []);
+  res.json({ ok: true, data: rows });
+});
+
+app.post("/api/facturas/email-reglas", requireAuth(["direccion"]), async (req, res) => {
+  const { email, local } = req.body;
+  if (!email || !local) return res.status(400).json({ ok: false, error: "Faltan email o local" });
+  try {
+    await dbRun(
+      "INSERT INTO facturas_email_reglas (email, local) VALUES (?, ?) ON CONFLICT(email) DO UPDATE SET local = excluded.local",
+      [email.trim().toLowerCase(), local]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.delete("/api/facturas/email-reglas/:id", requireAuth(["direccion"]), async (req, res) => {
+  await dbRun("DELETE FROM facturas_email_reglas WHERE id = ?", [req.params.id]);
+  res.json({ ok: true });
+});
+
+app.get("/api/facturas/gmail-status", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  const token = await getConfig("google_drive_refresh_token");
+  const ultimosEmails = await dbAll("SELECT * FROM facturas_emails_procesados ORDER BY procesado DESC LIMIT 20", []);
+  res.json({ ok: true, conectado: !!token, emails: ultimosEmails });
 });
 
 // OAuth routes (sin requireAuth en callback para que Google pueda redirigir)
@@ -1956,6 +2107,10 @@ const server = app.listen(PORT, () => {
   });
 
   initWhatsApp();
+
+  // Polling de Gmail: primer check a los 30 segundos, luego cada 5 minutos
+  setTimeout(pollGmail, 30 * 1000);
+  setInterval(pollGmail, 5 * 60 * 1000);
 });
 
 server.on("error", (err) => {

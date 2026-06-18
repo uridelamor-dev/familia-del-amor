@@ -332,7 +332,7 @@ async function loadKpi() {
 // ── Panel de Facturas IA ───────────────────────────────────────────────────
 
 async function loadFacturasPanel() {
-  await Promise.all([loadFacturasStatus(), loadGruposFactura(), loadUltimasFacturas(), loadGruposWADisponibles()]);
+  await Promise.all([loadFacturasStatus(), loadGruposFactura(), loadUltimasFacturas(), loadGruposWADisponibles(), loadEmailReglas(), loadGmailStatus()]);
   document.getElementById("formAddGrupoFactura")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const local = document.getElementById("facturaLocal").value;
@@ -345,6 +345,19 @@ async function loadFacturasPanel() {
     });
     const data = await res.json();
     if (data.ok) { loadGruposFactura(); }
+    else alert("Error: " + data.error);
+  });
+  document.getElementById("formAddEmailRegla")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = document.getElementById("reglaEmail").value.trim();
+    const local = document.getElementById("reglaLocal").value;
+    const res = await authFetch("/api/facturas/email-reglas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, local })
+    });
+    const data = await res.json();
+    if (data.ok) { document.getElementById("reglaEmail").value = ""; loadEmailReglas(); }
     else alert("Error: " + data.error);
   });
 }
@@ -407,6 +420,51 @@ window.eliminarGrupoFactura = async function(id) {
   if (!confirm("¿Eliminar este grupo?")) return;
   await authFetch(`/api/facturas/grupos/${id}`, { method: "DELETE" });
   loadGruposFactura();
+};
+
+async function loadGmailStatus() {
+  const el = document.getElementById("gmailStatus");
+  if (!el) return;
+  try {
+    const res = await authFetch("/api/facturas/gmail-status");
+    const data = await res.json();
+    if (!data.conectado) {
+      el.innerHTML = `⚠️ Gmail no conectado. Conecta Google Drive/Gmail arriba con el botón "Conectar Google Drive".`;
+      return;
+    }
+    const ultimoEmail = data.emails?.[0];
+    const ultimoTexto = ultimoEmail
+      ? `Último email procesado: <strong>${ultimoEmail.de_email}</strong> → ${ultimoEmail.local} (${ultimoEmail.procesado?.slice(0, 10)})`
+      : "Sin emails procesados aún.";
+    el.innerHTML = `✅ <strong>Gmail conectado</strong> — revisando bandeja cada 5 minutos.<br><small style="color:var(--muted)">${ultimoTexto}</small>`;
+  } catch {
+    el.innerHTML = `Error comprobando estado de Gmail.`;
+  }
+}
+
+async function loadEmailReglas() {
+  const el = document.getElementById("listaEmailReglas");
+  if (!el) return;
+  const res = await authFetch("/api/facturas/email-reglas");
+  const data = await res.json();
+  if (!data.ok || !data.data.length) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin reglas configuradas. Añade el email de cada encargado arriba.</p>`;
+    return;
+  }
+  el.innerHTML = `<table class="table"><thead><tr><th>Email encargado</th><th>Local</th><th></th></tr></thead><tbody>
+    ${data.data.map(r => `
+      <tr>
+        <td>${r.email}</td>
+        <td>${r.local}</td>
+        <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="eliminarEmailRegla(${r.id})">Eliminar</button></td>
+      </tr>`).join("")}
+  </tbody></table>`;
+}
+
+window.eliminarEmailRegla = async function(id) {
+  if (!confirm("¿Eliminar esta regla?")) return;
+  await authFetch(`/api/facturas/email-reglas/${id}`, { method: "DELETE" });
+  loadEmailReglas();
 };
 
 async function loadUltimasFacturas() {

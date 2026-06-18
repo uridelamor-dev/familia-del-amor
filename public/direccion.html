@@ -232,6 +232,36 @@
             </section>
 
             <section class="block">
+              <div class="section-head">
+                <h2>Correo electrónico</h2>
+                <p>Los encargados envían facturas al correo de prueba y Sara las procesa automáticamente cada 5 minutos.</p>
+              </div>
+              <div class="card" id="gmailStatus" style="margin-bottom:1rem">Comprobando Gmail...</div>
+              <form id="formAddEmailRegla" class="form" style="margin-bottom:1rem">
+                <div class="form-row">
+                  <label>
+                    <span>Email del encargado</span>
+                    <input type="email" id="reglaEmail" placeholder="encargado@ejemplo.com" required />
+                  </label>
+                  <label>
+                    <span>Local</span>
+                    <select id="reglaLocal">
+                      <option value="La Tapeta - Blanes">La Tapeta - Blanes</option>
+                      <option value="Cooperativa - Blanes">Cooperativa - Blanes</option>
+                      <option value="La Tapeta - Lloret">La Tapeta - Lloret</option>
+                      <option value="La Tapeta - Girona">La Tapeta - Girona</option>
+                      <option value="Can Mateu - Tordera">Can Mateu - Tordera</option>
+                      <option value="La Tapa Ibérica - Tordera">La Tapa Ibérica - Tordera</option>
+                      <option value="Botiga d'en Mateu - Tordera">Botiga d'en Mateu - Tordera</option>
+                    </select>
+                  </label>
+                </div>
+                <button class="btn" type="submit">Añadir regla</button>
+              </form>
+              <div id="listaEmailReglas">Cargando...</div>
+            </section>
+
+            <section class="block">
               <div class="section-head"><h2>Últimas facturas procesadas</h2></div>
               <div id="listaFacturas">Cargando...</div>
             </section>
