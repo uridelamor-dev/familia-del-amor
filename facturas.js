@@ -211,10 +211,12 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
     if (dataDupe) throw new FacturaDuplicadaError(dataDupe, "numero_factura");
   }
 
-  // 4. Obtener token de Drive
+  // 4. Obtener token de Drive y empresa del local
   const token = await getToken();
+  const localRow = await dbGet("SELECT empresa, cif FROM facturas_locales WHERE local = ?", [local]);
+  const empresa = localRow?.empresa || "Sin empresa asignada";
 
-  // 5. Estructura de carpetas: Raíz → Mes → Local
+  // 5. Estructura de carpetas: Raíz → Empresa → Local → Mes
   const cfgRaiz = await dbGet("SELECT value FROM config WHERE key = 'drive_facturas_root_id'");
   let rootId = cfgRaiz?.value;
   if (!rootId) {
@@ -225,14 +227,15 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
 
   const fechaDoc = datos.fecha ? new Date(datos.fecha + "T12:00:00") : new Date();
   const mesLabel = `${MESES_ES[fechaDoc.getMonth()]} ${fechaDoc.getFullYear()}`;
-  const localId = await findOrCreateFolder(token, local, rootId);
-  const mesId = await findOrCreateFolder(token, mesLabel, localId);
+  const empresaId = await findOrCreateFolder(token, empresa, rootId);
+  const localId   = await findOrCreateFolder(token, local, empresaId);
+  const mesId     = await findOrCreateFolder(token, mesLabel, localId);
 
   // 6. Subir archivo a Drive con nuevo formato de nombre
   const ext = mimeType === "application/pdf" ? ".pdf"
     : mimeType.startsWith("image/png") ? ".png" : ".jpg";
   const driveFilename = buildDriveFilename(datos, ext);
-  const driveFile = await driveSubirArchivo(token, localId, driveFilename, buffer, mimeType);
+  const driveFile = await driveSubirArchivo(token, mesId, driveFilename, buffer, mimeType);
   console.log(`[Facturas] Archivo subido: ${driveFile.url}`);
 
   // 7. Buscar o crear Sheet del local (INSERT OR IGNORE para emails sin grupo WA)
@@ -274,20 +277,20 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   ];
   await sheetsAñadirFila(token, sheetId, fila);
 
-  // 9. Guardar en BD local con hash
+  // 9. Guardar en BD local con hash y empresa
   await dbRun(
-    `INSERT INTO facturas (local, tipo, fecha, numero_factura, proveedor, nif, concepto,
+    `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
       base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [local, datos.tipo, datos.fecha, datos.numero_factura, datos.proveedor,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [local, empresa, datos.tipo, datos.fecha, datos.numero_factura, datos.proveedor,
      datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
      datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash]
   );
 
-  return { datos, driveUrl: driveFile.url, sheetUrl, sheetId };
+  return { datos, empresa, driveUrl: driveFile.url, sheetUrl, sheetId };
 }
 
-// ── Migración retroactiva: Raíz→Mes→Local → Raíz→Local→Mes ─────────────────
+// ── Migración retroactiva a estructura Raíz→Empresa→Local→Mes ──────────────
 
 function extractDriveFileId(url) {
   const m = (url || "").match(/(?:file\/d\/|id=)([a-zA-Z0-9_-]+)/);
@@ -309,7 +312,6 @@ export async function migrarEstructuraDrive({ getToken, dbAll, dbGet }) {
     if (!fileId) { res.omitidos++; continue; }
 
     try {
-      // Obtener carpeta padre actual del archivo
       const metaRes = await fetch(
         `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,parents`,
         { headers: { Authorization: `Bearer ${token}` } }
@@ -319,15 +321,17 @@ export async function migrarEstructuraDrive({ getToken, dbAll, dbGet }) {
 
       const oldParentId = meta.parents?.[0];
 
-      // Calcular nueva ruta: Raíz → Local → Mes
+      // Nueva ruta: Raíz → Empresa → Local → Mes
+      const localRow = await dbGet("SELECT empresa FROM facturas_locales WHERE local = ?", [f.local]);
+      const empresa = f.empresa || localRow?.empresa || "Sin empresa asignada";
       const fechaDoc = f.fecha ? new Date(f.fecha + "T12:00:00") : new Date(f.creado_en);
       const mesLabel = `${MESES_ES[fechaDoc.getMonth()]} ${fechaDoc.getFullYear()}`;
-      const localId = await findOrCreateFolder(token, f.local, rootId);
-      const mesId   = await findOrCreateFolder(token, mesLabel, localId);
+      const empresaId = await findOrCreateFolder(token, empresa, rootId);
+      const localId   = await findOrCreateFolder(token, f.local, empresaId);
+      const mesId     = await findOrCreateFolder(token, mesLabel, localId);
 
-      if (oldParentId === mesId) { res.omitidos++; continue; } // ya en la nueva estructura
+      if (oldParentId === mesId) { res.omitidos++; continue; }
 
-      // Mover archivo
       const moveRes = await fetch(
         `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${mesId}&removeParents=${oldParentId}&fields=id`,
         {
@@ -341,7 +345,7 @@ export async function migrarEstructuraDrive({ getToken, dbAll, dbGet }) {
         res.errores.push(`#${f.id} (${f.proveedor || "?"}): ${moveData.error.message}`);
       } else {
         res.movidos++;
-        console.log(`[Migración] Movido: ${meta.name} → ${f.local}/${mesLabel}`);
+        console.log(`[Migración] Movido: ${meta.name} → ${empresa}/${f.local}/${mesLabel}`);
       }
     } catch (err) {
       res.errores.push(`#${f.id}: ${err.message}`);

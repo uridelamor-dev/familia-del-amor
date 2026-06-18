@@ -208,6 +208,39 @@
             </section>
 
             <section class="block">
+              <div class="section-head">
+                <h2>Locales y empresas</h2>
+                <p>Asigna cada local a su empresa jurídica. Define esto una vez y los documentos se organizarán en Drive automáticamente.</p>
+              </div>
+              <form id="formAddLocal" class="form" style="margin-bottom:1rem">
+                <div class="form-row">
+                  <label>
+                    <span>Local</span>
+                    <select id="localNombre">
+                      <option value="La Tapeta - Blanes">La Tapeta - Blanes</option>
+                      <option value="Cooperativa - Blanes">Cooperativa - Blanes</option>
+                      <option value="La Tapeta - Lloret">La Tapeta - Lloret</option>
+                      <option value="La Tapeta - Girona">La Tapeta - Girona</option>
+                      <option value="Can Mateu - Tordera">Can Mateu - Tordera</option>
+                      <option value="La Tapa Ibérica - Tordera">La Tapa Ibérica - Tordera</option>
+                      <option value="Botiga d'en Mateu - Tordera">Botiga d'en Mateu - Tordera</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Empresa</span>
+                    <input type="text" id="localEmpresa" placeholder="DEL AMOR URIEL SLU" required />
+                  </label>
+                  <label>
+                    <span>CIF</span>
+                    <input type="text" id="localCif" placeholder="B70799135" style="max-width:140px" />
+                  </label>
+                </div>
+                <button class="btn" type="submit">Guardar</button>
+              </form>
+              <div id="listaLocales">Cargando...</div>
+            </section>
+
+            <section class="block">
               <div class="section-head"><h2>Grupos de WhatsApp</h2><p>Vincula cada grupo de facturas con su local.</p></div>
               <form id="formAddGrupoFactura" class="form" style="margin-bottom:1rem">
                 <div class="form-row">

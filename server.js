@@ -392,7 +392,17 @@ db.serialize(() => {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS facturas_locales (
+      local TEXT PRIMARY KEY,
+      empresa TEXT NOT NULL,
+      cif TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   db.run(`ALTER TABLE facturas ADD COLUMN file_hash TEXT`, () => {});
+  db.run(`ALTER TABLE facturas ADD COLUMN empresa TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN genero TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
@@ -854,6 +864,30 @@ app.post("/api/facturas/email-reglas", requireAuth(["direccion"]), async (req, r
 
 app.delete("/api/facturas/email-reglas/:id", requireAuth(["direccion"]), async (req, res) => {
   await dbRun("DELETE FROM facturas_email_reglas WHERE id = ?", [req.params.id]);
+  res.json({ ok: true });
+});
+
+app.get("/api/facturas/locales", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  const rows = await dbAll("SELECT * FROM facturas_locales ORDER BY empresa, local", []);
+  res.json({ ok: true, data: rows });
+});
+
+app.post("/api/facturas/locales", requireAuth(["direccion"]), async (req, res) => {
+  const { local, empresa, cif } = req.body;
+  if (!local || !empresa) return res.status(400).json({ ok: false, error: "Faltan local o empresa" });
+  try {
+    await dbRun(
+      "INSERT INTO facturas_locales (local, empresa, cif) VALUES (?, ?, ?) ON CONFLICT(local) DO UPDATE SET empresa = excluded.empresa, cif = excluded.cif",
+      [local, empresa.trim(), (cif || "").trim() || null]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.delete("/api/facturas/locales/:local", requireAuth(["direccion"]), async (req, res) => {
+  await dbRun("DELETE FROM facturas_locales WHERE local = ?", [decodeURIComponent(req.params.local)]);
   res.json({ ok: true });
 });
 

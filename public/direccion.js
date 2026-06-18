@@ -332,7 +332,7 @@ async function loadKpi() {
 // ── Panel de Facturas IA ───────────────────────────────────────────────────
 
 async function loadFacturasPanel() {
-  await Promise.all([loadFacturasStatus(), loadGruposFactura(), loadUltimasFacturas(), loadGruposWADisponibles(), loadEmailReglas(), loadGmailStatus()]);
+  await Promise.all([loadFacturasStatus(), loadLocalesEmpresas(), loadGruposFactura(), loadUltimasFacturas(), loadGruposWADisponibles(), loadEmailReglas(), loadGmailStatus()]);
   document.getElementById("formAddGrupoFactura")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const local = document.getElementById("facturaLocal").value;
@@ -347,6 +347,21 @@ async function loadFacturasPanel() {
     if (data.ok) { loadGruposFactura(); }
     else alert("Error: " + data.error);
   });
+  document.getElementById("formAddLocal")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const local = document.getElementById("localNombre").value;
+    const empresa = document.getElementById("localEmpresa").value.trim();
+    const cif = document.getElementById("localCif").value.trim();
+    const res = await authFetch("/api/facturas/locales", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ local, empresa, cif })
+    });
+    const data = await res.json();
+    if (data.ok) { document.getElementById("localEmpresa").value = ""; document.getElementById("localCif").value = ""; loadLocalesEmpresas(); }
+    else alert("Error: " + data.error);
+  });
+
   document.getElementById("btnMigrarEstructura")?.addEventListener("click", async () => {
     const btn = document.getElementById("btnMigrarEstructura");
     const status = document.getElementById("migrarStatus");
@@ -440,6 +455,32 @@ window.eliminarGrupoFactura = async function(id) {
   if (!confirm("¿Eliminar este grupo?")) return;
   await authFetch(`/api/facturas/grupos/${id}`, { method: "DELETE" });
   loadGruposFactura();
+};
+
+async function loadLocalesEmpresas() {
+  const el = document.getElementById("listaLocales");
+  if (!el) return;
+  const res = await authFetch("/api/facturas/locales");
+  const data = await res.json();
+  if (!data.ok || !data.data.length) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin locales configurados. Añade cada local con su empresa arriba.</p>`;
+    return;
+  }
+  el.innerHTML = `<table class="table"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th></th></tr></thead><tbody>
+    ${data.data.map(l => `
+      <tr>
+        <td>${l.local}</td>
+        <td>${l.empresa}</td>
+        <td style="font-family:monospace;font-size:0.85rem">${l.cif || "—"}</td>
+        <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="eliminarLocal('${encodeURIComponent(l.local)}')">Eliminar</button></td>
+      </tr>`).join("")}
+  </tbody></table>`;
+}
+
+window.eliminarLocal = async function(localEnc) {
+  if (!confirm("¿Eliminar esta asignación?")) return;
+  await authFetch(`/api/facturas/locales/${localEnc}`, { method: "DELETE" });
+  loadLocalesEmpresas();
 };
 
 async function loadGmailStatus() {
