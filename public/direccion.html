@@ -209,7 +209,7 @@
                 <div class="form-row">
                   <label>
                     <span>Local</span>
-                    <select name="local">
+                    <select id="facturaLocal">
                       <option value="La Tapeta - Blanes">La Tapeta - Blanes</option>
                       <option value="Cooperativa - Blanes">Cooperativa - Blanes</option>
                       <option value="La Tapeta - Lloret">La Tapeta - Lloret</option>
@@ -220,8 +220,10 @@
                     </select>
                   </label>
                   <label>
-                    <span>JID del grupo (ej: 34612…@g.us)</span>
-                    <input type="text" name="group_jid" placeholder="1234567890-1234567890@g.us" required />
+                    <span>Grupo de WhatsApp</span>
+                    <select id="facturaGrupo">
+                      <option value="">Cargando grupos...</option>
+                    </select>
                   </label>
                 </div>
                 <button class="btn" type="submit">Añadir grupo</button>

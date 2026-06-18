@@ -1944,8 +1944,8 @@ const server = app.listen(PORT, () => {
         `🏢 ${provStr}\n` +
         `💶 ${totalStr}` + (datos.porcentaje_iva ? ` (IVA ${datos.porcentaje_iva}%)` : "") + `\n` +
         `📅 ${datos.fecha || "fecha no detectada"}\n\n` +
-        `📁 <a href="${driveUrl}">Ver en Drive</a>\n` +
-        `📊 <a href="${sheetUrl}">Ver hoja</a>`
+        `📁 Drive: ${driveUrl}\n` +
+        `📊 Sheet: ${sheetUrl || `https://docs.google.com/spreadsheets/d/${result.sheetId}`}`
       );
     } catch (err) {
       console.error("[Facturas] Error procesando documento:", err.message);

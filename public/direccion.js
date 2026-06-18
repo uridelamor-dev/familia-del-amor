@@ -332,19 +332,38 @@ async function loadKpi() {
 // ── Panel de Facturas IA ───────────────────────────────────────────────────
 
 async function loadFacturasPanel() {
-  await Promise.all([loadFacturasStatus(), loadGruposFactura(), loadUltimasFacturas()]);
+  await Promise.all([loadFacturasStatus(), loadGruposFactura(), loadUltimasFacturas(), loadGruposWADisponibles()]);
   document.getElementById("formAddGrupoFactura")?.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const fd = new FormData(e.target);
+    const local = document.getElementById("facturaLocal").value;
+    const group_jid = document.getElementById("facturaGrupo").value;
+    if (!group_jid) { alert("Selecciona un grupo de WhatsApp"); return; }
     const res = await authFetch("/api/facturas/grupos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local: fd.get("local"), group_jid: fd.get("group_jid") })
+      body: JSON.stringify({ local, group_jid })
     });
     const data = await res.json();
-    if (data.ok) { e.target.reset(); loadGruposFactura(); }
+    if (data.ok) { loadGruposFactura(); }
     else alert("Error: " + data.error);
   });
+}
+
+async function loadGruposWADisponibles() {
+  const select = document.getElementById("facturaGrupo");
+  if (!select) return;
+  try {
+    const res = await authFetch("/api/whatsapp/groups");
+    const data = await res.json();
+    if (data.ok && data.data.length) {
+      select.innerHTML = `<option value="">— Selecciona un grupo —</option>` +
+        data.data.map(g => `<option value="${g.id}">${g.name}</option>`).join("");
+    } else {
+      select.innerHTML = `<option value="">Sin grupos disponibles (Sara debe estar conectada)</option>`;
+    }
+  } catch {
+    select.innerHTML = `<option value="">Error cargando grupos</option>`;
+  }
 }
 
 async function loadFacturasStatus() {

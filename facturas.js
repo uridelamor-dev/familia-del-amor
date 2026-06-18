@@ -233,5 +233,5 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
      datos.cuota_iva, datos.total, driveFile.url, sheetId]
   );
 
-  return { datos, driveUrl: driveFile.url, sheetUrl };
+  return { datos, driveUrl: driveFile.url, sheetUrl, sheetId };
 }
