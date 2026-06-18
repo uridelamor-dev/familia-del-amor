@@ -607,6 +607,8 @@ setInterval(async () => {
 }, 24 * 60 * 60 * 1000);
 
 // ── Google Drive / Sheets OAuth (cuenta separada para facturas) ────────────
+const GOOGLE_DRIVE_CLIENT_ID     = process.env.GOOGLE_DRIVE_CLIENT_ID     || "";
+const GOOGLE_DRIVE_CLIENT_SECRET = process.env.GOOGLE_DRIVE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI_FACTURAS = (process.env.BASE_URL || "https://familia-del-amor.replit.app") + "/auth/google-facturas/callback";
 
 async function getDriveAccessToken() {
@@ -616,8 +618,8 @@ async function getDriveAccessToken() {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      client_secret: GOOGLE_CLIENT_SECRET,
+      client_id: GOOGLE_DRIVE_CLIENT_ID,
+      client_secret: GOOGLE_DRIVE_CLIENT_SECRET,
       refresh_token: refresh,
       grant_type: "refresh_token"
     })
@@ -628,9 +630,9 @@ async function getDriveAccessToken() {
 }
 
 app.get("/auth/google-facturas", requireAuth(["direccion", "contabilidad"]), (req, res) => {
-  if (!GOOGLE_CLIENT_ID) return res.status(500).send("GOOGLE_CLIENT_ID no configurado");
+  if (!GOOGLE_DRIVE_CLIENT_ID) return res.status(500).send("GOOGLE_DRIVE_CLIENT_ID no configurado en Replit Secrets");
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
+  url.searchParams.set("client_id", GOOGLE_DRIVE_CLIENT_ID);
   url.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI_FACTURAS);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", [
@@ -651,8 +653,8 @@ app.get("/auth/google-facturas/callback", async (req, res) => {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: GOOGLE_CLIENT_ID,
-      client_secret: GOOGLE_CLIENT_SECRET,
+      client_id: GOOGLE_DRIVE_CLIENT_ID,
+      client_secret: GOOGLE_DRIVE_CLIENT_SECRET,
       redirect_uri: GOOGLE_REDIRECT_URI_FACTURAS,
       grant_type: "authorization_code"
     })
