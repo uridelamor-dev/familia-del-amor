@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync } from "child_process";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo } from "./whatsapp.js";
-import { procesarFactura } from "./facturas.js";
+import { procesarFactura, FacturaDuplicadaError } from "./facturas.js";
 
 dotenv.config();
 
@@ -392,6 +392,7 @@ db.serialize(() => {
     )
   `);
 
+  db.run(`ALTER TABLE facturas ADD COLUMN file_hash TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN genero TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
@@ -731,7 +732,11 @@ async function pollGmail() {
           });
           procesados++;
         } catch (err) {
-          console.error(`[Gmail] Error procesando adjunto de ${msgId}:`, err.message);
+          if (err instanceof FacturaDuplicadaError) {
+            console.warn(`[Gmail] Duplicado de ${senderEmail}: ${err.message}`);
+          } else {
+            console.error(`[Gmail] Error procesando adjunto de ${msgId}:`, err.message);
+          }
         }
       }
 
@@ -2099,10 +2104,19 @@ const server = app.listen(PORT, () => {
         `📊 Sheet: ${sheetUrl || `https://docs.google.com/spreadsheets/d/${result.sheetId}`}`
       );
     } catch (err) {
-      console.error("[Facturas] Error procesando documento:", err.message);
-      await sendMensajeAGrupo(groupJid,
-        `❌ No he podido procesar el documento: ${err.message.slice(0, 120)}\n\nRevisa que Google Drive esté conectado en el panel.`
-      ).catch(() => {});
+      if (err instanceof FacturaDuplicadaError) {
+        console.warn("[Facturas] Duplicado detectado:", err.message);
+        await sendMensajeAGrupo(groupJid,
+          `⚠️ *Documento duplicado · ${local}*\n\n` +
+          `${err.message}\n\n` +
+          `El documento NO se ha registrado de nuevo.`
+        ).catch(() => {});
+      } else {
+        console.error("[Facturas] Error procesando documento:", err.message);
+        await sendMensajeAGrupo(groupJid,
+          `❌ No he podido procesar el documento: ${err.message.slice(0, 120)}\n\nRevisa que Google Drive esté conectado en el panel.`
+        ).catch(() => {});
+      }
     }
   });
 

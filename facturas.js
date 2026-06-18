@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { createHash } from "crypto";
 
 const MESES_ES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -26,6 +27,38 @@ Devuelve ÚNICAMENTE un JSON válido, sin texto adicional, con esta estructura e
   "cuota_iva": number,
   "total": number
 }`;
+
+// ── Utilidades de nombre y hash ────────────────────────────────────────────
+
+function sanitizarNombre(str) {
+  return (str || "").replace(/[/\\:*?"<>|]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function fechaCorta(fechaISO) {
+  if (!fechaISO) return null;
+  const p = fechaISO.split("-");
+  if (p.length !== 3) return fechaISO;
+  return `${p[2]}-${p[1]}-${p[0].slice(2)}`; // dd-mm-aa
+}
+
+function buildDriveFilename(datos, ext) {
+  const proveedor = sanitizarNombre(datos.proveedor || "Desconocido");
+  const fecha = fechaCorta(datos.fecha) || "sin-fecha";
+  const num = sanitizarNombre(datos.numero_factura || "");
+  return [proveedor, fecha, num].filter(Boolean).join(", ") + ext;
+}
+
+export class FacturaDuplicadaError extends Error {
+  constructor(original, reason) {
+    const desc = reason === "hash"
+      ? "mismo archivo (hash idéntico)"
+      : `${sanitizarNombre(original.proveedor)} · nº ${original.numero_factura}`;
+    super(`Factura duplicada: ya existe ${desc}`);
+    this.isDuplicate = true;
+    this.original = original;
+    this.reason = reason;
+  }
+}
 
 // ── Claude: extracción de datos ────────────────────────────────────────────
 
@@ -159,14 +192,29 @@ async function sheetsAñadirFila(token, spreadsheetId, fila) {
 // ── Pipeline principal ──────────────────────────────────────────────────────
 
 export async function procesarFactura({ buffer, mimeType, filename, local, caption, getToken, dbGet, dbRun }) {
-  // 1. Extraer datos con Claude
+  // 1. Hash para detección de duplicados
+  const fileHash = createHash("sha256").update(buffer).digest("hex");
+
+  // 2. Extraer datos con Claude
   const datos = await extraerDatosDocumento(buffer, mimeType);
   console.log(`[Facturas] Datos extraídos para ${local}:`, JSON.stringify(datos));
 
-  // 2. Obtener token de Drive
+  // 3. Comprobar duplicados antes de subir nada
+  const hashDupe = await dbGet("SELECT id, proveedor, numero_factura, fecha, drive_url FROM facturas WHERE file_hash = ?", [fileHash]);
+  if (hashDupe) throw new FacturaDuplicadaError(hashDupe, "hash");
+
+  if (datos.proveedor && datos.numero_factura) {
+    const dataDupe = await dbGet(
+      "SELECT id, proveedor, numero_factura, fecha, drive_url FROM facturas WHERE LOWER(proveedor) = LOWER(?) AND numero_factura = ?",
+      [datos.proveedor, datos.numero_factura]
+    );
+    if (dataDupe) throw new FacturaDuplicadaError(dataDupe, "numero_factura");
+  }
+
+  // 4. Obtener token de Drive
   const token = await getToken();
 
-  // 3. Estructura de carpetas: Raíz → Mes → Local
+  // 5. Estructura de carpetas: Raíz → Mes → Local
   const cfgRaiz = await dbGet("SELECT value FROM config WHERE key = 'drive_facturas_root_id'");
   let rootId = cfgRaiz?.value;
   if (!rootId) {
@@ -180,15 +228,14 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   const mesId = await findOrCreateFolder(token, mesLabel, rootId);
   const localId = await findOrCreateFolder(token, local, mesId);
 
-  // 4. Subir archivo a Drive
+  // 6. Subir archivo a Drive con nuevo formato de nombre
   const ext = mimeType === "application/pdf" ? ".pdf"
     : mimeType.startsWith("image/png") ? ".png" : ".jpg";
-  const proveedorSlug = (datos.proveedor || "doc").replace(/[^a-z0-9áéíóúüñ]/gi, "_").slice(0, 30);
-  const driveFilename = `${datos.fecha || fechaDoc.toISOString().slice(0, 10)}_${proveedorSlug}_${datos.total ?? ""}€${ext}`;
+  const driveFilename = buildDriveFilename(datos, ext);
   const driveFile = await driveSubirArchivo(token, localId, driveFilename, buffer, mimeType);
   console.log(`[Facturas] Archivo subido: ${driveFile.url}`);
 
-  // 5. Buscar o crear Sheet del local
+  // 7. Buscar o crear Sheet del local (INSERT OR IGNORE para emails sin grupo WA)
   const grupoRow = await dbGet("SELECT sheet_id, sheet_url FROM facturas_grupos WHERE local = ?", [local]);
   let sheetId = grupoRow?.sheet_id;
   let sheetUrl = grupoRow?.sheet_url;
@@ -198,14 +245,18 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
     const sheet = await sheetsCrear(token, `Facturas · ${local} · ${year}`);
     sheetId = sheet.spreadsheetId;
     sheetUrl = sheet.url;
-    await dbRun(
-      "UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?",
-      [sheetId, sheetUrl, local]
-    );
+    if (grupoRow) {
+      await dbRun("UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?", [sheetId, sheetUrl, local]);
+    } else {
+      await dbRun(
+        "INSERT OR IGNORE INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)",
+        [local, `__email__:${local}`, sheetId, sheetUrl]
+      );
+    }
     console.log(`[Facturas] Sheet creado para ${local}: ${sheetUrl}`);
   }
 
-  // 6. Añadir fila al Sheet
+  // 8. Añadir fila al Sheet
   const ahora = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
   const fila = [
     datos.fecha ?? "",
@@ -223,14 +274,14 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   ];
   await sheetsAñadirFila(token, sheetId, fila);
 
-  // 7. Guardar en BD local
+  // 9. Guardar en BD local con hash
   await dbRun(
     `INSERT INTO facturas (local, tipo, fecha, numero_factura, proveedor, nif, concepto,
-      base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [local, datos.tipo, datos.fecha, datos.numero_factura, datos.proveedor,
      datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
-     datos.cuota_iva, datos.total, driveFile.url, sheetId]
+     datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash]
   );
 
   return { datos, driveUrl: driveFile.url, sheetUrl, sheetId };
