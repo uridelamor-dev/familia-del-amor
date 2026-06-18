@@ -332,7 +332,7 @@ async function loadKpi() {
 // ── Panel de Facturas IA ───────────────────────────────────────────────────
 
 async function loadFacturasPanel() {
-  await Promise.all([loadFacturasStatus(), loadLocalesEmpresas(), loadGruposFactura(), loadUltimasFacturas(), loadGruposWADisponibles(), loadEmailReglas(), loadGmailStatus()]);
+  await Promise.all([loadFacturasStatus(), loadLocalesEmpresas(), loadGruposFactura(), loadPendientes(), loadUltimasFacturas(), loadGruposWADisponibles(), loadEmailReglas(), loadGmailStatus()]);
   document.getElementById("formAddGrupoFactura")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const local = document.getElementById("facturaLocal").value;
@@ -456,6 +456,59 @@ window.eliminarGrupoFactura = async function(id) {
   if (!confirm("¿Eliminar este grupo?")) return;
   await authFetch(`/api/facturas/grupos/${id}`, { method: "DELETE" });
   loadGruposFactura();
+};
+
+const LOCALES_OPTS = [
+  "La Tapeta - Blanes","Cooperativa - Blanes","La Tapeta - Lloret",
+  "La Tapeta - Girona","Can Mateu - Tordera","La Tapa Ibérica - Tordera","Botiga d'en Mateu - Tordera"
+];
+
+async function loadPendientes() {
+  const el = document.getElementById("listaPendientes");
+  const badge = document.getElementById("badgePendientes");
+  if (!el) return;
+  const res = await authFetch("/api/facturas/pendientes");
+  const data = await res.json();
+  if (!data.ok || !data.data.length) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin facturas pendientes. ✅</p>`;
+    if (badge) badge.style.display = "none";
+    return;
+  }
+  if (badge) { badge.textContent = data.data.length; badge.style.display = "inline"; }
+  el.innerHTML = `<table class="table"><thead><tr>
+    <th>Proveedor</th><th>Empresa detectada</th><th>NIF receptor</th><th>Tipo</th><th>Total</th><th>Fecha</th><th>Drive</th><th>Asignar a</th><th></th>
+  </tr></thead><tbody>
+    ${data.data.map(p => `
+      <tr>
+        <td>${p.proveedor || "—"}</td>
+        <td>${p.empresa_detectada || "—"}</td>
+        <td style="font-family:monospace;font-size:0.8rem">${p.nif_receptor || "—"}</td>
+        <td>${p.tipo || "—"}</td>
+        <td>${p.total != null ? Number(p.total).toFixed(2) + " €" : "—"}</td>
+        <td>${p.fecha || "—"}</td>
+        <td>${p.drive_url ? `<a href="${p.drive_url}" target="_blank">Ver</a>` : "—"}</td>
+        <td>
+          <select id="asignarLocal_${p.id}">
+            <option value="">— selecciona —</option>
+            ${LOCALES_OPTS.map(l => `<option value="${l}">${l}</option>`).join("")}
+          </select>
+        </td>
+        <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="asignarPendiente(${p.id})">Asignar</button></td>
+      </tr>`).join("")}
+  </tbody></table>`;
+}
+
+window.asignarPendiente = async function(id) {
+  const local = document.getElementById(`asignarLocal_${id}`)?.value;
+  if (!local) { alert("Selecciona un local primero"); return; }
+  const res = await authFetch(`/api/facturas/pendientes/${id}/asignar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ local })
+  });
+  const data = await res.json();
+  if (data.ok) { loadPendientes(); loadUltimasFacturas(); }
+  else alert("Error: " + data.error);
 };
 
 async function loadLocalesEmpresas() {

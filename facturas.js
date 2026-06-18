@@ -21,12 +21,15 @@ Devuelve ÚNICAMENTE un JSON válido, sin texto adicional, con esta estructura e
   "numero_factura": "string",
   "proveedor": "string",
   "nif_proveedor": "string",
+  "nombre_receptor": "string",
+  "nif_receptor": "string",
   "concepto": "string",
   "base_imponible": number,
   "porcentaje_iva": number,
   "cuota_iva": number,
   "total": number
-}`;
+}
+En "nombre_receptor" y "nif_receptor" pon los datos de la empresa que RECIBE la factura (el cliente), no el proveedor.`;
 
 // ── Utilidades de nombre y hash ────────────────────────────────────────────
 
@@ -199,8 +202,9 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   const datos = await extraerDatosDocumento(buffer, mimeType);
   console.log(`[Facturas] Datos extraídos para ${local}:`, JSON.stringify(datos));
 
-  // 3. Comprobar duplicados antes de subir nada
-  const hashDupe = await dbGet("SELECT id, proveedor, numero_factura, fecha, drive_url FROM facturas WHERE file_hash = ?", [fileHash]);
+  // 3. Comprobar duplicados antes de subir nada (facturas procesadas y pendientes)
+  const hashDupe = await dbGet("SELECT id, proveedor, numero_factura, fecha, drive_url FROM facturas WHERE file_hash = ?", [fileHash])
+                || await dbGet("SELECT id, proveedor, numero_factura, fecha, drive_url FROM facturas_pendientes WHERE file_hash = ?", [fileHash]);
   if (hashDupe) throw new FacturaDuplicadaError(hashDupe, "hash");
 
   if (datos.proveedor && datos.numero_factura) {
@@ -355,4 +359,150 @@ export async function migrarEstructuraDrive({ getToken, dbAll, dbGet }) {
   }
 
   return res;
+}
+
+// ── Procesado de facturas sin local conocido (entrada por email sin regla) ──
+
+function normalizarNif(nif) {
+  return (nif || "").replace(/[\s\-\.]/g, "").toUpperCase();
+}
+
+export async function procesarFacturaSinLocal({ buffer, mimeType, filename, origen, getToken, dbGet, dbAll, dbRun }) {
+  // 1. Hash duplicados (facturas procesadas y pendientes)
+  const fileHash = createHash("sha256").update(buffer).digest("hex");
+  const hashDupe = await dbGet("SELECT id, proveedor, numero_factura, fecha FROM facturas WHERE file_hash = ?", [fileHash])
+                || await dbGet("SELECT id, proveedor, numero_factura, fecha FROM facturas_pendientes WHERE file_hash = ?", [fileHash]);
+  if (hashDupe) throw new FacturaDuplicadaError(hashDupe, "hash");
+
+  // 2. Extraer datos con Claude (incluye nif_receptor)
+  const datos = await extraerDatosDocumento(buffer, mimeType);
+  console.log(`[Facturas] Email sin local — datos extraídos:`, JSON.stringify(datos));
+
+  // 3. Intentar auto-detectar empresa y local por nif_receptor
+  let empresa = "Sin empresa asignada";
+  let localAutodetectado = null;
+
+  if (datos.nif_receptor) {
+    const nifNorm = normalizarNif(datos.nif_receptor);
+    const localesMatch = await dbAll(
+      "SELECT local, empresa, local_contable FROM facturas_locales WHERE REPLACE(REPLACE(UPPER(cif),' ',''),'-','') = ?",
+      [nifNorm]
+    );
+    if (localesMatch.length === 1) {
+      // NIF coincide con exactamente 1 local → asignación automática
+      empresa = localesMatch[0].empresa;
+      localAutodetectado = localesMatch[0].local_contable || localesMatch[0].local;
+      console.log(`[Facturas] NIF ${datos.nif_receptor} → auto-detectado: ${empresa} / ${localAutodetectado}`);
+    } else if (localesMatch.length > 1) {
+      // NIF coincide con varios locales (misma empresa) → detectamos empresa, local ambiguo
+      empresa = localesMatch[0].empresa;
+      console.log(`[Facturas] NIF ${datos.nif_receptor} → empresa detectada: ${empresa} (local ambiguo)`);
+    }
+  }
+
+  // 4. Si detectamos el local únicamente → procesar normalmente
+  if (localAutodetectado) {
+    return procesarFactura({ buffer, mimeType, filename, local: localAutodetectado, caption: `Email auto-detectado`, getToken, dbGet, dbAll: dbAll, dbRun });
+  }
+
+  // 5. No se pudo determinar el local → subir a _Por asignar y guardar como pendiente
+  const token = await getToken();
+  const cfgRaiz = await dbGet("SELECT value FROM config WHERE key = 'drive_facturas_root_id'");
+  let rootId = cfgRaiz?.value;
+  if (!rootId) {
+    rootId = await findOrCreateFolder(token, "Familia del Amor · Facturas (TEST)");
+    await dbRun("INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('drive_facturas_root_id', ?, datetime('now'))", [rootId]);
+  }
+
+  const empresaId  = await findOrCreateFolder(token, empresa, rootId);
+  const pendId     = await findOrCreateFolder(token, "_Por asignar", empresaId);
+  const ext = mimeType === "application/pdf" ? ".pdf" : mimeType.startsWith("image/png") ? ".png" : ".jpg";
+  const driveFile  = await driveSubirArchivo(token, pendId, buildDriveFilename(datos, ext), buffer, mimeType);
+
+  await dbRun(
+    `INSERT INTO facturas_pendientes
+      (empresa_detectada, nif_receptor, nombre_receptor, tipo, fecha, numero_factura, proveedor, nif,
+       concepto, base_imponible, porcentaje_iva, cuota_iva, total, drive_url, drive_file_id, file_hash, origen)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [empresa, datos.nif_receptor, datos.nombre_receptor, datos.tipo, datos.fecha, datos.numero_factura,
+     datos.proveedor, datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
+     datos.cuota_iva, datos.total, driveFile.url, driveFile.id, fileHash, origen || "email"]
+  );
+
+  console.log(`[Facturas] Guardada como pendiente: ${datos.proveedor} → ${empresa}/_Por asignar`);
+  return { datos, empresa, pendiente: true, driveUrl: driveFile.url };
+}
+
+// ── Asignación manual de una factura pendiente ──────────────────────────────
+
+export async function asignarFacturaPendiente({ pendiente, local, getToken, dbGet, dbAll, dbRun }) {
+  const token = await getToken();
+
+  const localRow = await dbGet("SELECT empresa, local_contable FROM facturas_locales WHERE local = ?", [local]);
+  const empresa = localRow?.empresa || "Sin empresa asignada";
+  const localContable = localRow?.local_contable || local;
+
+  // Obtener carpeta padre actual del archivo en Drive
+  const metaRes = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${pendiente.drive_file_id}?fields=parents`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const meta = await metaRes.json();
+  const oldParent = meta.parents?.[0];
+
+  // Crear carpeta destino: Raíz → Empresa → Local → Mes
+  const cfgRaiz = await dbGet("SELECT value FROM config WHERE key = 'drive_facturas_root_id'");
+  const rootId = cfgRaiz?.value;
+  const fechaDoc = pendiente.fecha ? new Date(pendiente.fecha + "T12:00:00") : new Date(pendiente.creado_en);
+  const mesLabel = `${MESES_ES[fechaDoc.getMonth()]} ${fechaDoc.getFullYear()}`;
+  const empresaId = await findOrCreateFolder(token, empresa, rootId);
+  const localId   = await findOrCreateFolder(token, localContable, empresaId);
+  const mesId     = await findOrCreateFolder(token, mesLabel, localId);
+
+  // Mover archivo
+  const moveRes = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${pendiente.drive_file_id}?addParents=${mesId}&removeParents=${oldParent}&fields=id,webViewLink`,
+    { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}" }
+  );
+  const moveData = await moveRes.json();
+  if (moveData.error) throw new Error("Error moviendo archivo en Drive: " + moveData.error.message);
+  const driveUrl = moveData.webViewLink || pendiente.drive_url;
+
+  // Buscar o crear Sheet del local
+  const grupoRow = await dbGet("SELECT sheet_id, sheet_url FROM facturas_grupos WHERE local = ?", [localContable]);
+  let sheetId = grupoRow?.sheet_id;
+  let sheetUrl = grupoRow?.sheet_url;
+  if (!sheetId) {
+    const sheet = await sheetsCrear(token, `Facturas · ${localContable} · ${fechaDoc.getFullYear()}`);
+    sheetId = sheet.spreadsheetId;
+    sheetUrl = sheet.url;
+    if (grupoRow) {
+      await dbRun("UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?", [sheetId, sheetUrl, localContable]);
+    } else {
+      await dbRun("INSERT OR IGNORE INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)",
+        [localContable, `__email__:${localContable}`, sheetId, sheetUrl]);
+    }
+  }
+
+  // Añadir fila al Sheet
+  const ahora = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
+  await sheetsAñadirFila(token, sheetId, [
+    pendiente.fecha ?? "", pendiente.numero_factura ?? "", pendiente.tipo ?? "",
+    pendiente.proveedor ?? "", pendiente.nif ?? "", pendiente.concepto ?? "",
+    pendiente.base_imponible ?? "", pendiente.porcentaje_iva ?? "",
+    pendiente.cuota_iva ?? "", pendiente.total ?? "", driveUrl, ahora
+  ]);
+
+  // Pasar de pendientes a facturas
+  await dbRun(
+    `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
+       base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [localContable, empresa, pendiente.tipo, pendiente.fecha, pendiente.numero_factura,
+     pendiente.proveedor, pendiente.nif, pendiente.concepto, pendiente.base_imponible,
+     pendiente.porcentaje_iva, pendiente.cuota_iva, pendiente.total, driveUrl, sheetId, pendiente.file_hash]
+  );
+  await dbRun("DELETE FROM facturas_pendientes WHERE id = ?", [pendiente.id]);
+
+  return { driveUrl, sheetUrl, sheetId };
 }

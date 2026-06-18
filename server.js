@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync } from "child_process";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo } from "./whatsapp.js";
-import { procesarFactura, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
+import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
 
 dotenv.config();
 
@@ -401,6 +401,30 @@ db.serialize(() => {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS facturas_pendientes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_detectada TEXT,
+      nif_receptor TEXT,
+      nombre_receptor TEXT,
+      tipo TEXT,
+      fecha TEXT,
+      numero_factura TEXT,
+      proveedor TEXT,
+      nif TEXT,
+      concepto TEXT,
+      base_imponible REAL,
+      porcentaje_iva REAL,
+      cuota_iva REAL,
+      total REAL,
+      drive_url TEXT,
+      drive_file_id TEXT,
+      file_hash TEXT,
+      origen TEXT DEFAULT 'email',
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   db.run(`ALTER TABLE facturas ADD COLUMN file_hash TEXT`, () => {});
   db.run(`ALTER TABLE facturas ADD COLUMN empresa TEXT`, () => {});
   db.run(`ALTER TABLE facturas_locales ADD COLUMN local_contable TEXT`, () => {});
@@ -708,7 +732,7 @@ async function pollGmail() {
       const senderEmail = (emailMatch ? emailMatch[1] : from).trim().toLowerCase();
 
       const regla = await dbGet("SELECT local FROM facturas_email_reglas WHERE LOWER(email) = ?", [senderEmail]);
-      const local = regla?.local || "Sin asignar";
+      const localConocido = regla?.local || null; // null = proveedor directo, sin regla
 
       const parts = flattenParts(msg.payload);
       const adjuntos = parts.filter(p =>
@@ -718,7 +742,7 @@ async function pollGmail() {
 
       if (adjuntos.length === 0) {
         await markGmailRead(token, msgId);
-        await dbRun("INSERT OR IGNORE INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, 0)", [msgId, senderEmail, subject, local]);
+        await dbRun("INSERT OR IGNORE INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, 0)", [msgId, senderEmail, subject, localConocido || "auto", 0]);
         continue;
       }
 
@@ -731,16 +755,24 @@ async function pollGmail() {
           const attData = await attRes.json();
           const buffer = Buffer.from(attData.data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
-          await procesarFactura({
-            buffer,
-            mimeType: parte.mimeType,
-            filename: parte.filename || `adjunto_${msgId}`,
-            local,
-            caption: `Email · ${from} · ${subject}`,
-            getToken: getDriveAccessToken,
-            dbGet,
-            dbRun
-          });
+          if (localConocido) {
+            // Regla configurada: procesar normalmente
+            await procesarFactura({
+              buffer, mimeType: parte.mimeType,
+              filename: parte.filename || `adjunto_${msgId}`,
+              local: localConocido,
+              caption: `Email · ${from} · ${subject}`,
+              getToken: getDriveAccessToken, dbGet, dbRun
+            });
+          } else {
+            // Proveedor directo sin regla: auto-detectar por nif_receptor
+            await procesarFacturaSinLocal({
+              buffer, mimeType: parte.mimeType,
+              filename: parte.filename || `adjunto_${msgId}`,
+              origen: "email",
+              getToken: getDriveAccessToken, dbGet, dbAll, dbRun
+            });
+          }
           procesados++;
         } catch (err) {
           if (err instanceof FacturaDuplicadaError) {
@@ -754,9 +786,9 @@ async function pollGmail() {
       await markGmailRead(token, msgId);
       await dbRun(
         "INSERT OR IGNORE INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, ?)",
-        [msgId, senderEmail, subject, local, procesados]
+        [msgId, senderEmail, subject, localConocido || "auto", procesados]
       );
-      console.log(`[Gmail] ${senderEmail} → ${local} (${procesados} adjunto/s procesado/s)`);
+      console.log(`[Gmail] ${senderEmail} → ${localConocido || "auto-detect"} (${procesados} adjunto/s)`);
     }
   } catch (err) {
     if (err.message.includes("no conectado")) return;
@@ -891,6 +923,24 @@ app.post("/api/facturas/locales", requireAuth(["direccion"]), async (req, res) =
 app.delete("/api/facturas/locales/:local", requireAuth(["direccion"]), async (req, res) => {
   await dbRun("DELETE FROM facturas_locales WHERE local = ?", [decodeURIComponent(req.params.local)]);
   res.json({ ok: true });
+});
+
+app.get("/api/facturas/pendientes", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  const rows = await dbAll("SELECT * FROM facturas_pendientes ORDER BY creado_en DESC", []);
+  res.json({ ok: true, data: rows });
+});
+
+app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), async (req, res) => {
+  const { local } = req.body;
+  if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
+  const pendiente = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ?", [req.params.id]);
+  if (!pendiente) return res.status(404).json({ ok: false, error: "No encontrado" });
+  try {
+    const result = await asignarFacturaPendiente({ pendiente, local, getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 app.post("/api/facturas/migrar-estructura", requireAuth(["direccion"]), async (req, res) => {
