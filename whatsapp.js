@@ -189,7 +189,17 @@ const DEBOUNCE_MS = 2500;
 const SESION_TTL_SEG = 4 * 60 * 60; // nueva sesión tras 4h sin actividad
 const batchPorJid = new Map(); // jid → { timer, items[] }
 
+// Set para deduplicar mensajes automáticos de Sara frente a su evento fromMe en messages.upsert
+// Clave: `${jid}:${texto.slice(0,100)}` — expira a los 15s
+const _mensajesSistema = new Set();
+function _marcarMensajeSistema(jid, texto) {
+  const key = `${jid}:${texto.slice(0, 100)}`;
+  _mensajesSistema.add(key);
+  setTimeout(() => _mensajesSistema.delete(key), 15000);
+}
+
 export function addSaraToHistorial(jid, texto) {
+  _marcarMensajeSistema(jid, texto); // evitar reentrada desde fromMe
   if (!conversaciones.has(jid)) conversaciones.set(jid, []);
   const historial = conversaciones.get(jid);
   historial.push({ role: "assistant", content: texto });
@@ -637,7 +647,27 @@ async function connectToWhatsApp() {
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify") return;
     for (const msg of messages) {
-      if (msg.key.fromMe) continue;
+      if (msg.key.fromMe) {
+        // Capturar mensajes manuales del operador para que Sara tenga contexto
+        const jidDest = msg.key.remoteJid;
+        if (jidDest && !jidDest.endsWith("@g.us") && jidDest !== "status@broadcast") {
+          const textoManual =
+            msg.message?.conversation ||
+            msg.message?.extendedTextMessage?.text || "";
+          const t = textoManual.trim();
+          const deduKey = `${jidDest}:${t.slice(0, 100)}`;
+          if (t && !_mensajesSistema.has(deduKey)) {
+            // Mensaje escrito a mano por el operador — añadir al contexto de Sara
+            if (!conversaciones.has(jidDest)) conversaciones.set(jidDest, []);
+            const h = conversaciones.get(jidDest);
+            h.push({ role: "assistant", content: t });
+            if (h.length > MAX_HISTORIAL * 2) h.splice(0, 2);
+            if (onMensajeSaliente) onMensajeSaliente({ jid: jidDest, mensaje: t, esManual: true });
+            console.log(`✍️ Mensaje manual del operador → ${jidDest.split("@")[0]}: ${t.slice(0, 60)}`);
+          }
+        }
+        continue;
+      }
 
       const jid = msg.key.remoteJid;
 

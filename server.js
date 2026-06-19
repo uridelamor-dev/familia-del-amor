@@ -2260,11 +2260,13 @@ const server = app.listen(PORT, () => {
     return row || null;
   });
 
-  setOnMensajeSaliente(({ jid, mensaje }) => {
+  setOnMensajeSaliente(({ jid, mensaje, esManual = false }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+    const tipo     = esManual ? "manual" : "saliente";
+    const origen   = esManual ? "[Operador]" : "[Sistema]";
     db.run(
-      `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, tipo) VALUES (?, ?, '[Sistema]', ?, 'saliente')`,
-      [jid, telefono, mensaje],
+      `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, tipo) VALUES (?, ?, ?, ?, ?)`,
+      [jid, telefono, origen, mensaje, tipo],
       (err) => { if (err) console.error("Error guardando mensaje saliente WA:", err.message); }
     );
     db.run(
