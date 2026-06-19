@@ -427,6 +427,8 @@ db.serialize(() => {
 
   db.run(`ALTER TABLE facturas ADD COLUMN file_hash TEXT`, () => {});
   db.run(`ALTER TABLE facturas ADD COLUMN empresa TEXT`, () => {});
+  db.run(`ALTER TABLE facturas ADD COLUMN pagado INTEGER DEFAULT 0`, () => {});
+  db.run(`ALTER TABLE facturas ADD COLUMN fecha_pago TEXT`, () => {});
   db.run(`ALTER TABLE facturas_locales ADD COLUMN local_contable TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN genero TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
@@ -874,6 +876,18 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
     local ? [local] : []
   );
   res.json({ ok: true, data: rows });
+});
+
+app.patch("/api/facturas/:id/pago", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const row = await dbGet("SELECT id, pagado FROM facturas WHERE id = ?", [id]);
+    if (!row) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
+    const nuevoPagado = row.pagado ? 0 : 1;
+    const fechaPago   = nuevoPagado ? new Date().toISOString().slice(0, 10) : null;
+    await dbRun("UPDATE facturas SET pagado = ?, fecha_pago = ? WHERE id = ?", [nuevoPagado, fechaPago, id]);
+    res.json({ ok: true, pagado: nuevoPagado, fecha_pago: fechaPago });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
 app.get("/api/facturas/email-reglas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {

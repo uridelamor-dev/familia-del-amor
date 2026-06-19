@@ -607,18 +607,45 @@ async function loadUltimasFacturas() {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin facturas procesadas aún.</p>`;
     return;
   }
-  el.innerHTML = `<table class="table"><thead><tr><th>Fecha</th><th>Tipo</th><th>Local</th><th>Proveedor</th><th>Total</th><th>Drive</th></tr></thead><tbody>
+  el.innerHTML = `<table class="table"><thead><tr>
+    <th>Fecha</th><th>Tipo</th><th>Local</th><th>Proveedor</th><th style="text-align:right">Total</th><th>Drive</th><th style="text-align:center">Pagado</th>
+  </tr></thead><tbody>
     ${data.data.map(f => `
-      <tr>
+      <tr id="fila-factura-${f.id}">
         <td>${f.fecha || "—"}</td>
         <td>${f.tipo || "—"}</td>
         <td>${f.local}</td>
         <td>${f.proveedor || "—"}</td>
-        <td>${f.total != null ? Number(f.total).toFixed(2) + " €" : "—"}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">${f.total != null ? Number(f.total).toFixed(2) + " €" : "—"}</td>
         <td>${f.drive_url ? `<a href="${f.drive_url}" target="_blank">Ver</a>` : "—"}</td>
+        <td style="text-align:center">
+          <button
+            onclick="togglePagado(${f.id}, ${f.pagado ? 1 : 0})"
+            title="${f.pagado ? "Marcar como pendiente" : "Marcar como pagado"}"
+            style="background:none;border:none;cursor:pointer;font-size:1.15rem;line-height:1;padding:0.1rem 0.3rem;border-radius:4px;transition:opacity 0.15s"
+            onmouseenter="this.style.opacity='0.65'" onmouseleave="this.style.opacity='1'"
+          >${f.pagado ? "✅" : "⬜"}</button>
+        </td>
       </tr>`).join("")}
   </tbody></table>`;
 }
+
+window.togglePagado = async function(id, estadoActual) {
+  const btn = document.querySelector(`#fila-factura-${id} button`);
+  if (btn) btn.style.opacity = "0.4";
+  const res  = await authFetch(`/api/facturas/${id}/pago`, { method: "PATCH" });
+  const data = await res.json();
+  if (data.ok && btn) {
+    const pagado = data.pagado;
+    btn.textContent = pagado ? "✅" : "⬜";
+    btn.title = pagado ? "Marcar como pendiente" : "Marcar como pagado";
+    btn.onclick = () => togglePagado(id, pagado);
+    btn.style.opacity = "1";
+  } else if (!data.ok) {
+    if (btn) btn.style.opacity = "1";
+    alert("Error: " + data.error);
+  }
+};
 
 // ── Estadísticas ──────────────────────────────────────────────────────────────
 
