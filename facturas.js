@@ -7,9 +7,9 @@ const MESES_ES = [
 ];
 
 const CABECERAS = [
-  "Fecha", "N° Doc.", "Tipo", "Proveedor", "NIF / CIF",
-  "Concepto", "Base Imponible", "% IVA", "Cuota IVA", "Total (€)",
-  "Archivo Drive", "Procesado"
+  "Fecha", "N° Documento", "Tipo", "Proveedor", "NIF / CIF Proveedor",
+  "Concepto", "Base Imponible (€)", "Tipo IVA (%)", "Cuota IVA (€)", "Total (€)",
+  "Canal", "Archivo Drive", "Registrado"
 ];
 
 const PROMPT_EXTRACCION = `Analiza este documento (factura, albarán o ticket) y extrae los datos.
@@ -155,32 +155,174 @@ async function driveSubirArchivo(token, folderId, filename, buffer, mimeType) {
 // ── Google Sheets API (via fetch) ───────────────────────────────────────────
 
 async function sheetsCrear(token, titulo) {
-  const body = {
-    properties: { title: titulo },
-    sheets: [{
-      properties: { title: "Facturas" },
-      data: [{
-        rowData: [{
-          values: CABECERAS.map(h => ({
-            userEnteredValue: { stringValue: h },
-            userEnteredFormat: { textFormat: { bold: true } }
-          }))
-        }]
-      }]
-    }]
-  };
   const r = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
     method: "POST",
     headers: await driveHeaders(token),
-    body: JSON.stringify(body)
+    body: JSON.stringify({
+      properties: { title: titulo },
+      sheets: [{ properties: { title: "RESUMEN" } }]
+    })
   });
   const data = await r.json();
   if (data.error) throw new Error("Sheets crear: " + JSON.stringify(data.error));
   return { spreadsheetId: data.spreadsheetId, url: `https://docs.google.com/spreadsheets/d/${data.spreadsheetId}` };
 }
 
-async function sheetsAñadirFila(token, spreadsheetId, fila) {
-  const range = encodeURIComponent("Facturas!A1");
+async function sheetsObtenerHojas(token, spreadsheetId) {
+  const r = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const data = await r.json();
+  if (data.error) throw new Error("Sheets obtener hojas: " + JSON.stringify(data.error));
+  return (data.sheets || []).map(s => ({
+    id: s.properties.sheetId,
+    title: s.properties.title,
+    index: s.properties.index
+  }));
+}
+
+async function sheetsCrearHojaMes(token, spreadsheetId, mesLabel) {
+  const addR = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    headers: await driveHeaders(token),
+    body: JSON.stringify({ requests: [{ addSheet: { properties: { title: mesLabel } } }] })
+  });
+  const addData = await addR.json();
+  if (addData.error) throw new Error("Sheets crear hoja mes: " + JSON.stringify(addData.error));
+  const sheetId = addData.replies[0].addSheet.properties.sheetId;
+
+  // Cabeceras en negrita con fondo gris
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    headers: await driveHeaders(token),
+    body: JSON.stringify({
+      requests: [{
+        updateCells: {
+          range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: CABECERAS.length },
+          rows: [{
+            values: CABECERAS.map(h => ({
+              userEnteredValue: { stringValue: h },
+              userEnteredFormat: {
+                textFormat: { bold: true },
+                backgroundColor: { red: 0.851, green: 0.851, blue: 0.851 }
+              }
+            }))
+          }],
+          fields: "userEnteredValue,userEnteredFormat"
+        }
+      }]
+    })
+  });
+
+  return sheetId;
+}
+
+function parseMesLabelFecha(label) {
+  const [mes, año] = label.split(" ");
+  return new Date(parseInt(año), MESES_ES.indexOf(mes), 1);
+}
+
+async function sheetsActualizarResumen(token, spreadsheetId, mesesLabels) {
+  const hojas = await sheetsObtenerHojas(token, spreadsheetId);
+  const resumenHoja = hojas.find(h => h.title === "RESUMEN");
+  let resumenSheetId;
+
+  if (!resumenHoja) {
+    const addR = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+      method: "POST",
+      headers: await driveHeaders(token),
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: "RESUMEN" } } }] })
+    });
+    const addData = await addR.json();
+    if (addData.error) throw new Error("Sheets crear RESUMEN: " + JSON.stringify(addData.error));
+    resumenSheetId = addData.replies[0].addSheet.properties.sheetId;
+  } else {
+    resumenSheetId = resumenHoja.id;
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("RESUMEN!A1:Z1000")}:clear`,
+      { method: "POST", headers: await driveHeaders(token), body: "{}" }
+    );
+  }
+
+  // Col G=Base Imponible, I=Cuota IVA, J=Total, L=Archivo Drive (para contar documentos)
+  // Filas: 1=título, 2=vacía, 3=cabeceras, 4..N=un mes, N+1=vacía, N+2=TOTAL
+  const dataStartRow = 4;
+  const dataEndRow = 3 + mesesLabels.length;
+  const totalRowIdx0 = 4 + mesesLabels.length; // 0-indexed para batchUpdate
+  const año = mesesLabels.length > 0 ? mesesLabels[mesesLabels.length - 1].split(" ")[1] : new Date().getFullYear();
+
+  const values = [
+    [`RESUMEN ANUAL ${año}`],
+    [],
+    ["Mes", "N° Documentos", "Base Imponible (€)", "Cuota IVA (€)", "Total (€)"],
+    ...mesesLabels.map(mes => [
+      mes,
+      `=COUNTA('${mes}'!L2:L)`,
+      `=SUMA('${mes}'!G2:G)`,
+      `=SUMA('${mes}'!I2:I)`,
+      `=SUMA('${mes}'!J2:J)`
+    ]),
+    [],
+    [
+      "TOTAL",
+      `=SUMA(B${dataStartRow}:B${dataEndRow})`,
+      `=SUMA(C${dataStartRow}:C${dataEndRow})`,
+      `=SUMA(D${dataStartRow}:D${dataEndRow})`,
+      `=SUMA(E${dataStartRow}:E${dataEndRow})`
+    ]
+  ];
+
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("RESUMEN!A1")}?valueInputOption=USER_ENTERED`,
+    { method: "PUT", headers: await driveHeaders(token), body: JSON.stringify({ values }) }
+  );
+
+  // Formato: título grande, cabeceras en gris, fila TOTAL en negrita
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    headers: await driveHeaders(token),
+    body: JSON.stringify({
+      requests: [
+        {
+          repeatCell: {
+            range: { sheetId: resumenSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 5 },
+            cell: { userEnteredFormat: { textFormat: { bold: true, fontSize: 14 } } },
+            fields: "userEnteredFormat.textFormat"
+          }
+        },
+        {
+          repeatCell: {
+            range: { sheetId: resumenSheetId, startRowIndex: 2, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 5 },
+            cell: { userEnteredFormat: { textFormat: { bold: true }, backgroundColor: { red: 0.851, green: 0.851, blue: 0.851 } } },
+            fields: "userEnteredFormat"
+          }
+        },
+        {
+          repeatCell: {
+            range: { sheetId: resumenSheetId, startRowIndex: totalRowIdx0, endRowIndex: totalRowIdx0 + 1, startColumnIndex: 0, endColumnIndex: 5 },
+            cell: { userEnteredFormat: { textFormat: { bold: true } } },
+            fields: "userEnteredFormat.textFormat"
+          }
+        }
+      ]
+    })
+  });
+}
+
+async function sheetsAñadirFilaMes(token, spreadsheetId, fila, mesLabel) {
+  const hojas = await sheetsObtenerHojas(token, spreadsheetId);
+  const mesesExistentes = hojas.filter(h => h.title !== "RESUMEN");
+  const mesExiste = mesesExistentes.find(h => h.title === mesLabel);
+
+  if (!mesExiste) {
+    await sheetsCrearHojaMes(token, spreadsheetId, mesLabel);
+    const nuevosMeses = [...mesesExistentes.map(h => h.title), mesLabel]
+      .sort((a, b) => parseMesLabelFecha(a) - parseMesLabelFecha(b));
+    await sheetsActualizarResumen(token, spreadsheetId, nuevosMeses);
+  }
+
+  const range = encodeURIComponent(`'${mesLabel}'!A1`);
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
   const r = await fetch(url, {
     method: "POST",
@@ -188,13 +330,13 @@ async function sheetsAñadirFila(token, spreadsheetId, fila) {
     body: JSON.stringify({ values: [fila] })
   });
   const data = await r.json();
-  if (data.error) throw new Error("Sheets append: " + JSON.stringify(data.error));
+  if (data.error) throw new Error("Sheets append mes: " + JSON.stringify(data.error));
   return data;
 }
 
 // ── Pipeline principal ──────────────────────────────────────────────────────
 
-export async function procesarFactura({ buffer, mimeType, filename, local, caption, getToken, dbGet, dbRun }) {
+export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbRun }) {
   // 1. Hash para detección de duplicados
   const fileHash = createHash("sha256").update(buffer).digest("hex");
 
@@ -264,7 +406,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
     console.log(`[Facturas] Sheet creado para ${local}: ${sheetUrl}`);
   }
 
-  // 8. Añadir fila al Sheet
+  // 8. Añadir fila al Sheet en la pestaña del mes correspondiente
   const ahora = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
   const fila = [
     datos.fecha ?? "",
@@ -277,10 +419,11 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
     datos.porcentaje_iva ?? "",
     datos.cuota_iva ?? "",
     datos.total ?? "",
+    canal,
     driveFile.url,
     ahora
   ];
-  await sheetsAñadirFila(token, sheetId, fila);
+  await sheetsAñadirFilaMes(token, sheetId, fila, mesLabel);
 
   // 9. Guardar en BD local con hash y empresa
   await dbRun(
@@ -402,7 +545,7 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
 
   // 4. Si detectamos el local únicamente → procesar normalmente
   if (localAutodetectado) {
-    return procesarFactura({ buffer, mimeType, filename, local: localAutodetectado, caption: `Email auto-detectado`, getToken, dbGet, dbAll: dbAll, dbRun });
+    return procesarFactura({ buffer, mimeType, filename, local: localAutodetectado, caption: "Email auto-detectado", canal: "Email", getToken, dbGet, dbAll: dbAll, dbRun });
   }
 
   // 5. No se pudo determinar el local → subir a _Por asignar y guardar como pendiente
@@ -484,14 +627,16 @@ export async function asignarFacturaPendiente({ pendiente, local, getToken, dbGe
     }
   }
 
-  // Añadir fila al Sheet
+  // Añadir fila al Sheet en la pestaña del mes correspondiente
   const ahora = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
-  await sheetsAñadirFila(token, sheetId, [
+  const canal = pendiente.origen === "email" ? "Email" : "WhatsApp";
+  const filaAsignada = [
     pendiente.fecha ?? "", pendiente.numero_factura ?? "", pendiente.tipo ?? "",
     pendiente.proveedor ?? "", pendiente.nif ?? "", pendiente.concepto ?? "",
     pendiente.base_imponible ?? "", pendiente.porcentaje_iva ?? "",
-    pendiente.cuota_iva ?? "", pendiente.total ?? "", driveUrl, ahora
-  ]);
+    pendiente.cuota_iva ?? "", pendiente.total ?? "", canal, driveUrl, ahora
+  ];
+  await sheetsAñadirFilaMes(token, sheetId, filaAsignada, mesLabel);
 
   // Pasar de pendientes a facturas
   await dbRun(

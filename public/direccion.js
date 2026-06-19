@@ -475,32 +475,45 @@ async function loadPendientes() {
     return;
   }
   if (badge) { badge.textContent = data.data.length; badge.style.display = "inline"; }
-  el.innerHTML = `<table class="table"><thead><tr>
-    <th>Proveedor</th><th>Empresa detectada</th><th>NIF receptor</th><th>Tipo</th><th>Total</th><th>Fecha</th><th>Drive</th><th>Asignar a</th><th></th>
-  </tr></thead><tbody>
-    ${data.data.map(p => `
-      <tr>
-        <td>${p.proveedor || "—"}</td>
-        <td>${p.empresa_detectada || "—"}</td>
-        <td style="font-family:monospace;font-size:0.8rem">${p.nif_receptor || "—"}</td>
-        <td>${p.tipo || "—"}</td>
-        <td>${p.total != null ? Number(p.total).toFixed(2) + " €" : "—"}</td>
-        <td>${p.fecha || "—"}</td>
-        <td>${p.drive_url ? `<a href="${p.drive_url}" target="_blank">Ver</a>` : "—"}</td>
-        <td>
-          <select id="asignarLocal_${p.id}">
-            <option value="">— selecciona —</option>
+  el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:1rem">
+    ${data.data.map(p => {
+      const total = p.total != null ? Number(p.total).toFixed(2) + " €" : "—";
+      const tipo = p.tipo ? p.tipo.charAt(0).toUpperCase() + p.tipo.slice(1) : "Documento";
+      return `
+      <div class="card" style="padding:1.1rem;display:flex;flex-direction:column;gap:0.75rem">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div style="font-weight:700;font-size:1rem;margin-bottom:0.15rem">${p.proveedor || "Proveedor desconocido"}</div>
+            <span style="font-size:0.75rem;background:rgba(211,106,95,0.12);color:var(--accent);padding:0.1rem 0.45rem;border-radius:99px">${tipo}</span>
+          </div>
+          <div style="text-align:right">
+            <div style="font-weight:700;font-size:1.05rem;color:var(--accent)">${total}</div>
+            <div style="font-size:0.75rem;color:var(--muted)">${p.fecha || "Sin fecha"}</div>
+          </div>
+        </div>
+        <div style="font-size:0.83rem;color:var(--muted);display:flex;flex-direction:column;gap:0.2rem">
+          <div><strong>Empresa detectada:</strong> ${p.empresa_detectada || "—"}</div>
+          <div><strong>NIF receptor:</strong> <span style="font-family:monospace">${p.nif_receptor || "—"}</span></div>
+          ${p.concepto ? `<div><strong>Concepto:</strong> ${p.concepto}</div>` : ""}
+        </div>
+        <div style="display:flex;gap:0.5rem;align-items:center;margin-top:auto">
+          <select id="asignarLocal_${p.id}" style="flex:1;font-size:0.85rem;padding:0.4rem 0.5rem;border:1px solid rgba(0,0,0,0.15);border-radius:6px;background:var(--bg)">
+            <option value="">— Selecciona local —</option>
             ${LOCALES_OPTS.map(l => `<option value="${l}">${l}</option>`).join("")}
           </select>
-        </td>
-        <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="asignarPendiente(${p.id})">Asignar</button></td>
-      </tr>`).join("")}
-  </tbody></table>`;
+          ${p.drive_url ? `<a href="${p.drive_url}" target="_blank" class="btn ghost" style="padding:0.4rem 0.65rem;font-size:0.8rem;white-space:nowrap">Ver PDF</a>` : ""}
+          <button class="btn" style="padding:0.4rem 0.75rem;font-size:0.85rem;white-space:nowrap" onclick="asignarPendiente(${p.id})">Asignar</button>
+        </div>
+      </div>`;
+    }).join("")}
+  </div>`;
 }
 
 window.asignarPendiente = async function(id) {
   const local = document.getElementById(`asignarLocal_${id}`)?.value;
-  if (!local) { alert("Selecciona un local primero"); return; }
+  if (!local) { alert("Selecciona un local antes de asignar"); return; }
+  const btn = document.querySelector(`[onclick="asignarPendiente(${id})"]`);
+  if (btn) { btn.disabled = true; btn.textContent = "Asignando..."; }
   const res = await authFetch(`/api/facturas/pendientes/${id}/asignar`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -508,7 +521,7 @@ window.asignarPendiente = async function(id) {
   });
   const data = await res.json();
   if (data.ok) { loadPendientes(); loadUltimasFacturas(); }
-  else alert("Error: " + data.error);
+  else { alert("Error al asignar: " + (data.error || "Error desconocido")); if (btn) { btn.disabled = false; btn.textContent = "Asignar"; } }
 };
 
 async function loadLocalesEmpresas() {
