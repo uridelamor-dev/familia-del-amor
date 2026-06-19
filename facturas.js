@@ -225,7 +225,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   const cfgRaiz = await dbGet("SELECT value FROM config WHERE key = 'drive_facturas_root_id'");
   let rootId = cfgRaiz?.value;
   if (!rootId) {
-    rootId = await findOrCreateFolder(token, "Familia del Amor · Facturas (TEST)");
+    rootId = await findOrCreateFolder(token, "Contabilidad");
     await dbRun("INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('drive_facturas_root_id', ?, datetime('now'))", [rootId]);
     console.log(`[Facturas] Carpeta raíz creada en Drive: ${rootId}`);
   }
@@ -410,7 +410,7 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
   const cfgRaiz = await dbGet("SELECT value FROM config WHERE key = 'drive_facturas_root_id'");
   let rootId = cfgRaiz?.value;
   if (!rootId) {
-    rootId = await findOrCreateFolder(token, "Familia del Amor · Facturas (TEST)");
+    rootId = await findOrCreateFolder(token, "Contabilidad");
     await dbRun("INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('drive_facturas_root_id', ?, datetime('now'))", [rootId]);
   }
 
