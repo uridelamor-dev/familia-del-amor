@@ -958,6 +958,124 @@ app.get("/api/facturas/gmail-status", requireAuth(["direccion", "contabilidad"])
   res.json({ ok: true, conectado: !!token, emails: ultimosEmails });
 });
 
+// ── Estadísticas y Modelo 303 ─────────────────────────────────────────────
+
+app.get("/api/facturas/empresas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const rows = await dbAll(
+      `SELECT DISTINCT empresa FROM facturas_locales WHERE empresa IS NOT NULL AND empresa != '' ORDER BY empresa`, []
+    );
+    res.json({ ok: true, data: rows.map(r => r.empresa) });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const año = req.query.año || new Date().getFullYear();
+    const [mensual, topProveedores, porLocal, resumenAnual] = await Promise.all([
+      dbAll(
+        `SELECT local, strftime('%m', fecha) AS mes,
+           COUNT(*) AS num,
+           ROUND(SUM(COALESCE(total,0)), 2) AS total,
+           ROUND(SUM(COALESCE(base_imponible,0)), 2) AS base,
+           ROUND(SUM(COALESCE(cuota_iva,0)), 2) AS iva
+         FROM facturas
+         WHERE strftime('%Y', fecha) = ? AND fecha IS NOT NULL
+         GROUP BY local, mes ORDER BY local, mes`,
+        [String(año)]
+      ),
+      dbAll(
+        `SELECT proveedor, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0)), 2) AS total
+         FROM facturas
+         WHERE strftime('%Y', fecha) = ? AND proveedor IS NOT NULL AND TRIM(proveedor) != ''
+         GROUP BY LOWER(TRIM(proveedor))
+         ORDER BY total DESC LIMIT 10`,
+        [String(año)]
+      ),
+      dbAll(
+        `SELECT local, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0)), 2) AS total
+         FROM facturas
+         WHERE strftime('%Y', fecha) = ?
+         GROUP BY local ORDER BY total DESC`,
+        [String(año)]
+      ),
+      dbGet(
+        `SELECT COUNT(*) AS num_docs,
+           ROUND(SUM(COALESCE(base_imponible,0)), 2) AS base,
+           ROUND(SUM(COALESCE(cuota_iva,0)), 2) AS iva,
+           ROUND(SUM(COALESCE(total,0)), 2) AS total
+         FROM facturas WHERE strftime('%Y', fecha) = ?`,
+        [String(año)]
+      )
+    ]);
+    res.json({ ok: true, data: { mensual, topProveedores, porLocal, resumenAnual, año } });
+  } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+app.get("/api/facturas/modelo303", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const { empresa, año = new Date().getFullYear(), trimestre } = req.query;
+    if (!empresa || !trimestre) return res.json({ ok: false, error: "Faltan parámetros: empresa y trimestre" });
+    const q = parseInt(trimestre);
+    if (q < 1 || q > 4) return res.json({ ok: false, error: "Trimestre debe ser 1, 2, 3 o 4" });
+
+    const mesInicio = (q - 1) * 3 + 1;
+    const mesFin    = q * 3;
+    const fechaInicio = `${año}-${String(mesInicio).padStart(2, "0")}-01`;
+    const fechaFin    = `${año}-${String(mesFin).padStart(2, "0")}-31`;
+
+    // Solo facturas (documentos fiscales válidos para deducción de IVA)
+    // Agrupamos por tipo de IVA redondeado para evitar imprecisiones de float
+    const [porTipoIva, totales, otrosDocs, locales] = await Promise.all([
+      dbAll(
+        `SELECT
+           CAST(ROUND(COALESCE(porcentaje_iva, 0)) AS INTEGER) AS tipo_iva,
+           COUNT(*) AS num_docs,
+           ROUND(SUM(COALESCE(base_imponible, 0)), 2) AS base_total,
+           ROUND(SUM(COALESCE(cuota_iva, 0)), 2) AS cuota_total
+         FROM facturas
+         WHERE empresa = ? AND fecha BETWEEN ? AND ? AND LOWER(tipo) = 'factura'
+         GROUP BY CAST(ROUND(COALESCE(porcentaje_iva, 0)) AS INTEGER)
+         ORDER BY tipo_iva`,
+        [empresa, fechaInicio, fechaFin]
+      ),
+      dbGet(
+        `SELECT
+           COUNT(*) AS num_facturas,
+           ROUND(SUM(COALESCE(base_imponible, 0)), 2) AS base_total,
+           ROUND(SUM(COALESCE(cuota_iva, 0)), 2) AS cuota_total,
+           ROUND(SUM(COALESCE(total, 0)), 2) AS importe_total
+         FROM facturas
+         WHERE empresa = ? AND fecha BETWEEN ? AND ? AND LOWER(tipo) = 'factura'`,
+        [empresa, fechaInicio, fechaFin]
+      ),
+      dbGet(
+        `SELECT COUNT(*) AS num_otros, ROUND(SUM(COALESCE(total, 0)), 2) AS total_otros
+         FROM facturas
+         WHERE empresa = ? AND fecha BETWEEN ? AND ? AND LOWER(tipo) != 'factura'`,
+        [empresa, fechaInicio, fechaFin]
+      ),
+      dbAll(
+        `SELECT DISTINCT local FROM facturas
+         WHERE empresa = ? AND fecha BETWEEN ? AND ? ORDER BY local`,
+        [empresa, fechaInicio, fechaFin]
+      )
+    ]);
+
+    res.json({
+      ok: true,
+      data: {
+        porTipoIva, totales, otrosDocs,
+        locales: locales.map(l => l.local),
+        empresa, año: parseInt(año), trimestre: q, fechaInicio, fechaFin
+      }
+    });
+  } catch (e) {
+    console.error("[Modelo 303]", e);
+    res.json({ ok: false, error: e.message });
+  }
+});
+
 // OAuth routes (sin requireAuth en callback para que Google pueda redirigir)
 app.get("/auth/google", (req, res) => {
   if (!GOOGLE_CLIENT_ID) return res.status(500).send("GOOGLE_CLIENT_ID no configurado");
@@ -2220,6 +2338,77 @@ const server = app.listen(PORT, () => {
   // Polling de Gmail: primer check a los 30 segundos, luego cada 5 minutos
   setTimeout(pollGmail, 30 * 1000);
   setInterval(pollGmail, 5 * 60 * 1000);
+
+  // ── Resumen mensual por WhatsApp: día 10 de cada mes a las 9:00h (Madrid) ──
+  const MESES_CAP = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+  async function enviarResumenMensualFacturas() {
+    try {
+      const prev = new Date();
+      prev.setDate(1);
+      prev.setMonth(prev.getMonth() - 1);
+      const mesIdx = prev.getMonth();
+      const año    = prev.getFullYear();
+      const mesLabel   = `${MESES_CAP[mesIdx]} ${año}`;
+      const yearMonth  = `${año}-${String(mesIdx + 1).padStart(2, "0")}`;
+
+      const rows = await dbAll(
+        `SELECT local, COUNT(*) AS num_docs,
+           ROUND(SUM(COALESCE(base_imponible,0)),2) AS base,
+           ROUND(SUM(COALESCE(cuota_iva,0)),2) AS iva,
+           ROUND(SUM(COALESCE(total,0)),2) AS total
+         FROM facturas
+         WHERE strftime('%Y-%m', fecha) = ?
+         GROUP BY local ORDER BY total DESC`,
+        [yearMonth]
+      );
+
+      if (!rows.length) {
+        console.log(`[Resumen] Sin facturas para ${mesLabel} — resumen omitido`);
+        return;
+      }
+
+      const fmt  = n => Number(n || 0).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const sumB = rows.reduce((s, r) => s + (r.base  || 0), 0);
+      const sumI = rows.reduce((s, r) => s + (r.iva   || 0), 0);
+      const sumT = rows.reduce((s, r) => s + (r.total || 0), 0);
+      const sumD = rows.reduce((s, r) => s + (r.num_docs || 0), 0);
+
+      let msg = `*📊 Resumen de facturas — ${mesLabel}*\n\n`;
+      for (const r of rows) {
+        msg += `*${r.local}*\n`;
+        msg += `  ${r.num_docs} doc${r.num_docs !== 1 ? "s" : ""} · Base: ${fmt(r.base)} € · IVA: ${fmt(r.iva)} € · *Total: ${fmt(r.total)} €*\n\n`;
+      }
+      msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
+      msg += `*TOTAL · ${sumD} documentos*\n`;
+      msg += `  Base imponible: ${fmt(sumB)} €\n`;
+      msg += `  IVA soportado:  ${fmt(sumI)} €\n`;
+      msg += `  *Total gastos:  ${fmt(sumT)} €*`;
+
+      await sendMensajeLibre("622149946", msg);
+      await dbRun(
+        "INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('resumen_mensual_ultimo', ?, datetime('now'))",
+        [yearMonth]
+      );
+      console.log(`[Resumen] ✅ Resumen ${mesLabel} enviado a 622149946`);
+    } catch (err) {
+      console.error("[Resumen]", err.message);
+    }
+  }
+
+  // Chequeo cada hora; dispara solo el día 10 a las 9:00h si aún no se envió este mes
+  setInterval(async () => {
+    try {
+      if (!isReady()) return;
+      const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Madrid" }));
+      if (now.getDate() !== 10 || now.getHours() !== 9) return;
+      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const prevYM = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+      const ultimo = await dbGet("SELECT value FROM config WHERE key = 'resumen_mensual_ultimo'");
+      if (ultimo?.value === prevYM) return; // ya enviado
+      await enviarResumenMensualFacturas();
+    } catch (e) { console.error("[Resumen cron]", e.message); }
+  }, 60 * 60 * 1000);
 });
 
 server.on("error", (err) => {

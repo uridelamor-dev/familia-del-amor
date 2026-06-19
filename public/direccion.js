@@ -332,7 +332,8 @@ async function loadKpi() {
 // ── Panel de Facturas IA ───────────────────────────────────────────────────
 
 async function loadFacturasPanel() {
-  await Promise.all([loadFacturasStatus(), loadLocalesEmpresas(), loadGruposFactura(), loadPendientes(), loadUltimasFacturas(), loadGruposWADisponibles(), loadEmailReglas(), loadGmailStatus()]);
+  inicializarSelectoresAño();
+  await Promise.all([loadFacturasStatus(), loadLocalesEmpresas(), loadGruposFactura(), loadPendientes(), loadUltimasFacturas(), loadGruposWADisponibles(), loadEmailReglas(), loadGmailStatus(), loadEstadisticas(), initModelo303()]);
   document.getElementById("formAddGrupoFactura")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const local = document.getElementById("facturaLocal").value;
@@ -618,3 +619,234 @@ async function loadUltimasFacturas() {
       </tr>`).join("")}
   </tbody></table>`;
 }
+
+// ── Estadísticas ──────────────────────────────────────────────────────────────
+
+const CHART_COLORS = ["#d36a5f","#4a90d9","#7cb27c","#f0a030","#9b6bbf","#2bb0ad","#e87b3e","#c9497a","#56b4a0","#c07b34"];
+const MESES_ABREV  = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+
+let _chartMensual = null, _chartLocal = null, _chartProv = null;
+
+function inicializarSelectoresAño() {
+  const año = new Date().getFullYear();
+  [document.getElementById("statsAño"), document.getElementById("m303Año")].forEach(sel => {
+    if (!sel || sel.options.length > 1) return;
+    sel.innerHTML = "";
+    for (let y = año; y >= año - 3; y--) {
+      const opt = document.createElement("option");
+      opt.value = y;
+      opt.textContent = y;
+      if (y === año) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  });
+}
+
+async function loadEstadisticas() {
+  const año = document.getElementById("statsAño")?.value || new Date().getFullYear();
+  const res  = await authFetch(`/api/facturas/stats?año=${año}`);
+  const data = await res.json();
+  if (!data.ok) return;
+  const { mensual, topProveedores, porLocal, resumenAnual } = data.data;
+
+  // — KPIs —
+  const kpis = document.getElementById("statsKpis");
+  if (kpis) {
+    const fmt = n => Number(n || 0).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    kpis.innerHTML = [
+      { icon: "📄", label: "Documentos",      val: resumenAnual?.num_docs || 0,       unit: "" },
+      { icon: "💰", label: "Base imponible",   val: fmt(resumenAnual?.base),           unit: " €" },
+      { icon: "🏛️", label: "IVA soportado",    val: fmt(resumenAnual?.iva),            unit: " €" },
+      { icon: "💳", label: "Total gastos",     val: fmt(resumenAnual?.total),          unit: " €" },
+    ].map(k => `
+      <div class="card" style="padding:1rem;text-align:center">
+        <div style="font-size:1.4rem;margin-bottom:0.3rem">${k.icon}</div>
+        <div style="font-size:1.25rem;font-weight:700;color:var(--accent);line-height:1.2">${k.val}${k.unit}</div>
+        <div style="font-size:0.75rem;color:var(--muted);margin-top:0.2rem">${k.label}</div>
+      </div>`).join("");
+  }
+
+  // — Gráfico mensual apilado —
+  const ctxM = document.getElementById("chartMensual");
+  if (ctxM) {
+    const locales  = [...new Set(mensual.map(r => r.local))];
+    const datasets = locales.map((loc, i) => ({
+      label: loc,
+      data: MESES_ABREV.map((_, idx) => {
+        const m = String(idx + 1).padStart(2, "0");
+        return mensual.find(r => r.local === loc && r.mes === m)?.total || 0;
+      }),
+      backgroundColor: CHART_COLORS[i % CHART_COLORS.length] + "cc",
+      borderColor:     CHART_COLORS[i % CHART_COLORS.length],
+      borderWidth: 1
+    }));
+    if (_chartMensual) _chartMensual.destroy();
+    _chartMensual = new Chart(ctxM, {
+      type: "bar",
+      data: { labels: MESES_ABREV, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } },
+        scales: {
+          x: { stacked: true, grid: { display: false } },
+          y: { stacked: true, ticks: { callback: v => v.toLocaleString("es-ES") + " €" } }
+        }
+      }
+    });
+  }
+
+  // — Gráfico doughnut por local —
+  const ctxL = document.getElementById("chartLocal");
+  if (ctxL && porLocal.length) {
+    if (_chartLocal) _chartLocal.destroy();
+    _chartLocal = new Chart(ctxL, {
+      type: "doughnut",
+      data: {
+        labels: porLocal.map(r => r.local),
+        datasets: [{
+          data: porLocal.map(r => r.total || 0),
+          backgroundColor: porLocal.map((_, i) => CHART_COLORS[i % CHART_COLORS.length] + "dd"),
+          borderWidth: 2,
+          borderColor: "#fff"
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: "60%",
+        plugins: {
+          legend: { position: "bottom", labels: { boxWidth: 11, font: { size: 10 } } },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${Number(ctx.parsed).toLocaleString("es-ES",{minimumFractionDigits:2})} €` } }
+        }
+      }
+    });
+  }
+
+  // — Gráfico horizontal top proveedores —
+  const ctxP = document.getElementById("chartProveedores");
+  if (ctxP && topProveedores.length) {
+    if (_chartProv) _chartProv.destroy();
+    _chartProv = new Chart(ctxP, {
+      type: "bar",
+      data: {
+        labels: topProveedores.map(r => r.proveedor?.length > 22 ? r.proveedor.slice(0, 20) + "…" : r.proveedor),
+        datasets: [{
+          label: "Total (€)",
+          data: topProveedores.map(r => r.total || 0),
+          backgroundColor: CHART_COLORS[0] + "cc",
+          borderColor:     CHART_COLORS[0],
+          borderWidth: 1
+        }]
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { callback: v => v.toLocaleString("es-ES") + " €" } },
+          y: { ticks: { font: { size: 11 } } }
+        }
+      }
+    });
+  }
+}
+
+// ── Modelo 303 ────────────────────────────────────────────────────────────────
+
+async function initModelo303() {
+  const sel = document.getElementById("m303Empresa");
+  if (!sel) return;
+  const res  = await authFetch("/api/facturas/empresas");
+  const data = await res.json();
+  if (!data.ok || !data.data.length) {
+    sel.innerHTML = `<option value="">Sin empresas configuradas</option>`;
+    return;
+  }
+  sel.innerHTML = data.data.map(e => `<option value="${e}">${e}</option>`).join("");
+
+  // Preseleccionar trimestre actual
+  const q = Math.ceil((new Date().getMonth() + 1) / 3);
+  const prevQ = q === 1 ? 4 : q - 1;
+  const tSel = document.getElementById("m303Trimestre");
+  if (tSel) tSel.value = prevQ;
+}
+
+window.calcularModelo303 = async function() {
+  const empresa   = document.getElementById("m303Empresa")?.value;
+  const año       = document.getElementById("m303Año")?.value;
+  const trimestre = document.getElementById("m303Trimestre")?.value;
+  const el        = document.getElementById("m303Result");
+  if (!empresa || !trimestre || !el) return;
+
+  el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Calculando...</p>`;
+
+  const res  = await authFetch(`/api/facturas/modelo303?empresa=${encodeURIComponent(empresa)}&año=${año}&trimestre=${trimestre}`);
+  const data = await res.json();
+
+  if (!data.ok) { el.innerHTML = `<p style="color:var(--accent)">Error: ${data.error}</p>`; return; }
+
+  const d   = data.data;
+  const fmt = n => Number(n || 0).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const NOMBRES_T = { 1: "Enero · Febrero · Marzo", 2: "Abril · Mayo · Junio", 3: "Julio · Agosto · Septiembre", 4: "Octubre · Noviembre · Diciembre" };
+
+  if (!d.totales?.num_facturas) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin facturas en T${d.trimestre} ${d.año} para <strong>${empresa}</strong>.</p>`;
+    return;
+  }
+
+  const totalBase  = d.porTipoIva.reduce((s, r) => s + (r.base_total  || 0), 0);
+  const totalCuota = d.porTipoIva.reduce((s, r) => s + (r.cuota_total || 0), 0);
+
+  el.innerHTML = `
+    <div class="card" style="padding:1.5rem;max-width:640px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.25rem">
+        <div>
+          <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">MODELO 303 — IVA SOPORTADO</div>
+          <div style="font-size:1.05rem;font-weight:700;margin-top:0.2rem">T${d.trimestre} ${d.año} — ${NOMBRES_T[d.trimestre]}</div>
+          <div style="font-size:0.82rem;color:var(--muted);margin-top:0.15rem">${empresa}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:1.4rem;font-weight:700;color:var(--accent)">${fmt(d.totales.importe_total)} €</div>
+          <div style="font-size:0.75rem;color:var(--muted)">${d.totales.num_facturas} facturas</div>
+        </div>
+      </div>
+
+      <table class="table" style="margin-bottom:0.5rem">
+        <thead>
+          <tr>
+            <th>Tipo IVA</th>
+            <th style="text-align:right">Nº facturas</th>
+            <th style="text-align:right">Base imponible</th>
+            <th style="text-align:right">Cuota IVA</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${d.porTipoIva.map(r => `
+            <tr>
+              <td><strong>${r.tipo_iva}%</strong>${r.tipo_iva === 0 ? " <span style='font-size:0.75rem;color:var(--muted)'>(exento)</span>" : ""}</td>
+              <td style="text-align:right">${r.num_docs}</td>
+              <td style="text-align:right">${fmt(r.base_total)} €</td>
+              <td style="text-align:right">${fmt(r.cuota_total)} €</td>
+            </tr>`).join("")}
+          <tr style="font-weight:700;border-top:2px solid rgba(0,0,0,0.1)">
+            <td>TOTAL</td>
+            <td style="text-align:right">${d.totales.num_facturas}</td>
+            <td style="text-align:right">${fmt(d.totales.base_total)} €</td>
+            <td style="text-align:right;color:var(--accent)">${fmt(d.totales.cuota_total)} €</td>
+          </tr>
+        </tbody>
+      </table>
+
+      ${d.otrosDocs?.num_otros > 0 ? `
+        <div style="font-size:0.8rem;color:var(--muted);margin-top:0.75rem;padding:0.6rem;background:rgba(0,0,0,0.04);border-radius:6px">
+          ℹ️ También hay ${d.otrosDocs.num_otros} documento${d.otrosDocs.num_otros>1?"s":""} de tipo no factura (albaranes / tickets) por ${fmt(d.otrosDocs.total_otros)} € que <strong>no</strong> se incluyen en este cálculo.
+        </div>` : ""}
+
+      ${d.locales.length ? `
+        <div style="font-size:0.8rem;color:var(--muted);margin-top:0.5rem">
+          Locales incluidos: ${d.locales.join(" · ")}
+        </div>` : ""}
+
+      <div style="margin-top:1rem;padding:0.75rem;background:rgba(240,160,48,0.1);border:1px solid rgba(240,160,48,0.3);border-radius:8px;font-size:0.8rem;color:#8a6a00">
+        ⚠️ <strong>Aviso:</strong> Este resumen es orientativo. Solo refleja el IVA soportado en compras registradas en el sistema. Debe ser validado por tu asesor fiscal antes de presentar el Modelo 303.
+      </div>
+    </div>`;
+};

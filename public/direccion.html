@@ -312,6 +312,69 @@
               <div id="listaEmailReglas">Cargando...</div>
             </section>
 
+            <!-- Estadísticas -->
+            <section class="block">
+              <div class="section-head" style="align-items:flex-start">
+                <div>
+                  <h2>Estadísticas</h2>
+                  <p>Resumen de gasto registrado, por mes, local y proveedor.</p>
+                </div>
+                <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.15rem">
+                  <select id="statsAño" style="padding:0.35rem 0.6rem;border-radius:6px;border:1px solid rgba(0,0,0,0.15);background:var(--bg);font-family:inherit;font-size:0.85rem"></select>
+                  <button class="btn ghost" style="padding:0.35rem 0.7rem;font-size:0.85rem" onclick="loadEstadisticas()">Actualizar</button>
+                </div>
+              </div>
+              <!-- KPI cards -->
+              <div id="statsKpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:0.75rem;margin-bottom:1.25rem"></div>
+              <!-- Gasto mensual por local -->
+              <div class="card" style="padding:1.25rem;margin-bottom:1rem">
+                <div style="font-weight:600;font-size:0.9rem;margin-bottom:1rem;color:var(--muted)">GASTO MENSUAL POR LOCAL</div>
+                <div style="position:relative;height:260px"><canvas id="chartMensual"></canvas></div>
+              </div>
+              <!-- Distribución + Top proveedores -->
+              <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:1rem">
+                <div class="card" style="padding:1.25rem">
+                  <div style="font-weight:600;font-size:0.9rem;margin-bottom:1rem;color:var(--muted)">DISTRIBUCIÓN POR LOCAL</div>
+                  <div style="position:relative;height:220px"><canvas id="chartLocal"></canvas></div>
+                </div>
+                <div class="card" style="padding:1.25rem">
+                  <div style="font-weight:600;font-size:0.9rem;margin-bottom:1rem;color:var(--muted)">TOP 10 PROVEEDORES (€)</div>
+                  <div style="position:relative;height:220px"><canvas id="chartProveedores"></canvas></div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Modelo 303 -->
+            <section class="block">
+              <div class="section-head">
+                <h2>Modelo 303 — IVA trimestral</h2>
+                <p>IVA soportado en compras, desglosado por tipo impositivo. Solo facturas (documentos fiscales válidos).</p>
+              </div>
+              <div class="form" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:1.25rem">
+                <label>
+                  <span>Empresa / NIF</span>
+                  <select id="m303Empresa" style="min-width:220px">
+                    <option value="">Cargando empresas...</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Año</span>
+                  <select id="m303Año" style="width:90px"></select>
+                </label>
+                <label>
+                  <span>Trimestre</span>
+                  <select id="m303Trimestre" style="width:130px">
+                    <option value="1">T1 — Ene · Feb · Mar</option>
+                    <option value="2">T2 — Abr · May · Jun</option>
+                    <option value="3">T3 — Jul · Ago · Sep</option>
+                    <option value="4">T4 — Oct · Nov · Dic</option>
+                  </select>
+                </label>
+                <button class="btn" onclick="calcularModelo303()" style="padding:0.5rem 1rem">Calcular</button>
+              </div>
+              <div id="m303Result"></div>
+            </section>
+
             <section class="block">
               <div class="section-head">
                 <h2>Pendientes de asignación <span id="badgePendientes" style="background:var(--accent);color:#fff;border-radius:99px;padding:0.1rem 0.5rem;font-size:0.75rem;display:none"></span></h2>
@@ -332,6 +395,7 @@
       </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script src="auth.js"></script>
     <script src="direccion.js"></script>
   </body>
