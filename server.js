@@ -1054,6 +1054,20 @@ app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), asy
   }
 });
 
+app.post("/api/facturas/reset-test", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    await dbRun("DELETE FROM facturas");
+    await dbRun("DELETE FROM facturas_pendientes");
+    await dbRun("DELETE FROM facturas_emails_procesados");
+    await dbRun("UPDATE facturas_grupos SET sheet_id = NULL, sheet_url = NULL");
+    await dbRun("DELETE FROM config WHERE key = 'drive_facturas_root_id'");
+    backupCriticalConfig();
+    res.json({ ok: true, mensaje: "Reset de pruebas completado. Ahora borra el contenido de Drive y envía facturas de nuevo." });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.post("/api/facturas/migrar-estructura", requireAuth(["direccion"]), async (req, res) => {
   try {
     const resultado = await migrarEstructuraDrive({ getToken: getDriveAccessToken, dbAll, dbGet });
