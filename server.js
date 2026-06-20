@@ -129,14 +129,23 @@ async function restoreCriticalConfig() {
     }
     for (const { local, group_jid, sheet_id, sheet_url } of (cfg.facturasGrupos || [])) {
       await new Promise(res => db.run(
-        `INSERT OR REPLACE INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)`,
+        // COALESCE: si el backup tiene sheet_id, úsalo; si es null, conserva el valor actual del DB
+        `INSERT INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)
+         ON CONFLICT(group_jid) DO UPDATE SET
+           local = excluded.local,
+           sheet_id = COALESCE(excluded.sheet_id, facturas_grupos.sheet_id),
+           sheet_url = COALESCE(excluded.sheet_url, facturas_grupos.sheet_url)`,
         [local, group_jid, sheet_id || null, sheet_url || null], res
       ));
       restored++;
     }
     for (const r of (cfg.facturasLocales || [])) {
       await new Promise(res => db.run(
-        `INSERT OR IGNORE INTO facturas_locales (local, empresa, cif, local_contable) VALUES (?, ?, ?, ?)`,
+        `INSERT INTO facturas_locales (local, empresa, cif, local_contable) VALUES (?, ?, ?, ?)
+         ON CONFLICT(local) DO UPDATE SET
+           empresa = excluded.empresa,
+           cif = excluded.cif,
+           local_contable = excluded.local_contable`,
         [r.local, r.empresa, r.cif, r.local_contable], res
       ));
     }
@@ -504,6 +513,15 @@ db.serialize(() => {
   db.run(`ALTER TABLE facturas ADD COLUMN pagado INTEGER DEFAULT 0`, () => {});
   db.run(`ALTER TABLE facturas ADD COLUMN fecha_pago TEXT`, () => {});
   db.run(`ALTER TABLE facturas_locales ADD COLUMN local_contable TEXT`, () => {});
+  // Migración: rellena empresa en facturas que quedaron como null o "Sin empresa asignada"
+  db.run(
+    `UPDATE facturas SET empresa = (
+       SELECT fl.empresa FROM facturas_locales fl WHERE fl.local = facturas.local
+     )
+     WHERE (empresa IS NULL OR empresa = 'Sin empresa asignada')
+     AND EXISTS (SELECT 1 FROM facturas_locales fl WHERE fl.local = facturas.local)`,
+    (err) => { if (err) console.error("[Migration] empresa fix:", err.message); }
+  );
   db.run(`ALTER TABLE leads ADD COLUMN genero TEXT`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
   db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
@@ -838,7 +856,8 @@ async function pollGmail() {
               filename: parte.filename || `adjunto_${msgId}`,
               local: localConocido,
               caption: `Email · ${from} · ${subject}`,
-              getToken: getDriveAccessToken, dbGet, dbRun
+              getToken: getDriveAccessToken, dbGet, dbRun,
+              backupFn: backupCriticalConfig
             });
           } else {
             // Proveedor directo sin regla: auto-detectar por nif_receptor
@@ -1028,7 +1047,7 @@ app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), asy
   const pendiente = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ?", [req.params.id]);
   if (!pendiente) return res.status(404).json({ ok: false, error: "No encontrado" });
   try {
-    const result = await asignarFacturaPendiente({ pendiente, local, getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
+    const result = await asignarFacturaPendiente({ pendiente, local, getToken: getDriveAccessToken, dbGet, dbAll, dbRun, backupFn: backupCriticalConfig });
     res.json({ ok: true, ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -2266,6 +2285,17 @@ const server = app.listen(PORT, () => {
   // Tiene prioridad sobre el backup completo de BD para estas tablas.
   await restoreCriticalConfig();
 
+  // Post-restore: volver a rellenar empresa en facturas que quedaron vacías
+  // (necesario porque restoreCriticalConfig puede traer facturas_locales actualizados)
+  db.run(
+    `UPDATE facturas SET empresa = (
+       SELECT fl.empresa FROM facturas_locales fl WHERE fl.local = facturas.local
+     )
+     WHERE (empresa IS NULL OR empresa = 'Sin empresa asignada')
+     AND EXISTS (SELECT 1 FROM facturas_locales fl WHERE fl.local = facturas.local)`,
+    (err) => { if (err) console.error("[Migration] empresa post-restore fix:", err.message); }
+  );
+
   setOnReady(procesarPendientesWA);
 
   // Enviar mensajes de seguimiento post-visita (cada 5 min)
@@ -2399,7 +2429,8 @@ const server = app.listen(PORT, () => {
       const result = await procesarFactura({
         buffer, mimeType, filename, local, caption,
         getToken: getDriveAccessToken,
-        dbGet, dbRun
+        dbGet, dbRun,
+        backupFn: backupCriticalConfig
       });
 
       const { datos, driveUrl, sheetUrl } = result;

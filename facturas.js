@@ -116,12 +116,24 @@ async function driveCrearCarpeta(token, nombre, parentId) {
   return data.id;
 }
 
+// Cache de promesas por clave "parentId|nombre" — evita race conditions y llamadas duplicadas
+const _folderCache = new Map();
+
 async function findOrCreateFolder(token, nombre, parentId = null) {
-  const q = `name = '${nombre.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`
-    + (parentId ? ` and '${parentId}' in parents` : "");
-  const files = await driveBuscar(token, q);
-  if (files.length) return files[0].id;
-  return driveCrearCarpeta(token, nombre, parentId);
+  const cacheKey = `${parentId || "root"}|${nombre}`;
+  if (_folderCache.has(cacheKey)) return _folderCache.get(cacheKey);
+
+  const promise = (async () => {
+    const q = `name = '${nombre.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`
+      + (parentId ? ` and '${parentId}' in parents` : "");
+    const files = await driveBuscar(token, q);
+    if (files.length) return files[0].id;
+    return driveCrearCarpeta(token, nombre, parentId);
+  })();
+
+  _folderCache.set(cacheKey, promise);
+  setTimeout(() => _folderCache.delete(cacheKey), 60000); // TTL 60s
+  return promise;
 }
 
 async function driveSubirArchivo(token, folderId, filename, buffer, mimeType) {
@@ -336,7 +348,7 @@ async function sheetsAñadirFilaMes(token, spreadsheetId, fila, mesLabel) {
 
 // ── Pipeline principal ──────────────────────────────────────────────────────
 
-export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbRun }) {
+export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbRun, backupFn }) {
   // 1. Hash para detección de duplicados
   const fileHash = createHash("sha256").update(buffer).digest("hex");
 
@@ -399,11 +411,13 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
       await dbRun("UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?", [sheetId, sheetUrl, localContable]);
     } else {
       await dbRun(
-        "INSERT OR IGNORE INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)",
+        `INSERT INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)
+         ON CONFLICT(group_jid) DO UPDATE SET sheet_id = excluded.sheet_id, sheet_url = excluded.sheet_url`,
         [localContable, `__email__:${localContable}`, sheetId, sheetUrl]
       );
     }
     console.log(`[Facturas] Sheet creado para ${local}: ${sheetUrl}`);
+    if (backupFn) backupFn();
   }
 
   // 8. Añadir fila al Sheet en la pestaña del mes correspondiente
@@ -578,7 +592,7 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
 
 // ── Asignación manual de una factura pendiente ──────────────────────────────
 
-export async function asignarFacturaPendiente({ pendiente, local, getToken, dbGet, dbAll, dbRun }) {
+export async function asignarFacturaPendiente({ pendiente, local, getToken, dbGet, dbAll, dbRun, backupFn }) {
   const token = await getToken();
 
   const localRow = await dbGet("SELECT empresa, local_contable FROM facturas_locales WHERE local = ?", [local]);
@@ -622,9 +636,13 @@ export async function asignarFacturaPendiente({ pendiente, local, getToken, dbGe
     if (grupoRow) {
       await dbRun("UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?", [sheetId, sheetUrl, localContable]);
     } else {
-      await dbRun("INSERT OR IGNORE INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)",
-        [localContable, `__email__:${localContable}`, sheetId, sheetUrl]);
+      await dbRun(
+        `INSERT INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)
+         ON CONFLICT(group_jid) DO UPDATE SET sheet_id = excluded.sheet_id, sheet_url = excluded.sheet_url`,
+        [localContable, `__email__:${localContable}`, sheetId, sheetUrl]
+      );
     }
+    if (backupFn) backupFn();
   }
 
   // Añadir fila al Sheet en la pestaña del mes correspondiente
