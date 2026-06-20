@@ -231,10 +231,12 @@ const followupAwaitingReply = new Map();
 
 async function sendNtfyAlert(title, body, priority = "urgent") {
   try {
+    // Los headers HTTP solo admiten ASCII — eliminar emojis del título
+    const safeTitle = title.replace(/[^\x00-\x7F]/g, "").trim();
     await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
       method: "POST",
       headers: {
-        "Title": title,
+        "Title": safeTitle,
         "Priority": priority,
         "Tags": priority === "urgent" ? "warning,robot" : "white_check_mark,robot"
       },
