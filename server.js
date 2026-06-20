@@ -76,6 +76,80 @@ async function backupToReplitDB() {
     console.error("[DB] Error guardando async:", e.message);
   }
 }
+// ── Backup crítico de configuración (tablas pequeñas, clave KV separada) ─────
+// El backup completo de la BD puede superar el límite de Replit KV (~512 KB)
+// cuando la BD crece con mensajes WA. Este backup guarda solo las tablas de
+// configuración crítica (<5 KB siempre) y se restaura con prioridad sobre el
+// backup completo.
+const KV_CRITICAL_KEY = "latapeta_critical_config_v2";
+
+async function backupCriticalConfig() {
+  const dbUrl = process.env.REPLIT_DB_URL;
+  if (!dbUrl) return;
+  try {
+    const [waLinks, facturasGrupos, facturasLocales, emailReglas] = await Promise.all([
+      new Promise((res, rej) => db.all("SELECT local, group_jid FROM wa_links", [], (e, r) => e ? rej(e) : res(r || []))),
+      new Promise((res, rej) => db.all("SELECT local, group_jid, sheet_id, sheet_url FROM facturas_grupos", [], (e, r) => e ? rej(e) : res(r || []))),
+      new Promise((res, rej) => db.all("SELECT * FROM facturas_locales", [], (e, r) => e ? rej(e) : res(r || []))),
+      new Promise((res, rej) => db.all("SELECT * FROM facturas_email_reglas", [], (e, r) => e ? rej(e) : res(r || []))),
+    ]);
+    const payload = JSON.stringify({ waLinks, facturasGrupos, facturasLocales, emailReglas, ts: Date.now() });
+    const body = new URLSearchParams();
+    body.set(KV_CRITICAL_KEY, payload);
+    const r = await fetch(dbUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    });
+    if (r.ok) console.log(`[Config] Backup crítico OK (wa:${waLinks.length} fg:${facturasGrupos.length} fl:${facturasLocales.length})`);
+    else console.warn("[Config] Error backup crítico:", r.status);
+  } catch (e) { console.error("[Config] Error backup crítico:", e.message); }
+}
+
+async function restoreCriticalConfig() {
+  const dbUrl = process.env.REPLIT_DB_URL;
+  if (!dbUrl) return;
+  try {
+    const raw = execSync(`curl -sf "${dbUrl}/${KV_CRITICAL_KEY}"`, { encoding: "utf8", timeout: 10000 }).trim();
+    if (!raw || raw === "null" || raw.length < 5) return;
+    const cfg = JSON.parse(raw);
+    const ahora = new Date().toISOString();
+    let restored = 0;
+    for (const { local, group_jid } of (cfg.waLinks || [])) {
+      await new Promise(res => db.run(
+        "INSERT OR REPLACE INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, ?)",
+        [local, group_jid, ahora], res
+      ));
+      // Sincronizar también con la tabla contents (sistema legacy de backup)
+      await new Promise(res => db.run(
+        "INSERT OR REPLACE INTO contents (key, value, updated_at) VALUES (?, ?, ?)",
+        [`whatsapp_group_${local}`, group_jid, ahora], res
+      ));
+      restored++;
+    }
+    for (const { local, group_jid, sheet_id, sheet_url } of (cfg.facturasGrupos || [])) {
+      await new Promise(res => db.run(
+        `INSERT OR REPLACE INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)`,
+        [local, group_jid, sheet_id || null, sheet_url || null], res
+      ));
+      restored++;
+    }
+    for (const r of (cfg.facturasLocales || [])) {
+      await new Promise(res => db.run(
+        `INSERT OR IGNORE INTO facturas_locales (local, empresa, cif, local_contable) VALUES (?, ?, ?, ?)`,
+        [r.local, r.empresa, r.cif, r.local_contable], res
+      ));
+    }
+    for (const r of (cfg.emailReglas || [])) {
+      await new Promise(res => db.run(
+        `INSERT OR IGNORE INTO facturas_email_reglas (email, local) VALUES (?, ?)`,
+        [r.email, r.local], res
+      ));
+    }
+    const ts = cfg.ts ? new Date(cfg.ts).toLocaleString("es-ES") : "?";
+    console.log(`[Config] Config crítica restaurada (${restored} entradas, guardada: ${ts})`);
+  } catch (e) { console.error("[Config] Error restaurando config crítica:", e.message); }
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 const app = express();
@@ -858,6 +932,8 @@ app.post("/api/facturas/grupos", requireAuth(["direccion"]), async (req, res) =>
       "INSERT INTO facturas_grupos (local, group_jid) VALUES (?, ?) ON CONFLICT(group_jid) DO UPDATE SET local = excluded.local",
       [local, group_jid]
     );
+    backupToReplitDBSync();    // Backup completo (faltaba)
+    backupCriticalConfig();    // Backup compacto de config crítica
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -866,6 +942,7 @@ app.post("/api/facturas/grupos", requireAuth(["direccion"]), async (req, res) =>
 
 app.delete("/api/facturas/grupos/:id", requireAuth(["direccion"]), async (req, res) => {
   await dbRun("DELETE FROM facturas_grupos WHERE id = ?", [req.params.id]);
+  backupCriticalConfig();
   res.json({ ok: true });
 });
 
@@ -928,6 +1005,7 @@ app.post("/api/facturas/locales", requireAuth(["direccion"]), async (req, res) =
        ON CONFLICT(local) DO UPDATE SET empresa = excluded.empresa, cif = excluded.cif, local_contable = excluded.local_contable`,
       [local, empresa.trim(), (cif || "").trim() || null, (local_contable || "").trim() || null]
     );
+    backupCriticalConfig();
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -1933,7 +2011,8 @@ app.post("/api/whatsapp/link", requireAuth(["direccion", "encargado"]), (req, re
          ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
         [`whatsapp_group_${local}`, groupId, updated_at]
       );
-      backupToReplitDBSync(); // Backup síncrono: garantiza que se guarda antes de seguir
+      backupToReplitDBSync(); // Backup completo síncrono
+      backupCriticalConfig(); // Backup compacto de config crítica (asíncrono, no bloquea)
       res.json({ ok: true });
     }
   );
@@ -2182,6 +2261,10 @@ const server = app.listen(PORT, () => {
       }
     );
   });
+
+  // Restaurar config crítica (wa_links, facturas_grupos, etc.) desde KV compacto.
+  // Tiene prioridad sobre el backup completo de BD para estas tablas.
+  await restoreCriticalConfig();
 
   setOnReady(procesarPendientesWA);
 
