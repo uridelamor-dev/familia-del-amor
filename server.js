@@ -2234,7 +2234,7 @@ async function procesarPendientesWA() {
   });
 }
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log(`Servidor activo en http://localhost:${PORT}`);
 
   // Backup inicial tras arrancar (30 s para dar tiempo a que la BD termine de inicializarse)
