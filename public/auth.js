@@ -68,9 +68,46 @@
     window.location.href = "/login.html";
   }
 
+  // ── Helpers compartidos ────────────────────────────────────────────────
+
+  // Escapa datos no confiables (nombres de clientes, OCR de facturas, notas…)
+  // antes de insertarlos en innerHTML. Evita XSS almacenado.
+  function escapeHtml(value) {
+    if (value == null) return "";
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  // Notificación inline no bloqueante. tipo: "success" | "error" | "info"
+  function toast(message, tipo = "info", ms = 3500) {
+    let cont = document.getElementById("toastContainer");
+    if (!cont) {
+      cont = document.createElement("div");
+      cont.id = "toastContainer";
+      cont.className = "toast-container";
+      document.body.appendChild(cont);
+    }
+    const el = document.createElement("div");
+    el.className = `toast toast-${tipo}`;
+    el.textContent = message;
+    cont.appendChild(el);
+    // forzar reflow para animar la entrada
+    requestAnimationFrame(() => el.classList.add("show"));
+    setTimeout(() => {
+      el.classList.remove("show");
+      setTimeout(() => el.remove(), 250);
+    }, ms);
+  }
+
   window.authFetch = authFetch;
   window.requireRole = requireRole;
   window.logout = logout;
+  window.escapeHtml = escapeHtml;
+  window.toast = toast;
 
   document.addEventListener("DOMContentLoaded", () => {
     const btn = document.getElementById("logoutBtn");

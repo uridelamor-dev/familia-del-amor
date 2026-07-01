@@ -73,9 +73,18 @@ async function loadCalendar() {
 
   updateCalendarTitle();
 
-  const res = await authFetch(`/api/reservas?${qs}`);
-  const data = await res.json();
-  renderCalendar(data.data || []);
+  const grid = document.getElementById("calGrid");
+  try {
+    const res = await authFetch(`/api/reservas?${qs}`);
+    const data = await res.json();
+    if (!data.ok) {
+      if (grid) grid.innerHTML = `<div class="cal-empty">No se pudieron cargar las reservas.</div>`;
+      return;
+    }
+    renderCalendar(data.data || []);
+  } catch (err) {
+    if (grid) grid.innerHTML = `<div class="cal-empty">Error de conexión al cargar el calendario.</div>`;
+  }
 }
 
 function renderCalendar(reservas) {
@@ -93,10 +102,10 @@ function renderCalendar(reservas) {
 
     const events = dayRes.length
       ? dayRes.map((r) => `
-          <div class="cal-event ${localClass(r.local)}" title="${r.local}">
-            <span class="cal-time">${r.hora}</span>
-            <span class="cal-name">${r.nombre_reserva}</span>
-            <span class="cal-meta">${r.personas}p · ${shortLocal(r.local)}</span>
+          <div class="cal-event ${localClass(r.local)}" title="${escapeHtml(r.local)}">
+            <span class="cal-time">${escapeHtml(r.hora)}</span>
+            <span class="cal-name">${escapeHtml(r.nombre_reserva)}</span>
+            <span class="cal-meta">${escapeHtml(String(r.personas))}p · ${escapeHtml(shortLocal(r.local))}</span>
             <button class="cal-del" data-id="${r.id}" title="Eliminar reserva">×</button>
           </div>`).join("")
       : `<div class="cal-empty">—</div>`;
@@ -116,8 +125,15 @@ function renderCalendar(reservas) {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       if (!confirm("¿Eliminar esta reserva?")) return;
-      await authFetch(`/api/reservas/${btn.dataset.id}`, { method: "DELETE" });
-      loadCalendar();
+      try {
+        const res = await authFetch(`/api/reservas/${btn.dataset.id}`, { method: "DELETE" });
+        const data = await res.json();
+        if (!data.ok) throw new Error();
+        toast("Reserva eliminada", "success");
+        loadCalendar();
+      } catch (err) {
+        toast("No se pudo eliminar la reserva", "error");
+      }
     });
   });
 }
@@ -149,15 +165,27 @@ async function loadReservas() {
   if (from) qs.set("from", from);
   if (to) qs.set("to", to);
 
-  const res = await authFetch(`/api/reservas${qs.toString() ? "?" + qs : ""}`);
-  const data = await res.json();
+  table.textContent = "Cargando reservas...";
+  let data;
+  try {
+    const res = await authFetch(`/api/reservas${qs.toString() ? "?" + qs : ""}`);
+    data = await res.json();
+  } catch (err) {
+    table.textContent = "Error de conexión al cargar reservas.";
+    return;
+  }
 
-  if (!data.ok || data.data.length === 0) {
+  if (!data.ok) {
+    table.textContent = "No se pudieron cargar las reservas.";
+    return;
+  }
+  if (data.data.length === 0) {
     table.textContent = "Sin reservas.";
     return;
   }
 
   table.innerHTML = `
+    <div class="table-wrap">
     <table class="table">
       <thead>
         <tr>
@@ -168,24 +196,32 @@ async function loadReservas() {
       <tbody>
         ${data.data.map((r) => `
           <tr>
-            <td>${r.dia}</td>
-            <td>${r.hora}</td>
-            <td>${r.nombre_reserva}</td>
-            <td>${r.personas}</td>
-            <td>${r.local}</td>
-            <td>${r.telefono}</td>
+            <td>${escapeHtml(r.dia)}</td>
+            <td>${escapeHtml(r.hora)}</td>
+            <td>${escapeHtml(r.nombre_reserva)}</td>
+            <td>${escapeHtml(String(r.personas))}</td>
+            <td>${escapeHtml(r.local)}</td>
+            <td>${escapeHtml(r.telefono)}</td>
             <td>
               <button class="btn ghost list-del" data-id="${r.id}" style="padding:0.2rem 0.5rem">×</button>
             </td>
           </tr>`).join("")}
       </tbody>
-    </table>`;
+    </table>
+    </div>`;
 
   table.querySelectorAll(".list-del").forEach((btn) => {
     btn.addEventListener("click", async () => {
       if (!confirm("¿Eliminar esta reserva?")) return;
-      await authFetch(`/api/reservas/${btn.dataset.id}`, { method: "DELETE" });
-      loadReservas();
+      try {
+        const res = await authFetch(`/api/reservas/${btn.dataset.id}`, { method: "DELETE" });
+        const data = await res.json();
+        if (!data.ok) throw new Error();
+        toast("Reserva eliminada", "success");
+        loadReservas();
+      } catch (err) {
+        toast("No se pudo eliminar la reserva", "error");
+      }
     });
   });
 }
@@ -230,7 +266,7 @@ async function initWhatsAppPanel() {
   const select = document.getElementById("waGroup");
   if (groupData.ok) {
     select.innerHTML = `<option value="">— Selecciona un grupo —</option>` +
-      groupData.data.map((g) => `<option value="${g.id}">${g.name}</option>`).join("");
+      groupData.data.map((g) => `<option value="${escapeHtml(String(g.id))}">${escapeHtml(g.name)}</option>`).join("");
   }
 
   await loadCurrentLinks();
@@ -238,33 +274,45 @@ async function initWhatsAppPanel() {
   document.getElementById("waSave")?.addEventListener("click", async () => {
     const local = document.getElementById("waLocal").value;
     const groupId = document.getElementById("waGroup").value;
-    if (!groupId) { alert("Selecciona un grupo"); return; }
+    if (!groupId) { toast("Selecciona un grupo", "error"); return; }
     const btn = document.getElementById("waSave");
     btn.disabled = true;
     btn.textContent = "Guardando...";
-    await authFetch("/api/whatsapp/link", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local, groupId })
-    });
-    btn.disabled = false;
-    btn.textContent = "Guardar vinculación";
-    await loadCurrentLinks();
+    try {
+      const res = await authFetch("/api/whatsapp/link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ local, groupId })
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error();
+      toast("Grupo vinculado", "success");
+      await loadCurrentLinks();
+    } catch (err) {
+      toast("No se pudo guardar la vinculación", "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Guardar vinculación";
+    }
   });
 }
 
 async function loadCurrentLinks() {
   const container = document.getElementById("waCurrentLinks");
   if (!container) return;
-  const res = await authFetch("/api/whatsapp/links");
-  const data = await res.json();
-  if (!data.ok || !data.data.length) {
-    container.innerHTML = `<div class="card">Sin grupos vinculados aún.</div>`;
-    return;
+  try {
+    const res = await authFetch("/api/whatsapp/links");
+    const data = await res.json();
+    if (!data.ok || !data.data.length) {
+      container.innerHTML = `<div class="card">Sin grupos vinculados aún.</div>`;
+      return;
+    }
+    container.innerHTML = data.data.map((row) =>
+      `<div class="card"><strong>${escapeHtml(row.local)}</strong><br><small style="color:var(--muted)">${escapeHtml(row.group_jid)}</small></div>`
+    ).join("");
+  } catch (err) {
+    container.innerHTML = `<div class="card">Error al cargar los grupos vinculados.</div>`;
   }
-  container.innerHTML = data.data.map((row) =>
-    `<div class="card"><strong>${row.local}</strong><br><small style="color:var(--muted)">${row.group_jid}</small></div>`
-  ).join("");
 }
 
 // ── Comunicados ───────────────────────────────────────────────────────────────
@@ -275,30 +323,50 @@ if (annForm) {
     e.preventDefault();
     const payload = Object.fromEntries(new FormData(annForm).entries());
     payload.rol = "trabajadores";
-    await authFetch("/api/announcements", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    annForm.reset();
-    loadAnnouncements();
+    const btn = annForm.querySelector("button[type=submit]");
+    if (btn) { btn.disabled = true; btn.textContent = "Publicando..."; }
+    try {
+      const res = await authFetch("/api/announcements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error();
+      annForm.reset();
+      toast("Comunicado publicado", "success");
+      loadAnnouncements();
+    } catch (err) {
+      toast("No se pudo publicar el comunicado", "error");
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Publicar comunicado"; }
+    }
   });
 }
 
 async function loadAnnouncements() {
   const list = document.getElementById("annListEnc");
   if (!list) return;
-  const res = await authFetch("/api/announcements?rol=trabajadores");
-  const data = await res.json();
-  if (!data.ok || data.data.length === 0) {
-    list.innerHTML = `<div class="card">Sin comunicados.</div>`;
-    return;
+  list.innerHTML = `<div class="card">Cargando comunicados...</div>`;
+  try {
+    const res = await authFetch("/api/announcements?rol=trabajadores");
+    const data = await res.json();
+    if (!data.ok) {
+      list.innerHTML = `<div class="card">No se pudieron cargar los comunicados.</div>`;
+      return;
+    }
+    if (data.data.length === 0) {
+      list.innerHTML = `<div class="card">Sin comunicados.</div>`;
+      return;
+    }
+    list.innerHTML = data.data
+      .map((a) => `
+        <div class="card">
+          <small>${escapeHtml(a.local)} · ${escapeHtml((a.creado_en || "").slice(0, 10))}</small>
+          <p>${escapeHtml(a.mensaje)}</p>
+        </div>`)
+      .join("");
+  } catch (err) {
+    list.innerHTML = `<div class="card">Error de conexión al cargar comunicados.</div>`;
   }
-  list.innerHTML = data.data
-    .map((a) => `
-      <div class="card">
-        <small>${a.local} · ${a.creado_en.slice(0, 10)}</small>
-        <p>${a.mensaje}</p>
-      </div>`)
-    .join("");
 }

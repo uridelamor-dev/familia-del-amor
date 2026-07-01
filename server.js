@@ -1956,14 +1956,14 @@ app.post("/api/rrhh/llamada", requireAuth(["rrhh", "direccion"]), (req, res) => 
 });
 
 // Mantenimiento
-app.get("/api/maintenance", requireAuth(), (req, res) => {
+app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), (req, res) => {
   db.all(`SELECT * FROM maintenance_issues ORDER BY creado_en DESC`, (err, rows) => {
     if (err) return res.status(500).json({ ok: false, error: "Error incidencias" });
     res.json({ ok: true, data: rows });
   });
 });
 
-app.post("/api/maintenance", requireAuth(), (req, res) => {
+app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), (req, res) => {
   const { local, titulo, descripcion } = req.body;
   if (!local || !titulo || !descripcion) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
