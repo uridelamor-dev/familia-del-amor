@@ -2959,6 +2959,17 @@ h1, h2, h3 {
 .panel > .panel-body,
 .panel > .dir-shell { flex: 1 0 auto; }
 
+/* Ancho máximo del contenido en pantallas anchas.
+   Paneles simples: columna centrada. Dirección: capada tras el sidebar. */
+.panel > main {
+  width: 100%;
+  max-width: 1280px;
+  margin-inline: auto;
+}
+.panel .dir-inline {
+  max-width: 1280px;
+}
+
 /* ── Eyebrow / labels legibles sobre crema ────────────────────────────── */
 .panel .eyebrow,
 .panel .hero.compact .eyebrow {
