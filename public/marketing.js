@@ -585,10 +585,17 @@ function buildQuery() {
 }
 
 async function loadLeads() {
+  if (!leadsTable) return;
   leadsTable.textContent = "Cargando clientes...";
   const qs = buildQuery();
-  const res = await authFetch(`/api/leads${qs ? "?" + qs : ""}`);
-  const data = await res.json();
+  let data;
+  try {
+    const res = await authFetch(`/api/leads${qs ? "?" + qs : ""}`);
+    data = await res.json();
+  } catch (err) {
+    leadsTable.textContent = "Error de conexión al cargar clientes.";
+    return;
+  }
   if (!data.ok) {
     leadsTable.textContent = "Error cargando clientes.";
     return;
@@ -605,14 +612,15 @@ async function loadLeads() {
 
   const rows = data.data.map(r => `
     <tr>
-      <td>${r.nombre} ${r.apellidos || ""} ${origenBadge(r.origen)}</td>
-      <td>${r.correo || "—"}</td>
-      <td>${r.telefono}</td>
-      <td>${r.poblacion || "—"}</td>
-      <td>${(r.ultima_actividad || "").slice(0, 10)}</td>
+      <td>${escapeHtml(r.nombre)} ${escapeHtml(r.apellidos || "")} ${origenBadge(r.origen)}</td>
+      <td>${escapeHtml(r.correo || "—")}</td>
+      <td>${escapeHtml(r.telefono)}</td>
+      <td>${escapeHtml(r.poblacion || "—")}</td>
+      <td>${escapeHtml((r.ultima_actividad || "").slice(0, 10))}</td>
     </tr>`).join("");
 
   leadsTable.innerHTML = `
+    <div class="table-wrap">
     <table class="table">
       <thead>
         <tr>
@@ -621,6 +629,7 @@ async function loadLeads() {
       </thead>
       <tbody>${rows}</tbody>
     </table>
+    </div>
     <p style="padding:8px 12px;font-size:0.8rem;color:var(--muted)">${data.data.length} contacto${data.data.length !== 1 ? "s" : ""} en total</p>
   `;
 }
@@ -643,21 +652,6 @@ leadExport.addEventListener("click", async (e) => {
 });
 
 loadLeads();
-
-const navToggle = document.getElementById("navToggle");
-const nav = document.querySelector(".nav");
-if (navToggle && nav) {
-  navToggle.addEventListener("click", () => {
-    const isOpen = nav.classList.toggle("open");
-    navToggle.setAttribute("aria-expanded", String(isOpen));
-  });
-  nav.querySelectorAll("a, button").forEach((link) => {
-    link.addEventListener("click", () => {
-      nav.classList.remove("open");
-      navToggle.setAttribute("aria-expanded", "false");
-    });
-  });
-}
 
 const tabs = document.querySelectorAll("[data-tab]");
 const sections = document.querySelectorAll(".panel-section");
@@ -695,10 +689,16 @@ function getCampSegmento() {
 async function loadCampHistorial() {
   const tbody = document.getElementById("campHistorial");
   if (!tbody) return;
-  const res = await authFetch("/api/campanas");
-  const data = await res.json();
+  let data;
+  try {
+    const res = await authFetch("/api/campanas");
+    data = await res.json();
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4" style="padding:12px;color:var(--muted)">Error al cargar el historial.</td></tr>`;
+    return;
+  }
   if (!data.ok || !data.data.length) {
-    tbody.innerHTML = `<tr><td colspan="4" style="padding:12px;color:#888">Sin campañas enviadas aún.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" style="padding:12px;color:var(--muted)">Sin campañas enviadas aún.</td></tr>`;
     return;
   }
   tbody.innerHTML = data.data.map((c, i) => {
@@ -706,8 +706,8 @@ async function loadCampHistorial() {
     const bg = i % 2 === 0 ? "" : "background:var(--bg)";
     const estado = c.finalizado_en ? `${c.total_enviados} ✅` : `⏳ enviando...`;
     return `<tr style="${bg}">
-      <td style="padding:8px 12px;color:var(--muted);white-space:nowrap">${fecha}</td>
-      <td style="padding:8px 12px">${c.nombre}</td>
+      <td style="padding:8px 12px;color:var(--muted);white-space:nowrap">${escapeHtml(fecha)}</td>
+      <td style="padding:8px 12px">${escapeHtml(c.nombre)}</td>
       <td style="padding:8px 12px">${estado}</td>
       <td style="padding:8px 12px;color:${c.total_errores > 0 ? '#c0392b' : 'var(--muted)'}">${c.total_errores}</td>
     </tr>`;
@@ -725,7 +725,7 @@ document.getElementById("campPreview")?.addEventListener("click", async () => {
   });
   const data = await res.json();
   if (!data.ok) { msg.textContent = "Error al calcular."; return; }
-  const muestra = data.muestra.map(c => `${c.nombre} ${c.apellidos} (${c.telefono})`).join(", ");
+  const muestra = data.muestra.map(c => escapeHtml(`${c.nombre} ${c.apellidos} (${c.telefono})`)).join(", ");
   msg.innerHTML = `<strong>${data.total} contacto${data.total !== 1 ? "s" : ""}</strong> recibirán este mensaje.<br><span style="color:var(--muted);font-size:0.8em">Muestra: ${muestra}${data.total > 5 ? "..." : ""}</span>`;
 });
 

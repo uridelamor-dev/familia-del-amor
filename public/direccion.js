@@ -180,10 +180,10 @@ function renderWaChat(telefono, contactData) {
         scroll.appendChild(bubble);
         scroll.scrollTop = scroll.scrollHeight;
       } else {
-        alert("Error: " + (data.error || "No se pudo enviar"));
+        toast("Error: " + (data.error || "No se pudo enviar"), "error");
       }
     } catch {
-      alert("Error de conexión al enviar el mensaje.");
+      toast("Error de conexión al enviar el mensaje.", "error");
     }
     sendBtn.disabled = false;
     sendBtn.textContent = "Enviar";
@@ -227,18 +227,26 @@ const ROL_LABEL = {
 async function loadUsers() {
   const container = document.getElementById("userList");
   if (!container) return;
-  const res = await authFetch("/api/users");
-  const data = await res.json();
+  container.innerHTML = `<div class="card">Cargando usuarios...</div>`;
+  let data;
+  try {
+    const res = await authFetch("/api/users");
+    data = await res.json();
+  } catch (err) {
+    container.innerHTML = `<div class="card">Error de conexión al cargar usuarios.</div>`;
+    return;
+  }
   if (!data.ok) { container.innerHTML = `<div class="card">Error cargando usuarios.</div>`; return; }
   container.innerHTML = `
+    <div class="table-wrap">
     <table class="table">
       <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Nueva contraseña</th><th></th></tr></thead>
       <tbody>
         ${data.data.map((u) => `
           <tr data-id="${u.id}">
-            <td>${u.username}</td>
-            <td>${u.nombre || "—"}</td>
-            <td>${ROL_LABEL[u.rol] || u.rol}</td>
+            <td>${escapeHtml(u.username)}</td>
+            <td>${escapeHtml(u.nombre || "—")}</td>
+            <td>${escapeHtml(ROL_LABEL[u.rol] || u.rol)}</td>
             <td><input type="password" class="pwd-input" placeholder="Nueva contraseña" style="width:100%" /></td>
             <td style="display:flex;gap:0.5rem">
               <button class="btn ghost pwd-save" style="padding:0.2rem 0.6rem">Guardar</button>
@@ -246,19 +254,27 @@ async function loadUsers() {
             </td>
           </tr>`).join("")}
       </tbody>
-    </table>`;
+    </table>
+    </div>`;
 
   container.querySelectorAll(".pwd-save").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const row = btn.closest("tr");
       const id = row.dataset.id;
       const pwd = row.querySelector(".pwd-input").value.trim();
-      if (!pwd) { alert("Escribe una contraseña"); return; }
+      if (!pwd) { toast("Escribe una contraseña", "error"); return; }
       btn.disabled = true; btn.textContent = "…";
-      await authFetch(`/api/users/${id}/password`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pwd }) });
-      btn.disabled = false; btn.textContent = "Guardar";
-      row.querySelector(".pwd-input").value = "";
-      alert("Contraseña actualizada");
+      try {
+        const res = await authFetch(`/api/users/${id}/password`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pwd }) });
+        const d = await res.json();
+        if (!d.ok) throw new Error();
+        row.querySelector(".pwd-input").value = "";
+        toast("Contraseña actualizada", "success");
+      } catch (err) {
+        toast("No se pudo actualizar la contraseña", "error");
+      } finally {
+        btn.disabled = false; btn.textContent = "Guardar";
+      }
     });
   });
 
@@ -266,8 +282,15 @@ async function loadUsers() {
     btn.addEventListener("click", async () => {
       const row = btn.closest("tr");
       if (!confirm(`¿Eliminar usuario ${row.querySelector("td").textContent}?`)) return;
-      await authFetch(`/api/users/${row.dataset.id}`, { method: "DELETE" });
-      loadUsers();
+      try {
+        const res = await authFetch(`/api/users/${row.dataset.id}`, { method: "DELETE" });
+        const d = await res.json();
+        if (!d.ok) throw new Error();
+        toast("Usuario eliminado", "success");
+        loadUsers();
+      } catch (err) {
+        toast("No se pudo eliminar el usuario", "error");
+      }
     });
   });
 }
@@ -283,8 +306,9 @@ function initNewUserForm() {
     const res = await authFetch("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const data = await res.json();
     btn.disabled = false; btn.textContent = "Crear usuario";
-    if (!data.ok) { alert("Error: " + (data.error || "no se pudo crear")); return; }
+    if (!data.ok) { toast("Error: " + (data.error || "no se pudo crear"), "error"); return; }
     form.reset();
+    toast("Usuario creado", "success");
     loadUsers();
   });
 }
@@ -296,8 +320,14 @@ async function loadKpi() {
 
   cards.innerHTML = `<div class="card" style="color:var(--muted)">Cargando...</div>`;
 
-  const res = await authFetch("/api/kpi");
-  const data = await res.json();
+  let data;
+  try {
+    const res = await authFetch("/api/kpi");
+    data = await res.json();
+  } catch (err) {
+    cards.innerHTML = `<div class="card">Error de conexión al cargar KPIs.</div>`;
+    return;
+  }
   if (!data.ok) { cards.innerHTML = `<div class="card">Error cargando KPIs.</div>`; return; }
 
   const d = data.data;
@@ -319,7 +349,7 @@ async function loadKpi() {
 
   if (d.reservas_por_local.length) {
     const rows = d.reservas_por_local
-      .map((r) => `<tr><td>${r.local}</td><td><strong>${r.total}</strong></td></tr>`)
+      .map((r) => `<tr><td>${escapeHtml(r.local)}</td><td><strong>${escapeHtml(String(r.total))}</strong></td></tr>`)
       .join("");
     byLocal.innerHTML = `
       <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:0.5rem">Reservas por local</div>
@@ -338,15 +368,20 @@ async function loadFacturasPanel() {
     e.preventDefault();
     const local = document.getElementById("facturaLocal").value;
     const group_jid = document.getElementById("facturaGrupo").value;
-    if (!group_jid) { alert("Selecciona un grupo de WhatsApp"); return; }
-    const res = await authFetch("/api/facturas/grupos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local, group_jid })
-    });
-    const data = await res.json();
-    if (data.ok) { loadGruposFactura(); }
-    else alert("Error: " + data.error);
+    if (!group_jid) { toast("Selecciona un grupo de WhatsApp", "error"); return; }
+    try {
+      const res = await authFetch("/api/facturas/grupos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ local, group_jid })
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      toast("Grupo vinculado", "success");
+      loadGruposFactura();
+    } catch (err) {
+      toast("Error: " + (err.message || "no se pudo vincular"), "error");
+    }
   });
   document.getElementById("formAddLocal")?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -354,14 +389,22 @@ async function loadFacturasPanel() {
     const empresa = document.getElementById("localEmpresa").value.trim();
     const cif = document.getElementById("localCif").value.trim();
     const local_contable = document.getElementById("localContable").value;
-    const res = await authFetch("/api/facturas/locales", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local, empresa, cif, local_contable })
-    });
-    const data = await res.json();
-    if (data.ok) { document.getElementById("localEmpresa").value = ""; document.getElementById("localCif").value = ""; document.getElementById("localContable").value = ""; loadLocalesEmpresas(); }
-    else alert("Error: " + data.error);
+    try {
+      const res = await authFetch("/api/facturas/locales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ local, empresa, cif, local_contable })
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      document.getElementById("localEmpresa").value = "";
+      document.getElementById("localCif").value = "";
+      document.getElementById("localContable").value = "";
+      toast("Local guardado", "success");
+      loadLocalesEmpresas();
+    } catch (err) {
+      toast("Error: " + (err.message || "no se pudo guardar"), "error");
+    }
   });
 
   document.getElementById("btnMigrarEstructura")?.addEventListener("click", async () => {
@@ -388,14 +431,20 @@ async function loadFacturasPanel() {
     e.preventDefault();
     const email = document.getElementById("reglaEmail").value.trim();
     const local = document.getElementById("reglaLocal").value;
-    const res = await authFetch("/api/facturas/email-reglas", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, local })
-    });
-    const data = await res.json();
-    if (data.ok) { document.getElementById("reglaEmail").value = ""; loadEmailReglas(); }
-    else alert("Error: " + data.error);
+    try {
+      const res = await authFetch("/api/facturas/email-reglas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, local })
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      document.getElementById("reglaEmail").value = "";
+      toast("Regla añadida", "success");
+      loadEmailReglas();
+    } catch (err) {
+      toast("Error: " + (err.message || "no se pudo añadir"), "error");
+    }
   });
 }
 
@@ -407,7 +456,7 @@ async function loadGruposWADisponibles() {
     const data = await res.json();
     if (data.ok && data.data.length) {
       select.innerHTML = `<option value="">— Selecciona un grupo —</option>` +
-        data.data.map(g => `<option value="${g.id}">${g.name}</option>`).join("");
+        data.data.map(g => `<option value="${escapeHtml(String(g.id))}">${escapeHtml(g.name)}</option>`).join("");
     } else {
       select.innerHTML = `<option value="">Sin grupos disponibles (Sara debe estar conectada)</option>`;
     }
@@ -436,27 +485,41 @@ async function loadFacturasStatus() {
 
 async function loadGruposFactura() {
   const el = document.getElementById("listaGruposFactura");
-  const res = await authFetch("/api/facturas/grupos");
-  const data = await res.json();
+  if (!el) return;
+  let data;
+  try {
+    const res = await authFetch("/api/facturas/grupos");
+    data = await res.json();
+  } catch (err) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Error de conexión al cargar grupos.</p>`;
+    return;
+  }
   if (!data.ok || !data.data.length) {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin grupos vinculados aún. Añade un grupo arriba.</p>`;
     return;
   }
-  el.innerHTML = `<table class="table"><thead><tr><th>Local</th><th>Group JID</th><th>Sheet</th><th></th></tr></thead><tbody>
+  el.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Local</th><th>Group JID</th><th>Sheet</th><th></th></tr></thead><tbody>
     ${data.data.map(g => `
       <tr>
-        <td>${g.local}</td>
-        <td style="font-size:0.8rem;font-family:monospace">${g.group_jid}</td>
-        <td>${g.sheet_url ? `<a href="${g.sheet_url}" target="_blank">Ver Sheet</a>` : "—"}</td>
+        <td>${escapeHtml(g.local)}</td>
+        <td style="font-size:0.8rem;font-family:monospace">${escapeHtml(g.group_jid)}</td>
+        <td>${g.sheet_url ? `<a href="${escapeHtml(g.sheet_url)}" target="_blank" rel="noopener">Ver Sheet</a>` : "—"}</td>
         <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="eliminarGrupoFactura(${g.id})">Eliminar</button></td>
       </tr>`).join("")}
-  </tbody></table>`;
+  </tbody></table></div>`;
 }
 
 window.eliminarGrupoFactura = async function(id) {
   if (!confirm("¿Eliminar este grupo?")) return;
-  await authFetch(`/api/facturas/grupos/${id}`, { method: "DELETE" });
-  loadGruposFactura();
+  try {
+    const res = await authFetch(`/api/facturas/grupos/${id}`, { method: "DELETE" });
+    const d = await res.json();
+    if (!d.ok) throw new Error();
+    toast("Grupo eliminado", "success");
+    loadGruposFactura();
+  } catch (err) {
+    toast("No se pudo eliminar el grupo", "error");
+  }
 };
 
 const LOCALES_OPTS = [
@@ -468,8 +531,14 @@ async function loadPendientes() {
   const el = document.getElementById("listaPendientes");
   const badge = document.getElementById("badgePendientes");
   if (!el) return;
-  const res = await authFetch("/api/facturas/pendientes");
-  const data = await res.json();
+  let data;
+  try {
+    const res = await authFetch("/api/facturas/pendientes");
+    data = await res.json();
+  } catch (err) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Error de conexión al cargar pendientes.</p>`;
+    return;
+  }
   if (!data.ok || !data.data.length) {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin facturas pendientes. ✅</p>`;
     if (badge) badge.style.display = "none";
@@ -484,25 +553,25 @@ async function loadPendientes() {
       <div class="card" style="padding:1.1rem;display:flex;flex-direction:column;gap:0.75rem">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
           <div>
-            <div style="font-weight:700;font-size:1rem;margin-bottom:0.15rem">${p.proveedor || "Proveedor desconocido"}</div>
-            <span style="font-size:0.75rem;background:rgba(211,106,95,0.12);color:var(--accent);padding:0.1rem 0.45rem;border-radius:99px">${tipo}</span>
+            <div style="font-weight:700;font-size:1rem;margin-bottom:0.15rem">${escapeHtml(p.proveedor || "Proveedor desconocido")}</div>
+            <span style="font-size:0.75rem;background:rgba(44,74,62,0.12);color:var(--panel-fill);padding:0.1rem 0.45rem;border-radius:99px">${escapeHtml(tipo)}</span>
           </div>
           <div style="text-align:right">
-            <div style="font-weight:700;font-size:1.05rem;color:var(--accent)">${total}</div>
-            <div style="font-size:0.75rem;color:var(--muted)">${p.fecha || "Sin fecha"}</div>
+            <div style="font-weight:700;font-size:1.05rem;color:var(--panel-fill)">${escapeHtml(total)}</div>
+            <div style="font-size:0.75rem;color:var(--muted)">${escapeHtml(p.fecha || "Sin fecha")}</div>
           </div>
         </div>
         <div style="font-size:0.83rem;color:var(--muted);display:flex;flex-direction:column;gap:0.2rem">
-          <div><strong>Empresa detectada:</strong> ${p.empresa_detectada || "—"}</div>
-          <div><strong>NIF receptor:</strong> <span style="font-family:monospace">${p.nif_receptor || "—"}</span></div>
-          ${p.concepto ? `<div><strong>Concepto:</strong> ${p.concepto}</div>` : ""}
+          <div><strong>Empresa detectada:</strong> ${escapeHtml(p.empresa_detectada || "—")}</div>
+          <div><strong>NIF receptor:</strong> <span style="font-family:monospace">${escapeHtml(p.nif_receptor || "—")}</span></div>
+          ${p.concepto ? `<div><strong>Concepto:</strong> ${escapeHtml(p.concepto)}</div>` : ""}
         </div>
         <div style="display:flex;gap:0.5rem;align-items:center;margin-top:auto">
           <select id="asignarLocal_${p.id}" style="flex:1;font-size:0.85rem;padding:0.4rem 0.5rem;border:1px solid rgba(0,0,0,0.15);border-radius:6px;background:var(--bg)">
             <option value="">— Selecciona local —</option>
-            ${LOCALES_OPTS.map(l => `<option value="${l}">${l}</option>`).join("")}
+            ${LOCALES_OPTS.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join("")}
           </select>
-          ${p.drive_url ? `<a href="${p.drive_url}" target="_blank" class="btn ghost" style="padding:0.4rem 0.65rem;font-size:0.8rem;white-space:nowrap">Ver PDF</a>` : ""}
+          ${p.drive_url ? `<a href="${escapeHtml(p.drive_url)}" target="_blank" rel="noopener" class="btn ghost" style="padding:0.4rem 0.65rem;font-size:0.8rem;white-space:nowrap">Ver PDF</a>` : ""}
           <button class="btn" style="padding:0.4rem 0.75rem;font-size:0.85rem;white-space:nowrap" onclick="asignarPendiente(${p.id})">Asignar</button>
         </div>
       </div>`;
@@ -512,46 +581,65 @@ async function loadPendientes() {
 
 window.asignarPendiente = async function(id) {
   const local = document.getElementById(`asignarLocal_${id}`)?.value;
-  if (!local) { alert("Selecciona un local antes de asignar"); return; }
+  if (!local) { toast("Selecciona un local antes de asignar", "error"); return; }
   const btn = document.querySelector(`[onclick="asignarPendiente(${id})"]`);
   if (btn) { btn.disabled = true; btn.textContent = "Asignando..."; }
-  const res = await authFetch(`/api/facturas/pendientes/${id}/asignar`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ local })
-  });
-  const data = await res.json();
-  if (data.ok) { loadPendientes(); loadUltimasFacturas(); }
-  else { alert("Error al asignar: " + (data.error || "Error desconocido")); if (btn) { btn.disabled = false; btn.textContent = "Asignar"; } }
+  try {
+    const res = await authFetch(`/api/facturas/pendientes/${id}/asignar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ local })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Error desconocido");
+    toast("Factura asignada", "success");
+    loadPendientes(); loadUltimasFacturas();
+  } catch (err) {
+    toast("Error al asignar: " + err.message, "error");
+    if (btn) { btn.disabled = false; btn.textContent = "Asignar"; }
+  }
 };
 
 async function loadLocalesEmpresas() {
   const el = document.getElementById("listaLocales");
   if (!el) return;
-  const res = await authFetch("/api/facturas/locales");
-  const data = await res.json();
+  let data;
+  try {
+    const res = await authFetch("/api/facturas/locales");
+    data = await res.json();
+  } catch (err) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Error de conexión al cargar locales.</p>`;
+    return;
+  }
   if (!data.ok || !data.data.length) {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin locales configurados. Añade cada local con su empresa arriba.</p>`;
     return;
   }
-  el.innerHTML = `<table class="table"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th>Agrupa con</th><th></th></tr></thead><tbody>
+  el.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th>Agrupa con</th><th></th></tr></thead><tbody>
     ${data.data.map(l => `
       <tr>
-        <td>${l.local}</td>
-        <td>${l.empresa}</td>
-        <td style="font-family:monospace;font-size:0.85rem">${l.cif || "—"}</td>
-        <td style="color:${l.local_contable ? "var(--accent)" : "var(--muted)"}">
-          ${l.local_contable ? `→ ${l.local_contable}` : "—"}
+        <td>${escapeHtml(l.local)}</td>
+        <td>${escapeHtml(l.empresa)}</td>
+        <td style="font-family:monospace;font-size:0.85rem">${escapeHtml(l.cif || "—")}</td>
+        <td style="color:${l.local_contable ? "var(--panel-fill)" : "var(--muted)"}">
+          ${l.local_contable ? `→ ${escapeHtml(l.local_contable)}` : "—"}
         </td>
         <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="eliminarLocal('${encodeURIComponent(l.local)}')">Eliminar</button></td>
       </tr>`).join("")}
-  </tbody></table>`;
+  </tbody></table></div>`;
 }
 
 window.eliminarLocal = async function(localEnc) {
   if (!confirm("¿Eliminar esta asignación?")) return;
-  await authFetch(`/api/facturas/locales/${localEnc}`, { method: "DELETE" });
-  loadLocalesEmpresas();
+  try {
+    const res = await authFetch(`/api/facturas/locales/${localEnc}`, { method: "DELETE" });
+    const d = await res.json();
+    if (!d.ok) throw new Error();
+    toast("Asignación eliminada", "success");
+    loadLocalesEmpresas();
+  } catch (err) {
+    toast("No se pudo eliminar la asignación", "error");
+  }
 };
 
 async function loadGmailStatus() {
@@ -577,47 +665,67 @@ async function loadGmailStatus() {
 async function loadEmailReglas() {
   const el = document.getElementById("listaEmailReglas");
   if (!el) return;
-  const res = await authFetch("/api/facturas/email-reglas");
-  const data = await res.json();
+  let data;
+  try {
+    const res = await authFetch("/api/facturas/email-reglas");
+    data = await res.json();
+  } catch (err) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Error de conexión al cargar reglas.</p>`;
+    return;
+  }
   if (!data.ok || !data.data.length) {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin reglas configuradas. Añade el email de cada encargado arriba.</p>`;
     return;
   }
-  el.innerHTML = `<table class="table"><thead><tr><th>Email encargado</th><th>Local</th><th></th></tr></thead><tbody>
+  el.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Email encargado</th><th>Local</th><th></th></tr></thead><tbody>
     ${data.data.map(r => `
       <tr>
-        <td>${r.email}</td>
-        <td>${r.local}</td>
+        <td>${escapeHtml(r.email)}</td>
+        <td>${escapeHtml(r.local)}</td>
         <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="eliminarEmailRegla(${r.id})">Eliminar</button></td>
       </tr>`).join("")}
-  </tbody></table>`;
+  </tbody></table></div>`;
 }
 
 window.eliminarEmailRegla = async function(id) {
   if (!confirm("¿Eliminar esta regla?")) return;
-  await authFetch(`/api/facturas/email-reglas/${id}`, { method: "DELETE" });
-  loadEmailReglas();
+  try {
+    const res = await authFetch(`/api/facturas/email-reglas/${id}`, { method: "DELETE" });
+    const d = await res.json();
+    if (!d.ok) throw new Error();
+    toast("Regla eliminada", "success");
+    loadEmailReglas();
+  } catch (err) {
+    toast("No se pudo eliminar la regla", "error");
+  }
 };
 
 async function loadUltimasFacturas() {
   const el = document.getElementById("listaFacturas");
-  const res = await authFetch("/api/facturas");
-  const data = await res.json();
+  if (!el) return;
+  let data;
+  try {
+    const res = await authFetch("/api/facturas");
+    data = await res.json();
+  } catch (err) {
+    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Error de conexión al cargar facturas.</p>`;
+    return;
+  }
   if (!data.ok || !data.data.length) {
     el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin facturas procesadas aún.</p>`;
     return;
   }
-  el.innerHTML = `<table class="table"><thead><tr>
+  el.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr>
     <th>Fecha</th><th>Tipo</th><th>Local</th><th>Proveedor</th><th style="text-align:right">Total</th><th>Drive</th><th style="text-align:center">Pagado</th>
   </tr></thead><tbody>
     ${data.data.map(f => `
       <tr id="fila-factura-${f.id}">
-        <td>${f.fecha || "—"}</td>
-        <td>${f.tipo || "—"}</td>
-        <td>${f.local}</td>
-        <td>${f.proveedor || "—"}</td>
+        <td>${escapeHtml(f.fecha || "—")}</td>
+        <td>${escapeHtml(f.tipo || "—")}</td>
+        <td>${escapeHtml(f.local)}</td>
+        <td>${escapeHtml(f.proveedor || "—")}</td>
         <td style="text-align:right;font-variant-numeric:tabular-nums">${f.total != null ? Number(f.total).toFixed(2) + " €" : "—"}</td>
-        <td>${f.drive_url ? `<a href="${f.drive_url}" target="_blank">Ver</a>` : "—"}</td>
+        <td>${f.drive_url ? `<a href="${escapeHtml(f.drive_url)}" target="_blank" rel="noopener">Ver</a>` : "—"}</td>
         <td style="text-align:center">
           <button
             onclick="togglePagado(${f.id}, ${f.pagado ? 1 : 0})"
@@ -627,7 +735,7 @@ async function loadUltimasFacturas() {
           >${f.pagado ? "✅" : "⬜"}</button>
         </td>
       </tr>`).join("")}
-  </tbody></table>`;
+  </tbody></table></div>`;
 }
 
 window.togglePagado = async function(id, estadoActual) {
@@ -643,7 +751,7 @@ window.togglePagado = async function(id, estadoActual) {
     btn.style.opacity = "1";
   } else if (!data.ok) {
     if (btn) btn.style.opacity = "1";
-    alert("Error: " + data.error);
+    toast("Error: " + data.error, "error");
   }
 };
 

@@ -53,18 +53,23 @@ async function initSeguimiento() {
   segMes = getMesActual();
   document.getElementById("segMesLabel").textContent = getMesLabel(segMes);
 
-  const [wRes, lRes] = await Promise.all([
-    authFetch("/api/rrhh/trabajadores"),
-    authFetch(`/api/rrhh/llamadas/${segMes}`)
-  ]);
-  const wData = await wRes.json();
-  const lData = await lRes.json();
+  const container = document.getElementById("segWorkerList");
+  try {
+    const [wRes, lRes] = await Promise.all([
+      authFetch("/api/rrhh/trabajadores"),
+      authFetch(`/api/rrhh/llamadas/${segMes}`)
+    ]);
+    const wData = await wRes.json();
+    const lData = await lRes.json();
 
-  segWorkers = wData.ok ? wData.data : [];
-  segLlamadasMes = {};
-  if (lData.ok) lData.data.forEach(l => { segLlamadasMes[l.worker_id] = l; });
+    segWorkers = wData.ok ? wData.data : [];
+    segLlamadasMes = {};
+    if (lData.ok) lData.data.forEach(l => { segLlamadasMes[l.worker_id] = l; });
 
-  renderWorkerList();
+    renderWorkerList();
+  } catch (err) {
+    if (container) container.innerHTML = `<div class="seg-loading">Error de conexión al cargar los trabajadores.</div>`;
+  }
 }
 
 // Track which locals are collapsed
@@ -101,16 +106,16 @@ function renderWorkerList() {
         <div class="seg-group">
           <div class="seg-group-label seg-collapsible" data-local="${local}">
             <span class="seg-collapse-arrow">${collapsed ? "▶" : "▼"}</span>
-            <span class="seg-group-name">${local}</span>
+            <span class="seg-group-name">${escapeHtml(local)}</span>
             <span class="seg-group-count">${localDone}/${workers.length}</span>
           </div>
           ${collapsed ? "" : workers.map(w => {
             const done = segLlamadasMes[w.id]?.realizada;
             return `
               <div class="seg-worker-card ${w.id === segSelectedId ? "active" : ""} ${done ? "done" : ""}" data-id="${w.id}">
-                <div class="seg-worker-avatar">${(w.nombre || w.username).charAt(0).toUpperCase()}</div>
+                <div class="seg-worker-avatar">${escapeHtml((w.nombre || w.username).charAt(0).toUpperCase())}</div>
                 <div class="seg-worker-info">
-                  <span class="seg-worker-name">${w.nombre || w.username}</span>
+                  <span class="seg-worker-name">${escapeHtml(w.nombre || w.username)}</span>
                 </div>
                 <span class="seg-call-badge ${done ? "done" : "pending"}">${done ? "✓" : "·"}</span>
               </div>`;
@@ -249,10 +254,10 @@ async function loadWorkerFicha(workerId) {
 
       <!-- Header trabajador -->
       <div class="seg-ficha-header">
-        <div class="seg-ficha-avatar">${(worker.nombre || worker.username).charAt(0).toUpperCase()}</div>
+        <div class="seg-ficha-avatar">${escapeHtml((worker.nombre || worker.username).charAt(0).toUpperCase())}</div>
         <div>
-          <div class="seg-ficha-name">${worker.nombre || worker.username}</div>
-          <div class="seg-ficha-meta">${worker.local || "Sin local"}</div>
+          <div class="seg-ficha-name">${escapeHtml(worker.nombre || worker.username)}</div>
+          <div class="seg-ficha-meta">${escapeHtml(worker.local || "Sin local")}</div>
         </div>
         <div class="seg-ficha-mes-badge ${llamadaMes?.realizada ? "done" : "pending"}">
           ${llamadaMes?.realizada
@@ -278,7 +283,7 @@ async function loadWorkerFicha(workerId) {
             <div class="seg-llamada-preguntas">
               ${preguntas.map((p, i) => `
                 <label class="seg-pregunta-label">
-                  <span>${p.pregunta}</span>
+                  <span>${escapeHtml(p.pregunta)}</span>
                   <textarea class="seg-pregunta-input" data-idx="${i}" rows="2" placeholder="Respuesta…"></textarea>
                 </label>`).join("")}
             </div>` : `<p style="font-size:0.85rem;color:var(--muted);margin-bottom:0.75rem">No hay preguntas configuradas para este mes. <a href="#" id="goPreguntas">Configurar →</a></p>`}
@@ -369,9 +374,10 @@ async function loadWorkerFicha(workerId) {
       const lData = await lRes.json();
       if (lData.ok) { segLlamadasMes = {}; lData.data.forEach(l => { segLlamadasMes[l.worker_id] = l; }); }
       renderWorkerList();
+      toast("Llamada registrada", "success");
       loadWorkerFicha(workerId);
     } else {
-      alert("Error al guardar la llamada.");
+      toast("Error al guardar la llamada", "error");
       btnGuardar.disabled = false;
       btnGuardar.textContent = "Guardar llamada";
     }
@@ -409,8 +415,8 @@ async function loadWorkerFicha(workerId) {
       body: JSON.stringify({ tipo: selectedTipo, contenido, autor: currentUser?.nombre || currentUser?.username })
     });
     const d = await res.json();
-    if (d.ok) loadWorkerFicha(workerId);
-    else { alert("Error al guardar la nota."); btnGuardarNota.disabled = false; }
+    if (d.ok) { toast("Nota guardada", "success"); loadWorkerFicha(workerId); }
+    else { toast("Error al guardar la nota", "error"); btnGuardarNota.disabled = false; }
   });
 
   btnCancelarNota?.addEventListener("click", () => addNotaBox?.classList.add("hidden"));
@@ -424,8 +430,9 @@ async function loadWorkerFicha(workerId) {
       segSelectedId = null;
       document.getElementById("segMain").innerHTML = `<div class="seg-empty"><div style="font-size:2.5rem;margin-bottom:0.75rem">👤</div><p>Selecciona un trabajador para ver su ficha</p></div>`;
       await initSeguimiento();
+      toast("Trabajador eliminado", "success");
     } else {
-      alert("Error al eliminar el trabajador.");
+      toast("Error al eliminar el trabajador", "error");
     }
   });
 
@@ -447,14 +454,14 @@ function renderLlamadaResumen(llamada, preguntas) {
       const resp = JSON.parse(llamada.respuestas);
       preguntas.forEach((p, i) => {
         const r = resp[i];
-        if (r) html += `<div class="seg-llamada-qa"><strong>${p.pregunta}</strong><p>${r}</p></div>`;
+        if (r) html += `<div class="seg-llamada-qa"><strong>${escapeHtml(p.pregunta)}</strong><p>${escapeHtml(r)}</p></div>`;
       });
     } catch {}
   }
   if (llamada.comentario_libre) {
-    html += `<div class="seg-llamada-qa seg-libre"><strong>💬 Espacio libre</strong><p>${llamada.comentario_libre}</p></div>`;
+    html += `<div class="seg-llamada-qa seg-libre"><strong>💬 Espacio libre</strong><p>${escapeHtml(llamada.comentario_libre)}</p></div>`;
   }
-  if (llamada.autor) html += `<div class="seg-llamada-meta">Registrado por ${llamada.autor}</div>`;
+  if (llamada.autor) html += `<div class="seg-llamada-meta">Registrado por ${escapeHtml(llamada.autor)}</div>`;
   html += `</div>`;
   return html;
 }
@@ -466,10 +473,10 @@ function renderNotaCard(nota) {
     <div class="seg-nota-card" style="border-color:${tipo.border};background:${tipo.color}">
       <div class="seg-nota-header">
         <span class="seg-nota-tipo">${tipo.icon} ${tipo.label}</span>
-        <span class="seg-nota-fecha">${fecha}${nota.autor ? ` · ${nota.autor}` : ""}</span>
+        <span class="seg-nota-fecha">${escapeHtml(fecha)}${nota.autor ? ` · ${escapeHtml(nota.autor)}` : ""}</span>
         <button class="seg-nota-delete" data-id="${nota.id}" title="Eliminar">×</button>
       </div>
-      <div class="seg-nota-body">${nota.contenido.replace(/\n/g, "<br>")}</div>
+      <div class="seg-nota-body">${escapeHtml(nota.contenido).replace(/\n/g, "<br>")}</div>
     </div>`;
 }
 
@@ -527,15 +534,19 @@ async function guardarPreguntas() {
   const preguntas = Array.from(document.querySelectorAll("#preguntasList input")).map(i => i.value.trim()).filter(Boolean);
   const msg = document.getElementById("preguntasMsg");
   if (msg) msg.textContent = "Guardando…";
-  const res = await authFetch(`/api/rrhh/preguntas/${mes}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ preguntas })
-  });
-  const d = await res.json();
-  if (msg) {
-    msg.textContent = d.ok ? "✓ Preguntas guardadas" : "Error al guardar";
-    setTimeout(() => { msg.textContent = ""; }, 2000);
+  try {
+    const res = await authFetch(`/api/rrhh/preguntas/${mes}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preguntas })
+    });
+    const d = await res.json();
+    if (!d.ok) throw new Error();
+    if (msg) { msg.textContent = "✓ Preguntas guardadas"; setTimeout(() => { msg.textContent = ""; }, 2000); }
+    toast("Preguntas guardadas", "success");
+  } catch (err) {
+    if (msg) msg.textContent = "";
+    toast("No se pudieron guardar las preguntas", "error");
   }
 }
 
@@ -544,27 +555,43 @@ async function guardarPreguntas() {
 async function loadJobsAdmin() {
   const table = document.getElementById("jobsTable");
   if (!table) return;
-  const res = await authFetch("/api/hr/jobs/admin");
-  const data = await res.json();
-  if (!data.ok || data.data.length === 0) { table.textContent = "Sin vacantes."; return; }
+  let data;
+  try {
+    const res = await authFetch("/api/hr/jobs/admin");
+    data = await res.json();
+  } catch (err) {
+    table.textContent = "Error de conexión al cargar vacantes.";
+    return;
+  }
+  if (!data.ok) { table.textContent = "No se pudieron cargar las vacantes."; return; }
+  if (data.data.length === 0) { table.textContent = "Sin vacantes."; return; }
   table.innerHTML = `
+    <div class="table-wrap">
     <table class="table">
       <thead><tr><th>Título</th><th>Local</th><th>Tipo</th><th>Activa</th><th></th></tr></thead>
       <tbody>
         ${data.data.map(j => `<tr>
-          <td>${j.titulo}</td>
-          <td>${j.local}</td>
-          <td>${j.tipo}</td>
+          <td>${escapeHtml(j.titulo)}</td>
+          <td>${escapeHtml(j.local)}</td>
+          <td>${escapeHtml(j.tipo)}</td>
           <td>${j.activo ? "Sí" : "No"}</td>
           <td><button class="btn ghost job-toggle" data-id="${j.id}" data-active="${j.activo}">${j.activo ? "Cerrar" : "Abrir"}</button></td>
         </tr>`).join("")}
       </tbody>
-    </table>`;
+    </table>
+    </div>`;
   table.querySelectorAll(".job-toggle").forEach(btn => {
     btn.addEventListener("click", async () => {
       const j = data.data.find(x => String(x.id) === btn.dataset.id);
-      await authFetch(`/api/hr/jobs/${btn.dataset.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...j, activo: btn.dataset.active !== "1" }) });
-      loadJobsAdmin();
+      try {
+        const res = await authFetch(`/api/hr/jobs/${btn.dataset.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...j, activo: btn.dataset.active !== "1" }) });
+        const d = await res.json();
+        if (!d.ok) throw new Error();
+        toast("Vacante actualizada", "success");
+        loadJobsAdmin();
+      } catch (err) {
+        toast("No se pudo actualizar la vacante", "error");
+      }
     });
   });
 }
@@ -574,9 +601,20 @@ jobForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const payload = Object.fromEntries(new FormData(jobForm).entries());
   payload.activo = jobForm.querySelector('input[name="activo"]').checked;
-  await authFetch("/api/hr/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-  jobForm.reset();
-  loadJobsAdmin();
+  const btn = jobForm.querySelector("button[type=submit]");
+  if (btn) { btn.disabled = true; btn.textContent = "Creando..."; }
+  try {
+    const res = await authFetch("/api/hr/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const d = await res.json();
+    if (!d.ok) throw new Error();
+    jobForm.reset();
+    toast("Vacante creada", "success");
+    loadJobsAdmin();
+  } catch (err) {
+    toast("No se pudo crear la vacante", "error");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Crear vacante"; }
+  }
 });
 
 // ── CANDIDATURAS ──────────────────────────────────────────────────────────
@@ -593,31 +631,47 @@ async function loadHrApplications() {
   if (estado) qs.set("estado", estado);
   if (from) qs.set("from", from);
   if (to) qs.set("to", to);
-  const res = await authFetch(`/api/hr/applications${qs.toString() ? "?" + qs : ""}`);
-  const data = await res.json();
-  if (!data.ok || !data.data.length) { table.textContent = "Sin candidaturas."; return; }
+  let data;
+  try {
+    const res = await authFetch(`/api/hr/applications${qs.toString() ? "?" + qs : ""}`);
+    data = await res.json();
+  } catch (err) {
+    table.textContent = "Error de conexión al cargar candidaturas.";
+    return;
+  }
+  if (!data.ok) { table.textContent = "No se pudieron cargar las candidaturas."; return; }
+  if (!data.data.length) { table.textContent = "Sin candidaturas."; return; }
   table.innerHTML = `
+    <div class="table-wrap">
     <table class="table">
       <thead><tr><th>Nombre</th><th>Email</th><th>Teléfono</th><th>Puesto</th><th>Estado</th><th>CV</th><th></th></tr></thead>
       <tbody>
         ${data.data.map(a => `<tr>
-          <td>${a.nombre}</td>
-          <td>${a.email || "—"}</td>
-          <td>${a.telefono}</td>
-          <td>${a.puesto}</td>
-          <td><span style="font-size:0.75rem;padding:2px 7px;border-radius:12px;background:${a.estado==="nuevo"?"#e3f2fd":a.estado==="en_proceso"?"#fff8e1":"#fce4ec"};color:#333">${a.estado}</span></td>
-          <td>${a.cv_url ? `<a href="${a.cv_url}" target="_blank">Ver CV</a>` : "—"}</td>
+          <td>${escapeHtml(a.nombre)}</td>
+          <td>${escapeHtml(a.email || "—")}</td>
+          <td>${escapeHtml(a.telefono)}</td>
+          <td>${escapeHtml(a.puesto)}</td>
+          <td><span style="font-size:0.75rem;padding:2px 7px;border-radius:12px;background:${a.estado==="nuevo"?"#e3f2fd":a.estado==="en_proceso"?"#fff8e1":"#fce4ec"};color:#333">${escapeHtml(a.estado)}</span></td>
+          <td>${a.cv_url ? `<a href="${encodeURI(a.cv_url)}" target="_blank" rel="noopener">Ver CV</a>` : "—"}</td>
           <td style="display:flex;gap:0.3rem">
             <button class="btn ghost hr-status" data-id="${a.id}" data-status="en_proceso" style="font-size:0.75rem;padding:0.25rem 0.6rem">En proceso</button>
             <button class="btn ghost hr-status" data-id="${a.id}" data-status="cerrado" style="font-size:0.75rem;padding:0.25rem 0.6rem">Cerrar</button>
           </td>
         </tr>`).join("")}
       </tbody>
-    </table>`;
+    </table>
+    </div>`;
   table.querySelectorAll(".hr-status").forEach(btn => {
     btn.addEventListener("click", async () => {
-      await authFetch(`/api/hr/applications/${btn.dataset.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ estado: btn.dataset.status }) });
-      loadHrApplications();
+      try {
+        const res = await authFetch(`/api/hr/applications/${btn.dataset.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ estado: btn.dataset.status }) });
+        const d = await res.json();
+        if (!d.ok) throw new Error();
+        toast("Candidatura actualizada", "success");
+        loadHrApplications();
+      } catch (err) {
+        toast("No se pudo actualizar la candidatura", "error");
+      }
     });
   });
 }
