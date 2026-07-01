@@ -12,7 +12,7 @@ function initTabs() {
   document.querySelectorAll("[data-view]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const view = btn.getAttribute("data-view");
-      document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("ghost", b !== btn));
+      document.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("active", b === btn));
       document.getElementById("vistaCalendario").classList.toggle("hidden", view !== "calendario");
       document.getElementById("vistaLista").classList.toggle("hidden", view !== "lista");
       if (view === "lista") loadReservas();

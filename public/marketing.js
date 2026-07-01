@@ -663,7 +663,7 @@ const tabs = document.querySelectorAll("[data-tab]");
 const sections = document.querySelectorAll(".panel-section");
 function activateTab(name) {
   tabs.forEach((b) => {
-    b.classList.toggle("ghost", b.getAttribute("data-tab") !== name);
+    b.classList.toggle("active", b.getAttribute("data-tab") === name);
   });
   sections.forEach((s) => {
     s.classList.toggle("active", s.getAttribute("data-section") === name);

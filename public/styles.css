@@ -14,10 +14,15 @@
   --tile-b: #e9edea;
   --tile-c: #ede9f1;
   --tile-d: #e8eff4;
+  /* Paneles internos: relleno interactivo y labels legibles sobre crema */
+  --panel-fill: #2c4a3e;
+  --panel-eyebrow: #2c4a3e;
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(27, 24, 22, 0.25) transparent;
 }
 
 .hidden { display: none !important; }
@@ -43,11 +48,6 @@ h1, h2, h3 {
 }
 
 /* Scrollbars más sutiles */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(27, 24, 22, 0.25) transparent;
-}
-
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -2938,4 +2938,153 @@ h1, h2, h3 {
   .reserva-success h3 {
     font-size: 1.35rem;
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PANELES INTERNOS (scope .panel)
+   Todo lo de aquí solo aplica a las páginas de rol post-login (body.panel).
+   La landing pública no lleva .panel, así que queda intacta.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.panel > .top { flex-shrink: 0; }
+
+/* El contenido crece para empujar el footer abajo */
+.panel > main,
+.panel > .panel-body,
+.panel > .dir-shell { flex: 1 0 auto; }
+
+/* ── Eyebrow / labels legibles sobre crema ────────────────────────────── */
+.panel .eyebrow,
+.panel .hero.compact .eyebrow {
+  color: var(--panel-eyebrow);
+  font-weight: 600;
+}
+
+.panel .hero.compact {
+  border-bottom-color: var(--border);
+}
+
+/* ── Cabecera de contenido unificada ──────────────────────────────────── */
+.panel-head {
+  padding: 1.6rem 2rem 1.2rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.panel-head .eyebrow {
+  color: var(--panel-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  font-size: 0.66rem;
+  margin-bottom: 0.4rem;
+  display: block;
+}
+.panel-head h1 {
+  font-size: 1.55rem;
+  margin: 0 0 0.15rem;
+}
+.panel-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* ── Sistema de pestañas unificado ────────────────────────────────────── */
+.panel .panel-tabs {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  max-width: none;
+  margin: 0;
+  padding: 0.7rem 2rem;
+}
+.panel-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.panel-tab:hover { border-color: var(--panel-fill); }
+.panel-tab.active {
+  background: var(--panel-fill);
+  border-color: var(--panel-fill);
+  color: #fff;
+}
+
+/* Sub-pestañas dentro de una sección (ej. Calendario/Lista en Encargados) */
+.panel .panel-subtabs {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.2rem;
+}
+
+/* ── Footer único de panel ────────────────────────────────────────────── */
+.panel-footer {
+  flex-shrink: 0;
+  margin-top: auto;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  background: #0f0e0d;
+  color: rgba(255,255,255,0.55);
+  padding: 1.4rem 2rem;
+}
+.panel-footer .panel-footer-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-family: "Inter", sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+}
+.panel-footer a {
+  color: rgba(255,255,255,0.72);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.panel-footer a:hover { color: var(--accent); }
+
+/* ── Overrides de paleta scopeados ────────────────────────────────────── */
+/* Badge (ej. pendientes de facturas) legible en verde en vez de dorado */
+.panel .badge-count {
+  background: var(--panel-fill);
+  color: #fff;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* Sidebar de Dirección: hover cálido y estado activo verde legible */
+.panel .dir-sidebar { border-right-color: var(--border); }
+.panel .dir-nav-btn:hover { background: rgba(184,148,90,0.10); }
+.panel .dir-nav-btn.active {
+  background: var(--panel-fill);
+  color: #fff;
+}
+
+@media (max-width: 700px) {
+  .panel-head { padding: 1.2rem 1.2rem 1rem; }
+  .panel .panel-tabs { padding: 0.6rem 1.2rem; }
+  .panel-footer { padding: 1.2rem 1.2rem; }
+  .panel-footer .panel-footer-inner { flex-direction: column; gap: 0.5rem; text-align: center; }
 }

@@ -13,7 +13,7 @@
         width: 220px;
         min-width: 220px;
         background: var(--card);
-        border-right: 1px solid rgba(226,215,200,0.7);
+        border-right: 1px solid var(--border);
         display: flex;
         flex-direction: column;
         padding: 1.2rem 0.75rem;
@@ -49,8 +49,8 @@
         width: 100%;
         transition: background 0.15s;
       }
-      .dir-nav-btn:hover { background: rgba(211,106,95,0.08); }
-      .dir-nav-btn.active { background: var(--accent); color: #fff; }
+      .dir-nav-btn:hover { background: rgba(184,148,90,0.10); }
+      .dir-nav-btn.active { background: var(--panel-fill); color: #fff; }
       .dir-nav-btn .icon { font-size: 1rem; width: 1.2rem; text-align: center; }
 
       .dir-main {
@@ -80,7 +80,7 @@
       }
     </style>
   </head>
-  <body>
+  <body class="panel">
     <div class="dir-shell">
       <header class="top">
         <div class="logo">
@@ -377,7 +377,7 @@
 
             <section class="block">
               <div class="section-head">
-                <h2>Pendientes de asignación <span id="badgePendientes" style="background:var(--accent);color:#fff;border-radius:99px;padding:0.1rem 0.5rem;font-size:0.75rem;display:none"></span></h2>
+                <h2>Pendientes de asignación <span id="badgePendientes" class="badge-count" style="display:none"></span></h2>
                 <p>Facturas recibidas por email cuyo local no se pudo determinar automáticamente.</p>
               </div>
               <div id="listaPendientes"><p style="color:var(--muted);font-size:0.9rem">Sin facturas pendientes.</p></div>

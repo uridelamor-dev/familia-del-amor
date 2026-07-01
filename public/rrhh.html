@@ -6,7 +6,7 @@
     <title>RR.HH. · Familia del Amor</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body class="panel">
     <header class="top">
       <div class="logo">
         <img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
@@ -18,21 +18,21 @@
     </header>
 
     <main>
-      <section class="hero compact">
-        <div class="eyebrow">Panel interno</div>
+      <div class="panel-head">
+        <span class="eyebrow">Panel interno</span>
         <h1>RR.HH.</h1>
         <p>Seguimiento, candidaturas y vacantes.</p>
-      </section>
+      </div>
 
       <div class="panel-tabs">
-        <button class="btn" data-tab="seguimiento">Seguimiento</button>
-        <button class="btn ghost" data-tab="vacantes">Vacantes</button>
-        <button class="btn ghost" data-tab="candidaturas">Candidaturas</button>
-        <button class="btn ghost" data-tab="preguntas">Preguntas del mes</button>
+        <button class="panel-tab active" data-tab="seguimiento">Seguimiento</button>
+        <button class="panel-tab" data-tab="vacantes">Vacantes</button>
+        <button class="panel-tab" data-tab="candidaturas">Candidaturas</button>
+        <button class="panel-tab" data-tab="preguntas">Preguntas del mes</button>
       </div>
 
       <!-- ── SEGUIMIENTO ─────────────────────────────────────────────────── -->
-      <section class="panel-section active" data-section="seguimiento">
+      <section class="block panel-section active" data-section="seguimiento">
         <div class="seg-layout">
 
           <!-- Sidebar: trabajadores por local -->
@@ -144,10 +144,10 @@
 
     </main>
 
-    <footer class="footer">
-      <div class="footer-inner">
-        <span style="font-size:0.8rem;color:var(--muted)">© Familia del Amor</span>
-        <a class="btn ghost" href="index.html" style="font-size:0.8rem">← Inicio</a>
+    <footer class="panel-footer">
+      <div class="panel-footer-inner">
+        <span>Familia del Amor · Panel interno</span>
+        <a href="/">Ir al inicio →</a>
       </div>
     </footer>
 

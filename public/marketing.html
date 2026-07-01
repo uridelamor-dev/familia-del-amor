@@ -6,21 +6,11 @@
     <title>Marketing · Familia del Amor</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body class="panel">
     <header class="top">
-      <button class="nav-toggle" id="navToggle" aria-label="Abrir menú" aria-expanded="false">
-        <span></span>
-        <span></span>
-        <span></span>
-      </button>
       <div class="logo">
         <img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
       </div>
-      <nav class="nav">
-        <a href="index.html">Inicio</a>
-        <a href="index.html#empresas">Empresas</a>
-        <a href="index.html#reservas">Reservas</a>
-      </nav>
       <div class="user-bar">
         <span id="userBar"></span>
         <button class="btn ghost" id="logoutBtn">Salir</button>
@@ -28,12 +18,21 @@
     </header>
 
     <main>
-      <section class="hero compact">
-        <div class="eyebrow">Panel interno</div>
+      <div class="panel-head">
+        <span class="eyebrow">Panel interno</span>
         <h1>Marketing</h1>
         <p>Edición web, anuncios, clientes y materiales.</p>
-      </section>
+      </div>
 
+      <div class="panel-tabs">
+        <button class="panel-tab active" data-tab="web">Edición web</button>
+        <button class="panel-tab" data-tab="conexiones">Conexiones</button>
+        <button class="panel-tab" data-tab="locals">Locales</button>
+        <button class="panel-tab" data-tab="campanas">Campañas WA</button>
+        <button class="panel-tab" data-tab="clients">Clientes</button>
+      </div>
+
+      <div class="panel-section" data-section="conexiones">
       <section class="block">
         <div class="section-head">
           <h2>WhatsApp</h2>
@@ -62,10 +61,9 @@
         </div>
         <div class="card form" id="placesForm">
           <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem">
-            Necesitas activar la <strong>Places API</strong> en Google Cloud Console y añadir <code>GOOGLE_PLACES_API_KEY</code> en los Secrets de Replit.
             Para encontrar el Place ID de cada local: busca el restaurante en
-            <a href="https://developers.google.com/maps/documentation/javascript/examples/places-placeid-finder" target="_blank" rel="noopener">este buscador oficial</a>
-            o desde Google Maps → comparte el link → el ID aparece tras <code>place_id:</code>.
+            <a href="https://developers.google.com/maps/documentation/javascript/examples/places-placeid-finder" target="_blank" rel="noopener">este buscador oficial</a>,
+            o ábrelo en Google Maps, comparte el enlace y copia el identificador.
           </p>
           <div id="placesFields">Cargando...</div>
           <div class="panel-actions" style="margin-top:1rem">
@@ -75,13 +73,7 @@
           </div>
         </div>
       </section>
-
-      <div class="panel-tabs">
-        <button class="btn" data-tab="web">Edición web</button>
-        <button class="btn ghost" data-tab="locals">Locales</button>
-        <button class="btn ghost" data-tab="campanas">Campañas WA</button>
-        <button class="btn ghost" data-tab="clients">Clientes</button>
-      </div>
+      </div><!-- /conexiones -->
 
       <section class="block panel-section wysiwyg-panel" data-section="web">
         <div class="wysiwyg-topbar">
@@ -196,7 +188,7 @@
               </tr>
             </thead>
             <tbody id="campHistorial">
-              <tr><td colspan="4" style="padding:12px;color:#888">Cargando...</td></tr>
+              <tr><td colspan="4" style="padding:12px;color:var(--muted)">Cargando...</td></tr>
             </tbody>
           </table>
         </div>
@@ -273,10 +265,10 @@
       </section>
     </main>
 
-    <footer class="footer">
-      <div class="footer-inner">
-        <span>Volver</span>
-        <a class="btn" href="index.html">Ir al sitio</a>
+    <footer class="panel-footer">
+      <div class="panel-footer-inner">
+        <span>Familia del Amor · Panel interno</span>
+        <a href="/">Ir al inicio →</a>
       </div>
     </footer>
     <script src="auth.js"></script>

@@ -18,7 +18,7 @@ function initTabs() {
   tabs.forEach(btn => {
     btn.addEventListener("click", () => {
       const name = btn.dataset.tab;
-      tabs.forEach(b => b.classList.toggle("ghost", b.dataset.tab !== name));
+      tabs.forEach(b => b.classList.toggle("active", b.dataset.tab === name));
       sections.forEach(s => s.classList.toggle("active", s.dataset.section === name));
     });
   });
