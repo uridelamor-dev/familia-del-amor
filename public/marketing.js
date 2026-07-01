@@ -69,15 +69,7 @@ async function initWhatsAppStatus(elId) {
 
 // ── GOOGLE PLACES CONFIG ─────────────────────────────────────────────────
 
-const PLACES_LOCALS = [
-  "La Tapeta - Blanes",
-  "Cooperativa - Blanes",
-  "La Tapeta - Lloret",
-  "La Tapeta - Girona",
-  "Can Mateu - Tordera",
-  "La Tapa Ibérica - Tordera",
-  "Botiga d'en Mateu - Tordera"
-];
+const PLACES_LOCALS = window.LOCALES;
 
 async function initPlacesConfig() {
   const fieldsEl = document.getElementById("placesFields");

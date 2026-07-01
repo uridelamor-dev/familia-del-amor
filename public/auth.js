@@ -103,14 +103,52 @@
     }, ms);
   }
 
+  // ── Locales (fuente única de verdad) ───────────────────────────────────
+  // Antes esta lista estaba copiada a mano en ~13 sitios con órdenes
+  // distintos. Ahora vive aquí y los <select> se rellenan solos.
+  const LOCALES = [
+    "La Tapeta - Blanes",
+    "Cooperativa - Blanes",
+    "La Tapeta - Lloret",
+    "La Tapeta - Girona",
+    "Can Mateu - Tordera",
+    "La Tapa Ibérica - Tordera",
+    "Botiga d'en Mateu - Tordera"
+  ];
+
+  // Rellena un <select data-locales>. Atributos opcionales:
+  //   data-placeholder="texto"  → primera opción con value=""
+  //   data-all="texto"          → última opción "todos"
+  //   data-all-value="Todos"    → value de esa opción (por defecto "Todos")
+  function fillLocalesSelect(sel) {
+    const prev = sel.value;
+    const placeholder = sel.getAttribute("data-placeholder");
+    const allLabel = sel.getAttribute("data-all");
+    const allValue = sel.getAttribute("data-all-value") || "Todos";
+    let html = "";
+    if (placeholder !== null) html += `<option value="">${escapeHtml(placeholder)}</option>`;
+    html += LOCALES.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join("");
+    if (allLabel !== null) html += `<option value="${escapeHtml(allValue)}">${escapeHtml(allLabel)}</option>`;
+    sel.innerHTML = html;
+    if (prev) sel.value = prev;
+  }
+
+  function fillAllLocalesSelects(root = document) {
+    root.querySelectorAll("select[data-locales]").forEach(fillLocalesSelect);
+  }
+
   window.authFetch = authFetch;
   window.requireRole = requireRole;
   window.logout = logout;
   window.escapeHtml = escapeHtml;
   window.toast = toast;
+  window.LOCALES = LOCALES;
+  window.fillLocalesSelect = fillLocalesSelect;
+  window.fillAllLocalesSelects = fillAllLocalesSelects;
 
   document.addEventListener("DOMContentLoaded", () => {
     const btn = document.getElementById("logoutBtn");
     if (btn) btn.addEventListener("click", logout);
+    fillAllLocalesSelects();
   });
 })();

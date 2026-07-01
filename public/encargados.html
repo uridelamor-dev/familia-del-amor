@@ -40,16 +40,7 @@
           <div class="cal-toolbar">
             <label>
               <span>Local</span>
-              <select id="calLocal">
-                <option value="">Todos los locales</option>
-                <option>La Tapeta - Blanes</option>
-                <option>La Tapeta - Lloret</option>
-                <option>La Tapeta - Girona</option>
-                <option>Cooperativa - Blanes</option>
-                <option>Can Mateu - Tordera</option>
-                <option>La Tapa Ibérica - Tordera</option>
-                <option>Botiga d'en Mateu - Tordera</option>
-              </select>
+              <select id="calLocal" data-locales data-placeholder="Todos los locales"></select>
             </label>
             <div class="cal-nav">
               <button class="btn ghost" id="calPrev">&#8592;</button>
@@ -72,16 +63,7 @@
         <div id="vistaLista" class="hidden">
           <div class="panel-filters form">
             <label><span>Local</span>
-              <select id="encLocal">
-                <option value="">Todos los locales</option>
-                <option>La Tapeta - Blanes</option>
-                <option>La Tapeta - Lloret</option>
-                <option>La Tapeta - Girona</option>
-                <option>Cooperativa - Blanes</option>
-                <option>Can Mateu - Tordera</option>
-                <option>La Tapa Ibérica - Tordera</option>
-                <option>Botiga d'en Mateu - Tordera</option>
-              </select>
+              <select id="encLocal" data-locales data-placeholder="Todos los locales"></select>
             </label>
             <div class="form-row">
               <label><span>Desde</span><input type="date" id="encFrom" /></label>
@@ -104,15 +86,7 @@
         <div id="waGroupsPanel" class="hidden">
           <div class="panel-filters form" style="margin-top:1rem">
             <label><span>Local</span>
-              <select id="waLocal">
-                <option>La Tapeta - Blanes</option>
-                <option>La Tapeta - Lloret</option>
-                <option>La Tapeta - Girona</option>
-                <option>Cooperativa - Blanes</option>
-                <option>Can Mateu - Tordera</option>
-                <option>La Tapa Ibérica - Tordera</option>
-                <option>Botiga d'en Mateu - Tordera</option>
-              </select>
+              <select id="waLocal" data-locales></select>
             </label>
             <label><span>Grupo de WhatsApp</span>
               <select id="waGroup"><option value="">Cargando grupos...</option></select>
@@ -131,16 +105,7 @@
         </div>
         <form id="annForm" class="form">
           <label><span>Local</span>
-            <select name="local">
-              <option>La Tapeta - Blanes</option>
-              <option>La Tapeta - Lloret</option>
-              <option>La Tapeta - Girona</option>
-              <option>Cooperativa - Blanes</option>
-              <option>Can Mateu - Tordera</option>
-              <option>La Tapa Ibérica - Tordera</option>
-              <option>Botiga d'en Mateu - Tordera</option>
-              <option value="Todos">Todos los locales</option>
-            </select>
+            <select name="local" data-locales data-all="Todos los locales" data-all-value="Todos"></select>
           </label>
           <label><span>Mensaje</span><textarea name="mensaje" rows="3" required></textarea></label>
           <button class="btn" type="submit">Publicar comunicado</button>

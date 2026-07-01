@@ -522,10 +522,7 @@ window.eliminarGrupoFactura = async function(id) {
   }
 };
 
-const LOCALES_OPTS = [
-  "La Tapeta - Blanes","Cooperativa - Blanes","La Tapeta - Lloret",
-  "La Tapeta - Girona","Can Mateu - Tordera","La Tapa Ibérica - Tordera","Botiga d'en Mateu - Tordera"
-];
+const LOCALES_OPTS = window.LOCALES;
 
 async function loadPendientes() {
   const el = document.getElementById("listaPendientes");

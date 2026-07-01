@@ -144,11 +144,7 @@ function renderWorkerList() {
 
 // ── AÑADIR / BORRAR TRABAJADORES ─────────────────────────────────────────
 
-const LOCALES_LIST = [
-  "La Tapeta - Blanes", "La Tapeta - Lloret", "La Tapeta - Girona",
-  "Cooperativa - Blanes", "Can Mateu - Tordera",
-  "La Tapa Ibérica - Tordera", "Botiga d'en Mateu - Tordera"
-];
+const LOCALES_LIST = window.LOCALES;
 
 function openNewWorkerModal() {
   let modal = document.getElementById("segWorkerModal");

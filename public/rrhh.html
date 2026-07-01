@@ -65,17 +65,7 @@
         <form id="jobForm" class="form">
           <label><span>Título</span><input name="titulo" required /></label>
           <label><span>Local</span>
-            <select name="local" required>
-              <option value="">Selecciona local</option>
-              <option>La Tapeta - Blanes</option>
-              <option>La Tapeta - Lloret</option>
-              <option>La Tapeta - Girona</option>
-              <option>Cooperativa - Blanes</option>
-              <option>Can Mateu - Tordera</option>
-              <option>La Tapa Ibérica - Tordera</option>
-              <option>Botiga d'en Mateu - Tordera</option>
-              <option value="Todos">Todos los locales</option>
-            </select>
+            <select name="local" required data-locales data-placeholder="Selecciona local" data-all="Todos los locales" data-all-value="Todos"></select>
           </label>
           <label><span>Tipo</span>
             <select name="tipo" required>
