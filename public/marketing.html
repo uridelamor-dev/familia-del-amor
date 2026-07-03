@@ -26,11 +26,31 @@
 
       <div class="panel-tabs">
         <button class="panel-tab active" data-tab="web">Edición web</button>
+        <button class="panel-tab" data-tab="sara">Sara (chatbot)</button>
         <button class="panel-tab" data-tab="conexiones">Conexiones</button>
         <button class="panel-tab" data-tab="locals">Locales</button>
         <button class="panel-tab" data-tab="campanas">Campañas WA</button>
         <button class="panel-tab" data-tab="clients">Clientes</button>
       </div>
+
+      <section class="block panel-section" data-section="sara">
+        <div class="section-head">
+          <h2>Instruir a Sara</h2>
+          <p>Dile en lenguaje natural cómo debe comportarse. Sara te propondrá el cambio y tú lo confirmas. Ejemplos: "la semana del 10 al 16 no aceptamos reservas en La Tapeta Blanes", "si preguntan por la carta de Blanes, mándales el PDF", "si preguntan por parking, di que hay zona azul".</p>
+        </div>
+        <div id="saraChat" class="sara-chat"></div>
+        <div id="saraProposal" class="sara-proposal hidden"></div>
+        <form id="saraForm" class="sara-inputbar">
+          <input type="text" id="saraInput" placeholder="Escríbele a Sara qué quieres cambiar…" autocomplete="off" />
+          <button class="btn" type="submit" id="saraSend">Enviar</button>
+        </form>
+
+        <div class="section-head" style="margin-top:2rem">
+          <h2>Configuración activa</h2>
+          <p>Lo que Sara tiene en cuenta ahora mismo.</p>
+        </div>
+        <div id="saraEstado">Cargando…</div>
+      </section>
 
       <div class="panel-section" data-section="conexiones">
       <section class="block">

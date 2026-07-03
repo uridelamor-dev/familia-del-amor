@@ -8,7 +8,8 @@ import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync } from "child_process";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver } from "./whatsapp.js";
+import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
 
 dotenv.config();
@@ -274,6 +275,32 @@ db.serialize(() => {
       telefono TEXT NOT NULL,
       nombre_reserva TEXT NOT NULL,
       creado_en TEXT NOT NULL
+    )
+  `);
+
+  // Configurador de Sara: bloqueos de reservas por local/fechas (local = nombre exacto o 'Todos')
+  db.run(`
+    CREATE TABLE IF NOT EXISTS bloqueos_reservas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      local TEXT NOT NULL,
+      desde TEXT NOT NULL,
+      hasta TEXT NOT NULL,
+      motivo TEXT,
+      creado_en TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Configurador de Sara: reglas de respuesta con documento (carta/menú PDF, etc.)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS sara_respuestas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tema TEXT NOT NULL,
+      disparadores TEXT,
+      respuesta TEXT,
+      documento_url TEXT,
+      local TEXT,
+      activo INTEGER DEFAULT 1,
+      creado_en TEXT DEFAULT (datetime('now'))
     )
   `);
 
@@ -635,6 +662,19 @@ async function setConfig(key, value) {
     `INSERT INTO config (key, value, updated_at) VALUES (?, ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
     [key, String(value)]
+  );
+}
+
+// Devuelve el bloqueo de reservas que aplica a (local, dia) o null.
+// dia en formato YYYY-MM-DD. Coincide por local exacto o por 'Todos'.
+async function estaBloqueado(local, dia) {
+  if (!local || !dia) return null;
+  return await dbGet(
+    `SELECT * FROM bloqueos_reservas
+     WHERE (local = ? OR local = 'Todos')
+       AND date(?) BETWEEN date(desde) AND date(hasta)
+     ORDER BY id LIMIT 1`,
+    [local, dia]
   );
 }
 
@@ -1586,7 +1626,7 @@ app.post("/api/upload", requireAuth(["marketing", "rrhh", "direccion"]), upload.
 });
 
 // Reservas
-app.post("/api/reservas", (req, res) => {
+app.post("/api/reservas", async (req, res) => {
   const { local, personas, dia, hora, telefono, nombre_reserva } = req.body;
   if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
@@ -1606,6 +1646,13 @@ app.post("/api/reservas", (req, res) => {
       return res.status(400).json({ ok: false, error: "Hora inválida" });
     }
   }
+  // Bloqueo de reservas configurado por marketing (mismo helper que usa Sara)
+  try {
+    const bloqueo = await estaBloqueado(local, dia);
+    if (bloqueo) {
+      return res.status(400).json({ ok: false, error: `En esas fechas no se aceptan reservas en ${local}${bloqueo.motivo ? ` (${bloqueo.motivo})` : ""}.` });
+    }
+  } catch (e) { console.error("Error comprobando bloqueo de reservas:", e.message); }
   const creado_en = new Date().toISOString();
   db.run(
     `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -2190,6 +2237,197 @@ app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), (req, res) => {
   );
 });
 
+// ── Configurador conversacional de Sara ─────────────────────────────────────
+const SARA_LOCALES = [
+  "La Tapeta - Blanes", "Cooperativa - Blanes", "La Tapeta - Lloret",
+  "La Tapeta - Girona", "Can Mateu - Tordera", "La Tapa Ibérica - Tordera",
+  "Botiga d'en Mateu - Tordera"
+];
+
+async function getSaraEstado() {
+  const hoy = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
+  const instrucciones = (await getConfig("sara_instrucciones")) || "";
+  const bloqueos = await dbAll(`SELECT * FROM bloqueos_reservas WHERE date(hasta) >= date(?) ORDER BY desde`, [hoy]);
+  const reglas = await dbAll(`SELECT * FROM sara_respuestas WHERE activo = 1 ORDER BY id DESC`, []);
+  return { instrucciones, bloqueos, reglas };
+}
+
+// Cartas/menús PDF ya subidos (tabla contents, claves local_<slug>_menu*_pdf)
+async function getDocsDisponibles() {
+  const rows = await dbAll(
+    `SELECT key, value FROM contents WHERE key LIKE 'local_%menu%pdf' AND value IS NOT NULL AND value != ''`, []
+  );
+  return rows.map(r => ({ key: r.key, url: r.value }));
+}
+
+const SARA_PROPOSAL_TOOLS = [
+  {
+    name: "proponer_instrucciones",
+    description: "Propone fijar/actualizar el texto de instrucciones generales de comportamiento de Sara (reemplaza el texto anterior).",
+    input_schema: { type: "object", properties: { texto: { type: "string" } }, required: ["texto"] }
+  },
+  {
+    name: "proponer_bloqueo",
+    description: "Propone bloquear reservas en un local (o 'Todos') entre dos fechas (YYYY-MM-DD).",
+    input_schema: {
+      type: "object",
+      properties: {
+        local: { type: "string" },
+        desde: { type: "string", description: "YYYY-MM-DD" },
+        hasta: { type: "string", description: "YYYY-MM-DD" },
+        motivo: { type: "string" }
+      },
+      required: ["local", "desde", "hasta"]
+    }
+  },
+  {
+    name: "proponer_regla_documento",
+    description: "Propone que Sara envíe un documento/carta PDF cuando se cumpla un disparador. documento_url debe ser una URL de las cartas ya subidas.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tema: { type: "string", description: "Nombre corto de la regla" },
+        disparadores: { type: "string", description: "Cuándo enviarlo (ej. 'preguntan por la carta de Blanes')" },
+        documento_url: { type: "string" },
+        respuesta: { type: "string", description: "Texto opcional que Sara diga además de enviar el PDF" },
+        local: { type: "string" }
+      },
+      required: ["tema", "disparadores", "documento_url"]
+    }
+  },
+  {
+    name: "proponer_respuesta_texto",
+    description: "Propone una respuesta de texto configurada (sin documento) para un tema/disparador.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tema: { type: "string" },
+        disparadores: { type: "string" },
+        respuesta: { type: "string" }
+      },
+      required: ["tema", "disparadores", "respuesta"]
+    }
+  },
+  {
+    name: "proponer_eliminar",
+    description: "Propone eliminar un bloqueo o una regla por su id.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tipo: { type: "string", enum: ["bloqueo", "regla"] },
+        id: { type: "integer" }
+      },
+      required: ["tipo", "id"]
+    }
+  }
+];
+
+app.get("/api/sara/estado", requireAuth(["marketing", "direccion"]), async (req, res) => {
+  try {
+    res.json({ ok: true, ...(await getSaraEstado()) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.post("/api/sara/chat", requireAuth(["marketing", "direccion"]), async (req, res) => {
+  try {
+    const mensajes = Array.isArray(req.body?.mensajes) ? req.body.mensajes.slice(-20) : [];
+    if (!mensajes.length) return res.status(400).json({ ok: false, error: "Sin mensajes" });
+    if (!process.env.ANTHROPIC_API_KEY) return res.status(500).json({ ok: false, error: "IA no configurada" });
+
+    const hoy = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
+    const estado = await getSaraEstado();
+    const docs = await getDocsDisponibles();
+    const resumenEstado =
+      `INSTRUCCIONES ACTUALES: ${estado.instrucciones || "(ninguna)"}\n` +
+      `BLOQUEOS ACTIVOS: ${estado.bloqueos.map(b => `#${b.id} ${b.local} ${b.desde}→${b.hasta}${b.motivo ? " ("+b.motivo+")" : ""}`).join("; ") || "(ninguno)"}\n` +
+      `REGLAS: ${estado.reglas.map(r => `#${r.id} ${r.tema}${r.documento_url ? " [PDF]" : ""}`).join("; ") || "(ninguna)"}\n` +
+      `CARTAS/MENÚS PDF YA SUBIDOS (usa estas URLs para reglas de documento): ${docs.map(d => `${d.key} → ${d.url}`).join("; ") || "(ninguna subida aún)"}`;
+
+    const system = `Eres el asistente de configuración de "Sara", el chatbot de WhatsApp del grupo de restaurantes Familia del Amor. Ayudas al equipo de marketing a cambiar el comportamiento de Sara SIN tocar código.
+
+Hoy es ${hoy} (zona Europe/Madrid). Locales válidos (nombres EXACTOS): ${SARA_LOCALES.join(" | ")}. Para bloquear todos, usa "Todos".
+
+${resumenEstado}
+
+REGLAS:
+- Cuando el usuario pida un cambio, resume en una frase clara qué vas a hacer Y llama a la herramienta de propuesta correspondiente con datos concretos. NO apliques nada tú: solo propones; el sistema pedirá confirmación al usuario.
+- Resuelve fechas relativas ("la semana que viene", "del 10 al 16") a fechas concretas YYYY-MM-DD usando la fecha de hoy.
+- Si falta información imprescindible (local, fechas, qué documento), pregúntala antes de proponer. No inventes.
+- Para reglas de documento usa SOLO una URL de las cartas ya subidas. Si no hay una adecuada, dile que primero suba el PDF en la pestaña "Locales".
+- Habla en español, cercano y breve.`;
+
+    const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const response = await ai.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 800,
+      system,
+      tools: SARA_PROPOSAL_TOOLS,
+      messages: mensajes.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }))
+    });
+
+    let reply = "";
+    let proposal = null;
+    for (const block of response.content) {
+      if (block.type === "text") reply += block.text;
+      if (block.type === "tool_use" && !proposal) proposal = { tipo: block.name, datos: block.input };
+    }
+    if (!reply.trim()) reply = proposal ? "Te propongo este cambio, ¿lo confirmo?" : "¿En qué quieres que ayude con Sara?";
+    res.json({ ok: true, reply: reply.trim(), proposal });
+  } catch (e) {
+    console.error("Error en /api/sara/chat:", e.message);
+    res.status(500).json({ ok: false, error: "Error del asistente" });
+  }
+});
+
+app.post("/api/sara/aplicar", requireAuth(["marketing", "direccion"]), async (req, res) => {
+  try {
+    const { tipo, datos } = req.body?.proposal || {};
+    if (!tipo || !datos) return res.status(400).json({ ok: false, error: "Propuesta inválida" });
+    const fechaOk = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+    if (tipo === "proponer_instrucciones") {
+      await setConfig("sara_instrucciones", String(datos.texto || "").slice(0, 4000));
+    } else if (tipo === "proponer_bloqueo") {
+      const local = datos.local === "Todos" ? "Todos" : datos.local;
+      if (local !== "Todos" && !SARA_LOCALES.includes(local)) return res.status(400).json({ ok: false, error: "Local no válido" });
+      if (!fechaOk(datos.desde) || !fechaOk(datos.hasta)) return res.status(400).json({ ok: false, error: "Fechas no válidas" });
+      const [desde, hasta] = datos.desde <= datos.hasta ? [datos.desde, datos.hasta] : [datos.hasta, datos.desde];
+      await dbRun(`INSERT INTO bloqueos_reservas (local, desde, hasta, motivo) VALUES (?, ?, ?, ?)`,
+        [local, desde, hasta, (datos.motivo || "").slice(0, 200) || null]);
+    } else if (tipo === "proponer_regla_documento") {
+      if (!datos.tema || !datos.documento_url) return res.status(400).json({ ok: false, error: "Faltan datos de la regla" });
+      await dbRun(`INSERT INTO sara_respuestas (tema, disparadores, respuesta, documento_url, local, activo) VALUES (?, ?, ?, ?, ?, 1)`,
+        [String(datos.tema).slice(0, 120), (datos.disparadores || "").slice(0, 400) || null, (datos.respuesta || "").slice(0, 1000) || null, String(datos.documento_url).slice(0, 500), datos.local || null]);
+    } else if (tipo === "proponer_respuesta_texto") {
+      if (!datos.tema || !datos.respuesta) return res.status(400).json({ ok: false, error: "Faltan datos de la respuesta" });
+      await dbRun(`INSERT INTO sara_respuestas (tema, disparadores, respuesta, activo) VALUES (?, ?, ?, 1)`,
+        [String(datos.tema).slice(0, 120), (datos.disparadores || "").slice(0, 400) || null, String(datos.respuesta).slice(0, 1000)]);
+    } else if (tipo === "proponer_eliminar") {
+      const id = parseInt(datos.id);
+      if (!id) return res.status(400).json({ ok: false, error: "id no válido" });
+      if (datos.tipo === "bloqueo") await dbRun(`DELETE FROM bloqueos_reservas WHERE id = ?`, [id]);
+      else if (datos.tipo === "regla") await dbRun(`DELETE FROM sara_respuestas WHERE id = ?`, [id]);
+      else return res.status(400).json({ ok: false, error: "Tipo a eliminar no válido" });
+    } else {
+      return res.status(400).json({ ok: false, error: "Tipo de propuesta desconocido" });
+    }
+    res.json({ ok: true, ...(await getSaraEstado()) });
+  } catch (e) {
+    console.error("Error en /api/sara/aplicar:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete("/api/sara/bloqueo/:id", requireAuth(["marketing", "direccion"]), async (req, res) => {
+  try { await dbRun(`DELETE FROM bloqueos_reservas WHERE id = ?`, [parseInt(req.params.id)]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.delete("/api/sara/regla/:id", requireAuth(["marketing", "direccion"]), async (req, res) => {
+  try { await dbRun(`DELETE FROM sara_respuestas WHERE id = ?`, [parseInt(req.params.id)]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.get("/", (req, res) => res.redirect("/login.html"));
 
 const shutdown = (signal) => {
@@ -2242,9 +2480,17 @@ const server = app.listen(PORT, async () => {
   // Backup periódico cada 5 minutos
   setInterval(() => backupToReplitDB(), 5 * 60 * 1000);
 
-  setOnReserva((reserva, jid) => {
+  setOnReserva(async (reserva, jid) => {
     const { local, personas, dia, hora, telefono, nombre_reserva, pendiente } = reserva;
     if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) return;
+    // Bloqueo configurado por marketing: rechazar y que Sara se lo explique al cliente
+    try {
+      const bloqueo = await estaBloqueado(local, dia);
+      if (bloqueo) {
+        console.log(`[Reserva WA] Bloqueada por config: ${local} ${dia}`);
+        return { ok: false, motivo: bloqueo.motivo || "fechas no disponibles" };
+      }
+    } catch (e) { console.error("Error comprobando bloqueo (WA):", e.message); }
     const creado_en = new Date().toISOString();
     db.run(
       `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -2385,6 +2631,68 @@ const server = app.listen(PORT, async () => {
   setPerfilLoader(async (jid) => {
     const row = await dbGet(`SELECT nombre, telefono, notas, ultima_interaccion FROM wa_clientes WHERE jid = ?`, [jid]);
     return row || null;
+  });
+
+  // Config editable de Sara → bloque de texto que se inyecta en su prompt
+  setSaraConfigLoader(async () => {
+    try {
+      const partes = [];
+      const instr = await getConfig("sara_instrucciones");
+      if (instr && instr.trim()) {
+        partes.push(`INSTRUCCIONES DEL EQUIPO (síguelas siempre que apliquen):\n${instr.trim()}`);
+      }
+      const hoy = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
+      const bloqueos = await dbAll(
+        `SELECT local, desde, hasta, motivo FROM bloqueos_reservas WHERE date(hasta) >= date(?) ORDER BY desde`, [hoy]
+      );
+      if (bloqueos.length) {
+        const lineas = bloqueos.map(b => `- ${b.local}: del ${b.desde} al ${b.hasta}${b.motivo ? ` (${b.motivo})` : ""}`).join("\n");
+        partes.push(`RESERVAS NO DISPONIBLES en estas fechas. NO registres reservas que caigan en estos rangos; si el cliente lo pide, explícale con amabilidad que esas fechas no están disponibles y ofrécele otra fecha:\n${lineas}`);
+      }
+      const docs = await dbAll(
+        `SELECT id, tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND documento_url IS NOT NULL AND documento_url != '' ORDER BY id`, []
+      );
+      if (docs.length) {
+        const lineas = docs.map(d => `- id ${d.id}: ${d.tema}${d.disparadores ? ` — cuándo enviarlo: ${d.disparadores}` : ""}${d.respuesta ? ` — di también: ${d.respuesta}` : ""}`).join("\n");
+        partes.push(`DOCUMENTOS DISPONIBLES para enviar con la herramienta enviar_documento (usa el id exacto):\n${lineas}`);
+      }
+      const respTexto = await dbAll(
+        `SELECT tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND (documento_url IS NULL OR documento_url = '') AND respuesta IS NOT NULL AND respuesta != '' ORDER BY id`, []
+      );
+      if (respTexto.length) {
+        const lineas = respTexto.map(d => `- ${d.tema}${d.disparadores ? ` (cuándo: ${d.disparadores})` : ""}: ${d.respuesta}`).join("\n");
+        partes.push(`RESPUESTAS CONFIGURADAS:\n${lineas}`);
+      }
+      return partes.length ? `--- CONFIGURACIÓN DEL EQUIPO ---\n${partes.join("\n\n")}` : "";
+    } catch (e) {
+      console.error("Error construyendo config de Sara:", e.message);
+      return "";
+    }
+  });
+
+  // Resuelve un documento (id de sara_respuestas) a un buffer para enviarlo por WhatsApp
+  setDocumentoResolver(async (documentoId) => {
+    try {
+      const row = await dbGet(`SELECT documento_url FROM sara_respuestas WHERE id = ? AND activo = 1`, [documentoId]);
+      if (!row || !row.documento_url) return null;
+      const url = row.documento_url;
+      let buffer;
+      if (/^https?:\/\//i.test(url)) {
+        const r = await fetch(url);
+        if (!r.ok) return null;
+        buffer = Buffer.from(await r.arrayBuffer());
+      } else {
+        const filePath = path.join(__dirname, "public", url.replace(/^\//, ""));
+        if (!fs.existsSync(filePath)) return null;
+        buffer = fs.readFileSync(filePath);
+      }
+      const filename = (url.split("/").pop() || "documento.pdf").split("?")[0];
+      const mimetype = filename.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream";
+      return { buffer, filename, mimetype };
+    } catch (e) {
+      console.error("Error resolviendo documento:", e.message);
+      return null;
+    }
   });
 
   setOnMensajeSaliente(({ jid, mensaje, esManual = false }) => {

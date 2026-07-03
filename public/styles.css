@@ -3136,3 +3136,37 @@ h1, h2, h3 {
 /* ── Tablas con scroll horizontal en móvil ────────────────────────────── */
 .panel .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .panel .table-wrap table { min-width: 560px; }
+
+/* ── Chat de configuración de Sara ────────────────────────────────────── */
+.sara-chat {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 1rem;
+  min-height: 220px;
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.sara-msg { max-width: 82%; padding: 0.55rem 0.8rem; border-radius: 12px; font-size: 0.9rem; line-height: 1.45; white-space: pre-wrap; }
+.sara-msg.user { align-self: flex-end; background: var(--panel-fill); color: #fff; border-bottom-right-radius: 3px; }
+.sara-msg.bot { align-self: flex-start; background: var(--card); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+.sara-msg.system { align-self: center; background: transparent; color: var(--muted); font-size: 0.82rem; font-style: italic; }
+.sara-proposal {
+  margin-top: 0.75rem;
+  border: 1px solid var(--panel-fill);
+  border-radius: 12px;
+  background: rgba(44,74,62,0.06);
+  padding: 0.9rem 1rem;
+}
+.sara-proposal .sara-proposal-actions { display: flex; gap: 0.6rem; margin-top: 0.75rem; }
+.sara-inputbar { display: flex; gap: 0.6rem; margin-top: 0.75rem; }
+.sara-inputbar input { flex: 1; padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 999px; font-family: inherit; font-size: 0.9rem; }
+.sara-rule-item {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
+  padding: 0.7rem 0.9rem; border: 1px solid var(--border); border-radius: 10px; background: var(--card); margin-bottom: 0.6rem;
+}
+.sara-rule-item .sara-rule-body { font-size: 0.88rem; }
+.sara-rule-item .sara-rule-tag { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--panel-fill); font-weight: 700; }

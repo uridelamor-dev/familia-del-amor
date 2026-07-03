@@ -660,6 +660,7 @@ tabs.forEach((btn) => {
     const tab = btn.getAttribute("data-tab");
     activateTab(tab);
     if (tab === "campanas") initCampanas();
+    if (tab === "sara") initSara();
   });
 });
 activateTab("web");
@@ -762,3 +763,176 @@ window.addEventListener("message", (event) => {
   if (msg.type === "canvas-select") renderPropsPanel(msg);
   if (msg.type === "canvas-deselect") clearPropsPanel();
 });
+
+// ── CONFIGURADOR DE SARA (chat) ───────────────────────────────────────────
+let saraInit = false;
+let saraMensajes = [];
+
+function initSara() {
+  loadSaraEstado();
+  if (saraInit) return;
+  saraInit = true;
+
+  const chat = document.getElementById("saraChat");
+  saraAddMsg("bot", "¡Hola! Dime qué quieres que cambie en Sara y te lo propongo antes de aplicarlo.");
+
+  const form = document.getElementById("saraForm");
+  form?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("saraInput");
+    const texto = input.value.trim();
+    if (!texto) return;
+    input.value = "";
+    saraAddMsg("user", texto);
+    saraMensajes.push({ role: "user", content: texto });
+    clearSaraProposal();
+    const btn = document.getElementById("saraSend");
+    btn.disabled = true;
+    const pensando = saraAddMsg("system", "Sara está pensando…");
+    try {
+      const res = await authFetch("/api/sara/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mensajes: saraMensajes })
+      });
+      const data = await res.json();
+      pensando.remove();
+      if (!data.ok) throw new Error(data.error || "Error");
+      saraAddMsg("bot", data.reply);
+      saraMensajes.push({ role: "assistant", content: data.reply });
+      if (data.proposal) renderSaraProposal(data.proposal);
+    } catch (err) {
+      pensando.remove();
+      saraAddMsg("bot", "Ha habido un problema al hablar con el asistente. Inténtalo de nuevo.");
+      toast("Error del asistente de Sara", "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function saraAddMsg(tipo, texto) {
+  const chat = document.getElementById("saraChat");
+  const el = document.createElement("div");
+  el.className = `sara-msg ${tipo}`;
+  el.textContent = texto;
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+  return el;
+}
+
+function clearSaraProposal() {
+  const box = document.getElementById("saraProposal");
+  box.classList.add("hidden");
+  box.innerHTML = "";
+}
+
+function resumenPropuesta(p) {
+  const d = p.datos || {};
+  switch (p.tipo) {
+    case "proponer_instrucciones": return `Fijar instrucciones generales:\n"${d.texto}"`;
+    case "proponer_bloqueo": return `Bloquear reservas en ${escapeHtml(d.local)} del ${d.desde} al ${d.hasta}${d.motivo ? ` (${escapeHtml(d.motivo)})` : ""}.`;
+    case "proponer_regla_documento": return `Cuando ${escapeHtml(d.disparadores || d.tema)}, Sara enviará el PDF${d.respuesta ? ` y dirá: "${escapeHtml(d.respuesta)}"` : ""}.`;
+    case "proponer_respuesta_texto": return `Cuando ${escapeHtml(d.disparadores || d.tema)}, Sara responderá: "${escapeHtml(d.respuesta)}".`;
+    case "proponer_eliminar": return `Eliminar ${d.tipo} #${d.id}.`;
+    default: return "Cambio propuesto.";
+  }
+}
+
+function renderSaraProposal(p) {
+  const box = document.getElementById("saraProposal");
+  box.innerHTML = `
+    <div><strong>Propuesta:</strong><br>${escapeHtml(resumenPropuesta(p)).replace(/\n/g, "<br>")}</div>
+    <div class="sara-proposal-actions">
+      <button class="btn" id="saraConfirm">Sí, aplicar</button>
+      <button class="btn ghost" id="saraCancel">No</button>
+    </div>`;
+  box.classList.remove("hidden");
+  document.getElementById("saraCancel").addEventListener("click", () => {
+    clearSaraProposal();
+    saraAddMsg("system", "Cambio descartado.");
+  });
+  document.getElementById("saraConfirm").addEventListener("click", async () => {
+    const btn = document.getElementById("saraConfirm");
+    btn.disabled = true; btn.textContent = "Aplicando…";
+    try {
+      const res = await authFetch("/api/sara/aplicar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposal: p })
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Error");
+      clearSaraProposal();
+      saraAddMsg("system", "✅ Cambio aplicado.");
+      saraMensajes.push({ role: "assistant", content: "(cambio aplicado)" });
+      renderSaraEstado(data);
+      toast("Cambio aplicado", "success");
+    } catch (err) {
+      btn.disabled = false; btn.textContent = "Sí, aplicar";
+      toast("No se pudo aplicar el cambio", "error");
+    }
+  });
+}
+
+async function loadSaraEstado() {
+  const el = document.getElementById("saraEstado");
+  if (!el) return;
+  el.textContent = "Cargando…";
+  try {
+    const res = await authFetch("/api/sara/estado");
+    const data = await res.json();
+    if (!data.ok) throw new Error();
+    renderSaraEstado(data);
+  } catch (err) {
+    el.textContent = "No se pudo cargar la configuración.";
+  }
+}
+
+function renderSaraEstado(data) {
+  const el = document.getElementById("saraEstado");
+  if (!el) return;
+  const bloques = [];
+
+  bloques.push(`<div class="sara-rule-item">
+    <div class="sara-rule-body"><span class="sara-rule-tag">Instrucciones generales</span><br>${data.instrucciones ? escapeHtml(data.instrucciones).replace(/\n/g, "<br>") : '<span style="color:var(--muted)">Ninguna</span>'}</div>
+  </div>`);
+
+  if (data.bloqueos && data.bloqueos.length) {
+    bloques.push(data.bloqueos.map(b => `<div class="sara-rule-item">
+      <div class="sara-rule-body"><span class="sara-rule-tag">Reservas cerradas</span><br>${escapeHtml(b.local)} · del ${b.desde} al ${b.hasta}${b.motivo ? ` — ${escapeHtml(b.motivo)}` : ""}</div>
+      <button class="btn ghost" style="padding:0.2rem 0.5rem" onclick="borrarSaraBloqueo(${b.id})">Eliminar</button>
+    </div>`).join(""));
+  }
+
+  if (data.reglas && data.reglas.length) {
+    bloques.push(data.reglas.map(r => `<div class="sara-rule-item">
+      <div class="sara-rule-body"><span class="sara-rule-tag">${r.documento_url ? "Envío de documento" : "Respuesta"}</span><br>${escapeHtml(r.tema)}${r.disparadores ? ` · ${escapeHtml(r.disparadores)}` : ""}${r.respuesta ? `<br><span style="color:var(--muted)">"${escapeHtml(r.respuesta)}"</span>` : ""}</div>
+      <button class="btn ghost" style="padding:0.2rem 0.5rem" onclick="borrarSaraRegla(${r.id})">Eliminar</button>
+    </div>`).join(""));
+  }
+
+  el.innerHTML = bloques.join("");
+}
+
+window.borrarSaraBloqueo = async function(id) {
+  if (!confirm("¿Eliminar este bloqueo de reservas?")) return;
+  try {
+    const res = await authFetch(`/api/sara/bloqueo/${id}`, { method: "DELETE" });
+    const d = await res.json();
+    if (!d.ok) throw new Error();
+    toast("Bloqueo eliminado", "success");
+    loadSaraEstado();
+  } catch (err) { toast("No se pudo eliminar", "error"); }
+};
+
+window.borrarSaraRegla = async function(id) {
+  if (!confirm("¿Eliminar esta regla?")) return;
+  try {
+    const res = await authFetch(`/api/sara/regla/${id}`, { method: "DELETE" });
+    const d = await res.json();
+    if (!d.ok) throw new Error();
+    toast("Regla eliminada", "success");
+    loadSaraEstado();
+  } catch (err) { toast("No se pudo eliminar", "error"); }
+};

@@ -180,6 +180,19 @@ const TOOLS = [
       required: ["campo", "valor"],
       additionalProperties: false
     }
+  },
+  {
+    name: "enviar_documento",
+    description: "Envía al cliente un documento (carta/menú en PDF u otro) por WhatsApp. Úsala SOLO cuando en la sección 'DOCUMENTOS DISPONIBLES' del contexto haya un documento que encaje con lo que pide el cliente. Pasa el 'id' exacto indicado ahí. Si no hay un documento adecuado, no la uses.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        documento_id: { type: "integer", description: "El id del documento a enviar, tal cual aparece en 'DOCUMENTOS DISPONIBLES'" }
+      },
+      required: ["documento_id"],
+      additionalProperties: false
+    }
   }
 ];
 
@@ -267,6 +280,15 @@ export function setOnActualizarPerfil(fn) { onActualizarPerfil = fn; }
 
 let onGroupAttachment = null;
 export function setOnGroupAttachment(fn) { onGroupAttachment = fn; }
+
+// Configuración editable de Sara (instrucciones de marketing, bloqueos, documentos).
+// Devuelve un bloque de texto que se inyecta en el system prompt en cada conversación.
+let saraConfigLoader = null;
+export function setSaraConfigLoader(fn) { saraConfigLoader = fn; }
+
+// Resuelve un documento configurado por su id → { buffer, filename, mimetype } (o null).
+let documentoResolver = null;
+export function setDocumentoResolver(fn) { documentoResolver = fn; }
 
 export async function sendMensajeAGrupo(groupJid, texto) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
@@ -376,6 +398,17 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
   const ai = getAnthropic();
   if (!ai) return "Lo siento, el asistente no está disponible en este momento.";
 
+  // Configuración editable por marketing (instrucciones + bloqueos + documentos).
+  // Se inyecta como segundo bloque de system, sin cache_control, para no invalidar
+  // el caché del prompt fijo cuando marketing cambie algo.
+  let saraConfigTexto = "";
+  if (saraConfigLoader) {
+    try { saraConfigTexto = (await saraConfigLoader()) || ""; }
+    catch (e) { console.error("Error cargando config de Sara:", e.message); }
+  }
+  const systemBlocks = [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }];
+  if (saraConfigTexto.trim()) systemBlocks.push({ type: "text", text: saraConfigTexto });
+
   try {
     // Perfil del cliente al inicio del contexto (no se persiste en historial duradero)
     const perfilCtx = buildPerfilContext(perfil);
@@ -389,9 +422,8 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
       const response = await ai.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
-        // El caché se activará cuando el prompt supere el mínimo cacheable de
-        // Haiku 4.5 (4096 tokens), p. ej. al añadir la carta al prompt
-        system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+        // Bloque 1 = prompt fijo (cacheable). Bloque 2 (opcional) = config de marketing.
+        system: systemBlocks,
         tools: TOOLS,
         messages: mensajesLoop
       });
@@ -441,13 +473,35 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
   try {
     if (name === "registrar_reserva") {
       if (!onReserva) throw new Error("sistema de reservas no disponible");
-      await onReserva(input, jid);
+      const resultado = await onReserva(input, jid);
+      // Si el local está bloqueado esas fechas, onReserva devuelve { ok:false, motivo }.
+      // No es un error técnico: Sara debe explicárselo al cliente con amabilidad.
+      if (resultado && resultado.ok === false) {
+        return {
+          content: `No se ha registrado la reserva porque en esas fechas no se aceptan reservas en ${input.local}${resultado.motivo ? ` (${resultado.motivo})` : ""}. Explícaselo al cliente con amabilidad y, si quieres, ofrécele otra fecha.`,
+          is_error: false
+        };
+      }
       return {
         content: input.pendiente
           ? "Reserva registrada como PENDIENTE. Un encargado contactará al cliente para confirmarla."
           : "Reserva registrada correctamente.",
         is_error: false
       };
+    }
+    if (name === "enviar_documento") {
+      if (!documentoResolver) throw new Error("envío de documentos no disponible");
+      if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
+      const doc = await documentoResolver(input.documento_id);
+      if (!doc || !doc.buffer) {
+        return { content: "No se encontró ese documento. No inventes que lo has enviado; ofrece ayudar de otro modo.", is_error: false };
+      }
+      await sock.sendMessage(jid, {
+        document: doc.buffer,
+        mimetype: doc.mimetype || "application/pdf",
+        fileName: doc.filename || "documento.pdf"
+      });
+      return { content: "Documento enviado al cliente correctamente.", is_error: false };
     }
     if (name === "notificar_nerea") {
       await notificarNerea(input.resumen, adjuntoUrl);
