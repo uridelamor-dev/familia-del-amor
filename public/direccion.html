@@ -145,7 +145,7 @@
           <div class="dir-inline hidden" id="viewUsuarios">
             <section class="block">
               <div class="section-head"><h2>Usuarios</h2><p>Gestión de accesos internos.</p></div>
-              <form id="newUserForm" class="form" style="margin-bottom:1.5rem">
+              <form id="newUserForm" class="form-internal" style="margin-bottom:1.5rem">
                 <div class="form-row">
                   <label><span>Usuario</span><input type="text" name="username" required placeholder="uriel" /></label>
                   <label><span>Contraseña</span><input type="password" name="password" required placeholder="••••••••" /></label>
@@ -177,14 +177,14 @@
             </section>
             <section class="block">
               <div class="section-head"><h2>Conversaciones</h2><p>Historial completo por contacto.</p></div>
-              <div id="waChatLayout" style="display:flex;gap:1rem;align-items:flex-start">
+              <div id="waChatLayout" class="wa-layout">
                 <!-- Lista de contactos -->
-                <div id="waContactList" style="width:240px;min-width:200px;display:flex;flex-direction:column;gap:0.5rem">
-                  <div class="card" style="color:var(--muted);text-align:center;padding:1rem">Cargando...</div>
+                <div id="waContactList" class="wa-contact-list">
+                  <div class="card empty-note" style="text-align:center">Cargando...</div>
                 </div>
                 <!-- Panel de chat -->
-                <div id="waChatPanel" style="flex:1;min-width:0">
-                  <div class="card" style="color:var(--muted);text-align:center;padding:2rem">
+                <div id="waChatPanel" class="wa-chat-panel">
+                  <div class="card empty-note" style="text-align:center;padding:2rem">
                     Selecciona un contacto para ver la conversación.
                   </div>
                 </div>
@@ -200,10 +200,10 @@
                 <p>Los encargados envían documentos al grupo de WhatsApp y Sara los registra automáticamente en Drive y Sheets.</p>
               </div>
               <div class="card" id="facturasStatus" style="margin-bottom:1rem">Comprobando conexión con Google Drive...</div>
-              <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center">
+              <div class="row">
                 <a class="btn" href="/auth/google-facturas" id="btnConectarDrive" style="display:none">Conectar Google Drive</a>
                 <button class="btn ghost" id="btnMigrarEstructura" title="Reorganiza los archivos existentes en Drive a la nueva estructura Local → Mes">Reorganizar carpetas Drive</button>
-                <span id="migrarStatus" style="font-size:0.85rem;color:var(--muted)"></span>
+                <span id="migrarStatus" class="empty-note"></span>
               </div>
             </section>
 
@@ -212,7 +212,7 @@
                 <h2>Locales y empresas</h2>
                 <p>Asigna cada local a su empresa jurídica. Define esto una vez y los documentos se organizarán en Drive automáticamente.</p>
               </div>
-              <form id="formAddLocal" class="form" style="margin-bottom:1rem">
+              <form id="formAddLocal" class="form-internal" style="margin-bottom:1rem">
                 <div class="form-row">
                   <label>
                     <span>Local</span>
@@ -224,14 +224,14 @@
                   </label>
                   <label>
                     <span>CIF</span>
-                    <input type="text" id="localCif" placeholder="B70799135" style="max-width:140px" />
+                    <input type="text" id="localCif" placeholder="B70799135" />
                   </label>
                   <label>
                     <span>Agrupar con (opcional)</span>
                     <select id="localContable" data-locales data-placeholder="— mismo nombre —"></select>
                   </label>
                 </div>
-                <small style="color:var(--muted)">Si dos locales comparten contabilidad (ej. Cooperativa → La Tapeta Blanes), selecciona el local principal en "Agrupar con". Sus facturas irán a la misma carpeta y sheet.</small>
+                <small class="empty-note">Si dos locales comparten contabilidad (ej. Cooperativa → La Tapeta Blanes), selecciona el local principal en "Agrupar con". Sus facturas irán a la misma carpeta y sheet.</small>
                 <button class="btn" type="submit" style="margin-top:0.5rem">Guardar</button>
               </form>
               <div id="listaLocales">Cargando...</div>
@@ -239,7 +239,7 @@
 
             <section class="block">
               <div class="section-head"><h2>Grupos de WhatsApp</h2><p>Vincula cada grupo de facturas con su local.</p></div>
-              <form id="formAddGrupoFactura" class="form" style="margin-bottom:1rem">
+              <form id="formAddGrupoFactura" class="form-internal" style="margin-bottom:1rem">
                 <div class="form-row">
                   <label>
                     <span>Local</span>
@@ -263,7 +263,7 @@
                 <p>Los encargados envían facturas al correo de prueba y Sara las procesa automáticamente cada 5 minutos.</p>
               </div>
               <div class="card" id="gmailStatus" style="margin-bottom:1rem">Comprobando Gmail...</div>
-              <form id="formAddEmailRegla" class="form" style="margin-bottom:1rem">
+              <form id="formAddEmailRegla" class="form-internal" style="margin-bottom:1rem">
                 <div class="form-row">
                   <label>
                     <span>Email del encargado</span>
@@ -286,27 +286,27 @@
                   <h2>Estadísticas</h2>
                   <p>Resumen de gasto registrado, por mes, local y proveedor.</p>
                 </div>
-                <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.15rem">
-                  <select id="statsAño" style="padding:0.35rem 0.6rem;border-radius:6px;border:1px solid rgba(0,0,0,0.15);background:var(--bg);font-family:inherit;font-size:0.85rem"></select>
-                  <button class="btn ghost" style="padding:0.35rem 0.7rem;font-size:0.85rem" onclick="loadEstadisticas()">Actualizar</button>
+                <div class="stats-controls">
+                  <select id="statsAño"></select>
+                  <button class="btn ghost btn-sm" onclick="loadEstadisticas()">Actualizar</button>
                 </div>
               </div>
               <!-- KPI cards -->
-              <div id="statsKpis" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:0.75rem;margin-bottom:1.25rem"></div>
+              <div id="statsKpis" class="grid-auto" style="margin-bottom:1.25rem"></div>
               <!-- Gasto mensual por local -->
-              <div class="card" style="padding:1.25rem;margin-bottom:1rem">
-                <div style="font-weight:600;font-size:0.9rem;margin-bottom:1rem;color:var(--muted)">GASTO MENSUAL POR LOCAL</div>
-                <div style="position:relative;height:260px"><canvas id="chartMensual"></canvas></div>
+              <div class="card chart-card" style="margin-bottom:1rem">
+                <div class="chart-title">Gasto mensual por local</div>
+                <div class="chart-box tall"><canvas id="chartMensual"></canvas></div>
               </div>
               <!-- Distribución + Top proveedores -->
-              <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:1rem">
-                <div class="card" style="padding:1.25rem">
-                  <div style="font-weight:600;font-size:0.9rem;margin-bottom:1rem;color:var(--muted)">DISTRIBUCIÓN POR LOCAL</div>
-                  <div style="position:relative;height:220px"><canvas id="chartLocal"></canvas></div>
+              <div class="stats-grid-2">
+                <div class="card chart-card">
+                  <div class="chart-title">Distribución por local</div>
+                  <div class="chart-box"><canvas id="chartLocal"></canvas></div>
                 </div>
-                <div class="card" style="padding:1.25rem">
-                  <div style="font-weight:600;font-size:0.9rem;margin-bottom:1rem;color:var(--muted)">TOP 10 PROVEEDORES (€)</div>
-                  <div style="position:relative;height:220px"><canvas id="chartProveedores"></canvas></div>
+                <div class="card chart-card">
+                  <div class="chart-title">Top 10 proveedores (€)</div>
+                  <div class="chart-box"><canvas id="chartProveedores"></canvas></div>
                 </div>
               </div>
             </section>
@@ -317,7 +317,7 @@
                 <h2>Modelo 303 — IVA trimestral</h2>
                 <p>IVA soportado en compras, desglosado por tipo impositivo. Solo facturas (documentos fiscales válidos).</p>
               </div>
-              <div class="form" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:1.25rem">
+              <div class="form-internal m303-filters">
                 <label>
                   <span>Empresa / NIF</span>
                   <select id="m303Empresa" style="min-width:220px">
@@ -337,7 +337,7 @@
                     <option value="4">T4 — Oct · Nov · Dic</option>
                   </select>
                 </label>
-                <button class="btn" onclick="calcularModelo303()" style="padding:0.5rem 1rem">Calcular</button>
+                <button class="btn" onclick="calcularModelo303()">Calcular</button>
               </div>
               <div id="m303Result"></div>
             </section>
@@ -347,7 +347,7 @@
                 <h2>Pendientes de asignación <span id="badgePendientes" class="badge-count" style="display:none"></span></h2>
                 <p>Facturas recibidas por email cuyo local no se pudo determinar automáticamente.</p>
               </div>
-              <div id="listaPendientes"><p style="color:var(--muted);font-size:0.9rem">Sin facturas pendientes.</p></div>
+              <div id="listaPendientes"><p class="empty-note">Sin facturas pendientes.</p></div>
             </section>
 
             <section class="block">

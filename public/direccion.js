@@ -55,7 +55,7 @@ async function loadWaMensajes() {
     const res = await authFetch("/api/whatsapp/mensajes");
     const data = await res.json();
     if (!data.ok || !data.data.length) {
-      contactList.innerHTML = `<div class="card" style="color:var(--muted);text-align:center;padding:1rem">Sin conversaciones aún.</div>`;
+      contactList.innerHTML = `<div class="card empty-note" style="text-align:center">Sin conversaciones aún.</div>`;
       return;
     }
 
@@ -78,18 +78,18 @@ async function loadWaMensajes() {
       const fecha = new Date(last.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
       const preview = (last.mensaje || "").slice(0, 40);
       return `
-        <div class="card wa-contact-card" data-phone="${c.telefono}" style="cursor:pointer;padding:0.75rem 1rem;transition:background 0.15s">
-          <div style="font-weight:600;font-size:0.9rem">${c.nombre || c.telefono}</div>
-          <div style="font-size:0.75rem;color:var(--muted)">${c.telefono}</div>
-          <div style="font-size:0.78rem;color:var(--muted);margin-top:0.25rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${preview}…</div>
-          <div style="font-size:0.7rem;color:var(--muted);margin-top:0.2rem">${fecha}</div>
+        <div class="card wa-contact-card" data-phone="${c.telefono}">
+          <div class="wa-contact-name">${c.nombre || c.telefono}</div>
+          <div class="wa-contact-meta">${c.telefono}</div>
+          <div class="wa-contact-preview">${preview}…</div>
+          <div class="wa-contact-date">${fecha}</div>
         </div>`;
     }).join("");
 
     contactList.querySelectorAll(".wa-contact-card").forEach((card) => {
       card.addEventListener("click", () => {
-        contactList.querySelectorAll(".wa-contact-card").forEach((c) => c.style.background = "");
-        card.style.background = "var(--accent-light, #fdf0ef)";
+        contactList.querySelectorAll(".wa-contact-card").forEach((c) => c.classList.remove("active"));
+        card.classList.add("active");
         renderWaChat(card.dataset.phone, byPhone[card.dataset.phone]);
       });
     });
@@ -97,10 +97,10 @@ async function loadWaMensajes() {
     // Auto-seleccionar el primero
     if (contacts.length) {
       const firstCard = contactList.querySelector(".wa-contact-card");
-      if (firstCard) { firstCard.style.background = "var(--accent-light, #fdf0ef)"; renderWaChat(contacts[0].telefono, byPhone[contacts[0].telefono]); }
+      if (firstCard) { firstCard.classList.add("active"); renderWaChat(contacts[0].telefono, byPhone[contacts[0].telefono]); }
     }
   } catch {
-    contactList.innerHTML = `<div class="card" style="color:var(--muted)">Error cargando conversaciones.</div>`;
+    contactList.innerHTML = `<div class="card empty-note">Error cargando conversaciones.</div>`;
   }
 }
 
@@ -114,38 +114,36 @@ function renderWaChat(telefono, contactData) {
 
   const bubbles = msgs.map((m) => {
     const fecha = new Date(m.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
-    const histBadge = m.historico ? `<span style="font-size:0.65rem;background:#e8e0ff;color:#6b3fa0;border-radius:3px;padding:1px 4px;vertical-align:middle">historial</span> ` : "";
+    const histBadge = m.historico ? `<span class="badge badge-historic">historial</span> ` : "";
     return `
       <!-- Mensaje del cliente -->
-      <div style="display:flex;justify-content:flex-start;margin-bottom:0.25rem">
-        <div style="max-width:70%;background:var(--card);border:1px solid var(--border);border-radius:12px 12px 12px 2px;padding:0.5rem 0.75rem;font-size:0.88rem">
+      <div class="wa-row in">
+        <div class="wa-bubble in">
           <div>${escHtml(m.mensaje)}</div>
-          <div style="font-size:0.68rem;color:var(--muted);margin-top:0.2rem;text-align:right">${histBadge}${fecha}</div>
+          <div class="wa-bubble-time">${histBadge}${fecha}</div>
         </div>
       </div>
       <!-- Respuesta del bot -->
-      <div style="display:flex;justify-content:flex-end;margin-bottom:0.75rem">
-        <div style="max-width:70%;background:var(--accent);color:#fff;border-radius:12px 12px 2px 12px;padding:0.5rem 0.75rem;font-size:0.88rem">
-          <div style="white-space:pre-wrap">${escHtml(m.respuesta)}</div>
-          <div style="font-size:0.68rem;opacity:0.75;margin-top:0.2rem;text-align:right">${fecha}</div>
+      <div class="wa-row out">
+        <div class="wa-bubble out">
+          <div class="wa-bubble-body">${escHtml(m.respuesta)}</div>
+          <div class="wa-bubble-time">${fecha}</div>
         </div>
       </div>`;
   }).join("");
 
   panel.innerHTML = `
-    <div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column">
-      <div style="padding:0.75rem 1rem;background:var(--primary);color:#fff;display:flex;align-items:center;gap:0.75rem">
-        <div>
-          <div style="font-weight:700">${escHtml(nombre)}</div>
-          <div style="font-size:0.78rem;opacity:0.8">${telefono} · ${msgs.length} mensaje${msgs.length !== 1 ? "s" : ""}</div>
-        </div>
+    <div class="card wa-chat-card">
+      <div class="wa-chat-header">
+        <div class="wa-chat-title">${escHtml(nombre)}</div>
+        <div class="wa-chat-sub">${telefono} · ${msgs.length} mensaje${msgs.length !== 1 ? "s" : ""}</div>
       </div>
-      <div style="padding:1rem;display:flex;flex-direction:column;max-height:440px;overflow-y:auto" id="waChatScroll">
+      <div class="wa-thread" id="waChatScroll">
         ${bubbles}
       </div>
-      <div style="padding:0.75rem 1rem;border-top:1px solid var(--border);display:flex;gap:0.5rem;align-items:flex-end">
-        <textarea id="waMsgInput" rows="2" placeholder="Escribe un mensaje..." style="flex:1;resize:none;border:1px solid var(--border);border-radius:8px;padding:0.5rem 0.75rem;font-size:0.88rem;font-family:inherit;line-height:1.4"></textarea>
-        <button id="waMsgSend" class="btn" style="padding:0.5rem 1rem;align-self:flex-end">Enviar</button>
+      <div class="wa-chat-foot">
+        <textarea id="waMsgInput" rows="2" placeholder="Escribe un mensaje..."></textarea>
+        <button id="waMsgSend" class="btn" style="align-self:flex-end">Enviar</button>
       </div>
     </div>`;
 
@@ -172,10 +170,10 @@ function renderWaChat(telefono, contactData) {
         // Añadir burbuja manual al chat sin recargar toda la lista
         const now = new Date().toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
         const bubble = document.createElement("div");
-        bubble.style.cssText = "display:flex;justify-content:flex-end;margin-bottom:0.75rem";
-        bubble.innerHTML = `<div style="max-width:70%;background:var(--accent);color:#fff;border-radius:12px 12px 2px 12px;padding:0.5rem 0.75rem;font-size:0.88rem">
-          <div style="white-space:pre-wrap">${escHtml(texto)}</div>
-          <div style="font-size:0.68rem;opacity:0.75;margin-top:0.2rem;text-align:right">${now} · tú</div>
+        bubble.className = "wa-row out";
+        bubble.innerHTML = `<div class="wa-bubble out">
+          <div class="wa-bubble-body">${escHtml(texto)}</div>
+          <div class="wa-bubble-time">${now} · tú</div>
         </div>`;
         scroll.appendChild(bubble);
         scroll.scrollTop = scroll.scrollHeight;
@@ -209,8 +207,8 @@ async function initWhatsAppStatus(elId) {
     if (data.connected) { el.innerHTML = `✅ WhatsApp conectado`; return; }
     if (data.qr) {
       el.innerHTML = `<p style="margin-bottom:0.75rem">📱 Escanea este QR con WhatsApp:</p>
-        <img src="${data.qr}" style="width:220px;height:220px;border-radius:8px;display:block;margin:0 auto" />
-        <p style="margin-top:0.5rem;font-size:0.85rem;color:var(--muted)">Espera a ver ✅ tras escanearlo.</p>`;
+        <img src="${data.qr}" class="qr-img" alt="Código QR de WhatsApp" />
+        <p style="margin-top:0.5rem" class="empty-note">Espera a ver ✅ tras escanearlo.</p>`;
     } else {
       el.innerHTML = `⏳ Generando QR${".".repeat(i % 3 + 1)}`;
     }
@@ -248,10 +246,10 @@ async function loadUsers() {
             <td>${escapeHtml(u.nombre || "—")}</td>
             <td>${escapeHtml(ROL_LABEL[u.rol] || u.rol)}</td>
             <td><input type="password" class="pwd-input" placeholder="Nueva contraseña" style="width:100%" /></td>
-            <td style="display:flex;gap:0.5rem">
-              <button class="btn ghost pwd-save" style="padding:0.2rem 0.6rem">Guardar</button>
-              <button class="btn ghost user-del" style="padding:0.2rem 0.5rem;color:var(--danger,#c00)">×</button>
-            </td>
+            <td><div class="row gap-sm">
+              <button class="btn ghost btn-sm pwd-save">Guardar</button>
+              <button class="btn ghost btn-sm danger user-del">×</button>
+            </div></td>
           </tr>`).join("")}
       </tbody>
     </table>
@@ -318,7 +316,7 @@ async function loadKpi() {
   const byLocal = document.getElementById("kpiByLocal");
   if (!cards || !byLocal) return;
 
-  cards.innerHTML = `<div class="card" style="color:var(--muted)">Cargando...</div>`;
+  cards.innerHTML = `<div class="card empty-note">Cargando...</div>`;
 
   let data;
   try {
@@ -340,11 +338,11 @@ async function loadKpi() {
   ];
 
   cards.innerHTML = kpis.map((k) => `
-    <div class="card" style="display:flex;flex-direction:column;gap:0.25rem">
-      <div style="font-size:1.4rem">${k.icon}</div>
-      <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted)">${k.label}</div>
-      <div style="font-size:2rem;font-weight:700;line-height:1">${k.value}</div>
-      <div style="font-size:0.78rem;color:var(--muted)">${k.sub}</div>
+    <div class="card kpi-card">
+      <div class="kpi-icon">${k.icon}</div>
+      <div class="kpi-label">${k.label}</div>
+      <div class="kpi-value">${k.value}</div>
+      <div class="kpi-sub">${k.sub}</div>
     </div>`).join("");
 
   if (d.reservas_por_local.length) {
@@ -352,10 +350,10 @@ async function loadKpi() {
       .map((r) => `<tr><td>${escapeHtml(r.local)}</td><td><strong>${escapeHtml(String(r.total))}</strong></td></tr>`)
       .join("");
     byLocal.innerHTML = `
-      <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:0.5rem">Reservas por local</div>
+      <div class="kpi-label" style="margin-bottom:0.5rem">Reservas por local</div>
       <table class="table"><thead><tr><th>Local</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>`;
   } else {
-    byLocal.innerHTML = `<span style="color:var(--muted);font-size:0.9rem">Sin reservas aún.</span>`;
+    byLocal.innerHTML = `<span class="empty-note">Sin reservas aún.</span>`;
   }
 }
 
@@ -491,20 +489,20 @@ async function loadGruposFactura() {
     const res = await authFetch("/api/facturas/grupos");
     data = await res.json();
   } catch (err) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Error de conexión al cargar grupos.</p>`;
+    el.innerHTML = `<p class="empty-note">Error de conexión al cargar grupos.</p>`;
     return;
   }
   if (!data.ok || !data.data.length) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin grupos vinculados aún. Añade un grupo arriba.</p>`;
+    el.innerHTML = `<p class="empty-note">Sin grupos vinculados aún. Añade un grupo arriba.</p>`;
     return;
   }
   el.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Local</th><th>Group JID</th><th>Sheet</th><th></th></tr></thead><tbody>
     ${data.data.map(g => `
       <tr>
         <td>${escapeHtml(g.local)}</td>
-        <td style="font-size:0.8rem;font-family:monospace">${escapeHtml(g.group_jid)}</td>
+        <td class="mono">${escapeHtml(g.group_jid)}</td>
         <td>${g.sheet_url ? `<a href="${escapeHtml(g.sheet_url)}" target="_blank" rel="noopener">Ver Sheet</a>` : "—"}</td>
-        <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="eliminarGrupoFactura(${g.id})">Eliminar</button></td>
+        <td><button class="btn btn-sm" onclick="eliminarGrupoFactura(${g.id})">Eliminar</button></td>
       </tr>`).join("")}
   </tbody></table></div>`;
 }
@@ -533,43 +531,43 @@ async function loadPendientes() {
     const res = await authFetch("/api/facturas/pendientes");
     data = await res.json();
   } catch (err) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Error de conexión al cargar pendientes.</p>`;
+    el.innerHTML = `<p class="empty-note">Error de conexión al cargar pendientes.</p>`;
     return;
   }
   if (!data.ok || !data.data.length) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin facturas pendientes. ✅</p>`;
+    el.innerHTML = `<p class="empty-note">Sin facturas pendientes. ✅</p>`;
     if (badge) badge.style.display = "none";
     return;
   }
   if (badge) { badge.textContent = data.data.length; badge.style.display = "inline"; }
-  el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:1rem">
+  el.innerHTML = `<div class="pending-grid">
     ${data.data.map(p => {
       const total = p.total != null ? Number(p.total).toFixed(2) + " €" : "—";
       const tipo = p.tipo ? p.tipo.charAt(0).toUpperCase() + p.tipo.slice(1) : "Documento";
       return `
-      <div class="card" style="padding:1.1rem;display:flex;flex-direction:column;gap:0.75rem">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div class="card pending-card">
+        <div class="row-between" style="align-items:flex-start">
           <div>
             <div style="font-weight:700;font-size:1rem;margin-bottom:0.15rem">${escapeHtml(p.proveedor || "Proveedor desconocido")}</div>
-            <span style="font-size:0.75rem;background:rgba(44,74,62,0.12);color:var(--panel-fill);padding:0.1rem 0.45rem;border-radius:99px">${escapeHtml(tipo)}</span>
+            <span class="badge badge-tag">${escapeHtml(tipo)}</span>
           </div>
           <div style="text-align:right">
-            <div style="font-weight:700;font-size:1.05rem;color:var(--panel-fill)">${escapeHtml(total)}</div>
-            <div style="font-size:0.75rem;color:var(--muted)">${escapeHtml(p.fecha || "Sin fecha")}</div>
+            <div class="pending-total">${escapeHtml(total)}</div>
+            <div class="wa-contact-meta">${escapeHtml(p.fecha || "Sin fecha")}</div>
           </div>
         </div>
-        <div style="font-size:0.83rem;color:var(--muted);display:flex;flex-direction:column;gap:0.2rem">
+        <div class="pending-meta">
           <div><strong>Empresa detectada:</strong> ${escapeHtml(p.empresa_detectada || "—")}</div>
-          <div><strong>NIF receptor:</strong> <span style="font-family:monospace">${escapeHtml(p.nif_receptor || "—")}</span></div>
+          <div><strong>NIF receptor:</strong> <span class="mono">${escapeHtml(p.nif_receptor || "—")}</span></div>
           ${p.concepto ? `<div><strong>Concepto:</strong> ${escapeHtml(p.concepto)}</div>` : ""}
         </div>
-        <div style="display:flex;gap:0.5rem;align-items:center;margin-top:auto">
-          <select id="asignarLocal_${p.id}" style="flex:1;font-size:0.85rem;padding:0.4rem 0.5rem;border:1px solid rgba(0,0,0,0.15);border-radius:6px;background:var(--bg)">
+        <div class="pending-actions">
+          <select id="asignarLocal_${p.id}">
             <option value="">— Selecciona local —</option>
             ${LOCALES_OPTS.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join("")}
           </select>
-          ${p.drive_url ? `<a href="${escapeHtml(p.drive_url)}" target="_blank" rel="noopener" class="btn ghost" style="padding:0.4rem 0.65rem;font-size:0.8rem;white-space:nowrap">Ver PDF</a>` : ""}
-          <button class="btn" style="padding:0.4rem 0.75rem;font-size:0.85rem;white-space:nowrap" onclick="asignarPendiente(${p.id})">Asignar</button>
+          ${p.drive_url ? `<a href="${escapeHtml(p.drive_url)}" target="_blank" rel="noopener" class="btn ghost btn-sm" style="white-space:nowrap">Ver PDF</a>` : ""}
+          <button class="btn btn-sm" style="white-space:nowrap" onclick="asignarPendiente(${p.id})">Asignar</button>
         </div>
       </div>`;
     }).join("")}
@@ -605,11 +603,11 @@ async function loadLocalesEmpresas() {
     const res = await authFetch("/api/facturas/locales");
     data = await res.json();
   } catch (err) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Error de conexión al cargar locales.</p>`;
+    el.innerHTML = `<p class="empty-note">Error de conexión al cargar locales.</p>`;
     return;
   }
   if (!data.ok || !data.data.length) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin locales configurados. Añade cada local con su empresa arriba.</p>`;
+    el.innerHTML = `<p class="empty-note">Sin locales configurados. Añade cada local con su empresa arriba.</p>`;
     return;
   }
   el.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th>Agrupa con</th><th></th></tr></thead><tbody>
@@ -617,11 +615,11 @@ async function loadLocalesEmpresas() {
       <tr>
         <td>${escapeHtml(l.local)}</td>
         <td>${escapeHtml(l.empresa)}</td>
-        <td style="font-family:monospace;font-size:0.85rem">${escapeHtml(l.cif || "—")}</td>
-        <td style="color:${l.local_contable ? "var(--panel-fill)" : "var(--muted)"}">
+        <td class="mono">${escapeHtml(l.cif || "—")}</td>
+        <td class="${l.local_contable ? "fg-fill" : "empty-note"}">
           ${l.local_contable ? `→ ${escapeHtml(l.local_contable)}` : "—"}
         </td>
-        <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="eliminarLocal('${encodeURIComponent(l.local)}')">Eliminar</button></td>
+        <td><button class="btn btn-sm" onclick="eliminarLocal('${encodeURIComponent(l.local)}')">Eliminar</button></td>
       </tr>`).join("")}
   </tbody></table></div>`;
 }
@@ -653,7 +651,7 @@ async function loadGmailStatus() {
     const ultimoTexto = ultimoEmail
       ? `Último email procesado: <strong>${ultimoEmail.de_email}</strong> → ${ultimoEmail.local} (${ultimoEmail.procesado?.slice(0, 10)})`
       : "Sin emails procesados aún.";
-    el.innerHTML = `✅ <strong>Gmail conectado</strong> — revisando bandeja cada 5 minutos.<br><small style="color:var(--muted)">${ultimoTexto}</small>`;
+    el.innerHTML = `✅ <strong>Gmail conectado</strong> — revisando bandeja cada 5 minutos.<br><small class="empty-note">${ultimoTexto}</small>`;
   } catch {
     el.innerHTML = `Error comprobando estado de Gmail.`;
   }
@@ -667,11 +665,11 @@ async function loadEmailReglas() {
     const res = await authFetch("/api/facturas/email-reglas");
     data = await res.json();
   } catch (err) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Error de conexión al cargar reglas.</p>`;
+    el.innerHTML = `<p class="empty-note">Error de conexión al cargar reglas.</p>`;
     return;
   }
   if (!data.ok || !data.data.length) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin reglas configuradas. Añade el email de cada encargado arriba.</p>`;
+    el.innerHTML = `<p class="empty-note">Sin reglas configuradas. Añade el email de cada encargado arriba.</p>`;
     return;
   }
   el.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr><th>Email encargado</th><th>Local</th><th></th></tr></thead><tbody>
@@ -679,7 +677,7 @@ async function loadEmailReglas() {
       <tr>
         <td>${escapeHtml(r.email)}</td>
         <td>${escapeHtml(r.local)}</td>
-        <td><button class="btn" style="padding:0.25rem 0.6rem;font-size:0.8rem" onclick="eliminarEmailRegla(${r.id})">Eliminar</button></td>
+        <td><button class="btn btn-sm" onclick="eliminarEmailRegla(${r.id})">Eliminar</button></td>
       </tr>`).join("")}
   </tbody></table></div>`;
 }
@@ -705,15 +703,15 @@ async function loadUltimasFacturas() {
     const res = await authFetch("/api/facturas");
     data = await res.json();
   } catch (err) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Error de conexión al cargar facturas.</p>`;
+    el.innerHTML = `<p class="empty-note">Error de conexión al cargar facturas.</p>`;
     return;
   }
   if (!data.ok || !data.data.length) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin facturas procesadas aún.</p>`;
+    el.innerHTML = `<p class="empty-note">Sin facturas procesadas aún.</p>`;
     return;
   }
   el.innerHTML = `<div class="table-wrap"><table class="table"><thead><tr>
-    <th>Fecha</th><th>Tipo</th><th>Local</th><th>Proveedor</th><th style="text-align:right">Total</th><th>Drive</th><th style="text-align:center">Pagado</th>
+    <th>Fecha</th><th>Tipo</th><th>Local</th><th>Proveedor</th><th class="num">Total</th><th>Drive</th><th class="center">Pagado</th>
   </tr></thead><tbody>
     ${data.data.map(f => `
       <tr id="fila-factura-${f.id}">
@@ -721,14 +719,13 @@ async function loadUltimasFacturas() {
         <td>${escapeHtml(f.tipo || "—")}</td>
         <td>${escapeHtml(f.local)}</td>
         <td>${escapeHtml(f.proveedor || "—")}</td>
-        <td style="text-align:right;font-variant-numeric:tabular-nums">${f.total != null ? Number(f.total).toFixed(2) + " €" : "—"}</td>
+        <td class="num">${f.total != null ? Number(f.total).toFixed(2) + " €" : "—"}</td>
         <td>${f.drive_url ? `<a href="${escapeHtml(f.drive_url)}" target="_blank" rel="noopener">Ver</a>` : "—"}</td>
-        <td style="text-align:center">
+        <td class="center">
           <button
+            class="pago-toggle"
             onclick="togglePagado(${f.id}, ${f.pagado ? 1 : 0})"
             title="${f.pagado ? "Marcar como pendiente" : "Marcar como pagado"}"
-            style="background:none;border:none;cursor:pointer;font-size:1.15rem;line-height:1;padding:0.1rem 0.3rem;border-radius:4px;transition:opacity 0.15s"
-            onmouseenter="this.style.opacity='0.65'" onmouseleave="this.style.opacity='1'"
           >${f.pagado ? "✅" : "⬜"}</button>
         </td>
       </tr>`).join("")}
@@ -791,10 +788,10 @@ async function loadEstadisticas() {
       { icon: "🏛️", label: "IVA soportado",    val: fmt(resumenAnual?.iva),            unit: " €" },
       { icon: "💳", label: "Total gastos",     val: fmt(resumenAnual?.total),          unit: " €" },
     ].map(k => `
-      <div class="card" style="padding:1rem;text-align:center">
-        <div style="font-size:1.4rem;margin-bottom:0.3rem">${k.icon}</div>
-        <div style="font-size:1.25rem;font-weight:700;color:var(--accent);line-height:1.2">${k.val}${k.unit}</div>
-        <div style="font-size:0.75rem;color:var(--muted);margin-top:0.2rem">${k.label}</div>
+      <div class="card kpi-card kpi-card--stat">
+        <div class="kpi-icon">${k.icon}</div>
+        <div class="kpi-value">${k.val}${k.unit}</div>
+        <div class="kpi-label">${k.label}</div>
       </div>`).join("");
   }
 
@@ -908,7 +905,7 @@ window.calcularModelo303 = async function() {
   const el        = document.getElementById("m303Result");
   if (!empresa || !trimestre || !el) return;
 
-  el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Calculando...</p>`;
+  el.innerHTML = `<p class="empty-note">Calculando...</p>`;
 
   const res  = await authFetch(`/api/facturas/modelo303?empresa=${encodeURIComponent(empresa)}&año=${año}&trimestre=${trimestre}`);
   const data = await res.json();
@@ -920,7 +917,7 @@ window.calcularModelo303 = async function() {
   const NOMBRES_T = { 1: "Enero · Febrero · Marzo", 2: "Abril · Mayo · Junio", 3: "Julio · Agosto · Septiembre", 4: "Octubre · Noviembre · Diciembre" };
 
   if (!d.totales?.num_facturas) {
-    el.innerHTML = `<p style="color:var(--muted);font-size:0.9rem">Sin facturas en T${d.trimestre} ${d.año} para <strong>${empresa}</strong>.</p>`;
+    el.innerHTML = `<p class="empty-note">Sin facturas en T${d.trimestre} ${d.año} para <strong>${empresa}</strong>.</p>`;
     return;
   }
 
@@ -928,16 +925,16 @@ window.calcularModelo303 = async function() {
   const totalCuota = d.porTipoIva.reduce((s, r) => s + (r.cuota_total || 0), 0);
 
   el.innerHTML = `
-    <div class="card" style="padding:1.5rem;max-width:640px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.25rem">
+    <div class="card m303-card">
+      <div class="m303-head">
         <div>
-          <div style="font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">MODELO 303 — IVA SOPORTADO</div>
-          <div style="font-size:1.05rem;font-weight:700;margin-top:0.2rem">T${d.trimestre} ${d.año} — ${NOMBRES_T[d.trimestre]}</div>
-          <div style="font-size:0.82rem;color:var(--muted);margin-top:0.15rem">${empresa}</div>
+          <div class="m303-eyebrow">Modelo 303 — IVA soportado</div>
+          <div class="m303-period">T${d.trimestre} ${d.año} — ${NOMBRES_T[d.trimestre]}</div>
+          <div class="m303-company">${empresa}</div>
         </div>
         <div style="text-align:right">
-          <div style="font-size:1.4rem;font-weight:700;color:var(--accent)">${fmt(d.totales.importe_total)} €</div>
-          <div style="font-size:0.75rem;color:var(--muted)">${d.totales.num_facturas} facturas</div>
+          <div class="m303-amount">${fmt(d.totales.importe_total)} €</div>
+          <div class="m303-amount-sub">${d.totales.num_facturas} facturas</div>
         </div>
       </div>
 
@@ -945,39 +942,39 @@ window.calcularModelo303 = async function() {
         <thead>
           <tr>
             <th>Tipo IVA</th>
-            <th style="text-align:right">Nº facturas</th>
-            <th style="text-align:right">Base imponible</th>
-            <th style="text-align:right">Cuota IVA</th>
+            <th class="num">Nº facturas</th>
+            <th class="num">Base imponible</th>
+            <th class="num">Cuota IVA</th>
           </tr>
         </thead>
         <tbody>
           ${d.porTipoIva.map(r => `
             <tr>
-              <td><strong>${r.tipo_iva}%</strong>${r.tipo_iva === 0 ? " <span style='font-size:0.75rem;color:var(--muted)'>(exento)</span>" : ""}</td>
-              <td style="text-align:right">${r.num_docs}</td>
-              <td style="text-align:right">${fmt(r.base_total)} €</td>
-              <td style="text-align:right">${fmt(r.cuota_total)} €</td>
+              <td><strong>${r.tipo_iva}%</strong>${r.tipo_iva === 0 ? " <span class='empty-note'>(exento)</span>" : ""}</td>
+              <td class="num">${r.num_docs}</td>
+              <td class="num">${fmt(r.base_total)} €</td>
+              <td class="num">${fmt(r.cuota_total)} €</td>
             </tr>`).join("")}
-          <tr style="font-weight:700;border-top:2px solid rgba(0,0,0,0.1)">
+          <tr class="table-total">
             <td>TOTAL</td>
-            <td style="text-align:right">${d.totales.num_facturas}</td>
-            <td style="text-align:right">${fmt(d.totales.base_total)} €</td>
-            <td style="text-align:right;color:var(--accent)">${fmt(d.totales.cuota_total)} €</td>
+            <td class="num">${d.totales.num_facturas}</td>
+            <td class="num">${fmt(d.totales.base_total)} €</td>
+            <td class="num" style="color:var(--accent)">${fmt(d.totales.cuota_total)} €</td>
           </tr>
         </tbody>
       </table>
 
       ${d.otrosDocs?.num_otros > 0 ? `
-        <div style="font-size:0.8rem;color:var(--muted);margin-top:0.75rem;padding:0.6rem;background:rgba(0,0,0,0.04);border-radius:6px">
+        <div class="m303-note">
           ℹ️ También hay ${d.otrosDocs.num_otros} documento${d.otrosDocs.num_otros>1?"s":""} de tipo no factura (albaranes / tickets) por ${fmt(d.otrosDocs.total_otros)} € que <strong>no</strong> se incluyen en este cálculo.
         </div>` : ""}
 
       ${d.locales.length ? `
-        <div style="font-size:0.8rem;color:var(--muted);margin-top:0.5rem">
+        <div class="empty-note" style="font-size:0.8rem;margin-top:0.5rem">
           Locales incluidos: ${d.locales.join(" · ")}
         </div>` : ""}
 
-      <div style="margin-top:1rem;padding:0.75rem;background:rgba(240,160,48,0.1);border:1px solid rgba(240,160,48,0.3);border-radius:8px;font-size:0.8rem;color:#8a6a00">
+      <div class="m303-warning">
         ⚠️ <strong>Aviso:</strong> Este resumen es orientativo. Solo refleja el IVA soportado en compras registradas en el sistema. Debe ser validado por tu asesor fiscal antes de presentar el Modelo 303.
       </div>
     </div>`;
