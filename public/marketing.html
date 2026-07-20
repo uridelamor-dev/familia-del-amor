@@ -121,16 +121,16 @@
       <section class="block panel-section" data-section="locals">
         <div class="section-head">
           <h2>Locales</h2>
-          <p>Instagram, cartas PDF y galerías.</p>
+          <p>Elige un local y edita su Instagram, cartas PDF, horario, mapa, historia y galería.</p>
         </div>
+        <label style="display:block;max-width:340px;margin-bottom:1rem">
+          <span>Local a editar</span>
+          <select id="localSelect"></select>
+        </label>
         <form id="localsForm" class="form"></form>
         <div class="panel-preview">
           <h3>Vista previa</h3>
-          <label class="edit-toggle">
-            <input type="checkbox" id="editModeToggleLocals" />
-            <span>Modo selección</span>
-          </label>
-          <iframe id="previewFrameLocals" src="local.html?slug=la-tapeta"></iframe>
+          <iframe id="previewFrameLocals" src="local.html?slug=la-tapeta-blanes"></iframe>
         </div>
         <div class="panel-actions">
           <button class="btn" id="localsSubmitBtn" type="button">Guardar locales</button>

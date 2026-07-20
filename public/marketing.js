@@ -359,86 +359,97 @@ function normalizeGallery(textarea) {
   textarea.value = lines.join("\n");
 }
 
+let contentValues = {};
+
 async function loadContent() {
   const res = await fetch("/api/content");
   const data = await res.json();
-  const values = data.ok ? data.data : {};
+  contentValues = data.ok ? data.data : {};
+  if (!localsForm) return;
 
-  if (localsForm) {
-    localsForm.innerHTML = "";
-    locals.forEach((loc) => {
-      const instagramKey  = `local_${loc.slug}_instagram`;
-      const menuKey       = `local_${loc.slug}_menu_pdf`;
-      const almuKey       = `local_${loc.slug}_menu_almuerzo_pdf`;
-      const galleryKey    = `local_${loc.slug}_gallery`;
-      const hoursKey      = `local_${loc.slug}_hours`;
-      const mapKey        = `local_${loc.slug}_map`;
-      const historyKey    = `local_${loc.slug}_history`;
+  const sel = document.getElementById("localSelect");
+  if (sel && !sel.options.length) {
+    sel.innerHTML = locals.map((l) => `<option value="${l.slug}">${escapeHtml(l.name)}</option>`).join("");
+    sel.addEventListener("change", () => renderLocalEditor(sel.value));
+  }
+  renderLocalEditor(sel ? sel.value : locals[0].slug);
+}
 
-      const menuUrl  = values[menuKey]  || "";
-      const almuUrl  = values[almuKey]  || "";
+function renderLocalEditor(slug) {
+  const loc = locals.find((l) => l.slug === slug) || locals[0];
+  const values = contentValues;
+  const instagramKey  = `local_${loc.slug}_instagram`;
+  const menuKey       = `local_${loc.slug}_menu_pdf`;
+  const almuKey       = `local_${loc.slug}_menu_almuerzo_pdf`;
+  const galleryKey    = `local_${loc.slug}_gallery`;
+  const hoursKey      = `local_${loc.slug}_hours`;
+  const mapKey        = `local_${loc.slug}_map`;
+  const historyKey    = `local_${loc.slug}_history`;
 
-      function pdfSlot(label, key, url, uploadClass) {
-        const preview = url
-          ? `<a href="${url}" target="_blank" class="btn ghost" style="font-size:0.75rem;padding:0.35rem 0.8rem">Ver PDF actual</a>`
-          : `<span style="font-size:0.82rem;color:var(--muted)">Sin PDF asignado</span>`;
-        return `
-          <div class="pdf-slot" style="display:flex;flex-direction:column;gap:0.5rem;padding:0.75rem;background:#f9f4ee;border-radius:10px;border:1px solid #eadfce">
-            <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted)">${label}</div>
-            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
-              ${preview}
-              <label class="upload" style="margin:0">
-                <input type="file" class="${uploadClass}" data-target="${key}" accept="application/pdf" />
-                <span>${url ? "Reemplazar PDF" : "Subir PDF"}</span>
-              </label>
-            </div>
-            <input type="hidden" name="${key}" value="${url}" class="pdf-url-field" data-key="${key}" />
-          </div>`;
-      }
+  const menuUrl  = values[menuKey]  || "";
+  const almuUrl  = values[almuKey]  || "";
 
-      const block = document.createElement("div");
-      block.className = "card";
-      block.innerHTML = `
-        <h3 style="margin-top:0">${loc.name}</h3>
-
-        <div style="display:flex;flex-direction:column;gap:0.6rem;margin-bottom:0.75rem">
-          ${pdfSlot("Carta", menuKey, menuUrl, "menuUpload")}
-          ${pdfSlot("Menú mediodía", almuKey, almuUrl, "menuUpload")}
+  function pdfSlot(label, key, url, uploadClass) {
+    const preview = url
+      ? `<a href="${url}" target="_blank" class="btn ghost" style="font-size:0.75rem;padding:0.35rem 0.8rem">Ver PDF actual</a>`
+      : `<span style="font-size:0.82rem;color:var(--muted)">Sin PDF asignado</span>`;
+    return `
+      <div class="pdf-slot" style="display:flex;flex-direction:column;gap:0.5rem;padding:0.75rem;background:#f9f4ee;border-radius:10px;border:1px solid #eadfce">
+        <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted)">${label}</div>
+        <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+          ${preview}
+          <label class="upload" style="margin:0">
+            <input type="file" class="${uploadClass}" data-target="${key}" accept="application/pdf" />
+            <span>${url ? "Reemplazar PDF" : "Subir PDF"}</span>
+          </label>
         </div>
+        <input type="hidden" name="${key}" value="${url}" class="pdf-url-field" data-key="${key}" />
+      </div>`;
+  }
 
-        <label>
-          <span>Instagram</span>
-          <input name="${instagramKey}" value="${values[instagramKey] || ""}" />
-        </label>
-        <label>
-          <span>Horarios</span>
-          <textarea name="${hoursKey}" rows="2">${values[hoursKey] || ""}</textarea>
-        </label>
-        <label>
-          <span>Mapa (URL)</span>
-          <input name="${mapKey}" value="${values[mapKey] || ""}" />
-        </label>
-        <label>
-          <span>Historia / Curiosidades</span>
-          <textarea name="${historyKey}" rows="2">${values[historyKey] || ""}</textarea>
-        </label>
-        <label>
-          <span>Galería (una URL por línea)</span>
-          <textarea name="${galleryKey}" rows="3">${values[galleryKey] || ""}</textarea>
-        </label>
-        <div class="gallery-tools">
-          <button type="button" class="btn ghost gallery-up" data-target="${galleryKey}">Subir</button>
-          <button type="button" class="btn ghost gallery-down" data-target="${galleryKey}">Bajar</button>
-          <button type="button" class="btn ghost gallery-remove" data-target="${galleryKey}">Eliminar última</button>
-        </div>
-        <label>
-          <span>Subir imágenes (añade a la galería)</span>
-          <input type="file" class="galleryUpload" data-target="${galleryKey}" accept="image/*" multiple />
-        </label>
-      `;
-      localsForm.appendChild(block);
-    });
+  localsForm.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:0.6rem;margin-bottom:0.75rem">
+      ${pdfSlot("Carta", menuKey, menuUrl, "menuUpload")}
+      ${pdfSlot("Menú mediodía", almuKey, almuUrl, "menuUpload")}
+    </div>
+    <label>
+      <span>Instagram</span>
+      <input name="${instagramKey}" value="${values[instagramKey] || ""}" />
+    </label>
+    <label>
+      <span>Horarios</span>
+      <textarea name="${hoursKey}" rows="2">${values[hoursKey] || ""}</textarea>
+    </label>
+    <label>
+      <span>Mapa (URL)</span>
+      <input name="${mapKey}" value="${values[mapKey] || ""}" />
+    </label>
+    <label>
+      <span>Historia / Curiosidades</span>
+      <textarea name="${historyKey}" rows="2">${values[historyKey] || ""}</textarea>
+    </label>
+    <label>
+      <span>Galería (una URL por línea)</span>
+      <textarea name="${galleryKey}" rows="3">${values[galleryKey] || ""}</textarea>
+    </label>
+    <div class="gallery-tools">
+      <button type="button" class="btn ghost gallery-up" data-target="${galleryKey}">Subir</button>
+      <button type="button" class="btn ghost gallery-down" data-target="${galleryKey}">Bajar</button>
+      <button type="button" class="btn ghost gallery-remove" data-target="${galleryKey}">Eliminar última</button>
+    </div>
+    <label>
+      <span>Subir imágenes (añade a la galería)</span>
+      <input type="file" class="galleryUpload" data-target="${galleryKey}" accept="image/*" multiple />
+    </label>
+  `;
 
+  const iframe = document.getElementById("previewFrameLocals");
+  if (iframe) iframe.src = `local.html?slug=${loc.slug}`;
+
+  wireLocalEditorHandlers();
+}
+
+function wireLocalEditorHandlers() {
     localsForm.querySelectorAll(".galleryUpload").forEach((input) => {
       input.addEventListener("change", async () => {
         if (!input.files.length) return;
@@ -529,27 +540,30 @@ async function loadContent() {
         area.value = lines.join("\n");
       });
     });
-  }
 }
 
 async function saveLocals() {
   if (!localsForm) return;
   if (localsStatus) localsStatus.textContent = "Guardando…";
-  const payload = Object.fromEntries(new FormData(localsForm).entries());
-  for (const [key, value] of Object.entries(payload)) {
-    const res = await authFetch("/api/content", {
+  const items = Object.entries(Object.fromEntries(new FormData(localsForm).entries()))
+    .map(([key, value]) => ({ key, value: value || "" }));
+  try {
+    const res = await authFetch("/api/content/batch", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value: value || "" })
+      body: JSON.stringify({ items })
     });
     const d = await res.json();
-    if (!d.ok) {
-      if (localsStatus) localsStatus.textContent = "Error guardando.";
-      return;
-    }
+    if (!d.ok) throw new Error(d.error || "Error");
+    // refrescar la caché con los valores guardados
+    items.forEach(({ key, value }) => { contentValues[key] = value; });
+    if (localsStatus) { localsStatus.textContent = "✓ Guardado"; setTimeout(() => (localsStatus.textContent = ""), 2000); }
+    toast("Local guardado", "success");
+    document.getElementById("previewFrameLocals")?.contentWindow?.location.reload();
+  } catch (e) {
+    if (localsStatus) localsStatus.textContent = "Error guardando.";
+    toast("No se pudo guardar: " + (e.message || ""), "error");
   }
-  if (localsStatus) { localsStatus.textContent = "✓ Guardado"; setTimeout(() => (localsStatus.textContent = ""), 2000); }
-  document.getElementById("previewFrameLocals")?.contentWindow?.location.reload();
 }
 
 document.getElementById("localsSubmitBtn")?.addEventListener("click", saveLocals);
