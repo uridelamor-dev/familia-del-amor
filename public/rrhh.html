@@ -62,7 +62,7 @@
         <div class="section-head">
           <h2>Vacantes</h2>
         </div>
-        <form id="jobForm" class="form">
+        <form id="jobForm" class="form-internal">
           <label><span>Título</span><input name="titulo" required /></label>
           <label><span>Local</span>
             <select name="local" required data-locales data-placeholder="Selecciona local" data-all="Todos los locales" data-all-value="Todos"></select>
@@ -88,7 +88,7 @@
         <div class="section-head">
           <h2>Candidaturas</h2>
         </div>
-        <div class="panel-filters form">
+        <div class="panel-filters form-internal">
           <label><span>Búsqueda</span><input type="text" id="hrQ" /></label>
           <label><span>Estado</span>
             <select id="hrEstado">
@@ -116,15 +116,15 @@
           <p>Estas preguntas aparecerán al registrar cada llamada mensual.</p>
         </div>
         <div class="card">
-          <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1rem;flex-wrap:wrap">
-            <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.88rem;font-weight:600">
+          <div class="row" style="margin-bottom:1rem">
+            <label class="row gap-sm" style="font-weight:600">
               Mes:
-              <input type="month" id="preguntasMes" style="font-size:0.88rem;border:1.5px solid var(--border);border-radius:8px;padding:0.3rem 0.6rem" />
+              <input type="month" id="preguntasMes" class="input-compact" />
             </label>
-            <button class="btn ghost" id="preguntasCargar" style="font-size:0.85rem">Cargar</button>
+            <button class="btn ghost btn-sm" id="preguntasCargar">Cargar</button>
           </div>
-          <div id="preguntasList" style="display:flex;flex-direction:column;gap:0.5rem;margin-bottom:1rem"></div>
-          <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+          <div id="preguntasList" class="stack gap-sm" style="margin-bottom:1rem"></div>
+          <div class="row gap-sm">
             <button class="btn ghost" id="preguntasAdd">+ Añadir pregunta</button>
             <button class="btn" id="preguntasGuardar">Guardar preguntas</button>
             <span class="form-note" id="preguntasMsg"></span>

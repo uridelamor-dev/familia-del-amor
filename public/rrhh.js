@@ -508,11 +508,11 @@ function addPreguntaRow(texto = "") {
   const list = document.getElementById("preguntasList");
   if (!list) return;
   const row = document.createElement("div");
-  row.style.cssText = "display:flex;gap:0.5rem;align-items:center";
+  row.className = "pregunta-row";
   row.innerHTML = `
-    <span style="flex-shrink:0;width:20px;text-align:right;color:var(--muted);font-size:0.82rem">${list.children.length + 1}.</span>
-    <input type="text" value="${texto.replace(/"/g, "&quot;")}" placeholder="Escribe la pregunta…" style="flex:1;font-size:0.88rem;border:1.5px solid var(--border);border-radius:8px;padding:0.4rem 0.7rem" />
-    <button style="flex-shrink:0;background:none;border:none;cursor:pointer;color:var(--muted);font-size:1.1rem;padding:0 0.2rem" title="Eliminar">×</button>
+    <span class="pregunta-row-num">${list.children.length + 1}.</span>
+    <input type="text" class="input-compact" value="${texto.replace(/"/g, "&quot;")}" placeholder="Escribe la pregunta…" />
+    <button class="icon-btn" title="Eliminar">×</button>
   `;
   row.querySelector("button").addEventListener("click", () => { row.remove(); renumberPreguntas(); });
   list.appendChild(row);
@@ -647,11 +647,11 @@ async function loadHrApplications() {
           <td>${escapeHtml(a.email || "—")}</td>
           <td>${escapeHtml(a.telefono)}</td>
           <td>${escapeHtml(a.puesto)}</td>
-          <td><span style="font-size:0.75rem;padding:2px 7px;border-radius:12px;background:${a.estado==="nuevo"?"#e3f2fd":a.estado==="en_proceso"?"#fff8e1":"#fce4ec"};color:#333">${escapeHtml(a.estado)}</span></td>
+          <td><span class="badge-estado ${escapeHtml(a.estado)}">${escapeHtml(a.estado)}</span></td>
           <td>${a.cv_url ? `<a href="${encodeURI(a.cv_url)}" target="_blank" rel="noopener">Ver CV</a>` : "—"}</td>
-          <td style="display:flex;gap:0.3rem">
-            <button class="btn ghost hr-status" data-id="${a.id}" data-status="en_proceso" style="font-size:0.75rem;padding:0.25rem 0.6rem">En proceso</button>
-            <button class="btn ghost hr-status" data-id="${a.id}" data-status="cerrado" style="font-size:0.75rem;padding:0.25rem 0.6rem">Cerrar</button>
+          <td class="row gap-sm">
+            <button class="btn ghost btn-sm hr-status" data-id="${a.id}" data-status="en_proceso">En proceso</button>
+            <button class="btn ghost btn-sm hr-status" data-id="${a.id}" data-status="cerrado">Cerrar</button>
           </td>
         </tr>`).join("")}
       </tbody>

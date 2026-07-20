@@ -203,7 +203,7 @@ async function loadReservas() {
             <td>${escapeHtml(r.local)}</td>
             <td>${escapeHtml(r.telefono)}</td>
             <td>
-              <button class="btn ghost list-del" data-id="${r.id}" style="padding:0.2rem 0.5rem">×</button>
+              <button class="btn ghost btn-sm list-del" data-id="${r.id}">×</button>
             </td>
           </tr>`).join("")}
       </tbody>
@@ -245,8 +245,8 @@ async function initWhatsAppPanel() {
     if (data.qr) {
       statusEl.innerHTML = `
         <p style="margin-bottom:0.75rem">📱 Escanea este QR con WhatsApp para activar las notificaciones:</p>
-        <img src="${data.qr}" alt="QR WhatsApp" style="width:220px;height:220px;border-radius:8px;display:block;margin:0 auto" />
-        <p style="margin-top:0.5rem;font-size:0.85rem;color:var(--muted)">El QR se actualiza automáticamente. Espera a ver ✅ tras escanearlo.</p>`;
+        <img src="${data.qr}" alt="QR WhatsApp" class="qr-img" />
+        <p style="margin-top:0.5rem" class="empty-note">El QR se actualiza automáticamente. Espera a ver ✅ tras escanearlo.</p>`;
     } else {
       statusEl.innerHTML = `<span>⏳ Generando QR${".".repeat(i % 3 + 1)}</span>`;
     }
@@ -308,7 +308,7 @@ async function loadCurrentLinks() {
       return;
     }
     container.innerHTML = data.data.map((row) =>
-      `<div class="card"><strong>${escapeHtml(row.local)}</strong><br><small style="color:var(--muted)">${escapeHtml(row.group_jid)}</small></div>`
+      `<div class="card"><strong>${escapeHtml(row.local)}</strong><br><small class="empty-note mono">${escapeHtml(row.group_jid)}</small></div>`
     ).join("");
   } catch (err) {
     container.innerHTML = `<div class="card">Error al cargar los grupos vinculados.</div>`;

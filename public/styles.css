@@ -3362,6 +3362,20 @@ h1, h2, h3 {
 .panel .empty-note { color: var(--muted); font-size: 0.9rem; }
 .panel .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.85rem; }
 .panel .fg-fill { color: var(--panel-fill); }
+/* Input suelto compacto (fuera de .form-internal) */
+.panel .input-compact { font-size: var(--font-sm); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.4rem 0.6rem; font-family: inherit; background: var(--card); color: var(--text); }
+/* Botón-icono minimalista (eliminar fila, etc.) */
+.panel .icon-btn { flex-shrink: 0; background: none; border: none; cursor: pointer; color: var(--muted); font-size: 1.1rem; padding: 0 0.2rem; }
+.panel .icon-btn:hover { color: var(--color-danger); }
+/* Fila del editor de preguntas del mes (RR.HH.) */
+.panel .pregunta-row { display: flex; gap: var(--space-sm); align-items: center; }
+.panel .pregunta-row-num { flex-shrink: 0; width: 20px; text-align: right; color: var(--muted); font-size: 0.82rem; }
+.panel .pregunta-row .input-compact { flex: 1; }
+/* Badge de estado de candidaturas (RR.HH.) */
+.panel .badge-estado { font-size: 0.75rem; padding: 2px 7px; border-radius: var(--radius-full); color: #333; }
+.panel .badge-estado.nuevo { background: #e3f2fd; }
+.panel .badge-estado.en_proceso { background: #fff8e1; }
+.panel .badge-estado.cerrado { background: #fce4ec; }
 
 /* ── Chat de WhatsApp (Dirección) ───────────────────────────────────────── */
 .panel .wa-layout { display: flex; gap: var(--space-lg); align-items: flex-start; }
