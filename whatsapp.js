@@ -275,6 +275,10 @@ export function setOnMessage(fn) { onMessage = fn; }
 let perfilLoader = null;
 export function setPerfilLoader(fn) { perfilLoader = fn; }
 
+// Devuelve la reserva reciente del cliente (por teléfono) para dar contexto a Sara.
+let reservaLoader = null;
+export function setReservaLoader(fn) { reservaLoader = fn; }
+
 let onMensajeSaliente = null;
 export function setOnMensajeSaliente(fn) { onMensajeSaliente = fn; }
 
@@ -361,6 +365,20 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
     try { perfil = await perfilLoader(jid); } catch (e) { console.error("Error cargando perfil WA:", e.message); }
   }
 
+  // 1b. Reserva reciente del cliente (por teléfono). Da contexto aunque el jid no
+  // coincida con el de la confirmación (p. ej. reservas web o jids @lid).
+  let reservaCtx = "";
+  try {
+    const telefono = await resolverTelefono(jid);
+    console.log(`[Sara] jid entrante ${jid} → teléfono ${telefono || "(no resuelto)"}`);
+    if (telefono && reservaLoader) {
+      const r = await reservaLoader(telefono);
+      if (r) {
+        reservaCtx = ` [CONTEXTO INTERNO: Este cliente tiene una reserva registrada: ${r.local}, ${r.dia} a las ${r.hora}, ${r.personas} persona${r.personas > 1 ? "s" : ""}, a nombre de ${r.nombre_reserva}. Si te escribe, probablemente sea por esa reserva; continúa la conversación con naturalidad y NO empieces una reserva nueva salvo que la pida explícitamente.]`;
+      }
+    }
+  } catch (e) { console.error("Error cargando reserva WA:", e.message); }
+
   // 2. TTL: si llevan más de 4h inactivos, nueva sesión (el perfil persiste)
   if (perfil?.ultima_interaccion && conversaciones.has(jid)) {
     const inactividadSeg = Math.floor(Date.now() / 1000) - perfil.ultima_interaccion;
@@ -386,14 +404,14 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
 
   const partesFecha = `[CONTEXTO INTERNO: Fecha y hora actual en España: ${getContextoFechaHora()}.]`;
   const partesRetraso = contextoRetraso ? ` ${contextoRetraso}` : "";
-  // Si es primer contacto y no conocemos al cliente, Sara se presenta
-  const partesPrimer = (esPrimerMensaje && !perfil?.nombre)
+  // Si es primer contacto y no conocemos al cliente NI tiene reserva reciente, Sara se presenta
+  const partesPrimer = (esPrimerMensaje && !perfil?.nombre && !reservaCtx)
     ? " Es el primer mensaje de este cliente: preséntate como Sara, asistente de IA de Familia del Amor, y responde a su consulta."
     : "";
   const parteAdjunto = adjuntoUrl ? ` [Ha adjuntado un archivo: ${adjuntoUrl}]` : "";
 
   const contenidoUsuario =
-    `${partesFecha}${partesRetraso}${partesPrimer} ${mensajeUsuario}${parteAdjunto}`;
+    `${partesFecha}${partesRetraso}${reservaCtx}${partesPrimer} ${mensajeUsuario}${parteAdjunto}`;
 
   historial.push({ role: "user", content: contenidoUsuario });
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
@@ -793,6 +811,20 @@ function formatPhone(telefono) {
     num = "34" + num;
   }
   return `${num}@s.whatsapp.net`;
+}
+
+// Extrae el número de teléfono de un jid entrante. Para @s.whatsapp.net es directo.
+// Para @lid (sistema de privacidad de WhatsApp) intenta resolver a número real.
+async function resolverTelefono(jid) {
+  if (!jid) return null;
+  if (jid.endsWith("@lid")) {
+    try {
+      const pn = await sock?.signalRepository?.lidMapping?.getPNForLID?.(jid);
+      if (pn) return pn.split("@")[0].split(":")[0].replace(/\D/g, "");
+    } catch {}
+    return null; // sin resolución fiable del lid → no arriesgamos un match erróneo
+  }
+  return jid.split("@")[0].split(":")[0].replace(/\D/g, "");
 }
 
 export async function sendMensajeLibre(telefono, texto) {

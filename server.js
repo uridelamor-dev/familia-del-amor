@@ -8,7 +8,7 @@ import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
 
@@ -2975,6 +2975,28 @@ const server = app.listen(PORT, async () => {
   setPerfilLoader(async (jid) => {
     const row = await dbGet(`SELECT nombre, telefono, notas, ultima_interaccion FROM wa_clientes WHERE jid = ?`, [jid]);
     return row || null;
+  });
+
+  // Reserva reciente del cliente por teléfono → contexto para Sara (arreglo del
+  // "arranque en frío" cuando el cliente responde a la confirmación de una reserva web).
+  setReservaLoader(async (telefono) => {
+    try {
+      const clave = (telefono || "").replace(/\D/g, "");
+      if (clave.length < 9) return null;
+      const cola = clave.slice(-9); // últimos 9 dígitos (número nacional), robusto a prefijos
+      const rows = await dbAll(
+        `SELECT local, dia, hora, personas, nombre_reserva, telefono
+         FROM reservas WHERE date(dia) >= date('now','-1 day')
+         ORDER BY creado_en DESC LIMIT 200`, []
+      );
+      for (const r of rows) {
+        if ((r.telefono || "").replace(/\D/g, "").endsWith(cola)) return r;
+      }
+      return null;
+    } catch (e) {
+      console.error("Error en reservaLoader:", e.message);
+      return null;
+    }
   });
 
   // Config editable de Sara → bloque de texto que se inyecta en su prompt
