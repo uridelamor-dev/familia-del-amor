@@ -2558,6 +2558,24 @@ const server = app.listen(PORT, async () => {
 
   setOnReady(procesarPendientesWA);
 
+  // Semilla única: Fiesta Mayor de Blanes 2026 (23–27 jul) — La Tapeta Blanes y
+  // Cooperativa cerradas a reservas. Se inserta UNA sola vez (flag en config);
+  // si marketing lo borra desde el panel, no reaparece. En adelante estos
+  // bloqueos se crean desde el chat de Sara.
+  try {
+    const yaSembrado = await getConfig("seed_fiesta_mayor_2026");
+    if (!yaSembrado) {
+      for (const local of ["La Tapeta - Blanes", "Cooperativa - Blanes"]) {
+        await dbRun(
+          `INSERT INTO bloqueos_reservas (local, desde, hasta, motivo) VALUES (?, ?, ?, ?)`,
+          [local, "2026-07-23", "2026-07-27", "Fiesta mayor"]
+        );
+      }
+      await setConfig("seed_fiesta_mayor_2026", "done");
+      console.log("[Seed] Bloqueo Fiesta Mayor Blanes 2026 creado (Blanes + Cooperativa, 23–27 jul)");
+    }
+  } catch (e) { console.error("[Seed] Error sembrando Fiesta Mayor:", e.message); }
+
   // Enviar mensajes de seguimiento post-visita (cada 5 min)
   setInterval(async () => {
     if (!isReady()) return;
