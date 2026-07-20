@@ -7,7 +7,7 @@ import multer from "multer";
 import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
@@ -1717,10 +1717,80 @@ app.put("/api/content/batch", requireAuth(["marketing", "direccion"]), async (re
 });
 
 // Upload
-app.post("/api/upload", requireAuth(["marketing", "rrhh", "direccion"]), upload.array("files", 10), (req, res) => {
+// ── Optimización automática de archivos subidos ─────────────────────────────
+// Imágenes con sharp (viene con Baileys); PDFs con ghostscript si está disponible.
+// Todo con degradación segura: si algo falla, se conserva el archivo original.
+let _sharp;
+async function getSharp() {
+  if (_sharp === undefined) {
+    try { _sharp = (await import("sharp")).default; }
+    catch { _sharp = null; console.warn("[Upload] sharp no disponible; imágenes sin optimizar"); }
+  }
+  return _sharp;
+}
+const GS_AVAILABLE = (() => {
+  try { execFileSync("gs", ["--version"], { stdio: "ignore" }); return true; }
+  catch { return false; }
+})();
+if (!GS_AVAILABLE) console.warn("[Upload] ghostscript (gs) no disponible; PDFs sin comprimir");
+
+async function optimizeUpload(filePath) {
+  try {
+    const ext = path.extname(filePath).toLowerCase();
+    const orig = fs.statSync(filePath).size;
+    if ([".jpg", ".jpeg", ".png", ".webp"].includes(ext)) {
+      const sharp = await getSharp();
+      if (!sharp) return;
+      let img = sharp(filePath, { failOn: "none" }).rotate().resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true });
+      if (ext === ".png") img = img.png({ compressionLevel: 9, palette: true });
+      else if (ext === ".webp") img = img.webp({ quality: 78 });
+      else img = img.jpeg({ quality: 78, mozjpeg: true });
+      const out = await img.toBuffer();
+      if (out.length > 0 && out.length < orig) fs.writeFileSync(filePath, out);
+    } else if (ext === ".pdf" && GS_AVAILABLE) {
+      const tmp = filePath + ".opt";
+      execFileSync("gs", [
+        "-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.4", "-dPDFSETTINGS=/ebook",
+        "-dNOPAUSE", "-dQUIET", "-dBATCH", `-sOutputFile=${tmp}`, filePath
+      ], { stdio: "ignore", timeout: 180000 });
+      if (fs.existsSync(tmp)) {
+        const newSize = fs.statSync(tmp).size;
+        if (newSize > 0 && newSize < orig) fs.renameSync(tmp, filePath);
+        else fs.unlinkSync(tmp);
+      }
+    }
+  } catch (e) {
+    console.error("[Upload] Optimización falló (se conserva original):", e.message);
+  }
+}
+
+app.post("/api/upload", requireAuth(["marketing", "rrhh", "direccion"]), upload.array("files", 10), async (req, res) => {
   const files = req.files || [];
+  for (const f of files) {
+    await optimizeUpload(f.path || path.join(uploadsDir, f.filename));
+  }
   const urls = files.map((f) => `/uploads/${f.filename}`);
   res.json({ ok: true, urls });
+});
+
+// Optimiza (in place) todos los archivos ya subidos en public/uploads.
+// Útil para comprimir archivos subidos antes de activar la optimización automática.
+app.post("/api/uploads/optimize-existing", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const entries = fs.readdirSync(uploadsDir).filter(n => /\.(jpe?g|png|webp|pdf)$/i.test(n));
+    const detalle = [];
+    for (const name of entries) {
+      const fp = path.join(uploadsDir, name);
+      if (!fs.statSync(fp).isFile()) continue;
+      const before = fs.statSync(fp).size;
+      await optimizeUpload(fp);
+      const after = fs.statSync(fp).size;
+      if (after < before) detalle.push({ archivo: name, antes: Math.round(before / 1024) + " KB", despues: Math.round(after / 1024) + " KB" });
+    }
+    res.json({ ok: true, optimizados: detalle.length, revisados: entries.length, detalle });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // Reservas
