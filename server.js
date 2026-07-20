@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
 
@@ -1584,29 +1584,40 @@ app.post("/api/leads", (req, res) => {
   );
 });
 
-// Captura mínima de lead cuando llega una reserva
-function upsertLeadFromReserva({ nombre_reserva, telefono }) {
+// Crea/actualiza un lead por teléfono. Si es nuevo → INSERT + backup + Sheets.
+// Si existe → actualiza actividad y rellena nombre/apellidos si estaban vacíos.
+function upsertLead({ nombre = "", apellidos = "", telefono, fuente = "web" }) {
   if (!telefono) return;
-  const nombre = (nombre_reserva || "").split(" ")[0] || nombre_reserva || "";
-  const apellidos = (nombre_reserva || "").split(" ").slice(1).join(" ");
   const ahora = new Date().toISOString();
-  db.get(`SELECT id FROM leads WHERE telefono = ?`, [telefono], (err, row) => {
+  db.get(`SELECT id, nombre, apellidos FROM leads WHERE telefono = ?`, [telefono], (err, row) => {
     if (err) return;
     if (row) {
-      // Lead ya existe — solo actualizamos la fecha de actividad
-      db.run(`UPDATE leads SET actualizado_en = ? WHERE id = ?`, [ahora, row.id], () => backupLeads());
-    } else {
-      // Cliente nuevo — creamos lead básico
+      // Rellenar nombre/apellidos si el lead existente los tenía vacíos
+      const nuevoNombre = (!row.nombre || row.nombre === "") && nombre ? nombre : row.nombre;
+      const nuevoApellidos = (!row.apellidos || row.apellidos === "") && apellidos ? apellidos : row.apellidos;
       db.run(
-        `INSERT INTO leads (nombre, apellidos, telefono, nacimiento, poblacion, correo, premio, fuente, creado_en) VALUES (?, ?, ?, '', '', '', '', 'reserva', ?)`,
-        [nombre, apellidos, telefono, ahora],
+        `UPDATE leads SET nombre = ?, apellidos = ?, actualizado_en = ? WHERE id = ?`,
+        [nuevoNombre || "", nuevoApellidos || "", ahora, row.id],
+        () => backupLeads()
+      );
+    } else {
+      db.run(
+        `INSERT INTO leads (nombre, apellidos, telefono, nacimiento, poblacion, correo, premio, fuente, creado_en) VALUES (?, ?, ?, '', '', '', '', ?, ?)`,
+        [nombre, apellidos, telefono, fuente, ahora],
         () => {
           backupLeads(); // copia interna durable
-          mirrorLeadToSheet({ nombre, apellidos, telefono, correo: "", poblacion: "", nacimiento: "", genero: null, fuente: "reserva", premio: "" });
+          mirrorLeadToSheet({ nombre, apellidos, telefono, correo: "", poblacion: "", nacimiento: "", genero: null, fuente, premio: "" });
         }
       );
     }
   });
+}
+
+// Captura mínima de lead cuando llega una reserva (wrapper de upsertLead)
+function upsertLeadFromReserva({ nombre_reserva, telefono }) {
+  const nombre = (nombre_reserva || "").split(" ")[0] || nombre_reserva || "";
+  const apellidos = (nombre_reserva || "").split(" ").slice(1).join(" ");
+  upsertLead({ nombre, apellidos, telefono, fuente: "reserva" });
 }
 
 // SQL unificado: leads + clientes de reservas sin lead, mergeando por teléfono
@@ -1675,6 +1686,30 @@ app.get("/api/leads", requireAuth(["direccion", "marketing"]), (req, res) => {
     if (err) return res.status(500).json({ ok: false, error: "Error leyendo leads" });
     res.json({ ok: true, data: rows });
   });
+});
+
+// Diagnóstico: cuántos leads/reservas/contactos hay y dónde vive la BD.
+app.get("/api/debug/estado", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const leads = await dbGet("SELECT COUNT(*) c FROM leads");
+    const reservas = await dbGet("SELECT COUNT(*) c FROM reservas");
+    const waClientes = await dbGet("SELECT COUNT(*) c FROM wa_clientes");
+    const porFuente = await dbAll("SELECT fuente, COUNT(*) c FROM leads GROUP BY fuente");
+    let dbSizeKb = null;
+    try { dbSizeKb = Math.round(fs.statSync(dbPath).size / 1024); } catch {}
+    res.json({
+      ok: true,
+      leads_total: leads?.c ?? 0,
+      leads_por_fuente: porFuente,
+      reservas_total: reservas?.c ?? 0,
+      wa_clientes_total: waClientes?.c ?? 0,
+      db_path: dbPath,
+      db_size_kb: dbSizeKb,
+      backup_completo_riesgo: dbSizeKb && dbSizeKb > 480 ? "SÍ (>480KB, el backup completo puede fallar)" : "bajo"
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 app.get("/api/leads/export.csv", requireAuth(["direccion", "marketing"]), (req, res) => {
@@ -3054,6 +3089,11 @@ const server = app.listen(PORT, async () => {
     );
   });
 
+  // Cualquiera que escriba a Sara (con teléfono real) queda registrado como lead
+  setOnContactoLead(({ telefono, nombre }) => {
+    upsertLead({ nombre: nombre || "", telefono, fuente: "whatsapp" });
+  });
+
   // Rehidratar la memoria de Sara tras un reinicio: últimos intercambios de las 4h recientes
   setHistorialLoader(async (jid) => {
     const rows = await dbAll(
@@ -3148,7 +3188,7 @@ const server = app.listen(PORT, async () => {
       );
       if (bloqueos.length) {
         const lineas = bloqueos.map(b => `- ${b.local}: del ${b.desde} al ${b.hasta}${b.motivo ? ` (${b.motivo})` : ""}`).join("\n");
-        partes.push(`RESERVAS NO DISPONIBLES en estos locales y fechas. NUNCA ofrezcas, sugieras ni registres una reserva que caiga en estos rangos. Si el cliente menciona esos días o un evento que ocurre en ellos (p. ej. la fiesta mayor), recuérdaselo proactivamente con amabilidad y ofrécele otra fecha u otro local que sí acepte — pero jamás le propongas reservar en estas fechas:\n${lineas}`);
+        partes.push(`RESERVAS NO DISPONIBLES en estos locales y fechas. NUNCA ofrezcas, sugieras ni registres una reserva que caiga en estos rangos. Si el cliente pregunta por reservar en estas fechas o locales, tu PRIMERA frase debe decir directamente que ese día no hay reservas (NO empieces diciendo que sí y luego te corrijas). Recuérdaselo con amabilidad y ofrécele otra fecha u otro local que sí acepte:\n${lineas}`);
       }
       const docs = await dbAll(
         `SELECT id, tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND documento_url IS NOT NULL AND documento_url != '' ORDER BY id`, []

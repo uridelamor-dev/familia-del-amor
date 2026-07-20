@@ -59,7 +59,10 @@ Cuando tengas todos los datos, usa la herramienta \`registrar_reserva\` y, segú
 
 **Reservas de más de 8 personas:** regístralas con \`pendiente: true\` y dile al cliente que su reserva queda registrada pero *no confirmada* hasta que un encargado le contacte para confirmar los detalles.
 
-**Fechas sin reservas:** puede haber fechas en las que un local no acepta reservas (las verás en "CONFIGURACIÓN DEL EQUIPO" bajo "RESERVAS NO DISPONIBLES"). NUNCA ofrezcas, sugieras ni registres una reserva que caiga en esos rangos. Si el cliente menciona esos días o un evento que ocurre en ellos (por ejemplo una fiesta mayor), recuérdaselo con amabilidad y ofrécele otra fecha u otro local que sí acepte reservas — pero nunca le propongas reservar en las fechas bloqueadas.
+**Fechas sin reservas:** puede haber fechas en las que un local no acepta reservas (las verás en "CONFIGURACIÓN DEL EQUIPO" bajo "RESERVAS NO DISPONIBLES"). NUNCA ofrezcas, sugieras ni registres una reserva que caiga en esos rangos.
+Si el cliente pregunta por reservar en una fecha o local que esté bloqueado, tu PRIMERA frase debe dejar claro que ese día no hay reservas — NO empieces diciendo que sí se puede reservar y luego te corrijas. Reconócelo desde el principio, con amabilidad, y ofrece alternativa (otra fecha u otro local que sí acepte).
+Ejemplo CORRECTO: "¡Uy! Justo ese día tenemos la Fiesta Mayor en Blanes y no aceptamos reservas 🎉 ¿Te va bien otra fecha, o te lo miro en otro de nuestros locales?"
+Ejemplo INCORRECTO (no lo hagas nunca): "¡Claro que sí, podemos reservar este sábado en Blanes!... aunque ese día hay fiesta mayor y no se puede."
 
 ## Cancelaciones
 Si un cliente quiere cancelar su reserva: primero confirma con él de qué reserva se trata (normalmente la verás en el contexto de su reserva: local, día y hora). Cuando el cliente confirme que quiere cancelarla, usa la herramienta \`cancelar_reserva\` con el día (y el local si lo sabes). Después, confírmale con amabilidad que su reserva ha quedado cancelada. Si no encuentras su reserva, pídele el día y el nombre, o dile que llame al local.
@@ -285,6 +288,10 @@ export function setOnReserva(fn) { onReserva = fn; }
 
 let onCancelarReserva = null;
 export function setOnCancelarReserva(fn) { onCancelarReserva = fn; }
+
+// Se dispara cuando un cliente escribe (con teléfono real) → registrar como lead.
+let onContactoLead = null;
+export function setOnContactoLead(fn) { onContactoLead = fn; }
 
 let onReady = null;
 export function setOnReady(fn) { onReady = fn; }
@@ -834,6 +841,14 @@ async function connectToWhatsApp() {
       }
 
       console.log(`💬 Mensaje de ${jid}: ${textoFinal}`);
+
+      // Registrar como lead a cualquier contacto con teléfono real (best-effort)
+      if (onContactoLead) {
+        resolverTelefono(jid)
+          .then(tel => { if (tel) onContactoLead({ telefono: tel, nombre: msg.pushName || "" }); })
+          .catch(() => {});
+      }
+
       procesarConDebounce(jid, { textoFinal, tieneAdjunto, msgTimestamp, contextoRetraso });
     }
   });
