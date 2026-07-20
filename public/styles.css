@@ -3137,6 +3137,36 @@ h1, h2, h3 {
 .panel .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .panel .table-wrap table { min-width: 560px; }
 
+/* ── Editor de Locales: selector + cuadrícula compacta a todo el ancho ──── */
+.panel .locals-toolbar {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 1.1rem;
+}
+.panel .locals-toolbar label { font-size: 0.9rem; font-weight: 600; color: var(--muted); }
+.panel #localSelect {
+  padding: 0.5rem 0.8rem; border: 1px solid var(--border); border-radius: 10px;
+  font-family: inherit; font-size: 0.95rem; background: var(--card); color: var(--text);
+  min-width: 240px; cursor: pointer; box-shadow: none; height: auto;
+}
+.panel #localSelect:hover { border-color: var(--panel-fill); }
+
+.panel .locals-editor {
+  max-width: none; margin: 0;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem 1.4rem; align-items: start;
+}
+.panel .locals-editor .full { grid-column: 1 / -1; }
+.panel .locals-editor label { font-size: 0.9rem; font-weight: 600; gap: 0.3rem; }
+.panel .locals-editor input,
+.panel .locals-editor textarea {
+  height: auto; font-size: 0.92rem; padding: 0.5rem 0.7rem;
+  border-radius: 10px; box-shadow: none; border-color: var(--border);
+}
+.panel .locals-editor textarea { min-height: 2.4rem; }
+
+@media (max-width: 760px) {
+  .panel .locals-editor { grid-template-columns: 1fr; }
+}
+
 /* ── Chat de configuración de Sara ────────────────────────────────────── */
 .sara-chat {
   border: 1px solid var(--border);

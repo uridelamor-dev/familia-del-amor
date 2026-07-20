@@ -408,39 +408,37 @@ function renderLocalEditor(slug) {
   }
 
   localsForm.innerHTML = `
-    <div style="display:flex;flex-direction:column;gap:0.6rem;margin-bottom:0.75rem">
-      ${pdfSlot("Carta", menuKey, menuUrl, "menuUpload")}
-      ${pdfSlot("Menú mediodía", almuKey, almuUrl, "menuUpload")}
-    </div>
+    ${pdfSlot("Carta", menuKey, menuUrl, "menuUpload")}
+    ${pdfSlot("Menú mediodía", almuKey, almuUrl, "menuUpload")}
     <label>
       <span>Instagram</span>
-      <input name="${instagramKey}" value="${values[instagramKey] || ""}" />
+      <input name="${instagramKey}" value="${values[instagramKey] || ""}" placeholder="https://instagram.com/..." />
     </label>
     <label>
       <span>Horarios</span>
-      <textarea name="${hoursKey}" rows="2">${values[hoursKey] || ""}</textarea>
+      <input name="${hoursKey}" value="${values[hoursKey] || ""}" placeholder="08:00 – 00:00" />
     </label>
     <label>
       <span>Mapa (URL)</span>
-      <input name="${mapKey}" value="${values[mapKey] || ""}" />
+      <input name="${mapKey}" value="${values[mapKey] || ""}" placeholder="Enlace de Google Maps" />
     </label>
     <label>
       <span>Historia / Curiosidades</span>
-      <textarea name="${historyKey}" rows="2">${values[historyKey] || ""}</textarea>
+      <input name="${historyKey}" value="${values[historyKey] || ""}" placeholder="Breve descripción del local" />
     </label>
-    <label>
+    <label class="full">
       <span>Galería (una URL por línea)</span>
       <textarea name="${galleryKey}" rows="3">${values[galleryKey] || ""}</textarea>
     </label>
-    <div class="gallery-tools">
+    <div class="gallery-tools full">
       <button type="button" class="btn ghost gallery-up" data-target="${galleryKey}">Subir</button>
       <button type="button" class="btn ghost gallery-down" data-target="${galleryKey}">Bajar</button>
       <button type="button" class="btn ghost gallery-remove" data-target="${galleryKey}">Eliminar última</button>
+      <label class="upload" style="margin:0">
+        <input type="file" class="galleryUpload" data-target="${galleryKey}" accept="image/*" multiple />
+        <span>Subir imágenes</span>
+      </label>
     </div>
-    <label>
-      <span>Subir imágenes (añade a la galería)</span>
-      <input type="file" class="galleryUpload" data-target="${galleryKey}" accept="image/*" multiple />
-    </label>
   `;
 
   const iframe = document.getElementById("previewFrameLocals");
