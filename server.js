@@ -2921,14 +2921,14 @@ const server = app.listen(PORT, async () => {
       );
       if (bloqueos.length) {
         const lineas = bloqueos.map(b => `- ${b.local}: del ${b.desde} al ${b.hasta}${b.motivo ? ` (${b.motivo})` : ""}`).join("\n");
-        partes.push(`RESERVAS NO DISPONIBLES en estas fechas. NO registres reservas que caigan en estos rangos; si el cliente lo pide, explícale con amabilidad que esas fechas no están disponibles y ofrécele otra fecha:\n${lineas}`);
+        partes.push(`RESERVAS NO DISPONIBLES en estos locales y fechas. NUNCA ofrezcas, sugieras ni registres una reserva que caiga en estos rangos. Si el cliente menciona esos días o un evento que ocurre en ellos (p. ej. la fiesta mayor), recuérdaselo proactivamente con amabilidad y ofrécele otra fecha u otro local que sí acepte — pero jamás le propongas reservar en estas fechas:\n${lineas}`);
       }
       const docs = await dbAll(
         `SELECT id, tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND documento_url IS NOT NULL AND documento_url != '' ORDER BY id`, []
       );
       if (docs.length) {
         const lineas = docs.map(d => `- id ${d.id}: ${d.tema}${d.disparadores ? ` — cuándo enviarlo: ${d.disparadores}` : ""}${d.respuesta ? ` — di también: ${d.respuesta}` : ""}`).join("\n");
-        partes.push(`DOCUMENTOS DISPONIBLES para enviar con la herramienta enviar_documento (usa el id exacto):\n${lineas}`);
+        partes.push(`DOCUMENTOS DISPONIBLES para enviar con la herramienta enviar_documento (usa el id exacto; envíalo A LA PRIMERA en cuanto el cliente pida algo que encaje, sin derivar al teléfono ni esperar a que insista):\n${lineas}`);
       }
       const respTexto = await dbAll(
         `SELECT tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND (documento_url IS NULL OR documento_url = '') AND respuesta IS NOT NULL AND respuesta != '' ORDER BY id`, []
