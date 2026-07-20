@@ -39,8 +39,12 @@
           <p>Dile en lenguaje natural cómo debe comportarse. Sara te propondrá el cambio y tú lo confirmas. Ejemplos: "la semana del 10 al 16 no aceptamos reservas en La Tapeta Blanes", "si preguntan por la carta de Blanes, mándales el PDF", "si preguntan por parking, di que hay zona azul".</p>
         </div>
         <div id="saraChat" class="sara-chat"></div>
+        <div id="saraAdjuntoChip" class="sara-adjunto-chip hidden"></div>
         <div id="saraProposal" class="sara-proposal hidden"></div>
         <form id="saraForm" class="sara-inputbar">
+          <label class="sara-attach" title="Adjuntar archivo o foto">📎
+            <input type="file" id="saraFile" accept="application/pdf,image/*" hidden />
+          </label>
           <input type="text" id="saraInput" placeholder="Escríbele a Sara qué quieres cambiar…" autocomplete="off" />
           <button class="btn" type="submit" id="saraSend">Enviar</button>
         </form>

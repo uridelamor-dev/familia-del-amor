@@ -3162,8 +3162,12 @@ h1, h2, h3 {
   padding: 0.9rem 1rem;
 }
 .sara-proposal .sara-proposal-actions { display: flex; gap: 0.6rem; margin-top: 0.75rem; }
-.sara-inputbar { display: flex; gap: 0.6rem; margin-top: 0.75rem; }
-.sara-inputbar input { flex: 1; padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 999px; font-family: inherit; font-size: 0.9rem; }
+.sara-inputbar { display: flex; gap: 0.6rem; margin-top: 0.75rem; align-items: center; }
+.sara-inputbar input[type="text"] { flex: 1; padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: 999px; font-family: inherit; font-size: 0.9rem; }
+.sara-attach { display: inline-flex; align-items: center; justify-content: center; width: 2.2rem; height: 2.2rem; border-radius: 999px; border: 1px solid var(--border); background: var(--card); cursor: pointer; font-size: 1.05rem; flex-shrink: 0; transition: border-color 0.15s; }
+.sara-attach:hover { border-color: var(--panel-fill); }
+.sara-adjunto-chip { margin-top: 0.5rem; font-size: 0.82rem; color: var(--panel-fill); background: rgba(44,74,62,0.08); border-radius: 8px; padding: 0.35rem 0.6rem; display: inline-block; }
+.sara-adjunto-chip button { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 1rem; margin-left: 0.4rem; }
 .sara-rule-item {
   display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
   padding: 0.7rem 0.9rem; border: 1px solid var(--border); border-radius: 10px; background: var(--card); margin-bottom: 0.6rem;

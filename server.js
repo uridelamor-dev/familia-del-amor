@@ -2425,6 +2425,40 @@ const SARA_PROPOSAL_TOOLS = [
       },
       required: ["tipo", "id"]
     }
+  },
+  {
+    name: "proponer_set_contenido",
+    description: "Coloca/actualiza un contenido de la web en una 'key' EXACTA del catálogo: una carta/menú PDF, una imagen o un enlace. Ej: poner una carta subida como carta de un local (key local_<slug>_menu_pdf, value = URL subida).",
+    input_schema: {
+      type: "object",
+      properties: { key: { type: "string" }, value: { type: "string" } },
+      required: ["key", "value"]
+    }
+  },
+  {
+    name: "proponer_set_texto",
+    description: "Cambia un texto editable de la web (títulos, subtítulos, textos) para un idioma. Usa una 'key' de tipo texto del catálogo.",
+    input_schema: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        texto: { type: "string" },
+        idioma: { type: "string", enum: ["es", "ca", "en"] }
+      },
+      required: ["key", "texto"]
+    }
+  },
+  {
+    name: "proponer_anadir_galeria",
+    description: "Añade una o varias fotos (URLs subidas) a una galería del catálogo (galería de un local o galería general).",
+    input_schema: {
+      type: "object",
+      properties: {
+        key: { type: "string" },
+        urls: { type: "array", items: { type: "string" } }
+      },
+      required: ["key", "urls"]
+    }
   }
 ];
 
@@ -2439,6 +2473,7 @@ app.post("/api/sara/chat", requireAuth(["marketing", "direccion"]), async (req, 
     const mensajes = Array.isArray(req.body?.mensajes) ? req.body.mensajes.slice(-20) : [];
     if (!mensajes.length) return res.status(400).json({ ok: false, error: "Sin mensajes" });
     if (!process.env.ANTHROPIC_API_KEY) return res.status(500).json({ ok: false, error: "IA no configurada" });
+    const adjuntos = Array.isArray(req.body?.adjuntos) ? req.body.adjuntos.filter(u => typeof u === "string" && u).slice(0, 5) : [];
 
     const hoy = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
     const estado = await getSaraEstado();
@@ -2447,20 +2482,40 @@ app.post("/api/sara/chat", requireAuth(["marketing", "direccion"]), async (req, 
       `INSTRUCCIONES ACTUALES: ${estado.instrucciones || "(ninguna)"}\n` +
       `BLOQUEOS ACTIVOS: ${estado.bloqueos.map(b => `#${b.id} ${b.local} ${b.desde}→${b.hasta}${b.motivo ? " ("+b.motivo+")" : ""}`).join("; ") || "(ninguno)"}\n` +
       `REGLAS: ${estado.reglas.map(r => `#${r.id} ${r.tema}${r.documento_url ? " [PDF]" : ""}`).join("; ") || "(ninguna)"}\n` +
-      `CARTAS/MENÚS PDF YA SUBIDOS (usa estas URLs para reglas de documento): ${docs.map(d => `${d.key} → ${d.url}`).join("; ") || "(ninguna subida aún)"}`;
+      `CARTAS/MENÚS PDF YA SUBIDOS: ${docs.map(d => `${d.key} → ${d.url}`).join("; ") || "(ninguna subida aún)"}`;
 
-    const system = `Eres el asistente de configuración de "Sara", el chatbot de WhatsApp del grupo de restaurantes Familia del Amor. Ayudas al equipo de marketing a cambiar el comportamiento de Sara SIN tocar código.
+    // Catálogo de contenidos editables (compacto) para mapear lenguaje natural → key
+    const { locales: regLocales } = getContentRegistry();
+    const globalCat = Object.entries(GLOBAL_FIELDS).map(([k, d]) => `  ${k}: ${d.label} (${d.type})`).join("\n");
+    const localFieldsCat = LOCAL_FIELDS.map(f => `  local_<slug>_${f.suffix}: ${f.label} (${f.type})`).join("\n");
+    const slugsCat = regLocales.map(l => `${l.slug} = ${l.name}`).join(" | ");
+    const catalogo = `CATÁLOGO DE CONTENIDOS EDITABLES (usa la 'key' EXACTA):\nGlobales:\n${globalCat}\nPor local (sustituye <slug>):\n${localFieldsCat}\nSlugs de local: ${slugsCat}`;
 
-Hoy es ${hoy} (zona Europe/Madrid). Locales válidos (nombres EXACTOS): ${SARA_LOCALES.join(" | ")}. Para bloquear todos, usa "Todos".
+    const adjuntoTxt = adjuntos.length
+      ? `\n\nARCHIVO(S) QUE EL USUARIO ACABA DE SUBIR (usa estas URLs como 'value'): ${adjuntos.join(", ")}`
+      : "";
+
+    const system = `Eres el asistente de configuración de "Sara", el chatbot de WhatsApp del grupo de restaurantes Familia del Amor. Ayudas al equipo de marketing a cambiar el comportamiento de Sara y el contenido de la web SIN tocar código.
+
+Hoy es ${hoy} (zona Europe/Madrid). Locales de reserva (nombres EXACTOS): ${SARA_LOCALES.join(" | ")}. Para bloquear todos, usa "Todos".
 
 ${resumenEstado}
 
+${catalogo}
+
 REGLAS:
-- Cuando el usuario pida un cambio, resume en una frase clara qué vas a hacer Y llama a la herramienta de propuesta correspondiente con datos concretos. NO apliques nada tú: solo propones; el sistema pedirá confirmación al usuario.
-- Resuelve fechas relativas ("la semana que viene", "del 10 al 16") a fechas concretas YYYY-MM-DD usando la fecha de hoy.
-- Si falta información imprescindible (local, fechas, qué documento), pregúntala antes de proponer. No inventes.
-- Para reglas de documento usa SOLO una URL de las cartas ya subidas. Si no hay una adecuada, dile que primero suba el PDF en la pestaña "Locales".
+- Cuando el usuario pida un cambio, resume en una frase clara qué vas a hacer Y llama a la herramienta de propuesta correspondiente con datos concretos. NO apliques nada tú: solo propones; el sistema pedirá confirmación.
+- Resuelve fechas relativas a fechas concretas YYYY-MM-DD usando la fecha de hoy.
+- COLOCAR ARCHIVOS/CONTENIDO: si el usuario sube un archivo y te dice dónde va (ej. "como carta de La Tapeta Blanes"), usa proponer_set_contenido con la key EXACTA del catálogo (ej. local_la-tapeta-blanes_menu_pdf) y value = la URL subida. Para textos usa proponer_set_texto (idioma es/ca/en, por defecto es). Para añadir fotos a una galería usa proponer_anadir_galeria con las URLs subidas.
+- Usa SIEMPRE una key EXACTA del catálogo. Si no encuentras el destino o falta info (local, qué campo), pregunta. No inventes keys ni URLs.
 - Habla en español, cercano y breve.`;
+
+    // Inyectar el/los adjunto(s) en el último mensaje del usuario para que el modelo los vea
+    const mensajesLLM = mensajes.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
+    if (adjuntoTxt && mensajesLLM.length) {
+      const last = mensajesLLM[mensajesLLM.length - 1];
+      if (last.role === "user") last.content += adjuntoTxt;
+    }
 
     const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await ai.messages.create({
@@ -2468,7 +2523,7 @@ REGLAS:
       max_tokens: 800,
       system,
       tools: SARA_PROPOSAL_TOOLS,
-      messages: mensajes.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }))
+      messages: mensajesLLM
     });
 
     let reply = "";
@@ -2514,6 +2569,38 @@ app.post("/api/sara/aplicar", requireAuth(["marketing", "direccion"]), async (re
       if (datos.tipo === "bloqueo") await dbRun(`DELETE FROM bloqueos_reservas WHERE id = ?`, [id]);
       else if (datos.tipo === "regla") await dbRun(`DELETE FROM sara_respuestas WHERE id = ?`, [id]);
       else return res.status(400).json({ ok: false, error: "Tipo a eliminar no válido" });
+    } else if (tipo === "proponer_set_contenido") {
+      const { campos } = getContentRegistry();
+      if (!keyEnRegistro(datos.key, campos)) return res.status(400).json({ ok: false, error: "Campo no permitido: " + datos.key });
+      await dbRun(
+        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        [datos.key, String(datos.value || "").slice(0, 2000)]
+      );
+    } else if (tipo === "proponer_set_texto") {
+      const { campos } = getContentRegistry();
+      const base = campos[datos.key];
+      if (!base || base.type !== "text_i18n") return res.status(400).json({ ok: false, error: "Campo de texto no válido" });
+      const idioma = ["es", "ca", "en"].includes(datos.idioma) ? datos.idioma : "es";
+      await dbRun(
+        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        [`${datos.key}_${idioma}`, String(datos.texto || "").slice(0, 2000)]
+      );
+    } else if (tipo === "proponer_anadir_galeria") {
+      const { campos } = getContentRegistry();
+      const base = campos[datos.key];
+      if (!base || base.type !== "gallery") return res.status(400).json({ ok: false, error: "Galería no válida" });
+      const nuevas = Array.isArray(datos.urls) ? datos.urls.filter(u => typeof u === "string" && u.trim()) : [];
+      if (!nuevas.length) return res.status(400).json({ ok: false, error: "Sin URLs" });
+      const row = await dbGet("SELECT value FROM contents WHERE key = ?", [datos.key]);
+      const actual = (row?.value || "").trim();
+      const combinado = (actual ? actual + "\n" : "") + nuevas.join("\n");
+      await dbRun(
+        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        [datos.key, combinado]
+      );
     } else {
       return res.status(400).json({ ok: false, error: "Tipo de propuesta desconocido" });
     }

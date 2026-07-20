@@ -783,24 +783,51 @@ window.addEventListener("message", (event) => {
 // ── CONFIGURADOR DE SARA (chat) ───────────────────────────────────────────
 let saraInit = false;
 let saraMensajes = [];
+let saraAdjuntos = [];
+
+function renderSaraChip() {
+  const chip = document.getElementById("saraAdjuntoChip");
+  if (!chip) return;
+  if (!saraAdjuntos.length) { chip.classList.add("hidden"); chip.innerHTML = ""; return; }
+  const nombres = saraAdjuntos.map(u => u.split("/").pop()).join(", ");
+  chip.classList.remove("hidden");
+  chip.innerHTML = `📎 ${escapeHtml(nombres)} <button type="button" id="saraChipDel" title="Quitar">×</button>`;
+  document.getElementById("saraChipDel")?.addEventListener("click", () => { saraAdjuntos = []; renderSaraChip(); });
+}
 
 function initSara() {
   loadSaraEstado();
   if (saraInit) return;
   saraInit = true;
 
-  const chat = document.getElementById("saraChat");
-  saraAddMsg("bot", "¡Hola! Dime qué quieres que cambie en Sara y te lo propongo antes de aplicarlo.");
+  saraAddMsg("bot", "¡Hola! Dime qué quieres que cambie en Sara o en la web. Puedes adjuntar un PDF o una foto con el clip 📎 y decirme dónde ponerlo. Te lo propongo antes de aplicar.");
+
+  const fileInput = document.getElementById("saraFile");
+  fileInput?.addEventListener("change", async () => {
+    if (!fileInput.files.length) return;
+    const label = document.querySelector(".sara-attach");
+    if (label) label.style.opacity = "0.5";
+    try {
+      const urls = await uploadFiles(fileInput.files);
+      if (urls.length) { saraAdjuntos = saraAdjuntos.concat(urls); renderSaraChip(); }
+      else toast("No se pudo subir el archivo", "error");
+    } catch { toast("No se pudo subir el archivo", "error"); }
+    finally { if (label) label.style.opacity = "1"; fileInput.value = ""; }
+  });
 
   const form = document.getElementById("saraForm");
   form?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const input = document.getElementById("saraInput");
     const texto = input.value.trim();
-    if (!texto) return;
+    if (!texto && !saraAdjuntos.length) return;
+    const adjuntosEnvio = saraAdjuntos.slice();
     input.value = "";
-    saraAddMsg("user", texto);
-    saraMensajes.push({ role: "user", content: texto });
+    saraAdjuntos = [];
+    renderSaraChip();
+    const textoMostrado = texto + (adjuntosEnvio.length ? `  📎 (${adjuntosEnvio.length} archivo/s)` : "");
+    saraAddMsg("user", textoMostrado);
+    saraMensajes.push({ role: "user", content: texto || "(archivo adjunto)" });
     clearSaraProposal();
     const btn = document.getElementById("saraSend");
     btn.disabled = true;
@@ -809,7 +836,7 @@ function initSara() {
       const res = await authFetch("/api/sara/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mensajes: saraMensajes })
+        body: JSON.stringify({ mensajes: saraMensajes, adjuntos: adjuntosEnvio })
       });
       const data = await res.json();
       pensando.remove();
@@ -851,6 +878,9 @@ function resumenPropuesta(p) {
     case "proponer_regla_documento": return `Cuando ${escapeHtml(d.disparadores || d.tema)}, Sara enviará el PDF${d.respuesta ? ` y dirá: "${escapeHtml(d.respuesta)}"` : ""}.`;
     case "proponer_respuesta_texto": return `Cuando ${escapeHtml(d.disparadores || d.tema)}, Sara responderá: "${escapeHtml(d.respuesta)}".`;
     case "proponer_eliminar": return `Eliminar ${d.tipo} #${d.id}.`;
+    case "proponer_set_contenido": return `Poner en la web «${escapeHtml(d.key)}»:\n${escapeHtml(d.value)}`;
+    case "proponer_set_texto": return `Cambiar el texto «${escapeHtml(d.key)}» (${escapeHtml(d.idioma || "es")}) a:\n"${escapeHtml(d.texto)}"`;
+    case "proponer_anadir_galeria": return `Añadir ${(d.urls || []).length} foto(s) a la galería «${escapeHtml(d.key)}».`;
     default: return "Cambio propuesto.";
   }
 }
