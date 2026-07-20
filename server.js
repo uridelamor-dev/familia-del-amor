@@ -2738,6 +2738,39 @@ const server = app.listen(PORT, async () => {
   // Tiene prioridad sobre el backup completo de BD para estas tablas.
   await restoreCriticalConfig();
 
+  // Grupos de WhatsApp "de serie": si un local no tiene su grupo enlazado, se le
+  // pone el suyo por defecto. Se ejecuta en CADA arranque con INSERT OR IGNORE →
+  // es autorreparable (si el backup falla, el default rellena el hueco) y NO pisa
+  // nunca un re-enlace manual (si el local ya tiene grupo, se respeta).
+  // La Tapeta Blanes y Cooperativa comparten grupo de reservas a propósito.
+  const DEFAULT_WA_LINKS = [
+    { local: "La Tapeta - Blanes", group_jid: "120363393125503294@g.us" },
+    { local: "La Tapeta - Lloret", group_jid: "34620403964-1593424370@g.us" },
+    { local: "La Tapeta - Girona", group_jid: "447341020476-1606230930@g.us" },
+    { local: "Cooperativa - Blanes", group_jid: "120363393125503294@g.us" },
+    { local: "Can Mateu - Tordera", group_jid: "120363044574117454@g.us" },
+    { local: "La Tapa Ibérica - Tordera", group_jid: "34620403964-1589730214@g.us" },
+    { local: "Botiga d'en Mateu - Tordera", group_jid: "120363202050821128@g.us" }
+  ];
+  const DEFAULT_FACTURAS_GRUPOS = [
+    { local: "Can Mateu - Tordera", group_jid: "120363409005830308@g.us" },
+    { local: "Cooperativa - Blanes", group_jid: "120363427741609402@g.us" },
+    { local: "La Tapa Ibérica - Tordera", group_jid: "120363407996132022@g.us" },
+    { local: "La Tapeta - Girona", group_jid: "120363426106267540@g.us" },
+    { local: "La Tapeta - Lloret", group_jid: "120363409899742012@g.us" }
+  ];
+  try {
+    for (const { local, group_jid } of DEFAULT_WA_LINKS) {
+      await dbRun(`INSERT OR IGNORE INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, datetime('now'))`, [local, group_jid]);
+      await dbRun(`INSERT OR IGNORE INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))`, [`whatsapp_group_${local}`, group_jid]);
+    }
+    for (const { local, group_jid } of DEFAULT_FACTURAS_GRUPOS) {
+      const existe = await dbGet(`SELECT 1 FROM facturas_grupos WHERE local = ?`, [local]);
+      if (!existe) await dbRun(`INSERT OR IGNORE INTO facturas_grupos (local, group_jid) VALUES (?, ?)`, [local, group_jid]);
+    }
+    console.log("[Defaults] Grupos de WhatsApp por defecto asegurados (reservas + facturas)");
+  } catch (e) { console.error("[Defaults] Error asegurando grupos por defecto:", e.message); }
+
   // Post-restore: volver a rellenar empresa en facturas que quedaron vacías
   // (necesario porque restoreCriticalConfig puede traer facturas_locales actualizados)
   db.run(
