@@ -137,6 +137,7 @@ const i18n = {
     reservation_at: "a las",
     success_reserva: "Reserva confirmada",
     err_generic: "No se pudo completar. Inténtalo de nuevo.",
+    reserva_bloqueada: "Esos días no aceptamos reservas en {local} 🎉 ¡Te esperamos en otra fecha o en otro de nuestros locales!",
     success_lead: "¡Descuento activado!",
     success_hr: "Candidatura enviada. Gracias.",
     err_hr: "No se pudo enviar. Inténtalo de nuevo.",
@@ -265,6 +266,7 @@ const i18n = {
     reservation_at: "a les",
     success_reserva: "Reserva confirmada",
     err_generic: "No s'ha pogut completar. Torna-ho a intentar.",
+    reserva_bloqueada: "Aquests dies no acceptem reserves a {local} 🎉 T'esperem en una altra data o en un altre dels nostres locals!",
     success_lead: "¡Descompte activat!",
     success_hr: "Candidatura enviada. Gràcies.",
     err_hr: "No s'ha pogut enviar. Torna-ho a intentar.",
@@ -393,6 +395,7 @@ const i18n = {
     reservation_at: "at",
     success_reserva: "Reservation confirmed",
     err_generic: "Could not complete. Please try again.",
+    reserva_bloqueada: "We're not taking bookings at {local} on those dates 🎉 We'd love to see you another day or at one of our other venues!",
     success_lead: "Discount activated!",
     success_hr: "Application sent. Thank you.",
     err_hr: "Could not send. Please try again.",
@@ -1196,6 +1199,8 @@ if (reservaForm) reservaForm.addEventListener("submit", async (e) => {
     document.getElementById("timePicker").querySelectorAll(".time-pill").forEach((b) => b.classList.remove("selected"));
     document.getElementById("horaValue").value = "";
     personasCount = 2; updateStepper();
+  } else if (data.code === "reservas_bloqueadas" && t.reserva_bloqueada) {
+    reservaMsg.textContent = t.reserva_bloqueada.replace("{local}", data.local || payload.local);
   } else {
     reservaMsg.textContent = data.error || t.err_generic;
   }

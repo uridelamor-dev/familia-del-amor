@@ -1650,7 +1650,15 @@ app.post("/api/reservas", async (req, res) => {
   try {
     const bloqueo = await estaBloqueado(local, dia);
     if (bloqueo) {
-      return res.status(400).json({ ok: false, error: `En esas fechas no se aceptan reservas en ${local}${bloqueo.motivo ? ` (${bloqueo.motivo})` : ""}.` });
+      // code + local + motivo para que el frontend muestre un mensaje traducido;
+      // 'error' queda como fallback en español.
+      return res.status(400).json({
+        ok: false,
+        code: "reservas_bloqueadas",
+        local,
+        motivo: bloqueo.motivo || "",
+        error: `En esas fechas no se aceptan reservas en ${local}${bloqueo.motivo ? ` (${bloqueo.motivo})` : ""}.`
+      });
     }
   } catch (e) { console.error("Error comprobando bloqueo de reservas:", e.message); }
   const creado_en = new Date().toISOString();
