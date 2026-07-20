@@ -1618,6 +1618,104 @@ app.put("/api/content", requireAuth(["marketing", "direccion"]), (req, res) => {
   );
 });
 
+// ── Registro de contenidos editables (fuente única) ─────────────────────────
+const WEB_LOCALES = [
+  { slug: "la-tapeta-blanes", name: "La Tapeta Blanes" },
+  { slug: "la-tapeta-lloret", name: "La Tapeta Lloret" },
+  { slug: "la-tapeta-girona", name: "La Tapeta Girona" },
+  { slug: "cooperativa", name: "Cooperativa" },
+  { slug: "can-mateu", name: "Can Mateu" },
+  { slug: "la-tapa-iberica", name: "La Tapa Ibérica" },
+  { slug: "botiga-d-en-mateu", name: "Botiga d'en Mateu" },
+  { slug: "viva-la-pepa", name: "Viva la Pepa" }
+];
+
+const LOCAL_FIELDS = [
+  { suffix: "menu_pdf", label: "Carta", type: "pdf" },
+  { suffix: "menu_almuerzo_pdf", label: "Menú mediodía", type: "pdf" },
+  { suffix: "instagram", label: "Instagram", type: "url" },
+  { suffix: "hours", label: "Horario", type: "text" },
+  { suffix: "map", label: "Mapa", type: "url" },
+  { suffix: "history", label: "Historia", type: "text" },
+  { suffix: "gallery", label: "Galería de fotos", type: "gallery" }
+];
+
+const GLOBAL_FIELDS = {
+  hero_eyebrow:       { label: "Etiqueta superior",     section: "Hero",      type: "text_i18n" },
+  hero_title:         { label: "Título principal",      section: "Hero",      type: "text_i18n" },
+  hero_sub:           { label: "Subtítulo",             section: "Hero",      type: "text_i18n" },
+  hero_cta:           { label: "Botón 'Reservar'",      section: "Hero",      type: "text_i18n" },
+  hero_cta_2:         { label: "Botón 'Ver locales'",   section: "Hero",      type: "text_i18n" },
+  hero_image_url:     { label: "Imagen de fondo",       section: "Hero",      type: "image" },
+  site_logo_url:      { label: "Logo del sitio",        section: "General",   type: "image" },
+  companies_title:    { label: "Título sección locales",section: "Locales",   type: "text_i18n" },
+  companies_sub:      { label: "Subtítulo locales",     section: "Locales",   type: "text_i18n" },
+  gallery_title:      { label: "Título galería",        section: "Galería",   type: "text_i18n" },
+  gallery_sub:        { label: "Subtítulo galería",     section: "Galería",   type: "text_i18n" },
+  gallery_images:     { label: "Fotos de la galería",   section: "Galería",   type: "gallery" },
+  reservations_title: { label: "Título reservas",       section: "Reservas",  type: "text_i18n" },
+  reservations_sub:   { label: "Subtítulo reservas",    section: "Reservas",  type: "text_i18n" },
+  reviews_title:      { label: "Título reseñas",        section: "Reseñas",   type: "text_i18n" },
+  reviews_sub:        { label: "Valoración Google",     section: "Reseñas",   type: "text_i18n" },
+  strip_title:        { label: "Franja: título",        section: "Descuento", type: "text_i18n" },
+  strip_sub:          { label: "Franja: texto",         section: "Descuento", type: "text_i18n" },
+  strip_cta:          { label: "Franja: botón",         section: "Descuento", type: "text_i18n" },
+  popup_title:        { label: "Popup: título",         section: "Popup",     type: "text_i18n" },
+  popup_text:         { label: "Popup: texto",          section: "Popup",     type: "text_i18n" },
+  contact_title:      { label: "Título contacto",       section: "Contacto",  type: "text_i18n" },
+  contact_text:       { label: "Texto contacto",        section: "Contacto",  type: "text_i18n" }
+};
+
+function getContentRegistry() {
+  const campos = {};
+  for (const [key, def] of Object.entries(GLOBAL_FIELDS)) campos[key] = { ...def, scope: "global" };
+  for (const loc of WEB_LOCALES) {
+    for (const f of LOCAL_FIELDS) {
+      campos[`local_${loc.slug}_${f.suffix}`] = {
+        label: `${f.label} de ${loc.name}`, section: loc.name, type: f.type, scope: "local", local: loc.slug
+      };
+    }
+  }
+  return { locales: WEB_LOCALES, campos };
+}
+
+// Allowlist: solo se pueden escribir claves del registro (acepta variantes i18n _es/_ca/_en).
+function keyEnRegistro(key, campos) {
+  if (campos[key]) return true;
+  const m = key.match(/^(.*)_(es|ca|en)$/);
+  return !!(m && campos[m[1]] && campos[m[1]].type === "text_i18n");
+}
+
+app.get("/api/content/registry", requireAuth(["marketing", "direccion"]), (req, res) => {
+  res.json({ ok: true, ...getContentRegistry() });
+});
+
+app.put("/api/content/batch", requireAuth(["marketing", "direccion"]), async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : null;
+  if (!items || !items.length) return res.status(400).json({ ok: false, error: "Sin cambios" });
+  const { campos } = getContentRegistry();
+  for (const it of items) {
+    if (!it || typeof it.key !== "string" || typeof it.value !== "string") {
+      return res.status(400).json({ ok: false, error: "Item inválido" });
+    }
+    if (!keyEnRegistro(it.key, campos)) {
+      return res.status(400).json({ ok: false, error: `Campo no permitido: ${it.key}` });
+    }
+  }
+  try {
+    for (const it of items) {
+      await dbRun(
+        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        [it.key, it.value]
+      );
+    }
+    res.json({ ok: true, count: items.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Upload
 app.post("/api/upload", requireAuth(["marketing", "rrhh", "direccion"]), upload.array("files", 10), (req, res) => {
   const files = req.files || [];
