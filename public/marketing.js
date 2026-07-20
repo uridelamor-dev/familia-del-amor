@@ -57,8 +57,8 @@ async function initWhatsAppStatus(elId) {
     if (data.connected) { el.innerHTML = `✅ WhatsApp conectado`; return; }
     if (data.qr) {
       el.innerHTML = `<p style="margin-bottom:0.75rem">📱 Escanea este QR con WhatsApp:</p>
-        <img src="${data.qr}" style="width:220px;height:220px;border-radius:8px;display:block;margin:0 auto" />
-        <p style="margin-top:0.5rem;font-size:0.85rem;color:var(--muted)">Espera a ver ✅ tras escanearlo.</p>`;
+        <img src="${data.qr}" class="qr-img" alt="Código QR de WhatsApp" />
+        <p style="margin-top:0.5rem" class="empty-note">Espera a ver ✅ tras escanearlo.</p>`;
     } else {
       el.innerHTML = `⏳ Generando QR${".".repeat(i % 3 + 1)}`;
     }
@@ -85,11 +85,10 @@ async function initPlacesConfig() {
   const savedMap = Object.fromEntries(saved.map(l => [l.name, l.placeId || ""]));
 
   fieldsEl.innerHTML = PLACES_LOCALS.map(name => `
-    <label style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">
-      <span style="min-width:200px;font-size:0.88rem">${name}</span>
-      <input type="text" class="cprops-input" data-place-name="${name}"
-        placeholder="ChIJ..." value="${savedMap[name] || ""}"
-        style="flex:1;font-size:0.82rem;font-family:monospace" />
+    <label class="places-field">
+      <span class="places-field-name">${name}</span>
+      <input type="text" class="cprops-input mono" data-place-name="${name}"
+        placeholder="ChIJ..." value="${savedMap[name] || ""}" />
     </label>
   `).join("");
 
@@ -391,12 +390,12 @@ function renderLocalEditor(slug) {
 
   function pdfSlot(label, key, url, uploadClass) {
     const preview = url
-      ? `<a href="${url}" target="_blank" class="btn ghost" style="font-size:0.75rem;padding:0.35rem 0.8rem">Ver PDF actual</a>`
-      : `<span style="font-size:0.82rem;color:var(--muted)">Sin PDF asignado</span>`;
+      ? `<a href="${url}" target="_blank" class="btn ghost btn-sm">Ver PDF actual</a>`
+      : `<span class="pdf-empty">Sin PDF asignado</span>`;
     return `
-      <div class="pdf-slot" style="display:flex;flex-direction:column;gap:0.5rem;padding:0.75rem;background:#f9f4ee;border-radius:10px;border:1px solid #eadfce">
-        <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted)">${label}</div>
-        <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+      <div class="pdf-slot">
+        <div class="pdf-slot-label">${label}</div>
+        <div class="pdf-slot-row">
           ${preview}
           <label class="upload" style="margin:0">
             <input type="file" class="${uploadClass}" data-target="${key}" accept="application/pdf" />
@@ -477,7 +476,7 @@ function wireLocalEditorHandlers() {
         if (hidden) hidden.value = urls[0];
         if (slot) {
           const oldLink = slot.querySelector("a.btn");
-          const noLabel = slot.querySelector("span[style*='Sin PDF']");
+          const noLabel = slot.querySelector(".pdf-empty");
           const uploadLabel = input.closest("label");
           if (oldLink) {
             oldLink.href = urls[0];
@@ -485,8 +484,7 @@ function wireLocalEditorHandlers() {
             const a = document.createElement("a");
             a.href = urls[0];
             a.target = "_blank";
-            a.className = "btn ghost";
-            a.style.cssText = "font-size:0.75rem;padding:0.35rem 0.8rem";
+            a.className = "btn ghost btn-sm";
             a.textContent = "Ver PDF actual";
             if (noLabel) noLabel.replaceWith(a);
             else uploadLabel.before(a);
@@ -613,8 +611,8 @@ async function loadLeads() {
   }
 
   const origenBadge = o => o === "lead"
-    ? `<span style="font-size:0.72rem;background:#e8f5e9;color:#2e7d32;border-radius:4px;padding:1px 5px">lead</span>`
-    : `<span style="font-size:0.72rem;background:#e3f2fd;color:#1565c0;border-radius:4px;padding:1px 5px">reserva</span>`;
+    ? `<span class="badge badge-lead">lead</span>`
+    : `<span class="badge badge-reserva">reserva</span>`;
 
   const rows = data.data.map(r => `
     <tr>
@@ -636,7 +634,7 @@ async function loadLeads() {
       <tbody>${rows}</tbody>
     </table>
     </div>
-    <p style="padding:8px 12px;font-size:0.8rem;color:var(--muted)">${data.data.length} contacto${data.data.length !== 1 ? "s" : ""} en total</p>
+    <p class="empty-note" style="padding:8px 12px;font-size:0.8rem">${data.data.length} contacto${data.data.length !== 1 ? "s" : ""} en total</p>
   `;
 }
 
@@ -701,22 +699,21 @@ async function loadCampHistorial() {
     const res = await authFetch("/api/campanas");
     data = await res.json();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="4" style="padding:12px;color:var(--muted)">Error al cargar el historial.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-note">Error al cargar el historial.</td></tr>`;
     return;
   }
   if (!data.ok || !data.data.length) {
-    tbody.innerHTML = `<tr><td colspan="4" style="padding:12px;color:var(--muted)">Sin campañas enviadas aún.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-note">Sin campañas enviadas aún.</td></tr>`;
     return;
   }
-  tbody.innerHTML = data.data.map((c, i) => {
+  tbody.innerHTML = data.data.map((c) => {
     const fecha = new Date(c.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" });
-    const bg = i % 2 === 0 ? "" : "background:var(--bg)";
     const estado = c.finalizado_en ? `${c.total_enviados} ✅` : `⏳ enviando...`;
-    return `<tr style="${bg}">
-      <td style="padding:8px 12px;color:var(--muted);white-space:nowrap">${escapeHtml(fecha)}</td>
-      <td style="padding:8px 12px">${escapeHtml(c.nombre)}</td>
-      <td style="padding:8px 12px">${estado}</td>
-      <td style="padding:8px 12px;color:${c.total_errores > 0 ? '#c0392b' : 'var(--muted)'}">${c.total_errores}</td>
+    return `<tr>
+      <td style="white-space:nowrap">${escapeHtml(fecha)}</td>
+      <td>${escapeHtml(c.nombre)}</td>
+      <td>${estado}</td>
+      <td class="${c.total_errores > 0 ? 'fg-danger' : 'empty-note'}">${c.total_errores}</td>
     </tr>`;
   }).join("");
 }
@@ -733,7 +730,7 @@ document.getElementById("campPreview")?.addEventListener("click", async () => {
   const data = await res.json();
   if (!data.ok) { msg.textContent = "Error al calcular."; return; }
   const muestra = data.muestra.map(c => escapeHtml(`${c.nombre} ${c.apellidos} (${c.telefono})`)).join(", ");
-  msg.innerHTML = `<strong>${data.total} contacto${data.total !== 1 ? "s" : ""}</strong> recibirán este mensaje.<br><span style="color:var(--muted);font-size:0.8em">Muestra: ${muestra}${data.total > 5 ? "..." : ""}</span>`;
+  msg.innerHTML = `<strong>${data.total} contacto${data.total !== 1 ? "s" : ""}</strong> recibirán este mensaje.<br><span class="hint">Muestra: ${muestra}${data.total > 5 ? "..." : ""}</span>`;
 });
 
 document.getElementById("campEnviar")?.addEventListener("click", async () => {
@@ -939,20 +936,20 @@ function renderSaraEstado(data) {
   const bloques = [];
 
   bloques.push(`<div class="sara-rule-item">
-    <div class="sara-rule-body"><span class="sara-rule-tag">Instrucciones generales</span><br>${data.instrucciones ? escapeHtml(data.instrucciones).replace(/\n/g, "<br>") : '<span style="color:var(--muted)">Ninguna</span>'}</div>
+    <div class="sara-rule-body"><span class="sara-rule-tag">Instrucciones generales</span><br>${data.instrucciones ? escapeHtml(data.instrucciones).replace(/\n/g, "<br>") : '<span class="empty-note">Ninguna</span>'}</div>
   </div>`);
 
   if (data.bloqueos && data.bloqueos.length) {
     bloques.push(data.bloqueos.map(b => `<div class="sara-rule-item">
       <div class="sara-rule-body"><span class="sara-rule-tag">Reservas cerradas</span><br>${escapeHtml(b.local)} · del ${b.desde} al ${b.hasta}${b.motivo ? ` — ${escapeHtml(b.motivo)}` : ""}</div>
-      <button class="btn ghost" style="padding:0.2rem 0.5rem" onclick="borrarSaraBloqueo(${b.id})">Eliminar</button>
+      <button class="btn ghost btn-sm" onclick="borrarSaraBloqueo(${b.id})">Eliminar</button>
     </div>`).join(""));
   }
 
   if (data.reglas && data.reglas.length) {
     bloques.push(data.reglas.map(r => `<div class="sara-rule-item">
-      <div class="sara-rule-body"><span class="sara-rule-tag">${r.documento_url ? "Envío de documento" : "Respuesta"}</span><br>${escapeHtml(r.tema)}${r.disparadores ? ` · ${escapeHtml(r.disparadores)}` : ""}${r.respuesta ? `<br><span style="color:var(--muted)">"${escapeHtml(r.respuesta)}"</span>` : ""}</div>
-      <button class="btn ghost" style="padding:0.2rem 0.5rem" onclick="borrarSaraRegla(${r.id})">Eliminar</button>
+      <div class="sara-rule-body"><span class="sara-rule-tag">${r.documento_url ? "Envío de documento" : "Respuesta"}</span><br>${escapeHtml(r.tema)}${r.disparadores ? ` · ${escapeHtml(r.disparadores)}` : ""}${r.respuesta ? `<br><span class="empty-note">"${escapeHtml(r.respuesta)}"</span>` : ""}</div>
+      <button class="btn ghost btn-sm" onclick="borrarSaraRegla(${r.id})">Eliminar</button>
     </div>`).join(""));
   }
 

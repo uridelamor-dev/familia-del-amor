@@ -83,8 +83,8 @@
           <h2>Google Places · Place IDs</h2>
           <p>Alternativa sin aprobación — importa hasta 5 reseñas recientes por local directamente de Google Maps.</p>
         </div>
-        <div class="card form" id="placesForm">
-          <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem">
+        <div class="card form-internal" id="placesForm">
+          <p class="empty-note" style="margin-bottom:1rem">
             Para encontrar el Place ID de cada local: busca el restaurante en
             <a href="https://developers.google.com/maps/documentation/javascript/examples/places-placeid-finder" target="_blank" rel="noopener">este buscador oficial</a>,
             o ábrelo en Google Maps, comparte el enlace y copia el identificador.
@@ -133,7 +133,7 @@
           <button class="btn" id="localsSubmitBtn" type="button" style="margin-left:auto">Guardar cambios</button>
           <span class="form-note" id="localsStatus"></span>
         </div>
-        <form id="localsForm" class="form locals-editor"></form>
+        <form id="localsForm" class="form-internal locals-editor"></form>
         <div class="panel-preview" style="margin-top:1.4rem">
           <h3>Vista previa</h3>
           <iframe id="previewFrameLocals" src="local.html?slug=la-tapeta-blanes"></iframe>
@@ -146,8 +146,8 @@
           <p>Envía mensajes segmentados a tus clientes.</p>
         </div>
 
-        <div class="card form" style="margin-bottom:1rem">
-          <h3 style="margin:0 0 1rem;font-size:1rem">Nueva campaña</h3>
+        <div class="card form-internal" style="margin-bottom:1rem">
+          <h3 class="card-title">Nueva campaña</h3>
           <label><span>Nombre de la campaña</span>
             <input type="text" id="campNombre" placeholder="Ej: Día de la Madre mayo 2026" />
           </label>
@@ -180,28 +180,28 @@
               <select id="campLocal" data-locales data-placeholder="Cualquier local"></select>
             </label>
           </div>
-          <label><span>Mensaje <span style="color:var(--muted);font-size:0.8em">— usa {nombre}, {apellidos}, {nombre_completo}</span></span>
+          <label><span>Mensaje <span class="hint">— usa {nombre}, {apellidos}, {nombre_completo}</span></span>
             <textarea id="campMensaje" rows="5" placeholder="¡Hola {nombre}! 🎉 Este mes es tu mes..."></textarea>
           </label>
-          <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.5rem">
+          <div class="row" style="margin-top:0.5rem">
             <button class="btn ghost" id="campPreview" type="button">Vista previa</button>
             <button class="btn" id="campEnviar" type="button">Enviar campaña</button>
           </div>
           <div id="campMsg" style="margin-top:0.75rem;font-size:0.9rem"></div>
         </div>
 
-        <div class="card" style="padding:0;overflow:hidden">
-          <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+        <div class="table-wrap">
+          <table class="table table-compact">
             <thead>
-              <tr style="background:var(--primary);color:#fff">
-                <th style="padding:8px 12px;text-align:left">Fecha</th>
-                <th style="padding:8px 12px;text-align:left">Campaña</th>
-                <th style="padding:8px 12px;text-align:left">Enviados</th>
-                <th style="padding:8px 12px;text-align:left">Errores</th>
+              <tr>
+                <th>Fecha</th>
+                <th>Campaña</th>
+                <th>Enviados</th>
+                <th>Errores</th>
               </tr>
             </thead>
             <tbody id="campHistorial">
-              <tr><td colspan="4" style="padding:12px;color:var(--muted)">Cargando...</td></tr>
+              <tr><td colspan="4" class="empty-note">Cargando...</td></tr>
             </tbody>
           </table>
         </div>
@@ -212,7 +212,7 @@
           <h2>Clientes</h2>
           <p>Filtra y exporta leads.</p>
         </div>
-        <div class="panel-filters form">
+        <div class="panel-filters form-internal">
           <label>
             <span>Búsqueda</span>
             <input type="text" id="leadQ" placeholder="Nombre, email o teléfono" />
