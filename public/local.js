@@ -1,21 +1,39 @@
 const locals = {
-  "la-tapeta": {
-    name: "La Tapeta",
+  "la-tapeta-blanes": {
+    name: "La Tapeta Blanes",
     desc: "Locales con ambiente y buen rollo.",
     type: "Bar de tapas",
-    slug: "la-tapeta",
+    slug: "la-tapeta-blanes",
     locations: [
-      { dir: "Blanes · Carrer de la Muralla 21", tel: "972916341" },
-      { dir: "Lloret · Carrer Sant Pere 84", tel: "872266645" },
+      { dir: "Blanes · Carrer de la Muralla 21", tel: "972916341" }
+    ],
+    instagram: "https://www.instagram.com/la.tapeta/",
+    menuPdf: "",
+    gallery: ["uploads/gallery/LaTapeta_Blanes_01.jpg"]
+  },
+  "la-tapeta-lloret": {
+    name: "La Tapeta Lloret",
+    desc: "Locales con ambiente y buen rollo.",
+    type: "Bar de tapas",
+    slug: "la-tapeta-lloret",
+    locations: [
+      { dir: "Lloret · Carrer Sant Pere 84", tel: "872266645" }
+    ],
+    instagram: "https://www.instagram.com/la.tapeta/",
+    menuPdf: "",
+    gallery: ["uploads/gallery/LaTapeta_Lloret_01.jpg"]
+  },
+  "la-tapeta-girona": {
+    name: "La Tapeta Girona",
+    desc: "Locales con ambiente y buen rollo.",
+    type: "Bar de tapas",
+    slug: "la-tapeta-girona",
+    locations: [
       { dir: "Girona · Avinguda Sant Francesc 7", tel: "872071246" }
     ],
     instagram: "https://www.instagram.com/la.tapeta/",
     menuPdf: "",
-    gallery: [
-      "https://familiadelamor.com/wp-content/uploads/elementor/thumbs/Tapeta_Lloret-30-ratgtjh9xi7hw5vtvqz47f25dmzpdau9n8kowi9w8g.jpg",
-      "https://familiadelamor.com/wp-content/uploads/elementor/thumbs/Tapeta_Lloret-27-ratgthllju4x8xyk6q5v2fj86v8yxwmsyz9pxycokw.jpg",
-      "https://familiadelamor.com/wp-content/uploads/elementor/thumbs/DSC03669-ratgsvzb6nbbtwtyoytfz2zmj07j0v8z809jwl8qk0.jpg"
-    ]
+    gallery: ["uploads/gallery/LaTapeta_Girona_01.jpg"]
   },
   cooperativa: {
     name: "Cooperativa",

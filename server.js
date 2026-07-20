@@ -2584,6 +2584,36 @@ const server = app.listen(PORT, async () => {
     }
   } catch (e) { console.error("[Seed] Error sembrando Fiesta Mayor:", e.message); }
 
+  // Migración única: separar La Tapeta (slug la-tapeta → 3 ciudades) y consolidar
+  // el slug de Botiga. Copia cada contenido SOLO si el destino aún no existe (no
+  // pisa personalizaciones). Flag en config para ejecutarse una sola vez.
+  try {
+    const yaMigrado = await getConfig("seed_split_latapeta_v1");
+    if (!yaMigrado) {
+      const CAMPOS = ["instagram", "menu_pdf", "menu_almuerzo_pdf", "gallery", "hours", "map", "history"];
+      const copiarContenido = async (origenSlug, destinoSlug) => {
+        for (const campo of CAMPOS) {
+          const origen = await dbGet("SELECT value FROM contents WHERE key = ?", [`local_${origenSlug}_${campo}`]);
+          if (!origen || !origen.value) continue;
+          const destKey = `local_${destinoSlug}_${campo}`;
+          const existe = await dbGet("SELECT value FROM contents WHERE key = ? AND value != ''", [destKey]);
+          if (existe) continue; // no pisar contenido ya personalizado
+          await dbRun(
+            `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+            [destKey, origen.value]
+          );
+        }
+      };
+      for (const ciudad of ["la-tapeta-blanes", "la-tapeta-lloret", "la-tapeta-girona"]) {
+        await copiarContenido("la-tapeta", ciudad);
+      }
+      await copiarContenido("botiga-mateu", "botiga-d-en-mateu"); // corrige inconsistencia de slug
+      await setConfig("seed_split_latapeta_v1", "done");
+      console.log("[Seed] La Tapeta separada en 3 ciudades y contenidos migrados");
+    }
+  } catch (e) { console.error("[Seed] Error migrando split La Tapeta:", e.message); }
+
   // Enviar mensajes de seguimiento post-visita (cada 5 min)
   setInterval(async () => {
     if (!isReady()) return;

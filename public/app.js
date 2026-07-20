@@ -2,16 +2,28 @@ let editModeEnabled = false;
 
 const companies = [
   {
-    name: "La Tapeta",
+    name: "La Tapeta Blanes",
     desc: "Locales con ambiente y buen rollo.",
     logo: "assets/logos/6.svg",
-    slug: "la-tapeta",
+    slug: "la-tapeta-blanes",
     photo: "uploads/gallery/LaTapeta_Blanes_01.jpg",
-    locations: [
-      "Blanes · Calle Muralla 21",
-      "Lloret · Calle Sant Pere 84",
-      "Girona · Avinguda Sant Francesc 7"
-    ]
+    locations: ["Blanes · Calle Muralla 21"]
+  },
+  {
+    name: "La Tapeta Lloret",
+    desc: "Locales con ambiente y buen rollo.",
+    logo: "assets/logos/6.svg",
+    slug: "la-tapeta-lloret",
+    photo: "uploads/gallery/LaTapeta_Lloret_01.jpg",
+    locations: ["Lloret · Calle Sant Pere 84"]
+  },
+  {
+    name: "La Tapeta Girona",
+    desc: "Locales con ambiente y buen rollo.",
+    logo: "assets/logos/6.svg",
+    slug: "la-tapeta-girona",
+    photo: "uploads/gallery/LaTapeta_Girona_01.jpg",
+    locations: ["Girona · Avinguda Sant Francesc 7"]
   },
   {
     name: "Cooperativa",
@@ -41,7 +53,7 @@ const companies = [
     name: "Botiga d'en Mateu",
     desc: "Tienda de embutidos y jamonería.",
     logo: "assets/logos/2.svg",
-    slug: "botiga-mateu",
+    slug: "botiga-d-en-mateu",
     photo: "uploads/gallery/BotigaMateu_01.jpg",
     locations: ["Tordera · Camí Ral 8"]
   },
@@ -639,9 +651,9 @@ function renderNewsAndFaq() {
 }
 
 const teaserCards = [
-  { name: "La Tapeta", loc: "Blanes",       slug: "la-tapeta",      photo: "uploads/gallery/LaTapeta_Blanes_01.jpg",  logo: "assets/logos/6.svg" },
-  { name: "La Tapeta", loc: "Lloret de Mar", slug: "la-tapeta",      photo: "uploads/gallery/LaTapeta_Lloret_01.jpg",  logo: "assets/logos/6.svg" },
-  { name: "La Tapeta", loc: "Girona",        slug: "la-tapeta",      photo: "uploads/gallery/LaTapeta_Girona_01.jpg",  logo: "assets/logos/6.svg" },
+  { name: "La Tapeta", loc: "Blanes",       slug: "la-tapeta-blanes", photo: "uploads/gallery/LaTapeta_Blanes_01.jpg",  logo: "assets/logos/6.svg" },
+  { name: "La Tapeta", loc: "Lloret de Mar", slug: "la-tapeta-lloret", photo: "uploads/gallery/LaTapeta_Lloret_01.jpg",  logo: "assets/logos/6.svg" },
+  { name: "La Tapeta", loc: "Girona",        slug: "la-tapeta-girona", photo: "uploads/gallery/LaTapeta_Girona_01.jpg",  logo: "assets/logos/6.svg" },
   { name: "Cooperativa", loc: "Blanes",      slug: "cooperativa",    photo: "uploads/gallery/Cooperativa_208.jpg",     logo: "assets/logos/7.svg" },
   { name: "Can Mateu",   loc: "Tordera",     slug: "can-mateu",      photo: "uploads/gallery/CanMateu_STR04757.jpg",   logo: "assets/logos/3.svg" },
   { name: "La Tapa Ibérica", loc: "Tordera", slug: "la-tapa-iberica",photo: "uploads/gallery/TapaIberica_STR05479.jpg",logo: "assets/logos/4.svg" },

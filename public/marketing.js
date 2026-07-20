@@ -330,7 +330,9 @@ document.querySelectorAll(".cedit-lang").forEach(btn => {
 });
 
 const locals = [
-  { slug: "la-tapeta", name: "La Tapeta" },
+  { slug: "la-tapeta-blanes", name: "La Tapeta Blanes" },
+  { slug: "la-tapeta-lloret", name: "La Tapeta Lloret" },
+  { slug: "la-tapeta-girona", name: "La Tapeta Girona" },
   { slug: "cooperativa", name: "Cooperativa" },
   { slug: "can-mateu", name: "Can Mateu" },
   { slug: "la-tapa-iberica", name: "La Tapa Ibérica" },
