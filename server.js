@@ -8,7 +8,8 @@ import fs from "fs";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader } from "./whatsapp.js";
+import zlib from "zlib";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
 
@@ -105,6 +106,101 @@ async function backupCriticalConfig() {
     if (r.ok) console.log(`[Config] Backup crítico OK (wa:${waLinks.length} fg:${facturasGrupos.length} fl:${facturasLocales.length})`);
     else console.warn("[Config] Error backup crítico:", r.status);
   } catch (e) { console.error("[Config] Error backup crítico:", e.message); }
+}
+
+// ── Copia interna durable de LEADS (a prueba del límite de tamaño de la BD) ──
+// Los leads no van en el backup completo (que falla si la BD supera ~512 KB), así
+// que se guardan comprimidos (gzip) en su propia clave KV y se restauran fusionando.
+const KV_LEADS_KEY = "latapeta_leads_v1";
+
+async function backupLeads() {
+  const dbUrl = process.env.REPLIT_DB_URL;
+  if (!dbUrl) return;
+  try {
+    const leads = await dbAll("SELECT * FROM leads", []);
+    const gz = zlib.gzipSync(Buffer.from(JSON.stringify(leads))).toString("base64");
+    const body = new URLSearchParams();
+    body.set(KV_LEADS_KEY, gz);
+    const r = await fetch(dbUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    });
+    if (r.ok) console.log(`[Leads] Backup OK (${leads.length} leads, ${Math.round(gz.length / 1024)} KB comprimido)`);
+    else console.warn("[Leads] Error backup:", r.status);
+  } catch (e) { console.error("[Leads] Error backup:", e.message); }
+}
+
+async function restoreLeads() {
+  const dbUrl = process.env.REPLIT_DB_URL;
+  if (!dbUrl) return;
+  try {
+    const raw = execSync(`curl -sf "${dbUrl}/${KV_LEADS_KEY}"`, { encoding: "utf8", timeout: 10000 }).trim();
+    if (!raw || raw === "null" || raw.length < 5) return;
+    let leads;
+    try { leads = JSON.parse(zlib.gunzipSync(Buffer.from(raw, "base64")).toString()); }
+    catch { return; }
+    if (!Array.isArray(leads) || !leads.length) return;
+    let restaurados = 0;
+    for (const l of leads) {
+      // Insertar solo si no existe ya (por teléfono o correo). Nunca sobrescribir.
+      const existe = await dbGet(
+        "SELECT id FROM leads WHERE (telefono != '' AND telefono = ?) OR (correo != '' AND correo = ?)",
+        [l.telefono || "", l.correo || ""]
+      );
+      if (existe) continue;
+      await dbRun(
+        `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuente, genero, creado_en, actualizado_en)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [l.nombre || "", l.apellidos || "", l.nacimiento || "", l.poblacion || "", l.telefono || "", l.correo || "",
+         l.premio || "", l.fuente || "web", l.genero || null, l.creado_en || new Date().toISOString(), l.actualizado_en || null]
+      );
+      restaurados++;
+    }
+    if (restaurados) console.log(`[Leads] Restaurados ${restaurados} leads que faltaban desde KV`);
+  } catch (e) { console.error("[Leads] Error restaurando leads:", e.message); }
+}
+
+// ── Espejo de leads en Google Sheets (registro externo legible, best-effort) ──
+async function ensureLeadsSheet(token) {
+  let id = await getConfig("leads_sheet_id");
+  if (id) return id;
+  const r = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ properties: { title: "Leads · Familia del Amor" } })
+  });
+  const data = await r.json();
+  if (data.error) throw new Error(JSON.stringify(data.error));
+  id = data.spreadsheetId;
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent("A1")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ values: [["Fecha", "Nombre", "Apellidos", "Teléfono", "Correo", "Población", "Nacimiento", "Género", "Fuente", "Premio"]] })
+  });
+  await setConfig("leads_sheet_id", id);
+  console.log(`[Leads] Hoja de Google Sheets creada: ${id}`);
+  return id;
+}
+
+async function mirrorLeadToSheet(lead) {
+  try {
+    const refresh = await getConfig("google_drive_refresh_token");
+    if (!refresh) return; // Google no conectado → la copia interna protege igual
+    const token = await getDriveAccessToken();
+    const id = await ensureLeadsSheet(token);
+    const fecha = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
+    const fila = [fecha, lead.nombre || "", lead.apellidos || "", lead.telefono || "", lead.correo || "",
+      lead.poblacion || "", lead.nacimiento || "", lead.genero || "", lead.fuente || "", lead.premio || ""];
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent("A1")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ values: [fila] })
+    });
+    console.log(`[Leads] Fila añadida a Google Sheets: ${lead.nombre} ${lead.apellidos}`);
+  } catch (e) {
+    console.error("[Leads] No se pudo escribir en Sheets (se conserva copia interna):", e.message);
+  }
 }
 
 async function restoreCriticalConfig() {
@@ -1467,6 +1563,7 @@ app.post("/api/leads", (req, res) => {
           [nombre, apellidos, nacimiento, poblacion, generoVal, fuenteVal, ahora, existing.id],
           (err2) => {
             if (err2) return res.status(500).json({ ok: false, error: "Error actualizando lead" });
+            backupLeads(); // copia interna durable de leads
             return res.json({ ok: true, premio, actualizado: true });
           }
         );
@@ -1477,6 +1574,8 @@ app.post("/api/leads", (req, res) => {
           function (err2) {
             if (err2) return res.status(500).json({ ok: false, error: "Error guardando lead" });
             backupToReplitDB(); // Guardar BD al recibir nuevo lead
+            backupLeads();      // copia interna durable de leads
+            mirrorLeadToSheet({ nombre, apellidos, telefono, correo, poblacion, nacimiento, genero: generoVal, fuente: fuenteVal, premio }); // espejo Google Sheets
             return res.json({ ok: true, premio });
           }
         );
@@ -1495,12 +1594,16 @@ function upsertLeadFromReserva({ nombre_reserva, telefono }) {
     if (err) return;
     if (row) {
       // Lead ya existe — solo actualizamos la fecha de actividad
-      db.run(`UPDATE leads SET actualizado_en = ? WHERE id = ?`, [ahora, row.id]);
+      db.run(`UPDATE leads SET actualizado_en = ? WHERE id = ?`, [ahora, row.id], () => backupLeads());
     } else {
       // Cliente nuevo — creamos lead básico
       db.run(
         `INSERT INTO leads (nombre, apellidos, telefono, nacimiento, poblacion, correo, premio, fuente, creado_en) VALUES (?, ?, ?, '', '', '', '', 'reserva', ?)`,
-        [nombre, apellidos, telefono, ahora]
+        [nombre, apellidos, telefono, ahora],
+        () => {
+          backupLeads(); // copia interna durable
+          mirrorLeadToSheet({ nombre, apellidos, telefono, correo: "", poblacion: "", nacimiento: "", genero: null, fuente: "reserva", premio: "" });
+        }
       );
     }
   });
@@ -2807,6 +2910,10 @@ const server = app.listen(PORT, async () => {
   // Restaurar config crítica (wa_links, facturas_grupos, etc.) desde KV compacto.
   // Tiene prioridad sobre el backup completo de BD para estas tablas.
   await restoreCriticalConfig();
+
+  // Restaurar/fusionar leads desde su copia interna durable (por si el backup
+  // completo de la BD falló por tamaño). Solo añade los que falten.
+  await restoreLeads();
 
   // Grupos de WhatsApp "de serie": si un local no tiene su grupo enlazado, se le
   // pone el suyo por defecto. Se ejecuta en CADA arranque con INSERT OR IGNORE →
