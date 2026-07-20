@@ -61,6 +61,9 @@ Cuando tengas todos los datos, usa la herramienta \`registrar_reserva\` y, segú
 
 **Fechas sin reservas:** puede haber fechas en las que un local no acepta reservas (las verás en "CONFIGURACIÓN DEL EQUIPO" bajo "RESERVAS NO DISPONIBLES"). NUNCA ofrezcas, sugieras ni registres una reserva que caiga en esos rangos. Si el cliente menciona esos días o un evento que ocurre en ellos (por ejemplo una fiesta mayor), recuérdaselo con amabilidad y ofrécele otra fecha u otro local que sí acepte reservas — pero nunca le propongas reservar en las fechas bloqueadas.
 
+## Cancelaciones
+Si un cliente quiere cancelar su reserva: primero confirma con él de qué reserva se trata (normalmente la verás en el contexto de su reserva: local, día y hora). Cuando el cliente confirme que quiere cancelarla, usa la herramienta \`cancelar_reserva\` con el día (y el local si lo sabes). Después, confírmale con amabilidad que su reserva ha quedado cancelada. Si no encuentras su reserva, pídele el día y el nombre, o dile que llame al local.
+
 ## Carta, platos y precios
 Si en el contexto ("DOCUMENTOS DISPONIBLES" / "CONFIGURACIÓN DEL EQUIPO") hay una carta o documento que encaje con lo que pide el cliente, envíaselo DIRECTAMENTE con la herramienta \`enviar_documento\` en cuanto lo pida — a la primera, sin derivar a ningún teléfono y sin esperar a que insista. Nunca digas que no tienes la carta si en el contexto hay un documento que encaja.
 Solo si NO hay ningún documento configurado para lo que pregunta, dile que puede escribir directamente al 622149946 y le atienden encantados.
@@ -196,6 +199,20 @@ const TOOLS = [
       required: ["documento_id"],
       additionalProperties: false
     }
+  },
+  {
+    name: "cancelar_reserva",
+    description: "Cancela la reserva del cliente. Úsala SOLO después de haber confirmado con el cliente que quiere cancelar y de qué reserva se trata (mira el contexto de su reserva). Tras cancelarla, confírmale con amabilidad que ha quedado cancelada.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        dia: { type: "string", format: "date", description: "Fecha de la reserva a cancelar (YYYY-MM-DD)" },
+        local: { type: "string", description: "Local de la reserva, si lo sabes (para desambiguar)" }
+      },
+      required: ["dia"],
+      additionalProperties: false
+    }
   }
 ];
 
@@ -265,6 +282,9 @@ async function sendNtfyAlert(title, body, priority = "urgent") {
 
 let onReserva = null;
 export function setOnReserva(fn) { onReserva = fn; }
+
+let onCancelarReserva = null;
+export function setOnCancelarReserva(fn) { onCancelarReserva = fn; }
 
 let onReady = null;
 export function setOnReady(fn) { onReady = fn; }
@@ -507,6 +527,21 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
         content: input.pendiente
           ? "Reserva registrada como PENDIENTE. Un encargado contactará al cliente para confirmarla."
           : "Reserva registrada correctamente.",
+        is_error: false
+      };
+    }
+    if (name === "cancelar_reserva") {
+      if (!onCancelarReserva) throw new Error("sistema de cancelaciones no disponible");
+      const telefono = await resolverTelefono(jid);
+      const resultado = await onCancelarReserva({ ...input, telefono }, jid);
+      if (!resultado || resultado.ok === false) {
+        return {
+          content: "No encuentro una reserva que coincida para cancelar. Pídele al cliente el día exacto y el nombre de la reserva, o dile que llame al local.",
+          is_error: false
+        };
+      }
+      return {
+        content: "Reserva cancelada correctamente y avisado el local. Confírmale al cliente con amabilidad que su reserva ha quedado cancelada.",
         is_error: false
       };
     }

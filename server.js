@@ -3106,6 +3106,34 @@ const server = app.listen(PORT, async () => {
     }
   });
 
+  // Cancelación de reserva por Sara: busca por teléfono + día, borra, avisa al grupo del local.
+  setOnCancelarReserva(async ({ telefono, dia, local }, jid) => {
+    try {
+      const clave = (telefono || "").replace(/\D/g, "");
+      if (clave.length < 9 || !dia) return { ok: false, motivo: "faltan datos" };
+      const cola = clave.slice(-9);
+      const rows = await dbAll(
+        `SELECT * FROM reservas WHERE dia = ?${local ? " AND local = ?" : ""} ORDER BY creado_en DESC`,
+        local ? [dia, local] : [dia]
+      );
+      const reserva = rows.find(r => (r.telefono || "").replace(/\D/g, "").endsWith(cola));
+      if (!reserva) return { ok: false, motivo: "no encontrada" };
+
+      await dbRun(`DELETE FROM reservas WHERE id = ?`, [reserva.id]);
+      console.log(`🗑️ Reserva cancelada por Sara (id ${reserva.id}): ${reserva.nombre_reserva} en ${reserva.local} ${reserva.dia}`);
+      backupToReplitDB(); // que la cancelación no reviva en un restore
+
+      // Nota al grupo de WhatsApp del local
+      const row = await dbGet(`SELECT group_jid FROM wa_links WHERE local = ?`, [reserva.local]);
+      if (row?.group_jid && isReady()) sendCancelacionGrupo(row.group_jid, reserva);
+
+      return { ok: true, reserva };
+    } catch (e) {
+      console.error("Error cancelando reserva (WA):", e.message);
+      return { ok: false, motivo: e.message };
+    }
+  });
+
   // Config editable de Sara → bloque de texto que se inyecta en su prompt
   setSaraConfigLoader(async () => {
     try {
