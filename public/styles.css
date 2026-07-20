@@ -3012,6 +3012,12 @@ h1, h2, h3 {
 .panel .dir-inline {
   max-width: 1280px;
 }
+/* Paneles internos: los .block no necesitan el padding editorial de la landing
+   (3rem 4rem). Más denso y escaneable. No afecta a la web pública (sin .panel). */
+.panel .block { padding: var(--space-xl) var(--space-2xl); }
+@media (max-width: 640px) { .panel .block { padding: var(--space-lg); } }
+/* Separadores entre las secciones apiladas de una vista (p. ej. Facturas IA). */
+.panel .dir-inline .block + .block { border-top: 1px solid var(--border); }
 
 /* ── Eyebrow / labels legibles sobre crema ────────────────────────────── */
 .panel .eyebrow,
