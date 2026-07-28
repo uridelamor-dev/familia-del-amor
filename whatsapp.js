@@ -1,4 +1,4 @@
-import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, downloadMediaMessage } from "@whiskeysockets/baileys";
+import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, downloadMediaMessage, fetchLatestWaWebVersion } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
 import pino from "pino";
@@ -657,13 +657,17 @@ async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   console.log(`[WhatsApp] Auth dir: ${AUTH_DIR} | Intento ${reconnectAttempts + 1}`);
 
+  const { version } = await fetchLatestWaWebVersion().catch(() => ({ version: [2, 3000, 1044015310] }));
+  console.log(`[WhatsApp] Versión WaWeb: ${version.join(".")}`);
+
   sock = makeWASocket({
     auth: state,
+    version,
     printQRInTerminal: true,
     logger: pino({ level: "silent" }),
     keepAliveIntervalMs: 25000,   // ping cada 25s para mantener viva la conexión TCP
     connectTimeoutMs: 60000,
-    browser: Browsers.macOS("Chrome"),
+    browser: ["Mac OS", "Chrome", "124.0.0"],
     getMessage: async () => ({ conversation: "" })
   });
 
