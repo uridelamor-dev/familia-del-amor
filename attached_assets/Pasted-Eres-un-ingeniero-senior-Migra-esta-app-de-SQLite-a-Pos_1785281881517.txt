@@ -1,0 +1,129 @@
+Eres un ingeniero senior. Migra esta app de SQLite a PostgreSQL de forma
+DEFINITIVA, autónoma y verificada. Contexto y motivo: es una app Node/Express
+(monolito server.js ~105KB + whatsapp.js + facturas.js, frontend vanilla en
+public/). Hoy usa SQLite en un archivo (database.sqlite) y en cada Republish el
+filesystem del deployment es EFÍMERO, así que se pierde TODA la base de datos
+(reservas, leads, clientes de WhatsApp, facturas...). El parche de copias a la
+KV de Replit es insuficiente (límite ~512KB por valor y solo restaura leads).
+Objetivo: usar la base PostgreSQL integrada de Replit, que persiste siempre.
+
+REGLA DE ORO: NO cambies ninguna funcionalidad, ni la API, ni la UI, ni la
+lógica de negocio. Solo cambia la capa de datos. No borres nada hasta haber
+verificado que la nueva versión funciona y persiste.
+
+PASOS:
+
+1) APROVISIONAR POSTGRES
+   - Crea/activa la base P (Neon). Debe quedar
+     disponible como variable de entorno DATABASE_URL en los Secrets.
+   - Instala la dependenciada hasta el final por si
+     hay que leer el SQLite viejo; retírala al terminar.
+
+2) CAPA DE ACCESO (minimiza cambios)
+   - Los wrappers actualesbGet/dbAll/dbRun sobre
+     sqlite3) y se INYECTAN a whatsapp.js y facturas.js. Reimpleméntalos sobre un
+     Pool de `pg` conectadún lo exija Replit),
+     MANTENIENDO EXACTAMENTE LAS MISMAS FIRMAS y el mismo comportamiento
+     (dbGet devuelve una fay, dbRun ejecuta).
+   - Para no tocar las ~280 queries una a una: haz que el wrapper TRADUZCA
+     automáticamente los pa `$1,$2,$3...` antes de
+     enviarlas a `pg`. Verifica que no haya `?` dentro de literales de texto (en
+     este código no los ha
+   - Para los INSERT que devuelven id: SQLite usa `this.lastID` en callbacks
+     (hay 8 casos, p.ej. l, 2249, 2338, 2377, 2481,
+     2914 de server.js). Conviértelos a `INSERT ... RETURNING id` y devuelve ese
+     id desde el wrapper (t que devuelva la fila
+     insertada / el id).
+
+3) ESQUEMA (reescribe las 27 CREATE TABLE al dialecto Postgres)
+   - `INTEGER PRIMARY KEY ARY KEY` (o IDENTITY).
+   - Fechas guardadas como TEXT con `DEFAULT (datetime('now'))` →
+     `TIMESTAMP DEFAULT CU solo fecha (dia, fecha,
+     desde, hasta, fecha_pago, send_at) → DATE o TIMESTAMP según se usen.
+   - Booleanos guardados cdo, sent, historico,
+     realizada, adjuntos_procesados) → mantenlos como INTEGER 0/1 para no romper
+     las comparaciones `= a BOOLEAN y ajusta TODAS
+     esas comparaciones de forma consistente. Elige una y sé coherente.
+   - Importes REAL (base_iorcentaje_iva) → NUMERIC.
+   - Campos JSON en TEXT (notas, segmento_json, reserva_json) → JSONB o TEXT
+     (si dudas, TEXT es lo parseo actual).
+   - `wa_clientes.ultima_interaccion` con DEFAULT `strftime('%s','now')` (epoch)
+     → `BIGINT DEFAULT (EXint`. Y las escrituras que
+     usan `strftime('%s','now')` (varias en server.js: ~2529, 2905, 3085, 3250,
+     3261, 3274) → `(EXTRA`.
+   - Respeta las claves: wa_links y facturas_locales tienen `local` como PRIMARY
+     KEY (sin id); config ; hr_llamadas_mes tiene
+     UNIQUE(worker_id, mes); *_grupos/*_email_reglas tienen columnas UNIQUE.
+   - Los 15 ALTER TABLE ..537, 634-638, 648-653 y
+     duplicados en ~1542-1543) → usa `ADD COLUMN IF NOT EXISTS` para que sean
+     idempotentes y no fal
+   - El bloque `db.serialize()` que crea las tablas: reemplázalo por creación
+     secuencial con await zar el orden.
+     secuencial con await (o BEGIN/COMMIT) para garantizar el orden.
+
+4) SQL ESPECÍFICO DE SQLITE (convertir cada aparición)
+   - `INSERT OR IGNORE` (1 437, 975, 1019, 2976,
+     2977, 2981, 3079) → `INSERT ... ON CONFLICT (<columna_unica>) DO NOTHING`.
+   - `INSERT OR REPLACE` (js 3383) →
+     `INSERT ... ON CONFLICT (<key>) DO UPDATE SET ...` actualizando también el
+     timestamp a CURRENT_T
+   - `datetime('now')` en queries (~24 casos) → `CURRENT_TIMESTAMP`.
+   - `strftime('%Y', col)`trftime('%Y-%m', col)`
+     (server.js ~1238-1268, 1674, 3354) → `EXTRACT(YEAR FROM col)` /
+     `EXTRACT(MONTH FROM c)`. Ojo: si esas columnas
+     son ahora DATE/TIMESTAMP, EXTRACT funciona directo; si las dejas como TEXT
+     ISO, usa `LEFT(col,4) con el tipo elegido.
+   - `IFNULL` → `COALESCE` (COALESCE ya se usa y es compatible).
+   - SEGURIDAD (arréglalo erpolan el mes con
+     `LIKE '${mes}%'` (server.js ~2057, 2060, 2063) — parametrízalas para evitar
+     inyección SQL.
+   - LIKE sigue siendo case-sensitive en Postgres; solo usa ILIKE si el
+     comportamiento actualevisa las búsquedas de
+     leads/candidaturas).
+
+5) RESCATAR LOS DATOS QUE AÚN QUEDEN (antes de retirar el andamiaje KV)
+   - Lee la KV de Replit vPostgres lo recuperable:
+       * clave `latapeta_leads_v1`: base64 de un gzip de un JSON array de leads →
+         descomprime e insuplicar porteléfono/correo).
+       * clave `latapeta_cwaLinks, facturasGrupos,
+         facturasLocales, emailReglas → inserta en sus tablas.
+   - Si existe un archivo r ejemplo en el entorno de
+     desarrollo del Repl), haz un script one-shot que copie TODAS las tablas de
+     ese SQLite a Postgres lo hubiera). No borres el
+     database.sqlite hasta confirmar la migración.
+
+6) RETIRAR EL ANDAMIAJE OBSOLETO (ya no hace falta con Postgres persistente)
+   - Elimina las 7 funcionus llamadas:
+     tryRestoreFromReplitDB, backupToReplitDB, backupToReplitDBSync,
+     backupCriticalConfig,pLeads, restoreLeads;
+     el restore en el arranque, los setInterval/setTimeout de backup (cada 5 min)
+     y el backup síncrono T). Deja el apagado limpio
+     cerrando el Pool de pg.
+   - Conserva el endpoint áptalo a Postgres (que
+     siga devolviendo leads_total, reservas_total, wa_clientes_total).
+
+7) SEEDS (mantener)
+   - Usuarios por defecto ador, rrhh, marketing,
+     contabilidad) con contraseña tapeta2024, solo si la tabla users está vacía.
+   - Cualquier seed por deWhatsApp / facturas y la
+     "blackout" de la Fiesta Mayor de Blanes: mantenlos idempotentes.
+
+8) VERIFICACIÓN OBLIGATORIA ANTES DE DESPLEGAR (prueba de fuego)
+   - Arranca la app. Compr2024), que cargan los KPIs,
+     el panel de Facturas IA, Marketing y RR.HH. sin errores en consola.
+   - Crea una reserva de p
+   - REINICIA el Repl (Stop/Run) y confirma que la reserva y el lead SIGUEN AHÍ.
+     Esta es la prueba claicio, la migración funciona.
+   - Ejecuta el endpoint /api/debug/estado y verifica los totales.
+   - Solo cuando todo esto
+
+9) ENTREGA
+   - Resume: qué archivos tocaste, cómo quedó la capa de datos, cuántas queries y
+     tablas migradas, qué ite, y confirma con
+     evidencia que los datos persisten tras reiniciar.
+   - Recuerda al usuario qe reconectar WhatsApp
+     (escanear el QR) y Google, porque el proceso se reinicia.
+
+No cambies la estética ni el comportamiento de la app. Trabaja de forma
+autónoma, pero si encuentrcon seguridad, resuélvela
+de forma conservadora y anótala en el resumen final.
