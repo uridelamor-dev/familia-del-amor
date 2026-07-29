@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import sqlite3 from "sqlite3";
+import pg from "pg";
 import dotenv from "dotenv";
 import multer from "multer";
 import fs from "fs";
@@ -18,244 +18,41 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ── Backup / Restore en Replit DB (persiste entre redeploys) ──────────────
-const REPLIT_BACKUP_KEY = "latapeta_db_v3";
+const { Pool } = pg;
 
-function tryRestoreFromReplitDB(targetPath) {
-  const dbUrl = process.env.REPLIT_DB_URL;
-  if (!dbUrl) return false;
-  try {
-    console.log("[DB] BD no encontrada, restaurando desde Replit KV...");
-    const raw = execSync(`curl -sf "${dbUrl}/${REPLIT_BACKUP_KEY}"`, {
-      encoding: "utf8", timeout: 20000,
-    }).trim();
-    if (!raw || raw === "null" || raw.length < 200) {
-      console.log("[DB] Sin copia en Replit KV");
-      return false;
-    }
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    fs.writeFileSync(targetPath, Buffer.from(raw, "base64"));
-    console.log(`[DB] BD restaurada (${Math.round(raw.length * 0.75 / 1024)} KB)`);
-    return true;
-  } catch (e) {
-    console.warn("[DB] No se pudo restaurar:", e.message);
-    return false;
-  }
+// ── PostgreSQL pool ───────────────────────────────────────────────────────────
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes("neon") ? { rejectUnauthorized: false } : false,
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+});
+
+pool.on("error", (err) => {
+  console.error("[PG] Error en pool (no fatal):", err.message);
+});
+
+// Translate ? placeholders → $1, $2, ...
+function toPositional(sql) {
+  let i = 0;
+  return sql.replace(/\?/g, () => `$${++i}`);
 }
 
-function backupToReplitDBSync() {
-  const dbUrl = process.env.REPLIT_DB_URL;
-  if (!dbUrl) return;
-  try {
-    const tmpFile = "/tmp/latapeta_db_bk.b64";
-    fs.writeFileSync(tmpFile, fs.readFileSync(dbPath).toString("base64"));
-    execSync(`curl -sf -X POST "${dbUrl}" --data-urlencode "${REPLIT_BACKUP_KEY}@${tmpFile}"`, {
-      timeout: 20000, stdio: "pipe",
-    });
-    try { fs.unlinkSync(tmpFile); } catch {}
-    console.log("[DB] BD guardada en Replit KV (sync)");
-  } catch (e) {
-    console.error("[DB] Error guardando sync:", e.message);
-  }
+async function dbGet(sql, params = []) {
+  const result = await pool.query(toPositional(sql), params);
+  return result.rows[0] || null;
+}
+async function dbAll(sql, params = []) {
+  const result = await pool.query(toPositional(sql), params);
+  return result.rows;
+}
+// dbRun returns the first row if the query has RETURNING, otherwise undefined.
+async function dbRun(sql, params = []) {
+  const result = await pool.query(toPositional(sql), params);
+  return result.rows[0] || undefined;
 }
 
-async function backupToReplitDB() {
-  const dbUrl = process.env.REPLIT_DB_URL;
-  if (!dbUrl) return;
-  try {
-    if (!fs.existsSync(dbPath)) return;
-    const b64 = fs.readFileSync(dbPath).toString("base64");
-    const body = new URLSearchParams();
-    body.set(REPLIT_BACKUP_KEY, b64);
-    const resp = await fetch(dbUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    });
-    if (resp.ok) console.log(`[DB] BD guardada en Replit KV (${Math.round(b64.length * 0.75 / 1024)} KB)`);
-    else console.warn("[DB] Error Replit KV:", resp.status);
-  } catch (e) {
-    console.error("[DB] Error guardando async:", e.message);
-  }
-}
-// ── Backup crítico de configuración (tablas pequeñas, clave KV separada) ─────
-// El backup completo de la BD puede superar el límite de Replit KV (~512 KB)
-// cuando la BD crece con mensajes WA. Este backup guarda solo las tablas de
-// configuración crítica (<5 KB siempre) y se restaura con prioridad sobre el
-// backup completo.
-const KV_CRITICAL_KEY = "latapeta_critical_config_v2";
-
-async function backupCriticalConfig() {
-  const dbUrl = process.env.REPLIT_DB_URL;
-  if (!dbUrl) return;
-  try {
-    const [waLinks, facturasGrupos, facturasLocales, emailReglas] = await Promise.all([
-      new Promise((res, rej) => db.all("SELECT local, group_jid FROM wa_links", [], (e, r) => e ? rej(e) : res(r || []))),
-      new Promise((res, rej) => db.all("SELECT local, group_jid, sheet_id, sheet_url FROM facturas_grupos", [], (e, r) => e ? rej(e) : res(r || []))),
-      new Promise((res, rej) => db.all("SELECT * FROM facturas_locales", [], (e, r) => e ? rej(e) : res(r || []))),
-      new Promise((res, rej) => db.all("SELECT * FROM facturas_email_reglas", [], (e, r) => e ? rej(e) : res(r || []))),
-    ]);
-    const payload = JSON.stringify({ waLinks, facturasGrupos, facturasLocales, emailReglas, ts: Date.now() });
-    const body = new URLSearchParams();
-    body.set(KV_CRITICAL_KEY, payload);
-    const r = await fetch(dbUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString()
-    });
-    if (r.ok) console.log(`[Config] Backup crítico OK (wa:${waLinks.length} fg:${facturasGrupos.length} fl:${facturasLocales.length})`);
-    else console.warn("[Config] Error backup crítico:", r.status);
-  } catch (e) { console.error("[Config] Error backup crítico:", e.message); }
-}
-
-// ── Copia interna durable de LEADS (a prueba del límite de tamaño de la BD) ──
-// Los leads no van en el backup completo (que falla si la BD supera ~512 KB), así
-// que se guardan comprimidos (gzip) en su propia clave KV y se restauran fusionando.
-const KV_LEADS_KEY = "latapeta_leads_v1";
-
-async function backupLeads() {
-  const dbUrl = process.env.REPLIT_DB_URL;
-  if (!dbUrl) return;
-  try {
-    const leads = await dbAll("SELECT * FROM leads", []);
-    const gz = zlib.gzipSync(Buffer.from(JSON.stringify(leads))).toString("base64");
-    const body = new URLSearchParams();
-    body.set(KV_LEADS_KEY, gz);
-    const r = await fetch(dbUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString()
-    });
-    if (r.ok) console.log(`[Leads] Backup OK (${leads.length} leads, ${Math.round(gz.length / 1024)} KB comprimido)`);
-    else console.warn("[Leads] Error backup:", r.status);
-  } catch (e) { console.error("[Leads] Error backup:", e.message); }
-}
-
-async function restoreLeads() {
-  const dbUrl = process.env.REPLIT_DB_URL;
-  if (!dbUrl) return;
-  try {
-    const raw = execSync(`curl -sf "${dbUrl}/${KV_LEADS_KEY}"`, { encoding: "utf8", timeout: 10000 }).trim();
-    if (!raw || raw === "null" || raw.length < 5) return;
-    let leads;
-    try { leads = JSON.parse(zlib.gunzipSync(Buffer.from(raw, "base64")).toString()); }
-    catch { return; }
-    if (!Array.isArray(leads) || !leads.length) return;
-    let restaurados = 0;
-    for (const l of leads) {
-      // Insertar solo si no existe ya (por teléfono o correo). Nunca sobrescribir.
-      const existe = await dbGet(
-        "SELECT id FROM leads WHERE (telefono != '' AND telefono = ?) OR (correo != '' AND correo = ?)",
-        [l.telefono || "", l.correo || ""]
-      );
-      if (existe) continue;
-      await dbRun(
-        `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuente, genero, creado_en, actualizado_en)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [l.nombre || "", l.apellidos || "", l.nacimiento || "", l.poblacion || "", l.telefono || "", l.correo || "",
-         l.premio || "", l.fuente || "web", l.genero || null, l.creado_en || new Date().toISOString(), l.actualizado_en || null]
-      );
-      restaurados++;
-    }
-    if (restaurados) console.log(`[Leads] Restaurados ${restaurados} leads que faltaban desde KV`);
-  } catch (e) { console.error("[Leads] Error restaurando leads:", e.message); }
-}
-
-// ── Espejo de leads en Google Sheets (registro externo legible, best-effort) ──
-async function ensureLeadsSheet(token) {
-  let id = await getConfig("leads_sheet_id");
-  if (id) return id;
-  const r = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ properties: { title: "Leads · Familia del Amor" } })
-  });
-  const data = await r.json();
-  if (data.error) throw new Error(JSON.stringify(data.error));
-  id = data.spreadsheetId;
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent("A1")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ values: [["Fecha", "Nombre", "Apellidos", "Teléfono", "Correo", "Población", "Nacimiento", "Género", "Fuente", "Premio"]] })
-  });
-  await setConfig("leads_sheet_id", id);
-  console.log(`[Leads] Hoja de Google Sheets creada: ${id}`);
-  return id;
-}
-
-async function mirrorLeadToSheet(lead) {
-  try {
-    const refresh = await getConfig("google_drive_refresh_token");
-    if (!refresh) return; // Google no conectado → la copia interna protege igual
-    const token = await getDriveAccessToken();
-    const id = await ensureLeadsSheet(token);
-    const fecha = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
-    const fila = [fecha, lead.nombre || "", lead.apellidos || "", lead.telefono || "", lead.correo || "",
-      lead.poblacion || "", lead.nacimiento || "", lead.genero || "", lead.fuente || "", lead.premio || ""];
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent("A1")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ values: [fila] })
-    });
-    console.log(`[Leads] Fila añadida a Google Sheets: ${lead.nombre} ${lead.apellidos}`);
-  } catch (e) {
-    console.error("[Leads] No se pudo escribir en Sheets (se conserva copia interna):", e.message);
-  }
-}
-
-async function restoreCriticalConfig() {
-  const dbUrl = process.env.REPLIT_DB_URL;
-  if (!dbUrl) return;
-  try {
-    const raw = execSync(`curl -sf "${dbUrl}/${KV_CRITICAL_KEY}"`, { encoding: "utf8", timeout: 10000 }).trim();
-    if (!raw || raw === "null" || raw.length < 5) return;
-    const cfg = JSON.parse(raw);
-    const ahora = new Date().toISOString();
-    let restored = 0;
-    for (const { local, group_jid } of (cfg.waLinks || [])) {
-      await new Promise(res => db.run(
-        "INSERT OR REPLACE INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, ?)",
-        [local, group_jid, ahora], res
-      ));
-      // Sincronizar también con la tabla contents (sistema legacy de backup)
-      await new Promise(res => db.run(
-        "INSERT OR REPLACE INTO contents (key, value, updated_at) VALUES (?, ?, ?)",
-        [`whatsapp_group_${local}`, group_jid, ahora], res
-      ));
-      restored++;
-    }
-    for (const { local, group_jid, sheet_id, sheet_url } of (cfg.facturasGrupos || [])) {
-      await new Promise(res => db.run(
-        // COALESCE: si el backup tiene sheet_id, úsalo; si es null, conserva el valor actual del DB
-        `INSERT INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)
-         ON CONFLICT(group_jid) DO UPDATE SET
-           local = excluded.local,
-           sheet_id = COALESCE(excluded.sheet_id, facturas_grupos.sheet_id),
-           sheet_url = COALESCE(excluded.sheet_url, facturas_grupos.sheet_url)`,
-        [local, group_jid, sheet_id || null, sheet_url || null], res
-      ));
-      restored++;
-    }
-    for (const r of (cfg.facturasLocales || [])) {
-      await new Promise(res => db.run(
-        `INSERT INTO facturas_locales (local, empresa, cif, local_contable) VALUES (?, ?, ?, ?)
-         ON CONFLICT(local) DO UPDATE SET
-           empresa = excluded.empresa,
-           cif = excluded.cif,
-           local_contable = excluded.local_contable`,
-        [r.local, r.empresa, r.cif, r.local_contable], res
-      ));
-    }
-    for (const r of (cfg.emailReglas || [])) {
-      await new Promise(res => db.run(
-        `INSERT OR IGNORE INTO facturas_email_reglas (email, local) VALUES (?, ?)`,
-        [r.email, r.local], res
-      ));
-    }
-    const ts = cfg.ts ? new Date(cfg.ts).toLocaleString("es-ES") : "?";
-    console.log(`[Config] Config crítica restaurada (${restored} entradas, guardada: ${ts})`);
-  } catch (e) { console.error("[Config] Error restaurando config crítica:", e.message); }
-}
 // ─────────────────────────────────────────────────────────────────────────────
 
 const app = express();
@@ -265,56 +62,6 @@ const JWT_SECRET = process.env.JWT_SECRET || "tapeta-secret-dev";
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
-
-function resolveDbPath() {
-  const configured = process.env.DB_PATH;
-  if (configured) {
-    // Validar que parece una ruta de archivo SQLite, no un directorio genérico
-    const looksWrong = configured === "/home/user" || configured === "/home/runner" || !configured.endsWith(".sqlite") && !configured.includes(".");
-    if (looksWrong) {
-      console.warn(`[DB] DB_PATH="${configured}" parece incorrecta — ignorando. Elimina esta variable de Secrets en Replit.`);
-    } else {
-      const dir = path.dirname(configured);
-      try {
-        fs.mkdirSync(dir, { recursive: true });
-        return configured;
-      } catch {
-        console.warn(`[DB] DB_PATH directory inaccesible (${dir}), usando ruta por defecto.`);
-      }
-    }
-  }
-  // En Replit Reserved VM, el directorio del proyecto persiste entre redeploys
-  const localPath = path.join(__dirname, "database.sqlite");
-  // Intentar también un directorio fuera del proyecto como respaldo
-  if (process.env.REPL_ID || process.env.REPL_SLUG) {
-    const persistentDir = "/home/runner/latapeta-data";
-    const persistentPath = path.join(persistentDir, "database.sqlite");
-    try {
-      fs.mkdirSync(persistentDir, { recursive: true });
-      const oldPath = localPath;
-      if (!fs.existsSync(persistentPath) && fs.existsSync(oldPath)) {
-        fs.copyFileSync(oldPath, persistentPath);
-        console.log(`[DB] BD migrada a ${persistentPath}`);
-      }
-      return persistentPath;
-    } catch (e) {
-      console.warn(`[DB] No se pudo usar ruta persistente (${e.message}), usando directorio local.`);
-    }
-  }
-  return localPath;
-}
-const dbPath = resolveDbPath();
-console.log(`[DB] Ruta de base de datos: ${dbPath}`);
-// Restaurar desde Replit KV si el archivo local no existe
-if (!fs.existsSync(dbPath)) {
-  tryRestoreFromReplitDB(dbPath);
-}
-const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
-  if (err) console.error("Error abriendo base de datos:", err.message);
-});
-db.on("error", (err) => {
-  console.error("DB error (no fatal):", err.message);
-});
 
 const uploadsDir = path.join(__dirname, "public", "uploads");
 if (!fs.existsSync(uploadsDir)) {
@@ -334,403 +81,463 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-db.serialize(() => {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      rol TEXT NOT NULL,
-      nombre TEXT,
-      local TEXT,
-      creado_en TEXT NOT NULL
-    )
-  `);
+// ── Inicializar esquema PostgreSQL ────────────────────────────────────────────
+async function initDB() {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        rol TEXT NOT NULL,
+        nombre TEXT,
+        local TEXT,
+        creado_en TEXT NOT NULL
+      )
+    `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS leads (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nombre TEXT NOT NULL,
-      apellidos TEXT NOT NULL,
-      nacimiento TEXT NOT NULL,
-      poblacion TEXT NOT NULL,
-      telefono TEXT NOT NULL,
-      correo TEXT NOT NULL,
-      premio TEXT NOT NULL,
-      creado_en TEXT NOT NULL
-    )
-  `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL DEFAULT '',
+        apellidos TEXT NOT NULL DEFAULT '',
+        nacimiento TEXT NOT NULL DEFAULT '',
+        poblacion TEXT NOT NULL DEFAULT '',
+        telefono TEXT NOT NULL DEFAULT '',
+        correo TEXT NOT NULL DEFAULT '',
+        premio TEXT NOT NULL DEFAULT '',
+        creado_en TEXT NOT NULL,
+        genero TEXT,
+        fuente TEXT DEFAULT 'web',
+        actualizado_en TEXT
+      )
+    `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS reservas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      local TEXT NOT NULL,
-      personas INTEGER NOT NULL,
-      dia TEXT NOT NULL,
-      hora TEXT NOT NULL,
-      telefono TEXT NOT NULL,
-      nombre_reserva TEXT NOT NULL,
-      creado_en TEXT NOT NULL
-    )
-  `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS reservas (
+        id SERIAL PRIMARY KEY,
+        local TEXT NOT NULL,
+        personas INTEGER NOT NULL,
+        dia TEXT NOT NULL,
+        hora TEXT NOT NULL,
+        telefono TEXT NOT NULL,
+        nombre_reserva TEXT NOT NULL,
+        creado_en TEXT NOT NULL
+      )
+    `);
 
-  // Configurador de Sara: bloqueos de reservas por local/fechas (local = nombre exacto o 'Todos')
-  db.run(`
-    CREATE TABLE IF NOT EXISTS bloqueos_reservas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      local TEXT NOT NULL,
-      desde TEXT NOT NULL,
-      hasta TEXT NOT NULL,
-      motivo TEXT,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bloqueos_reservas (
+        id SERIAL PRIMARY KEY,
+        local TEXT NOT NULL,
+        desde TEXT NOT NULL,
+        hasta TEXT NOT NULL,
+        motivo TEXT,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-  // Configurador de Sara: reglas de respuesta con documento (carta/menú PDF, etc.)
-  db.run(`
-    CREATE TABLE IF NOT EXISTS sara_respuestas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tema TEXT NOT NULL,
-      disparadores TEXT,
-      respuesta TEXT,
-      documento_url TEXT,
-      local TEXT,
-      activo INTEGER DEFAULT 1,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sara_respuestas (
+        id SERIAL PRIMARY KEY,
+        tema TEXT NOT NULL,
+        disparadores TEXT,
+        respuesta TEXT,
+        documento_url TEXT,
+        local TEXT,
+        activo INTEGER DEFAULT 1,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS contents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      key TEXT UNIQUE NOT NULL,
-      value TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS contents (
+        id SERIAL PRIMARY KEY,
+        key TEXT UNIQUE NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS wa_links (
-      local TEXT PRIMARY KEY,
-      group_jid TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  `, () => {
-    const ahora = new Date().toISOString();
-    // contents → wa_links (restaurar links guardados en el sistema antiguo)
-    db.all(`SELECT key, value FROM contents WHERE key LIKE 'whatsapp_group_%'`, (err, rows) => {
-      if (!err && rows?.length) {
-        rows.forEach(({ key, value }) => {
-          const local = key.replace("whatsapp_group_", "");
-          db.run(
-            `INSERT OR IGNORE INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, ?)`,
-            [local, value, ahora]
-          );
-        });
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wa_links (
+        local TEXT PRIMARY KEY,
+        group_jid TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_jobs (
+        id SERIAL PRIMARY KEY,
+        titulo TEXT NOT NULL,
+        local TEXT NOT NULL,
+        tipo TEXT NOT NULL,
+        descripcion TEXT NOT NULL,
+        activo INTEGER NOT NULL DEFAULT 1,
+        creado_en TEXT NOT NULL
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_applications (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        email TEXT NOT NULL,
+        telefono TEXT NOT NULL,
+        puesto TEXT NOT NULL,
+        mensaje TEXT,
+        cv_url TEXT,
+        estado TEXT NOT NULL DEFAULT 'nuevo',
+        creado_en TEXT NOT NULL,
+        edad INTEGER,
+        experiencia TEXT,
+        poblacion TEXT
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS maintenance_issues (
+        id SERIAL PRIMARY KEY,
+        local TEXT NOT NULL,
+        titulo TEXT NOT NULL,
+        descripcion TEXT NOT NULL,
+        estado TEXT NOT NULL DEFAULT 'abierta',
+        creado_en TEXT NOT NULL
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS announcements (
+        id SERIAL PRIMARY KEY,
+        local TEXT NOT NULL,
+        rol TEXT NOT NULL,
+        mensaje TEXT NOT NULL,
+        creado_en TEXT NOT NULL
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS config (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS google_reviews (
+        id TEXT PRIMARY KEY,
+        location_name TEXT,
+        author TEXT,
+        rating INTEGER,
+        text TEXT,
+        fecha TEXT,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS followup_scheduled (
+        id SERIAL PRIMARY KEY,
+        jid TEXT NOT NULL,
+        nombre TEXT NOT NULL,
+        local TEXT NOT NULL,
+        dia TEXT NOT NULL,
+        send_at TEXT NOT NULL,
+        sent INTEGER DEFAULT 0,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS whatsapp_messages (
+        id SERIAL PRIMARY KEY,
+        jid TEXT NOT NULL,
+        telefono TEXT NOT NULL,
+        mensaje TEXT NOT NULL,
+        respuesta TEXT NOT NULL,
+        historico INTEGER DEFAULT 0,
+        tipo TEXT DEFAULT 'intercambio',
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_grupos (
+        id SERIAL PRIMARY KEY,
+        local TEXT NOT NULL,
+        group_jid TEXT NOT NULL UNIQUE,
+        sheet_id TEXT,
+        sheet_url TEXT,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas (
+        id SERIAL PRIMARY KEY,
+        local TEXT NOT NULL,
+        tipo TEXT,
+        fecha TEXT,
+        numero_factura TEXT,
+        proveedor TEXT,
+        nif TEXT,
+        concepto TEXT,
+        base_imponible NUMERIC,
+        porcentaje_iva NUMERIC,
+        cuota_iva NUMERIC,
+        total NUMERIC,
+        drive_url TEXT,
+        sheet_id TEXT,
+        file_hash TEXT,
+        empresa TEXT,
+        pagado INTEGER DEFAULT 0,
+        fecha_pago TEXT,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wa_clientes (
+        jid TEXT PRIMARY KEY,
+        nombre TEXT,
+        telefono TEXT,
+        notas TEXT DEFAULT '{}',
+        ultima_interaccion BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_email_reglas (
+        id SERIAL PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        local TEXT NOT NULL,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_emails_procesados (
+        id SERIAL PRIMARY KEY,
+        gmail_id TEXT NOT NULL UNIQUE,
+        de_email TEXT,
+        asunto TEXT,
+        local TEXT,
+        adjuntos_procesados INTEGER DEFAULT 0,
+        procesado TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_locales (
+        local TEXT PRIMARY KEY,
+        empresa TEXT NOT NULL,
+        cif TEXT,
+        local_contable TEXT,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_pendientes (
+        id SERIAL PRIMARY KEY,
+        empresa_detectada TEXT,
+        nif_receptor TEXT,
+        nombre_receptor TEXT,
+        tipo TEXT,
+        fecha TEXT,
+        numero_factura TEXT,
+        proveedor TEXT,
+        nif TEXT,
+        concepto TEXT,
+        base_imponible NUMERIC,
+        porcentaje_iva NUMERIC,
+        cuota_iva NUMERIC,
+        total NUMERIC,
+        drive_url TEXT,
+        drive_file_id TEXT,
+        file_hash TEXT,
+        origen TEXT DEFAULT 'email',
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS campanas_wa (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        segmento_json TEXT NOT NULL,
+        mensaje TEXT NOT NULL,
+        total_enviados INTEGER DEFAULT 0,
+        total_errores INTEGER DEFAULT 0,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
+        finalizado_en TEXT
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS pending_whatsapp (
+        id SERIAL PRIMARY KEY,
+        tipo TEXT NOT NULL,
+        destino TEXT NOT NULL,
+        reserva_json TEXT NOT NULL,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_worker_notes (
+        id SERIAL PRIMARY KEY,
+        worker_id INTEGER NOT NULL,
+        tipo TEXT NOT NULL DEFAULT 'nota',
+        contenido TEXT NOT NULL,
+        autor TEXT,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_preguntas_mes (
+        id SERIAL PRIMARY KEY,
+        mes TEXT NOT NULL,
+        orden INTEGER DEFAULT 0,
+        pregunta TEXT NOT NULL
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hr_llamadas_mes (
+        id SERIAL PRIMARY KEY,
+        worker_id INTEGER NOT NULL,
+        mes TEXT NOT NULL,
+        realizada INTEGER DEFAULT 0,
+        fecha_llamada TEXT,
+        respuestas TEXT,
+        comentario_libre TEXT,
+        autor TEXT,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(worker_id, mes)
+      )
+    `);
+
+    // Seed usuarios por defecto si la tabla está vacía
+    const { rows: usersCount } = await client.query("SELECT COUNT(*) AS total FROM users");
+    if (parseInt(usersCount[0].total) === 0) {
+      const roles = [
+        { username: "direccion", nombre: "Dirección", rol: "direccion" },
+        { username: "encargado", nombre: "Encargado", rol: "encargado" },
+        { username: "trabajador", nombre: "Trabajador", rol: "trabajador" },
+        { username: "rrhh", nombre: "RR.HH.", rol: "rrhh" },
+        { username: "marketing", nombre: "Marketing", rol: "marketing" },
+        { username: "contabilidad", nombre: "Contabilidad", rol: "contabilidad" }
+      ];
+      for (const u of roles) {
+        const hash = await bcrypt.hash("tapeta2024", 10);
+        await client.query(
+          `INSERT INTO users (username, password_hash, rol, nombre, creado_en) VALUES ($1, $2, $3, $4, $5)`,
+          [u.username, hash, u.rol, u.nombre, new Date().toISOString()]
+        );
       }
-    });
-    // wa_links → contents (asegurar que todos los links estén también en contents como backup)
-    db.all(`SELECT local, group_jid FROM wa_links`, (err, rows) => {
-      if (!err && rows?.length) {
-        rows.forEach(({ local, group_jid }) => {
-          db.run(
-            `INSERT OR IGNORE INTO contents (key, value, updated_at) VALUES (?, ?, ?)`,
-            [`whatsapp_group_${local}`, group_jid, ahora]
-          );
-        });
-      }
-    });
-  });
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS hr_jobs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      titulo TEXT NOT NULL,
-      local TEXT NOT NULL,
-      tipo TEXT NOT NULL,
-      descripcion TEXT NOT NULL,
-      activo INTEGER NOT NULL DEFAULT 1,
-      creado_en TEXT NOT NULL
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS hr_applications (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nombre TEXT NOT NULL,
-      email TEXT NOT NULL,
-      telefono TEXT NOT NULL,
-      puesto TEXT NOT NULL,
-      mensaje TEXT,
-      cv_url TEXT,
-      estado TEXT NOT NULL DEFAULT 'nuevo',
-      creado_en TEXT NOT NULL
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS maintenance_issues (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      local TEXT NOT NULL,
-      titulo TEXT NOT NULL,
-      descripcion TEXT NOT NULL,
-      estado TEXT NOT NULL DEFAULT 'abierta',
-      creado_en TEXT NOT NULL
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS announcements (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      local TEXT NOT NULL,
-      rol TEXT NOT NULL,
-      mensaje TEXT NOT NULL,
-      creado_en TEXT NOT NULL
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS config (
-      key TEXT PRIMARY KEY,
-      value TEXT,
-      updated_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS google_reviews (
-      id TEXT PRIMARY KEY,
-      location_name TEXT,
-      author TEXT,
-      rating INTEGER,
-      text TEXT,
-      fecha TEXT,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS followup_scheduled (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      jid TEXT NOT NULL,
-      nombre TEXT NOT NULL,
-      local TEXT NOT NULL,
-      dia TEXT NOT NULL,
-      send_at TEXT NOT NULL,
-      sent INTEGER DEFAULT 0,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS whatsapp_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      jid TEXT NOT NULL,
-      telefono TEXT NOT NULL,
-      mensaje TEXT NOT NULL,
-      respuesta TEXT NOT NULL,
-      historico INTEGER DEFAULT 0,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-  db.run(`ALTER TABLE whatsapp_messages ADD COLUMN historico INTEGER DEFAULT 0`, () => {});
-  db.run(`ALTER TABLE whatsapp_messages ADD COLUMN tipo TEXT DEFAULT 'intercambio'`, () => {});
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS facturas_grupos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      local TEXT NOT NULL,
-      group_jid TEXT NOT NULL UNIQUE,
-      sheet_id TEXT,
-      sheet_url TEXT,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS facturas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      local TEXT NOT NULL,
-      tipo TEXT,
-      fecha TEXT,
-      numero_factura TEXT,
-      proveedor TEXT,
-      nif TEXT,
-      concepto TEXT,
-      base_imponible REAL,
-      porcentaje_iva REAL,
-      cuota_iva REAL,
-      total REAL,
-      drive_url TEXT,
-      sheet_id TEXT,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS wa_clientes (
-      jid TEXT PRIMARY KEY,
-      nombre TEXT,
-      telefono TEXT,
-      notas TEXT DEFAULT '{}',
-      ultima_interaccion INTEGER DEFAULT (strftime('%s', 'now')),
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS facturas_email_reglas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT NOT NULL UNIQUE,
-      local TEXT NOT NULL,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS facturas_emails_procesados (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      gmail_id TEXT NOT NULL UNIQUE,
-      de_email TEXT,
-      asunto TEXT,
-      local TEXT,
-      adjuntos_procesados INTEGER DEFAULT 0,
-      procesado TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS facturas_locales (
-      local TEXT PRIMARY KEY,
-      empresa TEXT NOT NULL,
-      cif TEXT,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS facturas_pendientes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      empresa_detectada TEXT,
-      nif_receptor TEXT,
-      nombre_receptor TEXT,
-      tipo TEXT,
-      fecha TEXT,
-      numero_factura TEXT,
-      proveedor TEXT,
-      nif TEXT,
-      concepto TEXT,
-      base_imponible REAL,
-      porcentaje_iva REAL,
-      cuota_iva REAL,
-      total REAL,
-      drive_url TEXT,
-      drive_file_id TEXT,
-      file_hash TEXT,
-      origen TEXT DEFAULT 'email',
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`ALTER TABLE facturas ADD COLUMN file_hash TEXT`, () => {});
-  db.run(`ALTER TABLE facturas ADD COLUMN empresa TEXT`, () => {});
-  db.run(`ALTER TABLE facturas ADD COLUMN pagado INTEGER DEFAULT 0`, () => {});
-  db.run(`ALTER TABLE facturas ADD COLUMN fecha_pago TEXT`, () => {});
-  db.run(`ALTER TABLE facturas_locales ADD COLUMN local_contable TEXT`, () => {});
-  // Migración: rellena empresa en facturas que quedaron como null o "Sin empresa asignada"
-  db.run(
-    `UPDATE facturas SET empresa = (
-       SELECT fl.empresa FROM facturas_locales fl WHERE fl.local = facturas.local
-     )
-     WHERE (empresa IS NULL OR empresa = 'Sin empresa asignada')
-     AND EXISTS (SELECT 1 FROM facturas_locales fl WHERE fl.local = facturas.local)`,
-    (err) => { if (err) console.error("[Migration] empresa fix:", err.message); }
-  );
-  db.run(`ALTER TABLE leads ADD COLUMN genero TEXT`, () => {});
-  db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
-  db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
-  db.run(`ALTER TABLE hr_applications ADD COLUMN edad INTEGER`, () => {});
-  db.run(`ALTER TABLE hr_applications ADD COLUMN experiencia TEXT`, () => {});
-  db.run(`ALTER TABLE hr_applications ADD COLUMN poblacion TEXT`, () => {});
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS campanas_wa (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nombre TEXT NOT NULL,
-      segmento_json TEXT NOT NULL,
-      mensaje TEXT NOT NULL,
-      total_enviados INTEGER DEFAULT 0,
-      total_errores INTEGER DEFAULT 0,
-      creado_en TEXT DEFAULT (datetime('now')),
-      finalizado_en TEXT
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS pending_whatsapp (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tipo TEXT NOT NULL,
-      destino TEXT NOT NULL,
-      reserva_json TEXT NOT NULL,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS hr_worker_notes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      worker_id INTEGER NOT NULL,
-      tipo TEXT NOT NULL DEFAULT 'nota',
-      contenido TEXT NOT NULL,
-      autor TEXT,
-      creado_en TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS hr_preguntas_mes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      mes TEXT NOT NULL,
-      orden INTEGER DEFAULT 0,
-      pregunta TEXT NOT NULL
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS hr_llamadas_mes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      worker_id INTEGER NOT NULL,
-      mes TEXT NOT NULL,
-      realizada INTEGER DEFAULT 0,
-      fecha_llamada TEXT,
-      respuestas TEXT,
-      comentario_libre TEXT,
-      autor TEXT,
-      creado_en TEXT DEFAULT (datetime('now')),
-      UNIQUE(worker_id, mes)
-    )
-  `);
-
-  // Seed de usuarios por defecto si la tabla está vacía
-  db.get("SELECT COUNT(*) as total FROM users", async (err, row) => {
-    if (err || row.total > 0) return;
-    const roles = [
-      { username: "direccion", nombre: "Dirección", rol: "direccion" },
-      { username: "encargado", nombre: "Encargado", rol: "encargado" },
-      { username: "trabajador", nombre: "Trabajador", rol: "trabajador" },
-      { username: "rrhh", nombre: "RR.HH.", rol: "rrhh" },
-      { username: "marketing", nombre: "Marketing", rol: "marketing" },
-      { username: "contabilidad", nombre: "Contabilidad", rol: "contabilidad" }
-    ];
-    for (const u of roles) {
-      const hash = await bcrypt.hash("tapeta2024", 10);
-      db.run(
-        `INSERT INTO users (username, password_hash, rol, nombre, creado_en) VALUES (?, ?, ?, ?, ?)`,
-        [u.username, hash, u.rol, u.nombre, new Date().toISOString()]
-      );
+      console.log("Usuarios por defecto creados. Contraseña: tapeta2024");
     }
-    console.log("Usuarios por defecto creados. Contraseña: tapeta2024");
-  });
-});
+
+    // Rellenar empresa en facturas que quedaron como null o "Sin empresa asignada"
+    await client.query(
+      `UPDATE facturas SET empresa = (
+         SELECT fl.empresa FROM facturas_locales fl WHERE fl.local = facturas.local
+       )
+       WHERE (empresa IS NULL OR empresa = 'Sin empresa asignada')
+       AND EXISTS (SELECT 1 FROM facturas_locales fl WHERE fl.local = facturas.local)`
+    );
+
+    console.log("[DB] Esquema PostgreSQL inicializado");
+  } finally {
+    client.release();
+  }
+}
+
+// ── KV → PostgreSQL: restauración de respaldo antiguo (idempotente) ──────────
+// Si existen datos en Replit KV de la época SQLite, los importa una sola vez.
+async function restoreFromKV() {
+  const dbUrl = process.env.REPLIT_DB_URL;
+  if (!dbUrl) return;
+
+  // Restaurar leads desde copia comprimida
+  try {
+    const raw = execSync(`curl -sf "${dbUrl}/latapeta_leads_v1"`, { encoding: "utf8", timeout: 10000 }).trim();
+    if (raw && raw !== "null" && raw.length >= 5) {
+      let leads;
+      try { leads = JSON.parse(zlib.gunzipSync(Buffer.from(raw, "base64")).toString()); } catch { leads = null; }
+      if (Array.isArray(leads) && leads.length) {
+        let restaurados = 0;
+        for (const l of leads) {
+          try {
+            const existe = await dbGet(
+              "SELECT id FROM leads WHERE (telefono != '' AND telefono = ?) OR (correo != '' AND correo = ?)",
+              [l.telefono || "", l.correo || ""]
+            );
+            if (!existe) {
+              await dbRun(
+                `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuente, genero, creado_en, actualizado_en)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT DO NOTHING`,
+                [l.nombre || "", l.apellidos || "", l.nacimiento || "", l.poblacion || "", l.telefono || "", l.correo || "",
+                 l.premio || "", l.fuente || "web", l.genero || null, l.creado_en || new Date().toISOString(), l.actualizado_en || null]
+              );
+              restaurados++;
+            }
+          } catch {}
+        }
+        if (restaurados) console.log(`[KV→PG] ${restaurados} leads restaurados desde KV`);
+      }
+    }
+  } catch (e) { console.error("[KV→PG] Error restaurando leads:", e.message); }
+
+  // Restaurar config crítica (wa_links, facturas_grupos, etc.)
+  try {
+    const raw = execSync(`curl -sf "${dbUrl}/latapeta_critical_config_v2"`, { encoding: "utf8", timeout: 10000 }).trim();
+    if (raw && raw !== "null" && raw.length >= 5) {
+      const cfg = JSON.parse(raw);
+      const ahora = new Date().toISOString();
+      for (const { local, group_jid } of (cfg.waLinks || [])) {
+        await dbRun(
+          "INSERT INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, ?) ON CONFLICT(local) DO UPDATE SET group_jid=EXCLUDED.group_jid, updated_at=EXCLUDED.updated_at",
+          [local, group_jid, ahora]
+        );
+        await dbRun(
+          "INSERT INTO contents (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at",
+          [`whatsapp_group_${local}`, group_jid, ahora]
+        );
+      }
+      for (const { local, group_jid, sheet_id, sheet_url } of (cfg.facturasGrupos || [])) {
+        await dbRun(
+          `INSERT INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)
+           ON CONFLICT(group_jid) DO UPDATE SET local=EXCLUDED.local,
+             sheet_id=COALESCE(EXCLUDED.sheet_id, facturas_grupos.sheet_id),
+             sheet_url=COALESCE(EXCLUDED.sheet_url, facturas_grupos.sheet_url)`,
+          [local, group_jid, sheet_id || null, sheet_url || null]
+        );
+      }
+      for (const r of (cfg.facturasLocales || [])) {
+        await dbRun(
+          `INSERT INTO facturas_locales (local, empresa, cif, local_contable) VALUES (?, ?, ?, ?)
+           ON CONFLICT(local) DO UPDATE SET empresa=EXCLUDED.empresa, cif=EXCLUDED.cif, local_contable=EXCLUDED.local_contable`,
+          [r.local, r.empresa, r.cif, r.local_contable]
+        );
+      }
+      for (const r of (cfg.emailReglas || [])) {
+        await dbRun(
+          `INSERT INTO facturas_email_reglas (email, local) VALUES (?, ?) ON CONFLICT(email) DO NOTHING`,
+          [r.email, r.local]
+        );
+      }
+      console.log(`[KV→PG] Config crítica restaurada desde KV`);
+    }
+  } catch (e) { console.error("[KV→PG] Error restaurando config:", e.message); }
+}
 
 // ── Google Business OAuth ─────────────────────────────────────────────────
 
@@ -739,36 +546,25 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI  = (process.env.BASE_URL || "https://familia-del-amor.replit.app") + "/auth/google/callback";
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
 
-function dbGet(sql, params = []) {
-  return new Promise((res, rej) => db.get(sql, params, (e, r) => e ? rej(e) : res(r)));
-}
-function dbAll(sql, params = []) {
-  return new Promise((res, rej) => db.all(sql, params, (e, r) => e ? rej(e) : res(r)));
-}
-function dbRun(sql, params = []) {
-  return new Promise((res, rej) => db.run(sql, params, (e) => e ? rej(e) : res()));
-}
-
 async function getConfig(key) {
   const row = await dbGet("SELECT value FROM config WHERE key = ?", [key]);
   return row ? row.value : null;
 }
 async function setConfig(key, value) {
   await dbRun(
-    `INSERT INTO config (key, value, updated_at) VALUES (?, ?, datetime('now'))
-     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+    `INSERT INTO config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`,
     [key, String(value)]
   );
 }
 
 // Devuelve el bloqueo de reservas que aplica a (local, dia) o null.
-// dia en formato YYYY-MM-DD. Coincide por local exacto o por 'Todos'.
 async function estaBloqueado(local, dia) {
   if (!local || !dia) return null;
   return await dbGet(
     `SELECT * FROM bloqueos_reservas
      WHERE (local = ? OR local = 'Todos')
-       AND date(?) BETWEEN date(desde) AND date(hasta)
+       AND ?::date BETWEEN desde::date AND hasta::date
      ORDER BY id LIMIT 1`,
     [local, dia]
   );
@@ -814,7 +610,6 @@ async function fetchAndStoreReviews() {
     if (!locData.locations?.length) continue;
 
     for (const loc of locData.locations) {
-      // API v1 de reseñas (v4 está obsoleta)
       const revRes = await fetch(
         `https://mybusinessreviews.googleapis.com/v1/${loc.name}/reviews?pageSize=50`,
         { headers: h }
@@ -827,8 +622,8 @@ async function fetchAndStoreReviews() {
         await dbRun(
           `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha)
            VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET author=excluded.author, rating=excluded.rating,
-             text=excluded.text, fecha=excluded.fecha`,
+           ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating,
+             text=EXCLUDED.text, fecha=EXCLUDED.fecha`,
           [
             rev.reviewId || rev.name,
             loc.title || loc.name,
@@ -866,8 +661,8 @@ async function fetchReviewsViaPlaces() {
       await dbRun(
         `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha)
          VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET author=excluded.author, rating=excluded.rating,
-           text=excluded.text, fecha=excluded.fecha`,
+         ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating,
+           text=EXCLUDED.text, fecha=EXCLUDED.fecha`,
         [id, loc.name, rev.author_name || "Cliente", rev.rating || 5, rev.text || "",
          new Date(rev.time * 1000).toISOString()]
       );
@@ -962,7 +757,7 @@ async function pollGmail() {
       const senderEmail = (emailMatch ? emailMatch[1] : from).trim().toLowerCase();
 
       const regla = await dbGet("SELECT local FROM facturas_email_reglas WHERE LOWER(email) = ?", [senderEmail]);
-      const localConocido = regla?.local || null; // null = proveedor directo, sin regla
+      const localConocido = regla?.local || null;
 
       const parts = flattenParts(msg.payload);
       const adjuntos = parts.filter(p =>
@@ -972,7 +767,10 @@ async function pollGmail() {
 
       if (adjuntos.length === 0) {
         await markGmailRead(token, msgId);
-        await dbRun("INSERT OR IGNORE INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, 0)", [msgId, senderEmail, subject, localConocido || "auto", 0]);
+        await dbRun(
+          "INSERT INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, 0) ON CONFLICT(gmail_id) DO NOTHING",
+          [msgId, senderEmail, subject, localConocido || "auto"]
+        );
         continue;
       }
 
@@ -986,17 +784,15 @@ async function pollGmail() {
           const buffer = Buffer.from(attData.data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
           if (localConocido) {
-            // Regla configurada: procesar normalmente
             await procesarFactura({
               buffer, mimeType: parte.mimeType,
               filename: parte.filename || `adjunto_${msgId}`,
               local: localConocido,
               caption: `Email · ${from} · ${subject}`,
               getToken: getDriveAccessToken, dbGet, dbRun,
-              backupFn: backupCriticalConfig
+              backupFn: null
             });
           } else {
-            // Proveedor directo sin regla: auto-detectar por nif_receptor
             await procesarFacturaSinLocal({
               buffer, mimeType: parte.mimeType,
               filename: parte.filename || `adjunto_${msgId}`,
@@ -1016,7 +812,7 @@ async function pollGmail() {
 
       await markGmailRead(token, msgId);
       await dbRun(
-        "INSERT OR IGNORE INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, ?) ON CONFLICT(gmail_id) DO NOTHING",
         [msgId, senderEmail, subject, localConocido || "auto", procesados]
       );
       console.log(`[Gmail] ${senderEmail} → ${localConocido || "auto-detect"} (${procesados} adjunto/s)`);
@@ -1084,11 +880,9 @@ app.post("/api/facturas/grupos", requireAuth(["direccion"]), async (req, res) =>
   if (!local || !group_jid) return res.status(400).json({ ok: false, error: "Faltan local o group_jid" });
   try {
     await dbRun(
-      "INSERT INTO facturas_grupos (local, group_jid) VALUES (?, ?) ON CONFLICT(group_jid) DO UPDATE SET local = excluded.local",
+      "INSERT INTO facturas_grupos (local, group_jid) VALUES (?, ?) ON CONFLICT(group_jid) DO UPDATE SET local = EXCLUDED.local",
       [local, group_jid]
     );
-    backupToReplitDBSync();    // Backup completo (faltaba)
-    backupCriticalConfig();    // Backup compacto de config crítica
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -1097,7 +891,6 @@ app.post("/api/facturas/grupos", requireAuth(["direccion"]), async (req, res) =>
 
 app.delete("/api/facturas/grupos/:id", requireAuth(["direccion"]), async (req, res) => {
   await dbRun("DELETE FROM facturas_grupos WHERE id = ?", [req.params.id]);
-  backupCriticalConfig();
   res.json({ ok: true });
 });
 
@@ -1132,7 +925,7 @@ app.post("/api/facturas/email-reglas", requireAuth(["direccion"]), async (req, r
   if (!email || !local) return res.status(400).json({ ok: false, error: "Faltan email o local" });
   try {
     await dbRun(
-      "INSERT INTO facturas_email_reglas (email, local) VALUES (?, ?) ON CONFLICT(email) DO UPDATE SET local = excluded.local",
+      "INSERT INTO facturas_email_reglas (email, local) VALUES (?, ?) ON CONFLICT(email) DO UPDATE SET local = EXCLUDED.local",
       [email.trim().toLowerCase(), local]
     );
     res.json({ ok: true });
@@ -1157,10 +950,9 @@ app.post("/api/facturas/locales", requireAuth(["direccion"]), async (req, res) =
   try {
     await dbRun(
       `INSERT INTO facturas_locales (local, empresa, cif, local_contable) VALUES (?, ?, ?, ?)
-       ON CONFLICT(local) DO UPDATE SET empresa = excluded.empresa, cif = excluded.cif, local_contable = excluded.local_contable`,
+       ON CONFLICT(local) DO UPDATE SET empresa = EXCLUDED.empresa, cif = EXCLUDED.cif, local_contable = EXCLUDED.local_contable`,
       [local, empresa.trim(), (cif || "").trim() || null, (local_contable || "").trim() || null]
     );
-    backupCriticalConfig();
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -1183,7 +975,7 @@ app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), asy
   const pendiente = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ?", [req.params.id]);
   if (!pendiente) return res.status(404).json({ ok: false, error: "No encontrado" });
   try {
-    const result = await asignarFacturaPendiente({ pendiente, local, getToken: getDriveAccessToken, dbGet, dbAll, dbRun, backupFn: backupCriticalConfig });
+    const result = await asignarFacturaPendiente({ pendiente, local, getToken: getDriveAccessToken, dbGet, dbAll, dbRun, backupFn: null });
     res.json({ ok: true, ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -1197,7 +989,6 @@ app.post("/api/facturas/reset-test", requireAuth(["direccion"]), async (req, res
     await dbRun("DELETE FROM facturas_emails_procesados");
     await dbRun("UPDATE facturas_grupos SET sheet_id = NULL, sheet_url = NULL");
     await dbRun("DELETE FROM config WHERE key = 'drive_facturas_root_id'");
-    backupCriticalConfig();
     res.json({ ok: true, mensaje: "Reset de pruebas completado. Ahora borra el contenido de Drive y envía facturas de nuevo." });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -1235,37 +1026,37 @@ app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async
     const año = req.query.año || new Date().getFullYear();
     const [mensual, topProveedores, porLocal, resumenAnual] = await Promise.all([
       dbAll(
-        `SELECT local, strftime('%m', fecha) AS mes,
+        `SELECT local, TO_CHAR(fecha::date, 'MM') AS mes,
            COUNT(*) AS num,
-           ROUND(SUM(COALESCE(total,0)), 2) AS total,
-           ROUND(SUM(COALESCE(base_imponible,0)), 2) AS base,
-           ROUND(SUM(COALESCE(cuota_iva,0)), 2) AS iva
+           ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total,
+           ROUND(SUM(COALESCE(base_imponible,0))::NUMERIC, 2) AS base,
+           ROUND(SUM(COALESCE(cuota_iva,0))::NUMERIC, 2) AS iva
          FROM facturas
-         WHERE strftime('%Y', fecha) = ? AND fecha IS NOT NULL
+         WHERE TO_CHAR(fecha::date, 'YYYY') = ? AND fecha IS NOT NULL
          GROUP BY local, mes ORDER BY local, mes`,
         [String(año)]
       ),
       dbAll(
-        `SELECT proveedor, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0)), 2) AS total
+        `SELECT MIN(proveedor) AS proveedor, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
          FROM facturas
-         WHERE strftime('%Y', fecha) = ? AND proveedor IS NOT NULL AND TRIM(proveedor) != ''
+         WHERE TO_CHAR(fecha::date, 'YYYY') = ? AND proveedor IS NOT NULL AND TRIM(proveedor) != ''
          GROUP BY LOWER(TRIM(proveedor))
          ORDER BY total DESC LIMIT 10`,
         [String(año)]
       ),
       dbAll(
-        `SELECT local, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0)), 2) AS total
+        `SELECT local, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
          FROM facturas
-         WHERE strftime('%Y', fecha) = ?
+         WHERE TO_CHAR(fecha::date, 'YYYY') = ?
          GROUP BY local ORDER BY total DESC`,
         [String(año)]
       ),
       dbGet(
         `SELECT COUNT(*) AS num_docs,
-           ROUND(SUM(COALESCE(base_imponible,0)), 2) AS base,
-           ROUND(SUM(COALESCE(cuota_iva,0)), 2) AS iva,
-           ROUND(SUM(COALESCE(total,0)), 2) AS total
-         FROM facturas WHERE strftime('%Y', fecha) = ?`,
+           ROUND(SUM(COALESCE(base_imponible,0))::NUMERIC, 2) AS base,
+           ROUND(SUM(COALESCE(cuota_iva,0))::NUMERIC, 2) AS iva,
+           ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
+         FROM facturas WHERE TO_CHAR(fecha::date, 'YYYY') = ?`,
         [String(año)]
       )
     ]);
@@ -1285,15 +1076,13 @@ app.get("/api/facturas/modelo303", requireAuth(["direccion", "contabilidad"]), a
     const fechaInicio = `${año}-${String(mesInicio).padStart(2, "0")}-01`;
     const fechaFin    = `${año}-${String(mesFin).padStart(2, "0")}-31`;
 
-    // Solo facturas (documentos fiscales válidos para deducción de IVA)
-    // Agrupamos por tipo de IVA redondeado para evitar imprecisiones de float
     const [porTipoIva, totales, otrosDocs, locales] = await Promise.all([
       dbAll(
         `SELECT
            CAST(ROUND(COALESCE(porcentaje_iva, 0)) AS INTEGER) AS tipo_iva,
            COUNT(*) AS num_docs,
-           ROUND(SUM(COALESCE(base_imponible, 0)), 2) AS base_total,
-           ROUND(SUM(COALESCE(cuota_iva, 0)), 2) AS cuota_total
+           ROUND(SUM(COALESCE(base_imponible, 0))::NUMERIC, 2) AS base_total,
+           ROUND(SUM(COALESCE(cuota_iva, 0))::NUMERIC, 2) AS cuota_total
          FROM facturas
          WHERE empresa = ? AND fecha BETWEEN ? AND ? AND LOWER(tipo) = 'factura'
          GROUP BY CAST(ROUND(COALESCE(porcentaje_iva, 0)) AS INTEGER)
@@ -1303,15 +1092,15 @@ app.get("/api/facturas/modelo303", requireAuth(["direccion", "contabilidad"]), a
       dbGet(
         `SELECT
            COUNT(*) AS num_facturas,
-           ROUND(SUM(COALESCE(base_imponible, 0)), 2) AS base_total,
-           ROUND(SUM(COALESCE(cuota_iva, 0)), 2) AS cuota_total,
-           ROUND(SUM(COALESCE(total, 0)), 2) AS importe_total
+           ROUND(SUM(COALESCE(base_imponible, 0))::NUMERIC, 2) AS base_total,
+           ROUND(SUM(COALESCE(cuota_iva, 0))::NUMERIC, 2) AS cuota_total,
+           ROUND(SUM(COALESCE(total, 0))::NUMERIC, 2) AS importe_total
          FROM facturas
          WHERE empresa = ? AND fecha BETWEEN ? AND ? AND LOWER(tipo) = 'factura'`,
         [empresa, fechaInicio, fechaFin]
       ),
       dbGet(
-        `SELECT COUNT(*) AS num_otros, ROUND(SUM(COALESCE(total, 0)), 2) AS total_otros
+        `SELECT COUNT(*) AS num_otros, ROUND(SUM(COALESCE(total, 0))::NUMERIC, 2) AS total_otros
          FROM facturas
          WHERE empresa = ? AND fecha BETWEEN ? AND ? AND LOWER(tipo) != 'factura'`,
         [empresa, fechaInicio, fechaFin]
@@ -1337,7 +1126,7 @@ app.get("/api/facturas/modelo303", requireAuth(["direccion", "contabilidad"]), a
   }
 });
 
-// OAuth routes (sin requireAuth en callback para que Google pueda redirigir)
+// OAuth routes
 app.get("/auth/google", (req, res) => {
   if (!GOOGLE_CLIENT_ID) return res.status(500).send("GOOGLE_CLIENT_ID no configurado");
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -1468,26 +1257,25 @@ function requireAuth(roles = []) {
 }
 
 // Auth endpoints
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ ok: false, error: "Faltan credenciales" });
   }
-  db.get("SELECT * FROM users WHERE username = ?", [username], async (err, user) => {
-    if (err || !user) {
-      return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
-    }
+  try {
+    const user = await dbGet("SELECT * FROM users WHERE username = ?", [username]);
+    if (!user) return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
     const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) {
-      return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
-    }
+    if (!valid) return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
     const token = jwt.sign(
       { id: user.id, username: user.username, rol: user.rol, nombre: user.nombre, local: user.local },
       JWT_SECRET,
       { expiresIn: "8h" }
     );
     res.json({ ok: true, token, rol: user.rol, nombre: user.nombre });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error de autenticación" });
+  }
 });
 
 app.get("/api/auth/me", requireAuth(), (req, res) => {
@@ -1495,11 +1283,13 @@ app.get("/api/auth/me", requireAuth(), (req, res) => {
 });
 
 // Gestión de usuarios (solo dirección)
-app.get("/api/users", requireAuth(["direccion"]), (req, res) => {
-  db.all("SELECT id, username, rol, nombre, local, creado_en FROM users ORDER BY rol", (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error leyendo usuarios" });
+app.get("/api/users", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const rows = await dbAll("SELECT id, username, rol, nombre, local, creado_en FROM users ORDER BY rol");
     res.json({ ok: true, data: rows });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error leyendo usuarios" });
+  }
 });
 
 app.post("/api/users", requireAuth(["direccion"]), async (req, res) => {
@@ -1507,43 +1297,42 @@ app.post("/api/users", requireAuth(["direccion"]), async (req, res) => {
   if (!username || !password || !rol) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
-  const hash = await bcrypt.hash(password, 10);
-  const creado_en = new Date().toISOString();
-  db.run(
-    `INSERT INTO users (username, password_hash, rol, nombre, local, creado_en) VALUES (?, ?, ?, ?, ?, ?)`,
-    [username, hash, rol, nombre || "", local || "", creado_en],
-    function (err) {
-      if (err) {
-        return res.status(400).json({ ok: false, error: "Usuario ya existe o error al crear" });
-      }
-      res.json({ ok: true, id: this.lastID });
-    }
-  );
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    const creado_en = new Date().toISOString();
+    const row = await dbRun(
+      `INSERT INTO users (username, password_hash, rol, nombre, local, creado_en) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+      [username, hash, rol, nombre || "", local || "", creado_en]
+    );
+    res.json({ ok: true, id: row.id });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: "Usuario ya existe o error al crear" });
+  }
 });
 
 app.put("/api/users/:id/password", requireAuth(["direccion"]), async (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ ok: false, error: "Contraseña requerida" });
-  const hash = await bcrypt.hash(password, 10);
-  db.run("UPDATE users SET password_hash = ? WHERE id = ?", [hash, req.params.id], (err) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error actualizando contraseña" });
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    await dbRun("UPDATE users SET password_hash = ? WHERE id = ?", [hash, req.params.id]);
     res.json({ ok: true });
-  });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: "Error actualizando contraseña" });
+  }
 });
 
-app.delete("/api/users/:id", requireAuth(["direccion"]), (req, res) => {
-  db.run("DELETE FROM users WHERE id = ?", [req.params.id], (err) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error eliminando usuario" });
+app.delete("/api/users/:id", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    await dbRun("DELETE FROM users WHERE id = ?", [req.params.id]);
     res.json({ ok: true });
-  });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: "Error eliminando usuario" });
+  }
 });
-
-// Migración segura: añadir columnas fuente y actualizado_en si no existen
-db.run(`ALTER TABLE leads ADD COLUMN fuente TEXT DEFAULT 'web'`, () => {});
-db.run(`ALTER TABLE leads ADD COLUMN actualizado_en TEXT`, () => {});
 
 // Leads
-app.post("/api/leads", (req, res) => {
+app.post("/api/leads", async (req, res) => {
   const { nombre, apellidos, nacimiento, poblacion, telefono, correo, fuente, genero } = req.body;
   if (!nombre || !apellidos || !nacimiento || !poblacion || !telefono || !correo) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
@@ -1553,71 +1342,98 @@ app.post("/api/leads", (req, res) => {
   const fuenteVal = fuente || "web";
   const generoVal = genero || null;
 
-  db.get(
-    `SELECT id FROM leads WHERE telefono = ? OR correo = ?`,
-    [telefono, correo],
-    (err, existing) => {
-      if (existing) {
-        db.run(
-          `UPDATE leads SET nombre=?, apellidos=?, nacimiento=?, poblacion=?, genero=COALESCE(?,genero), fuente=?, actualizado_en=? WHERE id=?`,
-          [nombre, apellidos, nacimiento, poblacion, generoVal, fuenteVal, ahora, existing.id],
-          (err2) => {
-            if (err2) return res.status(500).json({ ok: false, error: "Error actualizando lead" });
-            backupLeads(); // copia interna durable de leads
-            return res.json({ ok: true, premio, actualizado: true });
-          }
-        );
-      } else {
-        db.run(
-          `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuente, genero, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuenteVal, generoVal, ahora],
-          function (err2) {
-            if (err2) return res.status(500).json({ ok: false, error: "Error guardando lead" });
-            backupToReplitDB(); // Guardar BD al recibir nuevo lead
-            backupLeads();      // copia interna durable de leads
-            mirrorLeadToSheet({ nombre, apellidos, telefono, correo, poblacion, nacimiento, genero: generoVal, fuente: fuenteVal, premio }); // espejo Google Sheets
-            return res.json({ ok: true, premio });
-          }
-        );
-      }
+  try {
+    const existing = await dbGet(`SELECT id FROM leads WHERE telefono = ? OR correo = ?`, [telefono, correo]);
+    if (existing) {
+      await dbRun(
+        `UPDATE leads SET nombre=?, apellidos=?, nacimiento=?, poblacion=?, genero=COALESCE(?,genero), fuente=?, actualizado_en=? WHERE id=?`,
+        [nombre, apellidos, nacimiento, poblacion, generoVal, fuenteVal, ahora, existing.id]
+      );
+      return res.json({ ok: true, premio, actualizado: true });
+    } else {
+      await dbRun(
+        `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuente, genero, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuenteVal, generoVal, ahora]
+      );
+      mirrorLeadToSheet({ nombre, apellidos, telefono, correo, poblacion, nacimiento, genero: generoVal, fuente: fuenteVal, premio });
+      return res.json({ ok: true, premio });
     }
-  );
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error guardando lead" });
+  }
 });
 
-// Crea/actualiza un lead por teléfono. Si es nuevo → INSERT + backup + Sheets.
-// Si existe → actualiza actividad y rellena nombre/apellidos si estaban vacíos.
-function upsertLead({ nombre = "", apellidos = "", telefono, fuente = "web" }) {
+// Crea/actualiza un lead por teléfono.
+async function upsertLead({ nombre = "", apellidos = "", telefono, fuente = "web" }) {
   if (!telefono) return;
   const ahora = new Date().toISOString();
-  db.get(`SELECT id, nombre, apellidos FROM leads WHERE telefono = ?`, [telefono], (err, row) => {
-    if (err) return;
+  try {
+    const row = await dbGet(`SELECT id, nombre, apellidos FROM leads WHERE telefono = ?`, [telefono]);
     if (row) {
-      // Rellenar nombre/apellidos si el lead existente los tenía vacíos
       const nuevoNombre = (!row.nombre || row.nombre === "") && nombre ? nombre : row.nombre;
       const nuevoApellidos = (!row.apellidos || row.apellidos === "") && apellidos ? apellidos : row.apellidos;
-      db.run(
+      await dbRun(
         `UPDATE leads SET nombre = ?, apellidos = ?, actualizado_en = ? WHERE id = ?`,
-        [nuevoNombre || "", nuevoApellidos || "", ahora, row.id],
-        () => backupLeads()
+        [nuevoNombre || "", nuevoApellidos || "", ahora, row.id]
       );
     } else {
-      db.run(
+      await dbRun(
         `INSERT INTO leads (nombre, apellidos, telefono, nacimiento, poblacion, correo, premio, fuente, creado_en) VALUES (?, ?, ?, '', '', '', '', ?, ?)`,
-        [nombre, apellidos, telefono, fuente, ahora],
-        () => {
-          backupLeads(); // copia interna durable
-          mirrorLeadToSheet({ nombre, apellidos, telefono, correo: "", poblacion: "", nacimiento: "", genero: null, fuente, premio: "" });
-        }
+        [nombre, apellidos, telefono, fuente, ahora]
       );
+      mirrorLeadToSheet({ nombre, apellidos, telefono, correo: "", poblacion: "", nacimiento: "", genero: null, fuente, premio: "" });
     }
-  });
+  } catch (e) {
+    console.error("[upsertLead] Error:", e.message);
+  }
 }
 
-// Captura mínima de lead cuando llega una reserva (wrapper de upsertLead)
 function upsertLeadFromReserva({ nombre_reserva, telefono }) {
   const nombre = (nombre_reserva || "").split(" ")[0] || nombre_reserva || "";
   const apellidos = (nombre_reserva || "").split(" ").slice(1).join(" ");
   upsertLead({ nombre, apellidos, telefono, fuente: "reserva" });
+}
+
+// ── Espejo de leads en Google Sheets ──────────────────────────────────────
+async function ensureLeadsSheet(token) {
+  let id = await getConfig("leads_sheet_id");
+  if (id) return id;
+  const r = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ properties: { title: "Leads · Familia del Amor" } })
+  });
+  const data = await r.json();
+  if (data.error) throw new Error(JSON.stringify(data.error));
+  id = data.spreadsheetId;
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent("A1")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ values: [["Fecha", "Nombre", "Apellidos", "Teléfono", "Correo", "Población", "Nacimiento", "Género", "Fuente", "Premio"]] })
+  });
+  await setConfig("leads_sheet_id", id);
+  console.log(`[Leads] Hoja de Google Sheets creada: ${id}`);
+  return id;
+}
+
+async function mirrorLeadToSheet(lead) {
+  try {
+    const refresh = await getConfig("google_drive_refresh_token");
+    if (!refresh) return;
+    const token = await getDriveAccessToken();
+    const id = await ensureLeadsSheet(token);
+    const fecha = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
+    const fila = [fecha, lead.nombre || "", lead.apellidos || "", lead.telefono || "", lead.correo || "",
+      lead.poblacion || "", lead.nacimiento || "", lead.genero || "", lead.fuente || "", lead.premio || ""];
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent("A1")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ values: [fila] })
+    });
+    console.log(`[Leads] Fila añadida a Google Sheets: ${lead.nombre} ${lead.apellidos}`);
+  } catch (e) {
+    console.error("[Leads] No se pudo escribir en Sheets:", e.message);
+  }
 }
 
 // SQL unificado: leads + clientes de reservas sin lead, mergeando por teléfono
@@ -1658,7 +1474,7 @@ function sqlContactosUnificados(filtros = {}, params = []) {
         MAX(r.creado_en) AS ultima_actividad
       FROM reservas r
       WHERE r.telefono NOT IN (SELECT telefono FROM leads WHERE telefono IS NOT NULL)
-      GROUP BY r.telefono
+      GROUP BY r.telefono, r.nombre_reserva
     ) c
     WHERE 1=1
     ${localFilter}
@@ -1671,7 +1487,7 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   }
   if (poblacion) { sql += ` AND c.poblacion LIKE ?`; params.push(`%${poblacion}%`); }
   if (genero) { sql += ` AND c.genero = ?`; params.push(genero); }
-  if (cumple_mes) { sql += ` AND strftime('%m', c.nacimiento) = ?`; params.push(cumple_mes.padStart(2, "0")); }
+  if (cumple_mes) { sql += ` AND TO_CHAR(c.nacimiento::date, 'MM') = ?`; params.push(cumple_mes.padStart(2, "0")); }
   if (filtros.from) { sql += ` AND c.ultima_actividad >= ?`; params.push(filtros.from); }
   if (filtros.to) { sql += ` AND c.ultima_actividad <= ?`; params.push(filtros.to + " 23:59:59"); }
 
@@ -1679,44 +1495,42 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   return sql;
 }
 
-app.get("/api/leads", requireAuth(["direccion", "marketing"]), (req, res) => {
-  const params = [];
-  const sql = sqlContactosUnificados(req.query, params);
-  db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error leyendo leads" });
+app.get("/api/leads", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const params = [];
+    const sql = sqlContactosUnificados(req.query, params);
+    const rows = await dbAll(sql, params);
     res.json({ ok: true, data: rows });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error leyendo leads" });
+  }
 });
 
-// Diagnóstico: cuántos leads/reservas/contactos hay y dónde vive la BD.
+// Diagnóstico
 app.get("/api/debug/estado", requireAuth(["direccion"]), async (req, res) => {
   try {
     const leads = await dbGet("SELECT COUNT(*) c FROM leads");
     const reservas = await dbGet("SELECT COUNT(*) c FROM reservas");
     const waClientes = await dbGet("SELECT COUNT(*) c FROM wa_clientes");
     const porFuente = await dbAll("SELECT fuente, COUNT(*) c FROM leads GROUP BY fuente");
-    let dbSizeKb = null;
-    try { dbSizeKb = Math.round(fs.statSync(dbPath).size / 1024); } catch {}
     res.json({
       ok: true,
-      leads_total: leads?.c ?? 0,
+      leads_total: parseInt(leads?.c ?? 0),
       leads_por_fuente: porFuente,
-      reservas_total: reservas?.c ?? 0,
-      wa_clientes_total: waClientes?.c ?? 0,
-      db_path: dbPath,
-      db_size_kb: dbSizeKb,
-      backup_completo_riesgo: dbSizeKb && dbSizeKb > 480 ? "SÍ (>480KB, el backup completo puede fallar)" : "bajo"
+      reservas_total: parseInt(reservas?.c ?? 0),
+      wa_clientes_total: parseInt(waClientes?.c ?? 0),
+      db_engine: "postgresql"
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.get("/api/leads/export.csv", requireAuth(["direccion", "marketing"]), (req, res) => {
-  const params = [];
-  const sql = sqlContactosUnificados(req.query, params);
-  db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).send("Error exportando");
+app.get("/api/leads/export.csv", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const params = [];
+    const sql = sqlContactosUnificados(req.query, params);
+    const rows = await dbAll(sql, params);
     const header = "nombre,apellidos,telefono,correo,nacimiento,poblacion,genero,origen,ultima_actividad";
     const lines = rows.map((r) =>
       [r.nombre, r.apellidos, r.telefono, r.correo, r.nacimiento, r.poblacion, r.genero, r.origen, r.ultima_actividad]
@@ -1726,34 +1540,39 @@ app.get("/api/leads/export.csv", requireAuth(["direccion", "marketing"]), (req, 
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", `attachment; filename="contactos.csv"`);
     res.send([header, ...lines].join("\n"));
-  });
+  } catch (e) {
+    res.status(500).send("Error exportando");
+  }
 });
 
 // Contenidos
-app.get("/api/content", (req, res) => {
-  db.all(`SELECT key, value FROM contents`, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error leyendo contenidos" });
+app.get("/api/content", async (req, res) => {
+  try {
+    const rows = await dbAll(`SELECT key, value FROM contents`);
     const data = {};
     rows.forEach((r) => { data[r.key] = r.value; });
     res.json({ ok: true, data });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error leyendo contenidos" });
+  }
 });
 
-app.put("/api/content", requireAuth(["marketing", "direccion"]), (req, res) => {
+app.put("/api/content", requireAuth(["marketing", "direccion"]), async (req, res) => {
   const { key, value } = req.body;
   if (!key || typeof value !== "string") {
     return res.status(400).json({ ok: false, error: "Datos inválidos" });
   }
   const updated_at = new Date().toISOString();
-  db.run(
-    `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
-    [key, value, updated_at],
-    function (err) {
-      if (err) return res.status(500).json({ ok: false, error: "Error guardando contenido" });
-      return res.json({ ok: true });
-    }
-  );
+  try {
+    await dbRun(
+      `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`,
+      [key, value, updated_at]
+    );
+    return res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error guardando contenido" });
+  }
 });
 
 // ── Registro de contenidos editables (fuente única) ─────────────────────────
@@ -1817,7 +1636,6 @@ function getContentRegistry() {
   return { locales: WEB_LOCALES, campos };
 }
 
-// Allowlist: solo se pueden escribir claves del registro (acepta variantes i18n _es/_ca/_en).
 function keyEnRegistro(key, campos) {
   if (campos[key]) return true;
   const m = key.match(/^(.*)_(es|ca|en)$/);
@@ -1843,8 +1661,8 @@ app.put("/api/content/batch", requireAuth(["marketing", "direccion"]), async (re
   try {
     for (const it of items) {
       await dbRun(
-        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`,
         [it.key, it.value]
       );
     }
@@ -1855,9 +1673,6 @@ app.put("/api/content/batch", requireAuth(["marketing", "direccion"]), async (re
 });
 
 // Upload
-// ── Optimización automática de archivos subidos ─────────────────────────────
-// Imágenes con sharp (viene con Baileys); PDFs con ghostscript si está disponible.
-// Todo con degradación segura: si algo falla, se conserva el archivo original.
 let _sharp;
 async function getSharp() {
   if (_sharp === undefined) {
@@ -1911,8 +1726,6 @@ app.post("/api/upload", requireAuth(["marketing", "rrhh", "direccion"]), upload.
   res.json({ ok: true, urls });
 });
 
-// Optimiza (in place) todos los archivos ya subidos en public/uploads.
-// Útil para comprimir archivos subidos antes de activar la optimización automática.
 app.post("/api/uploads/optimize-existing", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const entries = fs.readdirSync(uploadsDir).filter(n => /\.(jpe?g|png|webp|pdf)$/i.test(n));
@@ -1952,12 +1765,9 @@ app.post("/api/reservas", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Hora inválida" });
     }
   }
-  // Bloqueo de reservas configurado por marketing (mismo helper que usa Sara)
   try {
     const bloqueo = await estaBloqueado(local, dia);
     if (bloqueo) {
-      // code + local + motivo para que el frontend muestre un mensaje traducido;
-      // 'error' queda como fallback en español.
       return res.status(400).json({
         ok: false,
         code: "reservas_bloqueadas",
@@ -1967,73 +1777,80 @@ app.post("/api/reservas", async (req, res) => {
       });
     }
   } catch (e) { console.error("Error comprobando bloqueo de reservas:", e.message); }
-  const creado_en = new Date().toISOString();
-  db.run(
-    `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [local, personas, dia, hora, telefono, nombre_reserva, creado_en],
-    function (err) {
-      if (err) return res.status(500).json({ ok: false, error: "Error guardando reserva" });
-      const pendiente = parseInt(personas) > 8;
-      const reserva = { local, personas, dia, hora, telefono, nombre_reserva };
-      upsertLeadFromReserva({ nombre_reserva, telefono });
-      console.log(`[Reserva] WhatsApp listo: ${isReady()} | ${pendiente ? "PENDIENTE" : "Confirmación"} a ${telefono}`);
-      if (pendiente) {
-        if (isReady()) sendConfirmacionPendienteCliente(telefono, reserva);
-        else guardarPendienteWA("confirmacion_pendiente", telefono, reserva);
-      } else {
-        if (isReady()) sendConfirmacionCliente(telefono, reserva);
-        else guardarPendienteWA("confirmacion", telefono, reserva);
-      }
-      db.get(`SELECT group_jid FROM wa_links WHERE local = ?`, [local], (_, row) => {
-        console.log(`[Reserva] Grupo para "${local}": ${row?.group_jid || "NO CONFIGURADO"}`);
-        if (row?.group_jid) {
-          if (pendiente) {
-            if (isReady()) sendNotificacionGrupoPendiente(row.group_jid, reserva);
-            else guardarPendienteWA("grupo_pendiente", row.group_jid, reserva);
-          } else {
-            if (isReady()) sendNotificacionGrupo(row.group_jid, reserva);
-            else guardarPendienteWA("grupo", row.group_jid, reserva);
-          }
-        }
-      });
-      return res.json({ ok: true, reserva_id: this.lastID, pendiente });
+
+  try {
+    const creado_en = new Date().toISOString();
+    const rowRes = await dbRun(
+      `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [local, personas, dia, hora, telefono, nombre_reserva, creado_en]
+    );
+    const reserva_id = rowRes.id;
+    const pendiente = parseInt(personas) > 8;
+    const reserva = { local, personas, dia, hora, telefono, nombre_reserva };
+    upsertLeadFromReserva({ nombre_reserva, telefono });
+    console.log(`[Reserva] WhatsApp listo: ${isReady()} | ${pendiente ? "PENDIENTE" : "Confirmación"} a ${telefono}`);
+    if (pendiente) {
+      if (isReady()) sendConfirmacionPendienteCliente(telefono, reserva);
+      else guardarPendienteWA("confirmacion_pendiente", telefono, reserva);
+    } else {
+      if (isReady()) sendConfirmacionCliente(telefono, reserva);
+      else guardarPendienteWA("confirmacion", telefono, reserva);
     }
-  );
-});
-
-app.get("/api/reservas", requireAuth(["direccion", "encargado"]), (req, res) => {
-  const { local, from, to } = req.query;
-  const where = [];
-  const params = [];
-  if (local) { where.push(`local = ?`); params.push(local); }
-  if (from) { where.push(`dia >= ?`); params.push(from); }
-  if (to) { where.push(`dia <= ?`); params.push(to); }
-  const sql = `SELECT * FROM reservas ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY dia ASC, hora ASC`;
-  db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error leyendo reservas" });
-    res.json({ ok: true, data: rows });
-  });
-});
-
-app.delete("/api/reservas/:id", requireAuth(["encargado", "direccion"]), (req, res) => {
-  db.get(`SELECT * FROM reservas WHERE id = ?`, [req.params.id], (err, reserva) => {
-    if (err || !reserva) return res.status(404).json({ ok: false, error: "Reserva no encontrada" });
-    db.run("DELETE FROM reservas WHERE id = ?", [req.params.id], (err2) => {
-      if (err2) return res.status(500).json({ ok: false, error: "Error eliminando reserva" });
-      res.json({ ok: true });
-      if (isReady()) {
-        sendCancelacionCliente(reserva.telefono, reserva);
-        db.get(`SELECT group_jid FROM wa_links WHERE local = ?`, [reserva.local], (_, row) => {
-          if (row?.group_jid) sendCancelacionGrupo(row.group_jid, reserva);
-        });
+    // Notificar grupo del local
+    dbGet(`SELECT group_jid FROM wa_links WHERE local = ?`, [local]).then((row) => {
+      console.log(`[Reserva] Grupo para "${local}": ${row?.group_jid || "NO CONFIGURADO"}`);
+      if (row?.group_jid) {
+        if (pendiente) {
+          if (isReady()) sendNotificacionGrupoPendiente(row.group_jid, reserva);
+          else guardarPendienteWA("grupo_pendiente", row.group_jid, reserva);
+        } else {
+          if (isReady()) sendNotificacionGrupo(row.group_jid, reserva);
+          else guardarPendienteWA("grupo", row.group_jid, reserva);
+        }
       }
-    });
-  });
+    }).catch(() => {});
+    return res.json({ ok: true, reserva_id, pendiente });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error guardando reserva" });
+  }
 });
 
-app.get("/api/reservas/export.csv", requireAuth(["direccion", "encargado", "contabilidad"]), (req, res) => {
-  db.all(`SELECT * FROM reservas ORDER BY creado_en DESC`, (err, rows) => {
-    if (err) return res.status(500).send("Error exportando");
+app.get("/api/reservas", requireAuth(["direccion", "encargado"]), async (req, res) => {
+  try {
+    const { local, from, to } = req.query;
+    const where = [];
+    const params = [];
+    if (local) { where.push(`local = ?`); params.push(local); }
+    if (from) { where.push(`dia >= ?`); params.push(from); }
+    if (to) { where.push(`dia <= ?`); params.push(to); }
+    const sql = `SELECT * FROM reservas ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY dia ASC, hora ASC`;
+    const rows = await dbAll(sql, params);
+    res.json({ ok: true, data: rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error leyendo reservas" });
+  }
+});
+
+app.delete("/api/reservas/:id", requireAuth(["encargado", "direccion"]), async (req, res) => {
+  try {
+    const reserva = await dbGet(`SELECT * FROM reservas WHERE id = ?`, [req.params.id]);
+    if (!reserva) return res.status(404).json({ ok: false, error: "Reserva no encontrada" });
+    await dbRun("DELETE FROM reservas WHERE id = ?", [req.params.id]);
+    res.json({ ok: true });
+    if (isReady()) {
+      sendCancelacionCliente(reserva.telefono, reserva);
+      dbGet(`SELECT group_jid FROM wa_links WHERE local = ?`, [reserva.local]).then((row) => {
+        if (row?.group_jid) sendCancelacionGrupo(row.group_jid, reserva);
+      }).catch(() => {});
+    }
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error eliminando reserva" });
+  }
+});
+
+app.get("/api/reservas/export.csv", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
+  try {
+    const rows = await dbAll(`SELECT * FROM reservas ORDER BY creado_en DESC`);
     const header = "id,local,personas,dia,hora,telefono,nombre_reserva,creado_en";
     const lines = rows.map((r) =>
       [r.id, r.local, r.personas, r.dia, r.hora, r.telefono, r.nombre_reserva, r.creado_en]
@@ -2043,86 +1860,95 @@ app.get("/api/reservas/export.csv", requireAuth(["direccion", "encargado", "cont
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", `attachment; filename="reservas.csv"`);
     res.send([header, ...lines].join("\n"));
-  });
+  } catch (e) {
+    res.status(500).send("Error exportando");
+  }
 });
 
 // KPIs
-app.get("/api/kpi", requireAuth(["direccion", "contabilidad"]), (req, res) => {
-  const result = {};
-  const hoy = new Date().toISOString().slice(0, 10);
-  const mes = hoy.slice(0, 7);
-
-  const queries = [
-    ["leads_total",    `SELECT COUNT(*) as v FROM leads`],
-    ["leads_mes",      `SELECT COUNT(*) as v FROM leads WHERE (creado_en LIKE '${mes}%' OR actualizado_en LIKE '${mes}%')`],
-    ["reservas_total", `SELECT COUNT(*) as v FROM reservas`],
-    ["reservas_hoy",   `SELECT COUNT(*) as v FROM reservas WHERE dia='${hoy}'`],
-    ["reservas_mes",   `SELECT COUNT(*) as v FROM reservas WHERE dia LIKE '${mes}%'`],
-    ["candidaturas",   `SELECT COUNT(*) as v FROM hr_applications`],
-    ["personas_hoy",   `SELECT COALESCE(SUM(CAST(personas AS INTEGER)),0) as v FROM reservas WHERE dia='${hoy}'`],
-    ["personas_mes",   `SELECT COALESCE(SUM(CAST(personas AS INTEGER)),0) as v FROM reservas WHERE dia LIKE '${mes}%'`],
-  ];
-
-  let pending = queries.length;
-  let failed = false;
-
-  queries.forEach(([key, sql]) => {
-    db.get(sql, (err, row) => {
-      if (failed) return;
-      if (err) { failed = true; return res.status(500).json({ ok: false, error: key }); }
-      result[key] = row.v;
-      if (--pending === 0) {
-        db.all(`SELECT local, COUNT(*) as total FROM reservas GROUP BY local ORDER BY total DESC`, (e, rows) => {
-          if (e) return res.status(500).json({ ok: false, error: "kpi_local" });
-          result.reservas_por_local = rows;
-          res.json({ ok: true, data: result });
-        });
+app.get("/api/kpi", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const hoy = new Date().toISOString().slice(0, 10);
+    const mes = hoy.slice(0, 7);
+    const mesLike = mes + "%";
+    const [leads_total, leads_mes, reservas_total, reservas_hoy, reservas_mes, candidaturas,
+           personas_hoy, personas_mes, reservas_por_local] = await Promise.all([
+      dbGet(`SELECT COUNT(*) as v FROM leads`),
+      dbGet(`SELECT COUNT(*) as v FROM leads WHERE (creado_en LIKE ? OR actualizado_en LIKE ?)`, [mesLike, mesLike]),
+      dbGet(`SELECT COUNT(*) as v FROM reservas`),
+      dbGet(`SELECT COUNT(*) as v FROM reservas WHERE dia = ?`, [hoy]),
+      dbGet(`SELECT COUNT(*) as v FROM reservas WHERE dia LIKE ?`, [mesLike]),
+      dbGet(`SELECT COUNT(*) as v FROM hr_applications`),
+      dbGet(`SELECT COALESCE(SUM(CAST(personas AS INTEGER)),0) as v FROM reservas WHERE dia = ?`, [hoy]),
+      dbGet(`SELECT COALESCE(SUM(CAST(personas AS INTEGER)),0) as v FROM reservas WHERE dia LIKE ?`, [mesLike]),
+      dbAll(`SELECT local, COUNT(*) as total FROM reservas GROUP BY local ORDER BY total DESC`)
+    ]);
+    res.json({
+      ok: true,
+      data: {
+        leads_total: parseInt(leads_total.v),
+        leads_mes: parseInt(leads_mes.v),
+        reservas_total: parseInt(reservas_total.v),
+        reservas_hoy: parseInt(reservas_hoy.v),
+        reservas_mes: parseInt(reservas_mes.v),
+        candidaturas: parseInt(candidaturas.v),
+        personas_hoy: parseInt(personas_hoy.v),
+        personas_mes: parseInt(personas_mes.v),
+        reservas_por_local
       }
     });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // RR.HH.
-app.get("/api/hr/jobs", (req, res) => {
-  db.all(`SELECT * FROM hr_jobs WHERE activo=1 ORDER BY creado_en DESC`, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error jobs" });
+app.get("/api/hr/jobs", async (req, res) => {
+  try {
+    const rows = await dbAll(`SELECT * FROM hr_jobs WHERE activo=1 ORDER BY creado_en DESC`);
     res.json({ ok: true, data: rows });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error jobs" });
+  }
 });
 
-app.get("/api/hr/jobs/admin", requireAuth(["rrhh", "direccion"]), (req, res) => {
-  db.all(`SELECT * FROM hr_jobs ORDER BY creado_en DESC`, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error jobs" });
+app.get("/api/hr/jobs/admin", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+  try {
+    const rows = await dbAll(`SELECT * FROM hr_jobs ORDER BY creado_en DESC`);
     res.json({ ok: true, data: rows });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error jobs" });
+  }
 });
 
-app.post("/api/hr/jobs", requireAuth(["rrhh", "direccion"]), (req, res) => {
+app.post("/api/hr/jobs", requireAuth(["rrhh", "direccion"]), async (req, res) => {
   const { titulo, local, tipo, descripcion, activo } = req.body;
   if (!titulo || !local || !tipo || !descripcion) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
-  const creado_en = new Date().toISOString();
-  db.run(
-    `INSERT INTO hr_jobs (titulo, local, tipo, descripcion, activo, creado_en) VALUES (?, ?, ?, ?, ?, ?)`,
-    [titulo, local, tipo, descripcion, activo ? 1 : 0, creado_en],
-    function (err) {
-      if (err) return res.status(500).json({ ok: false, error: "Error guardando job" });
-      res.json({ ok: true, id: this.lastID });
-    }
-  );
+  try {
+    const creado_en = new Date().toISOString();
+    const row = await dbRun(
+      `INSERT INTO hr_jobs (titulo, local, tipo, descripcion, activo, creado_en) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+      [titulo, local, tipo, descripcion, activo ? 1 : 0, creado_en]
+    );
+    res.json({ ok: true, id: row.id });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error guardando job" });
+  }
 });
 
-app.put("/api/hr/jobs/:id", requireAuth(["rrhh", "direccion"]), (req, res) => {
+app.put("/api/hr/jobs/:id", requireAuth(["rrhh", "direccion"]), async (req, res) => {
   const { titulo, local, tipo, descripcion, activo } = req.body;
-  db.run(
-    `UPDATE hr_jobs SET titulo=?, local=?, tipo=?, descripcion=?, activo=? WHERE id=?`,
-    [titulo, local, tipo, descripcion, activo ? 1 : 0, req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ ok: false, error: "Error actualizando job" });
-      res.json({ ok: true });
-    }
-  );
+  try {
+    await dbRun(
+      `UPDATE hr_jobs SET titulo=?, local=?, tipo=?, descripcion=?, activo=? WHERE id=?`,
+      [titulo, local, tipo, descripcion, activo ? 1 : 0, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error actualizando job" });
+  }
 });
 
 app.post("/api/hr/applications", (req, res, next) => {
@@ -2133,7 +1959,7 @@ app.post("/api/hr/applications", (req, res, next) => {
     }
     next();
   });
-}, (req, res) => {
+}, async (req, res) => {
   const { nombre, email, telefono, puesto, mensaje, edad, experiencia, poblacion } = req.body;
   console.log("[HR] Candidatura recibida:", { nombre, email, telefono, puesto, edad, experiencia, poblacion, tieneCV: !!req.file });
   if (!nombre || !email || !telefono || !puesto || !edad || !experiencia || !poblacion) {
@@ -2141,242 +1967,257 @@ app.post("/api/hr/applications", (req, res, next) => {
   }
   const cv_url = req.file ? `/uploads/${req.file.filename}` : "";
   const creado_en = new Date().toISOString();
-  db.run(
-    `INSERT INTO hr_applications (nombre, email, telefono, puesto, mensaje, cv_url, edad, experiencia, poblacion, estado, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'nuevo', ?)`,
-    [nombre, email, telefono, puesto, mensaje || "", cv_url, edad || null, experiencia || null, poblacion || null, creado_en],
-    function (err) {
-      if (err) {
-        console.error("[HR] Error DB:", err.message);
-        return res.status(500).json({ ok: false, error: "Error guardando candidatura" });
-      }
-      if (isReady()) {
-        const lineas = [
-          `🆕 *Nueva candidatura recibida*`,
-          ``,
-          `👤 *Nombre:* ${nombre}`,
-          `📞 *Teléfono:* ${telefono}`,
-          `📧 *Email:* ${email}`,
-          `💼 *Puesto:* ${puesto}`,
-          `🎂 *Edad:* ${edad} años`,
-          `🏙️ *Población:* ${poblacion}`,
-          `✅ *Experiencia:* ${experiencia === "si" ? "Sí" : "No"}`,
-        ];
-        if (mensaje) lineas.push(`💬 *Mensaje:* ${mensaje}`);
-        if (req.file) lineas.push(`📎 *CV:* adjunto a continuación`);
-        const numLimpio = telefono.replace(/\D/g, "").replace(/^00/, "");
-        const numWA = numLimpio.startsWith("34") ? numLimpio : `34${numLimpio}`;
-        const mensajePrefill = encodeURIComponent(
-          `Hola ${nombre}! 👋 Te escribo en relación a tu candidatura como ${puesto} en Familia del Amor. Cuéntame un poco más sobre ti para que podamos conocernos mejor 😊`
-        );
-        const linkWA = `https://wa.me/${numWA}?text=${mensajePrefill}`;
-        sendMensajeLibre("622065974", lineas.join("\n"))
-          .then(() => {
-            if (req.file) {
-              const cvBuffer = fs.readFileSync(req.file.path);
-              return sendDocumentoLibre("622065974", cvBuffer, req.file.originalname, req.file.mimetype);
-            }
-          })
-          .then(() => sendMensajeLibre("622065974", `Si quieres escribirle directamente a ${nombre}, haz clic aquí 👇\n${linkWA}`))
-          .catch((e) => console.error("[HR] Error notificando candidatura a Nerea:", e.message));
-      }
-      res.json({ ok: true });
+  try {
+    await dbRun(
+      `INSERT INTO hr_applications (nombre, email, telefono, puesto, mensaje, cv_url, edad, experiencia, poblacion, estado, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'nuevo', ?)`,
+      [nombre, email, telefono, puesto, mensaje || "", cv_url, edad || null, experiencia || null, poblacion || null, creado_en]
+    );
+    if (isReady()) {
+      const lineas = [
+        `🆕 *Nueva candidatura recibida*`,
+        ``,
+        `👤 *Nombre:* ${nombre}`,
+        `📞 *Teléfono:* ${telefono}`,
+        `📧 *Email:* ${email}`,
+        `💼 *Puesto:* ${puesto}`,
+        `🎂 *Edad:* ${edad} años`,
+        `🏙️ *Población:* ${poblacion}`,
+        `✅ *Experiencia:* ${experiencia === "si" ? "Sí" : "No"}`,
+      ];
+      if (mensaje) lineas.push(`💬 *Mensaje:* ${mensaje}`);
+      if (req.file) lineas.push(`📎 *CV:* adjunto a continuación`);
+      const numLimpio = telefono.replace(/\D/g, "").replace(/^00/, "");
+      const numWA = numLimpio.startsWith("34") ? numLimpio : `34${numLimpio}`;
+      const mensajePrefill = encodeURIComponent(
+        `Hola ${nombre}! 👋 Te escribo en relación a tu candidatura como ${puesto} en Familia del Amor. Cuéntame un poco más sobre ti para que podamos conocernos mejor 😊`
+      );
+      const linkWA = `https://wa.me/${numWA}?text=${mensajePrefill}`;
+      sendMensajeLibre("622065974", lineas.join("\n"))
+        .then(() => {
+          if (req.file) {
+            const cvBuffer = fs.readFileSync(req.file.path);
+            return sendDocumentoLibre("622065974", cvBuffer, req.file.originalname, req.file.mimetype);
+          }
+        })
+        .then(() => sendMensajeLibre("622065974", `Si quieres escribirle directamente a ${nombre}, haz clic aquí 👇\n${linkWA}`))
+        .catch((e) => console.error("[HR] Error notificando candidatura a Nerea:", e.message));
     }
-  );
-});
-
-app.get("/api/hr/applications", requireAuth(["rrhh", "direccion"]), (req, res) => {
-  const { q, estado, from, to } = req.query;
-  const where = [];
-  const params = [];
-  if (q) {
-    where.push(`(nombre LIKE ? OR email LIKE ? OR telefono LIKE ? OR puesto LIKE ?)`);
-    const like = `%${q}%`;
-    params.push(like, like, like, like);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[HR] Error DB:", e.message);
+    res.status(500).json({ ok: false, error: "Error guardando candidatura" });
   }
-  if (estado) { where.push(`estado = ?`); params.push(estado); }
-  if (from) { where.push(`creado_en >= ?`); params.push(from); }
-  if (to) { where.push(`creado_en <= ?`); params.push(to); }
-  const sql = `SELECT * FROM hr_applications ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY creado_en DESC`;
-  db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error leyendo candidaturas" });
-    res.json({ ok: true, data: rows });
-  });
 });
 
-app.put("/api/hr/applications/:id", requireAuth(["rrhh", "direccion"]), (req, res) => {
+app.get("/api/hr/applications", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+  try {
+    const { q, estado, from, to } = req.query;
+    const where = [];
+    const params = [];
+    if (q) {
+      where.push(`(nombre LIKE ? OR email LIKE ? OR telefono LIKE ? OR puesto LIKE ?)`);
+      const like = `%${q}%`;
+      params.push(like, like, like, like);
+    }
+    if (estado) { where.push(`estado = ?`); params.push(estado); }
+    if (from) { where.push(`creado_en >= ?`); params.push(from); }
+    if (to) { where.push(`creado_en <= ?`); params.push(to); }
+    const sql = `SELECT * FROM hr_applications ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY creado_en DESC`;
+    const rows = await dbAll(sql, params);
+    res.json({ ok: true, data: rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error leyendo candidaturas" });
+  }
+});
+
+app.put("/api/hr/applications/:id", requireAuth(["rrhh", "direccion"]), async (req, res) => {
   const { estado } = req.body;
   if (!estado) return res.status(400).json({ ok: false, error: "Estado requerido" });
-  db.run(`UPDATE hr_applications SET estado=? WHERE id=?`, [estado, req.params.id], (err) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error actualizando estado" });
+  try {
+    await dbRun(`UPDATE hr_applications SET estado=? WHERE id=?`, [estado, req.params.id]);
     res.json({ ok: true });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error actualizando estado" });
+  }
 });
 
 // ── RRHH: Seguimiento de trabajadores ─────────────────────────────────────
 
-app.get("/api/rrhh/trabajadores", requireAuth(["rrhh", "direccion"]), (req, res) => {
-  db.all(
-    `SELECT id, username, nombre, rol, local FROM users
-     WHERE rol IN ('trabajador','encargado')
-     ORDER BY local ASC, nombre ASC`,
-    [],
-    (err, rows) => {
-      if (err) return res.status(500).json({ ok: false });
-      res.json({ ok: true, data: rows || [] });
-    }
-  );
+app.get("/api/rrhh/trabajadores", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+  try {
+    const rows = await dbAll(
+      `SELECT id, username, nombre, rol, local FROM users
+       WHERE rol IN ('trabajador','encargado')
+       ORDER BY local ASC, nombre ASC`
+    );
+    res.json({ ok: true, data: rows || [] });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
 });
 
-app.get("/api/rrhh/trabajador/:id/notas", requireAuth(["rrhh", "direccion"]), (req, res) => {
-  db.all(
-    `SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC`,
-    [req.params.id],
-    (err, rows) => {
-      if (err) return res.status(500).json({ ok: false });
-      res.json({ ok: true, data: rows || [] });
-    }
-  );
+app.get("/api/rrhh/trabajador/:id/notas", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+  try {
+    const rows = await dbAll(
+      `SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC`,
+      [req.params.id]
+    );
+    res.json({ ok: true, data: rows || [] });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
 });
 
-app.post("/api/rrhh/trabajador/:id/nota", requireAuth(["rrhh", "direccion"]), (req, res) => {
+app.post("/api/rrhh/trabajador/:id/nota", requireAuth(["rrhh", "direccion"]), async (req, res) => {
   const { tipo = "nota", contenido, autor } = req.body;
   if (!contenido) return res.status(400).json({ ok: false, error: "Falta contenido" });
-  db.run(
-    `INSERT INTO hr_worker_notes (worker_id, tipo, contenido, autor, creado_en) VALUES (?, ?, ?, ?, ?)`,
-    [req.params.id, tipo, contenido, autor || null, new Date().toISOString()],
-    function (err) {
-      if (err) return res.status(500).json({ ok: false });
-      res.json({ ok: true, id: this.lastID });
-    }
-  );
+  try {
+    const row = await dbRun(
+      `INSERT INTO hr_worker_notes (worker_id, tipo, contenido, autor, creado_en) VALUES (?, ?, ?, ?, ?) RETURNING id`,
+      [req.params.id, tipo, contenido, autor || null, new Date().toISOString()]
+    );
+    res.json({ ok: true, id: row.id });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
 });
 
-app.delete("/api/rrhh/nota/:id", requireAuth(["rrhh", "direccion"]), (req, res) => {
-  db.run(`DELETE FROM hr_worker_notes WHERE id = ?`, [req.params.id], (err) => {
-    if (err) return res.status(500).json({ ok: false });
+app.delete("/api/rrhh/nota/:id", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+  try {
+    await dbRun(`DELETE FROM hr_worker_notes WHERE id = ?`, [req.params.id]);
     res.json({ ok: true });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
 });
 
-app.get("/api/rrhh/preguntas/:mes", requireAuth(["rrhh", "direccion"]), (req, res) => {
-  db.all(
-    `SELECT * FROM hr_preguntas_mes WHERE mes = ? ORDER BY orden ASC`,
-    [req.params.mes],
-    (err, rows) => {
-      if (err) return res.status(500).json({ ok: false });
-      res.json({ ok: true, data: rows || [] });
-    }
-  );
+app.get("/api/rrhh/preguntas/:mes", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+  try {
+    const rows = await dbAll(
+      `SELECT * FROM hr_preguntas_mes WHERE mes = ? ORDER BY orden ASC`,
+      [req.params.mes]
+    );
+    res.json({ ok: true, data: rows || [] });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
 });
 
-app.put("/api/rrhh/preguntas/:mes", requireAuth(["rrhh", "direccion"]), (req, res) => {
+app.put("/api/rrhh/preguntas/:mes", requireAuth(["rrhh", "direccion"]), async (req, res) => {
   const { preguntas } = req.body;
   if (!Array.isArray(preguntas)) return res.status(400).json({ ok: false });
   const mes = req.params.mes;
-  db.run(`DELETE FROM hr_preguntas_mes WHERE mes = ?`, [mes], (err) => {
-    if (err) return res.status(500).json({ ok: false });
+  try {
+    await dbRun(`DELETE FROM hr_preguntas_mes WHERE mes = ?`, [mes]);
     if (!preguntas.length) return res.json({ ok: true });
-    const stmt = db.prepare(`INSERT INTO hr_preguntas_mes (mes, orden, pregunta) VALUES (?, ?, ?)`);
-    preguntas.forEach((p, i) => stmt.run(mes, i, p));
-    stmt.finalize((err2) => {
-      if (err2) return res.status(500).json({ ok: false });
-      res.json({ ok: true });
-    });
-  });
-});
-
-app.get("/api/rrhh/llamadas/:mes", requireAuth(["rrhh", "direccion"]), (req, res) => {
-  db.all(
-    `SELECT * FROM hr_llamadas_mes WHERE mes = ?`,
-    [req.params.mes],
-    (err, rows) => {
-      if (err) return res.status(500).json({ ok: false });
-      res.json({ ok: true, data: rows || [] });
+    for (let i = 0; i < preguntas.length; i++) {
+      await dbRun(`INSERT INTO hr_preguntas_mes (mes, orden, pregunta) VALUES (?, ?, ?)`, [mes, i, preguntas[i]]);
     }
-  );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
 });
 
-app.post("/api/rrhh/llamada", requireAuth(["rrhh", "direccion"]), (req, res) => {
+app.get("/api/rrhh/llamadas/:mes", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+  try {
+    const rows = await dbAll(`SELECT * FROM hr_llamadas_mes WHERE mes = ?`, [req.params.mes]);
+    res.json({ ok: true, data: rows || [] });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
+});
+
+app.post("/api/rrhh/llamada", requireAuth(["rrhh", "direccion"]), async (req, res) => {
   const { worker_id, mes, respuestas, comentario_libre, autor } = req.body;
   if (!worker_id || !mes) return res.status(400).json({ ok: false, error: "Faltan datos" });
   const ahora = new Date().toISOString();
   const respJson = respuestas ? JSON.stringify(respuestas) : null;
-  db.run(
-    `INSERT INTO hr_llamadas_mes (worker_id, mes, realizada, fecha_llamada, respuestas, comentario_libre, autor, creado_en)
-     VALUES (?, ?, 1, ?, ?, ?, ?, ?)
-     ON CONFLICT(worker_id, mes) DO UPDATE SET
-       realizada=1, fecha_llamada=excluded.fecha_llamada,
-       respuestas=excluded.respuestas, comentario_libre=excluded.comentario_libre,
-       autor=excluded.autor`,
-    [worker_id, mes, ahora, respJson, comentario_libre || null, autor || null, ahora],
-    function (err) {
-      if (err) return res.status(500).json({ ok: false, error: err.message });
-      res.json({ ok: true });
-    }
-  );
+  try {
+    await dbRun(
+      `INSERT INTO hr_llamadas_mes (worker_id, mes, realizada, fecha_llamada, respuestas, comentario_libre, autor, creado_en)
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?)
+       ON CONFLICT(worker_id, mes) DO UPDATE SET
+         realizada=1, fecha_llamada=EXCLUDED.fecha_llamada,
+         respuestas=EXCLUDED.respuestas, comentario_libre=EXCLUDED.comentario_libre,
+         autor=EXCLUDED.autor`,
+      [worker_id, mes, ahora, respJson, comentario_libre || null, autor || null, ahora]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // Mantenimiento
-app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), (req, res) => {
-  db.all(`SELECT * FROM maintenance_issues ORDER BY creado_en DESC`, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error incidencias" });
+app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res) => {
+  try {
+    const rows = await dbAll(`SELECT * FROM maintenance_issues ORDER BY creado_en DESC`);
     res.json({ ok: true, data: rows });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error incidencias" });
+  }
 });
 
-app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), (req, res) => {
+app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res) => {
   const { local, titulo, descripcion } = req.body;
   if (!local || !titulo || !descripcion) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
-  const creado_en = new Date().toISOString();
-  db.run(
-    `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, creado_en) VALUES (?, ?, ?, 'abierta', ?)`,
-    [local, titulo, descripcion, creado_en],
-    function (err) {
-      if (err) return res.status(500).json({ ok: false, error: "Error guardando incidencia" });
-      res.json({ ok: true, id: this.lastID });
-    }
-  );
+  try {
+    const creado_en = new Date().toISOString();
+    const row = await dbRun(
+      `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, creado_en) VALUES (?, ?, ?, 'abierta', ?) RETURNING id`,
+      [local, titulo, descripcion, creado_en]
+    );
+    res.json({ ok: true, id: row.id });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error guardando incidencia" });
+  }
 });
 
-app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), (req, res) => {
+app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (req, res) => {
   const { estado } = req.body;
   if (!estado) return res.status(400).json({ ok: false, error: "Estado requerido" });
-  db.run(`UPDATE maintenance_issues SET estado=? WHERE id=?`, [estado, req.params.id], (err) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error actualizando incidencia" });
+  try {
+    await dbRun(`UPDATE maintenance_issues SET estado=? WHERE id=?`, [estado, req.params.id]);
     res.json({ ok: true });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error actualizando incidencia" });
+  }
 });
 
 // Comunicados
-app.get("/api/announcements", requireAuth(), (req, res) => {
-  const { local, rol } = req.query;
-  const where = [];
-  const params = [];
-  if (local) { where.push(`local = ?`); params.push(local); }
-  if (rol) { where.push(`rol = ?`); params.push(rol); }
-  const sql = `SELECT * FROM announcements ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY creado_en DESC`;
-  db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error anuncios" });
+app.get("/api/announcements", requireAuth(), async (req, res) => {
+  try {
+    const { local, rol } = req.query;
+    const where = [];
+    const params = [];
+    if (local) { where.push(`local = ?`); params.push(local); }
+    if (rol) { where.push(`rol = ?`); params.push(rol); }
+    const sql = `SELECT * FROM announcements ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY creado_en DESC`;
+    const rows = await dbAll(sql, params);
     res.json({ ok: true, data: rows });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error anuncios" });
+  }
 });
 
-app.post("/api/announcements", requireAuth(["encargado", "direccion"]), (req, res) => {
+app.post("/api/announcements", requireAuth(["encargado", "direccion"]), async (req, res) => {
   const { local, rol, mensaje } = req.body;
   if (!local || !rol || !mensaje) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
-  const creado_en = new Date().toISOString();
-  db.run(
-    `INSERT INTO announcements (local, rol, mensaje, creado_en) VALUES (?, ?, ?, ?)`,
-    [local, rol, mensaje, creado_en],
-    function (err) {
-      if (err) return res.status(500).json({ ok: false, error: "Error guardando anuncio" });
-      res.json({ ok: true, id: this.lastID });
-    }
-  );
+  try {
+    const creado_en = new Date().toISOString();
+    const row = await dbRun(
+      `INSERT INTO announcements (local, rol, mensaje, creado_en) VALUES (?, ?, ?, ?) RETURNING id`,
+      [local, rol, mensaje, creado_en]
+    );
+    res.json({ ok: true, id: row.id });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error guardando anuncio" });
+  }
 });
 
 // WhatsApp
@@ -2389,27 +2230,25 @@ app.get("/api/whatsapp/groups", requireAuth(["direccion", "encargado"]), async (
   res.json({ ok: true, data: groups });
 });
 
-app.post("/api/whatsapp/link", requireAuth(["direccion", "encargado"]), (req, res) => {
+app.post("/api/whatsapp/link", requireAuth(["direccion", "encargado"]), async (req, res) => {
   const { local, groupId } = req.body;
   if (!local || !groupId) return res.status(400).json({ ok: false, error: "Faltan campos" });
   const updated_at = new Date().toISOString();
-  db.run(
-    `INSERT INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, ?)
-     ON CONFLICT(local) DO UPDATE SET group_jid=excluded.group_jid, updated_at=excluded.updated_at`,
-    [local, groupId, updated_at],
-    (err) => {
-      if (err) return res.status(500).json({ ok: false, error: "Error guardando" });
-      // También guardar en contents para que la migración de startup lo restaure
-      db.run(
-        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
-        [`whatsapp_group_${local}`, groupId, updated_at]
-      );
-      backupToReplitDBSync(); // Backup completo síncrono
-      backupCriticalConfig(); // Backup compacto de config crítica (asíncrono, no bloquea)
-      res.json({ ok: true });
-    }
-  );
+  try {
+    await dbRun(
+      `INSERT INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(local) DO UPDATE SET group_jid=EXCLUDED.group_jid, updated_at=EXCLUDED.updated_at`,
+      [local, groupId, updated_at]
+    );
+    await dbRun(
+      `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`,
+      [`whatsapp_group_${local}`, groupId, updated_at]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error guardando" });
+  }
 });
 
 app.get("/api/whatsapp/qr", requireAuth(["direccion", "encargado", "marketing"]), async (req, res) => {
@@ -2419,11 +2258,13 @@ app.get("/api/whatsapp/qr", requireAuth(["direccion", "encargado", "marketing"])
   res.json({ ok: true, connected: false, qr: dataUrl });
 });
 
-app.get("/api/whatsapp/links", requireAuth(["direccion", "encargado"]), (req, res) => {
-  db.all(`SELECT local, group_jid FROM wa_links ORDER BY local`, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error" });
+app.get("/api/whatsapp/links", requireAuth(["direccion", "encargado"]), async (req, res) => {
+  try {
+    const rows = await dbAll(`SELECT local, group_jid FROM wa_links ORDER BY local`);
     res.json({ ok: true, data: rows });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error" });
+  }
 });
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
@@ -2441,74 +2282,80 @@ app.post("/api/whatsapp/test", requireAuth(["direccion"]), async (req, res) => {
   res.json({ ok: true, mensaje: `Mensaje de prueba enviado a ${telefono}` });
 });
 
-app.get("/api/contactos", requireAuth(["direccion", "marketing"]), (req, res) => {
-  const params = [];
-  const sql = sqlContactosUnificados(req.query, params);
-  db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: err.message });
+app.get("/api/contactos", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const params = [];
+    const sql = sqlContactosUnificados(req.query, params);
+    const rows = await dbAll(sql, params);
     res.json({ ok: true, data: rows, total: rows.length });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // ── CAMPAÑAS WHATSAPP ─────────────────────────────────────────────────
-app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), (req, res) => {
-  const params = [];
-  const sql = sqlContactosUnificados(req.body, params);
-  db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false });
+app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const params = [];
+    const sql = sqlContactosUnificados(req.body, params);
+    const rows = await dbAll(sql, params);
     res.json({ ok: true, total: rows.length, muestra: rows.slice(0, 5) });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
 });
 
 app.post("/api/campanas/enviar", requireAuth(["direccion", "marketing"]), async (req, res) => {
-  const { nombre_campana, mensaje } = req.body;
+  const { nombre_campana, mensaje, genero, poblacion, local, cumple_mes } = req.body;
   if (!mensaje || !nombre_campana) return res.status(400).json({ ok: false, error: "Faltan campos" });
   if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
 
-  const params = [];
-  const sql = sqlContactosUnificados(req.body, params);
-
-  db.all(sql, params, async (err, contactos) => {
-    if (err) return res.status(500).json({ ok: false });
+  try {
+    const params = [];
+    const sql = sqlContactosUnificados(req.body, params);
+    const contactos = await dbAll(sql, params);
     if (!contactos.length) return res.json({ ok: false, error: "No hay contactos con ese filtro" });
 
     const segmento = { genero, poblacion, local, cumple_mes };
-    db.run(
-      `INSERT INTO campanas_wa (nombre, segmento_json, mensaje, total_enviados) VALUES (?, ?, ?, 0)`,
-      [nombre_campana, JSON.stringify(segmento), mensaje],
-      async function(e) {
-        if (e) return res.status(500).json({ ok: false });
-        const campanaId = this.lastID;
-        res.json({ ok: true, total: contactos.length, campana_id: campanaId });
-
-        // Enviar en background con delay
-        let enviados = 0, errores = 0;
-        for (const c of contactos) {
-          try {
-            const texto = mensaje
-              .replace(/\{nombre\}/gi, c.nombre)
-              .replace(/\{apellidos\}/gi, c.apellidos)
-              .replace(/\{nombre_completo\}/gi, `${c.nombre} ${c.apellidos}`);
-            await sendMensajeLibre(c.telefono, texto);
-            enviados++;
-          } catch (_) { errores++; }
-          await new Promise(r => setTimeout(r, 4000));
-        }
-        db.run(
-          `UPDATE campanas_wa SET total_enviados=?, total_errores=?, finalizado_en=datetime('now') WHERE id=?`,
-          [enviados, errores, campanaId]
-        );
-        console.log(`📣 Campaña "${nombre_campana}" completada: ${enviados} enviados, ${errores} errores`);
-      }
+    const campanaRow = await dbRun(
+      `INSERT INTO campanas_wa (nombre, segmento_json, mensaje, total_enviados) VALUES (?, ?, ?, 0) RETURNING id`,
+      [nombre_campana, JSON.stringify(segmento), mensaje]
     );
-  });
+    const campanaId = campanaRow.id;
+    res.json({ ok: true, total: contactos.length, campana_id: campanaId });
+
+    // Enviar en background con delay
+    (async () => {
+      let enviados = 0, errores = 0;
+      for (const c of contactos) {
+        try {
+          const texto = mensaje
+            .replace(/\{nombre\}/gi, c.nombre)
+            .replace(/\{apellidos\}/gi, c.apellidos)
+            .replace(/\{nombre_completo\}/gi, `${c.nombre} ${c.apellidos}`);
+          await sendMensajeLibre(c.telefono, texto);
+          enviados++;
+        } catch (_) { errores++; }
+        await new Promise(r => setTimeout(r, 4000));
+      }
+      await dbRun(
+        `UPDATE campanas_wa SET total_enviados=?, total_errores=?, finalizado_en=CURRENT_TIMESTAMP WHERE id=?`,
+        [enviados, errores, campanaId]
+      );
+      console.log(`📣 Campaña "${nombre_campana}" completada: ${enviados} enviados, ${errores} errores`);
+    })();
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
-app.get("/api/campanas", requireAuth(["direccion", "marketing"]), (req, res) => {
-  db.all(`SELECT * FROM campanas_wa ORDER BY creado_en DESC LIMIT 50`, [], (err, rows) => {
-    if (err) return res.status(500).json({ ok: false });
+app.get("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const rows = await dbAll(`SELECT * FROM campanas_wa ORDER BY creado_en DESC LIMIT 50`);
     res.json({ ok: true, data: rows || [] });
-  });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
 });
 
 app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {
@@ -2519,15 +2366,14 @@ app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {
     await sendMensajeLibre(telefono, mensaje);
     const jid = telefono.replace(/\D/g, "").replace(/^00/, "").replace(/^(?!34)([679])/, "34$1") + "@s.whatsapp.net";
     addSaraToHistorial(jid, mensaje);
-    db.run(
+    await dbRun(
       `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, tipo) VALUES (?, ?, '[Equipo]', ?, 'manual')`,
-      [jid, telefono.replace(/\D/g, ""), mensaje],
-      (err) => { if (err) console.error("Error guardando mensaje manual WA:", err.message); }
+      [jid, telefono.replace(/\D/g, ""), mensaje]
     );
-    db.run(
+    await dbRun(
       `INSERT INTO wa_clientes (jid, telefono, ultima_interaccion)
-       VALUES (?, ?, strftime('%s','now'))
-       ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = strftime('%s','now')`,
+       VALUES (?, ?, EXTRACT(EPOCH FROM NOW())::BIGINT)
+       ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`,
       [jid, telefono.replace(/\D/g, "")]
     );
     res.json({ ok: true });
@@ -2536,19 +2382,18 @@ app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {
   }
 });
 
-app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), (req, res) => {
-  // Devuelve todos los mensajes con el nombre del lead si existe
-  db.all(
-    `SELECT w.*, COALESCE(l.nombre || ' ' || COALESCE(l.apellidos,''), w.telefono) AS nombre_contacto
-     FROM whatsapp_messages w
-     LEFT JOIN leads l ON l.telefono = w.telefono
-     ORDER BY w.creado_en ASC`,
-    [],
-    (err, rows) => {
-      if (err) return res.status(500).json({ ok: false });
-      res.json({ ok: true, data: rows || [] });
-    }
-  );
+app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const rows = await dbAll(
+      `SELECT w.*, COALESCE(l.nombre || ' ' || COALESCE(l.apellidos,''), w.telefono) AS nombre_contacto
+       FROM whatsapp_messages w
+       LEFT JOIN leads l ON l.telefono = w.telefono
+       ORDER BY w.creado_en ASC`
+    );
+    res.json({ ok: true, data: rows || [] });
+  } catch (e) {
+    res.status(500).json({ ok: false });
+  }
 });
 
 // ── Configurador conversacional de Sara ─────────────────────────────────────
@@ -2561,15 +2406,14 @@ const SARA_LOCALES = [
 async function getSaraEstado() {
   const hoy = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
   const instrucciones = (await getConfig("sara_instrucciones")) || "";
-  const bloqueos = await dbAll(`SELECT * FROM bloqueos_reservas WHERE date(hasta) >= date(?) ORDER BY desde`, [hoy]);
-  const reglas = await dbAll(`SELECT * FROM sara_respuestas WHERE activo = 1 ORDER BY id DESC`, []);
+  const bloqueos = await dbAll(`SELECT * FROM bloqueos_reservas WHERE hasta::date >= ?::date ORDER BY desde`, [hoy]);
+  const reglas = await dbAll(`SELECT * FROM sara_respuestas WHERE activo = 1 ORDER BY id DESC`);
   return { instrucciones, bloqueos, reglas };
 }
 
-// Cartas/menús PDF ya subidos (tabla contents, claves local_<slug>_menu*_pdf)
 async function getDocsDisponibles() {
   const rows = await dbAll(
-    `SELECT key, value FROM contents WHERE key LIKE 'local_%menu%pdf' AND value IS NOT NULL AND value != ''`, []
+    `SELECT key, value FROM contents WHERE key LIKE 'local_%menu%pdf' AND value IS NOT NULL AND value != ''`
   );
   return rows.map(r => ({ key: r.key, url: r.value }));
 }
@@ -2692,7 +2536,6 @@ app.post("/api/sara/chat", requireAuth(["marketing", "direccion"]), async (req, 
       `REGLAS: ${estado.reglas.map(r => `#${r.id} ${r.tema}${r.documento_url ? " [PDF]" : ""}`).join("; ") || "(ninguna)"}\n` +
       `CARTAS/MENÚS PDF YA SUBIDOS: ${docs.map(d => `${d.key} → ${d.url}`).join("; ") || "(ninguna subida aún)"}`;
 
-    // Catálogo de contenidos editables (compacto) para mapear lenguaje natural → key
     const { locales: regLocales } = getContentRegistry();
     const globalCat = Object.entries(GLOBAL_FIELDS).map(([k, d]) => `  ${k}: ${d.label} (${d.type})`).join("\n");
     const localFieldsCat = LOCAL_FIELDS.map(f => `  local_<slug>_${f.suffix}: ${f.label} (${f.type})`).join("\n");
@@ -2718,7 +2561,6 @@ REGLAS:
 - Usa SIEMPRE una key EXACTA del catálogo. Si no encuentras el destino o falta info (local, qué campo), pregunta. No inventes keys ni URLs.
 - Habla en español, cercano y breve.`;
 
-    // Inyectar el/los adjunto(s) en el último mensaje del usuario para que el modelo los vea
     const mensajesLLM = mensajes.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "") }));
     if (adjuntoTxt && mensajesLLM.length) {
       const last = mensajesLLM[mensajesLLM.length - 1];
@@ -2781,8 +2623,8 @@ app.post("/api/sara/aplicar", requireAuth(["marketing", "direccion"]), async (re
       const { campos } = getContentRegistry();
       if (!keyEnRegistro(datos.key, campos)) return res.status(400).json({ ok: false, error: "Campo no permitido: " + datos.key });
       await dbRun(
-        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`,
         [datos.key, String(datos.value || "").slice(0, 2000)]
       );
     } else if (tipo === "proponer_set_texto") {
@@ -2791,8 +2633,8 @@ app.post("/api/sara/aplicar", requireAuth(["marketing", "direccion"]), async (re
       if (!base || base.type !== "text_i18n") return res.status(400).json({ ok: false, error: "Campo de texto no válido" });
       const idioma = ["es", "ca", "en"].includes(datos.idioma) ? datos.idioma : "es";
       await dbRun(
-        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`,
         [`${datos.key}_${idioma}`, String(datos.texto || "").slice(0, 2000)]
       );
     } else if (tipo === "proponer_anadir_galeria") {
@@ -2805,8 +2647,8 @@ app.post("/api/sara/aplicar", requireAuth(["marketing", "direccion"]), async (re
       const actual = (row?.value || "").trim();
       const combinado = (actual ? actual + "\n" : "") + nuevas.join("\n");
       await dbRun(
-        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`,
         [datos.key, combinado]
       );
     } else {
@@ -2832,30 +2674,33 @@ app.delete("/api/sara/regla/:id", requireAuth(["marketing", "direccion"]), async
 app.get("/", (req, res) => res.redirect("/login.html"));
 
 const shutdown = (signal) => {
-  console.log(`${signal} recibido, guardando BD y cerrando servidor...`);
-  backupToReplitDBSync(); // Guardar BD antes de apagar
+  console.log(`${signal} recibido, cerrando servidor...`);
   setTimeout(() => { process.exit(0); }, 5000).unref();
   server.closeAllConnections?.();
-  server.close(() => {
-    db.close();
+  server.close(async () => {
+    await pool.end().catch(() => {});
     process.exit(0);
   });
 };
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT",  () => shutdown("SIGINT"));
 
-function guardarPendienteWA(tipo, destino, reserva) {
-  db.run(
-    `INSERT INTO pending_whatsapp (tipo, destino, reserva_json) VALUES (?, ?, ?)`,
-    [tipo, destino, JSON.stringify(reserva)],
-    (err) => { if (err) console.error("Error guardando pendiente WA:", err.message);
-               else console.log(`📥 Mensaje WA guardado como pendiente: ${tipo} → ${destino}`); }
-  );
+async function guardarPendienteWA(tipo, destino, reserva) {
+  try {
+    await dbRun(
+      `INSERT INTO pending_whatsapp (tipo, destino, reserva_json) VALUES (?, ?, ?)`,
+      [tipo, destino, JSON.stringify(reserva)]
+    );
+    console.log(`📥 Mensaje WA guardado como pendiente: ${tipo} → ${destino}`);
+  } catch (err) {
+    console.error("Error guardando pendiente WA:", err.message);
+  }
 }
 
 async function procesarPendientesWA() {
-  db.all(`SELECT * FROM pending_whatsapp ORDER BY creado_en ASC`, [], async (err, rows) => {
-    if (err || !rows || !rows.length) return;
+  try {
+    const rows = await dbAll(`SELECT * FROM pending_whatsapp ORDER BY creado_en ASC`);
+    if (!rows || !rows.length) return;
     console.log(`📨 Procesando ${rows.length} mensajes WhatsApp pendientes...`);
     for (const row of rows) {
       try {
@@ -2864,27 +2709,34 @@ async function procesarPendientesWA() {
         else if (row.tipo === "confirmacion_pendiente") await sendConfirmacionPendienteCliente(row.destino, reserva);
         else if (row.tipo === "grupo") await sendNotificacionGrupo(row.destino, reserva);
         else if (row.tipo === "grupo_pendiente") await sendNotificacionGrupoPendiente(row.destino, reserva);
-        db.run(`DELETE FROM pending_whatsapp WHERE id = ?`, [row.id]);
+        await dbRun(`DELETE FROM pending_whatsapp WHERE id = ?`, [row.id]);
         console.log(`✅ Pendiente WA enviado (id ${row.id})`);
       } catch (e) {
         console.error(`Error enviando pendiente WA ${row.id}:`, e.message);
       }
     }
-  });
+  } catch (e) {
+    console.error("Error procesando pendientes WA:", e.message);
+  }
 }
 
 const server = app.listen(PORT, async () => {
   console.log(`Servidor activo en http://localhost:${PORT}`);
 
-  // Backup inicial tras arrancar (30 s para dar tiempo a que la BD termine de inicializarse)
-  setTimeout(() => backupToReplitDB(), 30 * 1000);
-  // Backup periódico cada 5 minutos
-  setInterval(() => backupToReplitDB(), 5 * 60 * 1000);
+  // Inicializar esquema PostgreSQL
+  try {
+    await initDB();
+  } catch (e) {
+    console.error("[DB] Error inicializando esquema:", e.message);
+    process.exit(1);
+  }
+
+  // Restaurar datos desde KV (idempotente, solo importa los que falten)
+  try { await restoreFromKV(); } catch (e) { console.error("[KV] Error en restore:", e.message); }
 
   setOnReserva(async (reserva, jid) => {
     const { local, personas, dia, hora, telefono, nombre_reserva, pendiente } = reserva;
     if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) return;
-    // Bloqueo configurado por marketing: rechazar y que Sara se lo explique al cliente
     try {
       const bloqueo = await estaBloqueado(local, dia);
       if (bloqueo) {
@@ -2893,68 +2745,54 @@ const server = app.listen(PORT, async () => {
       }
     } catch (e) { console.error("Error comprobando bloqueo (WA):", e.message); }
     const creado_en = new Date().toISOString();
-    db.run(
-      `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [local, personas, dia, hora, telefono, nombre_reserva, creado_en],
-      function (err) {
-        if (err) { console.error("Error guardando reserva WhatsApp:", err.message); return; }
-        // Auto-actualizar perfil con nombre y teléfono obtenidos de la reserva
-        if (jid) {
-          db.run(
-            `INSERT INTO wa_clientes (jid, nombre, telefono, ultima_interaccion)
-             VALUES (?, ?, ?, strftime('%s','now'))
-             ON CONFLICT(jid) DO UPDATE SET
-               nombre = COALESCE(wa_clientes.nombre, excluded.nombre),
-               telefono = COALESCE(wa_clientes.telefono, excluded.telefono),
-               ultima_interaccion = excluded.ultima_interaccion`,
-            [jid, nombre_reserva, telefono],
-            (e) => { if (e) console.error("Error actualizando perfil WA:", e.message); }
-          );
-        }
-        console.log(`📅 Reserva WhatsApp guardada (id ${this.lastID}): ${nombre_reserva} en ${local}${pendiente ? " [PENDIENTE]" : ""}`);
-        upsertLeadFromReserva({ nombre_reserva, telefono });
+    try {
+      const rowRes = await dbRun(
+        `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        [local, personas, dia, hora, telefono, nombre_reserva, creado_en]
+      );
+      const reservaId = rowRes.id;
+      if (jid) {
+        await dbRun(
+          `INSERT INTO wa_clientes (jid, nombre, telefono, ultima_interaccion)
+           VALUES (?, ?, ?, EXTRACT(EPOCH FROM NOW())::BIGINT)
+           ON CONFLICT(jid) DO UPDATE SET
+             nombre = COALESCE(wa_clientes.nombre, EXCLUDED.nombre),
+             telefono = COALESCE(wa_clientes.telefono, EXCLUDED.telefono),
+             ultima_interaccion = EXCLUDED.ultima_interaccion`,
+          [jid, nombre_reserva, telefono]
+        );
+      }
+      console.log(`📅 Reserva WhatsApp guardada (id ${reservaId}): ${nombre_reserva} en ${local}${pendiente ? " [PENDIENTE]" : ""}`);
+      upsertLeadFromReserva({ nombre_reserva, telefono });
 
-        db.get(`SELECT group_jid FROM wa_links WHERE local = ?`, [local], (_, row) => {
-          if (row?.group_jid) {
-            if (pendiente) {
-              if (isReady()) sendNotificacionGrupoPendiente(row.group_jid, reserva);
-              else guardarPendienteWA("grupo", row.group_jid, { ...reserva, _pendiente: true });
-            } else {
-              if (isReady()) sendNotificacionGrupo(row.group_jid, reserva);
-              else guardarPendienteWA("grupo", row.group_jid, reserva);
-            }
-          }
-        });
-
-        // Programar follow-up al día siguiente a las 11h (solo reservas confirmadas)
-        if (!pendiente) {
-          const jid = telefono.replace(/\D/g, "").replace(/^00/, "").replace(/^(?!34)([679])/, "34$1") + "@s.whatsapp.net";
-          const [y, m, d] = dia.split("-").map(Number);
-          const nextDay = new Date(y, m - 1, d + 1);
-          const sendAt = `${nextDay.getFullYear()}-${String(nextDay.getMonth()+1).padStart(2,"0")}-${String(nextDay.getDate()).padStart(2,"0")}T11:00:00`;
-          db.run(
-            `INSERT INTO followup_scheduled (jid, nombre, local, dia, send_at) VALUES (?, ?, ?, ?, ?)`,
-            [jid, nombre_reserva, local, dia, sendAt],
-            (e) => { if (e) console.error("Error programando follow-up:", e.message); }
-          );
+      const row = await dbGet(`SELECT group_jid FROM wa_links WHERE local = ?`, [local]);
+      if (row?.group_jid) {
+        if (pendiente) {
+          if (isReady()) sendNotificacionGrupoPendiente(row.group_jid, reserva);
+          else guardarPendienteWA("grupo", row.group_jid, { ...reserva, _pendiente: true });
+        } else {
+          if (isReady()) sendNotificacionGrupo(row.group_jid, reserva);
+          else guardarPendienteWA("grupo", row.group_jid, reserva);
         }
       }
-    );
+
+      // Programar follow-up al día siguiente a las 11h (solo reservas confirmadas)
+      if (!pendiente) {
+        const jidFu = telefono.replace(/\D/g, "").replace(/^00/, "").replace(/^(?!34)([679])/, "34$1") + "@s.whatsapp.net";
+        const [y, m, d] = dia.split("-").map(Number);
+        const nextDay = new Date(y, m - 1, d + 1);
+        const sendAt = `${nextDay.getFullYear()}-${String(nextDay.getMonth()+1).padStart(2,"0")}-${String(nextDay.getDate()).padStart(2,"0")}T11:00:00`;
+        await dbRun(
+          `INSERT INTO followup_scheduled (jid, nombre, local, dia, send_at) VALUES (?, ?, ?, ?, ?)`,
+          [jidFu, nombre_reserva, local, dia, sendAt]
+        );
+      }
+    } catch (e) {
+      console.error("Error guardando reserva WhatsApp:", e.message);
+    }
   });
 
-  // Restaurar config crítica (wa_links, facturas_grupos, etc.) desde KV compacto.
-  // Tiene prioridad sobre el backup completo de BD para estas tablas.
-  await restoreCriticalConfig();
-
-  // Restaurar/fusionar leads desde su copia interna durable (por si el backup
-  // completo de la BD falló por tamaño). Solo añade los que falten.
-  await restoreLeads();
-
-  // Grupos de WhatsApp "de serie": si un local no tiene su grupo enlazado, se le
-  // pone el suyo por defecto. Se ejecuta en CADA arranque con INSERT OR IGNORE →
-  // es autorreparable (si el backup falla, el default rellena el hueco) y NO pisa
-  // nunca un re-enlace manual (si el local ya tiene grupo, se respeta).
-  // La Tapeta Blanes y Cooperativa comparten grupo de reservas a propósito.
+  // Grupos de WhatsApp por defecto (autorreparable, no pisa re-enlaces manuales)
   const DEFAULT_WA_LINKS = [
     { local: "La Tapeta - Blanes", group_jid: "120363393125503294@g.us" },
     { local: "La Tapeta - Lloret", group_jid: "34620403964-1593424370@g.us" },
@@ -2973,33 +2811,30 @@ const server = app.listen(PORT, async () => {
   ];
   try {
     for (const { local, group_jid } of DEFAULT_WA_LINKS) {
-      await dbRun(`INSERT OR IGNORE INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, datetime('now'))`, [local, group_jid]);
-      await dbRun(`INSERT OR IGNORE INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))`, [`whatsapp_group_${local}`, group_jid]);
+      await dbRun(`INSERT INTO wa_links (local, group_jid, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(local) DO NOTHING`, [local, group_jid]);
+      await dbRun(`INSERT INTO contents (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO NOTHING`, [`whatsapp_group_${local}`, group_jid]);
     }
     for (const { local, group_jid } of DEFAULT_FACTURAS_GRUPOS) {
       const existe = await dbGet(`SELECT 1 FROM facturas_grupos WHERE local = ?`, [local]);
-      if (!existe) await dbRun(`INSERT OR IGNORE INTO facturas_grupos (local, group_jid) VALUES (?, ?)`, [local, group_jid]);
+      if (!existe) await dbRun(`INSERT INTO facturas_grupos (local, group_jid) VALUES (?, ?) ON CONFLICT(group_jid) DO NOTHING`, [local, group_jid]);
     }
     console.log("[Defaults] Grupos de WhatsApp por defecto asegurados (reservas + facturas)");
   } catch (e) { console.error("[Defaults] Error asegurando grupos por defecto:", e.message); }
 
-  // Post-restore: volver a rellenar empresa en facturas que quedaron vacías
-  // (necesario porque restoreCriticalConfig puede traer facturas_locales actualizados)
-  db.run(
-    `UPDATE facturas SET empresa = (
-       SELECT fl.empresa FROM facturas_locales fl WHERE fl.local = facturas.local
-     )
-     WHERE (empresa IS NULL OR empresa = 'Sin empresa asignada')
-     AND EXISTS (SELECT 1 FROM facturas_locales fl WHERE fl.local = facturas.local)`,
-    (err) => { if (err) console.error("[Migration] empresa post-restore fix:", err.message); }
-  );
+  // Post-restore: rellenar empresa en facturas que quedaron vacías
+  try {
+    await dbRun(
+      `UPDATE facturas SET empresa = (
+         SELECT fl.empresa FROM facturas_locales fl WHERE fl.local = facturas.local
+       )
+       WHERE (empresa IS NULL OR empresa = 'Sin empresa asignada')
+       AND EXISTS (SELECT 1 FROM facturas_locales fl WHERE fl.local = facturas.local)`
+    );
+  } catch (e) { console.error("[Migration] empresa post-restore fix:", e.message); }
 
   setOnReady(procesarPendientesWA);
 
-  // Semilla única: Fiesta Mayor de Blanes 2026 (23–27 jul) — La Tapeta Blanes y
-  // Cooperativa cerradas a reservas. Se inserta UNA sola vez (flag en config);
-  // si marketing lo borra desde el panel, no reaparece. En adelante estos
-  // bloqueos se crean desde el chat de Sara.
+  // Semilla única: Fiesta Mayor de Blanes 2026
   try {
     const yaSembrado = await getConfig("seed_fiesta_mayor_2026");
     if (!yaSembrado) {
@@ -3014,9 +2849,7 @@ const server = app.listen(PORT, async () => {
     }
   } catch (e) { console.error("[Seed] Error sembrando Fiesta Mayor:", e.message); }
 
-  // Migración única: separar La Tapeta (slug la-tapeta → 3 ciudades) y consolidar
-  // el slug de Botiga. Copia cada contenido SOLO si el destino aún no existe (no
-  // pisa personalizaciones). Flag en config para ejecutarse una sola vez.
+  // Migración única: separar La Tapeta en 3 ciudades
   try {
     const yaMigrado = await getConfig("seed_split_latapeta_v1");
     if (!yaMigrado) {
@@ -3027,10 +2860,10 @@ const server = app.listen(PORT, async () => {
           if (!origen || !origen.value) continue;
           const destKey = `local_${destinoSlug}_${campo}`;
           const existe = await dbGet("SELECT value FROM contents WHERE key = ? AND value != ''", [destKey]);
-          if (existe) continue; // no pisar contenido ya personalizado
+          if (existe) continue;
           await dbRun(
-            `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, datetime('now'))
-             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+            `INSERT INTO contents (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at`,
             [destKey, origen.value]
           );
         }
@@ -3038,7 +2871,7 @@ const server = app.listen(PORT, async () => {
       for (const ciudad of ["la-tapeta-blanes", "la-tapeta-lloret", "la-tapeta-girona"]) {
         await copiarContenido("la-tapeta", ciudad);
       }
-      await copiarContenido("botiga-mateu", "botiga-d-en-mateu"); // corrige inconsistencia de slug
+      await copiarContenido("botiga-mateu", "botiga-d-en-mateu");
       await setConfig("seed_split_latapeta_v1", "done");
       console.log("[Seed] La Tapeta separada en 3 ciudades y contenidos migrados");
     }
@@ -3073,42 +2906,39 @@ const server = app.listen(PORT, async () => {
     }
   }, 5 * 60 * 1000);
 
-  setOnMessage(({ jid, texto, respuesta, historico = false }) => {
+  setOnMessage(async ({ jid, texto, respuesta, historico = false }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
-    db.run(
-      `INSERT OR IGNORE INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico, tipo) VALUES (?, ?, ?, ?, ?, 'intercambio')`,
-      [jid, telefono, texto, respuesta, historico ? 1 : 0],
-      (err) => { if (err) console.error("Error guardando mensaje WA:", err.message); }
-    );
-    db.run(
-      `INSERT INTO wa_clientes (jid, telefono, ultima_interaccion)
-       VALUES (?, ?, strftime('%s','now'))
-       ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = strftime('%s','now')`,
-      [jid, telefono],
-      (err) => { if (err) console.error("Error actualizando ultima_interaccion:", err.message); }
-    );
+    try {
+      await dbRun(
+        `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico, tipo) VALUES (?, ?, ?, ?, ?, 'intercambio')`,
+        [jid, telefono, texto, respuesta, historico ? 1 : 0]
+      );
+      await dbRun(
+        `INSERT INTO wa_clientes (jid, telefono, ultima_interaccion)
+         VALUES (?, ?, EXTRACT(EPOCH FROM NOW())::BIGINT)
+         ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`,
+        [jid, telefono]
+      );
+    } catch (e) { console.error("Error guardando mensaje WA:", e.message); }
   });
 
-  // Cualquiera que escriba a Sara (con teléfono real) queda registrado como lead
   setOnContactoLead(({ telefono, nombre }) => {
     upsertLead({ nombre: nombre || "", telefono, fuente: "whatsapp" });
   });
 
-  // Rehidratar la memoria de Sara tras un reinicio: últimos intercambios de las 4h recientes
   setHistorialLoader(async (jid) => {
     const rows = await dbAll(
       `SELECT mensaje, respuesta, COALESCE(tipo, 'intercambio') AS tipo
        FROM whatsapp_messages
        WHERE jid = ?
          AND respuesta != '(sin respuesta registrada)'
-         AND creado_en > datetime('now', '-4 hours')
+         AND creado_en > NOW() - INTERVAL '4 hours'
        ORDER BY id DESC LIMIT 20`,
       [jid]
     );
     const historial = [];
     for (const r of rows.reverse()) {
       if (r.tipo === "saliente" || r.tipo === "manual") {
-        // Mensaje que Sara inició (confirmación, mensaje del equipo): necesita placeholder de user
         historial.push({ role: "user", content: "[El cliente recibió un mensaje del equipo de Familia del Amor]" });
         historial.push({ role: "assistant", content: r.respuesta });
       } else {
@@ -3124,17 +2954,15 @@ const server = app.listen(PORT, async () => {
     return row || null;
   });
 
-  // Reserva reciente del cliente por teléfono → contexto para Sara (arreglo del
-  // "arranque en frío" cuando el cliente responde a la confirmación de una reserva web).
   setReservaLoader(async (telefono) => {
     try {
       const clave = (telefono || "").replace(/\D/g, "");
       if (clave.length < 9) return null;
-      const cola = clave.slice(-9); // últimos 9 dígitos (número nacional), robusto a prefijos
+      const cola = clave.slice(-9);
       const rows = await dbAll(
         `SELECT local, dia, hora, personas, nombre_reserva, telefono
-         FROM reservas WHERE date(dia) >= date('now','-1 day')
-         ORDER BY creado_en DESC LIMIT 200`, []
+         FROM reservas WHERE dia::date >= CURRENT_DATE - INTERVAL '1 day'
+         ORDER BY creado_en DESC LIMIT 200`
       );
       for (const r of rows) {
         if ((r.telefono || "").replace(/\D/g, "").endsWith(cola)) return r;
@@ -3146,7 +2974,6 @@ const server = app.listen(PORT, async () => {
     }
   });
 
-  // Cancelación de reserva por Sara: busca por teléfono + día, borra, avisa al grupo del local.
   setOnCancelarReserva(async ({ telefono, dia, local }, jid) => {
     try {
       const clave = (telefono || "").replace(/\D/g, "");
@@ -3161,9 +2988,7 @@ const server = app.listen(PORT, async () => {
 
       await dbRun(`DELETE FROM reservas WHERE id = ?`, [reserva.id]);
       console.log(`🗑️ Reserva cancelada por Sara (id ${reserva.id}): ${reserva.nombre_reserva} en ${reserva.local} ${reserva.dia}`);
-      backupToReplitDB(); // que la cancelación no reviva en un restore
 
-      // Nota al grupo de WhatsApp del local
       const row = await dbGet(`SELECT group_jid FROM wa_links WHERE local = ?`, [reserva.local]);
       if (row?.group_jid && isReady()) sendCancelacionGrupo(row.group_jid, reserva);
 
@@ -3174,7 +2999,6 @@ const server = app.listen(PORT, async () => {
     }
   });
 
-  // Config editable de Sara → bloque de texto que se inyecta en su prompt
   setSaraConfigLoader(async () => {
     try {
       const partes = [];
@@ -3184,21 +3008,21 @@ const server = app.listen(PORT, async () => {
       }
       const hoy = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
       const bloqueos = await dbAll(
-        `SELECT local, desde, hasta, motivo FROM bloqueos_reservas WHERE date(hasta) >= date(?) ORDER BY desde`, [hoy]
+        `SELECT local, desde, hasta, motivo FROM bloqueos_reservas WHERE hasta::date >= ?::date ORDER BY desde`, [hoy]
       );
       if (bloqueos.length) {
         const lineas = bloqueos.map(b => `- ${b.local}: del ${b.desde} al ${b.hasta}${b.motivo ? ` (${b.motivo})` : ""}`).join("\n");
         partes.push(`RESERVAS NO DISPONIBLES en estos locales y fechas. NUNCA ofrezcas, sugieras ni registres una reserva que caiga en estos rangos. Si el cliente pregunta por reservar en estas fechas o locales, tu PRIMERA frase debe decir directamente que ese día no hay reservas (NO empieces diciendo que sí y luego te corrijas). Recuérdaselo con amabilidad y ofrécele otra fecha u otro local que sí acepte:\n${lineas}`);
       }
       const docs = await dbAll(
-        `SELECT id, tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND documento_url IS NOT NULL AND documento_url != '' ORDER BY id`, []
+        `SELECT id, tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND documento_url IS NOT NULL AND documento_url != '' ORDER BY id`
       );
       if (docs.length) {
         const lineas = docs.map(d => `- id ${d.id}: ${d.tema}${d.disparadores ? ` — cuándo enviarlo: ${d.disparadores}` : ""}${d.respuesta ? ` — di también: ${d.respuesta}` : ""}`).join("\n");
         partes.push(`DOCUMENTOS DISPONIBLES para enviar con la herramienta enviar_documento (usa el id exacto; envíalo A LA PRIMERA en cuanto el cliente pida algo que encaje, sin derivar al teléfono ni esperar a que insista):\n${lineas}`);
       }
       const respTexto = await dbAll(
-        `SELECT tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND (documento_url IS NULL OR documento_url = '') AND respuesta IS NOT NULL AND respuesta != '' ORDER BY id`, []
+        `SELECT tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND (documento_url IS NULL OR documento_url = '') AND respuesta IS NOT NULL AND respuesta != '' ORDER BY id`
       );
       if (respTexto.length) {
         const lineas = respTexto.map(d => `- ${d.tema}${d.disparadores ? ` (cuándo: ${d.disparadores})` : ""}: ${d.respuesta}`).join("\n");
@@ -3211,7 +3035,6 @@ const server = app.listen(PORT, async () => {
     }
   });
 
-  // Resuelve un documento (id de sara_respuestas) a un buffer para enviarlo por WhatsApp
   setDocumentoResolver(async (documentoId) => {
     try {
       const row = await dbGet(`SELECT documento_url FROM sara_respuestas WHERE id = ? AND activo = 1`, [documentoId]);
@@ -3236,52 +3059,53 @@ const server = app.listen(PORT, async () => {
     }
   });
 
-  setOnMensajeSaliente(({ jid, mensaje, esManual = false }) => {
+  setOnMensajeSaliente(async ({ jid, mensaje, esManual = false }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
     const tipo     = esManual ? "manual" : "saliente";
     const origen   = esManual ? "[Operador]" : "[Sistema]";
-    db.run(
-      `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, tipo) VALUES (?, ?, ?, ?, ?)`,
-      [jid, telefono, origen, mensaje, tipo],
-      (err) => { if (err) console.error("Error guardando mensaje saliente WA:", err.message); }
-    );
-    db.run(
-      `INSERT INTO wa_clientes (jid, telefono, ultima_interaccion)
-       VALUES (?, ?, strftime('%s','now'))
-       ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = strftime('%s','now')`,
-      [jid, telefono]
-    );
+    try {
+      await dbRun(
+        `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, tipo) VALUES (?, ?, ?, ?, ?)`,
+        [jid, telefono, origen, mensaje, tipo]
+      );
+      await dbRun(
+        `INSERT INTO wa_clientes (jid, telefono, ultima_interaccion)
+         VALUES (?, ?, EXTRACT(EPOCH FROM NOW())::BIGINT)
+         ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`,
+        [jid, telefono]
+      );
+    } catch (e) { console.error("Error guardando mensaje saliente WA:", e.message); }
   });
 
   setOnActualizarPerfil(async (jid, { campo, valor }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
-    if (campo === "nombre") {
-      db.run(
-        `INSERT INTO wa_clientes (jid, telefono, nombre, ultima_interaccion)
-         VALUES (?, ?, ?, strftime('%s','now'))
-         ON CONFLICT(jid) DO UPDATE SET nombre = ?, ultima_interaccion = strftime('%s','now')`,
-        [jid, telefono, valor, valor],
-        (err) => { if (err) console.error("Error guardando nombre cliente WA:", err.message); }
-      );
-    } else if (campo === "nota") {
-      const row = await dbGet(`SELECT notas FROM wa_clientes WHERE jid = ?`, [jid]);
-      let notas = {};
-      if (row?.notas) { try { notas = JSON.parse(row.notas); } catch {} }
-      notas[Date.now()] = valor;
-      const notasJson = JSON.stringify(notas);
-      db.run(
-        `INSERT INTO wa_clientes (jid, telefono, notas, ultima_interaccion)
-         VALUES (?, ?, ?, strftime('%s','now'))
-         ON CONFLICT(jid) DO UPDATE SET notas = ?, ultima_interaccion = strftime('%s','now')`,
-        [jid, telefono, notasJson, notasJson],
-        (err) => { if (err) console.error("Error guardando nota cliente WA:", err.message); }
-      );
-    }
+    try {
+      if (campo === "nombre") {
+        await dbRun(
+          `INSERT INTO wa_clientes (jid, telefono, nombre, ultima_interaccion)
+           VALUES (?, ?, ?, EXTRACT(EPOCH FROM NOW())::BIGINT)
+           ON CONFLICT(jid) DO UPDATE SET nombre = ?, ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`,
+          [jid, telefono, valor, valor]
+        );
+      } else if (campo === "nota") {
+        const row = await dbGet(`SELECT notas FROM wa_clientes WHERE jid = ?`, [jid]);
+        let notas = {};
+        if (row?.notas) { try { notas = JSON.parse(row.notas); } catch {} }
+        notas[Date.now()] = valor;
+        const notasJson = JSON.stringify(notas);
+        await dbRun(
+          `INSERT INTO wa_clientes (jid, telefono, notas, ultima_interaccion)
+           VALUES (?, ?, ?, EXTRACT(EPOCH FROM NOW())::BIGINT)
+           ON CONFLICT(jid) DO UPDATE SET notas = ?, ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`,
+          [jid, telefono, notasJson, notasJson]
+        );
+      }
+    } catch (e) { console.error("Error actualizando perfil WA:", e.message); }
   });
 
   setOnGroupAttachment(async ({ groupJid, senderJid, buffer, mimeType, filename, caption }) => {
     const grupo = await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid]);
-    if (!grupo) return; // grupo no registrado como grupo de facturas
+    if (!grupo) return;
 
     const local = grupo.local;
     console.log(`[Facturas] Documento recibido en grupo ${local} de ${senderJid}`);
@@ -3293,7 +3117,7 @@ const server = app.listen(PORT, async () => {
         buffer, mimeType, filename, local, caption,
         getToken: getDriveAccessToken,
         dbGet, dbRun,
-        backupFn: backupCriticalConfig
+        backupFn: null
       });
 
       const { datos, driveUrl, sheetUrl } = result;
@@ -3347,11 +3171,11 @@ const server = app.listen(PORT, async () => {
 
       const rows = await dbAll(
         `SELECT local, COUNT(*) AS num_docs,
-           ROUND(SUM(COALESCE(base_imponible,0)),2) AS base,
-           ROUND(SUM(COALESCE(cuota_iva,0)),2) AS iva,
-           ROUND(SUM(COALESCE(total,0)),2) AS total
+           ROUND(SUM(COALESCE(base_imponible,0))::NUMERIC,2) AS base,
+           ROUND(SUM(COALESCE(cuota_iva,0))::NUMERIC,2) AS iva,
+           ROUND(SUM(COALESCE(total,0))::NUMERIC,2) AS total
          FROM facturas
-         WHERE strftime('%Y-%m', fecha) = ?
+         WHERE TO_CHAR(fecha::date, 'YYYY-MM') = ?
          GROUP BY local ORDER BY total DESC`,
         [yearMonth]
       );
@@ -3362,10 +3186,10 @@ const server = app.listen(PORT, async () => {
       }
 
       const fmt  = n => Number(n || 0).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const sumB = rows.reduce((s, r) => s + (r.base  || 0), 0);
-      const sumI = rows.reduce((s, r) => s + (r.iva   || 0), 0);
-      const sumT = rows.reduce((s, r) => s + (r.total || 0), 0);
-      const sumD = rows.reduce((s, r) => s + (r.num_docs || 0), 0);
+      const sumB = rows.reduce((s, r) => s + (Number(r.base)  || 0), 0);
+      const sumI = rows.reduce((s, r) => s + (Number(r.iva)   || 0), 0);
+      const sumT = rows.reduce((s, r) => s + (Number(r.total) || 0), 0);
+      const sumD = rows.reduce((s, r) => s + (Number(r.num_docs) || 0), 0);
 
       let msg = `*📊 Resumen de facturas — ${mesLabel}*\n\n`;
       for (const r of rows) {
@@ -3380,7 +3204,7 @@ const server = app.listen(PORT, async () => {
 
       await sendMensajeLibre("622149946", msg);
       await dbRun(
-        "INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('resumen_mensual_ultimo', ?, datetime('now'))",
+        "INSERT INTO config (key, value, updated_at) VALUES ('resumen_mensual_ultimo', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at",
         [yearMonth]
       );
       console.log(`[Resumen] ✅ Resumen ${mesLabel} enviado a 622149946`);
@@ -3398,7 +3222,7 @@ const server = app.listen(PORT, async () => {
       const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const prevYM = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
       const ultimo = await dbGet("SELECT value FROM config WHERE key = 'resumen_mensual_ultimo'");
-      if (ultimo?.value === prevYM) return; // ya enviado
+      if (ultimo?.value === prevYM) return;
       await enviarResumenMensualFacturas();
     } catch (e) { console.error("[Resumen cron]", e.message); }
   }, 60 * 60 * 1000);

@@ -1,0 +1,2 @@
+- [PostgreSQL migration](pg-migration.md) — app uses Neon PostgreSQL (pg Pool); SQLite removed entirely; ? → $N translated by toPositional() wrapper.
+- [WhatsApp QR fix](wa-qr-fix.md) — hardcode browser ["Mac OS","Chrome","124.0.0"] + fetchLatestWaWebVersion(); Baileys rc13+.

@@ -380,7 +380,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   let rootId = cfgRaiz?.value;
   if (!rootId) {
     rootId = await findOrCreateFolder(token, "Contabilidad");
-    await dbRun("INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('drive_facturas_root_id', ?, datetime('now'))", [rootId]);
+    await dbRun("INSERT INTO config (key, value, updated_at) VALUES ('drive_facturas_root_id', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at", [rootId]);
     console.log(`[Facturas] Carpeta raíz creada en Drive: ${rootId}`);
   }
 
@@ -568,7 +568,7 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
   let rootId = cfgRaiz?.value;
   if (!rootId) {
     rootId = await findOrCreateFolder(token, "Contabilidad");
-    await dbRun("INSERT OR REPLACE INTO config (key, value, updated_at) VALUES ('drive_facturas_root_id', ?, datetime('now'))", [rootId]);
+    await dbRun("INSERT INTO config (key, value, updated_at) VALUES ('drive_facturas_root_id', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at", [rootId]);
   }
 
   const empresaId  = await findOrCreateFolder(token, empresa, rootId);
