@@ -50,7 +50,7 @@ Cada capacidad se introduce en el nivel más bajo y sube solo con confianza y pe
 
 - Cada módulo expone sus operaciones como **acciones** (nombre, descripción, parámetros validados, permiso requerido) — el *action registry* previsto en `ARQUITECTURA_OBJETIVO_ERP.md`.
 - La IA consume ese registro como su catálogo de herramientas (igual que hoy Sara consume sus tools, pero generalizado a todo el ERP).
-- Los **eventos** (`EVENT_ARCHITECTURE.md`) alimentan a la IA de contexto en tiempo real (p.ej. "reserva creada", "incidencia abierta") para su capa proactiva, sin acoplarla a los módulos.
+- Los **eventos** (`EVENT_ARCHITECTURE.md`, hoy solo diseño — no se construyen en Fase 1) alimentarán a la IA de contexto en tiempo real (p.ej. "reserva creada", "incidencia abierta") para su capa proactiva, sin acoplarla a los módulos. Hasta entonces, la capa proactiva se apoya en consultas directas.
 - Añadir un módulo nuevo = exponer sus acciones → la IA lo puede operar **sin cambios en la IA**.
 
 ## 6. Seguridad, control y confianza

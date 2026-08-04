@@ -69,7 +69,8 @@ permisos(id, usuario_id, permiso, efecto ENUM(allow,deny), establecimiento_id NU
 - `requireLocationAccess()` — resuelve los locales efectivos y **filtra**; ignora cualquier `local`/`establecimiento_id` del cliente no autorizado.
 - `requireFinancialAccess()` — exige el permiso financiero explícito.
 - Toda denegación y todo acceso sensible → **auditoría** (`AUDITORIA_PROFESIONAL.md`).
-- **Grandfather:** un usuario sin permisos/locales asignados conserva el comportamiento actual (por compatibilidad) hasta que Dirección lo configure; Dirección siempre tiene acceso global.
+- **Adopción por fases (no construir todo el motor por adelantado):** se empieza con autorización **rol + establecimiento** (cubre ~95% de los casos reales, p.ej. "encargado de Blanes ve Blanes"). Los **overrides por usuario** (allow/deny) y la **granularidad** por acción/establecimiento se añaden **solo cuando exista un caso real** que lo justifique. Esto reduce la superficie de bugs de autorización (fugas silenciosas) y acelera la entrega de valor.
+- **Grandfather acotado + default-deny:** solo las cuentas **existentes en la migración** conservan su acceso hasta ser configuradas; un **usuario nuevo nace sin acceso** (default-deny) hasta que Dirección le asigne establecimientos. Dirección siempre global. (Detalle en `MODELO_ACCESO_POR_LOCAL.md` §5.)
 
 ## 7. Plantillas de rol iniciales (propuesta a validar)
 

@@ -21,10 +21,10 @@
 | multer límites/MIME + proteger `/api/hr/applications` (5) | Rechazar CVs legítimos; romper formulario público de empleo | Límites razonables (p.ej. 10 MB, PDF/imagen); mantener endpoint funcional con auth/anti-abuso, sin cambiar la web pública | Revertir config de multer |
 | Manejador global de errores (5) | Cambiar formato de respuestas de error | Mantener forma `{ok:false,error}` para el cliente; dejar de filtrar internos | Revertir middleware |
 | Modelo de datos nuevo (6) | Desalineación de strings de `local`; datos huérfanos | Tablas nuevas conviven con columnas `local` actuales (no se tocan); backfill idempotente y verificable | `DROP` de tablas nuevas (vacías/aisladas); columnas `local` intactas |
-| Motor de permisos (7) | Dejar a alguien sin acceso (lockout) | **Grandfather**: sin asignaciones = acceso total como hoy; Dirección siempre con acceso global; activación por flag | Desactivar flag → vuelve al comportamiento por rol |
-| Filtrado por local en queries (7) | Ocultar datos que antes se veían | Aplicar por módulo, con pruebas de "no filtra de más ni de menos"; primero en modo observación si hace falta | Revertir por módulo; flag global de bypass |
+| Motor de permisos rol+local (7) | Lockout, o **fuga por default inseguro** | **Grandfather acotado** (solo cuentas existentes en la migración); **usuario nuevo = default-deny** (nunca "sin asignación = ve todo"); Dirección siempre global; activación por flag | Desactivar flag → comportamiento por rol |
+| Filtrado por local en queries (7) | Ocultar datos que antes se veían, o **fuga por string mal casado** | Reconciliación estricta de `local` (falla ruidosa) + prioridad a `establecimiento_id` (FK); aplicar por módulo con pruebas de "no filtra de más ni de menos" | Revertir por módulo; flag global de bypass |
 | Pantalla Administración (8) | Cambios de permisos erróneos | Versionado de config (restaurar estado anterior); auditoría de cada cambio | Restaurar snapshot de permisos |
-| Menú/filtros por permisos (9) | Ocultar secciones necesarias | Grandfather + Dirección ve todo; validación con usuarios reales | Revertir front; backend no depende del menú |
+| Menú/filtros por permisos (9) | Ocultar secciones necesarias | Grandfather acotado + Dirección global; validación con usuarios reales | Revertir front; backend no depende del menú |
 | Dashboard ejecutivo (10) | Mostrar datos incorrectos | Solo datos existentes y fiables; nada de ventas/costes | Revertir vista; sin impacto en datos |
 
 ## 3. Procedimiento de recuperación de acceso (si un cambio de auth deja fuera a Dirección)

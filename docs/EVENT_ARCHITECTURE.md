@@ -1,7 +1,9 @@
 # Arquitectura de eventos
 
 > Objetivo: **desacoplar los módulos**. Un módulo no llama directamente a otros cinco; **emite un evento** ("ha pasado esto") y quien quiera reacciona. Así se crece durante años añadiendo reacciones sin tocar el módulo origen.
-> **Sin sobreingeniería:** empezamos con un **bus de eventos en proceso** (dentro del propio monolito modular), no con Kafka/RabbitMQ ni infraestructura externa. Evolutivo y reversible.
+> **Sin sobreingeniería:** el objetivo es un **bus de eventos en proceso** (dentro del propio monolito modular), no Kafka/RabbitMQ ni infraestructura externa. Evolutivo y reversible.
+>
+> **⛔ ESTADO: SOLO DISEÑO. En Fase 1 NO se construye el bus de eventos.** Se empieza con **llamadas directas entre servicios + una caché simple de KPIs**; el bus se introducirá **cuando exista un segundo/tercer consumidor real** que lo justifique. La autorización arranca por **rol + establecimiento** (la granularidad fina se añade solo ante casos reales). Este documento es la referencia para ese momento, no una tarea de la fase actual.
 
 ## 1. Idea
 

@@ -46,14 +46,16 @@ user_locations(id, usuario_id, establecimiento_id, rol_local NULL,
 - `user_locations` permite: **un usuario con un local**, **con varios**, **rol distinto por local** (opcional), **activación/desactivación** y **fechas de inicio/fin**.
 - Se evita depender del único `users.local`. Ese campo se conserva (no se borra) durante la transición.
 
-## 4. Backfill inicial
+## 4. Backfill inicial (con reconciliación estricta)
+- **Reconciliación previa OBLIGATORIA:** antes de poblar nada, un paso verifica que **todos** los valores `local` presentes en las 13 tablas casan con un establecimiento canónico. Si aparece un string que no casa (espacios finales, acentos, guion `-` vs `–`, variantes), el backfill **falla ruidosamente** y se corrige el dato antes de continuar. **Nunca** se asume la coincidencia.
 - Poblar `establecimientos` desde `LOCALES` (7 filas) y `empresas` desde `facturas_locales`/confirmación.
-- Poblar `user_locations` para los **43 trabajadores** con su `users.local` actual (coincidencia por `local_text`).
-- Cuentas de gestión genéricas (encargado, marketing…) → **sin asignación** por ahora (ver grandfather).
+- Poblar `user_locations` para los **43 trabajadores** con su `users.local` actual (match exacto por `local_text`, ya reconciliado).
+- Cuentas de gestión genéricas (encargado, marketing…) → ver §5 (grandfather acotado).
+- **Prioridad ALTA — sustituir texto libre por FK:** introducir `establecimiento_id` (clave foránea) en las tablas con `local` lo antes posible, dejando `local_text` solo como puente durante la transición. Mientras el aislamiento dependa de strings es frágil; el objetivo es que dependa de `establecimiento_id` (coherente con Single Source of Truth, `ARQUITECTURA_OBJETIVO_ERP.md` §8).
 
-## 5. Estrategia *grandfather* (cero rotura — decisión del usuario)
-- Usuario **sin** filas en `user_locations` → se comporta como hoy (**ve todo**), hasta que Dirección le asigne locales.
-- En cuanto tenga ≥1 asignación, el backend **restringe** a esos locales.
+## 5. Grandfather acotado + default-deny (revisado)
+- **Grandfather = lista blanca puntual, SOLO para las cuentas que YA existen en el momento de la migración.** A esas cuentas concretas (y solo a ellas) se les conserva el acceso actual hasta que Dirección les asigne establecimientos. Se materializa como una asignación explícita en la migración, no como una regla permanente.
+- **Usuario NUEVO = default-deny:** nace **sin acceso** a ningún establecimiento hasta que Dirección le asigne uno o varios. "Sin asignación" **NO** significa "ve todo" — eso convertiría cada olvido de configuración en una **fuga de datos**. El default seguro es **denegar**.
 - **Dirección** siempre tiene acceso **global** (no depende de asignaciones).
 - La activación del filtrado va detrás de **feature flag** para poder desactivarla sin desplegar.
 
@@ -63,5 +65,12 @@ KPIs y contadores · buscadores · reservas · clientes · trabajadores · candi
 
 Regla dura: **el `local`/`establecimiento_id` que llegue del frontend nunca concede acceso**; el backend intersecta siempre con los locales efectivos del usuario y responde 403 (o filtra) si no procede.
 
-## 7. Casos de prueba (ver `PLAN_PRUEBAS_REGRESION.md`)
+## 7. Modelo de clientes (decisión explícita)
+Los `clientes`/`leads`/`wa_clientes` **no tienen** columna de establecimiento y un cliente puede visitar varios locales. **Decisión:** los clientes son **globales del grupo** (fuente única de verdad a nivel de organización), **no se aíslan por establecimiento**.
+- La relación cliente ↔ establecimiento es **derivada** (de sus reservas/interacciones) y sirve para **segmentación de marketing**, no como frontera de aislamiento ni de propiedad.
+- Implicación: "marketing por local" filtra por esa relación derivada; el acceso al CRM completo es un **permiso** (`clientes.ver`/`clientes.exportar`), no un asunto de local.
+- **Candidaturas** (`hr_applications`, sin `local`) se asocian al establecimiento **a través de la vacante** (`hr_jobs.local`, que sí lo tiene).
+- **Revisable:** si en el futuro se quiere aislar clientes por local, requerirá un modelo de asociación explícito (hoy inexistente) y se documentará entonces. No queda implícito.
+
+## 8. Casos de prueba (ver `PLAN_PRUEBAS_REGRESION.md`)
 Encargado Blanes solo Blanes · Encargado Lloret solo Lloret · Trabajador Blanes no ve Girona · Trabajador no ve facturación · Sin permiso → 403 · Manipular `establecimiento_id` no da acceso · Dirección ve todo · Usuario con dos locales ve solo esos dos.

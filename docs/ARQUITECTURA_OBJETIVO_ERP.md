@@ -73,7 +73,40 @@ De-hardcode **progresivo y no disruptivo**: primero coexisten valor en código y
 - Índices en columnas de filtrado frecuente (`local`/`establecimiento_id`, fechas, teléfono) al introducir el modelo de datos.
 - Cachés en memoria para feature flags y permisos efectivos (invalidación al cambiar).
 
-## 7. Qué NO hacer (recordatorio)
+## 7. Infraestructura desacoplada (portabilidad)
+
+La arquitectura nueva debe poder migrar en el futuro a **Docker + PostgreSQL + cloud/VPS** sin reescribir la aplicación. **No** significa migrar ahora; significa que **ninguna decisión nueva lo impida**. Sin dependencias arquitectónicas de Replit.
+
+- **BD tras el repositorio:** ningún servicio/ruta conoce SQLite; cambiar a Postgres = cambiar la implementación del repositorio. Evitar en el código nuevo features exclusivas de SQLite.
+- **Sin acoplamiento al filesystem efímero:** datos persistentes (BD, sesión de WhatsApp, subidas) tras una abstracción de almacenamiento; nada crítico depende de `/home/runner`, `/tmp` ni de rutas absolutas de plataforma.
+- **Scheduler portable:** tareas programadas como temporizadores propios o cron estándar, no mecanismos exclusivos de Replit.
+- **Config y secretos por variables de entorno**, no valores de plataforma.
+- **Sin suponer proceso único:** el diseño no debe romperse con varias instancias/procesos (evitar estado global en memoria como única fuente de verdad; cachés reconstruibles).
+- **La infraestructura es sustituible sin reescribir la app.** Replit KV, rutas `/home/runner`, backups KV, etc. son detalles del monolito actual (clasificados, no borrados); el código nuevo se aísla de ellos mediante interfaces.
+
+## 8. Single Source of Truth (fuente única de verdad)
+
+Cada entidad tiene **una única fuente de verdad**; los datos derivados se **calculan o sincronizan** desde ella, nunca se duplican a mano.
+
+- Entidades canónicas: `establecimientos`, `empresas` (jurídicas), `usuarios`, perfiles de `trabajadores`, `proveedores`, `clientes`, `reservas`, `productos`…
+- **Fin del texto libre:** el establecimiento canónico es la tabla `establecimientos` (con `establecimiento_id`), no el string `local` repetido en 13 tablas (ver `MODELO_ACCESO_POR_LOCAL.md`).
+- **Nada de sincronización manual** entre módulos: si un dato se necesita en dos sitios, se **referencia por id** o se **deriva** (por consulta o evento), no se copia.
+- Los agregados (KPIs) son **derivados** de sus fuentes; se cachean, pero la verdad vive en las tablas de origen.
+
+## 9. Modularidad real
+
+Todo módulo nuevo debe ser:
+
+- **Independiente y desacoplado:** sin dependencias directas de otros módulos (nada de que "reservas importe RRHH"). La comunicación entre dominios va por la **capa de servicios/API** o por **eventos** (cuando existan), nunca por acoplamiento directo.
+- **Con permisos propios** (`modulo.accion`).
+- **Con auditoría propia** (registra sus acciones sensibles).
+- **Con API propia** (contrato JSON consistente).
+- **Activable/desactivable por Feature Flag.**
+- **Eliminable sin romper el resto:** apagar o quitar un módulo no debe tumbar a los demás.
+
+Regla: si un módulo no se puede desactivar sin romper otro, están acoplados y hay que rediseñar la frontera.
+
+## 10. Qué NO hacer (recordatorio)
 - No migrar todo el monolito de golpe.
 - No cambiar framework/BD/auth por gusto.
 - No introducir capas o abstracciones que no resuelvan un problema real (sin sobreingeniería).

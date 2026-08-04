@@ -65,7 +65,7 @@ Tarjetas de **insight accionable** generadas por la IA: anomalías detectadas ("
 Cambiar un filtro re-contextualiza todo el dashboard al instante (datos cacheados).
 
 ## 5. Interacción y velocidad
-- **Objetivo <5s** (idealmente <2s): los agregados se sirven **precalculados** (actualizados por eventos — ver `EVENT_ARCHITECTURE.md`), no se recalculan en cada carga.
+- **Objetivo <5s** (idealmente <2s): los agregados se sirven **precalculados/cacheados** (al inicio, con una caché simple de KPIs actualizada por llamadas directas; cuando exista la arquitectura de eventos —hoy solo diseño— se actualizarán por eventos, ver `EVENT_ARCHITECTURE.md`), no se recalculan en cada carga.
 - **Skeleton** inmediato; cada tarjeta carga de forma independiente (una lenta no bloquea al resto).
 - Todo ítem accionable resuelve **en contexto** (panel lateral/modal), sin perder el dashboard.
 - Personalizable por rol (qué tarjetas ve cada quién), configurable desde Dirección.

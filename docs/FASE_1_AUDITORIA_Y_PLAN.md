@@ -79,14 +79,16 @@ Principios que guían todo lo nuevo (detalle en `ARQUITECTURA_OBJETIVO_ERP.md`):
 | 2 | Documentar flujos WhatsApp y reservas (Mermaid) | **Esta fase** |
 | 3 | Pruebas de regresión (baseline + spec de permisos) | **Esta fase** |
 | — | **GATE: revisión y autorización** | **Parada obligatoria** |
-| 4 | Núcleo `src/core` + módulo piloto en capas (sin cambiar comportamiento) | Post-gate |
-| 5 | Seguridad urgente (JWT, rate-limit, helmet, CORS, uploads, errores) | Post-gate |
-| 6 | Modelo de datos (empresas, establecimientos, user_locations, permisos, flags, audit_log, config_versions) | Post-gate |
-| 7 | Motor de permisos en backend (requirePermission/requireLocationAccess/requireFinancialAccess) — grandfather | Post-gate |
+| 4 | **Seguridad de bajo riesgo + durabilidad de la sesión de WhatsApp** (JWT fuerte, rate-limit, helmet, CORS, uploads/errores; persistir `baileys_auth` fuera del FS efímero) | Post-gate |
+| 5 | Núcleo `src/core` + módulo piloto en capas (sin cambiar comportamiento) | Post-gate |
+| 6 | Modelo de datos (empresas, establecimientos, user_locations, permisos, flags, audit_log, config_versions) + reconciliación `local` → `establecimiento_id` (FK) | Post-gate |
+| 7 | Autorización **rol + establecimiento** (granularidad solo ante casos reales); **default-deny** + grandfather acotado | Post-gate |
 | 8 | Pantalla Dirección → Administración (todo configurable) | Post-gate |
 | 9 | Menú y filtros por permisos + flags | Post-gate |
 | 10 | Dashboard ejecutivo v1 (datos reales) | Post-gate |
 | 11 | Auditoría activada + base de versionado + documentar integraciones futuras | Post-gate |
+
+> **Arquitectura de eventos:** solo diseño; **no se construye en Fase 1** (se introducirá cuando exista un segundo consumidor real). Ver `EVENT_ARCHITECTURE.md`.
 
 **No se avanza** si: no compila, fallan las pruebas baseline, WhatsApp se desconecta, las reservas dejan de funcionar, no hay rollback, o hay migración destructiva.
 
@@ -94,9 +96,21 @@ Principios que guían todo lo nuevo (detalle en `ARQUITECTURA_OBJETIVO_ERP.md`):
 
 ## 6. Criterios de aceptación de la Fase 1 (parte ejecutable)
 
-- [ ] Los ~16 documentos existen en `docs/` y reflejan el **código real**.
+- [ ] Los documentos de `docs/` reflejan el **código real** y son coherentes entre sí.
 - [ ] Existen pruebas de regresión; las **baseline de reservas y WhatsApp pasan** en verde.
 - [ ] La bandera `TAPETA_TEST_MODE` está **aislada** y no afecta a producción.
 - [ ] No se ha modificado ningún endpoint, tabla ni la web pública.
 - [ ] Todo en una **rama separada**; sin cambios en producción hasta aprobar.
 - [ ] El diseño posterior (pasos 4-11) queda documentado y **gated**.
+
+## 7. Modo de trabajo (durante el desarrollo)
+Reglas obligatorias a partir de la construcción:
+- **Una sola fase por iteración**; cambios pequeños; **commits pequeños**.
+- **Pruebas antes y después** de cada cambio; **revisión antes de continuar**.
+- **Ningún cambio fuera del alcance** de la iteración; **ningún refactor innecesario**.
+- **Ninguna migración destructiva**; todo **aditivo y reversible**.
+- **Ningún cambio que afecte a WhatsApp, Sara o Reservas sin pruebas específicas.**
+- Avance **incremental, seguro y reversible**.
+
+## 8. Estado de la planificación
+**Fase 1 CONGELADA** tras incorporar: los 5 ajustes (grandfather acotado + default-deny, reconciliación estricta de `local` y prioridad a FK, decisión explícita del modelo de clientes, reordenar seguridad + durabilidad de WhatsApp antes del piloto, eventos solo como diseño con autorización rol+local) y los principios de **infraestructura desacoplada**, **single source of truth** y **modularidad real** (`ARQUITECTURA_OBJETIVO_ERP.md` §7-9). No se amplía más documentación salvo problema realmente importante. La siguiente fase es **construir** por iteraciones pequeñas.

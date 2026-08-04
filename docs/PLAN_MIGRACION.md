@@ -7,13 +7,12 @@
 - Forzar backup KV + **copia local de `database.sqlite`**.
 - Verificar que las pruebas baseline pasan.
 
-## 1. Seguridad — `JWT_SECRET` obligatorio (paso 5)
-- **Impacto:** si falta la env en prod, hoy usa fallback inseguro; queremos exigirla.
-- **Compatibilidad:** ventana transitoria que acepta el secreto actual mientras se define el nuevo; avisar antes de forzar.
-- **Rollback:** revertir a fallback temporal + reponer env.
-- **Recuperación de acceso:** ver `RIESGOS_Y_ROLLBACK.md` §3 (resetear contraseña de un `direccion` por script).
+## 1. Seguridad de bajo riesgo + durabilidad de WhatsApp (paso 4 — PRIORIDAD)
+- **`JWT_SECRET` obligatorio:** si falta la env en prod, hoy usa fallback inseguro; se exige un secreto fuerte. Ventana transitoria que acepta el secreto actual mientras se define el nuevo; avisar antes de forzar. Rollback: fallback temporal + reponer env. Recuperación de acceso: `RIESGOS_Y_ROLLBACK.md` §3.
+- **Otros fixes baratos y aislados:** rate-limit en login/rutas públicas, helmet, CORS restrictivo, límites/MIME en multer + proteger `/api/hr/applications`, manejador global de errores (dejar de filtrar `e.message`).
+- **Durabilidad de la sesión de WhatsApp:** persistir `baileys_auth` en almacenamiento durable (fuera del filesystem efímero de Replit) para dejar de perder la sesión en cada redeploy. Es el mayor riesgo operativo del sistema y va tras una abstracción de almacenamiento (portable, `ARQUITECTURA_OBJETIVO_ERP.md` §7). Cambio aditivo; no toca la lógica de Baileys/Sara.
 
-## 2. Núcleo `src/core` + módulo piloto (paso 4)
+## 2. Núcleo `src/core` + módulo piloto (paso 5)
 - **Aditivo:** nuevo código en `src/`, montado como router adicional; el monolito sigue sirviendo el resto.
 - **Sin cambio de comportamiento:** el módulo piloto (mantenimiento o comunicados) responde igual que hoy; pruebas antes/después idénticas.
 - **Rollback:** revert del commit del módulo.
@@ -32,11 +31,14 @@ config_versions(id, ambito, clave, valor_json, version, creado_en, creado_por, c
 ```
 Índices: `establecimientos.local_text`, `user_locations(usuario_id)`, `audit_log(ts, usuario_id, accion)`.
 
-### Backfill (idempotente, verificable)
+### Backfill (idempotente, verificable, con reconciliación estricta)
+- **Paso 0 — reconciliación OBLIGATORIA:** verificar que todos los `local` de las 13 tablas casan con un establecimiento canónico; si alguno no casa, **fallar ruidosamente** y corregir el dato antes de seguir. Nunca asumir coincidencia de strings.
 - `establecimientos` ← 7 filas de `LOCALES` (`whatsapp.js`).
 - `empresas` ← `facturas_locales` (producción) + confirmación de Dirección.
-- `user_locations` ← los **43 trabajadores** por su `users.local` (match por `local_text`).
+- `user_locations` ← los **43 trabajadores** por su `users.local` (match exacto, ya reconciliado). Cuentas existentes en la migración → grandfather acotado; **usuarios nuevos = default-deny**.
 - `role_templates` ← plantillas propuestas en `MODELO_MODULOS_Y_PERMISOS.md`.
+- **Prioridad ALTA:** añadir `establecimiento_id` (FK) a las tablas con `local`, dejando `local_text` como puente temporal (Single Source of Truth).
+- **Portabilidad:** las tablas y consultas nuevas evitan features exclusivas de SQLite para ser portables a PostgreSQL sin reescritura (`ARQUITECTURA_OBJETIVO_ERP.md` §7).
 - **Rollback:** `DROP` de tablas nuevas (aisladas); columnas `local` intactas; datos originales sin tocar.
 
 ## 4. Motor de permisos (paso 7)
@@ -55,6 +57,8 @@ config_versions(id, ambito, clave, valor_json, version, creado_en, creado_por, c
 
 ## 7. Orden y gates
 Cada paso: migración → backfill → pruebas verdes → commit → (si aplica) activar flag. **No se avanza** si falla una prueba baseline, se desconecta WhatsApp, o una migración no es reversible.
+
+**Orden de ejecución (revisado):** la **seguridad de bajo riesgo** (JWT fuerte, rate-limit, helmet, CORS, uploads/errores) y la **durabilidad de la sesión de WhatsApp** (persistir `baileys_auth` fuera del filesystem efímero) van **ANTES** del módulo piloto (ver `FASE_1_AUDITORIA_Y_PLAN.md` §5). La **arquitectura de eventos NO se construye** en Fase 1 (solo diseño). La autorización arranca por **rol + establecimiento**; la granularidad se añade solo ante casos reales.
 
 ## 8. Qué NO se migra en esta fase
 Nada funcional: esta fase entrega **solo** documentación y pruebas. Las migraciones anteriores son el **diseño** a ejecutar tras la aprobación del gate.
