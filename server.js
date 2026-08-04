@@ -12,6 +12,7 @@ import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, sendModificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
+import { resolveJwtSecret, errorHandler, safeLogError } from "./security.js";
 
 dotenv.config();
 
@@ -312,7 +313,11 @@ async function restoreCriticalConfig() {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || "tapeta-secret-dev";
+// Secreto JWT endurecido: sin fallback inseguro. En producción exige un secreto fuerte
+// (si falta o es débil, el proceso NO arranca). En desarrollo usa un secreto estable.
+// Se registra solo el ESTADO, nunca el valor.
+const { secret: JWT_SECRET, status: JWT_STATUS, source: JWT_SOURCE } = resolveJwtSecret();
+console.log(`[Seguridad] JWT_SECRET: ${JWT_STATUS} (origen: ${JWT_SOURCE})`);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
