@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, sendModificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
 
@@ -159,6 +159,58 @@ async function restoreLeads() {
     }
     if (restaurados) console.log(`[Leads] Restaurados ${restaurados} leads que faltaban desde KV`);
   } catch (e) { console.error("[Leads] Error restaurando leads:", e.message); }
+}
+
+// ── Copia interna durable de USUARIOS de login (a prueba del límite de la BD) ──
+// Los usuarios (tabla `users`: dirección, marketing, encargado…) NO van en el backup
+// completo (que falla en silencio si la BD supera ~512 KB por los mensajes de WhatsApp).
+// Igual que los leads, se guardan comprimidos en su propia clave KV y se restauran
+// FUSIONANDO por username (nunca se sobrescribe un usuario existente ni su contraseña).
+const KV_USERS_KEY = "latapeta_users_v1";
+
+async function backupUsers() {
+  const dbUrl = process.env.REPLIT_DB_URL;
+  if (!dbUrl) return;
+  try {
+    const users = await dbAll("SELECT username, password_hash, rol, nombre, local, creado_en FROM users", []);
+    const gz = zlib.gzipSync(Buffer.from(JSON.stringify(users))).toString("base64");
+    const body = new URLSearchParams();
+    body.set(KV_USERS_KEY, gz);
+    const r = await fetch(dbUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    });
+    if (r.ok) console.log(`[Users] Backup OK (${users.length} usuarios, ${Math.round(gz.length / 1024)} KB comprimido)`);
+    else console.warn("[Users] Error backup:", r.status);
+  } catch (e) { console.error("[Users] Error backup:", e.message); }
+}
+
+async function restoreUsers() {
+  const dbUrl = process.env.REPLIT_DB_URL;
+  if (!dbUrl) return;
+  try {
+    const raw = execSync(`curl -sf "${dbUrl}/${KV_USERS_KEY}"`, { encoding: "utf8", timeout: 10000 }).trim();
+    if (!raw || raw === "null" || raw.length < 5) return;
+    let users;
+    try { users = JSON.parse(zlib.gunzipSync(Buffer.from(raw, "base64")).toString()); }
+    catch { return; }
+    if (!Array.isArray(users) || !users.length) return;
+    let restaurados = 0;
+    for (const u of users) {
+      if (!u.username || !u.password_hash) continue;
+      // Insertar solo si no existe ya (por username). Nunca sobrescribir ni cambiar contraseñas.
+      const existe = await dbGet("SELECT id FROM users WHERE username = ?", [u.username]);
+      if (existe) continue;
+      await dbRun(
+        `INSERT INTO users (username, password_hash, rol, nombre, local, creado_en) VALUES (?, ?, ?, ?, ?, ?)`,
+        [u.username, u.password_hash, u.rol || "trabajador", u.nombre || u.username, u.local || null,
+         u.creado_en || new Date().toISOString()]
+      );
+      restaurados++;
+    }
+    if (restaurados) console.log(`[Users] Restaurados ${restaurados} usuarios que faltaban desde KV`);
+  } catch (e) { console.error("[Users] Error restaurando usuarios:", e.message); }
 }
 
 // ── Espejo de leads en Google Sheets (registro externo legible, best-effort) ──
@@ -373,6 +425,12 @@ db.serialize(() => {
       creado_en TEXT NOT NULL
     )
   `);
+  // Migración idempotente: preferencia terraza/interior (solo se pregunta en los
+  // locales de Blanes y Lloret). Si la columna ya existe, SQLite da error de
+  // "duplicate column name" que ignoramos.
+  db.run(`ALTER TABLE reservas ADD COLUMN zona TEXT`, (e) => {
+    if (e && !/duplicate column/i.test(e.message)) console.error("Error añadiendo columna zona:", e.message);
+  });
 
   // Configurador de Sara: bloqueos de reservas por local/fechas (local = nombre exacto o 'Todos')
   db.run(`
@@ -710,26 +768,33 @@ db.serialize(() => {
     )
   `);
 
-  // Seed de usuarios por defecto si la tabla está vacía
-  db.get("SELECT COUNT(*) as total FROM users", async (err, row) => {
-    if (err || row.total > 0) return;
+  // Usuarios institucionales: se garantizan SIEMPRE con INSERT OR IGNORE (idempotente),
+  // no solo cuando la tabla está vacía. Así, si en un redeploy de Replit la BD se
+  // restaura desde una foto antigua sin ellos, se recrean automáticamente sin tocar
+  // a los usuarios existentes (que conservan su contraseña). Ver también backupUsers().
+  (async () => {
     const roles = [
       { username: "direccion", nombre: "Dirección", rol: "direccion" },
       { username: "encargado", nombre: "Encargado", rol: "encargado" },
       { username: "trabajador", nombre: "Trabajador", rol: "trabajador" },
       { username: "rrhh", nombre: "RR.HH.", rol: "rrhh" },
       { username: "marketing", nombre: "Marketing", rol: "marketing" },
-      { username: "contabilidad", nombre: "Contabilidad", rol: "contabilidad" }
+      { username: "contabilidad", nombre: "Contabilidad", rol: "contabilidad" },
+      // uriel: usuario personal (rol dirección) creado a mano; se perdió en un redeploy.
+      // Se recrea con contraseña temporal 'tapeta2024' — cámbiala en el primer login.
+      { username: "uriel", nombre: "Uriel", rol: "direccion" }
     ];
     for (const u of roles) {
-      const hash = await bcrypt.hash("tapeta2024", 10);
-      db.run(
-        `INSERT INTO users (username, password_hash, rol, nombre, creado_en) VALUES (?, ?, ?, ?, ?)`,
-        [u.username, hash, u.rol, u.nombre, new Date().toISOString()]
-      );
+      try {
+        const hash = await bcrypt.hash("tapeta2024", 10);
+        db.run(
+          `INSERT OR IGNORE INTO users (username, password_hash, rol, nombre, creado_en) VALUES (?, ?, ?, ?, ?)`,
+          [u.username, hash, u.rol, u.nombre, new Date().toISOString()]
+        );
+      } catch (e) { console.error(`Error asegurando usuario ${u.username}:`, e.message); }
     }
-    console.log("Usuarios por defecto creados. Contraseña: tapeta2024");
-  });
+    console.log("Usuarios institucionales asegurados (INSERT OR IGNORE). Contraseña por defecto: tapeta2024");
+  })();
 });
 
 // ── Google Business OAuth ─────────────────────────────────────────────────
@@ -1516,6 +1581,7 @@ app.post("/api/users", requireAuth(["direccion"]), async (req, res) => {
       if (err) {
         return res.status(400).json({ ok: false, error: "Usuario ya existe o error al crear" });
       }
+      backupUsers(); // copia interna durable de usuarios
       res.json({ ok: true, id: this.lastID });
     }
   );
@@ -1527,6 +1593,7 @@ app.put("/api/users/:id/password", requireAuth(["direccion"]), async (req, res) 
   const hash = await bcrypt.hash(password, 10);
   db.run("UPDATE users SET password_hash = ? WHERE id = ?", [hash, req.params.id], (err) => {
     if (err) return res.status(500).json({ ok: false, error: "Error actualizando contraseña" });
+    backupUsers(); // la nueva contraseña queda en la copia durable
     res.json({ ok: true });
   });
 });
@@ -1534,6 +1601,7 @@ app.put("/api/users/:id/password", requireAuth(["direccion"]), async (req, res) 
 app.delete("/api/users/:id", requireAuth(["direccion"]), (req, res) => {
   db.run("DELETE FROM users WHERE id = ?", [req.params.id], (err) => {
     if (err) return res.status(500).json({ ok: false, error: "Error eliminando usuario" });
+    backupUsers(); // reflejar el borrado en la copia durable
     res.json({ ok: true });
   });
 });
@@ -2880,9 +2948,12 @@ const server = app.listen(PORT, async () => {
   setTimeout(() => backupToReplitDB(), 30 * 1000);
   // Backup periódico cada 5 minutos
   setInterval(() => backupToReplitDB(), 5 * 60 * 1000);
+  // Copia durable de usuarios cada hora (cambian poco; es un cinturón de seguridad
+  // adicional a los backups en alta/borrado por si el backup completo falla por tamaño)
+  setInterval(() => backupUsers(), 60 * 60 * 1000);
 
   setOnReserva(async (reserva, jid) => {
-    const { local, personas, dia, hora, telefono, nombre_reserva, pendiente } = reserva;
+    const { local, personas, dia, hora, telefono, nombre_reserva, pendiente, zona } = reserva;
     if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) return;
     // Bloqueo configurado por marketing: rechazar y que Sara se lo explique al cliente
     try {
@@ -2894,8 +2965,8 @@ const server = app.listen(PORT, async () => {
     } catch (e) { console.error("Error comprobando bloqueo (WA):", e.message); }
     const creado_en = new Date().toISOString();
     db.run(
-      `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [local, personas, dia, hora, telefono, nombre_reserva, creado_en],
+      `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en, zona) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [local, personas, dia, hora, telefono, nombre_reserva, creado_en, zona || null],
       function (err) {
         if (err) { console.error("Error guardando reserva WhatsApp:", err.message); return; }
         // Auto-actualizar perfil con nombre y teléfono obtenidos de la reserva
@@ -2949,6 +3020,12 @@ const server = app.listen(PORT, async () => {
   // Restaurar/fusionar leads desde su copia interna durable (por si el backup
   // completo de la BD falló por tamaño). Solo añade los que falten.
   await restoreLeads();
+
+  // Restaurar/fusionar usuarios de login desde su copia interna durable (mismo motivo
+  // que los leads). Solo añade los que falten, sin tocar los existentes. Después deja
+  // una copia fresca en KV (incluye los institucionales recién asegurados por el seed).
+  await restoreUsers();
+  backupUsers();
 
   // Grupos de WhatsApp "de serie": si un local no tiene su grupo enlazado, se le
   // pone el suyo por defecto. Se ejecuta en CADA arranque con INSERT OR IGNORE →
@@ -3170,6 +3247,57 @@ const server = app.listen(PORT, async () => {
       return { ok: true, reserva };
     } catch (e) {
       console.error("Error cancelando reserva (WA):", e.message);
+      return { ok: false, motivo: e.message };
+    }
+  });
+
+  // Modificación de reserva por Sara: localiza (teléfono + día actual), hace UPDATE de
+  // los campos que cambian (NO borra), avisa al grupo con "🔄 Reserva modificada".
+  setOnModificarReserva(async ({ telefono, dia, local, nuevas_personas, nueva_hora, nuevo_dia, nueva_zona }, jid) => {
+    try {
+      const clave = (telefono || "").replace(/\D/g, "");
+      if (clave.length < 9 || !dia) return { ok: false, motivo: "faltan datos" };
+      const cola = clave.slice(-9);
+      const rows = await dbAll(
+        `SELECT * FROM reservas WHERE dia = ?${local ? " AND local = ?" : ""} ORDER BY creado_en DESC`,
+        local ? [dia, local] : [dia]
+      );
+      const reserva = rows.find(r => (r.telefono || "").replace(/\D/g, "").endsWith(cola));
+      if (!reserva) return { ok: false, motivo: "no encontrada" };
+
+      // Construir SET solo con los campos realmente cambiados (para el UPDATE y el aviso).
+      const sets = [], params = [], cambios = {};
+      if (nuevas_personas != null && Number(nuevas_personas) !== reserva.personas) {
+        sets.push("personas = ?"); params.push(Number(nuevas_personas));
+        cambios.personas = { antes: reserva.personas, despues: Number(nuevas_personas) };
+      }
+      if (nueva_hora != null && nueva_hora !== reserva.hora) {
+        sets.push("hora = ?"); params.push(nueva_hora);
+        cambios.hora = { antes: reserva.hora, despues: nueva_hora };
+      }
+      if (nuevo_dia != null && nuevo_dia !== reserva.dia) {
+        sets.push("dia = ?"); params.push(nuevo_dia);
+        cambios.dia = { antes: reserva.dia, despues: nuevo_dia };
+      }
+      if (nueva_zona != null && nueva_zona !== reserva.zona) {
+        sets.push("zona = ?"); params.push(nueva_zona);
+        cambios.zona = { antes: reserva.zona || "—", despues: nueva_zona };
+      }
+      if (!sets.length) return { ok: false, motivo: "sin cambios" };
+
+      params.push(reserva.id);
+      await dbRun(`UPDATE reservas SET ${sets.join(", ")} WHERE id = ?`, params);
+      const actualizada = await dbGet(`SELECT * FROM reservas WHERE id = ?`, [reserva.id]);
+      console.log(`🔄 Reserva modificada por Sara (id ${reserva.id}): ${actualizada.nombre_reserva} en ${actualizada.local} ${actualizada.dia} — ${Object.keys(cambios).join(", ")}`);
+      backupToReplitDB(); // que la modificación no se pierda en un restore
+
+      // Nota al grupo de WhatsApp del local (usa el local actualizado por si cambió)
+      const row = await dbGet(`SELECT group_jid FROM wa_links WHERE local = ?`, [actualizada.local]);
+      if (row?.group_jid && isReady()) sendModificacionGrupo(row.group_jid, actualizada, cambios);
+
+      return { ok: true, reserva: actualizada, cambios };
+    } catch (e) {
+      console.error("Error modificando reserva (WA):", e.message);
       return { ok: false, motivo: e.message };
     }
   });
