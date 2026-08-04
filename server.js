@@ -12,7 +12,7 @@ import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, sendModificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
-import { resolveJwtSecret, errorHandler, safeLogError } from "./security.js";
+import { resolveJwtSecret, errorHandler, safeLogError, CV_MAX_BYTES, isAllowedCvUpload, validateCvContentSync, safeUploadName } from "./security.js";
 
 dotenv.config();
 
@@ -390,6 +390,22 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+
+// Subida ENDURECIDA para candidaturas (CV): nombre interno seguro (no usa el original),
+// límite de tamaño y filtro por extensión + MIME. El contenido real se valida por
+// magic bytes tras escribir (en el handler de /api/hr/applications).
+const cvStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => cb(null, safeUploadName(file.originalname)),
+});
+const uploadCV = multer({
+  storage: cvStorage,
+  limits: { fileSize: CV_MAX_BYTES, files: 1 },
+  fileFilter: (req, file, cb) => cb(null, isAllowedCvUpload(file)),
+});
 
 db.serialize(() => {
   db.run(`
@@ -2199,10 +2215,18 @@ app.put("/api/hr/jobs/:id", requireAuth(["rrhh", "direccion"]), (req, res) => {
 });
 
 app.post("/api/hr/applications", (req, res, next) => {
-  upload.single("cv")(req, res, (err) => {
+  uploadCV.single("cv")(req, res, (err) => {
     if (err) {
-      console.error("[HR] Error subiendo CV:", err.message);
-      return res.status(400).json({ ok: false, error: "Error subiendo el CV." });
+      const tooBig = err.code === "LIMIT_FILE_SIZE";
+      safeLogError("HR upload CV", err);
+      return res.status(400).json({ ok: false, error: tooBig
+        ? "El CV supera el tamaño máximo (8 MB)."
+        : "Archivo de CV no válido o formato no permitido (PDF, DOCX, JPG o PNG)." });
+    }
+    // Validación de CONTENIDO real (magic bytes), además de extensión+MIME.
+    if (req.file && !validateCvContentSync(req.file.path, req.file.originalname)) {
+      try { fs.unlinkSync(req.file.path); } catch { /* noop */ }
+      return res.status(400).json({ ok: false, error: "El contenido del archivo no coincide con un CV permitido (PDF, DOCX, JPG o PNG)." });
     }
     next();
   });
