@@ -2904,6 +2904,11 @@ app.delete("/api/sara/regla/:id", requireAuth(["marketing", "direccion"]), async
 
 app.get("/", (req, res) => res.redirect("/login.html"));
 
+// Manejador de errores global: respuesta genérica al cliente + log seguro en servidor.
+// Debe ir DESPUÉS de todas las rutas. No modifica las respuestas de los endpoints que ya
+// gestionan su propio error; solo cubre lo no controlado.
+app.use(errorHandler);
+
 const shutdown = (signal) => {
   console.log(`${signal} recibido, guardando BD y cerrando servidor...`);
   backupToReplitDBSync(); // Guardar BD antes de apagar
@@ -2916,6 +2921,27 @@ const shutdown = (signal) => {
 };
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT",  () => shutdown("SIGINT"));
+
+// ── Errores fatales / no controlados (Iteración 1A) ──────────────────────────
+let _fatalHandling = false;
+function fatalCrash(kind, err) {
+  if (_fatalHandling) return;
+  _fatalHandling = true;
+  safeLogError(kind, err instanceof Error ? err : new Error(String(err)));
+  try { backupToReplitDBSync(); } catch { /* respaldar solo lo seguro */ }
+  setTimeout(() => process.exit(1), 3000).unref();
+  try { server.close(() => { try { db.close(); } catch { /* noop */ } process.exit(1); }); }
+  catch { process.exit(1); }
+}
+// uncaughtException: el estado del proceso queda indeterminado ⇒ cierre controlado con
+// timeout y salida con código ≠ 0 para que el supervisor (Replit) reinicie. No se continúa.
+process.on("uncaughtException", (err) => fatalCrash("uncaughtException", err));
+// unhandledRejection (política 1A): se registra de forma VISIBLE (no se oculta), pero NO se
+// fuerza la salida todavía, porque la sesión de WhatsApp aún no es durable (evitar re-escaneos
+// de QR ante rechazos esporádicos). Se reevaluará en 1B para alinearlo con uncaughtException.
+process.on("unhandledRejection", (reason) => {
+  safeLogError("unhandledRejection", reason instanceof Error ? reason : new Error(String(reason)));
+});
 
 function guardarPendienteWA(tipo, destino, reserva) {
   db.run(
