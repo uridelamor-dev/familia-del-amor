@@ -66,7 +66,7 @@ const INCID = [
   { id: 91, local: "Can Mateu", titulo: "Cámara frigorífica — temperatura alta", sev: "hi", estado: "Abierta", dias: 0.1, resp: "Sin asignar", prov: "Frío Costa Brava", coste: 0, reps: 4 },
   { id: 92, local: "Lloret", titulo: "Grifo de barra con fuga", sev: "md", estado: "En proceso", dias: 1, resp: "Oriol Mas", prov: "Fontanería Ríos", coste: 120, reps: 1 },
   { id: 93, local: "Blanes", titulo: "Luz de terraza fundida", sev: "lo", estado: "Abierta", dias: 3, resp: "Sin asignar", prov: "—", coste: 0, reps: 0 },
-  { id: 94, local: "Girona", titulo: "Datáfono lento", sev: "md", estado: "En proceso", dias: 4, resp: "Clara Font", prov: "Redsys", coste: 0, reps: 2 },
+  { id: 94, local: "Girona", titulo: "Datáfono lento", sev: "md", estado: "En proceso", dias: 4, resp: "Clara Font", prov: "Redsys", coste: 0, reps: 2, reabierta: true },
 ];
 const TEAM = [
   { id: 1, n: "Núria Camps", local: "Blanes", puesto: "Encargada", estado: "Activo", contr: 40, trab: 43, ventas: 0, ticket: 0, res: 4.9, ausencia: false, retraso: false },
@@ -116,6 +116,49 @@ const RECOS = [
   { id: "r1", prio: "Alta", titulo: "Girona con ocupación prevista 42% el miércoles", motivo: "Reservas −18% y peor desviación de margen del grupo.", impacto: "+ ~800 € estimados", datos: "Reservas, ocupación, histórico", accion: "Preparar campaña a inactivos (Girona)", estado: "Pendiente", go: "marketing" },
   { id: "r2", prio: "Alta", titulo: "3 facturas llevan 40 días sin pagar", motivo: "Riesgo de recargo con 2 proveedores.", impacto: "Evitar recargos", datos: "Facturación", accion: "Revisar con Contabilidad", estado: "Pendiente", go: "config" },
   { id: "r3", prio: "Media", titulo: "Cámara de Can Mateu: 4ª reparación en 8 meses", motivo: "Coste acumulado supera la sustitución.", impacto: "Ahorro estimado 600 €/año", datos: "Mantenimiento", accion: "Valorar sustitución", estado: "Pendiente", go: "mantenimiento" },
+];
+// Compras: categorías (gasto vs presupuesto), proveedores (tendencia de precio, plazo,
+// fiabilidad) e insumos (rotación y desperdicio). Ahorros = oportunidades detectadas.
+const CATG = [
+  { cat: "Pescado", gasto: 7180, bud: 6800, trend: 5 },
+  { cat: "Bebidas", gasto: 4160, bud: 3900, trend: 8 },
+  { cat: "Verdura", gasto: 3400, bud: 3500, trend: -2 },
+  { cat: "Carne", gasto: 2640, bud: 2700, trend: 3 },
+  { cat: "Otros", gasto: 1560, bud: 1600, trend: 1 },
+];
+const SUPPLIERS = [
+  { n: "Peix Fresc Costa Brava", cat: "Pescado", trend: 5, lead: 1, fiab: 96, gasto: 7180 },
+  { n: "Distribucions Maresme", cat: "Bebidas", trend: 8, lead: 2, fiab: 88, gasto: 4160 },
+  { n: "Carns Selectes Girona", cat: "Carne", trend: 5, lead: 2, fiab: 92, gasto: 2640 },
+  { n: "Hortofrutícola Tordera", cat: "Verdura", trend: -2, lead: 1, fiab: 90, gasto: 3400 },
+  { n: "Forn Vell Blanes", cat: "Panadería", trend: 0, lead: 1, fiab: 98, gasto: 820 },
+];
+const INSUMOS = [
+  { n: "Merluza", cat: "Pescado", rot: "Baja", desp: 12, tend: "subiendo", ahorro: 180 },
+  { n: "Lechuga", cat: "Verdura", rot: "Normal", desp: 8, tend: "subiendo", ahorro: 60 },
+  { n: "Solomillo", cat: "Carne", rot: "Anómala", desp: 6, tend: "estable", ahorro: 90 },
+  { n: "Gambas", cat: "Pescado", rot: "Alta", desp: 3, tend: "estable", ahorro: 0 },
+  { n: "Cerveza barril", cat: "Bebidas", rot: "Alta", desp: 1, tend: "estable", ahorro: 0 },
+];
+const AHORROS = [
+  { t: "Reducir el pedido semanal de merluza", d: "12% de desperdicio y rotación baja.", val: 180, go: "compras" },
+  { t: "Renegociar bebidas con proveedor alternativo", d: "Distribucions Maresme ha subido 8%.", val: 250, go: "compras" },
+  { t: "Ajustar ración de solomillo", d: "Rotación anómala con merma del 6%.", val: 90, go: "compras" },
+];
+// Mantenimiento: proveedores (tiempo medio de respuesta) y deterioro por local (incidencias 90 días).
+const MANT_PROV = [
+  { n: "Frío Costa Brava", cat: "Refrigeración", tiempo: 3.2, lento: true, inc: 5 },
+  { n: "Redsys (TPV)", cat: "Datáfonos", tiempo: 2.6, lento: true, inc: 2 },
+  { n: "Fontanería Ríos", cat: "Fontanería", tiempo: 1.1, lento: false, inc: 3 },
+  { n: "ElectroLloret", cat: "Electricidad", tiempo: 0.8, lento: false, inc: 4 },
+];
+const MANT_LOCAL = [
+  { local: "Can Mateu", inc90: 6, tend: "subiendo" },
+  { local: "Girona", inc90: 5, tend: "subiendo" },
+  { local: "Lloret", inc90: 3, tend: "estable" },
+  { local: "Blanes", inc90: 2, tend: "estable" },
+  { local: "Cooperativa", inc90: 1, tend: "bajando" },
+  { local: "Ibérica", inc90: 1, tend: "estable" },
 ];
 /* Estado mutable de UI (en memoria; al recargar vuelve al inicial) */
 const S = { view: "dashboard", estab: "all", period: "ayer", collapsed: false, chat: [] };
@@ -519,12 +562,33 @@ V.rrhh = () => {
 };
 
 V.compras = () => {
-  const stats = `<div class="grid g4">${stat({ lab: "Gasto del mes", icon: "cart", val: eur(18940), delta: -4, invert: true })}${stat({ lab: "Pedidos pendientes", icon: "box", val: String(pendingOrders().length) })}${stat({ lab: "Proveedores activos", icon: "team", val: "23" })}${stat({ lab: "Productos críticos", icon: "alert", val: String(ORDERS.filter(o => o.critico).length) })}</div>`;
-  const donutC = card("Gasto por categoría", `<div class="flex" style="gap:22px;flex-wrap:wrap"><div>${(() => { const s = [{ v: 38, c: CATC[0], l: "Pescado" }, { v: 22, c: CATC[1], l: "Bebidas" }, { v: 18, c: CATC[2], l: "Verdura" }, { v: 14, c: CATC[3], l: "Carne" }, { v: 8, c: CATC[4], l: "Otros" }]; s.dLabel = "% gasto"; return donut(s); })()}</div>
-    <div class="legend" style="flex-direction:column;gap:10px">${[["Pescado", 38], ["Bebidas", 22], ["Verdura", 18], ["Carne", 14], ["Otros", 8]].map((x, i) => `<div><i style="background:${CATC[i]}"></i>${x[0]} <b class="tnum" style="margin-left:6px">${x[1]}%</b></div>`).join("")}</div></div>`);
-  const list = card("Pedidos", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Local</th><th>Estado</th><th class="r">Importe</th><th class="r">Desvío</th><th></th></tr></thead><tbody>${ORDERS.map(o => `<tr><td><div><b style="font-weight:600">${o.prov}</b><div class="mut" style="font-size:11.5px">${o.cat} · ${o.fecha}</div></div></td><td>${o.local}</td><td>${pill(o.estado, o.estado === "Pendiente" ? "warn" : o.estado === "Recibido" ? "ok" : "info")}</td><td class="r tnum">${eur(o.importe)}</td><td class="r tnum ${o.desv > 3 ? "down" : o.desv < 0 ? "up" : "mut"}">${o.desv > 0 ? "+" : ""}${o.desv}%</td><td class="r"><button class="btn ghost sm" data-act="order" data-id="${o.id}">Ver</button></td></tr>`).join("")}</tbody></table></div>`, `<button class="btn primary sm" data-act="soon">${ic("plus", 14)} Nuevo pedido</button>`);
-  const reco = card("Recomendación de reposición", `<div class="reco"><div class="rc">${ic("box", 16)}</div><div class="grow"><b style="font-size:13.5px">Pescado en Blanes por debajo de stock objetivo</b><p class="mut" style="margin:3px 0 8px;font-size:12.5px">Impacto estimado en margen: +0,4 pts si se repone hoy.</p><div class="wrapf"><button class="btn primary sm" data-act="approve-reco" data-txt="Reposición aprobada">Aprobar</button><button class="btn ghost sm" data-act="soon">Ver impacto</button></div></div></div>`);
-  return stats + `<div class="grid g2" style="margin-top:16px">${donutC}${reco}</div><div style="margin-top:16px">${list}</div>`;
+  const gastoMes = CATG.reduce((s, c) => s + c.gasto, 0), budMes = CATG.reduce((s, c) => s + c.bud, 0);
+  const overCat = CATG.filter(c => c.gasto > c.bud).sort((a, b) => (b.gasto - b.bud) - (a.gasto - a.bud));
+  const priceUp = SUPPLIERS.filter(s => s.trend > 0).sort((a, b) => b.trend - a.trend);
+  const wasteUp = INSUMOS.filter(i => i.desp >= 8 && i.tend === "subiendo").sort((a, b) => b.desp - a.desp);
+  const rotBad = INSUMOS.filter(i => i.rot === "Anómala" || i.rot === "Baja");
+  const ahorroTot = AHORROS.reduce((s, a) => s + a.val, 0);
+  const despMed = Math.round(INSUMOS.reduce((s, i) => s + i.desp, 0) / INSUMOS.length);
+  const stats = `<div class="grid g4">
+    ${stat({ lab: "Gasto del mes", icon: "cart", val: eur(gastoMes), delta: (gastoMes - budMes) / budMes * 100, invert: true })}
+    ${stat({ lab: "Ahorro potencial", icon: "euro", val: eur(ahorroTot), unit: "/mes" })}
+    ${stat({ lab: "Desperdicio medio", icon: "box", val: despMed + "%" })}
+    ${stat({ lab: "Pedidos pendientes", icon: "box", val: String(pendingOrders().length) })}</div>`;
+  const rowIc = (icn, k) => `<span class="ic ${k}" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none">${ic(icn, 15)}</span>`;
+  const aMore = answerCard("¿Estamos comprando de más?", overCat.length ? `<div class="rows" style="margin:0 -18px -18px">${overCat.map(c => `<div class="row">${rowIc("cart", "warn")}<div class="grow"><div class="t1">${c.cat}</div><div class="t2">Presupuesto ${eur(c.bud)} · gasto ${eur(c.gasto)}</div></div><b class="tnum down">+${eurK(c.gasto - c.bud)}</b></div>`).join("")}</div>` : `<div class="mut" style="padding:6px 0">Todo dentro de presupuesto.</div>`, { icon: "cart", sev: overCat.length ? "warn" : "ok" });
+  const aPrice = answerCard("¿Qué proveedor ha subido precios?", `<div class="rows" style="margin:0 -18px -18px">${priceUp.slice(0, 3).map(s => `<div class="row"><div class="grow"><div class="t1">${s.n}</div><div class="t2">${s.cat} · fiabilidad ${s.fiab}%</div></div><b class="tnum down">+${s.trend}%</b></div>`).join("")}</div>`, { icon: "cart", sev: "warn" });
+  const aWaste = answerCard("¿Dónde aumenta el desperdicio?", wasteUp.length ? `<div class="rows" style="margin:0 -18px -18px">${wasteUp.map(i => `<div class="row">${rowIc("box", "warn")}<div class="grow"><div class="t1">${i.n}</div><div class="t2">${i.cat} · rotación ${i.rot.toLowerCase()}</div></div><b class="tnum down">${i.desp}% ${ic("aU", 12)}</b></div>`).join("")}</div>` : `<div class="mut" style="padding:6px 0">Desperdicio estable.</div>`, { icon: "box", sev: "warn" });
+  const aRot = answerCard("¿Qué producto tiene rotación anormal?", `<div class="rows" style="margin:0 -18px -18px">${rotBad.map(i => `<div class="row"><div class="grow"><div class="t1">${i.n}</div><div class="t2">${i.cat} · merma ${i.desp}%</div></div>${pill(i.rot, i.rot === "Anómala" ? "bad" : "warn")}</div>`).join("")}</div>`, { icon: "spark", sev: "warn" });
+  const ahorro = card("¿Cuánto podemos ahorrar?", `<div class="rows" style="margin:-4px -18px 0">${AHORROS.map(a => `<div class="att"><div class="ic ok">${ic("euro", 16)}</div><div class="grow"><b style="font-size:13px">${a.t}</b><p class="mut" style="margin:3px 0 0;font-size:12px">${a.d}</p></div><div style="text-align:right"><b class="tnum" style="color:var(--success)">${eur(a.val)}</b><div class="mut" style="font-size:11px">/mes</div></div></div>`).join("")}</div>
+    <div style="margin-top:12px;padding:12px 14px;background:var(--success-soft);border-radius:11px;font-size:13px;color:var(--success);display:flex;gap:9px"><span style="flex:none">${ic("spark", 16)}</span><span>Aplicando las 3 acciones ahorrarías ~<b>${eur(ahorroTot)}/mes</b> (${eur(ahorroTot * 12)}/año) sin afectar al servicio.</span></div>`, `<button class="btn primary sm" data-act="approve-reco" data-txt="Plan de ahorro preparado">Preparar plan</button>`);
+  const catBars = card("Gasto por categoría vs. presupuesto", bars(CATG.map(c => ({ label: c.cat, v: c.gasto, c: c.gasto > c.bud ? "var(--danger)" : "var(--brand)" })), { h: 150 }), `<span class="mut">Mes</span>`);
+  const provTable = card("Proveedores", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Categoría</th><th class="r">Precio</th><th class="r">Plazo</th><th class="r">Fiabilidad</th><th class="r">Gasto/mes</th></tr></thead><tbody>${SUPPLIERS.map(s => `<tr><td style="font-weight:600">${s.n}</td><td class="mut">${s.cat}</td><td class="r tnum ${s.trend > 0 ? "down" : s.trend < 0 ? "up" : "mut"}">${s.trend > 0 ? "+" : ""}${s.trend}%</td><td class="r tnum">${s.lead} d</td><td class="r tnum ${s.fiab < 90 ? "down" : ""}">${s.fiab}%</td><td class="r tnum">${eur(s.gasto)}</td></tr>`).join("")}</tbody></table></div>`);
+  const pedidos = card("Pedidos", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Local</th><th>Estado</th><th class="r">Importe</th><th class="r">Desvío</th><th></th></tr></thead><tbody>${ORDERS.map(o => `<tr><td><div><b style="font-weight:600">${o.prov}</b><div class="mut" style="font-size:11.5px">${o.cat} · ${o.fecha}</div></div></td><td>${o.local}</td><td>${pill(o.estado, o.estado === "Pendiente" ? "warn" : o.estado === "Recibido" ? "ok" : "info")}</td><td class="r tnum">${eur(o.importe)}</td><td class="r tnum ${o.desv > 3 ? "down" : o.desv < 0 ? "up" : "mut"}">${o.desv > 0 ? "+" : ""}${o.desv}%</td><td class="r"><button class="btn ghost sm" data-act="order" data-id="${o.id}">Ver</button></td></tr>`).join("")}</tbody></table></div>`, `<button class="btn primary sm" data-act="soon">${ic("plus", 14)} Nuevo pedido</button>`);
+  return stats + `<div class="grid g12" style="margin-top:16px">
+    <div class="c6">${aMore}</div><div class="c6">${aPrice}</div>
+    <div class="c6">${aWaste}</div><div class="c6">${aRot}</div>
+    <div class="c7">${ahorro}</div><div class="c5">${catBars}</div>
+    <div class="c12">${provTable}</div><div class="c12">${pedidos}</div></div>`;
 };
 
 V.marketing = () => {
@@ -537,14 +601,31 @@ V.marketing = () => {
 function campRow(c) { return `<div class="row"><div class="ic info" style="width:34px;height:34px;border-radius:10px;display:grid;place-items:center">${ic("msg", 16)}</div><div class="grow"><div class="t1">${c.n}</div><div class="t2">${c.seg} · ${c.canal}${c.reservas ? " · " + c.reservas + " reservas · " + eur(c.ingresos) : ""}</div></div>${pill(c.estado, c.estado === "Activa" ? "ok" : c.estado === "Programada" ? "info" : c.estado === "Preparada" ? "brand" : "warn")}</div>`; }
 
 V.mantenimiento = () => {
-  const stats = `<div class="grid g4">${stat({ lab: "Abiertas", icon: "wrench", val: String(openIncid().length), unit: openIncid().some(i => i.sev === "hi") ? "· 1 crítica" : "" })}${stat({ lab: "En proceso", icon: "clock", val: String(INCID.filter(i => i.estado === "En proceso").length) })}${stat({ lab: "Resueltas (mes)", icon: "check", val: "17", delta: 28 })}${stat({ lab: "Tiempo medio", icon: "clock", val: "1,8", unit: "días" })}</div>`;
-  const filters = `<div class="wrapf" style="margin:16px 0">${["Todas", "Crítica", "Abierta", "En proceso"].map((c, i) => `<button class="chip ${i === 0 ? "on" : ""}" data-act="incidfilter" data-f="${c}">${c}</button>`).join("")}</div>`;
+  const reincid = INCID.filter(i => i.reps >= 2).sort((a, b) => b.reps - a.reps);
+  const deteriora = MANT_LOCAL.filter(m => m.tend === "subiendo").sort((a, b) => b.inc90 - a.inc90);
+  const lentos = MANT_PROV.filter(p => p.lento).sort((a, b) => b.tiempo - a.tiempo);
+  const chapuzas = INCID.filter(i => i.reabierta);
+  const stats = `<div class="grid g4">
+    ${stat({ lab: "Abiertas", icon: "wrench", val: String(openIncid().length), unit: openIncid().some(i => i.sev === "hi") ? "· 1 crítica" : "" })}
+    ${stat({ lab: "En proceso", icon: "clock", val: String(INCID.filter(i => i.estado === "En proceso").length) })}
+    ${stat({ lab: "Reincidencias", icon: "alert", val: String(reincid.length), unit: "averías repetidas" })}
+    ${stat({ lab: "Tiempo medio", icon: "clock", val: "1,8", unit: "días" })}</div>`;
+  const trendBadge = t => t === "subiendo" ? pill("↑ subiendo", "bad") : t === "bajando" ? pill("↓ bajando", "ok") : pill("estable");
+  const aDet = answerCard("¿Qué locales empiezan a deteriorarse?", `<div class="rows" style="margin:0 -18px -18px">${deteriora.map(m => `<div class="row"><span class="ic warn" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none">${ic("pin", 15)}</span><div class="grow"><div class="t1">${m.local}</div><div class="t2">${m.inc90} incidencias en 90 días</div></div>${trendBadge(m.tend)}</div>`).join("")}</div>`, { icon: "pin", sev: "warn" });
+  const aRep = answerCard("¿Qué averías se repiten?", reincid.length ? `<div class="rows" style="margin:0 -18px -18px">${reincid.map(i => `<div class="row"><span class="sev ${i.sev}"></span><div class="grow"><div class="t1">${i.titulo}</div><div class="t2">${i.local} · ${i.prov}</div></div><b class="tnum down">×${i.reps}</b></div>`).join("")}</div>` : `<div class="mut">Sin reincidencias.</div>`, { icon: "wrench", sev: "warn" });
+  const aProv = answerCard("¿Qué proveedor tarda demasiado?", `<div class="rows" style="margin:0 -18px -18px">${lentos.map(p => `<div class="row"><div class="grow"><div class="t1">${p.n}</div><div class="t2">${p.cat} · ${p.inc} intervenciones</div></div><b class="tnum down">${p.tiempo.toFixed(1).replace(".", ",")} d</b></div>`).join("")}</div>`, { icon: "clock", sev: "warn" });
+  const aChap = answerCard("¿Qué reparación fue una chapuza?", chapuzas.length ? `<div class="rows" style="margin:0 -18px -18px">${chapuzas.map(i => `<div class="row"><span class="ic bad" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none">${ic("alert", 15)}</span><div class="grow"><div class="t1">${i.titulo}</div><div class="t2">${i.local} · reapareció tras la reparación (${i.prov})</div></div></div>`).join("")}</div>` : `<div class="mut" style="padding:6px 0">Ninguna reapertura.</div>`, { icon: "alert", sev: chapuzas.length ? "crit" : "ok" });
+  const plan = card("Plan de prevención de Sara", `<div class="reco"><div class="rc">${ic("spark", 16)}</div><div class="grow"><b style="font-size:13.5px">Can Mateu y Girona concentran el 61% de las incidencias del trimestre</b><p class="mut" style="margin:4px 0 10px;font-size:12.5px">Sustituiría la cámara de Can Mateu (4ª reparación) y revisaría el datáfono de Girona a fondo (ya reabierto una vez con Redsys). Evita ~<b>800 €/año</b> en reparaciones recurrentes y cortes de servicio.</p><div class="wrapf"><button class="btn primary sm" data-act="approve-reco" data-txt="Plan de prevención preparado">Preparar plan</button><button class="btn ghost sm" data-act="go" data-view="compras">Pedir presupuestos</button></div></div></div>`);
+  const filters = `<div class="wrapf" style="margin:16px 0 12px">${["Todas", "Crítica", "Abierta", "En proceso"].map((c, i) => `<button class="chip ${i === 0 ? "on" : ""}" data-act="incidfilter" data-f="${c}">${c}</button>`).join("")}</div>`;
   const list = card("Incidencias", `<div class="rows" id="incidList" style="margin:0 -18px -18px">${INCID.map(i => incidRow(i)).join("")}</div>`, `<button class="btn primary sm" data-act="soon">${ic("plus", 14)} Nueva</button>`);
-  return stats + filters + list;
+  return stats + `<div class="grid g12" style="margin-top:16px">
+    <div class="c6">${aDet}</div><div class="c6">${aRep}</div>
+    <div class="c6">${aProv}</div><div class="c6">${aChap}</div>
+    <div class="c12">${plan}</div></div>` + filters + list;
 };
 function incidRow(i) {
   const kold = i.reps >= 3;
-  return `<div class="row"><span class="sev ${i.sev}"></span><div class="grow"><div class="t1">${i.titulo}</div><div class="t2">${ic("pin", 11)} ${i.local} · ${i.dias < 1 ? "hace horas" : Math.round(i.dias) + " días"} · ${i.resp}</div>${kold ? `<div class="meta" style="margin-top:5px;font-size:11.5px;color:var(--warning)">${ic("alert", 11)} ${i.reps}ª reparación en 8 meses — revisar sustitución</div>` : ""}</div>
+  return `<div class="row"><span class="sev ${i.sev}"></span><div class="grow"><div class="t1">${i.titulo}${i.reabierta ? ` ${pill("Reabierta", "bad")}` : ""}</div><div class="t2">${ic("pin", 11)} ${i.local} · ${i.dias < 1 ? "hace horas" : Math.round(i.dias) + " días"} · ${i.resp}</div>${kold ? `<div class="meta" style="margin-top:5px;font-size:11.5px;color:var(--warning)">${ic("alert", 11)} ${i.reps}ª reparación en 8 meses — revisar sustitución</div>` : ""}</div>
     <button class="btn ghost sm" data-act="incid" data-id="${i.id}">Ver</button>
     ${i.estado === "Abierta" ? pill("Abierta", "bad") : i.estado === "En proceso" ? pill("En proceso", "warn") : pill("Resuelta", "ok")}
     <button class="btn ghost sm" data-act="incid-next" data-id="${i.id}">${i.estado === "Abierta" ? "Tomar" : "Cerrar"}</button></div>`;
