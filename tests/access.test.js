@@ -231,11 +231,23 @@ describe("transición · tablas todavía no existentes", () => {
   });
 });
 
-describe("no se importa desde server.js (no cableado)", () => {
-  test("server.js no importa el núcleo de acceso", () => {
-    const src = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
-    assert.ok(!/core\/access/.test(src));
-    assert.ok(!/core\/flags/.test(src));
-    assert.ok(!/PERMISOS_V2/.test(src));
+describe("arquitectura del wiring (It4): server.js delega, no accede al núcleo directamente", () => {
+  const src = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
+  test("server.js NO importa directamente el núcleo de acceso ni scope", () => {
+    assert.ok(!/from\s+["'][^"']*core\/access\.js["']/.test(src), "no debe importar core/access.js");
+    assert.ok(!/from\s+["'][^"']*core\/scope\.js["']/.test(src), "no debe importar core/scope.js");
+  });
+  test("server.js NO usa funciones internas de autorización (encapsuladas en el servicio)", () => {
+    for (const fn of ["buildAccessContext", "authorizeEstablecimiento", "loadUserEstablecimientos", "canAccessEstablecimiento", "resolveAllowedLocalTexts", "hasLegacyAccess"]) {
+      assert.ok(!new RegExp("\\b" + fn + "\\b").test(src), `server.js no debe usar ${fn} directamente`);
+    }
+  });
+  test("server.js SÍ se limita a consultar el flag y delegar en el servicio de Mantenimiento", () => {
+    assert.ok(/permisosV2Enabled/.test(src), "debe consultar el flag");
+    assert.ok(/listMaintenanceIssues|createMaintenanceIssue|updateMaintenanceIssueStatus/.test(src), "debe delegar en el servicio");
+  });
+  test("la lógica de autorización de Mantenimiento vive en el servicio", () => {
+    const svc = fs.readFileSync(new URL("../src/modules/mantenimiento/maintenance.service.js", import.meta.url), "utf8");
+    assert.ok(/buildAccessContext|resolveAllowedLocalTexts|canAccessEstablecimiento/.test(svc), "el servicio contiene la lógica de acceso");
   });
 });
