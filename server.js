@@ -17,6 +17,7 @@ import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllow
 import { permisosV2Enabled } from "./src/core/flags.js";
 import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
+import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 
 dotenv.config();
 
@@ -1937,6 +1938,14 @@ app.get("/api/kpi", requireAuth(["direccion", "contabilidad"]), async (req, res)
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+// Dashboard ejecutivo — agregado de datos reales (foto del día + "necesita tu atención").
+app.get("/api/dashboard", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res, next) => {
+  try {
+    const data = await getDashboard({ get: dbGet, all: dbAll }, { whatsappConnected: isReady() });
+    res.json({ ok: true, data });
+  } catch (e) { next(e); }
 });
 
 // RR.HH.
