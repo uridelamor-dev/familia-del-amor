@@ -55,6 +55,7 @@ async function gatherSignals(x, { hoy, local }) {
     incWorkers, plantilla, checkinsMes,                        // equipo
     churn, mejores,                                             // clientes
     cand, facPend,                                              // pendientes
+    serieRes, sinResp,                                          // serie de reservas + reseñas sin responder
   ] = await mapLimit([
     // — cómo fue ayer —
     () => safe(() => x.get(`SELECT COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia = ?${lf}`, [ayer, ...lp]), null),
@@ -92,6 +93,10 @@ async function gatherSignals(x, { hoy, local }) {
     // — pendientes —
     () => safe(() => x.get(`SELECT COUNT(*)::int n, MIN(creado_en) AS oldest FROM hr_applications WHERE estado = 'nuevo'`, []), null),
     () => safe(() => x.get(`SELECT COUNT(*)::int n FROM facturas_pendientes`, []), null),
+    // — serie de reservas por día (últimos 30) para el gráfico de actividad —
+    () => safe(() => x.all(`SELECT dia, COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia::date >= ?::date AND dia::date <= ?::date${lf} GROUP BY dia ORDER BY dia`, [addDays(hoy, -29), hoy, ...lp]), []),
+    // — reseñas sin responder (para la tarjeta de reputación) —
+    () => safe(() => x.get(`SELECT COUNT(*)::int n FROM google_reviews WHERE (reply IS NULL OR reply = '')`, []), null),
   ], 4);
 
   // Correlación de la peor reseña reciente con la carga/incidencias de ese día.
@@ -125,7 +130,7 @@ async function gatherSignals(x, { hoy, local }) {
     resAgg, low, lowCorr, repLocal,
     porPagar, acreedores, masAntigua, gastoLocal, risers,
     incWorkers, plantilla, checkinsMes,
-    churn, mejores, cand, facPend, radar,
+    churn, mejores, cand, facPend, radar, serieRes, sinResp,
   };
 }
 
@@ -314,7 +319,8 @@ export async function getDashboard(x, { now, whatsappConnected = null, local = n
       mejores: (s.mejores || []).map((c) => ({ nombre: c.nombre, telefono: c.telefono, visitas: c.visitas, ultima: String(c.ultima || "").slice(0, 10), local: c.local })),
     },
     reputacionLocales: (s.repLocal || []).map((r) => ({ local: r.location_name, media: r.media, n: r.n })),
-    resenas: s.resAgg ? { media: s.resAgg.media, total: s.resAgg.total } : { media: 0, total: 0 },
+    resenas: { media: s.resAgg ? s.resAgg.media : 0, total: s.resAgg ? s.resAgg.total : 0, sinResponder: s.sinResp ? s.sinResp.n : 0 },
+    serieReservas: (s.serieRes || []).map((r) => ({ dia: String(r.dia).slice(0, 10), n: r.n, personas: r.personas })),
     mantenimiento: { abiertas: s.openInc ? s.openInc.n : 0 },
     whatsapp: { connected: whatsappConnected },
   };
