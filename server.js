@@ -480,10 +480,15 @@ async function initDB() {
     );
 
     // Modelo de establecimientos (Iteración 2): esquema ADITIVO e idempotente + catálogo canónico.
-    // No hace backfill de datos (eso es un paso manual y explícito: scripts/migrate-establecimientos.js).
-    const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
-    await ensureEstablecimientosSchema(schemaX);
-    await seedCatalogo(schemaX);
+    // NO fatal: si algo fallara aquí, el resto del ERP debe seguir arrancando (con PERMISOS_V2
+    // ausente nadie lee estas tablas). No hace backfill de datos (paso manual y explícito).
+    try {
+      const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
+      await ensureEstablecimientosSchema(schemaX);
+      await seedCatalogo(schemaX);
+    } catch (e) {
+      console.error("[DB] Aviso: esquema de establecimientos no inicializado (no fatal):", e.message);
+    }
 
     console.log("[DB] Esquema PostgreSQL inicializado");
   } finally {
@@ -1999,9 +2004,11 @@ app.post("/api/hr/applications", (req, res, next) => {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
   // Validar el CONTENIDO del CV (magic bytes) y publicarlo en public/uploads SOLO si es válido.
+  // Si NO es válido, se descarta el adjunto pero la candidatura SÍ se guarda (no perdemos al
+  // candidato). Seguridad preservada: nunca se publica un archivo cuyo contenido no coincida.
   if (req.file) {
     const fin = finalizeCvUpload({ tmpPath: req.file.path, filename: req.file.filename, originalname: req.file.originalname, publicDir: uploadsDir });
-    if (!fin.ok) return res.status(400).json({ ok: false, error: "El CV no es un archivo válido (PDF, DOCX, JPG o PNG)." });
+    if (!fin.ok) { console.warn("[HR] CV descartado (contenido no válido):", req.file.originalname); req.file = null; }
   }
   const cv_url = req.file ? `/uploads/${req.file.filename}` : "";
   const creado_en = new Date().toISOString();
