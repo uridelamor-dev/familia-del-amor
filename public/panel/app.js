@@ -34,17 +34,24 @@ async function apiSend(method, path, body) {
 }
 
 const NAV = [
-  { g: "Resumen", items: [["dashboard", "Dashboard", "📊", null, ["direccion", "encargado", "contabilidad"]]] },
-  { g: "Módulos", items: [
-    ["reservas", "Reservas", "🍽️", null, ["direccion", "encargado"]],
-    ["mantenimiento", "Mantenimiento", "🔧", null, ["direccion", "encargado"]],
-    ["clientes", "Clientes", "👥", null, ["direccion"]],
-    ["reviews", "Reseñas", "⭐", null, ["direccion", "encargado", "contabilidad"]],
-    ["campanas", "Campañas", "📣", null, ["direccion"]],
-    ["rrhh", "RR. HH.", "🗂️", null, ["direccion"]],
-    ["facturas", "Facturas", "🧾", null, ["direccion", "contabilidad"]],
+  { g: "Operación", items: [
+    ["dashboard", "Dashboard", "dash", ["direccion", "encargado", "contabilidad"]],
+    ["reservas", "Reservas", "cal", ["direccion", "encargado"]],
+    ["mantenimiento", "Mantenimiento", "wrench", ["direccion", "encargado"]],
+    ["clientes", "Clientes", "users", ["direccion"]],
   ] },
-  { g: "Sistema", items: [["whatsapp", "WhatsApp", "💬", null, ["direccion", "encargado"]], ["usuarios", "Usuarios", "👤", null, ["direccion"]]] },
+  { g: "Gestión", items: [
+    ["rrhh", "RR. HH.", "idcard", ["direccion"]],
+    ["facturas", "Facturas", "receipt", ["direccion", "contabilidad"]],
+    ["reviews", "Reseñas", "star", ["direccion", "encargado", "contabilidad"]],
+    ["campanas", "Campañas", "mkt", ["direccion"]],
+  ] },
+  { g: "Inteligencia", items: [
+    ["whatsapp", "WhatsApp", "chat", ["direccion", "encargado"]],
+  ] },
+  { g: "Sistema", items: [
+    ["usuarios", "Usuarios", "cog", ["direccion"]],
+  ] },
 ];
 const TITLES = { dashboard: "Dashboard", reservas: "Reservas", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", whatsapp: "WhatsApp", usuarios: "Usuarios" };
 const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad"], campanas: ["direccion"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"] };
@@ -53,37 +60,45 @@ let USER = null, CURRENT = "dashboard";
 
 function setTheme(v) { const r = document.documentElement; if (v === "auto") { r.removeAttribute("data-theme"); localStorage.removeItem("panelTheme"); } else { r.setAttribute("data-theme", v); localStorage.setItem("panelTheme", v); } }
 function isDark() { const r = document.documentElement; return r.getAttribute("data-theme") === "dark" || (!r.getAttribute("data-theme") && matchMedia("(prefers-color-scheme:dark)").matches); }
-function toggleTheme() { setTheme(isDark() ? "light" : "dark"); const b = document.getElementById("themeBtn"); if (b) b.textContent = isDark() ? "🌙" : "☀️"; }
+function toggleTheme() { setTheme(isDark() ? "light" : "dark"); const b = document.getElementById("themeBtn"); if (b) b.innerHTML = ic(isDark() ? "moon" : "sun"); }
 (function initTheme() { const t = localStorage.getItem("panelTheme"); if (t) document.documentElement.setAttribute("data-theme", t); })();
 
 function shell(active, bodyHtml) {
-  const initials = (USER.nombre || USER.username || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
+  const uname = USER.nombre || USER.username || "Usuario";
+  const initials = uname.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   const nav = NAV.map((grp) => {
-    const items = grp.items.filter(([, , , , roles]) => !roles || roles.includes(USER.rol));
+    const items = grp.items.filter(([, , , roles]) => !roles || roles.includes(USER.rol));
     if (!items.length) return "";
-    return `<div class="ngt">${grp.g}</div>` + items.map(([id, label, ico]) =>
-      `<a class="navi ${id === active ? "active" : ""}" data-view="${id}">
-        <span class="ico">${ico}</span><span>${label}</span></a>`).join("");
+    return `<div class="ngt">${grp.g}</div>` + items.map(([id, label, icon]) => {
+      const badge = (id === "dashboard" && DASH_CONCERNS > 0) ? `<span class="badge">${DASH_CONCERNS}</span>` : "";
+      return `<button class="navi ${id === active ? "active" : ""}" data-view="${id}"><span class="ico">${ic(icon)}</span><span>${label}</span>${badge}</button>`;
+    }).join("");
   }).join("");
-  return `<div class="app">
+  const estabLbl = DASH_LOCAL ? nombreCortoLocal(DASH_LOCAL) : "Todos los establecimientos";
+  const seg = ["7d", "14d", "mes"].map((p) => `<button class="${PERIOD === p ? "on" : ""}" data-act="period" data-p="${p}">${p === "7d" ? "7 días" : p === "14d" ? "14 días" : "Mes"}</button>`).join("");
+  return `<div class="app${COLLAPSED ? " collapsed" : ""}" id="appEl">
     <aside class="sidebar">
-      <div class="brand"><div class="logo">FA</div><div><b>Familia del Amor</b><span>Panel interno</span></div></div>
+      <div class="brand"><div class="logo">FA</div><div class="bt"><b>Familia del Amor</b><span>Sistema operativo interno</span></div></div>
       <nav class="nav">${nav}</nav>
-      <div class="sbf"><a class="navi" href="/direccion.html"><span class="ico">⚙️</span><span>Ajustes avanzados</span><span class="ext">↗</span></a></div>
+      <div class="sbf"><div class="u"><span class="avatar">${esc(initials)}</span><div class="txt"><b>${esc(uname)}</b><span>${esc(cap(USER.rol || ""))} · acceso ${USER.rol === "direccion" ? "global" : "de módulo"}</span></div></div>
+        <a class="ext" href="/direccion.html">${ic("cog", 16)}<span class="txt">Ajustes avanzados</span></a></div>
     </aside>
     <div class="main">
       <header class="topbar">
-        <button class="iconbtn menu" data-act="menu" aria-label="Abrir menú">☰</button>
-        <div style="font-weight:680;letter-spacing:-.01em">${TITLES[active] || "Panel"}</div>
+        <button class="iconbtn" data-act="mtoggle" aria-label="Menú">${ic("menu")}</button>
+        <button class="pick" data-act="estabmenu" title="Cambiar establecimiento"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span><span class="car">▾</span></button>
+        <div class="seg hidesm">${seg}</div>
+        <button class="sbtn hidesm" data-act="cmdk">${ic("search", 16)}<span>Buscar o ir a…</span><span class="kbd">⌘K</span></button>
         <div class="spacer"></div>
-        <span id="waPill" class="pill">WhatsApp…</span>
-        <button class="iconbtn" id="themeBtn" data-act="theme" title="Cambiar tema" aria-label="Cambiar tema">${isDark() ? "🌙" : "☀️"}</button>
-        <span class="avatar" title="${esc(USER.nombre || USER.username)}">${esc(initials)}</span>
-        <button class="iconbtn" data-act="logout" title="Salir" aria-label="Salir">⎋</button>
+        <span id="waPill" class="gstat"><span class="sdot st-off"></span>WhatsApp…</span>
+        <button class="iconbtn bell hidesm" data-view="dashboard" aria-label="Alertas">${ic("bell")}${DASH_CONCERNS ? `<span class="n">${DASH_CONCERNS}</span>` : ""}</button>
+        <button class="iconbtn" id="themeBtn" data-act="theme" aria-label="Cambiar tema">${ic(isDark() ? "moon" : "sun")}</button>
+        <span class="avatar" title="${esc(uname)}">${esc(initials)}</span>
+        <button class="iconbtn" data-act="logout" title="Cerrar sesión" aria-label="Cerrar sesión">${ic("exit")}</button>
       </header>
-      <main class="content"><div class="wrap" id="view">${bodyHtml}</div></main>
+      <main class="content"><div class="wrap enter" id="view">${bodyHtml}</div></main>
     </div>
-    <div class="navov" data-act="navclose" aria-hidden="true"></div></div>`;
+    <div class="mscrim" data-act="mclose"></div></div>`;
 }
 function skeleton() {
   return `<div class="ph"><div class="sk" style="width:120px;height:12px;margin-bottom:10px"></div><div class="sk" style="width:280px;height:26px"></div></div>
@@ -96,7 +111,7 @@ function stat(lab, icon, val, unit, sub) {
     <div class="val tnum">${val}${unit ? ` <small>${unit}</small>` : ""}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
 }
 async function refreshWaPill() {
-  try { const r = await fetch("/api/whatsapp/status", { headers: { Authorization: "Bearer " + token() } }); const j = await r.json(); const p = document.getElementById("waPill"); if (!p) return; const ok = j && j.connected; p.className = "pill " + (ok ? "ok" : "bad"); p.textContent = ok ? "WhatsApp OK" : "WhatsApp caído"; } catch { /* opcional */ }
+  try { const r = await fetch("/api/whatsapp/status", { headers: { Authorization: "Bearer " + token() } }); const j = await r.json(); const p = document.getElementById("waPill"); if (!p) return; const ok = j && j.connected; p.innerHTML = `<span class="sdot ${ok ? "st-ok" : "st-crit"}"></span>${ok ? "Sara conectada" : "Sara caída"}`; } catch { /* opcional */ }
 }
 
 // ── Modal ligero ─────────────────────────────────────────────────────────────
@@ -128,77 +143,156 @@ function promptModal(title, { placeholder = "", type = "text", ok = "Guardar" } 
   });
 }
 
-// ════════════════════════ VISTA: DASHBOARD (periódico ejecutivo) ════════════════════════
-let DASH_LOCAL = "";
+// ════════════════════════ ESTADO GLOBAL + COMPONENTES (lenguaje del prototipo) ════════════════════════
+let DASH_LOCAL = "", COLLAPSED = false, PERIOD = "7d", DASH_CONCERNS = 0;
 const nombreCorto = (s) => String(s || "").split(" ")[0];
+const nombreCortoLocal = (l) => String(l || "").replace(/^La Tapeta\s*[-·]\s*/i, "").trim() || l;
 const GO_VIEW = { whatsapp: "whatsapp", mantenimiento: "mantenimiento", clientes: "clientes", facturas: "facturas", rrhh: "rrhh", marketing: "reviews", reservas: "reservas", reviews: "reviews", campanas: "campanas" };
-const CICO = { whatsapp: "💬", mantenimiento: "🔧", facturas: "💶", resenas: "⭐", clientes: "👥", proveedores: "🚚", rrhh: "🧑‍🍳" };
-const SEVLAB = { crit: "Crítico", imp: "Importante", info: "A vigilar" };
+const ICN_TIPO = { whatsapp: "chat", mantenimiento: "wrench", facturas: "receipt", resenas: "star", clientes: "users", proveedores: "receipt", rrhh: "idcard" };
 function saludoHora() { const h = new Date().getHours(); return h < 6 ? "Buenas noches" : h < 13 ? "Buenos días" : h < 20 ? "Buenas tardes" : "Buenas noches"; }
+const signed2 = (v) => (v >= 0 ? "+" : "−") + Math.abs(Number(v) || 0).toFixed(1) + "%";
+
+// ── Iconos SVG (sustituyen a los emojis) ──
+const ICONS = {
+  dash: '<path d="M4 13h7V4H4zM13 20h7v-9h-7zM13 4v5h7V4zM4 20h7v-5H4z"/>',
+  cal: '<rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v3M16 3v3"/>',
+  wrench: '<path d="M15 6.5a3.8 3.8 0 0 0-5 5L4 17.5V20h2.5l6-6a3.8 3.8 0 0 0 5-5l-2.4 2.4-2-2z"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 6M15.5 20a5 5 0 0 1 5-3.4"/>',
+  idcard: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="11" r="2.2"/><path d="M13.5 9.5h4M13.5 13h4M5 15.5a3.5 3.5 0 0 1 7 0"/>',
+  receipt: '<path d="M6 3h12v18l-2.5-1.6L13 21l-2.5-1.6L8 21l-2-1.6zM9.5 8h5M9.5 12h5"/>',
+  star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
+  mkt: '<path d="M4 10v4h3l6 4V6l-6 4zM17 9.5a3 3 0 0 1 0 5"/>',
+  chat: '<path d="M4 5h16v11H9l-4 3z"/><path d="M8 9.5h8M8 12.5h5"/>',
+  cog: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M4.5 6.5l2.1 2.1M17.4 17.4l2.1 2.1M3 12h3M18 12h3M4.5 17.5l2.1-2.1M17.4 6.6l2.1-2.1"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  bell: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6M9.5 20a2.5 2.5 0 0 0 5 0"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
+  moon: '<path d="M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10z"/>',
+  euro: '<path d="M17 6.5a6 6 0 1 0 0 11M5 10h8M5 14h8"/>',
+  alert: '<path d="M12 4l9 16H3zM12 10v4M12 17h.01"/>',
+  exit: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M9 12h11M16.5 8.5L20 12l-3.5 3.5"/>',
+};
+function ic(name, size = 18) { return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICONS.dash}</svg>`; }
+
+// ── Componentes ──
+function deltaEl(v) { if (v == null || isNaN(v)) return ""; const up = v >= 0; return `<span class="delta ${Math.abs(v) < 0.5 ? "flat" : up ? "up" : "down"}">${up ? "↑" : "↓"} ${signed2(v)}</span>`; }
+function kpi({ lab, icon, val, unit, delta }) {
+  return `<div class="card stat"><div class="lab"><span class="ci">${ic(icon, 15)}</span>${lab}</div><div class="val tnum">${val}${unit ? ` <small>${unit}</small>` : ""}</div>${delta != null ? deltaEl(delta) : ""}</div>`;
+}
+function estadoState(e) {
+  if (e.incidenciasAbiertas >= 3) return { k: "crit", t: "Requiere atención" };
+  if (e.incidenciasAbiertas > 0) return { k: "warn", t: "Con incidencias" };
+  if (e.hoyPersonas > 0) return { k: "ok", t: "Activo hoy" };
+  return { k: "off", t: "Sin actividad" };
+}
+function attRow(c) {
+  const sevMap = { crit: ["bad", "Crítico"], imp: ["warn", "Importante"], info: ["info", "A vigilar"] };
+  const [k, lab] = sevMap[c.sev] || ["info", "A vigilar"]; const view = GO_VIEW[c.go];
+  return `<div class="att"><div class="ic ${k}">${ic(ICN_TIPO[c.tipo] || "alert", 18)}</div><div class="grow"><b>${c.titulo}</b><p>${c.decision || c.narrativa}</p><div class="meta"><span>${lab}</span></div></div>${view ? `<button class="btn sm" data-view="${view}">Abrir</button>` : ""}</div>`;
+}
+// Gráfico de área SVG (línea + relleno). data = array de números.
+function area(data, { h = 120 } = {}) {
+  const vals = (data || []).map((v) => Number(v) || 0); const w = 640;
+  if (vals.length < 2) return `<div class="mut" style="height:${h}px;display:grid;place-items:center;font-size:13px">Sin datos suficientes para el gráfico</div>`;
+  const max = Math.max(...vals, 1), min = Math.min(...vals, 0), rng = (max - min) || 1;
+  const X = (i) => (i / (vals.length - 1)) * w, Y = (v) => h - 8 - ((v - min) / rng) * (h - 16);
+  let d = ""; vals.forEach((v, i) => { d += (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1) + " "; });
+  const gid = "g" + Math.abs(vals.reduce((s, v, i) => s + v * (i + 1), 7) | 0) % 100000;
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" width="100%" height="${h}" style="display:block"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--brand)" stop-opacity=".22"/><stop offset="1" stop-color="var(--brand)" stop-opacity="0"/></linearGradient></defs><path d="${d}L ${w} ${h} L 0 ${h} Z" fill="url(#${gid})"/><path d="${d}" fill="none" stroke="var(--brand)" stroke-width="2" vector-effect="non-scaling-stroke"/><circle class="ep" cx="${X(vals.length - 1).toFixed(1)}" cy="${Y(vals[vals.length - 1]).toFixed(1)}" r="3.5"/></svg>`;
+}
+// Barras verticales. items = [{label, value}].
+function bars(items, { fmt = (v) => num(v) } = {}) {
+  const list = items || []; if (!list.length) return `<div class="mut" style="padding:10px 0">Sin datos</div>`;
+  const max = Math.max(...list.map((i) => i.value), 1);
+  return `<div style="display:flex;align-items:flex-end;gap:10px;height:150px">${list.map((it) => `<div class="barcol"><span class="tnum" style="font-size:11px;font-weight:600">${fmt(it.value)}</span><span style="width:100%;flex:1;display:flex;align-items:flex-end"><i style="display:block;width:100%;height:${Math.round((it.value / max) * 100)}%;min-height:3px;border-radius:6px 6px 0 0;background:linear-gradient(180deg,var(--brand),var(--brand2))"></i></span><span class="mut" style="font-size:11px;text-align:center;line-height:1.2">${esc(it.label)}</span></div>`).join("")}</div>`;
+}
+
+// ── Paleta de comandos (⌘K) ──
+let CMD_ITEMS = [], CMD_SEL = 0;
+function allCmd() {
+  const items = [];
+  NAV.forEach((grp) => grp.items.forEach(([id, label, icon, roles]) => { if (!roles || roles.includes(USER.rol)) items.push({ t: label, g: "Ir a", icon, view: id }); }));
+  const actions = [
+    ["Nueva reserva", "cal", ["direccion", "encargado"], () => { go("reservas"); setTimeout(openNuevaReserva, 80); }],
+    ["Nueva incidencia", "wrench", ["direccion", "encargado"], () => { go("mantenimiento"); setTimeout(openNuevaIncidencia, 80); }],
+    ["Actualizar reseñas", "star", ["direccion"], () => { go("reviews"); setTimeout(refreshReviews, 80); }],
+    ["Cambiar tema", "sun", null, () => toggleTheme()],
+  ];
+  actions.forEach(([t, icon, roles, fn]) => { if (!roles || roles.includes(USER.rol)) items.push({ t, g: "Acciones", icon, fn }); });
+  return items;
+}
+function openCmd() { const w = document.getElementById("cmdk"), o = document.getElementById("ovl"); if (!w) return; o.classList.add("open"); w.classList.add("open"); const inp = document.getElementById("cmdin"); inp.value = ""; fillCmd(""); setTimeout(() => inp.focus(), 30); }
+function closeCmd() { const w = document.getElementById("cmdk"), o = document.getElementById("ovl"); if (w) w.classList.remove("open"); if (o) o.classList.remove("open"); }
+function fillCmd(q) {
+  q = (q || "").toLowerCase().trim();
+  CMD_ITEMS = allCmd().filter((c) => !q || c.t.toLowerCase().includes(q) || c.g.toLowerCase().includes(q)); CMD_SEL = 0;
+  const groups = {}; CMD_ITEMS.forEach((c, i) => { (groups[c.g] = groups[c.g] || []).push({ ...c, i }); });
+  const html = Object.entries(groups).map(([g, arr]) => `<div class="cg">${g}</div>` + arr.map((c) => `<button class="cr ${c.i === CMD_SEL ? "sel" : ""}" data-cmd="${c.i}"><span class="ci2">${ic(c.icon, 16)}</span><span>${esc(c.t)}</span></button>`).join("")).join("");
+  document.getElementById("cmdl").innerHTML = html || `<div class="cg">Sin resultados</div>`;
+}
+function cmdMove(dir) { if (!CMD_ITEMS.length) return; CMD_SEL = (CMD_SEL + dir + CMD_ITEMS.length) % CMD_ITEMS.length; document.querySelectorAll("#cmdl .cr").forEach((el) => el.classList.toggle("sel", +el.getAttribute("data-cmd") === CMD_SEL)); const sel = document.querySelector("#cmdl .cr.sel"); if (sel) sel.scrollIntoView({ block: "nearest" }); }
+function runCmd(i) { const c = CMD_ITEMS[i]; if (!c) return; closeCmd(); if (c.view) go(c.view); else if (c.fn) c.fn(); }
+
+// ── Drawer lateral (selector de establecimiento) ──
+function openDrawer(title, bodyHtml) { document.getElementById("drawerTitle").textContent = title; document.getElementById("drawerBody").innerHTML = bodyHtml; document.getElementById("ovl").classList.add("open"); document.getElementById("drawer").classList.add("open"); }
+function closeDrawer() { const d = document.getElementById("drawer"), o = document.getElementById("ovl"); if (d) d.classList.remove("open"); if (o) o.classList.remove("open"); }
+function openEstabMenu() {
+  const opts = [["", "Todos los establecimientos"]].concat(LOCALES.map((l) => [l, l]));
+  openDrawer("Establecimiento", `<div class="rows">${opts.map(([v, l]) => `<button class="row" data-act="estab-pick" data-local="${esc(v)}" style="width:100%;text-align:left"><span class="sdot ${DASH_LOCAL === v ? "st-ok" : "st-off"}"></span><div class="grow"><div class="t1">${esc(l)}</div></div>${DASH_LOCAL === v ? '<span class="pill brand">Actual</span>' : ""}</button>`).join("")}</div>`);
+}
+
+// ════════════════════════ VISTA: DASHBOARD (ejecutivo) ════════════════════════
 function renderDashboard(d) {
   const localName = d.scope && d.scope.local;
-  const selector = `<div class="chips">${['<button class="chip ' + (!DASH_LOCAL ? "on" : "") + '" data-act="dash-local" data-local="">Todos</button>'].concat(LOCALES.map((l) => `<button class="chip ${DASH_LOCAL === l ? "on" : ""}" data-act="dash-local" data-local="${esc(l)}">${esc(l)}</button>`)).join("")}</div>`;
-  // ── Portada: Sara da su lectura del día (veredicto primero); ayer/hoy como contexto ──
+  DASH_CONCERNS = (d.preocupaciones || []).length;
+  // ── Cabecera ejecutiva ──
+  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${localName ? "Estado de <b>" + esc(localName) + "</b>" : "El estado de todo el grupo, de un vistazo."} · ${fechaLarga(d.fecha)}</div></div><div class="acts"><button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
+  // ── Sara: veredicto del día ──
   const contexto = [d.ayer && d.ayer.disponible ? d.ayer.texto : "", d.hoy && d.hoy.disponible ? d.hoy.texto : ""].filter(Boolean).join(" ");
-  const hero = `<div class="hero">
-    <div class="sarahead"><span class="saraface">S</span><div><div class="sname">Sara · dirección de operaciones</div><div class="mut" style="font-size:12.5px">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""} · ${fechaLarga(d.fecha)}${localName ? " · <b>" + esc(localName) + "</b>" : ""}</div></div></div>
-    <p class="lead" style="margin:16px 0 0">${d.titular || contexto || "Aún sin datos suficientes para hoy."}</p>
-    ${contexto ? `<p class="context ${d.hoy && d.hoy.alerta ? "warn" : ""}">${contexto}</p>` : ""}</div>`;
-  // ── Lo que me preocupa — Sara razona y decide ──
+  const sara = `<div class="card hero" style="margin-bottom:16px"><div style="display:flex;gap:13px;align-items:flex-start"><span class="avatar" style="width:40px;height:40px;border-radius:12px">S</span><div style="flex:1;min-width:0"><b style="font-size:14px">Sara · dirección de operaciones</b><p style="font-size:18px;line-height:1.5;margin:8px 0 0;font-weight:500;letter-spacing:-.01em">${d.titular || contexto || "Sin datos suficientes para hoy."}</p>${contexto ? `<p class="mut" style="font-size:13px;margin:10px 0 0;line-height:1.6">${contexto}</p>` : ""}</div></div></div>`;
+  // ── 4 KPIs reales ──
+  const hoyN = (d.hoy && d.hoy.hoy) || {};
+  const nCrit = (d.preocupaciones || []).filter((c) => c.tipo === "mantenimiento" && c.sev === "crit").length;
+  const kpis = `<div class="grid g4">${kpi({ lab: "Reservas hoy", icon: "cal", val: num(hoyN.n || 0), delta: d.ayer && d.ayer.delta })}${kpi({ lab: "Comensales hoy", icon: "users", val: num(hoyN.personas || 0) })}${kpi({ lab: "Mantenim. abierto", icon: "wrench", val: num((d.mantenimiento && d.mantenimiento.abiertas) || 0), unit: nCrit ? `· ${nCrit} crítica${nCrit === 1 ? "" : "s"}` : "" })}${kpi({ lab: "Por pagar", icon: "euro", val: eur((d.dinero && d.dinero.porPagar && d.dinero.porPagar.total) || 0) })}</div>`;
+
+  // ── Actividad (gráfico real de reservas) ──
+  const serie = d.serieReservas || []; const win = PERIOD === "mes" ? 30 : PERIOD === "14d" ? 14 : 7;
+  const slice = serie.slice(-win); const serieVals = slice.map((x) => x.personas || x.n || 0);
+  const totalPeriodo = slice.reduce((s, x) => s + (x.n || 0), 0);
+  const winLbl = PERIOD === "mes" ? "últimos 30 días" : PERIOD === "14d" ? "últimos 14 días" : "últimos 7 días";
+  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas</h3><span class="pill">${winLbl}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas en ${winLbl}</div></div><div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y ticket medio<br><span class="hl">al conectar Ágora</span></div></div>${area(serieVals, { h: 120 })}</div>`;
+
+  // ── Gasto del mes (barra apilada real) ──
+  const gl = (d.dinero && d.dinero.gastoLocal) || []; const gtot = gl.reduce((s, g) => s + (g.actual || 0), 0);
+  const PAL = ["var(--info)", "var(--warning)", "#8A5A9B", "var(--brand)", "var(--success)", "#B5713A", "#5B8A72"];
+  const gasto = `<div class="card c4"><div class="ch"><h3>Gasto del mes</h3></div><div class="big tnum">${eur(gtot)}</div><div class="mut" style="font-size:12px;margin:2px 0 12px">${gl.length} establecimiento${gl.length === 1 ? "" : "s"}</div>${gl.length ? `<div class="mbar">${gl.map((g, i) => `<span style="width:${gtot ? Math.round(g.actual / gtot * 100) : 0}%;background:${PAL[i % PAL.length]}"></span>`).join("")}</div><div class="rows" style="margin-top:10px">${gl.slice(0, 4).map((g, i) => `<div class="row" style="padding:8px 0;border-top:0"><span class="sdot" style="background:${PAL[i % PAL.length]}"></span><div class="grow"><div class="t1" style="font-size:12.5px">${esc(nombreCortoLocal(g.local))}</div></div><b class="tnum" style="font-size:12.5px">${eur(g.actual)}</b></div>`).join("")}</div>` : `<div class="mut">Sin gasto registrado este mes.</div>`}<div class="pendingblock" style="margin-top:14px;padding:12px 14px">Margen y coste de personal: <b>al conectar Ágora/Skello</b>.</div></div>`;
+
+  // ── Necesita tu atención (preocupaciones reales) ──
   const concerns = d.preocupaciones || [];
-  const concernsHtml = concerns.length ? concerns.map((c) => {
-    const view = GO_VIEW[c.go]; const btn = view ? `<button class="btn" data-view="${view}">Abrir ${TITLES[view] || view}</button>` : "";
-    return `<div class="concern ${c.sev}"><div class="stripe"></div><div class="body"><div class="ttl"><span class="cico">${CICO[c.tipo] || "•"}</span><span class="ttx">${c.titulo}</span><span class="sevtag ${c.sev}">${SEVLAB[c.sev] || ""}</span></div><p class="narr">${c.narrativa}</p><div class="decision"><span class="k">Yo haría</span><span class="d">${c.decision}</span></div>${c.impacto ? `<div class="impacto">💡 ${esc(c.impacto)}</div>` : ""}${btn ? `<div style="margin-top:12px">${btn}</div>` : ""}</div></div>`;
-  }).join("") : `<div class="card"><p class="lead" style="margin:0">${localName ? `Hoy <b>${esc(localName)}</b> está tranquilo. Nada urgente — buen día para cuidar el servicio y al equipo.` : `Hoy el grupo está tranquilo. Nada que apagar — buen momento para reconocer al equipo o preparar la semana.`}</p></div>`;
-  // ── Mi plan para hoy ──
-  const agenda = d.agenda || [];
-  const agendaHtml = agenda.length ? `<div class="card"><ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:12px">${agenda.map((a) => `<li><b>${esc(a.t)}</b><div class="mut" style="font-size:13px;margin-top:2px;color:var(--ink2)">${a.decision}</div></li>`).join("")}</ol></div>` : "";
+  const atencion = `<div class="card c7 p0"><div class="ch" style="padding:18px 18px 0"><h3>Necesita tu atención</h3>${concerns.length ? `<span class="pill ${nCrit || concerns.some((c) => c.sev === "crit") ? "bad" : "warn"}">${concerns.filter((c) => c.sev === "crit").length} crítica${concerns.filter((c) => c.sev === "crit").length === 1 ? "" : "s"}</span>` : '<span class="pill ok">Todo en orden</span>'}</div>${concerns.length ? `<div class="rows">${concerns.slice(0, 5).map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</div>`;
 
-  // ── Radar por local (solo vista de grupo): cada local como un negocio ──
+  // ── Estado por establecimiento (radar real) ──
   const radar = d.radarLocales || [];
-  let radarHtml = "";
-  if (!localName && radar.length) {
-    radarHtml = `<div class="section-title">Radar por establecimiento</div><div class="card p0"><div class="tblwrap"><table class="tbl radar"><thead><tr><th>Establecimiento</th><th class="r">Hoy (comensales)</th><th class="r">Incidencias abiertas</th><th class="r">Gasto del mes</th><th></th></tr></thead><tbody>${radar.map((r) => `<tr><td><b>${esc(r.local)}</b></td><td class="r tnum">${num(r.hoyPersonas)}</td><td class="r tnum">${r.incidenciasAbiertas > 0 ? `<span class="badge ${r.incidenciasAbiertas >= 3 ? "bad" : "warn"}">${r.incidenciasAbiertas}</span>` : "0"}</td><td class="r tnum">${eur(r.gastoMes)}</td><td class="r"><button class="btn sm" data-act="dash-local" data-local="${esc(r.local)}">Entrar</button></td></tr>`).join("")}</tbody></table></div></div>`;
-  }
+  const estado = `<div class="card c5 p0"><div class="ch" style="padding:18px 18px 0"><h3>Estado por establecimiento</h3></div>${radar.length ? `<div class="rows">${radar.map((e) => { const st = estadoState(e); return `<button class="row" data-act="estab-pick" data-local="${esc(e.local)}" style="width:100%;text-align:left"><span class="sdot st-${st.k}"></span><div class="grow"><div class="t1">${esc(nombreCortoLocal(e.local))}</div><div class="t2">${num(e.hoyPersonas)} comensales · ${e.incidenciasAbiertas} incid. · ${eur(e.gastoMes)}</div></div><span class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</span></button>`; }).join("")}</div>` : `<div style="padding:18px" class="mut">${localName ? "Estás viendo un solo establecimiento. Vuelve a «Todos» para comparar." : "Sin datos por establecimiento."}</div>`}</div>`;
 
-  // ── Dinero: lo que debo + gasto por local (honesto sobre ventas) ──
-  const din = d.dinero || {};
-  const pagar = din.porPagar || { total: 0, n: 0 };
-  const acre = din.acreedores || [];
-  const gl = din.gastoLocal || [];
-  const porPagarCard = `<div class="card"><div class="ch"><h3>Lo que debo ahora mismo</h3><button class="btn" data-view="facturas">Facturas</button></div>${pagar.n > 0
-    ? `<div style="display:flex;align-items:baseline;gap:10px"><div style="font-size:32px;font-weight:750" class="tnum">${eur(pagar.total)}</div><div class="mut">en ${num(pagar.n)} factura${pagar.n === 1 ? "" : "s"} sin pagar</div></div>${din.masAntigua ? `<div class="callout ${din.masAntigua.dias >= 75 ? "bad" : "warn"}" style="margin-top:10px">La más antigua: <b>${esc(din.masAntigua.proveedor || "—")}</b> · ${eur(din.masAntigua.total)} · lleva <b>${din.masAntigua.dias} días</b> sin pagar</div>` : ""}${acre.length ? `<div class="rows" style="margin-top:10px">${acre.slice(0, 4).map((a) => `<div class="row"><div class="grow"><div class="t1">${esc(a.proveedor)}</div><div class="t2">${a.n} factura${a.n === 1 ? "" : "s"}</div></div><b class="tnum">${eur(a.total)}</b></div>`).join("")}</div>` : ""}`
-    : `<p class="lead" style="margin:0">Estás al día: no hay facturas pendientes de pago${localName ? " en este local" : ""}.</p>`}</div>`;
-  const gastoCard = gl.length ? `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Gasto por establecimiento (este mes)</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Este mes</th><th class="r">vs mes pasado</th></tr></thead><tbody>${gl.map((g) => `<tr><td>${esc(g.local)}</td><td class="r tnum">${eur(g.actual)}</td><td class="r tnum">${g.delta == null ? "<span class='mut'>—</span>" : `<span style="color:${g.delta > 0 ? "var(--danger)" : "var(--brand)"}">${g.delta > 0 ? "+" : ""}${num(g.delta)}%</span>`}</td></tr>`).join("")}</tbody></table></div></div>` : "";
-  const dineroNota = `<div class="pendingblock"><b>Ventas y margen todavía no</b> — solo veo gasto. ${esc((din.sinFuente && din.sinFuente.nota) || "")}</div>`;
-  const dineroHtml = `<div class="section-title">El dinero</div><div class="grid g2">${porPagarCard}${gastoCard}</div>${dineroNota}`;
+  // ── Reseñas + Sara/WhatsApp ──
+  const rs = d.resenas || {};
+  const resenasCard = `<div class="card c4"><div class="ch"><h3>Reseñas</h3><button class="link" data-view="reviews">Gestionar →</button></div><div style="display:flex;gap:12px;align-items:baseline"><div class="big tnum" style="font-size:34px">${rs.total ? dec1(rs.media) : "—"}</div><div class="stars">${"★".repeat(Math.round(rs.media || 0))}</div></div><div class="mut" style="font-size:12px;margin-top:6px">${num(rs.total || 0)} reseñas (90 días)</div>${rs.sinResponder ? `<div style="margin-top:12px"><span class="pill warn">${rs.sinResponder} sin responder</span></div>` : ""}</div>`;
+  const waok = d.whatsapp && d.whatsapp.connected;
+  const saraCard = `<div class="card c8"><div class="ch"><h3>Sara · WhatsApp</h3><span class="pill ${waok ? "ok" : "bad"}">${waok ? "Conectada" : "Desconectada"}</span></div><p class="mut" style="margin:0">${waok ? "Sara atiende reservas y clientes por WhatsApp automáticamente." : "WhatsApp está caído: Sara no responde a los clientes. Reconéctala cuanto antes."}</p><div style="margin-top:12px"><button class="btn ${waok ? "" : "primary"}" data-view="whatsapp">${waok ? "Abrir WhatsApp" : "Reconectar ahora"}</button></div></div>`;
 
-  // ── Equipo: incidencias + check-ins (honesto sobre rendimiento) ──
-  const eq = d.equipo || {};
-  const inc = eq.incidencias || [];
-  const ck = eq.checkins;
-  const equipoInner = [];
-  if (ck && ck.plantilla > 0) { const pct = Math.round((ck.hechos / ck.plantilla) * 100); equipoInner.push(`<div class="card"><div class="ch"><h3>¿He escuchado al equipo?</h3><button class="btn" data-view="rrhh">RR.HH.</button></div><div style="display:flex;align-items:baseline;gap:10px"><div style="font-size:32px;font-weight:750" class="tnum">${ck.hechos}/${ck.plantilla}</div><div class="mut">check-ins este mes</div></div><div class="progress" style="margin-top:10px"><span style="width:${pct}%;background:${pct >= 80 ? "var(--brand)" : pct >= 40 ? "#c99a3a" : "var(--danger)"}"></span></div><div class="mut" style="font-size:12px;margin-top:6px">${ck.hechos >= ck.plantilla ? "Has hablado con todo el equipo. 👏" : `Te faltan ${ck.plantilla - ck.hechos} personas por escuchar.`}</div></div>`); }
-  if (inc.length) equipoInner.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Quién necesita atención</h3></div><div class="rows" style="margin-top:6px">${inc.map((w) => `<div class="row"><div class="grow"><div class="t1">${esc(w.nombre || "—")}</div><div class="t2">${w.local ? esc(w.local) : ""}</div></div><span class="badge ${w.c >= 2 ? "bad" : "warn"}">${w.c} incidencia${w.c === 1 ? "" : "s"}</span></div>`).join("")}</div></div>`);
-  const equipoHtml = (equipoInner.length || true) ? `<div class="section-title">El equipo</div>${equipoInner.length ? `<div class="grid g2">${equipoInner.join("")}</div>` : `<div class="card"><p class="lead" style="margin:0">Sin incidencias ni check-ins registrados${localName ? " en este local" : ""} este mes.</p></div>`}<div class="pendingblock"><b>Coste de personal, horas y ausencias todavía no</b> — ${esc((eq.sinFuente && eq.sinFuente.nota) || "")}</div>` : "";
+  // ── Clientes a llamar + Equipo (preserva la inteligencia real) ──
+  const cl = d.clientes || {}; const enfr = (cl.enfriando || []).slice(0, 4);
+  const clientesCard = enfr.length ? `<div class="card c6 p0"><div class="ch" style="padding:18px 18px 0"><h3>Clientes a los que llamar</h3><button class="link" data-view="clientes">Ver →</button></div><div class="rows">${enfr.map((c) => `<div class="row"><div class="ava">${esc((c.nombre || "?").slice(0, 1).toUpperCase())}</div><div class="grow"><div class="t1">${esc(c.nombre || "—")}</div><div class="t2">${c.visitas} reservas · última ${esc(c.ultima)}</div></div>${c.telefono ? `<a class="btn sm" href="tel:${esc(c.telefono)}">Llamar</a>` : ""}</div>`).join("")}</div></div>` : "";
+  const eq = d.equipo || {}; const einc = (eq.incidencias || []).slice(0, 3); const eck = eq.checkins;
+  const equipoCard = (einc.length || (eck && eck.plantilla)) ? `<div class="card c6"><div class="ch"><h3>Equipo</h3><button class="link" data-view="rrhh">RR. HH. →</button></div>${eck && eck.plantilla ? `<div class="between" style="margin-bottom:8px"><span class="mut" style="font-size:12.5px">Conversaciones del mes</span><b class="tnum">${eck.hechos}/${eck.plantilla}</b></div><div class="prog ${eck.hechos / eck.plantilla < 0.5 ? "warn" : ""}"><i style="width:${Math.round((eck.hechos / Math.max(1, eck.plantilla)) * 100)}%"></i></div>` : ""}${einc.length ? `<div class="rows" style="margin-top:10px">${einc.map((w) => `<div class="row" style="padding:8px 0;border-top:0"><div class="grow"><div class="t1" style="font-size:12.5px">${esc(w.nombre || "—")}</div><div class="t2">${esc(w.local || "")}</div></div><span class="badge ${w.c >= 2 ? "bad" : "warn"}">${w.c} incid.</span></div>`).join("")}</div>` : ""}<div class="pendingblock" style="margin-top:12px;padding:11px 13px">Coste de personal y horas: <b>al conectar Skello</b>.</div></div>` : "";
 
-  // ── Clientes: a quién llamar (fuga) + mejores (premiar) ──
-  const cl = d.clientes || {};
-  const enfr = cl.enfriando || [];
-  const mej = cl.mejores || [];
-  const cliInner = [];
-  if (enfr.length) cliInner.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>A los que llamaría hoy (se enfrían)</h3></div><div class="rows" style="margin-top:6px">${enfr.slice(0, 6).map((c) => `<div class="row"><div class="grow"><div class="t1">${esc(c.nombre || "—")}</div><div class="t2">${c.visitas} reservas · última ${esc(c.ultima)}${c.local ? " · " + esc(c.local) : ""}</div></div>${c.telefono ? `<a class="btn" href="tel:${esc(c.telefono)}">Llamar</a>` : ""}</div>`).join("")}</div></div>`);
-  if (mej.length) cliInner.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Mis mejores clientes (a cuidar)</h3></div><div class="rows" style="margin-top:6px">${mej.map((c) => `<div class="row"><div class="grow"><div class="t1">${esc(c.nombre || "—")}</div><div class="t2">${c.visitas} reservas · última ${esc(c.ultima)}${c.local ? " · " + esc(c.local) : ""}</div></div>${c.telefono ? `<a class="btn" href="tel:${esc(c.telefono)}">Llamar</a>` : ""}</div>`).join("")}</div></div>`);
-  const clientesHtml = cliInner.length ? `<div class="section-title">Los clientes</div><div class="grid g2">${cliInner.join("")}</div>` : "";
-
-  // ── Reputación por local (Google) ──
-  const rep = d.reputacionLocales || [];
-  const repHtml = rep.length ? `<div class="section-title">Reputación en Google, por local</div><div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>De peor a mejor</h3><button class="btn" data-view="reviews">Ver reseñas</button></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local (Google)</th><th class="r">Media</th><th class="r">Reseñas</th></tr></thead><tbody>${rep.map((r) => `<tr><td>${esc(r.local)}</td><td class="r tnum"><b style="color:${r.media <= 3.5 ? "var(--danger)" : r.media >= 4.3 ? "var(--brand)" : "inherit"}">${dec1(r.media)}★</b></td><td class="r tnum mut">${num(r.n)}</td></tr>`).join("")}</tbody></table></div></div>` : "";
-
-  return selector + hero +
-    `<div class="section-title">Lo que me preocupa</div>${concernsHtml}` +
-    (agenda.length ? `<div class="section-title">Mi plan para hoy</div>${agendaHtml}` : "") +
-    radarHtml + dineroHtml + equipoHtml + clientesHtml + repHtml;
+  const row1 = `<div class="grid g12" style="margin-top:16px">${actividad}${gasto}</div>`;
+  const row2 = `<div class="grid g12" style="margin-top:16px">${atencion}${estado}</div>`;
+  const row3 = `<div class="grid g12" style="margin-top:16px">${resenasCard}${saraCard}</div>`;
+  const row4 = (clientesCard || equipoCard) ? `<div class="grid g12" style="margin-top:16px">${clientesCard}${equipoCard}</div>` : "";
+  return header + sara + kpis + row1 + row2 + row3 + row4;
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -323,7 +417,6 @@ async function downloadClientesCsv() { try { const r = await fetch("/api/leads/e
 // ════════════════════════ VISTA: RESEÑAS (por local · responder · IA · masivas) ════════════════════════
 let REVF = { rating: "", local: "", estado: "" };
 let REV_DATA = [], REV_LOCALES = [], REV_SEL = new Set();
-const nombreCortoLocal = (l) => String(l || "").replace(/^La Tapeta\s*[-·]\s*/i, "").trim() || l;
 
 function renderReviews() {
   const rows = REV_DATA;
@@ -567,15 +660,18 @@ function go(view) {
 }
 
 document.addEventListener("click", (e) => {
-  const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); document.body.classList.remove("navopen"); go(v.getAttribute("data-view")); return; }
+  const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); go(v.getAttribute("data-view")); return; }
   const t = e.target.closest("[data-act]"); if (!t) return;
   const act = t.getAttribute("data-act");
-  if (act === "menu") document.body.classList.toggle("navopen");
-  else if (act === "navclose") document.body.classList.remove("navopen");
+  if (act === "mtoggle") { const a = document.getElementById("appEl"); if (!a) return; if (window.innerWidth <= 820) a.classList.toggle("mopen"); else { COLLAPSED = !COLLAPSED; a.classList.toggle("collapsed"); } }
+  else if (act === "mclose") { const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); }
+  else if (act === "cmdk") openCmd();
+  else if (act === "estabmenu") openEstabMenu();
+  else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; closeDrawer(); go("dashboard"); }
+  else if (act === "period") { PERIOD = t.getAttribute("data-p"); document.querySelectorAll('.seg [data-act="period"]').forEach((b) => b.classList.toggle("on", b.getAttribute("data-p") === PERIOD)); if (CURRENT === "dashboard") loadDashboard(); }
   else if (act === "theme") toggleTheme();
   else if (act === "logout") { localStorage.removeItem("token"); location.href = "/login.html"; }
   else if (act === "reload") go(CURRENT);
-  else if (act === "dash-local") { DASH_LOCAL = t.getAttribute("data-local") || ""; loadDashboard(); }
   else if (act === "filtrar") applyReservasFilter();
   else if (act === "nueva") openNuevaReserva();
   else if (act === "csv") downloadCsv();
@@ -603,6 +699,23 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-asignar") facAsignar(t.getAttribute("data-id"));
   else if (act === "camp-nueva") openNuevaCampana();
 });
+
+// ── Overlays: ⌘K, drawer, teclado ─────────────────────────────────────────────
+(function wireOverlays() {
+  const ovl = document.getElementById("ovl"); if (ovl) ovl.addEventListener("click", () => { closeCmd(); closeDrawer(); });
+  const dc = document.getElementById("drawerClose"); if (dc) dc.addEventListener("click", closeDrawer);
+  const cl = document.getElementById("cmdl"); if (cl) cl.addEventListener("click", (e) => { const r = e.target.closest("[data-cmd]"); if (r) runCmd(+r.getAttribute("data-cmd")); });
+  const inp = document.getElementById("cmdin"); if (inp) inp.addEventListener("input", (e) => fillCmd(e.target.value));
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); const open = document.getElementById("cmdk").classList.contains("open"); open ? closeCmd() : openCmd(); return; }
+    const open = document.getElementById("cmdk") && document.getElementById("cmdk").classList.contains("open");
+    if (!open) return;
+    if (e.key === "Escape") closeCmd();
+    else if (e.key === "ArrowDown") { e.preventDefault(); cmdMove(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); cmdMove(-1); }
+    else if (e.key === "Enter") { e.preventDefault(); runCmd(CMD_SEL); }
+  });
+})();
 
 // ── Arranque ─────────────────────────────────────────────────────────────────
 requireRole(["direccion", "encargado", "contabilidad"]).then((user) => {
