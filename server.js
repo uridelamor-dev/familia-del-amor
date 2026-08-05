@@ -12,7 +12,7 @@ import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, sendModificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
-import { resolveJwtSecret, replitEnvWarning, errorHandler, safeLogError, CV_MAX_BYTES, isAllowedCvUpload, validateCvContentSync, safeUploadName } from "./security.js";
+import { resolveJwtSecret, replitEnvWarning, errorHandler, safeLogError, CV_MAX_BYTES, isAllowedCvUpload, safeUploadName, finalizeCvUpload } from "./security.js";
 
 dotenv.config();
 
@@ -379,6 +379,12 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+// Directorio temporal PRIVADO para validar subidas antes de publicarlas. NO está bajo
+// public/, por lo que express.static NO lo sirve. Mismo filesystem que uploadsDir para
+// permitir el movimiento atómico (rename) una vez validado el contenido.
+const uploadsTmpDir = path.join(__dirname, "tmp_uploads");
+if (!fs.existsSync(uploadsTmpDir)) fs.mkdirSync(uploadsTmpDir, { recursive: true });
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -392,13 +398,14 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// Subida ENDURECIDA para candidaturas (CV): nombre interno seguro (no usa el original),
-// límite de tamaño y filtro por extensión + MIME. El contenido real se valida por
-// magic bytes tras escribir (en el handler de /api/hr/applications).
+// Subida ENDURECIDA para candidaturas (CV): escribe primero en un directorio temporal
+// PRIVADO (no público) con nombre interno seguro; límite de tamaño y filtro por extensión +
+// MIME. El contenido real se valida por magic bytes y solo entonces se mueve a la carpeta
+// pública (ver finalizeCvUpload en el handler de /api/hr/applications).
 const cvStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-    cb(null, uploadsDir);
+    if (!fs.existsSync(uploadsTmpDir)) fs.mkdirSync(uploadsTmpDir, { recursive: true });
+    cb(null, uploadsTmpDir);
   },
   filename: (req, file, cb) => cb(null, safeUploadName(file.originalname)),
 });
@@ -2224,11 +2231,20 @@ app.post("/api/hr/applications", (req, res, next) => {
         ? "El CV supera el tamaño máximo (8 MB)."
         : "Archivo de CV no válido o formato no permitido (PDF, DOCX, JPG o PNG)." });
     }
-    // Validación de CONTENIDO real (magic bytes), además de extensión+MIME.
-    if (req.file && !validateCvContentSync(req.file.path, req.file.originalname)) {
-      try { fs.unlinkSync(req.file.path); } catch { /* noop */ }
-      return res.status(400).json({ ok: false, error: "El contenido del archivo no coincide con un CV permitido (PDF, DOCX, JPG o PNG)." });
+    if (!req.file) return next(); // el CV es opcional
+    // El archivo está en el directorio temporal PRIVADO. Se valida el contenido (magic bytes)
+    // y solo si es válido se mueve a la carpeta pública; si no, se elimina el temporal y no
+    // queda ningún archivo (ni parcial) accesible.
+    const r = finalizeCvUpload({
+      tmpPath: req.file.path,
+      filename: req.file.filename,
+      originalname: req.file.originalname,
+      publicDir: uploadsDir,
+    });
+    if (!r.ok) {
+      return res.status(400).json({ ok: false, error: "El archivo de CV no es válido o no se pudo procesar." });
     }
+    req.file.path = r.finalPath; // el resto del handler usa req.file.path (envío del CV)
     next();
   });
 }, (req, res) => {

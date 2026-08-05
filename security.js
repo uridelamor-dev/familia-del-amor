@@ -4,6 +4,7 @@
 // cablea aparte con express-rate-limit, para no acoplar este módulo a esa dependencia.
 import crypto from "crypto";
 import fs from "fs";
+import path from "path";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entorno
@@ -153,4 +154,27 @@ export function safeUploadName(originalname) {
   const ext = extOf(originalname).replace(/[^a-z0-9]/g, "");
   const rand = crypto.randomBytes(8).toString("hex");
   return `${Date.now()}-${rand}${ext ? "." + ext : ""}`;
+}
+
+function safeUnlink(p) { try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch { /* noop */ } }
+
+// Finaliza una subida de CV: valida el CONTENIDO del archivo temporal (en un directorio
+// PRIVADO) por magic bytes y, SOLO si es válido, lo mueve a la carpeta pública de forma
+// atómica (rename dentro del mismo filesystem). Ante contenido inválido o cualquier error,
+// elimina el temporal y no deja ningún archivo parcial en destino.
+// Devuelve { ok: true, finalPath } o { ok: false, reason }.
+export function finalizeCvUpload({ tmpPath, filename, originalname, publicDir }) {
+  try {
+    if (!validateCvContentSync(tmpPath, originalname)) {
+      safeUnlink(tmpPath);
+      return { ok: false, reason: "invalid-content" };
+    }
+    const finalPath = path.join(publicDir, filename);
+    fs.renameSync(tmpPath, finalPath); // atómico dentro del mismo filesystem
+    return { ok: true, finalPath };
+  } catch {
+    safeUnlink(tmpPath);
+    if (publicDir && filename) safeUnlink(path.join(publicDir, filename));
+    return { ok: false, reason: "error" };
+  }
 }

@@ -8,7 +8,7 @@ import {
   isProduction, replitEnvWarning, classifyJwtSecret, resolveJwtSecret,
   safeLogError, errorHandler,
   extOf, cvTypeByExt, isAllowedCvUpload, magicMatches, validateCvContentSync, safeUploadName,
-  CV_MAX_BYTES,
+  finalizeCvUpload, CV_MAX_BYTES,
 } from "../security.js";
 
 describe("Entorno (isProduction) — solo configuración explícita", () => {
@@ -122,4 +122,58 @@ describe("Validación de subida de CV", () => {
     assert.match(n, /\.pdf$/);
   });
   test("límite de tamaño definido en 8 MB", () => { assert.equal(CV_MAX_BYTES, 8 * 1024 * 1024); });
+});
+
+describe("finalizeCvUpload — validar en privado, publicar solo si es válido", () => {
+  function dirs() {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "cvfin-"));
+    const priv = path.join(base, "priv"); const pub = path.join(base, "pub");
+    fs.mkdirSync(priv); fs.mkdirSync(pub);
+    return { base, priv, pub };
+  }
+  test("archivo VÁLIDO se mueve al destino final y el temporal desaparece", () => {
+    const { base, priv, pub } = dirs();
+    const filename = "abc.pdf"; const tmpPath = path.join(priv, filename);
+    fs.writeFileSync(tmpPath, Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31]));
+    const r = finalizeCvUpload({ tmpPath, filename, originalname: "cv.pdf", publicDir: pub });
+    assert.equal(r.ok, true);
+    assert.ok(fs.existsSync(path.join(pub, filename)), "debe publicarse en destino");
+    assert.ok(!fs.existsSync(tmpPath), "el temporal no debe quedar");
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+  test("archivo INVÁLIDO (firma incorrecta) NUNCA llega al destino y se limpia el temporal", () => {
+    const { base, priv, pub } = dirs();
+    const filename = "x.pdf"; const tmpPath = path.join(priv, filename);
+    fs.writeFileSync(tmpPath, Buffer.from("<html>no soy pdf</html>"));
+    const r = finalizeCvUpload({ tmpPath, filename, originalname: "cv.pdf", publicDir: pub });
+    assert.equal(r.ok, false); assert.equal(r.reason, "invalid-content");
+    assert.ok(!fs.existsSync(path.join(pub, filename)), "no debe publicarse");
+    assert.ok(!fs.existsSync(tmpPath), "debe limpiarse el temporal");
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+  test("ante ERROR (destino inaccesible) se limpia el temporal y no queda parcial", () => {
+    const { base, priv } = dirs();
+    const filename = "y.pdf"; const tmpPath = path.join(priv, filename);
+    fs.writeFileSync(tmpPath, Buffer.from([0x25, 0x50, 0x44, 0x46]));
+    const badPub = path.join(base, "soy-un-fichero"); // no es un directorio ⇒ rename falla
+    fs.writeFileSync(badPub, "x");
+    const r = finalizeCvUpload({ tmpPath, filename, originalname: "cv.pdf", publicDir: badPub });
+    assert.equal(r.ok, false);
+    assert.ok(!fs.existsSync(tmpPath), "debe limpiarse el temporal aún ante error");
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+});
+
+describe("server.js: subida de CV en directorio privado (no público)", () => {
+  const src = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
+  test("define un directorio temporal privado fuera de public/", () => {
+    assert.match(src, /uploadsTmpDir\s*=\s*path\.join\(__dirname,\s*["']tmp_uploads["']\)/);
+  });
+  test("express.static solo sirve public/ (no el temporal)", () => {
+    assert.match(src, /express\.static\(path\.join\(__dirname,\s*["']public["']\)\)/);
+    assert.ok(!/express\.static\([^)]*tmp_uploads/.test(src), "no debe servir el temporal");
+  });
+  test("la ruta de candidaturas usa finalizeCvUpload", () => {
+    assert.match(src, /finalizeCvUpload\(/);
+  });
 });
