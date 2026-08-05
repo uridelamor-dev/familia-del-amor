@@ -12,6 +12,7 @@ import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, sendModificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
+import { resolveJwtSecret, replitEnvWarning, errorHandler, safeLogError, CV_MAX_BYTES, isAllowedCvUpload, safeUploadName, finalizeCvUpload } from "./security.js";
 
 dotenv.config();
 
@@ -312,7 +313,12 @@ async function restoreCriticalConfig() {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || "tapeta-secret-dev";
+// Secreto JWT endurecido: sin fallback inseguro. En producción exige un secreto fuerte
+// (si falta o es débil, el proceso NO arranca). En desarrollo usa un secreto estable.
+// Se registra solo el ESTADO, nunca el valor.
+const { secret: JWT_SECRET, status: JWT_STATUS, source: JWT_SOURCE } = resolveJwtSecret();
+console.log(`[Seguridad] JWT_SECRET: ${JWT_STATUS} (origen: ${JWT_SOURCE})`);
+{ const _w = replitEnvWarning(); if (_w) console.warn(`[Seguridad] ${_w}`); }
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -373,6 +379,12 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+// Directorio temporal PRIVADO para validar subidas antes de publicarlas. NO está bajo
+// public/, por lo que express.static NO lo sirve. Mismo filesystem que uploadsDir para
+// permitir el movimiento atómico (rename) una vez validado el contenido.
+const uploadsTmpDir = path.join(__dirname, "tmp_uploads");
+if (!fs.existsSync(uploadsTmpDir)) fs.mkdirSync(uploadsTmpDir, { recursive: true });
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -385,6 +397,23 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+
+// Subida ENDURECIDA para candidaturas (CV): escribe primero en un directorio temporal
+// PRIVADO (no público) con nombre interno seguro; límite de tamaño y filtro por extensión +
+// MIME. El contenido real se valida por magic bytes y solo entonces se mueve a la carpeta
+// pública (ver finalizeCvUpload en el handler de /api/hr/applications).
+const cvStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(uploadsTmpDir)) fs.mkdirSync(uploadsTmpDir, { recursive: true });
+    cb(null, uploadsTmpDir);
+  },
+  filename: (req, file, cb) => cb(null, safeUploadName(file.originalname)),
+});
+const uploadCV = multer({
+  storage: cvStorage,
+  limits: { fileSize: CV_MAX_BYTES, files: 1 },
+  fileFilter: (req, file, cb) => cb(null, isAllowedCvUpload(file)),
+});
 
 db.serialize(() => {
   db.run(`
@@ -2194,11 +2223,28 @@ app.put("/api/hr/jobs/:id", requireAuth(["rrhh", "direccion"]), (req, res) => {
 });
 
 app.post("/api/hr/applications", (req, res, next) => {
-  upload.single("cv")(req, res, (err) => {
+  uploadCV.single("cv")(req, res, (err) => {
     if (err) {
-      console.error("[HR] Error subiendo CV:", err.message);
-      return res.status(400).json({ ok: false, error: "Error subiendo el CV." });
+      const tooBig = err.code === "LIMIT_FILE_SIZE";
+      safeLogError("HR upload CV", err);
+      return res.status(400).json({ ok: false, error: tooBig
+        ? "El CV supera el tamaño máximo (8 MB)."
+        : "Archivo de CV no válido o formato no permitido (PDF, DOCX, JPG o PNG)." });
     }
+    if (!req.file) return next(); // el CV es opcional
+    // El archivo está en el directorio temporal PRIVADO. Se valida el contenido (magic bytes)
+    // y solo si es válido se mueve a la carpeta pública; si no, se elimina el temporal y no
+    // queda ningún archivo (ni parcial) accesible.
+    const r = finalizeCvUpload({
+      tmpPath: req.file.path,
+      filename: req.file.filename,
+      originalname: req.file.originalname,
+      publicDir: uploadsDir,
+    });
+    if (!r.ok) {
+      return res.status(400).json({ ok: false, error: "El archivo de CV no es válido o no se pudo procesar." });
+    }
+    req.file.path = r.finalPath; // el resto del handler usa req.file.path (envío del CV)
     next();
   });
 }, (req, res) => {
@@ -2898,6 +2944,11 @@ app.delete("/api/sara/regla/:id", requireAuth(["marketing", "direccion"]), async
 });
 
 app.get("/", (req, res) => res.redirect("/login.html"));
+
+// Manejador de errores global: respuesta genérica al cliente + log seguro en servidor.
+// Debe ir DESPUÉS de todas las rutas. No modifica las respuestas de los endpoints que ya
+// gestionan su propio error; solo cubre lo no controlado.
+app.use(errorHandler);
 
 const shutdown = (signal) => {
   console.log(`${signal} recibido, guardando BD y cerrando servidor...`);
