@@ -1,5 +1,5 @@
 const ROLE_REDIRECT = {
-  direccion: "/direccion.html",
+  direccion: "/panel/",          // nuevo panel cockpit (Dashboard ejecutivo real)
   encargado: "/encargados.html",
   trabajador: "/trabajadores.html",
   rrhh: "/rrhh.html",
