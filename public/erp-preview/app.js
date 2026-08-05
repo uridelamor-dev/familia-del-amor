@@ -59,6 +59,8 @@ const ESTAB = [
 ];
 ESTAB.forEach(e => { e.cli = e.ticket ? Math.round(e.ventas / e.ticket) : 0; e.com = Math.round(e.res * 2.3); });
 const byShort = (s) => ESTAB.find(e => e.short === s);
+// Objetivo de margen operativo por establecimiento (%). Sirve para "margen vs previsto".
+const MARGEN_OBJ = { 1: 34, 2: 33, 3: 33, 4: 32, 5: 34, 6: 33, 7: 33 };
 
 const INCID = [
   { id: 91, local: "Can Mateu", titulo: "Cámara frigorífica — temperatura alta", sev: "hi", estado: "Abierta", dias: 0.1, resp: "Sin asignar", prov: "Frío Costa Brava", coste: 0, reps: 4 },
@@ -139,7 +141,9 @@ function baseFin(e) {
   const personal = e.ventas * e.pPct / 100, compras = e.ventas * e.cPct / 100, otros = e.ventas * e.oPct / 100;
   const margen = e.ventas - costes, margenPct = e.ventas ? margen / e.ventas * 100 : 0;
   const lyCostes = e.ly * (e.lyPPct + e.lyCPct + e.oPct) / 100, lyMargen = e.ly - lyCostes, lyMargenPct = e.ly ? lyMargen / e.ly * 100 : 0;
-  return { ventas: e.ventas, ly: e.ly, pw: e.pw, obj: e.obj, personal, compras, otros, costes, margen, margenPct, lyMargen, lyMargenPct, ticket: e.ticket, cli: e.cli, res: e.res, com: e.com, ocup: e.ocup };
+  const margenObj = MARGEN_OBJ[e.id] || 33, dMargenObj = margenPct - margenObj;
+  const dVentasLY = e.ly ? (e.ventas - e.ly) / e.ly * 100 : 0, dObj = e.obj ? (e.ventas - e.obj) / e.obj * 100 : 0;
+  return { ventas: e.ventas, ly: e.ly, pw: e.pw, obj: e.obj, personal, compras, otros, costes, margen, margenPct, lyMargen, lyMargenPct, margenObj, dMargenObj, dVentasLY, dObj, ticket: e.ticket, cli: e.cli, res: e.res, com: e.com, ocup: e.ocup };
 }
 function getFin(scope, period) {
   const list = (scope === "all" ? ESTAB : ESTAB.filter(e => e.id === scope)).filter(e => !e.cerrado || scope !== "all");
@@ -234,65 +238,152 @@ function estadoState(e) { if (e.cerrado) return { k: "off", t: "Cerrado" }; cons
    ========================================================================== */
 const V = {};
 
+/* ============================================================================
+   CAPA DE INTELIGENCIA — deriva RESPUESTAS del estado (todo cuadra con los datos).
+   ========================================================================== */
+function localHealth(e) {
+  if (e.cerrado) return { e, score: null, reasons: ["cerrado hoy"], estado: "off" };
+  const f = baseFin(e); const reasons = []; let score = 100;
+  if (f.dMargenObj <= -4) { score -= 32; reasons.push(`margen ${f.dMargenObj.toFixed(0)} pts bajo lo previsto (${f.margenPct.toFixed(0)}% vs ${f.margenObj}%)`); }
+  else if (f.dMargenObj < -0.5) { score -= 12; reasons.push(`margen ${f.dMargenObj.toFixed(1)} pts bajo objetivo`); }
+  if (f.dVentasLY <= -8) { score -= 30; reasons.push(`ventas ${signed(f.dVentasLY)} vs. año pasado`); }
+  else if (f.dVentasLY < 0) { score -= 8; reasons.push(`ventas ${signed(f.dVentasLY)}`); }
+  const inc = openIncid().filter(i => i.local === e.short);
+  if (inc.some(i => i.sev === "hi")) { score -= 24; reasons.push("incidencia crítica abierta"); }
+  else if (inc.length) { score -= 7; reasons.push(`${inc.length} incidencia${inc.length > 1 ? "s" : ""} abierta${inc.length > 1 ? "s" : ""}`); }
+  const rv = revAvgLocal(e.short); if (rv && rv < 3.5) { score -= 16; reasons.push(`reseñas bajas (${rv.toFixed(1).replace(".", ",")})`); }
+  if (e.ocup >= 92) { score -= 6; reasons.push(`ocupación muy alta (${e.ocup}%)`); }
+  if (absOfLocal(e.short)) { score -= 5; reasons.push(`${absOfLocal(e.short)} ausencia`); }
+  const estado = score >= 85 ? "exc" : score >= 70 ? "ok" : score >= 50 ? "warn" : "crit";
+  return { e, score: Math.max(0, Math.round(score)), reasons, estado, f };
+}
+function localsByNeed() { return ESTAB.filter(e => !e.cerrado).map(localHealth).sort((a, b) => a.score - b.score); }
+function employeeSupport() {
+  return TEAM.map(t => { let s = 0; const r = [];
+    if (t.estado === "Baja") { s += 3; r.push("de baja médica"); }
+    if (t.retraso) { s += 2; r.push("fichajes irregulares esta semana"); }
+    if (t.ventas > 0 && t.ventas < 1800) { s += 2; r.push("ventas por debajo de la media del grupo"); }
+    if (t.estado === "Activo" && t.trab < t.contr) { s += 1; r.push(`${t.contr - t.trab}h por debajo de contrato`); }
+    if (t.res > 0 && t.res < 4.6) { s += 1; r.push(`valoración ${t.res.toFixed(1).replace(".", ",")}`); }
+    return { t, s, r }; }).filter(x => x.s > 0).sort((a, b) => b.s - a.s);
+}
+function insights() {
+  const g = getFin("all", "ayer");
+  const health = localsByNeed();
+  const worstMargin = [...ESTAB].filter(e => !e.cerrado).map(e => ({ e, f: baseFin(e) })).sort((a, b) => a.f.dMargenObj - b.f.dMargenObj)[0];
+  const topEmp = [...TEAM].filter(t => t.ventas > 0).sort((a, b) => (b.ventas - a.ventas) || (b.res - a.res))[0];
+  const support = employeeSupport()[0];
+  const spikes = ORDERS.filter(o => o.desv >= 5).sort((a, b) => b.desv - a.desv);
+  const agingIncid = [...openIncid()].sort((a, b) => b.dias - a.dias);
+  const riskIncid = openIncid().filter(i => i.reps >= 3 || i.sev === "hi");
+  const topCamp = [...CAMPAIGNS].filter(c => c.reservas > 0).sort((a, b) => b.ingresos - a.ingresos)[0];
+  const extra = TEAM.filter(t => t.trab > t.contr);
+  const fiveStar = REVIEWS.filter(r => r.estrellas === 5).length;
+  return { g, health, worstMargin, topEmp, support, spikes, agingIncid, riskIncid, topCamp, extra, fiveStar, au: absent() };
+}
+/* Sara como Dirección de Operaciones: informa (no espera preguntas). */
+function saraBriefing() {
+  const I = insights(), f = I.g, p = [];
+  p.push(`Ayer facturaste <b>${eur(f.ventas)}</b> (${signed(f.dVentasLY)} ${comparativaLabel()}).`);
+  p.push(`El margen operativo fue de <b>${eur(f.margen)}</b> (${f.margenPct.toFixed(1)}% sobre ventas).`);
+  p.push(I.au.length ? `Hubo ${I.au.length} ausencia${I.au.length > 1 ? "s" : ""} (${I.au.map(t => t.n).join(", ")}).` : "No hubo ninguna ausencia.");
+  const inc = openIncid().length, crit = openIncid().some(i => i.sev === "hi");
+  p.push(inc ? `Hay ${inc} incidencia${inc > 1 ? "s" : ""} abierta${inc > 1 ? "s" : ""}${crit ? ", una de ellas crítica" : ""}.` : "El mantenimiento está al día.");
+  p.push(I.extra.length ? `${I.extra.length} trabajador${I.extra.length > 1 ? "es hicieron" : " hizo"} horas extra.` : "Nadie hizo horas extra.");
+  p.push(`Entraron ${I.fiveStar} reseña${I.fiveStar !== 1 ? "s" : ""} de cinco estrellas.`);
+  const nc = alertsBySev("crit").length;
+  p.push(nc ? `Y tienes ${nc} alerta crítica que revisar.` : "No hay ninguna alerta crítica.");
+  return p;
+}
+function saraConcern() {
+  const I = insights();
+  if (I.worstMargin && I.worstMargin.f.dMargenObj <= -3) {
+    const e = I.worstMargin.e, f = I.worstMargin.f;
+    return { sev: "warn", id: e.id, go: "establecimientos", t: `Creo que deberías revisar <b>${e.short}</b>: el margen cayó a ${f.margenPct.toFixed(0)}%, ${Math.abs(f.dMargenObj).toFixed(0)} puntos por debajo del ${f.margenObj}% previsto. El coste de personal (${(f.personal / f.ventas * 100).toFixed(0)}%) está por encima de lo habitual.` };
+  }
+  const w = I.health[0];
+  if (w && w.score < 65 && w.reasons.length) return { sev: "warn", id: w.e.id, go: "establecimientos", t: `Vigila <b>${w.e.short}</b>: ${w.reasons.slice(0, 2).join(" y ")}.` };
+  return null;
+}
+const miniKV = (l, v) => `<div style="background:var(--surface2);border-radius:10px;padding:9px 11px"><div class="mut" style="font-size:11px">${l}</div><div class="tnum" style="font-weight:700;font-size:15px;margin-top:2px">${v}</div></div>`;
+function answerCard(q, body, { icon = "spark", sev, go, right } = {}) {
+  const k = sev === "crit" ? "bad" : sev === "warn" ? "warn" : sev === "ok" ? "ok" : "";
+  const rt = right || (sev ? pill(sev === "crit" ? "Atención" : sev === "warn" ? "Revisar" : "OK", k) : (go ? `<span class="link">Abrir ${ic("chevR", 12)}</span>` : ""));
+  return `<div class="card"${go ? ` data-act="go" data-view="${go}" style="cursor:pointer"` : ""}>
+    <div class="ch"><h3 style="font-size:13px;color:var(--ink2);font-weight:650;display:flex;align-items:center;gap:8px"><span style="color:var(--brand)">${ic(icon, 15)}</span>${q}</h3>${rt}</div>${body}</div>`;
+}
+
 V.dashboard = () => {
-  const f = getFin(S.estab, S.period);
-  const nCrit = alertsBySev("crit").length, nImp = alertsBySev("imp").length;
-  const ventasBars = ESTAB.filter(e => !e.cerrado).map(e => ({ label: e.short, v: baseFin(e).ventas, id: e.id, go: 1 }));
-  const best = [...ESTAB].filter(e => !e.cerrado).sort((a, b) => b.crec - a.crec)[0];
-  const worst = [...ESTAB].filter(e => !e.cerrado).sort((a, b) => a.crec - b.crec)[0];
-  const attn = newAlerts();
-  // Ventas + margen protagonistas
-  const ventasCard = `<div class="card hero"><div class="ch"><h3>Ventas · ${periodLabel()}</h3><span class="pill">${scopeLabel()}</span></div>
-    <div class="between" style="align-items:flex-start;margin-bottom:6px">
-      <div><div class="big tnum">${eur(f.ventas)}</div>
-        <div class="flex" style="gap:14px;margin-top:10px;flex-wrap:wrap">
-          ${deltaEl(f.dVentasLY)} <span class="mut" style="font-size:12px">${comparativaLabel()}</span></div>
-        <div class="flex" style="gap:14px;margin-top:6px;flex-wrap:wrap;font-size:12px" class="mut">
-          <span>${deltaEl(f.dVentasPW)} <span class="mut">vs. semana anterior</span></span>
-          <span>${deltaEl(f.dObj)} <span class="mut">vs. objetivo</span></span></div>
-      </div>
-      <div style="text-align:right"><div class="mut" style="font-size:12px">Ticket medio</div><div class="tnum" style="font-size:20px;font-weight:700">${eur(f.ticket)}</div>
-        <div class="mut" style="font-size:12px;margin-top:8px">Clientes</div><div class="tnum" style="font-size:18px;font-weight:700">${nf.format(f.cli)}</div></div>
-    </div>${area(serieVentas(S.estab, S.period), { h: 120 })}
-    <div class="between" style="margin-top:12px"><span class="mut" style="font-size:12px">Mejor crecimiento: <b class="hl">${best.short} ${signed(best.crec)}</b></span><span class="mut" style="font-size:12px">Peor desviación: <b style="color:var(--danger)">${worst.short} ${signed(worst.crec)}</b></span></div></div>`;
+  const gf = getFin(S.estab, S.period);
+  const I = insights();
+  const c = saraConcern();
 
-  const margenCard = `<div class="card"><div class="ch"><h3>Margen y beneficio estimado</h3><span class="pill ${f.dMargen >= 0 ? "ok" : "bad"}">${f.dMargen >= 0 ? ic("aU", 12) : ic("aD", 12)} ${signed(f.dMargen)} pts</span></div>
-    <div class="between" style="align-items:flex-end"><div><div class="mut" style="font-size:12px">Margen operativo estimado</div><div class="big tnum" style="color:var(--brand)">${eur(f.margen)}</div><div class="mut" style="font-size:12px;margin-top:6px">${f.margenPct.toFixed(1)}% sobre ventas</div></div>
-      <div style="text-align:right;font-size:12px" class="mut"><div>Personal <b class="tnum" style="color:var(--ink)">${eur(f.personal)}</b> · ${(f.personal / f.ventas * 100).toFixed(0)}%</div><div style="margin-top:6px">Compras <b class="tnum" style="color:var(--ink)">${eur(f.compras)}</b> · ${(f.compras / f.ventas * 100).toFixed(0)}%</div><div style="margin-top:6px">Otros <b class="tnum" style="color:var(--ink)">${eur(f.otros)}</b></div></div></div>
-    <div class="mbar" style="margin-top:14px">
-      <span style="width:${f.personal / f.ventas * 100}%;background:#3F6E93"></span><span style="width:${f.compras / f.ventas * 100}%;background:#B9822B"></span><span style="width:${f.otros / f.ventas * 100}%;background:#8A5A9B"></span><span style="width:${f.margenPct}%;background:var(--brand)"></span></div>
-    <div class="legend" style="margin-top:10px"><span><i style="background:#3F6E93"></i>Personal</span><span><i style="background:#B9822B"></i>Compras</span><span><i style="background:#8A5A9B"></i>Otros</span><span><i style="background:var(--brand)"></i>Margen</span></div>
-    <div style="margin-top:14px;padding:12px;background:var(--brand-soft);border-radius:11px;font-size:12.5px;color:var(--ink);display:flex;gap:9px"><span style="color:var(--brand)">${ic("spark", 16)}</span><span>${marginWhy(f)}</span></div>
-    <div class="mut" style="font-size:11px;margin-top:8px">Beneficio estimado, no contabilidad cerrada.</div></div>`;
+  // ── Sara · Dirección de Operaciones (parte de la mañana) ──
+  const hero = `<div class="card hero" style="padding:22px">
+    <div class="flex" style="gap:12px;margin-bottom:14px"><span class="avatar" style="width:40px;height:40px">S</span>
+      <div><div style="font-weight:680;font-size:15px;letter-spacing:-.01em">Sara · Dirección de Operaciones</div><div class="mut" style="font-size:12px">Parte de la mañana · ${new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long" }).format(new Date(2026, 7, 5))}</div></div>
+      <span class="pill ok" style="margin-left:auto">${ic("wifi", 12)} Todo operativo</span></div>
+    <p style="font-size:15px;line-height:1.65;margin:0 0 14px;max-width:74ch">Buenos días, Uriel. ${saraBriefing().join(" ")}</p>
+    ${c ? `<div style="display:flex;gap:11px;padding:13px 15px;background:var(--warning-soft);border-radius:12px;align-items:flex-start"><span style="color:var(--warning);flex:none">${ic("alert", 18)}</span><div style="flex:1"><b style="font-size:13.5px">Lo que más me preocupa</b><p style="margin:4px 0 10px;font-size:13.5px;line-height:1.5">${c.t}</p><button class="btn ghost sm" data-act="estab" data-id="${c.id}">Revisar el local ${ic("chevR", 12)}</button></div></div>` : `<span class="pill ok">${ic("check", 12)} Nada urgente que revisar ahora</span>`}
+    <div class="wrapf" style="margin-top:14px"><button class="btn primary sm" data-act="go" data-view="sara">${ic("spark", 14)} Hablar con Sara</button><button class="btn ghost sm" data-act="go" data-view="alertas">Ver alertas (${newAlerts().length})</button></div></div>`;
 
-  const attnCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Necesita tu atención <span class="pill bad" style="margin-left:6px">${nCrit} críticas</span> <span class="pill warn">${nImp}</span></h3><button class="link" data-act="go" data-view="alertas">Ver todo ${ic("chevR", 13)}</button></div>
-    <div class="rows" style="margin-top:6px">${attn.slice(0, 5).map(a => attRow(a)).join("")}</div></div>`;
+  // ── KPIs de un vistazo ──
+  const kpis = `<div class="grid g4">
+    ${stat({ lab: "Ventas · " + periodLabel().toLowerCase(), icon: "euro", val: eur(gf.ventas), delta: gf.dVentasLY })}
+    ${stat({ lab: "Margen operativo", icon: "chart", val: eur(gf.margen), unit: gf.margenPct.toFixed(0) + "%", delta: gf.dMargen })}
+    ${stat({ lab: "Ocupación media", icon: "team", val: gf.ocup + "%" })}
+    ${stat({ lab: "Reservas hoy", icon: "cal", val: nf.format(ESTAB.reduce((s, e) => s + e.res, 0)), delta: 14 })}</div>`;
 
-  const estabStrip = card("Estado por establecimiento", `<div class="rows" style="margin:-4px -18px -18px">${ESTAB.map(e => {
-    const st = estadoState(e), f2 = baseFin(e);
-    return `<button class="row" data-act="estab" data-id="${e.id}" style="width:100%;text-align:left;background:none"><span class="sdot st-${st.k}"></span><div class="ava">${e.ini}</div>
-      <div class="grow"><div class="t1">${e.short}</div><div class="t2">${e.cerrado ? "Cerrado hoy" : eur(f2.ventas) + " · ocup " + e.ocup + "% · " + incidOfLocal(e.short) + " incid."}</div></div>
-      <div style="text-align:right"><div class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</div></div>${ic("chevR", 15)}</button>`;
-  }).join("")}</div>`, `<span class="mut">${periodLabel()}</span>`);
+  const atencion = answerCard("¿Qué requiere tu atención?", `<div class="rows" style="margin:-4px -18px -18px">${newAlerts().slice(0, 5).map(a => attRow(a)).join("") || '<div class="mut" style="padding:10px 0">Nada pendiente. Todo bajo control.</div>'}</div>`, { icon: "bell", go: "alertas" });
 
-  const opsCards = `<div class="grid g4">
-    ${stat({ lab: "Reservas hoy", icon: "cal", val: nf.format(ESTAB.reduce((s, e) => s + e.res, 0)), delta: 14 })}
-    ${stat({ lab: "Comensales", icon: "team", val: nf.format(ESTAB.reduce((s, e) => s + e.com, 0)), delta: 8 })}
-    ${stat({ lab: "Faltó hoy", icon: "clock", val: String(absent().length), unit: "persona" + (absent().length !== 1 ? "s" : "") })}
-    ${stat({ lab: "Mantenim. abierto", icon: "wrench", val: String(openIncid().length), unit: openIncid().some(i => i.sev === "hi") ? "· 1 crítica" : "" })}</div>`;
+  const needHelp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3 style="font-size:13px;color:var(--ink2);font-weight:650;display:flex;gap:8px"><span style="color:var(--brand)">${ic("pin", 15)}</span>¿Qué local necesita ayuda?</h3></div>
+    <div class="rows" style="margin-top:6px">${I.health.slice(0, 4).map(h => {
+      const col = h.estado === "crit" ? "var(--danger)" : h.estado === "warn" ? "var(--warning)" : "var(--success)";
+      return `<button class="row" data-act="estab" data-id="${h.e.id}" style="width:100%;text-align:left;background:none;align-items:flex-start">
+        <div class="ava" style="background:${h.estado === "crit" ? "var(--danger-soft)" : h.estado === "warn" ? "var(--warning-soft)" : "var(--brand-soft)"};color:${col}">${h.e.ini}</div>
+        <div class="grow"><div class="between"><div class="t1">${h.e.short}</div><b class="tnum" style="font-size:13px;color:${col}">${h.score}</b></div>
+          <div class="prog ${h.estado === "crit" ? "bad" : h.estado === "warn" ? "warn" : ""}" style="margin:6px 0"><i style="width:${h.score}%"></i></div>
+          <div class="t2">${h.reasons.length ? h.reasons.slice(0, 2).join(" · ") : "Rendimiento correcto, sin incidencias"}</div></div></button>`;
+    }).join("")}</div></div>`;
 
-  const sara = card("Sara ahora", `<div class="flex" style="gap:12px;margin-bottom:12px"><span class="pill ok">${ic("wifi", 12)} Conectada</span><span class="mut" style="font-size:12px">6 conversaciones activas · ${ESTAB.reduce((s, e) => s + e.res, 0)} reservas hoy</span></div>
-    <p style="font-size:13.5px;margin:0 0 12px">${saraSummary()}</p>
-    <div class="wrapf"><button class="btn soft sm" data-act="go" data-view="sara">${ic("msg", 14)} Abrir panel de Sara</button><button class="btn ghost sm" data-act="soon">Reconectar WhatsApp</button></div>`, `<button class="link" data-act="go" data-view="sara">Recomendaciones ${ic("chevR", 13)}</button>`);
+  const destaca = answerCard("¿Qué trabajador destaca?", `<div class="flex" style="gap:12px"><span class="ava" style="width:44px;height:44px;font-size:15px">${ini(I.topEmp.n)}</span><div class="grow"><div class="t1" style="font-size:15px">${I.topEmp.n}</div><div class="t2">${I.topEmp.puesto} · ${I.topEmp.local}</div></div></div>
+    <div class="grid g2" style="gap:10px;margin-top:12px">${miniKV("Ventas ayer", eur(I.topEmp.ventas))}${miniKV("Ticket medio", eur(I.topEmp.ticket))}${miniKV("Valoración", I.topEmp.res.toFixed(1).replace(".", ",") + " ★")}${miniKV("Jornada", I.topEmp.trab + " h")}</div>`, { icon: "star", sev: "ok" });
 
-  const reviews = card("Google Reviews", `<div class="between"><div><div class="big tnum" style="font-size:34px">${reviewAvgAll().toFixed(1).replace(".", ",")}</div><div class="wrapf" style="margin-top:6px">${"★★★★★".split("").map(() => `<span style="color:var(--warning)">${ic("star", 14)}</span>`).join("")}</div></div><div style="width:130px">${area([4.4, 4.5, 4.5, 4.6, 4.6, 4.7, 4.8], { h: 66, fmt: "num" })}</div></div>
-    <div class="mut" style="font-size:12px;margin-top:10px">${REVIEWS.filter(r => !r.respondida).length} sin responder · <b class="hl" data-act="go" data-view="marketing" style="cursor:pointer">gestionar</b></div>`);
+  const apoyo = I.support
+    ? answerCard("¿Quién necesita apoyo?", `<div class="flex" style="gap:12px"><span class="ava" style="width:44px;height:44px;font-size:15px;background:var(--warning-soft);color:var(--warning)">${ini(I.support.t.n)}</span><div class="grow"><div class="t1" style="font-size:15px">${I.support.t.n}</div><div class="t2">${I.support.t.puesto} · ${I.support.t.local}</div></div></div>
+      <div style="margin-top:10px;font-size:13px">${I.support.r.map(x => `<div class="flex" style="gap:8px;margin-top:6px"><span style="color:var(--warning);flex:none">${ic("alert", 13)}</span>${x[0].toUpperCase() + x.slice(1)}</div>`).join("")}</div>`, { icon: "team", sev: "warn" })
+    : answerCard("¿Quién necesita apoyo?", `<div class="mut" style="padding:6px 0">Todo el equipo dentro de parámetros.</div>`, { icon: "team", sev: "ok" });
 
-  return opsCards + `<div class="grid g12" style="margin-top:16px">
-    <div class="c8">${ventasCard}</div><div class="c4">${margenCard}</div>
-    <div class="c7">${attnCard}</div><div class="c5">${estabStrip}</div>
-    <div class="c8">${card("Ventas por establecimiento", bars(ventasBars), `<span class="mut">${periodLabel()}</span>`)}</div>
-    <div class="c4">${reviews}</div><div class="c12">${sara}</div></div>`;
+  const repu = answerCard("¿Cómo está la reputación?", `<div class="between"><div><div class="big tnum" style="font-size:32px">${reviewAvgAll().toFixed(1).replace(".", ",")}</div><div class="flex" style="color:var(--warning);margin-top:4px">${Array.from({ length: 5 }, () => ic("star", 13)).join("")}</div></div><div style="text-align:right"><div class="tnum" style="font-size:22px;font-weight:700;color:var(--success)">${I.fiveStar}</div><div class="mut" style="font-size:11.5px">reseñas 5★ ayer</div></div></div>
+    <div class="mut" style="font-size:12px;margin-top:10px">${REVIEWS.filter(r => !r.respondida).length} sin responder</div>`, { icon: "star", right: `<span class="link" data-act="go" data-view="marketing">Gestionar ${ic("chevR", 12)}</span>` });
+
+  const ventasBlk = card("Ventas por establecimiento", bars(ESTAB.filter(e => !e.cerrado).map(e => ({ label: e.short, v: baseFin(e).ventas, id: e.id, go: 1 })), { h: 160 }), `<span class="mut">${periodLabel()}</span>`);
+  const margenTbl = card("Margen vs. objetivo por local", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Margen</th><th class="r">Objetivo</th><th class="r">Desv.</th></tr></thead><tbody>${ESTAB.filter(e => !e.cerrado).map(e => { const f = baseFin(e); return `<tr><td style="font-weight:600">${e.short}</td><td class="r tnum">${f.margenPct.toFixed(0)}%</td><td class="r tnum mut">${f.margenObj}%</td><td class="r tnum ${f.dMargenObj < -0.5 ? "down" : f.dMargenObj > 0.5 ? "up" : "mut"}">${f.dMargenObj >= 0 ? "+" : ""}${f.dMargenObj.toFixed(1)}</td></tr>`; }).join("")}</tbody></table></div>`, `<span class="mut">puntos</span>`);
+
+  const spike = I.spikes.length
+    ? answerCard("¿Qué compras se están disparando?", `<div class="rows" style="margin:0 -18px -18px">${I.spikes.map(o => `<div class="row"><span class="ic warn" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none">${ic("cart", 15)}</span><div class="grow"><div class="t1">${o.prov}</div><div class="t2">${o.cat} · ${o.local}</div></div><b class="tnum down">+${o.desv}%</b></div>`).join("")}</div>`, { icon: "cart", sev: "warn", go: "compras" })
+    : answerCard("¿Qué compras se están disparando?", `<div class="mut" style="padding:6px 0">Precios de proveedores estables.</div>`, { icon: "cart", sev: "ok" });
+
+  const aging = answerCard("¿Qué mantenimiento lleva demasiado abierto?", `<div class="rows" style="margin:0 -18px -18px">${I.agingIncid.slice(0, 3).map(i => `<div class="row"><span class="sev ${i.sev}"></span><div class="grow"><div class="t1">${i.titulo}</div><div class="t2">${i.local} · ${i.estado}</div></div><b class="tnum ${i.dias >= 3 ? "down" : ""}">${i.dias < 1 ? "<1" : Math.round(i.dias)} día${Math.round(i.dias) !== 1 ? "s" : ""}</b></div>`).join("")}</div>`, { icon: "wrench", go: "mantenimiento" });
+
+  const riesgo = I.riskIncid.length
+    ? answerCard("¿Qué puede convertirse en un problema?", I.riskIncid.slice(0, 2).map(i => `<div style="display:flex;gap:11px;margin-bottom:8px"><span class="ic bad" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none">${ic("alert", 15)}</span><div><b style="font-size:13px">${i.titulo}</b><p class="mut" style="margin:3px 0 0;font-size:12px">${i.local} · ${i.reps >= 3 ? `${i.reps}ª reparación en 8 meses → valorar sustitución` : "crítica, aún sin asignar"}</p></div></div>`).join(""), { icon: "alert", sev: "crit", go: "mantenimiento" })
+    : answerCard("¿Qué puede convertirse en un problema?", `<div class="mut" style="padding:6px 0">Nada en zona de riesgo.</div>`, { icon: "alert", sev: "ok" });
+
+  const camp = I.topCamp
+    ? answerCard("¿Qué campañas han funcionado?", `<div class="between" style="align-items:flex-end"><div><div class="t1" style="font-size:15px">${I.topCamp.n}</div><div class="t2">${I.topCamp.seg}</div></div><span class="pill ok">${I.topCamp.estado}</span></div>
+      <div class="grid g3" style="gap:10px;margin-top:12px">${miniKV("Reservas", I.topCamp.reservas)}${miniKV("Ingresos", eur(I.topCamp.ingresos))}${miniKV("Coste", eur(I.topCamp.coste))}</div>
+      <div style="margin-top:10px;padding:10px 12px;background:var(--success-soft);border-radius:10px;font-size:12.5px;color:var(--success);display:flex;gap:8px"><span style="flex:none">${ic("aU", 14)}</span><span>Retorno positivo: ${eur(I.topCamp.ingresos)} generados sin coste de campaña.</span></div>`, { icon: "mkt", go: "marketing" })
+    : answerCard("¿Qué campañas han funcionado?", `<div class="mut">Sin campañas activas con retorno todavía.</div>`, { icon: "mkt" });
+
+  const evo = card("Evolución de ventas · 7 días", area(serieVentas("all", "7d"), { h: 150, labels: ["L", "M", "X", "J", "V", "S", "D"] }), `<span class="mut">Grupo</span>`);
+
+  return hero + `<div style="height:16px"></div>` + kpis + `<div class="grid g12" style="margin-top:16px">
+    <div class="c8">${atencion}</div><div class="c4">${needHelp}</div>
+    <div class="c4">${destaca}</div><div class="c4">${apoyo}</div><div class="c4">${repu}</div>
+    <div class="c7">${ventasBlk}</div><div class="c5">${margenTbl}</div>
+    <div class="c4">${spike}</div><div class="c4">${aging}</div><div class="c4">${riesgo}</div>
+    <div class="c6">${camp}</div><div class="c6">${evo}</div></div>`;
 };
 
 function attRow(a, done) {
@@ -399,13 +490,18 @@ V.alertas = () => {
 };
 
 V.sara = () => {
-  const chatMsgs = S.chat.length ? S.chat : [{ who: "her", t: saraSummary() }];
-  const left = card("Sara · asistente operativo", `<div class="chat" id="chatBox">${chatMsgs.map(m => `<div class="msg ${m.who}">${m.who === "her" ? '<div class="mn">Sara</div>' : ""}${m.t}</div>`).join("")}</div>
-    <div class="suggs">${["¿Cómo fue ayer?", "¿Qué local tuvo peor margen?", "¿Quién hizo horas extra?", "¿Qué pedidos están pendientes?", "¿Qué mantenimiento es urgente?"].map(q => `<button class="chip" data-act="ask" data-q="${q}">${q}</button>`).join("")}</div>
+  const brief = saraBriefing(), c = saraConcern();
+  const parte = `<div class="card"><div class="ch"><h3>Parte de la mañana</h3><span class="pill ok">${ic("wifi", 12)} Todo operativo</span></div>
+    <div class="flex" style="gap:12px;margin-bottom:12px"><span class="avatar" style="width:38px;height:38px">S</span><div><b style="font-size:14px">Sara · Dirección de Operaciones</b><div class="mut" style="font-size:12px">Te informo sin que tengas que preguntar</div></div></div>
+    <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:7px;font-size:13.5px;line-height:1.5">${brief.map(x => `<li>${x}</li>`).join("")}</ul>
+    ${c ? `<div style="display:flex;gap:11px;padding:13px 15px;background:var(--warning-soft);border-radius:12px;align-items:flex-start;margin-top:14px"><span style="color:var(--warning);flex:none">${ic("alert", 18)}</span><div style="flex:1"><b style="font-size:13px">Lo que más me preocupa</b><p style="margin:4px 0 10px;font-size:13px;line-height:1.5">${c.t}</p><button class="btn ghost sm" data-act="estab" data-id="${c.id}">Revisar el local ${ic("chevR", 12)}</button></div></div>` : `<div class="pill ok" style="margin-top:14px">${ic("check", 12)} Nada urgente que revisar</div>`}</div>`;
+  const chatMsgs = S.chat.length ? S.chat : [{ who: "her", t: "¿Quieres que profundice en algo? Pregúntame por cualquier local, trabajador o métrica." }];
+  const left = card("Preguntas a Sara", `<div class="chat" id="chatBox">${chatMsgs.map(m => `<div class="msg ${m.who}">${m.who === "her" ? '<div class="mn">Sara</div>' : ""}${m.t}</div>`).join("")}</div>
+    <div class="suggs">${["¿Cómo fue ayer?", "¿Qué local tuvo peor margen?", "¿Quién hizo horas extra?", "¿Qué pedidos están pendientes?", "¿Qué mantenimiento es urgente?", "¿Quién necesita apoyo?"].map(q => `<button class="chip" data-act="ask" data-q="${q}">${q}</button>`).join("")}</div>
     <div class="chatin"><input id="chatInput" placeholder="Pregúntale a Sara…" aria-label="Pregunta a Sara"/><button class="btn primary" data-act="ask-input">Enviar</button></div>`, `<span class="pill ok">${ic("wifi", 12)} En vivo</span>`);
   const reco = `<div class="card"><div class="ch"><h3>Recomendaciones</h3><span class="mut">Prioridad</span></div><div style="display:flex;flex-direction:column;gap:11px" id="recoList">${RECOS.map(r => recoRow(r)).join("")}</div></div>`;
   const autonomy = card("Niveles de autonomía", `<div class="rows" style="margin:0 -18px -18px">${[["Informar", "Resúmenes y respuestas", "ok"], ["Recomendar", "Sugerencias con impacto", "info"], ["Preparar acción", "Deja la acción lista", "warn"], ["Ejecutar", "Requiere aprobación humana", "brand"]].map(x => `<div class="row"><div class="grow"><div class="t1">${x[0]}</div><div class="t2">${x[1]}</div></div>${pill(x[2] === "brand" ? "Con aprobación" : "Activo", x[2])}</div>`).join("")}</div>`);
-  return `<div class="grid g12"><div class="c7">${left}</div><div class="c5">${reco}<div style="height:16px"></div>${autonomy}</div></div>`;
+  return `<div class="grid g12"><div class="c7">${parte}<div style="height:16px"></div>${left}</div><div class="c5">${reco}<div style="height:16px"></div>${autonomy}</div></div>`;
 };
 function recoRow(r) { return `<div class="reco ${r.estado !== "Pendiente" ? "done" : ""}" data-reco="${r.id}"><div class="rc">${ic("spark", 16)}</div><div class="grow"><div class="flex" style="gap:8px"><b style="font-size:13.5px">${r.titulo}</b>${pill(r.prio, r.prio === "Alta" ? "bad" : "warn")}</div><p class="mut" style="margin:4px 0 4px;font-size:12.5px">${r.motivo}</p><div class="mut" style="font-size:11.5px;margin-bottom:8px">Impacto: <b class="hl">${r.impacto}</b> · Datos: ${r.datos}</div>${r.estado === "Pendiente" ? `<div class="wrapf"><button class="btn primary sm" data-act="reco-approve" data-id="${r.id}">Aprobar</button><button class="btn ghost sm" data-act="go" data-view="${r.go}">Revisar</button><button class="btn ghost sm" data-act="reco-dismiss" data-id="${r.id}">Descartar</button></div>` : pill(r.estado, "ok")}</div></div>`; }
 
@@ -420,10 +516,10 @@ V.config = () => {
 };
 function localStorage_get() { return document.documentElement.getAttribute("data-theme"); }
 
-/* ---------- Sara: resumen + NLU mock ---------- */
+/* ---------- Sara: parte de la mañana + NLU mock ---------- */
 function saraSummary() {
-  const f = getFin(S.estab, S.period); const inc = openIncid().filter(i => i.sev === "hi").length; const au = absent().length;
-  return `Buenos días, Uriel. En ${scopeLabel()}, ${periodLabel().toLowerCase()} se facturaron <b class="hl">${eur(f.ventas)}</b> (${signed(f.dVentasLY)} ${comparativaLabel()}). El margen operativo estimado fue de <b class="hl">${eur(f.margen)}</b> (${f.margenPct.toFixed(1)}%). ${au ? "Faltó " + au + " persona" + (au > 1 ? "s" : "") : "No hubo ausencias"} y ${inc ? "hay " + inc + " incidencia crítica de mantenimiento" : "no hubo incidencias críticas"}.`;
+  const c = saraConcern();
+  return "Buenos días, Uriel. " + saraBriefing().join(" ") + (c ? " " + c.t : "");
 }
 function saraAnswer(q) {
   q = q.toLowerCase();
@@ -433,7 +529,9 @@ function saraAnswer(q) {
   if (/extra|horas/.test(q)) { const ex = TEAM.filter(t => t.trab > t.contr); return ex.length ? "Hicieron horas extra: " + ex.map(t => `<b>${t.n}</b> (+${t.trab - t.contr}h, ${t.local})`).join("; ") + "." : "Nadie hizo horas extra."; }
   if (/pedido|compra|proveedor/.test(q)) { const p = pendingOrders(); return p.length ? "Pedidos pendientes: " + p.map(o => `<b>${o.prov}</b> (${o.local}, ${eur(o.importe)}, ${o.fecha})`).join("; ") + "." : "No hay pedidos pendientes."; }
   if (/mantenim|incidenc|urgente|averí/.test(q)) { const c = openIncid().filter(i => i.sev === "hi"); return c.length ? "Urgente: " + c.map(i => `<b>${i.titulo}</b> en ${i.local}`).join("; ") + "." : "No hay incidencias urgentes de mantenimiento."; }
+  if (/apoyo|necesita|refuerzo|problema con/.test(q)) { const s = employeeSupport()[0]; return s ? `Quien más necesita apoyo es <b>${s.t.n}</b> (${s.t.local}): ${s.r.join(", ")}.` : "Todo el equipo está dentro de parámetros."; }
   if (/falt|ausen|baja/.test(q)) { const a = absent(); return a.length ? "Hoy falta: " + a.map(t => `<b>${t.n}</b> (${t.local}, ${t.estado})`).join("; ") + "." : "No hay ausencias hoy."; }
+  if (/ayuda|peor local|necesita ayuda/.test(q)) { const w = localsByNeed()[0]; return `El local que más atención necesita es <b>${w.e.short}</b> (salud ${w.score}/100): ${w.reasons.join(", ")}.`; }
   if (/reseñ|review|estrell/.test(q)) return `La media de reseñas es <b class="hl">${reviewAvgAll().toFixed(1).replace(".", ",")}</b>. Hay ${REVIEWS.filter(r => !r.respondida).length} sin responder.`;
   return "Puedo darte ventas, margen, horas extra, pedidos pendientes, mantenimiento urgente, ausencias o reseñas. En el prototipo respondo con datos de ejemplo.";
 }
