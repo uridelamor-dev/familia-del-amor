@@ -15,12 +15,27 @@ export const CATALOGO_CANONICO = [
   "Botiga d'en Mateu - Tordera",
 ];
 
-// Allowlist de tablas que ESPERAMOS que tengan columna `local`. Si aparece una tabla nueva
-// con columna `local` que no esté aquí, la reconciliación se DETIENE (no se ignora en silencio).
+// Allowlist CERRADA (sin comodines) de tablas que ESPERAMOS que tengan columna `local`.
+// Cualquier tabla futura con columna `local` que NO esté aquí vuelve a DETENER la reconciliación
+// hasta revisarla expresamente. Que una tabla esté vacía de valores `local` NO la excluye del
+// inventario: si en el futuro contiene valores, se someterá a la misma reconciliación estricta.
 export const EXPECTED_LOCAL_TABLES = [
-  "users", "reservas", "bloqueos_reservas", "wa_links", "facturas", "facturas_grupos",
-  "facturas_email_reglas", "facturas_pendientes", "facturas_locales", "hr_jobs",
-  "maintenance_issues", "announcements",
+  "users",                       // cuenta de panel; `local` del trabajador nominal
+  "reservas",                    // reserva en un local
+  "bloqueos_reservas",           // fechas sin reservas por local
+  "wa_links",                    // grupo de WhatsApp por local
+  "facturas",                    // factura asignada a un local
+  "facturas_grupos",             // grupo de WhatsApp de facturas por local
+  "facturas_email_reglas",       // regla email→local para clasificar facturas
+  "facturas_pendientes",         // factura pendiente de asignar (local opcional)
+  "facturas_locales",            // datos fiscales por local (empresa/CIF)
+  "hr_jobs",                     // oferta de empleo asociada a un local
+  "maintenance_issues",          // incidencia de mantenimiento de un local
+  "announcements",               // comunicado interno por local
+  // Tablas verificadas por esquema real (tienen columna `local`; hoy sin valores):
+  "facturas_emails_procesados",  // registro de emails de facturas ya procesados (dedupe), con su local
+  "followup_scheduled",          // seguimientos post-reserva programados, con el local de la reserva
+  "sara_respuestas",             // respuestas/documentos configurables de Sara, opcionalmente por local
 ];
 
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;

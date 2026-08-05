@@ -117,6 +117,22 @@ describe("Reconciliación", () => {
     assert.equal(catalogChecksum().length, 16);
     assert.equal(EXPECTED_LOCAL_TABLES.includes("reservas"), true);
   });
+  test("allowlist cerrada incluye las 3 tablas verificadas y no usa comodines", () => {
+    for (const t of ["facturas_emails_procesados", "followup_scheduled", "sara_respuestas"]) {
+      assert.ok(EXPECTED_LOCAL_TABLES.includes(t), `falta ${t} en la allowlist`);
+    }
+    assert.ok(EXPECTED_LOCAL_TABLES.every((t) => typeof t === "string" && !t.includes("*")), "sin comodines");
+  });
+  test("una tabla nueva NO listada sigue bloqueando (lista cerrada)", async () => {
+    const { dbPath } = mkDb(); const x = await openFk(dbPath); await createUsers(x);
+    await addUser(x, { id: 1, username: "u1", rol: "trabajador", local: B });
+    await x.run(`CREATE TABLE otra_tabla_local (id INTEGER PRIMARY KEY, local TEXT)`);
+    await x.run(`INSERT INTO otra_tabla_local (local) VALUES (?)`, [B]);
+    const r = await reconcile(x);
+    assert.equal(r.ok, false);
+    assert.ok(r.unexpectedTables.includes("otra_tabla_local"));
+    await x.close();
+  });
 });
 
 // ── Backfill ─────────────────────────────────────────────────────────────────
