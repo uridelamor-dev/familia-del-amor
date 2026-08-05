@@ -320,26 +320,108 @@ async function loadClientes() {
 function applyCliFilter() { const q = document.getElementById("cQ"), p = document.getElementById("cPob"), l = document.getElementById("cLocal"), c = document.getElementById("cCumple"); if (q) CLIF.q = q.value.trim(); if (p) CLIF.poblacion = p.value.trim(); if (l) CLIF.local = l.value; if (c) CLIF.cumple = c.checked; loadClientes(); }
 async function downloadClientesCsv() { try { const r = await fetch("/api/leads/export.csv" + (cliQS() ? "?" + cliQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "clientes.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
 
-// ════════════════════════ VISTA: RESEÑAS ════════════════════════
-let REVF = { rating: "" };
-function renderReviews(list) {
-  let rows = (list || []).slice();
-  if (REVF.rating) rows = rows.filter((r) => String(r.rating) === REVF.rating);
-  const media = rows.length ? (rows.reduce((s, r) => s + (r.rating || 0), 0) / rows.length) : 0;
+// ════════════════════════ VISTA: RESEÑAS (por local · responder · IA · masivas) ════════════════════════
+let REVF = { rating: "", local: "", estado: "" };
+let REV_DATA = [], REV_LOCALES = [], REV_SEL = new Set();
+const nombreCortoLocal = (l) => String(l || "").replace(/^La Tapeta\s*[-·]\s*/i, "").trim() || l;
+
+function renderReviews() {
+  const rows = REV_DATA;
   const puedeActualizar = USER.rol === "direccion";
+  const chip = (val, label, on) => `<button class="chip ${on ? "on" : ""}" data-act="rev-local" data-local="${esc(val)}">${esc(label)}</button>`;
+  const selector = REV_LOCALES.length > 1 ? `<div class="chips">${chip("", "Todos", !REVF.local)}${REV_LOCALES.map((l) => chip(l, nombreCortoLocal(l), REVF.local === l)).join("")}</div>` : "";
+  const estadoOpts = [["", "Todas"], ["pendientes", "Pendientes"], ["respondidas", "Respondidas"]].map(([v, t]) => `<option value="${v}" ${REVF.estado === v ? "selected" : ""}>${t}</option>`).join("");
   const ratingOpts = ['<option value="">Todas</option>'].concat([5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${REVF.rating === String(n) ? "selected" : ""}>${n}★</option>`)).join("");
-  const toolbar = `<div class="toolbar"><div class="field"><label>Puntuación</label><select id="rRating">${ratingOpts}</select></div><button class="btn" data-act="rev-filtrar">Filtrar</button><div style="flex:1"></div>${puedeActualizar ? '<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>' : ""}</div>`;
-  const head = `<div class="grid g4" style="margin-bottom:16px">${stat("Media de las mostradas", "⭐", rows.length ? dec1(media) : "—", rows.length ? "★" : "", `${num(rows.length)} reseñas · la media oficial por local está en el Dashboard`)}</div>`;
-  const body = rows.length ? `<div class="card p0"><div class="rows">${rows.map((r) => `<div class="row"><div class="stars" style="min-width:70px">${"★".repeat(Math.max(0, Math.min(5, r.rating || 0)))}</div><div class="grow"><div class="t1">${esc(r.author || "Anónimo")} ${r.location_name ? "· " + esc(r.location_name) : ""}</div><div class="t2">${esc(r.text || "")}</div></div><div class="mut" style="font-size:11px">${esc((r.fecha || r.creado_en || "").slice(0, 10))}</div></div>`).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin reseñas con ese filtro.</div></div>`;
-  return `<div class="ph"><div class="eyebrow">Reputación</div><h1>Reseñas de Google</h1><div class="sub">Opiniones de los clientes por local</div></div>${head}${toolbar}${body}`;
+  const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estadoOpts}</select></div><div class="field"><label>Puntuación</label><select id="rRating">${ratingOpts}</select></div><button class="btn" data-act="rev-filtrar">Filtrar</button><div style="flex:1"></div>${puedeActualizar ? '<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>' : ""}</div>`;
+  const nota = `<div class="pendingblock" style="margin-bottom:16px"><b>Responder en Google, muy pronto.</b> La publicación directa está pendiente de que Google apruebe la cuota de su API. Mientras tanto: redacta la respuesta (con IA si quieres), <b>guárdala</b> aquí y usa <b>Copiar</b> para pegarla en Google.</div>`;
+  const bulk = REV_SEL.size ? `<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><b>${REV_SEL.size} seleccionada${REV_SEL.size === 1 ? "" : "s"}</b><div style="flex:1"></div><button class="btn" data-act="rev-sel-none">Quitar selección</button><button class="btn primary" data-act="rev-bulk">✨ Generar borradores IA</button></div>` : "";
+  const body = rows.length ? rows.map(reviewCard).join("") : `<div class="card"><div class="mut" style="padding:8px">${REV_LOCALES.length ? "Sin reseñas con este filtro." : "Aún no hay reseñas importadas. Pulsa «Actualizar desde Google» (requiere que la conexión y la cuota de Google estén activas)."}</div></div>`;
+  return `<div class="ph"><div class="eyebrow">Reputación</div><h1>Reseñas de Google</h1><div class="sub">Opiniones por local · responde una a una o en lote</div></div>${nota}${selector}${toolbar}${bulk}${body}`;
 }
+
+function reviewCard(r) {
+  const badge = r.respondida ? '<span class="badge">Respondida</span>' : '<span class="badge warn">Pendiente</span>';
+  const check = r.respondida ? "" : `<input type="checkbox" class="revsel" data-act="rev-sel" data-id="${esc(r.id)}" ${REV_SEL.has(String(r.id)) ? "checked" : ""} aria-label="Seleccionar reseña">`;
+  const stars = `<span class="stars">${"★".repeat(r.rating)}<span class="mut">${"★".repeat(5 - r.rating)}</span></span>`;
+  return `<div class="card revcard ${r.negativa ? "neg" : ""}" style="margin-bottom:12px"><div style="display:flex;gap:12px;align-items:flex-start">${check}<div class="grow" style="min-width:0;flex:1">
+    <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">${stars}<b>${esc(r.author)}</b><span class="mut" style="font-size:12px">· ${esc(r.local)} · ${esc(r.fecha)}</span><span style="flex:1"></span>${badge}</div>
+    ${r.text ? `<p style="margin:8px 0 0;font-size:13.5px;line-height:1.5">${esc(r.text)}</p>` : '<p class="mut" style="margin:8px 0 0;font-size:13px">(sin texto, solo puntuación)</p>'}
+    ${r.reply ? `<div class="revreply"><span class="k">Tu respuesta</span><span>${esc(r.reply)}</span></div>` : ""}
+    <div style="margin-top:10px;display:flex;gap:8px"><button class="btn sm" data-act="rev-responder" data-id="${esc(r.id)}">${r.respondida ? "Editar respuesta" : "Responder"}</button></div>
+  </div></div></div>`;
+}
+
 async function loadReviews() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
-  try { const data = await api("/api/reviews?limit=200"); view.innerHTML = renderReviews(data); }
-  catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+  try {
+    const qs = new URLSearchParams();
+    if (REVF.local) qs.set("local", REVF.local);
+    if (REVF.rating) qs.set("rating", REVF.rating);
+    if (REVF.estado) qs.set("estado", REVF.estado);
+    const j = await apiSend("GET", "/api/reviews/manage" + (qs.toString() ? "?" + qs.toString() : ""));
+    REV_DATA = j.data || []; REV_LOCALES = j.locales || []; REV_SEL.clear();
+    view.innerHTML = renderReviews();
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
-function applyRevFilter() { const r = document.getElementById("rRating"); if (r) REVF.rating = r.value; loadReviews(); }
+function applyRevFilter() { const rt = document.getElementById("rRating"), es = document.getElementById("rEstado"); if (rt) REVF.rating = rt.value; if (es) REVF.estado = es.value; loadReviews(); }
 async function refreshReviews() { toast("Actualizando reseñas…"); try { await apiSend("POST", "/api/reviews/refresh"); toast("Reseñas actualizadas ✅"); loadReviews(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+function revSetLocal(l) { REVF.local = l || ""; loadReviews(); }
+function revToggleSel(id) { id = String(id); if (REV_SEL.has(id)) REV_SEL.delete(id); else REV_SEL.add(id); const v = document.getElementById("view"); if (v) v.innerHTML = renderReviews(); }
+function revSelNone() { REV_SEL.clear(); const v = document.getElementById("view"); if (v) v.innerHTML = renderReviews(); }
+
+function openResponder(id) {
+  const r = REV_DATA.find((x) => String(x.id) === String(id)); if (!r) return;
+  const body = `<div class="mut" style="font-size:12.5px;margin-bottom:6px">${"★".repeat(r.rating)} · ${esc(r.author)} · ${esc(r.local)} · ${esc(r.fecha)}</div>
+    <p style="margin:0 0 12px;font-size:13.5px;line-height:1.5">${esc(r.text || "(sin texto)")}</p>
+    <textarea id="revReply" rows="5" style="width:100%;resize:vertical" placeholder="Escribe la respuesta, o genérala con IA…">${esc(r.reply || "")}</textarea>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;align-items:center">
+      <button class="btn" id="revIa">✨ Generar borrador IA</button>
+      <button class="btn" id="revCopy">Copiar</button>
+      <div style="flex:1"></div>
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="revSave">Guardar</button>
+    </div>
+    <div class="mut" style="font-size:11.5px;margin-top:10px">La publicación directa en Google se activará al aprobarse la cuota. Por ahora guarda aquí y usa "Copiar".</div>`;
+  const ov = modal("Responder reseña", body);
+  const ta = ov.querySelector("#revReply");
+  ov.querySelector("#revIa").addEventListener("click", async (e) => {
+    const b = e.currentTarget; b.disabled = true; const t = b.textContent; b.textContent = "Generando…";
+    try { const j = await apiSend("POST", "/api/reviews/draft", { id: r.id }); if (j.reply) ta.value = j.reply; }
+    catch (err) { toast("Error IA: " + err.message); }
+    finally { b.disabled = false; b.textContent = t; }
+  });
+  ov.querySelector("#revCopy").addEventListener("click", () => { navigator.clipboard ? navigator.clipboard.writeText(ta.value).then(() => toast("Respuesta copiada ✅"), () => toast("No se pudo copiar")) : toast("Copia manual"); });
+  ov.querySelector("#revSave").addEventListener("click", async () => {
+    const reply = ta.value.trim(); if (!reply) { toast("Escribe una respuesta"); return; }
+    try { await apiSend("POST", "/api/reviews/" + encodeURIComponent(r.id) + "/reply", { reply }); ov.remove(); toast("Respuesta guardada ✅"); loadReviews(); }
+    catch (err) { toast("Error: " + err.message); }
+  });
+}
+
+async function revBulk() {
+  const ids = [...REV_SEL]; if (!ids.length) return;
+  if (!(await confirmModal(`¿Generar un borrador de respuesta con IA para ${ids.length} reseña(s)?`, { ok: "Generar" }))) return;
+  toast("Generando borradores…");
+  try {
+    const j = await apiSend("POST", "/api/reviews/draft-bulk", { ids });
+    const drafts = (j.data || []).filter((d) => d.ok && d.reply);
+    if (!drafts.length) { toast("No se generó ningún borrador"); return; }
+    openBulkReview(drafts);
+  } catch (e) { toast("Error: " + e.message); }
+}
+
+function openBulkReview(drafts) {
+  const rows = drafts.map((d) => { const r = REV_DATA.find((x) => String(x.id) === String(d.id)) || {}; return { id: d.id, author: r.author, local: r.local, rating: r.rating || 0, text: r.text || "", reply: d.reply }; });
+  const body = `<div class="mut" style="font-size:12.5px;margin-bottom:10px">Revisa y edita cada borrador. Se guardarán todos al pulsar "Guardar todo".</div>
+    ${rows.map((r) => `<div style="border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px"><div class="mut" style="font-size:12px;margin-bottom:6px">${"★".repeat(r.rating)} · ${esc(r.author || "")} · ${esc(r.local || "")}</div><div class="mut" style="font-size:12.5px;margin-bottom:6px">${esc((r.text || "").slice(0, 140))}</div><textarea data-bulk-id="${esc(r.id)}" rows="3" style="width:100%;resize:vertical">${esc(r.reply)}</textarea></div>`).join("")}
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:6px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="revBulkSave">Guardar todo (${rows.length})</button></div>`;
+  const ov = modal("Borradores de respuesta", body);
+  ov.querySelector("#revBulkSave").addEventListener("click", async () => {
+    const tas = [...ov.querySelectorAll("[data-bulk-id]")]; let okc = 0;
+    for (const ta of tas) { const reply = ta.value.trim(); if (!reply) continue; try { await apiSend("POST", "/api/reviews/" + encodeURIComponent(ta.getAttribute("data-bulk-id")) + "/reply", { reply }); okc++; } catch { /* sigue */ } }
+    ov.remove(); toast(`${okc} respuesta(s) guardada(s) ✅`); loadReviews();
+  });
+}
 
 // ════════════════════════ VISTA: RR. HH. ════════════════════════
 let RRTAB = "candidaturas", RRF = { estado: "", q: "" };
@@ -505,6 +587,11 @@ document.addEventListener("click", (e) => {
   else if (act === "cli-csv") downloadClientesCsv();
   else if (act === "rev-filtrar") applyRevFilter();
   else if (act === "rev-refresh") refreshReviews();
+  else if (act === "rev-local") revSetLocal(t.getAttribute("data-local"));
+  else if (act === "rev-responder") openResponder(t.getAttribute("data-id"));
+  else if (act === "rev-sel") revToggleSel(t.getAttribute("data-id"));
+  else if (act === "rev-sel-none") revSelNone();
+  else if (act === "rev-bulk") revBulk();
   else if (act === "rr-tab") rrTab(t.getAttribute("data-tab"));
   else if (act === "rr-filtrar") applyRRFilter();
   else if (act === "cand-estado") candEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));

@@ -18,6 +18,7 @@ import { permisosV2Enabled } from "./src/core/flags.js";
 import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
+import { mapManageRow, resumenPorLocal, draftRequest, extractText } from "./src/modules/reviews/reviews.service.js";
 
 dotenv.config();
 
@@ -474,6 +475,17 @@ async function initDB() {
     ];
     for (const sql of INDICES) {
       try { await client.query(sql); } catch (e) { console.warn("Índice omitido (no crítico):", e.message); }
+    }
+
+    // Migración aditiva (no destructiva): columnas para responder reseñas en modo borrador.
+    // ADD COLUMN IF NOT EXISTS + try/catch: nunca puede impedir el arranque ni tocar datos.
+    const ALTERS = [
+      "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS reply TEXT",
+      "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS replied_at TEXT",
+      "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS reply_by TEXT",
+    ];
+    for (const sql of ALTERS) {
+      try { await client.query(sql); } catch (e) { console.warn("Columna omitida (no crítica):", e.message); }
     }
 
     // Seed usuarios por defecto si la tabla está vacía
@@ -1297,6 +1309,83 @@ app.post("/api/places/config", requireAuth(["direccion", "marketing"]), async (r
   if (!Array.isArray(locations)) return res.status(400).json({ ok: false, error: "locations debe ser array" });
   await setConfig("places_ids", JSON.stringify(locations));
   res.json({ ok: true });
+});
+
+// ── Reseñas: gestión interna por local + respuesta en MODO BORRADOR ──────────────
+// Nota: el /api/reviews público (web) NO se toca. Este endpoint devuelve TODAS las reseñas
+// (incluidas las negativas, que son las que más interesa responder), con filtro por local.
+app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
+  try {
+    const cond = [], params = [];
+    if (req.query.local) { cond.push("location_name = ?"); params.push(String(req.query.local)); }
+    if (req.query.rating) { cond.push("rating = ?"); params.push(parseInt(req.query.rating)); }
+    if (req.query.estado === "pendientes") cond.push("(reply IS NULL OR reply = '')");
+    else if (req.query.estado === "respondidas") cond.push("(reply IS NOT NULL AND reply <> '')");
+    const where = cond.length ? "WHERE " + cond.join(" AND ") : "";
+    const rows = await dbAll(`SELECT * FROM google_reviews ${where} ORDER BY COALESCE(fecha,creado_en) DESC LIMIT 300`, params);
+    const data = (rows || []).map(mapManageRow);
+    const locRows = await dbAll(`SELECT DISTINCT location_name FROM google_reviews WHERE location_name IS NOT NULL AND location_name <> '' ORDER BY location_name`);
+    res.json({ ok: true, data, resumen: resumenPorLocal(data), locales: (locRows || []).map((l) => l.location_name) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error reseñas", data: [] });
+  }
+});
+
+// Genera un borrador de respuesta con IA (reutiliza el patrón de /api/sara/chat, sin tools).
+async function draftReplyForReview(review) {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error("IA no configurada");
+  const { system, messages } = draftRequest(review);
+  const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const response = await ai.messages.create({ model: "claude-haiku-4-5-20251001", max_tokens: 400, system, messages });
+  return extractText(response);
+}
+
+app.post("/api/reviews/draft", requireAuth(["direccion", "encargado"]), async (req, res) => {
+  try {
+    let review = req.body || {};
+    if (review.id) {
+      const row = await dbGet(`SELECT * FROM google_reviews WHERE id = ?`, [String(review.id)]);
+      if (row) review = row;
+    }
+    const reply = await draftReplyForReview(review);
+    if (!reply) return res.status(502).json({ ok: false, error: "La IA no devolvió texto" });
+    res.json({ ok: true, reply });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message === "IA no configurada" ? e.message : "Error generando borrador" });
+  }
+});
+
+// Borradores IA en lote (respuestas masivas). Máx 12 por llamada.
+app.post("/api/reviews/draft-bulk", requireAuth(["direccion", "encargado"]), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 12) : [];
+  if (!ids.length) return res.status(400).json({ ok: false, error: "Sin reseñas seleccionadas" });
+  const out = [];
+  for (const id of ids) {
+    try {
+      const row = await dbGet(`SELECT * FROM google_reviews WHERE id = ?`, [String(id)]);
+      if (!row) { out.push({ id, ok: false }); continue; }
+      const reply = await draftReplyForReview(row);
+      out.push({ id, ok: !!reply, reply });
+    } catch (e) { out.push({ id, ok: false, error: e.message }); }
+  }
+  res.json({ ok: true, data: out });
+});
+
+// Guarda la respuesta (modo borrador/registro interno). La publicación DIRECTA en Google
+// (updateReply) queda pendiente de aprobación de cuota de la Business Profile API + persistir
+// el resource name de cada reseña; hoy la respuesta solo se guarda aquí.
+app.post("/api/reviews/:id/reply", requireAuth(["direccion", "encargado"]), async (req, res) => {
+  const reply = String(req.body?.reply || "").trim();
+  if (!reply) return res.status(400).json({ ok: false, error: "Respuesta vacía" });
+  try {
+    const row = await dbGet(`SELECT id FROM google_reviews WHERE id = ?`, [req.params.id]);
+    if (!row) return res.status(404).json({ ok: false, error: "Reseña no encontrada" });
+    await dbRun(`UPDATE google_reviews SET reply = ?, replied_at = ?, reply_by = ? WHERE id = ?`,
+      [reply, new Date().toISOString(), req.user?.nombre || req.user?.username || null, req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "No se pudo guardar la respuesta" });
+  }
 });
 
 // ── Middleware de autenticación
