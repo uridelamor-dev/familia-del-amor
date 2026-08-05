@@ -12,7 +12,7 @@ import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, sendModificacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
-import { resolveJwtSecret, errorHandler, safeLogError, CV_MAX_BYTES, isAllowedCvUpload, validateCvContentSync, safeUploadName } from "./security.js";
+import { resolveJwtSecret, replitEnvWarning, errorHandler, safeLogError, CV_MAX_BYTES, isAllowedCvUpload, validateCvContentSync, safeUploadName } from "./security.js";
 
 dotenv.config();
 
@@ -318,6 +318,7 @@ const PORT = process.env.PORT || 5000;
 // Se registra solo el ESTADO, nunca el valor.
 const { secret: JWT_SECRET, status: JWT_STATUS, source: JWT_SOURCE } = resolveJwtSecret();
 console.log(`[Seguridad] JWT_SECRET: ${JWT_STATUS} (origen: ${JWT_SOURCE})`);
+{ const _w = replitEnvWarning(); if (_w) console.warn(`[Seguridad] ${_w}`); }
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -2945,27 +2946,6 @@ const shutdown = (signal) => {
 };
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT",  () => shutdown("SIGINT"));
-
-// ── Errores fatales / no controlados (Iteración 1A) ──────────────────────────
-let _fatalHandling = false;
-function fatalCrash(kind, err) {
-  if (_fatalHandling) return;
-  _fatalHandling = true;
-  safeLogError(kind, err instanceof Error ? err : new Error(String(err)));
-  try { backupToReplitDBSync(); } catch { /* respaldar solo lo seguro */ }
-  setTimeout(() => process.exit(1), 3000).unref();
-  try { server.close(() => { try { db.close(); } catch { /* noop */ } process.exit(1); }); }
-  catch { process.exit(1); }
-}
-// uncaughtException: el estado del proceso queda indeterminado ⇒ cierre controlado con
-// timeout y salida con código ≠ 0 para que el supervisor (Replit) reinicie. No se continúa.
-process.on("uncaughtException", (err) => fatalCrash("uncaughtException", err));
-// unhandledRejection (política 1A): se registra de forma VISIBLE (no se oculta), pero NO se
-// fuerza la salida todavía, porque la sesión de WhatsApp aún no es durable (evitar re-escaneos
-// de QR ante rechazos esporádicos). Se reevaluará en 1B para alinearlo con uncaughtException.
-process.on("unhandledRejection", (reason) => {
-  safeLogError("unhandledRejection", reason instanceof Error ? reason : new Error(String(reason)));
-});
 
 function guardarPendienteWA(tipo, destino, reserva) {
   db.run(

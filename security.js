@@ -7,15 +7,28 @@ import fs from "fs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entorno
-// Detección segura del entorno. NO depende exclusivamente de NODE_ENV: considera
-// también señales de la plataforma (Replit) y un override explícito opcional.
+// Producción se determina EXCLUSIVAMENTE por configuración explícita:
+//   1) APP_ENV (fuente autoritativa): "production" ⇒ producción; cualquier otro valor ⇒ no.
+//   2) Si APP_ENV no está definido, se consulta NODE_ENV: "production" ⇒ producción.
+//   3) Si ninguno está definido ⇒ desarrollo (NUNCA producción automática).
+// Las señales de Replit (REPL_ID/REPL_SLUG/REPLIT_DEPLOYMENT) NO deciden el entorno;
+// solo pueden generar un aviso de configuración (ver replitEnvWarning).
 // ─────────────────────────────────────────────────────────────────────────────
 export function isProduction(env = process.env) {
-  if (env.APP_ENV === "production") return true;
-  if (env.APP_ENV === "development" || env.APP_ENV === "test") return false;
-  if (env.NODE_ENV === "production") return true;
-  if (env.REPL_ID || env.REPL_SLUG || env.REPLIT_DEPLOYMENT) return true; // Replit ⇒ producción
+  if (env.APP_ENV != null && env.APP_ENV !== "") return env.APP_ENV === "production";
+  if (env.NODE_ENV != null && env.NODE_ENV !== "") return env.NODE_ENV === "production";
   return false;
+}
+
+// Aviso (no decisión): si se ejecuta en Replit sin entorno explícito, avisar para que se
+// configure APP_ENV. Devuelve el mensaje, o null si no procede.
+export function replitEnvWarning(env = process.env) {
+  const onReplit = !!(env.REPL_ID || env.REPL_SLUG || env.REPLIT_DEPLOYMENT);
+  const hasExplicit = (env.APP_ENV != null && env.APP_ENV !== "") || (env.NODE_ENV != null && env.NODE_ENV !== "");
+  if (onReplit && !hasExplicit) {
+    return "Ejecutando en Replit sin APP_ENV/NODE_ENV explícito: se asume DESARROLLO. Define APP_ENV=production en Secrets para producción.";
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,18 +81,6 @@ export function errorHandler(err, req, res, next) {
   safeLogError(`${req && req.method} ${req && (req.originalUrl || req.path)}`, err);
   if (res && res.headersSent) return next(err);
   res.status(500).json({ ok: false, error: "Error interno" });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Identificación de IP tras proxy (para rate limiting), sin cambiar `trust proxy`.
-// Lee el primer valor de X-Forwarded-For si existe; si no, cae a req.ip/socket.
-// (Caveat documentado: XFF es falsificable; endurecer con trust proxy verificado
-//  es una tarea futura.)
-// ─────────────────────────────────────────────────────────────────────────────
-export function clientIp(req) {
-  const xff = req && req.headers && req.headers["x-forwarded-for"];
-  if (typeof xff === "string" && xff.length) return xff.split(",")[0].trim();
-  return (req && (req.ip || (req.socket && req.socket.remoteAddress))) || "unknown";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

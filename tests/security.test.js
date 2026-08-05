@@ -5,23 +5,39 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  isProduction, classifyJwtSecret, resolveJwtSecret,
-  safeLogError, errorHandler, clientIp,
+  isProduction, replitEnvWarning, classifyJwtSecret, resolveJwtSecret,
+  safeLogError, errorHandler,
   extOf, cvTypeByExt, isAllowedCvUpload, magicMatches, validateCvContentSync, safeUploadName,
   CV_MAX_BYTES,
 } from "../security.js";
 
-describe("Entorno (isProduction)", () => {
-  test("APP_ENV=production ⇒ true; development/test ⇒ false", () => {
+describe("Entorno (isProduction) — solo configuración explícita", () => {
+  test("APP_ENV es la fuente autoritativa", () => {
     assert.equal(isProduction({ APP_ENV: "production" }), true);
+    assert.equal(isProduction({ APP_ENV: "staging" }), false);
+    // APP_ENV manda sobre NODE_ENV
+    assert.equal(isProduction({ APP_ENV: "production", NODE_ENV: "development" }), true);
     assert.equal(isProduction({ APP_ENV: "development", NODE_ENV: "production" }), false);
-    assert.equal(isProduction({ APP_ENV: "test" }), false);
   });
-  test("Señales de Replit ⇒ producción; sin señales ⇒ no", () => {
-    assert.equal(isProduction({ REPL_ID: "x" }), true);
-    assert.equal(isProduction({ REPL_SLUG: "x" }), true);
+  test("sin APP_ENV se consulta NODE_ENV", () => {
     assert.equal(isProduction({ NODE_ENV: "production" }), true);
+    assert.equal(isProduction({ NODE_ENV: "development" }), false);
+  });
+  test("sin APP_ENV ni NODE_ENV ⇒ desarrollo (nunca producción automática)", () => {
     assert.equal(isProduction({}), false);
+  });
+  test("las variables de Replit por sí solas NO implican producción", () => {
+    assert.equal(isProduction({ REPL_ID: "x" }), false);
+    assert.equal(isProduction({ REPL_SLUG: "x" }), false);
+    assert.equal(isProduction({ REPLIT_DEPLOYMENT: "1" }), false);
+    // Replit + configuración explícita ⇒ decide la configuración
+    assert.equal(isProduction({ REPL_ID: "x", APP_ENV: "production" }), true);
+  });
+  test("replitEnvWarning avisa (no decide) si hay Replit sin entorno explícito", () => {
+    assert.match(replitEnvWarning({ REPL_ID: "x" }), /Replit/);
+    assert.equal(replitEnvWarning({ REPL_ID: "x", APP_ENV: "production" }), null);
+    assert.equal(replitEnvWarning({ NODE_ENV: "development" }), null);
+    assert.equal(replitEnvWarning({}), null);
   });
 });
 
@@ -61,11 +77,15 @@ describe("Manejo de errores", () => {
   test("safeLogError no lanza", () => { assert.doesNotThrow(() => safeLogError("ctx", new Error("x"))); });
 });
 
-describe("clientIp (proxy-aware)", () => {
-  test("usa el primer X-Forwarded-For; si no, req.ip", () => {
-    assert.equal(clientIp({ headers: { "x-forwarded-for": "1.2.3.4, 10.0.0.1" } }), "1.2.3.4");
-    assert.equal(clientIp({ headers: {}, ip: "9.9.9.9" }), "9.9.9.9");
-    assert.equal(clientIp({ headers: {} }), "unknown");
+describe("server.js: solo error handler global (sin handlers de proceso en 1A)", () => {
+  const src = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
+  test("mantiene el manejador global de Express", () => {
+    assert.match(src, /app\.use\(errorHandler\)/);
+  });
+  test("no registra handlers de proceso añadidos en 1A", () => {
+    assert.ok(!/uncaughtException/.test(src), "no debe registrar uncaughtException");
+    assert.ok(!/unhandledRejection/.test(src), "no debe registrar unhandledRejection");
+    assert.ok(!/fatalCrash/.test(src), "no debe existir fatalCrash");
   });
 });
 
