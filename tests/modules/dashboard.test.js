@@ -1,7 +1,7 @@
 // Dashboard ejecutivo — motor de inteligencia: razonamiento de Sara (puro) + ensamblado.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { ayerNarrativa, hoyNarrativa, buildConcerns, buildAgenda, getDashboard } from "../../src/modules/dashboard/dashboard.service.js";
+import { ayerNarrativa, hoyNarrativa, buildConcerns, buildAgenda, buildTitular, getDashboard } from "../../src/modules/dashboard/dashboard.service.js";
 
 const HOY = "2026-08-05";
 
@@ -77,9 +77,9 @@ describe("buildConcerns — Sara razona y termina en decisión", () => {
     const w = c.find((x) => x.tipo === "rrhh" && /acumula/.test(x.titulo));
     assert.ok(w); assert.match(w.titulo, /Marc/);
   });
-  test("check-ins pendientes avanzado el mes ⇒ info", () => {
+  test("conversaciones con el equipo pendientes avanzado el mes ⇒ info", () => {
     const c = buildConcerns({ hoy: "2026-08-22", plantilla: { n: 20 }, checkinsMes: { n: 5 } }, { whatsappConnected: true });
-    const ck = c.find((x) => /check-ins/.test(x.titulo));
+    const ck = c.find((x) => /conversaciones con el equipo/.test(x.titulo));
     assert.ok(ck); assert.equal(ck.sev, "info");
   });
   test("fuga de clientes ⇒ lista de a quién llamar", () => {
@@ -93,6 +93,34 @@ describe("buildConcerns — Sara razona y termina en decisión", () => {
     assert.deepEqual(sevs, [...sevs].sort((a, b) => rank[a] - rank[b]));
     assert.ok(c.length <= 7);
     assert.equal(sevs[0], "crit");
+  });
+});
+
+describe("buildTitular — el veredicto de Sara", () => {
+  test("sin preocupaciones: día tranquilo", () => {
+    assert.match(buildTitular([], null), /no hay nada urgente/i);
+  });
+  test("con crítico: prioriza una sola cosa", () => {
+    const t = buildTitular([{ sev: "crit", titulo: "Sara está desconectada de WhatsApp" }], null);
+    assert.match(t, /solo (haces|una)/i);
+  });
+  test("por local incluye el nombre", () => {
+    assert.match(buildTitular([], "La Tapeta - Girona"), /Girona/);
+  });
+});
+
+describe("seguridad — escapado de datos de usuario/Google en narrativas (anti-XSS)", () => {
+  test("un título de incidencia con HTML se escapa, no se inyecta", () => {
+    const c = buildConcerns({ hoy: HOY, recur: [{ local: "<b>x</b>", titulo: "<img src=x onerror=alert(1)>", c: 4 }] }, { whatsappConnected: true });
+    const m = c.find((x) => x.tipo === "mantenimiento");
+    assert.ok(!m.titulo.includes("<img"), "el título no debe contener <img crudo");
+    assert.ok(!m.narrativa.includes("<img"), "la narrativa no debe contener <img crudo");
+    assert.match(m.titulo, /&lt;img/);
+  });
+  test("el texto de una reseña con HTML se escapa", () => {
+    const c = buildConcerns({ hoy: HOY, lowCorr: { review: { rating: 1, text: "<script>alert(1)</script>", location_name: "<b>G</b>" }, dia: "2026-08-03", reservasDia: 5, incidenciasDia: 0 } }, { whatsappConnected: true });
+    const r = c.find((x) => x.tipo === "resenas");
+    assert.ok(!r.narrativa.includes("<script>"), "la narrativa no debe contener <script> crudo");
   });
 });
 

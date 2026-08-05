@@ -14,6 +14,10 @@ const DOW = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "s
 function addDays(iso, n) { const d = new Date(iso + "T00:00:00.000Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 function addMonths(ym, n) { const [y, m] = ym.split("-").map(Number); const d = new Date(Date.UTC(y, m - 1 + n, 1)); return d.toISOString().slice(0, 7); }
 const signed = (n, d = 0) => (n >= 0 ? "+" : "−") + Math.abs(n).toFixed(d) + "%";
+// Las narrativas se pintan como HTML en el cliente (innerHTML). Todo valor que venga de la BD
+// o de Google (títulos de incidencia, proveedor, nombres, texto de reseña, local) se escapa
+// aquí antes de incrustarlo, para que un texto con < > no pueda inyectar nada.
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const eur = (n) => Math.round(n).toLocaleString("es-ES") + " €";
 const nombreCorto = (s) => String(s || "").split(" ")[0];
 const diasEntre = (aIso, bIso) => Math.max(0, Math.round((new Date(aIso + "T00:00:00Z") - new Date(String(bIso).slice(0, 10) + "T00:00:00Z")) / 86400000));
@@ -87,7 +91,7 @@ async function gatherSignals(x, { hoy, local }) {
     () => safe(() => x.all(`SELECT telefono, MAX(nombre_reserva) AS nombre, COUNT(*)::int visitas, MAX(dia) AS ultima, MAX(local) AS local FROM reservas WHERE telefono IS NOT NULL AND telefono <> ''${lf} GROUP BY telefono HAVING COUNT(*) >= 4 AND MAX(dia)::date >= ?::date ORDER BY visitas DESC LIMIT 6`, [...lp, addDays(hoy, -60)]), []),
     // — pendientes —
     () => safe(() => x.get(`SELECT COUNT(*)::int n, MIN(creado_en) AS oldest FROM hr_applications WHERE estado = 'nuevo'`, []), null),
-    () => safe(() => x.get(`SELECT COUNT(*)::int n FROM facturas_pendientes${local ? " WHERE local = ?" : ""}`, [...lp]), null),
+    () => safe(() => x.get(`SELECT COUNT(*)::int n FROM facturas_pendientes`, []), null),
   ], 4);
 
   // Correlación de la peor reseña reciente con la carga/incidencias de ese día.
@@ -146,7 +150,7 @@ function buildRadar({ hoyLocal, ayerLocal, incPorLocal, gastoAct }) {
 // ── Razonamiento PURO y testeable ────────────────────────────────────────────
 export function ayerNarrativa(s, localName) {
   if (!s.ayerTot || s.ayerTot.n == null) return { disponible: false, texto: "Aún no hay datos de reservas de ayer." };
-  const sujeto = localName || "el grupo";
+  const sujeto = esc(localName || "el grupo");
   const dowN = DOW[s.dow] || "día";
   let texto = `Ayer ${sujeto} tuvo <b>${s.ayerTot.n} reserva${s.ayerTot.n === 1 ? "" : "s"}</b> (${s.ayerTot.personas} comensales)`;
   let delta = null;
@@ -160,7 +164,7 @@ export function ayerNarrativa(s, localName) {
   texto += ".";
   if (!localName && s.ayerLocal && s.ayerLocal.length > 1) {
     const mejor = s.ayerLocal[0], peor = s.ayerLocal[s.ayerLocal.length - 1];
-    texto += ` El más movido fue <b>${mejor.local}</b> (${mejor.personas} comensales); el más flojo, ${peor.local} (${peor.personas}).`;
+    texto += ` El más movido fue <b>${esc(mejor.local)}</b> (${mejor.personas} comensales); el más flojo, ${esc(peor.local)} (${peor.personas}).`;
   }
   return { disponible: true, texto, delta, reservas: s.ayerTot.n, comensales: s.ayerTot.personas };
 }
@@ -172,7 +176,7 @@ export function hoyNarrativa(s, localName) {
   let texto = `Para hoy hay <b>${s.hoyTot.n} reserva${s.hoyTot.n === 1 ? "" : "s"}</b> (${s.hoyTot.personas} comensales)${sujeto}`;
   if (!localName && s.hoyLocal && s.hoyLocal.length) {
     const top = s.hoyLocal[0];
-    if (top && top.personas > 0) texto += `; el que más llena es <b>${top.local}</b> (${top.personas})`;
+    if (top && top.personas > 0) texto += `; el que más llena es <b>${esc(top.local)}</b> (${top.personas})`;
   }
   if (s.prox7 && s.prox7.n != null) texto += `. Los próximos 7 días suman ${s.prox7.n} reservas (${s.prox7.personas} comensales)`;
   texto += ".";
@@ -183,14 +187,15 @@ export function hoyNarrativa(s, localName) {
 
 export function buildConcerns(s, { localName, whatsappConnected } = {}) {
   const out = [];
-  const scope = localName ? ` en ${localName}` : "";
+  const scope = localName ? ` en ${esc(localName)}` : "";
 
   if (whatsappConnected === false)
     out.push({ sev: "crit", tipo: "whatsapp", titulo: "Sara está desconectada de WhatsApp", narrativa: "Mientras WhatsApp esté caído, Sara no responde a los clientes y se pueden perder reservas sin que nos enteremos.", decision: "Reconectaría ahora mismo escaneando el QR. Es lo primero del día.", impacto: "Cada hora caída son reservas y clientes perdidos.", go: "whatsapp" });
 
   if (s.recur && s.recur.length) {
     const r = s.recur[0];
-    out.push({ sev: r.c >= 3 ? "crit" : "imp", tipo: "mantenimiento", titulo: `«${r.titulo}» se repite en ${r.local}`, narrativa: `La incidencia «${r.titulo}» de ${r.local} se ha repetido <b>${r.c} veces</b> en las últimas semanas. No es mala suerte: es un equipo o un proveedor que no está resolviendo el problema de raíz.`, decision: `No la repararía otra vez. A partir de la 3ª intervención, sustituir sale más a cuenta que seguir pagando reparaciones. Pediría hoy presupuesto de sustitución.`, impacto: "Dejas de pagar reparaciones recurrentes y evitas un corte de servicio en plena hora punta.", go: "mantenimiento" });
+    const rt = esc(r.titulo), rl = esc(r.local);
+    out.push({ sev: r.c >= 3 ? "crit" : "imp", tipo: "mantenimiento", titulo: `«${rt}» se repite en ${rl}`, narrativa: `La incidencia «${rt}» de ${rl} se ha repetido <b>${r.c} veces</b> en las últimas semanas. No es mala suerte: es un equipo o un proveedor que no está resolviendo el problema de raíz.`, decision: `No la repararía otra vez. A partir de la 3ª intervención, sustituir sale más a cuenta que seguir pagando reparaciones. Pediría hoy presupuesto de sustitución.`, impacto: "Dejas de pagar reparaciones recurrentes y evitas un corte de servicio en plena hora punta.", go: "mantenimiento" });
   }
 
   // Dinero que debo: factura antigua sin pagar.
@@ -198,49 +203,49 @@ export function buildConcerns(s, { localName, whatsappConnected } = {}) {
     const dias = diasEntre(s.hoy, s.masAntigua.fecha);
     if (dias >= 45) {
       const tot = s.porPagar && s.porPagar.total ? ` En total hay ${eur(s.porPagar.total)} sin pagar (${s.porPagar.n} facturas).` : "";
-      out.push({ sev: dias >= 75 ? "crit" : "imp", tipo: "facturas", titulo: `Factura de ${s.masAntigua.proveedor || "un proveedor"} sin pagar desde hace ${dias} días`, narrativa: `La factura más antigua pendiente (${eur(s.masAntigua.total || 0)}) lleva <b>${dias} días</b> sin pagarse.${tot} Los proveedores que se cansan de esperar suben precios o dejan de servir.`, decision: `Pagaría hoy las vencidas o hablaría con el proveedor para pactar plazo. No dejaría que una deuda vieja se enquiste.`, impacto: "Mantienes la relación con proveedores y evitas recargos o cortes de suministro.", go: "facturas" });
+      out.push({ sev: dias >= 75 ? "crit" : "imp", tipo: "facturas", titulo: `Factura de ${esc(s.masAntigua.proveedor || "un proveedor")} sin pagar desde hace ${dias} días`, narrativa: `La factura más antigua pendiente (${eur(s.masAntigua.total || 0)}) lleva <b>${dias} días</b> sin pagarse.${tot} Los proveedores que se cansan de esperar suben precios o dejan de servir.`, decision: `Pagaría hoy las vencidas o hablaría con el proveedor para pactar plazo. No dejaría que una deuda vieja se enquiste.`, impacto: "Mantienes la relación con proveedores y evitas recargos o cortes de suministro.", go: "facturas" });
     }
   }
 
   // Gasto de un local disparado mes vs mes.
   if (s.gastoLocal && s.gastoLocal.length) {
     const sube = s.gastoLocal.filter((g) => g.delta != null && g.delta >= 25 && g.actual >= 500).sort((a, b) => b.delta - a.delta)[0];
-    if (sube) out.push({ sev: "imp", tipo: "facturas", titulo: `El gasto de ${sube.local} se ha disparado`, narrativa: `${sube.local} lleva gastado <b>${eur(sube.actual)}</b> este mes, un <b>${signed(sube.delta)}</b> más que el mes pasado (${eur(sube.prev)}). Sin ventas conectadas no puedo saber si lo justifica más facturación, pero el salto es grande.`, decision: `Miraría qué facturas concretas lo explican. Si no hay más ventas detrás, hay una fuga de coste que cortar.`, impacto: "Cada euro de coste que se dispara sin ventas detrás sale directo del margen.", go: "facturas" });
+    if (sube) out.push({ sev: "imp", tipo: "facturas", titulo: `El gasto de ${esc(sube.local)} se ha disparado`, narrativa: `${esc(sube.local)} lleva gastado <b>${eur(sube.actual)}</b> este mes, un <b>${signed(sube.delta)}</b> más que el mes pasado (${eur(sube.prev)}). Sin ventas conectadas no puedo saber si lo justifica más facturación, pero el salto es grande.`, decision: `Miraría qué facturas concretas lo explican. Si no hay más ventas detrás, hay una fuga de coste que cortar.`, impacto: "Cada euro de coste que se dispara sin ventas detrás sale directo del margen.", go: "facturas" });
   }
 
   if (s.aging && s.aging.length) {
-    const a = s.aging[0]; const dias = diasEntre(s.hoy, a.creado_en);
-    out.push({ sev: "imp", tipo: "mantenimiento", titulo: `Incidencia estancada en ${a.local}`, narrativa: `«${a.titulo}» lleva <b>${dias} días</b> abierta sin resolver${scope ? "" : ` en ${a.local}`}. Cuanto más espera, más caro sale y peor imagen da.`, decision: `La cerraría hoy o la escalaría a un técnico externo. Nada debería llevar más de 3 días abierto.`, impacto: "Evitas que una avería menor se convierta en una gorda.", go: "mantenimiento" });
+    const a = s.aging[0]; const dias = diasEntre(s.hoy, a.creado_en); const al = esc(a.local);
+    out.push({ sev: "imp", tipo: "mantenimiento", titulo: `Incidencia estancada en ${al}`, narrativa: `«${esc(a.titulo)}» lleva <b>${dias} días</b> abierta sin resolver${scope ? "" : ` en ${al}`}. Cuanto más espera, más caro sale y peor imagen da.`, decision: `La cerraría hoy o la escalaría a un técnico externo. Nada debería llevar más de 3 días abierto.`, impacto: "Evitas que una avería menor se convierta en una gorda.", go: "mantenimiento" });
   }
 
   // Reputación de un local en riesgo.
   if (s.repLocal && s.repLocal.length) {
     const peor = s.repLocal[0];
-    if (peor && peor.media > 0 && peor.media <= 3.8 && peor.n >= 5) out.push({ sev: peor.media <= 3.2 ? "crit" : "imp", tipo: "resenas", titulo: `La reputación de ${peor.location_name} está en riesgo`, narrativa: `${peor.location_name} tiene una media de <b>${peor.media}★</b> (${peor.n} reseñas en los últimos meses), por debajo del resto. En hostelería, media estrella en Google cambia cuántos clientes nuevos entran por la puerta.`, decision: `Leería las últimas reseñas de ese local, respondería a las negativas y hablaría con el encargado de qué está fallando en sala o cocina.`, impacto: "La nota de Google es el escaparate: subirla medio punto llena mesas.", go: "marketing" });
+    if (peor && peor.media > 0 && peor.media <= 3.8 && peor.n >= 5) { const pl = esc(peor.location_name); out.push({ sev: peor.media <= 3.2 ? "crit" : "imp", tipo: "resenas", titulo: `La reputación de ${pl} está en riesgo`, narrativa: `${pl} tiene una media de <b>${peor.media}★</b> (${peor.n} reseñas en los últimos meses), por debajo del resto. En hostelería, media estrella en Google cambia cuántos clientes nuevos entran por la puerta.`, decision: `Leería las últimas reseñas de ese local, respondería a las negativas y hablaría con el encargado de qué está fallando en sala o cocina.`, impacto: "La nota de Google es el escaparate: subirla medio punto llena mesas.", go: "marketing" }); }
   }
 
   if (s.lowCorr) {
-    const lc = s.lowCorr; const lugar = lc.review.location_name ? ` (${lc.review.location_name})` : "";
+    const lc = s.lowCorr; const lugar = lc.review.location_name ? ` (${esc(lc.review.location_name)})` : "";
     let conexion = "";
     if (lc.incidenciasDia > 0) conexion = ` Y coincide con una incidencia registrada ese mismo día${lugar}. Probablemente están relacionadas.`;
     else if (lc.reservasDia && lc.reservasDia >= 20) conexion = ` Cayó el día de más carga del mes (${lc.reservasDia} reservas): probablemente fue saturación de sala, no mala comida.`;
-    out.push({ sev: "imp", tipo: "resenas", titulo: `Reseña de ${lc.review.rating}★ el ${lc.dia}`, narrativa: `«${String(lc.review.text || "").slice(0, 120)}»${conexion}`, decision: `Respondería públicamente hoy con educación y revisaría qué pasó ese turno para que no se repita.`, impacto: "Una respuesta rápida y honesta recupera reputación; ignorarla la hunde.", go: "marketing" });
+    out.push({ sev: "imp", tipo: "resenas", titulo: `Reseña de ${lc.review.rating}★ el ${esc(lc.dia)}`, narrativa: `«${esc(String(lc.review.text || "").slice(0, 120))}»${conexion}`, decision: `Respondería públicamente hoy con educación y revisaría qué pasó ese turno para que no se repita.`, impacto: "Una respuesta rápida y honesta recupera reputación; ignorarla la hunde.", go: "marketing" });
   }
 
   // Equipo: trabajador con incidencias acumuladas.
   if (s.incWorkers && s.incWorkers.length && s.incWorkers[0].c >= 2) {
-    const w = s.incWorkers[0];
-    out.push({ sev: "imp", tipo: "rrhh", titulo: `${nombreCorto(w.nombre) || "Un trabajador"} acumula incidencias`, narrativa: `${w.nombre || "Un trabajador"}${w.local ? ` (${w.local})` : ""} tiene <b>${w.c} incidencias</b> registradas en las últimas semanas. Cuando se acumulan, no suele ser solo la persona: puede ser sobrecarga, falta de formación o un problema de equipo.`, decision: `Me sentaría a hablar con esa persona esta semana, antes de que la situación derive en una baja o una marcha.`, impacto: "Cuidar a tiempo a quien flojea evita perderlo y tener que formar a otro desde cero.", go: "rrhh" });
+    const w = s.incWorkers[0]; const wn = esc(w.nombre || "Un trabajador");
+    out.push({ sev: "imp", tipo: "rrhh", titulo: `${esc(nombreCorto(w.nombre)) || "Un trabajador"} acumula incidencias`, narrativa: `${wn}${w.local ? ` (${esc(w.local)})` : ""} tiene <b>${w.c} incidencias</b> registradas en las últimas semanas. Cuando se acumulan, no suele ser solo la persona: puede ser sobrecarga, falta de formación o un problema de equipo.`, decision: `Me sentaría a hablar con esa persona esta semana, antes de que la situación derive en una baja o una marcha.`, impacto: "Cuidar a tiempo a quien flojea evita perderlo y tener que formar a otro desde cero.", go: "rrhh" });
   }
 
   if (s.churn && s.churn.length) {
-    const top = s.churn.slice(0, 3).map((c) => nombreCorto(c.nombre)).filter(Boolean);
+    const top = s.churn.slice(0, 3).map((c) => esc(nombreCorto(c.nombre))).filter(Boolean);
     out.push({ sev: s.churn.length >= 5 ? "imp" : "info", tipo: "clientes", titulo: `${s.churn.length} clientes habituales se están enfriando${scope}`, narrativa: `${s.churn.length} personas que venían a menudo (3+ reservas) llevan <b>más de 6 semanas</b> sin volver. Perder un habitual es mucho más caro que recuperar uno.`, decision: `Hoy llamaría o mandaría un mensaje personal a los de más valor${top.length ? `: ${top.join(", ")}` : ""}. Un "te echamos de menos" funciona.`, impacto: "Recuperar un habitual cuesta una llamada; captar uno nuevo cuesta una campaña.", go: "clientes" });
   }
 
   if (s.risers && s.risers.length) {
-    const r = s.risers[0];
-    out.push({ sev: "info", tipo: "proveedores", titulo: `${r.proveedor} está subiendo el gasto`, narrativa: `El gasto con <b>${r.proveedor}</b> ha subido un <b>${signed(r.delta)}</b> respecto al mes anterior${scope}. O han subido precios o estamos pidiendo de más.`, decision: `Revisaría la última factura y renegociaría, o pediría una alternativa antes de que se consolide.`, impacto: "Un punto de coste de compras se lo come el margen directamente.", go: "facturas" });
+    const r = s.risers[0]; const rp = esc(r.proveedor);
+    out.push({ sev: "info", tipo: "proveedores", titulo: `${rp} está subiendo el gasto`, narrativa: `El gasto con <b>${rp}</b> ha subido un <b>${signed(r.delta)}</b> respecto al mes anterior${scope}. O han subido precios o estamos pidiendo de más.`, decision: `Revisaría la última factura y renegociaría, o pediría una alternativa antes de que se consolide.`, impacto: "Un punto de coste de compras se lo come el margen directamente.", go: "facturas" });
   }
 
   // Equipo: check-ins del mes sin hacer (solo si vamos avanzados de mes).
@@ -248,7 +253,7 @@ export function buildConcerns(s, { localName, whatsappConnected } = {}) {
     const hechos = s.checkinsMes ? s.checkinsMes.n : 0;
     const faltan = s.plantilla.n - hechos;
     const diaMes = Number(s.hoy.slice(8, 10));
-    if (faltan >= 3 && diaMes >= 18) out.push({ sev: "info", tipo: "rrhh", titulo: `Te faltan ${faltan} check-ins del equipo este mes`, narrativa: `Este mes has hablado con ${hechos} de ${s.plantilla.n} personas del equipo. A quien no escuchas, no sabes cómo está.`, decision: `Cerraría los ${faltan} pendientes antes de fin de mes; son 10 minutos por persona y previenen marchas.`, impacto: "El equipo que se siente escuchado rota menos.", go: "rrhh" });
+    if (faltan >= 3 && diaMes >= 18) out.push({ sev: "info", tipo: "rrhh", titulo: `Te faltan ${faltan} conversaciones con el equipo este mes`, narrativa: `Este mes has hablado con ${hechos} de ${s.plantilla.n} personas del equipo. A quien no escuchas, no sabes cómo está.`, decision: `Cerraría los ${faltan} pendientes antes de fin de mes; son 10 minutos por persona y previenen marchas.`, impacto: "El equipo que se siente escuchado rota menos.", go: "rrhh" });
   }
 
   if (s.cand && s.cand.n > 0) {
@@ -264,6 +269,18 @@ export function buildAgenda(concerns) {
   return concerns.filter((c) => c.sev !== "info").slice(0, 4).map((c) => ({ t: c.titulo, decision: c.decision, go: c.go }));
 }
 
+// El veredicto de Sara: lo primero que se lee. Sintetiza como lo diría una Directora General.
+export function buildTitular(concerns, localName) {
+  const donde = localName ? ` en ${localName}` : "";
+  if (!concerns.length) return `Hoy${donde} no hay nada urgente. Buen día para cuidar el servicio, reconocer al equipo y preparar lo que viene.`;
+  const crit = concerns.filter((c) => c.sev === "crit").length;
+  const first = concerns[0];
+  const resto = concerns.length - 1;
+  const cola = resto > 0 ? ` Luego hay ${resto} cosa${resto === 1 ? "" : "s"} más que mirar, pero esto es lo que movería la aguja.` : "";
+  if (crit) return `Si hoy solo haces una cosa${donde}, que sea esta: ${first.titulo.charAt(0).toLowerCase() + first.titulo.slice(1)}.${cola}`;
+  return `Hoy${donde} no hay fuegos que apagar, pero yo me ocuparía de que ${first.titulo.charAt(0).toLowerCase() + first.titulo.slice(1)}.${cola}`;
+}
+
 export async function getDashboard(x, { now, whatsappConnected = null, local = null } = {}) {
   const hoy = (now || new Date().toISOString()).slice(0, 10);
   const s = await gatherSignals(x, { hoy, local });
@@ -273,6 +290,7 @@ export async function getDashboard(x, { now, whatsappConnected = null, local = n
 
   return {
     fecha: hoy, ayerFecha: s.ayer, scope: { local: localName },
+    titular: buildTitular(concerns, localName),
     ayer: ayerNarrativa(s, localName),
     hoy: hoyNarrativa(s, localName),
     preocupaciones: concerns,

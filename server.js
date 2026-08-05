@@ -450,6 +450,32 @@ async function initDB() {
       )
     `);
 
+    // Índices (aditivos e idempotentes). Las consultas del panel/dashboard filtran por local,
+    // fecha, teléfono, estado… sin índices eran full-scans que a millones de filas degradan mucho.
+    // Cada CREATE va en su propio try/catch: un índice que falle NUNCA impide arrancar el servidor.
+    const INDICES = [
+      "CREATE INDEX IF NOT EXISTS idx_reservas_dia ON reservas(dia)",
+      "CREATE INDEX IF NOT EXISTS idx_reservas_local ON reservas(local)",
+      "CREATE INDEX IF NOT EXISTS idx_reservas_telefono ON reservas(telefono)",
+      "CREATE INDEX IF NOT EXISTS idx_facturas_local ON facturas(local)",
+      "CREATE INDEX IF NOT EXISTS idx_facturas_fecha ON facturas(fecha)",
+      "CREATE INDEX IF NOT EXISTS idx_facturas_pagado ON facturas(pagado)",
+      "CREATE INDEX IF NOT EXISTS idx_facturas_proveedor ON facturas(proveedor)",
+      "CREATE INDEX IF NOT EXISTS idx_maint_estado ON maintenance_issues(estado)",
+      "CREATE INDEX IF NOT EXISTS idx_maint_local ON maintenance_issues(local)",
+      "CREATE INDEX IF NOT EXISTS idx_greviews_fecha ON google_reviews(fecha)",
+      "CREATE INDEX IF NOT EXISTS idx_greviews_location ON google_reviews(location_name)",
+      "CREATE INDEX IF NOT EXISTS idx_wmsg_creado ON whatsapp_messages(creado_en)",
+      "CREATE INDEX IF NOT EXISTS idx_leads_creado ON leads(creado_en)",
+      "CREATE INDEX IF NOT EXISTS idx_hrnotes_worker ON hr_worker_notes(worker_id)",
+      "CREATE INDEX IF NOT EXISTS idx_hrllamadas_mes ON hr_llamadas_mes(mes)",
+      "CREATE INDEX IF NOT EXISTS idx_hrapps_estado ON hr_applications(estado)",
+      "CREATE INDEX IF NOT EXISTS idx_bloqueos_local ON bloqueos_reservas(local)",
+    ];
+    for (const sql of INDICES) {
+      try { await client.query(sql); } catch (e) { console.warn("Índice omitido (no crítico):", e.message); }
+    }
+
     // Seed usuarios por defecto si la tabla está vacía
     const { rows: usersCount } = await client.query("SELECT COUNT(*) AS total FROM users");
     if (parseInt(usersCount[0].total) === 0) {

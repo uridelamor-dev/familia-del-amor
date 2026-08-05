@@ -52,7 +52,8 @@ const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], rese
 let USER = null, CURRENT = "dashboard";
 
 function setTheme(v) { const r = document.documentElement; if (v === "auto") { r.removeAttribute("data-theme"); localStorage.removeItem("panelTheme"); } else { r.setAttribute("data-theme", v); localStorage.setItem("panelTheme", v); } }
-function toggleTheme() { const r = document.documentElement; const dark = r.getAttribute("data-theme") === "dark" || (!r.getAttribute("data-theme") && matchMedia("(prefers-color-scheme:dark)").matches); setTheme(dark ? "light" : "dark"); }
+function isDark() { const r = document.documentElement; return r.getAttribute("data-theme") === "dark" || (!r.getAttribute("data-theme") && matchMedia("(prefers-color-scheme:dark)").matches); }
+function toggleTheme() { setTheme(isDark() ? "light" : "dark"); const b = document.getElementById("themeBtn"); if (b) b.textContent = isDark() ? "🌙" : "☀️"; }
 (function initTheme() { const t = localStorage.getItem("panelTheme"); if (t) document.documentElement.setAttribute("data-theme", t); })();
 
 function shell(active, bodyHtml) {
@@ -68,19 +69,21 @@ function shell(active, bodyHtml) {
     <aside class="sidebar">
       <div class="brand"><div class="logo">FA</div><div><b>Familia del Amor</b><span>Panel interno</span></div></div>
       <nav class="nav">${nav}</nav>
-      <div class="sbf"><a class="navi" href="/direccion.html"><span class="ico">🗔</span><span>Panel completo (clásico)</span><span class="ext">↗</span></a></div>
+      <div class="sbf"><a class="navi" href="/direccion.html"><span class="ico">⚙️</span><span>Ajustes avanzados</span><span class="ext">↗</span></a></div>
     </aside>
     <div class="main">
       <header class="topbar">
+        <button class="iconbtn menu" data-act="menu" aria-label="Abrir menú">☰</button>
         <div style="font-weight:680;letter-spacing:-.01em">${TITLES[active] || "Panel"}</div>
         <div class="spacer"></div>
         <span id="waPill" class="pill">WhatsApp…</span>
-        <button class="iconbtn" data-act="theme" title="Tema" aria-label="Tema">☀️</button>
+        <button class="iconbtn" id="themeBtn" data-act="theme" title="Cambiar tema" aria-label="Cambiar tema">${isDark() ? "🌙" : "☀️"}</button>
         <span class="avatar" title="${esc(USER.nombre || USER.username)}">${esc(initials)}</span>
         <button class="iconbtn" data-act="logout" title="Salir" aria-label="Salir">⎋</button>
       </header>
       <main class="content"><div class="wrap" id="view">${bodyHtml}</div></main>
-    </div></div>`;
+    </div>
+    <div class="navov" data-act="navclose" aria-hidden="true"></div></div>`;
 }
 function skeleton() {
   return `<div class="ph"><div class="sk" style="width:120px;height:12px;margin-bottom:10px"></div><div class="sk" style="width:280px;height:26px"></div></div>
@@ -104,25 +107,48 @@ function modal(title, bodyHtml) {
   ov.addEventListener("click", (e) => { if (e.target === ov || e.target.closest("[data-close]")) ov.remove(); });
   return ov;
 }
+// Confirmación in-app (sustituye confirm() nativo). Devuelve Promise<boolean>.
+function confirmModal(message, { ok = "Confirmar", danger = false } = {}) {
+  return new Promise((resolve) => {
+    const ov = modal("Confirmar", `<p style="margin:0 0 18px;line-height:1.55">${esc(message)}</p><div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" data-close>Cancelar</button><button class="btn ${danger ? "danger" : "primary"}" data-ok>${esc(ok)}</button></div>`);
+    ov.addEventListener("click", (e) => {
+      if (e.target.closest("[data-ok]")) { ov.remove(); resolve(true); }
+      else if (e.target === ov || e.target.closest("[data-close]")) resolve(false);
+    });
+  });
+}
+// Entrada de texto in-app (sustituye prompt() nativo). Devuelve Promise<string|null>.
+function promptModal(title, { placeholder = "", type = "text", ok = "Guardar" } = {}) {
+  return new Promise((resolve) => {
+    const ov = modal(title, `<input id="__pm" type="${type}" placeholder="${esc(placeholder)}" style="width:100%;margin-bottom:16px" autocomplete="off"><div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" data-close>Cancelar</button><button class="btn primary" data-ok>${esc(ok)}</button></div>`);
+    const input = ov.querySelector("#__pm"); if (input) setTimeout(() => input.focus(), 30);
+    const submit = () => { const v = input ? input.value.trim() : ""; ov.remove(); resolve(v || null); };
+    ov.addEventListener("click", (e) => { if (e.target.closest("[data-ok]")) submit(); else if (e.target === ov || e.target.closest("[data-close]")) resolve(null); });
+    if (input) input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+  });
+}
 
 // ════════════════════════ VISTA: DASHBOARD (periódico ejecutivo) ════════════════════════
 let DASH_LOCAL = "";
 const nombreCorto = (s) => String(s || "").split(" ")[0];
 const GO_VIEW = { whatsapp: "whatsapp", mantenimiento: "mantenimiento", clientes: "clientes", facturas: "facturas", rrhh: "rrhh", marketing: "reviews", reservas: "reservas", reviews: "reviews", campanas: "campanas" };
+const CICO = { whatsapp: "💬", mantenimiento: "🔧", facturas: "💶", resenas: "⭐", clientes: "👥", proveedores: "🚚", rrhh: "🧑‍🍳" };
+const SEVLAB = { crit: "Crítico", imp: "Importante", info: "A vigilar" };
+function saludoHora() { const h = new Date().getHours(); return h < 6 ? "Buenas noches" : h < 13 ? "Buenos días" : h < 20 ? "Buenas tardes" : "Buenas noches"; }
 function renderDashboard(d) {
   const localName = d.scope && d.scope.local;
   const selector = `<div class="chips">${['<button class="chip ' + (!DASH_LOCAL ? "on" : "") + '" data-act="dash-local" data-local="">Todos</button>'].concat(LOCALES.map((l) => `<button class="chip ${DASH_LOCAL === l ? "on" : ""}" data-act="dash-local" data-local="${esc(l)}">${esc(l)}</button>`)).join("")}</div>`;
-  // ── Portada: buenos días + cómo fue ayer + qué viene hoy ──
-  const ayerTxt = d.ayer && d.ayer.disponible ? d.ayer.texto : esc((d.ayer && d.ayer.texto) || "Aún sin datos de ayer.");
-  const hoyTxt = d.hoy && d.hoy.disponible ? `<p class="lead ${d.hoy.alerta ? "warn" : ""}" style="margin:10px 0 0">${d.hoy.texto}</p>` : "";
+  // ── Portada: Sara da su lectura del día (veredicto primero); ayer/hoy como contexto ──
+  const contexto = [d.ayer && d.ayer.disponible ? d.ayer.texto : "", d.hoy && d.hoy.disponible ? d.hoy.texto : ""].filter(Boolean).join(" ");
   const hero = `<div class="hero">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><span class="saraface">S</span><div><div style="font-weight:750;font-size:15px">Buenos días${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><div class="mut" style="font-size:12.5px">${fechaLarga(d.fecha)}${localName ? " · <b>" + esc(localName) + "</b>" : " · todos los establecimientos"}</div></div></div>
-    <p class="lead" style="margin:0">${ayerTxt}</p>${hoyTxt}</div>`;
+    <div class="sarahead"><span class="saraface">S</span><div><div class="sname">Sara · dirección de operaciones</div><div class="mut" style="font-size:12.5px">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""} · ${fechaLarga(d.fecha)}${localName ? " · <b>" + esc(localName) + "</b>" : ""}</div></div></div>
+    <p class="lead" style="margin:16px 0 0">${d.titular || contexto || "Aún sin datos suficientes para hoy."}</p>
+    ${contexto ? `<p class="context ${d.hoy && d.hoy.alerta ? "warn" : ""}">${contexto}</p>` : ""}</div>`;
   // ── Lo que me preocupa — Sara razona y decide ──
   const concerns = d.preocupaciones || [];
   const concernsHtml = concerns.length ? concerns.map((c) => {
     const view = GO_VIEW[c.go]; const btn = view ? `<button class="btn" data-view="${view}">Abrir ${TITLES[view] || view}</button>` : "";
-    return `<div class="concern ${c.sev}"><div class="stripe"></div><div class="body"><div class="ttl">${esc(c.titulo)}</div><p class="narr">${c.narrativa}</p><div class="decision"><span class="k">Yo haría</span><span class="d">${c.decision}</span></div>${c.impacto ? `<div class="impacto">💡 ${esc(c.impacto)}</div>` : ""}${btn ? `<div style="margin-top:12px">${btn}</div>` : ""}</div></div>`;
+    return `<div class="concern ${c.sev}"><div class="stripe"></div><div class="body"><div class="ttl"><span class="cico">${CICO[c.tipo] || "•"}</span><span class="ttx">${c.titulo}</span><span class="sevtag ${c.sev}">${SEVLAB[c.sev] || ""}</span></div><p class="narr">${c.narrativa}</p><div class="decision"><span class="k">Yo haría</span><span class="d">${c.decision}</span></div>${c.impacto ? `<div class="impacto">💡 ${esc(c.impacto)}</div>` : ""}${btn ? `<div style="margin-top:12px">${btn}</div>` : ""}</div></div>`;
   }).join("") : `<div class="card"><p class="lead" style="margin:0">${localName ? `Hoy <b>${esc(localName)}</b> está tranquilo. Nada urgente — buen día para cuidar el servicio y al equipo.` : `Hoy el grupo está tranquilo. Nada que apagar — buen momento para reconocer al equipo o preparar la semana.`}</p></div>`;
   // ── Mi plan para hoy ──
   const agenda = d.agenda || [];
@@ -232,7 +258,7 @@ function openNuevaReserva() {
   });
 }
 async function cancelReserva(id, nombre) {
-  if (!confirm(`¿Cancelar la reserva de ${nombre}? Se avisará al grupo de WhatsApp del local.`)) return;
+  if (!(await confirmModal(`¿Cancelar la reserva de ${nombre}? Se avisará al grupo de WhatsApp del local.`, { ok: "Cancelar reserva", danger: true }))) return;
   try { await apiSend("DELETE", "/api/reservas/" + encodeURIComponent(id)); toast("Reserva cancelada"); loadReservas(); }
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
@@ -267,7 +293,7 @@ async function loadMant() {
   catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function applyMantFilter() { const l = document.getElementById("mLocal"), es = document.getElementById("mEstado"); if (l) MANF.local = l.value; if (es) MANF.estado = es.value; loadMant(); }
-async function mantEstado(id, estado) { try { await apiSend("PUT", "/api/maintenance/" + encodeURIComponent(id), { estado }); toast("Incidencia → " + estado); loadMant(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+async function mantEstado(id, estado) { try { await apiSend("PUT", "/api/maintenance/" + encodeURIComponent(id), { estado }); toast("Incidencia actualizada ✅"); loadMant(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 function openNuevaIncidencia() {
   const localOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
   const body = `<form id="fInc"><div class="form-grid"><div class="field full"><label>Local</label><select name="local" required>${localOpts}</select></div><div class="field full"><label>Título</label><input type="text" name="titulo" required></div><div class="field full"><label>Descripción</label><input type="text" name="descripcion" required></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear incidencia</button></div></form>`;
@@ -284,7 +310,7 @@ function renderClientes(j) {
   const localOpts = ['<option value="">Cualquier local</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${CLIF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
   const toolbar = `<div class="toolbar"><div class="field"><label>Buscar</label><input id="cQ" placeholder="Nombre, teléfono, email…" value="${esc(CLIF.q)}"></div><div class="field"><label>Población</label><input id="cPob" value="${esc(CLIF.poblacion)}"></div><div class="field"><label>Local</label><select id="cLocal">${localOpts}</select></div><label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" id="cCumple" ${CLIF.cumple ? "checked" : ""} style="width:auto;height:auto"> Cumple este mes</label><button class="btn" data-act="cli-filtrar">Buscar</button><div style="flex:1"></div><button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
   const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Cliente</th><th>Teléfono</th><th>Email</th><th>Población</th><th>Origen</th><th>Última visita</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(((c.nombre || "") + " " + (c.apellidos || "")).trim() || "—")}</td><td class="mut">${esc(c.telefono || "")}</td><td class="mut">${esc(c.correo || "")}</td><td>${esc(c.poblacion || "")}</td><td>${esc(c.origen || "")}</td><td class="mut">${esc((c.ultima_actividad || "").slice(0, 10))}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin clientes con esos filtros.</div></div>`;
-  return `<div class="ph"><div class="eyebrow">CRM</div><h1>Clientes</h1><div class="sub">${num(total)} contacto${total === 1 ? "" : "s"}${rows.length < total ? ` · mostrando ${rows.length}` : ""}</div></div>${toolbar}${table}`;
+  return `<div class="ph"><div class="eyebrow">Base de clientes</div><h1>Clientes</h1><div class="sub">${num(total)} contacto${total === 1 ? "" : "s"}${rows.length < total ? ` · mostrando ${rows.length}` : ""}</div></div>${toolbar}${table}`;
 }
 async function loadClientes() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -344,7 +370,7 @@ async function loadRRHH() {
 }
 function rrTab(tab) { RRTAB = tab; loadRRHH(); }
 function applyRRFilter() { const es = document.getElementById("rEstado"), q = document.getElementById("rQ"); if (es) RRF.estado = es.value; if (q) RRF.q = q.value.trim(); loadRRHH(); }
-async function candEstado(id, estado) { try { await apiSend("PUT", "/api/hr/applications/" + encodeURIComponent(id), { estado }); toast("Candidatura → " + estado); loadRRHH(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+async function candEstado(id, estado) { try { await apiSend("PUT", "/api/hr/applications/" + encodeURIComponent(id), { estado }); toast("Candidatura actualizada ✅"); loadRRHH(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 
 // ════════════════════════ VISTA: USUARIOS ════════════════════════
 function renderUsuarios(list) {
@@ -361,8 +387,8 @@ function openNuevoUsuario() {
   const ov = modal("Nuevo usuario", body);
   ov.querySelector("#fUser").addEventListener("submit", async (e) => { e.preventDefault(); const data = Object.fromEntries(new FormData(e.target).entries()); try { await apiSend("POST", "/api/users", data); ov.remove(); toast("Usuario creado ✅"); loadUsuarios(); } catch (err) { toast("Error: " + err.message); } });
 }
-async function userPass(id, nombre) { const p = prompt(`Nueva contraseña para ${nombre}:`); if (!p) return; try { await apiSend("PUT", "/api/users/" + encodeURIComponent(id) + "/password", { password: p }); toast("Contraseña actualizada"); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
-async function userDel(id, nombre) { if (!confirm(`¿Eliminar la cuenta ${nombre}? No se puede deshacer.`)) return; try { await apiSend("DELETE", "/api/users/" + encodeURIComponent(id)); toast("Usuario eliminado"); loadUsuarios(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+async function userPass(id, nombre) { const p = await promptModal(`Nueva contraseña para ${nombre}`, { type: "password", placeholder: "Escribe la nueva contraseña", ok: "Actualizar" }); if (!p) return; try { await apiSend("PUT", "/api/users/" + encodeURIComponent(id) + "/password", { password: p }); toast("Contraseña actualizada ✅"); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cuenta ${nombre}? No se puede deshacer.`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/users/" + encodeURIComponent(id)); toast("Usuario eliminado ✅"); loadUsuarios(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 
 // ════════════════════════ VISTA: FACTURAS ════════════════════════
 let FACF = { local: "" };
@@ -396,7 +422,7 @@ function renderWhatsApp(status, qr, links) {
   const connected = status && status.connected;
   const rows = links || [];
   const conn = `<div class="card"><div class="ch"><h3>Conexión de Sara</h3><span class="pill ${connected ? "ok" : "bad"}">${connected ? "Conectado" : "Desconectado"}</span></div>${connected ? `<p class="mut">Sara está conectada y atiende reservas por WhatsApp automáticamente.</p>` : `<p class="mut">Escanea este código desde WhatsApp → Dispositivos vinculados para reconectar a Sara:</p>${qr && qr.qr ? `<div style="text-align:center;padding:10px"><img src="${esc(qr.qr)}" alt="Código QR" style="width:240px;height:240px;border-radius:12px;background:#fff;padding:8px"></div><div class="mut" style="text-align:center;font-size:12px">El código se actualiza solo; en cuanto vincules, esta pantalla lo detectará.</div>` : '<p class="mut">Generando código QR…</p>'}`}</div>`;
-  const linksCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos por local</h3></div>${rows.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Grupo de WhatsApp</th></tr></thead><tbody>${rows.map((l) => `<tr><td>${esc(l.local)}</td><td class="mut" style="font-size:11px">${esc(l.group_jid)}</td></tr>`).join("")}</tbody></table></div>` : '<div style="padding:0 18px 12px" class="mut">Sin grupos vinculados.</div>'}<div style="padding:14px 18px"><a class="btn" href="/direccion.html">Configurar grupos ↗</a></div></div>`;
+  const linksCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos por local</h3></div>${rows.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Estado</th></tr></thead><tbody>${rows.map((l) => `<tr><td>${esc(l.local)}</td><td class="r">${l.group_jid ? '<span class="pill ok">Vinculado</span>' : '<span class="pill">Sin vincular</span>'}</td></tr>`).join("")}</tbody></table></div>` : '<div style="padding:0 18px 12px" class="mut">Sin grupos vinculados.</div>'}<div style="padding:14px 18px"><a class="btn" href="/direccion.html">Configurar grupos ↗</a></div></div>`;
   return `<div class="ph"><div class="eyebrow">Comunicación</div><h1>WhatsApp / Sara</h1><div class="sub">Estado de la conexión y grupos por local</div></div><div class="grid g2">${conn}${linksCard}</div>`;
 }
 async function loadWhatsApp() {
@@ -439,7 +465,7 @@ function openNuevaCampana() {
   ov.querySelector("#fCamp").addEventListener("submit", async (e) => {
     e.preventDefault(); const d = filtros(e.target);
     let prev; try { prev = await apiSend("POST", "/api/campanas/preview", d); } catch (err) { toast("Error: " + err.message); return; }
-    if (!confirm(`Vas a enviar esta campaña a ${prev.total} contacto(s) por WhatsApp. ¿Confirmar el envío?`)) return;
+    if (!(await confirmModal(`Vas a enviar esta campaña a ${prev.total} contacto(s) por WhatsApp.`, { ok: "Enviar campaña" }))) return;
     try { await apiSend("POST", "/api/campanas/enviar", d); ov.remove(); toast("Campaña en envío ✅"); loadCampanas(); } catch (err) { toast("Error: " + err.message); }
   });
 }
@@ -459,10 +485,12 @@ function go(view) {
 }
 
 document.addEventListener("click", (e) => {
-  const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); go(v.getAttribute("data-view")); return; }
+  const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); document.body.classList.remove("navopen"); go(v.getAttribute("data-view")); return; }
   const t = e.target.closest("[data-act]"); if (!t) return;
   const act = t.getAttribute("data-act");
-  if (act === "theme") toggleTheme();
+  if (act === "menu") document.body.classList.toggle("navopen");
+  else if (act === "navclose") document.body.classList.remove("navopen");
+  else if (act === "theme") toggleTheme();
   else if (act === "logout") { localStorage.removeItem("token"); location.href = "/login.html"; }
   else if (act === "reload") go(CURRENT);
   else if (act === "dash-local") { DASH_LOCAL = t.getAttribute("data-local") || ""; loadDashboard(); }
