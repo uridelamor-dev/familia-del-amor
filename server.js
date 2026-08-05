@@ -12,6 +12,11 @@ import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
+// Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
+import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
+import { permisosV2Enabled } from "./src/core/flags.js";
+import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
+import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 
 dotenv.config();
 
@@ -57,7 +62,13 @@ async function dbRun(sql, params = []) {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || "tapeta-secret-dev";
+// JWT endurecido (Iteración 1A): en producción exige un secreto FUERTE o el proceso NO arranca
+// (refuse-to-boot); en desarrollo usa un secreto fijo estable. Nunca queda un fallback inseguro.
+const PROD = isProduction();
+const _envWarn = replitEnvWarning();
+if (_envWarn) console.warn("[env]", _envWarn);
+const { secret: JWT_SECRET, status: jwtStatus, source: jwtSource } = resolveJwtSecret({ prod: PROD });
+console.log(`[auth] JWT secret: ${jwtStatus} (fuente: ${jwtSource})`);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -80,6 +91,21 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+
+// Subida de CV endurecida (Iteración 1A): se guarda primero en un directorio PRIVADO fuera de
+// public/, con límite de tamaño y allowlist de extensión+MIME; solo se publica tras validar los
+// magic bytes reales (ver el handler de /api/hr/applications con finalizeCvUpload).
+const uploadsTmpDir = path.join(__dirname, "tmp_uploads");
+if (!fs.existsSync(uploadsTmpDir)) fs.mkdirSync(uploadsTmpDir, { recursive: true });
+const cvStorage = multer.diskStorage({
+  destination: (req, file, cb) => { if (!fs.existsSync(uploadsTmpDir)) fs.mkdirSync(uploadsTmpDir, { recursive: true }); cb(null, uploadsTmpDir); },
+  filename: (req, file, cb) => cb(null, safeUploadName(file.originalname)),
+});
+const uploadCv = multer({
+  storage: cvStorage,
+  limits: { fileSize: CV_MAX_BYTES },
+  fileFilter: (req, file, cb) => cb(null, isAllowedCvUpload(file)),
+});
 
 // ── Inicializar esquema PostgreSQL ────────────────────────────────────────────
 async function initDB() {
@@ -452,6 +478,17 @@ async function initDB() {
        WHERE (empresa IS NULL OR empresa = 'Sin empresa asignada')
        AND EXISTS (SELECT 1 FROM facturas_locales fl WHERE fl.local = facturas.local)`
     );
+
+    // Modelo de establecimientos (Iteración 2): esquema ADITIVO e idempotente + catálogo canónico.
+    // NO fatal: si algo fallara aquí, el resto del ERP debe seguir arrancando (con PERMISOS_V2
+    // ausente nadie lee estas tablas). No hace backfill de datos (paso manual y explícito).
+    try {
+      const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
+      await ensureEstablecimientosSchema(schemaX);
+      await seedCatalogo(schemaX);
+    } catch (e) {
+      console.error("[DB] Aviso: esquema de establecimientos no inicializado (no fatal):", e.message);
+    }
 
     console.log("[DB] Esquema PostgreSQL inicializado");
   } finally {
@@ -1952,10 +1989,11 @@ app.put("/api/hr/jobs/:id", requireAuth(["rrhh", "direccion"]), async (req, res)
 });
 
 app.post("/api/hr/applications", (req, res, next) => {
-  upload.single("cv")(req, res, (err) => {
+  uploadCv.single("cv")(req, res, (err) => {
     if (err) {
       console.error("[HR] Error subiendo CV:", err.message);
-      return res.status(400).json({ ok: false, error: "Error subiendo el CV." });
+      const msg = err.code === "LIMIT_FILE_SIZE" ? "El CV supera el tamaño máximo (8 MB)." : "Error subiendo el CV.";
+      return res.status(400).json({ ok: false, error: msg });
     }
     next();
   });
@@ -1964,6 +2002,13 @@ app.post("/api/hr/applications", (req, res, next) => {
   console.log("[HR] Candidatura recibida:", { nombre, email, telefono, puesto, edad, experiencia, poblacion, tieneCV: !!req.file });
   if (!nombre || !email || !telefono || !puesto || !edad || !experiencia || !poblacion) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
+  }
+  // Validar el CONTENIDO del CV (magic bytes) y publicarlo en public/uploads SOLO si es válido.
+  // Si NO es válido, se descarta el adjunto pero la candidatura SÍ se guarda (no perdemos al
+  // candidato). Seguridad preservada: nunca se publica un archivo cuyo contenido no coincida.
+  if (req.file) {
+    const fin = finalizeCvUpload({ tmpPath: req.file.path, filename: req.file.filename, originalname: req.file.originalname, publicDir: uploadsDir });
+    if (!fin.ok) { console.warn("[HR] CV descartado (contenido no válido):", req.file.originalname); req.file = null; }
   }
   const cv_url = req.file ? `/uploads/${req.file.filename}` : "";
   const creado_en = new Date().toISOString();
@@ -1995,7 +2040,7 @@ app.post("/api/hr/applications", (req, res, next) => {
       sendMensajeLibre("622065974", lineas.join("\n"))
         .then(() => {
           if (req.file) {
-            const cvBuffer = fs.readFileSync(req.file.path);
+            const cvBuffer = fs.readFileSync(path.join(uploadsDir, req.file.filename)); // ya publicado por finalizeCvUpload
             return sendDocumentoLibre("622065974", cvBuffer, req.file.originalname, req.file.mimetype);
           }
         })
@@ -2149,42 +2194,39 @@ app.post("/api/rrhh/llamada", requireAuth(["rrhh", "direccion"]), async (req, re
   }
 });
 
-// Mantenimiento
-app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res) => {
+// Mantenimiento — enforcement por establecimiento gated por PERMISOS_V2 (Iteración 4).
+// Con el flag ausente (por defecto) el comportamiento es IDÉNTICO al anterior, incluidos los
+// mensajes de error 500. Toda la autorización vive en el servicio (no en la ruta).
+const maintDb = { get: dbGet, all: dbAll, run: dbRun };
+app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
   try {
-    const rows = await dbAll(`SELECT * FROM maintenance_issues ORDER BY creado_en DESC`);
-    res.json({ ok: true, data: rows });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: "Error incidencias" });
-  }
+    const r = await listMaintenanceIssues(maintDb, req.user, { enabled: permisosV2Enabled(), local: req.query.local });
+    if (r.code === "OK") return res.json({ ok: true, data: r.data });
+    if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
+    return next(new Error("maintenance_list_internal"));
+  } catch (e) { if (!permisosV2Enabled()) return res.status(500).json({ ok: false, error: "Error incidencias" }); next(e); }
 });
 
-app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res) => {
-  const { local, titulo, descripcion } = req.body;
-  if (!local || !titulo || !descripcion) {
-    return res.status(400).json({ ok: false, error: "Faltan campos" });
-  }
+app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
   try {
-    const creado_en = new Date().toISOString();
-    const row = await dbRun(
-      `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, creado_en) VALUES (?, ?, ?, 'abierta', ?) RETURNING id`,
-      [local, titulo, descripcion, creado_en]
-    );
-    res.json({ ok: true, id: row.id });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: "Error guardando incidencia" });
-  }
+    const { local, titulo, descripcion } = req.body;
+    const r = await createMaintenanceIssue(maintDb, req.user, { local, titulo, descripcion }, { enabled: permisosV2Enabled() });
+    if (r.code === "OK") return res.json({ ok: true, id: r.id });
+    if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_local" ? "Establecimiento no válido" : "Faltan campos" });
+    if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
+    return next(new Error("maintenance_create_internal"));
+  } catch (e) { if (!permisosV2Enabled()) return res.status(500).json({ ok: false, error: "Error guardando incidencia" }); next(e); }
 });
 
-app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (req, res) => {
-  const { estado } = req.body;
-  if (!estado) return res.status(400).json({ ok: false, error: "Estado requerido" });
+app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
   try {
-    await dbRun(`UPDATE maintenance_issues SET estado=? WHERE id=?`, [estado, req.params.id]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: "Error actualizando incidencia" });
-  }
+    const r = await updateMaintenanceIssueStatus(maintDb, req.user, req.params.id, { estado: req.body.estado }, { enabled: permisosV2Enabled() });
+    if (r.code === "OK") return res.json({ ok: true });
+    if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_id" ? "ID no válido" : "Estado requerido" });
+    if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
+    if (r.code === "NOT_FOUND") return res.status(404).json({ ok: false, error: "Incidencia no encontrada" });
+    return next(new Error("maintenance_update_internal"));
+  } catch (e) { if (!permisosV2Enabled()) return res.status(500).json({ ok: false, error: "Error actualizando incidencia" }); next(e); }
 });
 
 // Comunicados
@@ -2719,6 +2761,10 @@ async function procesarPendientesWA() {
     console.error("Error procesando pendientes WA:", e.message);
   }
 }
+
+// Manejador de errores global (Iteración 1A): respuesta 500 genérica sin filtrar internos,
+// y log seguro en servidor. Debe registrarse DESPUÉS de todas las rutas.
+app.use(errorHandler);
 
 const server = app.listen(PORT, async () => {
   console.log(`Servidor activo en http://localhost:${PORT}`);
