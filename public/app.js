@@ -1053,8 +1053,21 @@ const POPUP_KEY = "lead_popup_next";
 const POPUP_DONE_KEY = "lead_submitted";
 const POPUP_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 horas
 
+// Cookie de respaldo (1 año) además de localStorage: sobrevive a limpiezas parciales
+// de localStorage y funciona aunque localStorage esté deshabilitado.
+function setLeadCookie() {
+  try {
+    const unAnyo = 365 * 24 * 60 * 60;
+    document.cookie = `${POPUP_DONE_KEY}=1; path=/; max-age=${unAnyo}; SameSite=Lax`;
+  } catch {}
+}
+function hasLeadCookie() {
+  return document.cookie.split(";").some(c => c.trim().startsWith(`${POPUP_DONE_KEY}=`));
+}
+
 function shouldShowPopup() {
-  if (localStorage.getItem(POPUP_DONE_KEY)) return false;
+  // Si ya rellenó el formulario (en localStorage O en cookie), no volver a mostrarlo.
+  if (localStorage.getItem(POPUP_DONE_KEY) || hasLeadCookie()) return false;
   const next = Number(localStorage.getItem(POPUP_KEY) || "0");
   return Date.now() > next;
 }
@@ -1064,8 +1077,11 @@ function markPopupSeen() {
 }
 
 function markLeadSubmitted() {
-  localStorage.setItem(POPUP_DONE_KEY, "1");
-  localStorage.removeItem(POPUP_KEY);
+  try {
+    localStorage.setItem(POPUP_DONE_KEY, "1");
+    localStorage.removeItem(POPUP_KEY);
+  } catch {}
+  setLeadCookie();
 }
 
 if (popup && shouldShowPopup()) {
@@ -1140,19 +1156,26 @@ if (leadForm) leadForm.addEventListener("submit", async (e) => {
   const formData = new FormData(leadForm);
   const payload = Object.fromEntries(formData.entries());
 
-  const res = await fetch("/api/leads", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-  if (data.ok) {
-    markLeadSubmitted();
+  // El cliente ya ha rellenado y enviado el formulario: no debe volver a aparecerle,
+  // aunque el backend falle. Marcamos como hecho ANTES de esperar la respuesta.
+  markLeadSubmitted();
+
+  try {
+    const res = await fetch("/api/leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
     const t2 = i18n[currentLang] || i18n.es;
-    leadMsg.textContent = `${t2.success_lead}${data.premio ? " — " + data.premio : ""}`;
-    leadForm.reset();
-    setTimeout(() => popup.classList.remove("show"), 2500);
-  } else {
+    if (data.ok) {
+      leadMsg.textContent = `${t2.success_lead}${data.premio ? " — " + data.premio : ""}`;
+      leadForm.reset();
+      setTimeout(() => popup.classList.remove("show"), 2500);
+    } else {
+      leadMsg.textContent = t2.err_generic;
+    }
+  } catch (err) {
     const t2 = i18n[currentLang] || i18n.es;
     leadMsg.textContent = t2.err_generic;
   }

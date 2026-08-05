@@ -55,6 +55,8 @@ Puedes gestionar reservas por WhatsApp. Para una reserva necesitas: local, día,
 
 Pide los datos que te falten de dos en dos. Si solo quedan 3 pendientes, pídelos todos a la vez. Nunca pidas más de dos cosas por mensaje. La hora debe caer en mediodía (12:30–15:30) o cena (19:30–22:30).
 
+**Terraza o interior:** SOLO en *La Tapeta - Blanes*, *Cooperativa - Blanes* y *La Tapeta - Lloret*, pregunta también al cliente si prefiere terraza o interior, y pásalo en el campo \`zona\` (\`terraza\`, \`interior\`, o \`indiferente\` si le da igual). En el resto de locales NO lo preguntes: pon siempre \`zona: "indiferente"\`.
+
 Cuando tengas todos los datos, usa la herramienta \`registrar_reserva\` y, según el resultado, confírmale la reserva al cliente (o avísale si hubo un problema).
 
 **Reservas de más de 8 personas:** regístralas con \`pendiente: true\` y dile al cliente que su reserva queda registrada pero *no confirmada* hasta que un encargado le contacte para confirmar los detalles.
@@ -66,6 +68,9 @@ Ejemplo INCORRECTO (no lo hagas nunca): "¡Claro que sí, podemos reservar este 
 
 ## Cancelaciones
 Si un cliente quiere cancelar su reserva: primero confirma con él de qué reserva se trata (normalmente la verás en el contexto de su reserva: local, día y hora). Cuando el cliente confirme que quiere cancelarla, usa la herramienta \`cancelar_reserva\` con el día (y el local si lo sabes). Después, confírmale con amabilidad que su reserva ha quedado cancelada. Si no encuentras su reserva, pídele el día y el nombre, o dile que llame al local.
+
+## Modificaciones (¡NO son cancelaciones!)
+Si un cliente quiere CAMBIAR algo de una reserva que YA tiene (número de personas, hora, día o zona) — por ejemplo "al final seremos 4 en vez de 2" o "¿podemos cambiarlo a las 21:30?" — es una MODIFICACIÓN, NO una cancelación. Usa la herramienta \`modificar_reserva\` (localiza la reserva por su día actual y, si lo sabes, el local; pon en null lo que no cambie). NUNCA canceles y vuelvas a crear la reserva para un cambio: eso confunde al local. Solo usa \`cancelar_reserva\` si el cliente quiere anular la reserva del todo y no venir.
 
 ## Carta, platos y precios
 Si en el contexto ("DOCUMENTOS DISPONIBLES" / "CONFIGURACIÓN DEL EQUIPO") hay una carta o documento que encaje con lo que pide el cliente, envíaselo DIRECTAMENTE con la herramienta \`enviar_documento\` en cuanto lo pida — a la primera, sin derivar a ningún teléfono y sin esperar a que insista. Nunca digas que no tienes la carta si en el contexto hay un documento que encaja.
@@ -140,9 +145,10 @@ const TOOLS = [
         personas: { type: "integer", description: "Número de comensales" },
         nombre_reserva: { type: "string", description: "Nombre de quien hace la reserva" },
         telefono: { type: "string", description: "Teléfono de contacto del cliente" },
-        pendiente: { type: "boolean", description: "true solo si personas > 8 (queda pendiente de confirmación por un encargado)" }
+        pendiente: { type: "boolean", description: "true solo si personas > 8 (queda pendiente de confirmación por un encargado)" },
+        zona: { type: "string", enum: ["terraza", "interior", "indiferente"], description: "Preferencia terraza/interior. Solo se pregunta en La Tapeta - Blanes, Cooperativa - Blanes y La Tapeta - Lloret; en el resto usa 'indiferente'." }
       },
-      required: ["local", "dia", "hora", "personas", "nombre_reserva", "telefono", "pendiente"],
+      required: ["local", "dia", "hora", "personas", "nombre_reserva", "telefono", "pendiente", "zona"],
       additionalProperties: false
     }
   },
@@ -214,6 +220,24 @@ const TOOLS = [
         local: { type: "string", description: "Local de la reserva, si lo sabes (para desambiguar)" }
       },
       required: ["dia"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "modificar_reserva",
+    description: "Modifica una reserva EXISTENTE del cliente (cambiar número de personas, hora, día o zona) SIN cancelarla. Úsala cuando el cliente quiera cambiar algún dato de una reserva que ya tiene (por ejemplo 'en vez de 2 seremos 4'). NO uses cancelar_reserva para esto. Localiza la reserva por su día actual (y el local si lo sabes) y pon en null los campos que NO cambian.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        dia: { type: "string", format: "date", description: "Día ACTUAL de la reserva a modificar (YYYY-MM-DD), para localizarla" },
+        local: { type: ["string", "null"], description: "Local de la reserva, si lo sabes (para desambiguar); null si no" },
+        nuevas_personas: { type: ["integer", "null"], description: "Nuevo número de comensales, o null si no cambia" },
+        nueva_hora: { type: ["string", "null"], description: "Nueva hora HH:MM (mediodía 12:30–15:30 o cena 19:30–22:30), o null si no cambia" },
+        nuevo_dia: { type: ["string", "null"], description: "Nuevo día YYYY-MM-DD, o null si no cambia" },
+        nueva_zona: { type: ["string", "null"], description: "Nueva preferencia de zona: 'terraza', 'interior' o 'indiferente' (solo Blanes/Lloret). null si no cambia." }
+      },
+      required: ["dia", "local", "nuevas_personas", "nueva_hora", "nuevo_dia", "nueva_zona"],
       additionalProperties: false
     }
   }
@@ -288,6 +312,9 @@ export function setOnReserva(fn) { onReserva = fn; }
 
 let onCancelarReserva = null;
 export function setOnCancelarReserva(fn) { onCancelarReserva = fn; }
+
+let onModificarReserva = null;
+export function setOnModificarReserva(fn) { onModificarReserva = fn; }
 
 // Se dispara cuando un cliente escribe (con teléfono real) → registrar como lead.
 let onContactoLead = null;
@@ -549,6 +576,24 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
       }
       return {
         content: "Reserva cancelada correctamente y avisado el local. Confírmale al cliente con amabilidad que su reserva ha quedado cancelada.",
+        is_error: false
+      };
+    }
+    if (name === "modificar_reserva") {
+      if (!onModificarReserva) throw new Error("sistema de modificaciones no disponible");
+      const telefono = await resolverTelefono(jid);
+      const resultado = await onModificarReserva({ ...input, telefono }, jid);
+      if (!resultado || resultado.ok === false) {
+        if (resultado && resultado.motivo === "sin cambios") {
+          return { content: "No se indicó ningún cambio. Pregúntale al cliente qué quiere modificar (personas, hora, día o zona).", is_error: false };
+        }
+        return {
+          content: "No encuentro una reserva que coincida para modificar. Pídele al cliente el día exacto de su reserva y el nombre, o dile que llame al local.",
+          is_error: false
+        };
+      }
+      return {
+        content: "Reserva modificada correctamente y avisado el local. Confírmale al cliente con amabilidad los datos actualizados de su reserva.",
         is_error: false
       };
     }
@@ -906,6 +951,14 @@ function formatFecha(dia) {
   return `${DIAS_ES[date.getDay()]} ${d} de ${MESES_ES[m - 1]}`;
 }
 
+// Línea "🪑 Terraza/Interior" para los mensajes. Vacía si no hay preferencia
+// (indiferente/null) o si el local no ofrece esa opción.
+function lineaZona(zona) {
+  if (zona === "terraza") return `\n🪑 Terraza`;
+  if (zona === "interior") return `\n🪑 Interior`;
+  return "";
+}
+
 export async function sendConfirmacionCliente(telefono, reserva) {
   if (!clientReady || !sock) return;
   try {
@@ -917,7 +970,8 @@ export async function sendConfirmacionCliente(telefono, reserva) {
       `🏠 ${reserva.local}\n` +
       `📅 ${formatFecha(reserva.dia)}\n` +
       `⏰ ${reserva.hora}\n` +
-      `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
+      `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}` +
+      lineaZona(reserva.zona) + `\n` +
       `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
       `¡Te esperamos! Si necesitas cancelar o modificar, escríbenos aquí o llámanos.`;
     await sock.sendMessage(jid, { text: msg });
@@ -960,7 +1014,8 @@ export async function sendNotificacionGrupo(groupId, reserva) {
       `🪪 ${reserva.nombre_reserva}\n` +
       `📅 ${formatFecha(reserva.dia)}\n` +
       `⏰ ${reserva.hora}\n` +
-      `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
+      `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}` +
+      lineaZona(reserva.zona) + `\n` +
       `📞 ${reserva.telefono}`;
     await sock.sendMessage(groupId, { text: msg });
     console.log(`📤 Notificación enviada al grupo de ${reserva.local}`);
@@ -977,7 +1032,8 @@ export async function sendNotificacionGrupoPendiente(groupId, reserva) {
       `🪪 ${reserva.nombre_reserva}\n` +
       `📅 ${formatFecha(reserva.dia)}\n` +
       `⏰ ${reserva.hora}\n` +
-      `👥 ${reserva.personas} personas\n` +
+      `👥 ${reserva.personas} personas` +
+      lineaZona(reserva.zona) + `\n` +
       `📞 ${reserva.telefono}\n` +
       `📍 ${reserva.local}\n\n` +
       `Responde con *OK* cuando hayas hablado con el cliente.`;
@@ -1023,6 +1079,36 @@ export async function sendCancelacionGrupo(groupId, reserva) {
     console.log(`📤 Cancelación enviada al grupo de ${reserva.local}`);
   } catch (err) {
     console.error("Error enviando cancelación al grupo:", err.message);
+  }
+}
+
+// Aviso al grupo cuando una reserva se MODIFICA (no se cancela). Recibe la reserva
+// ya actualizada y un objeto `cambios` con {campo: {antes, despues}} para resaltar qué cambió.
+export async function sendModificacionGrupo(groupId, reserva, cambios = {}) {
+  if (!clientReady || !sock || !groupId) return;
+  try {
+    const etiquetas = {
+      personas: "👥 Personas",
+      hora: "⏰ Hora",
+      dia: "📅 Día",
+      zona: "🪑 Zona"
+    };
+    const lineasCambios = Object.entries(cambios)
+      .map(([campo, v]) => `${etiquetas[campo] || campo}: ${v.antes ?? "—"} → *${v.despues ?? "—"}*`)
+      .join("\n");
+    const msg =
+      `🔄 *Reserva modificada*\n\n` +
+      `🪪 ${reserva.nombre_reserva}\n` +
+      `📅 ${formatFecha(reserva.dia)}\n` +
+      `⏰ ${reserva.hora}\n` +
+      `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}` +
+      lineaZona(reserva.zona) + `\n` +
+      `📞 ${reserva.telefono}` +
+      (lineasCambios ? `\n\n*Cambios:*\n${lineasCambios}` : "");
+    await sock.sendMessage(groupId, { text: msg });
+    console.log(`📤 Modificación enviada al grupo de ${reserva.local}`);
+  } catch (err) {
+    console.error("Error enviando modificación al grupo:", err.message);
   }
 }
 
