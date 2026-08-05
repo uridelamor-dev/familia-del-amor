@@ -2449,7 +2449,7 @@ app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req,
     if (r.code === "OK") return res.json({ ok: true, data: r.data });
     if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
     return next(new Error("maintenance_list_internal"));
-  } catch (e) { next(e); }
+  } catch (e) { if (!permisosV2Enabled()) return res.status(500).json({ ok: false, error: "Error incidencias" }); next(e); }
 });
 
 app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
@@ -2460,7 +2460,7 @@ app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req
     if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_local" ? "Establecimiento no válido" : "Faltan campos" });
     if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
     return next(new Error("maintenance_create_internal"));
-  } catch (e) { next(e); }
+  } catch (e) { if (!permisosV2Enabled()) return res.status(500).json({ ok: false, error: "Error guardando incidencia" }); next(e); }
 });
 
 app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
@@ -2471,7 +2471,7 @@ app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (
     if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
     if (r.code === "NOT_FOUND") return res.status(404).json({ ok: false, error: "Incidencia no encontrada" });
     return next(new Error("maintenance_update_internal"));
-  } catch (e) { next(e); }
+  } catch (e) { if (!permisosV2Enabled()) return res.status(500).json({ ok: false, error: "Error actualizando incidencia" }); next(e); }
 });
 
 // Comunicados
