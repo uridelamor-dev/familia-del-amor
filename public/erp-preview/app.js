@@ -401,32 +401,66 @@ function attRow(a, done) {
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:7px">${reviewed ? pill("Revisada", "ok") : `<button class="btn ghost sm" data-act="alert-act" data-id="${a.id}">${a.accion}</button><button class="link" data-act="alert-review" data-id="${a.id}" style="font-size:11.5px">Marcar revisada</button>`}</div></div>`;
 }
 
-function pnlRow(label, val, sub, bold, color) { return `<div class="between" style="padding:10px 4px;border-top:1px solid var(--border)${bold ? ";font-weight:700" : ""}"><span style="${color ? "color:" + color : ""}">${label}</span><span class="flex" style="gap:12px">${sub ? `<span class="mut tnum" style="font-size:12px">${sub}</span>` : ""}<b class="tnum" style="${color ? "color:" + color : ""}">${val < 0 ? "− " : ""}${eur(Math.abs(val))}</b></span></div>`; }
+/* Modelo financiero mensual (mock coherente con el día tipo del grupo). */
+function finanzasModel(scope) {
+  const gDay = getFin("all", "ayer").ventas, sDay = getFin(scope, "ayer").ventas;
+  const scale = scope === "all" ? 1 : (gDay ? sDay / gDay : 1);
+  const V = Math.round(812000 * scale), Vbud = Math.round(820000 * scale);
+  const compras = Math.round(V * 26.0 / 100), personal = Math.round(V * 33.0 / 100), otros = Math.round(V * 8.5 / 100), amort = Math.round(V * 2.7 / 100);
+  const margenBruto = V - compras, ebitda = V - compras - personal - otros, ebit = ebitda - amort;
+  const budget = { compras: Math.round(Vbud * 25.5 / 100), personal: Math.round(Vbud * 31.5 / 100), otros: Math.round(Vbud * 8.5 / 100) };
+  const hist = [726, 690, 648, 712, 612, 590, 648, 705, 762, 815, 848, 812].map(x => Math.round(x * 1000 * scale));
+  const teso = scope === "all" ? { saldo: 142000, cobros: 806000, nominas: 268000, prov: 211000, alquileres: 69000, impuestos: 96000 } : null;
+  return { scale, scope, V, Vbud, compras, personal, otros, amort, margenBruto, ebitda, ebit, budget, hist,
+    mtd: Math.round(V * 0.18), forecast: V, conf: 92, teso,
+    comp: { anual: 8.6, mensual: 2.5, semanal: 3.7 },
+    margenBrutoPct: margenBruto / V * 100, ebitdaPct: ebitda / V * 100, ebitPct: ebit / V * 100, dObj: (V - Vbud) / Vbud * 100 };
+}
+function pnlLine(label, val, pctV, bud, o = {}) {
+  const dev = bud != null ? val - bud : null;
+  const devCls = dev == null ? "mut" : (o.cost ? (dev > 0 ? "down" : "up") : (dev >= 0 ? "up" : "down"));
+  return `<tr${o.bold ? ' style="font-weight:700"' : ""}><td style="${o.color ? "color:" + o.color : ""}">${label}</td><td class="r tnum"${o.color ? ` style="color:${o.color}"` : ""}>${o.neg ? "− " : ""}${eur(Math.abs(val))}</td><td class="r tnum mut">${pctV != null ? pctV.toFixed(1) + "%" : ""}</td><td class="r tnum ${devCls}">${dev == null ? "—" : (dev >= 0 ? "+" : "−") + eurK(Math.abs(dev))}</td></tr>`;
+}
+const miniTrend = (t, sub, d) => `<div style="background:var(--surface2);border-radius:12px;padding:14px"><div class="mut" style="font-size:11.5px;font-weight:600">${t}</div><div class="tnum" style="font-size:24px;font-weight:750;margin:5px 0;color:${d >= 0 ? "var(--success)" : "var(--danger)"}">${signed(d)}</div><div class="mut" style="font-size:11px">${sub}</div></div>`;
+const tesoRow = (l, v, cls, bold) => `<div class="between" style="padding:9px 2px;border-top:1px solid var(--border)${bold ? ";font-weight:700" : ""}"><span>${l}</span><b class="tnum ${cls || ""}">${v < 0 ? "− " : ""}${eur(Math.abs(v))}</b></div>`;
 V.finanzas = () => {
-  const f = getFin(S.estab, S.period), gAll = getFin("all", "ayer");
+  const M = finanzasModel(S.estab);
+  const bMB = M.Vbud - M.budget.compras, bEbitda = M.Vbud - M.budget.compras - M.budget.personal - M.budget.otros, bEbit = bEbitda - M.amort;
   const kpis = `<div class="grid g4">
-    ${stat({ lab: "Ventas · " + periodLabel().toLowerCase(), icon: "euro", val: eur(f.ventas), delta: f.dVentasLY })}
-    ${stat({ lab: "Margen operativo", icon: "chart", val: eur(f.margen), unit: f.margenPct.toFixed(0) + "%", delta: f.dMargen })}
-    ${stat({ lab: "Ticket medio", icon: "users", val: eur(f.ticket) })}
-    ${stat({ lab: "vs. objetivo de ventas", icon: "target", val: signed(f.dObj), delta: f.dObj })}</div>`;
-  const pnl = card("Cuenta de resultados estimada · " + scopeLabel(), `<div style="display:flex;flex-direction:column;gap:0">
-    ${pnlRow("Ventas", f.ventas, "100%", true)}
-    ${pnlRow("− Personal", -f.personal, (f.personal / f.ventas * 100).toFixed(0) + "%")}
-    ${pnlRow("− Compras / mercancía", -f.compras, (f.compras / f.ventas * 100).toFixed(0) + "%")}
-    ${pnlRow("− Otros gastos", -f.otros, (f.otros / f.ventas * 100).toFixed(0) + "%")}
-    ${pnlRow("= Margen operativo", f.margen, f.margenPct.toFixed(1) + "%", true, "var(--brand)")}</div>
-    <div style="margin-top:14px;padding:12px;background:var(--brand-soft);border-radius:11px;font-size:12.5px;display:flex;gap:9px"><span style="color:var(--brand);flex:none">${ic("spark", 16)}</span><span>${marginWhy(f)}</span></div>
-    <div class="mut" style="font-size:11px;margin-top:8px">Beneficio operativo estimado, no contabilidad cerrada.</div>`);
-  const evo = card("Evolución de ventas", area(serieVentas(S.estab, S.period), { h: 160, labels: S.period === "mes" ? null : ["L", "M", "X", "J", "V", "S", "D"] }), `<span class="mut">${periodLabel()} · ${scopeLabel()}</span>`);
-  const costes = card("Estructura de costes", `<div class="flex" style="gap:22px;flex-wrap:wrap"><div>${(() => { const s = [{ v: Math.round(f.personal), c: "#3F6E93" }, { v: Math.round(f.compras), c: "#B9822B" }, { v: Math.round(f.otros), c: "#8A5A9B" }, { v: Math.round(f.margen), c: "var(--brand)" }]; s.dLabel = "% de ventas"; return donut(s); })()}</div>
-    <div class="legend" style="flex-direction:column;gap:10px">${[["Personal", f.personal, "#3F6E93"], ["Compras", f.compras, "#B9822B"], ["Otros", f.otros, "#8A5A9B"], ["Margen", f.margen, "var(--brand)"]].map(x => `<div><i style="background:${x[2]}"></i>${x[0]} <b class="tnum" style="margin-left:6px">${eur(x[1])}</b> <span class="mut">· ${(x[1] / f.ventas * 100).toFixed(0)}%</span></div>`).join("")}</div></div>`);
-  const ventasLocal = card("Ventas por establecimiento", bars(ESTAB.filter(e => !e.cerrado).map(e => ({ label: e.short, v: baseFin(e).ventas, id: e.id, go: 1 })), { h: 150 }), `<span class="mut">${periodLabel()}</span>`);
-  const comp = card("Comparativa por establecimiento", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Ventas</th><th class="r">vs. año</th><th class="r">vs. sem.</th><th class="r">Margen</th><th class="r">vs. obj.</th></tr></thead><tbody>${ESTAB.filter(e => !e.cerrado).map(e => { const b = baseFin(e), dpw = e.pw ? (e.ventas - e.pw) / e.pw * 100 : 0; return `<tr><td style="font-weight:600">${e.short}</td><td class="r tnum">${eur(b.ventas)}</td><td class="r tnum ${b.dVentasLY < 0 ? "down" : "up"}">${signed(b.dVentasLY)}</td><td class="r tnum ${dpw < 0 ? "down" : "up"}">${signed(dpw)}</td><td class="r tnum">${b.margenPct.toFixed(0)}%</td><td class="r tnum ${b.dMargenObj < -0.5 ? "down" : b.dMargenObj > 0.5 ? "up" : "mut"}">${b.dMargenObj >= 0 ? "+" : ""}${b.dMargenObj.toFixed(1)}</td></tr>`; }).join("")}
+    ${stat({ lab: "Ventas mes (previsión)", icon: "euro", val: eur(M.forecast), delta: M.comp.anual })}
+    ${stat({ lab: "EBITDA estimado", icon: "chart", val: eur(M.ebitda), unit: M.ebitdaPct.toFixed(0) + "%" })}
+    ${stat({ lab: "Margen bruto", icon: "target", val: M.margenBrutoPct.toFixed(0) + "%" })}
+    ${stat({ lab: "Beneficio operativo", icon: "euro", val: eur(M.ebit), unit: M.ebitPct.toFixed(0) + "%" })}</div>`;
+  const pnl = card(`Cuenta de resultados · ${scopeLabel()} · mes en curso (previsión)`, `<div class="tblwrap"><table class="tbl"><thead><tr><th>Concepto</th><th class="r">Importe</th><th class="r">% ventas</th><th class="r">vs. presup.</th></tr></thead><tbody>
+    ${pnlLine("Ventas", M.V, 100, M.Vbud)}
+    ${pnlLine("Coste de mercancía / compras", M.compras, M.compras / M.V * 100, M.budget.compras, { neg: true, cost: true })}
+    ${pnlLine("= Margen bruto", M.margenBruto, M.margenBrutoPct, bMB, { bold: true })}
+    ${pnlLine("Coste de personal", M.personal, M.personal / M.V * 100, M.budget.personal, { neg: true, cost: true })}
+    ${pnlLine("Otros gastos operativos", M.otros, M.otros / M.V * 100, M.budget.otros, { neg: true, cost: true })}
+    ${pnlLine("= EBITDA estimado", M.ebitda, M.ebitdaPct, bEbitda, { bold: true, color: "var(--brand)" })}
+    ${pnlLine("Amortizaciones", M.amort, M.amort / M.V * 100, M.amort, { neg: true, cost: true })}
+    ${pnlLine("= Beneficio operativo (EBIT)", M.ebit, M.ebitPct, bEbit, { bold: true, color: "var(--brand)" })}
+  </tbody></table></div><div class="mut" style="font-size:11px;margin-top:10px">Cifras estimadas a partir de ventas y estructura de costes; no sustituyen la contabilidad cerrada.</div>`);
+  const comparativas = card("Comparativas de ventas", `<div class="grid g3" style="gap:12px">${miniTrend("Anual", "vs. mismo mes de 2025", M.comp.anual)}${miniTrend("Mensual", "vs. mes anterior", M.comp.mensual)}${miniTrend("Semanal", "vs. semana anterior", M.comp.semanal)}</div>`);
+  const hist = card("Evolución histórica · 12 meses", area(M.hist, { h: 160, fmt: "eur", labels: ["S", "O", "N", "D", "E", "F", "M", "A", "M", "J", "J", "A"] }), `<span class="mut">${scopeLabel()}</span>`);
+  const pctBud = M.forecast / M.Vbud * 100;
+  const forecast = card("Previsión de cierre de mes", `<div class="between" style="align-items:flex-end"><div><div class="mut" style="font-size:12px">Proyección de cierre</div><div class="big tnum">${eur(M.forecast)}</div><div class="mut" style="font-size:12px;margin-top:4px">Presupuesto ${eur(M.Vbud)} · <span class="${M.dObj >= 0 ? "up" : "down"}">${signed(M.dObj)}</span></div></div><div style="text-align:right"><div class="mut" style="font-size:12px">Confianza</div><div class="tnum" style="font-size:22px;font-weight:750">${M.conf}%</div></div></div>
+    <div class="prog ${M.dObj < 0 ? "warn" : ""}" style="margin-top:14px;height:10px"><i style="width:${Math.min(100, pctBud)}%"></i></div>
+    <div class="between mut" style="font-size:11px;margin-top:6px"><span>Llevas ${eur(M.mtd)} (día 5)</span><span>Meta ${eur(M.Vbud)}</span></div>
+    <div style="margin-top:12px;padding:11px 13px;background:var(--surface2);border-radius:11px;font-size:12.5px">A este ritmo cerrarías ${M.dObj < 0 ? `<b style="color:var(--warning)">${eurK(Math.abs(M.forecast - M.Vbud))} por debajo</b> del presupuesto` : `<b style="color:var(--success)">por encima</b> del presupuesto`}. Recuperarlo pide +${(Math.abs(M.dObj)).toFixed(1)}% de ventas o −1 pto de personal.</div>`);
+  const teso = M.teso ? (() => { const t = M.teso, fin = t.saldo + t.cobros - t.nominas - t.prov - t.alquileres - t.impuestos; return card("Previsión de tesorería · 30 días", `<div style="display:flex;flex-direction:column">
+    ${tesoRow("Saldo actual", t.saldo)}${tesoRow("+ Cobros previstos", t.cobros, "up")}${tesoRow("− Nóminas", -t.nominas, "down")}${tesoRow("− Proveedores", -t.prov, "down")}${tesoRow("− Alquileres y otros", -t.alquileres, "down")}${tesoRow("− Impuestos (IVA trimestral)", -t.impuestos, "down")}${tesoRow("= Saldo previsto fin de mes", fin, "", true)}</div>
+    <div style="margin-top:10px;padding:10px 12px;background:var(--success-soft);border-radius:10px;font-size:12.5px;color:var(--success);display:flex;gap:8px"><span style="flex:none">${ic("check", 14)}</span><span>Tesorería holgada: el saldo previsto cubre 1,1× las nóminas del mes siguiente.</span></div>`); })()
+    : card("Previsión de tesorería", `<div class="mut" style="padding:8px 0">La tesorería se consolida a nivel de grupo. Selecciona «Todos los establecimientos» para verla.</div>`);
+  const costes = card("Estructura de costes", `<div class="flex" style="gap:22px;flex-wrap:wrap"><div>${(() => { const s = [{ v: M.personal, c: "#3F6E93" }, { v: M.compras, c: "#B9822B" }, { v: M.otros + M.amort, c: "#8A5A9B" }, { v: M.ebit, c: "var(--brand)" }]; s.dLabel = "% de ventas"; return donut(s); })()}</div>
+    <div class="legend" style="flex-direction:column;gap:10px">${[["Personal", M.personal, "#3F6E93"], ["Compras", M.compras, "#B9822B"], ["Otros + amort.", M.otros + M.amort, "#8A5A9B"], ["Beneficio", M.ebit, "var(--brand)"]].map(x => `<div><i style="background:${x[2]}"></i>${x[0]} <b class="tnum" style="margin-left:6px">${eur(x[1])}</b> <span class="mut">· ${(x[1] / M.V * 100).toFixed(0)}%</span></div>`).join("")}</div></div>`);
+  const gAll = getFin("all", "ayer");
+  const comp = card("Rendimiento por establecimiento · ayer", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Ventas</th><th class="r">vs. año</th><th class="r">vs. sem.</th><th class="r">Margen</th><th class="r">vs. obj.</th></tr></thead><tbody>${ESTAB.filter(e => !e.cerrado).map(e => { const b = baseFin(e), dpw = e.pw ? (e.ventas - e.pw) / e.pw * 100 : 0; return `<tr><td style="font-weight:600">${e.short}</td><td class="r tnum">${eur(b.ventas)}</td><td class="r tnum ${b.dVentasLY < 0 ? "down" : "up"}">${signed(b.dVentasLY)}</td><td class="r tnum ${dpw < 0 ? "down" : "up"}">${signed(dpw)}</td><td class="r tnum">${b.margenPct.toFixed(0)}%</td><td class="r tnum ${b.dMargenObj < -0.5 ? "down" : b.dMargenObj > 0.5 ? "up" : "mut"}">${b.dMargenObj >= 0 ? "+" : ""}${b.dMargenObj.toFixed(1)}</td></tr>`; }).join("")}
     <tr style="font-weight:700;background:var(--surface2)"><td>Grupo</td><td class="r tnum">${eur(gAll.ventas)}</td><td class="r tnum">${signed(gAll.dVentasLY)}</td><td class="r tnum">${signed(gAll.dVentasPW)}</td><td class="r tnum">${gAll.margenPct.toFixed(0)}%</td><td class="r mut">—</td></tr></tbody></table></div>`);
   return kpis + `<div class="grid g12" style="margin-top:16px">
-    <div class="c5">${pnl}</div><div class="c7">${evo}</div>
-    <div class="c5">${costes}</div><div class="c7">${ventasLocal}</div>
-    <div class="c12">${comp}</div></div>`;
+    <div class="c7">${pnl}</div><div class="c5">${forecast}<div style="height:16px"></div>${comparativas}</div>
+    <div class="c7">${hist}</div><div class="c5">${costes}</div>
+    <div class="c5">${teso}</div><div class="c7">${comp}</div></div>`;
 };
 
 V.establecimientos = () => `<div class="grid g3">${ESTAB.map(e => {
