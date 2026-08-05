@@ -42,13 +42,14 @@ const NAV = [
     ["mantenimiento", "Mantenimiento", "🔧", null, ["direccion", "encargado"]],
     ["clientes", "Clientes", "👥", null, ["direccion"]],
     ["reviews", "Reseñas", "⭐", null, ["direccion", "encargado", "contabilidad"]],
+    ["campanas", "Campañas", "📣", null, ["direccion"]],
     ["rrhh", "RR. HH.", "🗂️", null, ["direccion"]],
     ["facturas", "Facturas", "🧾", null, ["direccion", "contabilidad"]],
   ] },
-  { g: "Sistema", items: [["usuarios", "Usuarios", "👤", null, ["direccion"]]] },
+  { g: "Sistema", items: [["whatsapp", "WhatsApp", "💬", null, ["direccion", "encargado"]], ["usuarios", "Usuarios", "👤", null, ["direccion"]]] },
 ];
-const TITLES = { dashboard: "Dashboard", reservas: "Reservas", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", rrhh: "RR. HH.", facturas: "Facturas", usuarios: "Usuarios" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], usuarios: ["direccion"] };
+const TITLES = { dashboard: "Dashboard", reservas: "Reservas", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", whatsapp: "WhatsApp", usuarios: "Usuarios" };
+const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad"], campanas: ["direccion"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"] };
 
 let USER = null, CURRENT = "dashboard";
 
@@ -356,8 +357,62 @@ function applyFacFilter() { const l = document.getElementById("facLocal"); if (l
 async function facPago(id) { try { await apiSend("PATCH", "/api/facturas/" + encodeURIComponent(id) + "/pago"); toast("Estado de pago actualizado"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facAsignar(id) { const sel = document.querySelector('.facSel[data-id="' + id + '"]'); const local = sel ? sel.value : ""; if (!local) { toast("Elige un local"); return; } try { await apiSend("POST", "/api/facturas/pendientes/" + encodeURIComponent(id) + "/asignar", { local }); toast("Factura asignada a " + local); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 
+// ════════════════════════ VISTA: WHATSAPP ════════════════════════
+let WA_POLL = null;
+function renderWhatsApp(status, qr, links) {
+  const connected = status && status.connected;
+  const rows = links || [];
+  const conn = `<div class="card"><div class="ch"><h3>Conexión de Sara</h3><span class="pill ${connected ? "ok" : "bad"}">${connected ? "Conectado" : "Desconectado"}</span></div>${connected ? `<p class="mut">Sara está conectada y atiende reservas por WhatsApp automáticamente.</p>` : `<p class="mut">Escanea este código desde WhatsApp → Dispositivos vinculados para reconectar a Sara:</p>${qr && qr.qr ? `<div style="text-align:center;padding:10px"><img src="${esc(qr.qr)}" alt="Código QR" style="width:240px;height:240px;border-radius:12px;background:#fff;padding:8px"></div><div class="mut" style="text-align:center;font-size:12px">El código se actualiza solo; en cuanto vincules, esta pantalla lo detectará.</div>` : '<p class="mut">Generando código QR…</p>'}`}</div>`;
+  const linksCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos por local</h3></div>${rows.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Grupo de WhatsApp</th></tr></thead><tbody>${rows.map((l) => `<tr><td>${esc(l.local)}</td><td class="mut" style="font-size:11px">${esc(l.group_jid)}</td></tr>`).join("")}</tbody></table></div>` : '<div style="padding:0 18px 12px" class="mut">Sin grupos vinculados.</div>'}<div style="padding:14px 18px"><a class="btn" href="/direccion.html">Configurar grupos ↗</a></div></div>`;
+  return `<div class="ph"><div class="eyebrow">Comunicación</div><h1>WhatsApp / Sara</h1><div class="sub">Estado de la conexión y grupos por local</div></div><div class="grid g2">${conn}${linksCard}</div>`;
+}
+async function loadWhatsApp() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    const status = await apiRaw("/api/whatsapp/status");
+    let qr = null; if (!status.connected) { try { qr = await apiRaw("/api/whatsapp/qr"); } catch { /* opcional */ } }
+    const links = await apiOptional("/api/whatsapp/links");
+    view.innerHTML = renderWhatsApp(status, qr, links);
+    clearInterval(WA_POLL); WA_POLL = null;
+    if (!status.connected) WA_POLL = setInterval(pollWa, 6000);
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+async function pollWa() {
+  if (CURRENT !== "whatsapp") { clearInterval(WA_POLL); WA_POLL = null; return; }
+  try { const s = await apiRaw("/api/whatsapp/status"); if (s && s.connected) { clearInterval(WA_POLL); WA_POLL = null; loadWhatsApp(); } } catch { /* reintenta */ }
+}
+
+// ════════════════════════ VISTA: CAMPAÑAS ════════════════════════
+function renderCampanas(list) {
+  const rows = list || [];
+  const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn primary" data-act="camp-nueva">+ Nueva campaña</button></div>`;
+  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Campaña</th><th>Segmento</th><th class="r">Enviados</th><th class="r">Errores</th><th>Fecha</th></tr></thead><tbody>${rows.map((c) => { let seg = ""; try { const s = JSON.parse(c.segmento_json || "{}"); seg = Object.entries(s).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(", "); } catch { /* */ } return `<tr><td>${esc(c.nombre)}</td><td class="mut">${esc(seg || "—")}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td></tr>`; }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay campañas enviadas.</div></div>`;
+  return `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas de WhatsApp</h1><div class="sub">Historial de envíos a clientes</div></div>${toolbar}${table}`;
+}
+async function loadCampanas() { const view = document.getElementById("view"); view.innerHTML = skeleton(); try { const data = await api("/api/campanas"); view.innerHTML = renderCampanas(data); } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); } }
+function openNuevaCampana() {
+  const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
+  const body = `<form id="fCamp"><div class="form-grid">
+    <div class="field full"><label>Nombre de la campaña</label><input name="nombre_campana" required></div>
+    <div class="field full"><label>Mensaje</label><input name="mensaje" required placeholder="Hola {nombre}! Este finde…"></div>
+    <div class="field"><label>Género</label><select name="genero"><option value="">Todos</option><option value="M">Hombre</option><option value="F">Mujer</option></select></div>
+    <div class="field"><label>Población</label><input name="poblacion"></div>
+    <div class="field"><label>Local</label><select name="local">${localOpts}</select></div>
+    <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" name="cumple_mes" style="width:auto;height:auto"> Cumpleaños este mes</label>
+  </div><div id="campPrev" class="mut" style="margin-top:12px;font-size:12.5px"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button type="button" class="btn" data-close>Cerrar</button><button type="button" class="btn" id="campPrevBtn">Previsualizar</button><button type="submit" class="btn primary">Enviar campaña</button></div></form>`;
+  const ov = modal("Nueva campaña", body);
+  const filtros = (form) => { const d = Object.fromEntries(new FormData(form).entries()); if (!d.cumple_mes) delete d.cumple_mes; else d.cumple_mes = 1; return d; };
+  ov.querySelector("#campPrevBtn").addEventListener("click", async () => { try { const j = await apiSend("POST", "/api/campanas/preview", filtros(ov.querySelector("#fCamp"))); ov.querySelector("#campPrev").textContent = `Se enviaría a ${j.total} contacto${j.total === 1 ? "" : "s"}.`; } catch (e) { toast("Error: " + e.message); } });
+  ov.querySelector("#fCamp").addEventListener("submit", async (e) => {
+    e.preventDefault(); const d = filtros(e.target);
+    let prev; try { prev = await apiSend("POST", "/api/campanas/preview", d); } catch (err) { toast("Error: " + err.message); return; }
+    if (!confirm(`Vas a enviar esta campaña a ${prev.total} contacto(s) por WhatsApp. ¿Confirmar el envío?`)) return;
+    try { await apiSend("POST", "/api/campanas/enviar", d); ov.remove(); toast("Campaña en envío ✅"); loadCampanas(); } catch (err) { toast("Error: " + err.message); }
+  });
+}
+
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, rrhh: loadRRHH, usuarios: loadUsuarios, facturas: loadFacturas };
+const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, whatsapp: loadWhatsApp, usuarios: loadUsuarios };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   CURRENT = view;
@@ -397,6 +452,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-filtrar") applyFacFilter();
   else if (act === "fac-pago") facPago(t.getAttribute("data-id"));
   else if (act === "fac-asignar") facAsignar(t.getAttribute("data-id"));
+  else if (act === "camp-nueva") openNuevaCampana();
 });
 
 // ── Arranque ─────────────────────────────────────────────────────────────────
