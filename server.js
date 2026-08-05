@@ -13,6 +13,8 @@ import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
 import { resolveJwtSecret, replitEnvWarning, errorHandler, safeLogError, CV_MAX_BYTES, isAllowedCvUpload, safeUploadName, finalizeCvUpload } from "./security.js";
+import { permisosV2Enabled } from "./src/core/flags.js";
+import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 
 dotenv.config();
 
@@ -2431,36 +2433,45 @@ app.post("/api/rrhh/llamada", requireAuth(["rrhh", "direccion"]), (req, res) => 
 });
 
 // Mantenimiento
-app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), (req, res) => {
-  db.all(`SELECT * FROM maintenance_issues ORDER BY creado_en DESC`, (err, rows) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error incidencias" });
-    res.json({ ok: true, data: rows });
-  });
+// ── Mantenimiento (Iteración 4): enforcement por establecimiento gated por PERMISOS_V2 ──
+// Adaptador compatible con el núcleo (get/all/run). `run` devuelve { lastID, changes } para
+// preservar el id del POST y confirmar el UPDATE sin condiciones de carrera. Las rutas solo
+// leen usuario/parámetros, consultan el flag, invocan el servicio y traducen a HTTP.
+const maintDb = {
+  get: dbGet,
+  all: dbAll,
+  run: (sql, p = []) => new Promise((res, rej) => db.run(sql, p, function (e) { e ? rej(e) : res({ lastID: this.lastID, changes: this.changes }); })),
+};
+
+app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
+  try {
+    const r = await listMaintenanceIssues(maintDb, req.user, { enabled: permisosV2Enabled(), local: req.query.local });
+    if (r.code === "OK") return res.json({ ok: true, data: r.data });
+    if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
+    return next(new Error("maintenance_list_internal"));
+  } catch (e) { next(e); }
 });
 
-app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), (req, res) => {
-  const { local, titulo, descripcion } = req.body;
-  if (!local || !titulo || !descripcion) {
-    return res.status(400).json({ ok: false, error: "Faltan campos" });
-  }
-  const creado_en = new Date().toISOString();
-  db.run(
-    `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, creado_en) VALUES (?, ?, ?, 'abierta', ?)`,
-    [local, titulo, descripcion, creado_en],
-    function (err) {
-      if (err) return res.status(500).json({ ok: false, error: "Error guardando incidencia" });
-      res.json({ ok: true, id: this.lastID });
-    }
-  );
+app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
+  try {
+    const { local, titulo, descripcion } = req.body;
+    const r = await createMaintenanceIssue(maintDb, req.user, { local, titulo, descripcion }, { enabled: permisosV2Enabled() });
+    if (r.code === "OK") return res.json({ ok: true, id: r.id });
+    if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_local" ? "Establecimiento no válido" : "Faltan campos" });
+    if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
+    return next(new Error("maintenance_create_internal"));
+  } catch (e) { next(e); }
 });
 
-app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), (req, res) => {
-  const { estado } = req.body;
-  if (!estado) return res.status(400).json({ ok: false, error: "Estado requerido" });
-  db.run(`UPDATE maintenance_issues SET estado=? WHERE id=?`, [estado, req.params.id], (err) => {
-    if (err) return res.status(500).json({ ok: false, error: "Error actualizando incidencia" });
-    res.json({ ok: true });
-  });
+app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
+  try {
+    const r = await updateMaintenanceIssueStatus(maintDb, req.user, req.params.id, { estado: req.body.estado }, { enabled: permisosV2Enabled() });
+    if (r.code === "OK") return res.json({ ok: true });
+    if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_id" ? "ID no válido" : "Estado requerido" });
+    if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
+    if (r.code === "NOT_FOUND") return res.status(404).json({ ok: false, error: "Incidencia no encontrada" });
+    return next(new Error("maintenance_update_internal"));
+  } catch (e) { next(e); }
 });
 
 // Comunicados
