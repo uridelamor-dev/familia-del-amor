@@ -70,12 +70,12 @@ function shell(active, bodyHtml) {
     const items = grp.items.filter(([, , , roles]) => !roles || roles.includes(USER.rol));
     if (!items.length) return "";
     return `<div class="ngt">${grp.g}</div>` + items.map(([id, label, icon]) => {
-      const badge = (id === "whatsapp" && DASH_CONCERNS > 0) ? `<span class="badge">${DASH_CONCERNS}</span>` : "";
+      const badge = (id === "dashboard" && DASH_CONCERNS > 0) ? `<span class="badge">${DASH_CONCERNS}</span>` : "";
       return `<button class="navi ${id === active ? "active" : ""}" data-view="${id}"><span class="ico">${ic(icon)}</span><span>${label}</span>${badge}</button>`;
     }).join("");
   }).join("");
   const estabLbl = DASH_LOCAL ? nombreCortoLocal(DASH_LOCAL) : "Todos los establecimientos";
-  const seg = ["ayer", "7d", "mes"].map((p) => `<button class="${PERIOD === p ? "on" : ""}" data-act="period" data-p="${p}">${p === "ayer" ? "Ayer" : p === "7d" ? "7 días" : "Mes"}</button>`).join("");
+  const seg = ["7d", "14d", "mes"].map((p) => `<button class="${PERIOD === p ? "on" : ""}" data-act="period" data-p="${p}">${p === "7d" ? "7 días" : p === "14d" ? "14 días" : "Mes"}</button>`).join("");
   return `<div class="app${COLLAPSED ? " collapsed" : ""}" id="appEl">
     <aside class="sidebar">
       <div class="brand"><div class="logo">FA</div><div class="bt"><b>Familia del Amor</b><span>Sistema operativo interno</span></div></div>
@@ -94,6 +94,7 @@ function shell(active, bodyHtml) {
         <button class="iconbtn bell hidesm" data-view="dashboard" aria-label="Alertas">${ic("bell")}${DASH_CONCERNS ? `<span class="n">${DASH_CONCERNS}</span>` : ""}</button>
         <button class="iconbtn" id="themeBtn" data-act="theme" aria-label="Cambiar tema">${ic(isDark() ? "moon" : "sun")}</button>
         <span class="avatar" title="${esc(uname)}">${esc(initials)}</span>
+        <button class="iconbtn" data-act="logout" title="Cerrar sesión" aria-label="Cerrar sesión">${ic("exit")}</button>
       </header>
       <main class="content"><div class="wrap enter" id="view">${bodyHtml}</div></main>
     </div>
@@ -143,7 +144,7 @@ function promptModal(title, { placeholder = "", type = "text", ok = "Guardar" } 
 }
 
 // ════════════════════════ ESTADO GLOBAL + COMPONENTES (lenguaje del prototipo) ════════════════════════
-let DASH_LOCAL = "", COLLAPSED = false, PERIOD = "ayer", DASH_CONCERNS = 0;
+let DASH_LOCAL = "", COLLAPSED = false, PERIOD = "7d", DASH_CONCERNS = 0;
 const nombreCorto = (s) => String(s || "").split(" ")[0];
 const nombreCortoLocal = (l) => String(l || "").replace(/^La Tapeta\s*[-·]\s*/i, "").trim() || l;
 const GO_VIEW = { whatsapp: "whatsapp", mantenimiento: "mantenimiento", clientes: "clientes", facturas: "facturas", rrhh: "rrhh", marketing: "reviews", reservas: "reservas", reviews: "reviews", campanas: "campanas" };
@@ -170,6 +171,7 @@ const ICONS = {
   moon: '<path d="M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10z"/>',
   euro: '<path d="M17 6.5a6 6 0 1 0 0 11M5 10h8M5 14h8"/>',
   alert: '<path d="M12 4l9 16H3zM12 10v4M12 17h.01"/>',
+  exit: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M9 12h11M16.5 8.5L20 12l-3.5 3.5"/>',
 };
 function ic(name, size = 18) { return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICONS.dash}</svg>`; }
 
@@ -211,8 +213,13 @@ let CMD_ITEMS = [], CMD_SEL = 0;
 function allCmd() {
   const items = [];
   NAV.forEach((grp) => grp.items.forEach(([id, label, icon, roles]) => { if (!roles || roles.includes(USER.rol)) items.push({ t: label, g: "Ir a", icon, view: id }); }));
-  const actions = [["Nueva reserva", "cal", () => { go("reservas"); setTimeout(openNuevaReserva, 80); }], ["Nueva incidencia", "wrench", () => { go("mantenimiento"); setTimeout(openNuevaIncidencia, 80); }], ["Actualizar reseñas", "star", () => { go("reviews"); setTimeout(refreshReviews, 80); }], ["Cambiar tema", "sun", () => toggleTheme()]];
-  actions.forEach(([t, icon, fn]) => { if (VIEW_ROLES && true) items.push({ t, g: "Acciones", icon, fn }); });
+  const actions = [
+    ["Nueva reserva", "cal", ["direccion", "encargado"], () => { go("reservas"); setTimeout(openNuevaReserva, 80); }],
+    ["Nueva incidencia", "wrench", ["direccion", "encargado"], () => { go("mantenimiento"); setTimeout(openNuevaIncidencia, 80); }],
+    ["Actualizar reseñas", "star", ["direccion"], () => { go("reviews"); setTimeout(refreshReviews, 80); }],
+    ["Cambiar tema", "sun", null, () => toggleTheme()],
+  ];
+  actions.forEach(([t, icon, roles, fn]) => { if (!roles || roles.includes(USER.rol)) items.push({ t, g: "Acciones", icon, fn }); });
   return items;
 }
 function openCmd() { const w = document.getElementById("cmdk"), o = document.getElementById("ovl"); if (!w) return; o.classList.add("open"); w.classList.add("open"); const inp = document.getElementById("cmdin"); inp.value = ""; fillCmd(""); setTimeout(() => inp.focus(), 30); }
@@ -250,10 +257,10 @@ function renderDashboard(d) {
   const kpis = `<div class="grid g4">${kpi({ lab: "Reservas hoy", icon: "cal", val: num(hoyN.n || 0), delta: d.ayer && d.ayer.delta })}${kpi({ lab: "Comensales hoy", icon: "users", val: num(hoyN.personas || 0) })}${kpi({ lab: "Mantenim. abierto", icon: "wrench", val: num((d.mantenimiento && d.mantenimiento.abiertas) || 0), unit: nCrit ? `· ${nCrit} crítica${nCrit === 1 ? "" : "s"}` : "" })}${kpi({ lab: "Por pagar", icon: "euro", val: eur((d.dinero && d.dinero.porPagar && d.dinero.porPagar.total) || 0) })}</div>`;
 
   // ── Actividad (gráfico real de reservas) ──
-  const serie = d.serieReservas || []; const win = PERIOD === "mes" ? 30 : 7;
+  const serie = d.serieReservas || []; const win = PERIOD === "mes" ? 30 : PERIOD === "14d" ? 14 : 7;
   const slice = serie.slice(-win); const serieVals = slice.map((x) => x.personas || x.n || 0);
   const totalPeriodo = slice.reduce((s, x) => s + (x.n || 0), 0);
-  const winLbl = PERIOD === "mes" ? "últimos 30 días" : "últimos 7 días";
+  const winLbl = PERIOD === "mes" ? "últimos 30 días" : PERIOD === "14d" ? "últimos 14 días" : "últimos 7 días";
   const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas</h3><span class="pill">${winLbl}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas en ${winLbl}</div></div><div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y ticket medio<br><span class="hl">al conectar Ágora</span></div></div>${area(serieVals, { h: 120 })}</div>`;
 
   // ── Gasto del mes (barra apilada real) ──
@@ -660,12 +667,11 @@ document.addEventListener("click", (e) => {
   else if (act === "mclose") { const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); }
   else if (act === "cmdk") openCmd();
   else if (act === "estabmenu") openEstabMenu();
-  else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; closeDrawer(); go(CURRENT); }
+  else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; closeDrawer(); go("dashboard"); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); document.querySelectorAll('.seg [data-act="period"]').forEach((b) => b.classList.toggle("on", b.getAttribute("data-p") === PERIOD)); if (CURRENT === "dashboard") loadDashboard(); }
   else if (act === "theme") toggleTheme();
   else if (act === "logout") { localStorage.removeItem("token"); location.href = "/login.html"; }
   else if (act === "reload") go(CURRENT);
-  else if (act === "dash-local") { DASH_LOCAL = t.getAttribute("data-local") || ""; loadDashboard(); }
   else if (act === "filtrar") applyReservasFilter();
   else if (act === "nueva") openNuevaReserva();
   else if (act === "csv") downloadCsv();
