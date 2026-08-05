@@ -395,6 +395,34 @@ function attRow(a, done) {
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:7px">${reviewed ? pill("Revisada", "ok") : `<button class="btn ghost sm" data-act="alert-act" data-id="${a.id}">${a.accion}</button><button class="link" data-act="alert-review" data-id="${a.id}" style="font-size:11.5px">Marcar revisada</button>`}</div></div>`;
 }
 
+function pnlRow(label, val, sub, bold, color) { return `<div class="between" style="padding:10px 4px;border-top:1px solid var(--border)${bold ? ";font-weight:700" : ""}"><span style="${color ? "color:" + color : ""}">${label}</span><span class="flex" style="gap:12px">${sub ? `<span class="mut tnum" style="font-size:12px">${sub}</span>` : ""}<b class="tnum" style="${color ? "color:" + color : ""}">${val < 0 ? "− " : ""}${eur(Math.abs(val))}</b></span></div>`; }
+V.finanzas = () => {
+  const f = getFin(S.estab, S.period), gAll = getFin("all", "ayer");
+  const kpis = `<div class="grid g4">
+    ${stat({ lab: "Ventas · " + periodLabel().toLowerCase(), icon: "euro", val: eur(f.ventas), delta: f.dVentasLY })}
+    ${stat({ lab: "Margen operativo", icon: "chart", val: eur(f.margen), unit: f.margenPct.toFixed(0) + "%", delta: f.dMargen })}
+    ${stat({ lab: "Ticket medio", icon: "users", val: eur(f.ticket) })}
+    ${stat({ lab: "vs. objetivo de ventas", icon: "target", val: signed(f.dObj), delta: f.dObj })}</div>`;
+  const pnl = card("Cuenta de resultados estimada · " + scopeLabel(), `<div style="display:flex;flex-direction:column;gap:0">
+    ${pnlRow("Ventas", f.ventas, "100%", true)}
+    ${pnlRow("− Personal", -f.personal, (f.personal / f.ventas * 100).toFixed(0) + "%")}
+    ${pnlRow("− Compras / mercancía", -f.compras, (f.compras / f.ventas * 100).toFixed(0) + "%")}
+    ${pnlRow("− Otros gastos", -f.otros, (f.otros / f.ventas * 100).toFixed(0) + "%")}
+    ${pnlRow("= Margen operativo", f.margen, f.margenPct.toFixed(1) + "%", true, "var(--brand)")}</div>
+    <div style="margin-top:14px;padding:12px;background:var(--brand-soft);border-radius:11px;font-size:12.5px;display:flex;gap:9px"><span style="color:var(--brand);flex:none">${ic("spark", 16)}</span><span>${marginWhy(f)}</span></div>
+    <div class="mut" style="font-size:11px;margin-top:8px">Beneficio operativo estimado, no contabilidad cerrada.</div>`);
+  const evo = card("Evolución de ventas", area(serieVentas(S.estab, S.period), { h: 160, labels: S.period === "mes" ? null : ["L", "M", "X", "J", "V", "S", "D"] }), `<span class="mut">${periodLabel()} · ${scopeLabel()}</span>`);
+  const costes = card("Estructura de costes", `<div class="flex" style="gap:22px;flex-wrap:wrap"><div>${(() => { const s = [{ v: Math.round(f.personal), c: "#3F6E93" }, { v: Math.round(f.compras), c: "#B9822B" }, { v: Math.round(f.otros), c: "#8A5A9B" }, { v: Math.round(f.margen), c: "var(--brand)" }]; s.dLabel = "% de ventas"; return donut(s); })()}</div>
+    <div class="legend" style="flex-direction:column;gap:10px">${[["Personal", f.personal, "#3F6E93"], ["Compras", f.compras, "#B9822B"], ["Otros", f.otros, "#8A5A9B"], ["Margen", f.margen, "var(--brand)"]].map(x => `<div><i style="background:${x[2]}"></i>${x[0]} <b class="tnum" style="margin-left:6px">${eur(x[1])}</b> <span class="mut">· ${(x[1] / f.ventas * 100).toFixed(0)}%</span></div>`).join("")}</div></div>`);
+  const ventasLocal = card("Ventas por establecimiento", bars(ESTAB.filter(e => !e.cerrado).map(e => ({ label: e.short, v: baseFin(e).ventas, id: e.id, go: 1 })), { h: 150 }), `<span class="mut">${periodLabel()}</span>`);
+  const comp = card("Comparativa por establecimiento", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Ventas</th><th class="r">vs. año</th><th class="r">vs. sem.</th><th class="r">Margen</th><th class="r">vs. obj.</th></tr></thead><tbody>${ESTAB.filter(e => !e.cerrado).map(e => { const b = baseFin(e), dpw = e.pw ? (e.ventas - e.pw) / e.pw * 100 : 0; return `<tr><td style="font-weight:600">${e.short}</td><td class="r tnum">${eur(b.ventas)}</td><td class="r tnum ${b.dVentasLY < 0 ? "down" : "up"}">${signed(b.dVentasLY)}</td><td class="r tnum ${dpw < 0 ? "down" : "up"}">${signed(dpw)}</td><td class="r tnum">${b.margenPct.toFixed(0)}%</td><td class="r tnum ${b.dMargenObj < -0.5 ? "down" : b.dMargenObj > 0.5 ? "up" : "mut"}">${b.dMargenObj >= 0 ? "+" : ""}${b.dMargenObj.toFixed(1)}</td></tr>`; }).join("")}
+    <tr style="font-weight:700;background:var(--surface2)"><td>Grupo</td><td class="r tnum">${eur(gAll.ventas)}</td><td class="r tnum">${signed(gAll.dVentasLY)}</td><td class="r tnum">${signed(gAll.dVentasPW)}</td><td class="r tnum">${gAll.margenPct.toFixed(0)}%</td><td class="r mut">—</td></tr></tbody></table></div>`);
+  return kpis + `<div class="grid g12" style="margin-top:16px">
+    <div class="c5">${pnl}</div><div class="c7">${evo}</div>
+    <div class="c5">${costes}</div><div class="c7">${ventasLocal}</div>
+    <div class="c12">${comp}</div></div>`;
+};
+
 V.establecimientos = () => `<div class="grid g3">${ESTAB.map(e => {
   const st = estadoState(e), f = baseFin(e);
   return `<button class="card lift" data-act="estab" data-id="${e.id}" style="text-align:left;display:flex;flex-direction:column;gap:14px">
@@ -540,13 +568,14 @@ function saraAnswer(q) {
    NAV / SHELL / ROUTER
    ========================================================================== */
 const NAV = [
-  { g: "Operación", items: [["dashboard", "Dashboard", "dash"], ["establecimientos", "Establecimientos", "shop"], ["equipo", "Equipo", "team"], ["clientes", "Clientes", "users"]] },
+  { g: "Operación", items: [["dashboard", "Dashboard", "dash"], ["finanzas", "Finanzas", "euro"], ["establecimientos", "Establecimientos", "shop"], ["equipo", "Equipo", "team"], ["clientes", "Clientes", "users"]] },
   { g: "Gestión", items: [["rrhh", "RR. HH.", "hr"], ["compras", "Compras", "cart"], ["marketing", "Marketing", "mkt"], ["mantenimiento", "Mantenimiento", "wrench"]] },
   { g: "Inteligencia", items: [["alertas", "Centro de alertas", "bell"], ["sara", "Panel de Sara", "spark"]] },
   { g: "Sistema", items: [["config", "Configuración", "cog"]] },
 ];
 const META = {
   dashboard: ["Buenos días, Uriel", "Dashboard ejecutivo", "El estado de todo el grupo, de un vistazo."],
+  finanzas: ["Dirección financiera", "Finanzas", "Ventas, márgenes, costes y comparativas del grupo."],
   establecimientos: ["Operación", "Establecimientos", "7 locales · estado en tiempo real (datos de ejemplo)."],
   equipo: ["Personas", "Equipo", "Plantilla, turnos, fichajes y rendimiento."],
   clientes: ["CRM", "Clientes", "Base de clientes del grupo, unificada."],
