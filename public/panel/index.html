@@ -77,7 +77,8 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .btn.danger{background:var(--danger);color:#fff;border-color:transparent}.btn.danger:hover{filter:brightness(.94)}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}.tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);font-weight:600;padding:10px 14px;border-bottom:1px solid var(--border)}
 .tbl td{padding:10px 14px;border-bottom:1px solid var(--border)}.tbl tr:last-child td{border-bottom:0}.tbl th.r,.tbl td.r{text-align:right}
-.tblwrap{overflow-x:auto;margin:0 -18px -18px}
+.tbl th:first-child,.tbl td:first-child{padding-left:18px}.tbl th:last-child,.tbl td:last-child{padding-right:18px}
+.tblwrap{overflow-x:auto}
 .stars{color:var(--warning);letter-spacing:1px}
 .note{padding:12px 14px;border-radius:11px;background:var(--info-soft);color:var(--info);font-size:12.5px;display:flex;gap:9px;align-items:center}
 .sk{background:linear-gradient(90deg,var(--surface2) 25%,color-mix(in srgb,var(--surface2) 55%,var(--surface)) 37%,var(--surface2) 63%);background-size:400% 100%;animation:sh 1.3s ease infinite;border-radius:8px}@keyframes sh{0%{background-position:100% 0}100%{background-position:-100% 0}}
