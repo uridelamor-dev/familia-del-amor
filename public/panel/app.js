@@ -261,7 +261,11 @@ function renderDashboard(d) {
   const slice = serie.slice(-win); const serieVals = slice.map((x) => x.personas || x.n || 0);
   const totalPeriodo = slice.reduce((s, x) => s + (x.n || 0), 0);
   const winLbl = PERIOD === "mes" ? "últimos 30 días" : PERIOD === "14d" ? "últimos 14 días" : "últimos 7 días";
-  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas</h3><span class="pill">${winLbl}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas en ${winLbl}</div></div><div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y ticket medio<br><span class="hl">al conectar Ágora</span></div></div>${area(serieVals, { h: 120 })}</div>`;
+  const ventasOk = d.ventas && d.ventas.disponible;
+  const ventasBox = ventasOk
+    ? `<div style="text-align:right"><div class="big tnum" style="font-size:30px">${eur(d.ventas.total)}</div><div class="mut" style="font-size:12px">ventas (30 días)</div></div>`
+    : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y ticket medio<br><span class="hl">al conectar Ágora</span></div>`;
+  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas</h3><span class="pill">${winLbl}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas en ${winLbl}</div></div>${ventasBox}</div>${area(serieVals, { h: 120 })}</div>`;
 
   // ── Gasto del mes (barra apilada real) ──
   const gl = (d.dinero && d.dinero.gastoLocal) || []; const gtot = gl.reduce((s, g) => s + (g.actual || 0), 0);

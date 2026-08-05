@@ -19,6 +19,9 @@ import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./sr
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { mapManageRow, resumenPorLocal, draftRequest, extractText } from "./src/modules/reviews/reviews.service.js";
+import { loadAgoraConfigs, publicConfig } from "./src/integrations/agora/registry.js";
+import { createAgoraClient } from "./src/integrations/agora/client.js";
+import { syncVentas } from "./src/integrations/agora/sync.js";
 
 dotenv.config();
 
@@ -451,6 +454,22 @@ async function initDB() {
       )
     `);
 
+    // Ventas diarias por establecimiento (integración Ágora TPV). Aditiva; se llena por el job de
+    // sincronización cuando haya locales configurados (env AGORA_LOCALES). Vacía = dashboard honesto.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ventas_diarias (
+        id SERIAL PRIMARY KEY,
+        local TEXT NOT NULL,
+        dia TEXT NOT NULL,
+        ventas NUMERIC DEFAULT 0,
+        tickets INTEGER DEFAULT 0,
+        comensales INTEGER DEFAULT 0,
+        ticket_medio NUMERIC DEFAULT 0,
+        actualizado_en TEXT,
+        UNIQUE(local, dia)
+      )
+    `);
+
     // Índices (aditivos e idempotentes). Las consultas del panel/dashboard filtran por local,
     // fecha, teléfono, estado… sin índices eran full-scans que a millones de filas degradan mucho.
     // Cada CREATE va en su propio try/catch: un índice que falle NUNCA impide arrancar el servidor.
@@ -472,6 +491,7 @@ async function initDB() {
       "CREATE INDEX IF NOT EXISTS idx_hrllamadas_mes ON hr_llamadas_mes(mes)",
       "CREATE INDEX IF NOT EXISTS idx_hrapps_estado ON hr_applications(estado)",
       "CREATE INDEX IF NOT EXISTS idx_bloqueos_local ON bloqueos_reservas(local)",
+      "CREATE INDEX IF NOT EXISTS idx_ventas_local_dia ON ventas_diarias(local, dia)",
     ];
     for (const sql of INDICES) {
       try { await client.query(sql); } catch (e) { console.warn("Índice omitido (no crítico):", e.message); }
@@ -763,6 +783,11 @@ setInterval(async () => {
     console.error("Auto-refresh reviews:", e.message);
   }
 }, 24 * 60 * 60 * 1000);
+
+// Sincronización de ventas de Ágora (oportunista + catch-up). No hace NADA si no hay locales
+// configurados (AGORA_LOCALES vacío). Arranque diferido 60s + cada 45 min.
+setTimeout(() => { runAgoraSync().catch((e) => console.error("Ágora sync (kickoff):", e.message)); }, 60 * 1000);
+setInterval(() => { runAgoraSync().catch((e) => console.error("Ágora sync:", e.message)); }, 45 * 60 * 1000);
 
 // ── Google Drive / Sheets OAuth (cuenta separada para facturas) ────────────
 const GOOGLE_DRIVE_CLIENT_ID     = process.env.GOOGLE_DRIVE_CLIENT_ID     || "";
@@ -2062,6 +2087,50 @@ app.get("/api/dashboard", requireAuth(["direccion", "encargado", "contabilidad"]
     const data = await getDashboard({ get: dbGet, all: dbAll }, { whatsappConnected: isReady(), local });
     res.json({ ok: true, data });
   } catch (e) { next(e); }
+});
+
+// ── Ágora TPV: ventas y estado de integración ────────────────────────────────────
+// Job de sincronización (dormido si no hay locales configurados en AGORA_LOCALES).
+async function runAgoraSync() {
+  const configs = loadAgoraConfigs();
+  if (!configs.length) return;
+  const hoy = new Date().toISOString().slice(0, 10);
+  await syncVentas({ get: dbGet, all: dbAll, run: dbRun }, {
+    hoy, configs, makeClient: createAgoraClient,
+    setEstado: async (local, r) => setConfig("agora_estado_" + local, JSON.stringify({ ...r, ts: new Date().toISOString() })),
+  });
+  await setConfig("agora_last_sync", new Date().toISOString());
+}
+
+app.get("/api/ventas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const cond = [], params = [];
+    if (req.query.local) { cond.push("local = ?"); params.push(String(req.query.local)); }
+    if (req.query.from) { cond.push("dia >= ?"); params.push(String(req.query.from)); }
+    if (req.query.to) { cond.push("dia <= ?"); params.push(String(req.query.to)); }
+    const where = cond.length ? "WHERE " + cond.join(" AND ") : "";
+    const rows = await dbAll(`SELECT local, dia, ventas::float ventas, tickets::int tickets, comensales::int comensales, ticket_medio::float ticket_medio FROM ventas_diarias ${where} ORDER BY dia DESC LIMIT 800`, params);
+    res.json({ ok: true, data: rows || [] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error ventas", data: [] });
+  }
+});
+
+// Estado de la integración por local (NUNCA expone el token).
+app.get("/api/agora/estado", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const configs = loadAgoraConfigs();
+    const out = [];
+    for (const cfg of configs) {
+      let estado = null;
+      try { const raw = await getConfig("agora_estado_" + cfg.local); if (raw) estado = JSON.parse(raw); } catch { /* ignore */ }
+      out.push({ ...publicConfig(cfg), estado });
+    }
+    const lastSync = await getConfig("agora_last_sync");
+    res.json({ ok: true, configurados: configs.length, lastSync: lastSync || null, locales: out });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error estado Ágora" });
+  }
 });
 
 // RR.HH.
