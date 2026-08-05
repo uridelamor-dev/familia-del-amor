@@ -33,8 +33,6 @@ async function apiSend(method, path, body) {
   const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error del servidor"); return j;
 }
 
-// Enlaces de respaldo al panel clásico mientras migramos módulo a módulo.
-const CLASSIC = { mantenimiento: "/mantenimiento.html", rrhh: "/rrhh.html", marketing: "/marketing.html", facturas: "/direccion.html", config: "/direccion.html", clientes: "/marketing.html", usuarios: "/direccion.html", reservas: "/encargados.html" };
 const NAV = [
   { g: "Resumen", items: [["dashboard", "Dashboard", "📊", null, ["direccion", "encargado", "contabilidad"]]] },
   { g: "Módulos", items: [
@@ -62,9 +60,9 @@ function shell(active, bodyHtml) {
   const nav = NAV.map((grp) => {
     const items = grp.items.filter(([, , , , roles]) => !roles || roles.includes(USER.rol));
     if (!items.length) return "";
-    return `<div class="ngt">${grp.g}</div>` + items.map(([id, label, ico, ext]) =>
-      `<a class="navi ${!ext && id === active ? "active" : ""}" ${ext ? `href="${ext}"` : `data-view="${id}"`}>
-        <span class="ico">${ico}</span><span>${label}</span>${ext ? '<span class="ext">↗</span>' : ""}</a>`).join("");
+    return `<div class="ngt">${grp.g}</div>` + items.map(([id, label, ico]) =>
+      `<a class="navi ${id === active ? "active" : ""}" data-view="${id}">
+        <span class="ico">${ico}</span><span>${label}</span></a>`).join("");
   }).join("");
   return `<div class="app">
     <aside class="sidebar">
@@ -110,39 +108,71 @@ function modal(title, bodyHtml) {
 // ════════════════════════ VISTA: DASHBOARD (periódico ejecutivo) ════════════════════════
 let DASH_LOCAL = "";
 const nombreCorto = (s) => String(s || "").split(" ")[0];
-const GO_VIEW = { whatsapp: "whatsapp", mantenimiento: "mantenimiento", clientes: "clientes", facturas: "facturas", rrhh: "rrhh", marketing: "reviews" };
+const GO_VIEW = { whatsapp: "whatsapp", mantenimiento: "mantenimiento", clientes: "clientes", facturas: "facturas", rrhh: "rrhh", marketing: "reviews", reservas: "reservas", reviews: "reviews", campanas: "campanas" };
 function renderDashboard(d) {
   const localName = d.scope && d.scope.local;
   const selector = `<div class="chips">${['<button class="chip ' + (!DASH_LOCAL ? "on" : "") + '" data-act="dash-local" data-local="">Todos</button>'].concat(LOCALES.map((l) => `<button class="chip ${DASH_LOCAL === l ? "on" : ""}" data-act="dash-local" data-local="${esc(l)}">${esc(l)}</button>`)).join("")}</div>`;
-  // Portada: buenos días + cómo fue ayer
+  // ── Portada: buenos días + cómo fue ayer + qué viene hoy ──
+  const ayerTxt = d.ayer && d.ayer.disponible ? d.ayer.texto : esc((d.ayer && d.ayer.texto) || "Aún sin datos de ayer.");
+  const hoyTxt = d.hoy && d.hoy.disponible ? `<p class="lead ${d.hoy.alerta ? "warn" : ""}" style="margin:10px 0 0">${d.hoy.texto}</p>` : "";
   const hero = `<div class="hero">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><span class="saraface">S</span><div><div style="font-weight:750;font-size:15px">Buenos días${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><div class="mut" style="font-size:12.5px">${fechaLarga(d.fecha)}${localName ? " · <b>" + esc(localName) + "</b>" : " · todos los establecimientos"}</div></div></div>
-    <p class="lead" style="margin:0">${d.ayer && d.ayer.disponible ? d.ayer.texto : esc((d.ayer && d.ayer.texto) || "Aún sin datos de ayer.")}</p></div>`;
-  // Lo que me preocupa — Sara razona y decide
+    <p class="lead" style="margin:0">${ayerTxt}</p>${hoyTxt}</div>`;
+  // ── Lo que me preocupa — Sara razona y decide ──
   const concerns = d.preocupaciones || [];
   const concernsHtml = concerns.length ? concerns.map((c) => {
     const view = GO_VIEW[c.go]; const btn = view ? `<button class="btn" data-view="${view}">Abrir ${TITLES[view] || view}</button>` : "";
     return `<div class="concern ${c.sev}"><div class="stripe"></div><div class="body"><div class="ttl">${esc(c.titulo)}</div><p class="narr">${c.narrativa}</p><div class="decision"><span class="k">Yo haría</span><span class="d">${c.decision}</span></div>${c.impacto ? `<div class="impacto">💡 ${esc(c.impacto)}</div>` : ""}${btn ? `<div style="margin-top:12px">${btn}</div>` : ""}</div></div>`;
   }).join("") : `<div class="card"><p class="lead" style="margin:0">${localName ? `Hoy <b>${esc(localName)}</b> está tranquilo. Nada urgente — buen día para cuidar el servicio y al equipo.` : `Hoy el grupo está tranquilo. Nada que apagar — buen momento para reconocer al equipo o preparar la semana.`}</p></div>`;
-  // Mi plan para hoy
+  // ── Mi plan para hoy ──
   const agenda = d.agenda || [];
   const agendaHtml = agenda.length ? `<div class="card"><ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:12px">${agenda.map((a) => `<li><b>${esc(a.t)}</b><div class="mut" style="font-size:13px;margin-top:2px;color:var(--ink2)">${a.decision}</div></li>`).join("")}</ol></div>` : "";
-  // Bloque honesto: fuentes que aún no existen
-  const pend = `<div class="pendingblock"><div style="font-weight:700;margin-bottom:6px">Lo que todavía no puedo ver — y por qué</div>
-    <div class="mut" style="font-size:13px;line-height:1.6"><b>Ventas y margen por local</b>: necesito el TPV (<b>Ágora</b>). <b>Coste de personal, horas y ausencias</b>: necesito los fichajes (<b>Skello</b>). En cuanto conectemos esas dos fuentes, te diré exactamente <b>dónde ganas y dónde pierdes dinero</b> por local. Hoy razono con lo que sí es real: reservas, mantenimiento, reseñas, clientes y proveedores. No me invento nada.</div></div>`;
-  // Soporte (cada bloque acaba en acción)
-  const sop = [];
-  if ((d.clientesRiesgo || []).length) sop.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Clientes a los que llamaría hoy</h3></div><div class="rows" style="margin-top:6px">${d.clientesRiesgo.slice(0, 6).map((c) => `<div class="row"><div class="grow"><div class="t1">${esc(c.nombre || "—")}</div><div class="t2">${c.visitas} reservas · última ${esc(c.ultima)}${c.local ? " · " + esc(c.local) : ""}</div></div>${c.telefono ? `<a class="btn" href="tel:${esc(c.telefono)}">Llamar</a>` : ""}</div>`).join("")}</div></div>`);
-  if ((d.proveedoresRiesgo || []).length) sop.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Proveedores que vigilaría</h3></div><div class="rows" style="margin-top:6px">${d.proveedoresRiesgo.map((p) => `<div class="row"><div class="grow"><div class="t1">${esc(p.proveedor)}</div><div class="t2">gasto este mes ${num(p.actual)} €</div></div><b class="tnum" style="color:var(--danger)">+${num(p.delta)}%</b></div>`).join("")}</div><div style="padding:12px 18px"><button class="btn" data-view="facturas">Ver facturas</button></div></div>`);
-  if (!localName && (d.reservas.porLocalAyer || []).length) sop.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Reservas de ayer por local</h3><button class="btn" data-view="reservas">Ver reservas</button></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Reservas</th><th class="r">Comensales</th></tr></thead><tbody>${d.reservas.porLocalAyer.map((r) => `<tr><td>${esc(r.local)}</td><td class="r tnum">${num(r.n)}</td><td class="r tnum">${num(r.personas)}</td></tr>`).join("")}</tbody></table></div></div>`);
-  sop.push(`<div class="card"><div class="ch"><h3>Reputación</h3><button class="btn" data-view="reviews">Reseñas</button></div><div style="display:flex;align-items:baseline;gap:8px"><div style="font-size:34px;font-weight:750" class="tnum">${d.resenas.total ? dec1(d.resenas.media) : "—"}</div><div class="stars" style="font-size:16px">${"★".repeat(Math.round(d.resenas.media || 0))}</div></div><div class="mut" style="font-size:12px;margin-top:6px">${num(d.resenas.total)} reseñas (90 días)</div></div>`);
-  const soporteHtml = `<div class="grid g2">${sop.join("")}</div>`;
+
+  // ── Radar por local (solo vista de grupo): cada local como un negocio ──
+  const radar = d.radarLocales || [];
+  let radarHtml = "";
+  if (!localName && radar.length) {
+    radarHtml = `<div class="section-title">Radar por establecimiento</div><div class="card p0"><div class="tblwrap"><table class="tbl radar"><thead><tr><th>Establecimiento</th><th class="r">Hoy (comensales)</th><th class="r">Incidencias abiertas</th><th class="r">Gasto del mes</th><th></th></tr></thead><tbody>${radar.map((r) => `<tr><td><b>${esc(r.local)}</b></td><td class="r tnum">${num(r.hoyPersonas)}</td><td class="r tnum">${r.incidenciasAbiertas > 0 ? `<span class="badge ${r.incidenciasAbiertas >= 3 ? "bad" : "warn"}">${r.incidenciasAbiertas}</span>` : "0"}</td><td class="r tnum">${eur(r.gastoMes)}</td><td class="r"><button class="btn sm" data-act="dash-local" data-local="${esc(r.local)}">Entrar</button></td></tr>`).join("")}</tbody></table></div></div>`;
+  }
+
+  // ── Dinero: lo que debo + gasto por local (honesto sobre ventas) ──
+  const din = d.dinero || {};
+  const pagar = din.porPagar || { total: 0, n: 0 };
+  const acre = din.acreedores || [];
+  const gl = din.gastoLocal || [];
+  const porPagarCard = `<div class="card"><div class="ch"><h3>Lo que debo ahora mismo</h3><button class="btn" data-view="facturas">Facturas</button></div>${pagar.n > 0
+    ? `<div style="display:flex;align-items:baseline;gap:10px"><div style="font-size:32px;font-weight:750" class="tnum">${eur(pagar.total)}</div><div class="mut">en ${num(pagar.n)} factura${pagar.n === 1 ? "" : "s"} sin pagar</div></div>${din.masAntigua ? `<div class="callout ${din.masAntigua.dias >= 75 ? "bad" : "warn"}" style="margin-top:10px">La más antigua: <b>${esc(din.masAntigua.proveedor || "—")}</b> · ${eur(din.masAntigua.total)} · lleva <b>${din.masAntigua.dias} días</b> sin pagar</div>` : ""}${acre.length ? `<div class="rows" style="margin-top:10px">${acre.slice(0, 4).map((a) => `<div class="row"><div class="grow"><div class="t1">${esc(a.proveedor)}</div><div class="t2">${a.n} factura${a.n === 1 ? "" : "s"}</div></div><b class="tnum">${eur(a.total)}</b></div>`).join("")}</div>` : ""}`
+    : `<p class="lead" style="margin:0">Estás al día: no hay facturas pendientes de pago${localName ? " en este local" : ""}.</p>`}</div>`;
+  const gastoCard = gl.length ? `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Gasto por establecimiento (este mes)</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Este mes</th><th class="r">vs mes pasado</th></tr></thead><tbody>${gl.map((g) => `<tr><td>${esc(g.local)}</td><td class="r tnum">${eur(g.actual)}</td><td class="r tnum">${g.delta == null ? "<span class='mut'>—</span>" : `<span style="color:${g.delta > 0 ? "var(--danger)" : "var(--brand)"}">${g.delta > 0 ? "+" : ""}${num(g.delta)}%</span>`}</td></tr>`).join("")}</tbody></table></div></div>` : "";
+  const dineroNota = `<div class="pendingblock"><b>Ventas y margen todavía no</b> — solo veo gasto. ${esc((din.sinFuente && din.sinFuente.nota) || "")}</div>`;
+  const dineroHtml = `<div class="section-title">El dinero</div><div class="grid g2">${porPagarCard}${gastoCard}</div>${dineroNota}`;
+
+  // ── Equipo: incidencias + check-ins (honesto sobre rendimiento) ──
+  const eq = d.equipo || {};
+  const inc = eq.incidencias || [];
+  const ck = eq.checkins;
+  const equipoInner = [];
+  if (ck && ck.plantilla > 0) { const pct = Math.round((ck.hechos / ck.plantilla) * 100); equipoInner.push(`<div class="card"><div class="ch"><h3>¿He escuchado al equipo?</h3><button class="btn" data-view="rrhh">RR.HH.</button></div><div style="display:flex;align-items:baseline;gap:10px"><div style="font-size:32px;font-weight:750" class="tnum">${ck.hechos}/${ck.plantilla}</div><div class="mut">check-ins este mes</div></div><div class="progress" style="margin-top:10px"><span style="width:${pct}%;background:${pct >= 80 ? "var(--brand)" : pct >= 40 ? "#c99a3a" : "var(--danger)"}"></span></div><div class="mut" style="font-size:12px;margin-top:6px">${ck.hechos >= ck.plantilla ? "Has hablado con todo el equipo. 👏" : `Te faltan ${ck.plantilla - ck.hechos} personas por escuchar.`}</div></div>`); }
+  if (inc.length) equipoInner.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Quién necesita atención</h3></div><div class="rows" style="margin-top:6px">${inc.map((w) => `<div class="row"><div class="grow"><div class="t1">${esc(w.nombre || "—")}</div><div class="t2">${w.local ? esc(w.local) : ""}</div></div><span class="badge ${w.c >= 2 ? "bad" : "warn"}">${w.c} incidencia${w.c === 1 ? "" : "s"}</span></div>`).join("")}</div></div>`);
+  const equipoHtml = (equipoInner.length || true) ? `<div class="section-title">El equipo</div>${equipoInner.length ? `<div class="grid g2">${equipoInner.join("")}</div>` : `<div class="card"><p class="lead" style="margin:0">Sin incidencias ni check-ins registrados${localName ? " en este local" : ""} este mes.</p></div>`}<div class="pendingblock"><b>Coste de personal, horas y ausencias todavía no</b> — ${esc((eq.sinFuente && eq.sinFuente.nota) || "")}</div>` : "";
+
+  // ── Clientes: a quién llamar (fuga) + mejores (premiar) ──
+  const cl = d.clientes || {};
+  const enfr = cl.enfriando || [];
+  const mej = cl.mejores || [];
+  const cliInner = [];
+  if (enfr.length) cliInner.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>A los que llamaría hoy (se enfrían)</h3></div><div class="rows" style="margin-top:6px">${enfr.slice(0, 6).map((c) => `<div class="row"><div class="grow"><div class="t1">${esc(c.nombre || "—")}</div><div class="t2">${c.visitas} reservas · última ${esc(c.ultima)}${c.local ? " · " + esc(c.local) : ""}</div></div>${c.telefono ? `<a class="btn" href="tel:${esc(c.telefono)}">Llamar</a>` : ""}</div>`).join("")}</div></div>`);
+  if (mej.length) cliInner.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Mis mejores clientes (a cuidar)</h3></div><div class="rows" style="margin-top:6px">${mej.map((c) => `<div class="row"><div class="grow"><div class="t1">${esc(c.nombre || "—")}</div><div class="t2">${c.visitas} reservas · última ${esc(c.ultima)}${c.local ? " · " + esc(c.local) : ""}</div></div>${c.telefono ? `<a class="btn" href="tel:${esc(c.telefono)}">Llamar</a>` : ""}</div>`).join("")}</div></div>`);
+  const clientesHtml = cliInner.length ? `<div class="section-title">Los clientes</div><div class="grid g2">${cliInner.join("")}</div>` : "";
+
+  // ── Reputación por local (Google) ──
+  const rep = d.reputacionLocales || [];
+  const repHtml = rep.length ? `<div class="section-title">Reputación en Google, por local</div><div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>De peor a mejor</h3><button class="btn" data-view="reviews">Ver reseñas</button></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local (Google)</th><th class="r">Media</th><th class="r">Reseñas</th></tr></thead><tbody>${rep.map((r) => `<tr><td>${esc(r.local)}</td><td class="r tnum"><b style="color:${r.media <= 3.5 ? "var(--danger)" : r.media >= 4.3 ? "var(--brand)" : "inherit"}">${dec1(r.media)}★</b></td><td class="r tnum mut">${num(r.n)}</td></tr>`).join("")}</tbody></table></div></div>` : "";
 
   return selector + hero +
     `<div class="section-title">Lo que me preocupa</div>${concernsHtml}` +
     (agenda.length ? `<div class="section-title">Mi plan para hoy</div>${agendaHtml}` : "") +
-    `<div class="section-title">De un vistazo</div>${soporteHtml}` +
-    `<div class="section-title">Todavía sin fuente</div>${pend}`;
+    radarHtml + dineroHtml + equipoHtml + clientesHtml + repHtml;
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -273,7 +303,7 @@ function renderReviews(list) {
   const puedeActualizar = USER.rol === "direccion";
   const ratingOpts = ['<option value="">Todas</option>'].concat([5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${REVF.rating === String(n) ? "selected" : ""}>${n}★</option>`)).join("");
   const toolbar = `<div class="toolbar"><div class="field"><label>Puntuación</label><select id="rRating">${ratingOpts}</select></div><button class="btn" data-act="rev-filtrar">Filtrar</button><div style="flex:1"></div>${puedeActualizar ? '<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>' : ""}</div>`;
-  const head = `<div class="grid g4" style="margin-bottom:16px">${stat("Media", "⭐", rows.length ? dec1(media) : "—", rows.length ? "★" : "", `${num(rows.length)} reseñas`)}</div>`;
+  const head = `<div class="grid g4" style="margin-bottom:16px">${stat("Media de las mostradas", "⭐", rows.length ? dec1(media) : "—", rows.length ? "★" : "", `${num(rows.length)} reseñas · la media oficial por local está en el Dashboard`)}</div>`;
   const body = rows.length ? `<div class="card p0"><div class="rows">${rows.map((r) => `<div class="row"><div class="stars" style="min-width:70px">${"★".repeat(Math.max(0, Math.min(5, r.rating || 0)))}</div><div class="grow"><div class="t1">${esc(r.author || "Anónimo")} ${r.location_name ? "· " + esc(r.location_name) : ""}</div><div class="t2">${esc(r.text || "")}</div></div><div class="mut" style="font-size:11px">${esc((r.fecha || r.creado_en || "").slice(0, 10))}</div></div>`).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin reseñas con ese filtro.</div></div>`;
   return `<div class="ph"><div class="eyebrow">Reputación</div><h1>Reseñas de Google</h1><div class="sub">Opiniones de los clientes por local</div></div>${head}${toolbar}${body}`;
 }
@@ -320,7 +350,7 @@ async function candEstado(id, estado) { try { await apiSend("PUT", "/api/hr/appl
 function renderUsuarios(list) {
   const rows = list || [];
   const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn primary" data-act="user-nuevo">+ Nuevo usuario</button></div>`;
-  const table = `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Local</th><th></th></tr></thead><tbody>${rows.map((u) => `<tr><td>${esc(u.username)}</td><td>${esc(u.nombre || "")}</td><td>${esc(u.rol)}</td><td>${esc(u.local || "")}</td><td class="r" style="white-space:nowrap"><button class="linkbtn" style="color:var(--brand)" data-act="user-pass" data-id="${u.id}" data-nombre="${esc(u.username)}">Contraseña</button> · <button class="linkbtn" data-act="user-del" data-id="${u.id}" data-nombre="${esc(u.username)}">Eliminar</button></td></tr>`).join("")}</tbody></table></div></div>`;
+  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Local</th><th></th></tr></thead><tbody>${rows.map((u) => `<tr><td>${esc(u.username)}</td><td>${esc(u.nombre || "")}</td><td>${esc(u.rol)}</td><td>${esc(u.local || "")}</td><td class="r" style="white-space:nowrap"><button class="linkbtn" style="color:var(--brand)" data-act="user-pass" data-id="${u.id}" data-nombre="${esc(u.username)}">Contraseña</button> · <button class="linkbtn" data-act="user-del" data-id="${u.id}" data-nombre="${esc(u.username)}">Eliminar</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">No hay usuarios todavía. Crea el primero con «+ Nuevo usuario».</div></div>`;
   return `<div class="ph"><div class="eyebrow">Sistema</div><h1>Usuarios</h1><div class="sub">${rows.length} cuenta${rows.length === 1 ? "" : "s"}</div></div>${toolbar}${table}`;
 }
 async function loadUsuarios() { const view = document.getElementById("view"); view.innerHTML = skeleton(); try { const data = await api("/api/users"); view.innerHTML = renderUsuarios(data); } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); } }
