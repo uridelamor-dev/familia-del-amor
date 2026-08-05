@@ -107,43 +107,46 @@ function modal(title, bodyHtml) {
   return ov;
 }
 
-// ════════════════════════ VISTA: DASHBOARD ════════════════════════
+// ════════════════════════ VISTA: DASHBOARD (periódico ejecutivo) ════════════════════════
+let DASH_LOCAL = "";
+const nombreCorto = (s) => String(s || "").split(" ")[0];
+const GO_VIEW = { whatsapp: "whatsapp", mantenimiento: "mantenimiento", clientes: "clientes", facturas: "facturas", rrhh: "rrhh", marketing: "reviews" };
 function renderDashboard(d) {
-  const wa = d.whatsapp && d.whatsapp.connected;
-  const atencion = d.atencion || [];
-  const kpis = `<div class="grid g4">
-    ${stat("Reservas hoy", "🍽️", num(d.reservas.hoy.n), "", `${num(d.reservas.hoy.personas)} comensales`)}
-    ${stat("Próximas (7 días)", "📅", num(d.reservas.proximas7))}
-    ${stat("Reseñas Google", "⭐", d.resenas.total ? dec1(d.resenas.media) : "—", d.resenas.total ? "★" : "", `${num(d.resenas.total)} reseñas · ${num(d.resenas.nuevas7)} nuevas`)}
-    ${stat("Candidaturas nuevas", "🗂️", num(d.candidaturas.nuevas))}</div>`;
-  const atencionCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>¿Qué requiere tu atención?</h3><span class="pill ${atencion.some((a) => a.sev === "crit") ? "bad" : ""}">${atencion.length}</span></div>
-    <div class="rows" style="margin-top:6px">${atencion.length ? atencion.map((a) => {
-      const url = CLASSIC[a.go] || "/direccion.html"; const k = a.sev === "crit" ? "bad" : a.sev === "imp" ? "imp" : "info"; const ic = a.sev === "crit" ? "⚠️" : a.sev === "imp" ? "❗" : "ℹ️";
-      return `<div class="att"><div class="ic ${k}">${ic}</div><div class="grow"><b>${esc(a.mensaje)}</b></div><a class="btn" href="${url}">${esc(a.accion)} ↗</a></div>`;
-    }).join("") : `<div style="padding:18px" class="mut">Nada urgente. Todo bajo control. ✅</div>`}</div></div>`;
-  const estadoCard = `<div class="card"><div class="ch"><h3>Estado</h3></div>
-    <div class="rows" style="margin:-4px -18px -18px">
-      <div class="row"><div class="grow"><div class="t1">WhatsApp / Sara</div><div class="t2">Reservas automáticas por WhatsApp</div></div><span class="pill ${wa ? "ok" : "bad"}">${wa ? "Conectado" : "Desconectado"}</span></div>
-      <div class="row"><div class="grow"><div class="t1">Facturas pendientes</div><div class="t2">Sin asignar a local</div></div><b class="tnum">${num(d.facturas.pendientes)}</b></div>
-      <div class="row"><div class="grow"><div class="t1">Mantenimiento abierto</div><div class="t2">${num(d.mantenimiento.antiguas)} lleva(n) demasiado tiempo</div></div><b class="tnum">${num(d.mantenimiento.abiertas)}</b></div>
-    </div></div>`;
-  const reservasLocal = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Reservas de hoy por local</h3><a class="btn" data-view="reservas">Ver todas</a></div>
-    ${d.reservas.porLocal.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Reservas</th><th class="r">Comensales</th></tr></thead><tbody>${d.reservas.porLocal.map((r) => `<tr><td>${esc(r.local)}</td><td class="r tnum">${num(r.n)}</td><td class="r tnum">${num(r.personas)}</td></tr>`).join("")}</tbody></table></div>` : '<div style="padding:0 18px 18px" class="mut">No hay reservas para hoy todavía.</div>'}</div>`;
-  const incLocal = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Incidencias abiertas por local</h3></div>
-    ${d.mantenimiento.porLocal.length ? `<div class="rows" style="margin-top:6px">${d.mantenimiento.porLocal.map((r) => `<div class="row"><div class="grow"><div class="t1">${esc(r.local)}</div></div><b class="tnum">${num(r.n)}</b></div>`).join("")}</div>` : '<div style="padding:0 18px 18px" class="mut">Sin incidencias abiertas. Mantenimiento al día.</div>'}</div>`;
-  const resenas = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Reseñas recientes de Google</h3><a class="btn" href="/marketing.html">Gestionar ↗</a></div>
-    ${d.resenas.ultimas.length ? `<div class="rows" style="margin-top:6px">${d.resenas.ultimas.map((r) => `<div class="row"><div class="stars">${"★".repeat(Math.max(0, Math.min(5, r.rating || 0)))}</div><div class="grow"><div class="t1">${esc(r.author || "Anónimo")} ${r.location_name ? "· " + esc(r.location_name) : ""}</div><div class="t2">${esc((r.text || "").slice(0, 120))}</div></div></div>`).join("")}</div>` : '<div style="padding:0 18px 18px" class="mut">Sin reseñas recientes.</div>'}</div>`;
-  const ventasNote = `<div class="note">💡 <span><b>Ventas y margen por local:</b> conectando el TPV (Ágora). En cuanto esté la integración, verás aquí la facturación y el margen diario de cada local.</span></div>`;
-  return `<div class="ph"><div class="eyebrow">Panel de dirección</div><h1>Buenos días${USER.nombre ? ", " + esc(USER.nombre.split(" ")[0]) : ""}</h1><div class="sub">${fechaLarga(d.fecha)} · datos en vivo</div></div>
-    ${ventasNote}<div style="height:16px"></div>${kpis}
-    <div class="grid g12" style="margin-top:16px">
-      <div class="c8">${atencionCard}</div><div class="c4">${estadoCard}</div>
-      <div class="c6">${reservasLocal}</div><div class="c6">${incLocal}</div>
-      <div class="c12">${resenas}</div></div>`;
+  const localName = d.scope && d.scope.local;
+  const selector = `<div class="chips">${['<button class="chip ' + (!DASH_LOCAL ? "on" : "") + '" data-act="dash-local" data-local="">Todos</button>'].concat(LOCALES.map((l) => `<button class="chip ${DASH_LOCAL === l ? "on" : ""}" data-act="dash-local" data-local="${esc(l)}">${esc(l)}</button>`)).join("")}</div>`;
+  // Portada: buenos días + cómo fue ayer
+  const hero = `<div class="hero">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px"><span class="saraface">S</span><div><div style="font-weight:750;font-size:15px">Buenos días${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><div class="mut" style="font-size:12.5px">${fechaLarga(d.fecha)}${localName ? " · <b>" + esc(localName) + "</b>" : " · todos los establecimientos"}</div></div></div>
+    <p class="lead" style="margin:0">${d.ayer && d.ayer.disponible ? d.ayer.texto : esc((d.ayer && d.ayer.texto) || "Aún sin datos de ayer.")}</p></div>`;
+  // Lo que me preocupa — Sara razona y decide
+  const concerns = d.preocupaciones || [];
+  const concernsHtml = concerns.length ? concerns.map((c) => {
+    const view = GO_VIEW[c.go]; const btn = view ? `<button class="btn" data-view="${view}">Abrir ${TITLES[view] || view}</button>` : "";
+    return `<div class="concern ${c.sev}"><div class="stripe"></div><div class="body"><div class="ttl">${esc(c.titulo)}</div><p class="narr">${c.narrativa}</p><div class="decision"><span class="k">Yo haría</span><span class="d">${c.decision}</span></div>${c.impacto ? `<div class="impacto">💡 ${esc(c.impacto)}</div>` : ""}${btn ? `<div style="margin-top:12px">${btn}</div>` : ""}</div></div>`;
+  }).join("") : `<div class="card"><p class="lead" style="margin:0">${localName ? `Hoy <b>${esc(localName)}</b> está tranquilo. Nada urgente — buen día para cuidar el servicio y al equipo.` : `Hoy el grupo está tranquilo. Nada que apagar — buen momento para reconocer al equipo o preparar la semana.`}</p></div>`;
+  // Mi plan para hoy
+  const agenda = d.agenda || [];
+  const agendaHtml = agenda.length ? `<div class="card"><ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:12px">${agenda.map((a) => `<li><b>${esc(a.t)}</b><div class="mut" style="font-size:13px;margin-top:2px;color:var(--ink2)">${a.decision}</div></li>`).join("")}</ol></div>` : "";
+  // Bloque honesto: fuentes que aún no existen
+  const pend = `<div class="pendingblock"><div style="font-weight:700;margin-bottom:6px">Lo que todavía no puedo ver — y por qué</div>
+    <div class="mut" style="font-size:13px;line-height:1.6"><b>Ventas y margen por local</b>: necesito el TPV (<b>Ágora</b>). <b>Coste de personal, horas y ausencias</b>: necesito los fichajes (<b>Skello</b>). En cuanto conectemos esas dos fuentes, te diré exactamente <b>dónde ganas y dónde pierdes dinero</b> por local. Hoy razono con lo que sí es real: reservas, mantenimiento, reseñas, clientes y proveedores. No me invento nada.</div></div>`;
+  // Soporte (cada bloque acaba en acción)
+  const sop = [];
+  if ((d.clientesRiesgo || []).length) sop.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Clientes a los que llamaría hoy</h3></div><div class="rows" style="margin-top:6px">${d.clientesRiesgo.slice(0, 6).map((c) => `<div class="row"><div class="grow"><div class="t1">${esc(c.nombre || "—")}</div><div class="t2">${c.visitas} reservas · última ${esc(c.ultima)}${c.local ? " · " + esc(c.local) : ""}</div></div>${c.telefono ? `<a class="btn" href="tel:${esc(c.telefono)}">Llamar</a>` : ""}</div>`).join("")}</div></div>`);
+  if ((d.proveedoresRiesgo || []).length) sop.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Proveedores que vigilaría</h3></div><div class="rows" style="margin-top:6px">${d.proveedoresRiesgo.map((p) => `<div class="row"><div class="grow"><div class="t1">${esc(p.proveedor)}</div><div class="t2">gasto este mes ${num(p.actual)} €</div></div><b class="tnum" style="color:var(--danger)">+${num(p.delta)}%</b></div>`).join("")}</div><div style="padding:12px 18px"><button class="btn" data-view="facturas">Ver facturas</button></div></div>`);
+  if (!localName && (d.reservas.porLocalAyer || []).length) sop.push(`<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Reservas de ayer por local</h3><button class="btn" data-view="reservas">Ver reservas</button></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Reservas</th><th class="r">Comensales</th></tr></thead><tbody>${d.reservas.porLocalAyer.map((r) => `<tr><td>${esc(r.local)}</td><td class="r tnum">${num(r.n)}</td><td class="r tnum">${num(r.personas)}</td></tr>`).join("")}</tbody></table></div></div>`);
+  sop.push(`<div class="card"><div class="ch"><h3>Reputación</h3><button class="btn" data-view="reviews">Reseñas</button></div><div style="display:flex;align-items:baseline;gap:8px"><div style="font-size:34px;font-weight:750" class="tnum">${d.resenas.total ? dec1(d.resenas.media) : "—"}</div><div class="stars" style="font-size:16px">${"★".repeat(Math.round(d.resenas.media || 0))}</div></div><div class="mut" style="font-size:12px;margin-top:6px">${num(d.resenas.total)} reseñas (90 días)</div></div>`);
+  const soporteHtml = `<div class="grid g2">${sop.join("")}</div>`;
+
+  return selector + hero +
+    `<div class="section-title">Lo que me preocupa</div>${concernsHtml}` +
+    (agenda.length ? `<div class="section-title">Mi plan para hoy</div>${agendaHtml}` : "") +
+    `<div class="section-title">De un vistazo</div>${soporteHtml}` +
+    `<div class="section-title">Todavía sin fuente</div>${pend}`;
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
-  try { const d = await api("/api/dashboard"); view.innerHTML = renderDashboard(d); }
+  try { const d = await api("/api/dashboard" + (DASH_LOCAL ? "?local=" + encodeURIComponent(DASH_LOCAL) : "")); view.innerHTML = renderDashboard(d); }
   catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 
@@ -432,6 +435,7 @@ document.addEventListener("click", (e) => {
   if (act === "theme") toggleTheme();
   else if (act === "logout") { localStorage.removeItem("token"); location.href = "/login.html"; }
   else if (act === "reload") go(CURRENT);
+  else if (act === "dash-local") { DASH_LOCAL = t.getAttribute("data-local") || ""; loadDashboard(); }
   else if (act === "filtrar") applyReservasFilter();
   else if (act === "nueva") openNuevaReserva();
   else if (act === "csv") downloadCsv();

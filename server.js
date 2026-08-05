@@ -1943,7 +1943,8 @@ app.get("/api/kpi", requireAuth(["direccion", "contabilidad"]), async (req, res)
 // Dashboard ejecutivo — agregado de datos reales (foto del día + "necesita tu atención").
 app.get("/api/dashboard", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res, next) => {
   try {
-    const data = await getDashboard({ get: dbGet, all: dbAll }, { whatsappConnected: isReady() });
+    const local = (req.query.local && String(req.query.local).trim()) || null;
+    const data = await getDashboard({ get: dbGet, all: dbAll }, { whatsappConnected: isReady(), local });
     res.json({ ok: true, data });
   } catch (e) { next(e); }
 });
