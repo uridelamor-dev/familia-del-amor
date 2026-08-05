@@ -89,10 +89,10 @@ export async function createMaintenanceIssue(x, user, { local, titulo, descripci
 
   const creado_en = now || new Date().toISOString();
   const r = await x.run(
-    `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, creado_en) VALUES (?, ?, ?, 'abierta', ?)`,
+    `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, creado_en) VALUES (?, ?, ?, 'abierta', ?) RETURNING id`,
     [local, titulo, descripcion, creado_en]
   );
-  return { code: "OK", id: r && r.lastID };
+  return { code: "OK", id: r && r.id };
 }
 
 // ── PUT /api/maintenance/:id ─────────────────────────────────────────────────

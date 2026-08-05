@@ -92,9 +92,10 @@ describe("Mantenimiento · listado (flag ON)", () => {
 
 describe("Mantenimiento · creación (flag ON)", () => {
   const body = (local) => ({ local, titulo: "Fuga", descripcion: "d" });
-  test("Dirección crea en cualquier local activo", async () => {
+  test("Dirección crea en cualquier local activo y devuelve id (RETURNING)", async () => {
     const x = baseDb();
-    assert.equal((await createMaintenanceIssue(x, dir(1), body(L), ON())).code, "OK");
+    const r = await createMaintenanceIssue(x, dir(1), body(L), ON());
+    assert.equal(r.code, "OK"); assert.ok(Number.isInteger(r.id));
     assert.equal(x._store.maintenance_issues.length, 1);
   });
   test("assigned crea en su local; no en ajeno (sin insertar)", async () => {
