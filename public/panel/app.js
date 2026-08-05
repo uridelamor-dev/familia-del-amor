@@ -42,12 +42,13 @@ const NAV = [
     ["mantenimiento", "Mantenimiento", "🔧", null, ["direccion", "encargado"]],
     ["clientes", "Clientes", "👥", null, ["direccion"]],
     ["reviews", "Reseñas", "⭐", null, ["direccion", "encargado", "contabilidad"]],
-    ["rrhh", "RR. HH.", "🗂️", CLASSIC.rrhh, ["direccion"]],
-    ["facturas", "Facturas", "🧾", CLASSIC.facturas, ["direccion", "contabilidad"]],
+    ["rrhh", "RR. HH.", "🗂️", null, ["direccion"]],
+    ["facturas", "Facturas", "🧾", null, ["direccion", "contabilidad"]],
   ] },
+  { g: "Sistema", items: [["usuarios", "Usuarios", "👤", null, ["direccion"]]] },
 ];
-const TITLES = { dashboard: "Dashboard", reservas: "Reservas", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad"] };
+const TITLES = { dashboard: "Dashboard", reservas: "Reservas", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", rrhh: "RR. HH.", facturas: "Facturas", usuarios: "Usuarios" };
+const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], usuarios: ["direccion"] };
 
 let USER = null, CURRENT = "dashboard";
 
@@ -280,8 +281,83 @@ async function loadReviews() {
 function applyRevFilter() { const r = document.getElementById("rRating"); if (r) REVF.rating = r.value; loadReviews(); }
 async function refreshReviews() { toast("Actualizando reseñas…"); try { await apiSend("POST", "/api/reviews/refresh"); toast("Reseñas actualizadas ✅"); loadReviews(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 
+// ════════════════════════ VISTA: RR. HH. ════════════════════════
+let RRTAB = "candidaturas", RRF = { estado: "", q: "" };
+const CAND_EST = { nuevo: "info", revisando: "imp", contratada: "ok", descartada: "bad" };
+function renderRRHH(data) {
+  const tabs = `<div class="toolbar" style="margin-bottom:12px"><button class="btn ${RRTAB === "candidaturas" ? "primary" : ""}" data-act="rr-tab" data-tab="candidaturas">Candidaturas</button><button class="btn ${RRTAB === "trabajadores" ? "primary" : ""}" data-act="rr-tab" data-tab="trabajadores">Trabajadores</button></div>`;
+  let body;
+  if (RRTAB === "candidaturas") {
+    const rows = data || [];
+    const estOpts = ['<option value="">Todos los estados</option>'].concat(["nuevo", "revisando", "contratada", "descartada"].map((e) => `<option value="${e}" ${RRF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
+    const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(RRF.q)}" placeholder="Nombre, puesto…"></div><button class="btn" data-act="rr-filtrar">Buscar</button></div>`;
+    const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
+    body = toolbar + table;
+  } else {
+    const rows = data || [];
+    body = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Local</th></tr></thead><tbody>${rows.map((t) => `<tr><td>${esc(t.nombre || "")}</td><td class="mut">${esc(t.username || "")}</td><td>${esc(t.rol || "")}</td><td>${esc(t.local || "")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin trabajadores.</div></div>`;
+  }
+  return `<div class="ph"><div class="eyebrow">Personas</div><h1>RR. HH.</h1><div class="sub">Candidaturas y equipo</div></div>${tabs}${body}`;
+}
+async function loadRRHH() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    let data;
+    if (RRTAB === "candidaturas") { const qs = new URLSearchParams(); if (RRF.estado) qs.set("estado", RRF.estado); if (RRF.q) qs.set("q", RRF.q); data = await api("/api/hr/applications" + (qs.toString() ? "?" + qs : "")); }
+    else data = await api("/api/rrhh/trabajadores");
+    view.innerHTML = renderRRHH(data);
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+function rrTab(tab) { RRTAB = tab; loadRRHH(); }
+function applyRRFilter() { const es = document.getElementById("rEstado"), q = document.getElementById("rQ"); if (es) RRF.estado = es.value; if (q) RRF.q = q.value.trim(); loadRRHH(); }
+async function candEstado(id, estado) { try { await apiSend("PUT", "/api/hr/applications/" + encodeURIComponent(id), { estado }); toast("Candidatura → " + estado); loadRRHH(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+
+// ════════════════════════ VISTA: USUARIOS ════════════════════════
+function renderUsuarios(list) {
+  const rows = list || [];
+  const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn primary" data-act="user-nuevo">+ Nuevo usuario</button></div>`;
+  const table = `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Local</th><th></th></tr></thead><tbody>${rows.map((u) => `<tr><td>${esc(u.username)}</td><td>${esc(u.nombre || "")}</td><td>${esc(u.rol)}</td><td>${esc(u.local || "")}</td><td class="r" style="white-space:nowrap"><button class="linkbtn" style="color:var(--brand)" data-act="user-pass" data-id="${u.id}" data-nombre="${esc(u.username)}">Contraseña</button> · <button class="linkbtn" data-act="user-del" data-id="${u.id}" data-nombre="${esc(u.username)}">Eliminar</button></td></tr>`).join("")}</tbody></table></div></div>`;
+  return `<div class="ph"><div class="eyebrow">Sistema</div><h1>Usuarios</h1><div class="sub">${rows.length} cuenta${rows.length === 1 ? "" : "s"}</div></div>${toolbar}${table}`;
+}
+async function loadUsuarios() { const view = document.getElementById("view"); view.innerHTML = skeleton(); try { const data = await api("/api/users"); view.innerHTML = renderUsuarios(data); } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); } }
+function openNuevoUsuario() {
+  const roles = ["direccion", "encargado", "trabajador", "rrhh", "marketing", "contabilidad"];
+  const localOpts = ['<option value="">— sin local —</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
+  const body = `<form id="fUser"><div class="form-grid"><div class="field"><label>Usuario</label><input name="username" required></div><div class="field"><label>Nombre</label><input name="nombre"></div><div class="field"><label>Contraseña</label><input name="password" type="text" required></div><div class="field"><label>Rol</label><select name="rol">${roles.map((r) => `<option value="${r}">${r}</option>`).join("")}</select></div><div class="field full"><label>Local</label><select name="local">${localOpts}</select></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear usuario</button></div></form>`;
+  const ov = modal("Nuevo usuario", body);
+  ov.querySelector("#fUser").addEventListener("submit", async (e) => { e.preventDefault(); const data = Object.fromEntries(new FormData(e.target).entries()); try { await apiSend("POST", "/api/users", data); ov.remove(); toast("Usuario creado ✅"); loadUsuarios(); } catch (err) { toast("Error: " + err.message); } });
+}
+async function userPass(id, nombre) { const p = prompt(`Nueva contraseña para ${nombre}:`); if (!p) return; try { await apiSend("PUT", "/api/users/" + encodeURIComponent(id) + "/password", { password: p }); toast("Contraseña actualizada"); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+async function userDel(id, nombre) { if (!confirm(`¿Eliminar la cuenta ${nombre}? No se puede deshacer.`)) return; try { await apiSend("DELETE", "/api/users/" + encodeURIComponent(id)); toast("Usuario eliminado"); loadUsuarios(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+
+// ════════════════════════ VISTA: FACTURAS ════════════════════════
+let FACF = { local: "" };
+const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
+function renderFacturas(list, pend, stats) {
+  const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${FACF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  const resumen = stats && stats.resumenAnual ? `<div class="grid g4" style="margin-bottom:16px">${stat("Facturas (año)", "🧾", num(stats.resumenAnual.num_docs))}${stat("Base imponible", "€", eur(stats.resumenAnual.base))}${stat("IVA", "€", eur(stats.resumenAnual.iva))}${stat("Total", "€", eur(stats.resumenAnual.total))}</div>` : "";
+  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="facLocal">${localOpts}</select></div><button class="btn" data-act="fac-filtrar">Buscar</button><div style="flex:1"></div><a class="btn" href="/direccion.html">Configuración avanzada ↗</a></div>`;
+  const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map((p) => `<div class="row"><div class="grow"><div class="t1">${esc(p.proveedor || "(sin proveedor)")}</div><div class="t2">${esc((p.fecha || "").slice(0, 10))} · ${eur(p.total)}</div></div><select class="facSel" data-id="${p.id}" style="max-width:190px"><option value="">Asignar a…</option>${LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("")}</select><button class="btn" data-act="fac-asignar" data-id="${p.id}">Asignar</button></div>`).join("")}</div></div>` : "";
+  const table = list.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Local</th><th>Fecha</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead><tbody>${list.map((f) => `<tr><td>${esc(f.proveedor || "")}</td><td>${esc(f.local || "")}</td><td class="mut">${esc((f.fecha || "").slice(0, 10))}</td><td class="r tnum">${eur(f.total)}</td><td><span class="pill ${f.pagado ? "ok" : ""}">${f.pagado ? "Pagada" : "Pendiente"}</span></td><td class="r"><button class="linkbtn" style="color:var(--brand)" data-act="fac-pago" data-id="${f.id}">${f.pagado ? "Marcar impagada" : "Marcar pagada"}</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin facturas.</div></div>`;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Facturas</h1><div class="sub">Últimas facturas y pendientes de asignar</div></div>${resumen}${toolbar}${pendCard}${table}`;
+}
+async function loadFacturas() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    const [lst, pend, stats] = await Promise.all([
+      api("/api/facturas" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : "")),
+      apiOptional("/api/facturas/pendientes"),
+      apiOptional("/api/facturas/stats"),
+    ]);
+    view.innerHTML = renderFacturas(lst || [], pend || [], stats);
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+function applyFacFilter() { const l = document.getElementById("facLocal"); if (l) FACF.local = l.value; loadFacturas(); }
+async function facPago(id) { try { await apiSend("PATCH", "/api/facturas/" + encodeURIComponent(id) + "/pago"); toast("Estado de pago actualizado"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+async function facAsignar(id) { const sel = document.querySelector('.facSel[data-id="' + id + '"]'); const local = sel ? sel.value : ""; if (!local) { toast("Elige un local"); return; } try { await apiSend("POST", "/api/facturas/pendientes/" + encodeURIComponent(id) + "/asignar", { local }); toast("Factura asignada a " + local); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews };
+const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, rrhh: loadRRHH, usuarios: loadUsuarios, facturas: loadFacturas };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   CURRENT = view;
@@ -312,6 +388,15 @@ document.addEventListener("click", (e) => {
   else if (act === "cli-csv") downloadClientesCsv();
   else if (act === "rev-filtrar") applyRevFilter();
   else if (act === "rev-refresh") refreshReviews();
+  else if (act === "rr-tab") rrTab(t.getAttribute("data-tab"));
+  else if (act === "rr-filtrar") applyRRFilter();
+  else if (act === "cand-estado") candEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
+  else if (act === "user-nuevo") openNuevoUsuario();
+  else if (act === "user-pass") userPass(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
+  else if (act === "user-del") userDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
+  else if (act === "fac-filtrar") applyFacFilter();
+  else if (act === "fac-pago") facPago(t.getAttribute("data-id"));
+  else if (act === "fac-asignar") facAsignar(t.getAttribute("data-id"));
 });
 
 // ── Arranque ─────────────────────────────────────────────────────────────────
