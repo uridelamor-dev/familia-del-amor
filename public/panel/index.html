@@ -81,6 +81,15 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .note{padding:12px 14px;border-radius:11px;background:var(--info-soft);color:var(--info);font-size:12.5px;display:flex;gap:9px;align-items:center}
 .sk{background:linear-gradient(90deg,var(--surface2) 25%,color-mix(in srgb,var(--surface2) 55%,var(--surface)) 37%,var(--surface2) 63%);background-size:400% 100%;animation:sh 1.3s ease infinite;border-radius:8px}@keyframes sh{0%{background-position:100% 0}100%{background-position:-100% 0}}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--bg);padding:11px 16px;border-radius:12px;font-size:13px;font-weight:600;box-shadow:var(--sh-lg);z-index:200;opacity:0;pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+.field{display:flex;flex-direction:column;gap:4px}.field label{font-size:11px;color:var(--ink3);font-weight:600}
+input,select{height:38px;border:1px solid var(--border);background:var(--surface);border-radius:10px;padding:0 11px;font:inherit;color:var(--ink);max-width:100%}
+.modal-ov{position:fixed;inset:0;background:rgba(15,17,12,.44);backdrop-filter:blur(3px);z-index:150;display:grid;place-items:center;padding:20px}
+.modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px;box-shadow:var(--sh-lg);width:min(460px,96vw);max-height:90vh;overflow:auto}
+.modal-h{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border);font-size:15px}
+.modal-b{padding:18px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.form-grid .full{grid-column:1/-1}
+.linkbtn{color:var(--danger);font-weight:600;font-size:12px}.linkbtn:hover{text-decoration:underline}
 @media (max-width:900px){.app{grid-template-columns:1fr}.sidebar{display:none}.g4{grid-template-columns:1fr 1fr}.c8,.c4,.c6{grid-column:span 12}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
