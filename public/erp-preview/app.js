@@ -99,19 +99,45 @@ const ALERTS = [
   { id: 5, sev: "info", local: "Girona", causa: "2 candidaturas nuevas (Cocina, Sala) sin revisar.", tiempo: "hoy", resp: "RR.HH.", accion: "Revisar", dept: "RR.HH.", estado: "Nueva" },
   { id: 6, sev: "info", local: "Girona", causa: "Reservas −18% este fin de semana vs. media.", tiempo: "hoy", resp: "Marketing", accion: "Preparar campaña", dept: "Marketing", estado: "Nueva" },
 ];
+// Clientes con gasto acumulado, nº de reseñas y semanas desde la última visita.
 const CLIENTS = [
-  { n: "Marta Serra", loc: "Blanes", tag: "VIP", res: 14, last: "hace 3 días" },
-  { n: "Jordi Puig", loc: "Lloret", tag: "Habitual", res: 9, last: "hace 1 sem" },
-  { n: "Anna Roca", loc: "Girona", tag: "Nuevo", res: 1, last: "ayer" },
-  { n: "Pere Vidal", loc: "Blanes", tag: "Habitual", res: 7, last: "hace 5 días" },
-  { n: "Laia Bosch", loc: "Can Mateu", tag: "VIP", res: 12, last: "hoy" },
-  { n: "Marc Ferrer", loc: "Lloret", tag: "Nuevo", res: 2, last: "hace 2 días" },
+  { n: "Laia Bosch", loc: "Can Mateu", res: 22, gasto: 1840, resenas: 5, semanas: 0 },
+  { n: "Marta Serra", loc: "Blanes", res: 14, gasto: 1220, resenas: 3, semanas: 0 },
+  { n: "Guillem Roig", loc: "Lloret", res: 9, gasto: 690, resenas: 3, semanas: 1, recuperado: true },
+  { n: "Jordi Puig", loc: "Lloret", res: 11, gasto: 980, resenas: 1, semanas: 1 },
+  { n: "Pere Vidal", loc: "Blanes", res: 8, gasto: 760, resenas: 2, semanas: 1 },
+  { n: "Anna Roca", loc: "Girona", res: 1, gasto: 60, resenas: 1, semanas: 0 },
+  { n: "Marc Ferrer", loc: "Lloret", res: 2, gasto: 150, resenas: 0, semanas: 2 },
+  { n: "Rosa Prat", loc: "Blanes", res: 18, gasto: 1560, resenas: 4, semanas: 7 },
+  { n: "Toni Mas", loc: "Girona", res: 12, gasto: 1040, resenas: 2, semanas: 9 },
+  { n: "Elena Sanz", loc: "Blanes", res: 6, gasto: 520, resenas: 1, semanas: 5 },
 ];
+function clienteEstado(c) {
+  if (c.semanas >= 8) return { k: "Perdido", c: "bad" };
+  if (c.gasto >= 1500 || c.res >= 15) return { k: "VIP", c: "brand" };
+  if (c.semanas >= 4) return { k: "En riesgo", c: "warn" };
+  if (c.recuperado) return { k: "Recuperado", c: "ok" };
+  if (c.res <= 2) return { k: "Nuevo", c: "info" };
+  return { k: "Habitual", c: "" };
+}
 const CAMPAIGNS = [
   { id: "c1", n: "Cumpleaños del mes", seg: "Cumple agosto · 212 contactos", canal: "WhatsApp", reservas: 34, ingresos: 1120, coste: 0, estado: "Activa" },
+  { id: "c4", n: "Google Ads · fin de semana", seg: "Radio 15 km · Blanes/Lloret", canal: "Ads", reservas: 26, ingresos: 1180, coste: 320, estado: "Activa" },
   { id: "c2", n: "Menú de temporada", seg: "Clientes VIP", canal: "WhatsApp", reservas: 0, ingresos: 0, coste: 0, estado: "Programada" },
   { id: "c3", n: "Reactivación 45+ días", seg: "Inactivos > 45 días · Girona", canal: "WhatsApp", reservas: 0, ingresos: 0, coste: 0, estado: "Borrador" },
 ];
+// Movimiento de clientes (mock) y datos de gestión de personas por id de trabajador.
+const MKT = { recuperados: 18, perdidos: 12, inactivos45: 64, leads: 327 };
+const TEAM_X = {
+  1: { horas4s: 172, sinLibrar: 9, form: null, rend: 88 },
+  2: { horas4s: 168, sinLibrar: 11, form: "Seguridad alimentaria", rend: 74 },
+  3: { horas4s: 150, sinLibrar: 5, form: null, rend: 92 },
+  4: { horas4s: 0, sinLibrar: 0, form: null, rend: 80 },
+  5: { horas4s: 118, sinLibrar: 6, form: "Atención al cliente", rend: 70 },
+  6: { horas4s: 0, sinLibrar: 0, form: null, rend: 60 },
+  7: { horas4s: 176, sinLibrar: 12, form: null, rend: 95 },
+  8: { horas4s: 158, sinLibrar: 7, form: "Nuevos platos", rend: 78 },
+};
 const RECOS = [
   { id: "r1", prio: "Alta", titulo: "Girona con ocupación prevista 42% el miércoles", motivo: "Reservas −18% y peor desviación de margen del grupo.", impacto: "+ ~800 € estimados", datos: "Reservas, ocupación, histórico", accion: "Preparar campaña a inactivos (Girona)", estado: "Pendiente", go: "marketing" },
   { id: "r2", prio: "Alta", titulo: "3 facturas llevan 40 días sin pagar", motivo: "Riesgo de recargo con 2 proveedores.", impacto: "Evitar recargos", datos: "Facturación", accion: "Revisar con Contabilidad", estado: "Pendiente", go: "config" },
@@ -521,38 +547,70 @@ V.establecimientos = () => `<div class="grid g3">${ESTAB.map(e => {
         <div><b class="tnum" style="font-size:16px">${revAvgLocal(e.short) ? revAvgLocal(e.short).toFixed(1).replace(".", ",") : "—"}</b><div class="mut" style="font-size:10px;text-transform:uppercase">Reseñas</div></div></div>`}</button>`;
 }).join("")}</div>`;
 
+const tx = (t) => TEAM_X[t.id] || { horas4s: 0, sinLibrar: 0, form: null, rend: 0 };
 V.equipo = () => {
-  const on = TEAM.filter(t => t.estado === "Activo");
-  const anomalias = TEAM.filter(t => t.retraso || t.ausencia || t.estado === "Baja");
-  const topVend = [...TEAM].filter(t => t.ventas > 0).sort((a, b) => b.ventas - a.ventas);
+  const act = TEAM.filter(t => t.estado === "Activo");
+  const burnout = act.map(t => ({ t, x: tx(t) })).filter(o => o.x.horas4s >= 165 && o.x.sinLibrar >= 9).sort((a, b) => b.x.sinLibrar - a.x.sinLibrar);
+  const muchasHoras = act.map(t => ({ t, x: tx(t) })).filter(o => o.x.horas4s > 165).sort((a, b) => b.x.horas4s - a.x.horas4s);
+  const extraord = act.map(t => ({ t, x: tx(t) })).filter(o => o.x.rend >= 90).sort((a, b) => b.x.rend - a.x.rend);
+  const formacion = TEAM.map(t => ({ t, x: tx(t) })).filter(o => o.x.form);
+  const recompensa = extraord.filter(o => o.t.ventas > 0 || o.t.res >= 4.8);
   const stats = `<div class="grid g4">
     ${stat({ lab: "En plantilla", icon: "team", val: "48" })}
-    ${stat({ lab: "Activos hoy", icon: "clock", val: String(on.length * 6) })}
-    ${stat({ lab: "Ausencias / bajas", icon: "alert", val: String(absent().length) })}
-    ${stat({ lab: "Horas extra (sem.)", icon: "clock", val: String(TEAM.reduce((s, t) => s + Math.max(0, t.trab - t.contr), 0)), unit: "h" })}</div>`;
-  const destacados = card("Destacados y anomalías", `<div class="rows" style="margin:-4px -18px -18px">
-    ${topVend.slice(0, 1).map(t => `<div class="row"><div class="ava">${ini(t.n)}</div><div class="grow"><div class="t1">${t.n} ${pill("Mejor vendedor", "brand")}</div><div class="t2">${t.local} · ${eur(t.ventas)} · ticket ${eur(t.ticket)}</div></div><button class="btn ghost sm" data-act="soon">Reconocer</button></div>`).join("")}
-    ${anomalias.map(t => `<div class="row"><div class="ava">${ini(t.n)}</div><div class="grow"><div class="t1">${t.n} ${t.estado === "Baja" ? pill("Baja", "bad") : t.retraso ? pill("Fichaje irregular", "warn") : pill("Ausente", "warn")}</div><div class="t2">${t.local} · ${t.puesto} · ${t.trab}h/${t.contr}h</div></div></div>`).join("")}</div>`);
-  const filters = `<div class="wrapf" style="margin:16px 0">${["Todos", ...[...new Set(TEAM.map(t => t.local))]].map((c, i) => `<button class="chip ${i === 0 ? "on" : ""}" data-act="teamfilter" data-loc="${c}">${c}</button>`).join("")}</div>`;
-  const table = card("Plantilla", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Persona</th><th>Local</th><th>Puesto</th><th>Estado</th><th class="r">Horas</th><th class="r">Extra</th><th class="r">Ventas</th><th class="r">Reseña</th></tr></thead><tbody id="teamBody">${teamRows("Todos")}</tbody></table></div>`, `<span class="mut">Comparativa completa</span>`);
-  return stats + `<div class="grid g2" style="margin-top:16px">${destacados}${card("Reparto por establecimiento", bars([...new Set(TEAM.map(t => t.local))].map(l => ({ label: l, v: TEAM.filter(t => t.local === l).length })), { fmt: "num" }))}</div>` + filters + table;
+    ${stat({ lab: "Riesgo de burnout", icon: "alert", val: String(burnout.length), unit: "personas" })}
+    ${stat({ lab: "Horas extra (4 sem.)", icon: "clock", val: String(TEAM.reduce((s, t) => s + Math.max(0, tx(t).horas4s - 160), 0)), unit: "h" })}
+    ${stat({ lab: "Formaciones pendientes", icon: "hr", val: String(formacion.length) })}</div>`;
+  const empRow = (o, right) => `<div class="row"><span class="ava">${ini(o.t.n)}</span><div class="grow"><div class="t1">${o.t.n}</div><div class="t2">${o.t.puesto} · ${o.t.local}</div></div>${right}</div>`;
+  const cBurn = answerCard("¿Quién está cerca de quemarse?", burnout.length ? `<div class="rows" style="margin:0 -18px -18px">${burnout.map(o => empRow(o, `<div style="text-align:right"><b class="tnum down">${o.x.sinLibrar} días</b><div class="mut" style="font-size:11px">sin librar</div></div>`)).join("")}</div>` : `<div class="mut" style="padding:6px 0">Nadie en riesgo.</div>`, { icon: "alert", sev: burnout.length ? "crit" : "ok" });
+  const cHoras = answerCard("¿Quién lleva demasiadas horas?", `<div class="rows" style="margin:0 -18px -18px">${muchasHoras.map(o => empRow(o, `<b class="tnum ${o.x.horas4s > 170 ? "down" : ""}">${o.x.horas4s}h</b>`)).join("")}</div>`, { icon: "clock", sev: "warn" });
+  const cRend = answerCard("¿Quién rinde de forma extraordinaria?", `<div class="rows" style="margin:0 -18px -18px">${extraord.map(o => empRow(o, `<div style="text-align:right"><b class="tnum" style="color:var(--success)">${o.x.rend}</b><div class="mut" style="font-size:11px">rendimiento</div></div>`)).join("")}</div>`, { icon: "star", sev: "ok" });
+  const cForm = answerCard("¿Quién necesita formación?", `<div class="rows" style="margin:0 -18px -18px">${formacion.map(o => empRow(o, `<span class="pill info">${o.x.form}</span>`)).join("")}</div>`, { icon: "hr" });
+  const reward = card("Reconocimiento del mes", `<div class="reco"><div class="rc">${ic("star", 16)}</div><div class="grow"><b style="font-size:13.5px">${recompensa[0] ? recompensa[0].t.n : "—"} merece un reconocimiento</b><p class="mut" style="margin:4px 0 10px;font-size:12.5px">Mejor vendedora del grupo (${eur(TEAM.find(t => t.ventas > 0 && t.id === 7) ? 2680 : 0)}) y valoración ${recompensa[0] ? recompensa[0].t.res.toFixed(1).replace(".", ",") : ""}★. Además acumula 176h en 4 semanas: convendría <b>reconocerla y protegerla</b> antes de que se sobrecargue.</p><div class="wrapf"><button class="btn primary sm" data-act="approve-reco" data-txt="Reconocimiento preparado">Reconocer</button><button class="btn ghost sm" data-act="soon">Ajustar turnos</button></div></div></div>`);
+  const filters = `<div class="wrapf" style="margin:16px 0 12px">${["Todos", ...[...new Set(TEAM.map(t => t.local))]].map((c, i) => `<button class="chip ${i === 0 ? "on" : ""}" data-act="teamfilter" data-loc="${c}">${c}</button>`).join("")}</div>`;
+  const table = card("Plantilla", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Persona</th><th>Local</th><th>Puesto</th><th>Estado</th><th class="r">Horas 4s</th><th class="r">Rendim.</th><th class="r">Ventas</th><th class="r">Reseña</th></tr></thead><tbody id="teamBody">${teamRows("Todos")}</tbody></table></div>`, `<span class="mut">Gestión de personas</span>`);
+  return stats + `<div class="grid g12" style="margin-top:16px">
+    <div class="c6">${cBurn}</div><div class="c6">${cHoras}</div>
+    <div class="c6">${cRend}</div><div class="c6">${cForm}</div>
+    <div class="c12">${reward}</div></div>` + filters + table;
 };
 const ini = (n) => n.split(" ").map(x => x[0]).slice(0, 2).join("");
 function teamRows(loc) {
   return TEAM.filter(t => loc === "Todos" || t.local === loc).map(t => {
-    const ex = Math.max(0, t.trab - t.contr);
-    const estK = t.estado === "Activo" ? "ok" : t.estado === "Baja" ? "bad" : "warn";
-    return `<tr><td><div class="flex"><span class="ava">${ini(t.n)}</span><b style="font-weight:600">${t.n}</b></div></td><td>${t.local}</td><td class="mut">${t.puesto}</td><td>${pill(t.estado, estK)}</td><td class="r tnum">${t.trab}/${t.contr}</td><td class="r tnum ${ex ? "" : "mut"}">${ex ? "+" + ex + "h" : "—"}</td><td class="r tnum">${t.ventas ? eur(t.ventas) : "—"}</td><td class="r tnum">${t.res.toFixed(1).replace(".", ",")}</td></tr>`;
+    const x = tx(t), estK = t.estado === "Activo" ? "ok" : t.estado === "Baja" ? "bad" : "warn";
+    const burn = x.horas4s >= 165 && x.sinLibrar >= 9;
+    return `<tr><td><div class="flex"><span class="ava">${ini(t.n)}</span><b style="font-weight:600">${t.n}${burn ? ` ${pill("Burnout", "bad")}` : ""}</b></div></td><td>${t.local}</td><td class="mut">${t.puesto}</td><td>${pill(t.estado, estK)}</td><td class="r tnum ${x.horas4s > 170 ? "down" : ""}">${x.horas4s || "—"}</td><td class="r tnum ${x.rend >= 90 ? "up" : x.rend && x.rend < 72 ? "down" : ""}">${x.rend || "—"}</td><td class="r tnum">${t.ventas ? eur(t.ventas) : "—"}</td><td class="r tnum">${t.res.toFixed(1).replace(".", ",")}</td></tr>`;
   }).join("");
 }
 
 V.clientes = () => {
-  const stats = `<div class="grid g4">${stat({ lab: "Clientes", icon: "users", val: nf.format(3482), delta: 4 })}${stat({ lab: "Nuevos (30 días)", icon: "spark", val: "124", delta: 18 })}${stat({ lab: "VIP", icon: "star", val: "212" })}${stat({ lab: "Cumpleaños esta semana", icon: "cal", val: "9" })}</div>`;
-  const filters = `<div class="wrapf" style="margin:16px 0">${["Todos", "VIP", "Habitual", "Nuevo"].map((c, i) => `<button class="chip ${i === 0 ? "on" : ""}" data-act="clientfilter" data-tag="${c}">${c}</button>`).join("")}</div>`;
-  const t = card("Clientes", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Cliente</th><th>Local habitual</th><th>Segmento</th><th class="r">Reservas</th><th class="r">Última visita</th></tr></thead><tbody id="cliBody">${cliRows("Todos")}</tbody></table></div>`, `<button class="btn ghost sm" data-act="toast" data-msg="CSV de ejemplo generado">${ic("doc", 14)} Exportar CSV</button>`);
-  return stats + filters + t;
+  const vip = CLIENTS.filter(c => clienteEstado(c).k === "VIP");
+  const perdidos = CLIENTS.filter(c => c.semanas >= 8).sort((a, b) => b.gasto - a.gasto);
+  const riesgo = CLIENTS.filter(c => c.semanas >= 4 && c.semanas < 8).sort((a, b) => b.gasto - a.gasto);
+  const vuelven = CLIENTS.filter(c => c.recuperado);
+  const topGasto = [...CLIENTS].sort((a, b) => b.gasto - a.gasto).slice(0, 3);
+  const topResenas = [...CLIENTS].filter(c => c.resenas > 0).sort((a, b) => b.resenas - a.resenas).slice(0, 3);
+  const stats = `<div class="grid g4">
+    ${stat({ lab: "Clientes", icon: "users", val: nf.format(3482), delta: 4 })}
+    ${stat({ lab: "VIP", icon: "star", val: String(212) })}
+    ${stat({ lab: "En riesgo de fuga", icon: "alert", val: String(riesgo.length + perdidos.length), unit: "detectados" })}
+    ${stat({ lab: "Recuperados (30 días)", icon: "spark", val: String(MKT.recuperados), delta: 12 })}</div>`;
+  const listCard = (q, icon, arr, render, sev) => answerCard(q, arr.length ? `<div class="rows" style="margin:0 -18px -18px">${arr.map(render).join("")}</div>` : `<div class="mut" style="padding:6px 0">Nada que destacar.</div>`, { icon, sev });
+  const cliBase = c => `<span class="ava">${ini(c.n)}</span><div class="grow"><div class="t1">${c.n}</div><div class="t2">${c.loc} · ${c.res} reservas</div></div>`;
+  const perd = listCard("¿Qué clientes hemos perdido?", "users", perdidos, c => `<div class="row">${cliBase(c)}<div style="text-align:right"><b class="tnum">${eur(c.gasto)}</b><div class="mut" style="font-size:11px">hace ${c.semanas} sem.</div></div></div>`, "crit");
+  const rie = listCard("¿Quién lleva tiempo sin venir?", "clock", riesgo, c => `<div class="row">${cliBase(c)}<div style="text-align:right"><span class="pill warn">${c.semanas} sem.</span></div></div>`, "warn");
+  const topG = listCard("¿Quién gasta más?", "euro", topGasto, c => `<div class="row">${cliBase(c)}<b class="tnum" style="color:var(--brand)">${eur(c.gasto)}</b></div>`);
+  const topR = listCard("¿Quién nos deja más reseñas?", "star", topResenas, c => `<div class="row">${cliBase(c)}<b class="tnum" style="color:var(--warning)">${c.resenas} ★</b></div>`);
+  const back = listCard("¿Quién ha vuelto?", "aU", vuelven, c => `<div class="row">${cliBase(c)}<span class="pill ok">Recuperado</span></div>`, "ok");
+  const action = card("Acción recomendada de Sara", `<div class="reco"><div class="rc">${ic("spark", 16)}</div><div class="grow"><b style="font-size:13.5px">${perdidos.length + riesgo.length} clientes de valor se están enfriando</b><p class="mut" style="margin:4px 0 10px;font-size:12.5px">Rosa Prat (VIP, ${eur(1560)}) y Toni Mas llevan semanas sin venir. Un mensaje personal con una invitación puede recuperar ~${eur(1200)} de gasto anual.</p><button class="btn primary sm" data-act="approve-camp">Preparar reactivación</button></div></div>`);
+  const table = card("Base de clientes", `<div class="wrapf" style="margin-bottom:14px">${["Todos", "VIP", "En riesgo", "Perdido", "Nuevo"].map((c, i) => `<button class="chip ${i === 0 ? "on" : ""}" data-act="clientfilter" data-tag="${c}">${c}</button>`).join("")}</div><div class="tblwrap"><table class="tbl"><thead><tr><th>Cliente</th><th>Local</th><th>Segmento</th><th class="r">Reservas</th><th class="r">Gasto</th><th class="r">Reseñas</th><th class="r">Últ. visita</th></tr></thead><tbody id="cliBody">${cliRows("Todos")}</tbody></table></div>`, `<button class="btn ghost sm" data-act="toast" data-msg="CSV de ejemplo generado">${ic("doc", 14)} Exportar</button>`);
+  return stats + `<div class="grid g12" style="margin-top:16px">
+    <div class="c4">${perd}</div><div class="c4">${rie}</div><div class="c4">${back}</div>
+    <div class="c4">${topG}</div><div class="c4">${topR}</div><div class="c4">${action}</div>
+    <div class="c12">${table}</div></div>`;
 };
-function cliRows(tg) { return CLIENTS.filter(c => tg === "Todos" || c.tag === tg).map(c => `<tr><td><div class="flex"><span class="ava">${ini(c.n)}</span><b style="font-weight:600">${c.n}</b></div></td><td>${c.loc}</td><td>${tag(c.tag)}</td><td class="r tnum">${c.res}</td><td class="r mut">${c.last}</td></tr>`).join(""); }
+function cliRows(tg) {
+  return CLIENTS.filter(c => { const e = clienteEstado(c).k; return tg === "Todos" || e === tg; }).sort((a, b) => b.gasto - a.gasto).map(c => { const e = clienteEstado(c); return `<tr><td><div class="flex"><span class="ava">${ini(c.n)}</span><b style="font-weight:600">${c.n}</b></div></td><td>${c.loc}</td><td>${pill(e.k, e.c)}</td><td class="r tnum">${c.res}</td><td class="r tnum">${eur(c.gasto)}</td><td class="r tnum">${c.resenas || "—"}</td><td class="r mut">${c.semanas === 0 ? "esta semana" : "hace " + c.semanas + " sem."}</td></tr>`; }).join("");
+}
 
 V.rrhh = () => {
   const cols = [["Nuevas", ["Cocinero/a · Girona", "Camarero/a · Lloret"], "info"], ["En proceso", ["Jefe de sala · Blanes", "Ayudante cocina · Tordera"], "warn"], ["Cerradas", ["Barra · Girona"], "ok"]];
@@ -592,13 +650,29 @@ V.compras = () => {
 };
 
 V.marketing = () => {
-  const stats = `<div class="grid g4">${stat({ lab: "Leads (30 días)", icon: "spark", val: "327", delta: 22 })}${stat({ lab: "Campañas activas", icon: "msg", val: String(CAMPAIGNS.filter(c => c.estado === "Activa").length) })}${stat({ lab: "Reservas generadas", icon: "cal", val: String(CAMPAIGNS.reduce((s, c) => s + c.reservas, 0)) })}${stat({ lab: "Google Reviews", icon: "star", val: reviewAvgAll().toFixed(1).replace(".", ","), delta: 0 })}</div>`;
-  const saraSug = card("Sugerencia de Sara", `<div class="reco"><div class="rc">${ic("spark", 16)}</div><div class="grow"><b style="font-size:13.5px">Girona: ocupación prevista 42% el miércoles</b><p class="mut" style="margin:3px 0 8px;font-size:12.5px">Preparar campaña para clientes inactivos desde hace más de 45 días. Impacto estimado +800 €.</p><div class="wrapf" id="sugActions"><button class="btn primary sm" data-act="approve-camp">Aprobar campaña</button><button class="btn ghost sm" data-act="soon">Revisar</button></div></div></div>`);
-  const camps = card("Campañas", `<div class="rows" style="margin:0 -18px -18px" id="campList">${CAMPAIGNS.map(c => campRow(c)).join("")}</div>`);
+  const activas = CAMPAIGNS.filter(c => c.reservas > 0);
+  const totRes = activas.reduce((s, c) => s + c.reservas, 0), totIng = activas.reduce((s, c) => s + c.ingresos, 0), totCoste = activas.reduce((s, c) => s + c.coste, 0);
+  const cprGlobal = totRes ? totCoste / totRes : 0;
+  const roiGlobal = totCoste ? (totIng - totCoste) / totCoste * 100 : null;
+  const best = [...activas].sort((a, b) => (b.ingresos - b.coste) - (a.ingresos - a.coste))[0];
+  const stats = `<div class="grid g4">
+    ${stat({ lab: "Reservas generadas", icon: "cal", val: String(totRes), delta: 16 })}
+    ${stat({ lab: "Coste por reserva", icon: "euro", val: cprGlobal ? eur(cprGlobal) : "0 €" })}
+    ${stat({ lab: "ROI de marketing", icon: "chart", val: roiGlobal != null ? "×" + (roiGlobal / 100 + 1).toFixed(1) : "—", unit: "retorno" })}
+    ${stat({ lab: "Ingresos atribuidos", icon: "spark", val: eur(totIng), delta: 22 })}</div>`;
+  const perf = card("Rendimiento de campañas", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Campaña</th><th>Canal</th><th class="r">Reservas</th><th class="r">Ingresos</th><th class="r">Coste</th><th class="r">Coste/reserva</th><th class="r">ROI</th></tr></thead><tbody>${CAMPAIGNS.map(c => { const cpr = c.reservas ? c.coste / c.reservas : null, roi = c.coste ? (c.ingresos - c.coste) / c.coste * 100 : (c.reservas ? Infinity : null); return `<tr><td style="font-weight:600">${c.n}${c === best ? " " + pill("Top", "brand") : ""}</td><td class="mut">${c.canal}</td><td class="r tnum">${c.reservas || "—"}</td><td class="r tnum">${c.ingresos ? eur(c.ingresos) : "—"}</td><td class="r tnum">${c.coste ? eur(c.coste) : "0 €"}</td><td class="r tnum">${cpr != null ? eur(cpr) : "—"}</td><td class="r tnum ${roi === Infinity || (roi != null && roi > 100) ? "up" : "mut"}">${roi === Infinity ? "orgánico" : roi != null ? "+" + roi.toFixed(0) + "%" : "—"}</td></tr>`; }).join("")}</tbody></table></div>`, `<button class="btn primary sm" data-act="soon">${ic("plus", 14)} Nueva campaña</button>`);
+  const movRow = (l, v, cls, icn) => `<div class="row"><span class="ic ${cls}" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none">${ic(icn, 15)}</span><div class="grow"><div class="t1">${l}</div></div><b class="tnum" style="font-size:18px">${v}</b></div>`;
+  const movimiento = card("Movimiento de clientes · 30 días", `<div class="rows" style="margin:-4px -18px -18px">
+    ${movRow("Clientes recuperados", MKT.recuperados, "ok", "aU")}
+    ${movRow("Clientes perdidos", MKT.perdidos, "bad", "aD")}
+    ${movRow("Inactivos > 45 días", MKT.inactivos45, "warn", "clock")}
+    ${movRow("Leads nuevos", MKT.leads, "info", "spark")}</div>`, `<button class="link" data-act="go" data-view="clientes">Ver clientes ${ic("chevR", 12)}</button>`);
+  const saraSug = card("Sugerencia de Sara", `<div class="reco"><div class="rc">${ic("spark", 16)}</div><div class="grow"><b style="font-size:13.5px">Reactivar ${MKT.inactivos45} clientes inactivos de Girona</b><p class="mut" style="margin:3px 0 8px;font-size:12.5px">La campaña «Reactivación 45+ días» está en borrador. Con el coste/reserva actual (${eur(cprGlobal)}) podría generar ~${eur(800)} con inversión mínima.</p><div class="wrapf" id="sugActions"><button class="btn primary sm" data-act="approve-camp">Aprobar campaña</button><button class="btn ghost sm" data-act="soon">Revisar</button></div></div></div>`);
   const reviews = card("Reseñas recientes", `<div class="rows" style="margin:0 -18px -18px">${REVIEWS.map(r => `<div class="row"><div style="display:flex;color:var(--warning)">${Array.from({ length: r.estrellas }, () => ic("star", 13)).join("")}</div><div class="grow"><div class="t1">${r.autor} · ${r.local}</div><div class="t2">${r.texto}${r.trab ? " — " + r.trab : ""}</div></div>${r.respondida ? pill("Respondida", "ok") : `<button class="btn ghost sm" data-act="reply-review" data-id="${r.id}">Preparar respuesta</button>`}</div>`).join("")}</div>`);
-  return stats + `<div class="grid g2" style="margin-top:16px">${saraSug}${camps}</div><div style="margin-top:16px">${reviews}</div>`;
+  return stats + `<div class="grid g12" style="margin-top:16px">
+    <div class="c8">${perf}</div><div class="c4">${movimiento}</div>
+    <div class="c6">${saraSug}</div><div class="c6">${reviews}</div></div>`;
 };
-function campRow(c) { return `<div class="row"><div class="ic info" style="width:34px;height:34px;border-radius:10px;display:grid;place-items:center">${ic("msg", 16)}</div><div class="grow"><div class="t1">${c.n}</div><div class="t2">${c.seg} · ${c.canal}${c.reservas ? " · " + c.reservas + " reservas · " + eur(c.ingresos) : ""}</div></div>${pill(c.estado, c.estado === "Activa" ? "ok" : c.estado === "Programada" ? "info" : c.estado === "Preparada" ? "brand" : "warn")}</div>`; }
 
 V.mantenimiento = () => {
   const reincid = INCID.filter(i => i.reps >= 2).sort((a, b) => b.reps - a.reps);
