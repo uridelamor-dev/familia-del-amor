@@ -49,7 +49,7 @@ const ic = (n, s = 18) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" f
    MOCK STATE — datos base; los agregados se DERIVAN para ser coherentes.
    ========================================================================== */
 const ESTAB = [
-  { id: 1, n: "La Tapeta · Blanes", short: "Blanes", ini: "TB", empresa: "Del Amor Uriel SLU", ventas: 8420, ly: 7930, pw: 8180, obj: 8600, pPct: 31, cPct: 26, oPct: 8, lyPPct: 34, lyCPct: 27, ocup: 86, res: 34, ticket: 32, franja: "21:00–22:30", crec: 6.2 },
+  { id: 1, n: "La Tapeta · Blanes", short: "Blanes", ini: "TB", empresa: "Del Amor Uriel SLU", ventas: 8420, ly: 8034, pw: 8180, obj: 8600, pPct: 31, cPct: 26.8, oPct: 8, lyPPct: 34, lyCPct: 27, ocup: 86, res: 34, ticket: 32, franja: "21:00–22:30", crec: 4.8 },
   { id: 2, n: "Cooperativa · Blanes", short: "Cooperativa", ini: "CB", empresa: "Del Amor Uriel SLU", ventas: 5210, ly: 5010, pw: 5120, obj: 5400, pPct: 33, cPct: 25, oPct: 8, lyPPct: 34, lyCPct: 26, ocup: 72, res: 21, ticket: 28, franja: "14:00–15:30", crec: 2.1 },
   { id: 3, n: "La Tapeta · Lloret", short: "Lloret", ini: "TL", empresa: "Del Amor Uriel SLU", ventas: 6890, ly: 6740, pw: 7020, obj: 7000, pPct: 36, cPct: 27, oPct: 9, lyPPct: 35, lyCPct: 27, ocup: 91, res: 29, ticket: 34, franja: "21:00–22:30", crec: -1.9 },
   { id: 4, n: "La Tapeta · Girona", short: "Girona", ini: "TG", empresa: "(por asignar)", ventas: 4120, ly: 5020, pw: 4460, obj: 4800, pPct: 35, cPct: 26, oPct: 9, lyPPct: 33, lyCPct: 25, ocup: 64, res: 18, ticket: 30, franja: "21:30–23:00", crec: -12.4 },
@@ -186,8 +186,23 @@ const MANT_LOCAL = [
   { local: "Cooperativa", inc90: 1, tend: "bajando" },
   { local: "Ibérica", inc90: 1, tend: "estable" },
 ];
+// Personalidad operativa de cada local: estado, compras (peso en coste / desviación de precio /
+// desperdicio), ahorro potencial y foco de la prioridad de Sara. Cada uno con un problema distinto.
+const ESTADO_LABEL = {
+  excelente: { t: "Excelente", k: "ok" }, estable: { t: "Estable", k: "brand" },
+  margen: { t: "Margen bajo objetivo", k: "warn" }, ventas: { t: "Ventas en caída", k: "bad" },
+  mantenimiento: { t: "Mantenimiento crítico", k: "bad" }, compras: { t: "Coste de compras alto", k: "warn" },
+};
+const LOCAL_X = {
+  1: { estado: "excelente", ahorro: 120, foco: "el pedido de bebidas y ajustar el turno de cierre del viernes", compras: [{ prod: "Cerveza", cat: "Bebidas", peso: 22, sub: 11, desp: 2 }, { prod: "Gambas", cat: "Pescado", peso: 18, sub: 3, desp: 4 }, { prod: "Pan", cat: "Panadería", peso: 9, sub: 0, desp: 1 }] },
+  2: { estado: "estable", ahorro: 40, foco: "mantener la pauta de mediodía", compras: [{ prod: "Café", cat: "Bebidas", peso: 16, sub: 2, desp: 1 }, { prod: "Aceite", cat: "Otros", peso: 12, sub: 3, desp: 2 }] },
+  3: { estado: "margen", ahorro: 250, foco: "revisar el coste de personal y ajustar el turno de cierre", compras: [{ prod: "Refrescos", cat: "Bebidas", peso: 20, sub: 8, desp: 3 }, { prod: "Merluza", cat: "Pescado", peso: 17, sub: 4, desp: 12 }] },
+  4: { estado: "ventas", ahorro: 90, foco: "reactivar clientes y arreglar el datáfono", compras: [{ prod: "Solomillo", cat: "Carne", peso: 19, sub: 5, desp: 6 }, { prod: "Verdura", cat: "Verdura", peso: 14, sub: -2, desp: 8 }] },
+  5: { estado: "mantenimiento", ahorro: 60, foco: "sustituir la cámara frigorífica antes de que pare el servicio", compras: [{ prod: "Verdura", cat: "Verdura", peso: 15, sub: -2, desp: 5 }, { prod: "Carne", cat: "Carne", peso: 20, sub: 1, desp: 3 }] },
+  6: { estado: "estable", ahorro: 0, foco: "mantener el ritmo de barra al mediodía", compras: [{ prod: "Ibéricos", cat: "Carne", peso: 24, sub: 3, desp: 2 }] },
+};
 /* Estado mutable de UI (en memoria; al recargar vuelve al inicial) */
-const S = { view: "dashboard", estab: "all", period: "ayer", collapsed: false, chat: [] };
+const S = { view: "dashboard", estab: "all", period: "ayer", collapsed: false, chat: [], reviewedLocal: new Set() };
 
 /* ---------- Derivados coherentes ---------- */
 const openIncid = () => INCID.filter(i => i.estado !== "Resuelta");
@@ -286,7 +301,6 @@ function donut(segs, size = 140) {
   const arcs = segs.map(s => { const frac = s.v / tot, len = frac * C, dash = `${Math.max(0, len - 3)} ${C - Math.max(0, len - 3)}`, off = -acc * C + C * .25; acc += frac; return `<circle cx="70" cy="70" r="${R}" fill="none" stroke="${s.c}" stroke-width="15" stroke-dasharray="${dash}" stroke-dashoffset="${off}" transform="rotate(-90 70 70)" stroke-linecap="round"/>`; }).join("");
   return `<svg viewBox="0 0 140 140" width="${size}" height="${size}"><circle cx="70" cy="70" r="${R}" fill="none" stroke="var(--surface2)" stroke-width="15"/>${arcs}<text x="70" y="66" text-anchor="middle" font-size="20" font-weight="700" fill="var(--ink)" style="letter-spacing:-1px">${tot}</text><text x="70" y="84" text-anchor="middle" font-size="10" fill="var(--ink3)">${segs.dLabel || "total"}</text></svg>`;
 }
-const CATC = ["var(--brand)", "#3F6E93", "#B9822B", "#8A5A9B", "#4C9B8F"];
 
 /* ============================================================================
    COMPONENTES
@@ -299,7 +313,6 @@ function stat({ lab, icon, val, unit, delta, invert, spark: sp }) {
 }
 function card(title, body, right = "") { return `<div class="card">${title ? `<div class="ch"><h3>${title}</h3>${right}</div>` : ""}${body}</div>`; }
 const pill = (t, k = "") => `<span class="pill ${k}">${t}</span>`;
-const tag = (t) => t === "VIP" ? pill("VIP", "brand") : t === "Nuevo" ? pill("Nuevo", "info") : pill(t);
 function estadoState(e) { if (e.cerrado) return { k: "off", t: "Cerrado" }; const f = baseFin(e); if (incidOfLocal(e.short) >= 1 && e.short === "Can Mateu") return { k: "crit", t: "Crítico" }; if (f.dVentasLY < -8 || e.ocup >= 90) return { k: "warn", t: "Necesita atención" }; if (f.margenPct >= 35 && f.dVentasLY >= 0) return { k: "exc", t: "Excelente" }; return { k: "ok", t: "Correcto" }; }
 
 /* ============================================================================
@@ -413,13 +426,140 @@ function criterioCard() {
       </div>
       <div>
         <div class="eyebrow" style="margin-bottom:8px">Qué revisaría hoy</div>
-        <div style="display:flex;flex-direction:column;gap:2px">${R.agenda.map((a, i) => `<button class="att" data-act="${a.id ? "estab" : "go"}" ${a.id ? `data-id="${a.id}"` : `data-view="${a.go}"`} style="width:100%;text-align:left;background:none;border-top:1px solid var(--border);padding:11px 2px"><div class="ic ${i === 0 ? "bad" : "warn"}" style="width:26px;height:26px;border-radius:8px;font-weight:700;font-size:12px">${i + 1}</div><div class="grow"><b style="font-size:13px">${a.t}</b><p class="mut" style="margin:2px 0 0;font-size:12px">${a.why}</p></div><span style="color:var(--ink3)">${ic("chevR", 15)}</span></button>`).join("")}</div>
+        <div style="display:flex;flex-direction:column;gap:2px">${R.agenda.map((a, i) => `<button class="att" data-act="${a.id ? "selestab" : "go"}" ${a.id ? `data-id="${a.id}"` : `data-view="${a.go}"`} style="width:100%;text-align:left;background:none;border-top:1px solid var(--border);padding:11px 2px"><div class="ic ${i === 0 ? "bad" : "warn"}" style="width:26px;height:26px;border-radius:8px;font-weight:700;font-size:12px">${i + 1}</div><div class="grow"><b style="font-size:13px">${a.t}</b><p class="mut" style="margin:2px 0 0;font-size:12px">${a.why}</p></div><span style="color:var(--ink3)">${ic("chevR", 15)}</span></button>`).join("")}</div>
       </div>
     </div>
     <div style="margin-top:18px;padding:15px 17px;background:var(--brand-soft);border-radius:13px;display:flex;gap:12px"><span style="color:var(--brand);flex:none;margin-top:1px">${ic("spark", 20)}</span><div><b style="font-size:13.5px">La decisión que yo tomaría</b><p style="margin:5px 0 0;font-size:14px;line-height:1.55">${R.decision}</p></div></div></div>`;
 }
 
-V.dashboard = () => {
+/* ============================================================================
+   COCKPIT POR ESTABLECIMIENTO — todo el dashboard se transforma en el centro de
+   mando del local. Cada local tiene personalidad operativa propia.
+   ========================================================================== */
+function localAlerts(e) {
+  const f = baseFin(e), x = LOCAL_X[e.id] || { compras: [] }, out = [];
+  if (f.dMargenObj <= -3) out.push({ id: e.id + "-margen", sev: "crit", problema: `Margen en ${f.margenPct.toFixed(0)}% · ${Math.abs(f.dMargenObj).toFixed(0)} pts bajo objetivo`, causa: `Coste de personal al ${(f.personal / f.ventas * 100).toFixed(0)}% (lo sano ~31%)`, impacto: `≈ ${eur(f.ventas * Math.abs(f.dMargenObj) / 100)}/día de beneficio`, resp: "Encargado/a", accion: "Ajustar cuadrante de cocina", edad: "hoy" });
+  if (f.dVentasLY <= -8) out.push({ id: e.id + "-ventas", sev: "crit", problema: `Ventas ${signed(f.dVentasLY)} vs. mismo día del año pasado`, causa: "Menos reservas y ocupación baja entre semana", impacto: `≈ ${eur(Math.abs(f.ventas - f.ly))}/día menos`, resp: "Dirección + Marketing", accion: "Activar campaña de reactivación", edad: "3 días" });
+  const spike = (x.compras || []).filter(c => c.sub >= 8).sort((a, b) => b.sub - a.sub)[0];
+  if (spike) out.push({ id: e.id + "-compra", sev: "imp", problema: `${spike.prod} +${spike.sub}% de precio`, causa: `Subida del proveedor de ${spike.cat.toLowerCase()}`, impacto: `≈ ${eur(f.compras * spike.peso / 100 * spike.sub / 100 * 26)}/mes`, resp: "Compras", accion: "Renegociar o cambiar proveedor", edad: "esta semana" });
+  const inc = openIncid().filter(i => i.local === e.short);
+  const critInc = inc.find(i => i.sev === "hi") || inc.find(i => i.reps >= 3);
+  if (critInc) out.push({ id: e.id + "-mant", sev: critInc.sev === "hi" ? "crit" : "imp", problema: critInc.titulo, causa: critInc.reps >= 3 ? `${critInc.reps}ª reparación en 8 meses` : "Avería crítica sin asignar", impacto: critInc.reps >= 3 ? "Sustitución más rentable que reparar" : "Riesgo de corte de servicio", resp: critInc.resp, accion: critInc.reps >= 3 ? "Pedir presupuesto de sustitución" : "Asignar y reparar hoy", edad: critInc.dias < 1 ? "hace horas" : Math.round(critInc.dias) + " días" });
+  const burn = TEAM.filter(t => t.local === e.short).map(t => ({ t, y: TEAM_X[t.id] || {} })).filter(o => o.y.horas4s >= 165 && o.y.sinLibrar >= 9);
+  if (burn.length) out.push({ id: e.id + "-equipo", sev: "imp", problema: `${burn.length} persona${burn.length > 1 ? "s" : ""} con riesgo de fatiga`, causa: `${burn.map(o => o.t.n.split(" ")[0]).join(", ")} · ≥9 días sin librar`, impacto: "Riesgo de baja y de servicio", resp: "Encargado/a", accion: "Reequilibrar turnos", edad: "esta semana" });
+  const low = REVIEWS.filter(r => r.local === e.short && r.estrellas <= 2)[0];
+  if (low) out.push({ id: e.id + "-resena", sev: "imp", problema: `Reseña de ${low.estrellas}★ en Google`, causa: low.texto, impacto: "Afecta a la reputación online", resp: "Marketing", accion: "Preparar respuesta pública", edad: low.fecha });
+  const abs = absent().filter(t => t.local === e.short);
+  if (abs.length) out.push({ id: e.id + "-aus", sev: "info", problema: `${abs.length} ausencia hoy (${abs.map(t => t.n.split(" ")[0]).join(", ")})`, causa: abs[0].estado === "Baja" ? "Baja médica" : "Ausencia justificada", impacto: "Cobertura de turno", resp: "Encargado/a", accion: "Cubrir turno", edad: "hoy" });
+  const ord = { crit: 0, imp: 1, info: 2 };
+  return out.sort((a, b) => ord[a.sev] - ord[b.sev]).slice(0, 5);
+}
+function localReasoning(e) {
+  const f = baseFin(e), x = LOCAL_X[e.id] || {};
+  const crit = openIncid().filter(i => i.local === e.short).find(i => i.sev === "hi");
+  const spike = (x.compras || []).filter(c => c.sub >= 8).sort((a, b) => b.sub - a.sub)[0];
+  const over = TEAM.filter(t => t.local === e.short).filter(t => (TEAM_X[t.id] || {}).horas4s > 168);
+  const p = [];
+  p.push(`${e.short} cerró ayer con <b>${eur(f.ventas)}</b> de ventas, un ${signed(f.dVentasLY)} ${f.dVentasLY >= 0 ? "más" : "menos"} que el mismo martes del año pasado.`);
+  p.push(`El margen fue del <b>${f.margenPct.toFixed(1)}%</b>, ${f.dMargenObj >= 0 ? "por encima" : "por debajo"} del objetivo (${f.margenObj}%).`);
+  p.push(crit ? `Hay una incidencia crítica: ${crit.titulo}.` : "No hay incidencias críticas.");
+  const ex = [];
+  if (spike) ex.push(`el coste de ${spike.prod.toLowerCase()} subió un ${spike.sub}%`);
+  if (over.length) ex.push(`${over.length} ${over.length > 1 ? "trabajadores superaron" : "trabajador superó"} sus horas previstas`);
+  if (ex.length) p.push(`${crit ? "Además" : "Sin embargo"}, ${ex.join(" y ")}.`);
+  return { briefing: p.join(" "), prioridad: `Mi prioridad hoy sería ${x.foco || "revisar los indicadores del turno de cierre"}.` };
+}
+function localAlertRow(a) {
+  const done = S.reviewedLocal.has(a.id), k = a.sev === "crit" ? "bad" : a.sev === "imp" ? "warn" : "info";
+  return `<div class="att ${done ? "done" : ""}"><div class="ic ${k}">${ic(a.sev === "info" ? "bell" : "alert", 17)}</div>
+    <div class="grow"><b>${a.problema}</b><div class="meta" style="margin-top:5px;flex-direction:column;gap:3px;align-items:flex-start">
+      <span><span class="mut">Causa:</span> ${a.causa}</span>
+      <span><span class="mut">Impacto:</span> <b>${a.impacto}</b> · <span class="mut">Resp.:</span> ${a.resp} · ${a.edad}</span></div></div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:7px">${done ? pill("Revisada", "ok") : `<button class="btn ghost sm" data-act="approve-reco" data-txt="${a.accion}">${a.accion}</button><button class="link" data-act="local-review" data-id="${a.id}" style="font-size:11.5px">Marcar revisada</button>`}</div></div>`;
+}
+const teamMini = (l, v, icn, k) => `<div class="flex" style="gap:9px;padding:7px 0"><span class="ic ${k || ""}" style="width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none;${k ? "" : "background:var(--surface2);color:var(--ink2)"}">${ic(icn, 14)}</span><div style="min-width:0"><div class="mut" style="font-size:11px">${l}</div><div style="font-size:13px;font-weight:600">${v}</div></div></div>`;
+function teamReco(e, best, fatiga) {
+  if (fatiga.length) return `<b>Recomendación:</b> reconocer a ${best ? best.n : "el equipo"} y aliviar la carga de ${fatiga.map(o => o.t.n.split(" ")[0]).join(", ")} (riesgo de fatiga).`;
+  const form = TEAM.filter(t => t.local === e.short && (TEAM_X[t.id] || {}).form);
+  if (form.length) return `<b>Recomendación:</b> formación pendiente — ${form.map(t => t.n.split(" ")[0] + " (" + TEAM_X[t.id].form + ")").join(", ")}.`;
+  return `<b>Recomendación:</b> equipo estable; buen momento para reconocer a ${best ? best.n : "los mejores"}.`;
+}
+function compareDrawer(id) {
+  const e = ESTAB.find(x => x.id === id), f = baseFin(e), others = ESTAB.filter(x => !x.cerrado);
+  const avg = fn => others.reduce((s, x) => s + fn(baseFin(x), x), 0) / others.length;
+  const rows = [
+    ["Ventas", eur(f.ventas), eur(avg(b => b.ventas))],
+    ["Margen", f.margenPct.toFixed(0) + "%", avg(b => b.margenPct).toFixed(0) + "%"],
+    ["Personal", (f.personal / f.ventas * 100).toFixed(0) + "%", avg(b => b.personal / b.ventas * 100).toFixed(0) + "%"],
+    ["Ocupación", e.ocup + "%", Math.round(avg((b, x) => x.ocup)) + "%"],
+    ["Ticket medio", eur(f.ticket), eur(avg(b => b.ticket))],
+  ];
+  openDrawer(`Comparar · ${e.short}`, `<p class="mut" style="margin-top:0">Frente a la media del grupo. Toca otro local para abrir su cockpit.</p>
+    <div class="tblwrap"><table class="tbl"><thead><tr><th>Métrica</th><th class="r">${e.short}</th><th class="r">Media grupo</th></tr></thead><tbody>${rows.map(r => `<tr><td>${r[0]}</td><td class="r tnum" style="font-weight:700">${r[1]}</td><td class="r tnum mut">${r[2]}</td></tr>`).join("")}</tbody></table></div>
+    <div class="wrapf" style="margin-top:16px">${others.filter(x => x.id !== id).map(x => `<button class="chip" data-act="selestab" data-id="${x.id}">${x.short}</button>`).join("")}</div>`);
+}
+function localCockpit(e) {
+  if (!e || e.cerrado) return `<div class="card" style="padding:44px;text-align:center"><div class="big">${e ? e.short : "—"}</div><p class="mut">Cerrado hoy. Sin actividad operativa que dirigir.</p><button class="btn ghost" data-act="selestab" data-id="all">← Volver al grupo</button></div>`;
+  const gf = getFin(e.id, S.period), bf = baseFin(e), x = LOCAL_X[e.id] || { compras: [], ahorro: 0 };
+  const est = ESTADO_LABEL[x.estado] || { t: "Correcto", k: "brand" };
+  const health = localHealth(e), R = localReasoning(e), alerts = localAlerts(e);
+  const team = TEAM.filter(t => t.local === e.short), inc = openIncid().filter(i => i.local === e.short);
+  const revs = REVIEWS.filter(r => r.local === e.short), clis = CLIENTS.filter(c => c.loc === e.short);
+  const header = `<div class="between" style="margin-bottom:16px;flex-wrap:wrap;gap:12px">
+    <div class="flex" style="gap:12px"><button class="btn ghost sm" data-act="selestab" data-id="all">← Grupo</button>
+      <div class="ava" style="width:44px;height:44px;border-radius:13px;font-size:16px">${e.ini}</div>
+      <div><div class="flex" style="gap:10px"><h1 style="margin:0;font-size:22px;letter-spacing:-.02em">${e.short}</h1><span class="pill ${est.k}">${est.t}</span></div><div class="mut" style="font-size:12.5px">${e.empresa} · ${e.franja} · salud ${health.score}/100</div></div></div>
+    <div class="wrapf"><button class="btn ghost sm" data-act="compare" data-id="${e.id}">${ic("chart", 14)} Comparar</button><button class="btn ghost sm" data-act="estab" data-id="${e.id}">Ficha completa</button></div></div>`;
+  const hero = `<div class="card hero" style="padding:22px">
+    <div class="flex" style="gap:12px;margin-bottom:12px"><span class="avatar" style="width:38px;height:38px">S</span><div><b style="font-size:14px">Sara · ${e.short}</b><div class="mut" style="font-size:12px">Análisis del local · ${periodLabel()}</div></div><span class="pill ${est.k}" style="margin-left:auto">${est.t}</span></div>
+    <p style="font-size:15px;line-height:1.6;margin:0 0 12px;max-width:74ch">${R.briefing}</p>
+    <div style="display:flex;gap:11px;padding:13px 15px;background:var(--brand-soft);border-radius:12px;align-items:flex-start"><span style="color:var(--brand);flex:none">${ic("spark", 18)}</span><div style="flex:1"><b style="font-size:13px">Prioridad de hoy</b><p style="margin:4px 0 10px;font-size:13.5px;line-height:1.5">${R.prioridad}</p><button class="btn primary sm" data-act="approve-reco" data-txt="Prioridad de ${e.short} aprobada">Aprobar prioridad</button></div></div></div>`;
+  const kv = (l, v, extra) => `<div style="padding:12px 14px;border-radius:12px;background:var(--surface2)"><div class="mut" style="font-size:11.5px">${l}</div><div class="tnum" style="font-size:19px;font-weight:750;margin-top:3px">${v}</div>${extra ? `<div style="font-size:11px;margin-top:3px">${extra}</div>` : ""}</div>`;
+  const resumen = card("Resumen ejecutivo", `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px">
+    ${kv("Ventas ayer", eur(gf.ventas), `${deltaEl(gf.dVentasLY)} <span class="mut">vs. año</span>`)}
+    ${kv("Margen estimado", eur(gf.margen), `<span class="${bf.dMargenObj >= 0 ? "up" : "down"}">${bf.margenPct.toFixed(1)}%</span> <span class="mut">obj ${bf.margenObj}%</span>`)}
+    ${kv("Coste de personal", eur(gf.personal), `${(gf.personal / gf.ventas * 100).toFixed(0)}% de ventas`)}
+    ${kv("Coste de compras", eur(gf.compras), `${(gf.compras / gf.ventas * 100).toFixed(0)}% de ventas`)}
+    ${kv("Ocupación", e.ocup + "%")}
+    ${kv("Ticket medio", eur(bf.ticket))}
+    ${kv("Clientes", nf.format(e.cli))}
+    ${kv("Reseñas", (revAvgLocal(e.short) ? revAvgLocal(e.short).toFixed(1).replace(".", ",") : "—") + " ★", `${revs.length} reseñas`)}
+    ${kv("Incidencias abiertas", String(inc.length), inc.some(i => i.sev === "hi") ? `<span class="down">1 crítica</span>` : "sin críticas")}
+    ${kv("Pedidos pendientes", String(ordPendOfLocal(e.short)))}
+    ${kv("Estado general", est.t)}</div>`);
+  const alertCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Qué necesita atención</h3><span class="pill ${alerts.some(a => a.sev === "crit") ? "bad" : alerts.length ? "warn" : "ok"}">${alerts.filter(a => !S.reviewedLocal.has(a.id)).length} activas</span></div>
+    <div class="rows" style="margin-top:6px">${alerts.length ? alerts.map(a => localAlertRow(a)).join("") : `<div class="mut" style="padding:16px">Sin alertas prioritarias. El local funciona con normalidad.</div>`}</div></div>`;
+  const dpw = e.pw ? (e.ventas - e.pw) / e.pw * 100 : 0;
+  const comparativa = card("Comparativas", `<div class="grid g3" style="gap:12px">${miniTrend("vs. año pasado", "mismo martes", bf.dVentasLY)}${miniTrend("vs. semana", "mismo día", dpw)}${miniTrend("vs. objetivo", "ventas", bf.dObj)}</div>
+    <div style="margin-top:14px">${area(serieVentas(e.id, S.period === "ayer" ? "7d" : S.period), { h: 96, labels: ["L", "M", "X", "J", "V", "S", "D"] })}</div>`);
+  const ausencias = team.filter(t => t.ausencia || t.estado === "Baja"), retrasos = team.filter(t => t.retraso);
+  const tOver = team.map(t => ({ t, y: TEAM_X[t.id] || {} }));
+  const extra = tOver.filter(o => o.t.trab > o.t.contr), menos = tOver.filter(o => o.t.estado === "Activo" && o.t.trab < o.t.contr);
+  const bestVend = [...team].filter(t => t.ventas > 0).sort((a, b) => b.ventas - a.ventas)[0];
+  const bestVal = [...team].sort((a, b) => b.res - a.res)[0];
+  const fatiga = tOver.filter(o => o.y.horas4s >= 165 && o.y.sinLibrar >= 9);
+  const equipoCard = card("Equipo del local", `<div class="grid g2" style="gap:6px 18px">
+    <div>${teamMini("Mejor vendedor/a", bestVend ? `${bestVend.n.split(" ")[0]} · ${eur(bestVend.ventas)}` : "—", "star", "ok")}${teamMini("Mejor valorado/a", bestVal ? `${bestVal.n.split(" ")[0]} · ${bestVal.res.toFixed(1).replace(".", ",")}★` : "—", "star", "ok")}${teamMini("Riesgo de fatiga", fatiga.length ? fatiga.map(o => o.t.n.split(" ")[0]).join(", ") : "ninguno", "alert", fatiga.length ? "bad" : "")}</div>
+    <div>${teamMini("Ausencias / bajas", ausencias.length ? ausencias.map(t => t.n.split(" ")[0]).join(", ") : "ninguna", "clock", ausencias.length ? "warn" : "")}${teamMini("Horas de más", extra.length ? extra.map(o => o.t.n.split(" ")[0] + " +" + (o.t.trab - o.t.contr) + "h").join(", ") : "—", "clock", extra.length ? "warn" : "")}${teamMini("Horas de menos / retrasos", [menos.length ? menos.map(o => o.t.n.split(" ")[0]).join(", ") : "", retrasos.length ? "retraso: " + retrasos.map(t => t.n.split(" ")[0]).join(", ") : ""].filter(Boolean).join(" · ") || "—", "clock", retrasos.length ? "warn" : "")}</div></div>
+    <div style="margin-top:10px;padding:11px 13px;background:var(--surface2);border-radius:11px;font-size:12.5px">${teamReco(e, bestVend, fatiga)}</div>`, `<button class="btn ghost sm" data-act="go" data-view="equipo">Equipo ${ic("chevR", 12)}</button>`);
+  const anom = (x.compras || []).filter(p => p.sub >= 8 || p.desp >= 8);
+  const impacto = anom.reduce((s, p) => s + gf.compras * p.peso / 100 * Math.max(p.sub, 0) / 100, 0);
+  const comprasCard = card("Compras y margen", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Producto</th><th class="r">% coste</th><th class="r">Precio</th><th class="r">Merma</th></tr></thead><tbody>${(x.compras || []).map(p => `<tr><td style="font-weight:600">${p.prod} <span class="mut" style="font-weight:400">· ${p.cat}</span></td><td class="r tnum">${p.peso}%</td><td class="r tnum ${p.sub >= 8 ? "down" : p.sub < 0 ? "up" : "mut"}">${p.sub > 0 ? "+" : ""}${p.sub}%</td><td class="r tnum ${p.desp >= 8 ? "down" : "mut"}">${p.desp}%</td></tr>`).join("") || `<tr><td class="mut">Sin datos.</td></tr>`}</tbody></table></div>
+    ${anom.length ? `<div style="margin-top:12px;padding:11px 13px;background:var(--warning-soft);border-radius:11px;font-size:12.5px;color:var(--warning);display:flex;gap:8px"><span style="flex:none">${ic("alert", 15)}</span><span>${anom.map(p => p.sub >= 8 ? `<b>${p.prod}</b> +${p.sub}%` : `<b>${p.prod}</b> ${p.desp}% merma`).join(", ")} — impacto ≈ ${eur(impacto * 26)}/mes. Ahorro potencial <b>${eur(x.ahorro || 0)}/mes</b>.</span></div>` : `<div style="margin-top:12px" class="pill ok">${ic("check", 12)} Compras sin anomalías</div>`}`, `<button class="btn ghost sm" data-act="go" data-view="compras">Compras ${ic("chevR", 12)}</button>`);
+  const mantCard = card("Mantenimiento", inc.length ? `<div class="rows" style="margin:0 -18px -18px">${inc.map(i => `<div class="row"><span class="sev ${i.sev}"></span><div class="grow"><div class="t1">${i.titulo}${i.reabierta ? ` ${pill("Reabierta", "bad")}` : ""}</div><div class="t2">${i.estado} · ${i.dias < 1 ? "hace horas" : Math.round(i.dias) + " días"} · ${i.prov} · acum. ${eur(i.coste)}</div>${i.reps >= 3 ? `<div class="meta" style="margin-top:5px;color:var(--warning);font-size:11.5px">${ic("alert", 11)} ${i.reps}ª reparación — sustituir sale más a cuenta</div>` : ""}</div><button class="btn ghost sm" data-act="incid" data-id="${i.id}">Ver</button></div>`).join("")}` : `<div class="mut" style="padding:8px 0">Sin incidencias abiertas. Mantenimiento al día.</div>`, `<button class="btn ghost sm" data-act="go" data-view="mantenimiento">Módulo ${ic("chevR", 12)}</button>`);
+  const nuevos = clis.filter(c => clienteEstado(c).k === "Nuevo").length, vip = clis.filter(c => clienteEstado(c).k === "VIP").length;
+  const perdidos = clis.filter(c => c.semanas >= 8), riesgoC = clis.filter(c => c.semanas >= 4 && c.semanas < 8);
+  const cmCard = card("Clientes y marketing", `<div class="grid g4" style="gap:10px">${miniKV("Nuevos", nuevos)}${miniKV("VIP", vip)}${miniKV("En riesgo", riesgoC.length)}${miniKV("Perdidos", perdidos.length)}</div>
+    ${(perdidos.length || riesgoC.length) ? `<div style="margin-top:12px;padding:11px 13px;background:var(--warning-soft);border-radius:11px;font-size:12.5px;color:var(--warning)">${perdidos.length + riesgoC.length} clientes de ${e.short} se están enfriando${[...perdidos, ...riesgoC][0] ? ` (${[...perdidos, ...riesgoC].slice(0, 2).map(c => c.n).join(", ")})` : ""}. Oportunidad de reactivación.</div>` : `<div style="margin-top:12px" class="pill ok">${ic("check", 12)} Base de clientes sana</div>`}
+    <div style="margin-top:12px" class="between"><span class="mut" style="font-size:12px">Campañas activas: ${CAMPAIGNS.filter(c => c.estado === "Activa").length} · ${CAMPAIGNS.reduce((s, c) => s + c.reservas, 0)} reservas</span><button class="btn ghost sm" data-act="approve-camp">Reactivar clientes</button></div>`, `<button class="btn ghost sm" data-act="go" data-view="clientes">Clientes ${ic("chevR", 12)}</button>`);
+  return header + hero + `<div style="height:16px"></div>` + resumen + `<div class="grid g12" style="margin-top:16px">
+    <div class="c8">${alertCard}</div><div class="c4">${comparativa}</div>
+    <div class="c6">${equipoCard}</div><div class="c6">${comprasCard}</div>
+    <div class="c6">${mantCard}</div><div class="c6">${cmCard}</div></div>`;
+}
+
+V.dashboard = () => S.estab === "all" ? groupCockpit() : localCockpit(ESTAB.find(e => e.id === S.estab));
+function groupCockpit() {
   const gf = getFin(S.estab, S.period);
   const I = insights();
   const c = saraConcern();
@@ -430,7 +570,7 @@ V.dashboard = () => {
       <div><div style="font-weight:680;font-size:15px;letter-spacing:-.01em">Sara · Dirección de Operaciones</div><div class="mut" style="font-size:12px">Parte de la mañana · ${new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long" }).format(new Date(2026, 7, 5))}</div></div>
       <span class="pill ok" style="margin-left:auto">${ic("wifi", 12)} Todo operativo</span></div>
     <p style="font-size:15px;line-height:1.65;margin:0 0 14px;max-width:74ch">Buenos días, Uriel. ${saraBriefing().join(" ")}</p>
-    ${c ? `<div style="display:flex;gap:11px;padding:13px 15px;background:var(--warning-soft);border-radius:12px;align-items:flex-start"><span style="color:var(--warning);flex:none">${ic("alert", 18)}</span><div style="flex:1"><b style="font-size:13.5px">Lo que más me preocupa</b><p style="margin:4px 0 10px;font-size:13.5px;line-height:1.5">${c.t}</p><button class="btn ghost sm" data-act="estab" data-id="${c.id}">Revisar el local ${ic("chevR", 12)}</button></div></div>` : `<span class="pill ok">${ic("check", 12)} Nada urgente que revisar ahora</span>`}
+    ${c ? `<div style="display:flex;gap:11px;padding:13px 15px;background:var(--warning-soft);border-radius:12px;align-items:flex-start"><span style="color:var(--warning);flex:none">${ic("alert", 18)}</span><div style="flex:1"><b style="font-size:13.5px">Lo que más me preocupa</b><p style="margin:4px 0 10px;font-size:13.5px;line-height:1.5">${c.t}</p><button class="btn ghost sm" data-act="selestab" data-id="${c.id}">Abrir su cockpit ${ic("chevR", 12)}</button></div></div>` : `<span class="pill ok">${ic("check", 12)} Nada urgente que revisar ahora</span>`}
     <div class="wrapf" style="margin-top:14px"><button class="btn primary sm" data-act="go" data-view="sara">${ic("spark", 14)} Hablar con Sara</button><button class="btn ghost sm" data-act="go" data-view="alertas">Ver alertas (${newAlerts().length})</button></div></div>`;
 
   // ── KPIs de un vistazo ──
@@ -445,7 +585,7 @@ V.dashboard = () => {
   const needHelp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3 style="font-size:13px;color:var(--ink2);font-weight:650;display:flex;gap:8px"><span style="color:var(--brand)">${ic("pin", 15)}</span>¿Qué local necesita ayuda?</h3></div>
     <div class="rows" style="margin-top:6px">${I.health.slice(0, 5).map(h => {
       const col = h.estado === "crit" ? "var(--danger)" : h.estado === "warn" ? "var(--warning)" : "var(--success)";
-      return `<button class="row" data-act="estab" data-id="${h.e.id}" style="width:100%;text-align:left;background:none;align-items:flex-start">
+      return `<button class="row" data-act="selestab" data-id="${h.e.id}" style="width:100%;text-align:left;background:none;align-items:flex-start">
         <div class="ava" style="background:${h.estado === "crit" ? "var(--danger-soft)" : h.estado === "warn" ? "var(--warning-soft)" : "var(--brand-soft)"};color:${col}">${h.e.ini}</div>
         <div class="grow"><div class="between"><div class="t1">${h.e.short}</div><b class="tnum" style="font-size:13px;color:${col}">${h.score}</b></div>
           <div class="prog ${h.estado === "crit" ? "bad" : h.estado === "warn" ? "warn" : ""}" style="margin:6px 0"><i style="width:${h.score}%"></i></div>
@@ -800,7 +940,7 @@ function topbar() {
     <button class="iconbtn" data-act="theme" aria-label="Tema">${ic("sun")}</button>
     <span class="avatar" title="Uriel">UD</span></header>`;
 }
-function pageHeader(k) { const m = META[k]; const acts = k === "dashboard" ? `<div class="seg" style="display:none"></div><button class="btn ghost" data-act="theme">${ic("sun", 15)}</button><button class="btn primary" data-act="cmdk">${ic("spark", 15)} Acción rápida</button>` : k === "clientes" ? `<button class="btn primary" data-act="soon">${ic("plus", 15)} Nuevo cliente</button>` : k === "establecimientos" ? `<button class="btn ghost" data-act="soon">${ic("plus", 15)} Añadir</button>` : ""; return `<div class="ph"><div><div class="eyebrow">${m[0]}</div><h1>${m[1]}</h1><div class="sub">${m[2]}</div></div><div class="acts">${acts}</div></div>`; }
+function pageHeader(k) { if (k === "dashboard" && S.estab !== "all") return ""; const m = META[k]; const acts = k === "dashboard" ? `<div class="seg" style="display:none"></div><button class="btn ghost" data-act="theme">${ic("sun", 15)}</button><button class="btn primary" data-act="cmdk">${ic("spark", 15)} Acción rápida</button>` : k === "clientes" ? `<button class="btn primary" data-act="soon">${ic("plus", 15)} Nuevo cliente</button>` : k === "establecimientos" ? `<button class="btn ghost" data-act="soon">${ic("plus", 15)} Añadir</button>` : ""; return `<div class="ph"><div><div class="eyebrow">${m[0]}</div><h1>${m[1]}</h1><div class="sub">${m[2]}</div></div><div class="acts">${acts}</div></div>`; }
 function skeleton() { return `<div class="enter"><div class="ph"><div><div class="sk" style="width:120px;height:12px;margin-bottom:12px"></div><div class="sk" style="width:280px;height:26px"></div></div></div><div class="grid g4">${Array(4).fill('<div class="card"><div class="sk" style="width:60%;height:12px"></div><div class="sk" style="width:50%;height:26px;margin-top:12px"></div></div>').join("")}</div><div class="grid g2" style="margin-top:16px">${Array(2).fill('<div class="card"><div class="sk" style="width:40%;height:14px"></div><div class="sk" style="height:150px;margin-top:16px"></div></div>').join("")}</div></div>`; }
 
 let _first = true;
@@ -858,7 +998,7 @@ function toggleTheme() { const r = document.documentElement; const isDark = r.ge
 let cmdSel = 0, cmdList = [];
 function allCmd() {
   const nav = Object.keys(META).map(k => ({ t: META[k][1], s: "Ir a", g: "Navegación", ic: (NAV.flatMap(x => x.items).find(i => i[0] === k) || [])[2] || "dash", run: () => go(k) }));
-  const locs = ESTAB.map(e => ({ t: e.short, s: "Establecimiento", g: "Establecimientos", ic: "shop", run: () => { S.estab = e.id; go("establecimientos"); setTimeout(() => estabDrawer(e.id), 300); } }));
+  const locs = ESTAB.map(e => ({ t: e.short, s: "Abrir cockpit", g: "Establecimientos", ic: "shop", run: () => { S.estab = e.id; if (S.view !== "dashboard") go("dashboard"); else rerender(); toast("Cockpit · " + e.short); } }));
   const people = TEAM.map(t => ({ t: t.n, s: t.puesto + " · " + t.local, g: "Personas", ic: "users", run: () => { go("equipo"); toast(t.n + " · " + t.local, "Equipo"); } }));
   const incs = INCID.map(i => ({ t: i.titulo, s: i.local, g: "Incidencias", ic: "wrench", run: () => { go("mantenimiento"); setTimeout(() => incidDrawer(i.id), 300); } }));
   const acts = [
@@ -913,6 +1053,9 @@ document.addEventListener("click", (e) => {
     case "estabmenu": estabMenu(t); break;
     case "cmdk": openCmd(); break;
     case "estab": estabDrawer(+id); break;
+    case "selestab": { const v = t.getAttribute("data-id"); S.estab = v === "all" ? "all" : +v; document.getElementById("appEl")?.classList.remove("mopen"); closeOverlays(); if (S.view !== "dashboard") go("dashboard"); else rerender(); toast(S.estab === "all" ? "Vista de grupo" : "Cockpit · " + ESTAB.find(x => x.id === S.estab).short); break; }
+    case "compare": compareDrawer(+id); break;
+    case "local-review": { S.reviewedLocal.add(t.getAttribute("data-id")); rerender(); toast("Alerta marcada como revisada", "✓"); break; }
     case "incid": incidDrawer(+id); break;
     case "order": orderDrawer(+id); break;
     case "soon": toast("Disponible próximamente", "Prototipo"); break;
