@@ -313,6 +313,43 @@ function answerCard(q, body, { icon = "spark", sev, go, right } = {}) {
     <div class="ch"><h3 style="font-size:13px;color:var(--ink2);font-weight:650;display:flex;align-items:center;gap:8px"><span style="color:var(--brand)">${ic(icon, 15)}</span>${q}</h3>${rt}</div>${body}</div>`;
 }
 
+/* Sara razona como Directora General: diagnóstico, prioridad, agenda y decisión. */
+function saraReasoning() {
+  const g = getFin("all", "ayer");
+  const worst = [...ESTAB].filter(e => !e.cerrado).map(e => ({ e, f: baseFin(e) })).sort((a, b) => a.f.dMargenObj - b.f.dMargenObj)[0];
+  const health = localsByNeed();
+  const spike = ORDERS.filter(o => o.desv >= 5).sort((a, b) => b.desv - a.desv)[0];
+  const risk = openIncid().find(i => i.reps >= 3) || openIncid().find(i => i.sev === "hi");
+  const wf = worst.f, personalPts = wf.personal / wf.ventas * 100, puntoDia = wf.ventas * 0.01;
+  const diagnostico = `El grupo cerró en <b>${g.margenPct.toFixed(1)}%</b> de margen, pero <b>${worst.e.short}</b> lo está frenando: ${wf.margenPct.toFixed(0)}%, ${Math.abs(wf.dMargenObj).toFixed(0)} puntos por debajo del ${wf.margenObj}% previsto. No es un problema de ventas (${signed(wf.dVentasLY)} vs. año pasado), sino de <b>coste de personal al ${personalPts.toFixed(0)}%</b> cuando lo sano ronda el 31%. Cada punto de personal ahí son ~${eur(puntoDia)}/día.`;
+  const first = health[0];
+  const prioridad = `Atendería primero <b>${first.e.short}</b> (salud ${first.score}/100): ${first.reasons.slice(0, 2).join(" y ")}. Es donde una intervención hoy rinde más.`;
+  const agenda = [];
+  if (risk) agenda.push({ t: `${risk.reps >= 3 ? "Sustituir" : "Cerrar"} «${risk.titulo}» · ${risk.local}`, why: risk.reps >= 3 ? `${risk.reps}ª reparación en 8 meses: repararla otra vez es tirar dinero` : "incidencia crítica aún sin asignar", go: "mantenimiento" });
+  agenda.push({ t: `Ajustar el cuadrante de ${worst.e.short}`, why: `personal al ${personalPts.toFixed(0)}%: reorganizar un turno recupera ~${eur(puntoDia)}/día por punto`, id: worst.e.id, go: "establecimientos" });
+  if (spike) agenda.push({ t: `Renegociar con ${spike.prov}`, why: `ha subido ${spike.desv}% en ${spike.cat} (${spike.local})`, go: "compras" });
+  const ahorroDia = wf.ventas * Math.abs(wf.dMargenObj) / 100;
+  const decision = `Si dirigiera yo hoy: bajaría el personal de <b>${worst.e.short}</b> del ${personalPts.toFixed(0)}% al ~31% reorganizando un turno de cocina — recupera ${Math.abs(wf.dMargenObj).toFixed(0)} puntos de margen, unos <b>${eur(ahorroDia)}/día</b> (≈ ${eur(ahorroDia * 26)}/mes). Aprobaría la campaña de reactivación de Girona antes del miércoles y sustituiría la cámara de Can Mateu en lugar de repararla por cuarta vez.`;
+  return { diagnostico, prioridad, agenda, decision };
+}
+function criterioCard() {
+  const R = saraReasoning();
+  return `<div class="card"><div class="ch"><h3 style="display:flex;gap:9px;align-items:center"><span class="avatar" style="width:26px;height:26px;font-size:11px">S</span> El criterio de Sara</h3><span class="pill brand">Análisis de dirección</span></div>
+    <div class="grid g2" style="gap:22px">
+      <div>
+        <div class="eyebrow" style="margin-bottom:8px">Por qué ha bajado el margen</div>
+        <p style="font-size:13.5px;line-height:1.55;margin:0 0 16px">${R.diagnostico}</p>
+        <div class="eyebrow" style="margin-bottom:8px">Qué local atendería primero</div>
+        <p style="font-size:13.5px;line-height:1.55;margin:0">${R.prioridad}</p>
+      </div>
+      <div>
+        <div class="eyebrow" style="margin-bottom:8px">Qué revisaría hoy</div>
+        <div style="display:flex;flex-direction:column;gap:2px">${R.agenda.map((a, i) => `<button class="att" data-act="${a.id ? "estab" : "go"}" ${a.id ? `data-id="${a.id}"` : `data-view="${a.go}"`} style="width:100%;text-align:left;background:none;border-top:1px solid var(--border);padding:11px 2px"><div class="ic ${i === 0 ? "bad" : "warn"}" style="width:26px;height:26px;border-radius:8px;font-weight:700;font-size:12px">${i + 1}</div><div class="grow"><b style="font-size:13px">${a.t}</b><p class="mut" style="margin:2px 0 0;font-size:12px">${a.why}</p></div><span style="color:var(--ink3)">${ic("chevR", 15)}</span></button>`).join("")}</div>
+      </div>
+    </div>
+    <div style="margin-top:18px;padding:15px 17px;background:var(--brand-soft);border-radius:13px;display:flex;gap:12px"><span style="color:var(--brand);flex:none;margin-top:1px">${ic("spark", 20)}</span><div><b style="font-size:13.5px">La decisión que yo tomaría</b><p style="margin:5px 0 0;font-size:14px;line-height:1.55">${R.decision}</p></div></div></div>`;
+}
+
 V.dashboard = () => {
   const gf = getFin(S.estab, S.period);
   const I = insights();
@@ -337,7 +374,7 @@ V.dashboard = () => {
   const atencion = answerCard("¿Qué requiere tu atención?", `<div class="rows" style="margin:-4px -18px -18px">${newAlerts().slice(0, 5).map(a => attRow(a)).join("") || '<div class="mut" style="padding:10px 0">Nada pendiente. Todo bajo control.</div>'}</div>`, { icon: "bell", go: "alertas" });
 
   const needHelp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3 style="font-size:13px;color:var(--ink2);font-weight:650;display:flex;gap:8px"><span style="color:var(--brand)">${ic("pin", 15)}</span>¿Qué local necesita ayuda?</h3></div>
-    <div class="rows" style="margin-top:6px">${I.health.slice(0, 4).map(h => {
+    <div class="rows" style="margin-top:6px">${I.health.slice(0, 5).map(h => {
       const col = h.estado === "crit" ? "var(--danger)" : h.estado === "warn" ? "var(--warning)" : "var(--success)";
       return `<button class="row" data-act="estab" data-id="${h.e.id}" style="width:100%;text-align:left;background:none;align-items:flex-start">
         <div class="ava" style="background:${h.estado === "crit" ? "var(--danger-soft)" : h.estado === "warn" ? "var(--warning-soft)" : "var(--brand-soft)"};color:${col}">${h.e.ini}</div>
@@ -346,44 +383,13 @@ V.dashboard = () => {
           <div class="t2">${h.reasons.length ? h.reasons.slice(0, 2).join(" · ") : "Rendimiento correcto, sin incidencias"}</div></div></button>`;
     }).join("")}</div></div>`;
 
-  const destaca = answerCard("¿Qué trabajador destaca?", `<div class="flex" style="gap:12px"><span class="ava" style="width:44px;height:44px;font-size:15px">${ini(I.topEmp.n)}</span><div class="grow"><div class="t1" style="font-size:15px">${I.topEmp.n}</div><div class="t2">${I.topEmp.puesto} · ${I.topEmp.local}</div></div></div>
-    <div class="grid g2" style="gap:10px;margin-top:12px">${miniKV("Ventas ayer", eur(I.topEmp.ventas))}${miniKV("Ticket medio", eur(I.topEmp.ticket))}${miniKV("Valoración", I.topEmp.res.toFixed(1).replace(".", ",") + " ★")}${miniKV("Jornada", I.topEmp.trab + " h")}</div>`, { icon: "star", sev: "ok" });
-
-  const apoyo = I.support
-    ? answerCard("¿Quién necesita apoyo?", `<div class="flex" style="gap:12px"><span class="ava" style="width:44px;height:44px;font-size:15px;background:var(--warning-soft);color:var(--warning)">${ini(I.support.t.n)}</span><div class="grow"><div class="t1" style="font-size:15px">${I.support.t.n}</div><div class="t2">${I.support.t.puesto} · ${I.support.t.local}</div></div></div>
-      <div style="margin-top:10px;font-size:13px">${I.support.r.map(x => `<div class="flex" style="gap:8px;margin-top:6px"><span style="color:var(--warning);flex:none">${ic("alert", 13)}</span>${x[0].toUpperCase() + x.slice(1)}</div>`).join("")}</div>`, { icon: "team", sev: "warn" })
-    : answerCard("¿Quién necesita apoyo?", `<div class="mut" style="padding:6px 0">Todo el equipo dentro de parámetros.</div>`, { icon: "team", sev: "ok" });
-
-  const repu = answerCard("¿Cómo está la reputación?", `<div class="between"><div><div class="big tnum" style="font-size:32px">${reviewAvgAll().toFixed(1).replace(".", ",")}</div><div class="flex" style="color:var(--warning);margin-top:4px">${Array.from({ length: 5 }, () => ic("star", 13)).join("")}</div></div><div style="text-align:right"><div class="tnum" style="font-size:22px;font-weight:700;color:var(--success)">${I.fiveStar}</div><div class="mut" style="font-size:11.5px">reseñas 5★ ayer</div></div></div>
-    <div class="mut" style="font-size:12px;margin-top:10px">${REVIEWS.filter(r => !r.respondida).length} sin responder</div>`, { icon: "star", right: `<span class="link" data-act="go" data-view="marketing">Gestionar ${ic("chevR", 12)}</span>` });
-
-  const ventasBlk = card("Ventas por establecimiento", bars(ESTAB.filter(e => !e.cerrado).map(e => ({ label: e.short, v: baseFin(e).ventas, id: e.id, go: 1 })), { h: 160 }), `<span class="mut">${periodLabel()}</span>`);
+  const ventasBlk = card("Ventas por establecimiento", bars(ESTAB.filter(e => !e.cerrado).map(e => ({ label: e.short, v: baseFin(e).ventas, id: e.id, go: 1 })), { h: 168 }), `<span class="mut">${periodLabel()}</span>`);
   const margenTbl = card("Margen vs. objetivo por local", `<div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Margen</th><th class="r">Objetivo</th><th class="r">Desv.</th></tr></thead><tbody>${ESTAB.filter(e => !e.cerrado).map(e => { const f = baseFin(e); return `<tr><td style="font-weight:600">${e.short}</td><td class="r tnum">${f.margenPct.toFixed(0)}%</td><td class="r tnum mut">${f.margenObj}%</td><td class="r tnum ${f.dMargenObj < -0.5 ? "down" : f.dMargenObj > 0.5 ? "up" : "mut"}">${f.dMargenObj >= 0 ? "+" : ""}${f.dMargenObj.toFixed(1)}</td></tr>`; }).join("")}</tbody></table></div>`, `<span class="mut">puntos</span>`);
-
-  const spike = I.spikes.length
-    ? answerCard("¿Qué compras se están disparando?", `<div class="rows" style="margin:0 -18px -18px">${I.spikes.map(o => `<div class="row"><span class="ic warn" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none">${ic("cart", 15)}</span><div class="grow"><div class="t1">${o.prov}</div><div class="t2">${o.cat} · ${o.local}</div></div><b class="tnum down">+${o.desv}%</b></div>`).join("")}</div>`, { icon: "cart", sev: "warn", go: "compras" })
-    : answerCard("¿Qué compras se están disparando?", `<div class="mut" style="padding:6px 0">Precios de proveedores estables.</div>`, { icon: "cart", sev: "ok" });
-
-  const aging = answerCard("¿Qué mantenimiento lleva demasiado abierto?", `<div class="rows" style="margin:0 -18px -18px">${I.agingIncid.slice(0, 3).map(i => `<div class="row"><span class="sev ${i.sev}"></span><div class="grow"><div class="t1">${i.titulo}</div><div class="t2">${i.local} · ${i.estado}</div></div><b class="tnum ${i.dias >= 3 ? "down" : ""}">${i.dias < 1 ? "<1" : Math.round(i.dias)} día${Math.round(i.dias) !== 1 ? "s" : ""}</b></div>`).join("")}</div>`, { icon: "wrench", go: "mantenimiento" });
-
-  const riesgo = I.riskIncid.length
-    ? answerCard("¿Qué puede convertirse en un problema?", I.riskIncid.slice(0, 2).map(i => `<div style="display:flex;gap:11px;margin-bottom:8px"><span class="ic bad" style="width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none">${ic("alert", 15)}</span><div><b style="font-size:13px">${i.titulo}</b><p class="mut" style="margin:3px 0 0;font-size:12px">${i.local} · ${i.reps >= 3 ? `${i.reps}ª reparación en 8 meses → valorar sustitución` : "crítica, aún sin asignar"}</p></div></div>`).join(""), { icon: "alert", sev: "crit", go: "mantenimiento" })
-    : answerCard("¿Qué puede convertirse en un problema?", `<div class="mut" style="padding:6px 0">Nada en zona de riesgo.</div>`, { icon: "alert", sev: "ok" });
-
-  const camp = I.topCamp
-    ? answerCard("¿Qué campañas han funcionado?", `<div class="between" style="align-items:flex-end"><div><div class="t1" style="font-size:15px">${I.topCamp.n}</div><div class="t2">${I.topCamp.seg}</div></div><span class="pill ok">${I.topCamp.estado}</span></div>
-      <div class="grid g3" style="gap:10px;margin-top:12px">${miniKV("Reservas", I.topCamp.reservas)}${miniKV("Ingresos", eur(I.topCamp.ingresos))}${miniKV("Coste", eur(I.topCamp.coste))}</div>
-      <div style="margin-top:10px;padding:10px 12px;background:var(--success-soft);border-radius:10px;font-size:12.5px;color:var(--success);display:flex;gap:8px"><span style="flex:none">${ic("aU", 14)}</span><span>Retorno positivo: ${eur(I.topCamp.ingresos)} generados sin coste de campaña.</span></div>`, { icon: "mkt", go: "marketing" })
-    : answerCard("¿Qué campañas han funcionado?", `<div class="mut">Sin campañas activas con retorno todavía.</div>`, { icon: "mkt" });
-
-  const evo = card("Evolución de ventas · 7 días", area(serieVentas("all", "7d"), { h: 150, labels: ["L", "M", "X", "J", "V", "S", "D"] }), `<span class="mut">Grupo</span>`);
 
   return hero + `<div style="height:16px"></div>` + kpis + `<div class="grid g12" style="margin-top:16px">
     <div class="c8">${atencion}</div><div class="c4">${needHelp}</div>
-    <div class="c4">${destaca}</div><div class="c4">${apoyo}</div><div class="c4">${repu}</div>
     <div class="c7">${ventasBlk}</div><div class="c5">${margenTbl}</div>
-    <div class="c4">${spike}</div><div class="c4">${aging}</div><div class="c4">${riesgo}</div>
-    <div class="c6">${camp}</div><div class="c6">${evo}</div></div>`;
+    <div class="c12">${criterioCard()}</div></div>`;
 };
 
 function attRow(a, done) {
@@ -529,7 +535,7 @@ V.sara = () => {
     <div class="chatin"><input id="chatInput" placeholder="Pregúntale a Sara…" aria-label="Pregunta a Sara"/><button class="btn primary" data-act="ask-input">Enviar</button></div>`, `<span class="pill ok">${ic("wifi", 12)} En vivo</span>`);
   const reco = `<div class="card"><div class="ch"><h3>Recomendaciones</h3><span class="mut">Prioridad</span></div><div style="display:flex;flex-direction:column;gap:11px" id="recoList">${RECOS.map(r => recoRow(r)).join("")}</div></div>`;
   const autonomy = card("Niveles de autonomía", `<div class="rows" style="margin:0 -18px -18px">${[["Informar", "Resúmenes y respuestas", "ok"], ["Recomendar", "Sugerencias con impacto", "info"], ["Preparar acción", "Deja la acción lista", "warn"], ["Ejecutar", "Requiere aprobación humana", "brand"]].map(x => `<div class="row"><div class="grow"><div class="t1">${x[0]}</div><div class="t2">${x[1]}</div></div>${pill(x[2] === "brand" ? "Con aprobación" : "Activo", x[2])}</div>`).join("")}</div>`);
-  return `<div class="grid g12"><div class="c7">${parte}<div style="height:16px"></div>${left}</div><div class="c5">${reco}<div style="height:16px"></div>${autonomy}</div></div>`;
+  return `<div class="grid g12"><div class="c12">${criterioCard()}</div><div class="c7">${parte}<div style="height:16px"></div>${left}</div><div class="c5">${reco}<div style="height:16px"></div>${autonomy}</div></div>`;
 };
 function recoRow(r) { return `<div class="reco ${r.estado !== "Pendiente" ? "done" : ""}" data-reco="${r.id}"><div class="rc">${ic("spark", 16)}</div><div class="grow"><div class="flex" style="gap:8px"><b style="font-size:13.5px">${r.titulo}</b>${pill(r.prio, r.prio === "Alta" ? "bad" : "warn")}</div><p class="mut" style="margin:4px 0 4px;font-size:12.5px">${r.motivo}</p><div class="mut" style="font-size:11.5px;margin-bottom:8px">Impacto: <b class="hl">${r.impacto}</b> · Datos: ${r.datos}</div>${r.estado === "Pendiente" ? `<div class="wrapf"><button class="btn primary sm" data-act="reco-approve" data-id="${r.id}">Aprobar</button><button class="btn ghost sm" data-act="go" data-view="${r.go}">Revisar</button><button class="btn ghost sm" data-act="reco-dismiss" data-id="${r.id}">Descartar</button></div>` : pill(r.estado, "ok")}</div></div>`; }
 
