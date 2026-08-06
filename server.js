@@ -2771,7 +2771,8 @@ app.get("/api/agora/informe/:tipo", requireAuth(["direccion", "contabilidad"]), 
         const client = createAgoraClient(cfg);
         const groups = def.needs.includes("groups") ? await client.posGroups() : undefined;
         const familias = def.needs.includes("familias") ? await client.familiaIds() : undefined;
-        const resp = await client.informe(def.clrType, def.buildExtra({ from, to, groups, familias }));
+        const categorias = def.needs.includes("categorias") ? await client.categoriaIds() : undefined;
+        const resp = await client.informe(def.clrType, def.buildExtra({ from, to, groups, familias, categorias }));
         const norm = def.map(resp);
         if (!base) base = { tipo: def.key, label: def.label, from, to, local, columnas: norm.columnas.slice(), ordenPor: norm.ordenPor, filas: [] };
         base.filas.push(...norm.filas.map((f) => (multi ? { local: cfg.local, ...f } : f)));
