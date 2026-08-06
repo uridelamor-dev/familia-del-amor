@@ -805,7 +805,7 @@ function renderFacturas(list, pend, stats, empresas) {
   const tipoOpts = ['<option value="">Todos los tipos</option>'].concat(["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${FACF.tipo === t ? "selected" : ""}>${cap(t)}</option>`)).join("");
   const estOpts = [["", "Todos los estados"], ["pagada", "Pagadas"], ["pendiente", "Pendientes"]].map(([v, l]) => `<option value="${v}" ${FACF.estado === v ? "selected" : ""}>${l}</option>`).join("");
   const resumen = stats && stats.resumenAnual ? `<div class="grid g4" style="margin-bottom:16px">${stat("Facturas (año)", "🧾", num(stats.resumenAnual.num_docs))}${stat("Base imponible", "€", eur(stats.resumenAnual.base))}${stat("IVA", "€", eur(stats.resumenAnual.iva))}${stat("Total", "€", eur(stats.resumenAnual.total))}</div>` : "";
-  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="facLocal">${localOpts}</select></div><div class="field"><label>Empresa</label><select id="facEmp">${empOpts}</select></div><div class="field"><label>Estado</label><select id="facEstado">${estOpts}</select></div><div class="field"><label>Tipo</label><select id="facTipo">${tipoOpts}</select></div><div class="field"><label>Desde</label><input type="date" id="facFrom" value="${esc(FACF.from)}"></div><div class="field"><label>Hasta</label><input type="date" id="facTo" value="${esc(FACF.to)}"></div><div class="field"><label>Buscar</label><input id="facQ" placeholder="Proveedor, concepto, nº" value="${esc(FACF.q)}"></div><button class="btn" data-act="fac-filtrar">Buscar</button><div style="flex:1"></div><button class="btn" data-act="fac-export">Exportar CSV</button></div>`;
+  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="facLocal">${localOpts}</select></div><div class="field"><label>Empresa</label><select id="facEmp">${empOpts}</select></div><div class="field"><label>Estado</label><select id="facEstado">${estOpts}</select></div><div class="field"><label>Tipo</label><select id="facTipo">${tipoOpts}</select></div><div class="field"><label>Desde</label><input type="date" id="facFrom" value="${esc(FACF.from)}"></div><div class="field"><label>Hasta</label><input type="date" id="facTo" value="${esc(FACF.to)}"></div><div class="field"><label>Buscar</label><input id="facQ" placeholder="Proveedor, concepto, nº" value="${esc(FACF.q)}"></div><button class="btn" data-act="fac-filtrar">Buscar</button><div style="flex:1"></div><button class="btn primary" data-act="fac-subir">+ Subir factura</button><button class="btn" data-act="fac-export">Exportar CSV</button></div>`;
   const maxLocal = Math.max(1, ...(((stats && stats.porLocal) || []).map((x) => Number(x.total) || 0)));
   const porLocal = (stats && stats.porLocal && stats.porLocal.length) ? `<div class="card"><div class="ch"><h3>Gasto por local (año)</h3></div><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div></div>` : "";
   const topProv = (stats && stats.topProveedores && stats.topProveedores.length) ? `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Top proveedores (año)</h3></div><div class="rows">${stats.topProveedores.map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "—")}</div><div class="t2">${num(p.num)} factura(s)</div></div><b class="tnum">${eur(p.total)}</b></div>`).join("")}</div></div>` : "";
@@ -828,6 +828,24 @@ function facFicha(id) {
   const pb = ov.querySelector("#ficPago"); if (pb) pb.addEventListener("click", async () => { try { await apiSend("PATCH", "/api/facturas/" + id + "/pago"); ov.remove(); toast("Estado de pago actualizado"); loadFacturas(); } catch (e) { toast("Error: " + e.message); } });
 }
 async function facExport() { try { const r = await fetch("/api/facturas/export.csv" + (facQS() ? "?" + facQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "facturas.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
+function facSubir() {
+  const localOpts = ['<option value="">Detectar automáticamente (por NIF)</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
+  const ov = modal("Subir factura", `<div class="field" style="width:100%"><label>Archivo (PDF o imagen)</label><input type="file" id="fsFile" accept="application/pdf,image/*"></div><div class="field" style="width:100%"><label>Local</label><select id="fsLocal">${localOpts}</select></div><div class="mut" style="font-size:12px">Se procesa con la misma IA, orden en Drive y control de duplicados que WhatsApp/correo. Requiere Google conectado.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fsSend">Subir y procesar</button></div><div id="fsMsg" class="mut" style="margin-top:8px"></div>`);
+  ov.querySelector("#fsSend").addEventListener("click", async () => {
+    const inp = ov.querySelector("#fsFile"); const f = inp && inp.files && inp.files[0];
+    if (!f) { toast("Elige un archivo"); return; }
+    const btn = ov.querySelector("#fsSend"); btn.disabled = true; ov.querySelector("#fsMsg").textContent = "Procesando… (puede tardar unos segundos)";
+    try {
+      const fd = new FormData(); fd.append("file", f); const loc = ov.querySelector("#fsLocal").value; if (loc) fd.append("local", loc);
+      const r = await fetch("/api/facturas/subir", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
+      const j = await r.json();
+      if (!j.ok) { ov.querySelector("#fsMsg").textContent = (j.duplicate ? "⚠ " : "Error: ") + (j.error || "no se pudo procesar"); btn.disabled = false; return; }
+      ov.remove();
+      toast(j.pendiente ? "Subida ✅ — pendiente de asignar local" : `Factura procesada ✅${j.proveedor ? " · " + j.proveedor : ""}`);
+      loadFacturas();
+    } catch (e) { ov.querySelector("#fsMsg").textContent = "Error: " + e.message; btn.disabled = false; }
+  });
+}
 
 function facLocalSelect(id, sel) { return `<select id="${id}"><option value="">Elegir local…</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${sel === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`; }
 function renderFacturasConfig() {
@@ -1506,6 +1524,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-303") fac303();
   else if (act === "fac-ficha") facFicha(t.getAttribute("data-id"));
   else if (act === "fac-export") facExport();
+  else if (act === "fac-subir") facSubir();
   else if (act === "fac-303-csv") fac303Csv();
   else if (act === "fac-migrar") facMigrar();
   else if (act === "fac-drive-add") facDriveAdd();

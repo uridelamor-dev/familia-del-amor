@@ -99,6 +99,8 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+// Subida de facturas: en memoria (necesitamos el buffer para el pipeline de facturas.js).
+const uploadFacturaMem = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 // Subida de CV endurecida (Iteración 1A): se guarda primero en un directorio PRIVADO fuera de
 // public/, con límite de tamaño y allowlist de extensión+MIME; solo se publica tras validar los
@@ -1162,6 +1164,23 @@ app.get("/api/facturas/export.csv", requireAuth(["direccion", "contabilidad"]), 
     res.setHeader("Content-Disposition", 'attachment; filename="facturas.csv"');
     res.send([header, ...lines].join("\n"));
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Subir una factura MANUALMENTE desde el panel (mismo pipeline que WhatsApp/correo/Drive).
+app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad"]), uploadFacturaMem.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ ok: false, error: "Falta el archivo" });
+    const { buffer, mimetype, originalname } = req.file;
+    if (!(mimetype === "application/pdf" || mimetype.startsWith("image/"))) return res.status(400).json({ ok: false, error: "Solo se admiten PDF o imágenes" });
+    const local = (req.body.local || "").trim();
+    let result;
+    if (local) result = await procesarFactura({ buffer, mimeType: mimetype, filename: originalname, local, canal: "Manual", getToken: getDriveAccessToken, dbGet, dbRun });
+    else result = await procesarFacturaSinLocal({ buffer, mimeType: mimetype, filename: originalname, origen: "manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
+    res.json({ ok: true, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl });
+  } catch (e) {
+    if (e && e.isDuplicate) return res.status(409).json({ ok: false, duplicate: true, error: e.message || "Esta factura ya está registrada" });
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // Carpetas de Drive vigiladas por local (ingesta directa dejando el archivo en Drive).
