@@ -79,7 +79,8 @@ function shell(active, bodyHtml) {
     }).join("");
   }).join("");
   const estabLbl = DASH_LOCAL ? nombreCortoLocal(DASH_LOCAL) : "Todos los establecimientos";
-  const seg = ["7d", "14d", "mes"].map((p) => `<button class="${PERIOD === p ? "on" : ""}" data-act="period" data-p="${p}">${p === "7d" ? "7 días" : p === "14d" ? "14 días" : "Mes"}</button>`).join("");
+  const customLbl = (PERIOD === "custom" && DASH_RANGE.from) ? `${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}` : "Personalizado";
+  const seg = [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]].map(([p, l]) => `<button class="${PERIOD === p ? "on" : ""}" data-act="period" data-p="${p}">${l}</button>`).join("") + `<button class="${PERIOD === "custom" ? "on" : ""}" data-act="period-custom" title="Rango personalizado (días o meses, incluso del año pasado)">${customLbl}</button>`;
   return `<div class="app${COLLAPSED ? " collapsed" : ""}" id="appEl">
     <aside class="sidebar">
       <div class="brand"><div class="logo">FA</div><div class="bt"><b>Familia del Amor</b><span>Sistema operativo interno</span></div></div>
@@ -147,7 +148,20 @@ function promptModal(title, { placeholder = "", type = "text", ok = "Guardar" } 
 }
 
 // ════════════════════════ ESTADO GLOBAL + COMPONENTES (lenguaje del prototipo) ════════════════════════
-let DASH_LOCAL = "", COLLAPSED = false, PERIOD = "7d", DASH_CONCERNS = 0;
+let DASH_LOCAL = "", COLLAPSED = false, PERIOD = "semana", DASH_CONCERNS = 0;
+let DASH_RANGE = { from: null, to: null, label: "Esta semana" };
+let DASH_PERIODO = null;
+// Reflejo puro de src/modules/dashboard/periodos.js
+function periodoDiaSemanaLunes(iso) { const [y, m, d] = String(iso).split("-").map(Number); const t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]; const yy = m < 3 ? y - 1 : y; return (((yy + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) + t[m - 1] + d) % 7) + 6) % 7; }
+function rangoPreset(preset, hoy) {
+  switch (String(preset)) {
+    case "hoy": return { preset: "hoy", from: hoy, to: hoy, label: "Hoy" };
+    case "ayer": { const a = addDaysStr(hoy, -1); return { preset: "ayer", from: a, to: a, label: "Ayer" }; }
+    case "semana": { const l = addDaysStr(hoy, -periodoDiaSemanaLunes(hoy)); return { preset: "semana", from: l, to: hoy, label: "Esta semana" }; }
+    case "mes": { const m1 = hoy.slice(0, 8) + "01"; return { preset: "mes", from: m1, to: hoy, label: "Este mes" }; }
+    default: { const l = addDaysStr(hoy, -periodoDiaSemanaLunes(hoy)); return { preset: "semana", from: l, to: hoy, label: "Esta semana" }; }
+  }
+}
 const nombreCorto = (s) => String(s || "").split(" ")[0];
 const nombreCortoLocal = (l) => String(l || "").replace(/^La Tapeta\s*[-·]\s*/i, "").trim() || l;
 const GO_VIEW = { whatsapp: "whatsapp", mantenimiento: "mantenimiento", clientes: "clientes", facturas: "facturas", rrhh: "rrhh", marketing: "reviews", reservas: "reservas", reviews: "reviews", campanas: "campanas" };
@@ -264,16 +278,18 @@ function renderDashboard(d) {
   const nCrit = (d.preocupaciones || []).filter((c) => c.tipo === "mantenimiento" && c.sev === "crit").length;
   const kpis = `<div class="grid g4">${kpi({ lab: "Reservas hoy", icon: "cal", val: num(hoyN.n || 0), delta: d.ayer && d.ayer.delta })}${kpi({ lab: "Comensales hoy", icon: "users", val: num(hoyN.personas || 0) })}${kpi({ lab: "Mantenim. abierto", icon: "wrench", val: num((d.mantenimiento && d.mantenimiento.abiertas) || 0), unit: nCrit ? `· ${nCrit} crítica${nCrit === 1 ? "" : "s"}` : "" })}${kpi({ lab: "Por pagar", icon: "euro", val: eur((d.dinero && d.dinero.porPagar && d.dinero.porPagar.total) || 0) })}</div>`;
 
-  // ── Actividad (gráfico real de reservas) ──
-  const serie = d.serieReservas || []; const win = PERIOD === "mes" ? 30 : PERIOD === "14d" ? 14 : 7;
-  const slice = serie.slice(-win); const serieVals = slice.map((x) => x.personas || x.n || 0);
-  const totalPeriodo = slice.reduce((s, x) => s + (x.n || 0), 0);
-  const winLbl = PERIOD === "mes" ? "últimos 30 días" : PERIOD === "14d" ? "últimos 14 días" : "últimos 7 días";
-  const ventasOk = d.ventas && d.ventas.disponible;
-  const ventasBox = ventasOk
-    ? `<div style="text-align:right"><div class="big tnum" style="font-size:30px">${eur(d.ventas.total)}</div><div class="mut" style="font-size:12px">ventas (30 días)</div></div>`
-    : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y ticket medio<br><span class="hl">al conectar Ágora</span></div>`;
-  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas</h3><span class="pill">${winLbl}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas en ${winLbl}</div></div>${ventasBox}</div>${area(serieVals, { h: 120 })}</div>`;
+  // ── Actividad (reservas + ventas del PERIODO seleccionado) ──
+  const per = DASH_PERIODO || null;
+  const winLbl = DASH_RANGE.label || "Esta semana";
+  const rSerie = (per && per.reservas && per.reservas.serie) || [];
+  const serieVals = rSerie.map((x) => x.personas || x.n || 0);
+  const totalPeriodo = (per && per.reservas && per.reservas.total) || 0;
+  const vOk = per && per.ventas && per.ventas.disponible;
+  const ventasBox = vOk
+    ? `<div style="text-align:right"><div class="big tnum" style="font-size:30px">${eur(per.ventas.total)}</div><div class="mut" style="font-size:12px">ventas · ${per.ventas.ticket_medio ? eur(per.ventas.ticket_medio) + "/ticket" : num(per.ventas.tickets) + " tickets"}${per.hoyEnVivo ? " · incluye hoy" : ""}</div></div>`
+    : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y ticket medio<br><span class="hl">${DASH_RANGE.to === todayStr() && DASH_RANGE.from === todayStr() ? "aún sin cierre de hoy" : "al conectar Ágora"}</span></div>`;
+  const grafico = serieVals.length >= 2 ? area(serieVals, { h: 120 }) : `<div class="mut" style="font-size:12.5px;padding:14px 0">${totalPeriodo ? "Rango de un día — sin serie para graficar." : "Sin reservas en este periodo."}</div>`;
+  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div></div>${ventasBox}</div>${grafico}</div>`;
 
   // ── Gasto del mes (barra apilada real) ──
   const gl = (d.dinero && d.dinero.gastoLocal) || []; const gtot = gl.reduce((s, g) => s + (g.actual || 0), 0);
@@ -308,8 +324,43 @@ function renderDashboard(d) {
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
-  try { const d = await api("/api/dashboard" + (DASH_LOCAL ? "?local=" + encodeURIComponent(DASH_LOCAL) : "")); view.innerHTML = renderDashboard(d); }
-  catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+  if (!DASH_RANGE.from) { const r = rangoPreset(PERIOD || "semana", todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; }
+  const lq = DASH_LOCAL ? "&local=" + encodeURIComponent(DASH_LOCAL) : "";
+  try {
+    const [d, per] = await Promise.all([
+      api("/api/dashboard" + (DASH_LOCAL ? "?local=" + encodeURIComponent(DASH_LOCAL) : "")),
+      apiOptional(`/api/dashboard/periodo?from=${DASH_RANGE.from}&to=${DASH_RANGE.to}${lq}`),
+    ]);
+    DASH_PERIODO = per || null;
+    view.innerHTML = renderDashboard(d);
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+// Rango personalizado (días o meses, incluso del año pasado).
+function openPeriodoCustom() {
+  const hoy = todayStr();
+  const f0 = DASH_RANGE.from || addDaysStr(hoy, -30), t0 = DASH_RANGE.to || hoy;
+  const ov = modal("Rango personalizado", `<div class="form-grid">
+    <div class="field"><label>Desde</label><input type="date" id="pcFrom" value="${esc(f0)}" max="${esc(hoy)}"></div>
+    <div class="field"><label>Hasta</label><input type="date" id="pcTo" value="${esc(t0)}" max="${esc(hoy)}"></div>
+  </div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"><button class="btn sm" data-pcq="mes-pasado">Mes pasado</button><button class="btn sm" data-pcq="este-ano">Este año</button><button class="btn sm" data-pcq="ano-pasado">Año pasado</button><button class="btn sm" data-pcq="ultimo-ano">Últimos 12 meses</button></div>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="pcAplicar">Aplicar</button></div>`);
+  const setRange = (from, to) => { ov.querySelector("#pcFrom").value = from; ov.querySelector("#pcTo").value = to; };
+  ov.addEventListener("click", (e) => {
+    const q = e.target.getAttribute && e.target.getAttribute("data-pcq"); if (!q) return;
+    const y = Number(hoy.slice(0, 4)), m = hoy.slice(5, 7);
+    if (q === "mes-pasado") { const d = new Date(hoy + "T12:00:00"); d.setDate(1); d.setMonth(d.getMonth() - 1); const fin = new Date(d.getFullYear(), d.getMonth() + 1, 0); setRange(d.toISOString().slice(0, 10), fin.toISOString().slice(0, 10)); }
+    else if (q === "este-ano") setRange(y + "-01-01", hoy);
+    else if (q === "ano-pasado") setRange((y - 1) + "-01-01", (y - 1) + "-12-31");
+    else if (q === "ultimo-ano") setRange(addDaysStr(hoy, -364), hoy);
+  });
+  ov.querySelector("#pcAplicar").addEventListener("click", () => {
+    const from = ov.querySelector("#pcFrom").value, to = ov.querySelector("#pcTo").value;
+    if (!from || !to) { toast("Elige las dos fechas"); return; }
+    if (from > to) { toast("El 'desde' debe ser anterior al 'hasta'"); return; }
+    PERIOD = "custom"; DASH_RANGE = { from, to, label: from === to ? fechaCorta(from) : `${fechaCorta(from)} – ${fechaCorta(to)}` };
+    ov.remove(); loadDashboard();
+  });
 }
 
 // ════════════════════════ VISTA: RESERVAS ════════════════════════
@@ -1928,7 +1979,8 @@ document.addEventListener("click", (e) => {
   else if (act === "cmdk") openCmd();
   else if (act === "estabmenu") openEstabMenu();
   else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; closeDrawer(); go("dashboard"); }
-  else if (act === "period") { PERIOD = t.getAttribute("data-p"); document.querySelectorAll('.seg [data-act="period"]').forEach((b) => b.classList.toggle("on", b.getAttribute("data-p") === PERIOD)); if (CURRENT === "dashboard") loadDashboard(); }
+  else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }
+  else if (act === "period-custom") openPeriodoCustom();
   else if (act === "theme") toggleTheme();
   else if (act === "logout") { localStorage.removeItem("token"); location.href = "/login.html"; }
   else if (act === "reload") go(CURRENT);

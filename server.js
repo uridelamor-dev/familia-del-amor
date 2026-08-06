@@ -2695,42 +2695,86 @@ app.get("/api/ventas", requireAuth(["direccion", "contabilidad"]), async (req, r
 // Ventas EN VIVO por local (últimos 8 días incluido HOY, tiempo real) vía el informe global.
 // Caché de 3 min para no martillear el TPV; también persiste días cerrados en ventas_diarias.
 let _ventasVivoCache = { ts: 0, data: null };
+async function ventasVivoData(force) {
+  const ahora = Date.now();
+  if (!force && _ventasVivoCache.data && (ahora - _ventasVivoCache.ts) < 3 * 60 * 1000) {
+    return { cache: true, ...(_ventasVivoCache.data) };
+  }
+  const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password);
+  const hoy = new Date().toISOString().slice(0, 10);
+  const desde = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const hasta = new Date(Date.now() + 86400000).toISOString().slice(0, 10); // incluye hoy
+  const locales = [];
+  for (const cfg of configs) {
+    try {
+      const dias = await createAgoraClient(cfg).getVentasRango(desde, hasta);
+      locales.push({ local: cfg.local, dias, error: null });
+      for (const v of dias) { // persistir días CERRADOS (< hoy) en ventas_diarias
+        if (v.dia >= hoy) continue;
+        try {
+          await dbRun(
+            `INSERT INTO ventas_diarias (local, dia, ventas, tickets, comensales, ticket_medio, base_imponible, cuota_iva, actualizado_en)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(local, dia) DO UPDATE SET ventas=EXCLUDED.ventas, tickets=EXCLUDED.tickets, comensales=EXCLUDED.comensales,
+               ticket_medio=EXCLUDED.ticket_medio, base_imponible=EXCLUDED.base_imponible, cuota_iva=EXCLUDED.cuota_iva, actualizado_en=EXCLUDED.actualizado_en`,
+            [cfg.local, v.dia, v.ventas, v.tickets, v.comensales, v.ticket_medio, v.base_imponible ?? null, v.cuota_iva ?? null, new Date().toISOString()]
+          );
+        } catch { /* no crítico */ }
+      }
+    } catch (e) {
+      locales.push({ local: cfg.local, dias: [], error: (e && e.message) ? String(e.message).slice(0, 120) : "error" });
+    }
+  }
+  const data = { hoy, desde, locales, generado: new Date().toISOString() };
+  _ventasVivoCache = { ts: ahora, data };
+  return { cache: false, ...data };
+}
 app.get("/api/agora/ventas-vivo", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const ahora = Date.now();
     const force = req.query.force === "1" || req.query.force === "true";
-    if (!force && _ventasVivoCache.data && (ahora - _ventasVivoCache.ts) < 3 * 60 * 1000) {
-      return res.json({ ok: true, cache: true, ...(_ventasVivoCache.data) });
-    }
-    const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password);
+    res.json({ ok: true, ...(await ventasVivoData(force)) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Métricas del dashboard por RANGO de fechas [from,to] (reservas + ventas). Si el rango incluye
+// hoy, añade la venta EN VIVO de hoy (no está aún en ventas_diarias). Usado por el selector Hoy/
+// Ayer/Semana/Mes/personalizado.
+app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
+  try {
+    const local = (req.query.local && String(req.query.local).trim()) || null;
+    const from = String(req.query.from || "").slice(0, 10);
+    const to = String(req.query.to || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ ok: false, error: "Rango inválido" });
+    const lf = local ? " AND local = ?" : "";
+    const lp = local ? [local] : [];
+    const resRows = await dbAll(`SELECT dia, COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia >= ? AND dia <= ?${lf} GROUP BY dia ORDER BY dia`, [from, to, ...lp]);
+    const venRows = await dbAll(`SELECT dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ?${lf} ORDER BY dia`, [from, to, ...lp]);
     const hoy = new Date().toISOString().slice(0, 10);
-    const desde = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-    const hasta = new Date(Date.now() + 86400000).toISOString().slice(0, 10); // incluye hoy
-    const locales = [];
-    for (const cfg of configs) {
+    const ventasSerie = venRows.map((r) => ({ dia: r.dia, ventas: r.ventas, tickets: r.tickets }));
+    let hoyEnVivo = false;
+    if (from <= hoy && to >= hoy) { // añadir hoy en vivo (no está en ventas_diarias)
       try {
-        const dias = await createAgoraClient(cfg).getVentasRango(desde, hasta);
-        locales.push({ local: cfg.local, dias, error: null });
-        // Persistir días CERRADOS (< hoy) en ventas_diarias (histórico).
-        for (const v of dias) {
-          if (v.dia >= hoy) continue;
-          try {
-            await dbRun(
-              `INSERT INTO ventas_diarias (local, dia, ventas, tickets, comensales, ticket_medio, base_imponible, cuota_iva, actualizado_en)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(local, dia) DO UPDATE SET ventas=EXCLUDED.ventas, tickets=EXCLUDED.tickets, comensales=EXCLUDED.comensales,
-                 ticket_medio=EXCLUDED.ticket_medio, base_imponible=EXCLUDED.base_imponible, cuota_iva=EXCLUDED.cuota_iva, actualizado_en=EXCLUDED.actualizado_en`,
-              [cfg.local, v.dia, v.ventas, v.tickets, v.comensales, v.ticket_medio, v.base_imponible ?? null, v.cuota_iva ?? null, new Date().toISOString()]
-            );
-          } catch { /* no crítico */ }
+        const vv = await ventasVivoData(false);
+        for (const L of (vv.locales || [])) {
+          if (local && L.local !== local) continue;
+          const t = (L.dias || []).find((d) => d.dia === hoy);
+          if (!t) continue;
+          hoyEnVivo = true;
+          const ex = ventasSerie.find((x) => x.dia === hoy);
+          if (ex) { ex.ventas += t.ventas; ex.tickets += t.tickets; } else ventasSerie.push({ dia: hoy, ventas: t.ventas, tickets: t.tickets });
         }
-      } catch (e) {
-        locales.push({ local: cfg.local, dias: [], error: (e && e.message) ? String(e.message).slice(0, 120) : "error" });
-      }
+        ventasSerie.sort((a, b) => a.dia.localeCompare(b.dia));
+      } catch { /* si el vivo falla, seguimos con lo cerrado */ }
     }
-    const data = { hoy, desde, locales, generado: new Date().toISOString() };
-    _ventasVivoCache = { ts: ahora, data };
-    res.json({ ok: true, cache: false, ...data });
+    const reservasTotal = resRows.reduce((s, r) => s + r.n, 0);
+    const personasTotal = resRows.reduce((s, r) => s + r.personas, 0);
+    const ventasTotal = ventasSerie.reduce((s, r) => s + (r.ventas || 0), 0);
+    const ticketsTotal = ventasSerie.reduce((s, r) => s + (r.tickets || 0), 0);
+    res.json({ ok: true, data: {
+      from, to, hoy, hoyEnVivo,
+      reservas: { total: reservasTotal, personas: personasTotal, serie: resRows },
+      ventas: { disponible: ventasSerie.length > 0, total: Math.round(ventasTotal * 100) / 100, tickets: ticketsTotal, ticket_medio: ticketsTotal ? Math.round(ventasTotal / ticketsTotal * 100) / 100 : 0, serie: ventasSerie },
+    } });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
