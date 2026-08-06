@@ -2847,6 +2847,9 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
         } catch { /* si el vivo falla, seguimos con lo cerrado */ }
       }
     }
+    // Gastos (facturas) del MISMO rango, para cuadrar el resultado (ventas − gastos).
+    const gasRow = await dbGet(`SELECT COUNT(*)::int n, COALESCE(SUM(total),0)::float total, COALESCE(SUM(base_imponible),0)::float base FROM facturas WHERE fecha >= ? AND fecha <= ?${lf}`, [from, to, ...lp]);
+    const gastosTotal = gasRow ? gasRow.total : 0;
     const reservasTotal = resRows.reduce((s, r) => s + r.n, 0);
     const personasTotal = resRows.reduce((s, r) => s + r.personas, 0);
     const ventasTotal = ventasSerie.reduce((s, r) => s + (r.ventas || 0), 0);
@@ -2855,6 +2858,8 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
       from, to, hoy, hoyEnVivo,
       reservas: { total: reservasTotal, personas: personasTotal, serie: resRows },
       ventas: { disponible: ventasSerie.length > 0, total: Math.round(ventasTotal * 100) / 100, tickets: ticketsTotal, ticket_medio: ticketsTotal ? Math.round(ventasTotal / ticketsTotal * 100) / 100 : 0, serie: ventasSerie, fuente: fuenteVentas },
+      gastos: { disponible: !!(gasRow && gasRow.n > 0), total: Math.round(gastosTotal * 100) / 100, base: Math.round((gasRow ? gasRow.base : 0) * 100) / 100, n: gasRow ? gasRow.n : 0 },
+      resultado: (ventasSerie.length || (gasRow && gasRow.n)) ? Math.round((ventasTotal - gastosTotal) * 100) / 100 : null,
     } });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
