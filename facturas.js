@@ -400,6 +400,80 @@ export async function reconstruirSheetMaestro({ getToken, dbGet, dbAll, dbRun })
   return { total: values.length, sheetId: id, url: `https://docs.google.com/spreadsheets/d/${id}` };
 }
 
+// ── Sincronización SIN DERIVA: los Sheets son una proyección reconstruible de la BD ──
+// (PURO/testeable) Etiqueta de mes de una fecha "YYYY-MM-DD" → "Mes AAAA" (español).
+export function mesLabelDeFecha(fecha) {
+  const d = fecha ? new Date(String(fecha).slice(0, 10) + "T12:00:00") : new Date();
+  if (isNaN(d.getTime())) return null;
+  return `${MESES_ES[d.getMonth()]} ${d.getFullYear()}`;
+}
+// (PURO/testeable) Fila de la pestaña del mes a partir de una factura de la BD (orden CABECERAS).
+export function filaFacturaSheet(f) {
+  return [
+    f.fecha ?? "", f.numero_factura ?? "", f.tipo ?? "", f.proveedor ?? "", f.nif ?? "", f.concepto ?? "",
+    f.base_imponible ?? "", f.porcentaje_iva ?? "", f.cuota_iva ?? "", f.total ?? "",
+    f.canal ?? "", f.drive_url ?? "", f.creado_en ?? "",
+  ];
+}
+
+// Reescribe COMPLETA la pestaña de un mes desde las filas dadas (idempotente).
+async function sincronizarTabMes(token, spreadsheetId, mesLabel, filas) {
+  const hojas = await sheetsObtenerHojas(token, spreadsheetId);
+  const existe = hojas.find((h) => h.title === mesLabel);
+  if (!existe) {
+    if (!filas.length) return; // no hay nada para ese mes: no creamos pestaña vacía
+    await sheetsCrearHojaMes(token, spreadsheetId, mesLabel);
+    const meses = [...hojas.filter((h) => h.title !== "RESUMEN").map((h) => h.title), mesLabel].sort((a, b) => parseMesLabelFecha(a) - parseMesLabelFecha(b));
+    await sheetsActualizarResumen(token, spreadsheetId, meses);
+  }
+  // Limpia las filas de datos (deja la cabecera A1) y reescribe desde A2.
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${mesLabel}'!A2:N100000`)}:clear`,
+    { method: "POST", headers: await driveHeaders(token), body: "{}" });
+  if (filas.length) {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`'${mesLabel}'!A2`)}?valueInputOption=USER_ENTERED`,
+      { method: "PUT", headers: await driveHeaders(token), body: JSON.stringify({ values: filas }) });
+  }
+}
+
+// Re-proyecta a los Sheets la pestaña (local_contable, mes) afectada por un cambio + el maestro.
+export async function resincronizarSheetsFactura({ getToken, dbGet, dbAll, dbRun }, local, fecha) {
+  if (!local || !fecha) return;
+  const mesLabel = mesLabelDeFecha(fecha);
+  if (!mesLabel) return;
+  const token = await getToken();
+  const localRow = await dbGet("SELECT local_contable FROM facturas_locales WHERE local = ?", [local]);
+  const localContable = localRow?.local_contable || local;
+  const grupo = await dbGet("SELECT sheet_id FROM facturas_grupos WHERE local = ?", [localContable]);
+  if (grupo?.sheet_id) {
+    const rows = await dbAll("SELECT f.* FROM facturas f LEFT JOIN facturas_locales fl ON fl.local = f.local WHERE COALESCE(fl.local_contable, f.local) = ?", [localContable]);
+    const filas = (rows || []).filter((r) => r.fecha && mesLabelDeFecha(r.fecha) === mesLabel).map(filaFacturaSheet);
+    await sincronizarTabMes(token, grupo.sheet_id, mesLabel, filas);
+  }
+  // El maestro se reconstruye entero desde la BD (barato y a prueba de deriva).
+  try { await reconstruirSheetMaestro({ getToken, dbGet, dbAll, dbRun }); } catch (e) { console.error("[Sync] maestro:", e.message); }
+}
+
+// "Verificar y reparar": reescribe TODAS las pestañas (local_contable, mes) desde la BD + maestro.
+export async function repararTodosLosSheets({ getToken, dbGet, dbAll, dbRun }) {
+  const token = await getToken();
+  const rows = await dbAll("SELECT f.*, COALESCE(fl.local_contable, f.local) AS lc FROM facturas f LEFT JOIN facturas_locales fl ON fl.local = f.local WHERE f.fecha IS NOT NULL");
+  const grupos = {};
+  for (const r of rows || []) {
+    const mes = mesLabelDeFecha(r.fecha); if (!mes) continue;
+    const key = r.lc + "||" + mes;
+    (grupos[key] = grupos[key] || { lc: r.lc, mes, filas: [] }).filas.push(filaFacturaSheet(r));
+  }
+  const sheetCache = {}; let tabs = 0;
+  for (const key of Object.keys(grupos)) {
+    const g = grupos[key];
+    if (sheetCache[g.lc] === undefined) { const gr = await dbGet("SELECT sheet_id FROM facturas_grupos WHERE local = ?", [g.lc]); sheetCache[g.lc] = gr?.sheet_id || null; }
+    const sid = sheetCache[g.lc]; if (!sid) continue;
+    try { await sincronizarTabMes(token, sid, g.mes, g.filas); tabs++; } catch (e) { console.error("[Reparar]", g.lc, g.mes, e.message); }
+  }
+  const master = await reconstruirSheetMaestro({ getToken, dbGet, dbAll, dbRun });
+  return { tabs, maestro: master.total };
+}
+
 // ── Pipeline principal ──────────────────────────────────────────────────────
 
 export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbRun, backupFn }) {
@@ -505,11 +579,11 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   // 9. Guardar en BD local con hash y empresa
   await dbRun(
     `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
-      base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [local, empresa, datos.tipo, datos.fecha, datos.numero_factura, datos.proveedor,
      datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
-     datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash]
+     datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash, canal]
   );
 
   return { datos, empresa, driveUrl: driveFile.url, sheetUrl, sheetId };

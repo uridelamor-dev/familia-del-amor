@@ -11,7 +11,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro } from "./facturas.js";
+import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets } from "./facturas.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
 import { permisosV2Enabled } from "./src/core/flags.js";
@@ -378,6 +378,7 @@ async function initDB() {
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS canal TEXT`); } catch (e) { console.error("[DB] alter facturas canal:", e.message); }
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS wa_clientes (
@@ -1139,9 +1140,10 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
   } catch (e) { res.status(500).json({ ok: false, error: e.message, data: [] }); }
 });
 
-// Editar los campos de una factura (corregir lo que extrajo la IA). Solo BD.
+// Editar los campos de una factura (corregir lo que extrajo la IA). Re-proyecta a los Sheets.
 app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    const antes = await dbGet("SELECT local, fecha FROM facturas WHERE id = ?", [req.params.id]);
     const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "local", "empresa", "pagado"];
     const sets = [], vals = [];
     for (const k of allowed) if (req.body[k] !== undefined) { sets.push(`${k} = ?`); vals.push(req.body[k] === "" ? null : req.body[k]); }
@@ -1149,7 +1151,34 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     vals.push(req.params.id);
     await dbRun(`UPDATE facturas SET ${sets.join(", ")} WHERE id = ?`, vals);
     res.json({ ok: true });
+    // Re-proyectar (fondo, no fatal): la pestaña vieja y la nueva si cambió local/fecha, + maestro.
+    const despues = await dbGet("SELECT local, fecha FROM facturas WHERE id = ?", [req.params.id]);
+    (async () => {
+      try {
+        const deps = { getToken: getDriveAccessToken, dbGet, dbAll, dbRun };
+        if (antes && antes.local && antes.fecha) await resincronizarSheetsFactura(deps, antes.local, antes.fecha);
+        if (despues && despues.local && despues.fecha && (despues.local !== antes?.local || despues.fecha !== antes?.fecha)) await resincronizarSheetsFactura(deps, despues.local, despues.fecha);
+      } catch (e) { console.error("[PATCH factura] resync:", e.message); }
+    })();
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Eliminar una factura (errores). Quita la fila y re-proyecta la pestaña afectada.
+app.delete("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const row = await dbGet("SELECT local, fecha FROM facturas WHERE id = ?", [req.params.id]);
+    await dbRun("DELETE FROM facturas WHERE id = ?", [req.params.id]);
+    res.json({ ok: true });
+    if (row && row.local && row.fecha) {
+      (async () => { try { await resincronizarSheetsFactura({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun }, row.local, row.fecha); } catch (e) { console.error("[DELETE factura] resync:", e.message); } })();
+    }
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Verificar y reparar: reescribe todas las pestañas y el maestro desde la BD (fuente de verdad).
+app.post("/api/facturas/reparar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try { const r = await repararTodosLosSheets({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun }); res.json({ ok: true, ...r }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // Export CSV de la tabla de facturas (con los mismos filtros).
