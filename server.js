@@ -11,7 +11,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive } from "./facturas.js";
+import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro } from "./facturas.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
 import { permisosV2Enabled } from "./src/core/flags.js";
@@ -333,6 +333,23 @@ async function initDB() {
         sheet_id TEXT,
         sheet_url TEXT,
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Carpetas de Drive vigiladas por local (tercer canal de ingesta) + idempotencia.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_drive_carpetas (
+        local TEXT PRIMARY KEY,
+        folder_id TEXT NOT NULL,
+        folder_url TEXT,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_drive_procesados (
+        drive_file_id TEXT PRIMARY KEY,
+        local TEXT,
+        procesado_en TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
@@ -895,6 +912,45 @@ async function markGmailRead(token, msgId) {
   });
 }
 
+// ── Ingesta de facturas por Drive (carpeta vigilada por local) ──────────────
+async function driveListarCarpeta(token, folderId) {
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed=false and (mimeType='application/pdf' or mimeType contains 'image/')`);
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType)&pageSize=100`, { headers: { Authorization: `Bearer ${token}` } });
+  const d = await r.json();
+  if (d.error) throw new Error(JSON.stringify(d.error));
+  return d.files || [];
+}
+async function driveDescargarArchivo(token, fileId) {
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error("descarga Drive " + r.status);
+  return Buffer.from(await r.arrayBuffer());
+}
+async function pollDriveFacturas() {
+  try {
+    const carpetas = await dbAll("SELECT local, folder_id FROM facturas_drive_carpetas");
+    if (!carpetas.length) return;
+    const token = await getDriveAccessToken();
+    if (!token) return;
+    for (const c of carpetas) {
+      let files = [];
+      try { files = await driveListarCarpeta(token, c.folder_id); } catch (e) { console.error(`[Drive ingest] listar ${c.local}:`, e.message); continue; }
+      for (const f of files) {
+        const done = await dbGet("SELECT 1 FROM facturas_drive_procesados WHERE drive_file_id = ?", [f.id]);
+        if (done) continue;
+        try {
+          const buffer = await driveDescargarArchivo(token, f.id);
+          await procesarFactura({ buffer, mimeType: f.mimeType, filename: f.name, local: c.local, canal: "Drive", getToken: getDriveAccessToken, dbGet, dbRun });
+          console.log(`[Drive ingest] Procesada ${f.name} (${c.local})`);
+        } catch (e) {
+          if (!(e && e.isDuplicate)) console.error(`[Drive ingest] ${f.name}:`, e.message);
+        }
+        // Marca como procesado SIEMPRE (evita reintentos infinitos, también en duplicado/error).
+        try { await dbRun("INSERT INTO facturas_drive_procesados (drive_file_id, local, procesado_en) VALUES (?, ?, ?) ON CONFLICT(drive_file_id) DO NOTHING", [f.id, c.local, new Date().toISOString()]); } catch { /* noop */ }
+      }
+    }
+  } catch (e) { console.error("[pollDriveFacturas]", e.message); }
+}
+
 async function pollGmail() {
   try {
     const token = await getDriveAccessToken();
@@ -1106,6 +1162,41 @@ app.get("/api/facturas/export.csv", requireAuth(["direccion", "contabilidad"]), 
     res.setHeader("Content-Disposition", 'attachment; filename="facturas.csv"');
     res.send([header, ...lines].join("\n"));
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Carpetas de Drive vigiladas por local (ingesta directa dejando el archivo en Drive).
+function extraerFolderId(input) {
+  const s = String(input || "").trim();
+  const m = s.match(/(?:folders\/|id=)([a-zA-Z0-9_-]{20,})/) || s.match(/^([a-zA-Z0-9_-]{20,})$/);
+  return m ? m[1] : "";
+}
+app.get("/api/facturas/drive-carpetas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try { res.json({ ok: true, data: await dbAll("SELECT local, folder_id, folder_url FROM facturas_drive_carpetas ORDER BY local") }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post("/api/facturas/drive-carpetas", requireAuth(["direccion"]), async (req, res) => {
+  const { local, folder } = req.body || {};
+  const folderId = extraerFolderId(folder);
+  if (!local || !folderId) return res.status(400).json({ ok: false, error: "Falta local o el enlace/ID de la carpeta" });
+  try {
+    await dbRun(`INSERT INTO facturas_drive_carpetas (local, folder_id, folder_url) VALUES (?, ?, ?) ON CONFLICT(local) DO UPDATE SET folder_id = EXCLUDED.folder_id, folder_url = EXCLUDED.folder_url`,
+      [local, folderId, String(folder).trim()]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.delete("/api/facturas/drive-carpetas/:local", requireAuth(["direccion"]), async (req, res) => {
+  try { await dbRun("DELETE FROM facturas_drive_carpetas WHERE local = ?", [req.params.local]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Estado + reconstrucción del Sheet maestro consolidado.
+app.get("/api/facturas/master", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try { const id = await getConfig("drive_facturas_master_sheet_id"); res.json({ ok: true, sheet_id: id || null, url: id ? `https://docs.google.com/spreadsheets/d/${id}` : null }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post("/api/facturas/reconstruir-maestro", requireAuth(["direccion"]), async (req, res) => {
+  try { const r = await reconstruirSheetMaestro({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun }); res.json({ ok: true, ...r }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.patch("/api/facturas/:id/pago", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
@@ -3928,6 +4019,9 @@ const server = app.listen(PORT, async () => {
   // Polling de Gmail: primer check a los 30 segundos, luego cada 5 minutos
   setTimeout(pollGmail, 30 * 1000);
   setInterval(pollGmail, 5 * 60 * 1000);
+  // Ingesta por Drive (carpeta vigilada por local). Dormido si no hay carpetas configuradas.
+  setTimeout(pollDriveFacturas, 45 * 1000);
+  setInterval(pollDriveFacturas, 5 * 60 * 1000);
 
   // ── Resumen mensual por WhatsApp: día 10 de cada mes a las 9:00h (Madrid) ──
   const MESES_CAP = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];

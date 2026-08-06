@@ -346,6 +346,60 @@ async function sheetsAñadirFilaMes(token, spreadsheetId, fila, mesLabel) {
   return data;
 }
 
+// ── Sheet MAESTRO consolidado (todas las facturas de todos los locales) ─────
+const MASTER_CABECERAS = [
+  "Fecha", "N° Documento", "Tipo", "Proveedor", "NIF / CIF", "Concepto",
+  "Base Imponible (€)", "Tipo IVA (%)", "Cuota IVA (€)", "Total (€)",
+  "Local", "Empresa", "Canal", "Archivo Drive", "Registrado"
+];
+async function cfgGet(dbGet, key) { const r = await dbGet("SELECT value FROM config WHERE key = ?", [key]); return r ? r.value : null; }
+async function cfgSet(dbRun, key, value) { await dbRun("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value", [key, value]); }
+
+async function ensureSheetMaestro(token, dbGet, dbRun) {
+  let id = await cfgGet(dbGet, "drive_facturas_master_sheet_id");
+  if (id) return id;
+  const r = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
+    method: "POST", headers: await driveHeaders(token),
+    body: JSON.stringify({ properties: { title: "Facturas · TODAS (consolidado)" }, sheets: [{ properties: { title: "TODAS" } }] })
+  });
+  const data = await r.json();
+  if (data.error) throw new Error("Master crear: " + JSON.stringify(data.error));
+  id = data.spreadsheetId;
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent("TODAS!A1")}?valueInputOption=USER_ENTERED`,
+    { method: "PUT", headers: await driveHeaders(token), body: JSON.stringify({ values: [MASTER_CABECERAS] }) });
+  await cfgSet(dbRun, "drive_facturas_master_sheet_id", id);
+  console.log(`[Facturas] Sheet maestro creado: https://docs.google.com/spreadsheets/d/${id}`);
+  return id;
+}
+
+// Añade una fila al maestro (no fatal: si falla, no rompe la ingesta).
+async function añadirFilaMaestro(token, dbGet, dbRun, fila) {
+  const id = await ensureSheetMaestro(token, dbGet, dbRun);
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent("TODAS!A1")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    { method: "POST", headers: await driveHeaders(token), body: JSON.stringify({ values: [fila] }) });
+  return id;
+}
+
+function filaMaestroDeFactura(f) {
+  return [f.fecha ?? "", f.numero_factura ?? "", f.tipo ?? "", f.proveedor ?? "", f.nif ?? "", f.concepto ?? "",
+    f.base_imponible ?? "", f.porcentaje_iva ?? "", f.cuota_iva ?? "", f.total ?? "", f.local ?? "", f.empresa ?? "", "", f.drive_url ?? "", f.creado_en ?? ""];
+}
+
+// Reconstruye el maestro desde cero con todas las facturas ya registradas (one-shot).
+export async function reconstruirSheetMaestro({ getToken, dbGet, dbAll, dbRun }) {
+  const token = await getToken();
+  const id = await ensureSheetMaestro(token, dbGet, dbRun);
+  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent("TODAS!A2:Z100000")}:clear`,
+    { method: "POST", headers: await driveHeaders(token), body: "{}" });
+  const rows = await dbAll("SELECT * FROM facturas ORDER BY fecha NULLS LAST, creado_en");
+  const values = rows.map(filaMaestroDeFactura);
+  if (values.length) {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent("TODAS!A2")}?valueInputOption=USER_ENTERED`,
+      { method: "PUT", headers: await driveHeaders(token), body: JSON.stringify({ values }) });
+  }
+  return { total: values.length, sheetId: id, url: `https://docs.google.com/spreadsheets/d/${id}` };
+}
+
 // ── Pipeline principal ──────────────────────────────────────────────────────
 
 export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbRun, backupFn }) {
@@ -438,6 +492,15 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
     ahora
   ];
   await sheetsAñadirFilaMes(token, sheetId, fila, mesLabel);
+
+  // 8b. Añadir también al Sheet MAESTRO consolidado (no fatal).
+  try {
+    await añadirFilaMaestro(token, dbGet, dbRun, [
+      datos.fecha ?? "", datos.numero_factura ?? "", datos.tipo ?? "", datos.proveedor ?? "", datos.nif_proveedor ?? "",
+      datos.concepto ?? "", datos.base_imponible ?? "", datos.porcentaje_iva ?? "", datos.cuota_iva ?? "", datos.total ?? "",
+      local, empresa, canal, driveFile.url, ahora
+    ]);
+  } catch (e) { console.error("[Facturas] Sheet maestro:", e.message); }
 
   // 9. Guardar en BD local con hash y empresa
   await dbRun(
