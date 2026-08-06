@@ -23,6 +23,7 @@ import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, 
 import crypto from "crypto";
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
+import { detectarIdioma, normalizarIdioma, idiomaDeContacto, necesitaTraduccion, idiomasPresentes, placeholdersIntactos, construirTraduccionRequest, IDIOMA_BASE } from "./src/modules/messaging/i18n.js";
 import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
 import { createAgoraClient } from "./src/integrations/agora/client.js";
 import { syncVentas } from "./src/integrations/agora/sync.js";
@@ -500,6 +501,19 @@ async function initDB() {
         nombre TEXT NOT NULL,
         filtros_json TEXT NOT NULL,
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Caché de traducciones de plantillas (por idioma + hash del texto) para no repetir llamadas IA.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS traducciones (
+        id SERIAL PRIMARY KEY,
+        idioma TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        texto_original TEXT,
+        texto_traducido TEXT NOT NULL,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (idioma, hash)
       )
     `);
 
@@ -3224,15 +3238,51 @@ function cargarAdjunto(url) {
   } catch { return null; }
 }
 
+// Traduce un texto (plantilla, con variables) a un idioma, con caché en BD y validación:
+// si la traducción pierde alguna variable {..} o la IA falla, devuelve el ORIGINAL (nunca rompe).
+async function traducirTexto(texto, idioma) {
+  const id = normalizarIdioma(idioma);
+  if (!id || !necesitaTraduccion(id)) return texto;
+  const hash = hashTexto(texto);
+  try {
+    const cached = await dbGet("SELECT texto_traducido FROM traducciones WHERE idioma = ? AND hash = ?", [id, hash]);
+    if (cached) return cached.texto_traducido;
+  } catch { /* noop */ }
+  if (!process.env.ANTHROPIC_API_KEY) return texto;
+  try {
+    const { system, messages } = construirTraduccionRequest(texto, id);
+    const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const resp = await ai.messages.create({ model: "claude-haiku-4-5-20251001", max_tokens: 800, system, messages });
+    const out = extractText(resp).trim();
+    if (!out || !placeholdersIntactos(texto, out)) return texto; // variables rotas → fallback seguro
+    try { await dbRun("INSERT INTO traducciones (idioma, hash, texto_original, texto_traducido) VALUES (?, ?, ?, ?) ON CONFLICT (idioma, hash) DO NOTHING", [id, hash, texto, out]); } catch { /* noop */ }
+    return out;
+  } catch (e) { console.error("[i18n] traducir:", e.message); return texto; }
+}
+
+// Precalcula la plantilla traducida para cada idioma presente entre los contactos.
+// Devuelve un resolver (contacto) → texto en su idioma (fallback: original).
+async function construirResolverIdioma(mensaje, contactos) {
+  const idiomas = idiomasPresentes(contactos, IDIOMA_BASE).filter((i) => necesitaTraduccion(i));
+  const mapa = { [IDIOMA_BASE]: mensaje };
+  for (const idi of idiomas) mapa[idi] = await traducirTexto(mensaje, idi);
+  return (c) => mapa[idiomaDeContacto(c, IDIOMA_BASE)] || mensaje;
+}
+
+// Hash corto y estable de un texto (reutiliza crypto, ya importado para facturas).
+function hashTexto(texto) { return crypto.createHash("sha256").update(String(texto || "")).digest("hex").slice(0, 32); }
+
 // Envío de un LOTE por WhatsApp con ritmo (jitter) — reutilizado por masivo y campañas.
 // Si hay campanaId, registra cada destinatario en campana_envios y cierra la campaña.
 // adjunto opcional { buffer, filename, mimetype } → imagen con pie o documento + texto.
-async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 6000, maxMs = 15000 }) {
+// resolverMensaje opcional (contacto)→texto: para traducir por idioma antes de aplicar variables.
+async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 6000, maxMs = 15000, resolverMensaje = null }) {
   let enviados = 0, errores = 0;
   for (const c of contactos) {
     let estado = "enviado", err = null;
     try {
-      const texto = aplicarVariables(mensaje, c);
+      const base = resolverMensaje ? resolverMensaje(c) : mensaje;
+      const texto = aplicarVariables(base, c);
       if (adjunto && adjunto.buffer) await sendMediaLibre(c.telefono, adjunto.buffer, adjunto.filename, adjunto.mimetype, texto);
       else await sendMensajeLibre(c.telefono, texto);
       enviados++;
@@ -3259,7 +3309,8 @@ async function dispatchCampana(campanaId) {
   const contactos = await dbAll(sql, params);
   const { aptos } = filtrarEnviablesWA(contactos, { soloOptIn: !!seg.soloOptIn });
   await dbRun(`UPDATE campanas_wa SET estado='enviando' WHERE id = ?`, [campanaId]);
-  enviarLoteWA({ contactos: aptos, mensaje: camp.mensaje, campanaId, adjunto: cargarAdjunto(camp.adjunto_url) });
+  const resolverMensaje = seg.traducir ? await construirResolverIdioma(camp.mensaje, aptos) : null;
+  enviarLoteWA({ contactos: aptos, mensaje: camp.mensaje, campanaId, adjunto: cargarAdjunto(camp.adjunto_url), resolverMensaje });
   return { ok: true, enviables: aptos.length };
 }
 
@@ -3360,7 +3411,7 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
   if (!nombre || !mensaje) return res.status(400).json({ ok: false, error: "Faltan nombre y mensaje" });
   if (canal !== "whatsapp") return res.status(400).json({ ok: false, error: "El canal email aún no está disponible" });
   try {
-    const seg = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes, con_email: req.body.con_email, con_telefono: req.body.con_telefono, idioma: req.body.idioma, origen: req.body.origen, from: req.body.from, to: req.body.to, excluir_telefonos: Array.isArray(req.body.excluir_telefonos) ? req.body.excluir_telefonos : [], excluir_baja: 1, soloOptIn: !!soloOptIn };
+    const seg = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes, con_email: req.body.con_email, con_telefono: req.body.con_telefono, idioma: req.body.idioma, origen: req.body.origen, from: req.body.from, to: req.body.to, excluir_telefonos: Array.isArray(req.body.excluir_telefonos) ? req.body.excluir_telefonos : [], traducir: !!req.body.traducir, excluir_baja: 1, soloOptIn: !!soloOptIn };
     // Recuento de enviables para informar
     const params = []; const contactos = await dbAll(sqlContactosUnificados(seg, params), params);
     const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: !!soloOptIn });
@@ -3375,7 +3426,8 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
     if (accion === "enviar") {
       if (!isReady()) { await dbRun(`UPDATE campanas_wa SET estado='borrador' WHERE id=?`, [id]); return res.status(503).json({ ok: false, error: "WhatsApp no conectado", campana_id: id }); }
       res.json({ ok: true, campana_id: id, estado: "enviando", enviables: aptos.length, omitidos });
-      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id, adjunto: cargarAdjunto(adjunto_url) });
+      const resolverMensaje = seg.traducir ? await construirResolverIdioma(mensaje, aptos) : null;
+      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id, adjunto: cargarAdjunto(adjunto_url), resolverMensaje });
       return;
     }
     res.json({ ok: true, campana_id: id, estado, enviables: aptos.length, omitidos });
@@ -3427,6 +3479,7 @@ app.patch("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (r
     }
     if (b.excluir_telefonos !== undefined) seg.excluir_telefonos = Array.isArray(b.excluir_telefonos) ? b.excluir_telefonos : [];
     if (b.soloOptIn !== undefined) seg.soloOptIn = !!b.soloOptIn;
+    if (b.traducir !== undefined) seg.traducir = !!b.traducir;
     seg.excluir_baja = 1;
     const nombre = b.nombre !== undefined ? b.nombre : camp.nombre;
     const mensaje = b.mensaje !== undefined ? b.mensaje : camp.mensaje;
@@ -3453,6 +3506,26 @@ app.post("/api/audiencias", requireAuth(["direccion", "marketing"]), async (req,
 app.delete("/api/audiencias/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try { await dbRun(`DELETE FROM audiencias WHERE id = ?`, [req.params.id]); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Detecta el idioma de los clientes a partir de sus mensajes de WhatsApp y lo cachea en
+// marketing_prefs.idioma. Solo rellena los que NO tienen idioma; castellano no se guarda (es el base).
+app.post("/api/contactos/detectar-idiomas", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const rows = await dbAll(`SELECT telefono, string_agg(mensaje, ' ') AS textos FROM whatsapp_messages WHERE mensaje IS NOT NULL AND mensaje <> '' GROUP BY telefono`, []);
+    let revisados = 0, actualizados = 0;
+    for (const r of rows) {
+      revisados++;
+      const tel = formatTelefonoES(r.telefono); if (!tel) continue;
+      const pref = await dbGet(`SELECT idioma FROM marketing_prefs WHERE RIGHT(regexp_replace(telefono,'[^0-9]','','g'),9) = RIGHT(regexp_replace(?,'[^0-9]','','g'),9)`, [tel]);
+      if (pref && pref.idioma) continue; // ya tiene idioma → respetamos (editable en la ficha)
+      const idi = detectarIdioma(r.textos);
+      if (!idi || idi === IDIOMA_BASE) continue; // sin señal clara o castellano → nada que guardar
+      await setMarketingPref(tel, { idioma: idi });
+      actualizados++;
+    }
+    res.json({ ok: true, revisados, actualizados });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ── PLANTILLAS DE MENSAJE ─────────────────────────────────────────────
