@@ -1114,7 +1114,7 @@ const RR_TIPO_COL = { nota: "var(--border2)", llamada: "var(--brand)", incidenci
 const RR_VAC_TIPOS = ["Jornada completa", "Jornada parcial", "Fines de semana", "Temporal"];
 function rrMesActual() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); }
 function rrAutor() { return (USER && (USER.nombre || USER.username || USER.rol)) || "panel"; }
-let RRSEG = { workers: [], llamadas: [], preguntas: [], sel: null, notas: [], ficha: null, mes: rrMesActual() };
+let RRSEG = { workers: [], llamadas: [], preguntas: [], sel: null, notas: [], ficha: null, resumen: [], mes: rrMesActual() };
 let RRPREG = { mes: rrMesActual(), preguntas: [] };
 function rrParseResp(v) { if (!v) return []; if (Array.isArray(v)) return v; try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } }
 // Pestañas visibles por rol: el encargado solo ve el Seguimiento de su equipo (candidaturas,
@@ -1134,7 +1134,7 @@ function renderRRCand(rows) {
   rows = rows || [];
   const estOpts = ['<option value="">Todos los estados</option>'].concat(["nuevo", "revisando", "contratada", "descartada"].map((e) => `<option value="${e}" ${RRF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
   const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(RRF.q)}" placeholder="Nombre, puesto…"></div><button class="btn" data-act="rr-filtrar">Buscar</button></div>`;
-  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
+  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => e === "contratada" ? `<button class="linkbtn" style="color:var(--brand)" data-act="cand-contratar" data-id="${c.id}" data-nombre="${esc(c.nombre)}">Contratar</button>` : `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
   return rrPh("Candidaturas y equipo") + rrTabs() + toolbar + table;
 }
 // ── Seguimiento (maestro-detalle) ──
@@ -1152,7 +1152,7 @@ function renderRRSegSidebar() {
     }).join("");
     return `<div><div class="ch" style="padding:10px 14px 4px;margin:0"><h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)">${esc(loc)}</h3><span class="pill ${hechos === ws.length ? "ok" : ""}">${hechos}/${ws.length}</span></div><div class="rows">${items}</div></div>`;
   }).join("");
-  const addBtn = USER.rol === "encargado" ? "" : '<button class="btn sm" data-act="rr-worker-add">+ Añadir</button>';
+  const addBtn = '<button class="btn sm" data-act="rr-worker-add">+ Añadir</button>';
   const agoraBtn = '<button class="btn sm" data-act="rr-agora-import" title="Enlazar operadores de Ágora">Ágora</button>';
   return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3><span style="display:flex;gap:6px">${agoraBtn}${addBtn}</span></div>${groups || '<div class="mut" style="padding:14px">Sin trabajadores.</div>'}</div>`;
 }
@@ -1285,8 +1285,19 @@ async function rrDocDel(id) {
   try { await apiSend("DELETE", "/api/rrhh/documento/" + encodeURIComponent(id)); toast("Documento borrado ✅"); if (RRSEG.sel) rrSelWorker(RRSEG.sel.id); }
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
+function renderRRResumen() {
+  const r = RRSEG.resumen || [];
+  if (!r.length) return "";
+  const cards = r.map((e) => {
+    const alert = e.docsAlerta ? `<span class="pill warn">${e.docsAlerta} doc. por caducar</span>` : "";
+    const cumple = (e.cumples && e.cumples.length) ? `<span class="pill">🎂 ${e.cumples.length}</span>` : "";
+    const antig = e.antiguedadMediaDias != null ? (Math.round(e.antiguedadMediaDias / 365 * 10) / 10) + " años" : "—";
+    return `<div class="card" style="padding:12px 14px"><div class="t1" style="font-weight:600">${esc(e.local)}</div><div class="t2" style="margin:4px 0 8px">${e.activos} activo(s)${e.bajas ? ` · ${e.bajas} baja(s)` : ""} · antig. media ${antig}</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="pill ${e.checkinsHechos >= e.total ? "ok" : ""}">Check-ins ${e.checkinsHechos}/${e.total}</span>${alert}${cumple}</div></div>`;
+  }).join("");
+  return `<div class="grid g3" style="gap:12px;margin-bottom:14px">${cards}</div>`;
+}
 function renderRRSeg() {
-  return rrPh("Seguimiento mensual del equipo · " + RRSEG.mes) + rrTabs() + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
+  return rrPh("Seguimiento mensual del equipo · " + RRSEG.mes) + rrTabs() + renderRRResumen() + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
 }
 // ── Vacantes ──
 function renderRRVac(rows) {
@@ -1314,8 +1325,8 @@ async function loadRRHH() {
       view.innerHTML = renderRRCand(await api("/api/hr/applications" + (qs.toString() ? "?" + qs : "")));
     } else if (RRTAB === "seguimiento") {
       RRSEG.mes = rrMesActual();
-      const [workers, llamadas, preguntas] = await Promise.all([api("/api/rrhh/trabajadores"), apiOptional("/api/rrhh/llamadas/" + RRSEG.mes), apiOptional("/api/rrhh/preguntas/" + RRSEG.mes)]);
-      RRSEG.workers = workers || []; RRSEG.llamadas = llamadas || []; RRSEG.preguntas = preguntas || [];
+      const [workers, llamadas, preguntas, resumen] = await Promise.all([api("/api/rrhh/trabajadores"), apiOptional("/api/rrhh/llamadas/" + RRSEG.mes), apiOptional("/api/rrhh/preguntas/" + RRSEG.mes), apiOptional("/api/rrhh/resumen?mes=" + RRSEG.mes)]);
+      RRSEG.workers = workers || []; RRSEG.llamadas = llamadas || []; RRSEG.preguntas = preguntas || []; RRSEG.resumen = resumen || [];
       if (RRSEG.sel) { const still = RRSEG.workers.find((w) => String(w.id) === String(RRSEG.sel.id)); RRSEG.sel = still || null; }
       view.innerHTML = renderRRSeg();
     } else if (RRTAB === "vacantes") {
@@ -1366,11 +1377,27 @@ async function rrNotaDel(id) {
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 function rrWorkerAdd() {
-  const locOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
-  const ov = modal("Añadir trabajador", `<form id="fWorker" class="grid" style="gap:12px"><div class="field"><label>Nombre</label><input name="nombre" required></div><div class="field"><label>Usuario</label><input name="username" required placeholder="nombre.local"></div><div class="field"><label>Local</label><select name="local">${locOpts}</select></div><div class="field"><label>Rol</label><select name="rol"><option value="trabajador">Trabajador</option><option value="encargado">Encargado</option></select></div><div class="field"><label>Contraseña</label><input name="password" required value="tapeta2024"></div><button class="btn primary" type="submit">Crear</button></form>`);
+  // Alta vía endpoint propio de RRHH: el encargado puede crear en SU local (rol fijo trabajador).
+  const enc = USER.rol === "encargado";
+  const localField = enc
+    ? `<input type="hidden" name="local" value="${esc(USER.local || "")}"><div class="field"><label>Local</label><input value="${esc(USER.local || "")}" disabled></div>`
+    : `<div class="field"><label>Local</label><select name="local">${LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("")}</select></div>`;
+  const rolField = enc ? `<input type="hidden" name="rol" value="trabajador">` : `<div class="field"><label>Rol</label><select name="rol"><option value="trabajador">Trabajador</option><option value="encargado">Encargado</option></select></div>`;
+  const ov = modal("Añadir trabajador", `<form id="fWorker" class="grid" style="gap:12px"><div class="field"><label>Nombre</label><input name="nombre" required></div><div class="field"><label>Usuario</label><input name="username" required placeholder="nombre.local"></div>${localField}${rolField}<div class="field"><label>Contraseña</label><input name="password" required value="tapeta2024"></div><button class="btn primary" type="submit">Crear</button></form>`);
   ov.querySelector("#fWorker").addEventListener("submit", async (e) => {
     e.preventDefault(); const data = Object.fromEntries(new FormData(e.target).entries());
-    try { await apiSend("POST", "/api/users", data); ov.remove(); toast("Trabajador creado ✅"); loadRRHH(); } catch (err) { toast("Error: " + err.message); }
+    try { await apiSend("POST", "/api/rrhh/trabajador", data); ov.remove(); toast("Trabajador creado ✅"); loadRRHH(); } catch (err) { toast("Error: " + err.message); }
+  });
+}
+function rrContratar(id, nombre) {
+  const localOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const base = String(nombre || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "");
+  const body = `<form id="fContratar"><div class="mut" style="margin-bottom:10px">Se creará la ficha de <b>${esc(nombre)}</b> (con su CV como primer documento) y la candidatura pasará a «contratada».</div><div class="form-grid"><div class="field"><label>Usuario</label><input name="username" required value="${esc(base)}"></div><div class="field"><label>Contraseña</label><input name="password" type="text" required value="tapeta2024"></div><div class="field"><label>Local</label><select name="local">${localOpts}</select></div><div class="field"><label>Rol</label><select name="rol"><option value="trabajador">trabajador</option><option value="encargado">encargado</option></select></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Contratar</button></div></form>`;
+  const ov = modal("Contratar candidato", body);
+  ov.querySelector("#fContratar").addEventListener("submit", async (e) => {
+    e.preventDefault(); const f = e.target;
+    try { await apiSend("POST", "/api/hr/applications/" + encodeURIComponent(id) + "/contratar", { username: f.username.value.trim(), password: f.password.value, local: f.local.value, rol: f.rol.value }); ov.remove(); toast("Contratado ✅ Ficha creada"); loadRRHH(); }
+    catch (err) { toast("Error: " + err.message); }
   });
 }
 async function rrWorkerDel(id, nombre) {
@@ -2690,6 +2717,7 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-editar-datos") rrEditarDatos(t.getAttribute("data-id"));
   else if (act === "rr-doc-subir") rrDocSubir(t.getAttribute("data-id"));
   else if (act === "rr-doc-del") rrDocDel(t.getAttribute("data-id"));
+  else if (act === "cand-contratar") rrContratar(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-agora-import") rrImportarOperadores();
   else if (act === "rr-rend-cargar") rrCargarRendimiento(t.getAttribute("data-id"));
   else if (act === "rr-worker-add") rrWorkerAdd();

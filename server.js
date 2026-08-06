@@ -3468,6 +3468,32 @@ app.put("/api/hr/applications/:id", requireAuth(["rrhh", "direccion"]), async (r
   }
 });
 
+// Contratar: crea la ficha/usuario copiando los datos del candidato + su CV como primer documento,
+// y marca la candidatura como 'contratada'. Cierra el hueco candidatura→alta (antes era manual).
+app.post("/api/hr/applications/:id/contratar", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+  const { username, password, local } = req.body;
+  const rol = req.body.rol === "encargado" ? "encargado" : "trabajador";
+  if (!username || !password || !local) return res.status(400).json({ ok: false, error: "Faltan usuario, contraseña o local" });
+  try {
+    const cand = await dbGet("SELECT * FROM hr_applications WHERE id = ?", [req.params.id]);
+    if (!cand) return res.status(404).json({ ok: false, error: "Candidatura no encontrada" });
+    const hash = await bcrypt.hash(password, 10);
+    const now = new Date().toISOString();
+    const u = await dbRun(
+      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, telefono, email, puesto, fecha_alta, activo, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`,
+      [username, hash, encUserPass(password), rol, cand.nombre || "", local, cand.telefono || null, cand.email || null, cand.puesto || null, now.slice(0, 10), now]);
+    if (cand.cv_url) {
+      await dbRun(`INSERT INTO hr_documentos (worker_id, tipo, nombre, url, sensible, autor, creado_en) VALUES (?, 'otro', ?, ?, 0, ?, ?)`,
+        [u.id, "CV de la candidatura", cand.cv_url, req.user?.nombre || req.user?.username || null, now]);
+    }
+    await dbRun(`UPDATE hr_applications SET estado='contratada' WHERE id=?`, [req.params.id]);
+    res.json({ ok: true, id: u.id });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: /duplicate|unique/i.test(e.message || "") ? "Ese nombre de usuario ya existe" : "No se pudo contratar" });
+  }
+});
+
 // ── RRHH: Seguimiento de trabajadores ─────────────────────────────────────
 // Acceso: dirección y rol `rrhh` ven TODOS los locales; `encargado` solo el suyo (validado aquí,
 // no en el front). RRHH_ROLES abre los endpoints de seguimiento también al encargado.
@@ -3491,6 +3517,46 @@ app.get("/api/rrhh/trabajadores", requireAuth(RRHH_ROLES), async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false });
   }
+});
+
+// Alta de trabajador desde RRHH (no depende de POST /api/users, que es solo dirección).
+// El encargado solo puede crear en SU local y con rol acotado a 'trabajador'.
+app.post("/api/rrhh/trabajador", requireAuth(RRHH_ROLES), async (req, res) => {
+  const { username, password, nombre } = req.body;
+  let local = req.body.local, rol = req.body.rol || "trabajador";
+  if (!username || !password || !nombre) return res.status(400).json({ ok: false, error: "Faltan usuario, contraseña o nombre" });
+  if (esEncargado(req)) { local = localScope(req); rol = "trabajador"; }
+  if (!local) return res.status(400).json({ ok: false, error: "Falta el local" });
+  if (!rrhhPuedeLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+  if (!["trabajador", "encargado"].includes(rol)) rol = "trabajador";
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    const now = new Date().toISOString();
+    const row = await dbRun(
+      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, fecha_alta, activo, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`,
+      [username, hash, encUserPass(password), rol, nombre, local, now.slice(0, 10), now]);
+    res.json({ ok: true, id: row.id });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: /duplicate|unique/i.test(e.message || "") ? "Ese usuario ya existe" : "No se pudo crear" });
+  }
+});
+
+// Resumen del equipo por local (plantilla, activos/bajas, antigüedad, check-ins, docs por caducar,
+// cumpleaños próximos). Reutiliza la lógica pura resumenEquipoPorLocal.
+app.get("/api/rrhh/resumen", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const scope = rrhhLocalScope(req);
+    const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes || "")) ? req.query.mes : new Date().toISOString().slice(0, 7);
+    const trabajadores = scope
+      ? await dbAll("SELECT id, nombre, local, activo, fecha_alta, fecha_baja, fecha_nac FROM users WHERE rol IN ('trabajador','encargado') AND local = ?", [scope])
+      : await dbAll("SELECT id, nombre, local, activo, fecha_alta, fecha_baja, fecha_nac FROM users WHERE rol IN ('trabajador','encargado')");
+    const ids = trabajadores.map((w) => w.id);
+    const ph = ids.map(() => "?").join(",");
+    const checkins = ids.length ? await dbAll(`SELECT worker_id, realizada FROM hr_llamadas_mes WHERE mes = ? AND worker_id IN (${ph})`, [mes, ...ids]) : [];
+    const docsRows = ids.length ? await dbAll(`SELECT worker_id, fecha_caducidad FROM hr_documentos WHERE worker_id IN (${ph})`, ids) : [];
+    const docsPorWorker = {}; for (const d of docsRows) (docsPorWorker[d.worker_id] || (docsPorWorker[d.worker_id] = [])).push(d);
+    res.json({ ok: true, data: resumenEquipoPorLocal(trabajadores, checkins, docsPorWorker, hoyISO(), 30), mes });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get("/api/rrhh/trabajador/:id/notas", requireAuth(RRHH_ROLES), async (req, res) => {
