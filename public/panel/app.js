@@ -37,6 +37,7 @@ const NAV = [
   { g: "Operación", items: [
     ["dashboard", "Dashboard", "dash", ["direccion", "encargado", "contabilidad"]],
     ["reservas", "Reservas", "cal", ["direccion", "encargado"]],
+    ["comunicados", "Comunicados", "mega", ["direccion", "encargado"]],
     ["mantenimiento", "Mantenimiento", "wrench", ["direccion", "encargado"]],
     ["clientes", "Clientes", "users", ["direccion"]],
   ] },
@@ -55,8 +56,8 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { dashboard: "Dashboard", reservas: "Reservas", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", sara: "Sara", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", sara: "Sara", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 
 let USER = null, CURRENT = "dashboard";
 
@@ -82,8 +83,7 @@ function shell(active, bodyHtml) {
     <aside class="sidebar">
       <div class="brand"><div class="logo">FA</div><div class="bt"><b>Familia del Amor</b><span>Sistema operativo interno</span></div></div>
       <nav class="nav">${nav}</nav>
-      <div class="sbf"><div class="u"><span class="avatar">${esc(initials)}</span><div class="txt"><b>${esc(uname)}</b><span>${esc(cap(USER.rol || ""))} · acceso ${USER.rol === "direccion" ? "global" : "de módulo"}</span></div></div>
-        <a class="ext" href="/direccion.html">${ic("cog", 16)}<span class="txt">Ajustes avanzados</span></a></div>
+      <div class="sbf"><div class="u"><span class="avatar">${esc(initials)}</span><div class="txt"><b>${esc(uname)}</b><span>${esc(cap(USER.rol || ""))} · acceso ${USER.rol === "direccion" ? "global" : "de módulo"}</span></div></div></div>
     </aside>
     <div class="main">
       <header class="topbar">
@@ -177,6 +177,7 @@ const ICONS = {
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/>',
   bot: '<rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M12 8V4.5M8.5 13h.01M15.5 13h.01M9.5 16h5M2.5 12.5v2M21.5 12.5v2"/><circle cx="12" cy="4" r="1.3"/>',
   clip: '<path d="M20 11l-8.5 8.5a4 4 0 0 1-5.7-5.7L14 5.6a2.6 2.6 0 0 1 3.7 3.7l-8.3 8.3a1.2 1.2 0 0 1-1.7-1.7l7.6-7.6"/>',
+  mega: '<path d="M3 11l12-5v12L3 13zM3 11v3M15 8.5a3 3 0 0 1 0 7M6.5 13.5V17a1.5 1.5 0 0 0 3 0v-2.6"/>',
 };
 function ic(name, size = 18) { return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICONS.dash}</svg>`; }
 
@@ -957,6 +958,28 @@ async function saraRegDel(id) {
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 
+// ── Comunicados (avisos al equipo) ────────────────────────────────────────────
+function renderComunicados(list) {
+  list = list || [];
+  const locOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const form = `<div class="card"><div class="ch"><h3>Publicar comunicado</h3></div><div class="toolbar"><div class="field"><label>Local</label><select id="comLocal">${locOpts}</select></div></div><div class="field" style="width:100%"><label>Mensaje para el equipo</label><textarea id="comMsg" rows="3" placeholder="Escribe el aviso que verán los trabajadores…"></textarea></div><button class="btn primary" data-act="com-add">Publicar comunicado</button></div>`;
+  const items = list.length ? list.map((a) => `<div class="card" style="padding:14px 16px"><div class="t2">${esc(a.local || "")} · ${esc(String(a.creado_en || "").slice(0, 10))}</div><div style="white-space:pre-wrap;margin-top:4px">${esc(a.mensaje || "")}</div></div>`).join("") : `<div class="card"><div class="mut" style="padding:6px">Sin comunicados publicados.</div></div>`;
+  return `<div class="ph"><div class="eyebrow">Operación</div><h1>Comunicados</h1><div class="sub">Avisos que verán los trabajadores en su panel</div></div>${form}<div class="grid" style="gap:10px;margin-top:16px">${items}</div>`;
+}
+async function loadComunicados() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try { view.innerHTML = renderComunicados(await api("/api/announcements?rol=trabajadores")); }
+  catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+async function comAdd() {
+  const local = (document.getElementById("comLocal") || {}).value || "";
+  const mensaje = (document.getElementById("comMsg") || {}).value || "";
+  if (!mensaje.trim()) { toast("Escribe el mensaje del comunicado"); return; }
+  if (!local) { toast("Elige un local"); return; }
+  try { await apiSend("POST", "/api/announcements", { local, rol: "trabajadores", mensaje: mensaje.trim() }); toast("Comunicado publicado ✅"); loadComunicados(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
 // ════════════════════════ VISTA: CAMPAÑAS ════════════════════════
 function renderCampanas(list) {
   const rows = list || [];
@@ -1163,7 +1186,7 @@ async function webBlkUpload(input, gallery) {
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, sara: loadSara, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, sara: loadSara, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   CURRENT = view;
@@ -1236,6 +1259,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-grp-add") facGrpAdd();
   else if (act === "fac-grp-del") facGrpDel(t.getAttribute("data-id"));
   else if (act === "fac-303") fac303();
+  else if (act === "com-add") comAdd();
   else if (act === "camp-nueva") openNuevaCampana();
   else if (act === "wa-link") waLink(t.getAttribute("data-local"), t);
   else if (act === "sara-send") saraSend();
