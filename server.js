@@ -2789,9 +2789,30 @@ app.get("/api/agora/informe/:tipo", requireAuth(["direccion", "contabilidad"]), 
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// Métricas del dashboard por RANGO de fechas [from,to] (reservas + ventas). Si el rango incluye
-// hoy, añade la venta EN VIVO de hoy (no está aún en ventas_diarias). Usado por el selector Hoy/
-// Ayer/Semana/Mes/personalizado.
+// Ventas de un RANGO consultadas EN VIVO a Ágora (getVentasRango, cualquier rango — SIN límite de
+// histórico; Ágora devuelve hasta donde haya datos). Caché 3 min por (local,rango) + timeout por
+// local para no colgar el dashboard si el TPV está cerrado. Devuelve serie por día, o null si no
+// hay credenciales / el TPV no responde (para que el endpoint use ventas_diarias de respaldo).
+const _ventasRangoCache = new Map();
+async function ventasRangoLive(local, from, to) {
+  const key = `${local || "*"}|${from}_${to}`;
+  const cached = _ventasRangoCache.get(key);
+  if (cached && (Date.now() - cached.ts) < 3 * 60 * 1000) return cached.serie;
+  const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (local ? c.local === local : true));
+  if (!configs.length) return null;
+  const conTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+  const results = await Promise.all(configs.map((cfg) => conTimeout(createAgoraClient(cfg).getVentasRango(from, to), 20000).then((d) => d).catch(() => null)));
+  const ok = results.filter(Boolean);
+  if (!ok.length) return null; // TPV cerrado/errores → respaldo en ventas_diarias
+  const byDia = {};
+  for (const dias of ok) for (const v of dias) { const e = byDia[v.dia] || (byDia[v.dia] = { dia: v.dia, ventas: 0, tickets: 0 }); e.ventas += v.ventas || 0; e.tickets += v.tickets || 0; }
+  const serie = Object.values(byDia).map((e) => ({ dia: e.dia, ventas: Math.round(e.ventas * 100) / 100, tickets: e.tickets })).sort((a, b) => a.dia.localeCompare(b.dia));
+  _ventasRangoCache.set(key, { ts: Date.now(), serie });
+  return serie;
+}
+
+// Métricas del dashboard por RANGO de fechas [from,to] (reservas + ventas). Las ventas se consultan
+// EN VIVO a Ágora (cualquier rango, sin tope de histórico); si el TPV está cerrado, usa ventas_diarias.
 app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
   try {
     const local = (req.query.local && String(req.query.local).trim()) || null;
@@ -2801,23 +2822,30 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
     const lf = local ? " AND local = ?" : "";
     const lp = local ? [local] : [];
     const resRows = await dbAll(`SELECT dia, COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia >= ? AND dia <= ?${lf} GROUP BY dia ORDER BY dia`, [from, to, ...lp]);
-    const venRows = await dbAll(`SELECT dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ?${lf} ORDER BY dia`, [from, to, ...lp]);
     const hoy = new Date().toISOString().slice(0, 10);
-    const ventasSerie = venRows.map((r) => ({ dia: r.dia, ventas: r.ventas, tickets: r.tickets }));
-    let hoyEnVivo = false;
-    if (from <= hoy && to >= hoy) { // añadir hoy en vivo (no está en ventas_diarias)
-      try {
-        const vv = await ventasVivoData(false);
-        for (const L of (vv.locales || [])) {
-          if (local && L.local !== local) continue;
-          const t = (L.dias || []).find((d) => d.dia === hoy);
-          if (!t) continue;
-          hoyEnVivo = true;
-          const ex = ventasSerie.find((x) => x.dia === hoy);
-          if (ex) { ex.ventas += t.ventas; ex.tickets += t.tickets; } else ventasSerie.push({ dia: hoy, ventas: t.ventas, tickets: t.tickets });
-        }
-        ventasSerie.sort((a, b) => a.dia.localeCompare(b.dia));
-      } catch { /* si el vivo falla, seguimos con lo cerrado */ }
+    let ventasSerie = [], hoyEnVivo = false, fuenteVentas = "bd";
+    const live = await ventasRangoLive(local, from, to);
+    if (live) {
+      ventasSerie = live;
+      hoyEnVivo = to >= hoy && ventasSerie.some((x) => x.dia === hoy);
+      fuenteVentas = "live";
+    } else {
+      // Respaldo: días cerrados en ventas_diarias (+ hoy en vivo si el TPV responde).
+      const venRows = await dbAll(`SELECT dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ?${lf} ORDER BY dia`, [from, to, ...lp]);
+      ventasSerie = venRows.map((r) => ({ dia: r.dia, ventas: r.ventas, tickets: r.tickets }));
+      if (from <= hoy && to >= hoy) {
+        try {
+          const vv = await ventasVivoData(false);
+          for (const L of (vv.locales || [])) {
+            if (local && L.local !== local) continue;
+            const t = (L.dias || []).find((d) => d.dia === hoy);
+            if (!t) continue; hoyEnVivo = true;
+            const ex = ventasSerie.find((x) => x.dia === hoy);
+            if (ex) { ex.ventas += t.ventas; ex.tickets += t.tickets; } else ventasSerie.push({ dia: hoy, ventas: t.ventas, tickets: t.tickets });
+          }
+          ventasSerie.sort((a, b) => a.dia.localeCompare(b.dia));
+        } catch { /* si el vivo falla, seguimos con lo cerrado */ }
+      }
     }
     const reservasTotal = resRows.reduce((s, r) => s + r.n, 0);
     const personasTotal = resRows.reduce((s, r) => s + r.personas, 0);
@@ -2826,7 +2854,7 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
     res.json({ ok: true, data: {
       from, to, hoy, hoyEnVivo,
       reservas: { total: reservasTotal, personas: personasTotal, serie: resRows },
-      ventas: { disponible: ventasSerie.length > 0, total: Math.round(ventasTotal * 100) / 100, tickets: ticketsTotal, ticket_medio: ticketsTotal ? Math.round(ventasTotal / ticketsTotal * 100) / 100 : 0, serie: ventasSerie },
+      ventas: { disponible: ventasSerie.length > 0, total: Math.round(ventasTotal * 100) / 100, tickets: ticketsTotal, ticket_medio: ticketsTotal ? Math.round(ventasTotal / ticketsTotal * 100) / 100 : 0, serie: ventasSerie, fuente: fuenteVentas },
     } });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
