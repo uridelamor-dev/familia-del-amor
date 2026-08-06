@@ -140,6 +140,9 @@ describe("mensajeEstadoReseñas", () => {
   test("faltan Place IDs", () => {
     assert.match(mensajeEstadoReseñas({ connected: true, reviews_count: 0, reason: "sin_place_ids" }), /Place IDs/);
   });
+  test("sin Place IDs → mensaje EXACTO (nunca 'Fuente: none' sin explicar)", () => {
+    assert.equal(mensajeEstadoReseñas({ connected: true, reviews_count: 0, source: "none", reason: "sin_place_ids", businessProfileError: "cuota_agotada_429" }), "No hay Place IDs configurados.");
+  });
 });
 
 describe("buildManageQuery (bandeja: filtros/orden)", () => {
