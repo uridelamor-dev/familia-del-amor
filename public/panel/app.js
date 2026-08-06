@@ -843,6 +843,7 @@ async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cue
 // ════════════════════════ VISTA: FACTURAS ════════════════════════
 let FACF = { local: "", empresa: "", estado: "", tipo: "", q: "", from: "", to: "" };
 let FAC_LIST = [];
+let FAC_PEND = [];
 let FACTAB = "facturas";
 let FCFG = { locales: [], reglas: [], grupos: [], empresas: [], groups: [], integ: null };
 let FAC303 = { empresa: "", trimestre: "", data: null, error: "" };
@@ -860,7 +861,13 @@ function renderFacturas(list, pend, stats, empresas) {
   const porLocal = (stats && stats.porLocal && stats.porLocal.length) ? `<div class="card"><div class="ch"><h3>Gasto por local (año)</h3></div><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div></div>` : "";
   const topProv = (stats && stats.topProveedores && stats.topProveedores.length) ? `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Top proveedores (año)</h3></div><div class="rows">${stats.topProveedores.map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "—")}</div><div class="t2">${num(p.num)} factura(s)</div></div><b class="tnum">${eur(p.total)}</b></div>`).join("")}</div></div>` : "";
   const vizGrid = (porLocal || topProv) ? `<div class="grid g2" style="margin-bottom:16px">${porLocal}${topProv}</div>` : "";
-  const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map((p) => `<div class="row"><div class="grow"><div class="t1">${esc(p.proveedor || "(sin proveedor)")}</div><div class="t2">${esc((p.fecha || "").slice(0, 10))} · ${eur(p.total)}</div></div>${p.drive_url ? `<a class="btn sm" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Ver ↗</a>` : ""}<select class="facSel" data-id="${p.id}" style="max-width:190px"><option value="">Asignar a…</option>${LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("")}</select><button class="btn" data-act="fac-asignar" data-id="${p.id}">Asignar</button></div>`).join("")}</div></div>` : "";
+  const pendRow = (p) => {
+    const sug = p.sugerido || {};
+    const sel = LOCALES.map((l) => `<option value="${esc(l)}" ${sug.local === l ? "selected" : ""}>${esc(l)}</option>`).join("");
+    const badge = sug.local ? `<span class="pill ${sug.confianza === "alta" ? "ok" : ""}" title="${esc(sug.motivo)}" style="font-size:10.5px">Sugerido: ${esc(nombreCortoLocal(sug.local))}</span>` : "";
+    return `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "(sin proveedor)")} ${badge}</div><div class="t2">${esc((p.fecha || "").slice(0, 10))} · ${eur(p.total)}</div></div><button class="btn sm" data-act="fac-revisar" data-id="${p.id}">Revisar</button><select class="facSel" data-id="${p.id}" style="max-width:190px"><option value="">Asignar a…</option>${sel}</select><button class="btn" data-act="fac-asignar" data-id="${p.id}">Asignar</button></div>`;
+  };
+  const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map(pendRow).join("")}</div></div>` : "";
   const table = list.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Nº</th><th>Proveedor</th><th>Local</th><th class="r">Base</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead><tbody>${list.map((f) => `<tr><td class="mut">${esc((f.fecha || "").slice(0, 10))}</td><td class="mut">${esc(f.numero_factura || "")}</td><td>${esc(f.proveedor || "")}${f.tipo && f.tipo !== "factura" ? ` <span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : ""}</td><td>${esc(f.local || "")}</td><td class="r tnum">${eur(f.base_imponible)}</td><td class="r tnum">${eur(f.total)}</td><td><span class="pill ${f.pagado ? "ok" : ""}">${f.pagado ? "Pagada" : "Pendiente"}</span></td><td class="r"><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin facturas con esos filtros.</div></div>`;
   return `${facHeader()}${resumen}${toolbar}${vizGrid}${pendCard}${table}`;
 }
@@ -883,23 +890,35 @@ function facFicha(id) {
 }
 async function facExport() { try { const r = await fetch("/api/facturas/export.csv" + (facQS() ? "?" + facQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "facturas.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
 function facSubir() {
-  const localOpts = ['<option value="">Detectar automáticamente (por NIF)</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
-  const ov = modal("Subir factura", `<div class="field" style="width:100%"><label>Archivo (PDF o imagen)</label><input type="file" id="fsFile" accept="application/pdf,image/*"></div><div class="field" style="width:100%"><label>Local</label><select id="fsLocal">${localOpts}</select></div><div class="mut" style="font-size:12px">Se procesa en segundo plano con la misma IA, orden en Drive y control de duplicados que WhatsApp/correo. Requiere Google conectado. Puedes cerrar y seguir trabajando; te aviso al terminar.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fsSend">Subir y procesar</button></div>`);
+  const localOpts = ['<option value="">Detectar automáticamente (por NIF, empresa o proveedor)</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
+  const ov = modal("Subir facturas", `<div class="field" style="width:100%"><label>Archivos (PDF o imágenes, puedes elegir varios)</label><input type="file" id="fsFile" accept="application/pdf,image/*" multiple></div><div class="field" style="width:100%"><label>Local</label><select id="fsLocal">${localOpts}</select></div><div class="mut" style="font-size:12px">Se procesan en segundo plano con la misma IA, orden en Drive y control de duplicados que WhatsApp/correo. Requiere Google conectado. Puedes cerrar y seguir trabajando; te aviso al terminar.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fsSend">Subir y procesar</button></div>`);
   ov.querySelector("#fsSend").addEventListener("click", () => {
-    const inp = ov.querySelector("#fsFile"); const f = inp && inp.files && inp.files[0];
-    if (!f) { toast("Elige un archivo"); return; }
+    const inp = ov.querySelector("#fsFile"); const files = inp && inp.files ? Array.from(inp.files) : [];
+    if (!files.length) { toast("Elige al menos un archivo"); return; }
     const loc = ov.querySelector("#fsLocal").value;
     ov.remove(); // fuera la pantallita: sigue trabajando
-    toast(`Subiendo «${f.name}» en segundo plano…`);
+    toast(files.length === 1 ? `Subiendo «${files[0].name}» en segundo plano…` : `Subiendo ${files.length} facturas en segundo plano…`);
     (async () => {
       try {
-        const fd = new FormData(); fd.append("file", f); if (loc) fd.append("local", loc);
+        const fd = new FormData();
+        files.forEach((f) => fd.append("files", f));
+        if (loc) fd.append("local", loc);
         const r = await fetch("/api/facturas/subir", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
         const j = await r.json();
-        if (!j.ok) { toast((j.duplicate ? "⚠ Duplicada, no se subió: " : "⚠ Error al procesar: ") + f.name); if (CURRENT === "facturas") loadFacturas(); return; }
-        toast(j.pendiente ? `✅ ${f.name}: subida, pendiente de asignar local` : `✅ Factura procesada: ${j.proveedor || f.name}`);
+        if (!j.ok) { toast("⚠ Error al subir: " + (j.error || "desconocido")); return; }
+        const rs = j.resultados || [];
+        const okc = rs.filter((x) => x.ok).length;
+        const dup = rs.filter((x) => x.duplicate).length;
+        const err = rs.filter((x) => !x.ok && !x.duplicate).length;
+        const pend = rs.filter((x) => x.ok && x.pendiente).length;
+        let msg = `✅ ${okc}/${rs.length} procesadas`;
+        if (pend) msg += ` · ${pend} pendiente(s) de asignar`;
+        if (dup) msg += ` · ${dup} duplicada(s)`;
+        if (err) msg += ` · ${err} con error`;
+        toast(msg);
+        if (err) rs.filter((x) => !x.ok && !x.duplicate).forEach((x) => toast(`⚠ ${x.filename}: ${x.error}`));
         if (CURRENT === "facturas") loadFacturas();
-      } catch (e) { toast(`⚠ Error al subir ${f.name}: ${e.message}`); }
+      } catch (e) { toast(`⚠ Error al subir: ${e.message}`); }
     })();
   });
 }
@@ -953,7 +972,8 @@ async function loadFacturas() {
       apiOptional("/api/facturas/empresas"),
     ]);
     FAC_LIST = lst || [];
-    view.innerHTML = renderFacturas(FAC_LIST, pend || [], stats, empresas || []);
+    FAC_PEND = pend || [];
+    view.innerHTML = renderFacturas(FAC_LIST, FAC_PEND, stats, empresas || []);
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function facTab(tab) { FACTAB = tab; loadFacturas(); }
@@ -995,6 +1015,64 @@ async function fac303() {
 }
 async function facPago(id) { try { await apiSend("PATCH", "/api/facturas/" + encodeURIComponent(id) + "/pago"); toast("Estado de pago actualizado"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facAsignar(id) { const sel = document.querySelector('.facSel[data-id="' + id + '"]'); const local = sel ? sel.value : ""; if (!local) { toast("Elige un local"); return; } try { await apiSend("POST", "/api/facturas/pendientes/" + encodeURIComponent(id) + "/asignar", { local }); toast("Factura asignada a " + local); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+
+// Revisar una factura pendiente: vista previa del documento a la izquierda y formulario
+// editable a la derecha, sin salir de la pestaña. Al asignar, se guardan las correcciones.
+function facRevisar(id) {
+  const p = (FAC_PEND || []).find((x) => String(x.id) === String(id));
+  if (!p) { toast("Pendiente no encontrada"); return; }
+  const sug = p.sugerido || {};
+  const fld = (label, key, type = "text", extra = "") => `<div class="field"><label>${label}</label><input data-pf="${key}" type="${type}" ${extra} value="${esc(p[key] != null ? p[key] : "")}"></div>`;
+  const localSel = `<div class="field"><label>Local${sug.local ? ` · <span class="mut">sugerido: ${esc(nombreCortoLocal(sug.local))}</span>` : ""}</label><select id="prLocal"><option value="">Elegir local…</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${sug.local === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`;
+  const tipoSel = `<div class="field"><label>Tipo</label><select data-pf="tipo">${["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${p.tipo === t ? "selected" : ""}>${cap(t)}</option>`).join("")}</select></div>`;
+  const body = `<div class="revrev">
+    <div class="prev"><div class="ld" id="prPrev">Cargando vista previa…</div></div>
+    <div>
+      <div class="form-grid">
+        ${fld("Proveedor", "proveedor")}${fld("NIF proveedor", "nif")}
+        ${fld("Nº documento", "numero_factura")}${fld("Fecha", "fecha", "date")}
+        ${tipoSel}${localSel}
+        ${fld("Concepto", "concepto")}${fld("Base (€)", "base_imponible", "number", 'step="0.01"')}
+        ${fld("IVA %", "porcentaje_iva", "number", 'step="0.01"')}${fld("Cuota (€)", "cuota_iva", "number", 'step="0.01"')}
+        ${fld("Total (€)", "total", "number", 'step="0.01"')}
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:8px;margin-top:14px;align-items:center">
+        ${p.drive_url ? `<a class="btn sm" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Abrir en Drive ↗</a>` : "<span></span>"}
+        <div style="display:flex;gap:8px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="prAsignar">Asignar</button></div>
+      </div>
+    </div>
+  </div>`;
+  const ov = modal("Revisar factura · " + (p.proveedor || p.id), body);
+  ov.querySelector(".modal").classList.add("wide");
+  // Vista previa: descargamos el archivo con el token y lo mostramos como blob (iframe/img).
+  let blobUrl = null;
+  (async () => {
+    try {
+      const r = await fetch("/api/facturas/pendientes/" + encodeURIComponent(id) + "/archivo", { headers: { Authorization: "Bearer " + token() } });
+      if (!r.ok) throw new Error("no disponible");
+      const blob = await r.blob(); blobUrl = URL.createObjectURL(blob);
+      const cont = ov.querySelector(".prev");
+      cont.innerHTML = blob.type.startsWith("image/")
+        ? `<img src="${blobUrl}" alt="Vista previa">`
+        : `<iframe src="${blobUrl}" title="Vista previa"></iframe>`;
+    } catch {
+      const el = ov.querySelector("#prPrev");
+      if (el) el.innerHTML = `<div style="text-align:center;padding:12px">No se pudo cargar la vista previa.${p.drive_url ? `<br><a class="link" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Abrir en Drive ↗</a>` : ""}</div>`;
+    }
+  })();
+  ov.addEventListener("click", (e) => { if ((e.target === ov || e.target.closest("[data-close]")) && blobUrl) URL.revokeObjectURL(blobUrl); });
+  ov.querySelector("#prAsignar").addEventListener("click", async () => {
+    const local = ov.querySelector("#prLocal").value;
+    if (!local) { toast("Elige un local"); return; }
+    const payload = { local };
+    ov.querySelectorAll("[data-pf]").forEach((el) => { payload[el.getAttribute("data-pf")] = el.value; });
+    try {
+      await apiSend("POST", "/api/facturas/pendientes/" + encodeURIComponent(id) + "/asignar", payload);
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      ov.remove(); toast("Factura asignada a " + local + " ✅"); loadFacturas();
+    } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+  });
+}
 
 // ════════════════════════ VISTA: WHATSAPP ════════════════════════
 let WA_POLL = null;
@@ -1598,6 +1676,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-filtrar") applyFacFilter();
   else if (act === "fac-pago") facPago(t.getAttribute("data-id"));
   else if (act === "fac-asignar") facAsignar(t.getAttribute("data-id"));
+  else if (act === "fac-revisar") facRevisar(t.getAttribute("data-id"));
   else if (act === "fac-tab") facTab(t.getAttribute("data-tab"));
   else if (act === "fac-loc-add") facLocAdd();
   else if (act === "fac-loc-del") facLocDel(t.getAttribute("data-local"));

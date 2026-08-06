@@ -12,6 +12,7 @@ import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets } from "./facturas.js";
+import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
 import { permisosV2Enabled } from "./src/core/flags.js";
@@ -1234,20 +1235,32 @@ app.get("/api/facturas/export.csv", requireAuth(["direccion", "contabilidad"]), 
 });
 
 // Subir una factura MANUALMENTE desde el panel (mismo pipeline que WhatsApp/correo/Drive).
-app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad"]), uploadFacturaMem.single("file"), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ ok: false, error: "Falta el archivo" });
-    const { buffer, mimetype, originalname } = req.file;
-    if (!(mimetype === "application/pdf" || mimetype.startsWith("image/"))) return res.status(400).json({ ok: false, error: "Solo se admiten PDF o imágenes" });
-    const local = (req.body.local || "").trim();
-    let result;
-    if (local) result = await procesarFactura({ buffer, mimeType: mimetype, filename: originalname, local, canal: "Manual", getToken: getDriveAccessToken, dbGet, dbRun });
-    else result = await procesarFacturaSinLocal({ buffer, mimeType: mimetype, filename: originalname, origen: "manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
-    res.json({ ok: true, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl });
-  } catch (e) {
-    if (e && e.isDuplicate) return res.status(409).json({ ok: false, duplicate: true, error: e.message || "Esta factura ya está registrada" });
-    res.status(500).json({ ok: false, error: e.message });
+// Subida manual: admite VARIAS facturas a la vez (campo "files"), y también el envío
+// antiguo de una sola ("file"). Se procesan en secuencia (respeta límites de Drive y el
+// cerrojo por hash) y se devuelve un resultado por archivo.
+app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad"]), uploadFacturaMem.fields([{ name: "files", maxCount: 30 }, { name: "file", maxCount: 1 }]), async (req, res) => {
+  const archivos = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
+  if (!archivos.length) return res.status(400).json({ ok: false, error: "Falta el archivo" });
+  const local = (req.body.local || "").trim();
+  const resultados = [];
+  for (const f of archivos) {
+    const { buffer, mimetype, originalname } = f;
+    if (!(mimetype === "application/pdf" || mimetype.startsWith("image/"))) {
+      resultados.push({ filename: originalname, ok: false, error: "Solo se admiten PDF o imágenes" });
+      continue;
+    }
+    try {
+      let result;
+      if (local) result = await procesarFactura({ buffer, mimeType: mimetype, filename: originalname, local, canal: "Manual", getToken: getDriveAccessToken, dbGet, dbRun });
+      else result = await procesarFacturaSinLocal({ buffer, mimeType: mimetype, filename: originalname, origen: "manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
+      resultados.push({ filename: originalname, ok: true, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl });
+    } catch (e) {
+      if (e && e.isDuplicate) resultados.push({ filename: originalname, ok: false, duplicate: true, error: e.message || "Esta factura ya está registrada" });
+      else resultados.push({ filename: originalname, ok: false, error: e.message });
+    }
   }
+  const okc = resultados.filter((r) => r.ok).length;
+  res.json({ ok: true, total: resultados.length, correctas: okc, resultados });
 });
 
 // Carpetas de Drive vigiladas por local (ingesta directa dejando el archivo en Drive).
@@ -1348,14 +1361,57 @@ app.delete("/api/facturas/locales/:local", requireAuth(["direccion"]), async (re
 
 app.get("/api/facturas/pendientes", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const rows = await dbAll("SELECT * FROM facturas_pendientes ORDER BY creado_en DESC", []);
-  res.json({ ok: true, data: rows });
+  // Enriquecer cada pendiente con una sugerencia de local (para preseleccionar en el panel).
+  let locales = [], historial = {};
+  try {
+    locales = await dbAll("SELECT local, empresa, cif, local_contable FROM facturas_locales", []);
+    historial = indexarHistorialProveedor(await dbAll("SELECT proveedor, local FROM facturas WHERE proveedor IS NOT NULL", []));
+  } catch (e) { console.error("[pendientes] sugerencia:", e.message); }
+  const data = rows.map((p) => ({ ...p, sugerido: sugerirLocalPendiente({ pendiente: p, locales, historial }) }));
+  res.json({ ok: true, data });
 });
 
+// Vista previa del archivo pendiente SIN salir del panel: hacemos de proxy del fichero de
+// Drive (el navegador no puede mandar el token de Google). Se sirve desde nuestro dominio.
+app.get("/api/facturas/pendientes/:id/archivo", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const p = await dbGet("SELECT drive_file_id FROM facturas_pendientes WHERE id = ?", [req.params.id]);
+    if (!p || !p.drive_file_id) return res.status(404).json({ ok: false, error: "No encontrado" });
+    const token = await getDriveAccessToken();
+    const meta = await (await fetch(`https://www.googleapis.com/drive/v3/files/${p.drive_file_id}?fields=mimeType,name`, { headers: { Authorization: `Bearer ${token}` } })).json();
+    const mime = meta.mimeType || "application/pdf";
+    const dl = await fetch(`https://www.googleapis.com/drive/v3/files/${p.drive_file_id}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!dl.ok) return res.status(502).json({ ok: false, error: "No se pudo leer el archivo de Drive" });
+    res.setHeader("Content-Type", mime);
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(meta.name || "factura")}"`);
+    const buf = Buffer.from(await dl.arrayBuffer());
+    res.end(buf);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Campos de la factura que el panel puede corregir al asignar (se persisten en BD/Sheets).
+const CAMPOS_PENDIENTE_EDITABLES = ["tipo", "fecha", "numero_factura", "proveedor", "nif", "concepto", "base_imponible", "porcentaje_iva", "cuota_iva", "total"];
+function mergePendienteEditado(pendiente, body) {
+  const out = { ...pendiente };
+  for (const k of CAMPOS_PENDIENTE_EDITABLES) {
+    if (body[k] === undefined) continue;
+    if (["base_imponible", "porcentaje_iva", "cuota_iva", "total"].includes(k)) {
+      const n = body[k] === "" || body[k] === null ? null : Number(body[k]);
+      out[k] = Number.isFinite(n) ? n : out[k];
+    } else {
+      out[k] = body[k] === null ? out[k] : String(body[k]).trim();
+    }
+  }
+  return out;
+}
+
 app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), async (req, res) => {
-  const { local } = req.body;
+  const { local } = req.body || {};
   if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
-  const pendiente = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ?", [req.params.id]);
-  if (!pendiente) return res.status(404).json({ ok: false, error: "No encontrado" });
+  const pendienteBD = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ?", [req.params.id]);
+  if (!pendienteBD) return res.status(404).json({ ok: false, error: "No encontrado" });
+  // Si el usuario corrigió datos en el modal, se aplican antes de asignar (van a BD y Sheet).
+  const pendiente = mergePendienteEditado(pendienteBD, req.body || {});
   try {
     const result = await asignarFacturaPendiente({ pendiente, local, getToken: getDriveAccessToken, dbGet, dbAll, dbRun, backupFn: null });
     res.json({ ok: true, ...result });
