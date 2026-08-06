@@ -29,6 +29,26 @@ export function mapManageRow(r) {
 }
 
 // Constructor PURO de la consulta de la bandeja de reseñas (WHERE + params + ORDER).
+// ¿La ficha de Google (location_name) corresponde al local del ERP? Requiere que TODOS los
+// tokens significativos (≥4 letras, sin conectores) del local ERP aparezcan en el nombre de
+// Google. Así "La Tapeta - Lloret" casa "La Tapeta Lloret" pero NO "La Tapeta Blanes" (la marca
+// "tapeta" sola no basta; hace falta también la ciudad). Base del scope por local en Reseñas.
+const _STOP_REV = new Set(["la", "el", "los", "las", "de", "del", "d", "en", "y", "sl", "slu", "sa", "s", "l", "u"]);
+function _normRev(s) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+export function localCoincideConReview(localERP, locationName) {
+  const a = _normRev(localERP), b = _normRev(locationName);
+  if (!a || !b) return false;
+  const toks = a.split(" ").filter((t) => t.length >= 4 && !_STOP_REV.has(t));
+  if (!toks.length) return false;
+  return toks.every((t) => b.includes(t));
+}
+// Subconjunto de nombres de ficha de Google que corresponden a un local del ERP.
+export function locationNamesDeLocal(localERP, names) {
+  return (Array.isArray(names) ? names : []).filter((n) => localCoincideConReview(localERP, n));
+}
+
 export function buildManageQuery(f = {}) {
   const cond = [], params = [];
   if (f.local) { cond.push("location_name = ?"); params.push(String(f.local)); }

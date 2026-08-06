@@ -72,6 +72,14 @@ function puedeVer(view) {
   if (Array.isArray(USER.modulos) && USER.modulos.length) return USER.modulos.includes(view);
   return true;
 }
+// Local al que queda fijado el usuario en la interfaz (encargado con local). null = sin restricción.
+function localFijadoFE() { return (USER.rol !== "direccion" && USER.local) ? USER.local : null; }
+// Opciones de un <select> de local respetando el ámbito del usuario (si está fijado, solo su local).
+function opcionesLocal(actual, allLabel) {
+  const fijo = localFijadoFE();
+  if (fijo) return `<option value="${esc(fijo)}" selected>${esc(fijo)}</option>`;
+  return ['<option value="">' + esc(allLabel) + '</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${actual === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+}
 
 let USER = null, CURRENT = "dashboard";
 
@@ -408,9 +416,10 @@ function resDiasSemana(lunes) { return Array.from({ length: 7 }, (_, i) => addDa
 
 function renderReservas(list) {
   if (!RESF.foco) RESF.foco = todayStr();
-  const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${RESF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  if (localFijadoFE()) RESF.local = localFijadoFE();
+  const localOpts = opcionesLocal(RESF.local, "Todos los locales");
   const seg = ["dia:Día", "semana:Semana", "lista:Lista"].map((p) => { const [v, t] = p.split(":"); return `<button class="btn ${RESF.vista === v ? "primary" : ""}" data-act="res-vista" data-vista="${v}">${t}</button>`; }).join("");
-  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="fLocal">${localOpts}</select></div><button class="btn" data-act="filtrar">Filtrar</button><div class="spacer" style="flex:1"></div><div class="toolbar" style="margin:0;gap:6px">${seg}</div><button class="btn" data-act="csv">Exportar CSV</button><button class="btn primary" data-act="nueva">+ Nueva reserva</button></div>`;
+  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="fLocal" ${localFijadoFE() ? "disabled" : ""}>${localOpts}</select></div><button class="btn" data-act="filtrar">Filtrar</button><div class="spacer" style="flex:1"></div><div class="toolbar" style="margin:0;gap:6px">${seg}</div><button class="btn" data-act="csv">Exportar CSV</button><button class="btn primary" data-act="nueva">+ Nueva reserva</button></div>`;
   const cuerpo = RESF.vista === "lista" ? renderResLista(list) : RESF.vista === "semana" ? renderResSemana(list) : renderResDia(list);
   return `<div class="ph"><div class="eyebrow">Operación</div><h1>Reservas</h1><div class="sub">Agenda por turnos, ocupación y gestión rápida</div></div>${toolbar}${cuerpo}`;
 }
@@ -472,7 +481,8 @@ function resNavega(dir) {
   loadReservas();
 }
 function openNuevaReserva() {
-  const localOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const fijo = localFijadoFE();
+  const localOpts = fijo ? `<option value="${esc(fijo)}" selected>${esc(fijo)}</option>` : LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
   const body = `<form id="fReserva"><div class="form-grid">
     <div class="field full"><label>Local</label><select name="local" required>${localOpts}</select></div>
     <div class="field"><label>Día</label><input type="date" name="dia" value="${todayStr()}" required></div>
@@ -511,9 +521,10 @@ function renderMant(list) {
   let rows = (list || []).slice();
   if (MANF.estado) rows = rows.filter((r) => (r.estado || "") === MANF.estado);
   rows.sort((a, b) => String(b.creado_en).localeCompare(String(a.creado_en)));
-  const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${MANF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  if (localFijadoFE()) MANF.local = localFijadoFE();
+  const localOpts = opcionesLocal(MANF.local, "Todos los locales");
   const estOpts = ['<option value="">Todos los estados</option>'].concat(["abierta", "en proceso", "resuelta"].map((e) => `<option value="${e}" ${MANF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
-  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="mLocal">${localOpts}</select></div><div class="field"><label>Estado</label><select id="mEstado">${estOpts}</select></div><button class="btn" data-act="mant-filtrar">Buscar</button><div style="flex:1"></div><button class="btn primary" data-act="mant-nueva">+ Nueva incidencia</button></div>`;
+  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="mLocal" ${localFijadoFE() ? "disabled" : ""}>${localOpts}</select></div><div class="field"><label>Estado</label><select id="mEstado">${estOpts}</select></div><button class="btn" data-act="mant-filtrar">Buscar</button><div style="flex:1"></div><button class="btn primary" data-act="mant-nueva">+ Nueva incidencia</button></div>`;
   const body = rows.length ? `<div class="card p0"><div class="rows">${rows.map((r) => {
     const est = r.estado || "abierta"; const next = est === "abierta" ? ["en proceso", "Tomar"] : est === "en proceso" ? ["resuelta", "Resolver"] : null;
     const foto = r.foto_url ? `<a href="${esc(r.foto_url)}" target="_blank" rel="noopener" title="Ver foto" style="margin-right:10px;flex-shrink:0"><img src="${esc(r.foto_url)}" alt="Foto de la incidencia" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:block"></a>` : "";
@@ -529,7 +540,8 @@ async function loadMant() {
 function applyMantFilter() { const l = document.getElementById("mLocal"), es = document.getElementById("mEstado"); if (l) MANF.local = l.value; if (es) MANF.estado = es.value; loadMant(); }
 async function mantEstado(id, estado) { try { await apiSend("PUT", "/api/maintenance/" + encodeURIComponent(id), { estado }); toast("Incidencia actualizada ✅"); loadMant(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 function openNuevaIncidencia() {
-  const localOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const fijo = localFijadoFE();
+  const localOpts = fijo ? `<option value="${esc(fijo)}" selected>${esc(fijo)}</option>` : LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
   const body = `<form id="fInc"><div class="form-grid"><div class="field full"><label>Local</label><select name="local" required>${localOpts}</select></div><div class="field full"><label>Título</label><input type="text" name="titulo" required></div><div class="field full"><label>Descripción</label><input type="text" name="descripcion" required></div><div class="field full"><label>Foto (opcional)</label><input type="file" id="incFoto" accept="image/*" capture="environment"><div class="mut" style="font-size:12px;margin-top:4px">Adjunta una imagen o haz una foto con la cámara.</div><div id="incFotoPrev"></div></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear incidencia</button></div></form>`;
   const ov = modal("Nueva incidencia", body);
   // Vista previa de la foto elegida (mejor feedback antes de subir).
@@ -1095,12 +1107,13 @@ function facQS() { const qs = new URLSearchParams(); ["local", "empresa", "estad
 function facHeader() { return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Facturas</h1><div class="sub">Facturas, asignación y configuración fiscal</div></div><div class="toolbar" style="margin-bottom:12px"><button class="btn ${FACTAB === "facturas" ? "primary" : ""}" data-act="fac-tab" data-tab="facturas">Facturas</button><button class="btn ${FACTAB === "config" ? "primary" : ""}" data-act="fac-tab" data-tab="config">Configuración</button></div>`; }
 const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
 function renderFacturas(list, pend, stats, empresas) {
-  const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${FACF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  if (localFijadoFE()) FACF.local = localFijadoFE();
+  const localOpts = opcionesLocal(FACF.local, "Todos los locales");
   const empOpts = ['<option value="">Todas las empresas</option>'].concat((empresas || []).map((e) => `<option value="${esc(e)}" ${FACF.empresa === e ? "selected" : ""}>${esc(e)}</option>`)).join("");
   const tipoOpts = ['<option value="">Todos los tipos</option>'].concat(["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${FACF.tipo === t ? "selected" : ""}>${cap(t)}</option>`)).join("");
   const estOpts = [["", "Todos los estados"], ["pagada", "Pagadas"], ["pendiente", "Pendientes"]].map(([v, l]) => `<option value="${v}" ${FACF.estado === v ? "selected" : ""}>${l}</option>`).join("");
   const resumen = stats && stats.resumenAnual ? `<div class="grid g4" style="margin-bottom:16px">${stat("Facturas (año)", "🧾", num(stats.resumenAnual.num_docs))}${stat("Base imponible", "€", eur(stats.resumenAnual.base))}${stat("IVA", "€", eur(stats.resumenAnual.iva))}${stat("Total", "€", eur(stats.resumenAnual.total))}</div>` : "";
-  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="facLocal">${localOpts}</select></div><div class="field"><label>Empresa</label><select id="facEmp">${empOpts}</select></div><div class="field"><label>Estado</label><select id="facEstado">${estOpts}</select></div><div class="field"><label>Tipo</label><select id="facTipo">${tipoOpts}</select></div><div class="field"><label>Desde</label><input type="date" id="facFrom" value="${esc(FACF.from)}"></div><div class="field"><label>Hasta</label><input type="date" id="facTo" value="${esc(FACF.to)}"></div><div class="field"><label>Buscar</label><input id="facQ" placeholder="Proveedor, concepto, nº" value="${esc(FACF.q)}"></div><button class="btn" data-act="fac-filtrar">Buscar</button><div style="flex:1"></div><button class="btn primary" data-act="fac-subir">+ Subir factura</button><button class="btn" data-act="fac-export">Exportar CSV</button></div>`;
+  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="facLocal" ${localFijadoFE() ? "disabled" : ""}>${localOpts}</select></div><div class="field"><label>Empresa</label><select id="facEmp">${empOpts}</select></div><div class="field"><label>Estado</label><select id="facEstado">${estOpts}</select></div><div class="field"><label>Tipo</label><select id="facTipo">${tipoOpts}</select></div><div class="field"><label>Desde</label><input type="date" id="facFrom" value="${esc(FACF.from)}"></div><div class="field"><label>Hasta</label><input type="date" id="facTo" value="${esc(FACF.to)}"></div><div class="field"><label>Buscar</label><input id="facQ" placeholder="Proveedor, concepto, nº" value="${esc(FACF.q)}"></div><button class="btn" data-act="fac-filtrar">Buscar</button><div style="flex:1"></div><button class="btn primary" data-act="fac-subir">+ Subir factura</button><button class="btn" data-act="fac-export">Exportar CSV</button></div>`;
   const maxLocal = Math.max(1, ...(((stats && stats.porLocal) || []).map((x) => Number(x.total) || 0)));
   const porLocal = (stats && stats.porLocal && stats.porLocal.length) ? `<div class="card"><div class="ch"><h3>Gasto por local (año)</h3></div><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div></div>` : "";
   const topProv = (stats && stats.topProveedores && stats.topProveedores.length) ? `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Top proveedores (año)</h3></div><div class="rows">${stats.topProveedores.map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "—")}</div><div class="t2">${num(p.num)} factura(s)</div></div><b class="tnum">${eur(p.total)}</b></div>`).join("")}</div></div>` : "";

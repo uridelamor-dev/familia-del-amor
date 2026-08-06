@@ -1,7 +1,27 @@
 // Reseñas — lógica pura: normalización de filas, resumen por local y prompt de borrador IA.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mapManageRow, resumenPorLocal, draftRequest, cleanDraft, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, hayCoincidenciaUnica, normalizarUbicacionBP, normalizarPlaceResult, formatearDireccionBP, placeIdsConfigurados, upsertPlaceEntry } from "../../src/modules/reviews/reviews.service.js";
+import { mapManageRow, resumenPorLocal, draftRequest, cleanDraft, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, hayCoincidenciaUnica, normalizarUbicacionBP, normalizarPlaceResult, formatearDireccionBP, placeIdsConfigurados, upsertPlaceEntry, localCoincideConReview, locationNamesDeLocal } from "../../src/modules/reviews/reviews.service.js";
+
+describe("scope por local en reseñas (ERP local ↔ ficha de Google)", () => {
+  const nombres = ["La Tapeta Lloret", "La Tapeta Blanes", "La Tapeta Girona", "Botiga d'en Mateu", "Cooperativa"];
+  test("casa la ciudad correcta y NO cruza entre Tapetas", () => {
+    assert.equal(localCoincideConReview("La Tapeta - Lloret", "La Tapeta Lloret"), true);
+    assert.equal(localCoincideConReview("La Tapeta - Lloret", "La Tapeta Blanes"), false);
+  });
+  test("requiere TODOS los tokens: sin ciudad no casa", () => {
+    assert.equal(localCoincideConReview("La Tapeta - Lloret", "La Tapeta"), false);
+  });
+  test("acentos y guiones no importan", () => {
+    assert.equal(localCoincideConReview("Botiga d'en Mateu", "Botiga d en Mateu"), true);
+  });
+  test("locationNamesDeLocal filtra solo la ficha del local", () => {
+    assert.deepEqual(locationNamesDeLocal("La Tapeta - Girona", nombres), ["La Tapeta Girona"]);
+  });
+  test("sin correspondencia → lista vacía (encargado no ve fichas ajenas)", () => {
+    assert.deepEqual(locationNamesDeLocal("Restaurante Inexistente", nombres), []);
+  });
+});
 
 describe("mapManageRow", () => {
   test("marca respondida y estrellas; fecha recortada", () => {
