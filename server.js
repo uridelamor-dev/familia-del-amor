@@ -24,6 +24,7 @@ import crypto from "crypto";
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/agora/diagnostico.js";
 import { extraerScripts, extraerRutasApi, clasificarRutas } from "./src/integrations/agora/descubrir.js";
+import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
 import { detectarIdioma, normalizarIdioma, idiomaDeContacto, necesitaTraduccion, idiomasPresentes, placeholdersIntactos, construirTraduccionRequest, IDIOMA_BASE } from "./src/modules/messaging/i18n.js";
 import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
@@ -2733,6 +2734,56 @@ app.get("/api/agora/ventas-vivo", requireAuth(["direccion", "contabilidad"]), as
   try {
     const force = req.query.force === "1" || req.query.force === "true";
     res.json({ ok: true, ...(await ventasVivoData(force)) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Analítica: informes de Ágora en vivo (producto, empleado, cancelaciones…) ──────────────
+// Lista de informes disponibles (para las pestañas del panel).
+app.get("/api/agora/informes", requireAuth(["direccion", "contabilidad"]), (req, res) => {
+  res.json({ ok: true, data: listaInformes() });
+});
+
+// Ejecuta un informe por RANGO de fechas y (opcional) local. Solo lectura. Caché 3 min por
+// (local, tipo, rango). Devuelve el shape normalizado { columnas, filas, totales } para la tabla genérica.
+const _informeCache = new Map();
+app.get("/api/agora/informe/:tipo", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const def = getInforme(req.params.tipo);
+    if (!def) return res.status(404).json({ ok: false, error: "Informe desconocido" });
+    const local = (req.query.local && String(req.query.local).trim()) || null;
+    const from = String(req.query.from || "").slice(0, 10);
+    const to = String(req.query.to || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ ok: false, error: "Rango inválido" });
+    const force = req.query.force === "1" || req.query.force === "true";
+    const ckey = `${local || "*"}|${def.key}|${from}_${to}`;
+    const cached = _informeCache.get(ckey);
+    if (!force && cached && (Date.now() - cached.ts) < 3 * 60 * 1000) return res.json({ ok: true, cache: true, ...cached.payload });
+
+    const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (local ? c.local === local : true));
+    if (!configs.length) {
+      return res.json({ ok: true, data: { tipo: def.key, label: def.label, from, to, local, columnas: [], filas: [], totales: {}, sinCredenciales: true }, errores: [] });
+    }
+    const multi = configs.length > 1;
+    let base = null;
+    const errores = [];
+    for (const cfg of configs) {
+      try {
+        const client = createAgoraClient(cfg);
+        const groups = def.needs.includes("groups") ? await client.posGroups() : undefined;
+        const familias = def.needs.includes("familias") ? await client.familiaIds() : undefined;
+        const resp = await client.informe(def.clrType, def.buildExtra({ from, to, groups, familias }));
+        const norm = def.map(resp);
+        if (!base) base = { tipo: def.key, label: def.label, from, to, local, columnas: norm.columnas.slice(), ordenPor: norm.ordenPor, filas: [] };
+        base.filas.push(...norm.filas.map((f) => (multi ? { local: cfg.local, ...f } : f)));
+      } catch (e) { errores.push({ local: cfg.local, error: (e && e.message) ? String(e.message).slice(0, 140) : "error" }); }
+    }
+    if (!base) return res.json({ ok: true, data: { tipo: def.key, label: def.label, from, to, local, columnas: [], filas: [], totales: {} }, errores });
+    if (multi) base.columnas = [{ key: "local", label: "Local", tipo: "texto" }, ...base.columnas];
+    if (base.ordenPor) base.filas.sort((a, b) => (Number(b[base.ordenPor]) || 0) - (Number(a[base.ordenPor]) || 0));
+    base.totales = calcularTotales(base.columnas, base.filas);
+    const payload = { data: { ...base, generado: new Date().toISOString() }, errores };
+    _informeCache.set(ckey, { ts: Date.now(), payload });
+    res.json({ ok: true, cache: false, ...payload });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

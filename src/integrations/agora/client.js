@@ -16,6 +16,7 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
   let cookie = cfg.cookie || null;
   let version = cfg.version || null;
   let posGroups = Array.isArray(cfg.posGroupsIds) && cfg.posGroupsIds.length ? cfg.posGroupsIds : null;
+  let familias = null;
 
   const sender = (v) => ({ ApplicationName: APP_NAME, ApplicationVersion: v, LanguageCode: "es", MachineType: 4, MachineName: "Web Device", UserName: cfg.usuario || "" });
   const envelope = (clrType, extra, v) => JSON.stringify({ CLRType: clrType, Message: { CLRType: clrType, IsBlocking: true, OutOfBandMessages: [], Sender: sender(v), ...extra } });
@@ -67,8 +68,22 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
     return posGroups;
   }
 
+  // IDs de TODAS las familias (varios informes filtran por familias: [] = ninguna, hay que darlas todas).
+  async function getFamilias() {
+    if (familias) return familias;
+    const j = await busJson("IGT.POS.Bus.SystemManagement.Messages.GetAllFamiliesRequest", {});
+    const all = (j && j.Message && Array.isArray(j.Message.All)) ? j.Message.All : [];
+    familias = all.map((f) => f && f.Id).filter((x) => x != null);
+    return familias;
+  }
+
   return {
     local: cfg.local,
+
+    // Ejecuta un mensaje de informe del bus (login/re-login automáticos) y devuelve el JSON crudo.
+    async informe(clrType, extra = {}) { return busJson(clrType, extra); },
+    async posGroups() { return getPosGroups(); },
+    async familiaIds() { return getFamilias(); },
 
     // ¿El servidor del TPV responde? (basta /version/, sin sesión). Alive = el local está abierto.
     async ping(timeoutMs = 6000) {

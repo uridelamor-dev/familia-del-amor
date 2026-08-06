@@ -49,6 +49,7 @@ const NAV = [
     ["campanas", "Campañas", "mkt", ["direccion", "marketing"]],
   ] },
   { g: "Inteligencia", items: [
+    ["analitica", "Analítica de ventas", "chart", ["direccion", "contabilidad"]],
     ["sara", "Sara (IA)", "bot", ["direccion", "marketing"]],
     ["whatsapp", "WhatsApp", "chat", ["direccion", "encargado"]],
   ] },
@@ -57,8 +58,8 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 
 let USER = null, CURRENT = "dashboard";
 
@@ -172,6 +173,7 @@ const signed2 = (v) => (v >= 0 ? "+" : "−") + Math.abs(Number(v) || 0).toFixed
 // ── Iconos SVG (sustituyen a los emojis) ──
 const ICONS = {
   dash: '<path d="M4 13h7V4H4zM13 20h7v-9h-7zM13 4v5h7V4zM4 20h7v-5H4z"/>',
+  chart: '<path d="M4 20h16M7 20v-6M12 20V8M17 20v-9"/>',
   cal: '<rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v3M16 3v3"/>',
   wrench: '<path d="M15 6.5a3.8 3.8 0 0 0-5 5L4 17.5V20h2.5l6-6a3.8 3.8 0 0 0 5-5l-2.4 2.4-2-2z"/>',
   users: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 6M15.5 20a5 5 0 0 1 5-3.4"/>',
@@ -1532,6 +1534,92 @@ async function agoraSyncNow() {
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 
+// ════════════════════════ VISTA: ANALÍTICA DE VENTAS (informes Ágora en vivo) ════════════════════════
+let ANAL = { tipo: "producto", local: "", range: null, tipos: [], data: null, sort: null, cargando: false };
+function fmtCelda(v, tipo) {
+  if (tipo === "eur") return eur(v);
+  if (tipo === "num") return num(v);
+  if (tipo === "pct") return (Math.round((Number(v) || 0) * 10) / 10) + "%";
+  return esc(v == null ? "" : String(v));
+}
+function renderAnaliticaTabla(data) {
+  if (!data) return "";
+  if (data.sinCredenciales) return `<div class="card"><div class="mut" style="font-size:13px">Configura <b>usuario y contraseña</b> del local en <b>Ágora (TPV)</b> para poder consultar informes.</div></div>`;
+  const cols = data.columnas || [], filas = data.filas || [];
+  if (!cols.length || !filas.length) return `<div class="card"><div class="mut" style="font-size:13px">Sin movimientos en este rango${data.local ? "" : " (prueba a elegir un local abierto)"}.</div></div>`;
+  // Orden (cliente): por defecto data.ordenPor desc; clic en cabecera cambia.
+  const sort = ANAL.sort || (data.ordenPor ? { key: data.ordenPor, dir: "desc" } : null);
+  let rows = filas.slice();
+  if (sort) { const c = cols.find((x) => x.key === sort.key); const numeric = c && (c.tipo === "num" || c.tipo === "eur" || c.tipo === "pct"); rows.sort((a, b) => { const va = a[sort.key], vb = b[sort.key]; const cmp = numeric ? (Number(va) || 0) - (Number(vb) || 0) : String(va || "").localeCompare(String(vb || "")); return sort.dir === "desc" ? -cmp : cmp; }); }
+  // Top-N para el mini-gráfico (columna de orden por defecto).
+  const chartKey = data.ordenPor && cols.find((c) => c.key === data.ordenPor) ? data.ordenPor : (cols.find((c) => c.tipo === "eur") || {}).key;
+  const chartTipo = (cols.find((c) => c.key === chartKey) || {}).tipo;
+  const labelKey = (cols.find((c) => c.tipo === "texto") || cols[0]).key;
+  const topItems = chartKey ? filas.slice().sort((a, b) => (Number(b[chartKey]) || 0) - (Number(a[chartKey]) || 0)).slice(0, 8).map((f) => ({ label: nombreCortoLocal(String(f[labelKey] || "—")).slice(0, 14), value: Number(f[chartKey]) || 0 })) : [];
+  const chart = topItems.length >= 2 ? `<div class="card"><div class="ch"><h3>Top ${topItems.length} · ${esc((cols.find((c) => c.key === chartKey) || {}).label || "")}</h3></div>${bars(topItems, { fmt: (v) => chartTipo === "eur" ? eur(v) : num(v) })}</div>` : "";
+  const th = cols.map((c) => { const on = sort && sort.key === c.key; const arrow = on ? (sort.dir === "desc" ? " ↓" : " ↑") : ""; return `<th class="${c.tipo === "num" || c.tipo === "eur" || c.tipo === "pct" ? "r" : ""}" data-act="anal-sort" data-key="${esc(c.key)}" style="cursor:pointer;white-space:nowrap">${esc(c.label)}${arrow}</th>`; }).join("");
+  const body = rows.map((f) => `<tr>${cols.map((c) => `<td class="${c.tipo === "num" || c.tipo === "eur" || c.tipo === "pct" ? "r tnum" : ""}">${fmtCelda(f[c.key], c.tipo)}</td>`).join("")}</tr>`).join("");
+  const totCells = cols.map((c, i) => { if (i === 0) return `<td><b>Total</b></td>`; const t = data.totales && data.totales[c.key]; return `<td class="${c.tipo === "num" || c.tipo === "eur" || c.tipo === "pct" ? "r tnum" : ""}">${t != null ? "<b>" + fmtCelda(t, c.tipo) + "</b>" : ""}</td>`; }).join("");
+  const errores = (data.__errores && data.__errores.length) ? `<div class="mut" style="font-size:12px;margin:6px 2px">${data.__errores.map((e) => `⚠ ${esc(e.local)}: ${esc(e.error)}`).join(" · ")}</div>` : "";
+  const tabla = `<div class="card p0"><div class="ch" style="padding:14px 16px 0"><h3>${esc(data.label)}${data.local ? " · " + esc(nombreCortoLocal(data.local)) : ""}</h3><span class="mut" style="font-size:12px">${num(filas.length)} filas${data.generado ? " · " + esc(String(data.generado).slice(11, 16)) : ""}</span></div><div class="tblwrap"><table class="tbl"><thead><tr>${th}</tr></thead><tbody>${body}</tbody><tfoot><tr>${totCells}</tr></tfoot></table></div></div>`;
+  return chart + tabla + errores;
+}
+function renderAnalitica() {
+  const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${ANAL.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  const presets = [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]];
+  const cur = ANAL.range || rangoPreset("mes", todayStr());
+  const seg = presets.map(([p, l]) => `<button class="${cur.preset === p ? "on" : ""}" data-act="anal-period" data-p="${p}">${l}</button>`).join("") + `<button class="${cur.preset === "custom" ? "on" : ""}" data-act="anal-period-custom">${cur.preset === "custom" ? esc(fechaCorta(cur.from)) + "–" + esc(fechaCorta(cur.to)) : "Personalizado"}</button>`;
+  const tabs = (ANAL.tipos || []).map((t) => `<button class="btn ${ANAL.tipo === t.key ? "primary" : ""}" data-act="anal-tab" data-tipo="${esc(t.key)}">${esc(t.label)}</button>`).join("");
+  const head = `<div class="ph"><div class="eyebrow">Inteligencia</div><h1>Analítica de ventas</h1><div class="sub">Informes en vivo del TPV · ${esc(cur.label)}</div><div class="acts"><button class="btn" data-act="anal-refresh">Actualizar</button><button class="btn" data-act="anal-csv">Exportar CSV</button></div></div>`;
+  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="analLocal">${localOpts}</select></div><div class="field"><label>Periodo</label><div class="seg">${seg}</div></div><div style="flex:1"></div></div>`;
+  const tabsBar = tabs ? `<div class="toolbar" style="margin-top:-6px">${tabs}</div>` : "";
+  const cuerpo = ANAL.cargando ? `<div class="card"><div class="mut" style="font-size:13px">Consultando el TPV…</div></div>` : renderAnaliticaTabla(ANAL.data);
+  return head + toolbar + tabsBar + `<div id="analBody">${cuerpo}</div>`;
+}
+async function loadAnalitica() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  if (!ANAL.range) ANAL.range = rangoPreset("mes", todayStr());
+  try {
+    if (!ANAL.tipos.length) { const j = await apiOptional("/api/agora/informes"); ANAL.tipos = j || []; if (ANAL.tipos.length && !ANAL.tipos.some((t) => t.key === ANAL.tipo)) ANAL.tipo = ANAL.tipos[0].key; }
+    view.innerHTML = renderAnalitica();
+    loadAnalInforme();
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+async function loadAnalInforme(force) {
+  ANAL.cargando = true; ANAL.sort = null;
+  const b = document.getElementById("analBody"); if (b) b.innerHTML = `<div class="card"><div class="mut" style="font-size:13px">Consultando el TPV…</div></div>`;
+  try {
+    const r = ANAL.range;
+    const qs = `from=${r.from}&to=${r.to}` + (ANAL.local ? "&local=" + encodeURIComponent(ANAL.local) : "") + (force ? "&force=1" : "");
+    const j = await apiRaw("/api/agora/informe/" + ANAL.tipo + "?" + qs);
+    const data = j.data || null; if (data && j.errores) data.__errores = j.errores;
+    ANAL.data = data; ANAL.cargando = false;
+    const bb = document.getElementById("analBody"); if (bb) bb.innerHTML = renderAnaliticaTabla(ANAL.data);
+    const sub = document.querySelector("#view .ph .sub"); if (sub) sub.textContent = "Informes en vivo del TPV · " + (ANAL.range.label || "");
+  } catch (e) {
+    ANAL.cargando = false;
+    const bb = document.getElementById("analBody"); if (bb) bb.innerHTML = `<div class="card"><div class="mut" style="font-size:13px">No se pudo cargar el informe${e.message && e.message !== "noauth" ? ": " + esc(e.message) : ""}.</div></div>`;
+  }
+}
+function analSort(key) { if (ANAL.sort && ANAL.sort.key === key) ANAL.sort.dir = ANAL.sort.dir === "desc" ? "asc" : "desc"; else ANAL.sort = { key, dir: "desc" }; const b = document.getElementById("analBody"); if (b) b.innerHTML = renderAnaliticaTabla(ANAL.data); }
+function analTab(tipo) { ANAL.tipo = tipo; document.querySelectorAll('[data-act="anal-tab"]').forEach((x) => x.classList.toggle("primary", x.getAttribute("data-tipo") === tipo)); loadAnalInforme(); }
+function analPeriod(p) { ANAL.range = rangoPreset(p, todayStr()); document.querySelectorAll('.seg [data-act="anal-period"]').forEach((x) => x.classList.toggle("on", x.getAttribute("data-p") === p)); const cs = document.querySelector('[data-act="anal-period-custom"]'); if (cs) cs.classList.remove("on"); loadAnalInforme(); }
+function analPeriodCustom() {
+  const hoy = todayStr(); const cur = ANAL.range || {};
+  const ov = modal("Rango personalizado", `<div class="form-grid"><div class="field"><label>Desde</label><input type="date" id="anFrom" value="${esc(cur.from || addDaysStr(hoy, -30))}" max="${esc(hoy)}"></div><div class="field"><label>Hasta</label><input type="date" id="anTo" value="${esc(cur.to || hoy)}" max="${esc(hoy)}"></div></div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"><button class="btn sm" data-anq="mes-pasado">Mes pasado</button><button class="btn sm" data-anq="este-ano">Este año</button><button class="btn sm" data-anq="ano-pasado">Año pasado</button></div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="anAplicar">Aplicar</button></div>`);
+  const setR = (f, t) => { ov.querySelector("#anFrom").value = f; ov.querySelector("#anTo").value = t; };
+  ov.addEventListener("click", (e) => { const q = e.target.getAttribute && e.target.getAttribute("data-anq"); if (!q) return; const y = Number(hoy.slice(0, 4)); if (q === "mes-pasado") { const d = new Date(hoy + "T12:00:00"); d.setDate(1); d.setMonth(d.getMonth() - 1); const fin = new Date(d.getFullYear(), d.getMonth() + 1, 0); setR(d.toISOString().slice(0, 10), fin.toISOString().slice(0, 10)); } else if (q === "este-ano") setR(y + "-01-01", hoy); else if (q === "ano-pasado") setR((y - 1) + "-01-01", (y - 1) + "-12-31"); });
+  ov.querySelector("#anAplicar").addEventListener("click", () => { const f = ov.querySelector("#anFrom").value, t = ov.querySelector("#anTo").value; if (!f || !t) { toast("Elige las dos fechas"); return; } if (f > t) { toast("El 'desde' debe ser anterior al 'hasta'"); return; } ANAL.range = { preset: "custom", from: f, to: t, label: f === t ? fechaCorta(f) : `${fechaCorta(f)} – ${fechaCorta(t)}` }; ov.remove(); const v = document.getElementById("view"); if (v) v.innerHTML = renderAnalitica(); loadAnalInforme(); });
+}
+function analCsv() {
+  const d = ANAL.data; if (!d || !d.filas || !d.filas.length) { toast("No hay datos que exportar"); return; }
+  const cols = d.columnas; const esc2 = (s) => { const v = String(s == null ? "" : s); return /[",;\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const head = cols.map((c) => esc2(c.label)).join(";");
+  const lines = d.filas.map((f) => cols.map((c) => esc2(f[c.key])).join(";"));
+  const csv = "﻿" + [head, ...lines].join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); a.download = `analitica_${d.tipo}_${d.from}_${d.to}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+}
+
 // ════════════════════════ VISTA: CAMPAÑAS ════════════════════════
 let CAMP = { list: [], plantillas: [], audiencias: [], cfg: { cumple_auto: false, cumple_plantilla: "" } };
 const CAMP_EST = { borrador: "", programada: "info", enviando: "warn", enviada: "ok" };
@@ -1957,7 +2045,7 @@ async function webBlkUpload(input, gallery) {
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   CURRENT = view;
@@ -1970,6 +2058,9 @@ function go(view) {
   VIEWS[view]();
 }
 
+document.addEventListener("change", (e) => {
+  if (e.target && e.target.id === "analLocal") { ANAL.local = e.target.value; loadAnalInforme(); }
+});
 document.addEventListener("click", (e) => {
   const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); go(v.getAttribute("data-view")); return; }
   const t = e.target.closest("[data-act]"); if (!t) return;
@@ -2061,6 +2152,12 @@ document.addEventListener("click", (e) => {
   else if (act === "ag-descubrir") agoraDescubrir(t.getAttribute("data-local"));
   else if (act === "ag-del") agoraDel(t.getAttribute("data-local"));
   else if (act === "ag-sync") agoraSyncNow();
+  else if (act === "anal-tab") analTab(t.getAttribute("data-tipo"));
+  else if (act === "anal-period") analPeriod(t.getAttribute("data-p"));
+  else if (act === "anal-period-custom") analPeriodCustom();
+  else if (act === "anal-sort") analSort(t.getAttribute("data-key"));
+  else if (act === "anal-refresh") loadAnalInforme(true);
+  else if (act === "anal-csv") analCsv();
   else if (act === "camp-nueva") openNuevaCampana();
   else if (act === "camp-detectar-idiomas") campDetectarIdiomas();
   else if (act === "camp-detalle") campDetalle(t.getAttribute("data-id"));
