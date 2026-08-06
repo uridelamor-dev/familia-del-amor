@@ -1,7 +1,7 @@
 // Ágora — resumen de ventas por local (lógica pura).
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { resumenVentasPorLocal, estadoDatosLocal, ETIQUETA_ESTADO_DATOS } from "../../src/modules/agora/ventas.js";
+import { resumenVentasPorLocal, estadoDatosLocal, ETIQUETA_ESTADO_DATOS, resumenVivoLocal } from "../../src/modules/agora/ventas.js";
 
 describe("resumenVentasPorLocal", () => {
   const rows = [
@@ -41,5 +41,26 @@ describe("estadoDatosLocal", () => {
   });
   test("hay etiqueta para cada estado", () => {
     for (const k of ["sin_configurar", "desactivado", "sin_datos", "con_datos"]) assert.ok(ETIQUETA_ESTADO_DATOS[k]);
+  });
+});
+
+describe("resumenVivoLocal", () => {
+  const dias = [
+    { dia: "2026-08-04", ventas: 3473.05, tickets: 293 },
+    { dia: "2026-08-05", ventas: 3320.50, tickets: 307 },
+    { dia: "2026-08-06", ventas: 1948.10, tickets: 230 }, // hoy (en curso)
+  ];
+  test("separa hoy (en curso), ayer y suma de días cerrados", () => {
+    const r = resumenVivoLocal(dias, "2026-08-06");
+    assert.equal(r.hoy.ventas, 1948.10);
+    assert.equal(r.ayer.dia, "2026-08-05");
+    assert.equal(r.total7, 6793.55);   // 3473.05 + 3320.50 (cerrados)
+    assert.equal(r.tickets7, 600);
+    assert.equal(r.cerrados.length, 2);
+  });
+  test("sin datos de hoy → hoy null", () => {
+    const r = resumenVivoLocal([{ dia: "2026-08-05", ventas: 100, tickets: 10 }], "2026-08-06");
+    assert.equal(r.hoy, null);
+    assert.equal(r.ayer.dia, "2026-08-05");
   });
 });

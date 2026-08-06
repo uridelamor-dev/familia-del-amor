@@ -29,6 +29,18 @@ export function estadoDatosLocal({ configurado, activo, dias } = {}) {
   return (Number(dias) || 0) > 0 ? "con_datos" : "sin_datos";
 }
 
+// Resumen en vivo de un local a partir de los días devueltos por /api/agora/ventas-vivo.
+// `hoy` = "YYYY-MM-DD". Devuelve fila de hoy (en curso), de ayer, cerrados ordenados y total 7d.
+export function resumenVivoLocal(dias = [], hoy) {
+  const arr = Array.isArray(dias) ? dias : [];
+  const hoyRow = arr.find((d) => d.dia === hoy) || null;
+  const cerrados = arr.filter((d) => d.dia < hoy).sort((a, b) => a.dia.localeCompare(b.dia));
+  const ayerRow = cerrados.length ? cerrados[cerrados.length - 1] : null;
+  const total7 = cerrados.reduce((s, d) => s + (Number(d.ventas) || 0), 0);
+  const tickets7 = cerrados.reduce((s, d) => s + (Number(d.tickets) || 0), 0);
+  return { hoy: hoyRow, ayer: ayerRow, cerrados, total7: Math.round(total7 * 100) / 100, tickets7 };
+}
+
 export const ETIQUETA_ESTADO_DATOS = {
   sin_configurar: "Sin configurar",
   desactivado: "Desactivado",

@@ -2692,6 +2692,48 @@ app.get("/api/ventas", requireAuth(["direccion", "contabilidad"]), async (req, r
   }
 });
 
+// Ventas EN VIVO por local (últimos 8 días incluido HOY, tiempo real) vía el informe global.
+// Caché de 3 min para no martillear el TPV; también persiste días cerrados en ventas_diarias.
+let _ventasVivoCache = { ts: 0, data: null };
+app.get("/api/agora/ventas-vivo", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const ahora = Date.now();
+    const force = req.query.force === "1" || req.query.force === "true";
+    if (!force && _ventasVivoCache.data && (ahora - _ventasVivoCache.ts) < 3 * 60 * 1000) {
+      return res.json({ ok: true, cache: true, ...(_ventasVivoCache.data) });
+    }
+    const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password);
+    const hoy = new Date().toISOString().slice(0, 10);
+    const desde = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    const hasta = new Date(Date.now() + 86400000).toISOString().slice(0, 10); // incluye hoy
+    const locales = [];
+    for (const cfg of configs) {
+      try {
+        const dias = await createAgoraClient(cfg).getVentasRango(desde, hasta);
+        locales.push({ local: cfg.local, dias, error: null });
+        // Persistir días CERRADOS (< hoy) en ventas_diarias (histórico).
+        for (const v of dias) {
+          if (v.dia >= hoy) continue;
+          try {
+            await dbRun(
+              `INSERT INTO ventas_diarias (local, dia, ventas, tickets, comensales, ticket_medio, base_imponible, cuota_iva, actualizado_en)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(local, dia) DO UPDATE SET ventas=EXCLUDED.ventas, tickets=EXCLUDED.tickets, comensales=EXCLUDED.comensales,
+                 ticket_medio=EXCLUDED.ticket_medio, base_imponible=EXCLUDED.base_imponible, cuota_iva=EXCLUDED.cuota_iva, actualizado_en=EXCLUDED.actualizado_en`,
+              [cfg.local, v.dia, v.ventas, v.tickets, v.comensales, v.ticket_medio, v.base_imponible ?? null, v.cuota_iva ?? null, new Date().toISOString()]
+            );
+          } catch { /* no crítico */ }
+        }
+      } catch (e) {
+        locales.push({ local: cfg.local, dias: [], error: (e && e.message) ? String(e.message).slice(0, 120) : "error" });
+      }
+    }
+    const data = { hoy, desde, locales, generado: new Date().toISOString() };
+    _ventasVivoCache = { ts: ahora, data };
+    res.json({ ok: true, cache: false, ...data });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // Estado de la integración por local (NUNCA expone el token).
 app.get("/api/agora/estado", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
