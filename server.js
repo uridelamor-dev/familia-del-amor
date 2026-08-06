@@ -2782,7 +2782,9 @@ async function ejecutarCandidataAgora(c, token, timeoutMs = 5000) {
     const text = await r.text();
     let esJson = false, jsonKeys = null;
     if (text) { try { const j = JSON.parse(text); esJson = true; jsonKeys = Array.isArray(j) ? `[array x${j.length}]` : Object.keys(j).slice(0, 25); } catch { /* no-JSON */ } }
-    return { label: c.label, method: c.method, url: redact(c.url), status: r.status, ok: r.ok, contentType: ct, esJson, jsonKeys, bodySample: redact(text.slice(0, 500)) };
+    const trimmed = text.trim();
+    const esXml = !esJson && (/xml/i.test(ct) || trimmed.startsWith("<?xml") || (trimmed.startsWith("<") && !/<!doctype html|<html/i.test(trimmed)));
+    return { label: c.label, method: c.method, url: redact(c.url), status: r.status, ok: r.ok, contentType: ct, esJson, esXml, jsonKeys, bodySample: redact(text.slice(0, 500)) };
   } catch (e) {
     return { label: c.label, method: c.method, url: redact(c.url), error: e && e.name === "AbortError" ? "timeout" : (e.code || e.message || "error") };
   } finally { clearTimeout(timer); }
@@ -2801,8 +2803,13 @@ app.post("/api/agora/diagnostico", requireAuth(["direccion"]), async (req, res) 
     const desde = (req.body.desde && String(req.body.desde)) || new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
     const hasta = (req.body.hasta && String(req.body.hasta)) || hoy;
     const candidatos = candidatosDiagnostico(cfg.host, { token: cfg.token, localId: cfg.localId, desde, hasta });
-    const resultados = await Promise.all(candidatos.map((c) => ejecutarCandidataAgora(c, cfg.token)));
-    res.json({ ok: true, local, base: cfg.host, desde, hasta, resultados: ordenarResultados(resultados) });
+    // En lotes de 8 para no saturar el servidor del TPV (embebido, pequeño).
+    const resultados = [];
+    for (let i = 0; i < candidatos.length; i += 8) {
+      const lote = candidatos.slice(i, i + 8);
+      resultados.push(...await Promise.all(lote.map((c) => ejecutarCandidataAgora(c, cfg.token))));
+    }
+    res.json({ ok: true, local, base: cfg.host, desde, hasta, total: resultados.length, resultados: ordenarResultados(resultados) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

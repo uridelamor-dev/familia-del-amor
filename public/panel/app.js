@@ -1395,7 +1395,7 @@ async function agoraDiagnostico(local) {
   let j; try { j = await apiSend("POST", "/api/agora/diagnostico", { local }); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); return; }
   const rs = j.resultados || [];
   const fila = (r) => {
-    const est = r.error ? `❌ ${r.error}` : `${r.ok ? "✅" : "•"} ${r.status}${r.esJson ? " · JSON" : r.contentType ? " · " + r.contentType.split(";")[0] : ""}`;
+    const est = r.error ? `❌ ${r.error}` : `${r.ok ? "✅" : "•"} ${r.status}${r.esJson ? " · JSON" : r.esXml ? " · XML" : r.contentType ? " · " + r.contentType.split(";")[0] : ""}`;
     const keys = r.jsonKeys ? ` · claves: ${Array.isArray(r.jsonKeys) ? r.jsonKeys.join(", ") : r.jsonKeys}` : "";
     return `<div class="agres"><div class="who" style="min-width:0"><div class="t1">${esc(r.label)} <span class="mut">${esc(r.method)}</span></div><div class="t2" style="word-break:break-all">${esc(r.url)}</div>${r.bodySample ? `<div class="t2" style="word-break:break-all;opacity:.85">${esc(String(r.bodySample).slice(0, 200))}</div>` : ""}${keys ? `<div class="t2">${esc(keys)}</div>` : ""}</div><span class="pill ${r.ok ? "ok" : r.error ? "bad" : ""}" style="white-space:nowrap">${esc(est)}</span></div>`;
   };
