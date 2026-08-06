@@ -1,42 +1,48 @@
-// Ágora JSON  →  nuestro modelo. PURO y testeable (sin red).
+// Ágora JSON → nuestro modelo. PURO y testeable (sin red).
 //
-// ⚠️ AJUSTAR con la respuesta REAL de la API de Ágora ("Servicios de Integración").
-// La especificación de campos no es pública; hoy se aceptan varios nombres candidatos
-// (importe/total/ventas, tickets/numDocumentos, comensales/cubiertos…) para que, en cuanto
-// veamos una respuesta real (doc del distribuidor o script de sondeo con un local abierto),
-// baste con fijar aquí los nombres correctos. Hay un test con una muestra mock.
+// Fuente REAL confirmada (2026-08): GetGlobalSalesReportResponse.Message.Report.Sales es una lista
+// de líneas de venta; cada una trae { BusinessDay, NetAmount, GrossAmount, Serie, Number, PosName, … }.
+// Validado contra el "Diario de Ventas" de Ágora:
+//   NetAmount  = importe CON IVA  → suma por día = "Total"  (p.ej. 3320.50)
+//   GrossAmount= base imponible   → suma por día = "Base"   (p.ej. 3018.61)
+//   Cuota IVA  = Net - Gross ; nº tickets = nº de (Serie, Number) distintos.
 
-function pick(obj, keys) {
-  for (const k of keys) {
-    if (obj && obj[k] != null) return obj[k];
-  }
-  return undefined;
-}
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
-function int(v) { return Math.round(num(v)); }
 const r2 = (n) => Math.round(n * 100) / 100;
 
-// Normaliza una "venta de un día" de un local.
-export function mapVentasDia(json, { dia } = {}) {
-  if (json == null) return null;
-  // Ágora puede devolver un objeto de resumen o un array de documentos/tickets; contemplamos ambos.
-  if (Array.isArray(json)) return mapVentasDesdeDocumentos(json, { dia });
-  const ventas = num(pick(json, ["importe", "total", "ventas", "totalVentas", "importeTotal", "Total", "Importe"]));
-  const tickets = int(pick(json, ["tickets", "numTickets", "documentos", "numDocumentos", "count", "NumTickets"]) || 0);
-  const comensales = int(pick(json, ["comensales", "cubiertos", "personas", "Comensales"]) || 0);
-  const tm = pick(json, ["ticketMedio", "ticket_medio", "TicketMedio"]);
-  const ticket_medio = tm != null ? r2(num(tm)) : (tickets > 0 ? r2(ventas / tickets) : 0);
-  return { dia: dia || pick(json, ["fecha", "dia", "date", "Fecha"]) || null, ventas: r2(ventas), tickets, comensales, ticket_medio };
+// Agrega las líneas de venta en un total por día (BusinessDay → fila de ventas_diarias).
+export function agregarVentasPorDia(sales) {
+  const byDay = {};
+  for (const s of (Array.isArray(sales) ? sales : [])) {
+    const dia = String((s && s.BusinessDay) || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) continue;
+    const e = byDay[dia] || (byDay[dia] = { dia, ventas: 0, base: 0, tickets: new Set() });
+    e.ventas += num(s.NetAmount);
+    e.base += num(s.GrossAmount);
+    if (s.Serie != null && s.Number != null) e.tickets.add(String(s.Serie) + "·" + String(s.Number));
+  }
+  return Object.values(byDay).map((e) => {
+    const tickets = e.tickets.size;
+    return {
+      dia: e.dia,
+      ventas: r2(e.ventas),                 // total con IVA (lo que se ve como "Total")
+      base_imponible: r2(e.base),           // base sin IVA
+      cuota_iva: r2(e.ventas - e.base),     // IVA
+      tickets,
+      comensales: 0,                        // el informe global no trae comensales
+      ticket_medio: tickets ? r2(e.ventas / tickets) : 0,
+    };
+  }).sort((a, b) => a.dia.localeCompare(b.dia));
 }
 
-// Si la API devuelve la lista de documentos/tickets del día, los agregamos.
-export function mapVentasDesdeDocumentos(docs, { dia } = {}) {
-  const list = Array.isArray(docs) ? docs : [];
-  let ventas = 0, comensales = 0;
-  for (const d of list) {
-    ventas += num(pick(d, ["importe", "total", "totalDocumento", "Total", "Importe"]));
-    comensales += int(pick(d, ["comensales", "cubiertos", "personas", "Comensales"]) || 0);
-  }
-  const tickets = list.length;
-  return { dia: dia || null, ventas: r2(ventas), tickets, comensales, ticket_medio: tickets > 0 ? r2(ventas / tickets) : 0 };
+// Extrae la versión de Ágora del recurso /version/ (contenido: var AGORA_VERSION = '8.7.4';).
+export function parseAgoraVersion(texto, porDefecto = "8.7.4") {
+  const m = String(texto || "").match(/AGORA_VERSION\s*=\s*'([^']+)'/);
+  return m ? m[1] : porDefecto;
+}
+
+// IDs de grupos de TPV desde GetAllPosGroupsResponse.Message.All ([{Id,Name}]).
+export function extraerPosGroupIds(resp) {
+  const all = resp && resp.Message && Array.isArray(resp.Message.All) ? resp.Message.All : [];
+  return all.map((g) => g && g.Id).filter((x) => x != null);
 }

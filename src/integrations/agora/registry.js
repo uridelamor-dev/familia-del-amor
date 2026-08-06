@@ -27,11 +27,14 @@ function normHost(h) {
 export function normalizeConfigs(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
-    .filter((c) => c && c.local && c.host && c.token && c.activo !== false)
+    // Válido si tiene host y credenciales de login (usuario+password) O token legado (Haddock).
+    .filter((c) => c && c.local && c.host && (((c.usuario && c.password)) || c.token) && c.activo !== false)
     .map((c) => ({
       local: String(c.local).trim(),
       host: normHost(c.host),
-      token: String(c.token),
+      usuario: c.usuario != null && c.usuario !== "" ? String(c.usuario) : null,
+      password: c.password != null && c.password !== "" ? String(c.password) : null,
+      token: c.token != null && c.token !== "" ? String(c.token) : null,
       localId: c.localId != null && c.localId !== "" ? String(c.localId) : null,
     }))
     .filter((c) => c.host);
@@ -52,13 +55,15 @@ export function configsFromRows(rows) {
   return normalizeConfigs((rows || []).map((r) => ({
     local: r.local,
     host: r.host,
+    usuario: r.usuario,
+    password: r.password,
     token: r.token,
     localId: r.localId != null ? r.localId : r.local_id,
     activo: r.activo !== 0 && r.activo !== false,
   })));
 }
 
-// Vista segura para exponer estado por API: nunca incluye el token.
+// Vista segura para exponer estado por API: nunca incluye credenciales (token/password).
 export function publicConfig(cfg) {
-  return { local: cfg.local, host: cfg.host, localId: cfg.localId || null };
+  return { local: cfg.local, host: cfg.host, localId: cfg.localId || null, usuario: cfg.usuario || null };
 }

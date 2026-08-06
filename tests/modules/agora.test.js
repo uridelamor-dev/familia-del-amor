@@ -2,7 +2,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { loadAgoraConfigs, configsFromRows, normalizeConfigs, publicConfig } from "../../src/integrations/agora/registry.js";
-import { mapVentasDia, mapVentasDesdeDocumentos } from "../../src/integrations/agora/mappers.js";
+import { agregarVentasPorDia, parseAgoraVersion, extraerPosGroupIds } from "../../src/integrations/agora/mappers.js";
 import { diasFaltantes, syncVentasLocal } from "../../src/integrations/agora/sync.js";
 
 describe("registry.loadAgoraConfigs", () => {
@@ -59,22 +59,39 @@ describe("registry.loadAgoraConfigs", () => {
   });
 });
 
-describe("mappers.mapVentasDia", () => {
-  test("objeto resumen: calcula ticket medio si no viene", () => {
-    const v = mapVentasDia({ importe: 1000, tickets: 40, comensales: 92 }, { dia: "2026-08-05" });
-    assert.equal(v.ventas, 1000); assert.equal(v.tickets, 40); assert.equal(v.comensales, 92);
-    assert.equal(v.ticket_medio, 25);
-    assert.equal(v.dia, "2026-08-05");
+describe("mappers.agregarVentasPorDia (GetGlobalSalesReport → ventas_diarias)", () => {
+  // Muestra real: NetAmount=total con IVA, GrossAmount=base; tickets = (Serie,Number) distintos.
+  const sales = [
+    { BusinessDay: "2026-08-05T00:00:00+02:00", NetAmount: 2.0, GrossAmount: 1.82, Serie: "T", Number: 1 },
+    { BusinessDay: "2026-08-05T00:00:00+02:00", NetAmount: 8.0, GrossAmount: 7.27, Serie: "T", Number: 1 }, // mismo ticket
+    { BusinessDay: "2026-08-05T00:00:00+02:00", NetAmount: 10.0, GrossAmount: 9.09, Serie: "T", Number: 2 },
+    { BusinessDay: "2026-08-04T00:00:00+02:00", NetAmount: 5.0, GrossAmount: 4.55, Serie: "T", Number: 9 },
+  ];
+  test("agrega por día: ventas=ΣNet, base=ΣGross, cuota=Net-Gross, tickets distintos", () => {
+    const r = agregarVentasPorDia(sales);
+    const d5 = r.find((x) => x.dia === "2026-08-05");
+    assert.equal(d5.ventas, 20);            // 2+8+10
+    assert.equal(d5.base_imponible, 18.18); // 1.82+7.27+9.09
+    assert.equal(d5.cuota_iva, 1.82);       // 20 - 18.18
+    assert.equal(d5.tickets, 2);            // (T,1) y (T,2)
+    assert.equal(d5.ticket_medio, 10);      // 20 / 2
   });
-  test("acepta nombres alternativos y ticketMedio explícito", () => {
-    const v = mapVentasDia({ total: 500, numDocumentos: 20, ticketMedio: 30 }, { dia: "2026-08-05" });
-    assert.equal(v.ventas, 500); assert.equal(v.tickets, 20); assert.equal(v.ticket_medio, 30);
+  test("ordena por día y descarta fechas inválidas/vacías", () => {
+    const r = agregarVentasPorDia([...sales, { BusinessDay: "", NetAmount: 99 }, { NetAmount: 1 }]);
+    assert.deepEqual(r.map((x) => x.dia), ["2026-08-04", "2026-08-05"]);
   });
-  test("array de documentos ⇒ agrega", () => {
-    const v = mapVentasDesdeDocumentos([{ importe: 30, comensales: 2 }, { importe: 20, comensales: 1 }], { dia: "2026-08-05" });
-    assert.equal(v.ventas, 50); assert.equal(v.tickets, 2); assert.equal(v.comensales, 3); assert.equal(v.ticket_medio, 25);
+  test("entrada vacía ⇒ []", () => { assert.deepEqual(agregarVentasPorDia(null), []); });
+});
+
+describe("mappers.parseAgoraVersion / extraerPosGroupIds", () => {
+  test("lee la versión del recurso /version/", () => {
+    assert.equal(parseAgoraVersion("var AGORA_VERSION = '8.7.4'; var X=1;"), "8.7.4");
+    assert.equal(parseAgoraVersion("sin version", "9.0"), "9.0");
   });
-  test("null ⇒ null", () => { assert.equal(mapVentasDia(null), null); });
+  test("extrae los IDs de grupos de TPV de GetAllPosGroupsResponse", () => {
+    assert.deepEqual(extraerPosGroupIds({ Message: { All: [{ Id: 1, Name: "A" }, { Id: 2 }, { Id: 3 }] } }), [1, 2, 3]);
+    assert.deepEqual(extraerPosGroupIds({}), []);
+  });
 });
 
 describe("sync.diasFaltantes (catch-up)", () => {
@@ -94,32 +111,41 @@ describe("sync.diasFaltantes (catch-up)", () => {
 });
 
 describe("sync.syncVentasLocal", () => {
-  const cfg = { local: "La Tapeta - Blanes", host: "http://x:8984", token: "T" };
+  const cfg = { local: "La Tapeta - Blanes", host: "http://x:8984", usuario: "u", password: "p" };
   test("servidor caído ⇒ reachable:false, 0 insertados", async () => {
-    const client = { ping: async () => false, getVentasDia: async () => { throw new Error("no debería llamarse"); } };
+    const client = { ping: async () => false, getVentasRango: async () => { throw new Error("no debería llamarse"); } };
     const x = { all: async () => [], run: async () => {} };
     const r = await syncVentasLocal(x, client, cfg, { hoy: "2026-08-10", maxDias: 3 });
     assert.equal(r.reachable, false); assert.equal(r.insertados, 0);
   });
-  test("servidor vivo ⇒ trae solo los días que faltan y hace upsert", async () => {
-    const inserts = [];
-    const client = { ping: async () => true, getVentasDia: async (dia) => ({ dia, ventas: 100, tickets: 5, comensales: 12, ticket_medio: 20 }) };
-    const x = {
-      all: async () => [{ dia: "2026-08-08" }], // ya tenemos el 08
-      run: async (_sql, params) => { inserts.push(params[1]); }, // params[1] = dia
+  test("servidor vivo ⇒ pide el rango que falta y hace upsert SOLO de los días cerrados que faltan", async () => {
+    const inserts = []; let rangoPedido = null;
+    const client = {
+      ping: async () => true,
+      getVentasRango: async (desde, hasta) => { rangoPedido = [desde, hasta]; return [
+        { dia: "2026-08-07", ventas: 100, tickets: 5, comensales: 0, ticket_medio: 20, base_imponible: 90, cuota_iva: 10 },
+        { dia: "2026-08-08", ventas: 200, tickets: 8, comensales: 0, ticket_medio: 25, base_imponible: 180, cuota_iva: 20 }, // ya existe → no se cuenta
+        { dia: "2026-08-09", ventas: 300, tickets: 9, comensales: 0, ticket_medio: 33, base_imponible: 270, cuota_iva: 30 },
+      ]; },
     };
+    const x = { all: async () => [{ dia: "2026-08-08" }], run: async (_sql, p) => { inserts.push(p[1]); } };
     const r = await syncVentasLocal(x, client, cfg, { hoy: "2026-08-10", maxDias: 3 });
     assert.equal(r.reachable, true);
-    // ventana 08-07..08-09; falta 07 y 09 (08 ya está)
-    assert.deepEqual(inserts.sort(), ["2026-08-07", "2026-08-09"]);
+    assert.deepEqual(rangoPedido, ["2026-08-07", "2026-08-10"]); // [primerFalta, últimoFalta+1)
+    assert.deepEqual(inserts.sort(), ["2026-08-07", "2026-08-09"]); // 08 ya estaba
     assert.equal(r.insertados, 2);
   });
-  test("un día que falla no detiene el resto", async () => {
-    const inserts = [];
-    const client = { ping: async () => true, getVentasDia: async (dia) => { if (dia === "2026-08-08") throw new Error("timeout"); return { dia, ventas: 1, tickets: 1, comensales: 1, ticket_medio: 1 }; } };
-    const x = { all: async () => [], run: async (_s, p) => { inserts.push(p[1]); } };
+  test("todo al día ⇒ no llama al informe, 0 insertados", async () => {
+    let llamado = false;
+    const client = { ping: async () => true, getVentasRango: async () => { llamado = true; return []; } };
+    const x = { all: async () => [{ dia: "2026-08-08" }, { dia: "2026-08-09" }], run: async () => {} };
+    const r = await syncVentasLocal(x, client, cfg, { hoy: "2026-08-10", maxDias: 2 });
+    assert.equal(llamado, false); assert.equal(r.insertados, 0);
+  });
+  test("error en el informe ⇒ se registra y no rompe", async () => {
+    const client = { ping: async () => true, getVentasRango: async () => { throw new Error("bus_500"); } };
+    const x = { all: async () => [], run: async () => {} };
     const r = await syncVentasLocal(x, client, cfg, { hoy: "2026-08-10", maxDias: 3 });
-    assert.ok(!inserts.includes("2026-08-08")); // el que falla no se inserta
-    assert.ok(inserts.includes("2026-08-07") && inserts.includes("2026-08-09")); // los demás sí
+    assert.equal(r.reachable, true); assert.equal(r.insertados, 0); assert.match(r.error, /bus_500/);
   });
 });
