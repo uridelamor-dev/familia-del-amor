@@ -278,6 +278,13 @@ async function initDB() {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // Credenciales de login de Ágora (usuario en claro, contraseña cifrada). La integración real
+    // usa login web (/auth/) → cookie → /bus/; el token de Haddock es otra API no accesible.
+    try { await client.query(`ALTER TABLE agora_locales ADD COLUMN IF NOT EXISTS usuario TEXT`); } catch (e) { console.error("[DB] alter agora_locales usuario:", e.message); }
+    try { await client.query(`ALTER TABLE agora_locales ADD COLUMN IF NOT EXISTS pass_enc TEXT`); } catch (e) { console.error("[DB] alter agora_locales pass_enc:", e.message); }
+    // Desglose fiscal de ventas por día (aditivo; el dashboard usa "ventas").
+    try { await client.query(`ALTER TABLE ventas_diarias ADD COLUMN IF NOT EXISTS base_imponible NUMERIC`); } catch (e) { console.error("[DB] alter ventas_diarias base:", e.message); }
+    try { await client.query(`ALTER TABLE ventas_diarias ADD COLUMN IF NOT EXISTS cuota_iva NUMERIC`); } catch (e) { console.error("[DB] alter ventas_diarias cuota:", e.message); }
 
     // Preferencias de marketing por contacto (consentimiento RGPD). Se cruza por teléfono con
     // la vista unificada de contactos. baja=1 excluye SIEMPRE de cualquier envío masivo.
@@ -2633,8 +2640,8 @@ function agoraDecToken(stored) {
 }
 // Configs activas: la BD manda; si está vacía, cae al Secret AGORA_LOCALES (compat).
 async function loadAgoraConfigsFromDB() {
-  const rows = await dbAll(`SELECT local, host, token, local_id, activo FROM agora_locales`);
-  return configsFromRows((rows || []).map((r) => ({ local: r.local, host: r.host, token: agoraDecToken(r.token), local_id: r.local_id, activo: r.activo })));
+  const rows = await dbAll(`SELECT local, host, token, usuario, pass_enc, local_id, activo FROM agora_locales`);
+  return configsFromRows((rows || []).map((r) => ({ local: r.local, host: r.host, token: agoraDecToken(r.token), usuario: r.usuario || null, password: agoraDecToken(r.pass_enc), local_id: r.local_id, activo: r.activo })));
 }
 async function loadAgoraConfigsActive() {
   try { const db = await loadAgoraConfigsFromDB(); if (db.length) return db; } catch { /* cae al env */ }
@@ -2678,7 +2685,7 @@ app.get("/api/ventas", requireAuth(["direccion", "contabilidad"]), async (req, r
     if (req.query.from) { cond.push("dia >= ?"); params.push(String(req.query.from)); }
     if (req.query.to) { cond.push("dia <= ?"); params.push(String(req.query.to)); }
     const where = cond.length ? "WHERE " + cond.join(" AND ") : "";
-    const rows = await dbAll(`SELECT local, dia, ventas::float ventas, tickets::int tickets, comensales::int comensales, ticket_medio::float ticket_medio FROM ventas_diarias ${where} ORDER BY dia DESC LIMIT 800`, params);
+    const rows = await dbAll(`SELECT local, dia, ventas::float ventas, tickets::int tickets, comensales::int comensales, ticket_medio::float ticket_medio, base_imponible::float base_imponible, cuota_iva::float cuota_iva FROM ventas_diarias ${where} ORDER BY dia DESC LIMIT 800`, params);
     res.json({ ok: true, data: rows || [] });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error ventas", data: [] });
@@ -2705,14 +2712,14 @@ app.get("/api/agora/estado", requireAuth(["direccion", "contabilidad"]), async (
 // Configuración de Ágora por local, editable desde el panel (solo dirección). NUNCA devuelve el token.
 app.get("/api/agora/locales", requireAuth(["direccion"]), async (req, res) => {
   try {
-    const rows = await dbAll(`SELECT local, host, token, local_id, activo, updated_at FROM agora_locales ORDER BY local`);
+    const rows = await dbAll(`SELECT local, host, token, usuario, pass_enc, local_id, activo, updated_at FROM agora_locales ORDER BY local`);
     const lastSync = await getConfig("agora_last_sync");
     const out = [];
     for (const r of rows || []) {
       const tok = agoraDecToken(r.token);
       let estado = null;
       try { const raw = await getConfig("agora_estado_" + r.local); if (raw) estado = JSON.parse(raw); } catch { /* ignore */ }
-      out.push({ local: r.local, host: r.host, local_id: r.local_id || null, activo: r.activo !== 0 && r.activo !== false, tokenSet: !!tok, tokenHint: tok ? "••••" + String(tok).slice(-4) : null, updated_at: r.updated_at || null, estado });
+      out.push({ local: r.local, host: r.host, local_id: r.local_id || null, activo: r.activo !== 0 && r.activo !== false, tokenSet: !!tok, tokenHint: tok ? "••••" + String(tok).slice(-4) : null, usuario: r.usuario || null, passSet: !!r.pass_enc, updated_at: r.updated_at || null, estado });
     }
     res.json({ ok: true, data: out, lastSync: lastSync || null });
   } catch (e) {
@@ -2720,24 +2727,27 @@ app.get("/api/agora/locales", requireAuth(["direccion"]), async (req, res) => {
   }
 });
 
-// Alta/edición por local. El token es opcional en edición (si viene vacío, se conserva el actual).
+// Alta/edición por local. Token/usuario/contraseña opcionales en edición (si vienen vacíos, se conserva lo actual).
 app.post("/api/agora/locales", requireAuth(["direccion"]), async (req, res) => {
   try {
-    const { local, host, token, local_id, activo } = req.body || {};
+    const { local, host, token, usuario, password, local_id, activo } = req.body || {};
     if (!local || !host) return res.status(400).json({ ok: false, error: "Faltan local y host" });
     const localId = local_id != null && String(local_id).trim() !== "" ? String(local_id).trim() : null;
     const act = (activo === false || activo === 0 || activo === "0") ? 0 : 1;
     const now = new Date().toISOString();
+    const existing = await dbGet(`SELECT token, pass_enc FROM agora_locales WHERE local = ?`, [local]);
     const tokTrim = token != null ? String(token).trim() : "";
-    const existing = await dbGet(`SELECT token FROM agora_locales WHERE local = ?`, [local]);
-    let tokenStored;
-    if (tokTrim) tokenStored = agoraEncToken(tokTrim);
-    else if (existing && existing.token) tokenStored = existing.token; // conserva el actual
-    else tokenStored = null;
+    let tokenStored = tokTrim ? agoraEncToken(tokTrim) : (existing && existing.token ? existing.token : null);
+    const passTrim = password != null ? String(password).trim() : "";
+    let passStored = passTrim ? agoraEncToken(passTrim) : (existing && existing.pass_enc ? existing.pass_enc : null);
+    const usuarioStored = usuario != null && String(usuario).trim() !== "" ? String(usuario).trim() : (existing ? undefined : null);
+    // COALESCE de usuario: si no viene en edición, conservar el actual.
     await dbRun(
-      `INSERT INTO agora_locales (local, host, token, local_id, activo, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (local) DO UPDATE SET host = EXCLUDED.host, token = EXCLUDED.token, local_id = EXCLUDED.local_id, activo = EXCLUDED.activo, updated_at = EXCLUDED.updated_at`,
-      [String(local).trim(), String(host).trim(), tokenStored, localId, act, now]
+      `INSERT INTO agora_locales (local, host, token, usuario, pass_enc, local_id, activo, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (local) DO UPDATE SET host = EXCLUDED.host, token = EXCLUDED.token,
+         usuario = COALESCE(EXCLUDED.usuario, agora_locales.usuario), pass_enc = EXCLUDED.pass_enc,
+         local_id = EXCLUDED.local_id, activo = EXCLUDED.activo, updated_at = EXCLUDED.updated_at`,
+      [String(local).trim(), String(host).trim(), tokenStored, usuarioStored === undefined ? null : usuarioStored, passStored, localId, act, now]
     );
     res.json({ ok: true });
   } catch (e) {

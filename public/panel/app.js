@@ -1337,22 +1337,26 @@ function renderAgoraRow(local, i) {
   const est = c && c.estado;
   const alive = est ? est.alive : null;
   const pill = !c ? '<span class="pill">Sin configurar</span>' : (!c.activo ? '<span class="pill">Desactivado</span>' : (alive === true ? '<span class="pill ok">TPV vivo</span>' : alive === false ? '<span class="pill bad">Sin respuesta</span>' : '<span class="pill brand">Activo</span>'));
-  const tokPh = c && c.tokenSet ? `${c.tokenHint} · guardado — escribe para cambiar` : "apiToken de Ágora";
+  const passPh = c && c.passSet ? "•••••• · guardada — escribe para cambiar" : "Contraseña de Ágora";
   return `<div class="card" data-agrow="${i}"><div class="ch"><h3>${esc(local)}</h3>${pill}</div>
     <div class="toolbar">
       <div class="field grow"><label>Host (DynDNS + puerto)</label><input id="agHost_${i}" value="${esc(c ? c.host : "")}" placeholder="local.chickenkiller.com:8984"></div>
       <div class="field"><label>Local ID (opcional)</label><input id="agLid_${i}" value="${esc(c && c.local_id ? c.local_id : "")}" placeholder="—" style="max-width:120px"></div>
     </div>
-    <div class="field" style="width:100%"><label>apiToken</label><input id="agTok_${i}" type="password" autocomplete="off" placeholder="${esc(tokPh)}"></div>
+    <div class="toolbar">
+      <div class="field grow"><label>Usuario de Ágora</label><input id="agUser_${i}" autocomplete="off" value="${esc(c && c.usuario ? c.usuario : "")}" placeholder="Ej. integracion / Admin web"></div>
+      <div class="field grow"><label>Contraseña de Ágora</label><input id="agPass_${i}" type="password" autocomplete="off" placeholder="${esc(passPh)}"></div>
+    </div>
+    <div class="field" style="width:100%"><label>apiToken (opcional · solo para diagnóstico/Haddock)</label><input id="agTok_${i}" type="password" autocomplete="off" placeholder="${esc(c && c.tokenSet ? c.tokenHint + " · guardado" : "—")}"></div>
     <div class="toolbar" style="align-items:center">
       <label class="chip" style="cursor:pointer"><input type="checkbox" id="agAct_${i}" ${(!c || c.activo) ? "checked" : ""} style="margin-right:6px">Activo</label>
       <span class="grow"></span>
-      <button class="btn" data-act="ag-probe" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Probar conexión</button>
+      <button class="btn" data-act="ag-probe" data-local="${esc(local)}" ${c ? "" : "disabled"}>Probar conexión</button>
       <button class="btn" data-act="ag-diag" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Diagnóstico API</button>
-      <button class="btn" data-act="ag-descubrir" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Descubrir rutas</button>
       <button class="btn primary" data-act="ag-save" data-local="${esc(local)}" data-i="${i}">Guardar</button>
       ${c ? `<button class="btn sm danger" data-act="ag-del" data-local="${esc(local)}">Eliminar</button>` : ""}
-    </div>${(() => { const rs = agoraResumenFor(local); const datos = rs && rs.dias > 0 ? `<span class="pill ok">Con datos</span> ${num(rs.dias)} día(s) · última venta ${esc(fechaCorta(rs.ultimoDia))}` : (c && c.activo ? '<span class="pill warn">Sin datos aún</span> aún no llegan ventas' : ""); return `<div class="mut" style="font-size:12px;margin-top:4px">${est && est.ts ? `Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}` : ""}${datos ? (est && est.ts ? " · " : "") + datos : ""}</div>`; })()}</div>`;
+    </div>
+    <div class="mut" style="font-size:11.5px;margin-top:4px">Las ventas se leen con el <b>usuario+contraseña</b> (login web de Ágora). Recomendado: crea un usuario dedicado con permisos mínimos.</div>${(() => { const rs = agoraResumenFor(local); const datos = rs && rs.dias > 0 ? `<span class="pill ok">Con datos</span> ${num(rs.dias)} día(s) · última venta ${esc(fechaCorta(rs.ultimoDia))}` : (c && c.activo ? '<span class="pill warn">Sin datos aún</span> aún no llegan ventas' : ""); return `<div class="mut" style="font-size:12px;margin-top:4px">${est && est.ts ? `Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}` : ""}${datos ? (est && est.ts ? " · " : "") + datos : ""}</div>`; })()}</div>`;
 }
 function renderAgora() {
   const head = `<div class="ph"><div class="eyebrow">Sistema · Integraciones</div><h1>Ágora (TPV)</h1><div class="sub">Conecta el TPV de cada local para traer las ventas. El apiToken se guarda cifrado y nunca se muestra.</div><div class="acts"><button class="btn primary" data-act="ag-sync">Sincronizar ventas ahora</button></div></div>`;
@@ -1378,10 +1382,12 @@ async function loadAgora() {
 async function agoraSave(local, i) {
   const host = (document.getElementById("agHost_" + i) || {}).value || "";
   const token = (document.getElementById("agTok_" + i) || {}).value || "";
+  const usuario = (document.getElementById("agUser_" + i) || {}).value || "";
+  const password = (document.getElementById("agPass_" + i) || {}).value || "";
   const local_id = (document.getElementById("agLid_" + i) || {}).value || "";
   const activo = (document.getElementById("agAct_" + i) || {}).checked ? 1 : 0;
   if (!host.trim()) { toast("Pon el host del TPV"); return; }
-  try { await apiSend("POST", "/api/agora/locales", { local, host: host.trim(), token: token.trim(), local_id: local_id.trim(), activo }); toast("Configuración guardada ✅"); loadAgora(); }
+  try { await apiSend("POST", "/api/agora/locales", { local, host: host.trim(), token: token.trim(), usuario: usuario.trim(), password: password.trim(), local_id: local_id.trim(), activo }); toast("Configuración guardada ✅"); loadAgora(); }
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 async function agoraProbe(local) {
