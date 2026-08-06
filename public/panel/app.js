@@ -1153,7 +1153,8 @@ function renderRRSegSidebar() {
     return `<div><div class="ch" style="padding:10px 14px 4px;margin:0"><h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)">${esc(loc)}</h3><span class="pill ${hechos === ws.length ? "ok" : ""}">${hechos}/${ws.length}</span></div><div class="rows">${items}</div></div>`;
   }).join("");
   const addBtn = USER.rol === "encargado" ? "" : '<button class="btn sm" data-act="rr-worker-add">+ Añadir</button>';
-  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3>${addBtn}</div>${groups || '<div class="mut" style="padding:14px">Sin trabajadores.</div>'}</div>`;
+  const agoraBtn = '<button class="btn sm" data-act="rr-agora-import" title="Enlazar operadores de Ágora">Ágora</button>';
+  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3><span style="display:flex;gap:6px">${agoraBtn}${addBtn}</span></div>${groups || '<div class="mut" style="padding:14px">Sin trabajadores.</div>'}</div>`;
 }
 function renderRRCheckin() {
   const w = RRSEG.sel; if (!w) return "";
@@ -1201,7 +1202,48 @@ function renderRRFicha() {
   const dato = (lab, val) => val ? `<div><div class="t2">${lab}</div><div class="t1">${esc(val)}</div></div>` : "";
   const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Puesto", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
   const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(t.rol || "")}${t.local ? " · " + esc(t.local) : ""}${t.username ? " · @" + esc(t.username) : ""}${antig}</div></div></div>${esDir ? `<button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(t.nombre || t.username || "")}">Eliminar</button>` : ""}</div></div>`;
-  return `<div class="grid" style="gap:16px">${hero}${datos}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
+  return `<div class="grid" style="gap:16px">${hero}${datos}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
+}
+function renderRRRendimiento() {
+  const f = RRSEG.ficha; if (!f) return "";
+  if (!f.enlazadoAgora) return `<div class="card"><div class="ch"><h3>Rendimiento (Ágora)</h3><button class="btn sm" data-act="rr-agora-import">Enlazar con Ágora</button></div><div class="mut" style="padding:2px 2px 4px">No está enlazado a su operador de Ágora. Enlázalo para ver sus ventas.</div></div>`;
+  return `<div class="card"><div class="ch"><h3>Rendimiento (Ágora)</h3><button class="btn sm" data-act="rr-rend-cargar" data-id="${RRSEG.sel.id}">Cargar ventas (30 días)</button></div><div id="rrRend"><div class="mut" style="padding:2px">Pulsa «Cargar» para consultar en vivo (requiere el TPV abierto).</div></div></div>`;
+}
+async function rrCargarRendimiento(id) {
+  const box = document.getElementById("rrRend"); if (box) box.innerHTML = '<div class="mut" style="padding:2px">Consultando Ágora…</div>';
+  try {
+    const j = await apiRaw("/api/rrhh/trabajador/" + encodeURIComponent(id) + "/rendimiento");
+    if (!box) return;
+    if (j.sinCredenciales) { box.innerHTML = '<div class="mut" style="padding:2px">Ágora no está configurado para este local.</div>'; return; }
+    if (!j.fila) { box.innerHTML = '<div class="mut" style="padding:2px">Sin ventas en el periodo (o el TPV está cerrado).</div>'; return; }
+    const f = j.fila;
+    box.innerHTML = `<div class="grid g3" style="gap:12px"><div><div class="t2">Ventas</div><div class="t1">${eur(f.ventas || 0)}</div></div><div><div class="t2">Cancelado</div><div class="t1">${eur(f.cancelado || 0)}</div></div><div><div class="t2">Periodo</div><div class="t1">${esc(j.from)} → ${esc(j.to)}</div></div></div>`;
+  } catch (e) { if (box) box.innerHTML = `<div class="mut" style="padding:2px">Error: ${esc(e.message)}</div>`; }
+}
+async function rrImportarOperadores() {
+  const ov = modal("Enlazar operadores de Ágora", '<div id="rrOpBody" class="mut">Consultando Ágora (últimos 90 días)…</div>');
+  const body = ov.querySelector("#rrOpBody");
+  try {
+    const j = await apiRaw("/api/rrhh/agora/operadores");
+    if (j.sinCredenciales) { body.innerHTML = "Ágora no está configurado. Configúralo en «Ágora (TPV)»."; return; }
+    const ops = j.operadores || [];
+    if (!ops.length) { body.innerHTML = "No se han detectado operadores con ventas en el periodo (o el TPV está cerrado)."; return; }
+    const workers = RRSEG.workers || [];
+    const wopts = (sel) => workers.map((w) => `<option value="${w.id}" ${String(w.id) === String(sel) ? "selected" : ""}>${esc(w.nombre)} · ${esc(w.local || "")}</option>`).join("");
+    body.innerHTML = `<div class="mut" style="margin-bottom:10px;font-size:12.5px">${ops.length} operador(es) detectados. Enlaza cada uno a su ficha.</div>` + ops.map((o, i) => {
+      if (o.match === "exacto") return `<div class="row"><div class="grow"><b>${esc(o.userName)}</b> <span class="pill ok">enlazado</span></div></div>`;
+      const sel = o.worker_id || (o.candidatos[0] && o.candidatos[0].id) || "";
+      const badge = o.match === "probable" ? '<span class="pill warn">probable</span>' : '<span class="pill">sin match</span>';
+      return `<div class="row" id="rrop-row-${i}"><div class="grow"><b>${esc(o.userName)}</b> ${badge}</div><select id="rrop-${i}" style="max-width:220px">${wopts(sel)}</select> <button class="btn sm primary" data-rr-enlazar="${i}" data-agora="${esc(o.userName)}">Enlazar</button></div>`;
+    }).join("");
+  } catch (e) { body.innerHTML = "Error: " + esc(e.message); return; }
+  ov.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-rr-enlazar]"); if (!b) return;
+    const i = b.getAttribute("data-rr-enlazar"); const agora = b.getAttribute("data-agora");
+    const sel = document.getElementById("rrop-" + i); const wid = sel ? sel.value : null; if (!wid) return;
+    try { await apiSend("POST", "/api/rrhh/agora/enlazar", { agora_username: agora, worker_id: wid }); toast("Enlazado ✅"); const row = document.getElementById("rrop-row-" + i); if (row) row.innerHTML = `<div class="grow"><b>${esc(agora)}</b> <span class="pill ok">enlazado</span></div>`; }
+    catch (err) { if (err.message !== "noauth") toast("Error: " + err.message); }
+  });
 }
 function rrEditarDatos(id) {
   const t = (RRSEG.ficha && RRSEG.ficha.trabajador) || RRSEG.sel; if (!t) return;
@@ -2648,6 +2690,8 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-editar-datos") rrEditarDatos(t.getAttribute("data-id"));
   else if (act === "rr-doc-subir") rrDocSubir(t.getAttribute("data-id"));
   else if (act === "rr-doc-del") rrDocDel(t.getAttribute("data-id"));
+  else if (act === "rr-agora-import") rrImportarOperadores();
+  else if (act === "rr-rend-cargar") rrCargarRendimiento(t.getAttribute("data-id"));
   else if (act === "rr-worker-add") rrWorkerAdd();
   else if (act === "rr-worker-del") rrWorkerDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-checkin-save") rrCheckinSave();

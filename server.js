@@ -28,6 +28,7 @@ import { getInforme, listaInformes, calcularTotales } from "./src/integrations/a
 import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos } from "./src/modules/usuarios/permisos.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
+import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
 import { detectarIdioma, normalizarIdioma, idiomaDeContacto, necesitaTraduccion, idiomasPresentes, placeholdersIntactos, construirTraduccionRequest, IDIOMA_BASE } from "./src/modules/messaging/i18n.js";
 import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
@@ -3052,6 +3053,32 @@ async function ventasRangoLive(local, from, to) {
   return serie;
 }
 
+// Ejecuta un informe de Ágora (por clave del registro INFORMES) para local/rango y devuelve las
+// filas normalizadas. Reutiliza loadAgoraConfigsActive + createAgoraClient + el mapper. Solo lectura.
+// Degrada limpio: sinCredenciales si no hay config; errores[] por local caído (TPV cerrado, timeout).
+async function runInformeAgora(tipoKey, { local, from, to }) {
+  const def = getInforme(tipoKey);
+  if (!def) return { filas: [], errores: [], sinDef: true };
+  const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (local ? c.local === local : true));
+  if (!configs.length) return { filas: [], errores: [], sinCredenciales: true };
+  const conTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+  const filas = []; const errores = [];
+  for (const cfg of configs) {
+    try {
+      const client = createAgoraClient(cfg);
+      const groups = def.needs.includes("groups") ? await client.posGroups() : undefined;
+      const familias = def.needs.includes("familias") ? await client.familiaIds() : undefined;
+      const categorias = def.needs.includes("categorias") ? await client.categoriaIds() : undefined;
+      const timeFrameGroupId = def.needs.includes("timeframe") ? await client.timeFrameGroupId() : undefined;
+      const resp = await conTimeout(client.informe(def.clrType, def.buildExtra({ from, to, groups, familias, categorias, timeFrameGroupId })), 20000);
+      const norm = def.map(resp);
+      filas.push(...norm.filas.map((f) => ({ local: cfg.local, ...f })));
+    } catch (e) { errores.push({ local: cfg.local, error: (e && e.message) ? String(e.message).slice(0, 140) : "error" }); }
+  }
+  return { filas, errores };
+}
+const addDaysISO = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
 // Métricas del dashboard por RANGO de fechas [from,to] (reservas + ventas). Las ventas se consultan
 // EN VIVO a Ágora (cualquier rango, sin tope de histórico); si el TPV está cerrado, usa ventas_diarias.
 app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
@@ -3662,6 +3689,55 @@ app.delete("/api/rrhh/documento/:id", requireAuth(RRHH_ROLES), async (req, res) 
     if (esEncargado(req) && (doc.sensible === 1 || doc.sensible === true)) return res.status(403).json({ ok: false, error: "Documento sensible" });
     await dbRun("DELETE FROM hr_documentos WHERE id = ?", [req.params.id]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── RRHH: enlace con operadores de Ágora + rendimiento por empleado (solo lectura) ──
+// Descubre los operadores que han facturado (informe `empleado`) y propone a qué perfil enlazarlos.
+app.get("/api/rrhh/agora/operadores", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const scope = rrhhLocalScope(req); // encargado → su local; dirección/rrhh → todos (o ?local)
+    const local = scope || (req.query.local ? String(req.query.local).trim() : null);
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || "")) ? req.query.to : hoyISO();
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || "")) ? req.query.from : addDaysISO(to, -90);
+    const r = await runInformeAgora("empleado", { local, from, to });
+    if (r.sinCredenciales) return res.json({ ok: true, operadores: [], sinCredenciales: true, from, to });
+    const userNames = [...new Set(r.filas.map((f) => f.empleado).filter(Boolean))];
+    const perfiles = await dbAll(`SELECT id, nombre, agora_username, local FROM users WHERE rol IN ('trabajador','encargado')${scope ? " AND local = ?" : ""}`, scope ? [scope] : []);
+    const operadores = emparejaOperadores(userNames, perfiles);
+    res.json({ ok: true, operadores, from, to, sinDatos: !userNames.length, errores: r.errores });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Enlaza (1:1) un UserName de Ágora con un perfil. Libera el enlace previo de ese UserName si lo hubiera.
+app.post("/api/rrhh/agora/enlazar", requireAuth(RRHH_ROLES), async (req, res) => {
+  const agora = String(req.body.agora_username || "").trim();
+  const worker_id = req.body.worker_id;
+  if (!worker_id) return res.status(400).json({ ok: false, error: "Falta el trabajador" });
+  try {
+    const wl = await rrhhWorkerLocal(worker_id);
+    if (wl === null) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
+    if (!agora) { await dbRun("UPDATE users SET agora_username = NULL WHERE id = ?", [worker_id]); return res.json({ ok: true, desenlazado: true }); }
+    await dbRun("UPDATE users SET agora_username = NULL WHERE agora_username = ? AND id <> ?", [agora, worker_id]);
+    await dbRun("UPDATE users SET agora_username = ? WHERE id = ?", [agora, worker_id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Rendimiento del trabajador (ventas/cancelaciones) desde Ágora, si tiene enlace. Solo lectura.
+app.get("/api/rrhh/trabajador/:id/rendimiento", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const w = await dbGet("SELECT id, local, agora_username FROM users WHERE id = ?", [req.params.id]);
+    if (!w) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    if (!rrhhPuedeLocal(req, w.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
+    if (!w.agora_username) return res.json({ ok: true, enlazado: false, fila: null });
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || "")) ? req.query.to : hoyISO();
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || "")) ? req.query.from : addDaysISO(to, -30);
+    const r = await runInformeAgora("empleado", { local: w.local, from, to });
+    if (r.sinCredenciales) return res.json({ ok: true, enlazado: true, sinCredenciales: true, from, to });
+    const fila = rendimientoDeEmpleado(r.filas, w.agora_username);
+    res.json({ ok: true, enlazado: true, fila, from, to, sinDatos: !fila, errores: r.errores });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
