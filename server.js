@@ -22,6 +22,7 @@ import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
+import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/agora/diagnostico.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
 import { detectarIdioma, normalizarIdioma, idiomaDeContacto, necesitaTraduccion, idiomasPresentes, placeholdersIntactos, construirTraduccionRequest, IDIOMA_BASE } from "./src/modules/messaging/i18n.js";
 import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
@@ -2763,6 +2764,45 @@ app.post("/api/agora/probe", requireAuth(["direccion"]), async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error en la prueba de conexión" });
   }
+});
+
+// Diagnóstico de la API de Ágora: sondea rutas candidatas contra el TPV ABIERTO y reporta cuál
+// devuelve datos (la doc de endpoints no es pública). Con el resultado se cablea la ruta real.
+// Redacta el token en lo que devuelve. Solo dirección.
+async function ejecutarCandidataAgora(c, token, timeoutMs = 5000) {
+  const redact = (s) => (token ? String(s == null ? "" : s).split(token).join("«token»") : String(s == null ? "" : s));
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const opt = { method: c.method, headers: { ...c.headers }, signal: ctrl.signal };
+    if (c.body != null) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(c.body); }
+    const r = await fetch(c.url, opt);
+    const ct = r.headers.get("content-type") || "";
+    const text = await r.text();
+    let esJson = false, jsonKeys = null;
+    if (text) { try { const j = JSON.parse(text); esJson = true; jsonKeys = Array.isArray(j) ? `[array x${j.length}]` : Object.keys(j).slice(0, 25); } catch { /* no-JSON */ } }
+    return { label: c.label, method: c.method, url: redact(c.url), status: r.status, ok: r.ok, contentType: ct, esJson, jsonKeys, bodySample: redact(text.slice(0, 500)) };
+  } catch (e) {
+    return { label: c.label, method: c.method, url: redact(c.url), error: e && e.name === "AbortError" ? "timeout" : (e.code || e.message || "error") };
+  } finally { clearTimeout(timer); }
+}
+
+app.post("/api/agora/diagnostico", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const { local } = req.body || {};
+    if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
+    const row = await dbGet(`SELECT local, host, token, local_id FROM agora_locales WHERE local = ?`, [local]);
+    if (!row) return res.status(404).json({ ok: false, error: "Local no configurado" });
+    const cfgs = configsFromRows([{ local: row.local, host: row.host, token: agoraDecToken(row.token), local_id: row.local_id, activo: true }]);
+    if (!cfgs.length) return res.status(400).json({ ok: false, error: "Config incompleta (falta host o token)" });
+    const cfg = cfgs[0];
+    const hoy = new Date().toISOString().slice(0, 10);
+    const desde = (req.body.desde && String(req.body.desde)) || new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+    const hasta = (req.body.hasta && String(req.body.hasta)) || hoy;
+    const candidatos = candidatosDiagnostico(cfg.host, { token: cfg.token, localId: cfg.localId, desde, hasta });
+    const resultados = await Promise.all(candidatos.map((c) => ejecutarCandidataAgora(c, cfg.token)));
+    res.json({ ok: true, local, base: cfg.host, desde, hasta, resultados: ordenarResultados(resultados) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // Forzar sincronización de ventas ahora mismo (solo dirección).

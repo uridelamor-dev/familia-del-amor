@@ -1348,6 +1348,7 @@ function renderAgoraRow(local, i) {
       <label class="chip" style="cursor:pointer"><input type="checkbox" id="agAct_${i}" ${(!c || c.activo) ? "checked" : ""} style="margin-right:6px">Activo</label>
       <span class="grow"></span>
       <button class="btn" data-act="ag-probe" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Probar conexión</button>
+      <button class="btn" data-act="ag-diag" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Diagnóstico API</button>
       <button class="btn primary" data-act="ag-save" data-local="${esc(local)}" data-i="${i}">Guardar</button>
       ${c ? `<button class="btn sm danger" data-act="ag-del" data-local="${esc(local)}">Eliminar</button>` : ""}
     </div>${(() => { const rs = agoraResumenFor(local); const datos = rs && rs.dias > 0 ? `<span class="pill ok">Con datos</span> ${num(rs.dias)} día(s) · última venta ${esc(fechaCorta(rs.ultimoDia))}` : (c && c.activo ? '<span class="pill warn">Sin datos aún</span> aún no llegan ventas' : ""); return `<div class="mut" style="font-size:12px;margin-top:4px">${est && est.ts ? `Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}` : ""}${datos ? (est && est.ts ? " · " : "") + datos : ""}</div>`; })()}</div>`;
@@ -1386,6 +1387,28 @@ async function agoraProbe(local) {
   toast("Probando conexión…");
   try { const j = await apiSend("POST", "/api/agora/probe", { local }); toast(j.alive ? "✅ " + (j.mensaje || "El TPV respondió") : "⚠ " + (j.mensaje || "Sin respuesta")); loadAgora(); }
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+// Sondea la API del TPV (rutas candidatas) y muestra el resultado para pegármelo y cablear la ruta real.
+async function agoraDiagnostico(local) {
+  toast("Sondeando la API del TPV… (el local debe estar abierto)");
+  let j; try { j = await apiSend("POST", "/api/agora/diagnostico", { local }); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); return; }
+  const rs = j.resultados || [];
+  const fila = (r) => {
+    const est = r.error ? `❌ ${r.error}` : `${r.ok ? "✅" : "•"} ${r.status}${r.esJson ? " · JSON" : r.contentType ? " · " + r.contentType.split(";")[0] : ""}`;
+    const keys = r.jsonKeys ? ` · claves: ${Array.isArray(r.jsonKeys) ? r.jsonKeys.join(", ") : r.jsonKeys}` : "";
+    return `<div class="agres"><div class="who" style="min-width:0"><div class="t1">${esc(r.label)} <span class="mut">${esc(r.method)}</span></div><div class="t2" style="word-break:break-all">${esc(r.url)}</div>${r.bodySample ? `<div class="t2" style="word-break:break-all;opacity:.85">${esc(String(r.bodySample).slice(0, 200))}</div>` : ""}${keys ? `<div class="t2">${esc(keys)}</div>` : ""}</div><span class="pill ${r.ok ? "ok" : r.error ? "bad" : ""}" style="white-space:nowrap">${esc(est)}</span></div>`;
+  };
+  const jsonTxt = JSON.stringify(j, null, 2);
+  const body = `<div class="mut" style="font-size:12.5px;margin-bottom:8px">Base: <b>${esc(j.base || "")}</b> · rango ${esc(j.desde || "")} → ${esc(j.hasta || "")}. Lo prometedor va arriba. <b>Cópialo y pégamelo</b> y cablearé la ruta real de ventas.</div>
+    <div class="card p0" style="max-height:46vh;overflow:auto">${rs.length ? rs.map(fila).join("") : '<div class="mut" style="padding:12px">Sin resultados (¿local cerrado?).</div>'}</div>
+    <textarea id="agDiagJson" style="width:100%;height:120px;margin-top:10px;font-family:monospace;font-size:11px" readonly>${esc(jsonTxt)}</textarea>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="btn" id="agDiagCopy">Copiar resultado</button><button class="btn primary" data-close>Cerrar</button></div>`;
+  const ov = modal("Diagnóstico API · " + local, body);
+  ov.querySelector(".modal").classList.add("wide");
+  ov.querySelector("#agDiagCopy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(jsonTxt); toast("Copiado ✅"); }
+    catch { const ta = ov.querySelector("#agDiagJson"); ta.focus(); ta.select(); toast("Selecciona y copia (⌘C)"); }
+  });
 }
 async function agoraDel(local) {
   const ok = await confirmModal(`¿Eliminar la configuración de Ágora de ${local}?`, { ok: "Eliminar", danger: true }); if (!ok) return;
@@ -1921,6 +1944,7 @@ document.addEventListener("click", (e) => {
   else if (act === "com-add") comAdd();
   else if (act === "ag-save") agoraSave(t.getAttribute("data-local"), t.getAttribute("data-i"));
   else if (act === "ag-probe") agoraProbe(t.getAttribute("data-local"));
+  else if (act === "ag-diag") agoraDiagnostico(t.getAttribute("data-local"));
   else if (act === "ag-del") agoraDel(t.getAttribute("data-local"));
   else if (act === "ag-sync") agoraSyncNow();
   else if (act === "camp-nueva") openNuevaCampana();
