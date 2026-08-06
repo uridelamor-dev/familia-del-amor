@@ -8,7 +8,7 @@
 function addDays(iso, n) { const d = new Date(iso + "T00:00:00.000Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 
 // PURO y testeable: qué días hay que traer (hasta ayer), rellenando huecos, con tope maxDias.
-export function diasFaltantes(existentes, { hoy, maxDias = 45 } = {}) {
+export function diasFaltantes(existentes, { hoy, maxDias = 800 } = {}) {
   const ayer = addDays(hoy, -1);
   const inicio = addDays(ayer, -(maxDias - 1));
   const set = existentes instanceof Set ? existentes : new Set(existentes || []);
@@ -24,7 +24,7 @@ export function diasFaltantes(existentes, { hoy, maxDias = 45 } = {}) {
 // Sincroniza un local. Devuelve { local, reachable, insertados, error? }.
 // Trae el rango [primerFalta, últimoFalta+1) en UNA consulta (el informe agrega por día) y
 // hace upsert SOLO de los días que faltaban (cerrados). Hoy nunca entra (diasFaltantes va a ayer).
-export async function syncVentasLocal(x, client, cfg, { hoy, maxDias = 45 } = {}) {
+export async function syncVentasLocal(x, client, cfg, { hoy, maxDias = 800 } = {}) {
   let reachable = false;
   try { reachable = await client.ping(); } catch { reachable = false; }
   if (!reachable) return { local: cfg.local, reachable: false, insertados: 0 };
