@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "crypto";
+import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 
 // Serializa el procesamiento de un MISMO archivo (por hash) para evitar duplicados por carrera:
 // dos peticiones casi simultáneas del mismo documento pasaban ambas la comprobación de duplicado
@@ -739,6 +740,23 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
       empresa = localesMatch[0].empresa;
       console.log(`[Facturas] NIF ${datos.nif_receptor} → empresa detectada: ${empresa} (local ambiguo)`);
     }
+  }
+
+  // 3-bis. Si el CIF no bastó, intentar por empresa receptora única o proveedor habitual
+  // (mismos criterios "muy claros" que hacía el usuario a mano). Solo autoasigna con confianza ALTA.
+  if (!localAutodetectado) {
+    try {
+      const locales = await dbAll("SELECT local, empresa, cif, local_contable FROM facturas_locales", []);
+      const hist = indexarHistorialProveedor(await dbAll("SELECT proveedor, local FROM facturas WHERE proveedor IS NOT NULL", []));
+      const sug = sugerirLocalPendiente({
+        pendiente: { nif_receptor: datos.nif_receptor, nombre_receptor: datos.nombre_receptor, empresa_detectada: empresa !== "Sin empresa asignada" ? empresa : null, proveedor: datos.proveedor },
+        locales, historial: hist,
+      });
+      if (sug.local && sug.confianza === "alta") {
+        localAutodetectado = sug.local;
+        console.log(`[Facturas] Autoasignado por ${sug.motivo}: ${sug.local}`);
+      }
+    } catch (e) { console.error("[Facturas] autoasignación proveedor/empresa:", e.message); }
   }
 
   // 4. Si detectamos el local únicamente → procesar normalmente
