@@ -22,6 +22,7 @@ import { mapManageRow, resumenPorLocal, draftRequest, extractText } from "./src/
 import crypto from "crypto";
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
+import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
 import { createAgoraClient } from "./src/integrations/agora/client.js";
 import { syncVentas } from "./src/integrations/agora/sync.js";
 
@@ -435,6 +436,39 @@ async function initDB() {
         total_errores INTEGER DEFAULT 0,
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
         finalizado_en TEXT
+      )
+    `);
+    // Ampliación de campañas (multicanal + estados + programación). Aditivo.
+    for (const col of [
+      "canal TEXT DEFAULT 'whatsapp'", "estado TEXT DEFAULT 'enviada'", "programada_para TEXT",
+      "plantilla_id INTEGER", "adjunto_url TEXT", "asunto TEXT",
+    ]) {
+      try { await client.query(`ALTER TABLE campanas_wa ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter campanas_wa:", e.message); }
+    }
+    // Seguimiento por destinatario (quién recibió qué). Base para aperturas/clics de email.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS campana_envios (
+        id SERIAL PRIMARY KEY,
+        campana_id INTEGER,
+        telefono TEXT,
+        correo TEXT,
+        nombre TEXT,
+        estado TEXT DEFAULT 'enviado',
+        error TEXT,
+        enviado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    try { await client.query(`CREATE INDEX IF NOT EXISTS idx_campana_envios_cid ON campana_envios(campana_id)`); } catch { /* noop */ }
+    // Plantillas de mensaje guardadas (reutilizables, con variables {nombre} {apellidos} {local}).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS plantillas_mensaje (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        canal TEXT DEFAULT 'whatsapp',
+        asunto TEXT,
+        cuerpo TEXT NOT NULL,
+        idioma TEXT DEFAULT 'es',
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
@@ -2801,19 +2835,36 @@ app.post("/api/contactos/mensaje", requireAuth(["direccion", "marketing"]), asyn
 });
 
 // Envío de un LOTE por WhatsApp con ritmo (jitter) — reutilizado por masivo y campañas.
+// Si hay campanaId, registra cada destinatario en campana_envios y cierra la campaña.
 async function enviarLoteWA({ contactos, mensaje, campanaId = null, minMs = 6000, maxMs = 15000 }) {
   let enviados = 0, errores = 0;
   for (const c of contactos) {
-    try {
-      await sendMensajeLibre(c.telefono, aplicarVariables(mensaje, c));
-      enviados++;
-    } catch (_) { errores++; }
+    let estado = "enviado", err = null;
+    try { await sendMensajeLibre(c.telefono, aplicarVariables(mensaje, c)); enviados++; }
+    catch (e) { errores++; estado = "error"; err = (e && e.message) ? String(e.message).slice(0, 200) : "error"; }
+    if (campanaId) {
+      try { await dbRun(`INSERT INTO campana_envios (campana_id, telefono, nombre, estado, error) VALUES (?, ?, ?, ?, ?)`, [campanaId, c.telefono, `${c.nombre || ""} ${c.apellidos || ""}`.trim(), estado, err]); } catch { /* noop */ }
+    }
     await new Promise((r) => setTimeout(r, delayConJitter(minMs, maxMs)));
   }
   if (campanaId) {
-    try { await dbRun(`UPDATE campanas_wa SET total_enviados=?, total_errores=?, finalizado_en=CURRENT_TIMESTAMP WHERE id=?`, [enviados, errores, campanaId]); } catch { /* noop */ }
+    try { await dbRun(`UPDATE campanas_wa SET total_enviados=?, total_errores=?, estado='enviada', finalizado_en=CURRENT_TIMESTAMP WHERE id=?`, [enviados, errores, campanaId]); } catch { /* noop */ }
   }
   return { enviados, errores };
+}
+
+// Segmenta desde el segmento guardado y envía una campaña (usado al enviar ya y por el scheduler).
+async function dispatchCampana(campanaId) {
+  const camp = await dbGet(`SELECT * FROM campanas_wa WHERE id = ?`, [campanaId]);
+  if (!camp) return { ok: false };
+  if (!isReady()) return { ok: false, motivo: "wa_off" };
+  let seg = {}; try { seg = JSON.parse(camp.segmento_json || "{}"); } catch { /* noop */ }
+  const params = []; const sql = sqlContactosUnificados(seg, params);
+  const contactos = await dbAll(sql, params);
+  const { aptos } = filtrarEnviablesWA(contactos, { soloOptIn: !!seg.soloOptIn });
+  await dbRun(`UPDATE campanas_wa SET estado='enviando' WHERE id = ?`, [campanaId]);
+  enviarLoteWA({ contactos: aptos, mensaje: camp.mensaje, campanaId });
+  return { ok: true, enviables: aptos.length };
 }
 
 // Mensaje MASIVO al conjunto filtrado (excluye SIEMPRE bajas; consentimiento opcional).
@@ -2901,6 +2952,94 @@ app.get("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, re
   } catch (e) {
     res.status(500).json({ ok: false });
   }
+});
+
+// Crear una campaña: guardar borrador, programar o enviar ya (según `accion`).
+app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const { nombre, mensaje, asunto = null, canal = "whatsapp", plantilla_id = null, accion = "borrador", programada_para = null, soloOptIn = false } = req.body || {};
+  if (!nombre || !mensaje) return res.status(400).json({ ok: false, error: "Faltan nombre y mensaje" });
+  if (canal !== "whatsapp") return res.status(400).json({ ok: false, error: "El canal email aún no está disponible" });
+  try {
+    const seg = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes, con_email: req.body.con_email, con_telefono: req.body.con_telefono, excluir_baja: 1, soloOptIn: !!soloOptIn };
+    // Recuento de enviables para informar
+    const params = []; const contactos = await dbAll(sqlContactosUnificados(seg, params), params);
+    const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: !!soloOptIn });
+    let estado = "borrador";
+    if (accion === "programar" && programada_para) estado = "programada";
+    else if (accion === "enviar") estado = "enviando";
+    const row = await dbRun(
+      `INSERT INTO campanas_wa (nombre, segmento_json, mensaje, asunto, canal, plantilla_id, estado, programada_para, total_enviados) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
+      [nombre, JSON.stringify(seg), mensaje, asunto, canal, plantilla_id, estado, accion === "programar" ? programada_para : null]
+    );
+    const id = row.id;
+    if (accion === "enviar") {
+      if (!isReady()) { await dbRun(`UPDATE campanas_wa SET estado='borrador' WHERE id=?`, [id]); return res.status(503).json({ ok: false, error: "WhatsApp no conectado", campana_id: id }); }
+      res.json({ ok: true, campana_id: id, estado: "enviando", enviables: aptos.length, omitidos });
+      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id });
+      return;
+    }
+    res.json({ ok: true, campana_id: id, estado, enviables: aptos.length, omitidos });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Detalle de una campaña con resultados por destinatario.
+app.get("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const camp = await dbGet(`SELECT * FROM campanas_wa WHERE id = ?`, [req.params.id]);
+    if (!camp) return res.status(404).json({ ok: false, error: "No existe" });
+    const envios = await dbAll(`SELECT telefono, nombre, estado, error, enviado_en FROM campana_envios WHERE campana_id = ? ORDER BY id DESC LIMIT 500`, [req.params.id]);
+    res.json({ ok: true, data: { campana: camp, envios, resumen: resumenEnvios(envios) } });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Disparar el envío de una campaña existente (borrador/programada).
+app.post("/api/campanas/:id/enviar", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
+  try {
+    const r = await dispatchCampana(req.params.id);
+    if (!r.ok) return res.status(400).json({ ok: false, error: r.motivo === "wa_off" ? "WhatsApp no conectado" : "No se pudo enviar" });
+    res.json({ ok: true, enviables: r.enviables });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try { await dbRun(`DELETE FROM campanas_wa WHERE id = ?`, [req.params.id]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── PLANTILLAS DE MENSAJE ─────────────────────────────────────────────
+app.get("/api/plantillas", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try { res.json({ ok: true, data: await dbAll(`SELECT * FROM plantillas_mensaje ORDER BY creado_en DESC`) }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post("/api/plantillas", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const { nombre, cuerpo, canal = "whatsapp", asunto = null, idioma = "es" } = req.body || {};
+  if (!nombre || !cuerpo) return res.status(400).json({ ok: false, error: "Faltan nombre y cuerpo" });
+  try { const row = await dbRun(`INSERT INTO plantillas_mensaje (nombre, canal, asunto, cuerpo, idioma) VALUES (?, ?, ?, ?, ?) RETURNING id`, [nombre, canal, asunto, cuerpo, idioma]); res.json({ ok: true, id: row.id }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.delete("/api/plantillas/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try { await dbRun(`DELETE FROM plantillas_mensaje WHERE id = ?`, [req.params.id]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Config de la automatización de cumpleaños (on/off + plantilla).
+app.get("/api/campanas-config", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try { res.json({ ok: true, cumple_auto: (await getConfig("cumple_auto")) === "1", cumple_plantilla: (await getConfig("cumple_plantilla")) || "" }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post("/api/campanas-config", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    if (req.body.cumple_auto !== undefined) await setConfig("cumple_auto", req.body.cumple_auto ? "1" : "0");
+    if (req.body.cumple_plantilla !== undefined) await setConfig("cumple_plantilla", String(req.body.cumple_plantilla || ""));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {
@@ -3456,6 +3595,40 @@ const server = app.listen(PORT, async () => {
     } catch (e) {
       console.error("Error procesando follow-ups:", e.message);
     }
+  }, 5 * 60 * 1000);
+
+  // Campañas programadas (despacho a su hora) + automatización de cumpleaños (cada 5 min).
+  setInterval(async () => {
+    if (!isReady()) return;
+    // 1) Campañas con estado 'programada' cuya hora ya llegó.
+    try {
+      const ahora = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Madrid" }).replace(" ", "T");
+      const prog = await dbAll(`SELECT id FROM campanas_wa WHERE estado = 'programada' AND programada_para IS NOT NULL AND programada_para <= ?`, [ahora]);
+      for (const c of prog) { try { await dispatchCampana(c.id); } catch (e) { console.error("[campaña programada]", e.message); } }
+    } catch (e) { console.error("[scheduler campañas]", e.message); }
+
+    // 2) Cumpleaños: una sola vez al día, en la franja 10:xx (Madrid), si está activado.
+    try {
+      if ((await getConfig("cumple_auto")) !== "1") return;
+      const hora = new Date().toLocaleTimeString("sv-SE", { timeZone: "Europe/Madrid" });
+      if (!hora.startsWith("10:")) return;
+      const hm = hoyMadrid();
+      if ((await getConfig("cumple_last")) === hm.iso) return;
+      await setConfig("cumple_last", hm.iso); // marca ANTES de enviar (evita duplicados si reintenta)
+      const plantilla = (await getConfig("cumple_plantilla")) || "¡Feliz cumpleaños, {nombre}! 🎉 Te esperamos en Familia del Amor.";
+      const leads = await dbAll(
+        `SELECT l.nombre, l.apellidos, l.telefono, l.nacimiento, COALESCE(mp.baja, 0) AS baja
+         FROM leads l LEFT JOIN marketing_prefs mp
+           ON RIGHT(regexp_replace(mp.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(l.telefono, '[^0-9]', '', 'g'), 9)
+         WHERE l.nacimiento IS NOT NULL AND l.nacimiento <> '' AND l.telefono IS NOT NULL AND l.telefono <> ''`
+      );
+      const dest = leads.filter((l) => !(l.baja === 1 || l.baja === true) && esCumpleHoy(l.nacimiento, hm));
+      if (!dest.length) return;
+      const row = await dbRun(`INSERT INTO campanas_wa (nombre, segmento_json, mensaje, canal, estado, total_enviados) VALUES (?, ?, ?, 'whatsapp', 'enviando', 0) RETURNING id`,
+        [`🎂 Cumpleaños ${hm.iso}`, JSON.stringify({ auto: "cumple" }), plantilla]);
+      enviarLoteWA({ contactos: dest, mensaje: plantilla, campanaId: row.id });
+      console.log(`🎂 Cumpleaños: enviando felicitación a ${dest.length} contacto(s)`);
+    } catch (e) { console.error("[cumpleaños]", e.message); }
   }, 5 * 60 * 1000);
 
   setOnMessage(async ({ jid, texto, respuesta, historico = false }) => {
