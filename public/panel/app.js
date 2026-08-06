@@ -313,35 +313,92 @@ async function loadDashboard() {
 }
 
 // ════════════════════════ VISTA: RESERVAS ════════════════════════
-let RESF = { local: "", from: "", to: "" };
+let RESF = { local: "", from: "", to: "", vista: "dia", foco: "" };
+// ── Lógica de agenda (reflejo de src/modules/reservas/agenda.js; el panel no importa ESM) ──
+const RES_TURNOS = [{ key: "comida", label: "Comida", desde: "12:00", hasta: "17:00" }, { key: "cena", label: "Cena", desde: "19:00", hasta: "23:59" }];
+const WD = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const CARGA_COL = { baja: "#3f9b52", media: "#c8912a", alta: "#c0392b" };
+function horaAMin(h) { const m = String(h || "").match(/^(\d{1,2}):(\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : null; }
+function turnoDeHora(h) { const min = horaAMin(h); if (min == null) return "otros"; for (const t of RES_TURNOS) if (min >= horaAMin(t.desde) && min <= horaAMin(t.hasta)) return t.key; return "otros"; }
+function nivelCarga(p) { p = Number(p) || 0; return p > 40 ? "alta" : p > 20 ? "media" : "baja"; }
+function resOrdenar(rs) { return (rs || []).slice().sort((a, b) => (horaAMin(a.hora) ?? 9999) - (horaAMin(b.hora) ?? 9999)); }
+function resAgendaDia(list, dia) {
+  const del = dia ? (list || []).filter((r) => r.dia === dia) : (list || []);
+  const porTurno = { comida: [], cena: [], otros: [] };
+  del.forEach((r) => porTurno[turnoDeHora(r.hora)].push(r));
+  const turnos = [...RES_TURNOS, { key: "otros", label: "Otras horas" }].map((t) => {
+    const rs = resOrdenar(porTurno[t.key]); const personas = rs.reduce((s, r) => s + (Number(r.personas) || 0), 0);
+    return { key: t.key, label: t.label, reservas: rs, personas, total: rs.length, carga: nivelCarga(personas) };
+  }).filter((t) => t.key !== "otros" || t.total > 0);
+  return { dia, turnos, totalReservas: del.length, totalPersonas: del.reduce((s, r) => s + (Number(r.personas) || 0), 0) };
+}
+function resDiaSemana(iso) { const [y, m, d] = iso.split("-").map(Number); const t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]; const yy = m < 3 ? y - 1 : y; return ((yy + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) + t[m - 1] + d) % 7 + 6) % 7; }
+function resLunes(iso) { return addDaysStr(iso, -resDiaSemana(iso)); }
+function resDiasSemana(lunes) { return Array.from({ length: 7 }, (_, i) => addDaysStr(lunes, i)); }
+
 function renderReservas(list) {
-  const rows = (list || []).slice().sort((a, b) => (a.dia + a.hora).localeCompare(b.dia + b.hora));
+  if (!RESF.foco) RESF.foco = todayStr();
   const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${RESF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
-  const toolbar = `<div class="toolbar">
-    <div class="field"><label>Local</label><select id="fLocal">${localOpts}</select></div>
-    <div class="field"><label>Desde</label><input type="date" id="fFrom" value="${RESF.from}"></div>
-    <div class="field"><label>Hasta</label><input type="date" id="fTo" value="${RESF.to}"></div>
-    <button class="btn" data-act="filtrar">Buscar</button>
-    <div class="spacer" style="flex:1"></div>
-    <button class="btn" data-act="csv">Exportar CSV</button>
-    <button class="btn primary" data-act="nueva">+ Nueva reserva</button></div>`;
-  const table = rows.length
+  const seg = ["dia:Día", "semana:Semana", "lista:Lista"].map((p) => { const [v, t] = p.split(":"); return `<button class="btn ${RESF.vista === v ? "primary" : ""}" data-act="res-vista" data-vista="${v}">${t}</button>`; }).join("");
+  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="fLocal">${localOpts}</select></div><button class="btn" data-act="filtrar">Filtrar</button><div class="spacer" style="flex:1"></div><div class="toolbar" style="margin:0;gap:6px">${seg}</div><button class="btn" data-act="csv">Exportar CSV</button><button class="btn primary" data-act="nueva">+ Nueva reserva</button></div>`;
+  const cuerpo = RESF.vista === "lista" ? renderResLista(list) : RESF.vista === "semana" ? renderResSemana(list) : renderResDia(list);
+  return `<div class="ph"><div class="eyebrow">Operación</div><h1>Reservas</h1><div class="sub">Agenda por turnos, ocupación y gestión rápida</div></div>${toolbar}${cuerpo}`;
+}
+function resNav(label) {
+  return `<div class="agnav"><button class="btn sm" data-act="res-prev">‹</button><button class="btn sm" data-act="res-hoy">Hoy</button><button class="btn sm" data-act="res-next">›</button><b style="margin-left:6px;text-transform:capitalize">${esc(label)}</b></div>`;
+}
+function resCargaDot(carga) { return `<span class="dot" style="background:${CARGA_COL[carga]}" title="Carga ${carga}"></span>`; }
+function resResRow(r) {
+  const tel = String(r.telefono || "").replace(/[^0-9+]/g, "");
+  return `<div class="agres"><span class="hh">${esc(r.hora || "")}</span><div class="who"><div class="t1">${esc(r.nombre_reserva || "(sin nombre)")}</div><div class="t2">${esc(r.local || "")} · ${esc(r.telefono || "")}</div></div><span class="pill">${esc(r.personas)} pax</span>${tel ? `<a class="btn sm" href="tel:${esc(tel)}" title="Llamar">Llamar</a>` : ""}<button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></div>`;
+}
+function renderResDia(list) {
+  const a = resAgendaDia(list, RESF.foco);
+  const label = `${WD[resDiaSemana(RESF.foco)]} · ${fechaCorta(RESF.foco)}`;
+  const resumen = `<div class="sub" style="margin:-4px 0 12px">${a.totalReservas} reserva${a.totalReservas === 1 ? "" : "s"} · ${a.totalPersonas} personas${RESF.foco === todayStr() ? " · hoy" : ""}</div>`;
+  const cols = a.turnos.map((t) => `<div class="agturno"><div class="th"><span>${esc(t.label)} ${resCargaDot(t.carga)}</span><span class="mut" style="font-weight:500">${t.total} · ${t.personas} pax</span></div>${t.reservas.length ? t.reservas.map(resResRow).join("") : '<div class="mut" style="padding:14px">Sin reservas.</div>'}</div>`).join("");
+  return `${resNav(label)}${resumen}<div class="agturnos">${cols || '<div class="card"><div class="mut" style="padding:8px">Sin reservas este día.</div></div>'}</div>`;
+}
+function renderResSemana(list) {
+  const lunes = resLunes(RESF.foco);
+  const dias = resDiasSemana(lunes);
+  const label = `Semana del ${fechaCorta(lunes)}`;
+  const cells = dias.map((dia, i) => {
+    const a = resAgendaDia(list, dia);
+    const tl = a.turnos.filter((t) => t.key !== "otros").map((t) => `<span class="tl">${resCargaDot(t.carga)} ${esc(t.label[0])}: ${t.total}/${t.personas}p</span>`).join("");
+    return `<div class="agday ${dia === todayStr() ? "hoy" : ""}" data-act="res-dia" data-dia="${dia}"><div class="dwd">${WD[i]}</div><div class="dnum">${Number(dia.slice(-2))}</div>${a.totalReservas ? tl : '<div class="mut" style="font-size:12px;margin-top:8px">—</div>'}</div>`;
+  }).join("");
+  return `${resNav(label)}<div class="agweek">${cells}</div><div class="mut" style="font-size:12px;margin-top:10px">Toca un día para ver el detalle por turnos. C = comida, C = cena (nº reservas / personas). El punto indica la carga.</div>`;
+}
+function renderResLista(list) {
+  const rows = (list || []).slice().sort((a, b) => (a.dia + a.hora).localeCompare(b.dia + b.hora));
+  return rows.length
     ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Día</th><th>Hora</th><th>Local</th><th class="r">Pers.</th><th>Nombre</th><th>Teléfono</th><th></th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(fechaCorta(r.dia))}</td><td class="tnum">${esc(r.hora)}</td><td>${esc(r.local)}</td><td class="r tnum">${esc(r.personas)}</td><td>${esc(r.nombre_reserva)}</td><td class="mut">${esc(r.telefono)}</td><td class="r"><button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></td></tr>`).join("")}</tbody></table></div></div>`
     : `<div class="card"><div class="mut" style="padding:8px">No hay reservas en ese rango. Prueba a ampliar las fechas o crea una nueva.</div></div>`;
-  return `<div class="ph"><div class="eyebrow">Operación</div><h1>Reservas</h1><div class="sub">${rows.length} reserva${rows.length === 1 ? "" : "s"} · ${esc(fechaCorta(RESF.from))} → ${esc(fechaCorta(RESF.to))}</div></div>${toolbar}${table}`;
+}
+// Rango [from,to] según la vista activa.
+function resRango() {
+  if (RESF.vista === "dia") return [RESF.foco, RESF.foco];
+  if (RESF.vista === "semana") { const l = resLunes(RESF.foco); return [l, addDaysStr(l, 6)]; }
+  if (!RESF.from) { RESF.from = todayStr(); RESF.to = addDaysStr(todayStr(), 30); }
+  return [RESF.from, RESF.to];
 }
 async function loadReservas() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
-  if (!RESF.from) { RESF.from = todayStr(); RESF.to = addDaysStr(todayStr(), 30); }
+  if (!RESF.foco) RESF.foco = todayStr();
   try {
-    const qs = new URLSearchParams(); qs.set("from", RESF.from); qs.set("to", RESF.to); if (RESF.local) qs.set("local", RESF.local);
+    const [from, to] = resRango();
+    const qs = new URLSearchParams(); qs.set("from", from); qs.set("to", to); if (RESF.local) qs.set("local", RESF.local);
     const data = await api("/api/reservas?" + qs.toString());
     view.innerHTML = renderReservas(data);
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
-function applyReservasFilter() {
-  const l = document.getElementById("fLocal"), f = document.getElementById("fFrom"), t = document.getElementById("fTo");
-  if (l) RESF.local = l.value; if (f && f.value) RESF.from = f.value; if (t && t.value) RESF.to = t.value;
+function applyReservasFilter() { const l = document.getElementById("fLocal"); if (l) RESF.local = l.value; loadReservas(); }
+function resVista(v) { RESF.vista = v; loadReservas(); }
+function resDiaFoco(dia) { RESF.foco = dia; RESF.vista = "dia"; loadReservas(); }
+function resNavega(dir) {
+  const paso = RESF.vista === "semana" ? 7 : 1;
+  if (dir === "hoy") RESF.foco = todayStr(); else RESF.foco = addDaysStr(RESF.foco, dir === "next" ? paso : -paso);
   loadReservas();
 }
 function openNuevaReserva() {
@@ -1633,6 +1690,11 @@ document.addEventListener("click", (e) => {
   else if (act === "logout") { localStorage.removeItem("token"); location.href = "/login.html"; }
   else if (act === "reload") go(CURRENT);
   else if (act === "filtrar") applyReservasFilter();
+  else if (act === "res-vista") resVista(t.getAttribute("data-vista"));
+  else if (act === "res-prev") resNavega("prev");
+  else if (act === "res-next") resNavega("next");
+  else if (act === "res-hoy") resNavega("hoy");
+  else if (act === "res-dia") resDiaFoco(t.getAttribute("data-dia"));
   else if (act === "nueva") openNuevaReserva();
   else if (act === "csv") downloadCsv();
   else if (act === "cancel") cancelReserva(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
