@@ -490,54 +490,66 @@ async function cliFicha(tel) {
 }
 
 // ════════════════════════ VISTA: RESEÑAS (por local · responder · IA · masivas) ════════════════════════
-let REVF = { rating: "", local: "", estado: "" };
+let REVF = { rating: "", local: "", estado: "", q: "", autor: "", from: "", to: "", sort: "recientes" };
 let REV_DATA = [], REV_LOCALES = [], REV_SEL = new Set(), REV_STATUS = null;
+let REV_CONT = { total: 0, pendientes: 0, respondidas: 0 }, REV_RESUMEN = [], REV_OFFSET = 0, REV_HASMORE = false;
 
 function renderReviews() {
   const rows = REV_DATA;
   const puedeActualizar = USER.rol === "direccion" || USER.rol === "marketing";
   const st = REV_STATUS;
-  const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "Google conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">${num(st.reviews_count || 0)} reseñas${st.source ? ` · fuente: ${st.source === "places" ? "Places" : st.source === "business_profile" ? "Business Profile" : esc(st.source)}` : ""}${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}</div></div></div>` : "";
+  const fuenteTxt = (s) => s === "places" ? "Places" : s === "business_profile" ? "Business Profile" : s ? esc(s) : "—";
+  const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "OAuth conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">Fuente: ${fuenteTxt(st.source)} · ${num(st.reviews_count || 0)} reseñas${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}${st.last_attempt ? ` · último intento ${esc(String(st.last_attempt).slice(0, 16).replace("T", " "))}` : ""}${st.last_error ? ` · último error: ${esc(String(st.last_error).slice(0, 80))}` : ""}</div></div>${puedeActualizar ? '<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>' : ""}</div>` : "";
+  const cont = `<div class="grid g3" style="margin-bottom:14px">${stat("Total reseñas", "star", num(REV_CONT.total))}${stat("Pendientes", "bell", num(REV_CONT.pendientes))}${stat("Respondidas", "chat", num(REV_CONT.respondidas))}</div>`;
   const chip = (val, label, on) => `<button class="chip ${on ? "on" : ""}" data-act="rev-local" data-local="${esc(val)}">${esc(label)}</button>`;
   const selector = REV_LOCALES.length > 1 ? `<div class="chips">${chip("", "Todos", !REVF.local)}${REV_LOCALES.map((l) => chip(l, nombreCortoLocal(l), REVF.local === l)).join("")}</div>` : "";
-  const estadoOpts = [["", "Todas"], ["pendientes", "Pendientes"], ["respondidas", "Respondidas"]].map(([v, t]) => `<option value="${v}" ${REVF.estado === v ? "selected" : ""}>${t}</option>`).join("");
+  const resumenChips = (REV_RESUMEN && REV_RESUMEN.length > 1) ? `<div class="chips" style="margin:6px 0 2px">${REV_RESUMEN.map((x) => `<span class="chip" style="cursor:default">${esc(nombreCortoLocal(x.local))} · ${x.media != null ? x.media + "★" : "—"} · ${x.pendientes} pend</span>`).join("")}</div>` : "";
+  const estadoOpts = [["", "Todas"], ["pendientes", "Sin responder"], ["respondidas", "Respondidas"]].map(([v, t]) => `<option value="${v}" ${REVF.estado === v ? "selected" : ""}>${t}</option>`).join("");
   const ratingOpts = ['<option value="">Todas</option>'].concat([5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${REVF.rating === String(n) ? "selected" : ""}>${n}★</option>`)).join("");
-  const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estadoOpts}</select></div><div class="field"><label>Puntuación</label><select id="rRating">${ratingOpts}</select></div><button class="btn" data-act="rev-filtrar">Filtrar</button><div style="flex:1"></div>${puedeActualizar ? '<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>' : ""}</div>`;
+  const sortOpts = [["recientes", "Más recientes"], ["antiguas", "Más antiguas"], ["mejor", "Mejor valoración"], ["peor", "Peor valoración"]].map(([v, t]) => `<option value="${v}" ${REVF.sort === v ? "selected" : ""}>${t}</option>`).join("");
+  const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estadoOpts}</select></div><div class="field"><label>Estrellas</label><select id="rRating">${ratingOpts}</select></div><div class="field"><label>Ordenar</label><select id="rSort">${sortOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(REVF.q)}" placeholder="Texto o autor…"></div><div class="field"><label>Autor</label><input id="rAutor" value="${esc(REVF.autor)}"></div><div class="field"><label>Desde</label><input type="date" id="rFrom" value="${esc(REVF.from)}"></div><div class="field"><label>Hasta</label><input type="date" id="rTo" value="${esc(REVF.to)}"></div><button class="btn" data-act="rev-filtrar">Filtrar</button></div>`;
   const nota = `<div class="pendingblock" style="margin-bottom:16px"><b>Responder en Google, muy pronto.</b> La publicación directa está pendiente de que Google apruebe la cuota de su API. Mientras tanto: redacta la respuesta (con IA si quieres), <b>guárdala</b> aquí y usa <b>Copiar</b> para pegarla en Google.</div>`;
   const bulk = REV_SEL.size ? `<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><b>${REV_SEL.size} seleccionada${REV_SEL.size === 1 ? "" : "s"}</b><div style="flex:1"></div><button class="btn" data-act="rev-sel-none">Quitar selección</button><button class="btn primary" data-act="rev-bulk">✨ Generar borradores IA</button></div>` : "";
-  const body = rows.length ? rows.map(reviewCard).join("") : `<div class="card"><div class="mut" style="padding:8px">${REV_LOCALES.length ? "Sin reseñas con este filtro." : "Aún no hay reseñas importadas. Pulsa «Actualizar desde Google» (requiere que la conexión y la cuota de Google estén activas)."}</div></div>`;
-  return `<div class="ph"><div class="eyebrow">Reputación</div><h1>Reseñas de Google</h1><div class="sub">Opiniones por local · responde una a una o en lote</div></div>${estadoBanner}${nota}${selector}${toolbar}${bulk}${body}`;
+  const body = rows.length ? rows.map(reviewCard).join("") : `<div class="card"><div class="mut" style="padding:8px">${REV_CONT.total ? "Sin reseñas con este filtro." : "Aún no hay reseñas importadas. Pulsa «Actualizar desde Google»."}</div></div>`;
+  const masBtn = REV_HASMORE ? `<div style="text-align:center;margin-top:6px"><button class="btn" data-act="rev-more">Cargar más (${num(REV_DATA.length)}/${num(REV_CONT.total)})</button></div>` : "";
+  return `<div class="ph"><div class="eyebrow">Reputación</div><h1>Reseñas de Google</h1><div class="sub">Bandeja de gestión · filtra, ordena y responde</div></div>${estadoBanner}${cont}${nota}${selector}${resumenChips}${toolbar}${bulk}${body}${masBtn}`;
 }
 
 function reviewCard(r) {
   const badge = r.respondida ? '<span class="badge">Respondida</span>' : '<span class="badge warn">Pendiente</span>';
+  const origen = r.origen ? `<span class="pill" style="font-size:10px" title="Origen">${r.origen === "places" ? "Places" : "Business"}</span>` : "";
   const check = r.respondida ? "" : `<input type="checkbox" class="revsel" data-act="rev-sel" data-id="${esc(r.id)}" ${REV_SEL.has(String(r.id)) ? "checked" : ""} aria-label="Seleccionar reseña">`;
   const stars = `<span class="stars">${"★".repeat(r.rating)}<span class="mut">${"★".repeat(5 - r.rating)}</span></span>`;
   return `<div class="card revcard ${r.negativa ? "neg" : ""}" style="margin-bottom:12px"><div style="display:flex;gap:12px;align-items:flex-start">${check}<div class="grow" style="min-width:0;flex:1">
-    <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">${stars}<b>${esc(r.author)}</b><span class="mut" style="font-size:12px">· ${esc(r.local)} · ${esc(r.fecha)}</span><span style="flex:1"></span>${badge}</div>
+    <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">${stars}<b>${esc(r.author)}</b><span class="mut" style="font-size:12px">· ${esc(r.local)} · ${esc(r.fecha)}</span>${origen}<span style="flex:1"></span>${badge}</div>
     ${r.text ? `<p style="margin:8px 0 0;font-size:13.5px;line-height:1.5">${esc(r.text)}</p>` : '<p class="mut" style="margin:8px 0 0;font-size:13px">(sin texto, solo puntuación)</p>'}
     ${r.reply ? `<div class="revreply"><span class="k">Tu respuesta</span><span>${esc(r.reply)}</span></div>` : ""}
     <div style="margin-top:10px;display:flex;gap:8px"><button class="btn sm" data-act="rev-responder" data-id="${esc(r.id)}">${r.respondida ? "Editar respuesta" : "Responder"}</button></div>
   </div></div></div>`;
 }
 
-async function loadReviews() {
-  const view = document.getElementById("view"); view.innerHTML = skeleton();
+async function loadReviews(append = false) {
+  const view = document.getElementById("view"); if (!append) view.innerHTML = skeleton();
   try {
     const qs = new URLSearchParams();
-    if (REVF.local) qs.set("local", REVF.local);
-    if (REVF.rating) qs.set("rating", REVF.rating);
-    if (REVF.estado) qs.set("estado", REVF.estado);
-    const [j, status] = await Promise.all([
-      apiSend("GET", "/api/reviews/manage" + (qs.toString() ? "?" + qs.toString() : "")),
-      fetch("/api/google/status").then((r) => (r.ok ? r.json() : null)).catch(() => null),
-    ]);
-    REV_DATA = j.data || []; REV_LOCALES = j.locales || []; REV_SEL.clear();
-    REV_STATUS = status || null;
+    ["local", "rating", "estado", "q", "autor", "from", "to", "sort"].forEach((k) => { if (REVF[k]) qs.set(k, REVF[k]); });
+    qs.set("limit", "50"); qs.set("offset", String(append ? REV_OFFSET : 0));
+    const promStatus = append ? Promise.resolve(REV_STATUS) : fetch("/api/google/status").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    const [j, status] = await Promise.all([apiSend("GET", "/api/reviews/manage?" + qs.toString()), promStatus]);
+    const data = j.data || [];
+    if (append) { REV_DATA = REV_DATA.concat(data); REV_OFFSET += data.length; }
+    else { REV_DATA = data; REV_OFFSET = data.length; REV_SEL.clear(); }
+    REV_LOCALES = j.locales || REV_LOCALES; REV_CONT = j.contadores || REV_CONT; REV_RESUMEN = j.resumen || []; REV_HASMORE = !!j.hasMore; REV_STATUS = status || REV_STATUS;
     view.innerHTML = renderReviews();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
-function applyRevFilter() { const rt = document.getElementById("rRating"), es = document.getElementById("rEstado"); if (rt) REVF.rating = rt.value; if (es) REVF.estado = es.value; loadReviews(); }
+function loadMoreReviews() { loadReviews(true); }
+function applyRevFilter() {
+  const g = (id) => { const e = document.getElementById(id); return e ? e.value.trim() : ""; };
+  REVF.estado = g("rEstado"); REVF.rating = g("rRating"); REVF.sort = g("rSort") || "recientes";
+  REVF.q = g("rQ"); REVF.autor = g("rAutor"); REVF.from = g("rFrom"); REVF.to = g("rTo");
+  loadReviews(false);
+}
 async function refreshReviews() {
   toast("Actualizando reseñas…");
   try {
@@ -1532,6 +1544,7 @@ document.addEventListener("click", (e) => {
   else if (act === "cli-ficha") cliFicha(t.getAttribute("data-tel"));
   else if (act === "cli-masivo") cliMasivo();
   else if (act === "rev-filtrar") applyRevFilter();
+  else if (act === "rev-more") loadMoreReviews();
   else if (act === "rev-refresh") refreshReviews();
   else if (act === "rev-local") revSetLocal(t.getAttribute("data-local"));
   else if (act === "rev-responder") openResponder(t.getAttribute("data-id"));
