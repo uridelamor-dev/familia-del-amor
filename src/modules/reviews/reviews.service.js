@@ -24,7 +24,30 @@ export function mapManageRow(r) {
     reply_by: r.reply_by || null,
     respondida: !!reply,
     negativa: rating > 0 && rating <= 3,
+    origen: r.origen || null,
   };
+}
+
+// Constructor PURO de la consulta de la bandeja de reseñas (WHERE + params + ORDER).
+export function buildManageQuery(f = {}) {
+  const cond = [], params = [];
+  if (f.local) { cond.push("location_name = ?"); params.push(String(f.local)); }
+  if (f.rating) { cond.push("rating = ?"); params.push(parseInt(f.rating)); }
+  if (f.estado === "pendientes") cond.push("(reply IS NULL OR reply = '')");
+  else if (f.estado === "respondidas") cond.push("(reply IS NOT NULL AND reply <> '')");
+  if (f.q) { cond.push("(LOWER(text) LIKE ? OR LOWER(author) LIKE ?)"); const like = "%" + String(f.q).toLowerCase() + "%"; params.push(like, like); }
+  if (f.autor) { cond.push("LOWER(author) LIKE ?"); params.push("%" + String(f.autor).toLowerCase() + "%"); }
+  if (f.from) { cond.push("COALESCE(fecha, creado_en) >= ?"); params.push(String(f.from)); }
+  if (f.to) { cond.push("COALESCE(fecha, creado_en) <= ?"); params.push(String(f.to) + "T23:59:59"); }
+  const where = cond.length ? "WHERE " + cond.join(" AND ") : "";
+  const orders = {
+    recientes: "COALESCE(fecha, creado_en) DESC",
+    antiguas: "COALESCE(fecha, creado_en) ASC",
+    mejor: "rating DESC, COALESCE(fecha, creado_en) DESC",
+    peor: "rating ASC, COALESCE(fecha, creado_en) DESC",
+  };
+  const orderBy = orders[f.sort] || orders.recientes;
+  return { where, params, orderBy };
 }
 
 // Agrupa por local para el resumen (conteos y pendientes por establecimiento).

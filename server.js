@@ -588,6 +588,8 @@ async function initDB() {
       "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS reply TEXT",
       "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS replied_at TEXT",
       "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS reply_by TEXT",
+      "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS origen TEXT",
+      "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS google_name TEXT",
     ];
     for (const sql of ALTERS) {
       try { await client.query(sql); } catch (e) { console.warn("Columna omitida (no crítica):", e.message); }
@@ -809,18 +811,25 @@ async function fetchBusinessReviews() {
     const locs = locData.locations || [];
     locsTotal += locs.length;
     for (const loc of locs) {
-      const revRes = await fetch(`https://mybusinessreviews.googleapis.com/v1/${loc.name}/reviews?pageSize=50`, { headers: h });
-      const revData = await revRes.json().catch(() => ({}));
-      for (const rev of (revData.reviews || [])) {
-        const r = await dbRun(
-          `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating, text=EXCLUDED.text, fecha=EXCLUDED.fecha
-           RETURNING (xmax = 0)::int AS inserted`,
-          [rev.reviewId || rev.name, loc.title || loc.name, rev.reviewer?.displayName || "Cliente", STAR[rev.starRating] || 5, rev.comment || "", rev.createTime || new Date().toISOString()]
-        );
-        if (r && (r.inserted === 1 || r.inserted === "1" || r.inserted === true)) imported++; else updated++;
-      }
+      // Paginación: recorre TODAS las páginas de reseñas de la ficha (histórico completo).
+      let pageToken = null, pages = 0;
+      do {
+        const url = `https://mybusinessreviews.googleapis.com/v1/${loc.name}/reviews?pageSize=50` + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
+        const revRes = await fetch(url, { headers: h });
+        const revData = await revRes.json().catch(() => ({}));
+        for (const rev of (revData.reviews || [])) {
+          const r = await dbRun(
+            `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha, origen, google_name)
+             VALUES (?, ?, ?, ?, ?, ?, 'business_profile', ?)
+             ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating, text=EXCLUDED.text, fecha=EXCLUDED.fecha, origen='business_profile', google_name=EXCLUDED.google_name
+             RETURNING (xmax = 0)::int AS inserted`,
+            [rev.reviewId || rev.name, loc.title || loc.name, rev.reviewer?.displayName || "Cliente", STAR[rev.starRating] || 5, rev.comment || "", rev.createTime || new Date().toISOString(), rev.name || null]
+          );
+          if (r && (r.inserted === 1 || r.inserted === "1" || r.inserted === true)) imported++; else updated++;
+        }
+        pageToken = revData.nextPageToken || null;
+        pages++;
+      } while (pageToken && pages < 60); // tope de seguridad (~3000 reseñas/ficha)
     }
   }
   console.log(`[Google Reviews] Locations found: ${locsTotal}`);
@@ -844,9 +853,10 @@ async function fetchPlacesReviews() {
       for (const rev of (data.result?.reviews || [])) {
         const id = `places_${loc.placeId}_${rev.time}`;
         const r = await dbRun(
-          `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating, text=EXCLUDED.text, fecha=EXCLUDED.fecha
+          `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha, origen)
+           VALUES (?, ?, ?, ?, ?, ?, 'places')
+           ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating, text=EXCLUDED.text, fecha=EXCLUDED.fecha,
+             origen = CASE WHEN google_reviews.origen = 'business_profile' THEN 'business_profile' ELSE 'places' END
            RETURNING (xmax = 0)::int AS inserted`,
           [id, loc.name || "Local", rev.author_name || "Cliente", rev.rating || 5, rev.text || "", new Date(rev.time * 1000).toISOString()]
         );
@@ -860,6 +870,9 @@ async function fetchPlacesReviews() {
 
 // Orquesta la sincronización (Business → fallback Places) y persiste el estado.
 async function runReviewsSync() {
+  const t0 = Date.now();
+  const ahora = new Date().toISOString();
+  await setConfig("reviews_last_attempt", ahora); // último INTENTO (aunque falle)
   const refresh = await getConfig("google_refresh_token");
   const placeIdsCount = await contarPlaceIds();
   const result = await syncReviews({
@@ -869,10 +882,14 @@ async function runReviewsSync() {
     fetchBusiness: fetchBusinessReviews,
     fetchPlaces: fetchPlacesReviews,
   });
-  console.log(`[Google Reviews] Sync finished: ${result.source} / ${result.imported + result.updated}`);
-  await setConfig("reviews_last_fetch", new Date().toISOString());
+  const ms = Date.now() - t0;
+  const total = result.imported + result.updated;
+  console.log(`[Google Reviews] Total importado: ${total} · Tiempo: ${ms} ms`);
+  console.log(`[Google Reviews] Sync finished: ${result.source} / ${total}`);
+  await setConfig("reviews_last_fetch", ahora);
   await setConfig("reviews_last_source", result.source);
   await setConfig("reviews_last_error", (result.businessProfileError || (result.errors && result.errors[0]) || result.reason || ""));
+  if (total > 0 || result.source !== "none") await setConfig("reviews_last_ok", ahora); // última SINCRONIZACIÓN con fuente
   return result;
 }
 
@@ -1547,17 +1564,15 @@ app.get("/auth/google/callback", async (req, res) => {
 
 app.get("/api/google/status", async (req, res) => {
   const token = await getConfig("google_refresh_token");
-  const lastFetch = await getConfig("reviews_last_fetch");
   const count = await dbGet("SELECT COUNT(*) as n FROM google_reviews");
   const placesCount = await contarPlaceIds();
-  const source = await getConfig("reviews_last_source");
-  const lastError = await getConfig("reviews_last_error");
   const status = {
     connected: !!token,
     reviews_count: parseInt(count?.n || 0),
-    last_fetch: lastFetch || null,
-    source: source || null,
-    last_error: lastError || null,
+    last_fetch: (await getConfig("reviews_last_ok")) || (await getConfig("reviews_last_fetch")) || null, // última sincronización correcta
+    last_attempt: (await getConfig("reviews_last_attempt")) || null, // último intento
+    source: (await getConfig("reviews_last_source")) || null,
+    last_error: (await getConfig("reviews_last_error")) || null,
     places_configured: placesCount,
     places_key_set: !!GOOGLE_PLACES_API_KEY,
   };
@@ -1613,18 +1628,29 @@ app.post("/api/places/config", requireAuth(["direccion", "marketing"]), async (r
 // (incluidas las negativas, que son las que más interesa responder), con filtro por local.
 app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabilidad", "marketing"]), async (req, res) => {
   try {
-    const cond = [], params = [];
-    if (req.query.local) { cond.push("location_name = ?"); params.push(String(req.query.local)); }
-    if (req.query.rating) { cond.push("rating = ?"); params.push(parseInt(req.query.rating)); }
-    if (req.query.estado === "pendientes") cond.push("(reply IS NULL OR reply = '')");
-    else if (req.query.estado === "respondidas") cond.push("(reply IS NOT NULL AND reply <> '')");
-    const where = cond.length ? "WHERE " + cond.join(" AND ") : "";
-    const rows = await dbAll(`SELECT * FROM google_reviews ${where} ORDER BY COALESCE(fecha,creado_en) DESC LIMIT 300`, params);
+    const { where, params, orderBy } = buildManageQuery(req.query);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+    const rows = await dbAll(`SELECT * FROM google_reviews ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`, [...params, limit, offset]);
     const data = (rows || []).map(mapManageRow);
+    // Contadores sobre TODO el conjunto filtrado (no solo la página).
+    const c = await dbGet(`SELECT COUNT(*) AS n,
+        SUM(CASE WHEN reply IS NULL OR reply = '' THEN 1 ELSE 0 END) AS pend,
+        SUM(CASE WHEN reply IS NOT NULL AND reply <> '' THEN 1 ELSE 0 END) AS resp
+      FROM google_reviews ${where}`, params);
+    const total = parseInt(c?.n || 0);
+    // Resumen por local sobre TODAS las reseñas (para los chips y medias).
+    const allRows = await dbAll(`SELECT location_name, reply, rating FROM google_reviews`);
+    const resumen = resumenPorLocal((allRows || []).map((r) => ({ local: r.location_name || "—", respondida: !!(r.reply && String(r.reply).trim()), rating: r.rating })));
     const locRows = await dbAll(`SELECT DISTINCT location_name FROM google_reviews WHERE location_name IS NOT NULL AND location_name <> '' ORDER BY location_name`);
-    res.json({ ok: true, data, resumen: resumenPorLocal(data), locales: (locRows || []).map((l) => l.location_name) });
+    res.json({
+      ok: true, data, total, offset, limit,
+      hasMore: offset + data.length < total,
+      contadores: { total, pendientes: parseInt(c?.pend || 0), respondidas: parseInt(c?.resp || 0) },
+      resumen, locales: (locRows || []).map((l) => l.location_name),
+    });
   } catch (e) {
-    res.status(500).json({ ok: false, error: "Error reseñas", data: [] });
+    res.status(500).json({ ok: false, error: "Error reseñas: " + e.message, data: [] });
   }
 });
 

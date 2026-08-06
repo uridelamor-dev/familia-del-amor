@@ -1,7 +1,7 @@
 // Reseñas — lógica pura: normalización de filas, resumen por local y prompt de borrador IA.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mapManageRow, resumenPorLocal, draftRequest, cleanDraft, extractText, syncReviews, mensajeEstadoReseñas } from "../../src/modules/reviews/reviews.service.js";
+import { mapManageRow, resumenPorLocal, draftRequest, cleanDraft, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery } from "../../src/modules/reviews/reviews.service.js";
 
 describe("mapManageRow", () => {
   test("marca respondida y estrellas; fecha recortada", () => {
@@ -141,3 +141,37 @@ describe("mensajeEstadoReseñas", () => {
     assert.match(mensajeEstadoReseñas({ connected: true, reviews_count: 0, reason: "sin_place_ids" }), /Place IDs/);
   });
 });
+
+describe("buildManageQuery (bandeja: filtros/orden)", () => {
+  test("sin filtros → sin WHERE, orden recientes", () => {
+    const q = buildManageQuery({});
+    assert.equal(q.where, "");
+    assert.match(q.orderBy, /DESC/);
+    assert.deepEqual(q.params, []);
+  });
+  test("local + rating + estado pendientes", () => {
+    const q = buildManageQuery({ local: "Haddock", rating: "5", estado: "pendientes" });
+    assert.match(q.where, /location_name = \?/);
+    assert.match(q.where, /rating = \?/);
+    assert.match(q.where, /reply IS NULL/);
+    assert.deepEqual(q.params, ["Haddock", 5]);
+  });
+  test("búsqueda de texto y autor (LIKE en minúsculas)", () => {
+    const q = buildManageQuery({ q: "Genial", autor: "Ana" });
+    assert.match(q.where, /LOWER\(text\) LIKE/);
+    assert.match(q.where, /LOWER\(author\) LIKE/);
+    assert.ok(q.params.includes("%genial%"));
+    assert.ok(q.params.includes("%ana%"));
+  });
+  test("rango de fechas", () => {
+    const q = buildManageQuery({ from: "2026-01-01", to: "2026-08-01" });
+    assert.ok(q.params.includes("2026-01-01"));
+    assert.ok(q.params.some((p) => String(p).startsWith("2026-08-01T23")));
+  });
+  test("orden peor valoración primero", () => {
+    assert.match(buildManageQuery({ sort: "peor" }).orderBy, /rating ASC/);
+    assert.match(buildManageQuery({ sort: "mejor" }).orderBy, /rating DESC/);
+    assert.match(buildManageQuery({ sort: "antiguas" }).orderBy, /ASC/);
+  });
+});
+
