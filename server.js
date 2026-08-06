@@ -23,6 +23,7 @@ import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, 
 import crypto from "crypto";
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/agora/diagnostico.js";
+import { extraerScripts, extraerRutasApi, clasificarRutas } from "./src/integrations/agora/descubrir.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
 import { detectarIdioma, normalizarIdioma, idiomaDeContacto, necesitaTraduccion, idiomasPresentes, placeholdersIntactos, construirTraduccionRequest, IDIOMA_BASE } from "./src/modules/messaging/i18n.js";
 import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
@@ -2802,6 +2803,48 @@ app.post("/api/agora/diagnostico", requireAuth(["direccion"]), async (req, res) 
     const candidatos = candidatosDiagnostico(cfg.host, { token: cfg.token, localId: cfg.localId, desde, hasta });
     const resultados = await Promise.all(candidatos.map((c) => ejecutarCandidataAgora(c, cfg.token)));
     res.json({ ok: true, local, base: cfg.host, desde, hasta, resultados: ordenarResultados(resultados) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Descubrir las rutas reales de la API leyendo el JavaScript de la web de administración de Ágora
+// (el :8984 sirve un SPA; sus scripts llaman a los endpoints de datos). Solo dirección; token redactado.
+async function fetchTextTimeout(url, headers, timeoutMs = 6000, maxBytes = 500000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { headers, signal: ctrl.signal });
+    const text = (await r.text()).slice(0, maxBytes);
+    return { status: r.status, ok: r.ok, text };
+  } finally { clearTimeout(timer); }
+}
+
+app.post("/api/agora/descubrir", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const { local } = req.body || {};
+    if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
+    const row = await dbGet(`SELECT local, host, token, local_id FROM agora_locales WHERE local = ?`, [local]);
+    if (!row) return res.status(404).json({ ok: false, error: "Local no configurado" });
+    const cfgs = configsFromRows([{ local: row.local, host: row.host, token: agoraDecToken(row.token), local_id: row.local_id, activo: true }]);
+    if (!cfgs.length) return res.status(400).json({ ok: false, error: "Config incompleta (falta host o token)" });
+    const cfg = cfgs[0];
+    const token = cfg.token;
+    const redact = (s) => (token ? String(s == null ? "" : s).split(token).join("«token»") : String(s == null ? "" : s));
+    const headers = { "Api-Token": token };
+    // 1) Raíz → HTML del SPA.
+    const rootHtml = (await fetchTextTimeout(cfg.host + "/", headers)).text;
+    const scripts = extraerScripts(rootHtml, cfg.host).slice(0, 12);
+    const rutas = new Set(extraerRutasApi(rootHtml));
+    // 2) Descargar cada script y extraer rutas candidatas.
+    const bajados = [];
+    for (const s of scripts) {
+      try {
+        const r = await fetchTextTimeout(s, headers);
+        extraerRutasApi(r.text).forEach((x) => rutas.add(x));
+        bajados.push({ url: redact(s), status: r.status, bytes: r.text.length });
+      } catch (e) { bajados.push({ url: redact(s), error: e && e.name === "AbortError" ? "timeout" : (e.message || "error") }); }
+    }
+    const { api, otras } = clasificarRutas([...rutas]);
+    res.json({ ok: true, local, base: cfg.host, scripts: bajados, api: api.slice(0, 120), otras: otras.slice(0, 120) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

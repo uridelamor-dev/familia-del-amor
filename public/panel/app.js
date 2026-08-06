@@ -1349,6 +1349,7 @@ function renderAgoraRow(local, i) {
       <span class="grow"></span>
       <button class="btn" data-act="ag-probe" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Probar conexión</button>
       <button class="btn" data-act="ag-diag" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Diagnóstico API</button>
+      <button class="btn" data-act="ag-descubrir" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Descubrir rutas</button>
       <button class="btn primary" data-act="ag-save" data-local="${esc(local)}" data-i="${i}">Guardar</button>
       ${c ? `<button class="btn sm danger" data-act="ag-del" data-local="${esc(local)}">Eliminar</button>` : ""}
     </div>${(() => { const rs = agoraResumenFor(local); const datos = rs && rs.dias > 0 ? `<span class="pill ok">Con datos</span> ${num(rs.dias)} día(s) · última venta ${esc(fechaCorta(rs.ultimoDia))}` : (c && c.activo ? '<span class="pill warn">Sin datos aún</span> aún no llegan ventas' : ""); return `<div class="mut" style="font-size:12px;margin-top:4px">${est && est.ts ? `Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}` : ""}${datos ? (est && est.ts ? " · " : "") + datos : ""}</div>`; })()}</div>`;
@@ -1408,6 +1409,25 @@ async function agoraDiagnostico(local) {
   ov.querySelector("#agDiagCopy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(jsonTxt); toast("Copiado ✅"); }
     catch { const ta = ov.querySelector("#agDiagJson"); ta.focus(); ta.select(); toast("Selecciona y copia (⌘C)"); }
+  });
+}
+// Lee la web de administración del TPV y extrae las rutas de API que usa su JavaScript.
+async function agoraDescubrir(local) {
+  toast("Leyendo la web del TPV y sus scripts… (local abierto)");
+  let j; try { j = await apiSend("POST", "/api/agora/descubrir", { local }); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); return; }
+  const api = j.api || [], otras = j.otras || [], scripts = j.scripts || [];
+  const lista = (arr) => arr.length ? arr.map((p) => `<div class="t2" style="word-break:break-all;font-family:monospace">${esc(p)}</div>`).join("") : '<div class="mut" style="padding:6px">—</div>';
+  const jsonTxt = JSON.stringify(j, null, 2);
+  const body = `<div class="mut" style="font-size:12.5px;margin-bottom:8px">Base: <b>${esc(j.base || "")}</b> · scripts leídos: ${scripts.length}. <b>Cópialo y pégamelo</b>: con las rutas de API cablearé la de ventas/cierres.</div>
+    <div class="card p0" style="max-height:34vh;overflow:auto"><div class="ch" style="padding:12px 12px 0"><h3>Rutas prometedoras (venta/cierre/api…)</h3></div><div style="padding:8px 12px">${lista(api)}</div></div>
+    <details style="margin-top:8px"><summary class="mut" style="cursor:pointer;font-size:12.5px">Otras rutas (${otras.length})</summary><div class="card p0" style="max-height:24vh;overflow:auto;margin-top:6px"><div style="padding:8px 12px">${lista(otras)}</div></div></details>
+    <textarea id="agDescJson" style="width:100%;height:120px;margin-top:10px;font-family:monospace;font-size:11px" readonly>${esc(jsonTxt)}</textarea>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="btn" id="agDescCopy">Copiar resultado</button><button class="btn primary" data-close>Cerrar</button></div>`;
+  const ov = modal("Descubrir rutas · " + local, body);
+  ov.querySelector(".modal").classList.add("wide");
+  ov.querySelector("#agDescCopy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(jsonTxt); toast("Copiado ✅"); }
+    catch { const ta = ov.querySelector("#agDescJson"); ta.focus(); ta.select(); toast("Selecciona y copia (⌘C)"); }
   });
 }
 async function agoraDel(local) {
@@ -1945,6 +1965,7 @@ document.addEventListener("click", (e) => {
   else if (act === "ag-save") agoraSave(t.getAttribute("data-local"), t.getAttribute("data-i"));
   else if (act === "ag-probe") agoraProbe(t.getAttribute("data-local"));
   else if (act === "ag-diag") agoraDiagnostico(t.getAttribute("data-local"));
+  else if (act === "ag-descubrir") agoraDescubrir(t.getAttribute("data-local"));
   else if (act === "ag-del") agoraDel(t.getAttribute("data-local"));
   else if (act === "ag-sync") agoraSyncNow();
   else if (act === "camp-nueva") openNuevaCampana();
