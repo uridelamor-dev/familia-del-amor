@@ -18,7 +18,7 @@ import { permisosV2Enabled } from "./src/core/flags.js";
 import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
-import { mapManageRow, resumenPorLocal, draftRequest, extractText } from "./src/modules/reviews/reviews.service.js";
+import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, mensajeEstadoReseñas } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
@@ -771,101 +771,118 @@ async function getGoogleAccessToken() {
 
 const STAR = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 };
 
-async function fetchAndStoreReviews() {
-  const token = await getGoogleAccessToken();
+// Cuenta cuántos Place IDs válidos hay configurados (tolerante a JSON malformado).
+async function contarPlaceIds() {
+  try { const raw = await getConfig("places_ids"); return raw ? JSON.parse(raw).filter((l) => l && l.placeId).length : 0; }
+  catch { return 0; }
+}
+// Traduce un error de Google a un motivo corto (sin volcar la respuesta completa).
+function detectarMotivoGoogle(status, data) {
+  const err = data && data.error;
+  const code = err && (err.status || "");
+  if (status === 403 || code === "PERMISSION_DENIED") return "cuota_o_permiso_403";
+  if (status === 429 || code === "RESOURCE_EXHAUSTED") return "cuota_agotada_429";
+  if (err && err.message) return String(err.message).slice(0, 120);
+  return `http_${status}`;
+}
+
+// Business Profile: devuelve resultado ESTRUCTURADO (no lanza en casos recuperables).
+async function fetchBusinessReviews() {
+  console.log("[Google Reviews] Business Profile start");
+  const token = await getGoogleAccessToken(); // token inválido → lanza; lo captura syncReviews
   const h = { Authorization: `Bearer ${token}` };
-
   const accRes = await fetch("https://mybusinessaccountmanagement.googleapis.com/v1/accounts", { headers: h });
-  const accData = await accRes.json();
-  console.log("Google accounts response:", JSON.stringify(accData).slice(0, 500));
-  if (!accData.accounts?.length) throw new Error("Sin cuentas Google Business: " + JSON.stringify(accData).slice(0, 200));
+  const accData = await accRes.json().catch(() => ({}));
+  if (!accRes.ok || accData.error) {
+    const reason = detectarMotivoGoogle(accRes.status, accData);
+    console.log(`[Google Reviews] Falling back to Places: ${reason}`);
+    return { imported: 0, updated: 0, accounts: 0, reason };
+  }
+  const accounts = accData.accounts || [];
+  console.log(`[Google Reviews] Accounts found: ${accounts.length}`);
+  if (!accounts.length) return { imported: 0, updated: 0, accounts: 0, reason: "sin_cuentas" };
 
-  let total = 0;
-  for (const account of accData.accounts) {
-    const locRes = await fetch(
-      `https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title`,
-      { headers: h }
-    );
-    const locData = await locRes.json();
-    console.log("Google locations response:", JSON.stringify(locData).slice(0, 500));
-    if (!locData.locations?.length) continue;
-
-    for (const loc of locData.locations) {
-      const revRes = await fetch(
-        `https://mybusinessreviews.googleapis.com/v1/${loc.name}/reviews?pageSize=50`,
-        { headers: h }
-      );
-      const revData = await revRes.json();
-      console.log(`Reviews for ${loc.name}:`, JSON.stringify(revData).slice(0, 300));
-      if (!revData.reviews?.length) continue;
-
-      for (const rev of revData.reviews) {
-        await dbRun(
+  let imported = 0, updated = 0, locsTotal = 0;
+  for (const account of accounts) {
+    const locRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title`, { headers: h });
+    const locData = await locRes.json().catch(() => ({}));
+    const locs = locData.locations || [];
+    locsTotal += locs.length;
+    for (const loc of locs) {
+      const revRes = await fetch(`https://mybusinessreviews.googleapis.com/v1/${loc.name}/reviews?pageSize=50`, { headers: h });
+      const revData = await revRes.json().catch(() => ({}));
+      for (const rev of (revData.reviews || [])) {
+        const r = await dbRun(
           `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha)
            VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating,
-             text=EXCLUDED.text, fecha=EXCLUDED.fecha`,
-          [
-            rev.reviewId || rev.name,
-            loc.title || loc.name,
-            rev.reviewer?.displayName || "Cliente",
-            STAR[rev.starRating] || 5,
-            rev.comment || "",
-            rev.createTime || new Date().toISOString()
-          ]
+           ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating, text=EXCLUDED.text, fecha=EXCLUDED.fecha
+           RETURNING (xmax = 0)::int AS inserted`,
+          [rev.reviewId || rev.name, loc.title || loc.name, rev.reviewer?.displayName || "Cliente", STAR[rev.starRating] || 5, rev.comment || "", rev.createTime || new Date().toISOString()]
         );
-        total++;
+        if (r && (r.inserted === 1 || r.inserted === "1" || r.inserted === true)) imported++; else updated++;
       }
     }
   }
-  await setConfig("reviews_last_fetch", new Date().toISOString());
-  console.log(`Google reviews: ${total} reseñas guardadas`);
+  console.log(`[Google Reviews] Locations found: ${locsTotal}`);
+  console.log(`[Google Reviews] Business Profile imported: ${imported} (updated: ${updated})`);
+  return { imported, updated, accounts: accounts.length, locations: locsTotal, reason: (imported + updated === 0 ? "sin_resenas" : null) };
 }
 
-async function fetchReviewsViaPlaces() {
-  if (!GOOGLE_PLACES_API_KEY) throw new Error("GOOGLE_PLACES_API_KEY no configurado en Replit Secrets");
-  const idsRaw = await getConfig("places_ids");
-  if (!idsRaw) throw new Error("No hay Place IDs configurados. Ve a Marketing → Google Places.");
-  const locations = JSON.parse(idsRaw).filter(l => l.placeId);
-  if (!locations.length) throw new Error("Ningún Place ID configurado");
-  let total = 0;
+// Places API: resultado ESTRUCTURADO; un local que falle NO detiene a los demás.
+async function fetchPlacesReviews() {
+  const raw = await getConfig("places_ids");
+  let locations = [];
+  try { locations = raw ? JSON.parse(raw).filter((l) => l && l.placeId) : []; } catch { locations = []; }
+  console.log(`[Google Reviews] Places configured: ${locations.length}`);
+  let imported = 0, updated = 0; const errors = [];
   for (const loc of locations) {
-    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(loc.placeId)}&fields=name,reviews&key=${GOOGLE_PLACES_API_KEY}&language=es&reviews_sort=newest`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.status !== "OK") {
-      console.warn(`Places API error para ${loc.name}: ${data.status} - ${data.error_message || ""}`);
-      continue;
-    }
-    for (const rev of (data.result?.reviews || [])) {
-      const id = `places_${loc.placeId}_${rev.time}`;
-      await dbRun(
-        `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating,
-           text=EXCLUDED.text, fecha=EXCLUDED.fecha`,
-        [id, loc.name, rev.author_name || "Cliente", rev.rating || 5, rev.text || "",
-         new Date(rev.time * 1000).toISOString()]
-      );
-      total++;
-    }
+    try {
+      const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(loc.placeId)}&fields=name,reviews&key=${GOOGLE_PLACES_API_KEY}&language=es&reviews_sort=newest`;
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({ status: "PARSE_ERROR" }));
+      if (data.status !== "OK") { errors.push(`${loc.name || loc.placeId}: ${data.status}${data.error_message ? " - " + data.error_message : ""}`); continue; }
+      for (const rev of (data.result?.reviews || [])) {
+        const id = `places_${loc.placeId}_${rev.time}`;
+        const r = await dbRun(
+          `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating, text=EXCLUDED.text, fecha=EXCLUDED.fecha
+           RETURNING (xmax = 0)::int AS inserted`,
+          [id, loc.name || "Local", rev.author_name || "Cliente", rev.rating || 5, rev.text || "", new Date(rev.time * 1000).toISOString()]
+        );
+        if (r && (r.inserted === 1 || r.inserted === "1" || r.inserted === true)) imported++; else updated++;
+      }
+    } catch (e) { errors.push(`${loc.name || loc.placeId}: ${e.message}`); }
   }
-  await setConfig("reviews_last_fetch", new Date().toISOString());
-  console.log(`Places API reviews: ${total} reseñas de ${locations.length} locales`);
-  return total;
+  console.log(`[Google Reviews] Places imported: ${imported} (updated: ${updated})`);
+  return { imported, updated, errors };
 }
 
-// Refresco diario de reseñas (cada 24h)
+// Orquesta la sincronización (Business → fallback Places) y persiste el estado.
+async function runReviewsSync() {
+  const refresh = await getConfig("google_refresh_token");
+  const placeIdsCount = await contarPlaceIds();
+  const result = await syncReviews({
+    hasRefreshToken: !!refresh,
+    hasPlacesKey: !!GOOGLE_PLACES_API_KEY,
+    placeIdsCount,
+    fetchBusiness: fetchBusinessReviews,
+    fetchPlaces: fetchPlacesReviews,
+  });
+  console.log(`[Google Reviews] Sync finished: ${result.source} / ${result.imported + result.updated}`);
+  await setConfig("reviews_last_fetch", new Date().toISOString());
+  await setConfig("reviews_last_source", result.source);
+  await setConfig("reviews_last_error", (result.businessProfileError || (result.errors && result.errors[0]) || result.reason || ""));
+  return result;
+}
+
+// Refresco diario de reseñas (cada 24h). Fallback automático Business → Places.
 setInterval(async () => {
   try {
     const refresh = await getConfig("google_refresh_token");
-    if (refresh) {
-      await fetchAndStoreReviews();
-    } else if (GOOGLE_PLACES_API_KEY) {
-      await fetchReviewsViaPlaces().catch(e => console.error("Auto-refresh Places:", e.message));
-    }
+    if (refresh || GOOGLE_PLACES_API_KEY) await runReviewsSync();
   } catch (e) {
-    console.error("Auto-refresh reviews:", e.message);
+    console.error("[Google Reviews] Auto-refresh:", e.message);
   }
 }, 24 * 60 * 60 * 1000);
 
@@ -1519,11 +1536,11 @@ app.get("/auth/google/callback", async (req, res) => {
   await setConfig("google_refresh_token", tokenData.refresh_token);
 
   try {
-    await fetchAndStoreReviews();
-    res.redirect("/marketing.html?google=connected");
+    const r = await runReviewsSync(); // fallback automático Business → Places
+    res.redirect(`/marketing.html?google=connected&source=${r.source}&n=${r.imported + r.updated}`);
   } catch (e) {
-    console.error("fetchAndStoreReviews:", e.message);
-    const msg = encodeURIComponent(e.message.slice(0, 200));
+    console.error("[Google Reviews] callback sync:", e.message);
+    const msg = encodeURIComponent(String(e.message || "").slice(0, 200));
     res.redirect(`/marketing.html?google=token_ok&err=${msg}`);
   }
 });
@@ -1532,15 +1549,19 @@ app.get("/api/google/status", async (req, res) => {
   const token = await getConfig("google_refresh_token");
   const lastFetch = await getConfig("reviews_last_fetch");
   const count = await dbGet("SELECT COUNT(*) as n FROM google_reviews");
-  const placesRaw = await getConfig("places_ids");
-  const placesCount = placesRaw ? JSON.parse(placesRaw).filter(l => l.placeId).length : 0;
-  res.json({
+  const placesCount = await contarPlaceIds();
+  const source = await getConfig("reviews_last_source");
+  const lastError = await getConfig("reviews_last_error");
+  const status = {
     connected: !!token,
-    reviews_count: count?.n || 0,
-    last_fetch: lastFetch,
+    reviews_count: parseInt(count?.n || 0),
+    last_fetch: lastFetch || null,
+    source: source || null,
+    last_error: lastError || null,
     places_configured: placesCount,
-    places_key_set: !!GOOGLE_PLACES_API_KEY
-  });
+    places_key_set: !!GOOGLE_PLACES_API_KEY,
+  };
+  res.json({ ...status, mensaje: mensajeEstadoReseñas(status) });
 });
 
 app.get("/api/reviews", async (req, res) => {
@@ -1558,21 +1579,18 @@ app.get("/api/reviews", async (req, res) => {
 });
 
 app.post("/api/reviews/refresh", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  // Dirección puede forzar (bypass del límite) para poder probar tras un cambio.
+  const force = !!(req.body && req.body.force) && req.user && req.user.rol === "direccion";
   const lastFetch = await getConfig("reviews_last_fetch");
-  if (lastFetch) {
+  if (lastFetch && !force) {
     const minsAgo = (Date.now() - new Date(lastFetch).getTime()) / 60000;
     if (minsAgo < 30) {
       return res.status(429).json({ ok: false, error: `Espera ${Math.ceil(30 - minsAgo)} min antes de volver a actualizar.` });
     }
   }
   try {
-    const refresh = await getConfig("google_refresh_token");
-    if (refresh) {
-      await fetchAndStoreReviews();
-    } else {
-      await fetchReviewsViaPlaces();
-    }
-    res.json({ ok: true });
+    const r = await runReviewsSync();
+    res.json({ ok: true, source: r.source, imported: r.imported, updated: r.updated, reason: r.reason, businessProfileError: r.businessProfileError, errors: r.errors });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -1593,7 +1611,7 @@ app.post("/api/places/config", requireAuth(["direccion", "marketing"]), async (r
 // ── Reseñas: gestión interna por local + respuesta en MODO BORRADOR ──────────────
 // Nota: el /api/reviews público (web) NO se toca. Este endpoint devuelve TODAS las reseñas
 // (incluidas las negativas, que son las que más interesa responder), con filtro por local.
-app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
+app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabilidad", "marketing"]), async (req, res) => {
   try {
     const cond = [], params = [];
     if (req.query.local) { cond.push("location_name = ?"); params.push(String(req.query.local)); }

@@ -79,3 +79,63 @@ export function extractText(response) {
   if (!response || !Array.isArray(response.content)) return "";
   return cleanDraft(response.content.filter((b) => b && b.type === "text").map((b) => b.text).join("").trim());
 }
+
+// ── Orquestación de sincronización de reseñas (PURA/testeable, sin BD ni red) ──
+// Fuente principal Business Profile; si por cuota/permisos/403/cuentas vacías/0 reseñas o
+// cualquier error no devuelve reseñas, cae automáticamente a Places API. Las funciones de I/O
+// (fetchBusiness/fetchPlaces) se inyectan. Devuelve un resultado estructurado.
+export async function syncReviews(deps = {}) {
+  const { hasRefreshToken, hasPlacesKey, placeIdsCount, fetchBusiness, fetchPlaces } = deps;
+  const out = { source: "none", imported: 0, updated: 0, errors: [], businessProfileError: null, reason: null };
+
+  // A. Business Profile primero, si hay refresh_token.
+  if (hasRefreshToken && typeof fetchBusiness === "function") {
+    let b = null;
+    try { b = await fetchBusiness(); }
+    catch (e) { out.businessProfileError = (e && e.message) ? e.message : "business_profile_error"; }
+    if (b) {
+      out.imported = b.imported || 0; out.updated = b.updated || 0;
+      if (((b.imported || 0) + (b.updated || 0)) > 0) { out.source = "business_profile"; return out; }
+      out.businessProfileError = b.reason || out.businessProfileError || "business_profile_sin_resultados";
+    }
+    // 0 reseñas o error recuperable → seguimos a Places (D: el fallo no impide el fallback).
+  }
+
+  // B/C. Places API: requiere key + Place IDs.
+  if (!hasPlacesKey) {
+    out.reason = hasRefreshToken ? "business_sin_datos_y_sin_places_key" : "sin_places_key";
+    out.errors.push("Falta GOOGLE_PLACES_API_KEY");
+    return out;
+  }
+  if (!placeIdsCount) { out.reason = "sin_place_ids"; out.errors.push("No hay Place IDs configurados"); return out; }
+  if (typeof fetchPlaces !== "function") { out.reason = "places_no_disponible"; return out; }
+  try {
+    const p = await fetchPlaces();
+    out.source = "places";
+    out.imported = (p && p.imported) || 0;
+    out.updated = (p && p.updated) || 0;
+    if (p && Array.isArray(p.errors)) out.errors = out.errors.concat(p.errors);
+    if ((out.imported + out.updated) === 0) out.reason = "places_sin_resultados";
+    return out;
+  } catch (e) {
+    out.reason = "places_error";
+    out.errors.push((e && e.message) ? e.message : "places_error");
+    return out;
+  }
+}
+
+// Mensaje explicativo del estado de reseñas (PURA). No incluye tokens ni credenciales.
+export function mensajeEstadoReseñas(s = {}) {
+  const conectado = !!s.connected;
+  const n = s.reviews_count || 0;
+  if (n > 0) {
+    const fuente = s.source === "places" ? "Google Places" : s.source === "business_profile" ? "Business Profile" : "Google";
+    return `Última sincronización correcta: ${n} reseña(s) mediante ${fuente}.`;
+  }
+  if (!conectado && !s.places_key_set) return "Google no conectado y sin clave de Places: no hay reseñas.";
+  if (s.reason === "sin_place_ids") return "Google conectado, pero faltan los Place IDs de los locales (configúralos para usar Places API).";
+  if (s.reason === "sin_places_key" || s.reason === "business_sin_datos_y_sin_places_key") return "Google conectado, pero Business Profile no devuelve reseñas (cuota/permisos) y falta la clave GOOGLE_PLACES_API_KEY.";
+  if (s.source === "places") return "Conectado. Usando Places API, pero aún sin reseñas (revisa los Place IDs).";
+  if (s.businessProfileError || s.reason) return `Google conectado, pero Business Profile no tiene cuota/permiso aprobado.${s.places_configured ? " Usando Places API." : " Configura Place IDs para ver reseñas ya."}`;
+  return conectado ? "Google conectado, pero aún no se han sincronizado reseñas." : "Google no conectado.";
+}

@@ -491,11 +491,13 @@ async function cliFicha(tel) {
 
 // ════════════════════════ VISTA: RESEÑAS (por local · responder · IA · masivas) ════════════════════════
 let REVF = { rating: "", local: "", estado: "" };
-let REV_DATA = [], REV_LOCALES = [], REV_SEL = new Set();
+let REV_DATA = [], REV_LOCALES = [], REV_SEL = new Set(), REV_STATUS = null;
 
 function renderReviews() {
   const rows = REV_DATA;
-  const puedeActualizar = USER.rol === "direccion";
+  const puedeActualizar = USER.rol === "direccion" || USER.rol === "marketing";
+  const st = REV_STATUS;
+  const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "Google conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">${num(st.reviews_count || 0)} reseñas${st.source ? ` · fuente: ${st.source === "places" ? "Places" : st.source === "business_profile" ? "Business Profile" : esc(st.source)}` : ""}${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}</div></div></div>` : "";
   const chip = (val, label, on) => `<button class="chip ${on ? "on" : ""}" data-act="rev-local" data-local="${esc(val)}">${esc(label)}</button>`;
   const selector = REV_LOCALES.length > 1 ? `<div class="chips">${chip("", "Todos", !REVF.local)}${REV_LOCALES.map((l) => chip(l, nombreCortoLocal(l), REVF.local === l)).join("")}</div>` : "";
   const estadoOpts = [["", "Todas"], ["pendientes", "Pendientes"], ["respondidas", "Respondidas"]].map(([v, t]) => `<option value="${v}" ${REVF.estado === v ? "selected" : ""}>${t}</option>`).join("");
@@ -504,7 +506,7 @@ function renderReviews() {
   const nota = `<div class="pendingblock" style="margin-bottom:16px"><b>Responder en Google, muy pronto.</b> La publicación directa está pendiente de que Google apruebe la cuota de su API. Mientras tanto: redacta la respuesta (con IA si quieres), <b>guárdala</b> aquí y usa <b>Copiar</b> para pegarla en Google.</div>`;
   const bulk = REV_SEL.size ? `<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><b>${REV_SEL.size} seleccionada${REV_SEL.size === 1 ? "" : "s"}</b><div style="flex:1"></div><button class="btn" data-act="rev-sel-none">Quitar selección</button><button class="btn primary" data-act="rev-bulk">✨ Generar borradores IA</button></div>` : "";
   const body = rows.length ? rows.map(reviewCard).join("") : `<div class="card"><div class="mut" style="padding:8px">${REV_LOCALES.length ? "Sin reseñas con este filtro." : "Aún no hay reseñas importadas. Pulsa «Actualizar desde Google» (requiere que la conexión y la cuota de Google estén activas)."}</div></div>`;
-  return `<div class="ph"><div class="eyebrow">Reputación</div><h1>Reseñas de Google</h1><div class="sub">Opiniones por local · responde una a una o en lote</div></div>${nota}${selector}${toolbar}${bulk}${body}`;
+  return `<div class="ph"><div class="eyebrow">Reputación</div><h1>Reseñas de Google</h1><div class="sub">Opiniones por local · responde una a una o en lote</div></div>${estadoBanner}${nota}${selector}${toolbar}${bulk}${body}`;
 }
 
 function reviewCard(r) {
@@ -526,13 +528,26 @@ async function loadReviews() {
     if (REVF.local) qs.set("local", REVF.local);
     if (REVF.rating) qs.set("rating", REVF.rating);
     if (REVF.estado) qs.set("estado", REVF.estado);
-    const j = await apiSend("GET", "/api/reviews/manage" + (qs.toString() ? "?" + qs.toString() : ""));
+    const [j, status] = await Promise.all([
+      apiSend("GET", "/api/reviews/manage" + (qs.toString() ? "?" + qs.toString() : "")),
+      fetch("/api/google/status").then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]);
     REV_DATA = j.data || []; REV_LOCALES = j.locales || []; REV_SEL.clear();
+    REV_STATUS = status || null;
     view.innerHTML = renderReviews();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function applyRevFilter() { const rt = document.getElementById("rRating"), es = document.getElementById("rEstado"); if (rt) REVF.rating = rt.value; if (es) REVF.estado = es.value; loadReviews(); }
-async function refreshReviews() { toast("Actualizando reseñas…"); try { await apiSend("POST", "/api/reviews/refresh"); toast("Reseñas actualizadas ✅"); loadReviews(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+async function refreshReviews() {
+  toast("Actualizando reseñas…");
+  try {
+    const j = await apiSend("POST", "/api/reviews/refresh", { force: USER.rol === "direccion" });
+    const total = (j.imported || 0) + (j.updated || 0);
+    const fuente = j.source === "places" ? "Places" : j.source === "business_profile" ? "Business Profile" : j.source;
+    toast(total > 0 ? `✅ ${total} reseña(s) vía ${fuente}` : `Sin reseñas${j.businessProfileError ? " (Business Profile: " + j.businessProfileError + ")" : j.reason ? " (" + j.reason + ")" : ""}`);
+    loadReviews();
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
 function revSetLocal(l) { REVF.local = l || ""; loadReviews(); }
 function revToggleSel(id) { id = String(id); if (REV_SEL.has(id)) REV_SEL.delete(id); else REV_SEL.add(id); const v = document.getElementById("view"); if (v) v.innerHTML = renderReviews(); }
 function revSelNone() { REV_SEL.clear(); const v = document.getElementById("view"); if (v) v.innerHTML = renderReviews(); }
