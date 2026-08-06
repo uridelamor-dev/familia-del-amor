@@ -33,6 +33,92 @@ export function mapProducto(resp) {
   };
 }
 
+// Ventas por EMPLEADO: Report.Sales[] por (usuario × método de pago). Se agrega por usuario;
+// MethodTotalAmount = lo cobrado (Σ por usuario cuadra con el total del día). Confirmado en vivo.
+export function mapEmpleado(resp) {
+  const rows = (resp && resp.Message && resp.Message.Report && resp.Message.Report.Sales) || [];
+  const byU = {};
+  for (const r of rows) {
+    const u = r.UserName || "—";
+    const e = byU[u] || (byU[u] = { empleado: u, ventas: 0, cancelado: 0 });
+    e.ventas += num(r.MethodTotalAmount);
+    e.cancelado += num(r.CancellationNetAmount);
+  }
+  const filas = Object.values(byU).map((e) => ({ empleado: e.empleado, ventas: r2(e.ventas), cancelado: r2(e.cancelado) })).filter((f) => f.ventas || f.cancelado);
+  return {
+    columnas: [
+      { key: "empleado", label: "Empleado", tipo: "texto" },
+      { key: "ventas", label: "Ventas", tipo: "eur" },
+      { key: "cancelado", label: "Cancelado", tipo: "eur" },
+    ],
+    filas, ordenPor: "ventas",
+  };
+}
+
+// CANCELACIONES por usuario: Report.Cancellations[] { UserName, ProductName, Reason, Quantity, CancellationAmount }.
+export function mapCancelaciones(resp) {
+  const rows = (resp && resp.Message && resp.Message.Report && resp.Message.Report.Cancellations) || [];
+  const filas = rows.map((r) => ({
+    empleado: r.UserName || "—",
+    producto: r.ProductName || "",
+    motivo: r.Reason || "",
+    uds: num(r.Quantity),
+    importe: r2(r.CancellationAmount),
+  }));
+  return {
+    columnas: [
+      { key: "empleado", label: "Empleado", tipo: "texto" },
+      { key: "producto", label: "Producto", tipo: "texto" },
+      { key: "motivo", label: "Motivo", tipo: "texto" },
+      { key: "uds", label: "Uds", tipo: "num" },
+      { key: "importe", label: "Importe", tipo: "eur" },
+    ],
+    filas, ordenPor: "uds",
+  };
+}
+
+// DESCUENTOS por usuario y tipo: Report.Discounts[] { UserName, DiscountName, DiscountType, DiscountCount, DiscountAmount }.
+export function mapDescuentos(resp) {
+  const rows = (resp && resp.Message && resp.Message.Report && resp.Message.Report.Discounts) || [];
+  const filas = rows.map((r) => ({
+    empleado: r.UserName || "—",
+    descuento: r.DiscountName || "",
+    tipo: r.DiscountType || "",
+    n: num(r.DiscountCount),
+    importe: r2(r.DiscountAmount),
+  }));
+  return {
+    columnas: [
+      { key: "empleado", label: "Empleado", tipo: "texto" },
+      { key: "descuento", label: "Descuento", tipo: "texto" },
+      { key: "tipo", label: "Tipo", tipo: "texto" },
+      { key: "n", label: "Nº", tipo: "num" },
+      { key: "importe", label: "Importe", tipo: "eur" },
+    ],
+    filas, ordenPor: "importe",
+  };
+}
+
+// INVITACIONES por jornada: Report.Invitations[] { BusinessDay, ProductName, Quantity, GrossAmount, NetAmount }.
+export function mapInvitaciones(resp) {
+  const rows = (resp && resp.Message && resp.Message.Report && resp.Message.Report.Invitations) || [];
+  const filas = rows.map((r) => ({
+    dia: String(r.BusinessDay || "").slice(0, 10),
+    producto: r.ProductName || "",
+    uds: num(r.Quantity),
+    importe: r2(r.NetAmount),
+  }));
+  return {
+    columnas: [
+      { key: "dia", label: "Día", tipo: "texto" },
+      { key: "producto", label: "Producto", tipo: "texto" },
+      { key: "uds", label: "Uds", tipo: "num" },
+      { key: "importe", label: "Importe", tipo: "eur" },
+    ],
+    filas, ordenPor: "importe",
+  };
+}
+
 // ── Registro de informes ──
 export const INFORMES = {
   producto: {
@@ -45,6 +131,30 @@ export const INFORMES = {
       IncludeDeliveryNotes: false, IncludeNotSoldProducts: false, SortOrder: 0,
     }),
     map: mapProducto,
+  },
+  empleado: {
+    key: "empleado", label: "Empleado", needs: ["groups"],
+    clrType: "IGT.POS.Bus.Reporting.Messages.GetUserSalesFileReportRequest",
+    buildExtra: ({ from, to, groups }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups }),
+    map: mapEmpleado,
+  },
+  cancelaciones: {
+    key: "cancelaciones", label: "Cancelaciones", needs: ["groups", "categorias"],
+    clrType: "IGT.POS.Bus.Reporting.Messages.GetCancellationsByUserAndTypeReportRequest",
+    buildExtra: ({ from, to, groups, categorias }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups, CategoryIds: categorias }),
+    map: mapCancelaciones,
+  },
+  descuentos: {
+    key: "descuentos", label: "Descuentos", needs: ["groups"],
+    clrType: "IGT.POS.Bus.Reporting.Messages.GetDiscountsByUserAndTypeReportRequest",
+    buildExtra: ({ from, to, groups }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups }),
+    map: mapDescuentos,
+  },
+  invitaciones: {
+    key: "invitaciones", label: "Invitaciones", needs: ["groups"],
+    clrType: "IGT.POS.Bus.Reporting.Messages.GetInvitationsByBusinessDayReportRequest",
+    buildExtra: ({ from, to, groups }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups }),
+    map: mapInvitaciones,
   },
 };
 

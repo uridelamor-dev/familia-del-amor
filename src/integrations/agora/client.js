@@ -17,6 +17,7 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
   let version = cfg.version || null;
   let posGroups = Array.isArray(cfg.posGroupsIds) && cfg.posGroupsIds.length ? cfg.posGroupsIds : null;
   let familias = null;
+  let categorias = null;
 
   const sender = (v) => ({ ApplicationName: APP_NAME, ApplicationVersion: v, LanguageCode: "es", MachineType: 4, MachineName: "Web Device", UserName: cfg.usuario || "" });
   const envelope = (clrType, extra, v) => JSON.stringify({ CLRType: clrType, Message: { CLRType: clrType, IsBlocking: true, OutOfBandMessages: [], Sender: sender(v), ...extra } });
@@ -76,6 +77,14 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
     familias = all.map((f) => f && f.Id).filter((x) => x != null);
     return familias;
   }
+  // IDs de TODAS las categorías (el informe de cancelaciones filtra por categorías: [] da error SQL).
+  async function getCategorias() {
+    if (categorias) return categorias;
+    const j = await busJson("IGT.POS.Bus.SystemManagement.Messages.GetAllCategoriesRequest", {});
+    const all = (j && j.Message && Array.isArray(j.Message.All)) ? j.Message.All : [];
+    categorias = all.map((c) => c && c.Id).filter((x) => x != null);
+    return categorias;
+  }
 
   return {
     local: cfg.local,
@@ -84,6 +93,7 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
     async informe(clrType, extra = {}) { return busJson(clrType, extra); },
     async posGroups() { return getPosGroups(); },
     async familiaIds() { return getFamilias(); },
+    async categoriaIds() { return getCategorias(); },
 
     // ¿El servidor del TPV responde? (basta /version/, sin sesión). Alive = el local está abierto.
     async ping(timeoutMs = 6000) {
