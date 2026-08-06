@@ -1376,8 +1376,45 @@ async function agoraSyncNow() {
 }
 
 // ════════════════════════ VISTA: CAMPAÑAS ════════════════════════
-let CAMP = { list: [], plantillas: [], cfg: { cumple_auto: false, cumple_plantilla: "" } };
+let CAMP = { list: [], plantillas: [], audiencias: [], cfg: { cumple_auto: false, cumple_plantilla: "" } };
 const CAMP_EST = { borrador: "", programada: "info", enviando: "warn", enviada: "ok" };
+// Plantillas de arranque por objetivo (insertables; no se guardan hasta que el usuario quiera).
+const CAMP_OBJETIVOS = [
+  { obj: "Promo", txt: "¡Hola {nombre}! Este finde en {local} tenemos una promo especial 🍤 Te esperamos." },
+  { obj: "Evento", txt: "{nombre}, te invitamos a un evento en {local} 🎉 ¿Te apuntas? Responde a este mensaje." },
+  { obj: "Reactivación", txt: "¡Te echamos de menos, {nombre}! Vuelve a {local} y te invitamos al postre 🍮" },
+  { obj: "Encuesta", txt: "Hola {nombre}, ¿qué te pareció tu última visita a {local}? Tu opinión nos ayuda muchísimo 🙏" },
+  { obj: "Aviso", txt: "{nombre}, un aviso importante de {local}: " },
+];
+// Reflejo de src/modules/campaigns/campaigns.service.js (el panel no importa ESM).
+const CLAVES_SEGMENTO = ["q", "genero", "poblacion", "local", "idioma", "origen", "from", "to"];
+function construirSegmento(input = {}, mesActual) {
+  const seg = {};
+  for (const k of CLAVES_SEGMENTO) { const v = input[k]; if (v != null && String(v).trim() !== "") seg[k] = typeof v === "string" ? v.trim() : v; }
+  if (input.con_email) seg.con_email = 1;
+  if (input.con_telefono) seg.con_telefono = 1;
+  if (input.cumple_mes) seg.cumple_mes = String(mesActual != null ? mesActual : new Date().getMonth() + 1).padStart(2, "0");
+  const excl = Array.isArray(input.excluir_telefonos) ? input.excluir_telefonos.filter(Boolean) : [];
+  if (excl.length) seg.excluir_telefonos = excl;
+  if (input.soloOptIn) seg.soloOptIn = true;
+  return seg;
+}
+function describirAudiencia(f = {}) {
+  const p = [];
+  if (f.local) p.push(`Local: ${f.local}`);
+  if (f.poblacion) p.push(`Pobl.: ${f.poblacion}`);
+  if (f.genero) p.push(f.genero === "M" ? "Hombres" : f.genero === "F" ? "Mujeres" : `Género ${f.genero}`);
+  if (f.idioma) p.push(`Idioma: ${f.idioma}`);
+  if (f.origen) p.push(`Origen: ${f.origen}`);
+  if (f.con_email) p.push("Con email");
+  if (f.con_telefono) p.push("Con teléfono");
+  if (f.cumple_mes) p.push(`Cumple mes ${f.cumple_mes}`);
+  if (f.from || f.to) p.push(`Actividad ${f.from || "…"}→${f.to || "…"}`);
+  if (f.soloOptIn) p.push("Solo opt-in");
+  const n = Array.isArray(f.excluir_telefonos) ? f.excluir_telefonos.length : 0;
+  if (n) p.push(`Excluye ${n}`);
+  return p.length ? p.join(" · ") : "Todos los contactos";
+}
 function renderCampanas() {
   const rows = CAMP.list || []; const cfg = CAMP.cfg || {};
   const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas</h1><div class="sub">Segmentar y enviar por WhatsApp · plantillas · programación · cumpleaños</div><div class="acts"><button class="btn primary" data-act="camp-nueva">+ Nueva campaña</button></div></div>`;
@@ -1385,9 +1422,10 @@ function renderCampanas() {
   const plist = (CAMP.plantillas || []).map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div><div class="t2">${esc((p.cuerpo || "").slice(0, 80))}</div></div><button class="btn sm danger" data-act="camp-plant-del" data-id="${p.id}">✕</button></div>`).join("") || `<div class="mut" style="padding:10px 14px">Sin plantillas guardadas.</div>`;
   const plantillas = `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Plantillas</h3><button class="btn sm" data-act="camp-plant-add">+ Nueva</button></div><div class="rows">${plist}</div></div>`;
   const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Campaña</th><th>Segmento</th><th>Estado</th><th class="r">Env.</th><th class="r">Err.</th><th>Fecha</th><th></th></tr></thead><tbody>${rows.map((c) => {
-    let seg = ""; try { const s = JSON.parse(c.segmento_json || "{}"); seg = Object.entries(s).filter(([k, v]) => v && k !== "excluir_baja" && k !== "soloOptIn").map(([k, v]) => `${k}: ${v}`).join(", "); } catch { /* */ }
+    let seg = ""; try { seg = describirAudiencia(JSON.parse(c.segmento_json || "{}")); } catch { /* */ }
     const est = c.estado || "enviada";
-    const acc = `<button class="linkbtn" style="color:var(--brand)" data-act="camp-detalle" data-id="${c.id}">Detalle</button>${(est === "borrador" || est === "programada") ? ` · <button class="linkbtn" style="color:var(--brand)" data-act="camp-enviar" data-id="${c.id}">Enviar</button>` : ""} · <button class="linkbtn" style="color:var(--danger)" data-act="camp-del" data-id="${c.id}">Eliminar</button>`;
+    const editable = est === "borrador" || est === "programada";
+    const acc = `<button class="linkbtn" style="color:var(--brand)" data-act="camp-detalle" data-id="${c.id}">Detalle</button>${editable ? ` · <button class="linkbtn" style="color:var(--brand)" data-act="camp-editar" data-id="${c.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="camp-enviar" data-id="${c.id}">Enviar</button>` : ""} · <button class="linkbtn" style="color:var(--brand)" data-act="camp-dup" data-id="${c.id}">Duplicar</button> · <button class="linkbtn" style="color:var(--danger)" data-act="camp-del" data-id="${c.id}">Eliminar</button>`;
     return `<tr><td>${esc(c.nombre)}${c.canal === "email" ? " 📧" : ""}${c.adjunto_url ? " 📎" : ""}</td><td class="mut">${esc(seg || "—")}</td><td><span class="pill ${CAMP_EST[est] || ""}">${cap(est)}</span>${(est === "programada" && c.programada_para) ? `<div class="t2">${esc(String(c.programada_para).slice(0, 16).replace("T", " "))}</div>` : ""}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td class="r" style="white-space:nowrap">${acc}</td></tr>`;
   }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay campañas.</div></div>`;
   return `${head}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div>`;
@@ -1395,61 +1433,153 @@ function renderCampanas() {
 async function loadCampanas() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
-    const [list, plantillas] = await Promise.all([api("/api/campanas"), apiOptional("/api/plantillas")]);
-    CAMP.list = list || []; CAMP.plantillas = plantillas || [];
+    const [list, plantillas, audiencias] = await Promise.all([api("/api/campanas"), apiOptional("/api/plantillas"), apiOptional("/api/audiencias")]);
+    CAMP.list = list || []; CAMP.plantillas = plantillas || []; CAMP.audiencias = audiencias || [];
     try { const j = await apiRaw("/api/campanas-config"); CAMP.cfg = { cumple_auto: j.cumple_auto, cumple_plantilla: j.cumple_plantilla }; } catch { CAMP.cfg = { cumple_auto: false, cumple_plantilla: "" }; }
     view.innerHTML = renderCampanas();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
-function openNuevaCampana() {
-  const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
+function openNuevaCampana() { openCampana("nueva"); }
+// Modal de campaña. mode: "nueva" | "editar" | "duplicar". pre: { id, nombre, mensaje, adjunto_url, seg }.
+function openCampana(mode = "nueva", pre = {}) {
+  const s = pre.seg || {};
+  const editar = mode === "editar";
+  const val = (k, d = "") => esc(s[k] != null ? s[k] : d);
+  const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${s.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
   const plantOpts = ['<option value="">— Insertar plantilla (opcional) —</option>'].concat((CAMP.plantillas || []).map((p) => `<option value="${p.id}">${esc(p.nombre)}</option>`)).join("");
+  const audOpts = ['<option value="">— Cargar audiencia guardada —</option>'].concat((CAMP.audiencias || []).map((a) => `<option value="${a.id}">${esc(a.nombre)}</option>`)).join("");
+  const objBtns = CAMP_OBJETIVOS.map((o) => `<button type="button" class="btn sm" data-obj="${esc(o.txt)}">${esc(o.obj)}</button>`).join("");
+  const idiomaOpts = ["", "es", "ca", "en", "fr", "de", "it", "nl", "pt", "ru", "ar", "zh"].map((v) => `<option value="${v}" ${s.idioma === v ? "selected" : ""}>${v ? v.toUpperCase() : "Cualquiera"}</option>`).join("");
+  const origenOpts = [["", "Cualquiera"], ["lead", "Ficha/lead"], ["reserva", "Solo reserva"]].map(([v, t]) => `<option value="${v}" ${s.origen === v ? "selected" : ""}>${t}</option>`).join("");
   const body = `<form id="fCamp"><div class="form-grid">
-    <div class="field full"><label>Nombre de la campaña</label><input name="nombre" required></div>
-    <div class="field full"><label>Plantilla</label><select id="campPlant">${plantOpts}</select></div>
+    <div class="field full"><label>Nombre de la campaña</label><input name="nombre" value="${esc(pre.nombre || "")}" required></div>
+    <div class="field"><label>Plantilla</label><select id="campPlant">${plantOpts}</select></div>
+    <div class="field"><label>Objetivo (rellena el mensaje)</label><div style="display:flex;gap:6px;flex-wrap:wrap">${objBtns}</div></div>
     <div class="field full"><label>Mensaje</label>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px"><button type="button" class="btn sm" data-var="{nombre}">+ nombre</button><button type="button" class="btn sm" data-var="{apellidos}">+ apellidos</button><button type="button" class="btn sm" data-var="{local}">+ local</button><label class="btn sm" style="cursor:pointer">📎 Adjuntar<input type="file" id="campFile" accept="image/*,application/pdf" hidden></label><span id="campAdjName" class="mut" style="font-size:12px;align-self:center"></span></div>
-      <textarea name="mensaje" id="campMsg" rows="3" required placeholder="Hola {nombre}! Este finde…"></textarea></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px"><button type="button" class="btn sm" data-var="{nombre}">+ nombre</button><button type="button" class="btn sm" data-var="{apellidos}">+ apellidos</button><button type="button" class="btn sm" data-var="{local}">+ local</button><label class="btn sm" style="cursor:pointer">📎 Adjuntar<input type="file" id="campFile" accept="image/*,application/pdf" hidden></label><span id="campAdjName" class="mut" style="font-size:12px;align-self:center">${pre.adjunto_url ? "📎 adjunto actual" : ""}</span></div>
+      <textarea name="mensaje" id="campMsg" rows="3" required placeholder="Hola {nombre}! Este finde…">${esc(pre.mensaje || "")}</textarea></div>
     <div class="field full"><label>Vista previa (así lo recibe el cliente)</label><div style="background:var(--surface2);border-radius:12px;padding:12px;display:flex;justify-content:flex-end"><div id="campBubble" style="background:var(--brand);color:var(--brand-ink);border-radius:12px;border-bottom-right-radius:5px;padding:9px 12px;max-width:85%;font-size:13.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word"></div></div></div>
-    <div class="field"><label>Género</label><select name="genero"><option value="">Todos</option><option value="M">Hombre</option><option value="F">Mujer</option></select></div>
-    <div class="field"><label>Población</label><input name="poblacion"></div>
+    <div class="field full"><label>Audiencia</label><div style="display:flex;gap:8px;flex-wrap:wrap"><select id="campAud" style="flex:1;min-width:180px">${audOpts}</select><button type="button" class="btn sm" id="campAudSave">💾 Guardar audiencia</button></div></div>
+    <div class="field"><label>Género</label><select name="genero"><option value="">Todos</option><option value="M" ${s.genero === "M" ? "selected" : ""}>Hombre</option><option value="F" ${s.genero === "F" ? "selected" : ""}>Mujer</option></select></div>
+    <div class="field"><label>Población</label><input name="poblacion" value="${val("poblacion")}"></div>
     <div class="field"><label>Local</label><select name="local">${localOpts}</select></div>
-    <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" name="cumple_mes" style="width:auto;height:auto"> Cumpleaños este mes</label>
-    <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" id="campOptin" style="width:auto;height:auto"> Solo opt-in</label>
-    <div class="field"><label>Programar para (opcional)</label><input type="datetime-local" id="campWhen"></div>
-  </div><div id="campPrev" class="mut" style="margin-top:12px;font-size:12.5px"></div>
-  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap"><button type="button" class="btn" data-close>Cerrar</button><button type="button" class="btn" id="campPrevBtn">Previsualizar</button><button type="button" class="btn" id="campBorrador">Guardar borrador</button><button type="button" class="btn" id="campProg">Programar</button><button type="button" class="btn primary" id="campEnviarYa">Enviar ya</button></div></form>`;
-  const ov = modal("Nueva campaña", body);
-  let campAdjunto = "";
-  const seg = (form) => { const d = Object.fromEntries(new FormData(form).entries()); if (!d.cumple_mes) delete d.cumple_mes; else d.cumple_mes = String(new Date().getMonth() + 1); return d; };
+    <div class="field"><label>Idioma del cliente</label><select name="idioma">${idiomaOpts}</select></div>
+    <div class="field"><label>Origen</label><select name="origen">${origenOpts}</select></div>
+    <div class="field"><label>Actividad desde</label><input type="date" name="from" value="${val("from")}"></div>
+    <div class="field"><label>Actividad hasta</label><input type="date" name="to" value="${val("to")}"></div>
+    <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" name="con_email" ${s.con_email ? "checked" : ""} style="width:auto;height:auto"> Con email</label>
+    <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" name="con_telefono" ${s.con_telefono ? "checked" : ""} style="width:auto;height:auto"> Con teléfono</label>
+    <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" name="cumple_mes" ${s.cumple_mes ? "checked" : ""} style="width:auto;height:auto"> Cumpleaños este mes</label>
+    <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" id="campOptin" ${s.soloOptIn ? "checked" : ""} style="width:auto;height:auto"> Solo opt-in</label>
+    <div class="field full"><label>Destinatarios</label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn sm" id="campVerDests">Ver / editar destinatarios</button><span id="campPrev" class="mut" style="font-size:12.5px"></span></div><div id="campDests" style="display:none;max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:10px;margin-top:8px"></div></div>
+    ${editar ? "" : '<div class="field"><label>Programar para (opcional)</label><input type="datetime-local" id="campWhen"></div>'}
+  </div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap"><button type="button" class="btn" data-close>Cerrar</button>${editar ? '<button type="button" class="btn primary" id="campGuardar">Guardar cambios</button><button type="button" class="btn" id="campEnviarYa">Enviar ya</button>' : '<button type="button" class="btn" id="campBorrador">Guardar borrador</button><button type="button" class="btn" id="campProg">Programar</button><button type="button" class="btn primary" id="campEnviarYa">Enviar ya</button>'}</div></form>`;
+  const ov = modal(editar ? "Editar campaña" : mode === "duplicar" ? "Duplicar campaña" : "Nueva campaña", body);
+  ov.querySelector(".modal").classList.add("wide");
+  let campAdjunto = pre.adjunto_url || "";
+  const excluir = new Set(Array.isArray(s.excluir_telefonos) ? s.excluir_telefonos : []);
+  // Construye el objeto de filtros desde el formulario (reflejo de construirSegmento del servicio).
+  const filtros = () => {
+    const f = Object.fromEntries(new FormData(ov.querySelector("#fCamp")).entries());
+    const base = { q: f.q, genero: f.genero, poblacion: f.poblacion, local: f.local, idioma: f.idioma, origen: f.origen, from: f.from, to: f.to, con_email: !!f.con_email, con_telefono: !!f.con_telefono, cumple_mes: !!f.cumple_mes, soloOptIn: ov.querySelector("#campOptin").checked, excluir_telefonos: [...excluir] };
+    return construirSegmento(base);
+  };
   const updateBubble = () => {
     const raw = ov.querySelector("#campMsg").value || "";
     const txt = raw.replace(/\{nombre_completo\}/gi, "Ana Pérez").replace(/\{nombre\}/gi, "Ana").replace(/\{apellidos\}/gi, "Pérez").replace(/\{local\}/gi, "La Tapeta - Blanes");
-    const b = ov.querySelector("#campBubble");
-    b.innerHTML = (campAdjunto ? `<div style="opacity:.9;margin-bottom:6px">📎 adjunto</div>` : "") + (txt ? esc(txt) : '<span style="opacity:.6">(escribe el mensaje…)</span>');
+    ov.querySelector("#campBubble").innerHTML = (campAdjunto ? `<div style="opacity:.9;margin-bottom:6px">📎 adjunto</div>` : "") + (txt ? esc(txt) : '<span style="opacity:.6">(escribe el mensaje…)</span>');
   };
   ov.querySelector("#campMsg").addEventListener("input", updateBubble);
-  ov.addEventListener("click", (e) => { const vb = e.target.closest("[data-var]"); if (vb) { const ta = ov.querySelector("#campMsg"); const v = vb.getAttribute("data-var"); const s = ta.selectionStart != null ? ta.selectionStart : ta.value.length; ta.value = ta.value.slice(0, s) + v + ta.value.slice(ta.selectionEnd != null ? ta.selectionEnd : s); ta.focus(); updateBubble(); } });
+  ov.addEventListener("click", (e) => {
+    const vb = e.target.closest("[data-var]");
+    if (vb) { const ta = ov.querySelector("#campMsg"); const v = vb.getAttribute("data-var"); const p = ta.selectionStart != null ? ta.selectionStart : ta.value.length; ta.value = ta.value.slice(0, p) + v + ta.value.slice(ta.selectionEnd != null ? ta.selectionEnd : p); ta.focus(); updateBubble(); return; }
+    const ob = e.target.closest("[data-obj]");
+    if (ob) { ov.querySelector("#campMsg").value = ob.getAttribute("data-obj"); updateBubble(); }
+  });
   ov.querySelector("#campFile").addEventListener("change", async (e) => {
     const f = e.target.files && e.target.files[0]; if (!f) return; toast("Subiendo adjunto…");
     try { const fd = new FormData(); fd.append("files", f); const r = await fetch("/api/upload", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd }); const j = await r.json(); if (!j.ok || !j.urls || !j.urls.length) throw new Error("subida"); campAdjunto = j.urls[0]; ov.querySelector("#campAdjName").textContent = "📎 " + f.name; updateBubble(); }
     catch { toast("No se pudo subir el adjunto"); }
   });
   ov.querySelector("#campPlant").addEventListener("change", (e) => { const p = (CAMP.plantillas || []).find((x) => String(x.id) === e.target.value); if (p) { ov.querySelector("#campMsg").value = p.cuerpo; updateBubble(); } });
+  // Cargar audiencia guardada → rellena los campos de filtro.
+  ov.querySelector("#campAud").addEventListener("change", (e) => {
+    const a = (CAMP.audiencias || []).find((x) => String(x.id) === e.target.value); if (!a) return;
+    let flt = {}; try { flt = JSON.parse(a.filtros_json || "{}"); } catch { /* */ }
+    const setV = (name, v) => { const el = ov.querySelector(`[name="${name}"]`); if (el) el.value = v || ""; };
+    ["genero", "poblacion", "local", "idioma", "origen", "from", "to"].forEach((k) => setV(k, flt[k]));
+    ["con_email", "con_telefono", "cumple_mes"].forEach((k) => { const el = ov.querySelector(`[name="${k}"]`); if (el) el.checked = !!flt[k]; });
+    ov.querySelector("#campOptin").checked = !!flt.soloOptIn;
+    excluir.clear(); (Array.isArray(flt.excluir_telefonos) ? flt.excluir_telefonos : []).forEach((t) => excluir.add(t));
+    toast(`Audiencia «${a.nombre}» cargada`);
+  });
+  ov.querySelector("#campAudSave").addEventListener("click", async () => {
+    const nombre = await promptModal("Nombre de la audiencia", { placeholder: "Ej. Clientes Blanes con email" }); if (!nombre) return;
+    try { await apiSend("POST", "/api/audiencias", { nombre, filtros: filtros() }); toast("Audiencia guardada ✅"); const a = await apiOptional("/api/audiencias"); CAMP.audiencias = a || []; }
+    catch (e) { toast("Error: " + e.message); }
+  });
+  // Ver / editar destinatarios: lista con casillas; desmarcar excluye ese teléfono.
+  const pintarDests = (lista) => {
+    const cont = ov.querySelector("#campDests"); cont.style.display = "block";
+    cont.innerHTML = lista.length ? lista.map((c) => {
+      const marcado = !excluir.has(c.telefono);
+      const nom = `${c.nombre || ""} ${c.apellidos || ""}`.trim() || c.telefono;
+      return `<label class="agres" style="cursor:pointer"><input type="checkbox" class="cdest" data-tel="${esc(c.telefono)}" ${marcado ? "checked" : ""} style="width:auto"><div class="who"><div class="t1">${esc(nom)} ${c.enviable ? "" : '<span class="pill bad" style="font-size:10px">no enviable</span>'}</div><div class="t2">${esc(c.telefono || "")}</div></div></label>`;
+    }).join("") : '<div class="mut" style="padding:12px">Sin destinatarios con esos filtros.</div>';
+  };
+  ov.querySelector("#campVerDests").addEventListener("click", async () => {
+    try { const j = await apiSend("POST", "/api/campanas/preview", { ...filtros(), soloOptIn: ov.querySelector("#campOptin").checked }); ov.querySelector("#campPrev").textContent = `${j.enviables} enviables de ${j.total} (excluidos ${excluir.size}).`; pintarDests(j.lista || []); }
+    catch (e) { toast("Error: " + e.message); }
+  });
+  ov.querySelector("#campDests").addEventListener("change", (e) => {
+    const cb = e.target.closest(".cdest"); if (!cb) return; const tel = cb.getAttribute("data-tel");
+    if (cb.checked) excluir.delete(tel); else excluir.add(tel);
+    ov.querySelector("#campPrev").textContent = `Excluidos ${excluir.size}. Pulsa "Ver/editar" para recalcular enviables.`;
+  });
   updateBubble();
-  ov.querySelector("#campPrevBtn").addEventListener("click", async () => { try { const j = await apiSend("POST", "/api/campanas/preview", seg(ov.querySelector("#fCamp"))); ov.querySelector("#campPrev").textContent = `Se enviaría a ~${j.total} contacto(s) (antes de excluir bajas/sin teléfono).`; } catch (e) { toast("Error: " + e.message); } });
-  const lanzar = async (accion) => {
-    const d = seg(ov.querySelector("#fCamp"));
+  const payload = (extra = {}) => {
+    const d = { nombre: (ov.querySelector('[name="nombre"]').value || "").trim(), mensaje: ov.querySelector("#campMsg").value || "", ...filtros(), soloOptIn: ov.querySelector("#campOptin").checked, ...extra };
+    if (campAdjunto) d.adjunto_url = campAdjunto;
+    return d;
+  };
+  const lanzarNueva = async (accion) => {
+    const d = payload({ accion });
     if (!d.nombre || !d.mensaje) { toast("Pon nombre y mensaje"); return; }
-    d.accion = accion; d.soloOptIn = ov.querySelector("#campOptin").checked; if (campAdjunto) d.adjunto_url = campAdjunto;
     if (accion === "programar") { const w = ov.querySelector("#campWhen").value; if (!w) { toast("Elige fecha y hora"); return; } d.programada_para = w; }
     if (accion === "enviar") { if (!(await confirmModal("¿Enviar esta campaña ahora por WhatsApp?", { ok: "Enviar" }))) return; }
     try { const j = await apiSend("POST", "/api/campanas", d); ov.remove(); toast(accion === "enviar" ? `Enviando a ${j.enviables} contacto(s) ✅` : accion === "programar" ? "Campaña programada ✅" : "Borrador guardado ✅"); loadCampanas(); }
     catch (e) { toast("Error: " + e.message); }
   };
-  ov.querySelector("#campBorrador").addEventListener("click", () => lanzar("borrador"));
-  ov.querySelector("#campProg").addEventListener("click", () => lanzar("programar"));
-  ov.querySelector("#campEnviarYa").addEventListener("click", () => lanzar("enviar"));
+  const guardarEdit = async (enviar) => {
+    const d = payload();
+    if (!d.nombre || !d.mensaje) { toast("Pon nombre y mensaje"); return; }
+    if (enviar && !(await confirmModal("¿Guardar y enviar ahora por WhatsApp?", { ok: "Enviar" }))) return;
+    try {
+      await apiSend("PATCH", "/api/campanas/" + pre.id, d);
+      if (enviar) { const j = await apiSend("POST", "/api/campanas/" + pre.id + "/enviar"); toast(`Enviando a ${j.enviables} contacto(s) ✅`); }
+      else toast("Cambios guardados ✅");
+      ov.remove(); loadCampanas();
+    } catch (e) { toast("Error: " + e.message); }
+  };
+  if (editar) {
+    ov.querySelector("#campGuardar").addEventListener("click", () => guardarEdit(false));
+    ov.querySelector("#campEnviarYa").addEventListener("click", () => guardarEdit(true));
+  } else {
+    ov.querySelector("#campBorrador").addEventListener("click", () => lanzarNueva("borrador"));
+    ov.querySelector("#campProg").addEventListener("click", () => lanzarNueva("programar"));
+    ov.querySelector("#campEnviarYa").addEventListener("click", () => lanzarNueva("enviar"));
+  }
+}
+async function campEditar(id) {
+  let c; try { c = (await apiRaw("/api/campanas/" + id)).data.campana; } catch (e) { toast("Error: " + e.message); return; }
+  let seg = {}; try { seg = JSON.parse(c.segmento_json || "{}"); } catch { /* */ }
+  openCampana("editar", { id: c.id, nombre: c.nombre, mensaje: c.mensaje, adjunto_url: c.adjunto_url, seg });
+}
+async function campDuplicar(id) {
+  let c; try { c = (await apiRaw("/api/campanas/" + id)).data.campana; } catch (e) { toast("Error: " + e.message); return; }
+  let seg = {}; try { seg = JSON.parse(c.segmento_json || "{}"); } catch { /* */ }
+  openCampana("duplicar", { nombre: (c.nombre || "") + " (copia)", mensaje: c.mensaje, adjunto_url: c.adjunto_url, seg });
 }
 async function campDetalle(id) {
   let d; try { d = (await apiRaw("/api/campanas/" + id)).data; } catch (e) { toast("Error: " + e.message); return; }
@@ -1764,6 +1894,8 @@ document.addEventListener("click", (e) => {
   else if (act === "ag-sync") agoraSyncNow();
   else if (act === "camp-nueva") openNuevaCampana();
   else if (act === "camp-detalle") campDetalle(t.getAttribute("data-id"));
+  else if (act === "camp-editar") campEditar(t.getAttribute("data-id"));
+  else if (act === "camp-dup") campDuplicar(t.getAttribute("data-id"));
   else if (act === "camp-enviar") campEnviar(t.getAttribute("data-id"));
   else if (act === "camp-del") campDel(t.getAttribute("data-id"));
   else if (act === "camp-plant-add") campPlantAdd();

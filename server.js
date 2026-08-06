@@ -493,6 +493,16 @@ async function initDB() {
       )
     `);
 
+    // Audiencias guardadas: un conjunto de filtros reutilizable para campañas/masivo.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS audiencias (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        filtros_json TEXT NOT NULL,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS pending_whatsapp (
         id SERIAL PRIMARY KEY,
@@ -2121,6 +2131,12 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   if (origen) { sql += ` AND c.origen = ?`; params.push(origen); }
   if (idioma) { sql += ` AND mp.idioma = ?`; params.push(idioma); }
   if (excluir_baja) sql += ` AND COALESCE(mp.baja, 0) = 0`;
+  // Exclusión manual de destinatarios concretos (editar la lista a mano en el panel).
+  if (Array.isArray(filtros.excluir_telefonos) && filtros.excluir_telefonos.length) {
+    const ph = filtros.excluir_telefonos.map(() => "?").join(",");
+    sql += ` AND c.telefono NOT IN (${ph})`;
+    params.push(...filtros.excluir_telefonos);
+  }
 
   sql += ` ORDER BY c.ultima_actividad DESC`;
   return sql;
@@ -3273,9 +3289,13 @@ app.post("/api/contactos/mensaje-masivo", requireAuth(["direccion", "marketing"]
 app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const params = [];
-    const sql = sqlContactosUnificados(req.body, params);
+    const sql = sqlContactosUnificados({ ...req.body, excluir_baja: 1 }, params);
     const rows = await dbAll(sql, params);
-    res.json({ ok: true, total: rows.length, muestra: rows.slice(0, 5) });
+    const { aptos, omitidos } = filtrarEnviablesWA(rows, { soloOptIn: !!req.body.soloOptIn });
+    const aptosSet = new Set(aptos.map((c) => c.telefono));
+    // Lista editable (nombre/teléfono + si es enviable) para "ver/editar destinatarios". Cap 500.
+    const lista = rows.slice(0, 500).map((c) => ({ nombre: c.nombre, apellidos: c.apellidos, telefono: c.telefono, enviable: aptosSet.has(c.telefono) }));
+    res.json({ ok: true, total: rows.length, enviables: aptos.length, omitidos, muestra: rows.slice(0, 5), lista });
   } catch (e) {
     res.status(500).json({ ok: false });
   }
@@ -3340,7 +3360,7 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
   if (!nombre || !mensaje) return res.status(400).json({ ok: false, error: "Faltan nombre y mensaje" });
   if (canal !== "whatsapp") return res.status(400).json({ ok: false, error: "El canal email aún no está disponible" });
   try {
-    const seg = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes, con_email: req.body.con_email, con_telefono: req.body.con_telefono, excluir_baja: 1, soloOptIn: !!soloOptIn };
+    const seg = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes, con_email: req.body.con_email, con_telefono: req.body.con_telefono, idioma: req.body.idioma, origen: req.body.origen, from: req.body.from, to: req.body.to, excluir_telefonos: Array.isArray(req.body.excluir_telefonos) ? req.body.excluir_telefonos : [], excluir_baja: 1, soloOptIn: !!soloOptIn };
     // Recuento de enviables para informar
     const params = []; const contactos = await dbAll(sqlContactosUnificados(seg, params), params);
     const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: !!soloOptIn });
@@ -3390,6 +3410,48 @@ app.post("/api/campanas/:id/enviar", requireAuth(["direccion", "marketing"]), as
 
 app.delete("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try { await dbRun(`DELETE FROM campanas_wa WHERE id = ?`, [req.params.id]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Editar una campaña en borrador/programada (nombre, mensaje, audiencia, adjunto, fecha).
+app.patch("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const camp = await dbGet(`SELECT * FROM campanas_wa WHERE id = ?`, [req.params.id]);
+    if (!camp) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!["borrador", "programada"].includes(camp.estado)) return res.status(409).json({ ok: false, error: "Solo se pueden editar campañas en borrador o programadas" });
+    const b = req.body || {};
+    let seg = {}; try { seg = JSON.parse(camp.segmento_json || "{}"); } catch { /* noop */ }
+    // Campos de segmentación editables (los que llegan se reemplazan).
+    for (const k of ["q", "genero", "poblacion", "local", "cumple_mes", "con_email", "con_telefono", "idioma", "origen", "from", "to"]) {
+      if (b[k] !== undefined) seg[k] = b[k];
+    }
+    if (b.excluir_telefonos !== undefined) seg.excluir_telefonos = Array.isArray(b.excluir_telefonos) ? b.excluir_telefonos : [];
+    if (b.soloOptIn !== undefined) seg.soloOptIn = !!b.soloOptIn;
+    seg.excluir_baja = 1;
+    const nombre = b.nombre !== undefined ? b.nombre : camp.nombre;
+    const mensaje = b.mensaje !== undefined ? b.mensaje : camp.mensaje;
+    const adjunto_url = b.adjunto_url !== undefined ? b.adjunto_url : camp.adjunto_url;
+    const programada_para = b.programada_para !== undefined ? b.programada_para : camp.programada_para;
+    const estado = programada_para ? "programada" : "borrador";
+    await dbRun(`UPDATE campanas_wa SET nombre=?, mensaje=?, segmento_json=?, adjunto_url=?, programada_para=?, estado=? WHERE id=?`,
+      [nombre, mensaje, JSON.stringify(seg), adjunto_url, programada_para || null, estado, req.params.id]);
+    res.json({ ok: true, estado });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── AUDIENCIAS GUARDADAS ──────────────────────────────────────────────
+app.get("/api/audiencias", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try { res.json({ ok: true, data: await dbAll(`SELECT * FROM audiencias ORDER BY creado_en DESC`) }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post("/api/audiencias", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const { nombre, filtros } = req.body || {};
+  if (!nombre || !filtros || typeof filtros !== "object") return res.status(400).json({ ok: false, error: "Faltan nombre y filtros" });
+  try { const row = await dbRun(`INSERT INTO audiencias (nombre, filtros_json) VALUES (?, ?) RETURNING id`, [nombre, JSON.stringify(filtros)]); res.json({ ok: true, id: row.id }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.delete("/api/audiencias/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try { await dbRun(`DELETE FROM audiencias WHERE id = ?`, [req.params.id]); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
