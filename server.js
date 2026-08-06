@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets } from "./facturas.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
@@ -3023,13 +3023,32 @@ app.post("/api/contactos/mensaje", requireAuth(["direccion", "marketing"]), asyn
   }
 });
 
+// Carga un adjunto (subido vía /api/upload → /uploads/xxx) desde disco como buffer.
+function cargarAdjunto(url) {
+  try {
+    if (!url) return null;
+    const nombre = path.basename(String(url).split("?")[0]);
+    const fp = path.join(uploadsDir, nombre);
+    if (!fs.existsSync(fp)) return null;
+    const ext = (nombre.split(".").pop() || "").toLowerCase();
+    const mime = ext === "pdf" ? "application/pdf" : ext === "png" ? "image/png" : (ext === "jpg" || ext === "jpeg") ? "image/jpeg" : ext === "webp" ? "image/webp" : "application/octet-stream";
+    return { buffer: fs.readFileSync(fp), filename: nombre, mimetype: mime };
+  } catch { return null; }
+}
+
 // Envío de un LOTE por WhatsApp con ritmo (jitter) — reutilizado por masivo y campañas.
 // Si hay campanaId, registra cada destinatario en campana_envios y cierra la campaña.
-async function enviarLoteWA({ contactos, mensaje, campanaId = null, minMs = 6000, maxMs = 15000 }) {
+// adjunto opcional { buffer, filename, mimetype } → imagen con pie o documento + texto.
+async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 6000, maxMs = 15000 }) {
   let enviados = 0, errores = 0;
   for (const c of contactos) {
     let estado = "enviado", err = null;
-    try { await sendMensajeLibre(c.telefono, aplicarVariables(mensaje, c)); enviados++; }
+    try {
+      const texto = aplicarVariables(mensaje, c);
+      if (adjunto && adjunto.buffer) await sendMediaLibre(c.telefono, adjunto.buffer, adjunto.filename, adjunto.mimetype, texto);
+      else await sendMensajeLibre(c.telefono, texto);
+      enviados++;
+    }
     catch (e) { errores++; estado = "error"; err = (e && e.message) ? String(e.message).slice(0, 200) : "error"; }
     if (campanaId) {
       try { await dbRun(`INSERT INTO campana_envios (campana_id, telefono, nombre, estado, error) VALUES (?, ?, ?, ?, ?)`, [campanaId, c.telefono, `${c.nombre || ""} ${c.apellidos || ""}`.trim(), estado, err]); } catch { /* noop */ }
@@ -3052,7 +3071,7 @@ async function dispatchCampana(campanaId) {
   const contactos = await dbAll(sql, params);
   const { aptos } = filtrarEnviablesWA(contactos, { soloOptIn: !!seg.soloOptIn });
   await dbRun(`UPDATE campanas_wa SET estado='enviando' WHERE id = ?`, [campanaId]);
-  enviarLoteWA({ contactos: aptos, mensaje: camp.mensaje, campanaId });
+  enviarLoteWA({ contactos: aptos, mensaje: camp.mensaje, campanaId, adjunto: cargarAdjunto(camp.adjunto_url) });
   return { ok: true, enviables: aptos.length };
 }
 
@@ -3145,7 +3164,7 @@ app.get("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, re
 
 // Crear una campaña: guardar borrador, programar o enviar ya (según `accion`).
 app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, res) => {
-  const { nombre, mensaje, asunto = null, canal = "whatsapp", plantilla_id = null, accion = "borrador", programada_para = null, soloOptIn = false } = req.body || {};
+  const { nombre, mensaje, asunto = null, canal = "whatsapp", plantilla_id = null, accion = "borrador", programada_para = null, soloOptIn = false, adjunto_url = null } = req.body || {};
   if (!nombre || !mensaje) return res.status(400).json({ ok: false, error: "Faltan nombre y mensaje" });
   if (canal !== "whatsapp") return res.status(400).json({ ok: false, error: "El canal email aún no está disponible" });
   try {
@@ -3157,14 +3176,14 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
     if (accion === "programar" && programada_para) estado = "programada";
     else if (accion === "enviar") estado = "enviando";
     const row = await dbRun(
-      `INSERT INTO campanas_wa (nombre, segmento_json, mensaje, asunto, canal, plantilla_id, estado, programada_para, total_enviados) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
-      [nombre, JSON.stringify(seg), mensaje, asunto, canal, plantilla_id, estado, accion === "programar" ? programada_para : null]
+      `INSERT INTO campanas_wa (nombre, segmento_json, mensaje, asunto, canal, plantilla_id, estado, programada_para, adjunto_url, total_enviados) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
+      [nombre, JSON.stringify(seg), mensaje, asunto, canal, plantilla_id, estado, accion === "programar" ? programada_para : null, adjunto_url]
     );
     const id = row.id;
     if (accion === "enviar") {
       if (!isReady()) { await dbRun(`UPDATE campanas_wa SET estado='borrador' WHERE id=?`, [id]); return res.status(503).json({ ok: false, error: "WhatsApp no conectado", campana_id: id }); }
       res.json({ ok: true, campana_id: id, estado: "enviando", enviables: aptos.length, omitidos });
-      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id });
+      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id, adjunto: cargarAdjunto(adjunto_url) });
       return;
     }
     res.json({ ok: true, campana_id: id, estado, enviables: aptos.length, omitidos });
