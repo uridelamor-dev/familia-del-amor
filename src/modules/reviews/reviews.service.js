@@ -192,6 +192,20 @@ export function normalizarPlaceResult(r) {
   };
 }
 
+// Cuenta Place IDs válidos configurados — FUENTE DE VERDAD de "hay/no hay Place IDs".
+// La misma lógica que usa la sincronización para decidir si ejecutar Places.
+export function placeIdsConfigurados(arr) {
+  return (Array.isArray(arr) ? arr : []).filter((l) => l && l.placeId).length;
+}
+// Upsert (por nombre de local) de una ficha en el array de places_ids. PURA.
+export function upsertPlaceEntry(arr, entry) {
+  const list = Array.isArray(arr) ? arr.slice() : [];
+  const nuevo = { name: entry.name, placeId: entry.placeId, google_location_id: entry.google_location_id || null, official_name: entry.official_name || "", address: entry.address || "" };
+  const i = list.findIndex((l) => l && l.name === entry.name);
+  if (i >= 0) list[i] = { ...list[i], ...nuevo }; else list.push(nuevo);
+  return list;
+}
+
 // Mensaje explicativo del estado de reseñas (PURA). No incluye tokens ni credenciales.
 export function mensajeEstadoReseñas(s = {}) {
   const conectado = !!s.connected;
@@ -201,8 +215,10 @@ export function mensajeEstadoReseñas(s = {}) {
     return `Última sincronización correcta: ${n} reseña(s) mediante ${fuente}.`;
   }
   if (!conectado && !s.places_key_set) return "Google no conectado y sin clave de Places: no hay reseñas.";
-  if (s.reason === "sin_place_ids") return "No hay Place IDs configurados.";
   if (s.reason === "sin_places_key" || s.reason === "business_sin_datos_y_sin_places_key") return "Google conectado, pero Business Profile no devuelve reseñas (cuota/permisos) y falta la clave GOOGLE_PLACES_API_KEY.";
+  // OJO: "reason" puede venir PERSISTIDO de una sync anterior. Para "no hay Place IDs" mandamos
+  // sobre el conteo LIVE (places_configured), así el banner es coherente tras vincular fichas.
+  if (!(Number(s.places_configured) > 0)) return "No hay Place IDs configurados.";
   if (s.source === "places") return "Conectado. Usando Places API, pero aún sin reseñas (revisa los Place IDs).";
   if (s.businessProfileError || s.reason) return `Google conectado, pero Business Profile no tiene cuota/permiso aprobado.${s.places_configured ? " Usando Places API." : " Configura Place IDs para ver reseñas ya."}`;
   return conectado ? "Google conectado, pero aún no se han sincronizado reseñas." : "Google no conectado.";

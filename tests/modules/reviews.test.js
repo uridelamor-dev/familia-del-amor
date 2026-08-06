@@ -1,7 +1,7 @@
 // Reseñas — lógica pura: normalización de filas, resumen por local y prompt de borrador IA.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mapManageRow, resumenPorLocal, draftRequest, cleanDraft, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, hayCoincidenciaUnica, normalizarUbicacionBP, normalizarPlaceResult, formatearDireccionBP } from "../../src/modules/reviews/reviews.service.js";
+import { mapManageRow, resumenPorLocal, draftRequest, cleanDraft, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, hayCoincidenciaUnica, normalizarUbicacionBP, normalizarPlaceResult, formatearDireccionBP, placeIdsConfigurados, upsertPlaceEntry } from "../../src/modules/reviews/reviews.service.js";
 
 describe("mapManageRow", () => {
   test("marca respondida y estrellas; fecha recortada", () => {
@@ -142,6 +142,35 @@ describe("mensajeEstadoReseñas", () => {
   });
   test("sin Place IDs → mensaje EXACTO (nunca 'Fuente: none' sin explicar)", () => {
     assert.equal(mensajeEstadoReseñas({ connected: true, reviews_count: 0, source: "none", reason: "sin_place_ids", businessProfileError: "cuota_agotada_429" }), "No hay Place IDs configurados.");
+  });
+  test("reason='sin_place_ids' OBSOLETO pero ya hay Place IDs vivos → NO dice 'No hay Place IDs'", () => {
+    // Regresión de coherencia: tras vincular fichas, places_configured>0 manda sobre el reason persistido.
+    const m = mensajeEstadoReseñas({ connected: true, reviews_count: 0, reason: "sin_place_ids", places_configured: 3, places_key_set: true });
+    assert.notEqual(m, "No hay Place IDs configurados.");
+  });
+});
+
+describe("coherencia Vincular → Guardar → Sincronización (mismo Place ID)", () => {
+  test("upsertPlaceEntry guarda y placeIdsConfigurados/sync encuentran ese mismo Place ID", () => {
+    // 1) Vincular ficha: se guarda en el array de places_ids (misma pura que usa server.js).
+    const guardado = upsertPlaceEntry([], { name: "La Tapeta - Blanes", placeId: "ChIJ123", google_location_id: "accounts/1/locations/99", official_name: "La Tapeta Blanes", address: "C/ Mayor 1, Blanes" });
+    // 2) La sincronización cuenta Place IDs con la MISMA fuente de verdad → debe ver 1.
+    assert.equal(placeIdsConfigurados(guardado), 1);
+    // 3) Y el Place ID recuperado es exactamente el vinculado (mismo campo `placeId`).
+    const entrada = guardado.find((l) => l.name === "La Tapeta - Blanes");
+    assert.equal(entrada.placeId, "ChIJ123");
+  });
+  test("upsert por nombre no duplica; actualiza el Place ID del mismo local", () => {
+    let arr = upsertPlaceEntry([], { name: "Cooperativa - Blanes", placeId: "OLD" });
+    arr = upsertPlaceEntry(arr, { name: "Cooperativa - Blanes", placeId: "NEW" });
+    assert.equal(arr.length, 1);
+    assert.equal(placeIdsConfigurados(arr), 1);
+    assert.equal(arr[0].placeId, "NEW");
+  });
+  test("placeIdsConfigurados ignora entradas sin placeId y tolera no-array", () => {
+    assert.equal(placeIdsConfigurados([{ name: "X" }, { name: "Y", placeId: "" }, { name: "Z", placeId: "ChIJz" }]), 1);
+    assert.equal(placeIdsConfigurados(null), 0);
+    assert.equal(placeIdsConfigurados(undefined), 0);
   });
 });
 
