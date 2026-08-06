@@ -1,7 +1,7 @@
 // Reseñas — lógica pura: normalización de filas, resumen por local y prompt de borrador IA.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mapManageRow, resumenPorLocal, draftRequest, cleanDraft, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery } from "../../src/modules/reviews/reviews.service.js";
+import { mapManageRow, resumenPorLocal, draftRequest, cleanDraft, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, hayCoincidenciaUnica, normalizarUbicacionBP, normalizarPlaceResult, formatearDireccionBP } from "../../src/modules/reviews/reviews.service.js";
 
 describe("mapManageRow", () => {
   test("marca respondida y estrellas; fecha recortada", () => {
@@ -178,3 +178,28 @@ describe("buildManageQuery (bandeja: filtros/orden)", () => {
   });
 });
 
+
+describe("auto-vinculación de fichas Google", () => {
+  test("queryTextSearch: quita el guion y normaliza espacios", () => {
+    assert.equal(queryTextSearch("La Tapeta - Blanes"), "La Tapeta Blanes");
+    assert.equal(queryTextSearch("Botiga d'en Mateu - Tordera"), "Botiga d'en Mateu Tordera");
+  });
+  test("elegirSugerido / hayCoincidenciaUnica", () => {
+    assert.equal(elegirSugerido([]), null);
+    assert.equal(elegirSugerido([{ place_id: "a" }]), 0);
+    assert.equal(elegirSugerido([{ place_id: "a" }, { place_id: "b" }]), 0);
+    assert.equal(hayCoincidenciaUnica([{ place_id: "a" }]), true);
+    assert.equal(hayCoincidenciaUnica([{ place_id: "a" }, { place_id: "b" }]), false);
+  });
+  test("normalizarUbicacionBP: extrae placeId, título, dirección y location_id", () => {
+    const loc = { name: "accounts/1/locations/99", title: "La Tapeta Blanes", metadata: { placeId: "ChIJxxx" }, storefrontAddress: { addressLines: ["C/ Mayor 1"], locality: "Blanes", administrativeArea: "Girona" } };
+    assert.deepEqual(normalizarUbicacionBP(loc), { place_id: "ChIJxxx", name: "La Tapeta Blanes", address: "C/ Mayor 1, Blanes, Girona", google_location_id: "accounts/1/locations/99" });
+  });
+  test("normalizarPlaceResult: Text Search → candidato uniforme", () => {
+    assert.deepEqual(normalizarPlaceResult({ place_id: "ChIJyyy", name: "La Tapeta", formatted_address: "C/ Mayor 1, Blanes" }), { place_id: "ChIJyyy", name: "La Tapeta", address: "C/ Mayor 1, Blanes", google_location_id: null });
+  });
+  test("formatearDireccionBP tolera vacíos", () => {
+    assert.equal(formatearDireccionBP(null), "");
+    assert.equal(formatearDireccionBP({ locality: "Lloret" }), "Lloret");
+  });
+});

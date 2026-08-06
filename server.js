@@ -18,7 +18,7 @@ import { permisosV2Enabled } from "./src/core/flags.js";
 import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
-import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery } from "./src/modules/reviews/reviews.service.js";
+import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
@@ -1625,6 +1625,74 @@ app.post("/api/places/config", requireAuth(["direccion", "marketing"]), async (r
   if (!Array.isArray(locations)) return res.status(400).json({ ok: false, error: "locations debe ser array" });
   await setConfig("places_ids", JSON.stringify(locations));
   res.json({ ok: true });
+});
+
+// ── Auto-descubrimiento de fichas de Google (sin copiar Place IDs a mano) ──────
+// Lista las ubicaciones de Business Profile de la cuenta conectada (con metadata.placeId).
+async function listarUbicacionesBusiness() {
+  const token = await getGoogleAccessToken();
+  const h = { Authorization: `Bearer ${token}` };
+  const accRes = await fetch("https://mybusinessaccountmanagement.googleapis.com/v1/accounts", { headers: h });
+  const accData = await accRes.json().catch(() => ({}));
+  if (!accRes.ok || accData.error) throw new Error(detectarMotivoGoogle(accRes.status, accData));
+  const out = [];
+  for (const account of (accData.accounts || [])) {
+    const locRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title,storefrontAddress,metadata`, { headers: h });
+    const locData = await locRes.json().catch(() => ({}));
+    for (const loc of (locData.locations || [])) { const c = normalizarUbicacionBP(loc); if (c && c.place_id) out.push(c); }
+  }
+  return out;
+}
+// Busca fichas por texto (nombre + ciudad) con Places Text Search — no necesita cuota Business.
+async function buscarPlacesTextSearch(query) {
+  if (!GOOGLE_PLACES_API_KEY || !query) return [];
+  const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&key=${GOOGLE_PLACES_API_KEY}&language=es&region=es`;
+  const res = await fetch(url);
+  const data = await res.json().catch(() => ({ status: "PARSE_ERROR" }));
+  if (data.status !== "OK") return [];
+  return (data.results || []).slice(0, 6).map(normalizarPlaceResult).filter((c) => c && c.place_id);
+}
+// Upsert de la ficha vinculada a un local en places_ids (no pisa otros locales).
+async function upsertPlaceLocal(entry) {
+  const raw = await getConfig("places_ids");
+  let arr = []; try { arr = raw ? JSON.parse(raw) : []; } catch { arr = []; }
+  const i = arr.findIndex((l) => l && l.name === entry.name);
+  const nuevo = { name: entry.name, placeId: entry.placeId, google_location_id: entry.google_location_id || null, official_name: entry.official_name || "", address: entry.address || "" };
+  if (i >= 0) arr[i] = { ...arr[i], ...nuevo }; else arr.push(nuevo);
+  await setConfig("places_ids", JSON.stringify(arr));
+  return arr;
+}
+
+// Descubre automáticamente las fichas de Google para cada local del ERP.
+app.get("/api/reviews/descubrir-fichas", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const raw = await getConfig("places_ids");
+    let saved = []; try { saved = raw ? JSON.parse(raw) : []; } catch { saved = []; }
+    const savedMap = Object.fromEntries(saved.filter((l) => l && l.name).map((l) => [l.name, l]));
+    let bpLocs = null, bpError = null;
+    if (await getConfig("google_refresh_token")) {
+      try { bpLocs = await listarUbicacionesBusiness(); } catch (e) { bpError = e.message; }
+    }
+    const usaBP = Array.isArray(bpLocs) && bpLocs.length > 0;
+    const data = [];
+    for (const local of SARA_LOCALES) {
+      let candidatos = [];
+      if (usaBP) candidatos = bpLocs;                                   // fichas de la cuenta (elige la correcta)
+      else if (GOOGLE_PLACES_API_KEY) candidatos = await buscarPlacesTextSearch(queryTextSearch(local));
+      data.push({ local, vinculado: savedMap[local] || null, candidatos, sugerido: elegirSugerido(candidatos) });
+    }
+    res.json({ ok: true, data, fuente: usaBP ? "business_profile" : (GOOGLE_PLACES_API_KEY ? "places" : "none"), bpError, places_key_set: !!GOOGLE_PLACES_API_KEY });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Vincula una ficha de Google a un local del ERP (guarda place_id, location_id, nombre, dirección).
+app.post("/api/reviews/vincular-ficha", requireAuth(["direccion"]), async (req, res) => {
+  const { local, place_id, google_location_id, name, address } = req.body || {};
+  if (!local || !place_id) return res.status(400).json({ ok: false, error: "Faltan local y place_id" });
+  try {
+    const arr = await upsertPlaceLocal({ name: local, placeId: place_id, google_location_id, official_name: name, address });
+    res.json({ ok: true, total: arr.filter((l) => l && l.placeId).length });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ── Reseñas: gestión interna por local + respuesta en MODO BORRADOR ──────────────
