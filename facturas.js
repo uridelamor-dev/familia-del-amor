@@ -542,66 +542,61 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   const driveFile = await driveSubirArchivo(token, mesId, driveFilename, buffer, mimeType);
   console.log(`[Facturas] Archivo subido: ${driveFile.url}`);
 
-  // 7. Buscar o crear Sheet del local (INSERT OR IGNORE para emails sin grupo WA)
+  // 7. Sheet del local (puede no existir aún; se crea al proyectar).
   const grupoRow = await dbGet("SELECT sheet_id, sheet_url FROM facturas_grupos WHERE local = ?", [localContable]);
   let sheetId = grupoRow?.sheet_id;
   let sheetUrl = grupoRow?.sheet_url;
 
-  if (!sheetId) {
-    const year = fechaDoc.getFullYear();
-    const sheet = await sheetsCrear(token, `Facturas · ${local} · ${year}`);
-    sheetId = sheet.spreadsheetId;
-    sheetUrl = sheet.url;
-    if (grupoRow) {
-      await dbRun("UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?", [sheetId, sheetUrl, localContable]);
-    } else {
-      await dbRun(
-        `INSERT INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)
-         ON CONFLICT(group_jid) DO UPDATE SET sheet_id = excluded.sheet_id, sheet_url = excluded.sheet_url`,
-        [localContable, `__email__:${localContable}`, sheetId, sheetUrl]
-      );
-    }
-    console.log(`[Facturas] Sheet creado para ${local}: ${sheetUrl}`);
-    if (backupFn) backupFn();
-  }
-
-  // 8. Añadir fila al Sheet en la pestaña del mes correspondiente
-  const ahora = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
-  const fila = [
-    datos.fecha ?? "",
-    datos.numero_factura ?? "",
-    datos.tipo ?? "",
-    datos.proveedor ?? "",
-    datos.nif_proveedor ?? "",
-    datos.concepto ?? "",
-    datos.base_imponible ?? "",
-    datos.porcentaje_iva ?? "",
-    datos.cuota_iva ?? "",
-    datos.total ?? "",
-    canal,
-    driveFile.url,
-    ahora
-  ];
-  await sheetsAñadirFilaMes(token, sheetId, fila, mesLabel);
-
-  // 8b. Añadir también al Sheet MAESTRO consolidado (no fatal).
-  try {
-    await añadirFilaMaestro(token, dbGet, dbRun, [
-      datos.fecha ?? "", datos.numero_factura ?? "", datos.tipo ?? "", datos.proveedor ?? "", datos.nif_proveedor ?? "",
-      datos.concepto ?? "", datos.base_imponible ?? "", datos.porcentaje_iva ?? "", datos.cuota_iva ?? "", datos.total ?? "",
-      local, empresa, canal, driveFile.url, ahora
-    ]);
-  } catch (e) { console.error("[Facturas] Sheet maestro:", e.message); }
-
-  // 9. Guardar en BD local con hash y empresa
-  await dbRun(
+  // 8. GUARDAR EN BD PRIMERO — la BD es la única verdad; el Sheet es una proyección reconstruible.
+  //    sheet_synced=0: si la proyección a Sheets falla, la cola de reintentos la reproyecta desde la BD.
+  const ins = await dbRun(
     `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
-      base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal, sheet_synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
     [local, empresa, datos.tipo, datos.fecha, datos.numero_factura, datos.proveedor,
      datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
      datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash, canal]
   );
+  const facturaId = ins?.id;
+
+  // 9. Proyectar al Sheet (NO fatal). Si algo falla, queda sheet_synced=0 y lo recoge el reintento.
+  try {
+    if (!sheetId) {
+      const year = fechaDoc.getFullYear();
+      const sheet = await sheetsCrear(token, `Facturas · ${local} · ${year}`);
+      sheetId = sheet.spreadsheetId;
+      sheetUrl = sheet.url;
+      if (grupoRow) {
+        await dbRun("UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?", [sheetId, sheetUrl, localContable]);
+      } else {
+        await dbRun(
+          `INSERT INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)
+           ON CONFLICT(group_jid) DO UPDATE SET sheet_id = excluded.sheet_id, sheet_url = excluded.sheet_url`,
+          [localContable, `__email__:${localContable}`, sheetId, sheetUrl]
+        );
+      }
+      console.log(`[Facturas] Sheet creado para ${local}: ${sheetUrl}`);
+      if (backupFn) backupFn();
+    }
+    const ahora = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
+    const fila = [
+      datos.fecha ?? "", datos.numero_factura ?? "", datos.tipo ?? "", datos.proveedor ?? "", datos.nif_proveedor ?? "",
+      datos.concepto ?? "", datos.base_imponible ?? "", datos.porcentaje_iva ?? "", datos.cuota_iva ?? "", datos.total ?? "",
+      canal, driveFile.url, ahora
+    ];
+    await sheetsAñadirFilaMes(token, sheetId, fila, mesLabel);
+    // Maestro consolidado (no fatal).
+    try {
+      await añadirFilaMaestro(token, dbGet, dbRun, [
+        datos.fecha ?? "", datos.numero_factura ?? "", datos.tipo ?? "", datos.proveedor ?? "", datos.nif_proveedor ?? "",
+        datos.concepto ?? "", datos.base_imponible ?? "", datos.porcentaje_iva ?? "", datos.cuota_iva ?? "", datos.total ?? "",
+        local, empresa, canal, driveFile.url, ahora
+      ]);
+    } catch (e) { console.error("[Facturas] Sheet maestro:", e.message); }
+    await dbRun("UPDATE facturas SET sheet_synced = 1, sheet_id = ? WHERE id = ?", [sheetId, facturaId]);
+  } catch (e) {
+    console.error(`[Facturas] Proyección a Sheet falló (queda pendiente de reintento): ${e.message}`);
+  }
 
   return { datos, empresa, driveUrl: driveFile.url, sheetUrl, sheetId };
   }); // withHashLock
@@ -827,47 +822,73 @@ export async function asignarFacturaPendiente({ pendiente, local, getToken, dbGe
   if (moveData.error) throw new Error("Error moviendo archivo en Drive: " + moveData.error.message);
   const driveUrl = moveData.webViewLink || pendiente.drive_url;
 
-  // Buscar o crear Sheet del local
   const grupoRow = await dbGet("SELECT sheet_id, sheet_url FROM facturas_grupos WHERE local = ?", [localContable]);
   let sheetId = grupoRow?.sheet_id;
   let sheetUrl = grupoRow?.sheet_url;
-  if (!sheetId) {
-    const sheet = await sheetsCrear(token, `Facturas · ${localContable} · ${fechaDoc.getFullYear()}`);
-    sheetId = sheet.spreadsheetId;
-    sheetUrl = sheet.url;
-    if (grupoRow) {
-      await dbRun("UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?", [sheetId, sheetUrl, localContable]);
-    } else {
-      await dbRun(
-        `INSERT INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)
-         ON CONFLICT(group_jid) DO UPDATE SET sheet_id = excluded.sheet_id, sheet_url = excluded.sheet_url`,
-        [localContable, `__email__:${localContable}`, sheetId, sheetUrl]
-      );
-    }
-    if (backupFn) backupFn();
-  }
-
-  // Añadir fila al Sheet en la pestaña del mes correspondiente
-  const ahora = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
   const canal = pendiente.origen === "email" ? "Email" : "WhatsApp";
-  const filaAsignada = [
-    pendiente.fecha ?? "", pendiente.numero_factura ?? "", pendiente.tipo ?? "",
-    pendiente.proveedor ?? "", pendiente.nif ?? "", pendiente.concepto ?? "",
-    pendiente.base_imponible ?? "", pendiente.porcentaje_iva ?? "",
-    pendiente.cuota_iva ?? "", pendiente.total ?? "", canal, driveUrl, ahora
-  ];
-  await sheetsAñadirFilaMes(token, sheetId, filaAsignada, mesLabel);
 
-  // Pasar de pendientes a facturas
-  await dbRun(
+  // BD PRIMERO (fuente de verdad) y quitar de pendientes: la asignación no se pierde aunque falle el Sheet.
+  const ins = await dbRun(
     `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
-       base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal, sheet_synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
     [localContable, empresa, pendiente.tipo, pendiente.fecha, pendiente.numero_factura,
      pendiente.proveedor, pendiente.nif, pendiente.concepto, pendiente.base_imponible,
-     pendiente.porcentaje_iva, pendiente.cuota_iva, pendiente.total, driveUrl, sheetId, pendiente.file_hash]
+     pendiente.porcentaje_iva, pendiente.cuota_iva, pendiente.total, driveUrl, sheetId, pendiente.file_hash, canal]
   );
+  const facturaId = ins?.id;
   await dbRun("DELETE FROM facturas_pendientes WHERE id = ?", [pendiente.id]);
 
+  // Proyectar al Sheet (NO fatal): si falla, sheet_synced=0 y lo recoge el reintento.
+  try {
+    if (!sheetId) {
+      const sheet = await sheetsCrear(token, `Facturas · ${localContable} · ${fechaDoc.getFullYear()}`);
+      sheetId = sheet.spreadsheetId;
+      sheetUrl = sheet.url;
+      if (grupoRow) {
+        await dbRun("UPDATE facturas_grupos SET sheet_id = ?, sheet_url = ? WHERE local = ?", [sheetId, sheetUrl, localContable]);
+      } else {
+        await dbRun(
+          `INSERT INTO facturas_grupos (local, group_jid, sheet_id, sheet_url) VALUES (?, ?, ?, ?)
+           ON CONFLICT(group_jid) DO UPDATE SET sheet_id = excluded.sheet_id, sheet_url = excluded.sheet_url`,
+          [localContable, `__email__:${localContable}`, sheetId, sheetUrl]
+        );
+      }
+      if (backupFn) backupFn();
+    }
+    const ahora = new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" });
+    const filaAsignada = [
+      pendiente.fecha ?? "", pendiente.numero_factura ?? "", pendiente.tipo ?? "",
+      pendiente.proveedor ?? "", pendiente.nif ?? "", pendiente.concepto ?? "",
+      pendiente.base_imponible ?? "", pendiente.porcentaje_iva ?? "",
+      pendiente.cuota_iva ?? "", pendiente.total ?? "", canal, driveUrl, ahora
+    ];
+    await sheetsAñadirFilaMes(token, sheetId, filaAsignada, mesLabel);
+    await dbRun("UPDATE facturas SET sheet_synced = 1, sheet_id = ? WHERE id = ?", [sheetId, facturaId]);
+  } catch (e) {
+    console.error(`[Facturas] Proyección a Sheet (asignar) falló, queda pendiente de reintento: ${e.message}`);
+  }
+
   return { driveUrl, sheetUrl, sheetId };
+}
+
+// ── Cola de reintentos: reproyecta a Sheets las facturas con sheet_synced=0 ──────────────
+// La BD es la verdad; esto reconstruye la pestaña (local, mes) desde la BD y marca como sincronizadas.
+// Idempotente y seguro: si Google sigue caído, no pasa nada y se reintenta al siguiente ciclo.
+export async function reproyectarPendientes({ getToken, dbGet, dbAll, dbRun }) {
+  const grupos = await dbAll(
+    "SELECT local, MIN(fecha) AS fecha, COUNT(*) AS n FROM facturas WHERE COALESCE(sheet_synced,0)=0 AND fecha IS NOT NULL GROUP BY local, substr(fecha,1,7)",
+    []
+  );
+  let sincronizados = 0, fallidos = 0;
+  for (const g of grupos) {
+    try {
+      await resincronizarSheetsFactura({ getToken, dbGet, dbAll, dbRun }, g.local, g.fecha);
+      const r = await dbRun("UPDATE facturas SET sheet_synced = 1 WHERE local = ? AND substr(fecha,1,7) = substr(?,1,7) AND COALESCE(sheet_synced,0)=0", [g.local, g.fecha]);
+      sincronizados += Number(g.n) || 0;
+    } catch (e) { fallidos++; console.error(`[Facturas] Reproyección ${g.local} ${g.fecha}: ${e.message}`); }
+  }
+  // Facturas sin fecha (raras): márcalas para no quedar colgadas en el contador.
+  try { await dbRun("UPDATE facturas SET sheet_synced = 1 WHERE COALESCE(sheet_synced,0)=0 AND (fecha IS NULL OR fecha='')", []); } catch { /* noop */ }
+  return { grupos: grupos.length, sincronizados, fallidos };
 }
