@@ -978,9 +978,8 @@ function renderFacturas(list, pend, stats, empresas) {
   const vizGrid = (porLocal || topProv) ? `<div class="grid g2" style="margin-bottom:16px">${porLocal}${topProv}</div>` : "";
   const pendRow = (p) => {
     const sug = p.sugerido || {};
-    const sel = LOCALES.map((l) => `<option value="${esc(l)}" ${sug.local === l ? "selected" : ""}>${esc(l)}</option>`).join("");
     const badge = sug.local ? `<span class="pill ${sug.confianza === "alta" ? "ok" : ""}" title="${esc(sug.motivo)}" style="font-size:10.5px">Sugerido: ${esc(nombreCortoLocal(sug.local))}</span>` : "";
-    return `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "(sin proveedor)")} ${badge}</div><div class="t2">${esc((p.fecha || "").slice(0, 10))} · ${eur(p.total)}</div></div><button class="btn sm" data-act="fac-revisar" data-id="${p.id}">Revisar</button><select class="facSel" data-id="${p.id}" style="max-width:190px"><option value="">Asignar a…</option>${sel}</select><button class="btn" data-act="fac-asignar" data-id="${p.id}">Asignar</button></div>`;
+    return `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "(sin proveedor)")} ${badge}</div><div class="t2">${esc((p.fecha || "").slice(0, 10))} · ${eur(p.total)}</div></div><button class="btn primary" data-act="fac-revisar" data-id="${p.id}">Revisar</button></div>`;
   };
   const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map(pendRow).join("")}</div></div>` : "";
   const table = list.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Nº</th><th>Proveedor</th><th>Local</th><th class="r">Base</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead><tbody>${list.map((f) => `<tr><td class="mut">${esc((f.fecha || "").slice(0, 10))}</td><td class="mut">${esc(f.numero_factura || "")}</td><td>${esc(f.proveedor || "")}${f.tipo && f.tipo !== "factura" ? ` <span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : ""}</td><td>${esc(f.local || "")}</td><td class="r tnum">${eur(f.base_imponible)}</td><td class="r tnum">${eur(f.total)}</td><td><span class="pill ${f.pagado ? "ok" : ""}">${f.pagado ? "Pagada" : "Pendiente"}</span></td><td class="r"><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin facturas con esos filtros.</div></div>`;
@@ -1131,7 +1130,6 @@ async function fac303() {
   const v = document.getElementById("view"); if (v) v.innerHTML = renderFacturasConfig();
 }
 async function facPago(id) { try { await apiSend("PATCH", "/api/facturas/" + encodeURIComponent(id) + "/pago"); toast("Estado de pago actualizado"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
-async function facAsignar(id) { const sel = document.querySelector('.facSel[data-id="' + id + '"]'); const local = sel ? sel.value : ""; if (!local) { toast("Elige un local"); return; } try { await apiSend("POST", "/api/facturas/pendientes/" + encodeURIComponent(id) + "/asignar", { local }); toast("Factura asignada a " + local); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 
 // Revisar una factura pendiente: vista previa del documento a la izquierda y formulario
 // editable a la derecha, sin salir de la pestaña. Al asignar, se guardan las correcciones.
@@ -2128,7 +2126,6 @@ document.addEventListener("click", (e) => {
   else if (act === "user-del") userDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "fac-filtrar") applyFacFilter();
   else if (act === "fac-pago") facPago(t.getAttribute("data-id"));
-  else if (act === "fac-asignar") facAsignar(t.getAttribute("data-id"));
   else if (act === "fac-revisar") facRevisar(t.getAttribute("data-id"));
   else if (act === "fac-tab") facTab(t.getAttribute("data-tab"));
   else if (act === "fac-loc-add") facLocAdd();
