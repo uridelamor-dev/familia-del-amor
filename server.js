@@ -19,7 +19,7 @@ import { permisosV2Enabled } from "./src/core/flags.js";
 import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
-import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry } from "./src/modules/reviews/reviews.service.js";
+import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry, locationNamesDeLocal } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/agora/diagnostico.js";
@@ -1249,7 +1249,9 @@ function facturasWhere(query = {}) {
 
 app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const { where, params } = facturasWhere(req.query);
+    const scope = localScope(req);
+    const query = scope ? { ...req.query, local: scope } : req.query;
+    const { where, params } = facturasWhere(query);
     const rows = await dbAll(`SELECT * FROM facturas ${where} ORDER BY fecha DESC NULLS LAST, creado_en DESC LIMIT 500`, params);
     res.json({ ok: true, data: rows });
   } catch (e) { res.status(500).json({ ok: false, error: e.message, data: [] }); }
@@ -1830,7 +1832,21 @@ app.post("/api/reviews/vincular-ficha", requireAuth(["direccion"]), async (req, 
 // (incluidas las negativas, que son las que más interesa responder), con filtro por local.
 app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabilidad", "marketing"]), async (req, res) => {
   try {
-    const { where, params, orderBy } = buildManageQuery(req.query);
+    // Ámbito por local (encargado): restringe a las fichas de Google que corresponden a su local.
+    const scope = localScope(req);
+    let scopeCond = "", scopeParams = [];
+    if (scope) {
+      const allNames = (await dbAll(`SELECT DISTINCT location_name FROM google_reviews WHERE location_name IS NOT NULL AND location_name <> ''`)).map((r) => r.location_name);
+      const matched = locationNamesDeLocal(scope, allNames);
+      scopeCond = matched.length ? `location_name IN (${matched.map(() => "?").join(",")})` : "1=0";
+      scopeParams = matched.length ? matched : [];
+    }
+    const withScope = (whereStr) => scopeCond ? (whereStr && whereStr.trim() ? `${whereStr} AND ${scopeCond}` : `WHERE ${scopeCond}`) : whereStr;
+    const scopeOnly = scopeCond ? `WHERE ${scopeCond}` : "";
+    const scopeAnd = scopeCond ? `AND ${scopeCond}` : "";
+
+    const q = buildManageQuery(req.query);
+    const where = withScope(q.where); const params = [...q.params, ...scopeParams]; const orderBy = q.orderBy;
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const rows = await dbAll(`SELECT * FROM google_reviews ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`, [...params, limit, offset]);
@@ -1841,10 +1857,10 @@ app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabili
         SUM(CASE WHEN reply IS NOT NULL AND reply <> '' THEN 1 ELSE 0 END) AS resp
       FROM google_reviews ${where}`, params);
     const total = parseInt(c?.n || 0);
-    // Resumen por local sobre TODAS las reseñas (para los chips y medias).
-    const allRows = await dbAll(`SELECT location_name, reply, rating FROM google_reviews`);
+    // Resumen por local (para los chips y medias) — también acotado al ámbito del usuario.
+    const allRows = await dbAll(`SELECT location_name, reply, rating FROM google_reviews ${scopeOnly}`, scopeParams);
     const resumen = resumenPorLocal((allRows || []).map((r) => ({ local: r.location_name || "—", respondida: !!(r.reply && String(r.reply).trim()), rating: r.rating })));
-    const locRows = await dbAll(`SELECT DISTINCT location_name FROM google_reviews WHERE location_name IS NOT NULL AND location_name <> '' ORDER BY location_name`);
+    const locRows = await dbAll(`SELECT DISTINCT location_name FROM google_reviews WHERE location_name IS NOT NULL AND location_name <> '' ${scopeAnd} ORDER BY location_name`, scopeParams);
     res.json({
       ok: true, data, total, offset, limit,
       hasMore: offset + data.length < total,
@@ -1903,8 +1919,10 @@ app.post("/api/reviews/:id/reply", requireAuth(["direccion", "encargado"]), asyn
   const reply = String(req.body?.reply || "").trim();
   if (!reply) return res.status(400).json({ ok: false, error: "Respuesta vacía" });
   try {
-    const row = await dbGet(`SELECT id FROM google_reviews WHERE id = ?`, [req.params.id]);
+    const row = await dbGet(`SELECT id, location_name FROM google_reviews WHERE id = ?`, [req.params.id]);
     if (!row) return res.status(404).json({ ok: false, error: "Reseña no encontrada" });
+    const scope = localScope(req);
+    if (scope && locationNamesDeLocal(scope, [row.location_name]).length === 0) return res.status(403).json({ ok: false, error: "Sin permiso sobre esta reseña" });
     await dbRun(`UPDATE google_reviews SET reply = ?, replied_at = ?, reply_by = ? WHERE id = ?`,
       [reply, new Date().toISOString(), req.user?.nombre || req.user?.username || null, req.params.id]);
     res.json({ ok: true });
@@ -1932,6 +1950,13 @@ function requireAuth(roles = []) {
       return res.status(401).json({ ok: false, error: "Token inválido o expirado" });
     }
   };
+}
+
+// Ámbito por local a nivel de servidor: un usuario con `local` asignado y rol ≠ dirección solo
+// puede ver/tocar los datos de SU local. Dirección y roles sin local → null (sin restricción).
+// Se aplica en los listados y mutaciones por local (belt-and-suspenders, independiente de flags).
+function localScope(req) {
+  return (req.user && req.user.rol !== "direccion" && req.user.local) ? String(req.user.local).trim() : null;
 }
 
 // Auth endpoints
@@ -2597,7 +2622,9 @@ app.post("/api/reservas", async (req, res) => {
 
 app.get("/api/reservas", requireAuth(["direccion", "encargado"]), async (req, res) => {
   try {
-    const { local, from, to } = req.query;
+    const { from, to } = req.query;
+    const scope = localScope(req);
+    const local = scope || req.query.local; // encargado con local → siempre su local
     const where = [];
     const params = [];
     if (local) { where.push(`local = ?`); params.push(local); }
@@ -2615,6 +2642,8 @@ app.delete("/api/reservas/:id", requireAuth(["encargado", "direccion"]), async (
   try {
     const reserva = await dbGet(`SELECT * FROM reservas WHERE id = ?`, [req.params.id]);
     if (!reserva) return res.status(404).json({ ok: false, error: "Reserva no encontrada" });
+    const scope = localScope(req);
+    if (scope && reserva.local !== scope) return res.status(403).json({ ok: false, error: "Sin permiso sobre esta reserva" });
     await dbRun("DELETE FROM reservas WHERE id = ?", [req.params.id]);
     res.json({ ok: true });
     if (isReady()) {
@@ -2630,7 +2659,10 @@ app.delete("/api/reservas/:id", requireAuth(["encargado", "direccion"]), async (
 
 app.get("/api/reservas/export.csv", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
   try {
-    const rows = await dbAll(`SELECT * FROM reservas ORDER BY creado_en DESC`);
+    const scope = localScope(req);
+    const rows = scope
+      ? await dbAll(`SELECT * FROM reservas WHERE local = ? ORDER BY creado_en DESC`, [scope])
+      : await dbAll(`SELECT * FROM reservas ORDER BY creado_en DESC`);
     const header = "id,local,personas,dia,hora,telefono,nombre_reserva,creado_en";
     const lines = rows.map((r) =>
       [r.id, r.local, r.personas, r.dia, r.hora, r.telefono, r.nombre_reserva, r.creado_en]
@@ -3393,8 +3425,9 @@ app.post("/api/rrhh/llamada", requireAuth(["rrhh", "direccion"]), async (req, re
 const maintDb = { get: dbGet, all: dbAll, run: dbRun };
 app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
   try {
-    const r = await listMaintenanceIssues(maintDb, req.user, { enabled: permisosV2Enabled(), local: req.query.local });
-    if (r.code === "OK") return res.json({ ok: true, data: r.data });
+    const scope = localScope(req);
+    const r = await listMaintenanceIssues(maintDb, req.user, { enabled: permisosV2Enabled(), local: scope || req.query.local });
+    if (r.code === "OK") { const data = scope ? (r.data || []).filter((x) => x.local === scope) : r.data; return res.json({ ok: true, data }); }
     if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
     return next(new Error("maintenance_list_internal"));
   } catch (e) { if (!permisosV2Enabled()) return res.status(500).json({ ok: false, error: "Error incidencias" }); next(e); }
@@ -3402,7 +3435,9 @@ app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req,
 
 app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
   try {
-    const { local, titulo, descripcion, foto_url } = req.body;
+    const scope = localScope(req);
+    const local = scope || req.body.local; // encargado con local → siempre su local
+    const { titulo, descripcion, foto_url } = req.body;
     const r = await createMaintenanceIssue(maintDb, req.user, { local, titulo, descripcion, foto_url }, { enabled: permisosV2Enabled() });
     if (r.code === "OK") return res.json({ ok: true, id: r.id });
     if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_local" ? "Establecimiento no válido" : "Faltan campos" });
@@ -3413,6 +3448,8 @@ app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req
 
 app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
   try {
+    const scope = localScope(req);
+    if (scope) { const row = await dbGet("SELECT local FROM maintenance_issues WHERE id = ?", [req.params.id]); if (row && row.local !== scope) return res.status(403).json({ ok: false, error: "Sin permiso sobre esta incidencia" }); }
     const r = await updateMaintenanceIssueStatus(maintDb, req.user, req.params.id, { estado: req.body.estado }, { enabled: permisosV2Enabled() });
     if (r.code === "OK") return res.json({ ok: true });
     if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_id" ? "ID no válido" : "Estado requerido" });
