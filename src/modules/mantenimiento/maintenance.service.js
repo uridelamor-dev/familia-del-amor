@@ -61,15 +61,16 @@ export async function listMaintenanceIssues(x, user, { enabled = false, local, n
 }
 
 // ── POST /api/maintenance ────────────────────────────────────────────────────
-export async function createMaintenanceIssue(x, user, { local, titulo, descripcion }, { enabled = false, now } = {}) {
+export async function createMaintenanceIssue(x, user, { local, titulo, descripcion, foto_url = null }, { enabled = false, now } = {}) {
   const camposOk = local && titulo && descripcion;
+  const foto = (foto_url && typeof foto_url === "string") ? foto_url.slice(0, 500) : null;
 
   if (!enabled) {
     if (!camposOk) return { code: "VALIDATION_ERROR", reason: "missing_fields" };
     const creado_en = now || new Date().toISOString();
     const r = await x.run(
-      `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, creado_en) VALUES (?, ?, ?, 'abierta', ?) RETURNING id`,
-      [local, titulo, descripcion, creado_en]
+      `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, foto_url, creado_en) VALUES (?, ?, ?, 'abierta', ?, ?) RETURNING id`,
+      [local, titulo, descripcion, foto, creado_en]
     );
     return { code: "OK", id: r && r.id };
   }
@@ -89,8 +90,8 @@ export async function createMaintenanceIssue(x, user, { local, titulo, descripci
 
   const creado_en = now || new Date().toISOString();
   const r = await x.run(
-    `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, creado_en) VALUES (?, ?, ?, 'abierta', ?) RETURNING id`,
-    [local, titulo, descripcion, creado_en]
+    `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, foto_url, creado_en) VALUES (?, ?, ?, 'abierta', ?, ?) RETURNING id`,
+    [local, titulo, descripcion, foto, creado_en]
   );
   return { code: "OK", id: r && r.id };
 }

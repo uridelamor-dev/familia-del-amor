@@ -418,6 +418,7 @@ async function initDB() {
     try { await client.query(`ALTER TABLE facturas_pendientes ADD COLUMN IF NOT EXISTS local_receptor TEXT`); } catch (e) { console.error("[DB] alter facturas_pendientes local_receptor:", e.message); }
     try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS modulos TEXT`); } catch (e) { console.error("[DB] alter users modulos:", e.message); }
     try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc TEXT`); } catch (e) { console.error("[DB] alter users password_enc:", e.message); }
+    try { await client.query(`ALTER TABLE maintenance_issues ADD COLUMN IF NOT EXISTS foto_url TEXT`); } catch (e) { console.error("[DB] alter maintenance_issues foto_url:", e.message); }
     // sheet_synced: 1 = proyectada a Sheets; 0 = pendiente (la cola de reintentos la reproyecta desde la BD).
     // Las facturas existentes se asumen sincronizadas (default 1); las nuevas insertan 0 y pasan a 1 al proyectar.
     try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS sheet_synced INTEGER DEFAULT 1`); } catch (e) { console.error("[DB] alter facturas sheet_synced:", e.message); }
@@ -1940,7 +1941,9 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(400).json({ ok: false, error: "Faltan credenciales" });
   }
   try {
-    const user = await dbGet("SELECT * FROM users WHERE username = ?", [username]);
+    // Usuario insensible a mayúsculas/minúsculas (la contraseña sí distingue). Así "Direccion"
+    // y "direccion" entran igual. Se recorta espacio sobrante por si acaso.
+    const user = await dbGet("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", [String(username).trim()]);
     if (!user) return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
@@ -2224,11 +2227,12 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   `;
 
   if (q) {
-    sql += ` AND (c.nombre LIKE ? OR c.apellidos LIKE ? OR c.telefono LIKE ? OR c.correo LIKE ?)`;
+    // ILIKE = búsqueda insensible a mayúsculas/minúsculas (da igual "ana" o "Ana").
+    sql += ` AND (c.nombre ILIKE ? OR c.apellidos ILIKE ? OR c.telefono ILIKE ? OR c.correo ILIKE ?)`;
     const like = `%${q}%`;
     params.push(like, like, like, like);
   }
-  if (poblacion) { sql += ` AND c.poblacion LIKE ?`; params.push(`%${poblacion}%`); }
+  if (poblacion) { sql += ` AND c.poblacion ILIKE ?`; params.push(`%${poblacion}%`); }
   if (genero) { sql += ` AND c.genero = ?`; params.push(genero); }
   if (cumple_mes) { sql += ` AND TO_CHAR(c.nacimiento::date, 'MM') = ?`; params.push(cumple_mes.padStart(2, "0")); }
   if (filtros.from) { sql += ` AND c.ultima_actividad >= ?`; params.push(filtros.from); }
@@ -2493,7 +2497,7 @@ async function optimizeUpload(filePath) {
   }
 }
 
-app.post("/api/upload", requireAuth(["marketing", "rrhh", "direccion"]), upload.array("files", 10), async (req, res) => {
+app.post("/api/upload", requireAuth(["marketing", "rrhh", "direccion", "encargado"]), upload.array("files", 10), async (req, res) => {
   const files = req.files || [];
   for (const f of files) {
     await optimizeUpload(f.path || path.join(uploadsDir, f.filename));
@@ -3398,8 +3402,8 @@ app.get("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req,
 
 app.post("/api/maintenance", requireAuth(["encargado", "direccion"]), async (req, res, next) => {
   try {
-    const { local, titulo, descripcion } = req.body;
-    const r = await createMaintenanceIssue(maintDb, req.user, { local, titulo, descripcion }, { enabled: permisosV2Enabled() });
+    const { local, titulo, descripcion, foto_url } = req.body;
+    const r = await createMaintenanceIssue(maintDb, req.user, { local, titulo, descripcion, foto_url }, { enabled: permisosV2Enabled() });
     if (r.code === "OK") return res.json({ ok: true, id: r.id });
     if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_local" ? "Establecimiento no válido" : "Faltan campos" });
     if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
@@ -3519,6 +3523,17 @@ app.get("/api/contactos", requireAuth(["direccion", "marketing"]), async (req, r
     const sql = sqlContactosUnificados(req.query, params);
     const rows = await dbAll(sql, params);
     res.json({ ok: true, data: rows, total: rows.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Poblaciones distintas (para el selector del filtro de Clientes). Vienen de los leads.
+// Se declara ANTES de "/api/contactos/:telefono" para que no lo capture esa ruta.
+app.get("/api/contactos/poblaciones", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const rows = await dbAll("SELECT DISTINCT TRIM(poblacion) AS poblacion FROM leads WHERE poblacion IS NOT NULL AND TRIM(poblacion) <> '' ORDER BY poblacion");
+    res.json({ ok: true, data: (rows || []).map((r) => r.poblacion) });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

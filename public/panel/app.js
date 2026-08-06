@@ -516,7 +516,8 @@ function renderMant(list) {
   const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="mLocal">${localOpts}</select></div><div class="field"><label>Estado</label><select id="mEstado">${estOpts}</select></div><button class="btn" data-act="mant-filtrar">Buscar</button><div style="flex:1"></div><button class="btn primary" data-act="mant-nueva">+ Nueva incidencia</button></div>`;
   const body = rows.length ? `<div class="card p0"><div class="rows">${rows.map((r) => {
     const est = r.estado || "abierta"; const next = est === "abierta" ? ["en proceso", "Tomar"] : est === "en proceso" ? ["resuelta", "Resolver"] : null;
-    return `<div class="row"><div class="grow"><div class="t1">${esc(r.titulo)}</div><div class="t2">${esc(r.local)} · ${esc(fechaCorta((r.creado_en || "").slice(0, 10)))}${r.descripcion ? " · " + esc((r.descripcion || "").slice(0, 80)) : ""}</div></div><span class="pill ${EST_PILL[est] || ""}">${esc(cap(est))}</span>${next ? `<button class="btn" data-act="mant-estado" data-id="${r.id}" data-estado="${next[0]}">${next[1]}</button>` : ""}</div>`;
+    const foto = r.foto_url ? `<a href="${esc(r.foto_url)}" target="_blank" rel="noopener" title="Ver foto" style="margin-right:10px;flex-shrink:0"><img src="${esc(r.foto_url)}" alt="Foto de la incidencia" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:block"></a>` : "";
+    return `<div class="row">${foto}<div class="grow"><div class="t1">${esc(r.titulo)}</div><div class="t2">${esc(r.local)} · ${esc(fechaCorta((r.creado_en || "").slice(0, 10)))}${r.descripcion ? " · " + esc((r.descripcion || "").slice(0, 80)) : ""}</div></div><span class="pill ${EST_PILL[est] || ""}">${esc(cap(est))}</span>${next ? `<button class="btn" data-act="mant-estado" data-id="${r.id}" data-estado="${next[0]}">${next[1]}</button>` : ""}</div>`;
   }).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin incidencias con esos filtros.</div></div>`;
   return `<div class="ph"><div class="eyebrow">Operación</div><h1>Mantenimiento</h1><div class="sub">${rows.length} incidencia${rows.length === 1 ? "" : "s"}</div></div>${toolbar}${body}`;
 }
@@ -529,45 +530,89 @@ function applyMantFilter() { const l = document.getElementById("mLocal"), es = d
 async function mantEstado(id, estado) { try { await apiSend("PUT", "/api/maintenance/" + encodeURIComponent(id), { estado }); toast("Incidencia actualizada ✅"); loadMant(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 function openNuevaIncidencia() {
   const localOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
-  const body = `<form id="fInc"><div class="form-grid"><div class="field full"><label>Local</label><select name="local" required>${localOpts}</select></div><div class="field full"><label>Título</label><input type="text" name="titulo" required></div><div class="field full"><label>Descripción</label><input type="text" name="descripcion" required></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear incidencia</button></div></form>`;
+  const body = `<form id="fInc"><div class="form-grid"><div class="field full"><label>Local</label><select name="local" required>${localOpts}</select></div><div class="field full"><label>Título</label><input type="text" name="titulo" required></div><div class="field full"><label>Descripción</label><input type="text" name="descripcion" required></div><div class="field full"><label>Foto (opcional)</label><input type="file" id="incFoto" accept="image/*" capture="environment"><div class="mut" style="font-size:12px;margin-top:4px">Adjunta una imagen o haz una foto con la cámara.</div><div id="incFotoPrev"></div></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear incidencia</button></div></form>`;
   const ov = modal("Nueva incidencia", body);
-  ov.querySelector("#fInc").addEventListener("submit", async (e) => { e.preventDefault(); const data = Object.fromEntries(new FormData(e.target).entries()); try { await apiSend("POST", "/api/maintenance", data); ov.remove(); toast("Incidencia creada ✅"); loadMant(); } catch (err) { toast("Error: " + err.message); } });
+  // Vista previa de la foto elegida (mejor feedback antes de subir).
+  const fileEl = ov.querySelector("#incFoto"), prev = ov.querySelector("#incFotoPrev");
+  if (fileEl) fileEl.addEventListener("change", () => {
+    const f = fileEl.files && fileEl.files[0];
+    if (f && prev) prev.innerHTML = `<img src="${URL.createObjectURL(f)}" alt="Vista previa" style="max-width:160px;max-height:160px;border-radius:10px;margin-top:10px;display:block">`;
+    else if (prev) prev.innerHTML = "";
+  });
+  ov.querySelector("#fInc").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target; const btn = f.querySelector('button[type="submit"]');
+    const data = { local: f.local.value, titulo: f.titulo.value.trim(), descripcion: f.descripcion.value.trim() };
+    try {
+      if (fileEl && fileEl.files && fileEl.files[0]) {
+        if (btn) { btn.disabled = true; btn.textContent = "Subiendo foto…"; }
+        const fd = new FormData(); fd.append("files", fileEl.files[0]);
+        const r = await fetch("/api/upload", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
+        if (r.status === 401 || r.status === 403) { localStorage.removeItem("token"); location.href = "/login.html"; return; }
+        const j = await r.json();
+        if (!j.ok || !(j.urls && j.urls[0])) throw new Error(j.error || "No se pudo subir la foto");
+        data.foto_url = j.urls[0];
+      }
+      await apiSend("POST", "/api/maintenance", data);
+      ov.remove(); toast("Incidencia creada ✅"); loadMant();
+    } catch (err) { if (btn) { btn.disabled = false; btn.textContent = "Crear incidencia"; } if (err.message !== "noauth") toast("Error: " + err.message); }
+  });
 }
 
 // ════════════════════════ VISTA: CLIENTES ════════════════════════
 let CLIF = { q: "", poblacion: "", local: "", cumple: false, con_email: false, con_telefono: false, excluir_baja: false };
 let CLI_TOTAL = 0;
+let CLI_POBLACIONES = [];
+let _cliTimer = null;
 async function apiRaw(path) { const r = await fetch(path, { headers: { Authorization: "Bearer " + token() } }); if (r.status === 401 || r.status === 403) { localStorage.removeItem("token"); location.href = "/login.html"; throw new Error("noauth"); } const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error"); return j; }
 function cliQS() { const qs = new URLSearchParams(); if (CLIF.q) qs.set("q", CLIF.q); if (CLIF.poblacion) qs.set("poblacion", CLIF.poblacion); if (CLIF.local) qs.set("local", CLIF.local); if (CLIF.cumple) qs.set("cumple_mes", "1"); if (CLIF.con_email) qs.set("con_email", "1"); if (CLIF.con_telefono) qs.set("con_telefono", "1"); if (CLIF.excluir_baja) qs.set("excluir_baja", "1"); return qs.toString(); }
-function cliChk(id, campo, label) { return `<label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" id="${id}" ${CLIF[campo] ? "checked" : ""} style="width:auto;height:auto"> ${esc(label)}</label>`; }
-function renderClientes(j) {
-  const rows = j.data || []; const total = j.total != null ? j.total : rows.length; CLI_TOTAL = total;
-  const localOpts = ['<option value="">Cualquier local</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${CLIF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
-  const toolbar = `<div class="toolbar"><div class="field"><label>Buscar</label><input id="cQ" placeholder="Nombre, teléfono, email…" value="${esc(CLIF.q)}"></div><div class="field"><label>Población</label><input id="cPob" value="${esc(CLIF.poblacion)}"></div><div class="field"><label>Local</label><select id="cLocal">${localOpts}</select></div>${cliChk("cCumple", "cumple", "Cumple este mes")}${cliChk("cEmail", "con_email", "Con email")}${cliChk("cTel", "con_telefono", "Con teléfono")}${cliChk("cBaja", "excluir_baja", "Excluir bajas")}<button class="btn" data-act="cli-filtrar">Buscar</button></div>`;
-  const actionsBar = `<div class="toolbar" style="margin-top:-6px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Escribir a los ${num(total)} filtrados (WhatsApp)</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div><button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
-  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Cliente</th><th>Teléfono</th><th>Email</th><th>Población</th><th>Origen</th><th>Última visita</th><th></th></tr></thead><tbody>${rows.map((c) => {
+function cliChk(id, campo, label) { return `<label style="display:inline-flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="${id}" ${CLIF[campo] ? "checked" : ""} style="width:auto;height:auto;margin:0"> ${esc(label)}</label>`; }
+function cliActionsBar(total) {
+  return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Escribir a los ${num(total)} filtrados (WhatsApp)</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div><button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
+}
+function cliTable(rows) {
+  if (!rows.length) return `<div class="card"><div class="mut" style="padding:8px">Sin clientes con esos filtros.</div></div>`;
+  return `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Cliente</th><th>Teléfono</th><th>Email</th><th>Población</th><th>Origen</th><th>Última visita</th><th></th></tr></thead><tbody>${rows.map((c) => {
     const tel = c.telefono || ""; const nom = ((c.nombre || "") + " " + (c.apellidos || "")).trim() || "—";
     const baja = c.baja === 1 || c.baja === true;
     const wa = c.es_contacto_wa ? '<span class="sdot" title="Tiene WhatsApp" style="display:inline-block;width:7px;height:7px;border-radius:999px;background:var(--success);margin-left:6px"></span>' : "";
     const acc = `<div style="display:flex;gap:4px;justify-content:flex-end">${tel ? `<button class="btn sm" data-act="cli-wa" data-tel="${esc(tel)}" data-nombre="${esc(nom)}" title="Escribir por WhatsApp">${ic("chat", 14)}</button><a class="btn sm" href="tel:${esc(tel)}" title="Llamar">${ic("bell", 14)}</a>` : ""}${c.correo ? `<a class="btn sm" href="mailto:${esc(c.correo)}" title="Enviar email">@</a>` : ""}<button class="btn sm" data-act="cli-ficha" data-tel="${esc(tel)}" title="Ver ficha">Ficha</button></div>`;
     return `<tr><td>${esc(nom)}${wa}${baja ? ' <span class="pill bad" style="font-size:10px">Baja</span>' : ""}</td><td class="mut">${esc(tel)}</td><td class="mut">${esc(c.correo || "")}</td><td>${esc(c.poblacion || "")}</td><td>${esc(c.origen || "")}</td><td class="mut">${esc((c.ultima_actividad || "").slice(0, 10))}</td><td>${acc}</td></tr>`;
-  }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin clientes con esos filtros.</div></div>`;
-  return `<div class="ph"><div class="eyebrow">Base de clientes</div><h1>Clientes</h1><div class="sub">${num(total)} contacto${total === 1 ? "" : "s"}${rows.length < total ? ` · mostrando ${rows.length}` : ""}</div></div>${toolbar}${actionsBar}${table}`;
+  }).join("")}</tbody></table></div></div>`;
+}
+function cliSubTxt(rows, total) { return `${num(total)} contacto${total === 1 ? "" : "s"}${rows.length < total ? ` · mostrando ${rows.length}` : ""}`; }
+function renderClientes(j) {
+  const rows = j.data || []; const total = j.total != null ? j.total : rows.length; CLI_TOTAL = total;
+  const localOpts = ['<option value="">Cualquier local</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${CLIF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  const pobOpts = ['<option value="">Todas las poblaciones</option>'].concat((CLI_POBLACIONES || []).map((p) => `<option value="${esc(p)}" ${CLIF.poblacion === p ? "selected" : ""}>${esc(p)}</option>`)).join("");
+  // Barra 1: búsqueda + selectores. Barra 2: casillas de filtro agrupadas. Sin botón «Buscar»:
+  // el listado se auto-actualiza al escribir, seleccionar o marcar (ver listeners globales).
+  const toolbar = `<div class="toolbar">
+    <div class="field" style="flex:2;min-width:220px"><label>Buscar</label><input id="cQ" placeholder="Nombre, teléfono, email…" value="${esc(CLIF.q)}" autocomplete="off"></div>
+    <div class="field"><label>Población</label><select id="cPob">${pobOpts}</select></div>
+    <div class="field"><label>Local</label><select id="cLocal">${localOpts}</select></div>
+  </div>
+  <div class="toolbar" style="margin-top:-4px;align-items:center;gap:18px;flex-wrap:wrap"><span class="mut" style="font-size:12px;font-weight:600;letter-spacing:.02em">FILTROS</span>${cliChk("cCumple", "cumple", "Cumple este mes")}${cliChk("cEmail", "con_email", "Con email")}${cliChk("cTel", "con_telefono", "Con teléfono")}${cliChk("cBaja", "excluir_baja", "Excluir bajas")}</div>`;
+  const head = `<div class="ph"><div class="eyebrow">Base de clientes</div><h1>Clientes</h1><div class="sub" id="cliSub">${cliSubTxt(rows, total)}</div></div>`;
+  return `${head}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div>`;
 }
 async function loadClientes() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
-  try { const j = await apiRaw("/api/contactos" + (cliQS() ? "?" + cliQS() : "")); view.innerHTML = renderClientes(j); }
-  catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+  try {
+    if (!CLI_POBLACIONES.length) { try { CLI_POBLACIONES = (await apiRaw("/api/contactos/poblaciones")).data || []; } catch { /* opcional */ } }
+    const j = await apiRaw("/api/contactos" + (cliQS() ? "?" + cliQS() : "")); view.innerHTML = renderClientes(j);
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
-function applyCliFilter() {
-  const q = document.getElementById("cQ"), p = document.getElementById("cPob"), l = document.getElementById("cLocal");
-  if (q) CLIF.q = q.value.trim(); if (p) CLIF.poblacion = p.value.trim(); if (l) CLIF.local = l.value;
-  CLIF.cumple = !!(document.getElementById("cCumple") || {}).checked;
-  CLIF.con_email = !!(document.getElementById("cEmail") || {}).checked;
-  CLIF.con_telefono = !!(document.getElementById("cTel") || {}).checked;
-  CLIF.excluir_baja = !!(document.getElementById("cBaja") || {}).checked;
-  loadClientes();
+// Refresca SOLO los resultados (no la barra) para no perder el foco/cursor mientras se escribe.
+async function refreshCliResults() {
+  try {
+    const j = await apiRaw("/api/contactos" + (cliQS() ? "?" + cliQS() : ""));
+    const rows = j.data || []; const total = j.total != null ? j.total : rows.length; CLI_TOTAL = total;
+    const body = document.getElementById("cliBody"); if (body) body.innerHTML = cliActionsBar(total) + cliTable(rows);
+    const sub = document.getElementById("cliSub"); if (sub) sub.innerHTML = cliSubTxt(rows, total);
+  } catch (e) { if (e.message !== "noauth") { const body = document.getElementById("cliBody"); if (body) body.innerHTML = errorCard(e.message); } }
 }
+function cliRefreshDebounced() { if (_cliTimer) clearTimeout(_cliTimer); _cliTimer = setTimeout(refreshCliResults, 250); }
 async function downloadClientesCsv() { try { const r = await fetch("/api/leads/export.csv" + (cliQS() ? "?" + cliQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "clientes.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
 // Escribir por WhatsApp a un contacto (individual).
 function cliWa(tel, nombre) {
@@ -2151,7 +2196,19 @@ function go(view) {
 }
 
 document.addEventListener("change", (e) => {
-  if (e.target && e.target.id === "analLocal") { ANAL.local = e.target.value; loadAnalInforme(); }
+  if (!e.target) return;
+  const id = e.target.id;
+  if (id === "analLocal") { ANAL.local = e.target.value; loadAnalInforme(); }
+  else if (id === "cPob") { CLIF.poblacion = e.target.value; refreshCliResults(); }
+  else if (id === "cLocal") { CLIF.local = e.target.value; refreshCliResults(); }
+  else if (id === "cCumple") { CLIF.cumple = e.target.checked; refreshCliResults(); }
+  else if (id === "cEmail") { CLIF.con_email = e.target.checked; refreshCliResults(); }
+  else if (id === "cTel") { CLIF.con_telefono = e.target.checked; refreshCliResults(); }
+  else if (id === "cBaja") { CLIF.excluir_baja = e.target.checked; refreshCliResults(); }
+});
+// Filtrado en vivo del buscador de Clientes: al escribir/borrar, refresca (con antirrebote).
+document.addEventListener("input", (e) => {
+  if (e.target && e.target.id === "cQ") { CLIF.q = e.target.value.trim(); cliRefreshDebounced(); }
 });
 document.addEventListener("click", (e) => {
   const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); go(v.getAttribute("data-view")); return; }
@@ -2179,7 +2236,6 @@ document.addEventListener("click", (e) => {
   else if (act === "mant-filtrar") applyMantFilter();
   else if (act === "mant-nueva") openNuevaIncidencia();
   else if (act === "mant-estado") mantEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
-  else if (act === "cli-filtrar") applyCliFilter();
   else if (act === "cli-csv") downloadClientesCsv();
   else if (act === "cli-wa") cliWa(t.getAttribute("data-tel"), t.getAttribute("data-nombre"));
   else if (act === "cli-ficha") cliFicha(t.getAttribute("data-tel"));
