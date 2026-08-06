@@ -25,6 +25,7 @@ import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrati
 import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/agora/diagnostico.js";
 import { extraerScripts, extraerRutasApi, clasificarRutas } from "./src/integrations/agora/descubrir.js";
 import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
+import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos } from "./src/modules/usuarios/permisos.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
 import { detectarIdioma, normalizarIdioma, idiomaDeContacto, necesitaTraduccion, idiomasPresentes, placeholdersIntactos, construirTraduccionRequest, IDIOMA_BASE } from "./src/modules/messaging/i18n.js";
 import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
@@ -82,6 +83,28 @@ const _envWarn = replitEnvWarning();
 if (_envWarn) console.warn("[env]", _envWarn);
 const { secret: JWT_SECRET, status: jwtStatus, source: jwtSource } = resolveJwtSecret({ prod: PROD });
 console.log(`[auth] JWT secret: ${jwtStatus} (fuente: ${jwtSource})`);
+
+// Copia REVERSIBLE de la contraseña, cifrada AES-256-GCM, para que Dirección pueda "verla"
+// desde el panel (petición explícita). El login sigue usando el hash bcrypt (irreversible);
+// esta copia es solo para mostrarla. Nota de seguridad: es recuperable si se filtra la BD.
+const USER_PASS_KEY = crypto.scryptSync(String(JWT_SECRET || "tapeta"), "user-pass-v1", 32);
+function encUserPass(plain) {
+  if (!plain) return null;
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv("aes-256-gcm", USER_PASS_KEY, iv);
+  const enc = Buffer.concat([c.update(String(plain), "utf8"), c.final()]);
+  const tag = c.getAuthTag();
+  return `${iv.toString("hex")}:${tag.toString("hex")}:${enc.toString("hex")}`;
+}
+function decUserPass(stored) {
+  if (!stored || typeof stored !== "string" || !stored.includes(":")) return null;
+  try {
+    const [ivh, tagh, dh] = stored.split(":");
+    const d = crypto.createDecipheriv("aes-256-gcm", USER_PASS_KEY, Buffer.from(ivh, "hex"));
+    d.setAuthTag(Buffer.from(tagh, "hex"));
+    return Buffer.concat([d.update(Buffer.from(dh, "hex")), d.final()]).toString("utf8");
+  } catch { return null; }
+}
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -393,6 +416,8 @@ async function initDB() {
     try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS canal TEXT`); } catch (e) { console.error("[DB] alter facturas canal:", e.message); }
     // local_receptor: pista del establecimiento concreto que aparece en la factura (p.ej. "(TAPETA LLORET)").
     try { await client.query(`ALTER TABLE facturas_pendientes ADD COLUMN IF NOT EXISTS local_receptor TEXT`); } catch (e) { console.error("[DB] alter facturas_pendientes local_receptor:", e.message); }
+    try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS modulos TEXT`); } catch (e) { console.error("[DB] alter users modulos:", e.message); }
+    try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc TEXT`); } catch (e) { console.error("[DB] alter users password_enc:", e.message); }
     // sheet_synced: 1 = proyectada a Sheets; 0 = pendiente (la cola de reintentos la reproyecta desde la BD).
     // Las facturas existentes se asumen sincronizadas (default 1); las nuevas insertan 0 y pasan a 1 al proyectar.
     try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS sheet_synced INTEGER DEFAULT 1`); } catch (e) { console.error("[DB] alter facturas sheet_synced:", e.message); }
@@ -1920,7 +1945,7 @@ app.post("/api/auth/login", async (req, res) => {
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
     const token = jwt.sign(
-      { id: user.id, username: user.username, rol: user.rol, nombre: user.nombre, local: user.local },
+      { id: user.id, username: user.username, rol: user.rol, nombre: user.nombre, local: user.local, modulos: modulosEfectivos(user.rol, user.modulos) },
       JWT_SECRET,
       { expiresIn: "8h" }
     );
@@ -1935,30 +1960,58 @@ app.get("/api/auth/me", requireAuth(), (req, res) => {
 });
 
 // Gestión de usuarios (solo dirección)
+// Catálogo de módulos del panel (para pintar checkboxes en el editor de usuarios).
+app.get("/api/users/catalogo-modulos", requireAuth(["direccion"]), (req, res) => {
+  res.json({ ok: true, data: CATALOGO_MODULOS });
+});
+
 app.get("/api/users", requireAuth(["direccion"]), async (req, res) => {
   try {
-    const rows = await dbAll("SELECT id, username, rol, nombre, local, creado_en FROM users ORDER BY rol");
-    res.json({ ok: true, data: rows });
+    const rows = await dbAll("SELECT id, username, rol, nombre, local, modulos, password_enc, creado_en FROM users ORDER BY rol");
+    const data = (rows || []).map((u) => ({
+      id: u.id, username: u.username, rol: u.rol, nombre: u.nombre, local: u.local, creado_en: u.creado_en,
+      modulos: modulosEfectivos(u.rol, u.modulos),      // módulos que realmente puede ver
+      restringido: !!(u.modulos && String(u.modulos).trim()), // tiene allowlist propia
+      pass_visible: !!u.password_enc,                    // ¿hay copia recuperable para "ver"?
+    }));
+    res.json({ ok: true, data });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error leyendo usuarios" });
   }
 });
 
 app.post("/api/users", requireAuth(["direccion"]), async (req, res) => {
-  const { username, password, rol, nombre, local } = req.body;
+  const { username, password, rol, nombre, local, modulos } = req.body;
   if (!username || !password || !rol) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
   try {
     const hash = await bcrypt.hash(password, 10);
     const creado_en = new Date().toISOString();
+    const mods = sanearModulos(rol, modulos);
     const row = await dbRun(
-      `INSERT INTO users (username, password_hash, rol, nombre, local, creado_en) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
-      [username, hash, rol, nombre || "", local || "", creado_en]
+      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, modulos, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [username, hash, encUserPass(password), rol, nombre || "", local || "", mods ? JSON.stringify(mods) : null, creado_en]
     );
     res.json({ ok: true, id: row.id });
   } catch (err) {
     res.status(400).json({ ok: false, error: "Usuario ya existe o error al crear" });
+  }
+});
+
+// Editar datos de un usuario: rol, nombre, local y módulos accesibles (allowlist).
+app.put("/api/users/:id", requireAuth(["direccion"]), async (req, res) => {
+  const { rol, nombre, local, modulos } = req.body;
+  if (!rol) return res.status(400).json({ ok: false, error: "Falta el rol" });
+  try {
+    const mods = sanearModulos(rol, modulos); // se sanea contra el NUEVO rol
+    await dbRun(
+      "UPDATE users SET rol = ?, nombre = ?, local = ?, modulos = ? WHERE id = ?",
+      [rol, nombre || "", local || "", mods ? JSON.stringify(mods) : null, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: "Error actualizando usuario" });
   }
 });
 
@@ -1967,10 +2020,24 @@ app.put("/api/users/:id/password", requireAuth(["direccion"]), async (req, res) 
   if (!password) return res.status(400).json({ ok: false, error: "Contraseña requerida" });
   try {
     const hash = await bcrypt.hash(password, 10);
-    await dbRun("UPDATE users SET password_hash = ? WHERE id = ?", [hash, req.params.id]);
+    await dbRun("UPDATE users SET password_hash = ?, password_enc = ? WHERE id = ?", [hash, encUserPass(password), req.params.id]);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: "Error actualizando contraseña" });
+  }
+});
+
+// Ver la contraseña en claro (solo dirección). Descifra la copia AES-GCM. Las cuentas creadas
+// antes de esta función no tienen copia → { disponible:false } y hay que restablecerla.
+app.get("/api/users/:id/password", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const row = await dbGet("SELECT password_enc FROM users WHERE id = ?", [req.params.id]);
+    if (!row) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
+    const plain = decUserPass(row.password_enc);
+    if (!plain) return res.json({ ok: true, disponible: false });
+    res.json({ ok: true, disponible: true, password: plain });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: "Error leyendo la contraseña" });
   }
 });
 
@@ -2614,7 +2681,10 @@ app.get("/api/kpi", requireAuth(["direccion", "contabilidad"]), async (req, res)
 // Dashboard ejecutivo — agregado de datos reales (foto del día + "necesita tu atención").
 app.get("/api/dashboard", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res, next) => {
   try {
-    const local = (req.query.local && String(req.query.local).trim()) || null;
+    // Ámbito por local: un usuario con local asignado (y rol ≠ dirección) solo ve SU local.
+    const local = (req.user && req.user.rol !== "direccion" && req.user.local)
+      ? String(req.user.local).trim()
+      : ((req.query.local && String(req.query.local).trim()) || null);
     const data = await getDashboard({ get: dbGet, all: dbAll }, { whatsappConnected: isReady(), local });
     res.json({ ok: true, data });
   } catch (e) { next(e); }
@@ -2752,7 +2822,10 @@ app.get("/api/agora/informe/:tipo", requireAuth(["direccion", "contabilidad"]), 
   try {
     const def = getInforme(req.params.tipo);
     if (!def) return res.status(404).json({ ok: false, error: "Informe desconocido" });
-    const local = (req.query.local && String(req.query.local).trim()) || null;
+    // Ámbito por local: un usuario con local asignado (y rol ≠ dirección) solo ve SU local.
+    const local = (req.user && req.user.rol !== "direccion" && req.user.local)
+      ? String(req.user.local).trim()
+      : ((req.query.local && String(req.query.local).trim()) || null);
     const from = String(req.query.from || "").slice(0, 10);
     const to = String(req.query.to || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ ok: false, error: "Rango inválido" });
@@ -2817,7 +2890,10 @@ async function ventasRangoLive(local, from, to) {
 // EN VIVO a Ágora (cualquier rango, sin tope de histórico); si el TPV está cerrado, usa ventas_diarias.
 app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
   try {
-    const local = (req.query.local && String(req.query.local).trim()) || null;
+    // Ámbito por local: un usuario con local asignado (y rol ≠ dirección) solo ve SU local.
+    const local = (req.user && req.user.rol !== "direccion" && req.user.local)
+      ? String(req.user.local).trim()
+      : ((req.query.local && String(req.query.local).trim()) || null);
     const from = String(req.query.from || "").slice(0, 10);
     const to = String(req.query.to || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ ok: false, error: "Rango inválido" });
