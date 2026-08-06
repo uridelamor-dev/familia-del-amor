@@ -48,14 +48,15 @@ const NAV = [
     ["campanas", "Campañas", "mkt", ["direccion", "marketing"]],
   ] },
   { g: "Inteligencia", items: [
+    ["sara", "Sara (IA)", "bot", ["direccion", "marketing"]],
     ["whatsapp", "WhatsApp", "chat", ["direccion", "encargado"]],
   ] },
   { g: "Sistema", items: [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { dashboard: "Dashboard", reservas: "Reservas", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { dashboard: "Dashboard", reservas: "Reservas", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", sara: "Sara", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 
 let USER = null, CURRENT = "dashboard";
 
@@ -174,6 +175,8 @@ const ICONS = {
   alert: '<path d="M12 4l9 16H3zM12 10v4M12 17h.01"/>',
   exit: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M9 12h11M16.5 8.5L20 12l-3.5 3.5"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/>',
+  bot: '<rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M12 8V4.5M8.5 13h.01M15.5 13h.01M9.5 16h5M2.5 12.5v2M21.5 12.5v2"/><circle cx="12" cy="4" r="1.3"/>',
+  clip: '<path d="M20 11l-8.5 8.5a4 4 0 0 1-5.7-5.7L14 5.6a2.6 2.6 0 0 1 3.7 3.7l-8.3 8.3a1.2 1.2 0 0 1-1.7-1.7l7.6-7.6"/>',
 };
 function ic(name, size = 18) { return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICONS.dash}</svg>`; }
 
@@ -683,6 +686,127 @@ async function pollWa() {
   try { const s = await apiRaw("/api/whatsapp/status"); if (s && s.connected) { clearInterval(WA_POLL); WA_POLL = null; loadWhatsApp(); } } catch { /* reintenta */ }
 }
 
+// ── Sara (IA): configurar el chatbot por conversación ─────────────────────────
+let SARA = { msgs: [], adjuntos: [], proposal: null, estado: null, sending: false };
+const SARA_HINTS = [
+  "Bloquea las reservas de La Tapeta Blanes del 24 al 26 de diciembre",
+  "Cuando pregunten por el menú de Navidad, que Sara envíe este PDF",
+  "Añade a las instrucciones: recuérdales que tenemos terraza",
+];
+function saraPropText(p) {
+  if (!p) return "";
+  const d = p.datos || {};
+  switch (p.tipo) {
+    case "proponer_instrucciones": return "Actualizar las <b>instrucciones generales</b> de Sara.";
+    case "proponer_bloqueo": return `<b>Bloquear reservas</b> en ${esc(d.local || "—")}${d.desde ? ` del ${esc(d.desde)}` : ""}${d.hasta ? ` al ${esc(d.hasta)}` : ""}${d.motivo ? ` · ${esc(d.motivo)}` : ""}.`;
+    case "proponer_regla_documento": return `Cuando pregunten por «${esc(d.tema || "…")}», <b>enviar el documento</b> adjunto${d.local ? ` (${esc(d.local)})` : ""}.`;
+    case "proponer_respuesta_texto": return `Cuando pregunten por «${esc(d.tema || "…")}», <b>responder</b>: ${esc((d.respuesta || "").slice(0, 120))}${(d.respuesta || "").length > 120 ? "…" : ""}`;
+    case "proponer_eliminar": return "<b>Eliminar</b> una regla o bloqueo existente.";
+    case "proponer_set_contenido":
+    case "proponer_set_texto":
+    case "proponer_anadir_galeria": return "Actualizar <b>contenido de la web</b> pública.";
+    default: return "Aplicar el cambio propuesto.";
+  }
+}
+function renderSaraBubbles() {
+  const items = SARA.msgs.map((m) => {
+    const mine = m.role === "user";
+    return `<div class="sbub ${mine ? "me" : "sara"}"><div class="sbub-in">${esc(m.content)}</div></div>`;
+  }).join("");
+  const typing = SARA.sending ? `<div class="sbub sara"><div class="sbub-in mut">Sara está escribiendo…</div></div>` : "";
+  const empty = (!SARA.msgs.length && !SARA.sending) ? `<div class="mut" style="padding:14px 4px">Escríbele a Sara en lenguaje natural para configurarla. Por ejemplo:<ul style="margin:8px 0 0;padding-left:18px;line-height:1.8">${SARA_HINTS.map((h) => `<li>${esc(h)}</li>`).join("")}</ul></div>` : "";
+  return `<div id="saraChat" class="schat">${empty}${items}${typing}</div>`;
+}
+function renderSaraProposal() {
+  if (!SARA.proposal) return "";
+  return `<div class="sprop"><div class="sprop-t">Sara propone:</div><div class="sprop-b">${saraPropText(SARA.proposal)}</div><div class="sprop-a"><button class="btn primary sm" data-act="sara-aplicar">Sí, aplicar</button><button class="btn sm" data-act="sara-cancelar">No</button></div></div>`;
+}
+function renderSaraInput() {
+  const chips = SARA.adjuntos.map((u, i) => `<span class="chip">${esc(u.split("/").pop())}<button class="chip-x" data-act="sara-adj-del" data-idx="${i}" title="Quitar">×</button></span>`).join("");
+  return `<div class="sbar">${chips ? `<div class="sadj">${chips}</div>` : ""}<div class="sbar-row"><label class="sattach" title="Adjuntar PDF o imagen">${ic("clip", 18)}<input type="file" accept="application/pdf,image/*" data-saraupload multiple hidden></label><textarea id="saraInput" rows="1" placeholder="Escribe a Sara…" ${SARA.sending ? "disabled" : ""}></textarea><button class="btn primary" data-act="sara-send" ${SARA.sending ? "disabled" : ""}>Enviar</button></div></div>`;
+}
+function renderSaraEstado() {
+  const e = SARA.estado || {};
+  const instr = (e.instrucciones || "").trim();
+  const instrCard = `<div class="card"><div class="ch"><h3>Instrucciones generales</h3></div>${instr ? `<p style="white-space:pre-wrap;margin:0;line-height:1.6">${esc(instr)}</p>` : `<p class="mut">Sin instrucciones personalizadas. Sara usa su comportamiento por defecto.</p>`}</div>`;
+  const bloqueos = (e.bloqueos || []);
+  const bloCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Bloqueos de reservas</h3><span class="pill">${bloqueos.length}</span></div>${bloqueos.length ? `<div class="rows">${bloqueos.map((b) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(b.local)}</div><div class="t2">${esc(b.desde)} → ${esc(b.hasta)}${b.motivo ? ` · ${esc(b.motivo)}` : ""}</div></div><button class="btn sm danger" data-act="sara-blo-del" data-id="${esc(String(b.id))}">Eliminar</button></div>`).join("")}</div>` : `<p class="mut" style="padding:0 18px 16px">No hay fechas bloqueadas. Sara acepta reservas en todos los locales.</p>`}</div>`;
+  const reglas = (e.reglas || []);
+  const regCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Respuestas y documentos</h3><span class="pill">${reglas.length}</span></div>${reglas.length ? `<div class="rows">${reglas.map((r) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(r.tema || "—")}${r.local ? ` <span class="mut">· ${esc(r.local)}</span>` : ""}</div><div class="t2">${r.documento_url ? "📎 Envía un documento" : esc((r.respuesta || "").slice(0, 90))}</div></div><button class="btn sm danger" data-act="sara-reg-del" data-id="${esc(String(r.id))}">Eliminar</button></div>`).join("")}</div>` : `<p class="mut" style="padding:0 18px 16px">Sin respuestas configuradas. Sara responde con su conocimiento general.</p>`}</div>`;
+  return `${instrCard}${bloCard}${regCard}`;
+}
+function renderSara() {
+  const chatCard = `<div class="card p0 schat-card"><div class="ch" style="padding:18px 18px 0"><h3>Configura a Sara hablando</h3></div>${renderSaraBubbles()}${renderSaraProposal()}${renderSaraInput()}</div>`;
+  return `<div class="ph"><div class="eyebrow">Inteligencia</div><h1>Sara (IA)</h1><div class="sub">Instruye al chatbot de WhatsApp sin tocar código: propone → confirmas → se aplica</div></div><div class="grid g2 sara-grid">${chatCard}<div class="scol">${renderSaraEstado()}</div></div>`;
+}
+function saraRepaint(focus) {
+  const v = document.getElementById("view"); if (!v || CURRENT !== "sara") return;
+  v.innerHTML = renderSara();
+  const ch = document.getElementById("saraChat"); if (ch) ch.scrollTop = ch.scrollHeight;
+  if (focus) { const inp = document.getElementById("saraInput"); if (inp) inp.focus(); }
+}
+async function loadSara() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    SARA.estado = await apiRaw("/api/sara/estado");
+    view.innerHTML = renderSara();
+    const ch = document.getElementById("saraChat"); if (ch) ch.scrollTop = ch.scrollHeight;
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+async function saraRefreshEstado() { try { SARA.estado = await apiRaw("/api/sara/estado"); } catch { /* mantiene el anterior */ } }
+async function saraSend() {
+  if (SARA.sending) return;
+  const inp = document.getElementById("saraInput"); const text = inp ? inp.value.trim() : "";
+  if (!text && !SARA.adjuntos.length) return;
+  SARA.msgs.push({ role: "user", content: text || "(archivo adjunto)" });
+  const adjuntos = SARA.adjuntos.slice();
+  SARA.adjuntos = []; SARA.sending = true; SARA.proposal = null;
+  saraRepaint(false);
+  try {
+    const j = await apiSend("POST", "/api/sara/chat", { mensajes: SARA.msgs.slice(-20), adjuntos });
+    SARA.sending = false;
+    const reply = j.reply || (j.data && j.data.reply) || "";
+    if (reply) SARA.msgs.push({ role: "assistant", content: reply });
+    SARA.proposal = j.proposal || (j.data && j.data.proposal) || null;
+    saraRepaint(true);
+  } catch (e) {
+    SARA.sending = false;
+    if (e.message !== "noauth") { SARA.msgs.push({ role: "assistant", content: "⚠ No pude procesar eso: " + e.message }); saraRepaint(true); }
+  }
+}
+async function saraAplicar() {
+  if (!SARA.proposal) return;
+  try {
+    const j = await apiSend("POST", "/api/sara/aplicar", { proposal: SARA.proposal });
+    SARA.estado = j.data || j; SARA.proposal = null;
+    SARA.msgs.push({ role: "assistant", content: "✅ Hecho. Lo tienes en la configuración activa." });
+    toast("Cambio aplicado ✅"); saraRepaint(true);
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+function saraCancelar() { SARA.proposal = null; SARA.msgs.push({ role: "assistant", content: "De acuerdo, no aplico nada." }); saraRepaint(true); }
+async function saraUpload(input) {
+  const files = input.files; if (!files || !files.length) return;
+  toast("Subiendo…");
+  try {
+    const fd = new FormData(); for (const f of files) fd.append("files", f);
+    const r = await fetch("/api/upload", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
+    const j = await r.json(); if (!j.ok || !j.urls || !j.urls.length) throw new Error("subida");
+    SARA.adjuntos = SARA.adjuntos.concat(j.urls).slice(0, 5);
+    toast("Archivo adjunto ✅"); saraRepaint(true);
+  } catch { toast("Error al subir el archivo"); }
+}
+function saraAdjDel(i) { SARA.adjuntos.splice(i, 1); saraRepaint(true); }
+async function saraBloDel(id) {
+  const ok = await confirmModal("¿Eliminar este bloqueo de reservas?", { ok: "Eliminar", danger: true }); if (!ok) return;
+  try { await apiSend("DELETE", "/api/sara/bloqueo/" + id); await saraRefreshEstado(); toast("Bloqueo eliminado ✅"); saraRepaint(false); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function saraRegDel(id) {
+  const ok = await confirmModal("¿Eliminar esta respuesta configurada?", { ok: "Eliminar", danger: true }); if (!ok) return;
+  try { await apiSend("DELETE", "/api/sara/regla/" + id); await saraRefreshEstado(); toast("Respuesta eliminada ✅"); saraRepaint(false); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
 // ════════════════════════ VISTA: CAMPAÑAS ════════════════════════
 function renderCampanas(list) {
   const rows = list || [];
@@ -889,7 +1013,7 @@ async function webBlkUpload(input, gallery) {
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, sara: loadSara, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   CURRENT = view;
@@ -950,6 +1074,12 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-303") fac303();
   else if (act === "camp-nueva") openNuevaCampana();
   else if (act === "wa-link") waLink(t.getAttribute("data-local"), t);
+  else if (act === "sara-send") saraSend();
+  else if (act === "sara-aplicar") saraAplicar();
+  else if (act === "sara-cancelar") saraCancelar();
+  else if (act === "sara-adj-del") saraAdjDel(+t.getAttribute("data-idx"));
+  else if (act === "sara-blo-del") saraBloDel(t.getAttribute("data-id"));
+  else if (act === "sara-reg-del") saraRegDel(t.getAttribute("data-id"));
   else if (act === "web-scope") { WEB.scope = t.getAttribute("data-scope"); WEB.q = ""; const v = document.getElementById("view"); if (v) { v.innerHTML = renderWeb(); webMountPreview(); } }
   else if (act === "web-lang") { WEB.lang = t.getAttribute("data-lang"); const v = document.getElementById("view"); if (v) { v.innerHTML = renderWeb(); webMountPreview(); } webPost({ type: "set-lang", lang: WEB.lang }); }
   else if (act === "web-gal-del") { webGalDel(t.getAttribute("data-galkey"), +t.getAttribute("data-idx")); }
@@ -966,11 +1096,14 @@ document.addEventListener("input", (e) => {
   const s = e.target.closest("[data-websearch]"); if (s) { WEB.q = s.value; const cont = document.querySelector(".webfields"); if (cont) cont.innerHTML = renderWebFields(); }
 });
 document.addEventListener("change", (e) => {
+  const su = e.target.closest("[data-saraupload]"); if (su) { saraUpload(su); return; }
   const bu = e.target.closest("[data-blkupload]"); if (bu) { webBlkUpload(bu, false); return; }
   const bg = e.target.closest("[data-blkgalup]"); if (bg) { webBlkUpload(bg, true); return; }
   const u = e.target.closest("[data-webupload]"); if (u) { webUpload(u); return; }
   const g = e.target.closest("[data-webgalup]"); if (g) { webUpload(g, { gallery: true }); }
 });
+// Sara: enviar con Enter (Shift+Enter = salto de línea).
+document.addEventListener("keydown", (e) => { const el = e.target; if (el && el.id === "saraInput" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saraSend(); } });
 // Reordenar galería con arrastrar-soltar.
 document.addEventListener("dragstart", (e) => { const it = e.target.closest("[data-galitem]"); if (it) { WEB_DRAG = { key: it.getAttribute("data-galkey"), idx: +it.getAttribute("data-idx") }; it.classList.add("dragging"); } });
 document.addEventListener("dragend", (e) => { const it = e.target.closest("[data-galitem]"); if (it) it.classList.remove("dragging"); });
