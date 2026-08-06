@@ -1,7 +1,7 @@
 // Integración Ágora — lógica pura: config por local, mapeo de ventas y catch-up de sincronización.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadAgoraConfigs, publicConfig } from "../../src/integrations/agora/registry.js";
+import { loadAgoraConfigs, configsFromRows, normalizeConfigs, publicConfig } from "../../src/integrations/agora/registry.js";
 import { mapVentasDia, mapVentasDesdeDocumentos } from "../../src/integrations/agora/mappers.js";
 import { diasFaltantes, syncVentasLocal } from "../../src/integrations/agora/sync.js";
 
@@ -23,6 +23,35 @@ describe("registry.loadAgoraConfigs", () => {
     assert.deepEqual(loadAgoraConfigs({}), []);
     assert.deepEqual(loadAgoraConfigs({ AGORA_LOCALES: "no-json" }), []);
   });
+  test("configsFromRows: filas de BD → configs (local_id y activo=0 filtrado)", () => {
+    const rows = [
+      { local: "La Tapeta - Blanes", host: "latapetablanes.chickenkiller.com:8984", token: "tok1", local_id: "", activo: 1 },
+      { local: "La Tapeta - Lloret", host: "http://x:8984/", token: "tok2", local_id: "L2", activo: 0 }, // inactivo → fuera
+      { local: "Sin token", host: "y:8984", token: "", activo: 1 }, // sin token → fuera
+    ];
+    const c = configsFromRows(rows);
+    assert.equal(c.length, 1);
+    assert.equal(c[0].local, "La Tapeta - Blanes");
+    assert.equal(c[0].host, "http://latapetablanes.chickenkiller.com:8984");
+    assert.equal(c[0].localId, null); // "" → null
+  });
+
+  test("configsFromRows: activo booleano y localId explícito", () => {
+    const c = configsFromRows([{ local: "A", host: "a:8984", token: "t", localId: "9", activo: true }]);
+    assert.equal(c.length, 1);
+    assert.equal(c[0].localId, "9");
+  });
+
+  test("configsFromRows: entrada vacía ⇒ []", () => {
+    assert.deepEqual(configsFromRows(null), []);
+    assert.deepEqual(configsFromRows([]), []);
+  });
+
+  test("normalizeConfigs equivale a loadAgoraConfigs sobre el array parseado", () => {
+    const arr = [{ local: "A", host: "a:8984", token: "t", localId: "1", activo: true }];
+    assert.deepEqual(normalizeConfigs(arr), loadAgoraConfigs({ AGORA_LOCALES: JSON.stringify(arr) }));
+  });
+
   test("publicConfig nunca incluye el token", () => {
     const p = publicConfig({ local: "X", host: "http://x:8984", token: "SECRETO", localId: null });
     assert.equal(p.token, undefined);
