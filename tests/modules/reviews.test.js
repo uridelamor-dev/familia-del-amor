@@ -1,7 +1,7 @@
 // Reseñas — lógica pura: normalización de filas, resumen por local y prompt de borrador IA.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mapManageRow, resumenPorLocal, draftRequest, cleanDraft, extractText } from "../../src/modules/reviews/reviews.service.js";
+import { mapManageRow, resumenPorLocal, draftRequest, cleanDraft, extractText, syncReviews, mensajeEstadoReseñas } from "../../src/modules/reviews/reviews.service.js";
 
 describe("mapManageRow", () => {
   test("marca respondida y estrellas; fecha recortada", () => {
@@ -61,5 +61,83 @@ describe("cleanDraft / extractText", () => {
     const resp = { content: [{ type: "text", text: '"Hola ' }, { type: "text", text: 'de nuevo"' }, { type: "tool_use" }] };
     assert.equal(extractText(resp), "Hola de nuevo");
     assert.equal(extractText(null), "");
+  });
+});
+
+describe("syncReviews (fallback Business Profile → Places)", () => {
+  const base = { hasRefreshToken: true, hasPlacesKey: true, placeIdsCount: 3 };
+  const biz = (r) => async () => r;
+  const places = (r) => async () => r;
+
+  test("Business Profile funciona (importa) → NO llama a Places", async () => {
+    let placesCalled = false;
+    const r = await syncReviews({ ...base, fetchBusiness: biz({ imported: 5, updated: 1 }), fetchPlaces: async () => { placesCalled = true; return { imported: 9 }; } });
+    assert.equal(r.source, "business_profile");
+    assert.equal(r.imported, 5);
+    assert.equal(placesCalled, false);
+  });
+
+  test("Business Profile 403 → llama a Places", async () => {
+    const r = await syncReviews({ ...base, fetchBusiness: async () => { throw new Error("cuota_o_permiso_403"); }, fetchPlaces: places({ imported: 7, updated: 0, errors: [] }) });
+    assert.equal(r.source, "places");
+    assert.equal(r.imported, 7);
+    assert.match(r.businessProfileError, /403/);
+  });
+
+  test("Business Profile 0 cuentas → llama a Places", async () => {
+    const r = await syncReviews({ ...base, fetchBusiness: biz({ imported: 0, updated: 0, accounts: 0, reason: "sin_cuentas" }), fetchPlaces: places({ imported: 4 }) });
+    assert.equal(r.source, "places");
+    assert.equal(r.imported, 4);
+    assert.equal(r.businessProfileError, "sin_cuentas");
+  });
+
+  test("Business Profile 0 reseñas → llama a Places", async () => {
+    const r = await syncReviews({ ...base, fetchBusiness: biz({ imported: 0, updated: 0, reason: "sin_resenas" }), fetchPlaces: places({ imported: 2 }) });
+    assert.equal(r.source, "places");
+    assert.equal(r.imported, 2);
+  });
+
+  test("Sin token → Places directamente", async () => {
+    let bizCalled = false;
+    const r = await syncReviews({ ...base, hasRefreshToken: false, fetchBusiness: async () => { bizCalled = true; return { imported: 1 }; }, fetchPlaces: places({ imported: 3 }) });
+    assert.equal(r.source, "places");
+    assert.equal(bizCalled, false);
+  });
+
+  test("Sin API key → motivo claro, sin llamar Places", async () => {
+    const r = await syncReviews({ ...base, hasPlacesKey: false, fetchBusiness: biz({ imported: 0, reason: "sin_cuentas" }), fetchPlaces: async () => ({ imported: 9 }) });
+    assert.equal(r.source, "none");
+    assert.equal(r.reason, "business_sin_datos_y_sin_places_key");
+    assert.ok(r.errors.some((e) => /GOOGLE_PLACES_API_KEY/.test(e)));
+  });
+
+  test("Sin Place IDs → motivo claro", async () => {
+    const r = await syncReviews({ ...base, placeIdsCount: 0, fetchBusiness: biz({ imported: 0, reason: "sin_cuentas" }), fetchPlaces: async () => ({ imported: 9 }) });
+    assert.equal(r.source, "none");
+    assert.equal(r.reason, "sin_place_ids");
+  });
+
+  test("Un Place ID falla → procesa los demás (errores agregados, no corta)", async () => {
+    const r = await syncReviews({ ...base, hasRefreshToken: false, fetchPlaces: places({ imported: 6, updated: 0, errors: ["Lloret: NOT_FOUND"] }) });
+    assert.equal(r.source, "places");
+    assert.equal(r.imported, 6);
+    assert.deepEqual(r.errors, ["Lloret: NOT_FOUND"]);
+  });
+
+  test("resultado estructurado tiene todas las claves", async () => {
+    const r = await syncReviews({ ...base, fetchBusiness: biz({ imported: 1 }), fetchPlaces: places({ imported: 0 }) });
+    for (const k of ["source", "imported", "updated", "errors", "businessProfileError"]) assert.ok(k in r, `falta ${k}`);
+  });
+});
+
+describe("mensajeEstadoReseñas", () => {
+  test("con reseñas → resumen con fuente", () => {
+    assert.match(mensajeEstadoReseñas({ connected: true, reviews_count: 143, source: "places" }), /143.*Places/);
+  });
+  test("cuota pendiente y con Place IDs → usando Places", () => {
+    assert.match(mensajeEstadoReseñas({ connected: true, reviews_count: 0, businessProfileError: "cuota_o_permiso_403", places_configured: 3 }), /Business Profile no tiene cuota/);
+  });
+  test("faltan Place IDs", () => {
+    assert.match(mensajeEstadoReseñas({ connected: true, reviews_count: 0, reason: "sin_place_ids" }), /Place IDs/);
   });
 });
