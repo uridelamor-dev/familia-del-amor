@@ -60,6 +60,18 @@ const NAV = [
 ];
 const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
 const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+// Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
+const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "facturas", "reviews", "analitica"]);
+// Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
+function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol)); }
+// ¿El usuario actual puede entrar a `view`? Respeta rol + allowlist efectiva (USER.modulos del token).
+function puedeVer(view) {
+  if (!VIEW_ROLES[view]) return true;
+  if (!VIEW_ROLES[view].includes(USER.rol)) return false;
+  if (USER.rol === "direccion") return true;
+  if (Array.isArray(USER.modulos) && USER.modulos.length) return USER.modulos.includes(view);
+  return true;
+}
 
 let USER = null, CURRENT = "dashboard";
 
@@ -72,7 +84,7 @@ function shell(active, bodyHtml) {
   const uname = USER.nombre || USER.username || "Usuario";
   const initials = uname.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   const nav = NAV.map((grp) => {
-    const items = grp.items.filter(([, , , roles]) => !roles || roles.includes(USER.rol));
+    const items = grp.items.filter(([id]) => puedeVer(id));
     if (!items.length) return "";
     return `<div class="ngt">${grp.g}</div>` + items.map(([id, label, icon]) => {
       const badge = (id === "dashboard" && DASH_CONCERNS > 0) ? `<span class="badge">${DASH_CONCERNS}</span>` : "";
@@ -236,7 +248,7 @@ function bars(items, { fmt = (v) => num(v) } = {}) {
 let CMD_ITEMS = [], CMD_SEL = 0;
 function allCmd() {
   const items = [];
-  NAV.forEach((grp) => grp.items.forEach(([id, label, icon, roles]) => { if (!roles || roles.includes(USER.rol)) items.push({ t: label, g: "Ir a", icon, view: id }); }));
+  NAV.forEach((grp) => grp.items.forEach(([id, label, icon]) => { if (puedeVer(id)) items.push({ t: label, g: "Ir a", icon, view: id }); }));
   const actions = [
     ["Nueva reserva", "cal", ["direccion", "encargado"], () => { go("reservas"); setTimeout(openNuevaReserva, 80); }],
     ["Nueva incidencia", "wrench", ["direccion", "encargado"], () => { go("mantenimiento"); setTimeout(openNuevaIncidencia, 80); }],
@@ -938,21 +950,93 @@ async function rrPregSave() {
 }
 
 // ════════════════════════ VISTA: USUARIOS ════════════════════════
+let USERS = [];
+const ROLES_USUARIO = ["direccion", "encargado", "trabajador", "rrhh", "marketing", "contabilidad"];
+
+// Chips con los módulos efectivos de un usuario (los que realmente puede abrir).
+function chipsModulos(u) {
+  const mods = Array.isArray(u.modulos) ? u.modulos : [];
+  if (u.rol === "direccion") return `<span class="pill ok">acceso total</span>`;
+  if (!mods.length) return `<span class="mut">sin módulos</span>`;
+  const chips = mods.map((id) => `<span class="pill" style="margin:1px 2px">${esc(TITLES[id] || id)}</span>`).join("");
+  return chips + (u.restringido ? ` <span class="pill warn" title="Se le han restringido módulos de su rol">restringido</span>` : "");
+}
 function renderUsuarios(list) {
   const rows = list || [];
-  const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn primary" data-act="user-nuevo">+ Nuevo usuario</button></div>`;
-  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Local</th><th></th></tr></thead><tbody>${rows.map((u) => `<tr><td>${esc(u.username)}</td><td>${esc(u.nombre || "")}</td><td>${esc(u.rol)}</td><td>${esc(u.local || "")}</td><td class="r" style="white-space:nowrap"><button class="linkbtn" style="color:var(--brand)" data-act="user-pass" data-id="${u.id}" data-nombre="${esc(u.username)}">Contraseña</button> · <button class="linkbtn" data-act="user-del" data-id="${u.id}" data-nombre="${esc(u.username)}">Eliminar</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">No hay usuarios todavía. Crea el primero con «+ Nuevo usuario».</div></div>`;
+  const toolbar = `<div class="toolbar"><div class="mut" style="flex:1;font-size:13px">Los usuarios con <b>local</b> asignado (y rol distinto de Dirección) solo ven los datos de su local en los módulos marcados «por local».</div><button class="btn primary" data-act="user-nuevo">+ Nuevo usuario</button></div>`;
+  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Local</th><th>Módulos con acceso</th><th></th></tr></thead><tbody>${rows.map((u) => {
+    const localCell = u.local ? `${esc(u.local)}${u.rol !== "direccion" ? ` <span class="mut" title="Solo ve datos de este local">🔒</span>` : ""}` : `<span class="mut">— todos —</span>`;
+    return `<tr><td><b>${esc(u.username)}</b></td><td>${esc(u.nombre || "")}</td><td>${esc(u.rol)}</td><td>${localCell}</td><td style="max-width:340px;line-height:1.9">${chipsModulos(u)}</td><td class="r" style="white-space:nowrap"><button class="linkbtn" style="color:var(--brand)" data-act="user-edit" data-id="${u.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="user-pass" data-id="${u.id}" data-nombre="${esc(u.username)}">Contraseña</button> · <button class="linkbtn" data-act="user-del" data-id="${u.id}" data-nombre="${esc(u.username)}">Eliminar</button></td></tr>`;
+  }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">No hay usuarios todavía. Crea el primero con «+ Nuevo usuario».</div></div>`;
   return `<div class="ph"><div class="eyebrow">Sistema</div><h1>Usuarios</h1><div class="sub">${rows.length} cuenta${rows.length === 1 ? "" : "s"}</div></div>${toolbar}${table}`;
 }
-async function loadUsuarios() { const view = document.getElementById("view"); view.innerHTML = skeleton(); try { const data = await api("/api/users"); view.innerHTML = renderUsuarios(data); } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); } }
-function openNuevoUsuario() {
-  const roles = ["direccion", "encargado", "trabajador", "rrhh", "marketing", "contabilidad"];
-  const localOpts = ['<option value="">— sin local —</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
-  const body = `<form id="fUser"><div class="form-grid"><div class="field"><label>Usuario</label><input name="username" required></div><div class="field"><label>Nombre</label><input name="nombre"></div><div class="field"><label>Contraseña</label><input name="password" type="text" required></div><div class="field"><label>Rol</label><select name="rol">${roles.map((r) => `<option value="${r}">${r}</option>`).join("")}</select></div><div class="field full"><label>Local</label><select name="local">${localOpts}</select></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear usuario</button></div></form>`;
-  const ov = modal("Nuevo usuario", body);
-  ov.querySelector("#fUser").addEventListener("submit", async (e) => { e.preventDefault(); const data = Object.fromEntries(new FormData(e.target).entries()); try { await apiSend("POST", "/api/users", data); ov.remove(); toast("Usuario creado ✅"); loadUsuarios(); } catch (err) { toast("Error: " + err.message); } });
+async function loadUsuarios() { const view = document.getElementById("view"); view.innerHTML = skeleton(); try { USERS = await api("/api/users"); view.innerHTML = renderUsuarios(USERS); } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); } }
+
+// Checkboxes de módulos para un rol. `sel` = Set de ids marcados. Dirección → todos, fijos.
+function modsCheckboxesHtml(rol, sel) {
+  const ids = modulosDeRolFE(rol);
+  if (!ids.length) return `<div class="mut">Este rol no tiene módulos asignados.</div>`;
+  const dir = rol === "direccion";
+  const items = ids.map((id) => {
+    const checked = (dir || sel.has(id)) ? "checked" : "";
+    const loc = MODULOS_POR_LOCAL.has(id) ? ` <span class="mut" style="font-size:11px">· por local</span>` : "";
+    return `<label style="display:flex;align-items:center;gap:8px;padding:5px 2px"><input type="checkbox" name="mod" value="${id}" ${checked} ${dir ? "disabled" : ""} style="width:auto;margin:0"><span>${esc(TITLES[id] || id)}${loc}</span></label>`;
+  }).join("");
+  const nota = dir ? "Dirección tiene acceso total; no se puede restringir." : "Desmarca los módulos a los que NO quieres que entre este usuario.";
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px">${items}</div><div class="mut" style="margin-top:8px">${nota}</div>`;
 }
-async function userPass(id, nombre) { const p = await promptModal(`Nueva contraseña para ${nombre}`, { type: "password", placeholder: "Escribe la nueva contraseña", ok: "Actualizar" }); if (!p) return; try { await apiSend("PUT", "/api/users/" + encodeURIComponent(id) + "/password", { password: p }); toast("Contraseña actualizada ✅"); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+function localOptionsHtml(sel) {
+  return ['<option value="">— sin local (todos) —</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${l === sel ? "selected" : ""}>${esc(l)}</option>`)).join("");
+}
+// Cablea el rerender de módulos al cambiar el rol dentro de un modal de usuario.
+function wireUserModal(ov) {
+  const rolSel = ov.querySelector("select[name=rol]");
+  const box = ov.querySelector("#modsBox");
+  if (rolSel && box) rolSel.addEventListener("change", () => { box.innerHTML = modsCheckboxesHtml(rolSel.value, new Set(modulosDeRolFE(rolSel.value))); });
+}
+function modsSeleccionados(ov) { return Array.from(ov.querySelectorAll("input[name=mod]:checked")).map((c) => c.value); }
+
+function openNuevoUsuario() {
+  const rol0 = "encargado";
+  const body = `<form id="fUser"><div class="form-grid"><div class="field"><label>Usuario</label><input name="username" required></div><div class="field"><label>Nombre</label><input name="nombre"></div><div class="field"><label>Contraseña</label><input name="password" type="text" required></div><div class="field"><label>Rol</label><select name="rol">${ROLES_USUARIO.map((r) => `<option value="${r}" ${r === rol0 ? "selected" : ""}>${r}</option>`).join("")}</select></div><div class="field full"><label>Local</label><select name="local">${localOptionsHtml("")}</select></div></div><div class="field full" style="margin-top:6px"><label>Módulos con acceso</label><div id="modsBox">${modsCheckboxesHtml(rol0, new Set(modulosDeRolFE(rol0)))}</div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear usuario</button></div></form>`;
+  const ov = modal("Nuevo usuario", body);
+  wireUserModal(ov);
+  ov.querySelector("#fUser").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const data = { username: f.username.value.trim(), nombre: f.nombre.value.trim(), password: f.password.value, rol: f.rol.value, local: f.local.value, modulos: modsSeleccionados(ov) };
+    try { await apiSend("POST", "/api/users", data); ov.remove(); toast("Usuario creado ✅"); loadUsuarios(); } catch (err) { toast("Error: " + err.message); }
+  });
+}
+function openEditarUsuario(id) {
+  const u = USERS.find((x) => String(x.id) === String(id)); if (!u) return;
+  const sel = new Set(Array.isArray(u.modulos) ? u.modulos : []);
+  const body = `<form id="fUserE"><div class="form-grid"><div class="field"><label>Usuario</label><input value="${esc(u.username)}" disabled></div><div class="field"><label>Nombre</label><input name="nombre" value="${esc(u.nombre || "")}"></div><div class="field"><label>Rol</label><select name="rol">${ROLES_USUARIO.map((r) => `<option value="${r}" ${r === u.rol ? "selected" : ""}>${r}</option>`).join("")}</select></div><div class="field"><label>Local</label><select name="local">${localOptionsHtml(u.local || "")}</select></div></div><div class="field full" style="margin-top:6px"><label>Módulos con acceso</label><div id="modsBox">${modsCheckboxesHtml(u.rol, sel)}</div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar cambios</button></div></form>`;
+  const ov = modal(`Editar ${u.username}`, body);
+  wireUserModal(ov);
+  ov.querySelector("#fUserE").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const data = { nombre: f.nombre.value.trim(), rol: f.rol.value, local: f.local.value, modulos: modsSeleccionados(ov) };
+    try { await apiSend("PUT", "/api/users/" + encodeURIComponent(id), data); ov.remove(); toast("Usuario actualizado ✅"); loadUsuarios(); } catch (err) { toast("Error: " + err.message); }
+  });
+}
+// Ver la contraseña actual (si hay copia recuperable) y/o cambiarla, en un solo modal.
+async function userPass(id, nombre) {
+  const ov = modal(`Contraseña de ${nombre}`, `<div id="pwCur" class="mut" style="margin-bottom:16px">Cargando…</div><div class="field"><label>Nueva contraseña</label><input id="pwNew" type="text" placeholder="Escribe para cambiarla" autocomplete="off"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button><button class="btn primary" data-ok>Actualizar</button></div>`);
+  const cur = ov.querySelector("#pwCur");
+  try {
+    const r = await apiSend("GET", "/api/users/" + encodeURIComponent(id) + "/password");
+    if (r && r.disponible) cur.innerHTML = `Contraseña actual: <b style="font-family:ui-monospace,monospace;user-select:all;background:var(--bg2,#0000000d);padding:2px 8px;border-radius:6px">${esc(r.password)}</b>`;
+    else cur.textContent = "La contraseña actual no se puede mostrar (cuenta anterior a esta función). Escribe una nueva y a partir de ahí podrás verla.";
+  } catch (e) { if (e.message !== "noauth") cur.textContent = "No se pudo leer la contraseña."; }
+  ov.addEventListener("click", async (e) => {
+    if (!e.target.closest("[data-ok]")) return;
+    const p = (ov.querySelector("#pwNew").value || "").trim();
+    if (!p) { toast("Escribe una contraseña nueva"); return; }
+    try { await apiSend("PUT", "/api/users/" + encodeURIComponent(id) + "/password", { password: p }); ov.remove(); toast("Contraseña actualizada ✅"); loadUsuarios(); } catch (er) { if (er.message !== "noauth") toast("Error: " + er.message); }
+  });
+}
 async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cuenta ${nombre}? No se puede deshacer.`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/users/" + encodeURIComponent(id)); toast("Usuario eliminado ✅"); loadUsuarios(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 
 // ════════════════════════ VISTA: FACTURAS ════════════════════════
@@ -1568,13 +1652,18 @@ function renderAnaliticaTabla(data) {
   return chart + tabla + errores;
 }
 function renderAnalitica() {
-  const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${ANAL.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  // Usuario con local asignado (no dirección) queda fijado a SU local (coherente con el backend).
+  const scopedLocal = (USER.rol !== "direccion" && USER.local) ? USER.local : null;
+  if (scopedLocal) ANAL.local = scopedLocal;
+  const localOpts = scopedLocal
+    ? `<option value="${esc(scopedLocal)}" selected>${esc(scopedLocal)}</option>`
+    : ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${ANAL.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
   const presets = [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]];
   const cur = ANAL.range || rangoPreset("mes", todayStr());
   const seg = presets.map(([p, l]) => `<button class="${cur.preset === p ? "on" : ""}" data-act="anal-period" data-p="${p}">${l}</button>`).join("") + `<button class="${cur.preset === "custom" ? "on" : ""}" data-act="anal-period-custom">${cur.preset === "custom" ? esc(fechaCorta(cur.from)) + "–" + esc(fechaCorta(cur.to)) : "Personalizado"}</button>`;
   const tabs = (ANAL.tipos || []).map((t) => `<button class="btn ${ANAL.tipo === t.key ? "primary" : ""}" data-act="anal-tab" data-tipo="${esc(t.key)}">${esc(t.label)}</button>`).join("");
   const head = `<div class="ph"><div class="eyebrow">Inteligencia</div><h1>Analítica de ventas</h1><div class="sub">Informes en vivo del TPV · ${esc(cur.label)}</div><div class="acts"><button class="btn" data-act="anal-refresh">Actualizar</button><button class="btn" data-act="anal-csv">Exportar CSV</button></div></div>`;
-  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="analLocal">${localOpts}</select></div><div class="field"><label>Periodo</label><div class="seg">${seg}</div></div><div style="flex:1"></div></div>`;
+  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="analLocal" ${scopedLocal ? "disabled" : ""}>${localOpts}</select></div><div class="field"><label>Periodo</label><div class="seg">${seg}</div></div><div style="flex:1"></div></div>`;
   const tabsBar = tabs ? `<div class="toolbar" style="margin-top:-6px">${tabs}</div>` : "";
   const cuerpo = ANAL.cargando ? `<div class="card"><div class="mut" style="font-size:13px">Consultando el TPV…</div></div>` : renderAnaliticaTabla(ANAL.data);
   return head + toolbar + tabsBar + `<div id="analBody">${cuerpo}</div>`;
@@ -2052,8 +2141,8 @@ const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: l
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   CURRENT = view;
-  if (VIEW_ROLES[view] && !VIEW_ROLES[view].includes(USER.rol)) {
-    document.getElementById("root").innerHTML = shell(view, `<div class="card"><div class="ch"><h3>Sin acceso</h3></div><p class="mut">Tu rol no tiene acceso a este módulo.</p></div>`);
+  if (!puedeVer(view)) {
+    document.getElementById("root").innerHTML = shell(view, `<div class="card"><div class="ch"><h3>Sin acceso</h3></div><p class="mut">No tienes acceso a este módulo.</p></div>`);
     refreshWaPill(); return;
   }
   document.getElementById("root").innerHTML = shell(view, skeleton());
@@ -2122,6 +2211,7 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-preg-mesload") rrPregMesLoad();
   else if (act === "rr-preg-save") rrPregSave();
   else if (act === "user-nuevo") openNuevoUsuario();
+  else if (act === "user-edit") openEditarUsuario(t.getAttribute("data-id"));
   else if (act === "user-pass") userPass(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "user-del") userDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "fac-filtrar") applyFacFilter();
