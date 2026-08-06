@@ -1,7 +1,7 @@
 // Ágora — registro de informes (mappers puros). Muestras JSON reales del TPV.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mapProducto, mapEmpleado, mapCancelaciones, mapDescuentos, mapInvitaciones, getInforme, listaInformes, calcularTotales, INFORMES } from "../../src/integrations/agora/reports.js";
+import { mapProducto, mapEmpleado, mapCancelaciones, mapDescuentos, mapInvitaciones, mapPagos, mapHora, getInforme, listaInformes, calcularTotales, INFORMES } from "../../src/integrations/agora/reports.js";
 
 describe("mapProducto", () => {
   // Muestra real (2 filas del informe GetProductSalesReport de Lloret).
@@ -123,6 +123,45 @@ describe("registro completo (4 informes nuevos)", () => {
     assert.ok(getInforme("cancelaciones").needs.includes("categorias"));
     assert.equal(getInforme("descuentos").clrType, "IGT.POS.Bus.Reporting.Messages.GetDiscountsByUserAndTypeReportRequest");
     assert.equal(getInforme("invitaciones").clrType, "IGT.POS.Bus.Reporting.Messages.GetInvitationsByBusinessDayReportRequest");
-    assert.equal(listaInformes().length, 5);
+    assert.ok(listaInformes().length >= 5);
+  });
+});
+
+describe("mapPagos", () => {
+  const resp = { Message: { Report: { Sales: [
+    { PaymentMethod: "Efectiu", PaidAmount: 1386.5, InvoiceCount: 307 },
+    { PaymentMethod: "Targeta", PaidAmount: 1613.5, InvoiceCount: 307 },
+    { PaymentMethod: "Efectiu", PaidAmount: 320.5, InvoiceCount: 0 }, // otro día, mismo método → suma
+  ] } } };
+  test("agrupa por método, suma importe y calcula %", () => {
+    const r = mapPagos(resp);
+    const ef = r.filas.find((f) => f.metodo === "Efectiu");
+    assert.equal(ef.importe, 1707);          // 1386.5 + 320.5
+    assert.equal(r.filas[0].metodo, "Efectiu"); // 1707 > 1613.5 → Efectiu primero
+    assert.equal(r.filas.reduce((s, f) => s + f.pct, 0) >= 99.9, true); // % suma ~100
+    assert.equal(r.columnas.find((c) => c.key === "pct").tipo, "pct");
+  });
+});
+
+describe("mapHora", () => {
+  const resp = { Message: { Report: { Sales: [
+    { TimeFrameName: "Matí", TimeFrameIndex: 0, TicketCount: 116, NetAmount: 643.4 },
+    { TimeFrameName: "Nit", TimeFrameIndex: 3, TicketCount: 40, NetAmount: 800 },
+    { TimeFrameName: "Matí", TimeFrameIndex: 0, TicketCount: 10, NetAmount: 50 }, // mismo día siguiente → suma
+  ] } } };
+  test("agrupa por franja en orden cronológico (index)", () => {
+    const r = mapHora(resp);
+    assert.equal(r.filas[0].franja, "Matí");   // idx 0 primero (no por importe)
+    assert.equal(r.filas[0].tickets, 126);     // 116 + 10
+    assert.equal(r.filas[0].importe, 693.4);
+    assert.equal(r.filas[1].franja, "Nit");
+  });
+});
+
+describe("registro pagos/hora", () => {
+  test("registrados; hora necesita timeframe; total 7 informes", () => {
+    assert.equal(getInforme("pagos").clrType, "IGT.POS.Bus.Reporting.Messages.GetPaymentMethodSalesReportRequest");
+    assert.ok(getInforme("hora").needs.includes("timeframe"));
+    assert.equal(listaInformes().length, 7);
   });
 });

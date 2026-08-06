@@ -119,6 +119,45 @@ export function mapInvitaciones(resp) {
   };
 }
 
+// MÉTODOS DE PAGO: Report.Sales[] una fila por método { PaymentMethod, PaidAmount }. Se agrega por método + %.
+export function mapPagos(resp) {
+  const rows = (resp && resp.Message && resp.Message.Report && resp.Message.Report.Sales) || [];
+  const byM = {};
+  for (const r of rows) { const m = r.PaymentMethod || "—"; byM[m] = (byM[m] || 0) + num(r.PaidAmount); }
+  const total = Object.values(byM).reduce((s, v) => s + v, 0) || 0;
+  const filas = Object.entries(byM).map(([metodo, importe]) => ({ metodo, importe: r2(importe), pct: total ? Math.round((importe / total) * 1000) / 10 : 0 }))
+    .filter((f) => f.importe).sort((a, b) => b.importe - a.importe);
+  return {
+    columnas: [
+      { key: "metodo", label: "Método", tipo: "texto" },
+      { key: "importe", label: "Importe", tipo: "eur" },
+      { key: "pct", label: "%", tipo: "pct" },
+    ],
+    filas, ordenPor: "importe",
+  };
+}
+
+// POR HORA / franja: Report.Sales[] { TimeFrameName, TimeFrameIndex, TicketCount, NetAmount }. Agrega por franja,
+// orden cronológico (TimeFrameIndex). Sin ordenPor → la tabla respeta el orden por franja.
+export function mapHora(resp) {
+  const rows = (resp && resp.Message && resp.Message.Report && resp.Message.Report.Sales) || [];
+  const byF = {};
+  for (const r of rows) {
+    const f = r.TimeFrameName || "—";
+    const e = byF[f] || (byF[f] = { franja: f, idx: num(r.TimeFrameIndex), tickets: 0, importe: 0 });
+    e.tickets += num(r.TicketCount); e.importe += num(r.NetAmount); e.idx = Math.min(e.idx, num(r.TimeFrameIndex));
+  }
+  const filas = Object.values(byF).sort((a, b) => a.idx - b.idx).map((e) => ({ franja: e.franja, tickets: e.tickets, importe: r2(e.importe) }));
+  return {
+    columnas: [
+      { key: "franja", label: "Franja", tipo: "texto" },
+      { key: "tickets", label: "Tickets", tipo: "num" },
+      { key: "importe", label: "Importe", tipo: "eur" },
+    ],
+    filas,
+  };
+}
+
 // ── Registro de informes ──
 export const INFORMES = {
   producto: {
@@ -155,6 +194,18 @@ export const INFORMES = {
     clrType: "IGT.POS.Bus.Reporting.Messages.GetInvitationsByBusinessDayReportRequest",
     buildExtra: ({ from, to, groups }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups }),
     map: mapInvitaciones,
+  },
+  pagos: {
+    key: "pagos", label: "Métodos de pago", needs: ["groups"],
+    clrType: "IGT.POS.Bus.Reporting.Messages.GetPaymentMethodSalesReportRequest",
+    buildExtra: ({ from, to, groups }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups }),
+    map: mapPagos,
+  },
+  hora: {
+    key: "hora", label: "Por hora", needs: ["groups", "timeframe"],
+    clrType: "IGT.POS.Bus.Reporting.Messages.GetTicketsByTimeFrameReportRequest",
+    buildExtra: ({ from, to, groups, timeFrameGroupId }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups, TimeFrameGroupId: timeFrameGroupId, IncludeDeliveryNotes: false }),
+    map: mapHora,
   },
 };
 
