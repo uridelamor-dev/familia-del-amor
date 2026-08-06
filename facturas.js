@@ -1,6 +1,19 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "crypto";
 
+// Serializa el procesamiento de un MISMO archivo (por hash) para evitar duplicados por carrera:
+// dos peticiones casi simultáneas del mismo documento pasaban ambas la comprobación de duplicado
+// antes de que ninguna insertara. Con el cerrojo, la 2ª espera y entonces SÍ ve la fila de la 1ª.
+// Servidor de un solo proceso (Replit) → Map en memoria es suficiente.
+const _hashLocks = new Map();
+async function withHashLock(hash, fn) {
+  if (!hash) return fn();
+  while (_hashLocks.get(hash)) { try { await _hashLocks.get(hash); } catch { /* noop */ } }
+  let done; const gate = new Promise((r) => { done = r; });
+  _hashLocks.set(hash, gate);
+  try { return await fn(); } finally { _hashLocks.delete(hash); done(); }
+}
+
 const MESES_ES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
@@ -479,6 +492,8 @@ export async function repararTodosLosSheets({ getToken, dbGet, dbAll, dbRun }) {
 export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbRun, backupFn }) {
   // 1. Hash para detección de duplicados
   const fileHash = createHash("sha256").update(buffer).digest("hex");
+  // Serializado por hash: dedup + subida + insert de un mismo archivo son atómicos frente a carreras.
+  return withHashLock(fileHash, async () => {
 
   // 2. Extraer datos con Claude
   const datos = await extraerDatosDocumento(buffer, mimeType);
@@ -587,6 +602,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   );
 
   return { datos, empresa, driveUrl: driveFile.url, sheetUrl, sheetId };
+  }); // withHashLock
 }
 
 // ── Migración retroactiva a estructura Raíz→Empresa→Local→Mes ──────────────
