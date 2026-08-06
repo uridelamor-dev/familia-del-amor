@@ -147,6 +147,51 @@ export async function syncReviews(deps = {}) {
   }
 }
 
+// ── Auto-descubrimiento y vinculación de fichas de Google (PURO/testeable) ──
+// Texto de búsqueda para Places Text Search a partir del nombre del local del ERP.
+// "La Tapeta - Blanes" → "La Tapeta Blanes".
+export function queryTextSearch(local) {
+  return String(local || "").replace(/\s*[-–—]\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+// Índice de candidato sugerido: si hay exactamente uno, es el 0; si hay varios, el primero
+// (más relevante en Text Search / se puede confirmar); si no hay, null.
+export function elegirSugerido(candidatos) {
+  if (!Array.isArray(candidatos) || !candidatos.length) return null;
+  return 0;
+}
+export function hayCoincidenciaUnica(candidatos) {
+  return Array.isArray(candidatos) && candidatos.length === 1;
+}
+// Formatea la dirección del storefrontAddress de Business Profile.
+export function formatearDireccionBP(sa) {
+  if (!sa) return "";
+  const parts = [];
+  if (Array.isArray(sa.addressLines)) parts.push(...sa.addressLines);
+  if (sa.locality) parts.push(sa.locality);
+  if (sa.administrativeArea) parts.push(sa.administrativeArea);
+  return parts.filter(Boolean).join(", ");
+}
+// Normaliza una ubicación de Business Profile a candidato uniforme.
+export function normalizarUbicacionBP(loc) {
+  if (!loc) return null;
+  return {
+    place_id: (loc.metadata && loc.metadata.placeId) || null,
+    name: loc.title || "",
+    address: formatearDireccionBP(loc.storefrontAddress),
+    google_location_id: loc.name || null,
+  };
+}
+// Normaliza un resultado de Places Text Search a candidato uniforme.
+export function normalizarPlaceResult(r) {
+  if (!r) return null;
+  return {
+    place_id: r.place_id || null,
+    name: r.name || "",
+    address: r.formatted_address || r.vicinity || "",
+    google_location_id: null,
+  };
+}
+
 // Mensaje explicativo del estado de reseñas (PURA). No incluye tokens ni credenciales.
 export function mensajeEstadoReseñas(s = {}) {
   const conectado = !!s.connected;

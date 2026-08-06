@@ -499,7 +499,7 @@ function renderReviews() {
   const puedeActualizar = USER.rol === "direccion" || USER.rol === "marketing";
   const st = REV_STATUS;
   const fuenteTxt = (s) => s === "places" ? "Places" : s === "business_profile" ? "Business Profile" : (!s || s === "none") ? "Ninguna" : esc(s);
-  const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "OAuth conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">Fuente: ${fuenteTxt(st.source)} · ${num(st.reviews_count || 0)} reseñas${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}${st.last_attempt ? ` · último intento ${esc(String(st.last_attempt).slice(0, 16).replace("T", " "))}` : ""}${st.last_error ? ` · último error: ${esc(String(st.last_error).slice(0, 80))}` : ""}</div></div>${puedeActualizar ? '<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>' : ""}</div>` : "";
+  const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "OAuth conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">Fuente: ${fuenteTxt(st.source)} · ${num(st.reviews_count || 0)} reseñas${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}${st.last_attempt ? ` · último intento ${esc(String(st.last_attempt).slice(0, 16).replace("T", " "))}` : ""}${st.last_error ? ` · último error: ${esc(String(st.last_error).slice(0, 80))}` : ""}</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">${USER.rol === "direccion" ? '<button class="btn" data-act="rev-vincular">Vincular fichas de Google</button>' : ""}${puedeActualizar ? '<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>' : ""}</div></div>` : "";
   const cont = `<div class="grid g3" style="margin-bottom:14px">${stat("Total reseñas", "star", num(REV_CONT.total))}${stat("Pendientes", "bell", num(REV_CONT.pendientes))}${stat("Respondidas", "chat", num(REV_CONT.respondidas))}</div>`;
   const chip = (val, label, on) => `<button class="chip ${on ? "on" : ""}" data-act="rev-local" data-local="${esc(val)}">${esc(label)}</button>`;
   const selector = REV_LOCALES.length > 1 ? `<div class="chips">${chip("", "Todos", !REVF.local)}${REV_LOCALES.map((l) => chip(l, nombreCortoLocal(l), REVF.local === l)).join("")}</div>` : "";
@@ -544,6 +544,29 @@ async function loadReviews(append = false) {
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function loadMoreReviews() { loadReviews(true); }
+let RVX = [];
+async function rvxVincular(local, c) { if (!c || !c.place_id) return; await apiSend("POST", "/api/reviews/vincular-ficha", { local, place_id: c.place_id, google_location_id: c.google_location_id, name: c.name, address: c.address }); }
+async function revVincular() {
+  let d; try { d = await apiRaw("/api/reviews/descubrir-fichas"); } catch (e) { toast("Error: " + e.message); return; }
+  RVX = d.data || [];
+  const fuente = d.fuente === "business_profile" ? "Google Business Profile" : d.fuente === "places" ? "Places (búsqueda por nombre + ciudad)" : "—";
+  const filas = RVX.map((it, i) => {
+    const cands = it.candidatos || [];
+    const vinc = it.vinculado && it.vinculado.placeId ? `<div class="t2">✓ Vinculado: ${esc(it.vinculado.official_name || it.vinculado.placeId)}${it.vinculado.address ? " · " + esc(it.vinculado.address) : ""}</div>` : "";
+    if (!cands.length) return `<div class="row"><div class="grow"><div class="t1">${esc(it.local)}</div>${vinc || '<div class="t2 mut">Sin coincidencias en Google</div>'}</div></div>`;
+    const opts = cands.map((c, ci) => `<option value="${ci}" ${ci === (it.sugerido || 0) ? "selected" : ""}>${esc(c.name)}${c.address ? " — " + esc(c.address) : ""}</option>`).join("");
+    return `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(it.local)}</div>${vinc}<select class="rvxSel" data-i="${i}" style="max-width:100%;margin-top:4px">${opts}</select></div><button class="btn sm primary" data-act="rvx-link" data-i="${i}">${it.vinculado ? "Recambiar" : "Vincular"}</button></div>`;
+  }).join("");
+  const ov = modal("Vincular fichas de Google", `<div class="mut" style="margin-bottom:8px">Fuente: <b>${esc(fuente)}</b>.${d.fuente === "places" ? " Confirma que la ficha es la correcta de cada local." : d.bpError ? " (Business Profile: " + esc(d.bpError) + ")" : ""} No hace falta copiar ningún Place ID de Google Maps.</div><div class="rows" style="max-height:52vh;overflow:auto">${filas || '<div class="mut" style="padding:10px">Sin resultados. ¿Está la clave de Places configurada?</div>'}</div><div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn" data-act="rvx-auto">Auto-vincular sugeridas</button><div style="display:flex;gap:8px"><button class="btn" data-close>Cerrar</button><button class="btn primary" data-act="rvx-refrescar">Vincular y actualizar reseñas</button></div></div>`);
+  ov.addEventListener("click", async (e) => {
+    const link = e.target.closest('[data-act="rvx-link"]');
+    if (link) { const i = +link.getAttribute("data-i"); const sel = ov.querySelector(`.rvxSel[data-i="${i}"]`); const it = RVX[i]; const c = it.candidatos[sel ? +sel.value : (it.sugerido || 0)]; try { await rvxVincular(it.local, c); toast("Vinculado ✅"); ov.remove(); revVincular(); } catch (er) { toast("Error: " + er.message); } return; }
+    const auto = e.target.closest('[data-act="rvx-auto"]');
+    if (auto) { let n = 0; for (const it of RVX) { if ((!it.vinculado || !it.vinculado.placeId) && it.candidatos && it.candidatos.length) { try { await rvxVincular(it.local, it.candidatos[it.sugerido || 0]); n++; } catch { /* sigue */ } } } toast(`Vinculadas ${n} ficha(s) ✅`); ov.remove(); revVincular(); return; }
+    const refr = e.target.closest('[data-act="rvx-refrescar"]');
+    if (refr) { ov.remove(); toast("Actualizando reseñas…"); try { await apiSend("POST", "/api/reviews/refresh", { force: USER.rol === "direccion" }); toast("Listo ✅"); loadReviews(); } catch (er) { toast("Error: " + er.message); } return; }
+  });
+}
 function applyRevFilter() {
   const g = (id) => { const e = document.getElementById(id); return e ? e.value.trim() : ""; };
   REVF.estado = g("rEstado"); REVF.rating = g("rRating"); REVF.sort = g("rSort") || "recientes";
@@ -1545,6 +1568,7 @@ document.addEventListener("click", (e) => {
   else if (act === "cli-masivo") cliMasivo();
   else if (act === "rev-filtrar") applyRevFilter();
   else if (act === "rev-more") loadMoreReviews();
+  else if (act === "rev-vincular") revVincular();
   else if (act === "rev-refresh") refreshReviews();
   else if (act === "rev-local") revSetLocal(t.getAttribute("data-local"));
   else if (act === "rev-responder") openResponder(t.getAttribute("data-id"));
