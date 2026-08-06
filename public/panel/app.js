@@ -39,6 +39,7 @@ const NAV = [
     ["reservas", "Reservas", "cal", ["direccion", "encargado"]],
     ["comunicados", "Comunicados", "mega", ["direccion", "encargado"]],
     ["mantenimiento", "Mantenimiento", "wrench", ["direccion", "encargado"]],
+    ["inventarios", "Inventarios", "box", ["direccion", "encargado"]],
     ["clientes", "Clientes", "users", ["direccion", "marketing"]],
   ] },
   { g: "Gestión", items: [
@@ -58,10 +59,10 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
-const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "facturas", "reviews", "analitica"]);
+const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
 function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol)); }
 // ¿El usuario actual puede entrar a `view`? Respeta rol + allowlist efectiva (USER.modulos del token).
@@ -193,6 +194,7 @@ const signed2 = (v) => (v >= 0 ? "+" : "−") + Math.abs(Number(v) || 0).toFixed
 // ── Iconos SVG (sustituyen a los emojis) ──
 const ICONS = {
   dash: '<path d="M4 13h7V4H4zM13 20h7v-9h-7zM13 4v5h7V4zM4 20h7v-5H4z"/>',
+  box: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9"/>',
   chart: '<path d="M4 20h16M7 20v-6M12 20V8M17 20v-9"/>',
   cal: '<rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v3M16 3v3"/>',
   wrench: '<path d="M15 6.5a3.8 3.8 0 0 0-5 5L4 17.5V20h2.5l6-6a3.8 3.8 0 0 0 5-5l-2.4 2.4-2-2z"/>',
@@ -569,6 +571,285 @@ function openNuevaIncidencia() {
       ov.remove(); toast("Incidencia creada ✅"); loadMant();
     } catch (err) { if (btn) { btn.disabled = false; btn.textContent = "Crear incidencia"; } if (err.message !== "noauth") toast("Error: " + err.message); }
   });
+}
+
+// ════════════════════════ VISTA: INVENTARIOS ════════════════════════
+// Flujo móvil: Local → Proveedor → Contar → Revisar → Pedido. Guardado automático.
+let INV = { local: "", proveedorId: null, proveedorNombre: "", sesionId: null, productos: [], filtro: "", pedidoId: null };
+const _invTimers = {};
+function invHeader(titulo, sub, back) {
+  const b = back ? `<button class="btn" data-act="${back.act}" ${back.data || ""} style="margin-bottom:12px">‹ ${esc(back.label)}</button>` : "";
+  return `${b}<div class="ph"><div class="eyebrow">Inventarios</div><h1>${esc(titulo)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+}
+async function loadInventario() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    const locales = await api("/api/inventario/locales");
+    if ((locales || []).length === 1) { INV.local = locales[0]; return loadInvProveedores(); }
+    view.innerHTML = renderInvLocales(locales || []);
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+function renderInvLocales(locales) {
+  const cards = locales.length ? `<div class="grid g2">${locales.map((l) => `<button class="card" data-act="inv-local" data-local="${esc(l)}" style="text-align:left;cursor:pointer;padding:18px"><div style="font-weight:600;font-size:16px">${esc(l)}</div><div class="mut" style="margin-top:4px">Ver proveedores ›</div></button>`).join("")}</div>`
+    : `<div class="card"><div class="mut" style="padding:8px">No tienes locales asignados.</div></div>`;
+  return `${invHeader("Inventarios", "Elige un establecimiento")}${cards}`;
+}
+function invPickLocal(local) { INV.local = local; loadInvProveedores(); }
+async function loadInvProveedores() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    const data = await api("/api/inventario/proveedores?local=" + encodeURIComponent(INV.local));
+    view.innerHTML = renderInvProveedores(data || []);
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+function renderInvProveedores(list) {
+  const multi = !localFijadoFE(); // dirección puede volver a elegir local
+  const back = multi ? { act: "inv-volver-locales", label: "Locales" } : null;
+  const toolbar = `<div class="toolbar"><div class="mut" style="flex:1;font-size:13px">Local: <b>${esc(INV.local)}</b></div><button class="btn" data-act="inv-pedidos">Pedidos</button><button class="btn primary" data-act="inv-nuevo-prov">+ Proveedor</button></div>`;
+  const cards = list.length ? `<div class="grid g2">${list.map((p) => {
+    const ultimo = p.ultimo_inventario ? fechaCorta(String(p.ultimo_inventario).slice(0, 10)) : "—";
+    const estado = Number(p.en_curso) > 0 ? '<span class="pill warn">Inventario en curso</span>' : '<span class="pill ok">Al día</span>';
+    return `<div class="card" style="padding:16px"><div style="display:flex;justify-content:space-between;align-items:start;gap:8px"><div><div style="font-weight:600;font-size:16px">${esc(p.nombre)}</div><div class="mut" style="font-size:13px;margin-top:3px">${num(p.n_productos)} producto(s) · último: ${esc(ultimo)}</div><div style="margin-top:8px">${estado}</div></div></div><div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" data-act="inv-contar" data-id="${p.id}" data-nombre="${esc(p.nombre)}" style="flex:1">Contar</button><button class="btn" data-act="inv-config" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Configurar</button></div></div>`;
+  }).join("")}</div>` : `<div class="card"><div class="mut" style="padding:8px">No hay proveedores en este local. Crea el primero con «+ Proveedor».</div></div>`;
+  return `${invHeader("Proveedores", "Elige un proveedor para inventariar", back)}${toolbar}${cards}`;
+}
+async function invNuevoProveedor() {
+  let sugerencias = [];
+  try { sugerencias = (await apiRaw("/api/inventario/facturas-proveedores?local=" + encodeURIComponent(INV.local))).data || []; } catch { /* opcional */ }
+  const dl = sugerencias.length ? `<datalist id="invProvSug">${sugerencias.map((s) => `<option value="${esc(s)}"></option>`).join("")}</datalist>` : "";
+  const body = `<form id="fInvProv">${dl}<div class="field"><label>Nombre del proveedor</label><input name="nombre" required list="invProvSug" placeholder="Ej. Estrella Damm" autocomplete="off"></div><div class="mut" style="font-size:12px;margin-top:2px">${sugerencias.length ? "Puedes elegir uno de los proveedores ya vistos en tus facturas." : ""}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear</button></div></form>`;
+  const ov = modal("Nuevo proveedor", body);
+  ov.querySelector("#fInvProv").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const nombre = e.target.nombre.value.trim(); if (!nombre) return;
+    try { await apiSend("POST", "/api/inventario/proveedores", { local: INV.local, nombre, factura_proveedor: nombre }); ov.remove(); toast("Proveedor creado ✅"); loadInvProveedores(); }
+    catch (err) { toast("Error: " + err.message); }
+  });
+}
+function invPickProveedor(id, nombre) { INV.proveedorId = id; INV.proveedorNombre = nombre; INV.filtro = ""; loadInvConteo(); }
+
+// ── Conteo ──
+async function loadInvConteo() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    const j = await apiRaw("/api/inventario/sesion?proveedor_id=" + encodeURIComponent(INV.proveedorId));
+    INV.sesionId = j.sesion.id; INV.proveedorNombre = j.proveedor.nombre; INV.local = j.proveedor.local;
+    INV.productos = (j.productos || []).map((p) => ({ ...p, cantidad: p.cantidad == null ? "" : p.cantidad }));
+    view.innerHTML = renderInvConteo();
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+function invProductosFiltrados() {
+  const f = INV.filtro.trim().toLowerCase();
+  return f ? INV.productos.filter((p) => (p.nombre || "").toLowerCase().includes(f)) : INV.productos;
+}
+function renderInvConteo() {
+  const back = { act: "inv-volver-prov", label: "Proveedores" };
+  const head = invHeader(esc(INV.proveedorNombre), `${esc(INV.local)} · ${INV.productos.length} producto(s)`, back);
+  const toolbar = `<div class="toolbar"><div class="field" style="flex:1"><input id="invSearch" placeholder="Buscar producto…" value="${esc(INV.filtro)}" autocomplete="off"></div><button class="btn primary" data-act="inv-revisar">Revisar inventario ›</button></div>`;
+  return `${head}${toolbar}<div id="invList">${renderInvList()}</div>`;
+}
+function invRowCant(p) { return (p.cantidad === "" || p.cantidad == null) ? "" : p.cantidad; }
+function renderInvList() {
+  const rows = invProductosFiltrados();
+  if (!INV.productos.length) return `<div class="card"><div class="mut" style="padding:8px">Este proveedor no tiene productos. Añádelos en «Configurar».</div></div>`;
+  if (!rows.length) return `<div class="card"><div class="mut" style="padding:8px">Ningún producto coincide con la búsqueda.</div></div>`;
+  const bt = "width:54px;height:54px;font-size:26px;line-height:1;border-radius:14px;flex:0 0 auto";
+  return rows.map((p) => `<div class="card" style="padding:14px;margin-bottom:10px">
+    <div style="font-weight:600;font-size:15px">${esc(p.nombre)}</div>
+    <div class="mut" style="font-size:13px;margin:2px 0 12px">${esc(p.unidad || "unidades")}${p.observacion ? ' · <span style="color:var(--brand)">nota</span>' : ""}</div>
+    <div style="display:flex;align-items:center;gap:12px;justify-content:center">
+      <button class="btn" data-act="inv-minus" data-id="${p.id}" style="${bt}">−</button>
+      <input class="invqty" id="invq-${p.id}" data-id="${p.id}" type="number" inputmode="decimal" min="0" step="any" value="${esc(invRowCant(p))}" placeholder="0" style="width:96px;height:50px;text-align:center;font-size:22px;font-weight:600">
+      <button class="btn" data-act="inv-plus" data-id="${p.id}" style="${bt}">+</button>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:13px">
+      <span class="mut">Stock necesario: <b>${num(p.necesario)} ${esc(p.unidad || "")}</b></span>
+      <button class="linkbtn" style="color:var(--brand)" data-act="inv-obs" data-id="${p.id}">${p.observacion ? "Ver nota" : "+ Observación"}</button>
+    </div>
+  </div>`).join("");
+}
+function invProd(id) { return INV.productos.find((p) => String(p.id) === String(id)); }
+function invRefreshList() { const el = document.getElementById("invList"); if (el) el.innerHTML = renderInvList(); }
+async function invSaveLinea(id) {
+  const p = invProd(id); if (!p) return;
+  const cantidad = (p.cantidad === "" || p.cantidad == null) ? 0 : Math.max(0, Number(p.cantidad) || 0);
+  try { await apiSend("POST", `/api/inventario/sesion/${encodeURIComponent(INV.sesionId)}/linea`, { producto_id: id, cantidad, observacion: p.observacion || "" }); }
+  catch (e) { if (e.message !== "noauth") toast("No se pudo guardar: " + e.message); }
+}
+function invStep(id, delta) {
+  const p = invProd(id); if (!p) return;
+  const val = Math.max(0, (Number(p.cantidad) || 0) + delta);
+  p.cantidad = val;
+  const inp = document.getElementById("invq-" + id); if (inp) inp.value = val;
+  invSaveLinea(id);
+}
+function invInput(id, raw) {
+  const p = invProd(id); if (!p) return;
+  p.cantidad = raw === "" ? "" : Math.max(0, Number(raw) || 0);
+  if (_invTimers[id]) clearTimeout(_invTimers[id]);
+  _invTimers[id] = setTimeout(() => invSaveLinea(id), 400);
+}
+async function invObs(id) {
+  const p = invProd(id); if (!p) return;
+  const txt = await promptModal(`Observación · ${p.nombre}`, { placeholder: p.observacion || "Ej. caja abierta, caduca pronto…", ok: "Guardar" });
+  if (txt === null) return;
+  p.observacion = txt;
+  await invSaveLinea(id);
+  invRefreshList();
+}
+
+// ── Revisión ──
+async function loadInvRevision() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try { const j = await apiRaw("/api/inventario/sesion/" + encodeURIComponent(INV.sesionId) + "/revision"); view.innerHTML = renderInvRevision(j); }
+  catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+function renderInvRevision(j) {
+  const rev = j.revision || [];
+  const aPedir = rev.filter((r) => r.sugerido > 0);
+  const back = { act: "inv-volver-conteo", label: "Seguir contando" };
+  const head = invHeader("Revisar inventario", `${esc(INV.proveedorNombre)} · ${esc(INV.local)}`, back);
+  const filas = rev.map((r) => {
+    const col = r.sugerido > 0 ? "color:var(--brand);font-weight:700" : "color:var(--mut)";
+    return `<tr><td>${esc(r.nombre)}</td><td class="r tnum">${num(r.contado)}</td><td class="r tnum">${num(r.necesario)}</td><td class="r tnum">${num(r.diferencia)}</td><td class="r tnum" style="${col}">${r.sugerido > 0 ? num(r.sugerido) + " " + esc(r.unidad || "") : "—"}</td></tr>`;
+  }).join("");
+  const tabla = rev.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Contado</th><th class="r">Necesario</th><th class="r">Dif.</th><th class="r">A pedir</th></tr></thead><tbody>${filas}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin productos.</div></div>`;
+  let accion;
+  if (j.pedido_existente) accion = `<div class="toolbar"><div class="mut" style="flex:1">Ya existe un pedido para este inventario.</div><button class="btn primary" data-act="inv-ver-pedido" data-id="${j.pedido_existente.id}">Ver pedido ›</button></div>`;
+  else if (aPedir.length) accion = `<div class="toolbar"><div class="mut" style="flex:1"><b>${aPedir.length}</b> producto(s) por debajo del stock necesario.</div><button class="btn primary" data-act="inv-generar-pedido">Generar pedido ›</button></div>`;
+  else accion = `<div class="card"><div class="mut" style="padding:8px">Todo cubierto: no hace falta pedir nada. El inventario queda guardado.</div></div>`;
+  return `${head}${accion}${tabla}`;
+}
+async function invGenerarPedido() {
+  try { const j = await apiSend("POST", "/api/inventario/pedido", { sesion_id: INV.sesionId }); toast(j.existente ? "Pedido ya existente" : "Pedido generado ✅"); loadInvPedido(j.id); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
+// ── Pedido ──
+async function loadInvPedido(id) {
+  INV.pedidoId = id;
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try { const j = await apiRaw("/api/inventario/pedido/" + encodeURIComponent(id)); view.innerHTML = renderInvPedido(j); }
+  catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+function renderInvPedido(j) {
+  const ped = j.pedido; const lineas = j.lineas || [];
+  const editable = ped.estado === "DRAFT";
+  const estadoPill = ped.estado === "APPROVED" ? '<span class="pill ok">Aprobado</span>' : ped.estado === "CANCELLED" ? '<span class="pill bad">Cancelado</span>' : '<span class="pill warn">Borrador</span>';
+  const back = { act: "inv-pedidos", label: "Pedidos" };
+  const head = invHeader("Pedido a " + esc(j.proveedor ? j.proveedor.nombre : ""), `${esc(ped.local)} · ${esc((ped.creado_en || "").slice(0, 10))} ${estadoPill}`, back);
+  const bt = "width:44px;height:44px;font-size:22px;line-height:1;border-radius:12px;flex:0 0 auto";
+  const filas = lineas.length ? lineas.map((l) => `<div class="card" style="padding:12px;margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:600">${esc(l.nombre)}</div>${editable ? `<button class="linkbtn" data-act="inv-linea-del" data-id="${l.id}" title="Quitar">✕</button>` : ""}</div>
+    <div class="mut" style="font-size:12.5px;margin:2px 0 10px">Contado ${num(l.stock_contado)} · Necesario ${num(l.stock_necesario)} · Sugerido ${num(l.cantidad_sugerida)} ${esc(l.unidad || "")}</div>
+    <div style="display:flex;align-items:center;gap:10px">
+      ${editable ? `<button class="btn" data-act="inv-linea-minus" data-id="${l.id}" style="${bt}">−</button>` : ""}
+      <input class="invpq" id="invpq-${l.id}" data-id="${l.id}" type="number" inputmode="decimal" min="0" step="any" value="${esc(num(l.cantidad_final))}" ${editable ? "" : "disabled"} style="width:90px;height:46px;text-align:center;font-size:20px;font-weight:600">
+      ${editable ? `<button class="btn" data-act="inv-linea-plus" data-id="${l.id}" style="${bt}">+</button>` : ""}
+      <span class="mut" style="flex:1;text-align:right">${esc(l.unidad || "")}</span>
+    </div>
+  </div>`).join("") : `<div class="card"><div class="mut" style="padding:8px">Pedido sin líneas.</div></div>`;
+  const obs = `<div class="card" style="padding:12px;margin-bottom:10px"><label class="mut" style="font-size:12px;display:block;margin-bottom:6px">Observaciones del pedido</label><textarea id="invPedObs" rows="2" ${editable ? "" : "disabled"} style="width:100%">${esc(ped.observaciones || "")}</textarea></div>`;
+  let acciones = "";
+  if (editable) acciones = `<div class="toolbar"><button class="btn" data-act="inv-guardar-pedido">Guardar borrador</button><div style="flex:1"></div><button class="btn" data-act="inv-cancelar-pedido">Cancelar pedido</button><button class="btn primary" data-act="inv-aprobar-pedido">Aprobar pedido</button></div>`;
+  else if (ped.estado === "APPROVED") acciones = `<div class="toolbar"><div class="mut" style="flex:1">Pedido aprobado (no editable).</div><button class="btn" data-act="inv-cancelar-pedido">Cancelar</button></div>`;
+  return `${head}${acciones}${obs}${filas}`;
+}
+function invPedLineaVal(id, v) { const inp = document.getElementById("invpq-" + id); if (inp) inp.value = v; }
+function invPedStep(id, delta) { const inp = document.getElementById("invpq-" + id); if (!inp) return; inp.value = Math.max(0, (Number(inp.value) || 0) + delta); }
+async function invGuardarPedido(silencioso) {
+  const lineas = Array.from(document.querySelectorAll(".invpq")).map((inp) => ({ id: inp.getAttribute("data-id"), cantidad_final: Math.max(0, Number(inp.value) || 0) }));
+  const obs = (document.getElementById("invPedObs") || {}).value || "";
+  try { await apiSend("PUT", "/api/inventario/pedido/" + encodeURIComponent(INV.pedidoId), { lineas, observaciones: obs }); if (!silencioso) toast("Borrador guardado ✅"); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function invDelLinea(id) {
+  try { await apiSend("PUT", "/api/inventario/pedido/" + encodeURIComponent(INV.pedidoId), { eliminar: [id] }); loadInvPedido(INV.pedidoId); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function invCambiarEstadoPedido(estado, msg) {
+  if (!(await confirmModal(estado === "APPROVED" ? "¿Aprobar este pedido? Después no se podrá editar." : "¿Cancelar este pedido?", { ok: msg, danger: estado === "CANCELLED" }))) return;
+  await invGuardarPedido(true); // conserva cantidades editadas antes de cambiar estado
+  try { await apiSend("PUT", "/api/inventario/pedido/" + encodeURIComponent(INV.pedidoId), { estado }); toast(msg + " ✅"); loadInvPedido(INV.pedidoId); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
+// ── Pedidos (historial) ──
+async function loadInvPedidos() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try { const data = await api("/api/inventario/pedidos?local=" + encodeURIComponent(INV.local)); view.innerHTML = renderInvPedidos(data || []); }
+  catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+function renderInvPedidos(list) {
+  const back = { act: "inv-volver-prov", label: "Proveedores" };
+  const pill = (e) => e === "APPROVED" ? '<span class="pill ok">Aprobado</span>' : e === "CANCELLED" ? '<span class="pill bad">Cancelado</span>' : '<span class="pill warn">Borrador</span>';
+  const rows = list.length ? `<div class="card p0"><div class="rows">${list.map((p) => `<div class="row" data-act="inv-ver-pedido" data-id="${p.id}" style="cursor:pointer"><div class="grow"><div class="t1">${esc(p.proveedor_nombre || "—")}</div><div class="t2">${esc((p.creado_en || "").slice(0, 10))} · ${num(p.n_lineas)} línea(s) · ${num(p.total_unidades)} uds</div></div>${pill(p.estado)}</div>`).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay pedidos en este local.</div></div>`;
+  return `${invHeader("Pedidos", esc(INV.local), back)}${rows}`;
+}
+
+// ── Configuración de productos del proveedor ──
+async function loadInvConfig(proveedorId, nombre) {
+  if (proveedorId) { INV.proveedorId = proveedorId; INV.proveedorNombre = nombre; }
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try { const j = await apiRaw("/api/inventario/productos?proveedor_id=" + encodeURIComponent(INV.proveedorId)); INV.local = j.proveedor.local; INV.proveedorNombre = j.proveedor.nombre; view.innerHTML = renderInvConfig(j.data || []); }
+  catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+function renderInvConfig(list) {
+  const back = { act: "inv-volver-prov", label: "Proveedores" };
+  const toolbar = `<div class="toolbar"><div class="mut" style="flex:1;font-size:13px">Configura productos, unidad y stock necesario (por local).</div><button class="btn primary" data-act="inv-nuevo-prod">+ Producto</button></div>`;
+  const rows = list.length ? `<div class="card p0"><div class="rows">${list.map((p) => {
+    const temp = (p.temporada_stock != null && p.temporada_stock !== "" && p.temporada_inicio) ? ` · temporada ${num(p.temporada_stock)} (${esc(p.temporada_inicio)}→${esc(p.temporada_fin || "")})` : "";
+    return `<div class="row"><div class="grow"><div class="t1">${esc(p.nombre)} ${p.activo ? "" : '<span class="pill bad" style="font-size:10px">inactivo</span>'}</div><div class="t2">${esc(p.unidad)} · necesario ${num(p.stock_objetivo)}${temp}${p.observaciones ? " · " + esc(p.observaciones) : ""}</div></div><button class="linkbtn" style="color:var(--brand)" data-act="inv-edit-prod" data-id="${p.id}">Editar</button> · <button class="linkbtn" data-act="inv-del-prod" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Borrar</button></div>`;
+  }).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin productos. Añade el primero con «+ Producto».</div></div>`;
+  return `${invHeader("Configurar · " + esc(INV.proveedorNombre), esc(INV.local), back)}${toolbar}${rows}`;
+}
+const INV_UNIDADES = ["unidades", "cajas", "botellas", "kilos", "bolsas", "barriles", "litros", "packs"];
+function invProductoForm(p) {
+  const uniOpts = INV_UNIDADES.map((u) => `<option value="${u}" ${(p && p.unidad === u) ? "selected" : ""}>${u}</option>`).join("");
+  return `<form id="fInvProd"><div class="form-grid">
+    <div class="field full"><label>Nombre</label><input name="nombre" required value="${p ? esc(p.nombre) : ""}"></div>
+    <div class="field"><label>Unidad de inventario</label><select name="unidad">${uniOpts}</select></div>
+    <div class="field"><label>Stock necesario (normal)</label><input name="stock_objetivo" type="number" min="0" step="any" value="${p ? esc(p.stock_objetivo) : "0"}"></div>
+    <div class="field"><label>Stock mínimo (opcional)</label><input name="stock_minimo" type="number" min="0" step="any" value="${p ? esc(p.stock_minimo) : "0"}"></div>
+    <div class="field"><label>Orden</label><input name="orden" type="number" min="0" step="1" value="${p ? esc(p.orden) : "0"}"></div>
+    <div class="field full"><div class="mut" style="font-size:12px;margin-bottom:4px">Temporada alta (opcional): otro stock necesario entre dos fechas.</div></div>
+    <div class="field"><label>Stock en temporada</label><input name="temporada_stock" type="number" min="0" step="any" value="${(p && p.temporada_stock != null) ? esc(p.temporada_stock) : ""}" placeholder="—"></div>
+    <div class="field"><label>Desde (MM-DD)</label><input name="temporada_inicio" placeholder="06-01" value="${p ? esc(p.temporada_inicio || "") : ""}"></div>
+    <div class="field"><label>Hasta (MM-DD)</label><input name="temporada_fin" placeholder="09-15" value="${p ? esc(p.temporada_fin || "") : ""}"></div>
+    <div class="field full"><label>Observaciones</label><input name="observaciones" value="${p ? esc(p.observaciones || "") : ""}"></div>
+    <label class="field full" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="activo" ${(!p || p.activo) ? "checked" : ""} style="width:auto"> Producto activo</label>
+  </div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar</button></div></form>`;
+}
+function invProductoData(form) {
+  return {
+    nombre: form.nombre.value.trim(), unidad: form.unidad.value, stock_objetivo: form.stock_objetivo.value,
+    stock_minimo: form.stock_minimo.value, orden: form.orden.value, temporada_stock: form.temporada_stock.value,
+    temporada_inicio: form.temporada_inicio.value.trim(), temporada_fin: form.temporada_fin.value.trim(),
+    observaciones: form.observaciones.value.trim(), activo: form.activo.checked,
+  };
+}
+function invNuevoProducto() {
+  const ov = modal("Nuevo producto", invProductoForm(null));
+  ov.querySelector("#fInvProd").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await apiSend("POST", "/api/inventario/productos", { proveedor_id: INV.proveedorId, ...invProductoData(e.target) }); ov.remove(); toast("Producto creado ✅"); loadInvConfig(); }
+    catch (err) { toast("Error: " + err.message); }
+  });
+}
+async function invEditProducto(id) {
+  let p; try { p = (await apiRaw("/api/inventario/productos?proveedor_id=" + encodeURIComponent(INV.proveedorId))).data.find((x) => String(x.id) === String(id)); } catch { return; }
+  if (!p) return;
+  const ov = modal("Editar producto", invProductoForm(p));
+  ov.querySelector("#fInvProd").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await apiSend("PUT", "/api/inventario/productos/" + encodeURIComponent(id), invProductoData(e.target)); ov.remove(); toast("Producto actualizado ✅"); loadInvConfig(); }
+    catch (err) { toast("Error: " + err.message); }
+  });
+}
+async function invDelProducto(id, nombre) {
+  if (!(await confirmModal(`¿Borrar el producto "${nombre}"?`, { ok: "Borrar", danger: true }))) return;
+  try { await apiSend("DELETE", "/api/inventario/productos/" + encodeURIComponent(id)); toast("Producto borrado ✅"); loadInvConfig(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 
 // ════════════════════════ VISTA: CLIENTES ════════════════════════
@@ -2195,7 +2476,7 @@ async function webBlkUpload(input, gallery) {
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   CURRENT = view;
@@ -2222,6 +2503,8 @@ document.addEventListener("change", (e) => {
 // Filtrado en vivo del buscador de Clientes: al escribir/borrar, refresca (con antirrebote).
 document.addEventListener("input", (e) => {
   if (e.target && e.target.id === "cQ") { CLIF.q = e.target.value.trim(); cliRefreshDebounced(); }
+  else if (e.target && e.target.id === "invSearch") { INV.filtro = e.target.value; invRefreshList(); }
+  else if (e.target && e.target.classList && e.target.classList.contains("invqty")) { invInput(e.target.getAttribute("data-id"), e.target.value); }
 });
 document.addEventListener("click", (e) => {
   const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); go(v.getAttribute("data-view")); return; }
@@ -2249,6 +2532,29 @@ document.addEventListener("click", (e) => {
   else if (act === "mant-filtrar") applyMantFilter();
   else if (act === "mant-nueva") openNuevaIncidencia();
   else if (act === "mant-estado") mantEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
+  else if (act === "inv-local") invPickLocal(t.getAttribute("data-local"));
+  else if (act === "inv-volver-locales") loadInventario();
+  else if (act === "inv-volver-prov") loadInvProveedores();
+  else if (act === "inv-volver-conteo") loadInvConteo();
+  else if (act === "inv-nuevo-prov") invNuevoProveedor();
+  else if (act === "inv-pedidos") loadInvPedidos();
+  else if (act === "inv-contar") invPickProveedor(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
+  else if (act === "inv-config") loadInvConfig(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
+  else if (act === "inv-revisar") loadInvRevision();
+  else if (act === "inv-minus") invStep(t.getAttribute("data-id"), -1);
+  else if (act === "inv-plus") invStep(t.getAttribute("data-id"), 1);
+  else if (act === "inv-obs") invObs(t.getAttribute("data-id"));
+  else if (act === "inv-generar-pedido") invGenerarPedido();
+  else if (act === "inv-ver-pedido") loadInvPedido(t.getAttribute("data-id"));
+  else if (act === "inv-linea-minus") invPedStep(t.getAttribute("data-id"), -1);
+  else if (act === "inv-linea-plus") invPedStep(t.getAttribute("data-id"), 1);
+  else if (act === "inv-linea-del") invDelLinea(t.getAttribute("data-id"));
+  else if (act === "inv-guardar-pedido") invGuardarPedido();
+  else if (act === "inv-aprobar-pedido") invCambiarEstadoPedido("APPROVED", "Aprobar pedido");
+  else if (act === "inv-cancelar-pedido") invCambiarEstadoPedido("CANCELLED", "Cancelar pedido");
+  else if (act === "inv-nuevo-prod") invNuevoProducto();
+  else if (act === "inv-edit-prod") invEditProducto(t.getAttribute("data-id"));
+  else if (act === "inv-del-prod") invDelProducto(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "cli-csv") downloadClientesCsv();
   else if (act === "cli-wa") cliWa(t.getAttribute("data-tel"), t.getAttribute("data-nombre"));
   else if (act === "cli-ficha") cliFicha(t.getAttribute("data-tel"));

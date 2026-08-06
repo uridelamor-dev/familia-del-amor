@@ -26,6 +26,7 @@ import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/ago
 import { extraerScripts, extraerRutasApi, clasificarRutas } from "./src/integrations/agora/descubrir.js";
 import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
 import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos } from "./src/modules/usuarios/permisos.js";
+import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
 import { detectarIdioma, normalizarIdioma, idiomaDeContacto, necesitaTraduccion, idiomasPresentes, placeholdersIntactos, construirTraduccionRequest, IDIOMA_BASE } from "./src/modules/messaging/i18n.js";
 import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
@@ -419,6 +420,88 @@ async function initDB() {
     try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS modulos TEXT`); } catch (e) { console.error("[DB] alter users modulos:", e.message); }
     try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc TEXT`); } catch (e) { console.error("[DB] alter users password_enc:", e.message); }
     try { await client.query(`ALTER TABLE maintenance_issues ADD COLUMN IF NOT EXISTS foto_url TEXT`); } catch (e) { console.error("[DB] alter maintenance_issues foto_url:", e.message); }
+
+    // ── Inventarios (aditivo, aislado por `local`). Flujo: local → proveedor → contar → pedido.
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS inv_proveedores (
+          id SERIAL PRIMARY KEY,
+          local TEXT NOT NULL,
+          nombre TEXT NOT NULL,
+          activo BOOLEAN DEFAULT TRUE,
+          orden INTEGER DEFAULT 0,
+          factura_proveedor TEXT,
+          creado_en TEXT NOT NULL,
+          UNIQUE(local, nombre)
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS inv_productos (
+          id SERIAL PRIMARY KEY,
+          proveedor_id INTEGER NOT NULL REFERENCES inv_proveedores(id) ON DELETE CASCADE,
+          local TEXT NOT NULL,
+          nombre TEXT NOT NULL,
+          unidad TEXT NOT NULL DEFAULT 'unidades',
+          stock_minimo NUMERIC DEFAULT 0,
+          stock_objetivo NUMERIC DEFAULT 0,
+          temporada_stock NUMERIC,
+          temporada_inicio TEXT,
+          temporada_fin TEXT,
+          activo BOOLEAN DEFAULT TRUE,
+          orden INTEGER DEFAULT 0,
+          observaciones TEXT,
+          agora_product_id TEXT,
+          creado_en TEXT NOT NULL
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS inv_sesiones (
+          id SERIAL PRIMARY KEY,
+          local TEXT NOT NULL,
+          proveedor_id INTEGER NOT NULL REFERENCES inv_proveedores(id) ON DELETE CASCADE,
+          estado TEXT NOT NULL DEFAULT 'en_curso',
+          usuario TEXT,
+          creado_en TEXT NOT NULL,
+          finalizado_en TEXT
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS inv_lineas (
+          id SERIAL PRIMARY KEY,
+          sesion_id INTEGER NOT NULL REFERENCES inv_sesiones(id) ON DELETE CASCADE,
+          producto_id INTEGER NOT NULL REFERENCES inv_productos(id) ON DELETE CASCADE,
+          cantidad NUMERIC DEFAULT 0,
+          observacion TEXT,
+          actualizado_en TEXT,
+          UNIQUE(sesion_id, producto_id)
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS inv_pedidos (
+          id SERIAL PRIMARY KEY,
+          local TEXT NOT NULL,
+          proveedor_id INTEGER NOT NULL REFERENCES inv_proveedores(id) ON DELETE CASCADE,
+          sesion_id INTEGER REFERENCES inv_sesiones(id) ON DELETE SET NULL,
+          estado TEXT NOT NULL DEFAULT 'DRAFT',
+          usuario TEXT,
+          observaciones TEXT,
+          factura_id INTEGER REFERENCES facturas(id) ON DELETE SET NULL,
+          creado_en TEXT NOT NULL,
+          actualizado_en TEXT
+        )`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS inv_pedido_lineas (
+          id SERIAL PRIMARY KEY,
+          pedido_id INTEGER NOT NULL REFERENCES inv_pedidos(id) ON DELETE CASCADE,
+          producto_id INTEGER REFERENCES inv_productos(id) ON DELETE SET NULL,
+          nombre TEXT,
+          unidad TEXT,
+          stock_contado NUMERIC,
+          stock_necesario NUMERIC,
+          cantidad_sugerida NUMERIC,
+          cantidad_final NUMERIC,
+          observacion TEXT
+        )`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_prod_prov ON inv_productos(proveedor_id)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_prov_local ON inv_proveedores(local)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ped_local ON inv_pedidos(local)`);
+    } catch (e) { console.error("[DB] inventario:", e.message); }
     // sheet_synced: 1 = proyectada a Sheets; 0 = pendiente (la cola de reintentos la reproyecta desde la BD).
     // Las facturas existentes se asumen sincronizadas (default 1); las nuevas insertan 0 y pasan a 1 al proyectar.
     try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS sheet_synced INTEGER DEFAULT 1`); } catch (e) { console.error("[DB] alter facturas sheet_synced:", e.message); }
@@ -1959,6 +2042,26 @@ function localScope(req) {
   return (req.user && req.user.rol !== "direccion" && req.user.local) ? String(req.user.local).trim() : null;
 }
 
+// Lista canónica de establecimientos (espejo de public/auth.js window.LOCALES). Solo lectura.
+const INV_LOCALES = [
+  "La Tapeta - Blanes", "Cooperativa - Blanes", "La Tapeta - Lloret",
+  "La Tapeta - Girona", "Can Mateu - Tordera", "La Tapa Ibérica - Tordera",
+  "Botiga d'en Mateu - Tordera",
+];
+// Locales a los que el usuario tiene acceso: dirección = todos; encargado = solo su local.
+function localesAccesibles(req) {
+  if (req.user && req.user.rol === "direccion") return [...INV_LOCALES];
+  const s = localScope(req);
+  return s ? [s] : [];
+}
+// ¿El usuario puede operar sobre este local? Validación de aislamiento (SIEMPRE en backend).
+function puedeAccederLocal(req, local) {
+  const l = String(local || "").trim();
+  if (!l) return false;
+  if (req.user && req.user.rol === "direccion") return true;
+  return l === localScope(req);
+}
+
 // Auth endpoints
 app.post("/api/auth/login", async (req, res) => {
   const { username, password } = req.body;
@@ -3457,6 +3560,305 @@ app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (
     if (r.code === "NOT_FOUND") return res.status(404).json({ ok: false, error: "Incidencia no encontrada" });
     return next(new Error("maintenance_update_internal"));
   } catch (e) { if (!permisosV2Enabled()) return res.status(500).json({ ok: false, error: "Error actualizando incidencia" }); next(e); }
+});
+
+// ════════════════════════ INVENTARIOS ════════════════════════
+// Flujo: local → proveedor → contar productos → comparar con stock necesario → proponer pedido.
+// Aislamiento por local SIEMPRE en backend (puedeAccederLocal). Solo lectura sobre facturas/Ágora.
+const INV_ROLES = ["direccion", "encargado"];
+const hoyMMDD = () => new Date().toISOString().slice(5, 10);
+const invBool = (v, def = true) => (v === undefined || v === null) ? def : !(v === false || v === 0 || v === "false" || v === "0" || v === "");
+const invNum = (v) => { const n = Number(v); return isFinite(n) && n >= 0 ? n : 0; };
+async function invProveedor(id) { return dbGet("SELECT * FROM inv_proveedores WHERE id = ?", [id]); }
+async function invSesionRow(id) { return dbGet("SELECT * FROM inv_sesiones WHERE id = ?", [id]); }
+async function invPedidoRow(id) { return dbGet("SELECT * FROM inv_pedidos WHERE id = ?", [id]); }
+async function invProductosDe(proveedorId, soloActivos = true) {
+  return dbAll(`SELECT * FROM inv_productos WHERE proveedor_id = ? ${soloActivos ? "AND activo = TRUE" : ""} ORDER BY orden, nombre`, [proveedorId]);
+}
+
+// 1) Locales a los que el usuario tiene acceso (paso 1 del flujo).
+app.get("/api/inventario/locales", requireAuth(INV_ROLES), (req, res) => {
+  res.json({ ok: true, data: localesAccesibles(req) });
+});
+
+// 2) Proveedores de un local (tarjetas): nº productos, último inventario, inventario en curso.
+app.get("/api/inventario/proveedores", requireAuth(INV_ROLES), async (req, res) => {
+  const local = String(req.query.local || "").trim();
+  if (!puedeAccederLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+  try {
+    const rows = await dbAll(`
+      SELECT p.*,
+        (SELECT COUNT(*) FROM inv_productos pr WHERE pr.proveedor_id = p.id AND pr.activo = TRUE) AS n_productos,
+        (SELECT MAX(finalizado_en) FROM inv_sesiones s WHERE s.proveedor_id = p.id AND s.estado = 'finalizado') AS ultimo_inventario,
+        (SELECT COUNT(*) FROM inv_sesiones s WHERE s.proveedor_id = p.id AND s.estado = 'en_curso') AS en_curso
+      FROM inv_proveedores p WHERE p.local = ? ORDER BY p.orden, p.nombre`, [local]);
+    res.json({ ok: true, data: rows });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Sugerencias de proveedores ya vistos en facturas de compra (para no duplicar al configurar).
+app.get("/api/inventario/facturas-proveedores", requireAuth(INV_ROLES), async (req, res) => {
+  const local = String(req.query.local || "").trim();
+  if (!puedeAccederLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+  try {
+    const rows = await dbAll(`SELECT DISTINCT proveedor FROM facturas WHERE local = ? AND proveedor IS NOT NULL AND TRIM(proveedor) <> '' ORDER BY proveedor LIMIT 200`, [local]);
+    res.json({ ok: true, data: (rows || []).map((r) => r.proveedor) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Crear / editar / borrar proveedor (configuración).
+app.post("/api/inventario/proveedores", requireAuth(INV_ROLES), async (req, res) => {
+  const local = String(req.body.local || "").trim();
+  const nombre = String(req.body.nombre || "").trim();
+  if (!puedeAccederLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+  if (!nombre) return res.status(400).json({ ok: false, error: "Falta el nombre del proveedor" });
+  try {
+    const row = await dbRun(
+      `INSERT INTO inv_proveedores (local, nombre, activo, orden, factura_proveedor, creado_en) VALUES (?, ?, TRUE, ?, ?, ?) RETURNING id`,
+      [local, nombre, invNum(req.body.orden), req.body.factura_proveedor || null, new Date().toISOString()]);
+    res.json({ ok: true, id: row.id });
+  } catch (e) { res.status(400).json({ ok: false, error: "Ese proveedor ya existe en el local o datos inválidos" }); }
+});
+app.put("/api/inventario/proveedores/:id", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const p = await invProveedor(req.params.id);
+    if (!p) return res.status(404).json({ ok: false, error: "Proveedor no encontrado" });
+    if (!puedeAccederLocal(req, p.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    const nombre = req.body.nombre !== undefined ? String(req.body.nombre).trim() : p.nombre;
+    await dbRun(`UPDATE inv_proveedores SET nombre = ?, activo = ?, orden = ?, factura_proveedor = ? WHERE id = ?`,
+      [nombre || p.nombre, invBool(req.body.activo, p.activo), invNum(req.body.orden ?? p.orden), req.body.factura_proveedor ?? p.factura_proveedor, p.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.delete("/api/inventario/proveedores/:id", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const p = await invProveedor(req.params.id);
+    if (!p) return res.status(404).json({ ok: false, error: "Proveedor no encontrado" });
+    if (!puedeAccederLocal(req, p.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    await dbRun("DELETE FROM inv_proveedores WHERE id = ?", [p.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Productos de un proveedor (configuración por local).
+app.get("/api/inventario/productos", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const p = await invProveedor(req.query.proveedor_id);
+    if (!p) return res.status(404).json({ ok: false, error: "Proveedor no encontrado" });
+    if (!puedeAccederLocal(req, p.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    const rows = await invProductosDe(p.id, false);
+    res.json({ ok: true, data: rows, proveedor: { id: p.id, nombre: p.nombre, local: p.local } });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+function invProductoPayload(body, prev = {}) {
+  const temp = body.temporada_stock;
+  return {
+    nombre: body.nombre !== undefined ? String(body.nombre).trim() : prev.nombre,
+    unidad: (body.unidad !== undefined ? String(body.unidad).trim() : prev.unidad) || "unidades",
+    stock_minimo: invNum(body.stock_minimo ?? prev.stock_minimo),
+    stock_objetivo: invNum(body.stock_objetivo ?? prev.stock_objetivo),
+    temporada_stock: (temp === "" || temp === null || temp === undefined) ? (prev.temporada_stock ?? null) : invNum(temp),
+    temporada_inicio: (body.temporada_inicio ?? prev.temporada_inicio) || null,
+    temporada_fin: (body.temporada_fin ?? prev.temporada_fin) || null,
+    activo: invBool(body.activo, prev.activo ?? true),
+    orden: invNum(body.orden ?? prev.orden),
+    observaciones: (body.observaciones ?? prev.observaciones) || null,
+    agora_product_id: (body.agora_product_id ?? prev.agora_product_id) || null,
+  };
+}
+app.post("/api/inventario/productos", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const p = await invProveedor(req.body.proveedor_id);
+    if (!p) return res.status(404).json({ ok: false, error: "Proveedor no encontrado" });
+    if (!puedeAccederLocal(req, p.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    const d = invProductoPayload(req.body);
+    if (!d.nombre) return res.status(400).json({ ok: false, error: "Falta el nombre del producto" });
+    if (!esMMDDValido(d.temporada_inicio) || !esMMDDValido(d.temporada_fin)) return res.status(400).json({ ok: false, error: "Fechas de temporada inválidas (MM-DD)" });
+    const row = await dbRun(
+      `INSERT INTO inv_productos (proveedor_id, local, nombre, unidad, stock_minimo, stock_objetivo, temporada_stock, temporada_inicio, temporada_fin, activo, orden, observaciones, agora_product_id, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [p.id, p.local, d.nombre, d.unidad, d.stock_minimo, d.stock_objetivo, d.temporada_stock, d.temporada_inicio, d.temporada_fin, d.activo, d.orden, d.observaciones, d.agora_product_id, new Date().toISOString()]);
+    res.json({ ok: true, id: row.id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.put("/api/inventario/productos/:id", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const prod = await dbGet("SELECT * FROM inv_productos WHERE id = ?", [req.params.id]);
+    if (!prod) return res.status(404).json({ ok: false, error: "Producto no encontrado" });
+    if (!puedeAccederLocal(req, prod.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    const d = invProductoPayload(req.body, prod);
+    if (!d.nombre) return res.status(400).json({ ok: false, error: "Falta el nombre del producto" });
+    if (!esMMDDValido(d.temporada_inicio) || !esMMDDValido(d.temporada_fin)) return res.status(400).json({ ok: false, error: "Fechas de temporada inválidas (MM-DD)" });
+    await dbRun(
+      `UPDATE inv_productos SET nombre=?, unidad=?, stock_minimo=?, stock_objetivo=?, temporada_stock=?, temporada_inicio=?, temporada_fin=?, activo=?, orden=?, observaciones=?, agora_product_id=? WHERE id=?`,
+      [d.nombre, d.unidad, d.stock_minimo, d.stock_objetivo, d.temporada_stock, d.temporada_inicio, d.temporada_fin, d.activo, d.orden, d.observaciones, d.agora_product_id, prod.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.delete("/api/inventario/productos/:id", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const prod = await dbGet("SELECT * FROM inv_productos WHERE id = ?", [req.params.id]);
+    if (!prod) return res.status(404).json({ ok: false, error: "Producto no encontrado" });
+    if (!puedeAccederLocal(req, prod.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    await dbRun("DELETE FROM inv_productos WHERE id = ?", [prod.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 3-5) Sesión de conteo: obtiene (o crea) el inventario EN CURSO del proveedor y sus productos
+// con la cantidad ya introducida (recuperación de inventarios a medias).
+app.get("/api/inventario/sesion", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const p = await invProveedor(req.query.proveedor_id);
+    if (!p) return res.status(404).json({ ok: false, error: "Proveedor no encontrado" });
+    if (!puedeAccederLocal(req, p.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    let sesion = await dbGet("SELECT * FROM inv_sesiones WHERE proveedor_id = ? AND estado = 'en_curso' ORDER BY id DESC LIMIT 1", [p.id]);
+    if (!sesion) {
+      const row = await dbRun("INSERT INTO inv_sesiones (local, proveedor_id, estado, usuario, creado_en) VALUES (?, ?, 'en_curso', ?, ?) RETURNING id", [p.local, p.id, req.user?.username || null, new Date().toISOString()]);
+      sesion = await invSesionRow(row.id);
+    }
+    const productos = await invProductosDe(p.id, true);
+    const lineas = await dbAll("SELECT producto_id, cantidad, observacion FROM inv_lineas WHERE sesion_id = ?", [sesion.id]);
+    const byId = {}; for (const l of (lineas || [])) byId[l.producto_id] = l;
+    const hoy = hoyMMDD();
+    const data = productos.map((pr) => ({
+      ...pr, necesario: invStockNecesario(pr, hoy),
+      cantidad: byId[pr.id] ? Number(byId[pr.id].cantidad) : null,
+      observacion: byId[pr.id]?.observacion || "",
+    }));
+    res.json({ ok: true, sesion, proveedor: { id: p.id, nombre: p.nombre, local: p.local }, productos: data });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 5) Guardado automático de una cantidad contada (nunca negativa).
+app.post("/api/inventario/sesion/:id/linea", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const sesion = await invSesionRow(req.params.id);
+    if (!sesion) return res.status(404).json({ ok: false, error: "Inventario no encontrado" });
+    if (!puedeAccederLocal(req, sesion.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    if (sesion.estado !== "en_curso") return res.status(409).json({ ok: false, error: "El inventario ya está finalizado" });
+    const prod = await dbGet("SELECT id, proveedor_id FROM inv_productos WHERE id = ?", [req.body.producto_id]);
+    if (!prod || prod.proveedor_id !== sesion.proveedor_id) return res.status(400).json({ ok: false, error: "Producto no válido para este inventario" });
+    const cantidad = invSanitizarCantidad(req.body.cantidad);
+    await dbRun(
+      `INSERT INTO inv_lineas (sesion_id, producto_id, cantidad, observacion, actualizado_en) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (sesion_id, producto_id) DO UPDATE SET cantidad = EXCLUDED.cantidad, observacion = EXCLUDED.observacion, actualizado_en = EXCLUDED.actualizado_en`,
+      [sesion.id, prod.id, cantidad, req.body.observacion || null, new Date().toISOString()]);
+    res.json({ ok: true, cantidad });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 6) Revisión: contado vs. necesario, diferencia y cantidad a pedir. No modifica la sesión.
+app.get("/api/inventario/sesion/:id/revision", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const sesion = await invSesionRow(req.params.id);
+    if (!sesion) return res.status(404).json({ ok: false, error: "Inventario no encontrado" });
+    if (!puedeAccederLocal(req, sesion.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    const prov = await invProveedor(sesion.proveedor_id);
+    const productos = await invProductosDe(sesion.proveedor_id, true);
+    const lineas = await dbAll("SELECT producto_id, cantidad FROM inv_lineas WHERE sesion_id = ?", [sesion.id]);
+    const cant = {}; for (const l of (lineas || [])) cant[l.producto_id] = Number(l.cantidad);
+    const revision = invConstruirRevision(productos, cant, hoyMMDD());
+    const pedido = await dbGet("SELECT id, estado FROM inv_pedidos WHERE sesion_id = ? AND estado <> 'CANCELLED' ORDER BY id DESC LIMIT 1", [sesion.id]);
+    res.json({ ok: true, sesion, proveedor: prov ? { id: prov.id, nombre: prov.nombre, local: prov.local } : null, revision, pedido_existente: pedido || null });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 7) Generar propuesta de pedido (DRAFT) desde el inventario. Idempotente: si ya existe un
+// pedido no cancelado para esta sesión, lo devuelve (evita duplicados). Finaliza la sesión.
+app.post("/api/inventario/pedido", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const sesion = await invSesionRow(req.body.sesion_id);
+    if (!sesion) return res.status(404).json({ ok: false, error: "Inventario no encontrado" });
+    if (!puedeAccederLocal(req, sesion.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    const existente = await dbGet("SELECT id FROM inv_pedidos WHERE sesion_id = ? AND estado <> 'CANCELLED' ORDER BY id DESC LIMIT 1", [sesion.id]);
+    if (existente) return res.json({ ok: true, id: existente.id, existente: true });
+    const productos = await invProductosDe(sesion.proveedor_id, true);
+    const lineasCont = await dbAll("SELECT producto_id, cantidad FROM inv_lineas WHERE sesion_id = ?", [sesion.id]);
+    const cant = {}; for (const l of (lineasCont || [])) cant[l.producto_id] = Number(l.cantidad);
+    const revision = invConstruirRevision(productos, cant, hoyMMDD());
+    const lineas = invLineasPedido(revision);
+    if (!lineas.length) return res.status(400).json({ ok: false, error: "No hay nada que pedir (todo cubierto)" });
+    const now = new Date().toISOString();
+    const ped = await dbRun("INSERT INTO inv_pedidos (local, proveedor_id, sesion_id, estado, usuario, creado_en, actualizado_en) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?) RETURNING id",
+      [sesion.local, sesion.proveedor_id, sesion.id, req.user?.username || null, now, now]);
+    for (const l of lineas) {
+      await dbRun("INSERT INTO inv_pedido_lineas (pedido_id, producto_id, nombre, unidad, stock_contado, stock_necesario, cantidad_sugerida, cantidad_final, observacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [ped.id, l.producto_id, l.nombre, l.unidad, l.stock_contado, l.stock_necesario, l.cantidad_sugerida, l.cantidad_final, l.observacion]);
+    }
+    if (sesion.estado === "en_curso") await dbRun("UPDATE inv_sesiones SET estado = 'finalizado', finalizado_en = ? WHERE id = ?", [now, sesion.id]);
+    res.json({ ok: true, id: ped.id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 8) Pedidos (historial) del local + detalle + edición de borrador y cambio de estado.
+app.get("/api/inventario/pedidos", requireAuth(INV_ROLES), async (req, res) => {
+  const local = String(req.query.local || "").trim();
+  if (!puedeAccederLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+  try {
+    const rows = await dbAll(`
+      SELECT ped.*, prov.nombre AS proveedor_nombre,
+        (SELECT COUNT(*) FROM inv_pedido_lineas pl WHERE pl.pedido_id = ped.id) AS n_lineas,
+        (SELECT COALESCE(SUM(cantidad_final), 0) FROM inv_pedido_lineas pl WHERE pl.pedido_id = ped.id) AS total_unidades
+      FROM inv_pedidos ped LEFT JOIN inv_proveedores prov ON prov.id = ped.proveedor_id
+      WHERE ped.local = ? ORDER BY ped.creado_en DESC LIMIT 200`, [local]);
+    res.json({ ok: true, data: rows });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.get("/api/inventario/pedido/:id", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const ped = await invPedidoRow(req.params.id);
+    if (!ped) return res.status(404).json({ ok: false, error: "Pedido no encontrado" });
+    if (!puedeAccederLocal(req, ped.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    const prov = await invProveedor(ped.proveedor_id);
+    const lineas = await dbAll("SELECT * FROM inv_pedido_lineas WHERE pedido_id = ? ORDER BY id", [ped.id]);
+    res.json({ ok: true, pedido: ped, proveedor: prov ? { id: prov.id, nombre: prov.nombre, local: prov.local } : null, lineas });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.put("/api/inventario/pedido/:id", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const ped = await invPedidoRow(req.params.id);
+    if (!ped) return res.status(404).json({ ok: false, error: "Pedido no encontrado" });
+    if (!puedeAccederLocal(req, ped.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+    const now = new Date().toISOString();
+    // Cambio de estado (DRAFT→APPROVED/CANCELLED, APPROVED→CANCELLED). Historial no se reescribe.
+    if (req.body.estado !== undefined) {
+      const nuevo = String(req.body.estado);
+      if (!esEstadoPedidoValido(nuevo)) return res.status(400).json({ ok: false, error: "Estado no válido" });
+      const permitido = (ped.estado === "DRAFT" && (nuevo === "APPROVED" || nuevo === "CANCELLED")) || (ped.estado === "APPROVED" && nuevo === "CANCELLED") || nuevo === ped.estado;
+      if (!permitido) return res.status(409).json({ ok: false, error: `Transición ${ped.estado} → ${nuevo} no permitida` });
+      await dbRun("UPDATE inv_pedidos SET estado = ?, actualizado_en = ? WHERE id = ?", [nuevo, now, ped.id]);
+    }
+    if (req.body.observaciones !== undefined) await dbRun("UPDATE inv_pedidos SET observaciones = ?, actualizado_en = ? WHERE id = ?", [req.body.observaciones || null, now, ped.id]);
+    // Edición de líneas solo en borrador.
+    const esBorrador = ped.estado === "DRAFT" && (req.body.estado === undefined || req.body.estado === "DRAFT");
+    if (esBorrador && Array.isArray(req.body.lineas)) {
+      for (const l of req.body.lineas) {
+        const linea = await dbGet("SELECT id FROM inv_pedido_lineas WHERE id = ? AND pedido_id = ?", [l.id, ped.id]);
+        if (!linea) continue;
+        await dbRun("UPDATE inv_pedido_lineas SET cantidad_final = ?, observacion = ? WHERE id = ?", [invSanitizarCantidad(l.cantidad_final), l.observacion || null, linea.id]);
+      }
+    }
+    if (esBorrador && Array.isArray(req.body.eliminar)) {
+      for (const lid of req.body.eliminar) await dbRun("DELETE FROM inv_pedido_lineas WHERE id = ? AND pedido_id = ?", [lid, ped.id]);
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Historial de inventarios finalizados del local (con el pedido generado, si lo hay).
+app.get("/api/inventario/historial", requireAuth(INV_ROLES), async (req, res) => {
+  const local = String(req.query.local || "").trim();
+  if (!puedeAccederLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+  try {
+    const rows = await dbAll(`
+      SELECT s.id, s.proveedor_id, prov.nombre AS proveedor_nombre, s.estado, s.usuario, s.creado_en, s.finalizado_en,
+        (SELECT COUNT(*) FROM inv_lineas l WHERE l.sesion_id = s.id) AS n_contados,
+        (SELECT id FROM inv_pedidos p WHERE p.sesion_id = s.id AND p.estado <> 'CANCELLED' ORDER BY id DESC LIMIT 1) AS pedido_id
+      FROM inv_sesiones s LEFT JOIN inv_proveedores prov ON prov.id = s.proveedor_id
+      WHERE s.local = ? AND s.estado = 'finalizado' ORDER BY s.finalizado_en DESC LIMIT 200`, [local]);
+    res.json({ ok: true, data: rows });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // Comunicados

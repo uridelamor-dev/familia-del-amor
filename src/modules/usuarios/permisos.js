@@ -18,6 +18,7 @@ export const CATALOGO_MODULOS = [
   { id: "clientes", label: "Clientes", roles: ["direccion", "marketing"], porLocal: false },
   { id: "rrhh", label: "RR. HH.", roles: ["direccion"], porLocal: false },
   { id: "facturas", label: "Facturas", roles: ["direccion", "contabilidad"], porLocal: true },
+  { id: "inventarios", label: "Inventarios", roles: ["direccion", "encargado"], porLocal: true },
   { id: "web", label: "Web", roles: ["direccion", "marketing"], porLocal: false },
   { id: "reviews", label: "Reseñas", roles: ["direccion", "encargado", "contabilidad", "marketing"], porLocal: true },
   { id: "campanas", label: "Campañas", roles: ["direccion", "marketing"], porLocal: false },
