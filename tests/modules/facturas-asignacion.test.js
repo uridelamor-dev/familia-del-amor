@@ -1,7 +1,7 @@
 // Facturas — autoasignación de local (lógica pura).
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { normalizarNif, normalizarTexto, resolverLocalERP, indexarHistorialProveedor, sugerirLocalPendiente } from "../../src/modules/facturas/asignacion.js";
+import { normalizarNif, normalizarTexto, resolverLocalERP, indexarHistorialProveedor, sugerirLocalPendiente, localPorPistaTexto } from "../../src/modules/facturas/asignacion.js";
 
 const LOCALES = [
   { local: "La Tapeta - Blanes", empresa: "DEL AMOR URIEL SLU", cif: "B-1111", local_contable: "La Tapeta Blanes" },
@@ -105,6 +105,39 @@ describe("sugerirLocalPendiente", () => {
   test("prioridad: CIF manda sobre proveedor habitual", () => {
     const historial = indexarHistorialProveedor([{ proveedor: "Makro", local: "La Tapeta Blanes" }, { proveedor: "Makro", local: "La Tapeta Blanes" }]);
     const s = sugerirLocalPendiente({ pendiente: { nif_receptor: "B2222", proveedor: "makro" }, locales: LOCALES, historial });
+    assert.equal(s.local, "Can Mateu - Tordera");
+    assert.equal(s.motivo, "CIF del receptor");
+  });
+});
+
+describe("localPorPistaTexto (nombre del local en la factura)", () => {
+  test("'(TAPETA LLORET)' → La Tapeta - Lloret (desambigua sobre Blanes)", () => {
+    assert.equal(localPorPistaTexto("DEL AMOR URIEL SLU (TAPETA LLORET)", LOCALES), "La Tapeta - Lloret");
+  });
+  test("'Can Mateu Tordera' → Can Mateu - Tordera", () => {
+    assert.equal(localPorPistaTexto("entrega en Can Mateu Tordera", LOCALES), "Can Mateu - Tordera");
+  });
+  test("texto sin token de local (solo empresa) → null", () => {
+    assert.equal(localPorPistaTexto("DEL AMOR URIEL SLU", LOCALES), null);
+  });
+  test("texto sin ningún token de local → null", () => {
+    assert.equal(localPorPistaTexto("Empresa Cualquiera SA", LOCALES), null);
+  });
+});
+
+describe("sugerirLocalPendiente con local indicado (CIF compartido)", () => {
+  test("CIF compartido por Blanes+Lloret, pero la factura dice 'TAPETA LLORET' → Lloret", () => {
+    const s = sugerirLocalPendiente({ pendiente: { nif_receptor: "B1111", local_receptor: "TAPETA LLORET" }, locales: LOCALES });
+    assert.equal(s.local, "La Tapeta - Lloret");
+    assert.equal(s.confianza, "alta");
+    assert.equal(s.motivo, "Local indicado en la factura");
+  });
+  test("pista en el nombre del receptor (sin local_receptor)", () => {
+    const s = sugerirLocalPendiente({ pendiente: { nombre_receptor: "DEL AMOR URIEL SLU (TAPETA LLORET)" }, locales: LOCALES });
+    assert.equal(s.local, "La Tapeta - Lloret");
+  });
+  test("CIF único sigue mandando sobre la pista", () => {
+    const s = sugerirLocalPendiente({ pendiente: { nif_receptor: "B2222", local_receptor: "TAPETA LLORET" }, locales: LOCALES });
     assert.equal(s.local, "Can Mateu - Tordera");
     assert.equal(s.motivo, "CIF del receptor");
   });
