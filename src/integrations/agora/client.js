@@ -18,6 +18,7 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
   let posGroups = Array.isArray(cfg.posGroupsIds) && cfg.posGroupsIds.length ? cfg.posGroupsIds : null;
   let familias = null;
   let categorias = null;
+  let timeFrameGroup = null;
 
   const sender = (v) => ({ ApplicationName: APP_NAME, ApplicationVersion: v, LanguageCode: "es", MachineType: 4, MachineName: "Web Device", UserName: cfg.usuario || "" });
   const envelope = (clrType, extra, v) => JSON.stringify({ CLRType: clrType, Message: { CLRType: clrType, IsBlocking: true, OutOfBandMessages: [], Sender: sender(v), ...extra } });
@@ -85,6 +86,14 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
     categorias = all.map((c) => c && c.Id).filter((x) => x != null);
     return categorias;
   }
+  // Primer grupo de franjas horarias (para los informes "por hora"). Por defecto 1.
+  async function getTimeFrameGroupId() {
+    if (timeFrameGroup != null) return timeFrameGroup;
+    const j = await busJson("IGT.POS.Bus.SystemManagement.Messages.GetAllTimeFrameGroupsRequest", {});
+    const all = (j && j.Message && Array.isArray(j.Message.All)) ? j.Message.All : [];
+    timeFrameGroup = all.length && all[0].Id != null ? all[0].Id : 1;
+    return timeFrameGroup;
+  }
 
   return {
     local: cfg.local,
@@ -94,6 +103,7 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
     async posGroups() { return getPosGroups(); },
     async familiaIds() { return getFamilias(); },
     async categoriaIds() { return getCategorias(); },
+    async timeFrameGroupId() { return getTimeFrameGroupId(); },
 
     // ¿El servidor del TPV responde? (basta /version/, sin sesión). Alive = el local está abierto.
     async ping(timeoutMs = 6000) {
