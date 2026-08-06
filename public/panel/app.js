@@ -1316,8 +1316,22 @@ async function comAdd() {
 }
 
 // ── Ágora (TPV): configurar la integración de ventas por local, desde el panel ────────────────
-let AGORA = { locales: [], lastSync: null };
+let AGORA = { locales: [], lastSync: null, ventas: [] };
 function agoraCfgFor(local) { return AGORA.locales.find((x) => x.local === local) || null; }
+// Reflejo de src/modules/agora/ventas.js (el panel no importa ESM).
+function resumenVentasPorLocal(rows, desde) {
+  const num = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+  const porLocal = {};
+  for (const r of (rows || [])) {
+    if (!r || !r.local) continue;
+    const e = porLocal[r.local] || (porLocal[r.local] = { local: r.local, dias: 0, ultimoDia: null, ventasRecientes: 0, ticketsRecientes: 0 });
+    e.dias += 1;
+    if (!e.ultimoDia || String(r.dia) > e.ultimoDia) e.ultimoDia = String(r.dia);
+    if (!desde || String(r.dia) >= desde) { e.ventasRecientes += num(r.ventas); e.ticketsRecientes += num(r.tickets); }
+  }
+  return Object.values(porLocal).sort((a, b) => (b.ultimoDia || "").localeCompare(a.ultimoDia || ""));
+}
+function agoraResumenFor(local) { return (AGORA._resumen || []).find((x) => x.local === local) || null; }
 function renderAgoraRow(local, i) {
   const c = agoraCfgFor(local);
   const est = c && c.estado;
@@ -1336,19 +1350,26 @@ function renderAgoraRow(local, i) {
       <button class="btn" data-act="ag-probe" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Probar conexión</button>
       <button class="btn primary" data-act="ag-save" data-local="${esc(local)}" data-i="${i}">Guardar</button>
       ${c ? `<button class="btn sm danger" data-act="ag-del" data-local="${esc(local)}">Eliminar</button>` : ""}
-    </div>${est && est.ts ? `<div class="mut" style="font-size:12px;margin-top:2px">Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}</div>` : ""}</div>`;
+    </div>${(() => { const rs = agoraResumenFor(local); const datos = rs && rs.dias > 0 ? `<span class="pill ok">Con datos</span> ${num(rs.dias)} día(s) · última venta ${esc(fechaCorta(rs.ultimoDia))}` : (c && c.activo ? '<span class="pill warn">Sin datos aún</span> aún no llegan ventas' : ""); return `<div class="mut" style="font-size:12px;margin-top:4px">${est && est.ts ? `Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}` : ""}${datos ? (est && est.ts ? " · " : "") + datos : ""}</div>`; })()}</div>`;
 }
 function renderAgora() {
   const head = `<div class="ph"><div class="eyebrow">Sistema · Integraciones</div><h1>Ágora (TPV)</h1><div class="sub">Conecta el TPV de cada local para traer las ventas. El apiToken se guarda cifrado y nunca se muestra.</div><div class="acts"><button class="btn primary" data-act="ag-sync">Sincronizar ventas ahora</button></div></div>`;
   const info = `<div class="card"><div class="mut" style="font-size:13px">El servidor del TPV solo responde con el <b>local abierto</b> (programa Ágora encendido). Requisitos: licencia de integración, v6.0.6, DynDNS y el puerto 8984 abierto.${AGORA.lastSync ? ` · Última sincronización: <b>${esc(String(AGORA.lastSync).slice(0, 16).replace("T", " "))}</b>` : " · Aún no se ha sincronizado."}</div></div>`;
+  const resumen = AGORA._resumen || [];
+  const totalDias = resumen.reduce((s, r) => s + (r.dias || 0), 0);
+  const ventasCard = totalDias > 0
+    ? `<div class="card p0" style="margin-top:6px"><div class="ch" style="padding:16px 16px 0"><h3>Ventas recogidas (últimos 7 días)</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Días con datos</th><th>Última venta</th><th class="r">Ventas 7d</th><th class="r">Tickets 7d</th></tr></thead><tbody>${resumen.map((r) => `<tr><td>${esc(r.local)}</td><td class="r tnum">${num(r.dias)}</td><td class="mut">${esc(fechaCorta(r.ultimoDia))}</td><td class="r tnum">${eur(r.ventasRecientes)}</td><td class="r tnum">${num(r.ticketsRecientes)}</td></tr>`).join("")}</tbody></table></div></div>`
+    : `<div class="card" style="margin-top:6px"><div class="mut" style="font-size:13px">Aún no hay ventas registradas. En cuanto un TPV configurado y abierto devuelva datos, aparecerán aquí y en el dashboard.</div></div>`;
   const rows = LOCALES.map((l, i) => renderAgoraRow(l, i)).join("");
-  return head + info + `<div class="grid" style="gap:14px;margin-top:6px">${rows}</div>`;
+  return head + info + ventasCard + `<div class="grid" style="gap:14px;margin-top:6px">${rows}</div>`;
 }
 async function loadAgora() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
-    const j = await apiRaw("/api/agora/locales");
-    AGORA.locales = j.data || []; AGORA.lastSync = j.lastSync || null;
+    const desde = addDaysStr(todayStr(), -7);
+    const [j, ventas] = await Promise.all([apiRaw("/api/agora/locales"), apiOptional("/api/ventas?from=" + desde)]);
+    AGORA.locales = j.data || []; AGORA.lastSync = j.lastSync || null; AGORA.ventas = ventas || [];
+    AGORA._resumen = resumenVentasPorLocal(AGORA.ventas, desde);
     view.innerHTML = renderAgora();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
