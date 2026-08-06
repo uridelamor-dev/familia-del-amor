@@ -27,6 +27,7 @@ import { extraerScripts, extraerRutasApi, clasificarRutas } from "./src/integrat
 import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
 import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos } from "./src/modules/usuarios/permisos.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
+import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
 import { detectarIdioma, normalizarIdioma, idiomaDeContacto, necesitaTraduccion, idiomasPresentes, placeholdersIntactos, construirTraduccionRequest, IDIOMA_BASE } from "./src/modules/messaging/i18n.js";
 import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
@@ -3572,6 +3573,96 @@ app.post("/api/rrhh/llamada", requireAuth(RRHH_ROLES), async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+// ── RRHH: ficha del trabajador (datos + timeline + documentos) ────────────────
+const hoyISO = () => new Date().toISOString().slice(0, 10);
+const HR_CAMPOS_DIR = ["telefono", "email", "dni", "puesto", "fecha_nac", "fecha_alta", "fecha_baja", "foto_url", "activo"];
+const HR_CAMPOS_ENC = ["telefono", "email", "puesto", "fecha_nac", "foto_url"]; // encargado: sin DNI/alta/baja/activo
+function esEncargado(req) { return req.user && req.user.rol === "encargado"; }
+
+app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const w = await dbGet("SELECT id, username, nombre, rol, local, telefono, email, dni, puesto, fecha_nac, fecha_alta, fecha_baja, foto_url, agora_username, activo, creado_en FROM users WHERE id = ?", [req.params.id]);
+    if (!w) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    if (!rrhhPuedeLocal(req, w.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
+    const notas = await dbAll("SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC", [w.id]);
+    const checkins = await dbAll("SELECT * FROM hr_llamadas_mes WHERE worker_id = ? ORDER BY mes DESC", [w.id]);
+    let documentos = await dbAll("SELECT * FROM hr_documentos WHERE worker_id = ? ORDER BY creado_en DESC", [w.id]);
+    // El encargado NO ve DNI ni documentos sensibles (RGPD).
+    if (esEncargado(req)) { w.dni = null; documentos = documentos.filter((d) => !(d.sensible === 1 || d.sensible === true)); }
+    const hoy = hoyISO();
+    res.json({
+      ok: true,
+      trabajador: w,
+      antiguedad: rrhhAntiguedad(w.fecha_alta, hoy),
+      timeline: construyeTimeline(notas, checkins, documentos),
+      documentos,
+      alertasDoc: documentosPorCaducar(documentos, hoy, 30),
+      enlazadoAgora: !!w.agora_username,
+    });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.put("/api/rrhh/trabajador/:id", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const w = await dbGet("SELECT id, local FROM users WHERE id = ?", [req.params.id]);
+    if (!w) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    if (!rrhhPuedeLocal(req, w.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
+    const campos = esEncargado(req) ? HR_CAMPOS_ENC : HR_CAMPOS_DIR;
+    const sets = [], vals = [];
+    for (const c of campos) if (req.body[c] !== undefined) { sets.push(`${c} = ?`); vals.push(req.body[c] === "" ? null : req.body[c]); }
+    if (req.body.nombre !== undefined) { sets.push("nombre = ?"); vals.push(String(req.body.nombre).trim()); }
+    if (!sets.length) return res.json({ ok: true });
+    vals.push(w.id);
+    await dbRun(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`, vals);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.get("/api/rrhh/trabajador/:id/documentos", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const wl = await rrhhWorkerLocal(req.params.id);
+    if (wl === null) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
+    let docs = await dbAll("SELECT * FROM hr_documentos WHERE worker_id = ? ORDER BY creado_en DESC", [req.params.id]);
+    if (esEncargado(req)) docs = docs.filter((d) => !(d.sensible === 1 || d.sensible === true));
+    res.json({ ok: true, data: docs, alertas: documentosPorCaducar(docs, hoyISO(), 30) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Subida de documento endurecida (magic-bytes, como el CV). Encargado: solo documentos NO sensibles.
+app.post("/api/rrhh/trabajador/:id/documento", requireAuth(RRHH_ROLES), (req, res, next) => {
+  uploadCv.single("archivo")(req, res, (err) => {
+    if (err) return res.status(400).json({ ok: false, error: err.code === "LIMIT_FILE_SIZE" ? "El archivo supera 8 MB." : "Error subiendo el archivo." });
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const wl = await rrhhWorkerLocal(req.params.id);
+    if (wl === null) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
+    if (!req.file) return res.status(400).json({ ok: false, error: "Falta el archivo" });
+    const fin = finalizeCvUpload({ tmpPath: req.file.path, filename: req.file.filename, originalname: req.file.originalname, publicDir: uploadsDir });
+    if (!fin.ok) return res.status(400).json({ ok: false, error: "Archivo no válido (tipo o contenido)" });
+    const sensible = esEncargado(req) ? 0 : (req.body.sensible === "1" || req.body.sensible === "true" || req.body.sensible === true ? 1 : 0);
+    const row = await dbRun(
+      `INSERT INTO hr_documentos (worker_id, tipo, nombre, url, sensible, fecha_emision, fecha_caducidad, autor, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [req.params.id, String(req.body.tipo || "otro"), req.body.nombre || req.file.originalname, `/uploads/${req.file.filename}`, sensible, req.body.fecha_emision || null, req.body.fecha_caducidad || null, req.user?.nombre || req.user?.username || null, new Date().toISOString()]);
+    res.json({ ok: true, id: row.id, url: `/uploads/${req.file.filename}` });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.delete("/api/rrhh/documento/:id", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const doc = await dbGet("SELECT worker_id, sensible FROM hr_documentos WHERE id = ?", [req.params.id]);
+    if (!doc) return res.json({ ok: true });
+    const wl = await rrhhWorkerLocal(doc.worker_id);
+    if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    if (esEncargado(req) && (doc.sensible === 1 || doc.sensible === true)) return res.status(403).json({ ok: false, error: "Documento sensible" });
+    await dbRun("DELETE FROM hr_documentos WHERE id = ?", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // Mantenimiento — enforcement por establecimiento gated por PERMISOS_V2 (Iteración 4).

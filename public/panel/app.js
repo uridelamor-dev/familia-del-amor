@@ -1114,7 +1114,7 @@ const RR_TIPO_COL = { nota: "var(--border2)", llamada: "var(--brand)", incidenci
 const RR_VAC_TIPOS = ["Jornada completa", "Jornada parcial", "Fines de semana", "Temporal"];
 function rrMesActual() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); }
 function rrAutor() { return (USER && (USER.nombre || USER.username || USER.rol)) || "panel"; }
-let RRSEG = { workers: [], llamadas: [], preguntas: [], sel: null, notas: [], mes: rrMesActual() };
+let RRSEG = { workers: [], llamadas: [], preguntas: [], sel: null, notas: [], ficha: null, mes: rrMesActual() };
 let RRPREG = { mes: rrMesActual(), preguntas: [] };
 function rrParseResp(v) { if (!v) return []; if (Array.isArray(v)) return v; try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } }
 // Pestañas visibles por rol: el encargado solo ve el Seguimiento de su equipo (candidaturas,
@@ -1176,10 +1176,72 @@ function renderRRNotas() {
   const list = notas.length ? notas.map((n) => { const t = RR_TIPOS[n.tipo] || RR_TIPOS.nota; return `<div class="card" style="border-left:3px solid ${RR_TIPO_COL[n.tipo] || "var(--border2)"};padding:12px 14px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><div style="min-width:0"><div class="t2">${t.ic} ${t.lab}${n.autor ? " · " + esc(n.autor) : ""} · ${esc(String(n.creado_en || "").slice(0, 16).replace("T", " "))}</div><div style="white-space:pre-wrap;margin-top:3px">${esc(n.contenido || "")}</div></div><button class="btn sm danger" data-act="rr-nota-del" data-id="${n.id}">✕</button></div></div>`; }).join("") : `<div class="card"><div class="mut" style="padding:6px">Sin notas todavía.</div></div>`;
   return `${form}<div class="grid" style="gap:10px">${list}</div>`;
 }
+const RR_DOC_TIPOS = { contrato: "Contrato", dni: "DNI/NIE", manipulador: "Carnet manipulador", nomina: "Nómina", otro: "Otro" };
+function renderRRDocs() {
+  const f = RRSEG.ficha; if (!f) return "";
+  const docs = f.documentos || [];
+  const alertaKey = {}; (f.alertasDoc || []).forEach((a) => { alertaKey[a.id] = a; });
+  const list = docs.length ? docs.map((d) => {
+    const al = alertaKey[d.id];
+    const cad = d.fecha_caducidad ? (al ? `<span class="pill ${al.estado === "vencido" ? "bad" : "warn"}">${al.estado === "vencido" ? "Vencido" : "Caduca en " + al.diasRestantes + "d"}</span>` : `<span class="mut">caduca ${esc(d.fecha_caducidad)}</span>`) : "";
+    return `<div class="row"><div class="grow"><div class="t1"><a href="${esc(d.url)}" target="_blank" rel="noopener" style="color:var(--brand)">${esc(d.nombre || d.tipo)}</a> ${d.sensible ? '<span class="pill" title="Sensible">🔒</span>' : ""}</div><div class="t2">${esc(RR_DOC_TIPOS[d.tipo] || d.tipo)} ${cad}</div></div><button class="btn sm danger" data-act="rr-doc-del" data-id="${d.id}">✕</button></div>`;
+  }).join("") : `<div class="mut" style="padding:8px 14px">Sin documentos.</div>`;
+  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Documentos</h3><button class="btn sm" data-act="rr-doc-subir" data-id="${RRSEG.sel.id}">+ Subir</button></div><div class="rows">${list}</div></div>`;
+}
 function renderRRFicha() {
   const w = RRSEG.sel;
-  if (!w) return `<div class="card" style="min-height:200px;display:grid;place-items:center"><div class="mut">Selecciona un trabajador para ver su ficha, check-in mensual y notas.</div></div>`;
-  return `<div class="grid" style="gap:16px"><div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(w.nombre || w.username || "—")}</h2><div class="t2">${esc(w.rol || "")}${w.local ? " · " + esc(w.local) : ""}${w.username ? " · @" + esc(w.username) : ""}</div></div><button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(w.nombre || w.username || "")}">Eliminar</button></div></div>${renderRRCheckin()}${renderRRNotas()}</div>`;
+  if (!w) return `<div class="card" style="min-height:200px;display:grid;place-items:center"><div class="mut">Selecciona un trabajador para ver su ficha, datos, documentos y check-in.</div></div>`;
+  const f = RRSEG.ficha; const t = (f && f.trabajador) || w;
+  const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
+  const baja = t.activo === 0 || t.activo === false || t.fecha_baja;
+  const estado = baja ? '<span class="pill bad">Baja</span>' : '<span class="pill ok">Activo</span>';
+  const antig = f && f.antiguedad ? ` · ${esc(f.antiguedad.texto)} en la empresa` : "";
+  const ini = (t.nombre || t.username || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
+  const foto = t.foto_url ? `<img src="${esc(t.foto_url)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : `<span class="avatar" style="width:56px;height:56px;font-size:20px;flex:none">${esc(ini)}</span>`;
+  const dato = (lab, val) => val ? `<div><div class="t2">${lab}</div><div class="t1">${esc(val)}</div></div>` : "";
+  const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Puesto", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
+  const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(t.rol || "")}${t.local ? " · " + esc(t.local) : ""}${t.username ? " · @" + esc(t.username) : ""}${antig}</div></div></div>${esDir ? `<button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(t.nombre || t.username || "")}">Eliminar</button>` : ""}</div></div>`;
+  return `<div class="grid" style="gap:16px">${hero}${datos}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
+}
+function rrEditarDatos(id) {
+  const t = (RRSEG.ficha && RRSEG.ficha.trabajador) || RRSEG.sel; if (!t) return;
+  const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
+  const F = (name, lab, val, type) => `<div class="field"><label>${lab}</label><input name="${name}" ${type ? `type="${type}"` : ""} value="${esc(val || "")}"></div>`;
+  const sensibles = esDir ? `${F("dni", "DNI/NIE", t.dni)}${F("fecha_alta", "Fecha de alta", (t.fecha_alta || "").slice(0, 10), "date")}${F("fecha_baja", "Fecha de baja", (t.fecha_baja || "").slice(0, 10), "date")}<label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="activo" ${(t.activo === 0 || t.fecha_baja) ? "" : "checked"} style="width:auto"> Activo</label>` : "";
+  const body = `<form id="fRRD"><div class="form-grid">${F("nombre", "Nombre", t.nombre)}${F("puesto", "Puesto", t.puesto)}${F("telefono", "Teléfono", t.telefono)}${F("email", "Email", t.email)}${F("fecha_nac", "Nacimiento", (t.fecha_nac || "").slice(0, 10), "date")}${sensibles}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar</button></div></form>`;
+  const ov = modal("Editar datos", body);
+  ov.querySelector("#fRRD").addEventListener("submit", async (e) => {
+    e.preventDefault(); const fm = e.target;
+    const data = { nombre: fm.nombre.value.trim(), puesto: fm.puesto.value.trim(), telefono: fm.telefono.value.trim(), email: fm.email.value.trim(), fecha_nac: fm.fecha_nac.value };
+    if (esDir) { data.dni = fm.dni.value.trim(); data.fecha_alta = fm.fecha_alta.value; data.fecha_baja = fm.fecha_baja.value; data.activo = fm.activo.checked ? 1 : 0; }
+    try { await apiSend("PUT", "/api/rrhh/trabajador/" + encodeURIComponent(id), data); ov.remove(); toast("Datos guardados ✅"); rrSelWorker(id); }
+    catch (err) { toast("Error: " + err.message); }
+  });
+}
+function rrDocSubir(id) {
+  const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
+  const tipoOpts = Object.keys(RR_DOC_TIPOS).map((k) => `<option value="${k}">${RR_DOC_TIPOS[k]}</option>`).join("");
+  const body = `<form id="fRRDoc"><div class="form-grid"><div class="field"><label>Tipo</label><select name="tipo">${tipoOpts}</select></div><div class="field"><label>Nombre</label><input name="nombre" placeholder="Contrato 2026…"></div><div class="field"><label>Caduca (opcional)</label><input name="fecha_caducidad" type="date"></div>${esDir ? `<label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="sensible" style="width:auto"> Documento sensible (solo dirección/RRHH)</label>` : ""}<div class="field full"><label>Archivo (PDF o imagen)</label><input type="file" id="rrDocFile" accept=".pdf,.jpg,.jpeg,.png" required></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Subir</button></div></form>`;
+  const ov = modal("Subir documento", body);
+  ov.querySelector("#fRRDoc").addEventListener("submit", async (e) => {
+    e.preventDefault(); const fm = e.target; const btn = fm.querySelector('button[type="submit"]');
+    const file = ov.querySelector("#rrDocFile").files[0]; if (!file) { toast("Elige un archivo"); return; }
+    const fd = new FormData(); fd.append("archivo", file); fd.append("tipo", fm.tipo.value); fd.append("nombre", fm.nombre.value.trim() || file.name);
+    if (fm.fecha_caducidad.value) fd.append("fecha_caducidad", fm.fecha_caducidad.value);
+    if (esDir && fm.sensible.checked) fd.append("sensible", "1");
+    if (btn) { btn.disabled = true; btn.textContent = "Subiendo…"; }
+    try {
+      const r = await fetch("/api/rrhh/trabajador/" + encodeURIComponent(id) + "/documento", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
+      if (r.status === 401 || r.status === 403) { localStorage.removeItem("token"); location.href = "/login.html"; return; }
+      const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error");
+      ov.remove(); toast("Documento subido ✅"); rrSelWorker(id);
+    } catch (err) { if (btn) { btn.disabled = false; btn.textContent = "Subir"; } toast("Error: " + err.message); }
+  });
+}
+async function rrDocDel(id) {
+  if (!(await confirmModal("¿Borrar este documento?", { ok: "Borrar", danger: true }))) return;
+  try { await apiSend("DELETE", "/api/rrhh/documento/" + encodeURIComponent(id)); toast("Documento borrado ✅"); if (RRSEG.sel) rrSelWorker(RRSEG.sel.id); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 function renderRRSeg() {
   return rrPh("Seguimiento mensual del equipo · " + RRSEG.mes) + rrTabs() + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
@@ -1228,8 +1290,9 @@ async function candEstado(id, estado) { try { await apiSend("PUT", "/api/hr/appl
 // Seguimiento: selección de trabajador (carga notas y repinta solo la ficha)
 async function rrSelWorker(id) {
   const w = RRSEG.workers.find((x) => String(x.id) === String(id)); if (!w) return;
-  RRSEG.sel = w;
+  RRSEG.sel = w; RRSEG.ficha = null;
   try { RRSEG.notas = (await apiOptional("/api/rrhh/trabajador/" + id + "/notas")) || []; } catch { RRSEG.notas = []; }
+  try { RRSEG.ficha = await apiRaw("/api/rrhh/trabajador/" + id + "/ficha"); } catch { RRSEG.ficha = null; }
   const v = document.getElementById("view"); if (v && CURRENT === "rrhh" && RRTAB === "seguimiento") v.innerHTML = renderRRSeg();
 }
 function rrRepaintFicha() { const f = document.getElementById("rrFicha"); if (f) f.innerHTML = renderRRFicha(); else if (CURRENT === "rrhh") loadRRHH(); }
@@ -2582,6 +2645,9 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-filtrar") applyRRFilter();
   else if (act === "cand-estado") candEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
   else if (act === "rr-worker") rrSelWorker(t.getAttribute("data-id"));
+  else if (act === "rr-editar-datos") rrEditarDatos(t.getAttribute("data-id"));
+  else if (act === "rr-doc-subir") rrDocSubir(t.getAttribute("data-id"));
+  else if (act === "rr-doc-del") rrDocDel(t.getAttribute("data-id"));
   else if (act === "rr-worker-add") rrWorkerAdd();
   else if (act === "rr-worker-del") rrWorkerDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-checkin-save") rrCheckinSave();
