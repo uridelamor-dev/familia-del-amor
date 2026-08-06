@@ -117,10 +117,26 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .sk{background:linear-gradient(90deg,var(--surface2) 25%,color-mix(in srgb,var(--surface2) 55%,var(--surface)) 37%,var(--surface2) 63%);background-size:400% 100%;animation:sh 1.3s ease infinite;border-radius:8px}@keyframes sh{0%{background-position:100% 0}100%{background-position:-100% 0}}
 .enter>*{opacity:0;transform:translateY(8px);animation:rise .5s cubic-bezier(.2,.8,.2,1) forwards}@keyframes rise{to{opacity:1;transform:none}}
 /* Formularios / campos (panel real) */
-input,select,textarea{border:1px solid var(--border);background:var(--surface);border-radius:10px;padding:0 11px;font:inherit;color:var(--ink);max-width:100%}
+/* Campos unificados (estética tipo Apple): mismo alto/radio/tipografía, foco suave y consistente
+   en TODAS las vistas. Los select llevan chevron propio; fechas/horas con icono afinado. */
+input,select,textarea{border:1px solid var(--border);background:var(--surface);border-radius:11px;padding:0 12px;font:inherit;font-size:13.5px;color:var(--ink);max-width:100%;transition:border-color .14s ease,box-shadow .14s ease,background .14s ease;-webkit-font-smoothing:inherit}
 input,select{height:38px}
-textarea{padding:9px 11px;font-size:13.5px;line-height:1.5;width:100%;resize:vertical}
-input[type=checkbox]{width:auto;height:auto}
+textarea{padding:9px 12px;font-size:13.5px;line-height:1.5;width:100%;resize:vertical}
+input:hover:not(:disabled):not(:focus),select:hover:not(:disabled):not(:focus),textarea:hover:not(:disabled):not(:focus){border-color:var(--border2)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 20%,transparent)}
+input::placeholder,textarea::placeholder{color:var(--ink3)}
+input:disabled,select:disabled,textarea:disabled{opacity:.55;cursor:not-allowed}
+/* Select con chevron propio (mismo en todos los navegadores) */
+select{-webkit-appearance:none;-moz-appearance:none;appearance:none;cursor:pointer;padding-right:34px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238A8E7D' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 12px center;background-size:15px}
+/* Casillas/opciones: nativas pero con el color de marca */
+input[type=checkbox],input[type=radio]{width:auto;height:auto;accent-color:var(--brand);cursor:pointer}
+/* Fechas y horas: campo consistente + icono afinado (el calendario emergente es del sistema) */
+input[type=date],input[type=time],input[type=datetime-local],input[type=month]{cursor:pointer;font-variant-numeric:tabular-nums}
+input::-webkit-calendar-picker-indicator{opacity:.45;cursor:pointer;transition:opacity .14s ease}
+input:hover::-webkit-calendar-picker-indicator,input:focus::-webkit-calendar-picker-indicator{opacity:.85}
+input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,input[type=datetime-local]::-webkit-datetime-edit{color:var(--ink)}
+/* Campos con look propio (buscador ⌘K y chat de Sara): sin el aro de foco genérico */
+.cmdk input:focus,.sbar-row textarea:focus{box-shadow:none}
 .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}.field label{font-size:11px;color:var(--ink3);font-weight:600}
 .linkbtn{color:var(--danger);font-weight:600;font-size:12px;background:none}.linkbtn:hover{text-decoration:underline}
