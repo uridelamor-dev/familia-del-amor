@@ -791,20 +791,43 @@ async function userPass(id, nombre) { const p = await promptModal(`Nueva contras
 async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cuenta ${nombre}? No se puede deshacer.`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/users/" + encodeURIComponent(id)); toast("Usuario eliminado ✅"); loadUsuarios(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 
 // ════════════════════════ VISTA: FACTURAS ════════════════════════
-let FACF = { local: "" };
+let FACF = { local: "", empresa: "", estado: "", tipo: "", q: "", from: "", to: "" };
+let FAC_LIST = [];
 let FACTAB = "facturas";
-let FCFG = { locales: [], reglas: [], grupos: [], empresas: [], groups: [] };
+let FCFG = { locales: [], reglas: [], grupos: [], empresas: [], groups: [], integ: null };
 let FAC303 = { empresa: "", trimestre: "", data: null, error: "" };
+function facQS() { const qs = new URLSearchParams(); ["local", "empresa", "estado", "tipo", "q", "from", "to"].forEach((k) => { if (FACF[k]) qs.set(k, FACF[k]); }); return qs.toString(); }
 function facHeader() { return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Facturas</h1><div class="sub">Facturas, asignación y configuración fiscal</div></div><div class="toolbar" style="margin-bottom:12px"><button class="btn ${FACTAB === "facturas" ? "primary" : ""}" data-act="fac-tab" data-tab="facturas">Facturas</button><button class="btn ${FACTAB === "config" ? "primary" : ""}" data-act="fac-tab" data-tab="config">Configuración</button></div>`; }
 const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
-function renderFacturas(list, pend, stats) {
+function renderFacturas(list, pend, stats, empresas) {
   const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${FACF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  const empOpts = ['<option value="">Todas las empresas</option>'].concat((empresas || []).map((e) => `<option value="${esc(e)}" ${FACF.empresa === e ? "selected" : ""}>${esc(e)}</option>`)).join("");
+  const tipoOpts = ['<option value="">Todos los tipos</option>'].concat(["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${FACF.tipo === t ? "selected" : ""}>${cap(t)}</option>`)).join("");
+  const estOpts = [["", "Todos los estados"], ["pagada", "Pagadas"], ["pendiente", "Pendientes"]].map(([v, l]) => `<option value="${v}" ${FACF.estado === v ? "selected" : ""}>${l}</option>`).join("");
   const resumen = stats && stats.resumenAnual ? `<div class="grid g4" style="margin-bottom:16px">${stat("Facturas (año)", "🧾", num(stats.resumenAnual.num_docs))}${stat("Base imponible", "€", eur(stats.resumenAnual.base))}${stat("IVA", "€", eur(stats.resumenAnual.iva))}${stat("Total", "€", eur(stats.resumenAnual.total))}</div>` : "";
-  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="facLocal">${localOpts}</select></div><button class="btn" data-act="fac-filtrar">Buscar</button></div>`;
+  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="facLocal">${localOpts}</select></div><div class="field"><label>Empresa</label><select id="facEmp">${empOpts}</select></div><div class="field"><label>Estado</label><select id="facEstado">${estOpts}</select></div><div class="field"><label>Tipo</label><select id="facTipo">${tipoOpts}</select></div><div class="field"><label>Desde</label><input type="date" id="facFrom" value="${esc(FACF.from)}"></div><div class="field"><label>Hasta</label><input type="date" id="facTo" value="${esc(FACF.to)}"></div><div class="field"><label>Buscar</label><input id="facQ" placeholder="Proveedor, concepto, nº" value="${esc(FACF.q)}"></div><button class="btn" data-act="fac-filtrar">Buscar</button><div style="flex:1"></div><button class="btn" data-act="fac-export">Exportar CSV</button></div>`;
+  const maxLocal = Math.max(1, ...(((stats && stats.porLocal) || []).map((x) => Number(x.total) || 0)));
+  const porLocal = (stats && stats.porLocal && stats.porLocal.length) ? `<div class="card"><div class="ch"><h3>Gasto por local (año)</h3></div><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div></div>` : "";
+  const topProv = (stats && stats.topProveedores && stats.topProveedores.length) ? `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Top proveedores (año)</h3></div><div class="rows">${stats.topProveedores.map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "—")}</div><div class="t2">${num(p.num)} factura(s)</div></div><b class="tnum">${eur(p.total)}</b></div>`).join("")}</div></div>` : "";
+  const vizGrid = (porLocal || topProv) ? `<div class="grid g2" style="margin-bottom:16px">${porLocal}${topProv}</div>` : "";
   const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map((p) => `<div class="row"><div class="grow"><div class="t1">${esc(p.proveedor || "(sin proveedor)")}</div><div class="t2">${esc((p.fecha || "").slice(0, 10))} · ${eur(p.total)}</div></div><select class="facSel" data-id="${p.id}" style="max-width:190px"><option value="">Asignar a…</option>${LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("")}</select><button class="btn" data-act="fac-asignar" data-id="${p.id}">Asignar</button></div>`).join("")}</div></div>` : "";
-  const table = list.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Proveedor</th><th>Local</th><th>Fecha</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead><tbody>${list.map((f) => `<tr><td>${esc(f.proveedor || "")}</td><td>${esc(f.local || "")}</td><td class="mut">${esc((f.fecha || "").slice(0, 10))}</td><td class="r tnum">${eur(f.total)}</td><td><span class="pill ${f.pagado ? "ok" : ""}">${f.pagado ? "Pagada" : "Pendiente"}</span></td><td class="r"><button class="linkbtn" style="color:var(--brand)" data-act="fac-pago" data-id="${f.id}">${f.pagado ? "Marcar impagada" : "Marcar pagada"}</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin facturas.</div></div>`;
-  return `${facHeader()}${resumen}${toolbar}${pendCard}${table}`;
+  const table = list.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Nº</th><th>Proveedor</th><th>Local</th><th class="r">Base</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead><tbody>${list.map((f) => `<tr><td class="mut">${esc((f.fecha || "").slice(0, 10))}</td><td class="mut">${esc(f.numero_factura || "")}</td><td>${esc(f.proveedor || "")}${f.tipo && f.tipo !== "factura" ? ` <span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : ""}</td><td>${esc(f.local || "")}</td><td class="r tnum">${eur(f.base_imponible)}</td><td class="r tnum">${eur(f.total)}</td><td><span class="pill ${f.pagado ? "ok" : ""}">${f.pagado ? "Pagada" : "Pendiente"}</span></td><td class="r"><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin facturas con esos filtros.</div></div>`;
+  return `${facHeader()}${resumen}${toolbar}${vizGrid}${pendCard}${table}`;
 }
+function facFicha(id) {
+  const f = (FAC_LIST || []).find((x) => String(x.id) === String(id)); if (!f) { toast("Factura no encontrada"); return; }
+  const fld = (lab, key, type = "text") => `<div class="field"><label>${lab}</label><input data-fic="${key}" type="${type}" value="${esc(f[key] == null ? "" : f[key])}"></div>`;
+  const tipoSel = `<div class="field"><label>Tipo</label><select data-fic="tipo">${["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${f.tipo === t ? "selected" : ""}>${cap(t)}</option>`).join("")}</select></div>`;
+  const localSel = `<div class="field"><label>Local</label><select data-fic="local"><option value="">—</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${f.local === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`;
+  const ov = modal("Factura · " + (f.proveedor || f.id), `<div class="form-grid">${fld("Proveedor", "proveedor")}${fld("NIF proveedor", "nif")}${fld("Nº documento", "numero_factura")}${fld("Fecha", "fecha", "date")}${tipoSel}${localSel}${fld("Empresa", "empresa")}${fld("Concepto", "concepto")}${fld("Base (€)", "base_imponible", "number")}${fld("IVA %", "porcentaje_iva", "number")}${fld("Cuota (€)", "cuota_iva", "number")}${fld("Total (€)", "total", "number")}</div>
+    <div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px;flex-wrap:wrap"><div style="display:flex;gap:8px">${f.drive_url ? `<a class="btn" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver archivo ↗</a>` : ""}<button class="btn ${f.pagado ? "" : "primary"}" id="ficPago">${f.pagado ? "Marcar impagada" : "Marcar pagada"}</button></div><div style="display:flex;gap:8px"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="ficSave">Guardar cambios</button></div></div>`);
+  ov.querySelector("#ficSave").addEventListener("click", async () => {
+    const body = {}; ov.querySelectorAll("[data-fic]").forEach((el) => { body[el.getAttribute("data-fic")] = el.value; });
+    try { await apiSend("PATCH", "/api/facturas/" + id, body); ov.remove(); toast("Factura actualizada ✅"); loadFacturas(); } catch (e) { toast("Error: " + e.message); }
+  });
+  const pb = ov.querySelector("#ficPago"); if (pb) pb.addEventListener("click", async () => { try { await apiSend("PATCH", "/api/facturas/" + id + "/pago"); ov.remove(); toast("Estado de pago actualizado"); loadFacturas(); } catch (e) { toast("Error: " + e.message); } });
+}
+async function facExport() { try { const r = await fetch("/api/facturas/export.csv" + (facQS() ? "?" + facQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "facturas.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
 
 function facLocalSelect(id, sel) { return `<select id="${id}"><option value="">Elegir local…</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${sel === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`; }
 function renderFacturasConfig() {
@@ -818,33 +841,52 @@ function renderFacturasConfig() {
   // Modelo 303
   const trims = ["1", "2", "3", "4"];
   const d = FAC303.data;
-  const m303res = FAC303.error ? `<div class="mut" style="padding:8px 18px 14px">${esc(FAC303.error)}</div>` : (d ? `<div class="rows">${(d.totales ? `<div class="row"><div class="grow"><div class="t1">Base imponible</div><div class="t2">${num((d.totales.num_facturas) || 0)} facturas</div></div><b class="tnum">${eur(d.totales.base_total || 0)}</b></div><div class="row"><div class="grow"><div class="t1">Cuota de IVA</div></div><b class="tnum">${eur(d.totales.cuota_total || 0)}</b></div><div class="row"><div class="grow"><div class="t1">Total facturas</div></div><b class="tnum">${eur(d.totales.importe_total || 0)}</b></div>` : "")}${(d.otrosDocs && (d.otrosDocs.num_otros) ? `<div class="row"><div class="grow"><div class="t1">Otros documentos</div><div class="t2">${num(d.otrosDocs.num_otros || 0)} docs</div></div><b class="tnum">${eur(d.otrosDocs.total_otros || 0)}</b></div>` : "")}</div>` : `<div class="mut" style="padding:8px 18px 14px">Elige empresa y trimestre y pulsa Calcular.</div>`);
+  const m303res = FAC303.error ? `<div class="mut" style="padding:8px 18px 14px">${esc(FAC303.error)}</div>` : (d ? `<div class="rows">${(d.porTipoIva && d.porTipoIva.length) ? d.porTipoIva.map((t) => `<div class="row"><div class="grow"><div class="t1">IVA ${num(t.tipo_iva)}%</div><div class="t2">${num(t.num_docs)} doc(s) · base ${eur(t.base_total)}</div></div><b class="tnum">${eur(t.cuota_total)}</b></div>`).join("") : ""}${(d.totales ? `<div class="row" style="border-top:2px solid var(--border)"><div class="grow"><div class="t1">Base imponible</div><div class="t2">${num((d.totales.num_facturas) || 0)} facturas</div></div><b class="tnum">${eur(d.totales.base_total || 0)}</b></div><div class="row"><div class="grow"><div class="t1">Cuota de IVA</div></div><b class="tnum">${eur(d.totales.cuota_total || 0)}</b></div><div class="row"><div class="grow"><div class="t1">Total facturas</div></div><b class="tnum">${eur(d.totales.importe_total || 0)}</b></div>` : "")}${(d.otrosDocs && (d.otrosDocs.num_otros) ? `<div class="row"><div class="grow"><div class="t1">Otros documentos</div><div class="t2">${num(d.otrosDocs.num_otros || 0)} docs</div></div><b class="tnum">${eur(d.otrosDocs.total_otros || 0)}</b></div>` : "")}</div><div style="padding:10px 18px"><button class="btn sm" data-act="fac-303-csv">Exportar 303 (CSV)</button></div>` : `<div class="mut" style="padding:8px 18px 14px">Elige empresa y trimestre y pulsa Calcular.</div>`);
   const empOpts = `<option value="">Empresa…</option>` + (FCFG.empresas || []).map((e) => `<option value="${esc(e)}" ${FAC303.empresa === e ? "selected" : ""}>${esc(e)}</option>`).join("");
   const m303 = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Modelo 303 (IVA trimestral)</h3></div><div class="toolbar" style="padding:12px 18px;margin:0"><select id="m303emp">${empOpts}</select><select id="m303tri"><option value="">Trimestre…</option>${trims.map((t) => `<option value="${t}" ${FAC303.trimestre === t ? "selected" : ""}>${t}º trimestre</option>`).join("")}</select><button class="btn primary" data-act="fac-303">Calcular</button></div>${m303res}</div>`;
-  return `${facHeader()}<div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div>`;
+  // Integraciones Google (Drive/Sheets/Gmail)
+  const ig = FCFG.integ || {}; const drv = ig.drive || {}; const gm = ig.gmail || {};
+  const integ = `<div class="card"><div class="ch"><h3>Integraciones (Google)</h3></div><div class="rows" style="padding:0">
+    <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Drive / Sheets</div><div class="t2">Guarda y ordena las facturas por empresa/local/mes</div></div><span class="pill ${drv.conectado ? "ok" : "bad"}">${drv.conectado ? "Conectado" : "Sin conectar"}</span></div>
+    <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Correo (Gmail)</div><div class="t2">${gm.conectado ? `${num((gm.emails && gm.emails.length) || 0)} correos procesados` : "Lee las facturas que llegan por email"}</div></div><span class="pill ${gm.conectado ? "ok" : "bad"}">${gm.conectado ? "Activo" : "Sin conectar"}</span></div>
+  </div><div class="toolbar" style="padding:12px 0 0"><a class="btn" href="/auth/google-facturas">${drv.conectado ? "Reconectar Google" : "Conectar Google"}</a><button class="btn" data-act="fac-migrar">Reordenar Drive</button></div></div>`;
+  return `${facHeader()}<div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${integ}</div>`;
 }
 
 async function loadFacturas() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
     if (FACTAB === "config") {
-      const [locales, reglas, grupos, empresas, groups] = await Promise.all([
+      const [locales, reglas, grupos, empresas, groups, integDrive, integGmail] = await Promise.all([
         apiOptional("/api/facturas/locales"), apiOptional("/api/facturas/email-reglas"), apiOptional("/api/facturas/grupos"), apiOptional("/api/facturas/empresas"), apiOptional("/api/whatsapp/groups"),
+        apiOptional("/api/facturas/status"), apiOptional("/api/facturas/gmail-status"),
       ]);
-      FCFG = { locales: locales || [], reglas: reglas || [], grupos: grupos || [], empresas: empresas || [], groups: groups || [] };
+      FCFG = { locales: locales || [], reglas: reglas || [], grupos: grupos || [], empresas: empresas || [], groups: groups || [], integ: { drive: integDrive, gmail: integGmail } };
       view.innerHTML = renderFacturasConfig();
       return;
     }
-    const [lst, pend, stats] = await Promise.all([
-      api("/api/facturas" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : "")),
+    const [lst, pend, stats, empresas] = await Promise.all([
+      api("/api/facturas" + (facQS() ? "?" + facQS() : "")),
       apiOptional("/api/facturas/pendientes"),
       apiOptional("/api/facturas/stats"),
+      apiOptional("/api/facturas/empresas"),
     ]);
-    view.innerHTML = renderFacturas(lst || [], pend || [], stats);
+    FAC_LIST = lst || [];
+    view.innerHTML = renderFacturas(FAC_LIST, pend || [], stats, empresas || []);
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function facTab(tab) { FACTAB = tab; loadFacturas(); }
-function applyFacFilter() { const l = document.getElementById("facLocal"); if (l) FACF.local = l.value; loadFacturas(); }
+function applyFacFilter() { ["local:facLocal", "empresa:facEmp", "estado:facEstado", "tipo:facTipo", "from:facFrom", "to:facTo", "q:facQ"].forEach((pair) => { const [k, id] = pair.split(":"); const el = document.getElementById(id); if (el) FACF[k] = (el.value || "").trim(); }); loadFacturas(); }
+function fac303Csv() {
+  const d = FAC303.data; if (!d) { toast("Calcula primero el 303"); return; }
+  const rows = [["Concepto", "Base", "Cuota", "Docs"]];
+  (d.porTipoIva || []).forEach((t) => rows.push([`IVA ${t.tipo_iva}%`, t.base_total, t.cuota_total, t.num_docs]));
+  if (d.totales) rows.push(["Total facturas", d.totales.base_total, d.totales.cuota_total, d.totales.num_facturas]);
+  if (d.otrosDocs) rows.push(["Otros documentos", "", d.otrosDocs.total_otros, d.otrosDocs.num_otros]);
+  const csv = rows.map((r) => r.map((v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `modelo303_${FAC303.empresa || ""}_T${FAC303.trimestre || ""}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+async function facMigrar() { if (!(await confirmModal("¿Reordenar en Drive todas las facturas a su carpeta Empresa/Local/Mes?", { ok: "Reordenar" }))) return; try { const j = await apiSend("POST", "/api/facturas/migrar-estructura"); toast(`Reordenadas: ${j.resultado ? j.resultado.movidos : "OK"} ✅`); } catch (e) { toast("Error: " + e.message); } }
 const facVal = (id) => { const e = document.getElementById(id); return e ? e.value.trim() : ""; };
 async function facLocAdd() { const local = facVal("flLocal"), empresa = facVal("flEmp"); if (!local || !empresa) { toast("Local y empresa obligatorios"); return; } try { await apiSend("POST", "/api/facturas/locales", { local, empresa, cif: facVal("flCif"), local_contable: facVal("flCont") }); toast("Guardado ✅"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facLocDel(local) { if (!(await confirmModal(`¿Quitar la empresa de ${local}?`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/facturas/locales/" + encodeURIComponent(local)); toast("Eliminado"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
@@ -1453,6 +1495,10 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-grp-add") facGrpAdd();
   else if (act === "fac-grp-del") facGrpDel(t.getAttribute("data-id"));
   else if (act === "fac-303") fac303();
+  else if (act === "fac-ficha") facFicha(t.getAttribute("data-id"));
+  else if (act === "fac-export") facExport();
+  else if (act === "fac-303-csv") fac303Csv();
+  else if (act === "fac-migrar") facMigrar();
   else if (act === "com-add") comAdd();
   else if (act === "ag-save") agoraSave(t.getAttribute("data-local"), t.getAttribute("data-i"));
   else if (act === "ag-probe") agoraProbe(t.getAttribute("data-local"));

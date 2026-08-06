@@ -1058,13 +1058,54 @@ app.delete("/api/facturas/grupos/:id", requireAuth(["direccion"]), async (req, r
   res.json({ ok: true });
 });
 
+// Construye el WHERE de facturas a partir de los filtros de query (reutilizado por lista y CSV).
+function facturasWhere(query = {}) {
+  const { local, empresa, tipo, estado, from, to, q } = query;
+  const cond = [], params = [];
+  if (local) { cond.push("local = ?"); params.push(local); }
+  if (empresa) { cond.push("empresa = ?"); params.push(empresa); }
+  if (tipo) { cond.push("tipo = ?"); params.push(tipo); }
+  if (estado === "pagada") cond.push("pagado = 1");
+  else if (estado === "pendiente") cond.push("COALESCE(pagado, 0) = 0");
+  if (from) { cond.push("fecha >= ?"); params.push(from); }
+  if (to) { cond.push("fecha <= ?"); params.push(to); }
+  if (q) { cond.push("(LOWER(proveedor) LIKE ? OR LOWER(concepto) LIKE ? OR numero_factura LIKE ?)"); const like = "%" + String(q).toLowerCase() + "%"; params.push(like, like, "%" + q + "%"); }
+  return { where: cond.length ? "WHERE " + cond.join(" AND ") : "", params };
+}
+
 app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
-  const { local } = req.query;
-  const rows = await dbAll(
-    `SELECT * FROM facturas ${local ? "WHERE local = ?" : ""} ORDER BY creado_en DESC LIMIT 100`,
-    local ? [local] : []
-  );
-  res.json({ ok: true, data: rows });
+  try {
+    const { where, params } = facturasWhere(req.query);
+    const rows = await dbAll(`SELECT * FROM facturas ${where} ORDER BY fecha DESC NULLS LAST, creado_en DESC LIMIT 500`, params);
+    res.json({ ok: true, data: rows });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message, data: [] }); }
+});
+
+// Editar los campos de una factura (corregir lo que extrajo la IA). Solo BD.
+app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "local", "empresa", "pagado"];
+    const sets = [], vals = [];
+    for (const k of allowed) if (req.body[k] !== undefined) { sets.push(`${k} = ?`); vals.push(req.body[k] === "" ? null : req.body[k]); }
+    if (!sets.length) return res.json({ ok: true });
+    vals.push(req.params.id);
+    await dbRun(`UPDATE facturas SET ${sets.join(", ")} WHERE id = ?`, vals);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Export CSV de la tabla de facturas (con los mismos filtros).
+app.get("/api/facturas/export.csv", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const { where, params } = facturasWhere(req.query);
+    const rows = await dbAll(`SELECT fecha, numero_factura, tipo, proveedor, nif, concepto, base_imponible, porcentaje_iva, cuota_iva, total, local, empresa, pagado FROM facturas ${where} ORDER BY fecha DESC NULLS LAST LIMIT 5000`, params);
+    const header = "Fecha,Numero,Tipo,Proveedor,NIF,Concepto,Base,IVA%,Cuota,Total,Local,Empresa,Pagado";
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = rows.map((r) => [r.fecha, r.numero_factura, r.tipo, r.proveedor, r.nif, r.concepto, r.base_imponible, r.porcentaje_iva, r.cuota_iva, r.total, r.local, r.empresa, r.pagado ? "Sí" : "No"].map(esc).join(","));
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="facturas.csv"');
+    res.send([header, ...lines].join("\n"));
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.patch("/api/facturas/:id/pago", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
