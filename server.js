@@ -421,6 +421,32 @@ async function initDB() {
     try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc TEXT`); } catch (e) { console.error("[DB] alter users password_enc:", e.message); }
     try { await client.query(`ALTER TABLE maintenance_issues ADD COLUMN IF NOT EXISTS foto_url TEXT`); } catch (e) { console.error("[DB] alter maintenance_issues foto_url:", e.message); }
 
+    // ── RRHH: perfil de trabajador (aditivo). Enriquece `users` con datos de personal + documentos.
+    for (const col of ["telefono TEXT", "email TEXT", "dni TEXT", "puesto TEXT", "fecha_nac TEXT", "fecha_alta TEXT", "fecha_baja TEXT", "foto_url TEXT", "agora_username TEXT", "activo INTEGER DEFAULT 1"]) {
+      try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter users " + col + ":", e.message); }
+    }
+    // Enlace 1:1 con el operador de Ágora (ignora NULL): un UserName no puede colgar de dos perfiles.
+    try { await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_agora_username ON users(agora_username) WHERE agora_username IS NOT NULL`); } catch (e) { console.error("[DB] idx users agora_username:", e.message); }
+    // Documentos del trabajador con caducidad (contrato, DNI, carnet manipulador…). worker_id → users.id.
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS hr_documentos (
+          id SERIAL PRIMARY KEY,
+          worker_id INTEGER NOT NULL,
+          tipo TEXT NOT NULL DEFAULT 'otro',
+          nombre TEXT,
+          url TEXT NOT NULL,
+          sensible INTEGER DEFAULT 0,
+          fecha_emision TEXT,
+          fecha_caducidad TEXT,
+          autor TEXT,
+          creado_en TEXT NOT NULL
+        )`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_hrdocs_worker ON hr_documentos(worker_id)`);
+    } catch (e) { console.error("[DB] hr_documentos:", e.message); }
+    // Backfill cosmético e idempotente: fecha de alta = alta del usuario para el equipo existente.
+    try { await client.query(`UPDATE users SET fecha_alta = creado_en WHERE fecha_alta IS NULL AND rol IN ('trabajador','encargado')`); } catch (e) { console.error("[DB] backfill fecha_alta:", e.message); }
+
     // ── Inventarios (aditivo, aislado por `local`). Flujo: local → proveedor → contar → pedido.
     try {
       await client.query(`
@@ -3415,22 +3441,35 @@ app.put("/api/hr/applications/:id", requireAuth(["rrhh", "direccion"]), async (r
 });
 
 // ── RRHH: Seguimiento de trabajadores ─────────────────────────────────────
+// Acceso: dirección y rol `rrhh` ven TODOS los locales; `encargado` solo el suyo (validado aquí,
+// no en el front). RRHH_ROLES abre los endpoints de seguimiento también al encargado.
+const RRHH_ROLES = ["rrhh", "direccion", "encargado"];
+function rrhhTodoLocal(req) { return req.user && (req.user.rol === "direccion" || req.user.rol === "rrhh"); }
+function rrhhLocalScope(req) { return rrhhTodoLocal(req) ? null : localScope(req); } // null = sin restricción
+function rrhhPuedeLocal(req, local) {
+  if (rrhhTodoLocal(req)) return true;
+  const l = String(local || "").trim();
+  return !!l && l === localScope(req);
+}
+async function rrhhWorkerLocal(id) { const r = await dbGet("SELECT local FROM users WHERE id = ?", [id]); return r ? (r.local || "") : null; }
 
-app.get("/api/rrhh/trabajadores", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+app.get("/api/rrhh/trabajadores", requireAuth(RRHH_ROLES), async (req, res) => {
   try {
-    const rows = await dbAll(
-      `SELECT id, username, nombre, rol, local FROM users
-       WHERE rol IN ('trabajador','encargado')
-       ORDER BY local ASC, nombre ASC`
-    );
+    const scope = rrhhLocalScope(req);
+    const rows = scope
+      ? await dbAll(`SELECT id, username, nombre, rol, local FROM users WHERE rol IN ('trabajador','encargado') AND local = ? ORDER BY nombre ASC`, [scope])
+      : await dbAll(`SELECT id, username, nombre, rol, local FROM users WHERE rol IN ('trabajador','encargado') ORDER BY local ASC, nombre ASC`);
     res.json({ ok: true, data: rows || [] });
   } catch (e) {
     res.status(500).json({ ok: false });
   }
 });
 
-app.get("/api/rrhh/trabajador/:id/notas", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+app.get("/api/rrhh/trabajador/:id/notas", requireAuth(RRHH_ROLES), async (req, res) => {
   try {
+    const wl = await rrhhWorkerLocal(req.params.id);
+    if (wl === null) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
     const rows = await dbAll(
       `SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC`,
       [req.params.id]
@@ -3441,10 +3480,13 @@ app.get("/api/rrhh/trabajador/:id/notas", requireAuth(["rrhh", "direccion"]), as
   }
 });
 
-app.post("/api/rrhh/trabajador/:id/nota", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+app.post("/api/rrhh/trabajador/:id/nota", requireAuth(RRHH_ROLES), async (req, res) => {
   const { tipo = "nota", contenido, autor } = req.body;
   if (!contenido) return res.status(400).json({ ok: false, error: "Falta contenido" });
   try {
+    const wl = await rrhhWorkerLocal(req.params.id);
+    if (wl === null) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
     const row = await dbRun(
       `INSERT INTO hr_worker_notes (worker_id, tipo, contenido, autor, creado_en) VALUES (?, ?, ?, ?, ?) RETURNING id`,
       [req.params.id, tipo, contenido, autor || null, new Date().toISOString()]
@@ -3455,8 +3497,12 @@ app.post("/api/rrhh/trabajador/:id/nota", requireAuth(["rrhh", "direccion"]), as
   }
 });
 
-app.delete("/api/rrhh/nota/:id", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+app.delete("/api/rrhh/nota/:id", requireAuth(RRHH_ROLES), async (req, res) => {
   try {
+    const nota = await dbGet(`SELECT worker_id FROM hr_worker_notes WHERE id = ?`, [req.params.id]);
+    if (!nota) return res.json({ ok: true });
+    const wl = await rrhhWorkerLocal(nota.worker_id);
+    if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a esta nota" });
     await dbRun(`DELETE FROM hr_worker_notes WHERE id = ?`, [req.params.id]);
     res.json({ ok: true });
   } catch (e) {
@@ -3464,7 +3510,7 @@ app.delete("/api/rrhh/nota/:id", requireAuth(["rrhh", "direccion"]), async (req,
   }
 });
 
-app.get("/api/rrhh/preguntas/:mes", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+app.get("/api/rrhh/preguntas/:mes", requireAuth(RRHH_ROLES), async (req, res) => {
   try {
     const rows = await dbAll(
       `SELECT * FROM hr_preguntas_mes WHERE mes = ? ORDER BY orden ASC`,
@@ -3492,18 +3538,24 @@ app.put("/api/rrhh/preguntas/:mes", requireAuth(["rrhh", "direccion"]), async (r
   }
 });
 
-app.get("/api/rrhh/llamadas/:mes", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+app.get("/api/rrhh/llamadas/:mes", requireAuth(RRHH_ROLES), async (req, res) => {
   try {
-    const rows = await dbAll(`SELECT * FROM hr_llamadas_mes WHERE mes = ?`, [req.params.mes]);
+    const scope = rrhhLocalScope(req);
+    const rows = scope
+      ? await dbAll(`SELECT l.* FROM hr_llamadas_mes l JOIN users u ON u.id = l.worker_id WHERE l.mes = ? AND u.local = ?`, [req.params.mes, scope])
+      : await dbAll(`SELECT * FROM hr_llamadas_mes WHERE mes = ?`, [req.params.mes]);
     res.json({ ok: true, data: rows || [] });
   } catch (e) {
     res.status(500).json({ ok: false });
   }
 });
 
-app.post("/api/rrhh/llamada", requireAuth(["rrhh", "direccion"]), async (req, res) => {
+app.post("/api/rrhh/llamada", requireAuth(RRHH_ROLES), async (req, res) => {
   const { worker_id, mes, respuestas, comentario_libre, autor } = req.body;
   if (!worker_id || !mes) return res.status(400).json({ ok: false, error: "Faltan datos" });
+  const wl = await rrhhWorkerLocal(worker_id);
+  if (wl === null) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+  if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
   const ahora = new Date().toISOString();
   const respJson = respuestas ? JSON.stringify(respuestas) : null;
   try {

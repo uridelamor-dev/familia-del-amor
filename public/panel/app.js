@@ -43,7 +43,7 @@ const NAV = [
     ["clientes", "Clientes", "users", ["direccion", "marketing"]],
   ] },
   { g: "Gestión", items: [
-    ["rrhh", "RR. HH.", "idcard", ["direccion"]],
+    ["rrhh", "RR. HH.", "idcard", ["direccion", "rrhh", "encargado"]],
     ["facturas", "Facturas", "receipt", ["direccion", "contabilidad"]],
     ["web", "Web", "globe", ["direccion", "marketing"]],
     ["reviews", "Reseñas", "star", ["direccion", "encargado", "contabilidad", "marketing"]],
@@ -60,9 +60,9 @@ const NAV = [
   ] },
 ];
 const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
-const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica"]);
+const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica", "rrhh"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
 function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol)); }
 // ¿El usuario actual puede entrar a `view`? Respeta rol + allowlist efectiva (USER.modulos del token).
@@ -1117,8 +1117,15 @@ function rrAutor() { return (USER && (USER.nombre || USER.username || USER.rol))
 let RRSEG = { workers: [], llamadas: [], preguntas: [], sel: null, notas: [], mes: rrMesActual() };
 let RRPREG = { mes: rrMesActual(), preguntas: [] };
 function rrParseResp(v) { if (!v) return []; if (Array.isArray(v)) return v; try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } }
-function rrTabs() {
+// Pestañas visibles por rol: el encargado solo ve el Seguimiento de su equipo (candidaturas,
+// vacantes y preguntas son centrales de RRHH/dirección).
+function rrTabsPermitidas() {
   const T = [["candidaturas", "Candidaturas"], ["seguimiento", "Seguimiento"], ["vacantes", "Vacantes"], ["preguntas", "Preguntas del mes"]];
+  return USER.rol === "encargado" ? T.filter(([id]) => id === "seguimiento") : T;
+}
+function rrTabs() {
+  const T = rrTabsPermitidas();
+  if (T.length <= 1) return "";
   return `<div class="toolbar" style="margin-bottom:12px">${T.map(([id, lab]) => `<button class="btn ${RRTAB === id ? "primary" : ""}" data-act="rr-tab" data-tab="${id}">${lab}</button>`).join("")}</div>`;
 }
 function rrPh(sub) { return `<div class="ph"><div class="eyebrow">Personas</div><h1>RR. HH.</h1><div class="sub">${esc(sub)}</div></div>`; }
@@ -1145,7 +1152,8 @@ function renderRRSegSidebar() {
     }).join("");
     return `<div><div class="ch" style="padding:10px 14px 4px;margin:0"><h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)">${esc(loc)}</h3><span class="pill ${hechos === ws.length ? "ok" : ""}">${hechos}/${ws.length}</span></div><div class="rows">${items}</div></div>`;
   }).join("");
-  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3><button class="btn sm" data-act="rr-worker-add">+ Añadir</button></div>${groups || '<div class="mut" style="padding:14px">Sin trabajadores.</div>'}</div>`;
+  const addBtn = USER.rol === "encargado" ? "" : '<button class="btn sm" data-act="rr-worker-add">+ Añadir</button>';
+  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3>${addBtn}</div>${groups || '<div class="mut" style="padding:14px">Sin trabajadores.</div>'}</div>`;
 }
 function renderRRCheckin() {
   const w = RRSEG.sel; if (!w) return "";
@@ -1194,6 +1202,8 @@ function renderRRPreg() {
 // ── Carga / router de pestañas ──
 async function loadRRHH() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
+  const permitidas = rrTabsPermitidas().map((t) => t[0]);
+  if (!permitidas.includes(RRTAB)) RRTAB = permitidas[0];
   try {
     if (RRTAB === "candidaturas") {
       const qs = new URLSearchParams(); if (RRF.estado) qs.set("estado", RRF.estado); if (RRF.q) qs.set("q", RRF.q);
