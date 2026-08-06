@@ -875,6 +875,7 @@ async function runReviewsSync() {
   await setConfig("reviews_last_attempt", ahora); // último INTENTO (aunque falle)
   const refresh = await getConfig("google_refresh_token");
   const placeIdsCount = await contarPlaceIds();
+  console.log(`[Google Reviews] runReviewsSync ENTRA · token=${!!refresh} placesKey=${!!GOOGLE_PLACES_API_KEY} placeIds=${placeIdsCount}`);
   const result = await syncReviews({
     hasRefreshToken: !!refresh,
     hasPlacesKey: !!GOOGLE_PLACES_API_KEY,
@@ -884,12 +885,13 @@ async function runReviewsSync() {
   });
   const ms = Date.now() - t0;
   const total = result.imported + result.updated;
-  console.log(`[Google Reviews] Total importado: ${total} · Tiempo: ${ms} ms`);
-  console.log(`[Google Reviews] Sync finished: ${result.source} / ${total}`);
+  console.log(`[Google Reviews] runReviewsSync SALE · source=${result.source} imported=${result.imported} updated=${result.updated} reason=${result.reason || "-"} bpError=${result.businessProfileError || "-"} errors=${(result.errors || []).join("; ") || "-"} · ${ms} ms`);
   await setConfig("reviews_last_fetch", ahora);
   await setConfig("reviews_last_source", result.source);
+  await setConfig("reviews_last_reason", result.reason || "");
+  await setConfig("reviews_last_bp_error", result.businessProfileError || "");
   await setConfig("reviews_last_error", (result.businessProfileError || (result.errors && result.errors[0]) || result.reason || ""));
-  if (total > 0 || result.source !== "none") await setConfig("reviews_last_ok", ahora); // última SINCRONIZACIÓN con fuente
+  if (total > 0) await setConfig("reviews_last_ok", ahora); // última SINCRONIZACIÓN con reseñas de verdad
   return result;
 }
 
@@ -1572,6 +1574,8 @@ app.get("/api/google/status", async (req, res) => {
     last_fetch: (await getConfig("reviews_last_ok")) || (await getConfig("reviews_last_fetch")) || null, // última sincronización correcta
     last_attempt: (await getConfig("reviews_last_attempt")) || null, // último intento
     source: (await getConfig("reviews_last_source")) || null,
+    reason: (await getConfig("reviews_last_reason")) || null,
+    businessProfileError: (await getConfig("reviews_last_bp_error")) || null,
     last_error: (await getConfig("reviews_last_error")) || null,
     places_configured: placesCount,
     places_key_set: !!GOOGLE_PLACES_API_KEY,

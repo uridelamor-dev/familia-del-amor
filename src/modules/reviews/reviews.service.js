@@ -156,7 +156,7 @@ export function mensajeEstadoReseñas(s = {}) {
     return `Última sincronización correcta: ${n} reseña(s) mediante ${fuente}.`;
   }
   if (!conectado && !s.places_key_set) return "Google no conectado y sin clave de Places: no hay reseñas.";
-  if (s.reason === "sin_place_ids") return "Google conectado, pero faltan los Place IDs de los locales (configúralos para usar Places API).";
+  if (s.reason === "sin_place_ids") return "No hay Place IDs configurados.";
   if (s.reason === "sin_places_key" || s.reason === "business_sin_datos_y_sin_places_key") return "Google conectado, pero Business Profile no devuelve reseñas (cuota/permisos) y falta la clave GOOGLE_PLACES_API_KEY.";
   if (s.source === "places") return "Conectado. Usando Places API, pero aún sin reseñas (revisa los Place IDs).";
   if (s.businessProfileError || s.reason) return `Google conectado, pero Business Profile no tiene cuota/permiso aprobado.${s.places_configured ? " Usando Places API." : " Configura Place IDs para ver reseñas ya."}`;
