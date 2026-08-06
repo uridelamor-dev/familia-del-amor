@@ -18,7 +18,7 @@ import { permisosV2Enabled } from "./src/core/flags.js";
 import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
-import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult } from "./src/modules/reviews/reviews.service.js";
+import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
@@ -775,7 +775,7 @@ const STAR = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 };
 
 // Cuenta cuántos Place IDs válidos hay configurados (tolerante a JSON malformado).
 async function contarPlaceIds() {
-  try { const raw = await getConfig("places_ids"); return raw ? JSON.parse(raw).filter((l) => l && l.placeId).length : 0; }
+  try { const raw = await getConfig("places_ids"); return placeIdsConfigurados(raw ? JSON.parse(raw) : []); }
   catch { return 0; }
 }
 // Traduce un error de Google a un motivo corto (sin volcar la respuesta completa).
@@ -1656,11 +1656,9 @@ async function buscarPlacesTextSearch(query) {
 async function upsertPlaceLocal(entry) {
   const raw = await getConfig("places_ids");
   let arr = []; try { arr = raw ? JSON.parse(raw) : []; } catch { arr = []; }
-  const i = arr.findIndex((l) => l && l.name === entry.name);
-  const nuevo = { name: entry.name, placeId: entry.placeId, google_location_id: entry.google_location_id || null, official_name: entry.official_name || "", address: entry.address || "" };
-  if (i >= 0) arr[i] = { ...arr[i], ...nuevo }; else arr.push(nuevo);
-  await setConfig("places_ids", JSON.stringify(arr));
-  return arr;
+  const nuevo = upsertPlaceEntry(arr, entry);
+  await setConfig("places_ids", JSON.stringify(nuevo));
+  return nuevo;
 }
 
 // Descubre automáticamente las fichas de Google para cada local del ERP.
