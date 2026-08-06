@@ -599,12 +599,25 @@ async function facAsignar(id) { const sel = document.querySelector('.facSel[data
 
 // ════════════════════════ VISTA: WHATSAPP ════════════════════════
 let WA_POLL = null;
-function renderWhatsApp(status, qr, links) {
+function waGroupOpts(cur, groups) {
+  let opts = `<option value="">— sin vincular —</option>`;
+  const has = (groups || []).some((g) => g.id === cur);
+  if (cur && !has) opts += `<option value="${esc(cur)}" selected>Grupo actual (vinculado)</option>`;
+  opts += (groups || []).map((g) => `<option value="${esc(g.id)}" ${cur === g.id ? "selected" : ""}>${esc(g.name || g.id)}</option>`).join("");
+  return opts;
+}
+function renderWhatsApp(status, qr, links, groups) {
   const connected = status && status.connected;
-  const rows = links || [];
+  const linkMap = {}; (links || []).forEach((l) => { linkMap[l.local] = l.group_jid; });
   const conn = `<div class="card"><div class="ch"><h3>Conexión de Sara</h3><span class="pill ${connected ? "ok" : "bad"}">${connected ? "Conectado" : "Desconectado"}</span></div>${connected ? `<p class="mut">Sara está conectada y atiende reservas por WhatsApp automáticamente.</p>` : `<p class="mut">Escanea este código desde WhatsApp → Dispositivos vinculados para reconectar a Sara:</p>${qr && qr.qr ? `<div style="text-align:center;padding:10px"><img src="${esc(qr.qr)}" alt="Código QR" style="width:240px;height:240px;border-radius:12px;background:#fff;padding:8px"></div><div class="mut" style="text-align:center;font-size:12px">El código se actualiza solo; en cuanto vincules, esta pantalla lo detectará.</div>` : '<p class="mut">Generando código QR…</p>'}`}</div>`;
-  const linksCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos por local</h3></div>${rows.length ? `<div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Estado</th></tr></thead><tbody>${rows.map((l) => `<tr><td>${esc(l.local)}</td><td class="r">${l.group_jid ? '<span class="pill ok">Vinculado</span>' : '<span class="pill">Sin vincular</span>'}</td></tr>`).join("")}</tbody></table></div>` : '<div style="padding:0 18px 12px" class="mut">Sin grupos vinculados.</div>'}<div style="padding:14px 18px"><a class="btn" href="/direccion.html">Configurar grupos ↗</a></div></div>`;
-  return `<div class="ph"><div class="eyebrow">Comunicación</div><h1>WhatsApp / Sara</h1><div class="sub">Estado de la conexión y grupos por local</div></div><div class="grid g2">${conn}${linksCard}</div>`;
+  const linksCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos por local</h3>${connected ? "" : '<span class="pill">Conecta Sara para elegir grupos</span>'}</div><div class="rows">${LOCALES.map((local) => { const cur = linkMap[local] || ""; return `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(local)}</div>${cur ? `<div class="t2">Vinculado</div>` : `<div class="t2">Sin vincular</div>`}</div><select class="waSel" style="max-width:210px" ${connected ? "" : "disabled"}>${waGroupOpts(cur, groups)}</select><button class="btn sm" data-act="wa-link" data-local="${esc(local)}" ${connected ? "" : "disabled"}>Guardar</button></div>`; }).join("")}</div><div class="mut" style="padding:12px 18px;font-size:12px">El grupo de cada local recibe los avisos de reservas y cancelaciones.</div></div>`;
+  return `<div class="ph"><div class="eyebrow">Comunicación</div><h1>WhatsApp / Sara</h1><div class="sub">Estado de la conexión y vinculación de grupos por local</div></div><div class="grid g2">${conn}${linksCard}</div>`;
+}
+async function waLink(local, btn) {
+  const row = btn && btn.closest(".row"); const sel = row && row.querySelector(".waSel"); const groupId = sel ? sel.value : "";
+  if (!groupId) { toast("Elige un grupo primero"); return; }
+  try { await apiSend("POST", "/api/whatsapp/link", { local, groupId }); toast("Grupo vinculado ✅"); loadWhatsApp(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 async function loadWhatsApp() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -612,7 +625,8 @@ async function loadWhatsApp() {
     const status = await apiRaw("/api/whatsapp/status");
     let qr = null; if (!status.connected) { try { qr = await apiRaw("/api/whatsapp/qr"); } catch { /* opcional */ } }
     const links = await apiOptional("/api/whatsapp/links");
-    view.innerHTML = renderWhatsApp(status, qr, links);
+    const groups = status.connected ? (await apiOptional("/api/whatsapp/groups")) : [];
+    view.innerHTML = renderWhatsApp(status, qr, links, groups);
     clearInterval(WA_POLL); WA_POLL = null;
     if (!status.connected) WA_POLL = setInterval(pollWa, 6000);
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
@@ -880,6 +894,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-pago") facPago(t.getAttribute("data-id"));
   else if (act === "fac-asignar") facAsignar(t.getAttribute("data-id"));
   else if (act === "camp-nueva") openNuevaCampana();
+  else if (act === "wa-link") waLink(t.getAttribute("data-local"), t);
   else if (act === "web-scope") { WEB.scope = t.getAttribute("data-scope"); WEB.q = ""; const v = document.getElementById("view"); if (v) { v.innerHTML = renderWeb(); webMountPreview(); } }
   else if (act === "web-lang") { WEB.lang = t.getAttribute("data-lang"); const v = document.getElementById("view"); if (v) { v.innerHTML = renderWeb(); webMountPreview(); } webPost({ type: "set-lang", lang: WEB.lang }); }
   else if (act === "web-gal-del") { webGalDel(t.getAttribute("data-galkey"), +t.getAttribute("data-idx")); }
