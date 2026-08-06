@@ -834,20 +834,23 @@ function facFicha(id) {
 async function facExport() { try { const r = await fetch("/api/facturas/export.csv" + (facQS() ? "?" + facQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "facturas.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
 function facSubir() {
   const localOpts = ['<option value="">Detectar automáticamente (por NIF)</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
-  const ov = modal("Subir factura", `<div class="field" style="width:100%"><label>Archivo (PDF o imagen)</label><input type="file" id="fsFile" accept="application/pdf,image/*"></div><div class="field" style="width:100%"><label>Local</label><select id="fsLocal">${localOpts}</select></div><div class="mut" style="font-size:12px">Se procesa con la misma IA, orden en Drive y control de duplicados que WhatsApp/correo. Requiere Google conectado.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fsSend">Subir y procesar</button></div><div id="fsMsg" class="mut" style="margin-top:8px"></div>`);
-  ov.querySelector("#fsSend").addEventListener("click", async () => {
+  const ov = modal("Subir factura", `<div class="field" style="width:100%"><label>Archivo (PDF o imagen)</label><input type="file" id="fsFile" accept="application/pdf,image/*"></div><div class="field" style="width:100%"><label>Local</label><select id="fsLocal">${localOpts}</select></div><div class="mut" style="font-size:12px">Se procesa en segundo plano con la misma IA, orden en Drive y control de duplicados que WhatsApp/correo. Requiere Google conectado. Puedes cerrar y seguir trabajando; te aviso al terminar.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fsSend">Subir y procesar</button></div>`);
+  ov.querySelector("#fsSend").addEventListener("click", () => {
     const inp = ov.querySelector("#fsFile"); const f = inp && inp.files && inp.files[0];
     if (!f) { toast("Elige un archivo"); return; }
-    const btn = ov.querySelector("#fsSend"); btn.disabled = true; ov.querySelector("#fsMsg").textContent = "Procesando… (puede tardar unos segundos)";
-    try {
-      const fd = new FormData(); fd.append("file", f); const loc = ov.querySelector("#fsLocal").value; if (loc) fd.append("local", loc);
-      const r = await fetch("/api/facturas/subir", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
-      const j = await r.json();
-      if (!j.ok) { ov.querySelector("#fsMsg").textContent = (j.duplicate ? "⚠ " : "Error: ") + (j.error || "no se pudo procesar"); btn.disabled = false; return; }
-      ov.remove();
-      toast(j.pendiente ? "Subida ✅ — pendiente de asignar local" : `Factura procesada ✅${j.proveedor ? " · " + j.proveedor : ""}`);
-      loadFacturas();
-    } catch (e) { ov.querySelector("#fsMsg").textContent = "Error: " + e.message; btn.disabled = false; }
+    const loc = ov.querySelector("#fsLocal").value;
+    ov.remove(); // fuera la pantallita: sigue trabajando
+    toast(`Subiendo «${f.name}» en segundo plano…`);
+    (async () => {
+      try {
+        const fd = new FormData(); fd.append("file", f); if (loc) fd.append("local", loc);
+        const r = await fetch("/api/facturas/subir", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
+        const j = await r.json();
+        if (!j.ok) { toast((j.duplicate ? "⚠ Duplicada, no se subió: " : "⚠ Error al procesar: ") + f.name); if (CURRENT === "facturas") loadFacturas(); return; }
+        toast(j.pendiente ? `✅ ${f.name}: subida, pendiente de asignar local` : `✅ Factura procesada: ${j.proveedor || f.name}`);
+        if (CURRENT === "facturas") loadFacturas();
+      } catch (e) { toast(`⚠ Error al subir ${f.name}: ${e.message}`); }
+    })();
   });
 }
 
@@ -873,7 +876,7 @@ function renderFacturasConfig() {
     <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Drive / Sheets</div><div class="t2">Guarda y ordena las facturas por empresa/local/mes</div></div><span class="pill ${drv.conectado ? "ok" : "bad"}">${drv.conectado ? "Conectado" : "Sin conectar"}</span></div>
     <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Correo (Gmail)</div><div class="t2">${gm.conectado ? `${num((gm.emails && gm.emails.length) || 0)} correos procesados` : "Lee las facturas que llegan por email"}</div></div><span class="pill ${gm.conectado ? "ok" : "bad"}">${gm.conectado ? "Activo" : "Sin conectar"}</span></div>
     <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Sheet maestro consolidado</div><div class="t2">${master.url ? "Todas las facturas de todos los locales en una hoja" : "Se crea al procesar la primera factura o al reconstruir"}</div></div>${master.url ? `<a class="link" href="${esc(master.url)}" target="_blank" rel="noopener">Abrir ↗</a>` : '<span class="pill">Sin crear</span>'}</div>
-  </div><div class="toolbar" style="padding:12px 0 0"><a class="btn" href="/auth/google-facturas">${drv.conectado ? "Reconectar Google" : "Conectar Google"}</a><button class="btn" data-act="fac-migrar">Reordenar Drive</button><button class="btn" data-act="fac-reparar">Verificar y reparar Sheets</button></div><div class="mut" style="font-size:12px;margin-top:6px">"Reparar" reescribe todas las hojas y el maestro desde la base de datos (la fuente de verdad). Úsalo si algún Sheet se ve desactualizado.</div></div>`;
+  </div><div class="toolbar" style="padding:12px 0 0"><a class="btn" href="/auth/google-facturas">${drv.conectado ? "Reconectar Google" : "Conectar Google"}</a><button class="btn" data-act="fac-migrar">Reordenar Drive</button><button class="btn" data-act="fac-reparar">Verificar y reparar Sheets</button><button class="btn danger" data-act="fac-empezar-cero">Empezar de cero</button></div><div class="mut" style="font-size:12px;margin-top:6px">"Reparar" reescribe todas las hojas y el maestro desde la base de datos (la fuente de verdad). "Empezar de cero" limpia todas las facturas de la base de datos (no borra Drive; eso se hace a mano).</div></div>`;
   // Carpetas de Drive vigiladas (tercer canal de ingesta)
   const carp = FCFG.carpetas || [];
   const drive = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Carpetas de Drive vigiladas</h3></div><div class="mut" style="padding:0 18px;font-size:12.5px">Deja una factura (PDF/imagen) en la carpeta de Drive de un local y entrará sola cada pocos minutos.</div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Carpeta</th><th></th></tr></thead><tbody>${carp.map((c) => `<tr><td>${esc(c.local)}</td><td class="mut">${c.folder_url ? `<a class="link" href="${esc(c.folder_url)}" target="_blank" rel="noopener">${esc(c.folder_id)}</a>` : esc(c.folder_id)}</td><td class="r"><button class="linkbtn" data-act="fac-drive-del" data-local="${esc(c.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin carpetas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fdLocal")}<input id="fdFolder" placeholder="Enlace o ID de la carpeta de Drive" style="flex:1;min-width:0"><button class="btn primary" data-act="fac-drive-add">Vincular</button></div></div>`;
@@ -919,6 +922,12 @@ async function facDriveAdd() { const local = facVal("fdLocal"), folder = facVal(
 async function facDriveDel(local) { if (!(await confirmModal(`¿Dejar de vigilar la carpeta de ${local}?`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/facturas/drive-carpetas/" + encodeURIComponent(local)); toast("Eliminada"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facReconstruir() { if (!(await confirmModal("¿Reconstruir el Sheet maestro con todas las facturas registradas?", { ok: "Reconstruir" }))) return; try { const j = await apiSend("POST", "/api/facturas/reconstruir-maestro"); toast(`Maestro actualizado: ${num(j.total || 0)} facturas ✅`); loadFacturas(); } catch (e) { toast("Error: " + e.message); } }
 async function facReparar() { if (!(await confirmModal("¿Verificar y reparar todos los Sheets desde la base de datos? Reescribe las hojas por local y el maestro.", { ok: "Reparar" }))) return; toast("Reparando Sheets… (puede tardar)"); try { const j = await apiSend("POST", "/api/facturas/reparar"); toast(`Sheets reparados: ${num(j.tabs || 0)} hojas · maestro ${num(j.maestro || 0)} facturas ✅`); loadFacturas(); } catch (e) { toast("Error: " + e.message); } }
+async function facEmpezarCero() {
+  if (!(await confirmModal("¿EMPEZAR DE CERO? Se borrarán TODAS las facturas de la base de datos (no los archivos de Drive). Úsalo solo para reiniciar el sistema.", { ok: "Sí, borrar todo", danger: true }))) return;
+  if (!(await confirmModal("Confirmación final: esto no se puede deshacer. ¿Seguro?", { ok: "Empezar de cero", danger: true }))) return;
+  try { const j = await apiSend("POST", "/api/facturas/reset-test"); toast("Base de datos de facturas limpiada ✅"); loadFacturas(); }
+  catch (e) { toast("Error: " + e.message); }
+}
 const facVal = (id) => { const e = document.getElementById(id); return e ? e.value.trim() : ""; };
 async function facLocAdd() { const local = facVal("flLocal"), empresa = facVal("flEmp"); if (!local || !empresa) { toast("Local y empresa obligatorios"); return; } try { await apiSend("POST", "/api/facturas/locales", { local, empresa, cif: facVal("flCif"), local_contable: facVal("flCont") }); toast("Guardado ✅"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facLocDel(local) { if (!(await confirmModal(`¿Quitar la empresa de ${local}?`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/facturas/locales/" + encodeURIComponent(local)); toast("Eliminado"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
@@ -1536,6 +1545,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-drive-del") facDriveDel(t.getAttribute("data-local"));
   else if (act === "fac-reconstruir") facReconstruir();
   else if (act === "fac-reparar") facReparar();
+  else if (act === "fac-empezar-cero") facEmpezarCero();
   else if (act === "com-add") comAdd();
   else if (act === "ag-save") agoraSave(t.getAttribute("data-local"), t.getAttribute("data-i"));
   else if (act === "ag-probe") agoraProbe(t.getAttribute("data-local"));

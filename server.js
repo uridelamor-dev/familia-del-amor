@@ -564,6 +564,8 @@ async function initDB() {
       "CREATE INDEX IF NOT EXISTS idx_facturas_fecha ON facturas(fecha)",
       "CREATE INDEX IF NOT EXISTS idx_facturas_pagado ON facturas(pagado)",
       "CREATE INDEX IF NOT EXISTS idx_facturas_proveedor ON facturas(proveedor)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_facturas_hash ON facturas(file_hash) WHERE file_hash IS NOT NULL",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_facturas_pend_hash ON facturas_pendientes(file_hash) WHERE file_hash IS NOT NULL",
       "CREATE INDEX IF NOT EXISTS idx_maint_estado ON maintenance_issues(estado)",
       "CREATE INDEX IF NOT EXISTS idx_maint_local ON maintenance_issues(local)",
       "CREATE INDEX IF NOT EXISTS idx_greviews_fecha ON google_reviews(fecha)",
@@ -1326,14 +1328,21 @@ app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), asy
   }
 });
 
+// Empezar de cero: limpia TODO el estado de facturas en la BD (no borra archivos de Drive,
+// eso se hace a mano). Deja el sistema listo para volcar desde cero, sin referencias colgando.
 app.post("/api/facturas/reset-test", requireAuth(["direccion"]), async (req, res) => {
   try {
     await dbRun("DELETE FROM facturas");
     await dbRun("DELETE FROM facturas_pendientes");
     await dbRun("DELETE FROM facturas_emails_procesados");
+    try { await dbRun("DELETE FROM facturas_drive_procesados"); } catch { /* tabla nueva */ }
     await dbRun("UPDATE facturas_grupos SET sheet_id = NULL, sheet_url = NULL");
     await dbRun("DELETE FROM config WHERE key = 'drive_facturas_root_id'");
-    res.json({ ok: true, mensaje: "Reset de pruebas completado. Ahora borra el contenido de Drive y envía facturas de nuevo." });
+    await dbRun("DELETE FROM config WHERE key = 'drive_facturas_master_sheet_id'");
+    // Con la BD ya limpia, aseguramos los índices únicos por hash (evitan duplicados de raíz).
+    try { await dbRun("CREATE UNIQUE INDEX IF NOT EXISTS uq_facturas_hash ON facturas(file_hash) WHERE file_hash IS NOT NULL"); } catch (e) { console.error("[reset] uq_facturas_hash:", e.message); }
+    try { await dbRun("CREATE UNIQUE INDEX IF NOT EXISTS uq_facturas_pend_hash ON facturas_pendientes(file_hash) WHERE file_hash IS NOT NULL"); } catch (e) { console.error("[reset] uq_pend_hash:", e.message); }
+    res.json({ ok: true, mensaje: "Base de datos de facturas limpiada. Ahora borra el contenido de Drive (y los Sheets si quieres) y vuelve a subir." });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
