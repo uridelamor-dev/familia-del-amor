@@ -19,7 +19,8 @@ import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./sr
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { mapManageRow, resumenPorLocal, draftRequest, extractText } from "./src/modules/reviews/reviews.service.js";
-import { loadAgoraConfigs, publicConfig } from "./src/integrations/agora/registry.js";
+import crypto from "crypto";
+import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { createAgoraClient } from "./src/integrations/agora/client.js";
 import { syncVentas } from "./src/integrations/agora/sync.js";
 
@@ -253,6 +254,19 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY,
         value TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Config de Ágora POR LOCAL, editable desde el panel (fuente de verdad; sustituye al Secret
+    // AGORA_LOCALES). El token va CIFRADO (AES-256-GCM) y NUNCA se expone por la API.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS agora_locales (
+        local TEXT PRIMARY KEY,
+        host TEXT NOT NULL,
+        token TEXT,
+        local_id TEXT,
+        activo INTEGER DEFAULT 1,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -2090,9 +2104,57 @@ app.get("/api/dashboard", requireAuth(["direccion", "encargado", "contabilidad"]
 });
 
 // ── Ágora TPV: ventas y estado de integración ────────────────────────────────────
-// Job de sincronización (dormido si no hay locales configurados en AGORA_LOCALES).
+// ── Cifrado del apiToken de Ágora en reposo (AES-256-GCM). El token NUNCA sale por la API. ──
+const AGORA_ENC_KEY = crypto.scryptSync(String(resolveJwtSecret() || "tapeta"), "agora-token-v1", 32);
+function agoraEncToken(plain) {
+  if (!plain) return null;
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv("aes-256-gcm", AGORA_ENC_KEY, iv);
+  const ct = Buffer.concat([c.update(String(plain), "utf8"), c.final()]);
+  return "enc:" + iv.toString("hex") + ":" + c.getAuthTag().toString("hex") + ":" + ct.toString("hex");
+}
+function agoraDecToken(stored) {
+  if (!stored) return null;
+  const s = String(stored);
+  if (!s.startsWith("enc:")) return s; // compat: valores en texto plano (p. ej. sembrados del env)
+  try {
+    const [, ivh, tagh, cth] = s.split(":");
+    const d = crypto.createDecipheriv("aes-256-gcm", AGORA_ENC_KEY, Buffer.from(ivh, "hex"));
+    d.setAuthTag(Buffer.from(tagh, "hex"));
+    return Buffer.concat([d.update(Buffer.from(cth, "hex")), d.final()]).toString("utf8");
+  } catch { return null; }
+}
+// Configs activas: la BD manda; si está vacía, cae al Secret AGORA_LOCALES (compat).
+async function loadAgoraConfigsFromDB() {
+  const rows = await dbAll(`SELECT local, host, token, local_id, activo FROM agora_locales`);
+  return configsFromRows((rows || []).map((r) => ({ local: r.local, host: r.host, token: agoraDecToken(r.token), local_id: r.local_id, activo: r.activo })));
+}
+async function loadAgoraConfigsActive() {
+  try { const db = await loadAgoraConfigsFromDB(); if (db.length) return db; } catch { /* cae al env */ }
+  return loadAgoraConfigs();
+}
+// Vuelca una sola vez el Secret AGORA_LOCALES a la BD (si la BD está vacía), para no perder config previa.
+async function seedAgoraFromEnv() {
+  try {
+    if (await getConfig("agora_seed_env_v1")) return;
+    const envCfgs = loadAgoraConfigs();
+    if (envCfgs.length) {
+      const rows = await dbAll(`SELECT local FROM agora_locales LIMIT 1`);
+      if (!rows || !rows.length) {
+        for (const c of envCfgs) {
+          await dbRun(`INSERT INTO agora_locales (local, host, token, local_id, activo, updated_at) VALUES (?, ?, ?, ?, 1, ?) ON CONFLICT (local) DO NOTHING`,
+            [c.local, c.host, agoraEncToken(c.token), c.localId, new Date().toISOString()]);
+        }
+        console.log("[Agora] Config del Secret AGORA_LOCALES volcada a la BD (" + envCfgs.length + " locales).");
+      }
+    }
+    await setConfig("agora_seed_env_v1", "1");
+  } catch (e) { console.error("[Agora] seed env→BD:", e.message); }
+}
+
+// Job de sincronización (dormido si no hay locales configurados).
 async function runAgoraSync() {
-  const configs = loadAgoraConfigs();
+  const configs = await loadAgoraConfigsActive();
   if (!configs.length) return;
   const hoy = new Date().toISOString().slice(0, 10);
   await syncVentas({ get: dbGet, all: dbAll, run: dbRun }, {
@@ -2119,7 +2181,7 @@ app.get("/api/ventas", requireAuth(["direccion", "contabilidad"]), async (req, r
 // Estado de la integración por local (NUNCA expone el token).
 app.get("/api/agora/estado", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const configs = loadAgoraConfigs();
+    const configs = await loadAgoraConfigsActive();
     const out = [];
     for (const cfg of configs) {
       let estado = null;
@@ -2130,6 +2192,84 @@ app.get("/api/agora/estado", requireAuth(["direccion", "contabilidad"]), async (
     res.json({ ok: true, configurados: configs.length, lastSync: lastSync || null, locales: out });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error estado Ágora" });
+  }
+});
+
+// Configuración de Ágora por local, editable desde el panel (solo dirección). NUNCA devuelve el token.
+app.get("/api/agora/locales", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const rows = await dbAll(`SELECT local, host, token, local_id, activo, updated_at FROM agora_locales ORDER BY local`);
+    const lastSync = await getConfig("agora_last_sync");
+    const out = [];
+    for (const r of rows || []) {
+      const tok = agoraDecToken(r.token);
+      let estado = null;
+      try { const raw = await getConfig("agora_estado_" + r.local); if (raw) estado = JSON.parse(raw); } catch { /* ignore */ }
+      out.push({ local: r.local, host: r.host, local_id: r.local_id || null, activo: r.activo !== 0 && r.activo !== false, tokenSet: !!tok, tokenHint: tok ? "••••" + String(tok).slice(-4) : null, updated_at: r.updated_at || null, estado });
+    }
+    res.json({ ok: true, data: out, lastSync: lastSync || null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error leyendo config Ágora" });
+  }
+});
+
+// Alta/edición por local. El token es opcional en edición (si viene vacío, se conserva el actual).
+app.post("/api/agora/locales", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const { local, host, token, local_id, activo } = req.body || {};
+    if (!local || !host) return res.status(400).json({ ok: false, error: "Faltan local y host" });
+    const localId = local_id != null && String(local_id).trim() !== "" ? String(local_id).trim() : null;
+    const act = (activo === false || activo === 0 || activo === "0") ? 0 : 1;
+    const now = new Date().toISOString();
+    const tokTrim = token != null ? String(token).trim() : "";
+    const existing = await dbGet(`SELECT token FROM agora_locales WHERE local = ?`, [local]);
+    let tokenStored;
+    if (tokTrim) tokenStored = agoraEncToken(tokTrim);
+    else if (existing && existing.token) tokenStored = existing.token; // conserva el actual
+    else tokenStored = null;
+    await dbRun(
+      `INSERT INTO agora_locales (local, host, token, local_id, activo, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (local) DO UPDATE SET host = EXCLUDED.host, token = EXCLUDED.token, local_id = EXCLUDED.local_id, activo = EXCLUDED.activo, updated_at = EXCLUDED.updated_at`,
+      [String(local).trim(), String(host).trim(), tokenStored, localId, act, now]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error guardando config Ágora" });
+  }
+});
+
+app.delete("/api/agora/locales/:local", requireAuth(["direccion"]), async (req, res) => {
+  try { await dbRun(`DELETE FROM agora_locales WHERE local = ?`, [req.params.local]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: "Error eliminando config Ágora" }); }
+});
+
+// Probar conexión con el TPV de un local (ping): responde si el servidor está vivo. No expone el token.
+app.post("/api/agora/probe", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const { local } = req.body || {};
+    if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
+    const row = await dbGet(`SELECT local, host, token, local_id FROM agora_locales WHERE local = ?`, [local]);
+    if (!row) return res.status(404).json({ ok: false, error: "Local no configurado" });
+    const cfgs = configsFromRows([{ local: row.local, host: row.host, token: agoraDecToken(row.token), local_id: row.local_id, activo: true }]);
+    if (!cfgs.length) return res.status(400).json({ ok: false, error: "Config incompleta (falta host o token)" });
+    const client = createAgoraClient(cfgs[0]);
+    const alive = await client.ping();
+    res.json({ ok: true, alive, mensaje: alive ? "El TPV respondió (servidor vivo)" : "Sin respuesta: el local está cerrado o inalcanzable" });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error en la prueba de conexión" });
+  }
+});
+
+// Forzar sincronización de ventas ahora mismo (solo dirección).
+app.post("/api/agora/sync-now", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const configs = await loadAgoraConfigsActive();
+    if (!configs.length) return res.json({ ok: true, configurados: 0, mensaje: "No hay locales de Ágora activos" });
+    await runAgoraSync();
+    const lastSync = await getConfig("agora_last_sync");
+    res.json({ ok: true, configurados: configs.length, lastSync: lastSync || null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Error sincronizando" });
   }
 });
 
@@ -2973,6 +3113,9 @@ const server = app.listen(PORT, async () => {
 
   // Restaurar datos desde KV (idempotente, solo importa los que falten)
   try { await restoreFromKV(); } catch (e) { console.error("[KV] Error en restore:", e.message); }
+
+  // Volcar una sola vez el Secret AGORA_LOCALES a la BD (fuente de verdad ahora editable desde el panel)
+  try { await seedAgoraFromEnv(); } catch (e) { console.error("[Agora] Error en seed env→BD:", e.message); }
 
   setOnReserva(async (reserva, jid) => {
     const { local, personas, dia, hora, telefono, nombre_reserva, pendiente } = reserva;

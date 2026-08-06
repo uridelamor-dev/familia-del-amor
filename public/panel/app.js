@@ -53,11 +53,12 @@ const NAV = [
     ["whatsapp", "WhatsApp", "chat", ["direccion", "encargado"]],
   ] },
   { g: "Sistema", items: [
+    ["agora", "Ágora (TPV)", "plug", ["direccion"]],
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", sara: "Sara", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], clientes: ["direccion"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 
 let USER = null, CURRENT = "dashboard";
 
@@ -178,6 +179,7 @@ const ICONS = {
   bot: '<rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M12 8V4.5M8.5 13h.01M15.5 13h.01M9.5 16h5M2.5 12.5v2M21.5 12.5v2"/><circle cx="12" cy="4" r="1.3"/>',
   clip: '<path d="M20 11l-8.5 8.5a4 4 0 0 1-5.7-5.7L14 5.6a2.6 2.6 0 0 1 3.7 3.7l-8.3 8.3a1.2 1.2 0 0 1-1.7-1.7l7.6-7.6"/>',
   mega: '<path d="M3 11l12-5v12L3 13zM3 11v3M15 8.5a3 3 0 0 1 0 7M6.5 13.5V17a1.5 1.5 0 0 0 3 0v-2.6"/>',
+  plug: '<path d="M9 2v6M15 2v6M6 8h12v2a6 6 0 0 1-12 0zM12 16v6"/>',
 };
 function ic(name, size = 18) { return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICONS.dash}</svg>`; }
 
@@ -980,6 +982,68 @@ async function comAdd() {
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 
+// ── Ágora (TPV): configurar la integración de ventas por local, desde el panel ────────────────
+let AGORA = { locales: [], lastSync: null };
+function agoraCfgFor(local) { return AGORA.locales.find((x) => x.local === local) || null; }
+function renderAgoraRow(local, i) {
+  const c = agoraCfgFor(local);
+  const est = c && c.estado;
+  const alive = est ? est.alive : null;
+  const pill = !c ? '<span class="pill">Sin configurar</span>' : (!c.activo ? '<span class="pill">Desactivado</span>' : (alive === true ? '<span class="pill ok">TPV vivo</span>' : alive === false ? '<span class="pill bad">Sin respuesta</span>' : '<span class="pill brand">Activo</span>'));
+  const tokPh = c && c.tokenSet ? `${c.tokenHint} · guardado — escribe para cambiar` : "apiToken de Ágora";
+  return `<div class="card" data-agrow="${i}"><div class="ch"><h3>${esc(local)}</h3>${pill}</div>
+    <div class="toolbar">
+      <div class="field grow"><label>Host (DynDNS + puerto)</label><input id="agHost_${i}" value="${esc(c ? c.host : "")}" placeholder="local.chickenkiller.com:8984"></div>
+      <div class="field"><label>Local ID (opcional)</label><input id="agLid_${i}" value="${esc(c && c.local_id ? c.local_id : "")}" placeholder="—" style="max-width:120px"></div>
+    </div>
+    <div class="field" style="width:100%"><label>apiToken</label><input id="agTok_${i}" type="password" autocomplete="off" placeholder="${esc(tokPh)}"></div>
+    <div class="toolbar" style="align-items:center">
+      <label class="chip" style="cursor:pointer"><input type="checkbox" id="agAct_${i}" ${(!c || c.activo) ? "checked" : ""} style="margin-right:6px">Activo</label>
+      <span class="grow"></span>
+      <button class="btn" data-act="ag-probe" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Probar conexión</button>
+      <button class="btn primary" data-act="ag-save" data-local="${esc(local)}" data-i="${i}">Guardar</button>
+      ${c ? `<button class="btn sm danger" data-act="ag-del" data-local="${esc(local)}">Eliminar</button>` : ""}
+    </div>${est && est.ts ? `<div class="mut" style="font-size:12px;margin-top:2px">Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}</div>` : ""}</div>`;
+}
+function renderAgora() {
+  const head = `<div class="ph"><div class="eyebrow">Sistema · Integraciones</div><h1>Ágora (TPV)</h1><div class="sub">Conecta el TPV de cada local para traer las ventas. El apiToken se guarda cifrado y nunca se muestra.</div><div class="acts"><button class="btn primary" data-act="ag-sync">Sincronizar ventas ahora</button></div></div>`;
+  const info = `<div class="card"><div class="mut" style="font-size:13px">El servidor del TPV solo responde con el <b>local abierto</b> (programa Ágora encendido). Requisitos: licencia de integración, v6.0.6, DynDNS y el puerto 8984 abierto.${AGORA.lastSync ? ` · Última sincronización: <b>${esc(String(AGORA.lastSync).slice(0, 16).replace("T", " "))}</b>` : " · Aún no se ha sincronizado."}</div></div>`;
+  const rows = LOCALES.map((l, i) => renderAgoraRow(l, i)).join("");
+  return head + info + `<div class="grid" style="gap:14px;margin-top:6px">${rows}</div>`;
+}
+async function loadAgora() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    const j = await apiRaw("/api/agora/locales");
+    AGORA.locales = j.data || []; AGORA.lastSync = j.lastSync || null;
+    view.innerHTML = renderAgora();
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+async function agoraSave(local, i) {
+  const host = (document.getElementById("agHost_" + i) || {}).value || "";
+  const token = (document.getElementById("agTok_" + i) || {}).value || "";
+  const local_id = (document.getElementById("agLid_" + i) || {}).value || "";
+  const activo = (document.getElementById("agAct_" + i) || {}).checked ? 1 : 0;
+  if (!host.trim()) { toast("Pon el host del TPV"); return; }
+  try { await apiSend("POST", "/api/agora/locales", { local, host: host.trim(), token: token.trim(), local_id: local_id.trim(), activo }); toast("Configuración guardada ✅"); loadAgora(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function agoraProbe(local) {
+  toast("Probando conexión…");
+  try { const j = await apiSend("POST", "/api/agora/probe", { local }); toast(j.alive ? "✅ " + (j.mensaje || "El TPV respondió") : "⚠ " + (j.mensaje || "Sin respuesta")); loadAgora(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function agoraDel(local) {
+  const ok = await confirmModal(`¿Eliminar la configuración de Ágora de ${local}?`, { ok: "Eliminar", danger: true }); if (!ok) return;
+  try { await apiSend("DELETE", "/api/agora/locales/" + encodeURIComponent(local)); toast("Configuración eliminada ✅"); loadAgora(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function agoraSyncNow() {
+  toast("Sincronizando ventas…");
+  try { const j = await apiSend("POST", "/api/agora/sync-now"); toast(j.configurados ? "Sincronización lanzada ✅" : "No hay locales de Ágora activos"); loadAgora(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
 // ════════════════════════ VISTA: CAMPAÑAS ════════════════════════
 function renderCampanas(list) {
   const rows = list || [];
@@ -1186,7 +1250,7 @@ async function webBlkUpload(input, gallery) {
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, sara: loadSara, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   CURRENT = view;
@@ -1260,6 +1324,10 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-grp-del") facGrpDel(t.getAttribute("data-id"));
   else if (act === "fac-303") fac303();
   else if (act === "com-add") comAdd();
+  else if (act === "ag-save") agoraSave(t.getAttribute("data-local"), t.getAttribute("data-i"));
+  else if (act === "ag-probe") agoraProbe(t.getAttribute("data-local"));
+  else if (act === "ag-del") agoraDel(t.getAttribute("data-local"));
+  else if (act === "ag-sync") agoraSyncNow();
   else if (act === "camp-nueva") openNuevaCampana();
   else if (act === "wa-link") waLink(t.getAttribute("data-local"), t);
   else if (act === "sara-send") saraSend();

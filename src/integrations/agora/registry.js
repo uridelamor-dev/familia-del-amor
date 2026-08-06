@@ -22,12 +22,9 @@ function normHost(h) {
   return h.replace(/\/+$/, "");
 }
 
-export function loadAgoraConfigs(env) {
-  const src = env || (typeof process !== "undefined" ? process.env : {});
-  const raw = src && src.AGORA_LOCALES;
-  if (!raw) return [];
-  let arr;
-  try { arr = JSON.parse(raw); } catch { return []; }
+// Normaliza y filtra una lista de configuraciones (misma forma venga del env o de la BD):
+// exige local+host+token y activo!==false; normaliza host; localId opcional.
+export function normalizeConfigs(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
     .filter((c) => c && c.local && c.host && c.token && c.activo !== false)
@@ -38,6 +35,27 @@ export function loadAgoraConfigs(env) {
       localId: c.localId != null && c.localId !== "" ? String(c.localId) : null,
     }))
     .filter((c) => c.host);
+}
+
+export function loadAgoraConfigs(env) {
+  const src = env || (typeof process !== "undefined" ? process.env : {});
+  const raw = src && src.AGORA_LOCALES;
+  if (!raw) return [];
+  let arr;
+  try { arr = JSON.parse(raw); } catch { return []; }
+  return normalizeConfigs(arr);
+}
+
+// Igual que loadAgoraConfigs pero desde filas de la BD (agora_locales).
+// Cada fila: { local, host, token, local_id|localId, activo }. El token ya debe venir descifrado.
+export function configsFromRows(rows) {
+  return normalizeConfigs((rows || []).map((r) => ({
+    local: r.local,
+    host: r.host,
+    token: r.token,
+    localId: r.localId != null ? r.localId : r.local_id,
+    activo: r.activo !== 0 && r.activo !== false,
+  })));
 }
 
 // Vista segura para exponer estado por API: nunca incluye el token.
