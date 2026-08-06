@@ -37,13 +37,15 @@ Devuelve ÚNICAMENTE un JSON válido, sin texto adicional, con esta estructura e
   "nif_proveedor": "string",
   "nombre_receptor": "string",
   "nif_receptor": "string",
+  "local_receptor": "string",
   "concepto": "string",
   "base_imponible": number,
   "porcentaje_iva": number,
   "cuota_iva": number,
   "total": number
 }
-En "nombre_receptor" y "nif_receptor" pon los datos de la empresa que RECIBE la factura (el cliente), no el proveedor.`;
+En "nombre_receptor" y "nif_receptor" pon los datos de la empresa que RECIBE la factura (el cliente), no el proveedor.
+En "local_receptor" pon el LOCAL o establecimiento CONCRETO del cliente si aparece: normalmente entre paréntesis tras el nombre del cliente (p. ej. "(TAPETA LLORET)"), o en la dirección de entrega, la referencia o el pie. Copia el texto tal cual (p. ej. "TAPETA LLORET", "Can Mateu Tordera"). Si no aparece ningún local concreto, pon null.`;
 
 // ── Utilidades de nombre y hash ────────────────────────────────────────────
 
@@ -744,7 +746,7 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
       const locales = await dbAll("SELECT local, empresa, cif, local_contable FROM facturas_locales", []);
       const hist = indexarHistorialProveedor(await dbAll("SELECT proveedor, local FROM facturas WHERE proveedor IS NOT NULL", []));
       const sug = sugerirLocalPendiente({
-        pendiente: { nif_receptor: datos.nif_receptor, nombre_receptor: datos.nombre_receptor, empresa_detectada: empresa !== "Sin empresa asignada" ? empresa : null, proveedor: datos.proveedor },
+        pendiente: { nif_receptor: datos.nif_receptor, nombre_receptor: datos.nombre_receptor, local_receptor: datos.local_receptor, empresa_detectada: empresa !== "Sin empresa asignada" ? empresa : null, proveedor: datos.proveedor },
         locales, historial: hist,
       });
       if (sug.local && sug.confianza === "alta") {
@@ -775,10 +777,10 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
 
   await dbRun(
     `INSERT INTO facturas_pendientes
-      (empresa_detectada, nif_receptor, nombre_receptor, tipo, fecha, numero_factura, proveedor, nif,
+      (empresa_detectada, nif_receptor, nombre_receptor, local_receptor, tipo, fecha, numero_factura, proveedor, nif,
        concepto, base_imponible, porcentaje_iva, cuota_iva, total, drive_url, drive_file_id, file_hash, origen)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [empresa, datos.nif_receptor, datos.nombre_receptor, datos.tipo, datos.fecha, datos.numero_factura,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [empresa, datos.nif_receptor, datos.nombre_receptor, datos.local_receptor || null, datos.tipo, datos.fecha, datos.numero_factura,
      datos.proveedor, datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
      datos.cuota_iva, datos.total, driveFile.url, driveFile.id, fileHash, origen || "email"]
   );

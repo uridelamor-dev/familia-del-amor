@@ -70,6 +70,29 @@ function localesPorEmpresa(nombreEmpresa, locales) {
 //  - pendiente: { nif_receptor, nombre_receptor, empresa_detectada, proveedor }
 //  - locales: [{ local, empresa, cif, local_contable }]
 //  - historial: salida de indexarHistorialProveedor (opcional)
+// Conectores/ruido que NO deben contar como token de local ("La Tapeta - Lloret" → tapeta, lloret).
+const STOP_LOCAL = new Set(["la", "el", "los", "las", "de", "del", "d", "en", "y", "sl", "slu", "sa", "s", "l", "u"]);
+// Tokens significativos del nombre de un local (≥4 letras, sin conectores).
+function tokensLocal(nombre) {
+  return normalizarTexto(nombre).split(/[^a-z0-9]+/).filter((t) => t.length >= 4 && !STOP_LOCAL.has(t));
+}
+// Casa el local por el TEXTO que identifica el establecimiento en la factura (p. ej. el cliente
+// "DEL AMOR URIEL SLU (TAPETA LLORET)" o la dirección de entrega). Devuelve el local si hay UNO
+// claramente por delante (más tokens coincidentes), o null si no hay o hay empate.
+export function localPorPistaTexto(texto, locales) {
+  const hint = normalizarTexto(texto);
+  if (!hint) return null;
+  let mejor = null, mejorScore = 0, empate = false;
+  for (const l of (Array.isArray(locales) ? locales : [])) {
+    const toks = tokensLocal(l.local);
+    let score = 0;
+    for (const t of toks) if (hint.includes(t)) score += 1;
+    if (score > mejorScore) { mejor = l; mejorScore = score; empate = false; }
+    else if (score === mejorScore && score > 0 && mejor && mejor.local !== l.local) empate = true;
+  }
+  return (mejor && mejorScore >= 1 && !empate) ? mejor.local : null;
+}
+
 export function sugerirLocalPendiente({ pendiente = {}, locales = [], historial = {} } = {}) {
   const nula = { local: null, confianza: null, motivo: "" };
 
@@ -82,6 +105,11 @@ export function sugerirLocalPendiente({ pendiente = {}, locales = [], historial 
     const porEmp = localesPorEmpresa(nombre, locales);
     if (porEmp.length === 1) return { local: porEmp[0].local, confianza: "alta", motivo: "Empresa receptora" };
   }
+
+  // 3) Local indicado en la factura: el nombre del establecimiento aparece en el texto del cliente
+  //    (p. ej. "(TAPETA LLORET)") o en la dirección. Desambigua cuando la empresa/CIF es compartida.
+  const pista = localPorPistaTexto([pendiente.local_receptor, pendiente.nombre_receptor].filter(Boolean).join(" "), locales);
+  if (pista) return { local: pista, confianza: "alta", motivo: "Local indicado en la factura" };
 
   // 3) Proveedor habitual: si SIEMPRE se ha asignado al mismo local, proponerlo.
   const h = historial[normalizarTexto(pendiente.proveedor)];
