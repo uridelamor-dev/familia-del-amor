@@ -1108,32 +1108,96 @@ async function agoraSyncNow() {
 }
 
 // ════════════════════════ VISTA: CAMPAÑAS ════════════════════════
-function renderCampanas(list) {
-  const rows = list || [];
-  const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn primary" data-act="camp-nueva">+ Nueva campaña</button></div>`;
-  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Campaña</th><th>Segmento</th><th class="r">Enviados</th><th class="r">Errores</th><th>Fecha</th></tr></thead><tbody>${rows.map((c) => { let seg = ""; try { const s = JSON.parse(c.segmento_json || "{}"); seg = Object.entries(s).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(", "); } catch { /* */ } return `<tr><td>${esc(c.nombre)}</td><td class="mut">${esc(seg || "—")}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td></tr>`; }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay campañas enviadas.</div></div>`;
-  return `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas de WhatsApp</h1><div class="sub">Historial de envíos a clientes</div></div>${toolbar}${table}`;
+let CAMP = { list: [], plantillas: [], cfg: { cumple_auto: false, cumple_plantilla: "" } };
+const CAMP_EST = { borrador: "", programada: "info", enviando: "warn", enviada: "ok" };
+function renderCampanas() {
+  const rows = CAMP.list || []; const cfg = CAMP.cfg || {};
+  const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas</h1><div class="sub">Segmentar y enviar por WhatsApp · plantillas · programación · cumpleaños</div><div class="acts"><button class="btn primary" data-act="camp-nueva">+ Nueva campaña</button></div></div>`;
+  const cumple = `<div class="card"><div class="ch"><h3>🎂 Cumpleaños automático</h3><label class="chip" style="cursor:pointer"><input type="checkbox" id="cumpleAuto" ${cfg.cumple_auto ? "checked" : ""} style="margin-right:6px">Activado</label></div><div class="field" style="width:100%"><label>Mensaje (usa {nombre})</label><textarea id="cumpleMsg" rows="2" placeholder="¡Feliz cumpleaños, {nombre}! 🎉">${esc(cfg.cumple_plantilla || "")}</textarea></div><div class="toolbar" style="padding:0"><button class="btn" data-act="camp-cumple-save">Guardar</button><span class="mut" style="font-size:12px;align-self:center">Cada mañana felicita a quien cumple ese día (excluye bajas).</span></div></div>`;
+  const plist = (CAMP.plantillas || []).map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div><div class="t2">${esc((p.cuerpo || "").slice(0, 80))}</div></div><button class="btn sm danger" data-act="camp-plant-del" data-id="${p.id}">✕</button></div>`).join("") || `<div class="mut" style="padding:10px 14px">Sin plantillas guardadas.</div>`;
+  const plantillas = `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Plantillas</h3><button class="btn sm" data-act="camp-plant-add">+ Nueva</button></div><div class="rows">${plist}</div></div>`;
+  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Campaña</th><th>Segmento</th><th>Estado</th><th class="r">Env.</th><th class="r">Err.</th><th>Fecha</th><th></th></tr></thead><tbody>${rows.map((c) => {
+    let seg = ""; try { const s = JSON.parse(c.segmento_json || "{}"); seg = Object.entries(s).filter(([k, v]) => v && k !== "excluir_baja" && k !== "soloOptIn").map(([k, v]) => `${k}: ${v}`).join(", "); } catch { /* */ }
+    const est = c.estado || "enviada";
+    const acc = `<button class="linkbtn" style="color:var(--brand)" data-act="camp-detalle" data-id="${c.id}">Detalle</button>${(est === "borrador" || est === "programada") ? ` · <button class="linkbtn" style="color:var(--brand)" data-act="camp-enviar" data-id="${c.id}">Enviar</button>` : ""} · <button class="linkbtn" style="color:var(--danger)" data-act="camp-del" data-id="${c.id}">Eliminar</button>`;
+    return `<tr><td>${esc(c.nombre)}${c.canal === "email" ? " 📧" : ""}</td><td class="mut">${esc(seg || "—")}</td><td><span class="pill ${CAMP_EST[est] || ""}">${cap(est)}</span>${(est === "programada" && c.programada_para) ? `<div class="t2">${esc(String(c.programada_para).slice(0, 16).replace("T", " "))}</div>` : ""}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td class="r" style="white-space:nowrap">${acc}</td></tr>`;
+  }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay campañas.</div></div>`;
+  return `${head}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div>`;
 }
-async function loadCampanas() { const view = document.getElementById("view"); view.innerHTML = skeleton(); try { const data = await api("/api/campanas"); view.innerHTML = renderCampanas(data); } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); } }
+async function loadCampanas() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    const [list, plantillas] = await Promise.all([api("/api/campanas"), apiOptional("/api/plantillas")]);
+    CAMP.list = list || []; CAMP.plantillas = plantillas || [];
+    try { const j = await apiRaw("/api/campanas-config"); CAMP.cfg = { cumple_auto: j.cumple_auto, cumple_plantilla: j.cumple_plantilla }; } catch { CAMP.cfg = { cumple_auto: false, cumple_plantilla: "" }; }
+    view.innerHTML = renderCampanas();
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
 function openNuevaCampana() {
   const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
+  const plantOpts = ['<option value="">— Insertar plantilla (opcional) —</option>'].concat((CAMP.plantillas || []).map((p) => `<option value="${p.id}">${esc(p.nombre)}</option>`)).join("");
   const body = `<form id="fCamp"><div class="form-grid">
-    <div class="field full"><label>Nombre de la campaña</label><input name="nombre_campana" required></div>
-    <div class="field full"><label>Mensaje</label><input name="mensaje" required placeholder="Hola {nombre}! Este finde…"></div>
+    <div class="field full"><label>Nombre de la campaña</label><input name="nombre" required></div>
+    <div class="field full"><label>Plantilla</label><select id="campPlant">${plantOpts}</select></div>
+    <div class="field full"><label>Mensaje</label><textarea name="mensaje" id="campMsg" rows="3" required placeholder="Hola {nombre}! Este finde…"></textarea></div>
     <div class="field"><label>Género</label><select name="genero"><option value="">Todos</option><option value="M">Hombre</option><option value="F">Mujer</option></select></div>
     <div class="field"><label>Población</label><input name="poblacion"></div>
     <div class="field"><label>Local</label><select name="local">${localOpts}</select></div>
     <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" name="cumple_mes" style="width:auto;height:auto"> Cumpleaños este mes</label>
-  </div><div id="campPrev" class="mut" style="margin-top:12px;font-size:12.5px"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button type="button" class="btn" data-close>Cerrar</button><button type="button" class="btn" id="campPrevBtn">Previsualizar</button><button type="submit" class="btn primary">Enviar campaña</button></div></form>`;
+    <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" id="campOptin" style="width:auto;height:auto"> Solo opt-in</label>
+    <div class="field"><label>Programar para (opcional)</label><input type="datetime-local" id="campWhen"></div>
+  </div><div id="campPrev" class="mut" style="margin-top:12px;font-size:12.5px"></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap"><button type="button" class="btn" data-close>Cerrar</button><button type="button" class="btn" id="campPrevBtn">Previsualizar</button><button type="button" class="btn" id="campBorrador">Guardar borrador</button><button type="button" class="btn" id="campProg">Programar</button><button type="button" class="btn primary" id="campEnviarYa">Enviar ya</button></div></form>`;
   const ov = modal("Nueva campaña", body);
-  const filtros = (form) => { const d = Object.fromEntries(new FormData(form).entries()); if (!d.cumple_mes) delete d.cumple_mes; else d.cumple_mes = 1; return d; };
-  ov.querySelector("#campPrevBtn").addEventListener("click", async () => { try { const j = await apiSend("POST", "/api/campanas/preview", filtros(ov.querySelector("#fCamp"))); ov.querySelector("#campPrev").textContent = `Se enviaría a ${j.total} contacto${j.total === 1 ? "" : "s"}.`; } catch (e) { toast("Error: " + e.message); } });
-  ov.querySelector("#fCamp").addEventListener("submit", async (e) => {
-    e.preventDefault(); const d = filtros(e.target);
-    let prev; try { prev = await apiSend("POST", "/api/campanas/preview", d); } catch (err) { toast("Error: " + err.message); return; }
-    if (!(await confirmModal(`Vas a enviar esta campaña a ${prev.total} contacto(s) por WhatsApp.`, { ok: "Enviar campaña" }))) return;
-    try { await apiSend("POST", "/api/campanas/enviar", d); ov.remove(); toast("Campaña en envío ✅"); loadCampanas(); } catch (err) { toast("Error: " + err.message); }
+  const seg = (form) => { const d = Object.fromEntries(new FormData(form).entries()); if (!d.cumple_mes) delete d.cumple_mes; else d.cumple_mes = String(new Date().getMonth() + 1); return d; };
+  ov.querySelector("#campPlant").addEventListener("change", (e) => { const p = (CAMP.plantillas || []).find((x) => String(x.id) === e.target.value); if (p) ov.querySelector("#campMsg").value = p.cuerpo; });
+  ov.querySelector("#campPrevBtn").addEventListener("click", async () => { try { const j = await apiSend("POST", "/api/campanas/preview", seg(ov.querySelector("#fCamp"))); ov.querySelector("#campPrev").textContent = `Se enviaría a ~${j.total} contacto(s) (antes de excluir bajas/sin teléfono).`; } catch (e) { toast("Error: " + e.message); } });
+  const lanzar = async (accion) => {
+    const d = seg(ov.querySelector("#fCamp"));
+    if (!d.nombre || !d.mensaje) { toast("Pon nombre y mensaje"); return; }
+    d.accion = accion; d.soloOptIn = ov.querySelector("#campOptin").checked;
+    if (accion === "programar") { const w = ov.querySelector("#campWhen").value; if (!w) { toast("Elige fecha y hora"); return; } d.programada_para = w; }
+    if (accion === "enviar") { if (!(await confirmModal("¿Enviar esta campaña ahora por WhatsApp?", { ok: "Enviar" }))) return; }
+    try { const j = await apiSend("POST", "/api/campanas", d); ov.remove(); toast(accion === "enviar" ? `Enviando a ${j.enviables} contacto(s) ✅` : accion === "programar" ? "Campaña programada ✅" : "Borrador guardado ✅"); loadCampanas(); }
+    catch (e) { toast("Error: " + e.message); }
+  };
+  ov.querySelector("#campBorrador").addEventListener("click", () => lanzar("borrador"));
+  ov.querySelector("#campProg").addEventListener("click", () => lanzar("programar"));
+  ov.querySelector("#campEnviarYa").addEventListener("click", () => lanzar("enviar"));
+}
+async function campDetalle(id) {
+  let d; try { d = (await apiRaw("/api/campanas/" + id)).data; } catch (e) { toast("Error: " + e.message); return; }
+  const c = d.campana, r = d.resumen || {};
+  const envios = (d.envios || []).slice(0, 200).map((e) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(e.nombre || e.telefono || "—")}</div><div class="t2">${esc(e.telefono || "")}${e.error ? " · " + esc(e.error) : ""}</div></div><span class="pill ${e.estado === "error" ? "bad" : "ok"}">${esc(e.estado || "")}</span></div>`).join("") || `<div class="mut" style="padding:10px 14px">Sin envíos registrados aún.</div>`;
+  modal(c.nombre, `<div class="grid" style="gap:12px"><div class="card" style="padding:12px 14px"><div class="t2">Estado: ${esc(c.estado || "—")} · ${num(r.enviados || 0)} enviados · ${num(r.errores || 0)} errores</div><div style="margin-top:6px;white-space:pre-wrap">${esc(c.mensaje || "")}</div></div><div class="card p0"><div class="ch" style="padding:14px 14px 0"><h3>Destinatarios</h3></div><div class="rows">${envios}</div></div><div style="display:flex;justify-content:flex-end"><button class="btn" data-close>Cerrar</button></div></div>`);
+}
+async function campEnviar(id) {
+  if (!(await confirmModal("¿Enviar esta campaña ahora por WhatsApp?", { ok: "Enviar" }))) return;
+  try { const j = await apiSend("POST", "/api/campanas/" + id + "/enviar"); toast(`Enviando a ${j.enviables} contacto(s) ✅`); loadCampanas(); }
+  catch (e) { toast("Error: " + e.message); }
+}
+async function campDel(id) {
+  if (!(await confirmModal("¿Eliminar esta campaña?", { ok: "Eliminar", danger: true }))) return;
+  try { await apiSend("DELETE", "/api/campanas/" + id); toast("Campaña eliminada ✅"); loadCampanas(); }
+  catch (e) { toast("Error: " + e.message); }
+}
+function campPlantAdd() {
+  const ov = modal("Nueva plantilla", `<div class="field" style="width:100%"><label>Nombre</label><input id="plNombre" placeholder="Promo fin de semana"></div><div class="field" style="width:100%"><label>Mensaje (usa {nombre}, {apellidos})</label><textarea id="plCuerpo" rows="4" placeholder="Hola {nombre}! …"></textarea></div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="plSave">Guardar</button></div>`);
+  ov.querySelector("#plSave").addEventListener("click", async () => {
+    const nombre = (ov.querySelector("#plNombre").value || "").trim(); const cuerpo = (ov.querySelector("#plCuerpo").value || "").trim();
+    if (!nombre || !cuerpo) { toast("Pon nombre y mensaje"); return; }
+    try { await apiSend("POST", "/api/plantillas", { nombre, cuerpo }); ov.remove(); toast("Plantilla guardada ✅"); loadCampanas(); } catch (e) { toast("Error: " + e.message); }
   });
+}
+async function campPlantDel(id) {
+  if (!(await confirmModal("¿Eliminar esta plantilla?", { ok: "Eliminar", danger: true }))) return;
+  try { await apiSend("DELETE", "/api/plantillas/" + id); toast("Plantilla eliminada ✅"); loadCampanas(); } catch (e) { toast("Error: " + e.message); }
+}
+async function campCumpleSave() {
+  const auto = !!(document.getElementById("cumpleAuto") || {}).checked;
+  const plantilla = (document.getElementById("cumpleMsg") || {}).value || "";
+  try { await apiSend("POST", "/api/campanas-config", { cumple_auto: auto, cumple_plantilla: plantilla }); toast("Guardado ✅"); }
+  catch (e) { toast("Error: " + e.message); }
 }
 
 // ════════════════════════ VISTA: WEB (editor de la web pública + preview en vivo) ════════════════════════
@@ -1395,6 +1459,12 @@ document.addEventListener("click", (e) => {
   else if (act === "ag-del") agoraDel(t.getAttribute("data-local"));
   else if (act === "ag-sync") agoraSyncNow();
   else if (act === "camp-nueva") openNuevaCampana();
+  else if (act === "camp-detalle") campDetalle(t.getAttribute("data-id"));
+  else if (act === "camp-enviar") campEnviar(t.getAttribute("data-id"));
+  else if (act === "camp-del") campDel(t.getAttribute("data-id"));
+  else if (act === "camp-plant-add") campPlantAdd();
+  else if (act === "camp-plant-del") campPlantDel(t.getAttribute("data-id"));
+  else if (act === "camp-cumple-save") campCumpleSave();
   else if (act === "wa-link") waLink(t.getAttribute("data-local"), t);
   else if (act === "sara-send") saraSend();
   else if (act === "sara-aplicar") saraAplicar();
