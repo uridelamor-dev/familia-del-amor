@@ -1356,27 +1356,61 @@ function renderAgoraRow(local, i) {
       <button class="btn primary" data-act="ag-save" data-local="${esc(local)}" data-i="${i}">Guardar</button>
       ${c ? `<button class="btn sm danger" data-act="ag-del" data-local="${esc(local)}">Eliminar</button>` : ""}
     </div>
-    <div class="mut" style="font-size:11.5px;margin-top:4px">Las ventas se leen con el <b>usuario+contraseña</b> (login web de Ágora). Recomendado: crea un usuario dedicado con permisos mínimos.</div>${(() => { const rs = agoraResumenFor(local); const datos = rs && rs.dias > 0 ? `<span class="pill ok">Con datos</span> ${num(rs.dias)} día(s) · última venta ${esc(fechaCorta(rs.ultimoDia))}` : (c && c.activo ? '<span class="pill warn">Sin datos aún</span> aún no llegan ventas' : ""); return `<div class="mut" style="font-size:12px;margin-top:4px">${est && est.ts ? `Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}` : ""}${datos ? (est && est.ts ? " · " : "") + datos : ""}</div>`; })()}</div>`;
+    <div class="mut" style="font-size:11.5px;margin-top:4px">Las ventas se leen con el <b>usuario+contraseña</b> (login web de Ágora). Recomendado: crea un usuario dedicado con permisos mínimos.</div>${est && est.ts ? `<div class="mut" style="font-size:12px;margin-top:4px">Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}</div>` : ""}</div>`;
 }
 function renderAgora() {
   const head = `<div class="ph"><div class="eyebrow">Sistema · Integraciones</div><h1>Ágora (TPV)</h1><div class="sub">Conecta el TPV de cada local para traer las ventas. El apiToken se guarda cifrado y nunca se muestra.</div><div class="acts"><button class="btn primary" data-act="ag-sync">Sincronizar ventas ahora</button></div></div>`;
   const info = `<div class="card"><div class="mut" style="font-size:13px">El servidor del TPV solo responde con el <b>local abierto</b> (programa Ágora encendido). Requisitos: licencia de integración, v6.0.6, DynDNS y el puerto 8984 abierto.${AGORA.lastSync ? ` · Última sincronización: <b>${esc(String(AGORA.lastSync).slice(0, 16).replace("T", " "))}</b>` : " · Aún no se ha sincronizado."}</div></div>`;
-  const resumen = AGORA._resumen || [];
-  const totalDias = resumen.reduce((s, r) => s + (r.dias || 0), 0);
-  const ventasCard = totalDias > 0
-    ? `<div class="card p0" style="margin-top:6px"><div class="ch" style="padding:16px 16px 0"><h3>Ventas recogidas (últimos 7 días)</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th class="r">Días con datos</th><th>Última venta</th><th class="r">Ventas 7d</th><th class="r">Tickets 7d</th></tr></thead><tbody>${resumen.map((r) => `<tr><td>${esc(r.local)}</td><td class="r tnum">${num(r.dias)}</td><td class="mut">${esc(fechaCorta(r.ultimoDia))}</td><td class="r tnum">${eur(r.ventasRecientes)}</td><td class="r tnum">${num(r.ticketsRecientes)}</td></tr>`).join("")}</tbody></table></div></div>`
-    : `<div class="card" style="margin-top:6px"><div class="mut" style="font-size:13px">Aún no hay ventas registradas. En cuanto un TPV configurado y abierto devuelva datos, aparecerán aquí y en el dashboard.</div></div>`;
+  const vivo = `<div id="agVivo" style="margin-top:6px"><div class="card"><div class="mut" style="font-size:13px">Cargando ventas en vivo…</div></div></div>`;
   const rows = LOCALES.map((l, i) => renderAgoraRow(l, i)).join("");
-  return head + info + ventasCard + `<div class="grid" style="gap:14px;margin-top:6px">${rows}</div>`;
+  return head + info + vivo + `<div class="grid" style="gap:14px;margin-top:6px">${rows}</div>`;
+}
+// Reflejo puro (src/modules/agora/ventas.js) del resumen en vivo por local.
+function resumenVivoLocal(dias, hoy) {
+  const arr = Array.isArray(dias) ? dias : [];
+  const hoyRow = arr.find((d) => d.dia === hoy) || null;
+  const cerrados = arr.filter((d) => d.dia < hoy).sort((a, b) => a.dia.localeCompare(b.dia));
+  const total7 = cerrados.reduce((s, d) => s + (Number(d.ventas) || 0), 0);
+  const tickets7 = cerrados.reduce((s, d) => s + (Number(d.tickets) || 0), 0);
+  return { hoy: hoyRow, ayer: cerrados.length ? cerrados[cerrados.length - 1] : null, cerrados, total7: Math.round(total7 * 100) / 100, tickets7 };
+}
+function renderAgoraVivo(vivo) {
+  if (!vivo || !vivo.locales || !vivo.locales.length) return `<div class="card"><div class="mut" style="font-size:13px">Aún no hay ventas. Configura usuario+contraseña de un local abierto y pulsa "Actualizar ventas".</div></div>`;
+  const hoy = vivo.hoy;
+  const card = (L) => {
+    if (L.error) return `<div class="card"><div class="ch"><h3>${esc(nombreCortoLocal(L.local))}</h3><span class="pill bad">Sin datos</span></div><div class="mut" style="font-size:12px">${esc(L.error)}</div></div>`;
+    const r = resumenVivoLocal(L.dias, hoy);
+    const maxV = Math.max(1, ...r.cerrados.map((d) => d.ventas || 0), (r.hoy && r.hoy.ventas) || 0);
+    const bars = [...r.cerrados, ...(r.hoy ? [r.hoy] : [])].map((d) => {
+      const h = Math.round(((d.ventas || 0) / maxV) * 46) + 2;
+      const esHoy = d.dia === hoy;
+      return `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1"><div style="width:100%;max-width:26px;height:${h}px;border-radius:4px 4px 0 0;background:${esHoy ? "var(--accent,#7a8450)" : "var(--brand,#8a9a5b)"};opacity:${esHoy ? 1 : 0.75}" title="${esc(fechaCorta(d.dia))}: ${eur(d.ventas)}"></div><div class="mut" style="font-size:10px">${esc(String(d.dia).slice(8, 10))}</div></div>`;
+    }).join("");
+    return `<div class="card"><div class="ch"><h3>${esc(nombreCortoLocal(L.local))}</h3>${r.hoy ? '<span class="pill ok">En vivo</span>' : ""}</div>
+      <div class="grid g2" style="gap:10px">
+        <div><div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Hoy (en curso)</div><div style="font-size:22px;font-weight:700;font-variant-numeric:tabular-nums">${r.hoy ? eur(r.hoy.ventas) : "—"}</div><div class="mut" style="font-size:11px">${r.hoy ? num(r.hoy.tickets) + " tickets · " + eur(r.hoy.ticket_medio) + "/tk" : ""}</div></div>
+        <div><div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Ayer</div><div style="font-size:22px;font-weight:700;font-variant-numeric:tabular-nums">${r.ayer ? eur(r.ayer.ventas) : "—"}</div><div class="mut" style="font-size:11px">${r.ayer ? num(r.ayer.tickets) + " tickets · " + eur(r.ayer.ticket_medio) + "/tk" : ""}</div></div>
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:5px;height:64px;margin-top:12px">${bars || '<div class="mut" style="font-size:12px">Sin días previos</div>'}</div>
+      <div class="mut" style="font-size:11px;margin-top:4px">Últimos días cerrados: <b>${eur(r.total7)}</b> · ${num(r.tickets7)} tickets</div></div>`;
+  };
+  return `<div class="ch" style="padding:0 2px 6px"><h3>Ventas por local · hoy en vivo</h3><button class="btn sm" data-act="ag-vivo-refresh">Actualizar</button></div><div class="grid g2" style="gap:14px">${vivo.locales.map(card).join("")}</div>${vivo.generado ? `<div class="mut" style="font-size:11px;margin-top:6px">Actualizado ${esc(String(vivo.generado).slice(11, 16))}${vivo.cache ? " (caché)" : ""}</div>` : ""}`;
+}
+async function loadAgoraVivo(force) {
+  const cont = document.getElementById("agVivo"); if (!cont) return;
+  try {
+    const vv = await apiRaw("/api/agora/ventas-vivo" + (force ? "?force=1" : ""));
+    AGORA.vivo = vv;
+    if (document.getElementById("agVivo")) document.getElementById("agVivo").innerHTML = renderAgoraVivo(vv);
+  } catch (e) { if (document.getElementById("agVivo")) document.getElementById("agVivo").innerHTML = `<div class="card"><div class="mut" style="font-size:13px">No se pudieron cargar las ventas en vivo${e.message && e.message !== "noauth" ? ": " + esc(e.message) : ""}.</div></div>`; }
 }
 async function loadAgora() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
-    const desde = addDaysStr(todayStr(), -7);
-    const [j, ventas] = await Promise.all([apiRaw("/api/agora/locales"), apiOptional("/api/ventas?from=" + desde)]);
-    AGORA.locales = j.data || []; AGORA.lastSync = j.lastSync || null; AGORA.ventas = ventas || [];
-    AGORA._resumen = resumenVentasPorLocal(AGORA.ventas, desde);
+    const j = await apiRaw("/api/agora/locales");
+    AGORA.locales = j.data || []; AGORA.lastSync = j.lastSync || null;
     view.innerHTML = renderAgora();
+    loadAgoraVivo(); // en segundo plano: consulta el TPV en vivo y rellena la tarjeta
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 async function agoraSave(local, i) {
@@ -1971,6 +2005,7 @@ document.addEventListener("click", (e) => {
   else if (act === "ag-save") agoraSave(t.getAttribute("data-local"), t.getAttribute("data-i"));
   else if (act === "ag-probe") agoraProbe(t.getAttribute("data-local"));
   else if (act === "ag-diag") agoraDiagnostico(t.getAttribute("data-local"));
+  else if (act === "ag-vivo-refresh") { const c = document.getElementById("agVivo"); if (c) c.innerHTML = '<div class="card"><div class="mut" style="font-size:13px">Actualizando ventas…</div></div>'; loadAgoraVivo(true); }
   else if (act === "ag-descubrir") agoraDescubrir(t.getAttribute("data-local"));
   else if (act === "ag-del") agoraDel(t.getAttribute("data-local"));
   else if (act === "ag-sync") agoraSyncNow();
