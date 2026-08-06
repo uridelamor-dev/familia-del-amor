@@ -11,7 +11,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets } from "./facturas.js";
+import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -381,6 +381,9 @@ async function initDB() {
       )
     `);
     try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS canal TEXT`); } catch (e) { console.error("[DB] alter facturas canal:", e.message); }
+    // sheet_synced: 1 = proyectada a Sheets; 0 = pendiente (la cola de reintentos la reproyecta desde la BD).
+    // Las facturas existentes se asumen sincronizadas (default 1); las nuevas insertan 0 y pasan a 1 al proyectar.
+    try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS sheet_synced INTEGER DEFAULT 1`); } catch (e) { console.error("[DB] alter facturas sheet_synced:", e.message); }
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS wa_clientes (
@@ -1153,7 +1156,18 @@ app.get("/auth/google-facturas/callback", async (req, res) => {
 app.get("/api/facturas/status", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const token = await getConfig("google_drive_refresh_token");
   const grupos = await dbAll("SELECT * FROM facturas_grupos ORDER BY local", []);
-  res.json({ ok: true, conectado: !!token, grupos });
+  let pendientesSheet = 0;
+  try { const r = await dbGet("SELECT COUNT(*) AS n FROM facturas WHERE COALESCE(sheet_synced,0)=0", []); pendientesSheet = Number(r?.n || 0); } catch { /* columna nueva */ }
+  res.json({ ok: true, conectado: !!token, grupos, pendientes_sheet: pendientesSheet, ultimo_reintento: (await getConfig("facturas_ultimo_reintento")) || null });
+});
+
+// Reproyectar ahora las facturas pendientes de volcado a Sheets (botón "Reintentar volcado").
+app.post("/api/facturas/reproyectar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const r = await reproyectarPendientes({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
+    await setConfig("facturas_ultimo_reintento", new Date().toISOString());
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get("/api/facturas/grupos", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
@@ -4405,6 +4419,19 @@ const server = app.listen(PORT, async () => {
   // Ingesta por Drive (carpeta vigilada por local). Dormido si no hay carpetas configuradas.
   setTimeout(pollDriveFacturas, 45 * 1000);
   setInterval(pollDriveFacturas, 5 * 60 * 1000);
+  // Cola de reintentos de volcado a Sheets: reproyecta desde la BD lo que quedó sin sincronizar.
+  const reintentarSheets = async () => {
+    try {
+      if (!(await getConfig("google_drive_refresh_token"))) return; // sin Google, nada que hacer aún
+      const pend = await dbGet("SELECT COUNT(*) AS n FROM facturas WHERE COALESCE(sheet_synced,0)=0", []);
+      if (!pend || Number(pend.n) === 0) return;
+      const r = await reproyectarPendientes({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
+      await setConfig("facturas_ultimo_reintento", new Date().toISOString());
+      console.log(`[Facturas] Reintento de volcado: ${r.sincronizados} sincronizadas, ${r.fallidos} grupos con error`);
+    } catch (e) { console.error("[Facturas] reintento volcado:", e.message); }
+  };
+  setTimeout(reintentarSheets, 90 * 1000);
+  setInterval(reintentarSheets, 10 * 60 * 1000);
 
   // ── Resumen mensual por WhatsApp: día 10 de cada mes a las 9:00h (Madrid) ──
   const MESES_CAP = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
