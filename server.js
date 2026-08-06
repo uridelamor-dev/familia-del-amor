@@ -1323,6 +1323,8 @@ app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), asy
   try {
     const result = await asignarFacturaPendiente({ pendiente, local, getToken: getDriveAccessToken, dbGet, dbAll, dbRun, backupFn: null });
     res.json({ ok: true, ...result });
+    // Asegura Sheets por local + maestro consistentes con la BD (fondo, no fatal).
+    (async () => { try { await resincronizarSheetsFactura({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun }, local, pendiente.fecha); } catch (e) { console.error("[asignar] resync:", e.message); } })();
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }

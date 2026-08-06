@@ -497,6 +497,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
 
   // 2. Extraer datos con Claude
   const datos = await extraerDatosDocumento(buffer, mimeType);
+  await corregirEmisorReceptor(datos, dbGet); // filtro anti-inversión emisor/receptor
   console.log(`[Facturas] Datos extraídos para ${local}:`, JSON.stringify(datos));
 
   // 3. Comprobar duplicados antes de subir nada (facturas procesadas y pendientes)
@@ -677,6 +678,35 @@ function normalizarNif(nif) {
   return (nif || "").replace(/[\s\-\.]/g, "").toUpperCase();
 }
 
+// ¿Es una de NUESTRAS empresas (las del grupo)? Por CIF o por nombre exacto.
+async function esEmpresaGrupo(dbGet, nif, nombre) {
+  const n = normalizarNif(nif);
+  if (n) {
+    const r = await dbGet("SELECT 1 FROM facturas_locales WHERE REPLACE(REPLACE(REPLACE(UPPER(cif),' ',''),'-',''),'.','') = ?", [n]);
+    if (r) return true;
+  }
+  if (nombre && String(nombre).trim()) {
+    const r = await dbGet("SELECT 1 FROM facturas_locales WHERE UPPER(TRIM(empresa)) = UPPER(TRIM(?))", [String(nombre)]);
+    if (r) return true;
+  }
+  return false;
+}
+
+// Filtro anti-error: si la IA leyó como PROVEEDOR una empresa NUESTRA (el receptor real),
+// invirtió emisor/receptor → los corregimos para que el proveedor sea el emisor externo.
+async function corregirEmisorReceptor(datos, dbGet) {
+  try {
+    if (!datos) return;
+    if (!(await esEmpresaGrupo(dbGet, datos.nif_proveedor, datos.proveedor))) return;
+    if (!datos.nombre_receptor && !datos.nif_receptor) return;          // sin datos del receptor, no se puede recuperar
+    if (await esEmpresaGrupo(dbGet, datos.nif_receptor, datos.nombre_receptor)) return; // ambos del grupo: no tocar
+    const p = datos.proveedor, np = datos.nif_proveedor;
+    datos.proveedor = datos.nombre_receptor; datos.nif_proveedor = datos.nif_receptor;
+    datos.nombre_receptor = p; datos.nif_receptor = np;
+    console.log("[Facturas] IA invirtió emisor/receptor → corregido. Proveedor real:", datos.proveedor);
+  } catch (e) { console.error("[Facturas] corregirEmisorReceptor:", e.message); }
+}
+
 export async function procesarFacturaSinLocal({ buffer, mimeType, filename, origen, getToken, dbGet, dbAll, dbRun }) {
   // 1. Hash duplicados (facturas procesadas y pendientes)
   const fileHash = createHash("sha256").update(buffer).digest("hex");
@@ -686,6 +716,7 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
 
   // 2. Extraer datos con Claude (incluye nif_receptor)
   const datos = await extraerDatosDocumento(buffer, mimeType);
+  await corregirEmisorReceptor(datos, dbGet); // filtro anti-inversión emisor/receptor
   console.log(`[Facturas] Email sin local — datos extraídos:`, JSON.stringify(datos));
 
   // 3. Intentar auto-detectar empresa y local por nif_receptor
