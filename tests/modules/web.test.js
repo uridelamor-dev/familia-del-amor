@@ -1,7 +1,7 @@
 // Editor de la web pública — lógica pura.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { groupRegistry, fieldValue, saveKeyFor, missingLangs, parseGallery, serializeGallery, matchCampo, i18nKey } from "../../src/modules/web/web.service.js";
+import { groupRegistry, fieldValue, saveKeyFor, missingLangs, parseGallery, serializeGallery, matchCampo, i18nKey, blockText, parseBlocks, serializeBlocks, newBlock, moveItem } from "../../src/modules/web/web.service.js";
 
 const REG = {
   locales: [{ slug: "la-tapeta-blanes", name: "La Tapeta Blanes" }, { slug: "cooperativa", name: "Cooperativa" }],
@@ -70,4 +70,32 @@ describe("matchCampo", () => {
     assert.ok(matchCampo({ key: "x", label: "y" }, "")); // sin query pasa todo
   });
   test("i18nKey", () => { assert.equal(i18nKey("a", "ca"), "a_ca"); });
+});
+
+describe("bloques", () => {
+  test("blockText resuelve idioma con fallback a es", () => {
+    const b = { text: { es: "Hola", ca: "Hola-ca" } };
+    assert.equal(blockText(b, "text", "ca"), "Hola-ca");
+    assert.equal(blockText(b, "text", "en"), "Hola"); // fallback es
+    assert.equal(blockText({ label: "plano" }, "label", "es"), "plano");
+    assert.equal(blockText({}, "text", "es"), "");
+  });
+  test("parse/serialize tolerante", () => {
+    assert.deepEqual(parseBlocks(""), []);
+    assert.deepEqual(parseBlocks("no-json"), []);
+    assert.deepEqual(parseBlocks('[{"type":"heading"}]'), [{ type: "heading" }]);
+    assert.equal(serializeBlocks([{ type: "paragraph" }]), '[{"type":"paragraph"}]');
+  });
+  test("newBlock crea la forma correcta por tipo", () => {
+    assert.deepEqual(newBlock("heading", "b1"), { id: "b1", type: "heading", text: { es: "", ca: "", en: "" } });
+    const img = newBlock("image", "b2"); assert.equal(img.url, ""); assert.ok(img.alt);
+    const gal = newBlock("gallery", "b3"); assert.deepEqual(gal.urls, []);
+    const cta = newBlock("cta", "b4"); assert.equal(cta.href, ""); assert.ok(cta.text);
+  });
+  test("moveItem reordena sin mutar el original", () => {
+    const a = [1, 2, 3];
+    assert.deepEqual(moveItem(a, 0, 2), [2, 3, 1]);
+    assert.deepEqual(a, [1, 2, 3]); // intacto
+    assert.deepEqual(moveItem(a, 5, 0), [1, 2, 3]); // índice inválido → copia igual
+  });
 });

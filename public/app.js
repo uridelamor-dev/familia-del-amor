@@ -614,6 +614,41 @@ function applyContentOverrides() {
   }
   renderNewsAndFaq();
   renderGallery();
+  renderBlocks();
+}
+
+// ── Bloques editables (secciones/páginas creadas desde el panel) ──
+function blkEsc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function blkUrl(u) { u = String(u == null ? "" : u).trim(); return /^(https?:\/\/|\/)/i.test(u) ? u : "#"; }
+function blkText(b, field) { const v = b && b[field]; if (v && typeof v === "object") return v[currentLang] || v.es || ""; return v == null ? "" : String(v); }
+function renderBlock(b) {
+  if (!b || !b.type) return "";
+  switch (b.type) {
+    case "heading": return `<h2 class="blk-h">${blkEsc(blkText(b, "text"))}</h2>`;
+    case "paragraph": return `<p class="blk-p">${blkEsc(blkText(b, "text")).replace(/\n/g, "<br>")}</p>`;
+    case "image": return blkText(b, "url") || b.url ? `<img class="blk-img" src="${blkUrl(b.url)}" alt="${blkEsc(blkText(b, "alt"))}" loading="lazy">` : "";
+    case "gallery": return `<div class="blk-gal">${(b.urls || []).map((u) => `<img src="${blkUrl(u)}" alt="" loading="lazy">`).join("")}</div>`;
+    case "cta": return `<a class="blk-cta" href="${blkUrl(b.href)}">${blkEsc(blkText(b, "text")) || "Más info"}</a>`;
+    case "pdf": return `<a class="blk-pdf" href="${blkUrl(b.url)}" target="_blank" rel="noopener">${blkEsc(blkText(b, "label")) || "Ver documento"}</a>`;
+    default: return "";
+  }
+}
+function ensureBlockCss() {
+  if (document.getElementById("blk-css")) return;
+  const s = document.createElement("style"); s.id = "blk-css";
+  s.textContent = ".blk-h{font-size:1.6rem;margin:1.6rem 0 .6rem;line-height:1.2}.blk-p{margin:0 0 1rem;line-height:1.7;color:inherit}.blk-img{width:100%;border-radius:14px;margin:1rem 0;display:block}.blk-gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:1rem 0}.blk-gal img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:12px}.blk-cta{display:inline-block;margin:.5rem 0 1rem;padding:.7rem 1.3rem;border-radius:999px;background:#2F6B4F;color:#fff;font-weight:600;text-decoration:none}.blk-pdf{display:inline-block;margin:.5rem 0;font-weight:600;text-decoration:underline}";
+  document.head.appendChild(s);
+}
+function renderBlocks() {
+  ensureBlockCss();
+  document.querySelectorAll("[data-blocks]").forEach((cont) => {
+    const scope = cont.getAttribute("data-blocks");
+    const raw = contentCache["blocks_" + scope];
+    if (!raw) { cont.innerHTML = ""; return; } // sin bloques → queda el contenido estático (fallback)
+    let blocks; try { blocks = JSON.parse(raw); } catch { return; }
+    if (!Array.isArray(blocks)) return;
+    cont.innerHTML = blocks.map(renderBlock).join("");
+  });
 }
 
 function renderNewsAndFaq() {

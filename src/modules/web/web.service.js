@@ -61,6 +61,31 @@ export function serializeGallery(urls) {
   return (urls || []).map((u) => String(u).trim()).filter(Boolean).join("\n");
 }
 
+// ── Bloques (Fase B: constructor de secciones/páginas) ──────────────────────
+// Un "scope" (nosotros/eventos/trabaja/home_extra) se guarda como content key
+// `blocks_<scope>` = JSON de bloques tipados. Los textos son i18n {es,ca,en}.
+export const BLOCK_TYPES = [
+  { type: "heading", label: "Título" },
+  { type: "paragraph", label: "Párrafo" },
+  { type: "image", label: "Imagen" },
+  { type: "gallery", label: "Galería" },
+  { type: "cta", label: "Botón" },
+  { type: "pdf", label: "PDF / documento" },
+];
+export function blockText(b, field, lang) { const v = b && b[field]; if (v && typeof v === "object") return v[lang] || v.es || ""; return v == null ? "" : String(v); }
+export function parseBlocks(raw) { if (!raw) return []; try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch { return []; } }
+export function serializeBlocks(arr) { return JSON.stringify(Array.isArray(arr) ? arr : []); }
+export function newBlock(type, id) {
+  const b = { id: id || ("b_" + type), type };
+  if (type === "heading" || type === "paragraph" || type === "cta") b.text = { es: "", ca: "", en: "" };
+  if (type === "image") { b.url = ""; b.alt = { es: "", ca: "", en: "" }; }
+  if (type === "gallery") b.urls = [];
+  if (type === "cta") b.href = "";
+  if (type === "pdf") { b.url = ""; b.label = { es: "", ca: "", en: "" }; }
+  return b;
+}
+export function moveItem(arr, from, to) { const a = (arr || []).slice(); if (from < 0 || from >= a.length || to < 0 || to >= a.length) return a; const [m] = a.splice(from, 1); a.splice(to, 0, m); return a; }
+
 // Filtro de búsqueda de campos por etiqueta o key.
 export function matchCampo(campo, q) {
   if (!q) return true;
