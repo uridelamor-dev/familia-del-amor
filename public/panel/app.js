@@ -1203,7 +1203,7 @@ function renderCampanas() {
     let seg = ""; try { const s = JSON.parse(c.segmento_json || "{}"); seg = Object.entries(s).filter(([k, v]) => v && k !== "excluir_baja" && k !== "soloOptIn").map(([k, v]) => `${k}: ${v}`).join(", "); } catch { /* */ }
     const est = c.estado || "enviada";
     const acc = `<button class="linkbtn" style="color:var(--brand)" data-act="camp-detalle" data-id="${c.id}">Detalle</button>${(est === "borrador" || est === "programada") ? ` · <button class="linkbtn" style="color:var(--brand)" data-act="camp-enviar" data-id="${c.id}">Enviar</button>` : ""} · <button class="linkbtn" style="color:var(--danger)" data-act="camp-del" data-id="${c.id}">Eliminar</button>`;
-    return `<tr><td>${esc(c.nombre)}${c.canal === "email" ? " 📧" : ""}</td><td class="mut">${esc(seg || "—")}</td><td><span class="pill ${CAMP_EST[est] || ""}">${cap(est)}</span>${(est === "programada" && c.programada_para) ? `<div class="t2">${esc(String(c.programada_para).slice(0, 16).replace("T", " "))}</div>` : ""}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td class="r" style="white-space:nowrap">${acc}</td></tr>`;
+    return `<tr><td>${esc(c.nombre)}${c.canal === "email" ? " 📧" : ""}${c.adjunto_url ? " 📎" : ""}</td><td class="mut">${esc(seg || "—")}</td><td><span class="pill ${CAMP_EST[est] || ""}">${cap(est)}</span>${(est === "programada" && c.programada_para) ? `<div class="t2">${esc(String(c.programada_para).slice(0, 16).replace("T", " "))}</div>` : ""}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td class="r" style="white-space:nowrap">${acc}</td></tr>`;
   }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay campañas.</div></div>`;
   return `${head}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div>`;
 }
@@ -1222,7 +1222,10 @@ function openNuevaCampana() {
   const body = `<form id="fCamp"><div class="form-grid">
     <div class="field full"><label>Nombre de la campaña</label><input name="nombre" required></div>
     <div class="field full"><label>Plantilla</label><select id="campPlant">${plantOpts}</select></div>
-    <div class="field full"><label>Mensaje</label><textarea name="mensaje" id="campMsg" rows="3" required placeholder="Hola {nombre}! Este finde…"></textarea></div>
+    <div class="field full"><label>Mensaje</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px"><button type="button" class="btn sm" data-var="{nombre}">+ nombre</button><button type="button" class="btn sm" data-var="{apellidos}">+ apellidos</button><button type="button" class="btn sm" data-var="{local}">+ local</button><label class="btn sm" style="cursor:pointer">📎 Adjuntar<input type="file" id="campFile" accept="image/*,application/pdf" hidden></label><span id="campAdjName" class="mut" style="font-size:12px;align-self:center"></span></div>
+      <textarea name="mensaje" id="campMsg" rows="3" required placeholder="Hola {nombre}! Este finde…"></textarea></div>
+    <div class="field full"><label>Vista previa (así lo recibe el cliente)</label><div style="background:var(--surface2);border-radius:12px;padding:12px;display:flex;justify-content:flex-end"><div id="campBubble" style="background:var(--brand);color:var(--brand-ink);border-radius:12px;border-bottom-right-radius:5px;padding:9px 12px;max-width:85%;font-size:13.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word"></div></div></div>
     <div class="field"><label>Género</label><select name="genero"><option value="">Todos</option><option value="M">Hombre</option><option value="F">Mujer</option></select></div>
     <div class="field"><label>Población</label><input name="poblacion"></div>
     <div class="field"><label>Local</label><select name="local">${localOpts}</select></div>
@@ -1232,13 +1235,28 @@ function openNuevaCampana() {
   </div><div id="campPrev" class="mut" style="margin-top:12px;font-size:12.5px"></div>
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap"><button type="button" class="btn" data-close>Cerrar</button><button type="button" class="btn" id="campPrevBtn">Previsualizar</button><button type="button" class="btn" id="campBorrador">Guardar borrador</button><button type="button" class="btn" id="campProg">Programar</button><button type="button" class="btn primary" id="campEnviarYa">Enviar ya</button></div></form>`;
   const ov = modal("Nueva campaña", body);
+  let campAdjunto = "";
   const seg = (form) => { const d = Object.fromEntries(new FormData(form).entries()); if (!d.cumple_mes) delete d.cumple_mes; else d.cumple_mes = String(new Date().getMonth() + 1); return d; };
-  ov.querySelector("#campPlant").addEventListener("change", (e) => { const p = (CAMP.plantillas || []).find((x) => String(x.id) === e.target.value); if (p) ov.querySelector("#campMsg").value = p.cuerpo; });
+  const updateBubble = () => {
+    const raw = ov.querySelector("#campMsg").value || "";
+    const txt = raw.replace(/\{nombre_completo\}/gi, "Ana Pérez").replace(/\{nombre\}/gi, "Ana").replace(/\{apellidos\}/gi, "Pérez").replace(/\{local\}/gi, "La Tapeta - Blanes");
+    const b = ov.querySelector("#campBubble");
+    b.innerHTML = (campAdjunto ? `<div style="opacity:.9;margin-bottom:6px">📎 adjunto</div>` : "") + (txt ? esc(txt) : '<span style="opacity:.6">(escribe el mensaje…)</span>');
+  };
+  ov.querySelector("#campMsg").addEventListener("input", updateBubble);
+  ov.addEventListener("click", (e) => { const vb = e.target.closest("[data-var]"); if (vb) { const ta = ov.querySelector("#campMsg"); const v = vb.getAttribute("data-var"); const s = ta.selectionStart != null ? ta.selectionStart : ta.value.length; ta.value = ta.value.slice(0, s) + v + ta.value.slice(ta.selectionEnd != null ? ta.selectionEnd : s); ta.focus(); updateBubble(); } });
+  ov.querySelector("#campFile").addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return; toast("Subiendo adjunto…");
+    try { const fd = new FormData(); fd.append("files", f); const r = await fetch("/api/upload", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd }); const j = await r.json(); if (!j.ok || !j.urls || !j.urls.length) throw new Error("subida"); campAdjunto = j.urls[0]; ov.querySelector("#campAdjName").textContent = "📎 " + f.name; updateBubble(); }
+    catch { toast("No se pudo subir el adjunto"); }
+  });
+  ov.querySelector("#campPlant").addEventListener("change", (e) => { const p = (CAMP.plantillas || []).find((x) => String(x.id) === e.target.value); if (p) { ov.querySelector("#campMsg").value = p.cuerpo; updateBubble(); } });
+  updateBubble();
   ov.querySelector("#campPrevBtn").addEventListener("click", async () => { try { const j = await apiSend("POST", "/api/campanas/preview", seg(ov.querySelector("#fCamp"))); ov.querySelector("#campPrev").textContent = `Se enviaría a ~${j.total} contacto(s) (antes de excluir bajas/sin teléfono).`; } catch (e) { toast("Error: " + e.message); } });
   const lanzar = async (accion) => {
     const d = seg(ov.querySelector("#fCamp"));
     if (!d.nombre || !d.mensaje) { toast("Pon nombre y mensaje"); return; }
-    d.accion = accion; d.soloOptIn = ov.querySelector("#campOptin").checked;
+    d.accion = accion; d.soloOptIn = ov.querySelector("#campOptin").checked; if (campAdjunto) d.adjunto_url = campAdjunto;
     if (accion === "programar") { const w = ov.querySelector("#campWhen").value; if (!w) { toast("Elige fecha y hora"); return; } d.programada_para = w; }
     if (accion === "enviar") { if (!(await confirmModal("¿Enviar esta campaña ahora por WhatsApp?", { ok: "Enviar" }))) return; }
     try { const j = await apiSend("POST", "/api/campanas", d); ov.remove(); toast(accion === "enviar" ? `Enviando a ${j.enviables} contacto(s) ✅` : accion === "programar" ? "Campaña programada ✅" : "Borrador guardado ✅"); loadCampanas(); }

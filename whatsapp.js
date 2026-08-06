@@ -942,6 +942,19 @@ export async function sendDocumentoLibre(telefono, buffer, filename, mimetype) {
   });
 }
 
+// Envía un adjunto con texto: imagen INLINE con pie de foto, o PDF/otros como documento
+// (precedido del texto). Usado por las campañas/masivos con contenido rico.
+export async function sendMediaLibre(telefono, buffer, filename, mimetype, caption) {
+  if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
+  const jid = formatPhone(telefono);
+  if (mimetype && mimetype.startsWith("image/")) {
+    await sock.sendMessage(jid, { image: buffer, caption: caption || "" });
+  } else {
+    if (caption) await sock.sendMessage(jid, { text: caption });
+    await sock.sendMessage(jid, { document: buffer, mimetype: mimetype || "application/octet-stream", fileName: filename || "adjunto" });
+  }
+}
+
 const DIAS_ES = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 const MESES_ES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
 
