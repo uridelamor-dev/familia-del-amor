@@ -21,6 +21,7 @@ import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { mapManageRow, resumenPorLocal, draftRequest, extractText } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
+import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
 import { createAgoraClient } from "./src/integrations/agora/client.js";
 import { syncVentas } from "./src/integrations/agora/sync.js";
 
@@ -267,6 +268,20 @@ async function initDB() {
         token TEXT,
         local_id TEXT,
         activo INTEGER DEFAULT 1,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Preferencias de marketing por contacto (consentimiento RGPD). Se cruza por teléfono con
+    // la vista unificada de contactos. baja=1 excluye SIEMPRE de cualquier envío masivo.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS marketing_prefs (
+        telefono TEXT PRIMARY KEY,
+        correo TEXT,
+        opt_in_wa INTEGER DEFAULT 0,
+        opt_in_email INTEGER DEFAULT 0,
+        baja INTEGER DEFAULT 0,
+        idioma TEXT,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -1534,6 +1549,16 @@ app.post("/api/leads", async (req, res) => {
   const fuenteVal = fuente || "web";
   const generoVal = genero || null;
 
+  // Consentimiento de marketing (opcional; solo se registra si el formulario lo envía).
+  const consienteWa = req.body.consent === true || req.body.consent === "1" || req.body.consent === 1 || !!req.body.opt_in_wa;
+  const consienteEmail = req.body.consent === true || req.body.consent === "1" || req.body.consent === 1 || !!req.body.opt_in_email;
+  const hayConsentimiento = req.body.consent !== undefined || req.body.opt_in_wa !== undefined || req.body.opt_in_email !== undefined;
+  const registrarConsent = async () => {
+    if (hayConsentimiento) {
+      try { await setMarketingPref(telefono, { correo, opt_in_wa: consienteWa ? 1 : 0, opt_in_email: consienteEmail ? 1 : 0 }); } catch (e) { console.error("[leads] consent:", e.message); }
+    }
+  };
+
   try {
     const existing = await dbGet(`SELECT id FROM leads WHERE telefono = ? OR correo = ?`, [telefono, correo]);
     if (existing) {
@@ -1541,6 +1566,7 @@ app.post("/api/leads", async (req, res) => {
         `UPDATE leads SET nombre=?, apellidos=?, nacimiento=?, poblacion=?, genero=COALESCE(?,genero), fuente=?, actualizado_en=? WHERE id=?`,
         [nombre, apellidos, nacimiento, poblacion, generoVal, fuenteVal, ahora, existing.id]
       );
+      await registrarConsent();
       return res.json({ ok: true, premio, actualizado: true });
     } else {
       await dbRun(
@@ -1548,6 +1574,7 @@ app.post("/api/leads", async (req, res) => {
         [nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuenteVal, generoVal, ahora]
       );
       mirrorLeadToSheet({ nombre, apellidos, telefono, correo, poblacion, nacimiento, genero: generoVal, fuente: fuenteVal, premio });
+      await registrarConsent();
       return res.json({ ok: true, premio });
     }
   } catch (e) {
@@ -1628,9 +1655,11 @@ async function mirrorLeadToSheet(lead) {
   }
 }
 
-// SQL unificado: leads + clientes de reservas sin lead, mergeando por teléfono
+// SQL unificado: leads + clientes de reservas sin lead, mergeando por teléfono.
+// Cruza marketing_prefs (consentimiento) por los últimos 9 dígitos del teléfono (robusto al
+// formato) y marca si el contacto tiene conversación de WhatsApp abierta (wa_clientes).
 function sqlContactosUnificados(filtros = {}, params = []) {
-  const { q, poblacion, genero, cumple_mes, local } = filtros;
+  const { q, poblacion, genero, cumple_mes, local, con_email, con_telefono, idioma, origen, excluir_baja } = filtros;
 
   let localFilter = local
     ? `AND c.telefono IN (SELECT telefono FROM reservas WHERE local = ?)`
@@ -1641,7 +1670,15 @@ function sqlContactosUnificados(filtros = {}, params = []) {
     SELECT
       c.nombre, c.apellidos, c.telefono, c.correo,
       c.nacimiento, c.poblacion, c.genero, c.origen,
-      c.ultima_actividad
+      c.ultima_actividad,
+      COALESCE(mp.baja, 0) AS baja,
+      COALESCE(mp.opt_in_wa, 0) AS opt_in_wa,
+      COALESCE(mp.opt_in_email, 0) AS opt_in_email,
+      mp.idioma AS idioma,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM wa_clientes w
+        WHERE RIGHT(regexp_replace(w.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
+      ) THEN 1 ELSE 0 END AS es_contacto_wa
     FROM (
       -- Clientes con lead (datos completos)
       SELECT
@@ -1668,6 +1705,8 @@ function sqlContactosUnificados(filtros = {}, params = []) {
       WHERE r.telefono NOT IN (SELECT telefono FROM leads WHERE telefono IS NOT NULL)
       GROUP BY r.telefono, r.nombre_reserva
     ) c
+    LEFT JOIN marketing_prefs mp
+      ON RIGHT(regexp_replace(mp.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
     WHERE 1=1
     ${localFilter}
   `;
@@ -1682,9 +1721,36 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   if (cumple_mes) { sql += ` AND TO_CHAR(c.nacimiento::date, 'MM') = ?`; params.push(cumple_mes.padStart(2, "0")); }
   if (filtros.from) { sql += ` AND c.ultima_actividad >= ?`; params.push(filtros.from); }
   if (filtros.to) { sql += ` AND c.ultima_actividad <= ?`; params.push(filtros.to + " 23:59:59"); }
+  if (con_email) sql += ` AND c.correo IS NOT NULL AND c.correo <> ''`;
+  if (con_telefono) sql += ` AND c.telefono IS NOT NULL AND c.telefono <> ''`;
+  if (origen) { sql += ` AND c.origen = ?`; params.push(origen); }
+  if (idioma) { sql += ` AND mp.idioma = ?`; params.push(idioma); }
+  if (excluir_baja) sql += ` AND COALESCE(mp.baja, 0) = 0`;
 
   sql += ` ORDER BY c.ultima_actividad DESC`;
   return sql;
+}
+
+// Marca/actualiza preferencias de marketing por teléfono (normalizado). Usado por opt-out y ficha.
+async function setMarketingPref(telefono, campos = {}) {
+  const tel = formatTelefonoES(telefono);
+  if (!tel) return;
+  const existing = await dbGet(`SELECT telefono FROM marketing_prefs WHERE telefono = ?`, [tel]);
+  const now = new Date().toISOString();
+  if (existing) {
+    const sets = [], vals = [];
+    for (const k of ["correo", "opt_in_wa", "opt_in_email", "baja", "idioma"]) {
+      if (campos[k] !== undefined) { sets.push(`${k} = ?`); vals.push(campos[k]); }
+    }
+    if (!sets.length) return;
+    sets.push(`updated_at = ?`); vals.push(now); vals.push(tel);
+    await dbRun(`UPDATE marketing_prefs SET ${sets.join(", ")} WHERE telefono = ?`, vals);
+  } else {
+    await dbRun(
+      `INSERT INTO marketing_prefs (telefono, correo, opt_in_wa, opt_in_email, baja, idioma, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [tel, campos.correo ?? null, campos.opt_in_wa ?? 0, campos.opt_in_email ?? 0, campos.baja ?? 0, campos.idioma ?? null, now]
+    );
+  }
 }
 
 app.get("/api/leads", requireAuth(["direccion", "marketing"]), async (req, res) => {
@@ -2669,6 +2735,109 @@ app.get("/api/contactos", requireAuth(["direccion", "marketing"]), async (req, r
   }
 });
 
+// Match por los últimos 9 dígitos del teléfono (robusto al formato +34 / espacios).
+const MATCH_TEL9 = (col) => `RIGHT(regexp_replace(${col}, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(?, '[^0-9]', '', 'g'), 9)`;
+
+// Ficha de un contacto: datos, visitas/reservas, estado WhatsApp y consentimiento.
+app.get("/api/contactos/:telefono", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const tel = req.params.telefono;
+    const lead = await dbGet(`SELECT nombre, apellidos, telefono, correo, nacimiento, poblacion, genero, fuente, creado_en, actualizado_en FROM leads WHERE ${MATCH_TEL9("telefono")} LIMIT 1`, [tel]);
+    const reservas = await dbAll(`SELECT local, dia, hora, personas, creado_en FROM reservas WHERE ${MATCH_TEL9("telefono")} ORDER BY dia DESC, hora DESC LIMIT 50`, [tel]);
+    const prefs = await dbGet(`SELECT correo, opt_in_wa, opt_in_email, baja, idioma FROM marketing_prefs WHERE ${MATCH_TEL9("telefono")} LIMIT 1`, [tel]);
+    const wa = await dbGet(`SELECT nombre, ultima_interaccion FROM wa_clientes WHERE ${MATCH_TEL9("telefono")} ORDER BY ultima_interaccion DESC LIMIT 1`, [tel]);
+    const nombre = lead?.nombre || (reservas[0]?.local ? (reservas[0].nombre_reserva || "") : "") || wa?.nombre || "";
+    res.json({
+      ok: true,
+      data: {
+        telefono: tel,
+        nombre, apellidos: lead?.apellidos || "", correo: lead?.correo || prefs?.correo || "",
+        poblacion: lead?.poblacion || "", nacimiento: lead?.nacimiento || "", genero: lead?.genero || null,
+        origen: lead ? "lead" : "reserva",
+        visitas: reservas.length,
+        ultimo_local: reservas[0]?.local || "",
+        reservas,
+        es_contacto_wa: !!wa,
+        wa_ultima: wa?.ultima_interaccion || null,
+        prefs: prefs || { opt_in_wa: 0, opt_in_email: 0, baja: 0, idioma: null },
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Editar consentimiento/idioma de un contacto.
+app.patch("/api/contactos/prefs", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const { telefono } = req.body;
+  if (!telefono) return res.status(400).json({ ok: false, error: "Falta teléfono" });
+  try {
+    const campos = {};
+    for (const k of ["opt_in_wa", "opt_in_email", "baja"]) if (req.body[k] !== undefined) campos[k] = req.body[k] ? 1 : 0;
+    for (const k of ["idioma", "correo"]) if (req.body[k] !== undefined) campos[k] = req.body[k] || null;
+    await setMarketingPref(telefono, campos);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Mensaje INDIVIDUAL por WhatsApp a un contacto (desde la ficha de Clientes).
+app.post("/api/contactos/mensaje", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const { telefono, mensaje } = req.body;
+  if (!telefono || !mensaje) return res.status(400).json({ ok: false, error: "Faltan datos" });
+  if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
+  try {
+    await sendMensajeLibre(telefono, mensaje);
+    const digits = String(telefono).replace(/\D/g, "");
+    const jid = formatTelefonoES(telefono) + "@s.whatsapp.net";
+    addSaraToHistorial(jid, mensaje);
+    await dbRun(`INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, tipo) VALUES (?, ?, '[Equipo]', ?, 'manual')`, [jid, digits, mensaje]);
+    await dbRun(`INSERT INTO wa_clientes (jid, telefono, ultima_interaccion) VALUES (?, ?, EXTRACT(EPOCH FROM NOW())::BIGINT) ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`, [jid, digits]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Envío de un LOTE por WhatsApp con ritmo (jitter) — reutilizado por masivo y campañas.
+async function enviarLoteWA({ contactos, mensaje, campanaId = null, minMs = 6000, maxMs = 15000 }) {
+  let enviados = 0, errores = 0;
+  for (const c of contactos) {
+    try {
+      await sendMensajeLibre(c.telefono, aplicarVariables(mensaje, c));
+      enviados++;
+    } catch (_) { errores++; }
+    await new Promise((r) => setTimeout(r, delayConJitter(minMs, maxMs)));
+  }
+  if (campanaId) {
+    try { await dbRun(`UPDATE campanas_wa SET total_enviados=?, total_errores=?, finalizado_en=CURRENT_TIMESTAMP WHERE id=?`, [enviados, errores, campanaId]); } catch { /* noop */ }
+  }
+  return { enviados, errores };
+}
+
+// Mensaje MASIVO al conjunto filtrado (excluye SIEMPRE bajas; consentimiento opcional).
+app.post("/api/contactos/mensaje-masivo", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const { mensaje, nombre_campana, soloOptIn } = req.body;
+  if (!mensaje) return res.status(400).json({ ok: false, error: "Falta el mensaje" });
+  if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
+  try {
+    const params = [];
+    const sql = sqlContactosUnificados(req.body, params);
+    const contactos = await dbAll(sql, params);
+    const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: !!soloOptIn });
+    if (!aptos.length) return res.json({ ok: true, total: contactos.length, enviables: 0, omitidos, aviso: "No hay destinatarios enviables (revisa bajas/consentimiento)." });
+    const segmento = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes };
+    const row = await dbRun(`INSERT INTO campanas_wa (nombre, segmento_json, mensaje, total_enviados) VALUES (?, ?, ?, 0) RETURNING id`,
+      [nombre_campana || ("Mensaje rápido " + new Date().toISOString().slice(0, 10)), JSON.stringify(segmento), mensaje]);
+    const campanaId = row.id;
+    res.json({ ok: true, total: contactos.length, enviables: aptos.length, omitidos, campana_id: campanaId });
+    enviarLoteWA({ contactos: aptos, mensaje, campanaId });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── CAMPAÑAS WHATSAPP ─────────────────────────────────────────────────
 app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
@@ -3302,6 +3471,13 @@ const server = app.listen(PORT, async () => {
          ON CONFLICT(jid) DO UPDATE SET ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`,
         [jid, telefono]
       );
+      // Opt-out de marketing: si el cliente escribe BAJA/STOP, se le excluye de envíos masivos.
+      if (!historico && jid.endsWith("@s.whatsapp.net")) {
+        const norm = String(texto || "").trim().toUpperCase();
+        if (["BAJA", "STOP", "NO MOLESTAR", "DAR DE BAJA", "UNSUBSCRIBE"].includes(norm)) {
+          try { await setMarketingPref(telefono, { baja: 1 }); console.log(`🔕 Opt-out marketing: ${telefono}`); } catch (e) { console.error("Opt-out:", e.message); }
+        }
+      }
     } catch (e) { console.error("Error guardando mensaje WA:", e.message); }
   });
 
