@@ -43,7 +43,7 @@ const NAV = [
     ["clientes", "Clientes", "users", ["direccion", "marketing"]],
   ] },
   { g: "Gestión", items: [
-    ["rrhh", "RR. HH.", "idcard", ["direccion"]],
+    ["rrhh", "RR. HH.", "idcard", ["direccion", "rrhh", "encargado"]],
     ["facturas", "Facturas", "receipt", ["direccion", "contabilidad"]],
     ["web", "Web", "globe", ["direccion", "marketing"]],
     ["reviews", "Reseñas", "star", ["direccion", "encargado", "contabilidad", "marketing"]],
@@ -60,9 +60,9 @@ const NAV = [
   ] },
 ];
 const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
-const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica"]);
+const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica", "rrhh"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
 function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol)); }
 // ¿El usuario actual puede entrar a `view`? Respeta rol + allowlist efectiva (USER.modulos del token).
@@ -1114,11 +1114,18 @@ const RR_TIPO_COL = { nota: "var(--border2)", llamada: "var(--brand)", incidenci
 const RR_VAC_TIPOS = ["Jornada completa", "Jornada parcial", "Fines de semana", "Temporal"];
 function rrMesActual() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); }
 function rrAutor() { return (USER && (USER.nombre || USER.username || USER.rol)) || "panel"; }
-let RRSEG = { workers: [], llamadas: [], preguntas: [], sel: null, notas: [], mes: rrMesActual() };
+let RRSEG = { workers: [], llamadas: [], preguntas: [], sel: null, notas: [], ficha: null, resumen: [], mes: rrMesActual() };
 let RRPREG = { mes: rrMesActual(), preguntas: [] };
 function rrParseResp(v) { if (!v) return []; if (Array.isArray(v)) return v; try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } }
-function rrTabs() {
+// Pestañas visibles por rol: el encargado solo ve el Seguimiento de su equipo (candidaturas,
+// vacantes y preguntas son centrales de RRHH/dirección).
+function rrTabsPermitidas() {
   const T = [["candidaturas", "Candidaturas"], ["seguimiento", "Seguimiento"], ["vacantes", "Vacantes"], ["preguntas", "Preguntas del mes"]];
+  return USER.rol === "encargado" ? T.filter(([id]) => id === "seguimiento") : T;
+}
+function rrTabs() {
+  const T = rrTabsPermitidas();
+  if (T.length <= 1) return "";
   return `<div class="toolbar" style="margin-bottom:12px">${T.map(([id, lab]) => `<button class="btn ${RRTAB === id ? "primary" : ""}" data-act="rr-tab" data-tab="${id}">${lab}</button>`).join("")}</div>`;
 }
 function rrPh(sub) { return `<div class="ph"><div class="eyebrow">Personas</div><h1>RR. HH.</h1><div class="sub">${esc(sub)}</div></div>`; }
@@ -1127,7 +1134,7 @@ function renderRRCand(rows) {
   rows = rows || [];
   const estOpts = ['<option value="">Todos los estados</option>'].concat(["nuevo", "revisando", "contratada", "descartada"].map((e) => `<option value="${e}" ${RRF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
   const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(RRF.q)}" placeholder="Nombre, puesto…"></div><button class="btn" data-act="rr-filtrar">Buscar</button></div>`;
-  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
+  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => e === "contratada" ? `<button class="linkbtn" style="color:var(--brand)" data-act="cand-contratar" data-id="${c.id}" data-nombre="${esc(c.nombre)}">Contratar</button>` : `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
   return rrPh("Candidaturas y equipo") + rrTabs() + toolbar + table;
 }
 // ── Seguimiento (maestro-detalle) ──
@@ -1145,7 +1152,9 @@ function renderRRSegSidebar() {
     }).join("");
     return `<div><div class="ch" style="padding:10px 14px 4px;margin:0"><h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)">${esc(loc)}</h3><span class="pill ${hechos === ws.length ? "ok" : ""}">${hechos}/${ws.length}</span></div><div class="rows">${items}</div></div>`;
   }).join("");
-  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3><button class="btn sm" data-act="rr-worker-add">+ Añadir</button></div>${groups || '<div class="mut" style="padding:14px">Sin trabajadores.</div>'}</div>`;
+  const addBtn = '<button class="btn sm" data-act="rr-worker-add">+ Añadir</button>';
+  const agoraBtn = '<button class="btn sm" data-act="rr-agora-import" title="Enlazar operadores de Ágora">Ágora</button>';
+  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3><span style="display:flex;gap:6px">${agoraBtn}${addBtn}</span></div>${groups || '<div class="mut" style="padding:14px">Sin trabajadores.</div>'}</div>`;
 }
 function renderRRCheckin() {
   const w = RRSEG.sel; if (!w) return "";
@@ -1168,13 +1177,127 @@ function renderRRNotas() {
   const list = notas.length ? notas.map((n) => { const t = RR_TIPOS[n.tipo] || RR_TIPOS.nota; return `<div class="card" style="border-left:3px solid ${RR_TIPO_COL[n.tipo] || "var(--border2)"};padding:12px 14px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><div style="min-width:0"><div class="t2">${t.ic} ${t.lab}${n.autor ? " · " + esc(n.autor) : ""} · ${esc(String(n.creado_en || "").slice(0, 16).replace("T", " "))}</div><div style="white-space:pre-wrap;margin-top:3px">${esc(n.contenido || "")}</div></div><button class="btn sm danger" data-act="rr-nota-del" data-id="${n.id}">✕</button></div></div>`; }).join("") : `<div class="card"><div class="mut" style="padding:6px">Sin notas todavía.</div></div>`;
   return `${form}<div class="grid" style="gap:10px">${list}</div>`;
 }
+const RR_DOC_TIPOS = { contrato: "Contrato", dni: "DNI/NIE", manipulador: "Carnet manipulador", nomina: "Nómina", otro: "Otro" };
+function renderRRDocs() {
+  const f = RRSEG.ficha; if (!f) return "";
+  const docs = f.documentos || [];
+  const alertaKey = {}; (f.alertasDoc || []).forEach((a) => { alertaKey[a.id] = a; });
+  const list = docs.length ? docs.map((d) => {
+    const al = alertaKey[d.id];
+    const cad = d.fecha_caducidad ? (al ? `<span class="pill ${al.estado === "vencido" ? "bad" : "warn"}">${al.estado === "vencido" ? "Vencido" : "Caduca en " + al.diasRestantes + "d"}</span>` : `<span class="mut">caduca ${esc(d.fecha_caducidad)}</span>`) : "";
+    return `<div class="row"><div class="grow"><div class="t1"><a href="${esc(d.url)}" target="_blank" rel="noopener" style="color:var(--brand)">${esc(d.nombre || d.tipo)}</a> ${d.sensible ? '<span class="pill" title="Sensible">🔒</span>' : ""}</div><div class="t2">${esc(RR_DOC_TIPOS[d.tipo] || d.tipo)} ${cad}</div></div><button class="btn sm danger" data-act="rr-doc-del" data-id="${d.id}">✕</button></div>`;
+  }).join("") : `<div class="mut" style="padding:8px 14px">Sin documentos.</div>`;
+  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Documentos</h3><button class="btn sm" data-act="rr-doc-subir" data-id="${RRSEG.sel.id}">+ Subir</button></div><div class="rows">${list}</div></div>`;
+}
 function renderRRFicha() {
   const w = RRSEG.sel;
-  if (!w) return `<div class="card" style="min-height:200px;display:grid;place-items:center"><div class="mut">Selecciona un trabajador para ver su ficha, check-in mensual y notas.</div></div>`;
-  return `<div class="grid" style="gap:16px"><div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(w.nombre || w.username || "—")}</h2><div class="t2">${esc(w.rol || "")}${w.local ? " · " + esc(w.local) : ""}${w.username ? " · @" + esc(w.username) : ""}</div></div><button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(w.nombre || w.username || "")}">Eliminar</button></div></div>${renderRRCheckin()}${renderRRNotas()}</div>`;
+  if (!w) return `<div class="card" style="min-height:200px;display:grid;place-items:center"><div class="mut">Selecciona un trabajador para ver su ficha, datos, documentos y check-in.</div></div>`;
+  const f = RRSEG.ficha; const t = (f && f.trabajador) || w;
+  const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
+  const baja = t.activo === 0 || t.activo === false || t.fecha_baja;
+  const estado = baja ? '<span class="pill bad">Baja</span>' : '<span class="pill ok">Activo</span>';
+  const antig = f && f.antiguedad ? ` · ${esc(f.antiguedad.texto)} en la empresa` : "";
+  const ini = (t.nombre || t.username || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
+  const foto = t.foto_url ? `<img src="${esc(t.foto_url)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : `<span class="avatar" style="width:56px;height:56px;font-size:20px;flex:none">${esc(ini)}</span>`;
+  const dato = (lab, val) => val ? `<div><div class="t2">${lab}</div><div class="t1">${esc(val)}</div></div>` : "";
+  const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Puesto", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
+  const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(t.rol || "")}${t.local ? " · " + esc(t.local) : ""}${t.username ? " · @" + esc(t.username) : ""}${antig}</div></div></div>${esDir ? `<button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(t.nombre || t.username || "")}">Eliminar</button>` : ""}</div></div>`;
+  return `<div class="grid" style="gap:16px">${hero}${datos}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
+}
+function renderRRRendimiento() {
+  const f = RRSEG.ficha; if (!f) return "";
+  if (!f.enlazadoAgora) return `<div class="card"><div class="ch"><h3>Rendimiento (Ágora)</h3><button class="btn sm" data-act="rr-agora-import">Enlazar con Ágora</button></div><div class="mut" style="padding:2px 2px 4px">No está enlazado a su operador de Ágora. Enlázalo para ver sus ventas.</div></div>`;
+  return `<div class="card"><div class="ch"><h3>Rendimiento (Ágora)</h3><button class="btn sm" data-act="rr-rend-cargar" data-id="${RRSEG.sel.id}">Cargar ventas (30 días)</button></div><div id="rrRend"><div class="mut" style="padding:2px">Pulsa «Cargar» para consultar en vivo (requiere el TPV abierto).</div></div></div>`;
+}
+async function rrCargarRendimiento(id) {
+  const box = document.getElementById("rrRend"); if (box) box.innerHTML = '<div class="mut" style="padding:2px">Consultando Ágora…</div>';
+  try {
+    const j = await apiRaw("/api/rrhh/trabajador/" + encodeURIComponent(id) + "/rendimiento");
+    if (!box) return;
+    if (j.sinCredenciales) { box.innerHTML = '<div class="mut" style="padding:2px">Ágora no está configurado para este local.</div>'; return; }
+    if (!j.fila) { box.innerHTML = '<div class="mut" style="padding:2px">Sin ventas en el periodo (o el TPV está cerrado).</div>'; return; }
+    const f = j.fila;
+    box.innerHTML = `<div class="grid g3" style="gap:12px"><div><div class="t2">Ventas</div><div class="t1">${eur(f.ventas || 0)}</div></div><div><div class="t2">Cancelado</div><div class="t1">${eur(f.cancelado || 0)}</div></div><div><div class="t2">Periodo</div><div class="t1">${esc(j.from)} → ${esc(j.to)}</div></div></div>`;
+  } catch (e) { if (box) box.innerHTML = `<div class="mut" style="padding:2px">Error: ${esc(e.message)}</div>`; }
+}
+async function rrImportarOperadores() {
+  const ov = modal("Enlazar operadores de Ágora", '<div id="rrOpBody" class="mut">Consultando Ágora (últimos 90 días)…</div>');
+  const body = ov.querySelector("#rrOpBody");
+  try {
+    const j = await apiRaw("/api/rrhh/agora/operadores");
+    if (j.sinCredenciales) { body.innerHTML = "Ágora no está configurado. Configúralo en «Ágora (TPV)»."; return; }
+    const ops = j.operadores || [];
+    if (!ops.length) { body.innerHTML = "No se han detectado operadores con ventas en el periodo (o el TPV está cerrado)."; return; }
+    const workers = RRSEG.workers || [];
+    const wopts = (sel) => workers.map((w) => `<option value="${w.id}" ${String(w.id) === String(sel) ? "selected" : ""}>${esc(w.nombre)} · ${esc(w.local || "")}</option>`).join("");
+    body.innerHTML = `<div class="mut" style="margin-bottom:10px;font-size:12.5px">${ops.length} operador(es) detectados. Enlaza cada uno a su ficha.</div>` + ops.map((o, i) => {
+      if (o.match === "exacto") return `<div class="row"><div class="grow"><b>${esc(o.userName)}</b> <span class="pill ok">enlazado</span></div></div>`;
+      const sel = o.worker_id || (o.candidatos[0] && o.candidatos[0].id) || "";
+      const badge = o.match === "probable" ? '<span class="pill warn">probable</span>' : '<span class="pill">sin match</span>';
+      return `<div class="row" id="rrop-row-${i}"><div class="grow"><b>${esc(o.userName)}</b> ${badge}</div><select id="rrop-${i}" style="max-width:220px">${wopts(sel)}</select> <button class="btn sm primary" data-rr-enlazar="${i}" data-agora="${esc(o.userName)}">Enlazar</button></div>`;
+    }).join("");
+  } catch (e) { body.innerHTML = "Error: " + esc(e.message); return; }
+  ov.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-rr-enlazar]"); if (!b) return;
+    const i = b.getAttribute("data-rr-enlazar"); const agora = b.getAttribute("data-agora");
+    const sel = document.getElementById("rrop-" + i); const wid = sel ? sel.value : null; if (!wid) return;
+    try { await apiSend("POST", "/api/rrhh/agora/enlazar", { agora_username: agora, worker_id: wid }); toast("Enlazado ✅"); const row = document.getElementById("rrop-row-" + i); if (row) row.innerHTML = `<div class="grow"><b>${esc(agora)}</b> <span class="pill ok">enlazado</span></div>`; }
+    catch (err) { if (err.message !== "noauth") toast("Error: " + err.message); }
+  });
+}
+function rrEditarDatos(id) {
+  const t = (RRSEG.ficha && RRSEG.ficha.trabajador) || RRSEG.sel; if (!t) return;
+  const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
+  const F = (name, lab, val, type) => `<div class="field"><label>${lab}</label><input name="${name}" ${type ? `type="${type}"` : ""} value="${esc(val || "")}"></div>`;
+  const sensibles = esDir ? `${F("dni", "DNI/NIE", t.dni)}${F("fecha_alta", "Fecha de alta", (t.fecha_alta || "").slice(0, 10), "date")}${F("fecha_baja", "Fecha de baja", (t.fecha_baja || "").slice(0, 10), "date")}<label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="activo" ${(t.activo === 0 || t.fecha_baja) ? "" : "checked"} style="width:auto"> Activo</label>` : "";
+  const body = `<form id="fRRD"><div class="form-grid">${F("nombre", "Nombre", t.nombre)}${F("puesto", "Puesto", t.puesto)}${F("telefono", "Teléfono", t.telefono)}${F("email", "Email", t.email)}${F("fecha_nac", "Nacimiento", (t.fecha_nac || "").slice(0, 10), "date")}${sensibles}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar</button></div></form>`;
+  const ov = modal("Editar datos", body);
+  ov.querySelector("#fRRD").addEventListener("submit", async (e) => {
+    e.preventDefault(); const fm = e.target;
+    const data = { nombre: fm.nombre.value.trim(), puesto: fm.puesto.value.trim(), telefono: fm.telefono.value.trim(), email: fm.email.value.trim(), fecha_nac: fm.fecha_nac.value };
+    if (esDir) { data.dni = fm.dni.value.trim(); data.fecha_alta = fm.fecha_alta.value; data.fecha_baja = fm.fecha_baja.value; data.activo = fm.activo.checked ? 1 : 0; }
+    try { await apiSend("PUT", "/api/rrhh/trabajador/" + encodeURIComponent(id), data); ov.remove(); toast("Datos guardados ✅"); rrSelWorker(id); }
+    catch (err) { toast("Error: " + err.message); }
+  });
+}
+function rrDocSubir(id) {
+  const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
+  const tipoOpts = Object.keys(RR_DOC_TIPOS).map((k) => `<option value="${k}">${RR_DOC_TIPOS[k]}</option>`).join("");
+  const body = `<form id="fRRDoc"><div class="form-grid"><div class="field"><label>Tipo</label><select name="tipo">${tipoOpts}</select></div><div class="field"><label>Nombre</label><input name="nombre" placeholder="Contrato 2026…"></div><div class="field"><label>Caduca (opcional)</label><input name="fecha_caducidad" type="date"></div>${esDir ? `<label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="sensible" style="width:auto"> Documento sensible (solo dirección/RRHH)</label>` : ""}<div class="field full"><label>Archivo (PDF o imagen)</label><input type="file" id="rrDocFile" accept=".pdf,.jpg,.jpeg,.png" required></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Subir</button></div></form>`;
+  const ov = modal("Subir documento", body);
+  ov.querySelector("#fRRDoc").addEventListener("submit", async (e) => {
+    e.preventDefault(); const fm = e.target; const btn = fm.querySelector('button[type="submit"]');
+    const file = ov.querySelector("#rrDocFile").files[0]; if (!file) { toast("Elige un archivo"); return; }
+    const fd = new FormData(); fd.append("archivo", file); fd.append("tipo", fm.tipo.value); fd.append("nombre", fm.nombre.value.trim() || file.name);
+    if (fm.fecha_caducidad.value) fd.append("fecha_caducidad", fm.fecha_caducidad.value);
+    if (esDir && fm.sensible.checked) fd.append("sensible", "1");
+    if (btn) { btn.disabled = true; btn.textContent = "Subiendo…"; }
+    try {
+      const r = await fetch("/api/rrhh/trabajador/" + encodeURIComponent(id) + "/documento", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
+      if (r.status === 401 || r.status === 403) { localStorage.removeItem("token"); location.href = "/login.html"; return; }
+      const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error");
+      ov.remove(); toast("Documento subido ✅"); rrSelWorker(id);
+    } catch (err) { if (btn) { btn.disabled = false; btn.textContent = "Subir"; } toast("Error: " + err.message); }
+  });
+}
+async function rrDocDel(id) {
+  if (!(await confirmModal("¿Borrar este documento?", { ok: "Borrar", danger: true }))) return;
+  try { await apiSend("DELETE", "/api/rrhh/documento/" + encodeURIComponent(id)); toast("Documento borrado ✅"); if (RRSEG.sel) rrSelWorker(RRSEG.sel.id); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+function renderRRResumen() {
+  const r = RRSEG.resumen || [];
+  if (!r.length) return "";
+  const cards = r.map((e) => {
+    const alert = e.docsAlerta ? `<span class="pill warn">${e.docsAlerta} doc. por caducar</span>` : "";
+    const cumple = (e.cumples && e.cumples.length) ? `<span class="pill">🎂 ${e.cumples.length}</span>` : "";
+    const antig = e.antiguedadMediaDias != null ? (Math.round(e.antiguedadMediaDias / 365 * 10) / 10) + " años" : "—";
+    return `<div class="card" style="padding:12px 14px"><div class="t1" style="font-weight:600">${esc(e.local)}</div><div class="t2" style="margin:4px 0 8px">${e.activos} activo(s)${e.bajas ? ` · ${e.bajas} baja(s)` : ""} · antig. media ${antig}</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="pill ${e.checkinsHechos >= e.total ? "ok" : ""}">Check-ins ${e.checkinsHechos}/${e.total}</span>${alert}${cumple}</div></div>`;
+  }).join("");
+  return `<div class="grid g3" style="gap:12px;margin-bottom:14px">${cards}</div>`;
 }
 function renderRRSeg() {
-  return rrPh("Seguimiento mensual del equipo · " + RRSEG.mes) + rrTabs() + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
+  return rrPh("Seguimiento mensual del equipo · " + RRSEG.mes) + rrTabs() + renderRRResumen() + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
 }
 // ── Vacantes ──
 function renderRRVac(rows) {
@@ -1194,14 +1317,16 @@ function renderRRPreg() {
 // ── Carga / router de pestañas ──
 async function loadRRHH() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
+  const permitidas = rrTabsPermitidas().map((t) => t[0]);
+  if (!permitidas.includes(RRTAB)) RRTAB = permitidas[0];
   try {
     if (RRTAB === "candidaturas") {
       const qs = new URLSearchParams(); if (RRF.estado) qs.set("estado", RRF.estado); if (RRF.q) qs.set("q", RRF.q);
       view.innerHTML = renderRRCand(await api("/api/hr/applications" + (qs.toString() ? "?" + qs : "")));
     } else if (RRTAB === "seguimiento") {
       RRSEG.mes = rrMesActual();
-      const [workers, llamadas, preguntas] = await Promise.all([api("/api/rrhh/trabajadores"), apiOptional("/api/rrhh/llamadas/" + RRSEG.mes), apiOptional("/api/rrhh/preguntas/" + RRSEG.mes)]);
-      RRSEG.workers = workers || []; RRSEG.llamadas = llamadas || []; RRSEG.preguntas = preguntas || [];
+      const [workers, llamadas, preguntas, resumen] = await Promise.all([api("/api/rrhh/trabajadores"), apiOptional("/api/rrhh/llamadas/" + RRSEG.mes), apiOptional("/api/rrhh/preguntas/" + RRSEG.mes), apiOptional("/api/rrhh/resumen?mes=" + RRSEG.mes)]);
+      RRSEG.workers = workers || []; RRSEG.llamadas = llamadas || []; RRSEG.preguntas = preguntas || []; RRSEG.resumen = resumen || [];
       if (RRSEG.sel) { const still = RRSEG.workers.find((w) => String(w.id) === String(RRSEG.sel.id)); RRSEG.sel = still || null; }
       view.innerHTML = renderRRSeg();
     } else if (RRTAB === "vacantes") {
@@ -1218,8 +1343,9 @@ async function candEstado(id, estado) { try { await apiSend("PUT", "/api/hr/appl
 // Seguimiento: selección de trabajador (carga notas y repinta solo la ficha)
 async function rrSelWorker(id) {
   const w = RRSEG.workers.find((x) => String(x.id) === String(id)); if (!w) return;
-  RRSEG.sel = w;
+  RRSEG.sel = w; RRSEG.ficha = null;
   try { RRSEG.notas = (await apiOptional("/api/rrhh/trabajador/" + id + "/notas")) || []; } catch { RRSEG.notas = []; }
+  try { RRSEG.ficha = await apiRaw("/api/rrhh/trabajador/" + id + "/ficha"); } catch { RRSEG.ficha = null; }
   const v = document.getElementById("view"); if (v && CURRENT === "rrhh" && RRTAB === "seguimiento") v.innerHTML = renderRRSeg();
 }
 function rrRepaintFicha() { const f = document.getElementById("rrFicha"); if (f) f.innerHTML = renderRRFicha(); else if (CURRENT === "rrhh") loadRRHH(); }
@@ -1251,11 +1377,27 @@ async function rrNotaDel(id) {
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 function rrWorkerAdd() {
-  const locOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
-  const ov = modal("Añadir trabajador", `<form id="fWorker" class="grid" style="gap:12px"><div class="field"><label>Nombre</label><input name="nombre" required></div><div class="field"><label>Usuario</label><input name="username" required placeholder="nombre.local"></div><div class="field"><label>Local</label><select name="local">${locOpts}</select></div><div class="field"><label>Rol</label><select name="rol"><option value="trabajador">Trabajador</option><option value="encargado">Encargado</option></select></div><div class="field"><label>Contraseña</label><input name="password" required value="tapeta2024"></div><button class="btn primary" type="submit">Crear</button></form>`);
+  // Alta vía endpoint propio de RRHH: el encargado puede crear en SU local (rol fijo trabajador).
+  const enc = USER.rol === "encargado";
+  const localField = enc
+    ? `<input type="hidden" name="local" value="${esc(USER.local || "")}"><div class="field"><label>Local</label><input value="${esc(USER.local || "")}" disabled></div>`
+    : `<div class="field"><label>Local</label><select name="local">${LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("")}</select></div>`;
+  const rolField = enc ? `<input type="hidden" name="rol" value="trabajador">` : `<div class="field"><label>Rol</label><select name="rol"><option value="trabajador">Trabajador</option><option value="encargado">Encargado</option></select></div>`;
+  const ov = modal("Añadir trabajador", `<form id="fWorker" class="grid" style="gap:12px"><div class="field"><label>Nombre</label><input name="nombre" required></div><div class="field"><label>Usuario</label><input name="username" required placeholder="nombre.local"></div>${localField}${rolField}<div class="field"><label>Contraseña</label><input name="password" required value="tapeta2024"></div><button class="btn primary" type="submit">Crear</button></form>`);
   ov.querySelector("#fWorker").addEventListener("submit", async (e) => {
     e.preventDefault(); const data = Object.fromEntries(new FormData(e.target).entries());
-    try { await apiSend("POST", "/api/users", data); ov.remove(); toast("Trabajador creado ✅"); loadRRHH(); } catch (err) { toast("Error: " + err.message); }
+    try { await apiSend("POST", "/api/rrhh/trabajador", data); ov.remove(); toast("Trabajador creado ✅"); loadRRHH(); } catch (err) { toast("Error: " + err.message); }
+  });
+}
+function rrContratar(id, nombre) {
+  const localOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const base = String(nombre || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "");
+  const body = `<form id="fContratar"><div class="mut" style="margin-bottom:10px">Se creará la ficha de <b>${esc(nombre)}</b> (con su CV como primer documento) y la candidatura pasará a «contratada».</div><div class="form-grid"><div class="field"><label>Usuario</label><input name="username" required value="${esc(base)}"></div><div class="field"><label>Contraseña</label><input name="password" type="text" required value="tapeta2024"></div><div class="field"><label>Local</label><select name="local">${localOpts}</select></div><div class="field"><label>Rol</label><select name="rol"><option value="trabajador">trabajador</option><option value="encargado">encargado</option></select></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Contratar</button></div></form>`;
+  const ov = modal("Contratar candidato", body);
+  ov.querySelector("#fContratar").addEventListener("submit", async (e) => {
+    e.preventDefault(); const f = e.target;
+    try { await apiSend("POST", "/api/hr/applications/" + encodeURIComponent(id) + "/contratar", { username: f.username.value.trim(), password: f.password.value, local: f.local.value, rol: f.rol.value }); ov.remove(); toast("Contratado ✅ Ficha creada"); loadRRHH(); }
+    catch (err) { toast("Error: " + err.message); }
   });
 }
 async function rrWorkerDel(id, nombre) {
@@ -2572,6 +2714,12 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-filtrar") applyRRFilter();
   else if (act === "cand-estado") candEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
   else if (act === "rr-worker") rrSelWorker(t.getAttribute("data-id"));
+  else if (act === "rr-editar-datos") rrEditarDatos(t.getAttribute("data-id"));
+  else if (act === "rr-doc-subir") rrDocSubir(t.getAttribute("data-id"));
+  else if (act === "rr-doc-del") rrDocDel(t.getAttribute("data-id"));
+  else if (act === "cand-contratar") rrContratar(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
+  else if (act === "rr-agora-import") rrImportarOperadores();
+  else if (act === "rr-rend-cargar") rrCargarRendimiento(t.getAttribute("data-id"));
   else if (act === "rr-worker-add") rrWorkerAdd();
   else if (act === "rr-worker-del") rrWorkerDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-checkin-save") rrCheckinSave();

@@ -44,16 +44,17 @@ describe("modulosEfectivos", () => {
     assert.deepEqual(eff, ["facturas"]);
   });
   test("allowlist nunca amplía por encima del rol", () => {
-    const eff = modulosEfectivos("encargado", ["agora", "rrhh"]);
+    const eff = modulosEfectivos("encargado", ["agora", "usuarios"]);
     assert.deepEqual(eff, []); // ninguno es de encargado
   });
 });
 
 describe("puedeAccederModulo", () => {
-  test("encargado con local entra a reservas, no a rrhh", () => {
+  test("encargado con local entra a reservas y rrhh, no a clientes", () => {
     const u = { rol: "encargado", modulos: null };
     assert.equal(puedeAccederModulo("reservas", u), true);
-    assert.equal(puedeAccederModulo("rrhh", u), false);
+    assert.equal(puedeAccederModulo("rrhh", u), true); // RRHH abierto a encargado (su local)
+    assert.equal(puedeAccederModulo("clientes", u), false);
   });
   test("restringido: contabilidad sin analitica en su allowlist", () => {
     const u = { rol: "contabilidad", modulos: ["facturas"] };
@@ -75,6 +76,13 @@ describe("sanearModulos", () => {
 });
 
 describe("esModuloPorLocal", () => {
+  test("rrhh abierto a direccion/rrhh/encargado y es por-local", () => {
+    const r = modulosDeRol("rrhh");
+    assert.ok(r.includes("rrhh"));
+    assert.ok(modulosDeRol("encargado").includes("rrhh"));
+    assert.ok(modulosDeRol("direccion").includes("rrhh"));
+    assert.equal(esModuloPorLocal("rrhh"), true);
+  });
   test("dashboard/reservas/facturas/analitica varían por local", () => {
     for (const v of ["dashboard", "reservas", "facturas", "analitica"]) assert.equal(esModuloPorLocal(v), true);
   });
