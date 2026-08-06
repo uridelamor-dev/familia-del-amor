@@ -528,33 +528,183 @@ function openBulkReview(drafts) {
 // ════════════════════════ VISTA: RR. HH. ════════════════════════
 let RRTAB = "candidaturas", RRF = { estado: "", q: "" };
 const CAND_EST = { nuevo: "info", revisando: "imp", contratada: "ok", descartada: "bad" };
-function renderRRHH(data) {
-  const tabs = `<div class="toolbar" style="margin-bottom:12px"><button class="btn ${RRTAB === "candidaturas" ? "primary" : ""}" data-act="rr-tab" data-tab="candidaturas">Candidaturas</button><button class="btn ${RRTAB === "trabajadores" ? "primary" : ""}" data-act="rr-tab" data-tab="trabajadores">Trabajadores</button></div>`;
-  let body;
-  if (RRTAB === "candidaturas") {
-    const rows = data || [];
-    const estOpts = ['<option value="">Todos los estados</option>'].concat(["nuevo", "revisando", "contratada", "descartada"].map((e) => `<option value="${e}" ${RRF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
-    const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(RRF.q)}" placeholder="Nombre, puesto…"></div><button class="btn" data-act="rr-filtrar">Buscar</button></div>`;
-    const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
-    body = toolbar + table;
-  } else {
-    const rows = data || [];
-    body = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Local</th></tr></thead><tbody>${rows.map((t) => `<tr><td>${esc(t.nombre || "")}</td><td class="mut">${esc(t.username || "")}</td><td>${esc(t.rol || "")}</td><td>${esc(t.local || "")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin trabajadores.</div></div>`;
-  }
-  return `<div class="ph"><div class="eyebrow">Personas</div><h1>RR. HH.</h1><div class="sub">Candidaturas y equipo</div></div>${tabs}${body}`;
+const RR_TIPOS = { nota: { ic: "📝", lab: "Nota" }, llamada: { ic: "📞", lab: "Llamada" }, incidencia: { ic: "⚠️", lab: "Incidencia" }, consulta: { ic: "💬", lab: "Consulta" } };
+const RR_TIPO_COL = { nota: "var(--border2)", llamada: "var(--brand)", incidencia: "var(--danger)", consulta: "var(--info)" };
+const RR_VAC_TIPOS = ["Jornada completa", "Jornada parcial", "Fines de semana", "Temporal"];
+function rrMesActual() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); }
+function rrAutor() { return (USER && (USER.nombre || USER.username || USER.rol)) || "panel"; }
+let RRSEG = { workers: [], llamadas: [], preguntas: [], sel: null, notas: [], mes: rrMesActual() };
+let RRPREG = { mes: rrMesActual(), preguntas: [] };
+function rrParseResp(v) { if (!v) return []; if (Array.isArray(v)) return v; try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } }
+function rrTabs() {
+  const T = [["candidaturas", "Candidaturas"], ["seguimiento", "Seguimiento"], ["vacantes", "Vacantes"], ["preguntas", "Preguntas del mes"]];
+  return `<div class="toolbar" style="margin-bottom:12px">${T.map(([id, lab]) => `<button class="btn ${RRTAB === id ? "primary" : ""}" data-act="rr-tab" data-tab="${id}">${lab}</button>`).join("")}</div>`;
 }
+function rrPh(sub) { return `<div class="ph"><div class="eyebrow">Personas</div><h1>RR. HH.</h1><div class="sub">${esc(sub)}</div></div>`; }
+// ── Candidaturas ──
+function renderRRCand(rows) {
+  rows = rows || [];
+  const estOpts = ['<option value="">Todos los estados</option>'].concat(["nuevo", "revisando", "contratada", "descartada"].map((e) => `<option value="${e}" ${RRF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
+  const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(RRF.q)}" placeholder="Nombre, puesto…"></div><button class="btn" data-act="rr-filtrar">Buscar</button></div>`;
+  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
+  return rrPh("Candidaturas y equipo") + rrTabs() + toolbar + table;
+}
+// ── Seguimiento (maestro-detalle) ──
+function rrWorkerLlamada(id) { return RRSEG.llamadas.find((l) => String(l.worker_id) === String(id) && l.realizada); }
+function renderRRSegSidebar() {
+  const byLocal = {};
+  RRSEG.workers.forEach((w) => { const k = w.local || "Sin local"; (byLocal[k] = byLocal[k] || []).push(w); });
+  const groups = Object.keys(byLocal).sort().map((loc) => {
+    const ws = byLocal[loc];
+    const hechos = ws.filter((w) => rrWorkerLlamada(w.id)).length;
+    const items = ws.map((w) => {
+      const done = !!rrWorkerLlamada(w.id);
+      const on = RRSEG.sel && String(RRSEG.sel.id) === String(w.id);
+      return `<button class="row" data-act="rr-worker" data-id="${w.id}" style="width:100%;text-align:left;background:${on ? "var(--surface2)" : "transparent"}"><span class="sdot" style="background:${done ? "var(--success)" : "var(--border2)"};width:8px;height:8px;border-radius:999px;flex:none"></span><span class="grow" style="min-width:0"><span class="t1">${esc(w.nombre || w.username || "—")}</span><span class="t2">${esc(w.rol || "")}</span></span></button>`;
+    }).join("");
+    return `<div><div class="ch" style="padding:10px 14px 4px;margin:0"><h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)">${esc(loc)}</h3><span class="pill ${hechos === ws.length ? "ok" : ""}">${hechos}/${ws.length}</span></div><div class="rows">${items}</div></div>`;
+  }).join("");
+  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3><button class="btn sm" data-act="rr-worker-add">+ Añadir</button></div>${groups || '<div class="mut" style="padding:14px">Sin trabajadores.</div>'}</div>`;
+}
+function renderRRCheckin() {
+  const w = RRSEG.sel; if (!w) return "";
+  const ll = RRSEG.llamadas.find((l) => String(l.worker_id) === String(w.id));
+  const done = ll && ll.realizada;
+  const preguntas = RRSEG.preguntas || [];
+  if (done) {
+    const resp = rrParseResp(ll.respuestas);
+    const filas = preguntas.length ? preguntas.map((p, i) => { const r = resp[i]; const ans = r && (r.respuesta != null ? r.respuesta : r); return `<div class="row"><div class="grow"><div class="t2">${esc(p.pregunta || p)}</div><div class="t1" style="font-weight:500;white-space:pre-wrap">${esc((ans && String(ans).trim()) || "—")}</div></div></div>`; }).join("") : resp.map((r) => `<div class="row"><div class="grow"><div class="t2">${esc((r && r.pregunta) || "")}</div><div class="t1" style="font-weight:500;white-space:pre-wrap">${esc((r && (r.respuesta != null ? r.respuesta : r)) || "—")}</div></div></div>`).join("");
+    return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>📞 Check-in de ${esc(RRSEG.mes)}</h3><span class="pill ok">Realizada${ll.fecha_llamada ? " · " + esc(String(ll.fecha_llamada).slice(0, 10)) : ""}</span></div><div class="rows">${filas || '<div class="mut" style="padding:12px 16px">Sin respuestas registradas.</div>'}</div>${ll.comentario_libre ? `<div style="padding:12px 16px;border-top:1px solid var(--border)"><div class="t2">Comentario libre</div><div style="white-space:pre-wrap">${esc(ll.comentario_libre)}</div></div>` : ""}<div style="padding:12px 16px;border-top:1px solid var(--border)"><button class="btn sm" data-act="rr-checkin-edit">Editar</button></div></div>`;
+  }
+  const campos = preguntas.length ? preguntas.map((p, i) => `<div class="field" style="width:100%"><label>${esc(p.pregunta || p)}</label><textarea id="rrq_${i}" rows="2"></textarea></div>`).join("") : `<div class="mut" style="padding:0 0 10px">No hay preguntas definidas para ${esc(RRSEG.mes)}. Configúralas en la pestaña «Preguntas del mes» (opcional).</div>`;
+  return `<div class="card"><div class="ch"><h3>📞 Registrar check-in de ${esc(RRSEG.mes)}</h3></div>${campos}<div class="field" style="width:100%"><label>Comentario libre (lo que el trabajador quiera expresar)</label><textarea id="rrComentario" rows="2"></textarea></div><button class="btn primary" data-act="rr-checkin-save">Registrar llamada</button></div>`;
+}
+function renderRRNotas() {
+  const w = RRSEG.sel; if (!w) return "";
+  const tipoOpts = Object.keys(RR_TIPOS).map((k) => `<option value="${k}">${RR_TIPOS[k].ic} ${RR_TIPOS[k].lab}</option>`).join("");
+  const form = `<div class="card"><div class="ch"><h3>Añadir nota</h3></div><div class="toolbar"><div class="field"><label>Tipo</label><select id="rrNotaTipo">${tipoOpts}</select></div><div class="field grow"><label>Contenido</label><input id="rrNotaCont" placeholder="Escribe la nota…"></div><button class="btn primary" data-act="rr-nota-add">Guardar</button></div></div>`;
+  const notas = RRSEG.notas || [];
+  const list = notas.length ? notas.map((n) => { const t = RR_TIPOS[n.tipo] || RR_TIPOS.nota; return `<div class="card" style="border-left:3px solid ${RR_TIPO_COL[n.tipo] || "var(--border2)"};padding:12px 14px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><div style="min-width:0"><div class="t2">${t.ic} ${t.lab}${n.autor ? " · " + esc(n.autor) : ""} · ${esc(String(n.creado_en || "").slice(0, 16).replace("T", " "))}</div><div style="white-space:pre-wrap;margin-top:3px">${esc(n.contenido || "")}</div></div><button class="btn sm danger" data-act="rr-nota-del" data-id="${n.id}">✕</button></div></div>`; }).join("") : `<div class="card"><div class="mut" style="padding:6px">Sin notas todavía.</div></div>`;
+  return `${form}<div class="grid" style="gap:10px">${list}</div>`;
+}
+function renderRRFicha() {
+  const w = RRSEG.sel;
+  if (!w) return `<div class="card" style="min-height:200px;display:grid;place-items:center"><div class="mut">Selecciona un trabajador para ver su ficha, check-in mensual y notas.</div></div>`;
+  return `<div class="grid" style="gap:16px"><div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(w.nombre || w.username || "—")}</h2><div class="t2">${esc(w.rol || "")}${w.local ? " · " + esc(w.local) : ""}${w.username ? " · @" + esc(w.username) : ""}</div></div><button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(w.nombre || w.username || "")}">Eliminar</button></div></div>${renderRRCheckin()}${renderRRNotas()}</div>`;
+}
+function renderRRSeg() {
+  return rrPh("Seguimiento mensual del equipo · " + RRSEG.mes) + rrTabs() + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
+}
+// ── Vacantes ──
+function renderRRVac(rows) {
+  rows = rows || [];
+  const locOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const tipoOpts = RR_VAC_TIPOS.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+  const form = `<div class="card"><div class="ch"><h3>Nueva vacante</h3></div><div class="toolbar"><div class="field"><label>Título</label><input id="vacTitulo" placeholder="Camarero/a…"></div><div class="field"><label>Local</label><select id="vacLocal">${locOpts}</select></div><div class="field"><label>Tipo</label><select id="vacTipo">${tipoOpts}</select></div></div><div class="field" style="width:100%"><label>Descripción</label><textarea id="vacDesc" rows="2" placeholder="Requisitos, horario…"></textarea></div><button class="btn primary" data-act="rr-vac-add">Publicar vacante</button></div>`;
+  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Título</th><th>Local</th><th>Tipo</th><th>Estado</th><th></th></tr></thead><tbody>${rows.map((v) => `<tr><td>${esc(v.titulo || "")}</td><td>${esc(v.local || "")}</td><td class="mut">${esc(v.tipo || "")}</td><td><span class="pill ${v.activo ? "ok" : "bad"}">${v.activo ? "Abierta" : "Cerrada"}</span></td><td class="r"><button class="linkbtn" style="color:var(--brand)" data-act="rr-vac-toggle" data-id="${v.id}" data-activo="${v.activo ? 1 : 0}">${v.activo ? "Cerrar" : "Reabrir"}</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin vacantes creadas.</div></div>`;
+  return rrPh("Vacantes activas del grupo") + rrTabs() + form + table;
+}
+// ── Preguntas del mes ──
+function renderRRPreg() {
+  const list = RRPREG.preguntas.length ? RRPREG.preguntas.map((p, i) => `<div class="row"><span class="mut" style="width:24px;flex:none">${i + 1}</span><input class="grow" data-rrpreg="${i}" value="${esc(p)}" placeholder="Escribe la pregunta…"><button class="btn sm" data-act="rr-preg-move" data-idx="${i}" data-dir="-1" ${i === 0 ? "disabled" : ""}>↑</button><button class="btn sm" data-act="rr-preg-move" data-idx="${i}" data-dir="1" ${i === RRPREG.preguntas.length - 1 ? "disabled" : ""}>↓</button><button class="btn sm danger" data-act="rr-preg-del" data-idx="${i}">✕</button></div>`).join("") : `<div class="mut" style="padding:12px 16px">Sin preguntas para este mes. Añade las que Sara/RR.HH. preguntará en cada check-in.</div>`;
+  const toolbar = `<div class="toolbar"><div class="field"><label>Mes</label><input type="month" id="rrPregMes" value="${esc(RRPREG.mes)}"></div><button class="btn" data-act="rr-preg-mesload">Cargar</button><span class="grow"></span><button class="btn" data-act="rr-preg-add">+ Pregunta</button><button class="btn primary" data-act="rr-preg-save">Guardar</button></div>`;
+  return rrPh("Preguntas del check-in mensual") + rrTabs() + toolbar + `<div class="card p0"><div class="rows">${list}</div></div>`;
+}
+// ── Carga / router de pestañas ──
 async function loadRRHH() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
-    let data;
-    if (RRTAB === "candidaturas") { const qs = new URLSearchParams(); if (RRF.estado) qs.set("estado", RRF.estado); if (RRF.q) qs.set("q", RRF.q); data = await api("/api/hr/applications" + (qs.toString() ? "?" + qs : "")); }
-    else data = await api("/api/rrhh/trabajadores");
-    view.innerHTML = renderRRHH(data);
+    if (RRTAB === "candidaturas") {
+      const qs = new URLSearchParams(); if (RRF.estado) qs.set("estado", RRF.estado); if (RRF.q) qs.set("q", RRF.q);
+      view.innerHTML = renderRRCand(await api("/api/hr/applications" + (qs.toString() ? "?" + qs : "")));
+    } else if (RRTAB === "seguimiento") {
+      RRSEG.mes = rrMesActual();
+      const [workers, llamadas, preguntas] = await Promise.all([api("/api/rrhh/trabajadores"), apiOptional("/api/rrhh/llamadas/" + RRSEG.mes), apiOptional("/api/rrhh/preguntas/" + RRSEG.mes)]);
+      RRSEG.workers = workers || []; RRSEG.llamadas = llamadas || []; RRSEG.preguntas = preguntas || [];
+      if (RRSEG.sel) { const still = RRSEG.workers.find((w) => String(w.id) === String(RRSEG.sel.id)); RRSEG.sel = still || null; }
+      view.innerHTML = renderRRSeg();
+    } else if (RRTAB === "vacantes") {
+      view.innerHTML = renderRRVac(await api("/api/hr/jobs/admin"));
+    } else if (RRTAB === "preguntas") {
+      RRPREG.preguntas = ((await apiOptional("/api/rrhh/preguntas/" + RRPREG.mes)) || []).map((p) => p.pregunta || p);
+      view.innerHTML = renderRRPreg();
+    }
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function rrTab(tab) { RRTAB = tab; loadRRHH(); }
 function applyRRFilter() { const es = document.getElementById("rEstado"), q = document.getElementById("rQ"); if (es) RRF.estado = es.value; if (q) RRF.q = q.value.trim(); loadRRHH(); }
 async function candEstado(id, estado) { try { await apiSend("PUT", "/api/hr/applications/" + encodeURIComponent(id), { estado }); toast("Candidatura actualizada ✅"); loadRRHH(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
+// Seguimiento: selección de trabajador (carga notas y repinta solo la ficha)
+async function rrSelWorker(id) {
+  const w = RRSEG.workers.find((x) => String(x.id) === String(id)); if (!w) return;
+  RRSEG.sel = w;
+  try { RRSEG.notas = (await apiOptional("/api/rrhh/trabajador/" + id + "/notas")) || []; } catch { RRSEG.notas = []; }
+  const v = document.getElementById("view"); if (v && CURRENT === "rrhh" && RRTAB === "seguimiento") v.innerHTML = renderRRSeg();
+}
+function rrRepaintFicha() { const f = document.getElementById("rrFicha"); if (f) f.innerHTML = renderRRFicha(); else if (CURRENT === "rrhh") loadRRHH(); }
+async function rrCheckinSave() {
+  const w = RRSEG.sel; if (!w) return;
+  const respuestas = (RRSEG.preguntas || []).map((p, i) => { const el = document.getElementById("rrq_" + i); return { pregunta: p.pregunta || p, respuesta: el ? el.value.trim() : "" }; });
+  const cEl = document.getElementById("rrComentario"); const comentario_libre = cEl ? cEl.value.trim() : "";
+  try {
+    await apiSend("POST", "/api/rrhh/llamada", { worker_id: w.id, mes: RRSEG.mes, respuestas, comentario_libre, autor: rrAutor() });
+    RRSEG.llamadas = (await apiOptional("/api/rrhh/llamadas/" + RRSEG.mes)) || RRSEG.llamadas;
+    toast("Check-in registrado ✅"); if (document.getElementById("view")) document.getElementById("view").innerHTML = renderRRSeg();
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+function rrCheckinEdit() { const w = RRSEG.sel; if (!w) return; RRSEG.llamadas = RRSEG.llamadas.map((l) => (String(l.worker_id) === String(w.id) ? { ...l, realizada: 0 } : l)); rrRepaintFicha(); }
+async function rrNotaAdd() {
+  const w = RRSEG.sel; if (!w) return;
+  const tEl = document.getElementById("rrNotaTipo"), cEl = document.getElementById("rrNotaCont");
+  const tipo = tEl ? tEl.value : "nota"; const contenido = cEl ? cEl.value.trim() : "";
+  if (!contenido) { toast("Escribe el contenido de la nota"); return; }
+  try {
+    await apiSend("POST", "/api/rrhh/trabajador/" + w.id + "/nota", { tipo, contenido, autor: rrAutor() });
+    RRSEG.notas = (await apiOptional("/api/rrhh/trabajador/" + w.id + "/notas")) || RRSEG.notas;
+    toast("Nota guardada ✅"); rrRepaintFicha();
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function rrNotaDel(id) {
+  const w = RRSEG.sel;
+  try { await apiSend("DELETE", "/api/rrhh/nota/" + id); if (w) RRSEG.notas = (await apiOptional("/api/rrhh/trabajador/" + w.id + "/notas")) || RRSEG.notas; toast("Nota eliminada ✅"); rrRepaintFicha(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+function rrWorkerAdd() {
+  const locOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const ov = modal("Añadir trabajador", `<form id="fWorker" class="grid" style="gap:12px"><div class="field"><label>Nombre</label><input name="nombre" required></div><div class="field"><label>Usuario</label><input name="username" required placeholder="nombre.local"></div><div class="field"><label>Local</label><select name="local">${locOpts}</select></div><div class="field"><label>Rol</label><select name="rol"><option value="trabajador">Trabajador</option><option value="encargado">Encargado</option></select></div><div class="field"><label>Contraseña</label><input name="password" required value="tapeta2024"></div><button class="btn primary" type="submit">Crear</button></form>`);
+  ov.querySelector("#fWorker").addEventListener("submit", async (e) => {
+    e.preventDefault(); const data = Object.fromEntries(new FormData(e.target).entries());
+    try { await apiSend("POST", "/api/users", data); ov.remove(); toast("Trabajador creado ✅"); loadRRHH(); } catch (err) { toast("Error: " + err.message); }
+  });
+}
+async function rrWorkerDel(id, nombre) {
+  const ok = await confirmModal(`¿Eliminar a ${nombre || "este trabajador"}? Se borrará su acceso.`, { ok: "Eliminar", danger: true }); if (!ok) return;
+  try { await apiSend("DELETE", "/api/users/" + id); RRSEG.sel = null; toast("Trabajador eliminado ✅"); loadRRHH(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function rrVacAdd() {
+  const titulo = (document.getElementById("vacTitulo") || {}).value || "";
+  const local = (document.getElementById("vacLocal") || {}).value || "";
+  const tipo = (document.getElementById("vacTipo") || {}).value || "";
+  const descripcion = (document.getElementById("vacDesc") || {}).value || "";
+  if (!titulo.trim()) { toast("Pon un título a la vacante"); return; }
+  try { await apiSend("POST", "/api/hr/jobs", { titulo: titulo.trim(), local, tipo, descripcion: descripcion.trim(), activo: 1 }); toast("Vacante publicada ✅"); loadRRHH(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function rrVacToggle(id, activo) {
+  try { await apiSend("PUT", "/api/hr/jobs/" + id, { activo: activo ? 0 : 1 }); toast("Vacante actualizada ✅"); loadRRHH(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+function rrPregSync() { document.querySelectorAll("[data-rrpreg]").forEach((el) => { const i = +el.getAttribute("data-rrpreg"); if (!isNaN(i)) RRPREG.preguntas[i] = el.value; }); }
+function rrPregAdd() { rrPregSync(); RRPREG.preguntas.push(""); const v = document.getElementById("view"); if (v) v.innerHTML = renderRRPreg(); }
+function rrPregDel(i) { rrPregSync(); RRPREG.preguntas.splice(i, 1); const v = document.getElementById("view"); if (v) v.innerHTML = renderRRPreg(); }
+function rrPregMove(i, dir) { rrPregSync(); const j = i + dir; if (j < 0 || j >= RRPREG.preguntas.length) return; const [m] = RRPREG.preguntas.splice(i, 1); RRPREG.preguntas.splice(j, 0, m); const v = document.getElementById("view"); if (v) v.innerHTML = renderRRPreg(); }
+function rrPregMesLoad() { const el = document.getElementById("rrPregMes"); if (el && el.value) RRPREG.mes = el.value; loadRRHH(); }
+async function rrPregSave() {
+  rrPregSync(); const preguntas = RRPREG.preguntas.map((p) => String(p || "").trim()).filter(Boolean);
+  try { await apiSend("PUT", "/api/rrhh/preguntas/" + RRPREG.mes, { preguntas }); toast("Preguntas guardadas ✅"); RRPREG.preguntas = preguntas; const v = document.getElementById("view"); if (v) v.innerHTML = renderRRPreg(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
 
 // ════════════════════════ VISTA: USUARIOS ════════════════════════
 function renderUsuarios(list) {
@@ -1058,6 +1208,20 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-tab") rrTab(t.getAttribute("data-tab"));
   else if (act === "rr-filtrar") applyRRFilter();
   else if (act === "cand-estado") candEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
+  else if (act === "rr-worker") rrSelWorker(t.getAttribute("data-id"));
+  else if (act === "rr-worker-add") rrWorkerAdd();
+  else if (act === "rr-worker-del") rrWorkerDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
+  else if (act === "rr-checkin-save") rrCheckinSave();
+  else if (act === "rr-checkin-edit") rrCheckinEdit();
+  else if (act === "rr-nota-add") rrNotaAdd();
+  else if (act === "rr-nota-del") rrNotaDel(t.getAttribute("data-id"));
+  else if (act === "rr-vac-add") rrVacAdd();
+  else if (act === "rr-vac-toggle") rrVacToggle(t.getAttribute("data-id"), +t.getAttribute("data-activo"));
+  else if (act === "rr-preg-add") rrPregAdd();
+  else if (act === "rr-preg-del") rrPregDel(+t.getAttribute("data-idx"));
+  else if (act === "rr-preg-move") rrPregMove(+t.getAttribute("data-idx"), +t.getAttribute("data-dir"));
+  else if (act === "rr-preg-mesload") rrPregMesLoad();
+  else if (act === "rr-preg-save") rrPregSave();
   else if (act === "user-nuevo") openNuevoUsuario();
   else if (act === "user-pass") userPass(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "user-del") userDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
