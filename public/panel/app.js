@@ -287,11 +287,16 @@ function renderDashboard(d) {
   const serieVals = rSerie.map((x) => x.personas || x.n || 0);
   const totalPeriodo = (per && per.reservas && per.reservas.total) || 0;
   const vOk = per && per.ventas && per.ventas.disponible;
-  const ventasBox = vOk
-    ? `<div style="text-align:right"><div class="big tnum" style="font-size:30px">${eur(per.ventas.total)}</div><div class="mut" style="font-size:12px">ventas · ${per.ventas.ticket_medio ? eur(per.ventas.ticket_medio) + "/ticket" : num(per.ventas.tickets) + " tickets"}${per.hoyEnVivo ? " · incluye hoy" : ""}</div></div>`
-    : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y ticket medio<br><span class="hl">${DASH_RANGE.to === todayStr() && DASH_RANGE.from === todayStr() ? "aún sin cierre de hoy" : "al conectar Ágora"}</span></div>`;
+  const gOk = per && per.gastos && per.gastos.disponible;
+  const res = per ? per.resultado : null;
+  const resCol = res == null ? "var(--ink)" : (res >= 0 ? "var(--brand)" : "var(--danger)");
+  const stat3 = (lab, val, col) => `<div style="min-width:0"><div class="mut" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">${lab}</div><div class="big tnum" style="font-size:22px${col ? ";color:" + col : ""}">${val}</div></div>`;
+  const ventasBox = (vOk || gOk)
+    ? `<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—")}${stat3("Resultado", res != null ? eur(res) : "—", resCol)}</div>`
+    : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y resultado<br><span class="hl">${DASH_RANGE.to === todayStr() && DASH_RANGE.from === todayStr() ? "aún sin cierre de hoy" : "al conectar Ágora"}</span></div>`;
   const grafico = serieVals.length >= 2 ? area(serieVals, { h: 120 }) : `<div class="mut" style="font-size:12.5px;padding:14px 0">${totalPeriodo ? "Rango de un día — sin serie para graficar." : "Sin reservas en este periodo."}</div>`;
-  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div></div>${ventasBox}</div>${grafico}</div>`;
+  const notaRes = (vOk || gOk) ? `<div class="mut" style="font-size:11px;margin-top:8px">Resultado = ventas${per.hoyEnVivo ? " (incluye hoy)" : ""} − gastos en facturas del periodo (no incluye personal).</div>` : "";
+  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div></div>${ventasBox}</div>${grafico}${notaRes}</div>`;
 
   // ── Gasto del mes (barra apilada real) ──
   const gl = (d.dinero && d.dinero.gastoLocal) || []; const gtot = gl.reduce((s, g) => s + (g.actual || 0), 0);
