@@ -1417,7 +1417,7 @@ function describirAudiencia(f = {}) {
 }
 function renderCampanas() {
   const rows = CAMP.list || []; const cfg = CAMP.cfg || {};
-  const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas</h1><div class="sub">Segmentar y enviar por WhatsApp · plantillas · programación · cumpleaños</div><div class="acts"><button class="btn primary" data-act="camp-nueva">+ Nueva campaña</button></div></div>`;
+  const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas</h1><div class="sub">Segmentar y enviar por WhatsApp · plantillas · programación · cumpleaños · traducción</div><div class="acts"><button class="btn" data-act="camp-detectar-idiomas">🌐 Detectar idiomas</button><button class="btn primary" data-act="camp-nueva">+ Nueva campaña</button></div></div>`;
   const cumple = `<div class="card"><div class="ch"><h3>🎂 Cumpleaños automático</h3><label class="chip" style="cursor:pointer"><input type="checkbox" id="cumpleAuto" ${cfg.cumple_auto ? "checked" : ""} style="margin-right:6px">Activado</label></div><div class="field" style="width:100%"><label>Mensaje (usa {nombre})</label><textarea id="cumpleMsg" rows="2" placeholder="¡Feliz cumpleaños, {nombre}! 🎉">${esc(cfg.cumple_plantilla || "")}</textarea></div><div class="toolbar" style="padding:0"><button class="btn" data-act="camp-cumple-save">Guardar</button><span class="mut" style="font-size:12px;align-self:center">Cada mañana felicita a quien cumple ese día (excluye bajas).</span></div></div>`;
   const plist = (CAMP.plantillas || []).map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div><div class="t2">${esc((p.cuerpo || "").slice(0, 80))}</div></div><button class="btn sm danger" data-act="camp-plant-del" data-id="${p.id}">✕</button></div>`).join("") || `<div class="mut" style="padding:10px 14px">Sin plantillas guardadas.</div>`;
   const plantillas = `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Plantillas</h3><button class="btn sm" data-act="camp-plant-add">+ Nueva</button></div><div class="rows">${plist}</div></div>`;
@@ -1471,6 +1471,7 @@ function openCampana(mode = "nueva", pre = {}) {
     <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" name="con_telefono" ${s.con_telefono ? "checked" : ""} style="width:auto;height:auto"> Con teléfono</label>
     <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" name="cumple_mes" ${s.cumple_mes ? "checked" : ""} style="width:auto;height:auto"> Cumpleaños este mes</label>
     <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" id="campOptin" ${s.soloOptIn ? "checked" : ""} style="width:auto;height:auto"> Solo opt-in</label>
+    <label class="field full" style="flex-direction:row;align-items:center;gap:7px"><input type="checkbox" id="campTraducir" ${s.traducir ? "checked" : ""} style="width:auto;height:auto"> 🌐 Traducir al idioma de cada cliente (detectado de sus mensajes; castellano por defecto)</label>
     <div class="field full"><label>Destinatarios</label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn sm" id="campVerDests">Ver / editar destinatarios</button><span id="campPrev" class="mut" style="font-size:12.5px"></span></div><div id="campDests" style="display:none;max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:10px;margin-top:8px"></div></div>
     ${editar ? "" : '<div class="field"><label>Programar para (opcional)</label><input type="datetime-local" id="campWhen"></div>'}
   </div>
@@ -1539,7 +1540,7 @@ function openCampana(mode = "nueva", pre = {}) {
   });
   updateBubble();
   const payload = (extra = {}) => {
-    const d = { nombre: (ov.querySelector('[name="nombre"]').value || "").trim(), mensaje: ov.querySelector("#campMsg").value || "", ...filtros(), soloOptIn: ov.querySelector("#campOptin").checked, ...extra };
+    const d = { nombre: (ov.querySelector('[name="nombre"]').value || "").trim(), mensaje: ov.querySelector("#campMsg").value || "", ...filtros(), soloOptIn: ov.querySelector("#campOptin").checked, traducir: ov.querySelector("#campTraducir").checked, ...extra };
     if (campAdjunto) d.adjunto_url = campAdjunto;
     return d;
   };
@@ -1580,6 +1581,12 @@ async function campDuplicar(id) {
   let c; try { c = (await apiRaw("/api/campanas/" + id)).data.campana; } catch (e) { toast("Error: " + e.message); return; }
   let seg = {}; try { seg = JSON.parse(c.segmento_json || "{}"); } catch { /* */ }
   openCampana("duplicar", { nombre: (c.nombre || "") + " (copia)", mensaje: c.mensaje, adjunto_url: c.adjunto_url, seg });
+}
+async function campDetectarIdiomas() {
+  if (!(await confirmModal("¿Detectar el idioma de los clientes a partir de sus mensajes de WhatsApp? Solo rellena los que no tienen idioma; podrás corregirlo en cada ficha.", { ok: "Detectar" }))) return;
+  toast("Detectando idiomas…");
+  try { const j = await apiSend("POST", "/api/contactos/detectar-idiomas"); toast(`Idiomas detectados: ${num(j.actualizados || 0)} de ${num(j.revisados || 0)} contactos ✅`); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 async function campDetalle(id) {
   let d; try { d = (await apiRaw("/api/campanas/" + id)).data; } catch (e) { toast("Error: " + e.message); return; }
@@ -1893,6 +1900,7 @@ document.addEventListener("click", (e) => {
   else if (act === "ag-del") agoraDel(t.getAttribute("data-local"));
   else if (act === "ag-sync") agoraSyncNow();
   else if (act === "camp-nueva") openNuevaCampana();
+  else if (act === "camp-detectar-idiomas") campDetectarIdiomas();
   else if (act === "camp-detalle") campDetalle(t.getAttribute("data-id"));
   else if (act === "camp-editar") campEditar(t.getAttribute("data-id"));
   else if (act === "camp-dup") campDuplicar(t.getAttribute("data-id"));
