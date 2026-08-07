@@ -59,7 +59,19 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
     if (!cookie) await login();
     let r = await busRaw(clrType, extra);
     if (r.status === 401) { await login(); r = await busRaw(clrType, extra); }
-    if (!r.ok) { let t = ""; try { t = await r.text(); } catch { /* noop */ } throw new Error(`bus_${r.status}:${String(t).slice(0, 140)}`); }
+    if (!r.ok) {
+      let t = ""; try { t = await r.text(); } catch { /* noop */ }
+      // "Error al obtener método para <CLRType>" = ese Ágora no implementa ese mensaje.
+      // Login y sesión van bien; lo que falla es que el informe no existe en esa versión
+      // (o su módulo no está licenciado). Sin esto el panel enseñaba el volcado crudo.
+      if (/obtener m[ée]todo/i.test(t)) {
+        const corto = String(clrType).split(".").pop().replace(/Request$/, "");
+        const e = new Error(`Este Ágora no admite el informe «${corto}»${version ? ` (versión ${version})` : ""}. Suele ser una versión antigua o el módulo no licenciado en ese local.`);
+        e.code = "METODO_NO_DISPONIBLE"; e.clrType = clrType; e.version = version;
+        throw e;
+      }
+      throw new Error(`bus_${r.status}:${String(t).slice(0, 140)}`);
+    }
     return r.json();
   }
 
@@ -111,6 +123,22 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
       const timer = setTimeout(() => ctrl.abort(), timeoutMs);
       try { await fetchFn(base + "/version/", { signal: ctrl.signal }); return true; }
       catch { return false; }
+      finally { clearTimeout(timer); }
+    },
+
+    // Como ping(), pero devolviendo la versión que anuncia el TPV. Sirve para diagnosticar:
+    // si un local falla en un informe y otro no, casi siempre es que corren versiones distintas.
+    // Devuelve { alive, version } con version=null si no se pudo leer.
+    async pingInfo(timeoutMs = 6000) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const r = await fetchFn(base + "/version/", { signal: ctrl.signal });
+        const txt = await r.text();
+        const v = parseAgoraVersion(txt, null);
+        if (v) version = v; // lo cacheamos: el bus exige que Sender.ApplicationVersion coincida
+        return { alive: true, version: v };
+      } catch { return { alive: false, version: null }; }
       finally { clearTimeout(timer); }
     },
 

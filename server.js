@@ -3041,7 +3041,7 @@ async function ventasVivoData(force) {
         } catch { /* no crítico */ }
       }
     } catch (e) {
-      locales.push({ local: cfg.local, dias: [], error: (e && e.message) ? String(e.message).slice(0, 120) : "error" });
+      locales.push({ local: cfg.local, dias: [], error: (e && e.message) ? String(e.message).slice(0, 220) : "error" });
     }
   }
   const data = { hoy, desde, locales, generado: new Date().toISOString() };
@@ -3283,17 +3283,38 @@ app.delete("/api/agora/locales/:local", requireAuth(["direccion"]), async (req, 
 });
 
 // Probar conexión con el TPV de un local (ping): responde si el servidor está vivo. No expone el token.
+// Mensaje concreto de qué falta en la config, en vez del genérico «falta host o token»,
+// que además era falso: desde el login web el token es opcional.
+function agoraFaltaQue(row) {
+  const falta = [];
+  if (!row || !row.host) falta.push("el host");
+  if (!row || !row.usuario) falta.push("el usuario");
+  if (!row || !row.pass_enc) falta.push("la contraseña");
+  return falta.length ? `Falta ${falta.join(", ").replace(/, ([^,]*)$/, " y $1")} de Ágora.` : "Configuración incompleta.";
+}
 app.post("/api/agora/probe", requireAuth(["direccion"]), async (req, res) => {
   try {
     const { local } = req.body || {};
     if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
-    const row = await dbGet(`SELECT local, host, token, local_id FROM agora_locales WHERE local = ?`, [local]);
+    const row = await dbGet(`SELECT local, host, token, usuario, pass_enc, local_id FROM agora_locales WHERE local = ?`, [local]);
     if (!row) return res.status(404).json({ ok: false, error: "Local no configurado" });
-    const cfgs = configsFromRows([{ local: row.local, host: row.host, token: agoraDecToken(row.token), local_id: row.local_id, activo: true }]);
-    if (!cfgs.length) return res.status(400).json({ ok: false, error: "Config incompleta (falta host o token)" });
+    // Hay que pasar usuario+contraseña: desde que la auth es login web, una config sin token
+    // pero con credenciales es VÁLIDA. Antes se leía solo el token y "Probar conexión"
+    // fallaba con «Config incompleta» en todos los locales bien configurados.
+    const cfgs = configsFromRows([{
+      local: row.local, host: row.host, token: agoraDecToken(row.token),
+      usuario: row.usuario || null, password: agoraDecToken(row.pass_enc),
+      local_id: row.local_id, activo: true,
+    }]);
+    if (!cfgs.length) return res.status(400).json({ ok: false, error: agoraFaltaQue(row) });
     const client = createAgoraClient(cfgs[0]);
-    const alive = await client.ping();
-    res.json({ ok: true, alive, mensaje: alive ? "El TPV respondió (servidor vivo)" : "Sin respuesta: el local está cerrado o inalcanzable" });
+    const { alive, version } = await client.pingInfo();
+    res.json({
+      ok: true, alive, version,
+      mensaje: alive
+        ? `El TPV respondió (servidor vivo)${version ? ` · Ágora ${version}` : ""}`
+        : "Sin respuesta: el local está cerrado o inalcanzable",
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error en la prueba de conexión" });
   }
@@ -3326,10 +3347,14 @@ app.post("/api/agora/diagnostico", requireAuth(["direccion"]), async (req, res) 
   try {
     const { local } = req.body || {};
     if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
-    const row = await dbGet(`SELECT local, host, token, local_id FROM agora_locales WHERE local = ?`, [local]);
+    const row = await dbGet(`SELECT local, host, token, usuario, pass_enc, local_id FROM agora_locales WHERE local = ?`, [local]);
     if (!row) return res.status(404).json({ ok: false, error: "Local no configurado" });
-    const cfgs = configsFromRows([{ local: row.local, host: row.host, token: agoraDecToken(row.token), local_id: row.local_id, activo: true }]);
-    if (!cfgs.length) return res.status(400).json({ ok: false, error: "Config incompleta (falta host o token)" });
+    const cfgs = configsFromRows([{
+      local: row.local, host: row.host, token: agoraDecToken(row.token),
+      usuario: row.usuario || null, password: agoraDecToken(row.pass_enc),
+      local_id: row.local_id, activo: true,
+    }]);
+    if (!cfgs.length) return res.status(400).json({ ok: false, error: agoraFaltaQue(row) });
     const cfg = cfgs[0];
     const hoy = new Date().toISOString().slice(0, 10);
     const desde = (req.body.desde && String(req.body.desde)) || new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
@@ -3361,10 +3386,14 @@ app.post("/api/agora/descubrir", requireAuth(["direccion"]), async (req, res) =>
   try {
     const { local } = req.body || {};
     if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
-    const row = await dbGet(`SELECT local, host, token, local_id FROM agora_locales WHERE local = ?`, [local]);
+    const row = await dbGet(`SELECT local, host, token, usuario, pass_enc, local_id FROM agora_locales WHERE local = ?`, [local]);
     if (!row) return res.status(404).json({ ok: false, error: "Local no configurado" });
-    const cfgs = configsFromRows([{ local: row.local, host: row.host, token: agoraDecToken(row.token), local_id: row.local_id, activo: true }]);
-    if (!cfgs.length) return res.status(400).json({ ok: false, error: "Config incompleta (falta host o token)" });
+    const cfgs = configsFromRows([{
+      local: row.local, host: row.host, token: agoraDecToken(row.token),
+      usuario: row.usuario || null, password: agoraDecToken(row.pass_enc),
+      local_id: row.local_id, activo: true,
+    }]);
+    if (!cfgs.length) return res.status(400).json({ ok: false, error: agoraFaltaQue(row) });
     const cfg = cfgs[0];
     const token = cfg.token;
     const redact = (s) => (token ? String(s == null ? "" : s).split(token).join("«token»") : String(s == null ? "" : s));
