@@ -3717,14 +3717,27 @@ app.get("/api/rrhh/resumen", requireAuth(RRHH_ROLES), async (req, res) => {
     const scope = rrhhLocalScope(req);
     const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes || "")) ? req.query.mes : new Date().toISOString().slice(0, 7);
     const trabajadores = scope
-      ? await dbAll("SELECT id, nombre, local, activo, fecha_alta, fecha_baja, fecha_nac FROM users WHERE rol IN ('trabajador','encargado') AND local = ?", [scope])
-      : await dbAll("SELECT id, nombre, local, activo, fecha_alta, fecha_baja, fecha_nac FROM users WHERE rol IN ('trabajador','encargado')");
+      ? await dbAll("SELECT id, nombre, local, activo, fecha_alta, fecha_baja, fecha_nac, telefono FROM users WHERE rol IN ('trabajador','encargado') AND local = ?", [scope])
+      : await dbAll("SELECT id, nombre, local, activo, fecha_alta, fecha_baja, fecha_nac, telefono FROM users WHERE rol IN ('trabajador','encargado')");
+    // Sin teléfono no les podemos escribir (ni el pulso, ni avisos). Lo rellenan ellos
+    // desde su perfil, pero conviene ver de un vistazo a cuántos les falta.
+    const activos = trabajadores.filter((w) => w.activo !== 0 && !w.fecha_baja);
+    const sinTelefono = activos.filter((w) => !String(w.telefono || "").trim());
     const ids = trabajadores.map((w) => w.id);
     const ph = ids.map(() => "?").join(",");
     const checkins = ids.length ? await dbAll(`SELECT worker_id, realizada FROM hr_llamadas_mes WHERE mes = ? AND worker_id IN (${ph})`, [mes, ...ids]) : [];
     const docsRows = ids.length ? await dbAll(`SELECT worker_id, fecha_caducidad FROM hr_documentos WHERE worker_id IN (${ph})`, ids) : [];
     const docsPorWorker = {}; for (const d of docsRows) (docsPorWorker[d.worker_id] || (docsPorWorker[d.worker_id] = [])).push(d);
-    res.json({ ok: true, data: resumenEquipoPorLocal(trabajadores, checkins, docsPorWorker, hoyISO(), 30), mes });
+    res.json({
+      ok: true,
+      data: resumenEquipoPorLocal(trabajadores, checkins, docsPorWorker, hoyISO(), 30),
+      mes,
+      contacto: {
+        activos: activos.length,
+        sinTelefono: sinTelefono.length,
+        quienes: sinTelefono.map((w) => ({ id: w.id, nombre: w.nombre, local: w.local })),
+      },
+    });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -3842,6 +3855,48 @@ const hoyISO = () => new Date().toISOString().slice(0, 10);
 const HR_CAMPOS_DIR = ["telefono", "email", "dni", "puesto", "fecha_nac", "fecha_alta", "fecha_baja", "foto_url", "activo"];
 const HR_CAMPOS_ENC = ["telefono", "email", "puesto", "fecha_nac", "foto_url"]; // encargado: sin DNI/alta/baja/activo
 function esEncargado(req) { return req.user && req.user.rol === "encargado"; }
+
+// ── Mi perfil: lo único que cada uno puede tocar de SÍ MISMO ────────────────
+// El usuario y la contraseña los crea la empresa; aquí el trabajador solo completa
+// sus datos de contacto. El teléfono es el que usaremos para escribirle, así que lo
+// pone él: ni hay que perseguir 42 números ni se quedan desactualizados.
+// La lista es CERRADA a propósito: nadie puede cambiarse el rol, el local ni el alta.
+const MI_PERFIL_CAMPOS = ["telefono", "email", "fecha_nac"];
+
+app.get("/api/mi-perfil", requireAuth(), async (req, res) => {
+  try {
+    const u = await dbGet(
+      `SELECT id, username, nombre, rol, local, telefono, email, puesto, fecha_nac, fecha_alta, foto_url, activo
+       FROM users WHERE id = ?`, [req.user.id]
+    );
+    if (!u) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
+    const hoy = new Date().toISOString().slice(0, 10);
+    res.json({ ok: true, data: { ...u, antiguedad: rrhhAntiguedad(u.fecha_alta, hoy), editables: MI_PERFIL_CAMPOS } });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el perfil" }); }
+});
+
+app.put("/api/mi-perfil", requireAuth(), async (req, res) => {
+  try {
+    const sets = [], vals = [];
+    for (const k of MI_PERFIL_CAMPOS) {
+      if (req.body[k] === undefined) continue;
+      let v = req.body[k] === "" ? null : String(req.body[k]).trim();
+      if (k === "telefono" && v) {
+        const digitos = v.replace(/\D/g, "");
+        if (digitos.length < 9) return res.status(400).json({ ok: false, error: "El teléfono no parece correcto" });
+      }
+      if (k === "fecha_nac" && v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+        return res.status(400).json({ ok: false, error: "Fecha de nacimiento inválida" });
+      }
+      sets.push(`${k} = ?`); vals.push(v);
+    }
+    if (!sets.length) return res.json({ ok: true });
+    vals.push(req.user.id);
+    await dbRun(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`, vals);
+    invalidarInternos(); // el teléfono acaba de cambiar: Sara debe dejar de contestarle
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo guardar" }); }
+});
 
 app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, res) => {
   try {

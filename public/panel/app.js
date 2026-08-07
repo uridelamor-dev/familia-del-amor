@@ -1423,7 +1423,21 @@ function renderRRResumen() {
     const antig = e.antiguedadMediaDias != null ? (Math.round(e.antiguedadMediaDias / 365 * 10) / 10) + " años" : "—";
     return `<div class="card" style="padding:12px 14px"><div class="t1" style="font-weight:600">${esc(e.local)}</div><div class="t2" style="margin:4px 0 8px">${e.activos} activo(s)${e.bajas ? ` · ${e.bajas} baja(s)` : ""} · antig. media ${antig}</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="pill ${e.checkinsHechos >= e.total ? "ok" : ""}">Check-ins ${e.checkinsHechos}/${e.total}</span>${alert}${cumple}</div></div>`;
   }).join("");
-  return `<div class="grid g3" style="gap:12px;margin-bottom:14px">${cards}</div>`;
+  return `${renderRRSinTelefono()}<div class="grid g3" style="gap:12px;margin-bottom:14px">${cards}</div>`;
+}
+// Sin teléfono no se les puede escribir. Lo rellenan ellos desde su perfil, pero
+// aquí se ve de un vistazo a quién le falta, para poder recordárselo.
+function renderRRSinTelefono() {
+  const c = RRSEG.contacto;
+  if (!c || !c.sinTelefono) return "";
+  const nombres = (c.quienes || []).map((w) => esc(w.nombre || "—")).join(", ");
+  return `<details class="card fold" style="margin-bottom:12px">
+    <summary><h3>${num(c.sinTelefono)} de ${num(c.activos)} sin teléfono</h3><span class="foldr"><span>no podemos escribirles</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <div style="padding:14px 18px">
+      <p class="mut" style="margin:0 0 8px;line-height:1.6">Cada uno lo rellena desde <b>su espacio</b> (entra con su usuario → «Mis datos»). Mientras falte, no recibirá el pulso mensual ni los avisos, y Sara le contestaría como si fuera un cliente.</p>
+      <div class="t2">${nombres}</div>
+    </div>
+  </details>`;
 }
 function renderRRSeg() {
   return rrPh("Seguimiento mensual del equipo · " + RRSEG.mes) + rrTabs() + renderRRResumen() + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
@@ -1454,8 +1468,10 @@ async function loadRRHH() {
       view.innerHTML = renderRRCand(await api("/api/hr/applications" + (qs.toString() ? "?" + qs : "")));
     } else if (RRTAB === "seguimiento") {
       RRSEG.mes = rrMesActual();
-      const [workers, llamadas, preguntas, resumen] = await Promise.all([api("/api/rrhh/trabajadores"), apiOptional("/api/rrhh/llamadas/" + RRSEG.mes), apiOptional("/api/rrhh/preguntas/" + RRSEG.mes), apiOptional("/api/rrhh/resumen?mes=" + RRSEG.mes)]);
-      RRSEG.workers = workers || []; RRSEG.llamadas = llamadas || []; RRSEG.preguntas = preguntas || []; RRSEG.resumen = resumen || [];
+      // El resumen se pide en crudo: además de `data` trae `contacto` (quién no tiene teléfono).
+      const [workers, llamadas, preguntas, resumen] = await Promise.all([api("/api/rrhh/trabajadores"), apiOptional("/api/rrhh/llamadas/" + RRSEG.mes), apiOptional("/api/rrhh/preguntas/" + RRSEG.mes), apiRaw("/api/rrhh/resumen?mes=" + RRSEG.mes).catch(() => null)]);
+      RRSEG.workers = workers || []; RRSEG.llamadas = llamadas || []; RRSEG.preguntas = preguntas || [];
+      RRSEG.resumen = (resumen && resumen.data) || []; RRSEG.contacto = (resumen && resumen.contacto) || null;
       if (RRSEG.sel) { const still = RRSEG.workers.find((w) => String(w.id) === String(RRSEG.sel.id)); RRSEG.sel = still || null; }
       view.innerHTML = renderRRSeg();
     } else if (RRTAB === "vacantes") {

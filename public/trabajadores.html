@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Trabajadores · Familia del Amor</title>
+    <title>Mi espacio · Familia del Amor</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body class="panel">
@@ -18,10 +18,54 @@
     </header>
     <main>
       <div class="panel-head">
-        <span class="eyebrow">Panel interno</span>
-        <h1>Trabajadores</h1>
-        <p>Información interna y comunicados.</p>
+        <span class="eyebrow">Mi espacio</span>
+        <h1 id="miNombre">Hola</h1>
+        <p id="miSub">Tus datos y los avisos del equipo.</p>
       </div>
+
+      <!-- Aviso mientras falte el teléfono: es lo que nos permite escribirle -->
+      <section class="block hidden" id="avisoTelefono">
+        <div class="cards">
+          <article class="card card--warn">
+            <h3>Nos falta tu teléfono</h3>
+            <p>Es el número con el que nos pondremos en contacto contigo. Rellénalo aquí abajo, tardas diez segundos.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="block">
+        <div class="section-head">
+          <h2>Mis datos</h2>
+          <p>Esto lo rellenas tú y puedes cambiarlo cuando quieras.</p>
+        </div>
+        <form id="perfilForm" class="form">
+          <div class="form-row">
+            <label>
+              <span>Teléfono móvil</span>
+              <input type="tel" name="telefono" id="pfTelefono" autocomplete="tel" placeholder="600 11 22 33" />
+            </label>
+            <label>
+              <span>Correo electrónico</span>
+              <input type="email" name="email" id="pfEmail" autocomplete="email" placeholder="tucorreo@example.com" />
+            </label>
+          </div>
+          <label>
+            <span>Fecha de nacimiento</span>
+            <input type="date" name="fecha_nac" id="pfNac" />
+          </label>
+          <button class="btn" type="submit">Guardar mis datos</button>
+          <p class="form-note" id="perfilMsg" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="block">
+        <div class="section-head">
+          <h2>Mi ficha</h2>
+          <p>Esto lo lleva la empresa. Si algo no cuadra, díselo a tu encargado.</p>
+        </div>
+        <div class="cards" id="fichaLista"></div>
+      </section>
+
       <section class="block">
         <div class="section-head">
           <h2>Comunicados</h2>

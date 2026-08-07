@@ -415,6 +415,12 @@ h1, h2, h3 {
   box-shadow: 0 2px 12px rgba(15, 14, 13, 0.05);
 }
 
+/* Tarjeta de aviso: se usa cuando al trabajador le falta algo por rellenar. */
+.card--warn {
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--card));
+}
+
 .card-link {
   display: block;
   color: inherit;
