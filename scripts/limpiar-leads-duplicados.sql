@@ -108,6 +108,19 @@ GROUP BY 1 HAVING COUNT(*) > 1;
 -- ── 3. Aplicar (solo con -v aplicar=1) ─────────────────────────────────────
 \if :aplicar
 
+  -- Copia de seguridad ANTES de tocar nada. No hay respaldo automático de `leads`, así que
+  -- duplicamos las dos tablas afectadas en `leads_backup_AAAAMMDD_HHMM` y
+  -- `marketing_prefs_backup_AAAAMMDD_HHMM`. Si algo sale mal, se restaura desde ahí
+  -- (ver instrucciones al final del fichero). Ocupan poco y se pueden borrar cuando sobren.
+  DO $backup$
+  DECLARE sufijo TEXT := to_char(now(), 'YYYYMMDD_HH24MI');
+  BEGIN
+    EXECUTE format('CREATE TABLE IF NOT EXISTS leads_backup_%s AS SELECT * FROM leads', sufijo);
+    EXECUTE format('CREATE TABLE IF NOT EXISTS marketing_prefs_backup_%s AS SELECT * FROM marketing_prefs', sufijo);
+    RAISE NOTICE 'Copia guardada en leads_backup_% y marketing_prefs_backup_%', sufijo, sufijo;
+  END
+  $backup$;
+
   -- Volcamos a la ficha que sobrevive todo lo recopilado del grupo.
   UPDATE leads l SET
     nombre = m.nombre, apellidos = m.apellidos, nacimiento = m.nacimiento,
@@ -169,6 +182,13 @@ GROUP BY 1 HAVING COUNT(*) > 1;
   \echo ''
   \echo '── APLICADO ───────────────────────────────────────────────────────────'
   SELECT COUNT(*) AS "fichas tras la limpieza" FROM leads;
+  \echo ''
+  \echo 'Copias de seguridad creadas en esta base (se pueden borrar cuando sobren):'
+  SELECT table_name AS "copia", (xpath('/row/c/text()',
+           query_to_xml(format('SELECT COUNT(*) AS c FROM %I', table_name), false, true, '')))[1]::text::int AS "filas"
+  FROM information_schema.tables
+  WHERE table_schema = 'public' AND (table_name LIKE 'leads_backup_%' OR table_name LIKE 'marketing_prefs_backup_%')
+  ORDER BY table_name;
   COMMIT;
 
 \else
@@ -179,3 +199,22 @@ GROUP BY 1 HAVING COUNT(*) > 1;
   ROLLBACK;
 
 \endif
+
+-- ═══════════════════════════════════════════════════════════════════════════
+--  CÓMO DESHACERLO
+-- ═══════════════════════════════════════════════════════════════════════════
+--  Al aplicar se crean copias `leads_backup_AAAAMMDD_HHMM` y
+--  `marketing_prefs_backup_AAAAMMDD_HHMM` en esta misma base. Para volver atrás,
+--  sustituye el sufijo por el que te haya salido y ejecuta:
+--
+--    BEGIN;
+--    DELETE FROM leads;
+--    INSERT INTO leads SELECT * FROM leads_backup_20260807_1430;
+--    SELECT setval('leads_id_seq', (SELECT MAX(id) FROM leads));
+--    DELETE FROM marketing_prefs;
+--    INSERT INTO marketing_prefs SELECT * FROM marketing_prefs_backup_20260807_1430;
+--    COMMIT;
+--
+--  Ver las copias que existen:   \dt *_backup_*
+--  Borrar una que ya no haga falta:   DROP TABLE leads_backup_20260807_1430;
+-- ═══════════════════════════════════════════════════════════════════════════
