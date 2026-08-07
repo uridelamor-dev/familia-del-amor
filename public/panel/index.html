@@ -96,6 +96,17 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .pill.bad{background:var(--danger-soft);color:var(--danger);border-color:transparent}.pill.info{background:var(--info-soft);color:var(--info);border-color:transparent}.pill.brand{background:var(--brand-soft);color:var(--brand);border-color:transparent}
 .chip{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:550;color:var(--ink2);transition:.12s}.chip:hover{border-color:var(--border2);color:var(--ink)}.chip.on{background:var(--brand);color:var(--brand-ink);border-color:transparent}
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+/* Tarjeta plegable (<details>): la cabecera hace de tirador. Nativa, sin JS. */
+.card.fold{padding:0;overflow:hidden;align-self:start}
+.card.fold>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0;padding:16px 18px;cursor:pointer;list-style:none;transition:background .12s ease}
+.card.fold>summary::-webkit-details-marker{display:none}
+.card.fold>summary:hover{background:var(--surface2)}
+.card.fold>summary h3{margin:0;font-size:14.5px;letter-spacing:-.01em;font-weight:650}
+.card.fold>summary .foldr{display:flex;align-items:center;gap:10px;color:var(--ink3);font-size:12.5px}
+.card.fold>summary .car{display:flex;transition:transform .18s cubic-bezier(.2,.8,.2,1)}
+.card.fold[open]>summary{border-bottom:1px solid var(--border)}
+.card.fold[open]>summary .car{transform:rotate(180deg)}
+.card.fold>summary:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .rows{display:flex;flex-direction:column}.row{display:flex;align-items:center;gap:13px;padding:12px 16px;border-top:1px solid var(--border)}.row:first-child{border-top:0}.row:hover{background:var(--surface2)}
 .row .grow{flex:1;min-width:0}.t1{font-weight:600;font-size:13.5px;letter-spacing:-.01em}.t2{font-size:12px;color:var(--ink3);margin-top:2px}
 .ava{width:32px;height:32px;border-radius:999px;display:grid;place-items:center;font-weight:650;font-size:12px;color:var(--brand);background:var(--brand-soft);flex:none}

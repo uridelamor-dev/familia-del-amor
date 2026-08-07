@@ -300,6 +300,7 @@ const ICONS = {
   chat: '<path d="M4 5h16v11H9l-4 3z"/><path d="M8 9.5h8M8 12.5h5"/>',
   cog: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M4.5 6.5l2.1 2.1M17.4 17.4l2.1 2.1M3 12h3M18 12h3M4.5 17.5l2.1-2.1M17.4 6.6l2.1-2.1"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  chev: '<path d="M6 9l6 6 6-6"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   bell: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6M9.5 20a2.5 2.5 0 0 0 5 0"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
@@ -1651,7 +1652,11 @@ function renderFacturas(list, pend, stats, empresas) {
   const maxLocal = Math.max(1, ...(((stats && stats.porLocal) || []).map((x) => Number(x.total) || 0)));
   // Con un establecimiento elegido el desglose por local sobra: sería una sola barra al 100%.
   const porLocal = (!FACF.local && stats && stats.porLocal && stats.porLocal.length) ? `<div class="card"><div class="ch"><h3>Gasto por local (año)</h3></div><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div></div>` : "";
-  const topProv = (stats && stats.topProveedores && stats.topProveedores.length) ? `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Top proveedores (año)</h3></div><div class="rows">${stats.topProveedores.map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "—")}</div><div class="t2">${num(p.num)} factura(s)</div></div><b class="tnum">${eur(p.total)}</b></div>`).join("")}</div></div>` : "";
+  // Plegable y cerrada por defecto: es una lista larga que casi nunca se consulta,
+  // y estorbaba entre los filtros y la tabla de facturas.
+  const nProv = (stats && stats.topProveedores && stats.topProveedores.length) || 0;
+  const totalProv = nProv ? stats.topProveedores.reduce((s, p) => s + (Number(p.total) || 0), 0) : 0;
+  const topProv = nProv ? `<details class="card fold"><summary><h3>Top proveedores (año)</h3><span class="foldr"><span>${num(nProv)} · ${eur(totalProv)}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="rows">${stats.topProveedores.map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "—")}</div><div class="t2">${num(p.num)} factura(s)</div></div><b class="tnum">${eur(p.total)}</b></div>`).join("")}</div></details>` : "";
   const vizGrid = (porLocal && topProv) ? `<div class="grid g2" style="margin-bottom:16px">${porLocal}${topProv}</div>`
     : (porLocal || topProv) ? `<div style="margin-bottom:16px">${porLocal}${topProv}</div>` : "";
   const pendRow = (p) => {
@@ -2770,6 +2775,9 @@ async function webBlkUpload(input, gallery) {
 const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
+  // El calendario cuelga de <body>, así que sobrevive al repintado de la vista:
+  // si no lo cerramos aquí, se queda flotando encima de la pantalla nueva.
+  dpClose();
   CURRENT = view;
   if (!puedeVer(view)) {
     document.getElementById("root").innerHTML = shell(view, `<div class="card"><div class="ch"><h3>Sin acceso</h3></div><p class="mut">No tienes acceso a este módulo.</p></div>`);
