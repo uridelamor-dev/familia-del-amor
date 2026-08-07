@@ -320,6 +320,24 @@ export function setOnModificarReserva(fn) { onModificarReserva = fn; }
 let onContactoLead = null;
 export function setOnContactoLead(fn) { onContactoLead = fn; }
 
+// ¿El que escribe es de la casa (trabajador, encargado, dirección…)? (telefono) => bool.
+// Sara está escrita para clientes de restaurante: si no filtramos, a un trabajador que
+// escriba al número de empresa le ofrece mesa para cenar y además lo da de alta como lead
+// de marketing. Los mensajes internos se registran, pero ni se responden ni crean lead.
+let telefonoInternoResolver = null;
+export function setTelefonoInterno(fn) { telefonoInternoResolver = fn; }
+// Devuelve true solo si estamos SEGUROS de que es interno. Si el jid no se puede resolver
+// a un número (los @lid), devuelve false a propósito: cerrar en falso dejaría sin respuesta
+// a clientes reales, que es el fallo más caro de los dos.
+async function esMensajeInterno(jid) {
+  if (!telefonoInternoResolver) return false;
+  try {
+    const tel = await resolverTelefono(jid);
+    if (!tel) return false;
+    return !!(await telefonoInternoResolver(tel));
+  } catch { return false; }
+}
+
 let onReady = null;
 export function setOnReady(fn) { onReady = fn; }
 
@@ -776,7 +794,7 @@ async function connectToWhatsApp() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("messaging-history.set", ({ messages }) => {
+  sock.ev.on("messaging-history.set", async ({ messages }) => {
     if (!onMessage) return;
     const cutoff = Math.floor(Date.now() / 1000) - 5 * 24 * 3600;
 
@@ -791,6 +809,8 @@ async function connectToWhatsApp() {
     }
 
     for (const [jid, msgs] of Object.entries(byJid)) {
+      // Una sola comprobación por conversación, no por mensaje.
+      const interno = await esMensajeInterno(jid);
       msgs.sort((a, b) => Number(a.messageTimestamp) - Number(b.messageTimestamp));
       for (let i = 0; i < msgs.length; i++) {
         const msg = msgs[i];
@@ -806,7 +826,7 @@ async function connectToWhatsApp() {
           const t = next.message?.conversation || next.message?.extendedTextMessage?.text || "";
           if (t) { respuesta = t; break; }
         }
-        onMessage({ jid, texto: texto.trim(), respuesta, historico: true });
+        onMessage({ jid, texto: texto.trim(), respuesta, historico: true, interno });
       }
     }
     console.log(`📜 Historial WA procesado: ${Object.keys(byJid).length} conversaciones`);
@@ -890,6 +910,14 @@ async function connectToWhatsApp() {
       }
 
       console.log(`💬 Mensaje de ${jid}: ${textoFinal}`);
+
+      // Gente de la casa: se guarda para poder leerlo, pero NI Sara responde NI se crea
+      // lead de marketing. Va antes que nada para que no se escape por ninguna rama.
+      if (await esMensajeInterno(jid)) {
+        console.log(`🏠 Mensaje interno de ${jid}: registrado, sin respuesta automática`);
+        if (onMessage) onMessage({ jid, texto: textoFinal, respuesta: null, interno: true });
+        continue;
+      }
 
       // Registrar como lead a cualquier contacto con teléfono real (best-effort)
       if (onContactoLead) {

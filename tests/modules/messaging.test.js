@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   formatTelefonoES, aplicarVariables, contactoEnviableWA,
   filtrarEnviablesWA, dividirPorTope, delayConJitter,
+  clave9, esTelefonoInterno,
 } from "../../src/modules/messaging/queue.js";
 
 describe("messaging.formatTelefonoES", () => {
@@ -72,6 +73,32 @@ describe("messaging.dividirPorTope", () => {
     const r = dividirPorTope([1, 2], { maxDiario: 3, yaEnviadosHoy: 3 });
     assert.deepEqual(r.aEnviar, []);
     assert.deepEqual(r.pospuestos, [1, 2]);
+  });
+});
+
+describe("messaging.esTelefonoInterno", () => {
+  // Set tal como lo construye el servidor: claves ya normalizadas de 9 dígitos.
+  const internos = new Set([clave9("600112233"), clave9("+34 655 44 33 22")]);
+
+  test("reconoce a los de la casa escriban como escriban el número", () => {
+    for (const t of ["600112233", "600 11 22 33", "+34600112233", "34600112233", "0034600112233"]) {
+      assert.equal(esTelefonoInterno(t, internos), true, t);
+    }
+  });
+  test("un cliente cualquiera no es interno", () => {
+    assert.equal(esTelefonoInterno("699001122", internos), false);
+  });
+  test("sin teléfono no excluye a nadie", () => {
+    assert.equal(esTelefonoInterno("", internos), false);
+    assert.equal(esTelefonoInterno(null, internos), false);
+  });
+  test("números demasiado cortos no producen falsos positivos", () => {
+    // "112233" no llega a 9 dígitos: no debe colarse por coincidir con el final de otro.
+    assert.equal(esTelefonoInterno("112233", internos), false);
+  });
+  test("ante la duda NO excluye: sin lista, Sara sigue respondiendo", () => {
+    assert.equal(esTelefonoInterno("600112233", new Set()), false);
+    assert.equal(esTelefonoInterno("600112233", null), false);
   });
 });
 

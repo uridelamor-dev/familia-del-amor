@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -29,7 +29,11 @@ import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos } from 
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
-import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter } from "./src/modules/messaging/queue.js";
+import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
+
+// Invalida la caché de teléfonos internos (se define al arrancar WhatsApp). Se llama al
+// dar de alta o editar un trabajador para que el cambio no espere al TTL de 10 min.
+let invalidarInternos = () => {};
 import { detectarIdioma, normalizarIdioma, idiomaDeContacto, necesitaTraduccion, idiomasPresentes, placeholdersIntactos, construirTraduccionRequest, IDIOMA_BASE } from "./src/modules/messaging/i18n.js";
 import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
 import { createAgoraClient } from "./src/integrations/agora/client.js";
@@ -2167,6 +2171,7 @@ app.post("/api/users", requireAuth(["direccion"]), async (req, res) => {
       `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, modulos, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       [username, hash, encUserPass(password), rol, nombre || "", local || "", mods ? JSON.stringify(mods) : null, creado_en]
     );
+    invalidarInternos();
     res.json({ ok: true, id: row.id });
   } catch (err) {
     res.status(400).json({ ok: false, error: "Usuario ya existe o error al crear" });
@@ -3650,6 +3655,7 @@ app.post("/api/hr/applications/:id/contratar", requireAuth(["rrhh", "direccion"]
         [u.id, "CV de la candidatura", cand.cv_url, req.user?.nombre || req.user?.username || null, now]);
     }
     await dbRun(`UPDATE hr_applications SET estado='contratada' WHERE id=?`, [req.params.id]);
+    invalidarInternos();
     res.json({ ok: true, id: u.id });
   } catch (e) {
     res.status(400).json({ ok: false, error: /duplicate|unique/i.test(e.message || "") ? "Ese nombre de usuario ya existe" : "No se pudo contratar" });
@@ -3697,6 +3703,7 @@ app.post("/api/rrhh/trabajador", requireAuth(RRHH_ROLES), async (req, res) => {
     const row = await dbRun(
       `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, fecha_alta, activo, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`,
       [username, hash, encUserPass(password), rol, nombre, local, now.slice(0, 10), now]);
+    invalidarInternos();
     res.json({ ok: true, id: row.id });
   } catch (e) {
     res.status(400).json({ ok: false, error: /duplicate|unique/i.test(e.message || "") ? "Ese usuario ya existe" : "No se pudo crear" });
@@ -3871,6 +3878,7 @@ app.put("/api/rrhh/trabajador/:id", requireAuth(RRHH_ROLES), async (req, res) =>
     if (!sets.length) return res.json({ ok: true });
     vals.push(w.id);
     await dbRun(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`, vals);
+    invalidarInternos(); // el teléfono puede haber cambiado
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -5421,13 +5429,44 @@ const server = app.listen(PORT, async () => {
     } catch (e) { console.error("[cumpleaños]", e.message); }
   }, 5 * 60 * 1000);
 
-  setOnMessage(async ({ jid, texto, respuesta, historico = false }) => {
+  // ── Números de la casa: Sara no les responde ───────────────────────────────
+  // Sara está escrita para clientes de restaurante. Si un trabajador escribe al número de
+  // empresa, sin esto le ofrece mesa y además lo da de alta como lead de marketing.
+  // Caché de 10 min: son 40-50 filas y se consulta en cada mensaje entrante.
+  let _internosSet = null, _internosTs = 0;
+  const INTERNOS_TTL_MS = 10 * 60 * 1000;
+  async function cargarTelefonosInternos() {
+    const rows = await dbAll(
+      `SELECT telefono FROM users WHERE COALESCE(telefono, '') <> '' AND COALESCE(activo, 1) = 1`
+    );
+    return new Set((rows || []).map((r) => clave9(r.telefono)).filter(Boolean));
+  }
+  async function telefonosInternos() {
+    if (_internosSet && Date.now() - _internosTs < INTERNOS_TTL_MS) return _internosSet;
+    try {
+      _internosSet = await cargarTelefonosInternos();
+      _internosTs = Date.now();
+    } catch (e) {
+      console.error("[internos] No se pudo cargar la lista:", e.message);
+      // Si falla, conservamos la anterior; si no había ninguna, Set vacío = no se excluye a nadie.
+      if (!_internosSet) _internosSet = new Set();
+    }
+    return _internosSet;
+  }
+  // Se llama al dar de alta o editar un trabajador, para no esperar al TTL.
+  invalidarInternos = () => { _internosTs = 0; };
+  setTelefonoInterno(async (telefono) => esTelefonoInterno(telefono, await telefonosInternos()));
+
+  setOnMessage(async ({ jid, texto, respuesta, historico = false, interno = false }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
     try {
       await dbRun(
-        `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico, tipo) VALUES (?, ?, ?, ?, ?, 'intercambio')`,
-        [jid, telefono, texto, respuesta, historico ? 1 : 0]
+        `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico, tipo) VALUES (?, ?, ?, ?, ?, ?)`,
+        [jid, telefono, texto, respuesta, historico ? 1 : 0, interno ? "interno" : "intercambio"]
       );
+      // Los de la casa NO entran en wa_clientes (que es la agenda de clientes de WhatsApp)
+      // ni pasan por la lógica de marketing: el mensaje queda guardado y nada más.
+      if (interno) return;
       await dbRun(
         `INSERT INTO wa_clientes (jid, telefono, ultima_interaccion)
          VALUES (?, ?, EXTRACT(EPOCH FROM NOW())::BIGINT)

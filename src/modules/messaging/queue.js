@@ -13,6 +13,22 @@ export function formatTelefonoES(raw) {
   return s;
 }
 
+// ¿Este teléfono es de alguien de la casa (trabajador, encargado, dirección…)?
+// Se compara por los últimos 9 dígitos, como en el resto del sistema: el mismo móvil
+// puede llegar como "600112233", "+34 600 11 22 33" o "34600112233".
+// `internos` es un Set de claves de 9 dígitos ya normalizadas.
+// Devuelve false si no hay teléfono o si el Set está vacío: ante la duda, NO se excluye
+// (fallar cerrado dejaría a clientes reales sin respuesta, que es peor).
+export function clave9(raw) {
+  const d = String(raw || "").replace(/\D/g, "");
+  return d.length >= 9 ? d.slice(-9) : "";
+}
+export function esTelefonoInterno(telefono, internos) {
+  const k = clave9(telefono);
+  if (!k || !internos) return false;
+  return typeof internos.has === "function" ? internos.has(k) : false;
+}
+
 // Sustituye variables de plantilla en el texto. Reutilizable por Campañas.
 // Soporta {nombre} {apellidos} {nombre_completo} {local}. Sin valor → cadena vacía.
 export function aplicarVariables(texto, contacto = {}) {
