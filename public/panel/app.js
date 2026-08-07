@@ -2150,6 +2150,7 @@ function renderAgoraRow(local, i) {
       <label class="chip" style="cursor:pointer"><input type="checkbox" id="agAct_${i}" ${(!c || c.activo) ? "checked" : ""} style="margin-right:6px">Activo</label>
       <span class="grow"></span>
       <button class="btn" data-act="ag-probe" data-local="${esc(local)}" ${c ? "" : "disabled"}>Probar conexión</button>
+      <button class="btn" data-act="ag-metodos" data-local="${esc(local)}" ${c ? "" : "disabled"} title="Pregunta al TPV qué informes entiende su versión de Ágora">Informes disponibles</button>
       <button class="btn" data-act="ag-diag" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Diagnóstico API</button>
       <button class="btn primary" data-act="ag-save" data-local="${esc(local)}" data-i="${i}">Guardar</button>
       ${c ? `<button class="btn sm danger" data-act="ag-del" data-local="${esc(local)}">Eliminar</button>` : ""}
@@ -2244,6 +2245,34 @@ async function agoraDiagnostico(local) {
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="btn" id="agDiagCopy">Copiar resultado</button><button class="btn primary" data-close>Cerrar</button></div>`;
   const ov = modal("Diagnóstico API · " + local, body);
   ov.querySelector(".modal").classList.add("wide");
+  wireCopiar(ov);
+  return;
+}
+// Pregunta al TPV qué informes entiende su versión. Pensado para locales con Ágora antiguo:
+// dice con cuál se puede sacar la venta diaria sin actualizar el TPV.
+async function agoraMetodos(local) {
+  toast("Preguntando al TPV qué informes tiene… (puede tardar)");
+  let j; try { j = await apiSend("POST", "/api/agora/metodos", { local }); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); return; }
+  const ms = j.metodos || [];
+  const pill = (m) => m.estado === "disponible" ? '<span class="pill ok">Disponible</span>'
+    : m.estado === "no_disponible" ? '<span class="pill bad">No está</span>'
+    : '<span class="pill warn">No se pudo saber</span>';
+  const fila = (m) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(m.corto)}</div><div class="t2">${esc(m.nota || "")}${m.detalle ? " · " + esc(m.detalle) : ""}</div></div>${pill(m)}</div>`;
+  const jsonTxt = JSON.stringify(j, null, 2);
+  const hay = ms.filter((m) => m.estado === "disponible");
+  const body = `<div class="mut" style="font-size:12.5px;margin-bottom:10px">${esc(j.mensaje || "")}${j.version ? ` · <b>Ágora ${esc(j.version)}</b>` : ""}<br>Lo marcado <b>Disponible</b> es lo que esta versión sí entiende. <b>Cópialo y pégamelo</b> y cablearé la venta diaria con uno de esos.</div>
+    <div class="card p0" style="max-height:46vh;overflow:auto"><div class="rows">${ms.length ? ms.map(fila).join("") : '<div class="mut" style="padding:12px">Sin resultados (¿local cerrado?).</div>'}</div></div>
+    ${hay.length ? "" : '<div class="pendingblock" style="margin-top:10px">Ningún informe respondió. Si el local está abierto, avisa: puede que el usuario de Ágora no tenga permiso de informes.</div>'}
+    <textarea id="agDiagJson" style="width:100%;height:120px;margin-top:10px;font-family:monospace;font-size:11px" readonly>${esc(jsonTxt)}</textarea>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="btn" id="agDiagCopy">Copiar resultado</button><button class="btn primary" data-close>Cerrar</button></div>`;
+  const ov = modal("Informes disponibles · " + local, body);
+  ov.querySelector(".modal").classList.add("wide");
+  wireCopiar(ov);
+}
+// Botón "Copiar resultado" compartido por los dos diálogos de diagnóstico.
+function wireCopiar(ov) {
+  const jsonTxt = ov.querySelector("#agDiagJson") ? ov.querySelector("#agDiagJson").value : "";
   ov.querySelector("#agDiagCopy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(jsonTxt); toast("Copiado ✅"); }
     catch { const ta = ov.querySelector("#agDiagJson"); ta.focus(); ta.select(); toast("Selecciona y copia (⌘C)"); }
@@ -2841,6 +2870,7 @@ document.addEventListener("click", (e) => {
   else if (act === "estabmenu") openEstabMenu();
   // Cambiar de establecimiento reaplica el ámbito sin sacarte de donde estabas.
   else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; closeDrawer(); go(MODULOS_POR_LOCAL.has(CURRENT) ? CURRENT : "dashboard"); }
+  else if (act === "ag-metodos") agoraMetodos(t.getAttribute("data-local"));
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }

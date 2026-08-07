@@ -112,6 +112,24 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
 
     // Ejecuta un mensaje de informe del bus (login/re-login automáticos) y devuelve el JSON crudo.
     async informe(clrType, extra = {}) { return busJson(clrType, extra); },
+
+    // ¿Este Ágora entiende este mensaje? Sirve para versiones antiguas, donde parte de los
+    // informes no existen. No nos importa el CONTENIDO de la respuesta: solo distinguimos
+    // "el servidor no encuentra el método" (no está) de cualquier otro fallo —parámetros
+    // incompletos, sin datos en el rango…—, que ya demuestra que el método SÍ existe.
+    async probarMetodo(clrType, extra = {}) {
+      const corto = String(clrType).split(".").pop().replace(/Request$/, "");
+      try {
+        await busJson(clrType, extra);
+        return { clrType, corto, estado: "disponible", detalle: "respondió correctamente" };
+      } catch (e) {
+        const msg = String((e && e.message) || "");
+        if (e && e.code === "METODO_NO_DISPONIBLE") return { clrType, corto, estado: "no_disponible", detalle: "este Ágora no lo implementa" };
+        // Fallos de red/sesión: no podemos concluir nada del método.
+        if (/^login_|timeout|ECONN|fetch failed|socket|network/i.test(msg)) return { clrType, corto, estado: "error", detalle: msg.slice(0, 120) };
+        return { clrType, corto, estado: "disponible", detalle: "existe, pero falló: " + msg.slice(0, 120) };
+      }
+    },
     async posGroups() { return getPosGroups(); },
     async familiaIds() { return getFamilias(); },
     async categoriaIds() { return getCategorias(); },

@@ -3292,6 +3292,60 @@ function agoraFaltaQue(row) {
   if (!row || !row.pass_enc) falta.push("la contraseña");
   return falta.length ? `Falta ${falta.join(", ").replace(/, ([^,]*)$/, " y $1")} de Ágora.` : "Configuración incompleta.";
 }
+// Candidatos a sondear cuando un TPV es de versión antigua y no tiene el informe habitual.
+// Los 8 primeros están CONFIRMADOS en los locales con Ágora 8.7.4; el resto son nombres
+// plausibles de versiones viejas (si no existen, el sondeo simplemente los marca así).
+const AGORA_CANDIDATOS = [
+  { clr: "IGT.POS.Bus.SystemManagement.Messages.GetAllPosGroupsRequest", nota: "control: debe existir siempre" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetGlobalSalesReportRequest", nota: "el que usamos para las ventas diarias" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetPaymentMethodSalesReportRequest", nota: "ventas por método de pago (sirve para el total del día)" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetUserSalesFileReportRequest", nota: "ventas por empleado (sumando da el total)" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetProductSalesReportRequest", nota: "ventas por producto" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetTicketsByTimeFrameReportRequest", nota: "tickets por franja horaria" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetDiscountsByUserAndTypeReportRequest", nota: "descuentos" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetInvitationsByBusinessDayReportRequest", nota: "invitaciones" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetSalesReportRequest", nota: "candidato antiguo" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetDailySalesReportRequest", nota: "candidato antiguo" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetSalesByDayReportRequest", nota: "candidato antiguo" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetBusinessDayReportRequest", nota: "candidato antiguo (día de negocio)" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetCashCountReportRequest", nota: "candidato antiguo (arqueo/cierre de caja)" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetZReportRequest", nota: "candidato antiguo (informe Z)" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetInvoicesReportRequest", nota: "candidato antiguo (facturas)" },
+];
+
+// Pregunta a UN TPV qué mensajes entiende. Pensado para locales con Ágora antiguo: nos dice
+// con qué informe podemos sacar la venta diaria sin tener que actualizar el TPV.
+// Solo dirección. Usa las credenciales guardadas: nunca salen de aquí.
+app.post("/api/agora/metodos", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const { local } = req.body || {};
+    if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
+    const row = await dbGet(`SELECT local, host, token, usuario, pass_enc, local_id FROM agora_locales WHERE local = ?`, [local]);
+    if (!row) return res.status(404).json({ ok: false, error: "Local no configurado" });
+    const cfgs = configsFromRows([{
+      local: row.local, host: row.host, token: agoraDecToken(row.token),
+      usuario: row.usuario || null, password: agoraDecToken(row.pass_enc),
+      local_id: row.local_id, activo: true,
+    }]);
+    if (!cfgs.length) return res.status(400).json({ ok: false, error: agoraFaltaQue(row) });
+    const client = createAgoraClient(cfgs[0]);
+    const { alive, version } = await client.pingInfo();
+    if (!alive) return res.json({ ok: true, local, version: null, alive: false, metodos: [], mensaje: "El TPV no responde: el local está cerrado o inalcanzable." });
+    // Rango mínimo (ayer) para que el informe no cargue al TPV; da igual lo que devuelva.
+    const hasta = new Date().toISOString().slice(0, 10);
+    const desde = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const metodos = [];
+    for (const c of AGORA_CANDIDATOS) {
+      const r = await client.probarMetodo(c.clr, { From: desde, To: hasta });
+      metodos.push({ ...r, nota: c.nota });
+    }
+    const hay = metodos.filter((m) => m.estado === "disponible").length;
+    res.json({ ok: true, local, alive: true, version, metodos, mensaje: `Ágora ${version || "?"} · ${hay} de ${metodos.length} mensajes disponibles` });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || "Error sondeando el TPV").slice(0, 200) });
+  }
+});
+
 app.post("/api/agora/probe", requireAuth(["direccion"]), async (req, res) => {
   try {
     const { local } = req.body || {};
