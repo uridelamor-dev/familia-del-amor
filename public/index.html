@@ -157,14 +157,38 @@
           <p class="form-note" id="reservaMsg" role="status" aria-live="polite"></p>
         </form>
 
-        <!-- Estado de éxito post-reserva -->
-        <div id="reservaSuccess" class="reserva-success hidden">
+      </section>
+
+      <!-- Confirmación de reserva + datos opcionales (pop-up) -->
+      <div class="popup" id="reservaPopup" role="dialog" aria-modal="true" aria-labelledby="reservaSuccessTitle">
+        <div class="popup-card">
+          <button class="close" id="reservaPopupClose" aria-label="Cerrar">×</button>
           <div class="reserva-success-icon">✅</div>
           <h3 id="reservaSuccessTitle">Reserva confirmada</h3>
           <p id="reservaSuccessDetails" class="reserva-success-details"></p>
-          <button class="btn ghost" id="reservaSuccessBack" data-i18n="reservation_success_back">Hacer otra reserva</button>
+          <form id="reservaPerfilForm" class="form reserva-perfil">
+            <p class="reserva-perfil-intro" data-i18n="reservation_extra_intro">¿Nos ayudas a conocerte mejor? Los dos campos son opcionales.</p>
+            <div class="form-row">
+              <label style="position:relative">
+                <span data-i18n="reservation_extra_town">Población (opcional)</span>
+                <input type="text" id="poblacionReservaInput" name="poblacion" autocomplete="address-level2" />
+                <div id="poblacionReservaSuggestions" class="sugg-box" style="display:none"></div>
+              </label>
+              <label>
+                <span data-i18n="reservation_extra_birth">Fecha de nacimiento (opcional)</span>
+                <input type="text" id="nacimientoReservaDisplay" data-date-input="nacimientoReserva" data-date-mode="birth" placeholder="dd/mm/aaaa" data-i18n-ph="ph_birth_date" readonly />
+                <input type="hidden" id="nacimientoReservaValue" name="nacimiento" />
+              </label>
+            </div>
+            <p class="form-note" data-i18n="reservation_extra_privacy">Al rellenarlos nos autorizas a guardar estos datos para avisarte de novedades y ofertas. Puedes pedirnos que los borremos cuando quieras.</p>
+            <div class="reserva-perfil-acts">
+              <button class="btn ghost" type="button" id="reservaPerfilSkip" data-i18n="reservation_extra_skip">Ahora no</button>
+              <button class="btn" type="submit" data-i18n="reservation_extra_save">Guardar</button>
+            </div>
+          </form>
+          <p class="form-note" id="reservaPerfilMsg" role="status" aria-live="polite"></p>
         </div>
-      </section>
+      </div>
 
       <!-- FRANJA DESCUENTO (siempre visible) -->
       <section class="block descuento-strip">
@@ -240,7 +264,7 @@
             <label style="position:relative">
               <span>Población</span>
               <input type="text" id="poblacionInput" name="poblacion" autocomplete="off" required />
-              <div id="poblacionSuggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:999;max-height:180px;overflow-y:auto"></div>
+              <div id="poblacionSuggestions" class="sugg-box" style="display:none"></div>
             </label>
             <label><span>Teléfono</span><input type="tel" name="telefono" autocomplete="tel" required /></label>
           </div>

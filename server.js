@@ -836,8 +836,10 @@ async function restoreFromKV() {
         for (const l of leads) {
           try {
             const existe = await dbGet(
-              "SELECT id FROM leads WHERE (telefono != '' AND telefono = ?) OR (correo != '' AND correo = ?)",
-              [l.telefono || "", l.correo || ""]
+              `SELECT id FROM leads
+               WHERE (COALESCE(telefono, '') <> '' AND ? <> '' AND ${MATCH_TEL9("telefono")})
+                  OR (COALESCE(correo, '') <> '' AND ? <> '' AND LOWER(TRIM(correo)) = LOWER(TRIM(?)))`,
+              [l.telefono || "", l.telefono || "", l.correo || "", l.correo || ""]
             );
             if (!existe) {
               await dbRun(
@@ -1660,6 +1662,11 @@ app.get("/api/facturas/empresas", requireAuth(["direccion", "contabilidad"]), as
 app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const año = req.query.año || new Date().getFullYear();
+    // Ámbito de establecimiento: el del selector del panel (?local=), salvo que el usuario
+    // tenga uno fijado (encargado), que manda siempre. Sin ámbito = todo el grupo.
+    const local = localScope(req) || String(req.query.local || "").trim();
+    const andLocal = local ? " AND local = ?" : "";
+    const p = local ? [String(año), local] : [String(año)];
     const [mensual, topProveedores, porLocal, resumenAnual] = await Promise.all([
       dbAll(
         `SELECT local, TO_CHAR(fecha::date, 'MM') AS mes,
@@ -1668,35 +1675,35 @@ app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async
            ROUND(SUM(COALESCE(base_imponible,0))::NUMERIC, 2) AS base,
            ROUND(SUM(COALESCE(cuota_iva,0))::NUMERIC, 2) AS iva
          FROM facturas
-         WHERE TO_CHAR(fecha::date, 'YYYY') = ? AND fecha IS NOT NULL
+         WHERE TO_CHAR(fecha::date, 'YYYY') = ? AND fecha IS NOT NULL${andLocal}
          GROUP BY local, mes ORDER BY local, mes`,
-        [String(año)]
+        p
       ),
       dbAll(
         `SELECT MIN(proveedor) AS proveedor, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
          FROM facturas
-         WHERE TO_CHAR(fecha::date, 'YYYY') = ? AND proveedor IS NOT NULL AND TRIM(proveedor) != ''
+         WHERE TO_CHAR(fecha::date, 'YYYY') = ? AND proveedor IS NOT NULL AND TRIM(proveedor) != ''${andLocal}
          GROUP BY LOWER(TRIM(proveedor))
          ORDER BY total DESC LIMIT 10`,
-        [String(año)]
+        p
       ),
       dbAll(
         `SELECT local, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
          FROM facturas
-         WHERE TO_CHAR(fecha::date, 'YYYY') = ?
+         WHERE TO_CHAR(fecha::date, 'YYYY') = ?${andLocal}
          GROUP BY local ORDER BY total DESC`,
-        [String(año)]
+        p
       ),
       dbGet(
         `SELECT COUNT(*) AS num_docs,
            ROUND(SUM(COALESCE(base_imponible,0))::NUMERIC, 2) AS base,
            ROUND(SUM(COALESCE(cuota_iva,0))::NUMERIC, 2) AS iva,
            ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
-         FROM facturas WHERE TO_CHAR(fecha::date, 'YYYY') = ?`,
-        [String(año)]
+         FROM facturas WHERE TO_CHAR(fecha::date, 'YYYY') = ?${andLocal}`,
+        p
       )
     ]);
-    res.json({ ok: true, data: { mensual, topProveedores, porLocal, resumenAnual, año } });
+    res.json({ ok: true, data: { mensual, topProveedores, porLocal, resumenAnual, año, local: local || null } });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
@@ -2231,7 +2238,15 @@ app.post("/api/leads", async (req, res) => {
   };
 
   try {
-    const existing = await dbGet(`SELECT id FROM leads WHERE telefono = ? OR correo = ?`, [telefono, correo]);
+    // Teléfono por los últimos 9 dígitos y correo sin distinguir mayúsculas ni espacios:
+    // con la comparación exacta de antes, "+34 600…" o "Marta@X.com" creaban un lead nuevo.
+    const existing = await dbGet(
+      `SELECT id FROM leads
+       WHERE ${MATCH_TEL9("telefono")}
+          OR (COALESCE(correo, '') <> '' AND LOWER(TRIM(correo)) = LOWER(TRIM(?)))
+       ORDER BY id LIMIT 1`,
+      [telefono, correo]
+    );
     if (existing) {
       await dbRun(
         `UPDATE leads SET nombre=?, apellidos=?, nacimiento=?, poblacion=?, genero=COALESCE(?,genero), fuente=?, actualizado_en=? WHERE id=?`,
@@ -2258,7 +2273,9 @@ async function upsertLead({ nombre = "", apellidos = "", telefono, fuente = "web
   if (!telefono) return;
   const ahora = new Date().toISOString();
   try {
-    const row = await dbGet(`SELECT id, nombre, apellidos FROM leads WHERE telefono = ?`, [telefono]);
+    // Comparamos por los últimos 9 dígitos: "600112233", "600 11 22 33" y "+34 600 11 22 33"
+    // son la misma persona. Con el `= ?` de antes, cada formato creaba un lead nuevo.
+    const row = await dbGet(`SELECT id, nombre, apellidos FROM leads WHERE ${MATCH_TEL9("telefono")} ORDER BY id LIMIT 1`, [telefono]);
     if (row) {
       const nuevoNombre = (!row.nombre || row.nombre === "") && nombre ? nombre : row.nombre;
       const nuevoApellidos = (!row.apellidos || row.apellidos === "") && apellidos ? apellidos : row.apellidos;
@@ -2277,6 +2294,43 @@ async function upsertLead({ nombre = "", apellidos = "", telefono, fuente = "web
     console.error("[upsertLead] Error:", e.message);
   }
 }
+
+// Datos opcionales que el cliente añade en el pop-up de confirmación (población y fecha de
+// nacimiento). No crean contacto nuevo: rellenan el lead que `upsertLeadFromReserva` ya creó
+// al reservar, así no se duplica a nadie. Es público, pero exigimos que el teléfono coincida
+// con el de la reserva para que nadie pueda escribir en la ficha de otro probando ids.
+app.post("/api/reservas/:id/perfil", async (req, res) => {
+  const { telefono, poblacion, nacimiento } = req.body || {};
+  if (!telefono) return res.status(400).json({ ok: false, error: "Faltan datos" });
+  const pob = String(poblacion || "").trim().slice(0, 80);
+  const nac = String(nacimiento || "").trim().slice(0, 10);
+  if (!pob && !nac) return res.json({ ok: true, guardado: false });
+  if (nac) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nac)) return res.status(400).json({ ok: false, error: "Fecha inválida" });
+    const año = Number(nac.slice(0, 4));
+    if (año < 1900 || año > new Date().getFullYear()) return res.status(400).json({ ok: false, error: "Fecha inválida" });
+  }
+  try {
+    const reserva = await dbGet(`SELECT id FROM reservas WHERE id = ? AND ${MATCH_TEL9("telefono")}`, [req.params.id, telefono]);
+    if (!reserva) return res.status(404).json({ ok: false, error: "Reserva no encontrada" });
+    // El lead se crea al reservar, pero sin esperar a que termine: si aún no está, lo creamos.
+    const lead = await dbGet(`SELECT id FROM leads WHERE ${MATCH_TEL9("telefono")} ORDER BY id LIMIT 1`, [telefono]);
+    if (!lead) await upsertLead({ telefono, fuente: "reserva" });
+    // Solo rellenamos lo que esté vacío: nunca pisamos lo que dio en el formulario del descuento.
+    await dbRun(
+      `UPDATE leads SET
+         poblacion = CASE WHEN COALESCE(poblacion, '') = '' THEN ? ELSE poblacion END,
+         nacimiento = CASE WHEN COALESCE(nacimiento, '') = '' THEN ? ELSE nacimiento END,
+         actualizado_en = ?
+       WHERE ${MATCH_TEL9("telefono")}`,
+      [pob, nac, new Date().toISOString(), telefono]
+    );
+    res.json({ ok: true, guardado: true });
+  } catch (e) {
+    console.error("[reserva/perfil] Error:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron guardar los datos" });
+  }
+});
 
 function upsertLeadFromReserva({ nombre_reserva, telefono }) {
   const nombre = (nombre_reserva || "").split(" ")[0] || nombre_reserva || "";
@@ -2332,8 +2386,14 @@ async function mirrorLeadToSheet(lead) {
 function sqlContactosUnificados(filtros = {}, params = []) {
   const { q, poblacion, genero, cumple_mes, local, con_email, con_telefono, idioma, origen, excluir_baja } = filtros;
 
+  // También por teléfono normalizado: si el lead guardó "+34 600…" y la reserva "600…",
+  // con el IN exacto el cliente desaparecía al filtrar por local.
   let localFilter = local
-    ? `AND c.telefono IN (SELECT telefono FROM reservas WHERE local = ?)`
+    ? `AND EXISTS (
+         SELECT 1 FROM reservas rl
+         WHERE rl.local = ?
+           AND RIGHT(regexp_replace(rl.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
+       )`
     : "";
   if (local) params.push(local);
 
@@ -2361,11 +2421,13 @@ function sqlContactosUnificados(filtros = {}, params = []) {
 
       UNION
 
-      -- Clientes solo de reservas (sin lead)
+      -- Clientes solo de reservas (sin lead). Agrupamos por teléfono normalizado y nos
+      -- quedamos con el nombre de la reserva más reciente: antes el GROUP BY incluía
+      -- nombre_reserva, así que "Uri" y "Uriel" con el mismo móvil salían como dos personas.
       SELECT
-        r.nombre_reserva AS nombre,
+        (array_agg(r.nombre_reserva ORDER BY r.creado_en DESC))[1] AS nombre,
         '' AS apellidos,
-        r.telefono,
+        (array_agg(r.telefono ORDER BY r.creado_en DESC))[1] AS telefono,
         '' AS correo,
         NULL AS nacimiento,
         NULL AS poblacion,
@@ -2373,8 +2435,12 @@ function sqlContactosUnificados(filtros = {}, params = []) {
         'reserva' AS origen,
         MAX(r.creado_en) AS ultima_actividad
       FROM reservas r
-      WHERE r.telefono NOT IN (SELECT telefono FROM leads WHERE telefono IS NOT NULL)
-      GROUP BY r.telefono, r.nombre_reserva
+      WHERE NOT EXISTS (
+        SELECT 1 FROM leads l2
+        WHERE l2.telefono IS NOT NULL
+          AND RIGHT(regexp_replace(l2.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(r.telefono, '[^0-9]', '', 'g'), 9)
+      )
+      GROUP BY RIGHT(regexp_replace(r.telefono, '[^0-9]', '', 'g'), 9)
     ) c
     LEFT JOIN marketing_prefs mp
       ON RIGHT(regexp_replace(mp.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)

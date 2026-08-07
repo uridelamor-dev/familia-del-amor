@@ -154,6 +154,13 @@ const i18n = {
     success_hr: "Candidatura enviada. Gracias.",
     err_hr: "No se pudo enviar. Inténtalo de nuevo.",
     reservation_success_back: "Hacer otra reserva",
+    reservation_extra_intro: "¿Nos ayudas a conocerte mejor? Los dos campos son opcionales.",
+    reservation_extra_town: "Población (opcional)",
+    reservation_extra_birth: "Fecha de nacimiento (opcional)",
+    reservation_extra_privacy: "Al rellenarlos nos autorizas a guardar estos datos para avisarte de novedades y ofertas. Puedes pedirnos que los borremos cuando quieras.",
+    reservation_extra_skip: "Ahora no",
+    reservation_extra_save: "Guardar",
+    reservation_extra_thanks: "¡Gracias! Lo hemos guardado.",
     strip_title: "¿Quieres conseguir un descuento?",
     strip_sub: "Déjanos tus datos y te enviamos tu descuento ahora.",
     strip_cta: "Consigue tu descuento",
@@ -283,6 +290,13 @@ const i18n = {
     success_hr: "Candidatura enviada. Gràcies.",
     err_hr: "No s'ha pogut enviar. Torna-ho a intentar.",
     reservation_success_back: "Fer una altra reserva",
+    reservation_extra_intro: "Ens ajudes a conèixer-te millor? Els dos camps són opcionals.",
+    reservation_extra_town: "Població (opcional)",
+    reservation_extra_birth: "Data de naixement (opcional)",
+    reservation_extra_privacy: "En omplir-los ens autoritzes a desar aquestes dades per avisar-te de novetats i ofertes. Pots demanar-nos que les esborrem quan vulguis.",
+    reservation_extra_skip: "Ara no",
+    reservation_extra_save: "Desar",
+    reservation_extra_thanks: "Gràcies! Ho hem desat.",
     strip_title: "Vols aconseguir un descompte?",
     strip_sub: "Deixa'ns les teves dades i t'enviem el teu descompte ara.",
     strip_cta: "Aconsegueix el teu descompte",
@@ -412,6 +426,13 @@ const i18n = {
     success_hr: "Application sent. Thank you.",
     err_hr: "Could not send. Please try again.",
     reservation_success_back: "Make another reservation",
+    reservation_extra_intro: "Help us get to know you? Both fields are optional.",
+    reservation_extra_town: "Town (optional)",
+    reservation_extra_birth: "Date of birth (optional)",
+    reservation_extra_privacy: "By filling these in you allow us to store them so we can tell you about news and offers. You can ask us to delete them at any time.",
+    reservation_extra_skip: "Not now",
+    reservation_extra_save: "Save",
+    reservation_extra_thanks: "Thanks! Saved.",
     strip_title: "Want to get a discount?",
     strip_sub: "Leave your details and we'll send your discount right away.",
     strip_cta: "Get my discount",
@@ -1153,34 +1174,35 @@ const POBLACIONES = [
   "Badalona","Granollers","Vic","Figueres","Olot"
 ];
 
-const poblacionInput = document.getElementById("poblacionInput");
-const poblacionSugg = document.getElementById("poblacionSuggestions");
-
-if (poblacionInput && poblacionSugg) {
-  poblacionInput.addEventListener("input", () => {
-    const q = poblacionInput.value.trim().toLowerCase();
-    if (q.length < 2) { poblacionSugg.style.display = "none"; return; }
+// Autocompletado de población: se escribe libremente y a partir de 2 letras aparecen las
+// coincidencias. Se usa en el formulario del descuento y en el pop-up de confirmación.
+function bindPoblacionAutocomplete(input, sugg) {
+  if (!input || !sugg) return;
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    if (q.length < 2) { sugg.style.display = "none"; return; }
     const matches = POBLACIONES.filter(p => p.toLowerCase().startsWith(q));
-    if (!matches.length) { poblacionSugg.style.display = "none"; return; }
-    poblacionSugg.innerHTML = matches.map(p =>
-      `<div style="padding:8px 12px;cursor:pointer;font-size:0.9rem" class="sugg-item">${p}</div>`
-    ).join("");
-    poblacionSugg.style.display = "block";
-    poblacionSugg.querySelectorAll(".sugg-item").forEach(item => {
+    if (!matches.length) { sugg.style.display = "none"; return; }
+    sugg.innerHTML = matches.map(p => `<div class="sugg-item">${p}</div>`).join("");
+    sugg.style.display = "block";
+    sugg.querySelectorAll(".sugg-item").forEach(item => {
       item.addEventListener("mousedown", (e) => {
         e.preventDefault();
-        poblacionInput.value = item.textContent;
-        poblacionSugg.style.display = "none";
+        input.value = item.textContent;
+        sugg.style.display = "none";
       });
     });
   });
-  poblacionInput.addEventListener("blur", () => {
-    setTimeout(() => { poblacionSugg.style.display = "none"; }, 150);
+  input.addEventListener("blur", () => {
+    setTimeout(() => { sugg.style.display = "none"; }, 150);
   });
-  poblacionInput.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") poblacionSugg.style.display = "none";
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") sugg.style.display = "none";
   });
 }
+
+bindPoblacionAutocomplete(document.getElementById("poblacionInput"), document.getElementById("poblacionSuggestions"));
+bindPoblacionAutocomplete(document.getElementById("poblacionReservaInput"), document.getElementById("poblacionReservaSuggestions"));
 
 const leadForm = document.getElementById("leadForm");
 const leadMsg = document.getElementById("leadMsg");
@@ -1246,21 +1268,17 @@ if (reservaForm) reservaForm.addEventListener("submit", async (e) => {
   });
   const data = await res.json();
   if (data.ok) {
-    const successEl = document.getElementById("reservaSuccess");
+    const popup = document.getElementById("reservaPopup");
     const successTitle = document.getElementById("reservaSuccessTitle");
     const successDetails = document.getElementById("reservaSuccessDetails");
-    if (successEl) {
+    if (popup) {
       if (successTitle) successTitle.textContent = data.pendiente ? "Solicitud recibida" : t.success_reserva;
       if (successDetails) successDetails.textContent = data.pendiente
         ? `Hemos recibido tu solicitud para ${payload.local} el ${payload.dia} a las ${payload.hora} (${payload.personas} personas). Un encargado se pondrá en contacto contigo para confirmar.`
         : `${payload.local} · ${payload.dia} ${t.reservation_at} ${payload.hora} · ${payload.personas} ${t.reservation_people_unit}`;
-      reservaForm.classList.add("hidden");
-      successEl.classList.remove("hidden");
-      successEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      setTimeout(() => {
-        successEl.classList.add("hidden");
-        reservaForm.classList.remove("hidden");
-      }, 8000);
+      // Guardamos a qué reserva pertenecen los datos opcionales que pueda rellenar ahora.
+      reservaPerfilCtx = { id: data.reserva_id, telefono: payload.telefono };
+      abrirReservaPopup();
     }
     reservaForm.reset();
     const localSel = document.getElementById("localSelect");
@@ -1280,9 +1298,55 @@ const savedLang = localStorage.getItem(LANG_KEY) || "es";
 setLang(savedLang);
 loadContent();
 
-document.getElementById("reservaSuccessBack")?.addEventListener("click", () => {
-  document.getElementById("reservaSuccess").classList.add("hidden");
-  document.getElementById("reservaForm").classList.remove("hidden");
+// ── Pop-up de confirmación de reserva + datos opcionales ────────────────────
+let reservaPerfilCtx = null;
+
+function abrirReservaPopup() {
+  const popup = document.getElementById("reservaPopup");
+  if (!popup) return;
+  const form = document.getElementById("reservaPerfilForm");
+  const msg = document.getElementById("reservaPerfilMsg");
+  if (form) { form.reset(); form.classList.remove("hidden"); }
+  if (msg) msg.textContent = "";
+  const nacVal = document.getElementById("nacimientoReservaValue");
+  if (nacVal) nacVal.value = ""; // el reset no limpia el hidden del datepicker
+  popup.classList.add("show");
+}
+
+function cerrarReservaPopup() {
+  document.getElementById("reservaPopup")?.classList.remove("show");
+  reservaPerfilCtx = null;
+}
+
+document.getElementById("reservaPopupClose")?.addEventListener("click", cerrarReservaPopup);
+document.getElementById("reservaPerfilSkip")?.addEventListener("click", cerrarReservaPopup);
+document.getElementById("reservaPopup")?.addEventListener("click", (e) => {
+  if (e.target.id === "reservaPopup") cerrarReservaPopup();
+});
+
+document.getElementById("reservaPerfilForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const t = i18n[currentLang] || i18n.es;
+  const msg = document.getElementById("reservaPerfilMsg");
+  const poblacion = (document.getElementById("poblacionReservaInput")?.value || "").trim();
+  const nacimiento = document.getElementById("nacimientoReservaValue")?.value || "";
+  if (!poblacion && !nacimiento) { cerrarReservaPopup(); return; }
+  if (!reservaPerfilCtx || !reservaPerfilCtx.id) { cerrarReservaPopup(); return; }
+  try {
+    const r = await fetch(`/api/reservas/${encodeURIComponent(reservaPerfilCtx.id)}/perfil`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ telefono: reservaPerfilCtx.telefono, poblacion, nacimiento })
+    });
+    const d = await r.json();
+    if (msg) msg.textContent = d.ok ? (t.reservation_extra_thanks || "¡Gracias!") : (d.error || t.err_generic);
+    if (d.ok) {
+      document.getElementById("reservaPerfilForm")?.classList.add("hidden");
+      setTimeout(cerrarReservaPopup, 1600);
+    }
+  } catch {
+    if (msg) msg.textContent = t.err_generic;
+  }
 });
 
 document.getElementById("reopenLead")?.addEventListener("click", () => {

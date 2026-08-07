@@ -2741,9 +2741,9 @@ h1, h2, h3 {
 
 /* ── Confirmación de reserva ─────────────────────────────────────────────── */
 
-.reserva-success {
+/* Pop-up de confirmación de reserva (antes era un bloque en línea bajo el formulario) */
+#reservaPopup .popup-card {
   text-align: center;
-  padding: 2.5rem 1.5rem;
   animation: successIn 0.4s ease;
 }
 
@@ -2758,7 +2758,7 @@ h1, h2, h3 {
   line-height: 1;
 }
 
-.reserva-success h3 {
+#reservaPopup h3 {
   font-size: 1.6rem;
   font-weight: 700;
   color: var(--primary);
@@ -2770,6 +2770,58 @@ h1, h2, h3 {
   color: var(--muted);
   margin: 0 0 1.5rem;
   line-height: 1.5;
+}
+
+/* Datos opcionales dentro del pop-up: separados de la confirmación por una línea */
+.reserva-perfil {
+  text-align: left;
+  border-top: 1px solid var(--border);
+  padding-top: 1.2rem;
+}
+
+.reserva-perfil-intro {
+  margin: 0 0 0.9rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+/* Las etiquetas ocupan una o dos líneas según el idioma: alineamos por abajo
+   para que los dos campos queden a la misma altura. */
+.reserva-perfil .form-row {
+  align-items: end;
+}
+
+.reserva-perfil-acts {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+  margin-top: 0.4rem;
+}
+
+/* Sugerencias de población (formulario del descuento y pop-up de reserva) */
+.sugg-box {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  z-index: 999;
+  max-height: 180px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.sugg-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.sugg-item:hover {
+  background: var(--bg, #f4f2ec);
 }
 
 /* ── Teaser de locales en home ────────────────────────────────────────────── */
@@ -2978,8 +3030,12 @@ h1, h2, h3 {
     margin-top: 0.5rem;
   }
 
-  .reserva-success h3 {
+  #reservaPopup h3 {
     font-size: 1.35rem;
+  }
+
+  .reserva-perfil .form-row {
+    grid-template-columns: 1fr;
   }
 }
 
