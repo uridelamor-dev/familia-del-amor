@@ -15,6 +15,11 @@ const token = () => localStorage.getItem("token");
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2600); }
 const LOCALES = (typeof window !== "undefined" && window.LOCALES) ? window.LOCALES : [];
+// Centros sin atención al público (la oficina): ni reservas ni ventas de TPV.
+const LOCALES_SIN_PUBLICO = (typeof window !== "undefined" && window.LOCALES_SIN_PUBLICO) ? window.LOCALES_SIN_PUBLICO : [];
+const sinPublico = (l) => LOCALES_SIN_PUBLICO.includes(String(l || ""));
+// Módulos que no aplican a esos centros: no se ofrecen en el selector ni se consultan.
+const MODULOS_SOLO_PUBLICO = new Set(["reservas", "analitica"]);
 
 // ── Capa de datos ────────────────────────────────────────────────────────────
 async function api(path) {
@@ -379,7 +384,9 @@ function runCmd(i) { const c = CMD_ITEMS[i]; if (!c) return; closeCmd(); if (c.v
 function openDrawer(title, bodyHtml) { document.getElementById("drawerTitle").textContent = title; document.getElementById("drawerBody").innerHTML = bodyHtml; document.getElementById("ovl").classList.add("open"); document.getElementById("drawer").classList.add("open"); }
 function closeDrawer() { const d = document.getElementById("drawer"), o = document.getElementById("ovl"); if (d) d.classList.remove("open"); if (o) o.classList.remove("open"); }
 function openEstabMenu() {
-  const opts = [["", "Todos los establecimientos"]].concat(LOCALES.map((l) => [l, l]));
+  // En Reservas y Analítica no ofrecemos los centros sin público: no tendrían datos.
+  const elegibles = MODULOS_SOLO_PUBLICO.has(CURRENT) ? LOCALES.filter((l) => !sinPublico(l)) : LOCALES;
+  const opts = [["", "Todos los establecimientos"]].concat(elegibles.map((l) => [l, l]));
   openDrawer("Establecimiento", `<div class="rows">${opts.map(([v, l]) => `<button class="row" data-act="estab-pick" data-local="${esc(v)}" style="width:100%;text-align:left"><span class="sdot ${DASH_LOCAL === v ? "st-ok" : "st-off"}"></span><div class="grow"><div class="t1">${esc(l)}</div></div>${DASH_LOCAL === v ? '<span class="pill brand">Actual</span>' : ""}</button>`).join("")}</div>`);
 }
 
@@ -562,10 +569,16 @@ function resRango() {
 // El ámbito de local lo manda el selector de establecimiento de la barra superior; el local
 // fijado del usuario (encargado) gana siempre.
 function resScope() { RESF.local = localFijadoFE() || DASH_LOCAL || ""; return RESF.local; }
+// Aviso para cuando el ámbito es un centro sin atención al público (la oficina).
+function avisoSinPublico(titulo, eyebrow, que) {
+  return `<div class="ph"><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(titulo)}</h1><div class="sub">${esc(nombreCortoLocal(DASH_LOCAL))}</div></div>
+    <div class="card"><div class="ch"><h3>Aquí no hay ${esc(que)}</h3></div><p class="mut" style="margin:0;line-height:1.6"><b>${esc(nombreCortoLocal(DASH_LOCAL))}</b> es un centro sin atención al público: recibe facturas, incidencias y personal, pero no ${esc(que)}.<br>Elige otro establecimiento en la barra de arriba.</p></div>`;
+}
 async function loadReservas() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   if (!RESF.foco) RESF.foco = todayStr();
   resScope();
+  if (sinPublico(RESF.local)) { view.innerHTML = avisoSinPublico("Reservas", "Operación", "reservas"); return; }
   try {
     const [from, to] = resRango();
     const qs = new URLSearchParams(); qs.set("from", from); qs.set("to", to); if (RESF.local) qs.set("local", RESF.local);
@@ -969,14 +982,24 @@ function cliChk(id, campo, label) { return `<label style="display:inline-flex;al
 function cliActionsBar(total) {
   return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Escribir a los ${num(total)} filtrados (WhatsApp)</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div><button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
 }
+// Cumpleaños: "12 abr 1988 (38)". Sin fecha → "—". La edad solo si el año es plausible.
+function fechaNac(iso) {
+  const p = String(iso || "").slice(0, 10).split("-");
+  if (p.length !== 3 || !Number(p[0])) return "—";
+  const hoy = todayStr().split("-").map(Number);
+  const [y, m, d] = p.map(Number);
+  let edad = hoy[0] - y; if (hoy[1] < m || (hoy[1] === m && hoy[2] < d)) edad--;
+  const base = `${d} ${DP_MESC[m - 1] || ""} ${y}`;
+  return (edad >= 0 && edad < 120) ? `${base} (${edad})` : base;
+}
 function cliTable(rows) {
   if (!rows.length) return `<div class="card"><div class="mut" style="padding:8px">Sin clientes con esos filtros.</div></div>`;
-  return `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Cliente</th><th>Teléfono</th><th>Email</th><th>Población</th><th>Origen</th><th>Última visita</th><th></th></tr></thead><tbody>${rows.map((c) => {
+  return `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Cliente</th><th>Teléfono</th><th>Email</th><th>Población</th><th>Cumpleaños</th><th>Origen</th><th>Última visita</th><th></th></tr></thead><tbody>${rows.map((c) => {
     const tel = c.telefono || ""; const nom = ((c.nombre || "") + " " + (c.apellidos || "")).trim() || "—";
     const baja = c.baja === 1 || c.baja === true;
     const wa = c.es_contacto_wa ? '<span class="sdot" title="Tiene WhatsApp" style="display:inline-block;width:7px;height:7px;border-radius:999px;background:var(--success);margin-left:6px"></span>' : "";
     const acc = `<div style="display:flex;gap:4px;justify-content:flex-end">${tel ? `<button class="btn sm" data-act="cli-wa" data-tel="${esc(tel)}" data-nombre="${esc(nom)}" title="Escribir por WhatsApp">${ic("chat", 14)}</button><a class="btn sm" href="tel:${esc(tel)}" title="Llamar">${ic("bell", 14)}</a>` : ""}${c.correo ? `<a class="btn sm" href="mailto:${esc(c.correo)}" title="Enviar email">@</a>` : ""}<button class="btn sm" data-act="cli-ficha" data-tel="${esc(tel)}" title="Ver ficha">Ficha</button></div>`;
-    return `<tr><td>${esc(nom)}${wa}${baja ? ' <span class="pill bad" style="font-size:10px">Baja</span>' : ""}</td><td class="mut">${esc(tel)}</td><td class="mut">${esc(c.correo || "")}</td><td>${esc(c.poblacion || "")}</td><td>${esc(c.origen || "")}</td><td class="mut">${esc((c.ultima_actividad || "").slice(0, 10))}</td><td>${acc}</td></tr>`;
+    return `<tr><td>${esc(nom)}${wa}${baja ? ' <span class="pill bad" style="font-size:10px">Baja</span>' : ""}</td><td class="mut">${esc(tel)}</td><td class="mut">${esc(c.correo || "")}</td><td>${esc(c.poblacion || "")}</td><td class="mut tnum">${esc(fechaNac(c.nacimiento))}</td><td>${esc(c.origen || "")}</td><td class="mut">${esc((c.ultima_actividad || "").slice(0, 10))}</td><td>${acc}</td></tr>`;
   }).join("")}</tbody></table></div></div>`;
 }
 function cliSubTxt(rows, total) { return `${num(total)} contacto${total === 1 ? "" : "s"}${rows.length < total ? ` · mostrando ${rows.length}` : ""}`; }
@@ -1046,7 +1069,7 @@ async function cliFicha(tel) {
   const resv = (d.reservas || []).slice(0, 8).map((r) => `<div class="row"><div class="grow"><div class="t1">${esc(r.local || "—")}</div><div class="t2">${esc(r.dia || "")} ${esc(r.hora || "")} · ${esc(String(r.personas || ""))} pax</div></div></div>`).join("") || `<div class="mut" style="padding:10px 14px">Sin reservas registradas.</div>`;
   const chk = (campo, label) => `<label class="chip" style="cursor:pointer"><input type="checkbox" data-ficha-pref="${campo}" ${p[campo] ? "checked" : ""} style="margin-right:6px">${esc(label)}</label>`;
   const ov = modal(d.nombre || tel, `<div class="grid" style="gap:12px">
-    <div class="card" style="padding:12px 14px"><div class="t2">${esc(tel)}${d.es_contacto_wa ? " · tiene WhatsApp" : ""}</div><div style="margin-top:4px">${esc(d.correo || "Sin email")} · ${esc(d.poblacion || "Sin población")} · ${d.visitas} visita(s)${d.ultimo_local ? " · último: " + esc(d.ultimo_local) : ""}</div></div>
+    <div class="card" style="padding:12px 14px"><div class="t2">${esc(tel)}${d.es_contacto_wa ? " · tiene WhatsApp" : ""}</div><div style="margin-top:4px">${esc(d.correo || "Sin email")} · ${esc(d.poblacion || "Sin población")} · ${d.visitas} visita(s)${d.ultimo_local ? " · último: " + esc(d.ultimo_local) : ""}</div><div class="t2" style="margin-top:4px">Cumpleaños: ${esc(fechaNac(d.nacimiento))}</div></div>
     <div class="card" style="padding:12px 14px"><div class="ch"><h3>Consentimiento</h3></div><div style="display:flex;gap:8px;flex-wrap:wrap" data-tel="${esc(tel)}">${chk("opt_in_wa", "Opt-in WhatsApp")}${chk("opt_in_email", "Opt-in Email")}${chk("baja", "Baja (no contactar)")}</div></div>
     <div class="card p0"><div class="ch" style="padding:14px 14px 0"><h3>Reservas</h3></div><div class="rows">${resv}</div></div>
     <div style="display:flex;gap:8px;justify-content:flex-end">${d.telefono || tel ? `<button class="btn primary" id="fichaWa">Escribir por WhatsApp</button>` : ""}<button class="btn" data-close>Cerrar</button></div>
@@ -2287,25 +2310,25 @@ function renderAnaliticaTabla(data) {
   return chart + tabla + errores;
 }
 function renderAnalitica() {
-  // Usuario con local asignado (no dirección) queda fijado a SU local (coherente con el backend).
-  const scopedLocal = (USER.rol !== "direccion" && USER.local) ? USER.local : null;
-  if (scopedLocal) ANAL.local = scopedLocal;
-  const localOpts = scopedLocal
-    ? `<option value="${esc(scopedLocal)}" selected>${esc(scopedLocal)}</option>`
-    : ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${ANAL.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
-  const presets = [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]];
+  const amb = analScope();
+  const presets =[["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]];
   const cur = ANAL.range || rangoPreset("mes", todayStr());
   const seg = presets.map(([p, l]) => `<button class="${cur.preset === p ? "on" : ""}" data-act="anal-period" data-p="${p}">${l}</button>`).join("") + `<button class="${cur.preset === "custom" ? "on" : ""}" data-act="anal-period-custom">${cur.preset === "custom" ? esc(fechaCorta(cur.from)) + "–" + esc(fechaCorta(cur.to)) : "Personalizado"}</button>`;
   const tabs = (ANAL.tipos || []).map((t) => `<button class="btn ${ANAL.tipo === t.key ? "primary" : ""}" data-act="anal-tab" data-tipo="${esc(t.key)}">${esc(t.label)}</button>`).join("");
-  const head = `<div class="ph"><div class="eyebrow">Inteligencia</div><h1>Analítica de ventas</h1><div class="sub">Informes en vivo del TPV · ${esc(cur.label)}</div><div class="acts"><button class="btn" data-act="anal-refresh">Actualizar</button><button class="btn" data-act="anal-csv">Exportar CSV</button></div></div>`;
-  const toolbar = `<div class="toolbar"><div class="field"><label>Local</label><select id="analLocal" ${scopedLocal ? "disabled" : ""}>${localOpts}</select></div><div class="field"><label>Periodo</label><div class="seg">${seg}</div></div><div style="flex:1"></div></div>`;
+  const head = `<div class="ph"><div class="eyebrow">Inteligencia</div><h1>Analítica de ventas</h1><div class="sub">Informes en vivo del TPV · ${esc(cur.label)}${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div><div class="acts"><button class="btn" data-act="anal-refresh">Actualizar</button><button class="btn" data-act="anal-csv">Exportar CSV</button></div></div>`;
+  // Sin selector de local: el ámbito lo marca el selector de establecimiento de la barra superior.
+  const toolbar = `<div class="toolbar"><div class="field"><label>Periodo</label><div class="seg">${seg}</div></div><div style="flex:1"></div></div>`;
   const tabsBar = tabs ? `<div class="toolbar" style="margin-top:-6px">${tabs}</div>` : "";
   const cuerpo = ANAL.cargando ? `<div class="card"><div class="mut" style="font-size:13px">Consultando el TPV…</div></div>` : renderAnaliticaTabla(ANAL.data);
   return head + toolbar + tabsBar + `<div id="analBody">${cuerpo}</div>`;
 }
+// Ámbito de local: selector de establecimiento de la barra superior (el fijado manda).
+function analScope() { ANAL.local = localFijadoFE() || DASH_LOCAL || ""; return ANAL.local; }
 async function loadAnalitica() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   if (!ANAL.range) ANAL.range = rangoPreset("mes", todayStr());
+  analScope();
+  if (sinPublico(ANAL.local)) { view.innerHTML = avisoSinPublico("Analítica de ventas", "Inteligencia", "ventas"); return; }
   try {
     if (!ANAL.tipos.length) { const j = await apiOptional("/api/agora/informes"); ANAL.tipos = j || []; if (ANAL.tipos.length && !ANAL.tipos.some((t) => t.key === ANAL.tipo)) ANAL.tipo = ANAL.tipos[0].key; }
     view.innerHTML = renderAnalitica();
@@ -2791,8 +2814,7 @@ function go(view) {
 document.addEventListener("change", (e) => {
   if (!e.target) return;
   const id = e.target.id;
-  if (id === "analLocal") { ANAL.local = e.target.value; loadAnalInforme(); }
-  else if (id === "cPob") { CLIF.poblacion = e.target.value; refreshCliResults(); }
+  if (id === "cPob") { CLIF.poblacion = e.target.value; refreshCliResults(); }
   else if (id === "cLocal") { CLIF.local = e.target.value; refreshCliResults(); }
   else if (id === "cCumple") { CLIF.cumple = e.target.checked; refreshCliResults(); }
   else if (id === "cEmail") { CLIF.con_email = e.target.checked; refreshCliResults(); }

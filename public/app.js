@@ -156,6 +156,7 @@ const i18n = {
     reservation_success_back: "Hacer otra reserva",
     reservation_extra_intro: "¿Nos ayudas a conocerte mejor? Los dos campos son opcionales.",
     reservation_extra_town: "Población (opcional)",
+    ph_town: "Escribe tu población",
     reservation_extra_birth: "Fecha de nacimiento (opcional)",
     reservation_extra_privacy: "Al rellenarlos nos autorizas a guardar estos datos para avisarte de novedades y ofertas. Puedes pedirnos que los borremos cuando quieras.",
     reservation_extra_skip: "Ahora no",
@@ -292,6 +293,7 @@ const i18n = {
     reservation_success_back: "Fer una altra reserva",
     reservation_extra_intro: "Ens ajudes a conèixer-te millor? Els dos camps són opcionals.",
     reservation_extra_town: "Població (opcional)",
+    ph_town: "Escriu la teva població",
     reservation_extra_birth: "Data de naixement (opcional)",
     reservation_extra_privacy: "En omplir-los ens autoritzes a desar aquestes dades per avisar-te de novetats i ofertes. Pots demanar-nos que les esborrem quan vulguis.",
     reservation_extra_skip: "Ara no",
@@ -428,6 +430,7 @@ const i18n = {
     reservation_success_back: "Make another reservation",
     reservation_extra_intro: "Help us get to know you? Both fields are optional.",
     reservation_extra_town: "Town (optional)",
+    ph_town: "Type your town",
     reservation_extra_birth: "Date of birth (optional)",
     reservation_extra_privacy: "By filling these in you allow us to store them so we can tell you about news and offers. You can ask us to delete them at any time.",
     reservation_extra_skip: "Not now",
@@ -1167,38 +1170,56 @@ popup?.addEventListener("click", (e) => {
 });
 
 // ── Autocomplete de población ──────────────────────────────────────────────
+// Sugerencias de población. NO es una lista cerrada: el campo es texto libre y se guarda
+// lo que se escriba, aunque no esté aquí. Esto solo ahorra teclear en los casos habituales,
+// así que están la comarca (de donde viene casi todo el mundo) y las ciudades grandes de
+// España, para el turismo.
 const POBLACIONES = [
-  "Blanes","Lloret de Mar","Girona","Tordera","Malgrat de Mar",
-  "Santa Susanna","Palafolls","Calella","Pineda de Mar","Hostalric",
-  "Barcelona","Tossa de Mar","Sant Celoni","Arenys de Mar","Mataró",
-  "Badalona","Granollers","Vic","Figueres","Olot"
+  // Alrededores
+  "Blanes","Lloret de Mar","Girona","Tordera","Malgrat de Mar","Santa Susanna","Palafolls",
+  "Calella","Pineda de Mar","Hostalric","Tossa de Mar","Sant Celoni","Arenys de Mar",
+  "Vidreres","Maçanet de la Selva","Sils","Caldes de Malavella","Santa Coloma de Farners",
+  "Sant Pol de Mar","Canet de Mar","Sant Feliu de Guíxols","Platja d'Aro","Palamós",
+  // Catalunya
+  "Barcelona","Mataró","Badalona","Granollers","Vic","Figueres","Olot","Sabadell","Terrassa",
+  "L'Hospitalet de Llobregat","Santa Coloma de Gramenet","Manresa","Reus","Tarragona","Lleida",
+  "Sitges","Vilanova i la Geltrú","Igualada","Mollet del Vallès","Rubí","Castelldefels",
+  // Resto de España
+  "Madrid","Valencia","Sevilla","Zaragoza","Málaga","Murcia","Palma","Las Palmas de Gran Canaria",
+  "Bilbao","Alicante","Córdoba","Valladolid","Vigo","Gijón","Granada","A Coruña","Vitoria-Gasteiz",
+  "Santa Cruz de Tenerife","Pamplona","Almería","San Sebastián","Santander","Burgos","Albacete",
+  "Salamanca","Logroño","Huelva","Cádiz","Jaén","Ourense","Lugo","Cáceres","Badajoz","Toledo",
+  "León","Tarifa","Marbella","Benidorm","Oviedo","Castellón de la Plana"
 ];
 
 // Autocompletado de población: se escribe libremente y a partir de 2 letras aparecen las
 // coincidencias. Se usa en el formulario del descuento y en el pop-up de confirmación.
+// Sin acentos ni mayúsculas, para que "malaga" encuentre "Málaga".
+const sinAcentos = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 function bindPoblacionAutocomplete(input, sugg) {
   if (!input || !sugg) return;
+  // Ocultar SIN vaciar dejaba las sugerencias anteriores en el DOM.
+  const ocultar = () => { sugg.style.display = "none"; sugg.innerHTML = ""; };
   input.addEventListener("input", () => {
-    const q = input.value.trim().toLowerCase();
-    if (q.length < 2) { sugg.style.display = "none"; return; }
-    const matches = POBLACIONES.filter(p => p.toLowerCase().startsWith(q));
-    if (!matches.length) { sugg.style.display = "none"; return; }
+    const q = sinAcentos(input.value.trim());
+    if (q.length < 2) { ocultar(); return; }
+    // Primero las que empiezan por lo escrito; después las que lo contienen.
+    const empiezan = POBLACIONES.filter(p => sinAcentos(p).startsWith(q));
+    const contienen = POBLACIONES.filter(p => !sinAcentos(p).startsWith(q) && sinAcentos(p).includes(q));
+    const matches = empiezan.concat(contienen).slice(0, 8);
+    if (!matches.length) { ocultar(); return; }
     sugg.innerHTML = matches.map(p => `<div class="sugg-item">${p}</div>`).join("");
     sugg.style.display = "block";
     sugg.querySelectorAll(".sugg-item").forEach(item => {
       item.addEventListener("mousedown", (e) => {
         e.preventDefault();
         input.value = item.textContent;
-        sugg.style.display = "none";
+        ocultar();
       });
     });
   });
-  input.addEventListener("blur", () => {
-    setTimeout(() => { sugg.style.display = "none"; }, 150);
-  });
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") sugg.style.display = "none";
-  });
+  input.addEventListener("blur", () => { setTimeout(ocultar, 150); });
+  input.addEventListener("keydown", (e) => { if (e.key === "Escape") ocultar(); });
 }
 
 bindPoblacionAutocomplete(document.getElementById("poblacionInput"), document.getElementById("poblacionSuggestions"));

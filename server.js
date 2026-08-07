@@ -2081,8 +2081,16 @@ function localScope(req) {
 const INV_LOCALES = [
   "La Tapeta - Blanes", "Cooperativa - Blanes", "La Tapeta - Lloret",
   "La Tapeta - Girona", "Can Mateu - Tordera", "La Tapa Ibérica - Tordera",
-  "Botiga d'en Mateu - Tordera",
+  "Botiga d'en Mateu - Tordera", "Oficina",
 ];
+// Centros sin atención al público: reciben facturas, incidencias, personal e inventario,
+// pero NO se puede reservar mesa en ellos. Espejo de window.LOCALES_SIN_PUBLICO (auth.js).
+const LOCALES_SIN_PUBLICO = new Set(["Oficina"]);
+// Comparación tolerante (mayúsculas, tildes, espacios sobrantes): "oficina" u " Oficina "
+// deben bloquearse igual que "Oficina".
+const normLocal = (s) => String(s || "").trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+const SIN_PUBLICO_NORM = new Set([...LOCALES_SIN_PUBLICO].map(normLocal));
+const esLocalSinPublico = (l) => SIN_PUBLICO_NORM.has(normLocal(l));
 // Locales a los que el usuario tiene acceso: dirección = todos; encargado = solo su local.
 function localesAccesibles(req) {
   if (req.user && req.user.rol === "direccion") return [...INV_LOCALES];
@@ -2751,6 +2759,11 @@ app.post("/api/reservas", async (req, res) => {
   const { local, personas, dia, hora, telefono, nombre_reserva } = req.body;
   if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
+  }
+  // La oficina y demás centros sin atención al público no admiten reservas. El formulario
+  // ya no los ofrece, pero esto lo garantiza también si alguien llama a la API a mano.
+  if (esLocalSinPublico(local)) {
+    return res.status(400).json({ ok: false, error: "En ese centro no se pueden hacer reservas." });
   }
   const [y, m, d] = dia.split("-").map((n) => Number(n));
   const dayDate = new Date(y, m - 1, d);
@@ -4336,7 +4349,17 @@ const MATCH_TEL9 = (col) => `RIGHT(regexp_replace(${col}, '[^0-9]', '', 'g'), 9)
 app.get("/api/contactos/:telefono", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const tel = req.params.telefono;
-    const lead = await dbGet(`SELECT nombre, apellidos, telefono, correo, nacimiento, poblacion, genero, fuente, creado_en, actualizado_en FROM leads WHERE ${MATCH_TEL9("telefono")} LIMIT 1`, [tel]);
+    // Si el contacto está duplicado, gana la ficha más completa (y a igualdad, la más
+    // reciente). Antes era un LIMIT 1 sin orden: salía una cualquiera, a veces la vacía.
+    const lead = await dbGet(
+      `SELECT nombre, apellidos, telefono, correo, nacimiento, poblacion, genero, fuente, creado_en, actualizado_en
+       FROM leads WHERE ${MATCH_TEL9("telefono")}
+       ORDER BY (COALESCE(nacimiento, '') <> '')::int + (COALESCE(poblacion, '') <> '')::int
+              + (COALESCE(correo, '') <> '')::int + (COALESCE(apellidos, '') <> '')::int DESC,
+              COALESCE(actualizado_en, creado_en) DESC
+       LIMIT 1`,
+      [tel]
+    );
     const reservas = await dbAll(`SELECT local, dia, hora, personas, creado_en FROM reservas WHERE ${MATCH_TEL9("telefono")} ORDER BY dia DESC, hora DESC LIMIT 50`, [tel]);
     const prefs = await dbGet(`SELECT correo, opt_in_wa, opt_in_email, baja, idioma FROM marketing_prefs WHERE ${MATCH_TEL9("telefono")} LIMIT 1`, [tel]);
     const wa = await dbGet(`SELECT nombre, ultima_interaccion FROM wa_clientes WHERE ${MATCH_TEL9("telefono")} ORDER BY ultima_interaccion DESC LIMIT 1`, [tel]);

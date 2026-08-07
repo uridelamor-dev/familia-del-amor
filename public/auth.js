@@ -113,8 +113,15 @@
     "La Tapeta - Girona",
     "Can Mateu - Tordera",
     "La Tapa Ibérica - Tordera",
-    "Botiga d'en Mateu - Tordera"
+    "Botiga d'en Mateu - Tordera",
+    "Oficina"
   ];
+
+  // Centros SIN atención al público: no se puede reservar en ellos ni venden por TPV,
+  // pero sí reciben facturas, incidencias, trabajadores e inventario.
+  // El formulario público de reservas tiene su propia lista (RESERVA_LOCALS en app.js),
+  // así que estos no aparecen ahí; esta constante es para el panel y el servidor.
+  const LOCALES_SIN_PUBLICO = ["Oficina"];
 
   // Rellena un <select data-locales>. Atributos opcionales:
   //   data-placeholder="texto"  → primera opción con value=""
@@ -143,6 +150,7 @@
   window.escapeHtml = escapeHtml;
   window.toast = toast;
   window.LOCALES = LOCALES;
+  window.LOCALES_SIN_PUBLICO = LOCALES_SIN_PUBLICO;
   window.fillLocalesSelect = fillLocalesSelect;
   window.fillAllLocalesSelects = fillAllLocalesSelects;
 

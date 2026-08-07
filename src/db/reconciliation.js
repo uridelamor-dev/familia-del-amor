@@ -14,6 +14,7 @@ export const CATALOGO_CANONICO = [
   "Can Mateu - Tordera",
   "La Tapa Ibérica - Tordera",
   "Botiga d'en Mateu - Tordera",
+  "Oficina",
 ];
 
 // Allowlist CERRADA (sin comodines) de tablas que ESPERAMOS que tengan columna `local`.
