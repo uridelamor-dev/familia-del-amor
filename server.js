@@ -41,6 +41,8 @@ import { ensureSchemaFichajes } from "./src/modules/fichajes/schema.js";
 import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
 import { validarFormatoPin, estadoBloqueo, trasFallo as pinTrasFallo, trasAcierto as pinTrasAcierto } from "./src/modules/fichajes/pin.js";
 import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornadas.js";
+import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo } from "./src/modules/fichajes/bolsa.js";
+import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
@@ -4822,6 +4824,10 @@ app.post("/api/fichajes/evento", requireAuth(FICHAJES_ROLES), async (req, res) =
     if (minuto == null) return res.status(400).json({ ok: false, error: "La hora tiene que ser HH:MM (admite 26:00 para la madrugada)" });
     if (motivo.length < MOTIVO_MIN) return res.status(400).json({ ok: false, error: "Escribe el motivo: es lo que hace que la corrección valga como prueba" });
 
+    // Periodo cerrado = nómina ya pagada. No se toca sin reabrirlo a propósito.
+    const bloqueo = await ficBloqueoPorCierre(w.local, dia);
+    if (bloqueo) return res.status(409).json({ ok: false, error: bloqueo });
+
     const cfg = await dbGet(`SELECT corte_dia_min FROM hor_config WHERE local = ?`, [w.local]);
     const corte = cfg?.corte_dia_min ?? 360;
     if (minuto < corte || minuto >= corte + 1440) {
@@ -4856,6 +4862,8 @@ app.post("/api/fichajes/evento/:id/anular", requireAuth(FICHAJES_ROLES), async (
     const ev = await dbGet(`SELECT id, worker_id, local, tipo, dia_negocio, anulado_por FROM fic_eventos WHERE id = ?`, [Number(req.params.id)]);
     if (!ev || !rrhhPuedeLocal(req, ev.local)) return res.status(404).json({ ok: false, error: "Fichaje no encontrado" });
     if (ev.anulado_por) return res.status(409).json({ ok: false, error: "Ese fichaje ya estaba anulado" });
+    const bloqueo = await ficBloqueoPorCierre(ev.local, ev.dia_negocio);
+    if (bloqueo) return res.status(409).json({ ok: false, error: bloqueo });
 
     const motivo = String(req.body?.motivo || "").trim();
     if (motivo.length < MOTIVO_MIN) return res.status(400).json({ ok: false, error: "Escribe el motivo: sin él, anular un fichaje es borrar una prueba" });
@@ -4896,6 +4904,8 @@ app.post("/api/fichajes/validar", requireAuth(FICHAJES_ROLES), async (req, res) 
     if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
     const dia = String(req.body?.dia || "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return res.status(400).json({ ok: false, error: "Falta el día" });
+    const bloqueo = await ficBloqueoPorCierre(w.local, dia);
+    if (bloqueo) return res.status(409).json({ ok: false, error: bloqueo });
 
     const j = await ficCalcularJornada(w.local, w.id, dia);
     // Por defecto se valida lo FICHADO menos las pausas. Se puede poner otro número —hay
@@ -4919,10 +4929,272 @@ app.post("/api/fichajes/validar", requireAuth(FICHAJES_ROLES), async (req, res) 
     await ficAuditar("jornada", null, "validar", req.user.username, {
       local: w.local, workerId: w.id, detalle: { dia, minutos, fichado: propuesto, nota: nota || null } });
 
-    res.json({ ok: true, minutos, mensaje: `Jornada de ${w.nombre} validada: ${deMinutos(minutos, { formato: "absoluto" })}.` });
+    // Validar es lo que mete horas en la bolsa. Antes de eso, las de un día sin revisar no
+    // están en el saldo de nadie: si no, el saldo se movería solo cada vez que alguien ficha.
+    const bolsa = await ficApuntarJornada(w.local, w.id, dia, { autor: req.user.username });
+
+    res.json({ ok: true, minutos, bolsa, mensaje: `Jornada de ${w.nombre} validada: ${deMinutos(minutos, { formato: "absoluto" })}.` });
   } catch (e) {
     console.error("[fichajes] validar:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo validar" });
+  }
+});
+
+// ── Bolsa de horas, cierre de periodo y export legal ─────────────────────────
+// La bolsa es un LIBRO: el saldo es SUM(minutos) y no hay ninguna columna `saldo`.
+// El cierre es lo que impide que corregir un día de marzo en noviembre cambie una nómina
+// ya pagada sin que nadie se entere.
+
+const ficCierresDe = (local) => dbAll(
+  `SELECT local, etiqueta, desde, hasta, cerrado_en, cerrado_por, reabierto_en FROM fic_cierres WHERE local = ?`, [local]);
+
+async function ficPeriodoDe(local, dia) {
+  const cfg = await dbGet(`SELECT dia_inicio_periodo FROM hor_config WHERE local = ?`, [local]);
+  return periodoDe(dia, { diaInicio: cfg?.dia_inicio_periodo ?? 1 });
+}
+
+// Guardia que se llama ANTES de tocar nada de un día. Devuelve el mensaje si está cerrado.
+async function ficBloqueoPorCierre(local, dia) {
+  return motivoBloqueo(await ficCierresDe(local), local, dia);
+}
+
+// Lleva al libro la diferencia entre lo VALIDADO y lo que tocaba según el cuadrante.
+// A la bolsa solo va lo validado: mientras una jornada esté sin revisar, sus horas no
+// entran en el saldo de nadie. Si no, el saldo se movería solo cada vez que alguien ficha.
+async function ficApuntarJornada(local, workerId, dia, { autor = "sistema" } = {}) {
+  const j = await dbGet(
+    `SELECT min_planificado, min_validado, firma_eventos FROM fic_jornadas WHERE worker_id = ? AND dia_negocio = ?`,
+    [workerId, dia]);
+  if (!j || j.min_validado == null) return { apuntado: false, motivo: "sin validar" };
+
+  const periodo = await ficPeriodoDe(local, dia);
+  const existentes = await dbAll(
+    `SELECT id, concepto, minutos, clave_idem, referencia_id FROM fic_bolsa_movimientos
+     WHERE worker_id = ? AND dia = ? ORDER BY id`, [workerId, dia]);
+
+  const { insertar, sinCambios } = movimientosParaJornada({
+    workerId, local, dia, periodo: periodo.etiqueta,
+    minutos: Number(j.min_validado) - Number(j.min_planificado || 0),
+    firma: j.firma_eventos, existentes, autor,
+    nota: `Validado ${j.min_validado} min sobre ${j.min_planificado || 0} planificados`,
+  });
+  if (sinCambios) return { apuntado: false, motivo: "sin cambios" };
+
+  const ahora = isoConOffset(Date.now());
+  for (const m of insertar) {
+    // ON CONFLICT DO NOTHING sobre la clave: dos recálculos a la vez no duplican.
+    await dbRun(
+      `INSERT INTO fic_bolsa_movimientos (worker_id, local, dia, periodo, concepto, minutos, clave_idem, referencia_id, nota, autor, creado_en)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING`,
+      [m.worker_id, m.local, m.dia, m.periodo, m.concepto, m.minutos, m.clave_idem, m.referencia_id ?? null, m.nota ?? null, m.autor, ahora]);
+  }
+  return { apuntado: true, movimientos: insertar.length };
+}
+
+// Saldo por persona de un periodo, con el arrastre de lo anterior.
+app.get("/api/fichajes/bolsa", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const cfg = await dbGet(`SELECT dia_inicio_periodo, corte_dia_min FROM hor_config WHERE local = ?`, [local]);
+    const hoy = instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 });
+    const p = periodoDe(/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.dia || "")) ? String(req.query.dia) : hoy.diaNegocio,
+      { diaInicio: cfg?.dia_inicio_periodo ?? 1 });
+
+    const [delPeriodo, anteriores, gente, cierres] = await Promise.all([
+      dbAll(`SELECT worker_id, concepto, minutos FROM fic_bolsa_movimientos WHERE local = ? AND periodo = ?`, [local, p.etiqueta]),
+      dbAll(`SELECT worker_id, sum(minutos) AS min FROM fic_bolsa_movimientos
+             WHERE local = ? AND periodo < ? GROUP BY worker_id`, [local, p.etiqueta]),
+      dbAll(`SELECT id, nombre FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
+             AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [local]),
+      ficCierresDe(local),
+    ]);
+
+    const porPersona = new Map();
+    for (const m of delPeriodo) {
+      if (!porPersona.has(m.worker_id)) porPersona.set(m.worker_id, []);
+      porPersona.get(m.worker_id).push(m);
+    }
+    const arrastre = new Map(anteriores.map((r) => [r.worker_id, Number(r.min) || 0]));
+
+    const personas = gente.map((w) => {
+      const movs = porPersona.get(w.id) || [];
+      const delMes = saldoDe(movs);
+      const antes = arrastre.get(w.id) || 0;
+      return { id: w.id, nombre: w.nombre, arrastre: antes, periodo: delMes, saldo: antes + delMes, movimientos: movs.length };
+    });
+
+    // Jornadas del periodo todavía sin validar: sus horas NO están en ningún saldo, y hay
+    // que decirlo o el número de arriba parece completo cuando no lo es.
+    const pend = await dbGet(
+      `SELECT count(*)::int AS n FROM fic_jornadas WHERE local = ? AND dia_negocio BETWEEN ? AND ? AND min_validado IS NULL`,
+      [local, p.desde, p.hasta]);
+
+    res.json({
+      ok: true, local, periodo: p, personas,
+      sinValidar: pend?.n || 0,
+      cerrado: estaCerrado(cierres, local, p.hasta),
+      cierre: cierres.find((c) => c.etiqueta === p.etiqueta && !c.reabierto_en) || null,
+    });
+  } catch (e) {
+    console.error("[fichajes] bolsa:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo calcular la bolsa" });
+  }
+});
+
+app.get("/api/fichajes/bolsa/:workerId", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.params.workerId)]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "No encontrado" });
+    const movs = await dbAll(
+      `SELECT id, dia, periodo, concepto, minutos, nota, autor, referencia_id, creado_en
+       FROM fic_bolsa_movimientos WHERE worker_id = ? ORDER BY periodo DESC, id DESC LIMIT 500`, [w.id]);
+    res.json({ ok: true, trabajador: { id: w.id, nombre: w.nombre }, saldo: saldoDe(movs), data: movs });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el libro" }); }
+});
+
+// Ajuste manual: «te debo dos horas de la fiesta mayor». Va al libro como una fila más,
+// con motivo y con nombre, y se puede señalar para siempre.
+app.post("/api/fichajes/bolsa/ajuste", requireAuth(["direccion", "rrhh"]), async (req, res) => {
+  try {
+    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.body?.worker_id || 0)]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "No encontrado" });
+    const minutos = Math.round(Number(req.body?.minutos));
+    const nota = String(req.body?.nota || "").trim();
+    if (!Number.isFinite(minutos) || minutos === 0) return res.status(400).json({ ok: false, error: "Pon los minutos (en negativo si se le descuentan)" });
+    if (nota.length < MOTIVO_MIN) return res.status(400).json({ ok: false, error: "Explica el ajuste: dentro de seis meses nadie se acordará" });
+
+    const dia = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.dia || "")) ? String(req.body.dia) : instanteANegocio(Date.now()).diaNegocio;
+    const bloqueo = await ficBloqueoPorCierre(w.local, dia);
+    if (bloqueo) return res.status(409).json({ ok: false, error: bloqueo });
+    const p = await ficPeriodoDe(w.local, dia);
+
+    await dbRun(
+      `INSERT INTO fic_bolsa_movimientos (worker_id, local, dia, periodo, concepto, minutos, clave_idem, nota, autor, creado_en)
+       VALUES (?,?,?,?, 'ajuste', ?,?,?,?,?)`,
+      [w.id, w.local, dia, p.etiqueta, minutos, `ajuste:${w.id}:${dia}:${crypto.randomBytes(6).toString("hex")}`,
+       nota, req.user.username, isoConOffset(Date.now())]);
+    await ficAuditar("bolsa", w.id, "ajuste", req.user.username, { local: w.local, workerId: w.id, detalle: { minutos, dia, nota } });
+    res.json({ ok: true, mensaje: `Ajuste de ${minutos > 0 ? "+" : ""}${minutos} min anotado a ${w.nombre}.` });
+  } catch (e) {
+    console.error("[fichajes] ajuste:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo anotar el ajuste" });
+  }
+});
+
+// ── Cierre ───────────────────────────────────────────────────────────────────
+app.post("/api/fichajes/cerrar", requireAuth(["direccion", "rrhh"]), async (req, res) => {
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const cfg = await dbGet(`SELECT dia_inicio_periodo, corte_dia_min FROM hor_config WHERE local = ?`, [local]);
+    const p = periodoDe(String(req.body?.dia || instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 }).diaNegocio),
+      { diaInicio: cfg?.dia_inicio_periodo ?? 1 });
+    if (!p) return res.status(400).json({ ok: false, error: "Periodo no válido" });
+
+    const hoy = instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 }).diaNegocio;
+    if (p.hasta >= hoy) return res.status(409).json({ ok: false, error: "Ese periodo todavía no ha terminado" });
+    if (estaCerrado(await ficCierresDe(local), local, p.hasta)) return res.status(409).json({ ok: false, error: "Ese periodo ya está cerrado" });
+
+    // No se cierra con jornadas sin validar: cerrar significa "estas son las horas", y con
+    // días a medias no lo son. Se puede forzar, pero hay que decirlo a propósito.
+    const pend = await dbAll(
+      `SELECT j.worker_id, j.dia_negocio, u.nombre FROM fic_jornadas j LEFT JOIN users u ON u.id = j.worker_id
+       WHERE j.local = ? AND j.dia_negocio BETWEEN ? AND ? AND j.min_validado IS NULL ORDER BY j.dia_negocio`,
+      [local, p.desde, p.hasta]);
+    if (pend.length && !req.body?.forzar) {
+      return res.status(409).json({
+        ok: false, error: `Quedan ${pend.length} ${pend.length === 1 ? "jornada" : "jornadas"} sin validar en este periodo`,
+        pendientes: pend.slice(0, 20),
+      });
+    }
+
+    // Antes de cerrar se apunta al libro TODO lo validado del periodo: el cierre tiene que
+    // reflejar lo que se decidió, no lo que hubiera apuntado quien pasara por la pantalla.
+    const validadas = await dbAll(
+      `SELECT worker_id, dia_negocio FROM fic_jornadas WHERE local = ? AND dia_negocio BETWEEN ? AND ? AND min_validado IS NOT NULL`,
+      [local, p.desde, p.hasta]);
+    for (const v of validadas) await ficApuntarJornada(local, v.worker_id, v.dia_negocio, { autor: req.user.username });
+
+    const resumen = await dbAll(
+      `SELECT b.worker_id, u.nombre, sum(b.minutos)::int AS minutos FROM fic_bolsa_movimientos b
+       LEFT JOIN users u ON u.id = b.worker_id
+       WHERE b.local = ? AND b.periodo = ? GROUP BY b.worker_id, u.nombre ORDER BY u.nombre`, [local, p.etiqueta]);
+    const cuerpo = { local, periodo: p, resumen, generado: isoConOffset(Date.now()) };
+    const hash = crypto.createHash("sha256").update(serializarCanonico(cuerpo)).digest("hex");
+
+    await dbRun(
+      `INSERT INTO fic_cierres (local, etiqueta, desde, hasta, resumen, hash, cerrado_en, cerrado_por)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [local, p.etiqueta, p.desde, p.hasta, JSON.stringify(cuerpo), hash, isoConOffset(Date.now()), req.user.username]);
+    await ficAuditar("cierre", null, "cerrar", req.user.username, { local, detalle: { periodo: p.etiqueta, hash, forzado: !!req.body?.forzar, sinValidar: pend.length } });
+
+    res.json({ ok: true, periodo: p, hash, resumen, mensaje: `Periodo ${p.etiqueta} cerrado.` });
+  } catch (e) {
+    console.error("[fichajes] cerrar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cerrar el periodo" });
+  }
+});
+
+// Reabrir. Se puede, pero con motivo y dejando la fila anterior intacta: el cierre no se
+// borra, se marca como reabierto. Así queda para siempre que ese mes se tocó después.
+app.post("/api/fichajes/reabrir", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const motivo = String(req.body?.motivo || "").trim();
+    if (motivo.length < MOTIVO_MIN) return res.status(400).json({ ok: false, error: "Escribe por qué se reabre un periodo ya cerrado" });
+    const c = await dbGet(`SELECT id, etiqueta FROM fic_cierres WHERE local = ? AND etiqueta = ? AND reabierto_en IS NULL`,
+      [local, String(req.body?.etiqueta || "")]);
+    if (!c) return res.status(404).json({ ok: false, error: "Ese periodo no está cerrado" });
+
+    await dbRun(`UPDATE fic_cierres SET reabierto_en = ?, reabierto_por = ?, reabierto_motivo = ? WHERE id = ?`,
+      [isoConOffset(Date.now()), req.user.username, motivo, c.id]);
+    await ficAuditar("cierre", c.id, "reabrir", req.user.username, { local, detalle: { periodo: c.etiqueta, motivo } });
+    res.json({ ok: true, mensaje: `Periodo ${c.etiqueta} reabierto. Queda constancia.` });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo reabrir" }); }
+});
+
+app.get("/api/fichajes/cierres", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    res.json({ ok: true, data: await dbAll(
+      `SELECT id, etiqueta, desde, hasta, hash, cerrado_en, cerrado_por, reabierto_en, reabierto_por, reabierto_motivo
+       FROM fic_cierres WHERE local = ? ORDER BY desde DESC`, [local]) });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar los cierres" }); }
+});
+
+// ── Export legal ─────────────────────────────────────────────────────────────
+// «Disponible para la persona trabajadora, sus representantes y la Inspección» (art. 34.9
+// ET). CSV con punto y coma y BOM para que Excel en español lo abra bien a la primera:
+// un export que hay que pelear con el asistente de importación no está disponible de nada.
+app.get("/api/fichajes/export", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const cfg = await dbGet(`SELECT dia_inicio_periodo, corte_dia_min FROM hor_config WHERE local = ?`, [local]);
+    const p = periodoDe(String(req.query.dia || instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 }).diaNegocio),
+      { diaInicio: cfg?.dia_inicio_periodo ?? 1 });
+    const soloWorker = Number(req.query.worker || 0) || null;
+
+    const eventos = await dbAll(
+      `SELECT e.worker_id, u.nombre, u.dni, e.dia_negocio, e.tipo, e.ocurrido_en, e.minuto_local, e.origen, e.autor, e.motivo, e.anulado_por
+       FROM fic_eventos e LEFT JOIN users u ON u.id = e.worker_id
+       WHERE e.local = ? AND e.dia_negocio BETWEEN ? AND ? ${soloWorker ? "AND e.worker_id = ?" : ""}
+       ORDER BY u.nombre, e.dia_negocio, e.epoch_ms, e.id`,
+      soloWorker ? [local, p.desde, p.hasta, soloWorker] : [local, p.desde, p.hasta]);
+
+    // El CSV se construye en src/modules/fichajes/export.js, con sus tests: es un documento
+    // que puede acabar delante de un inspector, y un punto y coma dentro de un motivo que
+    // parta una fila haría que el fichero contase otra cosa.
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombreFicheroRegistro(local, p.etiqueta)}"`);
+    res.send(construirCsv(eventos));
+    await ficAuditar("export", null, "descargar", req.user.username, { local, detalle: { periodo: p.etiqueta, filas: eventos.length, worker: soloWorker } });
+  } catch (e) {
+    console.error("[fichajes] export:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo generar el export" });
   }
 });
 

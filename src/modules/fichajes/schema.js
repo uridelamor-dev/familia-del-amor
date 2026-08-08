@@ -29,6 +29,11 @@ export async function ensureSchemaFichajes(x) {
     await x.run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ${col}`);
   }
 
+  // Día en que arranca el periodo de nómina. 1 = mes natural (lo habitual); 21 = del 21 al
+  // 20, que también se usa mucho en hostelería. Es un ajuste por local, no una decisión que
+  // haya que tomar para siempre: cambiarlo no toca ningún periodo ya cerrado.
+  await x.run(`ALTER TABLE hor_config ADD COLUMN IF NOT EXISTS dia_inicio_periodo INTEGER NOT NULL DEFAULT 1`);
+
   // Tablets. El token viaja en la URL una sola vez; en la base solo su hash, como las
   // invitaciones del pulso.
   await x.run(`CREATE TABLE IF NOT EXISTS fic_dispositivos (
@@ -116,6 +121,53 @@ export async function ensureSchemaFichajes(x) {
   )`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fic_jor_loc ON fic_jornadas (local, dia_negocio)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fic_jor_rev ON fic_jornadas (local, requiere_revision) WHERE requiere_revision`);
+
+  // Bolsa de horas. LIBRO DE MOVIMIENTOS: no hay ninguna columna `saldo` en ninguna parte.
+  // El saldo es SUM(minutos) —de todas las filas, sin filtros— y siempre se puede señalar de
+  // dónde sale cada minuto. Corregir no modifica ninguna fila: se escribe un contra-asiento
+  // y luego el movimiento nuevo, y los tres se quedan.
+  //
+  // Esta tabla es 100 % append-only: no tiene ni una sola columna que se actualice, ni
+  // siquiera `anulado_por`. Un movimiento que ya no debe contar tiene enfrente otro que lo
+  // compensa; tener además una marca de estado permitía descontarlo dos veces.
+  await x.run(`CREATE TABLE IF NOT EXISTS fic_bolsa_movimientos (
+    id SERIAL PRIMARY KEY,
+    worker_id INTEGER NOT NULL,
+    local TEXT NOT NULL,
+    dia TEXT,
+    periodo TEXT NOT NULL,
+    concepto TEXT NOT NULL,
+    minutos INTEGER NOT NULL,
+    clave_idem TEXT NOT NULL UNIQUE,
+    referencia_id INTEGER,
+    nota TEXT,
+    autor TEXT NOT NULL,
+    creado_en TEXT NOT NULL,
+    CHECK (concepto IN ('jornada','ajuste','contra','liquidacion','arrastre'))
+  )`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fic_bolsa_wk ON fic_bolsa_movimientos (worker_id, periodo)`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fic_bolsa_loc ON fic_bolsa_movimientos (local, periodo)`);
+
+  // Cierre de periodo. Un periodo cerrado no admite fichajes nuevos ni correcciones: sin
+  // esto, corregir un día de marzo en noviembre cambiaría una nómina ya pagada sin que
+  // nadie se entere. Reabrir se puede, pero deja rastro.
+  await x.run(`CREATE TABLE IF NOT EXISTS fic_cierres (
+    id SERIAL PRIMARY KEY,
+    local TEXT NOT NULL,
+    etiqueta TEXT NOT NULL,
+    desde TEXT NOT NULL,
+    hasta TEXT NOT NULL,
+    resumen TEXT,
+    hash TEXT,
+    cerrado_en TEXT NOT NULL,
+    cerrado_por TEXT NOT NULL,
+    reabierto_en TEXT,
+    reabierto_por TEXT,
+    reabierto_motivo TEXT
+  )`);
+  // Un solo cierre vivo por local y periodo; los reabiertos dejan de contar.
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fic_cierre_vivo
+               ON fic_cierres (local, etiqueta) WHERE reabierto_en IS NULL`);
 
   await x.run(`CREATE TABLE IF NOT EXISTS fic_auditoria (
     id SERIAL PRIMARY KEY,

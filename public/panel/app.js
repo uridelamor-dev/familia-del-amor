@@ -2263,6 +2263,7 @@ async function loadFichajes() {
     <div class="toolbar" style="margin-bottom:12px" id="ficTabs">
       <button class="btn ${FIC.tab === "hoy" ? "primary" : ""}" data-fictab="hoy">Quién está dentro</button>
       <button class="btn ${FIC.tab === "rev" ? "primary" : ""}" data-fictab="rev">Revisión</button>
+      <button class="btn ${FIC.tab === "bolsa" ? "primary" : ""}" data-fictab="bolsa">Bolsa de horas</button>
       <button class="btn ${FIC.tab === "disp" ? "primary" : ""}" data-fictab="disp">Tablets</button>
     </div>
     <div id="ficCuerpo"><p class="mut">Cargando…</p></div>`;
@@ -2275,6 +2276,7 @@ async function loadFichajes() {
 
   if (FIC.tab === "disp") return ficPintarDispositivos();
   if (FIC.tab === "rev") return ficPintarRevision();
+  if (FIC.tab === "bolsa") return ficPintarBolsa();
   await ficPintarHoy();
   // Un minuto: lo bastante para que sirva de tablero y lo bastante poco para no molestar.
   FIC_TIMER = setInterval(() => {
@@ -2457,6 +2459,125 @@ async function ficAbrirJornada(workerId, dia) {
 function ficReloj(min) {
   const b = ((Math.round(min) % 1440) + 1440) % 1440;
   return `${String(Math.floor(b / 60)).padStart(2, "0")}:${String(b % 60).padStart(2, "0")}`;
+}
+
+// ── Bolsa de horas ──────────────────────────────────────────────────────────
+// Un libro, no un contador: cada minuto del saldo se puede señalar. Por eso la fila de
+// cada persona se abre y enseña de dónde sale, incluidos los contra-asientos.
+const FIC_CONCEPTO = { jornada: "Jornada", ajuste: "Ajuste manual", contra: "Anulación del anterior", liquidacion: "Pagado o disfrutado", arrastre: "Viene del periodo anterior" };
+
+async function ficPintarBolsa() {
+  const cont = document.getElementById("ficCuerpo");
+  if (!cont) return;
+  let j;
+  try { j = await apiRaw(`/api/fichajes/bolsa?local=${encodeURIComponent(FIC.local)}${FIC.dia ? "&dia=" + FIC.dia : ""}`); }
+  catch { cont.innerHTML = `<div class="card"><p class="mut" style="margin:0">No se pudo cargar la bolsa.</p></div>`; return; }
+
+  const conSaldo = j.personas.filter((p) => p.saldo !== 0 || p.movimientos);
+  const puedeCerrar = USER.rol === "direccion" || USER.rol === "rrhh";
+  cont.innerHTML = `
+    <div class="card">
+      <div class="ch"><h3>Periodo ${esc(j.periodo.etiqueta)} · del ${esc(j.periodo.desde)} al ${esc(j.periodo.hasta)}</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn sm" id="ficExport" data-dia="${esc(j.periodo.hasta)}">Descargar registro</button>
+          ${j.cerrado ? '<span class="fic-tag">periodo cerrado</span>'
+            : puedeCerrar ? `<button class="btn sm primary" id="ficCerrar">Cerrar periodo</button>` : ""}
+        </div></div>
+      ${j.sinValidar ? `<p class="fic-nota">Quedan <b>${j.sinValidar}</b> ${j.sinValidar === 1 ? "jornada" : "jornadas"} sin validar en este periodo. Sus horas todavía <b>no están</b> en ningún saldo: valídalas en «Revisión».</p>` : ""}
+      ${j.cerrado && j.cierre ? `<p class="fic-nota">Cerrado el ${esc(String(j.cierre.cerrado_en).slice(0, 10))} por ${esc(j.cierre.cerrado_por)}. Para corregir algo de estas fechas hay que reabrirlo, y queda constancia.</p>` : ""}
+      ${conSaldo.length ? `<div class="tw"><table class="tbl">
+        <thead><tr><th>Persona</th><th style="text-align:right">Venía de antes</th><th style="text-align:right">Este periodo</th>
+        <th style="text-align:right">Saldo</th><th></th></tr></thead>
+        <tbody>${conSaldo.map((p) => `<tr>
+          <td><b>${esc(p.nombre)}</b></td>
+          <td style="text-align:right" class="mut">${esc(ficSigno(p.arrastre))}</td>
+          <td style="text-align:right">${esc(ficSigno(p.periodo))}</td>
+          <td style="text-align:right"><b>${esc(ficSigno(p.saldo))}</b></td>
+          <td style="text-align:right"><button class="btn sm" data-ficlibro="${p.id}">Ver el libro</button></td>
+        </tr>`).join("")}</tbody></table></div>`
+      : `<p class="mut" style="margin:0;line-height:1.6">Nadie tiene horas a favor ni en contra en este periodo. Aparecerán aquí a medida que se validen jornadas que se desvíen del cuadrante.</p>`}
+    </div>`;
+
+  const card = cont.firstElementChild;
+  card.addEventListener("click", async (e) => {
+    const libro = e.target.closest("[data-ficlibro]");
+    if (libro) return ficAbrirLibro(Number(libro.getAttribute("data-ficlibro")));
+    if (e.target.closest("#ficCerrar")) return ficCerrarPeriodo(j.periodo);
+    const exp = e.target.closest("#ficExport");
+    if (exp) return ficDescargarRegistro(exp.getAttribute("data-dia"));
+  });
+}
+
+// El export va por fetch con el token, no por un <a href>: un enlace directo no lleva la
+// cabecera de sesión y devolvería un 401 en forma de fichero.
+async function ficDescargarRegistro(dia) {
+  try {
+    const r = await fetch(`/api/fichajes/export?local=${encodeURIComponent(FIC.local)}&dia=${encodeURIComponent(dia)}`,
+      { headers: { Authorization: "Bearer " + token() } });
+    if (!r.ok) { toast("No se pudo generar el registro"); return; }
+    const nombre = (r.headers.get("content-disposition") || "").match(/filename="([^"]+)"/)?.[1] || "registro-jornada.csv";
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement("a"); a.href = url; a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    toast("Registro descargado ✅");
+  } catch { toast("No se pudo generar el registro"); }
+}
+
+async function ficAbrirLibro(workerId) {
+  let j;
+  try { j = await apiRaw("/api/fichajes/bolsa/" + workerId); } catch (e) { toast(e.message); return; }
+  const puedeAjustar = USER.rol === "direccion" || USER.rol === "rrhh";
+  const ov = modal(`Libro de horas · ${j.trabajador.nombre}`, `
+    <p style="margin:0 0 14px"><b style="font-size:20px">${esc(ficSigno(j.saldo))}</b>
+      <span class="mut">de saldo, que es la suma exacta de lo de abajo</span></p>
+    ${j.data.length ? `<div class="tw" style="max-height:340px;overflow:auto"><table class="tbl">
+      <thead><tr><th>Día</th><th>Concepto</th><th style="text-align:right">Minutos</th><th>Quién</th></tr></thead>
+      <tbody>${j.data.map((m) => `<tr>
+        <td class="mut" style="white-space:nowrap">${esc(m.dia || m.periodo)}</td>
+        <td>${esc(FIC_CONCEPTO[m.concepto] || m.concepto)}${m.nota ? `<div class="mut" style="font-size:11.5px">${esc(m.nota)}</div>` : ""}</td>
+        <td style="text-align:right;white-space:nowrap"><b>${esc(ficSigno(m.minutos))}</b></td>
+        <td class="mut">${esc(m.autor)}</td></tr>`).join("")}</tbody></table></div>`
+    : '<p class="mut" style="margin:0">Todavía no hay ningún movimiento.</p>'}
+    ${puedeAjustar ? `
+      <div class="ch" style="margin-top:18px"><h3 style="margin:0;font-size:13px">Ajuste manual</h3></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input class="inp" id="ficAjMin" placeholder="minutos (−60 para restar)" style="width:190px">
+        <input class="inp" id="ficAjNota" placeholder="Motivo (obligatorio)" style="flex:1;min-width:180px">
+        <button class="btn" id="ficAjOk">Anotar</button>
+      </div>
+      <p id="ficAjMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>` : ""}
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button></div>`);
+
+  if (!puedeAjustar) return;
+  ov.querySelector("#ficAjOk").addEventListener("click", async () => {
+    try {
+      const r = await apiSend("POST", "/api/fichajes/bolsa/ajuste", {
+        worker_id: workerId, minutos: Number(ov.querySelector("#ficAjMin").value),
+        nota: ov.querySelector("#ficAjNota").value.trim(),
+      });
+      ov.remove(); toast(r.mensaje || "Ajuste anotado ✅"); ficPintarBolsa();
+    } catch (e) { ov.querySelector("#ficAjMsg").textContent = e.message; }
+  });
+}
+
+async function ficCerrarPeriodo(periodo) {
+  const ok = await confirmModal(
+    `Se cierra ${periodo.etiqueta} (del ${periodo.desde} al ${periodo.hasta}). A partir de ahí no se podrán corregir fichajes de esas fechas sin reabrirlo, y reabrirlo deja constancia.`,
+    { ok: "Cerrar el periodo" });
+  if (!ok) return;
+  try {
+    const r = await apiSend("POST", "/api/fichajes/cerrar", { local: FIC.local, dia: periodo.hasta });
+    toast(r.mensaje || "Periodo cerrado ✅"); ficPintarBolsa();
+  } catch (e) {
+    // El 409 con jornadas sin validar no es un error: es la pregunta de si se fuerza.
+    if (!/sin validar/i.test(e.message)) return toast(e.message);
+    const forzar = await confirmModal(
+      `${e.message}. Cerrar ahora deja esas horas fuera del saldo hasta que se reabra el periodo. ¿Cerrar igualmente?`,
+      { ok: "Cerrar igualmente", danger: true });
+    if (!forzar) return;
+    try { const r = await apiSend("POST", "/api/fichajes/cerrar", { local: FIC.local, dia: periodo.hasta, forzar: true }); toast(r.mensaje); ficPintarBolsa(); }
+    catch (err) { toast(err.message); }
+  }
 }
 
 async function ficPintarDispositivos() {
