@@ -2084,9 +2084,16 @@ function horPh() {
   const amb = HOR.local ? ` · <b>${esc(nombreCortoLocal(HOR.local))}</b>` : "";
   return `<div class="ph"><div class="eyebrow">Personas</div><h1>Horarios</h1><div class="sub">Cuadrante semanal del equipo${amb}</div></div>`;
 }
+// Espejo de franjaCorta() de tiempo.js. Medianoche como FINAL se escribe 24, no 0: un
+// turno de 16:00 a 00:00 salía «16-0», que parece una errata.
 function horFranja(ini, fin, abierto) {
-  const h = (m) => { const b = ((Math.round(m) % 1440) + 1440) % 1440, hh = Math.floor(b / 60), mm = b % 60; return mm ? `${hh}:${String(mm).padStart(2, "0")}` : String(hh); };
-  return `${h(ini)}-${abierto ? "cierre" : h(fin)}`;
+  const h = (m, esFin) => {
+    const n = Math.round(m);
+    if (esFin && n > 0 && n % 1440 === 0) return "24";
+    const b = ((n % 1440) + 1440) % 1440, hh = Math.floor(b / 60), mm = b % 60;
+    return mm ? `${hh}:${String(mm).padStart(2, "0")}` : String(hh);
+  };
+  return `${h(ini)}-${abierto ? "cierre" : h(fin, true)}`;
 }
 // Espejo de franjaSiDifiere() del servidor: la hora solo se escribe si difiere del tramo.
 function horFranjaSiDifiere(a, tramo) {
@@ -2156,7 +2163,37 @@ function horRejilla() {
     ? `<details class="card fold" style="margin-top:14px"><summary><h3>Fuera de la rejilla</h3><span class="foldr"><span>${num(sueltos.length)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
        <div class="rows">${sueltos.map((a) => `<div class="row"><div class="grow"><div class="t1">${esc(horNombre(a.worker_id))}</div><div class="t2">${esc(a.dia)} · ${esc(cap(a.tipo || "turno"))}</div></div><button class="btn sm" data-act="hor-editar" data-id="${a.id}">Ver</button></div>`).join("")}</div></details>`
     : "";
-  return bloques + fuera;
+  // En móvil la rejilla se cambia por una lista de días. Siete columnas en 390 px obligan
+  // a desplazarse a ciegas: se ven dos días y medio, y el cuadrante existe justamente para
+  // ver la semana entera de un vistazo. La rejilla se sigue enviando (la usa el escritorio)
+  // y el CSS enseña una u otra: así no hay dos verdades ni hace falta repintar al girar.
+  return bloques + horListaDias() + fuera;
+}
+
+// La misma información que la rejilla, en vertical. Se toca un turno para editarlo, igual.
+function horListaDias() {
+  const hoy = todayStr();
+  const dias = (HOR.dias || []).map((dia, i) => {
+    const bloques = (HOR.tramos || []).map((tramo) => {
+      const areas = (HOR.areas || []).map((area) => {
+        const gente = (HOR.asignaciones || [])
+          .filter((a) => String(a.dia) === dia && String(a.tramo_id) === String(tramo.id) && String(a.area_id) === String(area.id) && (a.tipo || "turno") === "turno")
+          .map((a) => ({ ...a, franja: horFranjaSiDifiere(a, tramo) }))
+          .sort((a, b) => a.inicio_min - b.inicio_min);
+        if (!gente.length) return "";
+        return `<div class="hord-area"><span class="hord-et">${esc(area.nombre)}</span>
+          <span class="hord-gente">${gente.map((a) => `<button class="horchip" data-act="hor-editar" data-id="${a.id}">${a.franja ? `<span class="hf">${esc(a.franja)}</span>` : ""}${esc(horNombre(a.worker_id))}</button>`).join("")}</span></div>`;
+      }).join("");
+      if (!areas) return "";
+      return `<div class="hord-tramo"><div class="hord-th">${esc(tramo.nombre)} <span class="mut">${esc(horFranja(tramo.inicio_min, tramo.fin_min))}</span></div>${areas}</div>`;
+    }).join("");
+    return `<li class="${dia === hoy ? "es-hoy" : ""}">
+      <div class="hord-dia">${WD[i]} <b>${Number(dia.slice(-2))}</b></div>
+      ${bloques || '<div class="mut" style="font-size:12.5px">Nadie asignado</div>'}
+      ${horEditable() ? `<button class="btn sm" data-act="hor-nuevo" data-dia="${dia}" style="margin-top:8px">Añadir turno</button>` : ""}
+    </li>`;
+  }).join("");
+  return `<ul class="hordias">${dias}</ul>`;
 }
 
 // ── Vista por persona (la que evita las horas extra) ──
@@ -3597,10 +3634,13 @@ async function refrescarCompras() {
 
   const c = j.cobertura;
   const sinDetalle = c.facturas - c.conDetalle;
+  // Etiqueta ARRIBA y campo debajo (el patrón `.field` del resto del panel). Con el texto
+  // en línea, al envolverse en móvil el «Hasta» quedaba cortado a media palabra.
   const barra = `<div class="toolbar" style="margin-bottom:12px">
-      <input class="inp" id="compQ" value="${esc(COMP.q)}" placeholder="Buscar producto… (coca, aceite, gamba)" style="flex:1;min-width:200px">
-      <label class="mut" style="font-size:12px">Desde ${dpField("compFrom", COMP.from, "Cualquiera")}</label>
-      <label class="mut" style="font-size:12px">Hasta ${dpField("compTo", COMP.to, "Hoy")}</label>
+      <div class="field" style="flex:1;min-width:180px"><label>Buscar producto</label>
+        <input class="inp" id="compQ" value="${esc(COMP.q)}" placeholder="coca, aceite, gamba…"></div>
+      <div class="field"><label>Desde</label>${dpField("compFrom", COMP.from, "Cualquiera")}</div>
+      <div class="field"><label>Hasta</label>${dpField("compTo", COMP.to, "Hoy")}</div>
     </div>`;
 
   // La cobertura va arriba y siempre: un total calculado sobre la mitad de las facturas

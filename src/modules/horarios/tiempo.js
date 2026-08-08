@@ -176,12 +176,16 @@ export function deMinutos(min, { formato = "corto" } = {}) {
 }
 // Etiqueta corta al estilo del PDF de referencia: 660,900 → "11-15".
 export function franjaCorta(inicioMin, finMin, { finAbierto = false } = {}) {
-  const h = (m) => {
-    const base = ((Math.round(m) % 1440) + 1440) % 1440;
+  const h = (m, esFin = false) => {
+    const n = Math.round(m);
+    // Medianoche COMO FINAL se escribe 24, no 0. Un turno de 16:00 a 00:00 salía «16-0»,
+    // que parece una errata — y salía así también en el PDF que se manda al grupo.
+    if (esFin && n > 0 && n % 1440 === 0) return "24";
+    const base = ((n % 1440) + 1440) % 1440;
     const hh = Math.floor(base / 60), mm = base % 60;
     return mm === 0 ? String(hh) : `${hh}:${String(mm).padStart(2, "0")}`;
   };
-  return `${h(inicioMin)}-${finAbierto ? "cierre" : h(finMin)}`;
+  return `${h(inicioMin)}-${finAbierto ? "cierre" : h(finMin, true)}`;
 }
 export function duracionMin(inicioMin, finMin) {
   const a = Number(inicioMin), b = Number(finMin);

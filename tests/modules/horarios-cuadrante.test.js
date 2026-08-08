@@ -88,7 +88,7 @@ describe("cuadrante — estructura de la rejilla", () => {
     assert.equal(tarde.length, 1, "y el 20-00 al de tarde");
     // Y sus horas quedan escritas al lado, que es justo para lo que sirve `franjaSiDifiere`.
     assert.equal(mañana[0].franja, "10-14");
-    assert.equal(tarde[0].franja, "20-0");
+    assert.equal(tarde[0].franja, "20-24", "medianoche como final se escribe 24: «20-0» parece una errata");
   });
 
   test("lo que NO pega con ningún bloque sí sale aparte: no se mete con calzador", () => {

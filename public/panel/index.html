@@ -123,7 +123,27 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .hormas:hover{background:var(--brand);color:var(--brand-ink)}
 .hortot{display:flex;align-items:center;justify-content:flex-end;background:var(--surface2);font-variant-numeric:tabular-nums}
 .hortot.alto b{color:var(--danger)}
+/* ── El cuadrante en móvil: lista de días, no rejilla ──────────────────────
+   Siete columnas en 390 px son dos días y medio visibles y desplazarse a ciegas, y el
+   cuadrante existe justamente para ver la semana de un vistazo. Se pintan las dos y el
+   CSS elige: así no hay dos verdades ni hay que repintar al girar el móvil. */
+.hordias{display:none}
 @media(max-width:900px){.horgrid{grid-template-columns:96px repeat(7,minmax(104px,1fr));overflow-x:auto}}
+@media(max-width:720px){
+  .hortramo{display:none}
+  .hordias{display:block;list-style:none;margin:0;padding:0}
+  .hordias li{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+  .hordias li.es-hoy{box-shadow:inset 3px 0 0 var(--brand);border-color:var(--brand)}
+  .hord-dia{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);font-weight:700;margin-bottom:8px}
+  .hord-dia b{color:var(--ink);font-size:15px;margin-left:2px}
+  .hord-tramo{margin-bottom:10px}
+  .hord-tramo:last-child{margin-bottom:0}
+  .hord-th{font-size:11.5px;font-weight:700;color:var(--ink2);margin-bottom:5px}
+  .hord-area{display:flex;gap:8px;align-items:flex-start;margin-bottom:5px}
+  .hord-et{flex:0 0 62px;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink3);font-weight:600;padding-top:5px}
+  .hord-gente{display:flex;flex-wrap:wrap;gap:5px;flex:1}
+  .hord-gente .horchip{min-height:32px;display:inline-flex;align-items:center}
+}
 
 /* ── Fichajes ──────────────────────────────────────────────────────────────
    Solo el semáforo de «quién está dentro» y una etiqueta de estado. Todo lo demás
@@ -368,6 +388,30 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .content{padding:16px 15px 56px}.topbar{padding:0 12px;gap:8px}.wrap{max-width:100%}
   .btn{height:40px}.iconbtn{width:40px;height:40px}.chip{height:38px}.linkbtn{display:inline-block;padding:6px 2px}
   .form-grid{grid-template-columns:1fr}.ph h1{font-size:21px}
+
+  /* Los botones pequeños se quedaban en 30 px: el dedo de un adulto son ~45 px en
+     pantalla, así que en móvil fallar el toque es lo normal. La regla de arriba solo
+     tocaba `.btn`, y `.btn.sm` la ganaba por especificidad. */
+  .btn.sm{height:36px;padding:0 13px}
+  .seg button{height:36px;padding:0 14px}
+  /* Las casillas nativas miden 13 px. Imposibles de acertar con el pulgar.
+     Con `!important` a propósito: varias llevan un `style="width:auto;height:auto"` puesto
+     para anular el ancho global de los inputs, y ese estilo en línea gana siempre. Ese
+     ajuste se puso por el ancho, no para decidir el tamaño del área de toque. */
+  input[type="checkbox"],input[type="radio"]{width:20px!important;height:20px!important;accent-color:var(--brand)}
+  /* El buscador de ⌘K también se queda en 22 px de alto. */
+  .cmdk .ci input{height:38px}
+
+  /* TABLAS ANCHAS. No caben en 390 px y partirlas en tarjetas cambiaría demasiadas
+     pantallas de golpe. Se hace lo que de verdad las vuelve usables: la primera columna
+     —la que dice de QUIÉN o de QUÉ es la fila— se queda fija al desplazar, y un degradado
+     en el borde avisa de que hay más a la derecha. Sin eso se desliza a ciegas. */
+  .tw{position:relative}
+  .tw::after{content:"";position:absolute;top:0;right:0;bottom:0;width:22px;pointer-events:none;
+    background:linear-gradient(90deg,transparent,var(--surface));border-radius:0 12px 12px 0}
+  .tbl th:first-child,.tbl td:first-child{position:sticky;left:0;z-index:1;background:var(--surface)}
+  .tbl thead th:first-child{z-index:2}
+  .tbl th,.tbl td{padding-left:11px;padding-right:11px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.enter>*{opacity:1!important;transform:none!important}}
 /* Sara (IA) */

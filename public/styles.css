@@ -3587,3 +3587,22 @@ h1, h2, h3 {
   .reg-tot { align-self: flex-end; }
   .semana-nav { font-size: .85rem; }
 }
+
+/* ── Pantalla estrecha: lo que se toca con el pulgar ───────────────────────── */
+@media (max-width: 720px) {
+  /* Las horas de reserva son EL control más tocado de toda la web y medían 27 px de alto.
+     El dedo de un adulto ocupa unos 45 px en pantalla: fallar el toque era lo normal, y
+     fallar aquí significa perder la reserva. */
+  .time-pill { padding: 0.62rem 0.75rem; font-size: 0.86rem; min-width: 62px; }
+  .time-pills { gap: 0.45rem; }
+
+  /* Las casillas nativas miden 13 px. Imposibles de acertar. */
+  input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; accent-color: var(--accent-2); }
+
+  /* El botón de menú y el selector de idioma se quedaban por debajo de 30 px. */
+  .nav-toggle { min-width: 44px; min-height: 44px; }
+  .lang button { min-height: 36px; min-width: 36px; padding: 0 10px; }
+  /* Botones de las pantallas internas que se quedaban por debajo de 30 px. */
+  .seg-add-worker-btn { min-height: 36px; padding: 0 12px; }
+  .cedit-lang { min-height: 34px; min-width: 40px; }
+}

@@ -118,6 +118,14 @@ describe("tiempo — turnos que cruzan medianoche", () => {
     assert.equal(franjaCorta(1200, 1560, { finAbierto: true }), "20-cierre");
     assert.equal(franjaCorta(690, 900), "11:30-15", "las medias se ven, las en punto no");
   });
+  test("MEDIANOCHE COMO FINAL SE ESCRIBE 24, no 0", () => {
+    // El turno de tarde de la casa es 16:00–00:00 y salía «16-0», que parece una errata
+    // —y salía así también en el PDF que se manda al grupo.
+    assert.equal(franjaCorta(960, 1440), "16-24");
+    assert.equal(franjaCorta(480, 960), "8-16", "las horas normales no cambian");
+    assert.equal(franjaCorta(1200, 1560), "20-2", "pasada la medianoche se sigue viendo la hora de reloj");
+    assert.equal(franjaCorta(0, 1440), "0-24", "un turno que ocupa el día entero");
+  });
   test("dos turnos que se tocan no se solapan", () => {
     assert.equal(solapan({ inicio_min: 660, fin_min: 900 }, { inicio_min: 900, fin_min: 1140 }), false);
     assert.equal(solapan({ inicio_min: 660, fin_min: 900 }, { inicio_min: 840, fin_min: 1140 }), true);
