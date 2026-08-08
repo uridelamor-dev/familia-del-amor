@@ -23,7 +23,11 @@ async function loadPerfil() {
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ""; };
     set("pfTelefono", p.telefono);
     set("pfEmail", p.email);
-    set("pfNac", (p.fecha_nac || "").slice(0, 10));
+    // El selector propio: el visible muestra dd/mm/aaaa y el oculto guarda AAAA-MM-DD
+    const iso = (p.fecha_nac || "").slice(0, 10);
+    set("pfNacValue", iso);
+    const disp = document.getElementById("pfNacDisplay");
+    if (disp) { const [y, m, d] = iso.split("-"); disp.value = iso ? `${d}/${m}/${y}` : ""; }
 
     // El aviso solo mientras falte de verdad
     const aviso = document.getElementById("avisoTelefono");
@@ -51,7 +55,7 @@ document.getElementById("perfilForm")?.addEventListener("submit", async (e) => {
   const payload = {
     telefono: document.getElementById("pfTelefono").value.trim(),
     email: document.getElementById("pfEmail").value.trim(),
-    fecha_nac: document.getElementById("pfNac").value,
+    fecha_nac: document.getElementById("pfNacValue").value,
   };
   if (msg) msg.textContent = "Guardando…";
   try {
