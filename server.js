@@ -45,6 +45,7 @@ import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornada
 import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo } from "./src/modules/fichajes/bolsa.js";
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
+import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto, puedeConPasswordTemporal } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
@@ -445,7 +446,11 @@ async function initDB() {
     try { await client.query(`ALTER TABLE maintenance_issues ADD COLUMN IF NOT EXISTS foto_url TEXT`); } catch (e) { console.error("[DB] alter maintenance_issues foto_url:", e.message); }
 
     // ── RRHH: perfil de trabajador (aditivo). Enriquece `users` con datos de personal + documentos.
-    for (const col of ["telefono TEXT", "email TEXT", "dni TEXT", "puesto TEXT", "fecha_nac TEXT", "fecha_alta TEXT", "fecha_baja TEXT", "foto_url TEXT", "agora_username TEXT", "activo INTEGER DEFAULT 1"]) {
+    // `pass_temporal`: la cuenta entra con la contraseña inicial y no puede hacer NADA más
+    // que cambiarla. `login_intentos`/`login_bloqueado_hasta`: el freno a la fuerza bruta,
+    // en la base para que sobreviva a un reinicio.
+    for (const col of ["telefono TEXT", "email TEXT", "dni TEXT", "puesto TEXT", "fecha_nac TEXT", "fecha_alta TEXT", "fecha_baja TEXT", "foto_url TEXT", "agora_username TEXT", "activo INTEGER DEFAULT 1",
+      "pass_temporal BOOLEAN DEFAULT FALSE", "pass_cambiada_en TEXT", "login_intentos INTEGER DEFAULT 0", "login_bloqueado_hasta TEXT"]) {
       try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter users " + col + ":", e.message); }
     }
     // Enlace 1:1 con el operador de Ágora (ignora NULL): un UserName no puede colgar de dos perfiles.
@@ -2151,6 +2156,14 @@ function requireAuth(roles = []) {
     const token = auth.slice(7);
     try {
       const payload = jwt.verify(token, JWT_SECRET);
+      // Con la contraseña sin estrenar no se puede hacer nada más que cambiarla. Se corta
+      // AQUÍ y no solo en la pantalla: si no, bastaría con llamar a la API a mano.
+      if (payload.pass_temporal && !puedeConPasswordTemporal(req.path)) {
+        return res.status(403).json({
+          ok: false, passwordTemporal: true,
+          error: "Tienes que cambiar tu contraseña antes de usar el panel.",
+        });
+      }
       if (roles.length && !roles.includes(payload.rol)) {
         return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
       }
@@ -2199,6 +2212,10 @@ function puedeAccederLocal(req, local) {
 
 // Auth endpoints
 app.post("/api/auth/login", async (req, res) => {
+  // Primera capa del freno: por IP y en memoria. Corta el barrido de miles de intentos
+  // desde un sitio antes de tocar siquiera la base.
+  if (!pulsoRateLimit(req, res, 20)) return;
+
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ ok: false, error: "Faltan credenciales" });
@@ -2208,16 +2225,72 @@ app.post("/api/auth/login", async (req, res) => {
     // y "direccion" entran igual. Se recorta espacio sobrante por si acaso.
     const user = await dbGet("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", [String(username).trim()]);
     if (!user) return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
+
+    // Segunda capa: por usuario y EN LA BASE, así que sobrevive a un reinicio y no se
+    // esquiva cambiando de red. Se mira ANTES de bcrypt: si no, cada intento seguiría
+    // costando sus ~100 ms de CPU y el freno no frenaría nada.
+    const ahora = Date.now();
+    const freno = estadoFreno(user, ahora);
+    if (freno.frenado) return res.status(429).json({ ok: false, error: freno.mensaje, segundos: freno.segundos });
+
     const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
+    if (!valid) {
+      const f = trasFalloLogin(user, ahora);
+      await dbRun("UPDATE users SET login_intentos = ?, login_bloqueado_hasta = ? WHERE id = ?",
+        [f.login_intentos, f.login_bloqueado_hasta, user.id]).catch(() => {});
+      // El mensaje NO cambia según si el usuario existe o la contraseña falla: decirlo
+      // convertiría el login en un buscador de nombres de usuario válidos.
+      return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
+    }
+
+    const ok = trasLoginCorrecto();
+    await dbRun("UPDATE users SET login_intentos = ?, login_bloqueado_hasta = ? WHERE id = ?",
+      [ok.login_intentos, ok.login_bloqueado_hasta, user.id]).catch(() => {});
+
+    // `pass_temporal` viaja en el token: es lo que permite que requireAuth corte el paso
+    // en el servidor, no solo que la pantalla enseñe un formulario.
+    const debeCambiar = !!user.pass_temporal;
     const token = jwt.sign(
-      { id: user.id, username: user.username, rol: user.rol, nombre: user.nombre, local: user.local, modulos: modulosEfectivos(user.rol, user.modulos) },
+      { id: user.id, username: user.username, rol: user.rol, nombre: user.nombre, local: user.local,
+        modulos: modulosEfectivos(user.rol, user.modulos), pass_temporal: debeCambiar },
       JWT_SECRET,
-      { expiresIn: "8h" }
+      { expiresIn: debeCambiar ? "30m" : "8h" }   // si solo va a cambiar la contraseña, no hace falta más
     );
-    res.json({ ok: true, token, rol: user.rol, nombre: user.nombre });
+    res.json({ ok: true, token, rol: user.rol, nombre: user.nombre, debeCambiarPassword: debeCambiar });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error de autenticación" });
+  }
+});
+
+// Cambiar la propia contraseña. Sirve para el cambio obligatorio de la primera vez y para
+// cambiarla cuando a uno le apetezca.
+app.put("/api/mi-password", requireAuth(), async (req, res) => {
+  try {
+    const u = await dbGet("SELECT id, username, password_hash, pass_temporal FROM users WHERE id = ?", [req.user.id]);
+    if (!u) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
+
+    const actual = String(req.body?.actual || "");
+    const nueva = String(req.body?.nueva || "");
+    if (!(await bcrypt.compare(actual, u.password_hash))) {
+      return res.status(401).json({ ok: false, error: "La contraseña actual no es correcta." });
+    }
+    const v = validarPassword(nueva, { username: u.username });
+    if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
+
+    await dbRun(
+      "UPDATE users SET password_hash = ?, password_enc = ?, pass_temporal = FALSE, pass_cambiada_en = ? WHERE id = ?",
+      [await bcrypt.hash(nueva, 10), encUserPass(nueva), isoConOffset(Date.now()), u.id]);
+
+    // Token nuevo sin la marca: si no, seguiría bloqueado hasta volver a entrar.
+    const fresco = await dbGet("SELECT * FROM users WHERE id = ?", [u.id]);
+    const token = jwt.sign(
+      { id: fresco.id, username: fresco.username, rol: fresco.rol, nombre: fresco.nombre, local: fresco.local,
+        modulos: modulosEfectivos(fresco.rol, fresco.modulos), pass_temporal: false },
+      JWT_SECRET, { expiresIn: "8h" });
+    res.json({ ok: true, token, mensaje: "Contraseña cambiada." });
+  } catch (e) {
+    console.error("[auth] mi-password:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cambiar la contraseña" });
   }
 });
 
@@ -3838,24 +3911,46 @@ app.get("/api/rrhh/trabajadores", requireAuth(RRHH_ROLES), async (req, res) => {
 // Alta de trabajador desde RRHH (no depende de POST /api/users, que es solo dirección).
 // El encargado solo puede crear en SU local y con rol acotado a 'trabajador'.
 app.post("/api/rrhh/trabajador", requireAuth(RRHH_ROLES), async (req, res) => {
-  const { username, password, nombre } = req.body;
+  const { username, nombre } = req.body;
   let local = req.body.local, rol = req.body.rol || "trabajador";
-  if (!username || !password || !nombre) return res.status(400).json({ ok: false, error: "Faltan usuario, contraseña o nombre" });
+  if (!username || !nombre) return res.status(400).json({ ok: false, error: "Faltan el usuario o el nombre" });
   if (esEncargado(req)) { local = localScope(req); rol = "trabajador"; }
   if (!local) return res.status(400).json({ ok: false, error: "Falta el local" });
   if (!rrhhPuedeLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
   if (!["trabajador", "encargado"].includes(rol)) rol = "trabajador";
   try {
-    const hash = await bcrypt.hash(password, 10);
+    // La contraseña inicial es el propio nombre de usuario y la cuenta queda marcada como
+    // «tiene que cambiarla»: hasta que lo haga, no puede hacer nada más en el panel. Sin
+    // esa obligación, cuarenta altas serían cuarenta cuentas con la contraseña sabida.
+    const inicial = passwordInicial(username);
+    const hash = await bcrypt.hash(inicial, 10);
     const now = new Date().toISOString();
     const row = await dbRun(
-      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, fecha_alta, activo, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`,
-      [username, hash, encUserPass(password), rol, nombre, local, now.slice(0, 10), now]);
+      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, fecha_alta, activo, pass_temporal, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, TRUE, ?) RETURNING id`,
+      [username, hash, encUserPass(inicial), rol, nombre, local, now.slice(0, 10), now]);
     invalidarInternos();
-    res.json({ ok: true, id: row.id });
+    res.json({
+      ok: true, id: row.id, username, passwordInicial: inicial,
+      mensaje: `${nombre} entra con usuario y contraseña «${username}». Al entrar le pedirá cambiarla.`,
+    });
   } catch (e) {
     res.status(400).json({ ok: false, error: /duplicate|unique/i.test(e.message || "") ? "Ese usuario ya existe" : "No se pudo crear" });
   }
+});
+
+// Volver a poner la contraseña inicial (alguien que la ha olvidado). Deja la cuenta otra
+// vez en «tiene que cambiarla», así que la ventana vuelve a ser corta.
+app.post("/api/rrhh/trabajador/:id/reset-password", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const w = await dbGet("SELECT id, username, nombre, local FROM users WHERE id = ?", [Number(req.params.id)]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "No encontrado" });
+    const inicial = passwordInicial(w.username);
+    await dbRun("UPDATE users SET password_hash = ?, password_enc = ?, pass_temporal = TRUE, login_intentos = 0, login_bloqueado_hasta = NULL WHERE id = ?",
+      [await bcrypt.hash(inicial, 10), encUserPass(inicial), w.id]);
+    await ficAuditar("usuario", w.id, "reset_password", req.user.username, { local: w.local, workerId: w.id });
+    res.json({ ok: true, mensaje: `${w.nombre} vuelve a entrar con «${inicial}» y tendrá que cambiarla.` });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo restablecer" }); }
 });
 
 // Resumen del equipo por local (plantilla, activos/bajas, antigüedad, check-ins, docs por caducar,
@@ -6335,7 +6430,7 @@ app.put("/api/mi-perfil", requireAuth(), async (req, res) => {
 
 app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, res) => {
   try {
-    const w = await dbGet("SELECT id, username, nombre, rol, local, telefono, email, dni, puesto, fecha_nac, fecha_alta, fecha_baja, foto_url, agora_username, activo, creado_en FROM users WHERE id = ?", [req.params.id]);
+    const w = await dbGet("SELECT id, username, nombre, rol, local, telefono, email, dni, puesto, fecha_nac, fecha_alta, fecha_baja, foto_url, agora_username, activo, pass_temporal, pass_cambiada_en, creado_en FROM users WHERE id = ?", [req.params.id]);
     if (!w) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
     if (!rrhhPuedeLocal(req, w.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
     const notas = await dbAll("SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC", [w.id]);

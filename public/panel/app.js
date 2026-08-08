@@ -1548,10 +1548,30 @@ function renderRRPin() {
     : p.pin_temporal
       ? `<span class="pill">PIN provisional</span> <span class="mut">Aún no lo ha cambiado.</span>`
       : `<span class="pill ok">PIN activo</span>${p.pin_actualizado_en ? ` <span class="mut">desde el ${esc(String(p.pin_actualizado_en).slice(0, 10))}</span>` : ""}`;
-  return `<div class="card"><div class="ch"><h3>PIN de fichaje</h3>
-      <button class="btn sm" data-act="rr-pin" data-id="${RRSEG.sel.id}">${p.tiene ? "Cambiar PIN" : "Asignar PIN"}</button></div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${estado}
-      ${bloqueado ? '<span class="pill bad">bloqueado por intentos fallidos</span>' : ""}</div></div>`;
+  const t = (f && f.trabajador) || {};
+  return `<div class="card"><div class="ch"><h3>Acceso</h3>
+      <div style="display:flex;gap:8px">
+        <button class="btn sm" data-act="rr-reset-pass" data-id="${RRSEG.sel.id}" data-nombre="${esc(t.nombre || "")}">Restablecer contraseña</button>
+        <button class="btn sm" data-act="rr-pin" data-id="${RRSEG.sel.id}">${p.tiene ? "Cambiar PIN" : "Asignar PIN"}</button>
+      </div></div>
+    <div class="grid g3" style="gap:12px">
+      <div><div class="t2">Contraseña del panel</div><div class="t1">${t.pass_temporal
+        ? '<span class="pill warn">sin estrenar</span> <span class="mut">entra con su usuario</span>'
+        : t.pass_cambiada_en ? `<span class="pill ok">propia</span> <span class="mut">desde el ${esc(String(t.pass_cambiada_en).slice(0, 10))}</span>`
+        : '<span class="pill ok">propia</span>'}</div></div>
+      <div><div class="t2">PIN de fichaje</div><div class="t1">${estado}
+        ${bloqueado ? '<span class="pill bad">bloqueado</span>' : ""}</div></div>
+    </div></div>`;
+}
+
+// Restablecer: vuelve a dejar la contraseña igual al usuario y marcada como sin estrenar,
+// así que la ventana en que la sabe cualquiera vuelve a durar lo que tarde en entrar.
+async function rrResetPassword(id, nombre) {
+  if (!await confirmModal(
+    `La contraseña de ${nombre || "esta persona"} vuelve a ser su nombre de usuario, y el sistema le pedirá cambiarla al entrar. Hasta que entre, cualquiera que sepa su usuario puede acceder.`,
+    { ok: "Restablecer", danger: true })) return;
+  try { const r = await apiSend("POST", `/api/rrhh/trabajador/${id}/reset-password`, {}); toast(r.mensaje || "Restablecida ✅"); rrSelWorker(id); }
+  catch (e) { toast(e.message); }
 }
 
 async function rrAsignarPin(id) {
@@ -1777,10 +1797,28 @@ function rrWorkerAdd() {
     ? `<input type="hidden" name="local" value="${esc(USER.local || "")}"><div class="field"><label>Local</label><input value="${esc(USER.local || "")}" disabled></div>`
     : `<div class="field"><label>Local</label><select name="local">${LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("")}</select></div>`;
   const rolField = enc ? `<input type="hidden" name="rol" value="trabajador">` : `<div class="field"><label>Rol</label><select name="rol"><option value="trabajador">Trabajador</option><option value="encargado">Encargado</option></select></div>`;
-  const ov = modal("Añadir trabajador", `<form id="fWorker" class="grid" style="gap:12px"><div class="field"><label>Nombre</label><input name="nombre" required></div><div class="field"><label>Usuario</label><input name="username" required placeholder="nombre.local"></div>${localField}${rolField}<div class="field"><label>Contraseña</label><input name="password" required value="tapeta2024"></div><button class="btn primary" type="submit">Crear</button></form>`);
+  // Ya no se pide contraseña: la inicial es el propio usuario y el sistema obliga a
+  // cambiarla al entrar. Antes venía «tapeta2024» rellenada y nadie la cambiaba nunca,
+  // porque además el trabajador no podía.
+  const ov = modal("Añadir trabajador", `<form id="fWorker" class="grid" style="gap:12px">
+    <div class="field"><label>Nombre</label><input name="nombre" required></div>
+    <div class="field"><label>Usuario</label><input name="username" required placeholder="nombre.local"></div>
+    ${localField}${rolField}
+    <p class="mut" style="margin:0;line-height:1.55">Entrará con <b>su usuario como contraseña</b> y lo primero que
+      le pedirá el sistema es cambiarla. Hasta que lo haga no puede ver nada del panel.</p>
+    <button class="btn primary" type="submit">Crear</button></form>`);
   ov.querySelector("#fWorker").addEventListener("submit", async (e) => {
     e.preventDefault(); const data = Object.fromEntries(new FormData(e.target).entries());
-    try { await apiSend("POST", "/api/rrhh/trabajador", data); ov.remove(); toast("Trabajador creado ✅"); loadRRHH(); } catch (err) { toast("Error: " + err.message); }
+    try {
+      const r = await apiSend("POST", "/api/rrhh/trabajador", data);
+      ov.remove();
+      modal("Trabajador creado", `
+        <p style="margin:0 0 14px;line-height:1.6">${esc(r.mensaje || "Creado.")}</p>
+        <p class="mut" style="margin:0 0 16px;line-height:1.55">Díselo en persona. Si se le olvida, desde su ficha
+          puedes volver a dejarlo como al principio.</p>
+        <div style="display:flex;justify-content:flex-end"><button class="btn primary" data-close>Entendido</button></div>`);
+      loadRRHH();
+    } catch (err) { toast("Error: " + err.message); }
   });
 }
 function rrContratar(id, nombre) {
@@ -4513,6 +4551,7 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-worker") rrSelWorker(t.getAttribute("data-id"));
   else if (act === "rr-editar-datos") rrEditarDatos(t.getAttribute("data-id"));
   else if (act === "rr-pin") rrAsignarPin(t.getAttribute("data-id"));
+  else if (act === "rr-reset-pass") rrResetPassword(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-doc-subir") rrDocSubir(t.getAttribute("data-id"));
   else if (act === "rr-doc-del") rrDocDel(t.getAttribute("data-id"));
   else if (act === "cand-contratar") rrContratar(t.getAttribute("data-id"), t.getAttribute("data-nombre"));

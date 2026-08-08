@@ -115,6 +115,20 @@ describe("máquina — cálculo de la jornada", () => {
     assert.equal(j.minEfectivo, 180);
   });
 
+  test("ENTRA A LAS 20:00 Y SALE A LAS 00:13: mismo día y 4 h 13 min", () => {
+    // El caso que más se repite en la casa. La salida cae ya en el día siguiente del reloj
+    // de pared, pero pertenece al MISMO día de trabajo y son 4 h 13, no 4 ni 5.
+    const entrada = Date.UTC(2026, 7, 8, 18, 0);    // 20:00 de Madrid
+    const salida = Date.UTC(2026, 7, 8, 22, 13);    // 00:13, ya del día 9 en el reloj
+    const j = calcularJornada([
+      { id: 1, tipo: "entrada", epoch_ms: entrada, ocurrido_en: "2026-08-08T20:00:00+02:00" },
+      { id: 2, tipo: "salida", epoch_ms: salida, ocurrido_en: "2026-08-09T00:13:00+02:00" },
+    ]);
+    assert.equal(j.minPresencia, 253);
+    assert.equal(Math.floor(j.minPresencia / 60), 4);
+    assert.equal(j.minPresencia % 60, 13);
+  });
+
   test("EL CIERRE DE MADRUGADA: entra a las 20:00 y sale a las 02:10", () => {
     const entrada = Date.UTC(2026, 7, 8, 18, 0);   // 20:00 de Madrid
     const salida = Date.UTC(2026, 7, 9, 0, 10);    // 02:10 del día siguiente

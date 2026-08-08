@@ -39,11 +39,23 @@
         font-size: 0.9rem;
         margin-bottom: 1.5rem;
       }
-      #loginError {
+      #loginError,
+      #cambioError {
         color: var(--color-error);
         font-size: 0.875rem;
         margin-top: 0.75rem;
         display: none;
+      }
+      /* Aviso del cambio obligatorio: explica POR QUÉ se le pide, que si no parece
+         un trámite y la gente pone cualquier cosa. */
+      .login-aviso {
+        background: rgba(240, 160, 48, 0.12);
+        border: 1px solid rgba(240, 160, 48, 0.35);
+        border-radius: var(--radius-md);
+        padding: 0.75rem 0.9rem;
+        margin: 0 0 1.1rem;
+        font-size: 0.86rem;
+        line-height: 1.55;
       }
     </style>
   </head>
@@ -67,6 +79,23 @@
           </label>
           <button class="btn" type="submit">Entrar</button>
           <div id="loginError"></div>
+        </form>
+
+        <!-- Cambio obligatorio la primera vez. La cuenta se crea con la contraseña igual
+             al usuario, así que hasta que se cambie no se puede hacer nada más. -->
+        <form id="cambioForm" class="form hidden">
+          <p class="login-aviso">Entras por primera vez. Elige una contraseña que solo sepas tú
+            antes de seguir: la que traías es tu propio nombre de usuario y la sabe cualquiera.</p>
+          <label>
+            <span>Contraseña nueva</span>
+            <input type="password" name="nueva" required autocomplete="new-password" minlength="6" />
+          </label>
+          <label>
+            <span>Repítela</span>
+            <input type="password" name="repite" required autocomplete="new-password" minlength="6" />
+          </label>
+          <button class="btn" type="submit">Guardar y entrar</button>
+          <div id="cambioError"></div>
         </form>
       </div>
     </div>
