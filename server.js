@@ -760,6 +760,25 @@ async function initDB() {
       )
     `);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_pulso_resp_mes ON pulso_respuestas(mes, local)`);
+    // Tercera tabla, y aquí SÍ hay nombre: es la vía por la que alguien pide hablar, y la
+    // da él a sabiendas. Su mensaje es un campo distinto del comentario anónimo (dos
+    // <textarea> distintos en el formulario): copiar uno en otro sería justo lo que
+    // prometimos no hacer. Nada en pulso_respuestas indica que esta persona pidió hablar.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS pulso_contactos (
+        id SERIAL PRIMARY KEY,
+        mes TEXT NOT NULL,
+        worker_id INTEGER NOT NULL,
+        nombre TEXT,
+        local TEXT,
+        con_quien TEXT,
+        mensaje TEXT,
+        atendido INTEGER DEFAULT 0,
+        atendido_por TEXT,
+        atendido_en TEXT,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
     // Ventas diarias por establecimiento (integración Ágora TPV). Aditiva; se llena por el job de
     // sincronización cuando haya locales configurados (env AGORA_LOCALES). Vacía = dashboard honesto.
@@ -3873,6 +3892,52 @@ app.post("/api/pulso/:token", async (req, res) => {
   }
 });
 
+// Público: «quiero que hablemos». Es la ÚNICA parte del formulario que lleva nombre, y la
+// persona la marca a sabiendas. Va aparte del envío de la encuesta y NO consume el token:
+// pedir hablar y contestar son independientes, y quien pide hablar sin contestar debe
+// seguir pudiendo contestar después (y seguir contando como pendiente en los recordatorios).
+app.post("/api/pulso/:token/contacto", async (req, res) => {
+  if (!pulsoRateLimit(req, res, 5)) return;
+  const conQuien = ["direccion", "rrhh", "encargado"].includes(req.body?.con_quien) ? req.body.con_quien : "direccion";
+  const mensaje = String(req.body?.mensaje || "").trim().slice(0, 2000) || null;
+  try {
+    const inv = await dbGet(
+      `SELECT i.id, i.mes, i.local, i.caduca_en, i.worker_id, u.nombre
+       FROM pulso_invitaciones i JOIN users u ON u.id = i.worker_id
+       WHERE i.token_hash = ?`, [pulsoHash(req.params.token)]
+    );
+    if (!inv) return res.status(404).json({ ok: false, error: "Este enlace no es válido." });
+    const hoy = new Date().toISOString().slice(0, 10);
+    if (inv.caduca_en < hoy) return res.status(410).json({ ok: false, error: "Este enlace ha caducado." });
+    // Una petición por persona y mes: si insiste, se actualiza el mensaje en vez de duplicar.
+    const previa = await dbGet(`SELECT id FROM pulso_contactos WHERE worker_id = ? AND mes = ? AND atendido = 0`, [inv.worker_id, inv.mes]);
+    if (previa) {
+      await dbRun(`UPDATE pulso_contactos SET con_quien = ?, mensaje = ?, creado_en = ? WHERE id = ?`,
+        [conQuien, mensaje, new Date().toISOString(), previa.id]);
+    } else {
+      await dbRun(
+        `INSERT INTO pulso_contactos (mes, worker_id, nombre, local, con_quien, mensaje) VALUES (?, ?, ?, ?, ?, ?)`,
+        [inv.mes, inv.worker_id, inv.nombre, inv.local, conQuien, mensaje]
+      );
+    }
+    res.json({ ok: true });
+    avisarPeticionHablar().catch(() => {});
+  } catch (e) {
+    console.error("[pulso] contacto:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo enviar. Inténtalo de nuevo." });
+  }
+});
+
+// Aviso inmediato a dirección, SIN NOMBRE. El nombre vive en el panel, no en el WhatsApp
+// del móvil personal: por la pantalla de bloqueo pasa mucha gente.
+async function avisarPeticionHablar() {
+  try {
+    const tel = await getConfig("pulso_aviso_telefono");
+    if (!tel || !isReady()) return;
+    await sendMensajeLibre(tel, "Alguien del equipo ha pedido hablar contigo.\n\nEstá en el panel → RR. HH. → Pulso del equipo.");
+  } catch (e) { console.error("[pulso] aviso:", e.message); }
+}
+
 // ── Panel: solo dirección y RR.HH. ────────────────────────────────────────
 // El ENCARGADO no entra: la pregunta 2 va sobre él, y en un local pequeño ver la media
 // de su equipo es leer las respuestas de su gente. Si el equipo sospecha que su jefe
@@ -3925,6 +3990,28 @@ app.get("/api/rrhh/pulso/participacion", requireAuth(PULSO_ROLES), async (req, r
       pendientes: filas.filter((f) => !f.usado).map((f) => ({ nombre: f.nombre, local: f.local, enviado: !!f.enviado_en })),
     });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar la participación" }); }
+});
+
+// Peticiones de hablar. Es la única lista del pulso con nombres, y es legítima: la persona
+// los dio a propósito. No lleva NADA de sus respuestas.
+app.get("/api/rrhh/pulso/contactos", requireAuth(PULSO_ROLES), async (req, res) => {
+  try {
+    const soloPendientes = String(req.query.pendientes || "") === "1";
+    const filas = await dbAll(
+      `SELECT id, mes, nombre, local, con_quien, mensaje, atendido, atendido_por, atendido_en, creado_en
+       FROM pulso_contactos ${soloPendientes ? "WHERE atendido = 0" : ""}
+       ORDER BY atendido ASC, creado_en DESC LIMIT 100`
+    );
+    res.json({ ok: true, data: filas, pendientes: filas.filter((f) => !f.atendido).length });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar las peticiones" }); }
+});
+
+app.put("/api/rrhh/pulso/contacto/:id", requireAuth(PULSO_ROLES), async (req, res) => {
+  try {
+    await dbRun(`UPDATE pulso_contactos SET atendido = 1, atendido_por = ?, atendido_en = ? WHERE id = ?`,
+      [req.user.nombre || req.user.username, new Date().toISOString(), req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo marcar" }); }
 });
 
 // Genera las invitaciones del mes y las manda por WhatsApp. Solo dirección.

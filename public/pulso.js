@@ -49,6 +49,7 @@ async function cargar() {
     }
     $("pulsoPreguntas").innerHTML = (j.preguntas || []).map(pintarPregunta).join("");
     $("pulsoForm").classList.remove("hidden");
+    $("pulsoHablemos").classList.remove("hidden");
   } catch {
     aviso("No hay conexión. Inténtalo dentro de un rato.");
   }
@@ -75,8 +76,38 @@ $("pulsoForm").addEventListener("submit", async (e) => {
     $("pulsoForm").classList.add("hidden");
     $("pulsoPromesa").classList.add("hidden");
     $("pulsoGracias").classList.remove("hidden");
+    // El bloque de «hablemos» sigue disponible tras enviar: puede que justo al contestar
+    // se dé cuenta de que sí quiere hablar. Su petición va por otra vía y no lleva las
+    // respuestas, así que no rompe nada.
   } catch {
     $("pulsoMsg").textContent = "No hay conexión. Inténtalo dentro de un rato.";
+    btn.disabled = false;
+  }
+});
+
+// ── «Quiero que hablemos» ────────────────────────────────────────────────────
+// Petición aparte, con su propio textarea. Nunca se copia aquí el comentario anónimo:
+// son dos cosas distintas y el trabajador tiene derecho a que lo sigan siendo.
+$("hbCheck").addEventListener("change", (e) => {
+  $("hbDetalle").classList.toggle("hidden", !e.target.checked);
+});
+
+$("hbEnviar").addEventListener("click", async () => {
+  const btn = $("hbEnviar");
+  btn.disabled = true;
+  $("hbMsg").textContent = "Enviando…";
+  try {
+    const r = await fetch("/api/pulso/" + encodeURIComponent(TOKEN) + "/contacto", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ con_quien: $("hbConQuien").value, mensaje: $("hbMensaje").value.trim() || null }),
+    });
+    const j = await r.json();
+    if (!j.ok) { $("hbMsg").textContent = j.error || "No se pudo enviar."; btn.disabled = false; return; }
+    $("hbDetalle").innerHTML = `<p class="form-note" style="margin:0">Hecho. Te buscarán para hablar. Tus respuestas del formulario siguen siendo anónimas.</p>`;
+    $("hbCheck").disabled = true;
+  } catch {
+    $("hbMsg").textContent = "No hay conexión. Inténtalo dentro de un rato.";
     btn.disabled = false;
   }
 });

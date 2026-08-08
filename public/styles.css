@@ -435,6 +435,18 @@ h1, h2, h3 {
 .escala-op input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 .escala-pies { display: flex; justify-content: space-between; margin-top: 0.4rem; font-size: 0.82rem; color: var(--muted); }
 
+/* «Quiero que hablemos»: separado del formulario con un borde y otro fondo, porque es lo
+   único que lleva nombre. La separación visual es parte del mensaje. */
+.hablemos {
+  margin-top: 2rem; padding: 1.2rem;
+  border: 1px dashed var(--accent); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.hablemos-check { display: flex; gap: 0.7rem; align-items: flex-start; cursor: pointer; }
+.hablemos-check input { width: 20px; height: 20px; margin-top: 2px; flex: none; accent-color: var(--accent-2); }
+.hablemos-check span { font-size: 0.92rem; line-height: 1.55; }
+.hablemos #hbDetalle { margin-top: 1rem; }
+
 /* Tarjeta de aviso: se usa cuando al trabajador le falta algo por rellenar. */
 .card--warn {
   border-left: 3px solid var(--accent);

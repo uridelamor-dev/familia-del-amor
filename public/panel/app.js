@@ -1263,7 +1263,7 @@ function rrTabs() {
 function rrPh(sub) { return `<div class="ph"><div class="eyebrow">Personas</div><h1>RR. HH.</h1><div class="sub">${esc(sub)}</div></div>`; }
 
 // ── Pulso anónimo del equipo ──
-let PULSO = { mes: "", resumen: null, participacion: null };
+let PULSO = { mes: "", resumen: null, participacion: null, contactos: null };
 const pulsoNota = "Sabemos quién ha contestado, nunca qué ha contestado. Los desgloses por local solo aparecen con 4 o más respuestas.";
 function pulsoMedia(v) { return v == null ? "—" : String(v).replace(".", ","); }
 function renderRRPulso() {
@@ -1279,12 +1279,13 @@ function renderRRPulso() {
   const actual = serie.length ? serie[serie.length - 1].media : null;
   const delta = (actual != null && previo != null) ? Math.round((actual - previo) * 10) / 10 : null;
 
+  const nPend = (PULSO.contactos && PULSO.contactos.pendientes) || 0;
   const kpis = `<div class="grid g4" style="margin-bottom:16px">
     ${stat("Participación", ic("users", 15), `${num(part.respondidos)}/${num(part.invitados)}`)}
     ${stat("Media general", ic("chart", 15), pulsoMedia(actual), actual != null ? "/ 5" : "")}
     ${stat("Respecto al mes anterior", ic("chart", 15), delta == null ? "—" : (delta >= 0 ? "+" : "−") + pulsoMedia(Math.abs(delta)))}
-    ${stat("Respuestas del mes", ic("chat", 15), num(R.total || 0))}
-  </div>`;
+    ${stat("Quieren hablar contigo", ic("chat", 15), num(nPend), "", nPend ? "pendientes" : "")}
+  </div>` + renderPulsoContactos();
 
   if (!R.suficiente) {
     return cab + kpis + `<div class="card"><div class="ch"><h3>Todavía no hay suficientes respuestas</h3></div><p class="mut" style="margin:0;line-height:1.6">Hacen falta al menos 5 respuestas en el mes para poder enseñar nada sin señalar a nadie. Ahora mismo hay ${num(R.total || 0)}.</p></div>` + renderPulsoParticipacion(part);
@@ -1305,6 +1306,31 @@ function renderRRPulso() {
     : "";
 
   return cab + kpis + `<div class="grid g2" style="margin-bottom:16px">${resultados}${evol}</div>` + coment + renderPulsoParticipacion(part);
+}
+// La ÚNICA tarjeta del pulso con nombres, y es legítima: la persona los dio a propósito
+// marcando «quiero que hablemos». No lleva ni una de sus respuestas.
+function renderPulsoContactos() {
+  const filas = (PULSO.contactos && PULSO.contactos.data) || [];
+  const pend = filas.filter((c) => !c.atendido);
+  if (!filas.length) return "";
+  const CON = { direccion: "contigo", rrhh: "con RR. HH.", encargado: "con su encargado" };
+  const fila = (c) => `<div class="row"${c.atendido ? ' style="opacity:.55"' : ""}>
+    <div class="grow" style="min-width:0">
+      <div class="t1">${esc(c.nombre || "—")} <span class="mut" style="font-weight:400">quiere hablar ${esc(CON[c.con_quien] || "contigo")}</span></div>
+      <div class="t2">${esc(nombreCortoLocal(c.local || ""))} · ${esc(String(c.creado_en || "").slice(0, 10))}${c.atendido ? ` · atendido por ${esc(c.atendido_por || "")}` : ""}</div>
+      ${c.mensaje ? `<div class="t2" style="margin-top:6px;color:var(--ink);line-height:1.55;white-space:pre-wrap">${esc(c.mensaje)}</div>` : ""}
+    </div>
+    ${c.atendido ? '<span class="pill ok">Atendido</span>' : `<button class="btn sm primary" data-act="pulso-atendido" data-id="${c.id}">Marcar atendido</button>`}
+  </div>`;
+  return `<div class="card p0" style="margin-bottom:16px;border-left:3px solid var(--brand)">
+    <div class="ch" style="padding:18px 18px 0"><h3>Han pedido hablar contigo</h3>${pend.length ? `<span class="pill bad">${num(pend.length)} pendiente${pend.length === 1 ? "" : "s"}</span>` : ""}</div>
+    <div class="mut" style="padding:6px 18px 0;font-size:12px">Lo único con nombre de todo el pulso, porque lo dieron ellos. No incluye ninguna de sus respuestas.</div>
+    <div class="rows">${filas.map(fila).join("")}</div>
+  </div>`;
+}
+async function pulsoAtendido(id) {
+  try { await apiSend("PUT", "/api/rrhh/pulso/contacto/" + encodeURIComponent(id)); toast("Marcado como atendido ✅"); loadRRHH(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 // Tarjeta separada a propósito: esta sabe QUIÉN, la de arriba sabe QUÉ. Es la expresión
 // en pantalla del modelo de datos, y lo que hace que el equipo se crea el anonimato.
@@ -1552,11 +1578,12 @@ async function loadRRHH() {
     } else if (RRTAB === "pulso") {
       // Dos peticiones separadas a propósito: una sabe QUIÉN contestó, la otra QUÉ se
       // contestó. Nunca se cruzan, ni siquiera aquí.
-      const [resumen, participacion] = await Promise.all([
+      const [resumen, participacion, contactos] = await Promise.all([
         apiRaw("/api/rrhh/pulso/resumen" + (PULSO.mes ? "?mes=" + PULSO.mes : "")).catch(() => null),
         apiRaw("/api/rrhh/pulso/participacion" + (PULSO.mes ? "?mes=" + PULSO.mes : "")).catch(() => null),
+        apiRaw("/api/rrhh/pulso/contactos").catch(() => null),
       ]);
-      PULSO.resumen = resumen; PULSO.participacion = participacion;
+      PULSO.resumen = resumen; PULSO.participacion = participacion; PULSO.contactos = contactos;
       if (resumen && resumen.mes) PULSO.mes = resumen.mes;
       view.innerHTML = renderRRPulso();
     } else if (RRTAB === "vacantes") {
@@ -2973,6 +3000,7 @@ document.addEventListener("click", (e) => {
   else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; closeDrawer(); go(MODULOS_POR_LOCAL.has(CURRENT) ? CURRENT : "dashboard"); }
   else if (act === "ag-metodos") agoraMetodos(t.getAttribute("data-local"));
   else if (act === "pulso-enviar") pulsoEnviar();
+  else if (act === "pulso-atendido") pulsoAtendido(t.getAttribute("data-id"));
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }

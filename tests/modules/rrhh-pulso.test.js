@@ -159,6 +159,17 @@ describe("pulso — separación estructural de las dos tablas", () => {
       "una consulta que toque las dos tablas rompe el anonimato por construcción");
   });
 
+  test("las peticiones de hablar tampoco se pueden cruzar con las respuestas", () => {
+    // pulso_contactos SÍ lleva nombre (la persona lo dio a propósito). Justo por eso no
+    // puede aparecer nunca en la misma consulta que las respuestas anónimas.
+    const dentro = server.split("`").filter((_, i) => i % 2 === 1);
+    const culpables = dentro
+      .filter((t) => t.includes("pulso_respuestas") && t.includes("pulso_contactos"))
+      .map((t) => t.replace(/\s+/g, " ").trim().slice(0, 120));
+    assert.deepEqual(culpables, [],
+      "cruzar las peticiones de hablar con las respuestas pondría nombre a lo anónimo");
+  });
+
   test("no hay endpoint que devuelva respuestas individuales", () => {
     // Todo SELECT sobre pulso_respuestas debe agregar (COUNT/AVG/SUM) o pedir solo
     // las columnas públicas para agregarlas en el módulo puro.

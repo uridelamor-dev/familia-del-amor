@@ -40,6 +40,33 @@
         <p class="form-note" id="pulsoMsg" role="status" aria-live="polite"></p>
       </form>
 
+      <!-- Separado del formulario a propósito: esto SÍ lleva nombre y la persona lo sabe.
+           Es la única forma honesta de que alguien pueda pedir ayuda sin que el anonimato
+           de las respuestas deje de ser cierto. -->
+      <div class="hablemos hidden" id="pulsoHablemos">
+        <label class="hablemos-check">
+          <input type="checkbox" id="hbCheck" />
+          <span><strong>Quiero que hablemos.</strong> Esto es lo único que llevará tu nombre.
+            Tus respuestas de arriba siguen siendo anónimas: no se envían junto a esto.</span>
+        </label>
+        <div class="hidden" id="hbDetalle">
+          <label>
+            <span>¿Con quién?</span>
+            <select id="hbConQuien">
+              <option value="direccion">Con dirección</option>
+              <option value="rrhh">Con RR. HH.</option>
+              <option value="encargado">Con mi encargado</option>
+            </select>
+          </label>
+          <label>
+            <span>¿Quieres adelantar algo? <small>(opcional)</small></span>
+            <textarea id="hbMensaje" rows="3" maxlength="2000" placeholder="Si prefieres, lo hablamos en persona y ya está."></textarea>
+          </label>
+          <button class="btn ghost" type="button" id="hbEnviar">Pedir que hablemos</button>
+          <p class="form-note" id="hbMsg" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+
       <!-- Gracias -->
       <div class="card hidden" id="pulsoGracias">
         <h3 style="margin-top:0">¡Gracias!</h3>
