@@ -134,6 +134,11 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .fic-tag{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface2);font-size:11px;font-weight:600;color:var(--ink3);white-space:nowrap;margin-right:4px}
 .fic-tag.ok{border-color:transparent;background:var(--brand-soft);color:var(--brand)}
 .fic-tag.aviso{border-color:transparent;background:var(--danger-soft);color:var(--danger)}
+.fic-evs{list-style:none;margin:0;padding:0}
+.fic-evs li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px}
+.fic-evs li:last-child{border-bottom:none}
+/* Anulado NO se oculta: la fila sigue ahí, tachada, porque el registro no se borra. */
+.fic-evs li.anulado>span:first-child{text-decoration:line-through;color:var(--ink3)}
 
 /* Tarjeta plegable (<details>): la cabecera hace de tirador. Nativa, sin JS. */
 .card.fold{padding:0;overflow:hidden;align-self:start}

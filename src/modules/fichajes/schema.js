@@ -70,6 +70,53 @@ export async function ensureSchemaFichajes(x) {
   // El `local` que se guarda es el DEL DISPOSITIVO, no el de la ficha del trabajador: lo
   // que importa del registro es dónde se fichó de verdad.
 
+  // Correcciones. Append-only, motivo OBLIGATORIO y autor: es lo que hace que un registro
+  // editable siga valiendo como prueba. Apunta al evento que se anula y/o al que se añade;
+  // ninguno de los dos se toca después.
+  await x.run(`CREATE TABLE IF NOT EXISTS fic_correcciones (
+    id SERIAL PRIMARY KEY,
+    worker_id INTEGER NOT NULL,
+    local TEXT NOT NULL,
+    dia_negocio TEXT NOT NULL,
+    accion TEXT NOT NULL,
+    evento_anulado_id INTEGER,
+    evento_nuevo_id INTEGER,
+    motivo TEXT NOT NULL,
+    autor TEXT NOT NULL,
+    creado_en TEXT NOT NULL,
+    CHECK (accion IN ('anadir','anular','sustituir')),
+    CHECK (length(motivo) >= 5)
+  )`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fic_corr ON fic_correcciones (worker_id, dia_negocio)`);
+
+  // Proyección de la jornada: RECALCULABLE. Nada de lo que hay aquí es fuente de verdad
+  // salvo `min_validado` y su firma — el resto sale de fic_eventos y de hor_asignaciones
+  // y se puede volver a calcular en cualquier momento.
+  //
+  // `min_planificado` y `min_fichado` viven en columnas SEPARADAS y jamás se copian el uno
+  // en el otro. La diferencia entre ambos es la única señal de si el cuadrante es realista.
+  await x.run(`CREATE TABLE IF NOT EXISTS fic_jornadas (
+    id SERIAL PRIMARY KEY,
+    worker_id INTEGER NOT NULL,
+    local TEXT NOT NULL,
+    dia_negocio TEXT NOT NULL,
+    semana_id INTEGER,
+    min_planificado INTEGER NOT NULL DEFAULT 0,
+    min_fichado INTEGER NOT NULL DEFAULT 0,
+    min_pausa INTEGER NOT NULL DEFAULT 0,
+    min_validado INTEGER,
+    firma_eventos TEXT,
+    validado_en TEXT,
+    validado_por TEXT,
+    validado_nota TEXT,
+    incidencias TEXT,
+    requiere_revision BOOLEAN NOT NULL DEFAULT FALSE,
+    calculado_en TEXT NOT NULL,
+    UNIQUE (worker_id, dia_negocio)
+  )`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fic_jor_loc ON fic_jornadas (local, dia_negocio)`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fic_jor_rev ON fic_jornadas (local, requiere_revision) WHERE requiere_revision`);
+
   await x.run(`CREATE TABLE IF NOT EXISTS fic_auditoria (
     id SERIAL PRIMARY KEY,
     entidad TEXT NOT NULL,

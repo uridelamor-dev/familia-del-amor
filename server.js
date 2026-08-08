@@ -31,7 +31,7 @@ import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedi
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, caducidadMes, generarToken } from "./src/modules/rrhh/pulso.js";
 import { ensureSchemaHorarios, sembrarLocal } from "./src/modules/horarios/schema.js";
-import { instanteANegocio, lunesDe, diasSemana, isoConOffset } from "./src/modules/horarios/tiempo.js";
+import { instanteANegocio, lunesDe, diasSemana, isoConOffset, aMinutos, deMinutos, epochDeLocal, sumaDias } from "./src/modules/horarios/tiempo.js";
 import { detectarConflictos, resumirConflictos } from "./src/modules/horarios/conflictos.js";
 import { validarPublicacion, construirSnapshot } from "./src/modules/horarios/versiones.js";
 import { serializarCanonico } from "./src/core/canonico.js";
@@ -40,6 +40,7 @@ import { construirPdfSemana, nombreFichero } from "./src/modules/horarios/pdf/sc
 import { ensureSchemaFichajes } from "./src/modules/fichajes/schema.js";
 import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
 import { validarFormatoPin, estadoBloqueo, trasFallo as pinTrasFallo, trasAcierto as pinTrasAcierto } from "./src/modules/fichajes/pin.js";
+import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornadas.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
@@ -4674,6 +4675,255 @@ app.put("/api/mi-pin", requireAuth(), async (req, res) => {
     await ficAuditar("pin", yo.id, "cambio_propio", req.user.username, { local: yo.local, workerId: yo.id });
     res.json({ ok: true, mensaje: "PIN actualizado." });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cambiar el PIN" }); }
+});
+
+// ── Jornadas, incidencias y validación ───────────────────────────────────────
+// La jornada NO es fuente de verdad: es una proyección que se vuelve a calcular cada vez
+// que se pide, cruzando fic_eventos (el reloj) con hor_asignaciones de la semana PUBLICADA
+// (el plan). Lo único que se guarda como decisión humana es `min_validado`, con su firma.
+
+// El cuadrante publicado de un día. Si la semana no está publicada, no hay plan: eso NO es
+// un error, es que ese día se trabajó sin cuadrante y las incidencias lo dirán.
+async function ficPlanDelDia(local, dia) {
+  const semana = await dbGet(
+    `SELECT id FROM hor_semanas WHERE local = ? AND lunes = ? AND estado = 'publicado'`, [local, lunesDe(dia)]);
+  if (!semana) return { semanaId: null, asignaciones: [] };
+  const asignaciones = await dbAll(
+    `SELECT id, worker_id, inicio_min, fin_min, fin_abierto, tipo FROM hor_asignaciones
+     WHERE semana_id = ? AND dia = ?`, [semana.id, dia]);
+  return { semanaId: semana.id, asignaciones };
+}
+
+// Calcula la jornada de una persona y un día, y deja la proyección guardada para poder
+// listar pendientes sin recalcular medio mes. Devuelve el objeto completo.
+async function ficCalcularJornada(local, workerId, dia, { cfg = null } = {}) {
+  const conf = cfg || await dbGet(`SELECT corte_dia_min, tolerancia_min, hora_cierre_min FROM hor_config WHERE local = ?`, [local]);
+  const eventos = await dbAll(
+    `SELECT id, tipo, ocurrido_en, epoch_ms, minuto_local, origen, motivo, autor, anulado_por
+     FROM fic_eventos WHERE worker_id = ? AND dia_negocio = ? ORDER BY epoch_ms ASC, id ASC`, [workerId, dia]);
+  const { semanaId, asignaciones } = await ficPlanDelDia(local, dia);
+
+  const hoy = instanteANegocio(Date.now(), { corteMin: conf?.corte_dia_min ?? 360 });
+  const j = construirJornada({
+    eventos,
+    asignaciones: asignaciones.filter((a) => Number(a.worker_id) === Number(workerId)),
+    toleranciaMin: conf?.tolerancia_min ?? 10,
+    horaCierreMin: conf?.hora_cierre_min ?? null,
+    diaCerrado: dia < hoy.diaNegocio,
+  });
+
+  const guardada = await dbGet(`SELECT min_validado, firma_eventos, validado_en, validado_por, validado_nota FROM fic_jornadas WHERE worker_id = ? AND dia_negocio = ?`, [workerId, dia]);
+  const firma = firmaDeEventos(eventos);
+  // Validación caducada: se validó, y DESPUÉS cambió el registro. No se borra la
+  // validación (es una decisión humana con nombre), se marca para que se vuelva a mirar.
+  const validacionCaducada = !!(guardada && guardada.min_validado != null && guardada.firma_eventos !== firma);
+
+  await dbRun(
+    `INSERT INTO fic_jornadas (worker_id, local, dia_negocio, semana_id, min_planificado, min_fichado, min_pausa,
+                               incidencias, requiere_revision, calculado_en)
+     VALUES (?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT (worker_id, dia_negocio) DO UPDATE SET
+       local = EXCLUDED.local, semana_id = EXCLUDED.semana_id,
+       min_planificado = EXCLUDED.min_planificado, min_fichado = EXCLUDED.min_fichado,
+       min_pausa = EXCLUDED.min_pausa, incidencias = EXCLUDED.incidencias,
+       requiere_revision = EXCLUDED.requiere_revision, calculado_en = EXCLUDED.calculado_en`,
+    [workerId, local, dia, semanaId, j.minPlanificado, j.minFichado, j.minPausa,
+     JSON.stringify(j.incidencias.map((i) => ({ tipo: i.tipo, nivel: i.nivel, minutos: i.minutos ?? null }))),
+     j.requiereRevision || validacionCaducada, isoConOffset(Date.now())]);
+
+  return {
+    ...j, dia, workerId, semanaId,
+    eventos: eventos.map((e) => ({
+      id: e.id, tipo: e.tipo, hora: String(e.ocurrido_en).slice(11, 16), minuto: e.minuto_local,
+      origen: e.origen, motivo: e.motivo, autor: e.autor, anulado: !!e.anulado_por,
+    })),
+    validacion: guardada && guardada.min_validado != null
+      ? { minutos: guardada.min_validado, en: guardada.validado_en, por: guardada.validado_por, nota: guardada.validado_nota, caducada: validacionCaducada }
+      : null,
+  };
+}
+
+app.get("/api/fichajes/jornada", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const dia = String(req.query.dia || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return res.status(400).json({ ok: false, error: "Falta el día" });
+    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.query.worker || 0)]);
+    if (!w || w.local !== local) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    res.json({ ok: true, trabajador: { id: w.id, nombre: w.nombre }, ...(await ficCalcularJornada(local, w.id, dia)) });
+  } catch (e) {
+    console.error("[fichajes] jornada:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo calcular la jornada" });
+  }
+});
+
+// Lo que hay que revisar de un periodo. Recalcula todos los días con actividad —fichada o
+// planificada— para que no se cuele un turno que nadie fichó y del que no hay ninguna fila.
+app.get("/api/fichajes/revision", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const cfg = await dbGet(`SELECT corte_dia_min, tolerancia_min, hora_cierre_min FROM hor_config WHERE local = ?`, [local]);
+    const hoy = instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 });
+    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.hasta || "")) ? String(req.query.hasta) : hoy.diaNegocio;
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.desde || "")) ? String(req.query.desde) : sumaDias(hasta, -13);
+
+    // Días × personas con algo que mirar: o ficharon, o tenían turno.
+    const [fichados, planificados] = await Promise.all([
+      dbAll(`SELECT DISTINCT worker_id, dia_negocio AS dia FROM fic_eventos
+             WHERE local = ? AND dia_negocio BETWEEN ? AND ?`, [local, desde, hasta]),
+      dbAll(`SELECT DISTINCT a.worker_id, a.dia FROM hor_asignaciones a
+             JOIN hor_semanas s ON s.id = a.semana_id
+             WHERE a.local = ? AND s.estado = 'publicado' AND a.tipo = 'turno' AND a.dia BETWEEN ? AND ?`,
+        [local, desde, hasta]),
+    ]);
+    const pares = new Map();
+    for (const r of [...fichados, ...planificados]) pares.set(`${r.worker_id}|${r.dia}`, { worker_id: Number(r.worker_id), dia: r.dia });
+
+    const nombres = new Map((await dbAll(`SELECT id, nombre FROM users WHERE local = ?`, [local])).map((u) => [u.id, u.nombre]));
+    const filas = [];
+    for (const { worker_id, dia } of pares.values()) {
+      const j = await ficCalcularJornada(local, worker_id, dia, { cfg });
+      if (!j.requiereRevision && !j.incidencias.length && !j.validacion?.caducada) continue;
+      filas.push({
+        worker_id, nombre: nombres.get(worker_id) || "—", dia,
+        minPlanificado: j.minPlanificado, minFichado: j.minFichado, minEfectivo: j.minEfectivo,
+        minDesviacion: j.minDesviacion, requiereRevision: j.requiereRevision,
+        validado: j.validacion ? j.validacion.minutos : null,
+        validacionCaducada: !!j.validacion?.caducada,
+        incidencias: j.incidencias.map((i) => ({ tipo: i.tipo, nivel: i.nivel, texto: i.texto, minutos: i.minutos ?? null })),
+      });
+    }
+    filas.sort((a, b) => (b.dia.localeCompare(a.dia)) || a.nombre.localeCompare(b.nombre, "es"));
+    res.json({ ok: true, local, desde, hasta, data: filas });
+  } catch (e) {
+    console.error("[fichajes] revision:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar la revisión" });
+  }
+});
+
+// ── Correcciones ─────────────────────────────────────────────────────────────
+// Añadir un fichaje a mano. NO se copia lo planificado: quien corrige escribe la hora y
+// el motivo, y ambos quedan con su nombre. `origen='manual'` distingue para siempre esta
+// fila de la que puso una persona en la tablet.
+const MOTIVO_MIN = 5;
+app.post("/api/fichajes/evento", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.body?.worker_id || 0)]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+
+    const dia = String(req.body?.dia || "");
+    const tipo = String(req.body?.tipo || "");
+    const motivo = String(req.body?.motivo || "").trim();
+    const minuto = aMinutos(String(req.body?.hora || ""));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return res.status(400).json({ ok: false, error: "Falta el día" });
+    if (!["entrada", "salida", "pausa_inicio", "pausa_fin"].includes(tipo)) return res.status(400).json({ ok: false, error: "Acción no válida" });
+    if (minuto == null) return res.status(400).json({ ok: false, error: "La hora tiene que ser HH:MM (admite 26:00 para la madrugada)" });
+    if (motivo.length < MOTIVO_MIN) return res.status(400).json({ ok: false, error: "Escribe el motivo: es lo que hace que la corrección valga como prueba" });
+
+    const cfg = await dbGet(`SELECT corte_dia_min FROM hor_config WHERE local = ?`, [w.local]);
+    const corte = cfg?.corte_dia_min ?? 360;
+    if (minuto < corte || minuto >= corte + 1440) {
+      return res.status(400).json({ ok: false, error: `Ese día de trabajo va de las ${deMinutos(corte)} a las ${deMinutos(corte + 1440)} del día siguiente` });
+    }
+    // El minuto local pasa de 1440 en la madrugada; el instante real es del día siguiente.
+    const { epochMs } = epochDeLocal(minuto >= 1440 ? sumaDias(dia, 1) : dia, minuto % 1440);
+
+    const ev = await dbRun(
+      `INSERT INTO fic_eventos (worker_id, local, tipo, ocurrido_en, epoch_ms, dia_negocio, minuto_local,
+                                origen, autor, motivo, creado_en)
+       VALUES (?,?,?,?,?,?,?,'manual',?,?,?) RETURNING id, tipo, ocurrido_en`,
+      [w.id, w.local, tipo, isoConOffset(epochMs), epochMs, dia, minuto, req.user.username, motivo, isoConOffset(Date.now())]);
+
+    await dbRun(
+      `INSERT INTO fic_correcciones (worker_id, local, dia_negocio, accion, evento_nuevo_id, motivo, autor, creado_en)
+       VALUES (?,?,?,'anadir',?,?,?,?)`,
+      [w.id, w.local, dia, ev.id, motivo, req.user.username, isoConOffset(Date.now())]);
+    await ficAuditar("evento", ev.id, "anadir_manual", req.user.username, { local: w.local, workerId: w.id, detalle: { dia, tipo, minuto, motivo } });
+
+    res.json({ ok: true, evento: ev, jornada: await ficCalcularJornada(w.local, w.id, dia) });
+  } catch (e) {
+    console.error("[fichajes] evento manual:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo registrar la corrección" });
+  }
+});
+
+// Anular. `anulado_por` es LA ÚNICA columna de fic_eventos que se actualiza en todo el
+// sistema, y aquí está el único sitio donde ocurre. La fila original se queda entera.
+app.post("/api/fichajes/evento/:id/anular", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const ev = await dbGet(`SELECT id, worker_id, local, tipo, dia_negocio, anulado_por FROM fic_eventos WHERE id = ?`, [Number(req.params.id)]);
+    if (!ev || !rrhhPuedeLocal(req, ev.local)) return res.status(404).json({ ok: false, error: "Fichaje no encontrado" });
+    if (ev.anulado_por) return res.status(409).json({ ok: false, error: "Ese fichaje ya estaba anulado" });
+
+    const motivo = String(req.body?.motivo || "").trim();
+    if (motivo.length < MOTIVO_MIN) return res.status(400).json({ ok: false, error: "Escribe el motivo: sin él, anular un fichaje es borrar una prueba" });
+
+    const corr = await dbRun(
+      `INSERT INTO fic_correcciones (worker_id, local, dia_negocio, accion, evento_anulado_id, motivo, autor, creado_en)
+       VALUES (?,?,?,'anular',?,?,?,?) RETURNING id`,
+      [ev.worker_id, ev.local, ev.dia_negocio, ev.id, motivo, req.user.username, isoConOffset(Date.now())]);
+    // Se apunta a la corrección, no al usuario: desde la fila anulada se llega al motivo.
+    await dbRun(`UPDATE fic_eventos SET anulado_por = ? WHERE id = ?`, [corr.id, ev.id]);
+    await ficAuditar("evento", ev.id, "anular", req.user.username, { local: ev.local, workerId: ev.worker_id, detalle: { motivo, correccion: corr.id } });
+
+    res.json({ ok: true, jornada: await ficCalcularJornada(ev.local, ev.worker_id, ev.dia_negocio) });
+  } catch (e) {
+    console.error("[fichajes] anular:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo anular" });
+  }
+});
+
+app.get("/api/fichajes/correcciones", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const filas = await dbAll(
+      `SELECT c.*, u.nombre FROM fic_correcciones c LEFT JOIN users u ON u.id = c.worker_id
+       WHERE c.local = ? ${req.query.dia ? "AND c.dia_negocio = ?" : ""} ORDER BY c.id DESC LIMIT 200`,
+      req.query.dia ? [local, String(req.query.dia)] : [local]);
+    res.json({ ok: true, data: filas });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar las correcciones" }); }
+});
+
+// ── Validación ───────────────────────────────────────────────────────────────
+// «Estas son las horas que se pagan». Firmada: queda quién, cuándo y sobre QUÉ eventos.
+// Si después cambia el registro, la firma deja de coincidir y la jornada vuelve a la lista.
+app.post("/api/fichajes/validar", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.body?.worker_id || 0)]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    const dia = String(req.body?.dia || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return res.status(400).json({ ok: false, error: "Falta el día" });
+
+    const j = await ficCalcularJornada(w.local, w.id, dia);
+    // Por defecto se valida lo FICHADO menos las pausas. Se puede poner otro número —hay
+    // acuerdos que no salen del reloj—, pero entonces hace falta explicarlo.
+    const propuesto = j.minEfectivo;
+    const minutos = req.body?.minutos == null ? propuesto : Math.max(0, Math.round(Number(req.body.minutos)));
+    if (!Number.isFinite(minutos)) return res.status(400).json({ ok: false, error: "Los minutos no son un número" });
+    const nota = String(req.body?.nota || "").trim();
+    if (minutos !== propuesto && nota.length < MOTIVO_MIN) {
+      return res.status(400).json({ ok: false, error: `Vas a validar ${deMinutos(minutos, { formato: "absoluto" })} en lugar de las ${deMinutos(propuesto, { formato: "absoluto" })} fichadas: explica por qué` });
+    }
+    if (j.requiereRevision && !req.body?.aceptar_incidencias) {
+      return res.status(409).json({ ok: false, error: "Esta jornada tiene incidencias sin resolver", incidencias: j.incidencias });
+    }
+
+    const eventos = await dbAll(`SELECT id, tipo, epoch_ms, anulado_por FROM fic_eventos WHERE worker_id = ? AND dia_negocio = ?`, [w.id, dia]);
+    await dbRun(
+      `UPDATE fic_jornadas SET min_validado = ?, firma_eventos = ?, validado_en = ?, validado_por = ?, validado_nota = ?, requiere_revision = FALSE
+       WHERE worker_id = ? AND dia_negocio = ?`,
+      [minutos, firmaDeEventos(eventos), isoConOffset(Date.now()), req.user.username, nota || null, w.id, dia]);
+    await ficAuditar("jornada", null, "validar", req.user.username, {
+      local: w.local, workerId: w.id, detalle: { dia, minutos, fichado: propuesto, nota: nota || null } });
+
+    res.json({ ok: true, minutos, mensaje: `Jornada de ${w.nombre} validada: ${deMinutos(minutos, { formato: "absoluto" })}.` });
+  } catch (e) {
+    console.error("[fichajes] validar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo validar" });
+  }
 });
 
 // ════════════════════════ PULSO ANÓNIMO DEL EQUIPO ════════════════════════

@@ -217,6 +217,29 @@ describe("fichajes — los eventos no se tocan", () => {
       "borrar un fichaje destruye la prueba que la ley obliga a conservar 4 años");
   });
 
+  test("NUNCA se copia lo planificado en lo fichado", () => {
+    // La tentación es «si no fichó, ponle lo que tenía en el cuadrante». Eso convierte el
+    // registro en una copia del plan, que es exactamente lo que un inspector espera de uno
+    // falsificado, y le quita al trabajador el argumento «el cuadro decía 20:00».
+    // Se mira el LADO DERECHO de cada asignación a min_fichado (hasta la coma o el fin de
+    // línea): `min_fichado = EXCLUDED.min_fichado` es correcto y no debe dar falso positivo.
+    const sospechosas = [...server.matchAll(/min_fichado\s*[=:]\s*([^,\n]*)/g)]
+      .map((m) => m[1])
+      .filter((derecha) => /min_planificado|minPlanificado/.test(derecha));
+    assert.deepEqual(sospechosas, [],
+      "min_fichado sale de fic_eventos y de ningún otro sitio");
+  });
+
+  test("corregir un fichaje exige motivo, en el código y en la base", () => {
+    const esquema = fs.readFileSync(path.join(RAIZ, "src/modules/fichajes/schema.js"), "utf8");
+    assert.match(esquema, /fic_correcciones[\s\S]*motivo TEXT NOT NULL/,
+      "sin motivo, anular un fichaje es borrar una prueba");
+    assert.match(esquema, /fic_correcciones[\s\S]*CHECK \(length\(motivo\) >= \d+\)/,
+      "y la base tampoco debe aceptar un motivo vacío");
+    assert.match(server, /origen[\s\S]{0,80}'manual'/,
+      "los eventos metidos a mano quedan distinguibles para siempre de los de la tablet");
+  });
+
   test("el PIN se guarda con bcrypt, no con la copia reversible de las contraseñas", () => {
     const trozo = /pin_hash[\s\S]{0,600}/.exec(server);
     if (!trozo) return;   // todavía no cableado

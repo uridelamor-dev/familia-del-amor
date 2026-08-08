@@ -2247,7 +2247,7 @@ async function horSoltar(celda) {
 // ════════════════════════ VISTA: FICHAJES ════════════════════════
 // Dos pestañas: quién está dentro AHORA (que es la pregunta que se hace de verdad desde
 // la oficina) y las tablets. El PIN se asigna desde la ficha de RR. HH. de cada persona.
-let FIC = { tab: "hoy", local: "", dia: "" };
+let FIC = { tab: "hoy", local: "", dia: "", desde: "", hasta: "" };
 // El refresco automático se guarda a nivel de módulo y se limpia SIEMPRE al entrar: si no,
 // cambiar de vista dejaría el temporizador vivo pegándole a la API para siempre.
 let FIC_TIMER = null;
@@ -2262,6 +2262,7 @@ async function loadFichajes() {
   view.innerHTML = `<div class="ph"><div class="eyebrow">Personas</div><h1>Fichajes</h1><div class="sub">Registro de jornada${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>
     <div class="toolbar" style="margin-bottom:12px" id="ficTabs">
       <button class="btn ${FIC.tab === "hoy" ? "primary" : ""}" data-fictab="hoy">Quién está dentro</button>
+      <button class="btn ${FIC.tab === "rev" ? "primary" : ""}" data-fictab="rev">Revisión</button>
       <button class="btn ${FIC.tab === "disp" ? "primary" : ""}" data-fictab="disp">Tablets</button>
     </div>
     <div id="ficCuerpo"><p class="mut">Cargando…</p></div>`;
@@ -2273,6 +2274,7 @@ async function loadFichajes() {
   });
 
   if (FIC.tab === "disp") return ficPintarDispositivos();
+  if (FIC.tab === "rev") return ficPintarRevision();
   await ficPintarHoy();
   // Un minuto: lo bastante para que sirva de tablero y lo bastante poco para no molestar.
   FIC_TIMER = setInterval(() => {
@@ -2319,6 +2321,142 @@ async function ficPintarHoy() {
         <tbody>${dentro.map(fila).join("")}${resto.map(fila).join("")}</tbody></table></div>`
       : `<p class="mut" style="margin:0;line-height:1.6">Nadie ha fichado todavía en este día de trabajo. Si el kiosco aún no está montado, ve a <b>Tablets</b> y da de alta el dispositivo.</p>`}
     </div>`;
+}
+
+// ── Revisión: lo que no cuadra entre el cuadrante y el reloj ─────────────────
+// Es la pantalla de trabajo de verdad del módulo. Deliberadamente NO ofrece "aplicar el
+// horario planificado": copiar el plan sobre el fichaje destruye la prueba que la ley
+// obliga a conservar. Lo que se ofrece es escribir la hora real, con motivo y con nombre.
+// Con signo SIEMPRE: sin el menos, «6 h 00 min» de desviación se lee como que trabajó seis
+// horas de más cuando es justo al revés — no las trabajó.
+function ficSigno(min) {
+  const n = Math.round(Number(min) || 0);
+  if (n === 0) return "0";
+  return (n > 0 ? "+" : "−") + ficHoras(Math.abs(n));
+}
+
+async function ficPintarRevision() {
+  const cont = document.getElementById("ficCuerpo");
+  if (!cont) return;
+  cont.innerHTML = `<p class="mut">Recalculando las jornadas…</p>`;
+  let j;
+  try {
+    const qs = new URLSearchParams({ local: FIC.local });
+    if (FIC.desde) qs.set("desde", FIC.desde);
+    if (FIC.hasta) qs.set("hasta", FIC.hasta);
+    j = await apiRaw("/api/fichajes/revision?" + qs.toString());
+  } catch { cont.innerHTML = `<div class="card"><p class="mut" style="margin:0">No se pudo cargar la revisión.</p></div>`; return; }
+
+  const urge = j.data.filter((f) => f.requiereRevision || f.validacionCaducada);
+  const resto = j.data.filter((f) => !f.requiereRevision && !f.validacionCaducada);
+  const fila = (f) => `<tr data-ficjor="${f.worker_id}|${esc(f.dia)}" style="cursor:pointer">
+      <td class="mut">${esc(f.dia)}</td>
+      <td><b>${esc(f.nombre)}</b></td>
+      <td>${f.incidencias.map((i) => `<span class="fic-tag ${i.nivel === "revisar" ? "aviso" : ""}">${esc(i.texto)}${i.minutos ? " · " + esc(ficHoras(i.minutos)) : ""}</span>`).join("")}
+        ${f.validacionCaducada ? '<span class="fic-tag aviso">validación caducada</span>' : ""}</td>
+      <td style="text-align:right" class="mut">${esc(ficHoras(f.minPlanificado))}</td>
+      <td style="text-align:right">${esc(ficHoras(f.minEfectivo))}</td>
+      <td style="text-align:right"><b>${esc(ficSigno(f.minDesviacion))}</b></td>
+      <td style="text-align:right">${f.validado != null ? `<span class="fic-tag ok">${esc(ficHoras(f.validado))}</span>` : '<span class="mut">—</span>'}</td>
+    </tr>`;
+  const tabla = (filas) => `<div class="tw"><table class="tbl">
+      <thead><tr><th>Día</th><th>Persona</th><th>Qué pasa</th><th style="text-align:right">Cuadrante</th>
+      <th style="text-align:right">Fichado</th><th style="text-align:right">Dif.</th><th style="text-align:right">Validado</th></tr></thead>
+      <tbody>${filas.map(fila).join("")}</tbody></table></div>`;
+
+  cont.innerHTML = `
+    <div class="card">
+      <div class="ch"><h3>Del ${esc(j.desde)} al ${esc(j.hasta)}</h3>
+        <span class="mut">${urge.length ? `${urge.length} ${urge.length === 1 ? "jornada pide" : "jornadas piden"} una decisión` : "Nada pendiente de decidir"}</span></div>
+      ${j.data.length ? `${urge.length ? tabla(urge) : ""}${resto.length ? `<div class="mut" style="margin:14px 0 6px;font-size:12px">Desviaciones dentro de lo normal</div>${tabla(resto)}` : ""}`
+      : `<p class="mut" style="margin:0;line-height:1.6">Todo cuadra en estos días: lo fichado coincide con el cuadrante publicado dentro de la tolerancia.</p>`}
+    </div>`;
+
+  cont.firstElementChild.addEventListener("click", (e) => {
+    const tr = e.target.closest("[data-ficjor]"); if (!tr) return;
+    const [w, dia] = tr.getAttribute("data-ficjor").split("|");
+    ficAbrirJornada(Number(w), dia);
+  });
+}
+
+const FIC_EV_ORIGEN = { kiosco: "tablet", kiosco_offline: "tablet (sin conexión)", manual: "a mano", importado: "importado" };
+
+async function ficAbrirJornada(workerId, dia) {
+  const ov = modal("Jornada", '<p class="mut" id="ficJorBody">Cargando…</p>');
+  const pintar = async () => {
+    let j;
+    try { j = await apiRaw(`/api/fichajes/jornada?local=${encodeURIComponent(FIC.local)}&worker=${workerId}&dia=${dia}`); }
+    catch (e) { ov.querySelector("#ficJorBody").textContent = e.message; return; }
+
+    const planTxt = j.plan.length
+      ? j.plan.map((p) => `${esc(ficReloj(p.inicio))}–${esc(ficReloj(p.fin))}${p.abierto ? " (cierre)" : ""}`).join(" · ")
+      : "<span class='mut'>Sin turno en el cuadrante publicado</span>";
+    const evs = j.eventos.length ? `<ul class="fic-evs">${j.eventos.map((e) => `<li class="${e.anulado ? "anulado" : ""}">
+        <span><b>${esc(FIC_EV_TXT[e.tipo] || e.tipo)}</b> ${esc(e.hora)}
+          <span class="mut">· ${esc(FIC_EV_ORIGEN[e.origen] || e.origen)}${e.autor ? " por " + esc(e.autor) : ""}</span>
+          ${e.motivo ? `<div class="mut" style="font-size:11.5px">${esc(e.motivo)}</div>` : ""}</span>
+        ${e.anulado ? '<span class="fic-tag">anulado</span>' : `<button class="btn sm" data-ficanul="${e.id}">Anular</button>`}
+      </li>`).join("")}</ul>` : `<p class="mut" style="margin:0">Ningún fichaje registrado este día.</p>`;
+
+    ov.querySelector(".modal-b").innerHTML = `
+      <div id="ficJorBody">
+        <div class="ch" style="margin-top:0"><h3 style="margin:0">${esc(j.trabajador.nombre)} · ${esc(dia)}</h3></div>
+        <div class="grid g3" style="gap:12px;margin-bottom:14px">
+          <div><div class="t2">Cuadrante</div><div class="t1">${planTxt}</div></div>
+          <div><div class="t2">Fichado (sin pausas)</div><div class="t1">${esc(ficHoras(j.minEfectivo))}</div></div>
+          <div><div class="t2">Diferencia</div><div class="t1">${esc(ficSigno(j.minDesviacion))}</div></div>
+        </div>
+        ${j.incidencias.length ? `<div style="margin-bottom:14px">${j.incidencias.map((i) => `<span class="fic-tag ${i.nivel === "revisar" ? "aviso" : ""}">${esc(i.texto)}${i.minutos ? " · " + esc(ficHoras(i.minutos)) : ""}</span>`).join("")}</div>` : ""}
+        ${j.validacion ? `<p class="mut" style="margin:0 0 14px">Validado ${esc(ficHoras(j.validacion.minutos))} por ${esc(j.validacion.por)} el ${esc(String(j.validacion.en).slice(0, 10))}${j.validacion.caducada ? " — <b>pero el registro ha cambiado desde entonces</b>" : ""}${j.validacion.nota ? `<br>«${esc(j.validacion.nota)}»` : ""}</p>` : ""}
+        ${evs}
+        <div class="ch" style="margin-top:18px"><h3 style="margin:0;font-size:13px">Añadir un fichaje que falta</h3></div>
+        <p class="mut" style="margin:0 0 10px;line-height:1.5">Escribe la hora <b>real</b>, no la del cuadrante. Para la madrugada usa 26:10 en lugar de 02:10.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <select class="inp" id="ficNvTipo" style="width:auto">
+            <option value="entrada">Entrada</option><option value="salida">Salida</option>
+            <option value="pausa_inicio">Pausa</option><option value="pausa_fin">Vuelta</option>
+          </select>
+          <input class="inp" id="ficNvHora" placeholder="20:00" style="width:90px">
+          <input class="inp" id="ficNvMotivo" placeholder="Motivo (obligatorio)" style="flex:1;min-width:180px">
+          <button class="btn" id="ficNvOk">Añadir</button>
+        </div>
+        <p id="ficNvMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+          <button class="btn" data-close>Cerrar</button>
+          <button class="btn primary" id="ficValidar">Validar ${esc(ficHoras(j.minEfectivo))}</button>
+        </div>
+      </div>`;
+
+    ov.querySelector("#ficNvOk").addEventListener("click", async () => {
+      const msg = ov.querySelector("#ficNvMsg");
+      try {
+        await apiSend("POST", "/api/fichajes/evento", {
+          worker_id: workerId, dia, tipo: ov.querySelector("#ficNvTipo").value,
+          hora: ov.querySelector("#ficNvHora").value.trim(), motivo: ov.querySelector("#ficNvMotivo").value.trim(),
+        });
+        toast("Fichaje añadido ✅"); pintar();
+      } catch (e) { msg.textContent = e.message; }
+    });
+    ov.querySelector("#ficValidar").addEventListener("click", async () => {
+      try {
+        const r = await apiSend("POST", "/api/fichajes/validar", { worker_id: workerId, dia, aceptar_incidencias: !!j.requiereRevision });
+        ov.remove(); toast(r.mensaje || "Jornada validada ✅"); ficPintarRevision();
+      } catch (e) { ov.querySelector("#ficNvMsg").textContent = e.message; }
+    });
+    ov.querySelector("#ficJorBody").addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-ficanul]"); if (!b) return;
+      const motivo = await promptModal("¿Por qué se anula este fichaje?", { placeholder: "Se fichó por error en la tablet equivocada", ok: "Anular" });
+      if (!motivo) return;
+      try { await apiSend("POST", `/api/fichajes/evento/${b.getAttribute("data-ficanul")}/anular`, { motivo }); toast("Fichaje anulado"); pintar(); }
+      catch (err) { toast(err.message); }
+    });
+  };
+  await pintar();
+}
+// El minuto local pasa de 1440 en la madrugada; en pantalla se enseña el reloj de pared.
+function ficReloj(min) {
+  const b = ((Math.round(min) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(b / 60)).padStart(2, "0")}:${String(b % 60).padStart(2, "0")}`;
 }
 
 async function ficPintarDispositivos() {
