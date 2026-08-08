@@ -2221,22 +2221,34 @@ const HOR_PREF = {
   prefiere: { txt: "♥", sig: "no_disponible" },
   no_disponible: { txt: "✕", sig: "disponible" },
 };
-let HORCFG = { tab: "necesidades", data: null };
+let HORCFG = { tab: "turnos", data: null };
+const horHM = (m) => `${String(Math.floor((Number(m) || 0) / 60) % 24).padStart(2, "0")}:${String((Number(m) || 0) % 60).padStart(2, "0")}`;
+// "00:00" al final de un turno significa medianoche del día siguiente, no las 00:00 de hoy.
+const horAMin = (hhmm, finDeTurno = false) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || "").trim());
+  if (!m) return null;
+  const v = Number(m[1]) * 60 + Number(m[2]);
+  return finDeTurno && v === 0 ? 1440 : v;
+};
 
 async function horConfig() {
   const ov = modal("Configuración de " + nombreCortoLocal(HOR.local), '<p class="mut">Cargando…</p>');
-  ov.querySelector(".modal").style.maxWidth = "820px";
+  // Ancho: la rejilla son 7 días × 2 números y los refuerzos llevan dos horas dentro. Con
+  // los 520 px del diálogo normal se corta el domingo, que es justo la columna que más se
+  // mira. Se toca `width` y no `max-width` porque .modal fija el ancho, no el máximo.
+  ov.querySelector(".modal").style.width = "min(940px, 96vw)";
   const pintar = async () => {
     try { HORCFG.data = await apiRaw(`/api/horarios/plantilla?local=${encodeURIComponent(HOR.local)}`); }
     catch (e) { ov.querySelector(".modal-b").innerHTML = `<p class="mut">${esc(e.message)}</p>`; return; }
     const d = HORCFG.data;
     ov.querySelector(".modal-b").innerHTML = `
       <div class="toolbar" style="margin-bottom:14px">
-        ${[["necesidades", "Cuánta gente hace falta"], ["contratos", "Contratos"], ["ausencias", "Vacaciones y bajas"], ["disp", "Disponibilidad"]]
+        ${[["turnos", "Turnos"], ["necesidades", "Cuánta gente hace falta"], ["contratos", "Contratos"], ["ausencias", "Vacaciones y bajas"], ["disp", "Disponibilidad"]]
           .map(([k, t]) => `<button class="btn ${HORCFG.tab === k ? "primary" : ""}" data-horcfgtab="${k}">${t}</button>`).join("")}
       </div>
       <div id="horCfgCuerpo">${
-        HORCFG.tab === "necesidades" ? horCfgNecesidades(d)
+        HORCFG.tab === "turnos" ? horCfgTurnos(d)
+        : HORCFG.tab === "necesidades" ? horCfgNecesidades(d)
         : HORCFG.tab === "contratos" ? horCfgContratos(d)
         : HORCFG.tab === "ausencias" ? horCfgAusencias(d)
         : horCfgDisponibilidad(d)}</div>`;
@@ -2268,6 +2280,31 @@ function horCfgPedirFecha(titulo, nota) {
   });
 }
 
+// Los turnos de la casa. Se editan aquí porque suponerlos sale caro: de ellos cuelgan las
+// necesidades, el generador y lo que el PDF decide escribir o callar.
+function horCfgTurnos(d) {
+  const fila = (t) => `<tr data-tramo="${t.id || ""}">
+      <td><input class="inp horcfg-t" data-k="nombre" value="${esc(t.nombre || "")}" style="width:130px" placeholder="MAÑANA"></td>
+      <td><input class="inp horcfg-t" data-k="inicio" type="time" value="${horHM(t.inicio_min)}" style="width:110px"></td>
+      <td><input class="inp horcfg-t" data-k="fin" type="time" value="${horHM(t.fin_min)}" style="width:110px"></td>
+      <td class="mut" style="white-space:nowrap">${t.fin_min > 1440 || t.fin_min === 1440 ? "acaba de madrugada" : ""}</td>
+      <td style="text-align:right"><button class="btn sm danger" data-horcfg="turno-quitar">Quitar</button></td>
+    </tr>`;
+  return `
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Los turnos completos de la casa. Un turno que acabe a
+      medianoche se escribe <b>00:00</b> y se entiende como el final del día. Los <b>refuerzos no van aquí</b>:
+      como no tienen hora fija, se configuran en «Cuánta gente hace falta».</p>
+    <div class="tw"><table class="tbl">
+      <thead><tr><th>Nombre</th><th>Entra</th><th>Sale</th><th></th><th></th></tr></thead>
+      <tbody id="horCfgTurnos">${d.tramos.map(fila).join("")}</tbody></table></div>
+    <p id="horCfgTMsg" style="margin:10px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
+    <div style="display:flex;gap:10px;justify-content:space-between;margin-top:8px">
+      <button class="btn" data-horcfg="turno-add">Añadir turno</button>
+      <button class="btn primary" data-horcfg="guardar-turnos">Guardar</button></div>
+    <p class="mut" style="margin:14px 0 0;line-height:1.5">Quitar un turno no borra los cuadrantes ya hechos:
+      se desactiva, y las semanas antiguas siguen contando lo que fue.</p>`;
+}
+
 // Rejilla área × tramo × día. Se rellena una vez y no se vuelve a tocar en meses, así que
 // lo que importa es que se entienda de un vistazo, no que sea rápida de teclear.
 function horCfgNecesidades(d) {
@@ -2289,8 +2326,61 @@ function horCfgNecesidades(d) {
         <td style="white-space:nowrap"><b>${esc(a.nombre)}</b> <span class="mut">${esc(t.nombre)}</span></td>
         ${DOW.map((_, dow) => celda(a.id, t.id, dow, `${a.nombre} ${t.nombre}`)).join("")}
       </tr>`)).join("")}</tbody></table></div>
+
+    ${horCfgRefuerzos(d)}
+
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
       <button class="btn primary" data-horcfg="guardar-nec">Guardar</button></div>`;
+}
+
+// Refuerzos: 4 h que caen donde quepan dentro de una horquilla. Van aparte de la rejilla
+// de arriba porque NO tienen hora fija — uno puede ser de 10 a 14 y otro de 11 a 15 — y
+// meterlos en una columna de «tramo» sería volver al problema que esto viene a arreglar.
+function horCfgRefuerzos(d) {
+  // Cada refuerzo es una etiqueta + duración + ventana. Los días llevan solo el número.
+  const porGrupo = new Map();
+  for (const n of d.necesidades.filter((x) => Number(x.duracion_min) > 0)) {
+    const k = `${n.area_id}|${n.duracion_min}|${n.ventana_inicio_min}|${n.ventana_fin_min}|${n.etiqueta || ""}`;
+    if (!porGrupo.has(k)) porGrupo.set(k, { area_id: n.area_id, duracion_min: n.duracion_min,
+      ventana_inicio_min: n.ventana_inicio_min, ventana_fin_min: n.ventana_fin_min, etiqueta: n.etiqueta || "", dias: {} });
+    porGrupo.get(k).dias[n.dow] = n.minimo;
+  }
+  const grupos = [...porGrupo.values()];
+
+  // Una ficha por refuerzo, no una fila de tabla: entre la etiqueta, la duración, dos horas
+  // y siete días no cabe todo a lo ancho del diálogo, y en tabla se salían los domingos.
+  return `
+    <div class="ch" style="margin-top:22px"><h3 style="margin:0;font-size:13px">Refuerzos</h3></div>
+    <p class="mut" style="margin:0 0 10px;line-height:1.55">Gente extra que no hace turno completo. Se dice
+      <b>cuánto dura</b> y <b>entre qué horas puede caer</b>, y al generar se colocan donde quepan: pueden salir
+      de 10 a 14 un día y de 11 a 15 otro. Si quieres que sea siempre a la misma hora, aprieta la horquilla.</p>
+    <div id="horCfgRefs">${grupos.length ? grupos.map(horCfgRefuerzoFicha).join("")
+      // Dentro del contenedor, no fuera: así al añadir el primero desaparece solo.
+      : '<p class="mut horcfg-ref-vacio" style="margin:0 0 10px">Ningún refuerzo configurado.</p>'}</div>
+    <div><button class="btn sm" data-horcfg="ref-add">Añadir refuerzo</button></div>`;
+}
+
+function horCfgRefuerzoFicha(g = {}) {
+  const dias = g.dias || {};
+  return `<div class="horcfg-ref" data-area="${g.area_id || ""}">
+    <div class="horcfg-ref-h">
+      <input class="inp horcfg-r" data-k="etiqueta" value="${esc(g.etiqueta || "Refuerzo")}" placeholder="Refuerzo mañana">
+      <span class="mut">de</span>
+      <input class="inp horcfg-r horcfg-r-num" data-k="duracion" value="${(Number(g.duracion_min) / 60) || 4}" inputmode="decimal">
+      <span class="mut">h, entre las</span>
+      <input class="inp horcfg-r horcfg-r-hora" data-k="vini" type="time" value="${horHM(g.ventana_inicio_min ?? 540)}">
+      <span class="mut">y las</span>
+      <input class="inp horcfg-r horcfg-r-hora" data-k="vfin" type="time" value="${horHM(g.ventana_fin_min ?? 960)}">
+      <div style="flex:1"></div>
+      <button class="btn sm danger" data-horcfg="ref-quitar">Quitar</button>
+    </div>
+    <div class="horcfg-ref-d">
+      <span class="mut">Cuántos:</span>
+      ${DOW.map((x, dow) => `<label><span>${x}</span>
+        <input class="inp horcfg-r horcfg-rd" data-k="dia" data-d="${dow}" value="${dias[dow] ?? ""}"
+               inputmode="numeric" placeholder="—"></label>`).join("")}
+    </div>
+  </div>`;
 }
 
 function horCfgContratos(d) {
@@ -2377,7 +2467,53 @@ async function horCfgAccion(e, ov, pintar) {
   if (!b) return;
   const act = b.getAttribute("data-horcfg");
 
+  if (act === "turno-add") {
+    const tbody = ov.querySelector("#horCfgTurnos");
+    const tr = document.createElement("tr");
+    tr.setAttribute("data-tramo", "");
+    tr.innerHTML = `<td><input class="inp horcfg-t" data-k="nombre" value="" style="width:130px" placeholder="REFUERZO"></td>
+      <td><input class="inp horcfg-t" data-k="inicio" type="time" value="08:00" style="width:110px"></td>
+      <td><input class="inp horcfg-t" data-k="fin" type="time" value="16:00" style="width:110px"></td>
+      <td></td><td style="text-align:right"><button class="btn sm danger" data-horcfg="turno-quitar">Quitar</button></td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+  if (act === "turno-quitar") { b.closest("tr").remove(); return; }
+
+  if (act === "guardar-turnos") {
+    const msg = ov.querySelector("#horCfgTMsg");
+    const tramos = [...ov.querySelectorAll("#horCfgTurnos tr")].map((tr) => {
+      const g = (k) => tr.querySelector(`[data-k="${k}"]`).value;
+      return { id: tr.getAttribute("data-tramo") || null, nombre: g("nombre").trim(),
+        inicio_min: horAMin(g("inicio")), fin_min: horAMin(g("fin"), true) };
+    });
+    if (!tramos.length) { msg.textContent = "Tiene que quedar al menos un turno."; return; }
+    const malo = tramos.find((t) => !t.nombre || t.inicio_min == null || t.fin_min == null || t.fin_min <= t.inicio_min);
+    if (malo) { msg.textContent = `«${malo.nombre || "sin nombre"}»: revisa el nombre y que la salida sea posterior a la entrada.`; return; }
+    try { await apiSend("PUT", "/api/horarios/tramos", { local: HOR.local, tramos }); toast("Turnos guardados ✅"); }
+    catch (err) { msg.textContent = err.message; return; }
+    await loadHorarios();     // la rejilla del cuadrante depende de los tramos
+    return pintar();
+  }
+
+  if (act === "ref-add") {
+    const caja = ov.querySelector("#horCfgRefs");
+    caja.querySelector(".horcfg-ref-vacio")?.remove();
+    caja.insertAdjacentHTML("beforeend", horCfgRefuerzoFicha({ area_id: (HORCFG.data.areas[0] || {}).id }));
+    return;
+  }
+  if (act === "ref-quitar") {
+    const caja = ov.querySelector("#horCfgRefs");
+    b.closest(".horcfg-ref").remove();
+    if (!caja.querySelector(".horcfg-ref")) {
+      caja.innerHTML = '<p class="mut horcfg-ref-vacio" style="margin:0 0 10px">Ningún refuerzo configurado.</p>';
+    }
+    return;
+  }
+
   if (act === "guardar-nec") {
+    const necesidades = [];
+    // 1. La rejilla de turnos completos.
     const mapa = new Map();
     ov.querySelectorAll(".horcfg-n").forEach((i) => {
       const k = `${i.dataset.a}|${i.dataset.t}|${i.dataset.d}`;
@@ -2385,8 +2521,32 @@ async function horCfgAccion(e, ov, pintar) {
       const v = i.value.trim();
       mapa.get(k)[i.dataset.k] = v === "" ? null : Number(v);
     });
-    try { const r = await apiSend("PUT", "/api/horarios/necesidades", { local: HOR.local, necesidades: [...mapa.values()] });
-      toast(`Guardado · ${r.guardadas} casillas`); } catch (err) { toast(err.message); }
+    necesidades.push(...mapa.values());
+
+    // 2. Los refuerzos: una fila por día con número, todas compartiendo duración y ventana.
+    const areaPorDefecto = (HORCFG.data.areas[0] || {}).id;
+    for (const tr of ov.querySelectorAll("#horCfgRefs .horcfg-ref")) {
+      const g = (k) => tr.querySelector(`[data-k="${k}"]`).value.trim();
+      const horas = Number(String(g("duracion")).replace(",", "."));
+      const vIni = horAMin(g("vini")), vFin = horAMin(g("vfin"), true);
+      if (!(horas > 0) || vIni == null || vFin == null) continue;
+      if (vFin - vIni < horas * 60) {
+        toast(`«${g("etiqueta") || "Refuerzo"}»: la horquilla es más corta que la duración`);
+        return;
+      }
+      for (const inp of tr.querySelectorAll(".horcfg-rd")) {
+        const n = Number(inp.value.trim());
+        if (!(n > 0)) continue;
+        necesidades.push({
+          area_id: Number(tr.dataset.area || areaPorDefecto), tramo_id: null, dow: +inp.dataset.d,
+          minimo: n, objetivo: null, duracion_min: Math.round(horas * 60),
+          ventana_inicio_min: vIni, ventana_fin_min: vFin, etiqueta: g("etiqueta") || "Refuerzo",
+        });
+      }
+    }
+
+    try { const r = await apiSend("PUT", "/api/horarios/necesidades", { local: HOR.local, necesidades });
+      toast(`Guardado · ${r.guardadas} ${r.guardadas === 1 ? "línea" : "líneas"}`); } catch (err) { toast(err.message); }
     return pintar();
   }
 

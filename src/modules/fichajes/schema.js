@@ -40,6 +40,27 @@ export async function ensureSchemaFichajes(x) {
   // es sería enseñárselo a quien no toca.
   await x.run(`ALTER TABLE hor_config ADD COLUMN IF NOT EXISTS wa_grupo_jid TEXT`);
 
+  // ── Refuerzos ──────────────────────────────────────────────────────────────
+  // Una necesidad puede ser de dos formas:
+  //
+  //   · TURNO COMPLETO: hereda las horas de su tramo (08-16, 16-00). Es el caso normal.
+  //   · REFUERZO: una duración (4 h) dentro de una VENTANA (por ejemplo, las mañanas), y
+  //     las horas concretas se deciden al planificar. Un refuerzo puede ser de 10 a 14 un
+  //     día y de 11 a 15 otro, y eso no se puede expresar con una franja fija.
+  //
+  // La primera versión solo tenía lo primero, así que los refuerzos —que son la mitad de
+  // la plantilla en fin de semana— no cabían en el modelo.
+  for (const col of [
+    "duracion_min INTEGER",          // si está, es refuerzo: esto es lo que dura
+    "ventana_inicio_min INTEGER",    // y esta es la horquilla en la que puede caer
+    "ventana_fin_min INTEGER",
+    "etiqueta TEXT",                 // "Refuerzo mañana", para que se distinga en pantalla
+  ]) {
+    await x.run(`ALTER TABLE hor_necesidades ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+  // El tramo deja de ser obligatorio: un refuerzo no pertenece a ninguno.
+  await x.run(`ALTER TABLE hor_necesidades ALTER COLUMN tramo_id DROP NOT NULL`);
+
   // Tablets. El token viaja en la URL una sola vez; en la base solo su hash, como las
   // invitaciones del pulso.
   await x.run(`CREATE TABLE IF NOT EXISTS fic_dispositivos (

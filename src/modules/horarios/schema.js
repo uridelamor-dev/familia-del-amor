@@ -194,10 +194,14 @@ export const AREAS_POR_DEFECTO = [
   { nombre: "SALA", orden: 1 },
   { nombre: "COCINA", orden: 2 },
 ];
+// Los dos turnos que se hacen de verdad. Son un PUNTO DE PARTIDA para un local que
+// empieza, no una verdad: se editan desde Horarios → Configuración → Turnos, y cada local
+// puede tener los suyos. La primera versión de esto venía copiada del PDF de agosto
+// (11-16 y 19-01) y no era lo que se trabaja: asumir horarios ajenos sale caro porque
+// luego todo lo demás —las necesidades, el generador, el PDF— cuelga de ellos.
 export const TRAMOS_POR_DEFECTO = [
-  { nombre: "MAÑANA", orden: 1, inicio_min: 660, fin_min: 960 },   // 11:00-16:00
-  { nombre: "TARDE", orden: 2, inicio_min: 1140, fin_min: 1500 },  // 19:00-01:00
-  { nombre: "FIESTA", orden: 3, inicio_min: 1200, fin_min: 1620 }, // 20:00-03:00
+  { nombre: "MAÑANA", orden: 1, inicio_min: 480, fin_min: 960 },   // 08:00-16:00
+  { nombre: "TARDE", orden: 2, inicio_min: 960, fin_min: 1440 },   // 16:00-00:00
 ];
 
 export async function sembrarLocal(x, local, ahora) {

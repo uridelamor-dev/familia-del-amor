@@ -36,25 +36,45 @@ export const AJUSTES = {
 // Una necesidad de "2 personas en SALA el sábado por la tarde" son DOS huecos. Trabajar
 // con huecos de uno en uno es lo que permite cubrir el mínimo de un sitio y dejar sin
 // cubrir el objetivo de otro, en vez de todo o nada.
+// Cada cuánto se prueba a colocar un refuerzo dentro de su ventana. 30 min: nadie entra a
+// las 10:07, y bajar a 15 duplicaría el trabajo sin cambiar ningún cuadrante real.
+export const PASO_REFUERZO = 30;
+
 export function construirHuecos({ lunes, necesidades = [], tramos = [], objetivos = true } = {}) {
   const dias = diasSemana(lunes);
   const porTramo = new Map(tramos.map((t) => [String(t.id), t]));
   const huecos = [];
 
   for (const n of necesidades) {
-    const tramo = porTramo.get(String(n.tramo_id));
-    if (!tramo) continue;                                   // necesidad de un tramo borrado
     const dia = dias[Number(n.dow)];
     if (!dia) continue;
     if (n.desde && dia < n.desde) continue;                 // necesidad con vigencia
     if (n.hasta && dia > n.hasta) continue;
 
+    // Un refuerzo NO tiene horas fijas: tiene una duración y una ventana donde cabe.
+    const duracion = Number(n.duracion_min) || 0;
+    const esRefuerzo = duracion > 0;
+
+    let inicio, fin, ventana = null;
+    if (esRefuerzo) {
+      const vIni = Number(n.ventana_inicio_min);
+      const vFin = Number(n.ventana_fin_min);
+      if (!Number.isFinite(vIni) || !Number.isFinite(vFin) || vFin - vIni < duracion) continue;
+      ventana = { inicio: vIni, fin: vFin, duracion };
+      inicio = vIni; fin = vIni + duracion;                 // colocación de partida
+    } else {
+      const tramo = porTramo.get(String(n.tramo_id));
+      if (!tramo) continue;                                 // necesidad de un tramo borrado
+      inicio = Number(tramo.inicio_min); fin = Number(tramo.fin_min);
+    }
+
     const minimo = Math.max(0, Number(n.minimo) || 0);
     const objetivo = objetivos ? Math.max(minimo, Number(n.objetivo) || minimo) : minimo;
     for (let i = 0; i < objetivo; i++) {
       huecos.push({
-        dia, dow: Number(n.dow), area_id: n.area_id, tramo_id: n.tramo_id,
-        inicio_min: Number(tramo.inicio_min), fin_min: Number(tramo.fin_min),
+        dia, dow: Number(n.dow), area_id: n.area_id, tramo_id: esRefuerzo ? null : n.tramo_id,
+        inicio_min: inicio, fin_min: fin,
+        ventana, etiqueta: n.etiqueta || null,
         // Un hueco por encima del mínimo es deseable, no obligatorio. La diferencia manda
         // en el orden: primero se cubren TODOS los mínimos y después se rellena.
         obligatorio: i < minimo,
@@ -62,6 +82,25 @@ export function construirHuecos({ lunes, necesidades = [], tramos = [], objetivo
     }
   }
   return huecos;
+}
+
+// Las horas posibles de un hueco. Un turno completo solo tiene una; un refuerzo, todas las
+// que quepan en su ventana. Devolverlas así permite que el resto del generador no sepa
+// siquiera que existen los refuerzos: para él son varios huecos-candidatos del mismo sitio.
+export function colocaciones(hueco) {
+  if (!hueco.ventana) return [{ inicio_min: hueco.inicio_min, fin_min: hueco.fin_min }];
+  const { inicio, fin, duracion } = hueco.ventana;
+  const salida = [];
+  for (let ini = inicio; ini + duracion <= fin; ini += PASO_REFUERZO) {
+    salida.push({ inicio_min: ini, fin_min: ini + duracion });
+  }
+  // Si la ventana no es múltiplo del paso, el último trozo se pega al final: si no, un
+  // refuerzo de 4 h en una ventana de 18:00 a 00:00 nunca llegaría a acabar a las 00:00.
+  const ultimo = fin - duracion;
+  if (!salida.length || salida[salida.length - 1].inicio_min !== ultimo) {
+    salida.push({ inicio_min: ultimo, fin_min: fin });
+  }
+  return salida;
 }
 
 // ── Elegibilidad ─────────────────────────────────────────────────────────────
@@ -202,14 +241,23 @@ export function generarSemana({
 
   while (pendientes.length) {
     // Se recalculan los candidatos en cada vuelta: cada asignación cambia quién puede.
+    // En un refuerzo se prueban TODAS las horas posibles dentro de su ventana, y cuenta
+    // como apta la persona que pueda en alguna de ellas: rechazar a alguien porque no le
+    // cuadra la primera colocación sería descartarlo por un horario que aún no existe.
     const evaluados = pendientes.map((h, i) => {
-      const aptos = [], descartes = [];
+      const opciones = colocaciones(h);
+      const aptos = [], descartes = new Map();
       for (const w of trabajadores) {
-        const no = motivoDescarte(w, h, ctx);
-        if (no) descartes.push({ worker_id: w.id, nombre: w.nombre || w.username, ...no });
-        else aptos.push(w);
+        let mejor = null, motivo = null;
+        for (const c of opciones) {
+          const no = motivoDescarte(w, { ...h, ...c }, ctx);
+          if (!no) { mejor = c; break; }
+          motivo = motivo || no;                 // el primer porqué sirve para explicarlo
+        }
+        if (mejor) aptos.push({ w, colocacion: mejor });
+        else descartes.set(w.id, { worker_id: w.id, nombre: w.nombre || w.username, ...motivo });
       }
-      return { h, i, aptos, descartes };
+      return { h, i, aptos, descartes: [...descartes.values()] };
     });
 
     // Primero los obligatorios; dentro, el que menos candidatos tiene; y a igualdad, por
@@ -231,7 +279,9 @@ export function generarSemana({
       for (const d of elegido.descartes) (porMotivo[d.motivo] = porMotivo[d.motivo] || []).push(d.nombre);
       sinCubrir.push({
         dia: elegido.h.dia, area: nombreArea.get(String(elegido.h.area_id)) || null,
-        tramo: nombreTramo.get(String(elegido.h.tramo_id)) || null,
+        // Un refuerzo no tiene tramo, así que se identifica por su etiqueta y sus horas.
+        tramo: elegido.h.etiqueta || nombreTramo.get(String(elegido.h.tramo_id)) || null,
+        refuerzo: !!elegido.h.ventana,
         obligatorio: elegido.h.obligatorio,
         porque: Object.entries(porMotivo).map(([motivo, quienes]) => ({ motivo, n: quienes.length, quienes })),
       });
@@ -239,15 +289,16 @@ export function generarSemana({
     }
 
     const ordenados = elegido.aptos
-      .map((w) => ({ w, p: puntuar(w, elegido.h, ctx) }))
+      .map(({ w, colocacion }) => ({ w, colocacion, p: puntuar(w, { ...elegido.h, ...colocacion }, ctx) }))
       .sort((a, b) => mejorQue(a.p, b.p));
-    const { w, p } = ordenados[0];
+    const { w, colocacion, p } = ordenados[0];
 
     const asig = {
       worker_id: w.id, nombre: w.nombre || w.username,
       dia: elegido.h.dia, dow: elegido.h.dow,
       area_id: elegido.h.area_id, tramo_id: elegido.h.tramo_id,
-      inicio_min: elegido.h.inicio_min, fin_min: elegido.h.fin_min,
+      inicio_min: colocacion.inicio_min, fin_min: colocacion.fin_min,
+      refuerzo: !!elegido.h.ventana, etiqueta: elegido.h.etiqueta,
       tipo: "turno", origen: ORIGEN,
       // El porqué viaja con la propuesta: es lo que hace que se pueda revisar de un
       // vistazo en vez de tener que reconstruir el razonamiento.

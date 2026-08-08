@@ -4345,7 +4345,9 @@ app.get("/api/horarios/plantilla", requireAuth(HORARIOS_ROLES), async (req, res)
       dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden, inicio_min`, [local]),
       dbAll(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
              AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [local]),
-      dbAll(`SELECT id, area_id, tramo_id, dow, minimo, objetivo FROM hor_necesidades WHERE local = ?`, [local]),
+      dbAll(`SELECT id, area_id, tramo_id, dow, minimo, objetivo,
+                    duracion_min, ventana_inicio_min, ventana_fin_min, etiqueta
+             FROM hor_necesidades WHERE local = ?`, [local]),
       dbAll(`SELECT c.id, c.worker_id, c.desde, c.hasta, c.horas_semana, c.dias_semana FROM hor_contratos c
              JOIN users u ON u.id = c.worker_id WHERE u.local = ? ORDER BY c.worker_id, c.desde DESC`, [local]),
       dbAll(`SELECT a.id, a.worker_id, a.tipo, a.desde, a.hasta, a.estado, a.motivo FROM hor_ausencias a
@@ -4381,8 +4383,23 @@ app.put("/api/horarios/necesidades", requireAuth(HORARIOS_ROLES), async (req, re
       if (!minimo && !objetivo) continue;          // celda vacía: no se guarda una fila de ceros
       const dow = Number(f.dow);
       if (!(dow >= 0 && dow <= 6)) continue;
-      await q(`INSERT INTO hor_necesidades (local, area_id, tramo_id, dow, minimo, objetivo, creado_en)
-               VALUES (?,?,?,?,?,?,?)`, [local, Number(f.area_id), Number(f.tramo_id), dow, minimo, objetivo, ahora]);
+
+      // Refuerzo: dura lo que dure y cae donde quepa dentro de su ventana. No tiene tramo.
+      const duracion = Math.round(Number(f.duracion_min) || 0);
+      const vIni = f.ventana_inicio_min == null ? null : Math.round(Number(f.ventana_inicio_min));
+      const vFin = f.ventana_fin_min == null ? null : Math.round(Number(f.ventana_fin_min));
+      if (duracion > 0) {
+        if (!Number.isFinite(vIni) || !Number.isFinite(vFin) || vFin - vIni < duracion) {
+          return res.status(400).json({ ok: false, error: "Un refuerzo necesita una horquilla al menos tan larga como su duración" });
+        }
+      }
+
+      await q(`INSERT INTO hor_necesidades (local, area_id, tramo_id, dow, minimo, objetivo,
+                                            duracion_min, ventana_inicio_min, ventana_fin_min, etiqueta, creado_en)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        [local, Number(f.area_id), duracion > 0 ? null : Number(f.tramo_id), dow, minimo, objetivo,
+         duracion > 0 ? duracion : null, duracion > 0 ? vIni : null, duracion > 0 ? vFin : null,
+         f.etiqueta ? String(f.etiqueta).slice(0, 60) : null, ahora]);
       n++;
     }
     await client.query("COMMIT");
@@ -4391,6 +4408,60 @@ app.put("/api/horarios/necesidades", requireAuth(HORARIOS_ROLES), async (req, re
     await client.query("ROLLBACK").catch(() => {});
     console.error("[horarios] necesidades:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron guardar las necesidades" });
+  } finally { client.release(); }
+});
+
+// Los turnos del local (hor_tramos). Editables: los que se siembran al empezar son un
+// punto de partida, no una verdad. Cada casa tiene los suyos y suponerlos sale caro,
+// porque de ellos cuelgan las necesidades, el generador y lo que escribe el PDF.
+app.put("/api/horarios/tramos", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const filas = Array.isArray(req.body?.tramos) ? req.body.tramos : [];
+    if (!filas.length) return res.status(400).json({ ok: false, error: "Tiene que quedar al menos un turno" });
+
+    for (const t of filas) {
+      const ini = Number(t.inicio_min), fin = Number(t.fin_min);
+      if (!String(t.nombre || "").trim()) return res.status(400).json({ ok: false, error: "Todos los turnos necesitan un nombre" });
+      if (!Number.isFinite(ini) || !Number.isFinite(fin) || fin <= ini) {
+        return res.status(400).json({ ok: false, error: `«${t.nombre}»: la hora de salida tiene que ser posterior a la de entrada` });
+      }
+      // Hasta 2160 = 36:00, que permite un turno que acabe de madrugada del día siguiente.
+      if (fin > 2160) return res.status(400).json({ ok: false, error: `«${t.nombre}»: no puede acabar más allá de las 12:00 del día siguiente` });
+    }
+
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    const ahora = isoConOffset(Date.now());
+    const vivos = [];
+    for (const [i, t] of filas.entries()) {
+      const nombre = String(t.nombre).trim().slice(0, 40);
+      if (t.id) {
+        // Se ACTUALIZA, no se borra y recrea: las asignaciones ya escritas apuntan a este
+        // id, y recrearlo dejaría huérfanos los cuadrantes de semanas pasadas.
+        await q(`UPDATE hor_tramos SET nombre = ?, inicio_min = ?, fin_min = ?, orden = ? WHERE id = ? AND local = ?`,
+          [nombre, Number(t.inicio_min), Number(t.fin_min), i, Number(t.id), local]);
+        vivos.push(Number(t.id));
+      } else {
+        const r = await q(`INSERT INTO hor_tramos (local, nombre, orden, inicio_min, fin_min, creado_en)
+                           VALUES (?,?,?,?,?,?) ON CONFLICT (local, nombre) DO UPDATE
+                           SET inicio_min = EXCLUDED.inicio_min, fin_min = EXCLUDED.fin_min, orden = EXCLUDED.orden, activo = TRUE
+                           RETURNING id`,
+          [local, nombre, i, Number(t.inicio_min), Number(t.fin_min), ahora]);
+        vivos.push(Number(r.rows[0].id));
+      }
+    }
+    // Quitar un turno lo DESACTIVA, no lo borra: los cuadrantes antiguos siguen apuntando
+    // a él y el PDF de una semana de hace un año tiene que poder seguir contando la verdad.
+    await q(`UPDATE hor_tramos SET activo = FALSE WHERE local = ? AND id <> ALL(?::int[])`, [local, vivos]);
+    await client.query("COMMIT");
+    res.json({ ok: true, tramos: vivos.length });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[horarios] tramos:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron guardar los turnos" });
   } finally { client.release(); }
 });
 

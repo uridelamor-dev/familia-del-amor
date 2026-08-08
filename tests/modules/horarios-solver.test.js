@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { generarSemana, construirHuecos, motivoDescarte, ORIGEN, AJUSTES } from "../../src/modules/horarios/solver.js";
+import { generarSemana, construirHuecos, colocaciones, motivoDescarte, ORIGEN, AJUSTES, PASO_REFUERZO } from "../../src/modules/horarios/solver.js";
 import { detectarConflictos, BLOQUEA } from "../../src/modules/horarios/conflictos.js";
 
 const LUNES = "2026-08-03";   // lunes de verdad
@@ -273,6 +273,126 @@ describe("solver — la cuenta de la vieja: ¿hay gente para lo que se pide?", (
   test("sin contratos registrados no se inventa una capacidad", () => {
     const r = generarSemana({ lunes: LUNES, areas: AREAS, tramos: TRAMOS, trabajadores: gente(4), necesidades: nec(1, 10, 1) });
     assert.equal(r.resumen.capacidad.horasDisponibles, 0);
+  });
+});
+
+// ── Los turnos que se hacen DE VERDAD en la casa ────────────────────────────
+// Dos turnos completos de 8 h (08-16 y 16-00) y refuerzos de 4 h con hora variable: uno
+// puede ser de 10 a 14 y otro de 11 a 15, o por la tarde de 19 a 23 o de 20 a 00. La
+// primera versión de este módulo ataba las necesidades a franjas fijas y esos refuerzos
+// —que son media plantilla en fin de semana— no cabían en el modelo.
+const T_REAL = [
+  { id: 10, nombre: "MAÑANA", inicio_min: 480, fin_min: 960 },    // 08:00–16:00
+  { id: 20, nombre: "TARDE", inicio_min: 960, fin_min: 1440 },    // 16:00–00:00
+];
+const refuerzo = (dow, minimo, { duracion = 240, desde, hasta, etiqueta, area_id = 1, objetivo = null } = {}) =>
+  ({ area_id, tramo_id: null, dow, minimo, objetivo, duracion_min: duracion,
+     ventana_inicio_min: desde, ventana_fin_min: hasta, etiqueta });
+
+describe("solver — refuerzos de 4 h con hora variable", () => {
+  test("un turno completo tiene UNA colocación; un refuerzo, todas las que quepan", () => {
+    const [fijo] = construirHuecos({ lunes: LUNES, tramos: T_REAL, necesidades: [{ area_id: 1, tramo_id: 10, dow: 0, minimo: 1 }] });
+    assert.deepEqual(colocaciones(fijo), [{ inicio_min: 480, fin_min: 960 }]);
+
+    // Refuerzo de 4 h entre las 09:00 y las 16:00 → de 09-13 hasta 12-16.
+    const [ref] = construirHuecos({ lunes: LUNES, tramos: T_REAL, necesidades: [refuerzo(0, 1, { desde: 540, hasta: 960 })] });
+    const c = colocaciones(ref);
+    assert.equal(c[0].inicio_min, 540);
+    assert.equal(c[c.length - 1].fin_min, 960, "la última colocación llega justo al final de la ventana");
+    assert.ok(c.every((x) => x.fin_min - x.inicio_min === 240), "todas duran lo que se pidió");
+    assert.ok(c.every((x) => x.inicio_min >= 540 && x.fin_min <= 960), "y ninguna se sale de la ventana");
+  });
+
+  test("LA VENTANA DE TARDE LLEGA HASTA MEDIANOCHE: cabe el 20-00", () => {
+    // Con paso de 30 min desde las 18:00, 20:00 cae justo; pero si la ventana no fuese
+    // múltiplo del paso, el último trozo tiene que pegarse igualmente al final.
+    const [ref] = construirHuecos({ lunes: LUNES, tramos: T_REAL, necesidades: [refuerzo(0, 1, { desde: 1130, hasta: 1440 })] });
+    const c = colocaciones(ref);
+    assert.equal(c[c.length - 1].inicio_min, 1200);
+    assert.equal(c[c.length - 1].fin_min, 1440, "acaba a las 00:00 en punto");
+  });
+
+  test("una ventana más corta que la duración no genera un hueco imposible", () => {
+    assert.deepEqual(construirHuecos({ lunes: LUNES, tramos: T_REAL, necesidades: [refuerzo(0, 1, { desde: 600, hasta: 700 })] }), []);
+  });
+
+  test("un refuerzo sin ventana tampoco: no se inventa una", () => {
+    assert.deepEqual(construirHuecos({ lunes: LUNES, tramos: T_REAL, necesidades: [refuerzo(0, 1, {})] }), []);
+  });
+
+  test("EL GENERADOR ELIGE LA HORA, no solo la persona", () => {
+    // Una persona que no puede antes de las 11: el refuerzo tiene que colocarse a las 11,
+    // no descartarla porque la primera colocación posible fuera a las 09.
+    const r = generarSemana({
+      lunes: LUNES, areas: AREAS, tramos: T_REAL,
+      trabajadores: gente(1), contratos: contratos([1], 40),
+      necesidades: [refuerzo(0, 1, { desde: 540, hasta: 960 })],
+      disponibilidad: [{ worker_id: 1, dow: 0, inicio_min: 0, fin_min: 660, preferencia: "no_disponible" }],
+    });
+    assert.equal(r.asignaciones.length, 1, "no se queda sin cubrir");
+    assert.equal(r.asignaciones[0].inicio_min, 660, "lo coloca a las 11:00");
+    assert.equal(r.asignaciones[0].fin_min, 900, "y acaba a las 15:00");
+    assert.equal(r.asignaciones[0].refuerzo, true);
+  });
+
+  test("dos refuerzos el mismo día pueden salir a HORAS DISTINTAS", () => {
+    const r = generarSemana({
+      lunes: LUNES, areas: AREAS, tramos: T_REAL,
+      trabajadores: gente(2), contratos: contratos([1, 2], 40),
+      necesidades: [refuerzo(0, 2, { desde: 540, hasta: 960 })],
+      // A la 2 no le va bien antes de las 11; a la 1 le da igual.
+      disponibilidad: [{ worker_id: 2, dow: 0, inicio_min: 0, fin_min: 660, preferencia: "no_disponible" }],
+    });
+    assert.equal(r.asignaciones.length, 2);
+    const horas = r.asignaciones.map((a) => a.inicio_min).sort((a, b) => a - b);
+    assert.ok(horas[1] >= 660, "el de la persona que no puede pronto se va más tarde");
+  });
+
+  test("un refuerzo respeta el descanso igual que un turno completo", () => {
+    // Cierra el domingo a las 00:00 y el lunes hay refuerzo de mañana: no llegan 12 h.
+    const r = generarSemana({
+      lunes: LUNES, areas: AREAS, tramos: T_REAL,
+      trabajadores: gente(1), contratos: contratos([1], 40),
+      necesidades: [
+        { area_id: 1, tramo_id: 20, dow: 0, minimo: 1 },              // lunes 16-00
+        refuerzo(1, 1, { desde: 480, hasta: 720 }),                   // martes, mañana temprano
+      ],
+    });
+    // El de la mañana del martes no puede ser esa misma persona antes de las 12:00.
+    const martes = r.asignaciones.filter((a) => a.dia === "2026-08-04");
+    assert.equal(martes.length, 0, "no cabe nadie, y se dice");
+    assert.equal(r.sinCubrir.find((s) => s.dia === "2026-08-04").porque[0].motivo, "descanso");
+  });
+
+  test("SEMANA REALISTA: dos turnos de 8 h más refuerzos de 4 h el fin de semana", () => {
+    const necesidades = [];
+    for (const dow of [0, 1, 2, 3, 4, 5, 6]) {
+      necesidades.push({ area_id: 1, tramo_id: 10, dow, minimo: 2 });   // sala mañana
+      necesidades.push({ area_id: 1, tramo_id: 20, dow, minimo: 2 });   // sala tarde
+      necesidades.push({ area_id: 2, tramo_id: 10, dow, minimo: 1 });   // cocina mañana
+      necesidades.push({ area_id: 2, tramo_id: 20, dow, minimo: 1 });   // cocina tarde
+      if (dow >= 4) {                                                    // vie/sáb/dom
+        necesidades.push(refuerzo(dow, 1, { desde: 540, hasta: 960, etiqueta: "Refuerzo mañana" }));
+        necesidades.push(refuerzo(dow, 1, { desde: 1080, hasta: 1440, etiqueta: "Refuerzo tarde" }));
+      }
+    }
+    const r = generarSemana({
+      lunes: LUNES, areas: AREAS, tramos: T_REAL,
+      trabajadores: gente(14), contratos: contratos([1,2,3,4,5,6,7,8,9,10,11,12,13,14], 32),
+      necesidades,
+    });
+    assert.equal(r.resumen.sinCubrirObligatorios, 0, JSON.stringify(r.sinCubrir.slice(0, 3)));
+
+    const refuerzos = r.asignaciones.filter((a) => a.refuerzo);
+    assert.equal(refuerzos.length, 6, "dos refuerzos cada uno de los tres días fuertes");
+    assert.ok(refuerzos.every((a) => a.fin_min - a.inicio_min === 240), "todos de 4 h");
+
+    // Y lo que de verdad importa: lo generado no tiene ni un conflicto que bloquee.
+    const conf = detectarConflictos({
+      lunes: LUNES, asignaciones: r.asignaciones, trabajadores: gente(14),
+      contratos: contratos([1,2,3,4,5,6,7,8,9,10,11,12,13,14], 32), tramos: T_REAL, areas: AREAS,
+    });
+    assert.deepEqual(conf.filter((c) => c.nivel === BLOQUEA), []);
   });
 });
 

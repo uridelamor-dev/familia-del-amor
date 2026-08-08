@@ -162,6 +162,20 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .horcfg-ley.pref-prefiere{background:var(--brand-soft);color:var(--brand)}
 .horcfg-ley.pref-no_disponible{background:var(--danger-soft);color:var(--danger)}
 
+/* Refuerzos: una ficha por refuerzo, no una fila de tabla. Entre la etiqueta, la duración,
+   dos horas y siete días no cabe todo a lo ancho del diálogo. */
+.horcfg-ref{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px;background:var(--surface)}
+.horcfg-ref-h{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:12.5px}
+.horcfg-ref-h .horcfg-r[data-k="etiqueta"]{width:150px}
+.horcfg-r-num{width:48px;text-align:center}
+/* Ancho generoso a propósito: en un navegador en inglés el campo de hora añade AM/PM y
+   con 104 px se cortaba. */
+.horcfg-r-hora{width:124px}
+.horcfg-ref-d{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:1px dashed var(--border);font-size:12px}
+.horcfg-ref-d label{display:grid;justify-items:center;gap:2px}
+.horcfg-ref-d label span{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);font-weight:600}
+.horcfg-ref-d .horcfg-rd{width:42px;text-align:center;padding:4px 2px;font-variant-numeric:tabular-nums}
+
 /* Tarjeta plegable (<details>): la cabecera hace de tirador. Nativa, sin JS. */
 .card.fold{padding:0;overflow:hidden;align-self:start}
 .card.fold>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0;padding:16px 18px;cursor:pointer;list-style:none;transition:background .12s ease}
@@ -181,6 +195,11 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .ic.bad{background:var(--danger-soft);color:var(--danger)}.ic.warn{background:var(--warning-soft);color:var(--warning)}.ic.info{background:var(--info-soft);color:var(--info)}.ic.ok{background:var(--success-soft);color:var(--success)}
 .att .grow b{font-size:13.5px;font-weight:600}.att .grow p{margin:3px 0 0;font-size:12.5px;color:var(--ink2)}.att .grow .meta{margin-top:5px;font-size:11.5px;color:var(--ink3);display:flex;gap:10px;flex-wrap:wrap}.att.done{opacity:.5}
 .prog{height:7px;border-radius:999px;background:var(--surface2);overflow:hidden}.prog>i{display:block;height:100%;border-radius:999px;background:var(--brand);transition:width .6s cubic-bezier(.2,.8,.2,1)}.prog.warn>i{background:var(--warning)}.prog.bad>i{background:var(--danger)}
+/* Envoltorio de tabla ancha. Se usa en 12 sitios (facturas, fichajes, horarios…) y NO
+   tenía ninguna regla: las tablas anchas se cortaban por la derecha en silencio en vez de
+   poder desplazarse. `-webkit-overflow-scrolling` para que el gesto vaya bien en iPad, que
+   es donde se mira el cuadrante. */
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}.tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);font-weight:600;padding:11px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
 .tbl td{padding:11px 14px;border-bottom:1px solid var(--border)}.tbl tr:last-child td{border-bottom:0}.tbl tbody tr:hover{background:var(--surface2)}.tbl th.r,.tbl td.r{text-align:right}
 .tbl th:first-child,.tbl td:first-child{padding-left:18px}.tbl th:last-child,.tbl td:last-child{padding-right:18px}
