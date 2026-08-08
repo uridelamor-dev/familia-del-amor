@@ -4147,6 +4147,52 @@ const CAMP_OBJETIVOS = [
   { obj: "Encuesta", txt: "Hola {nombre}, ¿qué te pareció tu última visita a {local}? Tu opinión nos ayuda muchísimo 🙏" },
   { obj: "Aviso", txt: "{nombre}, un aviso importante de {local}: " },
 ];
+
+// Plantillas de partida. Espejo de src/modules/campaigns/plantillas.js (el panel no importa
+// ESM). Cada una trae el texto Y cuándo tiene sentido usarla, que es lo que de verdad
+// ahorra tiempo: el texto se cambia en diez segundos, saber cuándo mandarlo no.
+const CAMP_PLANTILLAS = [
+  { id:"cumple-mes", nombre:"Cumpleaños del mes", grupo:"Fechas señaladas",
+    cuando:"Una vez al mes, a principios. Es la que mejor funciona: la excusa es suya, no tuya.",
+    mensaje:"¡Felicidades, {nombre}! 🎂 Desde {local} queremos celebrarlo contigo: este mes, si vienes a comer o cenar, la tarta la ponemos nosotros. Solo tienes que decirlo al reservar.",
+    nota:"Hay un envío automático de cumpleaños en la configuración. Esto es para hacerlo a mano." },
+  { id:"reactivacion", nombre:"Hace tiempo que no viene", grupo:"Recuperar clientes",
+    cuando:"Cada tres o cuatro meses, a quien lleve medio año sin aparecer. Si insistes más, dejas de ser un sitio al que volver y pasas a ser un mensaje que se ignora.",
+    mensaje:"{nombre}, hace tiempo que no te vemos por {local} y se nota 😊 Si te apetece volver, dilo al reservar y te invitamos al café. Aquí seguimos.",
+    nota:"Filtra por última visita antes de mandarla, o se la mandas también a quien vino ayer." },
+  { id:"carta-nueva", nombre:"Carta nueva", grupo:"Novedades",
+    cuando:"Cuando cambia la carta de verdad, dos o tres veces al año. Anunciar cada plato nuevo quema la lista.",
+    mensaje:"{nombre}, hemos cambiado la carta en {local} 🍽️ Hay cosas nuevas que creemos que te van a gustar. ¿Te guardamos mesa esta semana?",
+    nota:"Si puedes, nombra un plato concreto: da mucha más curiosidad que «una carta nueva»." },
+  { id:"llenar-dia", nombre:"Llenar un día flojo", grupo:"Ocupación",
+    cuando:"Con dos o tres días de antelación, no el mismo día. Y solo a la gente de ese local.",
+    mensaje:"{nombre}, esta semana tenemos mesa libre en {local} y nos encantaría verte. Si vienes entre semana, te invitamos al postre 🍮 ¿Te reservamos?",
+    nota:"No la repitas cada semana: el día flojo deja de serlo, pero la promo deja de valer." },
+  { id:"evento", nombre:"Evento o cena especial", grupo:"Eventos",
+    cuando:"Con dos semanas de margen, y un recordatorio a los que respondieron.",
+    mensaje:"{nombre}, en {local} preparamos algo especial y queremos que lo sepas antes que nadie 🎉 Plazas limitadas. Responde a este mensaje y te contamos.",
+    nota:"Deja el mensaje abierto a que respondan: una campaña que genera conversación vale el doble." },
+  { id:"grupos-navidad", nombre:"Reservas de grupo (Navidad, comuniones)", grupo:"Eventos",
+    cuando:"Muy pronto. Las comidas de empresa se cierran en octubre y las comuniones en enero.",
+    mensaje:"{nombre}, ya estamos cogiendo reservas de grupo en {local} para estas fechas. Si tienes que organizar una comida de empresa o una celebración, escríbenos y lo cuadramos sin prisas 🗓️",
+    nota:"Es la que más dinero mueve. Mándala antes de que la mande la competencia." },
+  { id:"terraza", nombre:"Abrimos terraza", grupo:"Novedades",
+    cuando:"El primer día bueno de la temporada, no por calendario. Si hace frío no funciona por muy abril que sea.",
+    mensaje:"{nombre}, ya tenemos la terraza abierta en {local} ☀️ Si te apetece comer fuera, avísanos y te guardamos una mesa buena.",
+    nota:"Va bien a mediodía de un día soleado, cuando la gente decide dónde comer." },
+  { id:"resena", nombre:"Pedir una reseña", grupo:"Reputación",
+    cuando:"Uno o dos días después de la visita, nunca el mismo día. Y solo a quien se fue contento.",
+    mensaje:"{nombre}, gracias por venir a {local} 🙏 Si te ha gustado, contarlo en Google nos ayuda muchísimo — es lo que hace que otros se atrevan a probarnos. Y si algo no estuvo bien, dínoslo a nosotros primero.",
+    nota:"La última frase no es de adorno: da salida a quien no quedó contento y evita esa reseña." },
+  { id:"no-vino", nombre:"Reservó y no vino", grupo:"Recuperar clientes",
+    cuando:"Al día siguiente, y con tono de preocuparse, no de reproche.",
+    mensaje:"{nombre}, te esperábamos ayer en {local} y al final no pudiste venir. ¿Todo bien? Si quieres cambiar la reserva a otro día, dínoslo y lo movemos sin problema.",
+    nota:"Ni una palabra sobre la mesa vacía. Esto es para recuperar a la persona." },
+  { id:"aniversario", nombre:"Aniversario del local", grupo:"Fechas señaladas",
+    cuando:"Una vez al año, con unos días de antelación.",
+    mensaje:"{nombre}, {local} cumple años y lo queremos celebrar con quien lo ha hecho posible 🥂 Pásate esta semana y te invitamos a brindar con nosotros.",
+    nota:"Funciona porque no pide nada. Si le metes un descuento encima, pierde lo que la hace especial." },
+];
 // Reflejo de src/modules/campaigns/campaigns.service.js (el panel no importa ESM).
 const CLAVES_SEGMENTO = ["q", "genero", "poblacion", "local", "idioma", "origen", "from", "to"];
 function construirSegmento(input = {}, mesActual) {
@@ -4201,6 +4247,37 @@ async function loadCampanas() {
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function openNuevaCampana() { openCampana("nueva"); }
+
+// Elegir plantilla. Se enseña CUÁNDO usarla junto al texto: el texto lo cambia cualquiera
+// en diez segundos, saber cuándo tiene sentido mandarlo es lo que de verdad ahorra tiempo.
+function campElegirPlantilla(alElegir) {
+  const grupos = [...new Set(CAMP_PLANTILLAS.map((p) => p.grupo))];
+  const ov = modal("Plantillas de campaña", `
+    <p class="mut" style="margin:0 0 14px;line-height:1.55">Una base hecha para lo que se lanza más a menudo.
+      Al elegir una se rellena el mensaje; lo que envíes lo decides tú.</p>
+    ${grupos.map((g) => `
+      <div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:16px 0 8px">${esc(g)}</div>
+      <div class="rows">${CAMP_PLANTILLAS.filter((p) => p.grupo === g).map((p) => `
+        <div class="row campplant" data-plant="${esc(p.id)}" style="cursor:pointer;align-items:flex-start">
+          <div class="grow" style="min-width:0">
+            <div class="t1">${esc(p.nombre)}</div>
+            <div class="t2" style="line-height:1.5;white-space:normal">${esc(p.cuando)}</div>
+            <div class="campplant-msg">${esc(p.mensaje)}</div>
+            ${p.nota ? `<div class="t2" style="line-height:1.5;white-space:normal;margin-top:6px">💡 ${esc(p.nota)}</div>` : ""}
+          </div>
+          <button class="btn sm primary" data-plant-usar="${esc(p.id)}">Usar</button>
+        </div>`).join("")}</div>`).join("")}
+    <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button></div>`);
+  ov.querySelector(".modal").style.width = "min(760px, 96vw)";
+  ov.addEventListener("click", (e) => {
+    const fila = e.target.closest("[data-plant]");
+    if (!fila) return;
+    const p = CAMP_PLANTILLAS.find((x) => x.id === fila.getAttribute("data-plant"));
+    if (!p) return;
+    ov.remove();
+    alElegir(p);
+  });
+}
 // Modal de campaña. mode: "nueva" | "editar" | "duplicar". pre: { id, nombre, mensaje, adjunto_url, seg }.
 function openCampana(mode = "nueva", pre = {}) {
   const s = pre.seg || {};
@@ -4215,7 +4292,7 @@ function openCampana(mode = "nueva", pre = {}) {
   const body = `<form id="fCamp"><div class="form-grid">
     <div class="field full"><label>Nombre de la campaña</label><input name="nombre" value="${esc(pre.nombre || "")}" required></div>
     <div class="field"><label>Plantilla</label><select id="campPlant">${plantOpts}</select></div>
-    <div class="field"><label>Objetivo (rellena el mensaje)</label><div style="display:flex;gap:6px;flex-wrap:wrap">${objBtns}</div></div>
+    <div class="field"><label>Objetivo (rellena el mensaje)</label><div style="display:flex;gap:6px;flex-wrap:wrap">${objBtns}<button type="button" class="btn sm primary" data-act="camp-plantillas">Ver plantillas…</button></div></div>
     <div class="field full"><label>Mensaje</label>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px"><button type="button" class="btn sm" data-var="{nombre}">+ nombre</button><button type="button" class="btn sm" data-var="{apellidos}">+ apellidos</button><button type="button" class="btn sm" data-var="{local}">+ local</button><label class="btn sm" style="cursor:pointer">📎 Adjuntar<input type="file" id="campFile" accept="image/*,application/pdf" hidden></label><span id="campAdjName" class="mut" style="font-size:12px;align-self:center">${pre.adjunto_url ? "📎 adjunto actual" : ""}</span></div>
       <textarea name="mensaje" id="campMsg" rows="3" required placeholder="Hola {nombre}! Este finde…">${esc(pre.mensaje || "")}</textarea></div>
@@ -4258,6 +4335,15 @@ function openCampana(mode = "nueva", pre = {}) {
     if (vb) { const ta = ov.querySelector("#campMsg"); const v = vb.getAttribute("data-var"); const p = ta.selectionStart != null ? ta.selectionStart : ta.value.length; ta.value = ta.value.slice(0, p) + v + ta.value.slice(ta.selectionEnd != null ? ta.selectionEnd : p); ta.focus(); updateBubble(); return; }
     const ob = e.target.closest("[data-obj]");
     if (ob) { ov.querySelector("#campMsg").value = ob.getAttribute("data-obj"); updateBubble(); }
+    if (e.target.closest('[data-act="camp-plantillas"]')) {
+      campElegirPlantilla((p) => {
+        const msg = ov.querySelector("#campMsg");
+        msg.value = p.mensaje;
+        const nom = ov.querySelector('[name="nombre"]');
+        if (nom && !nom.value.trim()) nom.value = p.nombre;
+        updateBubble();
+      });
+    }
   });
   ov.querySelector("#campFile").addEventListener("change", async (e) => {
     const f = e.target.files && e.target.files[0]; if (!f) return; toast("Subiendo adjunto…");

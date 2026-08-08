@@ -43,7 +43,18 @@ export function aplicarVariables(texto, contacto = {}) {
     .replace(/\{local\}/gi, local)
     .replace(/[ \t]{2,}/g, " ")
     .replace(/[ \t]+([!?.,;:])/g, "$1")
-    .trim();
+    // Una variable vacía deja su puntuación huérfana: «{nombre}, hace tiempo…» se convierte
+    // en «, hace tiempo…» cuando la ficha no tiene nombre, y hay fichas sin nombre (las que
+    // vienen de una reserva por teléfono, por ejemplo). Se limpia lo que queda colgando al
+    // principio y en medio, y se recupera la mayúscula.
+    .replace(/^[\s,;:.]+/, "")
+    .replace(/([¡¿])\s*[,;:]+\s*/g, "$1")
+    // La coma también puede quedar colgando por delante: «¡Felicidades, {nombre}!» sin
+    // nombre daba «¡Felicidades,!». Una coma pegada a un cierre o al final sobra siempre.
+    .replace(/[,;:]+(?=\s*[!?.…]|$)/g, "")
+    .replace(/\s+,/g, ",")
+    .trim()
+    .replace(/^([a-záéíóúüñ])/, (c) => c.toUpperCase());
 }
 
 // ¿Se puede enviar por WhatsApp a este contacto? Regla legal: nunca a bajas.

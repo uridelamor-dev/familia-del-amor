@@ -29,6 +29,27 @@ describe("messaging.aplicarVariables", () => {
     assert.equal(aplicarVariables("Hola {nombre} {apellidos}!", { nombre: "Ana" }), "Hola Ana!");
     assert.equal(aplicarVariables(null, {}), "");
   });
+
+  test("UNA VARIABLE VACÍA AL PRINCIPIO NO DEJA LA COMA COLGANDO", () => {
+    // Hay fichas sin nombre (las que entran por una reserva telefónica, por ejemplo), y
+    // «{nombre}, hace tiempo que no te vemos» se les enviaba como «, hace tiempo que…».
+    assert.equal(
+      aplicarVariables("{nombre}, hace tiempo que no te vemos", { nombre: "" }),
+      "Hace tiempo que no te vemos");
+    assert.equal(
+      aplicarVariables("{nombre}, hace tiempo que no te vemos", { nombre: "Ana" }),
+      "Ana, hace tiempo que no te vemos");
+  });
+
+  test("y con signo de apertura tampoco queda raro", () => {
+    assert.equal(aplicarVariables("¡Hola {nombre}! Te esperamos", { nombre: "" }), "¡Hola! Te esperamos");
+    assert.equal(aplicarVariables("¡Felicidades, {nombre}! 🎂", { nombre: "" }), "¡Felicidades! 🎂");
+  });
+
+  test("no se toca un mensaje que ya empezaba bien", () => {
+    assert.equal(aplicarVariables("Hola {nombre}, ¿todo bien?", { nombre: "Ana" }), "Hola Ana, ¿todo bien?");
+    assert.equal(aplicarVariables("¿Vienes, {nombre}?", { nombre: "Ana" }), "¿Vienes, Ana?");
+  });
 });
 
 describe("messaging.contactoEnviableWA", () => {
