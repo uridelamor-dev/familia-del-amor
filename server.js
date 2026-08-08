@@ -3851,6 +3851,145 @@ app.get("/api/horarios/config", requireAuth(HORARIOS_ROLES), async (req, res) =>
   }
 });
 
+// Resuelve el local pedido respetando el ámbito del usuario. Devuelve null si no puede.
+function horLocal(req, pedido) {
+  const local = rrhhLocalScope(req) || String(pedido || "").trim();
+  if (!local || !rrhhPuedeLocal(req, local)) return null;
+  return local;
+}
+
+// La semana: devuelve la versión de trabajo (el borrador si lo hay, si no la publicada) y
+// todo lo necesario para pintar la rejilla en una sola petición.
+app.get("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const lunes = lunesDe(String(req.query.lunes || "")) || lunesDe(instanteANegocio(Date.now()).diaNegocio);
+
+    const [areas, tramos, equipo] = await Promise.all([
+      dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
+      dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden, inicio_min`, [local]),
+      dbAll(`SELECT id, nombre, username, puesto FROM users
+             WHERE local = ? AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL
+             ORDER BY nombre`, [local]),
+    ]);
+    // Se trabaja siempre sobre el borrador; si no hay, se ve la publicada en solo lectura.
+    const semana = await dbGet(
+      `SELECT * FROM hor_semanas WHERE local = ? AND lunes = ? AND estado IN ('borrador','publicado')
+       ORDER BY CASE estado WHEN 'borrador' THEN 0 ELSE 1 END LIMIT 1`, [local, lunes]
+    );
+    const asignaciones = semana
+      ? await dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ? ORDER BY dia, inicio_min, orden`, [semana.id])
+      : [];
+    res.json({ ok: true, local, lunes, dias: diasSemana(lunes), semana: semana || null, areas, tramos, equipo, asignaciones });
+  } catch (e) {
+    console.error("[horarios] semana:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar la semana" });
+  }
+});
+
+// Crea el borrador de una semana. Idempotente: si ya existe, lo devuelve.
+app.post("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const lunes = lunesDe(String(req.body?.lunes || ""));
+    if (!lunes) return res.status(400).json({ ok: false, error: "Semana no válida" });
+
+    const cerrada = await dbGet(`SELECT id FROM hor_semanas WHERE local = ? AND lunes = ? AND estado = 'cerrado'`, [local, lunes]);
+    if (cerrada) return res.status(409).json({ ok: false, error: "Esa semana está cerrada y no se puede replanificar." });
+
+    const ya = await dbGet(`SELECT * FROM hor_semanas WHERE local = ? AND lunes = ? AND estado = 'borrador'`, [local, lunes]);
+    if (ya) return res.json({ ok: true, semana: ya, creada: false });
+
+    const max = await dbGet(`SELECT COALESCE(MAX(version), 0) AS v FROM hor_semanas WHERE local = ? AND lunes = ?`, [local, lunes]);
+    const fila = await dbRun(
+      `INSERT INTO hor_semanas (local, lunes, version, estado, origen, creado_en, creado_por)
+       VALUES (?, ?, ?, 'borrador', 'manual', ?, ?) RETURNING *`,
+      [local, lunes, Number(max.v) + 1, isoConOffset(Date.now()), req.user.nombre || req.user.username]
+    );
+    res.json({ ok: true, semana: fila, creada: true });
+  } catch (e) {
+    console.error("[horarios] crear semana:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo crear la semana" });
+  }
+});
+
+// Comprueba que la asignación es de una semana editable y del local del usuario.
+async function horSemanaEditable(req, semanaId) {
+  const s = await dbGet(`SELECT * FROM hor_semanas WHERE id = ?`, [semanaId]);
+  if (!s) return { error: 404, mensaje: "Semana no encontrada" };
+  if (!rrhhPuedeLocal(req, s.local)) return { error: 403, mensaje: "Sin acceso a este establecimiento" };
+  if (s.estado !== "borrador") return { error: 409, mensaje: "Solo se puede editar el borrador. Crea una versión nueva para cambiar un horario publicado." };
+  return { semana: s };
+}
+
+app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const { semana_id, worker_id, dia, area_id, tramo_id, inicio_min, fin_min } = req.body || {};
+    const chk = await horSemanaEditable(req, semana_id);
+    if (chk.error) return res.status(chk.error).json({ ok: false, error: chk.mensaje });
+    if (!worker_id || !dia) return res.status(400).json({ ok: false, error: "Faltan la persona y el día" });
+    const ini = Number(inicio_min), fin = Number(fin_min);
+    if (!Number.isInteger(ini) || !Number.isInteger(fin) || fin < ini || fin > 2160) {
+      return res.status(400).json({ ok: false, error: "El horario no es válido" });
+    }
+    if (!diasSemana(chk.semana.lunes).includes(String(dia))) {
+      return res.status(400).json({ ok: false, error: "Ese día no es de esta semana" });
+    }
+    const fila = await dbRun(
+      `INSERT INTO hor_asignaciones (semana_id, local, worker_id, dia, area_id, tramo_id, inicio_min, fin_min, fin_abierto, tipo, nota, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      [chk.semana.id, chk.semana.local, worker_id, dia, area_id || null, tramo_id || null, ini, fin,
+       !!req.body.fin_abierto, req.body.tipo || "turno", req.body.nota || null, isoConOffset(Date.now())]
+    );
+    res.json({ ok: true, asignacion: fila });
+  } catch (e) {
+    console.error("[horarios] crear asignación:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar el turno" });
+  }
+});
+
+// Mover o editar un turno. Se usa también al arrastrar en la rejilla.
+app.patch("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const a = await dbGet(`SELECT * FROM hor_asignaciones WHERE id = ?`, [req.params.id]);
+    if (!a) return res.status(404).json({ ok: false, error: "Turno no encontrado" });
+    const chk = await horSemanaEditable(req, a.semana_id);
+    if (chk.error) return res.status(chk.error).json({ ok: false, error: chk.mensaje });
+
+    const campos = ["worker_id", "dia", "area_id", "tramo_id", "inicio_min", "fin_min", "fin_abierto", "tipo", "nota"];
+    const sets = [], vals = [];
+    for (const k of campos) {
+      if (req.body[k] === undefined) continue;
+      sets.push(`${k} = ?`);
+      vals.push(k === "fin_abierto" ? !!req.body[k] : (req.body[k] === "" ? null : req.body[k]));
+    }
+    if (!sets.length) return res.json({ ok: true, asignacion: a });
+    const dia = req.body.dia ?? a.dia;
+    if (!diasSemana(chk.semana.lunes).includes(String(dia))) {
+      return res.status(400).json({ ok: false, error: "Ese día no es de esta semana" });
+    }
+    vals.push(a.id);
+    const fila = await dbRun(`UPDATE hor_asignaciones SET ${sets.join(", ")} WHERE id = ? RETURNING *`, vals);
+    res.json({ ok: true, asignacion: fila });
+  } catch (e) {
+    console.error("[horarios] editar asignación:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo mover el turno" });
+  }
+});
+
+app.delete("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const a = await dbGet(`SELECT * FROM hor_asignaciones WHERE id = ?`, [req.params.id]);
+    if (!a) return res.json({ ok: true });
+    const chk = await horSemanaEditable(req, a.semana_id);
+    if (chk.error) return res.status(chk.error).json({ ok: false, error: chk.mensaje });
+    await dbRun(`DELETE FROM hor_asignaciones WHERE id = ?`, [a.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo borrar el turno" }); }
+});
+
 // ════════════════════════ PULSO ANÓNIMO DEL EQUIPO ════════════════════════
 // Ver el comentario del esquema (initDB) y src/modules/rrhh/pulso.js: las respuestas y
 // las invitaciones viven en tablas que nunca se cruzan, y el k-anonimato se aplica AQUÍ,

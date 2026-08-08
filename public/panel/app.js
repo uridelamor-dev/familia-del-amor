@@ -1806,18 +1806,25 @@ async function userPass(id, nombre) {
 async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cuenta ${nombre}? No se puede deshacer.`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/users/" + encodeURIComponent(id)); toast("Usuario eliminado ✅"); loadUsuarios(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 
 // ════════════════════════ VISTA: HORARIOS ════════════════════════
-// Fase 0: solo el esqueleto y la configuración del local. El cuadrante llega en la fase 1;
-// mientras tanto la pantalla dice honestamente lo que hay y lo que falta, en vez de fingir.
-let HOR = { local: "", lunes: "", dias: [], areas: [], tramos: [], config: null };
+// Cuadrante semanal. La rejilla es tramo × área × 7 días, igual que el papel: así el PDF
+// y la pantalla no pueden decir cosas distintas.
+//
+// El estado vive aquí y se repinta entero, como el resto del panel. La agrupación NO se
+// hace en el navegador a ojo: se replica la misma lógica que el módulo puro del servidor
+// (src/modules/horarios/cuadrante.js), porque el panel no puede importar ESM.
+let HOR = { local: "", lunes: "", dias: [], areas: [], tramos: [], equipo: [], asignaciones: [], semana: null, vista: "areas", drag: null };
 function horScope() { HOR.local = localFijadoFE() || DASH_LOCAL || ""; return HOR.local; }
+const horEditable = () => HOR.semana && HOR.semana.estado === "borrador";
 
 async function loadHorarios() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
+  horLimpiaDrag();                     // el HTML se repinta al soltar: dragend puede no llegar
   horScope();
   if (sinPublico(HOR.local)) { view.innerHTML = avisoSinPublico("Horarios", "Personas", "turnos"); return; }
-  if (!HOR.local) { view.innerHTML = horPh() + horSinLocal(); return; }
+  if (!HOR.local) { view.innerHTML = horPh() + `<div class="card"><div class="ch"><h3>Elige un establecimiento</h3></div><p class="mut" style="margin:0">El cuadrante es de un local concreto. Selecciónalo arriba, en la barra.</p></div>`; return; }
   try {
-    const j = await apiRaw("/api/horarios/config?local=" + encodeURIComponent(HOR.local));
+    if (!HOR.lunes) HOR.lunes = resLunes(todayStr());
+    const j = await apiRaw(`/api/horarios/semana?local=${encodeURIComponent(HOR.local)}&lunes=${HOR.lunes}`);
     HOR = { ...HOR, ...j };
     view.innerHTML = renderHorarios();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
@@ -1826,42 +1833,236 @@ function horPh() {
   const amb = HOR.local ? ` · <b>${esc(nombreCortoLocal(HOR.local))}</b>` : "";
   return `<div class="ph"><div class="eyebrow">Personas</div><h1>Horarios</h1><div class="sub">Cuadrante semanal del equipo${amb}</div></div>`;
 }
-function horSinLocal() {
-  return `<div class="card"><div class="ch"><h3>Elige un establecimiento</h3></div><p class="mut" style="margin:0;line-height:1.6">El cuadrante es de un local concreto. Selecciónalo arriba, en la barra.</p></div>`;
-}
-function renderHorarios() {
-  const semana = (HOR.dias || []).length
-    ? `${fechaCorta(HOR.dias[0])} – ${fechaCorta(HOR.dias[6])}`
-    : "";
-  const areas = (HOR.areas || []).map((a) => `<span class="chip">${esc(a.nombre)}</span>`).join("") || '<span class="mut">—</span>';
-  const tramos = (HOR.tramos || []).map((t) => `<div class="row"><div class="grow"><div class="t1">${esc(t.nombre)}</div></div><b class="tnum">${esc(horFranja(t.inicio_min, t.fin_min))}</b></div>`).join("");
-  const corte = HOR.config ? deMin(HOR.config.corte_dia_min) : "06:00";
-  return horPh() + `
-    <div class="pendingblock" style="margin-bottom:16px">
-      <b>Semana en curso: ${esc(semana)}.</b><br>
-      El cuadrante editable llega en el siguiente paso. De momento esto es la configuración del
-      local: las áreas y los tramos con los que se montará la rejilla y el PDF.
-    </div>
-    <div class="grid g2">
-      <div class="card"><div class="ch"><h3>Áreas</h3></div><div class="chips">${areas}</div>
-        <div class="mut" style="font-size:12px;margin-top:10px">Son filas de una tabla, no están fijadas en el código: se pueden añadir BARRA, OFFICE o lo que haga falta.</div>
-      </div>
-      <div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Tramos</h3></div><div class="rows">${tramos}</div>
-        <div class="mut" style="font-size:12px;padding:12px 18px">Con su horario habitual. En el PDF solo se antepone la franja a quien se salga de él, como en el cuadrante de siempre.</div>
-      </div>
-    </div>
-    <div class="card" style="margin-top:16px"><div class="ch"><h3>La jornada del local</h3></div>
-      <p class="mut" style="margin:0;line-height:1.6">El día de trabajo se corta a las <b>${esc(corte)}</b>: quien ficha la salida a las 02:10 de la madrugada cuenta en la jornada del día anterior, que es como se cuadra de verdad en hostelería.</p>
-    </div>`;
-}
-// Etiqueta al estilo del cuadrante: 660,960 → "11-16"; 1200,1620 → "20-03".
-function horFranja(ini, fin) {
+function horFranja(ini, fin, abierto) {
   const h = (m) => { const b = ((Math.round(m) % 1440) + 1440) % 1440, hh = Math.floor(b / 60), mm = b % 60; return mm ? `${hh}:${String(mm).padStart(2, "0")}` : String(hh); };
-  return `${h(ini)}-${h(fin)}`;
+  return `${h(ini)}-${abierto ? "cierre" : h(fin)}`;
 }
-function deMin(m) {
-  const b = ((Math.round(Number(m) || 0) % 1440) + 1440) % 1440;
-  return `${String(Math.floor(b / 60)).padStart(2, "0")}:${String(b % 60).padStart(2, "0")}`;
+// Espejo de franjaSiDifiere() del servidor: la hora solo se escribe si difiere del tramo.
+function horFranjaSiDifiere(a, tramo) {
+  if (a.fin_abierto) return horFranja(a.inicio_min, a.fin_min, true);
+  if (!tramo) return horFranja(a.inicio_min, a.fin_min);
+  return (+a.inicio_min === +tramo.inicio_min && +a.fin_min === +tramo.fin_min) ? null : horFranja(a.inicio_min, a.fin_min);
+}
+const horNombre = (id) => { const w = (HOR.equipo || []).find((x) => String(x.id) === String(id)); return w ? (w.nombre || w.username) : "—"; };
+
+function renderHorarios() {
+  const d = HOR.dias || [];
+  const etiqueta = d.length ? `${fechaCorta(d[0])} – ${fechaCorta(d[6])}` : "";
+  const est = HOR.semana
+    ? (HOR.semana.estado === "borrador"
+        ? `<span class="pill warn">Borrador · v${HOR.semana.version}</span>`
+        : `<span class="pill ok">Publicado · v${HOR.semana.version}</span>`)
+    : `<span class="pill">Sin empezar</span>`;
+  const nav = `<div class="agnav">
+    <button class="btn sm" data-act="hor-prev">‹</button>
+    <button class="btn sm" data-act="hor-hoy">Esta semana</button>
+    <button class="btn sm" data-act="hor-next">›</button>
+    <b style="margin-left:6px">${esc(etiqueta)}</b> ${est}
+    <div style="flex:1"></div>
+    <div class="seg">
+      <button class="${HOR.vista === "areas" ? "on" : ""}" data-act="hor-vista" data-v="areas">Por área</button>
+      <button class="${HOR.vista === "personas" ? "on" : ""}" data-act="hor-vista" data-v="personas">Por persona</button>
+    </div>
+    ${HOR.semana ? "" : `<button class="btn primary" data-act="hor-crear">Empezar esta semana</button>`}
+  </div>`;
+
+  if (!HOR.semana) {
+    return horPh() + nav + `<div class="card"><div class="ch"><h3>Esta semana está sin planificar</h3></div>
+      <p class="mut" style="margin:0;line-height:1.6">Dale a «Empezar esta semana» y podrás ir poniendo turnos. Nada se publica hasta que tú lo digas.</p></div>`;
+  }
+  const aviso = horEditable() ? "" :
+    `<div class="pendingblock" style="margin-bottom:12px">Estás viendo el horario <b>publicado</b>. Para cambiarlo hay que crear una versión nueva — así queda constancia de lo que vio el equipo.</div>`;
+  return horPh() + nav + aviso + (HOR.vista === "personas" ? horPorPersona() : horRejilla()) + horResumen();
+}
+
+// ── Rejilla por área (la del papel) ──
+function horRejilla() {
+  const dias = HOR.dias, hoy = todayStr();
+  const cab = `<div class="horcell horhead"></div>` + dias.map((dia, i) =>
+    `<div class="horcell horhead ${dia === hoy ? "hoy" : ""}"><div class="dwd">${WD[i]}</div><div class="dnum">${Number(dia.slice(-2))}</div></div>`
+  ).join("");
+
+  const bloques = (HOR.tramos || []).map((tramo) => {
+    const filas = (HOR.areas || []).map((area) => {
+      const celdas = dias.map((dia) => {
+        const gente = (HOR.asignaciones || [])
+          .filter((a) => String(a.dia) === dia && String(a.tramo_id) === String(tramo.id) && String(a.area_id) === String(area.id) && (a.tipo || "turno") === "turno")
+          .map((a) => ({ ...a, franja: horFranjaSiDifiere(a, tramo) }))
+          .sort((a, b) => (!a.franja && b.franja ? -1 : a.franja && !b.franja ? 1 : a.inicio_min - b.inicio_min));
+        const items = gente.map((a) => `<div class="horchip" draggable="${horEditable()}" data-horasig="${a.id}" data-act="hor-editar" data-id="${a.id}" title="${esc(horFranja(a.inicio_min, a.fin_min, a.fin_abierto))}">${a.franja ? `<span class="hf">${esc(a.franja)}</span>` : ""}${esc(horNombre(a.worker_id))}</div>`).join("");
+        const mas = horEditable() ? `<button class="hormas" data-act="hor-nuevo" data-dia="${dia}" data-tramo="${tramo.id}" data-area="${area.id}" title="Añadir">+</button>` : "";
+        return `<div class="horcell horslot" data-horcell data-dia="${dia}" data-tramo="${tramo.id}" data-area="${area.id}">${items}${mas}</div>`;
+      }).join("");
+      return `<div class="horcell horarea">${esc(area.nombre)}</div>${celdas}`;
+    }).join("");
+    return `<div class="hortramo"><div class="hortramo-t">${esc(tramo.nombre)} <span class="mut">${esc(horFranja(tramo.inicio_min, tramo.fin_min))}</span></div>
+      <div class="horgrid">${cab}${filas}</div></div>`;
+  }).join("");
+
+  const sueltos = (HOR.asignaciones || []).filter((a) => (a.tipo || "turno") !== "turno" || !a.tramo_id || !a.area_id);
+  const fuera = sueltos.length
+    ? `<details class="card fold" style="margin-top:14px"><summary><h3>Fuera de la rejilla</h3><span class="foldr"><span>${num(sueltos.length)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+       <div class="rows">${sueltos.map((a) => `<div class="row"><div class="grow"><div class="t1">${esc(horNombre(a.worker_id))}</div><div class="t2">${esc(a.dia)} · ${esc(cap(a.tipo || "turno"))}</div></div><button class="btn sm" data-act="hor-editar" data-id="${a.id}">Ver</button></div>`).join("")}</div></details>`
+    : "";
+  return bloques + fuera;
+}
+
+// ── Vista por persona (la que evita las horas extra) ──
+function horPorPersona() {
+  const dias = HOR.dias, hoy = todayStr();
+  const tramoPorId = new Map((HOR.tramos || []).map((t) => [String(t.id), t]));
+  const cab = `<div class="horcell horhead">Persona</div>` + dias.map((dia, i) =>
+    `<div class="horcell horhead ${dia === hoy ? "hoy" : ""}"><div class="dwd">${WD[i]}</div><div class="dnum">${Number(dia.slice(-2))}</div></div>`
+  ).join("") + `<div class="horcell horhead">Horas</div>`;
+
+  const filas = (HOR.equipo || []).map((w) => {
+    let min = 0;
+    const celdas = dias.map((dia) => {
+      const suyos = (HOR.asignaciones || []).filter((a) => String(a.worker_id) === String(w.id) && String(a.dia) === dia)
+        .sort((a, b) => a.inicio_min - b.inicio_min);
+      const chips = suyos.map((a) => {
+        if ((a.tipo || "turno") !== "turno") return `<div class="horchip lib">${esc(cap(a.tipo))}</div>`;
+        min += (a.fin_min - a.inicio_min);
+        return `<div class="horchip" draggable="${horEditable()}" data-horasig="${a.id}" data-act="hor-editar" data-id="${a.id}">${esc(horFranja(a.inicio_min, a.fin_min, a.fin_abierto))}</div>`;
+      }).join("");
+      return `<div class="horcell horslot" data-horcell data-dia="${dia}" data-worker="${w.id}">${chips}</div>`;
+    }).join("");
+    const h = Math.round((min / 60) * 10) / 10;
+    return `<div class="horcell horarea" title="${esc(w.puesto || "")}">${esc(w.nombre || w.username)}</div>${celdas}<div class="horcell hortot ${h > 40 ? "alto" : ""}"><b class="tnum">${dec1(h)}</b></div>`;
+  }).join("");
+  return `<div class="hortramo"><div class="horgrid porpersona">${cab}${filas}</div></div>`;
+}
+
+function horResumen() {
+  const turnos = (HOR.asignaciones || []).filter((a) => (a.tipo || "turno") === "turno");
+  const min = turnos.reduce((s, a) => s + (a.fin_min - a.inicio_min), 0);
+  const gente = new Set(turnos.map((a) => String(a.worker_id))).size;
+  const solapes = horSolapes().length;
+  return `<div class="grid g4" style="margin-top:16px">
+    ${stat("Turnos", ic("cal", 15), num(turnos.length))}
+    ${stat("Horas planificadas", ic("clock", 15), dec1(min / 60))}
+    ${stat("Personas con turno", ic("users", 15), `${num(gente)}/${num((HOR.equipo || []).length)}`)}
+    ${stat("Solapes", ic("alert", 15), num(solapes), "", solapes ? "hay que revisarlos" : "ninguno")}
+  </div>`;
+}
+// Espejo de solapesDe() del servidor.
+function horSolapes() {
+  const porClave = {};
+  for (const a of (HOR.asignaciones || [])) {
+    if ((a.tipo || "turno") !== "turno") continue;
+    (porClave[`${a.worker_id}|${a.dia}`] ||= []).push(a);
+  }
+  const out = [];
+  for (const k of Object.keys(porClave)) {
+    const l = porClave[k].sort((a, b) => a.inicio_min - b.inicio_min);
+    for (let i = 0; i < l.length - 1; i++) for (let j = i + 1; j < l.length; j++)
+      if (l[i].inicio_min < l[j].fin_min && l[j].inicio_min < l[i].fin_min) out.push([l[i], l[j]]);
+  }
+  return out;
+}
+
+// ── Acciones ──
+function horNavega(dir) {
+  HOR.lunes = dir === "hoy" ? resLunes(todayStr()) : addDaysStr(HOR.lunes, dir === "next" ? 7 : -7);
+  loadHorarios();
+}
+async function horCrear() {
+  try { await apiSend("POST", "/api/horarios/semana", { local: HOR.local, lunes: HOR.lunes }); loadHorarios(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+function horVista(v) { HOR.vista = v; document.getElementById("view").innerHTML = renderHorarios(); }
+
+// Alta y edición de turno. El horario se rellena solo con el del tramo: lo normal es que
+// coincida, y así solo se toca cuando de verdad hay que cambiarlo.
+function horModal(asig, ctx) {
+  const editando = !!asig;
+  const tramo = (HOR.tramos || []).find((t) => String(t.id) === String(asig?.tramo_id ?? ctx?.tramo));
+  const ini = asig ? asig.inicio_min : (tramo ? tramo.inicio_min : 660);
+  const fin = asig ? asig.fin_min : (tramo ? tramo.fin_min : 960);
+  const opt = (arr, sel, vacio) => [vacio ? `<option value="">${vacio}</option>` : ""].concat(
+    arr.map((x) => `<option value="${x.id}" ${String(sel) === String(x.id) ? "selected" : ""}>${esc(x.nombre || x.username)}</option>`)).join("");
+  const body = `<div class="form-grid">
+    <div class="field"><label>Persona</label><select id="hmW">${opt(HOR.equipo, asig?.worker_id ?? ctx?.worker, "Elegir…")}</select></div>
+    <div class="field"><label>Día</label><select id="hmD">${HOR.dias.map((d, i) => `<option value="${d}" ${String(asig?.dia ?? ctx?.dia) === d ? "selected" : ""}>${WD[i]} ${Number(d.slice(-2))}</option>`).join("")}</select></div>
+    <div class="field"><label>Tramo</label><select id="hmT">${opt(HOR.tramos, asig?.tramo_id ?? ctx?.tramo, "Sin tramo")}</select></div>
+    <div class="field"><label>Área</label><select id="hmA">${opt(HOR.areas, asig?.area_id ?? ctx?.area, "Sin área")}</select></div>
+    <div class="field"><label>Entra</label><input id="hmI" type="time" value="${horHHMM(ini)}"></div>
+    <div class="field"><label>Sale</label><input id="hmF" type="time" value="${horHHMM(fin)}" ${asig?.fin_abierto ? "disabled" : ""}></div>
+    <label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="hmC" ${asig?.fin_abierto ? "checked" : ""} style="width:auto"> Hasta cierre</label>
+    <div class="field"><label>Tipo</label><select id="hmTipo">${["turno", "libranza", "vacaciones", "baja", "formacion"].map((t) => `<option value="${t}" ${(asig?.tipo || "turno") === t ? "selected" : ""}>${cap(t)}</option>`).join("")}</select></div>
+    <div class="field full"><label>Nota (opcional)</label><input id="hmN" value="${esc(asig?.nota || "")}"></div>
+  </div>
+  <div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px">
+    <div>${editando ? `<button class="btn danger" id="hmDel">Quitar turno</button>` : ""}</div>
+    <div style="display:flex;gap:8px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="hmOk">${editando ? "Guardar" : "Añadir"}</button></div>
+  </div>`;
+  const ov = modal(editando ? "Turno de " + horNombre(asig.worker_id) : "Nuevo turno", body);
+  const cierre = ov.querySelector("#hmC");
+  cierre.addEventListener("change", () => { ov.querySelector("#hmF").disabled = cierre.checked; });
+  // Al cambiar de tramo, se reajustan las horas: es el caso normal.
+  ov.querySelector("#hmT").addEventListener("change", (e) => {
+    const t = (HOR.tramos || []).find((x) => String(x.id) === e.target.value);
+    if (!t) return;
+    ov.querySelector("#hmI").value = horHHMM(t.inicio_min);
+    ov.querySelector("#hmF").value = horHHMM(t.fin_min);
+  });
+  ov.querySelector("#hmOk").addEventListener("click", async () => {
+    const abierto = cierre.checked;
+    const cuerpo = {
+      semana_id: HOR.semana.id,
+      worker_id: ov.querySelector("#hmW").value,
+      dia: ov.querySelector("#hmD").value,
+      tramo_id: ov.querySelector("#hmT").value || null,
+      area_id: ov.querySelector("#hmA").value || null,
+      inicio_min: horMin(ov.querySelector("#hmI").value),
+      fin_min: abierto ? (horMin(ov.querySelector("#hmI").value) + 360) : horMin(ov.querySelector("#hmF").value),
+      fin_abierto: abierto,
+      tipo: ov.querySelector("#hmTipo").value,
+      nota: ov.querySelector("#hmN").value.trim() || null,
+    };
+    if (!cuerpo.worker_id) { toast("Elige a la persona"); return; }
+    try {
+      if (editando) await apiSend("PATCH", "/api/horarios/asignacion/" + asig.id, cuerpo);
+      else await apiSend("POST", "/api/horarios/asignacion", cuerpo);
+      ov.remove(); loadHorarios();
+    } catch (e) { toast("Error: " + e.message); }
+  });
+  const del = ov.querySelector("#hmDel");
+  if (del) del.addEventListener("click", async () => {
+    if (!(await confirmModal("¿Quitar este turno del cuadrante?", { ok: "Quitar", danger: true }))) return;
+    try { await apiSend("DELETE", "/api/horarios/asignacion/" + asig.id); ov.remove(); loadHorarios(); }
+    catch (e) { toast("Error: " + e.message); }
+  });
+}
+const horHHMM = (m) => { const b = ((Math.round(Number(m) || 0) % 1440) + 1440) % 1440; return `${String(Math.floor(b / 60)).padStart(2, "0")}:${String(b % 60).padStart(2, "0")}`; };
+const horMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "")); return m ? (+m[1]) * 60 + (+m[2]) : 0; };
+
+function horEditar(id) {
+  const a = (HOR.asignaciones || []).find((x) => String(x.id) === String(id));
+  if (!a) return;
+  if (!horEditable()) { toast("Este horario está publicado: crea una versión nueva para cambiarlo"); return; }
+  horModal(a, null);
+}
+// Arrastrar y soltar. El HTML se repinta al soltar, así que dragend puede no llegar nunca:
+// por eso se limpia también al principio de loadHorarios().
+function horLimpiaDrag() {
+  HOR.drag = null;
+  document.querySelectorAll(".horchip.dragging").forEach((e) => e.classList.remove("dragging"));
+  document.querySelectorAll(".horslot.dropok").forEach((e) => e.classList.remove("dropok"));
+}
+async function horSoltar(celda) {
+  const id = HOR.drag; horLimpiaDrag();
+  if (!id) return;
+  const a = (HOR.asignaciones || []).find((x) => String(x.id) === String(id));
+  if (!a) return;
+  const cuerpo = { dia: celda.getAttribute("data-dia") };
+  if (celda.hasAttribute("data-tramo")) { cuerpo.tramo_id = celda.getAttribute("data-tramo"); cuerpo.area_id = celda.getAttribute("data-area"); }
+  if (celda.hasAttribute("data-worker")) cuerpo.worker_id = celda.getAttribute("data-worker");
+  // Si no cambia nada, no molestamos al servidor.
+  if (String(cuerpo.dia) === String(a.dia) && String(cuerpo.tramo_id ?? a.tramo_id) === String(a.tramo_id)
+      && String(cuerpo.area_id ?? a.area_id) === String(a.area_id) && String(cuerpo.worker_id ?? a.worker_id) === String(a.worker_id)) return;
+  try { await apiSend("PATCH", "/api/horarios/asignacion/" + id, cuerpo); loadHorarios(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 
 // ════════════════════════ VISTA: FICHAJES ════════════════════════
@@ -3102,6 +3303,13 @@ document.addEventListener("click", (e) => {
   else if (act === "pulso-enviar") pulsoEnviar();
   else if (act === "pulso-atendido") pulsoAtendido(t.getAttribute("data-id"));
   else if (act === "pulso-config") pulsoConfig();
+  else if (act === "hor-prev") horNavega("prev");
+  else if (act === "hor-next") horNavega("next");
+  else if (act === "hor-hoy") horNavega("hoy");
+  else if (act === "hor-vista") horVista(t.getAttribute("data-v"));
+  else if (act === "hor-crear") horCrear();
+  else if (act === "hor-editar") horEditar(t.getAttribute("data-id"));
+  else if (act === "hor-nuevo") horModal(null, { dia: t.getAttribute("data-dia"), tramo: t.getAttribute("data-tramo"), area: t.getAttribute("data-area") });
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }
@@ -3262,6 +3470,13 @@ document.addEventListener("keydown", (e) => { const el = e.target; if (el && el.
 document.addEventListener("dragstart", (e) => { const it = e.target.closest("[data-galitem]"); if (it) { WEB_DRAG = { key: it.getAttribute("data-galkey"), idx: +it.getAttribute("data-idx") }; it.classList.add("dragging"); } });
 document.addEventListener("dragend", (e) => { const it = e.target.closest("[data-galitem]"); if (it) it.classList.remove("dragging"); });
 document.addEventListener("dragover", (e) => { if (e.target.closest("[data-galitem]") && WEB_DRAG) e.preventDefault(); });
+// Arrastrar turnos en el cuadrante. Mismo patrón que la galería, con una diferencia: aquí
+// hay zonas de destino vacías (celdas día × área), así que se marcan al pasar por encima.
+document.addEventListener("dragstart", (e) => { const c = e.target.closest("[data-horasig]"); if (c) { HOR.drag = c.getAttribute("data-horasig"); c.classList.add("dragging"); } });
+document.addEventListener("dragend", horLimpiaDrag);
+document.addEventListener("dragover", (e) => { const z = e.target.closest("[data-horcell]"); if (z && HOR.drag) { e.preventDefault(); z.classList.add("dropok"); } });
+document.addEventListener("dragleave", (e) => { const z = e.target.closest("[data-horcell]"); if (z) z.classList.remove("dropok"); });
+document.addEventListener("drop", (e) => { const z = e.target.closest("[data-horcell]"); if (z && HOR.drag) { e.preventDefault(); horSoltar(z); } });
 document.addEventListener("drop", (e) => { const it = e.target.closest("[data-galitem]"); if (it && WEB_DRAG && it.getAttribute("data-galkey") === WEB_DRAG.key) { e.preventDefault(); webGalReorder(WEB_DRAG.key, WEB_DRAG.idx, +it.getAttribute("data-idx")); WEB_DRAG = null; } });
 
 // ── Overlays: ⌘K, drawer, teclado ─────────────────────────────────────────────

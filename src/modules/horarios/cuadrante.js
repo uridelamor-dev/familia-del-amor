@@ -1,0 +1,157 @@
+// Horarios — el cuadrante. Lógica PURA: recibe filas planas de la BD y devuelve la
+// estructura que pintan la rejilla del panel y el PDF. Sin BD, sin red, sin Date.
+//
+// La misma función alimenta las dos vistas, y eso no es ahorro de código: es lo que
+// garantiza que el PDF que se manda al grupo diga exactamente lo mismo que la pantalla.
+
+import { franjaCorta, diasSemana, duracionMin, solapan } from "./tiempo.js";
+
+// ¿Hay que escribir la hora al lado del nombre? Solo si esa persona se sale del horario
+// general del tramo. Es lo que hace legible el cuadrante de papel: la mayoría entra a la
+// hora del tramo y no lleva nada; quien difiere lleva "11-15" delante, como siempre.
+export function franjaSiDifiere(asig, tramo) {
+  if (!asig) return null;
+  if (asig.fin_abierto) return franjaCorta(asig.inicio_min, asig.fin_min, { finAbierto: true });
+  if (!tramo) return franjaCorta(asig.inicio_min, asig.fin_min);
+  const igual = Number(asig.inicio_min) === Number(tramo.inicio_min)
+    && Number(asig.fin_min) === Number(tramo.fin_min);
+  return igual ? null : franjaCorta(asig.inicio_min, asig.fin_min);
+}
+
+// Ordena a la gente dentro de una celda: primero quien va con el tramo (sin hora escrita),
+// luego los demás por hora de entrada, y a igualdad por nombre. Así la columna se lee de
+// arriba abajo sin saltos y coincide con el orden del papel.
+function ordenarCelda(items) {
+  return [...items].sort((a, b) => {
+    if (!a.franja && b.franja) return -1;
+    if (a.franja && !b.franja) return 1;
+    if (a.inicio_min !== b.inicio_min) return a.inicio_min - b.inicio_min;
+    return String(a.nombre || "").localeCompare(String(b.nombre || ""), "es");
+  });
+}
+
+// Estructura del cuadrante: bloques (tramos) → áreas → 7 días → personas.
+//
+//   construirCuadrante({ lunes, tramos, areas, asignaciones, trabajadores })
+//     → { lunes, dias, bloques: [{ tramo, areas: [{ area, dias: [[{...}]] }] }],
+//         fuera, totales }
+//
+// `fuera` recoge lo que no encaja en ningún tramo o área (turnos sueltos, libranzas,
+// vacaciones). No se descarta nunca en silencio: se devuelve aparte para que la interfaz
+// pueda enseñarlo. Perder un turno por no encajar en la rejilla sería el peor fallo posible.
+export function construirCuadrante({ lunes, tramos = [], areas = [], asignaciones = [], trabajadores = [] }) {
+  const dias = diasSemana(lunes);
+  const idxDia = new Map(dias.map((d, i) => [d, i]));
+  const porId = new Map(trabajadores.map((w) => [String(w.id), w]));
+  const tramoPorId = new Map(tramos.map((t) => [String(t.id), t]));
+
+  const bloques = tramos.map((tramo) => ({
+    tramo,
+    areas: areas.map((area) => ({ area, dias: dias.map(() => []) })),
+  }));
+  const idxTramo = new Map(tramos.map((t, i) => [String(t.id), i]));
+  const idxArea = new Map(areas.map((a, i) => [String(a.id), i]));
+
+  const fuera = [];
+  for (const a of asignaciones) {
+    const d = idxDia.get(String(a.dia));
+    const w = porId.get(String(a.worker_id));
+    const item = {
+      id: a.id,
+      worker_id: a.worker_id,
+      nombre: (w && (w.nombre || w.username)) || a.nombre || "—",
+      inicio_min: Number(a.inicio_min),
+      fin_min: Number(a.fin_min),
+      fin_abierto: !!a.fin_abierto,
+      tipo: a.tipo || "turno",
+      nota: a.nota || null,
+      area_id: a.area_id, tramo_id: a.tramo_id, dia: a.dia,
+      franja: franjaSiDifiere(a, tramoPorId.get(String(a.tramo_id))),
+      minutos: duracionMin(a.inicio_min, a.fin_min),
+    };
+    const bi = idxTramo.get(String(a.tramo_id));
+    const ai = idxArea.get(String(a.area_id));
+    if (d == null || bi == null || ai == null || item.tipo !== "turno") { fuera.push(item); continue; }
+    bloques[bi].areas[ai].dias[d].push(item);
+  }
+
+  for (const b of bloques) for (const ar of b.areas) ar.dias = ar.dias.map(ordenarCelda);
+
+  return {
+    lunes, dias, bloques,
+    fuera: ordenarCelda(fuera),
+    totales: dias.map((_, i) =>
+      bloques.reduce((s, b) => s + b.areas.reduce((s2, ar) => s2 + ar.dias[i].length, 0), 0)
+    ),
+  };
+}
+
+// Cuántas personas distintas hay cada día (una persona con turno partido cuenta una vez).
+export function personasPorDia(cuadrante) {
+  return cuadrante.dias.map((_, i) => {
+    const set = new Set();
+    for (const b of cuadrante.bloques) for (const ar of b.areas) for (const p of ar.dias[i]) set.add(String(p.worker_id));
+    return set.size;
+  });
+}
+
+// Vista por persona: una fila por trabajador con sus 7 días. Es la que contesta "¿cuántas
+// horas le he puesto esta semana?", que es la pregunta que evita las horas extra.
+export function porPersona({ lunes, asignaciones = [], trabajadores = [], tramos = [] }) {
+  const dias = diasSemana(lunes);
+  const idxDia = new Map(dias.map((d, i) => [d, i]));
+  const tramoPorId = new Map(tramos.map((t) => [String(t.id), t]));
+  const filas = trabajadores.map((w) => ({
+    worker: w,
+    dias: dias.map(() => []),
+    minutos: 0,
+    diasTrabajados: 0,
+  }));
+  const idxW = new Map(trabajadores.map((w, i) => [String(w.id), i]));
+
+  for (const a of asignaciones) {
+    const wi = idxW.get(String(a.worker_id));
+    const d = idxDia.get(String(a.dia));
+    if (wi == null || d == null) continue;
+    const item = {
+      id: a.id, tipo: a.tipo || "turno",
+      inicio_min: Number(a.inicio_min), fin_min: Number(a.fin_min),
+      fin_abierto: !!a.fin_abierto,
+      area_id: a.area_id, tramo_id: a.tramo_id,
+      franja: franjaSiDifiere(a, tramoPorId.get(String(a.tramo_id))),
+      etiqueta: franjaCorta(a.inicio_min, a.fin_min, { finAbierto: !!a.fin_abierto }),
+      minutos: duracionMin(a.inicio_min, a.fin_min),
+    };
+    filas[wi].dias[d].push(item);
+    if (item.tipo === "turno") filas[wi].minutos += item.minutos;
+  }
+  for (const f of filas) {
+    f.dias = f.dias.map((ds) => ds.sort((a, b) => a.inicio_min - b.inicio_min));
+    f.diasTrabajados = f.dias.filter((ds) => ds.some((x) => x.tipo === "turno")).length;
+    f.horas = Math.round((f.minutos / 60) * 100) / 100;
+  }
+  return { dias, filas };
+}
+
+// Solapes de una misma persona el mismo día. Es lo único que se comprueba en esta fase:
+// el resto de conflictos (descanso, exceso semanal, ausencias) llegan con las tablas de
+// contratos y ausencias, que aún no se llenan.
+export function solapesDe(asignaciones = []) {
+  const porClave = new Map();
+  for (const a of asignaciones) {
+    if ((a.tipo || "turno") !== "turno") continue;
+    const k = `${a.worker_id}|${a.dia}`;
+    if (!porClave.has(k)) porClave.set(k, []);
+    porClave.get(k).push(a);
+  }
+  const out = [];
+  for (const [, lista] of porClave) {
+    const orden = [...lista].sort((a, b) => a.inicio_min - b.inicio_min);
+    for (let i = 0; i < orden.length - 1; i++) {
+      for (let j = i + 1; j < orden.length; j++) {
+        if (solapan(orden[i], orden[j])) out.push({ a: orden[i], b: orden[j] });
+      }
+    }
+  }
+  return out;
+}

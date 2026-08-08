@@ -96,6 +96,35 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .pill.bad{background:var(--danger-soft);color:var(--danger);border-color:transparent}.pill.info{background:var(--info-soft);color:var(--info);border-color:transparent}.pill.brand{background:var(--brand-soft);color:var(--brand);border-color:transparent}
 .chip{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:550;color:var(--ink2);transition:.12s}.chip:hover{border-color:var(--border2);color:var(--ink)}.chip.on{background:var(--brand);color:var(--brand-ink);border-color:transparent}
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+/* ── Cuadrante de horarios ─────────────────────────────────────────────────
+   Rejilla tramo × área × 7 días, la misma estructura que el cuadrante de papel.
+   Clases propias con prefijo `hor`: no se toca nada de lo compartido. */
+.hortramo{margin-bottom:18px}
+.hortramo-t{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);margin:0 0 6px 2px}
+.horgrid{display:grid;grid-template-columns:120px repeat(7,minmax(116px,1fr));gap:1px;background:var(--border);border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden}
+.horgrid.porpersona{grid-template-columns:150px repeat(7,minmax(96px,1fr)) 74px}
+.horcell{background:var(--surface);padding:6px}
+.horhead{background:var(--surface2);text-align:center;padding:8px 6px}
+.horhead.hoy{background:var(--brand-soft)}
+.horhead .dwd{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink3)}
+.horhead .dnum{font-size:15px;font-weight:650;line-height:1.2}
+.horarea{background:var(--surface2);display:flex;align-items:center;font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink2);overflow:hidden;text-overflow:ellipsis}
+.horslot{min-height:56px;display:flex;flex-direction:column;gap:3px;position:relative;transition:background .12s ease}
+.horslot.dropok{background:var(--brand-soft);box-shadow:inset 0 0 0 2px var(--brand)}
+.horchip{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:3px 7px;font-size:12px;font-weight:600;line-height:1.35;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:.12s}
+.horchip:hover{border-color:var(--brand);background:var(--brand-soft)}
+.horchip[draggable="true"]{cursor:grab}
+.horchip.dragging{opacity:.4}
+.horchip .hf{color:var(--ink3);font-weight:600;margin-right:5px;font-variant-numeric:tabular-nums}
+.horchip.lib{background:transparent;border-style:dashed;color:var(--ink3);font-weight:500}
+/* El botón de añadir solo aparece al pasar por encima: si no, la rejilla se llena de "+" */
+.hormas{position:absolute;right:4px;bottom:4px;width:22px;height:22px;border-radius:7px;background:var(--surface2);color:var(--ink3);font-size:15px;line-height:1;opacity:0;transition:.12s}
+.horslot:hover .hormas{opacity:1}
+.hormas:hover{background:var(--brand);color:var(--brand-ink)}
+.hortot{display:flex;align-items:center;justify-content:flex-end;background:var(--surface2);font-variant-numeric:tabular-nums}
+.hortot.alto b{color:var(--danger)}
+@media(max-width:900px){.horgrid{grid-template-columns:96px repeat(7,minmax(104px,1fr));overflow-x:auto}}
+
 /* Tarjeta plegable (<details>): la cabecera hace de tirador. Nativa, sin JS. */
 .card.fold{padding:0;overflow:hidden;align-self:start}
 .card.fold>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0;padding:16px 18px;cursor:pointer;list-style:none;transition:background .12s ease}
