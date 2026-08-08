@@ -17,6 +17,12 @@ export const CATALOGO_MODULOS = [
   { id: "mantenimiento", label: "Mantenimiento", roles: ["direccion", "encargado"], porLocal: true },
   { id: "clientes", label: "Clientes", roles: ["direccion", "marketing"], porLocal: false },
   { id: "rrhh", label: "RR. HH.", roles: ["direccion", "rrhh", "encargado"], porLocal: true },
+  // Horarios y fichajes van SEPARADOS a propósito: contabilidad necesita los fichajes para
+  // la nómina pero no debe poder tocar el cuadrante, y al revés el encargado planifica pero
+  // no cierra periodos. Ojo: hay un espejo manual de esta lista en public/panel/app.js
+  // (VIEW_ROLES), y un test que falla si dejan de coincidir.
+  { id: "horarios", label: "Horarios", roles: ["direccion", "rrhh", "encargado"], porLocal: true },
+  { id: "fichajes", label: "Fichajes", roles: ["direccion", "rrhh", "encargado", "contabilidad"], porLocal: true },
   { id: "facturas", label: "Facturas", roles: ["direccion", "contabilidad"], porLocal: true },
   { id: "inventarios", label: "Inventarios", roles: ["direccion", "encargado"], porLocal: true },
   { id: "web", label: "Web", roles: ["direccion", "marketing"], porLocal: false },

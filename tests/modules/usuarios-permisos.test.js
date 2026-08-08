@@ -1,6 +1,9 @@
 // Usuarios — permisos por módulo y ámbito por local (lógica pura).
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   CATALOGO_MODULOS, modulosDeRol, parseModulos, modulosEfectivos,
   puedeAccederModulo, sanearModulos, esModuloPorLocal, localForzado,
@@ -105,5 +108,54 @@ describe("localForzado", () => {
     const u = { rol: "encargado", local: "La Tapeta - Lloret" };
     assert.equal(localForzado(u, "reservas"), "La Tapeta - Lloret");
     assert.equal(localForzado(u, "comunicados"), null);
+  });
+});
+
+// ── El espejo manual entre backend y panel ───────────────────────────────────
+// CATALOGO_MODULOS (aquí) y VIEW_ROLES + MODULOS_POR_LOCAL (public/panel/app.js) son la
+// misma información escrita dos veces. Nadie comprobaba que coincidieran: añadir un módulo
+// y olvidar el otro lado deja a un rol viendo un menú que el servidor le va a negar, o al
+// revés. Este test lee el panel como texto y los compara.
+describe("espejo con el panel (public/panel/app.js)", () => {
+  const panel = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../public/panel/app.js"), "utf8"
+  );
+  const bloque = (nombre) => {
+    const i = panel.indexOf(`const ${nombre} =`);
+    assert.ok(i > -1, `no encuentro ${nombre} en el panel`);
+    return panel.slice(i, panel.indexOf("\n", i));
+  };
+
+  test("todos los módulos del backend existen en VIEW_ROLES", () => {
+    const vr = bloque("VIEW_ROLES");
+    for (const m of CATALOGO_MODULOS) {
+      assert.ok(new RegExp(`\\b${m.id}\\s*:`).test(vr), `el panel no conoce el módulo "${m.id}"`);
+    }
+  });
+
+  test("los roles de cada módulo coinciden en los dos sitios", () => {
+    const vr = bloque("VIEW_ROLES");
+    for (const m of CATALOGO_MODULOS) {
+      const trozo = new RegExp(`\\b${m.id}\\s*:\\s*\\[([^\\]]*)\\]`).exec(vr);
+      assert.ok(trozo, `sin roles para "${m.id}" en el panel`);
+      const enPanel = trozo[1].split(",").map((s) => s.trim().replace(/["']/g, "")).filter(Boolean).sort();
+      assert.deepEqual(enPanel, [...m.roles].sort(),
+        `"${m.id}" tiene roles distintos en el panel que en el servidor`);
+    }
+  });
+
+  test("porLocal coincide con MODULOS_POR_LOCAL", () => {
+    const linea = bloque("MODULOS_POR_LOCAL");
+    const enPanel = [...linea.matchAll(/"([a-z]+)"/g)].map((m) => m[1]).sort();
+    const enBackend = CATALOGO_MODULOS.filter((m) => m.porLocal).map((m) => m.id).sort();
+    assert.deepEqual(enPanel, enBackend,
+      "la lista de módulos que dependen del establecimiento no coincide");
+  });
+
+  test("cada módulo tiene su entrada de menú y su vista", () => {
+    for (const m of CATALOGO_MODULOS) {
+      assert.ok(new RegExp(`\\["${m.id}",`).test(panel), `"${m.id}" no está en el menú (NAV)`);
+      assert.ok(new RegExp(`\\b${m.id}\\s*:\\s*load`).test(panel), `"${m.id}" no está enrutado (VIEWS)`);
+    }
   });
 });

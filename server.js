@@ -29,6 +29,8 @@ import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos } from 
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, caducidadMes, generarToken } from "./src/modules/rrhh/pulso.js";
+import { ensureSchemaHorarios, sembrarLocal } from "./src/modules/horarios/schema.js";
+import { instanteANegocio, lunesDe, diasSemana, isoConOffset } from "./src/modules/horarios/tiempo.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
@@ -877,6 +879,15 @@ async function initDB() {
       await seedCatalogo(schemaX);
     } catch (e) {
       console.error("[DB] Aviso: esquema de establecimientos no inicializado (no fatal):", e.message);
+    }
+
+    // Horarios y fichajes. Aditivo e idempotente, y NO fatal por la misma razón: si algo
+    // fallara aquí, reservas y facturas deben seguir arrancando.
+    try {
+      const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
+      await ensureSchemaHorarios(schemaX);
+    } catch (e) {
+      console.error("[DB] Aviso: esquema de horarios no inicializado (no fatal):", e.message);
     }
 
     console.log("[DB] Esquema PostgreSQL inicializado");
@@ -3801,6 +3812,43 @@ app.get("/api/rrhh/resumen", requireAuth(RRHH_ROLES), async (req, res) => {
       },
     });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ════════════════════════ HORARIOS ════════════════════════
+// Fase 0: configuración del local (áreas y tramos). El cuadrante llega en la fase 1.
+// Ámbito por local reutilizando la capa ya probada de RR.HH.
+const HORARIOS_ROLES = ["direccion", "rrhh", "encargado"];
+
+// Devuelve la configuración de un local, sembrándola la primera vez. Sin esto la primera
+// pantalla estaría vacía y no se podría crear nada: se siembran SALA/COCINA y los tres
+// tramos del cuadrante que se venía haciendo a mano.
+app.get("/api/horarios/config", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = rrhhLocalScope(req) || String(req.query.local || "").trim();
+    if (!local) return res.status(400).json({ ok: false, error: "Falta el establecimiento" });
+    if (!rrhhPuedeLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+
+    const x = { run: (sql, p = []) => dbRun(sql, p) };
+    await sembrarLocal(x, local, isoConOffset(Date.now()));
+
+    const [config, areas, tramos] = await Promise.all([
+      dbGet(`SELECT * FROM hor_config WHERE local = ?`, [local]),
+      dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
+      dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden, inicio_min`, [local]),
+    ]);
+    // La semana en curso, calculada en hora de Madrid (no en UTC: ver tiempo.js).
+    const hoy = instanteANegocio(Date.now(), { corteMin: config?.corte_dia_min ?? 360 });
+    res.json({
+      ok: true,
+      local, config, areas, tramos,
+      hoy: hoy.diaNegocio,
+      lunes: lunesDe(hoy.diaNegocio),
+      dias: diasSemana(lunesDe(hoy.diaNegocio)),
+    });
+  } catch (e) {
+    console.error("[horarios] config:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar la configuración" });
+  }
 });
 
 // ════════════════════════ PULSO ANÓNIMO DEL EQUIPO ════════════════════════

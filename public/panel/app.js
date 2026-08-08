@@ -49,6 +49,8 @@ const NAV = [
   ] },
   { g: "Gestión", items: [
     ["rrhh", "RR. HH.", "idcard", ["direccion", "rrhh", "encargado"]],
+    ["horarios", "Horarios", "cal", ["direccion", "rrhh", "encargado"]],
+    ["fichajes", "Fichajes", "clock", ["direccion", "rrhh", "encargado", "contabilidad"]],
     ["facturas", "Facturas", "receipt", ["direccion", "contabilidad"]],
     ["web", "Web", "globe", ["direccion", "marketing"]],
     ["reviews", "Reseñas", "star", ["direccion", "encargado", "contabilidad", "marketing"]],
@@ -64,10 +66,10 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", horarios: "Horarios", fichajes: "Fichajes", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
-const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica", "rrhh"]);
+const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica", "rrhh", "horarios", "fichajes"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
 function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol)); }
 // ¿El usuario actual puede entrar a `view`? Respeta rol + allowlist efectiva (USER.modulos del token).
@@ -306,6 +308,7 @@ const ICONS = {
   cog: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M4.5 6.5l2.1 2.1M17.4 17.4l2.1 2.1M3 12h3M18 12h3M4.5 17.5l2.1-2.1M17.4 6.6l2.1-2.1"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   chev: '<path d="M6 9l6 6 6-6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   bell: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6M9.5 20a2.5 2.5 0 0 0 5 0"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
@@ -1802,6 +1805,77 @@ async function userPass(id, nombre) {
 }
 async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cuenta ${nombre}? No se puede deshacer.`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/users/" + encodeURIComponent(id)); toast("Usuario eliminado ✅"); loadUsuarios(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 
+// ════════════════════════ VISTA: HORARIOS ════════════════════════
+// Fase 0: solo el esqueleto y la configuración del local. El cuadrante llega en la fase 1;
+// mientras tanto la pantalla dice honestamente lo que hay y lo que falta, en vez de fingir.
+let HOR = { local: "", lunes: "", dias: [], areas: [], tramos: [], config: null };
+function horScope() { HOR.local = localFijadoFE() || DASH_LOCAL || ""; return HOR.local; }
+
+async function loadHorarios() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  horScope();
+  if (sinPublico(HOR.local)) { view.innerHTML = avisoSinPublico("Horarios", "Personas", "turnos"); return; }
+  if (!HOR.local) { view.innerHTML = horPh() + horSinLocal(); return; }
+  try {
+    const j = await apiRaw("/api/horarios/config?local=" + encodeURIComponent(HOR.local));
+    HOR = { ...HOR, ...j };
+    view.innerHTML = renderHorarios();
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+function horPh() {
+  const amb = HOR.local ? ` · <b>${esc(nombreCortoLocal(HOR.local))}</b>` : "";
+  return `<div class="ph"><div class="eyebrow">Personas</div><h1>Horarios</h1><div class="sub">Cuadrante semanal del equipo${amb}</div></div>`;
+}
+function horSinLocal() {
+  return `<div class="card"><div class="ch"><h3>Elige un establecimiento</h3></div><p class="mut" style="margin:0;line-height:1.6">El cuadrante es de un local concreto. Selecciónalo arriba, en la barra.</p></div>`;
+}
+function renderHorarios() {
+  const semana = (HOR.dias || []).length
+    ? `${fechaCorta(HOR.dias[0])} – ${fechaCorta(HOR.dias[6])}`
+    : "";
+  const areas = (HOR.areas || []).map((a) => `<span class="chip">${esc(a.nombre)}</span>`).join("") || '<span class="mut">—</span>';
+  const tramos = (HOR.tramos || []).map((t) => `<div class="row"><div class="grow"><div class="t1">${esc(t.nombre)}</div></div><b class="tnum">${esc(horFranja(t.inicio_min, t.fin_min))}</b></div>`).join("");
+  const corte = HOR.config ? deMin(HOR.config.corte_dia_min) : "06:00";
+  return horPh() + `
+    <div class="pendingblock" style="margin-bottom:16px">
+      <b>Semana en curso: ${esc(semana)}.</b><br>
+      El cuadrante editable llega en el siguiente paso. De momento esto es la configuración del
+      local: las áreas y los tramos con los que se montará la rejilla y el PDF.
+    </div>
+    <div class="grid g2">
+      <div class="card"><div class="ch"><h3>Áreas</h3></div><div class="chips">${areas}</div>
+        <div class="mut" style="font-size:12px;margin-top:10px">Son filas de una tabla, no están fijadas en el código: se pueden añadir BARRA, OFFICE o lo que haga falta.</div>
+      </div>
+      <div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Tramos</h3></div><div class="rows">${tramos}</div>
+        <div class="mut" style="font-size:12px;padding:12px 18px">Con su horario habitual. En el PDF solo se antepone la franja a quien se salga de él, como en el cuadrante de siempre.</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px"><div class="ch"><h3>La jornada del local</h3></div>
+      <p class="mut" style="margin:0;line-height:1.6">El día de trabajo se corta a las <b>${esc(corte)}</b>: quien ficha la salida a las 02:10 de la madrugada cuenta en la jornada del día anterior, que es como se cuadra de verdad en hostelería.</p>
+    </div>`;
+}
+// Etiqueta al estilo del cuadrante: 660,960 → "11-16"; 1200,1620 → "20-03".
+function horFranja(ini, fin) {
+  const h = (m) => { const b = ((Math.round(m) % 1440) + 1440) % 1440, hh = Math.floor(b / 60), mm = b % 60; return mm ? `${hh}:${String(mm).padStart(2, "0")}` : String(hh); };
+  return `${h(ini)}-${h(fin)}`;
+}
+function deMin(m) {
+  const b = ((Math.round(Number(m) || 0) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(b / 60)).padStart(2, "0")}:${String(b % 60).padStart(2, "0")}`;
+}
+
+// ════════════════════════ VISTA: FICHAJES ════════════════════════
+// Fase 0: solo el esqueleto. El kiosco y el registro llegan en la fase 4.
+async function loadFichajes() {
+  const view = document.getElementById("view");
+  const amb = localFijadoFE() || DASH_LOCAL || "";
+  if (sinPublico(amb)) { view.innerHTML = avisoSinPublico("Fichajes", "Personas", "fichajes"); return; }
+  view.innerHTML = `<div class="ph"><div class="eyebrow">Personas</div><h1>Fichajes</h1><div class="sub">Registro de jornada${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>
+    <div class="card"><div class="ch"><h3>Todavía no hay nada que registrar</h3></div>
+      <p class="mut" style="margin:0;line-height:1.6">El kiosco de fichaje y el registro de jornada llegan más adelante. Cuando estén, aquí verás quién está dentro ahora mismo, las incidencias del día y las jornadas pendientes de validar.</p>
+    </div>`;
+}
+
 // ════════════════════════ VISTA: FACTURAS ════════════════════════
 let FACF = { local: "", empresa: "", estado: "", tipo: "", q: "", from: "", to: "" };
 let FAC_LIST = [];
@@ -2978,7 +3052,7 @@ async function webBlkUpload(input, gallery) {
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, facturas: loadFacturas, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   // El calendario cuelga de <body>, así que sobrevive al repintado de la vista:
