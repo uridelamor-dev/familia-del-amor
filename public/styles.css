@@ -415,6 +415,26 @@ h1, h2, h3 {
   box-shadow: 0 2px 12px rgba(15, 14, 13, 0.05);
 }
 
+/* ── Pulso anónimo del equipo ─────────────────────────────────────────────── */
+.pulso-body { background: var(--bg); }
+.pulso-wrap { max-width: 620px; margin: 0 auto; padding: 2rem 1rem 3rem; }
+
+.escala { border: 0; padding: 0; margin: 0 0 1.6rem; }
+.escala legend { font-weight: 600; margin-bottom: 0.7rem; padding: 0; line-height: 1.4; }
+.escala-ops { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem; }
+/* Botones grandes: esto se contesta con el pulgar, de pie y con prisa. */
+.escala-op input { position: absolute; opacity: 0; width: 0; height: 0; }
+.escala-op span {
+  display: grid; place-items: center; min-height: 52px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  font-size: 1.05rem; font-weight: 600; cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.escala-op input:hover + span { border-color: var(--accent); }
+.escala-op input:checked + span { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+.escala-op input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.escala-pies { display: flex; justify-content: space-between; margin-top: 0.4rem; font-size: 0.82rem; color: var(--muted); }
+
 /* Tarjeta de aviso: se usa cuando al trabajador le falta algo por rellenar. */
 .card--warn {
   border-left: 3px solid var(--accent);

@@ -1249,7 +1249,10 @@ function rrParseResp(v) { if (!v) return []; if (Array.isArray(v)) return v; try
 // Pestañas visibles por rol: el encargado solo ve el Seguimiento de su equipo (candidaturas,
 // vacantes y preguntas son centrales de RRHH/dirección).
 function rrTabsPermitidas() {
-  const T = [["candidaturas", "Candidaturas"], ["seguimiento", "Seguimiento"], ["vacantes", "Vacantes"], ["preguntas", "Preguntas del mes"]];
+  // «Pulso» no está para el encargado: la pregunta 2 va sobre él, y en un local pequeño
+  // ver la media de su equipo es leer las respuestas de su gente. El filtro de abajo ya
+  // lo deja solo con «Seguimiento», así que basta con no añadírsela.
+  const T = [["candidaturas", "Candidaturas"], ["seguimiento", "Seguimiento"], ["pulso", "Pulso del equipo"], ["vacantes", "Vacantes"], ["preguntas", "Preguntas del mes"]];
   return USER.rol === "encargado" ? T.filter(([id]) => id === "seguimiento") : T;
 }
 function rrTabs() {
@@ -1258,6 +1261,78 @@ function rrTabs() {
   return `<div class="toolbar" style="margin-bottom:12px">${T.map(([id, lab]) => `<button class="btn ${RRTAB === id ? "primary" : ""}" data-act="rr-tab" data-tab="${id}">${lab}</button>`).join("")}</div>`;
 }
 function rrPh(sub) { return `<div class="ph"><div class="eyebrow">Personas</div><h1>RR. HH.</h1><div class="sub">${esc(sub)}</div></div>`; }
+
+// ── Pulso anónimo del equipo ──
+let PULSO = { mes: "", resumen: null, participacion: null };
+const pulsoNota = "Sabemos quién ha contestado, nunca qué ha contestado. Los desgloses por local solo aparecen con 4 o más respuestas.";
+function pulsoMedia(v) { return v == null ? "—" : String(v).replace(".", ","); }
+function renderRRPulso() {
+  const R = PULSO.resumen, P = PULSO.participacion;
+  const mesTxt = PULSO.mes ? fechaMesLargo(PULSO.mes) : "";
+  const cab = rrPh(`Pulso anónimo · ${mesTxt}`) + rrTabs()
+    + `<div class="pendingblock" style="margin:-4px 0 14px">${esc(pulsoNota)}</div>`;
+  if (!R) return cab + errorCard("No se pudo cargar el pulso.");
+
+  const part = P || { invitados: 0, respondidos: 0, pendientes: [] };
+  const serie = (R.serie || []).filter((s) => s.media != null);
+  const previo = serie.length > 1 ? serie[serie.length - 2].media : null;
+  const actual = serie.length ? serie[serie.length - 1].media : null;
+  const delta = (actual != null && previo != null) ? Math.round((actual - previo) * 10) / 10 : null;
+
+  const kpis = `<div class="grid g4" style="margin-bottom:16px">
+    ${stat("Participación", ic("users", 15), `${num(part.respondidos)}/${num(part.invitados)}`)}
+    ${stat("Media general", ic("chart", 15), pulsoMedia(actual), actual != null ? "/ 5" : "")}
+    ${stat("Respecto al mes anterior", ic("chart", 15), delta == null ? "—" : (delta >= 0 ? "+" : "−") + pulsoMedia(Math.abs(delta)))}
+    ${stat("Respuestas del mes", ic("chat", 15), num(R.total || 0))}
+  </div>`;
+
+  if (!R.suficiente) {
+    return cab + kpis + `<div class="card"><div class="ch"><h3>Todavía no hay suficientes respuestas</h3></div><p class="mut" style="margin:0;line-height:1.6">Hacen falta al menos 5 respuestas en el mes para poder enseñar nada sin señalar a nadie. Ahora mismo hay ${num(R.total || 0)}.</p></div>` + renderPulsoParticipacion(part);
+  }
+
+  const filas = (R.locales || []).map((l) => `<div class="row"><div class="grow"><div class="t1">${esc(nombreCortoLocal(l.local))}</div><div class="t2">${num(l.n)} respuesta${l.n === 1 ? "" : "s"}</div></div><b class="tnum">${pulsoMedia(l.p1)}</b></div>`).join("");
+  const sup = R.suprimidos
+    ? `<div class="row"><div class="grow"><div class="t1 mut">Otros ${num(R.suprimidos.nLocales)} locales</div><div class="t2">${num(R.suprimidos.n)} respuestas · juntos, para no señalar a nadie</div></div><b class="tnum mut">${pulsoMedia(R.suprimidos.p1)}</b></div>`
+    : "";
+  const resultados = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Cómo han estado (pregunta 1)</h3></div><div class="rows">${filas}${sup}</div></div>`;
+
+  const evol = serie.length > 1
+    ? `<div class="card"><div class="ch"><h3>Evolución</h3><span class="mut" style="font-size:12px">${num(serie.length)} meses con datos</span></div>${area(serie.map((s) => s.media))}</div>`
+    : "";
+
+  const coment = (R.comentarios || []).length
+    ? `<details class="card fold" style="margin-top:16px"><summary><h3>Lo que han escrito</h3><span class="foldr"><span>${num(R.comentarios.length)} · sin orden ni local</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="rows">${R.comentarios.map((c) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1" style="font-weight:400;line-height:1.6;white-space:pre-wrap">${esc(c)}</div></div></div>`).join("")}</div></details>`
+    : "";
+
+  return cab + kpis + `<div class="grid g2" style="margin-bottom:16px">${resultados}${evol}</div>` + coment + renderPulsoParticipacion(part);
+}
+// Tarjeta separada a propósito: esta sabe QUIÉN, la de arriba sabe QUÉ. Es la expresión
+// en pantalla del modelo de datos, y lo que hace que el equipo se crea el anonimato.
+function renderPulsoParticipacion(part) {
+  const pend = part.pendientes || [];
+  const lista = pend.length
+    ? pend.map((p) => `<div class="row"><div class="grow"><div class="t1">${esc(p.nombre || "—")}</div><div class="t2">${esc(nombreCortoLocal(p.local || ""))}${p.enviado ? "" : " · sin enviar"}</div></div></div>`).join("")
+    : `<div class="row"><div class="mut" style="padding:4px">Han contestado todos. 🎉</div></div>`;
+  return `<details class="card fold" style="margin-top:16px"><summary><h3>Quién falta por contestar</h3><span class="foldr"><span>${num(pend.length)} de ${num(part.invitados || 0)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <div class="rows">${lista}</div>
+    <div class="mut" style="padding:12px 18px;font-size:12px;border-top:1px solid var(--border)">Esta tarjeta sabe <b>quién</b>. La de arriba sabe <b>qué</b>. Nunca se cruzan.</div>
+    <div class="toolbar" style="padding:12px 18px;margin:0"><button class="btn primary" data-act="pulso-enviar">Enviar el pulso de ${esc(PULSO.mes ? fechaMesLargo(PULSO.mes) : "este mes")}</button></div>
+  </details>`;
+}
+function fechaMesLargo(mes) {
+  const [y, m] = String(mes || "").split("-");
+  if (!y || !m) return mes || "";
+  try { return cap(new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric" }).format(new Date(+y, +m - 1, 15))); } catch { return mes; }
+}
+async function pulsoEnviar() {
+  if (!(await confirmModal(`¿Enviar el pulso de ${fechaMesLargo(PULSO.mes)} por WhatsApp a todo el equipo?`, { ok: "Enviar" }))) return;
+  try {
+    const j = await apiSend("POST", "/api/rrhh/pulso/enviar", { mes: PULSO.mes });
+    const sin = (j.sinTelefono || []).length;
+    toast(`${num(j.generadas)} invitación(es) enviándose${j.yaTenian ? ` · ${num(j.yaTenian)} ya la tenían` : ""}${sin ? ` · ⚠ ${num(sin)} sin teléfono` : ""}`);
+    setTimeout(loadRRHH, 1200);
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
 // ── Candidaturas ──
 function renderRRCand(rows) {
   rows = rows || [];
@@ -1474,6 +1549,16 @@ async function loadRRHH() {
       RRSEG.resumen = (resumen && resumen.data) || []; RRSEG.contacto = (resumen && resumen.contacto) || null;
       if (RRSEG.sel) { const still = RRSEG.workers.find((w) => String(w.id) === String(RRSEG.sel.id)); RRSEG.sel = still || null; }
       view.innerHTML = renderRRSeg();
+    } else if (RRTAB === "pulso") {
+      // Dos peticiones separadas a propósito: una sabe QUIÉN contestó, la otra QUÉ se
+      // contestó. Nunca se cruzan, ni siquiera aquí.
+      const [resumen, participacion] = await Promise.all([
+        apiRaw("/api/rrhh/pulso/resumen" + (PULSO.mes ? "?mes=" + PULSO.mes : "")).catch(() => null),
+        apiRaw("/api/rrhh/pulso/participacion" + (PULSO.mes ? "?mes=" + PULSO.mes : "")).catch(() => null),
+      ]);
+      PULSO.resumen = resumen; PULSO.participacion = participacion;
+      if (resumen && resumen.mes) PULSO.mes = resumen.mes;
+      view.innerHTML = renderRRPulso();
     } else if (RRTAB === "vacantes") {
       view.innerHTML = renderRRVac(await api("/api/hr/jobs/admin"));
     } else if (RRTAB === "preguntas") {
@@ -2887,6 +2972,7 @@ document.addEventListener("click", (e) => {
   // Cambiar de establecimiento reaplica el ámbito sin sacarte de donde estabas.
   else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; closeDrawer(); go(MODULOS_POR_LOCAL.has(CURRENT) ? CURRENT : "dashboard"); }
   else if (act === "ag-metodos") agoraMetodos(t.getAttribute("data-local"));
+  else if (act === "pulso-enviar") pulsoEnviar();
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }

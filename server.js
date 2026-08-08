@@ -28,6 +28,7 @@ import { getInforme, listaInformes, calcularTotales } from "./src/integrations/a
 import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos } from "./src/modules/usuarios/permisos.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
+import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, caducidadMes, generarToken } from "./src/modules/rrhh/pulso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
@@ -717,6 +718,48 @@ async function initDB() {
         UNIQUE(worker_id, mes)
       )
     `);
+
+    // ── Pulso anónimo del equipo ──────────────────────────────────────────────
+    // DOS TABLAS QUE NO SE PUEDEN CRUZAR. Es el diseño entero, no un detalle:
+    //
+    //   pulso_invitaciones → sabe QUIÉN ha contestado (para no repetir recordatorios).
+    //   pulso_respuestas   → sabe QUÉ se ha contestado. Sin worker_id, sin token y SIN FECHA.
+    //
+    // Lo único que comparten es `local` y `mes`, que es justo el nivel al que se publica.
+    // Hay un test (tests/modules/rrhh-pulso.test.js) que falla si alguien añade una columna
+    // identificadora aquí o escribe una consulta que toque las dos a la vez.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS pulso_invitaciones (
+        id SERIAL PRIMARY KEY,
+        worker_id INTEGER NOT NULL,
+        mes TEXT NOT NULL,
+        local TEXT,
+        token_hash TEXT NOT NULL UNIQUE,
+        caduca_en TEXT NOT NULL,
+        enviado_en TEXT,
+        enviado_error TEXT,
+        recordatorio_en TEXT,
+        usado INTEGER NOT NULL DEFAULT 0,
+        creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(worker_id, mes)
+      )
+    `);
+    // `usado` es un entero y NO un timestamp a propósito: con la hora de uso y la hora de
+    // llegada de una respuesta, cruzarlas sería trivial. Para recordatorios basta sí/no.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS pulso_respuestas (
+        id SERIAL PRIMARY KEY,
+        mes TEXT NOT NULL,
+        local TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        p1 INTEGER NOT NULL,
+        p2 INTEGER NOT NULL,
+        p3 INTEGER,
+        comentario TEXT,
+        idioma TEXT DEFAULT 'es'
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_pulso_resp_mes ON pulso_respuestas(mes, local)`);
 
     // Ventas diarias por establecimiento (integración Ágora TPV). Aditiva; se llena por el job de
     // sincronización cuando haya locales configurados (env AGORA_LOCALES). Vacía = dashboard honesto.
@@ -3740,6 +3783,209 @@ app.get("/api/rrhh/resumen", requireAuth(RRHH_ROLES), async (req, res) => {
     });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+
+// ════════════════════════ PULSO ANÓNIMO DEL EQUIPO ════════════════════════
+// Ver el comentario del esquema (initDB) y src/modules/rrhh/pulso.js: las respuestas y
+// las invitaciones viven en tablas que nunca se cruzan, y el k-anonimato se aplica AQUÍ,
+// en el servidor, no en el panel.
+const PULSO_VERSION = 1;
+const PULSO_PREGUNTAS = [
+  { key: "p1", texto: "¿Cómo has estado este mes en el trabajo?", min: "Muy mal", max: "Muy bien", obligatoria: true },
+  { key: "p2", texto: "¿Te has sentido escuchado y apoyado por tu responsable?", min: "Nada", max: "Mucho", obligatoria: true },
+  { key: "p3", texto: "¿Recomendarías a un amigo trabajar aquí?", min: "No", max: "Sin duda", obligatoria: false },
+];
+// Van fijas en código, NO en hr_preguntas_mes (que es editable cada mes): cambiar las
+// preguntas rompería la serie temporal, que es justo lo que se quiere mirar.
+
+const pulsoHash = (t) => crypto.createHash("sha256").update(String(t || "")).digest("hex");
+const pulsoToken = () => generarToken((n) => crypto.randomBytes(n));
+
+// Antiabuso sencillo, sin dependencias nuevas (mismo patrón que el debounce de WhatsApp).
+const _pulsoHits = new Map();
+function pulsoRateLimit(req, res, max) {
+  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?";
+  const clave = String(ip).split(",")[0].trim() + ":" + req.method;
+  const ahora = Date.now();
+  const reg = _pulsoHits.get(clave) || { n: 0, desde: ahora };
+  if (ahora - reg.desde > 60000) { reg.n = 0; reg.desde = ahora; }
+  reg.n += 1; _pulsoHits.set(clave, reg);
+  if (_pulsoHits.size > 5000) _pulsoHits.clear(); // techo de memoria
+  if (reg.n > max) { res.status(429).json({ ok: false, error: "Demasiadas peticiones, espera un minuto" }); return false; }
+  return true;
+}
+
+// Público: el trabajador abre el enlace. NO devuelve nombre ni local — solo si vale o no.
+app.get("/api/pulso/:token", async (req, res) => {
+  if (!pulsoRateLimit(req, res, 20)) return;
+  try {
+    const inv = await dbGet(
+      `SELECT mes, caduca_en, usado FROM pulso_invitaciones WHERE token_hash = ?`,
+      [pulsoHash(req.params.token)]
+    );
+    if (!inv) return res.status(404).json({ ok: false, error: "Este enlace no es válido." });
+    const hoy = new Date().toISOString().slice(0, 10);
+    if (inv.usado) return res.status(410).json({ ok: false, error: "Ya has contestado este mes. ¡Gracias!" });
+    if (inv.caduca_en < hoy) return res.status(410).json({ ok: false, error: "Este enlace ha caducado." });
+    res.json({ ok: true, mes: inv.mes, version: PULSO_VERSION, preguntas: PULSO_PREGUNTAS });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo abrir el formulario" }); }
+});
+
+// Público: guarda la respuesta. La invitación se marca usada y la respuesta se escribe en
+// la OTRA tabla, sin nada que las enlace. Va en transacción para que no pueda pasar una
+// cosa sin la otra (dbRun no soporta transacciones: aquí sí se coge un cliente del pool).
+app.post("/api/pulso/:token", async (req, res) => {
+  if (!pulsoRateLimit(req, res, 5)) return;
+  const num1a5 = (v) => { const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 5 ? n : null; };
+  const p1 = num1a5(req.body?.p1), p2 = num1a5(req.body?.p2);
+  const p3 = req.body?.p3 == null || req.body?.p3 === "" ? null : num1a5(req.body.p3);
+  if (!p1 || !p2) return res.status(400).json({ ok: false, error: "Faltan las dos primeras respuestas" });
+  if (req.body?.p3 && p3 === null) return res.status(400).json({ ok: false, error: "Respuesta no válida" });
+  const comentario = String(req.body?.comentario || "").trim().slice(0, 2000) || null;
+  const idioma = ["es", "ca", "en"].includes(req.body?.idioma) ? req.body.idioma : "es";
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    // Bloqueamos la invitación para que dos envíos simultáneos no cuelen dos respuestas.
+    const inv = (await q(
+      `SELECT id, mes, local, caduca_en, usado FROM pulso_invitaciones WHERE token_hash = ? FOR UPDATE`,
+      [pulsoHash(req.params.token)]
+    )).rows[0];
+    const hoy = new Date().toISOString().slice(0, 10);
+    if (!inv) { await client.query("ROLLBACK"); return res.status(404).json({ ok: false, error: "Este enlace no es válido." }); }
+    if (inv.usado) { await client.query("ROLLBACK"); return res.status(410).json({ ok: false, error: "Ya has contestado este mes. ¡Gracias!" }); }
+    if (inv.caduca_en < hoy) { await client.query("ROLLBACK"); return res.status(410).json({ ok: false, error: "Este enlace ha caducado." }); }
+
+    await q(`UPDATE pulso_invitaciones SET usado = 1 WHERE id = ?`, [inv.id]);
+    await q(
+      `INSERT INTO pulso_respuestas (mes, local, version, p1, p2, p3, comentario, idioma) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [inv.mes, inv.local || "—", PULSO_VERSION, p1, p2, p3, comentario, idioma]
+    );
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch { /* ya estaba deshecha */ }
+    console.error("[pulso] Error guardando respuesta:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar. Inténtalo de nuevo." });
+  } finally {
+    client.release();
+  }
+});
+
+// ── Panel: solo dirección y RR.HH. ────────────────────────────────────────
+// El ENCARGADO no entra: la pregunta 2 va sobre él, y en un local pequeño ver la media
+// de su equipo es leer las respuestas de su gente. Si el equipo sospecha que su jefe
+// directo lo verá, no contesta con sinceridad y el dato no vale nada.
+const PULSO_ROLES = ["direccion", "rrhh"];
+const mesValido = (m) => (/^\d{4}-\d{2}$/.test(String(m || "")) ? m : null);
+
+// Agregados. AQUÍ se aplica el k-anonimato, no en el panel: un frontend manipulado no
+// puede sacar más de lo que devuelva esto.
+app.get("/api/rrhh/pulso/resumen", requireAuth(PULSO_ROLES), async (req, res) => {
+  try {
+    const mes = mesValido(req.query.mes) || mesAnterior(new Date().toISOString().slice(0, 7));
+    const meses = ultimosMeses(mes, 12);
+    // Solo columnas públicas: ni worker, ni token, ni fecha (no existen en esta tabla).
+    const filas = await dbAll(
+      `SELECT mes, local, p1, p2, p3, comentario FROM pulso_respuestas WHERE mes = ANY(?::text[])`,
+      [meses]
+    );
+    const delMes = filas.filter((f) => f.mes === mes);
+    const agregado = agregarPorLocal(delMes);
+    const comentarios = puedeMostrarComentarios(delMes.length)
+      ? barajar(delMes.map((f) => f.comentario).filter((c) => c && c.trim()))
+      : [];
+    res.json({
+      ok: true, mes, preguntas: PULSO_PREGUNTAS,
+      ...agregado,
+      comentarios,
+      serie: serieMensual(filas, meses),
+    });
+  } catch (e) {
+    console.error("[pulso] resumen:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar el pulso" });
+  }
+});
+
+// Participación: QUIÉN ha contestado. Endpoint aparte a propósito — dos tablas, dos
+// endpoints, ningún sitio de la API donde se puedan cruzar.
+app.get("/api/rrhh/pulso/participacion", requireAuth(PULSO_ROLES), async (req, res) => {
+  try {
+    const mes = mesValido(req.query.mes) || mesAnterior(new Date().toISOString().slice(0, 7));
+    const filas = await dbAll(
+      `SELECT i.usado, i.enviado_en, u.nombre, u.local
+       FROM pulso_invitaciones i JOIN users u ON u.id = i.worker_id
+       WHERE i.mes = ? ORDER BY u.local, u.nombre`, [mes]
+    );
+    res.json({
+      ok: true, mes,
+      invitados: filas.length,
+      respondidos: filas.filter((f) => f.usado).length,
+      pendientes: filas.filter((f) => !f.usado).map((f) => ({ nombre: f.nombre, local: f.local, enviado: !!f.enviado_en })),
+    });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar la participación" }); }
+});
+
+// Genera las invitaciones del mes y las manda por WhatsApp. Solo dirección.
+app.post("/api/rrhh/pulso/enviar", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const mes = mesValido(req.body?.mes) || mesAnterior(new Date().toISOString().slice(0, 7));
+    const caduca = caducidadMes(mes);
+    const equipo = await dbAll(
+      `SELECT id, nombre, local, telefono FROM users
+       WHERE rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL`
+    );
+    const conTel = equipo.filter((w) => String(w.telefono || "").replace(/\D/g, "").length >= 9);
+    const sinTel = equipo.filter((w) => !conTel.includes(w));
+    const nuevos = [];
+    for (const w of conTel) {
+      const token = pulsoToken();
+      const r = await dbRun(
+        `INSERT INTO pulso_invitaciones (worker_id, mes, local, token_hash, caduca_en)
+         VALUES (?, ?, ?, ?, ?) ON CONFLICT (worker_id, mes) DO NOTHING RETURNING id`,
+        [w.id, mes, w.local || null, pulsoHash(token), caduca]
+      );
+      if (r && r.id) nuevos.push({ ...w, token, invitacionId: r.id });
+    }
+    // Respondemos ya: el envío por WhatsApp puede tardar (jitter entre mensajes).
+    res.json({
+      ok: true, mes, generadas: nuevos.length,
+      yaTenian: conTel.length - nuevos.length,
+      sinTelefono: sinTel.map((w) => ({ nombre: w.nombre, local: w.local })),
+    });
+    enviarPulsoLote(nuevos, mes).catch((e) => console.error("[pulso] envío:", e.message));
+  } catch (e) {
+    console.error("[pulso] enviar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron generar las invitaciones" });
+  }
+});
+
+// Envío propio, NO enviarLoteWA: ese escribe en campana_envios (marketing) y meter ahí los
+// teléfonos del equipo sería mezclar RR.HH. con la base de clientes.
+async function enviarPulsoLote(invitaciones, mes) {
+  if (!invitaciones.length) return;
+  const base = (await getConfig("pulso_base_url")) || process.env.PUBLIC_URL || "https://familiadelamor.org";
+  const nombreMes = new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric", timeZone: "Europe/Madrid" })
+    .format(new Date(mes + "-15T12:00:00Z"));
+  for (const inv of invitaciones) {
+    const url = `${String(base).replace(/\/+$/, "")}/pulso.html?t=${inv.token}`;
+    const texto = `Hola ${String(inv.nombre || "").split(" ")[0]} 👋\n\n`
+      + `¿Cómo ha ido ${nombreMes}? Son dos preguntas y menos de un minuto.\n\n`
+      + `${url}\n\n`
+      + `Es anónimo: sabemos que has contestado, para no darte la lata con recordatorios, `
+      + `pero no sabemos qué has contestado.\n\n`
+      + `No respondas a este mensaje, usa el enlace.`;
+    try {
+      if (!isReady()) throw new Error("WhatsApp no conectado");
+      await sendMensajeLibre(inv.telefono, texto);
+      await dbRun(`UPDATE pulso_invitaciones SET enviado_en = ?, enviado_error = NULL WHERE id = ?`, [new Date().toISOString(), inv.invitacionId]);
+    } catch (e) {
+      await dbRun(`UPDATE pulso_invitaciones SET enviado_error = ? WHERE id = ?`, [String(e.message).slice(0, 200), inv.invitacionId]);
+    }
+    await new Promise((r) => setTimeout(r, delayConJitter()));
+  }
+}
 
 app.get("/api/rrhh/trabajador/:id/notas", requireAuth(RRHH_ROLES), async (req, res) => {
   try {

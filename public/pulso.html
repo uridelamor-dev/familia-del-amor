@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <title>¿Cómo ha ido el mes? · Familia del Amor</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="panel pulso-body">
+    <main class="pulso-wrap">
+      <div class="panel-head">
+        <span class="eyebrow">Familia del Amor</span>
+        <h1 id="pulsoTitulo">¿Cómo ha ido el mes?</h1>
+      </div>
+
+      <!-- La promesa, en la primera pantalla y con todas las letras -->
+      <div class="card card--warn" id="pulsoPromesa">
+        <p style="margin:0">
+          <strong>Este formulario es anónimo.</strong> Sabemos que has contestado, para no darte
+          la lata con recordatorios. No sabemos <em>qué</em> has contestado, y no hay forma de
+          averiguarlo.
+        </p>
+      </div>
+
+      <!-- Estado de carga / error -->
+      <div class="card hidden" id="pulsoAviso"><p id="pulsoAvisoTxt" style="margin:0"></p></div>
+
+      <form id="pulsoForm" class="form hidden">
+        <div id="pulsoPreguntas"></div>
+
+        <label>
+          <span>¿Algo que quieras contarnos? <small>(opcional · llega sin tu nombre)</small></span>
+          <textarea name="comentario" id="pulsoComentario" rows="4" maxlength="2000"
+                    placeholder="Lo que quieras. Lo bueno también."></textarea>
+        </label>
+
+        <button class="btn" type="submit" id="pulsoEnviar">Enviar</button>
+        <p class="form-note" id="pulsoMsg" role="status" aria-live="polite"></p>
+      </form>
+
+      <!-- Gracias -->
+      <div class="card hidden" id="pulsoGracias">
+        <h3 style="margin-top:0">¡Gracias!</h3>
+        <p style="margin:0">Ya está. Tu respuesta ha entrado sin tu nombre, junto a las de todos.</p>
+      </div>
+    </main>
+
+    <script src="pulso.js"></script>
+  </body>
+</html>
