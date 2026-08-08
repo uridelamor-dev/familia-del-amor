@@ -33,6 +33,32 @@
         </div>
       </section>
 
+      <!-- Su cuadrante y su registro van ARRIBA del todo: es a lo que entra la gente,
+           no a rellenar el perfil. Solo aparecen si tiene local asignado. -->
+      <section class="block hidden" id="cuadranteBloque">
+        <div class="section-head">
+          <h2>Mi horario</h2>
+          <p id="cuadranteSub">La semana que viene, tal y como está publicada.</p>
+        </div>
+        <div class="semana-nav">
+          <button class="btn ghost" type="button" id="semAnt">‹ Semana anterior</button>
+          <span id="semRango"></span>
+          <button class="btn ghost" type="button" id="semSig">Semana siguiente ›</button>
+        </div>
+        <div id="cuadranteLista"></div>
+      </section>
+
+      <section class="block hidden" id="registroBloque">
+        <div class="section-head">
+          <h2>Mi registro de jornada</h2>
+          <p>Lo que marca el reloj. Si algo no cuadra, díselo a tu encargado: se corrige
+            escribiendo la hora real y queda constancia de quién lo hizo y por qué.</p>
+        </div>
+        <div class="cards" id="registroResumen"></div>
+        <div id="registroLista"></div>
+        <button class="btn ghost" type="button" id="registroCsv">Descargar mi registro</button>
+      </section>
+
       <section class="block">
         <div class="section-head">
           <h2>Mis datos</h2>
@@ -56,6 +82,29 @@
           </label>
           <button class="btn" type="submit">Guardar mis datos</button>
           <p class="form-note" id="perfilMsg" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <!-- El PIN del kiosco. Solo aparece si ya tiene uno: si no lo tiene, no le sirve
+           de nada y lo único que haría es preocuparle. -->
+      <section class="block hidden" id="pinBloque">
+        <div class="section-head">
+          <h2>Mi PIN para fichar</h2>
+          <p id="pinSub">Es el que tecleas en la tablet del local.</p>
+        </div>
+        <form id="pinForm" class="form">
+          <div class="form-row">
+            <label id="pinActualCampo">
+              <span>PIN actual</span>
+              <input type="password" inputmode="numeric" maxlength="6" id="pinActual" autocomplete="off" />
+            </label>
+            <label>
+              <span>PIN nuevo <small>(4 a 6 números)</small></span>
+              <input type="password" inputmode="numeric" maxlength="6" id="pinNuevo" autocomplete="new-password" />
+            </label>
+          </div>
+          <button class="btn" type="submit">Cambiar mi PIN</button>
+          <p class="form-note" id="pinMsg" role="status" aria-live="polite"></p>
         </form>
       </section>
 

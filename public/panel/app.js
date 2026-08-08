@@ -2001,15 +2001,19 @@ function horSolapes() {
 function horAcciones() {
   if (!HOR.semana) return `<button class="btn primary" data-act="hor-crear">Empezar esta semana</button>`;
   const n = (HOR.asignaciones || []).length;
-  const pdf = `<button class="btn" data-act="hor-pdf" ${n ? "" : "disabled"} title="Descargar el cuadrante para mandarlo al grupo">${ic("receipt", 15)} PDF</button>`;
+  const pdf = `<button class="btn" data-act="hor-pdf" ${n ? "" : "disabled"} title="Descargar el cuadrante en PDF">${ic("receipt", 15)} PDF</button>`;
   if (horEditable()) {
     return `<button class="btn" data-act="hor-copiar">Copiar semana</button>
       <button class="btn" data-act="hor-plantillas">Plantillas</button>
       ${pdf}
       <button class="btn primary" data-act="hor-publicar" ${n ? "" : "disabled"}>Publicar</button>`;
   }
+  // Mandar al grupo es un botón APARTE de publicar, no un efecto de publicar: se publica
+  // varias veces mientras se cuadra la semana, y un mensaje al grupo por cada una sería
+  // ruido que la gente acabaría silenciando.
   return `<button class="btn" data-act="hor-historico">Versiones</button>
     ${pdf}
+    <button class="btn" data-act="hor-wa" title="Mandar el PDF al grupo de WhatsApp del local">Mandar al grupo</button>
     <button class="btn primary" data-act="hor-nueva-version">Cambiar horario</button>`;
 }
 
@@ -2128,6 +2132,41 @@ async function horPdf() {
     const pgs = r.headers.get("x-horario-paginas");
     toast(Number(pgs) > 1 ? `PDF descargado · ${pgs} hojas` : "PDF descargado ✅");
   } catch { toast("No se pudo generar el PDF"); }
+}
+
+// Mandar el cuadrante al grupo. Manda de verdad un mensaje a mucha gente, así que la
+// primera vez se pregunta a qué grupo y SIEMPRE se confirma antes de enviar.
+async function horMandarAlGrupo() {
+  if (!HOR.semana) return;
+  let j;
+  try { j = await apiRaw(`/api/horarios/grupos?local=${encodeURIComponent(HOR.local)}`); }
+  catch (e) { return toast(e.message); }
+  if (!j.conectado) return toast("WhatsApp no está conectado ahora mismo");
+
+  let grupo = j.elegido;
+  if (!grupo) {
+    if (!j.grupos.length) return toast("No hay ningún grupo de WhatsApp disponible");
+    grupo = await new Promise((resolve) => {
+      const ov = modal("¿A qué grupo?", `
+        <p style="margin:0 0 14px;line-height:1.55">Elige el grupo de <b>${esc(nombreCortoLocal(HOR.local))}</b>.
+          Se recordará para las próximas semanas.</p>
+        <select class="inp" id="horGrupoSel" style="width:100%">${j.grupos.map((g) =>
+          `<option value="${esc(g.id)}">${esc(g.name || g.id)}</option>`).join("")}</select>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+          <button class="btn" data-close>Cancelar</button><button class="btn primary" id="horGrupoOk">Continuar</button></div>`);
+      ov.addEventListener("click", (e) => {
+        if (e.target.closest("#horGrupoOk")) { const v = ov.querySelector("#horGrupoSel").value; ov.remove(); resolve(v); }
+        else if (e.target === ov || e.target.closest("[data-close]")) resolve(null);
+      });
+    });
+    if (!grupo) return;
+  }
+  const nombreGrupo = (j.grupos.find((g) => g.id === grupo) || {}).name || "el grupo";
+  if (!await confirmModal(`Se manda el horario de esta semana a «${nombreGrupo}», con el PDF adjunto. Lo verá todo el grupo.`, { ok: "Mandarlo" })) return;
+
+  toast("Mandando…");
+  try { const r = await apiSend("POST", `/api/horarios/semana/${HOR.semana.id}/whatsapp`, { grupo_jid: grupo }); toast(r.mensaje || "Mandado ✅"); }
+  catch (e) { toast(e.message); }
 }
 
 async function horHistorico() {
@@ -3884,6 +3923,7 @@ document.addEventListener("click", (e) => {
   else if (act === "hor-nueva-version") horNuevaVersion();
   else if (act === "hor-historico") horHistorico();
   else if (act === "hor-pdf") horPdf();
+  else if (act === "hor-wa") horMandarAlGrupo();
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }

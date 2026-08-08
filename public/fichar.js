@@ -21,7 +21,7 @@
   var VUELTA_MS = 20000;          // inactividad → volver a la lista
   var OK_MS = 3200;               // cuánto se queda la confirmación en pantalla
 
-  var estado = { equipo: [], local: "", ticket: null, worker: null, pin: "", pinTemporal: false };
+  var estado = { equipo: [], local: "", ticket: null, worker: null, pin: "", pinTemporal: false, sinLinea: false };
   var reloj = { servidorMs: 0, refMs: 0 };
   var temporizadorVuelta = null;
 
@@ -78,16 +78,43 @@
       if (!r.datos.ok) return pintarVacio(r.datos.error || "Este dispositivo no está dado de alta.");
       estado.equipo = r.datos.equipo || [];
       estado.local = r.datos.local;
+      estado.sinLinea = false;
       reloj.servidorMs = r.datos.servidorMs; reloj.refMs = performance.now();
       $("ficLocal").textContent = r.datos.local;
       $("ficDisp").textContent = r.datos.dispositivo || "";
       pintarReloj();
       pintarEquipo();
+      // Se guarda la PLANTILLA (nombres y quién tiene PIN), nunca el estado. Un
+      // "dentro/fuera" de ayer diría que sigue trabajando quien ya se fue, y esa pantalla
+      // sería mentira; los nombres, en cambio, cambian una vez cada varios meses.
+      guardarPlantilla({ local: r.datos.local, dispositivo: r.datos.dispositivo,
+        equipo: estado.equipo.map(function (p) { return { id: p.id, nombre: p.nombre, tienePin: p.tienePin }; }) });
       subirCola();
     }).catch(function () {
-      // Sin conexión no se puede saber quién hay: se dice, no se finge.
-      pintarVacio("Sin conexión con el servidor. Los fichajes pendientes se enviarán solos.");
+      // Sin línea se enseña la plantilla guardada, sin estados: la pantalla en blanco no
+      // ayuda a nadie, y quien ya tenga sesión abierta puede seguir fichando.
+      leerPlantilla().then(function (guardada) {
+        if (!guardada) return pintarVacio("Sin conexión con el servidor. Los fichajes pendientes se enviarán solos.");
+        estado.sinLinea = true;
+        estado.local = guardada.local;
+        estado.equipo = guardada.equipo.map(function (p) { return { id: p.id, nombre: p.nombre, tienePin: p.tienePin, estado: "fuera" }; });
+        $("ficLocal").textContent = guardada.local;
+        $("ficDisp").textContent = guardada.dispositivo || "";
+        pintarEquipo();
+      });
     });
+  }
+
+  // La plantilla vive en la misma base que la cola, con una clave reservada.
+  var CLAVE_PLANTILLA = "__plantilla__";
+  function guardarPlantilla(p) {
+    return conTienda("readwrite", function (s) { s.put({ id: CLAVE_PLANTILLA, ms: 0, plantilla: p }); }).catch(function () {});
+  }
+  function leerPlantilla() {
+    return conTienda("readonly", function (s) { return s.getAll(); }).then(function (l) {
+      var fila = (l || []).find(function (x) { return x.id === CLAVE_PLANTILLA; });
+      return fila && fila.plantilla && fila.plantilla.equipo && fila.plantilla.equipo.length ? fila.plantilla : null;
+    }).catch(function () { return null; });
   }
 
   function pintarVacio(texto) {
@@ -105,6 +132,7 @@
       $("ficVacio").textContent = "Todavía no hay nadie con PIN en " + estado.local +
         ". Los PINes se asignan desde el panel, en Fichajes.";
     }
+    refrescarCola();   // el aviso de arriba cambia si estamos sin línea
     estado.equipo.forEach(function (p) {
       var b = document.createElement("button");
       b.type = "button";
@@ -183,9 +211,14 @@
         if (!r.datos.ok) { $("ficPinError").textContent = r.datos.error || "PIN incorrecto."; return; }
         estado.ticket = r.datos.ticket;
         estado.pinTemporal = !!r.datos.pinTemporal;
+        estado.sinLinea = false;
         pintarAcciones(r.datos);
       })
-      .catch(function () { $("ficPinError").textContent = "Sin conexión. Inténtalo en un momento."; });
+      .catch(function () {
+        // Sin línea NO se puede comprobar un PIN, y no se va a fingir que sí: dejar entrar
+        // sin comprobarlo permitiría fichar en nombre de cualquiera. Se dice qué hacer.
+        $("ficPinError").textContent = "Sin conexión: no se puede comprobar el PIN ahora. Apunta tu hora y dísela a tu encargado.";
+      });
   }
 
   // ── 3 · Fichar ───────────────────────────────────────────────────────────
@@ -246,11 +279,14 @@
     var trabajo = {
       id: "k" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
       tipo: tipo, ticket: estado.ticket, nombre: estado.worker && estado.worker.nombre,
+      // La hora del PULSO, no la del envío. Si esto se queda en la cola seis horas, es la
+      // única forma de que quede registrado a la hora en que ocurrió de verdad.
+      ms: Date.now(),
     };
     aplazarVuelta(OK_MS + 500);
     api("/evento", {
       method: "POST",
-      body: JSON.stringify({ ticket: trabajo.ticket, tipo: tipo, cliente_id: trabajo.id, cliente_ms: Date.now() }),
+      body: JSON.stringify({ ticket: trabajo.ticket, tipo: tipo, cliente_id: trabajo.id, cliente_ms: trabajo.ms }),
     }).then(function (r) {
       if (r.datos.ok) return confirmar(tipo, r.datos);
       // 409 = la máquina de estados dice que eso no cabe (p. ej. entrar estando dentro).
@@ -282,45 +318,128 @@
   }
 
   // ── Cola de pendientes ───────────────────────────────────────────────────
-  function leerCola() {
-    try { return JSON.parse(localStorage.getItem(COLA_KEY) || "[]"); } catch (e) { return []; }
-  }
-  function guardarCola(c) {
-    try { localStorage.setItem(COLA_KEY, JSON.stringify(c)); } catch (e) { /* tablet sin espacio */ }
-    pintarCola(c);
-  }
-  function encolar(t) { var c = leerCola(); c.push(t); guardarCola(c); }
-  function pintarCola(c) {
-    var n = (c || leerCola()).length;
-    $("ficCola").classList.toggle("hidden", n === 0);
-    $("ficCola").textContent = n === 1 ? "1 fichaje pendiente de enviar" : n + " fichajes pendientes de enviar";
+  // En IndexedDB, no en localStorage. Un fichaje perdido es, legalmente, un fichaje que
+  // nunca ocurrió: la persona trabajó y no consta. localStorage se escribe de forma
+  // síncrona, falla en silencio cuando no cabe y el navegador lo borra antes que la base
+  // de datos cuando anda justo de espacio. Aquí la durabilidad no es un lujo.
+  //
+  // La hora del fichaje se guarda AL PULSAR, no al subir. Es la única forma de que una
+  // salida de las 02:10 que sube a las nueve de la mañana quede registrada a las 02:10;
+  // el servidor la marca como `kiosco_offline` para que se vea de dónde salió.
+  var DB_NOMBRE = "fichar", DB_TIENDA = "cola", _db = null;
+
+  function abrirDb() {
+    return new Promise(function (resolve) {
+      if (_db) return resolve(_db);
+      if (!self.indexedDB) return resolve(null);
+      var req;
+      try { req = indexedDB.open(DB_NOMBRE, 1); } catch (e) { return resolve(null); }
+      req.onupgradeneeded = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains(DB_TIENDA)) db.createObjectStore(DB_TIENDA, { keyPath: "id" });
+      };
+      req.onsuccess = function () { _db = req.result; resolve(_db); };
+      req.onerror = function () { resolve(null); };   // modo privado, cuota, etc.
+    });
   }
 
-  // Se sube de uno en uno y en orden: el orden de los eventos ES la jornada.
-  // El ticket puede haber caducado, así que el servidor los rechazará con 401; para eso
-  // está la fase 7 (offline de verdad, con firma del dispositivo). Mientras tanto, si un
-  // pendiente no entra, NO se tira: se deja para que un humano lo vea en el panel.
+  function conTienda(modo, fn) {
+    return abrirDb().then(function (db) {
+      if (!db) return respaldo(modo, fn);            // sin IndexedDB, localStorage
+      return new Promise(function (resolve) {
+        var tx = db.transaction(DB_TIENDA, modo);
+        var res = fn(tx.objectStore(DB_TIENDA));
+        tx.oncomplete = function () { resolve(res && res.result !== undefined ? res.result : res); };
+        tx.onerror = tx.onabort = function () { resolve(null); };
+      });
+    });
+  }
+
+  // Respaldo para navegadores sin IndexedDB (o en modo privado). Peor, pero mejor que nada.
+  function respaldo(modo, fn) {
+    var lista = [];
+    try { lista = JSON.parse(localStorage.getItem(COLA_KEY) || "[]"); } catch (e) { lista = []; }
+    var falso = {
+      add: function (v) { lista.push(v); },
+      put: function (v) { lista = lista.filter(function (x) { return x.id !== v.id; }); lista.push(v); },
+      delete: function (id) { lista = lista.filter(function (x) { return x.id !== id; }); },
+      getAll: function () { return { result: lista.slice() }; },
+    };
+    var r = fn(falso);
+    if (modo === "readwrite") { try { localStorage.setItem(COLA_KEY, JSON.stringify(lista)); } catch (e) { /* sin sitio */ } }
+    return Promise.resolve(r && r.result !== undefined ? r.result : r);
+  }
+
+  function leerCola() {
+    return conTienda("readonly", function (t) { return t.getAll(); }).then(function (l) {
+      return (l || [])
+        .filter(function (x) { return x.id !== CLAVE_PLANTILLA; })   // comparte tienda, no es un fichaje
+        .sort(function (a, b) { return a.ms - b.ms; });              // el orden ES la jornada
+    });
+  }
+  function encolar(t) { return conTienda("readwrite", function (s) { s.add(t); }).then(refrescarCola); }
+  function desencolar(id) { return conTienda("readwrite", function (s) { s.delete(id); }).then(refrescarCola); }
+
+  function refrescarCola() { return leerCola().then(pintarCola); }
+  // Una sola franja arriba. Los pendientes mandan sobre el aviso de "sin conexión": son lo
+  // accionable, y decir las dos cosas a la vez en una tablet no cabe ni se lee.
+  function pintarCola(c) {
+    var n = (c || []).length;
+    var texto = n ? (n === 1 ? "1 fichaje pendiente de enviar" : n + " fichajes pendientes de enviar")
+      : estado.sinLinea ? "Sin conexión — se recupera sola en cuanto vuelva" : "";
+    $("ficCola").classList.toggle("hidden", !texto);
+    $("ficCola").textContent = texto;
+  }
+
+  // Se sube de uno en uno y EN ORDEN: si la salida entrara antes que la entrada, la máquina
+  // de estados vería una salida sin entrada y generaría una incidencia que no existe.
   var subiendo = false;
   function subirCola() {
-    if (subiendo) return;
-    var cola = leerCola();
-    if (!cola.length) return pintarCola(cola);
+    if (subiendo) return Promise.resolve();
     subiendo = true;
-    var t = cola[0];
-    api("/evento", {
-      method: "POST",
-      body: JSON.stringify({ ticket: t.ticket, tipo: t.tipo, cliente_id: t.id, cliente_ms: Date.now() }),
-    }).then(function (r) {
-      subiendo = false;
-      if (r.datos.ok || r.http === 409) { guardarCola(leerCola().slice(1)); subirCola(); }
-    }).catch(function () { subiendo = false; });
+    return leerCola().then(function (cola) {
+      if (!cola.length) { subiendo = false; return pintarCola(cola); }
+      var t = cola[0];
+      return api("/evento", {
+        method: "POST",
+        // `offline: true` + la hora de CUANDO SE PULSÓ. El servidor la acepta con el ticket
+        // caducado y marca el evento como diferido.
+        body: JSON.stringify({ ticket: t.ticket, tipo: t.tipo, cliente_id: t.id, cliente_ms: t.ms, offline: true }),
+      }).then(function (r) {
+        subiendo = false;
+        // 409 = el servidor lo ha valorado y dice que no cabe (o que la tablet tiene la
+        // hora mal). Se quita de la cola porque reintentarlo daría siempre lo mismo, pero
+        // el problema ya está anotado en el servidor para que lo vea una persona.
+        // Si el servidor ha contestado, hay línea: se quita el aviso y se recupera la
+        // lista de verdad, con los estados al día.
+        if (estado.sinLinea) { estado.sinLinea = false; cargarEquipo(); }
+        if (r.datos.ok || r.http === 409) return desencolar(t.id).then(subirCola);
+      }).catch(function () { subiendo = false; });
+    });
   }
   setInterval(subirCola, 30000);
   window.addEventListener("online", subirCola);
 
+  // Migración de la cola vieja de localStorage, por si la tablet venía de la versión anterior.
+  (function migrar() {
+    var viejos = [];
+    try { viejos = JSON.parse(localStorage.getItem(COLA_KEY) || "[]"); } catch (e) { return; }
+    if (!viejos.length || !self.indexedDB) return;
+    abrirDb().then(function (db) {
+      if (!db) return;
+      Promise.all(viejos.map(function (v) { return encolar({ id: v.id, tipo: v.tipo, ticket: v.ticket, ms: v.ms || Date.now(), nombre: v.nombre }); }))
+        .then(function () { try { localStorage.removeItem(COLA_KEY); } catch (e) { /* da igual */ } });
+    });
+  })();
+
   // ── Arranque ─────────────────────────────────────────────────────────────
   montarTeclado();
-  pintarCola();
+  refrescarCola();
+  // El service worker solo sirve para que la pantalla siga abriéndose sin línea. No cachea
+  // ninguna respuesta de la API: un listado de ayer diría que está dentro quien ya se fue.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/fichar-sw.js").catch(function () { /* http, modo privado… */ });
+  }
   $("ficVolver").addEventListener("click", volverAlInicio);
   $("ficSalir").addEventListener("click", volverAlInicio);
   // Teclado físico, por si la tablet lleva uno acoplado.

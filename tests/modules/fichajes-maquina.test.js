@@ -240,6 +240,27 @@ describe("fichajes — los eventos no se tocan", () => {
       "los eventos metidos a mano quedan distinguibles para siempre de los de la tablet");
   });
 
+  test("EL SERVICE WORKER NO CACHEA NADA DE /api/", () => {
+    // Un listado guardado de ayer diría que sigue dentro quien ya se fue, y el kiosco
+    // enseñaría un estado falso. El service worker solo sirve para que la pantalla se
+    // abra sin línea; el estado viene siempre de la red o no viene.
+    const sw = fs.readFileSync(path.join(RAIZ, "public/fichar-sw.js"), "utf8");
+    assert.match(sw, /pathname\.startsWith\("\/api\/"\)[\s\S]{0,40}return/,
+      "tiene que salirse del handler para cualquier ruta de /api/");
+    assert.match(sw, /request\.method\s*!==\s*"GET"[\s\S]{0,30}return/,
+      "y un fichaje (POST) no pasa por el service worker jamás");
+  });
+
+  test("un fichaje en diferido queda MARCADO, no colado como si fuera normal", () => {
+    // La hora de un fichaje offline sale del reloj de la tablet. Se acepta, pero tiene que
+    // notarse: si pasara por `kiosco` a secas, el reloj del cliente estaría falsificando el
+    // registro sin dejar rastro.
+    assert.match(server, /kiosco_offline/,
+      "el origen distingue para siempre lo que vino en diferido");
+    assert.match(server, /desfase_ms/,
+      "y se guarda cuánto se desviaba esa tablet");
+  });
+
   test("el PIN se guarda con bcrypt, no con la copia reversible de las contraseñas", () => {
     const trozo = /pin_hash[\s\S]{0,600}/.exec(server);
     if (!trozo) return;   // todavía no cableado

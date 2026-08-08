@@ -374,6 +374,18 @@ export async function sendMensajeAGrupo(groupJid, texto) {
   await sock.sendMessage(groupJid, { text: texto });
 }
 
+// Un adjunto a un grupo. NO se puede usar sendDocumentoLibre para esto: aquel pasa el
+// destinatario por formatPhone(), que convierte un número de teléfono en JID y destrozaría
+// un JID de grupo (que ya viene entero, con su @g.us).
+export async function sendDocumentoAGrupo(groupJid, buffer, filename, mimetype) {
+  if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
+  await sock.sendMessage(groupJid, {
+    document: buffer,
+    mimetype: mimetype || "application/octet-stream",
+    fileName: filename,
+  });
+}
+
 let sock = null;
 let clientReady = false;
 let lastQR = null;

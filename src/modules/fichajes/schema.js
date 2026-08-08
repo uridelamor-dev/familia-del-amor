@@ -34,6 +34,12 @@ export async function ensureSchemaFichajes(x) {
   // haya que tomar para siempre: cambiarlo no toca ningún periodo ya cerrado.
   await x.run(`ALTER TABLE hor_config ADD COLUMN IF NOT EXISTS dia_inicio_periodo INTEGER NOT NULL DEFAULT 1`);
 
+  // Grupo de WhatsApp al que se manda el cuadrante de este local. Se elige una vez y se
+  // recuerda. Va aquí y no en `facturas_grupos` porque el grupo de las facturas es el de
+  // los encargados y el del horario es el de todo el equipo: mandar el cuadrante al que no
+  // es sería enseñárselo a quien no toca.
+  await x.run(`ALTER TABLE hor_config ADD COLUMN IF NOT EXISTS wa_grupo_jid TEXT`);
+
   // Tablets. El token viaja en la URL una sola vez; en la base solo su hash, como las
   // invitaciones del pulso.
   await x.run(`CREATE TABLE IF NOT EXISTS fic_dispositivos (

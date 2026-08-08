@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -4228,28 +4228,7 @@ app.get("/api/horarios/semana/:id/pdf", requireAuth(HORARIOS_ROLES), async (req,
     if (!s) return res.status(404).json({ ok: false, error: "Semana no encontrada" });
     if (!rrhhPuedeLocal(req, s.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
 
-    const dias = diasSemana(s.lunes);
-    const pub = await dbGet(`SELECT snapshot FROM hor_publicaciones WHERE semana_id = ?`, [s.id]);
-    let areas, tramos, asignaciones, equipo;
-    if (pub && pub.snapshot) {
-      const snap = JSON.parse(pub.snapshot);
-      areas = snap.areas; tramos = snap.tramos; asignaciones = snap.asignaciones;
-      equipo = snap.asignaciones.map((a) => ({ id: a.worker_id, nombre: a.nombre }));
-    } else {
-      [areas, tramos, asignaciones, equipo] = await Promise.all([
-        dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [s.local]),
-        dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden`, [s.local]),
-        dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]),
-        dbAll(`SELECT id, nombre, username FROM users WHERE local = ?`, [s.local]),
-      ]);
-    }
-    const cuadrante = construirCuadrante({ lunes: s.lunes, tramos, areas, asignaciones, trabajadores: equipo });
-    const { buffer, layout, perdidos } = construirPdfSemana(
-      { local: s.local, lunes: s.lunes, dias, bloques: cuadrante.bloques, estado: s.estado, version: s.version },
-      { ahora: isoConOffset(Date.now()) }
-    );
-    if (perdidos.length) console.warn("[horarios] PDF con caracteres sustituidos:", [...new Set(perdidos)].join(" "));
-    const nombre = nombreFichero({ local: s.local, lunes: s.lunes, domingo: dias[6], version: s.version, estado: s.estado });
+    const { buffer, layout, nombre } = await horPdfDeSemana(s);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${nombre}"`);
     res.setHeader("X-Horario-Paginas", String(layout.paginas.length));
@@ -4259,6 +4238,90 @@ app.get("/api/horarios/semana/:id/pdf", requireAuth(HORARIOS_ROLES), async (req,
     res.status(500).json({ ok: false, error: "No se pudo generar el PDF" });
   }
 });
+
+// Construye el PDF de una semana. Compartido por la descarga y por el envío al grupo:
+// tienen que ser EL MISMO documento, byte a byte, o el que se manda por WhatsApp y el que
+// se imprime dejarían de ser lo mismo.
+async function horPdfDeSemana(s) {
+  const dias = diasSemana(s.lunes);
+  const pub = await dbGet(`SELECT snapshot FROM hor_publicaciones WHERE semana_id = ?`, [s.id]);
+  let areas, tramos, asignaciones, equipo;
+  if (pub && pub.snapshot) {
+    const snap = JSON.parse(pub.snapshot);
+    areas = snap.areas; tramos = snap.tramos; asignaciones = snap.asignaciones;
+    equipo = snap.asignaciones.map((a) => ({ id: a.worker_id, nombre: a.nombre }));
+  } else {
+    [areas, tramos, asignaciones, equipo] = await Promise.all([
+      dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [s.local]),
+      dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden`, [s.local]),
+      dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]),
+      dbAll(`SELECT id, nombre, username FROM users WHERE local = ?`, [s.local]),
+    ]);
+  }
+  const cuadrante = construirCuadrante({ lunes: s.lunes, tramos, areas, asignaciones, trabajadores: equipo });
+  const { buffer, layout, perdidos } = construirPdfSemana(
+    { local: s.local, lunes: s.lunes, dias, bloques: cuadrante.bloques, estado: s.estado, version: s.version },
+    { ahora: isoConOffset(Date.now()) }
+  );
+  if (perdidos.length) console.warn("[horarios] PDF con caracteres sustituidos:", [...new Set(perdidos)].join(" "));
+  return { buffer, layout, dias, nombre: nombreFichero({ local: s.local, lunes: s.lunes, domingo: dias[6], version: s.version, estado: s.estado }) };
+}
+
+// Mandar el cuadrante al grupo de WhatsApp del local.
+//
+// NO se hace solo al publicar, y es a propósito: publicar y avisar son dos decisiones
+// distintas. Se publica varias veces mientras se cuadra la semana, y cada publicación
+// disparando un mensaje al grupo sería ruido que la gente acabaría silenciando — y
+// entonces no se enteraría del que sí importa.
+app.post("/api/horarios/semana/:id/whatsapp", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const s = await dbGet(`SELECT * FROM hor_semanas WHERE id = ?`, [req.params.id]);
+    if (!s) return res.status(404).json({ ok: false, error: "Semana no encontrada" });
+    if (!rrhhPuedeLocal(req, s.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    // Solo lo publicado: mandar un borrador al grupo es mandar un horario que va a cambiar.
+    if (s.estado !== "publicado") return res.status(409).json({ ok: false, error: "Publica la semana antes de mandarla al grupo" });
+
+    const cfg = await dbGet(`SELECT wa_grupo_jid FROM hor_config WHERE local = ?`, [s.local]);
+    const grupo = String(req.body?.grupo_jid || cfg?.wa_grupo_jid || "").trim();
+    if (!grupo) return res.status(400).json({ ok: false, error: "Elige primero a qué grupo de WhatsApp se manda el horario de este local" });
+    if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no está conectado ahora mismo" });
+
+    const { buffer, dias, nombre } = await horPdfDeSemana(s);
+    const texto = `📅 *Horario del ${fechaLarga(dias[0])} al ${fechaLarga(dias[6])}*\n${s.local}` +
+      (s.version > 1 ? `\n\n⚠️ Es la versión ${s.version}: sustituye a la anterior.` : "") +
+      `\n\nCada uno lo tiene también en su perfil, en familiadelamor.org.`;
+    await sendMensajeAGrupo(grupo, texto);
+    await sendDocumentoAGrupo(grupo, buffer, nombre, "application/pdf");
+
+    // Se recuerda el grupo elegido para no volver a preguntarlo cada semana.
+    if (!cfg?.wa_grupo_jid) await dbRun(`UPDATE hor_config SET wa_grupo_jid = ? WHERE local = ?`, [grupo, s.local]);
+    await ficAuditar("horario", s.id, "enviar_grupo", req.user.username, {
+      local: s.local, detalle: { lunes: s.lunes, version: s.version, grupo } });
+
+    res.json({ ok: true, mensaje: `Horario mandado al grupo.` });
+  } catch (e) {
+    console.error("[horarios] whatsapp:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo mandar al grupo: " + e.message });
+  }
+});
+
+// Grupos disponibles, para poder elegir el del local desde el panel.
+app.get("/api/horarios/grupos", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const cfg = await dbGet(`SELECT wa_grupo_jid FROM hor_config WHERE local = ?`, [local]);
+    if (!isReady()) return res.json({ ok: true, conectado: false, elegido: cfg?.wa_grupo_jid || null, grupos: [] });
+    const grupos = await getGroups();
+    res.json({ ok: true, conectado: true, elegido: cfg?.wa_grupo_jid || null, grupos });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar los grupos" }); }
+});
+
+const MESES_LARGO = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+function fechaLarga(iso) {
+  const [, m, d] = String(iso || "").split("-");
+  return d ? `${Number(d)} de ${MESES_LARGO[Number(m) - 1]}` : String(iso || "");
+}
 
 // Histórico de versiones de una semana. Contesta "qué horario vio el equipo".
 app.get("/api/horarios/historico", requireAuth(HORARIOS_ROLES), async (req, res) => {
@@ -4294,6 +4357,10 @@ const ficToken = () => generarToken((n) => crypto.randomBytes(n));
 // persona no tenga que teclear el PIN dos veces (una para ver su estado y otra para fichar).
 // Va firmado y lleva dentro el dispositivo, así que un ticket de una tablet no vale en otra.
 const FIC_TICKET_MS = 120000;
+// Un fichaje que se quedó en la cola de la tablet puede tardar horas en subir: si se
+// aplicara la caducidad normal, se perdería. El ticket sigue firmado y sigue atado a ESA
+// tablet, así que lo que prueba —que la persona tecleó su PIN— sigue siendo cierto.
+const FIC_TICKET_OFFLINE_MS = 48 * 3600 * 1000;
 function ficFirmar(cuerpo) {
   return crypto.createHmac("sha256", JWT_SECRET).update("fichar:" + cuerpo).digest("hex").slice(0, 32);
 }
@@ -4301,7 +4368,7 @@ function ficEmitirTicket(workerId, dispId, ahoraMs) {
   const cuerpo = `${workerId}.${dispId}.${ahoraMs + FIC_TICKET_MS}`;
   return `${cuerpo}.${ficFirmar(cuerpo)}`;
 }
-function ficLeerTicket(ticket, dispId, ahoraMs) {
+function ficLeerTicket(ticket, dispId, ahoraMs, { gracia = 0 } = {}) {
   const partes = String(ticket || "").split(".");
   if (partes.length !== 4) return null;
   const [wk, disp, exp, firma] = partes;
@@ -4310,7 +4377,7 @@ function ficLeerTicket(ticket, dispId, ahoraMs) {
   if (firma.length !== esperada.length) return null;
   if (!crypto.timingSafeEqual(Buffer.from(firma), Buffer.from(esperada))) return null;
   if (Number(disp) !== Number(dispId)) return null;
-  if (!(Number(exp) > ahoraMs)) return null;
+  if (!(Number(exp) + gracia > ahoraMs)) return null;
   return { workerId: Number(wk) };
 }
 
@@ -4452,7 +4519,9 @@ app.post("/api/fichar/:token/evento", async (req, res) => {
     if (!disp) return res.status(404).json({ ok: false, error: "Este dispositivo no está dado de alta" });
 
     const ahora = Date.now();
-    const sesion = ficLeerTicket(req.body?.ticket, disp.id, ahora);
+    // Un fichaje que estuvo en la cola: la tablet lo marca al subirlo.
+    const enDiferido = !!req.body?.offline;
+    const sesion = ficLeerTicket(req.body?.ticket, disp.id, ahora, { gracia: enDiferido ? FIC_TICKET_OFFLINE_MS : 0 });
     if (!sesion) return res.status(401).json({ ok: false, error: "Vuelve a introducir tu PIN." });
 
     const tipo = String(req.body?.tipo || "");
@@ -4470,9 +4539,29 @@ app.post("/api/fichar/:token/evento", async (req, res) => {
       if (ya) return res.json({ ok: true, repetido: true, evento: ya });
     }
 
-    const m = await ficMomento(disp.local, ahora);
+    // ── La hora ──────────────────────────────────────────────────────────────
+    // En el caso normal la pone el servidor y punto. En un fichaje en diferido eso sería
+    // mentira: una salida de las 02:10 que sube a las 09:00 quedaría registrada a las 09:00.
+    // Así que se usa la de la tablet, PERO se guarda `origen='kiosco_offline'` y el desfase,
+    // de modo que se vea de dónde salió esa hora. Se prefiere un dato marcado a un dato
+    // falso; lo que no se hace nunca es dejar que el reloj del cliente pase por el del
+    // servidor sin que se note.
+    const clienteMs = Number(req.body?.cliente_ms);
+    let cuando = ahora, origen = "kiosco", desfase = Number.isFinite(clienteMs) ? clienteMs - ahora : null;
+    if (enDiferido) {
+      if (!Number.isFinite(clienteMs)) return res.status(400).json({ ok: false, error: "Falta la hora del fichaje" });
+      // Fuera de una ventana razonable no se acepta: una tablet con la fecha en 2019 —o en
+      // el futuro— reescribiría la nómina, y eso es exactamente lo que hay que impedir.
+      if (clienteMs > ahora + 5 * 60000 || clienteMs < ahora - FIC_TICKET_OFFLINE_MS) {
+        console.warn(`[fichar] hora fuera de rango en dispositivo ${disp.id}: desfase ${Math.round((clienteMs - ahora) / 60000)} min`);
+        return res.status(409).json({ ok: false, error: "La tablet tiene la hora mal. Avisa a tu encargado: el fichaje no se ha perdido, hay que meterlo a mano." });
+      }
+      cuando = clienteMs; origen = "kiosco_offline";
+    }
+
+    const m = await ficMomento(disp.local, cuando);
     const eventos = await ficEventosDe(worker.id, m.diaNegocio);
-    const v = evaluarFichaje(eventos, tipo, ahora);
+    const v = evaluarFichaje(eventos, tipo, cuando);
     if (!v.registrar) {
       return res.status(v.duplicado ? 200 : 409).json({
         ok: !!v.duplicado, duplicado: !!v.duplicado, error: v.duplicado ? undefined : v.mensaje,
@@ -4486,15 +4575,17 @@ app.post("/api/fichar/:token/evento", async (req, res) => {
     if (v.cierraPausa) filas.push({ tipo: "pausa_fin", motivo: "cierre automático al fichar la salida", clave: clave ? clave + ":p" : null });
     filas.push({ tipo, motivo: v.incidencia ? "salida sin entrada registrada" : null, clave });
 
-    const desfase = Number(req.body?.cliente_ms) ? Number(req.body.cliente_ms) - ahora : null;
     let ultimo = null;
     for (const f of filas) {
       ultimo = await dbRun(
         `INSERT INTO fic_eventos (worker_id, local, tipo, ocurrido_en, epoch_ms, dia_negocio, minuto_local,
                                   origen, dispositivo_id, autor, motivo, idempotencia_key, desfase_ms, creado_en)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, tipo, ocurrido_en`,
-        [worker.id, disp.local, f.tipo, m.iso, ahora, m.diaNegocio, m.minutoNegocio,
-         "kiosco", disp.id, null, f.motivo, f.clave, Number.isFinite(desfase) ? desfase : null, m.iso]);
+        [worker.id, disp.local, f.tipo, m.iso, cuando, m.diaNegocio, m.minutoNegocio,
+         origen, disp.id, null, f.motivo, f.clave, Number.isFinite(desfase) ? desfase : null,
+         // `creado_en` es CUÁNDO LLEGÓ, no cuándo pasó: en un fichaje en diferido son
+         // horas distintas, y esa diferencia es justo lo que hay que poder ver.
+         isoConOffset(ahora)]);
     }
     if (v.incidencia) {
       await ficAuditar("evento", ultimo?.id, "incidencia:" + v.incidencia, "kiosco",
@@ -4506,6 +4597,7 @@ app.post("/api/fichar/:token/evento", async (req, res) => {
     res.json({
       ok: true, evento: ultimo, hora: m.hora.slice(0, 5), estado,
       acciones: accionesPermitidas(estado), incidencia: v.incidencia || null,
+      diferido: enDiferido,
       mensaje: v.mensaje || null, jornada: calcularJornada(despues, { hastaMs: ahora }),
     });
   } catch (e) {
@@ -5198,6 +5290,128 @@ app.get("/api/fichajes/export", requireAuth(FICHAJES_ROLES), async (req, res) =>
   }
 });
 
+// ── Autoservicio: lo que cada uno ve de SÍ MISMO ─────────────────────────────
+// El art. 34.9 del ET obliga a que el registro esté a disposición de la persona
+// trabajadora. Estas dos rutas son esa disposición, y no dependen de que nadie le mande
+// nada: entra con su usuario y lo ve. Ninguna acepta un `worker_id`: siempre es req.user.id.
+
+app.get("/api/mi-cuadrante", requireAuth(), async (req, res) => {
+  try {
+    const yo = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [req.user.id]);
+    if (!yo || !yo.local) return res.json({ ok: true, sinLocal: true, semanas: [] });
+
+    const cfg = await dbGet(`SELECT corte_dia_min FROM hor_config WHERE local = ?`, [yo.local]);
+    const hoy = instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 });
+    const lunes = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.lunes || "")) ? lunesDe(String(req.query.lunes)) : lunesDe(hoy.diaNegocio);
+
+    // SOLO lo publicado. Un borrador es una idea a medias del encargado: enseñárselo a la
+    // gente haría que se organizaran con horarios que todavía pueden cambiar.
+    const semana = await dbGet(
+      `SELECT id, version, publicado_en FROM hor_semanas WHERE local = ? AND lunes = ? AND estado = 'publicado'`,
+      [yo.local, lunes]);
+
+    const dias = diasSemana(lunes);
+    if (!semana) return res.json({ ok: true, local: yo.local, lunes, dias, hoy: hoy.diaNegocio, publicado: false, turnos: [] });
+
+    const filas = await dbAll(
+      `SELECT a.dia, a.inicio_min, a.fin_min, a.fin_abierto, a.tipo, a.nota, ar.nombre AS area, t.nombre AS tramo
+       FROM hor_asignaciones a
+       LEFT JOIN hor_areas ar ON ar.id = a.area_id
+       LEFT JOIN hor_tramos t ON t.id = a.tramo_id
+       WHERE a.semana_id = ? AND a.worker_id = ? ORDER BY a.dia, a.inicio_min`, [semana.id, yo.id]);
+
+    res.json({
+      ok: true, local: yo.local, lunes, dias, hoy: hoy.diaNegocio, publicado: true,
+      version: semana.version, publicadoEn: semana.publicado_en,
+      turnos: filas.map((f) => ({
+        dia: f.dia, tipo: f.tipo, area: f.area, tramo: f.tramo, nota: f.nota,
+        inicio: deMinutos(f.inicio_min), fin: f.fin_abierto ? null : deMinutos(f.fin_min),
+        finAbierto: !!f.fin_abierto,
+        minutos: f.tipo === "turno" ? Number(f.fin_min) - Number(f.inicio_min) : 0,
+      })),
+    });
+  } catch (e) {
+    console.error("[mi-cuadrante]:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar tu cuadrante" });
+  }
+});
+
+// Mi registro de jornada. Se enseña lo FICHADO, no lo planificado, y se dice cuál de los
+// dos es cada cosa: es su prueba, y tiene que poder discutirla si no cuadra.
+app.get("/api/mi-registro", requireAuth(), async (req, res) => {
+  try {
+    const yo = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [req.user.id]);
+    if (!yo || !yo.local) return res.json({ ok: true, sinLocal: true, dias: [] });
+
+    const cfg = await dbGet(`SELECT corte_dia_min, dia_inicio_periodo FROM hor_config WHERE local = ?`, [yo.local]);
+    const hoy = instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 });
+    const p = periodoDe(/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.dia || "")) ? String(req.query.dia) : hoy.diaNegocio,
+      { diaInicio: cfg?.dia_inicio_periodo ?? 1 });
+
+    const [eventos, jornadas, movimientos] = await Promise.all([
+      dbAll(`SELECT dia_negocio, tipo, ocurrido_en, origen, motivo, anulado_por FROM fic_eventos
+             WHERE worker_id = ? AND dia_negocio BETWEEN ? AND ? ORDER BY dia_negocio, epoch_ms, id`,
+        [yo.id, p.desde, p.hasta]),
+      dbAll(`SELECT dia_negocio, min_planificado, min_fichado, min_pausa, min_validado, validado_por, validado_en
+             FROM fic_jornadas WHERE worker_id = ? AND dia_negocio BETWEEN ? AND ?`, [yo.id, p.desde, p.hasta]),
+      dbAll(`SELECT minutos FROM fic_bolsa_movimientos WHERE worker_id = ?`, [yo.id]),
+    ]);
+
+    const porDia = new Map();
+    for (const j of jornadas) porDia.set(j.dia_negocio, { dia: j.dia_negocio, ...j, eventos: [] });
+    for (const e of eventos) {
+      if (!porDia.has(e.dia_negocio)) porDia.set(e.dia_negocio, { dia: e.dia_negocio, eventos: [] });
+      porDia.get(e.dia_negocio).eventos.push({
+        tipo: e.tipo, hora: String(e.ocurrido_en).slice(11, 16),
+        // Se dice cuáles metió una persona a mano y por qué: es la parte que puede querer
+        // discutir, y esconderla sería justo lo contrario de ponerlo a su disposición.
+        aMano: e.origen === "manual", motivo: e.motivo, anulado: !!e.anulado_por,
+      });
+    }
+    const dias = [...porDia.values()]
+      .map((d) => ({
+        dia: d.dia,
+        minPlanificado: d.min_planificado ?? null,
+        minFichado: d.min_fichado ?? null,
+        minValidado: d.min_validado ?? null,
+        validadoPor: d.validado_por || null,
+        eventos: d.eventos,
+      }))
+      .sort((a, b) => b.dia.localeCompare(a.dia));
+
+    res.json({
+      ok: true, local: yo.local, periodo: p, dias,
+      totalFichado: dias.reduce((s, d) => s + (d.minFichado || 0), 0),
+      totalValidado: dias.reduce((s, d) => s + (d.minValidado || 0), 0),
+      saldoBolsa: saldoDe(movimientos),
+    });
+  } catch (e) {
+    console.error("[mi-registro]:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar tu registro" });
+  }
+});
+
+// Su propio registro en CSV, con el mismo formato que el que se entrega a la Inspección.
+app.get("/api/mi-registro/csv", requireAuth(), async (req, res) => {
+  try {
+    const yo = await dbGet(`SELECT id, nombre, dni, local FROM users WHERE id = ?`, [req.user.id]);
+    if (!yo) return res.status(404).json({ ok: false, error: "No encontrado" });
+    const cfg = await dbGet(`SELECT corte_dia_min, dia_inicio_periodo FROM hor_config WHERE local = ?`, [yo.local]);
+    const hoy = instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 });
+    const p = periodoDe(/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.dia || "")) ? String(req.query.dia) : hoy.diaNegocio,
+      { diaInicio: cfg?.dia_inicio_periodo ?? 1 });
+
+    const eventos = await dbAll(
+      `SELECT dia_negocio, tipo, ocurrido_en, origen, autor, motivo, anulado_por FROM fic_eventos
+       WHERE worker_id = ? AND dia_negocio BETWEEN ? AND ? ORDER BY dia_negocio, epoch_ms, id`,
+      [yo.id, p.desde, p.hasta]);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombreFicheroRegistro(yo.nombre || "mi-registro", p.etiqueta)}"`);
+    res.send(construirCsv(eventos.map((e) => ({ ...e, nombre: yo.nombre, dni: yo.dni }))));
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo generar tu registro" }); }
+});
+
 // ════════════════════════ PULSO ANÓNIMO DEL EQUIPO ════════════════════════
 // Ver el comentario del esquema (initDB) y src/modules/rrhh/pulso.js: las respuestas y
 // las invitaciones viven en tablas que nunca se cruzan, y el k-anonimato se aplica AQUÍ,
@@ -5713,7 +5927,11 @@ app.get("/api/mi-perfil", requireAuth(), async (req, res) => {
     );
     if (!u) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
     const hoy = new Date().toISOString().slice(0, 10);
-    res.json({ ok: true, data: { ...u, antiguedad: rrhhAntiguedad(u.fecha_alta, hoy), editables: MI_PERFIL_CAMPOS } });
+    // Si tiene PIN y si es el provisional que le dio el encargado. El PIN no sale de la
+    // base ni hasheado: solo se dice si existe, para poder ofrecerle cambiarlo.
+    const pin = await dbGet(`SELECT pin_hash IS NOT NULL AS tiene, pin_temporal FROM users WHERE id = ?`, [req.user.id])
+      .catch(() => null);
+    res.json({ ok: true, data: { ...u, antiguedad: rrhhAntiguedad(u.fecha_alta, hoy), editables: MI_PERFIL_CAMPOS, pin } });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el perfil" }); }
 });
 
