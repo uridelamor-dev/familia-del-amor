@@ -125,6 +125,16 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .hortot.alto b{color:var(--danger)}
 @media(max-width:900px){.horgrid{grid-template-columns:96px repeat(7,minmax(104px,1fr));overflow-x:auto}}
 
+/* ── Fichajes ──────────────────────────────────────────────────────────────
+   Solo el semáforo de «quién está dentro» y una etiqueta de estado. Todo lo demás
+   reutiliza .card/.tbl/.btn. La pantalla del kiosco tiene su propio public/fichar.css. */
+.fic-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ink3);vertical-align:middle;margin-right:2px}
+.fic-dot.dentro{background:var(--ok,#16a34a)}
+.fic-dot.pausa{background:var(--warn,#d97706)}
+.fic-tag{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface2);font-size:11px;font-weight:600;color:var(--ink3);white-space:nowrap;margin-right:4px}
+.fic-tag.ok{border-color:transparent;background:var(--brand-soft);color:var(--brand)}
+.fic-tag.aviso{border-color:transparent;background:var(--danger-soft);color:var(--danger)}
+
 /* Tarjeta plegable (<details>): la cabecera hace de tirador. Nativa, sin JS. */
 .card.fold{padding:0;overflow:hidden;align-self:start}
 .card.fold>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0;padding:16px 18px;cursor:pointer;list-style:none;transition:background .12s ease}

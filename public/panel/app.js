@@ -1461,7 +1461,42 @@ function renderRRFicha() {
   const dato = (lab, val) => val ? `<div><div class="t2">${lab}</div><div class="t1">${esc(val)}</div></div>` : "";
   const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Puesto", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
   const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(t.rol || "")}${t.local ? " · " + esc(t.local) : ""}${t.username ? " · @" + esc(t.username) : ""}${antig}</div></div></div>${esDir ? `<button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(t.nombre || t.username || "")}">Eliminar</button>` : ""}</div></div>`;
-  return `<div class="grid" style="gap:16px">${hero}${datos}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
+  return `<div class="grid" style="gap:16px">${hero}${datos}${renderRRPin()}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
+}
+
+// PIN del kiosco. Se asigna desde aquí porque es donde se está cuando alguien entra a
+// trabajar; el trabajador lo cambia después desde su perfil.
+function renderRRPin() {
+  const f = RRSEG.ficha; if (!f || !RRSEG.sel) return "";
+  const p = f.pin || {};
+  const bloqueado = p.pin_bloqueado_hasta && Date.parse(p.pin_bloqueado_hasta) > Date.now();
+  const estado = !p.tiene
+    ? `<span class="mut">Todavía no puede fichar: no tiene PIN.</span>`
+    : p.pin_temporal
+      ? `<span class="pill">PIN provisional</span> <span class="mut">Aún no lo ha cambiado.</span>`
+      : `<span class="pill ok">PIN activo</span>${p.pin_actualizado_en ? ` <span class="mut">desde el ${esc(String(p.pin_actualizado_en).slice(0, 10))}</span>` : ""}`;
+  return `<div class="card"><div class="ch"><h3>PIN de fichaje</h3>
+      <button class="btn sm" data-act="rr-pin" data-id="${RRSEG.sel.id}">${p.tiene ? "Cambiar PIN" : "Asignar PIN"}</button></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${estado}
+      ${bloqueado ? '<span class="pill bad">bloqueado por intentos fallidos</span>' : ""}</div></div>`;
+}
+
+async function rrAsignarPin(id) {
+  const ov = modal("PIN de fichaje", `
+    <p style="margin:0 0 14px;line-height:1.55">Entre 4 y 6 números. Díselo en persona y pídele que lo cambie desde su perfil: mientras siga siendo el que le has dado tú, cualquiera que te haya oído puede fichar en su nombre.</p>
+    <input class="inp" id="rrPinVal" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="4917" style="width:100%;font-size:20px;letter-spacing:.3em;text-align:center">
+    <p id="rrPinMsg" style="margin:10px 0 0;min-height:18px;color:var(--danger);font-weight:550"></p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button><button class="btn primary" id="rrPinOk">Guardar</button></div>`);
+  const inp = ov.querySelector("#rrPinVal"), msg = ov.querySelector("#rrPinMsg");
+  inp.focus();
+  inp.addEventListener("input", () => { inp.value = inp.value.replace(/\D/g, "").slice(0, 6); msg.textContent = ""; });
+  ov.querySelector("#rrPinOk").addEventListener("click", async () => {
+    try {
+      const r = await apiSend("PUT", "/api/fichajes/pin/" + encodeURIComponent(id), { pin: inp.value });
+      ov.remove(); toast(r.mensaje || "PIN asignado ✅"); rrSelWorker(id);
+    } catch (e) { msg.textContent = e.message; }
+  });
 }
 function renderRRRendimiento() {
   const f = RRSEG.ficha; if (!f) return "";
@@ -2209,14 +2244,146 @@ async function horSoltar(celda) {
 
 // ════════════════════════ VISTA: FICHAJES ════════════════════════
 // Fase 0: solo el esqueleto. El kiosco y el registro llegan en la fase 4.
+// ════════════════════════ VISTA: FICHAJES ════════════════════════
+// Dos pestañas: quién está dentro AHORA (que es la pregunta que se hace de verdad desde
+// la oficina) y las tablets. El PIN se asigna desde la ficha de RR. HH. de cada persona.
+let FIC = { tab: "hoy", local: "", dia: "" };
+// El refresco automático se guarda a nivel de módulo y se limpia SIEMPRE al entrar: si no,
+// cambiar de vista dejaría el temporizador vivo pegándole a la API para siempre.
+let FIC_TIMER = null;
+
 async function loadFichajes() {
+  clearInterval(FIC_TIMER); FIC_TIMER = null;
   const view = document.getElementById("view");
   const amb = localFijadoFE() || DASH_LOCAL || "";
   if (sinPublico(amb)) { view.innerHTML = avisoSinPublico("Fichajes", "Personas", "fichajes"); return; }
+  FIC.local = amb;
+
   view.innerHTML = `<div class="ph"><div class="eyebrow">Personas</div><h1>Fichajes</h1><div class="sub">Registro de jornada${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>
-    <div class="card"><div class="ch"><h3>Todavía no hay nada que registrar</h3></div>
-      <p class="mut" style="margin:0;line-height:1.6">El kiosco de fichaje y el registro de jornada llegan más adelante. Cuando estén, aquí verás quién está dentro ahora mismo, las incidencias del día y las jornadas pendientes de validar.</p>
+    <div class="toolbar" style="margin-bottom:12px" id="ficTabs">
+      <button class="btn ${FIC.tab === "hoy" ? "primary" : ""}" data-fictab="hoy">Quién está dentro</button>
+      <button class="btn ${FIC.tab === "disp" ? "primary" : ""}" data-fictab="disp">Tablets</button>
+    </div>
+    <div id="ficCuerpo"><p class="mut">Cargando…</p></div>`;
+
+  view.querySelector("#ficTabs").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-fictab]"); if (!b) return;
+    FIC.tab = b.getAttribute("data-fictab");
+    loadFichajes();
+  });
+
+  if (FIC.tab === "disp") return ficPintarDispositivos();
+  await ficPintarHoy();
+  // Un minuto: lo bastante para que sirva de tablero y lo bastante poco para no molestar.
+  FIC_TIMER = setInterval(() => {
+    // Guarda: si el usuario ya se ha ido a otra vista, el temporizador no debe repintar nada.
+    if (CURRENT !== "fichajes" || FIC.tab !== "hoy") { clearInterval(FIC_TIMER); FIC_TIMER = null; return; }
+    ficPintarHoy();
+  }, 60000);
+}
+
+const FIC_ESTADO_TXT = { dentro: "Dentro", pausa: "En pausa", fuera: "Fuera" };
+const FIC_EV_TXT = { entrada: "Entrada", salida: "Salida", pausa_inicio: "Pausa", pausa_fin: "Vuelta" };
+function ficHoras(min) {
+  const h = Math.floor((min || 0) / 60), m = (min || 0) % 60;
+  return h ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min`;
+}
+
+async function ficPintarHoy() {
+  const cont = document.getElementById("ficCuerpo");
+  if (!cont) return;
+  let j;
+  try {
+    const qs = new URLSearchParams({ local: FIC.local });
+    if (FIC.dia) qs.set("dia", FIC.dia);
+    j = await apiRaw("/api/fichajes/hoy?" + qs.toString());
+  } catch { cont.innerHTML = `<div class="card"><p class="mut" style="margin:0">No se pudo cargar el registro.</p></div>`; return; }
+
+  const dentro = j.personas.filter((p) => p.estado !== "fuera");
+  const resto = j.personas.filter((p) => p.estado === "fuera");
+
+  const fila = (p) => `<tr>
+      <td><span class="fic-dot ${esc(p.estado)}"></span> <b>${esc(p.nombre)}</b></td>
+      <td>${esc(FIC_ESTADO_TXT[p.estado] || p.estado)}</td>
+      <td class="mut">${p.eventos.filter((e) => !e.anulado).map((e) => `${esc(FIC_EV_TXT[e.tipo] || e.tipo)} ${esc(e.hora)}`).join(" · ") || "—"}</td>
+      <td style="text-align:right">${p.jornada.minPresencia ? esc(ficHoras(p.jornada.minEfectivo)) + (p.jornada.enCurso ? ' <span class="mut" style="font-size:11px">en curso</span>' : "") : "—"}</td>
+      <td>${p.faltaSalida ? '<span class="fic-tag aviso">sin fichar la salida</span>' : ""}${p.jornada.sinEntrada ? '<span class="fic-tag aviso">sin fichar la entrada</span>' : ""}</td>
+    </tr>`;
+
+  cont.innerHTML = `
+    <div class="card">
+      <div class="ch"><h3>${j.dia === new Date().toISOString().slice(0, 10) ? "Hoy" : esc(j.dia)} · ${dentro.length} ${dentro.length === 1 ? "persona dentro" : "personas dentro"}</h3>
+        <span class="mut">Actualizado a las ${esc(j.hora)}</span></div>
+      ${j.personas.length ? `<div class="tw"><table class="tbl">
+        <thead><tr><th>Persona</th><th>Estado</th><th>Fichajes del día</th><th style="text-align:right">Trabajado</th><th></th></tr></thead>
+        <tbody>${dentro.map(fila).join("")}${resto.map(fila).join("")}</tbody></table></div>`
+      : `<p class="mut" style="margin:0;line-height:1.6">Nadie ha fichado todavía en este día de trabajo. Si el kiosco aún no está montado, ve a <b>Tablets</b> y da de alta el dispositivo.</p>`}
     </div>`;
+}
+
+async function ficPintarDispositivos() {
+  const cont = document.getElementById("ficCuerpo");
+  if (!cont) return;
+  let j;
+  try { j = await apiRaw("/api/fichajes/dispositivos?local=" + encodeURIComponent(FIC.local)); }
+  catch { cont.innerHTML = `<div class="card"><p class="mut" style="margin:0">No se pudieron cargar los dispositivos.</p></div>`; return; }
+
+  cont.innerHTML = `
+    <div class="card">
+      <div class="ch"><h3>Tablets de ${esc(nombreCortoLocal(FIC.local))}</h3>
+        <button class="btn primary" id="ficNueva">Dar de alta una tablet</button></div>
+      ${j.data.length ? `<div class="tw"><table class="tbl">
+        <thead><tr><th>Nombre</th><th>Último uso</th><th>Estado</th><th></th></tr></thead>
+        <tbody>${j.data.map((d) => `<tr>
+          <td><b>${esc(d.nombre)}</b></td>
+          <td class="mut">${d.ultimo_visto ? esc(String(d.ultimo_visto).slice(0, 16).replace("T", " ")) : "nunca"}</td>
+          <td>${d.revocado_en ? '<span class="fic-tag">revocada</span>' : '<span class="fic-tag ok">activa</span>'}</td>
+          <td style="text-align:right">
+            <button class="btn sm" data-ficreg="${d.id}">${d.revocado_en ? "Reactivar" : "Nuevo enlace"}</button>
+            ${d.revocado_en ? "" : `<button class="btn sm danger" data-ficrev="${d.id}">Revocar</button>`}
+          </td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="mut" style="margin:0;line-height:1.6">Ninguna tablet dada de alta. Al crearla saldrá un enlace y un QR: se abre una vez en la tablet, se guarda en favoritos y ya se queda.</p>`}
+    </div>`;
+
+  cont.querySelector("#ficNueva").addEventListener("click", async () => {
+    const nombre = await promptModal("¿Cómo se llama esta tablet?", { placeholder: "Tablet de la barra", ok: "Dar de alta" });
+    if (!nombre) return;
+    try { const r = await apiSend("POST", "/api/fichajes/dispositivos", { local: FIC.local, nombre }); ficMostrarEnlace(r); }
+    catch (e) { toast(e.message || "No se pudo dar de alta"); }
+  });
+  // Se engancha a la tarjeta, que se crea de cero en cada repintado, y NO a #ficCuerpo, que
+  // es el mismo nodo siempre: si no, cada repintado añadiría otro escuchador y acabaría
+  // saliendo el mismo diálogo dos y tres veces.
+  cont.firstElementChild.addEventListener("click", async (e) => {
+    const reg = e.target.closest("[data-ficreg]"), rev = e.target.closest("[data-ficrev]");
+    if (reg) {
+      if (!await confirmModal("Se generará un enlace nuevo y el anterior dejará de funcionar al momento. La tablet tendrá que abrir el nuevo.", { ok: "Generar" })) return;
+      try { ficMostrarEnlace(await apiSend("POST", `/api/fichajes/dispositivos/${reg.getAttribute("data-ficreg")}/regenerar`, {})); }
+      catch { toast("No se pudo regenerar"); }
+    } else if (rev) {
+      if (!await confirmModal("La tablet dejará de poder fichar. Los fichajes que ya se hicieron en ella no se tocan.", { ok: "Revocar", danger: true })) return;
+      try { await apiSend("POST", `/api/fichajes/dispositivos/${rev.getAttribute("data-ficrev")}/revocar`, {}); toast("Tablet revocada"); ficPintarDispositivos(); }
+      catch { toast("No se pudo revocar"); }
+    }
+  });
+}
+
+// El enlace se enseña UNA vez: en la base solo queda su hash. Se dice con todas las letras.
+function ficMostrarEnlace(r) {
+  modal("Enlace de la tablet", `
+    <p style="margin:0 0 14px;line-height:1.55">Abre este enlace <b>en la tablet</b> y guárdalo en favoritos o como acceso directo en el escritorio.</p>
+    ${r.qr ? `<div style="text-align:center;margin-bottom:14px"><img src="${esc(r.qr)}" alt="Código QR del enlace" style="width:220px;height:220px;border-radius:8px"></div>` : ""}
+    <input class="inp" id="ficUrl" readonly value="${esc(r.url)}" style="width:100%;font-family:ui-monospace,monospace;font-size:12px">
+    <p class="mut" style="margin:12px 0 0;line-height:1.5"><b>Guárdalo ahora:</b> por seguridad no se vuelve a mostrar. Si se pierde, se genera otro desde esta misma pantalla.</p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Cerrar</button>
+      <button class="btn primary" id="ficCopiar">Copiar enlace</button>
+    </div>`);
+  document.getElementById("ficCopiar").addEventListener("click", () => {
+    const i = document.getElementById("ficUrl");
+    i.select(); navigator.clipboard?.writeText(i.value).then(() => toast("Enlace copiado"), () => toast("Cópialo a mano"));
+  });
+  ficPintarDispositivos();
 }
 
 // ════════════════════════ VISTA: FACTURAS ════════════════════════
@@ -3516,6 +3683,7 @@ document.addEventListener("click", (e) => {
   else if (act === "cand-estado") candEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
   else if (act === "rr-worker") rrSelWorker(t.getAttribute("data-id"));
   else if (act === "rr-editar-datos") rrEditarDatos(t.getAttribute("data-id"));
+  else if (act === "rr-pin") rrAsignarPin(t.getAttribute("data-id"));
   else if (act === "rr-doc-subir") rrDocSubir(t.getAttribute("data-id"));
   else if (act === "rr-doc-del") rrDocDel(t.getAttribute("data-id"));
   else if (act === "cand-contratar") rrContratar(t.getAttribute("data-id"), t.getAttribute("data-nombre"));

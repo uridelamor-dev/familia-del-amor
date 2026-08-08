@@ -21,6 +21,7 @@ import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueSt
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry, locationNamesDeLocal } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
+import QRCode from "qrcode";   // ya instalada (la usa el enlace de WhatsApp); emparejar la tablet escaneando
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/agora/diagnostico.js";
 import { extraerScripts, extraerRutasApi, clasificarRutas } from "./src/integrations/agora/descubrir.js";
@@ -36,6 +37,9 @@ import { validarPublicacion, construirSnapshot } from "./src/modules/horarios/ve
 import { serializarCanonico } from "./src/core/canonico.js";
 import { construirCuadrante } from "./src/modules/horarios/cuadrante.js";
 import { construirPdfSemana, nombreFichero } from "./src/modules/horarios/pdf/schedule-pdf.service.js";
+import { ensureSchemaFichajes } from "./src/modules/fichajes/schema.js";
+import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
+import { validarFormatoPin, estadoBloqueo, trasFallo as pinTrasFallo, trasAcierto as pinTrasAcierto } from "./src/modules/fichajes/pin.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
@@ -891,6 +895,7 @@ async function initDB() {
     try {
       const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
       await ensureSchemaHorarios(schemaX);
+      await ensureSchemaFichajes(schemaX);
     } catch (e) {
       console.error("[DB] Aviso: esquema de horarios no inicializado (no fatal):", e.message);
     }
@@ -4266,6 +4271,411 @@ app.get("/api/horarios/historico", requireAuth(HORARIOS_ROLES), async (req, res)
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el histórico" }); }
 });
 
+// ════════════════════════ FICHAJES (kiosco) ════════════════════════
+// Registro de jornada del RD-ley 8/2019. Tres reglas que gobiernan todo lo de abajo:
+//
+//   1. LA HORA LA PONE EL SERVIDOR. El reloj de la tablet se guarda solo como `desfase_ms`
+//      para diagnóstico. Si la hora la pusiera el cliente, una tablet con la fecha mal
+//      —o alguien que la cambia a propósito— reescribiría la nómina.
+//   2. fic_eventos NO SE MODIFICA NUNCA. Corregir es escribir otra fila. La única columna
+//      que se actualiza es `anulado_por`. Hay un test que lee este fichero y falla si
+//      aparece cualquier otro UPDATE o un DELETE.
+//   3. NUNCA se rechaza registrar algo que ha pasado de verdad. Si alguien ficha la salida
+//      sin haber fichado la entrada, se guarda igual y se marca como incidencia.
+const FICHAJES_ROLES = ["direccion", "rrhh", "encargado"];
+
+const ficHash = (t) => crypto.createHash("sha256").update(String(t || "")).digest("hex");
+const ficToken = () => generarToken((n) => crypto.randomBytes(n));
+
+// El ticket de kiosco: se emite al acertar el PIN y vale dos minutos. Sirve para que la
+// persona no tenga que teclear el PIN dos veces (una para ver su estado y otra para fichar).
+// Va firmado y lleva dentro el dispositivo, así que un ticket de una tablet no vale en otra.
+const FIC_TICKET_MS = 120000;
+function ficFirmar(cuerpo) {
+  return crypto.createHmac("sha256", JWT_SECRET).update("fichar:" + cuerpo).digest("hex").slice(0, 32);
+}
+function ficEmitirTicket(workerId, dispId, ahoraMs) {
+  const cuerpo = `${workerId}.${dispId}.${ahoraMs + FIC_TICKET_MS}`;
+  return `${cuerpo}.${ficFirmar(cuerpo)}`;
+}
+function ficLeerTicket(ticket, dispId, ahoraMs) {
+  const partes = String(ticket || "").split(".");
+  if (partes.length !== 4) return null;
+  const [wk, disp, exp, firma] = partes;
+  const esperada = ficFirmar(`${wk}.${disp}.${exp}`);
+  // Comparación en tiempo constante: si no, se puede adivinar la firma byte a byte.
+  if (firma.length !== esperada.length) return null;
+  if (!crypto.timingSafeEqual(Buffer.from(firma), Buffer.from(esperada))) return null;
+  if (Number(disp) !== Number(dispId)) return null;
+  if (!(Number(exp) > ahoraMs)) return null;
+  return { workerId: Number(wk) };
+}
+
+// Traduce un instante real al día de negocio del local (corte configurable, 06:00 por
+// defecto): una salida a las 02:10 del domingo pertenece al sábado.
+async function ficMomento(local, ahoraMs) {
+  const cfg = await dbGet(`SELECT corte_dia_min FROM hor_config WHERE local = ?`, [local]);
+  return instanteANegocio(ahoraMs, { corteMin: cfg?.corte_dia_min ?? 360 });
+}
+
+const ficEventosDe = (workerId, dia) => dbAll(
+  `SELECT id, tipo, ocurrido_en, epoch_ms, anulado_por FROM fic_eventos
+   WHERE worker_id = ? AND dia_negocio = ? ORDER BY epoch_ms ASC, id ASC`, [workerId, dia]);
+
+async function ficAuditar(entidad, entidadId, accion, autor, extra = {}) {
+  await dbRun(
+    `INSERT INTO fic_auditoria (entidad, entidad_id, accion, local, worker_id, autor, detalle, creado_en)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    [entidad, entidadId ?? null, accion, extra.local || null, extra.workerId ?? null,
+     autor, extra.detalle ? JSON.stringify(extra.detalle) : null, isoConOffset(Date.now())]);
+}
+
+// ── Kiosco: público, sin sesión, con el token del dispositivo en la URL ──────
+// Mismo molde que el pulso: sin cookies, sin JWT, rate limit por IP y el token nunca
+// se guarda en claro (en la base solo su hash).
+async function ficDispositivo(token) {
+  return dbGet(
+    `SELECT id, local, nombre, activo FROM fic_dispositivos WHERE token_hash = ? AND activo AND revocado_en IS NULL`,
+    [ficHash(token)]);
+}
+
+// La tablet arranca: quién puede fichar aquí y cómo está cada uno ahora mismo.
+// Deliberadamente NO devuelve teléfonos, correos ni nada más que el nombre: esta pantalla
+// está a la vista de todo el mundo en la barra.
+app.get("/api/fichar/:token", async (req, res) => {
+  if (!pulsoRateLimit(req, res, 60)) return;
+  try {
+    const disp = await ficDispositivo(req.params.token);
+    if (!disp) return res.status(404).json({ ok: false, error: "Este dispositivo no está dado de alta" });
+
+    const ahora = Date.now();
+    const m = await ficMomento(disp.local, ahora);
+    // Solo la plantilla de ESTE local: no se puede fichar en un local que no es el tuyo
+    // (si alguien cubre fuera, lo mete el encargado a mano con motivo).
+    const equipo = await dbAll(
+      `SELECT id, nombre, pin_hash IS NOT NULL AS tiene_pin FROM users
+       WHERE local = ? AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL
+       ORDER BY nombre ASC`, [disp.local]);
+
+    const eventos = await dbAll(
+      `SELECT worker_id, id, tipo, ocurrido_en, epoch_ms, anulado_por FROM fic_eventos
+       WHERE local = ? AND dia_negocio = ? ORDER BY epoch_ms ASC, id ASC`, [disp.local, m.diaNegocio]);
+    const porPersona = new Map();
+    for (const e of eventos) {
+      if (!porPersona.has(e.worker_id)) porPersona.set(e.worker_id, []);
+      porPersona.get(e.worker_id).push(e);
+    }
+
+    dbRun(`UPDATE fic_dispositivos SET ultimo_visto = ? WHERE id = ?`, [m.iso, disp.id]).catch(() => {});
+
+    res.json({
+      ok: true,
+      local: disp.local, dispositivo: disp.nombre,
+      dia: m.diaNegocio, hora: m.hora.slice(0, 5), servidorMs: ahora,
+      equipo: equipo.map((w) => ({
+        id: w.id, nombre: w.nombre, tienePin: !!w.tiene_pin,
+        estado: estadoDe(porPersona.get(w.id) || []),
+      })),
+    });
+  } catch (e) {
+    console.error("[fichar] inicio:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar el kiosco" });
+  }
+});
+
+// PIN. Rate limit MUY corto: es el único sitio del sistema sin sesión que acepta un secreto.
+app.post("/api/fichar/:token/pin", async (req, res) => {
+  if (!pulsoRateLimit(req, res, 12)) return;
+  try {
+    const disp = await ficDispositivo(req.params.token);
+    if (!disp) return res.status(404).json({ ok: false, error: "Este dispositivo no está dado de alta" });
+
+    const workerId = Number(req.body?.worker_id || 0);
+    const pin = String(req.body?.pin || "");
+    const worker = await dbGet(
+      `SELECT id, nombre, local, pin_hash, pin_temporal, pin_intentos, pin_bloqueado_hasta FROM users WHERE id = ?`, [workerId]);
+    // Mismo mensaje si no existe, si es de otro local o si no tiene PIN: la pantalla del
+    // kiosco no debe servir para averiguar quién trabaja dónde.
+    if (!worker || worker.local !== disp.local || !worker.pin_hash) {
+      return res.status(401).json({ ok: false, error: "PIN incorrecto." });
+    }
+
+    const ahora = Date.now();
+    // El bloqueo se mira ANTES de bcrypt: si no, cada intento seguiría costando ~100 ms
+    // de CPU y el bloqueo no frenaría nada.
+    const bloqueo = estadoBloqueo(worker, ahora);
+    if (bloqueo.bloqueado) return res.status(429).json({ ok: false, error: bloqueo.mensaje, segundos: bloqueo.segundos });
+
+    if (!(await bcrypt.compare(pin, worker.pin_hash))) {
+      const f = pinTrasFallo(worker, ahora);
+      await dbRun(`UPDATE users SET pin_intentos = ?, pin_bloqueado_hasta = ? WHERE id = ?`,
+        [f.pin_intentos, f.pin_bloqueado_hasta, worker.id]);
+      if (f.bloqueado) {
+        await ficAuditar("pin", worker.id, "bloqueo", "kiosco", {
+          local: disp.local, workerId: worker.id, detalle: { intentos: f.pin_intentos, segundos: f.segundos, dispositivo: disp.id } });
+      }
+      return res.status(401).json({ ok: false, error: f.mensaje });
+    }
+
+    const ok = pinTrasAcierto();
+    await dbRun(`UPDATE users SET pin_intentos = ?, pin_bloqueado_hasta = ? WHERE id = ?`,
+      [ok.pin_intentos, ok.pin_bloqueado_hasta, worker.id]);
+
+    const m = await ficMomento(disp.local, ahora);
+    const eventos = await ficEventosDe(worker.id, m.diaNegocio);
+    const estado = estadoDe(eventos);
+    res.json({
+      ok: true,
+      ticket: ficEmitirTicket(worker.id, disp.id, ahora),
+      nombre: worker.nombre,
+      pinTemporal: !!worker.pin_temporal,
+      estado, acciones: accionesPermitidas(estado),
+      // Con `hastaMs`: al trabajador le importa lo que LLEVA, no lo que tiene cerrado.
+      jornada: calcularJornada(eventos, { hastaMs: ahora }),
+      hoy: eventos.filter((e) => !e.anulado_por).map((e) => ({ tipo: e.tipo, hora: String(e.ocurrido_en).slice(11, 16) })),
+    });
+  } catch (e) {
+    console.error("[fichar] pin:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo comprobar el PIN" });
+  }
+});
+
+// El fichaje. La hora sale de Date.now() aquí dentro; lo que manda el cliente es
+// únicamente su reloj (para guardarlo como desfase) y un id de idempotencia.
+app.post("/api/fichar/:token/evento", async (req, res) => {
+  if (!pulsoRateLimit(req, res, 30)) return;
+  try {
+    const disp = await ficDispositivo(req.params.token);
+    if (!disp) return res.status(404).json({ ok: false, error: "Este dispositivo no está dado de alta" });
+
+    const ahora = Date.now();
+    const sesion = ficLeerTicket(req.body?.ticket, disp.id, ahora);
+    if (!sesion) return res.status(401).json({ ok: false, error: "Vuelve a introducir tu PIN." });
+
+    const tipo = String(req.body?.tipo || "");
+    if (!["entrada", "salida", "pausa_inicio", "pausa_fin"].includes(tipo)) {
+      return res.status(400).json({ ok: false, error: "Acción no válida" });
+    }
+    const worker = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [sesion.workerId]);
+    if (!worker || worker.local !== disp.local) return res.status(403).json({ ok: false, error: "Sin acceso" });
+
+    // Idempotencia: la tablet manda el mismo id si reintenta. La UNIQUE de la columna es
+    // la que de verdad lo garantiza; esto solo evita el error feo en el caso normal.
+    const clave = String(req.body?.cliente_id || "").slice(0, 64) || null;
+    if (clave) {
+      const ya = await dbGet(`SELECT id, tipo, ocurrido_en FROM fic_eventos WHERE idempotencia_key = ?`, [clave]);
+      if (ya) return res.json({ ok: true, repetido: true, evento: ya });
+    }
+
+    const m = await ficMomento(disp.local, ahora);
+    const eventos = await ficEventosDe(worker.id, m.diaNegocio);
+    const v = evaluarFichaje(eventos, tipo, ahora);
+    if (!v.registrar) {
+      return res.status(v.duplicado ? 200 : 409).json({
+        ok: !!v.duplicado, duplicado: !!v.duplicado, error: v.duplicado ? undefined : v.mensaje,
+        mensaje: v.mensaje, estado: v.estado, acciones: accionesPermitidas(v.estado),
+      });
+    }
+
+    // Salir estando en pausa la cierra: se escribe el pausa_fin ANTES de la salida, con la
+    // misma hora, y marcado como automático para que se vea que no lo pulsó nadie.
+    const filas = [];
+    if (v.cierraPausa) filas.push({ tipo: "pausa_fin", motivo: "cierre automático al fichar la salida", clave: clave ? clave + ":p" : null });
+    filas.push({ tipo, motivo: v.incidencia ? "salida sin entrada registrada" : null, clave });
+
+    const desfase = Number(req.body?.cliente_ms) ? Number(req.body.cliente_ms) - ahora : null;
+    let ultimo = null;
+    for (const f of filas) {
+      ultimo = await dbRun(
+        `INSERT INTO fic_eventos (worker_id, local, tipo, ocurrido_en, epoch_ms, dia_negocio, minuto_local,
+                                  origen, dispositivo_id, autor, motivo, idempotencia_key, desfase_ms, creado_en)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, tipo, ocurrido_en`,
+        [worker.id, disp.local, f.tipo, m.iso, ahora, m.diaNegocio, m.minutoNegocio,
+         "kiosco", disp.id, null, f.motivo, f.clave, Number.isFinite(desfase) ? desfase : null, m.iso]);
+    }
+    if (v.incidencia) {
+      await ficAuditar("evento", ultimo?.id, "incidencia:" + v.incidencia, "kiosco",
+        { local: disp.local, workerId: worker.id, detalle: { tipo, dia: m.diaNegocio } });
+    }
+
+    const despues = await ficEventosDe(worker.id, m.diaNegocio);
+    const estado = estadoDe(despues);
+    res.json({
+      ok: true, evento: ultimo, hora: m.hora.slice(0, 5), estado,
+      acciones: accionesPermitidas(estado), incidencia: v.incidencia || null,
+      mensaje: v.mensaje || null, jornada: calcularJornada(despues, { hastaMs: ahora }),
+    });
+  } catch (e) {
+    // La UNIQUE de idempotencia saltando es un reintento, no un fallo.
+    if (String(e.message || "").includes("idempotencia")) return res.json({ ok: true, repetido: true });
+    console.error("[fichar] evento:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo registrar el fichaje" });
+  }
+});
+
+// ── Panel: quién está dentro, tablets y PINes ────────────────────────────────
+app.get("/api/fichajes/hoy", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+
+    const m = await ficMomento(local, Date.now());
+    const dia = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.dia || "")) ? String(req.query.dia) : m.diaNegocio;
+    const eventos = await dbAll(
+      `SELECT e.worker_id, e.id, e.tipo, e.ocurrido_en, e.epoch_ms, e.origen, e.motivo, e.anulado_por, u.nombre
+       FROM fic_eventos e LEFT JOIN users u ON u.id = e.worker_id
+       WHERE e.local = ? AND e.dia_negocio = ? ORDER BY e.epoch_ms ASC, e.id ASC`, [local, dia]);
+
+    const porPersona = new Map();
+    for (const e of eventos) {
+      if (!porPersona.has(e.worker_id)) porPersona.set(e.worker_id, { id: e.worker_id, nombre: e.nombre || "—", eventos: [] });
+      porPersona.get(e.worker_id).eventos.push(e);
+    }
+    // Un día distinto del que corre ya no puede recibir más fichajes: lo que falte, falta.
+    const diaCerrado = dia !== m.diaNegocio;
+    const ahoraMs = Date.now();
+    const personas = [...porPersona.values()].map((p) => ({
+      id: p.id, nombre: p.nombre,
+      estado: estadoDe(p.eventos),
+      // Del día en curso se enseña lo que la persona LLEVA (`hastaMs`); de un día pasado,
+      // solo lo fichado. Nunca se guarda: es la pantalla, no el registro.
+      jornada: calcularJornada(p.eventos, diaCerrado ? {} : { hastaMs: ahoraMs }),
+      // El aviso lo decide el servidor, que es quien sabe qué hora es: a media tarde
+      // TODO el que está dentro tiene la jornada abierta y marcarlos a todos sería ruido.
+      faltaSalida: faltaLaSalida(calcularJornada(p.eventos), { diaCerrado, ahoraMs }),
+      eventos: p.eventos.map((e) => ({
+        id: e.id, tipo: e.tipo, hora: String(e.ocurrido_en).slice(11, 16),
+        origen: e.origen, motivo: e.motivo, anulado: !!e.anulado_por,
+      })),
+    })).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+
+    res.json({
+      ok: true, local, dia, hora: m.hora.slice(0, 5),
+      dentro: personas.filter((p) => p.estado !== "fuera").length,
+      personas,
+    });
+  } catch (e) {
+    console.error("[fichajes] hoy:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar el registro" });
+  }
+});
+
+app.get("/api/fichajes/dispositivos", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const filas = await dbAll(
+      `SELECT id, nombre, activo, ultimo_visto, creado_en, creado_por, revocado_en FROM fic_dispositivos
+       WHERE local = ? ORDER BY revocado_en IS NOT NULL, nombre ASC`, [local]);
+    res.json({ ok: true, data: filas });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar los dispositivos" }); }
+});
+
+// Alta o regeneración de tablet. El token se enseña UNA VEZ, junto con su QR: en la base
+// solo queda el hash, así que si se pierde hay que regenerarlo (y el anterior deja de valer).
+async function ficEmitirDispositivo(req, res, { id = null, local = null, nombre = null }) {
+  const token = ficToken();
+  const ahora = isoConOffset(Date.now());
+  let fila;
+  if (id) {
+    fila = await dbRun(`UPDATE fic_dispositivos SET token_hash = ?, activo = TRUE, revocado_en = NULL, revocado_por = NULL
+                        WHERE id = ? RETURNING id, local, nombre`, [ficHash(token), id]);
+  } else {
+    fila = await dbRun(`INSERT INTO fic_dispositivos (local, nombre, token_hash, creado_en, creado_por)
+                        VALUES (?,?,?,?,?) RETURNING id, local, nombre`,
+      [local, nombre, ficHash(token), ahora, req.user.username]);
+  }
+  await ficAuditar("dispositivo", fila.id, id ? "regenerar" : "alta", req.user.username, { local: fila.local });
+
+  const base = (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+  const url = `${base}/fichar.html?t=${token}`;
+  let qr = null;
+  try { qr = await QRCode.toDataURL(url, { width: 320, margin: 1 }); } catch { /* el enlace basta */ }
+  res.json({ ok: true, dispositivo: fila, url, qr, aviso: "Guarda este enlace: no se vuelve a mostrar." });
+}
+
+app.post("/api/fichajes/dispositivos", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const nombre = String(req.body?.nombre || "").trim().slice(0, 60);
+    if (!nombre) return res.status(400).json({ ok: false, error: "Ponle un nombre (por ejemplo, «Tablet de la barra»)" });
+    await ficEmitirDispositivo(req, res, { local, nombre });
+  } catch (e) {
+    console.error("[fichajes] alta dispositivo:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo dar de alta el dispositivo" });
+  }
+});
+
+app.post("/api/fichajes/dispositivos/:id/regenerar", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const d = await dbGet(`SELECT id, local FROM fic_dispositivos WHERE id = ?`, [Number(req.params.id)]);
+    if (!d || !rrhhPuedeLocal(req, d.local)) return res.status(404).json({ ok: false, error: "No encontrado" });
+    await ficEmitirDispositivo(req, res, { id: d.id });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo regenerar el enlace" }); }
+});
+
+// Revocar, no borrar: los eventos que se ficharon en esa tablet siguen apuntando a ella y
+// la fila tiene que seguir existiendo para poder decir dónde se fichó.
+app.post("/api/fichajes/dispositivos/:id/revocar", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const d = await dbGet(`SELECT id, local FROM fic_dispositivos WHERE id = ?`, [Number(req.params.id)]);
+    if (!d || !rrhhPuedeLocal(req, d.local)) return res.status(404).json({ ok: false, error: "No encontrado" });
+    await dbRun(`UPDATE fic_dispositivos SET activo = FALSE, revocado_en = ?, revocado_por = ? WHERE id = ?`,
+      [isoConOffset(Date.now()), req.user.username, d.id]);
+    await ficAuditar("dispositivo", d.id, "revocar", req.user.username, { local: d.local });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo revocar" }); }
+});
+
+// PIN de un trabajador. Se guarda con bcrypt (unidireccional): a diferencia de la
+// contraseña del panel, un PIN no se puede recuperar, solo sustituir. Si se pudiera leer,
+// cualquiera con acceso al panel podría fichar en nombre de otro.
+app.put("/api/fichajes/pin/:workerId", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.params.workerId)]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "No encontrado" });
+
+    const pin = String(req.body?.pin || "");
+    const v = validarFormatoPin(pin);
+    if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
+
+    await dbRun(
+      `UPDATE users SET pin_hash = ?, pin_temporal = TRUE, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
+      [await bcrypt.hash(pin, 10), isoConOffset(Date.now()), w.id]);
+    // En auditoría queda QUIÉN lo cambió y CUÁNDO. El PIN, evidentemente, no.
+    await ficAuditar("pin", w.id, "asignar", req.user.username, { local: w.local, workerId: w.id });
+    res.json({ ok: true, mensaje: `PIN asignado a ${w.nombre}. Dile que lo cambie desde su perfil.` });
+  } catch (e) {
+    console.error("[fichajes] pin:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo asignar el PIN" });
+  }
+});
+
+// El propio trabajador cambia su PIN desde su perfil (aquí sí se exige el actual, salvo
+// que sea el temporal que le acaba de dar el encargado).
+app.put("/api/mi-pin", requireAuth(), async (req, res) => {
+  try {
+    const yo = await dbGet(`SELECT id, local, pin_hash, pin_temporal FROM users WHERE id = ?`, [req.user.id]);
+    if (!yo) return res.status(404).json({ ok: false, error: "No encontrado" });
+
+    const nuevo = String(req.body?.pin || "");
+    const v = validarFormatoPin(nuevo);
+    if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
+
+    if (yo.pin_hash && !yo.pin_temporal) {
+      if (!(await bcrypt.compare(String(req.body?.actual || ""), yo.pin_hash))) {
+        return res.status(401).json({ ok: false, error: "El PIN actual no es correcto." });
+      }
+    }
+    await dbRun(
+      `UPDATE users SET pin_hash = ?, pin_temporal = FALSE, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
+      [await bcrypt.hash(nuevo, 10), isoConOffset(Date.now()), yo.id]);
+    await ficAuditar("pin", yo.id, "cambio_propio", req.user.username, { local: yo.local, workerId: yo.id });
+    res.json({ ok: true, mensaje: "PIN actualizado." });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cambiar el PIN" }); }
+});
+
 // ════════════════════════ PULSO ANÓNIMO DEL EQUIPO ════════════════════════
 // Ver el comentario del esquema (initDB) y src/modules/rrhh/pulso.js: las respuestas y
 // las invitaciones viven en tablas que nunca se cruzan, y el k-anonimato se aplica AQUÍ,
@@ -4827,6 +5237,10 @@ app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, r
       documentos,
       alertasDoc: documentosPorCaducar(documentos, hoy, 30),
       enlazadoAgora: !!w.agora_username,
+      // Solo si TIENE PIN y desde cuándo; el PIN en sí no sale de la base ni hasheado.
+      pin: await dbGet(
+        `SELECT pin_hash IS NOT NULL AS tiene, pin_temporal, pin_actualizado_en, pin_bloqueado_hasta FROM users WHERE id = ?`,
+        [w.id]).catch(() => null),
     });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });

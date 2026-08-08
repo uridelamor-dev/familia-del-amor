@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#2c4a3e" />
+    <title>Fichar · Familia del Amor</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="fichar.css" />
+  </head>
+  <!-- Pantalla de kiosco: una tablet fija en la barra. NO carga app.js ni auth.js: aquí no
+       hay sesión, solo el token del dispositivo en la URL. Ver el bloque FICHAJES de server.js. -->
+  <body class="fic-body">
+    <header class="fic-head">
+      <div>
+        <span class="fic-local" id="ficLocal">—</span>
+        <span class="fic-disp" id="ficDisp"></span>
+      </div>
+      <div class="fic-reloj" id="ficReloj">--:--</div>
+    </header>
+
+    <!-- Pendientes de subir: la tablet está en la wifi del local, pero internet se cae. -->
+    <div class="fic-cola hidden" id="ficCola" role="status" aria-live="polite"></div>
+
+    <main class="fic-main">
+      <!-- 1 · Quién eres -->
+      <section class="fic-paso" id="ficPasoQuien">
+        <h1 class="fic-titulo">¿Quién eres?</h1>
+        <div class="fic-equipo" id="ficEquipo"></div>
+        <p class="fic-vacio hidden" id="ficVacio"></p>
+      </section>
+
+      <!-- 2 · Tu PIN -->
+      <section class="fic-paso hidden" id="ficPasoPin">
+        <button class="fic-volver" type="button" id="ficVolver">‹ No soy yo</button>
+        <h1 class="fic-titulo" id="ficPinNombre">—</h1>
+        <div class="fic-puntos" id="ficPuntos" aria-label="PIN"></div>
+        <p class="fic-error" id="ficPinError" role="alert" aria-live="assertive"></p>
+        <div class="fic-teclado" id="ficTeclado"></div>
+      </section>
+
+      <!-- 3 · Fichar -->
+      <section class="fic-paso hidden" id="ficPasoAcciones">
+        <h1 class="fic-titulo" id="ficHola">—</h1>
+        <p class="fic-estado" id="ficEstado"></p>
+        <div class="fic-acciones" id="ficAcciones"></div>
+        <ul class="fic-hoy" id="ficHoy"></ul>
+        <p class="fic-aviso hidden" id="ficAvisoPin"></p>
+        <button class="fic-salir" type="button" id="ficSalir">Terminar</button>
+      </section>
+
+      <!-- 4 · Confirmación a pantalla completa -->
+      <section class="fic-paso fic-ok hidden" id="ficPasoOk">
+        <div class="fic-tic" id="ficTic">✓</div>
+        <h1 class="fic-titulo" id="ficOkTitulo">—</h1>
+        <p class="fic-okhora" id="ficOkHora"></p>
+        <p class="fic-okmsg" id="ficOkMsg"></p>
+      </section>
+    </main>
+
+    <script src="fichar.js"></script>
+  </body>
+</html>
