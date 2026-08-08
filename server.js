@@ -45,6 +45,7 @@ import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornada
 import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo } from "./src/modules/fichajes/bolsa.js";
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
+import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto, puedeConPasswordTemporal } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
@@ -439,8 +440,35 @@ async function initDB() {
       )
     `);
     try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS canal TEXT`); } catch (e) { console.error("[DB] alter facturas canal:", e.message); }
+
+    // Detalle línea a línea. Ver src/modules/facturas/lineas.js y docs/lineas-de-factura.md.
+    // `lineas_estado` guarda si el detalle cuadra con la base imponible: sin ese aviso, una
+    // cantidad mal leída se arrastraría a todos los informes sin que nadie lo supiera.
+    for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT"]) {
+      try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
+    }
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS factura_lineas (
+        id SERIAL PRIMARY KEY,
+        factura_id INTEGER NOT NULL REFERENCES facturas(id) ON DELETE CASCADE,
+        orden INTEGER NOT NULL DEFAULT 0,
+        descripcion TEXT NOT NULL,
+        cantidad NUMERIC,
+        unidad TEXT,
+        precio_unitario NUMERIC,
+        importe NUMERIC,
+        dudosa BOOLEAN NOT NULL DEFAULT FALSE,
+        clave TEXT,
+        creado_en TEXT NOT NULL
+      )`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_fl_factura ON factura_lineas (factura_id)`);
+    // El índice que hace rápida la pregunta «cuántas Coca-Colas desde marzo».
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_fl_clave ON factura_lineas (clave)`);
     // local_receptor: pista del establecimiento concreto que aparece en la factura (p.ej. "(TAPETA LLORET)").
     try { await client.query(`ALTER TABLE facturas_pendientes ADD COLUMN IF NOT EXISTS local_receptor TEXT`); } catch (e) { console.error("[DB] alter facturas_pendientes local_receptor:", e.message); }
+    // El detalle leído se guarda mientras la factura espera local: al confirmarla se
+    // reutiliza en vez de volver a leer el PDF y pagar la lectura dos veces.
+    try { await client.query(`ALTER TABLE facturas_pendientes ADD COLUMN IF NOT EXISTS lineas_json TEXT`); } catch (e) { console.error("[DB] alter facturas_pendientes lineas_json:", e.message); }
     try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS modulos TEXT`); } catch (e) { console.error("[DB] alter users modulos:", e.message); }
     try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc TEXT`); } catch (e) { console.error("[DB] alter users password_enc:", e.message); }
     try { await client.query(`ALTER TABLE maintenance_issues ADD COLUMN IF NOT EXISTS foto_url TEXT`); } catch (e) { console.error("[DB] alter maintenance_issues foto_url:", e.message); }
@@ -2680,6 +2708,86 @@ app.get("/api/leads", requireAuth(["direccion", "marketing"]), async (req, res) 
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error leyendo leads" });
   }
+});
+
+// ── Compras por producto (detalle de las facturas) ───────────────────────────
+// Contesta «cuántas Coca-Colas hemos comprado desde marzo» y, sobre todo, «a cómo nos las
+// están cobrando y cómo ha cambiado». Fase A de docs/lineas-de-factura.md: SIN enlazar
+// todavía con inventario ni con Ágora — se agrupa por la descripción del proveedor tal
+// cual. Dos proveedores que llamen distinto al mismo producto salen separados, y en esta
+// fase eso es lo correcto: dos filas honestas valen más que una fusión inventada.
+app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    // Dos juegos de condiciones separados a propósito: los filtros de FACTURA valen para
+    // las dos consultas y el de texto solo para las líneas. Recortar un WHERE ya montado a
+    // base de reemplazos es la clase de cosa que un día deja de funcionar en silencio.
+    const condFac = [], parFac = [];
+    const local = localScope(req) || String(req.query.local || "").trim();
+    if (local) { condFac.push("f.local = ?"); parFac.push(local); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ""))) { condFac.push("f.fecha >= ?"); parFac.push(req.query.from); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || ""))) { condFac.push("f.fecha <= ?"); parFac.push(req.query.to); }
+    if (String(req.query.proveedor || "").trim()) { condFac.push("LOWER(f.proveedor) = LOWER(?)"); parFac.push(String(req.query.proveedor).trim()); }
+
+    const q = String(req.query.q || "").trim();
+    const condLin = [...condFac], parLin = [...parFac];
+    if (q) {
+      // Se busca sobre la clave normalizada: escribiendo «coca» salen «COCA-COLA» y
+      // «Coca Cola 33cl» sin tener que acertar el formato exacto del proveedor.
+      condLin.push("l.clave LIKE ?");
+      parLin.push("%" + claveProducto(q) + "%");
+    }
+    const whereLin = condLin.length ? "WHERE " + condLin.join(" AND ") : "";
+    const whereFac = condFac.length ? "WHERE " + condFac.join(" AND ") : "";
+
+    const filas = await dbAll(
+      `SELECT l.descripcion, l.cantidad::float AS cantidad, l.unidad, l.precio_unitario::float AS precio_unitario,
+              l.importe::float AS importe, l.dudosa, f.fecha, f.proveedor, f.local, f.id AS factura_id, f.numero_factura
+       FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
+       ${whereLin} ORDER BY f.fecha DESC, l.orden LIMIT 5000`, parLin);
+
+    const grupos = agruparPorProducto(filas);
+    // Cuántas facturas del periodo NO tienen detalle: sin esto, un total parcial parecería
+    // el total de verdad. Es la diferencia entre un dato y un dato en el que se puede confiar.
+    const cobertura = await dbGet(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE f.lineas_estado IS NOT NULL)::int AS con_detalle,
+              count(*) FILTER (WHERE f.lineas_estado = 'descuadre')::int AS descuadradas
+       FROM facturas f ${whereFac}`, parFac);
+
+    res.json({
+      ok: true, local: local || null, q: q || null,
+      desde: req.query.from || null, hasta: req.query.to || null,
+      grupos: grupos.slice(0, 300),
+      lineas: q ? filas.slice(0, 400) : [],
+      totales: {
+        importe: Math.round(grupos.reduce((s, g) => s + g.importe, 0) * 100) / 100,
+        productos: grupos.length,
+      },
+      cobertura: {
+        facturas: cobertura?.total || 0,
+        conDetalle: cobertura?.con_detalle || 0,
+        descuadradas: cobertura?.descuadradas || 0,
+      },
+    });
+  } catch (e) {
+    console.error("[facturas] compras:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar las compras" });
+  }
+});
+
+// El detalle de una factura concreta, para poder mirarlo cuando algo no cuadra.
+app.get("/api/facturas/:id/lineas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const f = await dbGet(`SELECT id, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible,
+                                  lineas_estado, lineas_aviso, drive_url FROM facturas WHERE id = ?`, [Number(req.params.id)]);
+    if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
+    const scope = localScope(req);
+    if (scope && f.local !== scope) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const lineas = await dbAll(
+      `SELECT orden, descripcion, cantidad::float AS cantidad, unidad, precio_unitario::float AS precio_unitario,
+              importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ? ORDER BY orden`, [f.id]);
+    res.json({ ok: true, factura: f, lineas });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el detalle" }); }
 });
 
 // ── Fichas duplicadas ────────────────────────────────────────────────────────

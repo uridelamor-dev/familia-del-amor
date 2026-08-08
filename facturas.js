@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { normalizarLineas, validarSuma, mensajeValidacion, claveProducto } from "./src/modules/facturas/lineas.js";
 import { createHash } from "crypto";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 
@@ -42,10 +43,41 @@ Devuelve ÚNICAMENTE un JSON válido, sin texto adicional, con esta estructura e
   "base_imponible": number,
   "porcentaje_iva": number,
   "cuota_iva": number,
-  "total": number
+  "total": number,
+  "lineas": [
+    { "descripcion": "string", "cantidad": number, "unidad": "string", "precio_unitario": number, "importe": number }
+  ]
 }
 En "nombre_receptor" y "nif_receptor" pon los datos de la empresa que RECIBE la factura (el cliente), no el proveedor.
-En "local_receptor" pon el LOCAL o establecimiento CONCRETO del cliente si aparece: normalmente entre paréntesis tras el nombre del cliente (p. ej. "(TAPETA LLORET)"), o en la dirección de entrega, la referencia o el pie. Copia el texto tal cual (p. ej. "TAPETA LLORET", "Can Mateu Tordera"). Si no aparece ningún local concreto, pon null.`;
+En "local_receptor" pon el LOCAL o establecimiento CONCRETO del cliente si aparece: normalmente entre paréntesis tras el nombre del cliente (p. ej. "(TAPETA LLORET)"), o en la dirección de entrega, la referencia o el pie. Copia el texto tal cual (p. ej. "TAPETA LLORET", "Can Mateu Tordera"). Si no aparece ningún local concreto, pon null.
+
+En "lineas" pon UNA ENTRADA POR CADA LÍNEA DE PRODUCTO del detalle, en el orden en que aparecen.
+- "descripcion": el texto del producto tal cual está escrito en la factura, sin traducir ni abreviar.
+- "cantidad" y "unidad": lo que diga la línea (2 / "cajas", 1.5 / "kg", 12 / "ud"). Si la línea no indica unidad, pon null en "unidad".
+- "precio_unitario" e "importe": los de esa línea.
+- Usa PUNTO decimal, nunca coma. No pongas separador de miles.
+- NO incluyas como líneas los subtotales, descuentos globales, portes, la base imponible, el IVA ni el total.
+- Si una línea no se lee con seguridad, ponla igualmente con "descripcion" con lo que se distinga y null en lo que no puedas leer. NO INVENTES cantidades ni importes: es preferible un null a un número que parezca correcto.
+- Si el documento no tiene detalle por líneas (por ejemplo un ticket resumido), devuelve "lineas": [].`;
+
+// Guarda el detalle de una factura y deja escrito si cuadra. NO es fatal: si algo falla
+// aquí, la factura ya está guardada y lo que se pierde es el detalle, no el gasto.
+export async function guardarLineas(dbRun, facturaId, datos, ahora) {
+  const lineas = normalizarLineas(datos.lineas);
+  const v = validarSuma(lineas, datos.base_imponible);
+  const aviso = mensajeValidacion(v);
+
+  for (const l of lineas) {
+    await dbRun(
+      `INSERT INTO factura_lineas (factura_id, orden, descripcion, cantidad, unidad, precio_unitario, importe, dudosa, clave, creado_en)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [facturaId, l.orden, l.descripcion || "(sin descripción)", l.cantidad, l.unidad,
+       l.precio_unitario, l.importe, l.dudosa, claveProducto(l.descripcion), ahora]);
+  }
+  await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ?, lineas_leidas_en = ? WHERE id = ?`,
+    [v.cuadra ? (v.dudosas ? "dudas" : "ok") : "descuadre", aviso, ahora, facturaId]);
+  return { n: lineas.length, validacion: v, aviso };
+}
 
 // ── Utilidades de nombre y hash ────────────────────────────────────────────
 
@@ -92,7 +124,9 @@ export async function extraerDatosDocumento(buffer, mimeType) {
 
   const response = await ai.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 512,
+    // Subido de 512: ahora también viene el detalle línea a línea, y una factura de
+    // proveedor de bebidas puede traer treinta. Con 512 se cortaba el JSON a la mitad.
+    max_tokens: 4096,
     messages: [{ role: "user", content: [adjunto, { type: "text", text: PROMPT_EXTRACCION }] }]
   });
 
@@ -561,6 +595,16 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   );
   const facturaId = ins?.id;
 
+  // 8b. El detalle línea a línea. NO fatal: si falla, la factura ya está guardada y lo que
+  // se pierde es el desglose, no el gasto.
+  try {
+    if (facturaId) {
+      const r = await guardarLineas(dbRun, facturaId, datos, new Date().toISOString());
+      if (r.aviso) console.warn(`[Facturas] #${facturaId} detalle: ${r.aviso}`);
+      else console.log(`[Facturas] #${facturaId}: ${r.n} líneas de detalle`);
+    }
+  } catch (e) { console.error("[Facturas] no se pudo guardar el detalle:", e.message); }
+
   // 9. Proyectar al Sheet (NO fatal). Si algo falla, queda sheet_synced=0 y lo recoge el reintento.
   try {
     if (!sheetId) {
@@ -778,11 +822,14 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
   await dbRun(
     `INSERT INTO facturas_pendientes
       (empresa_detectada, nif_receptor, nombre_receptor, local_receptor, tipo, fecha, numero_factura, proveedor, nif,
-       concepto, base_imponible, porcentaje_iva, cuota_iva, total, drive_url, drive_file_id, file_hash, origen)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       concepto, base_imponible, porcentaje_iva, cuota_iva, total, drive_url, drive_file_id, file_hash, origen, lineas_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [empresa, datos.nif_receptor, datos.nombre_receptor, datos.local_receptor || null, datos.tipo, datos.fecha, datos.numero_factura,
      datos.proveedor, datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
-     datos.cuota_iva, datos.total, driveFile.url, driveFile.id, fileHash, origen || "email"]
+     datos.cuota_iva, datos.total, driveFile.url, driveFile.id, fileHash, origen || "email",
+     // El detalle se guarda aquí mientras la factura espera a que alguien le asigne local:
+     // si no, al confirmarla habría que volver a leer el PDF y pagar la lectura dos veces.
+     Array.isArray(datos.lineas) && datos.lineas.length ? JSON.stringify(datos.lineas) : null]
   );
 
   console.log(`[Facturas] Guardada como pendiente: ${datos.proveedor} → ${empresa}/_Por asignar`);
@@ -839,6 +886,15 @@ export async function asignarFacturaPendiente({ pendiente, local, getToken, dbGe
      pendiente.porcentaje_iva, pendiente.cuota_iva, pendiente.total, driveUrl, sheetId, pendiente.file_hash, canal]
   );
   const facturaId = ins?.id;
+
+  // El detalle que se leyó cuando llegó la factura, recuperado tal cual.
+  try {
+    if (facturaId && pendiente.lineas_json) {
+      const r = await guardarLineas(dbRun, facturaId, { lineas: JSON.parse(pendiente.lineas_json), base_imponible: pendiente.base_imponible }, new Date().toISOString());
+      if (r.aviso) console.warn(`[Facturas] #${facturaId} detalle: ${r.aviso}`);
+    }
+  } catch (e) { console.error("[Facturas] no se pudo guardar el detalle de la pendiente:", e.message); }
+
   await dbRun("DELETE FROM facturas_pendientes WHERE id = ?", [pendiente.id]);
 
   // Proyectar al Sheet (NO fatal): si falla, sheet_synced=0 y lo recoge el reintento.

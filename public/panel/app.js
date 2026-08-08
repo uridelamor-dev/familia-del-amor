@@ -3403,9 +3403,12 @@ function facQS() { const qs = new URLSearchParams(); ["local", "empresa", "estad
 function facScope() { FACF.local = localFijadoFE() || DASH_LOCAL || ""; return FACF.local; }
 function facHeader() {
   const amb = facScope();
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Facturas</h1><div class="sub">Facturas, asignación y configuración fiscal${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px"><button class="btn ${FACTAB === "facturas" ? "primary" : ""}" data-act="fac-tab" data-tab="facturas">Facturas</button><button class="btn ${FACTAB === "config" ? "primary" : ""}" data-act="fac-tab" data-tab="config">Configuración</button></div>`;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Facturas</h1><div class="sub">Facturas, asignación y configuración fiscal${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px"><button class="btn ${FACTAB === "facturas" ? "primary" : ""}" data-act="fac-tab" data-tab="facturas">Facturas</button><button class="btn ${FACTAB === "compras" ? "primary" : ""}" data-act="fac-tab" data-tab="compras">Qué compramos</button><button class="btn ${FACTAB === "config" ? "primary" : ""}" data-act="fac-tab" data-tab="config">Configuración</button></div>`;
 }
 const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
+// Con céntimos. Para precios unitarios, donde redondear a euros enteros se carga justo el
+// dato: un aceite que pasa de 9,50 a 9,90 se vería como «10 €» las dos veces.
+const eur2 = (n) => (Number(n) || 0).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 function renderFacturas(list, pend, stats, empresas) {
   facScope();
   const empOpts =['<option value="">Todas las empresas</option>'].concat((empresas || []).map((e) => `<option value="${esc(e)}" ${FACF.empresa === e ? "selected" : ""}>${esc(e)}</option>`)).join("");
@@ -3534,6 +3537,7 @@ async function loadFacturas() {
       view.innerHTML = renderFacturasConfig();
       return;
     }
+    if (FACTAB === "compras") return loadCompras();
     const [lst, pend, stats, empresas] = await Promise.all([
       api("/api/facturas" + (facQS() ? "?" + facQS() : "")),
       apiOptional("/api/facturas/pendientes"),
@@ -3546,6 +3550,124 @@ async function loadFacturas() {
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function facTab(tab) { FACTAB = tab; loadFacturas(); }
+
+// ── Qué compramos ───────────────────────────────────────────────────────────
+// El detalle línea a línea de las facturas, agrupado por producto. Contesta «cuántas
+// Coca-Colas desde marzo» y, sobre todo, cuánto ha subido el precio — que es lo que hoy
+// no ve nadie. Todavía NO está enlazado con inventario ni con Ágora: se agrupa por la
+// descripción del proveedor tal cual, así que dos proveedores que llamen distinto al mismo
+// producto salen en dos filas. Es a propósito: dos filas honestas antes que una fusión
+// inventada (ver docs/lineas-de-factura.md).
+let COMP = { q: "", from: "", to: "" };
+
+async function loadCompras() {
+  const view = document.getElementById("view");
+  if (!COMP.from) { const d = new Date(); d.setMonth(d.getMonth() - 6); COMP.from = d.toISOString().slice(0, 10); }
+  view.innerHTML = facHeader() + `<div id="compRes"><p class="mut">Cargando…</p></div>`;
+  await refrescarCompras();
+  const cont = document.getElementById("compRes");
+  cont?.addEventListener("input", (e) => {
+    if (e.target.id === "compQ") { COMP.q = e.target.value.trim(); comprasDebounced(); }
+  });
+  cont?.addEventListener("change", (e) => {
+    if (e.target.id === "compFrom") { COMP.from = e.target.value; refrescarCompras(); }
+    if (e.target.id === "compTo") { COMP.to = e.target.value; refrescarCompras(); }
+  });
+  cont?.addEventListener("click", (e) => {
+    const f = e.target.closest("[data-compfac]");
+    if (f) return comprasVerFactura(f.getAttribute("data-compfac"));
+    const p = e.target.closest("[data-compprod]");
+    if (p) { COMP.q = p.getAttribute("data-compprod"); const i = document.getElementById("compQ"); if (i) i.value = COMP.q; refrescarCompras(); }
+  });
+}
+let _compTimer = null;
+function comprasDebounced() { clearTimeout(_compTimer); _compTimer = setTimeout(refrescarCompras, 280); }
+
+async function refrescarCompras() {
+  const cont = document.getElementById("compRes");
+  if (!cont) return;
+  const qs = new URLSearchParams();
+  if (FACF.local) qs.set("local", FACF.local);
+  if (COMP.q) qs.set("q", COMP.q);
+  if (COMP.from) qs.set("from", COMP.from);
+  if (COMP.to) qs.set("to", COMP.to);
+  let j;
+  try { j = await apiRaw("/api/facturas/compras?" + qs.toString()); }
+  catch (e) { cont.innerHTML = errorCard(e.message); return; }
+
+  const c = j.cobertura;
+  const sinDetalle = c.facturas - c.conDetalle;
+  const barra = `<div class="toolbar" style="margin-bottom:12px">
+      <input class="inp" id="compQ" value="${esc(COMP.q)}" placeholder="Buscar producto… (coca, aceite, gamba)" style="flex:1;min-width:200px">
+      <label class="mut" style="font-size:12px">Desde ${dpField("compFrom", COMP.from, "Cualquiera")}</label>
+      <label class="mut" style="font-size:12px">Hasta ${dpField("compTo", COMP.to, "Hoy")}</label>
+    </div>`;
+
+  // La cobertura va arriba y siempre: un total calculado sobre la mitad de las facturas
+  // parece el total de verdad si no se dice lo contrario.
+  const aviso = c.facturas === 0 ? "" : sinDetalle > 0
+    ? `<p class="fic-nota">De las <b>${num(c.facturas)}</b> facturas de este periodo, <b>${num(c.conDetalle)}</b> tienen el detalle leído.
+       Las <b>${num(sinDetalle)}</b> restantes son anteriores a que empezáramos a leer las líneas, así que <b>no cuentan</b> en estos totales.
+       ${c.descuadradas ? `Además, <b>${num(c.descuadradas)}</b> ${c.descuadradas === 1 ? "tiene un detalle que no cuadra" : "tienen un detalle que no cuadra"} con su base imponible: ${c.descuadradas === 1 ? "mírala" : "míralas"} antes de fiarte de sus cantidades.` : ""}</p>`
+    : `<p class="mut" style="margin:0 0 12px">${num(c.conDetalle)} facturas con detalle leído${c.descuadradas ? ` · <b>${num(c.descuadradas)}</b> con el detalle descuadrado` : ""}.</p>`;
+
+  const fila = (g) => `<tr>
+      <td><button class="linkbtn" data-compprod="${esc(g.descripcion)}" title="Ver solo este producto">${esc(g.descripcion)}</button>
+        <div class="mut" style="font-size:11px">${esc(g.proveedores.join(" · ") || "—")}</div></td>
+      <td style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) : "—"}</td>
+      <td style="text-align:right;white-space:nowrap"><b>${g.importe != null ? esc(eur(g.importe)) : "—"}</b></td>
+      <td style="text-align:right;white-space:nowrap">${g.ultimoPrecio != null ? esc(eur2(g.ultimoPrecio)) : "—"}</td>
+      <td style="text-align:right;white-space:nowrap">${g.variacionPct != null && g.variacionPct > 0
+        ? `<span class="${g.variacionPct >= 10 ? "fg-danger" : "mut"}">+${esc(String(g.variacionPct))} %</span>` : '<span class="mut">—</span>'}</td>
+      <td class="mut" style="white-space:nowrap;font-size:11.5px">${esc(g.veces)} ${g.veces === 1 ? "vez" : "veces"}<br>${esc(fechaCorta(g.ultima) || "")}</td>
+    </tr>`;
+
+  const tabla = j.grupos.length ? `<div class="tw"><table class="tbl">
+      <thead><tr><th>Producto</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Gastado</th>
+      <th style="text-align:right">Último precio</th><th style="text-align:right" title="Diferencia entre el precio más bajo y el más alto del periodo">Ha subido</th><th>Última compra</th></tr></thead>
+      <tbody>${j.grupos.map(fila).join("")}</tbody></table></div>`
+    : `<p class="mut" style="margin:0;line-height:1.6">${COMP.q
+        ? `No se ha comprado nada que se llame «${esc(COMP.q)}» en estas fechas.`
+        : "Todavía no hay facturas con el detalle leído. A partir de ahora, cada factura que entre traerá su desglose."}</p>`;
+
+  const detalle = j.lineas.length ? `<details class="card fold" style="margin-top:14px">
+      <summary><h3>Compra a compra</h3><span class="foldr"><span>${num(j.lineas.length)} líneas</span><span class="car">${ic("chev", 16)}</span></span></summary>
+      <div class="tw" style="max-height:320px;overflow:auto"><table class="tbl">
+        <thead><tr><th>Fecha</th><th>Producto</th><th>Proveedor</th><th style="text-align:right">Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Importe</th><th></th></tr></thead>
+        <tbody>${j.lineas.map((l) => `<tr${l.dudosa ? ' class="mut"' : ""}>
+          <td class="mut" style="white-space:nowrap">${esc(l.fecha || "")}</td>
+          <td>${esc(l.descripcion)}${l.dudosa ? ' <span class="fic-tag aviso">sin leer del todo</span>' : ""}</td>
+          <td class="mut">${esc(l.proveedor || "")}</td>
+          <td style="text-align:right">${l.cantidad != null ? esc(num(l.cantidad)) + (l.unidad ? " " + esc(l.unidad) : "") : "—"}</td>
+          <td style="text-align:right">${l.precio_unitario != null ? esc(eur2(l.precio_unitario)) : "—"}</td>
+          <td style="text-align:right">${l.importe != null ? esc(eur2(l.importe)) : "—"}</td>
+          <td style="text-align:right"><button class="btn sm" data-compfac="${l.factura_id}">Ver factura</button></td>
+        </tr>`).join("")}</tbody></table></div></details>` : "";
+
+  cont.innerHTML = `${barra}<div class="card">
+      <div class="ch"><h3>${COMP.q ? `«${esc(COMP.q)}»` : "Todo lo comprado"}</h3>
+        <span class="mut">${num(j.totales.productos)} ${j.totales.productos === 1 ? "producto" : "productos"} · <b>${esc(eur(j.totales.importe))}</b></span></div>
+      ${aviso}${tabla}</div>${detalle}`;
+}
+
+async function comprasVerFactura(id) {
+  let j;
+  try { j = await apiRaw("/api/facturas/" + id + "/lineas"); } catch (e) { return toast(e.message); }
+  const f = j.factura;
+  modal(`${f.proveedor || "Factura"} · ${f.numero_factura || "s/n"}`, `
+    <p class="mut" style="margin:0 0 12px">${esc(f.fecha || "")} · ${esc(nombreCortoLocal(f.local))} · base ${esc(eur(f.base_imponible || 0))}</p>
+    ${f.lineas_aviso ? `<p class="fic-nota">${esc(f.lineas_aviso)}</p>` : ""}
+    ${j.lineas.length ? `<div class="tw" style="max-height:340px;overflow:auto"><table class="tbl">
+      <thead><tr><th>Producto</th><th style="text-align:right">Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Importe</th></tr></thead>
+      <tbody>${j.lineas.map((l) => `<tr${l.dudosa ? ' class="mut"' : ""}>
+        <td>${esc(l.descripcion)}</td>
+        <td style="text-align:right">${l.cantidad != null ? esc(num(l.cantidad)) + (l.unidad ? " " + esc(l.unidad) : "") : "—"}</td>
+        <td style="text-align:right">${l.precio_unitario != null ? esc(eur2(l.precio_unitario)) : "—"}</td>
+        <td style="text-align:right">${l.importe != null ? esc(eur2(l.importe)) : "—"}</td></tr>`).join("")}</tbody></table></div>`
+      : '<p class="mut" style="margin:0">Esta factura no tiene el detalle leído.</p>'}
+    ${f.drive_url ? `<p style="margin:14px 0 0"><a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver el original</a></p>` : ""}
+    <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button></div>`);
+}
 // ── Filtrado en vivo (sin botón «Buscar») ───────────────────────────────────
 // Solo repinta #facRes, así el foco del buscador y el estado de los selects no se pierden.
 // `_facSeq` descarta respuestas que llegan tarde (si escribes rápido, gana la última).
