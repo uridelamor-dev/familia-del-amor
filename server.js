@@ -34,6 +34,8 @@ import { instanteANegocio, lunesDe, diasSemana, isoConOffset } from "./src/modul
 import { detectarConflictos, resumirConflictos } from "./src/modules/horarios/conflictos.js";
 import { validarPublicacion, construirSnapshot } from "./src/modules/horarios/versiones.js";
 import { serializarCanonico } from "./src/core/canonico.js";
+import { construirCuadrante } from "./src/modules/horarios/cuadrante.js";
+import { construirPdfSemana, nombreFichero } from "./src/modules/horarios/pdf/schedule-pdf.service.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
@@ -4206,6 +4208,47 @@ app.post("/api/horarios/plantillas", requireAuth(HORARIOS_ROLES), async (req, re
   } catch (e) {
     console.error("[horarios] plantilla:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo guardar la plantilla" });
+  }
+});
+
+// PDF de una semana. Si está publicada se genera desde el SNAPSHOT congelado, no desde las
+// tablas vivas: así el documento de un horario antiguo sigue diciendo lo mismo dentro de
+// dos años aunque se haya renombrado un área o dado de baja a alguien.
+app.get("/api/horarios/semana/:id/pdf", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const s = await dbGet(`SELECT * FROM hor_semanas WHERE id = ?`, [req.params.id]);
+    if (!s) return res.status(404).json({ ok: false, error: "Semana no encontrada" });
+    if (!rrhhPuedeLocal(req, s.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+
+    const dias = diasSemana(s.lunes);
+    const pub = await dbGet(`SELECT snapshot FROM hor_publicaciones WHERE semana_id = ?`, [s.id]);
+    let areas, tramos, asignaciones, equipo;
+    if (pub && pub.snapshot) {
+      const snap = JSON.parse(pub.snapshot);
+      areas = snap.areas; tramos = snap.tramos; asignaciones = snap.asignaciones;
+      equipo = snap.asignaciones.map((a) => ({ id: a.worker_id, nombre: a.nombre }));
+    } else {
+      [areas, tramos, asignaciones, equipo] = await Promise.all([
+        dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [s.local]),
+        dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden`, [s.local]),
+        dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]),
+        dbAll(`SELECT id, nombre, username FROM users WHERE local = ?`, [s.local]),
+      ]);
+    }
+    const cuadrante = construirCuadrante({ lunes: s.lunes, tramos, areas, asignaciones, trabajadores: equipo });
+    const { buffer, layout, perdidos } = construirPdfSemana(
+      { local: s.local, lunes: s.lunes, dias, bloques: cuadrante.bloques, estado: s.estado, version: s.version },
+      { ahora: isoConOffset(Date.now()) }
+    );
+    if (perdidos.length) console.warn("[horarios] PDF con caracteres sustituidos:", [...new Set(perdidos)].join(" "));
+    const nombre = nombreFichero({ local: s.local, lunes: s.lunes, domingo: dias[6], version: s.version, estado: s.estado });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${nombre}"`);
+    res.setHeader("X-Horario-Paginas", String(layout.paginas.length));
+    res.send(buffer);
+  } catch (e) {
+    console.error("[horarios] pdf:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo generar el PDF" });
   }
 });
 

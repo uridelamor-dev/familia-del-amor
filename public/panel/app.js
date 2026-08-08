@@ -1965,13 +1965,16 @@ function horSolapes() {
 // Botonera según el estado. Publicar solo aparece cuando hay algo que publicar.
 function horAcciones() {
   if (!HOR.semana) return `<button class="btn primary" data-act="hor-crear">Empezar esta semana</button>`;
+  const n = (HOR.asignaciones || []).length;
+  const pdf = `<button class="btn" data-act="hor-pdf" ${n ? "" : "disabled"} title="Descargar el cuadrante para mandarlo al grupo">${ic("receipt", 15)} PDF</button>`;
   if (horEditable()) {
-    const n = (HOR.asignaciones || []).length;
     return `<button class="btn" data-act="hor-copiar">Copiar semana</button>
       <button class="btn" data-act="hor-plantillas">Plantillas</button>
+      ${pdf}
       <button class="btn primary" data-act="hor-publicar" ${n ? "" : "disabled"}>Publicar</button>`;
   }
   return `<button class="btn" data-act="hor-historico">Versiones</button>
+    ${pdf}
     <button class="btn primary" data-act="hor-nueva-version">Cambiar horario</button>`;
 }
 
@@ -2074,6 +2077,22 @@ async function horNuevaVersion() {
   if (!(await confirmModal("Se creará una copia editable del horario publicado. El que ve el equipo no cambia hasta que publiques la nueva.", { ok: "Crear versión" }))) return;
   try { const j = await apiSend("POST", `/api/horarios/semana/${HOR.semana.id}/nueva-version`, {}); toast(`Versión ${j.semana.version} creada`); loadHorarios(); }
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
+// Descarga del PDF. Mismo patrón que el resto de exportaciones del panel.
+async function horPdf() {
+  if (!HOR.semana) return;
+  toast("Preparando el PDF…");
+  try {
+    const r = await fetch(`/api/horarios/semana/${HOR.semana.id}/pdf`, { headers: { Authorization: "Bearer " + token() } });
+    if (!r.ok) { toast("No se pudo generar el PDF"); return; }
+    const nombre = (r.headers.get("content-disposition") || "").match(/filename="([^"]+)"/)?.[1] || "horario.pdf";
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement("a"); a.href = url; a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    const pgs = r.headers.get("x-horario-paginas");
+    toast(Number(pgs) > 1 ? `PDF descargado · ${pgs} hojas` : "PDF descargado ✅");
+  } catch { toast("No se pudo generar el PDF"); }
 }
 
 async function horHistorico() {
@@ -3438,6 +3457,7 @@ document.addEventListener("click", (e) => {
   else if (act === "hor-publicar") horPublicar();
   else if (act === "hor-nueva-version") horNuevaVersion();
   else if (act === "hor-historico") horHistorico();
+  else if (act === "hor-pdf") horPdf();
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }
