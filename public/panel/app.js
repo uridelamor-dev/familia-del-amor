@@ -1899,6 +1899,7 @@ function renderHorarios() {
       <button class="${HOR.vista === "areas" ? "on" : ""}" data-act="hor-vista" data-v="areas">Por área</button>
       <button class="${HOR.vista === "personas" ? "on" : ""}" data-act="hor-vista" data-v="personas">Por persona</button>
     </div>
+    <button class="btn" data-act="hor-config" title="Cuánta gente hace falta, contratos, ausencias y disponibilidad">Configuración</button>
     ${horAcciones()}
   </div>`;
 
@@ -2133,6 +2134,231 @@ async function horPdf() {
     const pgs = r.headers.get("x-horario-paginas");
     toast(Number(pgs) > 1 ? `PDF descargado · ${pgs} hojas` : "PDF descargado ✅");
   } catch { toast("No se pudo generar el PDF"); }
+}
+
+// ── Configuración del local ─────────────────────────────────────────────────
+// Cuatro cosas que ya vivían en la base desde hace fases pero solo se podían rellenar
+// entrando por SQL, que es tanto como no tenerlas. Sin esto el generador no tiene con qué
+// trabajar y los avisos de conflicto se quedan a medias.
+const DOW = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const HOR_TIPO_AUS = { vacaciones: "Vacaciones", baja: "Baja", permiso: "Permiso", asuntos_propios: "Asuntos propios" };
+// Los tres estados de disponibilidad, en el orden en que se van pulsando.
+const HOR_PREF = {
+  disponible: { txt: "·", sig: "prefiere" },
+  prefiere: { txt: "♥", sig: "no_disponible" },
+  no_disponible: { txt: "✕", sig: "disponible" },
+};
+let HORCFG = { tab: "necesidades", data: null };
+
+async function horConfig() {
+  const ov = modal("Configuración de " + nombreCortoLocal(HOR.local), '<p class="mut">Cargando…</p>');
+  ov.querySelector(".modal").style.maxWidth = "820px";
+  const pintar = async () => {
+    try { HORCFG.data = await apiRaw(`/api/horarios/plantilla?local=${encodeURIComponent(HOR.local)}`); }
+    catch (e) { ov.querySelector(".modal-b").innerHTML = `<p class="mut">${esc(e.message)}</p>`; return; }
+    const d = HORCFG.data;
+    ov.querySelector(".modal-b").innerHTML = `
+      <div class="toolbar" style="margin-bottom:14px">
+        ${[["necesidades", "Cuánta gente hace falta"], ["contratos", "Contratos"], ["ausencias", "Vacaciones y bajas"], ["disp", "Disponibilidad"]]
+          .map(([k, t]) => `<button class="btn ${HORCFG.tab === k ? "primary" : ""}" data-horcfgtab="${k}">${t}</button>`).join("")}
+      </div>
+      <div id="horCfgCuerpo">${
+        HORCFG.tab === "necesidades" ? horCfgNecesidades(d)
+        : HORCFG.tab === "contratos" ? horCfgContratos(d)
+        : HORCFG.tab === "ausencias" ? horCfgAusencias(d)
+        : horCfgDisponibilidad(d)}</div>`;
+  };
+
+  // UN escuchador, puesto una sola vez sobre `.modal-b`, que es el nodo que sobrevive a los
+  // repintados (solo se le cambia el innerHTML). Volver a engancharlo en cada repintado
+  // acababa duplicando diálogos.
+  ov.querySelector(".modal-b").addEventListener("click", async (e) => {
+    const tab = e.target.closest("[data-horcfgtab]");
+    if (tab) { HORCFG.tab = tab.getAttribute("data-horcfgtab"); return pintar(); }
+    await horCfgAccion(e, ov, pintar);
+  });
+  await pintar();
+}
+
+// Pedir un día con el MISMO selector que el resto de la web, no con el del navegador.
+function horCfgPedirFecha(titulo, nota) {
+  return new Promise((resolve) => {
+    const ov = modal(titulo, `
+      ${nota ? `<p class="mut" style="margin:0 0 14px;line-height:1.5">${esc(nota)}</p>` : ""}
+      ${dpField("__cfgFecha", todayStr(), "Elegir día")}
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+        <button class="btn" data-close>Cancelar</button><button class="btn primary" data-ok>Guardar</button></div>`);
+    ov.addEventListener("click", (e) => {
+      if (e.target.closest("[data-ok]")) { const v = ov.querySelector("#__cfgFecha").value; ov.remove(); dpClose(); resolve(v || null); }
+      else if (e.target === ov || e.target.closest("[data-close]")) { dpClose(); resolve(null); }
+    });
+  });
+}
+
+// Rejilla área × tramo × día. Se rellena una vez y no se vuelve a tocar en meses, así que
+// lo que importa es que se entienda de un vistazo, no que sea rápida de teclear.
+function horCfgNecesidades(d) {
+  if (!d.areas.length || !d.tramos.length) return `<p class="mut">Este local no tiene áreas ni tramos configurados.</p>`;
+  const val = (a, t, dow) => d.necesidades.find((n) => +n.area_id === +a && +n.tramo_id === +t && +n.dow === dow) || {};
+  const celda = (a, t, dow, nombre) => {
+    const n = val(a, t, dow);
+    const campo = (k, cls, tit) => `<input class="inp horcfg-n ${cls}" data-a="${a}" data-t="${t}" data-d="${dow}" data-k="${k}"
+      value="${n[k] ?? ""}" inputmode="numeric" placeholder="—" title="${esc(tit)} · ${esc(nombre)} · ${DOW[dow]}">`;
+    return `<td class="horcfg-celda">${campo("minimo", "es-min", "Mínimo")}${campo("objetivo", "es-obj", "Objetivo")}</td>`;
+  };
+  return `
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Cuántas personas hacen falta en cada sitio.
+      <b>Arriba el mínimo</b> (sin eso no se puede abrir) y <b>abajo el objetivo</b>, más claro (lo ideal si hay
+      gente). El objetivo se puede dejar vacío. Se lee por filas: la de arriba son los mínimos de toda la semana.</p>
+    <div class="tw"><table class="tbl horcfg-nec">
+      <thead><tr><th>Área · Tramo</th>${DOW.map((x) => `<th style="text-align:center">${x}</th>`).join("")}</tr></thead>
+      <tbody>${d.areas.flatMap((a) => d.tramos.map((t) => `<tr>
+        <td style="white-space:nowrap"><b>${esc(a.nombre)}</b> <span class="mut">${esc(t.nombre)}</span></td>
+        ${DOW.map((_, dow) => celda(a.id, t.id, dow, `${a.nombre} ${t.nombre}`)).join("")}
+      </tr>`)).join("")}</tbody></table></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+      <button class="btn primary" data-horcfg="guardar-nec">Guardar</button></div>`;
+}
+
+function horCfgContratos(d) {
+  const vigente = (id) => d.contratos.find((c) => +c.worker_id === +id && !c.hasta);
+  return `
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Las horas por semana de cada uno. Es lo que usa el
+      generador para repartir y lo que compara la revisión de fichajes. Cambiar las horas <b>no borra</b> las
+      anteriores: se cierra el contrato viejo y se abre uno nuevo, para que los meses ya pagados sigan cuadrando.</p>
+    <div class="tw"><table class="tbl">
+      <thead><tr><th>Persona</th><th style="text-align:right">Horas/semana</th><th>Desde</th><th></th></tr></thead>
+      <tbody>${d.equipo.map((w) => { const c = vigente(w.id); return `<tr>
+        <td><b>${esc(w.nombre || w.username)}</b></td>
+        <td style="text-align:right">${c ? esc(String(c.horas_semana)) + " h" : '<span class="mut">sin contrato</span>'}</td>
+        <td class="mut">${c ? esc(String(c.desde)) : "—"}</td>
+        <td style="text-align:right"><button class="btn sm" data-horcfg="contrato" data-id="${w.id}" data-nombre="${esc(w.nombre || w.username)}">${c ? "Cambiar" : "Poner"}</button></td>
+      </tr>`; }).join("")}</tbody></table></div>`;
+}
+
+function horCfgAusencias(d) {
+  const nombre = (id) => (d.equipo.find((w) => +w.id === +id) || {}).nombre || "—";
+  return `
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Vacaciones, bajas y permisos. El generador no pone a
+      trabajar a quien esté de baja, y en la revisión de fichajes explican un día sin fichar sin que salte una incidencia.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:14px">
+      <label style="flex:1;min-width:150px"><span class="t2">Persona</span>
+        <select class="inp" id="ausW" style="width:100%">${d.equipo.map((w) => `<option value="${w.id}">${esc(w.nombre || w.username)}</option>`).join("")}</select></label>
+      <label><span class="t2">Motivo</span>
+        <select class="inp" id="ausTipo">${Object.entries(HOR_TIPO_AUS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
+      <label><span class="t2">Desde</span>${dpField("ausDesde", "", "Elegir día")}</label>
+      <label><span class="t2">Hasta</span>${dpField("ausHasta", "", "Elegir día")}</label>
+      <button class="btn" data-horcfg="ausencia-add">Añadir</button>
+    </div>
+    <p id="ausMsg" style="margin:0 0 10px;min-height:16px;color:var(--danger);font-weight:550"></p>
+    ${d.ausencias.length ? `<div class="tw"><table class="tbl">
+      <thead><tr><th>Persona</th><th>Motivo</th><th>Desde</th><th>Hasta</th><th></th></tr></thead>
+      <tbody>${d.ausencias.map((a) => `<tr>
+        <td><b>${esc(nombre(a.worker_id))}</b></td>
+        <td>${esc(HOR_TIPO_AUS[a.tipo] || a.tipo)}${a.estado !== "aprobada" ? ' <span class="fic-tag">pendiente</span>' : ""}</td>
+        <td class="mut">${esc(a.desde)}</td><td class="mut">${esc(a.hasta)}</td>
+        <td style="text-align:right"><button class="btn sm danger" data-horcfg="ausencia-del" data-id="${a.id}">Quitar</button></td>
+      </tr>`).join("")}</tbody></table></div>`
+    : `<p class="mut" style="margin:0">Nada apuntado. Se ven las de los últimos 30 días en adelante.</p>`}`;
+}
+
+// Disponibilidad: solo se guarda lo que NO es "disponible". Es lo normal poder trabajar, y
+// una tabla con 7 casillas por persona en verde no dice nada.
+function horCfgDisponibilidad(d) {
+  const suyas = (id) => d.disponibilidad.filter((x) => +x.worker_id === +id);
+  return `
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Pulsa una casilla para cambiarla:
+      <b class="horcfg-ley pref-disponible">·</b> puede · <b class="horcfg-ley pref-prefiere">♥</b> lo prefiere ·
+      <b class="horcfg-ley pref-no_disponible">✕</b> no puede.
+      El generador respeta los «no puede» como una vacación y usa los «lo prefiere» para desempatar.</p>
+    <div class="tw"><table class="tbl horcfg-nec">
+      <thead><tr><th>Persona</th>${DOW.map((x) => `<th style="text-align:center">${x}</th>`).join("")}</tr></thead>
+      <tbody>${d.equipo.map((w) => `<tr>
+        <td style="white-space:nowrap"><b>${esc(w.nombre || w.username)}</b></td>
+        ${DOW.map((_, dow) => {
+          const f = suyas(w.id).find((x) => +x.dow === dow);
+          const v = f ? f.preferencia : "disponible";
+          // Un botón de tres estados en vez de un <select>: el desplegable nativo se come
+          // 60 px por celda y con siete días la tabla no cabe en el diálogo.
+          return `<td class="horcfg-celda">
+            <button type="button" class="horcfg-d pref-${v}" data-w="${w.id}" data-d="${dow}" data-v="${v}"
+                    title="${esc(w.nombre || w.username)} · ${DOW[dow]} — pulsa para cambiar">${HOR_PREF[v].txt}</button></td>`;
+        }).join("")}
+      </tr>`).join("")}</tbody></table></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+      <button class="btn primary" data-horcfg="guardar-disp">Guardar</button></div>`;
+}
+
+async function horCfgAccion(e, ov, pintar) {
+  // Las casillas de disponibilidad van rotando en el sitio; no se guarda nada hasta pulsar
+  // «Guardar», para poder repasar la tabla entera antes de mandarla.
+  const pref = e.target.closest(".horcfg-d");
+  if (pref) {
+    const sig = HOR_PREF[pref.dataset.v].sig;
+    pref.dataset.v = sig;
+    pref.textContent = HOR_PREF[sig].txt;
+    pref.className = "horcfg-d pref-" + sig;
+    return;
+  }
+  const b = e.target.closest("[data-horcfg]");
+  if (!b) return;
+  const act = b.getAttribute("data-horcfg");
+
+  if (act === "guardar-nec") {
+    const mapa = new Map();
+    ov.querySelectorAll(".horcfg-n").forEach((i) => {
+      const k = `${i.dataset.a}|${i.dataset.t}|${i.dataset.d}`;
+      if (!mapa.has(k)) mapa.set(k, { area_id: +i.dataset.a, tramo_id: +i.dataset.t, dow: +i.dataset.d });
+      const v = i.value.trim();
+      mapa.get(k)[i.dataset.k] = v === "" ? null : Number(v);
+    });
+    try { const r = await apiSend("PUT", "/api/horarios/necesidades", { local: HOR.local, necesidades: [...mapa.values()] });
+      toast(`Guardado · ${r.guardadas} casillas`); } catch (err) { toast(err.message); }
+    return pintar();
+  }
+
+  if (act === "guardar-disp") {
+    const porW = new Map();
+    ov.querySelectorAll(".horcfg-d").forEach((s) => {
+      const w = s.dataset.w;
+      if (!porW.has(w)) porW.set(w, []);
+      porW.get(w).push({ dow: +s.dataset.d, preferencia: s.dataset.v, inicio_min: 0, fin_min: 1560 });
+    });
+    try {
+      for (const [w, franjas] of porW) await apiSend("PUT", `/api/horarios/disponibilidad/${w}`, { franjas });
+      toast("Disponibilidad guardada ✅");
+    } catch (err) { toast(err.message); }
+    return pintar();
+  }
+
+  if (act === "contrato") {
+    const horas = await promptModal(`Horas por semana de ${b.getAttribute("data-nombre")}`, { placeholder: "30", type: "number", ok: "Siguiente" });
+    if (!horas) return;
+    const desde = await horCfgPedirFecha("¿Desde qué día valen esas horas?",
+      "Lo anterior a esa fecha se queda como estaba: los meses ya pagados no se recalculan.");
+    if (!desde) return;
+    try { const r = await apiSend("POST", "/api/horarios/contrato", { worker_id: b.getAttribute("data-id"), horas_semana: Number(horas), desde });
+      toast(r.mensaje || "Contrato guardado ✅"); } catch (err) { toast(err.message); }
+    return pintar();
+  }
+
+  if (act === "ausencia-add") {
+    const msg = ov.querySelector("#ausMsg");
+    try {
+      const r = await apiSend("POST", "/api/horarios/ausencia", {
+        worker_id: ov.querySelector("#ausW").value, tipo: ov.querySelector("#ausTipo").value,
+        desde: ov.querySelector("#ausDesde").value, hasta: ov.querySelector("#ausHasta").value,
+      });
+      toast(r.mensaje || "Apuntado ✅");
+      return pintar();
+    } catch (err) { if (msg) msg.textContent = err.message; return; }
+  }
+
+  if (act === "ausencia-del") {
+    if (!await confirmModal("Se quita esta ausencia. El generador volverá a contar con esa persona esos días.", { ok: "Quitar", danger: true })) return;
+    try { await apiSend("DELETE", "/api/horarios/ausencia/" + b.getAttribute("data-id")); toast("Quitada"); } catch (err) { toast(err.message); }
+    return pintar();
+  }
 }
 
 // ── Proponer horario ────────────────────────────────────────────────────────
@@ -3993,6 +4219,7 @@ document.addEventListener("click", (e) => {
   else if (act === "hor-pdf") horPdf();
   else if (act === "hor-wa") horMandarAlGrupo();
   else if (act === "hor-generar") horGenerar();
+  else if (act === "hor-config") horConfig();
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }

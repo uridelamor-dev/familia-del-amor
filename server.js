@@ -4268,6 +4268,158 @@ async function horPdfDeSemana(s) {
   return { buffer, layout, dias, nombre: nombreFichero({ local: s.local, lunes: s.lunes, domingo: dias[6], version: s.version, estado: s.estado }) };
 }
 
+// ── Plantilla del local: lo que alimenta los avisos y el generador ───────────
+// Necesidades (cuánta gente hace falta), contratos, ausencias y disponibilidad. Todo esto
+// existía en la base desde la fase 2 pero no había forma de rellenarlo sin entrar por SQL,
+// que es tanto como no tenerlo.
+app.get("/api/horarios/plantilla", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const x = { run: (sql, p = []) => dbRun(sql, p) };
+    await sembrarLocal(x, local, isoConOffset(Date.now()));
+
+    const [areas, tramos, equipo, necesidades, contratos, ausencias, disponibilidad] = await Promise.all([
+      dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
+      dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden, inicio_min`, [local]),
+      dbAll(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
+             AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [local]),
+      dbAll(`SELECT id, area_id, tramo_id, dow, minimo, objetivo FROM hor_necesidades WHERE local = ?`, [local]),
+      dbAll(`SELECT c.id, c.worker_id, c.desde, c.hasta, c.horas_semana, c.dias_semana FROM hor_contratos c
+             JOIN users u ON u.id = c.worker_id WHERE u.local = ? ORDER BY c.worker_id, c.desde DESC`, [local]),
+      dbAll(`SELECT a.id, a.worker_id, a.tipo, a.desde, a.hasta, a.estado, a.motivo FROM hor_ausencias a
+             JOIN users u ON u.id = a.worker_id WHERE u.local = ? AND a.hasta >= ? ORDER BY a.desde`,
+        [local, sumaDias(instanteANegocio(Date.now()).diaNegocio, -30)]),
+      dbAll(`SELECT d.id, d.worker_id, d.dow, d.inicio_min, d.fin_min, d.preferencia FROM hor_disponibilidad d
+             JOIN users u ON u.id = d.worker_id WHERE u.local = ? ORDER BY d.worker_id, d.dow`, [local]),
+    ]);
+    res.json({ ok: true, local, areas, tramos, equipo, necesidades, contratos, ausencias, disponibilidad });
+  } catch (e) {
+    console.error("[horarios] plantilla:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar la configuración" });
+  }
+});
+
+// Las necesidades se guardan enteras de una vez: es una rejilla, y guardarla celda a celda
+// dejaría medio configurado un local si se cae la conexión a la mitad.
+app.put("/api/horarios/necesidades", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const filas = Array.isArray(req.body?.necesidades) ? req.body.necesidades : [];
+
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    await q(`DELETE FROM hor_necesidades WHERE local = ?`, [local]);
+    const ahora = isoConOffset(Date.now());
+    let n = 0;
+    for (const f of filas) {
+      const minimo = Math.max(0, Math.round(Number(f.minimo) || 0));
+      const objetivo = f.objetivo == null || f.objetivo === "" ? null : Math.max(minimo, Math.round(Number(f.objetivo)));
+      if (!minimo && !objetivo) continue;          // celda vacía: no se guarda una fila de ceros
+      const dow = Number(f.dow);
+      if (!(dow >= 0 && dow <= 6)) continue;
+      await q(`INSERT INTO hor_necesidades (local, area_id, tramo_id, dow, minimo, objetivo, creado_en)
+               VALUES (?,?,?,?,?,?,?)`, [local, Number(f.area_id), Number(f.tramo_id), dow, minimo, objetivo, ahora]);
+      n++;
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true, guardadas: n });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[horarios] necesidades:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron guardar las necesidades" });
+  } finally { client.release(); }
+});
+
+// Contrato. Cambiar de 20 a 30 horas NO edita la fila vieja: se cierra la anterior y se
+// abre una nueva. Si no, recalcular un mes pasado usaría el contrato de hoy y saldrían
+// desviaciones que nunca existieron.
+app.post("/api/horarios/contrato", requireAuth(["direccion", "rrhh"]), async (req, res) => {
+  try {
+    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.body?.worker_id || 0)]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    const horas = Number(req.body?.horas_semana);
+    const desde = String(req.body?.desde || "");
+    if (!(horas > 0 && horas <= 60)) return res.status(400).json({ ok: false, error: "Las horas semanales tienen que estar entre 1 y 60" });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(desde)) return res.status(400).json({ ok: false, error: "Falta la fecha desde la que vale" });
+
+    const ahora = isoConOffset(Date.now());
+    // Se cierra el anterior el día antes: dos contratos vigentes a la vez darían dos
+    // respuestas distintas a "cuántas horas tiene contratadas".
+    await dbRun(`UPDATE hor_contratos SET hasta = ? WHERE worker_id = ? AND hasta IS NULL AND desde < ?`,
+      [sumaDias(desde, -1), w.id, desde]);
+    await dbRun(`INSERT INTO hor_contratos (worker_id, desde, hasta, horas_semana, dias_semana, creado_en, creado_por)
+                 VALUES (?,?,NULL,?,?,?,?)`,
+      [w.id, desde, horas, req.body?.dias_semana ? Number(req.body.dias_semana) : null, ahora, req.user.username]);
+    res.json({ ok: true, mensaje: `${w.nombre}: ${horas} h/semana desde el ${desde}.` });
+  } catch (e) {
+    console.error("[horarios] contrato:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar el contrato" });
+  }
+});
+
+app.post("/api/horarios/ausencia", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.body?.worker_id || 0)]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    const { tipo, desde, hasta } = { tipo: String(req.body?.tipo || ""), desde: String(req.body?.desde || ""), hasta: String(req.body?.hasta || "") };
+    if (!["vacaciones", "baja", "permiso", "asuntos_propios"].includes(tipo)) return res.status(400).json({ ok: false, error: "Tipo no válido" });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta)) return res.status(400).json({ ok: false, error: "Faltan las fechas" });
+    if (hasta < desde) return res.status(400).json({ ok: false, error: "La fecha de fin es anterior a la de inicio" });
+
+    await dbRun(`INSERT INTO hor_ausencias (worker_id, local, tipo, desde, hasta, estado, motivo, autor, creado_en)
+                 VALUES (?,?,?,?,?,?,?,?,?)`,
+      [w.id, w.local, tipo, desde, hasta, String(req.body?.estado || "aprobada"),
+       req.body?.motivo ? String(req.body.motivo).slice(0, 300) : null, req.user.username, isoConOffset(Date.now())]);
+    res.json({ ok: true, mensaje: `${w.nombre}: ${tipo} del ${desde} al ${hasta}.` });
+  } catch (e) {
+    console.error("[horarios] ausencia:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar la ausencia" });
+  }
+});
+
+app.delete("/api/horarios/ausencia/:id", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const a = await dbGet(`SELECT a.id, u.local FROM hor_ausencias a JOIN users u ON u.id = a.worker_id WHERE a.id = ?`, [Number(req.params.id)]);
+    if (!a || !rrhhPuedeLocal(req, a.local || "")) return res.status(404).json({ ok: false, error: "No encontrada" });
+    await dbRun(`DELETE FROM hor_ausencias WHERE id = ?`, [a.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo borrar" }); }
+});
+
+// Disponibilidad de una persona: se guarda entera, como las necesidades.
+app.put("/api/horarios/disponibilidad/:workerId", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.params.workerId)]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    const filas = Array.isArray(req.body?.franjas) ? req.body.franjas : [];
+
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    await q(`DELETE FROM hor_disponibilidad WHERE worker_id = ?`, [w.id]);
+    const ahora = isoConOffset(Date.now());
+    let n = 0;
+    for (const f of filas) {
+      const dow = Number(f.dow);
+      if (!(dow >= 0 && dow <= 6)) continue;
+      if (!["disponible", "prefiere", "no_disponible"].includes(f.preferencia)) continue;
+      if (f.preferencia === "disponible") continue;   // es el valor por defecto: no se guarda
+      await q(`INSERT INTO hor_disponibilidad (worker_id, dow, inicio_min, fin_min, preferencia, creado_en)
+               VALUES (?,?,?,?,?,?)`,
+        [w.id, dow, Number(f.inicio_min) || 0, Number(f.fin_min) || 1560, f.preferencia, ahora]);
+      n++;
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true, guardadas: n });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    res.status(500).json({ ok: false, error: "No se pudo guardar la disponibilidad" });
+  } finally { client.release(); }
+});
+
 // ── El generador ─────────────────────────────────────────────────────────────
 // Escribe un BORRADOR y ya está: no publica, no manda nada y no toca ninguna versión
 // publicada. Lo que sale de aquí lo revisa una persona, que sabe cosas que no están en
