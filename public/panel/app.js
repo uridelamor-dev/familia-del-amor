@@ -983,7 +983,7 @@ async function apiRaw(path) { const r = await fetch(path, { headers: { Authoriza
 function cliQS() { const qs = new URLSearchParams(); if (CLIF.q) qs.set("q", CLIF.q); if (CLIF.poblacion) qs.set("poblacion", CLIF.poblacion); if (CLIF.local) qs.set("local", CLIF.local); if (CLIF.cumple) qs.set("cumple_mes", "1"); if (CLIF.con_email) qs.set("con_email", "1"); if (CLIF.con_telefono) qs.set("con_telefono", "1"); if (CLIF.excluir_baja) qs.set("excluir_baja", "1"); return qs.toString(); }
 function cliChk(id, campo, label) { return `<label style="display:inline-flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="${id}" ${CLIF[campo] ? "checked" : ""} style="width:auto;height:auto;margin:0"> ${esc(label)}</label>`; }
 function cliActionsBar(total) {
-  return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Escribir a los ${num(total)} filtrados (WhatsApp)</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div><button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
+  return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Escribir a los ${num(total)} filtrados (WhatsApp)</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div>${USER.rol === "direccion" ? `<button class="btn" data-act="cli-dup" title="Buscar fichas repetidas de la misma persona">Fichas repetidas</button>` : ""}<button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
 }
 // Cumpleaños: "12 abr 1988 (38)". Sin fecha → "—". La edad solo si el año es plausible.
 function fechaNac(iso) {
@@ -1039,6 +1039,79 @@ async function refreshCliResults() {
 }
 function cliRefreshDebounced() { if (_cliTimer) clearTimeout(_cliTimer); _cliTimer = setTimeout(refreshCliResults, 250); }
 async function downloadClientesCsv() { try { const r = await fetch("/api/leads/export.csv" + (cliQS() ? "?" + cliQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "clientes.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
+// ── Fichas repetidas ────────────────────────────────────────────────────────
+// Esto BORRA filas, así que la pantalla enseña primero exactamente qué va a pasar y solo
+// después deja aplicar. Y al aplicar se manda de vuelta el número de fichas del informe:
+// si entre medias ha entrado un lead nuevo, el servidor se niega y hay que volver a mirar.
+async function cliDuplicados() {
+  const ov = modal("Fichas repetidas", '<p class="mut">Revisando…</p>');
+  ov.querySelector(".modal").style.maxWidth = "760px";
+  let j;
+  try { j = await apiRaw("/api/clientes/duplicados"); }
+  catch (e) { ov.querySelector(".modal-b").innerHTML = `<p class="mut">${esc(e.message)}</p>`; return; }
+
+  if (!j.fichasABorrar) {
+    ov.querySelector(".modal-b").innerHTML = `
+      <p style="margin:0 0 14px;line-height:1.55">No hay ninguna ficha repetida. De ${num(j.total)} contactos,
+        ${num(j.sinMovil)} no tienen un móvil de 9 dígitos y por eso no se comparan.</p>
+      ${j.avisoCorreo.length ? cliDupAvisoCorreo(j) : ""}
+      <div style="display:flex;justify-content:flex-end"><button class="btn" data-close>Cerrar</button></div>`;
+    return;
+  }
+
+  ov.querySelector(".modal-b").innerHTML = `
+    <p style="margin:0 0 14px;line-height:1.55">
+      <b>${num(j.personasDuplicadas)} personas</b> tienen más de una ficha, casi siempre porque el mismo móvil se
+      guardó escrito de formas distintas. Se conservaría la más antigua de cada una, rellenándole los datos que le
+      falten con los más recientes, y se borrarían <b>${num(j.fichasABorrar)} fichas</b>.
+      Las reservas <b>no se tocan</b>.</p>
+
+    <details class="card fold" style="margin-bottom:12px"><summary><h3>Qué se unificaría</h3>
+      <span class="foldr"><span>${num(j.personasDuplicadas)} personas</span><span class="car">${ic("chev", 16)}</span></span></summary>
+      <div class="tw" style="max-height:220px;overflow:auto"><table class="tbl">
+        <thead><tr><th>Móvil</th><th>Se queda</th><th style="text-align:right">Fichas</th></tr></thead>
+        <tbody>${j.grupos.slice(0, 60).map((g) => `<tr>
+          <td class="mut">···${esc(String(g.tel9).slice(-6))}</td>
+          <td><b>${esc([g.nombre, g.apellidos].filter(Boolean).join(" ") || "sin nombre")}</b>
+            ${g.correo ? `<span class="mut"> · ${esc(g.correo)}</span>` : ""}</td>
+          <td style="text-align:right">${g.fichas}</td></tr>`).join("")}</tbody></table></div>
+      ${j.grupos.length > 60 ? `<div class="mut" style="padding:8px 18px">…y ${num(j.grupos.length - 60)} más</div>` : ""}
+    </details>
+
+    ${j.avisoCorreo.length ? cliDupAvisoCorreo(j) : ""}
+
+    <p class="fic-nota">Antes de tocar nada se guarda una <b>copia de seguridad</b> de las dos tablas dentro de la
+      misma base. Si algo sale mal se puede volver atrás; te digo el nombre de la copia al terminar.</p>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Ahora no</button>
+      <button class="btn primary" id="cliDupOk">Unificar las ${num(j.fichasABorrar)} fichas</button>
+    </div>`;
+
+  ov.querySelector("#cliDupOk").addEventListener("click", async () => {
+    if (!await confirmModal(`Se borrarán ${j.fichasABorrar} fichas repetidas, quedándose con una por persona. Se guarda copia antes.`, { ok: "Unificar", danger: true })) return;
+    const btn = ov.querySelector("#cliDupOk");
+    btn.disabled = true; btn.textContent = "Unificando…";
+    try {
+      const r = await apiSend("POST", "/api/clientes/duplicados/unificar", { fichas_a_borrar: j.fichasABorrar });
+      ov.remove(); toast(r.mensaje || "Unificado ✅"); refreshCliResults();
+    } catch (e) { btn.disabled = false; btn.textContent = "Reintentar"; toast(e.message); }
+  });
+}
+
+// Mismo correo con móviles distintos: no se unifican solas porque pueden ser dos personas
+// de la misma casa. Se enseñan para mirarlas a mano.
+function cliDupAvisoCorreo(j) {
+  return `<details class="card fold" style="margin-bottom:12px"><summary><h3>Mismo correo, móviles distintos</h3>
+    <span class="foldr"><span>${num(j.avisoCorreo.length)} · no se tocan</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <div style="padding:0 18px 14px">
+      <p class="mut" style="margin:6px 0 10px;line-height:1.5">Puede ser una pareja o una familia compartiendo correo,
+        así que no se unifican solas. Míralas cuando puedas.</p>
+      <div class="rows">${j.avisoCorreo.slice(0, 20).map((a) => `<div class="row"><div class="grow">
+        <div class="t1">${esc(a.correo)}</div><div class="t2">${esc(a.telefonos)}</div></div></div>`).join("")}</div>
+    </div></details>`;
+}
+
 // Escribir por WhatsApp a un contacto (individual).
 function cliWa(tel, nombre) {
   const ov = modal("Escribir por WhatsApp", `<div class="mut" style="margin-bottom:8px">Para <b>${esc(nombre)}</b> · ${esc(tel)}</div><textarea id="cwMsg" rows="4" style="width:100%" placeholder="Escribe tu mensaje… (puedes usar {nombre})"></textarea><div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="cwSend">Enviar</button></div>`);
@@ -4261,6 +4334,7 @@ document.addEventListener("click", (e) => {
   else if (act === "inv-edit-prod") invEditProducto(t.getAttribute("data-id"));
   else if (act === "inv-del-prod") invDelProducto(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "cli-csv") downloadClientesCsv();
+  else if (act === "cli-dup") cliDuplicados();
   else if (act === "cli-wa") cliWa(t.getAttribute("data-tel"), t.getAttribute("data-nombre"));
   else if (act === "cli-ficha") cliFicha(t.getAttribute("data-tel"));
   else if (act === "cli-masivo") cliMasivo();

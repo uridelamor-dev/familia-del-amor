@@ -44,6 +44,7 @@ import { validarFormatoPin, estadoBloqueo, trasFallo as pinTrasFallo, trasAciert
 import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornadas.js";
 import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo } from "./src/modules/fichajes/bolsa.js";
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
+import * as DUP from "./src/modules/clientes/duplicados.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
@@ -2606,6 +2607,66 @@ app.get("/api/leads", requireAuth(["direccion", "marketing"]), async (req, res) 
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error leyendo leads" });
   }
+});
+
+// ── Fichas duplicadas ────────────────────────────────────────────────────────
+// Informe primero, aplicar después, y nunca lo segundo sin lo primero. Ver
+// src/modules/clientes/duplicados.js para el porqué de cada regla.
+app.get("/api/clientes/duplicados", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const [grupos, aBorrar, avisoCorreo, resumen] = await Promise.all([
+      dbAll(DUP.SQL_GRUPOS), dbAll(DUP.SQL_A_BORRAR), dbAll(DUP.SQL_AVISO_CORREO), dbGet(DUP.SQL_RESUMEN),
+    ]);
+    res.json({
+      ok: true,
+      grupos, aBorrar, avisoCorreo,
+      total: Number(resumen?.total || 0),
+      sinMovil: Number(resumen?.sin_movil || 0),
+      personasDuplicadas: grupos.length,
+      fichasABorrar: aBorrar.length,
+    });
+  } catch (e) {
+    console.error("[clientes] duplicados:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo revisar: " + e.message });
+  }
+});
+
+app.post("/api/clientes/duplicados/unificar", requireAuth(["direccion"]), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    // Se exige mandar de vuelta cuántas fichas se van a borrar, tal y como salieron en el
+    // informe. Si entre medias ha entrado un lead nuevo el número no cuadra y no se aplica:
+    // esto borra filas, y hacerlo sobre una foto vieja es exactamente lo que no debe pasar.
+    const esperado = Number(req.body?.fichas_a_borrar);
+    const ahora = await dbAll(DUP.SQL_A_BORRAR);
+    if (!Number.isFinite(esperado)) return res.status(400).json({ ok: false, error: "Falta la confirmación del informe" });
+    if (ahora.length !== esperado) {
+      return res.status(409).json({
+        ok: false,
+        error: `El informe decía ${esperado} fichas y ahora hay ${ahora.length}. Vuelve a revisarlo antes de aplicar.`,
+      });
+    }
+    if (!ahora.length) return res.json({ ok: true, borradas: 0, mensaje: "No hay nada que unificar." });
+
+    const sufijo = DUP.sufijoCopia(new Date());
+    await client.query("BEGIN");
+    for (const sql of DUP.SQL_BACKUP(sufijo)) await client.query(sql);
+    for (const sql of [...DUP.SQL_APLICAR, ...DUP.SQL_APLICAR_PREFS]) await client.query(sql);
+    const quedan = (await client.query("SELECT COUNT(*)::int AS c FROM leads")).rows[0].c;
+    await client.query("COMMIT");
+
+    await ficAuditar("clientes", null, "unificar_duplicados", req.user.username, {
+      detalle: { borradas: ahora.length, copia: sufijo, quedan } });
+    console.log(`[clientes] duplicados unificados: ${ahora.length} fichas · copia en leads_backup_${sufijo}`);
+    res.json({
+      ok: true, borradas: ahora.length, quedan, copia: `leads_backup_${sufijo}`,
+      mensaje: `${ahora.length} fichas unificadas. Copia de seguridad en leads_backup_${sufijo}.`,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[clientes] unificar:", e.message);
+    res.status(500).json({ ok: false, error: "No se aplicó nada (todo deshecho): " + e.message });
+  } finally { client.release(); }
 });
 
 // Diagnóstico

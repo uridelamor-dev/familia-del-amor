@@ -18,6 +18,16 @@
 --    · Las reservas: no se borra ni una.
 --    · El teléfono de la ficha que sobrevive: se queda tal cual está escrito.
 --
+--  LO NORMAL ES HACERLO DESDE EL PANEL: Clientes → «Fichas repetidas». Enseña el
+--  informe, y solo después deja aplicar. Este fichero es el camino manual, para
+--  cuando haga falta mirarlo desde una shell.
+--
+--  ⚠️ Las reglas están DUPLICADAS aquí y en src/modules/clientes/duplicados.js
+--  (que es lo que usa el panel). Ya hubo una divergencia real —los `opt_in` con
+--  MIN en un sitio y MAX en el otro, que es tanto como borrar consentimientos—,
+--  así que hay un test (tests/modules/clientes-duplicados.test.js) que compara
+--  los dos ficheros y falla si dejan de decir lo mismo. Si tocas uno, toca el otro.
+--
 --  CÓMO USARLO (desde la shell de Replit):
 --
 --    1) Informe, no cambia nada:
