@@ -1342,8 +1342,34 @@ function renderPulsoParticipacion(part) {
   return `<details class="card fold" style="margin-top:16px"><summary><h3>Quién falta por contestar</h3><span class="foldr"><span>${num(pend.length)} de ${num(part.invitados || 0)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <div class="rows">${lista}</div>
     <div class="mut" style="padding:12px 18px;font-size:12px;border-top:1px solid var(--border)">Esta tarjeta sabe <b>quién</b>. La de arriba sabe <b>qué</b>. Nunca se cruzan.</div>
-    <div class="toolbar" style="padding:12px 18px;margin:0"><button class="btn primary" data-act="pulso-enviar">Enviar el pulso de ${esc(PULSO.mes ? fechaMesLargo(PULSO.mes) : "este mes")}</button></div>
+    <div class="toolbar" style="padding:12px 18px;margin:0"><button class="btn primary" data-act="pulso-enviar">Enviar el pulso de ${esc(PULSO.mes ? fechaMesLargo(PULSO.mes) : "este mes")}</button><div style="flex:1"></div><button class="btn" data-act="pulso-config">Configurar</button></div>
   </details>`;
+}
+// Config: solo dirección. Lo importante aquí no es el automático, es el tope diario:
+// es lo único que protege el número de la empresa de un baneo.
+async function pulsoConfig() {
+  let c; try { c = (await apiRaw("/api/rrhh/pulso/config")).data; } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); return; }
+  const ov = modal("Configurar el pulso", `<div class="form-grid">
+    <label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="pcAuto" ${c.pulso_auto === "1" ? "checked" : ""} style="width:auto"> Enviarlo solo cada mes</label>
+    <div class="field"><label>Día del mes</label><input id="pcDia" type="number" min="1" max="28" value="${esc(c.pulso_dia || "1")}"></div>
+    <div class="field full"><label>Dirección de la web (para el enlace)</label><input id="pcBase" value="${esc(c.pulso_base_url || "")}" placeholder="https://familiadelamor.org"></div>
+    <div class="field full"><label>Teléfono para avisos de «quiero que hablemos»</label><input id="pcAviso" value="${esc(c.pulso_aviso_telefono || "")}" placeholder="600112233"></div>
+    <div class="field"><label>Tope de WhatsApp al día</label><input id="pcTope" type="number" min="5" max="200" value="${esc(c.wa_max_diario || "40")}"></div>
+  </div>
+  <div class="pendingblock" style="margin-top:12px">Hoy se han enviado <b>${num(c.enviados_hoy || 0)}</b> mensajes en total (pulso y campañas). El tope los cuenta juntos: es lo que evita que el número acabe baneado.</div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="pcSave">Guardar</button></div>`);
+  ov.querySelector("#pcSave").addEventListener("click", async () => {
+    try {
+      await apiSend("PUT", "/api/rrhh/pulso/config", {
+        pulso_auto: ov.querySelector("#pcAuto").checked ? "1" : "0",
+        pulso_dia: ov.querySelector("#pcDia").value,
+        pulso_base_url: ov.querySelector("#pcBase").value,
+        pulso_aviso_telefono: ov.querySelector("#pcAviso").value,
+        wa_max_diario: ov.querySelector("#pcTope").value,
+      });
+      ov.remove(); toast("Configuración guardada ✅");
+    } catch (e) { toast("Error: " + e.message); }
+  });
 }
 function fechaMesLargo(mes) {
   const [y, m] = String(mes || "").split("-");
@@ -3001,6 +3027,7 @@ document.addEventListener("click", (e) => {
   else if (act === "ag-metodos") agoraMetodos(t.getAttribute("data-local"));
   else if (act === "pulso-enviar") pulsoEnviar();
   else if (act === "pulso-atendido") pulsoAtendido(t.getAttribute("data-id"));
+  else if (act === "pulso-config") pulsoConfig();
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }

@@ -4014,6 +4014,44 @@ app.put("/api/rrhh/pulso/contacto/:id", requireAuth(PULSO_ROLES), async (req, re
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo marcar" }); }
 });
 
+// Configuración del pulso. Solo dirección: decide si se manda solo, qué día y el tope.
+const PULSO_CONFIG = ["pulso_auto", "pulso_dia", "pulso_base_url", "pulso_aviso_telefono", "wa_max_diario"];
+app.get("/api/rrhh/pulso/config", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const out = {};
+    for (const k of PULSO_CONFIG) out[k] = await getConfig(k);
+    const hoy = new Date().toISOString().slice(0, 10);
+    out.enviados_hoy = Number((await getConfig("wa_enviados_" + hoy)) || 0);
+    res.json({ ok: true, data: out });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar la configuración" }); }
+});
+app.put("/api/rrhh/pulso/config", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    for (const k of PULSO_CONFIG) {
+      if (req.body[k] === undefined) continue;
+      await setConfig(k, String(req.body[k] ?? "").trim());
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo guardar" }); }
+});
+
+// El trabajador pide su propio enlace desde su espacio (perdió el WhatsApp, lo borró…).
+// Rota el token: el anterior deja de valer, y el que se devuelve solo se ve una vez.
+app.post("/api/pulso/mi-enlace", requireAuth(), async (req, res) => {
+  try {
+    const mes = mesAnterior(new Date().toISOString().slice(0, 7));
+    const inv = await dbGet(`SELECT id, usado, caduca_en FROM pulso_invitaciones WHERE worker_id = ? AND mes = ?`, [req.user.id, mes]);
+    if (!inv) return res.status(404).json({ ok: false, error: "Este mes todavía no hay ninguna encuesta para ti." });
+    if (inv.usado) return res.status(410).json({ ok: false, error: "Ya has contestado este mes. ¡Gracias!" });
+    const hoy = new Date().toISOString().slice(0, 10);
+    if (inv.caduca_en < hoy) return res.status(410).json({ ok: false, error: "El plazo de este mes ya ha pasado." });
+    const token = pulsoToken();
+    await dbRun(`UPDATE pulso_invitaciones SET token_hash = ? WHERE id = ?`, [pulsoHash(token), inv.id]);
+    const base = (await getConfig("pulso_base_url")) || process.env.PUBLIC_URL || "";
+    res.json({ ok: true, mes, url: `${String(base).replace(/\/+$/, "")}/pulso.html?t=${token}` });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo generar el enlace" }); }
+});
+
 // Genera las invitaciones del mes y las manda por WhatsApp. Solo dirección.
 app.post("/api/rrhh/pulso/enviar", requireAuth(["direccion"]), async (req, res) => {
   try {
@@ -4048,6 +4086,81 @@ app.post("/api/rrhh/pulso/enviar", requireAuth(["direccion"]), async (req, res) 
   }
 });
 
+// Crea las invitaciones que falten para un mes. Idempotente por (worker_id, mes).
+// Devuelve cuántas se crearon nuevas.
+async function asegurarInvitacionesPulso(mes) {
+  const caduca = caducidadMes(mes);
+  const equipo = await dbAll(
+    `SELECT id, local, telefono FROM users
+     WHERE rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL
+       AND LENGTH(regexp_replace(COALESCE(telefono,''), '[^0-9]', '', 'g')) >= 9`
+  );
+  let n = 0;
+  for (const w of equipo) {
+    const r = await dbRun(
+      `INSERT INTO pulso_invitaciones (worker_id, mes, local, token_hash, caduca_en)
+       VALUES (?, ?, ?, ?, ?) ON CONFLICT (worker_id, mes) DO NOTHING RETURNING id`,
+      [w.id, mes, w.local || null, pulsoHash(pulsoTokenTmp(w.id, mes)), caduca]
+    );
+    if (r && r.id) n += 1;
+  }
+  return n;
+}
+// El token en claro solo existe en el momento de enviarlo. Para las invitaciones creadas
+// por el job, se genera aquí y se guarda su hash; si el envío falla, se regenera al
+// reintentar (ver despacharPulsoPendientes), porque el token en claro ya no está.
+const _pulsoPendientesToken = new Map();
+function pulsoTokenTmp(workerId, mes) {
+  const t = pulsoToken();
+  _pulsoPendientesToken.set(`${workerId}:${mes}`, t);
+  return t;
+}
+
+// Manda las invitaciones que aún no han salido. Se llama en cada tick: si WhatsApp estaba
+// caído, se recupera solo. Rota el token al reenviar (el anterior no se guardó en claro).
+async function despacharPulsoPendientes() {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const pendientes = await dbAll(
+    `SELECT i.id, i.worker_id, i.mes, u.nombre, u.telefono
+     FROM pulso_invitaciones i JOIN users u ON u.id = i.worker_id
+     WHERE i.enviado_en IS NULL AND i.usado = 0 AND i.caduca_en >= ?
+       AND LENGTH(regexp_replace(COALESCE(u.telefono,''), '[^0-9]', '', 'g')) >= 9
+     ORDER BY i.id LIMIT 200`, [hoy]
+  );
+  if (!pendientes.length) return;
+
+  // Antes de nada: si hay una campaña de marketing programada para hoy, esperamos. Dos
+  // ráfagas el mismo día desde el mismo número es justo lo que dispara un baneo.
+  const hayCampana = await dbGet(
+    `SELECT id FROM campanas_wa WHERE estado = 'programada' AND programada_para LIKE ? LIMIT 1`, [hoy + "%"]
+  );
+  if (hayCampana) { console.log("[pulso] Hay una campaña programada hoy: pospongo el envío"); return; }
+
+  // TOPE DIARIO REAL. `dividirPorTope` existía, estaba testeada e importada... y no se
+  // llamaba desde ningún sitio: hasta ahora no había ningún límite de mensajes al día.
+  const yaHoy = Number((await getConfig("wa_enviados_" + hoy)) || 0);
+  const maxDiario = Number(await getConfig("wa_max_diario")) || 40;
+  const { aEnviar, pospuestos } = dividirPorTope(pendientes, { maxDiario, yaEnviadosHoy: yaHoy });
+  if (pospuestos.length) console.log(`[pulso] Tope diario (${maxDiario}): ${pospuestos.length} se quedan para mañana`);
+  if (!aEnviar.length) return;
+
+  const lote = aEnviar.map((p) => {
+    const clave = `${p.worker_id}:${p.mes}`;
+    let token = _pulsoPendientesToken.get(clave);
+    if (!token) token = null; // se regenera abajo
+    return { ...p, invitacionId: p.id, token };
+  });
+  for (const inv of lote) {
+    if (!inv.token) {
+      // Token perdido (reinicio del proceso): generamos uno nuevo y actualizamos el hash.
+      inv.token = pulsoToken();
+      await dbRun(`UPDATE pulso_invitaciones SET token_hash = ? WHERE id = ?`, [pulsoHash(inv.token), inv.invitacionId]);
+    }
+    _pulsoPendientesToken.delete(`${inv.worker_id}:${inv.mes}`);
+  }
+  await enviarPulsoLote(lote, lote[0].mes);
+}
+
 // Envío propio, NO enviarLoteWA: ese escribe en campana_envios (marketing) y meter ahí los
 // teléfonos del equipo sería mezclar RR.HH. con la base de clientes.
 async function enviarPulsoLote(invitaciones, mes) {
@@ -4066,6 +4179,7 @@ async function enviarPulsoLote(invitaciones, mes) {
     try {
       if (!isReady()) throw new Error("WhatsApp no conectado");
       await sendMensajeLibre(inv.telefono, texto);
+      await contarEnvioWA();
       await dbRun(`UPDATE pulso_invitaciones SET enviado_en = ?, enviado_error = NULL WHERE id = ?`, [new Date().toISOString(), inv.invitacionId]);
     } catch (e) {
       await dbRun(`UPDATE pulso_invitaciones SET enviado_error = ? WHERE id = ?`, [String(e.message).slice(0, 200), inv.invitacionId]);
@@ -4947,6 +5061,17 @@ function hashTexto(texto) { return crypto.createHash("sha256").update(String(tex
 // Si hay campanaId, registra cada destinatario en campana_envios y cierra la campaña.
 // adjunto opcional { buffer, filename, mimetype } → imagen con pie o documento + texto.
 // resolverMensaje opcional (contacto)→texto: para traducir por idioma antes de aplicar variables.
+// Cuenta un mensaje enviado hoy. Es lo que hace que `dividirPorTope` signifique algo:
+// sin este contador, el tope solo miraría los mensajes del pulso e ignoraría las campañas,
+// que son las que de verdad pueden quemar el número.
+async function contarEnvioWA(n = 1) {
+  try {
+    const hoy = new Date().toISOString().slice(0, 10);
+    const clave = "wa_enviados_" + hoy;
+    await setConfig(clave, String(Number((await getConfig(clave)) || 0) + n));
+  } catch { /* nunca debe tumbar un envío */ }
+}
+
 async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 6000, maxMs = 15000, resolverMensaje = null }) {
   let enviados = 0, errores = 0;
   for (const c of contactos) {
@@ -4957,6 +5082,7 @@ async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = nu
       if (adjunto && adjunto.buffer) await sendMediaLibre(c.telefono, adjunto.buffer, adjunto.filename, adjunto.mimetype, texto);
       else await sendMensajeLibre(c.telefono, texto);
       enviados++;
+      await contarEnvioWA(); // el tope diario solo es real si lo cuentan TODOS los caminos
     }
     catch (e) { errores++; estado = "error"; err = (e && e.message) ? String(e.message).slice(0, 200) : "error"; }
     if (campanaId) {
@@ -5815,6 +5941,41 @@ const server = app.listen(PORT, async () => {
       enviarLoteWA({ contactos: dest, mensaje: plantilla, campanaId: row.id });
       console.log(`🎂 Cumpleaños: enviando felicitación a ${dest.length} contacto(s)`);
     } catch (e) { console.error("[cumpleaños]", e.message); }
+  }, 5 * 60 * 1000);
+
+  // ── Pulso del equipo: generación y despacho, en pasos SEPARADOS ────────────
+  // La separación no es cosmética. En cada redespliegue de Replit se cae la sesión de
+  // WhatsApp, y el día 1 a las 11:00 es perfectamente posible que esté caída. Por eso el
+  // flag de idempotencia marca la GENERACIÓN (que solo toca la BD y siempre funciona), y
+  // el despacho se reintenta en cada tick hasta que haya sesión. Si marcáramos el envío,
+  // un redespliegue a deshora dejaría al equipo sin recibir nada ese mes.
+  setInterval(async () => {
+    try {
+      if ((await getConfig("pulso_auto")) !== "1") return;
+      const hm = hoyMadrid();
+      const [anio, mesN, diaN] = hm.iso.split("-").map(Number);
+      const hora = new Date().toLocaleTimeString("sv-SE", { timeZone: "Europe/Madrid" });
+      const mesEvaluado = mesAnterior(`${anio}-${String(mesN).padStart(2, "0")}`);
+
+      // 1) Día 1, franja 11:xx → crear las invitaciones del mes que acaba de cerrar.
+      const diaEnvio = Number(await getConfig("pulso_dia")) || 1;
+      if (diaN === diaEnvio && hora.startsWith("11:") && (await getConfig("pulso_last_gen")) !== mesEvaluado) {
+        await setConfig("pulso_last_gen", mesEvaluado); // ANTES de generar, como en cumpleaños
+        const n = await asegurarInvitacionesPulso(mesEvaluado);
+        console.log(`💬 Pulso ${mesEvaluado}: ${n} invitación(es) creadas`);
+      }
+
+      // 2) Día 8 → recordatorio a quien no haya contestado (una sola vez por mes).
+      if (diaN === 8 && hora.startsWith("11:") && (await getConfig("pulso_last_rec")) !== mesEvaluado) {
+        await setConfig("pulso_last_rec", mesEvaluado);
+        await dbRun(`UPDATE pulso_invitaciones SET enviado_en = NULL, recordatorio_en = ?
+                     WHERE mes = ? AND usado = 0 AND enviado_en IS NOT NULL`, [new Date().toISOString(), mesEvaluado]);
+      }
+
+      // 3) Despacho: en CADA tick, si hay sesión. Recupera lo que quedó pendiente.
+      if (!isReady()) return;
+      await despacharPulsoPendientes();
+    } catch (e) { console.error("[pulso scheduler]", e.message); }
   }, 5 * 60 * 1000);
 
   // ── Números de la casa: Sara no les responde ───────────────────────────────

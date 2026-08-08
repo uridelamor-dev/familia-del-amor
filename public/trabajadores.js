@@ -2,7 +2,23 @@ requireRole(["trabajador", "encargado", "direccion"]).then((user) => {
   if (!user) return;
   loadPerfil();
   loadAnnouncements();
+  loadPulso();
 });
+
+// Enlace a la encuesta del mes, por si perdió el WhatsApp o lo borró. Pedirlo ROTA el
+// token, así que el enlace viejo deja de valer: si alguien le hubiera cogido el móvil,
+// ese enlace ya no sirve.
+async function loadPulso() {
+  const bloque = document.getElementById("pulsoBloque");
+  if (!bloque) return;
+  try {
+    const res = await authFetch("/api/pulso/mi-enlace", { method: "POST" });
+    const data = await res.json();
+    if (!data.ok || !data.url) return; // ya contestada, caducada o aún sin encuesta: no molestamos
+    document.getElementById("pulsoLink").href = data.url;
+    bloque.classList.remove("hidden");
+  } catch { /* si falla, simplemente no se enseña */ }
+}
 
 // ── Mi perfil ────────────────────────────────────────────────────────────────
 // El usuario y la contraseña los crea la empresa; aquí cada uno completa sus datos
