@@ -4560,6 +4560,45 @@ app.put("/api/horarios/tramos", requireAuth(HORARIOS_ROLES), async (req, res) =>
   } finally { client.release(); }
 });
 
+// Las áreas del local (SALA, COCINA… o BARRA, TERRAZA, OFFICE). Mismo trato que los
+// turnos: editables, porque suponerlas es el mismo error. Quitar una la desactiva.
+app.put("/api/horarios/areas", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const filas = Array.isArray(req.body?.areas) ? req.body.areas : [];
+    if (!filas.length) return res.status(400).json({ ok: false, error: "Tiene que quedar al menos un área" });
+    if (filas.some((a) => !String(a.nombre || "").trim())) {
+      return res.status(400).json({ ok: false, error: "Todas las áreas necesitan un nombre" });
+    }
+
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    const ahora = isoConOffset(Date.now());
+    const vivos = [];
+    for (const [i, a] of filas.entries()) {
+      const nombre = String(a.nombre).trim().slice(0, 40);
+      if (a.id) {
+        await q(`UPDATE hor_areas SET nombre = ?, orden = ? WHERE id = ? AND local = ?`, [nombre, i, Number(a.id), local]);
+        vivos.push(Number(a.id));
+      } else {
+        const r = await q(`INSERT INTO hor_areas (local, nombre, orden, creado_en) VALUES (?,?,?,?)
+                           ON CONFLICT (local, nombre) DO UPDATE SET orden = EXCLUDED.orden, activo = TRUE
+                           RETURNING id`, [local, nombre, i, ahora]);
+        vivos.push(Number(r.rows[0].id));
+      }
+    }
+    await q(`UPDATE hor_areas SET activo = FALSE WHERE local = ? AND id <> ALL(?::int[])`, [local, vivos]);
+    await client.query("COMMIT");
+    res.json({ ok: true, areas: vivos.length });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[horarios] areas:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron guardar las áreas" });
+  } finally { client.release(); }
+});
+
 // Contrato. Cambiar de 20 a 30 horas NO edita la fila vieja: se cierra la anterior y se
 // abre una nueva. Si no, recalcular un mes pasado usaría el contrato de hoy y saldrían
 // desviaciones que nunca existieron.

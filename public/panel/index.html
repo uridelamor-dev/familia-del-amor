@@ -200,6 +200,22 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
    poder desplazarse. `-webkit-overflow-scrolling` para que el gesto vaya bien en iPad, que
    es donde se mira el cuadrante. */
 .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+/* Gráfico con el dato al pasar el ratón. La guía y el globo solo aparecen al entrar,
+   para que el gráfico en reposo siga siendo lo mismo de siempre. */
+.chart{position:relative}
+.chart-guia{position:absolute;top:0;bottom:0;width:1px;background:var(--border2);opacity:0;transition:opacity .1s;pointer-events:none}
+.chart.on .chart-guia{opacity:1}
+/* El globo va DENTRO del gráfico, no encima: si sale por arriba tapa las cifras de la
+   cabecera de la tarjeta, que es justo lo que se está comparando. */
+.chart-tip{position:absolute;top:4px;transform:translate(-50%,0);background:var(--ink);color:var(--surface);
+  border-radius:8px;padding:6px 9px;font-size:11.5px;line-height:1.45;white-space:nowrap;pointer-events:none;
+  opacity:0;transition:opacity .1s;box-shadow:var(--sh-lg);z-index:5;display:grid;gap:1px}
+.chart.on .chart-tip{opacity:1}
+.chart-tip.izq{transform:translate(-100%,0)}
+.chart-tip.der{transform:translate(0,0)}
+.chart-tip b{font-size:10.5px;opacity:.7;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.chart-tip .ex{font-variant-numeric:tabular-nums;opacity:.85}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}.tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);font-weight:600;padding:11px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
 .tbl td{padding:11px 14px;border-bottom:1px solid var(--border)}.tbl tr:last-child td{border-bottom:0}.tbl tbody tr:hover{background:var(--surface2)}.tbl th.r,.tbl td.r{text-align:right}
 .tbl th:first-child,.tbl td:first-child{padding-left:18px}.tbl th:last-child,.tbl td:last-child{padding-right:18px}

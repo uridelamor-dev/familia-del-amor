@@ -9,8 +9,11 @@ const dec1 = (n) => (Number(n) || 0).toFixed(1).replace(".", ",");
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const todayStr = () => new Date().toISOString().slice(0, 10);
 function addDaysStr(s, n) { const d = new Date(s + "T00:00:00.000Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
-function fechaLarga(iso) { try { return cap(new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(iso + "T12:00:00"))); } catch { return iso; } }
-function fechaCorta(iso) { try { return new Intl.DateTimeFormat("es-ES", { weekday: "short", day: "numeric", month: "short" }).format(new Date(iso + "T12:00:00")); } catch { return iso; } }
+// Si no llega una fecha se devuelve cadena vacía, NO el valor tal cual: con `return iso`
+// una fecha ausente acababa pintando literalmente «undefined» en la cabecera del panel.
+const esFechaISO = (v) => /^\d{4}-\d{2}-\d{2}/.test(String(v || ""));
+function fechaLarga(iso) { if (!esFechaISO(iso)) return ""; try { return cap(new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(String(iso).slice(0, 10) + "T12:00:00"))); } catch { return ""; } }
+function fechaCorta(iso) { if (!esFechaISO(iso)) return ""; try { return new Intl.DateTimeFormat("es-ES", { weekday: "short", day: "numeric", month: "short" }).format(new Date(String(iso).slice(0, 10) + "T12:00:00")); } catch { return ""; } }
 const token = () => localStorage.getItem("token");
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2600); }
@@ -340,16 +343,105 @@ function attRow(c) {
   const [k, lab] = sevMap[c.sev] || ["info", "A vigilar"]; const view = GO_VIEW[c.go];
   return `<div class="att"><div class="ic ${k}">${ic(ICN_TIPO[c.tipo] || "alert", 18)}</div><div class="grow"><b>${c.titulo}</b><p>${c.decision || c.narrativa}</p><div class="meta"><span>${lab}</span></div></div>${view ? `<button class="btn sm" data-view="${view}">Abrir</button>` : ""}</div>`;
 }
-// Gráfico de área SVG (línea + relleno). data = array de números.
-function area(data, { h = 120 } = {}) {
-  const vals = (data || []).map((v) => Number(v) || 0); const w = 640;
+// Gráfico de área SVG (línea + relleno), con el dato al pasar el ratón.
+//
+// `data` puede ser un array de números (como siempre) o un objeto
+// { valores, etiquetas, extra } donde `extra` es una segunda cifra por punto —lo que se
+// facturó ese día, típicamente— que se enseña debajo en el globo.
+//
+// El globo hace falta porque un gráfico sin números concretos solo sirve para ver la forma,
+// y la pregunta que se hace de verdad al mirarlo es «¿y el sábado cuánto fue?».
+function area(data, { h = 120, fmt = (v) => num(v), fmtExtra = (v) => eur(v), sufijo = "" } = {}) {
+  const cfg = Array.isArray(data) ? { valores: data } : (data || {});
+  const vals = (cfg.valores || []).map((v) => Number(v) || 0);
+  const etiquetas = cfg.etiquetas || [];
+  const extra = cfg.extra || null;
+  const w = 640;
   if (vals.length < 2) return `<div class="mut" style="height:${h}px;display:grid;place-items:center;font-size:13px">Sin datos suficientes para el gráfico</div>`;
   const max = Math.max(...vals, 1), min = Math.min(...vals, 0), rng = (max - min) || 1;
   const X = (i) => (i / (vals.length - 1)) * w, Y = (v) => h - 8 - ((v - min) / rng) * (h - 16);
   let d = ""; vals.forEach((v, i) => { d += (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1) + " "; });
   const gid = "g" + Math.abs(vals.reduce((s, v, i) => s + v * (i + 1), 7) | 0) % 100000;
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" width="100%" height="${h}" style="display:block"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--brand)" stop-opacity=".22"/><stop offset="1" stop-color="var(--brand)" stop-opacity="0"/></linearGradient></defs><path d="${d}L ${w} ${h} L 0 ${h} Z" fill="url(#${gid})"/><path d="${d}" fill="none" stroke="var(--brand)" stroke-width="2" vector-effect="non-scaling-stroke"/><circle class="ep" cx="${X(vals.length - 1).toFixed(1)}" cy="${Y(vals[vals.length - 1]).toFixed(1)}" r="3.5"/></svg>`;
+
+  // Los puntos ya formateados viajan en el propio nodo: así el globo no depende de que
+  // el estado del panel siga igual cuando alguien pasa el ratón medio minuto después.
+  const puntos = vals.map((v, i) => ({
+    x: +((i / (vals.length - 1)) * 100).toFixed(3),           // % del ancho, no píxeles
+    et: etiquetas[i] || "",
+    v: fmt(v) + (sufijo ? " " + sufijo : ""),
+    ex: extra && extra[i] != null ? fmtExtra(extra[i]) : null,
+  }));
+
+  return `<div class="chart" data-puntos='${esc(JSON.stringify(puntos))}'>
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" width="100%" height="${h}" style="display:block">
+      <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--brand)" stop-opacity=".22"/><stop offset="1" stop-color="var(--brand)" stop-opacity="0"/></linearGradient></defs>
+      <path d="${d}L ${w} ${h} L 0 ${h} Z" fill="url(#${gid})"/>
+      <path d="${d}" fill="none" stroke="var(--brand)" stroke-width="2" vector-effect="non-scaling-stroke"/>
+      <circle class="ep" cx="${X(vals.length - 1).toFixed(1)}" cy="${Y(vals[vals.length - 1]).toFixed(1)}" r="3.5"/>
+    </svg>
+    <div class="chart-guia"></div><div class="chart-tip"></div></div>`;
 }
+
+// Un solo escuchador para todos los gráficos del panel, puesto una vez. El HTML de las
+// vistas se repinta entero a cada rato, así que enganchar por gráfico acabaría dejando
+// escuchadores muertos por todas partes.
+(function graficoInteractivo() {
+  let activo = null;
+  const cerrar = () => { if (activo) { activo.classList.remove("on"); activo = null; } };
+
+  document.addEventListener("mousemove", (e) => {
+    const chart = e.target.closest?.(".chart");
+    if (!chart) return cerrar();
+    let puntos;
+    try { puntos = JSON.parse(chart.getAttribute("data-puntos") || "[]"); } catch { return; }
+    if (!puntos.length) return;
+
+    const r = chart.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100));
+    // El punto más cercano, no el de la izquierda: pasando el ratón por el medio entre dos
+    // días, el que se enseña tiene que ser el que se tiene debajo.
+    let mejor = 0, dist = Infinity;
+    puntos.forEach((p, i) => { const d = Math.abs(p.x - pct); if (d < dist) { dist = d; mejor = i; } });
+    const p = puntos[mejor];
+
+    const guia = chart.querySelector(".chart-guia");
+    const tip = chart.querySelector(".chart-tip");
+    guia.style.left = p.x + "%";
+    tip.innerHTML = `${p.et ? `<b>${p.et}</b>` : ""}<span>${p.v}</span>${p.ex ? `<span class="ex">${p.ex}</span>` : ""}`;
+    // El globo se pega al lado que tenga sitio, para que no se salga por los bordes.
+    tip.style.left = p.x + "%";
+    tip.classList.toggle("izq", p.x > 70);
+    tip.classList.toggle("der", p.x < 30);
+    chart.classList.add("on");
+    activo = chart;
+  });
+  document.addEventListener("mouseleave", cerrar, true);
+})();
+// Barras de ventas por día (Ágora). Usa el mismo globo que el gráfico de área: antes
+// llevaba un `title` del navegador, que tarda un segundo en salir y no se puede leer de
+// un vistazo mientras se recorre la semana con el ratón.
+function barrasDia(dias, { hoy = null } = {}) {
+  const list = (dias || []).filter(Boolean);
+  if (!list.length) return `<div class="mut" style="font-size:12px">Sin días previos</div>`;
+  const maxV = Math.max(1, ...list.map((d) => Number(d.ventas) || 0));
+  const puntos = list.map((d, i) => ({
+    x: +(((i + 0.5) / list.length) * 100).toFixed(3),
+    et: fechaCorta(d.dia) + (d.dia === hoy ? " · en curso" : ""),
+    v: eur(d.ventas || 0),
+    ex: d.tickets ? `${num(d.tickets)} tickets · ${eur(d.ticket_medio || 0)}/tk` : null,
+  }));
+  const barras = list.map((d) => {
+    const alto = Math.round(((Number(d.ventas) || 0) / maxV) * 46) + 2;
+    const esHoy = d.dia === hoy;
+    return `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">
+      <div style="width:100%;max-width:26px;height:${alto}px;border-radius:4px 4px 0 0;background:${esHoy ? "var(--accent,#7a8450)" : "var(--brand,#8a9a5b)"};opacity:${esHoy ? 1 : 0.75}"></div>
+      <div class="mut" style="font-size:10px">${esc(String(d.dia).slice(8, 10))}</div></div>`;
+  }).join("");
+  return `<div class="chart" data-puntos='${esc(JSON.stringify(puntos))}'>
+    <div style="display:flex;align-items:flex-end;gap:5px;height:64px">${barras}</div>
+    <div class="chart-guia"></div><div class="chart-tip"></div></div>`;
+}
+
 // Barras verticales. items = [{label, value}].
 function bars(items, { fmt = (v) => num(v) } = {}) {
   const list = items || []; if (!list.length) return `<div class="mut" style="padding:10px 0">Sin datos</div>`;
@@ -398,7 +490,7 @@ function renderDashboard(d) {
   const localName = d.scope && d.scope.local;
   DASH_CONCERNS = (d.preocupaciones || []).length;
   // ── Cabecera ejecutiva ──
-  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${localName ? "Estado de <b>" + esc(localName) + "</b>" : "El estado de todo el grupo, de un vistazo."} · ${fechaLarga(d.fecha)}</div></div><div class="acts"><button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
+  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${localName ? "Estado de <b>" + esc(localName) + "</b>" : "El estado de todo el grupo, de un vistazo."}${fechaLarga(d.fecha) ? " · " + fechaLarga(d.fecha) : ""}</div></div><div class="acts"><button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
   // ── Sara: veredicto del día ──
   const contexto = [d.ayer && d.ayer.disponible ? d.ayer.texto : "", d.hoy && d.hoy.disponible ? d.hoy.texto : ""].filter(Boolean).join(" ");
   const sara = `<div class="card hero" style="margin-bottom:16px"><div style="display:flex;gap:13px;align-items:flex-start"><span class="avatar" style="width:40px;height:40px;border-radius:12px">S</span><div style="flex:1;min-width:0"><b style="font-size:14px">Sara · dirección de operaciones</b><p style="font-size:18px;line-height:1.5;margin:8px 0 0;font-weight:500;letter-spacing:-.01em">${d.titular || contexto || "Sin datos suficientes para hoy."}</p>${contexto ? `<p class="mut" style="font-size:13px;margin:10px 0 0;line-height:1.6">${contexto}</p>` : ""}</div></div></div>`;
@@ -421,7 +513,16 @@ function renderDashboard(d) {
   const ventasBox = (vOk || gOk)
     ? `<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—")}${stat3("Resultado", res != null ? eur(res) : "—", resCol)}</div>`
     : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y resultado<br><span class="hl">${DASH_RANGE.to === todayStr() && DASH_RANGE.from === todayStr() ? "aún sin cierre de hoy" : "al conectar Ágora"}</span></div>`;
-  const grafico = serieVals.length >= 2 ? area(serieVals, { h: 120 }) : `<div class="mut" style="font-size:12.5px;padding:14px 0">${totalPeriodo ? "Rango de un día — sin serie para graficar." : "Sin reservas en este periodo."}</div>`;
+  // Al pasar el ratón se ve el día, cuántas reservas y —si Ágora está conectado— lo que
+  // se facturó ESE día. Es la pregunta que uno se hace mirando el pico del sábado.
+  const ventasPorDia = new Map(((per && per.ventas && per.ventas.serie) || []).map((v) => [String(v.dia), Number(v.ventas) || 0]));
+  const grafico = serieVals.length >= 2
+    ? area({
+        valores: serieVals,
+        etiquetas: rSerie.map((x) => fechaCorta(x.dia)),
+        extra: vOk ? rSerie.map((x) => ventasPorDia.get(String(x.dia)) ?? null) : null,
+      }, { h: 120, fmt: (v) => num(v) + (v === 1 ? " comensal" : " comensales"), fmtExtra: (v) => eur(v) + " facturado" })
+    : `<div class="mut" style="font-size:12.5px;padding:14px 0">${totalPeriodo ? "Rango de un día — sin serie para graficar." : "Sin reservas en este periodo."}</div>`;
   const notaRes = (vOk || gOk) ? `<div class="mut" style="font-size:11px;margin-top:8px">Resultado = ventas${per.hoyEnVivo ? " (incluye hoy)" : ""} − gastos en facturas del periodo (no incluye personal).</div>` : "";
   const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div></div>${ventasBox}</div>${grafico}${notaRes}</div>`;
 
@@ -703,20 +804,23 @@ function invHeader(titulo, sub, back) {
   const b = back ? `<button class="btn" data-act="${back.act}" ${back.data || ""} style="margin-bottom:12px">‹ ${esc(back.label)}</button>` : "";
   return `${b}<div class="ph"><div class="eyebrow">Inventarios</div><h1>${esc(titulo)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
 }
+// El local sale del selector de la barra de arriba, como en el resto del panel. Antes
+// Inventarios tenía su propia pantalla de «elige local», que era un paso de más y encima
+// se desincronizaba de lo que ponía la barra.
+function invScope() { INV.local = localFijadoFE() || DASH_LOCAL || ""; return INV.local; }
+
 async function loadInventario() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
-  try {
-    const locales = await api("/api/inventario/locales");
-    if ((locales || []).length === 1) { INV.local = locales[0]; return loadInvProveedores(); }
-    view.innerHTML = renderInvLocales(locales || []);
-  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+  invScope();
+  if (sinPublico(INV.local)) { view.innerHTML = avisoSinPublico("Inventarios", "Operación", "inventarios"); return; }
+  if (!INV.local) {
+    view.innerHTML = invHeader("Inventarios", "Elige un establecimiento") +
+      `<div class="card"><div class="ch"><h3>Elige un establecimiento</h3></div><p class="mut" style="margin:0">El inventario es de un local concreto. Selecciónalo arriba, en la barra.</p></div>`;
+    return;
+  }
+  return loadInvProveedores();
 }
-function renderInvLocales(locales) {
-  const cards = locales.length ? `<div class="grid g2">${locales.map((l) => `<button class="card" data-act="inv-local" data-local="${esc(l)}" style="text-align:left;cursor:pointer;padding:18px"><div style="font-weight:600;font-size:16px">${esc(l)}</div><div class="mut" style="margin-top:4px">Ver proveedores ›</div></button>`).join("")}</div>`
-    : `<div class="card"><div class="mut" style="padding:8px">No tienes locales asignados.</div></div>`;
-  return `${invHeader("Inventarios", "Elige un establecimiento")}${cards}`;
-}
-function invPickLocal(local) { INV.local = local; loadInvProveedores(); }
+
 async function loadInvProveedores() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
@@ -725,15 +829,15 @@ async function loadInvProveedores() {
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function renderInvProveedores(list) {
-  const multi = !localFijadoFE(); // dirección puede volver a elegir local
-  const back = multi ? { act: "inv-volver-locales", label: "Locales" } : null;
-  const toolbar = `<div class="toolbar"><div class="mut" style="flex:1;font-size:13px">Local: <b>${esc(INV.local)}</b></div><button class="btn" data-act="inv-pedidos">Pedidos</button><button class="btn primary" data-act="inv-nuevo-prov">+ Proveedor</button></div>`;
+  // Sin botón de «Locales»: el establecimiento se cambia arriba, en la barra.
+  const back = null;
+  const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn" data-act="inv-pedidos">Pedidos</button><button class="btn primary" data-act="inv-nuevo-prov">+ Proveedor</button></div>`;
   const cards = list.length ? `<div class="grid g2">${list.map((p) => {
     const ultimo = p.ultimo_inventario ? fechaCorta(String(p.ultimo_inventario).slice(0, 10)) : "—";
     const estado = Number(p.en_curso) > 0 ? '<span class="pill warn">Inventario en curso</span>' : '<span class="pill ok">Al día</span>';
     return `<div class="card" style="padding:16px"><div style="display:flex;justify-content:space-between;align-items:start;gap:8px"><div><div style="font-weight:600;font-size:16px">${esc(p.nombre)}</div><div class="mut" style="font-size:13px;margin-top:3px">${num(p.n_productos)} producto(s) · último: ${esc(ultimo)}</div><div style="margin-top:8px">${estado}</div></div></div><div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" data-act="inv-contar" data-id="${p.id}" data-nombre="${esc(p.nombre)}" style="flex:1">Contar</button><button class="btn" data-act="inv-config" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Configurar</button></div></div>`;
   }).join("")}</div>` : `<div class="card"><div class="mut" style="padding:8px">No hay proveedores en este local. Crea el primero con «+ Proveedor».</div></div>`;
-  return `${invHeader("Proveedores", "Elige un proveedor para inventariar", back)}${toolbar}${cards}`;
+  return `${invHeader("Proveedores", `Elige un proveedor para inventariar · <b>${esc(nombreCortoLocal(INV.local))}</b>`, back)}${toolbar}${cards}`;
 }
 async function invNuevoProveedor() {
   let sugerencias = [];
@@ -2321,6 +2425,10 @@ function horCfgPedirFecha(titulo, nota) {
 // Los turnos de la casa. Se editan aquí porque suponerlos sale caro: de ellos cuelgan las
 // necesidades, el generador y lo que el PDF decide escribir o callar.
 function horCfgTurnos(d) {
+  const areaFila = (a) => `<tr data-area="${a.id || ""}">
+      <td><input class="inp horcfg-a" data-k="nombre" value="${esc(a.nombre || "")}" style="width:180px" placeholder="BARRA"></td>
+      <td style="text-align:right"><button class="btn sm danger" data-horcfg="area-quitar">Quitar</button></td>
+    </tr>`;
   const fila = (t) => `<tr data-tramo="${t.id || ""}">
       <td><input class="inp horcfg-t" data-k="nombre" value="${esc(t.nombre || "")}" style="width:130px" placeholder="MAÑANA"></td>
       <td><input class="inp horcfg-t" data-k="inicio" type="time" value="${horHM(t.inicio_min)}" style="width:110px"></td>
@@ -2340,7 +2448,18 @@ function horCfgTurnos(d) {
       <button class="btn" data-horcfg="turno-add">Añadir turno</button>
       <button class="btn primary" data-horcfg="guardar-turnos">Guardar</button></div>
     <p class="mut" style="margin:14px 0 0;line-height:1.5">Quitar un turno no borra los cuadrantes ya hechos:
-      se desactiva, y las semanas antiguas siguen contando lo que fue.</p>`;
+      se desactiva, y las semanas antiguas siguen contando lo que fue.</p>
+
+    <div class="ch" style="margin-top:24px"><h3 style="margin:0;font-size:13px">Áreas</h3></div>
+    <p class="mut" style="margin:0 0 10px;line-height:1.55">Las filas del cuadrante. Vienen SALA y COCINA porque
+      es lo más común, pero cada casa tiene las suyas: BARRA, TERRAZA, OFFICE…</p>
+    <div class="tw"><table class="tbl">
+      <thead><tr><th>Nombre</th><th></th></tr></thead>
+      <tbody id="horCfgAreas">${d.areas.map(areaFila).join("")}</tbody></table></div>
+    <p id="horCfgAMsg" style="margin:10px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
+    <div style="display:flex;gap:10px;justify-content:space-between;margin-top:8px">
+      <button class="btn" data-horcfg="area-add">Añadir área</button>
+      <button class="btn primary" data-horcfg="guardar-areas">Guardar áreas</button></div>`;
 }
 
 // Rejilla área × tramo × día. Se rellena una vez y no se vuelve a tocar en meses, así que
@@ -2517,6 +2636,28 @@ async function horCfgAccion(e, ov, pintar) {
     return;
   }
   if (act === "turno-quitar") { b.closest("tr").remove(); return; }
+
+  if (act === "area-add") {
+    ov.querySelector("#horCfgAreas").insertAdjacentHTML("beforeend",
+      `<tr data-area=""><td><input class="inp horcfg-a" data-k="nombre" value="" style="width:180px" placeholder="BARRA"></td>
+       <td style="text-align:right"><button class="btn sm danger" data-horcfg="area-quitar">Quitar</button></td></tr>`);
+    return;
+  }
+  if (act === "area-quitar") { b.closest("tr").remove(); return; }
+
+  if (act === "guardar-areas") {
+    const msg = ov.querySelector("#horCfgAMsg");
+    const areas = [...ov.querySelectorAll("#horCfgAreas tr")].map((tr) => ({
+      id: tr.getAttribute("data-area") || null,
+      nombre: tr.querySelector('[data-k="nombre"]').value.trim(),
+    }));
+    if (!areas.length) { msg.textContent = "Tiene que quedar al menos un área."; return; }
+    if (areas.some((a) => !a.nombre)) { msg.textContent = "Todas las áreas necesitan un nombre."; return; }
+    try { await apiSend("PUT", "/api/horarios/areas", { local: HOR.local, areas }); toast("Áreas guardadas ✅"); }
+    catch (err) { msg.textContent = err.message; return; }
+    await loadHorarios();
+    return pintar();
+  }
 
   if (act === "guardar-turnos") {
     const msg = ov.querySelector("#horCfgTMsg");
@@ -3780,18 +3921,13 @@ function renderAgoraVivo(vivo) {
   const card = (L) => {
     if (L.error) return `<div class="card"><div class="ch"><h3>${esc(nombreCortoLocal(L.local))}</h3><span class="pill bad">Sin datos</span></div><div class="mut" style="font-size:12px">${esc(L.error)}</div></div>`;
     const r = resumenVivoLocal(L.dias, hoy);
-    const maxV = Math.max(1, ...r.cerrados.map((d) => d.ventas || 0), (r.hoy && r.hoy.ventas) || 0);
-    const bars = [...r.cerrados, ...(r.hoy ? [r.hoy] : [])].map((d) => {
-      const h = Math.round(((d.ventas || 0) / maxV) * 46) + 2;
-      const esHoy = d.dia === hoy;
-      return `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1"><div style="width:100%;max-width:26px;height:${h}px;border-radius:4px 4px 0 0;background:${esHoy ? "var(--accent,#7a8450)" : "var(--brand,#8a9a5b)"};opacity:${esHoy ? 1 : 0.75}" title="${esc(fechaCorta(d.dia))}: ${eur(d.ventas)}"></div><div class="mut" style="font-size:10px">${esc(String(d.dia).slice(8, 10))}</div></div>`;
-    }).join("");
+    const bars = barrasDia([...r.cerrados, ...(r.hoy ? [r.hoy] : [])], { hoy });
     return `<div class="card"><div class="ch"><h3>${esc(nombreCortoLocal(L.local))}</h3>${r.hoy ? '<span class="pill ok">En vivo</span>' : ""}</div>
       <div class="grid g2" style="gap:10px">
         <div><div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Hoy (en curso)</div><div style="font-size:22px;font-weight:700;font-variant-numeric:tabular-nums">${r.hoy ? eur(r.hoy.ventas) : "—"}</div><div class="mut" style="font-size:11px">${r.hoy ? num(r.hoy.tickets) + " tickets · " + eur(r.hoy.ticket_medio) + "/tk" : ""}</div></div>
         <div><div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">Ayer</div><div style="font-size:22px;font-weight:700;font-variant-numeric:tabular-nums">${r.ayer ? eur(r.ayer.ventas) : "—"}</div><div class="mut" style="font-size:11px">${r.ayer ? num(r.ayer.tickets) + " tickets · " + eur(r.ayer.ticket_medio) + "/tk" : ""}</div></div>
       </div>
-      <div style="display:flex;align-items:flex-end;gap:5px;height:64px;margin-top:12px">${bars || '<div class="mut" style="font-size:12px">Sin días previos</div>'}</div>
+      <div style="margin-top:12px">${bars}</div>
       <div class="mut" style="font-size:11px;margin-top:4px">Últimos días cerrados: <b>${eur(r.total7)}</b> · ${num(r.tickets7)} tickets</div></div>`;
   };
   return `<div class="ch" style="padding:0 2px 6px"><h3>Ventas por local · hoy en vivo</h3><button class="btn sm" data-act="ag-vivo-refresh">Actualizar</button></div><div class="grid g2" style="gap:14px">${vivo.locales.map(card).join("")}</div>${vivo.generado ? `<div class="mut" style="font-size:11px;margin-top:6px">Actualizado ${esc(String(vivo.generado).slice(11, 16))}${vivo.cache ? " (caché)" : ""}</div>` : ""}`;
@@ -4508,8 +4644,6 @@ document.addEventListener("click", (e) => {
   else if (act === "cancel") cancelReserva(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "mant-nueva") openNuevaIncidencia();
   else if (act === "mant-estado") mantEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
-  else if (act === "inv-local") invPickLocal(t.getAttribute("data-local"));
-  else if (act === "inv-volver-locales") loadInventario();
   else if (act === "inv-volver-prov") loadInvProveedores();
   else if (act === "inv-volver-conteo") loadInvConteo();
   else if (act === "inv-nuevo-prov") invNuevoProveedor();
