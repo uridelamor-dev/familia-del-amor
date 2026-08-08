@@ -36,6 +36,7 @@ import { detectarConflictos, resumirConflictos } from "./src/modules/horarios/co
 import { validarPublicacion, construirSnapshot } from "./src/modules/horarios/versiones.js";
 import { serializarCanonico } from "./src/core/canonico.js";
 import { construirCuadrante } from "./src/modules/horarios/cuadrante.js";
+import { generarSemana, ORIGEN as ORIGEN_SOLVER } from "./src/modules/horarios/solver.js";
 import { construirPdfSemana, nombreFichero } from "./src/modules/horarios/pdf/schedule-pdf.service.js";
 import { ensureSchemaFichajes } from "./src/modules/fichajes/schema.js";
 import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
@@ -4266,6 +4267,96 @@ async function horPdfDeSemana(s) {
   if (perdidos.length) console.warn("[horarios] PDF con caracteres sustituidos:", [...new Set(perdidos)].join(" "));
   return { buffer, layout, dias, nombre: nombreFichero({ local: s.local, lunes: s.lunes, domingo: dias[6], version: s.version, estado: s.estado }) };
 }
+
+// ── El generador ─────────────────────────────────────────────────────────────
+// Escribe un BORRADOR y ya está: no publica, no manda nada y no toca ninguna versión
+// publicada. Lo que sale de aquí lo revisa una persona, que sabe cosas que no están en
+// ninguna tabla (que hoy hay bautizo, que fulano está de bajón, que el sábado viene un
+// autocar). Además devuelve por qué ha puesto a cada uno y qué no ha podido cubrir.
+app.post("/api/horarios/generar", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const lunes = lunesDe(String(req.body?.lunes || ""));
+    if (!lunes) return res.status(400).json({ ok: false, error: "Falta la semana" });
+
+    const [cfg, areas, tramos, trabajadores, necesidades, ausencias, contratos, disponibilidad] = await Promise.all([
+      dbGet(`SELECT descanso_min_horas FROM hor_config WHERE local = ?`, [local]),
+      dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
+      dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden`, [local]),
+      dbAll(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
+             AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [local]),
+      dbAll(`SELECT * FROM hor_necesidades WHERE local = ?`, [local]),
+      dbAll(`SELECT * FROM hor_ausencias WHERE local = ? OR local IS NULL`, [local]),
+      dbAll(`SELECT c.* FROM hor_contratos c JOIN users u ON u.id = c.worker_id WHERE u.local = ?`, [local]),
+      dbAll(`SELECT d.* FROM hor_disponibilidad d JOIN users u ON u.id = d.worker_id WHERE u.local = ?`, [local]),
+    ]);
+    if (!necesidades.length) {
+      return res.status(409).json({ ok: false, error: "Antes hay que decir cuánta gente hace falta cada día. Sin eso no hay nada que generar." });
+    }
+
+    const r = generarSemana({
+      lunes, areas, tramos, trabajadores, necesidades, ausencias, contratos, disponibilidad,
+      objetivos: req.body?.solo_minimos !== true,
+      ajustes: cfg?.descanso_min_horas ? { descansoHoras: Number(cfg.descanso_min_horas) } : {},
+    });
+    // Solo se PROPONE. Guardar es otra petición, y es la que decide la persona.
+    res.json({ ok: true, local, lunes, ...r });
+  } catch (e) {
+    console.error("[horarios] generar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo generar la propuesta" });
+  }
+});
+
+// Aceptar la propuesta: la escribe en el borrador. Nunca sobre una semana publicada —
+// para eso está «Cambiar horario», que clona en una versión nueva.
+app.post("/api/horarios/generar/aceptar", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const lunes = lunesDe(String(req.body?.lunes || ""));
+    const propuestas = Array.isArray(req.body?.asignaciones) ? req.body.asignaciones : [];
+    if (!lunes || !propuestas.length) return res.status(400).json({ ok: false, error: "No hay nada que guardar" });
+
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    const ahora = isoConOffset(Date.now());
+
+    let semana = (await q(`SELECT * FROM hor_semanas WHERE local = $1 AND lunes = $2 AND estado = 'borrador'`, [local, lunes])).rows[0];
+    if (!semana) {
+      const pub = (await q(`SELECT max(version) AS v FROM hor_semanas WHERE local = $1 AND lunes = $2`, [local, lunes])).rows[0];
+      semana = (await q(
+        `INSERT INTO hor_semanas (local, lunes, version, estado, origen, creado_en, creado_por)
+         VALUES ($1,$2,$3,'borrador',$4,$5,$6) RETURNING *`,
+        [local, lunes, Number(pub?.v || 0) + 1, ORIGEN_SOLVER, ahora, req.user.username])).rows[0];
+    } else if (req.body?.reemplazar) {
+      // Reemplazar borra lo que hubiera en el BORRADOR, nunca nada publicado.
+      await q(`DELETE FROM hor_asignaciones WHERE semana_id = $1`, [semana.id]);
+      await q(`UPDATE hor_semanas SET origen = $1 WHERE id = $2`, [ORIGEN_SOLVER, semana.id]);
+    }
+
+    let n = 0;
+    for (const a of propuestas) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.dia || ""))) continue;
+      await q(
+        `INSERT INTO hor_asignaciones (semana_id, local, worker_id, dia, area_id, tramo_id, inicio_min, fin_min, tipo, nota, creado_en)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'turno',$9,$10)`,
+        [semana.id, local, Number(a.worker_id), a.dia, a.area_id ?? null, a.tramo_id ?? null,
+         Number(a.inicio_min), Number(a.fin_min), a.porque ? String(a.porque).slice(0, 200) : null, ahora]);
+      n++;
+    }
+    await client.query("COMMIT");
+    await ficAuditar("horario", semana.id, "generar", req.user.username, { local, detalle: { lunes, turnos: n } });
+    res.json({ ok: true, semana_id: semana.id, guardadas: n, mensaje: `${n} turnos en el borrador. Revísalo antes de publicar.` });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[horarios] aceptar propuesta:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar la propuesta" });
+  } finally {
+    client.release();
+  }
+});
 
 // Mandar el cuadrante al grupo de WhatsApp del local.
 //

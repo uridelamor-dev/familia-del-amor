@@ -2003,7 +2003,8 @@ function horAcciones() {
   const n = (HOR.asignaciones || []).length;
   const pdf = `<button class="btn" data-act="hor-pdf" ${n ? "" : "disabled"} title="Descargar el cuadrante en PDF">${ic("receipt", 15)} PDF</button>`;
   if (horEditable()) {
-    return `<button class="btn" data-act="hor-copiar">Copiar semana</button>
+    return `<button class="btn" data-act="hor-generar" title="Proponer un cuadrante a partir de las necesidades, los contratos y las ausencias">Proponer horario</button>
+      <button class="btn" data-act="hor-copiar">Copiar semana</button>
       <button class="btn" data-act="hor-plantillas">Plantillas</button>
       ${pdf}
       <button class="btn primary" data-act="hor-publicar" ${n ? "" : "disabled"}>Publicar</button>`;
@@ -2133,6 +2134,73 @@ async function horPdf() {
     toast(Number(pgs) > 1 ? `PDF descargado · ${pgs} hojas` : "PDF descargado ✅");
   } catch { toast("No se pudo generar el PDF"); }
 }
+
+// ── Proponer horario ────────────────────────────────────────────────────────
+// La propuesta se ENSEÑA antes de guardar nada. El encargado sabe cosas que no están en
+// ninguna tabla, así que lo que sale del generador es un punto de partida, no una orden:
+// aquí se ve el reparto de horas, lo que no ha cabido y por qué, y se decide.
+const HOR_MOTIVO = {
+  ausencia: "de vacaciones o de baja", no_disponible: "han dicho que ese día no pueden",
+  solape: "ya trabajan a esa hora", descanso: "no llegan a las horas de descanso",
+  jornada_larga: "se les haría una jornada demasiado larga", dias_seguidos: "llevarían demasiados días seguidos",
+  excede_contrato: "se pasarían de su contrato",
+};
+
+async function horGenerar() {
+  toast("Calculando…");
+  let j;
+  try { j = await apiSend("POST", "/api/horarios/generar", { local: HOR.local, lunes: HOR.lunes }); }
+  catch (e) { return toast(e.message); }
+
+  const cap = j.resumen.capacidad;
+  const faltan = j.sinCubrir.filter((s) => s.obligatorio);
+  const filaPersona = (p) => `<tr>
+      <td>${esc(p.nombre)}</td>
+      <td style="text-align:right">${esc(horHoras(p.minutos))}</td>
+      <td style="text-align:right" class="mut">${p.contratoMin != null ? esc(horHoras(p.contratoMin)) : "—"}</td>
+      <td style="text-align:right;white-space:nowrap"><b class="${p.desviacion != null && p.desviacion < -60 ? "fg-danger" : ""}">${p.desviacion == null ? "—" : esc(ficSigno(p.desviacion))}</b></td>
+      <td style="text-align:right" class="mut">${p.dias}</td>
+    </tr>`;
+
+  const ov = modal("Propuesta de horario", `
+    ${cap.mensaje ? `<p class="fic-nota" style="margin-top:0"><b>${esc(cap.mensaje)}</b></p>` : ""}
+    <p style="margin:0 0 14px;line-height:1.55">
+      <b>${j.asignaciones.length} turnos</b> para cubrir ${j.resumen.cubiertos} de ${j.resumen.huecos} huecos.
+      ${faltan.length ? `Quedan <b>${faltan.length}</b> por debajo del mínimo.` : "Todos los mínimos quedan cubiertos."}
+      Esto es un <b>borrador</b>: se guarda sin publicar y lo puedes cambiar entero.</p>
+
+    ${faltan.length ? `<details class="card fold" style="margin-bottom:14px">
+      <summary><h3>Lo que no ha cabido</h3><span class="foldr"><span>${faltan.length} por debajo del mínimo</span><span class="car">${ic("chev", 16)}</span></span></summary>
+      <div class="rows" style="padding:0 18px 14px;max-height:230px;overflow:auto">${faltan.slice(0, 12).map((s) => `<div class="row"><div class="grow">
+        <div class="t1">${esc(s.dia)} · ${esc(s.tramo || "—")} · ${esc(s.area || "—")}</div>
+        <div class="t2">${esc(s.porque.map((p) => `${p.n} ${HOR_MOTIVO[p.motivo] || p.motivo}`).join(" · "))}</div>
+      </div></div>`).join("")}${faltan.length > 12 ? `<div class="mut" style="padding-top:8px">…y ${faltan.length - 12} más</div>` : ""}</div></details>` : ""}
+
+    <div class="tw" style="max-height:300px;overflow:auto"><table class="tbl">
+      <thead><tr><th>Persona</th><th style="text-align:right">Propuesto</th><th style="text-align:right">Contrato</th>
+      <th style="text-align:right">Dif.</th><th style="text-align:right">Días</th></tr></thead>
+      <tbody>${j.resumen.personas.map(filaPersona).join("")}</tbody></table></div>
+
+    <label style="display:flex;gap:8px;align-items:center;margin-top:14px;font-size:13px">
+      <input type="checkbox" id="horGenReemplazar" checked> Sustituir lo que haya ahora en el borrador
+    </label>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Descartar</button>
+      <button class="btn primary" id="horGenOk" ${j.asignaciones.length ? "" : "disabled"}>Guardar como borrador</button>
+    </div>`);
+
+  ov.querySelector("#horGenOk")?.addEventListener("click", async () => {
+    try {
+      const r = await apiSend("POST", "/api/horarios/generar/aceptar", {
+        local: HOR.local, lunes: HOR.lunes, asignaciones: j.asignaciones,
+        reemplazar: ov.querySelector("#horGenReemplazar").checked,
+      });
+      ov.remove(); toast(r.mensaje || "Borrador guardado ✅"); loadHorarios();
+    } catch (e) { toast(e.message); }
+  });
+}
+
+const horHoras = (min) => `${Math.floor((min || 0) / 60)} h${(min || 0) % 60 ? " " + ((min || 0) % 60) + " min" : ""}`;
 
 // Mandar el cuadrante al grupo. Manda de verdad un mensaje a mucha gente, así que la
 // primera vez se pregunta a qué grupo y SIEMPRE se confirma antes de enviar.
@@ -3924,6 +3992,7 @@ document.addEventListener("click", (e) => {
   else if (act === "hor-historico") horHistorico();
   else if (act === "hor-pdf") horPdf();
   else if (act === "hor-wa") horMandarAlGrupo();
+  else if (act === "hor-generar") horGenerar();
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }
