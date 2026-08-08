@@ -39,6 +39,18 @@ function ordenarCelda(items) {
 // `fuera` recoge lo que no encaja en ningún tramo o área (turnos sueltos, libranzas,
 // vacaciones). No se descarta nunca en silencio: se devuelve aparte para que la interfaz
 // pueda enseñarlo. Perder un turno por no encajar en la rejilla sería el peor fallo posible.
+// Índice del bloque con el que más se solapa un turno suelto. Devuelve null si no toca
+// ninguno: entonces sí es un turno que no pertenece a la rejilla y va a `fuera`.
+export function bloqueQueMasSolapa(item, tramos = []) {
+  let mejor = null, mejorSolape = 0;
+  for (const [i, t] of tramos.entries()) {
+    const s = Math.min(Number(item.fin_min), Number(t.fin_min)) - Math.max(Number(item.inicio_min), Number(t.inicio_min));
+    // `>` y no `>=`: a igualdad gana el primero, que es el de más arriba en el cuadrante.
+    if (s > mejorSolape) { mejorSolape = s; mejor = i; }
+  }
+  return mejor;
+}
+
 export function construirCuadrante({ lunes, tramos = [], areas = [], asignaciones = [], trabajadores = [] }) {
   const dias = diasSemana(lunes);
   const idxDia = new Map(dias.map((d, i) => [d, i]));
@@ -69,7 +81,15 @@ export function construirCuadrante({ lunes, tramos = [], areas = [], asignacione
       franja: franjaSiDifiere(a, tramoPorId.get(String(a.tramo_id))),
       minutos: duracionMin(a.inicio_min, a.fin_min),
     };
-    const bi = idxTramo.get(String(a.tramo_id));
+    // Un turno sin tramo —un refuerzo de 4 h, o algo metido a mano a una hora suelta— se
+    // coloca en el bloque con el que MÁS SE SOLAPA. Sin esto acababa en `fuera`, o sea,
+    // fuera de la rejilla del PDF: el refuerzo no aparecía en el cuadrante que se manda al
+    // grupo, que es justo donde la gente lo mira.
+    //
+    // No hace falta nada más: `franjaSiDifiere` ya escribe las horas al lado del nombre
+    // cuando no coinciden con las del bloque, que es exactamente lo que se quiere ver de
+    // un refuerzo («10-14» junto a quien lo hace, dentro del bloque de mañana).
+    const bi = idxTramo.has(String(a.tramo_id)) ? idxTramo.get(String(a.tramo_id)) : bloqueQueMasSolapa(item, tramos);
     const ai = idxArea.get(String(a.area_id));
     if (d == null || bi == null || ai == null || item.tipo !== "turno") { fuera.push(item); continue; }
     bloques[bi].areas[ai].dias[d].push(item);

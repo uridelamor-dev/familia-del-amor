@@ -70,16 +70,37 @@ describe("cuadrante — estructura de la rejilla", () => {
     assert.equal(judit.franja, "11-15");
   });
 
-  test("NO SE PIERDE NADIE: lo que no encaja en la rejilla sale aparte", () => {
+  test("UN TURNO SIN TRAMO SE COLOCA EN EL BLOQUE QUE MÁS LE PEGA", () => {
+    // Es el caso de un refuerzo (4 h a una hora suelta, sin tramo) y el de un turno cuyo
+    // tramo se borró. Antes caían en `fuera`, o sea, desaparecían de la rejilla del PDF:
+    // gente que trabaja de verdad y que no salía en el cuadrante que se manda al grupo.
     const c = construirCuadrante({
       ...base,
       asignaciones: [
-        ...base.asignaciones,
-        asig({ id: 5, worker_id: 5, dia: "2026-08-11", tramo_id: 99, inicio_min: 600, fin_min: 800 }), // tramo inexistente
-        asig({ id: 6, worker_id: 5, dia: "2026-08-12", tipo: "vacaciones", inicio_min: 0, fin_min: 0 }),
+        asig({ id: 5, worker_id: 5, dia: "2026-08-11", tramo_id: null, inicio_min: 600, fin_min: 840 }), // 10-14
+        asig({ id: 6, worker_id: 4, dia: "2026-08-11", tramo_id: 99, inicio_min: 1200, fin_min: 1440 }), // 20-00, tramo borrado
       ],
     });
-    assert.equal(c.fuera.length, 2, "un turno con tramo desconocido y unas vacaciones");
+    assert.equal(c.fuera.length, 0, "ninguno de los dos se pierde");
+    const mañana = c.bloques[0].areas[0].dias[1];
+    const tarde = c.bloques[1].areas[0].dias[1];
+    assert.equal(mañana.length, 1, "el 10-14 va al bloque de mañana");
+    assert.equal(tarde.length, 1, "y el 20-00 al de tarde");
+    // Y sus horas quedan escritas al lado, que es justo para lo que sirve `franjaSiDifiere`.
+    assert.equal(mañana[0].franja, "10-14");
+    assert.equal(tarde[0].franja, "20-0");
+  });
+
+  test("lo que NO pega con ningún bloque sí sale aparte: no se mete con calzador", () => {
+    const c = construirCuadrante({
+      ...base,
+      asignaciones: [
+        // 03:00-05:00: no toca ni el 11-16 ni el 19-01. Meterlo en uno sería mentir.
+        asig({ id: 7, worker_id: 5, dia: "2026-08-11", tramo_id: null, inicio_min: 180, fin_min: 300 }),
+        asig({ id: 8, worker_id: 5, dia: "2026-08-12", tipo: "vacaciones", inicio_min: 0, fin_min: 0 }),
+      ],
+    });
+    assert.equal(c.fuera.length, 2);
     assert.ok(c.fuera.some((f) => f.tipo === "vacaciones"));
   });
 
