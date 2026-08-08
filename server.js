@@ -31,6 +31,9 @@ import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, 
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, caducidadMes, generarToken } from "./src/modules/rrhh/pulso.js";
 import { ensureSchemaHorarios, sembrarLocal } from "./src/modules/horarios/schema.js";
 import { instanteANegocio, lunesDe, diasSemana, isoConOffset } from "./src/modules/horarios/tiempo.js";
+import { detectarConflictos, resumirConflictos } from "./src/modules/horarios/conflictos.js";
+import { validarPublicacion, construirSnapshot } from "./src/modules/horarios/versiones.js";
+import { serializarCanonico } from "./src/core/canonico.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
@@ -3988,6 +3991,236 @@ app.delete("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (r
     await dbRun(`DELETE FROM hor_asignaciones WHERE id = ?`, [a.id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo borrar el turno" }); }
+});
+
+// Contexto para detectar conflictos: ausencias, contratos y necesidades del local.
+async function horContexto(local, lunes, dias) {
+  const [ausencias, contratos, necesidades] = await Promise.all([
+    dbAll(`SELECT * FROM hor_ausencias WHERE estado = 'aprobada' AND hasta >= ? AND desde <= ?`, [dias[0], dias[6]]),
+    dbAll(`SELECT * FROM hor_contratos WHERE desde <= ? AND (hasta IS NULL OR hasta >= ?)`, [dias[6], dias[0]]),
+    dbAll(`SELECT * FROM hor_necesidades WHERE local = ?`, [local]),
+  ]);
+  return { ausencias, contratos, necesidades };
+}
+
+// Conflictos de una semana. Se consulta al abrirla y antes de publicar.
+app.get("/api/horarios/semana/:id/conflictos", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const s = await dbGet(`SELECT * FROM hor_semanas WHERE id = ?`, [req.params.id]);
+    if (!s) return res.status(404).json({ ok: false, error: "Semana no encontrada" });
+    if (!rrhhPuedeLocal(req, s.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const dias = diasSemana(s.lunes);
+    const [asignaciones, equipo, areas, tramos, ctx] = await Promise.all([
+      dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]),
+      dbAll(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')`, [s.local]),
+      dbAll(`SELECT id, nombre FROM hor_areas WHERE local = ?`, [s.local]),
+      dbAll(`SELECT id, nombre FROM hor_tramos WHERE local = ?`, [s.local]),
+      horContexto(s.local, s.lunes, dias),
+    ]);
+    const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos, ...ctx });
+    res.json({ ok: true, ...resumirConflictos(conflictos), conflictos });
+  } catch (e) {
+    console.error("[horarios] conflictos:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron revisar los conflictos" });
+  }
+});
+
+// Copiar una semana (o aplicar una plantilla) sobre el borrador. Nunca publica solo.
+app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const chk = await horSemanaEditable(req, req.params.id);
+    if (chk.error) return res.status(chk.error).json({ ok: false, error: chk.mensaje });
+    const destino = chk.semana;
+    const diasDestino = diasSemana(destino.lunes);
+    const ahora = isoConOffset(Date.now());
+
+    let lineas = [];
+    if (req.body?.plantilla_id) {
+      const pl = await dbGet(`SELECT * FROM hor_plantillas WHERE id = ? AND local = ?`, [req.body.plantilla_id, destino.local]);
+      if (!pl) return res.status(404).json({ ok: false, error: "Plantilla no encontrada" });
+      const filas = await dbAll(`SELECT * FROM hor_plantilla_lineas WHERE plantilla_id = ? ORDER BY dow, inicio_min`, [pl.id]);
+      lineas = filas.filter((f) => f.worker_id).map((f) => ({ ...f, dia: diasDestino[Number(f.dow)] }));
+    } else {
+      const lunesOrigen = lunesDe(String(req.body?.lunes || "")) || addDiasISO(destino.lunes, -7);
+      const origen = await dbGet(
+        `SELECT * FROM hor_semanas WHERE local = ? AND lunes = ? AND estado IN ('publicado','borrador','sustituido','cerrado')
+         ORDER BY CASE estado WHEN 'publicado' THEN 0 WHEN 'cerrado' THEN 1 ELSE 2 END, version DESC LIMIT 1`,
+        [destino.local, lunesOrigen]
+      );
+      if (!origen) return res.status(404).json({ ok: false, error: "Esa semana no existe, no hay nada que copiar." });
+      const filas = await dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [origen.id]);
+      const diasOrigen = diasSemana(origen.lunes);
+      lineas = filas.map((f) => ({ ...f, dia: diasDestino[diasOrigen.indexOf(f.dia)] })).filter((f) => f.dia);
+    }
+
+    // Al copiar se COMPRUEBA quién sigue: dar de baja a alguien y que reaparezca en el
+    // cuadrante de la semana que viene sería un fallo grave y silencioso.
+    const equipo = await dbAll(
+      `SELECT id, nombre FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
+       AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL`, [destino.local]
+    );
+    const vivos = new Set(equipo.map((w) => String(w.id)));
+    const { ausencias } = await horContexto(destino.local, destino.lunes, diasDestino);
+    const ausente = (wid, dia) => (ausencias || []).some((a) =>
+      String(a.worker_id) === String(wid) && String(a.desde) <= dia && dia <= String(a.hasta));
+
+    const omitidos = [];
+    let copiadas = 0;
+    if (req.body?.reemplazar) await dbRun(`DELETE FROM hor_asignaciones WHERE semana_id = ?`, [destino.id]);
+    for (const l of lineas) {
+      if (!vivos.has(String(l.worker_id))) { omitidos.push({ worker_id: l.worker_id, dia: l.dia, motivo: "ya no está en el equipo" }); continue; }
+      if (ausente(l.worker_id, l.dia)) { omitidos.push({ worker_id: l.worker_id, dia: l.dia, motivo: "tiene una ausencia aprobada" }); continue; }
+      await dbRun(
+        `INSERT INTO hor_asignaciones (semana_id, local, worker_id, dia, area_id, tramo_id, inicio_min, fin_min, fin_abierto, tipo, nota, creado_en)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [destino.id, destino.local, l.worker_id, l.dia, l.area_id, l.tramo_id, l.inicio_min, l.fin_min, !!l.fin_abierto, l.tipo || "turno", l.nota || null, ahora]
+      );
+      copiadas++;
+    }
+    await dbRun(`UPDATE hor_semanas SET origen = ? WHERE id = ?`,
+      [req.body?.plantilla_id ? `plantilla:${req.body.plantilla_id}` : "copia", destino.id]);
+    res.json({ ok: true, copiadas, omitidos });
+  } catch (e) {
+    console.error("[horarios] copiar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo copiar" });
+  }
+});
+const addDiasISO = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+// Publicar. Es una transacción: o se hace todo o no se hace nada. Sustituye la versión
+// anterior, congela el snapshot con su hash y deja rastro.
+app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    await client.query("BEGIN");
+    const s = (await q(`SELECT * FROM hor_semanas WHERE id = ? FOR UPDATE`, [req.params.id])).rows[0];
+    if (!s) { await client.query("ROLLBACK"); return res.status(404).json({ ok: false, error: "Semana no encontrada" }); }
+    if (!rrhhPuedeLocal(req, s.local)) { await client.query("ROLLBACK"); return res.status(403).json({ ok: false, error: "Sin acceso" }); }
+
+    const dias = diasSemana(s.lunes);
+    const asignaciones = (await q(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id])).rows;
+    const equipo = (await q(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')`, [s.local])).rows;
+    const areas = (await q(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? ORDER BY orden`, [s.local])).rows;
+    const tramos = (await q(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? ORDER BY orden`, [s.local])).rows;
+    const ausencias = (await q(`SELECT * FROM hor_ausencias WHERE estado = 'aprobada' AND hasta >= ? AND desde <= ?`, [dias[0], dias[6]])).rows;
+    const contratos = (await q(`SELECT * FROM hor_contratos WHERE desde <= ?`, [dias[6]])).rows;
+    const necesidades = (await q(`SELECT * FROM hor_necesidades WHERE local = ?`, [s.local])).rows;
+
+    const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos, ausencias, contratos, necesidades });
+    const val = validarPublicacion({ estado: s.estado, conflictos, avisosAceptados: req.body?.aceptar_avisos ? true : null });
+    if (!val.ok) { await client.query("ROLLBACK"); return res.status(409).json({ ok: false, ...val }); }
+
+    const ahora = isoConOffset(Date.now());
+    const quien = req.user.nombre || req.user.username;
+    // La anterior publicada pasa a sustituida, con la hora exacta: es lo que permite
+    // preguntar dentro de dos años qué horario regía un día concreto.
+    await q(`UPDATE hor_semanas SET estado = 'sustituido', sustituido_en = ? WHERE local = ? AND lunes = ? AND estado = 'publicado'`,
+      [ahora, s.local, s.lunes]);
+    await q(`UPDATE hor_semanas SET estado = 'publicado', publicado_en = ?, publicado_por = ?, avisos_aceptados = ? WHERE id = ?`,
+      [ahora, quien, conflictos.length ? JSON.stringify({ por: quien, en: ahora, avisos: conflictos.filter((c) => c.severidad === "avisa") }) : null, s.id]);
+
+    const snapshot = construirSnapshot({ semana: s, areas, tramos, asignaciones, trabajadores: equipo, dias });
+    const texto = serializarCanonico(snapshot);
+    await q(`INSERT INTO hor_publicaciones (semana_id, local, lunes, version, snapshot, hash, publicado_en, publicado_por)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (semana_id) DO NOTHING`,
+      [s.id, s.local, s.lunes, s.version, texto, crypto.createHash("sha256").update(texto).digest("hex"), ahora, quien]);
+    await client.query("COMMIT");
+    res.json({ ok: true, version: s.version, avisos: conflictos.filter((c) => c.severidad === "avisa").length });
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch { /* ya deshecha */ }
+    console.error("[horarios] publicar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo publicar" });
+  } finally { client.release(); }
+});
+
+// Crear una versión nueva a partir de la publicada, para poder cambiarla sin tocarla.
+app.post("/api/horarios/semana/:id/nueva-version", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const s = await dbGet(`SELECT * FROM hor_semanas WHERE id = ?`, [req.params.id]);
+    if (!s) return res.status(404).json({ ok: false, error: "Semana no encontrada" });
+    if (!rrhhPuedeLocal(req, s.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const ya = await dbGet(`SELECT * FROM hor_semanas WHERE local = ? AND lunes = ? AND estado = 'borrador'`, [s.local, s.lunes]);
+    if (ya) return res.json({ ok: true, semana: ya, creada: false });
+
+    const max = await dbGet(`SELECT COALESCE(MAX(version),0) AS v FROM hor_semanas WHERE local = ? AND lunes = ?`, [s.local, s.lunes]);
+    const ahora = isoConOffset(Date.now());
+    const nueva = await dbRun(
+      `INSERT INTO hor_semanas (local, lunes, version, estado, origen, creado_en, creado_por)
+       VALUES (?, ?, ?, 'borrador', ?, ?, ?) RETURNING *`,
+      [s.local, s.lunes, Number(max.v) + 1, `version:${s.version}`, ahora, req.user.nombre || req.user.username]
+    );
+    const filas = await dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]);
+    for (const f of filas) {
+      await dbRun(
+        `INSERT INTO hor_asignaciones (semana_id, local, worker_id, dia, area_id, tramo_id, inicio_min, fin_min, fin_abierto, tipo, nota, creado_en)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [nueva.id, f.local, f.worker_id, f.dia, f.area_id, f.tramo_id, f.inicio_min, f.fin_min, f.fin_abierto, f.tipo, f.nota, ahora]
+      );
+    }
+    res.json({ ok: true, semana: nueva, creada: true, copiadas: filas.length });
+  } catch (e) {
+    console.error("[horarios] nueva versión:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo crear la versión" });
+  }
+});
+
+// Plantillas: guardar una semana como plantilla y listarlas.
+app.get("/api/horarios/plantillas", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const filas = await dbAll(
+      `SELECT p.*, (SELECT COUNT(*) FROM hor_plantilla_lineas l WHERE l.plantilla_id = p.id)::int AS lineas
+       FROM hor_plantillas p WHERE p.local = ? AND p.activo ORDER BY p.nombre`, [local]);
+    res.json({ ok: true, data: filas });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar las plantillas" }); }
+});
+
+app.post("/api/horarios/plantillas", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const s = await dbGet(`SELECT * FROM hor_semanas WHERE id = ?`, [req.body?.semana_id]);
+    if (!s) return res.status(404).json({ ok: false, error: "Semana no encontrada" });
+    if (!rrhhPuedeLocal(req, s.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const nombre = String(req.body?.nombre || "").trim();
+    if (!nombre) return res.status(400).json({ ok: false, error: "Ponle un nombre a la plantilla" });
+    const ahora = isoConOffset(Date.now());
+    const pl = await dbRun(
+      `INSERT INTO hor_plantillas (local, nombre, descripcion, creado_en, creado_por) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (local, nombre) DO UPDATE SET descripcion = EXCLUDED.descripcion RETURNING *`,
+      [s.local, nombre, req.body?.descripcion || null, ahora, req.user.nombre || req.user.username]
+    );
+    await dbRun(`DELETE FROM hor_plantilla_lineas WHERE plantilla_id = ?`, [pl.id]);
+    const dias = diasSemana(s.lunes);
+    const filas = await dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]);
+    for (const f of filas) {
+      const dow = dias.indexOf(f.dia);
+      if (dow < 0) continue;
+      await dbRun(
+        `INSERT INTO hor_plantilla_lineas (plantilla_id, dow, worker_id, area_id, tramo_id, inicio_min, fin_min, fin_abierto, tipo, nota)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [pl.id, dow, f.worker_id, f.area_id, f.tramo_id, f.inicio_min, f.fin_min, f.fin_abierto, f.tipo, f.nota]
+      );
+    }
+    res.json({ ok: true, plantilla: pl, lineas: filas.length });
+  } catch (e) {
+    console.error("[horarios] plantilla:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar la plantilla" });
+  }
+});
+
+// Histórico de versiones de una semana. Contesta "qué horario vio el equipo".
+app.get("/api/horarios/historico", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const lunes = lunesDe(String(req.query.lunes || ""));
+    const filas = await dbAll(
+      `SELECT s.id, s.version, s.estado, s.origen, s.publicado_en, s.publicado_por, s.sustituido_en, s.creado_en, p.hash
+       FROM hor_semanas s LEFT JOIN hor_publicaciones p ON p.semana_id = s.id
+       WHERE s.local = ? AND s.lunes = ? ORDER BY s.version DESC`, [local, lunes]);
+    res.json({ ok: true, data: filas });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el histórico" }); }
 });
 
 // ════════════════════════ PULSO ANÓNIMO DEL EQUIPO ════════════════════════

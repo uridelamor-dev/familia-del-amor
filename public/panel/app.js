@@ -1812,7 +1812,7 @@ async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cue
 // El estado vive aquí y se repinta entero, como el resto del panel. La agrupación NO se
 // hace en el navegador a ojo: se replica la misma lógica que el módulo puro del servidor
 // (src/modules/horarios/cuadrante.js), porque el panel no puede importar ESM.
-let HOR = { local: "", lunes: "", dias: [], areas: [], tramos: [], equipo: [], asignaciones: [], semana: null, vista: "areas", drag: null };
+let HOR = { local: "", lunes: "", dias: [], areas: [], tramos: [], equipo: [], asignaciones: [], semana: null, vista: "areas", drag: null, conflictos: null };
 function horScope() { HOR.local = localFijadoFE() || DASH_LOCAL || ""; return HOR.local; }
 const horEditable = () => HOR.semana && HOR.semana.estado === "borrador";
 
@@ -1827,6 +1827,7 @@ async function loadHorarios() {
     const j = await apiRaw(`/api/horarios/semana?local=${encodeURIComponent(HOR.local)}&lunes=${HOR.lunes}`);
     HOR = { ...HOR, ...j };
     view.innerHTML = renderHorarios();
+    if (HOR.semana) horConflictos(true);   // los avisos llegan después: la rejilla no espera
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function horPh() {
@@ -1863,7 +1864,7 @@ function renderHorarios() {
       <button class="${HOR.vista === "areas" ? "on" : ""}" data-act="hor-vista" data-v="areas">Por área</button>
       <button class="${HOR.vista === "personas" ? "on" : ""}" data-act="hor-vista" data-v="personas">Por persona</button>
     </div>
-    ${HOR.semana ? "" : `<button class="btn primary" data-act="hor-crear">Empezar esta semana</button>`}
+    ${horAcciones()}
   </div>`;
 
   if (!HOR.semana) {
@@ -1872,7 +1873,7 @@ function renderHorarios() {
   }
   const aviso = horEditable() ? "" :
     `<div class="pendingblock" style="margin-bottom:12px">Estás viendo el horario <b>publicado</b>. Para cambiarlo hay que crear una versión nueva — así queda constancia de lo que vio el equipo.</div>`;
-  return horPh() + nav + aviso + (HOR.vista === "personas" ? horPorPersona() : horRejilla()) + horResumen();
+  return horPh() + nav + aviso + `<div id="horAvisos">${horAvisosHtml(HOR.conflictos)}</div>` + (HOR.vista === "personas" ? horPorPersona() : horRejilla()) + horResumen();
 }
 
 // ── Rejilla por área (la del papel) ──
@@ -1959,6 +1960,128 @@ function horSolapes() {
       if (l[i].inicio_min < l[j].fin_min && l[j].inicio_min < l[i].fin_min) out.push([l[i], l[j]]);
   }
   return out;
+}
+
+// Botonera según el estado. Publicar solo aparece cuando hay algo que publicar.
+function horAcciones() {
+  if (!HOR.semana) return `<button class="btn primary" data-act="hor-crear">Empezar esta semana</button>`;
+  if (horEditable()) {
+    const n = (HOR.asignaciones || []).length;
+    return `<button class="btn" data-act="hor-copiar">Copiar semana</button>
+      <button class="btn" data-act="hor-plantillas">Plantillas</button>
+      <button class="btn primary" data-act="hor-publicar" ${n ? "" : "disabled"}>Publicar</button>`;
+  }
+  return `<button class="btn" data-act="hor-historico">Versiones</button>
+    <button class="btn primary" data-act="hor-nueva-version">Cambiar horario</button>`;
+}
+
+// Los conflictos se piden aparte: la rejilla se ve al instante y los avisos llegan después.
+async function horConflictos(silencioso) {
+  if (!HOR.semana) return null;
+  try {
+    const j = await apiRaw(`/api/horarios/semana/${HOR.semana.id}/conflictos`);
+    HOR.conflictos = j;
+    const caja = document.getElementById("horAvisos");
+    if (caja) caja.innerHTML = horAvisosHtml(j);
+    return j;
+  } catch (e) { if (!silencioso && e.message !== "noauth") toast("Error: " + e.message); return null; }
+}
+function horAvisosHtml(j) {
+  if (!j || !j.total) return "";
+  const fila = (c) => `<div class="row"><span class="sdot ${c.severidad === "bloquea" ? "st-crit" : "st-warn"}"></span><div class="grow"><div class="t1" style="font-weight:400;line-height:1.5">${esc(c.mensaje)}</div></div></div>`;
+  return `<details class="card fold" style="margin-bottom:14px" ${j.bloquean.length ? "open" : ""}>
+    <summary><h3>${j.bloquean.length ? "Hay que arreglar esto" : "Cosas a tener en cuenta"}</h3>
+      <span class="foldr"><span>${j.bloquean.length ? `${num(j.bloquean.length)} bloquean · ` : ""}${num(j.avisan.length)} avisos</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <div class="rows">${[...j.bloquean, ...j.avisan].map(fila).join("")}</div>
+  </details>`;
+}
+
+async function horCopiar() {
+  const anterior = addDaysStr(HOR.lunes, -7);
+  const ov = modal("Copiar semana", `<div class="form-grid">
+      <div class="field full"><label>¿De qué semana?</label>${dpField("horCopiaDe", anterior, "Elegir semana")}</div>
+      <label class="field full" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="horReemplazar" checked style="width:auto"> Sustituir lo que ya haya en esta semana</label>
+    </div>
+    <div class="pendingblock" style="margin-top:10px">Al copiar se comprueba quién sigue en el equipo y quién tiene vacaciones o baja. A esos no se les copia el turno, y te digo a quién.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="horCopiaOk">Copiar</button></div>`);
+  ov.querySelector("#horCopiaOk").addEventListener("click", async () => {
+    const lunes = document.getElementById("horCopiaDe").value;
+    if (!lunes) { toast("Elige la semana de origen"); return; }
+    try {
+      const j = await apiSend("POST", `/api/horarios/semana/${HOR.semana.id}/copiar`, { lunes, reemplazar: ov.querySelector("#horReemplazar").checked });
+      ov.remove();
+      toast(`${num(j.copiadas)} turno(s) copiados${j.omitidos.length ? ` · ${num(j.omitidos.length)} omitidos` : ""}`);
+      if (j.omitidos.length) horOmitidos(j.omitidos);
+      loadHorarios();
+    } catch (e) { toast("Error: " + e.message); }
+  });
+}
+// Lo que NO se copió y por qué. Callarlo sería el fallo peligroso: creerías tener cubierto
+// un turno que en realidad está vacío.
+function horOmitidos(oms) {
+  modal("No se copiaron estos turnos", `<div class="rows">${oms.map((o) => `<div class="row"><div class="grow"><div class="t1">${esc(horNombre(o.worker_id))}</div><div class="t2">${esc(o.dia)} · ${esc(o.motivo)}</div></div></div>`).join("")}</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn primary" data-close>Entendido</button></div>`);
+}
+
+async function horPlantillas() {
+  let j; try { j = await apiRaw(`/api/horarios/plantillas?local=${encodeURIComponent(HOR.local)}`); } catch { toast("No se pudieron cargar"); return; }
+  const lista = (j.data || []).length
+    ? (j.data || []).map((p) => `<div class="row"><div class="grow"><div class="t1">${esc(p.nombre)}</div><div class="t2">${num(p.lineas)} turnos${p.descripcion ? " · " + esc(p.descripcion) : ""}</div></div><button class="btn sm primary" data-horpl="${p.id}">Aplicar</button></div>`).join("")
+    : `<div class="mut" style="padding:12px">Todavía no has guardado ninguna.</div>`;
+  const ov = modal("Plantillas", `<div class="card p0"><div class="rows">${lista}</div></div>
+    <div class="toolbar" style="margin-top:14px"><div class="field" style="flex:1"><label>Guardar esta semana como plantilla</label><input id="horPlNombre" placeholder="Semana de verano, Festivo…"></div><button class="btn" id="horPlGuardar">Guardar</button></div>`);
+  ov.addEventListener("click", async (e) => {
+    const ap = e.target.closest("[data-horpl]");
+    if (!ap) return;
+    try {
+      const r = await apiSend("POST", `/api/horarios/semana/${HOR.semana.id}/copiar`, { plantilla_id: ap.getAttribute("data-horpl"), reemplazar: true });
+      ov.remove(); toast(`${num(r.copiadas)} turno(s) aplicados`);
+      if (r.omitidos.length) horOmitidos(r.omitidos);
+      loadHorarios();
+    } catch (err) { toast("Error: " + err.message); }
+  });
+  ov.querySelector("#horPlGuardar").addEventListener("click", async () => {
+    const nombre = ov.querySelector("#horPlNombre").value.trim();
+    if (!nombre) { toast("Ponle un nombre"); return; }
+    try { await apiSend("POST", "/api/horarios/plantillas", { semana_id: HOR.semana.id, nombre }); ov.remove(); toast("Plantilla guardada ✅"); }
+    catch (e) { toast("Error: " + e.message); }
+  });
+}
+
+async function horPublicar() {
+  const j = await horConflictos(true);
+  if (j && j.bloquean.length) {
+    modal("Todavía no se puede publicar", `<p class="mut" style="margin:0 0 10px;line-height:1.6">Esto no puede ser cierto y hay que arreglarlo antes:</p>
+      <div class="card p0"><div class="rows">${j.bloquean.map((c) => `<div class="row"><span class="sdot st-crit"></span><div class="grow"><div class="t1" style="font-weight:400">${esc(c.mensaje)}</div></div></div>`).join("")}</div></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn primary" data-close>Entendido</button></div>`);
+    return;
+  }
+  const avisos = (j && j.avisan) || [];
+  const cuerpo = avisos.length
+    ? `<p style="margin:0 0 10px;line-height:1.6">Se puede publicar, pero hay <b>${num(avisos.length)}</b> cosa(s) que conviene mirar. Si sigues, queda escrito que las asumiste tú.</p>
+       <div class="card p0" style="max-height:38vh;overflow:auto"><div class="rows">${avisos.map((c) => `<div class="row"><span class="sdot st-warn"></span><div class="grow"><div class="t1" style="font-weight:400">${esc(c.mensaje)}</div></div></div>`).join("")}</div></div>`
+    : `<p style="margin:0;line-height:1.6">Todo cuadra. Al publicar, el equipo verá este horario y quedará guardado tal cual.</p>`;
+  const ov = modal("Publicar el horario", cuerpo + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="horPubOk">Publicar</button></div>`);
+  ov.querySelector("#horPubOk").addEventListener("click", async () => {
+    try {
+      const r = await apiSend("POST", `/api/horarios/semana/${HOR.semana.id}/publicar`, { aceptar_avisos: true });
+      ov.remove(); toast(`Horario publicado (v${r.version}) ✅`); loadHorarios();
+    } catch (e) { toast("Error: " + e.message); }
+  });
+}
+
+async function horNuevaVersion() {
+  if (!(await confirmModal("Se creará una copia editable del horario publicado. El que ve el equipo no cambia hasta que publiques la nueva.", { ok: "Crear versión" }))) return;
+  try { const j = await apiSend("POST", `/api/horarios/semana/${HOR.semana.id}/nueva-version`, {}); toast(`Versión ${j.semana.version} creada`); loadHorarios(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
+async function horHistorico() {
+  let j; try { j = await apiRaw(`/api/horarios/historico?local=${encodeURIComponent(HOR.local)}&lunes=${HOR.lunes}`); } catch { toast("No se pudo cargar"); return; }
+  const pill = (e) => e === "publicado" ? '<span class="pill ok">Publicado</span>' : e === "borrador" ? '<span class="pill warn">Borrador</span>' : e === "cerrado" ? '<span class="pill">Cerrado</span>' : '<span class="pill">Sustituido</span>';
+  modal("Versiones de esta semana", `<div class="card p0"><div class="rows">${(j.data || []).map((v) => `<div class="row"><div class="grow"><div class="t1">Versión ${v.version} ${v.origen ? `<span class="mut" style="font-weight:400">· ${esc(v.origen)}</span>` : ""}</div><div class="t2">${v.publicado_en ? `Publicada ${esc(String(v.publicado_en).slice(0, 16).replace("T", " "))} por ${esc(v.publicado_por || "—")}` : `Creada ${esc(String(v.creado_en).slice(0, 10))}`}${v.sustituido_en ? ` · sustituida ${esc(String(v.sustituido_en).slice(0, 16).replace("T", " "))}` : ""}</div></div>${pill(v.estado)}</div>`).join("")}</div></div>
+    <div class="mut" style="font-size:12px;margin-top:10px">De cada versión publicada se guarda una copia congelada. Dentro de dos años se podrá saber exactamente qué horario estaba puesto un día concreto.</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn primary" data-close>Cerrar</button></div>`);
 }
 
 // ── Acciones ──
@@ -3310,6 +3433,11 @@ document.addEventListener("click", (e) => {
   else if (act === "hor-crear") horCrear();
   else if (act === "hor-editar") horEditar(t.getAttribute("data-id"));
   else if (act === "hor-nuevo") horModal(null, { dia: t.getAttribute("data-dia"), tramo: t.getAttribute("data-tramo"), area: t.getAttribute("data-area") });
+  else if (act === "hor-copiar") horCopiar();
+  else if (act === "hor-plantillas") horPlantillas();
+  else if (act === "hor-publicar") horPublicar();
+  else if (act === "hor-nueva-version") horNuevaVersion();
+  else if (act === "hor-historico") horHistorico();
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
   else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }
