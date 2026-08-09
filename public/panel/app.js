@@ -5019,7 +5019,17 @@ async function agoraSyncNow() {
 }
 
 // ════════════════════════ VISTA: ANALÍTICA DE VENTAS (informes Ágora en vivo) ════════════════════════
-let ANAL = { tipo: "producto", local: "", range: null, tipos: [], data: null, sort: null, cargando: false };
+// `area` parte la pantalla en dos: VENTAS (lo que entra) y CONTROL (lo que no llega a
+// cobrarse: cancelaciones, descuentos, invitaciones). Se miran por motivos distintos y en
+// momentos distintos; juntos en la misma fila de pestañas, control no se miraba nunca.
+// `q` busca dentro de la tabla ya cargada: el informe viene entero del TPV, así que filtrar
+// aquí es instantáneo y no cuesta otra consulta.
+let ANAL = { area: "ventas", tipo: "producto", local: "", range: null, tipos: [], data: null, sort: null, cargando: false, q: "" };
+const ANAL_AREAS = [
+  { key: "ventas", label: "Ventas", sub: "Lo que entra" },
+  { key: "control", label: "Control", sub: "Lo que no llega a cobrarse" },
+];
+const analDeArea = (a) => (ANAL.tipos || []).filter((t) => (t.area || "ventas") === a);
 function fmtCelda(v, tipo) {
   if (tipo === "eur") return eur(v);
   if (tipo === "num") return num(v);
@@ -5029,8 +5039,16 @@ function fmtCelda(v, tipo) {
 function renderAnaliticaTabla(data) {
   if (!data) return "";
   if (data.sinCredenciales) return `<div class="card"><div class="mut" style="font-size:13px">Configura <b>usuario y contraseña</b> del local en <b>Ágora (TPV)</b> para poder consultar informes.</div></div>`;
-  const cols = data.columnas || [], filas = data.filas || [];
-  if (!cols.length || !filas.length) return `<div class="card"><div class="mut" style="font-size:13px">Sin movimientos en este rango${data.local ? "" : " (prueba a elegir un local abierto)"}.</div></div>`;
+  const cols = data.columnas || [], filasTodas = data.filas || [];
+  if (!cols.length || !filasTodas.length) return `<div class="card"><div class="mut" style="font-size:13px">Sin movimientos en este rango${data.local ? "" : " (prueba a elegir un local abierto)"}.</div></div>`;
+  // El buscador mira TODAS las columnas de texto: buscando «croquetas» sale el producto, y
+  // buscando «Marta» salen sus cancelaciones. Sin acentos ni mayúsculas, como se escribe.
+  const nq = String(ANAL.q || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const filas = nq
+    ? filasTodas.filter((f) => cols.some((c) => c.tipo === "texto"
+        && String(f[c.key] || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(nq)))
+    : filasTodas;
+  if (!filas.length) return `<div class="card"><div class="mut" style="font-size:13px">Nada con «${esc(ANAL.q)}» en este informe.</div></div>`;
   // Orden (cliente): por defecto data.ordenPor desc; clic en cabecera cambia.
   const sort = ANAL.sort || (data.ordenPor ? { key: data.ordenPor, dir: "desc" } : null);
   let rows = filas.slice();
@@ -5043,23 +5061,61 @@ function renderAnaliticaTabla(data) {
   const chart = topItems.length >= 2 ? `<div class="card"><div class="ch"><h3>Top ${topItems.length} · ${esc((cols.find((c) => c.key === chartKey) || {}).label || "")}</h3></div>${bars(topItems, { fmt: (v) => chartTipo === "eur" ? eur(v) : num(v) })}</div>` : "";
   const th = cols.map((c) => { const on = sort && sort.key === c.key; const arrow = on ? (sort.dir === "desc" ? " ↓" : " ↑") : ""; return `<th class="${c.tipo === "num" || c.tipo === "eur" || c.tipo === "pct" ? "r" : ""}" data-act="anal-sort" data-key="${esc(c.key)}" style="cursor:pointer;white-space:nowrap">${esc(c.label)}${arrow}</th>`; }).join("");
   const body = rows.map((f) => `<tr>${cols.map((c) => `<td class="${c.tipo === "num" || c.tipo === "eur" || c.tipo === "pct" ? "r tnum" : ""}">${fmtCelda(f[c.key], c.tipo)}</td>`).join("")}</tr>`).join("");
-  const totCells = cols.map((c, i) => { if (i === 0) return `<td><b>Total</b></td>`; const t = data.totales && data.totales[c.key]; return `<td class="${c.tipo === "num" || c.tipo === "eur" || c.tipo === "pct" ? "r tnum" : ""}">${t != null ? "<b>" + fmtCelda(t, c.tipo) + "</b>" : ""}</td>`; }).join("");
+  // Al buscar, el total se recalcula sobre lo que se ve. Dejar el total del informe entero
+  // debajo de tres filas filtradas es la forma más fácil de leer un número que no es.
+  const totCells = cols.map((c, i) => {
+    if (i === 0) return `<td><b>Total${nq ? " de lo buscado" : ""}</b></td>`;
+    const numerica = c.tipo === "num" || c.tipo === "eur";
+    const t = nq ? (numerica ? filas.reduce((s2, f) => s2 + (Number(f[c.key]) || 0), 0) : null)
+                 : (data.totales && data.totales[c.key]);
+    return `<td class="${numerica || c.tipo === "pct" ? "r tnum" : ""}">${t != null ? "<b>" + fmtCelda(t, c.tipo) + "</b>" : ""}</td>`;
+  }).join("");
+  // En Control, la cifra que importa está arriba y en grande: cuánto se ha ido y en cuántos
+  // apuntes. La tabla contesta «quién y por qué»; esto contesta «cuánto», que es lo primero
+  // que se pregunta y lo que hace que separar Control de Ventas sirva para algo.
+  const resumenControl = ANAL.area === "control" ? (() => {
+    const colEur = cols.find((c) => c.tipo === "eur");
+    if (!colEur) return "";
+    const total = filas.reduce((s2, f) => s2 + (Number(f[colEur.key]) || 0), 0);
+    const colPersona = cols.find((c) => c.tipo === "texto");
+    const personas = colPersona ? new Set(filas.map((f) => String(f[colPersona.key] || "")).filter(Boolean)).size : 0;
+    // Quién acumula más. No es una acusación: casi siempre es quien más turnos hace.
+    const porPersona = new Map();
+    if (colPersona) for (const f of filas) {
+      const k = String(f[colPersona.key] || "—");
+      porPersona.set(k, (porPersona.get(k) || 0) + (Number(f[colEur.key]) || 0));
+    }
+    const top = [...porPersona.entries()].sort((a, b) => b[1] - a[1])[0];
+    return `<div class="kpis4" style="margin-bottom:14px">
+      <div class="kpi"><span>${esc(data.label)}</span><b>${esc(eur(total))}</b></div>
+      <div class="kpi"><span>Apuntes</span><b>${num(filas.length)}</b></div>
+      <div class="kpi"><span>${esc(colPersona ? colPersona.label : "Distintos")}</span><b>${num(personas)}</b></div>
+      ${top ? `<div class="kpi"><span>Más acumula</span><b style="font-size:15px">${esc(top[0])}</b><span style="text-transform:none;font-size:12px;color:var(--ink2)">${esc(eur(top[1]))}</span></div>` : ""}
+    </div>`;
+  })() : "";
+
   const errores = (data.__errores && data.__errores.length) ? `<div class="mut" style="font-size:12px;margin:6px 2px">${data.__errores.map((e) => `⚠ ${esc(e.local)}: ${esc(e.error)}`).join(" · ")}</div>` : "";
-  const tabla = `<div class="card p0"><div class="ch" style="padding:14px 16px 0"><h3>${esc(data.label)}${data.local ? " · " + esc(nombreCortoLocal(data.local)) : ""}</h3><span class="mut" style="font-size:12px">${num(filas.length)} filas${data.generado ? " · " + esc(String(data.generado).slice(11, 16)) : ""}</span></div><div class="tblwrap"><table class="tbl"><thead><tr>${th}</tr></thead><tbody>${body}</tbody><tfoot><tr>${totCells}</tr></tfoot></table></div></div>`;
-  return chart + tabla + errores;
+  const tabla = `<div class="card p0"><div class="ch" style="padding:14px 16px 0"><h3>${esc(data.label)}${data.local ? " · " + esc(nombreCortoLocal(data.local)) : ""}</h3><span class="mut" style="font-size:12px">${num(filas.length)}${nq ? ` de ${num(filasTodas.length)}` : ""} filas${data.generado ? " · " + esc(String(data.generado).slice(11, 16)) : ""}</span></div><div class="tblwrap"><table class="tbl"><thead><tr>${th}</tr></thead><tbody>${body}</tbody><tfoot><tr>${totCells}</tr></tfoot></table></div></div>`;
+  return resumenControl + chart + tabla + errores;
 }
 function renderAnalitica() {
   const amb = analScope();
   const presets =[["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]];
   const cur = ANAL.range || rangoPreset("mes", todayStr());
   const seg = presets.map(([p, l]) => `<button class="${cur.preset === p ? "on" : ""}" data-act="anal-period" data-p="${p}">${l}</button>`).join("") + `<button class="${cur.preset === "custom" ? "on" : ""}" data-act="anal-period-custom">${cur.preset === "custom" ? esc(fechaCorta(cur.from)) + "–" + esc(fechaCorta(cur.to)) : "Personalizado"}</button>`;
-  const tabs = (ANAL.tipos || []).map((t) => `<button class="btn ${ANAL.tipo === t.key ? "primary" : ""}" data-act="anal-tab" data-tipo="${esc(t.key)}">${esc(t.label)}</button>`).join("");
+  const tabs = analDeArea(ANAL.area).map((t) => `<button class="btn ${ANAL.tipo === t.key ? "primary" : ""}" data-act="anal-tab" data-tipo="${esc(t.key)}">${esc(t.label)}</button>`).join("");
+  const areas = ANAL_AREAS.filter((a) => analDeArea(a.key).length).map((a) =>
+    `<button class="anarea ${ANAL.area === a.key ? "on" : ""}" data-act="anal-area" data-area="${a.key}">
+       <b>${esc(a.label)}</b><span>${esc(a.sub)}</span></button>`).join("");
   const head = `<div class="ph"><div class="eyebrow">Inteligencia</div><h1>Analítica de ventas</h1><div class="sub">Informes en vivo del TPV · ${esc(cur.label)}${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div><div class="acts"><button class="btn" data-act="anal-refresh">Actualizar</button><button class="btn" data-act="anal-csv">Exportar CSV</button></div></div>`;
   // Sin selector de local: el ámbito lo marca el selector de establecimiento de la barra superior.
-  const toolbar = `<div class="toolbar"><div class="field"><label>Periodo</label><div class="seg">${seg}</div></div><div style="flex:1"></div></div>`;
+  const toolbar = `<div class="toolbar"><div class="field"><label>Periodo</label><div class="seg">${seg}</div></div><div style="flex:1"></div>
+      <div class="field" style="min-width:200px"><label>Buscar en el informe</label>
+        <input class="inp" id="analQ" value="${esc(ANAL.q)}" placeholder="${ANAL.tipo === "producto" ? "croquetas, vermut…" : "nombre, motivo…"}"></div></div>`;
+  const areasBar = areas ? `<div class="anareas">${areas}</div>` : "";
   const tabsBar = tabs ? `<div class="toolbar" style="margin-top:-6px">${tabs}</div>` : "";
   const cuerpo = ANAL.cargando ? `<div class="card"><div class="mut" style="font-size:13px">Consultando el TPV…</div></div>` : renderAnaliticaTabla(ANAL.data);
-  return head + toolbar + tabsBar + `<div id="analBody">${cuerpo}</div>`;
+  return head + areasBar + toolbar + tabsBar + `<div id="analBody">${cuerpo}</div>`;
 }
 // Ámbito de local: selector de establecimiento de la barra superior (el fijado manda).
 function analScope() { ANAL.local = localFijadoFE() || DASH_LOCAL || ""; return ANAL.local; }
@@ -5069,7 +5125,7 @@ async function loadAnalitica() {
   analScope();
   if (sinPublico(ANAL.local)) { view.innerHTML = avisoSinPublico("Analítica de ventas", "Inteligencia", "ventas"); return; }
   try {
-    if (!ANAL.tipos.length) { const j = await apiOptional("/api/agora/informes"); ANAL.tipos = j || []; if (ANAL.tipos.length && !ANAL.tipos.some((t) => t.key === ANAL.tipo)) ANAL.tipo = ANAL.tipos[0].key; }
+    if (!ANAL.tipos.length) { const j = await apiOptional("/api/agora/informes"); ANAL.tipos = j || []; if (ANAL.tipos.length && !analDeArea(ANAL.area).some((t) => t.key === ANAL.tipo)) ANAL.tipo = (analDeArea(ANAL.area)[0] || ANAL.tipos[0]).key; }
     view.innerHTML = renderAnalitica();
     loadAnalInforme();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
@@ -5091,7 +5147,20 @@ async function loadAnalInforme(force) {
   }
 }
 function analSort(key) { if (ANAL.sort && ANAL.sort.key === key) ANAL.sort.dir = ANAL.sort.dir === "desc" ? "asc" : "desc"; else ANAL.sort = { key, dir: "desc" }; const b = document.getElementById("analBody"); if (b) b.innerHTML = renderAnaliticaTabla(ANAL.data); }
-function analTab(tipo) { ANAL.tipo = tipo; document.querySelectorAll('[data-act="anal-tab"]').forEach((x) => x.classList.toggle("primary", x.getAttribute("data-tipo") === tipo)); loadAnalInforme(); }
+function analArea(area) {
+  if (ANAL.area === area) return;
+  ANAL.area = area;
+  ANAL.q = "";   // buscar «croquetas» no tiene sentido en cancelaciones
+  const primero = analDeArea(area)[0];
+  if (primero) ANAL.tipo = primero.key;
+  const v = document.getElementById("view"); if (v) v.innerHTML = renderAnalitica();
+  loadAnalInforme();
+}
+function analBuscar(q) {
+  ANAL.q = q;
+  const b = document.getElementById("analBody"); if (b) b.innerHTML = renderAnaliticaTabla(ANAL.data);
+}
+function analTab(tipo) { ANAL.tipo = tipo; ANAL.q = ""; const i = document.getElementById("analQ"); if (i) i.value = ""; document.querySelectorAll('[data-act="anal-tab"]').forEach((x) => x.classList.toggle("primary", x.getAttribute("data-tipo") === tipo)); loadAnalInforme(); }
 function analPeriod(p) { ANAL.range = rangoPreset(p, todayStr()); document.querySelectorAll('.seg [data-act="anal-period"]').forEach((x) => x.classList.toggle("on", x.getAttribute("data-p") === p)); const cs = document.querySelector('[data-act="anal-period-custom"]'); if (cs) cs.classList.remove("on"); loadAnalInforme(); }
 function analPeriodCustom() {
   const hoy = todayStr(); const cur = ANAL.range || {};
@@ -5655,7 +5724,11 @@ document.addEventListener("change", (e) => {
   else if (id === "mEstado") applyMantFilter();
 });
 // Filtrado en vivo del buscador de Clientes: al escribir/borrar, refresca (con antirrebote).
+let _analTimer = null;
 document.addEventListener("input", (e) => {
+  // El informe ya está entero en memoria, así que buscar es filtrar: instantáneo y sin
+  // volver a preguntarle al TPV. El antirrebote es solo para no repintar en cada tecla.
+  if (e.target && e.target.id === "analQ") { clearTimeout(_analTimer); const v = e.target.value; _analTimer = setTimeout(() => analBuscar(v), 180); return; }
   if (e.target && e.target.id === "cQ") { CLIF.q = e.target.value.trim(); cliRefreshDebounced(); }
   else if (e.target && e.target.id === "facQ") { facFilterDebounced(); }
   else if (e.target && e.target.id === "invSearch") { INV.filtro = e.target.value; invRefreshList(); }
@@ -5820,6 +5893,7 @@ document.addEventListener("click", (e) => {
   else if (act === "ag-del") agoraDel(t.getAttribute("data-local"));
   else if (act === "ag-sync") agoraSyncNow();
   else if (act === "anal-tab") analTab(t.getAttribute("data-tipo"));
+  else if (act === "anal-area") analArea(t.getAttribute("data-area"));
   else if (act === "anal-period") analPeriod(t.getAttribute("data-p"));
   else if (act === "anal-period-custom") analPeriodCustom();
   else if (act === "anal-sort") analSort(t.getAttribute("data-key"));

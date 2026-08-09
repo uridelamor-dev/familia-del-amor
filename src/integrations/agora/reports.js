@@ -163,6 +163,7 @@ export const INFORMES = {
   producto: {
     key: "producto",
     label: "Producto",
+    area: "ventas",
     clrType: "IGT.POS.Bus.Reporting.Messages.GetProductSalesReportRequest",
     needs: ["groups", "familias"], // el informe filtra por familias: hay que pasar TODAS
     buildExtra: ({ from, to, groups, familias }) => ({
@@ -172,37 +173,37 @@ export const INFORMES = {
     map: mapProducto,
   },
   empleado: {
-    key: "empleado", label: "Empleado", needs: ["groups"],
+    key: "empleado", label: "Empleado", area: "ventas", needs: ["groups"],
     clrType: "IGT.POS.Bus.Reporting.Messages.GetUserSalesFileReportRequest",
     buildExtra: ({ from, to, groups }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups }),
     map: mapEmpleado,
   },
   cancelaciones: {
-    key: "cancelaciones", label: "Cancelaciones", needs: ["groups", "categorias"],
+    key: "cancelaciones", label: "Cancelaciones", area: "control", needs: ["groups", "categorias"],
     clrType: "IGT.POS.Bus.Reporting.Messages.GetCancellationsByUserAndTypeReportRequest",
     buildExtra: ({ from, to, groups, categorias }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups, CategoryIds: categorias }),
     map: mapCancelaciones,
   },
   descuentos: {
-    key: "descuentos", label: "Descuentos", needs: ["groups"],
+    key: "descuentos", label: "Descuentos", area: "control", needs: ["groups"],
     clrType: "IGT.POS.Bus.Reporting.Messages.GetDiscountsByUserAndTypeReportRequest",
     buildExtra: ({ from, to, groups }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups }),
     map: mapDescuentos,
   },
   invitaciones: {
-    key: "invitaciones", label: "Invitaciones", needs: ["groups"],
+    key: "invitaciones", label: "Invitaciones", area: "control", needs: ["groups"],
     clrType: "IGT.POS.Bus.Reporting.Messages.GetInvitationsByBusinessDayReportRequest",
     buildExtra: ({ from, to, groups }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups }),
     map: mapInvitaciones,
   },
   pagos: {
-    key: "pagos", label: "Métodos de pago", needs: ["groups"],
+    key: "pagos", label: "Métodos de pago", area: "ventas", needs: ["groups"],
     clrType: "IGT.POS.Bus.Reporting.Messages.GetPaymentMethodSalesReportRequest",
     buildExtra: ({ from, to, groups }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups }),
     map: mapPagos,
   },
   hora: {
-    key: "hora", label: "Por hora", needs: ["groups", "timeframe"],
+    key: "hora", label: "Por hora", area: "ventas", needs: ["groups", "timeframe"],
     clrType: "IGT.POS.Bus.Reporting.Messages.GetTicketsByTimeFrameReportRequest",
     buildExtra: ({ from, to, groups, timeFrameGroupId }) => ({ From: iso(from), To: iso(to), PosGroupsIds: groups, TimeFrameGroupId: timeFrameGroupId, IncludeDeliveryNotes: false }),
     map: mapHora,
@@ -210,7 +211,25 @@ export const INFORMES = {
 };
 
 export function getInforme(tipo) { return INFORMES[tipo] || null; }
-export function listaInformes() { return Object.values(INFORMES).map((d) => ({ key: d.key, label: d.label })); }
+/**
+ * Los informes en dos áreas.
+ *
+ * VENTAS es lo que entra: qué se vende, quién lo vende, cómo se paga, a qué horas.
+ * CONTROL es lo que NO llega a cobrarse: cancelaciones, descuentos e invitaciones.
+ *
+ * Están separados porque se miran por motivos distintos y en momentos distintos. Ventas se
+ * mira a diario para decidir; control se mira de vez en cuando y con otra cara, porque una
+ * cancelación no es una venta menos: es una venta que alguien deshizo, y ahí importa quién.
+ * Mezclados en la misma lista de pestañas, control no se miraba nunca.
+ */
+export const AREAS = [
+  { key: "ventas", label: "Ventas", sub: "Lo que entra" },
+  { key: "control", label: "Control", sub: "Lo que no llega a cobrarse" },
+];
+
+export function listaInformes() {
+  return Object.values(INFORMES).map((d) => ({ key: d.key, label: d.label, area: d.area || "ventas" }));
+}
 
 // Recalcula la fila de totales (suma de columnas numéricas/eur) sobre un conjunto de filas.
 export function calcularTotales(columnas, filas) {
