@@ -1468,7 +1468,11 @@ function openBulkReview(drafts) {
 }
 
 // ════════════════════════ VISTA: RR. HH. ════════════════════════
-let RRTAB = "candidaturas", RRF = { estado: "", q: "" };
+let RRTAB = "seguimiento", RRF = { estado: "", q: "" };
+// Dentro de «Contratación» conviven candidaturas y vacantes: son la misma tarea vista por
+// los dos lados (quién quiere entrar / qué puesto hay abierto), y separarlas obligaba a
+// saltar de pestaña para cerrar una vacante justo después de contratar a alguien.
+let RRCONTR = "candidaturas";
 const CAND_EST = { nuevo: "info", revisando: "imp", contratada: "ok", descartada: "bad" };
 const RR_TIPOS = { nota: { ic: "📝", lab: "Nota" }, llamada: { ic: "📞", lab: "Llamada" }, incidencia: { ic: "⚠️", lab: "Incidencia" }, consulta: { ic: "💬", lab: "Consulta" } };
 const RR_TIPO_COL = { nota: "var(--border2)", llamada: "var(--brand)", incidencia: "var(--danger)", consulta: "var(--info)" };
@@ -1478,13 +1482,14 @@ function rrAutor() { return (USER && (USER.nombre || USER.username || USER.rol))
 let RRSEG = { workers: [], llamadas: [], preguntas: [], sel: null, notas: [], ficha: null, resumen: [], mes: rrMesActual() };
 let RRPREG = { mes: rrMesActual(), preguntas: [] };
 function rrParseResp(v) { if (!v) return []; if (Array.isArray(v)) return v; try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } }
-// Pestañas visibles por rol: el encargado solo ve el Seguimiento de su equipo (candidaturas,
-// vacantes y preguntas son centrales de RRHH/dirección).
+// Pestañas visibles por rol: el encargado solo ve a su Equipo (contratación y preguntas son
+// centrales de RRHH/dirección).
 function rrTabsPermitidas() {
+  // «Equipo» va primero: es lo que se abre a diario. Contratar es puntual.
   // «Pulso» no está para el encargado: la pregunta 2 va sobre él, y en un local pequeño
   // ver la media de su equipo es leer las respuestas de su gente. El filtro de abajo ya
-  // lo deja solo con «Seguimiento», así que basta con no añadírsela.
-  const T = [["candidaturas", "Candidaturas"], ["seguimiento", "Seguimiento"], ["pulso", "Pulso del equipo"], ["vacantes", "Vacantes"], ["preguntas", "Preguntas del mes"]];
+  // lo deja solo con «Equipo», así que basta con no añadírsela.
+  const T = [["seguimiento", "Equipo"], ["contratacion", "Contratación"], ["pulso", "Pulso del equipo"], ["preguntas", "Preguntas del mes"]];
   return USER.rol === "encargado" ? T.filter(([id]) => id === "seguimiento") : T;
 }
 function rrTabs() {
@@ -1623,7 +1628,7 @@ function renderRRCand(rows) {
   const estOpts = ['<option value="">Todos los estados</option>'].concat(["nuevo", "revisando", "contratada", "descartada"].map((e) => `<option value="${e}" ${RRF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
   const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(RRF.q)}" placeholder="Nombre, puesto…"></div><button class="btn" data-act="rr-filtrar">Buscar</button></div>`;
   const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => e === "contratada" ? `<button class="linkbtn" style="color:var(--brand)" data-act="cand-contratar" data-id="${c.id}" data-nombre="${esc(c.nombre)}">Contratar</button>` : `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
-  return rrPh("Candidaturas y equipo") + rrTabs() + toolbar + table;
+  return toolbar + table;
 }
 // ── Seguimiento (maestro-detalle) ──
 function rrWorkerLlamada(id) { return RRSEG.llamadas.find((l) => String(l.worker_id) === String(id) && l.realizada); }
@@ -1854,7 +1859,7 @@ function renderRRSinTelefono() {
   </details>`;
 }
 function renderRRSeg() {
-  return rrPh("Seguimiento mensual del equipo · " + RRSEG.mes) + rrTabs() + renderRRResumen() + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
+  return rrPh("El equipo, uno a uno · seguimiento de " + RRSEG.mes) + rrTabs() + renderRRResumen() + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
 }
 // ── Vacantes ──
 function renderRRVac(rows) {
@@ -1863,7 +1868,19 @@ function renderRRVac(rows) {
   const tipoOpts = RR_VAC_TIPOS.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
   const form = `<div class="card"><div class="ch"><h3>Nueva vacante</h3></div><div class="toolbar"><div class="field"><label>Título</label><input id="vacTitulo" placeholder="Camarero/a…"></div><div class="field"><label>Local</label><select id="vacLocal">${locOpts}</select></div><div class="field"><label>Tipo</label><select id="vacTipo">${tipoOpts}</select></div></div><div class="field" style="width:100%"><label>Descripción</label><textarea id="vacDesc" rows="2" placeholder="Requisitos, horario…"></textarea></div><button class="btn primary" data-act="rr-vac-add">Publicar vacante</button></div>`;
   const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Título</th><th>Local</th><th>Tipo</th><th>Estado</th><th></th></tr></thead><tbody>${rows.map((v) => `<tr><td>${esc(v.titulo || "")}</td><td>${esc(v.local || "")}</td><td class="mut">${esc(v.tipo || "")}</td><td><span class="pill ${v.activo ? "ok" : "bad"}">${v.activo ? "Abierta" : "Cerrada"}</span></td><td class="r"><button class="linkbtn" style="color:var(--brand)" data-act="rr-vac-toggle" data-id="${v.id}" data-activo="${v.activo ? 1 : 0}">${v.activo ? "Cerrar" : "Reabrir"}</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin vacantes creadas.</div></div>`;
-  return rrPh("Vacantes activas del grupo") + rrTabs() + form + table;
+  return form + table;
+}
+// Las dos caras de contratar, en la misma pantalla.
+function renderRRContratacion(cands, vacs) {
+  const abiertas = (vacs || []).filter((v) => v.activo).length;
+  const nuevas = (cands || []).filter((c) => (c.estado || "nuevo") === "nuevo").length;
+  const sub = [["candidaturas", `Candidaturas${nuevas ? ` · ${nuevas} sin revisar` : ""}`],
+               ["vacantes", `Vacantes${abiertas ? ` · ${abiertas} abierta${abiertas === 1 ? "" : "s"}` : ""}`]];
+  const barra = `<div class="toolbar" style="margin-bottom:12px">${sub.map(([id, lab]) =>
+    `<button class="btn ${RRCONTR === id ? "primary" : ""}" data-act="rr-contr-tab" data-tab="${id}">${lab}</button>`).join("")}</div>`;
+  const cuerpo = RRCONTR === "vacantes" ? renderRRVac(vacs) : renderRRCand(cands);
+  return rrPh(RRCONTR === "vacantes" ? "Puestos abiertos del grupo" : "Quién quiere entrar en el equipo")
+    + rrTabs() + barra + cuerpo;
 }
 // ── Preguntas del mes ──
 function renderRRPreg() {
@@ -1877,9 +1894,15 @@ async function loadRRHH() {
   const permitidas = rrTabsPermitidas().map((t) => t[0]);
   if (!permitidas.includes(RRTAB)) RRTAB = permitidas[0];
   try {
-    if (RRTAB === "candidaturas") {
+    if (RRTAB === "contratacion") {
       const qs = new URLSearchParams(); if (RRF.estado) qs.set("estado", RRF.estado); if (RRF.q) qs.set("q", RRF.q);
-      view.innerHTML = renderRRCand(await api("/api/hr/applications" + (qs.toString() ? "?" + qs : "")));
+      // Las dos a la vez aunque solo se vea una: es lo que permite poner el contador en la
+      // otra sub-pestaña, y son dos peticiones en un solo viaje de red.
+      const [cands, vacs] = await Promise.all([
+        api("/api/hr/applications" + (qs.toString() ? "?" + qs : "")),
+        apiOptional("/api/hr/jobs/admin"),
+      ]);
+      view.innerHTML = renderRRContratacion(cands || [], vacs || []);
     } else if (RRTAB === "seguimiento") {
       RRSEG.mes = rrMesActual();
       // El resumen se pide en crudo: además de `data` trae `contacto` (quién no tiene teléfono).
@@ -1899,8 +1922,6 @@ async function loadRRHH() {
       PULSO.resumen = resumen; PULSO.participacion = participacion; PULSO.contactos = contactos;
       if (resumen && resumen.mes) PULSO.mes = resumen.mes;
       view.innerHTML = renderRRPulso();
-    } else if (RRTAB === "vacantes") {
-      view.innerHTML = renderRRVac(await api("/api/hr/jobs/admin"));
     } else if (RRTAB === "preguntas") {
       RRPREG.preguntas = ((await apiOptional("/api/rrhh/preguntas/" + RRPREG.mes)) || []).map((p) => p.pregunta || p);
       view.innerHTML = renderRRPreg();
@@ -5347,6 +5368,7 @@ document.addEventListener("click", (e) => {
   else if (act === "rev-sel-none") revSelNone();
   else if (act === "rev-bulk") revBulk();
   else if (act === "rr-tab") rrTab(t.getAttribute("data-tab"));
+  else if (act === "rr-contr-tab") { RRCONTR = t.getAttribute("data-tab"); loadRRHH(); }
   else if (act === "rr-filtrar") applyRRFilter();
   else if (act === "cand-estado") candEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
   else if (act === "rr-worker") rrSelWorker(t.getAttribute("data-id"));
