@@ -1,9 +1,15 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   normalizarLinea, normalizarLineas, validarSuma, mensajeValidacion,
   claveProducto, agruparPorProducto,
 } from "../../src/modules/facturas/lineas.js";
+import { idDeDriveUrl } from "../../facturas.js";
+
+const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 describe("líneas — normalizar lo que devuelve el modelo", () => {
   test("una línea normal", () => {
@@ -173,5 +179,60 @@ describe("líneas — agrupar por producto", () => {
       lin("Gambas", { proveedor: "Salma" }), lin("Gambas", { proveedor: "Amat" }), lin("Gambas", { proveedor: "Salma" }),
     ]);
     assert.deepEqual(g[0].proveedores.sort(), ["Amat", "Salma"]);
+  });
+});
+
+describe("releer las antiguas — sacar el id de Drive del enlace guardado", () => {
+  // Si esto falla, no se relee NADA: es lo único que conecta la factura de la base con su
+  // PDF, porque en su día se guardó el enlace y no el identificador.
+  test("del formato que guarda Drive (webViewLink)", () => {
+    assert.equal(idDeDriveUrl("https://drive.google.com/file/d/1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuV/view?usp=drivesdk"),
+      "1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuV");
+  });
+  test("y del formato antiguo con ?id=", () => {
+    assert.equal(idDeDriveUrl("https://drive.google.com/open?id=1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuV"),
+      "1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuV");
+  });
+  test("con guiones y guiones bajos, que Drive usa", () => {
+    assert.equal(idDeDriveUrl("https://drive.google.com/file/d/1a2B-3c4D_5e6F7g8H9i0JkLmNoPqRs/view"),
+      "1a2B-3c4D_5e6F7g8H9i0JkLmNoPqRs");
+  });
+  test("sin enlace devuelve null y no una cadena rara", () => {
+    for (const v of [null, "", "no es una url", "https://drive.google.com/", undefined]) {
+      assert.equal(idDeDriveUrl(v), null, String(v));
+    }
+  });
+  test("no se traga un id demasiado corto: mejor no releer que descargar cualquier cosa", () => {
+    assert.equal(idDeDriveUrl("https://drive.google.com/file/d/abc/view"), null);
+  });
+});
+
+describe("releer las antiguas — cableado", () => {
+  const server = fs.readFileSync(path.join(RAIZ, "server.js"), "utf8");
+
+  test("va POR TANDAS, no todas de golpe", () => {
+    // Cada factura es una descarga más una lectura con el modelo. Cientos en una sola
+    // petición acabarían en un tiempo de espera agotado a la mitad y sin saber por dónde.
+    assert.match(server, /lineas\/releer/);
+    assert.match(server, /LIMIT \?/);
+  });
+
+  test("una factura que no se puede leer se MARCA, para no bloquear el avance", () => {
+    // Si no, un PDF que ya no está en Drive saldría en cada tanda y la relectura no
+    // avanzaría nunca.
+    assert.match(server, /lineas_estado = 'no_leible'/);
+  });
+
+  test("no se lanzan dos relecturas a la vez", () => {
+    assert.match(server, /_releyendo/);
+  });
+
+  test("releer NO toca la cabecera de la factura", () => {
+    // Proveedor, fecha e importes pueden estar corregidos a mano; volver a escribirlos con
+    // lo que diga el modelo desharía ese trabajo.
+    const fx = fs.readFileSync(path.join(RAIZ, "facturas.js"), "utf8");
+    const fn = /export async function releerLineasFactura[\s\S]{0,1200}?\n}/.exec(fx)[0];
+    assert.equal(/UPDATE facturas SET (?!lineas_)/.test(fn), false, "solo debe tocar las líneas");
+    assert.match(fn, /DELETE FROM factura_lineas WHERE factura_id/, "y ser idempotente");
   });
 });

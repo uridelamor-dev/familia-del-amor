@@ -11,7 +11,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes } from "./facturas.js";
+import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, releerLineasFactura, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -2750,8 +2750,10 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
     // el total de verdad. Es la diferencia entre un dato y un dato en el que se puede confiar.
     const cobertura = await dbGet(
       `SELECT count(*)::int AS total,
-              count(*) FILTER (WHERE f.lineas_estado IS NOT NULL)::int AS con_detalle,
-              count(*) FILTER (WHERE f.lineas_estado = 'descuadre')::int AS descuadradas
+              count(*) FILTER (WHERE f.lineas_estado IS NOT NULL AND f.lineas_estado <> 'no_leible')::int AS con_detalle,
+              count(*) FILTER (WHERE f.lineas_estado = 'descuadre')::int AS descuadradas,
+              count(*) FILTER (WHERE f.lineas_estado = 'no_leible')::int AS no_leibles,
+              count(*) FILTER (WHERE f.lineas_estado IS NULL)::int AS sin_leer
        FROM facturas f ${whereFac}`, parFac);
 
     res.json({
@@ -2767,11 +2769,84 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
         facturas: cobertura?.total || 0,
         conDetalle: cobertura?.con_detalle || 0,
         descuadradas: cobertura?.descuadradas || 0,
+        // Separadas a propósito: «todavía sin leer» se arregla con un botón, «no se pudo
+        // leer» no. Meterlas en el mismo saco haría prometer algo que no va a pasar.
+        sinLeer: cobertura?.sin_leer || 0,
+        noLeibles: cobertura?.no_leibles || 0,
       },
     });
   } catch (e) {
     console.error("[facturas] compras:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron cargar las compras" });
+  }
+});
+
+// ── Releer las facturas antiguas ─────────────────────────────────────────────
+// Las facturas que entraron ANTES de que se leyera el detalle no lo tienen, así que sin
+// esto la pantalla de compras solo sabría de las nuevas y la pregunta «cuántas Coca-Colas
+// desde marzo» no tendría respuesta hasta dentro de meses.
+//
+// Va POR TANDAS y no de una vez: cada factura es una descarga de Drive más una lectura con
+// el modelo, y meter cientos en una sola petición acabaría en un tiempo de espera agotado
+// a la mitad, sin saber por dónde iba. Es idempotente: se puede repetir sin duplicar nada.
+let _releyendo = false;
+
+app.get("/api/facturas/lineas/pendientes", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const scope = localScope(req);
+    const r = await dbGet(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE lineas_estado IS NULL)::int AS sin_detalle,
+              count(*) FILTER (WHERE lineas_estado IS NULL AND drive_url IS NOT NULL)::int AS releibles
+       FROM facturas ${scope ? "WHERE local = ?" : ""}`, scope ? [scope] : []);
+    res.json({
+      ok: true, total: r?.total || 0, sinDetalle: r?.sin_detalle || 0, releibles: r?.releibles || 0,
+      sinArchivo: (r?.sin_detalle || 0) - (r?.releibles || 0),
+      enCurso: _releyendo,
+    });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo comprobar" }); }
+});
+
+app.post("/api/facturas/lineas/releer", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  if (_releyendo) return res.status(409).json({ ok: false, error: "Ya hay una relectura en marcha. Espera a que termine." });
+  _releyendo = true;
+  try {
+    const scope = localScope(req);
+    const tanda = Math.min(Math.max(Number(req.body?.tanda) || 15, 1), 40);
+    const filas = await dbAll(
+      `SELECT id, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, drive_url
+       FROM facturas
+       WHERE lineas_estado IS NULL AND drive_url IS NOT NULL ${scope ? "AND local = ?" : ""}
+       ORDER BY fecha DESC NULLS LAST, id DESC LIMIT ?`,
+      scope ? [scope, tanda] : [tanda]);
+
+    const resultado = { leidas: 0, conAviso: 0, fallidas: 0, detalles: [] };
+    for (const f of filas) {
+      try {
+        const r = await releerLineasFactura({ factura: f, getToken: getDriveAccessToken, dbRun });
+        resultado.leidas += 1;
+        if (r.aviso) resultado.conAviso += 1;
+        resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, lineas: r.n, aviso: r.aviso || null });
+      } catch (e) {
+        resultado.fallidas += 1;
+        // Se marca para no volver a intentarlo en cada tanda: si no, una factura cuyo PDF
+        // ya no está en Drive bloquearía el avance para siempre.
+        await dbRun(`UPDATE facturas SET lineas_estado = 'no_leible', lineas_aviso = ?, lineas_leidas_en = ? WHERE id = ?`,
+          [String(e.message || "").slice(0, 300), isoConOffset(Date.now()), f.id]).catch(() => {});
+        resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, error: e.message });
+        console.error(`[facturas] releer #${f.id}:`, e.message);
+      }
+    }
+
+    const quedan = await dbGet(
+      `SELECT count(*)::int AS n FROM facturas WHERE lineas_estado IS NULL AND drive_url IS NOT NULL ${scope ? "AND local = ?" : ""}`,
+      scope ? [scope] : []);
+    res.json({ ok: true, ...resultado, quedan: quedan?.n || 0 });
+  } catch (e) {
+    console.error("[facturas] releer:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo releer: " + e.message });
+  } finally {
+    _releyendo = false;
   }
 });
 

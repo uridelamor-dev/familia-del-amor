@@ -60,6 +60,41 @@ En "lineas" pon UNA ENTRADA POR CADA LÍNEA DE PRODUCTO del detalle, en el orden
 - Si una línea no se lee con seguridad, ponla igualmente con "descripcion" con lo que se distinga y null en lo que no puedas leer. NO INVENTES cantidades ni importes: es preferible un null a un número que parezca correcto.
 - Si el documento no tiene detalle por líneas (por ejemplo un ticket resumido), devuelve "lineas": [].`;
 
+// El id del fichero dentro de una URL de Drive. Se guardó `webViewLink`, que tiene forma
+// https://drive.google.com/file/d/<ID>/view — pero también se ven las de ?id=<ID>.
+export function idDeDriveUrl(url) {
+  const s = String(url || "");
+  return (/\/d\/([-\w]{20,})/.exec(s) || /[?&]id=([-\w]{20,})/.exec(s) || [])[1] || null;
+}
+
+// Descarga un fichero de Drive. Hace falta para releer las facturas antiguas: el PDF vive
+// allí y en la base solo quedó el enlace.
+export async function driveDescargar(token, fileId) {
+  const meta = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=mimeType,name,size`,
+    { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
+  if (meta.error) throw new Error("Drive: " + meta.error.message);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error("Drive: no se pudo descargar (" + res.status + ")");
+  return { buffer: Buffer.from(await res.arrayBuffer()), mimeType: meta.mimeType, nombre: meta.name };
+}
+
+// Releer el detalle de UNA factura que ya estaba guardada. Idempotente: borra las líneas
+// que hubiera y las vuelve a escribir, así que se puede repetir sin duplicar nada.
+export async function releerLineasFactura({ factura, getToken, dbRun }) {
+  const fileId = idDeDriveUrl(factura.drive_url);
+  if (!fileId) throw new Error("La factura no tiene un enlace de Drive reconocible");
+  const token = await getToken();
+  const { buffer, mimeType } = await driveDescargar(token, fileId);
+  const datos = await extraerDatosDocumento(buffer, mimeType);
+
+  // Para releer el detalle NO se toca la cabecera: proveedor, fecha, importes y local ya
+  // están revisados y puede que corregidos a mano. Solo interesan las líneas, y se
+  // contrastan contra la base imponible que ya está guardada, no contra la releída.
+  await dbRun("DELETE FROM factura_lineas WHERE factura_id = ?", [factura.id]);
+  return guardarLineas(dbRun, factura.id, { lineas: datos.lineas, base_imponible: factura.base_imponible }, new Date().toISOString());
+}
+
 // Guarda el detalle de una factura y deja escrito si cuadra. NO es fatal: si algo falla
 // aquí, la factura ya está guardada y lo que se pierde es el detalle, no el gasto.
 export async function guardarLineas(dbRun, facturaId, datos, ahora) {

@@ -3614,7 +3614,8 @@ async function loadCompras() {
     const f = e.target.closest("[data-compfac]");
     if (f) return comprasVerFactura(f.getAttribute("data-compfac"));
     const p = e.target.closest("[data-compprod]");
-    if (p) { COMP.q = p.getAttribute("data-compprod"); const i = document.getElementById("compQ"); if (i) i.value = COMP.q; refrescarCompras(); }
+    if (p) { COMP.q = p.getAttribute("data-compprod"); const i = document.getElementById("compQ"); if (i) i.value = COMP.q; return refrescarCompras(); }
+    if (e.target.closest('[data-comp="releer"]')) comprasReleer();
   });
 }
 let _compTimer = null;
@@ -3645,11 +3646,17 @@ async function refrescarCompras() {
 
   // La cobertura va arriba y siempre: un total calculado sobre la mitad de las facturas
   // parece el total de verdad si no se dice lo contrario.
-  const aviso = c.facturas === 0 ? "" : sinDetalle > 0
+  // El aviso distingue lo que se arregla con un botón de lo que no. Meterlo todo en «no
+  // tienen detalle» haría prometer algo que en unas no va a pasar nunca.
+  const partes = [];
+  if (c.sinLeer) partes.push(`<b>${num(c.sinLeer)}</b> ${c.sinLeer === 1 ? "está" : "están"} sin leer todavía (son de antes de que se leyeran las líneas)`);
+  if (c.noLeibles) partes.push(`<b>${num(c.noLeibles)}</b> no se ${c.noLeibles === 1 ? "pudo" : "pudieron"} leer, normalmente porque ya no está el archivo`);
+  const aviso = c.facturas === 0 ? "" : (c.sinLeer || c.noLeibles || c.descuadradas)
     ? `<p class="fic-nota">De las <b>${num(c.facturas)}</b> facturas de este periodo, <b>${num(c.conDetalle)}</b> tienen el detalle leído.
-       Las <b>${num(sinDetalle)}</b> restantes son anteriores a que empezáramos a leer las líneas, así que <b>no cuentan</b> en estos totales.
-       ${c.descuadradas ? `Además, <b>${num(c.descuadradas)}</b> ${c.descuadradas === 1 ? "tiene un detalle que no cuadra" : "tienen un detalle que no cuadra"} con su base imponible: ${c.descuadradas === 1 ? "mírala" : "míralas"} antes de fiarte de sus cantidades.` : ""}</p>`
-    : `<p class="mut" style="margin:0 0 12px">${num(c.conDetalle)} facturas con detalle leído${c.descuadradas ? ` · <b>${num(c.descuadradas)}</b> con el detalle descuadrado` : ""}.</p>`;
+       ${partes.length ? `${cap(partes.join(" y "))}, así que <b>no cuentan</b> en estos totales.` : ""}
+       ${c.descuadradas ? `Además, <b>${num(c.descuadradas)}</b> ${c.descuadradas === 1 ? "tiene un detalle que no cuadra" : "tienen un detalle que no cuadra"} con su base imponible: ${c.descuadradas === 1 ? "mírala" : "míralas"} antes de fiarte de sus cantidades.` : ""}
+       ${c.sinLeer ? `<button class="btn sm" data-comp="releer" style="margin-top:8px">Leer las ${num(c.sinLeer)} que faltan</button>` : ""}</p>`
+    : `<p class="mut" style="margin:0 0 12px">Las ${num(c.conDetalle)} facturas de este periodo tienen el detalle leído.</p>`;
 
   const fila = (g) => `<tr>
       <td><button class="linkbtn" data-compprod="${esc(g.descripcion)}" title="Ver solo este producto">${esc(g.descripcion)}</button>
@@ -3688,6 +3695,54 @@ async function refrescarCompras() {
       <div class="ch"><h3>${COMP.q ? `«${esc(COMP.q)}»` : "Todo lo comprado"}</h3>
         <span class="mut">${num(j.totales.productos)} ${j.totales.productos === 1 ? "producto" : "productos"} · <b>${esc(eur(j.totales.importe))}</b></span></div>
       ${aviso}${tabla}</div>${detalle}`;
+}
+
+// Releer el detalle de las facturas antiguas. Va por tandas y se enseña el avance: son
+// cientos de descargas de Drive más una lectura cada una, y un botón que se queda pensando
+// cinco minutos sin decir nada acaba con alguien recargando la página a la mitad.
+async function comprasReleer() {
+  let est;
+  try { est = await apiRaw("/api/facturas/lineas/pendientes"); } catch (e) { return toast(e.message); }
+  if (!est.releibles) {
+    return modal("Nada que releer", `<p style="margin:0 0 16px;line-height:1.6">Todas las facturas que tienen su archivo en Drive ya tienen el detalle leído.
+      ${est.sinArchivo ? `Hay <b>${num(est.sinArchivo)}</b> sin archivo guardado: de esas no se puede sacar el detalle.` : ""}</p>
+      <div style="display:flex;justify-content:flex-end"><button class="btn" data-close>Cerrar</button></div>`);
+  }
+
+  const ok = await confirmModal(
+    `Se van a releer ${est.releibles} facturas antiguas para sacarles el detalle. Se descarga cada archivo de Drive y se lee: tarda un rato y se puede parar cuando quieras. No se toca nada de la cabecera — proveedor, fechas e importes se quedan como están.`,
+    { ok: "Empezar" });
+  if (!ok) return;
+
+  const ov = modal("Leyendo facturas antiguas", `
+    <p id="relEstado" style="margin:0 0 12px;line-height:1.6">Empezando…</p>
+    <div class="rows" id="relLista" style="max-height:260px;overflow:auto"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" id="relParar">Parar</button></div>`);
+  let parar = false;
+  ov.querySelector("#relParar").addEventListener("click", () => { parar = true; ov.querySelector("#relParar").textContent = "Parando…"; });
+  ov.addEventListener("click", (e) => { if (e.target === ov) parar = true; });
+
+  let leidas = 0, avisos = 0, fallidas = 0;
+  const estado = ov.querySelector("#relEstado"), lista = ov.querySelector("#relLista");
+  while (!parar) {
+    let r;
+    try { r = await apiSend("POST", "/api/facturas/lineas/releer", { tanda: 15 }); }
+    catch (e) { estado.innerHTML = `<b>Se ha parado:</b> ${esc(e.message)}`; break; }
+    leidas += r.leidas; avisos += r.conAviso; fallidas += r.fallidas;
+    for (const d of r.detalles) {
+      lista.insertAdjacentHTML("afterbegin", `<div class="row"><div class="grow">
+        <div class="t1">${esc(d.proveedor || "—")} <span class="mut">${esc(d.fecha || "")}</span></div>
+        <div class="t2">${d.error ? `⚠️ ${esc(d.error)}` : `${d.lineas} ${d.lineas === 1 ? "línea" : "líneas"}${d.aviso ? " · " + esc(d.aviso) : ""}`}</div>
+      </div></div>`);
+    }
+    estado.innerHTML = `<b>${num(leidas)}</b> leídas · quedan <b>${num(r.quedan)}</b>${avisos ? ` · ${num(avisos)} con avisos` : ""}${fallidas ? ` · ${num(fallidas)} sin poder leer` : ""}`;
+    if (!r.quedan || (!r.leidas && !r.fallidas)) break;   // sin avance: no dar vueltas en balde
+  }
+  ov.querySelector("#relParar").textContent = "Cerrar";
+  ov.querySelector("#relParar").setAttribute("data-close", "");
+  estado.innerHTML += `<br><span class="mut">Terminado.</span>`;
+  refrescarCompras();
 }
 
 async function comprasVerFactura(id) {
