@@ -390,6 +390,7 @@ let sock = null;
 let clientReady = false;
 let lastQR = null;
 let reconnectAttempts = 0;
+let pausedWaitingQR = false;
 let hasEverConnected = false;
 
 export function markAwaitingFollowup(jid, ctx) {
@@ -750,6 +751,7 @@ async function connectToWhatsApp() {
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
       lastQR = qr;
+      pausedWaitingQR = false;
       clientReady = false;
       console.log("\n📱 QR disponible en el panel de encargados\n");
     }
@@ -771,6 +773,11 @@ async function connectToWhatsApp() {
       // Código 408 = QR expiró sin ser escaneado.
       // Tras 3 intentos sin éxito, pausar para no saturar a WhatsApp.
       if (code === 408 && reconnectAttempts >= 3) {
+        // Importante: el QR guardado ya expiró. Si lo seguimos mostrando, el
+        // teléfono dirá "no se puede vincular". Lo borramos y esperamos a que
+        // el panel pida uno nuevo (via forceReconnect desde /api/whatsapp/qr).
+        lastQR = null;
+        pausedWaitingQR = true;
         console.log(`[WhatsApp] QR ignorado ${reconnectAttempts} veces — pausando reconexión automática. Escanea el QR manualmente.`);
         await sendNtfyAlert(
           "⚠️ WhatsApp esperando QR",
@@ -1183,6 +1190,17 @@ export function isReady() {
 export async function getQRImage() {
   if (!lastQR) return null;
   return QRCode.toDataURL(lastQR, { width: 300, margin: 2 });
+}
+
+// Si la reconexión automática está pausada (QR expirado sin escanear),
+// fuerza una nueva conexión para generar un QR fresco.
+export function forceReconnect() {
+  if (!pausedWaitingQR) return false;
+  pausedWaitingQR = false;
+  reconnectAttempts = 0;
+  console.log("[WhatsApp] Reconexión manual solicitada — generando QR nuevo...");
+  connectToWhatsApp().catch(e => console.error("Error reconectando (manual):", e.message));
+  return true;
 }
 
 export function initWhatsApp() {

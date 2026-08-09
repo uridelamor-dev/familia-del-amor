@@ -21,3 +21,6 @@ const sock = makeWASocket({
 });
 ```
 Use `@whiskeysockets/baileys` rc13 or later.
+
+## Stale QR after pause
+When 408 (QR expired unscanned) pauses auto-reconnect, `lastQR` must be cleared — otherwise the panel serves an expired QR and the phone says "no se puede vincular". `/api/whatsapp/qr` calls `forceReconnect()` when no QR is available and reconnection is paused, generating a fresh QR automatically.
