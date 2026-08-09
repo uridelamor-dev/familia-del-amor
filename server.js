@@ -8756,7 +8756,7 @@ const server = app.listen(PORT, async () => {
        FROM whatsapp_messages
        WHERE jid = ?
          AND respuesta != '(sin respuesta registrada)'
-         AND creado_en > NOW() - INTERVAL '4 hours'
+         AND creado_en::timestamptz > NOW() - INTERVAL '4 hours'
        ORDER BY id DESC LIMIT 20`,
       [jid]
     );

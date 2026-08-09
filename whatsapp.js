@@ -762,12 +762,21 @@ async function connectToWhatsApp() {
       console.log(`[WhatsApp] Conexión cerrada — código: ${code} | razón: ${reason}`);
 
       if (code === DisconnectReason.loggedOut) {
-        console.log("❌ Sesión cerrada (loggedOut). Escanea el QR para reconectar.");
+        console.log("❌ Sesión cerrada (loggedOut). Limpiando credenciales y generando QR nuevo...");
+        // Las credenciales viejas ya no valen: hay que borrarlas para que la
+        // nueva conexión genere un QR fresco (si no, entra en bucle 401 sin QR).
+        try {
+          fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        } catch (e) { console.error("[WhatsApp] Error limpiando auth dir:", e.message); }
         await sendNtfyAlert(
           "⚠️ WhatsApp desconectado — acción requerida",
-          "La sesión se ha cerrado. Entra en Dirección → WhatsApp y escanea el QR para volver a conectar."
+          "La sesión se ha cerrado. Entra en Dirección → WhatsApp y escanea el QR nuevo para volver a conectar."
         );
-        return; // No reconectar automáticamente: se necesita nuevo QR
+        reconnectAttempts = 0;
+        setTimeout(() => {
+          connectToWhatsApp().catch(e => console.error("Error reconectando tras loggedOut:", e.message));
+        }, 2000);
+        return;
       }
 
       // Código 408 = QR expiró sin ser escaneado.

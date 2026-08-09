@@ -22,5 +22,8 @@ const sock = makeWASocket({
 ```
 Use `@whiskeysockets/baileys` rc13 or later.
 
+## loggedOut must clear creds and reconnect
+On `DisconnectReason.loggedOut`, delete the auth dir and call `connectToWhatsApp()` again — returning without reconnecting means no socket exists, so no QR is ever generated and the panel stays empty forever.
+
 ## Stale QR after pause
 When 408 (QR expired unscanned) pauses auto-reconnect, `lastQR` must be cleared — otherwise the panel serves an expired QR and the phone says "no se puede vincular". `/api/whatsapp/qr` calls `forceReconnect()` when no QR is available and reconnection is paused, generating a fresh QR automatically.
