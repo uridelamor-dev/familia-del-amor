@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { claveProveedor, normalizarCategoria, indiceCategorias, categoriasDe, gastoPorCategoria, CATEGORIAS } from "../../src/modules/facturas/categorias.js";
+import { claveProveedor, normalizarCategoria, indiceCategorias, categoriasDe, gastoPorCategoria, seLeenLineas, CATEGORIAS, SIN_LINEAS } from "../../src/modules/facturas/categorias.js";
 
 describe("claveProveedor: el mismo proveedor escrito de cinco maneras", () => {
   test("la forma jurídica no distingue a nadie", () => {
@@ -106,5 +106,32 @@ describe("gasto por categoría", () => {
   test("importes que no son números no rompen el total", () => {
     const v = gastoPorCategoria([{ proveedor: "Grau", importe: null }, { proveedor: "Grau", importe: "abc" }], idx);
     assert.equal(v.total, 0);
+  });
+});
+
+describe("de qué facturas NO se lee el detalle", () => {
+  test("del alquiler, la luz o el gestor no: su línea no es un producto", () => {
+    for (const c of ["Alquileres", "Suministros", "Servicios y profesionales", "Impuestos y seguros", "Mantenimiento y obras", "Marketing"]) {
+      assert.equal(seLeenLineas([c]), false, c);
+    }
+  });
+  test("de la mercancía sí, que es de lo que se quiere saber cuánto se compra", () => {
+    for (const c of ["Bebidas", "Alcohol", "Carne", "Pescado y marisco", "Limpieza e higiene", "Desechables y envases", "Varios"]) {
+      assert.equal(seLeenLineas([c]), true, c);
+    }
+  });
+  test("un proveedor sin etiquetar SÍ se lee: no saber de qué es no es razón para dejar un hueco", () => {
+    assert.equal(seLeenLineas([]), true);
+    assert.equal(seLeenLineas(), true);
+  });
+  test("si vende de las dos cosas, se lee: parte de lo que vende sí interesa", () => {
+    assert.equal(seLeenLineas(["Suministros", "Bebidas"]), true);
+    assert.equal(seLeenLineas(["Alquileres", "Impuestos y seguros"]), false);
+  });
+  test("todas las de SIN_LINEAS están en el catálogo (si no, no se podrían elegir)", () => {
+    for (const c of SIN_LINEAS) assert.ok(CATEGORIAS.includes(c), c);
+  });
+  test("«Varios» NO está entre las que no se leen: es el cajón de los generalistas, que sí venden producto", () => {
+    assert.ok(!SIN_LINEAS.has("Varios"));
   });
 });

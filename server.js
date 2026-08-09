@@ -11,7 +11,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, releerLineasFactura, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes } from "./facturas.js";
+import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -2736,7 +2736,19 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   }
   if (poblacion) { sql += ` AND c.poblacion ILIKE ?`; params.push(`%${poblacion}%`); }
   if (genero) { sql += ` AND c.genero = ?`; params.push(genero); }
-  if (cumple_mes) { sql += ` AND TO_CHAR(c.nacimiento::date, 'MM') = ?`; params.push(cumple_mes.padStart(2, "0")); }
+  // Cumpleaños de un mes. SIN convertir a fecha: `''::date` revienta la consulta entera con
+  // un error de Postgres, y basta UN contacto con la fecha de nacimiento en blanco —que los
+  // hay— para que la lista deje de cargar. Se compara el trozo del mes tal cual, y se aceptan
+  // los dos formatos que hay guardados: «1980-08-15» y «15/08/1980».
+  const mm = String(cumple_mes || "").padStart(2, "0");
+  if (/^(0[1-9]|1[0-2])$/.test(mm)) {
+    sql += ` AND ( (c.nacimiento ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND substring(c.nacimiento, 6, 2) = ?)
+                OR (c.nacimiento ~ '^[0-9]{2}[/-][0-9]{2}[/-][0-9]{4}$' AND substring(c.nacimiento, 4, 2) = ?) )`;
+    params.push(mm, mm);
+  } else if (cumple_mes) {
+    // Un mes que no es un mes no puede filtrar por lo que le dé la gana: se ignora y se dice.
+    console.warn("[contactos] cumple_mes no válido, se ignora:", cumple_mes);
+  }
   if (filtros.from) { sql += ` AND c.ultima_actividad >= ?`; params.push(filtros.from); }
   if (filtros.to) { sql += ` AND c.ultima_actividad <= ?`; params.push(filtros.to + " 23:59:59"); }
   if (con_email) sql += ` AND c.correo IS NOT NULL AND c.correo <> ''`;
@@ -2828,9 +2840,12 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
     // el total de verdad. Es la diferencia entre un dato y un dato en el que se puede confiar.
     const cobertura = await dbGet(
       `SELECT count(*)::int AS total,
-              count(*) FILTER (WHERE f.lineas_estado IS NOT NULL AND f.lineas_estado <> 'no_leible')::int AS con_detalle,
+              count(*) FILTER (WHERE f.lineas_estado IS NOT NULL AND f.lineas_estado NOT IN ('no_leible','no_aplica'))::int AS con_detalle,
               count(*) FILTER (WHERE f.lineas_estado = 'descuadre')::int AS descuadradas,
               count(*) FILTER (WHERE f.lineas_estado = 'no_leible')::int AS no_leibles,
+              -- Alquiler, luz, gestor…: no se leen a propósito. Contarlas como «con detalle»
+              -- inflaría la cobertura, y como «sin leer» pediría leerlas para siempre.
+              count(*) FILTER (WHERE f.lineas_estado = 'no_aplica')::int AS no_aplica,
               count(*) FILTER (WHERE f.lineas_estado IS NULL)::int AS sin_leer
        FROM facturas f ${whereFac}`, parFac);
 
@@ -2851,6 +2866,7 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
         // leer» no. Meterlas en el mismo saco haría prometer algo que no va a pasar.
         sinLeer: cobertura?.sin_leer || 0,
         noLeibles: cobertura?.no_leibles || 0,
+        noAplica: cobertura?.no_aplica || 0,
       },
     });
   } catch (e) {
@@ -3029,9 +3045,18 @@ app.post("/api/facturas/lineas/releer", requireAuth(["direccion", "contabilidad"
        ORDER BY fecha DESC NULLS LAST, id DESC LIMIT ?`,
       scope ? [scope, tanda] : [tanda]);
 
-    const resultado = { leidas: 0, conAviso: 0, fallidas: 0, detalles: [] };
+    const resultado = { leidas: 0, conAviso: 0, fallidas: 0, saltadas: 0, detalles: [] };
     for (const f of filas) {
       try {
+        // El alquiler, la luz o el gestor no se leen: su línea no es un producto y cada
+        // lectura cuesta una llamada al modelo. Se marca `no_aplica` para que no vuelva a
+        // salir en la siguiente tanda.
+        if (!(await proveedorConLineas(dbGet, f.proveedor))) {
+          await dbRun(`UPDATE facturas SET lineas_estado = 'no_aplica', lineas_leidas_en = ? WHERE id = ?`, [isoConOffset(Date.now()), f.id]);
+          resultado.saltadas += 1;
+          resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, saltada: "gasto estructural" });
+          continue;
+        }
         const r = await releerLineasFactura({ factura: f, getToken: getDriveAccessToken, dbRun });
         resultado.leidas += 1;
         if (r.aviso) resultado.conAviso += 1;

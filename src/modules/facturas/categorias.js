@@ -27,6 +27,40 @@ export const CATEGORIAS = [
 ];
 
 /**
+ * Categorías de gasto estructural: lo que se paga para tener el negocio abierto, no lo que se
+ * vende. De estas facturas NO se lee el detalle línea a línea, por dos razones:
+ *
+ *   · No se va a analizar. «Cuántas Coca-Colas he comprado» tiene sentido; «cuántos alquileres
+ *     de julio» no. La línea de una factura de la luz o del gestor no es un producto.
+ *   · Ensucia. Sin esto, «Qué compramos» acaba con «Alquiler local julio», «Cuota mensual
+ *     asesoría» y «Consumo kWh» mezclados entre las gambas y el aceite, y el ranking de gasto
+ *     por producto deja de servir para lo que sirve.
+ *
+ * El gasto SÍ cuenta: la factura se guarda igual y suma en los totales y en su categoría. Lo
+ * único que no se guarda es el desglose.
+ */
+export const SIN_LINEAS = new Set([
+  "Suministros", "Mantenimiento y obras", "Servicios y profesionales",
+  "Impuestos y seguros", "Alquileres", "Marketing",
+]);
+
+/**
+ * ¿Hay que leer el detalle de las facturas de este proveedor?
+ *
+ * Sin categorías → SÍ. No saber de qué es un proveedor no es razón para dejar de leerlo; el
+ * daño de no leer algo que había que leer (un hueco silencioso en el histórico de compras) es
+ * mayor que el de leer algo que no hacía falta (una línea de más).
+ *
+ * Con categorías → solo si alguna es de mercancía. Un proveedor que es «Suministros» y nada
+ * más no se lee; uno que sea «Suministros» y «Bebidas» sí, porque parte de lo que vende sí
+ * interesa.
+ */
+export function seLeenLineas(categorias = []) {
+  if (!categorias.length) return true;
+  return categorias.some((c) => !SIN_LINEAS.has(c));
+}
+
+/**
  * Clave con la que se reconoce a un proveedor pese a cómo venga escrito en cada factura.
  * «GRAU DISTRIBUCIONS, S.L.», «Grau Distribucions SL» y «grau distribucions» son el mismo
  * proveedor, y si no se unifican hay que etiquetarlo tres veces y el gasto sale partido.

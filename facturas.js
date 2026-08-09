@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { normalizarLineas, validarSuma, mensajeValidacion, claveProducto } from "./src/modules/facturas/lineas.js";
 import { canonizarLocal, esLocalCanonico } from "./src/modules/facturas/local-canonico.js";
+import { claveProveedor, seLeenLineas } from "./src/modules/facturas/categorias.js";
 import { createHash } from "crypto";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 
@@ -94,6 +95,23 @@ export async function releerLineasFactura({ factura, getToken, dbRun }) {
   // contrastan contra la base imponible que ya está guardada, no contra la releída.
   await dbRun("DELETE FROM factura_lineas WHERE factura_id = ?", [factura.id]);
   return guardarLineas(dbRun, factura.id, { lineas: datos.lineas, base_imponible: factura.base_imponible }, new Date().toISOString());
+}
+
+/**
+ * ¿Se lee el detalle de este proveedor? Del alquiler, la luz o el gestor no: la línea de esas
+ * facturas no es un producto, no se va a analizar nunca, y metidas en «Qué compramos» dejan el
+ * ranking de gasto por producto lleno de «Alquiler local julio» entre las gambas y el aceite.
+ * El gasto sí cuenta igual: lo que no se guarda es el desglose.
+ * Ver src/modules/facturas/categorias.js (SIN_LINEAS).
+ */
+export async function proveedorConLineas(dbGet, proveedor) {
+  const clave = claveProveedor(proveedor);
+  if (!clave || !dbGet) return true;   // sin saber de qué es, se lee: un hueco silencioso es peor
+  try {
+    const filas = await dbGet(`SELECT string_agg(categoria, '|') AS cats FROM facturas_proveedor_cats WHERE prov_clave = ?`, [clave]);
+    const cats = filas && filas.cats ? String(filas.cats).split("|") : [];
+    return seLeenLineas(cats);
+  } catch { return true; }
 }
 
 // Guarda el detalle de una factura y deja escrito si cuadra. NO es fatal: si algo falla
@@ -643,9 +661,17 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   // se pierde es el desglose, no el gasto.
   try {
     if (facturaId) {
-      const r = await guardarLineas(dbRun, facturaId, datos, new Date().toISOString());
-      if (r.aviso) console.warn(`[Facturas] #${facturaId} detalle: ${r.aviso}`);
-      else console.log(`[Facturas] #${facturaId}: ${r.n} líneas de detalle`);
+      if (!(await proveedorConLineas(dbGet, datos.proveedor))) {
+        // `no_aplica` y no «sin leer»: así el contador de «Qué compramos» no pide leer para
+        // siempre unas facturas que a propósito no se leen.
+        await dbRun(`UPDATE facturas SET lineas_estado = 'no_aplica', lineas_leidas_en = ? WHERE id = ?`,
+          [new Date().toISOString(), facturaId]);
+        console.log(`[Facturas] #${facturaId}: gasto estructural (${datos.proveedor}), no se lee el detalle`);
+      } else {
+        const r = await guardarLineas(dbRun, facturaId, datos, new Date().toISOString());
+        if (r.aviso) console.warn(`[Facturas] #${facturaId} detalle: ${r.aviso}`);
+        else console.log(`[Facturas] #${facturaId}: ${r.n} líneas de detalle`);
+      }
     }
   } catch (e) { console.error("[Facturas] no se pudo guardar el detalle:", e.message); }
 

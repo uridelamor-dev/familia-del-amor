@@ -1149,7 +1149,11 @@ let CLI_TOTAL = 0;
 let CLI_POBLACIONES = [];
 let _cliTimer = null;
 async function apiRaw(path) { const r = await fetch(path, { headers: { Authorization: "Bearer " + token() } }); if (r.status === 401 || r.status === 403) { localStorage.removeItem("token"); location.href = "/login.html"; throw new Error("noauth"); } const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error"); return j; }
-function cliQS() { const qs = new URLSearchParams(); if (CLIF.q) qs.set("q", CLIF.q); if (CLIF.poblacion) qs.set("poblacion", CLIF.poblacion); if (CLIF.local) qs.set("local", CLIF.local); if (CLIF.cumple) qs.set("cumple_mes", "1"); if (CLIF.con_email) qs.set("con_email", "1"); if (CLIF.con_telefono) qs.set("con_telefono", "1"); if (CLIF.excluir_baja) qs.set("excluir_baja", "1"); return qs.toString(); }
+// El mes de HOY como «MM». El filtro «cumpleaños este mes» mandaba un `1` literal —la marca
+// de «casilla activada»— y el servidor lo leía como el mes 01: en agosto no salía nadie y en
+// enero salía media lista. El mes tiene que viajar, no un booleano.
+const mesActualMM = () => String(new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" })).slice(5, 7);
+function cliQS() { const qs = new URLSearchParams(); if (CLIF.q) qs.set("q", CLIF.q); if (CLIF.poblacion) qs.set("poblacion", CLIF.poblacion); if (CLIF.local) qs.set("local", CLIF.local); if (CLIF.cumple) qs.set("cumple_mes", mesActualMM()); if (CLIF.con_email) qs.set("con_email", "1"); if (CLIF.con_telefono) qs.set("con_telefono", "1"); if (CLIF.excluir_baja) qs.set("excluir_baja", "1"); return qs.toString(); }
 function cliChk(id, campo, label) { return `<label style="display:inline-flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="${id}" ${CLIF[campo] ? "checked" : ""} style="width:auto;height:auto;margin:0"> ${esc(label)}</label>`; }
 function cliActionsBar(total) {
   return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Escribir a los ${num(total)} filtrados (WhatsApp)</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div>${USER.rol === "direccion" ? `<button class="btn" data-act="cli-dup" title="Buscar fichas repetidas de la misma persona">Fichas repetidas</button>` : ""}<button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
@@ -1312,7 +1316,7 @@ function cliMasivo() {
     } catch (e) { toast("Error: " + e.message); }
   });
 }
-function filtrosClienteBody() { const b = {}; if (CLIF.q) b.q = CLIF.q; if (CLIF.poblacion) b.poblacion = CLIF.poblacion; if (CLIF.local) b.local = CLIF.local; if (CLIF.cumple) b.cumple_mes = String(new Date().getMonth() + 1); if (CLIF.con_email) b.con_email = 1; if (CLIF.con_telefono) b.con_telefono = 1; return b; }
+function filtrosClienteBody() { const b = {}; if (CLIF.q) b.q = CLIF.q; if (CLIF.poblacion) b.poblacion = CLIF.poblacion; if (CLIF.local) b.local = CLIF.local; if (CLIF.cumple) b.cumple_mes = mesActualMM(); if (CLIF.con_email) b.con_email = 1; if (CLIF.con_telefono) b.con_telefono = 1; return b; }
 // Ficha de contacto: datos, visitas, reservas, WhatsApp y consentimiento.
 async function cliFicha(tel) {
   let d; try { d = (await apiRaw("/api/contactos/" + encodeURIComponent(tel))).data; } catch (e) { toast("Error: " + e.message); return; }
@@ -4090,11 +4094,16 @@ async function refrescarCompras() {
   // tienen detalle» haría prometer algo que en unas no va a pasar nunca.
   const partes = [];
   if (c.sinLeer) partes.push(`<b>${num(c.sinLeer)}</b> ${c.sinLeer === 1 ? "está" : "están"} sin leer todavía (son de antes de que se leyeran las líneas)`);
+  // El gasto estructural va aparte y sin botón: no falta nada, es que no se lee a propósito.
+  const estructural = c.noAplica
+    ? ` <b>${num(c.noAplica)}</b> ${c.noAplica === 1 ? "es de gasto estructural" : "son de gasto estructural"} (alquiler, luz, gestor…): ${c.noAplica === 1 ? "su detalle no se lee" : "su detalle no se lee"} a propósito, porque esas líneas no son productos. El gasto sí cuenta.`
+    : "";
   if (c.noLeibles) partes.push(`<b>${num(c.noLeibles)}</b> no se ${c.noLeibles === 1 ? "pudo" : "pudieron"} leer, normalmente porque ya no está el archivo`);
-  const aviso = c.facturas === 0 ? "" : (c.sinLeer || c.noLeibles || c.descuadradas)
+  const aviso = c.facturas === 0 ? "" : (c.sinLeer || c.noLeibles || c.descuadradas || c.noAplica)
     ? `<p class="fic-nota">De las <b>${num(c.facturas)}</b> facturas de este periodo, <b>${num(c.conDetalle)}</b> tienen el detalle leído.
        ${partes.length ? `${cap(partes.join(" y "))}, así que <b>no cuentan</b> en estos totales.` : ""}
        ${c.descuadradas ? `Además, <b>${num(c.descuadradas)}</b> ${c.descuadradas === 1 ? "tiene un detalle que no cuadra" : "tienen un detalle que no cuadra"} con su base imponible: ${c.descuadradas === 1 ? "mírala" : "míralas"} antes de fiarte de sus cantidades.` : ""}
+       ${estructural}
        ${c.sinLeer ? `<button class="btn sm" data-comp="releer" style="margin-top:8px">Leer las ${num(c.sinLeer)} que faltan</button>` : ""}</p>`
     : `<p class="mut" style="margin:0 0 12px">Las ${num(c.conDetalle)} facturas de este periodo tienen el detalle leído.</p>`;
 
