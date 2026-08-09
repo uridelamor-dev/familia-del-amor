@@ -30,7 +30,8 @@ import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos } from 
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, caducidadMes, generarToken } from "./src/modules/rrhh/pulso.js";
-import { ensureSchemaHorarios, sembrarLocal } from "./src/modules/horarios/schema.js";
+import { ensureSchemaHorarios, sembrarLocal, migrarDescansos } from "./src/modules/horarios/schema.js";
+import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descansos.js";
 import { instanteANegocio, lunesDe, diasSemana, isoConOffset, aMinutos, deMinutos, epochDeLocal, sumaDias } from "./src/modules/horarios/tiempo.js";
 import { detectarConflictos, resumirConflictos } from "./src/modules/horarios/conflictos.js";
 import { validarPublicacion, construirSnapshot } from "./src/modules/horarios/versiones.js";
@@ -952,6 +953,7 @@ async function initDB() {
       const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
       await ensureSchemaHorarios(schemaX);
       await ensureSchemaFichajes(schemaX);
+      await migrarDescansos(schemaX, isoConOffset(Date.now()));
     } catch (e) {
       console.error("[DB] Aviso: esquema de horarios no inicializado (no fatal):", e.message);
     }
@@ -4356,20 +4358,34 @@ app.get("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) =>
 
     const [areas, tramos, equipo] = await Promise.all([
       dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
-      dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden, inicio_min`, [local]),
-      dbAll(`SELECT id, nombre, username, puesto FROM users
-             WHERE local = ? AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL
-             ORDER BY nombre`, [local]),
+      dbAll(`SELECT id, nombre, orden, inicio_min, fin_min, tipo FROM hor_tramos WHERE local = ? AND activo ORDER BY orden, inicio_min`, [local]),
+      // `fecha_alta` y `fecha_baja` viajan porque la fila de fiesta se calcula: sin ellas,
+      // quien entra el jueves saldría «librando» el lunes, martes y miércoles anteriores.
+      // Ojo: aquí NO se filtra por fecha_baja para poder pintar la parte de la semana que sí
+      // trabajó; lo decide `descansosPorDia` día a día.
+      dbAll(`SELECT id, nombre, username, puesto, fecha_alta, fecha_baja FROM users
+             WHERE local = ? AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1
+               AND (fecha_baja IS NULL OR fecha_baja >= ?)
+             ORDER BY nombre`, [local, lunes]),
     ]);
     // Se trabaja siempre sobre el borrador; si no hay, se ve la publicada en solo lectura.
     const semana = await dbGet(
       `SELECT * FROM hor_semanas WHERE local = ? AND lunes = ? AND estado IN ('borrador','publicado')
        ORDER BY CASE estado WHEN 'borrador' THEN 0 ELSE 1 END LIMIT 1`, [local, lunes]
     );
-    const asignaciones = semana
-      ? await dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ? ORDER BY dia, inicio_min, orden`, [semana.id])
-      : [];
-    res.json({ ok: true, local, lunes, dias: diasSemana(lunes), semana: semana || null, areas, tramos, equipo, asignaciones });
+    const dias = diasSemana(lunes);
+    const [asignaciones, ausencias] = await Promise.all([
+      semana
+        ? dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ? ORDER BY dia, inicio_min, orden`, [semana.id])
+        : Promise.resolve([]),
+      // Vacaciones y bajas que pisan esta semana: es lo que distingue «libra» de «está de baja».
+      dbAll(`SELECT worker_id, tipo, desde, hasta, estado FROM hor_ausencias
+             WHERE desde <= ? AND hasta >= ?`, [dias[6], dias[0]]).catch(() => []),
+    ]);
+    // La fila de fiesta se manda ya calculada: la pantalla no la deduce por su cuenta, para
+    // que no pueda decir una cosa distinta de la que dice el PDF.
+    const descansos = descansosPorDia({ dias, trabajadores: equipo, asignaciones, ausencias, areas });
+    res.json({ ok: true, local, lunes, dias, semana: semana || null, areas, tramos, equipo, asignaciones, ausencias, descansos });
   } catch (e) {
     console.error("[horarios] semana:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar la semana" });
@@ -4425,6 +4441,9 @@ app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, re
     if (!diasSemana(chk.semana.lunes).includes(String(dia))) {
       return res.status(400).json({ ok: false, error: "Ese día no es de esta semana" });
     }
+    if (await horEsBloqueDescanso(tramo_id)) {
+      return res.status(400).json({ ok: false, error: "La fila de fiesta se calcula sola: sale quien no tiene turno ese día. Para que alguien libre, quítale el turno." });
+    }
     const fila = await dbRun(
       `INSERT INTO hor_asignaciones (semana_id, local, worker_id, dia, area_id, tramo_id, inicio_min, fin_min, fin_abierto, tipo, nota, creado_en)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
@@ -4437,6 +4456,15 @@ app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, re
     res.status(500).json({ ok: false, error: "No se pudo guardar el turno" });
   }
 });
+
+// La fila de fiesta no admite turnos: no es un bloque horario, es el resultado de restar.
+// Se comprueba en el servidor y no solo en la pantalla porque el arrastrar-y-soltar y el
+// formulario mandan `tramo_id` a pelo, y un turno colgado ahí desaparecería del cuadrante.
+async function horEsBloqueDescanso(tramoId) {
+  if (!tramoId) return false;
+  const t = await dbGet(`SELECT tipo FROM hor_tramos WHERE id = ?`, [tramoId]);
+  return esTramoDescanso(t);
+}
 
 // Mover o editar un turno. Se usa también al arrastrar en la rejilla.
 app.patch("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (req, res) => {
@@ -4457,6 +4485,10 @@ app.patch("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (re
     const dia = req.body.dia ?? a.dia;
     if (!diasSemana(chk.semana.lunes).includes(String(dia))) {
       return res.status(400).json({ ok: false, error: "Ese día no es de esta semana" });
+    }
+    // Arrastrar un turno a la fila de fiesta: misma razón que al crearlo.
+    if (req.body.tramo_id !== undefined && await horEsBloqueDescanso(req.body.tramo_id)) {
+      return res.status(400).json({ ok: false, error: "La fila de fiesta se calcula sola: sale quien no tiene turno ese día. Para que alguien libre, quítale el turno." });
     }
     vals.push(a.id);
     const fila = await dbRun(`UPDATE hor_asignaciones SET ${sets.join(", ")} WHERE id = ? RETURNING *`, vals);
@@ -4587,7 +4619,7 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
     const asignaciones = (await q(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id])).rows;
     const equipo = (await q(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')`, [s.local])).rows;
     const areas = (await q(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? ORDER BY orden`, [s.local])).rows;
-    const tramos = (await q(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? ORDER BY orden`, [s.local])).rows;
+    const tramos = (await q(`SELECT id, nombre, orden, inicio_min, fin_min, tipo FROM hor_tramos WHERE local = ? ORDER BY orden`, [s.local])).rows;
     const ausencias = (await q(`SELECT * FROM hor_ausencias WHERE estado = 'aprobada' AND hasta >= ? AND desde <= ?`, [dias[0], dias[6]])).rows;
     const contratos = (await q(`SELECT * FROM hor_contratos WHERE desde <= ?`, [dias[6]])).rows;
     const necesidades = (await q(`SELECT * FROM hor_necesidades WHERE local = ?`, [s.local])).rows;
@@ -4605,7 +4637,7 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
     await q(`UPDATE hor_semanas SET estado = 'publicado', publicado_en = ?, publicado_por = ?, avisos_aceptados = ? WHERE id = ?`,
       [ahora, quien, conflictos.length ? JSON.stringify({ por: quien, en: ahora, avisos: conflictos.filter((c) => c.severidad === "avisa") }) : null, s.id]);
 
-    const snapshot = construirSnapshot({ semana: s, areas, tramos, asignaciones, trabajadores: equipo, dias });
+    const snapshot = construirSnapshot({ semana: s, areas, tramos, asignaciones, trabajadores: equipo, ausencias, dias });
     const texto = serializarCanonico(snapshot);
     await q(`INSERT INTO hor_publicaciones (semana_id, local, lunes, version, snapshot, hash, publicado_en, publicado_por)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (semana_id) DO NOTHING`,
@@ -4720,20 +4752,26 @@ app.get("/api/horarios/semana/:id/pdf", requireAuth(HORARIOS_ROLES), async (req,
 async function horPdfDeSemana(s) {
   const dias = diasSemana(s.lunes);
   const pub = await dbGet(`SELECT snapshot FROM hor_publicaciones WHERE semana_id = ?`, [s.id]);
-  let areas, tramos, asignaciones, equipo;
+  let areas, tramos, asignaciones, equipo, ausencias = [];
   if (pub && pub.snapshot) {
     const snap = JSON.parse(pub.snapshot);
     areas = snap.areas; tramos = snap.tramos; asignaciones = snap.asignaciones;
-    equipo = snap.asignaciones.map((a) => ({ id: a.worker_id, nombre: a.nombre }));
+    // La plantilla del snapshot (v2) es la de aquel día. Si no está —snapshots v1, anteriores
+    // a la fila de fiesta— se deduce de los turnos, y como esos tramos tampoco traen `tipo`
+    // no se dibuja ninguna fila calculada: el PDF sale exactamente igual que el que se mandó.
+    equipo = snap.plantilla || snap.asignaciones.map((a) => ({ id: a.worker_id, nombre: a.nombre }));
+    ausencias = snap.ausencias || [];
   } else {
-    [areas, tramos, asignaciones, equipo] = await Promise.all([
+    [areas, tramos, asignaciones, equipo, ausencias] = await Promise.all([
       dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [s.local]),
-      dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden`, [s.local]),
+      dbAll(`SELECT id, nombre, orden, inicio_min, fin_min, tipo FROM hor_tramos WHERE local = ? AND activo ORDER BY orden`, [s.local]),
       dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]),
-      dbAll(`SELECT id, nombre, username FROM users WHERE local = ?`, [s.local]),
+      dbAll(`SELECT id, nombre, username, fecha_alta, fecha_baja FROM users
+             WHERE local = ? AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1`, [s.local]),
+      dbAll(`SELECT worker_id, tipo, desde, hasta, estado FROM hor_ausencias WHERE desde <= ? AND hasta >= ?`, [dias[6], dias[0]]).catch(() => []),
     ]);
   }
-  const cuadrante = construirCuadrante({ lunes: s.lunes, tramos, areas, asignaciones, trabajadores: equipo });
+  const cuadrante = construirCuadrante({ lunes: s.lunes, tramos, areas, asignaciones, trabajadores: equipo, ausencias });
   const { buffer, layout, perdidos } = construirPdfSemana(
     { local: s.local, lunes: s.lunes, dias, bloques: cuadrante.bloques, estado: s.estado, version: s.version },
     { ahora: isoConOffset(Date.now()) }

@@ -45,6 +45,11 @@ export async function ensureSchemaHorarios(x) {
     UNIQUE (local, nombre),
     CHECK (fin_min > inicio_min AND fin_min <= 2160)
   )`);
+  // `tipo='descanso'` marca la fila de FIESTA: no se le asigna a nadie, se calcula sola a
+  // partir de quién NO tiene turno ese día (ver descansos.js). Es una columna y no una
+  // comprobación por el nombre del bloque porque el nombre lo cambia cualquiera desde el
+  // panel, y de ese nombre pasaría a depender que la fila se rellene o no.
+  await x.run(`ALTER TABLE hor_tramos ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'turno'`);
 
   // Semana + versión + estado. Columna vertebral del versionado.
   await x.run(`CREATE TABLE IF NOT EXISTS hor_semanas (
@@ -202,7 +207,44 @@ export const AREAS_POR_DEFECTO = [
 export const TRAMOS_POR_DEFECTO = [
   { nombre: "MAÑANA", orden: 1, inicio_min: 480, fin_min: 960 },   // 08:00-16:00
   { nombre: "TARDE", orden: 2, inicio_min: 960, fin_min: 1440 },   // 16:00-00:00
+  // La fila de fiesta del cuadrante de papel. Va al final y NO se rellena: sale de quién no
+  // tiene turno ese día. Las horas son de relleno (la columna es NOT NULL y hay un CHECK);
+  // no se enseñan ni se usan para nada, porque descansar no tiene horario.
+  { nombre: "FIESTA", orden: 99, inicio_min: 0, fin_min: 1440, tipo: "descanso" },
 ];
+
+/**
+ * Convierte en fila calculada los bloques de FIESTA que ya existen escritos a mano, y crea
+ * la fila en los locales que todavía no la tengan. Idempotente: se puede correr mil veces.
+ *
+ * Se hace UNA sola vez leyendo el nombre del bloque. A partir de aquí manda `tipo`, así que
+ * renombrar el bloque no vuelve a cambiar su comportamiento — que es justo lo que no se
+ * quiere: que el cuadrante dependa de cómo alguien escribió una palabra.
+ *
+ * Los turnos que hubiera colgando de ese bloque NO se borran: se sueltan (`tramo_id = NULL`)
+ * y el cuadrante los recoloca en el bloque de trabajo con el que más se solapen. Borrarlos
+ * sería perder trabajo planificado sin avisar.
+ */
+export async function migrarDescansos(x, ahora) {
+  await x.run(
+    `UPDATE hor_tramos SET tipo = 'descanso'
+     WHERE tipo <> 'descanso' AND nombre ~* '^[[:space:]]*(fiesta|fiestas|descanso|descans|libre|libres|libranza|festa|festes)[[:space:]]*$'`
+  );
+  await x.run(
+    `UPDATE hor_asignaciones SET tramo_id = NULL
+     WHERE tramo_id IN (SELECT id FROM hor_tramos WHERE tipo = 'descanso')`
+  );
+  // Un local sin fila de fiesta se queda sin ella en el papel, y el cuadrante impreso deja de
+  // decir quién libra. Se crea con el mismo nombre de siempre.
+  await x.run(
+    `INSERT INTO hor_tramos (local, nombre, orden, inicio_min, fin_min, tipo, creado_en)
+     SELECT DISTINCT t.local, 'FIESTA', 99, 0, 1440, 'descanso', ?
+       FROM hor_tramos t
+      WHERE NOT EXISTS (SELECT 1 FROM hor_tramos d WHERE d.local = t.local AND d.tipo = 'descanso')
+     ON CONFLICT (local, nombre) DO NOTHING`,
+    [ahora]
+  );
+}
 
 export async function sembrarLocal(x, local, ahora) {
   for (const a of AREAS_POR_DEFECTO) {
@@ -214,9 +256,9 @@ export async function sembrarLocal(x, local, ahora) {
   }
   for (const t of TRAMOS_POR_DEFECTO) {
     await x.run(
-      `INSERT INTO hor_tramos (local, nombre, orden, inicio_min, fin_min, creado_en)
-       VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (local, nombre) DO NOTHING`,
-      [local, t.nombre, t.orden, t.inicio_min, t.fin_min, ahora]
+      `INSERT INTO hor_tramos (local, nombre, orden, inicio_min, fin_min, tipo, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (local, nombre) DO NOTHING`,
+      [local, t.nombre, t.orden, t.inicio_min, t.fin_min, t.tipo || "turno", ahora]
     );
   }
   await x.run(

@@ -5,6 +5,7 @@
 // garantiza que el PDF que se manda al grupo diga exactamente lo mismo que la pantalla.
 
 import { franjaCorta, diasSemana, duracionMin, solapan } from "./tiempo.js";
+import { descansosPorDia, esTramoDescanso } from "./descansos.js";
 
 // ¿Hay que escribir la hora al lado del nombre? Solo si esa persona se sale del horario
 // general del tramo. Es lo que hace legible el cuadrante de papel: la mayoría entra a la
@@ -44,6 +45,9 @@ function ordenarCelda(items) {
 export function bloqueQueMasSolapa(item, tramos = []) {
   let mejor = null, mejorSolape = 0;
   for (const [i, t] of tramos.entries()) {
+    // La fila de descanso no acepta turnos: se calcula sola. Y suele solapar con la tarde
+    // (la de la captura iba de 20 a 3), así que sin esto un turno de noche acabaría dentro.
+    if (esTramoDescanso(t)) continue;
     const s = Math.min(Number(item.fin_min), Number(t.fin_min)) - Math.max(Number(item.inicio_min), Number(t.inicio_min));
     // `>` y no `>=`: a igualdad gana el primero, que es el de más arriba en el cuadrante.
     if (s > mejorSolape) { mejorSolape = s; mejor = i; }
@@ -51,7 +55,7 @@ export function bloqueQueMasSolapa(item, tramos = []) {
   return mejor;
 }
 
-export function construirCuadrante({ lunes, tramos = [], areas = [], asignaciones = [], trabajadores = [] }) {
+export function construirCuadrante({ lunes, tramos = [], areas = [], asignaciones = [], trabajadores = [], ausencias = [] }) {
   const dias = diasSemana(lunes);
   const idxDia = new Map(dias.map((d, i) => [d, i]));
   const porId = new Map(trabajadores.map((w) => [String(w.id), w]));
@@ -61,7 +65,10 @@ export function construirCuadrante({ lunes, tramos = [], areas = [], asignacione
     tramo,
     areas: areas.map((area) => ({ area, dias: dias.map(() => []) })),
   }));
-  const idxTramo = new Map(tramos.map((t, i) => [String(t.id), i]));
+  // A propósito NO se indexan los bloques de descanso: si una asignación vieja arrastra el
+  // tramo_id de FIESTA, cae en `bloqueQueMasSolapa` y se recoloca donde toca en vez de
+  // aparecer como si alguien tuviera turno en la fila de quien libra.
+  const idxTramo = new Map(tramos.filter((t) => !esTramoDescanso(t)).map((t) => [String(t.id), tramos.indexOf(t)]));
   const idxArea = new Map(areas.map((a, i) => [String(a.id), i]));
 
   const fuera = [];
@@ -97,11 +104,31 @@ export function construirCuadrante({ lunes, tramos = [], areas = [], asignacione
 
   for (const b of bloques) for (const ar of b.areas) ar.dias = ar.dias.map(ordenarCelda);
 
+  // La fila de fiesta no se rellena: es el resto de la plantilla. Se calcula aquí, dentro de
+  // la misma función que arma la rejilla, para que la pantalla y el PDF no puedan discrepar.
+  const descansos = descansosPorDia({ dias, trabajadores, asignaciones, ausencias, areas });
+  for (const b of bloques) {
+    if (!esTramoDescanso(b.tramo)) continue;
+    b.calculado = true;
+    // `franja` en vez de `etiqueta`: es el campo que ya pinta el PDF delante del nombre y en
+    // gris. Así «vacaciones Manoli» se dibuja igual que «11-15 Isa», sin tocar el layout.
+    const conFranja = (celda) => celda.map((x) => ({ ...x, franja: x.etiqueta }));
+    b.areas.forEach((ar, i) => { ar.dias = descansos.areas[i].dias.map(conFranja); });
+    // Quien esta semana no trabaja ningún día no tiene área. Va en una fila sin rótulo, y se
+    // añade como un área más para que el PDF la imprima sin saber nada de este caso.
+    if (descansos.sinArea.some((c) => c.length)) {
+      b.areas.push({ area: { id: null, nombre: "—" }, dias: descansos.sinArea.map(conFranja) });
+    }
+  }
+
   return {
-    lunes, dias, bloques,
+    lunes, dias, bloques, descansos,
     fuera: ordenarCelda(fuera),
+    // Los totales cuentan TURNOS, no personas descansando: es el número que dice cuánto
+    // trabajo hay planificado esa semana, y meter ahí las fiestas lo haría subir al vaciarse.
     totales: dias.map((_, i) =>
-      bloques.reduce((s, b) => s + b.areas.reduce((s2, ar) => s2 + ar.dias[i].length, 0), 0)
+      bloques.reduce((s, b) => s + (esTramoDescanso(b.tramo) ? 0
+        : b.areas.reduce((s2, ar) => s2 + ar.dias[i].length, 0)), 0)
     ),
   };
 }

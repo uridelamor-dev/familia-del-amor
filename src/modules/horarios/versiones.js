@@ -49,16 +49,26 @@ export function validarPublicacion({ estado, conflictos = [], avisosAceptados = 
 // El JSON que se congela. Se construye a partir de lo que hay AHORA, incluyendo los
 // nombres: si mañana alguien se da de baja, el horario publicado sigue diciendo quién
 // estaba puesto. Sin los nombres dentro, el snapshot no serviría de nada.
-export function construirSnapshot({ semana, areas = [], tramos = [], asignaciones = [], trabajadores = [], dias = [] }) {
+export function construirSnapshot({ semana, areas = [], tramos = [], asignaciones = [], trabajadores = [], ausencias = [], dias = [] }) {
   const porId = new Map(trabajadores.map((w) => [String(w.id), w]));
   return {
-    v: 1,
+    // v2 añade `plantilla` y `ausencias`: sin ellas la fila de fiesta —que es quien NO tiene
+    // turno— no se puede recalcular años después, porque haría falta saber quién estaba
+    // contratado entonces. Los snapshots v1 que ya existen se quedan como están y su PDF
+    // sale idéntico al que se mandó: nunca se le añade una fila a un papel ya enviado.
+    v: 2,
     local: semana.local,
     lunes: semana.lunes,
     version: semana.version,
     dias: [...dias],
     areas: areas.map((a) => ({ id: a.id, nombre: a.nombre, orden: a.orden })),
-    tramos: tramos.map((t) => ({ id: t.id, nombre: t.nombre, orden: t.orden, inicio_min: t.inicio_min, fin_min: t.fin_min })),
+    tramos: tramos.map((t) => ({ id: t.id, nombre: t.nombre, orden: t.orden, inicio_min: t.inicio_min, fin_min: t.fin_min, tipo: t.tipo || "turno" })),
+    plantilla: [...trabajadores]
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .map((w) => ({ id: w.id, nombre: w.nombre || w.username || "—", fecha_alta: w.fecha_alta || null, fecha_baja: w.fecha_baja || null })),
+    ausencias: [...ausencias]
+      .sort((a, b) => Number(a.worker_id) - Number(b.worker_id) || String(a.desde).localeCompare(String(b.desde)))
+      .map((x) => ({ worker_id: x.worker_id, tipo: x.tipo, desde: x.desde, hasta: x.hasta, estado: x.estado || "aprobada" })),
     asignaciones: [...asignaciones]
       .sort((a, b) => String(a.dia).localeCompare(String(b.dia)) || a.inicio_min - b.inicio_min || Number(a.id) - Number(b.id))
       .map((a) => ({

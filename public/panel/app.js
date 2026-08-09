@@ -2226,6 +2226,36 @@ function renderHorarios() {
   return horPh() + nav + aviso + `<div id="horAvisos">${horAvisosHtml(HOR.conflictos)}</div>` + (HOR.vista === "personas" ? horPorPersona() : horRejilla()) + horResumen();
 }
 
+// ── La fila de fiesta: no se rellena, se calcula ──
+// El servidor manda `descansos` ya resuelto (src/modules/horarios/descansos.js). Aquí solo se
+// pinta. Que el cálculo no esté duplicado en el navegador es lo que garantiza que la pantalla
+// diga exactamente lo mismo que el PDF que se manda al grupo.
+const horEsDescanso = (tramo) => String((tramo || {}).tipo || "turno") === "descanso";
+
+function horDescChip(x) {
+  const et = x.etiqueta ? `<span class="hf">${esc(x.etiqueta)}</span>` : "";
+  return `<div class="horchip desc ${x.motivo !== "fiesta" ? "aus" : ""}" title="${esc(x.motivo === "fiesta" ? "Libra" : cap(x.etiqueta || x.motivo))}">${et}${esc(x.nombre)}</div>`;
+}
+
+function horBloqueDescanso(tramo, cab) {
+  const d = HOR.descansos;
+  const dias = HOR.dias || [];
+  if (!d) return "";
+  const filas = (HOR.areas || []).map((area, i) => {
+    const celdas = dias.map((_, di) => `<div class="horcell horslot nodrop">${((d.areas[i] || {}).dias?.[di] || []).map(horDescChip).join("")}</div>`).join("");
+    return `<div class="horcell horarea">${esc(area.nombre)}</div>${celdas}`;
+  }).join("");
+  // Fila sin rótulo para quien esta semana no trabaja ningún día: no se le inventa un área.
+  const hayS = (d.sinArea || []).some((c) => c.length);
+  const sinArea = hayS
+    ? `<div class="horcell horarea mut" title="Esta semana no trabajan ningún día, así que no tienen área">—</div>`
+      + dias.map((_, di) => `<div class="horcell horslot nodrop">${(d.sinArea[di] || []).map(horDescChip).join("")}</div>`).join("")
+    : "";
+  return `<div class="hortramo desc"><div class="hortramo-t">${esc(tramo.nombre)}
+      <span class="mut">se calcula solo · quien no tiene turno ese día</span></div>
+    <div class="horgrid">${cab}${filas}${sinArea}</div></div>`;
+}
+
 // ── Rejilla por área (la del papel) ──
 function horRejilla() {
   const dias = HOR.dias, hoy = todayStr();
@@ -2234,6 +2264,7 @@ function horRejilla() {
   ).join("");
 
   const bloques = (HOR.tramos || []).map((tramo) => {
+    if (horEsDescanso(tramo)) return horBloqueDescanso(tramo, cab);
     const filas = (HOR.areas || []).map((area) => {
       const celdas = dias.map((dia) => {
         const gente = (HOR.asignaciones || [])
@@ -2267,6 +2298,18 @@ function horListaDias() {
   const hoy = todayStr();
   const dias = (HOR.dias || []).map((dia, i) => {
     const bloques = (HOR.tramos || []).map((tramo) => {
+      if (horEsDescanso(tramo)) {
+        const d = HOR.descansos; if (!d) return "";
+        const filas = (HOR.areas || []).map((area, ai) => {
+          const g = (d.areas[ai] || {}).dias?.[i] || [];
+          return g.length ? `<div class="hord-area"><span class="hord-et">${esc(area.nombre)}</span>
+            <span class="hord-gente">${g.map(horDescChip).join("")}</span></div>` : "";
+        }).join("");
+        const sa = (d.sinArea || [])[i] || [];
+        const extra = sa.length ? `<div class="hord-area"><span class="hord-et">—</span><span class="hord-gente">${sa.map(horDescChip).join("")}</span></div>` : "";
+        if (!filas && !extra) return "";
+        return `<div class="hord-tramo desc"><div class="hord-th">${esc(tramo.nombre)} <span class="mut">se calcula solo</span></div>${filas}${extra}</div>`;
+      }
       const areas = (HOR.areas || []).map((area) => {
         const gente = (HOR.asignaciones || [])
           .filter((a) => String(a.dia) === dia && String(a.tramo_id) === String(tramo.id) && String(a.area_id) === String(area.id) && (a.tipo || "turno") === "turno")
@@ -3035,7 +3078,7 @@ function horModal(asig, ctx) {
   const body = `<div class="form-grid">
     <div class="field"><label>Persona</label><select id="hmW">${opt(HOR.equipo, asig?.worker_id ?? ctx?.worker, "Elegir…")}</select></div>
     <div class="field"><label>Día</label><select id="hmD">${HOR.dias.map((d, i) => `<option value="${d}" ${String(asig?.dia ?? ctx?.dia) === d ? "selected" : ""}>${WD[i]} ${Number(d.slice(-2))}</option>`).join("")}</select></div>
-    <div class="field"><label>Tramo</label><select id="hmT">${opt(HOR.tramos, asig?.tramo_id ?? ctx?.tramo, "Sin tramo")}</select></div>
+    <div class="field"><label>Tramo</label><select id="hmT">${opt((HOR.tramos || []).filter((t) => !horEsDescanso(t)), asig?.tramo_id ?? ctx?.tramo, "Sin tramo")}</select></div>
     <div class="field"><label>Área</label><select id="hmA">${opt(HOR.areas, asig?.area_id ?? ctx?.area, "Sin área")}</select></div>
     <div class="field"><label>Entra</label><input id="hmI" type="time" value="${horHHMM(ini)}"></div>
     <div class="field"><label>Sale</label><input id="hmF" type="time" value="${horHHMM(fin)}" ${asig?.fin_abierto ? "disabled" : ""}></div>
