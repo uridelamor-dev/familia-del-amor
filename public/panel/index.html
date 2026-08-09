@@ -46,8 +46,27 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(150deg,var(--brand),var(--brand2));display:grid;place-items:center;color:var(--brand-ink);font-weight:700;flex:none;box-shadow:var(--sh-sm)}
 .brand .bt{display:flex;flex-direction:column;min-width:0;overflow:hidden}.brand .bt b{font-size:14px;letter-spacing:-.01em;white-space:nowrap}.brand .bt span{font-size:11px;color:var(--ink3);white-space:nowrap}
 .app.collapsed .bt,.app.collapsed .ngt,.app.collapsed .navi span,.app.collapsed .sbf .txt{display:none}
+.app.collapsed .navi .ico{display:grid}
 .nav{flex:1;overflow-y:auto;padding:6px 10px 14px}.nav::-webkit-scrollbar{width:8px}.nav::-webkit-scrollbar-thumb{background:var(--border2);border-radius:8px}
-.ngt{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);padding:14px 10px 6px}
+/* Cada departamento se pliega. Dirección ve 18 módulos en seis bloques: plegados se ve la
+   estructura de un vistazo y se abre el que toca. El grupo de la pantalla actual va siempre
+   abierto (lo decide el JS), y en modo icono se abren todos porque no hay rótulos que pulsar. */
+.ngt{display:flex;align-items:center;gap:6px;width:100%;font-size:10.5px;font-weight:600;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink3);padding:13px 10px 6px;cursor:pointer;background:none;border:0;
+  text-align:left;border-radius:8px;transition:color .12s}
+.ngt:hover{color:var(--ink2)}
+.ngt .gcar{display:grid;place-items:center;color:var(--ink3);transform:rotate(-90deg);transition:transform .16s}
+.ngrp.on .ngt .gcar{transform:rotate(0deg)}
+.ngt .gtxt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* Cuántos módulos hay escondidos: sin esto, un bloque plegado no dice si oculta uno o cinco. */
+.ngt .gn{font-size:10px;font-weight:600;color:var(--ink3);opacity:.75;letter-spacing:0}
+.ngt .gdot{width:6px;height:6px;border-radius:50%;background:var(--danger);flex:none}
+/* Plegar oculta: `display:none` y no una altura animada, porque con seis bloques y alturas
+   distintas cualquier animación de altura se ve dar saltos al abrir dos seguidos. */
+.ngrp .nitems{display:none}
+.ngrp.on .nitems{display:block;animation:navin .16s ease}
+@keyframes navin{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.app.collapsed .ngrp .nitems{display:block}
 .navi{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:10px;color:var(--ink2);font-weight:500;font-size:13.5px;position:relative;transition:.12s;white-space:nowrap;width:100%;text-align:left}
 .navi:hover{background:var(--surface2);color:var(--ink)}.navi.active{background:var(--surface);color:var(--ink);box-shadow:var(--sh-sm)}
 .navi.active::before{content:"";position:absolute;left:-10px;top:50%;transform:translateY(-50%);width:3px;height:18px;border-radius:3px;background:var(--brand)}

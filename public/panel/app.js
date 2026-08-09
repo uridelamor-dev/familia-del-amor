@@ -107,16 +107,73 @@ function isDark() { const r = document.documentElement; return r.getAttribute("d
 function toggleTheme() { setTheme(isDark() ? "light" : "dark"); const b = document.getElementById("themeBtn"); if (b) b.innerHTML = ic(isDark() ? "moon" : "sun"); }
 (function initTheme() { const t = localStorage.getItem("panelTheme"); if (t) document.documentElement.setAttribute("data-theme", t); })();
 
+// ── Menú lateral plegable ───────────────────────────────────────────────────
+// Dirección ve los 18 módulos y los seis bloques: la lista entera no cabe de un vistazo y
+// obliga a leerla para encontrar nada. Plegada, se ve la estructura —qué departamentos hay— y
+// se abre el que toca. Los demás roles ven tres o cuatro entradas en total, así que plegarles
+// nada les ahorraría y sí les añadiría un clic: a ellos se les abre todo.
+//
+// El grupo de la pantalla en la que estás se abre SIEMPRE, esté como esté guardado: un menú
+// que no enseña dónde estás no es un menú.
+let NAV_ABIERTOS = null;
+
+function navEstado() {
+  if (NAV_ABIERTOS) return NAV_ABIERTOS;
+  try {
+    const g = JSON.parse(localStorage.getItem("navGrupos") || "null");
+    if (Array.isArray(g)) return (NAV_ABIERTOS = new Set(g));
+  } catch { /* si está corrupto se empieza de cero */ }
+  // Por defecto: dirección con todo plegado, el resto con todo abierto.
+  NAV_ABIERTOS = new Set(USER && USER.rol === "direccion" ? [] : NAV.map((x) => x.g));
+  return NAV_ABIERTOS;
+}
+
+function navGrupoAbierto(nombre, items, active) {
+  if (COLLAPSED) return true;                       // en modo icono no hay rótulos que plegar
+  if (items.some(([id]) => id === active)) return true;
+  return navEstado().has(nombre);
+}
+
+function navToggleGrupo(nombre) {
+  const st = navEstado();
+  if (st.has(nombre)) st.delete(nombre); else st.add(nombre);
+  try { localStorage.setItem("navGrupos", JSON.stringify([...st])); } catch { /* sin persistencia, pero funciona */ }
+  // Se repinta solo la barra: repintar la vista entera perdería lo que haya en pantalla.
+  const el = document.querySelector(`.ngrp .ngt[data-g="${CSS.escape(nombre)}"]`)?.closest(".ngrp");
+  const grp = NAV.find((g) => g.g === nombre);
+  if (!el || !grp) return;
+  const items = grp.items.filter(([id]) => puedeVer(id));
+  const abierto = navGrupoAbierto(nombre, items, CURRENT);
+  el.classList.toggle("on", abierto);
+  el.querySelector(".ngt").setAttribute("aria-expanded", String(abierto));
+  const n = el.querySelector(".gn");
+  if (abierto) { if (n) n.remove(); el.querySelector(".gdot")?.remove(); }
+  else if (!n) {
+    const avisos = items.some(([id]) => id === "dashboard") && DASH_CONCERNS > 0;
+    el.querySelector(".ngt").insertAdjacentHTML("beforeend",
+      `<span class="gn">${items.length}${avisos ? " ·" : ""}</span>${avisos ? '<span class="gdot"></span>' : ""}`);
+  }
+}
+
 function shell(active, bodyHtml) {
   const uname = USER.nombre || USER.username || "Usuario";
   const initials = uname.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   const nav = NAV.map((grp) => {
     const items = grp.items.filter(([id]) => puedeVer(id));
     if (!items.length) return "";
-    return `<div class="ngt">${grp.g}</div>` + items.map(([id, label, icon]) => {
+    const abierto = navGrupoAbierto(grp.g, items, active);
+    const avisos = items.reduce((n, [id]) => n + (id === "dashboard" ? DASH_CONCERNS : 0), 0);
+    const botones = items.map(([id, label, icon]) => {
       const badge = (id === "dashboard" && DASH_CONCERNS > 0) ? `<span class="badge">${DASH_CONCERNS}</span>` : "";
       return `<button class="navi ${id === active ? "active" : ""}" data-view="${id}"><span class="ico">${ic(icon)}</span><span>${label}</span>${badge}</button>`;
     }).join("");
+    return `<div class="ngrp ${abierto ? "on" : ""}">
+      <button class="ngt" data-act="nav-grupo" data-g="${esc(grp.g)}" aria-expanded="${abierto}">
+        <span class="gcar">${ic("chev", 13)}</span><span class="gtxt">${esc(grp.g)}</span>
+        ${!abierto ? `<span class="gn">${items.length}${avisos ? " ·" : ""}</span>` : ""}
+        ${!abierto && avisos ? `<span class="gdot"></span>` : ""}
+      </button>
+      <div class="nitems">${botones}</div></div>`;
   }).join("");
   const estabLbl = DASH_LOCAL ? nombreCortoLocal(DASH_LOCAL) : "Todos los establecimientos";
   const customLbl = (PERIOD === "custom" && DASH_RANGE.from) ? `${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}` : "Personalizado";
@@ -5745,6 +5802,9 @@ document.addEventListener("click", (e) => {
   const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); go(v.getAttribute("data-view")); return; }
   const t = e.target.closest("[data-act]"); if (!t) return;
   const act = t.getAttribute("data-act");
+  if (act === "nav-grupo") { navToggleGrupo(t.getAttribute("data-g")); return; }
+  // Modo icono: los grupos se ven todos, pero eso lo hace el CSS. Aquí no se repinta nada,
+  // porque repintar la barra tira también la vista y con ella sus listeners.
   if (act === "mtoggle") { const a = document.getElementById("appEl"); if (!a) return; if (window.innerWidth <= 820) a.classList.toggle("mopen"); else { COLLAPSED = !COLLAPSED; a.classList.toggle("collapsed"); } }
   else if (act === "mclose") { const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); }
   else if (act === "cmdk") openCmd();
