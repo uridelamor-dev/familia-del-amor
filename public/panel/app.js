@@ -3620,7 +3620,7 @@ function renderFacturas(list, pend, stats, empresas) {
   };
   const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map(pendRow).join("")}</div></div>` : "";
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
-  return `${facHeader()}${resumen}${toolbar}<div id="facLocalesRaros"></div>${vizGrid}${pendCard}<div id="facRes">${facTablaHtml(list)}</div>`;
+  return `${facHeader()}${resumen}${toolbar}<div id="facLocalesRaros"></div><div id="facSinCats"></div>${vizGrid}${pendCard}<div id="facRes">${facTablaHtml(list)}</div>`;
 }
 // ── De qué es cada proveedor ────────────────────────────────────────────────
 // Etiquetar 30 proveedores se hace en una tarde; etiquetar 4.000 líneas de producto no se hace
@@ -3629,6 +3629,9 @@ let FCATS = null;
 
 const CATS_SIN_LINEAS = new Set(["Suministros", "Mantenimiento y obras", "Servicios y profesionales",
   "Impuestos y seguros", "Alquileres", "Marketing"]);
+// «Bebidas · Vinos y cavas». Un proveedor es de una categoría CON su subcategoría, no de dos
+// categorías sueltas: así el gasto va entero a un sitio y no hay que repartir nada.
+const parTxt = (p) => (p.subcategoria ? `${p.categoria} · ${p.subcategoria}` : p.categoria);
 
 async function facCargarCategorias() {
   const caja = document.getElementById("facCats");
@@ -3646,9 +3649,9 @@ function facCategoriasHtml() {
     <td class="mut r tnum">${num(p.facturas)}</td>
     <td class="r tnum">${eur(p.gasto)}</td>
     <td>${p.categorias.length
-      ? p.categorias.map((c) => `<span class="pill ${CATS_SIN_LINEAS.has(c) ? "" : "ok"}">${esc(c)}</span>`).join(" ")
-      : '<span class="mut">sin categoría</span>'}
-      ${p.categorias.length && !p.categorias.some((c) => !CATS_SIN_LINEAS.has(c))
+      ? p.categorias.map((c) => `<span class="pill ${CATS_SIN_LINEAS.has(c.categoria) ? "" : "ok"}">${esc(parTxt(c))}</span>`).join(" ")
+      : '<span class="pill warn">sin categoría</span>'}
+      ${p.categorias.length && !p.categorias.some((c) => !CATS_SIN_LINEAS.has(c.categoria))
         ? '<div class="t2">gasto estructural · no se lee el detalle</div>' : ""}</td>
     <td class="r"><button class="btn sm" data-act="fac-cat-editar" data-prov="${esc(p.proveedor)}">Cambiar</button></td></tr>`;
 
@@ -3667,23 +3670,69 @@ function facCategoriasHtml() {
 function facCatEditar(proveedor) {
   const j = FCATS; if (!j) return;
   const p = (j.proveedores || []).find((x) => x.proveedor === proveedor); if (!p) return;
-  const sel = new Set(p.categorias);
-  const item = (c) => `<label class="row" style="align-items:center;gap:9px;cursor:pointer">
-    <input type="checkbox" name="cat" value="${esc(c)}" ${sel.has(c) ? "checked" : ""} style="width:auto;margin:0">
-    <span class="grow">${esc(c)}</span>
-    ${CATS_SIN_LINEAS.has(c) ? '<span class="mut" style="font-size:11.5px">no se lee el detalle</span>' : ""}</label>`;
+  const cat0 = p.categorias[0]?.categoria || "";
+  const sub0 = p.categorias[0]?.subcategoria || "";
+
+  const opcCat = `<option value="">— sin decidir —</option>` + (j.catalogo || []).map((c) =>
+    `<option value="${esc(c.nombre)}" ${c.nombre === cat0 ? "selected" : ""}>${esc(c.nombre)}${CATS_SIN_LINEAS.has(c.nombre) ? " · no se lee el detalle" : ""}</option>`).join("");
 
   const ov = modal(`De qué es ${proveedor}`, `
-    <p class="mut" style="margin:0 0 12px;line-height:1.5">Puede ser más de una: Grau es bebidas <i>y</i> alcohol.
-      Cuando hay varias, su gasto se reparte a partes iguales entre ellas — así el total sigue cuadrando con las facturas.</p>
-    <div class="rows" style="max-height:52vh;overflow:auto">${(j.catalogo || []).map(item).join("")}</div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
-      <button class="btn" data-close>Cancelar</button><button class="btn primary" id="fcOk">Guardar</button></div>`);
-  ov.querySelector(".modal").style.width = "min(520px, 96vw)";
+    <p class="mut" style="margin:0 0 14px;line-height:1.55">Una categoría y, si aplica, la subcategoría dentro de ella:
+      Grau es <b>Bebidas · Vinos y cavas</b>. Así el gasto va entero a un sitio, «Bebidas» sigue siendo la suma exacta
+      de sus subcategorías, y se puede preguntar «cuánto vino» sin dejar de poder preguntar «cuánto en bebida».</p>
+    <div class="form-grid">
+      <div class="field full"><label>Categoría</label><select class="inp" id="fcCat">${opcCat}</select></div>
+      <div class="field full" id="fcSubBox"></div>
+    </div>
+    <div id="fcExtra"></div>
+    <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:18px">
+      <button class="linkbtn" id="fcMas">+ Otra categoría</button>
+      <span><button class="btn" data-close>Cancelar</button> <button class="btn primary" id="fcOk">Guardar</button></span></div>`);
+  ov.querySelector(".modal").style.width = "min(560px, 96vw)";
+
+  // Las subcategorías dependen de la categoría: se repintan al cambiarla, y se limpian, porque
+  // una subcategoría colgando de la categoría equivocada rompe que la suma cuadre.
+  const pintarSub = (sel = "") => {
+    const cat = ov.querySelector("#fcCat").value;
+    const subs = ((j.catalogo || []).find((c) => c.nombre === cat) || {}).subs || [];
+    ov.querySelector("#fcSubBox").innerHTML = subs.length
+      ? `<label>Subcategoría <span class="mut">(opcional)</span></label><select class="inp" id="fcSub">
+          <option value="">— toda la categoría —</option>
+          ${subs.map((x) => `<option value="${esc(x)}" ${x === sel ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>`
+      : `<p class="mut" style="margin:0;font-size:12.5px">${cat ? "Esta categoría no se subdivide." : ""}</p>`;
+  };
+  ov.querySelector("#fcCat").addEventListener("change", () => pintarSub());
+  pintarSub(sub0);
+
+  // Un proveedor que de verdad venda de dos cosas (Makro) puede tener más de un par. Es la
+  // excepción, así que va detrás de un enlace y no delante estorbando.
+  const extras = [];
+  const pintarExtras = () => {
+    ov.querySelector("#fcExtra").innerHTML = extras.map((e, i) => `<div class="row" style="align-items:center;gap:8px;margin-top:8px">
+      <span class="grow">${esc(parTxt(e))}</span>
+      <button class="linkbtn" data-quita="${i}">Quitar</button></div>`).join("");
+  };
+  p.categorias.slice(1).forEach((x) => extras.push(x));
+  pintarExtras();
+  ov.querySelector("#fcExtra").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-quita]"); if (!b) return;
+    extras.splice(Number(b.dataset.quita), 1); pintarExtras();
+  });
+  ov.querySelector("#fcMas").addEventListener("click", () => {
+    const cat = ov.querySelector("#fcCat").value;
+    if (!cat) return toast("Elige antes la primera categoría");
+    const sub = ov.querySelector("#fcSub")?.value || "";
+    if (!extras.some((x) => x.categoria === cat && x.subcategoria === sub)) extras.push({ categoria: cat, subcategoria: sub });
+    pintarExtras();
+    toast("Añadida. Elige ahora la otra arriba.");
+  });
+
   ov.querySelector("#fcOk").addEventListener("click", async () => {
-    const cats = [...ov.querySelectorAll('input[name="cat"]:checked')].map((c) => c.value);
+    const cat = ov.querySelector("#fcCat").value;
+    const sub = ov.querySelector("#fcSub")?.value || "";
+    const pares = cat ? [{ categoria: cat, subcategoria: sub }, ...extras] : [...extras];
     try {
-      await apiSend("PUT", "/api/facturas/categorias", { proveedor, categorias: cats });
+      await apiSend("PUT", "/api/facturas/categorias", { proveedor, categorias: pares });
       ov.remove(); toast("Guardado ✅");
       await facCargarCategorias();
     } catch (e) { toast(e.message); }
@@ -3695,6 +3744,25 @@ function facCatEditar(proveedor) {
 // Tapeta - Lloret». Filtrando por el nombre bueno faltaban facturas y el gasto por local
 // salía repartido entre nombres que son el mismo sitio. Las puertas ya están cerradas;
 // esto avisa de lo que quedó y lo arregla.
+// Proveedores sin categoría. Va en la pantalla principal y no escondido en Configuración,
+// porque mientras haya gasto sin etiquetar el reparto por categorías está incompleto y eso no
+// se ve mirando el reparto: un «Bebidas 4.200 €» parece un dato cerrado aunque falte la mitad.
+async function facAvisoCategorias() {
+  const caja = document.getElementById("facSinCats");
+  if (!caja) return;
+  let j;
+  try { j = await apiRaw("/api/facturas/categorias"); } catch { return; }
+  if (!j.sinEtiquetar) return;
+  const n = j.sinEtiquetar;
+  const quienes = (j.proveedores || []).filter((p) => !p.categorias.length).slice(0, 4).map((p) => p.proveedor);
+  caja.innerHTML = `<p class="fic-nota"><b>${num(n)}</b> ${n === 1 ? "proveedor no tiene categoría" : "proveedores no tienen categoría"}
+    ${j.gastoSinEtiquetar ? `y entre ${n === 1 ? "él" : "ellos"} suman <b>${esc(eur(j.gastoSinEtiquetar))}</b>` : ""}:
+    ${quienes.map((x) => esc(x)).join(", ")}${n > 4 ? "…" : ""}.
+    Hasta que ${n === 1 ? "la tenga" : "la tengan"}, ese gasto no entra en el reparto por categorías.
+    ${USER.rol === "direccion" || USER.rol === "contabilidad"
+      ? `<button class="btn sm" data-act="fac-ir-cats" style="margin-top:8px">Ponerles categoría</button>` : ""}</p>`;
+}
+
 async function facAvisoLocales() {
   const caja = document.getElementById("facLocalesRaros");
   if (!caja) return;
@@ -4096,7 +4164,7 @@ async function loadFacturas() {
     FAC_LIST = lst || [];
     FAC_PEND = pend || [];
     view.innerHTML = renderFacturas(FAC_LIST, FAC_PEND, stats, empresas || []);
-    facAvisoLocales(); // no se espera: si tarda, la tabla ya está en pantalla
+    facAvisoLocales(); facAvisoCategorias(); // no se esperan: si tardan, la tabla ya está
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function facTab(tab) { FACTAB = tab; loadFacturas(); }
@@ -4108,8 +4176,8 @@ function facTab(tab) { FACTAB = tab; loadFacturas(); }
 // descripción del proveedor tal cual, así que dos proveedores que llamen distinto al mismo
 // producto salen en dos filas. Es a propósito: dos filas honestas antes que una fusión
 // inventada (ver docs/lineas-de-factura.md).
-let COMP = { q: "", from: "", to: "", proveedor: "", categoria: "" };
-const COMP_FILTROS = ["q", "from", "to", "proveedor", "categoria"];
+let COMP = { q: "", from: "", to: "", proveedor: "", categoria: "", subcategoria: "" };
+const COMP_FILTROS = ["q", "from", "to", "proveedor", "categoria", "subcategoria"];
 
 async function loadCompras() {
   const view = document.getElementById("view");
@@ -4129,7 +4197,8 @@ async function loadCompras() {
       if (w === "quitar") return compQuitarFiltro(c.getAttribute("data-k"));
       if (w === "limpiar") return compLimpiarFiltros();
       // Pulsar una categoría filtra por ella: es el gesto natural al ver «Bebidas 4.200 €».
-      if (w === "cat") { COMP.categoria = c.getAttribute("data-cat"); return refrescarCompras(); }
+      if (w === "cat") { COMP.categoria = c.getAttribute("data-cat"); COMP.subcategoria = ""; return refrescarCompras(); }
+      if (w === "sub") { COMP.subcategoria = c.getAttribute("data-sub"); COMP.categoria = ""; return refrescarCompras(); }
     }
     const f = e.target.closest("[data-compfac]");
     if (f) return comprasVerFactura(f.getAttribute("data-compfac"));
@@ -4145,6 +4214,7 @@ function compFiltrosActivos() {
   if (COMP.from || COMP.to) out.push({ k: "fechas", txt: `${COMP.from ? fechaCorta(COMP.from) : "…"} → ${COMP.to ? fechaCorta(COMP.to) : "hoy"}` });
   if (COMP.proveedor) out.push({ k: "proveedor", txt: COMP.proveedor });
   if (COMP.categoria) String(COMP.categoria).split(",").filter(Boolean).forEach((c) => out.push({ k: "categoria:" + c, txt: c }));
+  if (COMP.subcategoria) String(COMP.subcategoria).split(",").filter(Boolean).forEach((c) => out.push({ k: "subcategoria:" + c, txt: c }));
   if (COMP.q) out.push({ k: "q", txt: `«${COMP.q}»` });
   return out;
 }
@@ -4156,7 +4226,10 @@ function compChipsHtml() {
 }
 function compQuitarFiltro(k) {
   if (k === "fechas") { COMP.from = ""; COMP.to = ""; }
-  else if (k.startsWith("categoria:")) {
+  else if (k.startsWith("subcategoria:")) {
+    const fuera = k.slice(13);
+    COMP.subcategoria = String(COMP.subcategoria).split(",").filter((c) => c && c !== fuera).join(",");
+  } else if (k.startsWith("categoria:")) {
     const fuera = k.slice(10);
     COMP.categoria = String(COMP.categoria).split(",").filter((c) => c && c !== fuera).join(",");
   } else COMP[k] = "";
@@ -4168,6 +4241,7 @@ async function compAbrirFiltros() {
   let provs = [];
   try { provs = (await apiRaw("/api/facturas/proveedores" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : ""))).data || []; } catch { /* sin lista */ }
   const cats = String(COMP.categoria || "").split(",").filter(Boolean);
+  const subsSel = String(COMP.subcategoria || "").split(",").filter(Boolean);
   const cuerpo = `
     <div class="drw-g"><span class="drw-gt">${ic("cal", 15)} Fecha de la factura</span>
       <div class="drw-row">${dpField("cFrom", COMP.from, "Desde")}${dpField("cTo", COMP.to, "Hasta")}</div>
@@ -4185,8 +4259,14 @@ async function compAbrirFiltros() {
     </div>
     <div class="drw-g"><span class="drw-gt">${ic("receipt", 15)} Categoría</span>
       <div class="drw-pills" id="cCats">${(COMP.catalogo || []).map((c) =>
-        `<button class="drw-pill ${cats.includes(c) ? "on" : ""}" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>
+        `<button class="drw-pill ${cats.includes(c.nombre) ? "on" : ""}" data-cat="${esc(c.nombre)}">${esc(c.nombre)}</button>`).join("")}</div>
       <p class="mut" style="margin:8px 0 0;font-size:12px">Sale de la categoría del proveedor, que se pone en Configuración.</p>
+    </div>
+
+    <div class="drw-g"><span class="drw-gt">${ic("box", 15)} Subcategoría</span>
+      <div class="drw-pills" id="cSubs">${(COMP.catalogo || []).flatMap((c) => c.subs.map((x) =>
+        `<button class="drw-pill ${subsSel.includes(x) ? "on" : ""}" data-sub="${esc(x)}" title="${esc(c.nombre)}">${esc(x)}</button>`)).join("")}</div>
+      <p class="mut" style="margin:8px 0 0;font-size:12px">Para afinar: «Vinos y cavas» en vez de «Bebidas» entera.</p>
     </div>`;
 
   const ov = drawer("Filtrar compras", cuerpo, {
@@ -4196,6 +4276,7 @@ async function compAbrirFiltros() {
       COMP.to = d.querySelector("#cTo").value || "";
       COMP.proveedor = d.querySelector("#cProv").value || "";
       COMP.categoria = [...d.querySelectorAll("#cCats .drw-pill.on")].map((b) => b.dataset.cat).join(",");
+      COMP.subcategoria = [...d.querySelectorAll("#cSubs .drw-pill.on")].map((b) => b.dataset.sub).join(",");
       d.cerrar();
       refrescarCompras();
     },
@@ -4218,18 +4299,76 @@ async function compAbrirFiltros() {
 function compCategoriasHtml(g) {
   if (!g || (!g.categorias.length && !g.sinCategoria)) return "";
   const max = Math.max(...g.categorias.map((c) => c.importe), 1);
-  const fila = (c) => `<button class="row" data-comp="cat" data-cat="${esc(c.categoria)}" style="width:100%;text-align:left;background:none;border:0;padding:7px 2px">
+  const subs = (c) => {
+    const reales = (c.subs || []).filter((x) => x.subcategoria);
+    if (!reales.length) return "";
+    return `<div class="subcats">${reales.map((x) =>
+      `<button class="subcat" data-comp="sub" data-sub="${esc(x.subcategoria)}">${esc(x.subcategoria)} <b>${esc(eur(x.importe))}</b></button>`).join("")}</div>`;
+  };
+  const fila = (c) => `<div class="row" style="padding:7px 2px;align-items:flex-start">
       <div class="grow" style="min-width:0">
-        <div class="t1">${esc(c.categoria)}</div>
+        <button class="linkbtn" data-comp="cat" data-cat="${esc(c.categoria)}" style="font-weight:600">${esc(c.categoria)}</button>
         <div class="barmini"><span style="width:${Math.round((c.importe / max) * 100)}%"></span></div>
+        ${subs(c)}
       </div>
-      <b class="tnum" style="flex:none">${esc(eur(c.importe))}</b></button>`;
+      <b class="tnum" style="flex:none;margin-left:10px">${esc(eur(c.importe))}</b></div>`;
   return `<details class="card fold" style="margin-bottom:14px" open>
     <summary><h3>En qué se va el dinero</h3><span class="foldr"><span>${num(g.categorias.length)} categorías</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <div class="rows">${g.categorias.map(fila).join("")}</div>
     ${g.repartido ? `<p class="mut" style="margin:10px 0 0;font-size:12px">De ${eur(g.repartido)} hay proveedores que están en más de una categoría; su gasto se reparte a partes iguales, así que esas cifras son aproximadas. El total sí cuadra.</p>` : ""}
     ${g.sinCategoria ? `<p class="fic-nota" style="margin:10px 0 0"><b>${eur(g.sinCategoria)}</b> de ${g.sinCatProveedores.length} ${g.sinCatProveedores.length === 1 ? "proveedor" : "proveedores"} sin categoría, así que no está repartido: ${esc(g.sinCatProveedores.slice(0, 4).join(", "))}${g.sinCatProveedores.length > 4 ? "…" : ""}. Se ponen en <b>Configuración</b>.</p>` : ""}
   </details>`;
+}
+
+/**
+ * Todas las veces que hemos comprado algo, con el enlace a cada factura. Es lo que se quiere
+ * saber cuando algo falta o ha subido: cuándo, a quién, cuánto y a qué precio — y luego ver
+ * el papel. El enlace va a Drive, que es donde está el original.
+ */
+async function comprasHistorial(clave, nombre) {
+  const qs = new URLSearchParams({ clave });
+  if (FACF.local) qs.set("local", FACF.local);
+  if (COMP.from) qs.set("from", COMP.from);
+  if (COMP.to) qs.set("to", COMP.to);
+  let j;
+  try { j = await apiRaw("/api/facturas/compras/producto?" + qs); } catch (e) { return toast(e.message); }
+  const r = j.resumen;
+
+  const subio = r.precioMin != null && r.precioMax != null && r.precioMin > 0
+    ? Math.round(((r.precioMax - r.precioMin) / r.precioMin) * 100) : null;
+
+  const fila = (c) => `<tr>
+    <td class="mut" style="white-space:nowrap">${esc(fechaCorta(c.fecha) || c.fecha || "—")}</td>
+    <td>${esc(c.proveedor || "—")}<div class="t2">${esc(nombreCortoLocal(c.local) || "")}</div></td>
+    <td class="r tnum">${c.cantidad != null ? esc(num(c.cantidad)) + (c.unidad ? " " + esc(c.unidad) : "") : "—"}</td>
+    <td class="r tnum">${c.precio_unitario != null ? esc(eur2(c.precio_unitario)) : "—"}</td>
+    <td class="r tnum"><b>${c.importe != null ? esc(eur2(c.importe)) : "—"}</b></td>
+    <td class="r" style="white-space:nowrap">
+      ${c.drive_url ? `<a class="btn sm" href="${esc(c.drive_url)}" target="_blank" rel="noopener" title="Abrir la factura en Drive">Ver factura ↗</a>`
+        : `<button class="btn sm" data-vfac="${c.factura_id}">Detalle</button>`}</td></tr>`;
+
+  const ov = modal(esc(j.nombre || nombre), `
+    <div class="kpis4" style="margin:0 0 14px">
+      <div class="kpi"><span>Veces</span><b>${num(r.veces)}</b></div>
+      <div class="kpi"><span>Cantidad</span><b>${num(Math.round(r.cantidad * 100) / 100)}</b></div>
+      <div class="kpi"><span>Gastado</span><b>${esc(eur(r.importe))}</b></div>
+      <div class="kpi"><span>Último precio</span><b>${r.precioUltimo != null ? esc(eur2(r.precioUltimo)) : "—"}</b></div>
+    </div>
+    ${subio != null && subio > 0 ? `<p class="fic-nota" style="margin-top:0">Entre el precio más bajo y el más alto de este periodo hay un
+      <b>${subio} %</b> (de ${esc(eur2(r.precioMin))} a ${esc(eur2(r.precioMax))}).${r.proveedores.length > 1 ? " Ojo: son varios proveedores, así que puede ser diferencia de proveedor y no subida." : ""}</p>` : ""}
+    ${j.nombres.length > 1 ? `<p class="mut" style="margin:0 0 10px;font-size:12.5px">Los proveedores lo escriben de ${j.nombres.length} formas
+      (${esc(j.nombres.slice(0, 3).join(" · "))}${j.nombres.length > 3 ? "…" : ""}); se agrupan como el mismo producto.</p>` : ""}
+    ${r.dudosas ? `<p class="mut" style="margin:0 0 10px;font-size:12.5px">${num(r.dudosas)} ${r.dudosas === 1 ? "línea no se leyó" : "líneas no se leyeron"} del todo: sus cantidades pueden no ser exactas.</p>` : ""}
+    ${j.compras.length ? `<div class="tw" style="max-height:46vh;overflow:auto"><table class="tbl">
+      <thead><tr><th>Fecha</th><th>Proveedor</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Importe</th><th></th></tr></thead>
+      <tbody>${j.compras.map(fila).join("")}</tbody></table></div>`
+      : '<p class="mut">No hay compras de esto en el periodo elegido.</p>'}
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button></div>`);
+  ov.querySelector(".modal").style.width = "min(880px, 96vw)";
+  ov.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-vfac]");
+    if (b) { ov.remove(); comprasVerFactura(b.getAttribute("data-vfac")); }
+  });
 }
 
 let _compTimer = null;
@@ -4277,7 +4416,7 @@ async function refrescarCompras() {
     : `<p class="mut" style="margin:0 0 12px">Las ${num(c.conDetalle)} facturas de este periodo tienen el detalle leído.</p>`;
 
   const fila = (g) => `<tr>
-      <td><button class="linkbtn" data-compprod="${esc(g.descripcion)}" title="Ver solo este producto">${esc(g.descripcion)}</button>
+      <td><button class="linkbtn" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="Todas las veces que lo hemos comprado">${esc(g.descripcion)}</button>
         <div class="mut" style="font-size:11px">${esc(g.proveedores.join(" · ") || "—")}</div></td>
       <td style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) : "—"}</td>
       <td style="text-align:right;white-space:nowrap"><b>${g.importe != null ? esc(eur(g.importe)) : "—"}</b></td>
@@ -5658,6 +5797,8 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-limpiar-filtros") facLimpiarFiltros();
   else if (act === "fac-normalizar-locales") facNormalizarLocales();
   else if (act === "fac-cat-editar") facCatEditar(t.getAttribute("data-prov"));
+  else if (act === "fac-ir-cats") facTab("config");
+  else if (act === "comp-producto") comprasHistorial(t.getAttribute("data-clave"), t.getAttribute("data-nombre"));
   else if (act === "fac-sel-resumen") facSelResumen();
   else if (act === "fac-sel-export") facSelExport();
   else if (act === "fac-sel-limpiar") facSelLimpiar();

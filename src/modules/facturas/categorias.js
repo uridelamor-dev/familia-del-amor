@@ -15,16 +15,45 @@
 //    «BEBIDA», el agrupar —que es para lo único que sirve esto— deja de funcionar. Es
 //    exactamente lo que pasó con el campo `local` de las facturas.
 
-/** Catálogo inicial. Dirección puede añadir, pero se empieza con algo, no con la nada. */
-export const CATEGORIAS = [
-  "Bebidas", "Alcohol", "Café e infusiones",
-  "Carne", "Embutidos y quesos", "Pescado y marisco", "Fruta y verdura",
-  "Pan y bollería", "Congelados", "Ultramarinos y conservas",
-  "Limpieza e higiene", "Desechables y envases", "Menaje y utillaje",
-  "Suministros", "Mantenimiento y obras", "Servicios y profesionales",
-  "Impuestos y seguros", "Alquileres", "Marketing",
-  "Varios",
+/**
+ * Catálogo en dos niveles: categoría y, dentro, subcategoría.
+ *
+ * Un proveedor es de UNA categoría con su subcategoría —Grau es «Bebidas · Alcohólicas»— y no
+ * de dos categorías sueltas. La diferencia importa: con dos categorías sueltas su gasto había
+ * que repartirlo entre ambas y las cifras salían aproximadas. Con categoría y subcategoría, el
+ * gasto va entero a un sitio, «Bebidas» es la suma exacta de sus subcategorías, y aun así se
+ * puede afinar («cuánto en vino» sin dejar de saber «cuánto en bebida»).
+ *
+ * Sobre «alcohólicas»: en lugar de un cajón único se parte en cervezas, vinos y licores. Un
+ * bloque «Alcohólicas» de 20.000 € no contesta ninguna pregunta que se haga de verdad, y
+ * «cuánto vino compro» sí. Filtrando por «Bebidas» siguen saliendo las tres juntas.
+ */
+export const CATALOGO = [
+  { nombre: "Bebidas", subs: ["Refrescos", "Aguas", "Zumos", "Cervezas", "Vinos y cavas", "Licores y destilados", "Cafés e infusiones"] },
+  { nombre: "Carne y aves", subs: ["Ternera", "Cerdo", "Pollo y aves", "Cordero y caza"] },
+  { nombre: "Embutidos y quesos", subs: ["Embutido", "Jamón", "Quesos"] },
+  { nombre: "Pescado y marisco", subs: ["Pescado fresco", "Marisco", "Salazones y ahumados"] },
+  { nombre: "Fruta y verdura", subs: [] },
+  { nombre: "Pan y bollería", subs: [] },
+  { nombre: "Congelados", subs: [] },
+  { nombre: "Ultramarinos y conservas", subs: ["Aceite y vinagre", "Conservas", "Legumbres y pasta", "Especias y salsas", "Postres y helados"] },
+  { nombre: "Limpieza e higiene", subs: [] },
+  { nombre: "Desechables y envases", subs: [] },
+  { nombre: "Menaje y utillaje", subs: [] },
+  { nombre: "Suministros", subs: ["Luz", "Agua", "Gas", "Internet y teléfono", "Basuras"] },
+  { nombre: "Mantenimiento y obras", subs: [] },
+  { nombre: "Servicios y profesionales", subs: ["Gestoría", "Prevención y formación", "Software y licencias", "Otros servicios"] },
+  { nombre: "Impuestos y seguros", subs: [] },
+  { nombre: "Alquileres", subs: [] },
+  { nombre: "Marketing", subs: [] },
+  { nombre: "Varios", subs: [] },
 ];
+
+/** Solo los nombres de categoría, que es lo que se guarda y con lo que se filtra. */
+export const CATEGORIAS = CATALOGO.map((c) => c.nombre);
+
+/** Subcategorías de una categoría. Vacío si esa categoría no se subdivide. */
+export const subcategoriasDe = (categoria) => (CATALOGO.find((c) => c.nombre === categoria) || {}).subs || [];
 
 /**
  * Categorías de gasto estructural: lo que se paga para tener el negocio abierto, no lo que se
@@ -43,6 +72,13 @@ export const SIN_LINEAS = new Set([
   "Suministros", "Mantenimiento y obras", "Servicios y profesionales",
   "Impuestos y seguros", "Alquileres", "Marketing",
 ]);
+
+/** Subcategorías que ya no existen o cambiaron de sitio, para no perderlas al migrar. */
+export const ALIAS_CATEGORIA = {
+  "alcohol": { categoria: "Bebidas", sub: "Licores y destilados" },
+  "cafe e infusiones": { categoria: "Bebidas", sub: "Cafés e infusiones" },
+  "carne": { categoria: "Carne y aves", sub: "" },
+};
 
 /**
  * ¿Hay que leer el detalle de las facturas de este proveedor?
@@ -76,17 +112,40 @@ export function claveProveedor(nombre) {
     .trim();
 }
 
+const norm = (s) => String(s || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
 /** ¿Es una categoría del catálogo? Comparación tolerante a mayúsculas y acentos. */
 export function normalizarCategoria(valor, catalogo = CATEGORIAS) {
-  const n = (s) => String(s || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-  const buscada = n(valor);
+  const buscada = norm(valor);
   if (!buscada) return null;
-  return catalogo.find((c) => n(c) === buscada) || null;
+  return catalogo.find((c) => norm(c) === buscada) || null;
 }
 
 /**
- * Índice proveedor → categorías, listo para consultar. Las filas vienen de la tabla de
- * etiquetas: [{proveedor, categoria}].
+ * Valida el par (categoría, subcategoría). Devuelve `null` si la categoría no existe, y la
+ * subcategoría se limpia a "" si no pertenece a esa categoría: NUNCA se guarda una
+ * subcategoría colgando de la categoría equivocada, porque el desglose dejaría de sumar.
+ */
+export function normalizarPar(categoria, subcategoria) {
+  const cat = normalizarCategoria(categoria);
+  if (!cat) {
+    // «Alcohol» y «Café e infusiones» eran categorías sueltas antes de partir Bebidas.
+    const alias = ALIAS_CATEGORIA[norm(categoria)];
+    if (!alias) return null;
+    return { categoria: alias.categoria, subcategoria: alias.sub };
+  }
+  const subs = subcategoriasDe(cat);
+  const sub = subs.find((x) => norm(x) === norm(subcategoria)) || "";
+  return { categoria: cat, subcategoria: sub };
+}
+
+/** Cómo se escribe un par para leerlo: «Bebidas · Vinos y cavas». */
+export const etiquetaPar = (p) => (p.subcategoria ? `${p.categoria} · ${p.subcategoria}` : p.categoria);
+
+/**
+ * Índice proveedor → pares {categoria, subcategoria}. Las filas vienen de la tabla de
+ * etiquetas. La clave del mapa es la del proveedor normalizada, así que las distintas formas
+ * de escribir el mismo nombre caen en la misma entrada.
  */
 export function indiceCategorias(filas = []) {
   const m = new Map();
@@ -94,23 +153,31 @@ export function indiceCategorias(filas = []) {
     const k = claveProveedor(f.proveedor);
     if (!k) continue;
     if (!m.has(k)) m.set(k, []);
-    if (!m.get(k).includes(f.categoria)) m.get(k).push(f.categoria);
+    const par = { categoria: f.categoria, subcategoria: f.subcategoria || "" };
+    if (!m.get(k).some((x) => x.categoria === par.categoria && x.subcategoria === par.subcategoria)) m.get(k).push(par);
   }
-  for (const [, v] of m) v.sort((a, b) => CATEGORIAS.indexOf(a) - CATEGORIAS.indexOf(b));
+  for (const [, v] of m) {
+    v.sort((a, b) => CATEGORIAS.indexOf(a.categoria) - CATEGORIAS.indexOf(b.categoria)
+      || String(a.subcategoria).localeCompare(String(b.subcategoria), "es"));
+  }
   return m;
 }
 
-/** Categorías de un proveedor concreto. Array vacío si nadie lo ha etiquetado todavía. */
+/** Pares de un proveedor concreto. Array vacío si nadie lo ha etiquetado todavía. */
 export const categoriasDe = (proveedor, indice) => indice.get(claveProveedor(proveedor)) || [];
+/** Solo los nombres de categoría, sin repetir: para decidir si se leen las líneas. */
+export const soloCategorias = (pares = []) => [...new Set(pares.map((p) => p.categoria))];
 
 /**
- * Reparto del gasto por categoría.
+ * Reparto del gasto por categoría, con su desglose en subcategorías.
  *
- * Un proveedor con DOS categorías (Grau: bebidas + alcohol) plantea un problema real: si se
- * suma su gasto entero en las dos, el total sale inflado y no cuadra con la factura. Aquí se
- * REPARTE a partes iguales entre sus categorías, y se dice en `repartido` cuánto gasto ha
- * tenido que repartirse. Un número que no cuadra con las facturas es peor que uno aproximado
- * que avisa de que lo es.
+ * Lo normal es que un proveedor tenga UN par (Grau → Bebidas · Alcohólicas), y entonces su
+ * gasto va entero a un sitio: no hay nada aproximado. Si alguien tiene varios pares se
+ * reparte a partes iguales y se dice cuánto ha habido que repartir — sumar el gasto entero
+ * en cada uno inflaría el total y dejaría de cuadrar con las facturas.
+ *
+ * `categoria.importe` es SIEMPRE la suma exacta de sus subcategorías. Esa es la ventaja de
+ * los dos niveles sobre las categorías sueltas: se puede afinar sin perder el total.
  *
  * Lo que no está etiquetado NO se mete en «Varios»: va aparte, en `sinCategoria`. Si no,
  * «Varios» crecería sin que nadie supiera si es que hay mucho gasto vario o es que falta
@@ -123,31 +190,39 @@ export function gastoPorCategoria(filas = [], indice = new Map()) {
   for (const f of filas) {
     const importe = Number(f.importe) || 0;
     total += importe;
-    const cats = categoriasDe(f.proveedor, indice);
-    if (!cats.length) {
+    const pares = categoriasDe(f.proveedor, indice);
+    if (!pares.length) {
       sinCategoria += importe;
       if (f.proveedor) sinCatProveedores.add(String(f.proveedor));
       continue;
     }
-    if (cats.length > 1) repartido += importe;
-    const trozo = importe / cats.length;
-    for (const c of cats) {
-      if (!acc.has(c)) acc.set(c, { categoria: c, importe: 0, proveedores: new Set() });
-      const g = acc.get(c);
+    if (pares.length > 1) repartido += importe;
+    const trozo = importe / pares.length;
+    for (const par of pares) {
+      if (!acc.has(par.categoria)) acc.set(par.categoria, { categoria: par.categoria, importe: 0, proveedores: new Set(), subs: new Map() });
+      const g = acc.get(par.categoria);
       g.importe += trozo;
       if (f.proveedor) g.proveedores.add(String(f.proveedor));
+      const sk = par.subcategoria || "";
+      g.subs.set(sk, (g.subs.get(sk) || 0) + trozo);
     }
   }
 
-  const lista = [...acc.values()]
-    .map((g) => ({ ...g, importe: Math.round(g.importe * 100) / 100, proveedores: [...g.proveedores].sort((a, b) => a.localeCompare(b, "es")) }))
-    .sort((a, b) => b.importe - a.importe);
+  const red = (n) => Math.round(n * 100) / 100;
+  const lista = [...acc.values()].map((g) => ({
+    categoria: g.categoria,
+    importe: red(g.importe),
+    proveedores: [...g.proveedores].sort((a, b) => a.localeCompare(b, "es")),
+    subs: [...g.subs.entries()]
+      .map(([subcategoria, importe]) => ({ subcategoria, importe: red(importe) }))
+      .sort((a, b) => b.importe - a.importe),
+  })).sort((a, b) => b.importe - a.importe);
 
   return {
     categorias: lista,
-    sinCategoria: Math.round(sinCategoria * 100) / 100,
+    sinCategoria: red(sinCategoria),
     sinCatProveedores: [...sinCatProveedores].sort((a, b) => a.localeCompare(b, "es")),
-    repartido: Math.round(repartido * 100) / 100,
-    total: Math.round(total * 100) / 100,
+    repartido: red(repartido),
+    total: red(total),
   };
 }

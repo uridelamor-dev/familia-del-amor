@@ -366,6 +366,18 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .fchip button{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:var(--ink3);font-size:13px;line-height:1}
 .fchip button:hover{background:var(--danger-soft);color:var(--danger)}
 
+/* Cuatro cifras de cabecera dentro de un diálogo. Se envuelven a dos columnas en móvil en
+   vez de encogerse: cuatro números de 60 px no se leen. */
+.kpis4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.kpis4 .kpi{background:var(--surface2);border-radius:12px;padding:10px 12px;min-width:0}
+.kpis4 .kpi span{display:block;font-size:11px;color:var(--ink3);text-transform:uppercase;letter-spacing:.04em}
+.kpis4 .kpi b{font-size:19px;font-variant-numeric:tabular-nums;line-height:1.25;word-break:break-word}
+@media (max-width:560px){.kpis4{grid-template-columns:repeat(2,1fr)}}
+/* Subcategorías bajo su categoría en el reparto de gasto. */
+.subcats{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.subcat{font-size:11.5px;padding:2px 8px;border-radius:999px;background:var(--surface2);color:var(--ink2);cursor:pointer;border:0}
+.subcat:hover{background:var(--brand-soft);color:var(--brand)}
+.subcat b{font-variant-numeric:tabular-nums}
 /* Barra proporcional del reparto de gasto por categoría. Sin números al lado: los números ya
    están en la fila; la barra es solo para ver de un vistazo cuál se lleva la mitad. */
 .barmini{height:5px;border-radius:3px;background:var(--surface2);margin-top:5px;overflow:hidden}

@@ -47,7 +47,7 @@ import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo 
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
-import { CATEGORIAS, claveProveedor, normalizarCategoria, indiceCategorias, categoriasDe, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
+import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto, puedeConPasswordTemporal } from "./src/modules/usuarios/acceso.js";
@@ -470,6 +470,25 @@ async function initDB() {
         PRIMARY KEY (prov_clave, categoria)
       )
     `);
+    // Segundo nivel: «Bebidas · Vinos y cavas». Un proveedor es de UNA categoría con su
+    // subcategoría, no de dos categorías sueltas: así el gasto va entero a un sitio y la
+    // categoría es la suma exacta de sus subcategorías, sin nada aproximado.
+    try {
+      await client.query(`ALTER TABLE facturas_proveedor_cats ADD COLUMN IF NOT EXISTS subcategoria TEXT NOT NULL DEFAULT ''`);
+      await client.query(`ALTER TABLE facturas_proveedor_cats DROP CONSTRAINT IF EXISTS facturas_proveedor_cats_pkey`);
+      await client.query(`ALTER TABLE facturas_proveedor_cats ADD PRIMARY KEY (prov_clave, categoria, subcategoria)`);
+      // «Alcohol» y «Café e infusiones» eran categorías sueltas antes de partir Bebidas.
+      await client.query(`UPDATE facturas_proveedor_cats SET categoria = 'Bebidas', subcategoria = 'Licores y destilados' WHERE categoria = 'Alcohol'`);
+      await client.query(`UPDATE facturas_proveedor_cats SET categoria = 'Bebidas', subcategoria = 'Cafés e infusiones' WHERE categoria = 'Café e infusiones'`);
+      await client.query(`UPDATE facturas_proveedor_cats SET categoria = 'Carne y aves' WHERE categoria = 'Carne'`);
+      // Si tras migrar un proveedor tiene la categoría a secas Y la misma con subcategoría, la
+      // de a secas sobra: era la versión vaga de lo mismo. Dejarla haría que su gasto se
+      // repartiera entre «Bebidas (sin más)» y «Bebidas · Licores», que es un desglose falso.
+      await client.query(`DELETE FROM facturas_proveedor_cats a
+         WHERE a.subcategoria = '' AND EXISTS (
+           SELECT 1 FROM facturas_proveedor_cats b
+            WHERE b.prov_clave = a.prov_clave AND b.categoria = a.categoria AND b.subcategoria <> '')`);
+    } catch (e) { console.error("[DB] alter facturas_proveedor_cats:", e.message); }
 
     // Detalle línea a línea. Ver src/modules/facturas/lineas.js y docs/lineas-de-factura.md.
     // `lineas_estado` guarda si el detalle cuadra con la base imponible: sin ese aviso, una
@@ -2821,8 +2840,11 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
     // resuelve con una subconsulta sobre la clave normalizada, que es la que une «GRAU, S.L.»
     // con «Grau Distribucions»: si se comparara el nombre a pelo, faltaría media lista.
     const cats = String(req.query.categoria || "").split(",").map((c) => normalizarCategoria(c)).filter(Boolean);
-    if (cats.length) {
-      const provsCat = await proveedoresDeCategorias(cats);
+    // La subcategoría afina dentro de la categoría: «Bebidas» sin más, o «Vinos y cavas».
+    const todasSubs = new Set(CATALOGO.flatMap((c) => c.subs));
+    const subs = String(req.query.subcategoria || "").split(",").map((x) => x.trim()).filter((x) => todasSubs.has(x));
+    if (cats.length || subs.length) {
+      const provsCat = await proveedoresDeCategorias(cats, subs);
       // Si nadie está etiquetado con esas categorías, la respuesta correcta es «nada», no
       // «todo»: una condición que no filtra habría devuelto la lista entera como si sí.
       condFac.push("f.proveedor = ANY(?)");
@@ -2863,21 +2885,24 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
     // Gasto por categoría. Va sobre el TOTAL de las facturas, no sobre las líneas: así el
     // alquiler y la luz —de las que a propósito no se lee el detalle— también cuentan. Si
     // saliera de las líneas, las categorías de gasto estructural darían siempre cero.
-    const etiquetas = await dbAll(`SELECT prov_clave AS proveedor, categoria FROM facturas_proveedor_cats`).catch(() => []);
+    const etiquetas = await dbAll(`SELECT prov_clave AS proveedor, categoria, subcategoria FROM facturas_proveedor_cats`).catch(() => []);
     const porProveedor = await dbAll(
       `SELECT f.proveedor, COALESCE(SUM(f.total),0)::float AS importe FROM facturas f ${whereFac} GROUP BY f.proveedor`, parFac);
-    const idxCat = new Map(etiquetas.map((e) => [e.proveedor, null]));
-    for (const e of etiquetas) { if (!idxCat.get(e.proveedor)) idxCat.set(e.proveedor, []); idxCat.get(e.proveedor).push(e.categoria); }
+    const idxCat = new Map();
+    for (const e of etiquetas) {
+      if (!idxCat.has(e.proveedor)) idxCat.set(e.proveedor, []);
+      idxCat.get(e.proveedor).push({ categoria: e.categoria, subcategoria: e.subcategoria || "" });
+    }
     const categorias = gastoPorCategoria(
-      porProveedor.map((p) => ({ proveedor: p.proveedor, importe: p.importe })),
-      new Map([...idxCat].map(([k, v]) => [k, v || []])));
+      porProveedor.map((p) => ({ proveedor: p.proveedor, importe: p.importe })), idxCat);
 
     res.json({
       ok: true, local: local || null, q: q || null,
       desde: req.query.from || null, hasta: req.query.to || null,
       categoria: cats.length ? cats.join(",") : null,
+      subcategoria: subs.length ? subs.join(",") : null,
       proveedor: String(req.query.proveedor || "").trim() || null,
-      catalogoCategorias: CATEGORIAS,
+      catalogoCategorias: CATALOGO,
       categorias,
       grupos: grupos.slice(0, 300),
       lineas: q ? filas.slice(0, 400) : [],
@@ -2907,6 +2932,54 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
 // «Lloret» y «BLANES» en la misma columna: filtrando por el nombre bueno faltaban
 // facturas y el gasto por local salía repartido entre nombres que son el mismo sitio.
 // Las puertas de entrada ya están cerradas; esto arregla lo que quedó.
+// Todas las veces que hemos comprado un producto, con el enlace a cada factura. Es la
+// pregunta que se hace de verdad cuando algo falta o ha subido: «¿cuándo lo compré y a
+// cuánto?», y luego «enséñame ese papel».
+app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const clave = claveProducto(String(req.query.clave || req.query.q || ""));
+    if (!clave) return res.status(400).json({ ok: false, error: "Falta el producto" });
+    const cond = ["l.clave = ?"], par = [clave];
+    const local = localScope(req) || String(req.query.local || "").trim();
+    if (local) { cond.push("f.local = ?"); par.push(local); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ""))) { cond.push("f.fecha >= ?"); par.push(req.query.from); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || ""))) { cond.push("f.fecha <= ?"); par.push(req.query.to); }
+
+    const compras = await dbAll(
+      `SELECT l.descripcion, l.cantidad::float AS cantidad, l.unidad,
+              l.precio_unitario::float AS precio_unitario, l.importe::float AS importe, l.dudosa,
+              f.id AS factura_id, f.fecha, f.proveedor, f.local, f.numero_factura, f.drive_url
+         FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
+        WHERE ${cond.join(" AND ")}
+        ORDER BY f.fecha DESC NULLS LAST, f.id DESC LIMIT 500`, par);
+
+    // El nombre que se enseña es el más frecuente, no el de la última factura: si un
+    // proveedor lo escribió raro una vez, esa vez no debe rebautizar el producto entero.
+    const cuenta = new Map();
+    for (const c of compras) cuenta.set(c.descripcion, (cuenta.get(c.descripcion) || 0) + 1);
+    const nombre = [...cuenta.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || req.query.clave;
+
+    const conPrecio = compras.filter((c) => c.precio_unitario != null);
+    res.json({
+      ok: true, clave, nombre, compras,
+      nombres: [...cuenta.keys()],
+      resumen: {
+        veces: compras.length,
+        cantidad: compras.reduce((s2, c) => s2 + (Number(c.cantidad) || 0), 0),
+        importe: Math.round(compras.reduce((s2, c) => s2 + (Number(c.importe) || 0), 0) * 100) / 100,
+        proveedores: [...new Set(compras.map((c) => c.proveedor).filter(Boolean))],
+        precioMin: conPrecio.length ? Math.min(...conPrecio.map((c) => c.precio_unitario)) : null,
+        precioMax: conPrecio.length ? Math.max(...conPrecio.map((c) => c.precio_unitario)) : null,
+        precioUltimo: conPrecio[0]?.precio_unitario ?? null,
+        dudosas: compras.filter((c) => c.dudosa).length,
+      },
+    });
+  } catch (e) {
+    console.error("[facturas] historial producto:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar el historial" });
+  }
+});
+
 // ── Categorías de proveedor ─────────────────────────────────────────────────
 /**
  * Nombres de proveedor (tal como están escritos en las facturas) que pertenecen a alguna de
@@ -2918,10 +2991,12 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
  * a perder proveedores en silencio. Son unas decenas de nombres distintos: traerlos y
  * compararlos en memoria cuesta nada.
  */
-async function proveedoresDeCategorias(cats) {
-  if (!cats.length) return [];
+async function proveedoresDeCategorias(cats, subs = []) {
+  if (!cats.length && !subs.length) return [];
   const [etiquetas, nombres] = await Promise.all([
-    dbAll(`SELECT prov_clave FROM facturas_proveedor_cats WHERE categoria = ANY(?)`, [cats]),
+    subs.length
+      ? dbAll(`SELECT prov_clave FROM facturas_proveedor_cats WHERE subcategoria = ANY(?)`, [subs])
+      : dbAll(`SELECT prov_clave FROM facturas_proveedor_cats WHERE categoria = ANY(?)`, [cats]),
     dbAll(`SELECT DISTINCT proveedor FROM facturas WHERE proveedor IS NOT NULL AND proveedor <> ''`),
   ]);
   const claves = new Set(etiquetas.map((e) => e.prov_clave));
@@ -2933,7 +3008,7 @@ async function proveedoresDeCategorias(cats) {
 app.get("/api/facturas/categorias", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const [etiquetas, provs] = await Promise.all([
-      dbAll(`SELECT prov_clave, proveedor, categoria FROM facturas_proveedor_cats ORDER BY proveedor, categoria`),
+      dbAll(`SELECT prov_clave, proveedor, categoria, subcategoria FROM facturas_proveedor_cats ORDER BY proveedor, categoria, subcategoria`),
       dbAll(`SELECT proveedor, count(*)::int AS facturas, COALESCE(SUM(total),0)::float AS gasto
                FROM facturas WHERE proveedor IS NOT NULL AND proveedor <> ''
               GROUP BY proveedor ORDER BY COALESCE(SUM(total),0) DESC`),
@@ -2950,8 +3025,12 @@ app.get("/api/facturas/categorias", requireAuth(["direccion", "contabilidad"]), 
     }
     const lista = [...mapa.values()].map((g) => ({ ...g, gasto: Math.round(g.gasto * 100) / 100 }))
       .sort((a, b) => b.gasto - a.gasto);
-    res.json({ ok: true, catalogo: CATEGORIAS, proveedores: lista,
-      sinEtiquetar: lista.filter((p) => !p.categorias.length).length });
+    const sinEtiquetar = lista.filter((p) => !p.categorias.length);
+    res.json({ ok: true, catalogo: CATALOGO, proveedores: lista,
+      sinEtiquetar: sinEtiquetar.length,
+      // El gasto que hay detrás de lo que falta por etiquetar: es lo que dice si el aviso
+      // urge o da igual. «3 proveedores sin categoría» no dice nada; «14.000 € sin repartir» sí.
+      gastoSinEtiquetar: Math.round(sinEtiquetar.reduce((s2, p) => s2 + p.gasto, 0) * 100) / 100 });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar las categorías" }); }
 });
 
@@ -2961,21 +3040,26 @@ app.put("/api/facturas/categorias", requireAuth(["direccion", "contabilidad"]), 
     const proveedor = String(req.body?.proveedor || "").trim();
     const clave = claveProveedor(proveedor);
     if (!clave) return res.status(400).json({ ok: false, error: "Falta el proveedor" });
+    // Cada entrada es {categoria, subcategoria}. Se valida el PAR: una subcategoría colgando
+    // de la categoría equivocada rompería que la categoría sume exactamente sus subcategorías.
     const pedidas = Array.isArray(req.body?.categorias) ? req.body.categorias : [];
-    const cats = [...new Set(pedidas.map((c) => normalizarCategoria(c)))].filter(Boolean);
-    if (cats.length !== new Set(pedidas).size) {
-      return res.status(400).json({ ok: false, error: "Alguna categoría no está en la lista. Elígelas del desplegable." });
+    const pares = [];
+    for (const p of pedidas) {
+      const par = normalizarPar(typeof p === "string" ? p : p?.categoria, typeof p === "string" ? "" : p?.subcategoria);
+      if (!par) return res.status(400).json({ ok: false, error: `«${typeof p === "string" ? p : p?.categoria}» no está en la lista de categorías.` });
+      if (!pares.some((x) => x.categoria === par.categoria && x.subcategoria === par.subcategoria)) pares.push(par);
     }
     await client.query("BEGIN");
     const q = (sql, p = []) => client.query(toPositional(sql), p);
     // Se reemplaza el juego entero: quitar una categoría es no mandarla.
     await q(`DELETE FROM facturas_proveedor_cats WHERE prov_clave = ?`, [clave]);
-    for (const c of cats) {
-      await q(`INSERT INTO facturas_proveedor_cats (prov_clave, proveedor, categoria, creado_en) VALUES (?, ?, ?, ?)
-               ON CONFLICT (prov_clave, categoria) DO NOTHING`, [clave, proveedor, c, isoConOffset(Date.now())]);
+    for (const par of pares) {
+      await q(`INSERT INTO facturas_proveedor_cats (prov_clave, proveedor, categoria, subcategoria, creado_en) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (prov_clave, categoria, subcategoria) DO NOTHING`,
+        [clave, proveedor, par.categoria, par.subcategoria, isoConOffset(Date.now())]);
     }
     await client.query("COMMIT");
-    res.json({ ok: true, proveedor, categorias: cats });
+    res.json({ ok: true, proveedor, categorias: pares });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("[facturas] categorías:", e.message);
