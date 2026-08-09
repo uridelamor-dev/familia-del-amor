@@ -58,3 +58,45 @@ describe("los filtros de facturas llegan de verdad al servidor", () => {
     assert.ok(enviadas.includes("proveedor"));
   });
 });
+
+// Mismo cierre para «Qué compramos»: lo que se puede elegir tiene que llegar al servidor.
+describe("los filtros de «Qué compramos» llegan al servidor", () => {
+  const lista = (() => {
+    const m = panel.match(/const COMP_FILTROS = \[([^\]]*)\]/);
+    assert.ok(m, "falta COMP_FILTROS");
+    return [...m[1].matchAll(/"(\w+)"/g)].map((x) => x[1]);
+  })();
+
+  test("todo lo que el panel de compras deja elegir se manda", () => {
+    const i = panel.indexOf("async function compAbrirFiltros(");
+    assert.notEqual(i, -1);
+    const bloque = panel.slice(i, panel.indexOf("\n}\n", i));
+    for (const k of [...new Set([...bloque.matchAll(/COMP\.(\w+)\s*=/g)].map((m) => m[1]))]) {
+      assert.ok(lista.includes(k), `se puede filtrar por «${k}» pero no se manda`);
+    }
+  });
+
+  test("la consulta se arma desde la lista, no a mano", () => {
+    assert.match(panel, /COMP_FILTROS\.forEach\(\(k\) => \{ if \(COMP\[k\]\) qs\.set/);
+  });
+
+  test("el servidor entiende proveedor y categoría", () => {
+    const i = server.indexOf('app.get("/api/facturas/compras"');
+    assert.notEqual(i, -1);
+    const bloque = server.slice(i, i + 3500);
+    assert.match(bloque, /req\.query\.proveedor/);
+    assert.match(bloque, /req\.query\.categoria/);
+  });
+
+  test("filtrar por una categoría que nadie tiene devuelve nada, no todo", () => {
+    // Una condición que no filtra habría devuelto la lista entera como si sí lo hubiera hecho.
+    const i = server.indexOf("const provsCat = await proveedoresDeCategorias");
+    assert.notEqual(i, -1);
+    assert.match(server.slice(i, i + 500), /provsCat\.length \? provsCat : \[/);
+  });
+
+  test("la clave del proveedor NO está reescrita en SQL: una sola versión, la de JS", () => {
+    assert.ok(!/regexp_replace\([^)]*sociedad limitada/.test(server),
+      "duplicar la normalización en SQL la deja desincronizada el día que se toque una");
+  });
+});

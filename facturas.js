@@ -962,11 +962,16 @@ export async function asignarFacturaPendiente({ pendiente, local, getToken, dbGe
   );
   const facturaId = ins?.id;
 
-  // El detalle que se leyó cuando llegó la factura, recuperado tal cual.
+  // El detalle que se leyó cuando llegó la factura, recuperado tal cual. Misma regla que en la
+  // vía normal: del gasto estructural no se guarda el desglose (ver proveedorConLineas).
   try {
     if (facturaId && pendiente.lineas_json) {
-      const r = await guardarLineas(dbRun, facturaId, { lineas: JSON.parse(pendiente.lineas_json), base_imponible: pendiente.base_imponible }, new Date().toISOString());
-      if (r.aviso) console.warn(`[Facturas] #${facturaId} detalle: ${r.aviso}`);
+      if (!(await proveedorConLineas(dbGet, pendiente.proveedor))) {
+        await dbRun(`UPDATE facturas SET lineas_estado = 'no_aplica', lineas_leidas_en = ? WHERE id = ?`, [new Date().toISOString(), facturaId]);
+      } else {
+        const r = await guardarLineas(dbRun, facturaId, { lineas: JSON.parse(pendiente.lineas_json), base_imponible: pendiente.base_imponible }, new Date().toISOString());
+        if (r.aviso) console.warn(`[Facturas] #${facturaId} detalle: ${r.aviso}`);
+      }
     }
   } catch (e) { console.error("[Facturas] no se pudo guardar el detalle de la pendiente:", e.message); }
 

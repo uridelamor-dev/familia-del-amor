@@ -366,6 +366,15 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .fchip button{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:var(--ink3);font-size:13px;line-height:1}
 .fchip button:hover{background:var(--danger-soft);color:var(--danger)}
 
+/* Barra proporcional del reparto de gasto por categoría. Sin números al lado: los números ya
+   están en la fila; la barra es solo para ver de un vistazo cuál se lleva la mitad. */
+.barmini{height:5px;border-radius:3px;background:var(--surface2);margin-top:5px;overflow:hidden}
+.barmini>span{display:block;height:100%;border-radius:3px;background:var(--brand)}
+[data-comp="cat"]{cursor:pointer;border-radius:9px;transition:background .12s}
+[data-comp="cat"]:hover{background:var(--brand-soft)}
+/* Proveedor sin categoría: se marca la fila entera, no una celda, para que se vea al pasar
+   la lista de arriba abajo buscando qué falta por etiquetar. */
+.tbl tr.sincat td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
 /* Selección de documentos */
 .tbl th.facsel,.tbl td.facsel{width:34px;padding-left:14px;padding-right:0}
 .tbl tr.sel{background:var(--brand-soft)}

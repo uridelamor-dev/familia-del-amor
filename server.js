@@ -2817,6 +2817,17 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ""))) { condFac.push("f.fecha >= ?"); parFac.push(req.query.from); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || ""))) { condFac.push("f.fecha <= ?"); parFac.push(req.query.to); }
     if (String(req.query.proveedor || "").trim()) { condFac.push("LOWER(f.proveedor) = LOWER(?)"); parFac.push(String(req.query.proveedor).trim()); }
+    // Filtrar por categoría es filtrar por «los proveedores que son de esa categoría». Se
+    // resuelve con una subconsulta sobre la clave normalizada, que es la que une «GRAU, S.L.»
+    // con «Grau Distribucions»: si se comparara el nombre a pelo, faltaría media lista.
+    const cats = String(req.query.categoria || "").split(",").map((c) => normalizarCategoria(c)).filter(Boolean);
+    if (cats.length) {
+      const provsCat = await proveedoresDeCategorias(cats);
+      // Si nadie está etiquetado con esas categorías, la respuesta correcta es «nada», no
+      // «todo»: una condición que no filtra habría devuelto la lista entera como si sí.
+      condFac.push("f.proveedor = ANY(?)");
+      parFac.push(provsCat.length ? provsCat : ["\u0000sin-proveedores"]);
+    }
 
     const q = String(req.query.q || "").trim();
     const condLin = [...condFac], parLin = [...parFac];
@@ -2849,9 +2860,25 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
               count(*) FILTER (WHERE f.lineas_estado IS NULL)::int AS sin_leer
        FROM facturas f ${whereFac}`, parFac);
 
+    // Gasto por categoría. Va sobre el TOTAL de las facturas, no sobre las líneas: así el
+    // alquiler y la luz —de las que a propósito no se lee el detalle— también cuentan. Si
+    // saliera de las líneas, las categorías de gasto estructural darían siempre cero.
+    const etiquetas = await dbAll(`SELECT prov_clave AS proveedor, categoria FROM facturas_proveedor_cats`).catch(() => []);
+    const porProveedor = await dbAll(
+      `SELECT f.proveedor, COALESCE(SUM(f.total),0)::float AS importe FROM facturas f ${whereFac} GROUP BY f.proveedor`, parFac);
+    const idxCat = new Map(etiquetas.map((e) => [e.proveedor, null]));
+    for (const e of etiquetas) { if (!idxCat.get(e.proveedor)) idxCat.set(e.proveedor, []); idxCat.get(e.proveedor).push(e.categoria); }
+    const categorias = gastoPorCategoria(
+      porProveedor.map((p) => ({ proveedor: p.proveedor, importe: p.importe })),
+      new Map([...idxCat].map(([k, v]) => [k, v || []])));
+
     res.json({
       ok: true, local: local || null, q: q || null,
       desde: req.query.from || null, hasta: req.query.to || null,
+      categoria: cats.length ? cats.join(",") : null,
+      proveedor: String(req.query.proveedor || "").trim() || null,
+      catalogoCategorias: CATEGORIAS,
+      categorias,
       grupos: grupos.slice(0, 300),
       lineas: q ? filas.slice(0, 400) : [],
       totales: {
@@ -2881,6 +2908,26 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
 // facturas y el gasto por local salía repartido entre nombres que son el mismo sitio.
 // Las puertas de entrada ya están cerradas; esto arregla lo que quedó.
 // ── Categorías de proveedor ─────────────────────────────────────────────────
+/**
+ * Nombres de proveedor (tal como están escritos en las facturas) que pertenecen a alguna de
+ * estas categorías.
+ *
+ * Se resuelve en JS y NO en SQL a propósito. La normalización de nombres —quitar «S.L.»,
+ * acentos y puntuación— vive en claveProveedor(); reescribirla en SQL crearía una segunda
+ * versión que el día que se toque una se queda desincronizada de la otra y el filtro empieza
+ * a perder proveedores en silencio. Son unas decenas de nombres distintos: traerlos y
+ * compararlos en memoria cuesta nada.
+ */
+async function proveedoresDeCategorias(cats) {
+  if (!cats.length) return [];
+  const [etiquetas, nombres] = await Promise.all([
+    dbAll(`SELECT prov_clave FROM facturas_proveedor_cats WHERE categoria = ANY(?)`, [cats]),
+    dbAll(`SELECT DISTINCT proveedor FROM facturas WHERE proveedor IS NOT NULL AND proveedor <> ''`),
+  ]);
+  const claves = new Set(etiquetas.map((e) => e.prov_clave));
+  return nombres.map((n) => n.proveedor).filter((n) => claves.has(claveProveedor(n)));
+}
+
 // Qué vende cada proveedor. Lista cerrada a propósito: si cada uno escribe «bebida»,
 // «Bebidas» y «BEBIDA», el agrupar —que es para lo único que sirve esto— deja de funcionar.
 app.get("/api/facturas/categorias", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
