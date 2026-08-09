@@ -41,35 +41,49 @@ async function apiSend(method, path, body) {
   const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error del servidor"); return j;
 }
 
+// El menú va por departamentos, que es como está repartido el trabajo de verdad: quien lleva
+// las facturas no entra nunca en Reseñas, y quien lleva el equipo no entra en Ágora. Antes
+// «Gestión» mezclaba nóminas, facturas y la web, así que había que leerse la lista entera.
+//
+// Arriba queda lo que se abre a diario sin ser de nadie en concreto (Operación) y abajo lo que
+// solo toca dirección (Sistema). Los grupos que quedan vacíos para un rol no se pintan, así que
+// un encargado ve tres bloques cortos en vez de cuatro largos con casi todo en gris.
 const NAV = [
   { g: "Operación", items: [
     ["dashboard", "Dashboard", "dash", ["direccion", "encargado", "contabilidad"]],
     ["reservas", "Reservas", "cal", ["direccion", "encargado"]],
     ["comunicados", "Comunicados", "mega", ["direccion", "encargado"]],
-    ["mantenimiento", "Mantenimiento", "wrench", ["direccion", "encargado"]],
-    ["inventarios", "Inventarios", "box", ["direccion", "encargado"]],
-    ["clientes", "Clientes", "users", ["direccion", "marketing"]],
   ] },
-  { g: "Gestión", items: [
-    ["rrhh", "RR. HH.", "idcard", ["direccion", "rrhh", "encargado"]],
+  { g: "RR. HH.", items: [
+    ["rrhh", "Equipo", "idcard", ["direccion", "rrhh", "encargado"]],
     ["horarios", "Horarios", "cal", ["direccion", "rrhh", "encargado"]],
     ["fichajes", "Fichajes", "clock", ["direccion", "rrhh", "encargado", "contabilidad"]],
-    ["facturas", "Facturas", "receipt", ["direccion", "contabilidad"]],
-    ["web", "Web", "globe", ["direccion", "marketing"]],
-    ["reviews", "Reseñas", "star", ["direccion", "encargado", "contabilidad", "marketing"]],
-    ["campanas", "Campañas", "mkt", ["direccion", "marketing"]],
   ] },
-  { g: "Inteligencia", items: [
+  { g: "Contabilidad", items: [
+    ["facturas", "Facturas", "receipt", ["direccion", "contabilidad"]],
     ["analitica", "Analítica de ventas", "chart", ["direccion", "contabilidad"]],
+  ] },
+  { g: "Marketing", items: [
+    ["clientes", "Clientes", "users", ["direccion", "marketing"]],
+    ["campanas", "Campañas", "mkt", ["direccion", "marketing"]],
+    ["reviews", "Reseñas", "star", ["direccion", "encargado", "contabilidad", "marketing"]],
+    ["web", "Web", "globe", ["direccion", "marketing"]],
     ["sara", "Sara (IA)", "bot", ["direccion", "marketing"]],
-    ["whatsapp", "WhatsApp", "chat", ["direccion", "encargado"]],
+  ] },
+  // Inventarios va aquí y no en Contabilidad porque lo llevan los mismos que las averías —
+  // el encargado del local— y no quien cuadra las cuentas. Es lo que hace falta para que el
+  // local funcione: que no falte producto y que no haya nada roto.
+  { g: "Mantenimiento", items: [
+    ["mantenimiento", "Incidencias", "wrench", ["direccion", "encargado"]],
+    ["inventarios", "Inventarios", "box", ["direccion", "encargado"]],
   ] },
   { g: "Sistema", items: [
+    ["whatsapp", "WhatsApp", "chat", ["direccion", "encargado"]],
     ["agora", "Ágora (TPV)", "plug", ["direccion"]],
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Mantenimiento", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "RR. HH.", horarios: "Horarios", fichajes: "Fichajes", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
 const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
 const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica", "rrhh", "horarios", "fichajes"]);
@@ -499,7 +513,12 @@ function bars(items, { fmt = (v) => num(v) } = {}) {
 let CMD_ITEMS = [], CMD_SEL = 0;
 function allCmd() {
   const items = [];
-  NAV.forEach((grp) => grp.items.forEach(([id, label, icon]) => { if (puedeVer(id)) items.push({ t: label, g: "Ir a", icon, view: id }); }));
+  // `k` son palabras extra por las que también se encuentra: el departamento y el nombre viejo.
+  // Sin esto, buscar «mantenimiento» o «rrhh» no encontraría «Incidencias» ni «Equipo».
+  const ALIAS = { rrhh: "rr hh recursos humanos personal", mantenimiento: "mantenimiento averias", facturas: "gastos proveedores", analitica: "ventas", reviews: "google opiniones", inventarios: "stock pedidos" };
+  NAV.forEach((grp) => grp.items.forEach(([id, label, icon]) => {
+    if (puedeVer(id)) items.push({ t: label, g: "Ir a", k: `${grp.g} ${ALIAS[id] || ""}`, icon, view: id });
+  }));
   const actions = [
     ["Nueva reserva", "cal", ["direccion", "encargado"], () => { go("reservas"); setTimeout(openNuevaReserva, 80); }],
     ["Nueva incidencia", "wrench", ["direccion", "encargado"], () => { go("mantenimiento"); setTimeout(openNuevaIncidencia, 80); }],
@@ -513,7 +532,7 @@ function openCmd() { const w = document.getElementById("cmdk"), o = document.get
 function closeCmd() { const w = document.getElementById("cmdk"), o = document.getElementById("ovl"); if (w) w.classList.remove("open"); if (o) o.classList.remove("open"); }
 function fillCmd(q) {
   q = (q || "").toLowerCase().trim();
-  CMD_ITEMS = allCmd().filter((c) => !q || c.t.toLowerCase().includes(q) || c.g.toLowerCase().includes(q)); CMD_SEL = 0;
+  CMD_ITEMS = allCmd().filter((c) => !q || `${c.t} ${c.g} ${c.k || ""}`.toLowerCase().includes(q)); CMD_SEL = 0;
   const groups = {}; CMD_ITEMS.forEach((c, i) => { (groups[c.g] = groups[c.g] || []).push({ ...c, i }); });
   const html = Object.entries(groups).map(([g, arr]) => `<div class="cg">${g}</div>` + arr.map((c) => `<button class="cr ${c.i === CMD_SEL ? "sel" : ""}" data-cmd="${c.i}"><span class="ci2">${ic(c.icon, 16)}</span><span>${esc(c.t)}</span></button>`).join("")).join("");
   document.getElementById("cmdl").innerHTML = html || `<div class="cg">Sin resultados</div>`;
