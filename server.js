@@ -47,6 +47,7 @@ import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo 
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
+import { CATEGORIAS, claveProveedor, normalizarCategoria, indiceCategorias, categoriasDe, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto, puedeConPasswordTemporal } from "./src/modules/usuarios/acceso.js";
@@ -454,6 +455,21 @@ async function initDB() {
       )
     `);
     try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS canal TEXT`); } catch (e) { console.error("[DB] alter facturas canal:", e.message); }
+
+    // De qué es cada proveedor: «Grau es bebidas y alcohol». Sirve para contestar «cuánto me
+    // gasto en bebida», que con el gasto solo por proveedor y por producto no se puede.
+    // Se guarda la clave normalizada del proveedor Y el nombre tal como se escribió: la
+    // clave es la que une «GRAU, S.L.» con «Grau Distribucions», y el nombre es el que se
+    // enseña. Ver src/modules/facturas/categorias.js.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_proveedor_cats (
+        prov_clave TEXT NOT NULL,
+        proveedor TEXT NOT NULL,
+        categoria TEXT NOT NULL,
+        creado_en TEXT,
+        PRIMARY KEY (prov_clave, categoria)
+      )
+    `);
 
     // Detalle línea a línea. Ver src/modules/facturas/lineas.js y docs/lineas-de-factura.md.
     // `lineas_estado` guarda si el detalle cuadra con la base imponible: sin ese aviso, una
@@ -2848,6 +2864,62 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
 // «Lloret» y «BLANES» en la misma columna: filtrando por el nombre bueno faltaban
 // facturas y el gasto por local salía repartido entre nombres que son el mismo sitio.
 // Las puertas de entrada ya están cerradas; esto arregla lo que quedó.
+// ── Categorías de proveedor ─────────────────────────────────────────────────
+// Qué vende cada proveedor. Lista cerrada a propósito: si cada uno escribe «bebida»,
+// «Bebidas» y «BEBIDA», el agrupar —que es para lo único que sirve esto— deja de funcionar.
+app.get("/api/facturas/categorias", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const [etiquetas, provs] = await Promise.all([
+      dbAll(`SELECT prov_clave, proveedor, categoria FROM facturas_proveedor_cats ORDER BY proveedor, categoria`),
+      dbAll(`SELECT proveedor, count(*)::int AS facturas, COALESCE(SUM(total),0)::float AS gasto
+               FROM facturas WHERE proveedor IS NOT NULL AND proveedor <> ''
+              GROUP BY proveedor ORDER BY COALESCE(SUM(total),0) DESC`),
+    ]);
+    const idx = indiceCategorias(etiquetas);
+    // Los proveedores se agrupan por su clave: «GRAU, S.L.» y «Grau Distribucions» son uno.
+    const mapa = new Map();
+    for (const p of provs) {
+      const k = claveProveedor(p.proveedor);
+      if (!k) continue;
+      if (!mapa.has(k)) mapa.set(k, { clave: k, proveedor: p.proveedor, nombres: [], facturas: 0, gasto: 0, categorias: idx.get(k) || [] });
+      const g = mapa.get(k);
+      g.nombres.push(p.proveedor); g.facturas += p.facturas; g.gasto += p.gasto;
+    }
+    const lista = [...mapa.values()].map((g) => ({ ...g, gasto: Math.round(g.gasto * 100) / 100 }))
+      .sort((a, b) => b.gasto - a.gasto);
+    res.json({ ok: true, catalogo: CATEGORIAS, proveedores: lista,
+      sinEtiquetar: lista.filter((p) => !p.categorias.length).length });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar las categorías" }); }
+});
+
+app.put("/api/facturas/categorias", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const proveedor = String(req.body?.proveedor || "").trim();
+    const clave = claveProveedor(proveedor);
+    if (!clave) return res.status(400).json({ ok: false, error: "Falta el proveedor" });
+    const pedidas = Array.isArray(req.body?.categorias) ? req.body.categorias : [];
+    const cats = [...new Set(pedidas.map((c) => normalizarCategoria(c)))].filter(Boolean);
+    if (cats.length !== new Set(pedidas).size) {
+      return res.status(400).json({ ok: false, error: "Alguna categoría no está en la lista. Elígelas del desplegable." });
+    }
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    // Se reemplaza el juego entero: quitar una categoría es no mandarla.
+    await q(`DELETE FROM facturas_proveedor_cats WHERE prov_clave = ?`, [clave]);
+    for (const c of cats) {
+      await q(`INSERT INTO facturas_proveedor_cats (prov_clave, proveedor, categoria, creado_en) VALUES (?, ?, ?, ?)
+               ON CONFLICT (prov_clave, categoria) DO NOTHING`, [clave, proveedor, c, isoConOffset(Date.now())]);
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true, proveedor, categorias: cats });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[facturas] categorías:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  } finally { client.release(); }
+});
+
 app.get("/api/facturas/locales-raros", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const filas = await dbAll(`SELECT local, count(*)::int AS n FROM facturas GROUP BY local`);

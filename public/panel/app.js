@@ -3569,7 +3569,11 @@ let FAC_PEND = [];
 let FACTAB = "facturas";
 let FCFG = { locales: [], reglas: [], grupos: [], empresas: [], groups: [], integ: null };
 let FAC303 = { empresa: "", trimestre: "", data: null, error: "" };
-function facQS() { const qs = new URLSearchParams(); ["local", "empresa", "estado", "tipo", "q", "from", "to"].forEach((k) => { if (FACF[k]) qs.set(k, FACF[k]); }); return qs.toString(); }
+// OJO al tocar esto: aquí va TODO lo que el panel de filtros deja elegir. Si una clave se
+// queda fuera, el chip aparece en pantalla y la lista vuelve sin filtrar — o sea, el filtro
+// miente. Le pasó a `proveedor`. Hay un test que compara esta lista con FAC_FILTROS.
+const FAC_FILTROS = ["local", "empresa", "proveedor", "estado", "tipo", "q", "from", "to"];
+function facQS() { const qs = new URLSearchParams(); FAC_FILTROS.forEach((k) => { if (FACF[k]) qs.set(k, FACF[k]); }); return qs.toString(); }
 // El ámbito de local lo manda el selector de establecimiento de la barra superior (no hay filtro
 // «Local» duplicado dentro de la vista). Para el encargado, su local fijado gana siempre.
 function facScope() { FACF.local = localFijadoFE() || DASH_LOCAL || ""; return FACF.local; }
