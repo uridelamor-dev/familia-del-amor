@@ -140,8 +140,22 @@ function stat(lab, icon, val, unit, sub) {
   return `<div class="card stat"><div class="lab"><span class="ci">${icon}</span>${lab}</div>
     <div class="val tnum">${val}${unit ? ` <small>${unit}</small>` : ""}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
 }
-async function refreshWaPill() {
-  try { const r = await fetch("/api/whatsapp/status", { headers: { Authorization: "Bearer " + token() } }); const j = await r.json(); const p = document.getElementById("waPill"); if (!p) return; const ok = j && j.connected; p.innerHTML = `<span class="sdot ${ok ? "st-ok" : "st-crit"}"></span>${ok ? "Sara conectada" : "Sara caída"}`; } catch { /* opcional */ }
+// Se llama en CADA cambio de vista. Que Sara esté conectada no cambia entre dos clics, así que
+// la respuesta vale 30 s: si no, cada navegación arrastraba una petición extra compitiendo por
+// la conexión con la que sí trae los datos de la pantalla.
+let WA_PILL = { hasta: 0, ok: null };
+function pintarWaPill(ok) {
+  const p = document.getElementById("waPill"); if (!p) return;
+  p.innerHTML = `<span class="sdot ${ok ? "st-ok" : "st-crit"}"></span>${ok ? "Sara conectada" : "Sara caída"}`;
+}
+async function refreshWaPill(forzar = false) {
+  if (!forzar && WA_PILL.ok !== null && Date.now() < WA_PILL.hasta) return pintarWaPill(WA_PILL.ok);
+  try {
+    const r = await fetch("/api/whatsapp/status", { headers: { Authorization: "Bearer " + token() } });
+    const j = await r.json();
+    WA_PILL = { ok: !!(j && j.connected), hasta: Date.now() + 30000 };
+    pintarWaPill(WA_PILL.ok);
+  } catch { /* opcional: si falla, la píldora se queda como estaba */ }
 }
 
 // ── Modal ligero ─────────────────────────────────────────────────────────────
@@ -152,6 +166,37 @@ function modal(title, bodyHtml) {
   ov.addEventListener("click", (e) => { if (e.target === ov || e.target.closest("[data-close]")) ov.remove(); });
   return ov;
 }
+// Panel lateral. Entra desde la derecha y deja ver la lista de fondo: es lo que permite
+// entender qué se está filtrando mientras se toca, cosa que un modal centrado impide.
+// Devuelve el nodo; quien lo abre decide qué hacer con «Aplicar» y «Quitar filtros».
+function drawer(titulo, cuerpoHtml, { aplicar = "Aplicar", limpiar = "Quitar filtros", onAplicar, onLimpiar } = {}) {
+  const ov = document.createElement("div");
+  ov.className = "drw-ov";
+  ov.innerHTML = `<aside class="drw" role="dialog" aria-label="${esc(titulo)}">
+    <div class="drw-h"><h3>${esc(titulo)}</h3><button class="iconbtn" data-close aria-label="Cerrar">✕</button></div>
+    <div class="drw-b">${cuerpoHtml}</div>
+    <div class="drw-f"><button class="btn" data-limpiar>${esc(limpiar)}</button><button class="btn primary" data-aplicar>${esc(aplicar)}</button></div>
+  </aside>`;
+  document.body.appendChild(ov);
+  // Un fotograma antes de la clase, para que la transición de entrada se vea.
+  requestAnimationFrame(() => ov.classList.add("on"));
+  const cerrar = () => { ov.classList.remove("on"); setTimeout(() => ov.remove(), 200); };
+  ov.cerrar = cerrar;
+  ov.addEventListener("click", (e) => {
+    if (e.target === ov || e.target.closest("[data-close]")) return cerrar();
+    if (e.target.closest("[data-limpiar]")) return onLimpiar && onLimpiar(ov);
+    if (e.target.closest("[data-aplicar]")) return onAplicar && onAplicar(ov);
+  });
+  // Las píldoras de selección múltiple se encienden y apagan solas.
+  ov.addEventListener("click", (e) => {
+    const p = e.target.closest(".drw-pill");
+    if (p) p.classList.toggle("on");
+  });
+  const esc0 = (e) => { if (e.key === "Escape") { cerrar(); document.removeEventListener("keydown", esc0); } };
+  document.addEventListener("keydown", esc0);
+  return ov;
+}
+
 // Confirmación in-app (sustituye confirm() nativo). Devuelve Promise<boolean>.
 function confirmModal(message, { ok = "Confirmar", danger = false } = {}) {
   return new Promise((resolve) => {
@@ -311,6 +356,7 @@ const ICONS = {
   cog: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M4.5 6.5l2.1 2.1M17.4 17.4l2.1 2.1M3 12h3M18 12h3M4.5 17.5l2.1-2.1M17.4 6.6l2.1-2.1"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   chev: '<path d="M6 9l6 6 6-6"/>',
+  filtro: '<path d="M4 6h16M7 12h10M10 18h4"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   bell: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6M9.5 20a2.5 2.5 0 0 0 5 0"/>',
@@ -1128,8 +1174,14 @@ function renderClientes(j) {
 async function loadClientes() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
-    if (!CLI_POBLACIONES.length) { try { CLI_POBLACIONES = (await apiRaw("/api/contactos/poblaciones")).data || []; } catch { /* opcional */ } }
-    const j = await apiRaw("/api/contactos" + (cliQS() ? "?" + cliQS() : "")); view.innerHTML = renderClientes(j);
+    // Las dos peticiones salen a la vez: encadenadas, la pantalla tardaba dos viajes de red
+    // en aparecer, y la lista de poblaciones (que solo llena un desplegable) no depende de nada.
+    const [pob, j] = await Promise.all([
+      CLI_POBLACIONES.length ? null : apiRaw("/api/contactos/poblaciones").catch(() => null),
+      apiRaw("/api/contactos" + (cliQS() ? "?" + cliQS() : "")),
+    ]);
+    if (pob) CLI_POBLACIONES = pob.data || [];
+    view.innerHTML = renderClientes(j);
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 // Refresca SOLO los resultados (no la barra) para no perder el foco/cursor mientras se escribe.
@@ -3452,8 +3504,14 @@ function renderFacturas(list, pend, stats, empresas) {
   const tipoOpts = ['<option value="">Todos los tipos</option>'].concat(["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${FACF.tipo === t ? "selected" : ""}>${cap(t)}</option>`)).join("");
   const estOpts = [["", "Todos los estados"], ["pagada", "Pagadas"], ["pendiente", "Pendientes"]].map(([v, l]) => `<option value="${v}" ${FACF.estado === v ? "selected" : ""}>${l}</option>`).join("");
   const resumen = stats && stats.resumenAnual ? `<div class="grid g4" style="margin-bottom:16px">${stat("Facturas (año)", "🧾", num(stats.resumenAnual.num_docs))}${stat("Base imponible", "€", eur(stats.resumenAnual.base))}${stat("IVA", "€", eur(stats.resumenAnual.iva))}${stat("Total", "€", eur(stats.resumenAnual.total))}</div>` : "";
-  // Sin botón «Buscar»: los filtros se aplican solos al cambiarlos o al escribir (ver applyFacFilter).
-  const toolbar = `<div class="toolbar"><div class="field"><label>Empresa</label><select id="facEmp">${empOpts}</select></div><div class="field"><label>Estado</label><select id="facEstado">${estOpts}</select></div><div class="field"><label>Tipo</label><select id="facTipo">${tipoOpts}</select></div><div class="field"><label>Desde</label>${dpField("facFrom", FACF.from, "Cualquiera", { max: FACF.to || "" })}</div><div class="field"><label>Hasta</label>${dpField("facTo", FACF.to, "Cualquiera", { min: FACF.from || "" })}</div><div class="field" style="flex:1 1 170px"><label>Buscar</label><input id="facQ" placeholder="Proveedor, concepto, nº" value="${esc(FACF.q)}"></div><div style="display:flex;gap:10px;margin-left:auto"><button class="btn primary" data-act="fac-subir">+ Subir factura</button><button class="btn" data-act="fac-export">Exportar CSV</button></div></div>`;
+  // Barra simple: buscar (en vivo, como estaba) y un botón que abre el panel con todo lo
+  // demás. Antes había seis campos siempre a la vista para algo que se toca de vez en
+  // cuando, y se comían la pantalla por encima de la tabla, que es lo que se viene a ver.
+  const toolbar = `<div class="toolbar">
+    <div class="field" style="flex:1 1 240px"><label>Buscar</label><input id="facQ" placeholder="Proveedor, concepto, nº" value="${esc(FACF.q)}"></div>
+    <button class="btn" data-act="fac-filtros">${ic("filtro", 15)} Filtrar${facFiltrosActivos().length ? '<span class="fdot"></span>' : ""}</button>
+    <div style="display:flex;gap:10px;margin-left:auto"><button class="btn primary" data-act="fac-subir">+ Subir factura</button><button class="btn" data-act="fac-export">Exportar CSV</button></div>
+  </div>${facChipsHtml()}`;
   const maxLocal = Math.max(1, ...(((stats && stats.porLocal) || []).map((x) => Number(x.total) || 0)));
   // Con un establecimiento elegido el desglose por local sobra: sería una sola barra al 100%.
   const porLocal = (!FACF.local && stats && stats.porLocal && stats.porLocal.length) ? `<div class="card"><div class="ch"><h3>Gasto por local (año)</h3></div><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div></div>` : "";
@@ -3471,11 +3529,299 @@ function renderFacturas(list, pend, stats, empresas) {
   };
   const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map(pendRow).join("")}</div></div>` : "";
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
-  return `${facHeader()}${resumen}${toolbar}${vizGrid}${pendCard}<div id="facRes">${facTablaHtml(list)}</div>`;
+  return `${facHeader()}${resumen}${toolbar}<div id="facLocalesRaros"></div>${vizGrid}${pendCard}<div id="facRes">${facTablaHtml(list)}</div>`;
 }
+// ── Locales mal guardados ───────────────────────────────────────────────────
+// El campo `local` era texto libre y quedaron «Lloret» y «BLANES» sueltos junto a «La
+// Tapeta - Lloret». Filtrando por el nombre bueno faltaban facturas y el gasto por local
+// salía repartido entre nombres que son el mismo sitio. Las puertas ya están cerradas;
+// esto avisa de lo que quedó y lo arregla.
+async function facAvisoLocales() {
+  const caja = document.getElementById("facLocalesRaros");
+  if (!caja) return;
+  let j;
+  try { j = await apiRaw("/api/facturas/locales-raros"); } catch { return; } // contabilidad y dirección; al resto le da 403 y no ve nada
+  const canales = j.canales || [];
+  if (!j.data.length && !canales.length) return;
+  const total = j.data.reduce((s, x) => s + x.n, 0);
+  caja.innerHTML = `<p class="fic-nota">${total ? `<b>${num(total)}</b> ${total === 1 ? "factura no está vinculada" : "facturas no están vinculadas"} a ningún establecimiento:
+    ${j.data.slice(0, 4).map((x) => `«${esc(x.valor || "sin local")}»`).join(", ")}${j.data.length > 4 ? "…" : ""}.
+    Mientras sea así, al filtrar por establecimiento no salen y el gasto por local queda repartido.` : ""}
+    ${canales.length ? `<br>Y ${canales.length === 1 ? "hay un canal de entrada apuntando" : `hay ${num(canales.length)} canales de entrada apuntando`} a un sitio que no existe
+      (${canales.slice(0, 3).map((c) => `${esc(c.tipo)} → «${esc(c.valor || "vacío")}»`).join("; ")}${canales.length > 3 ? "…" : ""}):
+      <b>lo que entre por ahí seguirá llegando mal</b>.` : ""}
+    ${USER.rol === "direccion"
+      ? `<button class="btn sm" data-act="fac-normalizar-locales" style="margin-top:8px">Vincularlas</button>`
+      : `<br><span class="mut">Lo puede arreglar dirección.</span>`}</p>`;
+}
+
+async function facNormalizarLocales() {
+  let j;
+  try { j = await apiRaw("/api/facturas/locales-raros"); } catch (e) { return toast(e.message); }
+  if (!j.data.length) return toast(j.canales?.length ? "Solo quedan canales por corregir: hazlo en Configuración" : "Todas están vinculadas");
+
+  const sel = (x, i) => `<select class="inp" data-raro="${i}" style="width:100%">
+      <option value="">— dejar como está —</option>
+      ${j.locales.map((l) => `<option value="${esc(l)}" ${x.sugerido === l ? "selected" : ""}>${esc(l)}</option>`).join("")}
+    </select>`;
+  const ov = modal("Vincular a un establecimiento", `
+    <p class="mut" style="margin:0 0 14px;line-height:1.55">Cada valor suelto y a qué establecimiento pasaría.
+      Donde el sistema lo tiene claro viene ya propuesto; donde no —«Tordera», por ejemplo, que puede ser tres
+      locales— lo dejo en blanco a propósito: <b>equivocarse aquí descuadra dos locales a la vez</b>.</p>
+    <div class="rows">${j.data.map((x, i) => `<div class="row" style="align-items:center">
+      <div class="grow" style="min-width:0"><div class="t1">${esc(x.valor || "(sin local)")}</div>
+        <div class="t2">${num(x.n)} ${x.n === 1 ? "factura" : "facturas"}</div></div>
+      <div style="flex:0 0 230px">${sel(x, i)}</div></div>`).join("")}</div>
+    ${j.canales?.length ? `<p class="fic-nota" style="margin-bottom:0">El mismo cambio se aplica al canal de entrada que tuviera ese valor
+      (${esc(j.canales.map((c) => c.tipo).filter((v, i2, a) => a.indexOf(v) === i2).join(", "))}), para que lo de mañana entre ya bien.</p>` : ""}
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button><button class="btn primary" id="facRaroOk">Aplicar</button></div>`);
+  ov.querySelector(".modal").style.width = "min(680px, 96vw)";
+
+  ov.querySelector("#facRaroOk").addEventListener("click", async () => {
+    const cambios = [];
+    ov.querySelectorAll("[data-raro]").forEach((s) => {
+      const i = Number(s.getAttribute("data-raro"));
+      if (s.value) cambios.push({ de: j.data[i].valor, a: s.value });
+    });
+    if (!cambios.length) { toast("No has elegido ningún establecimiento"); return; }
+    if (!await confirmModal(`Se vincularán ${cambios.reduce((s, c) => s + (j.data.find((x) => x.valor === c.de)?.n || 0), 0)} facturas. Esto cambia a qué local pertenece ese gasto.`, { ok: "Aplicar" })) return;
+    try { const r = await apiSend("POST", "/api/facturas/locales-raros/arreglar", { cambios }); ov.remove(); toast(r.mensaje || "Hecho ✅"); loadFacturas(); }
+    catch (e) { toast(e.message); }
+  });
+}
+
+// ── Filtros de facturas ─────────────────────────────────────────────────────
+// Los filtros viven en un panel lateral y su resumen se queda a la vista en forma de
+// chips: se puede saber qué se está mirando —y quitarlo— sin abrir nada.
+const FAC_TIPOS = [["factura", "Facturas"], ["albaran", "Albaranes"], ["ticket", "Tickets"], ["otro", "Otros"]];
+
+function facFiltrosActivos() {
+  const fuera = [];
+  const et = (k, txt) => fuera.push({ k, txt });
+  if (FACF.from || FACF.to) {
+    et("fecha", FACF.from && FACF.to ? `${dpFmt(FACF.from)} → ${dpFmt(FACF.to)}`
+      : FACF.from ? `Desde ${dpFmt(FACF.from)}` : `Hasta ${dpFmt(FACF.to)}`);
+  }
+  if (FACF.proveedor) et("proveedor", FACF.proveedor);
+  if (FACF.empresa) et("empresa", FACF.empresa);
+  if (FACF.tipo) et("tipo", FACF.tipo.split(",").map((t) => (FAC_TIPOS.find((x) => x[0] === t) || [, t])[1]).join(", "));
+  if (FACF.estado) et("estado", FACF.estado === "pagada" ? "Pagadas" : "Pendientes");
+  return fuera;
+}
+
+function facChipsHtml() {
+  const act = facFiltrosActivos();
+  if (!act.length) return "";
+  return `<div class="fchips">${act.map((f) => `<span class="fchip"><b>${esc(f.txt)}</b>
+    <button data-act="fac-quitar-filtro" data-k="${f.k}" title="Quitar" aria-label="Quitar filtro">✕</button></span>`).join("")}
+    <button class="linkbtn" data-act="fac-limpiar-filtros" style="align-self:center">Quitar todos</button></div>`;
+}
+
+function facQuitarFiltro(k) {
+  if (k === "fecha") { FACF.from = ""; FACF.to = ""; }
+  else FACF[k] = "";
+  loadFacturas();
+}
+function facLimpiarFiltros() {
+  FACF = { ...FACF, empresa: "", estado: "", tipo: "", proveedor: "", from: "", to: "" };
+  loadFacturas();
+}
+
+async function facAbrirFiltros() {
+  // Los proveedores se piden al abrir, no al cargar la pantalla: es una lista que solo
+  // hace falta aquí y así no se paga en cada visita a Facturas.
+  let provs = [];
+  try { provs = (await apiRaw("/api/facturas/proveedores" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : ""))).data || []; } catch { /* el filtro se queda sin lista */ }
+  let empresas = [];
+  try { empresas = (await apiOptional("/api/facturas/empresas")) || []; } catch { /* idem */ }
+
+  const tipos = String(FACF.tipo || "").split(",").filter(Boolean);
+  const cuerpo = `
+    <div class="drw-g"><span class="drw-gt">${ic("cal", 15)} Fecha del documento</span>
+      <div class="drw-row">${dpField("fFrom", FACF.from, "Desde")}${dpField("fTo", FACF.to, "Hasta")}</div>
+      <div class="drw-pills" style="margin-top:9px">
+        <button class="drw-pill" data-rango="mes">Este mes</button>
+        <button class="drw-pill" data-rango="mespasado">Mes pasado</button>
+        <button class="drw-pill" data-rango="ano">Este año</button>
+      </div>
+    </div>
+
+    <div class="drw-g"><span class="drw-gt">${ic("box", 15)} Proveedor</span>
+      <select class="inp" id="fProv">
+        <option value="">Todos los proveedores</option>
+        ${provs.map((p) => `<option value="${esc(p.proveedor)}" ${FACF.proveedor === p.proveedor ? "selected" : ""}>${esc(p.proveedor)} (${p.n})</option>`).join("")}
+      </select>
+    </div>
+
+    ${empresas.length > 1 ? `<div class="drw-g"><span class="drw-gt">${ic("idcard", 15)} Empresa</span>
+      <select class="inp" id="fEmp"><option value="">Todas las empresas</option>
+        ${empresas.map((e) => `<option value="${esc(e)}" ${FACF.empresa === e ? "selected" : ""}>${esc(e)}</option>`).join("")}
+      </select></div>` : ""}
+
+    <div class="drw-g"><span class="drw-gt">${ic("receipt", 15)} Tipo de documento</span>
+      <div class="drw-pills" id="fTipos">${FAC_TIPOS.map(([v, l]) =>
+        `<button class="drw-pill ${tipos.includes(v) ? "on" : ""}" data-tipo="${v}">${l}</button>`).join("")}</div>
+    </div>
+
+    <div class="drw-g"><span class="drw-gt">${ic("chart", 15)} Estado del pago</span>
+      <div class="drw-pills" id="fEstados">
+        <button class="drw-pill ${FACF.estado === "pagada" ? "on" : ""}" data-estado="pagada">Pagadas</button>
+        <button class="drw-pill ${FACF.estado === "pendiente" ? "on" : ""}" data-estado="pendiente">Pendientes</button>
+      </div>
+    </div>`;
+
+  const ov = drawer("Filtrar por", cuerpo, {
+    onLimpiar: (d) => { d.cerrar(); facLimpiarFiltros(); },
+    onAplicar: (d) => {
+      FACF.from = d.querySelector("#fFrom").value || "";
+      FACF.to = d.querySelector("#fTo").value || "";
+      FACF.proveedor = d.querySelector("#fProv").value || "";
+      FACF.empresa = d.querySelector("#fEmp")?.value || "";
+      FACF.tipo = [...d.querySelectorAll("#fTipos .drw-pill.on")].map((b) => b.dataset.tipo).join(",");
+      const est = d.querySelector("#fEstados .drw-pill.on");
+      FACF.estado = est ? est.dataset.estado : "";
+      d.cerrar();
+      loadFacturas();
+    },
+  });
+
+  // Pagada y pendiente se excluyen: encender una apaga la otra.
+  ov.querySelector("#fEstados").addEventListener("click", (e) => {
+    const b = e.target.closest(".drw-pill"); if (!b) return;
+    ov.querySelectorAll("#fEstados .drw-pill").forEach((x) => { if (x !== b) x.classList.remove("on"); });
+  });
+  // Atajos de rango. Rellenan los dos campos de fecha de una vez.
+  ov.addEventListener("click", (e) => {
+    const r = e.target.closest("[data-rango]"); if (!r) return;
+    r.classList.remove("on");   // es un atajo, no un estado que se quede encendido
+    const hoy = new Date(), y = hoy.getFullYear(), m = hoy.getMonth();
+    const iso = (d) => new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10);
+    let desde, hasta;
+    if (r.dataset.rango === "mes") { desde = new Date(y, m, 1); hasta = new Date(y, m + 1, 0); }
+    else if (r.dataset.rango === "mespasado") { desde = new Date(y, m - 1, 1); hasta = new Date(y, m, 0); }
+    else { desde = new Date(y, 0, 1); hasta = new Date(y, 11, 31); }
+    dpSet("fFrom", iso(desde)); dpSet("fTo", iso(hasta));
+  });
+}
+
+// ── Selección de documentos ─────────────────────────────────────────────────
+// Se marcan los que interesan y se actúa sobre ellos: exportarlos o ver el total de esa
+// selección concreta. La selección se guarda por id, así que sobrevive a repintar la tabla
+// al filtrar — que es justo el flujo real: filtras, marcas, filtras otra vez, marcas más.
+let FAC_SEL = new Set();
+
 function facTablaHtml(list) {
   if (!list.length) return `<div class="card"><div class="mut" style="padding:8px">Sin facturas con esos filtros.</div></div>`;
-  return `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Nº</th><th>Proveedor</th><th>Local</th><th class="r">Base</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead><tbody>${list.map((f) => `<tr><td class="mut">${esc((f.fecha || "").slice(0, 10))}</td><td class="mut">${esc(f.numero_factura || "")}</td><td>${esc(f.proveedor || "")}${f.tipo && f.tipo !== "factura" ? ` <span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : ""}</td><td>${esc(f.local || "")}</td><td class="r tnum">${eur(f.base_imponible)}</td><td class="r tnum">${eur(f.total)}</td><td><span class="pill ${f.pagado ? "ok" : ""}">${f.pagado ? "Pagada" : "Pendiente"}</span></td><td class="r"><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></td></tr>`).join("")}</tbody></table></div></div>`;
+  const visibles = list.map((f) => f.id);
+  const todasMarcadas = visibles.length > 0 && visibles.every((id) => FAC_SEL.has(id));
+  const fila = (f) => `<tr class="${FAC_SEL.has(f.id) ? "sel" : ""}">
+    <td class="facsel"><input type="checkbox" data-facsel="${f.id}" ${FAC_SEL.has(f.id) ? "checked" : ""} aria-label="Seleccionar"></td>
+    <td class="mut">${esc((f.fecha || "").slice(0, 10))}</td>
+    <td class="mut">${esc(f.numero_factura || "")}</td>
+    <td>${esc(f.proveedor || "")}${f.tipo && f.tipo !== "factura" ? ` <span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : ""}</td>
+    <td>${esc(f.local || "")}</td>
+    <td class="r tnum">${eur(f.base_imponible)}</td>
+    <td class="r tnum">${eur(f.total)}</td>
+    <td><span class="pill ${f.pagado ? "ok" : ""}">${f.pagado ? "Pagada" : "Pendiente"}</span></td>
+    <td class="r"><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></td></tr>`;
+  return `<div class="card p0"><div class="tblwrap"><table class="tbl">
+    <thead><tr><th class="facsel"><input type="checkbox" id="facSelAll" ${todasMarcadas ? "checked" : ""} aria-label="Seleccionar todas"></th>
+    <th>Fecha</th><th>Nº</th><th>Proveedor</th><th>Local</th><th class="r">Base</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead>
+    <tbody>${list.map(fila).join("")}</tbody></table></div></div>${facBarraSeleccion()}`;
+}
+
+// Barra flotante que aparece al marcar algo. Va abajo, encima de la tabla, para no
+// desplazar la lista al aparecer: si empujara el contenido, marcar la primera casilla
+// movería todas las demás justo cuando se van a marcar.
+function facBarraSeleccion() {
+  const n = FAC_SEL.size;
+  if (!n) return "";
+  return `<div class="selbar">
+    <b>${num(n)}</b> ${n === 1 ? "seleccionada" : "seleccionadas"}
+    <div style="flex:1"></div>
+    <button class="btn sm" data-act="fac-sel-resumen">Ver totales</button>
+    <button class="btn sm" data-act="fac-sel-export">Exportar</button>
+    <button class="btn sm" data-act="fac-sel-limpiar">Quitar selección</button>
+  </div>`;
+}
+
+function facSelToggle(id, marcada) {
+  const n = Number(id);
+  if (marcada) FAC_SEL.add(n); else FAC_SEL.delete(n);
+  facPintarSeleccion();
+}
+function facSelTodas(marcar) {
+  for (const f of FAC_LIST) { if (marcar) FAC_SEL.add(f.id); else FAC_SEL.delete(f.id); }
+  facRefresh();
+}
+function facSelLimpiar() { FAC_SEL = new Set(); facRefresh(); }
+
+// Solo repinta la barra y el resaltado de filas: repintar la tabla entera al marcar una
+// casilla perdería el desplazamiento y se sentiría lento.
+function facPintarSeleccion() {
+  document.querySelectorAll("[data-facsel]").forEach((c) => {
+    c.closest("tr")?.classList.toggle("sel", FAC_SEL.has(Number(c.dataset.facsel)));
+  });
+  const vis = FAC_LIST.map((f) => f.id);
+  const all = document.getElementById("facSelAll");
+  if (all) all.checked = vis.length > 0 && vis.every((id) => FAC_SEL.has(id));
+  const vieja = document.querySelector(".selbar");
+  const nueva = facBarraSeleccion();
+  if (vieja) vieja.outerHTML = nueva || "";
+  else if (nueva) document.getElementById("facRes")?.insertAdjacentHTML("beforeend", nueva);
+}
+
+// Totales de LO SELECCIONADO. Se calcula en el navegador sobre lo que ya está cargado: no
+// hace falta ir al servidor para sumar lo que se está viendo.
+function facSelResumen() {
+  const sel = FAC_LIST.filter((f) => FAC_SEL.has(f.id));
+  if (!sel.length) return;
+  const suma = (k) => sel.reduce((s, f) => s + (Number(f[k]) || 0), 0);
+  const porProveedor = {};
+  for (const f of sel) { const k = f.proveedor || "—"; porProveedor[k] = (porProveedor[k] || 0) + (Number(f.total) || 0); }
+  const porLocal = {};
+  for (const f of sel) { const k = f.local || "—"; porLocal[k] = (porLocal[k] || 0) + (Number(f.total) || 0); }
+  const pagadas = sel.filter((f) => f.pagado).length;
+  const fechas = sel.map((f) => (f.fecha || "").slice(0, 10)).filter(Boolean).sort();
+  const lista = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, 12)
+    .map(([k, v]) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(k)}</div></div><b class="tnum">${esc(eur(v))}</b></div>`).join("");
+
+  modal(`Totales de ${sel.length} ${sel.length === 1 ? "documento" : "documentos"}`, `
+    <div class="grid g3" style="gap:12px;margin-bottom:16px">
+      <div><div class="t2">Base imponible</div><div class="t1">${esc(eur(suma("base_imponible")))}</div></div>
+      <div><div class="t2">IVA</div><div class="t1">${esc(eur(suma("cuota_iva")))}</div></div>
+      <div><div class="t2">Total</div><div class="t1" style="font-size:19px">${esc(eur(suma("total")))}</div></div>
+    </div>
+    <p class="mut" style="margin:0 0 14px;line-height:1.55">
+      ${fechas.length ? `Del <b>${esc(fechas[0])}</b> al <b>${esc(fechas[fechas.length - 1])}</b>. ` : ""}
+      ${pagadas} ${pagadas === 1 ? "pagada" : "pagadas"} y ${sel.length - pagadas} ${sel.length - pagadas === 1 ? "pendiente" : "pendientes"}
+      (<b>${esc(eur(sel.filter((f) => !f.pagado).reduce((s, f) => s + (Number(f.total) || 0), 0)))}</b> por pagar).</p>
+    <details class="card fold" style="margin-bottom:10px"><summary><h3>Por proveedor</h3><span class="foldr"><span>${Object.keys(porProveedor).length}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="rows">${lista(porProveedor)}</div></details>
+    <details class="card fold"><summary><h3>Por establecimiento</h3><span class="foldr"><span>${Object.keys(porLocal).length}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="rows">${lista(porLocal)}</div></details>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Cerrar</button>
+      <button class="btn primary" data-act="fac-sel-export">Exportar estas ${sel.length}</button></div>`);
+}
+
+// Exportar SOLO lo seleccionado. Se manda la lista de ids y no los filtros: lo marcado
+// puede venir de varias búsquedas distintas, y reconstruirlo con filtros no siempre se puede.
+async function facSelExport() {
+  const ids = [...FAC_SEL];
+  if (!ids.length) return;
+  try {
+    const r = await fetch("/api/facturas/export.csv", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token() },
+      body: JSON.stringify({ ids }),
+    });
+    if (!r.ok) return toast("No se pudo exportar");
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement("a"); a.href = url;
+    a.download = `facturas-seleccion-${ids.length}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    toast(`${ids.length} ${ids.length === 1 ? "documento exportado" : "documentos exportados"} ✅`);
+  } catch { toast("No se pudo exportar"); }
 }
 function facFicha(id) {
   const f = (FAC_LIST || []).find((x) => String(x.id) === String(id)); if (!f) { toast("Factura no encontrada"); return; }
@@ -3531,14 +3877,20 @@ function facSubir() {
 }
 
 function facLocalSelect(id, sel) { return `<select id="${id}"><option value="">Elegir local…</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${sel === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`; }
+// Un canal apuntando a un nombre que no es ningún establecimiento manda mal TODO lo que entre
+// por él. Aquí es donde se ve, junto al canal, y no en un informe aparte.
+function facLocalCelda(v) {
+  return LOCALES.includes(String(v || "")) ? esc(v)
+    : `${esc(v || "(vacío)")} <span class="pill warn" title="No es ningún establecimiento: lo que entre por aquí llegará mal vinculado">revisar</span>`;
+}
 function renderFacturasConfig() {
   // Empresas / CIF por local
   const emp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Empresa y CIF por local</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th>Local contable</th><th></th></tr></thead><tbody>${(FCFG.locales || []).map((l) => `<tr><td>${esc(l.local)}</td><td>${esc(l.empresa || "")}</td><td class="mut">${esc(l.cif || "")}</td><td class="mut">${esc(l.local_contable || "")}</td><td class="r"><button class="linkbtn" data-act="fac-loc-del" data-local="${esc(l.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="5" class="mut">Sin empresas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("flLocal")}<input id="flEmp" placeholder="Empresa"><input id="flCif" placeholder="CIF" style="max-width:120px"><input id="flCont" placeholder="Local contable" style="max-width:150px"><button class="btn primary" data-act="fac-loc-add">Guardar</button></div></div>`;
   // Reglas de email → local
-  const reg = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Reglas de email → local</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Email remitente</th><th>Local</th><th></th></tr></thead><tbody>${(FCFG.reglas || []).map((r) => `<tr><td>${esc(r.email)}</td><td>${esc(r.local)}</td><td class="r"><button class="linkbtn" data-act="fac-mail-del" data-id="${r.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin reglas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0"><input id="frEmail" placeholder="proveedor@email.com" type="email">${facLocalSelect("frLocal")}<button class="btn primary" data-act="fac-mail-add">Añadir</button></div></div>`;
+  const reg = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Reglas de email → local</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Email remitente</th><th>Local</th><th></th></tr></thead><tbody>${(FCFG.reglas || []).map((r) => `<tr><td>${esc(r.email)}</td><td>${facLocalCelda(r.local)}</td><td class="r"><button class="linkbtn" data-act="fac-mail-del" data-id="${r.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin reglas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0"><input id="frEmail" placeholder="proveedor@email.com" type="email">${facLocalSelect("frLocal")}<button class="btn primary" data-act="fac-mail-add">Añadir</button></div></div>`;
   // Grupos de WhatsApp de facturas
   const grpOpt = (cur) => { let o = `<option value="">Grupo de WhatsApp…</option>`; const has = (FCFG.groups || []).some((g) => g.id === cur); if (cur && !has) o += `<option value="${esc(cur)}" selected>Grupo actual</option>`; o += (FCFG.groups || []).map((g) => `<option value="${esc(g.id)}">${esc(g.name || g.id)}</option>`).join(""); return o; };
-  const grp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos de WhatsApp para facturas</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Grupo</th><th></th></tr></thead><tbody>${(FCFG.grupos || []).map((g) => `<tr><td>${esc(g.local)}</td><td>${(FCFG.groups || []).find((x) => x.id === g.group_jid) ? esc((FCFG.groups.find((x) => x.id === g.group_jid)).name) : '<span class="pill ok">Vinculado</span>'}</td><td class="r"><button class="linkbtn" data-act="fac-grp-del" data-id="${g.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin grupos.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fgLocal")}<select id="fgGroup">${grpOpt("")}</select><button class="btn primary" data-act="fac-grp-add">Vincular</button></div></div>`;
+  const grp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos de WhatsApp para facturas</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Grupo</th><th></th></tr></thead><tbody>${(FCFG.grupos || []).map((g) => `<tr><td>${facLocalCelda(g.local)}</td><td>${(FCFG.groups || []).find((x) => x.id === g.group_jid) ? esc((FCFG.groups.find((x) => x.id === g.group_jid)).name) : '<span class="pill ok">Vinculado</span>'}</td><td class="r"><button class="linkbtn" data-act="fac-grp-del" data-id="${g.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin grupos.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fgLocal")}<select id="fgGroup">${grpOpt("")}</select><button class="btn primary" data-act="fac-grp-add">Vincular</button></div></div>`;
   // Modelo 303
   const trims = ["1", "2", "3", "4"];
   const d = FAC303.data;
@@ -3556,7 +3908,7 @@ function renderFacturasConfig() {
   </div><div class="toolbar" style="padding:12px 0 0"><a class="btn" href="/auth/google-facturas">${drv.conectado ? "Reconectar Google" : "Conectar Google"}</a><button class="btn" data-act="fac-migrar">Reordenar Drive</button>${(drv.pendientes_sheet || 0) > 0 ? '<button class="btn primary" data-act="fac-reproyectar">Reintentar volcado</button>' : ""}<button class="btn" data-act="fac-reparar">Verificar y reparar Sheets</button><button class="btn danger" data-act="fac-empezar-cero">Empezar de cero</button></div><div class="mut" style="font-size:12px;margin-top:6px">"Reparar" reescribe todas las hojas y el maestro desde la base de datos (la fuente de verdad). "Empezar de cero" limpia todas las facturas de la base de datos (no borra Drive; eso se hace a mano).</div></div>`;
   // Carpetas de Drive vigiladas (tercer canal de ingesta)
   const carp = FCFG.carpetas || [];
-  const drive = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Carpetas de Drive vigiladas</h3></div><div class="mut" style="padding:0 18px;font-size:12.5px">Deja una factura (PDF/imagen) en la carpeta de Drive de un local y entrará sola cada pocos minutos.</div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Carpeta</th><th></th></tr></thead><tbody>${carp.map((c) => `<tr><td>${esc(c.local)}</td><td class="mut">${c.folder_url ? `<a class="link" href="${esc(c.folder_url)}" target="_blank" rel="noopener">${esc(c.folder_id)}</a>` : esc(c.folder_id)}</td><td class="r"><button class="linkbtn" data-act="fac-drive-del" data-local="${esc(c.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin carpetas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fdLocal")}<input id="fdFolder" placeholder="Enlace o ID de la carpeta de Drive" style="flex:1;min-width:0"><button class="btn primary" data-act="fac-drive-add">Vincular</button></div></div>`;
+  const drive = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Carpetas de Drive vigiladas</h3></div><div class="mut" style="padding:0 18px;font-size:12.5px">Deja una factura (PDF/imagen) en la carpeta de Drive de un local y entrará sola cada pocos minutos.</div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Carpeta</th><th></th></tr></thead><tbody>${carp.map((c) => `<tr><td>${facLocalCelda(c.local)}</td><td class="mut">${c.folder_url ? `<a class="link" href="${esc(c.folder_url)}" target="_blank" rel="noopener">${esc(c.folder_id)}</a>` : esc(c.folder_id)}</td><td class="r"><button class="linkbtn" data-act="fac-drive-del" data-local="${esc(c.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin carpetas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fdLocal")}<input id="fdFolder" placeholder="Enlace o ID de la carpeta de Drive" style="flex:1;min-width:0"><button class="btn primary" data-act="fac-drive-add">Vincular</button></div></div>`;
   return `${facHeader()}<div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${integ}</div>`;
 }
 
@@ -3584,6 +3936,7 @@ async function loadFacturas() {
     FAC_LIST = lst || [];
     FAC_PEND = pend || [];
     view.innerHTML = renderFacturas(FAC_LIST, FAC_PEND, stats, empresas || []);
+    facAvisoLocales(); // no se espera: si tarda, la tabla ya está en pantalla
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function facTab(tab) { FACTAB = tab; loadFacturas(); }
@@ -3767,13 +4120,12 @@ async function comprasVerFactura(id) {
 // Solo repinta #facRes, así el foco del buscador y el estado de los selects no se pierden.
 // `_facSeq` descarta respuestas que llegan tarde (si escribes rápido, gana la última).
 let _facSeq = 0, _facTimer = null;
+// Solo el buscador filtra en vivo. Lo demás vive en el panel lateral y se aplica al
+// pulsar «Aplicar»: mientras el panel tapa la lista, filtrar a cada toque no se ve, y
+// además obligaría a repintar debajo de un panel abierto.
 function applyFacFilter() {
-  ["empresa:facEmp", "estado:facEstado", "tipo:facTipo", "from:facFrom", "to:facTo", "q:facQ"].forEach((pair) => {
-    const [k, id] = pair.split(":"); const el = document.getElementById(id); if (el) FACF[k] = (el.value || "").trim();
-  });
-  // Desde/Hasta se limitan mutuamente (la toolbar ya no se repinta, hay que refrescar los topes).
-  const f = document.getElementById("facFrom"), t = document.getElementById("facTo");
-  if (f && t) { f.setAttribute("data-max", t.value || ""); t.setAttribute("data-min", f.value || ""); }
+  const el = document.getElementById("facQ");
+  if (el) FACF.q = (el.value || "").trim();
   facRefresh();
 }
 function facFilterDebounced() { clearTimeout(_facTimer); _facTimer = setTimeout(applyFacFilter, 260); }
@@ -4457,9 +4809,14 @@ function renderCampanas() {
 async function loadCampanas() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
-    const [list, plantillas, audiencias] = await Promise.all([api("/api/campanas"), apiOptional("/api/plantillas"), apiOptional("/api/audiencias")]);
+    // Las cuatro en el mismo viaje: la config no depende de las otras tres y esperaba a que
+    // terminaran, así que la pantalla tardaba el doble en aparecer.
+    const [list, plantillas, audiencias, cfg] = await Promise.all([
+      api("/api/campanas"), apiOptional("/api/plantillas"), apiOptional("/api/audiencias"),
+      apiRaw("/api/campanas-config").catch(() => null),
+    ]);
     CAMP.list = list || []; CAMP.plantillas = plantillas || []; CAMP.audiencias = audiencias || [];
-    try { const j = await apiRaw("/api/campanas-config"); CAMP.cfg = { cumple_auto: j.cumple_auto, cumple_plantilla: j.cumple_plantilla }; } catch { CAMP.cfg = { cumple_auto: false, cumple_plantilla: "" }; }
+    CAMP.cfg = cfg ? { cumple_auto: cfg.cumple_auto, cumple_plantilla: cfg.cumple_plantilla } : { cumple_auto: false, cumple_plantilla: "" };
     view.innerHTML = renderCampanas();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
@@ -4876,7 +5233,7 @@ function go(view) {
     refreshWaPill(); return;
   }
   document.getElementById("root").innerHTML = shell(view, skeleton());
-  refreshWaPill();
+  refreshWaPill(view === "whatsapp"); // en la pantalla de Sara sí interesa el estado del momento
   VIEWS[view]();
 }
 
@@ -4899,6 +5256,13 @@ document.addEventListener("input", (e) => {
   else if (e.target && e.target.id === "facQ") { facFilterDebounced(); }
   else if (e.target && e.target.id === "invSearch") { INV.filtro = e.target.value; invRefreshList(); }
   else if (e.target && e.target.classList && e.target.classList.contains("invqty")) { invInput(e.target.getAttribute("data-id"), e.target.value); }
+});
+// Selección de facturas. Va aquí y no en la tabla porque la tabla se repinta al filtrar.
+document.addEventListener("change", (e) => {
+  const c = e.target;
+  if (!c || c.type !== "checkbox") return;
+  if (c.hasAttribute("data-facsel")) facSelToggle(c.getAttribute("data-facsel"), c.checked);
+  else if (c.id === "facSelAll") facSelTodas(c.checked);
 });
 document.addEventListener("click", (e) => {
   const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); go(v.getAttribute("data-view")); return; }
@@ -5023,6 +5387,13 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-303") fac303();
   else if (act === "fac-ficha") facFicha(t.getAttribute("data-id"));
   else if (act === "fac-export") facExport();
+  else if (act === "fac-filtros") facAbrirFiltros();
+  else if (act === "fac-quitar-filtro") facQuitarFiltro(t.getAttribute("data-k"));
+  else if (act === "fac-limpiar-filtros") facLimpiarFiltros();
+  else if (act === "fac-normalizar-locales") facNormalizarLocales();
+  else if (act === "fac-sel-resumen") facSelResumen();
+  else if (act === "fac-sel-export") facSelExport();
+  else if (act === "fac-sel-limpiar") facSelLimpiar();
   else if (act === "fac-subir") facSubir();
   else if (act === "fac-303-csv") fac303Csv();
   else if (act === "fac-migrar") facMigrar();

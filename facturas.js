@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { normalizarLineas, validarSuma, mensajeValidacion, claveProducto } from "./src/modules/facturas/lineas.js";
+import { canonizarLocal, esLocalCanonico } from "./src/modules/facturas/local-canonico.js";
 import { createHash } from "crypto";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 
@@ -562,6 +563,14 @@ export async function repararTodosLosSheets({ getToken, dbGet, dbAll, dbRun }) {
 // ── Pipeline principal ──────────────────────────────────────────────────────
 
 export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbRun, backupFn }) {
+  // El local SIEMPRE se guarda con el nombre del establecimiento, nunca como llegue.
+  // De no hacerlo acabaron conviviendo «La Tapeta - Lloret», «Lloret» y «BLANES» en la
+  // misma columna, y filtrando por el nombre bueno faltaban facturas.
+  {
+    const canon = canonizarLocal(local);
+    if (!canon) throw new Error(`«${local}» no es ningún establecimiento. Revisa a qué local está vinculado este canal de entrada.`);
+    local = canon;
+  }
   // 1. Hash para detección de duplicados
   const fileHash = createHash("sha256").update(buffer).digest("hex");
   // Serializado por hash: dedup + subida + insert de un mismo archivo son atómicos frente a carreras.
@@ -874,6 +883,11 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
 // ── Asignación manual de una factura pendiente ──────────────────────────────
 
 export async function asignarFacturaPendiente({ pendiente, local, getToken, dbGet, dbAll, dbRun, backupFn }) {
+  // Igual que en el alta: nunca se guarda un local que no sea un establecimiento.
+  const canon = canonizarLocal(local);
+  if (!canon) throw new Error(`«${local}» no es ningún establecimiento.`);
+  local = canon;
+
   const token = await getToken();
 
   const localRow = await dbGet("SELECT empresa, local_contable FROM facturas_locales WHERE local = ?", [local]);

@@ -317,6 +317,59 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .revreply{margin-top:10px;padding:10px 13px;border-radius:11px;background:var(--brand-soft);font-size:13px;line-height:1.5}.revreply .k{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--brand);margin-bottom:3px}
 .revsel{width:18px;height:18px;margin-top:4px;flex:none;accent-color:var(--brand)}
 /* Modales de formulario (panel real) */
+/* ── Panel lateral de filtros ──────────────────────────────────────────────
+   Entra desde la derecha y deja ver la lista de fondo, que es lo que permite entender
+   qué se está filtrando mientras se toca. Un modal centrado tapa justo eso. */
+.drw-ov{position:fixed;inset:0;background:rgba(15,17,12,.30);z-index:160;opacity:0;transition:opacity .18s}
+.drw-ov.on{opacity:1}
+.drw{position:fixed;top:0;right:0;bottom:0;width:min(400px,92vw);background:var(--surface);
+  border-left:1px solid var(--border2);box-shadow:-16px 0 40px rgba(15,17,12,.14);
+  display:flex;flex-direction:column;transform:translateX(100%);transition:transform .2s ease}
+.drw.on{transform:none}
+.drw-h{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--border)}
+.drw-h h3{margin:0;font-size:15px}
+.drw-b{flex:1;overflow:auto;padding:4px 20px 20px}
+.drw-f{display:flex;gap:10px;padding:14px 20px;border-top:1px solid var(--border);background:var(--surface)}
+.drw-f .btn{flex:1}
+/* Cada bloque de filtro, separado por una línea fina: se recorre de un vistazo. */
+.drw-g{padding:16px 0;border-bottom:1px solid var(--border)}
+.drw-g:last-child{border-bottom:0}
+.drw-g>label,.drw-gt{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:650;color:var(--ink2);margin-bottom:9px}
+.drw-g .inp,.drw-g select,.drw-g input{width:100%}
+.drw-row{display:flex;gap:8px}
+.drw-row>*{flex:1;min-width:0}
+/* Píldoras de selección múltiple. Un desplegable esconde las opciones; aquí se ven todas
+   y se ve cuáles están puestas sin abrir nada. */
+.drw-pills{display:flex;flex-wrap:wrap;gap:7px}
+.drw-pill{height:34px;padding:0 13px;border-radius:999px;border:1px solid var(--border);background:var(--surface2);
+  font-size:12.5px;font-weight:600;color:var(--ink2);cursor:pointer;transition:.12s}
+.drw-pill:hover{border-color:var(--brand)}
+.drw-pill.on{background:var(--brand);border-color:transparent;color:var(--brand-ink)}
+/* El punto del botón «Filtrar» cuando hay algo puesto. */
+.btn .fdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--brand);margin-left:7px;vertical-align:middle}
+.btn.primary .fdot{background:var(--brand-ink)}
+/* Resumen de lo aplicado, para no tener que abrir el panel para saber qué se está viendo. */
+.fchips{display:flex;flex-wrap:wrap;gap:7px;margin:-4px 0 14px}
+.fchip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 6px 0 11px;border-radius:999px;
+  border:1px solid var(--border);background:var(--surface);font-size:12px;color:var(--ink2)}
+.fchip b{color:var(--ink);font-weight:650}
+.fchip button{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;color:var(--ink3);font-size:13px;line-height:1}
+.fchip button:hover{background:var(--danger-soft);color:var(--danger)}
+
+/* Selección de documentos */
+.tbl th.facsel,.tbl td.facsel{width:34px;padding-left:14px;padding-right:0}
+.tbl tr.sel{background:var(--brand-soft)}
+.tbl tr.sel td:first-child{background:var(--brand-soft)}
+/* La barra va PEGADA ABAJO, no empujando la tabla: si empujara el contenido, marcar la
+   primera casilla movería todas las demás justo cuando se van a marcar. */
+.selbar{position:sticky;bottom:14px;z-index:20;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  margin-top:12px;padding:10px 14px;border-radius:12px;background:var(--ink);color:var(--surface);
+  box-shadow:var(--sh-lg);font-size:13px}
+.selbar b{font-size:15px}
+.selbar .btn{background:rgba(255,255,255,.14);color:var(--surface);border-color:transparent}
+.selbar .btn:hover{background:rgba(255,255,255,.24)}
+@media(max-width:720px){ .drw{width:100vw} .drw-pill{height:38px} }
+
 .modal-ov{position:fixed;inset:0;background:rgba(15,17,12,.44);backdrop-filter:blur(3px);z-index:150;display:grid;place-items:center;padding:20px}
 .modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px;box-shadow:var(--sh-lg);width:min(520px,96vw);max-height:90vh;overflow:auto}
 .modal.wide{width:min(1080px,96vw)}

@@ -170,7 +170,10 @@ describe("server.js: subida de CV en directorio privado (no público)", () => {
     assert.match(src, /uploadsTmpDir\s*=\s*path\.join\(__dirname,\s*["']tmp_uploads["']\)/);
   });
   test("express.static solo sirve public/ (no el temporal)", () => {
-    assert.match(src, /express\.static\(path\.join\(__dirname,\s*["']public["']\)\)/);
+    // La raíz debe seguir siendo public/. Detrás puede haber opciones (cabeceras de caché),
+    // pero el directorio servido no cambia.
+    assert.match(src, /express\.static\(path\.join\(__dirname,\s*["']public["']\)\s*[,)]/);
+    assert.equal((src.match(/express\.static\(/g) || []).length, 1, "un solo express.static");
     assert.ok(!/express\.static\([^)]*tmp_uploads/.test(src), "no debe servir el temporal");
   });
   test("la ruta de candidaturas usa finalizeCvUpload", () => {

@@ -46,6 +46,8 @@ import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo 
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
+import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
+import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto, puedeConPasswordTemporal } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
@@ -132,9 +134,20 @@ function decUserPass(stored) {
   } catch { return null; }
 }
 
+// Va ANTES que todo lo que responde: comprime el HTML, el JS y el JSON de la API.
+// `public/panel/app.js` son 474 KB que salían sin comprimir en cada primera visita.
+app.use(comprimir());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(path.join(__dirname, "public"), {
+  // Las fotos y los PDF de `uploads/` llevan el id en el nombre y no cambian nunca: se pueden
+  // guardar un año sin volver a preguntar. El HTML/JS/CSS sí cambia en cada despliegue, así que
+  // ese se revalida siempre (ETag) — el navegador sigue ahorrándose la descarga con un 304,
+  // pero nunca sirve una versión vieja del panel.
+  setHeaders(res, ruta) {
+    res.setHeader("Cache-Control", /[\\/]uploads[\\/]/.test(ruta) ? "public, max-age=31536000, immutable" : "no-cache");
+  },
+}));
 
 const uploadsDir = path.join(__dirname, "public", "uploads");
 if (!fs.existsSync(uploadsDir)) {
@@ -856,6 +869,11 @@ async function initDB() {
       "CREATE INDEX IF NOT EXISTS idx_facturas_fecha ON facturas(fecha)",
       "CREATE INDEX IF NOT EXISTS idx_facturas_pagado ON facturas(pagado)",
       "CREATE INDEX IF NOT EXISTS idx_facturas_proveedor ON facturas(proveedor)",
+      // Compuestos para las dos consultas que se lanzan al abrir Reservas y Facturas: siempre
+      // son «un local + un rango de fechas». Con los índices sueltos, Postgres tenía que leer
+      // TODAS las filas del local y cruzarlas; medido sobre 150.000 reservas, 2,47 ms → 0,24 ms.
+      "CREATE INDEX IF NOT EXISTS idx_reservas_local_dia ON reservas(local, dia)",
+      "CREATE INDEX IF NOT EXISTS idx_facturas_local_fecha ON facturas(local, fecha)",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_facturas_hash ON facturas(file_hash) WHERE file_hash IS NOT NULL",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_facturas_pend_hash ON facturas_pendientes(file_hash) WHERE file_hash IS NOT NULL",
       "CREATE INDEX IF NOT EXISTS idx_maint_estado ON maintenance_issues(estado)",
@@ -1454,10 +1472,14 @@ app.get("/api/facturas/grupos", requireAuth(["direccion", "contabilidad"]), asyn
 app.post("/api/facturas/grupos", requireAuth(["direccion"]), async (req, res) => {
   const { local, group_jid } = req.body;
   if (!local || !group_jid) return res.status(400).json({ ok: false, error: "Faltan local o group_jid" });
+  // El canal es el que decide a qué local se apunta cada factura que llega por él. Si aquí se
+  // guarda «Blanes» o «Tordera», ese error se copia en todas. Se canoniza en la puerta.
+  const localCanon = canonizarLocal(local);
+  if (!localCanon) return res.status(400).json({ ok: false, error: `«${local}» no es ningún establecimiento. Elige a cuál pertenece este grupo.` });
   try {
     await dbRun(
       "INSERT INTO facturas_grupos (local, group_jid) VALUES (?, ?) ON CONFLICT(group_jid) DO UPDATE SET local = EXCLUDED.local",
-      [local, group_jid]
+      [localCanon, group_jid]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -1472,11 +1494,18 @@ app.delete("/api/facturas/grupos/:id", requireAuth(["direccion"]), async (req, r
 
 // Construye el WHERE de facturas a partir de los filtros de query (reutilizado por lista y CSV).
 function facturasWhere(query = {}) {
-  const { local, empresa, tipo, estado, from, to, q } = query;
+  const { local, empresa, tipo, estado, from, to, q, proveedor } = query;
   const cond = [], params = [];
   if (local) { cond.push("local = ?"); params.push(local); }
   if (empresa) { cond.push("empresa = ?"); params.push(empresa); }
-  if (tipo) { cond.push("tipo = ?"); params.push(tipo); }
+  if (proveedor) { cond.push("proveedor = ?"); params.push(proveedor); }
+  // Varios tipos a la vez ("factura,albaran"): el filtro es de casillas, no de una sola
+  // opción, y pedir albaranes Y tickets a la vez es lo normal.
+  if (tipo) {
+    const tipos = String(tipo).split(",").map((t) => t.trim()).filter(Boolean);
+    if (tipos.length === 1) { cond.push("tipo = ?"); params.push(tipos[0]); }
+    else if (tipos.length > 1) { cond.push(`tipo IN (${tipos.map(() => "?").join(",")})`); params.push(...tipos); }
+  }
   if (estado === "pagada") cond.push("pagado = 1");
   else if (estado === "pendiente") cond.push("COALESCE(pagado, 0) = 0");
   if (from) { cond.push("fecha >= ?"); params.push(from); }
@@ -1500,6 +1529,13 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
   try {
     const antes = await dbGet("SELECT local, fecha FROM facturas WHERE id = ?", [req.params.id]);
     const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "local", "empresa", "pagado"];
+    // Corregir a mano tampoco puede colar un local que no existe: es la otra puerta por la
+    // que entraron los «Lloret» y «BLANES» sueltos.
+    if (req.body.local !== undefined && String(req.body.local || "").trim()) {
+      const canon = canonizarLocal(req.body.local);
+      if (!canon) return res.status(400).json({ ok: false, error: `«${req.body.local}» no es ningún establecimiento.` });
+      req.body.local = canon;
+    }
     const sets = [], vals = [];
     for (const k of allowed) if (req.body[k] !== undefined) { sets.push(`${k} = ?`); vals.push(req.body[k] === "" ? null : req.body[k]); }
     if (!sets.length) return res.json({ ok: true });
@@ -1537,17 +1573,37 @@ app.post("/api/facturas/reparar", requireAuth(["direccion", "contabilidad"]), as
 });
 
 // Export CSV de la tabla de facturas (con los mismos filtros).
+// Export por filtros (GET) o de UNA SELECCIÓN concreta (POST con ids). Lo segundo hace
+// falta porque lo marcado puede venir de varias búsquedas distintas y no siempre se puede
+// reconstruir con un filtro.
+async function facturasCsv(req, res) {
+  const scope = localScope(req);
+  let rows;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isFinite).slice(0, 5000) : null;
+  if (ids && ids.length) {
+    rows = await dbAll(
+      `SELECT fecha, numero_factura, tipo, proveedor, nif, concepto, base_imponible, porcentaje_iva, cuota_iva, total, local, empresa, pagado
+       FROM facturas WHERE id = ANY(?::int[]) ${scope ? "AND local = ?" : ""} ORDER BY fecha DESC NULLS LAST`,
+      scope ? [ids, scope] : [ids]);
+  } else {
+    const { where, params } = facturasWhere(scope ? { ...req.query, local: scope } : req.query);
+    rows = await dbAll(`SELECT fecha, numero_factura, tipo, proveedor, nif, concepto, base_imponible, porcentaje_iva, cuota_iva, total, local, empresa, pagado FROM facturas ${where} ORDER BY fecha DESC NULLS LAST LIMIT 5000`, params);
+  }
+  // Punto y coma y BOM, como el registro de jornada: es lo que Excel en español abre a la
+  // primera. Con coma, un concepto con decimales parte la fila.
+  const header = ["Fecha", "Numero", "Tipo", "Proveedor", "NIF", "Concepto", "Base", "IVA%", "Cuota", "Total", "Local", "Empresa", "Pagado"];
+  const c = (v) => { const s = String(v ?? ""); return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const lines = rows.map((r) => [r.fecha, r.numero_factura, r.tipo, r.proveedor, r.nif, r.concepto, r.base_imponible, r.porcentaje_iva, r.cuota_iva, r.total, r.local, r.empresa, r.pagado ? "Sí" : "No"].map(c).join(";"));
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="facturas${ids && ids.length ? "-seleccion" : ""}.csv"`);
+  res.send("﻿" + [header.join(";"), ...lines].join("\r\n") + "\r\n");
+}
+
 app.get("/api/facturas/export.csv", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
-  try {
-    const { where, params } = facturasWhere(req.query);
-    const rows = await dbAll(`SELECT fecha, numero_factura, tipo, proveedor, nif, concepto, base_imponible, porcentaje_iva, cuota_iva, total, local, empresa, pagado FROM facturas ${where} ORDER BY fecha DESC NULLS LAST LIMIT 5000`, params);
-    const header = "Fecha,Numero,Tipo,Proveedor,NIF,Concepto,Base,IVA%,Cuota,Total,Local,Empresa,Pagado";
-    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const lines = rows.map((r) => [r.fecha, r.numero_factura, r.tipo, r.proveedor, r.nif, r.concepto, r.base_imponible, r.porcentaje_iva, r.cuota_iva, r.total, r.local, r.empresa, r.pagado ? "Sí" : "No"].map(esc).join(","));
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", 'attachment; filename="facturas.csv"');
-    res.send([header, ...lines].join("\n"));
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  try { await facturasCsv(req, res); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+app.post("/api/facturas/export.csv", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try { await facturasCsv(req, res); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // Subir una factura MANUALMENTE desde el panel (mismo pipeline que WhatsApp/correo/Drive).
@@ -1593,9 +1649,11 @@ app.post("/api/facturas/drive-carpetas", requireAuth(["direccion"]), async (req,
   const { local, folder } = req.body || {};
   const folderId = extraerFolderId(folder);
   if (!local || !folderId) return res.status(400).json({ ok: false, error: "Falta local o el enlace/ID de la carpeta" });
+  const localCanon = canonizarLocal(local); // misma razón que en los grupos: el canal marca el local
+  if (!localCanon) return res.status(400).json({ ok: false, error: `«${local}» no es ningún establecimiento. Elige a cuál pertenece esta carpeta.` });
   try {
     await dbRun(`INSERT INTO facturas_drive_carpetas (local, folder_id, folder_url) VALUES (?, ?, ?) ON CONFLICT(local) DO UPDATE SET folder_id = EXCLUDED.folder_id, folder_url = EXCLUDED.folder_url`,
-      [local, folderId, String(folder).trim()]);
+      [localCanon, folderId, String(folder).trim()]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -1634,10 +1692,12 @@ app.get("/api/facturas/email-reglas", requireAuth(["direccion", "contabilidad"])
 app.post("/api/facturas/email-reglas", requireAuth(["direccion"]), async (req, res) => {
   const { email, local } = req.body;
   if (!email || !local) return res.status(400).json({ ok: false, error: "Faltan email o local" });
+  const localCanon = canonizarLocal(local); // tercera puerta de entrada, misma regla
+  if (!localCanon) return res.status(400).json({ ok: false, error: `«${local}» no es ningún establecimiento. Elige a cuál pertenece este remitente.` });
   try {
     await dbRun(
       "INSERT INTO facturas_email_reglas (email, local) VALUES (?, ?) ON CONFLICT(email) DO UPDATE SET local = EXCLUDED.local",
-      [email.trim().toLowerCase(), local]
+      [email.trim().toLowerCase(), localCanon]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -2779,6 +2839,81 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
     console.error("[facturas] compras:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron cargar las compras" });
   }
+});
+
+// ── Locales mal guardados ────────────────────────────────────────────────────
+// Antes el campo `local` era texto libre y acabaron conviviendo «La Tapeta - Lloret»,
+// «Lloret» y «BLANES» en la misma columna: filtrando por el nombre bueno faltaban
+// facturas y el gasto por local salía repartido entre nombres que son el mismo sitio.
+// Las puertas de entrada ya están cerradas; esto arregla lo que quedó.
+app.get("/api/facturas/locales-raros", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const filas = await dbAll(`SELECT local, count(*)::int AS n FROM facturas GROUP BY local`);
+    // Los canales de entrada (grupo de WhatsApp, remitente, carpeta de Drive) son la causa:
+    // lo que ponga ahí se copia en cada factura que llega. Se avisa aparte, porque arreglar
+    // las facturas de ayer sin arreglar el canal es volver a empezar mañana.
+    const canales = [];
+    for (const [tabla, etiqueta] of [["facturas_grupos", "grupo de WhatsApp"], ["facturas_email_reglas", "remitente de email"], ["facturas_drive_carpetas", "carpeta de Drive"]]) {
+      try {
+        for (const r of await dbAll(`SELECT DISTINCT local FROM ${tabla}`)) {
+          if (!esLocalCanonico(r.local)) canales.push({ tipo: etiqueta, valor: r.local || "", sugerido: canonizarLocal(r.local) });
+        }
+      } catch { /* la tabla puede no existir todavía en una instalación nueva */ }
+    }
+    res.json({ ok: true, data: agruparNoCanonicos(filas), canales, locales: LOCALES_CANON });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo comprobar" }); }
+});
+
+app.post("/api/facturas/locales-raros/arreglar", requireAuth(["direccion"]), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    // Cada cambio va explícito: {de: "Lloret", a: "La Tapeta - Lloret"}. No se aplica en
+    // bloque «lo que el sistema crea» porque esto reescribe a qué local pertenece el gasto,
+    // y equivocarse descuadra dos locales a la vez.
+    const cambios = Array.isArray(req.body?.cambios) ? req.body.cambios : [];
+    if (!cambios.length) return res.status(400).json({ ok: false, error: "No hay nada que cambiar" });
+    for (const c of cambios) {
+      if (!esLocalCanonico(c.a)) return res.status(400).json({ ok: false, error: `«${c.a}» no es ningún establecimiento.` });
+    }
+
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    let n = 0, nCanales = 0;
+    for (const c of cambios) {
+      const r = c.de === "" || c.de == null
+        ? await q(`UPDATE facturas SET local = ? WHERE local IS NULL OR local = ''`, [c.a])
+        : await q(`UPDATE facturas SET local = ? WHERE local = ?`, [c.a, c.de]);
+      n += r.rowCount || 0;
+      // El mismo cambio en los canales de entrada: si no, mañana vuelven a entrar mal.
+      if (c.de) {
+        for (const t of ["facturas_grupos", "facturas_email_reglas", "facturas_drive_carpetas"]) {
+          try { nCanales += (await q(`UPDATE ${t} SET local = ? WHERE local = ?`, [c.a, c.de])).rowCount || 0; }
+          catch { /* tabla inexistente */ }
+        }
+      }
+    }
+    await client.query("COMMIT");
+    await ficAuditar("facturas", null, "normalizar_locales", req.user.username, { detalle: { cambios, filas: n, canales: nCanales } });
+    res.json({ ok: true, actualizadas: n, canales: nCanales,
+      mensaje: `${n} ${n === 1 ? "factura vinculada" : "facturas vinculadas"} a su establecimiento` + (nCanales ? `, y ${nCanales} ${nCanales === 1 ? "canal de entrada corregido" : "canales de entrada corregidos"}.` : ".") });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[facturas] normalizar locales:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo aplicar" });
+  } finally { client.release(); }
+});
+
+// Proveedores distintos que aparecen en las facturas, para el filtro. Con su número de
+// facturas: así los que más se usan salen arriba y no hay que buscar en una lista larga.
+app.get("/api/facturas/proveedores", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const scope = localScope(req) || String(req.query.local || "").trim();
+    const filas = await dbAll(
+      `SELECT proveedor, count(*)::int AS n FROM facturas
+       WHERE COALESCE(proveedor,'') <> '' ${scope ? "AND local = ?" : ""}
+       GROUP BY proveedor ORDER BY n DESC, proveedor LIMIT 400`, scope ? [scope] : []);
+    res.json({ ok: true, data: filas });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar los proveedores" }); }
 });
 
 // ── Releer las facturas antiguas ─────────────────────────────────────────────
