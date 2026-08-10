@@ -73,7 +73,11 @@ describe("la pantalla no pide nada que el encargado no pueda", () => {
   test("el módulo está en los dos catálogos, que son espejo manual", () => {
     assert.ok(CATALOGO_MODULOS.some((m) => m.id === "subirfactura"));
     assert.match(panel, /\["subirfactura", "Subir factura"/);
-    assert.match(panel, /subirfactura: \["direccion", "contabilidad", "encargado"\]/);
+    // Solo encargado: dirección y contabilidad ya suben desde Compras → Facturas, con el
+    // mismo botón y el mismo endpoint. Tenerlo además suelto en su menú repetía una entrada
+    // que no usaban y parecía otra bandeja distinta.
+    assert.match(panel, /subirfactura: \["encargado"\]/);
+    assert.deepEqual(CATALOGO_MODULOS.find((m) => m.id === "subirfactura").roles, ["encargado"]);
     assert.match(panel, /subirfactura: loadSubirFactura/);
   });
 });

@@ -10,8 +10,12 @@ import {
 } from "../../src/modules/usuarios/permisos.js";
 
 describe("modulosDeRol", () => {
-  test("dirección ve todos los módulos", () => {
-    assert.equal(modulosDeRol("direccion").length, CATALOGO_MODULOS.length);
+  test("dirección ve todos los módulos menos «Subir factura»", () => {
+    // «Subir factura» es del encargado: dirección sube desde Compras → Facturas, con el mismo
+    // botón. Es el único módulo del catálogo que dirección no tiene, y es a propósito.
+    const suyos = modulosDeRol("direccion");
+    const fuera = CATALOGO_MODULOS.filter((m) => !suyos.includes(m.id)).map((m) => m.id);
+    assert.deepEqual(fuera, ["subirfactura"]);
   });
   test("contabilidad ve solo su subconjunto", () => {
     const m = modulosDeRol("contabilidad");

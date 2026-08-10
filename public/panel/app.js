@@ -71,10 +71,14 @@ const NAV = [
     ["fichajes", "Fichajes", "clock", ["direccion", "rrhh", "encargado", "contabilidad"]],
   ] },
   { g: "Contabilidad", items: [
-    // Al encargado solo le sale «Subir factura»: entra, hace la foto y se va. El resto de
-    // Facturas —el gasto del grupo, los totales, la configuración fiscal— no es cosa suya.
-    ["subirfactura", "Subir factura", "receipt", ["direccion", "contabilidad", "encargado"]],
+    // «Subir factura» es SOLO del encargado: entra, hace la foto y se va. Quien lleva la
+    // contabilidad sube desde Compras → Facturas, con el mismo botón; tenerlo además suelto
+    // en el menú repetía una entrada que no usaba y parecía otra bandeja distinta.
+    ["subirfactura", "Subir factura", "receipt", ["encargado"]],
     ["facturas", "Compras", "receipt", ["direccion", "contabilidad"]],
+    // Productos va justo debajo de Compras y no dentro: sale de los mismos papeles, pero
+    // contesta otra pregunta —qué entra y a cómo nos lo cobran— y se mira en otro momento.
+    ["productos", "Productos", "box", ["direccion", "contabilidad"]],
     ["analitica", "Analítica de ventas", "chart", ["direccion", "contabilidad"]],
   ] },
   { g: "Marketing", items: [
@@ -97,10 +101,10 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { subirfactura: ["direccion", "contabilidad", "encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
-const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica", "rrhh", "horarios", "fichajes"]);
+const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "horarios", "fichajes"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
 function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol)); }
 // ¿El usuario actual puede entrar a `view`? Respeta rol + allowlist efectiva (USER.modulos del token).
@@ -3917,7 +3921,15 @@ function facHeader() {
   // así que el rótulo lo dice aparte: una pantalla que suma dos locales sin decirlo se lee
   // como si fuera la de uno.
   const donde = amb ? nombreCortoLocal(amb) : viendoTodosLosMios() ? `Mis ${misLocales().length} establecimientos` : "";
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas, albaranes y qué se compra${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${[["facturas", "Facturas"], ["conciliar", "Conciliaciones"], ["compras", "Qué compramos"], ["config", "Configuración"]].map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("")}</div>`;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${[["facturas", "Facturas"], ["conciliar", "Conciliaciones"], ["config", "Configuración"]].map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("")}</div>`;
+}
+
+// La cabecera de Productos. Es su propia pantalla, no una pestaña de Compras: sale de los
+// mismos papeles pero contesta otra pregunta —qué entra y a cómo nos lo cobran—.
+function productosHeader() {
+  const amb = facScope();
+  const donde = amb ? nombreCortoLocal(amb) : viendoTodosLosMios() ? `Mis ${misLocales().length} establecimientos` : "";
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Productos</h1><div class="sub">Qué compramos y a cómo nos lo cobran${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div>`;
 }
 const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
 // Con céntimos. Para precios unitarios, donde redondear a euros enteros se carga justo el
@@ -4862,7 +4874,6 @@ async function loadFacturas() {
       facCargarCategorias(); facDiagnosticoDrive();   // no se esperan: la configuración ya está
       return;
     }
-    if (FACTAB === "compras") return loadCompras();
     if (FACTAB === "conciliar") return loadConciliacion();
     // Igual que en reservas: una petición por local y se juntan las filas.
     const [lst, pend, stats, empresas] = await Promise.all([
@@ -4885,7 +4896,9 @@ async function loadFacturas() {
     facAvisoLocales(); facAvisoCategorias(); facDuplicados(); // no se esperan: la tabla ya está
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
-function facTab(tab) { FACTAB = tab; loadFacturas(); }
+// `ir` = true cuando se llama desde OTRA pantalla (Productos): hay que cambiar de vista, no
+// solo de pestaña, o se pintaría Compras dejando el menú marcando donde no se está.
+function facTab(tab, ir = false) { FACTAB = tab; if (ir && CURRENT !== "facturas") return go("facturas"); loadFacturas(); }
 
 // ── Conciliaciones ──────────────────────────────────────────────────────────
 // El proveedor deja un albarán por entrega y a fin de mes manda UNA factura que las agrupa.
@@ -5033,7 +5046,7 @@ async function concConfirmar(id, albs) {
   catch (e) { toast(e.message); }
 }
 
-// ── Qué compramos ───────────────────────────────────────────────────────────
+// ── Productos (antes «Qué compramos», dentro de Compras) ─────────────────────
 // El detalle línea a línea de las facturas, agrupado por producto. Contesta «cuántas
 // Coca-Colas desde marzo» y, sobre todo, cuánto ha subido el precio — que es lo que hoy
 // no ve nadie. Todavía NO está enlazado con inventario ni con Ágora: se agrupa por la
@@ -5043,10 +5056,11 @@ async function concConfirmar(id, albs) {
 let COMP = { q: "", from: "", to: "", proveedor: "", categoria: "", subcategoria: "" };
 const COMP_FILTROS = ["q", "from", "to", "proveedor", "categoria", "subcategoria"];
 
-async function loadCompras() {
+async function loadProductos() {
   const view = document.getElementById("view");
+  facScope();   // el establecimiento lo fija el selector de la barra, como en el resto
   if (!COMP.from) { const d = new Date(); d.setMonth(d.getMonth() - 6); COMP.from = d.toISOString().slice(0, 10); }
-  view.innerHTML = facHeader() + `<div id="compRes"><p class="mut">Cargando…</p></div>`;
+  view.innerHTML = productosHeader() + `<div id="compRes"><p class="mut">Cargando…</p></div>`;
   await refrescarCompras();
   const cont = document.getElementById("compRes");
   cont?.addEventListener("input", (e) => {
@@ -6675,7 +6689,7 @@ async function webBlkUpload(input, gallery) {
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, productos: loadProductos, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   // El calendario cuelga de <body>, así que sobrevive al repintado de la vista:
@@ -6864,7 +6878,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-cat-editar") facCatEditar(t.getAttribute("data-prov"));
   else if (act === "fac-prov-ficha") facProveedorFicha(t.getAttribute("data-prov"));
   else if (act === "fac-dup") facDupResolver(t.getAttribute("data-id"), t.getAttribute("data-accion"));
-  else if (act === "fac-ir-cats") facTab("config");
+  else if (act === "fac-ir-cats") facTab("config", true);
   else if (act === "comp-producto") comprasHistorial(t.getAttribute("data-clave"), t.getAttribute("data-nombre"));
   else if (act === "fac-sel-resumen") facSelResumen();
   else if (act === "fac-sel-export") facSelExport();

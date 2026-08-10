@@ -24,11 +24,20 @@ export const CATALOGO_MODULOS = [
   { id: "horarios", label: "Horarios", roles: ["direccion", "rrhh", "encargado"], porLocal: true },
   { id: "fichajes", label: "Fichajes", roles: ["direccion", "rrhh", "encargado", "contabilidad"], porLocal: true },
   { id: "facturas", label: "Compras", roles: ["direccion", "contabilidad"], porLocal: true },
+  // Productos (antes «Qué compramos», dentro de Compras). Es un módulo aparte y no una
+  // pestaña porque no responde a la misma pregunta: Compras es «qué papeles hay» y Productos
+  // es «qué entra por la puerta y a cómo nos lo cobran». Se mira con otra frecuencia y por
+  // otro motivo, y escondido en la cuarta pestaña de otro módulo casi nadie llegaba.
+  { id: "productos", label: "Productos", roles: ["direccion", "contabilidad"], porLocal: true },
   // Módulo aparte y NO un permiso dentro de Facturas: el encargado sube la factura de su
   // proveedor y no tiene por qué ver el gasto del grupo, los totales ni la configuración
   // fiscal. Separarlo hace que «puede subir» y «puede ver» sean dos cosas distintas, que es
   // lo que son.
-  { id: "subirfactura", label: "Subir factura", roles: ["direccion", "contabilidad", "encargado"], porLocal: true },
+  //
+  // SOLO ENCARGADO. Dirección y contabilidad ya suben facturas desde Compras → Facturas, con
+  // el mismo botón y el mismo endpoint. Tenerlo además como módulo suelto les repetía en el
+  // menú una entrada que no usaban y hacía pensar que era otro sitio con otra bandeja.
+  { id: "subirfactura", label: "Subir factura", roles: ["encargado"], porLocal: true },
   { id: "inventarios", label: "Inventarios", roles: ["direccion", "encargado"], porLocal: true },
   { id: "web", label: "Web", roles: ["direccion", "marketing"], porLocal: false },
   { id: "reviews", label: "Reseñas", roles: ["direccion", "encargado", "contabilidad", "marketing"], porLocal: true },

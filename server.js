@@ -590,6 +590,22 @@ async function initDB() {
     // reutiliza en vez de volver a leer el PDF y pagar la lectura dos veces.
     try { await client.query(`ALTER TABLE facturas_pendientes ADD COLUMN IF NOT EXISTS lineas_json TEXT`); } catch (e) { console.error("[DB] alter facturas_pendientes lineas_json:", e.message); }
     try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS modulos TEXT`); } catch (e) { console.error("[DB] alter users modulos:", e.message); }
+    // «Qué compramos» era una pestaña DENTRO de Compras y ahora es el módulo «Productos».
+    // A quien tenga los módulos recortados a mano, la lista guardada dice «facturas» y no
+    // «productos», así que perdería una pantalla que ya usaba sin que nadie lo pidiera. Se le
+    // añade. Una sola vez (por eso la marca en `config`): si mañana dirección se lo quita a
+    // propósito, no se le vuelve a poner solo.
+    try {
+      const yaHecho = await client.query(`SELECT value FROM config WHERE key = 'modulos_productos_v1'`);
+      if (!yaHecho.rows.length) {
+        const r = await client.query(
+          `UPDATE users SET modulos = REPLACE(modulos, '"facturas"', '"facturas","productos"')
+            WHERE modulos LIKE '%"facturas"%' AND modulos NOT LIKE '%"productos"%'`);
+        await client.query(`INSERT INTO config (key, value, updated_at) VALUES ('modulos_productos_v1', '1', CURRENT_TIMESTAMP)
+                            ON CONFLICT (key) DO NOTHING`);
+        if (r.rowCount) console.log(`[DB] «Productos» añadido a los módulos de ${r.rowCount} usuario(s) que ya tenían Compras.`);
+      }
+    } catch (e) { console.error("[DB] migración modulos productos:", e.message); }
     try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc TEXT`); } catch (e) { console.error("[DB] alter users password_enc:", e.message); }
     try { await client.query(`ALTER TABLE maintenance_issues ADD COLUMN IF NOT EXISTS foto_url TEXT`); } catch (e) { console.error("[DB] alter maintenance_issues foto_url:", e.message); }
 
