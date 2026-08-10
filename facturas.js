@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { normalizarLineas, validarSuma, mensajeValidacion, claveProducto } from "./src/modules/facturas/lineas.js";
 import { canonizarLocal, esLocalCanonico } from "./src/modules/facturas/local-canonico.js";
-import { claveProveedor, seLeenLineas } from "./src/modules/facturas/categorias.js";
+import { claveProveedor, seLeenLineas, nombreCanonico } from "./src/modules/facturas/categorias.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { corregirEmisorReceptor } from "./src/modules/facturas/emisor.js";
 import { revisarCoherencia, textosDe } from "./src/modules/facturas/coherencia.js";
@@ -653,6 +653,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   // 2. Extraer datos con Claude
   const datos = await extraerDatosDocumento(buffer, mimeType);
   await revisarEmisorReceptor(datos, dbAll);   // ver por qué en revisarEmisorReceptor
+  await aplicarNombreProveedor(datos, dbAll);   // lo que ya se corrigió a mano, aprendido
   const coher = await revisarCoherenciaFactura(datos, dbAll);
   console.log(`[Facturas] Datos extraídos para ${local}:`, JSON.stringify(datos));
 
@@ -871,6 +872,24 @@ function normalizarNif(nif) {
  * No corrige nada. Corregir un importe «porque no cuadra» es inventarse un dato contable, y un
  * dato inventado que parece revisado es peor que uno mal que se nota.
  */
+/**
+ * Aplica el nombre de proveedor que ya se corrigió a mano. Si alguien arregló «Viruta Bronco»
+ * a «Virutas Branco», la siguiente factura entra ya bien: la lectura se equivoca siempre
+ * igual, y no tiene sentido corregir lo mismo cada mes.
+ */
+async function aplicarNombreProveedor(datos, dbAll) {
+  try {
+    if (!datos || !dbAll || !datos.proveedor) return;
+    const alias = await dbAll(`SELECT clave, nif, proveedor FROM facturas_proveedor_alias`).catch(() => []);
+    if (!alias.length) return;
+    const bueno = nombreCanonico({ proveedor: datos.proveedor, nif: datos.nif_proveedor }, alias);
+    if (bueno && bueno !== datos.proveedor) {
+      console.log(`[Facturas] proveedor corregido por alias: «${datos.proveedor}» → «${bueno}»`);
+      datos.proveedor = bueno;
+    }
+  } catch (e) { console.error("[Facturas] aplicarNombreProveedor:", e.message); }
+}
+
 async function revisarCoherenciaFactura(datos, dbAll) {
   try {
     if (!datos) return { avisos: [], grave: false };

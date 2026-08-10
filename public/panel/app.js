@@ -4058,7 +4058,7 @@ function facCategoriasHtml() {
   const provs = j.proveedores || [];
   // Los que más gastan primero: etiquetar los diez de arriba ya cubre casi todo el gasto.
   const fila = (p) => `<tr class="${p.categorias.length ? "" : "sincat"}">
-    <td><b>${esc(p.proveedor)}</b>${p.nombres.length > 1 ? `<div class="t2" title="${esc(p.nombres.join(" · "))}">y ${p.nombres.length - 1} forma${p.nombres.length > 2 ? "s" : ""} más de escribirlo</div>` : ""}</td>
+    <td><button class="linkbtn" data-act="fac-prov-ficha" data-prov="${esc(p.proveedor)}" style="font-weight:600" title="Abrir su ficha">${esc(p.proveedor)}</button>${p.nombres.length > 1 ? `<div class="t2" title="${esc(p.nombres.join(" · "))}">y ${p.nombres.length - 1} forma${p.nombres.length > 2 ? "s" : ""} más de escribirlo</div>` : ""}</td>
     <td class="mut r tnum">${num(p.facturas)}</td>
     <td class="r tnum">${eur(p.gasto)}</td>
     <td>${p.categorias.length
@@ -4078,6 +4078,44 @@ function facCategoriasHtml() {
     <div class="tw"><table class="tbl"><thead><tr><th>Proveedor</th><th class="r">Facturas</th><th class="r">Gasto</th><th>Categorías</th><th></th></tr></thead>
       <tbody>${provs.map(fila).join("") || '<tr><td colspan="5" class="mut">Todavía no hay proveedores.</td></tr>'}</tbody></table></div>
   </details>`;
+}
+
+/**
+ * Ficha del proveedor. Sirve sobre todo para una cosa: corregir el nombre cuando la lectura se
+ * equivoca —«Viruta Bronco» en vez de «Virutas Branco»— y que lo APRENDA, en lugar de tener
+ * que corregir lo mismo cada mes.
+ */
+async function facProveedorFicha(nombre) {
+  let j;
+  try { j = await apiRaw("/api/facturas/proveedor?nombre=" + encodeURIComponent(nombre)); } catch (e) { return toast(e.message); }
+  const nifPrincipal = (j.nifs || [])[0];
+  const ov = modal("Proveedor", `
+    <div class="kpis4" style="margin:0 0 16px">
+      <div class="kpi"><span>Facturas</span><b>${num(j.facturas || 0)}</b></div>
+      <div class="kpi"><span>Gasto</span><b>${esc(eur(j.gasto || 0))}</b></div>
+      <div class="kpi"><span>Desde</span><b style="font-size:14px">${esc(fechaCorta(j.primera) || "—")}</b></div>
+      <div class="kpi"><span>Última</span><b style="font-size:14px">${esc(fechaCorta(j.ultima) || "—")}</b></div>
+    </div>
+    <div class="field full"><label>Nombre del proveedor</label>
+      <input class="inp" id="fpNombre" value="${esc(nombre)}"></div>
+    <p class="mut" style="margin:8px 0 0;line-height:1.55">Si la lectura se equivoca siempre igual —«Viruta Bronco» por
+      «Virutas Branco»—, corrígelo aquí: se arreglan <b>todas sus facturas</b> y las que entren a partir de ahora
+      llegarán ya con el nombre bueno.${nifPrincipal ? ` Se recuerda por su NIF <b>${esc(nifPrincipal.nif)}</b>, que no cambia
+      aunque el nombre se lea de otra forma.` : " <b>Sin NIF no se puede anclar</b>, así que solo se reconocerá si el nombre se lee igual que ahora."}</p>
+    ${j.nombres.length > 1 ? `<p class="mut" style="margin:8px 0 0;font-size:12.5px">Ahora mismo aparece escrito de ${j.nombres.length} formas: ${j.nombres.map(esc).join(" · ")}. Se unifican todas.</p>` : ""}
+    ${(j.nifs || []).length > 1 ? `<p class="fic-nota">Tiene <b>${j.nifs.length} NIF distintos</b> (${j.nifs.map((x) => esc(x.nif)).join(", ")}). O son dos empresas parecidas, o alguno se leyó mal.</p>` : ""}
+    ${j.alias ? `<p class="mut" style="margin:8px 0 0;font-size:12.5px">Ya se corrigió antes: ${esc(j.alias.autor || "alguien")} lo dejó como «${esc(j.alias.proveedor)}».</p>` : ""}
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+      <button class="btn" data-close>Cerrar</button><button class="btn primary" id="fpOk">Guardar y aprender</button></div>`);
+  ov.querySelector(".modal").style.width = "min(560px, 96vw)";
+  ov.querySelector("#fpOk").addEventListener("click", async () => {
+    const nuevo = ov.querySelector("#fpNombre").value.trim();
+    if (!nuevo || nuevo === nombre) { ov.remove(); return; }
+    if (!await confirmModal(`Se cambiará el nombre en sus ${num(j.facturas || 0)} facturas y las próximas entrarán como «${nuevo}».`, { ok: "Guardar" })) return;
+    try { const r = await apiSend("PUT", "/api/facturas/proveedor", { antiguo: nombre, nuevo, nif: nifPrincipal?.nif });
+      ov.remove(); toast(r.mensaje || "Hecho ✅"); facCargarCategorias(); }
+    catch (e) { toast(e.message); }
+  });
 }
 
 function facCatEditar(proveedor) {
@@ -6563,6 +6601,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-limpiar-filtros") facLimpiarFiltros();
   else if (act === "fac-normalizar-locales") facNormalizarLocales();
   else if (act === "fac-cat-editar") facCatEditar(t.getAttribute("data-prov"));
+  else if (act === "fac-prov-ficha") facProveedorFicha(t.getAttribute("data-prov"));
   else if (act === "fac-dup") facDupResolver(t.getAttribute("data-id"), t.getAttribute("data-accion"));
   else if (act === "fac-ir-cats") facTab("config");
   else if (act === "comp-producto") comprasHistorial(t.getAttribute("data-clave"), t.getAttribute("data-nombre"));

@@ -114,6 +114,32 @@ export function claveProveedor(nombre) {
 
 const norm = (s) => String(s || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
+/**
+ * Nombre bueno de un proveedor, según lo que ya se haya corregido a mano.
+ *
+ * «Viruta Bronco S.L.» es en realidad «Virutas Branco S.L.»: la lectura se equivoca siempre
+ * igual, así que corregirlo una vez debería valer para las siguientes.
+ *
+ * Se busca PRIMERO POR NIF y luego por el nombre. El NIF es lo único que no cambia entre
+ * facturas del mismo proveedor: si el nombre se lee mal de otra forma la próxima vez
+ * («Viruta Branko»), el alias por nombre ya no casaría y el del NIF sí.
+ *
+ * `alias` = [{ clave, nif, proveedor }].
+ */
+export function nombreCanonico({ proveedor, nif } = {}, alias = []) {
+  const n = normNifProv(nif);
+  if (n) {
+    const porNif = alias.find((a) => normNifProv(a.nif) && normNifProv(a.nif) === n);
+    if (porNif) return porNif.proveedor;
+  }
+  const k = claveProveedor(proveedor);
+  if (!k) return null;
+  const porNombre = alias.find((a) => a.clave === k);
+  return porNombre ? porNombre.proveedor : null;
+}
+
+const normNifProv = (s) => String(s || "").replace(/[\s.\-/]/g, "").toUpperCase();
+
 /** ¿Es una categoría del catálogo? Comparación tolerante a mayúsculas y acentos. */
 export function normalizarCategoria(valor, catalogo = CATEGORIAS) {
   const buscada = norm(valor);

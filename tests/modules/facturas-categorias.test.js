@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias,
-  gastoPorCategoria, seLeenLineas, subcategoriasDe, etiquetaPar, CATALOGO, CATEGORIAS, SIN_LINEAS } from "../../src/modules/facturas/categorias.js";
+  gastoPorCategoria, seLeenLineas, nombreCanonico, subcategoriasDe, etiquetaPar, CATALOGO, CATEGORIAS, SIN_LINEAS } from "../../src/modules/facturas/categorias.js";
 
 describe("claveProveedor: el mismo proveedor escrito de cinco maneras", () => {
   test("la forma jurídica no distingue a nadie", () => {
@@ -183,5 +183,28 @@ describe("de qué facturas NO se lee el detalle", () => {
   });
   test("«Varios» NO está entre las que no se leen: es el cajón de los generalistas, que sí venden producto", () => {
     assert.ok(!SIN_LINEAS.has("Varios"));
+  });
+});
+
+describe("aprender el nombre bueno de un proveedor", () => {
+  // «Viruta Bronco S.L.» es en realidad «Virutas Branco S.L.». Corregirlo una vez tiene que
+  // valer para las siguientes.
+  const ALIAS = [{ clave: claveProveedor("Viruta Bronco S.L."), nif: "B12345678", proveedor: "Virutas Branco S.L." }];
+
+  test("por el nombre mal leído", () => {
+    assert.equal(nombreCanonico({ proveedor: "VIRUTA BRONCO, S.L." }, ALIAS), "Virutas Branco S.L.");
+  });
+  test("y por el NIF, que es lo que NO cambia", () => {
+    // Si la próxima vez lo lee «Viruta Branko», el alias por nombre no casaría; el del NIF sí.
+    assert.equal(nombreCanonico({ proveedor: "Viruta Branko", nif: "B-12.345.678" }, ALIAS), "Virutas Branco S.L.");
+  });
+  test("el NIF manda sobre el nombre", () => {
+    const dos = [...ALIAS, { clave: claveProveedor("Otro"), nif: "B99", proveedor: "Otro bueno" }];
+    assert.equal(nombreCanonico({ proveedor: "Otro", nif: "B12345678" }, dos), "Virutas Branco S.L.");
+  });
+  test("un proveedor que nadie ha corregido se queda como está", () => {
+    assert.equal(nombreCanonico({ proveedor: "Grau", nif: "B777" }, ALIAS), null);
+    assert.equal(nombreCanonico({ proveedor: "" }, ALIAS), null);
+    assert.equal(nombreCanonico({}, []), null);
   });
 });

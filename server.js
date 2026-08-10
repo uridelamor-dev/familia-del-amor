@@ -509,6 +509,21 @@ async function initDB() {
             WHERE b.prov_clave = a.prov_clave AND b.categoria = a.categoria AND b.subcategoria <> '')`);
     } catch (e) { console.error("[DB] alter facturas_proveedor_cats:", e.message); }
 
+    // Nombres de proveedor corregidos a mano. «Viruta Bronco S.L.» es «Virutas Branco S.L.»:
+    // la lectura se equivoca siempre igual, así que corregirlo una vez vale para las
+    // siguientes. Se guarda por NIF y por clave del nombre; el NIF es lo que no cambia.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_proveedor_alias (
+        clave TEXT PRIMARY KEY,
+        nif TEXT,
+        proveedor TEXT NOT NULL,
+        autor TEXT,
+        creado_en TEXT
+      )
+    `);
+    try { await client.query(`CREATE INDEX IF NOT EXISTS idx_prov_alias_nif ON facturas_proveedor_alias(nif) WHERE nif IS NOT NULL`); }
+    catch (e) { console.error("[DB] idx_prov_alias_nif:", e.message); }
+
     // Detalle línea a línea. Ver src/modules/facturas/lineas.js y docs/lineas-de-factura.md.
     // `lineas_estado` guarda si el detalle cuadra con la base imponible: sin ese aviso, una
     // cantidad mal leída se arrastraría a todos los informes sin que nadie lo supiera.
@@ -3339,6 +3354,81 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
     console.error("[facturas] historial producto:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar el historial" });
   }
+});
+
+// Ficha de un proveedor: sus datos, su gasto y cómo se le ha corregido el nombre.
+app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const nombre = String(req.query.nombre || "").trim();
+    if (!nombre) return res.status(400).json({ ok: false, error: "Falta el proveedor" });
+    const clave = claveProveedor(nombre);
+    const nombres = await dbAll(`SELECT DISTINCT proveedor FROM facturas WHERE proveedor IS NOT NULL AND proveedor <> ''`);
+    const suyos = nombres.map((x) => x.proveedor).filter((x) => claveProveedor(x) === clave);
+    if (!suyos.length) suyos.push(nombre);
+
+    const [datos, nifs, cats, alias] = await Promise.all([
+      dbGet(`SELECT count(*)::int AS facturas, COALESCE(SUM(total),0)::float AS gasto,
+                    MIN(fecha) AS primera, MAX(fecha) AS ultima
+               FROM facturas WHERE proveedor = ANY(?) AND ${SIN_ALBARANES}`, [suyos]),
+      dbAll(`SELECT nif, count(*)::int AS n FROM facturas WHERE proveedor = ANY(?) AND nif IS NOT NULL AND nif <> '' GROUP BY nif ORDER BY n DESC`, [suyos]),
+      dbAll(`SELECT categoria, subcategoria FROM facturas_proveedor_cats WHERE prov_clave = ?`, [clave]),
+      dbGet(`SELECT proveedor, nif, autor, creado_en FROM facturas_proveedor_alias WHERE clave = ?`, [clave]),
+    ]);
+    res.json({ ok: true, proveedor: nombre, clave, nombres: suyos, ...datos,
+      nifs, categorias: cats, alias: alias || null });
+  } catch (e) {
+    console.error("[facturas] ficha proveedor:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar la ficha" });
+  }
+});
+
+// Corregir el nombre de un proveedor Y APRENDERLO para las siguientes.
+app.put("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const antiguo = String(req.body?.antiguo || "").trim();
+    const nuevo = String(req.body?.nuevo || "").trim();
+    if (!antiguo || !nuevo) return res.status(400).json({ ok: false, error: "Faltan el nombre antiguo y el nuevo" });
+    if (nuevo.length < 2) return res.status(400).json({ ok: false, error: "El nombre nuevo es demasiado corto" });
+    const clave = claveProveedor(antiguo);
+    if (!clave) return res.status(400).json({ ok: false, error: "Ese proveedor no se reconoce" });
+
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    // Todas las formas en que se escribió ese mismo proveedor.
+    const todos = (await q(`SELECT DISTINCT proveedor FROM facturas WHERE proveedor IS NOT NULL AND proveedor <> ''`)).rows
+      .map((x) => x.proveedor).filter((x) => claveProveedor(x) === clave);
+    // El NIF más repetido: es el ancla para las próximas, aunque el nombre se lea distinto.
+    const nifRow = todos.length
+      ? (await q(`SELECT nif FROM facturas WHERE proveedor = ANY(?) AND nif IS NOT NULL AND nif <> '' GROUP BY nif ORDER BY count(*) DESC LIMIT 1`, [todos])).rows[0]
+      : null;
+    const nif = String(req.body?.nif || nifRow?.nif || "").trim() || null;
+
+    let cambiadas = 0;
+    if (req.body?.aplicarHistorico !== false && todos.length) {
+      cambiadas = (await q(`UPDATE facturas SET proveedor = ? WHERE proveedor = ANY(?)`, [nuevo, todos])).rowCount || 0;
+    }
+    await q(`INSERT INTO facturas_proveedor_alias (clave, nif, proveedor, autor, creado_en)
+             VALUES (?, ?, ?, ?, ?) ON CONFLICT (clave) DO UPDATE SET nif = EXCLUDED.nif, proveedor = EXCLUDED.proveedor,
+               autor = EXCLUDED.autor, creado_en = EXCLUDED.creado_en`,
+      [clave, nif, nuevo, req.user.nombre || req.user.username, isoConOffset(Date.now())]);
+    // Y también con la clave del nombre NUEVO, para que no se deshaga si alguien lo relee.
+    const claveNueva = claveProveedor(nuevo);
+    if (claveNueva && claveNueva !== clave) {
+      await q(`INSERT INTO facturas_proveedor_alias (clave, nif, proveedor, autor, creado_en)
+               VALUES (?, ?, ?, ?, ?) ON CONFLICT (clave) DO NOTHING`,
+        [claveNueva, nif, nuevo, req.user.nombre || req.user.username, isoConOffset(Date.now())]);
+    }
+    await client.query("COMMIT");
+    await ficAuditar("facturas", null, "proveedor_renombrado", req.user.nombre || req.user.username,
+      { detalle: { antiguo, nuevo, nif, facturas: cambiadas } });
+    res.json({ ok: true, cambiadas, nif,
+      mensaje: `${cambiadas} ${cambiadas === 1 ? "factura corregida" : "facturas corregidas"}. A partir de ahora entrará como «${nuevo}».` });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[facturas] renombrar proveedor:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  } finally { client.release(); }
 });
 
 // ── Conciliación de albaranes con facturas ──────────────────────────────────
