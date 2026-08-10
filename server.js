@@ -1492,6 +1492,117 @@ app.get("/api/facturas/status", requireAuth(["direccion", "contabilidad"]), asyn
   res.json({ ok: true, conectado: !!token, grupos, pendientes_sheet: pendientesSheet, ultimo_reintento: (await getConfig("facturas_ultimo_reintento")) || null });
 });
 
+/**
+ * Dónde están las facturas en Drive, con enlaces para ir a mirarlo.
+ *
+ * Existe porque «está conectado» no contesta la pregunta que se hace de verdad, que es «no veo
+ * ninguna carpeta». Las carpetas se crean en el Drive de la CUENTA QUE AUTORIZÓ la conexión, y
+ * si esa no es la cuenta con la que se navega, no aparecen por ningún lado aunque todo esté
+ * funcionando. Esto dice qué cuenta es y da el enlace directo a la carpeta raíz.
+ */
+app.get("/api/facturas/drive-diagnostico", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  const out = { conectado: false, cuenta: null, raiz: null, facturas: 0, conArchivo: 0, ultimas: [], sheets: [], avisos: [] };
+  try {
+    const refresh = await getConfig("google_drive_refresh_token");
+    out.conectado = !!refresh;
+    if (!refresh) { out.avisos.push("Google Drive no está conectado: nada se está guardando en Drive."); return res.json({ ok: true, ...out }); }
+
+    let token;
+    try { token = await getDriveAccessToken(); }
+    catch (e) { out.avisos.push("Hay una conexión guardada pero Google la rechaza: " + e.message + ". Hay que volver a conectar la cuenta."); return res.json({ ok: true, ...out }); }
+
+    // Con qué cuenta de Google se está escribiendo. Es el dato que resuelve el 90 % de los casos.
+    try {
+      const r = await fetch("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName),storageQuota(limit,usage)",
+        { headers: { Authorization: "Bearer " + token } });
+      const j = await r.json();
+      if (j.user) out.cuenta = { email: j.user.emailAddress, nombre: j.user.displayName };
+      if (j.storageQuota && j.storageQuota.limit && Number(j.storageQuota.usage) >= Number(j.storageQuota.limit)) {
+        out.avisos.push("El Drive de esa cuenta está lleno: las subidas fallarán hasta que se libere espacio.");
+      }
+    } catch { /* el diagnóstico sigue sin esto */ }
+
+    const rootId = await getConfig("drive_facturas_root_id");
+    if (!rootId) {
+      out.avisos.push("Todavía no se ha creado la carpeta raíz. Se crea sola con la primera factura que entre.");
+    } else {
+      try {
+        const r = await fetch(`https://www.googleapis.com/drive/v3/files/${rootId}?fields=id,name,trashed,webViewLink,owners(emailAddress)`,
+          { headers: { Authorization: "Bearer " + token } });
+        const j = await r.json();
+        if (j.error) out.avisos.push("La carpeta raíz guardada ya no existe o no es accesible con esta cuenta.");
+        else {
+          out.raiz = { id: j.id, nombre: j.name, url: j.webViewLink, papelera: !!j.trashed, dueño: (j.owners || [])[0]?.emailAddress || null };
+          if (j.trashed) out.avisos.push("¡La carpeta raíz está en la PAPELERA de Drive! Restáurala o se seguirán subiendo archivos a una carpeta borrada.");
+          // Qué hay dentro: es lo que confirma que la estructura existe de verdad.
+          const hijos = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${rootId}' in parents and trashed = false`)}&fields=files(id,name,mimeType,webViewLink)&pageSize=50`,
+            { headers: { Authorization: "Bearer " + token } }).then((x) => x.json());
+          out.raiz.contenido = (hijos.files || []).map((f) => ({ nombre: f.name, url: f.webViewLink, esCarpeta: f.mimeType === "application/vnd.google-apps.folder" }));
+          if (!out.raiz.contenido.length) out.avisos.push("La carpeta raíz está vacía: no ha entrado ninguna factura todavía.");
+        }
+      } catch (e) { out.avisos.push("No se pudo leer la carpeta raíz: " + e.message); }
+    }
+
+    const c = await dbGet(`SELECT count(*)::int AS n, count(*) FILTER (WHERE drive_url IS NOT NULL AND drive_url <> '')::int AS con FROM facturas`);
+    out.facturas = c?.n || 0; out.conArchivo = c?.con || 0;
+    if (out.facturas && !out.conArchivo) out.avisos.push("Hay facturas guardadas pero NINGUNA tiene archivo en Drive: entraron cuando la conexión estaba caída.");
+    out.ultimas = await dbAll(`SELECT id, fecha, proveedor, local, empresa, drive_url FROM facturas
+                                WHERE drive_url IS NOT NULL AND drive_url <> '' ORDER BY id DESC LIMIT 8`);
+
+    // La ruta REAL de cada una en Drive, subiendo por sus carpetas padre. Es lo único que
+    // contesta «¿están ordenadas?» sin que nadie tenga que fiarse de lo que diga el código:
+    // si sale «Contabilidad / Familia del Amor SL / La Tapeta - Blanes / Julio 2026», lo están.
+    const idDe = (u) => (String(u || "").match(/(?:file\/d\/|id=)([a-zA-Z0-9_-]+)/) || [])[1] || null;
+    const cacheNombre = new Map();
+    const rutaDe = async (fileId) => {
+      const partes = [];
+      let actual = fileId, saltos = 0;
+      while (actual && saltos++ < 8) {
+        if (!cacheNombre.has(actual)) {
+          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${actual}?fields=name,parents,trashed`,
+            { headers: { Authorization: "Bearer " + token } });
+          const j = await r.json();
+          if (j.error) return { error: j.error.message, partes };
+          cacheNombre.set(actual, { nombre: j.name, padre: (j.parents || [])[0] || null, papelera: !!j.trashed });
+        }
+        const n = cacheNombre.get(actual);
+        partes.unshift(n.nombre);
+        actual = n.padre;
+      }
+      return { partes };
+    };
+
+    let sueltas = 0;
+    for (const f of out.ultimas) {
+      const fid = idDe(f.drive_url);
+      if (!fid) { f.ruta = null; continue; }
+      try {
+        const { partes, error } = await rutaDe(fid);
+        f.ruta = error ? null : partes.slice(0, -1).join(" / ");   // sin el nombre del archivo
+        f.rutaError = error || null;
+        // Ordenada = cuelga de al menos Empresa/Local/Mes por debajo de la raíz.
+        f.ordenada = !!(f.ruta && partes.length >= 5);
+        if (f.ruta && !f.ordenada) sueltas++;
+      } catch (e) { f.rutaError = e.message; }
+    }
+    if (sueltas) {
+      out.avisos.push(`${sueltas} de las ${out.ultimas.length} últimas facturas NO están en su carpeta Empresa/Local/Mes. El botón «Reordenar Drive» las coloca sin volver a subirlas.`);
+    }
+    out.sheets = await dbAll(`SELECT local, sheet_url FROM facturas_grupos WHERE sheet_url IS NOT NULL ORDER BY local`);
+
+    // Un local sin empresa manda sus facturas a una carpeta llamada «Sin empresa asignada».
+    const sinEmpresa = await dbAll(`SELECT DISTINCT f.local FROM facturas f
+                                     LEFT JOIN facturas_locales l ON l.local = f.local
+                                    WHERE l.empresa IS NULL OR l.empresa = ''`);
+    if (sinEmpresa.length) out.avisos.push(`Sin empresa configurada: ${sinEmpresa.map((x) => x.local).join(", ")}. Sus facturas van a una carpeta «Sin empresa asignada».`);
+
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    console.error("[facturas] diagnóstico drive:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Reproyectar ahora las facturas pendientes de volcado a Sheets (botón "Reintentar volcado").
 app.post("/api/facturas/reproyectar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {

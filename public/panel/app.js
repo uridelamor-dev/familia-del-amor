@@ -3679,6 +3679,66 @@ function renderFacturas(list, pend, stats, empresas) {
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
   return `${facHeader()}${resumen}${toolbar}<div id="facLocalesRaros"></div><div id="facSinCats"></div>${vizGrid}${pendCard}<div id="facRes">${facTablaHtml(list)}</div>`;
 }
+// ── Dónde están las facturas en Drive ───────────────────────────────────────
+// «Conectado» no contesta «no veo las carpetas». Esto enseña con qué cuenta de Google se
+// escribe, el enlace directo a la carpeta raíz y la ruta REAL de las últimas facturas. Si la
+// ruta sale como «Contabilidad / Empresa / Local / Julio 2026», están ordenadas; si sale a
+// secas, no lo están y hay un botón que las coloca.
+async function facDiagnosticoDrive() {
+  const caja = document.getElementById("facDrive");
+  if (!caja) return;
+  // Si estaba abierto, se queda abierto al repintar. Al reordenar, el bloque dejaba de tener
+  // avisos y se plegaba solo: justo en el momento en que hay que ver que ha funcionado.
+  const estaba = caja.querySelector("details")?.open;
+  let j;
+  try { j = await apiRaw("/api/facturas/drive-diagnostico"); } catch { return; }
+
+  const avisos = (j.avisos || []).map((a) => `<p class="fic-nota" style="margin:0 0 8px">${esc(a)}</p>`).join("");
+  const desordenadas = (j.ultimas || []).some((f) => f.ruta && !f.ordenada);
+
+  const rutaHtml = (f) => {
+    if (f.rutaError) return `<span class="mut">no se pudo leer (${esc(f.rutaError)})</span>`;
+    if (!f.ruta) return `<span class="mut">sin enlace reconocible</span>`;
+    return `<span class="${f.ordenada ? "" : "fg-danger"}">${esc(f.ruta.replace(/ \/ /g, " › "))}</span>
+      ${f.ordenada ? "" : ' <span class="pill warn">suelta</span>'}`;
+  };
+
+  caja.innerHTML = `<details class="card fold" style="margin-bottom:16px" ${estaba || j.avisos?.length ? "open" : ""}>
+    <summary><h3>Dónde están las facturas en Drive</h3>
+      <span class="foldr"><span>${j.conectado ? (desordenadas ? "hay que reordenar" : "ordenadas") : "sin conectar"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    ${avisos}
+    <div class="rows">
+      <div class="row"><span class="grow"><div class="t1">Cuenta de Google</div>
+        <div class="t2">Las carpetas se crean en el Drive de ESTA cuenta. Si navegas con otra, no las verás aunque todo funcione.</div></span>
+        <b style="flex:none">${j.cuenta ? esc(j.cuenta.email) : '<span class="mut">—</span>'}</b></div>
+      <div class="row"><span class="grow"><div class="t1">Carpeta raíz</div>
+        <div class="t2">${j.raiz ? esc(j.raiz.nombre) + (j.raiz.dueño ? " · de " + esc(j.raiz.dueño) : "") : "todavía no creada"}</div></span>
+        ${j.raiz ? `<a class="btn sm" href="${esc(j.raiz.url)}" target="_blank" rel="noopener">Abrirla ↗</a>` : ""}</div>
+      <div class="row"><span class="grow"><div class="t1">Facturas con archivo</div>
+        <div class="t2">de ${num(j.facturas)} guardadas en total</div></span>
+        <b style="flex:none">${num(j.conArchivo)}</b></div>
+    </div>
+
+    ${j.raiz?.contenido?.length ? `<div style="margin-top:12px"><div class="t1" style="margin-bottom:6px">Dentro de la raíz</div>
+      <div class="fchips">${j.raiz.contenido.slice(0, 12).map((x) =>
+        `<a class="fchip" href="${esc(x.url)}" target="_blank" rel="noopener">${x.esCarpeta ? "📁" : "📄"} ${esc(x.nombre)}</a>`).join("")}</div></div>` : ""}
+
+    ${(j.ultimas || []).length ? `<div style="margin-top:12px"><div class="t1" style="margin-bottom:6px">Dónde ha ido a parar cada una de las últimas</div>
+      <div class="tw"><table class="tbl"><thead><tr><th>Factura</th><th>Carpeta en Drive</th><th></th></tr></thead>
+      <tbody>${j.ultimas.map((f) => `<tr>
+        <td>${esc(f.proveedor || "—")}<div class="t2">${esc((f.fecha || "").slice(0, 10))} · ${esc(nombreCortoLocal(f.local) || "")}</div></td>
+        <td style="font-size:12.5px">${rutaHtml(f)}</td>
+        <td class="r"><a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver ↗</a></td></tr>`).join("")}</tbody></table></div></div>` : ""}
+
+    ${desordenadas ? `<p class="fic-nota" style="margin:12px 0 0">Las que salen como <b>sueltas</b> están en Drive pero fuera de su carpeta.
+      <b>Reordenar Drive</b> las mueve a Empresa/Local/Mes sin volver a subirlas ni tocar la base de datos.
+      <button class="btn sm" data-act="fac-migrar" style="margin-top:8px">Reordenar Drive</button></p>` : ""}
+
+    ${(j.sheets || []).length ? `<div style="margin-top:12px"><div class="t1" style="margin-bottom:6px">Hojas de cálculo por local</div>
+      <div class="fchips">${j.sheets.map((x) => `<a class="fchip" href="${esc(x.sheet_url)}" target="_blank" rel="noopener">${esc(nombreCortoLocal(x.local))}</a>`).join("")}</div></div>` : ""}
+  </details>`;
+}
+
 // ── De qué es cada proveedor ────────────────────────────────────────────────
 // Etiquetar 30 proveedores se hace en una tarde; etiquetar 4.000 líneas de producto no se hace
 // nunca. Por eso la categoría va en el proveedor. Ver src/modules/facturas/categorias.js.
@@ -4193,7 +4253,7 @@ function renderFacturasConfig() {
   // Carpetas de Drive vigiladas (tercer canal de ingesta)
   const carp = FCFG.carpetas || [];
   const drive = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Carpetas de Drive vigiladas</h3></div><div class="mut" style="padding:0 18px;font-size:12.5px">Deja una factura (PDF/imagen) en la carpeta de Drive de un local y entrará sola cada pocos minutos.</div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Carpeta</th><th></th></tr></thead><tbody>${carp.map((c) => `<tr><td>${facLocalCelda(c.local)}</td><td class="mut">${c.folder_url ? `<a class="link" href="${esc(c.folder_url)}" target="_blank" rel="noopener">${esc(c.folder_id)}</a>` : esc(c.folder_id)}</td><td class="r"><button class="linkbtn" data-act="fac-drive-del" data-local="${esc(c.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin carpetas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fdLocal")}<input id="fdFolder" placeholder="Enlace o ID de la carpeta de Drive" style="flex:1;min-width:0"><button class="btn primary" data-act="fac-drive-add">Vincular</button></div></div>`;
-  return `${facHeader()}<div id="facCats"></div><div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${integ}</div>`;
+  return `${facHeader()}<div id="facDrive"></div><div id="facCats"></div><div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${integ}</div>`;
 }
 
 async function loadFacturas() {
@@ -4208,7 +4268,7 @@ async function loadFacturas() {
       ]);
       FCFG = { locales: locales || [], reglas: reglas || [], grupos: grupos || [], empresas: empresas || [], groups: groups || [], integ: { drive: integDrive, gmail: integGmail }, carpetas: carpetas || [], master: master || null };
       view.innerHTML = renderFacturasConfig();
-      facCargarCategorias();   // no se espera: la configuración ya está en pantalla
+      facCargarCategorias(); facDiagnosticoDrive();   // no se esperan: la configuración ya está
       return;
     }
     if (FACTAB === "compras") return loadCompras();
@@ -4616,7 +4676,7 @@ function fac303Csv() {
   const csv = rows.map((r) => r.map((v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `modelo303_${FAC303.empresa || ""}_T${FAC303.trimestre || ""}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
-async function facMigrar() { if (!(await confirmModal("¿Reordenar en Drive todas las facturas a su carpeta Empresa/Local/Mes?", { ok: "Reordenar" }))) return; try { const j = await apiSend("POST", "/api/facturas/migrar-estructura"); toast(`Reordenadas: ${j.resultado ? j.resultado.movidos : "OK"} ✅`); } catch (e) { toast("Error: " + e.message); } }
+async function facMigrar() { if (!(await confirmModal("¿Reordenar en Drive todas las facturas a su carpeta Empresa/Local/Mes?", { ok: "Reordenar" }))) return; try { const j = await apiSend("POST", "/api/facturas/migrar-estructura"); toast(`Reordenadas: ${j.resultado ? j.resultado.movidos : "OK"} ✅`); facDiagnosticoDrive(); } catch (e) { toast("Error: " + e.message); } }
 async function facDriveAdd() { const local = facVal("fdLocal"), folder = facVal("fdFolder"); if (!local || !folder) { toast("Local y carpeta obligatorios"); return; } try { await apiSend("POST", "/api/facturas/drive-carpetas", { local, folder }); toast("Carpeta vinculada ✅"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facDriveDel(local) { if (!(await confirmModal(`¿Dejar de vigilar la carpeta de ${local}?`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/facturas/drive-carpetas/" + encodeURIComponent(local)); toast("Eliminada"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facReconstruir() { if (!(await confirmModal("¿Reconstruir el Sheet maestro con todas las facturas registradas?", { ok: "Reconstruir" }))) return; try { const j = await apiSend("POST", "/api/facturas/reconstruir-maestro"); toast(`Maestro actualizado: ${num(j.total || 0)} facturas ✅`); loadFacturas(); } catch (e) { toast("Error: " + e.message); } }
