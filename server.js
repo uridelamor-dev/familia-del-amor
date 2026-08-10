@@ -518,7 +518,10 @@ async function initDB() {
     for (const col of ["dup_estado TEXT", "dup_de INTEGER", "dup_motivos TEXT", "dup_resuelto_por TEXT", "dup_resuelto_en TEXT",
       // Conciliación: en la factura, la lista de ids de sus albaranes; en el albarán, el id de
       // su factura. Aditivo, sin FK: es el mismo patrón que el resto.
-      "conciliado_con TEXT", "conciliado_por TEXT", "conciliado_en TEXT"]) {
+      "conciliado_con TEXT", "conciliado_por TEXT", "conciliado_en TEXT",
+      // Avisos de coherencia de lo leído (base+IVA≠total, NIF distinto del de siempre,
+      // importe fuera de escala). Ver src/modules/facturas/coherencia.js.
+      "revisar TEXT"]) {
       try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
     }
     for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT"]) {

@@ -4377,6 +4377,8 @@ function facKpisHtml() {
   // que el número no cuadre con la tabla que hay debajo.
   const avisos = [];
   if (FAC_HAY_MAS) avisos.push(`Las cifras son de las <b>${num(t.docs)}</b> que cumplen el filtro; abajo se enseñan las 500 más recientes.`);
+  const nRev = (FAC_LIST || []).filter((f) => f.revisar).length;
+  if (nRev) avisos.push(`<b>${num(nRev)}</b> ${nRev === 1 ? "factura tiene" : "facturas tienen"} algo que no cuadra en lo leído (marcadas como <b>revisar</b> en la tabla): base + IVA que no da el total, un NIF distinto del de siempre o un importe fuera de escala.`);
   if (t.albaranes) avisos.push(`No se cuentan <b>${num(t.albaranes)}</b> ${t.albaranes === 1 ? "albarán" : "albaranes"} (${esc(eur(t.albaranesImporte))}): son la entrega, no el pago — su importe ya va en la factura que los agrupa. Se cruzan en <b>Conciliaciones</b>.`);
   const aviso = avisos.length
     ? `<p class="mut" style="margin:-8px 0 14px;font-size:12.5px;line-height:1.5">${avisos.join(" ")}</p>` : "";
@@ -4388,6 +4390,12 @@ function facKpisHtml() {
     </div>${aviso}</div>`;
 }
 
+/** Los avisos de coherencia guardados con la factura (base+IVA≠total, NIF raro, importe fuera de escala). */
+function facRevisarTxt(f) {
+  if (!f || !f.revisar) return [];
+  try { const a = JSON.parse(f.revisar); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+
 function facTablaHtml(list) {
   if (!list.length) return `<div class="card"><div class="mut" style="padding:8px">Sin facturas con esos filtros.</div></div>`;
   const visibles = list.map((f) => f.id);
@@ -4396,7 +4404,7 @@ function facTablaHtml(list) {
     <td class="facsel"><input type="checkbox" data-facsel="${f.id}" ${FAC_SEL.has(f.id) ? "checked" : ""} aria-label="Seleccionar"></td>
     <td class="mut">${esc((f.fecha || "").slice(0, 10))}</td>
     <td class="mut">${esc(f.numero_factura || "")}</td>
-    <td>${esc(f.proveedor || "")}${f.tipo && f.tipo !== "factura" ? ` <span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : ""}</td>
+    <td>${esc(f.proveedor || "")}${f.tipo && f.tipo !== "factura" ? ` <span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : ""}${f.revisar ? ` <span class="pill warn" style="font-size:10px" title="${esc(facRevisarTxt(f).join(" · "))}">revisar</span>` : ""}</td>
     <td>${esc(f.local || "")}</td>
     <td class="r tnum">${eur(f.base_imponible)}</td>
     <td class="r tnum">${eur(f.total)}</td>
@@ -4506,7 +4514,11 @@ function facFicha(id) {
   const fechaFld = `<div class="field"><label>Fecha</label>${dpField("ficFecha", f.fecha, "Sin fecha", { attr: 'data-fic="fecha"' })}</div>`;
   const tipoSel = `<div class="field"><label>Tipo</label><select data-fic="tipo">${["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${f.tipo === t ? "selected" : ""}>${cap(t)}</option>`).join("")}</select></div>`;
   const localSel = `<div class="field"><label>Local</label><select data-fic="local"><option value="">—</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${f.local === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`;
-  const ov = modal("Factura · " + (f.proveedor || f.id), `<div class="form-grid">${fld("Proveedor", "proveedor")}${fld("NIF proveedor", "nif")}${fld("Nº documento", "numero_factura")}${fechaFld}${tipoSel}${localSel}${fld("Empresa", "empresa")}${fld("Concepto", "concepto")}${fld("Base (€)", "base_imponible", "number")}${fld("IVA %", "porcentaje_iva", "number")}${fld("Cuota (€)", "cuota_iva", "number")}${fld("Total (€)", "total", "number")}</div>
+  // Los avisos de coherencia van ARRIBA del formulario: es donde se corrige, y decir «no
+  // cuadra» después de los campos llega tarde.
+  const revisar = facRevisarTxt(f);
+  const ov = modal("Factura · " + (f.proveedor || f.id),
+    `${revisar.length ? `<p class="fic-nota" style="margin-top:0"><b>Revisa lo leído.</b> ${revisar.map(esc).join(" ")}</p>` : ""}<div class="form-grid">${fld("Proveedor", "proveedor")}${fld("NIF proveedor", "nif")}${fld("Nº documento", "numero_factura")}${fechaFld}${tipoSel}${localSel}${fld("Empresa", "empresa")}${fld("Concepto", "concepto")}${fld("Base (€)", "base_imponible", "number")}${fld("IVA %", "porcentaje_iva", "number")}${fld("Cuota (€)", "cuota_iva", "number")}${fld("Total (€)", "total", "number")}</div>
     <div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px;flex-wrap:wrap"><div style="display:flex;gap:8px">${f.drive_url ? `<a class="btn" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver archivo ↗</a>` : ""}<button class="btn ${f.pagado ? "" : "primary"}" id="ficPago">${f.pagado ? "Marcar impagada" : "Marcar pagada"}</button></div><div style="display:flex;gap:8px"><button class="btn danger" id="ficDel">Eliminar</button><button class="btn" data-close>Cerrar</button><button class="btn primary" id="ficSave">Guardar cambios</button></div></div>`);
   ov.querySelector("#ficDel").addEventListener("click", async () => {
     if (!(await confirmModal("¿Eliminar esta factura? Se quitará de la BD y de los Sheets.", { ok: "Eliminar", danger: true }))) return;
@@ -5164,6 +5176,8 @@ async function comprasVerFactura(id) {
   const f = j.factura;
   modal(`${f.proveedor || "Factura"} · ${f.numero_factura || "s/n"}`, `
     <p class="mut" style="margin:0 0 12px">${esc(f.fecha || "")} · ${esc(nombreCortoLocal(f.local))} · base ${esc(eur(f.base_imponible || 0))}</p>
+    ${(() => { const av = facRevisarTxt(f); return av.length
+      ? `<p class="fic-nota"><b>Revisa lo leído.</b> ${av.map(esc).join(" ")}</p>` : ""; })()}
     ${f.lineas_aviso ? `<p class="fic-nota">${esc(f.lineas_aviso)}</p>` : ""}
     ${j.lineas.length ? `<div class="tw" style="max-height:340px;overflow:auto"><table class="tbl">
       <thead><tr><th>Producto</th><th style="text-align:right">Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Importe</th></tr></thead>

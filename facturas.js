@@ -4,6 +4,7 @@ import { canonizarLocal, esLocalCanonico } from "./src/modules/facturas/local-ca
 import { claveProveedor, seLeenLineas } from "./src/modules/facturas/categorias.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { corregirEmisorReceptor } from "./src/modules/facturas/emisor.js";
+import { revisarCoherencia, textosDe } from "./src/modules/facturas/coherencia.js";
 import { createHash } from "crypto";
 import { PDFDocument } from "pdf-lib";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -652,6 +653,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   // 2. Extraer datos con Claude
   const datos = await extraerDatosDocumento(buffer, mimeType);
   await revisarEmisorReceptor(datos, dbAll);   // ver por qué en revisarEmisorReceptor
+  const coher = await revisarCoherenciaFactura(datos, dbAll);
   console.log(`[Facturas] Datos extraídos para ${local}:`, JSON.stringify(datos));
 
   // 3. Comprobar duplicados antes de subir nada (facturas procesadas y pendientes)
@@ -708,13 +710,14 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   const ins = await dbRun(
     `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
       base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal,
-      dup_estado, dup_de, dup_motivos, sheet_synced)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
+      dup_estado, dup_de, dup_motivos, revisar, sheet_synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
     [local, empresa, datos.tipo, datos.fecha, datos.numero_factura, datos.proveedor,
      datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
      datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash, canal,
      enDuda ? "duda" : null, enDuda ? enDuda.contra.id : null,
-     enDuda ? JSON.stringify(enDuda.motivos) : null]
+     enDuda ? JSON.stringify(enDuda.motivos) : null,
+     coher.avisos.length ? JSON.stringify(textosDe(coher.avisos)) : null]
   );
   if (enDuda) console.warn(`[Facturas] posible duplicado de #${enDuda.contra.id}: ${resumenMotivos(enDuda.motivos)}`);
   const facturaId = ins?.id;
@@ -861,6 +864,32 @@ function normalizarNif(nif) {
  * una en catalán. Por CIF tampoco, porque el número que traía era el de cliente. Un filtro que
  * solo acierta cuando el texto coincide letra por letra no filtra casi nada.
  */
+/**
+ * Comprobaciones deterministas sobre lo leído: que base + IVA dé el total, que la cuota cuadre
+ * con su porcentaje, y que el NIF y el importe encajen con lo que ese proveedor traía siempre.
+ *
+ * No corrige nada. Corregir un importe «porque no cuadra» es inventarse un dato contable, y un
+ * dato inventado que parece revisado es peor que uno mal que se nota.
+ */
+async function revisarCoherenciaFactura(datos, dbAll) {
+  try {
+    if (!datos) return { avisos: [], grave: false };
+    let historial = {};
+    const prov = (datos.proveedor || "").trim();
+    if (dbAll && prov) {
+      const previas = await dbAll(
+        `SELECT nif, total::float AS total FROM facturas
+          WHERE LOWER(proveedor) = LOWER(?) AND COALESCE(dup_estado,'') <> 'duda'
+          ORDER BY id DESC LIMIT 40`, [prov]).catch(() => []);
+      historial = { nifs: previas.map((x) => String(x.nif || "").replace(/[\s.\-/]/g, "").toUpperCase()).filter(Boolean),
+        totales: previas.map((x) => x.total) };
+    }
+    const r = revisarCoherencia(datos, historial);
+    if (r.avisos.length) console.warn(`[Facturas] revisar (${prov || "?"}): ${textosDe(r.avisos).join(" | ")}`);
+    return r;
+  } catch (e) { console.error("[Facturas] revisarCoherencia:", e.message); return { avisos: [], grave: false }; }
+}
+
 async function revisarEmisorReceptor(datos, dbAll) {
   try {
     if (!datos || !dbAll) return null;
