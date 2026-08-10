@@ -354,7 +354,11 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .drw{position:fixed;top:0;right:0;bottom:0;width:min(400px,92vw);background:var(--surface);
   border-left:1px solid var(--border2);box-shadow:-16px 0 40px rgba(15,17,12,.14);
   display:flex;flex-direction:column;transform:translateX(100%);transition:transform .2s ease}
-.drw.on{transform:none}
+/* OJO: la clase `on` la pone drawer() en el FONDO (.drw-ov), no en el panel. Con solo
+   `.drw.on` el fondo se oscurecía y el panel se quedaba fuera de la pantalla, así que parecía
+   que el botón de filtros no hacía nada. Se dejan las dos formas por si alguna vez se marca
+   el panel directamente. */
+.drw-ov.on .drw,.drw.on{transform:none}
 .drw-h{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--border)}
 .drw-h h3{margin:0;font-size:15px}
 .drw-b{flex:1;overflow:auto;padding:4px 20px 20px}
