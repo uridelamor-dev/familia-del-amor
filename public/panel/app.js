@@ -3312,8 +3312,16 @@ async function ficPintarHoy() {
     j = await apiRaw("/api/fichajes/hoy?" + qs.toString());
   } catch { cont.innerHTML = `<div class="card"><p class="mut" style="margin:0">No se pudo cargar el registro.</p></div>`; return; }
 
-  const dentro = j.personas.filter((p) => p.estado !== "fuera");
-  const resto = j.personas.filter((p) => p.estado === "fuera");
+  // Si la respuesta llega sin `personas` —un despliegue a medias, un error del TPV— antes
+  // reventaba aquí y la pantalla se quedaba EN BLANCO, sin decir nada. Una pantalla vacía sin
+  // explicación es peor que un error: nadie sabe si es que no hay nadie fichando o que falla.
+  const personas = Array.isArray(j.personas) ? j.personas : [];
+  if (!Array.isArray(j.personas)) {
+    cont.innerHTML = `<div class="card"><p class="mut" style="margin:0">El registro ha llegado incompleto. Vuelve a cargar la página; si sigue igual, avisa.</p></div>`;
+    return;
+  }
+  const dentro = personas.filter((p) => p.estado !== "fuera");
+  const resto = personas.filter((p) => p.estado === "fuera");
 
   const fila = (p) => `<tr>
       <td><span class="fic-dot ${esc(p.estado)}"></span> <b>${esc(p.nombre)}</b></td>

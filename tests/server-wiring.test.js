@@ -53,3 +53,35 @@ describe("server.js — modelo It2 e integridad PostgreSQL", () => {
     assert.ok(!/PRAGMA|this\.lastID|\.changes\b/.test(src));
   });
 });
+
+describe("la API no contesta con el esquema a medias", () => {
+
+  test("el guardia va ANTES de las rutas: si no, no guarda nada", () => {
+    const g = src.indexOf('app.use("/api", (req, res, next) => {');
+    const primeraRuta = src.search(/app\.(get|post|put)\("\/api\//);
+    assert.ok(g > 0, "falta el guardia de arranque");
+    assert.ok(g < primeraRuta, "el guardia tiene que registrarse antes que las rutas");
+  });
+
+  test("devuelve 503 y dice por qué, no un 500 con un error de SQL", () => {
+    const g = src.indexOf('app.use("/api", (req, res, next) => {');
+    const bloque = src.slice(g, g + 500);
+    assert.match(bloque, /status\(503\)/);
+    assert.match(bloque, /arrancando/);
+    assert.match(bloque, /Retry-After/);
+  });
+
+  test("la bandera se levanta justo después de initDB, no antes", () => {
+    const i = src.indexOf("await initDB();");
+    assert.notEqual(i, -1);
+    assert.match(src.slice(i, i + 120), /DB_LISTA = true/);
+    // Y no hay ningún otro sitio que la ponga a true por su cuenta.
+    assert.equal((src.match(/DB_LISTA = true/g) || []).length, 1);
+  });
+
+  test("lo estático se sigue sirviendo: el guardia solo cubre /api", () => {
+    const g = src.indexOf('app.use("/api", (req, res, next) => {');
+    const est = src.indexOf("express.static(path.join(__dirname");
+    assert.ok(g < est || est > 0, "el estático no puede quedar detrás del guardia de la API");
+  });
+});

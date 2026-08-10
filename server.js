@@ -139,6 +139,22 @@ function decUserPass(stored) {
 
 // Va ANTES que todo lo que responde: comprime el HTML, el JS y el JSON de la API.
 // `public/panel/app.js` son 474 KB que salían sin comprimir en cada primera visita.
+// El servidor empieza a escuchar ANTES de que `initDB()` termine (así el health check de
+// Replit responde enseguida y el despliegue no se marca como caído). Pero durante esos
+// segundos las tablas y las columnas nuevas todavía no existen, y una consulta contra una
+// columna que falta no falla a medias: falla del todo.
+//
+// Así que la API contesta «arrancando» hasta que el esquema está listo. Un 503 con su motivo
+// se entiende y se reintenta; un 500 con «column dup_estado does not exist» parece que se ha
+// roto algo. Lo estático (la web pública, el panel) se sirve igual desde el primer segundo.
+let DB_LISTA = false;
+app.use("/api", (req, res, next) => {
+  if (DB_LISTA) return next();
+  res.set("Retry-After", "3");
+  res.status(503).json({ ok: false, arrancando: true,
+    error: "El sistema está arrancando. Vuelve a intentarlo en unos segundos." });
+});
+
 app.use(comprimir());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -8705,6 +8721,7 @@ const server = app.listen(PORT, async () => {
   // Inicializar esquema PostgreSQL
   try {
     await initDB();
+    DB_LISTA = true;   // a partir de aquí la API puede contestar de verdad
   } catch (e) {
     console.error("[DB] Error inicializando esquema:", e.message);
     process.exit(1);
