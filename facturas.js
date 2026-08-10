@@ -5,6 +5,7 @@ import { claveProveedor, seLeenLineas } from "./src/modules/facturas/categorias.
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { corregirEmisorReceptor } from "./src/modules/facturas/emisor.js";
 import { createHash } from "crypto";
+import { PDFDocument } from "pdf-lib";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 
 // Serializa el procesamiento de un MISMO archivo (por hash) para evitar duplicados por carrera:
@@ -874,6 +875,29 @@ async function revisarEmisorReceptor(datos, dbAll) {
     }
     return r;
   } catch (e) { console.error("[Facturas] revisarEmisorReceptor:", e.message); return null; }
+}
+
+// ── Combinar varios archivos (fotos/PDFs) en un único PDF ───────────────────
+// Para facturas de varias hojas: cada imagen pasa a ser una página y los PDFs
+// se fusionan en orden. El resultado se procesa como UN solo documento.
+export async function combinarArchivosEnPdf(archivos) {
+  const out = await PDFDocument.create();
+  for (const { buffer, mimetype, originalname } of archivos) {
+    if (mimetype === "application/pdf") {
+      const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const pages = await out.copyPages(src, src.getPageIndices());
+      pages.forEach((p) => out.addPage(p));
+    } else if (mimetype === "image/jpeg" || mimetype === "image/jpg" || mimetype === "image/png") {
+      const img = mimetype === "image/png" ? await out.embedPng(buffer) : await out.embedJpg(buffer);
+      // Página a tamaño de la imagen (en puntos) para no recortar ni deformar.
+      const page = out.addPage([img.width, img.height]);
+      page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+    } else {
+      throw new Error(`No se puede combinar «${originalname || "archivo"}» (${mimetype}). Usa PDF, JPG o PNG.`);
+    }
+  }
+  if (!out.getPageCount()) throw new Error("No hay páginas que combinar.");
+  return Buffer.from(await out.save());
 }
 
 export async function procesarFacturaSinLocal({ buffer, mimeType, filename, origen, getToken, dbGet, dbAll, dbRun }) {

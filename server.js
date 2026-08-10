@@ -11,7 +11,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes } from "./facturas.js";
+import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -1865,6 +1865,29 @@ app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad", "encar
     return res.status(403).json({ ok: false, error: "Tu usuario no tiene un establecimiento asignado, así que no se sabe a qué local pertenece la factura. Pídeselo a dirección." });
   }
   const local = fijado || (req.body.local || "").trim();
+
+  // Modo "misma factura": todas las páginas subidas se combinan en UN solo PDF
+  // y se procesan como un único documento (la IA ve todas las hojas de golpe).
+  const combinar = ["1", "true", "si", "sí"].includes(String(req.body.combinar || "").toLowerCase());
+  if (combinar && archivos.length > 1) {
+    const invalido = archivos.find((f) => !(f.mimetype === "application/pdf" || f.mimetype.startsWith("image/")));
+    if (invalido) return res.status(400).json({ ok: false, error: `«${invalido.originalname}»: solo se admiten PDF o imágenes` });
+    const nombre = (archivos[0].originalname || "factura").replace(/\.[^.]+$/, "") + "-completa.pdf";
+    try {
+      const buffer = await combinarArchivosEnPdf(archivos);
+      let result;
+      if (local) result = await procesarFactura({ buffer, mimeType: "application/pdf", filename: nombre, local, canal: "Manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
+      else result = await procesarFacturaSinLocal({ buffer, mimeType: "application/pdf", filename: nombre, origen: "manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
+      const r = { filename: nombre, paginas: archivos.length, ok: true, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl };
+      return res.json({ ok: true, total: 1, correctas: 1, resultados: [r] });
+    } catch (e) {
+      const r = e && e.isDuplicate
+        ? { filename: nombre, ok: false, duplicate: true, error: e.message || "Esta factura ya está registrada" }
+        : { filename: nombre, ok: false, error: e.message };
+      return res.json({ ok: true, total: 1, correctas: 0, resultados: [r] });
+    }
+  }
+
   const resultados = [];
   for (const f of archivos) {
     const { buffer, mimetype, originalname } = f;
@@ -2047,6 +2070,63 @@ app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), asy
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
+});
+
+// Fusionar varias facturas pendientes en un único documento: son páginas de la
+// MISMA factura que entraron por separado (dos fotos, dos correos…). Se descargan
+// de Drive, se combinan en un PDF, se re-extraen los datos viendo todas las hojas,
+// y los registros/archivos antiguos se eliminan.
+app.post("/api/facturas/pendientes/fusionar", requireAuth(["direccion"]), async (req, res) => {
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number).filter(Number.isFinite) : [];
+  if (ids.length < 2) return res.status(400).json({ ok: false, error: "Elige al menos 2 documentos para fusionar" });
+  try {
+    const pendientes = [];
+    for (const id of ids) {
+      const p = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ?", [id]);
+      if (!p) return res.status(404).json({ ok: false, error: `Pendiente #${id} no encontrado` });
+      if (!p.drive_file_id) return res.status(400).json({ ok: false, error: `Pendiente #${id} no tiene archivo en Drive` });
+      pendientes.push(p);
+    }
+    const token = await getDriveAccessToken();
+    const archivos = [];
+    for (const p of pendientes) {
+      const meta = await (await fetch(`https://www.googleapis.com/drive/v3/files/${p.drive_file_id}?fields=mimeType,name`, { headers: { Authorization: `Bearer ${token}` } })).json();
+      const dl = await fetch(`https://www.googleapis.com/drive/v3/files/${p.drive_file_id}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!dl.ok) return res.status(502).json({ ok: false, error: `No se pudo descargar de Drive el pendiente #${p.id}` });
+      archivos.push({ buffer: Buffer.from(await dl.arrayBuffer()), mimetype: meta.mimeType || "application/pdf", originalname: meta.name || `pendiente-${p.id}` });
+    }
+    const buffer = await combinarArchivosEnPdf(archivos);
+
+    // PRIMERO se crea el documento fusionado; los registros viejos solo se borran
+    // cuando el nuevo existe. Si algo falla aquí, no se pierde nada: los pendientes
+    // originales siguen intactos en BD y en Drive. (El hash del PDF combinado es
+    // distinto al de los originales, así que la deduplicación no lo bloquea.)
+    let result;
+    try {
+      result = await procesarFacturaSinLocal({ buffer, mimeType: "application/pdf", filename: "factura-fusionada.pdf", origen: "fusion", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: "No se pudo procesar el documento fusionado (no se ha borrado nada): " + e.message });
+    }
+
+    // Documento nuevo creado con éxito → retirar los registros y archivos viejos.
+    for (const p of pendientes) await dbRun("DELETE FROM facturas_pendientes WHERE id = ?", [p.id]);
+    const noRetirados = [];
+    for (const p of pendientes) {
+      try {
+        const tr = await fetch(`https://www.googleapis.com/drive/v3/files/${p.drive_file_id}`, {
+          method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ trashed: true }),
+        });
+        if (!tr.ok) throw new Error(`HTTP ${tr.status}`);
+      } catch (e) {
+        noRetirados.push(p.drive_file_id);
+        console.error(`[fusionar] No se pudo retirar de Drive ${p.drive_file_id}:`, e.message);
+      }
+    }
+    if (noRetirados.length) console.error(`[fusionar] Quedan ${noRetirados.length} archivo(s) viejos sin retirar en Drive (revisar a mano):`, noRetirados.join(", "));
+
+    res.json({ ok: true, paginas: archivos.length, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl, drive_sin_retirar: noRetirados.length || undefined });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // Empezar de cero: limpia TODO el estado de facturas en la BD (no borra archivos de Drive,

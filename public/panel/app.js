@@ -3712,12 +3712,27 @@ function renderFacturas(list, pend, stats, empresas) {
   const pendRow = (p) => {
     const sug = p.sugerido || {};
     const badge = sug.local ? `<span class="pill ${sug.confianza === "alta" ? "ok" : ""}" title="${esc(sug.motivo)}" style="font-size:10.5px">Sugerido: ${esc(nombreCortoLocal(sug.local))}</span>` : "";
-    return `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "(sin proveedor)")} ${badge}</div><div class="t2">${esc((p.fecha || "").slice(0, 10))} · ${eur(p.total)}</div></div><button class="btn primary" data-act="fac-revisar" data-id="${p.id}">Revisar</button></div>`;
+    // La fusión solo la puede ejecutar dirección (igual que asignar): a los demás no se les enseña.
+    const puedeFusionar = USER.rol === "direccion";
+    return `<div class="row">${puedeFusionar ? `<input type="checkbox" class="pendFusChk" data-id="${p.id}" style="width:auto;flex:none" title="Marcar para fusionar">` : ""}<div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "(sin proveedor)")} ${badge}</div><div class="t2">${esc((p.fecha || "").slice(0, 10))} · ${eur(p.total)}</div></div><button class="btn primary" data-act="fac-revisar" data-id="${p.id}">Revisar</button></div>`;
   };
-  const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map(pendRow).join("")}</div></div>` : "";
+  const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map(pendRow).join("")}</div>${pend.length > 1 && USER.rol === "direccion" ? `<div class="toolbar" style="padding:10px 18px;margin:0"><button class="btn sm" data-act="fac-fusionar">Fusionar marcadas (misma factura)</button><span class="mut" style="font-size:12px">Marca 2+ documentos que sean páginas de la misma factura: se unirán en un solo PDF y se volverán a leer.</span></div>` : ""}</div>` : "";
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
   return `${facHeader()}${resumen}${toolbar}<div id="facDups"></div><div id="facLocalesRaros"></div><div id="facSinCats"></div>${vizGrid}${pendCard}<div id="facRes">${facTablaHtml(list)}</div>`;
 }
+// ── Fusionar pendientes que son páginas de la misma factura ─────────────────
+async function facFusionarPendientes() {
+  const ids = Array.from(document.querySelectorAll(".pendFusChk:checked")).map((c) => Number(c.getAttribute("data-id")));
+  if (ids.length < 2) { toast("Marca al menos 2 documentos para fusionar"); return; }
+  if (!(await confirmModal(`¿Unir ${ids.length} documentos en una sola factura? Se combinarán en un PDF y se volverán a leer los datos.`, { ok: "Fusionar" }))) return;
+  toast("Fusionando y releyendo la factura…");
+  try {
+    const j = await apiSend("POST", "/api/facturas/pendientes/fusionar", { ids });
+    toast(`✅ Fusionadas ${j.paginas} páginas${j.proveedor ? " · " + j.proveedor : ""}${j.pendiente ? " · falta asignarle local" : ""}`);
+    if (CURRENT === "facturas") loadFacturas();
+  } catch (e) { toast("⚠ No se pudo fusionar: " + e.message); }
+}
+
 // ── Posibles duplicados ─────────────────────────────────────────────────────
 // Las que entraron con dudas. Están guardadas pero NO cuentan en ningún total hasta que
 // alguien decida, así que lo primero que se dice es cuánto dinero hay ahí parado: si son
@@ -4327,6 +4342,9 @@ async function loadSubirFactura() {
         <span>Se abre la cámara del móvil</span>
       </button>
       <button class="subalt" data-act="sf-archivo">o elegir un archivo (PDF o imagen)</button>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;cursor:pointer;justify-content:center">
+        <input type="checkbox" id="sfCombinar" style="width:auto"> Son páginas de la <b>misma factura</b> (se unirán en un solo documento)
+      </label>
       <p class="mut" style="margin:14px 0 0;font-size:12.5px;line-height:1.55">
         Se lee sola: proveedor, fecha, número, base, IVA y total. Se guarda en Drive en la carpeta de tu local
         y se avisa si esa factura ya estaba subida. Puedes mandar varias de una vez.</p>
@@ -4363,6 +4381,8 @@ async function sfEnviar(files) {
     // El encargado no manda local: se lo pone el servidor. Si lo mandara, tampoco se usaría.
     const sel = document.getElementById("sfLocal");
     if (sel && sel.value) fd.append("local", sel.value);
+    const comb = document.getElementById("sfCombinar");
+    if (comb && comb.checked && files.length > 1) fd.append("combinar", "1");
     const r = await fetch("/api/facturas/subir", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
     const j = await r.json();
     if (!j.ok) { toast("No se pudo subir: " + (j.error || "error desconocido")); return; }
@@ -4377,18 +4397,21 @@ async function sfEnviar(files) {
 
 function facSubir() {
   const localOpts = ['<option value="">Detectar automáticamente (por NIF, empresa o proveedor)</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
-  const ov = modal("Subir facturas", `<div class="field" style="width:100%"><label>Archivos (PDF o imágenes, puedes elegir varios)</label><input type="file" id="fsFile" accept="application/pdf,image/*" multiple></div><div class="field" style="width:100%"><label>Local</label><select id="fsLocal">${localOpts}</select></div><div class="mut" style="font-size:12px">Se procesan en segundo plano con la misma IA, orden en Drive y control de duplicados que WhatsApp/correo. Requiere Google conectado. Puedes cerrar y seguir trabajando; te aviso al terminar.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fsSend">Subir y procesar</button></div>`);
+  const ov = modal("Subir facturas", `<div class="field" style="width:100%"><label>Archivos (PDF o imágenes, puedes elegir varios)</label><input type="file" id="fsFile" accept="application/pdf,image/*" multiple></div><div class="field" style="width:100%"><label>Local</label><select id="fsLocal">${localOpts}</select></div><label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:10px"><input type="checkbox" id="fsCombinar" style="width:auto"> Son páginas de la <b>misma factura</b> (se unirán en un solo documento)</label><div class="mut" style="font-size:12px">Se procesan en segundo plano con la misma IA, orden en Drive y control de duplicados que WhatsApp/correo. Requiere Google conectado. Puedes cerrar y seguir trabajando; te aviso al terminar.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fsSend">Subir y procesar</button></div>`);
   ov.querySelector("#fsSend").addEventListener("click", () => {
     const inp = ov.querySelector("#fsFile"); const files = inp && inp.files ? Array.from(inp.files) : [];
     if (!files.length) { toast("Elige al menos un archivo"); return; }
     const loc = ov.querySelector("#fsLocal").value;
+    const combinar = !!(ov.querySelector("#fsCombinar") && ov.querySelector("#fsCombinar").checked);
     ov.remove(); // fuera la pantallita: sigue trabajando
-    toast(files.length === 1 ? `Subiendo «${files[0].name}» en segundo plano…` : `Subiendo ${files.length} facturas en segundo plano…`);
+    toast(combinar && files.length > 1 ? `Uniendo ${files.length} páginas en una sola factura…`
+      : files.length === 1 ? `Subiendo «${files[0].name}» en segundo plano…` : `Subiendo ${files.length} facturas en segundo plano…`);
     (async () => {
       try {
         const fd = new FormData();
         files.forEach((f) => fd.append("files", f));
         if (loc) fd.append("local", loc);
+        if (combinar && files.length > 1) fd.append("combinar", "1");
         const r = await fetch("/api/facturas/subir", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
         const j = await r.json();
         if (!j.ok) { toast("⚠ Error al subir: " + (j.error || "desconocido")); return; }
@@ -6175,6 +6198,7 @@ document.addEventListener("click", (e) => {
   else if (act === "user-del") userDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "fac-pago") facPago(t.getAttribute("data-id"));
   else if (act === "fac-revisar") facRevisar(t.getAttribute("data-id"));
+  else if (act === "fac-fusionar") facFusionarPendientes();
   else if (act === "fac-tab") facTab(t.getAttribute("data-tab"));
   else if (act === "fac-loc-add") facLocAdd();
   else if (act === "fac-loc-del") facLocDel(t.getAttribute("data-local"));
