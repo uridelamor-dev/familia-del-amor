@@ -1746,6 +1746,11 @@ app.delete("/api/facturas/grupos/:id", requireAuth(["direccion"]), async (req, r
 // ni en los totales, ni en el gasto por categoría. Un total con un duplicado dentro es un
 // total falso. Se ve aparte, en su propia pantalla, con lo que suma.
 const SIN_DUDAS = "COALESCE(dup_estado,'') <> 'duda'";
+// Un albarán es la ENTREGA; lo que se paga es la factura que agrupa varios. Sumar los dos es
+// contar el mismo gasto dos veces: el albarán de 400 € y la factura de 1.240 € que lo incluye
+// darían 1.640 €. Así que el dinero se cuenta solo sobre facturas y tickets. Los albaranes
+// siguen viéndose en la lista y se concilian aparte.
+const SIN_ALBARANES = "COALESCE(tipo,'factura') <> 'albaran'";
 
 function facturasWhere(query = {}) {
   const { local, empresa, tipo, estado, from, to, q, proveedor } = query;
@@ -1778,13 +1783,17 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
     // Los totales se calculan sobre el MISMO filtro y SIN el tope: sumar solo las filas que se
     // enseñan daría un total corto en cuanto haya más de 500, y un total corto no se nota —
     // parece que se ha gastado menos—. Es una consulta agregada, no trae filas.
+    // Los albaranes NO suman: son la entrega, no el pago. Se cuentan aparte para poder decir
+    // cuántos se están dejando fuera — esconderlos sin más sería otra forma de mentir.
     const t = await dbGet(
-      `SELECT count(*)::int AS docs,
-              COALESCE(SUM(base_imponible),0)::float AS base,
-              COALESCE(SUM(cuota_iva),0)::float AS iva,
-              COALESCE(SUM(total),0)::float AS total,
-              count(*) FILTER (WHERE COALESCE(pagado,0) = 0)::int AS pendientes,
-              COALESCE(SUM(total) FILTER (WHERE COALESCE(pagado,0) = 0),0)::float AS por_pagar
+      `SELECT count(*) FILTER (WHERE ${SIN_ALBARANES})::int AS docs,
+              COALESCE(SUM(base_imponible) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS base,
+              COALESCE(SUM(cuota_iva) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS iva,
+              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS total,
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0)::int AS pendientes,
+              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0),0)::float AS por_pagar,
+              count(*) FILTER (WHERE NOT (${SIN_ALBARANES}))::int AS albaranes,
+              COALESCE(SUM(total) FILTER (WHERE NOT (${SIN_ALBARANES})),0)::float AS albaranes_importe
          FROM facturas ${where}`, params);
     res.json({ ok: true, data: rows, totales: t || null, hayMas: (t?.docs || 0) > rows.length });
   } catch (e) { res.status(500).json({ ok: false, error: e.message, data: [] }); }
@@ -2214,14 +2223,14 @@ app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async
            ROUND(SUM(COALESCE(base_imponible,0))::NUMERIC, 2) AS base,
            ROUND(SUM(COALESCE(cuota_iva,0))::NUMERIC, 2) AS iva
          FROM facturas
-         WHERE TO_CHAR(fecha::date, 'YYYY') = ? AND fecha IS NOT NULL${andLocal}
+         WHERE ${SIN_ALBARANES} AND TO_CHAR(fecha::date, 'YYYY') = ? AND fecha IS NOT NULL${andLocal}
          GROUP BY local, mes ORDER BY local, mes`,
         p
       ),
       dbAll(
         `SELECT MIN(proveedor) AS proveedor, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
          FROM facturas
-         WHERE TO_CHAR(fecha::date, 'YYYY') = ? AND proveedor IS NOT NULL AND TRIM(proveedor) != ''${andLocal}
+         WHERE ${SIN_ALBARANES} AND TO_CHAR(fecha::date, 'YYYY') = ? AND proveedor IS NOT NULL AND TRIM(proveedor) != ''${andLocal}
          GROUP BY LOWER(TRIM(proveedor))
          ORDER BY total DESC LIMIT 10`,
         p
@@ -2229,7 +2238,7 @@ app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async
       dbAll(
         `SELECT local, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
          FROM facturas
-         WHERE TO_CHAR(fecha::date, 'YYYY') = ?${andLocal}
+         WHERE ${SIN_ALBARANES} AND TO_CHAR(fecha::date, 'YYYY') = ?${andLocal}
          GROUP BY local ORDER BY total DESC`,
         p
       ),
@@ -2238,7 +2247,7 @@ app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async
            ROUND(SUM(COALESCE(base_imponible,0))::NUMERIC, 2) AS base,
            ROUND(SUM(COALESCE(cuota_iva,0))::NUMERIC, 2) AS iva,
            ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
-         FROM facturas WHERE TO_CHAR(fecha::date, 'YYYY') = ?${andLocal}`,
+         FROM facturas WHERE ${SIN_ALBARANES} AND TO_CHAR(fecha::date, 'YYYY') = ?${andLocal}`,
         p
       )
     ]);
@@ -3236,7 +3245,7 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
     // saliera de las líneas, las categorías de gasto estructural darían siempre cero.
     const etiquetas = await dbAll(`SELECT prov_clave AS proveedor, categoria, subcategoria FROM facturas_proveedor_cats`).catch(() => []);
     const porProveedor = await dbAll(
-      `SELECT f.proveedor, COALESCE(SUM(f.total),0)::float AS importe FROM facturas f ${whereFac} GROUP BY f.proveedor`, parFac);
+      `SELECT f.proveedor, COALESCE(SUM(f.total),0)::float AS importe FROM facturas f ${whereFac} AND COALESCE(f.tipo,'factura') <> 'albaran' GROUP BY f.proveedor`, parFac);
     const idxCat = new Map();
     for (const e of etiquetas) {
       if (!idxCat.has(e.proveedor)) idxCat.set(e.proveedor, []);
@@ -3504,7 +3513,7 @@ app.get("/api/facturas/categorias", requireAuth(["direccion", "contabilidad"]), 
     const [etiquetas, provs] = await Promise.all([
       dbAll(`SELECT prov_clave, proveedor, categoria, subcategoria FROM facturas_proveedor_cats ORDER BY proveedor, categoria, subcategoria`),
       dbAll(`SELECT proveedor, count(*)::int AS facturas, COALESCE(SUM(total),0)::float AS gasto
-               FROM facturas WHERE proveedor IS NOT NULL AND proveedor <> ''
+               FROM facturas WHERE ${SIN_ALBARANES} AND proveedor IS NOT NULL AND proveedor <> ''
               GROUP BY proveedor ORDER BY COALESCE(SUM(total),0) DESC`),
     ]);
     const idx = indiceCategorias(etiquetas);

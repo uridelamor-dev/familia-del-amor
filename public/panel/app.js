@@ -4358,7 +4358,8 @@ function facSumaTotales(resp) {
   if (!ts.length) return null;
   const suma = (k) => ts.reduce((s2, t) => s2 + (Number(t[k]) || 0), 0);
   return { docs: suma("docs"), base: suma("base"), iva: suma("iva"), total: suma("total"),
-    pendientes: suma("pendientes"), porPagar: suma("por_pagar") };
+    pendientes: suma("pendientes"), porPagar: suma("por_pagar"),
+    albaranes: suma("albaranes"), albaranesImporte: suma("albaranes_importe") };
 }
 
 /**
@@ -4371,9 +4372,14 @@ function facKpisHtml() {
   if (!t) return `<div id="facKpis"></div>`;
   const f = facFiltrosActivos();
   const que = f.length ? "de lo filtrado" : "de todo";
-  const aviso = FAC_HAY_MAS
-    ? `<p class="mut" style="margin:-8px 0 14px;font-size:12.5px">Las cifras son de las <b>${num(t.docs)}</b> facturas que cumplen el filtro; abajo se enseñan las 500 más recientes.</p>`
-    : "";
+  // Los albaranes NO suman: son la entrega, no el pago —la factura que los agrupa ya lleva ese
+  // importe—. Pero se dice cuántos son y cuánto valen: esconderlos sin más sería otra forma de
+  // que el número no cuadre con la tabla que hay debajo.
+  const avisos = [];
+  if (FAC_HAY_MAS) avisos.push(`Las cifras son de las <b>${num(t.docs)}</b> que cumplen el filtro; abajo se enseñan las 500 más recientes.`);
+  if (t.albaranes) avisos.push(`No se cuentan <b>${num(t.albaranes)}</b> ${t.albaranes === 1 ? "albarán" : "albaranes"} (${esc(eur(t.albaranesImporte))}): son la entrega, no el pago — su importe ya va en la factura que los agrupa. Se cruzan en <b>Conciliaciones</b>.`);
+  const aviso = avisos.length
+    ? `<p class="mut" style="margin:-8px 0 14px;font-size:12.5px;line-height:1.5">${avisos.join(" ")}</p>` : "";
   return `<div id="facKpis"><div class="grid g4" style="margin-bottom:16px">
       ${stat(`Facturas ${que}`, "🧾", num(t.docs))}
       ${stat("Base imponible", "€", eur(t.base))}

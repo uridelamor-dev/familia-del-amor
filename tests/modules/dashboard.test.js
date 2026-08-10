@@ -142,7 +142,11 @@ function fakeX(hoy) {
     if (/dia::date > \?::date AND dia::date <= \?/.test(sql)) return { n: 40, personas: 130 };
     if (/SELECT COUNT\(\*\)::int n FROM maintenance_issues WHERE estado NOT IN/.test(sql) && !/GROUP BY/.test(sql)) return { n: 5 };
     if (/AVG\(rating\)/.test(sql)) return { media: 4.4, total: 120 };
-    if (/COUNT\(\*\)::int n, COALESCE\(SUM\(total\),0\)::float total FROM facturas WHERE COALESCE\(pagado,0\) = 0/.test(sql)) return { n: 9, total: 5400 };
+    // El simulacro casa por lo que la consulta PIDE, no por su texto exacto: si no, cualquier
+    // condición nueva —como excluir los albaranes— lo rompe sin que haya cambiado nada del
+    // comportamiento que se está probando.
+    if (/COUNT\(\*\)::int n, COALESCE\(SUM\(total\),0\)::float total FROM facturas/.test(sql)
+        && /COALESCE\(pagado,0\) = 0/.test(sql)) return { n: 9, total: 5400 };
     if (/pagado,0\) = 0 AND fecha IS NOT NULL.*ORDER BY fecha::date ASC/.test(sql)) return { proveedor: "Maresme Fruites", total: 1200, fecha: "2026-05-10" };
     if (/FROM users WHERE rol IN/.test(sql)) return { n: 18 };
     if (/hr_llamadas_mes WHERE mes = \?/.test(sql)) return { n: 6 };

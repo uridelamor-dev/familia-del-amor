@@ -1,5 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { proponerConciliacion, buscarCombinacion, resumenConciliacion } from "../../src/modules/facturas/conciliacion.js";
 
 const P = { proveedor: "Grau Distribucions", nif: "B17972860" };
@@ -93,5 +94,48 @@ describe("el resumen de la pantalla", () => {
     assert.equal(r.parciales, 2);
     assert.equal(r.sinAlbaranes, 1);
     assert.equal(r.importeParcial, 300, "lo que hay por revisar");
+  });
+});
+
+describe("un albarán no es gasto: no puede sumar dos veces", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  const dash = readFileSync(new URL("../../src/modules/dashboard/dashboard.service.js", import.meta.url), "utf8");
+  const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+
+  test("hay una sola definición de «esto no es un albarán»", () => {
+    assert.match(server, /const SIN_ALBARANES = "COALESCE\(tipo,'factura'\) <> 'albaran'"/);
+  });
+
+  test("las cifras de Compras lo excluyen", () => {
+    const i = server.indexOf("count(*) FILTER (WHERE ${SIN_ALBARANES})::int AS docs");
+    assert.notEqual(i, -1, "los totales tienen que filtrar los albaranes");
+  });
+
+  test("y los declaran, en vez de esconderlos", () => {
+    // Un número que no cuadra con la tabla de debajo es peor que un número grande.
+    assert.match(server, /AS albaranes,/);
+    assert.match(panel, /No se cuentan <b>\$\{num\(t\.albaranes\)\}<\/b>/);
+  });
+
+  test("el dashboard también los excluye, en TODAS sus consultas de dinero", () => {
+    const sumas = (dash.match(/FROM facturas WHERE/g) || []).length;
+    const filtradas = (dash.match(/FROM facturas WHERE COALESCE\(tipo,'factura'\) <> 'albaran' AND/g) || []).length;
+    assert.equal(filtradas, sumas, `${sumas - filtradas} consultas del dashboard siguen sumando albaranes`);
+  });
+
+  test("y los gráficos del año", () => {
+    const i = server.indexOf("const andLocal = local");
+    const bloque = server.slice(i, i + 2200);
+    const total = (bloque.match(/TO_CHAR\(fecha::date, 'YYYY'\) = \?/g) || []).length;
+    const conFiltro = (bloque.match(/\$\{SIN_ALBARANES\} AND TO_CHAR\(fecha::date, 'YYYY'\) = \?/g) || []).length;
+    assert.equal(conFiltro, total, "alguna consulta anual sigue contando albaranes");
+  });
+
+  test("pero el albarán SÍ se sigue viendo en la lista", () => {
+    // Excluirlo del dinero no es esconderlo: hay que poder verlo y conciliarlo.
+    const i = server.indexOf('app.get("/api/facturas", requireAuth');
+    const bloque = server.slice(i, i + 700);
+    assert.ok(!/SIN_ALBARANES/.test(bloque.split("const t = await")[0]),
+      "la consulta de la LISTA no debe filtrar por tipo");
   });
 });
