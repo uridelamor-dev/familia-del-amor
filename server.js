@@ -19,7 +19,7 @@ import { permisosV2Enabled } from "./src/core/flags.js";
 import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
-import { mapManageRow, resumenPorLocal, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry, locationNamesDeLocal } from "./src/modules/reviews/reviews.service.js";
+import { mapManageRow, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry, locationNamesDeLocal } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import QRCode from "qrcode";   // ya instalada (la usa el enlace de WhatsApp); emparejar la tablet escaneando
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
@@ -2539,17 +2539,23 @@ app.post("/api/reviews/vincular-ficha", requireAuth(["direccion"]), async (req, 
 // (incluidas las negativas, que son las que más interesa responder), con filtro por local.
 app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabilidad", "marketing"]), async (req, res) => {
   try {
-    // Ámbito por local (encargado): restringe a las fichas de Google que corresponden a su local.
+    // Ámbito por local. Es el ÚNICO camino por el que entra el establecimiento: nuestro nombre
+    // («La Tapeta - Blanes») se traduce aquí a los nombres de ficha de Google que le
+    // correspondan («Blanes»), porque comparar los dos textos a pelo no casa nunca.
+    // `localScope` ya devuelve lo que pide dirección y lo que le toca al encargado.
     const scope = localScope(req);
-    let scopeCond = "", scopeParams = [];
+    let scopeCond = "", scopeParams = [], fichas = [];
     if (scope) {
       const allNames = (await dbAll(`SELECT DISTINCT location_name FROM google_reviews WHERE location_name IS NOT NULL AND location_name <> ''`)).map((r) => r.location_name);
-      const matched = locationNamesDeLocal(scope, allNames);
-      scopeCond = matched.length ? `location_name IN (${matched.map(() => "?").join(",")})` : "1=0";
-      scopeParams = matched.length ? matched : [];
+      fichas = locationNamesDeLocal(scope, allNames);
+      scopeCond = fichas.length ? `location_name IN (${fichas.map(() => "?").join(",")})` : "1=0";
+      scopeParams = fichas.length ? fichas : [];
     }
+    // Sin ficha que case, la respuesta correcta es CERO reseñas — pero hay que decirlo, o
+    // parece que el establecimiento no tiene ninguna cuando lo que pasa es que su ficha de
+    // Google no está vinculada.
+    const sinFicha = !!scope && fichas.length === 0;
     const withScope = (whereStr) => scopeCond ? (whereStr && whereStr.trim() ? `${whereStr} AND ${scopeCond}` : `WHERE ${scopeCond}`) : whereStr;
-    const scopeOnly = scopeCond ? `WHERE ${scopeCond}` : "";
     const scopeAnd = scopeCond ? `AND ${scopeCond}` : "";
 
     const q = buildManageQuery(req.query);
@@ -2564,15 +2570,16 @@ app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabili
         SUM(CASE WHEN reply IS NOT NULL AND reply <> '' THEN 1 ELSE 0 END) AS resp
       FROM google_reviews ${where}`, params);
     const total = parseInt(c?.n || 0);
-    // Resumen por local (para los chips y medias) — también acotado al ámbito del usuario.
-    const allRows = await dbAll(`SELECT location_name, reply, rating FROM google_reviews ${scopeOnly}`, scopeParams);
-    const resumen = resumenPorLocal((allRows || []).map((r) => ({ local: r.location_name || "—", respondida: !!(r.reply && String(r.reply).trim()), rating: r.rating })));
+    // Ya no se calcula el resumen por local (media y pendientes de cada ficha): lo pintaba una
+    // fila de píldoras que no se podía pulsar y que se ha quitado. Era una lectura de la tabla
+    // ENTERA en cada página de la bandeja para algo que nadie miraba.
     const locRows = await dbAll(`SELECT DISTINCT location_name FROM google_reviews WHERE location_name IS NOT NULL AND location_name <> '' ${scopeAnd} ORDER BY location_name`, scopeParams);
     res.json({
       ok: true, data, total, offset, limit,
       hasMore: offset + data.length < total,
       contadores: { total, pendientes: parseInt(c?.pend || 0), respondidas: parseInt(c?.resp || 0) },
-      resumen, locales: (locRows || []).map((l) => l.location_name),
+      locales: (locRows || []).map((l) => l.location_name),
+      local: scope || null, fichas, sinFicha,
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error reseñas: " + e.message, data: [] });

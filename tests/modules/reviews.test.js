@@ -201,12 +201,19 @@ describe("buildManageQuery (bandeja: filtros/orden)", () => {
     assert.match(q.orderBy, /DESC/);
     assert.deepEqual(q.params, []);
   });
-  test("local + rating + estado pendientes", () => {
-    const q = buildManageQuery({ local: "Haddock", rating: "5", estado: "pendientes" });
-    assert.match(q.where, /location_name = \?/);
+  test("rating + estado pendientes", () => {
+    const q = buildManageQuery({ rating: "5", estado: "pendientes" });
     assert.match(q.where, /rating = \?/);
     assert.match(q.where, /reply IS NULL/);
-    assert.deepEqual(q.params, ["Haddock", 5]);
+    assert.deepEqual(q.params, [5]);
+  });
+  test("el local NO se filtra aquí: se traduce antes a los nombres de ficha de Google", () => {
+    // Comparar `location_name` con el nombre de nuestro establecimiento dejaba la pantalla
+    // vacía sin decir por qué: la ficha se llama «Blanes» y el establecimiento
+    // «La Tapeta - Blanes». El local entra por `locationNamesDeLocal`, no por aquí.
+    const q = buildManageQuery({ local: "La Tapeta - Blanes" });
+    assert.equal(q.where, "");
+    assert.deepEqual(q.params, []);
   });
   test("búsqueda de texto y autor (LIKE en minúsculas)", () => {
     const q = buildManageQuery({ q: "Genial", autor: "Ana" });

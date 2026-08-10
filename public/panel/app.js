@@ -1553,10 +1553,21 @@ async function cliFicha(tel) {
   const waBtn = ov.querySelector("#fichaWa"); if (waBtn) waBtn.addEventListener("click", () => { ov.remove(); cliWa(tel, d.nombre || tel); });
 }
 
-// ════════════════════════ VISTA: RESEÑAS (por local · responder · IA · masivas) ════════════════════════
-let REVF = { rating: "", local: "", estado: "", q: "", autor: "", from: "", to: "", sort: "recientes" };
-let REV_DATA = [], REV_LOCALES = [], REV_SEL = new Set(), REV_STATUS = null;
-let REV_CONT = { total: 0, pendientes: 0, respondidas: 0 }, REV_RESUMEN = [], REV_OFFSET = 0, REV_HASMORE = false;
+// ════════════════════════ VISTA: RESEÑAS (responder · IA · masivas) ════════════════════════
+//
+// EL ESTABLECIMIENTO LO FIJA LA BARRA DE ARRIBA, como en el resto del panel. Aquí había dos
+// filas de píldoras de local: una filtraba pero no informaba y otra informaba pero no se podía
+// pulsar. Dos formas de elegir local en la misma pantalla —la de la barra y la de aquí— y
+// ninguna de las dos completa. Ahora manda la de la barra y punto.
+//
+// El nombre del establecimiento NO viaja como filtro de texto: el servidor lo traduce a los
+// nombres de ficha de Google que le correspondan (la ficha se llama «Blanes» y nosotros
+// «La Tapeta - Blanes»). Si no hay ficha vinculada, se dice; no se renombra nada.
+let REVF = { rating: "", estado: "", q: "", autor: "", from: "", to: "", sort: "recientes" };
+let REV_DATA = [], REV_SEL = new Set(), REV_STATUS = null;
+let REV_CONT = { total: 0, pendientes: 0, respondidas: 0 }, REV_HASMORE = false;
+let REV_PAGINA = 0, REV_SIN_FICHA = false;
+const REV_TAM = 50;
 
 function renderReviews() {
   const rows = REV_DATA;
@@ -1565,18 +1576,24 @@ function renderReviews() {
   const fuenteTxt = (s) => s === "places" ? "Places" : s === "business_profile" ? "Business Profile" : (!s || s === "none") ? "Ninguna" : esc(s);
   const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "OAuth conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">Fuente: ${fuenteTxt(st.source)} · ${num(st.reviews_count || 0)} reseñas${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}${st.last_attempt ? ` · último intento ${esc(String(st.last_attempt).slice(0, 16).replace("T", " "))}` : ""}${st.last_error ? ` · último error: ${esc(String(st.last_error).slice(0, 80))}` : ""}</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">${USER.rol === "direccion" ? '<button class="btn" data-act="rev-vincular">Vincular fichas de Google</button>' : ""}${puedeActualizar ? '<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>' : ""}</div></div>` : "";
   const cont = `<div class="grid g3" style="margin-bottom:14px">${stat("Total reseñas", "star", num(REV_CONT.total))}${stat("Pendientes", "bell", num(REV_CONT.pendientes))}${stat("Respondidas", "chat", num(REV_CONT.respondidas))}</div>`;
-  const chip = (val, label, on) => `<button class="chip ${on ? "on" : ""}" data-act="rev-local" data-local="${esc(val)}">${esc(label)}</button>`;
-  const selector = REV_LOCALES.length > 1 ? `<div class="chips">${chip("", "Todos", !REVF.local)}${REV_LOCALES.map((l) => chip(l, nombreCortoLocal(l), REVF.local === l)).join("")}</div>` : "";
-  const resumenChips = (REV_RESUMEN && REV_RESUMEN.length > 1) ? `<div class="chips" style="margin:6px 0 2px">${REV_RESUMEN.map((x) => `<span class="chip" style="cursor:default">${esc(nombreCortoLocal(x.local))} · ${x.media != null ? x.media + "★" : "—"} · ${x.pendientes} pend</span>`).join("")}</div>` : "";
+  // Cero reseñas por falta de ficha vinculada NO es lo mismo que cero reseñas. Sin este aviso,
+  // la pantalla vacía parece un local sin opiniones y nadie va a mirar el vínculo con Google.
+  const avisoFicha = REV_SIN_FICHA ? `<div class="pendingblock" style="margin-bottom:14px"><b>Este establecimiento no tiene ninguna ficha de Google vinculada</b>, así que no hay reseñas que enseñar. ${USER.rol === "direccion" ? "Se vincula en «Vincular fichas de Google», aquí arriba." : "Díselo a dirección: se arregla desde «Vincular fichas de Google»."}</div>` : "";
   const estadoOpts = [["", "Todas"], ["pendientes", "Sin responder"], ["respondidas", "Respondidas"]].map(([v, t]) => `<option value="${v}" ${REVF.estado === v ? "selected" : ""}>${t}</option>`).join("");
   const ratingOpts = ['<option value="">Todas</option>'].concat([5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${REVF.rating === String(n) ? "selected" : ""}>${n}★</option>`)).join("");
   const sortOpts = [["recientes", "Más recientes"], ["antiguas", "Más antiguas"], ["mejor", "Mejor valoración"], ["peor", "Peor valoración"]].map(([v, t]) => `<option value="${v}" ${REVF.sort === v ? "selected" : ""}>${t}</option>`).join("");
   const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estadoOpts}</select></div><div class="field"><label>Estrellas</label><select id="rRating">${ratingOpts}</select></div><div class="field"><label>Ordenar</label><select id="rSort">${sortOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(REVF.q)}" placeholder="Texto o autor…"></div><div class="field"><label>Autor</label><input id="rAutor" value="${esc(REVF.autor)}"></div><div class="field"><label>Desde</label><input type="date" id="rFrom" value="${esc(REVF.from)}"></div><div class="field"><label>Hasta</label><input type="date" id="rTo" value="${esc(REVF.to)}"></div><button class="btn" data-act="rev-filtrar">Filtrar</button></div>`;
   const nota = `<div class="pendingblock" style="margin-bottom:16px"><b>Responder en Google, muy pronto.</b> La publicación directa está pendiente de que Google apruebe la cuota de su API. Mientras tanto: redacta la respuesta (con IA si quieres), <b>guárdala</b> aquí y usa <b>Copiar</b> para pegarla en Google.</div>`;
   const bulk = REV_SEL.size ? `<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><b>${REV_SEL.size} seleccionada${REV_SEL.size === 1 ? "" : "s"}</b><div style="flex:1"></div><button class="btn" data-act="rev-sel-none">Quitar selección</button><button class="btn primary" data-act="rev-bulk">✨ Generar borradores IA</button></div>` : "";
-  const body = rows.length ? rows.map(reviewCard).join("") : `<div class="card"><div class="mut" style="padding:8px">${REV_CONT.total ? "Sin reseñas con este filtro." : "Aún no hay reseñas importadas. Pulsa «Actualizar desde Google»."}</div></div>`;
+  const vacio = REV_SIN_FICHA ? "No hay reseñas de este establecimiento porque su ficha de Google no está vinculada."
+    : REV_CONT.total ? "Sin reseñas con este filtro." : "Aún no hay reseñas importadas. Pulsa «Actualizar desde Google».";
+  const body = rows.length ? rows.map(reviewCard).join("") : `<div class="card"><div class="mut" style="padding:8px">${vacio}</div></div>`;
   const masBtn = REV_HASMORE ? `<div style="text-align:center;margin-top:6px"><button class="btn" data-act="rev-more">Cargar más (${num(REV_DATA.length)}/${num(REV_CONT.total)})</button></div>` : "";
-  return `<div class="ph"><div class="eyebrow">Reputación</div><h1>Reseñas de Google</h1><div class="sub">Bandeja de gestión · filtra, ordena y responde</div></div>${estadoBanner}${cont}${nota}${selector}${resumenChips}${toolbar}${bulk}${body}${masBtn}`;
+  // Qué establecimiento se está mirando: lo dice el rótulo, que es lo que antes hacían las
+  // píldoras. El que manda es el selector de la barra de arriba.
+  const amb = viendoTodosLosMios() ? `Mis ${misLocales().length} establecimientos`
+    : localActualFE() ? nombreCortoLocal(localActualFE()) : "";
+  return `<div class="ph"><div class="eyebrow">Reputación</div><h1>Reseñas de Google</h1><div class="sub">Bandeja de gestión · filtra, ordena y responde${amb ? ` · <b>${esc(amb)}</b>` : ""}</div></div>${estadoBanner}${cont}${avisoFicha}${nota}${toolbar}${bulk}${body}${masBtn}`;
 }
 
 function reviewCard(r) {
@@ -1592,18 +1609,59 @@ function reviewCard(r) {
   </div></div></div>`;
 }
 
+/** El orden que pide la barra de filtros, para rehacerlo cuando se juntan varios locales. */
+function revOrdenar(filas, sort) {
+  const f = (r) => String(r.fecha || "");
+  const cmp = {
+    recientes: (a, b) => f(b).localeCompare(f(a)),
+    antiguas: (a, b) => f(a).localeCompare(f(b)),
+    mejor: (a, b) => (b.rating - a.rating) || f(b).localeCompare(f(a)),
+    peor: (a, b) => (a.rating - b.rating) || f(b).localeCompare(f(a)),
+  };
+  return [...filas].sort(cmp[sort] || cmp.recientes);
+}
+
+/**
+ * Una petición por local y se juntan, igual que reservas y facturas (`pidePorLocales`). Aquí
+ * además hay que SUMAR los contadores y volver a ordenar: cada local viene ordenado por su
+ * cuenta, y pegar dos listas ordenadas no da una lista ordenada.
+ */
+async function revPedir(montaUrl) {
+  const locales = misLocales();
+  if (!viendoTodosLosMios() || locales.length < 2) return apiSend("GET", montaUrl(localActualFE()));
+  const partes = (await Promise.all(locales.map((l) => apiSend("GET", montaUrl(l)).catch(() => null)))).filter(Boolean);
+  const suma = (k) => partes.reduce((s, p) => s + ((p.contadores && p.contadores[k]) || 0), 0);
+  return {
+    ok: true,
+    data: revOrdenar(partes.flatMap((p) => p.data || []), REVF.sort),
+    contadores: { total: suma("total"), pendientes: suma("pendientes"), respondidas: suma("respondidas") },
+    hasMore: partes.some((p) => p.hasMore),
+    // Solo se avisa de la ficha sin vincular si le pasa a TODOS: con dos locales y uno bien
+    // vinculado, el aviso sería falso —sí hay reseñas, las del otro—.
+    sinFicha: partes.length > 0 && partes.every((p) => p.sinFicha),
+  };
+}
+
 async function loadReviews(append = false) {
   const view = document.getElementById("view"); if (!append) view.innerHTML = skeleton();
   try {
-    const qs = new URLSearchParams();
-    ["local", "rating", "estado", "q", "autor", "from", "to", "sort"].forEach((k) => { if (REVF[k]) qs.set(k, REVF[k]); });
-    qs.set("limit", "50"); qs.set("offset", String(append ? REV_OFFSET : 0));
+    REV_PAGINA = append ? REV_PAGINA + 1 : 0;
+    // El establecimiento sale del selector de la barra, no de un filtro propio de esta pantalla.
+    const montaUrl = (local) => {
+      const qs = new URLSearchParams();
+      ["rating", "estado", "q", "autor", "from", "to", "sort"].forEach((k) => { if (REVF[k]) qs.set(k, REVF[k]); });
+      if (local) qs.set("local", local);
+      qs.set("limit", String(REV_TAM));
+      // El desplazamiento es POR LOCAL: con varios se pide la misma página a cada uno.
+      qs.set("offset", String(REV_PAGINA * REV_TAM));
+      return "/api/reviews/manage?" + qs.toString();
+    };
     const promStatus = append ? Promise.resolve(REV_STATUS) : fetch("/api/google/status").then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    const [j, status] = await Promise.all([apiSend("GET", "/api/reviews/manage?" + qs.toString()), promStatus]);
+    const [j, status] = await Promise.all([revPedir(montaUrl), promStatus]);
     const data = j.data || [];
-    if (append) { REV_DATA = REV_DATA.concat(data); REV_OFFSET += data.length; }
-    else { REV_DATA = data; REV_OFFSET = data.length; REV_SEL.clear(); }
-    REV_LOCALES = j.locales || REV_LOCALES; REV_CONT = j.contadores || REV_CONT; REV_RESUMEN = j.resumen || []; REV_HASMORE = !!j.hasMore; REV_STATUS = status || REV_STATUS;
+    if (append) REV_DATA = REV_DATA.concat(data);
+    else { REV_DATA = data; REV_SEL.clear(); }
+    REV_CONT = j.contadores || REV_CONT; REV_HASMORE = !!j.hasMore; REV_SIN_FICHA = !!j.sinFicha; REV_STATUS = status || REV_STATUS;
     view.innerHTML = renderReviews();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
@@ -1647,7 +1705,6 @@ async function refreshReviews() {
     loadReviews();
   } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
-function revSetLocal(l) { REVF.local = l || ""; loadReviews(); }
 function revToggleSel(id) { id = String(id); if (REV_SEL.has(id)) REV_SEL.delete(id); else REV_SEL.add(id); const v = document.getElementById("view"); if (v) v.innerHTML = renderReviews(); }
 function revSelNone() { REV_SEL.clear(); const v = document.getElementById("view"); if (v) v.innerHTML = renderReviews(); }
 
@@ -6733,7 +6790,6 @@ document.addEventListener("click", (e) => {
   else if (act === "rev-more") loadMoreReviews();
   else if (act === "rev-vincular") revVincular();
   else if (act === "rev-refresh") refreshReviews();
-  else if (act === "rev-local") revSetLocal(t.getAttribute("data-local"));
   else if (act === "rev-responder") openResponder(t.getAttribute("data-id"));
   else if (act === "rev-sel") revToggleSel(t.getAttribute("data-id"));
   else if (act === "rev-sel-none") revSelNone();

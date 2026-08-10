@@ -49,9 +49,18 @@ export function locationNamesDeLocal(localERP, names) {
   return (Array.isArray(names) ? names : []).filter((n) => localCoincideConReview(localERP, n));
 }
 
+/**
+ * El WHERE de la bandeja. OJO: aquí NO se filtra por local.
+ *
+ * El local se aplica por otro camino, el de `locationNamesDeLocal`, y tiene que ser así: la
+ * ficha de Google se llama «Blanes» y nuestro establecimiento «La Tapeta - Blanes», de modo que
+ * un `location_name = 'La Tapeta - Blanes'` no casa con nada y la pantalla sale vacía sin decir
+ * por qué. Y la solución NO es renombrar las fichas para que cuadren —eso rompe el casado y se
+ * arregla desde «Vincular fichas de Google»—, sino traducir el establecimiento a los nombres de
+ * ficha que le correspondan antes de consultar.
+ */
 export function buildManageQuery(f = {}) {
   const cond = [], params = [];
-  if (f.local) { cond.push("location_name = ?"); params.push(String(f.local)); }
   if (f.rating) { cond.push("rating = ?"); params.push(parseInt(f.rating)); }
   if (f.estado === "pendientes") cond.push("(reply IS NULL OR reply = '')");
   else if (f.estado === "respondidas") cond.push("(reply IS NOT NULL AND reply <> '')");
