@@ -189,7 +189,11 @@ function shell(active, bodyHtml) {
       </button>
       <div class="nitems">${botones}</div></div>`;
   }).join("");
-  const estabLbl = DASH_LOCAL ? nombreCortoLocal(DASH_LOCAL) : "Todos los establecimientos";
+  // Quien tiene local asignado no ve «Todos los establecimientos» ni de rótulo: no es cierto,
+  // porque el servidor le devuelve solo los suyos. Un rótulo que promete más de lo que hay es
+  // peor que no tenerlo — el encargado leía sus reservas creyendo que eran las del grupo.
+  const fijado = localFijadoFE();
+  const estabLbl = fijado ? nombreCortoLocal(fijado) : (DASH_LOCAL ? nombreCortoLocal(DASH_LOCAL) : "Todos los establecimientos");
   const customLbl = (PERIOD === "custom" && DASH_RANGE.from) ? `${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}` : "Personalizado";
   const seg = [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]].map(([p, l]) => `<button class="${PERIOD === p ? "on" : ""}" data-act="period" data-p="${p}">${l}</button>`).join("") + `<button class="${PERIOD === "custom" ? "on" : ""}" data-act="period-custom" title="Rango personalizado (días o meses, incluso del año pasado)">${customLbl}</button>`;
   return `<div class="app${COLLAPSED ? " collapsed" : ""}" id="appEl">
@@ -201,7 +205,9 @@ function shell(active, bodyHtml) {
     <div class="main">
       <header class="topbar">
         <button class="iconbtn" data-act="mtoggle" aria-label="Menú">${ic("menu")}</button>
-        <button class="pick" data-act="estabmenu" title="Cambiar establecimiento"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span><span class="car">▾</span></button>
+        ${fijado
+          ? `<span class="pick fijo" title="Tu usuario está asignado a este establecimiento"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span></span>`
+          : `<button class="pick" data-act="estabmenu" title="Cambiar establecimiento"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span><span class="car">▾</span></button>`}
         <div class="seg hidesm">${seg}</div>
         <button class="sbtn hidesm" data-act="cmdk">${ic("search", 16)}<span>Buscar o ir a…</span><span class="kbd">⌘K</span></button>
         <div class="spacer"></div>
@@ -616,6 +622,8 @@ function openDrawer(title, bodyHtml) { document.getElementById("drawerTitle").te
 function closeDrawer() { const d = document.getElementById("drawer"), o = document.getElementById("ovl"); if (d) d.classList.remove("open"); if (o) o.classList.remove("open"); }
 function openEstabMenu() {
   // En Reservas y Analítica no ofrecemos los centros sin público: no tendrían datos.
+  const fijado = localFijadoFE();
+  if (fijado) return;   // su local no se elige: se lo puso dirección
   const elegibles = MODULOS_SOLO_PUBLICO.has(CURRENT) ? LOCALES.filter((l) => !sinPublico(l)) : LOCALES;
   const opts = [["", "Todos los establecimientos"]].concat(elegibles.map((l) => [l, l]));
   openDrawer("Establecimiento", `<div class="rows">${opts.map(([v, l]) => `<button class="row" data-act="estab-pick" data-local="${esc(v)}" style="width:100%;text-align:left"><span class="sdot ${DASH_LOCAL === v ? "st-ok" : "st-off"}"></span><div class="grow"><div class="t1">${esc(l)}</div></div>${DASH_LOCAL === v ? '<span class="pill brand">Actual</span>' : ""}</button>`).join("")}</div>`);
@@ -2165,8 +2173,17 @@ function modsCheckboxesHtml(rol, sel) {
     const loc = MODULOS_POR_LOCAL.has(id) ? ` <span class="mut" style="font-size:11px">· por local</span>` : "";
     return `<label style="display:flex;align-items:center;gap:8px;padding:5px 2px"><input type="checkbox" name="mod" value="${id}" ${checked} ${dir ? "disabled" : ""} style="width:auto;margin:0"><span>${esc(TITLES[id] || id)}${loc}</span></label>`;
   }).join("");
-  const nota = dir ? "Dirección tiene acceso total; no se puede restringir." : "Desmarca los módulos a los que NO quieres que entre este usuario.";
-  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px">${items}</div><div class="mut" style="margin-top:8px">${nota}</div>`;
+  // Esta lista es la del ROL, no el catálogo entero. Desmarcar QUITA; no hay forma de dar
+  // aquí un módulo que el rol no tenga. Se dice, porque si no se busca «Facturas» en la lista
+  // de un encargado, no aparece, y parece que los permisos no funcionan.
+  const fuera = Object.keys(VIEW_ROLES).filter((id) => !ids.includes(id));
+  const nota = dir
+    ? "Dirección tiene acceso total; no se puede restringir."
+    : `Desmarca los módulos a los que NO quieres que entre. Aquí solo salen los del rol
+       <b>${esc(rol)}</b>: desde aquí se quita acceso, nunca se da. Para que llegue a
+       ${fuera.length ? `<b>${esc(fuera.slice(0, 3).map((id) => TITLES[id] || id).join(", "))}</b>${fuera.length > 3 ? " u otros" : ""}` : "otros módulos"},
+       hay que cambiarle el rol.`;
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px">${items}</div><div class="mut" style="margin-top:8px;line-height:1.5">${nota}</div>`;
 }
 function localOptionsHtml(sel) {
   return ['<option value="">— sin local (todos) —</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${l === sel ? "selected" : ""}>${esc(l)}</option>`)).join("");
@@ -6212,8 +6229,14 @@ document.addEventListener("drop", (e) => { const it = e.target.closest("[data-ga
 })();
 
 // ── Arranque ─────────────────────────────────────────────────────────────────
-requireRole(["direccion", "encargado", "contabilidad", "marketing"]).then((user) => {
+// Entran todos los roles que tienen algún módulo. `trabajador` no tiene ninguno —no gestiona
+// nada— y por eso no está: su sitio es /trabajadores.html, con su cuadrante y sus fichajes.
+requireRole(["direccion", "encargado", "contabilidad", "marketing", "rrhh"]).then((user) => {
   if (!user) return;
   USER = user;
-  go(user.rol === "marketing" ? "web" : "dashboard");
+  // Se abre por la primera pantalla a la que tenga acceso, no por una fija: a marketing el
+  // Dashboard le daría «Sin acceso» nada más entrar, y a RR.HH. también.
+  const inicio = ["dashboard", "reservas", "rrhh", "facturas", "web", "clientes"].find((v) => puedeVer(v))
+    || Object.keys(VIEWS).find((v) => puedeVer(v)) || "dashboard";
+  go(inicio);
 }).catch(() => { /* requireRole ya redirige a /login.html */ });

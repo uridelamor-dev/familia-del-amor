@@ -1,127 +1,20 @@
 <!doctype html>
+<!-- Redirigida al panel único -->
+<!-- Esta página era la versión suelta de este rol: sin el menú de la izquierda, sin los
+     módulos nuevos y, en el caso de Encargados, con un selector de «Todos los locales» que
+     no pinta nada en la pantalla de alguien que lleva un local. El panel enseña a cada rol
+     lo suyo, así que aquí solo queda el reenvío: los marcadores y enlaces viejos siguen
+     funcionando en vez de dar un 404 o, peor, la pantalla antigua. -->
 <html lang="es">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Encargados · Familia del Amor</title>
-    <link rel="stylesheet" href="styles.css" />
+    <title>Familia del Amor</title>
+    <meta http-equiv="refresh" content="0; url=/panel/" />
+    <script>location.replace("/panel/" + location.hash);</script>
   </head>
-  <body class="panel">
-    <header class="top">
-      <div class="logo">
-        <img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
-      </div>
-      <div class="user-bar">
-        <span id="userBar"></span>
-        <button class="btn ghost" id="logoutBtn">Salir</button>
-      </div>
-    </header>
-
-    <main>
-      <div class="panel-head">
-        <span class="eyebrow">Panel interno</span>
-        <h1>Encargados</h1>
-        <p>Gestión diaria del local.</p>
-      </div>
-
-      <section class="block">
-        <div class="section-head">
-          <h2>Reservas</h2>
-          <p>Consulta y gestiona las reservas por local.</p>
-        </div>
-
-        <div class="panel-subtabs">
-          <button class="panel-tab active" id="tabCalendario" data-view="calendario">Calendario</button>
-          <button class="panel-tab" id="tabLista" data-view="lista">Lista</button>
-        </div>
-
-        <!-- Vista calendario -->
-        <div id="vistaCalendario">
-          <div class="cal-toolbar">
-            <label>
-              <span>Local</span>
-              <select id="calLocal" data-locales data-placeholder="Todos los locales"></select>
-            </label>
-            <div class="cal-nav">
-              <button class="btn ghost" id="calPrev">&#8592;</button>
-              <span id="calTitle"></span>
-              <button class="btn ghost" id="calNext">&#8594;</button>
-              <button class="btn ghost" id="calToday">Hoy</button>
-            </div>
-          </div>
-          <div id="calGrid" class="cal-grid"></div>
-          <div class="cal-legend">
-            <span class="cal-legend-item tapeta">La Tapeta</span>
-            <span class="cal-legend-item cooperativa">Cooperativa</span>
-            <span class="cal-legend-item canmateu">Can Mateu</span>
-            <span class="cal-legend-item latapa">La Tapa Ibérica</span>
-            <span class="cal-legend-item botiga">Botiga d'en Mateu</span>
-          </div>
-        </div>
-
-        <!-- Vista lista -->
-        <div id="vistaLista" class="hidden">
-          <div class="panel-filters form-internal">
-            <label><span>Local</span>
-              <select id="encLocal" data-locales data-placeholder="Todos los locales"></select>
-            </label>
-            <div class="form-row">
-              <label><span>Desde</span><input type="date" id="encFrom" /></label>
-              <label><span>Hasta</span><input type="date" id="encTo" /></label>
-            </div>
-            <div class="panel-actions">
-              <button class="btn" id="encSearch" type="button">Buscar</button>
-            </div>
-          </div>
-          <div class="card" id="encReservas">Cargando reservas...</div>
-        </div>
-      </section>
-
-      <section class="block">
-        <div class="section-head">
-          <h2>WhatsApp</h2>
-          <p>Vincula cada local con su grupo de WhatsApp para recibir notificaciones de reservas.</p>
-        </div>
-        <div class="card" id="waStatus">Comprobando conexión...</div>
-        <div id="waGroupsPanel" class="hidden">
-          <div class="panel-filters form-internal" style="margin-top:1rem">
-            <label><span>Local</span>
-              <select id="waLocal" data-locales></select>
-            </label>
-            <label><span>Grupo de WhatsApp</span>
-              <select id="waGroup"><option value="">Cargando grupos...</option></select>
-            </label>
-            <div class="panel-actions">
-              <button class="btn" id="waSave" type="button">Guardar vinculación</button>
-            </div>
-          </div>
-          <div id="waCurrentLinks" class="cards"></div>
-        </div>
-      </section>
-
-      <section class="block">
-        <div class="section-head">
-          <h2>Comunicados a trabajadores</h2>
-        </div>
-        <form id="annForm" class="form-internal">
-          <label><span>Local</span>
-            <select name="local" data-locales data-all="Todos los locales" data-all-value="Todos"></select>
-          </label>
-          <label><span>Mensaje</span><textarea name="mensaje" rows="3" required></textarea></label>
-          <button class="btn" type="submit">Publicar comunicado</button>
-        </form>
-        <div class="cards" id="annListEnc"></div>
-      </section>
-    </main>
-
-    <footer class="panel-footer">
-      <div class="panel-footer-inner">
-        <span>Familia del Amor · Panel interno</span>
-        <a href="/">Ir al inicio →</a>
-      </div>
-    </footer>
-
-    <script src="auth.js"></script>
-    <script src="encargados.js"></script>
+  <body>
+    <p style="font-family:system-ui;padding:24px">Llevándote al panel…
+      <a href="/panel/">Entrar</a></p>
   </body>
 </html>

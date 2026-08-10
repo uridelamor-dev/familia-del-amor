@@ -1,10 +1,21 @@
+// TODO EL MUNDO al mismo panel. Antes cada rol aterrizaba en una página suelta —encargados,
+// rrhh, marketing, contabilidad— que eran versiones viejas y paralelas de lo mismo: sin el
+// menú de la izquierda, sin los módulos nuevos y, en el caso de Encargados, con un selector
+// de «Todos los locales» que no pinta nada en la pantalla de alguien que lleva un local.
+//
+// El panel ya sabe enseñarle a cada uno lo suyo: filtra el menú por rol y `puedeVer()` corta
+// el paso a lo que no le toca. No hacía falta una página por rol; hacía falta una sola.
+//
+// El trabajador es la excepción y a propósito: no tiene NINGÚN módulo del panel (no gestiona
+// nada). Su página es su cuadrante y sus fichajes, que es otra cosa.
+const PANEL = "/panel/";
 const ROLE_REDIRECT = {
-  direccion: "/panel/",          // nuevo panel cockpit (Dashboard ejecutivo real)
-  encargado: "/encargados.html",
+  direccion: PANEL,
+  encargado: PANEL,
+  rrhh: PANEL,
+  marketing: PANEL,
+  contabilidad: PANEL,
   trabajador: "/trabajadores.html",
-  rrhh: "/rrhh.html",
-  marketing: "/marketing.html",
-  contabilidad: "/contabilidad.html"
 };
 
 // Si ya hay sesión activa, redirigir directamente

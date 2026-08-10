@@ -1482,7 +1482,7 @@ app.get("/auth/google-facturas/callback", async (req, res) => {
     return res.send("Error: Google no devolvió refresh_token. Ve a <a href='https://myaccount.google.com/permissions'>myaccount.google.com/permissions</a>, revoca el acceso y vuelve a intentarlo.");
   }
   await setConfig("google_drive_refresh_token", tokenData.refresh_token);
-  res.redirect("/direccion.html?facturas=connected");
+  res.redirect("/panel/?facturas=connected");
 });
 
 // ── API: estado y grupos de facturas ───────────────────────────────────────
@@ -2216,11 +2216,11 @@ app.get("/auth/google/callback", async (req, res) => {
 
   try {
     const r = await runReviewsSync(); // fallback automático Business → Places
-    res.redirect(`/marketing.html?google=connected&source=${r.source}&n=${r.imported + r.updated}`);
+    res.redirect(`/panel/?google=connected&source=${r.source}&n=${r.imported + r.updated}`);
   } catch (e) {
     console.error("[Google Reviews] callback sync:", e.message);
     const msg = encodeURIComponent(String(e.message || "").slice(0, 200));
-    res.redirect(`/marketing.html?google=token_ok&err=${msg}`);
+    res.redirect(`/panel/?google=token_ok&err=${msg}`);
   }
 });
 
