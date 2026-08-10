@@ -133,3 +133,42 @@ describe("permisos: quitar un módulo tiene efecto de verdad", () => {
     assert.match(bloque, /payload\.rol !== "direccion"/, "dirección no se restringe");
   });
 });
+
+describe("ver varios locales juntos, sin tocar el filtrado", () => {
+  const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+
+  test("se pide UNA vez por local y se juntan las filas", () => {
+    // La alternativa era reescribir las ~126 consultas que filtran con `local = ?`, que es lo
+    // que el ADR 0001 aparta hasta después de producción. Dos peticiones cuestan nada.
+    const i = panel.indexOf("async function pidePorLocales(");
+    assert.notEqual(i, -1);
+    const bloque = panel.slice(i, panel.indexOf("\n}\n", i));
+    assert.match(bloque, /locales\.map\(\(l\) =>/);
+    assert.match(bloque, /\.flat\(\)/);
+    assert.match(bloque, /\.catch\(\(\) => null\)/, "que falle un local no puede tirar los demás");
+  });
+
+  test("cada petición sigue llevando UN local: el servidor no cambia", () => {
+    const i = panel.indexOf("async function pidePorLocales(");
+    assert.match(panel.slice(i, i + 900), /montaUrl\(l\)/);
+  });
+
+  test("«Mis N establecimientos» solo aparece si de verdad tiene varios", () => {
+    assert.match(panel, /mios\.length > 1 \? \[\[MIS_LOCALES/);
+  });
+
+  test("y no se ofrece «todos los establecimientos» a quien tiene locales asignados", () => {
+    // Sería un ámbito que el servidor no le va a dar.
+    assert.match(panel, /mios\.length\s*\n?\s*\?\s*\(mios\.length > 1/);
+  });
+
+  test("con varios locales NO se pide el resumen agregado del servidor", () => {
+    // Es de UN local: enseñarlo junto a una tabla con dos es la peor mezcla posible, un
+    // número que parece el total y no lo es.
+    assert.match(panel, /viendoTodosLosMios\(\) \? Promise\.resolve\(null\)/);
+  });
+
+  test("se suma lo que se ve y se dice que es eso, no el total del año", () => {
+    assert.match(panel, /no es el total del año/);
+  });
+});

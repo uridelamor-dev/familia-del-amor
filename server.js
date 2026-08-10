@@ -4107,9 +4107,10 @@ app.get("/api/kpi", requireAuth(["direccion", "contabilidad"]), async (req, res)
 app.get("/api/dashboard", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res, next) => {
   try {
     // Ámbito por local: un usuario con local asignado (y rol ≠ dirección) solo ve SU local.
-    const local = (req.user && req.user.rol !== "direccion" && req.user.local)
-      ? String(req.user.local).trim()
-      : ((req.query.local && String(req.query.local).trim()) || null);
+    // Pasa por localScope: con varios establecimientos asignados hay que respetar el que se
+    // esté mirando. Mirando `req.user.local` a pelo siempre salía el principal, así que
+    // cambiar de local en la barra no cambiaba nada en estas pantallas.
+    const local = localScope(req);
     const data = await getDashboard({ get: dbGet, all: dbAll }, { whatsappConnected: isReady(), local });
     res.json({ ok: true, data });
   } catch (e) { next(e); }
@@ -4248,9 +4249,10 @@ app.get("/api/agora/informe/:tipo", requireAuth(["direccion", "contabilidad"]), 
     const def = getInforme(req.params.tipo);
     if (!def) return res.status(404).json({ ok: false, error: "Informe desconocido" });
     // Ámbito por local: un usuario con local asignado (y rol ≠ dirección) solo ve SU local.
-    const local = (req.user && req.user.rol !== "direccion" && req.user.local)
-      ? String(req.user.local).trim()
-      : ((req.query.local && String(req.query.local).trim()) || null);
+    // Pasa por localScope: con varios establecimientos asignados hay que respetar el que se
+    // esté mirando. Mirando `req.user.local` a pelo siempre salía el principal, así que
+    // cambiar de local en la barra no cambiaba nada en estas pantallas.
+    const local = localScope(req);
     const from = String(req.query.from || "").slice(0, 10);
     const to = String(req.query.to || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ ok: false, error: "Rango inválido" });
@@ -4342,9 +4344,10 @@ const addDaysISO = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUT
 app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
   try {
     // Ámbito por local: un usuario con local asignado (y rol ≠ dirección) solo ve SU local.
-    const local = (req.user && req.user.rol !== "direccion" && req.user.local)
-      ? String(req.user.local).trim()
-      : ((req.query.local && String(req.query.local).trim()) || null);
+    // Pasa por localScope: con varios establecimientos asignados hay que respetar el que se
+    // esté mirando. Mirando `req.user.local` a pelo siempre salía el principal, así que
+    // cambiar de local en la barra no cambiaba nada en estas pantallas.
+    const local = localScope(req);
     const from = String(req.query.from || "").slice(0, 10);
     const to = String(req.query.to || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ ok: false, error: "Rango inválido" });

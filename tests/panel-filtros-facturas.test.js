@@ -32,7 +32,11 @@ describe("los filtros de facturas llegan de verdad al servidor", () => {
   });
 
   test("facQS usa la lista y no una copia suelta", () => {
-    assert.match(panel, /function facQS\(\)\s*\{[^}]*FAC_FILTROS\.forEach/);
+    // Ahora acepta un local forzado (para ver varios locales juntos), pero los filtros
+    // siguen saliendo de FAC_FILTROS y no de una copia escrita a mano.
+    const i = panel.indexOf("function facQS(");
+    assert.notEqual(i, -1);
+    assert.match(panel.slice(i, i + 500), /FAC_FILTROS\.forEach\(\(k\) => \{ if \(FACF\[k\]\) qs\.set/);
   });
 
   test("y el servidor sabe qué hacer con cada una", () => {

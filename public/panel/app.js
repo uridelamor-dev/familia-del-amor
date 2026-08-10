@@ -119,11 +119,39 @@ function misLocales() {
 }
 // Local FIJADO = no hay nada que elegir. Con varios ya no está fijado: se elige entre los suyos.
 function localFijadoFE() { const m = misLocales(); return m.length === 1 ? m[0] : null; }
+// Marca de «todos los míos», para quien tiene varios asignados.
+const MIS_LOCALES = "*mios*";
+const viendoTodosLosMios = () => DASH_LOCAL === MIS_LOCALES && misLocales().length > 1;
+
 // El que se está mirando ahora. Con varios, el elegido o el primero suyo.
+// Con «todos los míos» devuelve "" (sin filtro) SOLO para pintar rótulos; las consultas no lo
+// usan: van una por local (ver `pidePorLocales`).
 function localActualFE() {
   const m = misLocales();
-  if (!m.length) return DASH_LOCAL || "";
+  if (!m.length) return DASH_LOCAL === MIS_LOCALES ? "" : (DASH_LOCAL || "");
+  if (viendoTodosLosMios()) return "";
   return m.includes(DASH_LOCAL) ? DASH_LOCAL : m[0];
+}
+
+/**
+ * Ver varios locales juntos SIN tocar el filtrado del servidor.
+ *
+ * Cada consulta sigue pidiendo UN local —exactamente la misma que ya estaba probada— y aquí se
+ * juntan las respuestas. Es una petición más por local (dos o tres, no cien) a cambio de no
+ * reescribir las ~126 consultas que filtran con `local = ?`, que es lo que el ADR 0001 aparta
+ * hasta después de producción. Un fallo ahí no se vería: saldrían menos reservas, o las de otro.
+ *
+ * `montaUrl(local)` devuelve la URL de UN local. Devuelve el array ya concatenado.
+ */
+async function pidePorLocales(montaUrl, { raw = false } = {}) {
+  const locales = misLocales();
+  if (!viendoTodosLosMios() || locales.length < 2) {
+    const j = raw ? await apiRaw(montaUrl(localActualFE())) : await api(montaUrl(localActualFE()));
+    return raw ? j : j;
+  }
+  const partes = await Promise.all(locales.map((l) => (raw ? apiRaw(montaUrl(l)) : api(montaUrl(l))).catch(() => null)));
+  const arrays = partes.filter(Boolean).map((p) => (raw ? (p.data || []) : (p || [])));
+  return raw ? { ok: true, data: arrays.flat(), variosLocales: true } : arrays.flat();
 }
 
 let USER = null, CURRENT = "dashboard";
@@ -207,6 +235,7 @@ function shell(active, bodyHtml) {
   const fijado = localFijadoFE();
   const actual = localActualFE();
   const estabLbl = fijado ? nombreCortoLocal(fijado)
+    : viendoTodosLosMios() ? `Mis ${misLocales().length} establecimientos`
     : actual ? nombreCortoLocal(actual) : "Todos los establecimientos";
   const customLbl = (PERIOD === "custom" && DASH_RANGE.from) ? `${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}` : "Personalizado";
   const seg = [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]].map(([p, l]) => `<button class="${PERIOD === p ? "on" : ""}" data-act="period" data-p="${p}">${l}</button>`).join("") + `<button class="${PERIOD === "custom" ? "on" : ""}" data-act="period-custom" title="Rango personalizado (días o meses, incluso del año pasado)">${customLbl}</button>`;
@@ -643,7 +672,9 @@ function openEstabMenu() {
   const elegibles = MODULOS_SOLO_PUBLICO.has(CURRENT) ? base.filter((l) => !sinPublico(l)) : base;
   // «Todos» solo para dirección: al que tiene dos locales asignados no se le ofrece un ámbito
   // que el servidor no le va a dar — cada pantalla sigue mirando UN local.
-  const opts = (mios.length ? [] : [["", "Todos los establecimientos"]]).concat(elegibles.map((l) => [l, l]));
+  const opts = (mios.length
+    ? (mios.length > 1 ? [[MIS_LOCALES, `Mis ${mios.length} establecimientos`]] : [])
+    : [["", "Todos los establecimientos"]]).concat(elegibles.map((l) => [l, l]));
   openDrawer("Establecimiento", `<div class="rows">${opts.map(([v, l]) => `<button class="row" data-act="estab-pick" data-local="${esc(v)}" style="width:100%;text-align:left"><span class="sdot ${DASH_LOCAL === v ? "st-ok" : "st-off"}"></span><div class="grow"><div class="t1">${esc(l)}</div></div>${DASH_LOCAL === v ? '<span class="pill brand">Actual</span>' : ""}</button>`).join("")}</div>`);
 }
 
@@ -918,12 +949,19 @@ async function loadReservas() {
   if (sinPublico(RESF.local)) { view.innerHTML = avisoSinPublico("Reservas", "Operación", "reservas"); return; }
   try {
     const [from, to] = resRango();
-    const qs = new URLSearchParams(); qs.set("from", from); qs.set("to", to); if (RESF.local) qs.set("local", RESF.local);
-    if (RESF.vista === "historial") { qs.set("orden", "desc"); qs.set("limit", "1500"); }
-    const j = await apiRaw("/api/reservas?" + qs.toString());
+    // Juntar reservas de varios locales es exacto: son filas, se concatenan. Cada petición
+    // sigue pidiendo UN local, igual que siempre.
+    const montaUrl = (loc) => {
+      const qs = new URLSearchParams(); qs.set("from", from); qs.set("to", to);
+      if (loc) qs.set("local", loc);
+      if (RESF.vista === "historial") { qs.set("orden", "desc"); qs.set("limit", "1500"); }
+      return "/api/reservas?" + qs.toString();
+    };
+    const j = await pidePorLocales(montaUrl, { raw: true });
     RESH.hayMas = !!j.hayMas;
-    if (RESF.vista === "historial") RESH.datos = j.data || [];
-    view.innerHTML = renderReservas(j.data || []);
+    const datos = j.data || [];
+    if (RESF.vista === "historial") RESH.datos = datos;
+    view.innerHTML = renderReservas(datos);
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function resVista(v) { RESF.vista = v; loadReservas(); }
@@ -3788,7 +3826,13 @@ let FAC303 = { empresa: "", trimestre: "", data: null, error: "" };
 // queda fuera, el chip aparece en pantalla y la lista vuelve sin filtrar — o sea, el filtro
 // miente. Le pasó a `proveedor`. Hay un test que compara esta lista con FAC_FILTROS.
 const FAC_FILTROS = ["local", "empresa", "proveedor", "estado", "tipo", "q", "from", "to"];
-function facQS() { const qs = new URLSearchParams(); FAC_FILTROS.forEach((k) => { if (FACF[k]) qs.set(k, FACF[k]); }); return qs.toString(); }
+function facQS(localForzado) {
+  const qs = new URLSearchParams();
+  FAC_FILTROS.forEach((k) => { if (FACF[k]) qs.set(k, FACF[k]); });
+  // Al ver varios locales juntos, cada petición lleva el suyo (ver pidePorLocales).
+  if (localForzado !== undefined) { if (localForzado) qs.set("local", localForzado); else qs.delete("local"); }
+  return qs.toString();
+}
 // El ámbito de local lo manda el selector de establecimiento de la barra superior (no hay filtro
 // «Local» duplicado dentro de la vista). Para el encargado, su local fijado gana siempre.
 function facScope() { FACF.local = localActualFE(); return FACF.local; }
@@ -3805,7 +3849,16 @@ function renderFacturas(list, pend, stats, empresas) {
   const empOpts =['<option value="">Todas las empresas</option>'].concat((empresas || []).map((e) => `<option value="${esc(e)}" ${FACF.empresa === e ? "selected" : ""}>${esc(e)}</option>`)).join("");
   const tipoOpts = ['<option value="">Todos los tipos</option>'].concat(["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${FACF.tipo === t ? "selected" : ""}>${cap(t)}</option>`)).join("");
   const estOpts = [["", "Todos los estados"], ["pagada", "Pagadas"], ["pendiente", "Pendientes"]].map(([v, l]) => `<option value="${v}" ${FACF.estado === v ? "selected" : ""}>${l}</option>`).join("");
-  const resumen = stats && stats.resumenAnual ? `<div class="grid g4" style="margin-bottom:16px">${stat("Facturas (año)", "🧾", num(stats.resumenAnual.num_docs))}${stat("Base imponible", "€", eur(stats.resumenAnual.base))}${stat("IVA", "€", eur(stats.resumenAnual.iva))}${stat("Total", "€", eur(stats.resumenAnual.total))}</div>` : "";
+  // Con varios locales a la vez no hay resumen del servidor (sería el de uno solo). Se suma
+  // lo que se está viendo, que es exacto porque son estas filas y no otras — y se dice que es
+  // «lo que se ve» y no «el año», para que nadie lo lea como el total anual.
+  const sumaVista = (k) => (list || []).reduce((s2, f) => s2 + (Number(f[k]) || 0), 0);
+  const resumen = stats && stats.resumenAnual
+    ? `<div class="grid g4" style="margin-bottom:16px">${stat("Facturas (año)", "🧾", num(stats.resumenAnual.num_docs))}${stat("Base imponible", "€", eur(stats.resumenAnual.base))}${stat("IVA", "€", eur(stats.resumenAnual.iva))}${stat("Total", "€", eur(stats.resumenAnual.total))}</div>`
+    : viendoTodosLosMios()
+      ? `<div class="grid g4" style="margin-bottom:16px">${stat("Documentos que se ven", "🧾", num((list || []).length))}${stat("Base imponible", "€", eur(sumaVista("base_imponible")))}${stat("IVA", "€", eur(sumaVista("cuota_iva")))}${stat("Total", "€", eur(sumaVista("total")))}</div>
+         <p class="mut" style="margin:-8px 0 14px;font-size:12.5px">Sumado de <b>${esc(misLocales().map(nombreCortoLocal).join(" + "))}</b>, sobre los documentos que se están viendo — no es el total del año.</p>`
+      : "";
   // Barra simple: buscar (en vivo, como estaba) y un botón que abre el panel con todo lo
   // demás. Antes había seis campos siempre a la vista para algo que se toca de vez en
   // cuando, y se comían la pantalla por encima de la tabla, que es lo que se viene a ver.
@@ -4599,10 +4652,15 @@ async function loadFacturas() {
       return;
     }
     if (FACTAB === "compras") return loadCompras();
+    // Igual que en reservas: una petición por local y se juntan las filas.
     const [lst, pend, stats, empresas] = await Promise.all([
-      api("/api/facturas" + (facQS() ? "?" + facQS() : "")),
+      pidePorLocales((loc) => { const q = facQS(loc); return "/api/facturas" + (q ? "?" + q : ""); }),
       apiOptional("/api/facturas/pendientes"),
-      apiOptional("/api/facturas/stats" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : "")),
+      // El resumen viene YA AGREGADO del servidor y es de UN local. Viendo varios juntos
+      // enseñaría el de uno solo junto a una tabla con los dos, que es la peor mezcla posible:
+      // un número que parece el total y no lo es. Se pide solo cuando hay un local.
+      viendoTodosLosMios() ? Promise.resolve(null)
+        : apiOptional("/api/facturas/stats" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : "")),
       apiOptional("/api/facturas/empresas"),
     ]);
     FAC_LIST = lst || [];
