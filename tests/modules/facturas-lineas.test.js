@@ -243,3 +243,55 @@ describe("releer las antiguas — cableado", () => {
     assert.match(fn, /DELETE FROM factura_lineas WHERE factura_id/, "y ser idempotente");
   });
 });
+
+describe("el descuento: lo que se paga, no lo que pone la tarifa", () => {
+  // La factura real de Tupinamba:
+  // P.UNIDAD 0,52 · IMPORTE 234,00 · DTO 48,08 % · TOTAL 121,49
+  const CAPSULAS = { descripcion: "CAPSULAS TUPISPRESSO SOFT 150 UDS", cantidad: 450, unidad: "ud",
+    precio_unitario: 0.52, importe: 234, descuento_pct: 48.08, importe_neto: 121.49 };
+
+  test("el importe que se guarda es el que se paga", () => {
+    assert.equal(normalizarLinea(CAPSULAS).importe, 121.49);
+  });
+  test("y el precio unitario también: 0,27 €, no 0,52 €", () => {
+    // Es lo que rompía el seguimiento de subidas: comparaba precios que nadie paga.
+    assert.equal(normalizarLinea(CAPSULAS).precio_unitario, 0.27);
+  });
+  test("el bruto y el descuento se guardan: si un mes deja de aplicarse, se ve", () => {
+    const l = normalizarLinea(CAPSULAS);
+    assert.equal(l.importe_bruto, 234);
+    assert.equal(l.precio_bruto, 0.52);
+    assert.equal(l.descuento_pct, 48.08);
+  });
+  test("si la factura no da el neto, se calcula del porcentaje", () => {
+    const l = normalizarLinea({ ...CAPSULAS, importe_neto: null });
+    assert.equal(l.importe, 121.49);
+  });
+  test("sin descuento, todo se queda como estaba", () => {
+    const l = normalizarLinea({ descripcion: "X", cantidad: 10, precio_unitario: 2, importe: 20 });
+    assert.equal(l.importe, 20);
+    assert.equal(l.precio_unitario, 2);
+    assert.equal(l.importe_bruto, null, "no se guarda un bruto que es igual al neto");
+    assert.equal(l.descuento_pct, null);
+  });
+  test("un descuento de 0 % o de 100 % no se guarda: o no hay, o el dato está mal", () => {
+    assert.equal(normalizarLinea({ descripcion: "X", importe: 10, descuento_pct: 0 }).descuento_pct, null);
+    assert.equal(normalizarLinea({ descripcion: "X", importe: 10, descuento_pct: 100 }).descuento_pct, null);
+  });
+  test("si el neto sale MAYOR que el bruto, la línea es dudosa: no cuadra", () => {
+    const l = normalizarLinea({ descripcion: "X", cantidad: 1, importe: 10, importe_neto: 40 });
+    assert.equal(l.dudosa, true);
+  });
+  test("sin cantidad no se reparte el neto: se deja el precio de tarifa antes que inventar uno", () => {
+    const l = normalizarLinea({ descripcion: "X", precio_unitario: 5, importe: 100, descuento_pct: 50 });
+    assert.equal(l.importe, 50);
+    assert.equal(l.precio_unitario, 5);
+  });
+  test("la suma de las líneas cuadra con la base usando los NETOS", () => {
+    // Antes sumaba los brutos y descuadraba con la base imponible en cada factura con dto.
+    const ls = normalizarLineas([CAPSULAS, { descripcion: "AZUCAR", cantidad: 1, precio_unitario: 44.72,
+      importe: 44.72, descuento_pct: 50.07, importe_neto: 22.33 }]);
+    const v = validarSuma(ls, 143.82);
+    assert.equal(v.cuadra, true, `suma ${v.suma} vs base ${v.base}`);
+  });
+});

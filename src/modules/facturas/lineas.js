@@ -25,6 +25,7 @@ export const TOLERANCIA_PCT = 0.01;      // 1 % de la base, para las grandes
 
 // Número o null. El `null` importa: si esto devolviera 0 para lo que no se lee, una
 // cantidad ilegible se convertiría en «compramos 0», que es una mentira que además cuadra.
+const red = (x) => Math.round(x * 100) / 100;
 const n = (v) => {
   if (v == null) return null;
   const s = String(v).trim().replace(/\s/g, "").replace(",", ".");
@@ -35,24 +36,54 @@ const n = (v) => {
 
 // Normaliza una línea tal y como la devuelve el modelo. Nunca inventa: lo que no venga
 // queda en null y se marca.
+/**
+ * Una línea, con el DESCUENTO aplicado.
+ *
+ * EL FALLO QUE ARREGLA: las facturas de Tupinamba traen «P.UNIDAD 0,52 · IMPORTE 234,00 ·
+ * DTO 48,08 % · TOTAL 121,49». Guardando el precio de tarifa y el importe bruto, «Qué
+ * compramos» decía que esas cápsulas costaban 0,52 € y que se habían gastado 1.716 €, cuando
+ * en realidad son 0,27 € y la mitad de dinero. Y lo peor: el seguimiento de subidas de precio
+ * —que es para lo que sirve esa pantalla— compara precios que nadie paga.
+ *
+ * Aquí manda SIEMPRE lo que se paga de verdad. El bruto y el descuento se guardan aparte,
+ * porque saber que te hacen un 48 % también vale (si un mes deja de aplicarse, se ve).
+ */
 export function normalizarLinea(cruda = {}, orden = 0) {
   const descripcion = String(cruda.descripcion ?? "").trim().slice(0, 300);
   const cantidad = n(cruda.cantidad);
-  const precio = n(cruda.precio_unitario);
-  let importe = n(cruda.importe);
+  const precioBruto = n(cruda.precio_unitario);
+  const dto = n(cruda.descuento_pct);
+  let bruto = n(cruda.importe);
+  let neto = n(cruda.importe_neto);
 
   // Si falta el importe pero están cantidad y precio, se deriva: es aritmética, no adivinar.
-  if (importe == null && cantidad != null && precio != null) importe = Math.round(cantidad * precio * 100) / 100;
+  if (bruto == null && cantidad != null && precioBruto != null) bruto = red(cantidad * precioBruto);
+
+  // El neto: el que venga en la factura manda; si no, se calcula del descuento.
+  if (neto == null && bruto != null && dto != null && dto > 0 && dto < 100) neto = red(bruto * (1 - dto / 100));
+  if (neto == null) neto = bruto;
+
+  // Y el precio que se guarda es el que se paga: el neto entre las unidades. Si no hay
+  // cantidad no se puede repartir, y se deja el de tarifa antes que inventarse uno.
+  const precioNeto = (neto != null && cantidad) ? red(neto / cantidad) : precioBruto;
+
+  // Un descuento deducido de dos números que no cuadran es sospechoso: se marca para que la
+  // línea salga como dudosa en vez de dar por bueno un precio que nadie ha comprobado.
+  const incoherente = bruto != null && neto != null && neto > bruto + 0.01;
 
   return {
     orden,
     descripcion,
     cantidad,
     unidad: String(cruda.unidad ?? "").trim().slice(0, 20) || null,
-    precio_unitario: precio,
-    importe,
+    precio_unitario: precioNeto,
+    importe: neto,
+    // Lo de tarifa, para poder ver el descuento y notar si un mes deja de aplicarse.
+    precio_bruto: precioBruto,
+    importe_bruto: bruto != null && neto != null && Math.abs(bruto - neto) > 0.01 ? bruto : null,
+    descuento_pct: dto != null && dto > 0 && dto < 100 ? dto : null,
     // Una línea es dudosa si le falta lo mínimo para servir de algo.
-    dudosa: !descripcion || importe == null,
+    dudosa: !descripcion || neto == null || incoherente,
   };
 }
 

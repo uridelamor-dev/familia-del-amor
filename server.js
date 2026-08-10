@@ -525,6 +525,14 @@ async function initDB() {
     try { await client.query(`CREATE INDEX IF NOT EXISTS idx_prov_alias_nif ON facturas_proveedor_alias(nif) WHERE nif IS NOT NULL`); }
     catch (e) { console.error("[DB] idx_prov_alias_nif:", e.message); }
 
+    // Descuento por línea. Muchas facturas traen «IMPORTE» (bruto) y «TOTAL» (lo que se paga):
+    // guardando solo el bruto, «Qué compramos» decía un precio que nadie paga y el seguimiento
+    // de subidas comparaba tarifas en vez de lo pagado.
+    for (const col of ["precio_bruto NUMERIC", "importe_bruto NUMERIC", "descuento_pct NUMERIC"]) {
+      try { await client.query(`ALTER TABLE factura_lineas ADD COLUMN IF NOT EXISTS ${col}`); }
+      catch (e) { console.error("[DB] alter factura_lineas " + col + ":", e.message); }
+    }
+
     // Detalle línea a línea. Ver src/modules/facturas/lineas.js y docs/lineas-de-factura.md.
     // `lineas_estado` guarda si el detalle cuadra con la base imponible: sin ese aviso, una
     // cantidad mal leída se arrastraría a todos los informes sin que nadie lo supiera.
@@ -557,6 +565,13 @@ async function initDB() {
         clave TEXT,
         creado_en TEXT NOT NULL
       )`);
+    // Descuento por línea. Muchas facturas traen «IMPORTE» (bruto) y «TOTAL» (lo que se paga):
+    // guardando solo el bruto, «Qué compramos» decía un precio que nadie paga y el seguimiento
+    // de subidas comparaba tarifas en vez de lo pagado. Va DESPUÉS del CREATE, claro.
+    for (const col of ["precio_bruto NUMERIC", "importe_bruto NUMERIC", "descuento_pct NUMERIC"]) {
+      try { await client.query(`ALTER TABLE factura_lineas ADD COLUMN IF NOT EXISTS ${col}`); }
+      catch (e) { console.error("[DB] alter factura_lineas " + col + ":", e.message); }
+    }
     await client.query(`CREATE INDEX IF NOT EXISTS idx_fl_factura ON factura_lineas (factura_id)`);
     // El índice que hace rápida la pregunta «cuántas Coca-Colas desde marzo».
     await client.query(`CREATE INDEX IF NOT EXISTS idx_fl_clave ON factura_lineas (clave)`);
@@ -3325,6 +3340,7 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
     const compras = await dbAll(
       `SELECT l.descripcion, l.cantidad::float AS cantidad, l.unidad,
               l.precio_unitario::float AS precio_unitario, l.importe::float AS importe, l.dudosa,
+              l.precio_bruto::float AS precio_bruto, l.descuento_pct::float AS descuento_pct,
               f.id AS factura_id, f.fecha, f.proveedor, f.local, f.numero_factura, f.drive_url
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
         WHERE ${cond.join(" AND ")}

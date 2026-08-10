@@ -51,7 +51,7 @@ Devuelve ÚNICAMENTE un JSON válido, sin texto adicional, con esta estructura e
   "cuota_iva": number,
   "total": number,
   "lineas": [
-    { "descripcion": "string", "cantidad": number, "unidad": "string", "precio_unitario": number, "importe": number }
+    { "descripcion": "string", "cantidad": number, "unidad": "string", "precio_unitario": number, "importe": number, "descuento_pct": number, "importe_neto": number }
   ]
 }
 QUIÉN EMITE Y QUIÉN RECIBE. Es el error más fácil de cometer y el más caro:
@@ -69,7 +69,11 @@ En "local_receptor" pon el LOCAL o establecimiento CONCRETO del cliente si apare
 En "lineas" pon UNA ENTRADA POR CADA LÍNEA DE PRODUCTO del detalle, en el orden en que aparecen.
 - "descripcion": el texto del producto tal cual está escrito en la factura, sin traducir ni abreviar.
 - "cantidad" y "unidad": lo que diga la línea (2 / "cajas", 1.5 / "kg", 12 / "ud"). Si la línea no indica unidad, pon null en "unidad".
-- "precio_unitario" e "importe": los de esa línea.
+- "precio_unitario" e "importe": los de esa línea, TAL CUAL aparecen (antes de descuento).
+- DESCUENTOS. Muchas facturas traen columnas «DTO. %» y «TOTAL» además de «IMPORTE»: el
+  importe es el bruto y el total es lo que se paga de verdad. Si las ves, pon el porcentaje en
+  "descuento_pct" y ese total de la línea en "importe_neto". Si no hay descuento, pon null en
+  las dos. Es importante: sin esto se guarda un precio que nadie paga.
 - Usa PUNTO decimal, nunca coma. No pongas separador de miles.
 - NO incluyas como líneas los subtotales, descuentos globales, portes, la base imponible, el IVA ni el total.
 - Si una línea no se lee con seguridad, ponla igualmente con "descripcion" con lo que se distinga y null en lo que no puedas leer. NO INVENTES cantidades ni importes: es preferible un null a un número que parezca correcto.
@@ -136,10 +140,12 @@ export async function guardarLineas(dbRun, facturaId, datos, ahora) {
 
   for (const l of lineas) {
     await dbRun(
-      `INSERT INTO factura_lineas (factura_id, orden, descripcion, cantidad, unidad, precio_unitario, importe, dudosa, clave, creado_en)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO factura_lineas (factura_id, orden, descripcion, cantidad, unidad, precio_unitario, importe,
+         precio_bruto, importe_bruto, descuento_pct, dudosa, clave, creado_en)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [facturaId, l.orden, l.descripcion || "(sin descripción)", l.cantidad, l.unidad,
-       l.precio_unitario, l.importe, l.dudosa, claveProducto(l.descripcion), ahora]);
+       l.precio_unitario, l.importe, l.precio_bruto, l.importe_bruto, l.descuento_pct,
+       l.dudosa, claveProducto(l.descripcion), ahora]);
   }
   await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ?, lineas_leidas_en = ? WHERE id = ?`,
     [v.cuadra ? (v.dudosas ? "dudas" : "ok") : "descuadre", aviso, ahora, facturaId]);

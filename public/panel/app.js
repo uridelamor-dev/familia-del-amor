@@ -5078,7 +5078,10 @@ async function comprasHistorial(clave, nombre) {
     <td class="mut" style="white-space:nowrap">${esc(fechaCorta(c.fecha) || c.fecha || "—")}</td>
     <td>${esc(c.proveedor || "—")}<div class="t2">${esc(nombreCortoLocal(c.local) || "")}</div></td>
     <td class="r tnum">${c.cantidad != null ? esc(num(c.cantidad)) + (c.unidad ? " " + esc(c.unidad) : "") : "—"}</td>
-    <td class="r tnum">${c.precio_unitario != null ? esc(eur2(c.precio_unitario)) : "—"}</td>
+    ${/* El precio que se enseña es el que se PAGA. Si hay descuento se dice, con el de tarifa
+          al lado: así se ve de un vistazo si un mes deja de aplicarse. */""}
+    <td class="r tnum">${c.precio_unitario != null ? esc(eur2(c.precio_unitario)) : "—"}
+      ${c.descuento_pct ? `<div class="t2" style="white-space:nowrap">${esc(eur2(c.precio_bruto))} −${esc(String(c.descuento_pct))} %</div>` : ""}</td>
     <td class="r tnum"><b>${c.importe != null ? esc(eur2(c.importe)) : "—"}</b></td>
     <td class="r" style="white-space:nowrap">
       ${c.drive_url ? `<a class="btn sm" href="${esc(c.drive_url)}" target="_blank" rel="noopener" title="Abrir la factura en Drive">Ver factura ↗</a>`
