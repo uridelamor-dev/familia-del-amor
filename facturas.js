@@ -6,6 +6,7 @@ import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicado
 import { corregirEmisorReceptor } from "./src/modules/facturas/emisor.js";
 import { revisarCoherencia, textosDe } from "./src/modules/facturas/coherencia.js";
 import { extraerTextoPdf, bloqueTextoParaClaude } from "./src/modules/facturas/pdf-texto.js";
+import { VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { createHash } from "crypto";
 import { PDFDocument } from "pdf-lib";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -148,8 +149,11 @@ export async function guardarLineas(dbRun, facturaId, datos, ahora) {
        l.precio_unitario, l.importe, l.precio_bruto, l.importe_bruto, l.descuento_pct,
        l.dudosa, claveProducto(l.descripcion), ahora]);
   }
-  await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ?, lineas_leidas_en = ? WHERE id = ?`,
-    [v.cuadra ? (v.dudosas ? "dudas" : "ok") : "descuadre", aviso, ahora, facturaId]);
+  // Queda escrito CON QUÉ VERSIÓN se leyó. Es lo que permite releer hacia atrás solo lo que
+  // se leyó con la de antes, en vez de volver a pasar por el modelo facturas que ya están al
+  // día. Ver src/modules/facturas/repaso.js.
+  await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ?, lineas_leidas_en = ?, lineas_version = ? WHERE id = ?`,
+    [v.cuadra ? (v.dudosas ? "dudas" : "ok") : "descuadre", aviso, ahora, VERSION_LINEAS, facturaId]);
   return { n: lineas.length, validacion: v, aviso };
 }
 

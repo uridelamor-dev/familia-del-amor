@@ -54,6 +54,7 @@ import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados
 import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
+import { repasarLote, resumenRepaso, pideRelecturaDeLineas, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
@@ -549,7 +550,12 @@ async function initDB() {
       "revisar TEXT"]) {
       try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
     }
-    for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT"]) {
+    // `lineas_version`: con qué versión del lector se sacó el detalle. Es lo que permite
+    // releer hacia atrás SOLO lo que se leyó con la versión de antes de los descuentos —sin
+    // este número habría que adivinarlo mirando las columnas, y una factura que de verdad no
+    // tiene descuentos parecería pendiente de releer para siempre.
+    // Ver src/modules/facturas/repaso.js.
+    for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT", "lineas_version INTEGER"]) {
       try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
     }
     await client.query(`
@@ -3861,6 +3867,161 @@ app.post("/api/facturas/lineas/releer", requireAuth(["direccion", "contabilidad"
     res.json({ ok: true, ...resultado, quedan: quedan?.n || 0 });
   } catch (e) {
     console.error("[facturas] releer:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo releer: " + e.message });
+  } finally {
+    _releyendo = false;
+  }
+});
+
+// ── Repaso de las facturas ya guardadas ─────────────────────────────────────
+// Las comprobaciones se han ido añadiendo con el tiempo y todas actúan sobre la factura que
+// ENTRA: los descuentos por línea, los avisos de coherencia y la sospecha de duplicado. Las
+// que ya estaban guardadas se quedaron como estaban, así que la contabilidad tiene dos mitades
+// —la de antes, sin repasar, y la de ahora— y la de antes es la más grande.
+//
+// El repaso son DOS COSAS con costes muy distintos, y por eso son dos endpoints:
+//   · Coherencia y duplicados: aritmética y comparaciones sobre lo que ya está en la base.
+//     Ni una llamada al modelo, ni una descarga. Se puede repasar todo entero en un segundo.
+//   · Descuentos por línea: hay que volver a leer el documento. Descarga de Drive + modelo por
+//     factura, así que va por tandas y se puede parar, igual que «Leer las que faltan».
+//
+// Y mirar va SEPARADO de aplicar. Apartar una factura como dudosa la saca de TODOS los totales;
+// enseñar antes lo que va a pasar no es un lujo cuando lo que se toca es un mes ya cerrado.
+// Ver src/modules/facturas/repaso.js.
+
+/** Las columnas que necesita el repaso. Se piden una vez y se reparten a las dos revisiones. */
+const REPASO_COLS = `id, local, tipo, fecha, numero_factura, proveedor, nif,
+   base_imponible::float AS base_imponible, porcentaje_iva::float AS porcentaje_iva,
+   cuota_iva::float AS cuota_iva, total::float AS total, dup_estado, dup_de, revisar,
+   lineas_estado, lineas_version, drive_url`;
+// Techo de seguridad: el repaso carga las facturas en memoria para compararlas entre sí. Con
+// unos miles va sobrado; poner un límite evita que el día que haya cientos de miles esto se
+// convierta en una petición que tumba el proceso en vez de en una que dice que no puede.
+const REPASO_MAX = 20000;
+
+async function repasoCargar(scope) {
+  return dbAll(`SELECT ${REPASO_COLS} FROM facturas ${scope ? "WHERE local = ?" : ""}
+                ORDER BY id LIMIT ${REPASO_MAX}`, scope ? [scope] : []);
+}
+
+// Mirar. No escribe nada: dice qué cambiaría y cuánto.
+app.get("/api/facturas/repaso", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const scope = localScope(req);
+    const filas = await repasoCargar(scope);
+    const r = repasarLote(filas);
+    const porReleer = filas.filter(pideRelecturaDeLineas);
+    res.json({
+      ok: true,
+      facturas: filas.length,
+      tope: filas.length >= REPASO_MAX,
+      ...resumenRepaso(r),
+      porReleer: porReleer.length,
+      // Solo una muestra: la lista entera de una base grande no cabe en una pantalla ni en
+      // una cabeza. Para verlas todas están la pestaña de facturas y la de duplicados.
+      revisiones: r.revisiones.slice(0, 25),
+      dudas: r.sospechas.slice(0, 25),
+      enCurso: _releyendo,
+    });
+  } catch (e) {
+    console.error("[facturas] repaso (mirar):", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo repasar: " + e.message });
+  }
+});
+
+// Aplicar lo barato: escribir los avisos de coherencia y apartar las repetidas.
+app.post("/api/facturas/repaso", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const scope = localScope(req);
+    const conDuplicados = req.body?.duplicados !== false;
+    const filas = await repasoCargar(scope);
+    const r = repasarLote(filas);
+
+    let avisos = 0;
+    for (const v of r.revisiones) {
+      await dbRun(`UPDATE facturas SET revisar = ? WHERE id = ?`,
+        [v.textos.length ? JSON.stringify(v.textos) : null, v.id]);
+      avisos++;
+    }
+
+    // `dup_estado IS NULL` en el WHERE y no solo en el módulo: entre mirar y aplicar puede
+    // haber entrado una factura o haber decidido alguien, y lo que no se puede es pisar la
+    // decisión de una persona con el resultado de un análisis de hace treinta segundos.
+    let apartadas = 0;
+    if (conDuplicados) {
+      for (const s of r.sospechas) {
+        const upd = await dbRun(
+          `UPDATE facturas SET dup_estado = 'duda', dup_de = ?, dup_motivos = ?
+            WHERE id = ? AND dup_estado IS NULL RETURNING id`,
+          [s.contraId, JSON.stringify(s.motivos), s.id]);
+        if (upd) {
+          apartadas++;
+          await ficAuditar("facturas", s.id, "duplicado_sospechado", req.user?.username || "sistema",
+            { local: s.local, detalle: { parecida_a: s.contraId, motivos: s.motivos, origen: "repaso" } }).catch(() => {});
+        }
+      }
+    }
+
+    console.log(`[facturas] repaso aplicado${scope ? " (" + scope + ")" : ""}: ${avisos} avisos, ${apartadas} apartadas`);
+    res.json({ ok: true, facturas: filas.length, avisos, apartadas, ...resumenRepaso(r),
+      porReleer: filas.filter(pideRelecturaDeLineas).length });
+  } catch (e) {
+    console.error("[facturas] repaso (aplicar):", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo aplicar el repaso: " + e.message });
+  }
+});
+
+// Lo caro: volver a leer el detalle de las que se leyeron con la versión de antes de los
+// descuentos. Por tandas, con la misma mecánica que «Leer las que faltan».
+app.post("/api/facturas/repaso/lineas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  if (_releyendo) return res.status(409).json({ ok: false, error: "Ya hay una relectura en marcha. Espera a que termine." });
+  _releyendo = true;
+  try {
+    const scope = localScope(req);
+    const tanda = Math.min(Math.max(Number(req.body?.tanda) || 10, 1), 40);
+    // Las que ya fallaron en esta pasada. No se marcan en la base como ilegibles —tienen su
+    // detalle viejo, que sigue sirviendo— pero hay que saltarlas o la tanda siguiente volvería
+    // a tropezar con las mismas y el contador no bajaría nunca.
+    const saltar = (Array.isArray(req.body?.saltar) ? req.body.saltar : []).map(Number).filter(Number.isInteger).slice(0, 500);
+    const cond = [`COALESCE(lineas_version, 1) < ?`, `drive_url IS NOT NULL`,
+                  `lineas_estado IN ('ok','dudas','descuadre')`];
+    const par = [VERSION_LINEAS];
+    if (scope) { cond.push("local = ?"); par.push(scope); }
+    if (saltar.length) { cond.push(`NOT (id = ANY(?))`); par.push(saltar); }
+    const filas = await dbAll(
+      `SELECT id, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, drive_url
+         FROM facturas WHERE ${cond.join(" AND ")}
+        ORDER BY fecha DESC NULLS LAST, id DESC LIMIT ?`, [...par, tanda]);
+
+    const r = { leidas: 0, conDescuento: 0, conAviso: 0, fallidas: 0, detalles: [] };
+    for (const f of filas) {
+      try {
+        const antes = await dbGet(`SELECT count(*)::int AS n FROM factura_lineas WHERE factura_id = ?`, [f.id]);
+        await releerLineasFactura({ factura: f, getToken: getDriveAccessToken, dbRun });
+        const ahora = await dbGet(
+          `SELECT count(*)::int AS n, count(*) FILTER (WHERE descuento_pct IS NOT NULL)::int AS con_dto
+             FROM factura_lineas WHERE factura_id = ?`, [f.id]);
+        r.leidas++;
+        if (ahora?.con_dto) r.conDescuento++;
+        r.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha,
+          lineas: ahora?.n || 0, antes: antes?.n || 0, descuentos: ahora?.con_dto || 0 });
+      } catch (e) {
+        // Que falle una NO la marca como ilegible: su detalle de antes sigue guardado y sigue
+        // valiendo. Lo único que pasa es que se queda sin los descuentos.
+        r.fallidas++;
+        r.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, error: e.message });
+        console.error(`[facturas] repaso líneas #${f.id}:`, e.message);
+      }
+    }
+
+    const quedan = await dbGet(
+      `SELECT count(*)::int AS n FROM facturas
+        WHERE COALESCE(lineas_version, 1) < ? AND drive_url IS NOT NULL
+          AND lineas_estado IN ('ok','dudas','descuadre') ${scope ? "AND local = ?" : ""}`,
+      scope ? [VERSION_LINEAS, scope] : [VERSION_LINEAS]);
+    res.json({ ok: true, ...r, quedan: Math.max(0, (quedan?.n || 0) - saltar.length - r.fallidas) });
+  } catch (e) {
+    console.error("[facturas] repaso líneas:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo releer: " + e.message });
   } finally {
     _releyendo = false;

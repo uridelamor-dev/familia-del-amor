@@ -4760,7 +4760,18 @@ function renderFacturasConfig() {
   // Carpetas de Drive vigiladas (tercer canal de ingesta)
   const carp = FCFG.carpetas || [];
   const drive = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Carpetas de Drive vigiladas</h3></div><div class="mut" style="padding:0 18px;font-size:12.5px">Deja una factura (PDF/imagen) en la carpeta de Drive de un local y entrará sola cada pocos minutos.</div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Carpeta</th><th></th></tr></thead><tbody>${carp.map((c) => `<tr><td>${facLocalCelda(c.local)}</td><td class="mut">${c.folder_url ? `<a class="link" href="${esc(c.folder_url)}" target="_blank" rel="noopener">${esc(c.folder_id)}</a>` : esc(c.folder_id)}</td><td class="r"><button class="linkbtn" data-act="fac-drive-del" data-local="${esc(c.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin carpetas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fdLocal")}<input id="fdFolder" placeholder="Enlace o ID de la carpeta de Drive" style="flex:1;min-width:0"><button class="btn primary" data-act="fac-drive-add">Vincular</button></div></div>`;
-  return `${facHeader()}<div id="facDrive"></div><div id="facCats"></div><div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${integ}</div>`;
+  // Repasar hacia atrás. Va en Configuración y no en la lista de facturas porque es una
+  // tarea de mantenimiento que se hace de tarde en tarde, no algo del día a día.
+  const repaso = `<div class="card"><div class="ch"><h3>Repasar las facturas ya guardadas</h3></div>
+    <p class="mut" style="margin:0;line-height:1.6">Las comprobaciones se han ido añadiendo con el tiempo y todas actúan sobre la factura que <b>entra</b>, así que las de antes se quedaron sin pasar por ellas. Esto las repasa hacia atrás:</p>
+    <ul class="mut" style="margin:8px 0 0;padding-left:18px;line-height:1.6">
+      <li><b>Coherencia:</b> base + IVA = total, el NIF de siempre, importes fuera de escala.</li>
+      <li><b>Repetidas:</b> la misma factura metida dos veces. Se <b>aparta</b> para que alguien decida; no se borra nada.</li>
+      <li><b>Descuentos por línea:</b> vuelve a leer el documento para guardar lo que se paga y no la tarifa. Esto sí tarda: es una descarga y una lectura por factura.</li>
+    </ul>
+    <p class="mut" style="margin:8px 0 0;line-height:1.6">Primero enseña lo que encontraría. No cambia nada hasta que lo confirmes.</p>
+    <div class="toolbar" style="padding:12px 0 0"><button class="btn primary" data-act="fac-repaso">Repasar</button></div></div>`;
+  return `${facHeader()}<div id="facDrive"></div><div id="facCats"></div><div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${repaso}</div><div style="margin-top:16px">${integ}</div>`;
 }
 
 async function loadFacturas() {
@@ -5359,6 +5370,103 @@ async function facMigrar() { if (!(await confirmModal("¿Reordenar en Drive toda
 async function facDriveAdd() { const local = facVal("fdLocal"), folder = facVal("fdFolder"); if (!local || !folder) { toast("Local y carpeta obligatorios"); return; } try { await apiSend("POST", "/api/facturas/drive-carpetas", { local, folder }); toast("Carpeta vinculada ✅"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facDriveDel(local) { if (!(await confirmModal(`¿Dejar de vigilar la carpeta de ${local}?`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/facturas/drive-carpetas/" + encodeURIComponent(local)); toast("Eliminada"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facReconstruir() { if (!(await confirmModal("¿Reconstruir el Sheet maestro con todas las facturas registradas?", { ok: "Reconstruir" }))) return; try { const j = await apiSend("POST", "/api/facturas/reconstruir-maestro"); toast(`Maestro actualizado: ${num(j.total || 0)} facturas ✅`); loadFacturas(); } catch (e) { toast("Error: " + e.message); } }
+// ── Repasar hacia atrás las facturas ya guardadas ───────────────────────────
+// MIRAR y APLICAR van separados a propósito: apartar una factura como dudosa la saca de todos
+// los totales, y eso no se hace a ciegas por darle a un botón. Primero se enseña qué saldría.
+async function facRepaso() {
+  const ov = modal("Repaso de las facturas guardadas", `<p class="mut" id="repCuerpo" style="margin:0;line-height:1.6">Mirando las facturas… (no se está cambiando nada)</p>`);
+  let j;
+  try { j = await apiRaw("/api/facturas/repaso"); }
+  catch (e) { const c = ov.querySelector("#repCuerpo"); if (c) c.textContent = e.message; return; }
+  facRepasoPintar(ov, j);
+}
+
+function facRepasoPintar(ov, j) {
+  const cuerpo = ov.querySelector(".modal-b");
+  if (!cuerpo) return;
+  const nadaBarato = !j.avisosNuevos && !j.avisosQuitados && !j.avisosCambiados && !j.sospechas;
+
+  const fila = (t1, t2) => `<div class="row"><div class="grow"><div class="t1">${t1}</div><div class="t2">${t2}</div></div></div>`;
+  const listaDudas = j.dudas && j.dudas.length ? `<details class="fold" style="margin-top:10px"><summary><b>Las que se apartarían</b> <span class="mut">(${num(j.sospechas)})</span></summary>
+      <div class="rows" style="max-height:220px;overflow:auto">${j.dudas.map((d) => `<div class="row"><div class="grow">
+        <div class="t1">${esc(d.proveedor || "—")} · nº ${esc(d.numero_factura || "s/n")} <span class="mut">${esc(d.fecha || "")}</span></div>
+        <div class="t2">Se parece a la #${esc(String(d.contraId))}. ${esc(d.resumen)}</div></div></div>`).join("")}</div></details>` : "";
+  const listaAvisos = j.revisiones && j.revisiones.length ? `<details class="fold" style="margin-top:10px"><summary><b>Avisos que cambian</b> <span class="mut">(muestra)</span></summary>
+      <div class="rows" style="max-height:220px;overflow:auto">${j.revisiones.map((r) => `<div class="row"><div class="grow">
+        <div class="t1">${esc(r.proveedor || "—")} · nº ${esc(r.numero_factura || "s/n")} <span class="mut">${esc(r.fecha || "")}</span></div>
+        <div class="t2">${r.textos.length ? esc(r.textos.join(" · ")) : "Ya no hace falta revisarla"}</div></div></div>`).join("")}</div></details>` : "";
+
+  cuerpo.innerHTML = `
+    <p style="margin:0 0 12px;line-height:1.6">Repasadas <b>${num(j.facturas)}</b> facturas${j.tope ? " (el tope de una pasada)" : ""}.</p>
+    <div class="rows">
+      ${fila(`<b>${num(j.avisosNuevos)}</b> con avisos nuevos${j.graves ? ` · ${num(j.graves)} de los serios` : ""}`, "Base + IVA que no cuadra, NIF distinto del de siempre o importe fuera de escala.")}
+      ${j.avisosQuitados || j.avisosCambiados ? fila(`<b>${num(j.avisosQuitados + j.avisosCambiados)}</b> con avisos que ya no tocan`, "Se corrigieron a mano y el aviso sobra.") : ""}
+      ${fila(`<b>${num(j.sospechas)}</b> posibles repetidas${j.certezas ? ` · ${num(j.certezas)} casi seguras` : ""}`, "Se apartan de los totales y las decide una persona en «Posibles duplicados». No se borra ninguna.")}
+      ${fila(`<b>${num(j.porReleer)}</b> por releer para los descuentos`, "Se guardó el precio de tarifa en vez de lo que se paga. Hay que volver a leer el documento: tarda.")}
+    </div>
+    ${listaDudas}${listaAvisos}
+    <p class="mut" style="margin:12px 0 0;line-height:1.5">El repaso deja las facturas viejas igual que si hubieran entrado hoy. Nunca borra: lo dudoso se aparta y lo decide una persona.</p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
+      <button class="btn" data-close>Cerrar</button>
+      ${j.porReleer ? `<button class="btn" id="repLineas">Releer ${num(j.porReleer)} para los descuentos</button>` : ""}
+      ${nadaBarato ? "" : `<button class="btn primary" id="repAplicar">Aplicar avisos y apartar repetidas</button>`}
+    </div>`;
+
+  const bAplicar = cuerpo.querySelector("#repAplicar");
+  if (bAplicar) bAplicar.addEventListener("click", async () => {
+    bAplicar.disabled = true; bAplicar.textContent = "Aplicando…";
+    try {
+      const r = await apiSend("POST", "/api/facturas/repaso", {});
+      toast(`Repaso aplicado: ${num(r.avisos)} avisos · ${num(r.apartadas)} apartadas ✅`);
+      ov.remove(); loadFacturas();
+    } catch (e) { toast("Error: " + e.message); bAplicar.disabled = false; bAplicar.textContent = "Aplicar avisos y apartar repetidas"; }
+  });
+  const bLineas = cuerpo.querySelector("#repLineas");
+  if (bLineas) bLineas.addEventListener("click", () => { ov.remove(); facRepasoLineas(j.porReleer); });
+}
+
+// Lo caro: releer el documento de las que se leyeron antes de los descuentos. Va por tandas y
+// enseña el avance —son cientos de descargas más una lectura cada una— y se puede parar.
+async function facRepasoLineas(total) {
+  const ok = await confirmModal(
+    `Se van a releer ${total} facturas para guardar los descuentos por línea. Se descarga cada archivo de Drive y se vuelve a leer: tarda un rato y se puede parar cuando quieras. No se toca la cabecera —proveedor, fechas e importes se quedan como están—, solo el detalle.`,
+    { ok: "Empezar" });
+  if (!ok) return;
+
+  const ov = modal("Releyendo para los descuentos", `
+    <p id="repEstado" style="margin:0 0 12px;line-height:1.6">Empezando…</p>
+    <div class="rows" id="repLista" style="max-height:260px;overflow:auto"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button class="btn" id="repParar">Parar</button></div>`);
+  let parar = false;
+  const bParar = ov.querySelector("#repParar");
+  bParar.addEventListener("click", () => { parar = true; bParar.textContent = "Parando…"; });
+  ov.addEventListener("click", (e) => { if (e.target === ov) parar = true; });
+
+  const estado = ov.querySelector("#repEstado"), lista = ov.querySelector("#repLista");
+  // Las que fallan se van apuntando y se le dicen al servidor para que no vuelva a sacarlas:
+  // si no, cada tanda tropezaría con las mismas y el contador no bajaría nunca.
+  const saltar = [];
+  let leidas = 0, conDto = 0;
+  while (!parar) {
+    let r;
+    try { r = await apiSend("POST", "/api/facturas/repaso/lineas", { tanda: 10, saltar }); }
+    catch (e) { estado.innerHTML = `<b>Se ha parado:</b> ${esc(e.message)}`; break; }
+    leidas += r.leidas; conDto += r.conDescuento;
+    for (const d of r.detalles) {
+      if (d.error) saltar.push(d.id);
+      lista.insertAdjacentHTML("afterbegin", `<div class="row"><div class="grow">
+        <div class="t1">${esc(d.proveedor || "—")} <span class="mut">${esc(d.fecha || "")}</span></div>
+        <div class="t2">${d.error ? `⚠️ ${esc(d.error)}` : `${d.lineas} ${d.lineas === 1 ? "línea" : "líneas"}${d.descuentos ? ` · ${d.descuentos} con descuento` : " · sin descuentos"}`}</div>
+      </div></div>`);
+    }
+    estado.innerHTML = `<b>${num(leidas)}</b> releídas · quedan <b>${num(r.quedan)}</b>${conDto ? ` · ${num(conDto)} traían descuento` : ""}${saltar.length ? ` · ${num(saltar.length)} sin poder leer` : ""}`;
+    if (!r.quedan || (!r.leidas && !r.fallidas)) break;   // sin avance: no dar vueltas en balde
+  }
+  bParar.textContent = "Cerrar"; bParar.setAttribute("data-close", "");
+  estado.innerHTML += `<br><span class="mut">Terminado. Las que traían descuento ya guardan lo que se paga, no la tarifa.</span>`;
+  loadFacturas();
+}
+
 async function facReparar() { if (!(await confirmModal("¿Verificar y reparar todos los Sheets desde la base de datos? Reescribe las hojas por local y el maestro.", { ok: "Reparar" }))) return; toast("Reparando Sheets… (puede tardar)"); try { const j = await apiSend("POST", "/api/facturas/reparar"); toast(`Sheets reparados: ${num(j.tabs || 0)} hojas · maestro ${num(j.maestro || 0)} facturas ✅`); loadFacturas(); } catch (e) { toast("Error: " + e.message); } }
 async function facReproyectar() { toast("Reintentando volcado a Sheets…"); try { const j = await apiSend("POST", "/api/facturas/reproyectar"); toast(`Volcado: ${num(j.sincronizados || 0)} factura(s) sincronizadas${j.fallidos ? ` · ${num(j.fallidos)} grupo(s) con error` : ""} ✅`); loadFacturas(); } catch (e) { toast("Error: " + e.message); } }
 async function facEmpezarCero() {
@@ -6695,6 +6803,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-drive-del") facDriveDel(t.getAttribute("data-local"));
   else if (act === "fac-reconstruir") facReconstruir();
   else if (act === "fac-reparar") facReparar();
+  else if (act === "fac-repaso") facRepaso();
   else if (act === "fac-reproyectar") facReproyectar();
   else if (act === "fac-empezar-cero") facEmpezarCero();
   else if (act === "com-add") comAdd();
