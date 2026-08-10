@@ -954,12 +954,14 @@ async function initDB() {
       ];
       for (const u of roles) {
         const hash = await bcrypt.hash("tapeta2024", 10);
+        // También temporal: esta contraseña está escrita en el código y sale por el log al
+        // arrancar. Una cuenta con una contraseña pública no puede quedarse así.
         await client.query(
-          `INSERT INTO users (username, password_hash, rol, nombre, creado_en) VALUES ($1, $2, $3, $4, $5)`,
+          `INSERT INTO users (username, password_hash, rol, nombre, pass_temporal, creado_en) VALUES ($1, $2, $3, $4, TRUE, $5)`,
           [u.username, hash, u.rol, u.nombre, new Date().toISOString()]
         );
       }
-      console.log("Usuarios por defecto creados. Contraseña: tapeta2024");
+      console.log("Usuarios por defecto creados. Contraseña inicial: tapeta2024 (la pide cambiar al entrar).");
     }
 
     // Rellenar empresa en facturas que quedaron como null o "Sin empresa asignada"
@@ -2637,8 +2639,14 @@ app.post("/api/users", requireAuth(["direccion"]), async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const creado_en = new Date().toISOString();
     const mods = sanearModulos(rol, modulos);
+    // `pass_temporal = TRUE`: la contraseña la ha elegido quien crea la cuenta y se la va a
+    // decir de viva voz o por WhatsApp, así que la sabe más de una persona. Hasta que su dueño
+    // la cambie, la cuenta no puede hacer NADA más en el panel. Esto se olvidó aquí —que es la
+    // vía por la que se crean casi todos los usuarios— y por eso el cambio obligatorio no
+    // saltaba nunca. Hay un test que ahora recorre todos los INSERT de usuarios.
     const row = await dbRun(
-      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, modulos, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, modulos, pass_temporal, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, ?) RETURNING id`,
       [username, hash, encUserPass(password), rol, nombre || "", local || "", mods ? JSON.stringify(mods) : null, creado_en]
     );
     invalidarInternos();
@@ -4600,8 +4608,9 @@ app.post("/api/hr/applications/:id/contratar", requireAuth(["rrhh", "direccion"]
     const hash = await bcrypt.hash(password, 10);
     const now = new Date().toISOString();
     const u = await dbRun(
-      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, telefono, email, puesto, fecha_alta, activo, creado_en)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`,
+      // pass_temporal: igual que en el resto de altas, la primera contraseña es prestada.
+      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, telefono, email, puesto, fecha_alta, activo, pass_temporal, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, TRUE, ?) RETURNING id`,
       [username, hash, encUserPass(password), rol, cand.nombre || "", local, cand.telefono || null, cand.email || null, cand.puesto || null, now.slice(0, 10), now]);
     if (cand.cv_url) {
       await dbRun(`INSERT INTO hr_documentos (worker_id, tipo, nombre, url, sensible, autor, creado_en) VALUES (?, 'otro', ?, ?, 0, ?, ?)`,

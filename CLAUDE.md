@@ -18,7 +18,8 @@ App de gestión interna + web pública de un grupo de restauración. **Responder
 - **Puerto:** `5000` (en Replit sale por el 80).
 - **Reiniciar** (mata puerto + chrome/puppeteer + SingletonLock + relanza): `/restart-tapeta`.
 - **Probar API** (login + endpoints, sin pegar token a mano): skill `tapeta-api` → `.claude/skills/tapeta-api/api.sh <endpoint>`.
-- Login de prueba: usuarios `direccion` / `encargado`, contraseña `tapeta2024`.
+- Login de prueba: usuarios `direccion` / `encargado`, contraseña `tapeta2024`. En una base
+  **recién creada** pide cambiarla al entrar (todas las altas nacen con `pass_temporal`).
 
 ## Git ↔ Replit (importante)
 La app también vive en Replit, que commitea al **mismo `main`**. Por eso **siempre `pull --rebase` antes de push**.

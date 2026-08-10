@@ -27,7 +27,7 @@ const MODULOS_SOLO_PUBLICO = new Set(["reservas", "analitica"]);
 // ── Capa de datos ────────────────────────────────────────────────────────────
 async function api(path) {
   const r = await fetch(path, { headers: { Authorization: "Bearer " + token() } });
-  if (r.status === 401 || r.status === 403) { localStorage.removeItem("token"); location.href = "/login.html"; throw new Error("noauth"); }
+  if (await fueraDeSesion(r)) throw new Error("noauth");
   const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error del servidor"); return j.data;
 }
 async function apiOptional(path) {
@@ -37,7 +37,7 @@ async function apiSend(method, path, body) {
   const opt = { method, headers: { Authorization: "Bearer " + token() } };
   if (body) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
   const r = await fetch(path, opt);
-  if (r.status === 401 || r.status === 403) { localStorage.removeItem("token"); location.href = "/login.html"; throw new Error("noauth"); }
+  if (await fueraDeSesion(r)) throw new Error("noauth");
   const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error del servidor"); return j;
 }
 
@@ -48,6 +48,26 @@ async function apiSend(method, path, body) {
 // Arriba queda lo que se abre a diario sin ser de nadie en concreto (Operación) y abajo lo que
 // solo toca dirección (Sistema). Los grupos que quedan vacíos para un rol no se pintan, así que
 // un encargado ve tres bloques cortos en vez de cuatro largos con casi todo en gris.
+/**
+ * Qué hacer con un 401/403. La contraseña sin estrenar NO es una sesión caducada: el token es
+ * bueno, lo que pasa es que esa cuenta no puede hacer nada hasta cambiarla. Si se trata igual
+ * que una sesión caducada se le borra el token y aterriza en el login sin que nadie le haya
+ * dicho por qué, que es justo la sensación de «esto no funciona».
+ */
+async function fueraDeSesion(r) {
+  if (r.status !== 401 && r.status !== 403) return false;
+  let j = null;
+  try { j = await r.clone().json(); } catch { /* algunos 401 no traen cuerpo */ }
+  if (j && j.passwordTemporal) {
+    // El token se conserva a propósito: es el que necesita la pantalla de cambio para el PUT.
+    location.href = "/login.html?cambiar=1";
+  } else {
+    localStorage.removeItem("token");
+    location.href = "/login.html";
+  }
+  return true;
+}
+
 const NAV = [
   { g: "Operación", items: [
     ["dashboard", "Dashboard", "dash", ["direccion", "encargado", "contabilidad"]],
@@ -910,7 +930,7 @@ function openNuevaIncidencia() {
         if (btn) { btn.disabled = true; btn.textContent = "Subiendo foto…"; }
         const fd = new FormData(); fd.append("files", fileEl.files[0]);
         const r = await fetch("/api/upload", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
-        if (r.status === 401 || r.status === 403) { localStorage.removeItem("token"); location.href = "/login.html"; return; }
+        if (await fueraDeSesion(r)) return;
         const j = await r.json();
         if (!j.ok || !(j.urls && j.urls[0])) throw new Error(j.error || "No se pudo subir la foto");
         data.foto_url = j.urls[0];
@@ -1208,7 +1228,7 @@ let CLIF = { q: "", poblacion: "", local: "", cumple: false, con_email: false, c
 let CLI_TOTAL = 0;
 let CLI_POBLACIONES = [];
 let _cliTimer = null;
-async function apiRaw(path) { const r = await fetch(path, { headers: { Authorization: "Bearer " + token() } }); if (r.status === 401 || r.status === 403) { localStorage.removeItem("token"); location.href = "/login.html"; throw new Error("noauth"); } const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error"); return j; }
+async function apiRaw(path) { const r = await fetch(path, { headers: { Authorization: "Bearer " + token() } }); if (await fueraDeSesion(r)) throw new Error("noauth"); const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error"); return j; }
 // El mes de HOY como «MM». El filtro «cumpleaños este mes» mandaba un `1` literal —la marca
 // de «casilla activada»— y el servidor lo leía como el mes 01: en agosto no salía nadie y en
 // enero salía media lista. El mes tiene que viajar, no un booleano.
@@ -1905,7 +1925,7 @@ function rrDocSubir(id) {
     if (btn) { btn.disabled = true; btn.textContent = "Subiendo…"; }
     try {
       const r = await fetch("/api/rrhh/trabajador/" + encodeURIComponent(id) + "/documento", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
-      if (r.status === 401 || r.status === 403) { localStorage.removeItem("token"); location.href = "/login.html"; return; }
+      if (await fueraDeSesion(r)) return;
       const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error");
       ov.remove(); toast("Documento subido ✅"); rrSelWorker(id);
     } catch (err) { if (btn) { btn.disabled = false; btn.textContent = "Subir"; } toast("Error: " + err.message); }

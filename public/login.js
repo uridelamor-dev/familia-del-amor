@@ -11,6 +11,10 @@ const ROLE_REDIRECT = {
 (async function checkExisting() {
   const token = localStorage.getItem("token");
   if (!token) return;
+  // `?cambiar=1`: viene rebotado del panel porque todavía no ha estrenado la contraseña. Se
+  // le enseña el cambio con su explicación, en vez de un login pelado que no dice por qué
+  // le han echado.
+  const forzar = new URLSearchParams(location.search).get("cambiar") === "1";
   try {
     const res = await fetch("/api/auth/me", {
       headers: { Authorization: `Bearer ${token}` }
@@ -19,7 +23,7 @@ const ROLE_REDIRECT = {
     if (data.ok) {
       // Si dejó la sesión a medias sin cambiar la contraseña, no se le manda al panel:
       // allí todo le daría 403. Se le vuelve a pedir el cambio aquí.
-      if (data.user.pass_temporal) return pedirCambio(data.user.rol, data.user.username);
+      if (forzar || data.user.pass_temporal) return pedirCambio(data.user.rol, data.user.username);
       window.location.href = ROLE_REDIRECT[data.user.rol] || "/";
     }
   } catch {

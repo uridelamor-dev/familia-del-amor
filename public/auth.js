@@ -27,8 +27,17 @@
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(url, { ...options, headers });
     if (res.status === 401 || res.status === 403) {
-      localStorage.removeItem("token");
-      window.location.href = "/login.html";
+      // La contraseña sin estrenar no es una sesión caducada: el token vale, pero esa cuenta
+      // no puede hacer nada hasta cambiarla. Se conserva el token —lo necesita la pantalla de
+      // cambio— y se dice a qué va, en vez de soltar a la persona en el login sin explicación.
+      let j = null;
+      try { j = await res.clone().json(); } catch { /* algunos 401 no traen cuerpo */ }
+      if (j && j.passwordTemporal) {
+        window.location.href = "/login.html?cambiar=1";
+      } else {
+        localStorage.removeItem("token");
+        window.location.href = "/login.html";
+      }
       throw new Error("No autorizado");
     }
     return res;
