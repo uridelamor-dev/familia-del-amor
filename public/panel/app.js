@@ -3884,7 +3884,17 @@ function renderFacturas(list, pend, stats, empresas) {
     const puedeFusionar = USER.rol === "direccion";
     return `<div class="row">${puedeFusionar ? `<input type="checkbox" class="pendFusChk" data-id="${p.id}" style="width:auto;flex:none" title="Marcar para fusionar">` : ""}<div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "(sin proveedor)")} ${badge}</div><div class="t2">${esc((p.fecha || "").slice(0, 10))} · ${eur(p.total)}</div></div><button class="btn primary" data-act="fac-revisar" data-id="${p.id}">Revisar</button></div>`;
   };
-  const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map(pendRow).join("")}</div>${pend.length > 1 && USER.rol === "direccion" ? `<div class="toolbar" style="padding:10px 18px;margin:0"><button class="btn sm" data-act="fac-fusionar">Fusionar marcadas (misma factura)</button><span class="mut" style="font-size:12px">Marca 2+ documentos que sean páginas de la misma factura: se unirán en un solo PDF y se volverán a leer.</span></div>` : ""}</div>` : "";
+  // Plegado, como el resto de bloques de aviso: son documentos que llegaron sin local y hay
+  // que asignárselo, pero se despachan de vez en cuando y ocupaban media pantalla por encima
+  // de la tabla, que es lo que se viene a ver. El contador va en el resumen, así que sigue
+  // viéndose cuántos hay sin abrirlo — y por eso arranca CERRADO: si arrancara abierto, plegarlo
+  // sería un clic más cada vez que se entra.
+  const pendCard = (pend && pend.length) ? `<details class="card fold" style="margin-bottom:16px">
+      <summary><h3>Facturas pendientes de asignar</h3>
+        <span class="foldr"><span class="pill bad">${pend.length}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+      <div class="rows" style="margin-top:2px">${pend.map(pendRow).join("")}</div>
+      ${pend.length > 1 && USER.rol === "direccion" ? `<div class="toolbar" style="padding:10px 16px 14px;margin:0"><button class="btn sm" data-act="fac-fusionar">Fusionar marcadas (misma factura)</button><span class="mut" style="font-size:12px">Marca 2+ documentos que sean páginas de la misma factura: se unirán en un solo PDF y se volverán a leer.</span></div>` : ""}
+    </details>` : "";
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
   return `${facHeader()}${resumen}${toolbar}<div id="facDups"></div><div id="facLocalesRaros"></div><div id="facSinCats"></div>${vizGrid}${pendCard}<div id="facRes">${facTablaHtml(list)}</div>`;
 }
