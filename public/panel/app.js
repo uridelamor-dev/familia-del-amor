@@ -4085,6 +4085,15 @@ function facCategoriasHtml() {
  * equivoca —«Viruta Bronco» en vez de «Virutas Branco»— y que lo APRENDA, en lugar de tener
  * que corregir lo mismo cada mes.
  */
+// Espejo de nifValido() del servidor: solo para avisar mientras se escribe.
+function facNifPareceValido(v) {
+  const n = String(v || "").replace(/[\s.\-/]/g, "").toUpperCase();
+  const L = "TRWAGMYFPDXBNJZSQVHLCKE";
+  const dni = /^(\d{8})([A-Z])$/.exec(n); if (dni) return L[Number(dni[1]) % 23] === dni[2];
+  const nie = /^([XYZ])(\d{7})([A-Z])$/.exec(n); if (nie) return L[Number("XYZ".indexOf(nie[1]) + nie[2]) % 23] === nie[3];
+  return /^[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]$/.test(n);
+}
+
 async function facProveedorFicha(nombre) {
   let j;
   try { j = await apiRaw("/api/facturas/proveedor?nombre=" + encodeURIComponent(nombre)); } catch (e) { return toast(e.message); }
@@ -4096,8 +4105,12 @@ async function facProveedorFicha(nombre) {
       <div class="kpi"><span>Desde</span><b style="font-size:14px">${esc(fechaCorta(j.primera) || "—")}</b></div>
       <div class="kpi"><span>Última</span><b style="font-size:14px">${esc(fechaCorta(j.ultima) || "—")}</b></div>
     </div>
-    <div class="field full"><label>Nombre del proveedor</label>
-      <input class="inp" id="fpNombre" value="${esc(nombre)}"></div>
+    <div class="form-grid">
+      <div class="field full"><label>Nombre del proveedor</label>
+        <input class="inp" id="fpNombre" value="${esc(nombre)}"></div>
+      <div class="field full"><label>NIF ${nifPrincipal ? "" : "<span class=\"mut\">(no se ha leído ninguno)</span>"}</label>
+        <input class="inp" id="fpNif" value="${esc(nifPrincipal ? nifPrincipal.nif : "")}" placeholder="B12345678"></div>
+    </div>
     <p class="mut" style="margin:8px 0 0;line-height:1.55">Si la lectura se equivoca siempre igual —«Viruta Bronco» por
       «Virutas Branco»—, corrígelo aquí: se arreglan <b>todas sus facturas</b> y las que entren a partir de ahora
       llegarán ya con el nombre bueno.${nifPrincipal ? ` Se recuerda por su NIF <b>${esc(nifPrincipal.nif)}</b>, que no cambia
@@ -4108,11 +4121,29 @@ async function facProveedorFicha(nombre) {
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
       <button class="btn" data-close>Cerrar</button><button class="btn primary" id="fpOk">Guardar y aprender</button></div>`);
   ov.querySelector(".modal").style.width = "min(560px, 96vw)";
+  // Aviso en vivo si lo escrito no puede ser un NIF. No bloquea: hay proveedores extranjeros
+  // con VAT que no sigue el formato español, y bloquearlos sería peor que avisar.
+  const nifIn = ov.querySelector("#fpNif");
+  const pistaNif = document.createElement("div");
+  pistaNif.className = "mut";
+  pistaNif.style.cssText = "font-size:12px;margin-top:4px";
+  nifIn.parentElement.appendChild(pistaNif);
+  const revisaNif = () => {
+    const v = nifIn.value.trim();
+    pistaNif.textContent = !v || facNifPareceValido(v) ? "" : "Eso no tiene forma de NIF ni de CIF español. Si es un proveedor extranjero puede estar bien; si no, revísalo.";
+  };
+  nifIn.addEventListener("input", revisaNif); revisaNif();
+
   ov.querySelector("#fpOk").addEventListener("click", async () => {
     const nuevo = ov.querySelector("#fpNombre").value.trim();
-    if (!nuevo || nuevo === nombre) { ov.remove(); return; }
-    if (!await confirmModal(`Se cambiará el nombre en sus ${num(j.facturas || 0)} facturas y las próximas entrarán como «${nuevo}».`, { ok: "Guardar" })) return;
-    try { const r = await apiSend("PUT", "/api/facturas/proveedor", { antiguo: nombre, nuevo, nif: nifPrincipal?.nif });
+    const nif = ov.querySelector("#fpNif").value.trim();
+    const nifViejo = nifPrincipal ? nifPrincipal.nif : "";
+    const cambiaNif = nif && nif !== nifViejo;
+    if ((!nuevo || nuevo === nombre) && !cambiaNif) { ov.remove(); return; }
+    if (!nuevo) return toast("El nombre no puede quedar vacío");
+    const qué = [nuevo !== nombre ? "el nombre" : null, cambiaNif ? "el NIF" : null].filter(Boolean).join(" y ");
+    if (!await confirmModal(`Se cambiará ${qué} en sus ${num(j.facturas || 0)} facturas y las próximas entrarán ya corregidas.`, { ok: "Guardar" })) return;
+    try { const r = await apiSend("PUT", "/api/facturas/proveedor", { antiguo: nombre, nuevo, nif: nif || undefined });
       ov.remove(); toast(r.mensaje || "Hecho ✅"); facCargarCategorias(); }
     catch (e) { toast(e.message); }
   });

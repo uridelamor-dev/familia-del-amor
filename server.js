@@ -50,6 +50,7 @@ import * as DUP from "./src/modules/clientes/duplicados.js";
 import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { proponerConciliacion, resumenConciliacion } from "./src/modules/facturas/conciliacion.js";
+import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { comprimir } from "./src/http/comprimir.js";
@@ -3402,11 +3403,30 @@ app.put("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
     const nifRow = todos.length
       ? (await q(`SELECT nif FROM facturas WHERE proveedor = ANY(?) AND nif IS NOT NULL AND nif <> '' GROUP BY nif ORDER BY count(*) DESC LIMIT 1`, [todos])).rows[0]
       : null;
-    const nif = String(req.body?.nif || nifRow?.nif || "").trim() || null;
+    const nifActual = nifRow?.nif || null;
+    const nifNuevo = String(req.body?.nif || "").trim() || null;
+    const nif = nifNuevo || nifActual;
+
+    // Cambiar el NIF es más delicado que cambiar el nombre: el NIF es el ancla con la que se
+    // reconoce al proveedor en las siguientes facturas, y si se pone el de OTRO se fusionan
+    // dos proveedores distintos y su gasto se mezcla sin que nadie lo note. Se comprueba.
+    if (nifNuevo && nifActual && normNif(nifNuevo) !== normNif(nifActual)) {
+      const deOtro = (await q(
+        `SELECT DISTINCT proveedor FROM facturas WHERE nif IS NOT NULL
+           AND REPLACE(REPLACE(REPLACE(UPPER(nif),' ',''),'-',''),'.','') = ?
+           AND NOT (proveedor = ANY(?))`, [normNif(nifNuevo), todos.length ? todos : [""]])).rows;
+      if (deOtro.length) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ ok: false,
+          error: `Ese NIF ya es de «${deOtro[0].proveedor}». Si de verdad son el mismo proveedor, corrige antes el nombre de los dos para que se unifiquen; si no, revisa el NIF.` });
+      }
+    }
 
     let cambiadas = 0;
     if (req.body?.aplicarHistorico !== false && todos.length) {
       cambiadas = (await q(`UPDATE facturas SET proveedor = ? WHERE proveedor = ANY(?)`, [nuevo, todos])).rowCount || 0;
+      // El NIF solo se pisa si se ha pedido cambiarlo: si no, se deja el que traía cada una.
+      if (nifNuevo) await q(`UPDATE facturas SET nif = ? WHERE proveedor = ANY(?)`, [nifNuevo, todos]);
     }
     await q(`INSERT INTO facturas_proveedor_alias (clave, nif, proveedor, autor, creado_en)
              VALUES (?, ?, ?, ?, ?) ON CONFLICT (clave) DO UPDATE SET nif = EXCLUDED.nif, proveedor = EXCLUDED.proveedor,
@@ -3421,9 +3441,10 @@ app.put("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
     }
     await client.query("COMMIT");
     await ficAuditar("facturas", null, "proveedor_renombrado", req.user.nombre || req.user.username,
-      { detalle: { antiguo, nuevo, nif, facturas: cambiadas } });
+      { detalle: { antiguo, nuevo, nif, nifAntiguo: nifActual, facturas: cambiadas } });
+    const cambioNif = nifNuevo && nifActual && normNif(nifNuevo) !== normNif(nifActual);
     res.json({ ok: true, cambiadas, nif,
-      mensaje: `${cambiadas} ${cambiadas === 1 ? "factura corregida" : "facturas corregidas"}. A partir de ahora entrará como «${nuevo}».` });
+      mensaje: `${cambiadas} ${cambiadas === 1 ? "factura corregida" : "facturas corregidas"}${cambioNif ? ` (nombre y NIF)` : ""}. A partir de ahora entrará como «${nuevo}».` });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("[facturas] renombrar proveedor:", e.message);
