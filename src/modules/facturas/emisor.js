@@ -1,0 +1,117 @@
+// Facturas — quién emite y quién recibe. Lógica PURA.
+//
+// EL FALLO QUE ARREGLA: en una factura de la gestoría, la lectura puso como proveedor a
+// «DEL AMOR SALINAS, MATEO», que somos nosotros —es el nombre fiscal de La Tapa Ibérica—, y
+// como NIF cogió «430001836», que es el NÚMERO DE CLIENTE que nos tiene asignado la gestoría.
+// El proveedor de verdad era Euroconta. En una factura de servicios los dos nombres están casi
+// pegados, sin líneas de producto que ayuden a distinguir cuál es cuál.
+//
+// No se arregla solo pidiéndoselo mejor al modelo. Se arregla con lo que SÍ sabemos con
+// certeza: nuestros propios CIF y nombres fiscales. Si el «proveedor» somos nosotros, no es el
+// proveedor. Eso no es una heurística: es un hecho.
+
+/** Quita puntos, guiones y espacios, y sube a mayúsculas. */
+export const normNif = (s) => String(s || "").replace(/[\s.\-/]/g, "").toUpperCase();
+
+const norm = (s) => String(s || "").trim().toLowerCase()
+  .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[.,]/g, " ").replace(/\s+/g, " ").trim();
+
+const LETRAS_DNI = "TRWAGMYFPDXBNJZSQVHLCKE";
+
+/**
+ * ¿Es un NIF español con la letra correcta? Vale para DNI/NIE (letra de control por módulo 23)
+ * y para CIF de sociedad (letra inicial + 7 dígitos + control).
+ *
+ * Sirve para algo muy concreto: «430001836» son nueve dígitos sin letra, así que NO es un NIF.
+ * Es el número de cliente. Un dato que no puede ser lo que dice ser es una señal de que la
+ * lectura se ha equivocado de sitio.
+ */
+export function nifValido(valor) {
+  const n = normNif(valor);
+  if (!n) return false;
+  const dni = /^(\d{8})([A-Z])$/.exec(n);
+  if (dni) return LETRAS_DNI[Number(dni[1]) % 23] === dni[2];
+  const nie = /^([XYZ])(\d{7})([A-Z])$/.exec(n);
+  if (nie) return LETRAS_DNI[Number("XYZ".indexOf(nie[1]) + nie[2]) % 23] === nie[3];
+  // CIF: no se comprueba el dígito de control (hay dos variantes según la letra inicial); se
+  // comprueba la FORMA, que ya descarta un número de cliente suelto.
+  return /^[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]$/.test(n);
+}
+
+/**
+ * ¿Este par (nombre, NIF) es una de NUESTRAS empresas?
+ * `nuestras` viene de facturas_locales: [{empresa, cif}].
+ */
+export function esNuestra(nombre, nif, nuestras = []) {
+  const n = normNif(nif);
+  if (n && nuestras.some((x) => normNif(x.cif) && normNif(x.cif) === n)) return "cif";
+  const nom = norm(nombre);
+  if (!nom) return null;
+  for (const x of nuestras) {
+    const e = norm(x.empresa);
+    if (!e) continue;
+    if (e === nom) return "nombre";
+    // «Mateu Del Amor Salinas» y «DEL AMOR SALINAS, MATEO»: las mismas palabras en otro orden
+    // y una escrita en catalán. Por eso no se exige que coincidan TODAS —«mateu»/«mateo» no lo
+    // hacen— sino la mayoría: tres de cada cuatro. Que un proveedor comparta tres palabras
+    // largas con nuestro nombre fiscal y no sea nosotros no pasa.
+    //
+    // En la factura de la gestoría esto es lo ÚNICO que hay: nuestro NIF no aparece por
+    // ningún lado, solo el número de cliente. Sin el emparejado por nombre no se caza.
+    const pa = new Set(nom.split(" ").filter((w) => w.length > 2));
+    const pb = new Set(e.split(" ").filter((w) => w.length > 2));
+    const minimo = Math.min(pa.size, pb.size);
+    if (minimo >= 2) {
+      const comunes = [...pa].filter((w) => pb.has(w)).length;
+      if (comunes >= 2 && comunes / minimo >= 0.7) return "nombre";
+    }
+  }
+  return null;
+}
+
+/**
+ * Corrige la lectura si se han cambiado los papeles.
+ *
+ *   → { datos, corregido: bool, aviso: string|null }
+ *
+ * Solo se intercambia cuando hay a la vez las dos condiciones: el «proveedor» es nuestro Y el
+ * «receptor» no lo es. Con una sola no se toca nada — cambiar los datos de una factura a medias
+ * es peor que dejarla mal, porque encima parece revisada.
+ */
+export function corregirEmisorReceptor(datos = {}, nuestras = []) {
+  const d = { ...datos };
+  const provEsNuestro = esNuestra(d.proveedor, d.nif_proveedor, nuestras);
+  const recEsNuestro = esNuestra(d.nombre_receptor, d.nif_receptor, nuestras);
+
+  if (provEsNuestro && !recEsNuestro && (d.nombre_receptor || d.nif_receptor)) {
+    return {
+      datos: {
+        ...d,
+        proveedor: d.nombre_receptor, nif_proveedor: d.nif_receptor,
+        nombre_receptor: datos.proveedor, nif_receptor: datos.nif_proveedor,
+      },
+      corregido: true,
+      aviso: `Se leyó al revés: «${datos.proveedor}» somos nosotros, así que es quien RECIBE la factura. El proveedor es «${d.nombre_receptor}».`,
+    };
+  }
+
+  // Es nuestro y no hay con qué cambiarlo: no se inventa un proveedor, se avisa.
+  if (provEsNuestro && !recEsNuestro) {
+    return { datos: d, corregido: false,
+      aviso: `El proveedor leído («${datos.proveedor}») somos nosotros, y no se ha leído ningún otro nombre. Revisa quién emite esta factura.` };
+  }
+
+  // Ni idea de quién es quién: los dos parecen nuestros.
+  if (provEsNuestro && recEsNuestro) {
+    return { datos: d, corregido: false,
+      aviso: "Tanto el emisor como el receptor parecen empresas nuestras. Revísalo." };
+  }
+
+  // El NIF no puede ser lo que dice ser: casi siempre es un número de cliente colado.
+  if (d.nif_proveedor && !nifValido(d.nif_proveedor)) {
+    return { datos: d, corregido: false,
+      aviso: `«${d.nif_proveedor}» no tiene forma de NIF ni de CIF; puede ser el número de cliente. Comprueba el NIF del proveedor.` };
+  }
+
+  return { datos: d, corregido: false, aviso: null };
+}

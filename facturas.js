@@ -3,6 +3,7 @@ import { normalizarLineas, validarSuma, mensajeValidacion, claveProducto } from 
 import { canonizarLocal, esLocalCanonico } from "./src/modules/facturas/local-canonico.js";
 import { claveProveedor, seLeenLineas } from "./src/modules/facturas/categorias.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
+import { corregirEmisorReceptor } from "./src/modules/facturas/emisor.js";
 import { createHash } from "crypto";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 
@@ -51,7 +52,16 @@ Devuelve ÚNICAMENTE un JSON válido, sin texto adicional, con esta estructura e
     { "descripcion": "string", "cantidad": number, "unidad": "string", "precio_unitario": number, "importe": number }
   ]
 }
-En "nombre_receptor" y "nif_receptor" pon los datos de la empresa que RECIBE la factura (el cliente), no el proveedor.
+QUIÉN EMITE Y QUIÉN RECIBE. Es el error más fácil de cometer y el más caro:
+- "proveedor" y "nif_proveedor" son de QUIEN EMITE la factura y cobra: normalmente arriba del
+  todo, con el logotipo y el membrete (dirección, teléfono, web, registro mercantil).
+- "nombre_receptor" y "nif_receptor" son de QUIEN LA RECIBE y paga: suele ir más abajo, en un
+  recuadro, o precedido de "Cliente:", "Sr./Sra.", "Facturar a:" o una dirección de envío.
+- Si ves un número junto a la palabra "Cliente", ESO NO ES UN NIF: es el número de cliente que
+  el proveedor le asigna. El NIF español es 8 dígitos + letra, o una letra + 7 dígitos + control.
+  Si no encuentras el NIF de alguna de las dos partes, pon null; no pongas otro número.
+- En facturas de servicios (gestoría, seguros, suministros) no hay líneas de producto que
+  ayuden: fíjate en el membrete para saber quién emite.
 En "local_receptor" pon el LOCAL o establecimiento CONCRETO del cliente si aparece: normalmente entre paréntesis tras el nombre del cliente (p. ej. "(TAPETA LLORET)"), o en la dirección de entrega, la referencia o el pie. Copia el texto tal cual (p. ej. "TAPETA LLORET", "Can Mateu Tordera"). Si no aparece ningún local concreto, pon null.
 
 En "lineas" pon UNA ENTRADA POR CADA LÍNEA DE PRODUCTO del detalle, en el orden en que aparecen.
@@ -640,7 +650,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
 
   // 2. Extraer datos con Claude
   const datos = await extraerDatosDocumento(buffer, mimeType);
-  await corregirEmisorReceptor(datos, dbGet); // filtro anti-inversión emisor/receptor
+  await revisarEmisorReceptor(datos, dbAll);   // ver por qué en revisarEmisorReceptor
   console.log(`[Facturas] Datos extraídos para ${local}:`, JSON.stringify(datos));
 
   // 3. Comprobar duplicados antes de subir nada (facturas procesadas y pendientes)
@@ -841,33 +851,29 @@ function normalizarNif(nif) {
   return (nif || "").replace(/[\s\-\.]/g, "").toUpperCase();
 }
 
-// ¿Es una de NUESTRAS empresas (las del grupo)? Por CIF o por nombre exacto.
-async function esEmpresaGrupo(dbGet, nif, nombre) {
-  const n = normalizarNif(nif);
-  if (n) {
-    const r = await dbGet("SELECT 1 FROM facturas_locales WHERE REPLACE(REPLACE(REPLACE(UPPER(cif),' ',''),'-',''),'.','') = ?", [n]);
-    if (r) return true;
-  }
-  if (nombre && String(nombre).trim()) {
-    const r = await dbGet("SELECT 1 FROM facturas_locales WHERE UPPER(TRIM(empresa)) = UPPER(TRIM(?))", [String(nombre)]);
-    if (r) return true;
-  }
-  return false;
-}
-
-// Filtro anti-error: si la IA leyó como PROVEEDOR una empresa NUESTRA (el receptor real),
-// invirtió emisor/receptor → los corregimos para que el proveedor sea el emisor externo.
-async function corregirEmisorReceptor(datos, dbGet) {
+/**
+ * Emisor y receptor cambiados. Envuelve al módulo puro con la lectura de NUESTRAS empresas.
+ *
+ * ESTO YA EXISTÍA Y NO SALTÓ. Comparaba el nombre por igualdad exacta contra
+ * `facturas_locales.empresa`, y la factura de la gestoría decía «DEL AMOR SALINAS, MATEO»
+ * mientras que en la ficha pone «Mateu Del Amor Salinas»: las mismas palabras en otro orden y
+ * una en catalán. Por CIF tampoco, porque el número que traía era el de cliente. Un filtro que
+ * solo acierta cuando el texto coincide letra por letra no filtra casi nada.
+ */
+async function revisarEmisorReceptor(datos, dbAll) {
   try {
-    if (!datos) return;
-    if (!(await esEmpresaGrupo(dbGet, datos.nif_proveedor, datos.proveedor))) return;
-    if (!datos.nombre_receptor && !datos.nif_receptor) return;          // sin datos del receptor, no se puede recuperar
-    if (await esEmpresaGrupo(dbGet, datos.nif_receptor, datos.nombre_receptor)) return; // ambos del grupo: no tocar
-    const p = datos.proveedor, np = datos.nif_proveedor;
-    datos.proveedor = datos.nombre_receptor; datos.nif_proveedor = datos.nif_receptor;
-    datos.nombre_receptor = p; datos.nif_receptor = np;
-    console.log("[Facturas] IA invirtió emisor/receptor → corregido. Proveedor real:", datos.proveedor);
-  } catch (e) { console.error("[Facturas] corregirEmisorReceptor:", e.message); }
+    if (!datos || !dbAll) return null;
+    const nuestras = await dbAll("SELECT empresa, cif FROM facturas_locales").catch(() => []);
+    if (!nuestras.length) return null;
+    const r = corregirEmisorReceptor(datos, nuestras);
+    if (r.corregido) {
+      Object.assign(datos, r.datos);
+      console.log("[Facturas] emisor/receptor invertidos → corregido. Proveedor real:", datos.proveedor);
+    } else if (r.aviso) {
+      console.warn("[Facturas] emisor/receptor:", r.aviso);
+    }
+    return r;
+  } catch (e) { console.error("[Facturas] revisarEmisorReceptor:", e.message); return null; }
 }
 
 export async function procesarFacturaSinLocal({ buffer, mimeType, filename, origen, getToken, dbGet, dbAll, dbRun }) {
@@ -879,7 +885,7 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
 
   // 2. Extraer datos con Claude (incluye nif_receptor)
   const datos = await extraerDatosDocumento(buffer, mimeType);
-  await corregirEmisorReceptor(datos, dbGet); // filtro anti-inversión emisor/receptor
+  await revisarEmisorReceptor(datos, dbAll);   // ver por qué en revisarEmisorReceptor
   console.log(`[Facturas] Email sin local — datos extraídos:`, JSON.stringify(datos));
 
   // 3. Intentar auto-detectar empresa y local por nif_receptor
