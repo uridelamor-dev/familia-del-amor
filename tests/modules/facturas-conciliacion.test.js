@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { proponerConciliacion, buscarCombinacion, resumenConciliacion } from "../../src/modules/facturas/conciliacion.js";
+import { proponerConciliacion, buscarCombinacion, resumenConciliacion, estadoConciliada } from "../../src/modules/facturas/conciliacion.js";
 
 const P = { proveedor: "Grau Distribucions", nif: "B17972860" };
 const alb = (total, fecha, n) => ({ ...P, id: n, tipo: "albaran", numero_factura: "ALB-" + n, fecha, total });
@@ -137,5 +137,39 @@ describe("un albarán no es gasto: no puede sumar dos veces", () => {
     const bloque = server.slice(i, i + 700);
     assert.ok(!/SIN_ALBARANES/.test(bloque.split("const t = await")[0]),
       "la consulta de la LISTA no debe filtrar por tipo");
+  });
+});
+
+describe("conciliar a medias: lo que ya ha llegado cuenta", () => {
+  const F100 = { ...P, id: 50, tipo: "factura", fecha: "2026-07-31", total: 100 };
+  test("una factura de 100 con un albarán de 40 queda a medias, con 60 esperando", () => {
+    const r = estadoConciliada(F100, [alb(40, "2026-07-10", 1)]);
+    assert.equal(r.estado, "conciliada-parcial");
+    assert.equal(r.ligado, 40);
+    assert.equal(r.falta, 60);
+  });
+  test("cuando llega el resto, pasa a conciliada del todo", () => {
+    const r = estadoConciliada(F100, [alb(40, "2026-07-10", 1), alb(60, "2026-07-20", 2)]);
+    assert.equal(r.estado, "conciliada");
+    assert.equal(r.falta, 0);
+  });
+  test("un céntimo de diferencia no la deja a medias", () => {
+    assert.equal(estadoConciliada(F100, [alb(99.99, "2026-07-10", 1)]).estado, "conciliada");
+  });
+  test("si se ligan de más, también se dice: falta en negativo", () => {
+    const r = estadoConciliada(F100, [alb(140, "2026-07-10", 1)]);
+    assert.equal(r.estado, "conciliada-parcial");
+    assert.equal(r.falta, -40);
+  });
+  test("el resumen cuenta aparte lo que está a medias y lo que aún falta", () => {
+    const r = resumenConciliacion([
+      { estado: "conciliada", factura: { total: 100 } },
+      { estado: "conciliada-parcial", factura: { total: 100 }, falta: 60 },
+      { estado: "parcial", factura: { total: 250 } },
+    ]);
+    assert.equal(r.cuadran, 1);
+    assert.equal(r.aMedias, 1);
+    assert.equal(r.importeAMedias, 60, "lo que se sigue esperando, no el total de la factura");
+    assert.equal(r.parciales, 1);
   });
 });

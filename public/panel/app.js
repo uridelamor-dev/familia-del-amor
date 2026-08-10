@@ -4809,7 +4809,7 @@ function facTab(tab) { FACTAB = tab; loadFacturas(); }
 // Se PROPONE; confirmar es de una persona: dar por buena una conciliación equivocada es peor
 // que no tener ninguna, porque se paga creyendo que está comprobada.
 let CONC = { from: "", to: "", filtro: "parcial" };
-const CONC_FILTROS = [["parcial", "Por revisar"], ["cuadra", "Cuadran"], ["sin-albaranes", "Sin albarán"], ["conciliada", "Ya conciliadas"], ["", "Todas"]];
+const CONC_FILTROS = [["parcial", "Por revisar"], ["conciliada-parcial", "A medias"], ["cuadra", "Cuadran"], ["sin-albaranes", "Sin albarán"], ["conciliada", "Ya conciliadas"], ["", "Todas"]];
 
 async function loadConciliacion() {
   const view = document.getElementById("view");
@@ -4822,12 +4822,13 @@ async function loadConciliacion() {
     if (!b) return;
     const w = b.getAttribute("data-conc");
     if (w === "filtro") { CONC.filtro = b.getAttribute("data-v"); return refrescarConciliacion(); }
-    if (w === "confirmar") return concConfirmar(b.getAttribute("data-id"), b.getAttribute("data-albs"));
+    if (w === "marcados") return concMarcados(b.getAttribute("data-id"));
     if (w === "deshacer") return concConfirmar(b.getAttribute("data-id"), "");
   });
   cont?.addEventListener("change", (e) => {
     if (e.target.id === "concFrom") { CONC.from = e.target.value; refrescarConciliacion(); }
     if (e.target.id === "concTo") { CONC.to = e.target.value; refrescarConciliacion(); }
+    if (e.target.classList?.contains("concChk")) concPintarSuma(e.target.getAttribute("data-f"));
   });
 }
 
@@ -4855,20 +4856,27 @@ async function refrescarConciliacion() {
       ${stat("Cuadran", "✅", num(r.cuadran))}
       ${stat("Por revisar", "⚠️", num(r.parciales))}
       ${stat("En juego", "€", eur(r.importeParcial))}
-      ${stat("Albaranes sueltos", "📦", num(j.albaranesSueltos))}
+      ${r.aMedias ? stat("A medias · falta", "⏳", esc(eur(r.importeAMedias))) : stat("Albaranes sueltos", "📦", num(j.albaranesSueltos))}
     </div>`;
 
-  const albRow = (a) => `<div class="row" style="padding:7px 0">
+  // Cada albarán con su casilla: se pueden aceptar unos y descartar otros. Y no hace falta que
+  // sumen el total — si de una factura de 100 € solo ha llegado un albarán de 40, esos 40 ya
+  // están comprobados y los 60 quedan esperando. Obligar a tenerlo todo para poder marcar algo
+  // hace que no se marque nunca, y el trabajo hecho se pierde.
+  const albRow = (a, fid, marcado) => `<label class="row" style="padding:7px 0;cursor:pointer">
+      <input type="checkbox" class="concChk" data-f="${fid}" data-id="${a.id}" data-total="${a.total}" ${marcado ? "checked" : ""} style="width:auto;margin:0 8px 0 0">
       <span class="grow"><div class="t1" style="font-weight:500">${esc(fechaCorta(a.fecha) || a.fecha || "—")} · ${esc(a.numero_factura || "s/n")}</div></span>
       <b class="tnum">${esc(eur2(a.total))}</b>
-      ${a.drive_url ? `<a class="btn sm" href="${esc(a.drive_url)}" target="_blank" rel="noopener">Ver ↗</a>` : ""}</div>`;
+      ${a.drive_url ? `<a class="btn sm" href="${esc(a.drive_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Ver ↗</a>` : ""}</label>`;
 
   const ficha = (p) => {
     const f = p.factura;
     const est = p.estado === "cuadra" ? ["ok", "Cuadra"] : p.estado === "conciliada" ? ["brand", "Conciliada"]
+      : p.estado === "conciliada-parcial" ? ["warn", `A medias · faltan ${eur2(p.falta || 0)}`]
       : p.estado === "parcial" ? ["warn", "Por revisar"] : ["", "Sin albarán"];
-    const ids = (p.albaranes || []).map((a) => a.id).join(",");
-    return `<div class="dupcard">
+    const ligados = (p.albaranes || []).map((a) => a.id);
+    const todos = [...(p.albaranes || []), ...(p.candidatos || [])];
+    return `<div class="dupcard" data-fcard="${f.id}">
       <div class="row" style="padding:0 0 10px;border:0">
         <span class="grow" style="min-width:0">
           <div class="t1">${esc(f.proveedor || "—")} · ${esc(f.numero_factura || "s/n")}</div>
@@ -4878,21 +4886,56 @@ async function refrescarConciliacion() {
         <span class="pill ${est[0]}" style="flex:none">${est[1]}</span>
       </div>
       <p class="dupmot">${esc(p.motivos.join(". "))}.</p>
-      ${(p.albaranes || []).length ? `<div class="rows" style="background:var(--surface2);border-radius:10px;padding:4px 12px">${p.albaranes.map(albRow).join("")}</div>` : ""}
+      ${todos.length ? `<div class="rows" style="background:var(--surface2);border-radius:10px;padding:4px 12px">${todos.map((a) => albRow(a, f.id, ligados.includes(a.id) || p.estado === "cuadra" || p.estado === "parcial")).join("")}</div>
+        <div class="mut" data-concsuma="${f.id}" style="font-size:12.5px;margin-top:6px"></div>` : ""}
       <div class="dupacts">
         ${f.drive_url ? `<a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver factura ↗</a>` : ""}
-        ${p.estado === "conciliada"
-          ? `<button class="btn sm" data-conc="deshacer" data-id="${f.id}">Deshacer</button>`
-          : (p.albaranes || []).length
-            ? `<button class="btn sm ${p.estado === "cuadra" ? "primary" : ""}" data-conc="confirmar" data-id="${f.id}" data-albs="${esc(ids)}">
-                 ${p.estado === "cuadra" ? "Confirmar" : `Conciliar con estos ${p.albaranes.length}`}</button>`
-            : ""}
+        ${p.estado === "conciliada" || p.estado === "conciliada-parcial"
+          ? `<button class="btn sm" data-conc="deshacer" data-id="${f.id}">Deshacer</button>` : ""}
+        ${todos.length ? `<button class="btn sm ${p.estado === "cuadra" ? "primary" : ""}" data-conc="marcados" data-id="${f.id}" data-total="${f.total}">Conciliar los marcados</button>` : ""}
       </div></div>`;
   };
 
   cont.innerHTML = `${kpis}${barra}
     ${r.parciales ? `<p class="fic-nota">Las de <b>por revisar</b> son las que importan: o falta un albarán por subir, o la factura cobra algo que no se entregó. <b>${esc(eur(r.importeParcial))}</b> en juego.</p>` : ""}
     ${lista.length ? lista.map(ficha).join("") : `<div class="card"><div class="mut" style="padding:8px">No hay facturas en este estado dentro del periodo.</div></div>`}`;
+  lista.forEach((p) => concPintarSuma(p.factura.id));
+}
+
+/** Lo que suman las casillas marcadas de una factura, y cuánto falta para su total. */
+function concPintarSuma(fid) {
+  const card = document.querySelector(`[data-fcard="${CSS.escape(String(fid))}"]`);
+  const caja = document.querySelector(`[data-concsuma="${CSS.escape(String(fid))}"]`);
+  if (!card || !caja) return;
+  const total = Number(card.querySelector('[data-conc="marcados"]')?.getAttribute("data-total")) || 0;
+  const marcados = [...card.querySelectorAll(".concChk:checked")];
+  const suma = marcados.reduce((s2, c) => s2 + (Number(c.getAttribute("data-total")) || 0), 0);
+  const falta = Math.round((total - suma) * 100) / 100;
+  if (!marcados.length) { caja.innerHTML = "Sin marcar nada, se deshace la conciliación."; return; }
+  caja.innerHTML = Math.abs(falta) < 0.02
+    ? `<b>${marcados.length}</b> marcados · ${esc(eur2(suma))} — cuadra con la factura.`
+    : falta > 0
+      ? `<b>${marcados.length}</b> marcados · ${esc(eur2(suma))} de ${esc(eur2(total))} — quedarían <b>${esc(eur2(falta))}</b> esperando albarán.`
+      : `<b>${marcados.length}</b> marcados · ${esc(eur2(suma))}, que es <b>${esc(eur2(Math.abs(falta)))}</b> MÁS que la factura. Revísalo.`;
+}
+
+async function concMarcados(fid) {
+  const card = document.querySelector(`[data-fcard="${CSS.escape(String(fid))}"]`);
+  if (!card) return;
+  const marcados = [...card.querySelectorAll(".concChk:checked")];
+  const ids = marcados.map((c) => Number(c.getAttribute("data-id")));
+  if (!ids.length) return concConfirmar(fid, "");
+  const total = Number(card.querySelector('[data-conc="marcados"]')?.getAttribute("data-total")) || 0;
+  const suma = marcados.reduce((s2, c) => s2 + (Number(c.getAttribute("data-total")) || 0), 0);
+  const falta = Math.round((total - suma) * 100) / 100;
+  const aviso = Math.abs(falta) < 0.02
+    ? `¿Dar por buena esta factura con ${ids.length} albarán(es)?`
+    : falta > 0
+      ? `Se conciliará con ${ids.length} albarán(es) por ${eur2(suma)}. Quedan ${eur2(falta)} esperando albarán: seguirá saliendo como «a medias» hasta que llegue.`
+      : `Los albaranes marcados suman ${eur2(Math.abs(falta))} MÁS que la factura. ¿Seguro?`;
+  if (!(await confirmModal(`${aviso} Quedará registrado quién y cuándo, y esos albaranes no podrán usarse en otra factura.`, { ok: "Conciliar" }))) return;
+  try { const r = await apiSend("POST", `/api/facturas/${fid}/conciliar`, { albaranes: ids }); toast(r.mensaje || "Hecho ✅"); refrescarConciliacion(); }
+  catch (e) { toast(e.message); }
 }
 
 async function concConfirmar(id, albs) {

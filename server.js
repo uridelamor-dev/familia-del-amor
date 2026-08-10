@@ -49,7 +49,8 @@ import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/expo
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
-import { proponerConciliacion, resumenConciliacion } from "./src/modules/facturas/conciliacion.js";
+import { proponerConciliacion, resumenConciliacion, estadoConciliada } from "./src/modules/facturas/conciliacion.js";
+import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados.js";
 import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
@@ -3505,8 +3506,19 @@ app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"])
     const propuestas = facturas.map((f) => {
       if (f.conciliado_con) {
         const ids = (() => { try { return JSON.parse(f.conciliado_con); } catch { return []; } })();
-        return { factura: f, estado: "conciliada", albaranes: albaranes.filter((a) => ids.includes(a.id)),
-          motivos: [`Conciliada por ${f.conciliado_por || "alguien"}`], diferencia: 0 };
+        const ligados = albaranes.filter((a) => ids.includes(a.id));
+        const est = estadoConciliada(f, ligados);
+        // A medias se siguen ofreciendo los albaranes sueltos del proveedor: cuando llegue el
+        // que falta, se añade sin deshacer lo que ya estaba comprobado.
+        const candidatos = est.estado === "conciliada-parcial"
+          ? sueltos.filter((a) => MISMO_PROV(f, a) && !ids.includes(a.id)) : [];
+        return { factura: f, estado: est.estado, albaranes: ligados, candidatos,
+          ligado: est.ligado, falta: est.falta,
+          motivos: est.estado === "conciliada"
+            ? [`Conciliada por ${f.conciliado_por || "alguien"}`]
+            : [`${est.ligado.toFixed(2)} € comprobados de ${Number(f.total).toFixed(2)} €`,
+               est.falta > 0 ? `faltan ${est.falta.toFixed(2)} € por llegar` : `hay ${Math.abs(est.falta).toFixed(2)} € ligados de más`],
+          diferencia: est.falta };
       }
       return { factura: f, ...proponerConciliacion(f, sueltos) };
     });
@@ -3534,10 +3546,17 @@ app.post("/api/facturas/:id/conciliar", requireAuth(["direccion", "contabilidad"
       return res.json({ ok: true, mensaje: "Conciliación deshecha." });
     }
     // Un albarán solo puede pertenecer a UNA factura: si no, se pagaría dos veces lo mismo.
-    const yaUsados = await dbAll(`SELECT id, conciliado_con FROM facturas WHERE id = ANY(?) AND conciliado_con IS NOT NULL`, [ids]);
+    // Los que ya estaban ligados a ESTA factura no cuentan: se está reenviando la lista entera
+    // para añadir uno nuevo, que es como se completa una conciliación a medias.
+    const yaUsados = (await dbAll(`SELECT id, conciliado_con FROM facturas WHERE id = ANY(?) AND conciliado_con IS NOT NULL`, [ids]))
+      .filter((a) => String(a.conciliado_con) !== String(f.id));
     if (yaUsados.length) {
       return res.status(409).json({ ok: false, error: `Ya hay ${yaUsados.length} albarán(es) conciliados con otra factura. Deshaz esa conciliación primero.` });
     }
+    // Los que estaban ligados a esta factura y ya no vienen en la lista se sueltan: es como se
+    // descarta uno que se había propuesto por error.
+    await dbRun(`UPDATE facturas SET conciliado_con = NULL WHERE conciliado_con = ? AND NOT (id = ANY(?))`,
+      [String(f.id), ids]).catch(() => {});
     await dbRun(`UPDATE facturas SET conciliado_con = ?, conciliado_por = ?, conciliado_en = ? WHERE id = ?`,
       [JSON.stringify(ids), quien, isoConOffset(Date.now()), f.id]);
     await dbRun(`UPDATE facturas SET conciliado_con = ? WHERE id = ANY(?)`, [String(f.id), ids]);

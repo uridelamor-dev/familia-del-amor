@@ -19,6 +19,7 @@ import { MISMO_PROVEEDOR } from "./duplicados.js";
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const cent = (v) => Math.round(num(v) * 100);   // en céntimos: sumar euros en coma flotante arrastra restos
+const red = (x) => Math.round(x * 100) / 100;
 
 const dias = (a, b) => {
   const t1 = Date.parse(String(a || "").slice(0, 10)), t2 = Date.parse(String(b || "").slice(0, 10));
@@ -119,14 +120,38 @@ export function proponerConciliacion(factura, albaranes, { ventanaDias = 45, tol
   return { estado: "parcial", albaranes: suyos, motivos, diferencia: Math.round(dif * 100) / 100, acotado: !!r.acotado };
 }
 
+/**
+ * Estado de una factura YA conciliada, según lo que sumen sus albaranes.
+ *
+ * Conciliar no es todo o nada. Si de una factura de 100 € ha llegado un albarán de 40, eso ya
+ * es información buena: esos 40 están comprobados y quedan 60 esperando. Obligar a esperar a
+ * tenerlo todo para poder marcar algo hace que no se marque nunca, y el trabajo ya hecho se
+ * pierde.
+ *
+ *   → { estado: "conciliada" | "conciliada-parcial", ligado, falta }
+ */
+export function estadoConciliada(factura, ligados = [], { tolerancia = 2 } = {}) {
+  const objetivo = cent(factura && factura.total);
+  const suma = ligados.reduce((s, a) => s + cent(a.total), 0);
+  const falta = red((objetivo - suma) / 100);
+  if (Math.abs(objetivo - suma) <= tolerancia) {
+    return { estado: "conciliada", ligado: red(suma / 100), falta: 0 };
+  }
+  return { estado: "conciliada-parcial", ligado: red(suma / 100), falta };
+}
+
 /** Resumen para la cabecera: cuántas cuadran, cuántas no y cuánto dinero hay en juego. */
 export function resumenConciliacion(propuestas = []) {
   const c = { cuadran: 0, parciales: 0, sinAlbaranes: 0, importeParcial: 0, importeCuadra: 0 };
+  c.aMedias = 0; c.importeAMedias = 0;
   for (const p of propuestas) {
-    if (p.estado === "cuadra") { c.cuadran++; c.importeCuadra += num(p.factura && p.factura.total); }
+    if (p.estado === "cuadra" || p.estado === "conciliada") { c.cuadran++; c.importeCuadra += num(p.factura && p.factura.total); }
+    // Lo conciliado a medias cuenta aparte: está bien encaminado, pero sigue esperando papel.
+    else if (p.estado === "conciliada-parcial") { c.aMedias++; c.importeAMedias += num(p.falta); }
     else if (p.estado === "parcial") { c.parciales++; c.importeParcial += num(p.factura && p.factura.total); }
     else c.sinAlbaranes++;
   }
+  c.importeAMedias = Math.round(c.importeAMedias * 100) / 100;
   c.importeParcial = Math.round(c.importeParcial * 100) / 100;
   c.importeCuadra = Math.round(c.importeCuadra * 100) / 100;
   return c;
