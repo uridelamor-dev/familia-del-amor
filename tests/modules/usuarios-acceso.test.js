@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   passwordInicial, validarPassword, esperaTrasFallo, estadoFreno, trasFalloLogin,
-  trasLoginCorrecto, puedeConPasswordTemporal, textoEspera, ESPERAS_SEG, FALLOS_ANTES_DE_FRENAR,
+  trasLoginCorrecto, textoEspera, ESPERAS_SEG, FALLOS_ANTES_DE_FRENAR,
 } from "../../src/modules/usuarios/acceso.js";
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -96,29 +96,29 @@ describe("acceso — el freno tras fallar", () => {
   });
 });
 
-describe("acceso — con la contraseña sin cambiar no se puede hacer nada más", () => {
-  test("solo mirarse a sí mismo y cambiarla", () => {
-    assert.equal(puedeConPasswordTemporal("/api/mi-password"), true);
-    assert.equal(puedeConPasswordTemporal("/api/auth/me"), true);
-  });
-  test("ni ver reservas, ni fichajes, ni clientes", () => {
-    for (const r of ["/api/reservas", "/api/fichajes/hoy", "/api/contactos", "/api/mi-cuadrante", "/api/leads"]) {
-      assert.equal(puedeConPasswordTemporal(r), false, r);
-    }
-  });
-  test("y los parámetros no sirven para colarse", () => {
-    assert.equal(puedeConPasswordTemporal("/api/leads?x=/api/mi-password"), false);
-    assert.equal(puedeConPasswordTemporal("/api/mi-password?x=1"), true);
+describe("acceso — la contraseña sin estrenar avisa, pero no cierra la puerta", () => {
+  // Se probó a bloquear el panel hasta cambiarla y el resultado fue gente sin poder trabajar
+  // por un formulario. Ahora la marca solo sirve para avisar (y para que dirección vea qué
+  // cuentas siguen con la contraseña que les dieron).
+  test("ya no hay lista de rutas permitidas: no hay nada que permitir", async () => {
+    const mod = await import("../../src/modules/usuarios/acceso.js");
+    assert.equal(mod.puedeConPasswordTemporal, undefined);
+    assert.equal(mod.RUTAS_CON_PASSWORD_TEMPORAL, undefined);
   });
 });
 
 describe("acceso — cableado en el servidor", () => {
   const server = fs.readFileSync(path.join(RAIZ, "server.js"), "utf8");
 
-  test("el bloqueo por contraseña temporal se comprueba EN EL SERVIDOR", () => {
-    // Si solo se forzara en el navegador, bastaría con llamar a la API a mano.
-    assert.match(server, /puedeConPasswordTemporal/,
-      "requireAuth tiene que cortar, no solo la pantalla");
+  test("requireAuth ya NO corta el paso por la contraseña temporal", () => {
+    // Cortar aquí dejaba fuera del panel a quien abre el local a las siete de la mañana.
+    const i2 = server.indexOf("function requireAuth(");
+    const bloque = server.slice(i2, i2 + 1400);
+    // Se mira el CÓDIGO, no los comentarios: el porqué sí se explica ahí.
+    const codigo = bloque.replace(/\/\/[^\n]*/g, "");
+    assert.ok(!/payload\.pass_temporal/.test(codigo),
+      "requireAuth no debe mirar pass_temporal: se avisa en la interfaz, no se bloquea");
+    assert.ok(!/passwordTemporal/.test(codigo), "y no devuelve el 403 que bloqueaba");
   });
 
   test("el login pasa por el freno antes de comparar la contraseña", () => {

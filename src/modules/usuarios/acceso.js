@@ -78,12 +78,10 @@ export function trasFalloLogin(usuario = {}, ahoraMs = Date.now()) {
 
 export const trasLoginCorrecto = () => ({ login_intentos: 0, login_bloqueado_hasta: null });
 
-// ── Qué puede hacer alguien que todavía no ha cambiado la contraseña ─────────
-// Nada, salvo mirarse a sí mismo y cambiarla. Si solo se comprobara en el navegador,
-// bastaría con llamar a la API a mano para saltárselo.
-export const RUTAS_CON_PASSWORD_TEMPORAL = ["/api/auth/me", "/api/mi-password", "/api/auth/login"];
-
-export function puedeConPasswordTemporal(ruta) {
-  const limpia = String(ruta || "").split("?")[0];
-  return RUTAS_CON_PASSWORD_TEMPORAL.includes(limpia);
-}
+// ── Qué pasa con la contraseña sin estrenar ─────────────────────────────────
+// NO bloquea. Se probó a cortar el paso hasta cambiarla y el resultado fue gente sin poder
+// trabajar por un formulario: el encargado que abre el local a las siete no puede quedarse
+// fuera del panel por esto. Se marca la cuenta, se avisa, y se puede posponer.
+//
+// La marca sigue sirviendo para dos cosas: enseñar el aviso, y que dirección vea de un vistazo
+// qué cuentas siguen con la contraseña que les dieron.

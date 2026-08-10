@@ -50,7 +50,7 @@ import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { comprimir } from "./src/http/comprimir.js";
-import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto, puedeConPasswordTemporal } from "./src/modules/usuarios/acceso.js";
+import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
 import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
@@ -2467,14 +2467,10 @@ function requireAuth(roles = []) {
     const token = auth.slice(7);
     try {
       const payload = jwt.verify(token, JWT_SECRET);
-      // Con la contraseña sin estrenar no se puede hacer nada más que cambiarla. Se corta
-      // AQUÍ y no solo en la pantalla: si no, bastaría con llamar a la API a mano.
-      if (payload.pass_temporal && !puedeConPasswordTemporal(req.path)) {
-        return res.status(403).json({
-          ok: false, passwordTemporal: true,
-          error: "Tienes que cambiar tu contraseña antes de usar el panel.",
-        });
-      }
+      // `pass_temporal` NO bloquea. Se probó a cortar el paso hasta cambiarla y el resultado
+      // fue gente que no podía trabajar por un formulario: el encargado que llega a las siete
+      // de la mañana con el local abriendo no puede quedarse fuera del panel por esto. La
+      // marca viaja igual en el token y la interfaz enseña un aviso que se puede posponer.
       if (roles.length && !roles.includes(payload.rol)) {
         return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
       }
@@ -2565,7 +2561,7 @@ app.post("/api/auth/login", async (req, res) => {
       { id: user.id, username: user.username, rol: user.rol, nombre: user.nombre, local: user.local,
         modulos: modulosEfectivos(user.rol, user.modulos), pass_temporal: debeCambiar },
       JWT_SECRET,
-      { expiresIn: debeCambiar ? "30m" : "8h" }   // si solo va a cambiar la contraseña, no hace falta más
+      { expiresIn: "8h" }
     );
     res.json({ ok: true, token, rol: user.rol, nombre: user.nombre, debeCambiarPassword: debeCambiar });
   } catch (e) {

@@ -49,22 +49,13 @@ async function apiSend(method, path, body) {
 // solo toca dirección (Sistema). Los grupos que quedan vacíos para un rol no se pintan, así que
 // un encargado ve tres bloques cortos en vez de cuatro largos con casi todo en gris.
 /**
- * Qué hacer con un 401/403. La contraseña sin estrenar NO es una sesión caducada: el token es
- * bueno, lo que pasa es que esa cuenta no puede hacer nada hasta cambiarla. Si se trata igual
- * que una sesión caducada se le borra el token y aterriza en el login sin que nadie le haya
- * dicho por qué, que es justo la sensación de «esto no funciona».
+ * Qué hacer con un 401/403: se decide en un solo sitio y no en cinco copias, porque el día que
+ * cambie la regla habría que acordarse de las cinco.
  */
 async function fueraDeSesion(r) {
   if (r.status !== 401 && r.status !== 403) return false;
-  let j = null;
-  try { j = await r.clone().json(); } catch { /* algunos 401 no traen cuerpo */ }
-  if (j && j.passwordTemporal) {
-    // El token se conserva a propósito: es el que necesita la pantalla de cambio para el PUT.
-    location.href = "/login.html?cambiar=1";
-  } else {
-    localStorage.removeItem("token");
-    location.href = "/login.html";
-  }
+  localStorage.removeItem("token");
+  location.href = "/login.html";
   return true;
 }
 

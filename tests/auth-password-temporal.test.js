@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { validarPassword, puedeConPasswordTemporal, RUTAS_CON_PASSWORD_TEMPORAL, passwordInicial } from "../src/modules/usuarios/acceso.js";
+import { validarPassword, passwordInicial } from "../src/modules/usuarios/acceso.js";
 
 // La primera contraseña de cualquiera SIEMPRE la elige otra persona: quien da el alta. O sea,
 // la sabe más de uno. Por eso toda cuenta nace obligada a cambiarla.
@@ -38,42 +38,59 @@ describe("toda cuenta nueva nace obligada a cambiar la contraseña", () => {
   });
 });
 
-describe("el bloqueo se hace en el servidor, no solo en la pantalla", () => {
-  test("requireAuth corta el paso con la contraseña sin estrenar", () => {
-    const i = server.indexOf("function requireAuth(");
-    const bloque = server.slice(i, i + 1200);
-    assert.match(bloque, /payload\.pass_temporal && !puedeConPasswordTemporal\(req\.path\)/);
-    assert.match(bloque, /passwordTemporal: true/);
+describe("avisa, pero deja trabajar", () => {
+  // Bloquear el panel hasta cambiarla dejaba fuera a quien abre el local a las siete de la
+  // mañana. Y encima el formulario mandaba el NOMBRE DE USUARIO como contraseña actual —cierto
+  // solo en un tipo de alta—, así que a casi todos les decía «la actual no es correcta»: el
+  // peor error posible, el que acusa a la persona de equivocarse cuando no lo ha hecho.
+  const auth = readFileSync(new URL("../public/auth.js", import.meta.url), "utf8");
+  const login = readFileSync(new URL("../public/login.js", import.meta.url), "utf8");
+
+  test("el servidor no corta el paso", () => {
+    const i2 = server.indexOf("function requireAuth(");
+    const codigo = server.slice(i2, i2 + 1400).replace(/\/\/[^\n]*/g, "");
+    assert.ok(!/payload\.pass_temporal/.test(codigo));
   });
 
-  test("solo se puede mirar uno mismo y cambiarla", () => {
-    assert.deepEqual(RUTAS_CON_PASSWORD_TEMPORAL, ["/api/auth/me", "/api/mi-password", "/api/auth/login"]);
-    for (const r of ["/api/facturas", "/api/reservas", "/api/users", "/api/horarios/semana"]) {
-      assert.equal(puedeConPasswordTemporal(r), false, r);
-    }
+  test("el login entra al panel, no desvía a ningún formulario", () => {
+    assert.ok(!/pedirCambio/.test(login), "el desvío obligatorio ya no existe");
+    assert.ok(!/debeCambiarPassword\)/.test(login) || /ROLE_REDIRECT/.test(login));
   });
 
-  test("y con parámetros tampoco se cuela", () => {
-    assert.equal(puedeConPasswordTemporal("/api/facturas?local=x"), false);
-    assert.equal(puedeConPasswordTemporal("/api/mi-password?x=1"), true);
+  test("el aviso PIDE la contraseña actual en vez de adivinarla", () => {
+    const i2 = auth.indexOf("function avisoPassword(");
+    assert.notEqual(i2, -1, "falta el aviso");
+    const bloque = auth.slice(i2, i2 + 3000);
+    assert.match(bloque, /name="actual"/, "hay que preguntarla: no siempre es el nombre de usuario");
+    assert.match(bloque, /JSON\.stringify\(\{ actual, nueva \}\)/);
+    assert.ok(!/actual: *user\.username|actual: *USUARIO/.test(bloque), "no se puede volver a dar por hecho");
   });
 
-  test("la marca viaja en el token: si no, el servidor no podría cortar", () => {
-    const i = server.indexOf('app.post("/api/auth/login"');
-    const bloque = server.slice(i, i + 3200);
-    assert.match(bloque, /pass_temporal: debeCambiar/);
-    assert.match(bloque, /debeCambiarPassword: debeCambiar/, "la pantalla necesita saberlo");
+  test("se puede posponer, y no vuelve a salir en cada pantalla", () => {
+    const i2 = auth.indexOf("function avisoPassword(");
+    const bloque = auth.slice(i2, i2 + 3000);
+    assert.match(bloque, /Ahora no/, "tiene que haber forma de seguir trabajando");
+    assert.match(bloque, /24 \* 60 \* 60 \* 1000/, "pospuesto un día: ni acoso ni olvido");
+  });
+
+  test("sale en todas las páginas, no solo en el panel", () => {
+    // auth.js lo cargan el panel y las páginas de cada rol.
+    assert.match(auth, /if \(user\.pass_temporal\) setTimeout\(\(\) => avisoPassword\(user\)/);
+  });
+
+  test("y se trae su propio estilo: el panel no carga styles.css", () => {
+    assert.match(auth, /function estiloAviso\(\)/);
+    assert.match(auth, /passAvisoCSS/);
   });
 
   test("al cambiarla se devuelve un token SIN la marca", () => {
-    // Si no, seguiría bloqueado hasta volver a entrar y parecería que no ha funcionado.
-    const i = server.indexOf('app.put("/api/mi-password"');
-    const bloque = server.slice(i, i + 1800);
+    const i2 = server.indexOf('app.put("/api/mi-password"');
+    const bloque = server.slice(i2, i2 + 1800);
     assert.match(bloque, /pass_temporal = FALSE/);
     assert.match(bloque, /pass_temporal: false/);
   });
 
-  test("reiniciar la contraseña de alguien vuelve a obligarle", () => {
+  test("reiniciar la contraseña de alguien vuelve a marcarla", () => {
     assert.match(server, /UPDATE users SET password_hash = \?, password_enc = \?, pass_temporal = TRUE/);
   });
 });
@@ -93,37 +110,5 @@ describe("qué contraseña se acepta", () => {
   });
   test("una normal vale", () => {
     assert.equal(validarPassword("tapeta2027", { username: "marta" }).ok, true);
-  });
-});
-
-describe("al que le falta cambiarla no se le echa sin explicación", () => {
-  const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
-  const auth = readFileSync(new URL("../public/auth.js", import.meta.url), "utf8");
-  const login = readFileSync(new URL("../public/login.js", import.meta.url), "utf8");
-
-  test("el 403 de contraseña temporal NO borra el token", () => {
-    // El token es bueno: es justo el que necesita la pantalla de cambio para hacer el PUT.
-    // Borrarlo obligaba a entrar otra vez con la contraseña inicial para que se lo pidieran.
-    for (const [nombre, src] of [["panel", panel], ["auth.js", auth]]) {
-      const i = src.indexOf("passwordTemporal");
-      assert.notEqual(i, -1, `${nombre} no distingue el 403 de contraseña temporal`);
-      const bloque = src.slice(i, i + 400);
-      assert.match(bloque, /login\.html\?cambiar=1/, nombre);
-      assert.ok(!/removeItem\("token"\)[\s\S]{0,40}cambiar=1/.test(bloque), `${nombre}: no puede borrar el token en esa rama`);
-    }
-  });
-
-  test("el panel decide en un solo sitio, no en cinco copias", () => {
-    assert.match(panel, /async function fueraDeSesion\(r\)/);
-    // Ninguna capa de datos puede decidir por su cuenta qué hacer con un 401/403: si queda
-    // una suelta, se olvidará de actualizar y volverá a echar a la gente sin explicación.
-    // (El `removeItem` del botón de salir sí es legítimo: ahí sí quiere cerrar la sesión.)
-    const sueltas = (panel.match(/r\.status === 401 \|\| r\.status === 403/g) || []).length;
-    assert.equal(sueltas, 0, "quedan comprobaciones de 401/403 fuera de fueraDeSesion()");
-  });
-
-  test("el login entiende el ?cambiar=1 y enseña el cambio", () => {
-    assert.match(login, /cambiar"\) === "1"/);
-    assert.match(login, /if \(forzar \|\| data\.user\.pass_temporal\)/);
   });
 });

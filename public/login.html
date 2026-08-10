@@ -81,22 +81,6 @@
           <div id="loginError"></div>
         </form>
 
-        <!-- Cambio obligatorio la primera vez. La cuenta se crea con la contraseña igual
-             al usuario, así que hasta que se cambie no se puede hacer nada más. -->
-        <form id="cambioForm" class="form hidden">
-          <p class="login-aviso">Entras por primera vez. Elige una contraseña que solo sepas tú
-            antes de seguir: la que traías es tu propio nombre de usuario y la sabe cualquiera.</p>
-          <label>
-            <span>Contraseña nueva</span>
-            <input type="password" name="nueva" required autocomplete="new-password" minlength="6" />
-          </label>
-          <label>
-            <span>Repítela</span>
-            <input type="password" name="repite" required autocomplete="new-password" minlength="6" />
-          </label>
-          <button class="btn" type="submit">Guardar y entrar</button>
-          <div id="cambioError"></div>
-        </form>
       </div>
     </div>
     <script src="login.js"></script>
