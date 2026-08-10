@@ -1769,8 +1769,20 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
     const scope = localScope(req);
     const query = scope ? { ...req.query, local: scope } : req.query;
     const { where, params } = facturasWhere(query);
-    const rows = await dbAll(`SELECT * FROM facturas ${where} ORDER BY fecha DESC NULLS LAST, creado_en DESC LIMIT 500`, params);
-    res.json({ ok: true, data: rows });
+    const LIMITE = 500;
+    const rows = await dbAll(`SELECT * FROM facturas ${where} ORDER BY fecha DESC NULLS LAST, creado_en DESC LIMIT ${LIMITE}`, params);
+    // Los totales se calculan sobre el MISMO filtro y SIN el tope: sumar solo las filas que se
+    // enseñan daría un total corto en cuanto haya más de 500, y un total corto no se nota —
+    // parece que se ha gastado menos—. Es una consulta agregada, no trae filas.
+    const t = await dbGet(
+      `SELECT count(*)::int AS docs,
+              COALESCE(SUM(base_imponible),0)::float AS base,
+              COALESCE(SUM(cuota_iva),0)::float AS iva,
+              COALESCE(SUM(total),0)::float AS total,
+              count(*) FILTER (WHERE COALESCE(pagado,0) = 0)::int AS pendientes,
+              COALESCE(SUM(total) FILTER (WHERE COALESCE(pagado,0) = 0),0)::float AS por_pagar
+         FROM facturas ${where}`, params);
+    res.json({ ok: true, data: rows, totales: t || null, hayMas: (t?.docs || 0) > rows.length });
   } catch (e) { res.status(500).json({ ok: false, error: e.message, data: [] }); }
 });
 

@@ -3849,16 +3849,9 @@ function renderFacturas(list, pend, stats, empresas) {
   const empOpts =['<option value="">Todas las empresas</option>'].concat((empresas || []).map((e) => `<option value="${esc(e)}" ${FACF.empresa === e ? "selected" : ""}>${esc(e)}</option>`)).join("");
   const tipoOpts = ['<option value="">Todos los tipos</option>'].concat(["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${FACF.tipo === t ? "selected" : ""}>${cap(t)}</option>`)).join("");
   const estOpts = [["", "Todos los estados"], ["pagada", "Pagadas"], ["pendiente", "Pendientes"]].map(([v, l]) => `<option value="${v}" ${FACF.estado === v ? "selected" : ""}>${l}</option>`).join("");
-  // Con varios locales a la vez no hay resumen del servidor (sería el de uno solo). Se suma
-  // lo que se está viendo, que es exacto porque son estas filas y no otras — y se dice que es
-  // «lo que se ve» y no «el año», para que nadie lo lea como el total anual.
-  const sumaVista = (k) => (list || []).reduce((s2, f) => s2 + (Number(f[k]) || 0), 0);
-  const resumen = stats && stats.resumenAnual
-    ? `<div class="grid g4" style="margin-bottom:16px">${stat("Facturas (año)", "🧾", num(stats.resumenAnual.num_docs))}${stat("Base imponible", "€", eur(stats.resumenAnual.base))}${stat("IVA", "€", eur(stats.resumenAnual.iva))}${stat("Total", "€", eur(stats.resumenAnual.total))}</div>`
-    : viendoTodosLosMios()
-      ? `<div class="grid g4" style="margin-bottom:16px">${stat("Documentos que se ven", "🧾", num((list || []).length))}${stat("Base imponible", "€", eur(sumaVista("base_imponible")))}${stat("IVA", "€", eur(sumaVista("cuota_iva")))}${stat("Total", "€", eur(sumaVista("total")))}</div>
-         <p class="mut" style="margin:-8px 0 14px;font-size:12.5px">Sumado de <b>${esc(misLocales().map(nombreCortoLocal).join(" + "))}</b>, sobre los documentos que se están viendo — no es el total del año.</p>`
-      : "";
+  // Las cifras salen de `totales`, que el servidor calcula con el MISMO filtro: así cambian
+  // al filtrar, que es lo que se espera al poner un filtro.
+  const resumen = facKpisHtml();
   // Barra simple: buscar (en vivo, como estaba) y un botón que abre el panel con todo lo
   // demás. Antes había seis campos siempre a la vista para algo que se toca de vez en
   // cuando, y se comían la pantalla por encima de la tabla, que es lo que se viene a ver.
@@ -4351,6 +4344,37 @@ async function facAbrirFiltros() {
 // selección concreta. La selección se guarda por id, así que sobrevive a repintar la tabla
 // al filtrar — que es justo el flujo real: filtras, marcas, filtras otra vez, marcas más.
 let FAC_SEL = new Set();
+let FAC_TOT = null, FAC_HAY_MAS = false;
+
+/** Suma los agregados que devuelve el servidor (uno por local si se ven varios). */
+function facSumaTotales(resp) {
+  const ts = resp && resp.totales ? [resp.totales] : (resp && resp.partes) || [];
+  if (!ts.length) return null;
+  const suma = (k) => ts.reduce((s2, t) => s2 + (Number(t[k]) || 0), 0);
+  return { docs: suma("docs"), base: suma("base"), iva: suma("iva"), total: suma("total"),
+    pendientes: suma("pendientes"), porPagar: suma("por_pagar") };
+}
+
+/**
+ * Las cuatro cifras de arriba. Salen SIEMPRE de lo que está filtrado, no del año entero: si
+ * filtras un proveedor y las cifras siguen siendo las de todo el año, se leen como si fueran
+ * de ese proveedor. El rótulo dice de qué son.
+ */
+function facKpisHtml() {
+  const t = FAC_TOT;
+  if (!t) return `<div id="facKpis"></div>`;
+  const f = facFiltrosActivos();
+  const que = f.length ? "de lo filtrado" : "de todo";
+  const aviso = FAC_HAY_MAS
+    ? `<p class="mut" style="margin:-8px 0 14px;font-size:12.5px">Las cifras son de las <b>${num(t.docs)}</b> facturas que cumplen el filtro; abajo se enseñan las 500 más recientes.</p>`
+    : "";
+  return `<div id="facKpis"><div class="grid g4" style="margin-bottom:16px">
+      ${stat(`Facturas ${que}`, "🧾", num(t.docs))}
+      ${stat("Base imponible", "€", eur(t.base))}
+      ${stat("IVA", "€", eur(t.iva))}
+      ${stat("Total", "€", eur(t.total))}
+    </div>${aviso}</div>`;
+}
 
 function facTablaHtml(list) {
   if (!list.length) return `<div class="card"><div class="mut" style="padding:8px">Sin facturas con esos filtros.</div></div>`;
@@ -4664,7 +4688,7 @@ async function loadFacturas() {
     if (FACTAB === "compras") return loadCompras();
     // Igual que en reservas: una petición por local y se juntan las filas.
     const [lst, pend, stats, empresas] = await Promise.all([
-      pidePorLocales((loc) => { const q = facQS(loc); return "/api/facturas" + (q ? "?" + q : ""); }),
+      pidePorLocales((loc) => { const q = facQS(loc); return "/api/facturas" + (q ? "?" + q : ""); }, { raw: true }),
       apiOptional("/api/facturas/pendientes"),
       // El resumen viene YA AGREGADO del servidor y es de UN local. Viendo varios juntos
       // enseñaría el de uno solo junto a una tabla con los dos, que es la peor mezcla posible:
@@ -4673,7 +4697,11 @@ async function loadFacturas() {
         : apiOptional("/api/facturas/stats" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : "")),
       apiOptional("/api/facturas/empresas"),
     ]);
-    FAC_LIST = lst || [];
+    // Los totales vienen del servidor con el MISMO filtro y sin el tope de 500. Con varios
+    // locales se suman los de cada uno: es exacto porque una factura es de un solo local.
+    FAC_LIST = (lst && lst.data) || [];
+    FAC_TOT = facSumaTotales(lst);
+    FAC_HAY_MAS = !!(lst && lst.hayMas);
     FAC_PEND = pend || [];
     view.innerHTML = renderFacturas(FAC_LIST, FAC_PEND, stats, empresas || []);
     facAvisoLocales(); facAvisoCategorias(); facDuplicados(); // no se esperan: la tabla ya está
@@ -5052,10 +5080,16 @@ async function facRefresh() {
   const seq = ++_facSeq;
   box.classList.add("livebusy");
   try {
-    const lst = await api("/api/facturas" + (facQS() ? "?" + facQS() : ""));
+    const lst = await pidePorLocales((loc) => { const q = facQS(loc); return "/api/facturas" + (q ? "?" + q : ""); }, { raw: true });
     if (seq !== _facSeq) return; // llegó tarde: ya hay una búsqueda más nueva
-    FAC_LIST = lst || [];
+    FAC_LIST = (lst && lst.data) || [];
+    FAC_TOT = facSumaTotales(lst);
+    FAC_HAY_MAS = !!(lst && lst.hayMas);
     box.innerHTML = facTablaHtml(FAC_LIST);
+    // Y las cifras de arriba, que son de lo filtrado: si no se repintan, dicen otra cosa que
+    // la tabla que tienen debajo, que es la forma más fácil de leer un número equivocado.
+    const kpis = document.getElementById("facKpis");
+    if (kpis) kpis.outerHTML = facKpisHtml();
   } catch (e) {
     if (seq === _facSeq && e.message !== "noauth") box.innerHTML = errorCard(e.message);
   } finally {
