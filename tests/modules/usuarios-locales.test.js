@@ -162,13 +162,22 @@ describe("ver varios locales juntos, sin tocar el filtrado", () => {
     assert.match(panel, /mios\.length\s*\n?\s*\?\s*\(mios\.length > 1/);
   });
 
-  test("con varios locales NO se pide el resumen agregado del servidor", () => {
-    // Es de UN local: enseñarlo junto a una tabla con dos es la peor mezcla posible, un
-    // número que parece el total y no lo es.
+  test("con varios locales NO se pide el resumen ANUAL del servidor", () => {
+    // Es de UN local: enseñarlo junto a una tabla con dos sería un número que parece el total
+    // y no lo es. (Los gráficos que sí lo usan dicen «(año)» en su título.)
     assert.match(panel, /viendoTodosLosMios\(\) \? Promise\.resolve\(null\)/);
   });
 
-  test("se suma lo que se ve y se dice que es eso, no el total del año", () => {
-    assert.match(panel, /no es el total del año/);
+  test("las cifras de arriba se suman de los agregados de cada local", () => {
+    // Ya no se suman las filas visibles —la lista está topada a 500—: el servidor devuelve un
+    // agregado por local sobre el mismo filtro, y aquí se suman. Exacto: una factura es de un
+    // solo local, así que los conjuntos son disjuntos.
+    const i = panel.indexOf("function facSumaTotales(");
+    assert.notEqual(i, -1, "falta facSumaTotales");
+    const bloque = panel.slice(i, panel.indexOf("\n}\n", i));
+    assert.match(bloque, /resp\.partes/);
+    assert.match(bloque, /suma\("total"\)/);
+    assert.match(panel, /partes: buenas\.map\(\(p\) => p\.totales\)/,
+      "pidePorLocales tiene que devolver el agregado de cada local");
   });
 });

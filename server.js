@@ -49,6 +49,7 @@ import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/expo
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
+import { proponerConciliacion, resumenConciliacion } from "./src/modules/facturas/conciliacion.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { comprimir } from "./src/http/comprimir.js";
@@ -514,7 +515,10 @@ async function initDB() {
     // Sospecha de duplicado. `dup_estado='duda'` aparta la factura de TODOS los totales hasta
     // que alguien decida: un total con un duplicado dentro es un total falso, y uno al que le
     // falta una factura buena también. Se aparta, se dice cuánto se ha apartado, y se decide.
-    for (const col of ["dup_estado TEXT", "dup_de INTEGER", "dup_motivos TEXT", "dup_resuelto_por TEXT", "dup_resuelto_en TEXT"]) {
+    for (const col of ["dup_estado TEXT", "dup_de INTEGER", "dup_motivos TEXT", "dup_resuelto_por TEXT", "dup_resuelto_en TEXT",
+      // Conciliación: en la factura, la lista de ids de sus albaranes; en el albarán, el id de
+      // su factura. Aditivo, sin FK: es el mismo patrón que el resto.
+      "conciliado_con TEXT", "conciliado_por TEXT", "conciliado_en TEXT"]) {
       try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
     }
     for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT"]) {
@@ -3322,6 +3326,87 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
   } catch (e) {
     console.error("[facturas] historial producto:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar el historial" });
+  }
+});
+
+// ── Conciliación de albaranes con facturas ──────────────────────────────────
+// El proveedor deja un albarán por entrega y a fin de mes manda UNA factura que las agrupa.
+// Aquí se propone qué albaranes componen cada factura. Se PROPONE: confirmarlo es de una
+// persona, porque dar por buena una conciliación equivocada es peor que no tener ninguna —se
+// paga la factura creyendo que está comprobada. Ver src/modules/facturas/conciliacion.js.
+app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const scope = localScope(req);
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || "")) ? req.query.from : null;
+    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || "")) ? req.query.to : null;
+    const cond = [SIN_DUDAS], par = [];
+    if (scope) { cond.push("local = ?"); par.push(scope); }
+    if (desde) { cond.push("fecha >= ?"); par.push(desde); }
+    if (hasta) { cond.push("fecha <= ?"); par.push(hasta); }
+    const where = "WHERE " + cond.join(" AND ");
+
+    const docs = await dbAll(
+      `SELECT id, local, tipo, fecha, numero_factura, proveedor, nif, concepto,
+              base_imponible::float AS base_imponible, total::float AS total, drive_url,
+              conciliado_con, conciliado_por, conciliado_en
+         FROM facturas ${where} ORDER BY fecha DESC NULLS LAST LIMIT 1500`, par);
+
+    // Los albaranes se comparan contra un margen MÁS ANCHO que el periodo pedido: la factura
+    // de agosto recoge entregas de julio, y si solo se miraran las de agosto no cuadraría nunca.
+    const albDesde = desde ? new Date(Date.parse(desde) - 60 * 86400000).toISOString().slice(0, 10) : null;
+    const albaranes = await dbAll(
+      `SELECT id, local, tipo, fecha, numero_factura, proveedor, nif, total::float AS total, drive_url, conciliado_con
+         FROM facturas WHERE ${SIN_DUDAS} AND tipo = 'albaran' ${scope ? "AND local = ?" : ""}
+         ${albDesde ? "AND fecha >= ?" : ""} ${hasta ? "AND fecha <= ?" : ""}
+         ORDER BY fecha LIMIT 3000`,
+      [scope, albDesde, hasta].filter((x) => x != null));
+
+    const sueltos = albaranes.filter((a) => !a.conciliado_con);
+    const facturas = docs.filter((d) => (d.tipo || "factura") !== "albaran");
+    const propuestas = facturas.map((f) => {
+      if (f.conciliado_con) {
+        const ids = (() => { try { return JSON.parse(f.conciliado_con); } catch { return []; } })();
+        return { factura: f, estado: "conciliada", albaranes: albaranes.filter((a) => ids.includes(a.id)),
+          motivos: [`Conciliada por ${f.conciliado_por || "alguien"}`], diferencia: 0 };
+      }
+      return { factura: f, ...proponerConciliacion(f, sueltos) };
+    });
+
+    res.json({ ok: true, propuestas, resumen: resumenConciliacion(propuestas),
+      albaranesSueltos: sueltos.length, totalAlbaranes: albaranes.length });
+  } catch (e) {
+    console.error("[facturas] conciliación:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo calcular la conciliación" });
+  }
+});
+
+app.post("/api/facturas/:id/conciliar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const f = await dbGet(`SELECT id, local, proveedor, total::float AS total FROM facturas WHERE id = ?`, [req.params.id]);
+    if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
+    if (!puedeAccederLocal(req, f.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const ids = Array.isArray(req.body?.albaranes) ? req.body.albaranes.map(Number).filter(Boolean) : [];
+    const quien = req.user.nombre || req.user.username;
+
+    if (!ids.length) {   // deshacer
+      await dbRun(`UPDATE facturas SET conciliado_con = NULL, conciliado_por = NULL, conciliado_en = NULL WHERE id = ?`, [f.id]);
+      await dbRun(`UPDATE facturas SET conciliado_con = NULL WHERE conciliado_con = ?`, [String(f.id)]).catch(() => {});
+      await ficAuditar("facturas", f.id, "conciliacion_deshecha", quien, { local: f.local });
+      return res.json({ ok: true, mensaje: "Conciliación deshecha." });
+    }
+    // Un albarán solo puede pertenecer a UNA factura: si no, se pagaría dos veces lo mismo.
+    const yaUsados = await dbAll(`SELECT id, conciliado_con FROM facturas WHERE id = ANY(?) AND conciliado_con IS NOT NULL`, [ids]);
+    if (yaUsados.length) {
+      return res.status(409).json({ ok: false, error: `Ya hay ${yaUsados.length} albarán(es) conciliados con otra factura. Deshaz esa conciliación primero.` });
+    }
+    await dbRun(`UPDATE facturas SET conciliado_con = ?, conciliado_por = ?, conciliado_en = ? WHERE id = ?`,
+      [JSON.stringify(ids), quien, isoConOffset(Date.now()), f.id]);
+    await dbRun(`UPDATE facturas SET conciliado_con = ? WHERE id = ANY(?)`, [String(f.id), ids]);
+    await ficAuditar("facturas", f.id, "conciliada", quien, { local: f.local, detalle: { albaranes: ids, total: f.total } });
+    res.json({ ok: true, mensaje: `Conciliada con ${ids.length} albarán(es).` });
+  } catch (e) {
+    console.error("[facturas] conciliar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
   }
 });
 

@@ -74,7 +74,7 @@ const NAV = [
     // Al encargado solo le sale «Subir factura»: entra, hace la foto y se va. El resto de
     // Facturas —el gasto del grupo, los totales, la configuración fiscal— no es cosa suya.
     ["subirfactura", "Subir factura", "receipt", ["direccion", "contabilidad", "encargado"]],
-    ["facturas", "Facturas", "receipt", ["direccion", "contabilidad"]],
+    ["facturas", "Compras", "receipt", ["direccion", "contabilidad"]],
     ["analitica", "Analítica de ventas", "chart", ["direccion", "contabilidad"]],
   ] },
   { g: "Marketing", items: [
@@ -97,7 +97,7 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const TITLES = { subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
 const VIEW_ROLES = { subirfactura: ["direccion", "contabilidad", "encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
 const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica", "rrhh", "horarios", "fichajes"]);
@@ -150,8 +150,14 @@ async function pidePorLocales(montaUrl, { raw = false } = {}) {
     return raw ? j : j;
   }
   const partes = await Promise.all(locales.map((l) => (raw ? apiRaw(montaUrl(l)) : api(montaUrl(l))).catch(() => null)));
-  const arrays = partes.filter(Boolean).map((p) => (raw ? (p.data || []) : (p || [])));
-  return raw ? { ok: true, data: arrays.flat(), variosLocales: true } : arrays.flat();
+  const buenas = partes.filter(Boolean);
+  const arrays = buenas.map((p) => (raw ? (p.data || []) : (p || [])));
+  if (!raw) return arrays.flat();
+  return { ok: true, data: arrays.flat(), variosLocales: true,
+    // El agregado de CADA local, para poder sumarlos: sumar las filas visibles daría corto,
+    // porque la lista viene topada.
+    partes: buenas.map((p) => p.totales).filter(Boolean),
+    hayMas: buenas.some((p) => p.hayMas) };
 }
 
 let USER = null, CURRENT = "dashboard";
@@ -3838,7 +3844,7 @@ function facQS(localForzado) {
 function facScope() { FACF.local = localActualFE(); return FACF.local; }
 function facHeader() {
   const amb = facScope();
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Facturas</h1><div class="sub">Facturas, asignación y configuración fiscal${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px"><button class="btn ${FACTAB === "facturas" ? "primary" : ""}" data-act="fac-tab" data-tab="facturas">Facturas</button><button class="btn ${FACTAB === "compras" ? "primary" : ""}" data-act="fac-tab" data-tab="compras">Qué compramos</button><button class="btn ${FACTAB === "config" ? "primary" : ""}" data-act="fac-tab" data-tab="config">Configuración</button></div>`;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas, albaranes y qué se compra${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${[["facturas", "Facturas"], ["conciliar", "Conciliaciones"], ["compras", "Qué compramos"], ["config", "Configuración"]].map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("")}</div>`;
 }
 const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
 // Con céntimos. Para precios unitarios, donde redondear a euros enteros se carga justo el
@@ -4686,6 +4692,7 @@ async function loadFacturas() {
       return;
     }
     if (FACTAB === "compras") return loadCompras();
+    if (FACTAB === "conciliar") return loadConciliacion();
     // Igual que en reservas: una petición por local y se juntan las filas.
     const [lst, pend, stats, empresas] = await Promise.all([
       pidePorLocales((loc) => { const q = facQS(loc); return "/api/facturas" + (q ? "?" + q : ""); }, { raw: true }),
@@ -4708,6 +4715,109 @@ async function loadFacturas() {
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function facTab(tab) { FACTAB = tab; loadFacturas(); }
+
+// ── Conciliaciones ──────────────────────────────────────────────────────────
+// El proveedor deja un albarán por entrega y a fin de mes manda UNA factura que las agrupa.
+// Aquí se ve si esa factura recoge todos sus albaranes —y si cobra algo que no se entregó—.
+// Se PROPONE; confirmar es de una persona: dar por buena una conciliación equivocada es peor
+// que no tener ninguna, porque se paga creyendo que está comprobada.
+let CONC = { from: "", to: "", filtro: "parcial" };
+const CONC_FILTROS = [["parcial", "Por revisar"], ["cuadra", "Cuadran"], ["sin-albaranes", "Sin albarán"], ["conciliada", "Ya conciliadas"], ["", "Todas"]];
+
+async function loadConciliacion() {
+  const view = document.getElementById("view");
+  if (!CONC.from) { const d = new Date(); d.setMonth(d.getMonth() - 2); CONC.from = d.toISOString().slice(0, 10); }
+  view.innerHTML = facHeader() + `<div id="concRes"><p class="mut">Cruzando albaranes y facturas…</p></div>`;
+  await refrescarConciliacion();
+  const cont = document.getElementById("concRes");
+  cont?.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-conc]");
+    if (!b) return;
+    const w = b.getAttribute("data-conc");
+    if (w === "filtro") { CONC.filtro = b.getAttribute("data-v"); return refrescarConciliacion(); }
+    if (w === "confirmar") return concConfirmar(b.getAttribute("data-id"), b.getAttribute("data-albs"));
+    if (w === "deshacer") return concConfirmar(b.getAttribute("data-id"), "");
+  });
+  cont?.addEventListener("change", (e) => {
+    if (e.target.id === "concFrom") { CONC.from = e.target.value; refrescarConciliacion(); }
+    if (e.target.id === "concTo") { CONC.to = e.target.value; refrescarConciliacion(); }
+  });
+}
+
+async function refrescarConciliacion() {
+  const cont = document.getElementById("concRes"); if (!cont) return;
+  const qs = new URLSearchParams();
+  if (CONC.from) qs.set("from", CONC.from);
+  if (CONC.to) qs.set("to", CONC.to);
+  let j;
+  try { j = await apiRaw("/api/facturas/conciliacion?" + qs); } catch (e) { cont.innerHTML = errorCard(e.message); return; }
+  const r = j.resumen;
+  const lista = (j.propuestas || []).filter((p) => !CONC.filtro || p.estado === CONC.filtro);
+
+  const pills = CONC_FILTROS.map(([v, t]) => {
+    const n = v ? (j.propuestas || []).filter((p) => p.estado === v).length : (j.propuestas || []).length;
+    return `<button class="btn sm ${CONC.filtro === v ? "primary" : ""}" data-conc="filtro" data-v="${v}">${t} · ${num(n)}</button>`;
+  }).join("");
+
+  const barra = `<div class="toolbar" style="margin-bottom:10px">
+      <div class="field"><label>Desde</label>${dpField("concFrom", CONC.from, "Cualquiera")}</div>
+      <div class="field"><label>Hasta</label>${dpField("concTo", CONC.to, "Hoy")}</div>
+    </div><div class="toolbar" style="margin-bottom:12px">${pills}</div>`;
+
+  const kpis = `<div class="grid g4" style="margin-bottom:16px">
+      ${stat("Cuadran", "✅", num(r.cuadran))}
+      ${stat("Por revisar", "⚠️", num(r.parciales))}
+      ${stat("En juego", "€", eur(r.importeParcial))}
+      ${stat("Albaranes sueltos", "📦", num(j.albaranesSueltos))}
+    </div>`;
+
+  const albRow = (a) => `<div class="row" style="padding:7px 0">
+      <span class="grow"><div class="t1" style="font-weight:500">${esc(fechaCorta(a.fecha) || a.fecha || "—")} · ${esc(a.numero_factura || "s/n")}</div></span>
+      <b class="tnum">${esc(eur2(a.total))}</b>
+      ${a.drive_url ? `<a class="btn sm" href="${esc(a.drive_url)}" target="_blank" rel="noopener">Ver ↗</a>` : ""}</div>`;
+
+  const ficha = (p) => {
+    const f = p.factura;
+    const est = p.estado === "cuadra" ? ["ok", "Cuadra"] : p.estado === "conciliada" ? ["brand", "Conciliada"]
+      : p.estado === "parcial" ? ["warn", "Por revisar"] : ["", "Sin albarán"];
+    const ids = (p.albaranes || []).map((a) => a.id).join(",");
+    return `<div class="dupcard">
+      <div class="row" style="padding:0 0 10px;border:0">
+        <span class="grow" style="min-width:0">
+          <div class="t1">${esc(f.proveedor || "—")} · ${esc(f.numero_factura || "s/n")}</div>
+          <div class="t2">${esc(fechaCorta(f.fecha) || f.fecha || "")} · ${esc(nombreCortoLocal(f.local) || "")}</div>
+        </span>
+        <b class="tnum" style="font-size:16px">${esc(eur2(f.total))}</b>
+        <span class="pill ${est[0]}" style="flex:none">${est[1]}</span>
+      </div>
+      <p class="dupmot">${esc(p.motivos.join(". "))}.</p>
+      ${(p.albaranes || []).length ? `<div class="rows" style="background:var(--surface2);border-radius:10px;padding:4px 12px">${p.albaranes.map(albRow).join("")}</div>` : ""}
+      <div class="dupacts">
+        ${f.drive_url ? `<a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver factura ↗</a>` : ""}
+        ${p.estado === "conciliada"
+          ? `<button class="btn sm" data-conc="deshacer" data-id="${f.id}">Deshacer</button>`
+          : (p.albaranes || []).length
+            ? `<button class="btn sm ${p.estado === "cuadra" ? "primary" : ""}" data-conc="confirmar" data-id="${f.id}" data-albs="${esc(ids)}">
+                 ${p.estado === "cuadra" ? "Confirmar" : `Conciliar con estos ${p.albaranes.length}`}</button>`
+            : ""}
+      </div></div>`;
+  };
+
+  cont.innerHTML = `${kpis}${barra}
+    ${r.parciales ? `<p class="fic-nota">Las de <b>por revisar</b> son las que importan: o falta un albarán por subir, o la factura cobra algo que no se entregó. <b>${esc(eur(r.importeParcial))}</b> en juego.</p>` : ""}
+    ${lista.length ? lista.map(ficha).join("") : `<div class="card"><div class="mut" style="padding:8px">No hay facturas en este estado dentro del periodo.</div></div>`}`;
+}
+
+async function concConfirmar(id, albs) {
+  const ids = String(albs || "").split(",").filter(Boolean).map(Number);
+  const deshacer = !ids.length;
+  if (!(await confirmModal(deshacer
+    ? "¿Deshacer la conciliación? Los albaranes vuelven a quedar sueltos."
+    : `¿Dar por buena esta factura con ${ids.length} albarán(es)? Quedará registrado quién y cuándo, y esos albaranes no podrán usarse en otra factura.`,
+    { ok: deshacer ? "Deshacer" : "Confirmar", danger: deshacer }))) return;
+  try { const r = await apiSend("POST", `/api/facturas/${id}/conciliar`, { albaranes: ids }); toast(r.mensaje || "Hecho ✅"); refrescarConciliacion(); }
+  catch (e) { toast(e.message); }
+}
 
 // ── Qué compramos ───────────────────────────────────────────────────────────
 // El detalle línea a línea de las facturas, agrupado por producto. Contesta «cuántas
