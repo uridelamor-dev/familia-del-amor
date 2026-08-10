@@ -1823,10 +1823,18 @@ app.post("/api/facturas/export.csv", requireAuth(["direccion", "contabilidad"]),
 // Subida manual: admite VARIAS facturas a la vez (campo "files"), y también el envío
 // antiguo de una sola ("file"). Se procesan en secuencia (respeta límites de Drive y el
 // cerrojo por hash) y se devuelve un resultado por archivo.
-app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad"]), uploadFacturaMem.fields([{ name: "files", maxCount: 30 }, { name: "file", maxCount: 1 }]), async (req, res) => {
+// Subir facturas. El encargado entra aquí también, pero SOLO a esto: el resto de rutas de
+// facturas (lista, totales, configuración, qué compramos) siguen siendo de dirección y
+// contabilidad. Y su local no lo elige él: se le fija el suyo, porque un encargado subiendo
+// una factura al local equivocado descuadra dos locales a la vez y nadie se entera.
+app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad", "encargado"]), uploadFacturaMem.fields([{ name: "files", maxCount: 30 }, { name: "file", maxCount: 1 }]), async (req, res) => {
   const archivos = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
   if (!archivos.length) return res.status(400).json({ ok: false, error: "Falta el archivo" });
-  const local = (req.body.local || "").trim();
+  const fijado = localScope(req);   // encargado con local → siempre el suyo, venga lo que venga
+  if (req.user.rol === "encargado" && !fijado) {
+    return res.status(403).json({ ok: false, error: "Tu usuario no tiene un establecimiento asignado, así que no se sabe a qué local pertenece la factura. Pídeselo a dirección." });
+  }
+  const local = fijado || (req.body.local || "").trim();
   const resultados = [];
   for (const f of archivos) {
     const { buffer, mimetype, originalname } = f;

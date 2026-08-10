@@ -24,6 +24,11 @@ export const CATALOGO_MODULOS = [
   { id: "horarios", label: "Horarios", roles: ["direccion", "rrhh", "encargado"], porLocal: true },
   { id: "fichajes", label: "Fichajes", roles: ["direccion", "rrhh", "encargado", "contabilidad"], porLocal: true },
   { id: "facturas", label: "Facturas", roles: ["direccion", "contabilidad"], porLocal: true },
+  // Módulo aparte y NO un permiso dentro de Facturas: el encargado sube la factura de su
+  // proveedor y no tiene por qué ver el gasto del grupo, los totales ni la configuración
+  // fiscal. Separarlo hace que «puede subir» y «puede ver» sean dos cosas distintas, que es
+  // lo que son.
+  { id: "subirfactura", label: "Subir factura", roles: ["direccion", "contabilidad", "encargado"], porLocal: true },
   { id: "inventarios", label: "Inventarios", roles: ["direccion", "encargado"], porLocal: true },
   { id: "web", label: "Web", roles: ["direccion", "marketing"], porLocal: false },
   { id: "reviews", label: "Reseñas", roles: ["direccion", "encargado", "contabilidad", "marketing"], porLocal: true },

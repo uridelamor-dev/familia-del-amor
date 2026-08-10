@@ -60,6 +60,9 @@ const NAV = [
     ["fichajes", "Fichajes", "clock", ["direccion", "rrhh", "encargado", "contabilidad"]],
   ] },
   { g: "Contabilidad", items: [
+    // Al encargado solo le sale «Subir factura»: entra, hace la foto y se va. El resto de
+    // Facturas —el gasto del grupo, los totales, la configuración fiscal— no es cosa suya.
+    ["subirfactura", "Subir factura", "receipt", ["direccion", "contabilidad", "encargado"]],
     ["facturas", "Facturas", "receipt", ["direccion", "contabilidad"]],
     ["analitica", "Analítica de ventas", "chart", ["direccion", "contabilidad"]],
   ] },
@@ -83,10 +86,10 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Facturas", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { subirfactura: ["direccion", "contabilidad", "encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
-const MODULOS_POR_LOCAL = new Set(["dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica", "rrhh", "horarios", "fichajes"]);
+const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "reviews", "analitica", "rrhh", "horarios", "fichajes"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
 function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol)); }
 // ¿El usuario actual puede entrar a `view`? Respeta rol + allowlist efectiva (USER.modulos del token).
@@ -4194,6 +4197,91 @@ function facFicha(id) {
   const pb = ov.querySelector("#ficPago"); if (pb) pb.addEventListener("click", async () => { try { await apiSend("PATCH", "/api/facturas/" + id + "/pago"); ov.remove(); toast("Estado de pago actualizado"); loadFacturas(); } catch (e) { toast("Error: " + e.message); } });
 }
 async function facExport() { try { const r = await fetch("/api/facturas/export.csv" + (facQS() ? "?" + facQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "facturas.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
+// ── Subir factura (pantalla del encargado) ──────────────────────────────────
+// Se hace desde el móvil, de pie en la barra y con el albarán en la mano, así que es una sola
+// pantalla: un botón grande de cámara, otro de archivo y la lista de lo que llevas subido hoy.
+// NO se consulta ninguna otra ruta de facturas: el encargado no tiene permiso sobre ellas y
+// pedirlas solo serviría para llenarle la pantalla de errores.
+let SUBF = { enviando: 0, hechas: [] };
+
+async function loadSubirFactura() {
+  const view = document.getElementById("view");
+  const local = localFijadoFE() || DASH_LOCAL || "";
+  const esEncargado = USER.rol === "encargado";
+
+  const avisoLocal = esEncargado && !localFijadoFE()
+    ? `<p class="fic-nota">Tu usuario no tiene establecimiento asignado, así que no se sabría a qué local pertenece la factura. Pídeselo a dirección antes de subir nada.</p>`
+    : "";
+
+  // A dirección y contabilidad sí se les deja elegir: pueden subir la de cualquier local.
+  const selector = esEncargado ? "" : `<div class="field" style="width:100%;max-width:420px;margin:0 auto 14px">
+      <label>Local</label>
+      <select class="inp" id="sfLocal">
+        <option value="">Detectarlo de la factura</option>
+        ${LOCALES.map((l) => `<option value="${esc(l)}" ${l === local ? "selected" : ""}>${esc(l)}</option>`).join("")}
+      </select></div>`;
+
+  view.innerHTML = `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Subir factura</h1>
+      <div class="sub">${esEncargado && local ? `Se guardará en <b>${esc(nombreCortoLocal(local))}</b>` : "Haz la foto o elige el archivo"}</div></div>
+    ${avisoLocal}
+    ${selector}
+    <div class="subcard">
+      <input type="file" id="sfCam" accept="image/*" capture="environment" multiple hidden>
+      <input type="file" id="sfFile" accept="application/pdf,image/*" multiple hidden>
+      <button class="subbig" data-act="sf-camara">
+        <span class="subico">${ic("receipt", 30)}</span>
+        <b>Hacer foto de la factura</b>
+        <span>Se abre la cámara del móvil</span>
+      </button>
+      <button class="subalt" data-act="sf-archivo">o elegir un archivo (PDF o imagen)</button>
+      <p class="mut" style="margin:14px 0 0;font-size:12.5px;line-height:1.55">
+        Se lee sola: proveedor, fecha, número, base, IVA y total. Se guarda en Drive en la carpeta de tu local
+        y se avisa si esa factura ya estaba subida. Puedes mandar varias de una vez.</p>
+    </div>
+    <div id="sfLista"></div>`;
+  sfPintarLista();
+}
+
+function sfPintarLista() {
+  const caja = document.getElementById("sfLista"); if (!caja) return;
+  if (!SUBF.hechas.length && !SUBF.enviando) { caja.innerHTML = ""; return; }
+  const fila = (r) => `<div class="row">
+      <span class="grow" style="min-width:0">
+        <div class="t1">${r.ok ? esc(r.proveedor || r.filename) : esc(r.filename)}</div>
+        <div class="t2">${r.ok
+          ? (r.total != null ? esc(eur2(r.total)) : "sin total") + (r.pendiente ? " · falta asignarle local" : "")
+          : `<span class="${r.duplicate ? "" : "fg-danger"}">${esc(r.error || "no se pudo")}</span>`}</div>
+      </span>
+      <span class="pill ${r.ok ? "ok" : r.duplicate ? "warn" : "bad"}" style="flex:none">${r.ok ? "Guardada" : r.duplicate ? "Ya estaba" : "Error"}</span>
+    </div>`;
+  caja.innerHTML = `<div class="card p0" style="margin-top:16px">
+    <div class="ch" style="padding:16px 16px 0"><h3>Subidas en esta sesión</h3>
+      <span class="mut" style="font-size:12px">${SUBF.enviando ? `enviando ${num(SUBF.enviando)}…` : `${num(SUBF.hechas.filter((x) => x.ok).length)} guardadas`}</span></div>
+    <div class="rows">${SUBF.enviando ? `<div class="row"><span class="grow"><div class="t1">Leyendo la factura…</div><div class="t2">tarda unos segundos</div></span></div>` : ""}
+      ${SUBF.hechas.map(fila).join("")}</div></div>`;
+}
+
+async function sfEnviar(files) {
+  if (!files.length) return;
+  SUBF.enviando = files.length; sfPintarLista();
+  try {
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f));
+    // El encargado no manda local: se lo pone el servidor. Si lo mandara, tampoco se usaría.
+    const sel = document.getElementById("sfLocal");
+    if (sel && sel.value) fd.append("local", sel.value);
+    const r = await fetch("/api/facturas/subir", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });
+    const j = await r.json();
+    if (!j.ok) { toast("No se pudo subir: " + (j.error || "error desconocido")); return; }
+    // Las últimas arriba: es donde mira quien acaba de pulsar.
+    SUBF.hechas = [...(j.resultados || []), ...SUBF.hechas].slice(0, 40);
+    const okc = (j.resultados || []).filter((x) => x.ok).length;
+    toast(okc === (j.resultados || []).length ? (okc === 1 ? "Factura guardada ✅" : `${okc} facturas guardadas ✅`)
+      : `${okc} de ${(j.resultados || []).length} guardadas`);
+  } catch (e) { toast("No se pudo subir: " + e.message); }
+  finally { SUBF.enviando = 0; sfPintarLista(); }
+}
+
 function facSubir() {
   const localOpts = ['<option value="">Detectar automáticamente (por NIF, empresa o proveedor)</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
   const ov = modal("Subir facturas", `<div class="field" style="width:100%"><label>Archivos (PDF o imágenes, puedes elegir varios)</label><input type="file" id="fsFile" accept="application/pdf,image/*" multiple></div><div class="field" style="width:100%"><label>Local</label><select id="fsLocal">${localOpts}</select></div><div class="mut" style="font-size:12px">Se procesan en segundo plano con la misma IA, orden en Drive y control de duplicados que WhatsApp/correo. Requiere Google conectado. Puedes cerrar y seguir trabajando; te aviso al terminar.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fsSend">Subir y procesar</button></div>`);
@@ -5824,7 +5912,7 @@ async function webBlkUpload(input, gallery) {
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 function go(view) {
   if (!VIEWS[view]) view = "dashboard";
   // El calendario cuelga de <body>, así que sobrevive al repintado de la vista:
@@ -5843,6 +5931,12 @@ function go(view) {
 document.addEventListener("change", (e) => {
   if (!e.target) return;
   const id = e.target.id;
+  if (id === "sfCam" || id === "sfFile") {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";   // para poder volver a elegir el mismo archivo si algo falló
+    sfEnviar(files);
+    return;
+  }
   if (id === "cPob") { CLIF.poblacion = e.target.value; refreshCliResults(); }
   else if (id === "cLocal") { CLIF.local = e.target.value; refreshCliResults(); }
   else if (id === "cCumple") { CLIF.cumple = e.target.checked; refreshCliResults(); }
@@ -6009,6 +6103,8 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-sel-export") facSelExport();
   else if (act === "fac-sel-limpiar") facSelLimpiar();
   else if (act === "fac-subir") facSubir();
+  else if (act === "sf-camara") document.getElementById("sfCam")?.click();
+  else if (act === "sf-archivo") document.getElementById("sfFile")?.click();
   else if (act === "fac-303-csv") fac303Csv();
   else if (act === "fac-migrar") facMigrar();
   else if (act === "fac-colocar-raiz") facColocarRaiz();
