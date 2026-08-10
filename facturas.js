@@ -5,6 +5,7 @@ import { claveProveedor, seLeenLineas, nombreCanonico } from "./src/modules/fact
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { corregirEmisorReceptor } from "./src/modules/facturas/emisor.js";
 import { revisarCoherencia, textosDe } from "./src/modules/facturas/coherencia.js";
+import { extraerTextoPdf, bloqueTextoParaClaude } from "./src/modules/facturas/pdf-texto.js";
 import { createHash } from "crypto";
 import { PDFDocument } from "pdf-lib";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -226,12 +227,29 @@ export async function extraerDatosDocumento(buffer, mimeType) {
     ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
     : { type: "image",    source: { type: "base64", media_type: mimeType, data: base64 } };
 
+  // Si el PDF trae capa de texto (los que salen del programa de gestión del proveedor la traen;
+  // los escaneados y las fotos no), se manda TAMBIÉN el texto exacto junto al documento. El
+  // documento aporta la disposición —quién firma arriba, qué hay en el recuadro del cliente— y
+  // el texto aporta los caracteres sin error de lectura: el nº de factura, el NIF, los importes.
+  // Ver src/modules/facturas/pdf-texto.js.
+  const contenido = [adjunto];
+  if (isPdf) {
+    const capa = extraerTextoPdf(buffer);
+    if (capa.hayTexto) {
+      contenido.push({ type: "text", text: bloqueTextoParaClaude(capa.texto) });
+      console.log(`[Facturas] PDF con capa de texto: ${capa.texto.length} caracteres extraídos del archivo`);
+    } else {
+      console.log(`[Facturas] PDF sin capa de texto aprovechable (${capa.motivo}): se lee solo la imagen`);
+    }
+  }
+  contenido.push({ type: "text", text: PROMPT_EXTRACCION });
+
   const response = await ai.messages.create({
     model: "claude-haiku-4-5-20251001",
     // Subido de 512: ahora también viene el detalle línea a línea, y una factura de
     // proveedor de bebidas puede traer treinta. Con 512 se cortaba el JSON a la mitad.
     max_tokens: 4096,
-    messages: [{ role: "user", content: [adjunto, { type: "text", text: PROMPT_EXTRACCION }] }]
+    messages: [{ role: "user", content: contenido }]
   });
 
   const text = response.content.find(b => b.type === "text")?.text || "";
