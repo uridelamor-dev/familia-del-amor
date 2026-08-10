@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { normalizarLineas, validarSuma, mensajeValidacion, claveProducto } from "./src/modules/facturas/lineas.js";
 import { canonizarLocal, esLocalCanonico } from "./src/modules/facturas/local-canonico.js";
 import { claveProveedor, seLeenLineas } from "./src/modules/facturas/categorias.js";
+import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { createHash } from "crypto";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 
@@ -153,13 +154,44 @@ function buildDriveFilename(datos, ext) {
   return [proveedor, fecha, num].filter(Boolean).join(", ") + ext;
 }
 
+/**
+ * Busca entre las facturas del MISMO proveedor y de fechas cercanas. Acotado en la consulta:
+ * comparar contra la tabla entera sería caro y no aportaría nada — una factura de hace ocho
+ * meses con el mismo importe es la cuota mensual, no un duplicado.
+ */
+export async function sospecharDuplicado(dbAll, datos, { ventanaDias = 10 } = {}) {
+  if (!dbAll || !datos) return null;
+  const prov = (datos.proveedor || "").trim();
+  const nif = (datos.nif_proveedor || datos.nif || "").trim();
+  if (!prov && !nif) return null;
+  const f = datos.fecha && /^\d{4}-\d{2}-\d{2}$/.test(datos.fecha) ? datos.fecha : null;
+  try {
+    const filas = await dbAll(
+      `SELECT id, proveedor, nif, fecha, numero_factura, base_imponible::float AS base_imponible,
+              total::float AS total, local, drive_url, dup_estado
+         FROM facturas
+        WHERE (LOWER(proveedor) = LOWER(?) OR (? <> '' AND nif = ?))
+          ${f ? "AND fecha BETWEEN (?::date - ?::int)::text AND (?::date + ?::int)::text" : ""}
+        ORDER BY id DESC LIMIT 60`,
+      f ? [prov, nif, nif, f, ventanaDias, f, ventanaDias] : [prov, nif, nif]);
+    return buscarParecida({ ...datos, nif: nif || datos.nif }, filas, { ventanaDias });
+  } catch (e) {
+    // Que falle la comprobación no puede impedir que entre la factura: se registra y sigue.
+    console.error("[Facturas] no se pudo comprobar duplicados:", e.message);
+    return null;
+  }
+}
+
 export class FacturaDuplicadaError extends Error {
-  constructor(original, reason) {
+  constructor(original, reason, motivos = []) {
     const desc = reason === "hash"
       ? "mismo archivo (hash idéntico)"
-      : `${sanitizarNombre(original.proveedor)} · nº ${original.numero_factura}`;
+      : reason === "parecido"
+        ? `${sanitizarNombre(original.proveedor)} · nº ${original.numero_factura || "s/n"} (${resumenMotivos(motivos).toLowerCase()})`
+        : `${sanitizarNombre(original.proveedor)} · nº ${original.numero_factura}`;
     super(`Factura duplicada: ya existe ${desc}`);
     this.isDuplicate = true;
+    this.motivos = motivos;
     this.original = original;
     this.reason = reason;
   }
@@ -592,7 +624,7 @@ export async function repararTodosLosSheets({ getToken, dbGet, dbAll, dbRun }) {
 
 // ── Pipeline principal ──────────────────────────────────────────────────────
 
-export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbRun, backupFn }) {
+export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbAll, dbRun, backupFn }) {
   // El local SIEMPRE se guarda con el nombre del establecimiento, nunca como llegue.
   // De no hacerlo acabaron conviviendo «La Tapeta - Lloret», «Lloret» y «BLANES» en la
   // misma columna, y filtrando por el nombre bueno faltaban facturas.
@@ -616,12 +648,12 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
                 || await dbGet("SELECT id, proveedor, numero_factura, fecha, drive_url FROM facturas_pendientes WHERE file_hash = ?", [fileHash]);
   if (hashDupe) throw new FacturaDuplicadaError(hashDupe, "hash");
 
-  if (datos.proveedor && datos.numero_factura) {
-    const dataDupe = await dbGet(
-      "SELECT id, proveedor, numero_factura, fecha, drive_url FROM facturas WHERE LOWER(proveedor) = LOWER(?) AND numero_factura = ?",
-      [datos.proveedor, datos.numero_factura]
-    );
-    if (dataDupe) throw new FacturaDuplicadaError(dataDupe, "numero_factura");
+  // Sospecha de duplicado. Antes solo se cazaba el archivo idéntico y el mismo número exacto;
+  // se colaba la misma factura fotografiada dos veces, porque el archivo cambia y el número se
+  // lee mal. Ver src/modules/facturas/duplicados.js.
+  const sospecha = await sospecharDuplicado(dbAll, datos);
+  if (sospecha && sospecha.veredicto === "duplicada") {
+    throw new FacturaDuplicadaError(sospecha.contra, "parecido", sospecha.motivos);
   }
 
   // 4. Obtener token de Drive y empresa del local
@@ -659,14 +691,21 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
 
   // 8. GUARDAR EN BD PRIMERO — la BD es la única verdad; el Sheet es una proyección reconstruible.
   //    sheet_synced=0: si la proyección a Sheets falla, la cola de reintentos la reproyecta desde la BD.
+  // La duda se guarda CON la factura: entra, pero apartada de los totales hasta que alguien
+  // decida. No entrar sería decidir que es duplicada, que es justo lo que no se sabe.
+  const enDuda = sospecha && sospecha.veredicto === "duda" ? sospecha : null;
   const ins = await dbRun(
     `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
-      base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal, sheet_synced)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
+      base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal,
+      dup_estado, dup_de, dup_motivos, sheet_synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
     [local, empresa, datos.tipo, datos.fecha, datos.numero_factura, datos.proveedor,
      datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
-     datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash, canal]
+     datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash, canal,
+     enDuda ? "duda" : null, enDuda ? enDuda.contra.id : null,
+     enDuda ? JSON.stringify(enDuda.motivos) : null]
   );
+  if (enDuda) console.warn(`[Facturas] posible duplicado de #${enDuda.contra.id}: ${resumenMotivos(enDuda.motivos)}`);
   const facturaId = ins?.id;
 
   // 8b. El detalle línea a línea. NO fatal: si falla, la factura ya está guardada y lo que

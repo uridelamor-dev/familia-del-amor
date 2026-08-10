@@ -3708,8 +3708,65 @@ function renderFacturas(list, pend, stats, empresas) {
   };
   const pendCard = (pend && pend.length) ? `<div class="card p0" style="margin-bottom:16px"><div class="ch" style="padding:18px 18px 0"><h3>Facturas pendientes de asignar</h3><span class="pill bad">${pend.length}</span></div><div class="rows" style="margin-top:6px">${pend.map(pendRow).join("")}</div></div>` : "";
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
-  return `${facHeader()}${resumen}${toolbar}<div id="facLocalesRaros"></div><div id="facSinCats"></div>${vizGrid}${pendCard}<div id="facRes">${facTablaHtml(list)}</div>`;
+  return `${facHeader()}${resumen}${toolbar}<div id="facDups"></div><div id="facLocalesRaros"></div><div id="facSinCats"></div>${vizGrid}${pendCard}<div id="facRes">${facTablaHtml(list)}</div>`;
 }
+// ── Posibles duplicados ─────────────────────────────────────────────────────
+// Las que entraron con dudas. Están guardadas pero NO cuentan en ningún total hasta que
+// alguien decida, así que lo primero que se dice es cuánto dinero hay ahí parado: si son
+// 40 €, se mira mañana; si son 4.000, se mira ahora.
+async function facDuplicados() {
+  const caja = document.getElementById("facDups");
+  if (!caja) return;
+  let j;
+  try { j = await apiRaw("/api/facturas/duplicados"); } catch { return; }
+  if (!j.total) { caja.innerHTML = ""; return; }
+
+  const ficha = (f, cual) => `<div class="dupcol ${cual}">
+      <div class="t2">${cual === "nueva" ? "La que acaba de entrar" : "La que ya estaba"}${f.canal ? " · " + esc(f.canal) : ""}</div>
+      <div class="t1">${esc(f.proveedor || "—")}</div>
+      <div class="dupdatos">
+        <span>${esc(fechaCorta(f.fecha) || f.fecha || "sin fecha")}</span>
+        <span>nº ${esc(f.numero_factura || "s/n")}</span>
+        <b>${esc(eur2(f.total))}</b>
+      </div>
+      ${f.local ? `<div class="t2">${esc(nombreCortoLocal(f.local))}</div>` : ""}
+      ${f.drive_url ? `<a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver el papel ↗</a>`
+        : '<span class="mut" style="font-size:12px">sin archivo</span>'}
+    </div>`;
+
+  const par = (f) => `<div class="dupcard">
+      <p class="dupmot">${esc(f.motivos.length ? f.motivos.join(", ").replace(/^./, (c) => c.toUpperCase()) + "." : "Se parecen.")}</p>
+      <div class="dupgrid">
+        ${f.original ? ficha(f.original, "vieja") : '<div class="dupcol vieja"><div class="t2">La original ya no está</div></div>'}
+        <div class="dupvs">¿la misma?</div>
+        ${ficha(f, "nueva")}
+      </div>
+      <div class="dupacts">
+        <button class="btn danger sm" data-act="fac-dup" data-id="${f.id}" data-accion="duplicada">Es la misma: descartar</button>
+        <button class="btn sm" data-act="fac-dup" data-id="${f.id}" data-accion="distinta">Son distintas: que cuente</button>
+      </div>
+    </div>`;
+
+  caja.innerHTML = `<div class="card" style="margin-bottom:16px">
+    <div class="ch"><h3>Posibles facturas repetidas</h3>
+      <span class="mut" style="font-size:12px">${num(j.total)} por decidir · ${esc(eur(j.importe))}</span></div>
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Estas <b>no cuentan</b> en ningún total mientras estén aquí:
+      un total con una factura repetida dentro es un total falso, y uno al que le falta una buena también.
+      Mira las dos y dime. <b>Descartar</b> borra la copia del registro; el archivo sigue en Drive.</p>
+    ${j.data.map(par).join("")}</div>`;
+}
+
+async function facDupResolver(id, accion) {
+  const dup = accion === "duplicada";
+  const ok = await confirmModal(
+    dup ? "¿Es la misma factura? Se borra esta copia del registro. El archivo se queda en Drive por si hay que mirarlo."
+        : "¿Son dos facturas distintas? Esta pasará a contar en los totales.",
+    { ok: dup ? "Sí, descartar" : "Sí, que cuente", danger: dup });
+  if (!ok) return;
+  try { const r = await apiSend("POST", `/api/facturas/duplicados/${id}/resolver`, { accion }); toast(r.mensaje || "Hecho ✅"); loadFacturas(); }
+  catch (e) { toast(e.message); }
+}
+
 // ── Dónde están las facturas en Drive ───────────────────────────────────────
 // «Conectado» no contesta «no veo las carpetas». Esto enseña con qué cuenta de Google se
 // escribe, el enlace directo a la carpeta raíz y la ruta REAL de las últimas facturas. Si la
@@ -4405,7 +4462,7 @@ async function loadFacturas() {
     FAC_LIST = lst || [];
     FAC_PEND = pend || [];
     view.innerHTML = renderFacturas(FAC_LIST, FAC_PEND, stats, empresas || []);
-    facAvisoLocales(); facAvisoCategorias(); // no se esperan: si tardan, la tabla ya está
+    facAvisoLocales(); facAvisoCategorias(); facDuplicados(); // no se esperan: la tabla ya está
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function facTab(tab) { FACTAB = tab; loadFacturas(); }
@@ -6125,6 +6182,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-limpiar-filtros") facLimpiarFiltros();
   else if (act === "fac-normalizar-locales") facNormalizarLocales();
   else if (act === "fac-cat-editar") facCatEditar(t.getAttribute("data-prov"));
+  else if (act === "fac-dup") facDupResolver(t.getAttribute("data-id"), t.getAttribute("data-accion"));
   else if (act === "fac-ir-cats") facTab("config");
   else if (act === "comp-producto") comprasHistorial(t.getAttribute("data-clave"), t.getAttribute("data-nombre"));
   else if (act === "fac-sel-resumen") facSelResumen();

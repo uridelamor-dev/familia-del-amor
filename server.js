@@ -47,6 +47,7 @@ import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo 
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
+import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { comprimir } from "./src/http/comprimir.js";
@@ -493,6 +494,12 @@ async function initDB() {
     // Detalle línea a línea. Ver src/modules/facturas/lineas.js y docs/lineas-de-factura.md.
     // `lineas_estado` guarda si el detalle cuadra con la base imponible: sin ese aviso, una
     // cantidad mal leída se arrastraría a todos los informes sin que nadie lo supiera.
+    // Sospecha de duplicado. `dup_estado='duda'` aparta la factura de TODOS los totales hasta
+    // que alguien decida: un total con un duplicado dentro es un total falso, y uno al que le
+    // falta una factura buena también. Se aparta, se dice cuánto se ha apartado, y se decide.
+    for (const col of ["dup_estado TEXT", "dup_de INTEGER", "dup_motivos TEXT", "dup_resuelto_por TEXT", "dup_resuelto_en TEXT"]) {
+      try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
+    }
     for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT"]) {
       try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
     }
@@ -1341,7 +1348,7 @@ async function pollDriveFacturas() {
         if (done) continue;
         try {
           const buffer = await driveDescargarArchivo(token, f.id);
-          await procesarFactura({ buffer, mimeType: f.mimeType, filename: f.name, local: c.local, canal: "Drive", getToken: getDriveAccessToken, dbGet, dbRun });
+          await procesarFactura({ buffer, mimeType: f.mimeType, filename: f.name, local: c.local, canal: "Drive", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
           console.log(`[Drive ingest] Procesada ${f.name} (${c.local})`);
         } catch (e) {
           if (!(e && e.isDuplicate)) console.error(`[Drive ingest] ${f.name}:`, e.message);
@@ -1411,7 +1418,7 @@ async function pollGmail() {
               filename: parte.filename || `adjunto_${msgId}`,
               local: localConocido,
               caption: `Email · ${from} · ${subject}`,
-              getToken: getDriveAccessToken, dbGet, dbRun,
+              getToken: getDriveAccessToken, dbGet, dbAll, dbRun,
               backupFn: null
             });
           } else {
@@ -1570,7 +1577,7 @@ app.get("/api/facturas/drive-diagnostico", requireAuth(["direccion", "contabilid
       } catch (e) { out.avisos.push("No se pudo leer la carpeta raíz: " + e.message); }
     }
 
-    const c = await dbGet(`SELECT count(*)::int AS n, count(*) FILTER (WHERE drive_url IS NOT NULL AND drive_url <> '')::int AS con FROM facturas`);
+    const c = await dbGet(`SELECT count(*)::int AS n, count(*) FILTER (WHERE drive_url IS NOT NULL AND drive_url <> '')::int AS con FROM facturas WHERE COALESCE(dup_estado,'') <> 'duda'`);
     out.facturas = c?.n || 0; out.conArchivo = c?.con || 0;
     if (out.facturas && !out.conArchivo) out.avisos.push("Hay facturas guardadas pero NINGUNA tiene archivo en Drive: entraron cuando la conexión estaba caída.");
     out.ultimas = await dbAll(`SELECT id, fecha, proveedor, local, empresa, drive_url FROM facturas
@@ -1708,9 +1715,14 @@ app.delete("/api/facturas/grupos/:id", requireAuth(["direccion"]), async (req, r
 });
 
 // Construye el WHERE de facturas a partir de los filtros de query (reutilizado por lista y CSV).
+// Lo que está pendiente de decidir si es duplicado NO cuenta en ningún sitio: ni en la lista,
+// ni en los totales, ni en el gasto por categoría. Un total con un duplicado dentro es un
+// total falso. Se ve aparte, en su propia pantalla, con lo que suma.
+const SIN_DUDAS = "COALESCE(dup_estado,'') <> 'duda'";
+
 function facturasWhere(query = {}) {
   const { local, empresa, tipo, estado, from, to, q, proveedor } = query;
-  const cond = [], params = [];
+  const cond = [SIN_DUDAS], params = [];
   if (local) { cond.push("local = ?"); params.push(local); }
   if (empresa) { cond.push("empresa = ?"); params.push(empresa); }
   if (proveedor) { cond.push("proveedor = ?"); params.push(proveedor); }
@@ -1846,7 +1858,7 @@ app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad", "encar
     }
     try {
       let result;
-      if (local) result = await procesarFactura({ buffer, mimeType: mimetype, filename: originalname, local, canal: "Manual", getToken: getDriveAccessToken, dbGet, dbRun });
+      if (local) result = await procesarFactura({ buffer, mimeType: mimetype, filename: originalname, local, canal: "Manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
       else result = await procesarFacturaSinLocal({ buffer, mimeType: mimetype, filename: originalname, origen: "manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
       resultados.push({ filename: originalname, ok: true, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl });
     } catch (e) {
@@ -3018,7 +3030,7 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
     // Dos juegos de condiciones separados a propósito: los filtros de FACTURA valen para
     // las dos consultas y el de texto solo para las líneas. Recortar un WHERE ya montado a
     // base de reemplazos es la clase de cosa que un día deja de funcionar en silencio.
-    const condFac = [], parFac = [];
+    const condFac = ["COALESCE(f.dup_estado,'') <> 'duda'"], parFac = [];
     const local = localScope(req) || String(req.query.local || "").trim();
     if (local) { condFac.push("f.local = ?"); parFac.push(local); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ""))) { condFac.push("f.fecha >= ?"); parFac.push(req.query.from); }
@@ -3165,6 +3177,70 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
   } catch (e) {
     console.error("[facturas] historial producto:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar el historial" });
+  }
+});
+
+// ── Posibles duplicados ─────────────────────────────────────────────────────
+// Las que entraron con dudas: están guardadas pero apartadas de todos los totales hasta que
+// alguien decida. Se enseñan EN PAREJA, con los motivos en palabras: «mismo proveedor, mismo
+// importe, misma fecha y el número difiere en un carácter» se decide en dos segundos.
+app.get("/api/facturas/duplicados", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const scope = localScope(req);
+    const filas = await dbAll(
+      `SELECT f.id, f.local, f.empresa, f.tipo, f.fecha, f.numero_factura, f.proveedor, f.nif,
+              f.concepto, f.base_imponible::float AS base_imponible, f.total::float AS total,
+              f.drive_url, f.canal, f.creado_en, f.dup_de, f.dup_motivos,
+              o.id AS o_id, o.fecha AS o_fecha, o.numero_factura AS o_numero, o.proveedor AS o_proveedor,
+              o.total::float AS o_total, o.drive_url AS o_drive_url, o.canal AS o_canal, o.local AS o_local
+         FROM facturas f LEFT JOIN facturas o ON o.id = f.dup_de
+        WHERE f.dup_estado = 'duda' ${scope ? "AND f.local = ?" : ""}
+        ORDER BY f.id DESC LIMIT 200`, scope ? [scope] : []);
+    const data = filas.map((f) => ({
+      ...f,
+      motivos: (() => { try { return JSON.parse(f.dup_motivos || "[]"); } catch { return []; } })(),
+      original: f.o_id ? { id: f.o_id, fecha: f.o_fecha, numero_factura: f.o_numero, proveedor: f.o_proveedor,
+        total: f.o_total, drive_url: f.o_drive_url, canal: f.o_canal, local: f.o_local } : null,
+    }));
+    res.json({ ok: true, data, total: data.length,
+      importe: Math.round(data.reduce((s2, f) => s2 + (Number(f.total) || 0), 0) * 100) / 100 });
+  } catch (e) {
+    console.error("[facturas] duplicados:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar" });
+  }
+});
+
+// Decidir. `duplicada` la borra —es la copia, el original se queda—; `distinta` la deja contar.
+app.post("/api/facturas/duplicados/:id/resolver", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const accion = String(req.body?.accion || "");
+    if (!["duplicada", "distinta"].includes(accion)) {
+      return res.status(400).json({ ok: false, error: "Hay que decir si es duplicada o distinta" });
+    }
+    const f = await dbGet(`SELECT * FROM facturas WHERE id = ? AND dup_estado = 'duda'`, [req.params.id]);
+    if (!f) return res.status(404).json({ ok: false, error: "Esa factura ya no está pendiente de decidir" });
+    if (localScope(req) && f.local !== localScope(req)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+
+    const quien = req.user.nombre || req.user.username;
+    if (accion === "distinta") {
+      await dbRun(`UPDATE facturas SET dup_estado = 'distinta', dup_resuelto_por = ?, dup_resuelto_en = ? WHERE id = ?`,
+        [quien, isoConOffset(Date.now()), f.id]);
+      await ficAuditar("facturas", f.id, "duplicado_descartado", quien, { local: f.local, detalle: { parecida_a: f.dup_de } });
+      // Vuelve a contar, así que su mes hay que reproyectarlo al Sheet.
+      resincronizarSheetsFactura({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun }, f.local, f.fecha).catch(() => {});
+      return res.json({ ok: true, accion, mensaje: "Marcada como distinta: ya cuenta en los totales." });
+    }
+
+    // Es duplicada: se borra la copia. El archivo de Drive NO se toca —borrar el papel de
+    // alguien no es reversible— pero se deja dicho dónde está por si hay que mirarlo.
+    await ficAuditar("facturas", f.id, "duplicado_confirmado", quien, { local: f.local,
+      detalle: { copia_de: f.dup_de, proveedor: f.proveedor, numero: f.numero_factura, total: f.total, drive_url: f.drive_url } });
+    await dbRun("DELETE FROM factura_lineas WHERE factura_id = ?", [f.id]).catch(() => {});
+    await dbRun("DELETE FROM facturas WHERE id = ?", [f.id]);
+    res.json({ ok: true, accion, mensaje: "Descartada como duplicada. El archivo sigue en Drive." });
+  } catch (e) {
+    console.error("[facturas] resolver duplicado:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar la decisión" });
   }
 });
 
@@ -9129,7 +9205,7 @@ const server = app.listen(PORT, async () => {
       const result = await procesarFactura({
         buffer, mimeType, filename, local, caption,
         getToken: getDriveAccessToken,
-        dbGet, dbRun,
+        dbGet, dbAll, dbRun,
         backupFn: null
       });
 
