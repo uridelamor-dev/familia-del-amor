@@ -223,16 +223,28 @@ async function driveCrearCarpeta(token, nombre, parentId) {
 // Cache de promesas por clave "parentId|nombre" — evita race conditions y llamadas duplicadas
 const _folderCache = new Map();
 
+/**
+ * Busca la carpeta y, si no está, la crea.
+ *
+ * OJO CON LA RAÍZ. Sin `parentId` la búsqueda era «cualquier carpeta que se llame así», y eso
+ * incluye las que están en «Compartido conmigo» y las huérfanas —las que no cuelgan de ninguna
+ * parte porque alguien borró su carpeta madre—. Si la raíz resolvía a una de esas, TODA la
+ * estructura colgaba de un sitio que no aparece en «Mi unidad»: los archivos se veían en la
+ * página principal de Drive y en «Reciente», pero no había forma de llegar a ellos navegando.
+ *
+ * Por eso la raíz se ancla explícitamente a `root`, que es la primera pantalla de Mi unidad.
+ */
 async function findOrCreateFolder(token, nombre, parentId = null) {
   const cacheKey = `${parentId || "root"}|${nombre}`;
   if (_folderCache.has(cacheKey)) return _folderCache.get(cacheKey);
 
+  const padre = parentId || "root";
   const promise = (async () => {
     const q = `name = '${nombre.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`
-      + (parentId ? ` and '${parentId}' in parents` : "");
+      + ` and '${padre}' in parents`;
     const files = await driveBuscar(token, q);
     if (files.length) return files[0].id;
-    return driveCrearCarpeta(token, nombre, parentId);
+    return driveCrearCarpeta(token, nombre, padre);
   })();
 
   _folderCache.set(cacheKey, promise);

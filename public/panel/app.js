@@ -3714,6 +3714,9 @@ async function facDiagnosticoDrive() {
       <div class="row"><span class="grow"><div class="t1">Carpeta raíz</div>
         <div class="t2">${j.raiz ? esc(j.raiz.nombre) + (j.raiz.dueño ? " · de " + esc(j.raiz.dueño) : "") : "todavía no creada"}</div></span>
         ${j.raiz ? `<a class="btn sm" href="${esc(j.raiz.url)}" target="_blank" rel="noopener">Abrirla ↗</a>` : ""}</div>
+      ${j.raiz ? `<div class="row"><span class="grow"><div class="t1">Dónde está esa carpeta</div>
+        <div class="t2">Si no cuelga de «Mi unidad», las facturas se ven en la página principal de Drive pero no se llega a ellas navegando.</div></span>
+        <b style="flex:none" class="${j.raiz.enMiUnidad ? "" : "fg-danger"}">${j.raiz.enMiUnidad ? "Mi unidad ✓" : esc(j.raiz.ubicacion || "fuera de Mi unidad")}</b></div>` : ""}
       <div class="row"><span class="grow"><div class="t1">Facturas con archivo</div>
         <div class="t2">de ${num(j.facturas)} guardadas en total</div></span>
         <b style="flex:none">${num(j.conArchivo)}</b></div>
@@ -3729,6 +3732,11 @@ async function facDiagnosticoDrive() {
         <td>${esc(f.proveedor || "—")}<div class="t2">${esc((f.fecha || "").slice(0, 10))} · ${esc(nombreCortoLocal(f.local) || "")}</div></td>
         <td style="font-size:12.5px">${rutaHtml(f)}</td>
         <td class="r"><a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver ↗</a></td></tr>`).join("")}</tbody></table></div></div>` : ""}
+
+    ${j.raiz && !j.raiz.enMiUnidad ? `<p class="fic-nota" style="margin:12px 0 0">La carpeta raíz <b>no está en Mi unidad</b>, y eso explica que veas las facturas
+      en la página principal de Drive pero no las carpetas. <b>Colocarla en Mi unidad</b> no mueve ni copia ningún archivo: en Drive, mover una carpeta
+      es cambiarle el sitio y todo lo de dentro va con ella conservando sus enlaces.
+      <button class="btn sm" data-act="fac-colocar-raiz" style="margin-top:8px">Colocarla en Mi unidad</button></p>` : ""}
 
     ${desordenadas ? `<p class="fic-nota" style="margin:12px 0 0">Las que salen como <b>sueltas</b> están en Drive pero fuera de su carpeta.
       <b>Reordenar Drive</b> las mueve a Empresa/Local/Mes sin volver a subirlas ni tocar la base de datos.
@@ -4675,6 +4683,11 @@ function fac303Csv() {
   if (d.otrosDocs) rows.push(["Otros documentos", "", d.otrosDocs.total_otros, d.otrosDocs.num_otros]);
   const csv = rows.map((r) => r.map((v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `modelo303_${FAC303.empresa || ""}_T${FAC303.trimestre || ""}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+async function facColocarRaiz() {
+  if (!(await confirmModal("¿Colocar la carpeta de facturas en «Mi unidad»? No se mueve ni se copia ningún archivo: la carpeta cambia de sitio con todo lo que tiene dentro, y los enlaces guardados siguen funcionando.", { ok: "Colocarla" }))) return;
+  try { const j = await apiSend("POST", "/api/facturas/drive-colocar-raiz"); toast(j.mensaje || "Hecho ✅"); facDiagnosticoDrive(); }
+  catch (e) { toast("Error: " + e.message); }
 }
 async function facMigrar() { if (!(await confirmModal("¿Reordenar en Drive todas las facturas a su carpeta Empresa/Local/Mes?", { ok: "Reordenar" }))) return; try { const j = await apiSend("POST", "/api/facturas/migrar-estructura"); toast(`Reordenadas: ${j.resultado ? j.resultado.movidos : "OK"} ✅`); facDiagnosticoDrive(); } catch (e) { toast("Error: " + e.message); } }
 async function facDriveAdd() { const local = facVal("fdLocal"), folder = facVal("fdFolder"); if (!local || !folder) { toast("Local y carpeta obligatorios"); return; } try { await apiSend("POST", "/api/facturas/drive-carpetas", { local, folder }); toast("Carpeta vinculada ✅"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
@@ -5998,6 +6011,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-subir") facSubir();
   else if (act === "fac-303-csv") fac303Csv();
   else if (act === "fac-migrar") facMigrar();
+  else if (act === "fac-colocar-raiz") facColocarRaiz();
   else if (act === "fac-drive-add") facDriveAdd();
   else if (act === "fac-drive-del") facDriveDel(t.getAttribute("data-local"));
   else if (act === "fac-reconstruir") facReconstruir();

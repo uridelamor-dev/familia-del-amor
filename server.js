@@ -1527,13 +1527,38 @@ app.get("/api/facturas/drive-diagnostico", requireAuth(["direccion", "contabilid
       out.avisos.push("Todavía no se ha creado la carpeta raíz. Se crea sola con la primera factura que entre.");
     } else {
       try {
-        const r = await fetch(`https://www.googleapis.com/drive/v3/files/${rootId}?fields=id,name,trashed,webViewLink,owners(emailAddress)`,
+        const r = await fetch(`https://www.googleapis.com/drive/v3/files/${rootId}?fields=id,name,trashed,webViewLink,parents,ownedByMe,shared,owners(emailAddress)`,
           { headers: { Authorization: "Bearer " + token } });
         const j = await r.json();
         if (j.error) out.avisos.push("La carpeta raíz guardada ya no existe o no es accesible con esta cuenta.");
         else {
-          out.raiz = { id: j.id, nombre: j.name, url: j.webViewLink, papelera: !!j.trashed, dueño: (j.owners || [])[0]?.emailAddress || null };
+          out.raiz = { id: j.id, nombre: j.name, url: j.webViewLink, papelera: !!j.trashed,
+            dueño: (j.owners || [])[0]?.emailAddress || null, propia: j.ownedByMe !== false, padres: j.parents || [] };
           if (j.trashed) out.avisos.push("¡La carpeta raíz está en la PAPELERA de Drive! Restáurala o se seguirán subiendo archivos a una carpeta borrada.");
+
+          // ¿Cuelga de «Mi unidad»? Si no, los archivos existen y se ven en la página
+          // principal y en «Reciente», pero NO hay forma de llegar a ellos navegando por Mi
+          // unidad. Es exactamente el síntoma de «veo las facturas pero no las carpetas».
+          out.raiz.enMiUnidad = false;
+          if (!j.parents || !j.parents.length) {
+            out.raiz.ubicacion = "huérfana";
+            out.avisos.push("La carpeta raíz no cuelga de ninguna parte (está huérfana): por eso las facturas se ven en la página principal de Drive pero no aparecen en «Mi unidad».");
+          } else {
+            try {
+              const pr = await fetch(`https://www.googleapis.com/drive/v3/files/${j.parents[0]}?fields=id,name,parents,ownedByMe`,
+                { headers: { Authorization: "Bearer " + token } }).then((x) => x.json());
+              const raizDrive = await fetch("https://www.googleapis.com/drive/v3/files/root?fields=id",
+                { headers: { Authorization: "Bearer " + token } }).then((x) => x.json());
+              out.raiz.enMiUnidad = pr.id === raizDrive.id;
+              out.raiz.ubicacion = out.raiz.enMiUnidad ? "Mi unidad" : (pr.name || "otra carpeta");
+              if (!out.raiz.enMiUnidad && pr.ownedByMe === false) {
+                out.avisos.push(`La carpeta raíz está dentro de «${pr.name}», que NO es tuya (compartida contigo). Por eso no aparece en «Mi unidad».`);
+              } else if (!out.raiz.enMiUnidad) {
+                out.raiz.ubicacion = pr.name;
+              }
+            } catch { /* si no se puede leer el padre, se deja lo que hay */ }
+          }
+          if (j.ownedByMe === false) out.avisos.push("La carpeta raíz no es de esta cuenta: es de " + (out.raiz.dueño || "otra persona") + ".");
           // Qué hay dentro: es lo que confirma que la estructura existe de verdad.
           const hijos = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${rootId}' in parents and trashed = false`)}&fields=files(id,name,mimeType,webViewLink)&pageSize=50`,
             { headers: { Authorization: "Bearer " + token } }).then((x) => x.json());
@@ -1599,6 +1624,46 @@ app.get("/api/facturas/drive-diagnostico", requireAuth(["direccion", "contabilid
     res.json({ ok: true, ...out });
   } catch (e) {
     console.error("[facturas] diagnóstico drive:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * Coloca la carpeta raíz en «Mi unidad».
+ *
+ * No mueve ni copia ni un archivo: en Drive, mover una carpeta es cambiarle el padre, y todo
+ * lo de dentro va con ella conservando sus enlaces. Los `drive_url` guardados en la base de
+ * datos siguen funcionando exactamente igual.
+ */
+app.post("/api/facturas/drive-colocar-raiz", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const rootId = await getConfig("drive_facturas_root_id");
+    if (!rootId) return res.status(400).json({ ok: false, error: "Todavía no hay carpeta raíz." });
+    const token = await getDriveAccessToken();
+
+    const actual = await fetch(`https://www.googleapis.com/drive/v3/files/${rootId}?fields=id,name,parents,ownedByMe`,
+      { headers: { Authorization: "Bearer " + token } }).then((r) => r.json());
+    if (actual.error) return res.status(400).json({ ok: false, error: "No se puede leer la carpeta raíz: " + actual.error.message });
+    if (actual.ownedByMe === false) {
+      return res.status(400).json({ ok: false, error: `La carpeta «${actual.name}» no es de esta cuenta, así que no se puede mover. Hay que crear una raíz nueva y reordenar.` });
+    }
+
+    const miUnidad = await fetch("https://www.googleapis.com/drive/v3/files/root?fields=id",
+      { headers: { Authorization: "Bearer " + token } }).then((r) => r.json());
+    const quitar = (actual.parents || []).filter((p) => p !== miUnidad.id);
+    if (!quitar.length && (actual.parents || []).includes(miUnidad.id)) {
+      return res.json({ ok: true, yaEstaba: true, mensaje: "La carpeta ya estaba en Mi unidad." });
+    }
+
+    const url = `https://www.googleapis.com/drive/v3/files/${rootId}?addParents=${miUnidad.id}`
+      + (quitar.length ? `&removeParents=${quitar.join(",")}` : "") + "&fields=id,name,webViewLink";
+    const mv = await fetch(url, { method: "PATCH", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: "{}" }).then((r) => r.json());
+    if (mv.error) return res.status(500).json({ ok: false, error: mv.error.message });
+
+    console.log(`[Facturas] Carpeta raíz colocada en Mi unidad: ${mv.name}`);
+    res.json({ ok: true, url: mv.webViewLink, mensaje: `«${mv.name}» ya está en Mi unidad, con todo lo que tiene dentro.` });
+  } catch (e) {
+    console.error("[facturas] colocar raíz:", e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
