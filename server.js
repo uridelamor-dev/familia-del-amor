@@ -3974,9 +3974,17 @@ app.get("/api/reservas", requireAuth(["direccion", "encargado"]), async (req, re
     if (local) { where.push(`local = ?`); params.push(local); }
     if (from) { where.push(`dia >= ?`); params.push(from); }
     if (to) { where.push(`dia <= ?`); params.push(to); }
-    const sql = `SELECT * FROM reservas ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY dia ASC, hora ASC`;
+    // El historial pide de más reciente a más antigua y con tope: «todo el año pasado» de los
+    // ocho locales son miles de filas, y nadie las lee. Se traen las últimas N y se dice que
+    // hay más, en vez de tardar diez segundos y pintar una tabla infinita.
+    const desc = String(req.query.orden || "") === "desc";
+    const limite = Math.min(Math.max(Number(req.query.limit) || 0, 0), 3000);
+    const sql = `SELECT * FROM reservas ${where.length ? "WHERE " + where.join(" AND ") : ""}`
+      + ` ORDER BY dia ${desc ? "DESC" : "ASC"}, hora ${desc ? "DESC" : "ASC"}`
+      + (limite ? ` LIMIT ${limite + 1}` : "");
     const rows = await dbAll(sql, params);
-    res.json({ ok: true, data: rows });
+    const hayMas = limite > 0 && rows.length > limite;
+    res.json({ ok: true, data: hayMas ? rows.slice(0, limite) : rows, hayMas });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error leyendo reservas" });
   }

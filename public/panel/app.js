@@ -744,6 +744,12 @@ function openPeriodoCustom() {
 
 // ════════════════════════ VISTA: RESERVAS ════════════════════════
 let RESF = { local: "", from: "", to: "", vista: "dia", foco: "" };
+// Historial: lo que YA PASÓ, de más reciente a más antigua. Es la pregunta que se hace de
+// verdad —«¿cuándo vino esta gente?», «¿cuánto llenamos el sábado pasado?»— y hasta ahora la
+// lista solo miraba hacia delante, así que no había forma de contestarla.
+let RESH = { periodo: "30", q: "", hayMas: false, datos: [] };
+let _reshT = null;
+const RESH_PERIODOS = [["7", "7 días"], ["30", "30 días"], ["90", "3 meses"], ["365", "12 meses"]];
 // ── Lógica de agenda (reflejo de src/modules/reservas/agenda.js; el panel no importa ESM) ──
 const RES_TURNOS = [{ key: "comida", label: "Comida", desde: "12:00", hasta: "17:00" }, { key: "cena", label: "Cena", desde: "19:00", hasta: "23:59" }];
 const WD = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
@@ -769,10 +775,12 @@ function resDiasSemana(lunes) { return Array.from({ length: 7 }, (_, i) => addDa
 function renderReservas(list) {
   if (!RESF.foco) RESF.foco = todayStr();
   const amb = resScope();
-  const seg = ["dia:Día", "semana:Semana", "lista:Lista"].map((p) => { const [v, t] = p.split(":"); return `<button class="btn ${RESF.vista === v ? "primary" : ""}" data-act="res-vista" data-vista="${v}">${t}</button>`; }).join("");
+  const seg = ["dia:Día", "semana:Semana", "lista:Próximas", "historial:Ya pasadas"].map((p) => { const [v, t] = p.split(":"); return `<button class="btn ${RESF.vista === v ? "primary" : ""}" data-act="res-vista" data-vista="${v}">${t}</button>`; }).join("");
   // Sin filtro de local: el ámbito lo marca el selector de establecimiento de la barra superior.
   const toolbar = `<div class="toolbar"><div class="toolbar" style="margin:0;gap:6px">${seg}</div><div style="display:flex;gap:10px;margin-left:auto"><button class="btn" data-act="csv">Exportar CSV</button><button class="btn primary" data-act="nueva">+ Nueva reserva</button></div></div>`;
-  const cuerpo = RESF.vista === "lista" ? renderResLista(list) : RESF.vista === "semana" ? renderResSemana(list) : renderResDia(list);
+  const cuerpo = RESF.vista === "historial" ? renderResHistorial(list)
+    : RESF.vista === "lista" ? renderResLista(list)
+    : RESF.vista === "semana" ? renderResSemana(list) : renderResDia(list);
   return `<div class="ph"><div class="eyebrow">Operación</div><h1>Reservas</h1><div class="sub">Agenda por turnos, ocupación y gestión rápida${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>${toolbar}${cuerpo}`;
 }
 function resNav(label) {
@@ -807,8 +815,71 @@ function renderResLista(list) {
     ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Día</th><th>Hora</th><th>Local</th><th class="r">Pers.</th><th>Nombre</th><th>Teléfono</th><th></th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(fechaCorta(r.dia))}</td><td class="tnum">${esc(r.hora)}</td><td>${esc(r.local)}</td><td class="r tnum">${esc(r.personas)}</td><td>${esc(r.nombre_reserva)}</td><td class="mut">${esc(r.telefono)}</td><td class="r"><button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></td></tr>`).join("")}</tbody></table></div></div>`
     : `<div class="card"><div class="mut" style="padding:8px">No hay reservas en ese rango. Prueba a ampliar las fechas o crea una nueva.</div></div>`;
 }
+// El historial: de más reciente a más antigua, con buscador y total. NO lleva el botón de
+// cancelar: una reserva de hace dos meses no se cancela, y ofrecerlo es una trampa.
+function renderResHistorial(list) {
+  const q = RESH.q.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const tel9 = (t) => String(t || "").replace(/\D/g, "").slice(-9);
+  const todas = (list || []).filter((r) => q === ""
+    || String(r.nombre_reserva || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(q)
+    || tel9(r.telefono).includes(q.replace(/\D/g, "")) && /\d/.test(q));
+  // Ya vienen ordenadas del servidor (más reciente primero); se reordena por si acaso.
+  const rows = todas.slice().sort((a, b) => (b.dia + b.hora).localeCompare(a.dia + a.hora));
+  const personas = rows.reduce((s2, r) => s2 + (Number(r.personas) || 0), 0);
+
+  const pills = RESH_PERIODOS.map(([v, t]) =>
+    `<button class="btn sm ${RESH.periodo === v ? "primary" : ""}" data-act="resh-periodo" data-p="${v}">${t}</button>`).join("");
+  const barra = `<div class="toolbar" style="margin-bottom:10px">
+      <div class="toolbar" style="margin:0;gap:6px">${pills}</div>
+      <div class="field" style="flex:1;min-width:180px;margin-left:auto"><label>Buscar</label>
+        <input class="inp" id="reshQ" value="${esc(RESH.q)}" placeholder="nombre o teléfono"></div>
+    </div>`;
+
+  const resumen = `<div class="sub" style="margin:-2px 0 12px">${num(rows.length)} ${rows.length === 1 ? "reserva" : "reservas"}
+    · ${num(personas)} personas${q ? ` con «${esc(RESH.q)}»` : ""}${RESH.hayMas ? " · se enseñan las más recientes; acota el periodo para verlas todas" : ""}</div>`;
+
+  // El día se repite mucho: se agrupa por fecha para poder leerlo de un vistazo.
+  let ultimoDia = null;
+  const fila = (r) => {
+    const cambia = r.dia !== ultimoDia; ultimoDia = r.dia;
+    const tel = String(r.telefono || "").replace(/[^0-9+]/g, "");
+    return `<tr>
+      ${/* `fechaCorta` ya trae el día de la semana («dom, 9 ago»): anteponer WD lo duplicaba. */""}
+      <td class="mut" style="white-space:nowrap">${cambia ? esc(fechaCorta(r.dia) || r.dia) : ""}</td>
+      <td class="tnum">${esc(r.hora || "")}</td>
+      <td>${esc(r.nombre_reserva || "(sin nombre)")}</td>
+      <td class="r tnum">${esc(r.personas)}</td>
+      <td>${esc(nombreCortoLocal(r.local) || "")}</td>
+      <td class="mut" style="white-space:nowrap">${tel ? `<a class="link" href="tel:${esc(tel)}">${esc(r.telefono)}</a>` : ""}</td>
+      ${/* La ficha del cliente es del módulo Clientes: a quien no lo tenga, el 403 le sacaría
+            del panel. Solo se ofrece a quien puede abrirla. */""}
+      <td class="r">${tel && puedeVer("clientes") ? `<button class="btn sm" data-act="cli-ficha" data-tel="${esc(tel)}">Ficha</button>` : ""}</td></tr>`;
+  };
+
+  const tabla = rows.length
+    ? `<div class="tw"><table class="tbl"><thead><tr><th>Día</th><th>Hora</th><th>Nombre</th><th class="r">Pers.</th><th>Local</th><th>Teléfono</th><th></th></tr></thead>
+        <tbody>${rows.map(fila).join("")}</tbody></table></div>`
+    : `<div class="card"><div class="mut" style="padding:8px">${q ? `Nada con «${esc(RESH.q)}» en este periodo.` : "No hay reservas pasadas en este periodo."}</div></div>`;
+  return `${barra}<div id="reshBody">${resumen}${tabla}</div>`;
+}
+
+// Buscar NO vuelve a preguntar al servidor: el periodo ya está en memoria. Y se repinta solo
+// la tabla, no la pantalla entera: repintar el buscador mientras se escribe pierde el foco y
+// se queda a medias la palabra.
+function resHistBuscar(q) {
+  RESH.q = q;
+  const caja = document.getElementById("reshBody");
+  if (!caja) return;
+  const html = renderResHistorial(RESH.datos);
+  caja.outerHTML = html.slice(html.indexOf('<div id="reshBody">'));
+}
+
 // Rango [from,to] según la vista activa.
 function resRango() {
+  if (RESF.vista === "historial") {
+    // Hasta AYER: lo de hoy no ha pasado todavía y se ve en la agenda del día.
+    return [addDaysStr(todayStr(), -Number(RESH.periodo)), addDaysStr(todayStr(), -1)];
+  }
   if (RESF.vista === "dia") return [RESF.foco, RESF.foco];
   if (RESF.vista === "semana") { const l = resLunes(RESF.foco); return [l, addDaysStr(l, 6)]; }
   if (!RESF.from) { RESF.from = todayStr(); RESF.to = addDaysStr(todayStr(), 30); }
@@ -830,8 +901,11 @@ async function loadReservas() {
   try {
     const [from, to] = resRango();
     const qs = new URLSearchParams(); qs.set("from", from); qs.set("to", to); if (RESF.local) qs.set("local", RESF.local);
-    const data = await api("/api/reservas?" + qs.toString());
-    view.innerHTML = renderReservas(data);
+    if (RESF.vista === "historial") { qs.set("orden", "desc"); qs.set("limit", "1500"); }
+    const j = await apiRaw("/api/reservas?" + qs.toString());
+    RESH.hayMas = !!j.hayMas;
+    if (RESF.vista === "historial") RESH.datos = j.data || [];
+    view.innerHTML = renderReservas(j.data || []);
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function resVista(v) { RESF.vista = v; loadReservas(); }
@@ -6069,6 +6143,7 @@ document.addEventListener("input", (e) => {
   // El informe ya está entero en memoria, así que buscar es filtrar: instantáneo y sin
   // volver a preguntarle al TPV. El antirrebote es solo para no repintar en cada tecla.
   if (e.target && e.target.id === "analQ") { clearTimeout(_analTimer); const v = e.target.value; _analTimer = setTimeout(() => analBuscar(v), 180); return; }
+  if (e.target && e.target.id === "reshQ") { const v = e.target.value; clearTimeout(_reshT); _reshT = setTimeout(() => resHistBuscar(v), 200); return; }
   if (e.target && e.target.id === "cQ") { CLIF.q = e.target.value.trim(); cliRefreshDebounced(); }
   else if (e.target && e.target.id === "facQ") { facFilterDebounced(); }
   else if (e.target && e.target.id === "invSearch") { INV.filtro = e.target.value; invRefreshList(); }
@@ -6122,6 +6197,7 @@ document.addEventListener("click", (e) => {
   else if (act === "logout") { localStorage.removeItem("token"); location.href = "/login.html"; }
   else if (act === "reload") go(CURRENT);
   else if (act === "res-vista") resVista(t.getAttribute("data-vista"));
+  else if (act === "resh-periodo") { RESH.periodo = t.getAttribute("data-p"); loadReservas(); }   // la búsqueda se conserva: se suele buscar lo mismo en otro periodo
   else if (act === "res-prev") resNavega("prev");
   else if (act === "res-next") resNavega("next");
   else if (act === "res-hoy") resNavega("hoy");
