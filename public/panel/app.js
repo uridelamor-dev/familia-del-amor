@@ -112,7 +112,19 @@ function puedeVer(view) {
   return true;
 }
 // Local al que queda fijado el usuario en la interfaz (encargado con local). null = sin restricción.
-function localFijadoFE() { return (USER.rol !== "direccion" && USER.local) ? USER.local : null; }
+// Los establecimientos a los que llega este usuario. Dirección: [] = todos.
+function misLocales() {
+  if (!USER || USER.rol === "direccion") return [];
+  return Array.isArray(USER.locales) && USER.locales.length ? USER.locales : (USER.local ? [USER.local] : []);
+}
+// Local FIJADO = no hay nada que elegir. Con varios ya no está fijado: se elige entre los suyos.
+function localFijadoFE() { const m = misLocales(); return m.length === 1 ? m[0] : null; }
+// El que se está mirando ahora. Con varios, el elegido o el primero suyo.
+function localActualFE() {
+  const m = misLocales();
+  if (!m.length) return DASH_LOCAL || "";
+  return m.includes(DASH_LOCAL) ? DASH_LOCAL : m[0];
+}
 
 let USER = null, CURRENT = "dashboard";
 
@@ -193,7 +205,9 @@ function shell(active, bodyHtml) {
   // porque el servidor le devuelve solo los suyos. Un rótulo que promete más de lo que hay es
   // peor que no tenerlo — el encargado leía sus reservas creyendo que eran las del grupo.
   const fijado = localFijadoFE();
-  const estabLbl = fijado ? nombreCortoLocal(fijado) : (DASH_LOCAL ? nombreCortoLocal(DASH_LOCAL) : "Todos los establecimientos");
+  const actual = localActualFE();
+  const estabLbl = fijado ? nombreCortoLocal(fijado)
+    : actual ? nombreCortoLocal(actual) : "Todos los establecimientos";
   const customLbl = (PERIOD === "custom" && DASH_RANGE.from) ? `${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}` : "Personalizado";
   const seg = [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]].map(([p, l]) => `<button class="${PERIOD === p ? "on" : ""}" data-act="period" data-p="${p}">${l}</button>`).join("") + `<button class="${PERIOD === "custom" ? "on" : ""}" data-act="period-custom" title="Rango personalizado (días o meses, incluso del año pasado)">${customLbl}</button>`;
   return `<div class="app${COLLAPSED ? " collapsed" : ""}" id="appEl">
@@ -623,9 +637,13 @@ function closeDrawer() { const d = document.getElementById("drawer"), o = docume
 function openEstabMenu() {
   // En Reservas y Analítica no ofrecemos los centros sin público: no tendrían datos.
   const fijado = localFijadoFE();
-  if (fijado) return;   // su local no se elige: se lo puso dirección
-  const elegibles = MODULOS_SOLO_PUBLICO.has(CURRENT) ? LOCALES.filter((l) => !sinPublico(l)) : LOCALES;
-  const opts = [["", "Todos los establecimientos"]].concat(elegibles.map((l) => [l, l]));
+  if (fijado) return;   // un solo local: no hay nada que elegir
+  const mios = misLocales();
+  const base = mios.length ? mios : LOCALES;
+  const elegibles = MODULOS_SOLO_PUBLICO.has(CURRENT) ? base.filter((l) => !sinPublico(l)) : base;
+  // «Todos» solo para dirección: al que tiene dos locales asignados no se le ofrece un ámbito
+  // que el servidor no le va a dar — cada pantalla sigue mirando UN local.
+  const opts = (mios.length ? [] : [["", "Todos los establecimientos"]]).concat(elegibles.map((l) => [l, l]));
   openDrawer("Establecimiento", `<div class="rows">${opts.map(([v, l]) => `<button class="row" data-act="estab-pick" data-local="${esc(v)}" style="width:100%;text-align:left"><span class="sdot ${DASH_LOCAL === v ? "st-ok" : "st-off"}"></span><div class="grow"><div class="t1">${esc(l)}</div></div>${DASH_LOCAL === v ? '<span class="pill brand">Actual</span>' : ""}</button>`).join("")}</div>`);
 }
 
@@ -887,7 +905,7 @@ function resRango() {
 }
 // El ámbito de local lo manda el selector de establecimiento de la barra superior; el local
 // fijado del usuario (encargado) gana siempre.
-function resScope() { RESF.local = localFijadoFE() || DASH_LOCAL || ""; return RESF.local; }
+function resScope() { RESF.local = localActualFE(); return RESF.local; }
 // Aviso para cuando el ámbito es un centro sin atención al público (la oficina).
 function avisoSinPublico(titulo, eyebrow, que) {
   return `<div class="ph"><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(titulo)}</h1><div class="sub">${esc(nombreCortoLocal(DASH_LOCAL))}</div></div>
@@ -954,7 +972,7 @@ let MANF = { local: "", estado: "" };
 let MAN_LIST = [];
 const EST_PILL = { "abierta": "bad", "en proceso": "imp", "resuelta": "ok", "cerrada": "ok" };
 // Ámbito de local: selector de establecimiento de la barra superior (el local fijado manda).
-function mantScope() { MANF.local = localFijadoFE() || DASH_LOCAL || ""; return MANF.local; }
+function mantScope() { MANF.local = localActualFE(); return MANF.local; }
 function renderMant(list) {
   let rows = (list || []).slice();
   if (MANF.estado) rows = rows.filter((r) => (r.estado || "") === MANF.estado);
@@ -1025,7 +1043,7 @@ function invHeader(titulo, sub, back) {
 // El local sale del selector de la barra de arriba, como en el resto del panel. Antes
 // Inventarios tenía su propia pantalla de «elige local», que era un paso de más y encima
 // se desincronizaba de lo que ponía la barra.
-function invScope() { INV.local = localFijadoFE() || DASH_LOCAL || ""; return INV.local; }
+function invScope() { INV.local = localActualFE(); return INV.local; }
 
 async function loadInventario() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -2259,6 +2277,22 @@ function modsCheckboxesHtml(rol, sel) {
        hay que cambiarle el rol.`;
   return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px">${items}</div><div class="mut" style="margin-top:8px;line-height:1.5">${nota}</div>`;
 }
+// Locales EXTRA. El encargado de la Cooperativa lleva también La Tapeta de Blanes porque
+// están pegadas: con uno solo había que darle dos cuentas. Aquí se marcan los de más; el
+// principal es el de arriba y no sale, porque ya lo tiene.
+function localesExtraHtml(principal, sel) {
+  const otros = LOCALES.filter((l) => l !== principal);
+  const items = otros.map((l) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 2px">
+      <input type="checkbox" name="locextra" value="${esc(l)}" ${sel.has(l) ? "checked" : ""} style="width:auto;margin:0">
+      <span>${esc(l)}</span></label>`).join("");
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px">${items}</div>
+    <div class="mut" style="margin-top:8px;line-height:1.5">Podrá cambiar de establecimiento desde la barra de arriba y ver
+      cada uno por separado. <b>No se suman en la misma pantalla</b>: cada vista sigue enseñando un local.</div>`;
+}
+function localesExtraSeleccionados(ov) {
+  return Array.from(ov.querySelectorAll('input[name=locextra]:checked')).map((c) => c.value);
+}
+
 function localOptionsHtml(sel) {
   return ['<option value="">— sin local (todos) —</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${l === sel ? "selected" : ""}>${esc(l)}</option>`)).join("");
 }
@@ -2267,31 +2301,38 @@ function wireUserModal(ov) {
   const rolSel = ov.querySelector("select[name=rol]");
   const box = ov.querySelector("#modsBox");
   if (rolSel && box) rolSel.addEventListener("change", () => { box.innerHTML = modsCheckboxesHtml(rolSel.value, new Set(modulosDeRolFE(rolSel.value))); });
+  // El local principal no puede salir también como extra: al cambiarlo se repinta la lista
+  // conservando lo que ya estaba marcado.
+  const locSel = ov.querySelector("select[name=local]"), locBox = ov.querySelector("#locExtraBox");
+  if (locSel && locBox) locSel.addEventListener("change", () => {
+    const marcados = new Set(localesExtraSeleccionados(ov));
+    locBox.innerHTML = localesExtraHtml(locSel.value, marcados);
+  });
 }
 function modsSeleccionados(ov) { return Array.from(ov.querySelectorAll("input[name=mod]:checked")).map((c) => c.value); }
 
 function openNuevoUsuario() {
   const rol0 = "encargado";
-  const body = `<form id="fUser"><div class="form-grid"><div class="field"><label>Usuario</label><input name="username" required></div><div class="field"><label>Nombre</label><input name="nombre"></div><div class="field"><label>Contraseña</label><input name="password" type="text" required></div><div class="field"><label>Rol</label><select name="rol">${ROLES_USUARIO.map((r) => `<option value="${r}" ${r === rol0 ? "selected" : ""}>${r}</option>`).join("")}</select></div><div class="field full"><label>Local</label><select name="local">${localOptionsHtml("")}</select></div></div><div class="field full" style="margin-top:6px"><label>Módulos con acceso</label><div id="modsBox">${modsCheckboxesHtml(rol0, new Set(modulosDeRolFE(rol0)))}</div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear usuario</button></div></form>`;
+  const body = `<form id="fUser"><div class="form-grid"><div class="field"><label>Usuario</label><input name="username" required></div><div class="field"><label>Nombre</label><input name="nombre"></div><div class="field"><label>Contraseña</label><input name="password" type="text" required></div><div class="field"><label>Rol</label><select name="rol">${ROLES_USUARIO.map((r) => `<option value="${r}" ${r === rol0 ? "selected" : ""}>${r}</option>`).join("")}</select></div><div class="field full"><label>Local</label><select name="local">${localOptionsHtml("")}</select></div></div><div class="field full" style="margin-top:6px"><label>Otros establecimientos <span class="mut">(opcional)</span></label><div id="locExtraBox">${localesExtraHtml("", new Set())}</div></div><div class="field full" style="margin-top:6px"><label>Módulos con acceso</label><div id="modsBox">${modsCheckboxesHtml(rol0, new Set(modulosDeRolFE(rol0)))}</div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear usuario</button></div></form>`;
   const ov = modal("Nuevo usuario", body);
   wireUserModal(ov);
   ov.querySelector("#fUser").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
-    const data = { username: f.username.value.trim(), nombre: f.nombre.value.trim(), password: f.password.value, rol: f.rol.value, local: f.local.value, modulos: modsSeleccionados(ov) };
+    const data = { username: f.username.value.trim(), nombre: f.nombre.value.trim(), password: f.password.value, rol: f.rol.value, local: f.local.value, modulos: modsSeleccionados(ov), locales_extra: localesExtraSeleccionados(ov) };
     try { await apiSend("POST", "/api/users", data); ov.remove(); toast("Usuario creado ✅"); loadUsuarios(); } catch (err) { toast("Error: " + err.message); }
   });
 }
 function openEditarUsuario(id) {
   const u = USERS.find((x) => String(x.id) === String(id)); if (!u) return;
   const sel = new Set(Array.isArray(u.modulos) ? u.modulos : []);
-  const body = `<form id="fUserE"><div class="form-grid"><div class="field"><label>Usuario</label><input value="${esc(u.username)}" disabled></div><div class="field"><label>Nombre</label><input name="nombre" value="${esc(u.nombre || "")}"></div><div class="field"><label>Rol</label><select name="rol">${ROLES_USUARIO.map((r) => `<option value="${r}" ${r === u.rol ? "selected" : ""}>${r}</option>`).join("")}</select></div><div class="field"><label>Local</label><select name="local">${localOptionsHtml(u.local || "")}</select></div></div><div class="field full" style="margin-top:6px"><label>Módulos con acceso</label><div id="modsBox">${modsCheckboxesHtml(u.rol, sel)}</div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar cambios</button></div></form>`;
+  const body = `<form id="fUserE"><div class="form-grid"><div class="field"><label>Usuario</label><input value="${esc(u.username)}" disabled></div><div class="field"><label>Nombre</label><input name="nombre" value="${esc(u.nombre || "")}"></div><div class="field"><label>Rol</label><select name="rol">${ROLES_USUARIO.map((r) => `<option value="${r}" ${r === u.rol ? "selected" : ""}>${r}</option>`).join("")}</select></div><div class="field"><label>Local</label><select name="local">${localOptionsHtml(u.local || "")}</select></div></div><div class="field full" style="margin-top:6px"><label>Otros establecimientos <span class="mut">(opcional)</span></label><div id="locExtraBox">${localesExtraHtml(u.local || "", new Set(Array.isArray(u.locales_extra) ? u.locales_extra : (() => { try { return JSON.parse(u.locales_extra || "[]"); } catch { return []; } })()))}</div></div><div class="field full" style="margin-top:6px"><label>Módulos con acceso</label><div id="modsBox">${modsCheckboxesHtml(u.rol, sel)}</div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar cambios</button></div></form>`;
   const ov = modal(`Editar ${u.username}`, body);
   wireUserModal(ov);
   ov.querySelector("#fUserE").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
-    const data = { nombre: f.nombre.value.trim(), rol: f.rol.value, local: f.local.value, modulos: modsSeleccionados(ov) };
+    const data = { nombre: f.nombre.value.trim(), rol: f.rol.value, local: f.local.value, modulos: modsSeleccionados(ov), locales_extra: localesExtraSeleccionados(ov) };
     try { await apiSend("PUT", "/api/users/" + encodeURIComponent(id), data); ov.remove(); toast("Usuario actualizado ✅"); loadUsuarios(); } catch (err) { toast("Error: " + err.message); }
   });
 }
@@ -2321,7 +2362,7 @@ async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cue
 // hace en el navegador a ojo: se replica la misma lógica que el módulo puro del servidor
 // (src/modules/horarios/cuadrante.js), porque el panel no puede importar ESM.
 let HOR = { local: "", lunes: "", dias: [], areas: [], tramos: [], equipo: [], asignaciones: [], semana: null, vista: "areas", drag: null, conflictos: null };
-function horScope() { HOR.local = localFijadoFE() || DASH_LOCAL || ""; return HOR.local; }
+function horScope() { HOR.local = localActualFE(); return HOR.local; }
 const horEditable = () => HOR.semana && HOR.semana.estado === "borrador";
 
 async function loadHorarios() {
@@ -3338,7 +3379,7 @@ let FIC_TIMER = null;
 async function loadFichajes() {
   clearInterval(FIC_TIMER); FIC_TIMER = null;
   const view = document.getElementById("view");
-  const amb = localFijadoFE() || DASH_LOCAL || "";
+  const amb = localActualFE();
   if (sinPublico(amb)) { view.innerHTML = avisoSinPublico("Fichajes", "Personas", "fichajes"); return; }
   FIC.local = amb;
 
@@ -3750,7 +3791,7 @@ const FAC_FILTROS = ["local", "empresa", "proveedor", "estado", "tipo", "q", "fr
 function facQS() { const qs = new URLSearchParams(); FAC_FILTROS.forEach((k) => { if (FACF[k]) qs.set(k, FACF[k]); }); return qs.toString(); }
 // El ámbito de local lo manda el selector de establecimiento de la barra superior (no hay filtro
 // «Local» duplicado dentro de la vista). Para el encargado, su local fijado gana siempre.
-function facScope() { FACF.local = localFijadoFE() || DASH_LOCAL || ""; return FACF.local; }
+function facScope() { FACF.local = localActualFE(); return FACF.local; }
 function facHeader() {
   const amb = facScope();
   return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Facturas</h1><div class="sub">Facturas, asignación y configuración fiscal${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px"><button class="btn ${FACTAB === "facturas" ? "primary" : ""}" data-act="fac-tab" data-tab="facturas">Facturas</button><button class="btn ${FACTAB === "compras" ? "primary" : ""}" data-act="fac-tab" data-tab="compras">Qué compramos</button><button class="btn ${FACTAB === "config" ? "primary" : ""}" data-act="fac-tab" data-tab="config">Configuración</button></div>`;
@@ -4388,7 +4429,7 @@ let SUBF = { enviando: 0, hechas: [] };
 
 async function loadSubirFactura() {
   const view = document.getElementById("view");
-  const local = localFijadoFE() || DASH_LOCAL || "";
+  const local = localActualFE();
   const esEncargado = USER.rol === "encargado";
 
   const avisoLocal = esEncargado && !localFijadoFE()
@@ -5526,7 +5567,7 @@ function renderAnalitica() {
   return head + areasBar + toolbar + tabsBar + `<div id="analBody">${cuerpo}</div>`;
 }
 // Ámbito de local: selector de establecimiento de la barra superior (el fijado manda).
-function analScope() { ANAL.local = localFijadoFE() || DASH_LOCAL || ""; return ANAL.local; }
+function analScope() { ANAL.local = localActualFE(); return ANAL.local; }
 async function loadAnalitica() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   if (!ANAL.range) ANAL.range = rangoPreset("mes", todayStr());

@@ -84,6 +84,41 @@ export function sanearModulos(rol, modulosGuardados, catalogo = CATALOGO_MODULOS
   return limpio;
 }
 
+/**
+ * De qué módulo es una ruta de la API. Sirve para que quitar un módulo a alguien no sea solo
+ * cosmético: hasta ahora la allowlist únicamente escondía botones, y quien supiera la URL
+ * seguía pudiendo llamar a la API.
+ *
+ * El mapa va por prefijo y es DELIBERADAMENTE incompleto: lo que no está aquí se comporta
+ * exactamente como antes (sin comprobación de módulo, solo de rol). Añadir una entrada
+ * ENDURECE; no añadirla no rompe nada. Es la forma segura de cerrar esto por partes.
+ */
+export const MODULO_POR_RUTA = [
+  ["/api/reservas", "reservas"],
+  ["/api/dashboard", "dashboard"],
+  ["/api/comunicados", "comunicados"],
+  ["/api/mantenimiento", "mantenimiento"],
+  ["/api/inventario", "inventarios"],
+  ["/api/inv/", "inventarios"],
+  ["/api/contactos", "clientes"],
+  ["/api/clientes", "clientes"],
+  ["/api/campanas", "campanas"],
+  ["/api/plantillas", "campanas"],
+  ["/api/audiencias", "campanas"],
+  ["/api/reviews", "reviews"],
+  ["/api/horarios", "horarios"],
+  ["/api/fichajes", "fichajes"],
+  ["/api/agora", "analitica"],
+  ["/api/sara", "sara"],
+];
+
+/** Módulo al que pertenece una ruta, o null si no está mapeada (no se comprueba). */
+export function moduloDeRuta(ruta) {
+  const r = String(ruta || "").split("?")[0];
+  for (const [pre, mod] of MODULO_POR_RUTA) if (r === pre || r.startsWith(pre + "/") || r.startsWith(pre)) return mod;
+  return null;
+}
+
 // ¿El módulo `view` muestra datos que cambian por local?
 export function esModuloPorLocal(view, catalogo = CATALOGO_MODULOS) {
   const m = (Array.isArray(catalogo) ? catalogo : []).find((x) => x.id === view);

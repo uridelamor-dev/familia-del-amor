@@ -26,7 +26,8 @@ import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrati
 import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/agora/diagnostico.js";
 import { extraerScripts, extraerRutasApi, clasificarRutas } from "./src/integrations/agora/descubrir.js";
 import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
-import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos } from "./src/modules/usuarios/permisos.js";
+import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos, moduloDeRuta } from "./src/modules/usuarios/permisos.js";
+import { localesDe, localPermitido, puedeLocal, sanearLocalesExtra, parseLocales } from "./src/modules/usuarios/locales.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, caducidadMes, generarToken } from "./src/modules/rrhh/pulso.js";
@@ -549,6 +550,12 @@ async function initDB() {
     // `pass_temporal`: la cuenta entra con la contraseña inicial y no puede hacer NADA más
     // que cambiarla. `login_intentos`/`login_bloqueado_hasta`: el freno a la fuerza bruta,
     // en la base para que sobreviva a un reinicio.
+    // Establecimientos EXTRA de un usuario, como lista de nombres canónicos. Es aditivo y no
+    // toca ninguna tabla viva: el ADR 0001 aparta el modelo con `establecimiento_id` y RLS
+    // hasta después de producción, y esto no lo adelanta. Cada consulta sigue filtrando por UN
+    // local; lo que cambia es que ahora se puede elegir cuál, entre los suyos.
+    try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS locales_extra TEXT`); }
+    catch (e) { console.error("[DB] alter users locales_extra:", e.message); }
     for (const col of ["telefono TEXT", "email TEXT", "dni TEXT", "puesto TEXT", "fecha_nac TEXT", "fecha_alta TEXT", "fecha_baja TEXT", "foto_url TEXT", "agora_username TEXT", "activo INTEGER DEFAULT 1",
       "pass_temporal BOOLEAN DEFAULT FALSE", "pass_cambiada_en TEXT", "login_intentos INTEGER DEFAULT 0", "login_bloqueado_hasta TEXT"]) {
       try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter users " + col + ":", e.message); }
@@ -2582,6 +2589,14 @@ function requireAuth(roles = []) {
       if (roles.length && !roles.includes(payload.rol)) {
         return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
       }
+      // Y la allowlist por usuario, no solo el rol. Hasta ahora quitarle un módulo a alguien
+      // solo escondía botones: quien supiera la URL seguía pudiendo llamar a la API. El mapa
+      // de rutas es incompleto a propósito; lo que no está en él se comporta como antes.
+      const mod = moduloDeRuta(req.path);
+      if (mod && payload.rol !== "direccion" && Array.isArray(payload.modulos) && payload.modulos.length
+          && !payload.modulos.includes(mod)) {
+        return res.status(403).json({ ok: false, error: "No tienes acceso a este módulo." });
+      }
       req.user = payload;
       next();
     } catch {
@@ -2593,8 +2608,17 @@ function requireAuth(roles = []) {
 // Ámbito por local a nivel de servidor: un usuario con `local` asignado y rol ≠ dirección solo
 // puede ver/tocar los datos de SU local. Dirección y roles sin local → null (sin restricción).
 // Se aplica en los listados y mutaciones por local (belt-and-suspenders, independiente de flags).
-function localScope(req) {
-  return (req.user && req.user.rol !== "direccion" && req.user.local) ? String(req.user.local).trim() : null;
+/**
+ * El local con el que se responde a esta petición.
+ *
+ * Quien tiene UN local recibe siempre el suyo, pida lo que pida — igual que antes. Quien tiene
+ * varios (el encargado de la Cooperativa lleva también La Tapeta de Blanes) puede pedir
+ * cualquiera de los SUYOS con `?local=`; si pide otro se le devuelve el principal, nunca el
+ * que pidió. La regla vive en src/modules/usuarios/locales.js, con tests.
+ */
+function localScope(req, pedido) {
+  if (!req || !req.user) return null;
+  return localPermitido(req.user, pedido !== undefined ? pedido : (req.query && req.query.local));
 }
 
 // Lista canónica de establecimientos (espejo de public/auth.js window.LOCALES). Solo lectura.
@@ -2618,11 +2642,10 @@ function localesAccesibles(req) {
   return s ? [s] : [];
 }
 // ¿El usuario puede operar sobre este local? Validación de aislamiento (SIEMPRE en backend).
+// «¿Puede esta persona tocar ESTE local?» — distinto de «¿en cuál está mirando ahora?».
+// Comparar contra localScope() dejaba fuera los demás locales del usuario, que sí son suyos.
 function puedeAccederLocal(req, local) {
-  const l = String(local || "").trim();
-  if (!l) return false;
-  if (req.user && req.user.rol === "direccion") return true;
-  return l === localScope(req);
+  return puedeLocal(req && req.user, local);
 }
 
 // Auth endpoints
@@ -2667,7 +2690,7 @@ app.post("/api/auth/login", async (req, res) => {
     const debeCambiar = !!user.pass_temporal;
     const token = jwt.sign(
       { id: user.id, username: user.username, rol: user.rol, nombre: user.nombre, local: user.local,
-        modulos: modulosEfectivos(user.rol, user.modulos), pass_temporal: debeCambiar },
+        modulos: modulosEfectivos(user.rol, user.modulos), locales: localesDe(user), pass_temporal: debeCambiar },
       JWT_SECRET,
       { expiresIn: "8h" }
     );
@@ -2700,7 +2723,7 @@ app.put("/api/mi-password", requireAuth(), async (req, res) => {
     const fresco = await dbGet("SELECT * FROM users WHERE id = ?", [u.id]);
     const token = jwt.sign(
       { id: fresco.id, username: fresco.username, rol: fresco.rol, nombre: fresco.nombre, local: fresco.local,
-        modulos: modulosEfectivos(fresco.rol, fresco.modulos), pass_temporal: false },
+        modulos: modulosEfectivos(fresco.rol, fresco.modulos), locales: localesDe(fresco), pass_temporal: false },
       JWT_SECRET, { expiresIn: "8h" });
     res.json({ ok: true, token, mensaje: "Contraseña cambiada." });
   } catch (e) {
@@ -2709,8 +2732,18 @@ app.put("/api/mi-password", requireAuth(), async (req, res) => {
   }
 });
 
-app.get("/api/auth/me", requireAuth(), (req, res) => {
-  res.json({ ok: true, user: req.user });
+// Se lee de la BASE, no del token. El token guarda lo que había AL ENTRAR, así que quitarle
+// un módulo a alguien no tenía efecto hasta que volviera a entrar — y quien ya estaba dentro
+// seguía viéndolo todo. Es una consulta por carga de pantalla, no por petición.
+app.get("/api/auth/me", requireAuth(), async (req, res) => {
+  try {
+    const u = await dbGet("SELECT id, username, rol, nombre, local, modulos, locales_extra, pass_temporal FROM users WHERE id = ?", [req.user.id]);
+    if (!u) return res.json({ ok: true, user: req.user });   // usuario borrado: no se le echa a mitad de faena
+    res.json({ ok: true, user: {
+      id: u.id, username: u.username, rol: u.rol, nombre: u.nombre, local: u.local,
+      modulos: modulosEfectivos(u.rol, u.modulos), locales: localesDe(u), pass_temporal: !!u.pass_temporal,
+    } });
+  } catch { res.json({ ok: true, user: req.user }); }
 });
 
 // Gestión de usuarios (solo dirección)
@@ -2721,7 +2754,7 @@ app.get("/api/users/catalogo-modulos", requireAuth(["direccion"]), (req, res) =>
 
 app.get("/api/users", requireAuth(["direccion"]), async (req, res) => {
   try {
-    const rows = await dbAll("SELECT id, username, rol, nombre, local, modulos, password_enc, creado_en FROM users ORDER BY rol");
+    const rows = await dbAll("SELECT id, username, rol, nombre, local, modulos, locales_extra, password_enc, creado_en FROM users ORDER BY rol");
     const data = (rows || []).map((u) => ({
       id: u.id, username: u.username, rol: u.rol, nombre: u.nombre, local: u.local, creado_en: u.creado_en,
       modulos: modulosEfectivos(u.rol, u.modulos),      // módulos que realmente puede ver
@@ -2749,9 +2782,10 @@ app.post("/api/users", requireAuth(["direccion"]), async (req, res) => {
     // vía por la que se crean casi todos los usuarios— y por eso el cambio obligatorio no
     // saltaba nunca. Hay un test que ahora recorre todos los INSERT de usuarios.
     const row = await dbRun(
-      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, modulos, pass_temporal, creado_en)
-       VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, ?) RETURNING id`,
-      [username, hash, encUserPass(password), rol, nombre || "", local || "", mods ? JSON.stringify(mods) : null, creado_en]
+      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, modulos, locales_extra, pass_temporal, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?) RETURNING id`,
+      [username, hash, encUserPass(password), rol, nombre || "", local || "", mods ? JSON.stringify(mods) : null,
+       (() => { const x = sanearLocalesExtra(local, req.body.locales_extra, INV_LOCALES); return x ? JSON.stringify(x) : null; })(), creado_en]
     );
     invalidarInternos();
     res.json({ ok: true, id: row.id });
@@ -2766,9 +2800,12 @@ app.put("/api/users/:id", requireAuth(["direccion"]), async (req, res) => {
   if (!rol) return res.status(400).json({ ok: false, error: "Falta el rol" });
   try {
     const mods = sanearModulos(rol, modulos); // se sanea contra el NUEVO rol
+    // Los locales extra se sanean contra el catálogo y contra el principal: nunca se guarda
+    // uno inventado ni el suyo repetido.
+    const extra = sanearLocalesExtra(local, req.body.locales_extra, INV_LOCALES);
     await dbRun(
-      "UPDATE users SET rol = ?, nombre = ?, local = ?, modulos = ? WHERE id = ?",
-      [rol, nombre || "", local || "", mods ? JSON.stringify(mods) : null, req.params.id]
+      "UPDATE users SET rol = ?, nombre = ?, local = ?, modulos = ?, locales_extra = ? WHERE id = ?",
+      [rol, nombre || "", local || "", mods ? JSON.stringify(mods) : null, extra ? JSON.stringify(extra) : null, req.params.id]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -4808,8 +4845,7 @@ function rrhhTodoLocal(req) { return req.user && (req.user.rol === "direccion" |
 function rrhhLocalScope(req) { return rrhhTodoLocal(req) ? null : localScope(req); } // null = sin restricción
 function rrhhPuedeLocal(req, local) {
   if (rrhhTodoLocal(req)) return true;
-  const l = String(local || "").trim();
-  return !!l && l === localScope(req);
+  return puedeLocal(req.user, local);   // cualquiera de los suyos, no solo en el que esté mirando
 }
 async function rrhhWorkerLocal(id) { const r = await dbGet("SELECT local FROM users WHERE id = ?", [id]); return r ? (r.local || "") : null; }
 

@@ -59,7 +59,10 @@ describe("una sola puerta para todos", () => {
 describe("quien tiene local asignado no ve un ámbito que no tiene", () => {
   test("la barra enseña SU local, no «Todos los establecimientos»", () => {
     // El servidor ya le devolvía solo los suyos; el rótulo prometía más de lo que había.
-    assert.match(panel, /const fijado = localFijadoFE\(\);\s*\n\s*const estabLbl = fijado \?/);
+    // Con varios locales asignados enseña el que se está mirando, nunca «todos».
+    assert.match(panel, /const estabLbl = fijado \? nombreCortoLocal\(fijado\)/);
+    assert.match(panel, /: actual \? nombreCortoLocal\(actual\) : "Todos los establecimientos"/);
+    assert.match(panel, /function localActualFE\(\)/, "el local en curso sale de sus locales, no de DASH_LOCAL a pelo");
   });
 
   test("y no puede cambiarlo: se lo puso dirección", () => {
