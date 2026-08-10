@@ -19,6 +19,7 @@ import { permisosV2Enabled } from "./src/core/flags.js";
 import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
+import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fusion.js";
 import { mapManageRow, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry, locationNamesDeLocal } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import QRCode from "qrcode";   // ya instalada (la usa el enlace de WhatsApp); emparejar la tablet escaneando
@@ -27,7 +28,7 @@ import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/ago
 import { extraerScripts, extraerRutasApi, clasificarRutas } from "./src/integrations/agora/descubrir.js";
 import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
 import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos, moduloDeRuta } from "./src/modules/usuarios/permisos.js";
-import { localesDe, localPermitido, puedeLocal, sanearLocalesExtra, parseLocales } from "./src/modules/usuarios/locales.js";
+import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocalesExtra, parseLocales } from "./src/modules/usuarios/locales.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, caducidadMes, generarToken } from "./src/modules/rrhh/pulso.js";
@@ -55,6 +56,7 @@ import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { repasarLote, resumenRepaso, pideRelecturaDeLineas, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
+import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
@@ -2694,6 +2696,25 @@ function localScope(req, pedido) {
   return localPermitido(req.user, pedido !== undefined ? pedido : (req.query && req.query.local));
 }
 
+/**
+ * Los establecimientos de esta petición cuando la pantalla enseña VARIOS a la vez (`?locales=`).
+ *
+ * Devuelve siempre una lista: vacía = sin restricción (solo dirección), uno = lo de siempre,
+ * varios = hay que pedir uno a uno y sumar. Nunca devuelve un local que no sea del usuario:
+ * eso lo garantiza `localesPermitidos`, que está aparte y con tests porque es lo único que
+ * impide leer los datos de otro establecimiento escribiéndolo en la URL.
+ */
+function localesScope(req) {
+  if (!req || !req.user) return [];
+  const pedidos = req.query && req.query.locales;
+  if (pedidos) {
+    const lista = localesPermitidos(req.user, pedidos);
+    if (lista.length) return lista;
+  }
+  const uno = localScope(req);
+  return uno ? [uno] : [];
+}
+
 // Lista canónica de establecimientos (espejo de public/auth.js window.LOCALES). Solo lectura.
 const INV_LOCALES = [
   "La Tapeta - Blanes", "Cooperativa - Blanes", "La Tapeta - Lloret",
@@ -3231,13 +3252,16 @@ app.get("/api/leads", requireAuth(["direccion", "marketing"]), async (req, res) 
 // todavía con inventario ni con Ágora — se agrupa por la descripción del proveedor tal
 // cual. Dos proveedores que llamen distinto al mismo producto salen separados, y en esta
 // fase eso es lo correcto: dos filas honestas valen más que una fusión inventada.
-app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
-  try {
+// Es una función y no el cuerpo del endpoint porque, para ver varios establecimientos a la
+// vez, se llama UNA VEZ POR LOCAL y se suman las respuestas (src/modules/facturas/compras-fusion.js).
+// La consulta es exactamente la de siempre, con su `local = ?`: el ADR 0001 aparta tocar el
+// filtrado por local hasta después de producción.
+async function comprasDeLocal(query, local) {
     // Dos juegos de condiciones separados a propósito: los filtros de FACTURA valen para
     // las dos consultas y el de texto solo para las líneas. Recortar un WHERE ya montado a
     // base de reemplazos es la clase de cosa que un día deja de funcionar en silencio.
+    const req = { query };
     const condFac = ["COALESCE(f.dup_estado,'') <> 'duda'"], parFac = [];
-    const local = localScope(req) || String(req.query.local || "").trim();
     if (local) { condFac.push("f.local = ?"); parFac.push(local); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ""))) { condFac.push("f.fecha >= ?"); parFac.push(req.query.from); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || ""))) { condFac.push("f.fecha <= ?"); parFac.push(req.query.to); }
@@ -3302,7 +3326,7 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
     const categorias = gastoPorCategoria(
       porProveedor.map((p) => ({ proveedor: p.proveedor, importe: p.importe })), idxCat);
 
-    res.json({
+    return {
       ok: true, local: local || null, q: q || null,
       desde: req.query.from || null, hasta: req.query.to || null,
       categoria: cats.length ? cats.join(",") : null,
@@ -3326,7 +3350,20 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
         noLeibles: cobertura?.no_leibles || 0,
         noAplica: cobertura?.no_aplica || 0,
       },
-    });
+    };
+}
+
+app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const locales = localesScope(req);
+    if (locales.length > 1) {
+      // Una petición por local y se suman. Ver src/modules/facturas/compras-fusion.js: lo
+      // delicado no es sumar, es no sumar dos veces lo que ya viene junto.
+      const partes = [];
+      for (const l of locales) partes.push(await comprasDeLocal(req.query, l));
+      return res.json(fusionarCompras(partes, { locales }));
+    }
+    res.json(await comprasDeLocal(req.query, locales[0] || null));
   } catch (e) {
     console.error("[facturas] compras:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron cargar las compras" });
@@ -4533,8 +4570,18 @@ app.get("/api/dashboard", requireAuth(["direccion", "encargado", "contabilidad"]
     // Pasa por localScope: con varios establecimientos asignados hay que respetar el que se
     // esté mirando. Mirando `req.user.local` a pelo siempre salía el principal, así que
     // cambiar de local en la barra no cambiaba nada en estas pantallas.
-    const local = localScope(req);
-    const data = await getDashboard({ get: dbGet, all: dbAll }, { whatsappConnected: isReady(), local });
+    const locales = localesScope(req);
+    if (locales.length > 1) {
+      // Varios establecimientos a la vez: se pide el dashboard de CADA uno con la consulta de
+      // siempre y se suman las respuestas. Uno detrás de otro y no en paralelo: cada dashboard
+      // ya lanza sus consultas de cuatro en cuatro, y multiplicarlo por el número de locales
+      // dejaría al pool sin conexiones para lo que sí es urgente (reservas, Sara).
+      // Ver src/modules/dashboard/fusion.js.
+      const partes = [];
+      for (const l of locales) partes.push(await getDashboard({ get: dbGet, all: dbAll }, { whatsappConnected: isReady(), local: l }));
+      return res.json({ ok: true, data: fusionarDashboards(partes, { locales, whatsappConnected: isReady() }) });
+    }
+    const data = await getDashboard({ get: dbGet, all: dbAll }, { whatsappConnected: isReady(), local: locales[0] || null });
     res.json({ ok: true, data });
   } catch (e) { next(e); }
 });
@@ -4770,10 +4817,32 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
     // Pasa por localScope: con varios establecimientos asignados hay que respetar el que se
     // esté mirando. Mirando `req.user.local` a pelo siempre salía el principal, así que
     // cambiar de local en la barra no cambiaba nada en estas pantallas.
-    const local = localScope(req);
+    const locales = localesScope(req);
+    // El rango se valida aquí y no dentro: un rango mal escrito es un 400 («lo has pedido
+    // mal»), no un 500 («se ha roto»), y esa diferencia es la que hace que un fallo se
+    // entienda desde fuera.
+    const f0 = String(req.query.from || "").slice(0, 10), t0 = String(req.query.to || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f0) || !/^\d{4}-\d{2}-\d{2}$/.test(t0) || f0 > t0) {
+      return res.status(400).json({ ok: false, error: "Rango inválido" });
+    }
+    if (locales.length > 1) {
+      // Varios locales: uno a uno con la consulta de siempre y se suman (ver fusion.js).
+      const partes = [];
+      for (const l of locales) partes.push(await periodoDeLocal(req.query, l));
+      return res.json({ ok: true, data: fusionarPeriodo(partes) });
+    }
+    const data = await periodoDeLocal(req.query, locales[0] || null);
+    return res.json({ ok: true, data });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// El cuerpo de arriba, por local, para poder pedirlo una vez por establecimiento.
+async function periodoDeLocal(query, local) {
+  {
+    const req = { query };
     const from = String(req.query.from || "").slice(0, 10);
     const to = String(req.query.to || "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ ok: false, error: "Rango inválido" });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) throw new Error("Rango inválido");
     const lf = local ? " AND local = ?" : "";
     const lp = local ? [local] : [];
     const resRows = await dbAll(`SELECT dia, COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia >= ? AND dia <= ?${lf} GROUP BY dia ORDER BY dia`, [from, to, ...lp]);
@@ -4809,15 +4878,15 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
     const personasTotal = resRows.reduce((s, r) => s + r.personas, 0);
     const ventasTotal = ventasSerie.reduce((s, r) => s + (r.ventas || 0), 0);
     const ticketsTotal = ventasSerie.reduce((s, r) => s + (r.tickets || 0), 0);
-    res.json({ ok: true, data: {
+    return {
       from, to, hoy, hoyEnVivo,
       reservas: { total: reservasTotal, personas: personasTotal, serie: resRows },
       ventas: { disponible: ventasSerie.length > 0, total: Math.round(ventasTotal * 100) / 100, tickets: ticketsTotal, ticket_medio: ticketsTotal ? Math.round(ventasTotal / ticketsTotal * 100) / 100 : 0, serie: ventasSerie, fuente: fuenteVentas },
       gastos: { disponible: !!(gasRow && gasRow.n > 0), total: Math.round(gastosTotal * 100) / 100, base: Math.round((gasRow ? gasRow.base : 0) * 100) / 100, n: gasRow ? gasRow.n : 0 },
       resultado: (ventasSerie.length || (gasRow && gasRow.n)) ? Math.round((ventasTotal - gastosTotal) * 100) / 100 : null,
-    } });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
+    };
+  }
+}
 
 // Estado de la integración por local (NUNCA expone el token).
 app.get("/api/agora/estado", requireAuth(["direccion", "contabilidad"]), async (req, res) => {

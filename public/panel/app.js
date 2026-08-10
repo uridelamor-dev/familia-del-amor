@@ -689,7 +689,13 @@ function renderDashboard(d) {
   const localName = d.scope && d.scope.local;
   DASH_CONCERNS = (d.preocupaciones || []).length;
   // ── Cabecera ejecutiva ──
-  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${localName ? "Estado de <b>" + esc(localName) + "</b>" : "El estado de todo el grupo, de un vistazo."}${fechaLarga(d.fecha) ? " · " + fechaLarga(d.fecha) : ""}</div></div><div class="acts"><button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
+  // Con varios establecimientos, «todo el grupo» sería mentira: se dice cuáles son. El
+  // servidor manda la etiqueta ya hecha («Lloret y Girona») junto a los datos sumados.
+  const etiqueta = d.scope && d.scope.etiqueta;
+  const ambito = localName ? "Estado de <b>" + esc(localName) + "</b>"
+    : etiqueta ? "Estado de <b>" + esc(etiqueta) + "</b>, sumado"
+    : "El estado de todo el grupo, de un vistazo.";
+  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${ambito}${fechaLarga(d.fecha) ? " · " + fechaLarga(d.fecha) : ""}</div></div><div class="acts"><button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
   // ── Sara: veredicto del día ──
   const contexto = [d.ayer && d.ayer.disponible ? d.ayer.texto : "", d.hoy && d.hoy.disponible ? d.hoy.texto : ""].filter(Boolean).join(" ");
   const sara = `<div class="card hero" style="margin-bottom:16px"><div style="display:flex;gap:13px;align-items:flex-start"><span class="avatar" style="width:40px;height:40px;border-radius:12px">S</span><div style="flex:1;min-width:0"><b style="font-size:14px">Sara · dirección de operaciones</b><p style="font-size:18px;line-height:1.5;margin:8px 0 0;font-weight:500;letter-spacing:-.01em">${d.titular || contexto || "Sin datos suficientes para hoy."}</p>${contexto ? `<p class="mut" style="font-size:13px;margin:10px 0 0;line-height:1.6">${contexto}</p>` : ""}</div></div></div>`;
@@ -759,11 +765,17 @@ function renderDashboard(d) {
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   if (!DASH_RANGE.from) { const r = rangoPreset(PERIOD || "semana", todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; }
-  const lq = DASH_LOCAL ? "&local=" + encodeURIComponent(DASH_LOCAL) : "";
+  // El dashboard es un AGREGADO, así que no vale con juntar filas como en reservas: se le
+  // dice al servidor qué establecimientos son y él pide el de cada uno y los suma campo a
+  // campo (src/modules/dashboard/fusion.js). `DASH_LOCAL` vale «*mios*» cuando se están
+  // mirando todos los suyos, y eso no es el nombre de ningún local: mandarlo tal cual hacía
+  // que el servidor cayera al principal y se viera UN local creyendo que se veían los dos.
+  const q = viendoTodosLosMios() ? "locales=" + encodeURIComponent(misLocales().join(","))
+    : localActualFE() ? "local=" + encodeURIComponent(localActualFE()) : "";
   try {
     const [d, per] = await Promise.all([
-      api("/api/dashboard" + (DASH_LOCAL ? "?local=" + encodeURIComponent(DASH_LOCAL) : "")),
-      apiOptional(`/api/dashboard/periodo?from=${DASH_RANGE.from}&to=${DASH_RANGE.to}${lq}`),
+      api("/api/dashboard" + (q ? "?" + q : "")),
+      apiOptional(`/api/dashboard/periodo?from=${DASH_RANGE.from}&to=${DASH_RANGE.to}${q ? "&" + q : ""}`),
     ]);
     DASH_PERIODO = per || null;
     view.innerHTML = renderDashboard(d);
@@ -3901,7 +3913,11 @@ function facQS(localForzado) {
 function facScope() { FACF.local = localActualFE(); return FACF.local; }
 function facHeader() {
   const amb = facScope();
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas, albaranes y qué se compra${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${[["facturas", "Facturas"], ["conciliar", "Conciliaciones"], ["compras", "Qué compramos"], ["config", "Configuración"]].map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("")}</div>`;
+  // Con varios establecimientos, `facScope()` devuelve "" (las consultas van una por local),
+  // así que el rótulo lo dice aparte: una pantalla que suma dos locales sin decirlo se lee
+  // como si fuera la de uno.
+  const donde = amb ? nombreCortoLocal(amb) : viendoTodosLosMios() ? `Mis ${misLocales().length} establecimientos` : "";
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas, albaranes y qué se compra${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${[["facturas", "Facturas"], ["conciliar", "Conciliaciones"], ["compras", "Qué compramos"], ["config", "Configuración"]].map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("")}</div>`;
 }
 const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
 // Con céntimos. Para precios unitarios, donde redondear a euros enteros se carga justo el
@@ -5229,7 +5245,11 @@ async function refrescarCompras() {
   const cont = document.getElementById("compRes");
   if (!cont) return;
   const qs = new URLSearchParams();
-  if (FACF.local) qs.set("local", FACF.local);
+  // «Qué compramos» también es un agregado: con varios establecimientos se le pasan todos y el
+  // servidor suma producto a producto (src/modules/facturas/compras-fusion.js). Juntar aquí
+  // las respuestas contaría dos veces el mismo producto comprado en los dos locales.
+  if (viendoTodosLosMios()) qs.set("locales", misLocales().join(","));
+  else if (FACF.local) qs.set("local", FACF.local);
   COMP_FILTROS.forEach((k) => { if (COMP[k]) qs.set(k, COMP[k]); });
   let j;
   try { j = await apiRaw("/api/facturas/compras?" + qs.toString()); }

@@ -55,6 +55,29 @@ export function localPermitido(user, pedido) {
   return mios[0];
 }
 
+/**
+ * Los establecimientos que se van a consultar cuando se piden VARIOS a la vez.
+ *
+ * Mismo criterio que `localPermitido`, en plural: lo que pida, pero solo lo suyo. Si de lo
+ * pedido no queda nada suyo, se cae a su principal en vez de devolver un error —un enlace
+ * guardado de otro local no es un ataque, es un enlace viejo—. Y si de verdad no pide nada,
+ * devuelve vacío, que significa «sin restricción» y solo puede pasarle a dirección.
+ *
+ * Es la puerta de las pantallas que suman varios locales: sin esto, `?locales=` sería una
+ * forma de leer los datos de un establecimiento ajeno pidiéndolo por la URL.
+ */
+export function localesPermitidos(user, pedidos) {
+  // Llega como array o como «A,B» en la URL. Los nombres de establecimiento no llevan comas.
+  const crudos = typeof pedidos === "string" ? pedidos.split(",") : pedidos;
+  const lista = [...new Set(parseLocales(crudos).map((s) => s.trim()).filter(Boolean))];
+  if (!user) return [];
+  if (user.rol === "direccion") return lista;          // vacío = todos, que es lo suyo
+  const mios = localesDe(user);
+  if (!mios.length) return [];
+  const buenos = lista.filter((l) => mios.includes(l));
+  return buenos.length ? buenos : [mios[0]];
+}
+
 /** ¿Puede este usuario ver datos de ese local? */
 export function puedeLocal(user, local) {
   if (!user || user.rol === "direccion") return true;

@@ -135,7 +135,10 @@ describe("cableado: lo dudoso no puede colarse en ningún total", () => {
   });
 
   test("«Qué compramos» también", () => {
-    const i = server.indexOf('app.get("/api/facturas/compras"');
+    // La consulta vive en `comprasDeLocal`, que es la que se llama una vez por local cuando
+    // se miran varios establecimientos a la vez. Lo dudoso queda fuera de las dos formas.
+    const i = server.indexOf("async function comprasDeLocal(");
+    assert.notEqual(i, -1, "¿han renombrado comprasDeLocal?");
     assert.match(server.slice(i, i + 900), /COALESCE\(f\.dup_estado,''\) <> 'duda'/);
   });
 

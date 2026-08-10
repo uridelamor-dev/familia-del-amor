@@ -85,7 +85,7 @@ describe("los filtros de «Qué compramos» llegan al servidor", () => {
   });
 
   test("el servidor entiende proveedor y categoría", () => {
-    const i = server.indexOf('app.get("/api/facturas/compras"');
+    const i = server.indexOf("async function comprasDeLocal(");
     assert.notEqual(i, -1);
     const bloque = server.slice(i, i + 3500);
     assert.match(bloque, /req\.query\.proveedor/);
