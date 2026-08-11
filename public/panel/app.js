@@ -990,7 +990,7 @@ function renderResSemana(list) {
 function renderResLista(list) {
   const rows = (list || []).slice().sort((a, b) => (a.dia + a.hora).localeCompare(b.dia + b.hora));
   return rows.length
-    ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Día</th><th>Hora</th><th>Local</th><th class="r">Pers.</th><th>Nombre</th><th>Teléfono</th><th></th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(fechaCorta(r.dia))}</td><td class="tnum">${esc(r.hora)}</td><td>${esc(r.local)}</td><td class="r tnum">${esc(r.personas)}</td><td>${esc(r.nombre_reserva)}</td><td class="mut">${esc(r.telefono)}</td><td class="r"><button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></td></tr>`).join("")}</tbody></table></div></div>`
+    ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Día</th><th>Hora</th><th>Local</th><th class="r">Pers.</th><th>Nombre</th><th>Teléfono</th><th></th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(fechaCorta(r.dia))}</td><td class="tnum">${esc(r.hora)}</td><td>${esc(r.local)}</td><td class="r tnum">${esc(r.personas)}</td><td>${esc(r.nombre_reserva)}</td><td class="mut">${esc(r.telefono)}</td><td class="r"><button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></td></tr>`).join("")}</tbody></table></div></div>`
     : `<div class="card"><div class="mut" style="padding:8px">No hay reservas en ese rango. Prueba a ampliar las fechas o crea una nueva.</div></div>`;
 }
 // El historial: de más reciente a más antigua, con buscador y total. NO lleva el botón de
@@ -1342,7 +1342,7 @@ function renderInvRevision(j) {
     const col = r.sugerido > 0 ? "color:var(--brand);font-weight:700" : "color:var(--ink3)";
     return `<tr><td>${esc(r.nombre)}</td><td class="r tnum">${num(r.contado)}</td><td class="r tnum">${num(r.necesario)}</td><td class="r tnum">${num(r.diferencia)}</td><td class="r tnum" style="${col}">${r.sugerido > 0 ? num(r.sugerido) + " " + esc(r.unidad || "") : "—"}</td></tr>`;
   }).join("");
-  const tabla = rev.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Contado</th><th class="r">Necesario</th><th class="r">Dif.</th><th class="r">A pedir</th></tr></thead><tbody>${filas}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin productos.</div></div>`;
+  const tabla = rev.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Contado</th><th class="r">Necesario</th><th class="r">Dif.</th><th class="r">A pedir</th></tr></thead><tbody>${filas}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin productos.</div></div>`;
   let accion;
   if (j.pedido_existente) accion = `<div class="toolbar"><div class="mut" style="flex:1">Ya existe un pedido para este inventario.</div><button class="btn primary" data-act="inv-ver-pedido" data-id="${j.pedido_existente.id}">Ver pedido ›</button></div>`;
   else if (aPedir.length) accion = `<div class="toolbar"><div class="mut" style="flex:1"><b>${aPedir.length}</b> producto(s) por debajo del stock necesario.</div><button class="btn primary" data-act="inv-generar-pedido">Generar pedido ›</button></div>`;
@@ -1508,7 +1508,7 @@ function fechaNac(iso) {
 }
 function cliTable(rows) {
   if (!rows.length) return `<div class="card"><div class="mut" style="padding:8px">Sin clientes con esos filtros.</div></div>`;
-  return `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Cliente</th><th>Teléfono</th><th>Email</th><th>Población</th><th>Cumpleaños</th><th>Origen</th><th>Última visita</th><th></th></tr></thead><tbody>${rows.map((c) => {
+  return `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Cliente</th><th>Teléfono</th><th>Email</th><th>Población</th><th>Cumpleaños</th><th>Origen</th><th>Última visita</th><th></th></tr></thead><tbody>${rows.map((c) => {
     const tel = c.telefono || ""; const nom = ((c.nombre || "") + " " + (c.apellidos || "")).trim() || "—";
     const baja = c.baja === 1 || c.baja === true;
     const wa = c.es_contacto_wa ? '<span class="sdot" title="Tiene WhatsApp" style="display:inline-block;width:7px;height:7px;border-radius:999px;background:var(--success);margin-left:6px"></span>' : "";
@@ -2045,7 +2045,7 @@ function renderRRCand(rows) {
   rows = rows || [];
   const estOpts = ['<option value="">Todos los estados</option>'].concat(["nuevo", "revisando", "contratada", "descartada"].map((e) => `<option value="${e}" ${RRF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
   const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(RRF.q)}" placeholder="Nombre, puesto…"></div><button class="btn" data-act="rr-filtrar">Buscar</button></div>`;
-  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => e === "contratada" ? `<button class="linkbtn" style="color:var(--brand)" data-act="cand-contratar" data-id="${c.id}" data-nombre="${esc(c.nombre)}">Contratar</button>` : `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
+  const table = rows.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => e === "contratada" ? `<button class="linkbtn" style="color:var(--brand)" data-act="cand-contratar" data-id="${c.id}" data-nombre="${esc(c.nombre)}">Contratar</button>` : `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
   return toolbar + table;
 }
 // ── Seguimiento (maestro-detalle) ──
@@ -2285,7 +2285,7 @@ function renderRRVac(rows) {
   const locOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
   const tipoOpts = RR_VAC_TIPOS.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
   const form = `<div class="card"><div class="ch"><h3>Nueva vacante</h3></div><div class="toolbar"><div class="field"><label>Título</label><input id="vacTitulo" placeholder="Camarero/a…"></div><div class="field"><label>Local</label><select id="vacLocal">${locOpts}</select></div><div class="field"><label>Tipo</label><select id="vacTipo">${tipoOpts}</select></div></div><div class="field" style="width:100%"><label>Descripción</label><textarea id="vacDesc" rows="2" placeholder="Requisitos, horario…"></textarea></div><button class="btn primary" data-act="rr-vac-add">Publicar vacante</button></div>`;
-  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Título</th><th>Local</th><th>Tipo</th><th>Estado</th><th></th></tr></thead><tbody>${rows.map((v) => `<tr><td>${esc(v.titulo || "")}</td><td>${esc(v.local || "")}</td><td class="mut">${esc(v.tipo || "")}</td><td><span class="pill ${v.activo ? "ok" : "bad"}">${v.activo ? "Abierta" : "Cerrada"}</span></td><td class="r"><button class="linkbtn" style="color:var(--brand)" data-act="rr-vac-toggle" data-id="${v.id}" data-activo="${v.activo ? 1 : 0}">${v.activo ? "Cerrar" : "Reabrir"}</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin vacantes creadas.</div></div>`;
+  const table = rows.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Título</th><th>Local</th><th>Tipo</th><th>Estado</th><th></th></tr></thead><tbody>${rows.map((v) => `<tr><td>${esc(v.titulo || "")}</td><td>${esc(v.local || "")}</td><td class="mut">${esc(v.tipo || "")}</td><td><span class="pill ${v.activo ? "ok" : "bad"}">${v.activo ? "Abierta" : "Cerrada"}</span></td><td class="r"><button class="linkbtn" style="color:var(--brand)" data-act="rr-vac-toggle" data-id="${v.id}" data-activo="${v.activo ? 1 : 0}">${v.activo ? "Cerrar" : "Reabrir"}</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin vacantes creadas.</div></div>`;
   return form + table;
 }
 // Las dos caras de contratar, en la misma pantalla.
@@ -2471,7 +2471,7 @@ function chipsModulos(u) {
 function renderUsuarios(list) {
   const rows = list || [];
   const toolbar = `<div class="toolbar"><div class="mut" style="flex:1;font-size:13px">Los usuarios con <b>local</b> asignado (y rol distinto de Dirección) solo ven los datos de su local en los módulos marcados «por local».</div><button class="btn primary" data-act="user-nuevo">+ Nuevo usuario</button></div>`;
-  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Local</th><th>Módulos con acceso</th><th></th></tr></thead><tbody>${rows.map((u) => {
+  const table = rows.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Local</th><th>Módulos con acceso</th><th></th></tr></thead><tbody>${rows.map((u) => {
     const localCell = u.local ? `${esc(u.local)}${u.rol !== "direccion" ? ` <span class="mut" title="Solo ve datos de este local">🔒</span>` : ""}` : `<span class="mut">— todos —</span>`;
     return `<tr><td><b>${esc(u.username)}</b></td><td>${esc(u.nombre || "")}</td><td>${esc(u.rol)}</td><td>${localCell}</td><td style="max-width:340px;line-height:1.9">${chipsModulos(u)}</td><td class="r" style="white-space:nowrap"><button class="linkbtn" style="color:var(--brand)" data-act="user-edit" data-id="${u.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="user-pass" data-id="${u.id}" data-nombre="${esc(u.username)}">Contraseña</button> · <button class="linkbtn" data-act="user-del" data-id="${u.id}" data-nombre="${esc(u.username)}">Eliminar</button></td></tr>`;
   }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">No hay usuarios todavía. Crea el primero con «+ Nuevo usuario».</div></div>`;
@@ -4740,7 +4740,7 @@ function facTablaHtml(list) {
     <td class="r tnum">${eur(f.total)}</td>
     <td>${facPillPago(f)}</td>
     <td class="r"><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></td></tr>`;
-  return `<div class="card p0"><div class="tblwrap"><table class="tbl">
+  return `<div class="card p0"><div class="tw"><table class="tbl">
     <thead><tr><th class="facsel"><input type="checkbox" id="facSelAll" ${todasMarcadas ? "checked" : ""} aria-label="Seleccionar todas"></th>
     <th class="facthumb"></th>
     <th>Fecha</th><th>Documento</th><th>Local</th><th class="r">Base</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead>
@@ -5002,12 +5002,12 @@ function facLocalCelda(v) {
 }
 function renderFacturasConfig() {
   // Empresas / CIF por local
-  const emp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Empresa y CIF por local</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th>Local contable</th><th></th></tr></thead><tbody>${(FCFG.locales || []).map((l) => `<tr><td>${esc(l.local)}</td><td>${esc(l.empresa || "")}</td><td class="mut">${esc(l.cif || "")}</td><td class="mut">${esc(l.local_contable || "")}</td><td class="r"><button class="linkbtn" data-act="fac-loc-del" data-local="${esc(l.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="5" class="mut">Sin empresas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("flLocal")}<input id="flEmp" placeholder="Empresa"><input id="flCif" placeholder="CIF" style="max-width:120px"><input id="flCont" placeholder="Local contable" style="max-width:150px"><button class="btn primary" data-act="fac-loc-add">Guardar</button></div></div>`;
+  const emp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Empresa y CIF por local</h3></div><div class="tw"><table class="tbl"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th>Local contable</th><th></th></tr></thead><tbody>${(FCFG.locales || []).map((l) => `<tr><td>${esc(l.local)}</td><td>${esc(l.empresa || "")}</td><td class="mut">${esc(l.cif || "")}</td><td class="mut">${esc(l.local_contable || "")}</td><td class="r"><button class="linkbtn" data-act="fac-loc-del" data-local="${esc(l.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="5" class="mut">Sin empresas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("flLocal")}<input id="flEmp" placeholder="Empresa"><input id="flCif" placeholder="CIF" style="max-width:120px"><input id="flCont" placeholder="Local contable" style="max-width:150px"><button class="btn primary" data-act="fac-loc-add">Guardar</button></div></div>`;
   // Reglas de email → local
-  const reg = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Reglas de email → local</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Email remitente</th><th>Local</th><th></th></tr></thead><tbody>${(FCFG.reglas || []).map((r) => `<tr><td>${esc(r.email)}</td><td>${facLocalCelda(r.local)}</td><td class="r"><button class="linkbtn" data-act="fac-mail-del" data-id="${r.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin reglas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0"><input id="frEmail" placeholder="proveedor@email.com" type="email">${facLocalSelect("frLocal")}<button class="btn primary" data-act="fac-mail-add">Añadir</button></div></div>`;
+  const reg = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Reglas de email → local</h3></div><div class="tw"><table class="tbl"><thead><tr><th>Email remitente</th><th>Local</th><th></th></tr></thead><tbody>${(FCFG.reglas || []).map((r) => `<tr><td>${esc(r.email)}</td><td>${facLocalCelda(r.local)}</td><td class="r"><button class="linkbtn" data-act="fac-mail-del" data-id="${r.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin reglas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0"><input id="frEmail" placeholder="proveedor@email.com" type="email">${facLocalSelect("frLocal")}<button class="btn primary" data-act="fac-mail-add">Añadir</button></div></div>`;
   // Grupos de WhatsApp de facturas
   const grpOpt = (cur) => { let o = `<option value="">Grupo de WhatsApp…</option>`; const has = (FCFG.groups || []).some((g) => g.id === cur); if (cur && !has) o += `<option value="${esc(cur)}" selected>Grupo actual</option>`; o += (FCFG.groups || []).map((g) => `<option value="${esc(g.id)}">${esc(g.name || g.id)}</option>`).join(""); return o; };
-  const grp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos de WhatsApp para facturas</h3></div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Grupo</th><th></th></tr></thead><tbody>${(FCFG.grupos || []).map((g) => `<tr><td>${facLocalCelda(g.local)}</td><td>${(FCFG.groups || []).find((x) => x.id === g.group_jid) ? esc((FCFG.groups.find((x) => x.id === g.group_jid)).name) : '<span class="pill ok">Vinculado</span>'}</td><td class="r"><button class="linkbtn" data-act="fac-grp-del" data-id="${g.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin grupos.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fgLocal")}<select id="fgGroup">${grpOpt("")}</select><button class="btn primary" data-act="fac-grp-add">Vincular</button></div></div>`;
+  const grp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos de WhatsApp para facturas</h3></div><div class="tw"><table class="tbl"><thead><tr><th>Local</th><th>Grupo</th><th></th></tr></thead><tbody>${(FCFG.grupos || []).map((g) => `<tr><td>${facLocalCelda(g.local)}</td><td>${(FCFG.groups || []).find((x) => x.id === g.group_jid) ? esc((FCFG.groups.find((x) => x.id === g.group_jid)).name) : '<span class="pill ok">Vinculado</span>'}</td><td class="r"><button class="linkbtn" data-act="fac-grp-del" data-id="${g.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin grupos.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fgLocal")}<select id="fgGroup">${grpOpt("")}</select><button class="btn primary" data-act="fac-grp-add">Vincular</button></div></div>`;
   // Modelo 303
   const trims = ["1", "2", "3", "4"];
   const d = FAC303.data;
@@ -5025,7 +5025,7 @@ function renderFacturasConfig() {
   </div><div class="toolbar" style="padding:12px 0 0"><a class="btn" href="/auth/google-facturas">${drv.conectado ? "Reconectar Google" : "Conectar Google"}</a><button class="btn" data-act="fac-migrar">Reordenar Drive</button>${(drv.pendientes_sheet || 0) > 0 ? '<button class="btn primary" data-act="fac-reproyectar">Reintentar volcado</button>' : ""}<button class="btn" data-act="fac-reparar">Verificar y reparar Sheets</button><button class="btn danger" data-act="fac-empezar-cero">Empezar de cero</button></div><div class="mut" style="font-size:12px;margin-top:6px">"Reparar" reescribe todas las hojas y el maestro desde la base de datos (la fuente de verdad). "Empezar de cero" limpia todas las facturas de la base de datos (no borra Drive; eso se hace a mano).</div></div>`;
   // Carpetas de Drive vigiladas (tercer canal de ingesta)
   const carp = FCFG.carpetas || [];
-  const drive = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Carpetas de Drive vigiladas</h3></div><div class="mut" style="padding:0 18px;font-size:12.5px">Deja una factura (PDF/imagen) en la carpeta de Drive de un local y entrará sola cada pocos minutos.</div><div class="tblwrap"><table class="tbl"><thead><tr><th>Local</th><th>Carpeta</th><th></th></tr></thead><tbody>${carp.map((c) => `<tr><td>${facLocalCelda(c.local)}</td><td class="mut">${c.folder_url ? `<a class="link" href="${esc(c.folder_url)}" target="_blank" rel="noopener">${esc(c.folder_id)}</a>` : esc(c.folder_id)}</td><td class="r"><button class="linkbtn" data-act="fac-drive-del" data-local="${esc(c.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin carpetas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fdLocal")}<input id="fdFolder" placeholder="Enlace o ID de la carpeta de Drive" style="flex:1;min-width:0"><button class="btn primary" data-act="fac-drive-add">Vincular</button></div></div>`;
+  const drive = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Carpetas de Drive vigiladas</h3></div><div class="mut" style="padding:0 18px;font-size:12.5px">Deja una factura (PDF/imagen) en la carpeta de Drive de un local y entrará sola cada pocos minutos.</div><div class="tw"><table class="tbl"><thead><tr><th>Local</th><th>Carpeta</th><th></th></tr></thead><tbody>${carp.map((c) => `<tr><td>${facLocalCelda(c.local)}</td><td class="mut">${c.folder_url ? `<a class="link" href="${esc(c.folder_url)}" target="_blank" rel="noopener">${esc(c.folder_id)}</a>` : esc(c.folder_id)}</td><td class="r"><button class="linkbtn" data-act="fac-drive-del" data-local="${esc(c.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin carpetas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fdLocal")}<input id="fdFolder" placeholder="Enlace o ID de la carpeta de Drive" style="flex:1;min-width:0"><button class="btn primary" data-act="fac-drive-add">Vincular</button></div></div>`;
   // Repasar hacia atrás. Va en Configuración y no en la lista de facturas porque es una
   // tarea de mantenimiento que se hace de tarde en tarde, no algo del día a día.
   const repaso = `<div class="card"><div class="ch"><h3>Repasar las facturas ya guardadas</h3></div>
@@ -5417,6 +5417,21 @@ async function compAbrirFiltros() {
 
 // Reparto del gasto por categoría. Va sobre el total de las facturas, no sobre las líneas:
 // así el alquiler y la luz —de las que no se lee el detalle— también cuentan.
+/**
+ * Cuánto se sale el último precio de lo normal. Es la diferencia entre informar y avisar: 45 €
+ * no dice nada hasta ponerlo al lado de los 30 € que se pagan siempre.
+ *
+ * Solo se pinta cuando hay con qué comparar y cuando la diferencia es de verdad (±5 %): un
+ * chip en cada fila se convierte en decoración y deja de leerse.
+ */
+function compChipPrecio(g) {
+  if (g.precioNormal == null || g.ultimoPrecio == null || g.precioNormal <= 0) return "";
+  const pct = Math.round(((g.ultimoPrecio - g.precioNormal) / g.precioNormal) * 1000) / 10;
+  if (Math.abs(pct) < 5) return "";
+  const sube = pct > 0;
+  return ` <span class="pill ${sube ? "bad" : "ok"}" style="font-size:10px" title="Respecto a lo que se paga normalmente (${esc(eur2(g.precioNormal))})">${sube ? "↗" : "↘"} ${signed2(pct)}</span>`;
+}
+
 function compCategoriasHtml(g) {
   if (!g || (!g.categorias.length && !g.sinCategoria)) return "";
   const max = Math.max(...g.categorias.map((c) => c.importe), 1);
@@ -5557,15 +5572,14 @@ async function refrescarCompras() {
         <div class="mut" style="font-size:11px">${esc(g.proveedores.join(" · ") || "—")}</div></td>
       <td style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) : "—"}</td>
       <td style="text-align:right;white-space:nowrap"><b>${g.importe != null ? esc(eur(g.importe)) : "—"}</b></td>
-      <td style="text-align:right;white-space:nowrap">${g.ultimoPrecio != null ? esc(eur2(g.ultimoPrecio)) : "—"}</td>
-      <td style="text-align:right;white-space:nowrap">${g.variacionPct != null && g.variacionPct > 0
-        ? `<span class="${g.variacionPct >= 10 ? "fg-danger" : "mut"}">+${esc(String(g.variacionPct))} %</span>` : '<span class="mut">—</span>'}</td>
+      <td style="text-align:right;white-space:nowrap">${g.precioNormal != null ? esc(eur2(g.precioNormal)) : '<span class="mut" title="Con menos de tres compras no hay un precio normal que valga, y con varios proveedores no se puede comparar: sería otro precio, no una subida">—</span>'}</td>
+      <td style="text-align:right;white-space:nowrap">${g.ultimoPrecio != null ? `${esc(eur2(g.ultimoPrecio))}${compChipPrecio(g)}` : "—"}</td>
       <td class="mut" style="white-space:nowrap;font-size:11.5px">${esc(g.veces)} ${g.veces === 1 ? "vez" : "veces"}<br>${esc(fechaCorta(g.ultima) || "")}</td>
     </tr>`;
 
   const tabla = j.grupos.length ? `<div class="tw"><table class="tbl">
       <thead><tr><th>Producto</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Gastado</th>
-      <th style="text-align:right">Último precio</th><th style="text-align:right" title="Diferencia entre el precio más bajo y el más alto del periodo">Ha subido</th><th>Última compra</th></tr></thead>
+      <th style="text-align:right" title="La mediana de las últimas compras: lo que se paga normalmente">Precio normal</th><th style="text-align:right">Último precio</th><th>Última compra</th></tr></thead>
       <tbody>${j.grupos.map(fila).join("")}</tbody></table></div>`
     : `<p class="mut" style="margin:0;line-height:1.6">${COMP.q
         ? `No se ha comprado nada que se llame «${esc(COMP.q)}» en estas fechas.`
@@ -6342,7 +6356,7 @@ function renderAnaliticaTabla(data) {
   })() : "";
 
   const errores = (data.__errores && data.__errores.length) ? `<div class="mut" style="font-size:12px;margin:6px 2px">${data.__errores.map((e) => `⚠ ${esc(e.local)}: ${esc(e.error)}`).join(" · ")}</div>` : "";
-  const tabla = `<div class="card p0"><div class="ch" style="padding:14px 16px 0"><h3>${esc(data.label)}${data.local ? " · " + esc(nombreCortoLocal(data.local)) : ""}</h3><span class="mut" style="font-size:12px">${num(filas.length)}${nq ? ` de ${num(filasTodas.length)}` : ""} filas${data.generado ? " · " + esc(String(data.generado).slice(11, 16)) : ""}</span></div><div class="tblwrap"><table class="tbl"><thead><tr>${th}</tr></thead><tbody>${body}</tbody><tfoot><tr>${totCells}</tr></tfoot></table></div></div>`;
+  const tabla = `<div class="card p0"><div class="ch" style="padding:14px 16px 0"><h3>${esc(data.label)}${data.local ? " · " + esc(nombreCortoLocal(data.local)) : ""}</h3><span class="mut" style="font-size:12px">${num(filas.length)}${nq ? ` de ${num(filasTodas.length)}` : ""} filas${data.generado ? " · " + esc(String(data.generado).slice(11, 16)) : ""}</span></div><div class="tw"><table class="tbl"><thead><tr>${th}</tr></thead><tbody>${body}</tbody><tfoot><tr>${totCells}</tr></tfoot></table></div></div>`;
   return resumenControl + chart + tabla + errores;
 }
 function renderAnalitica() {
@@ -6517,7 +6531,7 @@ function renderCampanas() {
   const cumple = `<div class="card"><div class="ch"><h3>🎂 Cumpleaños automático</h3><label class="chip" style="cursor:pointer"><input type="checkbox" id="cumpleAuto" ${cfg.cumple_auto ? "checked" : ""} style="margin-right:6px">Activado</label></div><div class="field" style="width:100%"><label>Mensaje (usa {nombre})</label><textarea id="cumpleMsg" rows="2" placeholder="¡Feliz cumpleaños, {nombre}! 🎉">${esc(cfg.cumple_plantilla || "")}</textarea></div><div class="toolbar" style="padding:0"><button class="btn" data-act="camp-cumple-save">Guardar</button><span class="mut" style="font-size:12px;align-self:center">Cada mañana felicita a quien cumple ese día (excluye bajas).</span></div></div>`;
   const plist = (CAMP.plantillas || []).map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div><div class="t2">${esc((p.cuerpo || "").slice(0, 80))}</div></div><button class="btn sm danger" data-act="camp-plant-del" data-id="${p.id}">✕</button></div>`).join("") || `<div class="mut" style="padding:10px 14px">Sin plantillas guardadas.</div>`;
   const plantillas = `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Plantillas</h3><button class="btn sm" data-act="camp-plant-add">+ Nueva</button></div><div class="rows">${plist}</div></div>`;
-  const table = rows.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Campaña</th><th>Segmento</th><th>Estado</th><th class="r">Env.</th><th class="r">Err.</th><th>Fecha</th><th></th></tr></thead><tbody>${rows.map((c) => {
+  const table = rows.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Campaña</th><th>Segmento</th><th>Estado</th><th class="r">Env.</th><th class="r">Err.</th><th>Fecha</th><th></th></tr></thead><tbody>${rows.map((c) => {
     let seg = ""; try { seg = describirAudiencia(JSON.parse(c.segmento_json || "{}")); } catch { /* */ }
     const est = c.estado || "enviada";
     const editable = est === "borrador" || est === "programada";

@@ -12,6 +12,8 @@
 // Lo único que NO se suma es el número de PRODUCTOS: dos locales que compran Coca-Cola no
 // compran dos productos distintos. Se cuentan los productos del conjunto ya fusionado.
 
+import { recortarPrecios, medianaPrecios } from "./lineas.js";
+
 const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const red2 = (x) => Math.round(x * 100) / 100;
 const red3 = (x) => Math.round(x * 1000) / 1000;
@@ -45,6 +47,11 @@ export function fusionarGrupos(listas = []) {
     }
     a.ultima = despues(a.ultima, g.ultima);
     a.proveedores = [...new Set([...(a.proveedores || []), ...(g.proveedores || [])])];
+    // Las listas de precios se JUNTAN y se vuelve a calcular la mediana. De dos medianas no
+    // sale una mediana; de dos listas sí. Por eso cada local manda sus últimas compras y no
+    // solo su resultado — el mismo motivo por el que la suma de todo lo demás es exacta.
+    a.precios = recortarPrecios([...(a.precios || []), ...(g.precios || [])]);
+    a.precioNormal = a.proveedores.length === 1 ? medianaPrecios(a.precios) : null;
     // Se recalcula con los mínimos y máximos ya juntos: el porcentaje de subida de dos locales
     // no es la media de sus porcentajes.
     a.variacionPct = a.precioMin != null && a.precioMax != null && a.precioMin > 0

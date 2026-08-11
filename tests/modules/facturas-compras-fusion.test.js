@@ -239,3 +239,37 @@ describe("el albarán y su factura cuentan UNA vez", () => {
     assert.equal(fusionarCompras([a, b], { locales: ["A", "B"] }).albaranesYaFacturados, 5);
   });
 });
+
+describe("el precio normal sobrevive a la fusión de locales", () => {
+  const linea = (d, p, f, prov) => ({ descripcion: d, cantidad: 1, precio_unitario: p, importe: p, fecha: f, proveedor: prov || "Grau" });
+
+  test("fusionar dos locales da la MISMA mediana que contarlos juntos", () => {
+    // De dos medianas no sale una mediana. Por eso cada local manda sus últimas compras y no
+    // solo su resultado: es lo que mantiene exacta la fusión.
+    const A = [linea("ACEITE", 30, "2026-06-01"), linea("ACEITE", 31, "2026-06-10"), linea("ACEITE", 29, "2026-06-20")];
+    const B = [linea("ACEITE", 45, "2026-07-01"), linea("ACEITE", 30, "2026-05-01")];
+    const juntas = agruparPorProducto([...A, ...B])[0];
+    const fus = fusionarGrupos([agruparPorProducto(A), agruparPorProducto(B)])[0];
+    assert.equal(fus.precioNormal, juntas.precioNormal);
+    assert.equal(fus.precioNormal, 30);
+    assert.equal(fus.ultimoPrecio, juntas.ultimoPrecio);
+  });
+
+  test("con menos de tres compras no se afirma cuál es el precio normal", () => {
+    const g = agruparPorProducto([linea("SAL", 1, "2026-06-01"), linea("SAL", 2, "2026-06-02")])[0];
+    assert.equal(g.precioNormal, null);
+  });
+
+  test("y con dos proveedores tampoco: sería otro precio, no una subida", () => {
+    // Que el aceite esté más caro en Makro que en el mayorista no es una subida.
+    const g = agruparPorProducto([
+      linea("SAL", 1, "2026-06-01"), linea("SAL", 2, "2026-06-02", "Makro"), linea("SAL", 1, "2026-06-03"),
+    ])[0];
+    assert.equal(g.precioNormal, null);
+  });
+
+  test("la lista de precios va recortada: no puede hinchar la respuesta", () => {
+    const muchas = Array.from({ length: 90 }, (_, i) => linea("AGUA", 1 + i / 100, `2026-0${1 + (i % 9)}-01`));
+    assert.ok(agruparPorProducto(muchas)[0].precios.length <= 40);
+  });
+});

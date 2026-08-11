@@ -100,3 +100,13 @@ describe("la paleta de categorías es la misma en el módulo y en el panel", () 
     }
   });
 });
+
+describe("no hay dos clases para lo mismo", () => {
+  test("solo queda `.tw` para el scroll horizontal de las tablas", () => {
+    // Había `.tw` y `.tblwrap` haciendo exactamente lo mismo en 20 y 13 sitios. Dos clases
+    // para una cosa acaban divergiendo: una se arregla en móvil y la otra no.
+    assert.doesNotMatch(html, /\.tblwrap/);
+    assert.doesNotMatch(app, /tblwrap/);
+    assert.match(html, /\.tw\{overflow-x:auto/);
+  });
+});

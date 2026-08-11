@@ -138,6 +138,24 @@ export function claveProducto(descripcion) {
     .trim();
 }
 
+/** Las últimas compras, de la más reciente a la más antigua, y como mucho `tope`. */
+export function recortarPrecios(precios = [], tope = 40) {
+  return [...precios].sort((a, b) => String(b.fecha).localeCompare(String(a.fecha))).slice(0, tope);
+}
+
+/**
+ * La mediana de las últimas compras. Mediana y no media: una oferta puntual —o una línea mal
+ * leída— desplaza la media, y entonces un precio normal parece una subida. Con menos de tres
+ * compras no se afirma nada: con dos precios no hay «normal» que valga.
+ */
+export function medianaPrecios(precios = [], { minimo = 3, ventana = 12 } = {}) {
+  const v = precios.slice(0, ventana).map((x) => Number(x.precio)).filter((x) => Number.isFinite(x) && x > 0);
+  if (v.length < minimo) return null;
+  v.sort((a, b) => a - b);
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : Math.round(((v[m - 1] + v[m]) / 2) * 100) / 100;
+}
+
 export function agruparPorProducto(lineas = []) {
   const mapa = new Map();
   for (const l of lineas) {
@@ -148,6 +166,11 @@ export function agruparPorProducto(lineas = []) {
         clave: k, descripcion: l.descripcion, proveedores: new Set(),
         cantidad: 0, importe: 0, veces: 0, conImporte: 0, conCantidad: 0, dudosas: 0,
         precioMin: null, precioMax: null, primera: null, ultima: null, ultimoPrecio: null,
+        // Las últimas compras con su fecha. Hacen falta para el precio NORMAL (la mediana) y
+        // para poder fusionar dos locales sin inventar: de dos medianas no sale una mediana,
+        // pero de dos listas sí. Se recortan a 40 por producto — con eso sobra para la mediana
+        // de las últimas doce y la respuesta no se hincha.
+        precios: [],
       });
     }
     const g = mapa.get(k);
@@ -160,6 +183,7 @@ export function agruparPorProducto(lineas = []) {
     if (p != null) {
       g.precioMin = g.precioMin == null ? p : Math.min(g.precioMin, p);
       g.precioMax = g.precioMax == null ? p : Math.max(g.precioMax, p);
+      if (l.fecha) g.precios.push({ fecha: String(l.fecha).slice(0, 10), precio: p });
     }
     const f = l.fecha || null;
     if (f) {
@@ -171,6 +195,12 @@ export function agruparPorProducto(lineas = []) {
     .map((g) => ({
       ...g,
       proveedores: [...g.proveedores],
+      precios: recortarPrecios(g.precios),
+      // El precio NORMAL: la mediana de las últimas compras. Es lo que convierte «último
+      // precio» en una cifra que se puede juzgar — 45 € no dice nada hasta saber que lo normal
+      // son 30 —. Con un solo proveedor; con varios no se enseña, porque «más caro en Makro
+      // que en el mayorista» no es una subida, es otro proveedor.
+      precioNormal: g.proveedores.size === 1 ? medianaPrecios(recortarPrecios(g.precios)) : null,
       // null y no 0 cuando NINGUNA línea traía el dato: un «0 €» se lee como «no gastamos
       // nada», y lo que pasa es que no se pudo leer. No es lo mismo.
       cantidad: g.conCantidad ? Math.round(g.cantidad * 1000) / 1000 : null,
