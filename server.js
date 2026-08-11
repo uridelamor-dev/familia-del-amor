@@ -32,7 +32,7 @@ import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos, modulo
 import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocalesExtra, parseLocales } from "./src/modules/usuarios/locales.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
-import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, caducidadMes, generarToken } from "./src/modules/rrhh/pulso.js";
+import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo, generarToken } from "./src/modules/rrhh/pulso.js";
 import { ensureSchemaHorarios, sembrarLocal, migrarDescansos } from "./src/modules/horarios/schema.js";
 import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descansos.js";
 import { instanteANegocio, lunesDe, diasSemana, isoConOffset, aMinutos, deMinutos, epochDeLocal, sumaDias } from "./src/modules/horarios/tiempo.js";
@@ -7698,8 +7698,11 @@ app.get("/api/pulso/:token", async (req, res) => {
     if (!inv) return res.status(404).json({ ok: false, error: "Este enlace no es válido." });
     const hoy = new Date().toISOString().slice(0, 10);
     if (inv.usado) return res.status(410).json({ ok: false, error: "Ya has contestado este mes. ¡Gracias!" });
-    if (inv.caduca_en < hoy) return res.status(410).json({ ok: false, error: "Este enlace ha caducado." });
-    res.json({ ok: true, mes: inv.mes, version: PULSO_VERSION, preguntas: PULSO_PREGUNTAS });
+    // El enlace NO caduca. `caduca_en` es hasta cuándo se insiste con los recordatorios, no
+    // hasta cuándo vale: quien estaba de vacaciones esos días es justo de quien más falta hace
+    // saber cómo está. Se avisa de que el mes ya se cerró, pero se deja contestar.
+    res.json({ ok: true, mes: inv.mes, version: PULSO_VERSION, preguntas: PULSO_PREGUNTAS,
+      fueraDePlazo: inv.caduca_en < hoy });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo abrir el formulario" }); }
 });
 
@@ -7728,7 +7731,10 @@ app.post("/api/pulso/:token", async (req, res) => {
     const hoy = new Date().toISOString().slice(0, 10);
     if (!inv) { await client.query("ROLLBACK"); return res.status(404).json({ ok: false, error: "Este enlace no es válido." }); }
     if (inv.usado) { await client.query("ROLLBACK"); return res.status(410).json({ ok: false, error: "Ya has contestado este mes. ¡Gracias!" }); }
-    if (inv.caduca_en < hoy) { await client.query("ROLLBACK"); return res.status(410).json({ ok: false, error: "Este enlace ha caducado." }); }
+    // Sin comprobar el plazo: una respuesta que llega tarde cuenta para SU mes, que es de lo
+    // que hablaba. Un mes ya mirado puede ganar una respuesta más — eso lo completa, no lo
+    // estropea. Y NO se marca cuál llegó tarde: en un equipo pequeño, «esta llegó fuera de
+    // plazo» puede señalar a quien estuvo de baja, y estas respuestas son anónimas.
 
     await q(`UPDATE pulso_invitaciones SET usado = 1 WHERE id = ?`, [inv.id]);
     await q(
@@ -7762,7 +7768,7 @@ app.post("/api/pulso/:token/contacto", async (req, res) => {
     );
     if (!inv) return res.status(404).json({ ok: false, error: "Este enlace no es válido." });
     const hoy = new Date().toISOString().slice(0, 10);
-    if (inv.caduca_en < hoy) return res.status(410).json({ ok: false, error: "Este enlace ha caducado." });
+
     // Una petición por persona y mes: si insiste, se actualiza el mensaje en vez de duplicar.
     const previa = await dbGet(`SELECT id FROM pulso_contactos WHERE worker_id = ? AND mes = ? AND atendido = 0`, [inv.worker_id, inv.mes]);
     if (previa) {
@@ -7897,8 +7903,6 @@ app.post("/api/pulso/mi-enlace", requireAuth(), async (req, res) => {
     const inv = await dbGet(`SELECT id, usado, caduca_en FROM pulso_invitaciones WHERE worker_id = ? AND mes = ?`, [req.user.id, mes]);
     if (!inv) return res.status(404).json({ ok: false, error: "Este mes todavía no hay ninguna encuesta para ti." });
     if (inv.usado) return res.status(410).json({ ok: false, error: "Ya has contestado este mes. ¡Gracias!" });
-    const hoy = new Date().toISOString().slice(0, 10);
-    if (inv.caduca_en < hoy) return res.status(410).json({ ok: false, error: "El plazo de este mes ya ha pasado." });
     const token = pulsoToken();
     await dbRun(`UPDATE pulso_invitaciones SET token_hash = ? WHERE id = ?`, [pulsoHash(token), inv.id]);
     const base = (await getConfig("pulso_base_url")) || process.env.PUBLIC_URL || "";
@@ -7910,7 +7914,7 @@ app.post("/api/pulso/mi-enlace", requireAuth(), async (req, res) => {
 app.post("/api/rrhh/pulso/enviar", requireAuth(["direccion"]), async (req, res) => {
   try {
     const mes = mesValido(req.body?.mes) || mesAnterior(new Date().toISOString().slice(0, 7));
-    const caduca = caducidadMes(mes);
+    const caduca = finDePlazo(mes);
     const equipo = await dbAll(
       `SELECT id, nombre, local, telefono FROM users
        WHERE rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL`

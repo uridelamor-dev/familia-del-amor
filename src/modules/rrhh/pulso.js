@@ -137,8 +137,19 @@ export function ultimosMeses(mes, n) {
 
 const DIAS_MES = (y, m) => (m === 2 ? (((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 29 : 28) : [31, 0, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]);
 
-// Hasta cuándo vale el enlace: fin del mes evaluado + días de gracia (vacaciones, bajas).
-export function caducidadMes(mes, { diasGracia = 10 } = {}) {
+/**
+ * Hasta cuándo se INSISTE con el enlace: fin del mes evaluado + unos días de gracia.
+ *
+ * OJO: esto es el plazo para RECORDAR, no una caducidad. El enlace sigue valiendo después.
+ * Se probó al revés —el enlace moría a los diez días— y el resultado es que quien estaba de
+ * vacaciones o de baja justo esos días se quedaba sin voz ese mes… que es exactamente la
+ * persona cuya opinión más falta hace. Dejar de dar la lata sí tiene sentido; cerrarle la
+ * puerta a quien por fin abre el enlace, no.
+ *
+ * La respuesta tardía cuenta para SU mes, que es de lo que hablaba. Un mes ya mirado puede
+ * ganar una respuesta más: eso no estropea el dato, lo completa.
+ */
+export function finDePlazo(mes, { diasGracia = 10 } = {}) {
   const m = /^(\d{4})-(\d{2})$/.exec(String(mes || ""));
   if (!m) return null;
   let y = +m[1], mm = +m[2];

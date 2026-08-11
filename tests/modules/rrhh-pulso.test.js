@@ -1,11 +1,12 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   K_ANON, MIN_GLOBAL, mediaSegura, agregarPorLocal, serieMensual,
-  puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, caducidadMes,
+  puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo,
   generarToken, hashToken,
 } from "../../src/modules/rrhh/pulso.js";
 
@@ -112,10 +113,10 @@ describe("pulso.calendario", () => {
     assert.deepEqual(ultimosMeses("2026-02", 3), ["2025-12", "2026-01", "2026-02"]);
   });
   test("caducidad = fin de mes + gracia, cruzando meses y años", () => {
-    assert.equal(caducidadMes("2026-08"), "2026-09-10");   // agosto 31 + 10
-    assert.equal(caducidadMes("2026-02"), "2026-03-10");   // febrero 28 + 10
-    assert.equal(caducidadMes("2024-02"), "2024-03-10");   // bisiesto: 29 + 10
-    assert.equal(caducidadMes("2026-12"), "2027-01-10");   // cruza el año
+    assert.equal(finDePlazo("2026-08"), "2026-09-10");   // agosto 31 + 10
+    assert.equal(finDePlazo("2026-02"), "2026-03-10");   // febrero 28 + 10
+    assert.equal(finDePlazo("2024-02"), "2024-03-10");   // bisiesto: 29 + 10
+    assert.equal(finDePlazo("2026-12"), "2027-01-10");   // cruza el año
   });
 });
 
@@ -180,5 +181,37 @@ describe("pulso — separación estructural de las dos tablas", () => {
       const soloPublicas = !/worker|token|telefono|nombre/.test(s);
       assert.ok(agrega || soloPublicas, `SELECT sospechoso sobre pulso_respuestas: ${s.trim().slice(0, 80)}`);
     }
+  });
+});
+
+describe("el enlace del pulso no caduca", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+
+  test("ni para abrir el formulario ni para contestar", () => {
+    // El plazo se probó como caducidad y el resultado es que quien estaba de vacaciones o de
+    // baja justo esos diez días se quedaba sin voz ese mes — que es exactamente la persona
+    // cuya opinión más falta hace.
+    const publico = server.slice(server.indexOf('app.get("/api/pulso/:token"'), server.indexOf("// Público: «quiero que hablemos»"));
+    assert.doesNotMatch(publico, /caduca_en < hoy\) (return res\.status\(410\)|\{ await client)/);
+    assert.match(publico, /fueraDePlazo/, "pero sí se dice que llega tarde");
+  });
+
+  test("y el plazo sigue sirviendo para dejar de dar la lata con recordatorios", () => {
+    // Ese uso sí tiene sentido: insistir eternamente por WhatsApp, no.
+    const recordatorios = server.slice(server.indexOf("async function despacharPulsoPendientes"));
+    assert.match(recordatorios.slice(0, 600), /i\.caduca_en >= \?/);
+  });
+
+  test("la respuesta tardía NO se marca: en un equipo pequeño eso señala a alguien", () => {
+    // `pulso_respuestas` no tiene fecha a propósito. Un «esta llegó fuera de plazo» sería una
+    // fecha encubierta, y quien estuvo de baja ese mes es identificable.
+    const post = server.slice(server.indexOf('app.post("/api/pulso/:token"'), server.indexOf("// Público: «quiero que hablemos»"));
+    assert.doesNotMatch(post, /INSERT INTO pulso_respuestas[^;]*tarde/i);
+  });
+
+  test("y el trabajador puede pedir su enlace aunque haya pasado el plazo", () => {
+    const mi = server.slice(server.indexOf('app.post("/api/pulso/mi-enlace"'), server.indexOf('app.post("/api/pulso/mi-enlace"') + 1200);
+    assert.doesNotMatch(mi, /El plazo de este mes ya ha pasado/);
+    assert.match(mi, /Ya has contestado este mes/, "lo que sí sigue: no contestar dos veces");
   });
 });

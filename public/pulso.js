@@ -47,6 +47,14 @@ async function cargar() {
         .format(new Date(Number(y), Number(m) - 1, 15));
       $("pulsoTitulo").textContent = `¿Cómo ha ido ${nombre}?`;
     }
+    // Si llega fuera de plazo se dice, pero se deja contestar: quien estaba de vacaciones esos
+    // días es justo de quien más falta hace saber cómo está.
+    if (j.fueraDePlazo) {
+      const nota = document.createElement("p");
+      nota.className = "pulso-nota";
+      nota.textContent = "Este mes ya se cerró, pero tu respuesta cuenta igual. Gracias por contestar.";
+      $("pulsoPreguntas").before(nota);
+    }
     $("pulsoPreguntas").innerHTML = (j.preguntas || []).map(pintarPregunta).join("");
     $("pulsoForm").classList.remove("hidden");
     $("pulsoHablemos").classList.remove("hidden");

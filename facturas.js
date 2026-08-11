@@ -9,6 +9,7 @@ import { extraerTextoPdf, bloqueTextoParaClaude } from "./src/modules/facturas/p
 import { VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { calcularVencimiento } from "./src/modules/facturas/vencimiento.js";
 import { precioReferencia, revisarPrecios } from "./src/modules/facturas/precio-referencia.js";
+import { extraerJson } from "./src/modules/facturas/json-cortado.js";
 import { createHash } from "crypto";
 import { PDFDocument } from "pdf-lib";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -337,14 +338,23 @@ export async function extraerDatosDocumento(buffer, mimeType) {
     model: "claude-haiku-4-5-20251001",
     // Subido de 512: ahora también viene el detalle línea a línea, y una factura de
     // proveedor de bebidas puede traer treinta. Con 512 se cortaba el JSON a la mitad.
-    max_tokens: 4096,
+    max_tokens: 16000,
     messages: [{ role: "user", content: contenido }]
   });
 
   const text = response.content.find(b => b.type === "text")?.text || "";
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("Claude no devolvió JSON válido: " + text.slice(0, 200));
-  return JSON.parse(match[0]);
+  const r = extraerJson(text);
+
+  // El modelo avisa por su cuenta de que le hemos cortado. Sin mirar esto, el fallo salía como
+  // «Expected ',' or ']' after array element in JSON at position 9099», que no le dice nada a
+  // quien lo lee y parece que la factura no tenía descuentos.
+  if (response.stop_reason === "max_tokens") {
+    if (!r.ok) throw new Error("La lectura se ha cortado: la factura tiene más líneas de las que caben en una respuesta.");
+    console.warn(`[Facturas] la lectura se ha cortado; se guardan las ${(r.valor.lineas || []).length} líneas que llegaron enteras`);
+  }
+  if (!r.ok) throw new Error(`Claude no devolvió JSON válido (${r.motivo}): ` + text.slice(0, 200));
+  if (r.recortado) console.warn(`[Facturas] respuesta incompleta: se aprovechan ${(r.valor.lineas || []).length} líneas enteras`);
+  return r.valor;
 }
 
 // ── Google Drive API (via fetch) ────────────────────────────────────────────
