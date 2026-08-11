@@ -8,6 +8,7 @@ import { revisarCoherencia, textosDe } from "./src/modules/facturas/coherencia.j
 import { extraerTextoPdf, bloqueTextoParaClaude } from "./src/modules/facturas/pdf-texto.js";
 import { VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { calcularVencimiento } from "./src/modules/facturas/vencimiento.js";
+import { precioReferencia, revisarPrecios } from "./src/modules/facturas/precio-referencia.js";
 import { createHash } from "crypto";
 import { PDFDocument } from "pdf-lib";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -141,6 +142,44 @@ export async function proveedorConLineas(dbGet, proveedor) {
 }
 
 /**
+ * Los precios a los que este proveedor nos ha cobrado antes cada producto de la factura, para
+ * poder decir si el de hoy se sale de lo normal.
+ *
+ * Se pregunta por las claves de ESTA factura y contra el MISMO proveedor: que el aceite esté
+ * más caro en Makro que en el mayorista no es una subida, es otro proveedor, y un aviso que no
+ * se puede accionar se aprende a ignorar.
+ *
+ * Solo mira facturas ya guardadas (no la que está entrando) y descarta las apartadas por
+ * dudosas: una copia repetida contaría dos veces en la mediana.
+ */
+export async function referenciasDeProveedor(dbAll, proveedor, claves) {
+  const lista = [...new Set((claves || []).filter(Boolean))];
+  if (!dbAll || !proveedor || !lista.length) return new Map();
+  try {
+    const filas = await dbAll(
+      `SELECT l.clave, l.precio_unitario::float AS precio, f.fecha
+         FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
+        WHERE LOWER(f.proveedor) = LOWER(?) AND COALESCE(f.dup_estado,'') <> 'duda'
+          AND l.clave = ANY(?) AND l.precio_unitario IS NOT NULL AND l.dudosa = FALSE
+        ORDER BY f.fecha DESC LIMIT 2000`, [proveedor, lista]);
+    const porClave = new Map();
+    for (const f of filas) {
+      if (!porClave.has(f.clave)) porClave.set(f.clave, []);
+      porClave.get(f.clave).push(f.precio);
+    }
+    const out = new Map();
+    for (const [clave, precios] of porClave) {
+      const ref = precioReferencia(precios);
+      if (ref != null) out.set(clave, { precio: ref, compras: precios.length });
+    }
+    return out;
+  } catch (e) {
+    console.error("[Facturas] referencias de precio:", e.message);
+    return new Map();
+  }
+}
+
+/**
  * Las condiciones de pago pactadas con este proveedor, si las hay. Se buscan por la clave
  * normalizada —igual que las categorías— para que valgan aunque el nombre se lea de tres
  * formas distintas. Si no hay condiciones, la factura se queda SIN fecha de vencimiento y se
@@ -158,10 +197,17 @@ export async function condicionesDePago(dbGet, proveedor) {
 
 // Guarda el detalle de una factura y deja escrito si cuadra. NO es fatal: si algo falla
 // aquí, la factura ya está guardada y lo que se pierde es el detalle, no el gasto.
-export async function guardarLineas(dbRun, facturaId, datos, ahora) {
+export async function guardarLineas(dbRun, facturaId, datos, ahora, extra = {}) {
   const lineas = normalizarLineas(datos.lineas);
   const v = validarSuma(lineas, datos.base_imponible);
   const aviso = mensajeValidacion(v);
+
+  // ¿Nos están cobrando algo más caro de lo normal? Se mira ANTES de guardar las líneas, que
+  // es cuando las de esta factura todavía no ensucian su propia referencia.
+  const avisosPrecio = extra.referencias && extra.referencias.size
+    ? revisarPrecios(lineas.map((l) => ({ ...l, clave: claveProducto(l.descripcion) })), extra.referencias,
+      { proveedor: extra.proveedor || "" })
+    : { avisos: [], total: 0, ocultos: 0 };
 
   for (const l of lineas) {
     await dbRun(
@@ -177,7 +223,23 @@ export async function guardarLineas(dbRun, facturaId, datos, ahora) {
   // día. Ver src/modules/facturas/repaso.js.
   await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ?, lineas_leidas_en = ?, lineas_version = ? WHERE id = ?`,
     [v.cuadra ? (v.dudosas ? "dudas" : "ok") : "descuadre", aviso, ahora, VERSION_LINEAS, facturaId]);
-  return { n: lineas.length, validacion: v, aviso };
+
+  // Los avisos de precio van a `revisar`, con los de coherencia: es la misma pregunta —«esto
+  // no cuadra, míralo antes de pagar»— y tenerlos en dos sitios sería tener dos bandejas.
+  if (avisosPrecio.avisos.length) {
+    const textos = avisosPrecio.avisos.map((a) => a.texto);
+    if (avisosPrecio.ocultos) textos.push(`Y ${avisosPrecio.ocultos} producto(s) más por encima de lo normal.`);
+    await dbRun(
+      `UPDATE facturas SET revisar = CASE
+          WHEN revisar IS NULL OR revisar = '' THEN ?
+          ELSE ?::jsonb || revisar::jsonb END::text
+        WHERE id = ?`,
+      [JSON.stringify(textos), JSON.stringify(textos), facturaId]).catch(async () => {
+      // Si la columna trae algo que no es JSON (de antes), no se pierde el aviso: se reemplaza.
+      await dbRun(`UPDATE facturas SET revisar = ? WHERE id = ?`, [JSON.stringify(textos), facturaId]).catch(() => {});
+    });
+  }
+  return { n: lineas.length, validacion: v, aviso, precios: avisosPrecio };
 }
 
 // ── Utilidades de nombre y hash ────────────────────────────────────────────
@@ -792,9 +854,16 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
           [new Date().toISOString(), facturaId]);
         console.log(`[Facturas] #${facturaId}: gasto estructural (${datos.proveedor}), no se lee el detalle`);
       } else {
-        const r = await guardarLineas(dbRun, facturaId, datos, new Date().toISOString());
+        // Los precios a los que este proveedor nos cobraba antes cada cosa, para poder avisar
+        // si hoy cobra más. Se piden ANTES de guardar: si no, las líneas de esta factura ya
+        // estarían dentro de su propia referencia y una subida se taparía a sí misma.
+        const referencias = await referenciasDeProveedor(dbAll, datos.proveedor,
+          normalizarLineas(datos.lineas).map((l) => claveProducto(l.descripcion)));
+        const r = await guardarLineas(dbRun, facturaId, datos, new Date().toISOString(),
+          { referencias, proveedor: datos.proveedor });
         if (r.aviso) console.warn(`[Facturas] #${facturaId} detalle: ${r.aviso}`);
         else console.log(`[Facturas] #${facturaId}: ${r.n} líneas de detalle`);
+        if (r.precios?.total) console.warn(`[Facturas] #${facturaId}: ${r.precios.total} producto(s) por encima de lo normal`);
       }
     }
   } catch (e) { console.error("[Facturas] no se pudo guardar el detalle:", e.message); }

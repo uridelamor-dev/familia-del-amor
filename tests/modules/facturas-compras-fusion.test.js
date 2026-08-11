@@ -199,3 +199,43 @@ describe("cableado en el servidor", () => {
     assert.match(fn, /viendoTodosLosMios\(\) \? "locales="/);
   });
 });
+
+describe("el albarán y su factura cuentan UNA vez", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  const fn = server.slice(server.indexOf("async function comprasDeLocal("), server.indexOf('app.get("/api/facturas/compras"'));
+
+  test("se descuenta la línea del albarán solo si su factura YA trae detalle", () => {
+    // El proveedor deja un albarán por entrega y a fin de mes la factura que las agrupa. Si
+    // las dos traen detalle, el mismo kilo de gambas está dos veces y «Todo lo comprado»
+    // decía el doble.
+    assert.match(fn, /COALESCE\(f\.tipo,'factura'\) = 'albaran' AND f\.conciliado_con IS NOT NULL/);
+    assert.match(fn, /ff\.lineas_estado IN \('ok','dudas','descuadre'\)/);
+    assert.match(fn, /condLin\.push\(`NOT \$\{ALBARAN_YA_CONTADO\}`\)/);
+  });
+
+  test("si la factura NO trae detalle, el albarán sigue contando", () => {
+    // Hay facturas resumen («según albaranes adjuntos») donde el albarán es la única fuente
+    // de lo que entró por la puerta. Quitarlo perdería el producto entero.
+    // La condición exige que la factura tenga detalle para descontar: sin ese IN, se
+    // descontaría siempre y se perderían los productos de las facturas resumen.
+    // Ojo con el recorte: hay otro `condLin.push` ANTES (el filtro de texto), así que se busca
+    // el que va después de la constante.
+    const desde = fn.indexOf("const ALBARAN_YA_CONTADO");
+    const cond = fn.slice(desde, fn.indexOf("condLin.push", desde));
+    assert.match(cond, /lineas_estado IN \('ok','dudas','descuadre'\)/);
+    assert.match(cond, /EXISTS \(/, "hace falta comprobar la factura, no solo que esté conciliado");
+  });
+
+  test("y se cuenta cuántos se han dejado fuera, para poder decirlo", () => {
+    assert.match(fn, /count\(DISTINCT f\.id\)::int AS n/);
+    const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+    assert.match(panel, /albaranesYaFacturados/);
+    assert.match(panel, /se compró una vez y se cuenta una vez/);
+  });
+
+  test("con varios locales, el contador se suma", () => {
+    const a = { grupos: [], categorias: { categorias: [] }, cobertura: {}, totales: {}, albaranesYaFacturados: 2, local: "A" };
+    const b = { grupos: [], categorias: { categorias: [] }, cobertura: {}, totales: {}, albaranesYaFacturados: 3, local: "B" };
+    assert.equal(fusionarCompras([a, b], { locales: ["A", "B"] }).albaranesYaFacturados, 5);
+  });
+});

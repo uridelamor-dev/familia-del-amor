@@ -3387,6 +3387,24 @@ async function comprasDeLocal(query, local) {
       condLin.push("l.clave LIKE ?");
       parLin.push("%" + claveProducto(q) + "%");
     }
+    // ── El albarán y su factura cuentan UNA vez ──────────────────────────────
+    // El proveedor deja un albarán por entrega y a fin de mes manda la factura que las agrupa.
+    // Si las dos traen su detalle leído, el mismo kilo de gambas está dos veces: se compró
+    // una, y «Todo lo comprado» decía el doble.
+    //
+    // Pero no vale con quitar los albaranes y ya: hay facturas resumen que no traen detalle
+    // («según albaranes adjuntos»), y ahí el albarán es la ÚNICA fuente de lo que entró por la
+    // puerta. Quitarlo perdería el producto entero, que es peor que contarlo dos veces.
+    //
+    // La regla, entonces: se descuenta la línea de un albarán solo si YA está conciliado con
+    // una factura y esa factura TIENE su propio detalle. Si la factura no lo trae, o si el
+    // albarán aún no tiene factura, la línea del albarán cuenta — es lo único que hay.
+    const ALBARAN_YA_CONTADO = `(COALESCE(f.tipo,'factura') = 'albaran' AND f.conciliado_con IS NOT NULL AND EXISTS (
+        SELECT 1 FROM facturas ff
+         WHERE ff.id = NULLIF(regexp_replace(f.conciliado_con, '[^0-9]', '', 'g'), '')::int
+           AND ff.lineas_estado IN ('ok','dudas','descuadre')))`;
+    condLin.push(`NOT ${ALBARAN_YA_CONTADO}`);
+
     const whereLin = condLin.length ? "WHERE " + condLin.join(" AND ") : "";
     const whereFac = condFac.length ? "WHERE " + condFac.join(" AND ") : "";
 
@@ -3395,6 +3413,12 @@ async function comprasDeLocal(query, local) {
               l.importe::float AS importe, l.dudosa, f.fecha, f.proveedor, f.local, f.id AS factura_id, f.numero_factura
        FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
        ${whereLin} ORDER BY f.fecha DESC, l.orden LIMIT 5000`, parLin);
+
+    // Cuántos albaranes se han dejado fuera por eso, para poder decirlo: descontar en silencio
+    // es cambiar un total sin avisar, y el que lo mire mañana no sabrá por qué bajó.
+    const dobles = await dbGet(
+      `SELECT count(DISTINCT f.id)::int AS n FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
+        WHERE ${[...condFac, ALBARAN_YA_CONTADO].join(" AND ")}`, parFac);
 
     const grupos = agruparPorProducto(filas);
     // Cuántas facturas del periodo NO tienen detalle: sin esto, un total parcial parecería
@@ -3438,6 +3462,8 @@ async function comprasDeLocal(query, local) {
         importe: Math.round(grupos.reduce((s, g) => s + g.importe, 0) * 100) / 100,
         productos: grupos.length,
       },
+      // Los albaranes que ya trae su factura y por eso no se cuentan dos veces.
+      albaranesYaFacturados: dobles?.n || 0,
       cobertura: {
         facturas: cobertura?.total || 0,
         conDetalle: cobertura?.con_detalle || 0,

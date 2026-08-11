@@ -5477,11 +5477,18 @@ async function refrescarCompras() {
     ? ` <b>${num(c.noAplica)}</b> ${c.noAplica === 1 ? "es de gasto estructural" : "son de gasto estructural"} (alquiler, luz, gestor…): ${c.noAplica === 1 ? "su detalle no se lee" : "su detalle no se lee"} a propósito, porque esas líneas no son productos. El gasto sí cuenta.`
     : "";
   if (c.noLeibles) partes.push(`<b>${num(c.noLeibles)}</b> no se ${c.noLeibles === 1 ? "pudo" : "pudieron"} leer, normalmente porque ya no está el archivo`);
-  const aviso = c.facturas === 0 ? "" : (c.sinLeer || c.noLeibles || c.descuadradas || c.noAplica)
+  // El proveedor deja un albarán por entrega y a fin de mes la factura que las agrupa. Cuando
+  // las dos traen detalle, el mismo kilo de gambas estaría dos veces. Se cuenta una — y se
+  // dice, porque descontar en silencio es cambiar un total sin avisar.
+  const dobles = j.albaranesYaFacturados || 0;
+  const notaDobles = dobles
+    ? ` <b>${num(dobles)}</b> ${dobles === 1 ? "albarán ya viene" : "albaranes ya vienen"} dentro de su factura, así que ${dobles === 1 ? "su detalle no se cuenta aparte" : "su detalle no se cuenta aparte"}: se compró una vez y se cuenta una vez.`
+    : "";
+  const aviso = c.facturas === 0 ? "" : (c.sinLeer || c.noLeibles || c.descuadradas || c.noAplica || dobles)
     ? `<p class="fic-nota">De las <b>${num(c.facturas)}</b> facturas de este periodo, <b>${num(c.conDetalle)}</b> tienen el detalle leído.
        ${partes.length ? `${cap(partes.join(" y "))}, así que <b>no cuentan</b> en estos totales.` : ""}
        ${c.descuadradas ? `Además, <b>${num(c.descuadradas)}</b> ${c.descuadradas === 1 ? "tiene un detalle que no cuadra" : "tienen un detalle que no cuadra"} con su base imponible: ${c.descuadradas === 1 ? "mírala" : "míralas"} antes de fiarte de sus cantidades.` : ""}
-       ${estructural}
+       ${estructural}${notaDobles}
        ${c.sinLeer ? `<button class="btn sm" data-comp="releer" style="margin-top:8px">Leer las ${num(c.sinLeer)} que faltan</button>` : ""}</p>`
     : `<p class="mut" style="margin:0 0 12px">Las ${num(c.conDetalle)} facturas de este periodo tienen el detalle leído.</p>`;
 
