@@ -11,7 +11,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes } from "./facturas.js";
+import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -20,6 +20,7 @@ import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./sr
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fusion.js";
+import { rangoAnterior, variacion } from "./src/modules/dashboard/periodos.js";
 import { mapManageRow, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry, locationNamesDeLocal } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import QRCode from "qrcode";   // ya instalada (la usa el enlace de WhatsApp); emparejar la tablet escaneando
@@ -557,7 +558,10 @@ async function initDB() {
     // este número habría que adivinarlo mirando las columnas, y una factura que de verdad no
     // tiene descuentos parecería pendiente de releer para siempre.
     // Ver src/modules/facturas/repaso.js.
-    for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT", "lineas_version INTEGER"]) {
+    // `drive_thumb`: la miniatura del papel, en base64, como CACHÉ. No es un dato: se puede
+    // borrar entera y se vuelve a pedir a Drive sola. Se guarda la imagen y no el enlace porque
+    // el `thumbnailLink` de Drive caduca en unas horas (ver /api/facturas/:id/miniatura).
+    for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT", "lineas_version INTEGER", "drive_thumb TEXT"]) {
       try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
     }
     await client.query(`
@@ -1839,6 +1843,10 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
     const { where, params } = facturasWhere(query);
     const LIMITE = 500;
     const rows = await dbAll(`SELECT * FROM facturas ${where} ORDER BY fecha DESC NULLS LAST, creado_en DESC LIMIT ${LIMITE}`, params);
+    // `drive_thumb` es la miniatura en base64 y NO puede viajar en la lista: son ~8 KB por
+    // factura, y con el tope de 500 serían cuatro megas de respuesta para pintar una tabla.
+    // Cada fila la pide por su lado (`/api/facturas/:id/miniatura`) y el navegador la cachea.
+    for (const r of rows) delete r.drive_thumb;
     // Los totales se calculan sobre el MISMO filtro y SIN el tope: sumar solo las filas que se
     // enseñan daría un total corto en cuanto haya más de 500, y un total corto no se nota —
     // parece que se ha gastado menos—. Es una consulta agregada, no trae filas.
@@ -2133,6 +2141,51 @@ app.get("/api/facturas/pendientes/:id/archivo", requireAuth(["direccion", "conta
     const buf = Buffer.from(await dl.arrayBuffer());
     res.end(buf);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── Miniatura de la factura ─────────────────────────────────────────────────
+// Una lista de facturas es una lista de papeles, y un papel se reconoce por su pinta antes que
+// por su número. Con la miniatura al lado, «esa es la de Grau» se ve sin leer.
+//
+// POR QUÉ UN PROXY Y NO GUARDAR EL ENLACE: el `thumbnailLink` que da Drive CADUCA en unas horas
+// y depende de la sesión. Guardarlo daría una lista llena de imágenes rotas al día siguiente —y
+// rotas en silencio—. Se guarda la IMAGEN, no el enlace, y se sirve desde nuestro dominio (el
+// navegador no puede mandar el token de Google). Mismo patrón que la vista previa de pendientes.
+//
+// La caché es de usar y tirar: si se borra la columna, se vuelve a pedir y ya está.
+app.get("/api/facturas/:id/miniatura", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const f = await dbGet("SELECT id, local, drive_url, drive_thumb FROM facturas WHERE id = ?", [Number(req.params.id)]);
+    if (!f) return res.status(404).end();
+    const scope = localScope(req);
+    if (scope && f.local !== scope && !puedeAccederLocal(req, f.local)) return res.status(403).end();
+
+    const enviar = (b64) => {
+      // Un día de caché en el navegador: la miniatura de una factura no cambia nunca.
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.end(Buffer.from(b64, "base64"));
+    };
+    if (f.drive_thumb) return enviar(f.drive_thumb);
+
+    const fileId = idDeDriveUrl(f.drive_url);
+    if (!fileId) return res.status(404).end();
+    const token = await getDriveAccessToken();
+    const meta = await (await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=thumbnailLink`,
+      { headers: { Authorization: `Bearer ${token}` } })).json();
+    if (!meta || !meta.thumbnailLink) return res.status(404).end();
+    // `=s220` pide una miniatura pequeña: son 5-10 KB en vez de 200, y en una fila de tabla no
+    // se va a ver más grande de 40 px.
+    const url = String(meta.thumbnailLink).replace(/=s\d+.*$/, "") + "=s220";
+    const img = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!img.ok) return res.status(404).end();
+    const b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
+    await dbRun("UPDATE facturas SET drive_thumb = ? WHERE id = ?", [b64, f.id]).catch(() => {});
+    return enviar(b64);
+  } catch (e) {
+    // Que falte una miniatura no puede ensuciar el log ni romper la fila: 404 y a otra cosa.
+    return res.status(404).end();
+  }
 });
 
 // Campos de la factura que el panel puede corregir al asignar (se persisten en BD/Sheets).
@@ -4846,13 +4899,44 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
     if (!/^\d{4}-\d{2}-\d{2}$/.test(f0) || !/^\d{4}-\d{2}-\d{2}$/.test(t0) || f0 > t0) {
       return res.status(400).json({ ok: false, error: "Rango inválido" });
     }
-    if (locales.length > 1) {
-      // Varios locales: uno a uno con la consulta de siempre y se suman (ver fusion.js).
-      const partes = [];
-      for (const l of locales) partes.push(await periodoDeLocal(req.query, l));
-      return res.json({ ok: true, data: fusionarPeriodo(partes) });
+    const deLosLocales = async (q) => {
+      if (locales.length > 1) {
+        // Varios locales: uno a uno con la consulta de siempre y se suman (ver fusion.js).
+        const partes = [];
+        for (const l of locales) partes.push(await periodoDeLocal(q, l));
+        return fusionarPeriodo(partes);
+      }
+      return periodoDeLocal(q, locales[0] || null);
+    };
+
+    const data = await deLosLocales(req.query);
+
+    // ¿Con qué se compara? Solo si se pide (`comparar=1`): son las mismas consultas otra vez, y
+    // el que no quiera la comparación no tiene por qué pagarlas. Una cifra sola no dice nada
+    // —«17.000 €» solo significa algo al lado de con cuánto se compara— pero el periodo
+    // anterior no se calcula restando días: ver `rangoAnterior` en src/modules/dashboard.
+    // Va DENTRO de `data` a propósito: el panel desenvuelve `j.data` y todo lo que viaje fuera
+    // se pierde por el camino sin que nadie se entere.
+    if (["1", "true", "si", "sí"].includes(String(req.query.comparar || "").toLowerCase())) {
+      // El preset lo sabe el panel («semana», «mes»…) y es lo que decide la regla: un rango de
+      // once días puede ser «lo que va de mes» o una ventana de once días, y mirando solo las
+      // fechas no hay forma de saberlo.
+      const prev = rangoAnterior(f0, t0, req.query.preset);
+      if (prev && data) {
+        const ant = await deLosLocales({ ...req.query, from: prev.from, to: prev.to });
+        data.comparacion = {
+          desde: prev.from, hasta: prev.to, etiqueta: prev.etiqueta,
+          reservas: variacion(data?.reservas?.total, ant?.reservas?.total),
+          personas: variacion(data?.reservas?.personas, ant?.reservas?.personas),
+          ventas: variacion(data?.ventas?.total, ant?.ventas?.total),
+          gastos: variacion(data?.gastos?.total, ant?.gastos?.total),
+          resultado: variacion(data?.resultado, ant?.resultado),
+          // Los totales de antes, para poder enseñarlos al pasar el ratón sin pedirlos otra vez.
+          totales: { reservas: ant?.reservas?.total ?? null, ventas: ant?.ventas?.total ?? null,
+            gastos: ant?.gastos?.total ?? null, resultado: ant?.resultado ?? null },
+        };
+      }
     }
-    const data = await periodoDeLocal(req.query, locales[0] || null);
     return res.json({ ok: true, data });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });

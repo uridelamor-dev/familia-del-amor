@@ -109,10 +109,12 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .stat .lab{font-size:12px;color:var(--ink2);font-weight:550;display:flex;align-items:center;gap:7px}.stat .lab .ci{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;background:var(--brand-soft);color:var(--brand)}
 .stat .val{font-size:28px;font-weight:700;letter-spacing:-.03em;line-height:1.05}.stat .val small{font-size:14px;font-weight:600;color:var(--ink3)}
 .stat .sub{font-size:12px;color:var(--ink3)}
-.delta{font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:4px}.up{color:var(--success)}.down{color:var(--danger)}.flat{color:var(--ink3)}
+.delta{font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.up{color:var(--success)}.down{color:var(--danger)}.flat{color:var(--ink3)}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--surface2);color:var(--ink2);border:1px solid var(--border)}
 .pill.ok{background:var(--success-soft);color:var(--success);border-color:transparent}.pill.warn{background:var(--warning-soft);color:var(--warning);border-color:transparent}
-.pill.bad{background:var(--danger-soft);color:var(--danger);border-color:transparent}.pill.info{background:var(--info-soft);color:var(--info);border-color:transparent}.pill.brand{background:var(--brand-soft);color:var(--brand);border-color:transparent}
+.pill.bad{background:var(--danger-soft);color:var(--danger);border-color:transparent}
+/* `imp` (importante) lo genera el JS en incidencias y candidaturas; sin esta regla salía gris. */
+.pill.imp{background:var(--warning-soft);color:var(--warning);border-color:transparent}.pill.info{background:var(--info-soft);color:var(--info);border-color:transparent}.pill.brand{background:var(--brand-soft);color:var(--brand);border-color:transparent}
 .chip{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:550;color:var(--ink2);transition:.12s}.chip:hover{border-color:var(--border2);color:var(--ink)}.chip.on{background:var(--brand);color:var(--brand-ink);border-color:transparent}
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
 /* ── Cuadrante de horarios ─────────────────────────────────────────────────
@@ -178,8 +180,8 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
    Solo el semáforo de «quién está dentro» y una etiqueta de estado. Todo lo demás
    reutiliza .card/.tbl/.btn. La pantalla del kiosco tiene su propio public/fichar.css. */
 .fic-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ink3);vertical-align:middle;margin-right:2px}
-.fic-dot.dentro{background:var(--ok,#16a34a)}
-.fic-dot.pausa{background:var(--warn,#d97706)}
+.fic-dot.dentro{background:var(--success)}
+.fic-dot.pausa{background:var(--warning)}
 .fic-tag{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface2);font-size:11px;font-weight:600;color:var(--ink3);white-space:nowrap;margin-right:4px}
 .fic-tag.ok{border-color:transparent;background:var(--brand-soft);color:var(--brand)}
 .fic-tag.aviso{border-color:transparent;background:var(--danger-soft);color:var(--danger)}
@@ -275,7 +277,6 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .tbl th:first-child,.tbl td:first-child{padding-left:18px}.tbl th:last-child,.tbl td:last-child{padding-right:18px}
 .tblwrap{overflow-x:auto}
 .mbar{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--surface2)}.mbar span{height:100%}
-.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink2)}.legend i{width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:6px}
 .wrapf{display:flex;flex-wrap:wrap;gap:9px}.between{display:flex;align-items:center;justify-content:space-between;gap:12px}.flex{display:flex;align-items:center;gap:10px}
 .big{font-size:40px;font-weight:750;letter-spacing:-.035em;line-height:1}
 .sdot{width:9px;height:9px;border-radius:999px;flex:none}.st-exc{background:var(--success)}.st-ok{background:var(--brand)}.st-warn{background:var(--warning)}.st-crit{background:var(--danger)}.st-off{background:var(--ink3)}
@@ -457,6 +458,11 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .tbl tr.sincat td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
 /* Selección de documentos */
 .tbl th.facsel,.tbl td.facsel{width:34px;padding-left:14px;padding-right:0}
+/* La miniatura del papel. Una factura se reconoce por su pinta antes que por su número;
+   si no hay archivo o Drive no la da, la fila se queda sin foto y no pasa nada. */
+.tbl th.facthumb,.tbl td.facthumb{width:46px;padding-left:8px;padding-right:0}
+.tbl td.facthumb .thumb{width:38px;height:46px;object-fit:cover;border-radius:6px;border:1px solid var(--border);background:var(--surface2);display:block}
+@media(max-width:820px){.tbl th.facthumb,.tbl td.facthumb{display:none}}
 .tbl tr.sel{background:var(--brand-soft)}
 .tbl tr.sel td:first-child{background:var(--brand-soft)}
 /* La barra va PEGADA ABAJO, no empujando la tabla: si empujara el contenido, marcar la
@@ -475,7 +481,7 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .revrev{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start}
 .revrev .prev{position:sticky;top:0;background:var(--bg,#f4f2ec);border:1px solid var(--border);border-radius:12px;overflow:hidden;height:min(72vh,760px)}
 .revrev .prev iframe,.revrev .prev embed,.revrev .prev img{width:100%;height:100%;border:0;object-fit:contain;background:#fff;display:block}
-.revrev .prev .ld{display:grid;place-items:center;height:100%;color:var(--muted)}
+.revrev .prev .ld{display:grid;place-items:center;height:100%;color:var(--ink3)}
 @media(max-width:820px){.revrev{grid-template-columns:1fr}.revrev .prev{position:static;height:52vh}}
 .agnav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .agturnos{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -485,12 +491,12 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .agres{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)}
 .agres:last-child{border-bottom:0}
 .agres .hh{font-variant-numeric:tabular-nums;font-weight:650;min-width:44px}
-.agres .who{flex:1;min-width:0}.agres .who .t2{color:var(--muted);font-size:12px}
+.agres .who{flex:1;min-width:0}.agres .who .t2{color:var(--ink3);font-size:12px}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex:none}
 .agweek{display:grid;grid-template-columns:repeat(7,minmax(120px,1fr));gap:10px;overflow-x:auto}
 .agday{background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:10px;cursor:pointer;min-height:96px}
-.agday.hoy{border-color:var(--accent,#7a8450);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent,#7a8450) 22%,transparent)}
-.agday .dnum{font-weight:700;font-size:15px}.agday .dwd{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.agday.hoy{border-color:var(--brand);box-shadow:0 0 0 2px color-mix(in srgb,var(--brand) 22%,transparent)}
+.agday .dnum{font-weight:700;font-size:15px}.agday .dwd{color:var(--ink3);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
 .agday .tl{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px}
 @media(max-width:720px){.agweek{grid-template-columns:1fr}.agday{min-height:auto}}
 .modal-h{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border);font-size:15px;font-weight:650}

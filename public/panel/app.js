@@ -280,9 +280,47 @@ function skeleton() {
     <div class="grid g2" style="margin-top:16px">${Array(2).fill('<div class="card"><div class="sk" style="width:40%;height:14px"></div><div class="sk" style="height:120px;margin-top:14px"></div></div>').join("")}</div>`;
 }
 function errorCard(msg) { return `<div class="card"><div class="ch"><h3>No se pudo cargar</h3></div><p class="mut">${esc(msg)}</p><button class="btn primary" data-act="reload">Reintentar</button></div>`; }
-function stat(lab, icon, val, unit, sub) {
+/**
+ * La tarjeta de cifra. `sub` es texto libre debajo; `delta` es la comparación con el periodo
+ * anterior ({ pct, contra }), que se pinta con flecha y color.
+ *
+ * Antes había DOS funciones para esto —`stat()` y `kpi()`, con firmas distintas: una recibía el
+ * icono ya en HTML y la otra su nombre—, y solo la segunda sabía comparar. Resultado: el panel
+ * entero usaba la que no compara y el componente de comparación se quedó en un único KPI de
+ * todo el sistema. Ahora hay una sola, y `kpi()` es una envoltura suya.
+ */
+function stat(lab, icon, val, unit, sub, delta) {
+  const d = delta && delta.pct != null ? deltaEl(delta.pct, delta.contra) : "";
   return `<div class="card stat"><div class="lab"><span class="ci">${icon}</span>${lab}</div>
-    <div class="val tnum">${val}${unit ? ` <small>${unit}</small>` : ""}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+    <div class="val tnum">${val}${unit ? ` <small>${unit}</small>` : ""}</div>${d}${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+}
+function kpi({ lab, icon, val, unit, delta, contra, sub }) {
+  return stat(lab, ic(icon, 15), val, unit, sub, delta != null ? { pct: delta, contra } : null);
+}
+
+const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+const diaDeLaSemana = (iso) => new Date(String(iso).slice(0, 10) + "T12:00:00Z").getUTCDay();
+
+/**
+ * Lo de hoy contra «un día normal de la misma semana»: la media de los mismos días de las
+ * semanas anteriores. Es la comparación que hace cualquiera —un martes se compara con otros
+ * martes, no con el lunes— y la única honesta en hostelería, donde el día de la semana manda.
+ *
+ * `serie` son los últimos 30 días, y los días SIN reservas no vienen en la lista: cuentan como
+ * cero, que es lo que fueron. Pero solo se cuentan los que caen dentro de lo que la serie
+ * cubre: si el local lleva diez días abierto, las semanas anteriores no son «cero reservas»,
+ * son «no existíamos», y compararse contra eso daría un +300 % de mentira.
+ */
+function deltaMismoDiaSemana(serie, hoyISO, campo) {
+  if (!Array.isArray(serie) || !serie.length || !hoyISO) return null;
+  const mapa = new Map(serie.map((x) => [String(x.dia).slice(0, 10), Number(x[campo]) || 0]));
+  const primero = serie.map((x) => String(x.dia).slice(0, 10)).sort()[0];
+  const previos = [7, 14, 21, 28].map((n) => addDaysStr(hoyISO, -n)).filter((f) => f >= primero);
+  if (previos.length < 2) return null;                       // con uno solo no hay «normal»
+  const media = previos.reduce((s, f) => s + (mapa.get(f) || 0), 0) / previos.length;
+  const pct = media > 0 ? Math.round(((Number(mapa.get(hoyISO) || 0) - media) / media) * 1000) / 10 : null;
+  if (pct == null) return null;
+  return { pct, contra: `vs un ${DIAS_SEMANA[diaDeLaSemana(hoyISO)]} normal` };
 }
 // Se llama en CADA cambio de vista. Que Sara esté conectada no cambia entre dos clics, así que
 // la respuesta vale 30 s: si no, cada navegación arrastraba una petición extra compitiendo por
@@ -518,9 +556,18 @@ const ICONS = {
 function ic(name, size = 18) { return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICONS.dash}</svg>`; }
 
 // ── Componentes ──
-function deltaEl(v) { if (v == null || isNaN(v)) return ""; const up = v >= 0; return `<span class="delta ${Math.abs(v) < 0.5 ? "flat" : up ? "up" : "down"}">${up ? "↑" : "↓"} ${signed2(v)}</span>`; }
-function kpi({ lab, icon, val, unit, delta }) {
-  return `<div class="card stat"><div class="lab"><span class="ci">${ic(icon, 15)}</span>${lab}</div><div class="val tnum">${val}${unit ? ` <small>${unit}</small>` : ""}</div>${delta != null ? deltaEl(delta) : ""}</div>`;
+/**
+ * La comparación de una cifra con la de antes. Flechas ↗/↘ y no ↑/↓: una diagonal se lee como
+ * tendencia y una vertical como orden (subir/bajar en una lista).
+ *
+ * `contra` es contra QUÉ se compara, y no es decorativo: un «−12 %» sin decir respecto a cuándo
+ * no se puede interpretar ni discutir. Si no hay con qué comparar no se pinta nada — que es
+ * distinto de pintar un cero.
+ */
+function deltaEl(v, contra) {
+  if (v == null || isNaN(v)) return "";
+  const up = v >= 0, plano = Math.abs(v) < 0.5;
+  return `<span class="delta ${plano ? "flat" : up ? "up" : "down"}">${plano ? "=" : up ? "↗" : "↘"} ${signed2(v)}${contra ? ` <span class="mut" style="font-weight:500">${esc(contra)}</span>` : ""}</span>`;
 }
 function estadoState(e) {
   if (e.incidenciasAbiertas >= 3) return { k: "crit", t: "Requiere atención" };
@@ -624,7 +671,7 @@ function barrasDia(dias, { hoy = null } = {}) {
     const alto = Math.round(((Number(d.ventas) || 0) / maxV) * 46) + 2;
     const esHoy = d.dia === hoy;
     return `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">
-      <div style="width:100%;max-width:26px;height:${alto}px;border-radius:4px 4px 0 0;background:${esHoy ? "var(--accent,#7a8450)" : "var(--brand,#8a9a5b)"};opacity:${esHoy ? 1 : 0.75}"></div>
+      <div style="width:100%;max-width:26px;height:${alto}px;border-radius:4px 4px 0 0;background:${esHoy ? "var(--brand)" : "var(--brand2)"};opacity:${esHoy ? 1 : 0.75}"></div>
       <div class="mut" style="font-size:10px">${esc(String(d.dia).slice(8, 10))}</div></div>`;
   }).join("");
   return `<div class="chart" data-puntos='${esc(JSON.stringify(puntos))}'>
@@ -706,7 +753,13 @@ function renderDashboard(d) {
   // ── 4 KPIs reales ──
   const hoyN = (d.hoy && d.hoy.hoy) || {};
   const nCrit = (d.preocupaciones || []).filter((c) => c.tipo === "mantenimiento" && c.sev === "crit").length;
-  const kpis = `<div class="grid g4">${kpi({ lab: "Reservas hoy", icon: "cal", val: num(hoyN.n || 0), delta: d.ayer && d.ayer.delta })}${kpi({ lab: "Comensales hoy", icon: "users", val: num(hoyN.personas || 0) })}${kpi({ lab: "Mantenim. abierto", icon: "wrench", val: num((d.mantenimiento && d.mantenimiento.abiertas) || 0), unit: nCrit ? `· ${nCrit} crítica${nCrit === 1 ? "" : "s"}` : "" })}${kpi({ lab: "Por pagar", icon: "euro", val: eur((d.dinero && d.dinero.porPagar && d.dinero.porPagar.total) || 0) })}</div>`;
+  // OJO con lo que se compara: esta tarjeta dice «Reservas HOY» y antes le pintaba el delta de
+  // AYER (`d.ayer.delta`, que es ayer contra un día normal de esa semana). El número y su
+  // comparación hablaban de días distintos y nadie lo notaba, porque no ponía contra qué.
+  // Ahora se compara hoy con un día normal de la misma semana, y se dice con todas las letras.
+  const cmpHoy = deltaMismoDiaSemana(d.serieReservas, d.fecha, "n");
+  const cmpCom = deltaMismoDiaSemana(d.serieReservas, d.fecha, "personas");
+  const kpis = `<div class="grid g4">${kpi({ lab: "Reservas hoy", icon: "cal", val: num(hoyN.n || 0), delta: cmpHoy && cmpHoy.pct, contra: cmpHoy && cmpHoy.contra })}${kpi({ lab: "Comensales hoy", icon: "users", val: num(hoyN.personas || 0), delta: cmpCom && cmpCom.pct, contra: cmpCom && cmpCom.contra })}${kpi({ lab: "Mantenim. abierto", icon: "wrench", val: num((d.mantenimiento && d.mantenimiento.abiertas) || 0), unit: nCrit ? `· ${nCrit} crítica${nCrit === 1 ? "" : "s"}` : "" })}${kpi({ lab: "Por pagar", icon: "euro", val: eur((d.dinero && d.dinero.porPagar && d.dinero.porPagar.total) || 0) })}</div>`;
 
   // ── Actividad (reservas + ventas del PERIODO seleccionado) ──
   const per = DASH_PERIODO || null;
@@ -718,9 +771,16 @@ function renderDashboard(d) {
   const gOk = per && per.gastos && per.gastos.disponible;
   const res = per ? per.resultado : null;
   const resCol = res == null ? "var(--ink)" : (res >= 0 ? "var(--brand)" : "var(--danger)");
-  const stat3 = (lab, val, col) => `<div style="min-width:0"><div class="mut" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">${lab}</div><div class="big tnum" style="font-size:22px${col ? ";color:" + col : ""}">${val}</div></div>`;
+  // La comparación con el periodo anterior la calcula el servidor (sabe que un mes se compara
+  // con el mes anterior, no con «los 31 días de antes»). Si no la manda, no se pinta nada.
+  const cmp = (per && per.comparacion) || null;
+  const contra = cmp ? `vs ${cmp.etiqueta}` : "";
+  // El rótulo va corto para que quepa dentro de la tarjeta; las fechas exactas de la
+  // comparación se ven al pasar el ratón, que es donde se miran cuando se dudan.
+  const cuando = cmp ? `Comparado con ${fechaCorta(cmp.desde)} – ${fechaCorta(cmp.hasta)}` : "";
+  const stat3 = (lab, val, col, pct) => `<div style="min-width:0"><div class="mut" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">${lab}</div><div class="big tnum" style="font-size:22px${col ? ";color:" + col : ""}">${val}</div>${pct != null ? `<div style="margin-top:2px" title="${esc(cuando)}">${deltaEl(pct, contra)}</div>` : ""}</div>`;
   const ventasBox = (vOk || gOk)
-    ? `<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—")}${stat3("Resultado", res != null ? eur(res) : "—", resCol)}</div>`
+    ? `<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && cmp ? cmp.ventas : null)}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && cmp ? cmp.gastos : null)}${stat3("Resultado", res != null ? eur(res) : "—", resCol, res != null && cmp ? cmp.resultado : null)}</div>`
     : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y resultado<br><span class="hl">${DASH_RANGE.to === todayStr() && DASH_RANGE.from === todayStr() ? "aún sin cierre de hoy" : "al conectar Ágora"}</span></div>`;
   // Al pasar el ratón se ve el día, cuántas reservas y —si Ágora está conectado— lo que
   // se facturó ESE día. Es la pregunta que uno se hace mirando el pico del sábado.
@@ -733,7 +793,7 @@ function renderDashboard(d) {
       }, { h: 120, fmt: (v) => num(v) + (v === 1 ? " comensal" : " comensales"), fmtExtra: (v) => eur(v) + " facturado" })
     : `<div class="mut" style="font-size:12.5px;padding:14px 0">${totalPeriodo ? "Rango de un día — sin serie para graficar." : "Sin reservas en este periodo."}</div>`;
   const notaRes = (vOk || gOk) ? `<div class="mut" style="font-size:11px;margin-top:8px">Resultado = ventas${per.hoyEnVivo ? " (incluye hoy)" : ""} − gastos en facturas del periodo (no incluye personal).</div>` : "";
-  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div></div>${ventasBox}</div>${grafico}${notaRes}</div>`;
+  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${grafico}${notaRes}</div>`;
 
   // ── Gasto del mes (barra apilada real) ──
   const gl = (d.dinero && d.dinero.gastoLocal) || []; const gtot = gl.reduce((s, g) => s + (g.actual || 0), 0);
@@ -777,9 +837,12 @@ async function loadDashboard() {
   const q = viendoTodosLosMios() ? "locales=" + encodeURIComponent(misLocales().join(","))
     : localActualFE() ? "local=" + encodeURIComponent(localActualFE()) : "";
   try {
+    // `comparar=1`: el servidor trae también el periodo anterior y la variación ya calculada.
+    // El «contra qué» lo decide él (`rangoAnterior`), que sabe que un mes se compara con el mes
+    // anterior y no con «los 31 días de antes».
     const [d, per] = await Promise.all([
       api("/api/dashboard" + (q ? "?" + q : "")),
-      apiOptional(`/api/dashboard/periodo?from=${DASH_RANGE.from}&to=${DASH_RANGE.to}${q ? "&" + q : ""}`),
+      apiOptional(`/api/dashboard/periodo?from=${DASH_RANGE.from}&to=${DASH_RANGE.to}&comparar=1&preset=${encodeURIComponent(PERIOD || "")}${q ? "&" + q : ""}`),
     ]);
     DASH_PERIODO = per || null;
     view.innerHTML = renderDashboard(d);
@@ -1232,7 +1295,7 @@ function renderInvRevision(j) {
   const back = { act: "inv-volver-conteo", label: "Seguir contando" };
   const head = invHeader("Revisar inventario", `${esc(INV.proveedorNombre)} · ${esc(INV.local)}`, back);
   const filas = rev.map((r) => {
-    const col = r.sugerido > 0 ? "color:var(--brand);font-weight:700" : "color:var(--mut)";
+    const col = r.sugerido > 0 ? "color:var(--brand);font-weight:700" : "color:var(--ink3)";
     return `<tr><td>${esc(r.nombre)}</td><td class="r tnum">${num(r.contado)}</td><td class="r tnum">${num(r.necesario)}</td><td class="r tnum">${num(r.diferencia)}</td><td class="r tnum" style="${col}">${r.sugerido > 0 ? num(r.sugerido) + " " + esc(r.unidad || "") : "—"}</td></tr>`;
   }).join("");
   const tabla = rev.length ? `<div class="card p0"><div class="tblwrap"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Contado</th><th class="r">Necesario</th><th class="r">Dif.</th><th class="r">A pedir</th></tr></thead><tbody>${filas}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin productos.</div></div>`;
@@ -4554,11 +4617,20 @@ function facTablaHtml(list) {
   if (!list.length) return `<div class="card"><div class="mut" style="padding:8px">Sin facturas con esos filtros.</div></div>`;
   const visibles = list.map((f) => f.id);
   const todasMarcadas = visibles.length > 0 && visibles.every((id) => FAC_SEL.has(id));
+  // Dos cosas que no se veían y estaban guardadas: que el detalle no cuadra con la base
+  // (`lineas_estado`) y que la factura ya está conciliada con sus albaranes (`conciliado_con`).
+  // Guardar un estado y no enseñarlo es tenerlo para nadie.
+  const marcas = (f) => [
+    f.tipo && f.tipo !== "factura" ? `<span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : "",
+    f.revisar ? `<span class="pill warn" style="font-size:10px" title="${esc(facRevisarTxt(f).join(" · "))}">revisar</span>` : "",
+    f.lineas_estado === "descuadre" ? `<span class="pill warn" style="font-size:10px" title="El detalle leído no suma la base imponible">descuadre</span>` : "",
+    f.conciliado_con ? `<span class="pill ok" style="font-size:10px" title="Conciliada con sus albaranes">conciliada</span>` : "",
+  ].filter(Boolean).join(" ");
   const fila = (f) => `<tr class="${FAC_SEL.has(f.id) ? "sel" : ""}">
     <td class="facsel"><input type="checkbox" data-facsel="${f.id}" ${FAC_SEL.has(f.id) ? "checked" : ""} aria-label="Seleccionar"></td>
+    <td class="facthumb">${f.drive_url ? `<img class="thumb" loading="lazy" src="/api/facturas/${f.id}/miniatura" alt="" onerror="this.remove()">` : ""}</td>
     <td class="mut">${esc((f.fecha || "").slice(0, 10))}</td>
-    <td class="mut">${esc(f.numero_factura || "")}</td>
-    <td>${esc(f.proveedor || "")}${f.tipo && f.tipo !== "factura" ? ` <span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : ""}${f.revisar ? ` <span class="pill warn" style="font-size:10px" title="${esc(facRevisarTxt(f).join(" · "))}">revisar</span>` : ""}</td>
+    <td><div class="t1">${esc(f.numero_factura || "—")}</div><div class="t2">${esc(f.proveedor || "")}</div>${marcas(f) ? `<div style="margin-top:3px">${marcas(f)}</div>` : ""}</td>
     <td>${esc(f.local || "")}</td>
     <td class="r tnum">${eur(f.base_imponible)}</td>
     <td class="r tnum">${eur(f.total)}</td>
@@ -4566,7 +4638,8 @@ function facTablaHtml(list) {
     <td class="r"><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></td></tr>`;
   return `<div class="card p0"><div class="tblwrap"><table class="tbl">
     <thead><tr><th class="facsel"><input type="checkbox" id="facSelAll" ${todasMarcadas ? "checked" : ""} aria-label="Seleccionar todas"></th>
-    <th>Fecha</th><th>Nº</th><th>Proveedor</th><th>Local</th><th class="r">Base</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead>
+    <th class="facthumb"></th>
+    <th>Fecha</th><th>Documento</th><th>Local</th><th class="r">Base</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead>
     <tbody>${list.map(fila).join("")}</tbody></table></div></div>${facBarraSeleccion()}`;
 }
 
