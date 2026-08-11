@@ -11,7 +11,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl } from "./facturas.js";
+import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -58,6 +58,8 @@ import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPa
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { repasarLote, resumenRepaso, pideRelecturaDeLineas, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
+import { agruparPagos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
+import { instanteMadrid } from "./src/modules/horarios/tiempo.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
@@ -495,6 +497,19 @@ async function initDB() {
         PRIMARY KEY (prov_clave, categoria)
       )
     `);
+    // Condiciones de pago del proveedor: a cuántos días paga y, si los tiene, en qué día del
+    // mes. Se guarda por `prov_clave` —igual que las categorías— para que sirva aunque el
+    // nombre se lea de tres formas distintas.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_proveedor_pago (
+        prov_clave TEXT PRIMARY KEY,
+        proveedor TEXT NOT NULL,
+        dias INTEGER NOT NULL,
+        dia_pago INTEGER,
+        actualizado_por TEXT,
+        actualizado_en TEXT
+      )
+    `);
     // Segundo nivel: «Bebidas · Vinos y cavas». Un proveedor es de UNA categoría con su
     // subcategoría, no de dos categorías sueltas: así el gasto va entero a un sitio y la
     // categoría es la suma exacta de sus subcategorías, sin nada aproximado.
@@ -561,7 +576,11 @@ async function initDB() {
     // `drive_thumb`: la miniatura del papel, en base64, como CACHÉ. No es un dato: se puede
     // borrar entera y se vuelve a pedir a Drive sola. Se guarda la imagen y no el enlace porque
     // el `thumbnailLink` de Drive caduca en unas horas (ver /api/facturas/:id/miniatura).
-    for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT", "lineas_version INTEGER", "drive_thumb TEXT"]) {
+    // `vencimiento`: cuándo hay que pagar. `vencimiento_origen` dice de dónde salió —del papel
+    // o calculado con lo pactado— y no es un adorno: si cambian las condiciones del proveedor,
+    // se recalculan las calculadas y NO se tocan las que traía escritas la factura.
+    for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT", "lineas_version INTEGER", "drive_thumb TEXT",
+      "vencimiento TEXT", "vencimiento_origen TEXT"]) {
       try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
     }
     await client.query(`
@@ -1846,7 +1865,12 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
     // `drive_thumb` es la miniatura en base64 y NO puede viajar en la lista: son ~8 KB por
     // factura, y con el tope de 500 serían cuatro megas de respuesta para pintar una tabla.
     // Cada fila la pide por su lado (`/api/facturas/:id/miniatura`) y el navegador la cachea.
-    for (const r of rows) delete r.drive_thumb;
+    //
+    // El estado de pago se calcula AQUÍ y no en el panel: los umbrales («vencida», «esta
+    // semana») viven en un módulo puro con tests, y copiarlos al navegador sería tener dos
+    // verdades que un día dejan de coincidir sin que nadie se entere.
+    const hoyMad = instanteMadrid(new Date()).fecha;
+    for (const r of rows) { delete r.drive_thumb; r.estado_pago = estadoPago(r, hoyMad); }
     // Los totales se calculan sobre el MISMO filtro y SIN el tope: sumar solo las filas que se
     // enseñan daría un total corto en cuanto haya más de 500, y un total corto no se nota —
     // parece que se ha gastado menos—. Es una consulta agregada, no trae filas.
@@ -3498,6 +3522,99 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
   }
 });
 
+// ── Pagos: qué hay que pagar y cuándo ───────────────────────────────────────
+// La pregunta de los lunes. Hasta ahora sabíamos CUÁNTO se debe (un total) pero no CUÁNDO, y
+// un total de deuda no se paga: se pagan facturas con fecha. Ver src/modules/facturas/vencimiento.js.
+//
+// Los albaranes quedan fuera: son la entrega, no el pago —su importe ya va en la factura que
+// los agrupa— y meterlos aquí sería pagar dos veces lo mismo. Las dudosas también: mientras no
+// se decida si están repetidas, ni cuentan en los totales ni se pagan.
+app.get("/api/facturas/pagos", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const locales = localesScope(req);
+    const cond = [SIN_DUDAS, SIN_ALBARANES, "COALESCE(pagado,0) = 0"];
+    const par = [];
+    if (locales.length) { cond.push(`local = ANY(?)`); par.push(locales); }
+    const filas = await dbAll(
+      `SELECT id, local, proveedor, nif, fecha, numero_factura, total::float AS total,
+              vencimiento, vencimiento_origen, drive_url, revisar
+         FROM facturas WHERE ${cond.join(" AND ")}
+        ORDER BY vencimiento NULLS LAST, fecha LIMIT 2000`, par);
+
+    // Hora de MADRID y no UTC: `hoyISO()` es UTC y entre medianoche y las dos de la mañana en
+    // verano devuelve el día de ayer. Aquí eso significaría enseñar como «vence hoy» algo que
+    // venció ayer, justo a la hora en que se cierra caja. (Deuda conocida en el resto; en lo
+    // nuevo se usa el módulo que ya sabe de husos.)
+    const hoy = instanteMadrid(new Date()).fecha;
+    const grupos = agruparPagos(filas, hoy);
+    // Los proveedores que salen sin fecha y NO tienen condiciones puestas: es lo que hay que
+    // arreglar para que esta pantalla deje de tener un grupo de «no se sabe».
+    const sinFecha = grupos.find((g) => g.clave === "sin_fecha");
+    const provsSinCondiciones = [...new Set((sinFecha?.facturas || []).map((f) => f.proveedor).filter(Boolean))].slice(0, 12);
+    res.json({ ok: true, hoy, grupos, resumen: resumenPagos(grupos), provsSinCondiciones });
+  } catch (e) {
+    console.error("[facturas] pagos:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar los pagos" });
+  }
+});
+
+// Las condiciones de pago de un proveedor. Al guardarlas se RECALCULAN sus facturas sin pagar,
+// pero solo las que tenían la fecha calculada: si el vencimiento venía escrito en el papel,
+// manda el papel y no se toca.
+app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const nombre = String(req.body?.proveedor || "").trim();
+    const clave = claveProveedor(nombre);
+    if (!nombre || !clave) return res.status(400).json({ ok: false, error: "Falta el proveedor" });
+
+    const quitar = req.body?.dias === null || req.body?.dias === "";
+    if (quitar) {
+      await dbRun(`DELETE FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]);
+    } else {
+      const dias = Number(req.body?.dias);
+      if (!Number.isInteger(dias) || dias < 0 || dias > 365) {
+        return res.status(400).json({ ok: false, error: "Los días de pago tienen que ser un número entre 0 y 365" });
+      }
+      const diaBruto = req.body?.dia_pago;
+      const diaPago = diaBruto === null || diaBruto === "" || diaBruto === undefined ? null : Number(diaBruto);
+      if (diaPago !== null && (!Number.isInteger(diaPago) || diaPago < 1 || diaPago > 31)) {
+        return res.status(400).json({ ok: false, error: "El día de pago tiene que estar entre 1 y 31" });
+      }
+      await dbRun(
+        `INSERT INTO facturas_proveedor_pago (prov_clave, proveedor, dias, dia_pago, actualizado_por, actualizado_en)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (prov_clave) DO UPDATE SET proveedor = EXCLUDED.proveedor, dias = EXCLUDED.dias,
+           dia_pago = EXCLUDED.dia_pago, actualizado_por = EXCLUDED.actualizado_por, actualizado_en = EXCLUDED.actualizado_en`,
+        [clave, nombre, dias, diaPago, req.user?.nombre || req.user?.username || null, isoConOffset(Date.now())]);
+    }
+
+    // Recalcular las suyas: sin pagar y con la fecha calculada (o sin fecha). Las que traían el
+    // vencimiento escrito en la factura NO se tocan.
+    const cond = await condicionesDePago(dbGet, nombre);
+    // El proveedor se filtra por CLAVE y eso no lo sabe hacer el SQL (une «GRAU, S.L.» con
+    // «Grau Distribucions»), así que se traen las candidatas y se criban aquí. Una consulta,
+    // no una por factura.
+    const candidatas = await dbAll(
+      `SELECT id, fecha, proveedor FROM facturas
+        WHERE COALESCE(pagado,0) = 0 AND COALESCE(vencimiento_origen,'') <> 'factura'
+          AND proveedor IS NOT NULL AND proveedor <> ''`, []);
+    let tocadas = 0;
+    for (const f of candidatas) {
+      if (claveProveedor(f.proveedor) !== clave) continue;
+      const v = calcularVencimiento({ fecha: f.fecha, condiciones: cond });
+      await dbRun(`UPDATE facturas SET vencimiento = ?, vencimiento_origen = ? WHERE id = ?`,
+        [v.vencimiento, v.origen, f.id]);
+      tocadas++;
+    }
+    res.json({ ok: true, condiciones: cond, recalculadas: tocadas,
+      mensaje: cond ? `Guardado. Se han puesto fechas a ${tocadas} factura(s) suyas sin pagar.`
+        : `Condiciones quitadas. ${tocadas} factura(s) suyas se quedan sin fecha de pago.` });
+  } catch (e) {
+    console.error("[facturas] condiciones de pago:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron guardar las condiciones" });
+  }
+});
+
 // Ficha de un proveedor: sus datos, su gasto y cómo se le ha corregido el nombre.
 app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
@@ -3516,8 +3633,12 @@ app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
       dbAll(`SELECT categoria, subcategoria FROM facturas_proveedor_cats WHERE prov_clave = ?`, [clave]),
       dbGet(`SELECT proveedor, nif, autor, creado_en FROM facturas_proveedor_alias WHERE clave = ?`, [clave]),
     ]);
+    // Las condiciones de pago, para poder ponerlas desde la misma ficha: es donde se mira
+    // cuando llega su factura y donde se sabe la respuesta.
+    const pago = await dbGet(`SELECT dias, dia_pago, actualizado_por, actualizado_en FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]).catch(() => null);
     res.json({ ok: true, proveedor: nombre, clave, nombres: suyos, ...datos,
-      nifs, categorias: cats, alias: alias || null });
+      nifs, categorias: cats, alias: alias || null,
+      pago: pago || null, pagoTexto: pago ? textoCondiciones(pago) : null });
   } catch (e) {
     console.error("[facturas] ficha proveedor:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar la ficha" });

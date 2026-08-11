@@ -37,11 +37,11 @@ describe("Productos es un módulo, no una pestaña", () => {
     assert.match(panel, /<h1>Productos<\/h1>/);
   });
 
-  test("Compras se queda con tres pestañas y sin «Qué compramos»", () => {
+  test("Compras se queda con sus pestañas y sin «Qué compramos»", () => {
     const i = panel.indexOf("function facHeader()");
     const fn = panel.slice(i, panel.indexOf("\n}\n", i));
     assert.doesNotMatch(fn, /"Qué compramos"/);
-    assert.match(fn, /\["facturas", "Facturas"\], \["conciliar", "Conciliaciones"\], \["config", "Configuración"\]/);
+    assert.match(fn, /\["facturas", "Facturas"\], \["pagos", "Pagos"\], \["conciliar", "Conciliaciones"\], \["config", "Configuración"\]/);
     assert.doesNotMatch(fn, /qué se compra/, "el subtítulo ya no promete lo que se ha llevado a otra pantalla");
   });
 

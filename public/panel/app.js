@@ -3984,7 +3984,7 @@ function facHeader() {
   // así que el rótulo lo dice aparte: una pantalla que suma dos locales sin decirlo se lee
   // como si fuera la de uno.
   const donde = amb ? nombreCortoLocal(amb) : viendoTodosLosMios() ? `Mis ${misLocales().length} establecimientos` : "";
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${[["facturas", "Facturas"], ["conciliar", "Conciliaciones"], ["config", "Configuración"]].map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("")}</div>`;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${[["facturas", "Facturas"], ["pagos", "Pagos"], ["conciliar", "Conciliaciones"], ["config", "Configuración"]].map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("")}</div>`;
 }
 
 // La cabecera de Productos. Es su propia pantalla, no una pestaña de Compras: sale de los
@@ -4258,7 +4258,18 @@ async function facProveedorFicha(nombre) {
         <input class="inp" id="fpNombre" value="${esc(nombre)}"></div>
       <div class="field full"><label>NIF ${nifPrincipal ? "" : "<span class=\"mut\">(no se ha leído ninguno)</span>"}</label>
         <input class="inp" id="fpNif" value="${esc(nifPrincipal ? nifPrincipal.nif : "")}" placeholder="B12345678"></div>
+      <div class="field"><label>Se le paga a</label>
+        <select class="inp" id="fpDias">
+          ${[["", "No lo sé todavía"], ["0", "Al contado"], ["7", "7 días"], ["15", "15 días"], ["30", "30 días"], ["45", "45 días"], ["60", "60 días"], ["90", "90 días"]]
+            .map(([v, t]) => `<option value="${v}" ${String(j.pago?.dias ?? "") === v ? "selected" : ""}>${t}</option>`).join("")}
+        </select></div>
+      <div class="field"><label>Pagando los días <span class="mut">(opcional)</span></label>
+        <input class="inp" id="fpDiaPago" type="number" min="1" max="31" placeholder="p. ej. 10"
+          value="${esc(j.pago?.dia_pago ?? "")}"></div>
     </div>
+    <p class="mut" style="margin:8px 0 0;line-height:1.55">Con esto, cada factura suya sabe <b>cuándo hay que
+      pagarla</b> y aparece en <b>Pagos</b>. Si la factura trae su vencimiento escrito, manda el papel.
+      ${j.pago ? `Ahora mismo: <b>${esc(j.pagoTexto || "")}</b>.` : "Sin esto, sus facturas se quedan <b>sin fecha de pago</b>."}</p>
     <p class="mut" style="margin:8px 0 0;line-height:1.55">Si la lectura se equivoca siempre igual —«Viruta Bronco» por
       «Virutas Branco»—, corrígelo aquí: se arreglan <b>todas sus facturas</b> y las que entren a partir de ahora
       llegarán ya con el nombre bueno.${nifPrincipal ? ` Se recuerda por su NIF <b>${esc(nifPrincipal.nif)}</b>, que no cambia
@@ -4287,12 +4298,32 @@ async function facProveedorFicha(nombre) {
     const nif = ov.querySelector("#fpNif").value.trim();
     const nifViejo = nifPrincipal ? nifPrincipal.nif : "";
     const cambiaNif = nif && nif !== nifViejo;
-    if ((!nuevo || nuevo === nombre) && !cambiaNif) { ov.remove(); return; }
+    // Las condiciones de pago son independientes del nombre: se pueden poner sin tocar nada más.
+    const dias = ov.querySelector("#fpDias").value;
+    const diaPago = ov.querySelector("#fpDiaPago").value.trim();
+    const cambiaPago = String(j.pago?.dias ?? "") !== dias || String(j.pago?.dia_pago ?? "") !== diaPago;
+
+    if ((!nuevo || nuevo === nombre) && !cambiaNif && !cambiaPago) { ov.remove(); return; }
     if (!nuevo) return toast("El nombre no puede quedar vacío");
-    const qué = [nuevo !== nombre ? "el nombre" : null, cambiaNif ? "el NIF" : null].filter(Boolean).join(" y ");
-    if (!await confirmModal(`Se cambiará ${qué} en sus ${num(j.facturas || 0)} facturas y las próximas entrarán ya corregidas.`, { ok: "Guardar" })) return;
-    try { const r = await apiSend("PUT", "/api/facturas/proveedor", { antiguo: nombre, nuevo, nif: nif || undefined });
-      ov.remove(); toast(r.mensaje || "Hecho ✅"); facCargarCategorias(); }
+
+    if (nuevo !== nombre || cambiaNif) {
+      const qué = [nuevo !== nombre ? "el nombre" : null, cambiaNif ? "el NIF" : null].filter(Boolean).join(" y ");
+      if (!await confirmModal(`Se cambiará ${qué} en sus ${num(j.facturas || 0)} facturas y las próximas entrarán ya corregidas.`, { ok: "Guardar" })) return;
+    }
+    try {
+      let msg = "";
+      if (cambiaPago) {
+        const r = await apiSend("PUT", "/api/facturas/proveedor-pago",
+          { proveedor: nuevo || nombre, dias: dias === "" ? null : Number(dias), dia_pago: diaPago === "" ? null : Number(diaPago) });
+        msg = r.mensaje || "";
+      }
+      if (nuevo !== nombre || cambiaNif) {
+        const r = await apiSend("PUT", "/api/facturas/proveedor", { antiguo: nombre, nuevo, nif: nif || undefined });
+        msg = r.mensaje || msg;
+      }
+      ov.remove(); toast(msg || "Hecho ✅"); facCargarCategorias();
+      if (FACTAB === "pagos") loadPagos();
+    }
     catch (e) { toast(e.message); }
   });
 }
@@ -4613,6 +4644,21 @@ function facRevisarTxt(f) {
   try { const a = JSON.parse(f.revisar); return Array.isArray(a) ? a : []; } catch { return []; }
 }
 
+/**
+ * El estado de pago de una factura. «Pendiente» a secas no dice nada: lo que se necesita saber
+ * es si YA venció y cuánto hace. La lógica —y los umbrales— viven en el módulo puro; aquí solo
+ * se elige el color.
+ */
+const PILL_PAGO = { vencida: "bad", hoy: "warn", semana: "warn", proxima: "", sin_fecha: "", pagada: "ok" };
+function facPillPago(f) {
+  // El estado lo calcula el servidor (`estado_pago`), que es quien tiene el módulo con los
+  // umbrales y sus tests. Aquí solo se elige el color.
+  const e = f.estado_pago || { estado: f.pagado ? "pagada" : "sin_fecha", texto: f.pagado ? "Pagada" : "Pendiente" };
+  const clase = PILL_PAGO[e.estado] ?? "";
+  const titulo = e.pista || (f.vencimiento ? `Vence el ${f.vencimiento}` : "");
+  return `<span class="pill ${clase}"${titulo ? ` title="${esc(titulo)}"` : ""}>${esc(e.texto)}</span>`;
+}
+
 function facTablaHtml(list) {
   if (!list.length) return `<div class="card"><div class="mut" style="padding:8px">Sin facturas con esos filtros.</div></div>`;
   const visibles = list.map((f) => f.id);
@@ -4634,7 +4680,7 @@ function facTablaHtml(list) {
     <td>${esc(f.local || "")}</td>
     <td class="r tnum">${eur(f.base_imponible)}</td>
     <td class="r tnum">${eur(f.total)}</td>
-    <td><span class="pill ${f.pagado ? "ok" : ""}">${f.pagado ? "Pagada" : "Pendiente"}</span></td>
+    <td>${facPillPago(f)}</td>
     <td class="r"><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></td></tr>`;
   return `<div class="card p0"><div class="tblwrap"><table class="tbl">
     <thead><tr><th class="facsel"><input type="checkbox" id="facSelAll" ${todasMarcadas ? "checked" : ""} aria-label="Seleccionar todas"></th>
@@ -4951,6 +4997,7 @@ async function loadFacturas() {
       facCargarCategorias(); facDiagnosticoDrive();   // no se esperan: la configuración ya está
       return;
     }
+    if (FACTAB === "pagos") return loadPagos();
     if (FACTAB === "conciliar") return loadConciliacion();
     // Igual que en reservas: una petición por local y se juntan las filas.
     const [lst, pend, stats, empresas] = await Promise.all([
@@ -4976,6 +5023,67 @@ async function loadFacturas() {
 // `ir` = true cuando se llama desde OTRA pantalla (Productos): hay que cambiar de vista, no
 // solo de pestaña, o se pintaría Compras dejando el menú marcando donde no se está.
 function facTab(tab, ir = false) { FACTAB = tab; if (ir && CURRENT !== "facturas") return go("facturas"); loadFacturas(); }
+
+// ── Pagos ───────────────────────────────────────────────────────────────────
+// «¿Qué hay que pagar esta semana?». Hasta ahora se sabía CUÁNTO se debe pero no CUÁNDO, y un
+// total de deuda no se paga: se pagan facturas con fecha.
+//
+// Lo primero de la pantalla es lo que ya se debía, y lo último las que no tienen fecha — que no
+// es «no urgente», es «no se sabe», y por eso van con su aviso y no escondidas.
+async function loadPagos() {
+  const view = document.getElementById("view");
+  view.innerHTML = facHeader() + `<div id="pagosRes"><p class="mut">Mirando vencimientos…</p></div>`;
+  let j;
+  try { j = await apiRaw("/api/facturas/pagos"); }
+  catch (e) { document.getElementById("pagosRes").innerHTML = errorCard(e.message); return; }
+
+  const r = j.resumen || {};
+  const kpis = `<div class="grid g3" style="margin-bottom:16px">
+      ${stat("Ya vencidas", "⏰", eur(r.vencidas?.total || 0), null, `${num(r.vencidas?.n || 0)} ${r.vencidas?.n === 1 ? "factura" : "facturas"}`)}
+      ${stat("Esta semana", "€", eur(r.semana?.total || 0), null, `${num(r.semana?.n || 0)} ${r.semana?.n === 1 ? "factura" : "facturas"} · incluye hoy`)}
+      ${stat("Sin fecha de pago", "❔", eur(r.sinFecha?.total || 0), null, `${num(r.sinFecha?.n || 0)} ${r.sinFecha?.n === 1 ? "factura" : "facturas"}`)}
+    </div>`;
+
+  // Lo que hay que arreglar para que el grupo «sin fecha» deje de existir, y con quién.
+  const aviso = (j.provsSinCondiciones || []).length
+    ? `<p class="fic-nota">Hay facturas sin fecha de pago porque no sabemos a cuántos días paga
+       ${j.provsSinCondiciones.length === 1 ? "este proveedor" : "estos proveedores"}:
+       <b>${j.provsSinCondiciones.map(esc).join("</b>, <b>")}</b>. Se pone una vez en su ficha —desde
+       <b>Configuración → De qué es cada proveedor</b> o pulsando su nombre aquí— y vale para todas las suyas.</p>`
+    : "";
+
+  const fila = (f) => `<div class="row"><div class="grow" style="min-width:0">
+      <div class="t1"><button class="linkbtn" data-pago="prov" data-prov="${esc(f.proveedor || "")}">${esc(f.proveedor || "—")}</button>
+        <span class="mut" style="font-weight:400">· nº ${esc(f.numero_factura || "s/n")}</span></div>
+      <div class="t2">${esc(fechaCorta(f.fecha) || "")} · ${esc(nombreCortoLocal(f.local))}${f._estado?.dias != null && f._estado.dias < 0 ? ` · <b>${esc(f._estado.texto)}</b>` : f._estado ? ` · ${esc(f._estado.texto)}` : ""}${f.vencimiento_origen === "factura" ? ` <span class="mut" title="La fecha viene escrita en la propia factura">· del papel</span>` : ""}</div>
+    </div>
+    <b class="tnum">${esc(eur(f.total))}</b>
+    <button class="btn sm" data-pago="pagada" data-id="${f.id}" title="Marcar como pagada">Pagada</button>
+    <button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></div>`;
+
+  const grupos = (j.grupos || []).map((g) => {
+    if (!g.n) return "";
+    return `<div class="card p0" style="margin-bottom:14px">
+      <div class="ch" style="padding:16px 18px 6px"><h3>${esc(g.titulo)} <span class="mut" style="font-weight:400">· ${num(g.n)}</span></h3>
+        <b class="tnum">${esc(eur(g.total))}</b></div>
+      ${g.nota ? `<p class="mut" style="margin:0 18px 6px;font-size:12.5px">${esc(g.nota)}</p>` : ""}
+      <div class="rows">${g.facturas.map(fila).join("")}</div></div>`;
+  }).join("");
+
+  const nada = !(j.grupos || []).some((g) => g.n);
+  document.getElementById("pagosRes").innerHTML = kpis + aviso +
+    (nada ? `<div class="card"><p class="mut" style="margin:0">No queda nada por pagar. Todas las facturas del ámbito están marcadas como pagadas.</p></div>` : grupos);
+
+  document.getElementById("pagosRes")?.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-pago]");
+    if (!b) return;
+    if (b.getAttribute("data-pago") === "prov") return facProveedorFicha(b.getAttribute("data-prov"));
+    const id = b.getAttribute("data-id");
+    b.disabled = true;
+    try { await apiSend("PATCH", "/api/facturas/" + id + "/pago"); toast("Marcada como pagada ✅"); loadPagos(); }
+    catch (err) { toast("Error: " + err.message); b.disabled = false; }
+  });
+}
 
 // ── Conciliaciones ──────────────────────────────────────────────────────────
 // El proveedor deja un albarán por entrega y a fin de mes manda UNA factura que las agrupa.

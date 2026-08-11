@@ -7,6 +7,7 @@ import { corregirEmisorReceptor } from "./src/modules/facturas/emisor.js";
 import { revisarCoherencia, textosDe } from "./src/modules/facturas/coherencia.js";
 import { extraerTextoPdf, bloqueTextoParaClaude } from "./src/modules/facturas/pdf-texto.js";
 import { VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
+import { calcularVencimiento } from "./src/modules/facturas/vencimiento.js";
 import { createHash } from "crypto";
 import { PDFDocument } from "pdf-lib";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -41,6 +42,7 @@ Devuelve ÚNICAMENTE un JSON válido, sin texto adicional, con esta estructura e
 {
   "tipo": "factura" | "albaran" | "ticket" | "otro",
   "fecha": "YYYY-MM-DD",
+  "vencimiento": "YYYY-MM-DD",
   "numero_factura": "string",
   "proveedor": "string",
   "nif_proveedor": "string",
@@ -66,6 +68,11 @@ QUIÉN EMITE Y QUIÉN RECIBE. Es el error más fácil de cometer y el más caro:
   Si no encuentras el NIF de alguna de las dos partes, pon null; no pongas otro número.
 - En facturas de servicios (gestoría, seguros, suministros) no hay líneas de producto que
   ayuden: fíjate en el membrete para saber quién emite.
+En "vencimiento" pon la fecha en que hay que pagar, SOLO si aparece escrita: suele venir como
+"Vencimiento", "Fecha de vencimiento", "Vto." o "Fecha de pago". Si lo que pone son condiciones
+("a 30 días", "pago a 60 días fecha factura") y no una fecha concreta, pon null: la fecha la
+calculamos nosotros. Nunca la deduzcas.
+
 En "local_receptor" pon el LOCAL o establecimiento CONCRETO del cliente si aparece: normalmente entre paréntesis tras el nombre del cliente (p. ej. "(TAPETA LLORET)"), o en la dirección de entrega, la referencia o el pie. Copia el texto tal cual (p. ej. "TAPETA LLORET", "Can Mateu Tordera"). Si no aparece ningún local concreto, pon null.
 
 En "lineas" pon UNA ENTRADA POR CADA LÍNEA DE PRODUCTO del detalle, en el orden en que aparecen.
@@ -131,6 +138,22 @@ export async function proveedorConLineas(dbGet, proveedor) {
     const cats = filas && filas.cats ? String(filas.cats).split("|") : [];
     return seLeenLineas(cats);
   } catch { return true; }
+}
+
+/**
+ * Las condiciones de pago pactadas con este proveedor, si las hay. Se buscan por la clave
+ * normalizada —igual que las categorías— para que valgan aunque el nombre se lea de tres
+ * formas distintas. Si no hay condiciones, la factura se queda SIN fecha de vencimiento y se
+ * dice: inventar un «30 días» por defecto se paga tarde o se paga dos veces, y encima con la
+ * tranquilidad de que la fecha estaba puesta.
+ */
+export async function condicionesDePago(dbGet, proveedor) {
+  const clave = claveProveedor(proveedor);
+  if (!clave || !dbGet) return null;
+  try {
+    const r = await dbGet(`SELECT dias, dia_pago FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]);
+    return r ? { dias: r.dias, dia_pago: r.dia_pago } : null;
+  } catch { return null; }
 }
 
 // Guarda el detalle de una factura y deja escrito si cuadra. NO es fatal: si algo falla
@@ -736,17 +759,24 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   // La duda se guarda CON la factura: entra, pero apartada de los totales hasta que alguien
   // decida. No entrar sería decidir que es duplicada, que es justo lo que no se sabe.
   const enDuda = sospecha && sospecha.veredicto === "duda" ? sospecha : null;
+  // Cuándo hay que pagarla: manda lo que ponga el papel y, si no dice nada, lo pactado con el
+  // proveedor. Si no hay ninguna de las dos, se queda sin fecha — y eso se ve en «Pagos».
+  const venc = calcularVencimiento({
+    fecha: datos.fecha, vencimientoLeido: datos.vencimiento,
+    condiciones: await condicionesDePago(dbGet, datos.proveedor),
+  });
   const ins = await dbRun(
     `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
       base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal,
-      dup_estado, dup_de, dup_motivos, revisar, sheet_synced)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
+      dup_estado, dup_de, dup_motivos, revisar, vencimiento, vencimiento_origen, sheet_synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
     [local, empresa, datos.tipo, datos.fecha, datos.numero_factura, datos.proveedor,
      datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
      datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash, canal,
      enDuda ? "duda" : null, enDuda ? enDuda.contra.id : null,
      enDuda ? JSON.stringify(enDuda.motivos) : null,
-     coher.avisos.length ? JSON.stringify(textosDe(coher.avisos)) : null]
+     coher.avisos.length ? JSON.stringify(textosDe(coher.avisos)) : null,
+     venc.vencimiento, venc.origen]
   );
   if (enDuda) console.warn(`[Facturas] posible duplicado de #${enDuda.contra.id}: ${resumenMotivos(enDuda.motivos)}`);
   const facturaId = ins?.id;
