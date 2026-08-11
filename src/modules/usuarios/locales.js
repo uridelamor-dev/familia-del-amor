@@ -28,12 +28,26 @@ export function parseLocales(v) {
  * Todos los establecimientos a los que llega este usuario: el suyo primero y luego los extra,
  * sin repetidos. Dirección devuelve [] — no está limitada a ninguno, que no es lo mismo que
  * no llegar a ninguno.
+ *
+ * OJO: «este usuario» llega en DOS FORMAS distintas y hay que entender las dos.
+ *   · La FILA de la base: trae la columna `locales_extra`.
+ *   · El USUARIO DEL TOKEN (`req.user`), que es el que ve el servidor en cada petición: NO
+ *     trae esa columna, porque en el token se guarda la lista ya calculada, en `locales`.
+ *
+ * Mirando solo `locales_extra`, el servidor creía que un encargado con dos establecimientos
+ * solo tenía el principal. Y no fallaba de forma visible: `localPermitido` devuelve el
+ * principal cuando le piden uno que «no es suyo», así que pedir el segundo local contestaba
+ * con los datos del primero. En Reservas eso era una agenda vacía; en Facturas, las del otro
+ * local. Exactamente el fallo que no se ve, que es el que hay que cerrar por abajo.
+ *
+ * La lista del token es de fiar: la calculó esta misma función al entrar y va firmada.
  */
 export function localesDe(user) {
   if (!user || user.rol === "direccion") return [];
   const principal = String(user.local || "").trim();
-  const extra = parseLocales(user.locales_extra);
-  const todos = [principal, ...extra].filter(Boolean);
+  const extra = parseLocales(user.locales_extra);      // fila de la base
+  const delToken = parseLocales(user.locales);         // usuario del token
+  const todos = [principal, ...extra, ...delToken].filter(Boolean);
   return [...new Set(todos)];
 }
 

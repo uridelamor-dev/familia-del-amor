@@ -4758,9 +4758,13 @@ async function sfEnviar(files) {
   try {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
-    // El encargado no manda local: se lo pone el servidor. Si lo mandara, tampoco se usaría.
+    // Se manda el local que la pantalla PROMETE («Se guardará en X»). Al encargado no se le
+    // pinta el selector —elige arriba, en la barra—, pero si lleva dos establecimientos hay
+    // que decir en cuál está: antes se guardaba siempre en el principal aunque estuviera
+    // mirando el otro. El servidor no se fía igualmente: solo acepta uno que sea suyo.
     const sel = document.getElementById("sfLocal");
     if (sel && sel.value) fd.append("local", sel.value);
+    else { const suyo = localActualFE(); if (suyo) fd.append("local", suyo); }
     const comb = document.getElementById("sfCombinar");
     if (comb && comb.checked && files.length > 1) fd.append("combinar", "1");
     const r = await fetch("/api/facturas/subir", { method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd });

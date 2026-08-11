@@ -1951,7 +1951,12 @@ app.post("/api/facturas/export.csv", requireAuth(["direccion", "contabilidad"]),
 app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad", "encargado"]), uploadFacturaMem.fields([{ name: "files", maxCount: 30 }, { name: "file", maxCount: 1 }]), async (req, res) => {
   const archivos = [...((req.files && req.files.files) || []), ...((req.files && req.files.file) || [])];
   if (!archivos.length) return res.status(400).json({ ok: false, error: "Falta el archivo" });
-  const fijado = localScope(req);   // encargado con local → siempre el suyo, venga lo que venga
+  // Encargado → siempre uno de los SUYOS, venga lo que venga: `localPermitido` no deja pasar
+  // un local ajeno. Lo que sí se respeta es CUÁL de los suyos, que llega en el cuerpo (aquí
+  // no hay query): quien lleva dos establecimientos elige arriba y la pantalla le promete
+  // «se guardará en X». Sin esto, se guardaba siempre en el principal aunque pusiera el otro
+  // —una factura archivada en el local equivocado descuadra dos locales y no se ve—.
+  const fijado = localScope(req, (req.query && req.query.local) || (req.body && req.body.local) || undefined);
   if (req.user.rol === "encargado" && !fijado) {
     return res.status(403).json({ ok: false, error: "Tu usuario no tiene un establecimiento asignado, así que no se sabe a qué local pertenece la factura. Pídeselo a dirección." });
   }

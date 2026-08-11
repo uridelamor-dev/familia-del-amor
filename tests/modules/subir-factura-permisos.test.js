@@ -41,11 +41,14 @@ describe("el servidor no le abre más de una puerta", () => {
     assert.deepEqual(abiertas, ["POST /api/facturas/subir"], `abiertas: ${abiertas.join(", ")}`);
   });
 
-  test("al encargado se le fuerza SU local: no puede subir a otro", () => {
-    // Subir al local equivocado descuadra dos locales a la vez y nadie se entera.
+  test("al encargado se le fuerza uno de LOS SUYOS: no puede subir a otro", () => {
+    // Subir al local equivocado descuadra dos locales a la vez y nadie se entera. El local
+    // pedido pasa SIEMPRE por `localScope` (o sea, por `localPermitido`), que devuelve el
+    // suyo cuando le piden uno ajeno. Lo que sí se respeta es cuál de los suyos: quien lleva
+    // dos elige arriba, y antes se le guardaba todo en el principal.
     const i = server.indexOf('app.post("/api/facturas/subir"');
-    const bloque = server.slice(i, i + 1200);
-    assert.match(bloque, /const fijado = localScope\(req\)/);
+    const bloque = server.slice(i, i + 1600);
+    assert.match(bloque, /const fijado = localScope\(req, [\s\S]{0,120}req\.body[\s\S]{0,20}local/);
     assert.match(bloque, /const local = fijado \|\| /, "el local del cuerpo solo vale si no hay fijado");
   });
 
@@ -68,6 +71,14 @@ describe("la pantalla no pide nada que el encargado no pueda", () => {
 
   test("al encargado no se le pinta el selector de local", () => {
     assert.match(fn, /esEncargado \? "" :/);
+  });
+
+  test("pero se manda el local que la pantalla promete, no uno supuesto", () => {
+    // La pantalla le dice «Se guardará en X» (el de la barra de arriba). Si no se mandara,
+    // quien lleva dos establecimientos vería una promesa y la factura acabaría en el otro.
+    assert.match(fn, /Se guardará en/);
+    const envio = panel.slice(panel.indexOf("async function sfEnviar("), panel.indexOf("async function sfEnviar(") + 900);
+    assert.match(envio, /const suyo = localActualFE\(\); if \(suyo\) fd\.append\("local", suyo\)/);
   });
 
   test("el módulo está en los dos catálogos, que son espejo manual", () => {

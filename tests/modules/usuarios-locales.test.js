@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { localesDe, localPermitido, puedeLocal, sanearLocalesExtra, parseLocales } from "../../src/modules/usuarios/locales.js";
+import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocalesExtra, parseLocales } from "../../src/modules/usuarios/locales.js";
 
 const CAT = ["La Tapeta - Blanes", "Cooperativa - Blanes", "La Tapeta - Lloret", "Can Mateu - Tordera"];
 // El caso real: el encargado de la Cooperativa lleva también La Tapeta de Blanes.
@@ -179,5 +179,64 @@ describe("ver varios locales juntos, sin tocar el filtrado", () => {
     assert.match(bloque, /suma\("total"\)/);
     assert.match(panel, /partes: buenas\.map\(\(p\) => p\.totales\)/,
       "pidePorLocales tiene que devolver el agregado de cada local");
+  });
+});
+
+// ── El usuario del TOKEN, que es el que ve el servidor en cada petición ──────
+// EL FALLO QUE ESTO CIERRA: en cada llamada, `req.user` es el payload del JWT, y ahí no está
+// la columna `locales_extra` —está la lista ya calculada, en `locales`—. Mirando solo la
+// columna, el servidor creía que un encargado con dos establecimientos solo tenía el
+// principal. Y no fallaba a la vista: `localPermitido` devuelve el principal cuando le piden
+// uno «que no es suyo», así que pedir el segundo local contestaba con los datos del primero.
+// En Reservas era una agenda vacía; en Facturas, las facturas del otro local.
+describe("el usuario del token cuenta igual que la fila de la base", () => {
+  // Kevin, tal y como lo ve el servidor: sin `locales_extra`, con `locales`.
+  const DEL_TOKEN = {
+    id: 9, username: "kevin", rol: "encargado", nombre: "Kevin",
+    local: "Cooperativa - Blanes",
+    locales: ["Cooperativa - Blanes", "La Tapeta - Blanes"],
+    modulos: ["reservas"],
+  };
+
+  test("llega a sus dos establecimientos", () => {
+    assert.deepEqual(localesDe(DEL_TOKEN), ["Cooperativa - Blanes", "La Tapeta - Blanes"]);
+  });
+
+  test("y puede pedir el segundo: antes se le contestaba con el primero, sin decir nada", () => {
+    assert.equal(localPermitido(DEL_TOKEN, "La Tapeta - Blanes"), "La Tapeta - Blanes");
+    assert.equal(puedeLocal(DEL_TOKEN, "La Tapeta - Blanes"), true);
+  });
+
+  test("los dos a la vez también", () => {
+    assert.deepEqual(localesPermitidos(DEL_TOKEN, ["Cooperativa - Blanes", "La Tapeta - Blanes"]),
+      ["Cooperativa - Blanes", "La Tapeta - Blanes"]);
+  });
+
+  test("pero uno ajeno sigue sin colarse: el arreglo no abre ninguna puerta", () => {
+    assert.equal(localPermitido(DEL_TOKEN, "La Tapeta - Lloret"), "Cooperativa - Blanes");
+    assert.equal(puedeLocal(DEL_TOKEN, "La Tapeta - Lloret"), false);
+    assert.deepEqual(localesPermitidos(DEL_TOKEN, ["La Tapeta - Lloret"]), ["Cooperativa - Blanes"]);
+  });
+
+  test("una lista de locales inventada en el token no sirve de nada si no está firmada", () => {
+    // No se comprueba aquí (lo hace jwt.verify), pero sí que la forma es la misma: lo que
+    // llega por `locales` se trata igual que la columna, ni más ni menos.
+    assert.deepEqual(localesDe({ rol: "encargado", local: "A", locales: "{roto" }), ["A"]);
+    assert.deepEqual(localesDe({ rol: "encargado", local: "A", locales: ["A", "B"] }), ["A", "B"]);
+  });
+
+  test("a dirección le sigue dando igual: no está limitada a ninguno", () => {
+    assert.deepEqual(localesDe({ rol: "direccion", local: null, locales: [] }), []);
+  });
+});
+
+describe("el token tiene que seguir llevando la lista", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  test("al entrar se firma `locales` con los establecimientos del usuario", () => {
+    // Si alguien quita esto del payload, el servidor vuelve a creer que cada encargado tiene
+    // un solo local y las pantallas de los demás se quedan vacías sin explicación.
+    const firmas = [...server.matchAll(/jwt\.sign\(\s*\{[\s\S]{0,400}?\}/g)].map((m) => m[0]);
+    assert.ok(firmas.length >= 2, `esperaba al menos dos jwt.sign, hay ${firmas.length}`);
+    for (const f of firmas) assert.match(f, /locales: localesDe\(/);
   });
 });
