@@ -15,9 +15,13 @@ function tokensDeclarados() {
   return new Set([...bloque.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
 }
 
-/** Cada `var(--algo)` que aparece, con o sin valor de reserva. */
+/**
+ * Cada `var(--algo)` que aparece. Solo cuenta los que se escriben ENTEROS: los que el JS
+ * construye al vuelo —`var(--cat-${nombre})`— no se pueden comprobar mirando el texto, y para
+ * esos está el test de la familia de abajo.
+ */
 function tokensUsados(texto) {
-  return [...texto.matchAll(/var\(\s*(--[\w-]+)\s*(,)?/g)].map((m) => ({ nombre: m[1], conReserva: !!m[2] }));
+  return [...texto.matchAll(/var\(\s*(--[\w-]+)\s*(?=[,)])/g)].map((m) => ({ nombre: m[1] }));
 }
 
 describe("los colores del panel salen de tokens que existen", () => {
@@ -40,13 +44,26 @@ describe("los colores del panel salen de tokens que existen", () => {
     assert.deepEqual(huerfanas, [], "variables CSS que no existen (el navegador las ignora en silencio)");
   });
 
+  test("los colores que el JS arma al vuelo tienen su familia declarada", () => {
+    // `var(--cat-${categoria})` no se puede comprobar entero, pero sí que exista la familia:
+    // si un día se renombran los tokens de categoría, las barras se quedarían sin color y
+    // nadie lo vería —que es justo el fallo que este fichero existe para cazar—.
+    const familias = [...new Set([...app.matchAll(/var\(\s*(--[\w-]+?)\$\{/g)].map((m) => m[1]))];
+    for (const f of familias) {
+      const hay = [...declarados].filter((t) => t.startsWith(f));
+      assert.ok(hay.length >= 3, `«var(${f}…)» se arma en el JS y apenas hay tokens ${f}* declarados`);
+    }
+  });
+
   test("el tema oscuro redefine TODOS los tokens de color del claro", () => {
     // Si uno se queda sin redefinir, en oscuro se queda el color del tema claro y el contraste
     // se rompe justo en esa pieza. Los que no son de color (radios, sombras, fuentes) se
     // quedan fuera a propósito.
     const oscuro = html.slice(html.indexOf(':root[data-theme="dark"]'), html.indexOf("@media (prefers-color-scheme:dark)"));
     const enOscuro = new Set([...oscuro.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
-    const noColor = new Set(["--sh-sm", "--sh-md", "--sh-lg", "--r-sm", "--r-md", "--r-lg", "--sb", "--font", "--mono"]);
+    // `--cat` se fija por elemento y su valor por defecto ya es un token temado (`--brand`),
+    // así que no necesita —ni debe tener— una versión oscura propia.
+    const noColor = new Set(["--sh-sm", "--sh-md", "--sh-lg", "--r-sm", "--r-md", "--r-lg", "--sb", "--font", "--mono", "--cat"]);
     const faltan = [...declarados].filter((t) => !noColor.has(t) && !enOscuro.has(t));
     assert.deepEqual(faltan, [], "tokens de color sin versión oscura");
   });
@@ -60,6 +77,26 @@ describe("las píldoras de estado tienen su color", () => {
     for (const m of app.matchAll(/["'](ok|warn|bad|info|brand|imp)["']/g)) variantes.add(m[1]);
     for (const v of variantes) {
       assert.match(html, new RegExp(`\\.pill\\.${v}\\s*\\{`), `falta la regla .pill.${v} en el CSS`);
+    }
+  });
+});
+
+describe("la paleta de categorías es la misma en el módulo y en el panel", () => {
+  test("mismas categorías y mismo color en los dos sitios", async () => {
+    // El panel no puede importar módulos (es un script suelto), así que la lista está escrita
+    // dos veces. Es el mismo espejo manual que ya existe con VIEW_ROLES, y como aquel, sin un
+    // test que los compare acaban divergiendo: una categoría nueva saldría gris para siempre.
+    const { COLOR_CATEGORIA } = await import("../src/modules/facturas/categorias.js");
+    const bloque = app.slice(app.indexOf("const COLOR_CAT_FE = {"), app.indexOf("const colorCategoriaFE"));
+    const enPanel = Object.fromEntries([...bloque.matchAll(/"([^"]+)":\s*"([a-z]+)"/g)].map((m) => [m[1], m[2]]));
+    assert.deepEqual(enPanel, COLOR_CATEGORIA);
+  });
+
+  test("y cada color de la paleta existe como token", async () => {
+    const { COLOR_CATEGORIA } = await import("../src/modules/facturas/categorias.js");
+    const declarados = tokensDeclarados();
+    for (const color of new Set(Object.values(COLOR_CATEGORIA))) {
+      assert.ok(declarados.has(`--cat-${color}`), `falta el token --cat-${color} en el CSS`);
     }
   });
 });

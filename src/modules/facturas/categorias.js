@@ -49,6 +49,45 @@ export const CATALOGO = [
   { nombre: "Varios", subs: [] },
 ];
 
+/**
+ * El color de cada categoría. NO es decoración: es lo que permite leer «en qué se va el dinero»
+ * sin leer. Hoy todas las barras son del mismo verde y solo cambia la longitud, así que hay que
+ * ir etiqueta por etiqueta para saber qué es cada cosa.
+ *
+ * Se guardan NOMBRES DE TOKEN, no colores: el valor de cada uno lo pone el CSS y cambia entre
+ * el tema claro y el oscuro. Un hexadecimal escrito aquí se vería mal en uno de los dos —que es
+ * justo lo que pasa hoy con la paleta cableada del dashboard.
+ *
+ * La agrupación tiene sentido de cocina, no de diseño: la comida en tonos cálidos (lo que se
+ * compra a diario y se mira más), la limpieza y el menaje en fríos, y el gasto estructural
+ * —alquiler, impuestos, gestoría— en grises, porque es el que no se toca.
+ */
+export const COLOR_CATEGORIA = {
+  "Bebidas": "uva",
+  "Carne y aves": "carne",
+  "Embutidos y quesos": "curado",
+  "Pescado y marisco": "mar",
+  "Fruta y verdura": "huerta",
+  "Pan y bollería": "pan",
+  "Congelados": "hielo",
+  "Ultramarinos y conservas": "despensa",
+  "Limpieza e higiene": "limpieza",
+  "Desechables y envases": "envase",
+  "Menaje y utillaje": "menaje",
+  "Suministros": "gris",
+  "Mantenimiento y obras": "gris",
+  "Servicios y profesionales": "gris",
+  "Impuestos y seguros": "gris",
+  "Alquileres": "gris",
+  "Marketing": "marketing",
+  "Varios": "gris",
+};
+
+/** El token de color de una categoría. Lo que no está en el catálogo va en gris, no en rojo. */
+export function colorCategoria(categoria) {
+  return COLOR_CATEGORIA[normalizarCategoria(categoria)] || "gris";
+}
+
 /** Solo los nombres de categoría, que es lo que se guarda y con lo que se filtra. */
 export const CATEGORIAS = CATALOGO.map((c) => c.nombre);
 

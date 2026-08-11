@@ -17,6 +17,16 @@
   --sh-md:0 2px 6px rgba(28,38,26,.06),0 8px 22px rgba(28,38,26,.08);
   --sh-lg:0 12px 40px rgba(28,38,26,.16),0 3px 10px rgba(28,38,26,.08);
   --r-sm:8px;--r-md:14px;--r-lg:20px;--sb:248px;
+  /* `--cat` se fija POR ELEMENTO (cada barra o píldora dice de qué categoría es); aquí solo
+     está su valor por defecto, para que nada dependa de una variable sin declarar. */
+  --cat:var(--brand);
+  /* Colores de categoría de gasto. Van aquí y no en el JS porque cambian con el tema: un
+     hexadecimal escrito en el código se ve mal en uno de los dos. Ver COLOR_CATEGORIA en
+     src/modules/facturas/categorias.js. */
+  --cat-uva:#7B4B8A;--cat-carne:#B4453C;--cat-curado:#A65A2E;--cat-mar:#2F7E9E;
+  --cat-huerta:#4E8C3F;--cat-pan:#B8862F;--cat-hielo:#5B8FB0;--cat-despensa:#8A7A2E;
+  --cat-limpieza:#3E8F84;--cat-envase:#6B7A8F;--cat-menaje:#7A6A55;--cat-marketing:#9B5178;
+  --cat-gris:#8B8F80;
   --font:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;color-scheme:light}
 :root[data-theme="dark"]{
@@ -25,6 +35,10 @@
   --brand:#6BBE92;--brand2:#57A87D;--brand-ink:#0E1610;--brand-soft:#17281E;
   --success:#4FBE88;--success-soft:#132A1E;--warning:#D8A64A;--warning-soft:#2C2413;
   --danger:#E0685A;--danger-soft:#2E1613;--info:#79A4CB;--info-soft:#12212E;--focus:#6BBE92;
+  --cat-uva:#B98ECB;--cat-carne:#E58B82;--cat-curado:#DC9A66;--cat-mar:#6FB9D8;
+  --cat-huerta:#8CC97C;--cat-pan:#E0BB6A;--cat-hielo:#93C2DD;--cat-despensa:#C6B662;
+  --cat-limpieza:#71C7BB;--cat-envase:#A3B2C6;--cat-menaje:#B6A48A;--cat-marketing:#D68CB0;
+  --cat-gris:#9AA08D;
   --sh-sm:0 1px 2px rgba(0,0,0,.4);--sh-md:0 2px 8px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
   --sh-lg:0 14px 44px rgba(0,0,0,.6);color-scheme:dark}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
@@ -33,6 +47,10 @@
   --brand:#6BBE92;--brand2:#57A87D;--brand-ink:#0E1610;--brand-soft:#17281E;
   --success:#4FBE88;--success-soft:#132A1E;--warning:#D8A64A;--warning-soft:#2C2413;
   --danger:#E0685A;--danger-soft:#2E1613;--info:#79A4CB;--info-soft:#12212E;--focus:#6BBE92;
+  --cat-uva:#B98ECB;--cat-carne:#E58B82;--cat-curado:#DC9A66;--cat-mar:#6FB9D8;
+  --cat-huerta:#8CC97C;--cat-pan:#E0BB6A;--cat-hielo:#93C2DD;--cat-despensa:#C6B662;
+  --cat-limpieza:#71C7BB;--cat-envase:#A3B2C6;--cat-menaje:#B6A48A;--cat-marketing:#D68CB0;
+  --cat-gris:#9AA08D;
   --sh-sm:0 1px 2px rgba(0,0,0,.4);--sh-md:0 2px 8px rgba(0,0,0,.4);--sh-lg:0 14px 44px rgba(0,0,0,.6);color-scheme:dark}}
 body{font-family:var(--font);font-size:14px;color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;line-height:1.5;overflow:hidden}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{color:inherit;text-decoration:none}
@@ -450,12 +468,16 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 /* Barra proporcional del reparto de gasto por categoría. Sin números al lado: los números ya
    están en la fila; la barra es solo para ver de un vistazo cuál se lleva la mitad. */
 .barmini{height:5px;border-radius:3px;background:var(--surface2);margin-top:5px;overflow:hidden}
-.barmini>span{display:block;height:100%;border-radius:3px;background:var(--brand)}
+.barmini>span{display:block;height:100%;border-radius:3px;background:var(--cat, var(--brand))}
+/* Punto de color delante del nombre de la categoría: es lo que deja leer «en qué se va
+   el dinero» sin ir etiqueta por etiqueta. */
+.catdot{width:9px;height:9px;border-radius:3px;display:inline-block;margin-right:7px;background:var(--cat, var(--brand));flex:none}
+.pill.cat{background:color-mix(in srgb, var(--cat, var(--brand)) 16%, transparent);color:var(--cat, var(--brand));border-color:transparent}
 [data-comp="cat"]{cursor:pointer;border-radius:9px;transition:background .12s}
 [data-comp="cat"]:hover{background:var(--brand-soft)}
 /* Proveedor sin categoría: se marca la fila entera, no una celda, para que se vea al pasar
    la lista de arriba abajo buscando qué falta por etiquetar. */
-.tbl tr.sincat td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
+.tbl tr.sincat td:first-child{box-shadow:inset 3px 0 0 var(--danger)}
 /* Selección de documentos */
 .tbl th.facsel,.tbl td.facsel{width:34px;padding-left:14px;padding-right:0}
 /* La miniatura del papel. Una factura se reconoce por su pinta antes que por su número;

@@ -219,6 +219,20 @@ function navToggleGrupo(nombre) {
   }
 }
 
+/**
+ * Repinta la barra lateral y la campana sin tocar la vista. Volver a escribir el shell entero
+ * dejaría el contenido en su sitio pero SIN los manejadores que cada pantalla engancha después
+ * de dibujarse (Productos, Pagos, Conciliaciones…), y la pantalla se quedaría muerta al tacto.
+ */
+function repintarBarra() {
+  const nuevo = document.createElement("div");
+  nuevo.innerHTML = shell(CURRENT, "");
+  const barra = document.querySelector(".sidebar"), nueva = nuevo.querySelector(".sidebar");
+  if (barra && nueva) barra.replaceWith(nueva);
+  const campana = document.querySelector(".bell"), campanaNueva = nuevo.querySelector(".bell");
+  if (campana && campanaNueva) campana.replaceWith(campanaNueva);
+}
+
 function shell(active, bodyHtml) {
   const uname = USER.nombre || USER.username || "Usuario";
   const initials = uname.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
@@ -226,9 +240,10 @@ function shell(active, bodyHtml) {
     const items = grp.items.filter(([id]) => puedeVer(id));
     if (!items.length) return "";
     const abierto = navGrupoAbierto(grp.g, items, active);
-    const avisos = items.reduce((n, [id]) => n + (id === "dashboard" ? DASH_CONCERNS : 0), 0);
+    const avisos = items.reduce((n, [id]) => n + (PENDIENTES[id] || 0), 0);
     const botones = items.map(([id, label, icon]) => {
-      const badge = (id === "dashboard" && DASH_CONCERNS > 0) ? `<span class="badge">${DASH_CONCERNS}</span>` : "";
+      const n = PENDIENTES[id] || 0;
+      const badge = n > 0 ? `<span class="badge" title="${esc(PENDIENTES_TXT[id] || "")}">${num(n)}</span>` : "";
       return `<button class="navi ${id === active ? "active" : ""}" data-view="${id}"><span class="ico">${ic(icon)}</span><span>${label}</span>${badge}</button>`;
     }).join("");
     return `<div class="ngrp ${abierto ? "on" : ""}">
@@ -502,6 +517,31 @@ window.addEventListener("scroll", dpClose, true);
 
 // ════════════════════════ ESTADO GLOBAL + COMPONENTES (lenguaje del prototipo) ════════════════════════
 let DASH_LOCAL = "", COLLAPSED = false, PERIOD = "semana", DASH_CONCERNS = 0;
+
+/**
+ * El trabajo pendiente de cada módulo, para que se vea en el menú SIN entrar. Hasta ahora solo
+ * el Dashboard llevaba número, y encima solo se sabía después de abrirlo.
+ *
+ * Sale del propio dashboard, que ya calcula todo esto: no hay ni una consulta nueva. Y si no se
+ * ha cargado todavía no se pinta nada — un cero que en realidad es «no lo sé» es peor que no
+ * poner nada, porque se lee como «no hay trabajo».
+ */
+let PENDIENTES = {}, PENDIENTES_TXT = {};
+function fijarPendientes(d) {
+  if (!d) return;
+  const n = (x) => (Number(x) > 0 ? Number(x) : 0);
+  PENDIENTES = {
+    dashboard: n((d.preocupaciones || []).length),
+    mantenimiento: n(d.mantenimiento && d.mantenimiento.abiertas),
+    reviews: n(d.resenas && d.resenas.sinResponder),
+  };
+  PENDIENTES_TXT = {
+    dashboard: "Cosas que mirar hoy",
+    mantenimiento: "Incidencias abiertas",
+    reviews: "Reseñas sin responder",
+  };
+  DASH_CONCERNS = PENDIENTES.dashboard;
+}
 let DASH_RANGE = { from: null, to: null, label: "Esta semana" };
 let DASH_PERIODO = null;
 // Reflejo puro de src/modules/dashboard/periodos.js
@@ -738,7 +778,7 @@ function openEstabMenu() {
 // ════════════════════════ VISTA: DASHBOARD (ejecutivo) ════════════════════════
 function renderDashboard(d) {
   const localName = d.scope && d.scope.local;
-  DASH_CONCERNS = (d.preocupaciones || []).length;
+  fijarPendientes(d);
   // ── Cabecera ejecutiva ──
   // Con varios establecimientos, «todo el grupo» sería mentira: se dice cuáles son. El
   // servidor manda la etiqueta ya hecha («Lloret y Girona») junto a los datos sumados.
@@ -846,6 +886,10 @@ async function loadDashboard() {
     ]);
     DASH_PERIODO = per || null;
     view.innerHTML = renderDashboard(d);
+    // El menú se pinta ANTES de que lleguen estos datos, así que los números de pendientes hay
+    // que repintarlos cuando se saben. Sin esto solo aparecían al cambiar de pantalla: es decir,
+    // nunca en la primera, que es donde se mira.
+    repintarBarra();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 // Rango personalizado (días o meses, incluso del año pasado).
@@ -4190,6 +4234,17 @@ let FCATS = null;
 
 const CATS_SIN_LINEAS = new Set(["Suministros", "Mantenimiento y obras", "Servicios y profesionales",
   "Impuestos y seguros", "Alquileres", "Marketing"]);
+// Espejo de COLOR_CATEGORIA (src/modules/facturas/categorias.js). El panel no puede importar
+// módulos, así que se copia — y hay un test que falla si las dos listas dejan de coincidir.
+const COLOR_CAT_FE = {
+  "Bebidas": "uva", "Carne y aves": "carne", "Embutidos y quesos": "curado",
+  "Pescado y marisco": "mar", "Fruta y verdura": "huerta", "Pan y bollería": "pan",
+  "Congelados": "hielo", "Ultramarinos y conservas": "despensa", "Limpieza e higiene": "limpieza",
+  "Desechables y envases": "envase", "Menaje y utillaje": "menaje", "Suministros": "gris",
+  "Mantenimiento y obras": "gris", "Servicios y profesionales": "gris",
+  "Impuestos y seguros": "gris", "Alquileres": "gris", "Marketing": "marketing", "Varios": "gris",
+};
+const colorCategoriaFE = (c) => COLOR_CAT_FE[String(c || "").trim()] || "gris";
 // «Bebidas · Vinos y cavas». Un proveedor es de una categoría CON su subcategoría, no de dos
 // categorías sueltas: así el gasto va entero a un sitio y no hay que repartir nada.
 const parTxt = (p) => (p.subcategoria ? `${p.categoria} · ${p.subcategoria}` : p.categoria);
@@ -4203,15 +4258,18 @@ async function facCargarCategorias() {
 
 function facCategoriasHtml() {
   const j = FCATS; if (!j) return "";
-  const provs = j.proveedores || [];
-  // Los que más gastan primero: etiquetar los diez de arriba ya cubre casi todo el gasto.
+  // Los SIN CATEGORÍA primero, y dentro de cada bloque los que más gastan. Antes iban mezclados
+  // por gasto y el trabajo pendiente quedaba repartido por toda la tabla: la lista tiene que
+  // empezar por lo que hay que arreglar, que además se arregla desde ahí mismo.
+  const provs = [...(j.proveedores || [])].sort((a, b) =>
+    (a.categorias.length ? 1 : 0) - (b.categorias.length ? 1 : 0) || (b.gasto || 0) - (a.gasto || 0));
   const fila = (p) => `<tr class="${p.categorias.length ? "" : "sincat"}">
     <td><button class="linkbtn" data-act="fac-prov-ficha" data-prov="${esc(p.proveedor)}" style="font-weight:600" title="Abrir su ficha">${esc(p.proveedor)}</button>${p.nombres.length > 1 ? `<div class="t2" title="${esc(p.nombres.join(" · "))}">y ${p.nombres.length - 1} forma${p.nombres.length > 2 ? "s" : ""} más de escribirlo</div>` : ""}</td>
     <td class="mut r tnum">${num(p.facturas)}</td>
     <td class="r tnum">${eur(p.gasto)}</td>
     <td>${p.categorias.length
-      ? p.categorias.map((c) => `<span class="pill ${CATS_SIN_LINEAS.has(c.categoria) ? "" : "ok"}">${esc(parTxt(c))}</span>`).join(" ")
-      : '<span class="pill warn">sin categoría</span>'}
+      ? p.categorias.map((c) => `<span class="pill cat" style="--cat:var(--cat-${esc(colorCategoriaFE(c.categoria))})">${esc(parTxt(c))}</span>`).join(" ")
+      : '<span class="pill bad">sin categoría</span>'}
       ${p.categorias.length && !p.categorias.some((c) => !CATS_SIN_LINEAS.has(c.categoria))
         ? '<div class="t2">gasto estructural · no se lee el detalle</div>' : ""}</td>
     <td class="r"><button class="btn sm" data-act="fac-cat-editar" data-prov="${esc(p.proveedor)}">Cambiar</button></td></tr>`;
@@ -5368,9 +5426,11 @@ function compCategoriasHtml(g) {
     return `<div class="subcats">${reales.map((x) =>
       `<button class="subcat" data-comp="sub" data-sub="${esc(x.subcategoria)}">${esc(x.subcategoria)} <b>${esc(eur(x.importe))}</b></button>`).join("")}</div>`;
   };
-  const fila = (c) => `<div class="row" style="padding:7px 2px;align-items:flex-start">
+  // Cada categoría con SU color, el mismo en toda la aplicación. Antes todas las barras eran
+  // del mismo verde y solo cambiaba la longitud: había que ir etiqueta por etiqueta.
+  const fila = (c) => `<div class="row" style="padding:7px 2px;align-items:flex-start;--cat:var(--cat-${esc(colorCategoriaFE(c.categoria))})">
       <div class="grow" style="min-width:0">
-        <button class="linkbtn" data-comp="cat" data-cat="${esc(c.categoria)}" style="font-weight:600">${esc(c.categoria)}</button>
+        <button class="linkbtn" data-comp="cat" data-cat="${esc(c.categoria)}" style="font-weight:600;display:inline-flex;align-items:center"><span class="catdot"></span>${esc(c.categoria)}</button>
         <div class="barmini"><span style="width:${Math.round((c.importe / max) * 100)}%"></span></div>
         ${subs(c)}
       </div>
