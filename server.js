@@ -49,6 +49,7 @@ import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornada
 import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo } from "./src/modules/fichajes/bolsa.js";
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
+import { colaDeTrabajo, cobertura } from "./src/modules/facturas/diccionario.js";
 import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { proponerConciliacion, resumenConciliacion, estadoConciliada } from "./src/modules/facturas/conciliacion.js";
@@ -520,6 +521,37 @@ async function initDB() {
     }
     // En modo recibo no hay «días», así que la columna deja de ser obligatoria.
     await dbRun(`ALTER TABLE facturas_proveedor_pago ALTER COLUMN dias DROP NOT NULL`).catch(() => {});
+    // ── El diccionario de productos ────────────────────────────────────────
+    // EL PROBLEMA: el mismo producto se llama de tres maneras. En la factura «COCA COLA ZERO
+    // 33CL LATA CAJA 24U», en el inventario «Coca-Cola Zero». Agrupamos por el texto exacto
+    // del proveedor, así que «COCA COLA 33CL» y «Coca-Cola 33 cl» son dos productos y
+    // «cuánto compramos de Coca-Cola» no se puede contestar.
+    //
+    // El producto canónico es del GRUPO y no de un local: si fuera por local, comparar Blanes
+    // con Lloret —que es la mitad de la gracia— seguiría sin poder hacerse.
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS productos_canonicos (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        unidad TEXT,
+        creado_por TEXT,
+        creado_en TEXT
+      )
+    `);
+    // Dos productos con el mismo nombre son un error de dedo, no dos productos.
+    await dbRun(`CREATE UNIQUE INDEX IF NOT EXISTS productos_canonicos_nombre ON productos_canonicos (LOWER(nombre))`).catch(() => {});
+    // Qué texto exacto de proveedor es qué producto. `producto_id` NULL significa «revisado y
+    // dejado aparte»: así no vuelve a salir en la cola, pero tampoco se une a nada.
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS producto_alias (
+        clave TEXT PRIMARY KEY,
+        producto_id INTEGER REFERENCES productos_canonicos(id) ON DELETE CASCADE,
+        descripcion TEXT,
+        confirmado_por TEXT,
+        confirmado_en TEXT
+      )
+    `);
+
     // Segundo nivel: «Bebidas · Vinos y cavas». Un proveedor es de UNA categoría con su
     // subcategoría, no de dos categorías sueltas: así el gasto va entero a un sitio y la
     // categoría es la suma exacta de sus subcategorías, sin nada aproximado.
@@ -3430,7 +3462,14 @@ async function comprasDeLocal(query, local) {
       `SELECT count(DISTINCT f.id)::int AS n FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
         WHERE ${[...condFac, ALBARAN_YA_CONTADO].join(" AND ")}`, parFac);
 
-    const grupos = agruparPorProducto(filas);
+    // El diccionario, si hay algo confirmado: convierte «COCA COLA 33CL» y «Coca-Cola 33 cl»
+    // en un solo producto. Una consulta, y si no hay nada confirmado todo sigue como estaba.
+    const aliasFilas = await dbAll(
+      `SELECT a.clave, a.producto_id, p.nombre FROM producto_alias a
+         JOIN productos_canonicos p ON p.id = a.producto_id`, []).catch(() => []);
+    const alias = new Map(aliasFilas.map((a) => [a.clave, { id: a.producto_id, nombre: a.nombre }]));
+
+    const grupos = agruparPorProducto(filas, { alias });
     // Cuántas facturas del periodo NO tienen detalle: sin esto, un total parcial parecería
     // el total de verdad. Es la diferencia entre un dato y un dato en el que se puede confiar.
     const cobertura = await dbGet(
@@ -3486,6 +3525,104 @@ async function comprasDeLocal(query, local) {
       },
     };
 }
+
+// ── El diccionario de productos ─────────────────────────────────────────────
+// La cola de trabajo: qué descripciones no se han revisado todavía, ordenadas POR EL DINERO
+// QUE MUEVEN. Con cientos de textos distintos, las veinte primeras confirmaciones cubren la
+// mayor parte del histórico; por orden alfabético no termina nadie.
+app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const pendientes = await dbAll(
+      `SELECT l.clave, MAX(l.descripcion) AS descripcion, SUM(l.importe)::float AS gasto,
+              COUNT(*)::int AS veces, string_agg(DISTINCT f.proveedor, ' · ') AS proveedores
+         FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
+         LEFT JOIN producto_alias a ON a.clave = l.clave
+        WHERE a.clave IS NULL AND COALESCE(l.clave,'') <> '' AND ${SIN_DUDAS}
+        GROUP BY l.clave ORDER BY gasto DESC NULLS LAST LIMIT 200`, []);
+
+    const productos = await dbAll(
+      `SELECT p.id, p.nombre, COUNT(a.clave)::int AS alias
+         FROM productos_canonicos p LEFT JOIN producto_alias a ON a.producto_id = p.id
+        GROUP BY p.id, p.nombre ORDER BY p.nombre`, []);
+
+    // Cuánto gasto está ya revisado. Es el número que dice si merece la pena seguir: no
+    // «cuántas faltan» —siempre faltarán— sino cuánto dinero cubre lo decidido.
+    const resueltos = await dbAll(
+      `SELECT SUM(l.importe)::float AS gasto
+         FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
+         JOIN producto_alias a ON a.clave = l.clave
+        WHERE ${SIN_DUDAS} GROUP BY a.clave`, []);
+
+    res.json({
+      ok: true,
+      cola: colaDeTrabajo(pendientes, productos),
+      productos,
+      cobertura: cobertura(resueltos, pendientes),
+      hayMas: pendientes.length >= 200,
+    });
+  } catch (e) {
+    console.error("[facturas] diccionario:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar el diccionario" });
+  }
+});
+
+// Confirmar una: unir a un producto que ya existe, crear uno nuevo, o dejarla aparte.
+// NADA se une solo, ni con un 95 % de parecido: unir dos productos que no son el mismo
+// estropea el histórico de los dos a la vez y ya no hay forma de saber cuál era cuál.
+app.post("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const clave = String(req.body?.clave || "").trim();
+    if (!clave) return res.status(400).json({ ok: false, error: "Falta el producto" });
+    const quien = req.user?.nombre || req.user?.username || null;
+    const ahora = isoConOffset(Date.now());
+    const descripcion = String(req.body?.descripcion || "").trim() || null;
+
+    let productoId = null;
+    if (req.body?.aparte) {
+      productoId = null;                                   // revisado, pero no se une a nada
+    } else if (req.body?.nombre_nuevo) {
+      const nombre = String(req.body.nombre_nuevo).trim().slice(0, 120);
+      if (!nombre) return res.status(400).json({ ok: false, error: "El nombre no puede estar vacío" });
+      const ya = await dbGet(`SELECT id FROM productos_canonicos WHERE LOWER(nombre) = LOWER(?)`, [nombre]);
+      if (ya) productoId = ya.id;
+      else {
+        const r = await dbRun(
+          `INSERT INTO productos_canonicos (nombre, creado_por, creado_en) VALUES (?, ?, ?) RETURNING id`,
+          [nombre, quien, ahora]);
+        productoId = r?.id;
+      }
+    } else {
+      productoId = Number(req.body?.producto_id);
+      if (!Number.isInteger(productoId)) return res.status(400).json({ ok: false, error: "Falta a qué producto se une" });
+      const existe = await dbGet(`SELECT id FROM productos_canonicos WHERE id = ?`, [productoId]);
+      if (!existe) return res.status(404).json({ ok: false, error: "Ese producto ya no existe" });
+    }
+
+    await dbRun(
+      `INSERT INTO producto_alias (clave, producto_id, descripcion, confirmado_por, confirmado_en)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (clave) DO UPDATE SET producto_id = EXCLUDED.producto_id,
+         descripcion = EXCLUDED.descripcion, confirmado_por = EXCLUDED.confirmado_por,
+         confirmado_en = EXCLUDED.confirmado_en`,
+      [clave, productoId, descripcion, quien, ahora]);
+
+    res.json({ ok: true, producto_id: productoId });
+  } catch (e) {
+    console.error("[facturas] confirmar diccionario:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+// Deshacer: la descripción vuelve a la cola. Equivocarse tiene que costar un clic, no un
+// vaciado de tabla — si no, nadie se atreve a decidir.
+app.delete("/api/facturas/diccionario/:clave", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    await dbRun(`DELETE FROM producto_alias WHERE clave = ?`, [String(req.params.clave || "")]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "No se pudo deshacer" });
+  }
+});
 
 app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {

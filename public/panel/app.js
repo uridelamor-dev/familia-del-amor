@@ -5437,12 +5437,120 @@ async function concConfirmar(id, albs) {
 let COMP = { q: "", from: "", to: "", proveedor: "", categoria: "", subcategoria: "" };
 const COMP_FILTROS = ["q", "from", "to", "proveedor", "categoria", "subcategoria"];
 
+// ── El diccionario: unificar productos ──────────────────────────────────────
+// «COCA COLA 33CL» y «Coca-Cola 33 cl» son el mismo producto y hoy cuentan como dos. Aquí se
+// va diciendo cuál es cuál, EMPEZANDO POR LO QUE MÁS DINERO MUEVE: con cientos de textos, las
+// veinte primeras confirmaciones cubren casi todo el histórico.
+//
+// Nada se une solo. Lo que sale es una propuesta y hay que decir que sí.
+let DICC = null;
+
+async function dicPedir() {
+  try { DICC = await apiRaw("/api/facturas/diccionario"); } catch { DICC = null; }
+  dicPintar();
+}
+
+function dicPintar() {
+  const caja = document.getElementById("dicRes");
+  if (!caja) return;
+  if (!DICC) { caja.innerHTML = ""; return; }
+  const cola = DICC.cola || [];
+  const c = DICC.cobertura || {};
+
+  if (!cola.length) {
+    caja.innerHTML = `<div class="card" style="margin-bottom:14px"><p class="mut" style="margin:0">
+      Todos los productos están revisados. Cuando entren descripciones nuevas aparecerán aquí.</p></div>`;
+    return;
+  }
+
+  const fila = (p) => `<div class="row" data-dic-fila="${esc(p.clave)}">
+      <div class="grow" style="min-width:0">
+        <div class="t1">${esc(p.descripcion)}</div>
+        <div class="t2">${esc(eur(p.gasto))} · ${num(p.veces)} ${p.veces === 1 ? "vez" : "veces"}${p.proveedores ? ` · ${esc(p.proveedores)}` : ""}</div>
+      </div>
+      ${p.sugerido ? `<button class="btn sm primary" data-dic="unir" data-clave="${esc(p.clave)}" data-id="${p.sugerido.id}" data-desc="${esc(p.descripcion)}"
+          title="Se parece un ${p.sugerido.score} %">Es «${esc(p.sugerido.nombre)}»</button>` : ""}
+      <button class="btn sm" data-dic="nuevo" data-clave="${esc(p.clave)}" data-nombre="${esc(p.nombrePropuesto)}"
+        data-desc="${esc(p.descripcion)}">Es nuevo</button>
+      <button class="btn sm" data-dic="otro" data-clave="${esc(p.clave)}" data-desc="${esc(p.descripcion)}">Otro…</button>
+      <button class="btn sm" data-dic="aparte" data-clave="${esc(p.clave)}" data-desc="${esc(p.descripcion)}"
+        title="Revisado, pero no se une a ningún producto">Dejar aparte</button>
+    </div>`;
+
+  caja.innerHTML = `<details class="card fold" style="margin-bottom:14px" ${c.pct < 50 ? "open" : ""}>
+    <summary><h3>Unificar productos</h3><span class="foldr">
+      <span>${num(cola.length)} sin revisar${DICC.hayMas ? "+" : ""}${c.pct ? ` · ${c.pct} % del gasto ya revisado` : ""}</span>
+      <span class="car">${ic("chev", 16)}</span></span></summary>
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">El mismo producto se llama de dos maneras según quién
+      escriba la factura, y así cuenta como dos. Diciendo cuál es cuál se puede contestar <b>cuánto compramos de
+      algo</b> y comparar establecimientos. <b>Empieza por arriba</b>: son los que más dinero mueven.
+      ${c.pct ? `Llevas <b>${c.pct} %</b> del gasto revisado.` : ""}</p>
+    <div class="rows">${cola.slice(0, 25).map(fila).join("")}</div>
+    ${cola.length > 25 ? `<p class="mut" style="margin:10px 0 0;font-size:12px">Y ${num(cola.length - 25)} más, que irán apareciendo según decidas estas.</p>` : ""}
+  </details>`;
+}
+
+async function dicGuardar(cuerpo, fila) {
+  try {
+    await apiSend("POST", "/api/facturas/diccionario", cuerpo);
+    // La fila desaparece al momento: la cola tiene que bajar a ojos vista o no se termina.
+    fila?.remove();
+    if (DICC) DICC.cola = (DICC.cola || []).filter((x) => x.clave !== cuerpo.clave);
+    toast("Hecho ✅");
+    comprasDebounced();               // el agrupado cambia: se repinta el gasto por producto
+  } catch (e) { toast("Error: " + e.message); }
+}
+
+/** Elegir a mano entre los productos que ya existen, con buscador. */
+function dicElegir(clave, descripcion, fila) {
+  const productos = (DICC?.productos || []);
+  const ov = modal("¿Qué producto es?", `
+    <p class="mut" style="margin:0 0 10px">Se está clasificando <b>${esc(descripcion)}</b>.</p>
+    <input class="inp" id="dicQ" placeholder="Buscar producto…" autocomplete="off">
+    <div id="dicLista" class="rows" style="max-height:320px;overflow:auto;margin-top:10px"></div>
+    ${productos.length ? "" : '<p class="mut">Todavía no hay ningún producto creado. Usa «Es nuevo».</p>'}`);
+
+  const pintar = (q) => {
+    const t = (q || "").toLowerCase();
+    const l = productos.filter((p) => !t || p.nombre.toLowerCase().includes(t)).slice(0, 60);
+    ov.querySelector("#dicLista").innerHTML = l.map((p) => `<div class="row">
+        <div class="grow"><b>${esc(p.nombre)}</b>${p.alias ? ` <span class="mut">· ${num(p.alias)} forma${p.alias === 1 ? "" : "s"} de escribirlo</span>` : ""}</div>
+        <button class="btn sm primary" data-elegir="${p.id}">Es este</button></div>`).join("")
+      || '<p class="mut">Ninguno con ese nombre.</p>';
+  };
+  pintar("");
+  ov.querySelector("#dicQ").addEventListener("input", (e) => pintar(e.target.value));
+  ov.querySelector("#dicLista").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-elegir]");
+    if (!b) return;
+    ov.remove();
+    dicGuardar({ clave, descripcion, producto_id: Number(b.getAttribute("data-elegir")) }, fila);
+  });
+}
+
 async function loadProductos() {
   const view = document.getElementById("view");
   facScope();   // el establecimiento lo fija el selector de la barra, como en el resto
   if (!COMP.from) { const d = new Date(); d.setMonth(d.getMonth() - 6); COMP.from = d.toISOString().slice(0, 10); }
-  view.innerHTML = productosHeader() + `<div id="compRes"><p class="mut">Cargando…</p></div>`;
+  view.innerHTML = productosHeader() + `<div id="dicRes"></div><div id="compRes"><p class="mut">Cargando…</p></div>`;
   await refrescarCompras();
+  dicPedir();                        // no se espera: la cola llega cuando llegue
+
+  document.getElementById("dicRes")?.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-dic]");
+    if (!b) return;
+    const clave = b.getAttribute("data-clave");
+    const desc = b.getAttribute("data-desc") || "";
+    const fila = b.closest("[data-dic-fila]");
+    const q = b.getAttribute("data-dic");
+    if (q === "unir") return dicGuardar({ clave, descripcion: desc, producto_id: Number(b.getAttribute("data-id")) }, fila);
+    if (q === "aparte") return dicGuardar({ clave, descripcion: desc, aparte: true }, fila);
+    if (q === "otro") return dicElegir(clave, desc, fila);
+    if (q === "nuevo") {
+      const nombre = prompt("¿Cómo se llama este producto?", b.getAttribute("data-nombre") || desc);
+      if (nombre && nombre.trim()) dicGuardar({ clave, descripcion: desc, nombre_nuevo: nombre.trim() }, fila);
+    }
+  });
   const cont = document.getElementById("compRes");
   cont?.addEventListener("input", (e) => {
     if (e.target.id === "compQ") { COMP.q = e.target.value.trim(); comprasDebounced(); }

@@ -156,14 +156,28 @@ export function medianaPrecios(precios = [], { minimo = 3, ventana = 12 } = {}) 
   return v.length % 2 ? v[m] : Math.round(((v[m - 1] + v[m]) / 2) * 100) / 100;
 }
 
-export function agruparPorProducto(lineas = []) {
+/**
+ * `alias` es el diccionario: clave del proveedor → { id, nombre } del producto de verdad.
+ *
+ * Sin él se agrupa por el texto exacto y «COCA COLA 33CL» y «Coca-Cola 33 cl» son dos
+ * productos — que es lo honesto mientras nadie haya dicho que son el mismo. Con él, las dos
+ * caen en el mismo grupo y por fin se puede contestar «cuánto compramos de Coca-Cola» y
+ * comparar dos locales.
+ *
+ * La clave del grupo pasa a ser «p:12» para que el resto —la fusión entre locales, el
+ * historial— siga funcionando sin enterarse: para ellos solo es otra clave.
+ */
+export function agruparPorProducto(lineas = [], { alias = null } = {}) {
   const mapa = new Map();
   for (const l of lineas) {
-    const k = claveProducto(l.descripcion);
+    const propia = claveProducto(l.descripcion);
+    const canon = alias?.get?.(propia) || null;
+    const k = canon ? `p:${canon.id}` : propia;
     if (!k) continue;
     if (!mapa.has(k)) {
       mapa.set(k, {
-        clave: k, descripcion: l.descripcion, proveedores: new Set(),
+        clave: k, descripcion: canon ? canon.nombre : l.descripcion, unificado: !!canon,
+        proveedores: new Set(),
         cantidad: 0, importe: 0, veces: 0, conImporte: 0, conCantidad: 0, dudosas: 0,
         precioMin: null, precioMax: null, primera: null, ultima: null, ultimoPrecio: null,
         // Las últimas compras con su fecha. Hacen falta para el precio NORMAL (la mediana) y
