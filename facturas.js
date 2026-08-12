@@ -191,8 +191,10 @@ export async function condicionesDePago(dbGet, proveedor) {
   const clave = claveProveedor(proveedor);
   if (!clave || !dbGet) return null;
   try {
-    const r = await dbGet(`SELECT dias, dia_pago FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]);
-    return r ? { dias: r.dias, dia_pago: r.dia_pago } : null;
+    const r = await dbGet(
+      `SELECT dias, dia_pago, modo, meses_despues, domiciliado FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]);
+    return r ? { dias: r.dias, dia_pago: r.dia_pago, modo: r.modo || "dias",
+      meses_despues: r.meses_despues, domiciliado: !!Number(r.domiciliado) } : null;
   } catch { return null; }
 }
 

@@ -58,7 +58,7 @@ import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPa
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { repasarLote, resumenRepaso, pideRelecturaDeLineas, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
-import { agruparPagos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
+import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
 import { instanteMadrid } from "./src/modules/horarios/tiempo.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
@@ -504,12 +504,22 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS facturas_proveedor_pago (
         prov_clave TEXT PRIMARY KEY,
         proveedor TEXT NOT NULL,
-        dias INTEGER NOT NULL,
+        dias INTEGER,
         dia_pago INTEGER,
         actualizado_por TEXT,
         actualizado_en TEXT
       )
     `);
+    // El RECIBO MENSUAL, que es como paga la mayoría: «todo lo que me facture en julio me lo
+    // pasa en un recibo el 15 de agosto». No se puede simular con «a X días»: una factura del
+    // 3 y otra del 31 del mismo mes vencen el MISMO día, y con días saldrían dos fechas que no
+    // existen. Aditivas y con su valor de siempre, para que lo ya guardado no cambie.
+    for (const col of ["modo TEXT NOT NULL DEFAULT 'dias'", "meses_despues INTEGER NOT NULL DEFAULT 1",
+                       "domiciliado INTEGER NOT NULL DEFAULT 0"]) {
+      await dbRun(`ALTER TABLE facturas_proveedor_pago ADD COLUMN IF NOT EXISTS ${col}`).catch(() => {});
+    }
+    // En modo recibo no hay «días», así que la columna deja de ser obligatoria.
+    await dbRun(`ALTER TABLE facturas_proveedor_pago ALTER COLUMN dias DROP NOT NULL`).catch(() => {});
     // Segundo nivel: «Bebidas · Vinos y cavas». Un proveedor es de UNA categoría con su
     // subcategoría, no de dos categorías sueltas: así el gasto va entero a un sitio y la
     // categoría es la suma exacta de sus subcategorías, sin nada aproximado.
@@ -3567,12 +3577,27 @@ app.get("/api/facturas/pagos", requireAuth(["direccion", "contabilidad"]), async
          FROM facturas WHERE ${cond.join(" AND ")}
         ORDER BY vencimiento NULLS LAST, fecha LIMIT 2000`, par);
 
+    // Quién paga por recibo mensual: hace falta para juntar sus facturas en un solo cargo, que
+    // es como llega al banco. Una consulta para todos, no una por factura.
+    const modos = new Map((await dbAll(
+      `SELECT prov_clave, modo, domiciliado FROM facturas_proveedor_pago`, []).catch(() => []))
+      .map((r) => [r.prov_clave, r]));
+    for (const f of filas) {
+      const c = modos.get(claveProveedor(f.proveedor));
+      f.prov_clave = claveProveedor(f.proveedor);
+      f.recibo = c?.modo === "mensual";
+      f.domiciliado = !!Number(c?.domiciliado);
+    }
+
     // Hora de MADRID y no UTC: `hoyISO()` es UTC y entre medianoche y las dos de la mañana en
     // verano devuelve el día de ayer. Aquí eso significaría enseñar como «vence hoy» algo que
     // venció ayer, justo a la hora en que se cierra caja. (Deuda conocida en el resto; en lo
     // nuevo se usa el módulo que ya sabe de husos.)
     const hoy = instanteMadrid(new Date()).fecha;
-    const grupos = agruparPagos(filas, hoy);
+    // Primero se juntan los recibos —doce facturas de Grau del 15 de agosto son UN cargo de
+    // 3.450 €— y luego se reparten por urgencia. Al revés, el mismo recibo saldría partido
+    // entre «esta semana» y «más adelante».
+    const grupos = agruparPagos(agruparRecibos(filas), hoy);
     // Los proveedores que salen sin fecha y NO tienen condiciones puestas: es lo que hay que
     // arreglar para que esta pantalla deje de tener un grupo de «no se sabe».
     const sinFecha = grupos.find((g) => g.clave === "sin_fecha");
@@ -3593,25 +3618,43 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
     const clave = claveProveedor(nombre);
     if (!nombre || !clave) return res.status(400).json({ ok: false, error: "Falta el proveedor" });
 
-    const quitar = req.body?.dias === null || req.body?.dias === "";
+    const modo = req.body?.modo === "mensual" ? "mensual" : "dias";
+    // Quitar las condiciones es dejar vacío lo que define el modo: los días, o el día del recibo.
+    const quitar = modo === "mensual"
+      ? (req.body?.dia_pago === null || req.body?.dia_pago === "" || req.body?.dia_pago === undefined)
+      : (req.body?.dias === null || req.body?.dias === "");
+
     if (quitar) {
       await dbRun(`DELETE FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]);
     } else {
-      const dias = Number(req.body?.dias);
-      if (!Number.isInteger(dias) || dias < 0 || dias > 365) {
-        return res.status(400).json({ ok: false, error: "Los días de pago tienen que ser un número entre 0 y 365" });
-      }
       const diaBruto = req.body?.dia_pago;
       const diaPago = diaBruto === null || diaBruto === "" || diaBruto === undefined ? null : Number(diaBruto);
       if (diaPago !== null && (!Number.isInteger(diaPago) || diaPago < 1 || diaPago > 31)) {
         return res.status(400).json({ ok: false, error: "El día de pago tiene que estar entre 1 y 31" });
       }
+      const domiciliado = req.body?.domiciliado ? 1 : 0;
+      let dias = null, meses = 1;
+
+      if (modo === "mensual") {
+        // El día ES la condición: sin él no hay recibo que valga.
+        if (diaPago === null) return res.status(400).json({ ok: false, error: "Falta el día en que pasa el recibo" });
+        meses = Number(req.body?.meses_despues);
+        if (!Number.isInteger(meses) || meses < 0 || meses > 12) meses = 1;
+      } else {
+        dias = Number(req.body?.dias);
+        if (!Number.isInteger(dias) || dias < 0 || dias > 365) {
+          return res.status(400).json({ ok: false, error: "Los días de pago tienen que ser un número entre 0 y 365" });
+        }
+      }
+
       await dbRun(
-        `INSERT INTO facturas_proveedor_pago (prov_clave, proveedor, dias, dia_pago, actualizado_por, actualizado_en)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO facturas_proveedor_pago (prov_clave, proveedor, dias, dia_pago, modo, meses_despues, domiciliado, actualizado_por, actualizado_en)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (prov_clave) DO UPDATE SET proveedor = EXCLUDED.proveedor, dias = EXCLUDED.dias,
-           dia_pago = EXCLUDED.dia_pago, actualizado_por = EXCLUDED.actualizado_por, actualizado_en = EXCLUDED.actualizado_en`,
-        [clave, nombre, dias, diaPago, req.user?.nombre || req.user?.username || null, isoConOffset(Date.now())]);
+           dia_pago = EXCLUDED.dia_pago, modo = EXCLUDED.modo, meses_despues = EXCLUDED.meses_despues,
+           domiciliado = EXCLUDED.domiciliado,
+           actualizado_por = EXCLUDED.actualizado_por, actualizado_en = EXCLUDED.actualizado_en`,
+        [clave, nombre, dias, diaPago, modo, meses, domiciliado, req.user?.nombre || req.user?.username || null, isoConOffset(Date.now())]);
     }
 
     // Recalcular las suyas: sin pagar y con la fecha calculada (o sin fecha). Las que traían el
@@ -3661,7 +3704,10 @@ app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
     ]);
     // Las condiciones de pago, para poder ponerlas desde la misma ficha: es donde se mira
     // cuando llega su factura y donde se sabe la respuesta.
-    const pago = await dbGet(`SELECT dias, dia_pago, actualizado_por, actualizado_en FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]).catch(() => null);
+    const pagoBruto = await dbGet(
+      `SELECT dias, dia_pago, modo, meses_despues, domiciliado, actualizado_por, actualizado_en
+         FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]).catch(() => null);
+    const pago = pagoBruto ? { ...pagoBruto, modo: pagoBruto.modo || "dias", domiciliado: !!Number(pagoBruto.domiciliado) } : null;
     res.json({ ok: true, proveedor: nombre, clave, nombres: suyos, ...datos,
       nifs, categorias: cats, alias: alias || null,
       pago: pago || null, pagoTexto: pago ? textoCondiciones(pago) : null });

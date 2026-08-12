@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { calcularVencimiento, estadoPago, diasHasta, agruparPagos, resumenPagos, textoCondiciones, GRUPOS_PAGO }
+import { agruparRecibos, calcularVencimiento, estadoPago, diasHasta, agruparPagos, resumenPagos, textoCondiciones, GRUPOS_PAGO }
   from "../../src/modules/facturas/vencimiento.js";
 
 const HOY = "2026-08-11";
@@ -238,5 +238,144 @@ describe("la factura trae su vencimiento cuando lo lleva escrito", () => {
   });
   test("y al guardar se calcula con lo pactado si el papel no dice nada", () => {
     assert.match(facturas, /calcularVencimiento\(\{[\s\S]{0,200}condicionesDePago\(dbGet, datos\.proveedor\)/);
+  });
+});
+
+// ── El recibo mensual ──────────────────────────────────────────────────────
+// «Todo lo que me facture en julio me lo pasa en un recibo el 15 de agosto». Es como se paga a
+// la mayoría de proveedores, y NO es «a X días» disfrazado.
+
+describe("el recibo mensual: todo el mes en un solo cargo", () => {
+  const grau = { modo: "mensual", dia_pago: 15, meses_despues: 1, domiciliado: true };
+
+  test("una factura del día 3 y otra del 31 vencen EL MISMO DÍA", () => {
+    // Esto es lo que hace que no se pueda simular con «a 30 días»: con 30 días saldrían el 2 y
+    // el 30 de agosto, dos fechas que no existen — el banco cobra una vez, el día 15.
+    const a = calcularVencimiento({ fecha: "2026-07-03", condiciones: grau });
+    const b = calcularVencimiento({ fecha: "2026-07-31", condiciones: grau });
+    assert.equal(a.vencimiento, "2026-08-15");
+    assert.equal(b.vencimiento, "2026-08-15");
+    assert.equal(a.origen, "proveedor");
+  });
+
+  test("cruzando el año, diciembre va a enero", () => {
+    assert.equal(calcularVencimiento({ fecha: "2026-12-20", condiciones: grau }).vencimiento, "2027-01-15");
+  });
+
+  test("si el mes de destino no tiene ese día, se cobra el último y NO se mueve de mes", () => {
+    // Día 31 con destino febrero: el 31 de febrero no existe, y pasarlo al 1 de marzo movería
+    // el recibo de mes y descuadraría la previsión.
+    const c = { modo: "mensual", dia_pago: 31, meses_despues: 1 };
+    assert.equal(calcularVencimiento({ fecha: "2026-01-10", condiciones: c }).vencimiento, "2026-02-28");
+    assert.equal(calcularVencimiento({ fecha: "2028-01-10", condiciones: c }).vencimiento, "2028-02-29", "bisiesto");
+  });
+
+  test("se puede pactar a dos meses, o dentro del mismo mes", () => {
+    assert.equal(calcularVencimiento({ fecha: "2026-07-05", condiciones: { modo: "mensual", dia_pago: 5, meses_despues: 2 } }).vencimiento, "2026-09-05");
+    assert.equal(calcularVencimiento({ fecha: "2026-07-05", condiciones: { modo: "mensual", dia_pago: 28, meses_despues: 0 } }).vencimiento, "2026-07-28");
+  });
+
+  test("el papel sigue mandando por encima del recibo", () => {
+    // Si la factura trae su propio vencimiento escrito, es el que el proveedor va a reclamar.
+    const r = calcularVencimiento({ fecha: "2026-07-03", vencimientoLeido: "2026-08-31", condiciones: grau });
+    assert.equal(r.vencimiento, "2026-08-31");
+    assert.equal(r.origen, "factura");
+  });
+
+  test("sin día no hay recibo, y no se inventa uno", () => {
+    assert.equal(calcularVencimiento({ fecha: "2026-07-03", condiciones: { modo: "mensual" } }).vencimiento, null);
+    assert.equal(calcularVencimiento({ fecha: "2026-07-03", condiciones: { modo: "mensual", dia_pago: 40 } }).vencimiento, null);
+  });
+
+  test("se explica en una frase que se entiende", () => {
+    assert.equal(textoCondiciones(grau), "Recibo mensual: todo lo del mes, el día 15 del mes siguiente (por banco)");
+    assert.equal(textoCondiciones({ modo: "mensual", dia_pago: 5, meses_despues: 2 }), "Recibo mensual: todo lo del mes, el día 5 2 meses después");
+    assert.equal(textoCondiciones({ dias: 30, dia_pago: 10, domiciliado: true }), "A 30 días, pagando los días 10 (por banco)");
+  });
+});
+
+describe("las facturas de un recibo son UN cargo, no doce", () => {
+  const f = (id, total, venc, recibo = true) => ({ id, total, vencimiento: venc, recibo, domiciliado: recibo, proveedor: "Grau", prov_clave: "grau" });
+
+  test("se suman en una sola línea con su fecha", () => {
+    // En el banco sale una línea de 350 €, no tres de 100, 200 y 50. Enseñarlas sueltas obliga
+    // a sumarlas a mano para saber qué va a salir de la cuenta.
+    const g = agruparRecibos([f(1, 100, "2026-08-15"), f(2, 200, "2026-08-15"), f(3, 50, "2026-08-15")]);
+    assert.equal(g.length, 1);
+    assert.equal(g[0].total, 350);
+    assert.equal(g[0].facturas.length, 3);
+    assert.equal(g[0].esRecibo, true);
+  });
+
+  test("dos meses son dos recibos, aunque sea el mismo proveedor", () => {
+    const g = agruparRecibos([f(1, 100, "2026-08-15"), f(2, 200, "2026-09-15")]);
+    assert.equal(g.length, 2);
+    assert.deepEqual(g.map((x) => x.vencimiento), ["2026-08-15", "2026-09-15"]);
+  });
+
+  test("dos proveedores no se mezclan aunque cobren el mismo día", () => {
+    const otra = { ...f(9, 500, "2026-08-15"), proveedor: "Cerezo", prov_clave: "cerezo" };
+    assert.equal(agruparRecibos([f(1, 100, "2026-08-15"), otra]).length, 2);
+  });
+
+  test("las que no son recibo se quedan sueltas, sin tocarlas", () => {
+    const suelta = f(7, 80, "2026-08-20", false);
+    const g = agruparRecibos([f(1, 100, "2026-08-15"), suelta]);
+    assert.equal(g.length, 2);
+    assert.equal(g.find((x) => !x.esRecibo).id, 7);
+  });
+
+  test("y todo sale ordenado por fecha, que es como se paga", () => {
+    const g = agruparRecibos([f(1, 100, "2026-09-15"), f(2, 200, "2026-08-15"), f(3, 50, "2026-07-15")]);
+    assert.deepEqual(g.map((x) => x.vencimiento), ["2026-07-15", "2026-08-15", "2026-09-15"]);
+  });
+});
+
+describe("el recibo, cableado", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+
+  test("se juntan los recibos ANTES de repartir por urgencia", () => {
+    // Al revés, un mismo recibo saldría partido entre «esta semana» y «más adelante» según la
+    // fecha de cada factura — y es un solo cargo.
+    assert.match(server, /agruparPagos\(agruparRecibos\(filas\), hoy\)/);
+  });
+
+  test("en modo recibo, `dias` deja de ser obligatorio en la base", () => {
+    assert.match(server, /ALTER TABLE facturas_proveedor_pago ALTER COLUMN dias DROP NOT NULL/);
+    assert.match(server, /modo TEXT NOT NULL DEFAULT 'dias'/, "y lo ya guardado no cambia de modo");
+  });
+
+  test("el contador sigue contando FACTURAS, no cargos", () => {
+    const mod = readFileSync(new URL("../../src/modules/facturas/vencimiento.js", import.meta.url), "utf8");
+    assert.match(mod, /g\.n \+= f\.facturas\?\.length \|\| 1/);
+  });
+
+  test("el recibo se puede marcar pagado entero, que es como se paga", () => {
+    assert.match(panel, /data-pago="recibo"/);
+    assert.match(panel, /Se marcarán como pagadas las \$\{ids\.length\} facturas/);
+  });
+
+  test("y en la ficha el recibo mensual va primero, por ser lo más común", () => {
+    const i = panel.indexOf('id="fpModo"');
+    const bloque = panel.slice(i, i + 400);
+    assert.ok(bloque.indexOf('value="mensual"') < bloque.indexOf('value="dias"'));
+  });
+});
+
+describe("las miniaturas se piden con la cabecera", () => {
+  const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+
+  test("NO se pintan como <img src> a pelo", () => {
+    // El panel se autentica con una cabecera `Authorization`, y una imagen que pide el
+    // navegador por su cuenta no la lleva: cada miniatura recibía un 401 y el `onerror` la
+    // borraba sin decir nada. La columna salía vacía y parecía cosa de Drive.
+    assert.doesNotMatch(panel, /<img[^>]*src="\/api\/facturas\/\$\{[^}]*\}\/miniatura"/);
+    assert.match(panel, /fetch\(`\/api\/facturas\/\$\{encodeURIComponent\(id\)\}\/miniatura`, \{ headers: \{ Authorization/);
+  });
+
+  test("y solo las que se ven, que si no son 500 peticiones a Drive de golpe", () => {
+    assert.match(panel, /new IntersectionObserver/);
+    assert.match(panel, /rootMargin/);
   });
 });

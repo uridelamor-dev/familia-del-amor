@@ -4316,17 +4316,40 @@ async function facProveedorFicha(nombre) {
         <input class="inp" id="fpNombre" value="${esc(nombre)}"></div>
       <div class="field full"><label>NIF ${nifPrincipal ? "" : "<span class=\"mut\">(no se ha leído ninguno)</span>"}</label>
         <input class="inp" id="fpNif" value="${esc(nifPrincipal ? nifPrincipal.nif : "")}" placeholder="B12345678"></div>
-      <div class="field"><label>Se le paga a</label>
-        <select class="inp" id="fpDias">
-          ${[["", "No lo sé todavía"], ["0", "Al contado"], ["7", "7 días"], ["15", "15 días"], ["30", "30 días"], ["45", "45 días"], ["60", "60 días"], ["90", "90 días"]]
-            .map(([v, t]) => `<option value="${v}" ${String(j.pago?.dias ?? "") === v ? "selected" : ""}>${t}</option>`).join("")}
+      <div class="field full"><label>¿Cómo se le paga?</label>
+        <select class="inp" id="fpModo">
+          <option value="mensual" ${j.pago?.modo === "mensual" ? "selected" : ""}>Recibo mensual: todo lo del mes, un solo cargo</option>
+          <option value="dias" ${j.pago && j.pago.modo !== "mensual" ? "selected" : ""}>A X días desde cada factura</option>
+          <option value="" ${!j.pago ? "selected" : ""}>No lo sé todavía</option>
         </select></div>
-      <div class="field"><label>Pagando los días <span class="mut">(opcional)</span></label>
-        <input class="inp" id="fpDiaPago" type="number" min="1" max="31" placeholder="p. ej. 10"
+
+      <!-- Recibo mensual: es como paga la mayoría, así que va primero. -->
+      <div class="field" data-modo="mensual"><label>Pasa el recibo el día</label>
+        <input class="inp" id="fpDiaPago" type="number" min="1" max="31" placeholder="15"
           value="${esc(j.pago?.dia_pago ?? "")}"></div>
+      <div class="field" data-modo="mensual"><label>De lo facturado</label>
+        <select class="inp" id="fpMeses">
+          ${[["1", "el mes anterior"], ["0", "ese mismo mes"], ["2", "dos meses antes"]]
+            .map(([v, t]) => `<option value="${v}" ${String(j.pago?.meses_despues ?? 1) === v ? "selected" : ""}>${t}</option>`).join("")}
+        </select></div>
+
+      <div class="field" data-modo="dias"><label>Se le paga a</label>
+        <select class="inp" id="fpDias">
+          ${[["0", "Al contado"], ["7", "7 días"], ["15", "15 días"], ["30", "30 días"], ["45", "45 días"], ["60", "60 días"], ["90", "90 días"]]
+            .map(([v, t]) => `<option value="${v}" ${String(j.pago?.dias ?? "30") === v ? "selected" : ""}>${t}</option>`).join("")}
+        </select></div>
+      <div class="field" data-modo="dias"><label>Pagando los días <span class="mut">(opcional)</span></label>
+        <input class="inp" id="fpDiaDias" type="number" min="1" max="31" placeholder="p. ej. 10"
+          value="${esc(j.pago?.modo !== "mensual" ? (j.pago?.dia_pago ?? "") : "")}"></div>
+
+      <div class="field full" data-modo="mensual dias">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="fpDomi" ${j.pago?.domiciliado ? "checked" : ""} style="width:auto;margin:0">
+          <span>Se cobra solo por el banco (domiciliado)</span></label></div>
     </div>
     <p class="mut" style="margin:8px 0 0;line-height:1.55">Con esto, cada factura suya sabe <b>cuándo hay que
-      pagarla</b> y aparece en <b>Pagos</b>. Si la factura trae su vencimiento escrito, manda el papel.
+      pagarla</b> y aparece en <b>Pagos</b>. En el recibo mensual, <b>todas las del mes salen juntas en un
+      solo cargo</b>, que es como llega al banco. Si la factura trae su vencimiento escrito, manda el papel.
       ${j.pago ? `Ahora mismo: <b>${esc(j.pagoTexto || "")}</b>.` : "Sin esto, sus facturas se quedan <b>sin fecha de pago</b>."}</p>
     <p class="mut" style="margin:8px 0 0;line-height:1.55">Si la lectura se equivoca siempre igual —«Viruta Bronco» por
       «Virutas Branco»—, corrígelo aquí: se arreglan <b>todas sus facturas</b> y las que entren a partir de ahora
@@ -4351,15 +4374,41 @@ async function facProveedorFicha(nombre) {
   };
   nifIn.addEventListener("input", revisaNif); revisaNif();
 
+  // Solo se ven los campos del modo elegido: enseñar los dos a la vez invita a rellenar los
+  // que no van y a que luego no cuadre nada.
+  const modoSel = ov.querySelector("#fpModo");
+  const pintarModo = () => {
+    const m = modoSel.value;
+    ov.querySelectorAll("[data-modo]").forEach((el) => {
+      el.style.display = m && el.getAttribute("data-modo").split(" ").includes(m) ? "" : "none";
+    });
+  };
+  modoSel.addEventListener("change", pintarModo);
+  pintarModo();
+
   ov.querySelector("#fpOk").addEventListener("click", async () => {
     const nuevo = ov.querySelector("#fpNombre").value.trim();
     const nif = ov.querySelector("#fpNif").value.trim();
     const nifViejo = nifPrincipal ? nifPrincipal.nif : "";
     const cambiaNif = nif && nif !== nifViejo;
     // Las condiciones de pago son independientes del nombre: se pueden poner sin tocar nada más.
-    const dias = ov.querySelector("#fpDias").value;
-    const diaPago = ov.querySelector("#fpDiaPago").value.trim();
-    const cambiaPago = String(j.pago?.dias ?? "") !== dias || String(j.pago?.dia_pago ?? "") !== diaPago;
+    const modo = modoSel.value;
+    const pago = modo === "mensual"
+      ? { modo: "mensual", dia_pago: ov.querySelector("#fpDiaPago").value.trim(),
+          meses_despues: Number(ov.querySelector("#fpMeses").value) }
+      : modo === "dias"
+        ? { modo: "dias", dias: ov.querySelector("#fpDias").value,
+            dia_pago: ov.querySelector("#fpDiaDias").value.trim() }
+        : { modo: "dias", dias: "" };                       // «no lo sé» = quitar las condiciones
+    pago.domiciliado = ov.querySelector("#fpDomi").checked;
+
+    const antes = j.pago
+      ? { modo: j.pago.modo || "dias", dias: String(j.pago.dias ?? ""), dia_pago: String(j.pago.dia_pago ?? ""),
+          meses_despues: Number(j.pago.meses_despues ?? 1), domiciliado: !!j.pago.domiciliado }
+      : null;
+    const ahora = { modo: pago.modo, dias: String(pago.dias ?? ""), dia_pago: String(pago.dia_pago ?? ""),
+      meses_despues: Number(pago.meses_despues ?? 1), domiciliado: !!pago.domiciliado };
+    const cambiaPago = JSON.stringify(antes) !== JSON.stringify(modo ? ahora : null);
 
     if ((!nuevo || nuevo === nombre) && !cambiaNif && !cambiaPago) { ov.remove(); return; }
     if (!nuevo) return toast("El nombre no puede quedar vacío");
@@ -4371,8 +4420,14 @@ async function facProveedorFicha(nombre) {
     try {
       let msg = "";
       if (cambiaPago) {
-        const r = await apiSend("PUT", "/api/facturas/proveedor-pago",
-          { proveedor: nuevo || nombre, dias: dias === "" ? null : Number(dias), dia_pago: diaPago === "" ? null : Number(diaPago) });
+        const r = await apiSend("PUT", "/api/facturas/proveedor-pago", {
+          proveedor: nuevo || nombre,
+          modo: pago.modo,
+          dias: pago.dias === "" || pago.dias == null ? null : Number(pago.dias),
+          dia_pago: pago.dia_pago === "" || pago.dia_pago == null ? null : Number(pago.dia_pago),
+          meses_despues: pago.meses_despues,
+          domiciliado: pago.domiciliado,
+        });
         msg = r.mensaje || "";
       }
       if (nuevo !== nombre || cambiaNif) {
@@ -4703,6 +4758,51 @@ function facRevisarTxt(f) {
 }
 
 /**
+ * Las miniaturas del papel, cargadas de verdad.
+ *
+ * NO se puede poner `<img src="/api/facturas/1/miniatura">`: el panel se autentica con una
+ * cabecera `Authorization`, y una imagen que pide el navegador por su cuenta no la lleva. Cada
+ * miniatura recibía un 401 y el `onerror` la borraba sin decir nada, así que la columna salía
+ * vacía y parecía que Drive no respondía. Se piden con fetch y se pintan como blob, igual que
+ * la vista previa de los pendientes.
+ *
+ * Y solo las que se ven: con 500 filas, pedirlas todas de golpe son 500 peticiones a Drive por
+ * abrir la pantalla. Con el observador, se piden al asomarse.
+ */
+let THUMB_OBS = null;
+function facCargarMiniaturas(raiz) {
+  const cajas = [...(raiz || document).querySelectorAll("[data-thumb]")];
+  if (!cajas.length) return;
+  if (!("IntersectionObserver" in window)) { cajas.forEach(facPintarMiniatura); return; }
+  THUMB_OBS?.disconnect();
+  THUMB_OBS = new IntersectionObserver((entradas, obs) => {
+    for (const e of entradas) {
+      if (!e.isIntersecting) continue;
+      obs.unobserve(e.target);
+      facPintarMiniatura(e.target);
+    }
+  }, { rootMargin: "300px" });
+  cajas.forEach((c) => THUMB_OBS.observe(c));
+}
+
+async function facPintarMiniatura(caja) {
+  const id = caja.getAttribute("data-thumb");
+  if (!id || caja.dataset.cargada) return;
+  caja.dataset.cargada = "1";
+  try {
+    const r = await fetch(`/api/facturas/${encodeURIComponent(id)}/miniatura`, { headers: { Authorization: "Bearer " + token() } });
+    if (!r.ok) { caja.remove(); return; }          // sin papel o sin Drive: la fila sigue igual
+    const url = URL.createObjectURL(await r.blob());
+    const img = new Image();
+    img.className = "thumb";
+    img.alt = "";
+    img.src = url;
+    img.onload = () => URL.revokeObjectURL(url);
+    caja.replaceWith(img);
+  } catch { caja.remove(); }
+}
+
+/**
  * El estado de pago de una factura. «Pendiente» a secas no dice nada: lo que se necesita saber
  * es si YA venció y cuánto hace. La lógica —y los umbrales— viven en el módulo puro; aquí solo
  * se elige el color.
@@ -4732,7 +4832,7 @@ function facTablaHtml(list) {
   ].filter(Boolean).join(" ");
   const fila = (f) => `<tr class="${FAC_SEL.has(f.id) ? "sel" : ""}">
     <td class="facsel"><input type="checkbox" data-facsel="${f.id}" ${FAC_SEL.has(f.id) ? "checked" : ""} aria-label="Seleccionar"></td>
-    <td class="facthumb">${f.drive_url ? `<img class="thumb" loading="lazy" src="/api/facturas/${f.id}/miniatura" alt="" onerror="this.remove()">` : ""}</td>
+    <td class="facthumb">${f.drive_url ? `<span class="thumb ph" data-thumb="${f.id}"></span>` : ""}</td>
     <td class="mut">${esc((f.fecha || "").slice(0, 10))}</td>
     <td><div class="t1">${esc(f.numero_factura || "—")}</div><div class="t2">${esc(f.proveedor || "")}</div>${marcas(f) ? `<div style="margin-top:3px">${marcas(f)}</div>` : ""}</td>
     <td>${esc(f.local || "")}</td>
@@ -5075,6 +5175,7 @@ async function loadFacturas() {
     FAC_HAY_MAS = !!(lst && lst.hayMas);
     FAC_PEND = pend || [];
     view.innerHTML = renderFacturas(FAC_LIST, FAC_PEND, stats, empresas || []);
+    facCargarMiniaturas(view);
     facAvisoLocales(); facAvisoCategorias(); facDuplicados(); // no se esperan: la tabla ya está
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
@@ -5110,7 +5211,34 @@ async function loadPagos() {
        <b>Configuración → De qué es cada proveedor</b> o pulsando su nombre aquí— y vale para todas las suyas.</p>`
     : "";
 
-  const fila = (f) => `<div class="row"><div class="grow" style="min-width:0">
+  // Un recibo mensual es UNA línea con su total: en el banco sale un cargo, no doce. Se puede
+  // desplegar para ver de qué facturas sale, que es lo que se mira cuando no cuadra.
+  const filaRecibo = (g) => `<details class="row" style="display:block"><summary style="display:flex;align-items:center;gap:10px;cursor:pointer;list-style:none">
+      <div class="grow" style="min-width:0">
+        <div class="t1"><button class="linkbtn" data-pago="prov" data-prov="${esc(g.proveedor || "")}">${esc(g.proveedor || "—")}</button>
+          <span class="pill" style="margin-left:6px">${g.domiciliado ? "recibo · por banco" : "recibo mensual"}</span></div>
+        <div class="t2">${num(g.facturas.length)} ${g.facturas.length === 1 ? "factura" : "facturas"} de ${esc(mesDeFacturas(g.facturas))} · ${esc(g._estado?.texto || "")}</div>
+      </div>
+      <b class="tnum">${esc(eur(g.total))}</b>
+      <span class="mut" style="font-size:12px">ver</span></summary>
+    <div class="rows" style="margin:6px 0 0 12px;border-left:2px solid var(--border);padding-left:12px">
+      ${g.facturas.map((f) => `<div class="row" style="padding:6px 0">
+        <div class="grow"><span class="t2">${esc(fechaCorta(f.fecha) || "")} · nº ${esc(f.numero_factura || "s/n")} · ${esc(nombreCortoLocal(f.local))}</span></div>
+        <span class="tnum">${esc(eur(f.total))}</span>
+        <button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></div>`).join("")}
+      <div class="row" style="padding:8px 0 2px"><div class="grow mut" style="font-size:12px">Se cargan juntas el ${esc(fechaCorta(g.vencimiento) || "")}.</div>
+        <button class="btn sm" data-pago="recibo" data-ids="${g.facturas.map((f) => f.id).join(",")}">Marcar el recibo como pagado</button></div>
+    </div></details>`;
+
+  // De qué mes son las facturas de un recibo: es lo que le da sentido al cargo.
+  const mesDeFacturas = (fs) => {
+    const f = fs.find((x) => x.fecha)?.fecha || "";
+    const [y, m] = String(f).split("-");
+    if (!y || !m) return "—";
+    return new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric" }).format(new Date(Number(y), Number(m) - 1, 15));
+  };
+
+  const fila = (f) => f.esRecibo ? filaRecibo(f) : `<div class="row"><div class="grow" style="min-width:0">
       <div class="t1"><button class="linkbtn" data-pago="prov" data-prov="${esc(f.proveedor || "")}">${esc(f.proveedor || "—")}</button>
         <span class="mut" style="font-weight:400">· nº ${esc(f.numero_factura || "s/n")}</span></div>
       <div class="t2">${esc(fechaCorta(f.fecha) || "")} · ${esc(nombreCortoLocal(f.local))}${f._estado?.dias != null && f._estado.dias < 0 ? ` · <b>${esc(f._estado.texto)}</b>` : f._estado ? ` · ${esc(f._estado.texto)}` : ""}${f.vencimiento_origen === "factura" ? ` <span class="mut" title="La fecha viene escrita en la propia factura">· del papel</span>` : ""}</div>
@@ -5136,6 +5264,16 @@ async function loadPagos() {
     const b = e.target.closest("[data-pago]");
     if (!b) return;
     if (b.getAttribute("data-pago") === "prov") return facProveedorFicha(b.getAttribute("data-prov"));
+    if (b.getAttribute("data-pago") === "recibo") {
+      const ids = (b.getAttribute("data-ids") || "").split(",").filter(Boolean);
+      if (!await confirmModal(`Se marcarán como pagadas las ${ids.length} facturas de este recibo.`, { ok: "Marcar" })) return;
+      b.disabled = true;
+      try {
+        for (const id of ids) await apiSend("PATCH", "/api/facturas/" + id + "/pago");
+        toast(`Recibo marcado: ${ids.length} facturas ✅`); loadPagos();
+      } catch (err) { toast("Error: " + err.message); b.disabled = false; }
+      return;
+    }
     const id = b.getAttribute("data-id");
     b.disabled = true;
     try { await apiSend("PATCH", "/api/facturas/" + id + "/pago"); toast("Marcada como pagada ✅"); loadPagos(); }
@@ -5699,6 +5837,7 @@ async function facRefresh() {
     FAC_TOT = facSumaTotales(lst);
     FAC_HAY_MAS = !!(lst && lst.hayMas);
     box.innerHTML = facTablaHtml(FAC_LIST);
+    facCargarMiniaturas(box);
     // Y las cifras de arriba, que son de lo filtrado: si no se repintan, dicen otra cosa que
     // la tabla que tienen debajo, que es la forma más fácil de leer un número equivocado.
     const kpis = document.getElementById("facKpis");

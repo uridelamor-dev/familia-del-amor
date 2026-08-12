@@ -44,6 +44,30 @@ function alDiaDePago(iso, diaPago) {
 }
 
 /**
+ * EL RECIBO MENSUAL, que es como se paga a la mayoría: «todo lo que me facture en julio me lo
+ * pasa en un recibo el 15 de agosto».
+ *
+ * No es «a X días» disfrazado, y por eso hace falta este modo aparte: una factura del 3 de
+ * julio y otra del 31 vencen **el mismo día**. Con «a 30 días» saldrían el 2 y el 30 de agosto,
+ * dos fechas que no existen — el banco cobra una sola vez, el día 15.
+ *
+ * Si el mes de destino no tiene ese día (un 31 en febrero), se cobra el último: el recibo no se
+ * mueve de mes.
+ */
+function reciboMensual(fecha, { dia_pago, meses_despues } = {}) {
+  const dia = Number(dia_pago);
+  if (!Number.isInteger(dia) || dia < 1 || dia > 31) return null;
+  const meses = Number.isInteger(Number(meses_despues)) ? Number(meses_despues) : 1;
+  if (meses < 0 || meses > 12) return null;
+
+  let [y, m] = String(fecha).slice(0, 10).split("-").map(Number);
+  m += meses;
+  while (m > 12) { m -= 12; y += 1; }
+  const d = Math.min(dia, ultimoDiaDeMes(y, m));
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/**
  * La fecha de vencimiento de una factura y DE DÓNDE sale, que importa tanto como la fecha:
  * una calculada se puede recalcular si cambian las condiciones; una leída del papel, no.
  *
@@ -52,6 +76,11 @@ function alDiaDePago(iso, diaPago) {
 export function calcularVencimiento({ fecha, vencimientoLeido, condiciones } = {}) {
   if (esISO(vencimientoLeido)) return { vencimiento: String(vencimientoLeido).slice(0, 10), origen: "factura" };
   if (!esISO(fecha) || !condiciones) return { vencimiento: null, origen: null };
+
+  if (condiciones.modo === "mensual") {
+    const v = reciboMensual(fecha, condiciones);
+    return v ? { vencimiento: v, origen: "proveedor" } : { vencimiento: null, origen: null };
+  }
 
   const dias = Number(condiciones.dias);
   if (!Number.isInteger(dias) || dias < 0 || dias > 365) return { vencimiento: null, origen: null };
@@ -109,7 +138,9 @@ export function agruparPagos(filas = [], hoy) {
     if (!g) continue;
     g.facturas.push({ ...f, _estado: e });
     g.total += Number(f.total) || 0;
-    g.n += 1;
+    // Un recibo son varias facturas aunque sea un solo cargo: el contador cuenta facturas, que
+    // es lo que se ha comprado. Decir «1» cuando son doce sería mentir sobre el volumen.
+    g.n += f.facturas?.length || 1;
   }
   for (const g of grupos) {
     // Dentro de cada grupo, lo que antes vence primero. Sin fecha, la más antigua arriba.
@@ -134,9 +165,46 @@ export function resumenPagos(grupos = []) {
 
 /** Cómo se dice una condición de pago en una línea. */
 export function textoCondiciones(c) {
-  if (!c || !Number.isInteger(Number(c.dias))) return "Sin condiciones";
+  if (!c) return "Sin condiciones";
+  const dia = Number(c.dia_pago);
+
+  if (c.modo === "mensual") {
+    if (!Number.isInteger(dia) || dia < 1 || dia > 31) return "Sin condiciones";
+    const meses = Number.isInteger(Number(c.meses_despues)) ? Number(c.meses_despues) : 1;
+    const cuando = meses === 0 ? "del mismo mes" : meses === 1 ? "del mes siguiente" : `${meses} meses después`;
+    return `Recibo mensual: todo lo del mes, el día ${dia} ${cuando}${c.domiciliado ? " (por banco)" : ""}`;
+  }
+
+  if (!Number.isInteger(Number(c.dias))) return "Sin condiciones";
   const d = Number(c.dias);
   const base = d === 0 ? "Al contado" : `A ${d} días`;
-  const dia = Number(c.dia_pago);
-  return Number.isInteger(dia) && dia >= 1 && dia <= 31 ? `${base}, pagando los días ${dia}` : base;
+  const conDia = Number.isInteger(dia) && dia >= 1 && dia <= 31 ? `${base}, pagando los días ${dia}` : base;
+  return c.domiciliado ? `${conDia} (por banco)` : conDia;
+}
+
+/**
+ * Las facturas de un mismo recibo son UN cargo, no varios.
+ *
+ * Cuando el proveedor agrupa el mes, en el banco sale una línea de 3.450 € y no doce de 287 €.
+ * Enseñarlas sueltas obliga a sumarlas mentalmente para saber qué va a salir de la cuenta, que
+ * es justo la pregunta. Se agrupan por proveedor y fecha; las demás se quedan como están.
+ */
+export function agruparRecibos(filas = []) {
+  const mapa = new Map();
+  const sueltas = [];
+  for (const f of filas) {
+    if (!f?.recibo || !f.vencimiento) { sueltas.push(f); continue; }
+    const k = `${String(f.prov_clave || f.proveedor || "").toLowerCase()}|${f.vencimiento}`;
+    if (!mapa.has(k)) {
+      mapa.set(k, {
+        esRecibo: true, proveedor: f.proveedor, vencimiento: f.vencimiento,
+        domiciliado: !!f.domiciliado, total: 0, facturas: [],
+      });
+    }
+    const g = mapa.get(k);
+    g.total = Math.round((g.total + (Number(f.total) || 0)) * 100) / 100;
+    g.facturas.push(f);
+  }
+  return [...mapa.values(), ...sueltas]
+    .sort((a, b) => String(a.vencimiento || "9999").localeCompare(String(b.vencimiento || "9999")));
 }
