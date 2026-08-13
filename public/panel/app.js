@@ -1234,7 +1234,7 @@ async function loadInvProveedores() {
 function renderInvProveedores(list) {
   // Sin botón de «Locales»: el establecimiento se cambia arriba, en la barra.
   const back = null;
-  const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn" data-act="inv-pedidos">Pedidos</button><button class="btn primary" data-act="inv-nuevo-prov">+ Proveedor</button></div>`;
+  const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn" data-act="inv-historial">Historial</button><button class="btn" data-act="inv-pedidos">Pedidos</button><button class="btn primary" data-act="inv-nuevo-prov">+ Proveedor</button></div>`;
   const cards = list.length ? `<div class="grid g2">${list.map((p) => {
     const ultimo = p.ultimo_inventario ? fechaCorta(String(p.ultimo_inventario).slice(0, 10)) : "—";
     const estado = Number(p.en_curso) > 0 ? '<span class="pill warn">Inventario en curso</span>' : '<span class="pill ok">Al día</span>';
@@ -1242,6 +1242,34 @@ function renderInvProveedores(list) {
   }).join("")}</div>` : `<div class="card"><div class="mut" style="padding:8px">No hay proveedores en este local. Crea el primero con «+ Proveedor».</div></div>`;
   return `${invHeader("Proveedores", `Elige un proveedor para inventariar · <b>${esc(nombreCortoLocal(INV.local))}</b>`, back)}${toolbar}${cards}`;
 }
+/**
+ * Los inventarios ya cerrados. El endpoint existía desde el principio y el panel no lo llamaba
+ * NUNCA, así que no había forma de ver qué se contó la semana pasada ni de volver a un pedido
+ * que salió de un recuento — la única manera era acordarse.
+ */
+async function loadInvHistorial() {
+  const view = document.getElementById("view");
+  const back = { act: "inv-volver-prov", label: "Proveedores" };
+  view.innerHTML = invHeader("Historial de inventarios", esc(nombreCortoLocal(INV.local)), back) + `<p class="mut">Cargando…</p>`;
+  let j;
+  try { j = await apiRaw("/api/inventario/historial?local=" + encodeURIComponent(INV.local)); }
+  catch (e) { view.innerHTML = invHeader("Historial de inventarios", "", back) + errorCard(e.message); return; }
+
+  const filas = (j.data || []).map((s) => `<div class="row">
+      <div class="grow" style="min-width:0">
+        <div class="t1">${esc(s.proveedor_nombre || "—")}</div>
+        <div class="t2">${esc(fechaCorta((s.finalizado_en || "").slice(0, 10)) || "")} · ${num(s.n_contados)} producto(s) contados${s.usuario ? ` · ${esc(s.usuario)}` : ""}</div>
+      </div>
+      ${s.pedido_id
+        ? `<button class="btn sm" data-act="inv-ver-pedido" data-id="${s.pedido_id}">Ver el pedido</button>`
+        : `<span class="mut" style="font-size:12px">sin pedido</span>`}
+    </div>`).join("");
+
+  view.innerHTML = invHeader("Historial de inventarios", esc(nombreCortoLocal(INV.local)), back) +
+    (filas ? `<div class="card p0"><div class="rows">${filas}</div></div>`
+           : `<div class="card"><p class="mut" style="margin:0">Todavía no hay ningún inventario cerrado en este establecimiento.</p></div>`);
+}
+
 async function invNuevoProveedor() {
   let sugerencias = [];
   try { sugerencias = (await apiRaw("/api/inventario/facturas-proveedores?local=" + encodeURIComponent(INV.local))).data || []; } catch { /* opcional */ }
@@ -1340,7 +1368,10 @@ function renderInvRevision(j) {
   const head = invHeader("Revisar inventario", `${esc(INV.proveedorNombre)} · ${esc(INV.local)}`, back);
   const filas = rev.map((r) => {
     const col = r.sugerido > 0 ? "color:var(--brand);font-weight:700" : "color:var(--ink3)";
-    return `<tr><td>${esc(r.nombre)}</td><td class="r tnum">${num(r.contado)}</td><td class="r tnum">${num(r.necesario)}</td><td class="r tnum">${num(r.diferencia)}</td><td class="r tnum" style="${col}">${r.sugerido > 0 ? num(r.sugerido) + " " + esc(r.unidad || "") : "—"}</td></tr>`;
+    // El mínimo no cambia cuánto se pide: avisa de que se está a punto de quedar sin, que es
+    // otra cosa y hasta ahora no se decía en ningún sitio.
+    const aviso = r.bajoMinimo ? ` <span class="pill bad" style="font-size:10px" title="Por debajo del mínimo (${num(r.minimo)} ${esc(r.unidad || "")})">bajo mínimo</span>` : "";
+    return `<tr${r.bajoMinimo ? ' class="sincat"' : ""}><td>${esc(r.nombre)}${aviso}</td><td class="r tnum">${num(r.contado)}</td><td class="r tnum">${num(r.necesario)}</td><td class="r tnum">${num(r.diferencia)}</td><td class="r tnum" style="${col}">${r.sugerido > 0 ? num(r.sugerido) + " " + esc(r.unidad || "") : "—"}</td></tr>`;
   }).join("");
   const tabla = rev.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Contado</th><th class="r">Necesario</th><th class="r">Dif.</th><th class="r">A pedir</th></tr></thead><tbody>${filas}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin productos.</div></div>`;
   let accion;
@@ -7311,6 +7342,7 @@ document.addEventListener("click", (e) => {
   else if (act === "inv-volver-conteo") loadInvConteo();
   else if (act === "inv-nuevo-prov") invNuevoProveedor();
   else if (act === "inv-pedidos") loadInvPedidos();
+  else if (act === "inv-historial") loadInvHistorial();
   else if (act === "inv-contar") invPickProveedor(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "inv-config") loadInvConfig(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "inv-revisar") loadInvRevision();

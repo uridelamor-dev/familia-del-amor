@@ -3,7 +3,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   sanitizarCantidad, enTemporada, stockNecesario, cantidadAPedir,
-  construirRevision, lineasPropuestaPedido, esEstadoPedidoValido, esMMDDValido,
+  construirRevision, lineasPropuestaPedido, esEstadoPedidoValido, esMMDDValido, bajoMinimo,
 } from "../../src/modules/inventario/calculo.js";
 
 describe("sanitizarCantidad", () => {
@@ -71,7 +71,9 @@ describe("construirRevision + lineasPropuestaPedido", () => {
   ];
   test("revisión calcula contado/necesario/sugerido por producto", () => {
     const rev = construirRevision(productos, { 1: 3, 2: 10, 3: 2 }, "07-01");
-    assert.deepEqual(rev[0], { producto_id: 1, nombre: "Estrella Damm 33cl", unidad: "cajas", contado: 3, necesario: 5, diferencia: 2, sugerido: 2 });
+    // La fila lleva además el mínimo y si está por debajo: es un aviso, no entra en el cálculo.
+    assert.deepEqual(rev[0], { producto_id: 1, nombre: "Estrella Damm 33cl", unidad: "cajas",
+      contado: 3, necesario: 5, diferencia: 2, sugerido: 2, minimo: 0, bajoMinimo: false });
     assert.equal(rev[1].sugerido, 0);            // 10 contado ≥ 10 necesario
     assert.equal(rev[2].necesario, 12);          // temporada activa
     assert.equal(rev[2].sugerido, 10);           // 12 − 2
@@ -106,5 +108,33 @@ describe("validaciones", () => {
     assert.equal(esMMDDValido(""), true);
     assert.equal(esMMDDValido("6-1"), false);
     assert.equal(esMMDDValido("13-40"), false);
+  });
+});
+
+describe("el stock mínimo avisa, no cambia el pedido", () => {
+  test("por debajo del mínimo se marca", () => {
+    // El campo se rellenaba en la ficha y no lo leía nadie: quien lo ponía trabajaba para nada.
+    assert.equal(bajoMinimo({ stock_minimo: 5 }, 3), true);
+    assert.equal(bajoMinimo({ stock_minimo: 5 }, 5), false, "estar justo en el mínimo no es estar por debajo");
+    assert.equal(bajoMinimo({ stock_minimo: 5 }, 12), false);
+  });
+
+  test("sin mínimo puesto no se avisa de nada", () => {
+    // Un aviso que sale siempre deja de leerse.
+    assert.equal(bajoMinimo({}, 0), false);
+    assert.equal(bajoMinimo({ stock_minimo: 0 }, 0), false);
+  });
+
+  test("y NO cambia cuánto se pide: eso lo marca el stock objetivo", () => {
+    // Mezclarlos sería cambiar la fórmula del pedido por la puerta de atrás.
+    const productos = [{ id: 1, nombre: "Coca-Cola", unidad: "cajas", stock_minimo: 5, stock_objetivo: 10 }];
+    const r = construirRevision(productos, { 1: 3 })[0];
+    assert.equal(r.sugerido, 7, "10 objetivo − 3 contadas");
+    assert.equal(r.bajoMinimo, true);
+    assert.equal(r.minimo, 5);
+
+    const holgado = construirRevision([{ ...productos[0], stock_minimo: 1 }], { 1: 3 })[0];
+    assert.equal(holgado.sugerido, 7, "el mismo pedido, aunque no esté bajo mínimo");
+    assert.equal(holgado.bajoMinimo, false);
   });
 });

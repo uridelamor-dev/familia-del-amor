@@ -32,6 +32,20 @@ export function stockNecesario(prod = {}, hoy = null) {
   return num(prod.stock_objetivo);
 }
 
+/**
+ * ¿Está por debajo del mínimo? Es una SEÑAL, no un cálculo: el mínimo no cambia cuánto se
+ * pide —eso lo marca el stock objetivo— sino que avisa de que se está a punto de quedar sin.
+ *
+ * El campo se rellenaba en la ficha del producto y no lo leía nadie, así que quien lo ponía
+ * estaba trabajando para nada. O se usa o se quita; esto es usarlo para lo único que puede
+ * decir de verdad.
+ */
+export function bajoMinimo(prod = {}, contado) {
+  const min = num(prod.stock_minimo);
+  if (!(min > 0)) return false;                 // sin mínimo puesto no hay nada que avisar
+  return num(contado) < min;
+}
+
 // Cantidad recomendada a pedir. Nunca negativa.
 export function cantidadAPedir(necesario, contado) {
   const d = num(necesario) - num(contado);
@@ -49,6 +63,7 @@ export function construirRevision(productos, cantidades, hoy = null) {
     return {
       producto_id: p.id, nombre: p.nombre, unidad: p.unidad,
       contado, necesario, diferencia: necesario - contado, sugerido,
+      minimo: num(p.stock_minimo), bajoMinimo: bajoMinimo(p, contado),
     };
   });
 }
