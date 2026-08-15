@@ -237,7 +237,8 @@ describe("la factura trae su vencimiento cuando lo lleva escrito", () => {
     assert.match(facturas, /Si lo que pone son condiciones/, "«a 30 días» no es una fecha: eso lo calculamos nosotros");
   });
   test("y al guardar se calcula con lo pactado si el papel no dice nada", () => {
-    assert.match(facturas, /calcularVencimiento\(\{[\s\S]{0,200}condicionesDePago\(dbGet, datos\.proveedor\)/);
+    // Con la empresa: el mismo proveedor puede tener condiciones distintas en cada una.
+    assert.match(facturas, /calcularVencimiento\(\{[\s\S]{0,300}condicionesDePago\(dbGet, datos\.proveedor, empresa\)/);
   });
 });
 
@@ -377,5 +378,53 @@ describe("las miniaturas se piden con la cabecera", () => {
   test("y solo las que se ven, que si no son 500 peticiones a Drive de golpe", () => {
     assert.match(panel, /new IntersectionObserver/);
     assert.match(panel, /rootMargin/);
+  });
+});
+
+describe("las condiciones de pago son por proveedor Y EMPRESA", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  const facturas = readFileSync(new URL("../../facturas.js", import.meta.url), "utf8");
+  const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+
+  test("la empresa entra en la clave de la tabla", () => {
+    // El mismo proveedor puede pasarle el recibo del 15 a una empresa del grupo y cobrarle al
+    // contado a otra. Con una sola regla por proveedor, la fecha de una de las dos sale mal
+    // SIEMPRE — y encima parece correcta.
+    assert.match(server, /ADD COLUMN IF NOT EXISTS empresa TEXT NOT NULL DEFAULT ''/);
+    assert.match(server, /ADD PRIMARY KEY \(prov_clave, empresa\)/);
+    assert.match(server, /ON CONFLICT \(prov_clave, empresa\)/);
+  });
+
+  test("y manda la de la empresa sobre la general", () => {
+    // `empresa = ''` es la regla general: lo que ya estaba guardado pasa a serlo, que es lo
+    // que significaba hasta ahora.
+    const fn = facturas.slice(facturas.indexOf("export async function condicionesDePago"), facturas.indexOf("export async function condicionesDePago") + 900);
+    assert.match(fn, /empresa IN \(\?, ''\)/);
+    assert.match(fn, /ORDER BY \(empresa <> ''\) DESC/);
+  });
+
+  test("cada factura se recalcula con la regla de SU empresa", () => {
+    const fn = server.slice(server.indexOf('app.put("/api/facturas/proveedor-pago"'), server.indexOf("// Ficha de un proveedor"));
+    assert.match(fn, /condicionesDePago\(dbGet, nombre, k\)/);
+    assert.match(fn, /condDe\(f\.empresa\)/);
+    assert.match(fn, /porEmpresa/, "las condiciones se resuelven una vez por empresa, no una por factura");
+  });
+
+  test("dos empresas del mismo proveedor son DOS recibos, no uno", () => {
+    // Son dos cargos contra dos cuentas distintas. Juntarlos daría un total que no coincide
+    // con ninguno de los dos apuntes del banco.
+    const mod = readFileSync(new URL("../../src/modules/facturas/vencimiento.js", import.meta.url), "utf8");
+    assert.match(mod, /\$\{String\(f\.empresa \|\| ""\)\}/);
+  });
+
+  test("la ficha enseña TODAS sus reglas, no solo una", () => {
+    assert.match(server, /reglasPago: reglas/);
+    assert.match(panel, /function fpReglasHtml/);
+    assert.match(panel, /Todas las empresas/);
+  });
+
+  test("y se puede quitar la de una empresa sin tocar la general", () => {
+    assert.match(server, /DELETE FROM facturas_proveedor_pago WHERE prov_clave = \? AND empresa = \?/);
+    assert.match(panel, /Sus facturas pasarán a usar la regla general/);
   });
 });

@@ -4331,6 +4331,22 @@ function facNifPareceValido(v) {
   return /^[ABCDEFGHJNPQRSUVW]\d{7}[0-9A-J]$/.test(n);
 }
 
+/** Las reglas de pago que ya tiene: la general y las excepciones por empresa. */
+function fpReglasHtml(j) {
+  const rs = j.reglasPago || [];
+  if (!rs.length) return "";
+  return `<label>Cómo se le paga hoy</label>
+    <div class="rows" style="border:1px solid var(--border);border-radius:10px;padding:2px 10px">
+      ${rs.map((r) => `<div class="row" style="padding:8px 0">
+        <div class="grow" style="min-width:0">
+          <div class="t1">${r.empresa ? esc(r.empresa) : "Todas las empresas"}${r.empresa ? "" : ' <span class="mut" style="font-weight:400">· regla general</span>'}</div>
+          <div class="t2">${esc(r.texto || "")}</div>
+        </div>
+        <button class="btn sm" data-fpregla="quitar" data-empresa="${esc(r.empresa)}">Quitar</button>
+      </div>`).join("")}
+    </div>`;
+}
+
 async function facProveedorFicha(nombre) {
   let j;
   try { j = await apiRaw("/api/facturas/proveedor?nombre=" + encodeURIComponent(nombre)); } catch (e) { return toast(e.message); }
@@ -4347,7 +4363,13 @@ async function facProveedorFicha(nombre) {
         <input class="inp" id="fpNombre" value="${esc(nombre)}"></div>
       <div class="field full"><label>NIF ${nifPrincipal ? "" : "<span class=\"mut\">(no se ha leído ninguno)</span>"}</label>
         <input class="inp" id="fpNif" value="${esc(nifPrincipal ? nifPrincipal.nif : "")}" placeholder="B12345678"></div>
-      <div class="field full"><label>¿Cómo se le paga?</label>
+      <div class="field full">${fpReglasHtml(j)}</div>
+      <div class="field full"><label>${(j.reglasPago || []).length ? "Añadir o cambiar una regla" : "¿Cómo se le paga?"}</label>
+        <select class="inp" id="fpEmpresa">
+          <option value="">Para todas las empresas (regla general)</option>
+          ${(j.empresas || FCFG.empresas || []).map((e) => `<option value="${esc(e)}">Solo para ${esc(e)}</option>`).join("")}
+        </select></div>
+      <div class="field full"><label>Y se le paga</label>
         <select class="inp" id="fpModo">
           <option value="mensual" ${j.pago?.modo === "mensual" ? "selected" : ""}>Recibo mensual: todo lo del mes, un solo cargo</option>
           <option value="dias" ${j.pago && j.pago.modo !== "mensual" ? "selected" : ""}>A X días desde cada factura</option>
@@ -4381,7 +4403,9 @@ async function facProveedorFicha(nombre) {
     <p class="mut" style="margin:8px 0 0;line-height:1.55">Con esto, cada factura suya sabe <b>cuándo hay que
       pagarla</b> y aparece en <b>Pagos</b>. En el recibo mensual, <b>todas las del mes salen juntas en un
       solo cargo</b>, que es como llega al banco. Si la factura trae su vencimiento escrito, manda el papel.
-      ${j.pago ? `Ahora mismo: <b>${esc(j.pagoTexto || "")}</b>.` : "Sin esto, sus facturas se quedan <b>sin fecha de pago</b>."}</p>
+      <b>Si el mismo proveedor cobra distinto a cada empresa</b> —a una el recibo del 15 y a otra al contado—,
+      se le pone una regla a esa empresa y manda sobre la general.
+      ${(j.reglasPago || []).length ? "" : "Sin esto, sus facturas se quedan <b>sin fecha de pago</b>."}</p>
     <p class="mut" style="margin:8px 0 0;line-height:1.55">Si la lectura se equivoca siempre igual —«Viruta Bronco» por
       «Virutas Branco»—, corrígelo aquí: se arreglan <b>todas sus facturas</b> y las que entren a partir de ahora
       llegarán ya con el nombre bueno.${nifPrincipal ? ` Se recuerda por su NIF <b>${esc(nifPrincipal.nif)}</b>, que no cambia
@@ -4417,6 +4441,21 @@ async function facProveedorFicha(nombre) {
   modoSel.addEventListener("change", pintarModo);
   pintarModo();
 
+  // Quitar una regla concreta (la general o la de una empresa).
+  ov.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-fpregla]");
+    if (!b) return;
+    const emp = b.getAttribute("data-empresa") || "";
+    if (!await confirmModal(emp
+      ? `Se quita la regla de ${emp}. Sus facturas pasarán a usar la regla general, o se quedarán sin fecha si no la hay.`
+      : "Se quita la regla general. Las empresas sin regla propia se quedarán sin fecha de pago.", { ok: "Quitar" })) return;
+    try {
+      const r = await apiSend("PUT", "/api/facturas/proveedor-pago",
+        { proveedor: nombre, empresa: emp, modo: "dias", dias: null, dia_pago: null });
+      ov.remove(); toast(r.mensaje || "Quitada"); facProveedorFicha(nombre);
+    } catch (err) { toast("Error: " + err.message); }
+  });
+
   ov.querySelector("#fpOk").addEventListener("click", async () => {
     const nuevo = ov.querySelector("#fpNombre").value.trim();
     const nif = ov.querySelector("#fpNif").value.trim();
@@ -4424,6 +4463,7 @@ async function facProveedorFicha(nombre) {
     const cambiaNif = nif && nif !== nifViejo;
     // Las condiciones de pago son independientes del nombre: se pueden poner sin tocar nada más.
     const modo = modoSel.value;
+    const empresaRegla = ov.querySelector("#fpEmpresa").value;
     const pago = modo === "mensual"
       ? { modo: "mensual", dia_pago: ov.querySelector("#fpDiaPago").value.trim(),
           meses_despues: Number(ov.querySelector("#fpMeses").value) }
@@ -4433,9 +4473,12 @@ async function facProveedorFicha(nombre) {
         : { modo: "dias", dias: "" };                       // «no lo sé» = quitar las condiciones
     pago.domiciliado = ov.querySelector("#fpDomi").checked;
 
-    const antes = j.pago
-      ? { modo: j.pago.modo || "dias", dias: String(j.pago.dias ?? ""), dia_pago: String(j.pago.dia_pago ?? ""),
-          meses_despues: Number(j.pago.meses_despues ?? 1), domiciliado: !!j.pago.domiciliado }
+    // Se compara contra la regla de ESA empresa, no contra la general: si no, poner una
+    // excepción idéntica a la general no se guardaría nunca.
+    const reglaAntes = (j.reglasPago || []).find((r) => (r.empresa || "") === empresaRegla) || null;
+    const antes = reglaAntes
+      ? { modo: reglaAntes.modo || "dias", dias: String(reglaAntes.dias ?? ""), dia_pago: String(reglaAntes.dia_pago ?? ""),
+          meses_despues: Number(reglaAntes.meses_despues ?? 1), domiciliado: !!reglaAntes.domiciliado }
       : null;
     const ahora = { modo: pago.modo, dias: String(pago.dias ?? ""), dia_pago: String(pago.dia_pago ?? ""),
       meses_despues: Number(pago.meses_despues ?? 1), domiciliado: !!pago.domiciliado };
@@ -4453,6 +4496,7 @@ async function facProveedorFicha(nombre) {
       if (cambiaPago) {
         const r = await apiSend("PUT", "/api/facturas/proveedor-pago", {
           proveedor: nuevo || nombre,
+          empresa: empresaRegla,
           modo: pago.modo,
           dias: pago.dias === "" || pago.dias == null ? null : Number(pago.dias),
           dia_pago: pago.dia_pago === "" || pago.dia_pago == null ? null : Number(pago.dia_pago),

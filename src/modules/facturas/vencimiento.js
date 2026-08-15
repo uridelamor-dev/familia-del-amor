@@ -194,10 +194,12 @@ export function agruparRecibos(filas = []) {
   const sueltas = [];
   for (const f of filas) {
     if (!f?.recibo || !f.vencimiento) { sueltas.push(f); continue; }
-    const k = `${String(f.prov_clave || f.proveedor || "").toLowerCase()}|${f.vencimiento}`;
+    // La EMPRESA entra en la clave: si dos empresas del grupo le compran al mismo proveedor,
+    // son dos recibos contra dos cuentas distintas, no uno.
+    const k = `${String(f.prov_clave || f.proveedor || "").toLowerCase()}|${String(f.empresa || "")}|${f.vencimiento}`;
     if (!mapa.has(k)) {
       mapa.set(k, {
-        esRecibo: true, proveedor: f.proveedor, vencimiento: f.vencimiento,
+        esRecibo: true, proveedor: f.proveedor, empresa: f.empresa || null, vencimiento: f.vencimiento,
         domiciliado: !!f.domiciliado, total: 0, facturas: [],
       });
     }

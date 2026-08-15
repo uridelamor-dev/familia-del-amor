@@ -521,6 +521,14 @@ async function initDB() {
     }
     // En modo recibo no hay «días», así que la columna deja de ser obligatoria.
     await dbRun(`ALTER TABLE facturas_proveedor_pago ALTER COLUMN dias DROP NOT NULL`).catch(() => {});
+    // LA EMPRESA ENTRA EN LA CLAVE. El mismo proveedor puede servir a dos empresas del grupo
+    // con condiciones distintas —una paga el recibo del 15 y la otra al contado—, y con una
+    // sola regla por proveedor la fecha de pago de una de las dos sale mal siempre.
+    // `empresa = ''` es la regla GENERAL: lo que ya estaba guardado pasa a serlo, que es lo
+    // que significaba hasta ahora.
+    await dbRun(`ALTER TABLE facturas_proveedor_pago ADD COLUMN IF NOT EXISTS empresa TEXT NOT NULL DEFAULT ''`).catch(() => {});
+    await dbRun(`ALTER TABLE facturas_proveedor_pago DROP CONSTRAINT IF EXISTS facturas_proveedor_pago_pkey`).catch(() => {});
+    await dbRun(`ALTER TABLE facturas_proveedor_pago ADD PRIMARY KEY (prov_clave, empresa)`).catch(() => {});
     // ── El diccionario de productos ────────────────────────────────────────
     // EL PROBLEMA: el mismo producto se llama de tres maneras. En la factura «COCA COLA ZERO
     // 33CL LATA CAJA 24U», en el inventario «Coca-Cola Zero». Agrupamos por el texto exacto
@@ -3771,19 +3779,21 @@ app.get("/api/facturas/pagos", requireAuth(["direccion", "contabilidad"]), async
     const par = [];
     if (locales.length) { cond.push(`local = ANY(?)`); par.push(locales); }
     const filas = await dbAll(
-      `SELECT id, local, proveedor, nif, fecha, numero_factura, total::float AS total,
+      `SELECT id, local, empresa, proveedor, nif, fecha, numero_factura, total::float AS total,
               vencimiento, vencimiento_origen, drive_url, revisar
          FROM facturas WHERE ${cond.join(" AND ")}
         ORDER BY vencimiento NULLS LAST, fecha LIMIT 2000`, par);
 
     // Quién paga por recibo mensual: hace falta para juntar sus facturas en un solo cargo, que
     // es como llega al banco. Una consulta para todos, no una por factura.
-    const modos = new Map((await dbAll(
-      `SELECT prov_clave, modo, domiciliado FROM facturas_proveedor_pago`, []).catch(() => []))
-      .map((r) => [r.prov_clave, r]));
+    const reglas = await dbAll(
+      `SELECT prov_clave, empresa, modo, domiciliado FROM facturas_proveedor_pago`, []).catch(() => []);
+    // Clave doble: la regla de la empresa manda sobre la general (`empresa = ''`).
+    const porClaveEmpresa = new Map(reglas.map((r) => [`${r.prov_clave}|${r.empresa || ""}`, r]));
     for (const f of filas) {
-      const c = modos.get(claveProveedor(f.proveedor));
-      f.prov_clave = claveProveedor(f.proveedor);
+      const clave = claveProveedor(f.proveedor);
+      const c = porClaveEmpresa.get(`${clave}|${f.empresa || ""}`) || porClaveEmpresa.get(`${clave}|`);
+      f.prov_clave = clave;
       f.recibo = c?.modo === "mensual";
       f.domiciliado = !!Number(c?.domiciliado);
     }
@@ -3817,6 +3827,9 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
     const clave = claveProveedor(nombre);
     if (!nombre || !clave) return res.status(400).json({ ok: false, error: "Falta el proveedor" });
 
+    // Vacío = la regla GENERAL, la que vale para todas las empresas del grupo. Con nombre =
+    // la excepción de esa empresa, que manda sobre la general.
+    const empresa = String(req.body?.empresa || "").trim();
     const modo = req.body?.modo === "mensual" ? "mensual" : "dias";
     // Quitar las condiciones es dejar vacío lo que define el modo: los días, o el día del recibo.
     const quitar = modo === "mensual"
@@ -3824,7 +3837,7 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
       : (req.body?.dias === null || req.body?.dias === "");
 
     if (quitar) {
-      await dbRun(`DELETE FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]);
+      await dbRun(`DELETE FROM facturas_proveedor_pago WHERE prov_clave = ? AND empresa = ?`, [clave, empresa]);
     } else {
       const diaBruto = req.body?.dia_pago;
       const diaPago = diaBruto === null || diaBruto === "" || diaBruto === undefined ? null : Number(diaBruto);
@@ -3847,36 +3860,48 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
       }
 
       await dbRun(
-        `INSERT INTO facturas_proveedor_pago (prov_clave, proveedor, dias, dia_pago, modo, meses_despues, domiciliado, actualizado_por, actualizado_en)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (prov_clave) DO UPDATE SET proveedor = EXCLUDED.proveedor, dias = EXCLUDED.dias,
+        `INSERT INTO facturas_proveedor_pago (prov_clave, proveedor, empresa, dias, dia_pago, modo, meses_despues, domiciliado, actualizado_por, actualizado_en)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (prov_clave, empresa) DO UPDATE SET proveedor = EXCLUDED.proveedor, dias = EXCLUDED.dias,
            dia_pago = EXCLUDED.dia_pago, modo = EXCLUDED.modo, meses_despues = EXCLUDED.meses_despues,
            domiciliado = EXCLUDED.domiciliado,
            actualizado_por = EXCLUDED.actualizado_por, actualizado_en = EXCLUDED.actualizado_en`,
-        [clave, nombre, dias, diaPago, modo, meses, domiciliado, req.user?.nombre || req.user?.username || null, isoConOffset(Date.now())]);
+        [clave, nombre, empresa, dias, diaPago, modo, meses, domiciliado, req.user?.nombre || req.user?.username || null, isoConOffset(Date.now())]);
     }
 
     // Recalcular las suyas: sin pagar y con la fecha calculada (o sin fecha). Las que traían el
     // vencimiento escrito en la factura NO se tocan.
-    const cond = await condicionesDePago(dbGet, nombre);
     // El proveedor se filtra por CLAVE y eso no lo sabe hacer el SQL (une «GRAU, S.L.» con
     // «Grau Distribucions»), así que se traen las candidatas y se criban aquí. Una consulta,
     // no una por factura.
     const candidatas = await dbAll(
-      `SELECT id, fecha, proveedor FROM facturas
+      `SELECT id, fecha, proveedor, empresa FROM facturas
         WHERE COALESCE(pagado,0) = 0 AND COALESCE(vencimiento_origen,'') <> 'factura'
           AND proveedor IS NOT NULL AND proveedor <> ''`, []);
+
+    // Cada factura coge la regla de SU empresa (o la general si esa empresa no tiene la suya),
+    // así que se resuelven las condiciones una vez por empresa y no una por factura.
+    const porEmpresa = new Map();
+    const condDe = async (emp) => {
+      const k = String(emp || "");
+      if (!porEmpresa.has(k)) porEmpresa.set(k, await condicionesDePago(dbGet, nombre, k));
+      return porEmpresa.get(k);
+    };
+
     let tocadas = 0;
     for (const f of candidatas) {
       if (claveProveedor(f.proveedor) !== clave) continue;
-      const v = calcularVencimiento({ fecha: f.fecha, condiciones: cond });
+      const v = calcularVencimiento({ fecha: f.fecha, condiciones: await condDe(f.empresa) });
       await dbRun(`UPDATE facturas SET vencimiento = ?, vencimiento_origen = ? WHERE id = ?`,
         [v.vencimiento, v.origen, f.id]);
       tocadas++;
     }
+    const cond = await condicionesDePago(dbGet, nombre, empresa);
+    const deQuien = empresa ? ` de ${empresa}` : "";
     res.json({ ok: true, condiciones: cond, recalculadas: tocadas,
-      mensaje: cond ? `Guardado. Se han puesto fechas a ${tocadas} factura(s) suyas sin pagar.`
-        : `Condiciones quitadas. ${tocadas} factura(s) suyas se quedan sin fecha de pago.` });
+      mensaje: quitar
+        ? `Regla${deQuien ? " " + deQuien : " general"} quitada. Se han recalculado ${tocadas} factura(s) suyas sin pagar.`
+        : `Guardado${deQuien}. Se han puesto fechas a ${tocadas} factura(s) suyas sin pagar.` });
   } catch (e) {
     console.error("[facturas] condiciones de pago:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron guardar las condiciones" });
@@ -3903,13 +3928,23 @@ app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
     ]);
     // Las condiciones de pago, para poder ponerlas desde la misma ficha: es donde se mira
     // cuando llega su factura y donde se sabe la respuesta.
-    const pagoBruto = await dbGet(
-      `SELECT dias, dia_pago, modo, meses_despues, domiciliado, actualizado_por, actualizado_en
-         FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]).catch(() => null);
-    const pago = pagoBruto ? { ...pagoBruto, modo: pagoBruto.modo || "dias", domiciliado: !!Number(pagoBruto.domiciliado) } : null;
+    // TODAS sus reglas de pago: la general y las excepciones por empresa. El mismo proveedor
+    // puede pasarle el recibo del 15 a una empresa del grupo y cobrarle al contado a otra.
+    const reglas = (await dbAll(
+      `SELECT empresa, dias, dia_pago, modo, meses_despues, domiciliado, actualizado_por, actualizado_en
+         FROM facturas_proveedor_pago WHERE prov_clave = ? ORDER BY (empresa <> ''), empresa`, [clave]).catch(() => []))
+      .map((r) => ({ ...r, empresa: r.empresa || "", modo: r.modo || "dias", domiciliado: !!Number(r.domiciliado),
+        texto: textoCondiciones({ ...r, modo: r.modo || "dias", domiciliado: !!Number(r.domiciliado) }) }));
+    const pago = reglas.find((r) => !r.empresa) || null;   // la general, para compatibilidad
+    // Las empresas del grupo van EN LA FICHA y no se cogen de lo que hubiera cargado la
+    // pantalla: la ficha se abre también desde Pagos, y allí no se ha pasado por Configuración
+    // — el desplegable salía vacío y no se podía poner una regla a una empresa.
+    const empresas = (await dbAll(
+      `SELECT DISTINCT empresa FROM facturas_locales WHERE empresa IS NOT NULL AND empresa <> '' ORDER BY empresa`, [])
+      .catch(() => [])).map((r) => r.empresa);
     res.json({ ok: true, proveedor: nombre, clave, nombres: suyos, ...datos,
       nifs, categorias: cats, alias: alias || null,
-      pago: pago || null, pagoTexto: pago ? textoCondiciones(pago) : null });
+      pago: pago || null, pagoTexto: pago ? textoCondiciones(pago) : null, reglasPago: reglas, empresas });
   } catch (e) {
     console.error("[facturas] ficha proveedor:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar la ficha" });

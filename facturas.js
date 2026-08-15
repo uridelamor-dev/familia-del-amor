@@ -188,14 +188,20 @@ export async function referenciasDeProveedor(dbAll, proveedor, claves) {
  * dice: inventar un «30 días» por defecto se paga tarde o se paga dos veces, y encima con la
  * tranquilidad de que la fecha estaba puesta.
  */
-export async function condicionesDePago(dbGet, proveedor) {
+export async function condicionesDePago(dbGet, proveedor, empresa = "") {
   const clave = claveProveedor(proveedor);
   if (!clave || !dbGet) return null;
   try {
+    // Primero la regla de ESA empresa; si no la hay, la general. El mismo proveedor puede
+    // pasarle el recibo del 15 a una empresa del grupo y cobrarle al contado a otra.
     const r = await dbGet(
-      `SELECT dias, dia_pago, modo, meses_despues, domiciliado FROM facturas_proveedor_pago WHERE prov_clave = ?`, [clave]);
+      `SELECT dias, dia_pago, modo, meses_despues, domiciliado, empresa
+         FROM facturas_proveedor_pago
+        WHERE prov_clave = ? AND empresa IN (?, '')
+        ORDER BY (empresa <> '') DESC LIMIT 1`, [clave, String(empresa || "")]);
     return r ? { dias: r.dias, dia_pago: r.dia_pago, modo: r.modo || "dias",
-      meses_despues: r.meses_despues, domiciliado: !!Number(r.domiciliado) } : null;
+      meses_despues: r.meses_despues, domiciliado: !!Number(r.domiciliado),
+      empresa: r.empresa || "", general: !r.empresa } : null;
   } catch { return null; }
 }
 
@@ -838,7 +844,8 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   // proveedor. Si no hay ninguna de las dos, se queda sin fecha — y eso se ve en «Pagos».
   const venc = calcularVencimiento({
     fecha: datos.fecha, vencimientoLeido: datos.vencimiento,
-    condiciones: await condicionesDePago(dbGet, datos.proveedor),
+    // Con la EMPRESA: el mismo proveedor puede tener condiciones distintas en cada una.
+    condiciones: await condicionesDePago(dbGet, datos.proveedor, empresa),
   });
   const ins = await dbRun(
     `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
