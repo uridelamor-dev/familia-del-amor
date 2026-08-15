@@ -5518,7 +5518,53 @@ function dicPintar() {
       ${c.pct ? `Llevas <b>${c.pct} %</b> del gasto revisado.` : ""}</p>
     <div class="rows">${cola.slice(0, 25).map(fila).join("")}</div>
     ${cola.length > 25 ? `<p class="mut" style="margin:10px 0 0;font-size:12px">Y ${num(cola.length - 25)} más, que irán apareciendo según decidas estas.</p>` : ""}
+  </details>${dicProductosHtml()}`;
+}
+
+/**
+ * Los productos que ya se han creado, para poder CORREGIRLOS. Sin esto, una errata al crear
+ * uno se queda para siempre — y las erratas se cometen justo en los primeros veinte, cuando
+ * aún no se ha cogido el gusto a nombrarlos.
+ */
+function dicProductosHtml() {
+  const ps = DICC?.productos || [];
+  if (!ps.length) return "";
+  return `<details class="card fold" style="margin-bottom:14px">
+    <summary><h3>Productos del diccionario</h3><span class="foldr">
+      <span>${num(ps.length)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Los que se han ido creando. Si uno tiene una errata se
+      cambia el nombre y sus formas de escribirlo lo siguen; si el mismo producto se creó dos veces, se fusionan.
+      Al borrar uno, sus formas <b>vuelven a la cola</b>: no se pierde el trabajo, se deshace.</p>
+    <div class="rows">${ps.map((p) => `<div class="row" data-dicp-fila="${p.id}">
+        <div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div>
+          <div class="t2">${num(p.alias)} forma${p.alias === 1 ? "" : "s"} de escribirlo</div></div>
+        <button class="btn sm" data-dicp="nombre" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Cambiar nombre</button>
+        <button class="btn sm" data-dicp="fusionar" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Fusionar…</button>
+        <button class="btn sm" data-dicp="borrar" data-id="${p.id}" data-nombre="${esc(p.nombre)}" data-alias="${p.alias}">Borrar</button>
+      </div>`).join("")}</div>
   </details>`;
+}
+
+/** Fusionar: elegir con cuál se junta. El que se elige es el que SE QUEDA. */
+function dicFusionar(id, nombre) {
+  const otros = (DICC?.productos || []).filter((p) => p.id !== Number(id));
+  if (!otros.length) return toast("No hay otro producto con el que fusionarlo");
+  const ov = modal(`Fusionar «${nombre}»`, `
+    <p class="mut" style="margin:0 0 10px">Elige con cuál se junta. <b>El que elijas es el que se queda</b>, y
+      «${esc(nombre)}» desaparece dejándole todas sus formas de escribirlo.</p>
+    <div class="rows" style="max-height:320px;overflow:auto">${otros.map((p) => `<div class="row">
+        <div class="grow"><b>${esc(p.nombre)}</b> <span class="mut">· ${num(p.alias)} forma${p.alias === 1 ? "" : "s"}</span></div>
+        <button class="btn sm primary" data-fus="${p.id}">Quedarse con este</button></div>`).join("")}</div>`);
+  ov.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-fus]");
+    if (!b) return;
+    ov.remove();
+    try {
+      const r = await apiSend("POST", `/api/facturas/productos/${b.getAttribute("data-fus")}/fusionar`, { origen: Number(id) });
+      toast(r.mensaje || "Fusionados ✅");
+      dicPedir(); comprasDebounced();
+    } catch (err) { toast("Error: " + err.message); }
+  });
 }
 
 async function dicGuardar(cuerpo, fila) {
@@ -5580,6 +5626,38 @@ async function loadProductos() {
     if (q === "nuevo") {
       const nombre = prompt("¿Cómo se llama este producto?", b.getAttribute("data-nombre") || desc);
       if (nombre && nombre.trim()) dicGuardar({ clave, descripcion: desc, nombre_nuevo: nombre.trim() }, fila);
+    }
+  });
+
+  // Corregir los productos ya creados.
+  document.getElementById("dicRes")?.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-dicp]");
+    if (!b) return;
+    const id = b.getAttribute("data-id");
+    const nombre = b.getAttribute("data-nombre") || "";
+    const q = b.getAttribute("data-dicp");
+
+    if (q === "fusionar") return dicFusionar(id, nombre);
+
+    if (q === "nombre") {
+      const nuevo = prompt("¿Cómo se llama de verdad?", nombre);
+      if (!nuevo || !nuevo.trim() || nuevo.trim() === nombre) return;
+      try {
+        const r = await apiSend("PUT", `/api/facturas/productos/${id}`, { nombre: nuevo.trim() });
+        toast(r.mensaje || "Hecho ✅"); dicPedir(); comprasDebounced();
+      } catch (err) { toast("Error: " + err.message); }
+      return;
+    }
+
+    if (q === "borrar") {
+      const n = Number(b.getAttribute("data-alias")) || 0;
+      // Se dice cuánto trabajo se deshace ANTES de deshacerlo.
+      if (!await confirmModal(`Se borra «${nombre}». ${n ? `Sus ${n} forma(s) de escribirlo vuelven a la cola.` : "No tiene ninguna forma asignada."}`,
+        { ok: "Borrar", danger: true })) return;
+      try {
+        const r = await apiSend("DELETE", `/api/facturas/productos/${id}`);
+        toast(r.mensaje || "Borrado"); dicPedir(); comprasDebounced();
+      } catch (err) { toast("Error: " + err.message); }
     }
   });
   const cont = document.getElementById("compRes");

@@ -3613,6 +3613,68 @@ app.post("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"])
   }
 });
 
+// Corregir un producto del diccionario. Sin esto, una errata al crearlo se queda para
+// siempre: y las erratas se cometen justo en los primeros veinte, que es cuando aún no se ha
+// cogido el gusto a nombrarlos.
+app.put("/api/facturas/productos/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const nombre = String(req.body?.nombre || "").trim().slice(0, 120);
+    if (!Number.isInteger(id) || !nombre) return res.status(400).json({ ok: false, error: "Falta el nombre" });
+    const choca = await dbGet(`SELECT id FROM productos_canonicos WHERE LOWER(nombre) = LOWER(?) AND id <> ?`, [nombre, id]);
+    if (choca) return res.status(409).json({ ok: false, error: "Ya hay otro producto con ese nombre. Puedes fusionarlos." });
+    await dbRun(`UPDATE productos_canonicos SET nombre = ? WHERE id = ?`, [nombre, id]);
+    res.json({ ok: true, mensaje: "Nombre cambiado. Todas sus formas de escribirlo siguen apuntando aquí." });
+  } catch (e) {
+    console.error("[facturas] renombrar producto:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cambiar el nombre" });
+  }
+});
+
+// Fusionar dos: pasa a ser uno solo. Es lo que hace falta cuando el mismo producto se creó dos
+// veces con nombres distintos — que pasa, y sin esto el diccionario acaba con el mismo problema
+// que venía a resolver.
+app.post("/api/facturas/productos/:id/fusionar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const destino = Number(req.params.id);
+    const origen = Number(req.body?.origen);
+    if (!Number.isInteger(destino) || !Number.isInteger(origen)) return res.status(400).json({ ok: false, error: "Faltan los productos" });
+    if (destino === origen) return res.status(400).json({ ok: false, error: "Son el mismo producto" });
+    const d = await dbGet(`SELECT id, nombre FROM productos_canonicos WHERE id = ?`, [destino]);
+    const o = await dbGet(`SELECT id, nombre FROM productos_canonicos WHERE id = ?`, [origen]);
+    if (!d || !o) return res.status(404).json({ ok: false, error: "Alguno ya no existe" });
+
+    // Primero se repuntan los alias y LUEGO se borra: al revés, el borrado en cascada se
+    // llevaría por delante las formas de escribirlo y volverían todas a la cola.
+    // Cuántas formas se mueven: se cuentan antes, porque `dbRun` devuelve la fila de RETURNING
+    // y no el número de filas tocadas (eso era de SQLite, y aquí ya no hay SQLite).
+    const cuantas = await dbGet(`SELECT count(*)::int AS n FROM producto_alias WHERE producto_id = ?`, [origen]);
+    await dbRun(`UPDATE producto_alias SET producto_id = ? WHERE producto_id = ?`, [destino, origen]);
+    await dbRun(`DELETE FROM productos_canonicos WHERE id = ?`, [origen]);
+    res.json({ ok: true, movidos: cuantas?.n || 0,
+      mensaje: `«${o.nombre}» ahora es «${d.nombre}»${cuantas?.n ? `, con sus ${cuantas.n} forma(s) de escribirlo` : ""}.` });
+  } catch (e) {
+    console.error("[facturas] fusionar productos:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron fusionar" });
+  }
+});
+
+// Borrar un producto del diccionario. Sus formas de escribirlo VUELVEN a la cola: no se pierde
+// trabajo, se deshace. Por eso se dice cuántas son antes de borrar.
+app.delete("/api/facturas/productos/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ ok: false, error: "Falta el producto" });
+    const n = await dbGet(`SELECT count(*)::int AS n FROM producto_alias WHERE producto_id = ?`, [id]);
+    await dbRun(`DELETE FROM productos_canonicos WHERE id = ?`, [id]);
+    res.json({ ok: true, vueltas: n?.n || 0,
+      mensaje: `Borrado. ${n?.n || 0} forma(s) de escribirlo vuelven a la cola.` });
+  } catch (e) {
+    console.error("[facturas] borrar producto:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo borrar" });
+  }
+});
+
 // Deshacer: la descripción vuelve a la cola. Equivocarse tiene que costar un clic, no un
 // vaciado de tabla — si no, nadie se atreve a decidir.
 app.delete("/api/facturas/diccionario/:clave", requireAuth(["direccion", "contabilidad"]), async (req, res) => {

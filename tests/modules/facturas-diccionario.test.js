@@ -183,3 +183,37 @@ describe("cableado del diccionario", () => {
     assert.match(server, /JOIN productos_canonicos p ON p\.id = a\.producto_id/);
   });
 });
+
+describe("corregir el diccionario", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+
+  test("se puede cambiar el nombre, y no chocar con otro que ya exista", () => {
+    // Una errata al crear un producto se quedaba para siempre, y las erratas se cometen justo
+    // en los primeros veinte, que es cuando aún no se ha cogido el gusto a nombrarlos.
+    const fn = server.slice(server.indexOf('app.put("/api/facturas/productos/:id"'), server.indexOf('app.post("/api/facturas/productos/:id/fusionar"'));
+    assert.match(fn, /LOWER\(nombre\) = LOWER\(\?\) AND id <> \?/);
+    assert.match(fn, /409/, "si ya existe se dice, y se ofrece fusionar");
+  });
+
+  test("al fusionar se repuntan los alias ANTES de borrar", () => {
+    // Al revés, el borrado en cascada se llevaría las formas de escribirlo y volverían todas
+    // a la cola: el trabajo de semanas, deshecho por el orden de dos líneas.
+    const fn = server.slice(server.indexOf('app.post("/api/facturas/productos/:id/fusionar"'), server.indexOf('app.delete("/api/facturas/productos/:id"'));
+    const iUpdate = fn.indexOf("UPDATE producto_alias SET producto_id");
+    const iDelete = fn.indexOf("DELETE FROM productos_canonicos");
+    assert.ok(iUpdate > -1 && iDelete > iUpdate, "el UPDATE tiene que ir antes que el DELETE");
+    assert.match(fn, /destino === origen/, "fusionar algo consigo mismo no hace nada");
+  });
+
+  test("borrar dice cuánto trabajo se deshace, antes de deshacerlo", () => {
+    const fn = server.slice(server.indexOf('app.delete("/api/facturas/productos/:id"'), server.indexOf('// Deshacer: la descripción vuelve a la cola'));
+    assert.match(fn, /count\(\*\)::int AS n FROM producto_alias WHERE producto_id/);
+    assert.match(fn, /vuelven a la cola/);
+    assert.match(panel, /Sus \$\{n\} forma\(s\) de escribirlo vuelven a la cola/);
+  });
+
+  test("y en la fusión se dice CUÁL se queda, que es lo que se pregunta todo el mundo", () => {
+    assert.match(panel, /El que elijas es el que se queda/);
+  });
+});
