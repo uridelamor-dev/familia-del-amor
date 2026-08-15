@@ -57,7 +57,7 @@ import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados
 import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
-import { repasarLote, resumenRepaso, pideRelecturaDeLineas, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
+import { repasarLote, resumenRepaso, pideRelecturaDeLineas, esAlcanceValido, ALCANCES_REPASO, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
 import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
 import { instanteMadrid } from "./src/modules/horarios/tiempo.js";
@@ -4455,13 +4455,17 @@ app.get("/api/facturas/repaso", requireAuth(["direccion", "contabilidad"]), asyn
     const scope = localScope(req);
     const filas = await repasoCargar(scope);
     const r = repasarLote(filas);
-    const porReleer = filas.filter(pideRelecturaDeLineas);
+    const alcance = esAlcanceValido(req.query?.alcance) ? String(req.query.alcance) : "faltan";
+    const porReleer = filas.filter((f) => pideRelecturaDeLineas(f, alcance));
     res.json({
       ok: true,
       facturas: filas.length,
       tope: filas.length >= REPASO_MAX,
       ...resumenRepaso(r),
       porReleer: porReleer.length,
+      alcance,
+      // Cuántas hay en cada alcance, para poder elegir con el número delante y no a ciegas.
+      alcances: ALCANCES_REPASO.map((a) => ({ ...a, n: filas.filter((f) => pideRelecturaDeLineas(f, a.clave)).length })),
       // Solo una muestra: la lista entera de una base grande no cabe en una pantalla ni en
       // una cabeza. Para verlas todas están la pestaña de facturas y la de duplicados.
       revisiones: r.revisiones.slice(0, 25),
@@ -4527,10 +4531,17 @@ app.post("/api/facturas/repaso/lineas", requireAuth(["direccion", "contabilidad"
     // Las que ya fallaron en esta pasada. No se marcan en la base como ilegibles —tienen su
     // detalle viejo, que sigue sirviendo— pero hay que saltarlas o la tanda siguiente volvería
     // a tropezar con las mismas y el contador no bajaría nunca.
-    const saltar = (Array.isArray(req.body?.saltar) ? req.body.saltar : []).map(Number).filter(Number.isInteger).slice(0, 500);
-    const cond = [`COALESCE(lineas_version, 1) < ?`, `drive_url IS NOT NULL`,
-                  `lineas_estado IN ('ok','dudas','descuadre')`];
-    const par = [VERSION_LINEAS];
+    // El tope tiene que dar para una pasada entera: con «todas», aquí vienen TODAS las ya
+    // releídas, y recortando a 500 la 501 volvería a salir y esto no terminaría.
+    const saltar = (Array.isArray(req.body?.saltar) ? req.body.saltar : []).map(Number).filter(Number.isInteger).slice(0, 5000);
+    // El ALCANCE. Que una factura esté marcada como leída con la versión de hoy no garantiza
+    // que esté bien: si la lectura se cortó, se guardaron las líneas que llegaron y quedó
+    // marcada igual. Por eso se puede pedir releer también las que no cuadran, o todas.
+    const alcance = esAlcanceValido(req.body?.alcance) ? String(req.body.alcance) : "faltan";
+    const cond = [`drive_url IS NOT NULL`, `lineas_estado IN ('ok','dudas','descuadre')`];
+    const par = [];
+    if (alcance === "faltan") { cond.push(`COALESCE(lineas_version, 1) < ?`); par.push(VERSION_LINEAS); }
+    else if (alcance === "descuadre") cond.push(`lineas_estado = 'descuadre'`);
     if (scope) { cond.push("local = ?"); par.push(scope); }
     if (saltar.length) { cond.push(`NOT (id = ANY(?))`); par.push(saltar); }
     const filas = await dbAll(

@@ -6173,7 +6173,7 @@ function facRepasoPintar(ov, j) {
     <p class="mut" style="margin:12px 0 0;line-height:1.5">El repaso deja las facturas viejas igual que si hubieran entrado hoy. Nunca borra: lo dudoso se aparta y lo decide una persona.</p>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
       <button class="btn" data-close>Cerrar</button>
-      ${j.porReleer ? `<button class="btn" id="repLineas">Releer ${num(j.porReleer)} para los descuentos</button>` : ""}
+      ${(j.alcances || []).some((a) => a.n) ? `<button class="btn" id="repLineas">Volver a leer documentos…</button>` : ""}
       ${nadaBarato ? "" : `<button class="btn primary" id="repAplicar">Aplicar avisos y apartar repetidas</button>`}
     </div>`;
 
@@ -6187,14 +6187,39 @@ function facRepasoPintar(ov, j) {
     } catch (e) { toast("Error: " + e.message); bAplicar.disabled = false; bAplicar.textContent = "Aplicar avisos y apartar repetidas"; }
   });
   const bLineas = cuerpo.querySelector("#repLineas");
-  if (bLineas) bLineas.addEventListener("click", () => { ov.remove(); facRepasoLineas(j.porReleer); });
+  if (bLineas) bLineas.addEventListener("click", () => { ov.remove(); facElegirAlcance(j.alcances || []); });
+}
+
+/**
+ * Qué facturas volver a leer. Hace falta elegir porque «al día» no quiere decir «bien»: si la
+ * lectura de una factura larga se cortó, se guardaron las líneas que llegaron y quedó marcada
+ * con la versión de hoy igual que las buenas.
+ */
+function facElegirAlcance(alcances) {
+  const hay = alcances.filter((a) => a.n > 0);
+  if (!hay.length) return toast("No hay ninguna que releer");
+  const ov = modal("¿Cuáles vuelvo a leer?", `
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Estar «al día» no quiere decir estar bien: si la lectura
+      de una factura larga se cortó, se guardó lo que llegó y quedó marcada igual que las buenas. Por eso se puede
+      pedir de tres maneras.</p>
+    <div class="rows">${hay.map((a) => `<div class="row">
+        <div class="grow" style="min-width:0"><div class="t1">${esc(a.label)} · <b>${num(a.n)}</b></div>
+          <div class="t2">${esc(a.ayuda)}</div></div>
+        <button class="btn sm ${a.clave === "descuadre" ? "primary" : ""}" data-alcance="${esc(a.clave)}" data-n="${a.n}">Leer estas</button>
+      </div>`).join("")}</div>`);
+  ov.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-alcance]");
+    if (!b) return;
+    ov.remove();
+    facRepasoLineas(Number(b.getAttribute("data-n")), b.getAttribute("data-alcance"));
+  });
 }
 
 // Lo caro: releer el documento de las que se leyeron antes de los descuentos. Va por tandas y
 // enseña el avance —son cientos de descargas más una lectura cada una— y se puede parar.
-async function facRepasoLineas(total) {
+async function facRepasoLineas(total, alcance = "faltan") {
   const ok = await confirmModal(
-    `Se van a releer ${total} facturas para guardar los descuentos por línea. Se descarga cada archivo de Drive y se vuelve a leer: tarda un rato y se puede parar cuando quieras. No se toca la cabecera —proveedor, fechas e importes se quedan como están—, solo el detalle.`,
+    `Se van a releer ${total} facturas. Se descarga cada archivo de Drive y se vuelve a leer: tarda un rato y se puede parar cuando quieras. No se toca la cabecera —proveedor, fechas e importes se quedan como están—, solo el detalle.`,
     { ok: "Empezar" });
   if (!ok) return;
 
@@ -6211,24 +6236,34 @@ async function facRepasoLineas(total) {
   // Las que fallan se van apuntando y se le dicen al servidor para que no vuelva a sacarlas:
   // si no, cada tanda tropezaría con las mismas y el contador no bajaría nunca.
   const saltar = [];
-  let leidas = 0, conDto = 0;
+  // Las que NO se han podido leer se cuentan aparte: la lista de saltar lleva también las
+  // buenas cuando el alcance no es «las que faltan», y contarlas como fallos diría que no se
+  // ha podido leer justo lo que sí se ha leído.
+  let leidas = 0, conDto = 0, fallidas = 0;
   while (!parar) {
     let r;
-    try { r = await apiSend("POST", "/api/facturas/repaso/lineas", { tanda: 10, saltar }); }
+    try { r = await apiSend("POST", "/api/facturas/repaso/lineas", { tanda: 10, saltar, alcance }); }
     catch (e) { estado.innerHTML = `<b>Se ha parado:</b> ${esc(e.message)}`; break; }
     leidas += r.leidas; conDto += r.conDescuento;
     for (const d of r.detalles) {
-      if (d.error) saltar.push(d.id);
+      // Con «todas» o «las que no cuadran», releer no cambia el filtro: si no se apuntaran
+      // también las que SALEN BIEN, la tanda siguiente volvería a coger las mismas y esto no
+      // terminaría nunca. Con «las que faltan» basta con las fallidas, porque las buenas suben
+      // de versión y salen solas del filtro.
+      if (d.error) fallidas++;
+      if (d.error || alcance !== "faltan") saltar.push(d.id);
       lista.insertAdjacentHTML("afterbegin", `<div class="row"><div class="grow">
         <div class="t1">${esc(d.proveedor || "—")} <span class="mut">${esc(d.fecha || "")}</span></div>
         <div class="t2">${d.error ? `⚠️ ${esc(d.error)}` : `${d.lineas} ${d.lineas === 1 ? "línea" : "líneas"}${d.descuentos ? ` · ${d.descuentos} con descuento` : " · sin descuentos"}`}</div>
       </div></div>`);
     }
-    estado.innerHTML = `<b>${num(leidas)}</b> releídas · quedan <b>${num(r.quedan)}</b>${conDto ? ` · ${num(conDto)} traían descuento` : ""}${saltar.length ? ` · ${num(saltar.length)} sin poder leer` : ""}`;
+    estado.innerHTML = `<b>${num(leidas)}</b> releídas · quedan <b>${num(r.quedan)}</b>${conDto ? ` · ${num(conDto)} traían descuento` : ""}${fallidas ? ` · ${num(fallidas)} sin poder leer` : ""}`;
     if (!r.quedan || (!r.leidas && !r.fallidas)) break;   // sin avance: no dar vueltas en balde
   }
   bParar.textContent = "Cerrar"; bParar.setAttribute("data-close", "");
-  estado.innerHTML += `<br><span class="mut">Terminado. Las que traían descuento ya guardan lo que se paga, no la tarifa.</span>`;
+  estado.innerHTML += `<br><span class="mut">Terminado. ${alcance === "faltan"
+    ? "Las que traían descuento ya guardan lo que se paga, no la tarifa."
+    : "Se ha vuelto a leer el documento de cada una; el detalle está como si entraran hoy."}</span>`;
   loadFacturas();
 }
 

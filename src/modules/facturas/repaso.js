@@ -43,11 +43,27 @@ const LEIDAS = new Set(["ok", "dudas", "descuadre"]);
  * releerlo. Las que nunca se leyeron son cosa del otro botón («Leer las que faltan»), y las
  * de gasto estructural no se leen a propósito.
  */
-export function pideRelecturaDeLineas(f = {}) {
+export function pideRelecturaDeLineas(f = {}, alcance = "faltan") {
   if (!f.drive_url) return false;
   if (!LEIDAS.has(String(f.lineas_estado || ""))) return false;
+
+  // Que una factura esté marcada como leída con la versión de hoy NO garantiza que esté bien:
+  // si la lectura se cortó, se guardaron las líneas que llegaron y quedó marcada igual. Por
+  // eso hacen falta los otros dos alcances.
+  if (alcance === "todas") return true;
+  // Las que no cuadran con su base imponible: es justo la huella que deja una lectura
+  // incompleta, y son pocas — releerlas cuesta poco y es donde está casi todo el fallo.
+  if (alcance === "descuadre") return String(f.lineas_estado) === "descuadre";
   return Number(f.lineas_version || 1) < VERSION_LINEAS;
 }
+
+/** Los alcances que se pueden pedir, con lo que significan de verdad. */
+export const ALCANCES_REPASO = [
+  { clave: "faltan", label: "Las que faltan", ayuda: "Solo las que no han pasado por la versión de hoy. Es lo normal." },
+  { clave: "descuadre", label: "Las que no cuadran", ayuda: "Las que tienen líneas que no suman su base imponible: es la huella que deja una lectura incompleta." },
+  { clave: "todas", label: "Todas, otra vez", ayuda: "Vuelve a leer todas, aunque estén al día. Tarda y cuesta: una descarga y una lectura por factura." },
+];
+export const esAlcanceValido = (a) => ALCANCES_REPASO.some((x) => x.clave === String(a || ""));
 
 /** Los textos de aviso que tiene guardados una factura (la columna `revisar` es JSON). */
 export function avisosGuardados(fila = {}) {

@@ -224,7 +224,21 @@ describe("el panel — el botón está donde se busca y no dispara nada solo", (
   test("las que fallan al releer se apuntan para no volver a tropezar con ellas", () => {
     const fn = /async function facRepasoLineas\([\s\S]*?\n}/.exec(app)[0];
     assert.match(fn, /saltar\.push\(d\.id\)/);
-    assert.match(fn, /\{ tanda: 10, saltar \}/);
+    assert.match(fn, /\{ tanda: 10, saltar, alcance \}/);
+  });
+
+  test("y con «todas» se apuntan TAMBIÉN las que salen bien, o no termina nunca", () => {
+    // Releer no cambia el filtro cuando el alcance no es «las que faltan»: sin apuntar las
+    // buenas, la tanda siguiente volvería a coger las mismas y esto daría vueltas para siempre.
+    const fn = /async function facRepasoLineas\([\s\S]*?\n}/.exec(app)[0];
+    assert.match(fn, /d\.error \|\| alcance !== "faltan"/);
+  });
+
+  test("el alcance se elige a sabiendas: con cuántas hay en cada uno", () => {
+    // «Al día» no quiere decir «bien»: una lectura cortada guardó lo que llegó y quedó marcada
+    // igual que las buenas.
+    assert.match(app, /function facElegirAlcance/);
+    assert.match(app, /Estar «al día» no quiere decir estar bien/);
   });
 
   test("se puede parar a la mitad: son cientos de descargas", () => {
