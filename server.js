@@ -522,14 +522,44 @@ async function initDB() {
     }
     // En modo recibo no hay «días», así que la columna deja de ser obligatoria.
     await dbRun(`ALTER TABLE facturas_proveedor_pago ALTER COLUMN dias DROP NOT NULL`).catch(() => {});
-    // LA EMPRESA ENTRA EN LA CLAVE. El mismo proveedor puede servir a dos empresas del grupo
-    // con condiciones distintas —una paga el recibo del 15 y la otra al contado—, y con una
-    // sola regla por proveedor la fecha de pago de una de las dos sale mal siempre.
-    // `empresa = ''` es la regla GENERAL: lo que ya estaba guardado pasa a serlo, que es lo
-    // que significaba hasta ahora.
-    await dbRun(`ALTER TABLE facturas_proveedor_pago ADD COLUMN IF NOT EXISTS empresa TEXT NOT NULL DEFAULT ''`).catch(() => {});
-    await dbRun(`ALTER TABLE facturas_proveedor_pago DROP CONSTRAINT IF EXISTS facturas_proveedor_pago_pkey`).catch(() => {});
-    await dbRun(`ALTER TABLE facturas_proveedor_pago ADD PRIMARY KEY (prov_clave, empresa)`).catch(() => {});
+    // NOTA: a partir de aquí esta tabla ya NO se usa. Las reglas viven en `facturas_pago_reglas`
+    // (abajo), que admite una por proveedor y empresa. Se deja como estaba —sin tocar y sin
+    // borrar— porque de ella se copian las reglas la primera vez y porque borrarla es
+    // justo el tipo de cambio que bloquea un despliegue.
+    // LAS REGLAS DE PAGO, POR PROVEEDOR **Y EMPRESA**. El mismo proveedor puede servir a dos
+    // empresas del grupo con condiciones distintas —una paga el recibo del 15 y la otra al
+    // contado—, y con una sola regla por proveedor la fecha de una de las dos sale mal siempre.
+    //
+    // Va en una TABLA NUEVA y no cambiando la clave de la de antes. Cambiar una clave primaria
+    // obliga a tres pasos en un orden concreto (añadir la columna, quitar la clave, ponerla
+    // nueva) y el generador de migraciones del despliegue los emite en otro orden: crea la
+    // clave con una columna que aún no existe, falla, y el despliegue se queda bloqueado. Una
+    // tabla nueva es aditiva y no hay orden que se pueda equivocar.
+    await dbRun(`
+      CREATE TABLE IF NOT EXISTS facturas_pago_reglas (
+        prov_clave TEXT NOT NULL,
+        empresa TEXT NOT NULL DEFAULT '',
+        proveedor TEXT NOT NULL,
+        dias INTEGER,
+        dia_pago INTEGER,
+        modo TEXT NOT NULL DEFAULT 'dias',
+        meses_despues INTEGER NOT NULL DEFAULT 1,
+        domiciliado INTEGER NOT NULL DEFAULT 0,
+        actualizado_por TEXT,
+        actualizado_en TEXT,
+        PRIMARY KEY (prov_clave, empresa)
+      )
+    `);
+    // Lo que ya estuviera guardado pasa a ser la regla GENERAL, que es justo lo que significaba
+    // hasta ahora. `DO NOTHING` para que repetirlo en cada arranque no pise lo que se cambie
+    // después desde el panel.
+    await dbRun(`
+      INSERT INTO facturas_pago_reglas (prov_clave, empresa, proveedor, dias, dia_pago, modo, meses_despues, domiciliado, actualizado_por, actualizado_en)
+        SELECT prov_clave, '', proveedor, dias, dia_pago, COALESCE(modo,'dias'), COALESCE(meses_despues,1),
+               COALESCE(domiciliado,0), actualizado_por, actualizado_en
+          FROM facturas_proveedor_pago
+      ON CONFLICT (prov_clave, empresa) DO NOTHING
+    `).catch(() => { /* si la vieja no existe (base nueva), no hay nada que copiar */ });
     // ── El diccionario de productos ────────────────────────────────────────
     // EL PROBLEMA: el mismo producto se llama de tres maneras. En la factura «COCA COLA ZERO
     // 33CL LATA CAJA 24U», en el inventario «Coca-Cola Zero». Agrupamos por el texto exacto
@@ -3788,7 +3818,7 @@ app.get("/api/facturas/pagos", requireAuth(["direccion", "contabilidad"]), async
     // Quién paga por recibo mensual: hace falta para juntar sus facturas en un solo cargo, que
     // es como llega al banco. Una consulta para todos, no una por factura.
     const reglas = await dbAll(
-      `SELECT prov_clave, empresa, modo, domiciliado FROM facturas_proveedor_pago`, []).catch(() => []);
+      `SELECT prov_clave, empresa, modo, domiciliado FROM facturas_pago_reglas`, []).catch(() => []);
     // Clave doble: la regla de la empresa manda sobre la general (`empresa = ''`).
     const porClaveEmpresa = new Map(reglas.map((r) => [`${r.prov_clave}|${r.empresa || ""}`, r]));
     for (const f of filas) {
@@ -3838,7 +3868,7 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
       : (req.body?.dias === null || req.body?.dias === "");
 
     if (quitar) {
-      await dbRun(`DELETE FROM facturas_proveedor_pago WHERE prov_clave = ? AND empresa = ?`, [clave, empresa]);
+      await dbRun(`DELETE FROM facturas_pago_reglas WHERE prov_clave = ? AND empresa = ?`, [clave, empresa]);
     } else {
       const diaBruto = req.body?.dia_pago;
       const diaPago = diaBruto === null || diaBruto === "" || diaBruto === undefined ? null : Number(diaBruto);
@@ -3861,7 +3891,7 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
       }
 
       await dbRun(
-        `INSERT INTO facturas_proveedor_pago (prov_clave, proveedor, empresa, dias, dia_pago, modo, meses_despues, domiciliado, actualizado_por, actualizado_en)
+        `INSERT INTO facturas_pago_reglas (prov_clave, proveedor, empresa, dias, dia_pago, modo, meses_despues, domiciliado, actualizado_por, actualizado_en)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (prov_clave, empresa) DO UPDATE SET proveedor = EXCLUDED.proveedor, dias = EXCLUDED.dias,
            dia_pago = EXCLUDED.dia_pago, modo = EXCLUDED.modo, meses_despues = EXCLUDED.meses_despues,
@@ -3933,7 +3963,7 @@ app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
     // puede pasarle el recibo del 15 a una empresa del grupo y cobrarle al contado a otra.
     const reglas = (await dbAll(
       `SELECT empresa, dias, dia_pago, modo, meses_despues, domiciliado, actualizado_por, actualizado_en
-         FROM facturas_proveedor_pago WHERE prov_clave = ? ORDER BY (empresa <> ''), empresa`, [clave]).catch(() => []))
+         FROM facturas_pago_reglas WHERE prov_clave = ? ORDER BY (empresa <> ''), empresa`, [clave]).catch(() => []))
       .map((r) => ({ ...r, empresa: r.empresa || "", modo: r.modo || "dias", domiciliado: !!Number(r.domiciliado),
         texto: textoCondiciones({ ...r, modo: r.modo || "dias", domiciliado: !!Number(r.domiciliado) }) }));
     const pago = reglas.find((r) => !r.empresa) || null;   // la general, para compatibilidad

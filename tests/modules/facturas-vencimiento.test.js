@@ -386,13 +386,24 @@ describe("las condiciones de pago son por proveedor Y EMPRESA", () => {
   const facturas = readFileSync(new URL("../../facturas.js", import.meta.url), "utf8");
   const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
 
-  test("la empresa entra en la clave de la tabla", () => {
+  test("las reglas van en una TABLA NUEVA, no cambiando la clave de la que había", () => {
     // El mismo proveedor puede pasarle el recibo del 15 a una empresa del grupo y cobrarle al
     // contado a otra. Con una sola regla por proveedor, la fecha de una de las dos sale mal
     // SIEMPRE — y encima parece correcta.
-    assert.match(server, /ADD COLUMN IF NOT EXISTS empresa TEXT NOT NULL DEFAULT ''/);
-    assert.match(server, /ADD PRIMARY KEY \(prov_clave, empresa\)/);
-    assert.match(server, /ON CONFLICT \(prov_clave, empresa\)/);
+    //
+    // Y va en una tabla nueva por una razón muy concreta: cambiar una clave primaria son tres
+    // pasos en un orden obligatorio, y el generador de migraciones del despliegue los emite en
+    // otro —crea la clave con una columna que aún no existe—, falla, y el despliegue se queda
+    // bloqueado. Pasó de verdad. Una tabla nueva es aditiva y no hay orden que equivocar.
+    assert.match(server, /CREATE TABLE IF NOT EXISTS facturas_pago_reglas/);
+    assert.match(server, /PRIMARY KEY \(prov_clave, empresa\)/);
+    assert.doesNotMatch(server, /ALTER TABLE facturas_proveedor_pago (DROP CONSTRAINT|ADD PRIMARY KEY)/,
+      "tocar la clave de la tabla vieja es lo que bloqueó el despliegue");
+  });
+
+  test("y lo que ya estaba guardado pasa a ser la regla general, sin pisarse al reiniciar", () => {
+    assert.match(server, /INSERT INTO facturas_pago_reglas[\s\S]{0,400}FROM facturas_proveedor_pago/);
+    assert.match(server, /ON CONFLICT \(prov_clave, empresa\) DO NOTHING/);
   });
 
   test("y manda la de la empresa sobre la general", () => {
@@ -424,7 +435,7 @@ describe("las condiciones de pago son por proveedor Y EMPRESA", () => {
   });
 
   test("y se puede quitar la de una empresa sin tocar la general", () => {
-    assert.match(server, /DELETE FROM facturas_proveedor_pago WHERE prov_clave = \? AND empresa = \?/);
+    assert.match(server, /DELETE FROM facturas_pago_reglas WHERE prov_clave = \? AND empresa = \?/);
     assert.match(panel, /Sus facturas pasarán a usar la regla general/);
   });
 });

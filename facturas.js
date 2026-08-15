@@ -196,7 +196,7 @@ export async function condicionesDePago(dbGet, proveedor, empresa = "") {
     // pasarle el recibo del 15 a una empresa del grupo y cobrarle al contado a otra.
     const r = await dbGet(
       `SELECT dias, dia_pago, modo, meses_despues, domiciliado, empresa
-         FROM facturas_proveedor_pago
+         FROM facturas_pago_reglas
         WHERE prov_clave = ? AND empresa IN (?, '')
         ORDER BY (empresa <> '') DESC LIMIT 1`, [clave, String(empresa || "")]);
     return r ? { dias: r.dias, dia_pago: r.dia_pago, modo: r.modo || "dias",
