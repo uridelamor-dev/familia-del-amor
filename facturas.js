@@ -39,7 +39,8 @@ const CABECERAS = [
 ];
 
 const PROMPT_EXTRACCION = `Analiza este documento (factura, albarán o ticket) y extrae los datos.
-Devuelve ÚNICAMENTE un JSON válido, sin texto adicional, con esta estructura exacta
+Devuelve ÚNICAMENTE un JSON válido, sin texto adicional y SIN envolverlo en un bloque de código
+markdown, con esta estructura exacta
 (usa null para los campos que no aparezcan):
 {
   "tipo": "factura" | "albaran" | "ticket" | "otro",

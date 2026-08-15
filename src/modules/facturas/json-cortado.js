@@ -70,7 +70,16 @@ export function repararJsonCortado(texto) {
   }
 
   if (enCadena && corte < 0) return { ok: false, valor: null, recortado: false, motivo: "sin ningún dato completo" };
-  if (!pila.length) return { ok: false, valor: null, recortado: false, motivo: "no está cortado" };
+  if (!pila.length) {
+    // Balanceado pero ilegible: casi siempre es que SOBRA algo detrás (el cierre de un bloque
+    // de markdown, una coletilla del modelo). Se prueba a quedarse hasta la última llave.
+    const fin = s.lastIndexOf("}");
+    if (fin > 0) {
+      try { return { ok: true, valor: JSON.parse(s.slice(0, fin + 1)), recortado: false, motivo: null }; }
+      catch { /* entonces sí es otra cosa */ }
+    }
+    return { ok: false, valor: null, recortado: false, motivo: "no está cortado, pero no se puede leer" };
+  }
   if (corte < 0) return { ok: false, valor: null, recortado: false, motivo: "sin ningún dato completo" };
 
   // La coma final sobra: quedaría «[1,2,]».
@@ -105,5 +114,16 @@ export function extraerJson(texto) {
   const s = String(texto || "");
   const abre = s.indexOf("{");
   if (abre < 0) return { ok: false, valor: null, recortado: false, motivo: "no hay JSON" };
+
+  // El modelo suele envolver la respuesta en un bloque de markdown (```json … ```). Cortar
+  // desde la primera llave HASTA EL FINAL se lleva también el cierre del bloque, y entonces
+  // `JSON.parse` falla por lo que sobra detrás aunque el JSON esté entero y perfecto.
+  // Por eso se prueba primero de llave a llave.
+  const cierra = s.lastIndexOf("}");
+  if (cierra > abre) {
+    try {
+      return { ok: true, valor: JSON.parse(s.slice(abre, cierra + 1)), recortado: false, motivo: null };
+    } catch { /* no era eso: puede venir cortado de verdad */ }
+  }
   return repararJsonCortado(s.slice(abre));
 }

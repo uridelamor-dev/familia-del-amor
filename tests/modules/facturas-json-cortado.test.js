@@ -77,6 +77,32 @@ describe("sacar el JSON de la respuesta del modelo", () => {
     assert.equal(r.valor.lineas.length, 2);
   });
 
+  test("EL CASO REAL: el modelo envuelve la respuesta en un bloque de markdown", () => {
+    // ```json … ``` — cortar desde la primera llave hasta el final se lleva el cierre del
+    // bloque, y `JSON.parse` falla por lo que sobra detrás aunque el JSON esté entero. Se
+    // veía como «no está cortado», que es exactamente lo que era.
+    const conBloque = '```json\n{ "tipo": "factura", "proveedor": "DDI PROVEA, S.L.",\n' +
+      '  "lineas": [{"descripcion":"VIRUTA IBERICA","importe":1650}] }\n```';
+    const r = extraerJson(conBloque);
+    assert.equal(r.ok, true);
+    assert.equal(r.recortado, false, "está entero: no hay nada que recortar");
+    assert.equal(r.valor.proveedor, "DDI PROVEA, S.L.");
+    assert.equal(r.valor.lineas.length, 1);
+  });
+
+  test("y si viene cortado DENTRO del bloque, también se salva lo entero", () => {
+    const r = extraerJson('```json\n{"proveedor":"DDI","lineas":[{"d":"A","importe":10},{"d":"B","impor');
+    assert.equal(r.ok, true);
+    assert.equal(r.recortado, true);
+    assert.equal(r.valor.lineas.length, 1);
+  });
+
+  test("una coletilla detrás del JSON tampoco tumba la lectura", () => {
+    const r = extraerJson('{"a":1}\n\nEspero que te sirva.');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.valor, { a: 1 });
+  });
+
   test("sin JSON, se dice que no hay", () => {
     assert.equal(extraerJson("no puedo leer este documento").motivo, "no hay JSON");
   });
