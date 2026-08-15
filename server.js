@@ -50,6 +50,7 @@ import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo 
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { colaDeTrabajo, cobertura } from "./src/modules/facturas/diccionario.js";
+import { gruposDuplicados } from "./src/modules/facturas/proveedores-duplicados.js";
 import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { proponerConciliacion, resumenConciliacion, estadoConciliada } from "./src/modules/facturas/conciliacion.js";
@@ -3948,6 +3949,28 @@ app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
   } catch (e) {
     console.error("[facturas] ficha proveedor:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar la ficha" });
+  }
+});
+
+// Los proveedores que son el mismo metido varias veces. NO se une nada: se propone.
+app.get("/api/facturas/proveedores-duplicados", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    // Una fila por forma de escribirlo, con su NIF más repetido: es la señal que permite ver
+    // que «GRAU» y «Vins i Licors Grau, S.A.» son la misma empresa, cosa que por el nombre no
+    // se puede saber.
+    const filas = await dbAll(
+      `SELECT f.proveedor, count(*)::int AS facturas, SUM(f.total)::float AS gasto,
+              (SELECT n.nif FROM facturas n
+                WHERE n.proveedor = f.proveedor AND n.nif IS NOT NULL AND n.nif <> ''
+                GROUP BY n.nif ORDER BY count(*) DESC LIMIT 1) AS nif
+         FROM facturas f
+        WHERE f.proveedor IS NOT NULL AND f.proveedor <> '' AND COALESCE(f.dup_estado,'') <> 'duda' 
+        GROUP BY f.proveedor ORDER BY gasto DESC NULLS LAST`, []);
+
+    res.json({ ok: true, grupos: gruposDuplicados(filas).slice(0, 40), proveedores: filas.length });
+  } catch (e) {
+    console.error("[facturas] proveedores duplicados:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron buscar los repetidos" });
   }
 });
 

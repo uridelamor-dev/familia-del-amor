@@ -4287,6 +4287,52 @@ async function facCargarCategorias() {
   caja.innerHTML = facCategoriasHtml();
 }
 
+// ── Proveedores repetidos ───────────────────────────────────────────────────
+// «GRAU» y «Vins i Licors Grau, S.A.» son la misma empresa: salen como dos proveedores, hay
+// que etiquetarlos dos veces y el gasto sale partido. Se propone; unir lo decide una persona,
+// porque unir reescribe todas sus facturas.
+let PROVDUP = null;
+
+async function facProvDuplicados() {
+  const caja = document.getElementById("facProvDup");
+  if (!caja) return;
+  try { PROVDUP = await apiRaw("/api/facturas/proveedores-duplicados"); } catch { return; }
+  const g = PROVDUP.grupos || [];
+  if (!g.length) { caja.innerHTML = ""; return; }
+
+  caja.innerHTML = `<details class="card fold" style="margin-bottom:16px" open>
+    <summary><h3>Proveedores repetidos</h3><span class="foldr">
+      <span>${num(g.length)} ${g.length === 1 ? "caso" : "casos"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">El mismo proveedor metido con dos nombres. Cuando comparten
+      NIF <b>no es que se parezcan: son la misma empresa</b>. Al unirlos, todas las facturas pasan al nombre que elijas
+      y las próximas entran ya correctas — es lo mismo que corregir el nombre a mano, pero de una vez.</p>
+    <div class="rows">${g.map((x, i) => `<div class="row" data-provdup-fila="${i}">
+        <div class="grow" style="min-width:0">
+          <div class="t1">${esc(x.sugerido.proveedor)}</div>
+          <div class="t2">y ${x.otros.map((o) => `<b>${esc(o.proveedor)}</b>`).join(", ")}
+            · ${esc(x.motivo)} · ${num(x.facturas)} facturas · ${esc(eur(x.gasto))}</div>
+        </div>
+        <button class="btn sm primary" data-act="fac-provdup" data-provdup="unir" data-i="${i}">Unir en «${esc(nombreCorto(x.sugerido.proveedor))}»</button>
+        <button class="btn sm" data-act="fac-provdup" data-provdup="otro" data-i="${i}">Al revés</button>
+      </div>`).join("")}</div>
+  </details>`;
+}
+
+/** Unir de verdad: se reutiliza el renombrado, que ya reescribe todas las facturas y aprende. */
+async function facProvUnir(grupo, destino) {
+  const otros = [grupo.sugerido, ...grupo.otros].filter((x) => x.proveedor !== destino);
+  if (!await confirmModal(
+    `Se unen ${otros.length + 1} nombres en «${destino}». ${num(grupo.facturas)} factura(s) pasan a ese nombre y las próximas entrarán ya así.`,
+    { ok: "Unir" })) return;
+  try {
+    for (const o of otros) {
+      await apiSend("PUT", "/api/facturas/proveedor", { antiguo: o.proveedor, nuevo: destino });
+    }
+    toast(`Unidos en «${destino}» ✅`);
+    facProvDuplicados(); facCargarCategorias();
+  } catch (e) { toast("Error: " + e.message); }
+}
+
 function facCategoriasHtml() {
   const j = FCATS; if (!j) return "";
   // Los SIN CATEGORÍA primero, y dentro de cada bloque los que más gastan. Antes iban mezclados
@@ -5220,7 +5266,7 @@ function renderFacturasConfig() {
     </ul>
     <p class="mut" style="margin:8px 0 0;line-height:1.6">Primero enseña lo que encontraría. No cambia nada hasta que lo confirmes.</p>
     <div class="toolbar" style="padding:12px 0 0"><button class="btn primary" data-act="fac-repaso">Repasar</button></div></div>`;
-  return `${facHeader()}<div id="facDrive"></div><div id="facCats"></div><div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${repaso}</div><div style="margin-top:16px">${integ}</div>`;
+  return `${facHeader()}<div id="facDrive"></div><div id="facProvDup"></div><div id="facCats"></div><div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${repaso}</div><div style="margin-top:16px">${integ}</div>`;
 }
 
 async function loadFacturas() {
@@ -5235,7 +5281,7 @@ async function loadFacturas() {
       ]);
       FCFG = { locales: locales || [], reglas: reglas || [], grupos: grupos || [], empresas: empresas || [], groups: groups || [], integ: { drive: integDrive, gmail: integGmail }, carpetas: carpetas || [], master: master || null };
       view.innerHTML = renderFacturasConfig();
-      facCargarCategorias(); facDiagnosticoDrive();   // no se esperan: la configuración ya está
+      facCargarCategorias(); facDiagnosticoDrive(); facProvDuplicados();   // no se esperan: la configuración ya está
       return;
     }
     if (FACTAB === "pagos") return loadPagos();
@@ -7586,6 +7632,24 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-limpiar-filtros") facLimpiarFiltros();
   else if (act === "fac-normalizar-locales") facNormalizarLocales();
   else if (act === "fac-cat-editar") facCatEditar(t.getAttribute("data-prov"));
+  else if (act === "fac-provdup") {
+    const g = (PROVDUP?.grupos || [])[Number(t.getAttribute("data-i"))];
+    if (!g) return;
+    if (t.getAttribute("data-provdup") === "unir") return facProvUnir(g, g.sugerido.proveedor);
+    // «Al revés»: elegir a mano con cuál de los nombres se queda.
+    const todos = [g.sugerido, ...g.otros];
+    const ov = modal("¿Con qué nombre se queda?", `
+      <p class="mut" style="margin:0 0 10px">Todas las facturas pasarán al que elijas, y las próximas entrarán ya así.</p>
+      <div class="rows">${todos.map((x) => `<div class="row">
+          <div class="grow"><b>${esc(x.proveedor)}</b> <span class="mut">· ${num(x.facturas)} facturas · ${esc(eur(x.gasto))}</span></div>
+          <button class="btn sm primary" data-quedarse="${esc(x.proveedor)}">Este</button></div>`).join("")}</div>`);
+    ov.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-quedarse]");
+      if (!b) return;
+      ov.remove();
+      facProvUnir(g, b.getAttribute("data-quedarse"));
+    });
+  }
   else if (act === "fac-prov-ficha") facProveedorFicha(t.getAttribute("data-prov"));
   else if (act === "fac-dup") facDupResolver(t.getAttribute("data-id"), t.getAttribute("data-accion"));
   else if (act === "fac-ir-cats") facTab("config", true);
