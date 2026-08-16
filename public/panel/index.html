@@ -159,6 +159,33 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 /* La barra de proporción va DETRÁS del número, pegada al borde inferior de la celda. */
 .gastocel{position:relative;padding-bottom:5px}
 .gastobar{position:absolute;right:0;bottom:0;height:3px;border-radius:3px;background:color-mix(in srgb,var(--brand) 45%,transparent);display:block}
+
+/* ── Ficha de factura: el papel a un lado y los datos al otro ────────────────
+   Una ficha existe para comparar lo leído con la factura de verdad; antes había que salir a
+   Drive en otra pestaña y volver. */
+.ficha{display:grid;grid-template-columns:minmax(200px,300px) 1fr;gap:20px;align-items:start}
+.fic-doc{display:flex;flex-direction:column;gap:8px;position:sticky;top:0}
+.fic-ph,.fic-img{width:100%;border-radius:10px;border:1px solid var(--border);background:var(--surface2);display:block}
+.fic-ph{aspect-ratio:3/4;display:grid;place-items:center}
+.fic-img{object-fit:contain;max-height:60vh}
+.fic-ph.nofoto{border-style:dashed}
+.fic-cab{display:flex;align-items:flex-start;gap:10px;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px}
+.fic-cab h3{font-size:16px;letter-spacing:-.02em}
+.fic-pills{display:flex;gap:5px;flex-wrap:wrap}
+/* Los tres bloques —quién, documento, dinero— separados por aire, no por marcos: con doce
+   casillas iguales el NIF pesaba lo mismo que el total. */
+.fic-g{margin-bottom:14px}
+.fic-gt{display:block;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3);margin-bottom:7px}
+.fic-g .form-grid{margin-bottom:9px}
+.fic-suma{margin-top:8px;font-size:12.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.fic-suma .ok{color:var(--success)}
+.fic-suma .mal{color:var(--danger)}
+.fic-pie{display:flex;align-items:center;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);flex-wrap:wrap}
+/* Eliminar deja de ser un botón rojo al lado de Guardar: es lo que no se quiere pulsar sin
+   querer, así que se va al otro extremo y pierde el peso de botón. */
+.fic-pie .linkbtn.danger{color:var(--danger);font-size:12.5px}
+.tbl tr.dudosa td{background:color-mix(in srgb,var(--warning) 7%,transparent)}
+
 /* La línea del precio. En móvil se va: el ancho que ocupa vale más para el nombre, y el dato
    sigue estando en la columna de al lado y en el histórico del producto. */
 .spark{display:block;overflow:visible}
@@ -743,6 +770,10 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   /* El precio y su variación, en dos líneas si hace falta, para no ensanchar la columna. */
   .tbl td .pill{font-size:9.5px}
   .modal-b .form-grid{grid-template-columns:1fr}
+  .ficha{grid-template-columns:1fr;gap:12px}
+  .fic-doc{position:static;flex-direction:row;align-items:flex-start}
+  .fic-ph,.fic-img{max-height:180px;width:auto;max-width:45%}
+  .fic-doc .btn{align-self:center}
   .rng{flex-direction:column;gap:12px}
   .rngq{flex-direction:row;flex-wrap:wrap;width:auto;padding:0 0 12px;border-right:0;border-bottom:1px solid var(--border)}
   .rngcals .rngmes:last-child{display:none}

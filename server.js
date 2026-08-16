@@ -61,6 +61,7 @@ import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES
 import { repasarLote, resumenRepaso, pideRelecturaDeLineas, esAlcanceValido, ALCANCES_REPASO, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
 import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
+import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
@@ -2298,6 +2299,89 @@ app.get("/api/facturas/pendientes/:id/archivo", requireAuth(["direccion", "conta
     const buf = Buffer.from(await dl.arrayBuffer());
     res.end(buf);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/**
+ * EL DOCUMENTO DE UNA FACTURA, el original. La miniatura de abajo sirve para reconocerla de un
+ * vistazo; esto es el papel entero, para verlo grande o guardarlo.
+ *
+ * Va por nuestro proxy y no por el enlace de Drive porque el navegador no puede mandarle a
+ * Google nuestro token de servicio — y porque así el permiso lo decide esta casa: el encargado
+ * de Blanes no se descarga una factura de Lloret escribiendo el id en la barra.
+ */
+async function archivoDeFactura(f) {
+  const fileId = idDeDriveUrl(f.drive_url);
+  if (!fileId) return null;
+  const token = await getDriveAccessToken();
+  const meta = await (await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=mimeType,name`,
+    { headers: { Authorization: `Bearer ${token}` } })).json();
+  const dl = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    { headers: { Authorization: `Bearer ${token}` } });
+  if (!dl.ok) return null;
+  return { mime: meta.mimeType || "application/pdf", nombre: meta.name || "factura",
+    datos: Buffer.from(await dl.arrayBuffer()) };
+}
+
+app.get("/api/facturas/:id/archivo", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const f = await dbGet("SELECT id, local, proveedor, fecha, numero_factura, drive_url FROM facturas WHERE id = ?", [Number(req.params.id)]);
+    if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
+    if (!puedeAccederLocal(req, f.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    if (!f.drive_url) return res.status(404).json({ ok: false, error: "Esta factura no tiene archivo guardado" });
+    const a = await archivoDeFactura(f);
+    if (!a) return res.status(502).json({ ok: false, error: "No se pudo leer el archivo de Drive" });
+    const ext = (a.mime.split("/")[1] || "pdf").replace("jpeg", "jpg");
+    res.setHeader("Content-Type", a.mime);
+    res.setHeader("Content-Disposition",
+      `${req.query.descargar ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(nombreDeFactura(f, ext))}`);
+    res.end(a.datos);
+  } catch (e) {
+    console.error("[facturas] archivo:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo descargar" });
+  }
+});
+
+/**
+ * VARIAS FACTURAS, EN UN ZIP. «Exportar» tenía que dar los papeles y daba una hoja de cálculo:
+ * lo que se le manda al gestor son las facturas, no una tabla con sus números.
+ *
+ * El ZIP se escribe a mano (src/modules/facturas/zip.js) porque aquí no se pueden añadir
+ * dependencias. Se topa a 60 documentos por tanda: se monta entero en memoria y una tanda de
+ * trescientos PDF tumbaría el servidor justo cuando más falta hace.
+ */
+const TOPE_ZIP = 60;
+app.post("/api/facturas/export.zip", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter(Number.isInteger);
+    if (!ids.length) return res.status(400).json({ ok: false, error: "No hay documentos elegidos" });
+    if (ids.length > TOPE_ZIP) return res.status(400).json({ ok: false, error: `Máximo ${TOPE_ZIP} documentos por descarga. Filtra un poco más.` });
+    const filas = await dbAll(
+      `SELECT id, local, proveedor, fecha, numero_factura, drive_url FROM facturas WHERE id = ANY(?) ORDER BY fecha, id`, [ids]);
+    const mias = filas.filter((f) => puedeAccederLocal(req, f.local) && f.drive_url);
+    if (!mias.length) return res.status(404).json({ ok: false, error: "Ninguno de esos documentos tiene archivo guardado" });
+
+    const archivos = [];
+    const fallidas = [];
+    for (const f of mias) {
+      try {
+        const a = await archivoDeFactura(f);
+        if (!a) { fallidas.push(f.numero_factura || f.id); continue; }
+        archivos.push({ nombre: nombreDeFactura(f, (a.mime.split("/")[1] || "pdf").replace("jpeg", "jpg")), datos: a.datos });
+      } catch { fallidas.push(f.numero_factura || f.id); }
+    }
+    if (!archivos.length) return res.status(502).json({ ok: false, error: "No se pudo traer ningún archivo de Drive" });
+
+    const zip = crearZip(archivos, { fecha: new Date() });
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="facturas-${archivos.length}.zip"`);
+    // Cuántas se han quedado fuera, en una cabecera: el ZIP se descarga igual, pero el panel
+    // puede decirlo. Un archivo con menos facturas de las pedidas y sin avisar es una trampa.
+    res.setHeader("X-Faltan", String(fallidas.length));
+    res.end(zip);
+  } catch (e) {
+    console.error("[facturas] export zip:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo preparar la descarga" });
+  }
 });
 
 // ── Miniatura de la factura ─────────────────────────────────────────────────

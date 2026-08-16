@@ -227,3 +227,67 @@ describe("la cola del diccionario se puede despachar por establecimiento", () =>
     assert.match(panel, /lo que decidas vale para todos: el producto es el mismo en todas partes/);
   });
 });
+
+describe("exportar da los papeles, no una hoja de cálculo", () => {
+  test("«Descargar documentos» está en la barra de selección, y el CSV aparte", () => {
+    assert.match(panel, /data-act="fac-sel-docs">Descargar documentos</);
+    assert.match(panel, /data-act="fac-sel-export" title="Solo los datos/);
+  });
+
+  test("uno solo se baja directo; varios van en un ZIP que arma el servidor", () => {
+    // Encadenar descargas desde el navegador no vale: Safari se queda con la primera.
+    assert.match(panel, /if \(ids\.length === 1\)/);
+    assert.match(panel, /"\/api\/facturas\/export\.zip"/);
+  });
+
+  test("el servidor solo mete las que esa persona puede ver", () => {
+    const i = server.indexOf('app.post("/api/facturas/export.zip"');
+    assert.ok(i > 0, "falta el endpoint del ZIP");
+    assert.match(server.slice(i, i + 2200), /filter\(\(f\) => puedeAccederLocal\(req, f\.local\) && f\.drive_url\)/);
+  });
+
+  test("y dice cuántas se han quedado fuera", () => {
+    // Un ZIP con menos facturas de las pedidas y en silencio es una trampa.
+    assert.match(server, /res\.setHeader\("X-Faltan"/);
+    assert.match(panel, /Number\(r\.headers\.get\("X-Faltan"\)\)/);
+  });
+
+  test("con un tope por tanda, que se monta entero en memoria", () => {
+    assert.match(server, /const TOPE_ZIP = 60;/);
+    assert.match(server, /ids\.length > TOPE_ZIP/);
+  });
+});
+
+describe("la ficha de una factura", () => {
+  test("enseña el papel, que es para lo que se abre una ficha", () => {
+    assert.match(panel, /facPintarPapel\(ov\.querySelector\("\[data-ficthumb\]"\), f\.id\)/);
+    assert.match(css, /\.ficha\{display:grid;grid-template-columns:minmax\(200px,300px\) 1fr/);
+  });
+
+  test("y si lo que vuelve no es una imagen, lo dice con palabras", () => {
+    // Pintarlo daría el icono de foto rota, que parece un fallo del panel.
+    assert.match(panel, /startsWith\("image\/"\)/);
+  });
+
+  test("los datos van agrupados: quién, documento y dinero", () => {
+    // Con doce casillas iguales, el NIF pesaba lo mismo que el total.
+    assert.match(panel, /<span class="fic-gt">Quién<\/span>/);
+    assert.match(panel, /<span class="fic-gt">Documento<\/span>/);
+    assert.match(panel, /<span class="fic-gt">Dinero<\/span>/);
+  });
+
+  test("la suma se comprueba mientras se escribe", () => {
+    assert.match(panel, /Base \+ IVA da el total/);
+    assert.match(panel, /el\.addEventListener\("input", pintarSuma\)/);
+  });
+
+  test("y «Eliminar» deja de ser un botón rojo al lado de «Guardar»", () => {
+    // Es lo que no se quiere pulsar sin querer: se va al otro extremo y pierde peso.
+    assert.match(panel, /<button class="linkbtn danger" id="ficDel">/);
+  });
+
+  test("en la lista manda el proveedor y el número queda debajo", () => {
+    // «250048061012013» no se reconoce; «Tupinamba» sí.
+    assert.match(panel, /<div class="t1">\$\{esc\(f\.proveedor \|\| "Sin proveedor"\)\}<\/div>/);
+  });
+});

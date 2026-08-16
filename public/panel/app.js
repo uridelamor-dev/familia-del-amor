@@ -5264,8 +5264,10 @@ function facTablaHtml(list) {
     <td class="facsel"><input type="checkbox" data-facsel="${f.id}" ${FAC_SEL.has(f.id) ? "checked" : ""} aria-label="Seleccionar"></td>
     <td class="facthumb">${f.drive_url ? `<span class="thumb ph" data-thumb="${f.id}"></span>` : ""}</td>
     <td class="mut" style="white-space:nowrap"><span class="hidesm">${esc(fechaCorta(f.fecha) || (f.fecha || "").slice(0, 10))}</span><span class="solosm">${esc(fechaMini(f.fecha) || (f.fecha || "").slice(0, 10))}</span></td>
-    <td><div class="t1">${esc(f.numero_factura || "—")}</div>
-      <div class="t2" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">${esc(f.proveedor || "")}${marcas(f)}</div></td>
+    ${/* Manda el PROVEEDOR, no el número. Un número de factura no se reconoce —«250048061012013»
+          no dice nada— y el proveedor sí: es como se busca una factura de memoria. */""}
+    <td><div class="t1">${esc(f.proveedor || "Sin proveedor")}</div>
+      <div class="t2" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">${esc(f.numero_factura || "sin número")}${marcas(f)}</div></td>
     ${conLocal ? `<td class="mut">${esc(nombreCortoLocal(f.local) || "")}</td>` : ""}
     <td class="r tnum" style="white-space:nowrap"><b>${eur(f.total)}</b></td>
     <td>${facPillPago(f)}</td>
@@ -5291,7 +5293,10 @@ function facBarraSeleccion() {
     <button class="btn sm" data-act="fac-sel-pagar" data-pagado="1">Marcar pagadas</button>
     <button class="btn sm" data-act="fac-sel-pagar" data-pagado="0">Marcar sin pagar</button>
     <button class="btn sm" data-act="fac-sel-resumen">Ver totales</button>
-    <button class="btn sm" data-act="fac-sel-export">Exportar</button>
+    ${/* «Exportar» daba una hoja de cálculo. Lo que se manda al gestor —o lo que se guarda—
+          son los papeles, así que eso es lo que hace ahora; los datos siguen a un botón. */""}
+    <button class="btn sm" data-act="fac-sel-docs">Descargar documentos</button>
+    <button class="btn sm" data-act="fac-sel-export" title="Solo los datos, en hoja de cálculo">CSV</button>
     <button class="btn sm" data-act="fac-sel-limpiar">Quitar selección</button>
   </div>`;
 }
@@ -5379,6 +5384,59 @@ function facSelResumen() {
 
 // Exportar SOLO lo seleccionado. Se manda la lista de ids y no los filtros: lo marcado
 // puede venir de varias búsquedas distintas, y reconstruirlo con filtros no siempre se puede.
+/**
+ * DESCARGAR LOS DOCUMENTOS de lo seleccionado: la imagen o el PDF, que es lo que se pide
+ * cuando alguien dice «expórtame estas facturas».
+ *
+ * Uno solo se descarga directamente; varios van en un ZIP que arma el servidor. Encadenar
+ * descargas desde el navegador no vale: Safari se queda con la primera y Chrome pregunta.
+ */
+async function facSelDocumentos() {
+  const ids = [...FAC_SEL];
+  if (!ids.length) return;
+  const sel = FAC_LIST.filter((f) => FAC_SEL.has(f.id));
+  const sinArchivo = sel.filter((f) => !f.drive_url).length;
+  if (sinArchivo === sel.length) return toast("Ninguna de las elegidas tiene archivo guardado");
+
+  if (ids.length === 1) {
+    // Con una sola no hay nada que empaquetar: se baja el papel tal cual.
+    try {
+      const r = await fetch(`/api/facturas/${ids[0]}/archivo?descargar=1`, { headers: { Authorization: "Bearer " + token() } });
+      if (!r.ok) return toast("No se pudo descargar el documento");
+      bajarBlob(await r.blob(), (sel[0]?.numero_factura || "factura") + guessExt(r.headers.get("content-type")));
+      toast("Documento descargado ✅");
+    } catch { toast("No se pudo descargar"); }
+    return;
+  }
+
+  toast(`Preparando ${ids.length} documentos…`);
+  try {
+    const r = await fetch("/api/facturas/export.zip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token() },
+      body: JSON.stringify({ ids }),
+    });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); return toast(j.error || "No se pudo preparar la descarga"); }
+    bajarBlob(await r.blob(), `facturas-${ids.length}.zip`);
+    // Si alguna se ha quedado fuera se dice: un ZIP con menos facturas de las pedidas y en
+    // silencio es una trampa.
+    const faltan = Number(r.headers.get("X-Faltan")) || 0;
+    toast(faltan ? `Descargado. ${faltan} sin archivo, así que no van dentro.`
+      : `${ids.length} documentos descargados ✅`);
+  } catch { toast("No se pudo preparar la descarga"); }
+}
+
+const guessExt = (mime) => (String(mime || "").includes("pdf") ? ".pdf"
+  : String(mime || "").includes("png") ? ".png" : ".jpg");
+
+function bajarBlob(blob, nombre) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = nombre;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function facSelExport() {
   const ids = [...FAC_SEL];
   if (!ids.length) return;
@@ -5396,18 +5454,163 @@ async function facSelExport() {
     toast(`${ids.length} ${ids.length === 1 ? "documento exportado" : "documentos exportados"} ✅`);
   } catch { toast("No se pudo exportar"); }
 }
+/** El documento de una factura, en grande, dentro de su ficha. */
+async function facPintarPapel(caja, id) {
+  if (!caja) return;
+  try {
+    const r = await fetch(`/api/facturas/${encodeURIComponent(id)}/miniatura`, { headers: { Authorization: "Bearer " + token() } });
+    // Que conteste no basta: si lo que vuelve no es una imagen —un error en JSON, por ejemplo—
+    // pintarlo daría el icono de foto rota, que parece un fallo del panel y no una factura sin
+    // vista previa. Se dice con palabras.
+    const esImagen = r.ok && (r.headers.get("content-type") || "").startsWith("image/");
+    if (!esImagen) {
+      caja.classList.add("nofoto");
+      caja.innerHTML = '<span class="mut" style="font-size:12px;text-align:center;padding:10px">Sin vista previa. El original sigue en Drive.</span>';
+      return;
+    }
+    const url = URL.createObjectURL(await r.blob());
+    const img = new Image();
+    img.className = "fic-img"; img.alt = "Documento de la factura"; img.src = url;
+    img.onload = () => URL.revokeObjectURL(url);
+    caja.replaceWith(img);
+  } catch { caja.classList.add("nofoto"); }
+}
+
+/**
+ * LA FICHA DE UNA FACTURA.
+ *
+ * Era una rejilla de doce casillas iguales: el NIF pesaba lo mismo que el total, no se veía el
+ * estado de pago, no se veía el detalle leído y —lo peor— no se veía EL PAPEL. Una ficha
+ * existe para comparar lo leído con la factura de verdad, y para eso había que salir a Drive
+ * en otra pestaña y volver.
+ *
+ * Ahora: el papel a la izquierda, los datos agrupados a la derecha —quién, documento, dinero—,
+ * el estado arriba en píldoras y el detalle leído abajo, plegado. En móvil se apila, con el
+ * papel primero: es lo que se mira antes de tocar nada.
+ */
 function facFicha(id) {
   const f = (FAC_LIST || []).find((x) => String(x.id) === String(id)); if (!f) { toast("Factura no encontrada"); return; }
-  const fld = (lab, key, type = "text") => `<div class="field"><label>${lab}</label><input data-fic="${key}" type="${type}" value="${esc(f[key] == null ? "" : f[key])}"></div>`;
+  const fld = (lab, key, type = "text", extra = "") => `<div class="field"><label>${lab}</label><input data-fic="${key}" type="${type}" value="${esc(f[key] == null ? "" : f[key])}" ${extra}></div>`;
   const fechaFld = `<div class="field"><label>Fecha</label>${dpField("ficFecha", f.fecha, "Sin fecha", { attr: 'data-fic="fecha"' })}</div>`;
   const tipoSel = `<div class="field"><label>Tipo</label><select data-fic="tipo">${["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${f.tipo === t ? "selected" : ""}>${cap(t)}</option>`).join("")}</select></div>`;
   const localSel = `<div class="field"><label>Local</label><select data-fic="local"><option value="">—</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${f.local === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`;
-  // Los avisos de coherencia van ARRIBA del formulario: es donde se corrige, y decir «no
-  // cuadra» después de los campos llega tarde.
   const revisar = facRevisarTxt(f);
-  const ov = modal("Factura · " + (f.proveedor || f.id),
-    `${revisar.length ? `<p class="fic-nota" style="margin-top:0"><b>Revisa lo leído.</b> ${revisar.map(esc).join(" ")}</p>` : ""}<div class="form-grid">${fld("Proveedor", "proveedor")}${fld("NIF proveedor", "nif")}${fld("Nº documento", "numero_factura")}${fechaFld}${tipoSel}${localSel}${fld("Empresa", "empresa")}${fld("Concepto", "concepto")}${fld("Base (€)", "base_imponible", "number")}${fld("IVA %", "porcentaje_iva", "number")}${fld("Cuota (€)", "cuota_iva", "number")}${fld("Total (€)", "total", "number")}</div>
-    <div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px;flex-wrap:wrap"><div style="display:flex;gap:8px">${f.drive_url ? `<a class="btn" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver archivo ↗</a>` : ""}<button class="btn ${f.pagado ? "" : "primary"}" id="ficPago">${f.pagado ? "Marcar impagada" : "Marcar pagada"}</button></div><div style="display:flex;gap:8px"><button class="btn danger" id="ficDel">Eliminar</button><button class="btn" data-close>Cerrar</button><button class="btn primary" id="ficSave">Guardar cambios</button></div></div>`);
+
+  // Lo que ya se sabía de esta factura y no se enseñaba: si está pagada o cuándo vence, si su
+  // detalle no cuadra, si ya está conciliada con sus albaranes.
+  const pills = [
+    facPillPago(f),
+    f.tipo && f.tipo !== "factura" ? `<span class="pill">${esc(f.tipo)}</span>` : "",
+    f.lineas_estado === "descuadre" ? '<span class="pill warn" title="El detalle leído no suma la base imponible">descuadre</span>' : "",
+    f.conciliado_con ? '<span class="pill ok" title="Conciliada con sus albaranes">conciliada</span>' : "",
+  ].filter(Boolean).join(" ");
+
+  const ov = modal("Factura", `
+    <div class="ficha">
+      <div class="fic-doc">
+        ${f.drive_url
+          ? `<a href="${esc(f.drive_url)}" target="_blank" rel="noopener" title="Abrir el original en Drive"><span class="fic-ph" data-ficthumb="${esc(String(f.id))}"></span></a>
+             <div style="display:flex;gap:6px">
+               <a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener" style="flex:1;justify-content:center">Ver ↗</a>
+               <button class="btn sm" id="ficBajar" style="flex:1">Descargar</button>
+             </div>`
+          : '<div class="fic-ph nofoto"><span class="mut" style="font-size:12px;text-align:center;padding:10px">Sin archivo guardado</span></div>'}
+      </div>
+      <div class="fic-datos">
+        <div class="fic-cab">
+          <div><h3 style="margin:0">${esc(f.proveedor || "Sin proveedor")}</h3>
+            <div class="t2">${esc(f.numero_factura || "sin número")} · ${esc(fechaCorta(f.fecha) || "sin fecha")}</div></div>
+          <div class="fic-pills">${pills}</div>
+        </div>
+        ${revisar.length ? `<p class="fic-nota" style="margin:0 0 12px"><b>Revisa lo leído.</b> ${revisar.map(esc).join(" ")}</p>` : ""}
+
+        <div class="fic-g"><span class="fic-gt">Quién</span>
+          <div class="form-grid">${fld("Proveedor", "proveedor")}${fld("NIF", "nif")}</div>
+          ${fld("Concepto", "concepto")}
+        </div>
+
+        <div class="fic-g"><span class="fic-gt">Documento</span>
+          <div class="form-grid">${fld("Nº documento", "numero_factura")}${fechaFld}${tipoSel}${localSel}</div>
+          ${fld("Empresa", "empresa")}
+        </div>
+
+        <div class="fic-g"><span class="fic-gt">Dinero</span>
+          <div class="form-grid">${fld("Base (€)", "base_imponible", "number")}${fld("IVA %", "porcentaje_iva", "number")}${fld("Cuota (€)", "cuota_iva", "number")}${fld("Total (€)", "total", "number")}</div>
+          ${/* La comprobación que hace el resto del sistema, aquí y en vivo: base + cuota = total.
+                Si no cuadra se dice mientras se escribe, que es cuando sirve de algo. */""}
+          <div class="fic-suma" id="ficSuma"></div>
+        </div>
+      </div>
+    </div>
+    <details class="card fold" style="margin:14px 0 0" id="ficLineas">
+      <summary><h3>Detalle leído</h3><span class="foldr"><span class="mut" id="ficNLin">ver</span><span class="car">${ic("chev", 16)}</span></span></summary>
+      <div id="ficLinCuerpo"><p class="mut" style="margin:0">Cargando…</p></div>
+    </details>
+    <div class="fic-pie">
+      <button class="linkbtn danger" id="ficDel">Eliminar factura</button>
+      <div style="flex:1"></div>
+      <button class="btn" data-close>Cerrar</button>
+      <button class="btn" id="ficPago">${f.pagado ? "Marcar impagada" : "Marcar pagada"}</button>
+      <button class="btn primary" id="ficSave">Guardar cambios</button>
+    </div>`);
+  ov.querySelector(".modal").classList.add("wide");
+
+  // El papel. Mismo camino que las miniaturas de la lista —por el proxy y con nuestro token,
+  // porque el navegador no puede mandarle el de Google a Drive— pero en grande.
+  facPintarPapel(ov.querySelector("[data-ficthumb]"), f.id);
+
+  // ── La suma, comprobada en vivo ───────────────────────────────────────────
+  const val = (k) => Number(String(ov.querySelector(`[data-fic="${k}"]`)?.value || "").replace(",", ".")) || 0;
+  function pintarSuma() {
+    const base = val("base_imponible"), cuota = val("cuota_iva"), total = val("total");
+    const caja = ov.querySelector("#ficSuma");
+    if (!total) { caja.innerHTML = ""; return; }
+    const dif = Math.round((base + cuota - total) * 100) / 100;
+    caja.innerHTML = Math.abs(dif) <= 0.02
+      ? `<span class="ok">✓ Base + IVA da el total (${esc(eur2(total))})</span>`
+      : `<span class="mal">Base + IVA da ${esc(eur2(base + cuota))}, y el total dice ${esc(eur2(total))} — se lleva ${esc(eur2(Math.abs(dif)))}.</span>
+         <button class="linkbtn" id="ficCuadrar">Recalcular la cuota</button>`;
+  }
+  ov.querySelectorAll('[data-fic="base_imponible"],[data-fic="cuota_iva"],[data-fic="total"],[data-fic="porcentaje_iva"]')
+    .forEach((el) => el.addEventListener("input", pintarSuma));
+  ov.addEventListener("click", (e) => {
+    if (!e.target.closest("#ficCuadrar")) return;
+    // La cuota es la única de las cuatro que se puede deducir sin dudar: base × IVA %.
+    const base = val("base_imponible"), iva = val("porcentaje_iva");
+    ov.querySelector('[data-fic="cuota_iva"]').value = Math.round(base * iva) / 100;
+    ov.querySelector('[data-fic="total"]').value = Math.round((base + base * iva / 100) * 100) / 100;
+    pintarSuma();
+  });
+  pintarSuma();
+
+  // ── El detalle leído, solo al abrirlo: son otra consulta y casi nunca se mira ──
+  const det = ov.querySelector("#ficLineas");
+  det.addEventListener("toggle", async () => {
+    if (!det.open || det.dataset.cargado) return;
+    det.dataset.cargado = "1";
+    const cuerpo = ov.querySelector("#ficLinCuerpo");
+    try {
+      const j = await apiRaw(`/api/facturas/${encodeURIComponent(id)}/lineas`);
+      const ls = j.lineas || [];
+      ov.querySelector("#ficNLin").textContent = ls.length ? `${num(ls.length)} línea${ls.length === 1 ? "" : "s"}` : "sin detalle";
+      cuerpo.innerHTML = ls.length
+        ? `<div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Importe</th></tr></thead>
+           <tbody>${ls.map((l) => `<tr class="${l.dudosa ? "dudosa" : ""}">
+             <td>${esc(l.descripcion || "—")}${l.dudosa ? ' <span class="pill warn" style="font-size:9.5px" title="No se leyó del todo: sus cantidades pueden no ser exactas">dudosa</span>' : ""}</td>
+             <td class="r tnum">${l.cantidad != null ? esc(num(l.cantidad)) + (l.unidad ? " " + esc(l.unidad) : "") : "—"}</td>
+             <td class="r tnum">${l.precio_unitario != null ? esc(eur2(l.precio_unitario)) : "—"}</td>
+             <td class="r tnum"><b>${l.importe != null ? esc(eur2(l.importe)) : "—"}</b></td></tr>`).join("")}</tbody></table></div>`
+        : `<p class="mut" style="margin:0">De esta factura no se ha leído el detalle por líneas.</p>`;
+    } catch { cuerpo.innerHTML = '<p class="mut" style="margin:0">No se pudo cargar el detalle.</p>'; }
+  });
+
+  ov.querySelector("#ficBajar")?.addEventListener("click", async () => {
+    try {
+      const r = await fetch(`/api/facturas/${encodeURIComponent(id)}/archivo?descargar=1`, { headers: { Authorization: "Bearer " + token() } });
+      if (!r.ok) return toast("No se pudo descargar el documento");
+      bajarBlob(await r.blob(), (f.numero_factura || "factura") + guessExt(r.headers.get("content-type")));
+    } catch { toast("No se pudo descargar"); }
+  });
   ov.querySelector("#ficDel").addEventListener("click", async () => {
     if (!(await confirmModal("¿Eliminar esta factura? Se quitará de la BD y de los Sheets.", { ok: "Eliminar", danger: true }))) return;
     try { await apiSend("DELETE", "/api/facturas/" + id); ov.remove(); toast("Factura eliminada ✅"); loadFacturas(); } catch (e) { toast("Error: " + e.message); }
@@ -5416,7 +5619,9 @@ function facFicha(id) {
     const body = {}; ov.querySelectorAll("[data-fic]").forEach((el) => { body[el.getAttribute("data-fic")] = el.value; });
     try { await apiSend("PATCH", "/api/facturas/" + id, body); ov.remove(); toast("Factura actualizada ✅"); loadFacturas(); } catch (e) { toast("Error: " + e.message); }
   });
-  const pb = ov.querySelector("#ficPago"); if (pb) pb.addEventListener("click", async () => { try { await apiSend("PATCH", "/api/facturas/" + id + "/pago"); ov.remove(); toast("Estado de pago actualizado"); loadFacturas(); } catch (e) { toast("Error: " + e.message); } });
+  ov.querySelector("#ficPago").addEventListener("click", async () => {
+    try { await apiSend("PATCH", "/api/facturas/" + id + "/pago"); ov.remove(); toast("Estado de pago actualizado"); loadFacturas(); } catch (e) { toast("Error: " + e.message); }
+  });
 }
 async function facExport() { try { const r = await fetch("/api/facturas/export.csv" + (facQS() ? "?" + facQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "facturas.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
 // ── Subir factura (pantalla del encargado) ──────────────────────────────────
@@ -8389,6 +8594,7 @@ document.addEventListener("click", (e) => {
   else if (act === "comp-producto") comprasHistorial(t.getAttribute("data-clave"), t.getAttribute("data-nombre"));
   else if (act === "fac-sel-resumen") facSelResumen();
   else if (act === "fac-sel-export") facSelExport();
+  else if (act === "fac-sel-docs") facSelDocumentos();
   else if (act === "fac-sel-limpiar") facSelLimpiar();
   else if (act === "fac-sel-pagar") facSelPagar(t.getAttribute("data-pagado") === "1");
   else if (act === "comp-unificar") compUnificar();
