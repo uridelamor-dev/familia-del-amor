@@ -5286,6 +5286,10 @@ function facBarraSeleccion() {
   return `<div class="selbar">
     <b>${num(n)}</b> ${n === 1 ? "seleccionada" : "seleccionadas"}
     <div style="flex:1"></div>
+    ${/* Marcar el pago es LA acción de esta pantalla: llega el recibo del banco con diez
+          facturas de un proveedor y hasta ahora había que abrir las diez fichas una a una. */""}
+    <button class="btn sm" data-act="fac-sel-pagar" data-pagado="1">Marcar pagadas</button>
+    <button class="btn sm" data-act="fac-sel-pagar" data-pagado="0">Marcar sin pagar</button>
     <button class="btn sm" data-act="fac-sel-resumen">Ver totales</button>
     <button class="btn sm" data-act="fac-sel-export">Exportar</button>
     <button class="btn sm" data-act="fac-sel-limpiar">Quitar selección</button>
@@ -5302,6 +5306,29 @@ function facSelTodas(marcar) {
   facRefresh();
 }
 function facSelLimpiar() { FAC_SEL = new Set(); facRefresh(); }
+
+/**
+ * Marcar como pagadas (o como sin pagar) las que estén seleccionadas.
+ *
+ * Se pregunta antes y se dice cuánto suma: marcar veinte facturas por error es fácil de hacer
+ * y molesto de deshacer —hay que acordarse de cuáles eran—, y el importe es lo que hace parar
+ * a tiempo si la selección no era la que se creía.
+ */
+async function facSelPagar(pagado) {
+  const sel = FAC_LIST.filter((f) => FAC_SEL.has(f.id));
+  if (!sel.length) return;
+  const suma = sel.reduce((s2, f) => s2 + (Number(f.total) || 0), 0);
+  const ok = await confirmModal(
+    `Se marcan ${sel.length} ${sel.length === 1 ? "documento" : "documentos"} como ${pagado ? "PAGADOS" : "SIN PAGAR"} (${eur(suma)}).`,
+    { ok: pagado ? "Marcar pagadas" : "Marcar sin pagar" });
+  if (!ok) return;
+  try {
+    const r = await apiSend("POST", "/api/facturas/pago-lote", { ids: sel.map((f) => f.id), pagado: !!pagado });
+    toast(`${r.tocadas} ${r.tocadas === 1 ? "documento" : "documentos"} ${pagado ? "marcados como pagados" : "marcados como pendientes"} ✅`);
+    FAC_SEL = new Set();
+    loadFacturas();
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
 
 // Solo repinta la barra y el resaltado de filas: repintar la tabla entera al marcar una
 // casilla perdería el desplazamiento y se sentiría lento.
@@ -5878,6 +5905,15 @@ async function concConfirmar(id, albs) {
 // producto salen en dos filas. Es a propósito: dos filas honestas antes que una fusión
 // inventada (ver docs/lineas-de-factura.md).
 let COMP = { q: "", from: "", to: "", proveedor: "", categoria: "", subcategoria: "" };
+/**
+ * Productos marcados para unificar, por su clave. Se decide DONDE SE VE: los dos calamares
+ * salen uno debajo del otro, con el mismo importe, y hasta ahora había que irse al diccionario
+ * a buscarlos por su nombre para juntarlos.
+ *
+ * Se guarda también la descripción porque es lo que se propone como nombre del producto y lo
+ * que se manda al servidor como «forma de escribirlo»: la fila ya no estará al confirmar.
+ */
+let COMP_SEL = new Map();
 const COMP_FILTROS = ["q", "from", "to", "proveedor", "categoria", "subcategoria"];
 
 // ── El diccionario: unificar productos ──────────────────────────────────────
@@ -5889,7 +5925,12 @@ const COMP_FILTROS = ["q", "from", "to", "proveedor", "categoria", "subcategoria
 let DICC = null;
 
 async function dicPedir() {
-  try { DICC = await apiRaw("/api/facturas/diccionario"); } catch { DICC = null; }
+  // La cola se pide del establecimiento que se esté mirando: revisar «lo que compro en Blanes»
+  // de una sentada es abordable; las descripciones de los siete sitios mezcladas, no. El
+  // diccionario que sale de ahí sigue siendo único —un producto es el mismo en todas partes—.
+  const loc = localActualFE();
+  try { DICC = await apiRaw("/api/facturas/diccionario" + (loc ? "?local=" + encodeURIComponent(loc) : "")); }
+  catch { DICC = null; }
   dicPintar();
 }
 
@@ -5927,12 +5968,14 @@ function dicPintar() {
 
   caja.innerHTML = `<details class="card fold" style="margin-bottom:14px">
     <summary><h3>Unificar productos</h3><span class="foldr">
-      <span>${num(cola.length)} sin revisar${DICC.hayMas ? "+" : ""}${c.pct ? ` · ${c.pct} % del gasto ya revisado` : ""}</span>
+      <span>${num(cola.length)} sin revisar${DICC.hayMas ? "+" : ""}${DICC.local ? ` en ${esc(nombreCortoLocal(DICC.local))}` : ""}${c.pct ? ` · ${c.pct} % del gasto ya revisado` : ""}</span>
       <span class="car">${ic("chev", 16)}</span></span></summary>
     <p class="mut" style="margin:0 0 12px;line-height:1.55">El mismo producto se llama de dos maneras según quién
       escriba la factura, y así cuenta como dos. Diciendo cuál es cuál se puede contestar <b>cuánto compramos de
       algo</b> y comparar establecimientos. <b>Empieza por arriba</b>: son los que más dinero mueven.
-      ${c.pct ? `Llevas <b>${c.pct} %</b> del gasto revisado.` : ""}</p>
+      ${c.pct ? `Llevas <b>${c.pct} %</b> del gasto revisado.` : ""}
+      ${DICC.local ? `Esta cola es la de <b>${esc(nombreCortoLocal(DICC.local))}</b> —cambia de establecimiento arriba para ver otra—, pero
+        lo que decidas vale para todos: el producto es el mismo en todas partes.` : ""}</p>
     <div class="rows">${cola.slice(0, 25).map(fila).join("")}</div>
     ${cola.length > 25 ? `<p class="mut" style="margin:10px 0 0;font-size:12px">Y ${num(cola.length - 25)} más, que irán apareciendo según decidas estas.</p>` : ""}
   </details>${dicProductosHtml()}`;
@@ -6216,6 +6259,86 @@ async function compAbrirFiltros() {
 // Reparto del gasto por categoría. Va sobre el total de las facturas, no sobre las líneas:
 // así el alquiler y la luz —de las que no se lee el detalle— también cuentan.
 /**
+ * Cuál de los nombres proponer al unificar.
+ *
+ * NO el más largo. Lo probé y en el caso real —«Calamar Andalusa Xipiron» contra «Albarà
+ * 2026-AL-43429 - 23/07/2026 - 245.52 (PEDIDO TABLET) CALAMAR ANDALUSA…»— el más largo es
+ * justo la línea basura que se quiere enterrar, y el nombre bueno es el corto.
+ *
+ * Lo que distingue a un nombre de producto de una línea de albarán es que el producto casi no
+ * lleva cifras. Así que se puntúa por la proporción de letras, y a igualdad gana el más corto,
+ * que suele ser el limpio. Es una propuesta: el campo se puede cambiar antes de aceptar.
+ */
+function nombreParaUnificar(descripciones) {
+  const cand = (descripciones || []).map((d) => String(d || "").trim()).filter(Boolean);
+  if (!cand.length) return "";
+  const puntua = (d) => {
+    const letras = (d.match(/[a-zA-ZáéíóúàèìòùçñÁÉÍÓÚÑÀÈÌÒÙÇ]/g) || []).length;
+    const cifras = (d.match(/[0-9]/g) || []).length;
+    return (letras - cifras * 2) / Math.max(1, d.length);
+  };
+  return [...cand].sort((a, b) => puntua(b) - puntua(a) || a.length - b.length)[0];
+}
+
+/** La barra flotante de Productos: aparece al marcar dos o más. */
+function compBarraSeleccion() {
+  const n = COMP_SEL.size;
+  if (!n) return "";
+  return `<div class="selbar">
+    <b>${num(n)}</b> ${n === 1 ? "producto elegido" : "productos elegidos"}
+    <div style="flex:1"></div>
+    ${n > 1 ? '<button class="btn sm" data-act="comp-unificar">Unificar en uno</button>' : '<span style="font-size:12.5px;opacity:.85">Marca otro para unirlos</span>'}
+    <button class="btn sm" data-act="comp-sel-limpiar">Quitar selección</button>
+  </div>`;
+}
+
+function compSelToggle(clave, desc, marcado) {
+  if (marcado) COMP_SEL.set(clave, desc || clave); else COMP_SEL.delete(clave);
+  // Se repinta solo la barra y el resaltado: repintar la tabla entera al marcar una casilla
+  // perdería el desplazamiento, y marcar dos productos que están lejos es justo el caso.
+  document.querySelectorAll("[data-compsel]").forEach((c) => {
+    c.closest("tr")?.classList.toggle("sel", COMP_SEL.has(c.getAttribute("data-compsel")));
+  });
+  const vieja = document.querySelector("#compRes .selbar");
+  const nueva = compBarraSeleccion();
+  if (vieja) vieja.outerHTML = nueva || "";
+  else if (nueva) document.querySelector("#compRes .tw")?.insertAdjacentHTML("afterend", nueva);
+}
+
+/**
+ * Unificar lo marcado. El nombre se propone —el más largo, que suele ser el completo y no la
+ * abreviatura— y se puede cambiar: es lo que se va a ver a partir de ahora en todas partes.
+ */
+function compUnificar() {
+  const elegidos = [...COMP_SEL.entries()].map(([clave, descripcion]) => ({ clave, descripcion }));
+  if (elegidos.length < 2) return toast("Marca al menos dos productos");
+  const propuesto = nombreParaUnificar(elegidos.map((e) => e.descripcion));
+  const ov = modal(`Unificar ${elegidos.length} productos`, `
+    <p class="mut" style="margin:0 0 10px;line-height:1.55">Pasan a ser <b>uno solo</b>: su gasto se suma y su precio se
+      puede comparar entre establecimientos. Las formas de escribirlo se guardan, así que las facturas que entren
+      escritas de cualquiera de estas maneras irán ya a este producto.</p>
+    <div class="rows" style="margin-bottom:12px">${elegidos.map((e) =>
+      `<div class="row" style="padding:6px 0"><span class="t2">${esc(e.descripcion)}</span></div>`).join("")}</div>
+    <div class="field"><label>Cómo se llamará</label><input id="unifNombre" value="${esc(propuesto)}" maxlength="120"></div>
+    <p class="mut" style="margin:8px 0 0;font-size:12px">Se puede deshacer: en <b>Configuración → Productos del diccionario</b>,
+      cada forma tiene su botón de quitar.</p>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="unifOk">Unificar</button></div>`);
+  ov.querySelector("#unifOk").addEventListener("click", async () => {
+    const nombre = ov.querySelector("#unifNombre").value.trim();
+    if (!nombre) return toast("Ponle un nombre");
+    try {
+      const r = await apiSend("POST", "/api/facturas/diccionario/unificar", { productos: elegidos, nombre });
+      ov.remove();
+      COMP_SEL = new Map();
+      toast(r.mensaje || "Unificados ✅");
+      loadProductos();
+    } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+  });
+}
+
+/**
  * Cuánto se sale el último precio de lo normal. Es la diferencia entre informar y avisar: 45 €
  * no dice nada hasta ponerlo al lado de los 30 € que se pagan siempre.
  *
@@ -6442,7 +6565,8 @@ async function refrescarCompras() {
     for (const pr of (c.proveedores || [])) if (!catDeProv.has(pr)) catDeProv.set(pr, c.categoria || c.nombre);
   }
   const catDe = (g) => catDeProv.get((g.proveedores || [])[0]) || "";
-  const fila = (g) => `<tr>
+  const fila = (g) => `<tr class="${COMP_SEL.has(g.clave) ? "sel" : ""}">
+      <td class="facsel"><input type="checkbox" data-compsel="${esc(g.clave)}" data-desc="${esc(g.descripcion || "")}" ${COMP_SEL.has(g.clave) ? "checked" : ""} aria-label="Elegir para unificar"></td>
       <td style="--cat:var(--cat-${esc(colorCategoriaFE(catDe(g)))})"><div style="display:flex;align-items:center;gap:6px;min-width:0"><span class="catdot" title="${esc(catDe(g) || "Sin categoría")}"></span>${g.unificado ? `<span class="pill ok" style="font-size:9.5px;flex:none" title="Producto del diccionario: junta varias formas de escribirlo">✓</span>` : ""}<button class="linkbtn prod" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="${esc(g.descripcion)} — todas las veces que lo hemos comprado">${esc(g.descripcion)}</button></div>
         <div class="mut provcel" style="font-size:11px" title="${esc(g.proveedores.join(" · "))}">${esc(g.proveedores.join(" · ") || "—")}</div></td>
       <td class="cantcel" style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) + (g.unidad ? ` <span class="mut" style="font-size:11px">${esc(g.unidad)}</span>` : "") : "—"}</td>
@@ -6457,10 +6581,10 @@ async function refrescarCompras() {
     </tr>`;
 
   const tabla = j.grupos.length ? `<div class="tw${j.grupos.length > 25 ? " alta" : ""}"><table class="tbl">
-      <thead><tr><th>Producto</th><th class="cantcel" style="text-align:right">Cantidad</th><th style="text-align:right">Gastado</th>
+      <thead><tr><th class="facsel"></th><th>Producto</th><th class="cantcel" style="text-align:right">Cantidad</th><th style="text-align:right">Gastado</th>
       <th style="text-align:right" title="Lo que se paga ahora. Al lado, cuánto se sale de lo normal">Precio</th>
       <th class="sparkcel" title="Cómo ha ido el precio en las últimas compras">Evolución</th><th class="ultcel">Última compra</th></tr></thead>
-      <tbody>${j.grupos.map(fila).join("")}</tbody></table></div>`
+      <tbody>${j.grupos.map(fila).join("")}</tbody></table></div>${compBarraSeleccion()}`
     : `<p class="mut" style="margin:0;line-height:1.6">${COMP.q
         ? `No se ha comprado nada que se llame «${esc(COMP.q)}» en estas fechas.`
         : "Todavía no hay facturas con el detalle leído. A partir de ahora, cada factura que entre traerá su desglose."}</p>`;
@@ -7975,6 +8099,7 @@ document.addEventListener("change", (e) => {
   if (!c || c.type !== "checkbox") return;
   if (c.hasAttribute("data-facsel")) facSelToggle(c.getAttribute("data-facsel"), c.checked);
   else if (c.id === "facSelAll") facSelTodas(c.checked);
+  else if (c.hasAttribute("data-compsel")) compSelToggle(c.getAttribute("data-compsel"), c.getAttribute("data-desc"), c.checked);
 });
 document.addEventListener("click", (e) => {
   const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); go(v.getAttribute("data-view")); return; }
@@ -8158,6 +8283,9 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-sel-resumen") facSelResumen();
   else if (act === "fac-sel-export") facSelExport();
   else if (act === "fac-sel-limpiar") facSelLimpiar();
+  else if (act === "fac-sel-pagar") facSelPagar(t.getAttribute("data-pagado") === "1");
+  else if (act === "comp-unificar") compUnificar();
+  else if (act === "comp-sel-limpiar") { COMP_SEL = new Map(); refrescarCompras(); }
   else if (act === "fac-subir") facSubir();
   else if (act === "sf-camara") document.getElementById("sfCam")?.click();
   else if (act === "sf-archivo") document.getElementById("sfFile")?.click();

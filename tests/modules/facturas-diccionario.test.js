@@ -156,7 +156,19 @@ describe("cableado del diccionario", () => {
   test("la cola sale ordenada por GASTO y sin las ya revisadas", () => {
     const fn = server.slice(server.indexOf('app.get("/api/facturas/diccionario"'), server.indexOf('app.post("/api/facturas/diccionario"'));
     assert.match(fn, /ORDER BY gasto DESC/);
-    assert.match(fn, /LEFT JOIN producto_alias a ON a\.clave = l\.clave[\s\S]{0,120}a\.clave IS NULL/);
+    // La condición va en el array `cond` desde que la cola se puede acotar a un local.
+    assert.match(fn, /LEFT JOIN producto_alias a ON a\.clave = l\.clave/);
+    assert.match(fn, /const cond = \["a\.clave IS NULL"/);
+  });
+
+  test("la COLA se puede acotar a un local, pero el diccionario sigue siendo único", () => {
+    // Un producto es el mismo en Blanes y en Lloret —de eso va unificar, de poder comparar el
+    // precio entre locales—; lo que se acota es el trabajo de revisar, no lo decidido.
+    const fn = server.slice(server.indexOf('app.get("/api/facturas/diccionario"'), server.indexOf('app.post("/api/facturas/diccionario"'));
+    assert.match(fn, /if \(local\) \{ cond\.push\("f\.local = \?"\); par\.push\(local\); \}/);
+    // La lista de productos canónicos NO lleva filtro de local.
+    const listaProductos = fn.slice(fn.indexOf("FROM productos_canonicos"), fn.indexOf("FROM productos_canonicos") + 300);
+    assert.doesNotMatch(listaProductos, /f\.local/);
   });
 
   test("«dejar aparte» se guarda, para que no vuelva a preguntar", () => {

@@ -2187,6 +2187,35 @@ app.patch("/api/facturas/:id/pago", requireAuth(["direccion", "contabilidad"]), 
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+/**
+ * Marcar VARIAS como pagadas (o como sin pagar) de una vez.
+ *
+ * El de arriba (`/:id/pago`) es un interruptor: vale para una fila, pero para veinte no —al
+ * conmutar cada una, las que ya estaban pagadas se quedarían sin pagar—. Aquí el estado se
+ * dice, no se conmuta: es lo que se quiere cuando llega el recibo del banco y se marcan de
+ * golpe las diez facturas de ese proveedor.
+ */
+app.post("/api/facturas/pago-lote", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter(Number.isInteger);
+    if (!ids.length) return res.status(400).json({ ok: false, error: "No hay documentos elegidos" });
+    if (ids.length > 500) return res.status(400).json({ ok: false, error: "Demasiados de una vez (máximo 500)" });
+    const pagado = req.body?.pagado ? 1 : 0;
+    // La fecha de pago se pone al marcar y se borra al desmarcar: dejarla puesta en una que
+    // vuelve a estar pendiente diría que se pagó un día que no se pagó.
+    const fechaPago = pagado ? hoyISO() : null;
+    // Solo las que pueda tocar: un encargado no marca las de otro establecimiento.
+    const suyas = await dbAll(`SELECT id, local FROM facturas WHERE id = ANY(?)`, [ids]);
+    const permitidas = suyas.filter((f) => puedeAccederLocal(req, f.local)).map((f) => f.id);
+    if (!permitidas.length) return res.status(403).json({ ok: false, error: "No puedes tocar esos documentos" });
+    await dbRun(`UPDATE facturas SET pagado = ?, fecha_pago = ? WHERE id = ANY(?)`, [pagado, fechaPago, permitidas]);
+    res.json({ ok: true, tocadas: permitidas.length, pagado });
+  } catch (e) {
+    console.error("[facturas] pago en lote:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cambiar el estado de pago" });
+  }
+});
+
 app.get("/api/facturas/email-reglas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const rows = await dbAll("SELECT * FROM facturas_email_reglas ORDER BY email", []);
   res.json({ ok: true, data: rows });
@@ -3645,13 +3674,20 @@ async function comprasDeLocal(query, local) {
 // mayor parte del histórico; por orden alfabético no termina nadie.
 app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    // LA COLA se puede acotar a un establecimiento; EL DICCIONARIO no. Son cosas distintas:
+    // un producto es el mismo en Blanes y en Lloret —de eso va unificar, de poder comparar el
+    // precio entre locales—, pero la cola de revisión sí conviene poder despacharla por sitio:
+    // «lo que compro en Blanes» de una sentada, en vez de las siete mezcladas.
+    const local = localScope(req) || String(req.query.local || "").trim();
+    const cond = ["a.clave IS NULL", "COALESCE(l.clave,'') <> ''", SIN_DUDAS], par = [];
+    if (local) { cond.push("f.local = ?"); par.push(local); }
     const pendientes = await dbAll(
       `SELECT l.clave, MAX(l.descripcion) AS descripcion, SUM(l.importe)::float AS gasto,
               COUNT(*)::int AS veces, string_agg(DISTINCT f.proveedor, ' · ') AS proveedores
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
          LEFT JOIN producto_alias a ON a.clave = l.clave
-        WHERE a.clave IS NULL AND COALESCE(l.clave,'') <> '' AND ${SIN_DUDAS}
-        GROUP BY l.clave ORDER BY gasto DESC NULLS LAST LIMIT 200`, []);
+        WHERE ${cond.join(" AND ")}
+        GROUP BY l.clave ORDER BY gasto DESC NULLS LAST LIMIT 200`, par);
 
     const productos = await dbAll(
       `SELECT p.id, p.nombre, COUNT(a.clave)::int AS alias,
@@ -3664,17 +3700,21 @@ app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]),
 
     // Cuánto gasto está ya revisado. Es el número que dice si merece la pena seguir: no
     // «cuántas faltan» —siempre faltarán— sino cuánto dinero cubre lo decidido.
+    // La cobertura se mide sobre lo mismo que la cola: si la cola es de Blanes y el «ya
+    // revisado» fuera de los siete locales, el porcentaje no diría nada de lo que se está
+    // mirando.
     const resueltos = await dbAll(
       `SELECT SUM(l.importe)::float AS gasto
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
          JOIN producto_alias a ON a.clave = l.clave
-        WHERE ${SIN_DUDAS} GROUP BY a.clave`, []);
+        WHERE ${SIN_DUDAS}${local ? " AND f.local = ?" : ""} GROUP BY a.clave`, local ? [local] : []);
 
     res.json({
       ok: true,
       cola: colaDeTrabajo(pendientes, productos),
       productos,
       cobertura: cobertura(resueltos, pendientes),
+      local: local || null,
       hayMas: pendientes.length >= 200,
     });
   } catch (e) {
@@ -3727,6 +3767,79 @@ app.post("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"])
   } catch (e) {
     console.error("[facturas] confirmar diccionario:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+/**
+ * UNIFICAR VARIOS PRODUCTOS DE UNA VEZ, desde la propia lista de Productos.
+ *
+ * Hasta ahora, para juntar «Calamar Andalusa Xipiron» con «Albarà 2026-AL-43429 … CALAMAR
+ * ANDALUSA» había que irse al diccionario, buscarlos y confirmarlos uno a uno — y los ves
+ * juntos en la lista, uno debajo del otro, con el mismo importe. Se decide donde se ve.
+ *
+ * Las claves llegan como las enseña la lista: «p:12» si ya es un producto del diccionario, o
+ * la clave normalizada si es una descripción suelta. De ahí los tres casos, resueltos aquí y
+ * no en el navegador para que sea UNA operación y no cinco peticiones a medio terminar.
+ */
+app.post("/api/facturas/diccionario/unificar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const entradas = (Array.isArray(req.body?.productos) ? req.body.productos : [])
+      .map((p) => ({ clave: String(p?.clave || "").trim(), descripcion: String(p?.descripcion || "").trim() || null }))
+      .filter((p) => p.clave);
+    if (entradas.length < 2) return res.status(400).json({ ok: false, error: "Elige al menos dos productos" });
+    const nombre = String(req.body?.nombre || "").trim().slice(0, 120);
+    if (!nombre) return res.status(400).json({ ok: false, error: "Falta el nombre del producto" });
+
+    const quien = req.user?.nombre || req.user?.username || null;
+    const ahora = isoConOffset(Date.now());
+    const ids = [], sueltas = [];
+    for (const e of entradas) {
+      const m = /^p:(\d+)$/.exec(e.clave);
+      if (m) ids.push(Number(m[1])); else sueltas.push(e);
+    }
+
+    // El que se queda: si ya había productos del diccionario, el primero —y se le pone el
+    // nombre elegido—. Si no había ninguno, se crea uno.
+    let destino = ids[0] ?? null;
+    if (destino != null) {
+      const existe = await dbGet(`SELECT id FROM productos_canonicos WHERE id = ?`, [destino]);
+      if (!existe) return res.status(404).json({ ok: false, error: "Ese producto ya no existe" });
+      await dbRun(`UPDATE productos_canonicos SET nombre = ? WHERE id = ?`, [nombre, destino]);
+    } else {
+      const ya = await dbGet(`SELECT id FROM productos_canonicos WHERE LOWER(nombre) = LOWER(?)`, [nombre]);
+      destino = ya ? ya.id
+        : (await dbRun(`INSERT INTO productos_canonicos (nombre, creado_por, creado_en) VALUES (?, ?, ?) RETURNING id`,
+            [nombre, quien, ahora]))?.id;
+    }
+
+    // Los demás productos se vacían en el destino. Primero se mueven sus formas de escribirlo
+    // y LUEGO se borran: al revés, el borrado en cascada se las llevaría por delante y
+    // volverían todas a la cola.
+    let movidas = 0;
+    for (const otro of ids.slice(1)) {
+      const n = await dbGet(`SELECT count(*)::int AS n FROM producto_alias WHERE producto_id = ?`, [otro]);
+      await dbRun(`UPDATE producto_alias SET producto_id = ? WHERE producto_id = ?`, [destino, otro]);
+      await dbRun(`DELETE FROM productos_canonicos WHERE id = ?`, [otro]);
+      movidas += n?.n || 0;
+    }
+
+    // Y las descripciones sueltas se enganchan como una forma más de escribirlo.
+    for (const e of sueltas) {
+      await dbRun(
+        `INSERT INTO producto_alias (clave, producto_id, descripcion, confirmado_por, confirmado_en)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (clave) DO UPDATE SET producto_id = EXCLUDED.producto_id,
+           descripcion = EXCLUDED.descripcion, confirmado_por = EXCLUDED.confirmado_por,
+           confirmado_en = EXCLUDED.confirmado_en`,
+        [e.clave, destino, e.descripcion, quien, ahora]);
+      movidas += 1;
+    }
+
+    res.json({ ok: true, producto_id: destino, nombre, formas: movidas,
+      mensaje: `«${nombre}» junta ahora ${movidas + (ids.length ? 1 : 0)} forma(s) de escribirlo.` });
+  } catch (e) {
+    console.error("[facturas] unificar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron unificar" });
   }
 });
 

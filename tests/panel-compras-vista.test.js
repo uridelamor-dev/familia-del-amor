@@ -167,3 +167,63 @@ describe("la evolución del precio, dibujada", () => {
     assert.match(css, /\.tbl th\.sparkcel,\.tbl td\.sparkcel\{display:none\}/);
   });
 });
+
+describe("el trabajo en lote se hace donde se ve", () => {
+  test("marcar varias facturas como pagadas dice el estado, no lo conmuta", () => {
+    // El endpoint de una sola factura es un interruptor: aplicado a veinte, las que ya estaban
+    // pagadas se quedarían sin pagar.
+    const i = server.indexOf('app.post("/api/facturas/pago-lote"');
+    assert.ok(i > 0, "falta el endpoint de pago en lote");
+    const fn = server.slice(i, server.indexOf("\n});\n", i));
+    assert.match(fn, /const pagado = req\.body\?\.pagado \? 1 : 0;/);
+    assert.doesNotMatch(fn, /row\.pagado \? 0 : 1/);
+  });
+
+  test("y solo toca los establecimientos que esa persona puede tocar", () => {
+    const i = server.indexOf('app.post("/api/facturas/pago-lote"');
+    assert.match(server.slice(i, i + 1800), /filter\(\(f\) => puedeAccederLocal\(req, f\.local\)\)/);
+  });
+
+  test("antes de marcar se dice cuántas son y cuánto suman", () => {
+    // Marcar veinte por error es fácil de hacer y molesto de deshacer.
+    assert.match(panel, /Se marcan \$\{sel\.length\}[^`]*\$\{eur\(suma\)\}/);
+  });
+
+  test("unificar productos se hace desde la lista, en una sola operación", () => {
+    const i = server.indexOf('app.post("/api/facturas/diccionario/unificar"');
+    assert.ok(i > 0, "falta el endpoint de unificar");
+    const fn = server.slice(i, server.indexOf("\n});\n", i));
+    // Los tres casos: producto existente, descripción suelta, y varios productos a la vez.
+    assert.match(fn, /\/\^p:\(\\d\+\)\$\//);
+    assert.match(fn, /INSERT INTO producto_alias/);
+    assert.match(fn, /UPDATE producto_alias SET producto_id = \? WHERE producto_id = \?/);
+  });
+
+  test("al fusionar dos productos, primero se mueven las formas y luego se borra", () => {
+    // Al revés, el borrado en cascada se las lleva por delante y vuelven todas a la cola.
+    const i = server.indexOf('app.post("/api/facturas/diccionario/unificar"');
+    const fn = server.slice(i, server.indexOf("\n});\n", i));
+    assert.ok(fn.indexOf("UPDATE producto_alias SET producto_id") < fn.indexOf("DELETE FROM productos_canonicos"));
+  });
+
+  test("el nombre que se propone es el limpio, no el más largo", () => {
+    // El más largo era justo la línea de albarán que se quiere enterrar.
+    assert.match(panel, /function nombreParaUnificar\(descripciones\)/);
+    assert.match(panel, /letras - cifras \* 2/);
+  });
+});
+
+describe("la cola del diccionario se puede despachar por establecimiento", () => {
+  test("la cola lleva local; el diccionario que sale de ahí, no", () => {
+    assert.match(panel, /"\/api\/facturas\/diccionario" \+ \(loc \? "\?local=" \+ encodeURIComponent\(loc\) : ""\)/);
+  });
+
+  test("y la cobertura se mide sobre lo mismo que la cola", () => {
+    // Si la cola es de Blanes y el «ya revisado» de los siete, el porcentaje no dice nada.
+    assert.match(server, /WHERE \$\{SIN_DUDAS\}\$\{local \? " AND f\.local = \?" : ""\} GROUP BY a\.clave/);
+  });
+
+  test("y se dice en pantalla que lo decidido vale para todos los locales", () => {
+    assert.match(panel, /lo que decidas vale para todos: el producto es el mismo en todas partes/);
+  });
+});
