@@ -313,8 +313,16 @@ function shell(active, bodyHtml) {
   const estabLbl = fijado ? nombreCortoLocal(fijado)
     : viendoVarios() ? etiquetaAmbito()
     : actual ? nombreCortoLocal(actual) : "Todos los establecimientos";
-  const customLbl = (PERIOD === "custom" && DASH_RANGE.from) ? `${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}` : "Personalizado";
-  const seg = [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]].map(([p, l]) => `<button class="${PERIOD === p ? "on" : ""}" data-act="period" data-p="${p}">${l}</button>`).join("") + `<button class="${PERIOD === "custom" ? "on" : ""}" data-act="period-custom" title="Rango personalizado (días o meses, incluso del año pasado)">${customLbl}</button>`;
+  // El selector de periodo solo se pinta donde manda algo. En Reservas o en Usuarios era un
+  // control vivo que no hacía nada.
+  const grupo = grupoPeriodo(active);
+  const per = periodoVista(active);
+  const customLbl = (per.p === "custom" && per.from) ? `${esc(fechaCorta(per.from))} – ${esc(fechaCorta(per.to))}` : "Personalizado";
+  const presets = grupo === "compras"
+    ? [["todo", "Todo"], ["semana", "Semana"], ["mes", "Mes"]]
+    : [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]];
+  const seg = !grupo ? "" : presets.map(([p, l]) => `<button class="${per.p === p ? "on" : ""}" data-act="period" data-p="${p}">${l}</button>`).join("")
+    + `<button class="${per.p === "custom" ? "on" : ""}" data-act="period-custom" title="Elegir fechas">${customLbl}</button>`;
   return `<div class="app${COLLAPSED ? " collapsed" : ""}" id="appEl">
     <aside class="sidebar">
       <div class="brand"><div class="logo">FA</div><div class="bt"><b>Familia del Amor</b><span>Sistema operativo interno</span></div></div>
@@ -327,7 +335,7 @@ function shell(active, bodyHtml) {
         ${fijado
           ? `<span class="pick fijo" title="Tu usuario está asignado a este establecimiento"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span></span>`
           : `<button class="pick" data-act="estabmenu" title="Cambiar establecimiento"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span><span class="car">▾</span></button>`}
-        <div class="seg hidesm">${seg}</div>
+        ${seg ? `<div class="seg hidesm">${seg}</div>` : ""}
         <button class="sbtn hidesm" data-act="cmdk">${ic("search", 16)}<span>Buscar o ir a…</span><span class="kbd">⌘K</span></button>
         <div class="spacer"></div>
         <span id="waPill" class="gstat"><span class="sdot st-off"></span>WhatsApp…</span>
@@ -568,6 +576,61 @@ window.addEventListener("scroll", dpClose, true);
 
 // ════════════════════════ ESTADO GLOBAL + COMPONENTES (lenguaje del prototipo) ════════════════════════
 let DASH_LOCAL = "", SELECCION = [], COLLAPSED = false, PERIOD = "semana", DASH_CONCERNS = 0;
+
+/**
+ * EL PERIODO ES DE CADA PANTALLA, y solo lo tienen las que miran fechas.
+ *
+ * Antes era uno solo y únicamente lo obedecía el Dashboard: en Productos podías poner
+ * «6 may – 15 may» en la barra y seguir viendo las compras de julio. El control estaba ahí,
+ * se movía, y no hacía nada — que es peor que no tenerlo, porque te crees el número.
+ *
+ * Y no puede ser el MISMO periodo para todas: en el Dashboard la pregunta es «cómo va esta
+ * semana» y en Productos es «qué compramos», que de entrada es TODO y se acota si hace falta.
+ * Compartirlo obligaba a que una de las dos mintiera.
+ */
+const GRUPO_PERIODO = { dashboard: "dashboard", facturas: "compras", productos: "compras" };
+const grupoPeriodo = (v) => GRUPO_PERIODO[v || CURRENT] || null;
+// «todo» = sin filtro de fechas. Es lo que se quiere al entrar en Compras y en Productos.
+let PERIODO_VISTA = { facturas: "todo", productos: "todo" };
+
+// Dónde vive el rango de cada pantalla: Compras filtra con FACF y Productos con COMP, que son
+// los mismos campos que usan sus filtros. Así la barra y el panel de filtros no se contradicen.
+function periodoVista(v) {
+  const vista = v || CURRENT;
+  if (grupoPeriodo(vista) !== "compras") return { p: PERIOD, from: DASH_RANGE.from || "", to: DASH_RANGE.to || "" };
+  const f = vista === "productos" ? COMP : FACF;
+  // El botón encendido se deduce del rango DE VERDAD, no de lo último que se pulsó: las fechas
+  // también se pueden poner desde el panel de «Filtros», y la barra tiene que decir lo mismo.
+  const guardado = PERIODO_VISTA[vista] || "todo";
+  const p = (!f.from && !f.to) ? "todo" : (guardado === "todo" ? "custom" : guardado);
+  return { p, from: f.from || "", to: f.to || "" };
+}
+function fijarPeriodoVista(p, from, to, label) {
+  if (grupoPeriodo() !== "compras") { PERIOD = p; DASH_RANGE = { from, to, label }; return; }
+  PERIODO_VISTA[CURRENT] = p;
+  const f = CURRENT === "productos" ? COMP : FACF;
+  f.from = from || ""; f.to = to || "";
+}
+// El selector de la barra, repintado solo. Cambiar las fechas desde el panel de «Filtros»
+// dejaba la barra diciendo «Todo» con un rango puesto.
+function repintarSeg() {
+  const cont = document.querySelector(".topbar .seg");
+  if (!cont) return;
+  const per = periodoVista();
+  const presets = grupoPeriodo() === "compras"
+    ? [["todo", "Todo"], ["semana", "Semana"], ["mes", "Mes"]]
+    : [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]];
+  const customLbl = (per.p === "custom" && per.from) ? `${esc(fechaCorta(per.from))} – ${esc(fechaCorta(per.to))}` : "Personalizado";
+  cont.innerHTML = presets.map(([p, l]) => `<button class="${per.p === p ? "on" : ""}" data-act="period" data-p="${p}">${l}</button>`).join("")
+    + `<button class="${per.p === "custom" ? "on" : ""}" data-act="period-custom" title="Elegir fechas">${customLbl}</button>`;
+}
+
+// Volver a pedir los datos con el periodo nuevo. Sin esto el rótulo cambiaba y la lista no.
+function recargarPorPeriodo() {
+  if (CURRENT === "dashboard") return loadDashboard();
+  if (CURRENT === "productos") return loadProductos();
+  if (CURRENT === "facturas") return loadFacturas();
+}
 
 /**
  * El trabajo pendiente de cada módulo, para que se vea en el menú SIN entrar. Hasta ahora solo
@@ -973,31 +1036,137 @@ async function loadDashboard() {
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 // Rango personalizado (días o meses, incluso del año pasado).
+/**
+ * ELEGIR FECHAS. Un calendario de rango, no dos casillas de fecha.
+ *
+ * Antes eran dos `<input type="date">`: para ver «del 6 al 15 de mayo» había que abrir dos
+ * calendarios distintos, uno para cada extremo, y en ninguno de los dos se veía el rango. Aquí
+ * se pulsa el primer día, se pulsa el último y se ve pintado lo que hay en medio, que es lo
+ * que se está eligiendo de verdad.
+ *
+ * Dos meses a la vez porque casi todos los rangos que se miran cruzan de mes.
+ */
 function openPeriodoCustom() {
   const hoy = todayStr();
-  const f0 = DASH_RANGE.from || addDaysStr(hoy, -30), t0 = DASH_RANGE.to || hoy;
-  const ov = modal("Rango personalizado", `<div class="form-grid">
-    <div class="field"><label>Desde</label><input type="date" id="pcFrom" value="${esc(f0)}" max="${esc(hoy)}"></div>
-    <div class="field"><label>Hasta</label><input type="date" id="pcTo" value="${esc(t0)}" max="${esc(hoy)}"></div>
+  const grupo = grupoPeriodo();
+  const per = periodoVista();
+  let a = per.from || "", b = per.to || "", hov = "";
+  let cur = "";   // el mes de la izquierda; se fija abajo, cuando `mesSig` ya existe
+
+  // «Todo» solo donde significa algo: el Dashboard SIEMPRE compara un periodo con el anterior,
+  // así que «sin fechas» no es una respuesta que pueda dar.
+  const rapidos = [
+    ...(grupo === "compras" ? [["todo", "Todo"]] : []),
+    ["hoy", "Hoy"], ["semana", "Esta semana"], ["mes", "Este mes"], ["mes-pasado", "Mes pasado"],
+    ["este-ano", "Este año"], ["ano-pasado", "Año pasado"], ["12m", "Últimos 12 meses"],
+  ];
+
+  const ov = modal("Periodo", `<div class="rng">
+    <div class="rngq">${rapidos.map(([k, l]) => `<button type="button" data-rq="${k}">${esc(l)}</button>`).join("")}</div>
+    <div class="rngc">
+      <div class="rngh">
+        <button type="button" class="rngnav" data-rnav="-1" aria-label="Meses anteriores">‹</button>
+        <div class="rngms" id="rngMs"></div>
+        <button type="button" class="rngnav" data-rnav="1" aria-label="Meses siguientes">›</button>
+      </div>
+      <div class="rngcals" id="rngCals"></div>
+    </div>
   </div>
-  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"><button class="btn sm" data-pcq="mes-pasado">Mes pasado</button><button class="btn sm" data-pcq="este-ano">Este año</button><button class="btn sm" data-pcq="ano-pasado">Año pasado</button><button class="btn sm" data-pcq="ultimo-ano">Últimos 12 meses</button></div>
-  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="pcAplicar">Aplicar</button></div>`);
-  const setRange = (from, to) => { ov.querySelector("#pcFrom").value = from; ov.querySelector("#pcTo").value = to; };
+  <div class="rngf"><span class="rngsum" id="rngSum"></span>
+    <span style="flex:1"></span>
+    <button class="btn" data-close>Cancelar</button>
+    <button class="btn primary" id="rngOk">Aplicar</button></div>`);
+
+  const mesSig = (ym, n) => { let [y, m] = ym.split("-").map(Number); m += n; y += Math.floor((m - 1) / 12); m = ((m - 1) % 12 + 12) % 12 + 1; return `${y}-${dp2(m)}`; };
+  // Sin rango puesto se abre en el mes ANTERIOR y el actual. Abrir en el actual y el siguiente
+  // dejaba media pantalla con días del futuro, que están apagados: no hay facturas de mañana.
+  cur = a ? a.slice(0, 7) : mesSig(hoy.slice(0, 7), -1);
+  const dentro = (iso, x, y2) => x && y2 && iso >= x && iso <= y2;
+
+  function mesHtml(ym) {
+    const [y, m] = ym.split("-").map(Number);
+    const off = periodoDiaSemanaLunes(`${ym}-01`);
+    // El extremo provisional: mientras se elige el segundo día, se pinta por dónde iría.
+    const fin = b || (a && hov > a ? hov : "");
+    const celdas = [];
+    for (let i = 0; i < off; i++) celdas.push('<span class="rngd out"></span>');
+    for (let d = 1; d <= dpDim(y, m); d++) {
+      const iso = `${ym}-${dp2(d)}`;
+      // La columna, para redondear la franja donde la semana se corta: sin esto el rango
+      // termina en pico a la derecha del domingo y empieza en pico el lunes siguiente.
+      const col = (off + d - 1) % 7;
+      const cls = [
+        iso === a ? "ini" : "", iso === b ? "fin" : "",
+        (iso === a && !fin) ? "solo" : "",
+        dentro(iso, a, fin) ? "in" : "",
+        iso === hoy ? "hoy" : "",
+        // Nombres largos a propósito: `c1`/`c7` chocaban con la rejilla de tarjetas del panel
+        // (`.c7 { grid-column: span 7 }`) y el domingo se comía la fila entera.
+        col === 0 ? "rnglft" : "", col === 6 ? "rngrgt" : "", d === 1 ? "rnglft" : "", d === dpDim(y, m) ? "rngrgt" : "",
+      ].filter(Boolean).join(" ");
+      celdas.push(`<button type="button" class="rngd ${cls}" data-iso="${iso}"${iso > hoy ? " disabled" : ""}>${d}</button>`);
+    }
+    while (celdas.length % 7) celdas.push('<span class="rngd out"></span>');
+    return `<div class="rngmes"><div class="rngmt">${cap(DP_MES[m - 1])} ${y}</div>
+      <div class="rngg">${DP_DOW.map((x) => `<span class="rngw">${x}</span>`).join("")}${celdas.join("")}</div></div>`;
+  }
+
+  function pintar() {
+    ov.querySelector("#rngCals").innerHTML = mesHtml(cur) + mesHtml(mesSig(cur, 1));
+    ov.querySelector("#rngMs").textContent = "";
+    const dias = a && b ? Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 86400000) + 1 : 0;
+    ov.querySelector("#rngSum").innerHTML = !a
+      ? '<span class="mut">Sin fechas: desde siempre</span>'
+      : !b ? `<b>${esc(fechaCorta(a))}</b> <span class="mut">— elige el último día</span>`
+      : `<b>${esc(fechaCorta(a))} – ${esc(fechaCorta(b))}</b> <span class="mut">· ${dias} día${dias === 1 ? "" : "s"}</span>`;
+  }
+
+  ov.addEventListener("mouseover", (e) => {
+    const d = e.target.closest("[data-iso]"); if (!d || !a || b) return;
+    const iso = d.getAttribute("data-iso");
+    if (iso === hov) return;
+    hov = iso; pintar();
+  });
+
   ov.addEventListener("click", (e) => {
-    const q = e.target.getAttribute && e.target.getAttribute("data-pcq"); if (!q) return;
-    const y = Number(hoy.slice(0, 4)), m = hoy.slice(5, 7);
-    if (q === "mes-pasado") { const d = new Date(hoy + "T12:00:00"); d.setDate(1); d.setMonth(d.getMonth() - 1); const fin = new Date(d.getFullYear(), d.getMonth() + 1, 0); setRange(d.toISOString().slice(0, 10), fin.toISOString().slice(0, 10)); }
-    else if (q === "este-ano") setRange(y + "-01-01", hoy);
-    else if (q === "ano-pasado") setRange((y - 1) + "-01-01", (y - 1) + "-12-31");
-    else if (q === "ultimo-ano") setRange(addDaysStr(hoy, -364), hoy);
+    const nav = e.target.closest("[data-rnav]");
+    if (nav) { cur = mesSig(cur, Number(nav.getAttribute("data-rnav"))); return pintar(); }
+
+    const q = e.target.closest("[data-rq]");
+    if (q) {
+      const k = q.getAttribute("data-rq");
+      const y = Number(hoy.slice(0, 4));
+      if (k === "todo") { a = ""; b = ""; }
+      else if (k === "mes-pasado") { const d = new Date(hoy + "T12:00:00"); d.setDate(1); d.setMonth(d.getMonth() - 1); const f = new Date(d.getFullYear(), d.getMonth() + 1, 0); a = `${d.getFullYear()}-${dp2(d.getMonth() + 1)}-01`; b = `${f.getFullYear()}-${dp2(f.getMonth() + 1)}-${dp2(f.getDate())}`; }
+      else if (k === "este-ano") { a = y + "-01-01"; b = hoy; }
+      else if (k === "ano-pasado") { a = (y - 1) + "-01-01"; b = (y - 1) + "-12-31"; }
+      else if (k === "12m") { a = addDaysStr(hoy, -364); b = hoy; }
+      else { const r = rangoPreset(k, hoy); a = r.from; b = r.to; }
+      hov = ""; if (a) cur = a.slice(0, 7);
+      return pintar();
+    }
+
+    const d = e.target.closest("[data-iso]");
+    if (d && !d.disabled) {
+      const iso = d.getAttribute("data-iso");
+      // Primer clic = principio. Segundo = final. Y si el segundo es anterior, se entiende
+      // que se ha cambiado de idea sobre el principio, no que quiera un rango al revés.
+      if (!a || b || iso < a) { a = iso; b = ""; }
+      else b = iso;
+      hov = ""; return pintar();
+    }
   });
-  ov.querySelector("#pcAplicar").addEventListener("click", () => {
-    const from = ov.querySelector("#pcFrom").value, to = ov.querySelector("#pcTo").value;
-    if (!from || !to) { toast("Elige las dos fechas"); return; }
-    if (from > to) { toast("El 'desde' debe ser anterior al 'hasta'"); return; }
-    PERIOD = "custom"; DASH_RANGE = { from, to, label: from === to ? fechaCorta(from) : `${fechaCorta(from)} – ${fechaCorta(to)}` };
-    ov.remove(); loadDashboard();
+
+  ov.querySelector("#rngOk").addEventListener("click", () => {
+    if (a && !b) b = a;                       // un solo día es un rango de un día
+    const label = !a ? "Desde siempre" : a === b ? fechaCorta(a) : `${fechaCorta(a)} – ${fechaCorta(b)}`;
+    fijarPeriodoVista(a ? "custom" : "todo", a, b, label);
+    ov.remove();
+    repintarSeg();
+    recargarPorPeriodo();
   });
+
+  pintar();
 }
 
 // ════════════════════════ VISTA: RESERVAS ════════════════════════
@@ -4828,7 +4997,7 @@ function facChipsHtml() {
 }
 
 function facQuitarFiltro(k) {
-  if (k === "fecha") { FACF.from = ""; FACF.to = ""; }
+  if (k === "fecha") { FACF.from = ""; FACF.to = ""; PERIODO_VISTA.facturas = "todo"; }
   else FACF[k] = "";
   loadFacturas();
 }
@@ -4883,6 +5052,7 @@ async function facAbrirFiltros() {
   const ov = drawer("Filtrar por", cuerpo, {
     onLimpiar: (d) => { d.cerrar(); facLimpiarFiltros(); },
     onAplicar: (d) => {
+      PERIODO_VISTA.facturas = (d.querySelector("#fFrom").value || d.querySelector("#fTo").value) ? "custom" : "todo";
       FACF.from = d.querySelector("#fFrom").value || "";
       FACF.to = d.querySelector("#fTo").value || "";
       FACF.proveedor = d.querySelector("#fProv").value || "";
@@ -5913,7 +6083,7 @@ function compChipsHtml() {
     <button class="linkbtn" data-comp="limpiar">Quitar todos</button></div>`;
 }
 function compQuitarFiltro(k) {
-  if (k === "fechas") { COMP.from = ""; COMP.to = ""; }
+  if (k === "fechas") { COMP.from = ""; COMP.to = ""; PERIODO_VISTA.productos = "todo"; }
   else if (k.startsWith("subcategoria:")) {
     const fuera = k.slice(13);
     COMP.subcategoria = String(COMP.subcategoria).split(",").filter((c) => c && c !== fuera).join(",");
@@ -5923,7 +6093,7 @@ function compQuitarFiltro(k) {
   } else COMP[k] = "";
   refrescarCompras();
 }
-function compLimpiarFiltros() { COMP_FILTROS.forEach((k) => { COMP[k] = ""; }); const i = document.getElementById("compQ"); if (i) i.value = ""; refrescarCompras(); }
+function compLimpiarFiltros() { COMP_FILTROS.forEach((k) => { COMP[k] = ""; }); PERIODO_VISTA.productos = "todo"; const i = document.getElementById("compQ"); if (i) i.value = ""; refrescarCompras(); }
 
 async function compAbrirFiltros() {
   let provs = [];
@@ -5962,6 +6132,7 @@ async function compAbrirFiltros() {
     onAplicar: (d) => {
       COMP.from = d.querySelector("#cFrom").value || "";
       COMP.to = d.querySelector("#cTo").value || "";
+      PERIODO_VISTA.productos = (COMP.from || COMP.to) ? "custom" : "todo";
       COMP.proveedor = d.querySelector("#cProv").value || "";
       COMP.categoria = [...d.querySelectorAll("#cCats .drw-pill.on")].map((b) => b.dataset.cat).join(",");
       COMP.subcategoria = [...d.querySelectorAll("#cSubs .drw-pill.on")].map((b) => b.dataset.sub).join(",");
@@ -6085,6 +6256,7 @@ function comprasDebounced() { clearTimeout(_compTimer); _compTimer = setTimeout(
 async function refrescarCompras() {
   const cont = document.getElementById("compRes");
   if (!cont) return;
+  repintarSeg();   // las fechas se pueden cambiar desde «Filtros»: la barra tiene que decir lo mismo
   const qs = new URLSearchParams();
   // «Qué compramos» también es un agregado: con varios establecimientos se le pasan todos y el
   // servidor suma producto a producto (src/modules/facturas/compras-fusion.js). Juntar aquí
@@ -7733,7 +7905,13 @@ document.addEventListener("click", (e) => {
   else if (act === "hor-config") horConfig();
   else if (act === "dp-open") dpOpen(t);
   else if (act === "dp-clear") { dpSet(t.getAttribute("data-for"), ""); dpClose(); }
-  else if (act === "period") { PERIOD = t.getAttribute("data-p"); const r = rangoPreset(PERIOD, todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; document.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b === t)); if (CURRENT === "dashboard") loadDashboard(); }
+  else if (act === "period") {
+    const p = t.getAttribute("data-p");
+    const r = p === "todo" ? { from: "", to: "", label: "Desde siempre" } : rangoPreset(p, todayStr());
+    fijarPeriodoVista(p, r.from, r.to, r.label);
+    document.querySelectorAll(".topbar .seg button").forEach((b) => b.classList.toggle("on", b === t));
+    recargarPorPeriodo();
+  }
   else if (act === "period-custom") openPeriodoCustom();
   else if (act === "theme") toggleTheme();
   else if (act === "logout") { localStorage.removeItem("token"); location.href = "/login.html"; }

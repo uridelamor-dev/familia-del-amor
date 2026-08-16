@@ -350,6 +350,41 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .dpf{display:flex;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
 .dpf button{flex:1;height:30px;border-radius:9px;font-size:12px;font-weight:600;color:var(--ink2);background:var(--surface2)}
 .dpf button:hover{color:var(--ink);background:var(--surface3)}
+
+/* ── Calendario de rango (elegir periodo) ─────────────────────────────────────
+   Dos meses, el rango pintado en medio y los extremos redondeados por fuera. La franja va
+   sobre una celda cuadrada de fondo (.rngd::before) para que quede continua entre días. */
+.rng{display:flex;gap:18px;align-items:flex-start}
+.rngq{display:flex;flex-direction:column;gap:2px;flex:none;width:146px;padding-right:16px;border-right:1px solid var(--border)}
+.rngq button{text-align:left;padding:7px 10px;border-radius:9px;font-size:12.5px;font-weight:550;color:var(--ink2);white-space:nowrap;transition:background .12s ease,color .12s ease}
+.rngq button:hover{background:var(--surface2);color:var(--ink)}
+.rngc{flex:1;min-width:0}
+.rngh{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}
+.rngnav{width:30px;height:30px;border-radius:999px;color:var(--ink2);font-size:17px;line-height:1;transition:background .12s ease}
+.rngnav:hover{background:var(--surface2);color:var(--ink)}
+.rngcals{display:flex;gap:22px}
+.rngmes{flex:1;min-width:0}
+.rngmt{text-align:center;font-size:13px;font-weight:650;letter-spacing:-.01em;margin:-24px 0 6px;pointer-events:none}
+.rngg{display:grid;grid-template-columns:repeat(7,1fr)}
+.rngw{padding:4px 0 6px;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink3);text-align:center}
+.rngd{position:relative;height:32px;font-size:12.5px;font-weight:550;color:var(--ink);font-variant-numeric:tabular-nums;display:grid;place-items:center}
+.rngd.out{visibility:hidden}
+.rngd::before{content:"";position:absolute;inset:1px 0;background:transparent;z-index:0}
+.rngd>*,.rngd{z-index:1}
+.rngd.in::before,.rngd.ini::before,.rngd.fin::before{background:color-mix(in srgb,var(--brand) 13%,transparent)}
+.rngd.ini::before{border-radius:999px 0 0 999px}
+.rngd.fin::before{border-radius:0 999px 999px 0}
+.rngd.in.rnglft::before,.rngd.fin.rnglft::before{border-top-left-radius:999px;border-bottom-left-radius:999px}
+.rngd.in.rngrgt::before,.rngd.ini.rngrgt::before{border-top-right-radius:999px;border-bottom-right-radius:999px}
+.rngd.solo::before,.rngd.ini.fin::before{border-radius:999px}
+.rngd.ini,.rngd.fin{color:var(--brand-ink);font-weight:700}
+.rngd.ini::after,.rngd.fin::after{content:"";position:absolute;inset:1px 2px;border-radius:999px;background:var(--brand);z-index:-1}
+.rngd.hoy:not(.ini):not(.fin){color:var(--brand);font-weight:750}
+.rngd:not(:disabled):not(.out):hover::after{content:"";position:absolute;inset:1px 2px;border-radius:999px;background:var(--surface3);z-index:-1}
+.rngd.ini:hover::after,.rngd.fin:hover::after{background:var(--brand)}
+.rngd:disabled{opacity:.28;cursor:not-allowed}
+.rngf{display:flex;align-items:center;gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);flex-wrap:wrap}
+.rngsum{font-size:13px;font-variant-numeric:tabular-nums}
 /* Región de resultados refrescándose en vivo (filtros sin botón «Buscar») */
 .livebusy{opacity:.45;pointer-events:none;transition:opacity .15s ease}
 /* Campos con look propio (buscador ⌘K y chat de Sara): sin el aro de foco genérico */
@@ -501,6 +536,7 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .modal-ov{position:fixed;inset:0;background:rgba(15,17,12,.44);backdrop-filter:blur(3px);z-index:150;display:grid;place-items:center;padding:20px}
 .modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px;box-shadow:var(--sh-lg);width:min(520px,96vw);max-height:90vh;overflow:auto}
 .modal.wide{width:min(1080px,96vw)}
+.modal:has(.rng){width:min(700px,96vw)}
 .revrev{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start}
 .revrev .prev{position:sticky;top:0;background:var(--bg,#f4f2ec);border:1px solid var(--border);border-radius:12px;overflow:hidden;height:min(72vh,760px)}
 .revrev .prev iframe,.revrev .prev embed,.revrev .prev img{width:100%;height:100%;border:0;object-fit:contain;background:#fff;display:block}
@@ -630,6 +666,9 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .row{flex-wrap:wrap}
   .tbl th,.tbl td{padding:8px 10px;font-size:12.5px}
   .modal-b .form-grid{grid-template-columns:1fr}
+  .rng{flex-direction:column;gap:12px}
+  .rngq{flex-direction:row;flex-wrap:wrap;width:auto;padding:0 0 12px;border-right:0;border-bottom:1px solid var(--border)}
+  .rngcals .rngmes:last-child{display:none}
 }
 </style>
 </head>
