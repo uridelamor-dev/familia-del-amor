@@ -220,3 +220,27 @@ describe("corregir el diccionario", () => {
     assert.match(panel, /El que elijas es el que se queda/);
   });
 });
+
+describe("deshacer UNA forma sin cargarse el producto", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+
+  test("cada producto trae sus formas de escribirlo", () => {
+    // Sin esto no había forma de ver qué se había unido a qué, y deshacer una unión aceptada
+    // por error costaba borrar el producto entero: las demás formas volvían también a la cola.
+    assert.match(server, /json_agg\(json_build_object\('clave', a\.clave, 'descripcion', a\.descripcion\)/);
+    assert.match(panel, /data-dicp="quitar-forma"/);
+  });
+
+  test("y quitarla la devuelve a la cola, no la borra", () => {
+    assert.match(panel, /apiSend\("DELETE", "\/api\/facturas\/diccionario\/" \+ encodeURIComponent\(clave\)\)/);
+    assert.match(panel, /Esta forma vuelve a la cola, sin tocar las demás/);
+  });
+
+  test("los botones dentro del desplegable no lo despliegan al pulsarlos", () => {
+    // Están en un <summary>: sin frenar el evento, cada clic en «Cambiar nombre» abría o
+    // cerraba la ficha entera.
+    const fn = panel.slice(panel.indexOf('const b = e.target.closest("[data-dicp]")'), panel.indexOf('const b = e.target.closest("[data-dicp]")') + 300);
+    assert.match(fn, /e\.preventDefault\(\)/);
+  });
+});

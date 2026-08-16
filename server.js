@@ -3642,7 +3642,11 @@ app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]),
         GROUP BY l.clave ORDER BY gasto DESC NULLS LAST LIMIT 200`, []);
 
     const productos = await dbAll(
-      `SELECT p.id, p.nombre, COUNT(a.clave)::int AS alias
+      `SELECT p.id, p.nombre, COUNT(a.clave)::int AS alias,
+              -- Las formas de escribirlo, para poder quitar UNA sin cargarse el producto: si
+              -- se acepta una unión por error, deshacerla no puede costar deshacer las demás.
+              COALESCE(json_agg(json_build_object('clave', a.clave, 'descripcion', a.descripcion)
+                       ORDER BY a.descripcion) FILTER (WHERE a.clave IS NOT NULL), '[]') AS formas
          FROM productos_canonicos p LEFT JOIN producto_alias a ON a.producto_id = p.id
         GROUP BY p.id, p.nombre ORDER BY p.nombre`, []);
 

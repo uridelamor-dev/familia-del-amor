@@ -5634,13 +5634,21 @@ function dicProductosHtml() {
     <p class="mut" style="margin:0 0 12px;line-height:1.55">Los que se han ido creando. Si uno tiene una errata se
       cambia el nombre y sus formas de escribirlo lo siguen; si el mismo producto se creó dos veces, se fusionan.
       Al borrar uno, sus formas <b>vuelven a la cola</b>: no se pierde el trabajo, se deshace.</p>
-    <div class="rows">${ps.map((p) => `<div class="row" data-dicp-fila="${p.id}">
-        <div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div>
-          <div class="t2">${num(p.alias)} forma${p.alias === 1 ? "" : "s"} de escribirlo</div></div>
-        <button class="btn sm" data-dicp="nombre" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Cambiar nombre</button>
-        <button class="btn sm" data-dicp="fusionar" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Fusionar…</button>
-        <button class="btn sm" data-dicp="borrar" data-id="${p.id}" data-nombre="${esc(p.nombre)}" data-alias="${p.alias}">Borrar</button>
-      </div>`).join("")}</div>
+    <div class="rows">${ps.map((p) => `<details class="row" style="display:block" data-dicp-fila="${p.id}">
+        <summary style="display:flex;align-items:center;gap:10px;cursor:pointer;list-style:none">
+          <div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div>
+            <div class="t2">${num(p.alias)} forma${p.alias === 1 ? "" : "s"} de escribirlo${p.alias ? " · pulsa para verlas" : ""}</div></div>
+          <button class="btn sm" data-dicp="nombre" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Cambiar nombre</button>
+          <button class="btn sm" data-dicp="fusionar" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Fusionar…</button>
+          <button class="btn sm" data-dicp="borrar" data-id="${p.id}" data-nombre="${esc(p.nombre)}" data-alias="${p.alias}">Borrar</button>
+        </summary>
+        ${(p.formas || []).length ? `<div class="rows" style="margin:6px 0 0 12px;border-left:2px solid var(--border);padding-left:12px">
+          ${p.formas.map((f) => `<div class="row" style="padding:6px 0">
+            <div class="grow"><span class="t2">${esc(f.descripcion || f.clave)}</span></div>
+            <button class="btn sm" data-dicp="quitar-forma" data-clave="${esc(f.clave)}"
+              title="Esta forma vuelve a la cola, sin tocar las demás">Quitar</button></div>`).join("")}
+        </div>` : ""}
+      </details>`).join("")}</div>
   </details>`;
 }
 
@@ -5734,11 +5742,23 @@ async function loadProductos() {
   document.getElementById("dicRes")?.addEventListener("click", async (e) => {
     const b = e.target.closest("[data-dicp]");
     if (!b) return;
+    e.preventDefault();      // están dentro de un <summary>: sin esto, pulsarlos lo despliega
     const id = b.getAttribute("data-id");
     const nombre = b.getAttribute("data-nombre") || "";
     const q = b.getAttribute("data-dicp");
 
     if (q === "fusionar") return dicFusionar(id, nombre);
+
+    // Quitar UNA forma: vuelve a la cola y las demás se quedan como estaban. Es lo que hace
+    // falta cuando se acepta una unión por error — deshacerla no puede costar deshacer todo.
+    if (q === "quitar-forma") {
+      const clave = b.getAttribute("data-clave");
+      try {
+        await apiSend("DELETE", "/api/facturas/diccionario/" + encodeURIComponent(clave));
+        toast("Vuelve a la cola ✅"); dicPedir(); comprasDebounced();
+      } catch (err) { toast("Error: " + err.message); }
+      return;
+    }
 
     if (q === "nombre") {
       const nuevo = prompt("¿Cómo se llama de verdad?", nombre);
