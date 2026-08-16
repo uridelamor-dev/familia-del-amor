@@ -63,9 +63,34 @@ export function normalizarLinea(cruda = {}, orden = 0) {
   if (neto == null && bruto != null && dto != null && dto > 0 && dto < 100) neto = red(bruto * (1 - dto / 100));
   if (neto == null) neto = bruto;
 
+  // ── LA CANTIDAD Y EL PRECIO TIENEN QUE HABLAR DE LA MISMA UNIDAD ──────────
+  //
+  // EL FALLO QUE ARREGLA. Tupinamba factura así:
+  //     UDS. PACK 3 · UDS. TOTALES 450 · P. UNIDAD 0,52 · IMPORTE 234,00 · DTO 48,08 · TOTAL 121,49
+  // La lectura cogía la cantidad de una columna (3 packs) y el precio de otra (0,52 € por
+  // cápsula). Mezcladas no hablan de lo mismo —3 × 0,52 = 1,56 €, no 234 €— y el precio que
+  // salía era 40,50 € «por unidad» cuando lo que se paga son 0,27 € por cápsula.
+  //
+  // No hace falta adivinar: la propia línea lo dice dos veces. Si `importe / precio` no da la
+  // cantidad, es que la cantidad está en paquetes, y `importe / precio / cantidad` es cuántas
+  // unidades trae cada paquete —450 / 0,52 / 3 = 150, que es justo lo que pone el concepto—.
+  //
+  // Se corrige SOLO cuando el factor sale entero y de al menos 2: eso es un tamaño de paquete.
+  // Un factor con decimales sería otra cosa (un precio por kilo con la cantidad en piezas, por
+  // ejemplo) y ahí no se toca nada, porque corregir a ciegas es peor que no corregir.
+  let cantidadFinal = cantidad;
+  let factor = null;
+  if (cantidad && precioBruto && bruto != null && Math.abs(cantidad * precioBruto - bruto) > 0.02) {
+    const f = bruto / precioBruto / cantidad;
+    if (f >= 2 && Math.abs(f - Math.round(f)) < 0.01) {
+      factor = Math.round(f);
+      cantidadFinal = red(cantidad * factor);
+    }
+  }
+
   // Y el precio que se guarda es el que se paga: el neto entre las unidades. Si no hay
   // cantidad no se puede repartir, y se deja el de tarifa antes que inventarse uno.
-  const precioNeto = (neto != null && cantidad) ? red(neto / cantidad) : precioBruto;
+  const precioNeto = (neto != null && cantidadFinal) ? red(neto / cantidadFinal) : precioBruto;
 
   // Un descuento deducido de dos números que no cuadran es sospechoso: se marca para que la
   // línea salga como dudosa en vez de dar por bueno un precio que nadie ha comprobado.
@@ -74,8 +99,13 @@ export function normalizarLinea(cruda = {}, orden = 0) {
   return {
     orden,
     descripcion,
-    cantidad,
-    unidad: String(cruda.unidad ?? "").trim().slice(0, 20) || null,
+    cantidad: cantidadFinal,
+    // Al deshacer el paquete, la unidad de la factura («PACK») deja de valer: eran 3 packs,
+    // ahora son 450 unidades. Decir «450 PACK» sería peor que no decir nada.
+    unidad: factor ? "ud" : (String(cruda.unidad ?? "").trim().slice(0, 20) || null),
+    // Cuántas unidades traía cada paquete. Se guarda para poder explicar de dónde sale la
+    // cantidad —«3 PACK × 150»— y para que se vea que aquí ha pasado algo.
+    factor_unidad: factor,
     precio_unitario: precioNeto,
     importe: neto,
     // Lo de tarifa, para poder ver el descuento y notar si un mes deja de aplicarse.

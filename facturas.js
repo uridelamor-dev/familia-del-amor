@@ -81,6 +81,10 @@ En "local_receptor" pon el LOCAL o establecimiento CONCRETO del cliente si apare
 En "lineas" pon UNA ENTRADA POR CADA LÍNEA DE PRODUCTO del detalle, en el orden en que aparecen.
 - "descripcion": el texto del producto tal cual está escrito en la factura, sin traducir ni abreviar.
 - "cantidad" y "unidad": lo que diga la línea (2 / "cajas", 1.5 / "kg", 12 / "ud"). Si la línea no indica unidad, pon null en "unidad".
+- CANTIDAD Y PRECIO TIENEN QUE HABLAR DE LO MISMO: cantidad × precio_unitario debe dar el
+  importe. Hay facturas con DOS columnas de cantidad ("UDS. PACK" y "UDS. TOTALES", o
+  "BULTOS" y "UNIDADES"): si el precio es por unidad suelta, la cantidad que va aquí es la de
+  UNIDADES TOTALES, no la de paquetes. Comprueba la multiplicación antes de responder.
 - "precio_unitario" e "importe": los de esa línea, TAL CUAL aparecen (antes de descuento).
 - DESCUENTOS. Muchas facturas traen columnas «DTO. %» y «TOTAL» además de «IMPORTE»: el
   importe es el bruto y el total es lo que se paga de verdad. Si las ves, pon el porcentaje en
@@ -222,11 +226,11 @@ export async function guardarLineas(dbRun, facturaId, datos, ahora, extra = {}) 
   for (const l of lineas) {
     await dbRun(
       `INSERT INTO factura_lineas (factura_id, orden, descripcion, cantidad, unidad, precio_unitario, importe,
-         precio_bruto, importe_bruto, descuento_pct, dudosa, clave, creado_en)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         precio_bruto, importe_bruto, descuento_pct, factor_unidad, dudosa, clave, creado_en)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [facturaId, l.orden, l.descripcion || "(sin descripción)", l.cantidad, l.unidad,
        l.precio_unitario, l.importe, l.precio_bruto, l.importe_bruto, l.descuento_pct,
-       l.dudosa, claveProducto(l.descripcion), ahora]);
+       l.factor_unidad ?? null, l.dudosa, claveProducto(l.descripcion), ahora]);
   }
   // Queda escrito CON QUÉ VERSIÓN se leyó. Es lo que permite releer hacia atrás solo lo que
   // se leyó con la de antes, en vez de volver a pasar por el modelo facturas que ya están al

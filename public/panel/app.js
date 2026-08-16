@@ -6081,6 +6081,7 @@ async function loadProductos() {
   // había pedido — y con unas cifras que parecían el total y no lo eran.
   view.innerHTML = productosHeader() + `<div id="dicRes"></div><div id="compRes"><p class="mut">Cargando…</p></div>`;
   await refrescarCompras();
+  comprasPaquetes();                 // tampoco se espera: es un aviso, no un dato de la tabla
   dicPedir();                        // no se espera: la cola llega cuando llegue
 
   document.getElementById("dicRes")?.addEventListener("click", (e) => {
@@ -6164,6 +6165,7 @@ async function loadProductos() {
     if (p) { COMP.q = p.getAttribute("data-compprod"); const i = document.getElementById("compQ"); if (i) i.value = COMP.q; return refrescarCompras(); }
     if (e.target.closest('[data-comp="releer"]')) comprasReleer();
     // Las descuadradas van por otro camino: no hay que releerlo todo, solo esas.
+    if (e.target.closest('[data-comp="recuadrar"]')) return comprasRecuadrar();
     const rd = e.target.closest('[data-comp="releer-descuadre"]');
     if (rd) return facRepasoLineas(Number(rd.getAttribute("data-n")) || 0, "descuadre");
   });
@@ -6432,13 +6434,16 @@ async function comprasHistorial(clave, nombre) {
   const fila = (c) => `<tr>
     <td class="mut" style="white-space:nowrap">${esc(fechaCorta(c.fecha) || c.fecha || "—")}</td>
     <td>${esc(c.proveedor || "—")}<div class="t2">${esc(nombreCortoLocal(c.local) || "")}</div></td>
-    <td class="r tnum">${c.cantidad != null ? esc(num(c.cantidad)) + (c.unidad ? " " + esc(c.unidad) : "") : "—"}</td>
+    <td class="r tnum">${c.cantidad != null ? esc(num(c.cantidad)) + (c.unidad ? " " + esc(c.unidad) : "") : "—"}
+      ${c.factor_unidad ? `<div class="t2" title="La factura daba la cantidad en paquetes y el precio por unidad: se deshizo el paquete para poder comparar precios">× ${esc(num(c.factor_unidad))} por paquete</div>` : ""}</td>
     ${/* El precio que se enseña es el que se PAGA. Si hay descuento se dice, con el de tarifa
           al lado: así se ve de un vistazo si un mes deja de aplicarse. */""}
     <td class="r tnum">${c.precio_unitario != null ? esc(eur2(c.precio_unitario)) : "—"}
       ${c.descuento_pct ? `<div class="t2" style="white-space:nowrap">${esc(eur2(c.precio_bruto))} −${esc(String(c.descuento_pct))} %</div>` : ""}</td>
     <td class="r tnum"><b>${c.importe != null ? esc(eur2(c.importe)) : "—"}</b></td>
     <td class="r" style="white-space:nowrap">
+      <button class="btn sm" data-corregir="${c.linea_id}" data-cant="${esc(String(c.cantidad ?? ""))}" data-unidad="${esc(c.unidad || "")}"
+        data-importe="${esc(String(c.importe ?? ""))}" data-desc="${esc(c.descripcion || "")}" title="La cantidad no es la que compraste">Corregir</button>
       ${c.drive_url ? `<a class="btn sm" href="${esc(c.drive_url)}" target="_blank" rel="noopener" title="Abrir la factura en Drive">Ver factura ↗</a>`
         : `<button class="btn sm" data-vfac="${c.factura_id}">Detalle</button>`}</td></tr>`;
 
@@ -6462,12 +6467,108 @@ async function comprasHistorial(clave, nombre) {
   ov.querySelector(".modal").style.width = "min(880px, 96vw)";
   ov.addEventListener("click", (e) => {
     const b = e.target.closest("[data-vfac]");
-    if (b) { ov.remove(); comprasVerFactura(b.getAttribute("data-vfac")); }
+    if (b) { ov.remove(); return comprasVerFactura(b.getAttribute("data-vfac")); }
+    const c = e.target.closest("[data-corregir]");
+    if (c) corregirLinea(c, () => { ov.remove(); comprasHistorial(clave, nombre); });
+  });
+}
+
+/**
+ * CORREGIR LA CANTIDAD DE UNA COMPRA.
+ *
+ * La factura de Tupinamba pone «3 PACK» y el precio por cápsula: cuando el papel lo dice dos
+ * veces, la cantidad se recuadra sola. Pero hay facturas que solo ponen «3 PACK · 121,49 €» y
+ * no dicen cuántas cápsulas trae el pack — eso no está escrito en ninguna parte y solo lo sabe
+ * quien abre la caja. Para esas, esto.
+ *
+ * El importe NO se puede tocar: es lo que se pagó y está en el papel. Lo que se corrige es en
+ * cuántas unidades se reparte. Se enseña el precio resultante MIENTRAS se escribe, porque es
+ * el número que dice si la corrección es la buena: «0,27 €» se reconoce, «40,50 €» no.
+ */
+function corregirLinea(btn, alGuardar) {
+  const id = btn.getAttribute("data-corregir");
+  const cant0 = Number(btn.getAttribute("data-cant")) || 0;
+  const importe = Number(btn.getAttribute("data-importe")) || 0;
+  const ov = modal("Corregir la cantidad", `
+    <p class="mut" style="margin:0 0 12px;line-height:1.55"><b>${esc(btn.getAttribute("data-desc") || "")}</b><br>
+      Se pagaron <b>${esc(eur2(importe))}</b> — eso no se toca. Lo que se corrige es entre cuántas unidades se reparten:
+      si la factura contaba paquetes, pon las unidades que hay dentro de todos ellos.</p>
+    <div class="form-grid">
+      <div class="field"><label>Cantidad</label><input id="corCant" type="number" step="any" min="0" value="${esc(String(cant0))}"></div>
+      <div class="field"><label>Unidad</label><input id="corUni" value="${esc(btn.getAttribute("data-unidad") || "")}" placeholder="ud, kg, l…" maxlength="20"></div>
+    </div>
+    <div class="drw-pills" style="margin-top:10px">
+      <span class="mut" style="font-size:12px;align-self:center;margin-right:4px">Si cada paquete trae:</span>
+      ${[6, 12, 24, 100, 150].map((n2) => `<button class="drw-pill" data-mult="${n2}">× ${n2}</button>`).join("")}
+    </div>
+    <p style="margin:12px 0 0;font-size:13.5px">Quedaría a <b id="corPrecio" class="tnum">—</b> cada una.</p>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;cursor:pointer">
+      <input type="checkbox" id="corTodas" checked style="width:auto;margin-top:2px">
+      <span>Aplicar la misma corrección a las demás compras de este producto a este proveedor.
+        <span class="mut">El mismo proveedor lo factura igual todos los meses: arreglar una y dejar treinta mal sería trabajo tirado.</span></span>
+    </label>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="corOk">Guardar</button></div>`);
+
+  const inp = ov.querySelector("#corCant");
+  const pinta = () => {
+    const c = Number(inp.value);
+    ov.querySelector("#corPrecio").textContent = (c > 0 && importe) ? eur2(importe / c) : "—";
+  };
+  inp.addEventListener("input", pinta); pinta();
+  ov.addEventListener("click", (e) => {
+    const m = e.target.closest("[data-mult]");
+    if (m) {
+      inp.value = String(Math.round(cant0 * Number(m.getAttribute("data-mult")) * 1000) / 1000);
+      // Al deshacer el paquete, la unidad de la factura («PACK») deja de valer: ya no son 3
+      // packs sino 450 unidades, y dejar «450 PACK» sería peor que no poner nada.
+      const u = ov.querySelector("#corUni");
+      if (!u.value || /pack|caja|bulto|palet|fardo/i.test(u.value)) u.value = "ud";
+      pinta();
+    }
+  });
+  ov.querySelector("#corOk").addEventListener("click", async () => {
+    const cantidad = Number(inp.value);
+    if (!(cantidad > 0)) return toast("La cantidad tiene que ser mayor que cero");
+    try {
+      const r = await apiSend("PATCH", "/api/facturas/lineas/" + id, {
+        cantidad, unidad: ov.querySelector("#corUni").value.trim(),
+        aplicar_a_todas: ov.querySelector("#corTodas").checked,
+      });
+      ov.remove();
+      toast(`Corregido a ${eur2(r.precio_unitario)} por unidad${r.tambien ? ` · y ${r.tambien} compra(s) más` : ""} ✅`);
+      alGuardar?.();
+    } catch (e2) { if (e2.message !== "noauth") toast("Error: " + e2.message); }
   });
 }
 
 let _compTimer = null;
 function comprasDebounced() { clearTimeout(_compTimer); _compTimer = setTimeout(refrescarCompras, 280); }
+
+/**
+ * Cuántas líneas tienen la cantidad en paquetes. Se pide aparte y sin bloquear: es una cuenta
+ * sobre todas las líneas y no vale la pena hacer esperar a la tabla por ella.
+ */
+let COMP_PAQUETES = 0;
+async function comprasPaquetes() {
+  try { COMP_PAQUETES = (await apiRaw("/api/facturas/lineas/paquetes")).n || 0; } catch { COMP_PAQUETES = 0; }
+  if (COMP_PAQUETES && CURRENT === "productos") refrescarCompras();
+}
+
+async function comprasRecuadrar() {
+  const ok = await confirmModal(
+    `Se van a recuadrar ${COMP_PAQUETES} línea(s): la cantidad pasa a estar en unidades sueltas y el precio, a ser el de cada unidad. ` +
+    `El importe pagado NO se toca, así que las facturas siguen cuadrando igual. No se vuelve a leer ningún documento.`,
+    { ok: "Recuadrar" });
+  if (!ok) return;
+  try {
+    const r = await apiSend("POST", "/api/facturas/lineas/recuadrar");
+    COMP_PAQUETES = 0;
+    toast(`${r.arregladas} línea(s) recuadradas ✅`);
+    loadProductos();
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
 
 async function refrescarCompras() {
   const cont = document.getElementById("compRes");
@@ -6536,6 +6637,12 @@ async function refrescarCompras() {
     chips.push(chip(`<b>${num(c.sinLeer)}</b> sin leer`, "warn",
       "Son de antes de que se leyeran las líneas, así que no cuentan en estos totales. Pulsa para leerlas.",
       'data-comp="releer"'));
+  }
+  // Las líneas cuya cantidad venía en paquetes: se arreglan con aritmética, sin releer nada.
+  if (COMP_PAQUETES) {
+    chips.push(chip(`<b>${num(COMP_PAQUETES)}</b> con la cantidad en paquetes`, "warn",
+      "La factura contaba paquetes y cobraba por unidad, así que el precio por unidad que sale no es el que se paga. Se arregla con la propia factura, sin volver a leerla. Pulsa para recuadrarlas.",
+      'data-comp="recuadrar"'));
   }
   if (c.noLeibles) chips.push(chip(`<b>${num(c.noLeibles)}</b> ilegibles`, "", "No se pudieron leer, normalmente porque ya no está el archivo. No cuentan en estos totales."));
   if (c.noAplica) chips.push(chip(`<b>${num(c.noAplica)}</b> de gasto estructural`, "", "Alquiler, luz, gestor…: su detalle no se lee a propósito, porque esas líneas no son productos. El gasto sí cuenta."));

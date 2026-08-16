@@ -641,7 +641,10 @@ async function initDB() {
     // Descuento por línea. Muchas facturas traen «IMPORTE» (bruto) y «TOTAL» (lo que se paga):
     // guardando solo el bruto, «Qué compramos» decía un precio que nadie paga y el seguimiento
     // de subidas comparaba tarifas en vez de lo pagado.
-    for (const col of ["precio_bruto NUMERIC", "importe_bruto NUMERIC", "descuento_pct NUMERIC"]) {
+    // `factor_unidad`: cuántas unidades traía cada paquete cuando la factura da la cantidad en
+    // packs y el precio por unidad. Se guarda para poder explicar de dónde sale la cantidad
+    // («3 PACK × 150») y para que se vea que ahí ha pasado algo.
+    for (const col of ["precio_bruto NUMERIC", "importe_bruto NUMERIC", "descuento_pct NUMERIC", "factor_unidad NUMERIC"]) {
       try { await client.query(`ALTER TABLE factura_lineas ADD COLUMN IF NOT EXISTS ${col}`); }
       catch (e) { console.error("[DB] alter factura_lineas " + col + ":", e.message); }
     }
@@ -3960,9 +3963,10 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || ""))) { cond.push("f.fecha <= ?"); par.push(req.query.to); }
 
     const compras = await dbAll(
-      `SELECT l.descripcion, l.cantidad::float AS cantidad, l.unidad,
+      `SELECT l.id AS linea_id, l.descripcion, l.cantidad::float AS cantidad, l.unidad,
               l.precio_unitario::float AS precio_unitario, l.importe::float AS importe, l.dudosa,
               l.precio_bruto::float AS precio_bruto, l.descuento_pct::float AS descuento_pct,
+              l.factor_unidad::float AS factor_unidad,
               f.id AS factura_id, f.fecha, f.proveedor, f.local, f.numero_factura, f.drive_url
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
         WHERE ${cond.join(" AND ")}
@@ -4619,6 +4623,117 @@ app.get("/api/facturas/lineas/pendientes", requireAuth(["direccion", "contabilid
       enCurso: _releyendo,
     });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo comprobar" }); }
+});
+
+/**
+ * RECUADRAR las líneas ya guardadas cuya cantidad venía en paquetes.
+ *
+ * El caso: «UDS. PACK 3 · P. UNIDAD 0,52 · IMPORTE 234 € · TOTAL 121,49 €». La cantidad
+ * quedó en 3 y el precio en 40,50 € «por unidad», cuando lo que se paga son 0,27 € por
+ * cápsula. Aquí NO se vuelve a leer ningún PDF ni se llama al modelo: la propia línea guardada
+ * ya lo dice dos veces, y esto es aritmética sobre lo que hay.
+ *
+ * EL IMPORTE NO SE TOCA. Cambia cómo se reparte, nunca cuánto se pagó: por eso la suma con la
+ * base imponible de cada factura sigue cuadrando igual y no hay nada que revisar después.
+ */
+const SQL_RECUADRE = `
+  WITH cand AS (
+    SELECT id, cantidad, precio_bruto, importe,
+           (COALESCE(importe_bruto, importe) / precio_bruto / cantidad) AS f
+      FROM factura_lineas
+     WHERE cantidad > 0 AND precio_bruto > 0 AND COALESCE(importe_bruto, importe) IS NOT NULL
+       AND abs(cantidad * precio_bruto - COALESCE(importe_bruto, importe)) > 0.02)`;
+
+app.get("/api/facturas/lineas/paquetes", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const r = await dbGet(`${SQL_RECUADRE}
+      SELECT count(*)::int AS n FROM cand WHERE f >= 2 AND abs(f - round(f)) < 0.01`);
+    res.json({ ok: true, n: r?.n || 0 });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo comprobar", n: 0 }); }
+});
+
+app.post("/api/facturas/lineas/recuadrar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const antes = await dbGet(`${SQL_RECUADRE}
+      SELECT count(*)::int AS n FROM cand WHERE f >= 2 AND abs(f - round(f)) < 0.01`);
+    await dbRun(`${SQL_RECUADRE}
+      UPDATE factura_lineas l
+         SET cantidad = c.cantidad * round(c.f),
+             factor_unidad = round(c.f),
+             -- La unidad de la factura («PACK») deja de valer: eran 3 packs, ahora son 450
+             -- unidades, y «450 PACK» sería peor que no decir nada.
+             unidad = 'ud',
+             precio_unitario = round(l.importe / (c.cantidad * round(c.f)), 2)
+        FROM cand c
+       WHERE l.id = c.id AND c.f >= 2 AND abs(c.f - round(c.f)) < 0.01`);
+    res.json({ ok: true, arregladas: antes?.n || 0 });
+  } catch (e) {
+    console.error("[facturas] recuadrar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron recuadrar" });
+  }
+});
+
+/**
+ * CORREGIR A MANO LA LECTURA DE UNA LÍNEA.
+ *
+ * El recuadre automático de arriba resuelve el caso en que la factura dice la verdad dos veces
+ * (precio por unidad e importe). Pero hay facturas que solo ponen «3 PACK · 121,49 €» y no
+ * dicen cuántas cápsulas trae el pack: eso no está escrito en ninguna parte y solo lo sabe
+ * quien abre la caja. Para esas, esto.
+ *
+ * DOS REGLAS:
+ * 1. El IMPORTE no se toca nunca. Es lo que se pagó y está en el papel: lo que se corrige es
+ *    en cuántas unidades se reparte, no cuánto costó. Así la factura sigue cuadrando.
+ * 2. Corregir una vale para las demás iguales, si se pide. El mismo proveedor factura el mismo
+ *    producto igual todos los meses: arreglar una y dejar treinta mal sería trabajo tirado.
+ */
+app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const cantidad = Number(req.body?.cantidad);
+    if (!Number.isInteger(id) || !Number.isFinite(cantidad) || cantidad <= 0) {
+      return res.status(400).json({ ok: false, error: "La cantidad tiene que ser un número mayor que cero" });
+    }
+    const unidad = String(req.body?.unidad || "").trim().slice(0, 20) || null;
+    const l = await dbGet(
+      `SELECT l.id, l.cantidad::float AS cantidad, l.importe::float AS importe, l.clave, f.proveedor, f.local
+         FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id WHERE l.id = ?`, [id]);
+    if (!l) return res.status(404).json({ ok: false, error: "Esa línea ya no existe" });
+    if (!puedeAccederLocal(req, l.local)) return res.status(403).json({ ok: false, error: "No puedes tocar ese establecimiento" });
+
+    const precio = l.importe != null ? Math.round((l.importe / cantidad) * 100) / 100 : null;
+    const factor = l.cantidad ? cantidad / l.cantidad : null;
+    await dbRun(
+      `UPDATE factura_lineas SET cantidad = ?, unidad = ?, precio_unitario = ?,
+              factor_unidad = ?, dudosa = FALSE WHERE id = ?`,
+      [cantidad, unidad, precio, factor && factor > 1 && Number.isInteger(factor) ? factor : null, id]);
+
+    // Las demás compras del MISMO producto al MISMO proveedor, con el mismo factor. Se guarda
+    // el factor y no la cantidad: si un mes pidieron 5 packs y otro 8, la cantidad buena es
+    // distinta pero el tamaño del paquete es el mismo.
+    let tambien = 0;
+    if (req.body?.aplicar_a_todas && factor && factor !== 1 && l.clave) {
+      const otras = await dbAll(
+        `SELECT l.id FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
+          WHERE l.clave = ? AND f.proveedor = ? AND l.id <> ? AND l.cantidad > 0 AND l.importe IS NOT NULL`,
+        [l.clave, l.proveedor, id]);
+      for (const o of otras) {
+        await dbRun(
+          `UPDATE factura_lineas
+              SET cantidad = round(cantidad * ?, 3),
+                  unidad = ?,
+                  precio_unitario = round(importe / (cantidad * ?), 2),
+                  factor_unidad = ?
+            WHERE id = ?`,
+          [factor, unidad, factor, Number.isInteger(factor) && factor > 1 ? factor : null, o.id]);
+      }
+      tambien = otras.length;
+    }
+    res.json({ ok: true, cantidad, unidad, precio_unitario: precio, tambien });
+  } catch (e) {
+    console.error("[facturas] corregir línea:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo corregir" });
+  }
 });
 
 app.post("/api/facturas/lineas/releer", requireAuth(["direccion", "contabilidad"]), async (req, res) => {

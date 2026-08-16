@@ -401,3 +401,119 @@ describe("el histórico de un producto ya unificado", () => {
     assert.match(fn, /cond\.push\("f\.fecha <= \?"\)/);
   });
 });
+
+describe("cuando la cantidad viene en paquetes y el precio por unidad", () => {
+  // El caso real de Tupinamba, con la factura delante:
+  //   UDS. PACK 3 · UDS. TOTALES 450 · P. UNIDAD 0,52 · IMPORTE 234,00 · DTO 48,08 · TOTAL 121,49
+  const CAPSULAS = { descripcion: "CAPSULAS TUPISPRESSO SOFT 150 UDS", cantidad: 3, unidad: "PACK",
+    precio_unitario: 0.52, importe: 234, descuento_pct: 48.08, importe_neto: 121.49 };
+
+  test("se deshace el paquete y el precio pasa a ser el de verdad", () => {
+    const l = normalizarLinea(CAPSULAS);
+    assert.equal(l.cantidad, 450, "3 packs de 150 son 450 cápsulas");
+    assert.equal(l.precio_unitario, 0.27, "121,49 € entre 450 cápsulas");
+    assert.equal(l.factor_unidad, 150);
+    assert.equal(l.unidad, "ud", "«450 PACK» sería peor que no decir nada");
+  });
+
+  test("el importe NO se toca: es lo que se pagó", () => {
+    // Lo único que cambia es cómo se reparte, nunca cuánto.
+    assert.equal(normalizarLinea(CAPSULAS).importe, 121.49);
+  });
+
+  test("y la línea no se marca dudosa: la aritmética es exacta, no una suposición", () => {
+    assert.equal(normalizarLinea(CAPSULAS).dudosa, false);
+  });
+
+  test("no se toca nada si el factor no es un número entero de unidades", () => {
+    // Precio por kilo con la cantidad en piezas, por ejemplo: ahí no sabemos qué pasa, y
+    // corregir a ciegas es peor que no corregir.
+    const l = normalizarLinea({ descripcion: "Jamón", cantidad: 2, precio_unitario: 10, importe: 47 });
+    assert.equal(l.cantidad, 2);
+    assert.equal(l.factor_unidad, null);
+  });
+
+  test("ni cuando cantidad × precio ya cuadra con el importe", () => {
+    const l = normalizarLinea({ descripcion: "Coca-Cola", cantidad: 24, precio_unitario: 0.62, importe: 14.88 });
+    assert.equal(l.cantidad, 24);
+    assert.equal(l.factor_unidad, null);
+    assert.equal(l.precio_unitario, 0.62);
+  });
+
+  test("ni con un factor de 1: eso no es un paquete, es un redondeo", () => {
+    const l = normalizarLinea({ descripcion: "Café", cantidad: 10, precio_unitario: 3.33, importe: 33.31 });
+    assert.equal(l.cantidad, 10);
+    assert.equal(l.factor_unidad, null);
+  });
+
+  test("y la suma con la base imponible sigue cuadrando igual", () => {
+    // Es la salvaguarda de todo el módulo: si tocar la cantidad descuadrara la factura, el
+    // arreglo sería peor que el fallo.
+    const ls = normalizarLineas([CAPSULAS, { descripcion: "Azúcar", cantidad: 1, precio_unitario: 44.72, importe: 44.72, descuento_pct: 50.07, importe_neto: 22.33 }]);
+    assert.equal(validarSuma(ls, 143.82).cuadra, true);
+  });
+});
+
+describe("corregir a mano la lectura de una compra", () => {
+  const server = fs.readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  const panel = fs.readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+  const i = server.indexOf('app.patch("/api/facturas/lineas/:id"');
+  const fn = server.slice(i, server.indexOf("\n});\n", i));
+
+  test("el endpoint existe y NO deja tocar el importe", () => {
+    // Es lo que se pagó y está en el papel: lo que se corrige es entre cuántas unidades se
+    // reparte. Si se pudiera cambiar, la factura dejaría de cuadrar con sus líneas.
+    assert.ok(i > 0, "falta el endpoint de corregir línea");
+    assert.doesNotMatch(fn, /SET[^`]*importe = \?/);
+    assert.match(fn, /precio_unitario = \?/);
+  });
+
+  test("el precio sale del importe entre la cantidad nueva", () => {
+    assert.match(fn, /Math\.round\(\(l\.importe \/ cantidad\) \* 100\) \/ 100/);
+  });
+
+  test("y solo en los establecimientos que esa persona puede tocar", () => {
+    assert.match(fn, /puedeAccederLocal\(req, l\.local\)/);
+  });
+
+  test("aplicar a las demás guarda el FACTOR, no la cantidad", () => {
+    // Un mes se piden 5 packs y otro 8: la cantidad buena es distinta, el tamaño del paquete
+    // es el mismo.
+    assert.match(fn, /cantidad = round\(cantidad \* \?, 3\)/);
+    assert.match(fn, /l\.clave = \? AND f\.proveedor = \?/);
+  });
+
+  test("en pantalla se ve el precio que quedaría mientras se escribe", () => {
+    // «0,27 €» se reconoce; «40,50 €» no. Es el número que dice si la corrección es la buena.
+    assert.match(panel, /Quedaría a <b id="corPrecio"/);
+    assert.match(panel, /inp\.addEventListener\("input", pinta\)/);
+  });
+
+  test("y al deshacer el paquete la unidad deja de ser «PACK»", () => {
+    assert.match(panel, /\/pack\|caja\|bulto\|palet\|fardo\/i\.test\(u\.value\)/);
+  });
+});
+
+describe("recuadrar hacia atrás lo ya guardado", () => {
+  const server = fs.readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+
+  test("no vuelve a leer ningún PDF: es aritmética sobre lo que hay", () => {
+    const i = server.indexOf('app.post("/api/facturas/lineas/recuadrar"');
+    assert.ok(i > 0, "falta el endpoint de recuadrar");
+    const fn = server.slice(i, server.indexOf("\n});\n", i));
+    assert.doesNotMatch(fn, /leerFactura|anthropic|drive_url/i);
+    assert.match(fn, /UPDATE factura_lineas/);
+  });
+
+  test("solo toca las líneas donde el factor es un número entero de al menos 2", () => {
+    // Un factor con decimales es otra cosa (precio por kilo con cantidad en piezas) y ahí
+    // corregir a ciegas es peor que no corregir.
+    assert.match(server, /WHERE l\.id = c\.id AND c\.f >= 2 AND abs\(c\.f - round\(c\.f\)\) < 0\.01/);
+  });
+
+  test("y el importe se queda como estaba", () => {
+    const i = server.indexOf("const SQL_RECUADRE");
+    const fn = server.slice(i, server.indexOf('app.post("/api/facturas/lineas/releer"'));
+    assert.doesNotMatch(fn, /SET[\s\S]{0,200}importe =/);
+  });
+});
