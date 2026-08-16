@@ -64,3 +64,22 @@ describe("cableado", () => {
     assert.match(mappers, /comensales: 0,\s*\/\/ el informe global no trae comensales/);
   });
 });
+
+describe("los dos botones hacen cosas distintas y los dos existen", () => {
+  const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+
+  test("«Buscar informes en su web» está pintado, no solo programado", () => {
+    // Estuvo meses sin pintarse: la función existía, el despachador la conocía, y ningún
+    // botón la ofrecía. Es la diferencia entre construir algo y enchufarlo.
+    assert.match(panel, /data-act="ag-descubrir"/);
+    assert.match(panel, /async function agoraDescubrir\(local\)/);
+    assert.match(panel, /act === "ag-descubrir"/);
+  });
+
+  test("y no se confunde con el sondeo, que pregunta por nombres que suponemos", () => {
+    // «Informes disponibles» prueba una lista de candidatos: si el nombre no se nos ocurrió,
+    // no sale. «Buscar informes en su web» lee los que ese Ágora usa de verdad.
+    assert.match(panel, /data-act="ag-metodos"/);
+    assert.match(panel, /lista REAL de informes que tiene, sin adivinar nombres/);
+  });
+});

@@ -6640,6 +6640,8 @@ function renderAgoraRow(local, i) {
       <span class="grow"></span>
       <button class="btn" data-act="ag-probe" data-local="${esc(local)}" ${c ? "" : "disabled"}>Probar conexión</button>
       <button class="btn" data-act="ag-metodos" data-local="${esc(local)}" ${c ? "" : "disabled"} title="Pregunta al TPV qué informes entiende su versión de Ágora">Informes disponibles</button>
+      <button class="btn" data-act="ag-descubrir" data-local="${esc(local)}" ${c ? "" : "disabled"}
+        title="Lee la web de administración de este TPV y saca la lista REAL de informes que tiene, sin adivinar nombres">Buscar informes en su web</button>
       <button class="btn" data-act="ag-diag" data-local="${esc(local)}" ${c && c.tokenSet ? "" : "disabled"}>Diagnóstico API</button>
       <button class="btn primary" data-act="ag-save" data-local="${esc(local)}" data-i="${i}">Guardar</button>
       ${c ? `<button class="btn sm danger" data-act="ag-del" data-local="${esc(local)}">Eliminar</button>` : ""}
