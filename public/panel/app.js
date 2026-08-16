@@ -7980,7 +7980,9 @@ function describirAudiencia(f = {}) {
   const p = [];
   if (f.local) p.push(`Local: ${f.local}`);
   if (f.poblacion) p.push(`Pobl.: ${f.poblacion}`);
-  if (f.genero) p.push(f.genero === "M" ? "Hombres" : f.genero === "F" ? "Mujeres" : `Género ${f.genero}`);
+  // «M»/«F» son de las campañas viejas, cuando el formulario mandaba una cosa y la base
+  // guardaba otra: siguen apareciendo en los segmentos ya guardados.
+  if (f.genero) p.push(["M", "hombre"].includes(f.genero) ? "Hombres" : ["F", "mujer"].includes(f.genero) ? "Mujeres" : `Género ${f.genero}`);
   if (f.idioma) p.push(`Idioma: ${f.idioma}`);
   if (f.origen) p.push(`Origen: ${f.origen}`);
   if (f.con_email) p.push("Con email");
@@ -8005,7 +8007,18 @@ function renderCampanas() {
     const acc = `<button class="linkbtn" style="color:var(--brand)" data-act="camp-detalle" data-id="${c.id}">Detalle</button>${editable ? ` · <button class="linkbtn" style="color:var(--brand)" data-act="camp-editar" data-id="${c.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="camp-enviar" data-id="${c.id}">Enviar</button>` : ""} · <button class="linkbtn" style="color:var(--brand)" data-act="camp-dup" data-id="${c.id}">Duplicar</button> · <button class="linkbtn" style="color:var(--danger)" data-act="camp-del" data-id="${c.id}">Eliminar</button>`;
     return `<tr><td>${esc(c.nombre)}${c.canal === "email" ? " 📧" : ""}${c.adjunto_url ? " 📎" : ""}</td><td class="mut">${esc(seg || "—")}</td><td><span class="pill ${CAMP_EST[est] || ""}">${cap(est)}</span>${(est === "programada" && c.programada_para) ? `<div class="t2">${esc(String(c.programada_para).slice(0, 16).replace("T", " "))}</div>` : ""}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td class="r" style="white-space:nowrap">${acc}</td></tr>`;
   }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay campañas.</div></div>`;
-  return `${head}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div><div id="campFaltan"></div>`;
+  // La caja de escribir va ARRIBA DEL TODO: es por donde se empieza. Debajo queda lo de
+  // siempre, que sigue estando para quien prefiera montarla a mano.
+  const redactar = `<div class="card" style="margin-bottom:16px">
+    <div class="ch"><h3>Cuéntame la campaña</h3><span class="mut" style="font-size:12px">La preparo y la revisas antes de enviar</span></div>
+    <div class="field"><textarea id="campTexto" rows="2"
+      placeholder="p. ej. felicitar y regalar un café a los que cumplen años esta semana"></textarea></div>
+    <div class="toolbar" style="padding:0;margin-top:10px">
+      <button class="btn primary" data-act="camp-redactar">Preparar campaña</button>
+      <span class="mut" style="font-size:12px;align-self:center">No se envía nada: sale una propuesta.</span>
+    </div>
+    <div id="campProp"></div></div>`;
+  return `${head}${redactar}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div><div id="campFaltan"></div>`;
 }
 
 /**
@@ -8036,6 +8049,62 @@ async function campFaltan() {
     <div class="rows">${filas.map(fila).join("")}</div>
   </details>`;
 }
+/**
+ * LA PROPUESTA. Se pide al servidor, que es quien decide qué filtros son de verdad y quien
+ * CUENTA la gente con la misma consulta que usará al enviar: el número que se lee aquí es el
+ * número que va a salir, no uno que ha dicho un modelo.
+ */
+let CAMP_PROP = null;
+async function campRedactar() {
+  const texto = (document.getElementById("campTexto")?.value || "").trim();
+  if (!texto) return toast("Escribe qué campaña quieres");
+  const caja = document.getElementById("campProp");
+  caja.innerHTML = `<p class="mut" style="margin:14px 0 0">Preparándola…</p>`;
+  try {
+    CAMP_PROP = await apiRaw("/api/campanas/redactar", { method: "POST", body: { texto } });
+  } catch (e) {
+    CAMP_PROP = null;
+    caja.innerHTML = `<p class="fic-nota" style="margin:14px 0 0">${esc(e.message || "No se pudo preparar")}</p>`;
+    return;
+  }
+  const p = CAMP_PROP;
+  // Lo que no se ha podido traducir va PRIMERO y en rojo: si Laura pide «españoles» y no
+  // decimos que eso no lo tenemos, se queda creyendo que ha filtrado por nacionalidad.
+  const noTrad = (p.noTraducido || []).length
+    ? `<p class="fic-nota" style="margin:0 0 12px"><b>No he podido filtrar por esto:</b>
+       ${p.noTraducido.map((x) => esc(x)).join(" · ")}. Queda apuntado en la lista del final para más adelante.</p>`
+    : "";
+  const muchos = p.enviables > 500
+    ? `<p class="fic-nota" style="margin:0 0 12px"><b>Son muchos.</b> Vas a escribir a ${num(p.enviables)} personas de golpe: repásalo dos veces.</p>` : "";
+  caja.innerHTML = `<div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+    ${noTrad}${muchos}
+    <div class="fic-g"><span class="fic-gt">A quién</span>
+      <p style="margin:0 0 6px;line-height:1.5">${esc(p.descripcion)}</p>
+      <p class="mut" style="margin:0;font-size:12.5px"><b class="tnum">${num(p.enviables)}</b> personas recibirán el mensaje
+        · ${num(p.total)} encontradas${p.total - p.enviables > 0 ? ` · ${num(p.total - p.enviables)} fuera (baja, sin WhatsApp o sin consentimiento)` : ""}</p>
+      ${p.explicacion ? `<p class="mut" style="margin:6px 0 0;font-size:12.5px">${esc(p.explicacion)}</p>` : ""}
+    </div>
+    <div class="fic-g"><span class="fic-gt">Mensaje</span>
+      <div class="field"><textarea id="campPropMsg" rows="4">${esc(p.mensaje)}</textarea></div>
+      <p class="mut" style="margin:6px 0 0;font-size:12px">Léelo entero antes de seguir: a ${num(p.enviables)} personas no se le puede dar a deshacer.</p>
+    </div>
+    <div class="toolbar" style="padding:0">
+      <button class="btn primary" data-act="camp-usar-propuesta">Continuar y revisar el envío</button>
+      <button class="btn" data-act="camp-redactar">Volver a intentarlo</button>
+    </div></div>`;
+}
+
+/**
+ * De la propuesta al formulario de siempre. NO se envía desde aquí: se abre la pantalla de
+ * enviar con todo puesto, que es donde están las comprobaciones y el botón de verdad.
+ */
+function campUsarPropuesta() {
+  if (!CAMP_PROP) return;
+  const msg = (document.getElementById("campPropMsg")?.value || "").trim();
+  if (!msg) return toast("El mensaje no puede quedar vacío");
+  openNuevaCampana({ nombre: CAMP_PROP.nombre, mensaje: msg, seg: CAMP_PROP.segmento });
+}
+
 async function loadCampanas() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
@@ -8051,7 +8120,7 @@ async function loadCampanas() {
     campFaltan();                      // no se espera: es una libreta, no un dato de la pantalla
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
-function openNuevaCampana() { openCampana("nueva"); }
+function openNuevaCampana(pre = {}) { openCampana("nueva", pre); }
 
 // Elegir plantilla. Se enseña CUÁNDO usarla junto al texto: el texto lo cambia cualquiera
 // en diez segundos, saber cuándo tiene sentido mandarlo es lo que de verdad ahorra tiempo.
@@ -8103,7 +8172,7 @@ function openCampana(mode = "nueva", pre = {}) {
       <textarea name="mensaje" id="campMsg" rows="3" required placeholder="Hola {nombre}! Este finde…">${esc(pre.mensaje || "")}</textarea></div>
     <div class="field full"><label>Vista previa (así lo recibe el cliente)</label><div style="background:var(--surface2);border-radius:12px;padding:12px;display:flex;justify-content:flex-end"><div id="campBubble" style="background:var(--brand);color:var(--brand-ink);border-radius:12px;border-bottom-right-radius:5px;padding:9px 12px;max-width:85%;font-size:13.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word"></div></div></div>
     <div class="field full"><label>Audiencia</label><div style="display:flex;gap:8px;flex-wrap:wrap"><select id="campAud" style="flex:1;min-width:180px">${audOpts}</select><button type="button" class="btn sm" id="campAudSave">💾 Guardar audiencia</button></div></div>
-    <div class="field"><label>Género</label><select name="genero"><option value="">Todos</option><option value="M" ${s.genero === "M" ? "selected" : ""}>Hombre</option><option value="F" ${s.genero === "F" ? "selected" : ""}>Mujer</option></select></div>
+    <div class="field"><label>Género</label><select name="genero"><option value="">Todos</option><option value="hombre" ${["hombre", "M"].includes(s.genero) ? "selected" : ""}>Hombre</option><option value="mujer" ${["mujer", "F"].includes(s.genero) ? "selected" : ""}>Mujer</option></select></div>
     <div class="field"><label>Población</label><input name="poblacion" value="${val("poblacion")}"></div>
     <div class="field"><label>Local</label><select name="local">${localOpts}</select></div>
     <div class="field"><label>Idioma del cliente</label><select name="idioma">${idiomaOpts}</select></div>
@@ -8759,6 +8828,8 @@ document.addEventListener("click", (e) => {
   else if (act === "anal-refresh") loadAnalInforme(true);
   else if (act === "anal-csv") analCsv();
   else if (act === "camp-nueva") openNuevaCampana();
+  else if (act === "camp-redactar") campRedactar();
+  else if (act === "camp-usar-propuesta") campUsarPropuesta();
   else if (act === "camp-detectar-idiomas") campDetectarIdiomas();
   else if (act === "camp-detalle") campDetalle(t.getAttribute("data-id"));
   else if (act === "camp-editar") campEditar(t.getAttribute("data-id"));

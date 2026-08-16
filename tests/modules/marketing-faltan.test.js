@@ -3,6 +3,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { claveFalta, ordenarFaltas } from "../../src/modules/marketing/faltan.js";
+import { sanearSegmento, describirSegmento } from "../../src/modules/marketing/segmento.js";
 
 describe("agrupar peticiones que son la misma", () => {
   test("da igual cómo se escriba: «con hijos» es una sola línea", () => {
@@ -92,5 +93,82 @@ describe("los filtros nuevos de segmentación", () => {
     // no se nota hasta que ya ha salido.
     assert.match(server, /reservo_from: req\.body\.reservo_from, reservo_to: req\.body\.reservo_to,/);
     assert.match(server, /edad_min: req\.body\.edad_min, edad_max: req\.body\.edad_max, cumple_en_dias: req\.body\.cumple_en_dias,/);
+  });
+});
+
+describe("el segmento que propone el modelo se sanea antes de usarse", () => {
+  const LOC = ["La Tapeta - Blanes", "La Tapeta - Girona", "Oficina"];
+
+  test("lo que no está en la lista de filtros, no entra", () => {
+    // Un filtro inventado que se guardara haría una campaña que dice filtrar por algo y no
+    // filtra por nada — y eso solo se descubre cuando ya ha salido.
+    const { segmento, descartados } = sanearSegmento({ genero: "mujer", tiene_hijos: true, nacionalidad: "española" }, { locales: LOC });
+    assert.deepEqual(segmento, { genero: "mujer" });
+    assert.equal(descartados.length, 2);
+    assert.match(descartados[0].motivo, /no existe/);
+  });
+
+  test("ni un valor inventado en un campo que sí existe", () => {
+    const { segmento, descartados } = sanearSegmento({ genero: "no binario", origen: "cualquiera" }, { locales: LOC });
+    assert.deepEqual(segmento, {});
+    assert.equal(descartados.length, 2);
+  });
+
+  test("el local tiene que ser uno de verdad, aunque se diga a medias", () => {
+    // «Blanes» a secas sí vale —se reconoce—; «Barcelona» no, y no puede colarse como si
+    // filtrara por un local.
+    assert.equal(sanearSegmento({ local: "blanes" }, { locales: LOC }).segmento.local, "La Tapeta - Blanes");
+    assert.equal(sanearSegmento({ local: "Barcelona" }, { locales: LOC }).segmento.local, undefined);
+  });
+
+  test("las fechas tienen que ser fechas", () => {
+    assert.equal(sanearSegmento({ reservo_from: "el mes pasado" }, { locales: LOC }).segmento.reservo_from, undefined);
+    assert.equal(sanearSegmento({ reservo_from: "2026-07-01" }, { locales: LOC }).segmento.reservo_from, "2026-07-01");
+  });
+
+  test("una edad al revés se endereza y se dice", () => {
+    // «De 50 a 35» devuelve cero personas y se lee como «no hay nadie de esa edad».
+    const { segmento, descartados } = sanearSegmento({ edad_min: 50, edad_max: 35 }, { locales: LOC });
+    assert.equal(segmento.edad_min, 35);
+    assert.equal(segmento.edad_max, 50);
+    assert.match(descartados[0].motivo, /se han cambiado/);
+  });
+
+  test("y una edad imposible no pasa", () => {
+    assert.equal(sanearSegmento({ edad_min: 900 }, { locales: LOC }).segmento.edad_min, undefined);
+  });
+});
+
+describe("el segmento, en palabras", () => {
+  test("dice exactamente lo que filtra", () => {
+    assert.equal(
+      describirSegmento({ genero: "mujer", origen: "lead", edad_min: 35 }),
+      "Mujeres · con ficha completa (leads) · de 35 años o más");
+  });
+
+  test("y sin filtros lo dice claro, en vez de callar", () => {
+    // Un segmento vacío es «todo el mundo»: eso hay que leerlo antes de enviar, no después.
+    assert.equal(describirSegmento({}), "Todos los contactos, sin ningún filtro");
+  });
+
+  test("«cumplen hoy» no se confunde con «sin filtro de cumpleaños»", () => {
+    // `cumple_en_dias: 0` es falsy: con un `if` a secas desaparecería de la descripción.
+    assert.match(describirSegmento({ cumple_en_dias: 0 }), /cumplen años hoy/);
+  });
+
+  test("y se ve cuándo la campaña es para PEDIR un dato que falta", () => {
+    assert.match(describirSegmento({ sin_nacimiento: 1 }), /NO sabemos la fecha de nacimiento/);
+  });
+});
+
+describe("el género, que estaba roto", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+
+  test("se normaliza en la consulta, no solo en el formulario", () => {
+    // El formulario mandaba «M»/«F» y la base guarda «hombre»/«mujer»: filtrar por género no
+    // devolvía a NADIE, y cero destinatarios se lee como «no hay mujeres», no como «roto».
+    // Las campañas YA guardadas llevan «M» dentro de su segmento, así que arreglar solo la
+    // pantalla dejaría las programadas saliendo vacías.
+    assert.match(server, /\{ m: "hombre", h: "hombre", hombre: "hombre", f: "mujer", mujer: "mujer" \}/);
   });
 });

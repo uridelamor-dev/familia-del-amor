@@ -63,6 +63,7 @@ import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
 import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
 import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
 import { claveFalta, ordenarFaltas } from "./src/modules/marketing/faltan.js";
+import { sanearSegmento, describirSegmento } from "./src/modules/marketing/segmento.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
@@ -3545,7 +3546,17 @@ function sqlContactosUnificados(filtros = {}, params = []) {
     params.push(like, like, like, like);
   }
   if (poblacion) { sql += ` AND c.poblacion ILIKE ?`; params.push(`%${poblacion}%`); }
-  if (genero) { sql += ` AND c.genero = ?`; params.push(genero); }
+  if (genero) {
+    // EL FORMULARIO DE CAMPAÑAS MANDABA «M»/«F» Y EN LA BASE PONE «hombre»/«mujer», así que
+    // filtrar por género no devolvía a NADIE — y una campaña con cero destinatarios se lee
+    // como «no hay mujeres en la base», no como «el filtro está roto».
+    // Se normaliza aquí y no solo en el formulario porque las campañas ya guardadas llevan
+    // «M» dentro de su segmento: si solo se arreglara la pantalla, las programadas seguirían
+    // saliendo vacías.
+    const g = String(genero).trim().toLowerCase();
+    const norm = { m: "hombre", h: "hombre", hombre: "hombre", f: "mujer", mujer: "mujer" }[g] || g;
+    sql += ` AND c.genero = ?`; params.push(norm);
+  }
   // Cumpleaños de un mes. SIN convertir a fecha: `''::date` revienta la consulta entera con
   // un error de Postgres, y basta UN contacto con la fecha de nacimiento en blanco —que los
   // hay— para que la lista deje de cargar. Se compara el trozo del mes tal cual, y se aceptan
@@ -3601,6 +3612,13 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   }
   if (con_email) sql += ` AND c.correo IS NOT NULL AND c.correo <> ''`;
   if (con_telefono) sql += ` AND c.telefono IS NOT NULL AND c.telefono <> ''`;
+  // ── LOS QUE NOS FALTAN DATOS ──────────────────────────────────────────────
+  // No es un filtro de marketing al uso: es para poder PEDIR el dato. «Los leads sin fecha de
+  // nacimiento» es la lista a la que preguntar cuándo cumplen, y a partir de ahí se les puede
+  // felicitar. Sin esto, el hueco no se puede ni ver.
+  if (filtros.sin_nacimiento) sql += ` AND COALESCE(c.nacimiento, '') = ''`;
+  if (filtros.sin_email) sql += ` AND COALESCE(c.correo, '') = ''`;
+  if (filtros.sin_poblacion) sql += ` AND COALESCE(c.poblacion, '') = ''`;
   if (origen) { sql += ` AND c.origen = ?`; params.push(origen); }
   if (idioma) { sql += ` AND mp.idioma = ?`; params.push(idioma); }
   if (excluir_baja) sql += ` AND COALESCE(mp.baja, 0) = 0`;
@@ -10075,6 +10093,129 @@ app.delete("/api/plantillas/:id", requireAuth(["direccion", "marketing"]), async
  * La clave es el texto normalizado: pedir «gente con hijos» y «con hijos» tiene que sumar en
  * la misma línea, o la lista se convierte en cien peticiones de una vez cada una.
  */
+/**
+ * DE UNA FRASE A UNA CAMPAÑA.
+ *
+ * Laura escribe «quiero felicitar y regalar un café a los que cumplen años esta semana» y esto
+ * devuelve una PROPUESTA: a quién, cuánta gente es y qué mensaje. No envía nada.
+ *
+ * El reparto de trabajo es el que importa:
+ *   · el modelo TRADUCE la frase a filtros y redacta el mensaje;
+ *   · el servidor DECIDE qué filtros son de verdad (`sanearSegmento`) y CUENTA la gente con la
+ *     misma consulta que usará al enviar.
+ * Así el número que se lee antes de dar a enviar es el número de verdad, no uno que ha dicho
+ * un modelo — que es la diferencia entre una propuesta que se puede aprobar y una que no.
+ *
+ * Y lo que no se puede traducir se DICE y se APUNTA en la libreta: pedir «españoles» y recibir
+ * en silencio «idioma español» haría creer que se ha filtrado por nacionalidad.
+ */
+const CAMPANA_TOOL = {
+  name: "proponer_campana",
+  description: "Propone una campaña de WhatsApp a partir de lo que ha pedido la persona de marketing.",
+  input_schema: {
+    type: "object",
+    properties: {
+      nombre: { type: "string", description: "Nombre corto de la campaña, para la lista" },
+      mensaje: { type: "string", description: "El mensaje de WhatsApp, en español, tuteando, sin emojis de más y sin inventar ofertas ni precios que no se hayan pedido" },
+      segmento: {
+        type: "object",
+        description: "Solo estos campos. Lo que no se pueda expresar aquí NO se pone en ningún sitio: va en no_traducido.",
+        properties: {
+          genero: { type: "string", enum: ["hombre", "mujer"] },
+          poblacion: { type: "string" },
+          local: { type: "string", description: "Nombre EXACTO de un establecimiento de la lista" },
+          origen: { type: "string", enum: ["lead", "reserva"], description: "lead = tiene ficha con datos; reserva = solo ha reservado" },
+          idioma: { type: "string", enum: ["es", "ca", "en"] },
+          edad_min: { type: "integer" }, edad_max: { type: "integer" },
+          cumple_mes: { type: "string", description: "MM" },
+          cumple_en_dias: { type: "integer", description: "0 = hoy, 7 = esta semana" },
+          reservo_from: { type: "string", description: "AAAA-MM-DD" },
+          reservo_to: { type: "string", description: "AAAA-MM-DD" },
+          con_email: { type: "boolean" }, sin_email: { type: "boolean" },
+          sin_nacimiento: { type: "boolean", description: "No sabemos su fecha de nacimiento" },
+          sin_poblacion: { type: "boolean" },
+        },
+      },
+      no_traducido: {
+        type: "array", items: { type: "string" },
+        description: "Cada cosa que ha pedido y NO se puede expresar con los campos de arriba, con sus palabras. P. ej. «que sean españoles» (no guardamos nacionalidad) o «que tengan hijos».",
+      },
+      explicacion: { type: "string", description: "Una frase explicando por qué ese segmento" },
+    },
+    required: ["nombre", "mensaje", "segmento"],
+  },
+};
+
+app.post("/api/campanas/redactar", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const texto = String(req.body?.texto || "").trim().slice(0, 1000);
+    if (!texto) return res.status(400).json({ ok: false, error: "Cuéntame qué campaña quieres hacer" });
+    if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ ok: false, error: "La IA no está configurada" });
+    const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const hoy = hoyISO();
+    const sistema = `Eres quien prepara campañas de WhatsApp para Familia del Amor, un grupo de restauración de la Costa Brava.
+Hoy es ${hoy}. Los establecimientos, con su nombre EXACTO: ${INV_LOCALES.join(" | ")}.
+Traduce lo que te piden a los campos de la herramienta y redacta el mensaje.
+REGLAS QUE NO SE SALTAN:
+- Las fechas relativas las resuelves tú a fechas concretas: «el mes pasado» son del 1 al último día del mes anterior a hoy.
+- NO inventes ofertas, precios, descuentos ni horarios que no te hayan dicho. Si te piden «regalar un café», el café se regala; nada más.
+- Si algo de lo que piden NO se puede expresar con los campos disponibles, NO lo aproximes con otro campo parecido: ponlo en "no_traducido" con las palabras de quien lo pidió.
+- El mensaje: español, de tú, dos o tres frases, sin emojis de relleno y sin prometer nada que no se haya pedido. Si hace falta que la persona conteste algo, pídelo claro.`;
+
+    const resp = await ai.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1200,
+      system: sistema,
+      tools: [CAMPANA_TOOL],
+      tool_choice: { type: "tool", name: "proponer_campana" },
+      messages: [{ role: "user", content: texto }],
+    });
+    const uso = (resp.content || []).find((c) => c.type === "tool_use");
+    if (!uso) return res.status(502).json({ ok: false, error: "No he sabido convertir eso en una campaña. Prueba a decirlo de otra manera." });
+
+    const { segmento, descartados } = sanearSegmento(uso.input?.segmento || {}, { locales: INV_LOCALES });
+    // Nunca se escribe a quien se ha dado de baja, lo pida quien lo pida.
+    const seg = { ...segmento, excluir_baja: 1 };
+    const params = [];
+    const contactos = await dbAll(sqlContactosUnificados(seg, params), params);
+    const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: false });
+
+    // Lo que no se ha podido traducir va a la libreta: es la lista que dirá qué datos merece
+    // la pena empezar a pedir.
+    const noTraducido = [...(Array.isArray(uso.input?.no_traducido) ? uso.input.no_traducido : []),
+      ...descartados.map((d) => `${d.campo}: ${d.valor} (${d.motivo})`)];
+    for (const q of noTraducido.slice(0, 5)) {
+      const clave = claveFalta(q);
+      if (!clave) continue;
+      const ahora = isoConOffset(Date.now());
+      await dbRun(
+        `INSERT INTO marketing_faltan (clave, que_pidieron, contexto, veces, primera_vez, ultima_vez, quien)
+         VALUES (?, ?, ?, 1, ?, ?, ?)
+         ON CONFLICT (clave) DO UPDATE SET veces = marketing_faltan.veces + 1, ultima_vez = EXCLUDED.ultima_vez`,
+        [clave, String(q).slice(0, 200), texto.slice(0, 300), ahora, ahora, req.user?.nombre || req.user?.username || null]
+      ).catch(() => { /* la libreta nunca puede tumbar la propuesta */ });
+    }
+
+    res.json({
+      ok: true,
+      nombre: String(uso.input?.nombre || "Campaña").slice(0, 120),
+      mensaje: String(uso.input?.mensaje || "").slice(0, 1500),
+      explicacion: String(uso.input?.explicacion || "").slice(0, 400),
+      segmento,
+      descripcion: describirSegmento(segmento),
+      // Los números los da la consulta, no el modelo.
+      total: contactos.length,
+      enviables: aptos.length,
+      omitidos,
+      noTraducido,
+    });
+  } catch (e) {
+    console.error("[campanas] redactar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo preparar la propuesta" });
+  }
+});
+
 app.post("/api/marketing/faltan", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const que = String(req.body?.que || "").trim().slice(0, 200);
