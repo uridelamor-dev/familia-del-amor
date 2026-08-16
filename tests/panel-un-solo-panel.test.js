@@ -36,7 +36,14 @@ describe("una sola puerta para todos", () => {
 
   test("y arranca por una pantalla que ese rol pueda ver", () => {
     // A marketing el Dashboard le daría «Sin acceso» nada más entrar.
-    assert.match(panel, /const inicio = \[[^\]]*\]\.find\(\(v\) => puedeVer\(v\)\)/);
+    assert.match(panel, /\|\| \[[^\]]*\]\.find\(\(v\) => puedeVer\(v\)\)/);
+  });
+
+  test("salvo que la URL diga otra cosa, y a esa también se le mira el acceso", () => {
+    // La pantalla va en el «#» para poder recargar sin perder el sitio. Pero una URL escrita a
+    // mano no puede saltarse los permisos: se comprueba igual que en el menú.
+    assert.match(panel, /deUrl\.vista && puedeVer\(deUrl\.vista\)/);
+    assert.match(panel, /if \(!d\.vista \|\| !puedeVer\(d\.vista\)\) return;/);
   });
 
   test("las páginas viejas reenvían al panel en vez de servir la versión antigua", () => {

@@ -123,18 +123,69 @@ function misLocales() {
 }
 // Local FIJADO = no hay nada que elegir. Con varios ya no está fijado: se elige entre los suyos.
 function localFijadoFE() { const m = misLocales(); return m.length === 1 ? m[0] : null; }
-// Marca de «todos los míos», para quien tiene varios asignados.
-const MIS_LOCALES = "*mios*";
-const viendoTodosLosMios = () => DASH_LOCAL === MIS_LOCALES && misLocales().length > 1;
+/**
+ * EL ÁMBITO: qué establecimientos se están mirando.
+ *
+ * Tres estados, y `DASH_LOCAL` los distingue: el nombre de UN local, "" = todos, o la marca
+ * `VARIOS` = los que haya en `SELECCION` (dos, tres, los que sean).
+ *
+ * Antes solo había «uno» o «todos». «Todos» es cómodo para mirar y traicionero para tocar: se
+ * edita el producto de Blanes creyendo que es el de Lloret, porque en la lista salen los dos y
+ * se parecen. Poder elegir «Blanes y Lloret» es lo que hace que se pueda comparar sin dejar de
+ * saber en cuál se está.
+ */
+const VARIOS = "*varios*";
+// La lista completa entre la que se puede elegir: los suyos si tiene asignados, todos si no.
+function localesBase() { const m = misLocales(); return m.length ? m : LOCALES; }
+// Los establecimientos en juego cuando se ven varios a la vez. Se filtra siempre contra la
+// base: una selección guardada de hace meses puede nombrar un local que ya no le toca.
+function localesDelAmbito() {
+  const base = localesBase();
+  const sel = SELECCION.filter((l) => base.includes(l));
+  return sel.length ? sel : misLocales();
+}
+const viendoVarios = () => DASH_LOCAL === VARIOS && localesDelAmbito().length > 1;
+// Cómo se llama lo que se está mirando: «Blanes y Lloret», no «3 establecimientos». El nombre
+// de los sitios es lo que se reconoce de un vistazo; un número hay que ir a comprobarlo.
+function etiquetaAmbito() {
+  const n = localesDelAmbito().map(nombreCortoLocal);
+  if (n.length <= 1) return n[0] || "";
+  if (n.length <= 3) return n.slice(0, -1).join(", ") + " y " + n[n.length - 1];
+  return `${n.length} establecimientos`;
+}
 
-// El que se está mirando ahora. Con varios, el elegido o el primero suyo.
-// Con «todos los míos» devuelve "" (sin filtro) SOLO para pintar rótulos; las consultas no lo
-// usan: van una por local (ver `pidePorLocales`).
+// El que se está mirando ahora. Con varios devuelve "" (sin filtro) SOLO para pintar rótulos;
+// las consultas no lo usan: van una por local (ver `pidePorLocales`).
 function localActualFE() {
   const m = misLocales();
-  if (!m.length) return DASH_LOCAL === MIS_LOCALES ? "" : (DASH_LOCAL || "");
-  if (viendoTodosLosMios()) return "";
+  if (viendoVarios()) return "";
+  if (!m.length) return DASH_LOCAL === VARIOS ? "" : (DASH_LOCAL || "");
   return m.includes(DASH_LOCAL) ? DASH_LOCAL : m[0];
+}
+
+/**
+ * El ámbito se RECUERDA. Sin esto, cada recarga te devolvía a «todos los establecimientos»
+ * —justo el ámbito que no conviene tener puesto sin darte cuenta— y había que volver a elegir.
+ */
+function guardarAmbito() {
+  try { localStorage.setItem("panelAmbito", JSON.stringify({ local: DASH_LOCAL, locales: SELECCION })); } catch { /* sin sitio: se pierde, no se rompe */ }
+}
+function ambitoInicial() {
+  const base = localesBase();
+  try {
+    const g = JSON.parse(localStorage.getItem("panelAmbito") || "null");
+    if (g && g.local === VARIOS && Array.isArray(g.locales)) {
+      const buenos = g.locales.filter((l) => base.includes(l));
+      if (buenos.length > 1) return { local: VARIOS, locales: buenos };
+    }
+    if (g && base.includes(g.local)) return { local: g.local, locales: [] };
+    // «Todos» solo se recuerda a quien puede tenerlo: el que tiene locales asignados no lo tiene.
+    if (g && g.local === "" && !misLocales().length) return { local: "", locales: [] };
+  } catch { /* si está corrupto se empieza por el de siempre */ }
+  // Por defecto UNO, y el primero de la lista: La Tapeta - Blanes. Entrar en «todos» invita a
+  // tocar el local equivocado; entrar en uno obliga a cambiar a propósito, que es lo que se
+  // quiere.
+  return { local: base[0] || "", locales: [] };
 }
 
 /**
@@ -148,8 +199,8 @@ function localActualFE() {
  * `montaUrl(local)` devuelve la URL de UN local. Devuelve el array ya concatenado.
  */
 async function pidePorLocales(montaUrl, { raw = false } = {}) {
-  const locales = misLocales();
-  if (!viendoTodosLosMios() || locales.length < 2) {
+  const locales = localesDelAmbito();
+  if (!viendoVarios() || locales.length < 2) {
     const j = raw ? await apiRaw(montaUrl(localActualFE())) : await api(montaUrl(localActualFE()));
     return raw ? j : j;
   }
@@ -260,7 +311,7 @@ function shell(active, bodyHtml) {
   const fijado = localFijadoFE();
   const actual = localActualFE();
   const estabLbl = fijado ? nombreCortoLocal(fijado)
-    : viendoTodosLosMios() ? `Mis ${misLocales().length} establecimientos`
+    : viendoVarios() ? etiquetaAmbito()
     : actual ? nombreCortoLocal(actual) : "Todos los establecimientos";
   const customLbl = (PERIOD === "custom" && DASH_RANGE.from) ? `${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}` : "Personalizado";
   const seg = [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]].map(([p, l]) => `<button class="${PERIOD === p ? "on" : ""}" data-act="period" data-p="${p}">${l}</button>`).join("") + `<button class="${PERIOD === "custom" ? "on" : ""}" data-act="period-custom" title="Rango personalizado (días o meses, incluso del año pasado)">${customLbl}</button>`;
@@ -516,7 +567,7 @@ window.addEventListener("resize", dpClose);
 window.addEventListener("scroll", dpClose, true);
 
 // ════════════════════════ ESTADO GLOBAL + COMPONENTES (lenguaje del prototipo) ════════════════════════
-let DASH_LOCAL = "", COLLAPSED = false, PERIOD = "semana", DASH_CONCERNS = 0;
+let DASH_LOCAL = "", SELECCION = [], COLLAPSED = false, PERIOD = "semana", DASH_CONCERNS = 0;
 
 /**
  * El trabajo pendiente de cada módulo, para que se vea en el menú SIN entrar. Hasta ahora solo
@@ -765,14 +816,43 @@ function openEstabMenu() {
   const fijado = localFijadoFE();
   if (fijado) return;   // un solo local: no hay nada que elegir
   const mios = misLocales();
-  const base = mios.length ? mios : LOCALES;
-  const elegibles = MODULOS_SOLO_PUBLICO.has(CURRENT) ? base.filter((l) => !sinPublico(l)) : base;
-  // «Todos» solo para dirección: al que tiene dos locales asignados no se le ofrece un ámbito
-  // que el servidor no le va a dar — cada pantalla sigue mirando UN local.
-  const opts = (mios.length
-    ? (mios.length > 1 ? [[MIS_LOCALES, `Mis ${mios.length} establecimientos`]] : [])
-    : [["", "Todos los establecimientos"]]).concat(elegibles.map((l) => [l, l]));
-  openDrawer("Establecimiento", `<div class="rows">${opts.map(([v, l]) => `<button class="row" data-act="estab-pick" data-local="${esc(v)}" style="width:100%;text-align:left"><span class="sdot ${DASH_LOCAL === v ? "st-ok" : "st-off"}"></span><div class="grow"><div class="t1">${esc(l)}</div></div>${DASH_LOCAL === v ? '<span class="pill brand">Actual</span>' : ""}</button>`).join("")}</div>`);
+  const elegibles = MODULOS_SOLO_PUBLICO.has(CURRENT) ? localesBase().filter((l) => !sinPublico(l)) : localesBase();
+  const marcados = new Set(viendoVarios() ? localesDelAmbito() : (localActualFE() ? [localActualFE()] : []));
+
+  // Dos gestos en cada fila, y esa es toda la idea:
+  //   · pulsar el NOMBRE  → ir solo a ese (el caso de siempre, un clic)
+  //   · marcar la CASILLA → juntarlo con otros y pulsar «Ver los elegidos»
+  // Con un solo control habría que elegir entre un clic extra para lo habitual o no poder
+  // combinar; con dos, cada cosa cuesta lo que tiene que costar.
+  const fila = (l) => {
+    const activo = marcados.has(l);
+    return `<div class="row">
+      <button class="grow" data-act="estab-pick" data-local="${esc(l)}" style="display:flex;align-items:center;gap:13px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;min-width:0">
+        <span class="sdot ${activo ? "st-ok" : "st-off"}"></span>
+        <span class="t1">${esc(nombreCortoLocal(l))}</span>
+      </button>
+      ${DASH_LOCAL === l && !viendoVarios() ? '<span class="pill brand">Actual</span>' : ""}
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink3);cursor:pointer" title="Juntar con otros establecimientos">
+        <input type="checkbox" data-act="estab-marca" data-local="${esc(l)}" ${activo ? "checked" : ""}> juntar
+      </label>
+    </div>`;
+  };
+
+  // «Todos» solo para dirección: al que tiene locales asignados no se le ofrece un ámbito que
+  // el servidor no le va a dar.
+  const todos = mios.length ? "" : `<div class="row">
+    <button class="grow" data-act="estab-pick" data-local="" style="display:flex;align-items:center;gap:13px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer">
+      <span class="sdot ${DASH_LOCAL === "" ? "st-ok" : "st-off"}"></span>
+      <span class="t1">Todos los establecimientos</span>
+    </button>${DASH_LOCAL === "" ? '<span class="pill brand">Actual</span>' : ""}</div>`;
+
+  const n = marcados.size;
+  const pie = `<div style="padding:14px 16px;border-top:1px solid var(--border)">
+    <button class="btn primary" data-act="estab-varios" style="width:100%" ${n > 1 ? "" : "disabled"}>${n > 1 ? `Ver los ${n} juntos` : "Marca dos o más para juntarlos"}</button>
+    <div class="mut" style="font-size:11.5px;margin-top:8px">Pulsa el nombre para ir a uno solo. Marca «juntar» en varios para verlos sumados.</div>
+  </div>`;
+
+  openDrawer("Establecimiento", `<div class="rows">${todos}${elegibles.map(fila).join("")}</div>${pie}`);
 }
 
 // ════════════════════════ VISTA: DASHBOARD (ejecutivo) ════════════════════════
@@ -874,7 +954,7 @@ async function loadDashboard() {
   // campo (src/modules/dashboard/fusion.js). `DASH_LOCAL` vale «*mios*» cuando se están
   // mirando todos los suyos, y eso no es el nombre de ningún local: mandarlo tal cual hacía
   // que el servidor cayera al principal y se viera UN local creyendo que se veían los dos.
-  const q = viendoTodosLosMios() ? "locales=" + encodeURIComponent(misLocales().join(","))
+  const q = viendoVarios() ? "locales=" + encodeURIComponent(localesDelAmbito().join(","))
     : localActualFE() ? "local=" + encodeURIComponent(localActualFE()) : "";
   try {
     // `comparar=1`: el servidor trae también el periodo anterior y la variación ya calculada.
@@ -1745,7 +1825,7 @@ function renderReviews() {
   const masBtn = REV_HASMORE ? `<div style="text-align:center;margin-top:6px"><button class="btn" data-act="rev-more">Cargar más (${num(REV_DATA.length)}/${num(REV_CONT.total)})</button></div>` : "";
   // Qué establecimiento se está mirando: lo dice el rótulo, que es lo que antes hacían las
   // píldoras. El que manda es el selector de la barra de arriba.
-  const amb = viendoTodosLosMios() ? `Mis ${misLocales().length} establecimientos`
+  const amb = viendoVarios() ? etiquetaAmbito()
     : localActualFE() ? nombreCortoLocal(localActualFE()) : "";
   return `<div class="ph"><div class="eyebrow">Reputación</div><h1>Reseñas de Google</h1><div class="sub">Bandeja de gestión · filtra, ordena y responde${amb ? ` · <b>${esc(amb)}</b>` : ""}</div></div>${estadoBanner}${cont}${avisoFicha}${nota}${toolbar}${bulk}${body}${masBtn}`;
 }
@@ -1781,8 +1861,8 @@ function revOrdenar(filas, sort) {
  * cuenta, y pegar dos listas ordenadas no da una lista ordenada.
  */
 async function revPedir(montaUrl) {
-  const locales = misLocales();
-  if (!viendoTodosLosMios() || locales.length < 2) return apiSend("GET", montaUrl(localActualFE()));
+  const locales = localesDelAmbito();
+  if (!viendoVarios() || locales.length < 2) return apiSend("GET", montaUrl(localActualFE()));
   const partes = (await Promise.all(locales.map((l) => apiSend("GET", montaUrl(l)).catch(() => null)))).filter(Boolean);
   const suma = (k) => partes.reduce((s, p) => s + ((p.contadores && p.contadores[k]) || 0), 0);
   return {
@@ -4058,7 +4138,7 @@ function facHeader() {
   // Con varios establecimientos, `facScope()` devuelve "" (las consultas van una por local),
   // así que el rótulo lo dice aparte: una pantalla que suma dos locales sin decirlo se lee
   // como si fuera la de uno.
-  const donde = amb ? nombreCortoLocal(amb) : viendoTodosLosMios() ? `Mis ${misLocales().length} establecimientos` : "";
+  const donde = amb ? nombreCortoLocal(amb) : viendoVarios() ? etiquetaAmbito() : "";
   return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${[["facturas", "Facturas"], ["pagos", "Pagos"], ["conciliar", "Conciliaciones"], ["config", "Configuración"]].map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("")}</div>`;
 }
 
@@ -4066,8 +4146,14 @@ function facHeader() {
 // mismos papeles pero contesta otra pregunta —qué entra y a cómo nos lo cobran—.
 function productosHeader() {
   const amb = facScope();
-  const donde = amb ? nombreCortoLocal(amb) : viendoTodosLosMios() ? `Mis ${misLocales().length} establecimientos` : "";
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Productos</h1><div class="sub">Qué compramos y a cómo nos lo cobran${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div>`;
+  const donde = amb ? nombreCortoLocal(amb) : viendoVarios() ? etiquetaAmbito() : "";
+  // El periodo, ESCRITO. Con el filtro puesto en julio y la lista igual que antes, no se puede
+  // saber si es que el filtro no ha entrado o es que en julio se compró eso mismo. Dicho aquí,
+  // se distingue de un vistazo — y si pone «desde siempre», el filtro no está puesto.
+  const cuando = (COMP.from || COMP.to)
+    ? `${COMP.from ? fechaCorta(COMP.from) : "el principio"} → ${COMP.to ? fechaCorta(COMP.to) : "hoy"}`
+    : "desde siempre";
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Productos</h1><div class="sub">Qué compramos y a cómo nos lo cobran${donde ? ` · <b>${esc(donde)}</b>` : ""} · <b>${esc(cuando)}</b></div></div>`;
 }
 const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
 // Con céntimos. Para precios unitarios, donde redondear a euros enteros se carga justo el
@@ -5294,7 +5380,7 @@ async function loadFacturas() {
       // El resumen viene YA AGREGADO del servidor y es de UN local. Viendo varios juntos
       // enseñaría el de uno solo junto a una tabla con los dos, que es la peor mezcla posible:
       // un número que parece el total y no lo es. Se pide solo cuando hay un local.
-      viendoTodosLosMios() ? Promise.resolve(null)
+      viendoVarios() ? Promise.resolve(null)
         : apiOptional("/api/facturas/stats" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : "")),
       apiOptional("/api/facturas/empresas"),
     ]);
@@ -5311,7 +5397,12 @@ async function loadFacturas() {
 }
 // `ir` = true cuando se llama desde OTRA pantalla (Productos): hay que cambiar de vista, no
 // solo de pestaña, o se pintaría Compras dejando el menú marcando donde no se está.
-function facTab(tab, ir = false) { FACTAB = tab; if (ir && CURRENT !== "facturas") return go("facturas"); loadFacturas(); }
+function facTab(tab, ir = false) {
+  FACTAB = tab;
+  if (ir && CURRENT !== "facturas") return go("facturas");
+  escribirUrl("facturas", tab);
+  loadFacturas();
+}
 
 // ── Pagos ───────────────────────────────────────────────────────────────────
 // «¿Qué hay que pagar esta semana?». Hasta ahora se sabía CUÁNTO se debe pero no CUÁNDO, y un
@@ -5998,7 +6089,7 @@ async function refrescarCompras() {
   // «Qué compramos» también es un agregado: con varios establecimientos se le pasan todos y el
   // servidor suma producto a producto (src/modules/facturas/compras-fusion.js). Juntar aquí
   // las respuestas contaría dos veces el mismo producto comprado en los dos locales.
-  if (viendoTodosLosMios()) qs.set("locales", misLocales().join(","));
+  if (viendoVarios()) qs.set("locales", localesDelAmbito().join(","));
   else if (FACF.local) qs.set("local", FACF.local);
   COMP_FILTROS.forEach((k) => { if (COMP[k]) qs.set(k, COMP[k]); });
   let j;
@@ -7514,12 +7605,38 @@ async function webBlkUpload(input, gallery) {
 
 // ── Router ───────────────────────────────────────────────────────────────────
 const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, productos: loadProductos, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
-function go(view) {
+/**
+ * LA PANTALLA VA EN LA URL. Sin esto, recargar en cualquier sitio te devolvía al Dashboard —y
+ * también hacía inútiles el botón de atrás y guardar un enlace a una pantalla concreta.
+ *
+ * Se usa el «#» y no rutas de verdad porque el panel es un solo archivo servido en /panel/: con
+ * rutas de servidor habría que enseñar el mismo HTML en veinte direcciones distintas. El «#» no
+ * viaja al servidor y hace exactamente lo que hace falta.
+ *
+ * Compras lleva además su pestaña («#facturas/pagos»): recargar en Pagos y aparecer en Facturas
+ * es el mismo problema en pequeño.
+ */
+function vistaDeUrl() {
+  const [vista, sub] = String(location.hash || "").replace(/^#\/?/, "").split("/");
+  return { vista: VIEWS[vista] ? vista : null, sub: sub || null };
+}
+
+function escribirUrl(view, sub) {
+  const nueva = "#" + view + (sub ? "/" + sub : "");
+  if (location.hash === nueva) return;
+  // `replaceState` y no `pushState`: cada pantalla del panel no es un paso atrás que la gente
+  // quiera deshacer una por una. Con esto, «atrás» sale del panel como se espera, y la URL
+  // sigue diciendo dónde estás al recargar.
+  history.replaceState(null, "", nueva);
+}
+
+function go(view, { desdeUrl = false } = {}) {
   if (!VIEWS[view]) view = "dashboard";
   // El calendario cuelga de <body>, así que sobrevive al repintado de la vista:
   // si no lo cerramos aquí, se queda flotando encima de la pantalla nueva.
   dpClose();
   CURRENT = view;
+  if (!desdeUrl) escribirUrl(view, view === "facturas" ? FACTAB : null);
   if (!puedeVer(view)) {
     document.getElementById("root").innerHTML = shell(view, `<div class="card"><div class="ch"><h3>Sin acceso</h3></div><p class="mut">No tienes acceso a este módulo.</p></div>`);
     refreshWaPill(); return;
@@ -7579,7 +7696,21 @@ document.addEventListener("click", (e) => {
   else if (act === "cmdk") openCmd();
   else if (act === "estabmenu") openEstabMenu();
   // Cambiar de establecimiento reaplica el ámbito sin sacarte de donde estabas.
-  else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; closeDrawer(); go(MODULOS_POR_LOCAL.has(CURRENT) ? CURRENT : "dashboard"); }
+  else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; SELECCION = []; guardarAmbito(); closeDrawer(); go(MODULOS_POR_LOCAL.has(CURRENT) ? CURRENT : "dashboard"); }
+  // Marcar y desmarcar no cambia de pantalla: se van eligiendo y se aplica al final. Cambiar de
+  // ámbito en cada clic haría tres recargas para juntar tres locales.
+  else if (act === "estab-marca") {
+    const l = t.getAttribute("data-local") || "";
+    const actuales = new Set(viendoVarios() ? localesDelAmbito() : (localActualFE() ? [localActualFE()] : []));
+    if (t.checked) actuales.add(l); else actuales.delete(l);
+    SELECCION = localesBase().filter((x) => actuales.has(x));   // en el orden de la lista, no en el de los clics
+    openEstabMenu();
+  }
+  else if (act === "estab-varios") {
+    if (SELECCION.length < 2) return;
+    DASH_LOCAL = VARIOS; guardarAmbito(); closeDrawer();
+    go(MODULOS_POR_LOCAL.has(CURRENT) ? CURRENT : "dashboard");
+  }
   else if (act === "ag-metodos") agoraMetodos(t.getAttribute("data-local"));
   else if (act === "pulso-enviar") pulsoEnviar();
   else if (act === "pulso-atendido") pulsoAtendido(t.getAttribute("data-id"));
@@ -7831,9 +7962,25 @@ document.addEventListener("drop", (e) => { const it = e.target.closest("[data-ga
 requireRole(["direccion", "encargado", "contabilidad", "marketing", "rrhh"]).then((user) => {
   if (!user) return;
   USER = user;
-  // Se abre por la primera pantalla a la que tenga acceso, no por una fija: a marketing el
-  // Dashboard le daría «Sin acceso» nada más entrar, y a RR.HH. también.
-  const inicio = ["dashboard", "reservas", "rrhh", "facturas", "web", "clientes"].find((v) => puedeVer(v))
+  // El establecimiento con el que se entra: el que se dejó puesto, o Blanes. Va antes de
+  // pintar nada porque media pantalla depende de él.
+  const amb = ambitoInicial();
+  DASH_LOCAL = amb.local; SELECCION = amb.locales;
+  // Si la URL trae pantalla, manda ella: es lo que permite recargar sin perder el sitio y
+  // guardar un enlace directo. Si no, se abre por la primera a la que se tenga acceso —a
+  // marketing el Dashboard le daría «Sin acceso» nada más entrar, y a RR.HH. también.
+  const deUrl = vistaDeUrl();
+  const inicio = (deUrl.vista && puedeVer(deUrl.vista) && deUrl.vista)
+    || ["dashboard", "reservas", "rrhh", "facturas", "web", "clientes"].find((v) => puedeVer(v))
     || Object.keys(VIEWS).find((v) => puedeVer(v)) || "dashboard";
-  go(inicio);
+  if (inicio === "facturas" && deUrl.sub) FACTAB = deUrl.sub;
+  go(inicio, { desdeUrl: !!deUrl.vista });
+
+  // Cambiar el «#» a mano o con el botón de atrás también navega.
+  window.addEventListener("hashchange", () => {
+    const d = vistaDeUrl();
+    if (!d.vista || !puedeVer(d.vista)) return;
+    if (d.vista === "facturas" && d.sub) FACTAB = d.sub;
+    if (d.vista !== CURRENT || d.vista === "facturas") go(d.vista, { desdeUrl: true });
+  });
 }).catch(() => { /* requireRole ya redirige a /login.html */ });

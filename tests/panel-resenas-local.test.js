@@ -27,7 +27,7 @@ describe("Reseñas obedece al selector de la barra", () => {
   });
 
   test("y se dice cuál se está mirando, que es lo que hacían las píldoras", () => {
-    assert.match(bloqueReviews, /viendoTodosLosMios\(\) \? `Mis \$\{misLocales\(\)\.length\} establecimientos`/);
+    assert.match(bloqueReviews, /viendoVarios\(\) \? etiquetaAmbito\(\)/);
   });
 
   test("con varios locales se pide UNA vez por local y se juntan", () => {

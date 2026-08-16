@@ -370,3 +370,26 @@ describe("la consulta descarta lo que el agrupado descartaba", () => {
     assert.match(fn, /condLin\.push\(`COALESCE\(l\.clave,''\) <> ''`\)/);
   });
 });
+
+describe("el histórico de un producto ya unificado", () => {
+  const server = fs.readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  const i = server.indexOf('app.get("/api/facturas/compras/producto"');
+  const fn = server.slice(i, server.indexOf("\n});\n", i));
+
+  test("«p:12» se busca por sus formas de escribirlo, no como si fuera texto", () => {
+    // Era el fallo: `claveProducto("p:12")` da «p 12», que no es la clave de nada. El
+    // histórico salía VACÍO justo en los productos ya unificados —los que más interesa
+    // mirar— y con él el filtro de fechas, que no tenía nada que filtrar.
+    assert.equal(claveProducto("p:12"), "p 12", "si esto cambia, el motivo del arreglo cambia");
+    assert.match(fn, /l\.clave IN \(SELECT clave FROM producto_alias WHERE producto_id = \?\)/);
+  });
+
+  test("y se enseña el nombre del diccionario, no el que escriba cada proveedor", () => {
+    assert.match(fn, /SELECT nombre FROM productos_canonicos WHERE id = \?/);
+  });
+
+  test("el filtro de fechas sigue aplicándose igual", () => {
+    assert.match(fn, /cond\.push\("f\.fecha >= \?"\)/);
+    assert.match(fn, /cond\.push\("f\.fecha <= \?"\)/);
+  });
+});

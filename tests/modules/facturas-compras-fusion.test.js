@@ -186,17 +186,17 @@ describe("cableado en el servidor", () => {
     assert.match(server.slice(fn, fn + 900), /condFac\.push\("f\.local = \?"\)/);
   });
 
-  test("el panel manda sus locales cuando se están mirando todos", () => {
-    assert.match(panel, /if \(viendoTodosLosMios\(\)\) qs\.set\("locales", misLocales\(\)\.join\(","\)\)/);
+  test("el panel manda los locales elegidos cuando se están mirando varios", () => {
+    assert.match(panel, /if \(viendoVarios\(\)\) qs\.set\("locales", localesDelAmbito\(\)\.join\(","\)\)/);
   });
 
-  test("el dashboard no manda «*mios*» como si fuera un local", () => {
-    // Era el fallo: `DASH_LOCAL` vale «*mios*» al mirarlos todos, el servidor no lo reconocía
-    // y caía al principal. Se veía UN local creyendo que se veían los dos.
+  test("el dashboard no manda «*varios*» como si fuera un local", () => {
+    // Era el fallo: `DASH_LOCAL` vale «*varios*» al mirar más de uno, el servidor no lo
+    // reconocía y caía al principal. Se veía UN local creyendo que se veían los dos.
     const i = panel.indexOf("async function loadDashboard(");
     const fn = panel.slice(i, panel.indexOf("\n}\n", i));
     assert.doesNotMatch(fn, /encodeURIComponent\(DASH_LOCAL\)/);
-    assert.match(fn, /viendoTodosLosMios\(\) \? "locales="/);
+    assert.match(fn, /viendoVarios\(\) \? "locales="/);
   });
 });
 

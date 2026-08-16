@@ -3818,9 +3818,17 @@ app.get("/api/facturas/compras", requireAuth(["direccion", "contabilidad"]), asy
 // cuánto?», y luego «enséñame ese papel».
 app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const clave = claveProducto(String(req.query.clave || req.query.q || ""));
+    // Un producto del diccionario llega como «p:12» —así lo agrupa la lista— y sus compras
+    // son las de TODAS sus formas de escribirlo. Pasarlo por `claveProducto` lo convertía en
+    // el texto «p 12», que no es la clave de nada: el histórico salía vacío justo en los
+    // productos ya unificados, que son los que más interesa mirar.
+    const crudo = String(req.query.clave || req.query.q || "").trim();
+    const unificado = /^p:(\d+)$/.exec(crudo);
+    const clave = unificado ? crudo : claveProducto(crudo);
     if (!clave) return res.status(400).json({ ok: false, error: "Falta el producto" });
-    const cond = ["l.clave = ?"], par = [clave];
+    const cond = [], par = [];
+    if (unificado) { cond.push("l.clave IN (SELECT clave FROM producto_alias WHERE producto_id = ?)"); par.push(Number(unificado[1])); }
+    else { cond.push("l.clave = ?"); par.push(clave); }
     const local = localScope(req) || String(req.query.local || "").trim();
     if (local) { cond.push("f.local = ?"); par.push(local); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ""))) { cond.push("f.fecha >= ?"); par.push(req.query.from); }
@@ -3839,7 +3847,10 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
     // proveedor lo escribió raro una vez, esa vez no debe rebautizar el producto entero.
     const cuenta = new Map();
     for (const c of compras) cuenta.set(c.descripcion, (cuenta.get(c.descripcion) || 0) + 1);
-    const nombre = [...cuenta.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || req.query.clave;
+    // Si está en el diccionario manda SU nombre: es el que alguien decidió a mano, y verlo
+    // cambiar al abrir el histórico haría dudar de si es el mismo producto.
+    const canonico = unificado ? await dbGet("SELECT nombre FROM productos_canonicos WHERE id = ?", [Number(unificado[1])]) : null;
+    const nombre = canonico?.nombre || [...cuenta.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || req.query.clave;
 
     const conPrecio = compras.filter((c) => c.precio_unitario != null);
     res.json({

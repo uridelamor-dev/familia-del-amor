@@ -153,19 +153,47 @@ describe("ver varios locales juntos, sin tocar el filtrado", () => {
     assert.match(panel.slice(i, i + 900), /montaUrl\(l\)/);
   });
 
-  test("«Mis N establecimientos» solo aparece si de verdad tiene varios", () => {
-    assert.match(panel, /mios\.length > 1 \? \[\[MIS_LOCALES/);
+  test("juntar varios establecimientos solo se aplica de dos en adelante", () => {
+    // Con uno marcado no hay nada que juntar: el botón está apagado y lo dice.
+    assert.match(panel, /if \(SELECCION\.length < 2\) return;/);
+    assert.match(panel, /n > 1 \? `Ver los \$\{n\} juntos`/);
   });
 
   test("y no se ofrece «todos los establecimientos» a quien tiene locales asignados", () => {
     // Sería un ámbito que el servidor no le va a dar.
-    assert.match(panel, /mios\.length\s*\n?\s*\?\s*\(mios\.length > 1/);
+    assert.match(panel, /const todos = mios\.length \? ""/);
+  });
+
+  test("se entra por UN establecimiento, no por «todos»", () => {
+    // Ver los ocho juntos es cómodo para mirar y traicionero para tocar: se edita el producto
+    // de Blanes creyendo que es el de Lloret. Se entra por el primero de la lista (Blanes).
+    const i = panel.indexOf("function ambitoInicial(");
+    const fn = panel.slice(i, panel.indexOf("\n}\n", i));
+    assert.match(fn, /return \{ local: base\[0\] \|\| "", locales: \[\] \}/);
+  });
+
+  test("y el establecimiento elegido se recuerda al recargar", () => {
+    assert.match(panel, /localStorage\.setItem\("panelAmbito"/);
+    assert.match(panel, /localStorage\.getItem\("panelAmbito"\)/);
+    // Al elegir uno se guarda: si no, el siguiente arranque vuelve al de por defecto.
+    assert.match(panel, /act === "estab-pick"\) \{ DASH_LOCAL = [^\n]*guardarAmbito\(\)/);
+  });
+
+  test("«todos» solo se recuerda a quien puede tenerlo", () => {
+    // A quien tiene locales asignados el servidor no le da «todos»: recordárselo sería
+    // enseñarle un rótulo que promete más de lo que hay.
+    assert.match(panel, /g\.local === "" && !misLocales\(\)\.length/);
+  });
+
+  test("la selección se filtra contra los locales del usuario, no se cree lo guardado", () => {
+    // Lo guardado en el navegador puede nombrar un local que ya no le toca.
+    assert.match(panel, /const sel = SELECCION\.filter\(\(l\) => base\.includes\(l\)\)/);
   });
 
   test("con varios locales NO se pide el resumen ANUAL del servidor", () => {
     // Es de UN local: enseñarlo junto a una tabla con dos sería un número que parece el total
     // y no lo es. (Los gráficos que sí lo usan dicen «(año)» en su título.)
-    assert.match(panel, /viendoTodosLosMios\(\) \? Promise\.resolve\(null\)/);
+    assert.match(panel, /viendoVarios\(\) \? Promise\.resolve\(null\)/);
   });
 
   test("las cifras de arriba se suman de los agregados de cada local", () => {
