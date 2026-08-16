@@ -273,3 +273,31 @@ describe("el precio normal sobrevive a la fusión de locales", () => {
     assert.ok(agruparPorProducto(muchas)[0].precios.length <= 40);
   });
 });
+
+describe("cuando no cabe todo, se dice", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+
+  test("Productos ya no mete seis meses de filtro por su cuenta", () => {
+    // Abría con un filtro que nadie había pedido, y con unas cifras que parecían el total de
+    // todo y eran las de medio año.
+    assert.doesNotMatch(panel, /COMP\.from = d\.toISOString/);
+    assert.match(panel, /Sin filtro de fechas por defecto/);
+  });
+
+  test("y si el tope de líneas muerde, se avisa en vez de enseñar un total parcial", () => {
+    // Un total parcial que parece completo es peor que no enseñar nada: nadie lo va a mirar
+    // dos veces. Y sin filtro de fechas, el tope se toca mucho más fácil.
+    assert.match(server, /const topeTocado = filas\.length >= TOPE_LINEAS_COMPRAS/);
+    assert.match(server, /topeLineas: topeTocado \? TOPE_LINEAS_COMPRAS : 0/);
+    assert.match(panel, /Hay más compras de las que caben de una vez/);
+    assert.match(panel, /no las de todo el histórico/);
+  });
+
+  test("con varios establecimientos basta con que muerda en uno", () => {
+    // Si falta parte de un local, la SUMA ya es parcial: callarlo en el total sería peor.
+    const a = { grupos: [], categorias: { categorias: [] }, cobertura: {}, totales: {}, topeLineas: 0, local: "A" };
+    const b = { grupos: [], categorias: { categorias: [] }, cobertura: {}, totales: {}, topeLineas: 5000, local: "B" };
+    assert.equal(fusionarCompras([a, b], { locales: ["A", "B"] }).topeLineas, 5000);
+  });
+});

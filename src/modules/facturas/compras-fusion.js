@@ -113,6 +113,8 @@ export function fusionarCompras(partes = [], { locales = [] } = {}) {
     lineas: buenas.flatMap((p) => p.lineas || [])
       .sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || ""))).slice(0, 400),
     albaranesYaFacturados: buenas.reduce((s, p) => s + n(p.albaranesYaFacturados), 0),
+    // Si el tope ha mordido en CUALQUIERA de los locales, el total de la suma ya es parcial.
+    topeLineas: Math.max(0, ...buenas.map((p) => n(p.topeLineas))),
     totales: {
       importe: red2(grupos.reduce((s, g) => s + n(g.importe), 0)),
       // Y NO la suma de los productos de cada local: dos locales que compran lo mismo compran

@@ -5707,7 +5707,9 @@ function dicElegir(clave, descripcion, fila) {
 async function loadProductos() {
   const view = document.getElementById("view");
   facScope();   // el establecimiento lo fija el selector de la barra, como en el resto
-  if (!COMP.from) { const d = new Date(); d.setMonth(d.getMonth() - 6); COMP.from = d.toISOString().slice(0, 10); }
+  // Sin filtro de fechas por defecto: se ve TODO lo comprado, y el que quiera acotar lo acota.
+  // Antes se metían seis meses por su cuenta y la pantalla abría con un filtro puesto que nadie
+  // había pedido — y con unas cifras que parecían el total y no lo eran.
   view.innerHTML = productosHeader() + `<div id="dicRes"></div><div id="compRes"><p class="mut">Cargando…</p></div>`;
   await refrescarCompras();
   dicPedir();                        // no se espera: la cola llega cuando llegue
@@ -6021,6 +6023,15 @@ async function refrescarCompras() {
   // El proveedor deja un albarán por entrega y a fin de mes la factura que las agrupa. Cuando
   // las dos traen detalle, el mismo kilo de gambas estaría dos veces. Se cuenta una — y se
   // dice, porque descontar en silencio es cambiar un total sin avisar.
+  // Si se ha topado el máximo de líneas, las cifras son las de las últimas N y NO el total.
+  // Decirlo es la diferencia entre un dato y un dato en el que se puede confiar.
+  const tope = j.topeLineas || 0;
+  const avisoTope = tope
+    ? `<p class="fic-nota" style="margin:0 0 12px"><b>Hay más compras de las que caben de una vez.</b>
+       Estas cifras son las de las <b>últimas ${num(tope)} líneas</b>, no las de todo el histórico.
+       Acota las fechas en <b>Filtros</b> para ver un periodo completo.</p>`
+    : "";
+
   const dobles = j.albaranesYaFacturados || 0;
   const notaDobles = dobles
     ? ` <b>${num(dobles)}</b> ${dobles === 1 ? "albarán ya viene" : "albaranes ya vienen"} dentro de su factura, así que ${dobles === 1 ? "su detalle no se cuenta aparte" : "su detalle no se cuenta aparte"}: se compró una vez y se cuenta una vez.`
@@ -6065,7 +6076,7 @@ async function refrescarCompras() {
           <td style="text-align:right"><button class="btn sm" data-compfac="${l.factura_id}">Ver factura</button></td>
         </tr>`).join("")}</tbody></table></div></details>` : "";
 
-  cont.innerHTML = `${barra}${compCategoriasHtml(j.categorias)}<div class="card">
+  cont.innerHTML = `${barra}${avisoTope}${compCategoriasHtml(j.categorias)}<div class="card">
       <div class="ch"><h3>${COMP.q ? `«${esc(COMP.q)}»` : COMP.proveedor ? `Lo que nos vende ${esc(COMP.proveedor)}` : "Todo lo comprado"}</h3>
         <span class="mut">${num(j.totales.productos)} ${j.totales.productos === 1 ? "producto" : "productos"} · <b>${esc(eur(j.totales.importe))}</b></span></div>
       ${aviso}${tabla}</div>${detalle}`;

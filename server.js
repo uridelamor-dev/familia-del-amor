@@ -3435,6 +3435,10 @@ app.get("/api/leads", requireAuth(["direccion", "marketing"]), async (req, res) 
 // vez, se llama UNA VEZ POR LOCAL y se suman las respuestas (src/modules/facturas/compras-fusion.js).
 // La consulta es exactamente la de siempre, con su `local = ?`: el ADR 0001 aparta tocar el
 // filtrado por local hasta después de producción.
+// Cuántas líneas de detalle se traen de una vez. Es un tope de memoria y de tiempo, no una
+// decisión de negocio: cuando muerde, se dice en pantalla.
+const TOPE_LINEAS_COMPRAS = 5000;
+
 async function comprasDeLocal(query, local) {
     // Dos juegos de condiciones separados a propósito: los filtros de FACTURA valen para
     // las dos consultas y el de texto solo para las líneas. Recortar un WHERE ya montado a
@@ -3493,7 +3497,13 @@ async function comprasDeLocal(query, local) {
       `SELECT l.descripcion, l.cantidad::float AS cantidad, l.unidad, l.precio_unitario::float AS precio_unitario,
               l.importe::float AS importe, l.dudosa, f.fecha, f.proveedor, f.local, f.id AS factura_id, f.numero_factura
        FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
-       ${whereLin} ORDER BY f.fecha DESC, l.orden LIMIT 5000`, parLin);
+       ${whereLin} ORDER BY f.fecha DESC, l.orden LIMIT ${TOPE_LINEAS_COMPRAS}`, parLin);
+
+    // Si el tope ha mordido, hay que DECIRLO: las cifras serían las de las últimas 5.000 líneas
+    // y se leerían como el total de todo. Un total parcial que parece completo es peor que no
+    // enseñar nada. Antes esto no se notaba porque la pantalla metía seis meses de filtro por
+    // su cuenta; sin filtro, se toca mucho más fácil.
+    const topeTocado = filas.length >= TOPE_LINEAS_COMPRAS;
 
     // Cuántos albaranes se han dejado fuera por eso, para poder decirlo: descontar en silencio
     // es cambiar un total sin avisar, y el que lo mire mañana no sabrá por qué bajó.
@@ -3552,6 +3562,7 @@ async function comprasDeLocal(query, local) {
       },
       // Los albaranes que ya trae su factura y por eso no se cuentan dos veces.
       albaranesYaFacturados: dobles?.n || 0,
+      topeLineas: topeTocado ? TOPE_LINEAS_COMPRAS : 0,
       cobertura: {
         facturas: cobertura?.total || 0,
         conDetalle: cobertura?.con_detalle || 0,
