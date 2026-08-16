@@ -1807,7 +1807,13 @@ async function invDelProducto(id, nombre) {
 }
 
 // ════════════════════════ VISTA: CLIENTES ════════════════════════
-let CLIF = { q: "", poblacion: "", local: "", cumple: false, con_email: false, con_telefono: false, excluir_baja: false };
+// «Más filtros» empieza plegado: cinco casillas más a la vista para algo que se usa de vez en
+// cuando taparían la lista, que es lo que se viene a ver.
+let CLI_MAS = false;
+let CLIF = { q: "", poblacion: "", local: "", cumple: false, con_email: false, con_telefono: false, excluir_baja: false,
+  // Los tres que faltaban para poder pedir de verdad lo que se pide: «los que vinieron el mes
+  // pasado», «mujeres de más de 35» y «los que cumplen esta semana».
+  edad_min: "", edad_max: "", reservo_from: "", reservo_to: "", cumple_en_dias: "" };
 let CLI_TOTAL = 0;
 let CLI_POBLACIONES = [];
 let _cliTimer = null;
@@ -1816,7 +1822,8 @@ async function apiRaw(path) { const r = await fetch(path, { headers: { Authoriza
 // de «casilla activada»— y el servidor lo leía como el mes 01: en agosto no salía nadie y en
 // enero salía media lista. El mes tiene que viajar, no un booleano.
 const mesActualMM = () => String(new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" })).slice(5, 7);
-function cliQS() { const qs = new URLSearchParams(); if (CLIF.q) qs.set("q", CLIF.q); if (CLIF.poblacion) qs.set("poblacion", CLIF.poblacion); if (CLIF.local) qs.set("local", CLIF.local); if (CLIF.cumple) qs.set("cumple_mes", mesActualMM()); if (CLIF.con_email) qs.set("con_email", "1"); if (CLIF.con_telefono) qs.set("con_telefono", "1"); if (CLIF.excluir_baja) qs.set("excluir_baja", "1"); return qs.toString(); }
+const CLI_EXTRA = ["edad_min", "edad_max", "reservo_from", "reservo_to", "cumple_en_dias"];
+function cliQS() { const qs = new URLSearchParams(); if (CLIF.q) qs.set("q", CLIF.q); if (CLIF.poblacion) qs.set("poblacion", CLIF.poblacion); if (CLIF.local) qs.set("local", CLIF.local); if (CLIF.cumple) qs.set("cumple_mes", mesActualMM()); if (CLIF.con_email) qs.set("con_email", "1"); if (CLIF.con_telefono) qs.set("con_telefono", "1"); if (CLIF.excluir_baja) qs.set("excluir_baja", "1"); CLI_EXTRA.forEach((k) => { if (CLIF[k]) qs.set(k, CLIF[k]); }); return qs.toString(); }
 function cliChk(id, campo, label) { return `<label style="display:inline-flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="${id}" ${CLIF[campo] ? "checked" : ""} style="width:auto;height:auto;margin:0"> ${esc(label)}</label>`; }
 function cliActionsBar(total) {
   return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Escribir a los ${num(total)} filtrados (WhatsApp)</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div>${USER.rol === "direccion" ? `<button class="btn" data-act="cli-dup" title="Buscar fichas repetidas de la misma persona">Fichas repetidas</button>` : ""}<button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
@@ -1853,7 +1860,20 @@ function renderClientes(j) {
     <div class="field"><label>Población</label><select id="cPob">${pobOpts}</select></div>
     <div class="field"><label>Local</label><select id="cLocal">${localOpts}</select></div>
   </div>
-  <div class="toolbar" style="margin-top:-4px;align-items:center;gap:18px;flex-wrap:wrap"><span class="mut" style="font-size:12px;font-weight:600;letter-spacing:.02em">FILTROS</span>${cliChk("cCumple", "cumple", "Cumple este mes")}${cliChk("cEmail", "con_email", "Con email")}${cliChk("cTel", "con_telefono", "Con teléfono")}${cliChk("cBaja", "excluir_baja", "Excluir bajas")}</div>`;
+  <div class="toolbar" style="margin-top:-4px;align-items:center;gap:18px;flex-wrap:wrap"><span class="mut" style="font-size:12px;font-weight:600;letter-spacing:.02em">FILTROS</span>${cliChk("cCumple", "cumple", "Cumple este mes")}${cliChk("cEmail", "con_email", "Con email")}${cliChk("cTel", "con_telefono", "Con teléfono")}${cliChk("cBaja", "excluir_baja", "Excluir bajas")}
+    <div style="flex:1"></div>
+    <button class="linkbtn" data-act="cli-mas-filtros">Más filtros…</button></div>
+  ${CLI_MAS ? `<div class="toolbar" style="margin-top:-4px;flex-wrap:wrap;align-items:flex-end">
+    <div class="field" style="max-width:120px"><label>Edad desde</label><input id="cEdadMin" type="number" min="0" max="120" value="${esc(CLIF.edad_min)}" placeholder="—"></div>
+    <div class="field" style="max-width:120px"><label>hasta</label><input id="cEdadMax" type="number" min="0" max="120" value="${esc(CLIF.edad_max)}" placeholder="—"></div>
+    <div class="field" style="max-width:150px"><label>Cumple en</label>
+      <select id="cCumpleDias"><option value="">—</option>${[["0", "hoy"], ["7", "7 días"], ["15", "15 días"], ["30", "30 días"]]
+        .map(([v, l]) => `<option value="${v}" ${String(CLIF.cumple_en_dias) === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+    <div class="field" style="max-width:170px"><label>Reservó desde</label>${dpField("cResDesde", CLIF.reservo_from, "Cualquiera")}</div>
+    <div class="field" style="max-width:170px"><label>hasta</label>${dpField("cResHasta", CLIF.reservo_to, "Cualquiera")}</div>
+    ${/* La lista de lo que NO se puede pedir. Va aquí porque es aquí donde te das cuenta. */""}
+    <button class="linkbtn mut" data-act="cli-falta-filtro" style="align-self:center;font-size:12px">¿Te falta un filtro?</button>
+  </div>` : ""}`;
   const head = `<div class="ph"><div class="eyebrow">Base de clientes</div><h1>Clientes</h1><div class="sub" id="cliSub">${cliSubTxt(rows, total)}</div></div>`;
   return `${head}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div>`;
 }
@@ -1979,7 +1999,36 @@ function cliMasivo() {
     } catch (e) { toast("Error: " + e.message); }
   });
 }
-function filtrosClienteBody() { const b = {}; if (CLIF.q) b.q = CLIF.q; if (CLIF.poblacion) b.poblacion = CLIF.poblacion; if (CLIF.local) b.local = CLIF.local; if (CLIF.cumple) b.cumple_mes = mesActualMM(); if (CLIF.con_email) b.con_email = 1; if (CLIF.con_telefono) b.con_telefono = 1; return b; }
+/**
+ * APUNTAR UN FILTRO QUE NO TENEMOS.
+ *
+ * «Quiero escribir a la gente con hijos» hoy se contesta con un «no se puede» y ahí muere:
+ * nadie se entera de que hace falta y el mes que viene se vuelve a pedir. Apuntado, en unas
+ * semanas la lista dice sola qué datos merece la pena empezar a preguntar en la ficha — que
+ * es una decisión de negocio, no de código, y por eso hay que poder verla.
+ */
+function pedirFiltroQueFalta() {
+  const ov = modal("¿Qué filtro te falta?", `
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Escribe qué querrías poder filtrar aunque hoy no se pueda
+      —«los que tienen hijos», «nacionalidad», «los que vienen entre semana»—. No se pierde: se apunta con la fecha, y
+      cuando algo se repita bastante sabremos qué empezar a preguntar.</p>
+    <div class="field"><label>Lo que necesitas</label><input id="ffQue" placeholder="p. ej. clientes con hijos" maxlength="200"></div>
+    <div class="field" style="margin-top:10px"><label>Para qué, si quieres contarlo <span class="mut">(opcional)</span></label>
+      <input id="ffCtx" placeholder="p. ej. campaña de menú infantil en Semana Santa" maxlength="300"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="ffOk">Apuntar</button></div>`);
+  ov.querySelector("#ffOk").addEventListener("click", async () => {
+    const que = ov.querySelector("#ffQue").value.trim();
+    if (!que) return toast("Escribe qué te falta");
+    try {
+      await apiSend("POST", "/api/marketing/faltan", { que, contexto: ov.querySelector("#ffCtx").value.trim() });
+      ov.remove(); toast("Apuntado ✅");
+    } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+  });
+}
+
+function filtrosClienteBody() { const b = {}; if (CLIF.q) b.q = CLIF.q; if (CLIF.poblacion) b.poblacion = CLIF.poblacion; if (CLIF.local) b.local = CLIF.local; if (CLIF.cumple) b.cumple_mes = mesActualMM(); if (CLIF.con_email) b.con_email = 1; if (CLIF.con_telefono) b.con_telefono = 1; CLI_EXTRA.forEach((k) => { if (CLIF[k]) b[k] = CLIF[k]; }); return b; }
 // Ficha de contacto: datos, visitas, reservas, WhatsApp y consentimiento.
 async function cliFicha(tel) {
   let d; try { d = (await apiRaw("/api/contactos/" + encodeURIComponent(tel))).data; } catch (e) { toast("Error: " + e.message); return; }
@@ -7956,7 +8005,36 @@ function renderCampanas() {
     const acc = `<button class="linkbtn" style="color:var(--brand)" data-act="camp-detalle" data-id="${c.id}">Detalle</button>${editable ? ` · <button class="linkbtn" style="color:var(--brand)" data-act="camp-editar" data-id="${c.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="camp-enviar" data-id="${c.id}">Enviar</button>` : ""} · <button class="linkbtn" style="color:var(--brand)" data-act="camp-dup" data-id="${c.id}">Duplicar</button> · <button class="linkbtn" style="color:var(--danger)" data-act="camp-del" data-id="${c.id}">Eliminar</button>`;
     return `<tr><td>${esc(c.nombre)}${c.canal === "email" ? " 📧" : ""}${c.adjunto_url ? " 📎" : ""}</td><td class="mut">${esc(seg || "—")}</td><td><span class="pill ${CAMP_EST[est] || ""}">${cap(est)}</span>${(est === "programada" && c.programada_para) ? `<div class="t2">${esc(String(c.programada_para).slice(0, 16).replace("T", " "))}</div>` : ""}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td class="r" style="white-space:nowrap">${acc}</td></tr>`;
   }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay campañas.</div></div>`;
-  return `${head}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div>`;
+  return `${head}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div><div id="campFaltan"></div>`;
+}
+
+/**
+ * LO QUE NOS PIDEN Y NO PODEMOS FILTRAR, al final de Campañas y plegado.
+ *
+ * Escondido a propósito: no es trabajo pendiente ni un aviso, es una libreta. Pero tiene que
+ * estar donde se decide una campaña, porque es ahí donde uno se da cuenta de que le falta un
+ * dato — y si no se apunta en ese momento, no se apunta nunca.
+ */
+async function campFaltan() {
+  const caja = document.getElementById("campFaltan");
+  if (!caja) return;
+  let filas = [];
+  try { filas = (await apiRaw("/api/marketing/faltan")).data || []; } catch { return; }
+  if (!filas.length) return;
+  const fila = (f) => `<div class="row" style="padding:8px 0">
+      <div class="grow" style="min-width:0">
+        <div class="t1">${esc(f.que_pidieron)}</div>
+        <div class="t2">${f.contexto ? esc(f.contexto) + " · " : ""}pedido ${num(f.veces)} ${f.veces === 1 ? "vez" : "veces"} · última: ${esc(String(f.ultima_vez || "").slice(0, 10))}${f.quien ? " · " + esc(f.quien) : ""}</div>
+      </div>
+      <button class="linkbtn mut" data-act="faltan-quitar" data-id="${f.id}" title="Ya lo tenemos o ya no hace falta">Quitar</button>
+    </div>`;
+  caja.innerHTML = `<details class="card fold" style="margin-top:16px">
+    <summary><h3>Filtros que nos han pedido y no tenemos</h3><span class="foldr">
+      <span class="mut">${num(filas.length)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <p class="mut" style="margin:0 0 10px;line-height:1.55">No es trabajo pendiente: es la lista de datos que quizá
+      merezca la pena empezar a preguntar. Lo que más se repita arriba.</p>
+    <div class="rows">${filas.map(fila).join("")}</div>
+  </details>`;
 }
 async function loadCampanas() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -7970,6 +8048,7 @@ async function loadCampanas() {
     CAMP.list = list || []; CAMP.plantillas = plantillas || []; CAMP.audiencias = audiencias || [];
     CAMP.cfg = cfg ? { cumple_auto: cfg.cumple_auto, cumple_plantilla: cfg.cumple_plantilla } : { cumple_auto: false, cumple_plantilla: "" };
     view.innerHTML = renderCampanas();
+    campFaltan();                      // no se espera: es una libreta, no un dato de la pantalla
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function openNuevaCampana() { openCampana("nueva"); }
@@ -8424,7 +8503,12 @@ document.addEventListener("change", (e) => {
     sfEnviar(files);
     return;
   }
-  if (id === "cPob") { CLIF.poblacion = e.target.value; refreshCliResults(); }
+  if (id === "cEdadMin") { CLIF.edad_min = e.target.value; refreshCliResults(); }
+  else if (id === "cEdadMax") { CLIF.edad_max = e.target.value; refreshCliResults(); }
+  else if (id === "cCumpleDias") { CLIF.cumple_en_dias = e.target.value; refreshCliResults(); }
+  else if (id === "cResDesde") { CLIF.reservo_from = e.target.value; refreshCliResults(); }
+  else if (id === "cResHasta") { CLIF.reservo_to = e.target.value; refreshCliResults(); }
+  else if (id === "cPob") { CLIF.poblacion = e.target.value; refreshCliResults(); }
   else if (id === "cLocal") { CLIF.local = e.target.value; refreshCliResults(); }
   else if (id === "cCumple") { CLIF.cumple = e.target.checked; refreshCliResults(); }
   else if (id === "cEmail") { CLIF.con_email = e.target.checked; refreshCliResults(); }
@@ -8550,6 +8634,12 @@ document.addEventListener("click", (e) => {
   else if (act === "inv-nuevo-prod") invNuevoProducto();
   else if (act === "inv-edit-prod") invEditProducto(t.getAttribute("data-id"));
   else if (act === "inv-del-prod") invDelProducto(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
+  else if (act === "faltan-quitar") {
+    apiSend("DELETE", "/api/marketing/faltan/" + t.getAttribute("data-id"))
+      .then(() => campFaltan()).catch(() => toast("No se pudo quitar"));
+  }
+  else if (act === "cli-mas-filtros") { CLI_MAS = !CLI_MAS; loadClientes(); }
+  else if (act === "cli-falta-filtro") pedirFiltroQueFalta();
   else if (act === "cli-csv") downloadClientesCsv();
   else if (act === "cli-dup") cliDuplicados();
   else if (act === "cli-wa") cliWa(t.getAttribute("data-tel"), t.getAttribute("data-nombre"));

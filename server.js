@@ -62,6 +62,7 @@ import { repasarLote, resumenRepaso, pideRelecturaDeLineas, esAlcanceValido, ALC
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
 import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
 import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
+import { claveFalta, ordenarFaltas } from "./src/modules/marketing/faltan.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
@@ -926,6 +927,28 @@ async function initDB() {
         total_errores INTEGER DEFAULT 0,
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP,
         finalizado_en TEXT
+      )
+    `);
+    /**
+     * LO QUE NOS PIDEN Y NO PODEMOS FILTRAR.
+     *
+     * «Quiero escribir a la gente con hijos». No tenemos ese dato, así que la respuesta hoy es
+     * «no se puede» y ahí muere: nadie se entera de que hace falta, y el mes que viene se pide
+     * otra vez. Guardado, al cabo de unas semanas la lista dice sola qué merece la pena empezar
+     * a preguntar en la ficha del cliente — que es una decisión de negocio, no de código.
+     *
+     * `veces` sube en vez de crear filas nuevas: lo que importa no es que se pidió, es cuántas.
+     */
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS marketing_faltan (
+        id SERIAL PRIMARY KEY,
+        clave TEXT NOT NULL UNIQUE,
+        que_pidieron TEXT NOT NULL,
+        contexto TEXT,
+        veces INTEGER NOT NULL DEFAULT 1,
+        primera_vez TEXT NOT NULL,
+        ultima_vez TEXT NOT NULL,
+        quien TEXT
       )
     `);
     // Ampliación de campañas (multicanal + estados + programación). Aditivo.
@@ -3424,6 +3447,32 @@ async function mirrorLeadToSheet(lead) {
 // SQL unificado: leads + clientes de reservas sin lead, mergeando por teléfono.
 // Cruza marketing_prefs (consentimiento) por los últimos 9 dígitos del teléfono (robusto al
 // formato) y marca si el contacto tiene conversación de WhatsApp abierta (wa_clientes).
+/**
+ * LA EDAD, SIN CONVERTIR A FECHA.
+ *
+ * `to_date('31/02/1970','DD/MM/YYYY')` revienta con «date/time field value out of range», y
+ * basta UN contacto con una fecha imposible —los hay, se teclean a mano— para que la lista
+ * entera deje de cargar. Es el mismo fallo que ya tuvimos con las fechas en blanco.
+ *
+ * Así que aritmética pura sobre los trozos: año, mes y día como números. Se aceptan los dos
+ * formatos guardados («1980-08-15» y «15/08/1980») y lo que no encaje da NULL, que es lo
+ * honesto: de esa persona no sabemos la edad, así que no entra en un filtro por edad.
+ */
+const SQL_TROZO_NAC = (desdeISO, desdeES) =>
+  `CASE WHEN c.nacimiento ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN substring(c.nacimiento,${desdeISO},2)::int
+        WHEN c.nacimiento ~ '^[0-9]{2}[/-][0-9]{2}[/-][0-9]{4}$' THEN substring(c.nacimiento,${desdeES},2)::int END`;
+const SQL_ANYO_NAC =
+  `CASE WHEN c.nacimiento ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN substring(c.nacimiento,1,4)::int
+        WHEN c.nacimiento ~ '^[0-9]{2}[/-][0-9]{2}[/-][0-9]{4}$' THEN substring(c.nacimiento,7,4)::int END`;
+const SQL_MES_NAC = SQL_TROZO_NAC(6, 4);
+const SQL_DIA_NAC = SQL_TROZO_NAC(9, 1);
+// Los años cumplidos A DÍA DE HOY: si aún no ha llegado su cumpleaños este año, uno menos.
+const sqlEdad = (hoy) => {
+  const [, m, d] = String(hoy).split("-").map(Number);
+  return `(${String(hoy).slice(0, 4)}::int - ${SQL_ANYO_NAC}
+           - (CASE WHEN (${SQL_MES_NAC}, ${SQL_DIA_NAC}) > (${m}, ${d}) THEN 1 ELSE 0 END))`;
+};
+
 function sqlContactosUnificados(filtros = {}, params = []) {
   const { q, poblacion, genero, cumple_mes, local, con_email, con_telefono, idioma, origen, excluir_baja } = filtros;
 
@@ -3512,6 +3561,44 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   }
   if (filtros.from) { sql += ` AND c.ultima_actividad >= ?`; params.push(filtros.from); }
   if (filtros.to) { sql += ` AND c.ultima_actividad <= ?`; params.push(filtros.to + " 23:59:59"); }
+
+  // ── QUIÉN VINO, y no «quién tiene la ficha tocada» ────────────────────────
+  // `from`/`to` filtran la última actividad, que en un lead es cuándo se actualizó su ficha.
+  // «Los que reservaron el mes pasado» es otra cosa y hasta ahora no se podía pedir: se daba
+  // una lista parecida que no era esa. Va por la FECHA DE LA RESERVA (`dia`), no por cuándo
+  // se apuntó, y cruza por teléfono normalizado como el resto.
+  if (filtros.reservo_from || filtros.reservo_to) {
+    const cond = ["RIGHT(regexp_replace(rr.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)"];
+    if (filtros.reservo_from) { cond.push("rr.dia >= ?"); }
+    if (filtros.reservo_to) { cond.push("rr.dia <= ?"); }
+    sql += ` AND EXISTS (SELECT 1 FROM reservas rr WHERE ${cond.join(" AND ")})`;
+    if (filtros.reservo_from) params.push(filtros.reservo_from);
+    if (filtros.reservo_to) params.push(filtros.reservo_to);
+  }
+
+  // ── EDAD ──────────────────────────────────────────────────────────────────
+  // Quien no tiene fecha de nacimiento NO entra: de esa persona no sabemos la edad, y meterla
+  // en «mayores de 35» sería inventarse el dato. Se dice aparte cuántas se quedan fuera.
+  const hoyM = filtros.hoy || hoyISO();
+  const edadMin = Number(filtros.edad_min), edadMax = Number(filtros.edad_max);
+  if (Number.isFinite(edadMin) && edadMin > 0) sql += ` AND ${sqlEdad(hoyM)} >= ${Math.floor(edadMin)}`;
+  if (Number.isFinite(edadMax) && edadMax > 0) sql += ` AND ${sqlEdad(hoyM)} <= ${Math.floor(edadMax)}`;
+
+  // ── CUMPLEAÑOS EN LOS PRÓXIMOS N DÍAS ─────────────────────────────────────
+  // «Felicitar y regalar un café» funciona el día que es, no en un envío único el día 1 a los
+  // doscientos del mes. Se compara mes×100+día, que no necesita convertir nada a fecha; y se
+  // contempla que la ventana cruce el fin de año, que si no diciembre se queda sin felicitar.
+  const dias = Number(filtros.cumple_en_dias);
+  if (Number.isFinite(dias) && dias >= 0 && dias <= 60) {
+    const desde = new Date(hoyM + "T12:00:00Z");
+    const hasta = new Date(desde.getTime() + dias * 86400000);
+    const md = (d) => (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+    const a = md(desde), b = md(hasta);
+    const expr = `(${SQL_MES_NAC} * 100 + ${SQL_DIA_NAC})`;
+    sql += a <= b
+      ? ` AND ${expr} BETWEEN ${a} AND ${b}`
+      : ` AND (${expr} >= ${a} OR ${expr} <= ${b})`;
+  }
   if (con_email) sql += ` AND c.correo IS NOT NULL AND c.correo <> ''`;
   if (con_telefono) sql += ` AND c.telefono IS NOT NULL AND c.telefono <> ''`;
   if (origen) { sql += ` AND c.origen = ?`; params.push(origen); }
@@ -9842,7 +9929,12 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
   if (!nombre || !mensaje) return res.status(400).json({ ok: false, error: "Faltan nombre y mensaje" });
   if (canal !== "whatsapp") return res.status(400).json({ ok: false, error: "El canal email aún no está disponible" });
   try {
-    const seg = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes, con_email: req.body.con_email, con_telefono: req.body.con_telefono, idioma: req.body.idioma, origen: req.body.origen, from: req.body.from, to: req.body.to, excluir_telefonos: Array.isArray(req.body.excluir_telefonos) ? req.body.excluir_telefonos : [], traducir: !!req.body.traducir, excluir_baja: 1, soloOptIn: !!soloOptIn };
+    const seg = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes, con_email: req.body.con_email, con_telefono: req.body.con_telefono, idioma: req.body.idioma, origen: req.body.origen, from: req.body.from, to: req.body.to,
+      // Los tres nuevos: quién vino de verdad, la edad y el cumpleaños por días. Si no se
+      // guardan en el segmento, la campaña programada se enviaría a otra gente que la que se
+      // vio al crearla — y eso no se nota hasta que ya ha salido.
+      reservo_from: req.body.reservo_from, reservo_to: req.body.reservo_to,
+      edad_min: req.body.edad_min, edad_max: req.body.edad_max, cumple_en_dias: req.body.cumple_en_dias, excluir_telefonos: Array.isArray(req.body.excluir_telefonos) ? req.body.excluir_telefonos : [], traducir: !!req.body.traducir, excluir_baja: 1, soloOptIn: !!soloOptIn };
     // Recuento de enviables para informar
     const params = []; const contactos = await dbAll(sqlContactosUnificados(seg, params), params);
     const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: !!soloOptIn });
@@ -9976,6 +10068,46 @@ app.delete("/api/plantillas/:id", requireAuth(["direccion", "marketing"]), async
 });
 
 // Config de la automatización de cumpleaños (on/off + plantilla).
+/**
+ * Apuntar un filtro que no tenemos. Lo escribe una persona («no encuentro cómo filtrar por…»)
+ * y más adelante lo escribirá también el traductor de campañas cuando no sepa traducir algo.
+ *
+ * La clave es el texto normalizado: pedir «gente con hijos» y «con hijos» tiene que sumar en
+ * la misma línea, o la lista se convierte en cien peticiones de una vez cada una.
+ */
+app.post("/api/marketing/faltan", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const que = String(req.body?.que || "").trim().slice(0, 200);
+    if (!que) return res.status(400).json({ ok: false, error: "¿Qué filtro te falta?" });
+    const clave = claveFalta(que);
+    if (!clave) return res.status(400).json({ ok: false, error: "Escríbelo con un poco más de detalle" });
+    const ahora = isoConOffset(Date.now());
+    const quien = req.user?.nombre || req.user?.username || null;
+    await dbRun(
+      `INSERT INTO marketing_faltan (clave, que_pidieron, contexto, veces, primera_vez, ultima_vez, quien)
+       VALUES (?, ?, ?, 1, ?, ?, ?)
+       ON CONFLICT (clave) DO UPDATE SET veces = marketing_faltan.veces + 1, ultima_vez = EXCLUDED.ultima_vez,
+         contexto = COALESCE(EXCLUDED.contexto, marketing_faltan.contexto)`,
+      [clave, que, String(req.body?.contexto || "").trim().slice(0, 300) || null, ahora, ahora, quien]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[marketing] faltan:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo apuntar" });
+  }
+});
+
+app.get("/api/marketing/faltan", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const data = await dbAll(`SELECT * FROM marketing_faltan LIMIT 200`);
+    res.json({ ok: true, data: ordenarFaltas(data) });
+  } catch { res.json({ ok: true, data: [] }); }
+});
+
+app.delete("/api/marketing/faltan/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try { await dbRun(`DELETE FROM marketing_faltan WHERE id = ?`, [Number(req.params.id)]); res.json({ ok: true }); }
+  catch { res.status(500).json({ ok: false, error: "No se pudo quitar" }); }
+});
+
 app.get("/api/campanas-config", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try { res.json({ ok: true, cumple_auto: (await getConfig("cumple_auto")) === "1", cumple_plantilla: (await getConfig("cumple_plantilla")) || "" }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
