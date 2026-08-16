@@ -179,8 +179,12 @@ describe("cableado del diccionario", () => {
   });
 
   test("y Productos AGRUPA con él, que es lo único que lo hace servir para algo", () => {
-    assert.match(server, /agruparPorProducto\(filas, \{ alias \}\)/);
-    assert.match(server, /JOIN productos_canonicos p ON p\.id = a\.producto_id/);
+    // Ahora la agrupación la hace la base, y el diccionario entra en ella: dos escrituras
+    // confirmadas como el mismo producto se suman juntas y con el nombre bueno, sin traerse
+    // una fila por compra.
+    assert.match(server, /COALESCE\('p:' \|\| a\.producto_id::text, l\.clave\) AS clave/);
+    assert.match(server, /LEFT JOIN producto_alias a ON a\.clave = l\.clave/);
+    assert.match(server, /LEFT JOIN productos_canonicos p ON p\.id = a\.producto_id/);
   });
 });
 

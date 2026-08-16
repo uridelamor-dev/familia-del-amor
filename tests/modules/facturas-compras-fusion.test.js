@@ -285,19 +285,31 @@ describe("cuando no cabe todo, se dice", () => {
     assert.match(panel, /Sin filtro de fechas por defecto/);
   });
 
-  test("y si el tope de líneas muerde, se avisa en vez de enseñar un total parcial", () => {
-    // Un total parcial que parece completo es peor que no enseñar nada: nadie lo va a mirar
-    // dos veces. Y sin filtro de fechas, el tope se toca mucho más fácil.
-    assert.match(server, /const topeTocado = filas\.length >= TOPE_LINEAS_COMPRAS/);
-    assert.match(server, /topeLineas: topeTocado \? TOPE_LINEAS_COMPRAS : 0/);
-    assert.match(panel, /Hay más compras de las que caben de una vez/);
-    assert.match(panel, /no las de todo el histórico/);
+  test("ya no hay tope de LÍNEAS: la base agrupa, así que da igual cuántas compras haya", () => {
+    // Un producto comprado quinientas veces es UNA fila. Traerse las quinientas para juntarlas
+    // en el servidor obligaba a un tope, y con tope el total dejaba de ser el total sin que se
+    // notara.
+    assert.doesNotMatch(server, /TOPE_LINEAS_COMPRAS/);
+    assert.match(server, /GROUP BY 1/);
+    assert.match(server, /LIMIT \$\{TOPE_PRODUCTOS\}/);
+  });
+
+  test("y las líneas sueltas solo se traen al BUSCAR", () => {
+    // Sin búsqueda no hacen falta: la pantalla enseña productos. Es lo que quitó el tope.
+    assert.match(server, /const sueltas = q \? await dbAll/);
+    assert.match(server, /LIMIT 400/);
+  });
+
+  test("si hay más PRODUCTOS de los que caben, se dice", () => {
+    assert.match(server, /topeProductos: filas\.length >= TOPE_PRODUCTOS \? TOPE_PRODUCTOS : 0/);
+    assert.match(panel, /Hay más productos distintos de los que caben/);
+    assert.match(panel, /el total no es el de todos/);
   });
 
   test("con varios establecimientos basta con que muerda en uno", () => {
     // Si falta parte de un local, la SUMA ya es parcial: callarlo en el total sería peor.
-    const a = { grupos: [], categorias: { categorias: [] }, cobertura: {}, totales: {}, topeLineas: 0, local: "A" };
-    const b = { grupos: [], categorias: { categorias: [] }, cobertura: {}, totales: {}, topeLineas: 5000, local: "B" };
-    assert.equal(fusionarCompras([a, b], { locales: ["A", "B"] }).topeLineas, 5000);
+    const a = { grupos: [], categorias: { categorias: [] }, cobertura: {}, totales: {}, topeProductos: 0, local: "A" };
+    const b = { grupos: [], categorias: { categorias: [] }, cobertura: {}, totales: {}, topeProductos: 300, local: "B" };
+    assert.equal(fusionarCompras([a, b], { locales: ["A", "B"] }).topeProductos, 300);
   });
 });

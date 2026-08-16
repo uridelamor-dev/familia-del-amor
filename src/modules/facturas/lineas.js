@@ -157,6 +157,64 @@ export function medianaPrecios(precios = [], { minimo = 3, ventana = 12 } = {}) 
 }
 
 /**
+ * Una fila YA AGRUPADA por la base de datos, hablada en el idioma del panel.
+ *
+ * POR QUÉ AGRUPA LA BASE Y NO AQUÍ: si un producto se ha comprado quinientas veces, la
+ * pantalla enseña UN producto, no quinientas líneas. Traerse las quinientas para juntarlas
+ * después obliga a poner un tope —y con tope, el total deja de ser el total sin que se note—.
+ * Agrupando en la consulta salen tantas filas como productos hay, que es lo que se mira; el
+ * detalle de las quinientas compras se pide aparte, al pulsar el producto.
+ *
+ * La base devuelve los precios y sus fechas en dos listas paralelas (es lo que sabe hacer);
+ * aquí se casan, porque juntas son lo que permite calcular la mediana y fusionar locales.
+ */
+export function grupoDeSQL(fila = {}) {
+  const precios = (fila.precios || []).map((precio, i) => ({
+    precio: Number(precio),
+    fecha: String((fila.precios_fechas || [])[i] || "").slice(0, 10),
+  })).filter((x) => Number.isFinite(x.precio));
+
+  const conCantidad = Number(fila.concantidad ?? fila.conCantidad) || 0;
+  const conImporte = Number(fila.conimporte ?? fila.conImporte) || 0;
+  const precioMin = fila.preciomin ?? fila.precioMin ?? null;
+  const precioMax = fila.preciomax ?? fila.precioMax ?? null;
+  const proveedores = (fila.proveedores || []).filter(Boolean);
+
+  return {
+    clave: fila.clave,
+    descripcion: fila.descripcion,
+    unificado: !!fila.unificado,
+    proveedores,
+    veces: Number(fila.veces) || 0,
+    dudosas: Number(fila.dudosas) || 0,
+    conCantidad, conImporte,
+    // null significa «no se pudo leer», no «cero». Si ninguna línea traía la cantidad, la
+    // cantidad sigue sin existir en vez de convertirse en un 0 que se lee como «no compramos».
+    cantidad: conCantidad ? Number(fila.cantidad) : null,
+    importe: conImporte ? Number(fila.importe) : null,
+    precioMin: precioMin == null ? null : Number(precioMin),
+    precioMax: precioMax == null ? null : Number(precioMax),
+    primera: fila.primera || null,
+    ultima: fila.ultima || null,
+    ultimoPrecio: precios.length ? precios[0].precio : null,
+    precios: recortarPrecios(precios),
+    precioNormal: proveedores.length === 1 ? medianaPrecios(recortarPrecios(precios)) : null,
+    variacionPct: precioMin != null && precioMax != null && Number(precioMin) > 0
+      ? Math.round(((Number(precioMax) - Number(precioMin)) / Number(precioMin)) * 1000) / 10
+      : null,
+  };
+}
+
+/**
+ * ⚠️ ESTO YA NO ES EL CAMINO DE PRODUCCIÓN. La pantalla de Productos agrupa en la CONSULTA
+ * (ver `comprasDeLocal` en server.js): traerse una fila por compra para juntarlas aquí obliga
+ * a poner un tope, y con tope el total deja de ser el total sin que se note — llegó a enseñar
+ * una cuarta parte del gasto con la misma cara de siempre.
+ *
+ * Se conserva porque es la especificación legible de lo que la consulta tiene que hacer, y
+ * porque sus tests fijan las reglas que no se pueden perder (un null no es un cero, la fusión
+ * entre locales es exacta). Queda pendiente portar esos tests a `grupoDeSQL` y borrar esto.
+ *
  * `alias` es el diccionario: clave del proveedor → { id, nombre } del producto de verdad.
  *
  * Sin él se agrupa por el texto exacto y «COCA COLA 33CL» y «Coca-Cola 33 cl» son dos

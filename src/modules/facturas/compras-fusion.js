@@ -107,14 +107,16 @@ export function fusionarCompras(partes = [], { locales = [] } = {}) {
     local: null,
     locales: locales.length ? locales : buenas.map((p) => p.local).filter(Boolean),
     categorias: fusionarCategorias(buenas.map((p) => p.categorias)),
-    grupos: grupos.slice(0, 300),
+    // El mismo tope que usa la consulta: recortar aquí a menos dejaría fuera productos que el
+    // servidor sí trajo, y el total de arriba no cuadraría con la lista de abajo.
+    grupos: grupos.slice(0, 5000),
     // Las líneas sueltas (solo salen al buscar) se juntan y se ordenan por fecha: pegar una
     // lista detrás de otra dejaría todo un local antes que el otro, no lo más reciente arriba.
     lineas: buenas.flatMap((p) => p.lineas || [])
       .sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || ""))).slice(0, 400),
     albaranesYaFacturados: buenas.reduce((s, p) => s + n(p.albaranesYaFacturados), 0),
     // Si el tope ha mordido en CUALQUIERA de los locales, el total de la suma ya es parcial.
-    topeLineas: Math.max(0, ...buenas.map((p) => n(p.topeLineas))),
+    topeProductos: Math.max(0, ...buenas.map((p) => n(p.topeProductos))),
     totales: {
       importe: red2(grupos.reduce((s, g) => s + n(g.importe), 0)),
       // Y NO la suma de los productos de cada local: dos locales que compran lo mismo compran

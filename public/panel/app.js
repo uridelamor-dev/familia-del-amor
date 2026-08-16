@@ -6025,11 +6025,11 @@ async function refrescarCompras() {
   // dice, porque descontar en silencio es cambiar un total sin avisar.
   // Si se ha topado el máximo de líneas, las cifras son las de las últimas N y NO el total.
   // Decirlo es la diferencia entre un dato y un dato en el que se puede confiar.
-  const tope = j.topeLineas || 0;
+  const tope = j.topeProductos || 0;
   const avisoTope = tope
-    ? `<p class="fic-nota" style="margin:0 0 12px"><b>Hay más compras de las que caben de una vez.</b>
-       Estas cifras son las de las <b>últimas ${num(tope)} líneas</b>, no las de todo el histórico.
-       Acota las fechas en <b>Filtros</b> para ver un periodo completo.</p>`
+    ? `<p class="fic-nota" style="margin:0 0 12px"><b>Hay más productos distintos de los que caben de una vez.</b>
+       Se enseñan los <b>${num(tope)} que más gasto tienen</b>, así que el total no es el de todos.
+       Busca un producto o acota en <b>Filtros</b>.</p>`
     : "";
 
   const dobles = j.albaranesYaFacturados || 0;

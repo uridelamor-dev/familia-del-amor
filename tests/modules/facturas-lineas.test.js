@@ -5,8 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   normalizarLinea, normalizarLineas, validarSuma, mensajeValidacion,
-  claveProducto, agruparPorProducto,
-} from "../../src/modules/facturas/lineas.js";
+  claveProducto, agruparPorProducto, grupoDeSQL } from "../../src/modules/facturas/lineas.js";
 // `facturas.js` importa `pdf-lib`, que aquí no está instalado (npm install no funciona en
 // local: el lockfile apunta al firewall de Replit). Se carga en tiempo de ejecución y, si
 // falta, estos tests se SALTAN con el motivo escrito. Dejarlos en rojo por una dependencia
@@ -293,5 +292,69 @@ describe("el descuento: lo que se paga, no lo que pone la tarifa", () => {
       importe: 44.72, descuento_pct: 50.07, importe_neto: 22.33 }]);
     const v = validarSuma(ls, 143.82);
     assert.equal(v.cuadra, true, `suma ${v.suma} vs base ${v.base}`);
+  });
+});
+
+// ── Lo que devuelve la base ya agrupado ────────────────────────────────────
+// La agrupación por producto la hace ahora la consulta: un producto comprado quinientas veces
+// es UNA fila. Esto comprueba la traducción de esa fila al idioma del panel.
+
+describe("una fila ya agrupada por la base", () => {
+  const SQL = (extra = {}) => ({
+    clave: "coca cola 33cl", descripcion: "COCA COLA 33CL", unificado: false,
+    proveedores: ["Grau"], veces: 4, dudosas: 0, concantidad: 4, conimporte: 4,
+    cantidad: 70, importe: 42.92, preciomin: 0.58, preciomax: 0.7,
+    primera: "2026-06-01", ultima: "2026-08-01",
+    precios: [0.62, 0.58, 0.7, 0.6],
+    precios_fechas: ["2026-08-01", "2026-08-01", "2026-07-01", "2026-06-01"],
+    ...extra,
+  });
+
+  test("los precios y sus fechas se casan, que es lo que permite la mediana", () => {
+    const g = grupoDeSQL(SQL());
+    assert.equal(g.precios.length, 4);
+    assert.deepEqual(g.precios[0], { precio: 0.62, fecha: "2026-08-01" });
+    assert.equal(g.precioNormal, 0.61, "mediana de 0,58 0,60 0,62 0,70");
+  });
+
+  test("el último precio es el de la compra más reciente", () => {
+    assert.equal(grupoDeSQL(SQL()).ultimoPrecio, 0.62);
+  });
+
+  test("con varios proveedores NO se afirma un precio normal", () => {
+    // Que esté más caro en Makro que en el mayorista no es una subida, es otro proveedor.
+    assert.equal(grupoDeSQL(SQL({ proveedores: ["Grau", "Makro"] })).precioNormal, null);
+  });
+
+  test("null sigue significando «no se pudo leer», no cero", () => {
+    // Un 0 se lee como «no compramos nada», y lo que pasa es que la factura no traía cantidad.
+    const g = grupoDeSQL(SQL({ concantidad: 0, cantidad: null, precios: null, precios_fechas: null }));
+    assert.equal(g.cantidad, null);
+    assert.equal(g.importe, 42.92, "el importe sí venía");
+    assert.equal(g.ultimoPrecio, null);
+    assert.equal(g.precioNormal, null);
+    assert.deepEqual(g.precios, []);
+  });
+
+  test("un producto del diccionario viene marcado y con su nombre bueno", () => {
+    const g = grupoDeSQL(SQL({ clave: "p:7", descripcion: "Coca-Cola 33cl", unificado: true }));
+    assert.equal(g.clave, "p:7");
+    assert.equal(g.descripcion, "Coca-Cola 33cl");
+    assert.equal(g.unificado, true);
+  });
+
+  test("la subida se calcula del mínimo al máximo del periodo", () => {
+    // De 0,58 a 0,70 hay un 20,7 %.
+    assert.equal(grupoDeSQL(SQL()).variacionPct, 20.7);
+    assert.equal(grupoDeSQL(SQL({ preciomin: null, preciomax: null })).variacionPct, null);
+  });
+
+  test("una fila vacía no revienta ni se inventa nada", () => {
+    const g = grupoDeSQL({});
+    assert.equal(g.veces, 0);
+    assert.equal(g.cantidad, null);
+    assert.equal(g.importe, null);
+    assert.deepEqual(g.proveedores, []);
+    assert.equal(g.precioNormal, null);
   });
 });

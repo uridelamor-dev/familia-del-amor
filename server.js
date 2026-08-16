@@ -51,7 +51,7 @@ import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/expo
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { colaDeTrabajo, cobertura } from "./src/modules/facturas/diccionario.js";
 import { gruposDuplicados } from "./src/modules/facturas/proveedores-duplicados.js";
-import { agruparPorProducto, claveProducto } from "./src/modules/facturas/lineas.js";
+import { grupoDeSQL, claveProducto } from "./src/modules/facturas/lineas.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { proponerConciliacion, resumenConciliacion, estadoConciliada } from "./src/modules/facturas/conciliacion.js";
 import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados.js";
@@ -3435,9 +3435,15 @@ app.get("/api/leads", requireAuth(["direccion", "marketing"]), async (req, res) 
 // vez, se llama UNA VEZ POR LOCAL y se suman las respuestas (src/modules/facturas/compras-fusion.js).
 // La consulta es exactamente la de siempre, con su `local = ?`: el ADR 0001 aparta tocar el
 // filtrado por local hasta después de producción.
-// Cuántas líneas de detalle se traen de una vez. Es un tope de memoria y de tiempo, no una
-// decisión de negocio: cuando muerde, se dice en pantalla.
-const TOPE_LINEAS_COMPRAS = 5000;
+// Cuántos PRODUCTOS distintos se enseñan de una vez. Ya no es un tope de líneas: la base
+// agrupa, así que da igual cuántas veces se haya comprado cada uno — un producto comprado
+// quinientas veces sigue siendo una fila.
+//
+// 5.000 es holgado a propósito: con un catálogo real de cientos de productos no muerde nunca,
+// y así el total de la pantalla es el total de verdad. Sigue habiendo un número porque una
+// consulta sin límite es una forma de tumbar el servidor el día que algo salga mal; y si
+// alguna vez muerde, se dice en pantalla en vez de enseñar un total a medias.
+const TOPE_PRODUCTOS = 5000;
 
 async function comprasDeLocal(query, local) {
     // Dos juegos de condiciones separados a propósito: los filtros de FACTURA valen para
@@ -3493,17 +3499,50 @@ async function comprasDeLocal(query, local) {
     const whereLin = condLin.length ? "WHERE " + condLin.join(" AND ") : "";
     const whereFac = condFac.length ? "WHERE " + condFac.join(" AND ") : "";
 
+    // AGRUPA LA BASE, NO EL SERVIDOR. Un producto comprado quinientas veces es UNA fila, no
+    // quinientas: la pantalla enseña productos. Traérselas todas para juntarlas después obliga
+    // a un tope, y con tope el total deja de ser el total sin que se note. Aquí salen tantas
+    // filas como productos hay — cien productos, cien filas, den igual las compras que haya
+    // detrás—. El detalle de cada uno se pide al pulsarlo (`/api/facturas/compras/producto`).
+    //
+    // El diccionario entra en la propia agrupación: si dos escrituras están confirmadas como
+    // el mismo producto, la base ya las suma juntas y con el nombre bueno.
     const filas = await dbAll(
+      `SELECT
+         COALESCE('p:' || a.producto_id::text, l.clave) AS clave,
+         (array_agg(COALESCE(p.nombre, l.descripcion) ORDER BY f.fecha DESC, l.id DESC))[1] AS descripcion,
+         bool_or(a.producto_id IS NOT NULL) AS unificado,
+         array_agg(DISTINCT f.proveedor) AS proveedores,
+         count(*)::int AS veces,
+         count(*) FILTER (WHERE l.dudosa)::int AS dudosas,
+         count(*) FILTER (WHERE l.cantidad IS NOT NULL)::int AS concantidad,
+         count(*) FILTER (WHERE l.importe IS NOT NULL)::int AS conimporte,
+         SUM(l.cantidad)::float AS cantidad,
+         SUM(l.importe)::float AS importe,
+         MIN(l.precio_unitario)::float AS preciomin,
+         MAX(l.precio_unitario)::float AS preciomax,
+         MIN(f.fecha) AS primera,
+         MAX(f.fecha) AS ultima,
+         (array_agg(l.precio_unitario::float ORDER BY f.fecha DESC, l.id DESC)
+            FILTER (WHERE l.precio_unitario IS NOT NULL))[1:40] AS precios,
+         (array_agg(f.fecha ORDER BY f.fecha DESC, l.id DESC)
+            FILTER (WHERE l.precio_unitario IS NOT NULL))[1:40] AS precios_fechas
+       FROM factura_lineas l
+       JOIN facturas f ON f.id = l.factura_id
+       LEFT JOIN producto_alias a ON a.clave = l.clave AND a.producto_id IS NOT NULL
+       LEFT JOIN productos_canonicos p ON p.id = a.producto_id
+       ${whereLin}
+       GROUP BY 1
+       ORDER BY importe DESC NULLS LAST
+       LIMIT ${TOPE_PRODUCTOS}`, parLin);
+
+    // Las líneas sueltas SOLO al buscar: ahí sí se quieren ver las compras una a una, y son
+    // las de un producto concreto. Sin búsqueda no se traen — es lo que quitaba el tope.
+    const sueltas = q ? await dbAll(
       `SELECT l.descripcion, l.cantidad::float AS cantidad, l.unidad, l.precio_unitario::float AS precio_unitario,
               l.importe::float AS importe, l.dudosa, f.fecha, f.proveedor, f.local, f.id AS factura_id, f.numero_factura
        FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
-       ${whereLin} ORDER BY f.fecha DESC, l.orden LIMIT ${TOPE_LINEAS_COMPRAS}`, parLin);
-
-    // Si el tope ha mordido, hay que DECIRLO: las cifras serían las de las últimas 5.000 líneas
-    // y se leerían como el total de todo. Un total parcial que parece completo es peor que no
-    // enseñar nada. Antes esto no se notaba porque la pantalla metía seis meses de filtro por
-    // su cuenta; sin filtro, se toca mucho más fácil.
-    const topeTocado = filas.length >= TOPE_LINEAS_COMPRAS;
+       ${whereLin} ORDER BY f.fecha DESC, l.orden LIMIT 400`, parLin) : [];
 
     // Cuántos albaranes se han dejado fuera por eso, para poder decirlo: descontar en silencio
     // es cambiar un total sin avisar, y el que lo mire mañana no sabrá por qué bajó.
@@ -3511,14 +3550,7 @@ async function comprasDeLocal(query, local) {
       `SELECT count(DISTINCT f.id)::int AS n FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
         WHERE ${[...condFac, ALBARAN_YA_CONTADO].join(" AND ")}`, parFac);
 
-    // El diccionario, si hay algo confirmado: convierte «COCA COLA 33CL» y «Coca-Cola 33 cl»
-    // en un solo producto. Una consulta, y si no hay nada confirmado todo sigue como estaba.
-    const aliasFilas = await dbAll(
-      `SELECT a.clave, a.producto_id, p.nombre FROM producto_alias a
-         JOIN productos_canonicos p ON p.id = a.producto_id`, []).catch(() => []);
-    const alias = new Map(aliasFilas.map((a) => [a.clave, { id: a.producto_id, nombre: a.nombre }]));
-
-    const grupos = agruparPorProducto(filas, { alias });
+    const grupos = filas.map(grupoDeSQL);
     // Cuántas facturas del periodo NO tienen detalle: sin esto, un total parcial parecería
     // el total de verdad. Es la diferencia entre un dato y un dato en el que se puede confiar.
     const cobertura = await dbGet(
@@ -3554,15 +3586,17 @@ async function comprasDeLocal(query, local) {
       proveedor: String(req.query.proveedor || "").trim() || null,
       catalogoCategorias: CATALOGO,
       categorias,
-      grupos: grupos.slice(0, 300),
-      lineas: q ? filas.slice(0, 400) : [],
+      grupos,
+      lineas: sueltas,
       totales: {
         importe: Math.round(grupos.reduce((s, g) => s + g.importe, 0) * 100) / 100,
         productos: grupos.length,
       },
       // Los albaranes que ya trae su factura y por eso no se cuentan dos veces.
       albaranesYaFacturados: dobles?.n || 0,
-      topeLineas: topeTocado ? TOPE_LINEAS_COMPRAS : 0,
+      // Si hay más productos distintos de los que caben, se dice: el total sería el de los
+      // 300 que más gasto tienen y se leería como el de todos.
+      topeProductos: filas.length >= TOPE_PRODUCTOS ? TOPE_PRODUCTOS : 0,
       cobertura: {
         facturas: cobertura?.total || 0,
         conDetalle: cobertura?.con_detalle || 0,
