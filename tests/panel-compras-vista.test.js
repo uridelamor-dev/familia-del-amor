@@ -38,6 +38,15 @@ describe("Compras: las cifras de arriba contestan la pregunta del día", () => {
   });
 });
 
+describe("los importes se escriben igual en toda la pantalla", () => {
+  test("los miles se separan también con cuatro cifras", () => {
+    // En español, Intl por defecto NO agrupa «7809», y salía junto a «12.481» como si vinieran
+    // de dos sitios distintos. Pasa en la misma tarjeta, así que se nota.
+    assert.match(panel, /new Intl\.NumberFormat\("es-ES", \{ useGrouping: "always" \}\)/);
+    assert.match(panel, /maximumFractionDigits: 2, useGrouping: "always"/);
+  });
+});
+
 describe("Compras: la tabla", () => {
   test("no repite el establecimiento en cada fila cuando solo hay uno", () => {
     assert.match(panel, /const conLocal = !localActualFE\(\);/);

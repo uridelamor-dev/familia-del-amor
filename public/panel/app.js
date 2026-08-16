@@ -3,7 +3,9 @@
    authFetch y el JWT de localStorage. Router simple con vistas in-app (Dashboard, Reservas)
    y enlaces de respaldo al panel clásico para lo aún no migrado. */
 
-const nf = new Intl.NumberFormat("es-ES");
+// `useGrouping: "always"`: en español, por defecto, Intl NO separa los millares de cuatro
+// cifras — «7809» junto a «12.481» en la misma pantalla, como si fueran de dos sitios.
+const nf = new Intl.NumberFormat("es-ES", { useGrouping: "always" });
 const num = (n) => nf.format(Number(n) || 0);
 const dec1 = (n) => (Number(n) || 0).toFixed(1).replace(".", ",");
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -4335,7 +4337,7 @@ function productosHeader() {
 const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
 // Con céntimos. Para precios unitarios, donde redondear a euros enteros se carga justo el
 // dato: un aceite que pasa de 9,50 a 9,90 se vería como «10 €» las dos veces.
-const eur2 = (n) => (Number(n) || 0).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+const eur2 = (n) => (Number(n) || 0).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: "always" }) + " €";
 function renderFacturas(list, pend, stats, empresas) {
   facScope();
   const empOpts =['<option value="">Todas las empresas</option>'].concat((empresas || []).map((e) => `<option value="${esc(e)}" ${FACF.empresa === e ? "selected" : ""}>${esc(e)}</option>`)).join("");
