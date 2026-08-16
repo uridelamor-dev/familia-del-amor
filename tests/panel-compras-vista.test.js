@@ -94,7 +94,7 @@ describe("Productos: la tabla se lee de un vistazo", () => {
   test("sin cola pendiente sigue habiendo forma de deshacer una unión", () => {
     // La caja de revisar se va, pero la lista del diccionario NO: ahí está el botón de quitar
     // una forma mal unida. Antes se iban las dos y no quedaba manera de deshacer.
-    assert.match(panel, /caja\.innerHTML = dicProductosHtml\(\);/);
+    assert.match(panel, /pintarConservandoPliegues\(caja, dicProductosHtml\(\)\);/);
   });
 });
 

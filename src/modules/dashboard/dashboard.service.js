@@ -27,16 +27,48 @@ async function safe(fn, fallback) { try { return await fn(); } catch { return fa
 // Ejecuta un array de "thunks" (funciones que devuelven promesa) con concurrencia limitada.
 // El dashboard hace muchas consultas; acotarlas deja conexiones libres del pool para las
 // operaciones críticas (reservas, WhatsApp/Sara). Preserva el orden del array de entrada.
-async function mapLimit(thunks, limit) {
+async function mapLimit(thunks, limit, tiempos = null) {
   const results = new Array(thunks.length);
   let i = 0;
-  async function worker() { while (i < thunks.length) { const idx = i++; results[idx] = await thunks[idx](); } }
+  async function worker() {
+    while (i < thunks.length) {
+      const idx = i++;
+      // Cuánto tarda cada señal. Sin esto, «el dashboard va lento» solo se puede contestar
+      // adivinando: son treinta consultas y basta con que UNA se ponga tonta al crecer los
+      // datos. Medir cuesta un `Date.now()` por consulta.
+      const t0 = tiempos ? Date.now() : 0;
+      results[idx] = await thunks[idx]();
+      if (tiempos) tiempos[idx] = Date.now() - t0;
+    }
+  }
   await Promise.all(Array.from({ length: Math.min(limit, thunks.length) }, worker));
   return results;
 }
 
 // ── Recolección de señales reales (cada una defensiva) ───────────────────────
+// De cuatro en cuatro se dejaban conexiones libres del pool (max 10) para lo urgente
+// —reservas, Sara—, pero treinta consultas de cuatro en cuatro son ocho viajes seguidos a la
+// base, y cada viaje son decenas de milisegundos. Con seis siguen sobrando cuatro conexiones
+// y se ahorran casi tres viajes enteros.
+const CONCURRENCIA = 6;
+const AVISO_LENTO_MS = 2500;
+// Para poder nombrar a la lenta en el registro. Mismo orden que los thunks de abajo.
+const NOMBRES_SENAL = [
+  "reservas-ayer", "reservas-ayer-local", "base-mismo-dia",
+  "reservas-hoy", "reservas-hoy-local", "reservas-7dias",
+  "incid-recurrentes", "incid-antiguedad", "incid-abiertas", "incid-por-local",
+  "reseñas-agg", "reseñas-bajas", "reseñas-por-local",
+  "por-pagar", "acreedores", "factura-mas-antigua", "gasto-mes", "gasto-mes-anterior",
+  "proveedores-mes", "proveedores-mes-anterior",
+  "incid-trabajadores", "plantilla", "checkins-mes",
+  "clientes-fuga", "mejores-clientes",
+  "candidaturas", "facturas-pendientes",
+  "serie-reservas", "reseñas-sin-responder",
+  "ventas", "ventas-por-local",
+];
+
 async function gatherSignals(x, { hoy, local }) {
+  const tiempos = [];
   const ayer = addDays(hoy, -1);
   const dow = new Date(ayer + "T12:00:00.000Z").getUTCDay();
   const mesActual = hoy.slice(0, 7);
@@ -101,7 +133,20 @@ async function gatherSignals(x, { hoy, local }) {
     // — ventas (Ágora): total últimos 30 días + por local. Vacío hasta conectar el TPV. —
     () => safe(() => x.get(`SELECT COALESCE(SUM(ventas),0)::float total, COUNT(DISTINCT dia)::int dias FROM ventas_diarias WHERE dia::date >= ?::date${lf}`, [addDays(hoy, -30), ...lp]), null),
     () => safe(() => x.all(`SELECT local, COALESCE(SUM(ventas),0)::float total FROM ventas_diarias WHERE dia::date >= ?::date GROUP BY local ORDER BY total DESC`, [addDays(hoy, -30)]), []),
-  ], 4);
+  ], CONCURRENCIA, tiempos);
+
+  // Si la recogida se ha ido de tiempo, se dice CUÁL ha sido y cuánto: un aviso de «va lento»
+  // sin el culpable obliga a adivinar entre treinta consultas. Solo cuando pasa, para no
+  // ensuciar el registro con lo normal.
+  if (tiempos) {
+    const total = tiempos.reduce((a, b) => a + (b || 0), 0);
+    if (total > AVISO_LENTO_MS) {
+      const peores = tiempos.map((ms, i) => ({ ms: ms || 0, señal: NOMBRES_SENAL[i] || `#${i}` }))
+        .sort((a, b) => b.ms - a.ms).slice(0, 3)
+        .map((x2) => `${x2.señal} ${x2.ms} ms`).join(" · ");
+      console.warn(`[dashboard] lento (${total} ms sumados${local ? ", " + local : ""}). Lo más caro: ${peores}`);
+    }
+  }
 
   // Correlación de la peor reseña reciente con la carga/incidencias de ese día.
   let lowCorr = null;

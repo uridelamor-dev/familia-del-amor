@@ -419,6 +419,38 @@ async function refreshWaPill(forzar = false) {
 }
 
 // ── Modal ligero ─────────────────────────────────────────────────────────────
+/**
+ * REPINTAR SIN CERRAR LO QUE ESTABA ABIERTO.
+ *
+ * El fallo: abres «De qué es cada proveedor», cambias la categoría de uno y el desplegable se
+ * cierra solo — porque guardar vuelve a pedir los datos y repinta la caja entera. Pasaba en
+ * todas las pantallas que repintan un bloque con desplegables dentro: el diccionario, las
+ * categorías, «En qué se va el dinero»… Y cerrarse justo después de tocar algo obliga a volver
+ * a abrir para seguir con el siguiente, que es lo que se estaba haciendo.
+ *
+ * Se identifican por el TÍTULO del `<summary>` (el `<h3>`), no por el texto entero: el texto
+ * lleva el contador —«12 sin etiquetar»— y ese contador cambia justo al guardar, que es cuando
+ * hay que reconocerlos.
+ */
+function clavesDePliegues(raiz) {
+  const cuenta = new Map();
+  return [...raiz.querySelectorAll("details")].map((d) => {
+    const base = (d.getAttribute("data-fold") || d.querySelector("summary h3")?.textContent || "")
+      .replace(/\s+/g, " ").trim().slice(0, 60);
+    const n = (cuenta.get(base) || 0) + 1;
+    cuenta.set(base, n);
+    return { d, clave: base ? `${base}#${n}` : "" };
+  });
+}
+
+function pintarConservandoPliegues(caja, html) {
+  if (!caja) return;
+  const abiertos = new Set(clavesDePliegues(caja).filter((x) => x.d.open && x.clave).map((x) => x.clave));
+  caja.innerHTML = html;
+  if (!abiertos.size) return;
+  for (const x of clavesDePliegues(caja)) if (x.clave && abiertos.has(x.clave)) x.d.open = true;
+}
+
 function modal(title, bodyHtml) {
   const ov = document.createElement("div"); ov.className = "modal-ov";
   ov.innerHTML = `<div class="modal"><div class="modal-h"><b>${esc(title)}</b><button class="iconbtn" data-close aria-label="Cerrar">✕</button></div><div class="modal-b">${bodyHtml}</div></div>`;
@@ -1027,12 +1059,21 @@ async function loadDashboard() {
     // `comparar=1`: el servidor trae también el periodo anterior y la variación ya calculada.
     // El «contra qué» lo decide él (`rangoAnterior`), que sabe que un mes se compara con el mes
     // anterior y no con «los 31 días de antes».
-    const [d, per] = await Promise.all([
-      api("/api/dashboard" + (q ? "?" + q : "")),
-      apiOptional(`/api/dashboard/periodo?from=${DASH_RANGE.from}&to=${DASH_RANGE.to}&comparar=1&preset=${encodeURIComponent(PERIOD || "")}${q ? "&" + q : ""}`),
-    ]);
-    DASH_PERIODO = per || null;
+    // LAS DOS PETICIONES NO SE ESPERAN LA UNA A LA OTRA. Antes iban en un `Promise.all` y la
+    // pantalla no aparecía hasta que llegaba la MÁS LENTA de las dos: el dashboard hace unas
+    // treinta consultas y la comparación con el periodo anterior hace el doble de trabajo que
+    // el periodo solo. Se pinta con lo primero que llega y las variaciones entran después,
+    // que es como se nota rápido de verdad.
+    const pedirPeriodo = apiOptional(`/api/dashboard/periodo?from=${DASH_RANGE.from}&to=${DASH_RANGE.to}&comparar=1&preset=${encodeURIComponent(PERIOD || "")}${q ? "&" + q : ""}`);
+    const d = await api("/api/dashboard" + (q ? "?" + q : ""));
     view.innerHTML = renderDashboard(d);
+    pedirPeriodo.then((per) => {
+      // Puede haber cambiado de pantalla o de periodo mientras llegaba: entonces no se pinta.
+      if (CURRENT !== "dashboard") return;
+      DASH_PERIODO = per || null;
+      const nuevo = document.getElementById("view");
+      if (nuevo && per) nuevo.innerHTML = renderDashboard(d);
+    }).catch(() => { /* sin comparación: el dashboard ya está en pantalla */ });
     // El menú se pinta ANTES de que lleguen estos datos, así que los números de pendientes hay
     // que repintarlos cuando se saben. Sin esto solo aparecían al cambiar de pantalla: es decir,
     // nunca en la primera, que es donde se mira.
@@ -4551,7 +4592,7 @@ async function facCargarCategorias() {
   const caja = document.getElementById("facCats");
   if (!caja) return;
   try { FCATS = await apiRaw("/api/facturas/categorias"); } catch { return; }
-  caja.innerHTML = facCategoriasHtml();
+  pintarConservandoPliegues(caja, facCategoriasHtml());
 }
 
 // ── Proveedores repetidos ───────────────────────────────────────────────────
@@ -4567,7 +4608,7 @@ async function facProvDuplicados() {
   const g = PROVDUP.grupos || [];
   if (!g.length) { caja.innerHTML = ""; return; }
 
-  caja.innerHTML = `<details class="card fold" style="margin-bottom:16px">
+  pintarConservandoPliegues(caja, `<details class="card fold" style="margin-bottom:16px">
     <summary><h3>Proveedores repetidos</h3><span class="foldr">
       <span>${num(g.length)} ${g.length === 1 ? "caso" : "casos"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <p class="mut" style="margin:0 0 12px;line-height:1.55">El mismo proveedor metido con dos nombres. Cuando comparten
@@ -4582,7 +4623,7 @@ async function facProvDuplicados() {
         <button class="btn sm primary" data-act="fac-provdup" data-provdup="unir" data-i="${i}">Unir en «${esc(nombreCorto(x.sugerido.proveedor))}»</button>
         <button class="btn sm" data-act="fac-provdup" data-provdup="otro" data-i="${i}">Al revés</button>
       </div>`).join("")}</div>
-  </details>`;
+  </details>`);
 }
 
 /** Unir de verdad: se reutiliza el renombrado, que ya reescribe todas las facturas y aprende. */
@@ -6153,7 +6194,7 @@ function dicPintar() {
     //
     // Pero la LISTA del diccionario sí se pinta. Antes se iba con ella, y con ella el botón de
     // quitar una forma mal unida: al terminar la cola desaparecía la única manera de deshacer.
-    caja.innerHTML = dicProductosHtml();
+    pintarConservandoPliegues(caja, dicProductosHtml());
     return;
   }
 
@@ -6171,7 +6212,7 @@ function dicPintar() {
         title="Revisado, pero no se une a ningún producto">Dejar aparte</button>
     </div>`;
 
-  caja.innerHTML = `<details class="card fold" style="margin-bottom:14px">
+  pintarConservandoPliegues(caja, `<details class="card fold" style="margin-bottom:14px">
     <summary><h3>Unificar productos</h3><span class="foldr">
       <span>${num(cola.length)} sin revisar${DICC.hayMas ? "+" : ""}${DICC.local ? ` en ${esc(nombreCortoLocal(DICC.local))}` : ""}${c.pct ? ` · ${c.pct} % del gasto ya revisado` : ""}</span>
       <span class="car">${ic("chev", 16)}</span></span></summary>
@@ -6183,7 +6224,7 @@ function dicPintar() {
         lo que decidas vale para todos: el producto es el mismo en todas partes.` : ""}</p>
     <div class="rows">${cola.slice(0, 25).map(fila).join("")}</div>
     ${cola.length > 25 ? `<p class="mut" style="margin:10px 0 0;font-size:12px">Y ${num(cola.length - 25)} más, que irán apareciendo según decidas estas.</p>` : ""}
-  </details>${dicProductosHtml()}`;
+  </details>${dicProductosHtml()}`);
 }
 
 /**
@@ -6915,10 +6956,10 @@ async function refrescarCompras() {
           <td style="text-align:right"><button class="btn sm" data-compfac="${l.factura_id}">Ver factura</button></td>
         </tr>`).join("")}</tbody></table></div></details>` : "";
 
-  cont.innerHTML = `${barra}${avisoTope}${compCategoriasHtml(j.categorias)}<div class="card">
+  pintarConservandoPliegues(cont, `${barra}${avisoTope}${compCategoriasHtml(j.categorias)}<div class="card">
       <div class="ch"><h3>${COMP.q ? `«${esc(COMP.q)}»` : COMP.proveedor ? `Lo que nos vende ${esc(COMP.proveedor)}` : "Todo lo comprado"}</h3>
         <span class="mut">${num(j.totales.productos)} ${j.totales.productos === 1 ? "producto" : "productos"} · <b>${esc(eur(j.totales.importe))}</b></span></div>
-      ${aviso}${tabla}</div>${detalle}`;
+      ${aviso}${tabla}</div>${detalle}`);
 }
 
 // Releer el detalle de las facturas antiguas. Va por tandas y se enseña el avance: son

@@ -18,14 +18,32 @@ describe("los desplegables empiezan cerrados", () => {
 
   test("y nadie los abre después por JavaScript", () => {
     assert.doesNotMatch(panel, /setAttribute\("open"/);
-    assert.doesNotMatch(panel, /\.open\s*=\s*true/);
+    // Solo hay UN sitio que abra un desplegable desde el código, y solo para devolver a su
+    // sitio lo que ya estaba abierto. Si aparece otro, este test lo caza.
+    const aperturas = [...panel.matchAll(/\.open = true/g)].length;
+    assert.equal(aperturas, 1, "alguien abre desplegables por su cuenta");
+    assert.match(panel, /if \(x\.clave && abiertos\.has\(x\.clave\)\) x\.d\.open = true;/);
   });
 
   test("lo que sí se conserva es lo que TÚ abriste, al repintar", () => {
     // No es abrirse solo: es no cerrarse en las narices de quien lo está mirando cuando el
-    // bloque se vuelve a pintar tras una acción.
+    // bloque se vuelve a pintar tras una acción —guardar la categoría de un proveedor, por
+    // ejemplo—, que además es justo cuando se va a seguir con el siguiente.
+    assert.match(panel, /function pintarConservandoPliegues\(caja, html\)/);
     assert.match(panel, /const estaba = caja\.querySelector\("details"\)\?\.open/);
-    assert.match(panel, /\$\{estaba \? "open" : ""\}/);
+  });
+
+  test("los desplegables se reconocen por su TÍTULO, no por el texto entero", () => {
+    // El texto del resumen lleva el contador —«12 sin etiquetar»— y ese contador cambia justo
+    // al guardar, que es cuando hay que reconocerlos.
+    assert.match(panel, /d\.querySelector\("summary h3"\)\?\.textContent/);
+  });
+
+  test("y los bloques que se repintan lo usan", () => {
+    for (const sitio of ["facCategoriasHtml\\(\\)", "dicProductosHtml\\(\\)"]) {
+      assert.match(panel, new RegExp(`pintarConservandoPliegues\\([^,]+, ${sitio}\\)`), sitio);
+    }
+    assert.match(panel, /pintarConservandoPliegues\(cont, `\$\{barra\}/);
   });
 });
 
