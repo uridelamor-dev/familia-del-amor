@@ -16,7 +16,7 @@ describe("Compras: las cifras de arriba contestan la pregunta del día", () => {
     // Antes eran cuatro tarjetas —facturas, base, IVA, total— que son cuatro vistas del mismo
     // número; para saber si algo estaba vencido había que irse a la pestaña de Pagos.
     assert.match(panel, /stat\("Por pagar"/);
-    assert.match(panel, /stat\("Vence esta semana"/);
+    assert.match(panel, /stat\("Vence en 7 días"/);
     assert.match(panel, /Vencido<\/div>/);
   });
 
@@ -95,5 +95,75 @@ describe("Productos: la tabla se lee de un vistazo", () => {
     // La caja de revisar se va, pero la lista del diccionario NO: ahí está el botón de quitar
     // una forma mal unida. Antes se iban las dos y no quedaba manera de deshacer.
     assert.match(panel, /caja\.innerHTML = dicProductosHtml\(\);/);
+  });
+});
+
+describe("todo se entrega también en móvil", () => {
+  // En un iPhone (390×844), la primera factura empezaba a 838 px: una pantalla entera de
+  // deslizar sin ver ni una factura. Ahora empieza a 421 px.
+  test("las tres cifras no se apilan: una línea de tres", () => {
+    assert.match(css, /\.statsm\{grid-template-columns:repeat\(3,1fr\)/);
+  });
+
+  test("las pestañas no se parten en dos filas: se deslizan", () => {
+    assert.match(css, /\.tabstrip\{flex-wrap:nowrap;overflow-x:auto/);
+    assert.match(panel, /<div class="toolbar tabstrip"/);
+  });
+
+  test("la columna de marcar se va: 60 px de 390 para algo que es de escritorio", () => {
+    assert.match(css, /\.tbl th\.facsel,\.tbl td\.facsel\{display:none\}/);
+  });
+
+  test("la columna pegajosa se limita en píxeles, para que el dinero quepa", () => {
+    // Con nombres largos se comía la pantalla entera: se veían los productos y ni un euro.
+    assert.match(css, /\.tbl td:first-child,\.tbl th:first-child\{max-width:180px\}/);
+  });
+
+  test("la fecha pierde el día de la semana, que son 34 px", () => {
+    assert.match(panel, /<span class="solosm">\$\{esc\(fechaMini\(f\.fecha\)/);
+    assert.match(css, /\.solosm\{display:none\}/);
+    assert.match(css, /\.solosm\{display:inline\}/);
+  });
+
+  test("y el importe no se parte en dos líneas", () => {
+    assert.match(panel, /<td class="r tnum" style="white-space:nowrap"><b>\$\{eur\(f\.total\)\}/);
+  });
+});
+
+describe("las listas largas se recorren", () => {
+  test("la cabecera se queda arriba, y por eso la tabla larga tiene altura propia", () => {
+    // `position:sticky` se agarra al antecesor que se desplaza, y `.tw` ya se desplaza en
+    // horizontal: sin darle altura, «top:0» no se agarra a nada y la cabecera se iba.
+    assert.match(css, /\.tw\.alta\{max-height:calc\(100vh - 300px\)/);
+    assert.match(css, /\.tbl thead th\{position:sticky;top:0/);
+    assert.match(panel, /list\.length > 25 \? " alta" : ""/);
+    assert.match(panel, /j\.grupos\.length > 25 \? " alta" : ""/);
+  });
+
+  test("y hay bandas de mes, pero solo cuando la lista es larga", () => {
+    // En una lista corta la banda es más ruido que ayuda.
+    assert.match(panel, /function bandasDeMes\(list, fila, columnas, minimo = 30\)/);
+    assert.match(panel, /if \(list\.length < minimo\) return list\.map\(fila\)\.join\(""\)/);
+  });
+});
+
+describe("la evolución del precio, dibujada", () => {
+  test("se dibuja a mano en SVG: aquí no se pueden añadir librerías", () => {
+    assert.match(panel, /function sparkPrecio\(g\)/);
+    assert.match(panel, /<svg class="spark"/);
+  });
+
+  test("con menos de tres compras no se dibuja nada", () => {
+    // Dos puntos son una recta, y una recta se lee como una tendencia que no existe.
+    assert.match(panel, /if \(ps\.length < 3\) return "";/);
+  });
+
+  test("si todos los precios son iguales, la línea va por el medio", () => {
+    // Aplastada contra el borde parecería que el precio está por los suelos.
+    assert.match(panel, /max === min \? H \/ 2 :/);
+  });
+
+  test("y en móvil la columna se va, que el ancho hace más falta para el nombre", () => {
+    assert.match(css, /\.tbl th\.sparkcel,\.tbl td\.sparkcel\{display:none\}/);
   });
 });

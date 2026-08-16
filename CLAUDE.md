@@ -19,9 +19,10 @@ App de gestión interna + web pública de un grupo de restauración. **Responder
 - **Reiniciar** (mata puerto + chrome/puppeteer + SingletonLock + relanza): `/restart-tapeta`.
 - **Probar API** (login + endpoints, sin pegar token a mano): skill `tapeta-api` → `.claude/skills/tapeta-api/api.sh <endpoint>`.
 - **Barrido de pantallas:** `node tools/barrido-rutas.mjs` abre las 19 vistas del panel en Chrome
-  sin ventana (servidor falso incluido) y avisa de errores de JS, pantallas en blanco y
-  desplegables abiertos de casa. Necesita `puppeteer`, que **no** es dependencia: si falta, se
-  salta. `npm test` lee el código; esto lo ejecuta, y ahí salen otros fallos.
+  sin ventana (servidor falso incluido) **en ordenador (1280) y en móvil (390)** y avisa de
+  errores de JS, pantallas en blanco, desplegables abiertos de casa y páginas que se salen de
+  ancho. Necesita `puppeteer`, que **no** es dependencia: si falta, se salta. `npm test` lee el
+  código; esto lo ejecuta, y ahí salen otros fallos.
 - Login de prueba: usuarios `direccion` / `encargado`, contraseña `tapeta2024`. En una base
   **recién creada** pide cambiarla al entrar (todas las altas nacen con `pass_temporal`).
 
@@ -59,6 +60,13 @@ Otros puntos: la hora de un fichaje la pone el **servidor** (salvo los diferidos
 `kiosco_offline` con su desfase); el PDF del cuadrante se escribe a mano (base-14 + WinAnsi)
 porque no se pueden añadir dependencias; y el generador (`solver.js`) **propone un borrador**,
 no publica.
+
+## Interfaz: ordenador Y móvil, siempre
+Todo cambio visual se entrega funcionando en las dos, sin que haya que pedirlo: el panel se usa
+dentro de los locales con el teléfono en la mano. Comprobar a **1440×800 y 390×844** antes de dar
+nada por hecho (`node tools/barrido-rutas.mjs` ya barre las dos). Lo que más falla: tarjetas que
+se apilan y se comen la pantalla, barras de pestañas que se parten en dos filas, y tablas anchas
+cuya primera columna —pegajosa— deja el dinero fuera de la vista.
 
 ## Deuda conocida
 - ~~`hoyISO()` en UTC~~ **Arreglado.** Hay un único `hoyISO()` en `server.js` y usa

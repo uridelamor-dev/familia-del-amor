@@ -16,6 +16,8 @@ function addDaysStr(s, n) { const d = new Date(s + "T00:00:00.000Z"); d.setUTCDa
 const esFechaISO = (v) => /^\d{4}-\d{2}-\d{2}/.test(String(v || ""));
 function fechaLarga(iso) { if (!esFechaISO(iso)) return ""; try { return cap(new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date(String(iso).slice(0, 10) + "T12:00:00"))); } catch { return ""; } }
 function fechaCorta(iso) { if (!esFechaISO(iso)) return ""; try { return new Intl.DateTimeFormat("es-ES", { weekday: "short", day: "numeric", month: "short" }).format(new Date(String(iso).slice(0, 10) + "T12:00:00")); } catch { return ""; } }
+// Sin el día de la semana. En el móvil, «dom,» son 34 px que le hacen falta al importe.
+function fechaMini(iso) { if (!esFechaISO(iso)) return ""; try { return new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short" }).format(new Date(String(iso).slice(0, 10) + "T12:00:00")); } catch { return ""; } }
 const token = () => localStorage.getItem("token");
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2600); }
@@ -4318,7 +4320,7 @@ function facHeader() {
     <button class="btn" data-act="fac-filtros">${ic("filtro", 15)} Filtrar${facFiltrosActivos().length ? '<span class="fdot"></span>' : ""}</button>
     <button class="btn primary" data-act="fac-subir">+ Subir</button>
     <button class="btn" data-act="fac-export">CSV</button>`;
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${pestanas}${acciones}</div>`;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar tabstrip" style="margin-bottom:12px">${pestanas}${acciones}</div>`;
 }
 
 // La cabecera de Productos. Es su propia pantalla, no una pestaña de Compras: sale de los
@@ -5144,7 +5146,7 @@ function facKpisHtml() {
   // ficha, no la portada. Van en la línea de debajo.
   const kpi3 = `<div class="grid g3 statsm" style="margin-bottom:10px">
       ${stat("Por pagar", ic("receipt", 15), eur(t.porPagar), "", `${num(t.pendientes)} ${t.pendientes === 1 ? "documento" : "documentos"}`)}
-      ${stat("Vence esta semana", ic("cal", 15), eur(t.semanaImporte), "", `${num(t.semana)} en los próximos 7 días`)}
+      ${stat("Vence en 7 días", ic("cal", 15), eur(t.semanaImporte), "", `${num(t.semana)} ${t.semana === 1 ? "documento" : "documentos"}`)}
       <div class="card stat${t.vencidas ? " alerta" : ""}"><div class="lab"><span class="ci">${ic("alert", 15)}</span>Vencido</div>
         <div class="val tnum">${esc(eur(t.vencidoImporte))}</div>
         <div class="sub">${t.vencidas ? `${num(t.vencidas)} sin pagar` : "nada vencido"}</div></div>
@@ -5221,6 +5223,25 @@ function facPillPago(f) {
   return `<span class="pill ${clase}"${titulo ? ` title="${esc(titulo)}"` : ""}>${esc(e.texto)}</span>`;
 }
 
+/**
+ * Bandas de mes en las listas largas. Recorrer trescientas facturas leyendo fechas una a una no
+ * es recorrer, es buscar. Con la banda, el ojo salta al mes y ya está.
+ *
+ * Solo a partir de treinta: en una lista corta, la banda sería más ruido que ayuda.
+ */
+const MES_LARGO = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+function bandasDeMes(list, fila, columnas, minimo = 30) {
+  if (list.length < minimo) return list.map(fila).join("");
+  let mes = "";
+  return list.map((f) => {
+    const ym = String(f.fecha || "").slice(0, 7);
+    if (!ym || ym === mes) return fila(f);
+    mes = ym;
+    const [y, m] = ym.split("-").map(Number);
+    return `<tr class="sepmes"><td colspan="${columnas}">${esc(cap(MES_LARGO[m - 1] || ""))} ${y}</td></tr>` + fila(f);
+  }).join("");
+}
+
 function facTablaHtml(list) {
   if (!list.length) return `<div class="card"><div class="mut" style="padding:8px">Sin facturas con esos filtros.</div></div>`;
   const visibles = list.map((f) => f.id);
@@ -5242,17 +5263,18 @@ function facTablaHtml(list) {
   const fila = (f) => `<tr class="${FAC_SEL.has(f.id) ? "sel" : ""} facrow" data-act="fac-ficha" data-id="${f.id}">
     <td class="facsel"><input type="checkbox" data-facsel="${f.id}" ${FAC_SEL.has(f.id) ? "checked" : ""} aria-label="Seleccionar"></td>
     <td class="facthumb">${f.drive_url ? `<span class="thumb ph" data-thumb="${f.id}"></span>` : ""}</td>
-    <td class="mut" style="white-space:nowrap">${esc(fechaCorta(f.fecha) || (f.fecha || "").slice(0, 10))}</td>
-    <td><div class="t1">${esc(f.numero_factura || "—")}</div><div class="t2">${esc(f.proveedor || "")}</div>${marcas(f) ? `<div style="margin-top:3px">${marcas(f)}</div>` : ""}</td>
+    <td class="mut" style="white-space:nowrap"><span class="hidesm">${esc(fechaCorta(f.fecha) || (f.fecha || "").slice(0, 10))}</span><span class="solosm">${esc(fechaMini(f.fecha) || (f.fecha || "").slice(0, 10))}</span></td>
+    <td><div class="t1">${esc(f.numero_factura || "—")}</div>
+      <div class="t2" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">${esc(f.proveedor || "")}${marcas(f)}</div></td>
     ${conLocal ? `<td class="mut">${esc(nombreCortoLocal(f.local) || "")}</td>` : ""}
-    <td class="r tnum"><b>${eur(f.total)}</b></td>
+    <td class="r tnum" style="white-space:nowrap"><b>${eur(f.total)}</b></td>
     <td>${facPillPago(f)}</td>
     <td class="r mut" aria-hidden="true">${ic("chev", 15)}</td></tr>`;
-  return `<div class="card p0"><div class="tw"><table class="tbl">
+  return `<div class="card p0"><div class="tw${list.length > 25 ? " alta" : ""}"><table class="tbl">
     <thead><tr><th class="facsel"><input type="checkbox" id="facSelAll" ${todasMarcadas ? "checked" : ""} aria-label="Seleccionar todas"></th>
     <th class="facthumb"></th>
     <th>Fecha</th><th>Documento</th>${conLocal ? "<th>Local</th>" : ""}<th class="r">Total</th><th>Estado</th><th></th></tr></thead>
-    <tbody>${list.map(fila).join("")}</tbody></table></div></div>${facBarraSeleccion()}`;
+    <tbody>${bandasDeMes(list, fila, conLocal ? 8 : 7)}</tbody></table></div></div>${facBarraSeleccion()}`;
 }
 
 // Barra flotante que aparece al marcar algo. Va abajo, encima de la tabla, para no
@@ -6200,6 +6222,33 @@ async function compAbrirFiltros() {
  * Solo se pinta cuando hay con qué comparar y cuando la diferencia es de verdad (±5 %): un
  * chip en cada fila se convierte en decoración y deja de leerse.
  */
+/**
+ * LA LÍNEA DEL PRECIO. De cada producto guardamos hasta cuarenta precios con su fecha y hasta
+ * ahora se enseñaban dos números: el normal y el último. Dos números no distinguen «lleva tres
+ * meses subiendo» de «un mes le cobraron de más». La línea sí, y sin leer nada.
+ *
+ * Se dibuja a mano en SVG —doce puntos, un `path`— porque aquí no se pueden añadir librerías,
+ * y porque una librería de gráficos para esto sería mover una montaña para poner un clavo.
+ */
+function sparkPrecio(g) {
+  const ps = (g.precios || []).filter((x) => x && Number.isFinite(Number(x.precio)));
+  if (ps.length < 3) return "";                       // con dos puntos no hay tendencia que ver
+  // Vienen de más nuevo a más viejo: se dibuja al revés, que es como se lee el tiempo.
+  const v = ps.map((x) => Number(x.precio)).reverse();
+  const min = Math.min(...v), max = Math.max(...v);
+  const W = 62, H = 18, P = 2;
+  const x = (i) => (v.length === 1 ? W / 2 : P + (i * (W - P * 2)) / (v.length - 1));
+  // Si todos los precios son iguales, la línea va por el medio: aplastarla contra el borde
+  // haría parecer que el precio está por los suelos.
+  const y = (n) => (max === min ? H / 2 : H - P - ((n - min) / (max - min)) * (H - P * 2));
+  const d = v.map((n, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(n).toFixed(1)}`).join(" ");
+  const sube = v[v.length - 1] > v[0];
+  const color = max === min ? "var(--ink3)" : sube ? "var(--danger)" : "var(--success)";
+  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true"
+    ><path d="${d}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${x(v.length - 1).toFixed(1)}" cy="${y(v[v.length - 1]).toFixed(1)}" r="2" fill="${color}"/></svg>`;
+}
+
 function compChipPrecio(g) {
   if (g.precioNormal == null || g.ultimoPrecio == null || g.precioNormal <= 0) return "";
   const pct = Math.round(((g.ultimoPrecio - g.precioNormal) / g.precioNormal) * 1000) / 10;
@@ -6385,20 +6434,32 @@ async function refrescarCompras() {
   // producto que más gasta, no contra el total: si no, con 167 productos todas las barras
   // serían un pelo y no dirían nada.
   const topeGasto = Math.max(1, ...j.grupos.map((g) => Number(g.importe) || 0));
+  // De qué categoría es cada producto: se sabe por su proveedor, que es como se etiqueta el
+  // gasto. Un punto de color por fila convierte una lista gris en algo que se recorre por
+  // bloques —«esto es pescado, esto es bebida»— sin leer una palabra.
+  const catDeProv = new Map();
+  for (const c of (j.categorias?.categorias || [])) {
+    for (const pr of (c.proveedores || [])) if (!catDeProv.has(pr)) catDeProv.set(pr, c.categoria || c.nombre);
+  }
+  const catDe = (g) => catDeProv.get((g.proveedores || [])[0]) || "";
   const fila = (g) => `<tr>
-      <td><div style="display:flex;align-items:center;gap:6px;min-width:0">${g.unificado ? `<span class="pill ok" style="font-size:9.5px;flex:none" title="Producto del diccionario: junta varias formas de escribirlo">✓</span>` : ""}<button class="linkbtn prod" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="${esc(g.descripcion)} — todas las veces que lo hemos comprado">${esc(g.descripcion)}</button></div>
-        <div class="mut" style="font-size:11px">${esc(g.proveedores.join(" · ") || "—")}</div></td>
-      <td style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) + (g.unidad ? ` <span class="mut" style="font-size:11px">${esc(g.unidad)}</span>` : "") : "—"}</td>
+      <td style="--cat:var(--cat-${esc(colorCategoriaFE(catDe(g)))})"><div style="display:flex;align-items:center;gap:6px;min-width:0"><span class="catdot" title="${esc(catDe(g) || "Sin categoría")}"></span>${g.unificado ? `<span class="pill ok" style="font-size:9.5px;flex:none" title="Producto del diccionario: junta varias formas de escribirlo">✓</span>` : ""}<button class="linkbtn prod" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="${esc(g.descripcion)} — todas las veces que lo hemos comprado">${esc(g.descripcion)}</button></div>
+        <div class="mut provcel" style="font-size:11px" title="${esc(g.proveedores.join(" · "))}">${esc(g.proveedores.join(" · ") || "—")}</div></td>
+      <td class="cantcel" style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) + (g.unidad ? ` <span class="mut" style="font-size:11px">${esc(g.unidad)}</span>` : "") : "—"}</td>
       <td style="text-align:right;white-space:nowrap"><div class="gastocel"><b>${g.importe != null ? esc(eur(g.importe)) : "—"}</b>
         <i class="gastobar" style="width:${Math.round(((Number(g.importe) || 0) / topeGasto) * 100)}%"></i></div></td>
-      <td style="text-align:right;white-space:nowrap">${g.precioNormal != null ? esc(eur2(g.precioNormal)) : '<span class="mut" title="Con menos de tres compras no hay un precio normal que valga, y con varios proveedores no se puede comparar: sería otro precio, no una subida">—</span>'}</td>
-      <td style="text-align:right;white-space:nowrap">${g.ultimoPrecio != null ? `${esc(eur2(g.ultimoPrecio))}${compChipPrecio(g)}` : "—"}</td>
-      <td class="mut" style="white-space:nowrap;font-size:11.5px">${esc(g.veces)} ${g.veces === 1 ? "vez" : "veces"}<br>${esc(fechaCorta(g.ultima) || "")}</td>
+      ${/* UNA SOLA COLUMNA DE PRECIO. «Precio normal» y «Último precio» traían casi siempre el
+            mismo número, y cuando no, ya lo decía la píldora. Se queda el que se paga ahora, con
+            su variación al lado y el normal en el rótulo al pasar por encima. */""}
+      <td style="text-align:right;white-space:nowrap"${g.precioNormal != null ? ` title="Lo normal es ${esc(eur2(g.precioNormal))}"` : ""}>${g.ultimoPrecio != null ? `${esc(eur2(g.ultimoPrecio))}${compChipPrecio(g)}` : "—"}</td>
+      <td class="sparkcel">${sparkPrecio(g)}</td>
+      <td class="ultcel mut" style="white-space:nowrap;font-size:11.5px">${esc(g.veces)} ${g.veces === 1 ? "vez" : "veces"}<br>${esc(fechaCorta(g.ultima) || "")}</td>
     </tr>`;
 
-  const tabla = j.grupos.length ? `<div class="tw"><table class="tbl">
-      <thead><tr><th>Producto</th><th style="text-align:right">Cantidad</th><th style="text-align:right">Gastado</th>
-      <th style="text-align:right" title="La mediana de las últimas compras: lo que se paga normalmente">Precio normal</th><th style="text-align:right">Último precio</th><th>Última compra</th></tr></thead>
+  const tabla = j.grupos.length ? `<div class="tw${j.grupos.length > 25 ? " alta" : ""}"><table class="tbl">
+      <thead><tr><th>Producto</th><th class="cantcel" style="text-align:right">Cantidad</th><th style="text-align:right">Gastado</th>
+      <th style="text-align:right" title="Lo que se paga ahora. Al lado, cuánto se sale de lo normal">Precio</th>
+      <th class="sparkcel" title="Cómo ha ido el precio en las últimas compras">Evolución</th><th class="ultcel">Última compra</th></tr></thead>
       <tbody>${j.grupos.map(fila).join("")}</tbody></table></div>`
     : `<p class="mut" style="margin:0;line-height:1.6">${COMP.q
         ? `No se ha comprado nada que se llame «${esc(COMP.q)}» en estas fechas.`

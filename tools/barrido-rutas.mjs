@@ -55,36 +55,63 @@ const servidor = http.createServer(async (req, res) => {
 await new Promise((r) => servidor.listen(PUERTO, r));
 
 const navegador = await puppeteer.launch({ headless: "new", args: ["--no-sandbox"] });
-const pagina = await navegador.newPage();
-await pagina.setViewport({ width: 1280, height: 1000 });
-const errores = [];
-pagina.on("pageerror", (e) => errores.push(e.message));
-await pagina.evaluateOnNewDocument(() => localStorage.setItem("token", "x"));
-await pagina.goto(`http://localhost:${PUERTO}/panel/`, { waitUntil: "networkidle0" });
-await new Promise((r) => setTimeout(r, 900));
 
-const rutas = await pagina.evaluate(() => [...document.querySelectorAll(".nav .navi")].map((b) => b.getAttribute("data-view")));
+/**
+ * Se barre DOS VECES: en ordenador y en móvil.
+ *
+ * El panel se usa dentro de los locales con el teléfono en la mano, así que una pantalla que
+ * solo funciona en el escritorio no está terminada. El caso que lo destapó: en Compras, en un
+ * iPhone, la primera factura empezaba a 838 px — una pantalla entera de deslizar sin ver ni
+ * una factura, y en el ordenador no se notaba nada.
+ */
+const PANTALLAS = [
+  { mote: "ordenador", ancho: 1280, alto: 1000, movil: false },
+  { mote: "móvil", ancho: 390, alto: 844, movil: true },
+];
+
 let fallos = 0;
-console.log(`\nBarrido de ${rutas.length} pantallas\n`);
+for (const p of PANTALLAS) {
+  const pagina = await navegador.newPage();
+  await pagina.setViewport({ width: p.ancho, height: p.alto, isMobile: p.movil, hasTouch: p.movil });
+  const errores = [];
+  pagina.on("pageerror", (e) => errores.push(e.message));
+  await pagina.evaluateOnNewDocument(() => localStorage.setItem("token", "x"));
+  await pagina.goto(`http://localhost:${PUERTO}/panel/`, { waitUntil: "networkidle0" });
+  await new Promise((r) => setTimeout(r, 900));
 
-for (const r of rutas) {
-  errores.length = 0;
-  await pagina.evaluate((v) => document.querySelector(`[data-view="${v}"]`).click(), r);
-  await new Promise((x) => setTimeout(x, 700));
-  const info = await pagina.evaluate(() => {
-    const det = [...document.querySelectorAll("#view details")];
-    return { abiertos: det.filter((d) => d.open).length, total: det.length,
-      vacia: (document.getElementById("view")?.innerText || "").trim().length < 20 };
-  });
-  const problemas = [];
-  if (errores.length) problemas.push(`error: ${errores[0].slice(0, 70)}`);
-  if (info.abiertos) problemas.push(`${info.abiertos} desplegable(s) abiertos de casa`);
-  if (info.vacia) problemas.push("la pantalla se queda en blanco");
-  if (problemas.length) fallos++;
-  console.log(`${problemas.length ? "✖" : "✔"} ${r.padEnd(15)} ${problemas.join(" · ")}`);
+  const rutas = await pagina.evaluate(() => [...document.querySelectorAll(".nav .navi")].map((b) => b.getAttribute("data-view")));
+  console.log(`\n── ${p.mote} (${p.ancho}×${p.alto}) · ${rutas.length} pantallas ──\n`);
+
+  for (const r of rutas) {
+    errores.length = 0;
+    // En móvil el menú está cerrado: se abre, se pulsa y se cierra solo al navegar.
+    await pagina.evaluate((v) => {
+      document.getElementById("appEl")?.classList.add("mopen");
+      document.querySelector(`[data-view="${v}"]`).click();
+    }, r);
+    await new Promise((x) => setTimeout(x, 700));
+    const info = await pagina.evaluate(() => {
+      const det = [...document.querySelectorAll("#view details")];
+      return {
+        abiertos: det.filter((d) => d.open).length,
+        vacia: (document.getElementById("view")?.innerText || "").trim().length < 20,
+        // Que la PÁGINA se desplace en horizontal es siempre un fallo: las tablas anchas se
+        // desplazan dentro de su caja, no arrastrando la pantalla entera.
+        desborda: document.documentElement.scrollWidth > window.innerWidth + 2,
+      };
+    });
+    const problemas = [];
+    if (errores.length) problemas.push(`error: ${errores[0].slice(0, 70)}`);
+    if (info.abiertos) problemas.push(`${info.abiertos} desplegable(s) abiertos de casa`);
+    if (info.vacia) problemas.push("la pantalla se queda en blanco");
+    if (info.desborda) problemas.push("se sale de ancho");
+    if (problemas.length) fallos++;
+    console.log(`${problemas.length ? "✖" : "✔"} ${r.padEnd(15)} ${problemas.join(" · ")}`);
+  }
+  await pagina.close();
 }
 
 await navegador.close();
 servidor.close();
-console.log(fallos ? `\n${fallos} pantalla(s) con problemas\n` : "\nTodas las pantallas abren limpias\n");
+console.log(fallos ? `\n${fallos} pantalla(s) con problemas\n` : "\nTodas las pantallas abren limpias, en ordenador y en móvil\n");
 process.exit(fallos ? 1 : 0);

@@ -56,7 +56,7 @@ body{font-family:var(--font);font-size:14px;color:var(--ink);background:var(--bg
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{color:inherit;text-decoration:none}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:6px}
 ::selection{background:color-mix(in srgb,var(--brand) 26%,transparent)}
-.tnum{font-variant-numeric:tabular-nums}.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tnum{font-variant-numeric:tabular-nums}.solosm{display:none}.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .mut{color:var(--ink3)}.hl{color:var(--brand);font-weight:650}
 .app{display:grid;grid-template-columns:var(--sb) 1fr;height:100vh}.app.collapsed{--sb:74px}
 .sidebar{background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0;transition:width .18s}
@@ -137,6 +137,22 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 /* La fila entera abre la ficha: se nota al pasar por encima. */
 .facrow{cursor:pointer}
 .facrow:hover{background:var(--surface2)}
+/* La cabecera se queda arriba al bajar. Con 167 productos, en cuanto desplazas dejas de saber
+   qué columna es cuál y hay que subir a mirar.
+   OJO: `position:sticky` se agarra al ANTECESOR QUE SE DESPLAZA, y `.tw` ya se desplaza en
+   horizontal — dentro de él, «top:0» no se agarra a nada. Por eso las listas largas llevan
+   `.tw.alta`, que le da su propia altura: entonces sí hay un desplazamiento vertical al que
+   agarrarse, y de paso las cifras de arriba no se van de la pantalla al bajar. */
+.tw.alta{max-height:calc(100vh - 300px);min-height:340px;overflow:auto}
+.tbl thead th{position:sticky;top:0;z-index:3;background:var(--surface)}
+.tbl thead th:first-child{z-index:4}
+/* Banda de mes en las listas largas: recorrer 300 facturas leyendo fechas una a una no es
+   recorrer, es buscar. */
+.tbl tr.sepmes td{position:sticky;top:34px;z-index:2;background:var(--surface2);color:var(--ink3);
+  font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:5px 14px}
+/* La miniatura del documento, más pequeña: mandaba la altura de la fila entera. */
+.tbl td.facthumb .thumb,.tbl td.facthumb{width:30px;height:30px}
+
 /* Productos: el nombre es un enlace, pero pintarlo del color de marca hacía que la tabla
    entera se leyera como una lista de errores. Tinta normal y subrayado al pasar por encima. */
 .linkbtn.prod{color:var(--ink);font-weight:600;text-align:left;display:block;max-width:38ch;
@@ -145,6 +161,10 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 /* La barra de proporción va DETRÁS del número, pegada al borde inferior de la celda. */
 .gastocel{position:relative;padding-bottom:5px}
 .gastobar{position:absolute;right:0;bottom:0;height:3px;border-radius:3px;background:color-mix(in srgb,var(--brand) 45%,transparent);display:block}
+/* La línea del precio. En móvil se va: el ancho que ocupa vale más para el nombre, y el dato
+   sigue estando en la columna de al lado y en el histórico del producto. */
+.spark{display:block;overflow:visible}
+.tbl td.sparkcel,.tbl th.sparkcel{width:74px;padding-left:6px;padding-right:6px}
 
 .stat .sub{font-size:12px;color:var(--ink3)}
 .delta{font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.up{color:var(--success)}.down{color:var(--danger)}.flat{color:var(--ink3)}
@@ -540,7 +560,7 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .tbl th.facthumb,.tbl td.facthumb{width:46px;padding-left:8px;padding-right:0}
 .thumb.ph{display:block;background:var(--surface2);border:1px solid var(--border)}
 .tbl td.facthumb .thumb{width:38px;height:46px;object-fit:cover;border-radius:6px;border:1px solid var(--border);background:var(--surface2);display:block}
-@media(max-width:820px){.tbl th.facthumb,.tbl td.facthumb{display:none}}
+@media(max-width:820px){.tbl th.facthumb,.tbl td.facthumb,.tbl th.sparkcel,.tbl td.sparkcel{display:none}}
 .tbl tr.sel{background:var(--brand-soft)}
 .tbl tr.sel td:first-child{background:var(--brand-soft)}
 /* La barra va PEGADA ABAJO, no empujando la tabla: si empujara el contenido, marcar la
@@ -621,10 +641,30 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 @media (max-width:820px){
   .app{grid-template-columns:1fr}.sidebar{position:fixed;z-index:50;width:min(280px,82vw);height:100vh;box-shadow:var(--sh-lg);transform:translateX(-100%);transition:transform .2s}.app.mopen .sidebar{transform:none}
   .app.mopen .mscrim{display:block;position:fixed;inset:0;background:rgba(15,17,12,.4);z-index:49}
-  .g4,.g3,.g2{grid-template-columns:1fr}.sbtn span,.hidesm{display:none}.sbtn{min-width:0}.ph{flex-direction:column;align-items:flex-start}
+  .g4,.g3,.g2{grid-template-columns:1fr}.sbtn span,.hidesm{display:none}.solosm{display:inline}.sbtn{min-width:0}.ph{flex-direction:column;align-items:flex-start}
   .content{padding:16px 15px 56px}.topbar{padding:0 12px;gap:8px}.wrap{max-width:100%}
   .btn{height:40px}.iconbtn{width:40px;height:40px}.chip{height:38px}.linkbtn{display:inline-block;padding:6px 2px}
   .form-grid{grid-template-columns:1fr}.ph h1{font-size:21px}
+
+  /* LAS TRES CIFRAS, EN UNA LÍNEA. Apiladas ocupaban 450 px: en un iPhone había que deslizar
+     una pantalla entera antes de ver la primera factura. Aquí no se quitan —son lo que se
+     viene a mirar— se encogen. */
+  .statsm{grid-template-columns:repeat(3,1fr);gap:8px}
+  .statsm .stat{padding:9px 10px}
+  .statsm .stat .lab{font-size:10.5px;gap:0}
+  .statsm .stat .lab .ci{display:none}
+  .statsm .stat .val{font-size:16px;letter-spacing:-.02em}
+  .statsm .stat .sub{font-size:10.5px}
+
+  /* LAS PESTAÑAS, EN UNA TIRA QUE SE DESLIZA. Partidas en dos filas se comían otros 60 px y
+     además se leían como si «Configuración» fuera de otro grupo. */
+  .tabstrip{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .tabstrip::-webkit-scrollbar{display:none}
+  .tabstrip>.btn{flex:none}
+  .tabstrip>.field{flex:1 0 190px}
+
+  /* La cabecera de pantalla ocupaba 300 px para decir dónde estás. */
+  .ph{gap:2px;margin-bottom:12px}.ph .eyebrow{font-size:10px}.ph .sub{font-size:12px}
 
   /* Los botones pequeños se quedaban en 30 px: el dedo de un adulto son ~45 px en
      pantalla, así que en móvil fallar el toque es lo normal. La regla de arriba solo
@@ -685,6 +725,22 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .toolbar .field{flex:1 1 140px}
   .row{flex-wrap:wrap}
   .tbl th,.tbl td{padding:8px 10px;font-size:12.5px}
+  /* Marcar varias facturas para operar en lote es cosa de escritorio: en el móvil la columna
+     de casillas se come 60 px de los 390 que hay, y la fila entera ya abre la ficha. */
+  .tbl th.facsel,.tbl td.facsel{display:none}
+
+  /* PRODUCTOS EN MÓVIL. La primera columna es pegajosa y con nombres largos se comía la
+     pantalla entera: se veían los productos y ni un euro. Se recorta el nombre y se van las
+     dos columnas de contexto —cuánto y cuándo— para que quepan las que contestan la pregunta:
+     cuánto llevamos gastado y a cómo nos lo cobran. Siguen estando al abrir el producto. */
+  .tbl th.cantcel,.tbl td.cantcel,.tbl th.ultcel,.tbl td.ultcel{display:none}
+  /* La columna pegajosa se limita en píxeles, no en caracteres: es lo único que garantiza que
+     el dinero quepa en 390 px pase lo que pase con los nombres. */
+  .tbl td:first-child,.tbl th:first-child{max-width:180px}
+  .linkbtn.prod{max-width:100%;font-size:13px}
+  .provcel{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* El precio y su variación, en dos líneas si hace falta, para no ensanchar la columna. */
+  .tbl td .pill{font-size:9.5px}
   .modal-b .form-grid{grid-template-columns:1fr}
   .rng{flex-direction:column;gap:12px}
   .rngq{flex-direction:row;flex-wrap:wrap;width:auto;padding:0 0 12px;border-right:0;border-bottom:1px solid var(--border)}
