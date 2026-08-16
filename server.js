@@ -26,7 +26,7 @@ import crypto from "crypto";
 import QRCode from "qrcode";   // ya instalada (la usa el enlace de WhatsApp); emparejar la tablet escaneando
 import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
 import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/agora/diagnostico.js";
-import { extraerScripts, extraerRutasApi, clasificarRutas } from "./src/integrations/agora/descubrir.js";
+import { extraerScripts, extraerRutasApi, clasificarRutas, extraerClrTypes, clasificarInformes } from "./src/integrations/agora/descubrir.js";
 import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
 import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos, moduloDeRuta } from "./src/modules/usuarios/permisos.js";
 import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocalesExtra, parseLocales } from "./src/modules/usuarios/locales.js";
@@ -5643,6 +5643,14 @@ const AGORA_CANDIDATOS = [
   { clr: "IGT.POS.Bus.Reporting.Messages.GetCashCountReportRequest", nota: "candidato antiguo (arqueo/cierre de caja)" },
   { clr: "IGT.POS.Bus.Reporting.Messages.GetZReportRequest", nota: "candidato antiguo (informe Z)" },
   { clr: "IGT.POS.Bus.Reporting.Messages.GetInvoicesReportRequest", nota: "candidato antiguo (facturas)" },
+  // Comensales: hoy `ventas_diarias.comensales` vale SIEMPRE 0 porque el informe global no los
+  // trae, así que el «ticket medio» es por ticket y no por persona. Estos son los nombres con
+  // los que Ágora podría tenerlo; el descubrimiento dice cuáles existen de verdad.
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetDinersReportRequest", nota: "comensales (si existe, se puede el ticket medio por persona)" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetDinersSalesReportRequest", nota: "comensales (variante)" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetSalesByDinersReportRequest", nota: "comensales (variante)" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetSalesSummaryReportRequest", nota: "resumen de ventas (suele traer comensales)" },
+  { clr: "IGT.POS.Bus.Reporting.Messages.GetTablesReportRequest", nota: "mesas (a veces trae comensales por mesa)" },
 ];
 
 // Pregunta a UN TPV qué mensajes entiende. Pensado para locales con Ágora antiguo: nos dice
@@ -5788,17 +5796,29 @@ app.post("/api/agora/descubrir", requireAuth(["direccion"]), async (req, res) =>
     const rootHtml = (await fetchTextTimeout(cfg.host + "/", headers)).text;
     const scripts = extraerScripts(rootHtml, cfg.host).slice(0, 12);
     const rutas = new Set(extraerRutasApi(rootHtml));
-    // 2) Descargar cada script y extraer rutas candidatas.
+    // Los NOMBRES DE INFORME que ese Ágora conoce, sacados de su propio JavaScript. Es la
+    // manera de saber qué informes existen sin adivinar: la web de administración los llama
+    // todos, así que están escritos ahí. Sondear mensajes candidatos a mano es tirar a ver si
+    // suena; esto es leer el índice.
+    const clr = new Set(extraerClrTypes(rootHtml));
+    // 2) Descargar cada script y extraer rutas y nombres de informe.
     const bajados = [];
     for (const s of scripts) {
       try {
         const r = await fetchTextTimeout(s, headers);
         extraerRutasApi(r.text).forEach((x) => rutas.add(x));
+        extraerClrTypes(r.text).forEach((x) => clr.add(x));
         bajados.push({ url: redact(s), status: r.status, bytes: r.text.length });
       } catch (e) { bajados.push({ url: redact(s), error: e && e.name === "AbortError" ? "timeout" : (e.message || "error") }); }
     }
     const { api, otras } = clasificarRutas([...rutas]);
-    res.json({ ok: true, local, base: cfg.host, scripts: bajados, api: api.slice(0, 120), otras: otras.slice(0, 120) });
+    const informes = clasificarInformes([...clr], AGORA_CANDIDATOS.map((c) => c.clr));
+    res.json({ ok: true, local, base: cfg.host, scripts: bajados,
+      api: api.slice(0, 120), otras: otras.slice(0, 120),
+      informes,
+      // La pregunta concreta que hay que contestar antes de prometer un «ticket medio por
+      // comensal»: si aquí no sale nada, Ágora no da los comensales y no se puede.
+      hayComensales: informes.comensales.length > 0 });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

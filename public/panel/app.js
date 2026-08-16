@@ -6769,12 +6769,35 @@ async function agoraDescubrir(local) {
   const api = j.api || [], otras = j.otras || [], scripts = j.scripts || [];
   const lista = (arr) => arr.length ? arr.map((p) => `<div class="t2" style="word-break:break-all;font-family:monospace">${esc(p)}</div>`).join("") : '<div class="mut" style="padding:6px">—</div>';
   const jsonTxt = JSON.stringify(j, null, 2);
-  const body = `<div class="mut" style="font-size:12.5px;margin-bottom:8px">Base: <b>${esc(j.base || "")}</b> · scripts leídos: ${scripts.length}. <b>Cópialo y pégamelo</b>: con las rutas de API cablearé la de ventas/cierres.</div>
+  // El veredicto va ARRIBA: la pregunta concreta es si este Ágora da los comensales, y leer
+  // una lista de cincuenta nombres a ojo para averiguarlo no lo hace nadie.
+  const inf = j.informes || { usados: [], comensales: [], otros: [] };
+  const veredicto = j.hayComensales
+    ? `<p class="fic-nota" style="margin:0 0 10px"><b>Este Ágora SÍ tiene un informe de comensales:</b>
+       ${inf.comensales.map((x) => `<code>${esc(x.corto)}</code>`).join(", ")}. Con eso se puede pasar de
+       «ticket medio» a <b>gasto por persona</b>.</p>`
+    : `<p class="fic-nota" style="margin:0 0 10px"><b>No aparece ningún informe de comensales.</b>
+       Su web de administración no llama a ninguno, así que el gasto por persona no se puede sacar de aquí:
+       el «ticket medio» seguirá siendo por ticket. ${inf.usados.length + inf.otros.length
+         ? `Se han leído ${num(inf.usados.length + inf.otros.length)} informes.`
+         : "No se ha podido leer ningún nombre de informe: mándame el resultado igualmente."}</p>`;
+
+  const listaInf = (arr) => arr.length
+    ? arr.map((x) => `<div class="t2" style="font-family:monospace">${esc(x.corto)}</div>`).join("")
+    : '<div class="mut" style="padding:6px">—</div>';
+
+  const body = `${veredicto}
+    <details style="margin-bottom:8px"><summary class="mut" style="cursor:pointer;font-size:12.5px">Informes que conoce este Ágora (${num(inf.usados.length + inf.comensales.length + inf.otros.length)})</summary>
+      <div class="card p0" style="max-height:26vh;overflow:auto;margin-top:6px"><div style="padding:8px 12px">
+        ${inf.usados.length ? `<div class="t1" style="margin-bottom:4px">Los que ya usamos</div>${listaInf(inf.usados)}` : ""}
+        ${inf.otros.length ? `<div class="t1" style="margin:10px 0 4px">Los demás</div>${listaInf(inf.otros)}` : ""}
+      </div></div></details>
+    <div class="mut" style="font-size:12.5px;margin-bottom:8px">Base: <b>${esc(j.base || "")}</b> · scripts leídos: ${scripts.length}. <b>Cópialo y pégamelo</b>: con las rutas de API cablearé la de ventas/cierres.</div>
     <div class="card p0" style="max-height:34vh;overflow:auto"><div class="ch" style="padding:12px 12px 0"><h3>Rutas prometedoras (venta/cierre/api…)</h3></div><div style="padding:8px 12px">${lista(api)}</div></div>
     <details style="margin-top:8px"><summary class="mut" style="cursor:pointer;font-size:12.5px">Otras rutas (${otras.length})</summary><div class="card p0" style="max-height:24vh;overflow:auto;margin-top:6px"><div style="padding:8px 12px">${lista(otras)}</div></div></details>
     <textarea id="agDescJson" style="width:100%;height:120px;margin-top:10px;font-family:monospace;font-size:11px" readonly>${esc(jsonTxt)}</textarea>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button class="btn" id="agDescCopy">Copiar resultado</button><button class="btn primary" data-close>Cerrar</button></div>`;
-  const ov = modal("Descubrir rutas · " + local, body);
+  const ov = modal("Qué sabe hacer este Ágora · " + local, body);
   ov.querySelector(".modal").classList.add("wide");
   ov.querySelector("#agDescCopy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(jsonTxt); toast("Copiado ✅"); }

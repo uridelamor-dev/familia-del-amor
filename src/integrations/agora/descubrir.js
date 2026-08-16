@@ -24,6 +24,42 @@ export function extraerScripts(html, base) {
   return [...new Set(out)];
 }
 
+/**
+ * Los NOMBRES DE INFORME que conoce ese Ágora, sacados del JavaScript de su propia web de
+ * administración.
+ *
+ * Es la forma de saber qué informes existe SIN adivinar: la web de administración los llama
+ * todos, así que sus nombres están escritos en su código. La lista de mensajes candidatos que
+ * sondeamos a mano es tirar a ver si suena; esto es leer el índice.
+ *
+ * Devuelve los nombres completos («IGT.POS.Bus.Reporting.Messages.GetXxxReportRequest») sin
+ * repetir y ordenados.
+ */
+export function extraerClrTypes(texto) {
+  const re = /IGT\.POS\.Bus\.[A-Za-z.]+\.Messages\.[A-Za-z0-9]+Request/g;
+  return [...new Set(String(texto || "").match(re) || [])].sort();
+}
+
+/** Los que suenan a comensales: es lo que hace falta para el ticket medio por persona. */
+export const OLOR_COMENSALES = /diner|comensal|cover|guest|people|persona|pax/i;
+
+/**
+ * Reparte los informes encontrados en los que ya usamos, los que huelen a comensales y el
+ * resto. Sirve para mirar una lista de cincuenta nombres y saber dónde mirar.
+ */
+export function clasificarInformes(clrTypes = [], yaUsados = []) {
+  const usados = new Set(yaUsados);
+  const corto = (c) => String(c).split(".").pop().replace(/Request$/, "");
+  const out = { usados: [], comensales: [], otros: [] };
+  for (const c of clrTypes) {
+    const fila = { clrType: c, corto: corto(c) };
+    if (usados.has(c)) out.usados.push(fila);
+    else if (OLOR_COMENSALES.test(c)) out.comensales.push(fila);
+    else out.otros.push(fila);
+  }
+  return out;
+}
+
 const ASSET_RE = /\.(js|css|png|jpe?g|gif|svg|woff2?|ttf|eot|ico|map|html|json|webp)(\?|#|$)/i;
 
 // Extrae cadenas que parecen rutas ("/algo/...") de un texto (HTML o JS), sin assets estáticos.
