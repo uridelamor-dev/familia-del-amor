@@ -184,6 +184,9 @@ export function grupoDeSQL(fila = {}) {
     clave: fila.clave,
     descripcion: fila.descripcion,
     unificado: !!fila.unificado,
+    // La unidad solo si es UNA. Con dos («kg» en unas facturas y «ud» en otras) la suma de
+    // cantidades no significa nada y decir cualquiera de las dos sería inventarse el dato.
+    unidad: (fila.unidades || []).length === 1 ? String(fila.unidades[0]) : null,
     proveedores,
     veces: Number(fila.veces) || 0,
     dudosas: Number(fila.dudosas) || 0,

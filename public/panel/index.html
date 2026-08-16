@@ -126,6 +126,26 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .stat{display:flex;flex-direction:column;gap:6px;position:relative}
 .stat .lab{font-size:12px;color:var(--ink2);font-weight:550;display:flex;align-items:center;gap:7px}.stat .lab .ci{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;background:var(--brand-soft);color:var(--brand)}
 .stat .val{font-size:28px;font-weight:700;letter-spacing:-.03em;line-height:1.05}.stat .val small{font-size:14px;font-weight:600;color:var(--ink3)}
+/* Vencido con dinero dentro no es un dato más: se ve antes de leerlo. */
+.stat.alerta{border-color:color-mix(in srgb,var(--danger) 35%,var(--border))}
+.stat.alerta .val,.stat.alerta .ci{color:var(--danger)}
+/* Tarjetas compactas: tres cifras no necesitan la altura de un gráfico, y cada píxel de aquí
+   arriba es una factura menos que se ve sin desplazar. */
+.statsm .stat{padding:12px 14px}
+.statsm .stat .val{font-size:23px}
+.statsm .stat .sub{margin-top:1px}
+/* La fila entera abre la ficha: se nota al pasar por encima. */
+.facrow{cursor:pointer}
+.facrow:hover{background:var(--surface2)}
+/* Productos: el nombre es un enlace, pero pintarlo del color de marca hacía que la tabla
+   entera se leyera como una lista de errores. Tinta normal y subrayado al pasar por encima. */
+.linkbtn.prod{color:var(--ink);font-weight:600;text-align:left;display:block;max-width:38ch;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.linkbtn.prod:hover{color:var(--brand);text-decoration:underline;text-underline-offset:2px}
+/* La barra de proporción va DETRÁS del número, pegada al borde inferior de la celda. */
+.gastocel{position:relative;padding-bottom:5px}
+.gastobar{position:absolute;right:0;bottom:0;height:3px;border-radius:3px;background:color-mix(in srgb,var(--brand) 45%,transparent);display:block}
+
 .stat .sub{font-size:12px;color:var(--ink3)}
 .delta{font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.up{color:var(--success)}.down{color:var(--danger)}.flat{color:var(--ink3)}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--surface2);color:var(--ink2);border:1px solid var(--border)}

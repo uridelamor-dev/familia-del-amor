@@ -114,7 +114,10 @@ describe("un albarán no es gasto: no puede sumar dos veces", () => {
   test("y los declaran, en vez de esconderlos", () => {
     // Un número que no cuadra con la tabla de debajo es peor que un número grande.
     assert.match(server, /AS albaranes,/);
-    assert.match(panel, /No se cuentan <b>\$\{num\(t\.albaranes\)\}<\/b>/);
+    // El aviso es ahora un chip («3 albaranes · 810 €») en vez de una frase larga encima de
+    // la tabla, pero sigue diciendo cuántos son, cuánto valen y por qué no suman.
+    assert.match(panel, /<b>\$\{num\(t\.albaranes\)\}<\/b> \$\{t\.albaranes === 1 \? "albarán" : "albaranes"\}/);
+    assert.match(panel, /No suman: son la entrega, no el pago/);
   });
 
   test("el dashboard también los excluye, en TODAS sus consultas de dinero", () => {

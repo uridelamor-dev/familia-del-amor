@@ -4308,7 +4308,15 @@ function facHeader() {
   // así que el rótulo lo dice aparte: una pantalla que suma dos locales sin decirlo se lee
   // como si fuera la de uno.
   const donde = amb ? nombreCortoLocal(amb) : viendoVarios() ? etiquetaAmbito() : "";
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${[["facturas", "Facturas"], ["pagos", "Pagos"], ["conciliar", "Conciliaciones"], ["config", "Configuración"]].map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("")}</div>`;
+  const pestanas = [["facturas", "Facturas"], ["pagos", "Pagos"], ["conciliar", "Conciliaciones"], ["config", "Configuración"]]
+    .map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("");
+  // En la pestaña de Facturas, la misma fila lleva las pestañas, el buscador y las acciones.
+  const acciones = FACTAB !== "facturas" ? "" : `
+    <div class="field" style="flex:1 1 200px;min-width:150px"><input id="facQ" placeholder="Buscar proveedor, concepto, nº…" value="${esc(FACF.q)}"></div>
+    <button class="btn" data-act="fac-filtros">${ic("filtro", 15)} Filtrar${facFiltrosActivos().length ? '<span class="fdot"></span>' : ""}</button>
+    <button class="btn primary" data-act="fac-subir">+ Subir</button>
+    <button class="btn" data-act="fac-export">CSV</button>`;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar" style="margin-bottom:12px">${pestanas}${acciones}</div>`;
 }
 
 // La cabecera de Productos. Es su propia pantalla, no una pestaña de Compras: sale de los
@@ -4339,11 +4347,10 @@ function renderFacturas(list, pend, stats, empresas) {
   // Barra simple: buscar (en vivo, como estaba) y un botón que abre el panel con todo lo
   // demás. Antes había seis campos siempre a la vista para algo que se toca de vez en
   // cuando, y se comían la pantalla por encima de la tabla, que es lo que se viene a ver.
-  const toolbar = `<div class="toolbar">
-    <div class="field" style="flex:1 1 240px"><label>Buscar</label><input id="facQ" placeholder="Proveedor, concepto, nº" value="${esc(FACF.q)}"></div>
-    <button class="btn" data-act="fac-filtros">${ic("filtro", 15)} Filtrar${facFiltrosActivos().length ? '<span class="fdot"></span>' : ""}</button>
-    <div style="display:flex;gap:10px;margin-left:auto"><button class="btn primary" data-act="fac-subir">+ Subir factura</button><button class="btn" data-act="fac-export">Exportar CSV</button></div>
-  </div>${facChipsHtml()}`;
+  // Buscar y los botones van EN LA MISMA FILA que las pestañas. Antes era una fila entera para
+  // un campo de texto: sesenta píxeles que empujaban las facturas fuera de la pantalla en un
+  // portátil, y lo que se viene a ver aquí es la tabla.
+  const toolbar = facChipsHtml();
   const maxLocal = Math.max(1, ...(((stats && stats.porLocal) || []).map((x) => Number(x.total) || 0)));
   // Con un establecimiento elegido el desglose por local sobra: sería una sola barra al 100%.
   const porLocal = (!FACF.local && stats && stats.porLocal && stats.porLocal.length) ? `<div class="card"><div class="ch"><h3>Gasto por local (año)</h3></div><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div></div>` : "";
@@ -5098,6 +5105,8 @@ function facSumaTotales(resp) {
   const suma = (k) => ts.reduce((s2, t) => s2 + (Number(t[k]) || 0), 0);
   return { docs: suma("docs"), base: suma("base"), iva: suma("iva"), total: suma("total"),
     pendientes: suma("pendientes"), porPagar: suma("por_pagar"),
+    vencidas: suma("vencidas"), vencidoImporte: suma("vencido_importe"),
+    semana: suma("semana"), semanaImporte: suma("semana_importe"),
     albaranes: suma("albaranes"), albaranesImporte: suma("albaranes_importe") };
 }
 
@@ -5110,23 +5119,38 @@ function facKpisHtml() {
   const t = FAC_TOT;
   if (!t) return `<div id="facKpis"></div>`;
   const f = facFiltrosActivos();
-  const que = f.length ? "de lo filtrado" : "de todo";
   // Los albaranes NO suman: son la entrega, no el pago —la factura que los agrupa ya lleva ese
   // importe—. Pero se dice cuántos son y cuánto valen: esconderlos sin más sería otra forma de
   // que el número no cuadre con la tabla que hay debajo.
+  // Los avisos, en chips y no en un párrafo: eran tres frases largas encima de la tabla que
+  // empujaban las facturas fuera de la pantalla. Lo que explicaban se lee al pasar por encima,
+  // que es cuando de verdad se quiere leer.
   const avisos = [];
-  if (FAC_HAY_MAS) avisos.push(`Las cifras son de las <b>${num(t.docs)}</b> que cumplen el filtro; abajo se enseñan las 500 más recientes.`);
+  if (FAC_HAY_MAS) avisos.push([`<b>${num(t.docs)}</b> en total`, "", "Las cifras son de todas las que cumplen el filtro; abajo se enseñan las 500 más recientes."]);
   const nRev = (FAC_LIST || []).filter((f) => f.revisar).length;
-  if (nRev) avisos.push(`<b>${num(nRev)}</b> ${nRev === 1 ? "factura tiene" : "facturas tienen"} algo que no cuadra en lo leído (marcadas como <b>revisar</b> en la tabla): base + IVA que no da el total, un NIF distinto del de siempre o un importe fuera de escala.`);
-  if (t.albaranes) avisos.push(`No se cuentan <b>${num(t.albaranes)}</b> ${t.albaranes === 1 ? "albarán" : "albaranes"} (${esc(eur(t.albaranesImporte))}): son la entrega, no el pago — su importe ya va en la factura que los agrupa. Se cruzan en <b>Conciliaciones</b>.`);
+  if (nRev) avisos.push([`<b>${num(nRev)}</b> por revisar`, "warn", "Algo no cuadra en lo leído (van marcadas como «revisar» en la tabla): base + IVA que no da el total, un NIF distinto del de siempre o un importe fuera de escala."]);
+  if (t.albaranes) avisos.push([`<b>${num(t.albaranes)}</b> ${t.albaranes === 1 ? "albarán" : "albaranes"} · ${esc(eur(t.albaranesImporte))}`, "",
+    "No suman: son la entrega, no el pago — su importe ya va en la factura que los agrupa. Se cruzan en Conciliaciones."]);
   const aviso = avisos.length
-    ? `<p class="mut" style="margin:-8px 0 14px;font-size:12.5px;line-height:1.5">${avisos.join(" ")}</p>` : "";
-  return `<div id="facKpis"><div class="grid g4" style="margin-bottom:16px">
-      ${stat(`Facturas ${que}`, "🧾", num(t.docs))}
-      ${stat("Base imponible", "€", eur(t.base))}
-      ${stat("IVA", "€", eur(t.iva))}
-      ${stat("Total", "€", eur(t.total))}
-    </div>${aviso}</div>`;
+    ? `<div class="fchips" style="margin:0 0 12px">${avisos.map(([txt, cls, tit]) => `<span class="fchip ${cls}" title="${esc(tit)}">${txt}</span>`).join("")}</div>` : "";
+  // LO QUE SE MIRA AL ABRIR ESTA PANTALLA no es cuánto se ha gastado —eso ya pasó— sino qué
+  // hay que pagar y cuándo. Antes había cuatro tarjetas (facturas, base, IVA, total) que son
+  // cuatro vistas del mismo número y ninguna contestaba eso: para saber si algo estaba
+  // vencido había que irse a la pestaña de Pagos.
+  //
+  // La base y el IVA no desaparecen: se miran una vez al trimestre y ese sitio es el 303 y la
+  // ficha, no la portada. Van en la línea de debajo.
+  const kpi3 = `<div class="grid g3 statsm" style="margin-bottom:10px">
+      ${stat("Por pagar", ic("receipt", 15), eur(t.porPagar), "", `${num(t.pendientes)} ${t.pendientes === 1 ? "documento" : "documentos"}`)}
+      ${stat("Vence esta semana", ic("cal", 15), eur(t.semanaImporte), "", `${num(t.semana)} en los próximos 7 días`)}
+      <div class="card stat${t.vencidas ? " alerta" : ""}"><div class="lab"><span class="ci">${ic("alert", 15)}</span>Vencido</div>
+        <div class="val tnum">${esc(eur(t.vencidoImporte))}</div>
+        <div class="sub">${t.vencidas ? `${num(t.vencidas)} sin pagar` : "nada vencido"}</div></div>
+    </div>`;
+  const linea = `<p class="mut" style="margin:0 0 14px;font-size:12.5px">
+    <b>${num(t.docs)}</b> ${t.docs === 1 ? "factura" : "facturas"}${f.length ? " con estos filtros" : ""} · total <b class="tnum">${esc(eur(t.total))}</b>
+    <span style="opacity:.75">(base ${esc(eur(t.base))} · IVA ${esc(eur(t.iva))})</span></p>`;
+  return `<div id="facKpis">${kpi3}${linea}${aviso}</div>`;
 }
 
 /** Los avisos de coherencia guardados con la factura (base+IVA≠total, NIF raro, importe fuera de escala). */
@@ -5208,20 +5232,24 @@ function facTablaHtml(list) {
     f.lineas_estado === "descuadre" ? `<span class="pill warn" style="font-size:10px" title="El detalle leído no suma la base imponible">descuadre</span>` : "",
     f.conciliado_con ? `<span class="pill ok" style="font-size:10px" title="Conciliada con sus albaranes">conciliada</span>` : "",
   ].filter(Boolean).join(" ");
-  const fila = (f) => `<tr class="${FAC_SEL.has(f.id) ? "sel" : ""}">
+  // El establecimiento solo se enseña cuando hay más de uno a la vista: con el ámbito puesto
+  // en Blanes, repetir «La Tapeta - Blanes» en cada fila es ancho gastado en decir lo que ya
+  // pone la barra de arriba. Y la base imponible no se mira de un barrido —se mira en la ficha
+  // y en el 303—: la columna que importa es el total.
+  const conLocal = !localActualFE();
+  const fila = (f) => `<tr class="${FAC_SEL.has(f.id) ? "sel" : ""} facrow" data-act="fac-ficha" data-id="${f.id}">
     <td class="facsel"><input type="checkbox" data-facsel="${f.id}" ${FAC_SEL.has(f.id) ? "checked" : ""} aria-label="Seleccionar"></td>
     <td class="facthumb">${f.drive_url ? `<span class="thumb ph" data-thumb="${f.id}"></span>` : ""}</td>
-    <td class="mut">${esc((f.fecha || "").slice(0, 10))}</td>
+    <td class="mut" style="white-space:nowrap">${esc(fechaCorta(f.fecha) || (f.fecha || "").slice(0, 10))}</td>
     <td><div class="t1">${esc(f.numero_factura || "—")}</div><div class="t2">${esc(f.proveedor || "")}</div>${marcas(f) ? `<div style="margin-top:3px">${marcas(f)}</div>` : ""}</td>
-    <td>${esc(f.local || "")}</td>
-    <td class="r tnum">${eur(f.base_imponible)}</td>
-    <td class="r tnum">${eur(f.total)}</td>
+    ${conLocal ? `<td class="mut">${esc(nombreCortoLocal(f.local) || "")}</td>` : ""}
+    <td class="r tnum"><b>${eur(f.total)}</b></td>
     <td>${facPillPago(f)}</td>
-    <td class="r"><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></td></tr>`;
+    <td class="r mut" aria-hidden="true">${ic("chev", 15)}</td></tr>`;
   return `<div class="card p0"><div class="tw"><table class="tbl">
     <thead><tr><th class="facsel"><input type="checkbox" id="facSelAll" ${todasMarcadas ? "checked" : ""} aria-label="Seleccionar todas"></th>
     <th class="facthumb"></th>
-    <th>Fecha</th><th>Documento</th><th>Local</th><th class="r">Base</th><th class="r">Total</th><th>Estado</th><th></th></tr></thead>
+    <th>Fecha</th><th>Documento</th>${conLocal ? "<th>Local</th>" : ""}<th class="r">Total</th><th>Estado</th><th></th></tr></thead>
     <tbody>${list.map(fila).join("")}</tbody></table></div></div>${facBarraSeleccion()}`;
 }
 
@@ -5849,8 +5877,13 @@ function dicPintar() {
   const c = DICC.cobertura || {};
 
   if (!cola.length) {
-    caja.innerHTML = `<div class="card" style="margin-bottom:14px"><p class="mut" style="margin:0">
-      Todos los productos están revisados. Cuando entren descripciones nuevas aparecerán aquí.</p></div>`;
+    // Sin cola pendiente no se enseña la caja de revisar: una tarjeta que solo dice «no hay
+    // nada que hacer» ocupa el sitio de la primera fila de la tabla, que es lo que se viene a
+    // ver. Reaparece sola cuando entren descripciones nuevas.
+    //
+    // Pero la LISTA del diccionario sí se pinta. Antes se iba con ella, y con ella el botón de
+    // quitar una forma mal unida: al terminar la cola desaparecía la única manera de deshacer.
+    caja.innerHTML = dicProductosHtml();
     return;
   }
 
@@ -6063,6 +6096,9 @@ async function loadProductos() {
     const p = e.target.closest("[data-compprod]");
     if (p) { COMP.q = p.getAttribute("data-compprod"); const i = document.getElementById("compQ"); if (i) i.value = COMP.q; return refrescarCompras(); }
     if (e.target.closest('[data-comp="releer"]')) comprasReleer();
+    // Las descuadradas van por otro camino: no hay que releerlo todo, solo esas.
+    const rd = e.target.closest('[data-comp="releer-descuadre"]');
+    if (rd) return facRepasoLineas(Number(rd.getAttribute("data-n")) || 0, "descuadre");
   });
 }
 // Los filtros de «Qué compramos», en el mismo panel lateral que los de Facturas: es la misma
@@ -6189,7 +6225,13 @@ function compCategoriasHtml(g) {
       </div>
       <b class="tnum" style="flex:none;margin-left:10px">${esc(eur(c.importe))}</b></div>`;
   return `<details class="card fold" style="margin-bottom:14px">
-    <summary><h3>En qué se va el dinero</h3><span class="foldr"><span>${num(g.categorias.length)} categorías</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    ${/* El desplegable sigue CERRADO —nada se abre solo—, pero cerrado decía «6 categorías»,
+          que no es información: son seis palabras que no dicen dónde va el dinero. Ahora
+          cerrado ya enseña las tres que más pesan, y se abre para ver el resto. */""}
+    <summary><h3>En qué se va el dinero</h3><span class="foldr">
+      <span class="hidesm" style="font-weight:500">${g.categorias.slice(0, 3).map((c) =>
+        `<span style="--cat:var(--cat-${esc(colorCategoriaFE(c.categoria))});white-space:nowrap"><span class="catdot"></span>${esc(c.categoria)} <b class="tnum">${esc(eur(c.importe))}</b></span>`).join('<span class="mut" style="margin:0 8px">·</span>')}</span>
+      <span class="mut">${num(g.categorias.length)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <div class="rows">${g.categorias.map(fila).join("")}</div>
     ${g.repartido ? `<p class="mut" style="margin:10px 0 0;font-size:12px">De ${eur(g.repartido)} hay proveedores que están en más de una categoría; su gasto se reparte a partes iguales, así que esas cifras son aproximadas. El total sí cuadra.</p>` : ""}
     ${g.sinCategoria ? `<p class="fic-nota" style="margin:10px 0 0"><b>${eur(g.sinCategoria)}</b> de ${g.sinCatProveedores.length} ${g.sinCatProveedores.length === 1 ? "proveedor" : "proveedores"} sin categoría, así que no está repartido: ${esc(g.sinCatProveedores.slice(0, 4).join(", "))}${g.sinCatProveedores.length > 4 ? "…" : ""}. Se ponen en <b>Configuración</b>.</p>` : ""}
@@ -6287,8 +6329,8 @@ async function refrescarCompras() {
   COMP.catalogo = j.catalogoCategorias || [];
   COMP.proveedores = (j.categorias?.categorias || []).flatMap((c) => c.proveedores);
   const barra = `<div class="toolbar" style="margin-bottom:10px">
-      <div class="field" style="flex:1;min-width:180px"><label>Buscar producto</label>
-        <input class="inp" id="compQ" value="${esc(COMP.q)}" placeholder="coca, aceite, gamba…"></div>
+      <div class="field" style="flex:1;min-width:180px">
+        <input class="inp" id="compQ" value="${esc(COMP.q)}" placeholder="Buscar producto: coca, aceite, gamba…"></div>
       <button class="btn" data-comp="filtros">${ic("cog", 15)} Filtros${compFiltrosActivos().length ? '<span class="fdot"></span>' : ""}</button>
     </div>${compChipsHtml()}`;
 
@@ -6296,18 +6338,37 @@ async function refrescarCompras() {
   // parece el total de verdad si no se dice lo contrario.
   // El aviso distingue lo que se arregla con un botón de lo que no. Meterlo todo en «no
   // tienen detalle» haría prometer algo que en unas no va a pasar nunca.
-  const partes = [];
-  if (c.sinLeer) partes.push(`<b>${num(c.sinLeer)}</b> ${c.sinLeer === 1 ? "está" : "están"} sin leer todavía (son de antes de que se leyeran las líneas)`);
-  // El gasto estructural va aparte y sin botón: no falta nada, es que no se lee a propósito.
-  const estructural = c.noAplica
-    ? ` <b>${num(c.noAplica)}</b> ${c.noAplica === 1 ? "es de gasto estructural" : "son de gasto estructural"} (alquiler, luz, gestor…): ${c.noAplica === 1 ? "su detalle no se lee" : "su detalle no se lee"} a propósito, porque esas líneas no son productos. El gasto sí cuenta.`
-    : "";
-  if (c.noLeibles) partes.push(`<b>${num(c.noLeibles)}</b> no se ${c.noLeibles === 1 ? "pudo" : "pudieron"} leer, normalmente porque ya no está el archivo`);
-  // El proveedor deja un albarán por entrega y a fin de mes la factura que las agrupa. Cuando
-  // las dos traen detalle, el mismo kilo de gambas estaría dos veces. Se cuenta una — y se
-  // dice, porque descontar en silencio es cambiar un total sin avisar.
-  // Si se ha topado el máximo de líneas, las cifras son las de las últimas N y NO el total.
-  // Decirlo es la diferencia entre un dato y un dato en el que se puede confiar.
+  // UNA TIRA DE CHIPS, NO UN PÁRRAFO. Esto era un bloque de cuatro líneas de texto seguido
+  // —«De las 29 facturas de este periodo, 29 tienen el detalle leído. Además, 15 tienen un
+  // detalle que no cuadra…»— encima de la tabla. Nadie lee cuatro líneas para empezar a
+  // trabajar, y lo que se podía arreglar estaba enterrado dentro de la frase.
+  //
+  // Cada chip dice un número y, si hay algo que hacer con él, ES un botón. La explicación
+  // larga no se pierde: se lee al pasar por encima.
+  const chip = (txt, cls = "", titulo = "", act = "") => act
+    ? `<button class="fchip ${cls}" ${act} title="${esc(titulo)}">${txt}</button>`
+    : `<span class="fchip ${cls}" title="${esc(titulo)}">${txt}</span>`;
+  const chips = [];
+  if (c.facturas) {
+    chips.push(chip(`<b>${num(c.conDetalle)}</b>/${num(c.facturas)} con detalle`, c.conDetalle === c.facturas ? "ok" : "",
+      "Los totales de abajo salen SOLO de las facturas cuyo detalle se ha podido leer."));
+  }
+  if (c.descuadradas) {
+    chips.push(chip(`<b>${num(c.descuadradas)}</b> ${c.descuadradas === 1 ? "descuadre" : "descuadres"}`, "warn",
+      "Su detalle leído no suma la base imponible: míralas antes de fiarte de sus cantidades. Pulsa para volver a leerlas.",
+      `data-comp="releer-descuadre" data-n="${c.descuadradas}"`));
+  }
+  if (c.sinLeer) {
+    chips.push(chip(`<b>${num(c.sinLeer)}</b> sin leer`, "warn",
+      "Son de antes de que se leyeran las líneas, así que no cuentan en estos totales. Pulsa para leerlas.",
+      'data-comp="releer"'));
+  }
+  if (c.noLeibles) chips.push(chip(`<b>${num(c.noLeibles)}</b> ilegibles`, "", "No se pudieron leer, normalmente porque ya no está el archivo. No cuentan en estos totales."));
+  if (c.noAplica) chips.push(chip(`<b>${num(c.noAplica)}</b> de gasto estructural`, "", "Alquiler, luz, gestor…: su detalle no se lee a propósito, porque esas líneas no son productos. El gasto sí cuenta."));
+  const dobles = j.albaranesYaFacturados || 0;
+  if (dobles) chips.push(chip(`<b>${num(dobles)}</b> ${dobles === 1 ? "albarán ya facturado" : "albaranes ya facturados"}`, "",
+    "Ya vienen dentro de su factura, así que su detalle no se cuenta aparte: se compró una vez y se cuenta una vez."));
+
   const tope = j.topeProductos || 0;
   const avisoTope = tope
     ? `<p class="fic-nota" style="margin:0 0 12px"><b>Hay más productos distintos de los que caben de una vez.</b>
@@ -6315,23 +6376,19 @@ async function refrescarCompras() {
        Busca un producto o acota en <b>Filtros</b>.</p>`
     : "";
 
-  const dobles = j.albaranesYaFacturados || 0;
-  const notaDobles = dobles
-    ? ` <b>${num(dobles)}</b> ${dobles === 1 ? "albarán ya viene" : "albaranes ya vienen"} dentro de su factura, así que ${dobles === 1 ? "su detalle no se cuenta aparte" : "su detalle no se cuenta aparte"}: se compró una vez y se cuenta una vez.`
-    : "";
-  const aviso = c.facturas === 0 ? "" : (c.sinLeer || c.noLeibles || c.descuadradas || c.noAplica || dobles)
-    ? `<p class="fic-nota">De las <b>${num(c.facturas)}</b> facturas de este periodo, <b>${num(c.conDetalle)}</b> tienen el detalle leído.
-       ${partes.length ? `${cap(partes.join(" y "))}, así que <b>no cuentan</b> en estos totales.` : ""}
-       ${c.descuadradas ? `Además, <b>${num(c.descuadradas)}</b> ${c.descuadradas === 1 ? "tiene un detalle que no cuadra" : "tienen un detalle que no cuadra"} con su base imponible: ${c.descuadradas === 1 ? "mírala" : "míralas"} antes de fiarte de sus cantidades.` : ""}
-       ${estructural}${notaDobles}
-       ${c.sinLeer ? `<button class="btn sm" data-comp="releer" style="margin-top:8px">Leer las ${num(c.sinLeer)} que faltan</button>` : ""}</p>`
-    : `<p class="mut" style="margin:0 0 12px">Las ${num(c.conDetalle)} facturas de este periodo tienen el detalle leído.</p>`;
+  const aviso = chips.length ? `<div class="fchips" style="margin:0 0 12px">${chips.join("")}</div>` : "";
 
+  // La proporción del gasto, detrás del número. 891 € y 164 € se leen igual en una columna de
+  // cifras; con la barra se ve dónde se va el dinero sin llegar a leerlas. Se mide contra el
+  // producto que más gasta, no contra el total: si no, con 167 productos todas las barras
+  // serían un pelo y no dirían nada.
+  const topeGasto = Math.max(1, ...j.grupos.map((g) => Number(g.importe) || 0));
   const fila = (g) => `<tr>
-      <td><button class="linkbtn" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="Todas las veces que lo hemos comprado">${esc(g.descripcion)}</button>
+      <td><div style="display:flex;align-items:center;gap:6px;min-width:0">${g.unificado ? `<span class="pill ok" style="font-size:9.5px;flex:none" title="Producto del diccionario: junta varias formas de escribirlo">✓</span>` : ""}<button class="linkbtn prod" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="${esc(g.descripcion)} — todas las veces que lo hemos comprado">${esc(g.descripcion)}</button></div>
         <div class="mut" style="font-size:11px">${esc(g.proveedores.join(" · ") || "—")}</div></td>
-      <td style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) : "—"}</td>
-      <td style="text-align:right;white-space:nowrap"><b>${g.importe != null ? esc(eur(g.importe)) : "—"}</b></td>
+      <td style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) + (g.unidad ? ` <span class="mut" style="font-size:11px">${esc(g.unidad)}</span>` : "") : "—"}</td>
+      <td style="text-align:right;white-space:nowrap"><div class="gastocel"><b>${g.importe != null ? esc(eur(g.importe)) : "—"}</b>
+        <i class="gastobar" style="width:${Math.round(((Number(g.importe) || 0) / topeGasto) * 100)}%"></i></div></td>
       <td style="text-align:right;white-space:nowrap">${g.precioNormal != null ? esc(eur2(g.precioNormal)) : '<span class="mut" title="Con menos de tres compras no hay un precio normal que valga, y con varios proveedores no se puede comparar: sería otro precio, no una subida">—</span>'}</td>
       <td style="text-align:right;white-space:nowrap">${g.ultimoPrecio != null ? `${esc(eur2(g.ultimoPrecio))}${compChipPrecio(g)}` : "—"}</td>
       <td class="mut" style="white-space:nowrap;font-size:11.5px">${esc(g.veces)} ${g.veces === 1 ? "vez" : "veces"}<br>${esc(fechaCorta(g.ultima) || "")}</td>
@@ -7859,6 +7916,9 @@ document.addEventListener("change", (e) => {
 document.addEventListener("click", (e) => {
   const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); go(v.getAttribute("data-view")); return; }
   const t = e.target.closest("[data-act]"); if (!t) return;
+  // La fila entera de una factura abre su ficha, pero la casilla de seleccionar y los botones
+  // que lleva dentro son suyos: sin esto, marcar una factura te abría su ficha.
+  if (t.classList.contains("facrow") && e.target.closest("input,button,a,label")) return;
   const act = t.getAttribute("data-act");
   if (act === "nav-grupo") { navToggleGrupo(t.getAttribute("data-g")); return; }
   // Modo icono: los grupos se ven todos, pero eso lo hace el CSS. Aquí no se repinta nada,

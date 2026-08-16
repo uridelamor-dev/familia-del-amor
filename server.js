@@ -1977,8 +1977,16 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
               count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0)::int AS pendientes,
               COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0),0)::float AS por_pagar,
               count(*) FILTER (WHERE NOT (${SIN_ALBARANES}))::int AS albaranes,
-              COALESCE(SUM(total) FILTER (WHERE NOT (${SIN_ALBARANES})),0)::float AS albaranes_importe
-         FROM facturas ${where}`, params);
+              COALESCE(SUM(total) FILTER (WHERE NOT (${SIN_ALBARANES})),0)::float AS albaranes_importe,
+              -- Lo que de verdad se mira al abrir Compras no es cuánto se ha gastado —eso ya
+              -- pasó— sino qué hay que pagar y cuándo. Sin esto había que ir a la pestaña de
+              -- Pagos para saber si algo estaba vencido.
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(vencimiento,'') <> '' AND vencimiento < ?)::int AS vencidas,
+              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(vencimiento,'') <> '' AND vencimiento < ?),0)::float AS vencido_importe,
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND vencimiento >= ? AND vencimiento <= ?)::int AS semana,
+              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND vencimiento >= ? AND vencimiento <= ?),0)::float AS semana_importe
+         FROM facturas ${where}`, // OJO con el orden: los «?» se numeran por su sitio en el SQL, y estos van ANTES del WHERE.
+      [hoyISO(), hoyISO(), hoyISO(), hoyMas(7), hoyISO(), hoyMas(7), ...params]);
     res.json({ ok: true, data: rows, totales: t || null, hayMas: (t?.docs || 0) > rows.length });
   } catch (e) { res.status(500).json({ ok: false, error: e.message, data: [] }); }
 });
@@ -3543,7 +3551,11 @@ async function comprasDeLocal(query, local) {
          (array_agg(l.precio_unitario::float ORDER BY f.fecha DESC, l.id DESC)
             FILTER (WHERE l.precio_unitario IS NOT NULL))[1:40] AS precios,
          (array_agg(f.fecha ORDER BY f.fecha DESC, l.id DESC)
-            FILTER (WHERE l.precio_unitario IS NOT NULL))[1:40] AS precios_fechas
+            FILTER (WHERE l.precio_unitario IS NOT NULL))[1:40] AS precios_fechas,
+         -- La unidad, solo si TODAS las compras coinciden: «441» sin unidad no dice nada, y
+         -- «441 kg» junto a «441 ud» sumados diría algo falso. Con dos unidades distintas se
+         -- calla, que es la respuesta honesta.
+         (array_agg(DISTINCT l.unidad) FILTER (WHERE COALESCE(l.unidad,'') <> '')) AS unidades
        FROM factura_lineas l
        JOIN facturas f ON f.id = l.factura_id
        LEFT JOIN producto_alias a ON a.clave = l.clave AND a.producto_id IS NOT NULL

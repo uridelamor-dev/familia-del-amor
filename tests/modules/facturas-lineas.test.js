@@ -350,6 +350,14 @@ describe("una fila ya agrupada por la base", () => {
     assert.equal(grupoDeSQL(SQL({ preciomin: null, preciomax: null })).variacionPct, null);
   });
 
+  test("la unidad solo se enseña si TODAS las compras coinciden", () => {
+    // «441» sin unidad no dice nada; «441» sumando kilos y unidades diría algo falso.
+    assert.equal(grupoDeSQL(SQL({ unidades: ["kg"] })).unidad, "kg");
+    assert.equal(grupoDeSQL(SQL({ unidades: ["kg", "ud"] })).unidad, null);
+    assert.equal(grupoDeSQL(SQL({ unidades: [] })).unidad, null);
+    assert.equal(grupoDeSQL(SQL()).unidad, null);
+  });
+
   test("una fila vacía no revienta ni se inventa nada", () => {
     const g = grupoDeSQL({});
     assert.equal(g.veces, 0);
