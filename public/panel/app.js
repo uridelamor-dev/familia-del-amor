@@ -2882,7 +2882,7 @@ async function horConflictos(silencioso) {
 function horAvisosHtml(j) {
   if (!j || !j.total) return "";
   const fila = (c) => `<div class="row"><span class="sdot ${c.severidad === "bloquea" ? "st-crit" : "st-warn"}"></span><div class="grow"><div class="t1" style="font-weight:400;line-height:1.5">${esc(c.mensaje)}</div></div></div>`;
-  return `<details class="card fold" style="margin-bottom:14px" ${j.bloquean.length ? "open" : ""}>
+  return `<details class="card fold" style="margin-bottom:14px">
     <summary><h3>${j.bloquean.length ? "Hay que arreglar esto" : "Cosas a tener en cuenta"}</h3>
       <span class="foldr"><span>${j.bloquean.length ? `${num(j.bloquean.length)} bloquean · ` : ""}${num(j.avisan.length)} avisos</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <div class="rows">${[...j.bloquean, ...j.avisan].map(fila).join("")}</div>
@@ -4198,8 +4198,9 @@ async function facDupResolver(id, accion) {
 async function facDiagnosticoDrive() {
   const caja = document.getElementById("facDrive");
   if (!caja) return;
-  // Si estaba abierto, se queda abierto al repintar. Al reordenar, el bloque dejaba de tener
-  // avisos y se plegaba solo: justo en el momento en que hay que ver que ha funcionado.
+  // Si TÚ lo tenías abierto, se queda abierto al repintar. No es abrirse solo: es no cerrarse
+  // en las narices de quien lo está mirando —al pulsar «Reordenar Drive» el bloque se repinta,
+  // y es justo el momento en el que hay que ver que ha funcionado.
   const estaba = caja.querySelector("details")?.open;
   let j;
   try { j = await apiRaw("/api/facturas/drive-diagnostico"); } catch { return; }
@@ -4214,7 +4215,7 @@ async function facDiagnosticoDrive() {
       ${f.ordenada ? "" : ' <span class="pill warn">suelta</span>'}`;
   };
 
-  caja.innerHTML = `<details class="card fold" style="margin-bottom:16px" ${estaba || j.avisos?.length ? "open" : ""}>
+  caja.innerHTML = `<details class="card fold" style="margin-bottom:16px" ${estaba ? "open" : ""}>
     <summary><h3>Dónde están las facturas en Drive</h3>
       <span class="foldr"><span>${j.conectado ? (desordenadas ? "hay que reordenar" : "ordenadas") : "sin conectar"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
     ${avisos}
@@ -4300,7 +4301,7 @@ async function facProvDuplicados() {
   const g = PROVDUP.grupos || [];
   if (!g.length) { caja.innerHTML = ""; return; }
 
-  caja.innerHTML = `<details class="card fold" style="margin-bottom:16px" open>
+  caja.innerHTML = `<details class="card fold" style="margin-bottom:16px">
     <summary><h3>Proveedores repetidos</h3><span class="foldr">
       <span>${num(g.length)} ${g.length === 1 ? "caso" : "casos"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <p class="mut" style="margin:0 0 12px;line-height:1.55">El mismo proveedor metido con dos nombres. Cuando comparten
@@ -4352,7 +4353,7 @@ function facCategoriasHtml() {
     <td class="r"><button class="btn sm" data-act="fac-cat-editar" data-prov="${esc(p.proveedor)}">Cambiar</button></td></tr>`;
 
   const sin = j.sinEtiquetar || 0;
-  return `<details class="card fold" style="margin-bottom:16px" ${sin ? "open" : ""}>
+  return `<details class="card fold" style="margin-bottom:16px">
     <summary><h3>De qué es cada proveedor</h3><span class="foldr"><span>${sin ? `${num(sin)} sin etiquetar` : "todos etiquetados"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <p class="mut" style="margin:0 0 12px;line-height:1.55">Sirve para saber cuánto se va en bebida, en carne o en limpieza,
       que hoy solo se puede ver proveedor a proveedor. Empieza por los de arriba: son los que más gastan.
@@ -5606,7 +5607,7 @@ function dicPintar() {
         title="Revisado, pero no se une a ningún producto">Dejar aparte</button>
     </div>`;
 
-  caja.innerHTML = `<details class="card fold" style="margin-bottom:14px" ${c.pct < 50 ? "open" : ""}>
+  caja.innerHTML = `<details class="card fold" style="margin-bottom:14px">
     <summary><h3>Unificar productos</h3><span class="foldr">
       <span>${num(cola.length)} sin revisar${DICC.hayMas ? "+" : ""}${c.pct ? ` · ${c.pct} % del gasto ya revisado` : ""}</span>
       <span class="car">${ic("chev", 16)}</span></span></summary>
@@ -5903,7 +5904,7 @@ function compCategoriasHtml(g) {
         ${subs(c)}
       </div>
       <b class="tnum" style="flex:none;margin-left:10px">${esc(eur(c.importe))}</b></div>`;
-  return `<details class="card fold" style="margin-bottom:14px" open>
+  return `<details class="card fold" style="margin-bottom:14px">
     <summary><h3>En qué se va el dinero</h3><span class="foldr"><span>${num(g.categorias.length)} categorías</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <div class="rows">${g.categorias.map(fila).join("")}</div>
     ${g.repartido ? `<p class="mut" style="margin:10px 0 0;font-size:12px">De ${eur(g.repartido)} hay proveedores que están en más de una categoría; su gasto se reparte a partes iguales, así que esas cifras son aproximadas. El total sí cuadra.</p>` : ""}
@@ -5982,7 +5983,19 @@ async function refrescarCompras() {
   try { j = await apiRaw("/api/facturas/compras?" + qs.toString()); }
   catch (e) { cont.innerHTML = errorCard(e.message); return; }
 
-  const c = j.cobertura;
+  // Una respuesta a medias tumbaba la pantalla entera con un error de JavaScript, y lo que se
+  // veía era «Cargando…» para siempre: ni el dato ni el motivo. Pasa cuando se piden varios
+  // establecimientos y fallan todos —la fusión devuelve nada—, y pasaría con cualquier versión
+  // del servidor que no traiga todavía algún campo.
+  if (!j || !Array.isArray(j.grupos)) {
+    cont.innerHTML = errorCard("No se han podido cargar los productos de este periodo. Vuelve a intentarlo.");
+    return;
+  }
+  j.lineas = j.lineas || [];
+  j.categorias = j.categorias || { categorias: [] };
+  j.totales = j.totales || {};
+
+  const c = j.cobertura || {};
   const sinDetalle = c.facturas - c.conDetalle;
   // Etiqueta ARRIBA y campo debajo (el patrón `.field` del resto del panel). Con el texto
   // en línea, al envolverse en móvil el «Hasta» quedaba cortado a media palabra.
