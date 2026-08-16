@@ -205,83 +205,13 @@ export function grupoDeSQL(fila = {}) {
   };
 }
 
-/**
- * ⚠️ ESTO YA NO ES EL CAMINO DE PRODUCCIÓN. La pantalla de Productos agrupa en la CONSULTA
- * (ver `comprasDeLocal` en server.js): traerse una fila por compra para juntarlas aquí obliga
- * a poner un tope, y con tope el total deja de ser el total sin que se note — llegó a enseñar
- * una cuarta parte del gasto con la misma cara de siempre.
- *
- * Se conserva porque es la especificación legible de lo que la consulta tiene que hacer, y
- * porque sus tests fijan las reglas que no se pueden perder (un null no es un cero, la fusión
- * entre locales es exacta). Queda pendiente portar esos tests a `grupoDeSQL` y borrar esto.
- *
- * `alias` es el diccionario: clave del proveedor → { id, nombre } del producto de verdad.
- *
- * Sin él se agrupa por el texto exacto y «COCA COLA 33CL» y «Coca-Cola 33 cl» son dos
- * productos — que es lo honesto mientras nadie haya dicho que son el mismo. Con él, las dos
- * caen en el mismo grupo y por fin se puede contestar «cuánto compramos de Coca-Cola» y
- * comparar dos locales.
- *
- * La clave del grupo pasa a ser «p:12» para que el resto —la fusión entre locales, el
- * historial— siga funcionando sin enterarse: para ellos solo es otra clave.
- */
-export function agruparPorProducto(lineas = [], { alias = null } = {}) {
-  const mapa = new Map();
-  for (const l of lineas) {
-    const propia = claveProducto(l.descripcion);
-    const canon = alias?.get?.(propia) || null;
-    const k = canon ? `p:${canon.id}` : propia;
-    if (!k) continue;
-    if (!mapa.has(k)) {
-      mapa.set(k, {
-        clave: k, descripcion: canon ? canon.nombre : l.descripcion, unificado: !!canon,
-        proveedores: new Set(),
-        cantidad: 0, importe: 0, veces: 0, conImporte: 0, conCantidad: 0, dudosas: 0,
-        precioMin: null, precioMax: null, primera: null, ultima: null, ultimoPrecio: null,
-        // Las últimas compras con su fecha. Hacen falta para el precio NORMAL (la mediana) y
-        // para poder fusionar dos locales sin inventar: de dos medianas no sale una mediana,
-        // pero de dos listas sí. Se recortan a 40 por producto — con eso sobra para la mediana
-        // de las últimas doce y la respuesta no se hincha.
-        precios: [],
-      });
-    }
-    const g = mapa.get(k);
-    g.veces += 1;
-    if (l.dudosa) g.dudosas += 1;
-    if (l.proveedor) g.proveedores.add(l.proveedor);
-    if (l.cantidad != null) { g.cantidad += l.cantidad; g.conCantidad += 1; }
-    if (l.importe != null) { g.importe += l.importe; g.conImporte += 1; }
-    const p = l.precio_unitario;
-    if (p != null) {
-      g.precioMin = g.precioMin == null ? p : Math.min(g.precioMin, p);
-      g.precioMax = g.precioMax == null ? p : Math.max(g.precioMax, p);
-      if (l.fecha) g.precios.push({ fecha: String(l.fecha).slice(0, 10), precio: p });
-    }
-    const f = l.fecha || null;
-    if (f) {
-      if (!g.primera || f < g.primera) g.primera = f;
-      if (!g.ultima || f >= g.ultima) { g.ultima = f; if (p != null) g.ultimoPrecio = p; }
-    }
-  }
-  return [...mapa.values()]
-    .map((g) => ({
-      ...g,
-      proveedores: [...g.proveedores],
-      precios: recortarPrecios(g.precios),
-      // El precio NORMAL: la mediana de las últimas compras. Es lo que convierte «último
-      // precio» en una cifra que se puede juzgar — 45 € no dice nada hasta saber que lo normal
-      // son 30 —. Con un solo proveedor; con varios no se enseña, porque «más caro en Makro
-      // que en el mayorista» no es una subida, es otro proveedor.
-      precioNormal: g.proveedores.size === 1 ? medianaPrecios(recortarPrecios(g.precios)) : null,
-      // null y no 0 cuando NINGUNA línea traía el dato: un «0 €» se lee como «no gastamos
-      // nada», y lo que pasa es que no se pudo leer. No es lo mismo.
-      cantidad: g.conCantidad ? Math.round(g.cantidad * 1000) / 1000 : null,
-      importe: g.conImporte ? Math.round(g.importe * 100) / 100 : null,
-      // Cuánto ha subido el precio de la primera vez a la última. Es la cifra que hace que
-      // esto valga la pena sin haber enlazado nada todavía.
-      variacionPct: g.precioMin != null && g.precioMax != null && g.precioMin > 0
-        ? Math.round(((g.precioMax - g.precioMin) / g.precioMin) * 1000) / 10
-        : null,
-    }))
-    .sort((a, b) => (b.importe ?? -1) - (a.importe ?? -1));
-}
+// NOTA: aquí vivía `agruparPorProducto`, que juntaba las líneas en el servidor. Ya no existe:
+// la pantalla de Productos agrupa en la CONSULTA (ver `comprasDeLocal` en server.js), porque
+// traerse una fila por compra para juntarlas después obligaba a un tope — y con tope el total
+// dejaba de ser el total sin que se notara: llegó a enseñar una cuarta parte del gasto.
+//
+// Lo que devuelve la consulta se traduce con `grupoDeSQL`, más arriba. Y para poder seguir
+// probando con líneas de verdad las reglas que no se pueden perder —un null no es un cero, la
+// fusión entre locales es exacta—, los tests tienen su propia versión del agrupado en
+// `tests/helpers/agrupa-como-la-base.js`, que es donde debe estar: en producción esto lo hace
+// PostgreSQL, y mandar dos implementaciones de lo mismo era el problema que se quitó.

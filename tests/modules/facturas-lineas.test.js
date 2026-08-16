@@ -5,7 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   normalizarLinea, normalizarLineas, validarSuma, mensajeValidacion,
-  claveProducto, agruparPorProducto, grupoDeSQL } from "../../src/modules/facturas/lineas.js";
+  claveProducto, grupoDeSQL } from "../../src/modules/facturas/lineas.js";
+import { agrupaComoLaBase } from "../helpers/agrupa-como-la-base.js";
 // `facturas.js` importa `pdf-lib`, que aquí no está instalado (npm install no funciona en
 // local: el lockfile apunta al firewall de Replit). Se carga en tiempo de ejecución y, si
 // falta, estos tests se SALTAN con el motivo escrito. Dejarlos en rojo por una dependencia
@@ -115,7 +116,7 @@ describe("líneas — agrupar por producto", () => {
   });
 
   test("suma cantidades e importes del mismo producto", () => {
-    const g = agruparPorProducto([
+    const g = agrupaComoLaBase([
       lin("COCA COLA 33CL", { cantidad: 2, importe: 28.8, fecha: "2026-03-04", precio_unitario: 14.4, proveedor: "Damm" }),
       lin("Coca-Cola 33cl", { cantidad: 3, importe: 44.7, fecha: "2026-05-02", precio_unitario: 14.9, proveedor: "Damm" }),
     ]);
@@ -126,7 +127,7 @@ describe("líneas — agrupar por producto", () => {
   });
 
   test("DICE CUÁNTO HA SUBIDO EL PRECIO: es lo que hace que esto valga sin enlazar nada", () => {
-    const g = agruparPorProducto([
+    const g = agrupaComoLaBase([
       lin("Aceite girasol 5L", { precio_unitario: 10, fecha: "2026-01-10" }),
       lin("Aceite girasol 5L", { precio_unitario: 10.8, fecha: "2026-06-10" }),
     ]);
@@ -140,26 +141,26 @@ describe("líneas — agrupar por producto", () => {
     // En esta fase no hay diccionario. Dos filas honestas son mejores que una fusión
     // inventada: si se juntara «REFRESCO COLA» con «COCA COLA» y no fuera lo mismo, el
     // número saldría mal y nadie volvería a mirarlo.
-    const g = agruparPorProducto([lin("COCA COLA 33CL"), lin("REFRESCO COLA LATA")]);
+    const g = agrupaComoLaBase([lin("COCA COLA 33CL"), lin("REFRESCO COLA LATA")]);
     assert.equal(g.length, 2);
   });
 
   test("ordena por lo que más dinero se lleva", () => {
-    const g = agruparPorProducto([lin("Barato", { importe: 5 }), lin("Caro", { importe: 500 })]);
+    const g = agrupaComoLaBase([lin("Barato", { importe: 5 }), lin("Caro", { importe: 500 })]);
     assert.equal(g[0].descripcion, "Caro");
   });
 
   test("SI NADA SE PUDO LEER, el importe es null y NO cero", () => {
     // Un «0 €» se lee como «no gastamos nada»; lo que pasa es que no se pudo leer. Que la
     // pantalla pinte «—» y no un cero depende enteramente de esto.
-    const g = agruparPorProducto([{ descripcion: "Gambas rojas", cantidad: null, importe: null, dudosa: true }]);
+    const g = agrupaComoLaBase([{ descripcion: "Gambas rojas", cantidad: null, importe: null, dudosa: true }]);
     assert.equal(g[0].importe, null);
     assert.equal(g[0].cantidad, null);
     assert.equal(g[0].dudosas, 1);
   });
 
   test("pero si alguna línea sí se leyó, se suma lo que hay", () => {
-    const g = agruparPorProducto([
+    const g = agrupaComoLaBase([
       { descripcion: "Gambas", importe: 40, cantidad: 2 },
       { descripcion: "Gambas", importe: null, cantidad: null, dudosa: true },
     ]);
@@ -169,7 +170,7 @@ describe("líneas — agrupar por producto", () => {
   });
 
   test("los que no se pudieron leer no se cuelan arriba del todo al ordenar", () => {
-    const g = agruparPorProducto([
+    const g = agrupaComoLaBase([
       { descripcion: "Ilegible", importe: null },
       { descripcion: "Caro", importe: 500 },
     ]);
@@ -177,11 +178,11 @@ describe("líneas — agrupar por producto", () => {
   });
 
   test("una línea sin descripción no crea un grupo fantasma", () => {
-    assert.equal(agruparPorProducto([{ descripcion: "", importe: 10 }]).length, 0);
+    assert.equal(agrupaComoLaBase([{ descripcion: "", importe: 10 }]).length, 0);
   });
 
   test("guarda de qué proveedores viene, para poder comparar", () => {
-    const g = agruparPorProducto([
+    const g = agrupaComoLaBase([
       lin("Gambas", { proveedor: "Salma" }), lin("Gambas", { proveedor: "Amat" }), lin("Gambas", { proveedor: "Salma" }),
     ]);
     assert.deepEqual(g[0].proveedores.sort(), ["Amat", "Salma"]);
@@ -356,5 +357,16 @@ describe("una fila ya agrupada por la base", () => {
     assert.equal(g.importe, null);
     assert.deepEqual(g.proveedores, []);
     assert.equal(g.precioNormal, null);
+  });
+});
+
+describe("la consulta descarta lo que el agrupado descartaba", () => {
+  test("las líneas sin clave no crean un producto fantasma", () => {
+    // Una línea cuya descripción no se pudo leer tiene la clave vacía. Agrupadas todas juntas
+    // saldría una fila sin nombre con un gasto que no es de ningún producto. Lo hacía el
+    // agrupado del servidor; al mudarlo a la consulta había que llevárselo también.
+    const server = fs.readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+    const fn = server.slice(server.indexOf("async function comprasDeLocal("), server.indexOf('app.get("/api/facturas/compras"'));
+    assert.match(fn, /condLin\.push\(`COALESCE\(l\.clave,''\) <> ''`\)/);
   });
 });

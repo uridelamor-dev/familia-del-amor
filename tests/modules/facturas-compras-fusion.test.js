@@ -2,7 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fusionarCompras, fusionarGrupos, fusionarCategorias } from "../../src/modules/facturas/compras-fusion.js";
-import { agruparPorProducto } from "../../src/modules/facturas/lineas.js";
+import { agrupaComoLaBase } from "../helpers/agrupa-como-la-base.js";
 
 const LLORET = "La Tapeta - Lloret", GIRONA = "La Tapeta - Girona";
 
@@ -22,8 +22,8 @@ describe("juntar dos locales da lo mismo que contarlos juntos", () => {
     linea({ d: "COCA COLA 33CL", c: 12, p: 0.8, i: 9.6, f: "2026-07-20" }),
   ];
 
-  const juntas = agruparPorProducto([...deLloret, ...deGirona]);
-  const fusionadas = fusionarGrupos([agruparPorProducto(deLloret), agruparPorProducto(deGirona)]);
+  const juntas = agrupaComoLaBase([...deLloret, ...deGirona]);
+  const fusionadas = fusionarGrupos([agrupaComoLaBase(deLloret), agrupaComoLaBase(deGirona)]);
 
   const coca = (lista) => lista.find((g) => /coca/i.test(g.descripcion));
 
@@ -65,8 +65,8 @@ describe("juntar dos locales da lo mismo que contarlos juntos", () => {
   test("dos proveedores que escriben distinto el mismo producto siguen separados", () => {
     // Es la fase A a propósito (docs/lineas-de-factura.md): dos filas honestas valen más que
     // una fusión inventada. La fusión de locales no puede cambiar eso por su cuenta.
-    const a = agruparPorProducto([linea({ d: "COCA COLA 33CL", i: 10, f: "2026-06-01" })]);
-    const b = agruparPorProducto([linea({ d: "Coca-Cola 33 cl", i: 10, f: "2026-06-01" })]);
+    const a = agrupaComoLaBase([linea({ d: "COCA COLA 33CL", i: 10, f: "2026-06-01" })]);
+    const b = agrupaComoLaBase([linea({ d: "Coca-Cola 33 cl", i: 10, f: "2026-06-01" })]);
     assert.equal(fusionarGrupos([a, b]).length, 2);
   });
 });
@@ -74,16 +74,16 @@ describe("juntar dos locales da lo mismo que contarlos juntos", () => {
 describe("lo que no se puede leer sigue sin poder leerse", () => {
   test("si ningún local trae la cantidad, no se inventa un cero", () => {
     // Un «0» se lee como «no compramos nada», y lo que pasa es que no se pudo leer.
-    const a = agruparPorProducto([linea({ d: "GAMBA", i: 20, f: "2026-06-01" })]);
-    const b = agruparPorProducto([linea({ d: "GAMBA", i: 30, f: "2026-06-02" })]);
+    const a = agrupaComoLaBase([linea({ d: "GAMBA", i: 20, f: "2026-06-01" })]);
+    const b = agrupaComoLaBase([linea({ d: "GAMBA", i: 30, f: "2026-06-02" })]);
     const f = fusionarGrupos([a, b]);
     assert.equal(f[0].cantidad, null);
     assert.equal(f[0].importe, 50);
   });
 
   test("si uno la trae y el otro no, se suma lo que hay y se dice de cuántas líneas sale", () => {
-    const a = agruparPorProducto([linea({ d: "GAMBA", c: 5, i: 20, f: "2026-06-01" })]);
-    const b = agruparPorProducto([linea({ d: "GAMBA", i: 30, f: "2026-06-02" })]);
+    const a = agrupaComoLaBase([linea({ d: "GAMBA", c: 5, i: 20, f: "2026-06-01" })]);
+    const b = agrupaComoLaBase([linea({ d: "GAMBA", i: 30, f: "2026-06-02" })]);
     const f = fusionarGrupos([a, b]);
     assert.equal(f[0].cantidad, 5);
     assert.equal(f[0].conCantidad, 1);
@@ -91,8 +91,8 @@ describe("lo que no se puede leer sigue sin poder leerse", () => {
   });
 
   test("las líneas dudosas se acumulan: siguen marcadas después de fusionar", () => {
-    const a = agruparPorProducto([linea({ d: "GAMBA", i: 20, f: "2026-06-01", dudosa: true })]);
-    const b = agruparPorProducto([linea({ d: "GAMBA", i: 30, f: "2026-06-02" })]);
+    const a = agrupaComoLaBase([linea({ d: "GAMBA", i: 20, f: "2026-06-01", dudosa: true })]);
+    const b = agrupaComoLaBase([linea({ d: "GAMBA", i: 30, f: "2026-06-02" })]);
     assert.equal(fusionarGrupos([a, b])[0].dudosas, 1);
   });
 });
@@ -125,7 +125,7 @@ describe("la respuesta entera", () => {
   const parte = (local, o = {}) => ({
     ok: true, local, q: null, catalogoCategorias: [{ categoria: "Bebidas", subs: [] }],
     categorias: { categorias: [{ categoria: "Bebidas", importe: o.cat ?? 100, proveedores: ["Grau"], subs: [] }], sinCategoria: 0, sinCatProveedores: [], repartido: 0, total: o.cat ?? 100 },
-    grupos: o.grupos || agruparPorProducto([linea({ d: o.prod || "COCA COLA", c: 10, p: 1, i: 10, f: "2026-06-01" })]),
+    grupos: o.grupos || agrupaComoLaBase([linea({ d: o.prod || "COCA COLA", c: 10, p: 1, i: 10, f: "2026-06-01" })]),
     lineas: o.lineas || [],
     totales: { importe: o.imp ?? 10, productos: 1 },
     cobertura: { facturas: o.fac ?? 10, conDetalle: o.det ?? 8, descuadradas: 1, sinLeer: 1, noLeibles: 0, noAplica: 1 },
@@ -248,21 +248,21 @@ describe("el precio normal sobrevive a la fusión de locales", () => {
     // solo su resultado: es lo que mantiene exacta la fusión.
     const A = [linea("ACEITE", 30, "2026-06-01"), linea("ACEITE", 31, "2026-06-10"), linea("ACEITE", 29, "2026-06-20")];
     const B = [linea("ACEITE", 45, "2026-07-01"), linea("ACEITE", 30, "2026-05-01")];
-    const juntas = agruparPorProducto([...A, ...B])[0];
-    const fus = fusionarGrupos([agruparPorProducto(A), agruparPorProducto(B)])[0];
+    const juntas = agrupaComoLaBase([...A, ...B])[0];
+    const fus = fusionarGrupos([agrupaComoLaBase(A), agrupaComoLaBase(B)])[0];
     assert.equal(fus.precioNormal, juntas.precioNormal);
     assert.equal(fus.precioNormal, 30);
     assert.equal(fus.ultimoPrecio, juntas.ultimoPrecio);
   });
 
   test("con menos de tres compras no se afirma cuál es el precio normal", () => {
-    const g = agruparPorProducto([linea("SAL", 1, "2026-06-01"), linea("SAL", 2, "2026-06-02")])[0];
+    const g = agrupaComoLaBase([linea("SAL", 1, "2026-06-01"), linea("SAL", 2, "2026-06-02")])[0];
     assert.equal(g.precioNormal, null);
   });
 
   test("y con dos proveedores tampoco: sería otro precio, no una subida", () => {
     // Que el aceite esté más caro en Makro que en el mayorista no es una subida.
-    const g = agruparPorProducto([
+    const g = agrupaComoLaBase([
       linea("SAL", 1, "2026-06-01"), linea("SAL", 2, "2026-06-02", "Makro"), linea("SAL", 1, "2026-06-03"),
     ])[0];
     assert.equal(g.precioNormal, null);
@@ -270,7 +270,7 @@ describe("el precio normal sobrevive a la fusión de locales", () => {
 
   test("la lista de precios va recortada: no puede hinchar la respuesta", () => {
     const muchas = Array.from({ length: 90 }, (_, i) => linea("AGUA", 1 + i / 100, `2026-0${1 + (i % 9)}-01`));
-    assert.ok(agruparPorProducto(muchas)[0].precios.length <= 40);
+    assert.ok(agrupaComoLaBase(muchas)[0].precios.length <= 40);
   });
 });
 

@@ -3495,6 +3495,11 @@ async function comprasDeLocal(query, local) {
          WHERE ff.id = NULLIF(regexp_replace(f.conciliado_con, '[^0-9]', '', 'g'), '')::int
            AND ff.lineas_estado IN ('ok','dudas','descuadre')))`;
     condLin.push(`NOT ${ALBARAN_YA_CONTADO}`);
+    // Una línea sin descripción legible tiene la clave vacía y no es un producto: agrupadas
+    // todas juntas saldría un «producto fantasma» sin nombre y con un gasto que no es de nada.
+    // El agrupado que se hacía en el servidor ya las descartaba; la consulta tenía que hacerlo
+    // también, y lo cazó un test al portarlo.
+    condLin.push(`COALESCE(l.clave,'') <> ''`);
 
     const whereLin = condLin.length ? "WHERE " + condLin.join(" AND ") : "";
     const whereFac = condFac.length ? "WHERE " + condFac.join(" AND ") : "";

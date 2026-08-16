@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { esqueleto, medidas, parecido, proponer, colaDeTrabajo, nombreLimpio, cobertura, MINIMO_PROPUESTA }
   from "../../src/modules/facturas/diccionario.js";
+import { agrupaComoLaBase } from "../helpers/agrupa-como-la-base.js";
 
 describe("quitar el envase para ver el producto", () => {
   test("el esqueleto deja el nombre comercial y tira el embalaje", () => {
@@ -115,7 +116,6 @@ describe("cuánto queda por hacer, medido en dinero", () => {
 
 describe("agrupar CON el diccionario", () => {
   test("dos formas de escribirlo pasan a ser un producto, con su nombre bueno", async () => {
-    const { agruparPorProducto } = await import("../../src/modules/facturas/lineas.js");
     const linea = (d, i, prov) => ({ descripcion: d, cantidad: 1, precio_unitario: i, importe: i,
       fecha: "2026-07-01", proveedor: prov || "Grau" });
     const lineas = [
@@ -128,10 +128,10 @@ describe("agrupar CON el diccionario", () => {
       ["coca cola 33 cl", { id: 7, nombre: "Coca-Cola 33cl" }],
     ]);
 
-    const sin = agruparPorProducto(lineas);
+    const sin = agrupaComoLaBase(lineas);
     assert.equal(sin.length, 3, "sin diccionario son tres productos, que es lo honesto");
 
-    const con = agruparPorProducto(lineas, { alias });
+    const con = agrupaComoLaBase(lineas, { alias });
     assert.equal(con.length, 2);
     const coca = con.find((g) => g.clave === "p:7");
     assert.equal(coca.descripcion, "Coca-Cola 33cl", "manda el nombre del diccionario");
@@ -142,8 +142,7 @@ describe("agrupar CON el diccionario", () => {
   });
 
   test("lo que no está en el diccionario se queda como estaba", async () => {
-    const { agruparPorProducto } = await import("../../src/modules/facturas/lineas.js");
-    const g = agruparPorProducto(
+    const g = agrupaComoLaBase(
       [{ descripcion: "PAPEL COCINA", importe: 10, fecha: "2026-07-01", proveedor: "X" }],
       { alias: new Map() });
     assert.equal(g[0].clave, "papel cocina");

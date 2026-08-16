@@ -18,6 +18,10 @@ App de gestión interna + web pública de un grupo de restauración. **Responder
 - **Puerto:** `5000` (en Replit sale por el 80).
 - **Reiniciar** (mata puerto + chrome/puppeteer + SingletonLock + relanza): `/restart-tapeta`.
 - **Probar API** (login + endpoints, sin pegar token a mano): skill `tapeta-api` → `.claude/skills/tapeta-api/api.sh <endpoint>`.
+- **Barrido de pantallas:** `node tools/barrido-rutas.mjs` abre las 19 vistas del panel en Chrome
+  sin ventana (servidor falso incluido) y avisa de errores de JS, pantallas en blanco y
+  desplegables abiertos de casa. Necesita `puppeteer`, que **no** es dependencia: si falta, se
+  salta. `npm test` lee el código; esto lo ejecuta, y ahí salen otros fallos.
 - Login de prueba: usuarios `direccion` / `encargado`, contraseña `tapeta2024`. En una base
   **recién creada** pide cambiarla al entrar (todas las altas nacen con `pass_temporal`).
 
