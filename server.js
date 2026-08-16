@@ -35,7 +35,7 @@ import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, 
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo, generarToken } from "./src/modules/rrhh/pulso.js";
 import { ensureSchemaHorarios, sembrarLocal, migrarDescansos } from "./src/modules/horarios/schema.js";
 import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descansos.js";
-import { instanteANegocio, lunesDe, diasSemana, isoConOffset, aMinutos, deMinutos, epochDeLocal, sumaDias } from "./src/modules/horarios/tiempo.js";
+import { instanteANegocio, lunesDe, diasSemana, isoConOffset, aMinutos, deMinutos, epochDeLocal, sumaDias, instanteMadrid } from "./src/modules/horarios/tiempo.js";
 import { detectarConflictos, resumirConflictos } from "./src/modules/horarios/conflictos.js";
 import { validarPublicacion, construirSnapshot } from "./src/modules/horarios/versiones.js";
 import { serializarCanonico } from "./src/core/canonico.js";
@@ -61,7 +61,6 @@ import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES
 import { repasarLote, resumenRepaso, pideRelecturaDeLineas, esAlcanceValido, ALCANCES_REPASO, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
 import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
-import { instanteMadrid } from "./src/modules/horarios/tiempo.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
@@ -116,6 +115,19 @@ async function dbRun(sql, params = []) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * HOY, en hora de MADRID. No es un detalle: `new Date().toISOString()` da la fecha en UTC, y
+ * entre medianoche y las dos de la mañana en verano eso es AYER. Un restaurante cierra a esa
+ * hora — la reserva que se apunta a las 00:30, la factura que se sube al cerrar caja y el
+ * «hoy» del dashboard se archivaban con la fecha del día anterior, cada noche de verano.
+ *
+ * Los módulos de horarios y fichajes ya tenían su propia hora de Madrid porque ahí la fecha es
+ * prueba legal. Esto la trae al resto.
+ */
+const hoyISO = () => instanteMadrid(new Date()).fecha;
+/** Días antes o después de hoy, también en Madrid. */
+const hoyMas = (n) => sumaDias(hoyISO(), n);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -2161,7 +2173,7 @@ app.patch("/api/facturas/:id/pago", requireAuth(["direccion", "contabilidad"]), 
     const row = await dbGet("SELECT id, pagado FROM facturas WHERE id = ?", [id]);
     if (!row) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
     const nuevoPagado = row.pagado ? 0 : 1;
-    const fechaPago   = nuevoPagado ? new Date().toISOString().slice(0, 10) : null;
+    const fechaPago   = nuevoPagado ? hoyISO() : null;
     await dbRun("UPDATE facturas SET pagado = ?, fecha_pago = ? WHERE id = ?", [nuevoPagado, fechaPago, id]);
     res.json({ ok: true, pagado: nuevoPagado, fecha_pago: fechaPago });
   } catch (e) { res.json({ ok: false, error: e.message }); }
@@ -5144,7 +5156,7 @@ app.get("/api/reservas/export.csv", requireAuth(["direccion", "encargado", "cont
 // KPIs
 app.get("/api/kpi", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = hoyISO();
     const mes = hoy.slice(0, 7);
     const mesLike = mes + "%";
     const [leads_total, leads_mes, reservas_total, reservas_hoy, reservas_mes, candidaturas,
@@ -5254,7 +5266,7 @@ async function seedAgoraFromEnv() {
 async function runAgoraSync() {
   const configs = await loadAgoraConfigsActive();
   if (!configs.length) return;
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = hoyISO();
   await syncVentas({ get: dbGet, all: dbAll, run: dbRun }, {
     hoy, configs, makeClient: createAgoraClient,
     setEstado: async (local, r) => setConfig("agora_estado_" + local, JSON.stringify({ ...r, ts: new Date().toISOString() })),
@@ -5285,9 +5297,9 @@ async function ventasVivoData(force) {
     return { cache: true, ...(_ventasVivoCache.data) };
   }
   const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password);
-  const hoy = new Date().toISOString().slice(0, 10);
-  const desde = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-  const hasta = new Date(Date.now() + 86400000).toISOString().slice(0, 10); // incluye hoy
+  const hoy = hoyISO();
+  const desde = hoyMas(-7);
+  const hasta = hoyMas(1); // incluye hoy
   const locales = [];
   for (const cfg of configs) {
     try {
@@ -5492,7 +5504,7 @@ async function periodoDeLocal(query, local) {
     const lf = local ? " AND local = ?" : "";
     const lp = local ? [local] : [];
     const resRows = await dbAll(`SELECT dia, COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia >= ? AND dia <= ?${lf} GROUP BY dia ORDER BY dia`, [from, to, ...lp]);
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = hoyISO();
     let ventasSerie = [], hoyEnVivo = false, fuenteVentas = "bd";
     const live = await ventasRangoLive(local, from, to);
     if (live) {
@@ -5652,8 +5664,8 @@ app.post("/api/agora/metodos", requireAuth(["direccion"]), async (req, res) => {
     const { alive, version } = await client.pingInfo();
     if (!alive) return res.json({ ok: true, local, version: null, alive: false, metodos: [], mensaje: "El TPV no responde: el local está cerrado o inalcanzable." });
     // Rango mínimo (ayer) para que el informe no cargue al TPV; da igual lo que devuelva.
-    const hasta = new Date().toISOString().slice(0, 10);
-    const desde = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const hasta = hoyISO();
+    const desde = hoyMas(-1);
     const metodos = [];
     for (const c of AGORA_CANDIDATOS) {
       const r = await client.probarMetodo(c.clr, { From: desde, To: hasta });
@@ -5730,8 +5742,8 @@ app.post("/api/agora/diagnostico", requireAuth(["direccion"]), async (req, res) 
     }]);
     if (!cfgs.length) return res.status(400).json({ ok: false, error: agoraFaltaQue(row) });
     const cfg = cfgs[0];
-    const hoy = new Date().toISOString().slice(0, 10);
-    const desde = (req.body.desde && String(req.body.desde)) || new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+    const hoy = hoyISO();
+    const desde = (req.body.desde && String(req.body.desde)) || hoyMas(-2);
     const hasta = (req.body.hasta && String(req.body.hasta)) || hoy;
     const candidatos = candidatosDiagnostico(cfg.host, { token: cfg.token, localId: cfg.localId, desde, hasta });
     // En lotes de 8 para no saturar el servidor del TPV (embebido, pequeño).
@@ -8090,7 +8102,7 @@ app.get("/api/pulso/:token", async (req, res) => {
       [pulsoHash(req.params.token)]
     );
     if (!inv) return res.status(404).json({ ok: false, error: "Este enlace no es válido." });
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = hoyISO();
     if (inv.usado) return res.status(410).json({ ok: false, error: "Ya has contestado este mes. ¡Gracias!" });
     // El enlace NO caduca. `caduca_en` es hasta cuándo se insiste con los recordatorios, no
     // hasta cuándo vale: quien estaba de vacaciones esos días es justo de quien más falta hace
@@ -8122,7 +8134,7 @@ app.post("/api/pulso/:token", async (req, res) => {
       `SELECT id, mes, local, caduca_en, usado FROM pulso_invitaciones WHERE token_hash = ? FOR UPDATE`,
       [pulsoHash(req.params.token)]
     )).rows[0];
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = hoyISO();
     if (!inv) { await client.query("ROLLBACK"); return res.status(404).json({ ok: false, error: "Este enlace no es válido." }); }
     if (inv.usado) { await client.query("ROLLBACK"); return res.status(410).json({ ok: false, error: "Ya has contestado este mes. ¡Gracias!" }); }
     // Sin comprobar el plazo: una respuesta que llega tarde cuenta para SU mes, que es de lo
@@ -8161,7 +8173,7 @@ app.post("/api/pulso/:token/contacto", async (req, res) => {
        WHERE i.token_hash = ?`, [pulsoHash(req.params.token)]
     );
     if (!inv) return res.status(404).json({ ok: false, error: "Este enlace no es válido." });
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = hoyISO();
 
     // Una petición por persona y mes: si insiste, se actualiza el mensaje en vez de duplicar.
     const previa = await dbGet(`SELECT id FROM pulso_contactos WHERE worker_id = ? AND mes = ? AND atendido = 0`, [inv.worker_id, inv.mes]);
@@ -8274,7 +8286,7 @@ app.get("/api/rrhh/pulso/config", requireAuth(["direccion"]), async (req, res) =
   try {
     const out = {};
     for (const k of PULSO_CONFIG) out[k] = await getConfig(k);
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = hoyISO();
     out.enviados_hoy = Number((await getConfig("wa_enviados_" + hoy)) || 0);
     res.json({ ok: true, data: out });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar la configuración" }); }
@@ -8371,7 +8383,7 @@ function pulsoTokenTmp(workerId, mes) {
 // Manda las invitaciones que aún no han salido. Se llama en cada tick: si WhatsApp estaba
 // caído, se recupera solo. Rota el token al reenviar (el anterior no se guardó en claro).
 async function despacharPulsoPendientes() {
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = hoyISO();
   const pendientes = await dbAll(
     `SELECT i.id, i.worker_id, i.mes, u.nombre, u.telefono
      FROM pulso_invitaciones i JOIN users u ON u.id = i.worker_id
@@ -8550,7 +8562,6 @@ app.post("/api/rrhh/llamada", requireAuth(RRHH_ROLES), async (req, res) => {
 });
 
 // ── RRHH: ficha del trabajador (datos + timeline + documentos) ────────────────
-const hoyISO = () => new Date().toISOString().slice(0, 10);
 const HR_CAMPOS_DIR = ["telefono", "email", "dni", "puesto", "fecha_nac", "fecha_alta", "fecha_baja", "foto_url", "activo"];
 const HR_CAMPOS_ENC = ["telefono", "email", "puesto", "fecha_nac", "foto_url"]; // encargado: sin DNI/alta/baja/activo
 function esEncargado(req) { return req.user && req.user.rol === "encargado"; }
@@ -8569,7 +8580,7 @@ app.get("/api/mi-perfil", requireAuth(), async (req, res) => {
        FROM users WHERE id = ?`, [req.user.id]
     );
     if (!u) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = hoyISO();
     // Si tiene PIN y si es el provisional que le dio el encargado. El PIN no sale de la
     // base ni hasheado: solo se dice si existe, para poder ofrecerle cambiarlo.
     const pin = await dbGet(`SELECT pin_hash IS NOT NULL AS tiene, pin_temporal FROM users WHERE id = ?`, [req.user.id])
@@ -9330,7 +9341,7 @@ function hashTexto(texto) { return crypto.createHash("sha256").update(String(tex
 // que son las que de verdad pueden quemar el número.
 async function contarEnvioWA(n = 1) {
   try {
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = hoyISO();
     const clave = "wa_enviados_" + hoy;
     await setConfig(clave, String(Number((await getConfig(clave)) || 0) + n));
   } catch { /* nunca debe tumbar un envío */ }
@@ -9388,7 +9399,7 @@ app.post("/api/contactos/mensaje-masivo", requireAuth(["direccion", "marketing"]
     if (!aptos.length) return res.json({ ok: true, total: contactos.length, enviables: 0, omitidos, aviso: "No hay destinatarios enviables (revisa bajas/consentimiento)." });
     const segmento = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes };
     const row = await dbRun(`INSERT INTO campanas_wa (nombre, segmento_json, mensaje, total_enviados) VALUES (?, ?, ?, 0) RETURNING id`,
-      [nombre_campana || ("Mensaje rápido " + new Date().toISOString().slice(0, 10)), JSON.stringify(segmento), mensaje]);
+      [nombre_campana || ("Mensaje rápido " + hoyISO()), JSON.stringify(segmento), mensaje]);
     const campanaId = row.id;
     res.json({ ok: true, total: contactos.length, enviables: aptos.length, omitidos, campana_id: campanaId });
     enviarLoteWA({ contactos: aptos, mensaje, campanaId });

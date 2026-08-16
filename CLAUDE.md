@@ -36,7 +36,10 @@ Ya está configurado global `pull.rebase=true` + `rebase.autoStash=true`, así q
 - Al reiniciar en local, borrar `.wwebjs_auth/session/SingletonLock` si el navegador quedó bloqueado.
 
 ## Seguridad (deuda conocida)
-- `JWT_SECRET` tiene fallback inseguro `tapeta-secret-dev`; contraseña seed `tapeta2024`; **sin rate-limit ni helmet**.
+- ~~`JWT_SECRET` con fallback inseguro~~ **Arreglado**: en producción no arranca sin un secreto
+  fuerte (`resolveJwtSecret`, refuse-to-boot). El login **sí** tiene freno por usuario y en la
+  base (`src/modules/usuarios/acceso.js`: 5 fallos → 30 s, 2, 5, 15 min, y se suelta solo).
+  Queda: contraseña seed `tapeta2024` y **sin helmet**.
 - No commitear credenciales reales; el `.env` no va al repo.
 
 ## Imágenes
@@ -58,10 +61,10 @@ porque no se pueden añadir dependencias; y el generador (`solver.js`) **propone
 no publica.
 
 ## Deuda conocida
-- `hoyISO()` y ~15 usos de `toISOString().slice(0,10)` son **UTC**: entre las 00:00 y las 02:00
-  en verano devuelven el día anterior. Está enredado con reservas y facturas (en producción) y
-  por eso no se ha tocado. Los módulos de horarios/fichajes **no lo usan**: tienen su propio
-  `src/modules/horarios/tiempo.js` con hora de Madrid y día de negocio.
+- ~~`hoyISO()` en UTC~~ **Arreglado.** Hay un único `hoyISO()` en `server.js` y usa
+  `instanteMadrid()` (hora de Madrid). Lo que sigue en UTC —y es correcto— es la **aritmética
+  sobre una fecha ya dada** (`addDiasISO`, `addDaysISO`): ahí el huso no estorba y meter hora
+  local podría introducir saltos con el cambio de hora. Test: `tests/hora-de-madrid.test.js`.
 - Analítica e Inventarios mantienen su propio selector de local (el resto usa el de la barra).
 
 ## Roadmap y estado
