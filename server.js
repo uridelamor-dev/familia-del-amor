@@ -51,7 +51,7 @@ import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/expo
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { colaDeTrabajo, cobertura } from "./src/modules/facturas/diccionario.js";
 import { gruposDuplicados } from "./src/modules/facturas/proveedores-duplicados.js";
-import { grupoDeSQL, claveProducto } from "./src/modules/facturas/lineas.js";
+import { grupoDeSQL, claveProducto, validarSuma, mensajeValidacion } from "./src/modules/facturas/lineas.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { proponerConciliacion, resumenConciliacion, estadoConciliada } from "./src/modules/facturas/conciliacion.js";
 import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados.js";
@@ -5125,23 +5125,52 @@ app.post("/api/facturas/lineas/recuadrar", requireAuth(["direccion", "contabilid
 app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const cantidad = Number(req.body?.cantidad);
-    if (!Number.isInteger(id) || !Number.isFinite(cantidad) || cantidad <= 0) {
-      return res.status(400).json({ ok: false, error: "La cantidad tiene que ser un número mayor que cero" });
-    }
-    const unidad = String(req.body?.unidad || "").trim().slice(0, 20) || null;
+    if (!Number.isInteger(id)) return res.status(400).json({ ok: false, error: "Falta la línea" });
     const l = await dbGet(
-      `SELECT l.id, l.cantidad::float AS cantidad, l.importe::float AS importe, l.clave, f.proveedor, f.local
+      `SELECT l.id, l.cantidad::float AS cantidad, l.precio_unitario::float AS precio_unitario,
+              l.importe::float AS importe, l.clave, f.id AS factura_id, f.proveedor, f.local,
+              f.base_imponible::float AS base_imponible
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id WHERE l.id = ?`, [id]);
     if (!l) return res.status(404).json({ ok: false, error: "Esa línea ya no existe" });
     if (!puedeAccederLocal(req, l.local)) return res.status(403).json({ ok: false, error: "No puedes tocar ese establecimiento" });
 
-    const precio = l.importe != null ? Math.round((l.importe / cantidad) * 100) / 100 : null;
+    const num = (v) => { if (v === undefined || v === null || v === "") return null; const n = Number(String(v).replace(",", ".")); return Number.isFinite(n) ? n : null; };
+    const cantidad = num(req.body?.cantidad) ?? l.cantidad;
+    const unidad = req.body?.unidad !== undefined ? (String(req.body.unidad || "").trim().slice(0, 20) || null) : undefined;
+    const importePedido = num(req.body?.importe);
+    const precioPedido = num(req.body?.precio_unitario);
+
+    if (cantidad != null && cantidad <= 0) return res.status(400).json({ ok: false, error: "La cantidad tiene que ser mayor que cero" });
+
+    /**
+     * QUÉ MANDA AL CORREGIR. Los tres números están atados —cantidad × precio = importe—, así
+     * que tocar uno obliga a recalcular otro. Manda EL QUE SE HA ESCRITO:
+     *   · si se corrige el importe (lo normal al arreglar un descuadre: se leyó 12,49 donde
+     *     ponía 121,49), el precio se recalcula;
+     *   · si se corrige el precio, se recalcula el importe;
+     *   · si solo se corrige la cantidad, el importe se respeta y el precio se reparte.
+     * Así lo que se acaba de teclear no se ve cambiado por detrás, que es lo que hace que
+     * alguien deje de fiarse de una pantalla.
+     */
+    let importe = l.importe, precio = l.precio_unitario;
+    if (importePedido != null) {
+      importe = importePedido;
+      precio = cantidad ? Math.round((importe / cantidad) * 100) / 100 : precio;
+    } else if (precioPedido != null) {
+      precio = precioPedido;
+      importe = cantidad != null ? Math.round(precio * cantidad * 100) / 100 : importe;
+    } else if (importe != null && cantidad) {
+      precio = Math.round((importe / cantidad) * 100) / 100;
+    }
+
     const factor = l.cantidad ? cantidad / l.cantidad : null;
     await dbRun(
-      `UPDATE factura_lineas SET cantidad = ?, unidad = ?, precio_unitario = ?,
+      `UPDATE factura_lineas SET cantidad = ?, precio_unitario = ?, importe = ?,
+              ${unidad !== undefined ? "unidad = ?," : ""}
               factor_unidad = ?, dudosa = FALSE WHERE id = ?`,
-      [cantidad, unidad, precio, factor && factor > 1 && Number.isInteger(factor) ? factor : null, id]);
+      unidad !== undefined
+        ? [cantidad, precio, importe, unidad, factor && factor > 1 && Number.isInteger(factor) ? factor : null, id]
+        : [cantidad, precio, importe, factor && factor > 1 && Number.isInteger(factor) ? factor : null, id]);
 
     // Las demás compras del MISMO producto al MISMO proveedor, con el mismo factor. Se guarda
     // el factor y no la cantidad: si un mes pidieron 5 packs y otro 8, la cantidad buena es
@@ -5156,15 +5185,29 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
         await dbRun(
           `UPDATE factura_lineas
               SET cantidad = round(cantidad * ?, 3),
-                  unidad = ?,
+                  ${unidad !== undefined ? "unidad = ?," : ""}
                   precio_unitario = round(importe / (cantidad * ?), 2),
                   factor_unidad = ?
             WHERE id = ?`,
-          [factor, unidad, factor, Number.isInteger(factor) && factor > 1 ? factor : null, o.id]);
+          unidad !== undefined
+            ? [factor, unidad, factor, Number.isInteger(factor) && factor > 1 ? factor : null, o.id]
+            : [factor, factor, Number.isInteger(factor) && factor > 1 ? factor : null, o.id]);
       }
       tambien = otras.length;
     }
-    res.json({ ok: true, cantidad, unidad, precio_unitario: precio, tambien });
+
+    // ── Y SE VUELVE A MIRAR SI LA FACTURA CUADRA ──────────────────────────────
+    // Es el sentido de poder corregir: que al arreglar la línea mal leída desaparezca la
+    // etiqueta de «descuadre». Si el estado no se recalculara, la factura seguiría marcada
+    // para siempre y nadie volvería a tocarla.
+    const lineas = await dbAll(
+      `SELECT importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ?`, [l.factura_id]);
+    const v = validarSuma(lineas, l.base_imponible);
+    await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ? WHERE id = ?`,
+      [v.cuadra ? "ok" : "descuadre", mensajeValidacion(v), l.factura_id]);
+
+    res.json({ ok: true, cantidad, unidad, precio_unitario: precio, importe, tambien,
+      suma: v.suma, base: v.base, diferencia: v.diferencia ?? 0, cuadra: !!v.cuadra });
   } catch (e) {
     console.error("[facturas] corregir línea:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo corregir" });

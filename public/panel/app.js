@@ -5890,20 +5890,60 @@ function facFicha(id) {
       const dif = j.diferencia;
       const cuadre = dif == null ? ""
         : Math.abs(dif) <= 0.02
-          ? `<p class="fic-suma"><span class="ok">✓ Las líneas suman la base imponible (${esc(eur2(j.suma))})</span></p>`
-          : `<p class="fic-nota" style="margin:0 0 10px"><b>No cuadra por ${esc(eur2(Math.abs(dif)))}.</b>
+          ? `<p class="fic-suma" id="ficCuadre"><span class="ok">✓ Las líneas suman la base imponible (${esc(eur2(j.suma))})</span></p>`
+          : `<p class="fic-nota" id="ficCuadre" style="margin:0 0 10px"><b>No cuadra por ${esc(eur2(Math.abs(dif)))}.</b>
              Las líneas suman <b>${esc(eur2(j.suma))}</b> y la base imponible dice <b>${esc(eur2(f.base_imponible))}</b>.
              ${dif > 0 ? "Sobra detalle: puede haber una línea repetida o leída de más."
                        : "Falta detalle: puede haber una línea que no se leyó, o un descuento que no se aplicó."}
              Corrige la cantidad de una línea abajo, o vuelve a leer el documento desde <b>Productos → sin leer</b>.</p>`;
+      // SE PUEDE CORREGIR AQUÍ MISMO. Un descuadre casi siempre es un número mal leído —12,49
+      // donde ponía 121,49—, y hasta ahora la única salida era volver a leer la factura entera
+      // con el modelo. Los tres números están atados (cantidad × precio = importe): manda el
+      // que se escribe y el otro se recalcula, para que lo tecleado no cambie por detrás.
       cuerpo.innerHTML = ls.length
         ? cuadre + `<div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Importe</th></tr></thead>
-           <tbody>${ls.map((l) => `<tr class="${l.dudosa ? "dudosa" : ""}">
+           <tbody>${ls.map((l) => `<tr class="${l.dudosa ? "dudosa" : ""}" data-lin="${l.linea_id}">
              <td>${esc(l.descripcion || "—")}${l.dudosa ? ' <span class="pill warn" style="font-size:9.5px" title="No se leyó del todo: sus cantidades pueden no ser exactas">dudosa</span>' : ""}</td>
-             <td class="r tnum">${l.cantidad != null ? esc(num(l.cantidad)) + (l.unidad ? " " + esc(l.unidad) : "") : "—"}</td>
-             <td class="r tnum">${l.precio_unitario != null ? esc(eur2(l.precio_unitario)) : "—"}</td>
-             <td class="r tnum"><b>${l.importe != null ? esc(eur2(l.importe)) : "—"}</b></td></tr>`).join("")}</tbody></table></div>`
+             <td class="r"><input class="lincel" data-campo="cantidad" data-id="${l.linea_id}" value="${esc(l.cantidad != null ? num(l.cantidad) : "")}" inputmode="decimal">${l.unidad ? ` <span class="mut" style="font-size:11px">${esc(l.unidad)}</span>` : ""}</td>
+             <td class="r"><input class="lincel" data-campo="precio_unitario" data-id="${l.linea_id}" value="${esc(l.precio_unitario != null ? String(l.precio_unitario).replace(".", ",") : "")}" inputmode="decimal"></td>
+             <td class="r"><input class="lincel" data-campo="importe" data-id="${l.linea_id}" value="${esc(l.importe != null ? String(l.importe).replace(".", ",") : "")}" inputmode="decimal"></td></tr>`).join("")}</tbody></table></div>
+           <p class="mut" style="margin:8px 0 0;font-size:12px">Cambia el número que esté mal y sal del recuadro: se guarda solo y se vuelve a comprobar si la factura cuadra.</p>`
         : `<p class="mut" style="margin:0">De esta factura no se ha leído el detalle por líneas.</p>`;
+
+      // Se guarda al salir del recuadro, no en cada tecla: escribiendo «121,49» pasarías por
+      // «1», «12», «121»… y se guardaría cuatro veces, tres de ellas mal.
+      cuerpo.querySelectorAll(".lincel").forEach((inp) => {
+        inp.dataset.antes = inp.value;
+        inp.addEventListener("change", async () => {
+          if (inp.value === inp.dataset.antes) return;
+          const campo = inp.getAttribute("data-campo");
+          try {
+            const r = await apiSend("PATCH", "/api/facturas/lineas/" + inp.getAttribute("data-id"), { [campo]: inp.value });
+            inp.dataset.antes = inp.value;
+            // Los otros dos números de la fila se recalculan: verlos cambiar es la prueba de
+            // que se ha guardado, y de paso enseña cuál manda.
+            const fila = inp.closest("tr");
+            fila.querySelectorAll(".lincel").forEach((otro) => {
+              if (otro === inp) return;
+              const c = otro.getAttribute("data-campo");
+              const v = c === "cantidad" ? r.cantidad : c === "precio_unitario" ? r.precio_unitario : r.importe;
+              otro.value = v == null ? "" : String(v).replace(".", ",");
+              otro.dataset.antes = otro.value;
+            });
+            // Y el cuadre, en vivo: si con esto cuadra, la etiqueta de descuadre desaparece.
+            const caja = ov.querySelector("#ficCuadre");
+            if (caja) {
+              caja.innerHTML = r.cuadra
+                ? `<span class="ok">✓ Ahora sí cuadra: las líneas suman ${esc(eur2(r.suma))}</span>`
+                : `<span class="mal">Siguen sin cuadrar: suman ${esc(eur2(r.suma))} y la base dice ${esc(eur2(r.base))} (${esc(eur2(Math.abs(r.diferencia)))} de diferencia).</span>`;
+            }
+            toast(r.cuadra ? "Corregido · la factura ya cuadra ✅" : "Corregido");
+          } catch (e) {
+            inp.value = inp.dataset.antes;   // si no se pudo guardar, no puede quedarse el número nuevo en pantalla
+            if (e.message !== "noauth") toast("Error: " + e.message);
+          }
+        });
+      });
     } catch { cuerpo.innerHTML = '<p class="mut" style="margin:0">No se pudo cargar el detalle.</p>'; }
   });
 
@@ -6392,7 +6432,11 @@ async function refrescarConciliacion() {
     const est = p.estado === "cuadra" ? ["ok", "Cuadra"] : p.estado === "conciliada" ? ["brand", "Conciliada"]
       : p.estado === "conciliada-parcial" ? ["warn", `A medias · faltan ${eur2(p.falta || 0)}`]
       : p.estado === "parcial" ? ["warn", "Por revisar"] : ["", "Sin albarán"];
-    const ligados = (p.albaranes || []).map((a) => a.id);
+    // «LIGADO» SOLO SI YA ESTÁ CONCILIADA. En una factura sin conciliar, `p.albaranes` no son
+    // vínculos: son LA PROPUESTA, y una propuesta es justo lo que se quiere poder descartar.
+    // Tratándolos como ligados, el botón de descartar no salía nunca donde más falta hace.
+    const yaConciliada = p.estado === "conciliada" || p.estado === "conciliada-parcial";
+    const ligados = yaConciliada ? (p.albaranes || []).map((a) => a.id) : [];
     const todos = [...(p.albaranes || []), ...(p.candidatos || [])];
     return `<div class="dupcard" data-fcard="${f.id}">
       <div class="row" style="padding:0 0 10px;border:0">

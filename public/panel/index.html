@@ -185,6 +185,11 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
    querer, así que se va al otro extremo y pierde el peso de botón. */
 .fic-pie .linkbtn.danger{color:var(--danger);font-size:12.5px}
 .tbl tr.dudosa td{background:color-mix(in srgb,var(--warning) 7%,transparent)}
+/* Los números del detalle se pueden corregir ahí mismo: parecen texto hasta que los tocas. */
+.lincel{width:88px;max-width:88px;text-align:right;font-variant-numeric:tabular-nums;
+  border:1px solid transparent;background:transparent;border-radius:7px;padding:3px 6px;font-size:13px;color:inherit}
+.lincel:hover{border-color:var(--border2)}
+.lincel:focus{border-color:var(--brand);background:var(--surface);outline:none}
 
 /* La línea del precio. En móvil se va: el ancho que ocupa vale más para el nombre, y el dato
    sigue estando en la columna de al lado y en el histórico del producto. */

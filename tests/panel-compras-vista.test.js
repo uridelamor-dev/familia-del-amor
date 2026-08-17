@@ -356,3 +356,46 @@ describe("Productos: ordenar, exportar y columnas (de haddock)", () => {
     assert.match(css, /@media \(max-width:1040px\)\{\.tbl td\.provcol/);
   });
 });
+
+describe("un descuadre se puede perseguir y arreglar", () => {
+  test("la ficha dice de cuánto es y hacia dónde", () => {
+    // La etiqueta decía «descuadre» y ahí se acababa: ni cuánto suman las líneas, ni cuánto
+    // dice la factura, ni de cuánto va la cosa. Una factura marcada que no se puede revisar
+    // acaba ignorándose.
+    assert.match(panel, /No cuadra por \$\{esc\(eur2\(Math\.abs\(dif\)\)\)\}/);
+    assert.match(panel, /Sobra detalle: puede haber una línea repetida/);
+    assert.match(panel, /Falta detalle: puede haber una línea que no se leyó/);
+  });
+
+  test("y los números del detalle se corrigen ahí mismo", () => {
+    assert.match(panel, /<input class="lincel" data-campo="importe"/);
+    assert.match(panel, /<input class="lincel" data-campo="cantidad"/);
+  });
+
+  test("se guarda al SALIR del recuadro, no en cada tecla", () => {
+    // Escribiendo «121,49» se pasa por «1», «12», «121»… y se guardaría cuatro veces, tres de
+    // ellas con un número que nadie ha querido poner.
+    assert.match(panel, /inp\.addEventListener\("change"/);
+    assert.doesNotMatch(panel, /lincel[\s\S]{0,400}addEventListener\("input"/);
+  });
+
+  test("si no se pudo guardar, el número vuelve a como estaba", () => {
+    // Dejarlo en pantalla haría creer que se guardó.
+    assert.match(panel, /inp\.value = inp\.dataset\.antes;\s*\/\/ si no se pudo guardar/);
+  });
+
+  test("y el cuadre se recalcula en el servidor, no en el navegador", () => {
+    // Es lo que hace que la etiqueta de «descuadre» desaparezca sola de la lista.
+    assert.match(server, /const v = validarSuma\(lineas, l\.base_imponible\);/);
+  });
+});
+
+describe("descartar en conciliaciones sale donde tiene que salir", () => {
+  test("una propuesta NO es un vínculo: en una factura sin conciliar se puede descartar", () => {
+    // Tratando los albaranes propuestos como ya ligados, el botón no aparecía nunca — que es
+    // justo donde hace falta. El banco de pruebas no lo cazó porque su respuesta falsa no se
+    // parecía a la del servidor.
+    assert.match(panel, /const yaConciliada = p\.estado === "conciliada" \|\| p\.estado === "conciliada-parcial";/);
+    assert.match(panel, /const ligados = yaConciliada \? \(p\.albaranes \|\| \[\]\)\.map\(\(a\) => a\.id\) : \[\];/);
+  });
+});

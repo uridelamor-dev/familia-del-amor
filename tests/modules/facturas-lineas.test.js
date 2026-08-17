@@ -460,16 +460,32 @@ describe("corregir a mano la lectura de una compra", () => {
   const i = server.indexOf('app.patch("/api/facturas/lineas/:id"');
   const fn = server.slice(i, server.indexOf("\n});\n", i));
 
-  test("el endpoint existe y NO deja tocar el importe", () => {
-    // Es lo que se pagó y está en el papel: lo que se corrige es entre cuántas unidades se
-    // reparte. Si se pudiera cambiar, la factura dejaría de cuadrar con sus líneas.
+  test("corregir la CANTIDAD no cambia el importe", () => {
+    // Ese es el caso del paquete: se pagaron 121,49 € y lo que se corrige es entre cuántas
+    // unidades se reparten. Si el importe se moviera, la factura dejaría de cuadrar.
     assert.ok(i > 0, "falta el endpoint de corregir línea");
-    assert.doesNotMatch(fn, /SET[^`]*importe = \?/);
-    assert.match(fn, /precio_unitario = \?/);
+    assert.match(fn, /\} else if \(importe != null && cantidad\) \{\s*\n\s*precio = Math\.round\(\(importe \/ cantidad\) \* 100\) \/ 100;/);
   });
 
-  test("el precio sale del importe entre la cantidad nueva", () => {
-    assert.match(fn, /Math\.round\(\(l\.importe \/ cantidad\) \* 100\) \/ 100/);
+  test("pero el IMPORTE sí se puede corregir cuando está mal leído", () => {
+    // Es otro caso distinto: «12,49» donde el papel pone «121,49». Ahí el número guardado no
+    // es lo que se pagó, es una errata de lectura, y la única salida era releer la factura
+    // entera con el modelo.
+    assert.match(fn, /if \(importePedido != null\) \{\s*\n\s*importe = importePedido;/);
+  });
+
+  test("manda el número que se ha escrito, y el otro se recalcula", () => {
+    // Ver cambiar por detrás lo que acabas de teclear es la forma más rápida de dejar de
+    // fiarte de una pantalla.
+    assert.match(fn, /precio = cantidad \? Math\.round\(\(importe \/ cantidad\) \* 100\) \/ 100 : precio;/);
+    assert.match(fn, /importe = cantidad != null \? Math\.round\(precio \* cantidad \* 100\) \/ 100 : importe;/);
+  });
+
+  test("y al corregir se vuelve a mirar si la factura cuadra", () => {
+    // Es el sentido de poder corregir: que la etiqueta de «descuadre» desaparezca sola. Sin
+    // recalcular, la factura seguiría marcada para siempre y nadie volvería a tocarla.
+    assert.match(fn, /const v = validarSuma\(lineas, l\.base_imponible\);/);
+    assert.match(fn, /v\.cuadra \? "ok" : "descuadre"/);
   });
 
   test("y solo en los establecimientos que esa persona puede tocar", () => {
@@ -512,8 +528,12 @@ describe("recuadrar hacia atrás lo ya guardado", () => {
   });
 
   test("y el importe se queda como estaba", () => {
-    const i = server.indexOf("const SQL_RECUADRE");
-    const fn = server.slice(i, server.indexOf('app.post("/api/facturas/lineas/releer"'));
+    // En el RECUADRE automático sí es intocable: ahí no se está corrigiendo una errata, se está
+    // repartiendo un importe correcto entre las unidades que de verdad venían.
+    // Solo el endpoint de recuadrar: entre él y el de releer hay ahora otros que sí tocan el
+    // importe a propósito, y cogerlos también hacía fallar al test por donde no era.
+    const i = server.indexOf('app.post("/api/facturas/lineas/recuadrar"');
+    const fn = server.slice(i, server.indexOf("\n});\n", i));
     assert.doesNotMatch(fn, /SET[\s\S]{0,200}importe =/);
   });
 });
