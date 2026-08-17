@@ -6384,7 +6384,11 @@ async function concConfirmar(id, albs) {
 // descripción del proveedor tal cual, así que dos proveedores que llamen distinto al mismo
 // producto salen en dos filas. Es a propósito: dos filas honestas antes que una fusión
 // inventada (ver docs/lineas-de-factura.md).
-let COMP = { q: "", from: "", to: "", proveedor: "", categoria: "", subcategoria: "" };
+let COMP = { q: "", from: "", to: "", proveedor: "", categoria: "", subcategoria: "", orden: "gasto" };
+// El orden va al servidor, no se hace aquí: la lista viene topada, y ordenar DESPUÉS de
+// recortar daría «la A-Z de los que más gastan», que no es la A-Z de nada.
+const COMP_ORDENES = [["gasto", "Lo que más gasta"], ["nombre", "A-Z"], ["reciente", "Comprado hace poco"],
+  ["veces", "Comprado más veces"], ["subida", "Lo que más ha subido"]];
 /**
  * Productos marcados para unificar, por su clave. Se decide DONDE SE VE: los dos calamares
  * salen uno debajo del otro, con el mismo importe, y hasta ahora había que irse al diccionario
@@ -6394,7 +6398,7 @@ let COMP = { q: "", from: "", to: "", proveedor: "", categoria: "", subcategoria
  * que se manda al servidor como «forma de escribirlo»: la fila ya no estará al confirmar.
  */
 let COMP_SEL = new Map();
-const COMP_FILTROS = ["q", "from", "to", "proveedor", "categoria", "subcategoria"];
+const COMP_FILTROS = ["q", "from", "to", "proveedor", "categoria", "subcategoria", "orden"];
 
 // ── El diccionario: unificar productos ──────────────────────────────────────
 // «COCA COLA 33CL» y «Coca-Cola 33 cl» son el mismo producto y hoy cuentan como dos. Aquí se
@@ -6627,6 +6631,9 @@ async function loadProductos() {
   cont?.addEventListener("input", (e) => {
     if (e.target.id === "compQ") { COMP.q = e.target.value.trim(); comprasDebounced(); }
   });
+  cont?.addEventListener("change", (e) => {
+    if (e.target.id === "compOrden") { COMP.orden = e.target.value; refrescarCompras(); }
+  });
 
   cont?.addEventListener("click", (e) => {
     const c = e.target.closest("[data-comp]");
@@ -6645,6 +6652,9 @@ async function loadProductos() {
     if (p) { COMP.q = p.getAttribute("data-compprod"); const i = document.getElementById("compQ"); if (i) i.value = COMP.q; return refrescarCompras(); }
     if (e.target.closest('[data-comp="releer"]')) comprasReleer();
     // Las descuadradas van por otro camino: no hay que releerlo todo, solo esas.
+    const pv = e.target.closest('[data-comp="prov"]');
+    if (pv) { COMP.proveedor = pv.getAttribute("data-prov") || ""; return refrescarCompras(); }
+    if (e.target.closest('[data-comp="csv"]')) return comprasCsv();
     if (e.target.closest('[data-comp="recuadrar"]')) return comprasRecuadrar();
     const rd = e.target.closest('[data-comp="releer-descuadre"]');
     if (rd) return facRepasoLineas(Number(rd.getAttribute("data-n")) || 0, "descuadre");
@@ -6653,6 +6663,8 @@ async function loadProductos() {
 // Los filtros de «Qué compramos», en el mismo panel lateral que los de Facturas: es la misma
 // pregunta («qué documentos miro») hecha desde el otro lado.
 function compFiltrosActivos() {
+  // `orden` viaja con los filtros al servidor pero NO es un filtro: no quita nada de la lista,
+  // así que no puede salir como un chip que se «quita».
   const out = [];
   if (COMP.from || COMP.to) out.push({ k: "fechas", txt: `${COMP.from ? fechaCorta(COMP.from) : "…"} → ${COMP.to ? fechaCorta(COMP.to) : "hoy"}` });
   if (COMP.proveedor) out.push({ k: "proveedor", txt: COMP.proveedor });
@@ -7036,6 +7048,19 @@ async function comprasPaquetes() {
   if (COMP_PAQUETES && CURRENT === "productos") refrescarCompras();
 }
 
+/** La lista tal y como se está viendo, en hoja de cálculo. */
+function comprasCsv() {
+  const qs = new URLSearchParams();
+  if (viendoVarios()) qs.set("locales", localesDelAmbito().join(","));
+  else if (FACF.local) qs.set("local", FACF.local);
+  COMP_FILTROS.forEach((k) => { if (COMP[k]) qs.set(k, COMP[k]); });
+  // Con `fetch` y no con un enlace: la descarga necesita el token, y un `<a href>` no lo lleva.
+  fetch("/api/facturas/compras.csv?" + qs.toString(), { headers: { Authorization: "Bearer " + token() } })
+    .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("No se pudo exportar"))))
+    .then((b) => bajarBlob(b, "productos.csv"))
+    .catch((e) => toast(e.message));
+}
+
 async function comprasRecuadrar() {
   const ok = await confirmModal(
     `Se van a recuadrar ${COMP_PAQUETES} línea(s): la cantidad pasa a estar en unidades sueltas y el precio, a ser el de cada unidad. ` +
@@ -7084,9 +7109,12 @@ async function refrescarCompras() {
   COMP.catalogo = j.catalogoCategorias || [];
   COMP.proveedores = (j.categorias?.categorias || []).flatMap((c) => c.proveedores);
   const barra = `<div class="toolbar" style="margin-bottom:10px">
-      <div class="field" style="flex:1;min-width:180px">
+      <div class="field" style="flex:1;min-width:160px">
         <input class="inp" id="compQ" value="${esc(COMP.q)}" placeholder="Buscar producto: coca, aceite, gamba…"></div>
+      <div class="field" style="max-width:190px"><select id="compOrden" title="Por dónde se ordena la lista">${COMP_ORDENES
+        .map(([v, l]) => `<option value="${v}" ${COMP.orden === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>
       <button class="btn" data-comp="filtros">${ic("cog", 15)} Filtros${compFiltrosActivos().length ? '<span class="fdot"></span>' : ""}</button>
+      <button class="btn" data-comp="csv" title="Lo mismo que estás viendo, en hoja de cálculo">Exportar</button>
     </div>${compChipsHtml()}`;
 
   // La cobertura va arriba y siempre: un total calculado sobre la mitad de las facturas
@@ -7154,8 +7182,14 @@ async function refrescarCompras() {
   const catDe = (g) => catDeProv.get((g.proveedores || [])[0]) || "";
   const fila = (g) => `<tr class="${COMP_SEL.has(g.clave) ? "sel" : ""}">
       <td class="facsel"><input type="checkbox" data-compsel="${esc(g.clave)}" data-desc="${esc(g.descripcion || "")}" ${COMP_SEL.has(g.clave) ? "checked" : ""} aria-label="Elegir para unificar"></td>
-      <td style="--cat:var(--cat-${esc(colorCategoriaFE(catDe(g)))})"><div style="display:flex;align-items:center;gap:6px;min-width:0"><span class="catdot" title="${esc(catDe(g) || "Sin categoría")}"></span>${g.unificado ? `<span class="pill ok" style="font-size:9.5px;flex:none" title="Producto del diccionario: junta varias formas de escribirlo">✓</span>` : ""}<button class="linkbtn prod" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="${esc(g.descripcion)} — todas las veces que lo hemos comprado">${esc(g.descripcion)}</button></div>
-        <div class="mut provcel" style="font-size:11px" title="${esc(g.proveedores.join(" · "))}">${esc(g.proveedores.join(" · ") || "—")}</div></td>
+      ${/* El proveedor y la categoría, en columna propia. Debajo del nombre y en gris se leían
+            como una nota al pie; en columna se recorren de arriba abajo, que es como se busca
+            «todo lo de este proveedor» o «cuánto de limpieza». */""}
+      <td><div style="display:flex;align-items:center;gap:6px;min-width:0">${g.unificado ? `<span class="pill ok" style="font-size:9.5px;flex:none" title="Producto del diccionario: junta varias formas de escribirlo">✓</span>` : ""}<button class="linkbtn prod" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="${esc(g.descripcion)} — todas las veces que lo hemos comprado">${esc(g.descripcion)}</button></div></td>
+      <td class="provcol"><button class="linkbtn provlink" data-comp="prov" data-prov="${esc(g.proveedores[0] || "")}" title="Ver solo lo que nos vende">${esc(g.proveedores[0] || "—")}</button>${g.proveedores.length > 1 ? `<span class="mut" style="font-size:11px" title="${esc(g.proveedores.join(" · "))}"> +${g.proveedores.length - 1}</span>` : ""}</td>
+      <td class="catcol">${catDe(g)
+        ? `<span class="pill cat" style="--cat:var(--cat-${esc(colorCategoriaFE(catDe(g)))})">${esc(catDe(g))}</span>`
+        : '<span class="mut" style="font-size:11.5px" title="Sale de la categoría del proveedor, que se pone en Configuración">sin categoría</span>'}</td>
       <td class="cantcel" style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) + (g.unidad ? ` <span class="mut" style="font-size:11px">${esc(g.unidad)}</span>` : "") : "—"}</td>
       <td style="text-align:right;white-space:nowrap"><div class="gastocel"><b>${g.importe != null ? esc(eur(g.importe)) : "—"}</b>
         <i class="gastobar" style="width:${Math.round(((Number(g.importe) || 0) / topeGasto) * 100)}%"></i></div></td>
@@ -7168,7 +7202,7 @@ async function refrescarCompras() {
     </tr>`;
 
   const tabla = j.grupos.length ? `<div class="tw${j.grupos.length > 25 ? " alta" : ""}"><table class="tbl">
-      <thead><tr><th class="facsel"></th><th>Producto</th><th class="cantcel" style="text-align:right">Cantidad</th><th style="text-align:right">Gastado</th>
+      <thead><tr><th class="facsel"></th><th>Producto</th><th class="provcol">Proveedor</th><th class="catcol">Categoría</th><th class="cantcel" style="text-align:right">Cantidad</th><th style="text-align:right">Gastado</th>
       <th style="text-align:right" title="Lo que se paga ahora. Al lado, cuánto se sale de lo normal">Precio</th>
       <th class="sparkcel" title="Cómo ha ido el precio en las últimas compras">Evolución</th><th class="ultcel">Última compra</th></tr></thead>
       <tbody>${j.grupos.map(fila).join("")}</tbody></table></div>${compBarraSeleccion()}`

@@ -3729,6 +3729,26 @@ app.get("/api/leads", requireAuth(["direccion", "marketing"]), async (req, res) 
 // alguna vez muerde, se dice en pantalla en vez de enseñar un total a medias.
 const TOPE_PRODUCTOS = 5000;
 
+/**
+ * Por dónde se ordena la lista de productos.
+ *
+ * VA EN LA CONSULTA Y NO EN EL NAVEGADOR porque hay un tope de filas: ordenar después de
+ * recortar daría «la A-Z de los cinco mil que más gastan», que no es la A-Z de nada. Lo que se
+ * recorta tiene que ser lo último según el orden pedido.
+ *
+ * La lista es cerrada a propósito: esto se pega dentro de un ORDER BY.
+ */
+const ORDENES_COMPRAS = {
+  gasto: "importe DESC NULLS LAST",
+  nombre: "descripcion ASC",
+  reciente: "ultima DESC NULLS LAST",
+  veces: "veces DESC",
+  // Cuánto se ha movido el precio dentro del periodo. Es la misma cuenta que enseña la
+  // columna de variación, así que ordenar por aquí ordena por lo que se ve.
+  subida: "(preciomax - preciomin) / NULLIF(preciomin, 0) DESC NULLS LAST",
+};
+const ordenCompras = (o) => ORDENES_COMPRAS[String(o || "")] || ORDENES_COMPRAS.gasto;
+
 async function comprasDeLocal(query, local) {
     // Dos juegos de condiciones separados a propósito: los filtros de FACTURA valen para
     // las dos consultas y el de texto solo para las líneas. Recortar un WHERE ya montado a
@@ -3826,7 +3846,7 @@ async function comprasDeLocal(query, local) {
        LEFT JOIN productos_canonicos p ON p.id = a.producto_id
        ${whereLin}
        GROUP BY 1
-       ORDER BY importe DESC NULLS LAST
+       ORDER BY ${ordenCompras(req.query.orden)}
        LIMIT ${TOPE_PRODUCTOS}`, parLin);
 
     // Las líneas sueltas SOLO al buscar: ahí sí se quieren ver las compras una a una, y son
@@ -4148,6 +4168,37 @@ app.delete("/api/facturas/diccionario/:clave", requireAuth(["direccion", "contab
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: "No se pudo deshacer" });
+  }
+});
+
+/**
+ * La lista de productos, en CSV. Para pasársela al gestor, mirarla en una hoja o compararla
+ * con otra cosa: hoy no había ninguna salida de esta pantalla.
+ *
+ * Sale lo MISMO que se está viendo —mismos filtros, mismo orden—: un CSV que no coincide con
+ * la pantalla de la que salió es peor que no tenerlo.
+ */
+app.get("/api/facturas/compras.csv", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const locales = localesScope(req);
+    const datos = locales.length > 1
+      ? fusionarCompras(await Promise.all(locales.map((l) => comprasDeLocal(req.query, l))), { locales })
+      : await comprasDeLocal(req.query, locales[0] || null);
+
+    const header = ["Producto", "Proveedores", "Veces", "Cantidad", "Unidad", "Gastado", "Precio normal", "Ultimo precio", "Variacion %", "Primera compra", "Ultima compra"];
+    const c = (v) => { const s = String(v ?? ""); return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    // Coma decimal y punto y coma de separador: es lo que Excel en español abre a la primera.
+    const n2 = (x) => (x == null ? "" : String(Math.round(Number(x) * 100) / 100).replace(".", ","));
+    const lines = (datos.grupos || []).map((g) => [
+      g.descripcion, (g.proveedores || []).join(" · "), g.veces, n2(g.cantidad), g.unidad || "",
+      n2(g.importe), n2(g.precioNormal), n2(g.ultimoPrecio), n2(g.variacionPct), g.primera, g.ultima,
+    ].map(c).join(";"));
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="productos-${(datos.grupos || []).length}.csv"`);
+    res.send("\ufeff" + [header.join(";"), ...lines].join("\r\n") + "\r\n");
+  } catch (e) {
+    console.error("[facturas] compras csv:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo exportar" });
   }
 });
 

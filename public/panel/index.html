@@ -189,7 +189,20 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 /* La línea del precio. En móvil se va: el ancho que ocupa vale más para el nombre, y el dato
    sigue estando en la columna de al lado y en el histórico del producto. */
 .spark{display:block;overflow:visible}
-.tbl td.sparkcel,.tbl th.sparkcel{width:74px;padding-left:6px;padding-right:6px}
+.tbl td.sparkcel,.tbl th.sparkcel{width:86px;padding-left:6px;padding-right:6px}
+/* El proveedor y la categoría, en columna: se recorren de arriba abajo. Se recortan porque un
+   nombre largo de proveedor no puede empujar al producto fuera de la pantalla. */
+.tbl td.provcol,.tbl th.provcol{max-width:190px}
+/* `.linkbtn` se declara más abajo y pinta de rojo: a igual especificidad gana la última, así
+   que aquí hace falta `.linkbtn.provlink`. Una columna entera de nombres en rojo se lee como
+   una lista de errores — el mismo fallo que ya tuvimos con los nombres de producto. */
+.linkbtn.provlink{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  display:inline-block;vertical-align:bottom;color:var(--ink2);font-weight:500}
+.linkbtn.provlink:hover{color:var(--brand);text-decoration:underline;text-underline-offset:2px}
+.tbl td.catcol,.tbl th.catcol{white-space:nowrap}
+/* Con la ventana estrecha se van antes que el dinero, que es lo que se viene a ver. */
+@media (max-width:1180px){.tbl td.catcol,.tbl th.catcol{display:none}}
+@media (max-width:1040px){.tbl td.provcol,.tbl th.provcol{display:none}}
 
 .stat .sub{font-size:12px;color:var(--ink3)}
 .delta{font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.up{color:var(--success)}.down{color:var(--danger)}.flat{color:var(--ink3)}
@@ -761,7 +774,7 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
      pantalla entera: se veían los productos y ni un euro. Se recorta el nombre y se van las
      dos columnas de contexto —cuánto y cuándo— para que quepan las que contestan la pregunta:
      cuánto llevamos gastado y a cómo nos lo cobran. Siguen estando al abrir el producto. */
-  .tbl th.cantcel,.tbl td.cantcel,.tbl th.ultcel,.tbl td.ultcel{display:none}
+  .tbl th.cantcel,.tbl td.cantcel,.tbl th.ultcel,.tbl td.ultcel,.tbl th.provcol,.tbl td.provcol,.tbl th.catcol,.tbl td.catcol{display:none}
   /* La columna pegajosa se limita en píxeles, no en caracteres: es lo único que garantiza que
      el dinero quepa en 390 px pase lo que pase con los nombres. */
   .tbl td:first-child,.tbl th:first-child{max-width:180px}

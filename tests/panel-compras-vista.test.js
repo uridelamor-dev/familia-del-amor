@@ -315,3 +315,44 @@ describe("«sin fecha de pago» es una lista de proveedores, no de facturas", ()
     assert.match(panel, /provs\.length === 1 \? "proveedor" : "proveedores"/);
   });
 });
+
+describe("Productos: ordenar, exportar y columnas (de haddock)", () => {
+  test("el orden va en la CONSULTA, no en el navegador", () => {
+    // La lista viene topada: ordenar después de recortar daría «la A-Z de los cinco mil que
+    // más gastan», que no es la A-Z de nada.
+    assert.match(server, /const ORDENES_COMPRAS = \{/);
+    assert.match(server, /ORDER BY \$\{ordenCompras\(req\.query\.orden\)\}/);
+  });
+
+  test("y solo se aceptan los órdenes de la lista", () => {
+    // Esto se pega dentro de un ORDER BY: cualquier otra cosa sería inyección.
+    assert.match(server, /const ordenCompras = \(o\) => ORDENES_COMPRAS\[String\(o \|\| ""\)\] \|\| ORDENES_COMPRAS\.gasto;/);
+  });
+
+  test("el CSV sale con los MISMOS filtros y el mismo orden que la pantalla", () => {
+    // Un CSV que no coincide con la pantalla de la que salió es peor que no tenerlo.
+    assert.match(panel, /COMP_FILTROS\.forEach\(\(k\) => \{ if \(COMP\[k\]\) qs\.set\(k, COMP\[k\]\); \}\);\s*\n\s*\/\/ Con `fetch`/);
+    assert.match(server, /app\.get\("\/api\/facturas\/compras\.csv"/);
+  });
+
+  test("y se baja con fetch, porque un enlace no lleva el token", () => {
+    assert.match(panel, /fetch\("\/api\/facturas\/compras\.csv\?"/);
+  });
+
+  test("el proveedor tiene columna propia y no va en rojo", () => {
+    // Una columna entera de nombres en rojo se lee como una lista de errores: el mismo fallo
+    // que ya tuvimos con los nombres de producto.
+    assert.match(panel, /<td class="provcol">/);
+    assert.match(css, /\.linkbtn\.provlink\{[^}]*color:var\(--ink2\)/);
+  });
+
+  test("la categoría se lee con su nombre, no solo con un color", () => {
+    assert.match(panel, /<td class="catcol">/);
+    assert.match(panel, /<span class="pill cat" style="--cat:var\(--cat-/);
+  });
+
+  test("y con la ventana estrecha se van antes que el dinero", () => {
+    assert.match(css, /@media \(max-width:1180px\)\{\.tbl td\.catcol/);
+    assert.match(css, /@media \(max-width:1040px\)\{\.tbl td\.provcol/);
+  });
+});
