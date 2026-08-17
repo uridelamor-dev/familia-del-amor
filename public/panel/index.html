@@ -199,6 +199,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .linkbtn.provlink{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   display:inline-block;vertical-align:bottom;color:var(--ink2);font-weight:500}
 .linkbtn.provlink:hover{color:var(--brand);text-decoration:underline;text-underline-offset:2px}
+/* Los módulos de un usuario, plegados: doce píldoras hacen tres líneas por fila. */
+.modsfold>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.modsfold>summary::-webkit-details-marker{display:none}
 .tbl td.catcol,.tbl th.catcol{white-space:nowrap}
 /* Con la ventana estrecha se van antes que el dinero, que es lo que se viene a ver. */
 @media (max-width:1180px){.tbl td.catcol,.tbl th.catcol{display:none}}

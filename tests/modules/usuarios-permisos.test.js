@@ -93,8 +93,14 @@ describe("esModuloPorLocal", () => {
   test("dashboard/reservas/facturas/analitica varían por local", () => {
     for (const v of ["dashboard", "reservas", "facturas", "analitica"]) assert.equal(esModuloPorLocal(v), true);
   });
-  test("usuarios/agora/clientes no varían por local", () => {
-    for (const v of ["usuarios", "agora", "clientes"]) assert.equal(esModuloPorLocal(v), false);
+  test("ágora y clientes no varían por local", () => {
+    for (const v of ["agora", "clientes"]) assert.equal(esModuloPorLocal(v), false);
+  });
+
+  test("usuarios SÍ, desde que la lista se filtra por el establecimiento", () => {
+    // Con Blanes puesto en la barra salen los de Blanes. Si el catálogo dijera que no varía,
+    // el menú no lo marcaría y el panel no lo trataría como tal.
+    assert.equal(esModuloPorLocal("usuarios"), true);
   });
 });
 

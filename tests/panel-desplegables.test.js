@@ -66,3 +66,56 @@ describe("las llamadas a la API usan la función que toca", () => {
     assert.deepEqual(malas, [], "apiRaw no acepta opciones; usa apiSend");
   });
 });
+
+describe("los bloques que ocupaban sin aportar", () => {
+  test("el parte de Sara es un botón, no una tarjeta de 94 px", () => {
+    assert.match(panel, /data-act="dash-parte"/);
+    // El `hero` que queda es el de la ficha del trabajador, otra pantalla: lo que se comprueba
+    // es que el dashboard ya no monta el suyo.
+    const i = panel.indexOf("function renderDashboard");
+    assert.doesNotMatch(panel.slice(i, i + 4000), /class="card hero"/);
+  });
+
+  test("«Necesita tu atención» y «Estado por establecimiento» van plegados", () => {
+    assert.match(panel, /<details class="card fold c7 p0">/);
+    assert.match(panel, /<details class="card fold c5 p0">/);
+  });
+
+  test("RR. HH. ya no pinta una tarjeta por local", () => {
+    // Antigüedad media y check-ins: lo primero no se mira nunca y lo segundo ya sale en el
+    // Dashboard, donde además avisa cuando va corto.
+    assert.doesNotMatch(panel, /antig\. media/);
+    // Lo que sí era trabajo pendiente se queda.
+    assert.match(panel, /function renderRRResumen\(\) \{\s*\n\s*return renderRRSinTelefono\(\);/);
+  });
+
+  test("los cuatro bloques de Configuración de Compras están plegados", () => {
+    for (const t of ["Empresa y CIF por local", "Reglas de email → local", "Grupos de WhatsApp para facturas", "Modelo 303"]) {
+      assert.match(panel, new RegExp(`<details class="card fold p0"><summary[^>]*><h3>${t.replace(/[()]/g, "\\$&")}`), t);
+    }
+  });
+
+  test("y en Ágora cada local es un desplegable", () => {
+    assert.match(panel, /<details class="card fold" data-agrow="\$\{i\}">/);
+  });
+});
+
+describe("la barra de arriba no te mueve de pantalla", () => {
+  test("cambiar de establecimiento te deja donde estabas", () => {
+    // Antes, en las ocho vistas que no miran el local, te sacaba al Dashboard: elegías Lloret
+    // y aparecías en otro sitio sin haberlo pedido.
+    assert.doesNotMatch(panel, /go\(MODULOS_POR_LOCAL\.has\(CURRENT\) \? CURRENT : "dashboard"\)/);
+    const i = panel.indexOf('act === "estab-pick"');
+    assert.match(panel.slice(i, i + 260), /go\(CURRENT, \{ desdeUrl: true \}\)/);
+  });
+});
+
+describe("Conciliaciones usa el periodo de la barra", () => {
+  test("ya no tiene su propio calendario ni un rango puesto de casa", () => {
+    // Dos calendarios en la misma pantalla —uno arriba y otro dentro— era la manera de que uno
+    // de los dos mintiera. Y el rango de «los dos últimos meses» no lo había pedido nadie.
+    assert.doesNotMatch(panel, /dpField\("concFrom"/);
+    assert.doesNotMatch(panel, /d\.setMonth\(d\.getMonth\(\) - 2\)/);
+    assert.match(panel, /const per = periodoVista\("facturas"\);/);
+  });
+});

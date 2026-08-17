@@ -46,7 +46,9 @@ export const CATALOGO_MODULOS = [
   { id: "sara", label: "Sara (IA)", roles: ["direccion", "marketing"], porLocal: false },
   { id: "whatsapp", label: "WhatsApp", roles: ["direccion", "encargado"], porLocal: false },
   { id: "agora", label: "Ágora (TPV)", roles: ["direccion"], porLocal: false },
-  { id: "usuarios", label: "Usuarios", roles: ["direccion"], porLocal: false },
+  // `porLocal` desde que la lista se filtra por el establecimiento de la barra: con Blanes
+  // puesto salen los de Blanes. El menú lo marca como «por local» y el panel lo respeta.
+  { id: "usuarios", label: "Usuarios", roles: ["direccion"], porLocal: true },
 ];
 
 // IDs de módulos que un rol puede ver (su máximo teórico).

@@ -16,6 +16,7 @@
 // ninguna: se paga una factura creyendo que está comprobada.
 
 import { MISMO_PROVEEDOR } from "./duplicados.js";
+import { sinDescartados } from "./descartes.js";
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const cent = (v) => Math.round(num(v) * 100);   // en céntimos: sumar euros en coma flotante arrastra restos
@@ -28,6 +29,7 @@ const dias = (a, b) => {
 };
 
 /** Tolerancia: un céntimo por documento, por los redondeos de IVA de cada albarán. */
+
 export const margen = (n) => Math.max(2, n);
 
 /**
@@ -88,16 +90,27 @@ export function buscarCombinacion(albaranes, objetivoCent, { maxCombinacion = 6,
  *   "sin-albaranes" — no hay ninguno con el que comparar. No es un error: hay proveedores que
  *                 no dejan albarán.
  */
-export function proponerConciliacion(factura, albaranes, { ventanaDias = 45, tolerancia = 2 } = {}) {
-  const suyos = (albaranes || []).filter((a) => {
+export function proponerConciliacion(factura, albaranes, { ventanaDias = 45, tolerancia = 2, descartados = null } = {}) {
+  const candidatos = (albaranes || []).filter((a) => {
     if (!MISMO_PROVEEDOR(factura, a)) return false;
     const d = dias(factura.fecha, a.fecha);
     // El albarán es ANTERIOR a la factura (se entrega y luego se factura). Se admite algún
     // día después por si la factura se fecha antes de la última entrega del mes.
     return d == null || (d >= -3 && d <= ventanaDias);
   });
+  // Los que alguien ya dijo que NO son de esta factura. Se quitan aquí y no antes para poder
+  // contar cuántos eran: sin el número, una factura se quedaría sin candidatos y parecería que
+  // nunca hubo ninguno.
+  const suyos = sinDescartados(candidatos, descartados);
+  const nDescartados = candidatos.length - suyos.length;
+
   if (!suyos.length) {
-    return { estado: "sin-albaranes", albaranes: [], motivos: ["No hay albaranes de este proveedor en el periodo"], diferencia: 0 };
+    return {
+      estado: "sin-albaranes", albaranes: [], diferencia: 0, descartados: nDescartados,
+      motivos: [nDescartados
+        ? `Los ${nDescartados} albaranes del periodo se descartaron a mano`
+        : "No hay albaranes de este proveedor en el periodo"],
+    };
   }
 
   const objetivo = cent(factura.total);
@@ -109,7 +122,8 @@ export function proponerConciliacion(factura, albaranes, { ventanaDias = 45, tol
   if (elegidos.length && Math.abs(sumaSel - objetivo) <= tolerancia) {
     const motivos = [`${elegidos.length} ${elegidos.length === 1 ? "albarán suma" : "albaranes suman"} exactamente el total de la factura`];
     if (suyos.length > elegidos.length) motivos.push(`quedan ${suyos.length - elegidos.length} sin usar en el periodo`);
-    return { estado: "cuadra", albaranes: elegidos, motivos, diferencia: 0, acotado: !!r.acotado };
+    if (nDescartados) motivos.push(`${nDescartados} descartado(s) a mano`);
+    return { estado: "cuadra", albaranes: elegidos, motivos, diferencia: 0, acotado: !!r.acotado, descartados: nDescartados };
   }
 
   const dif = (sumaTodos - objetivo) / 100;
@@ -117,7 +131,8 @@ export function proponerConciliacion(factura, albaranes, { ventanaDias = 45, tol
     dif > 0 ? `suman ${(sumaTodos / 100).toFixed(2)} €, ${dif.toFixed(2)} € MÁS que la factura`
             : `suman ${(sumaTodos / 100).toFixed(2)} €, ${Math.abs(dif).toFixed(2)} € MENOS que la factura`];
   if (r.acotado) motivos.push("hay demasiadas combinaciones para probarlas todas: puede haber una que cuadre");
-  return { estado: "parcial", albaranes: suyos, motivos, diferencia: Math.round(dif * 100) / 100, acotado: !!r.acotado };
+  if (nDescartados) motivos.push(`${nDescartados} descartado(s) a mano`);
+  return { estado: "parcial", albaranes: suyos, motivos, diferencia: Math.round(dif * 100) / 100, acotado: !!r.acotado, descartados: nDescartados };
 }
 
 /**

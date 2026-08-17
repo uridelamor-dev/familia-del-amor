@@ -108,7 +108,7 @@ const NAV = [
 const TITLES = { subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
 const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
-const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "horarios", "fichajes"]);
+const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "horarios", "fichajes", "usuarios"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
 function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol)); }
 // ¿El usuario actual puede entrar a `view`? Respeta rol + allowlist efectiva (USER.modulos del token).
@@ -694,6 +694,8 @@ function fijarPendientes(d) {
 }
 let DASH_RANGE = { from: null, to: null, label: "Esta semana" };
 let DASH_PERIODO = null;
+// El parte del día de Sara, guardado para poder abrirlo desde el botón de la cabecera.
+let DASH_PARTE = null;
 // Reflejo puro de src/modules/dashboard/periodos.js
 function periodoDiaSemanaLunes(iso) { const [y, m, d] = String(iso).split("-").map(Number); const t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]; const yy = m < 3 ? y - 1 : y; return (((yy + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) + t[m - 1] + d) % 7) + 6) % 7; }
 function rangoPreset(preset, hoy) {
@@ -965,10 +967,15 @@ function renderDashboard(d) {
   const ambito = localName ? "Estado de <b>" + esc(localName) + "</b>"
     : etiqueta ? "Estado de <b>" + esc(etiqueta) + "</b>, sumado"
     : "El estado de todo el grupo, de un vistazo.";
-  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${ambito}${fechaLarga(d.fecha) ? " · " + fechaLarga(d.fecha) : ""}</div></div><div class="acts"><button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
-  // ── Sara: veredicto del día ──
+  // ── Sara: el parte del día, detrás de un botón ──
+  // Era una tarjeta de 94 px en lo más alto de la pantalla que casi siempre dice lo mismo. El
+  // parte no se ha perdido: se lee cuando se quiere leer, y mientras tanto el sitio lo ocupan
+  // las cifras.
   const contexto = [d.ayer && d.ayer.disponible ? d.ayer.texto : "", d.hoy && d.hoy.disponible ? d.hoy.texto : ""].filter(Boolean).join(" ");
-  const sara = `<div class="card hero" style="margin-bottom:16px"><div style="display:flex;gap:13px;align-items:flex-start"><span class="avatar" style="width:40px;height:40px;border-radius:12px">S</span><div style="flex:1;min-width:0"><b style="font-size:14px">Sara · dirección de operaciones</b><p style="font-size:18px;line-height:1.5;margin:8px 0 0;font-weight:500;letter-spacing:-.01em">${d.titular || contexto || "Sin datos suficientes para hoy."}</p>${contexto ? `<p class="mut" style="font-size:13px;margin:10px 0 0;line-height:1.6">${contexto}</p>` : ""}</div></div></div>`;
+  DASH_PARTE = { titular: d.titular || "", contexto };
+  const hayParte = !!(d.titular || contexto);
+  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${ambito}${fechaLarga(d.fecha) ? " · " + fechaLarga(d.fecha) : ""}</div></div><div class="acts">${hayParte ? `<button class="btn" data-act="dash-parte">${ic("chat", 15)} El parte de Sara</button>` : ""}<button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
+  const sara = "";
   // ── 4 KPIs reales ──
   const hoyN = (d.hoy && d.hoy.hoy) || {};
   const nCrit = (d.preocupaciones || []).filter((c) => c.tipo === "mantenimiento" && c.sev === "crit").length;
@@ -1021,11 +1028,14 @@ function renderDashboard(d) {
 
   // ── Necesita tu atención (preocupaciones reales) ──
   const concerns = d.preocupaciones || [];
-  const atencion = `<div class="card c7 p0"><div class="ch" style="padding:18px 18px 0"><h3>Necesita tu atención</h3>${concerns.length ? `<span class="pill ${nCrit || concerns.some((c) => c.sev === "crit") ? "bad" : "warn"}">${concerns.filter((c) => c.sev === "crit").length} crítica${concerns.filter((c) => c.sev === "crit").length === 1 ? "" : "s"}</span>` : '<span class="pill ok">Todo en orden</span>'}</div>${concerns.length ? `<div class="rows">${concerns.slice(0, 5).map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</div>`;
+  // Plegados: lo que hay dentro se mira cuando hay algo, y el resumen del título ya dice si lo
+  // hay. Cerrados ocupan una línea en vez de una tarjeta.
+  const nCritC = concerns.filter((c) => c.sev === "crit").length;
+  const atencion = `<details class="card fold c7 p0"><summary style="padding:18px 18px 14px"><h3>Necesita tu atención</h3><span class="foldr">${concerns.length ? `<span class="pill ${nCrit || nCritC ? "bad" : "warn"}">${nCritC ? `${nCritC} crítica${nCritC === 1 ? "" : "s"}` : `${concerns.length}`}</span>` : '<span class="pill ok">Todo en orden</span>'}<span class="car">${ic("chev", 16)}</span></span></summary>${concerns.length ? `<div class="rows">${concerns.slice(0, 5).map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</details>`;
 
   // ── Estado por establecimiento (radar real) ──
   const radar = d.radarLocales || [];
-  const estado = `<div class="card c5 p0"><div class="ch" style="padding:18px 18px 0"><h3>Estado por establecimiento</h3></div>${radar.length ? `<div class="rows">${radar.map((e) => { const st = estadoState(e); return `<button class="row" data-act="estab-pick" data-local="${esc(e.local)}" style="width:100%;text-align:left"><span class="sdot st-${st.k}"></span><div class="grow"><div class="t1">${esc(nombreCortoLocal(e.local))}</div><div class="t2">${num(e.hoyPersonas)} comensales · ${e.incidenciasAbiertas} incid. · ${eur(e.gastoMes)}</div></div><span class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</span></button>`; }).join("")}</div>` : `<div style="padding:18px" class="mut">${localName ? "Estás viendo un solo establecimiento. Vuelve a «Todos» para comparar." : "Sin datos por establecimiento."}</div>`}</div>`;
+  const estado = `<details class="card fold c5 p0"><summary style="padding:18px 18px 14px"><h3>Estado por establecimiento</h3><span class="foldr"><span class="mut">${radar.length ? num(radar.length) : "—"}</span><span class="car">${ic("chev", 16)}</span></span></summary>${radar.length ? `<div class="rows">${radar.map((e) => { const st = estadoState(e); return `<button class="row" data-act="estab-pick" data-local="${esc(e.local)}" style="width:100%;text-align:left"><span class="sdot st-${st.k}"></span><div class="grow"><div class="t1">${esc(nombreCortoLocal(e.local))}</div><div class="t2">${num(e.hoyPersonas)} comensales · ${e.incidenciasAbiertas} incid. · ${eur(e.gastoMes)}</div></div><span class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</span></button>`; }).join("")}</div>` : `<div style="padding:18px" class="mut">${localName ? "Estás viendo un solo establecimiento. Vuelve a «Todos» para comparar." : "Sin datos por establecimiento."}</div>`}</details>`;
 
   // ── Reseñas + Sara/WhatsApp ──
   const rs = d.resenas || {};
@@ -2756,16 +2766,19 @@ async function rrDocDel(id) {
   try { await apiSend("DELETE", "/api/rrhh/documento/" + encodeURIComponent(id)); toast("Documento borrado ✅"); if (RRSEG.sel) rrSelWorker(RRSEG.sel.id); }
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
+/**
+ * FUERA LAS TARJETAS POR LOCAL.
+ *
+ * Había una tarjeta por establecimiento con los check-ins hechos y la antigüedad media del
+ * equipo. Ocupaban toda la parte de arriba de RR. HH. y no contestaban ninguna pregunta: la
+ * antigüedad media no se mira nunca y los check-ins ya salen en el Dashboard, donde además
+ * avisan cuando van cortos.
+ *
+ * Lo que sí es trabajo pendiente —quién no tiene teléfono, que sin él no recibe ni el pulso ni
+ * los avisos— se queda, porque eso hay que arreglarlo.
+ */
 function renderRRResumen() {
-  const r = RRSEG.resumen || [];
-  if (!r.length) return "";
-  const cards = r.map((e) => {
-    const alert = e.docsAlerta ? `<span class="pill warn">${e.docsAlerta} doc. por caducar</span>` : "";
-    const cumple = (e.cumples && e.cumples.length) ? `<span class="pill">🎂 ${e.cumples.length}</span>` : "";
-    const antig = e.antiguedadMediaDias != null ? (Math.round(e.antiguedadMediaDias / 365 * 10) / 10) + " años" : "—";
-    return `<div class="card" style="padding:12px 14px"><div class="t1" style="font-weight:600">${esc(e.local)}</div><div class="t2" style="margin:4px 0 8px">${e.activos} activo(s)${e.bajas ? ` · ${e.bajas} baja(s)` : ""} · antig. media ${antig}</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="pill ${e.checkinsHechos >= e.total ? "ok" : ""}">Check-ins ${e.checkinsHechos}/${e.total}</span>${alert}${cumple}</div></div>`;
-  }).join("");
-  return `${renderRRSinTelefono()}<div class="grid g3" style="gap:12px;margin-bottom:14px">${cards}</div>`;
+  return renderRRSinTelefono();
 }
 // Sin teléfono no se les puede escribir. Lo rellenan ellos desde su perfil, pero
 // aquí se ve de un vistazo a quién le falta, para poder recordárselo.
@@ -2965,22 +2978,53 @@ async function rrPregSave() {
 let USERS = [];
 const ROLES_USUARIO = ["direccion", "encargado", "trabajador", "rrhh", "marketing", "contabilidad"];
 
-// Chips con los módulos efectivos de un usuario (los que realmente puede abrir).
+/**
+ * Los módulos de un usuario, DETRÁS DE UN BOTÓN.
+ *
+ * Un encargado tiene doce módulos, y doce píldoras hacen tres líneas de alto por fila: con diez
+ * usuarios la tabla se convertía en un muro. El número sí se ve —es lo que se compara de un
+ * vistazo— y la lista se abre al pulsarlo.
+ */
 function chipsModulos(u) {
   const mods = Array.isArray(u.modulos) ? u.modulos : [];
   if (u.rol === "direccion") return `<span class="pill ok">acceso total</span>`;
   if (!mods.length) return `<span class="mut">sin módulos</span>`;
   const chips = mods.map((id) => `<span class="pill" style="margin:1px 2px">${esc(TITLES[id] || id)}</span>`).join("");
-  return chips + (u.restringido ? ` <span class="pill warn" title="Se le han restringido módulos de su rol">restringido</span>` : "");
+  const aviso = u.restringido ? ` <span class="pill warn" title="Se le han restringido módulos de su rol">restringido</span>` : "";
+  return `<details class="modsfold"><summary><span class="linkbtn">${num(mods.length)} módulo${mods.length === 1 ? "" : "s"}</span>${aviso}</summary>
+    <div style="line-height:1.9;margin-top:4px">${chips}</div></details>`;
+}
+
+/**
+ * A quién se enseña con un establecimiento puesto en la barra.
+ *
+ * Dirección NO aparece: no está asignada a ningún local. Se dice en el subtítulo, porque una
+ * lista más corta y sin explicación se lee como que falta gente.
+ */
+function usuariosDelAmbito(list) {
+  const loc = localActualFE();
+  if (!loc) return list || [];
+  return (list || []).filter((u) => {
+    // Su local principal y los extra: un encargado de Blanes que también lleva Lloret tiene que
+    // salir en los dos, o al mirar Lloret parecería que ese local no tiene a nadie.
+    const suyos = [u.local, ...(Array.isArray(u.locales) ? u.locales : [])].filter(Boolean);
+    return suyos.includes(loc);
+  });
 }
 function renderUsuarios(list) {
-  const rows = list || [];
+  const rows = usuariosDelAmbito(list);
+  const loc = localActualFE();
   const toolbar = `<div class="toolbar"><div class="mut" style="flex:1;font-size:13px">Los usuarios con <b>local</b> asignado (y rol distinto de Dirección) solo ven los datos de su local en los módulos marcados «por local».</div><button class="btn primary" data-act="user-nuevo">+ Nuevo usuario</button></div>`;
   const table = rows.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Local</th><th>Módulos con acceso</th><th></th></tr></thead><tbody>${rows.map((u) => {
     const localCell = u.local ? `${esc(u.local)}${u.rol !== "direccion" ? ` <span class="mut" title="Solo ve datos de este local">🔒</span>` : ""}` : `<span class="mut">— todos —</span>`;
     return `<tr><td><b>${esc(u.username)}</b></td><td>${esc(u.nombre || "")}</td><td>${esc(u.rol)}</td><td>${localCell}</td><td style="max-width:340px;line-height:1.9">${chipsModulos(u)}</td><td class="r" style="white-space:nowrap"><button class="linkbtn" style="color:var(--brand)" data-act="user-edit" data-id="${u.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="user-pass" data-id="${u.id}" data-nombre="${esc(u.username)}">Contraseña</button> · <button class="linkbtn" data-act="user-del" data-id="${u.id}" data-nombre="${esc(u.username)}">Eliminar</button></td></tr>`;
-  }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">No hay usuarios todavía. Crea el primero con «+ Nuevo usuario».</div></div>`;
-  return `<div class="ph"><div class="eyebrow">Sistema</div><h1>Usuarios</h1><div class="sub">${rows.length} cuenta${rows.length === 1 ? "" : "s"}</div></div>${toolbar}${table}`;
+  }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">${loc
+    ? `Ningún usuario asignado a <b>${esc(nombreCortoLocal(loc))}</b>. Cambia de establecimiento en la barra para verlos todos.`
+    : "No hay usuarios todavía. Crea el primero con «+ Nuevo usuario»."}</div></div>`;
+  const sub = loc
+    ? `${rows.length} cuenta${rows.length === 1 ? "" : "s"} en <b>${esc(nombreCortoLocal(loc))}</b> · <span class="mut">dirección no se muestra: no está asignada a ningún local</span>`
+    : `${rows.length} cuenta${rows.length === 1 ? "" : "s"}`;
+  return `<div class="ph"><div class="eyebrow">Sistema</div><h1>Usuarios</h1><div class="sub">${sub}</div></div>${toolbar}${table}`;
 }
 async function loadUsuarios() { const view = document.getElementById("view"); view.innerHTML = skeleton(); try { USERS = await api("/api/users"); view.innerHTML = renderUsuarios(USERS); } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); } }
 
@@ -4578,14 +4622,19 @@ function renderFacturas(list, pend, stats, empresas) {
   const toolbar = facChipsHtml();
   const maxLocal = Math.max(1, ...(((stats && stats.porLocal) || []).map((x) => Number(x.total) || 0)));
   // Con un establecimiento elegido el desglose por local sobra: sería una sola barra al 100%.
-  const porLocal = (!FACF.local && stats && stats.porLocal && stats.porLocal.length) ? `<div class="card"><div class="ch"><h3>Gasto por local (año)</h3></div><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div></div>` : "";
+  // PLEGADOS Y AL FINAL. Están bien tenerlos, pero encima de la tabla se comían el sitio de lo
+  // que se viene a ver aquí, que son las facturas.
+  const totalLocales = (stats?.porLocal || []).reduce((s2, x) => s2 + (Number(x.total) || 0), 0);
+  const porLocal = (!FACF.local && stats && stats.porLocal && stats.porLocal.length) ? `<details class="card fold"><summary><h3>Gasto por local (año)</h3><span class="foldr"><span>${num(stats.porLocal.length)} · ${eur(totalLocales)}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div></details>` : "";
   // Plegable y cerrada por defecto: es una lista larga que casi nunca se consulta,
   // y estorbaba entre los filtros y la tabla de facturas.
   const nProv = (stats && stats.topProveedores && stats.topProveedores.length) || 0;
   const totalProv = nProv ? stats.topProveedores.reduce((s, p) => s + (Number(p.total) || 0), 0) : 0;
   const topProv = nProv ? `<details class="card fold"><summary><h3>Top proveedores (año)</h3><span class="foldr"><span>${num(nProv)} · ${eur(totalProv)}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="rows">${stats.topProveedores.map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.proveedor || "—")}</div><div class="t2">${num(p.num)} factura(s)</div></div><b class="tnum">${eur(p.total)}</b></div>`).join("")}</div></details>` : "";
-  const vizGrid = (porLocal && topProv) ? `<div class="grid g2" style="margin-bottom:16px">${porLocal}${topProv}</div>`
-    : (porLocal || topProv) ? `<div style="margin-bottom:16px">${porLocal}${topProv}</div>` : "";
+  // Van al FINAL, debajo de la tabla: se miran de vez en cuando y lo de arriba es lo de todos
+  // los días.
+  const vizGrid = (porLocal && topProv) ? `<div class="grid g2" style="margin-top:16px">${porLocal}${topProv}</div>`
+    : (porLocal || topProv) ? `<div style="margin-top:16px">${porLocal}${topProv}</div>` : "";
   const pendRow = (p) => {
     const sug = p.sugerido || {};
     const badge = sug.local ? `<span class="pill ${sug.confianza === "alta" ? "ok" : ""}" title="${esc(sug.motivo)}" style="font-size:10.5px">Sugerido: ${esc(nombreCortoLocal(sug.local))}</span>` : "";
@@ -4605,7 +4654,7 @@ function renderFacturas(list, pend, stats, empresas) {
       ${pend.length > 1 && USER.rol === "direccion" ? `<div class="toolbar" style="padding:10px 16px 14px;margin:0"><button class="btn sm" data-act="fac-fusionar">Fusionar marcadas (misma factura)</button><span class="mut" style="font-size:12px">Marca 2+ documentos que sean páginas de la misma factura: se unirán en un solo PDF y se volverán a leer.</span></div>` : ""}
     </details>` : "";
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
-  return `${facHeader()}${resumen}${toolbar}<div id="facDups"></div><div id="facLocalesRaros"></div><div id="facSinCats"></div>${vizGrid}${pendCard}<div id="facRes">${facTablaHtml(list)}</div>`;
+  return `${facHeader()}${resumen}${toolbar}<div id="facDups"></div><div id="facLocalesRaros"></div><div id="facSinCats"></div>${pendCard}<div id="facRes">${facTablaHtml(list)}</div>${vizGrid}`;
 }
 // ── Fusionar pendientes que son páginas de la misma factura ─────────────────
 async function facFusionarPendientes() {
@@ -5985,18 +6034,18 @@ function facLocalCelda(v) {
 }
 function renderFacturasConfig() {
   // Empresas / CIF por local
-  const emp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Empresa y CIF por local</h3></div><div class="tw"><table class="tbl"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th>Local contable</th><th></th></tr></thead><tbody>${(FCFG.locales || []).map((l) => `<tr><td>${esc(l.local)}</td><td>${esc(l.empresa || "")}</td><td class="mut">${esc(l.cif || "")}</td><td class="mut">${esc(l.local_contable || "")}</td><td class="r"><button class="linkbtn" data-act="fac-loc-del" data-local="${esc(l.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="5" class="mut">Sin empresas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("flLocal")}<input id="flEmp" placeholder="Empresa"><input id="flCif" placeholder="CIF" style="max-width:120px"><input id="flCont" placeholder="Local contable" style="max-width:150px"><button class="btn primary" data-act="fac-loc-add">Guardar</button></div></div>`;
+  const emp = `<details class="card fold p0"><summary style="padding:18px 18px 14px"><h3>Empresa y CIF por local</h3><span class="foldr"><span>${num((FCFG.locales || []).length)}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="tw"><table class="tbl"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th>Local contable</th><th></th></tr></thead><tbody>${(FCFG.locales || []).map((l) => `<tr><td>${esc(l.local)}</td><td>${esc(l.empresa || "")}</td><td class="mut">${esc(l.cif || "")}</td><td class="mut">${esc(l.local_contable || "")}</td><td class="r"><button class="linkbtn" data-act="fac-loc-del" data-local="${esc(l.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="5" class="mut">Sin empresas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("flLocal")}<input id="flEmp" placeholder="Empresa"><input id="flCif" placeholder="CIF" style="max-width:120px"><input id="flCont" placeholder="Local contable" style="max-width:150px"><button class="btn primary" data-act="fac-loc-add">Guardar</button></div></details>`;
   // Reglas de email → local
-  const reg = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Reglas de email → local</h3></div><div class="tw"><table class="tbl"><thead><tr><th>Email remitente</th><th>Local</th><th></th></tr></thead><tbody>${(FCFG.reglas || []).map((r) => `<tr><td>${esc(r.email)}</td><td>${facLocalCelda(r.local)}</td><td class="r"><button class="linkbtn" data-act="fac-mail-del" data-id="${r.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin reglas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0"><input id="frEmail" placeholder="proveedor@email.com" type="email">${facLocalSelect("frLocal")}<button class="btn primary" data-act="fac-mail-add">Añadir</button></div></div>`;
+  const reg = `<details class="card fold p0"><summary style="padding:18px 18px 14px"><h3>Reglas de email → local</h3><span class="foldr"><span>${num((FCFG.reglas || []).length)}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="tw"><table class="tbl"><thead><tr><th>Email remitente</th><th>Local</th><th></th></tr></thead><tbody>${(FCFG.reglas || []).map((r) => `<tr><td>${esc(r.email)}</td><td>${facLocalCelda(r.local)}</td><td class="r"><button class="linkbtn" data-act="fac-mail-del" data-id="${r.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin reglas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0"><input id="frEmail" placeholder="proveedor@email.com" type="email">${facLocalSelect("frLocal")}<button class="btn primary" data-act="fac-mail-add">Añadir</button></div></details>`;
   // Grupos de WhatsApp de facturas
   const grpOpt = (cur) => { let o = `<option value="">Grupo de WhatsApp…</option>`; const has = (FCFG.groups || []).some((g) => g.id === cur); if (cur && !has) o += `<option value="${esc(cur)}" selected>Grupo actual</option>`; o += (FCFG.groups || []).map((g) => `<option value="${esc(g.id)}">${esc(g.name || g.id)}</option>`).join(""); return o; };
-  const grp = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos de WhatsApp para facturas</h3></div><div class="tw"><table class="tbl"><thead><tr><th>Local</th><th>Grupo</th><th></th></tr></thead><tbody>${(FCFG.grupos || []).map((g) => `<tr><td>${facLocalCelda(g.local)}</td><td>${(FCFG.groups || []).find((x) => x.id === g.group_jid) ? esc((FCFG.groups.find((x) => x.id === g.group_jid)).name) : '<span class="pill ok">Vinculado</span>'}</td><td class="r"><button class="linkbtn" data-act="fac-grp-del" data-id="${g.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin grupos.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fgLocal")}<select id="fgGroup">${grpOpt("")}</select><button class="btn primary" data-act="fac-grp-add">Vincular</button></div></div>`;
+  const grp = `<details class="card fold p0"><summary style="padding:18px 18px 14px"><h3>Grupos de WhatsApp para facturas</h3><span class="foldr"><span>${num((FCFG.grupos || []).length)}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="tw"><table class="tbl"><thead><tr><th>Local</th><th>Grupo</th><th></th></tr></thead><tbody>${(FCFG.grupos || []).map((g) => `<tr><td>${facLocalCelda(g.local)}</td><td>${(FCFG.groups || []).find((x) => x.id === g.group_jid) ? esc((FCFG.groups.find((x) => x.id === g.group_jid)).name) : '<span class="pill ok">Vinculado</span>'}</td><td class="r"><button class="linkbtn" data-act="fac-grp-del" data-id="${g.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin grupos.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fgLocal")}<select id="fgGroup">${grpOpt("")}</select><button class="btn primary" data-act="fac-grp-add">Vincular</button></div></details>`;
   // Modelo 303
   const trims = ["1", "2", "3", "4"];
   const d = FAC303.data;
   const m303res = FAC303.error ? `<div class="mut" style="padding:8px 18px 14px">${esc(FAC303.error)}</div>` : (d ? `<div class="rows">${(d.porTipoIva && d.porTipoIva.length) ? d.porTipoIva.map((t) => `<div class="row"><div class="grow"><div class="t1">IVA ${num(t.tipo_iva)}%</div><div class="t2">${num(t.num_docs)} doc(s) · base ${eur(t.base_total)}</div></div><b class="tnum">${eur(t.cuota_total)}</b></div>`).join("") : ""}${(d.totales ? `<div class="row" style="border-top:2px solid var(--border)"><div class="grow"><div class="t1">Base imponible</div><div class="t2">${num((d.totales.num_facturas) || 0)} facturas</div></div><b class="tnum">${eur(d.totales.base_total || 0)}</b></div><div class="row"><div class="grow"><div class="t1">Cuota de IVA</div></div><b class="tnum">${eur(d.totales.cuota_total || 0)}</b></div><div class="row"><div class="grow"><div class="t1">Total facturas</div></div><b class="tnum">${eur(d.totales.importe_total || 0)}</b></div>` : "")}${(d.otrosDocs && (d.otrosDocs.num_otros) ? `<div class="row"><div class="grow"><div class="t1">Otros documentos</div><div class="t2">${num(d.otrosDocs.num_otros || 0)} docs</div></div><b class="tnum">${eur(d.otrosDocs.total_otros || 0)}</b></div>` : "")}</div><div style="padding:10px 18px"><button class="btn sm" data-act="fac-303-csv">Exportar 303 (CSV)</button></div>` : `<div class="mut" style="padding:8px 18px 14px">Elige empresa y trimestre y pulsa Calcular.</div>`);
   const empOpts = `<option value="">Empresa…</option>` + (FCFG.empresas || []).map((e) => `<option value="${esc(e)}" ${FAC303.empresa === e ? "selected" : ""}>${esc(e)}</option>`).join("");
-  const m303 = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Modelo 303 (IVA trimestral)</h3></div><div class="toolbar" style="padding:12px 18px;margin:0"><select id="m303emp">${empOpts}</select><select id="m303tri"><option value="">Trimestre…</option>${trims.map((t) => `<option value="${t}" ${FAC303.trimestre === t ? "selected" : ""}>${t}º trimestre</option>`).join("")}</select><button class="btn primary" data-act="fac-303">Calcular</button></div>${m303res}</div>`;
+  const m303 = `<details class="card fold p0"><summary style="padding:18px 18px 14px"><h3>Modelo 303 (IVA trimestral)</h3><span class="foldr"><span class="mut">trimestral</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="toolbar" style="padding:12px 18px;margin:0"><select id="m303emp">${empOpts}</select><select id="m303tri"><option value="">Trimestre…</option>${trims.map((t) => `<option value="${t}" ${FAC303.trimestre === t ? "selected" : ""}>${t}º trimestre</option>`).join("")}</select><button class="btn primary" data-act="fac-303">Calcular</button></div>${m303res}</details>`;
   // Integraciones Google (Drive/Sheets/Gmail)
   const ig = FCFG.integ || {};
   // OJO: `apiOptional` devuelve null si la petición falla, y pintar eso como «Sin conectar»
@@ -6236,12 +6285,14 @@ async function loadPagos() {
 // Aquí se ve si esa factura recoge todos sus albaranes —y si cobra algo que no se entregó—.
 // Se PROPONE; confirmar es de una persona: dar por buena una conciliación equivocada es peor
 // que no tener ninguna, porque se paga creyendo que está comprobada.
-let CONC = { from: "", to: "", filtro: "parcial" };
+// Sin fechas propias: las pone el selector de la barra de arriba, como en el resto de Compras.
+// Antes esta pestaña se abría con «los dos últimos meses» puesto por su cuenta, así que lo de
+// antes no existía y nadie sabía por qué.
+let CONC = { filtro: "parcial" };
 const CONC_FILTROS = [["parcial", "Por revisar"], ["conciliada-parcial", "A medias"], ["cuadra", "Cuadran"], ["sin-albaranes", "Sin albarán"], ["conciliada", "Ya conciliadas"], ["", "Todas"]];
 
 async function loadConciliacion() {
   const view = document.getElementById("view");
-  if (!CONC.from) { const d = new Date(); d.setMonth(d.getMonth() - 2); CONC.from = d.toISOString().slice(0, 10); }
   view.innerHTML = facHeader() + `<div id="concRes"><p class="mut">Cruzando albaranes y facturas…</p></div>`;
   await refrescarConciliacion();
   const cont = document.getElementById("concRes");
@@ -6252,19 +6303,22 @@ async function loadConciliacion() {
     if (w === "filtro") { CONC.filtro = b.getAttribute("data-v"); return refrescarConciliacion(); }
     if (w === "marcados") return concMarcados(b.getAttribute("data-id"));
     if (w === "deshacer") return concConfirmar(b.getAttribute("data-id"), "");
+    if (w === "descartar") { e.preventDefault(); return concDescartar(b.getAttribute("data-f"), b.getAttribute("data-id")); }
+    if (w === "recuperar") { e.preventDefault(); return concRecuperar(b.getAttribute("data-f"), b.getAttribute("data-id")); }
   });
   cont?.addEventListener("change", (e) => {
-    if (e.target.id === "concFrom") { CONC.from = e.target.value; refrescarConciliacion(); }
-    if (e.target.id === "concTo") { CONC.to = e.target.value; refrescarConciliacion(); }
     if (e.target.classList?.contains("concChk")) concPintarSuma(e.target.getAttribute("data-f"));
   });
 }
 
 async function refrescarConciliacion() {
   const cont = document.getElementById("concRes"); if (!cont) return;
+  // El periodo es el de la barra: Conciliaciones es Compras, y tener dos calendarios en la
+  // misma pantalla —uno arriba y otro dentro— era la manera de que uno de los dos mintiera.
+  const per = periodoVista("facturas");
   const qs = new URLSearchParams();
-  if (CONC.from) qs.set("from", CONC.from);
-  if (CONC.to) qs.set("to", CONC.to);
+  if (per.from) qs.set("from", per.from);
+  if (per.to) qs.set("to", per.to);
   let j;
   try { j = await apiRaw("/api/facturas/conciliacion?" + qs); } catch (e) { cont.innerHTML = errorCard(e.message); return; }
   const r = j.resumen;
@@ -6275,10 +6329,7 @@ async function refrescarConciliacion() {
     return `<button class="btn sm ${CONC.filtro === v ? "primary" : ""}" data-conc="filtro" data-v="${v}">${t} · ${num(n)}</button>`;
   }).join("");
 
-  const barra = `<div class="toolbar" style="margin-bottom:10px">
-      <div class="field"><label>Desde</label>${dpField("concFrom", CONC.from, "Cualquiera")}</div>
-      <div class="field"><label>Hasta</label>${dpField("concTo", CONC.to, "Hoy")}</div>
-    </div><div class="toolbar" style="margin-bottom:12px">${pills}</div>`;
+  const barra = `<div class="toolbar" style="margin-bottom:12px">${pills}</div>`;
 
   const kpis = `<div class="grid g4" style="margin-bottom:16px">
       ${stat("Cuadran", "✅", num(r.cuadran))}
@@ -6291,11 +6342,15 @@ async function refrescarConciliacion() {
   // sumen el total — si de una factura de 100 € solo ha llegado un albarán de 40, esos 40 ya
   // están comprobados y los 60 quedan esperando. Obligar a tenerlo todo para poder marcar algo
   // hace que no se marque nunca, y el trabajo hecho se pierde.
-  const albRow = (a, fid, marcado) => `<label class="row" style="padding:7px 0;cursor:pointer">
+  const albRow = (a, fid, marcado, esCandidato) => `<label class="row" style="padding:7px 0;cursor:pointer">
       <input type="checkbox" class="concChk" data-f="${fid}" data-id="${a.id}" data-total="${a.total}" ${marcado ? "checked" : ""} style="width:auto;margin:0 8px 0 0">
       <span class="grow"><div class="t1" style="font-weight:500">${esc(fechaCorta(a.fecha) || a.fecha || "—")} · ${esc(a.numero_factura || "s/n")}</div></span>
       <b class="tnum">${esc(eur2(a.total))}</b>
-      ${a.drive_url ? `<a class="btn sm" href="${esc(a.drive_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Ver ↗</a>` : ""}</label>`;
+      ${a.drive_url ? `<a class="btn sm" href="${esc(a.drive_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Ver ↗</a>` : ""}
+      ${/* Descartar: «este albarán NO es de esta factura». Solo en los PROPUESTOS —lo que ya
+            está ligado se suelta deshaciendo—, y con `stopPropagation` porque la fila entera es
+            un <label> y el clic marcaría la casilla en vez de descartar. */""}
+      ${esCandidato ? `<button class="linkbtn" data-conc="descartar" data-f="${fid}" data-id="${a.id}" title="No es de esta factura: deja de proponerse aquí" onclick="event.stopPropagation()" style="color:var(--ink3);padding:0 4px">✕</button>` : ""}</label>`;
 
   const ficha = (p) => {
     const f = p.factura;
@@ -6314,8 +6369,10 @@ async function refrescarConciliacion() {
         <span class="pill ${est[0]}" style="flex:none">${est[1]}</span>
       </div>
       <p class="dupmot">${esc(p.motivos.join(". "))}.</p>
-      ${todos.length ? `<div class="rows" style="background:var(--surface2);border-radius:10px;padding:4px 12px">${todos.map((a) => albRow(a, f.id, ligados.includes(a.id) || p.estado === "cuadra" || p.estado === "parcial")).join("")}</div>
+      ${todos.length ? `<div class="rows" style="background:var(--surface2);border-radius:10px;padding:4px 12px">${todos.map((a) => albRow(a, f.id, ligados.includes(a.id) || p.estado === "cuadra" || p.estado === "parcial", !ligados.includes(a.id))).join("")}</div>
         <div class="mut" data-concsuma="${f.id}" style="font-size:12.5px;margin-top:6px"></div>` : ""}
+      ${(p.descartadosIds || []).length ? `<div class="mut" style="font-size:12px;margin-top:6px">
+        ${num(p.descartadosIds.length)} descartado(s) a mano · ${p.descartadosIds.map((d) => `<button class="linkbtn" data-conc="recuperar" data-f="${f.id}" data-id="${d.id}" style="font-size:12px">recuperar ${esc(d.numero_factura || "s/n")}</button>`).join(" · ")}</div>` : ""}
       <div class="dupacts">
         ${f.drive_url ? `<a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver factura ↗</a>` : ""}
         ${p.estado === "conciliada" || p.estado === "conciliada-parcial"
@@ -6364,6 +6421,30 @@ async function concMarcados(fid) {
   if (!(await confirmModal(`${aviso} Quedará registrado quién y cuándo, y esos albaranes no podrán usarse en otra factura.`, { ok: "Conciliar" }))) return;
   try { const r = await apiSend("POST", `/api/facturas/${fid}/conciliar`, { albaranes: ids }); toast(r.mensaje || "Hecho ✅"); refrescarConciliacion(); }
   catch (e) { toast(e.message); }
+}
+
+/**
+ * DESCARTAR una propuesta. Se pregunta, porque es una decisión que se guarda: a partir de aquí
+ * ese albarán deja de ofrecerse para ESTA factura —para las demás sigue disponible—.
+ */
+async function concDescartar(facturaId, albaranId) {
+  const ok = await confirmModal(
+    "¿Este albarán no es de esta factura? Dejará de proponerse aquí. Para otras facturas sigue disponible, y se puede recuperar.",
+    { ok: "No es de esta" });
+  if (!ok) return;
+  try {
+    await apiSend("POST", `/api/facturas/${facturaId}/descartar`, { albaranes: [Number(albaranId)] });
+    toast("Descartado ✅");
+    refrescarConciliacion();
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
+async function concRecuperar(facturaId, albaranId) {
+  try {
+    await apiSend("DELETE", `/api/facturas/${facturaId}/descartar/${albaranId}`);
+    toast("Vuelve a proponerse");
+    refrescarConciliacion();
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 
 async function concConfirmar(id, albs) {
@@ -7773,7 +7854,10 @@ function renderAgoraRow(local, i) {
   const alive = est ? est.alive : null;
   const pill = !c ? '<span class="pill">Sin configurar</span>' : (!c.activo ? '<span class="pill">Desactivado</span>' : (alive === true ? '<span class="pill ok">TPV vivo</span>' : alive === false ? '<span class="pill bad">Sin respuesta</span>' : '<span class="pill brand">Activo</span>'));
   const passPh = c && c.passSet ? "•••••• · guardada — escribe para cambiar" : "Contraseña de Ágora";
-  return `<div class="card" data-agrow="${i}"><div class="ch"><h3>${esc(local)}</h3>${pill}</div>
+  // PLEGADA. Ocho locales × una tarjeta con seis campos y seis botones eran casi tres mil
+  // píxeles para una pantalla que se toca una vez al mes. Cerrada dice lo único que se mira de
+  // pasada: cómo está ese TPV.
+  return `<details class="card fold" data-agrow="${i}"><summary style="padding:16px 18px"><h3>${esc(local)}</h3><span class="foldr">${pill}<span class="car">${ic("chev", 16)}</span></span></summary>
     <div class="toolbar">
       <div class="field grow"><label>Host (DynDNS + puerto)</label><input id="agHost_${i}" value="${esc(c ? c.host : "")}" placeholder="local.chickenkiller.com:8984"></div>
       <div class="field"><label>Local ID (opcional)</label><input id="agLid_${i}" value="${esc(c && c.local_id ? c.local_id : "")}" placeholder="—" style="max-width:120px"></div>
@@ -7794,7 +7878,7 @@ function renderAgoraRow(local, i) {
       <button class="btn primary" data-act="ag-save" data-local="${esc(local)}" data-i="${i}">Guardar</button>
       ${c ? `<button class="btn sm danger" data-act="ag-del" data-local="${esc(local)}">Eliminar</button>` : ""}
     </div>
-    <div class="mut" style="font-size:11.5px;margin-top:4px">Las ventas se leen con el <b>usuario+contraseña</b> (login web de Ágora). Recomendado: crea un usuario dedicado con permisos mínimos.</div>${est && est.ts ? `<div class="mut" style="font-size:12px;margin-top:4px">Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}</div>` : ""}</div>`;
+    <div class="mut" style="font-size:11.5px;margin-top:4px">Las ventas se leen con el <b>usuario+contraseña</b> (login web de Ágora). Recomendado: crea un usuario dedicado con permisos mínimos.</div>${est && est.ts ? `<div class="mut" style="font-size:12px;margin-top:4px">Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}</div>` : ""}</details>`;
 }
 function renderAgora() {
   const head = `<div class="ph"><div class="eyebrow">Sistema · Integraciones</div><h1>Ágora (TPV)</h1><div class="sub">Conecta el TPV de cada local para traer las ventas. El apiToken se guarda cifrado y nunca se muestra.</div><div class="acts"><button class="btn primary" data-act="ag-sync">Sincronizar ventas ahora</button></div></div>`;
@@ -7960,8 +8044,17 @@ async function agoraDel(local) {
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 async function agoraSyncNow() {
+  // El servidor ya no espera a terminar (ocho locales en serie eran medio minuto de petición
+  // colgada), así que aquí se avisa y se vuelve a preguntar a los pocos segundos: si no, el
+  // botón parecería no hacer nada.
   toast("Sincronizando ventas…");
-  try { const j = await apiSend("POST", "/api/agora/sync-now"); toast(j.configurados ? "Sincronización lanzada ✅" : "No hay locales de Ágora activos"); loadAgora(); }
+  try {
+    const j = await apiSend("POST", "/api/agora/sync-now");
+    toast(!j.configurados ? "No hay locales de Ágora activos"
+      : j.lanzada ? "Sincronizando por detrás… en unos segundos se actualiza" : "Ya había una en marcha");
+    if (j.lanzada) setTimeout(() => { if (CURRENT === "agora") loadAgora(); }, 8000);
+    else loadAgora();
+  }
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 
@@ -8842,10 +8935,20 @@ document.addEventListener("click", (e) => {
   // porque repintar la barra tira también la vista y con ella sus listeners.
   if (act === "mtoggle") { const a = document.getElementById("appEl"); if (!a) return; if (window.innerWidth <= 820) a.classList.toggle("mopen"); else { COLLAPSED = !COLLAPSED; a.classList.toggle("collapsed"); } }
   else if (act === "mclose") { const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); }
+  else if (act === "dash-parte") {
+    const p = DASH_PARTE || {};
+    modal("El parte de Sara", `<p style="font-size:17px;line-height:1.55;margin:0;font-weight:500;letter-spacing:-.01em">${p.titular || p.contexto || "Sin datos suficientes para hoy."}</p>
+      ${p.titular && p.contexto ? `<p class="mut" style="margin:12px 0 0;line-height:1.6">${p.contexto}</p>` : ""}
+      <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button></div>`);
+  }
   else if (act === "cmdk") openCmd();
   else if (act === "estabmenu") openEstabMenu();
   // Cambiar de establecimiento reaplica el ámbito sin sacarte de donde estabas.
-  else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; SELECCION = []; guardarAmbito(); closeDrawer(); go(MODULOS_POR_LOCAL.has(CURRENT) ? CURRENT : "dashboard"); }
+  // CAMBIAR DE ESTABLECIMIENTO NO TE MUEVE DE PANTALLA. Antes, en las ocho vistas que no
+  // miran el local —clientes, campañas, usuarios…— te sacaba al Dashboard: se elegía Lloret y
+  // aparecías en otro sitio sin haberlo pedido. Si la pantalla no usa el local, no pasa nada
+  // visible, que es exactamente lo correcto.
+  else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; SELECCION = []; guardarAmbito(); closeDrawer(); go(CURRENT, { desdeUrl: true }); }
   // Marcar y desmarcar no cambia de pantalla: se van eligiendo y se aplica al final. Cambiar de
   // ámbito en cada clic haría tres recargas para juntar tres locales.
   else if (act === "estab-marca") {
@@ -8858,7 +8961,7 @@ document.addEventListener("click", (e) => {
   else if (act === "estab-varios") {
     if (SELECCION.length < 2) return;
     DASH_LOCAL = VARIOS; guardarAmbito(); closeDrawer();
-    go(MODULOS_POR_LOCAL.has(CURRENT) ? CURRENT : "dashboard");
+    go(CURRENT, { desdeUrl: true });
   }
   else if (act === "ag-metodos") agoraMetodos(t.getAttribute("data-local"));
   else if (act === "pulso-enviar") pulsoEnviar();
@@ -9143,6 +9246,12 @@ requireRole(["direccion", "encargado", "contabilidad", "marketing", "rrhh"]).the
     || Object.keys(VIEWS).find((v) => puedeVer(v)) || "dashboard";
   if (inicio === "facturas" && deUrl.sub) FACTAB = deUrl.sub;
   go(inicio, { desdeUrl: !!deUrl.vista });
+
+  // AVISO DE QUE ALGUIEN HA ENTRADO: el servidor mira si las ventas del TPV llevan más de 15
+  // minutos sin actualizarse y, si es así, las sincroniza por detrás. Va con `fetch` pelado a
+  // propósito —sin `await`, sin toast, sin `throw`—: la pantalla no puede depender de esto, y
+  // si Ágora está caído no es asunto de quien acaba de entrar a mirar las reservas.
+  fetch("/api/ventas/sync-ping", { method: "POST", headers: { Authorization: "Bearer " + token() } }).catch(() => {});
 
   // Cambiar el «#» a mano o con el botón de atrás también navega.
   window.addEventListener("hashchange", () => {

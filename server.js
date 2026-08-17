@@ -62,6 +62,8 @@ import { repasarLote, resumenRepaso, pideRelecturaDeLineas, esAlcanceValido, ALC
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
 import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
 import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
+import { indiceDescartes, descartadosDe } from "./src/modules/facturas/descartes.js";
+import { debeSincronizar, siguebloqueado, edadMinutos } from "./src/modules/agora/programacion.js";
 import { claveFalta, ordenarFaltas } from "./src/modules/marketing/faltan.js";
 import { sanearSegmento, describirSegmento } from "./src/modules/marketing/segmento.js";
 import { sanearHecho, agruparHechos, resumenHechos, ETIQUETAS, conversacionesParaLeer, hechosNuevos } from "./src/modules/clientes/hechos.js";
@@ -932,6 +934,31 @@ async function initDB() {
       )
     `);
     /**
+     * «ESTE ALBARÁN NO ES DE ESTA FACTURA».
+     *
+     * Sin esto, una propuesta falsa vuelve a proponerse cada vez que se abre la pantalla —para
+     * siempre—, y quien concilia acaba pasando por encima de las mismas tres cada semana. Esa
+     * es justo la manera de que un día pulse sin mirar.
+     *
+     * PK tonta e índice único aparte, NO una clave primaria compuesta: el despliegue de Replit
+     * genera su migración diffando, y una PK compuesta es exactamente lo que no sabe ordenar
+     * (ya nos costó un despliegue con `facturas_pago_reglas`).
+     */
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_conciliacion_descartes (
+        id SERIAL PRIMARY KEY,
+        factura_id INTEGER NOT NULL,
+        albaran_id INTEGER NOT NULL,
+        local TEXT,
+        motivo TEXT,
+        autor TEXT,
+        creado_en TEXT NOT NULL
+      )
+    `);
+    try { await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_conc_descarte ON facturas_conciliacion_descartes (factura_id, albaran_id)`); }
+    catch (e) { console.error("[DB] ux_conc_descarte:", e.message); }
+
+    /**
      * LO QUE SABEMOS DE CADA CLIENTE. El cuaderno del camarero, escrito.
      *
      * Se guarda por TELÉFONO y no por id de lead porque un cliente puede estar en la base
@@ -1536,8 +1563,11 @@ setInterval(async () => {
 
 // Sincronización de ventas de Ágora (oportunista + catch-up). No hace NADA si no hay locales
 // configurados (AGORA_LOCALES vacío). Arranque diferido 60s + cada 45 min.
-setTimeout(() => { runAgoraSync().catch((e) => console.error("Ágora sync (kickoff):", e.message)); }, 60 * 1000);
-setInterval(() => { runAgoraSync().catch((e) => console.error("Ágora sync:", e.message)); }, 45 * 60 * 1000);
+setTimeout(() => { lanzarAgoraSync("arranque"); }, 60 * 1000);
+// Se COMPRUEBA cada 5 minutos y se sincroniza si el último pasa de 15. No es lo mismo que un
+// temporizador de 15: así «cada 15 minutos» significa «nunca más viejo de 15 minutos», venga el
+// disparo de donde venga —el temporizador, alguien entrando al panel o el botón—.
+setInterval(() => { agoraSyncSiToca("timer").catch((e) => console.error("Ágora sync:", e.message)); }, 5 * 60 * 1000);
 
 // ── Google Drive / Sheets OAuth (cuenta separada para facturas) ────────────
 const GOOGLE_DRIVE_CLIENT_ID     = process.env.GOOGLE_DRIVE_CLIENT_ID     || "";
@@ -3221,6 +3251,11 @@ app.get("/api/users", requireAuth(["direccion"]), async (req, res) => {
     const rows = await dbAll("SELECT id, username, rol, nombre, local, modulos, locales_extra, password_enc, creado_en FROM users ORDER BY rol");
     const data = (rows || []).map((u) => ({
       id: u.id, username: u.username, rol: u.rol, nombre: u.nombre, local: u.local, creado_en: u.creado_en,
+      // TODOS sus locales, no solo el principal. El panel filtra la lista por el
+      // establecimiento de la barra: sin los extra, un encargado de Blanes que también lleva
+      // Lloret desaparecería al mirar Lloret y ese local parecería no tener a nadie.
+      locales: localesDe({ ...u, rol: u.rol }),
+      locales_extra: u.locales_extra || null,
       modulos: modulosEfectivos(u.rol, u.modulos),      // módulos que realmente puede ver
       restringido: !!(u.modulos && String(u.modulos).trim()), // tiene allowlist propia
       pass_visible: !!u.password_enc,                    // ¿hay copia recuperable para "ver"?
@@ -4596,6 +4631,11 @@ app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"])
 
     const sueltos = albaranes.filter((a) => !a.conciliado_con);
     const facturas = docs.filter((d) => (d.tipo || "factura") !== "albaran");
+    // Lo que ya se dijo que NO va junto. Una sola consulta para todas las facturas del listado.
+    const descartesIdx = indiceDescartes(facturas.length
+      ? await dbAll(`SELECT factura_id, albaran_id FROM facturas_conciliacion_descartes WHERE factura_id = ANY(?)`,
+          [facturas.map((f) => f.id)]).catch(() => [])
+      : []);
     const propuestas = facturas.map((f) => {
       if (f.conciliado_con) {
         const ids = (() => { try { return JSON.parse(f.conciliado_con); } catch { return []; } })();
@@ -4603,8 +4643,10 @@ app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"])
         const est = estadoConciliada(f, ligados);
         // A medias se siguen ofreciendo los albaranes sueltos del proveedor: cuando llegue el
         // que falta, se añade sin deshacer lo que ya estaba comprobado.
+        // También en las de a medias: si no, un descartado seguiría ofreciéndose ahí.
+        const desc = descartadosDe(descartesIdx, f.id);
         const candidatos = est.estado === "conciliada-parcial"
-          ? sueltos.filter((a) => MISMO_PROV(f, a) && !ids.includes(a.id)) : [];
+          ? sueltos.filter((a) => MISMO_PROV(f, a) && !ids.includes(a.id) && !desc.has(String(a.id))) : [];
         return { factura: f, estado: est.estado, albaranes: ligados, candidatos,
           ligado: est.ligado, falta: est.falta,
           motivos: est.estado === "conciliada"
@@ -4613,7 +4655,12 @@ app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"])
                est.falta > 0 ? `faltan ${est.falta.toFixed(2)} € por llegar` : `hay ${Math.abs(est.falta).toFixed(2)} € ligados de más`],
           diferencia: est.falta };
       }
-      return { factura: f, ...proponerConciliacion(f, sueltos) };
+      const desc = descartadosDe(descartesIdx, f.id);
+      // Los descartados, con su número: sin él, «2 descartados» no dice cuáles y no se pueden
+      // recuperar. Se resuelven contra los albaranes ya cargados, sin otra consulta.
+      const descartadosIds = albaranes.filter((a) => desc.has(String(a.id)))
+        .map((a) => ({ id: a.id, numero_factura: a.numero_factura, fecha: a.fecha, total: a.total }));
+      return { factura: f, ...proponerConciliacion(f, sueltos, { descartados: desc }), descartadosIds };
     });
 
     res.json({ ok: true, propuestas, resumen: resumenConciliacion(propuestas),
@@ -4621,6 +4668,63 @@ app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"])
   } catch (e) {
     console.error("[facturas] conciliación:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo calcular la conciliación" });
+  }
+});
+
+/**
+ * DESCARTAR una propuesta: «este albarán NO es de esta factura».
+ *
+ * Es OTRA COSA que deshacer una conciliación. Deshacer suelta un albarán que estaba ligado;
+ * descartar dice que nunca lo estuvo y que no vuelva a proponerse aquí. Por eso deshacer una
+ * conciliación NO borra los descartes: son dos decisiones distintas de dos momentos distintos.
+ *
+ * Y es por PAREJA: el mismo albarán puede ser perfectamente de la factura del mes siguiente.
+ */
+app.post("/api/facturas/:id/descartar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const f = await dbGet(`SELECT id, local FROM facturas WHERE id = ?`, [req.params.id]);
+    if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
+    if (!puedeAccederLocal(req, f.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const ids = (Array.isArray(req.body?.albaranes) ? req.body.albaranes : []).map(Number).filter(Boolean);
+    if (!ids.length) return res.status(400).json({ ok: false, error: "No hay albaranes que descartar" });
+
+    // Si está LIGADO a esta factura, esto no es un descarte: es deshacer, y se hace por el otro
+    // camino. Mezclar los dos dejaría un albarán suelto y además descartado, sin que se vea.
+    const ligados = await dbAll(`SELECT id FROM facturas WHERE id = ANY(?) AND conciliado_con = ?`, [ids, String(f.id)]);
+    if (ligados.length) {
+      return res.status(409).json({ ok: false, error: "Ese albarán está conciliado con esta factura: deshaz la conciliación primero." });
+    }
+
+    const ahora = isoConOffset(Date.now());
+    const quien = req.user?.nombre || req.user?.username || null;
+    for (const albaranId of ids) {
+      await dbRun(
+        `INSERT INTO facturas_conciliacion_descartes (factura_id, albaran_id, local, motivo, autor, creado_en)
+         VALUES (?,?,?,?,?,?) ON CONFLICT (factura_id, albaran_id) DO NOTHING`,
+        [f.id, albaranId, f.local, String(req.body?.motivo || "").slice(0, 200) || null, quien, ahora]);
+    }
+    await ficAuditar("facturas", f.id, "conciliacion_descartada", quien, { local: f.local, detalle: { albaranes: ids } });
+    res.json({ ok: true, descartados: ids.length });
+  } catch (e) {
+    console.error("[facturas] descartar conciliación:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo descartar" });
+  }
+});
+
+// Recuperar un descarte hecho por error: vuelve a proponerse.
+app.delete("/api/facturas/:id/descartar/:albaranId", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const f = await dbGet(`SELECT id, local FROM facturas WHERE id = ?`, [req.params.id]);
+    if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
+    if (!puedeAccederLocal(req, f.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    await dbRun(`DELETE FROM facturas_conciliacion_descartes WHERE factura_id = ? AND albaran_id = ?`,
+      [f.id, Number(req.params.albaranId)]);
+    await ficAuditar("facturas", f.id, "descarte_deshecho", req.user?.nombre || req.user?.username || null,
+      { local: f.local, detalle: { albaran: Number(req.params.albaranId) } });
+    res.json({ ok: true, mensaje: "Vuelve a proponerse." });
+  } catch (e) {
+    console.error("[facturas] recuperar descarte:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo recuperar" });
   }
 });
 
@@ -5801,6 +5905,41 @@ async function seedAgoraFromEnv() {
 }
 
 // Job de sincronización (dormido si no hay locales configurados).
+/**
+ * LA SINCRONIZACIÓN, CON CANDADO.
+ *
+ * `runAgoraSync` recorre los locales EN SERIE con 6 s de espera por TPV: dos ejecuciones
+ * solapadas son minutos de peticiones repetidas. Antes no había nada que lo impidiera, y ahora
+ * que se dispara también al entrar al panel harían falta veinte a la vez.
+ *
+ * Dos candados, porque uno solo no basta:
+ *  · en memoria, que devuelve LA MISMA promesa a quien llegue mientras corre;
+ *  · en la base con marca de tiempo (`agora_sync_inicio`), que es el que sobrevive a un
+ *    reinicio a media sync y caduca solo a los cinco minutos.
+ */
+let _agoraEnCurso = null;
+function lanzarAgoraSync(origen = "timer") {
+  if (_agoraEnCurso) return _agoraEnCurso;
+  _agoraEnCurso = (async () => {
+    await setConfig("agora_sync_inicio", new Date().toISOString()).catch(() => {});
+    try { await runAgoraSync(); }
+    // El fallo se registra y se traga: esto se llama sin `await` desde varios sitios y una
+    // promesa rechazada sin capturar tumba el proceso entero.
+    catch (e) { console.error(`[Ágora] sync (${origen}):`, e.message); }
+    finally { _agoraEnCurso = null; }
+  })();
+  return _agoraEnCurso;
+}
+
+/** Mira si toca y, si toca, la lanza. NUNCA espera a que termine. */
+async function agoraSyncSiToca(origen = "timer", { forzar = false } = {}) {
+  const [lastSync, inicio] = await Promise.all([getConfig("agora_last_sync"), getConfig("agora_sync_inicio")]);
+  const enCurso = !!_agoraEnCurso || siguebloqueado(inicio);
+  const d = debeSincronizar({ lastSync, enCurso, forzar });
+  if (d.sincronizar) lanzarAgoraSync(origen);
+  return { ...d, lanzada: d.sincronizar, lastSync: lastSync || null, origen };
+}
+
 async function runAgoraSync() {
   const configs = await loadAgoraConfigsActive();
   if (!configs.length) return;
@@ -6365,11 +6504,36 @@ app.post("/api/agora/sync-now", requireAuth(["direccion"]), async (req, res) => 
   try {
     const configs = await loadAgoraConfigsActive();
     if (!configs.length) return res.json({ ok: true, configurados: 0, mensaje: "No hay locales de Ágora activos" });
-    await runAgoraSync();
-    const lastSync = await getConfig("agora_last_sync");
-    res.json({ ok: true, configurados: configs.length, lastSync: lastSync || null });
+    // Ya NO se espera a que termine: con ocho locales en serie y 6 s de espera por TPV, la
+    // petición se quedaba colgada medio minuto y el navegador daba por muerta la pantalla.
+    // `forzar`: es un botón que se pulsa a propósito, así que no le aplica la ventana de 15 min.
+    const r = await agoraSyncSiToca("manual", { forzar: true });
+    res.json({ ok: true, configurados: configs.length, lanzada: r.lanzada, motivo: r.motivo, lastSync: r.lastSync });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error sincronizando" });
+  }
+});
+
+/**
+ * EL AVISO DE QUE ALGUIEN HA ENTRADO AL PANEL. Contesta al instante: mira si el último volcado
+ * de ventas pasa de 15 minutos y, si toca, lanza uno por detrás.
+ *
+ * NO PUEDE COLGAR DE `/api/agora`: el mapa de permisos (src/modules/usuarios/permisos.js) manda
+ * todo lo que empiece por ahí al módulo «analitica», así que un encargado sin analítica se
+ * comería un 403 nada más abrir el panel. Por eso vive en `/api/ventas`.
+ *
+ * Y contesta `ok: true` aunque no haya nada configurado o Ágora esté caído: un error aquí haría
+ * saltar un aviso rojo al entrar, y esto es un recado de fondo, no algo que se haya pedido.
+ */
+app.post("/api/ventas/sync-ping", requireAuth([]), async (req, res) => {
+  try {
+    const configs = await loadAgoraConfigsActive();
+    if (!configs.length) return res.json({ ok: true, lanzada: false, motivo: "sin-locales" });
+    const r = await agoraSyncSiToca("panel");
+    res.json({ ok: true, lanzada: r.lanzada, motivo: r.motivo, edadMin: r.edadMin, lastSync: r.lastSync });
+  } catch (e) {
+    console.error("[Ágora] ping:", e.message);
+    res.json({ ok: true, lanzada: false, motivo: "error" });
   }
 });
 
