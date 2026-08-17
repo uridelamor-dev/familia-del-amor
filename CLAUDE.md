@@ -17,6 +17,9 @@ App de gestión interna + web pública de un grupo de restauración. **Responder
   hay tests de introspección que leen `server.js`/`app.js` como texto para blindar invariantes.
 - **Puerto:** `5000` (en Replit sale por el 80).
 - **Reiniciar** (mata puerto + chrome/puppeteer + SingletonLock + relanza): `/restart-tapeta`.
+- **Inventario de bloques:** `node tools/inventario-bloques.mjs` lista cada tarjeta de cada
+  pantalla con su título y su altura, numeradas. Sirve para pedir cambios por número («12
+  plegar», «19 fuera») en vez de describirlos. Necesita `puppeteer`; si falta, se salta.
 - **Probar API** (login + endpoints, sin pegar token a mano): skill `tapeta-api` → `.claude/skills/tapeta-api/api.sh <endpoint>`.
 - **Barrido de pantallas:** `node tools/barrido-rutas.mjs` abre las 19 vistas del panel en Chrome
   sin ventana (servidor falso incluido) **en ordenador (1280) y en móvil (390)** y avisa de
