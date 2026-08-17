@@ -129,9 +129,14 @@ describe("un albarán no es gasto: no puede sumar dos veces", () => {
   test("y los gráficos del año", () => {
     const i = server.indexOf("const andLocal = local");
     const bloque = server.slice(i, i + 2200);
-    const total = (bloque.match(/TO_CHAR\(fecha::date, 'YYYY'\) = \?/g) || []).length;
-    const conFiltro = (bloque.match(/\$\{SIN_ALBARANES\} AND TO_CHAR\(fecha::date, 'YYYY'\) = \?/g) || []).length;
-    assert.equal(conFiltro, total, "alguna consulta anual sigue contando albaranes");
+    // Cada consulta anual tiene que llevar SIN_ALBARANES en su WHERE. Se mira por trozos y no
+    // con un patrón pegado, porque entre medias puede haber otras condiciones —el gasto de
+    // empresa, por ejemplo— y lo que importa es que el filtro esté, no dónde.
+    const anuales = bloque.split("TO_CHAR(fecha::date, 'YYYY') = ?").slice(0, -1);
+    for (const trozo of anuales) {
+      const where = trozo.slice(trozo.lastIndexOf("WHERE"));
+      assert.match(where, /\$\{SIN_ALBARANES\}/, "una consulta anual no excluye albaranes: " + where.slice(0, 80));
+    }
   });
 
   test("pero el albarán SÍ se sigue viendo en la lista", () => {

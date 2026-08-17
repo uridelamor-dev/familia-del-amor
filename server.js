@@ -62,6 +62,7 @@ import { repasarLote, resumenRepaso, pideRelecturaDeLineas, esAlcanceValido, ALC
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
 import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
 import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
+import { repartirImporte, pesosPorVentas, textoReparto } from "./src/modules/facturas/reparto.js";
 import { indiceDescartes, descartadosDe } from "./src/modules/facturas/descartes.js";
 import { debeSincronizar, siguebloqueado, edadMinutos } from "./src/modules/agora/programacion.js";
 import { claveFalta, ordenarFaltas } from "./src/modules/marketing/faltan.js";
@@ -650,6 +651,9 @@ async function initDB() {
     // `factor_unidad`: cuántas unidades traía cada paquete cuando la factura da la cantidad en
     // packs y el precio por unidad. Se guarda para poder explicar de dónde sale la cantidad
     // («3 PACK × 150») y para que se vea que ahí ha pasado algo.
+    // `reparto`: null = de un local; 'empresa' = de toda la sociedad, se reparte al sumar.
+    try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS reparto TEXT`); }
+    catch (e) { console.error("[DB] alter facturas reparto:", e.message); }
     for (const col of ["precio_bruto NUMERIC", "importe_bruto NUMERIC", "descuento_pct NUMERIC", "factor_unidad NUMERIC"]) {
       try { await client.query(`ALTER TABLE factura_lineas ADD COLUMN IF NOT EXISTS ${col}`); }
       catch (e) { console.error("[DB] alter factura_lineas " + col + ":", e.message); }
@@ -2531,14 +2535,22 @@ function mergePendienteEditado(pendiente, body) {
 }
 
 app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), async (req, res) => {
-  const { local } = req.body || {};
+  let { local } = req.body || {};
+  // «Toda la empresa»: el papel se archiva bajo uno de sus locales —en algún sitio tiene que
+  // vivir— pero la factura queda marcada para repartirse entre todos al sumar por local.
+  const repartoEmpresa = req.body?.reparto === "empresa";
+  if (repartoEmpresa) {
+    const suyos = await dbAll(`SELECT local FROM facturas_locales WHERE empresa = ? ORDER BY local`, [String(req.body?.empresa || "")]);
+    if (!suyos.length) return res.status(400).json({ ok: false, error: "Esa empresa no tiene locales configurados en Compras → Configuración." });
+    local = suyos[0].local;
+  }
   if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
   const pendienteBD = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ?", [req.params.id]);
   if (!pendienteBD) return res.status(404).json({ ok: false, error: "No encontrado" });
   // Si el usuario corrigió datos en el modal, se aplican antes de asignar (van a BD y Sheet).
   const pendiente = mergePendienteEditado(pendienteBD, req.body || {});
   try {
-    const result = await asignarFacturaPendiente({ pendiente, local, getToken: getDriveAccessToken, dbGet, dbAll, dbRun, backupFn: null });
+    const result = await asignarFacturaPendiente({ pendiente, local, reparto: repartoEmpresa ? "empresa" : null, getToken: getDriveAccessToken, dbGet, dbAll, dbRun, backupFn: null });
     res.json({ ok: true, ...result });
     // Asegura Sheets por local + maestro consistentes con la BD (fondo, no fatal).
     (async () => { try { await resincronizarSheetsFactura({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun }, local, pendiente.fecha); } catch (e) { console.error("[asignar] resync:", e.message); } })();
@@ -2679,9 +2691,11 @@ app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async
         p
       ),
       dbAll(
+        // El gasto de empresa se saca de aquí y se reparte aparte: si contara entero al local
+        // donde está archivado, ese local cargaría con la gestoría de los tres.
         `SELECT local, COUNT(*) AS num, ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
          FROM facturas
-         WHERE ${SIN_ALBARANES} AND TO_CHAR(fecha::date, 'YYYY') = ?${andLocal}
+         WHERE ${SIN_ALBARANES} AND COALESCE(reparto,'') <> 'empresa' AND TO_CHAR(fecha::date, 'YYYY') = ?${andLocal}
          GROUP BY local ORDER BY total DESC`,
         p
       ),
@@ -2694,7 +2708,41 @@ app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async
         p
       )
     ]);
-    res.json({ ok: true, data: { mensual, topProveedores, porLocal, resumenAnual, año, local: local || null } });
+    // ── El gasto que es de toda una empresa, repartido entre sus locales ──────
+    // Elegido: proporcional a las ventas de cada local. Con un freno: si a alguno le faltan
+    // las ventas del año, se reparte a partes iguales entre todos —dejarlo fuera concentraría
+    // el gasto en los demás, y eso no es más justo, es un número falso—. Y se DICE con qué se
+    // ha repartido, porque un número repartido sin explicación parece un número medido.
+    const deEmpresa = await dbAll(
+      `SELECT empresa, ROUND(SUM(COALESCE(total,0))::NUMERIC, 2) AS total
+         FROM facturas
+        WHERE ${SIN_ALBARANES} AND reparto = 'empresa' AND TO_CHAR(fecha::date, 'YYYY') = ?
+        GROUP BY empresa`, [String(año)]).catch(() => []);
+    const repartos = [];
+    if (deEmpresa.length) {
+      const [locEmp, ventas] = await Promise.all([
+        dbAll(`SELECT local, empresa FROM facturas_locales`).catch(() => []),
+        dbAll(`SELECT local, COALESCE(SUM(ventas),0)::float AS ventas FROM ventas_diarias
+                WHERE TO_CHAR(dia::date, 'YYYY') = ? GROUP BY local`, [String(año)]).catch(() => []),
+      ]);
+      const porTotal = new Map(porLocal.map((x) => [x.local, Number(x.total) || 0]));
+      for (const e of deEmpresa) {
+        const suyos = locEmp.filter((l) => l.empresa === e.empresa).map((l) => l.local);
+        if (!suyos.length) continue;
+        const { pesos, base, faltan } = pesosPorVentas(ventas, suyos);
+        for (const parte of repartirImporte(e.total, pesos)) {
+          porTotal.set(parte.local, Math.round(((porTotal.get(parte.local) || 0) + parte.importe) * 100) / 100);
+        }
+        repartos.push({ empresa: e.empresa, total: Number(e.total), locales: suyos.length,
+          texto: textoReparto({ base, faltan, locales: suyos }) });
+      }
+      // Se reconstruye la lista con el reparto dentro, y se vuelve a ordenar por gasto.
+      porLocal.length = 0;
+      for (const [l, total] of [...porTotal.entries()].sort((a, b) => b[1] - a[1])) porLocal.push({ local: l, total });
+      // Con un local en el filtro, solo interesa el suyo.
+      if (local) { const suyo = porLocal.filter((x) => x.local === local); porLocal.length = 0; porLocal.push(...suyo); }
+    }
+    res.json({ ok: true, data: { mensual, topProveedores, porLocal, resumenAnual, repartos, año, local: local || null } });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
@@ -5350,9 +5398,13 @@ app.get("/api/facturas/:id/lineas", requireAuth(["direccion", "contabilidad"]), 
     const scope = localScope(req);
     if (scope && f.local !== scope) return res.status(403).json({ ok: false, error: "Sin acceso" });
     const lineas = await dbAll(
-      `SELECT orden, descripcion, cantidad::float AS cantidad, unidad, precio_unitario::float AS precio_unitario,
+      `SELECT id AS linea_id, orden, descripcion, cantidad::float AS cantidad, unidad, precio_unitario::float AS precio_unitario,
               importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ? ORDER BY orden`, [f.id]);
-    res.json({ ok: true, factura: f, lineas });
+    // La suma de las líneas, calculada aquí: es lo que hay que poner al lado de la base para
+    // que «descuadre» deje de ser una etiqueta y pase a ser un número que se puede perseguir.
+    const suma = Math.round(lineas.reduce((s2, l) => s2 + (Number(l.importe) || 0), 0) * 100) / 100;
+    res.json({ ok: true, factura: f, lineas, suma,
+      diferencia: f.base_imponible != null ? Math.round((suma - Number(f.base_imponible)) * 100) / 100 : null });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el detalle" }); }
 });
 

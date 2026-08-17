@@ -5370,6 +5370,7 @@ async function facAbrirFiltros() {
 // selección concreta. La selección se guarda por id, así que sobrevive a repintar la tabla
 // al filtrar — que es justo el flujo real: filtras, marcas, filtras otra vez, marcas más.
 let FAC_SEL = new Set();
+let FAC_EMPRESAS = [];
 let FAC_TOT = null, FAC_HAY_MAS = false;
 
 /** Suma los agregados que devuelve el servidor (uno por local si se ven varios). */
@@ -5524,6 +5525,9 @@ function facTablaHtml(list) {
     f.revisar ? `<span class="pill warn" style="font-size:10px" title="${esc(facRevisarTxt(f).join(" · "))}">revisar</span>` : "",
     f.lineas_estado === "descuadre" ? `<span class="pill warn" style="font-size:10px" title="El detalle leído no suma la base imponible">descuadre</span>` : "",
     f.conciliado_con ? `<span class="pill ok" style="font-size:10px" title="Conciliada con sus albaranes">conciliada</span>` : "",
+    // Gasto de toda la sociedad: el papel está archivado aquí, pero el importe se reparte entre
+    // los locales de esa empresa al sumar. Sin la marca parecería un gasto de este local.
+    f.reparto === "empresa" ? `<span class="pill" style="font-size:10px" title="Gasto de toda la empresa: al sumar por local se reparte entre los suyos">empresa</span>` : "",
   ].filter(Boolean).join(" ");
   // El establecimiento solo se enseña cuando hay más de uno a la vista: con el ámbito puesto
   // en Blanes, repetir «La Tapeta - Blanes» en cada fila es ancho gastado en decir lo que ya
@@ -5771,7 +5775,7 @@ function facFicha(id) {
   const pills = [
     facPillPago(f),
     f.tipo && f.tipo !== "factura" ? `<span class="pill">${esc(f.tipo)}</span>` : "",
-    f.lineas_estado === "descuadre" ? '<span class="pill warn" title="El detalle leído no suma la base imponible">descuadre</span>' : "",
+    f.lineas_estado === "descuadre" ? `<span class="pill warn" title="${esc(f.lineas_aviso || "El detalle leído no suma la base imponible")}">descuadre</span>` : "",
     f.conciliado_con ? '<span class="pill ok" title="Conciliada con sus albaranes">conciliada</span>' : "",
   ].filter(Boolean).join(" ");
 
@@ -5863,8 +5867,20 @@ function facFicha(id) {
       const j = await apiRaw(`/api/facturas/${encodeURIComponent(id)}/lineas`);
       const ls = j.lineas || [];
       ov.querySelector("#ficNLin").textContent = ls.length ? `${num(ls.length)} línea${ls.length === 1 ? "" : "s"}` : "sin detalle";
+      // QUÉ DESCUADRE ES. La etiqueta decía «descuadre» y ahí se acababa: no se veía cuánto
+      // suman las líneas, cuánto dice la factura ni de cuánto va la cosa. Sin eso no se puede
+      // perseguir, y una factura marcada que no se puede revisar acaba ignorándose.
+      const dif = j.diferencia;
+      const cuadre = dif == null ? ""
+        : Math.abs(dif) <= 0.02
+          ? `<p class="fic-suma"><span class="ok">✓ Las líneas suman la base imponible (${esc(eur2(j.suma))})</span></p>`
+          : `<p class="fic-nota" style="margin:0 0 10px"><b>No cuadra por ${esc(eur2(Math.abs(dif)))}.</b>
+             Las líneas suman <b>${esc(eur2(j.suma))}</b> y la base imponible dice <b>${esc(eur2(f.base_imponible))}</b>.
+             ${dif > 0 ? "Sobra detalle: puede haber una línea repetida o leída de más."
+                       : "Falta detalle: puede haber una línea que no se leyó, o un descuento que no se aplicó."}
+             Corrige la cantidad de una línea abajo, o vuelve a leer el documento desde <b>Productos → sin leer</b>.</p>`;
       cuerpo.innerHTML = ls.length
-        ? `<div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Importe</th></tr></thead>
+        ? cuadre + `<div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Importe</th></tr></thead>
            <tbody>${ls.map((l) => `<tr class="${l.dudosa ? "dudosa" : ""}">
              <td>${esc(l.descripcion || "—")}${l.dudosa ? ' <span class="pill warn" style="font-size:9.5px" title="No se leyó del todo: sus cantidades pueden no ser exactas">dudosa</span>' : ""}</td>
              <td class="r tnum">${l.cantidad != null ? esc(num(l.cantidad)) + (l.unidad ? " " + esc(l.unidad) : "") : "—"}</td>
@@ -6111,6 +6127,8 @@ async function loadFacturas() {
     // Los totales vienen del servidor con el MISMO filtro y sin el tope de 500. Con varios
     // locales se suman los de cada uno: es exacto porque una factura es de un solo local.
     FAC_LIST = (lst && lst.data) || [];
+    // Las empresas se guardan para el desplegable de «toda la empresa» al revisar pendientes.
+    FAC_EMPRESAS = empresas || [];
     FAC_TOT = facSumaTotales(lst);
     FAC_HAY_MAS = !!(lst && lst.hayMas);
     FAC_PEND = pend || [];
@@ -7598,7 +7616,15 @@ function facRevisar(id) {
   if (!p) { toast("Pendiente no encontrada"); return; }
   const sug = p.sugerido || {};
   const fld = (label, key, type = "text", extra = "") => `<div class="field"><label>${label}</label><input data-pf="${key}" type="${type}" ${extra} value="${esc(p[key] != null ? p[key] : "")}"></div>`;
-  const localSel = `<div class="field"><label>Local${sug.local ? ` · <span class="mut">sugerido: ${esc(nombreCortoLocal(sug.local))}</span>` : ""}</label><select id="prLocal"><option value="">Elegir local…</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${sug.local === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`;
+  // «TODA LA EMPRESA» es una opción más del mismo desplegable. La gestoría no es de un local:
+  // ponerle uno le carga un gasto que no es suyo, y dejarla en blanco la deja en la bandeja de
+  // pendientes para siempre, pidiendo una decisión que no se puede tomar.
+  const empresas = [...new Set((FAC_EMPRESAS || []).map((e) => (typeof e === "string" ? e : e.empresa)).filter(Boolean))];
+  const localSel = `<div class="field"><label>Local${sug.local ? ` · <span class="mut">sugerido: ${esc(nombreCortoLocal(sug.local))}</span>` : ""}</label>
+    <select id="prLocal"><option value="">Elegir local…</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${sug.local === l ? "selected" : ""}>${esc(l)}</option>`).join("")}
+      ${empresas.length ? `<optgroup label="Gasto de toda una empresa">${empresas.map((e) => `<option value="empresa:${esc(e)}">Toda la empresa · ${esc(e)}</option>`).join("")}</optgroup>` : ""}
+    </select>
+    <p class="mut" style="margin:6px 0 0;font-size:11.5px">La gestoría, el seguro o el alquiler de la sociedad no son de un local: elígelos como «toda la empresa» y el gasto se reparte entre los suyos.</p></div>`;
   const tipoSel = `<div class="field"><label>Tipo</label><select data-pf="tipo">${["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${p.tipo === t ? "selected" : ""}>${cap(t)}</option>`).join("")}</select></div>`;
   const body = `<div class="revrev">
     <div class="prev"><div class="ld" id="prPrev">Cargando vista previa…</div></div>
@@ -7637,14 +7663,19 @@ function facRevisar(id) {
   })();
   ov.addEventListener("click", (e) => { if ((e.target === ov || e.target.closest("[data-close]")) && blobUrl) URL.revokeObjectURL(blobUrl); });
   ov.querySelector("#prAsignar").addEventListener("click", async () => {
-    const local = ov.querySelector("#prLocal").value;
-    if (!local) { toast("Elige un local"); return; }
-    const payload = { local };
+    const elegido = ov.querySelector("#prLocal").value;
+    if (!elegido) { toast("Elige un local"); return; }
+    // «empresa:Del Amor Uriel SLU» → la factura se guarda sin local y con la marca de reparto.
+    const esEmpresa = elegido.startsWith("empresa:");
+    const local = esEmpresa ? "" : elegido;
+    const payload = esEmpresa ? { empresa: elegido.slice(8), reparto: "empresa" } : { local };
     ov.querySelectorAll("[data-pf]").forEach((el) => { payload[el.getAttribute("data-pf")] = el.value; });
     try {
       await apiSend("POST", "/api/facturas/pendientes/" + encodeURIComponent(id) + "/asignar", payload);
       if (blobUrl) URL.revokeObjectURL(blobUrl);
-      ov.remove(); toast("Factura asignada a " + local + " ✅"); loadFacturas();
+      ov.remove();
+      toast(esEmpresa ? `Guardada como gasto de ${elegido.slice(8)} ✅` : "Factura asignada a " + local + " ✅");
+      loadFacturas();
     } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
   });
 }

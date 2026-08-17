@@ -866,6 +866,11 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   );
   if (enDuda) console.warn(`[Facturas] posible duplicado de #${enDuda.contra.id}: ${resumenMotivos(enDuda.motivos)}`);
   const facturaId = ins?.id;
+  // La marca de «esto es de toda la empresa» va justo después del alta: el documento queda
+  // archivado como cualquier otro y lo único que cambia es cómo se reparte al sumar por local.
+  if (reparto === "empresa" && facturaId) {
+    await dbRun(`UPDATE facturas SET reparto = 'empresa' WHERE id = ?`, [facturaId]).catch(() => {});
+  }
 
   // 8b. El detalle línea a línea. NO fatal: si falla, la factura ya está guardada y lo que
   // se pierde es el desglose, no el gasto.
@@ -1188,7 +1193,12 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
 
 // ── Asignación manual de una factura pendiente ──────────────────────────────
 
-export async function asignarFacturaPendiente({ pendiente, local, getToken, dbGet, dbAll, dbRun, backupFn }) {
+/**
+ * `reparto: "empresa"` — el gasto no es de un local sino de toda la sociedad (la gestoría, el
+ * seguro, el alquiler). El documento se archiva igual, bajo uno de sus locales, porque en algún
+ * sitio tiene que vivir el papel; lo que cambia es cómo se CUENTA, y eso lo marca la columna.
+ */
+export async function asignarFacturaPendiente({ pendiente, local, reparto = null, getToken, dbGet, dbAll, dbRun, backupFn }) {
   // Igual que en el alta: nunca se guarda un local que no sea un establecimiento.
   const canon = canonizarLocal(local);
   if (!canon) throw new Error(`«${local}» no es ningún establecimiento.`);
