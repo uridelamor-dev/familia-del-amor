@@ -33,6 +33,10 @@ export const CAMPOS = {
   sin_nacimiento: { tipo: "bool" },
   sin_email: { tipo: "bool" },
   sin_poblacion: { tipo: "bool" },
+  // Lo que sabemos de la gente: «los celíacos», «los que vienen los martes». Solo cuenta lo
+  // confirmado, y por eso se puede usar para decidir a quién se escribe.
+  hecho_etiqueta: { tipo: "enum", valores: ["dieta", "no_le_gusta", "prefiere_dia", "prefiere_local", "con_ninos", "vive_fuera", "horario", "ocasion", "trabajo", "otro"] },
+  hecho_valor: { tipo: "texto" },
 };
 
 const esFecha = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ""));
@@ -126,6 +130,11 @@ export function describirSegmento(seg = {}) {
   if (seg.sin_nacimiento) p.push("de quienes NO sabemos la fecha de nacimiento");
   if (seg.sin_email) p.push("de quienes no tenemos email");
   if (seg.sin_poblacion) p.push("de quienes no sabemos la población");
+  if (seg.hecho_etiqueta) {
+    const et = { dieta: "en su dieta", no_le_gusta: "que no les gusta", prefiere_dia: "que vienen", prefiere_local: "cuyo local es",
+      con_ninos: "que vienen con niños", vive_fuera: "que viven fuera", horario: "de horario", ocasion: "que celebran", trabajo: "que trabajan en", otro: "de quienes sabemos" }[seg.hecho_etiqueta];
+    p.push(seg.hecho_valor ? `${et} ${seg.hecho_valor}` : `de quienes sabemos algo sobre «${seg.hecho_etiqueta}»`);
+  }
   if (seg.q) p.push(`cuyo nombre o contacto contiene «${seg.q}»`);
 
   if (!p.length) return "Todos los contactos, sin ningún filtro";

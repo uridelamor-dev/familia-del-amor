@@ -64,6 +64,7 @@ import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estado
 import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
 import { claveFalta, ordenarFaltas } from "./src/modules/marketing/faltan.js";
 import { sanearSegmento, describirSegmento } from "./src/modules/marketing/segmento.js";
+import { sanearHecho, agruparHechos, resumenHechos, ETIQUETAS } from "./src/modules/clientes/hechos.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
@@ -930,6 +931,36 @@ async function initDB() {
         finalizado_en TEXT
       )
     `);
+    /**
+     * LO QUE SABEMOS DE CADA CLIENTE. El cuaderno del camarero, escrito.
+     *
+     * Se guarda por TELÉFONO y no por id de lead porque un cliente puede estar en la base
+     * solo por una reserva, sin ficha; el teléfono es lo único que hay siempre y es como se
+     * cruza todo lo demás.
+     *
+     * `texto_original` no es decoración: es lo que separa un dato de un rumor. Y nada se
+     * pisa: un dato nuevo sucede al viejo, así que el historial explica por qué la ficha
+     * dice lo que dice.
+     */
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS cliente_hechos (
+        id SERIAL PRIMARY KEY,
+        telefono TEXT NOT NULL,
+        etiqueta TEXT NOT NULL,
+        valor TEXT NOT NULL,
+        texto_original TEXT,
+        fuente TEXT NOT NULL DEFAULT 'panel',
+        estado TEXT NOT NULL DEFAULT 'propuesto',
+        atribucion_dudosa BOOLEAN NOT NULL DEFAULT FALSE,
+        creado_en TEXT NOT NULL,
+        creado_por TEXT,
+        confirmado_por TEXT,
+        confirmado_en TEXT
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_hechos_tel ON cliente_hechos (RIGHT(regexp_replace(telefono, '[^0-9]', '', 'g'), 9))`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_hechos_etiqueta ON cliente_hechos (etiqueta) WHERE estado = 'confirmado'`);
+
     /**
      * LO QUE NOS PIDEN Y NO PODEMOS FILTRAR.
      *
@@ -3616,6 +3647,18 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   // No es un filtro de marketing al uso: es para poder PEDIR el dato. «Los leads sin fecha de
   // nacimiento» es la lista a la que preguntar cuándo cumplen, y a partir de ahí se les puede
   // felicitar. Sin esto, el hueco no se puede ni ver.
+  // ── SEGMENTAR POR LO QUE SABEMOS DE ELLOS ─────────────────────────────────
+  // «Los celíacos de Blanes» solo se puede pedir si el cuaderno se puede filtrar. Solo entra
+  // lo CONFIRMADO: una propuesta que nadie ha mirado no puede decidir a quién se escribe.
+  if (filtros.hecho_etiqueta) {
+    const cond = ["h.estado = 'confirmado'",
+      "RIGHT(regexp_replace(h.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)",
+      "h.etiqueta = ?"];
+    const par = [String(filtros.hecho_etiqueta)];
+    if (filtros.hecho_valor) { cond.push("h.valor ILIKE ?"); par.push(`%${filtros.hecho_valor}%`); }
+    sql += ` AND EXISTS (SELECT 1 FROM cliente_hechos h WHERE ${cond.join(" AND ")})`;
+    params.push(...par);
+  }
   if (filtros.sin_nacimiento) sql += ` AND COALESCE(c.nacimiento, '') = ''`;
   if (filtros.sin_email) sql += ` AND COALESCE(c.correo, '') = ''`;
   if (filtros.sin_poblacion) sql += ` AND COALESCE(c.poblacion, '') = ''`;
@@ -9677,6 +9720,54 @@ app.get("/api/contactos/poblaciones", requireAuth(["direccion", "marketing"]), a
 // Match por los últimos 9 dígitos del teléfono (robusto al formato +34 / espacios).
 const MATCH_TEL9 = (col) => `RIGHT(regexp_replace(${col}, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(?, '[^0-9]', '', 'g'), 9)`;
 
+// ── Lo que sabemos de un cliente ────────────────────────────────────────────
+// El cuaderno: se lee en su ficha, se escribe a mano y —más adelante— lo irá proponiendo la
+// IA a partir de lo que la gente cuenta por WhatsApp. Ver src/modules/clientes/hechos.js.
+app.get("/api/contactos/:telefono/hechos", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const filas = await dbAll(
+      `SELECT * FROM cliente_hechos WHERE ${MATCH_TEL9("telefono")} ORDER BY creado_en DESC`, [req.params.telefono]);
+    res.json({ ok: true, data: filas, grupos: agruparHechos(filas), etiquetas: ETIQUETAS });
+  } catch (e) {
+    console.error("[hechos] listar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar", data: [], grupos: [] });
+  }
+});
+
+app.post("/api/contactos/:telefono/hechos", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const h = sanearHecho(req.body, { fuente: "panel" });
+    if (!h) return res.status(400).json({ ok: false, error: "Falta la etiqueta o lo que sabemos" });
+    const ahora = isoConOffset(Date.now());
+    const quien = req.user?.nombre || req.user?.username || null;
+    const fila = await dbRun(
+      `INSERT INTO cliente_hechos (telefono, etiqueta, valor, texto_original, fuente, estado, atribucion_dudosa, creado_en, creado_por, confirmado_por, confirmado_en)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+      [req.params.telefono, h.etiqueta, h.valor, h.texto_original, h.fuente, h.estado, h.atribucion_dudosa, ahora, quien, quien, ahora]);
+    res.json({ ok: true, id: fila?.id });
+  } catch (e) {
+    console.error("[hechos] crear:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+// Confirmar o descartar una propuesta. No se borra al descartar: si se borrara, la misma
+// conversación volvería a proponer lo mismo mañana y habría que decidirlo otra vez.
+app.patch("/api/hechos/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const estado = String(req.body?.estado || "");
+    if (!["confirmado", "descartado"].includes(estado)) return res.status(400).json({ ok: false, error: "Estado no válido" });
+    await dbRun(`UPDATE cliente_hechos SET estado = ?, confirmado_por = ?, confirmado_en = ? WHERE id = ?`,
+      [estado, req.user?.nombre || req.user?.username || null, isoConOffset(Date.now()), Number(req.params.id)]);
+    res.json({ ok: true });
+  } catch { res.status(500).json({ ok: false, error: "No se pudo actualizar" }); }
+});
+
+app.delete("/api/hechos/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try { await dbRun(`DELETE FROM cliente_hechos WHERE id = ?`, [Number(req.params.id)]); res.json({ ok: true }); }
+  catch { res.status(500).json({ ok: false, error: "No se pudo borrar" }); }
+});
+
 // Ficha de un contacto: datos, visitas/reservas, estado WhatsApp y consentimiento.
 app.get("/api/contactos/:telefono", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
@@ -10934,7 +11025,14 @@ const server = app.listen(PORT, async () => {
       if (!historico && jid.endsWith("@s.whatsapp.net")) {
         const norm = String(texto || "").trim().toUpperCase();
         if (["BAJA", "STOP", "NO MOLESTAR", "DAR DE BAJA", "UNSUBSCRIBE"].includes(norm)) {
-          try { await setMarketingPref(telefono, { baja: 1 }); console.log(`🔕 Opt-out marketing: ${telefono}`); } catch (e) { console.error("Opt-out:", e.message); }
+          try {
+            await setMarketingPref(telefono, { baja: 1 });
+            // Darse de baja no es solo dejar de recibir: lo que hayamos ido apuntando sobre
+            // esa persona se borra con ella. Guardar el cuaderno de alguien que ha pedido que
+            // le dejes en paz es exactamente lo que no se debe hacer.
+            await dbRun(`DELETE FROM cliente_hechos WHERE ${MATCH_TEL9("telefono")}`, [telefono]).catch(() => {});
+            console.log(`🔕 Opt-out marketing: ${telefono}`);
+          } catch (e) { console.error("Opt-out:", e.message); }
         }
       }
     } catch (e) { console.error("Error guardando mensaje WA:", e.message); }

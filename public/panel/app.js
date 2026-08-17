@@ -2038,6 +2038,7 @@ async function cliFicha(tel) {
   const ov = modal(d.nombre || tel, `<div class="grid" style="gap:12px">
     <div class="card" style="padding:12px 14px"><div class="t2">${esc(tel)}${d.es_contacto_wa ? " · tiene WhatsApp" : ""}</div><div style="margin-top:4px">${esc(d.correo || "Sin email")} · ${esc(d.poblacion || "Sin población")} · ${d.visitas} visita(s)${d.ultimo_local ? " · último: " + esc(d.ultimo_local) : ""}</div><div class="t2" style="margin-top:4px">Cumpleaños: ${esc(fechaNac(d.nacimiento))}</div></div>
     <div class="card" style="padding:12px 14px"><div class="ch"><h3>Consentimiento</h3></div><div style="display:flex;gap:8px;flex-wrap:wrap" data-tel="${esc(tel)}">${chk("opt_in_wa", "Opt-in WhatsApp")}${chk("opt_in_email", "Opt-in Email")}${chk("baja", "Baja (no contactar)")}</div></div>
+    <div id="fichaHechos"></div>
     <div class="card p0"><div class="ch" style="padding:14px 14px 0"><h3>Reservas</h3></div><div class="rows">${resv}</div></div>
     <div style="display:flex;gap:8px;justify-content:flex-end">${d.telefono || tel ? `<button class="btn primary" id="fichaWa">Escribir por WhatsApp</button>` : ""}<button class="btn" data-close>Cerrar</button></div>
   </div>`);
@@ -2048,6 +2049,71 @@ async function cliFicha(tel) {
     catch (err) { toast("Error: " + err.message); cb.checked = !cb.checked; }
   });
   const waBtn = ov.querySelector("#fichaWa"); if (waBtn) waBtn.addEventListener("click", () => { ov.remove(); cliWa(tel, d.nombre || tel); });
+  cliHechos(ov, tel);
+}
+
+/**
+ * LO QUE SABEMOS DE ESTE CLIENTE. El cuaderno del camarero: que viene los martes, que es
+ * celíaca, que vive fuera pero tiene casa aquí. Hoy eso está en la cabeza de quien atiende y
+ * se pierde el día que libra.
+ *
+ * Cada dato va con LA FRASE con la que se dijo. Es lo que separa un dato de un rumor: dentro
+ * de seis meses, «celíaca» a secas no se sabe si lo dijo ella o lo dedujo una máquina.
+ */
+async function cliHechos(ov, tel) {
+  const caja = ov.querySelector("#fichaHechos");
+  if (!caja) return;
+  let j;
+  try { j = await apiRaw(`/api/contactos/${encodeURIComponent(tel)}/hechos`); } catch { return; }
+  const grupos = j.grupos || [];
+  const etiquetas = j.etiquetas || {};
+  const n = grupos.reduce((s2, g) => s2 + g.hechos.length, 0);
+  const propuestos = grupos.flatMap((g) => g.hechos).filter((h) => h.estado === "propuesto").length;
+
+  const linea = (h) => `<div class="row" style="padding:7px 0;align-items:flex-start">
+      <div class="grow" style="min-width:0">
+        <div class="t1">${esc(h.valor)}${h.estado === "propuesto" ? ' <span class="pill warn" style="font-size:9.5px">sin confirmar</span>' : ""}${h.atribucion_dudosa ? ' <span class="pill bad" style="font-size:9.5px" title="La frase parecía hablar de otra persona">¿de quién?</span>' : ""}</div>
+        ${h.texto_original ? `<div class="t2" style="font-style:italic">«${esc(h.texto_original)}»</div>` : ""}
+        <div class="t2">${esc(String(h.creado_en || "").slice(0, 10))} · ${esc(h.fuente === "panel" ? (h.creado_por || "a mano") : h.fuente)}</div>
+      </div>
+      ${h.estado === "propuesto" ? `<button class="btn sm" data-hecho="confirmar" data-id="${h.id}">Es así</button>` : ""}
+      <button class="linkbtn mut" data-hecho="borrar" data-id="${h.id}" style="font-size:12px">Quitar</button>
+    </div>`;
+
+  caja.innerHTML = `<details class="card fold">
+    <summary><h3>Lo que sabemos</h3><span class="foldr">
+      ${propuestos ? `<span class="pill warn" style="font-size:10px">${num(propuestos)} por confirmar</span>` : ""}
+      <span class="mut">${n || "añadir"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    ${grupos.length ? grupos.map((g) => `<div style="margin-bottom:10px">
+      <span class="fic-gt">${esc(g.label)}</span><div class="rows">${g.hechos.map(linea).join("")}</div></div>`).join("")
+      : '<p class="mut" style="margin:0 0 10px">Todavía no hay nada. Lo que cuente por WhatsApp o en la mesa, apúntalo aquí.</p>'}
+    <div class="toolbar" style="padding:0;margin-top:6px">
+      <div class="field" style="max-width:170px"><select id="hEtiqueta">${Object.entries(etiquetas)
+        .map(([k, v]) => `<option value="${esc(k)}">${esc(v.label)}</option>`).join("")}</select></div>
+      <div class="field" style="flex:1;min-width:140px"><input id="hValor" placeholder="p. ej. celíaca" maxlength="120"></div>
+      <button class="btn" data-hecho="add">Apuntar</button>
+    </div>
+    <p class="mut" style="margin:8px 0 0;font-size:11.5px">Solo lo que dice de sí misma. Si se da de baja, esto se borra con ella.</p>
+  </details>`;
+
+  caja.onclick = async (e) => {
+    const b = e.target.closest("[data-hecho]");
+    if (!b) return;
+    const qué = b.getAttribute("data-hecho");
+    try {
+      if (qué === "add") {
+        const valor = caja.querySelector("#hValor").value.trim();
+        if (!valor) return toast("¿Qué apuntamos?");
+        await apiSend("POST", `/api/contactos/${encodeURIComponent(tel)}/hechos`,
+          { etiqueta: caja.querySelector("#hEtiqueta").value, valor });
+      } else if (qué === "confirmar") {
+        await apiSend("PATCH", "/api/hechos/" + b.getAttribute("data-id"), { estado: "confirmado" });
+      } else if (qué === "borrar") {
+        await apiSend("DELETE", "/api/hechos/" + b.getAttribute("data-id"));
+      }
+      cliHechos(ov, tel);
+    } catch (err) { if (err.message !== "noauth") toast("Error: " + err.message); }
+  };
 }
 
 // ════════════════════════ VISTA: RESEÑAS (responder · IA · masivas) ════════════════════════
