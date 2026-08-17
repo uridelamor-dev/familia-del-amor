@@ -386,7 +386,8 @@ describe("un descuadre se puede perseguir y arreglar", () => {
 
   test("y el cuadre se recalcula en el servidor, no en el navegador", () => {
     // Es lo que hace que la etiqueta de «descuadre» desaparezca sola de la lista.
-    assert.match(server, /const v = validarSuma\(lineas, l\.base_imponible\);/);
+    assert.match(server, /async function recalcularCuadre\(facturaId, baseImponible\)/);
+    assert.match(server, /const v = await recalcularCuadre\(l\.factura_id, l\.base_imponible\);/);
   });
 });
 
@@ -397,5 +398,46 @@ describe("descartar en conciliaciones sale donde tiene que salir", () => {
     // parecía a la del servidor.
     assert.match(panel, /const yaConciliada = p\.estado === "conciliada" \|\| p\.estado === "conciliada-parcial";/);
     assert.match(panel, /const ligados = yaConciliada \? \(p\.albaranes \|\| \[\]\)\.map\(\(a\) => a\.id\) : \[\];/);
+  });
+});
+
+describe("la ✕ de descartar tiene que descartar", () => {
+  test("nada de `stopPropagation` en el botón", () => {
+    // Lo llevaba para que el clic no marcara la casilla —la fila es un <label>— y con eso el
+    // evento no llegaba al manejador delegado, que es quien escucha: el botón no hacía nada.
+    // Quien evita que se marque la casilla es el preventDefault() del manejador.
+    const i = panel.indexOf('data-conc="descartar"');
+    const linea = panel.slice(i - 200, i + 260);
+    assert.doesNotMatch(linea, /stopPropagation/);
+    assert.match(panel, /if \(w === "descartar"\) \{ e\.preventDefault\(\);/);
+  });
+});
+
+describe("cerrar una factura que no lleva albarán", () => {
+  test("existe y se guarda con nombre y fecha", () => {
+    // Hay proveedores que no dejan albarán nunca y su factura se queda para siempre en la
+    // lista pidiendo algo que no va a llegar. Es una decisión, no un dato del papel: por eso
+    // se firma.
+    assert.match(server, /app\.post\("\/api\/facturas\/:id\/sin-albaran"/);
+    assert.match(server, /SET sin_albaran_por = \?, sin_albaran_en = \? WHERE id = \?/);
+  });
+
+  test("no se puede cerrar una que ya está conciliada", () => {
+    // Sería contradecir lo que se ve en la propia tarjeta.
+    assert.match(server, /if \(f\.conciliado_con\) return res\.status\(409\)/);
+  });
+
+  test("se puede reabrir, porque el albarán a veces aparece un mes después", () => {
+    assert.match(server, /if \(req\.body\?\.reabrir\)/);
+    assert.match(panel, /data-conc="reabrir"/);
+  });
+
+  test("y no se esconde: tiene su propio filtro", () => {
+    assert.match(panel, /\["cerrada", "Cerradas"\]/);
+  });
+
+  test("cerrar pregunta; reabrir no", () => {
+    // Deshacer tiene que ser más fácil que hacer.
+    assert.match(panel, /if \(!reabrir\) \{\s*\n\s*const ok = await confirmModal\(/);
   });
 });

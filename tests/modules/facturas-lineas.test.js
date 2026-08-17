@@ -484,8 +484,10 @@ describe("corregir a mano la lectura de una compra", () => {
   test("y al corregir se vuelve a mirar si la factura cuadra", () => {
     // Es el sentido de poder corregir: que la etiqueta de «descuadre» desaparezca sola. Sin
     // recalcular, la factura seguiría marcada para siempre y nadie volvería a tocarla.
-    assert.match(fn, /const v = validarSuma\(lineas, l\.base_imponible\);/);
-    assert.match(fn, /v\.cuadra \? "ok" : "descuadre"/);
+    // El recálculo vive en `recalcularCuadre`, que comparten corregir y borrar: tenerlo dos
+    // veces garantizaría que un día una de las dos se quedara sin actualizar el estado.
+    assert.match(fn, /const v = await recalcularCuadre\(l\.factura_id, l\.base_imponible\);/);
+    assert.match(server, /async function recalcularCuadre\(facturaId, baseImponible\)[\s\S]{0,400}v\.cuadra \? "ok" : "descuadre"/);
   });
 
   test("y solo en los establecimientos que esa persona puede tocar", () => {

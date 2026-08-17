@@ -5901,14 +5901,41 @@ function facFicha(id) {
       // con el modelo. Los tres números están atados (cantidad × precio = importe): manda el
       // que se escribe y el otro se recalcula, para que lo tecleado no cambie por detrás.
       cuerpo.innerHTML = ls.length
-        ? cuadre + `<div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Importe</th></tr></thead>
+        ? cuadre + `<div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Importe</th><th></th></tr></thead>
            <tbody>${ls.map((l) => `<tr class="${l.dudosa ? "dudosa" : ""}" data-lin="${l.linea_id}">
              <td>${esc(l.descripcion || "—")}${l.dudosa ? ' <span class="pill warn" style="font-size:9.5px" title="No se leyó del todo: sus cantidades pueden no ser exactas">dudosa</span>' : ""}</td>
              <td class="r"><input class="lincel" data-campo="cantidad" data-id="${l.linea_id}" value="${esc(l.cantidad != null ? num(l.cantidad) : "")}" inputmode="decimal">${l.unidad ? ` <span class="mut" style="font-size:11px">${esc(l.unidad)}</span>` : ""}</td>
              <td class="r"><input class="lincel" data-campo="precio_unitario" data-id="${l.linea_id}" value="${esc(l.precio_unitario != null ? String(l.precio_unitario).replace(".", ",") : "")}" inputmode="decimal"></td>
-             <td class="r"><input class="lincel" data-campo="importe" data-id="${l.linea_id}" value="${esc(l.importe != null ? String(l.importe).replace(".", ",") : "")}" inputmode="decimal"></td></tr>`).join("")}</tbody></table></div>
-           <p class="mut" style="margin:8px 0 0;font-size:12px">Cambia el número que esté mal y sal del recuadro: se guarda solo y se vuelve a comprobar si la factura cuadra.</p>`
+             <td class="r"><input class="lincel" data-campo="importe" data-id="${l.linea_id}" value="${esc(l.importe != null ? String(l.importe).replace(".", ",") : "")}" inputmode="decimal"></td>
+             ${/* Los SUBTOTALES se cuelan como si fueran un producto: «Cooperativa 128 €» que
+                   en realidad es la suma de las de arriba. Contada como producto infla el
+                   gasto, ensucia «Qué compramos» y descuadra la factura. Se borra. */""}
+             <td class="r"><button class="linkbtn mut" data-linborrar="${l.linea_id}" title="Esta línea no es un producto (un subtotal, un porte…): se borra" style="padding:0 4px">✕</button></td></tr>`).join("")}</tbody></table></div>
+           <p class="mut" style="margin:8px 0 0;font-size:12px">Cambia el número que esté mal y sal del recuadro: se guarda solo y se vuelve a comprobar si la factura cuadra. La ✕ borra una línea que no sea un producto —un subtotal, un porte—.</p>`
         : `<p class="mut" style="margin:0">De esta factura no se ha leído el detalle por líneas.</p>`;
+
+      // El cuadre se repinta desde la respuesta del servidor, que es quien lo calcula.
+      const pintarCuadre = (r) => {
+        const caja = ov.querySelector("#ficCuadre");
+        if (!caja) return;
+        caja.innerHTML = r.cuadra
+          ? `<span class="ok">✓ Ahora sí cuadra: las líneas suman ${esc(eur2(r.suma))}</span>`
+          : `<span class="mal">Siguen sin cuadrar: suman ${esc(eur2(r.suma))} y la base dice ${esc(eur2(r.base))} (${esc(eur2(Math.abs(r.diferencia)))} de diferencia).</span>`;
+      };
+
+      cuerpo.querySelectorAll("[data-linborrar]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const fila = btn.closest("tr");
+          const nombre = fila.querySelector("td")?.textContent.trim() || "esta línea";
+          if (!(await confirmModal(`¿Borrar «${nombre}»? Se borra del detalle leído porque no es un producto. El documento original no se toca.`, { ok: "Borrar", danger: true }))) return;
+          try {
+            const r = await apiSend("DELETE", "/api/facturas/lineas/" + btn.getAttribute("data-linborrar"));
+            fila.remove();
+            pintarCuadre(r);
+            toast(r.cuadra ? "Borrada · la factura ya cuadra ✅" : "Línea borrada");
+          } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+        });
+      });
 
       // Se guarda al salir del recuadro, no en cada tecla: escribiendo «121,49» pasarías por
       // «1», «12», «121»… y se guardaría cuatro veces, tres de ellas mal.
@@ -5930,13 +5957,7 @@ function facFicha(id) {
               otro.value = v == null ? "" : String(v).replace(".", ",");
               otro.dataset.antes = otro.value;
             });
-            // Y el cuadre, en vivo: si con esto cuadra, la etiqueta de descuadre desaparece.
-            const caja = ov.querySelector("#ficCuadre");
-            if (caja) {
-              caja.innerHTML = r.cuadra
-                ? `<span class="ok">✓ Ahora sí cuadra: las líneas suman ${esc(eur2(r.suma))}</span>`
-                : `<span class="mal">Siguen sin cuadrar: suman ${esc(eur2(r.suma))} y la base dice ${esc(eur2(r.base))} (${esc(eur2(Math.abs(r.diferencia)))} de diferencia).</span>`;
-            }
+            pintarCuadre(r);   // si con esto cuadra, la etiqueta de descuadre desaparece
             toast(r.cuadra ? "Corregido · la factura ya cuadra ✅" : "Corregido");
           } catch (e) {
             inp.value = inp.dataset.antes;   // si no se pudo guardar, no puede quedarse el número nuevo en pantalla
@@ -6364,7 +6385,7 @@ async function loadPagos() {
 // Antes esta pestaña se abría con «los dos últimos meses» puesto por su cuenta, así que lo de
 // antes no existía y nadie sabía por qué.
 let CONC = { filtro: "parcial" };
-const CONC_FILTROS = [["parcial", "Por revisar"], ["conciliada-parcial", "A medias"], ["cuadra", "Cuadran"], ["sin-albaranes", "Sin albarán"], ["conciliada", "Ya conciliadas"], ["", "Todas"]];
+const CONC_FILTROS = [["parcial", "Por revisar"], ["conciliada-parcial", "A medias"], ["cuadra", "Cuadran"], ["sin-albaranes", "Sin albarán"], ["conciliada", "Ya conciliadas"], ["cerrada", "Cerradas"], ["", "Todas"]];
 
 async function loadConciliacion() {
   const view = document.getElementById("view");
@@ -6379,6 +6400,8 @@ async function loadConciliacion() {
     if (w === "marcados") return concMarcados(b.getAttribute("data-id"));
     if (w === "deshacer") return concConfirmar(b.getAttribute("data-id"), "");
     if (w === "descartar") { e.preventDefault(); return concDescartar(b.getAttribute("data-f"), b.getAttribute("data-id")); }
+    if (w === "sinalbaran") return concSinAlbaran(b.getAttribute("data-id"));
+    if (w === "reabrir") return concSinAlbaran(b.getAttribute("data-id"), true);
     if (w === "recuperar") { e.preventDefault(); return concRecuperar(b.getAttribute("data-f"), b.getAttribute("data-id")); }
   });
   cont?.addEventListener("change", (e) => {
@@ -6425,12 +6448,17 @@ async function refrescarConciliacion() {
       ${/* Descartar: «este albarán NO es de esta factura». Solo en los PROPUESTOS —lo que ya
             está ligado se suelta deshaciendo—, y con `stopPropagation` porque la fila entera es
             un <label> y el clic marcaría la casilla en vez de descartar. */""}
-      ${esCandidato ? `<button class="linkbtn" data-conc="descartar" data-f="${fid}" data-id="${a.id}" title="No es de esta factura: deja de proponerse aquí" onclick="event.stopPropagation()" style="color:var(--ink3);padding:0 4px">✕</button>` : ""}</label>`;
+      ${/* SIN `stopPropagation`. Lo llevaba para que el clic no marcara la casilla —la fila es
+            un <label>— y con eso el evento no llegaba al manejador de arriba, que es quien
+            escucha: el botón no hacía absolutamente nada. Quien evita que se marque la casilla
+            es el `preventDefault()` del manejador, que sí deja pasar el clic. */""}
+      ${esCandidato ? `<button class="linkbtn" data-conc="descartar" data-f="${fid}" data-id="${a.id}" title="No es de esta factura: deja de proponerse aquí" style="color:var(--ink3);padding:0 4px">✕</button>` : ""}</label>`;
 
   const ficha = (p) => {
     const f = p.factura;
     const est = p.estado === "cuadra" ? ["ok", "Cuadra"] : p.estado === "conciliada" ? ["brand", "Conciliada"]
       : p.estado === "conciliada-parcial" ? ["warn", `A medias · faltan ${eur2(p.falta || 0)}`]
+      : p.estado === "cerrada" ? ["", "Cerrada · sin albarán"]
       : p.estado === "parcial" ? ["warn", "Por revisar"] : ["", "Sin albarán"];
     // «LIGADO» SOLO SI YA ESTÁ CONCILIADA. En una factura sin conciliar, `p.albaranes` no son
     // vínculos: son LA PROPUESTA, y una propuesta es justo lo que se quiere poder descartar.
@@ -6456,6 +6484,13 @@ async function refrescarConciliacion() {
         ${f.drive_url ? `<a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver factura ↗</a>` : ""}
         ${p.estado === "conciliada" || p.estado === "conciliada-parcial"
           ? `<button class="btn sm" data-conc="deshacer" data-id="${f.id}">Deshacer</button>` : ""}
+        ${/* «No tiene albarán»: hay proveedores que no dejan ninguno —la gestoría, el seguro—
+              y su factura se queda en la lista para siempre pidiendo algo que no va a llegar.
+              Con veinte así, lo que hay que revisar se pierde entre lo que no. */""}
+        ${p.estado === "cerrada"
+          ? `<button class="btn sm" data-conc="reabrir" data-id="${f.id}">Reabrir</button>`
+          : (p.estado === "sin-albaranes" || p.estado === "parcial")
+            ? `<button class="btn sm" data-conc="sinalbaran" data-id="${f.id}">No tiene albarán</button>` : ""}
         ${todos.length ? `<button class="btn sm ${p.estado === "cuadra" ? "primary" : ""}" data-conc="marcados" data-id="${f.id}" data-total="${f.total}">Conciliar los marcados</button>` : ""}
       </div></div>`;
   };
@@ -6514,6 +6549,25 @@ async function concDescartar(facturaId, albaranId) {
   try {
     await apiSend("POST", `/api/facturas/${facturaId}/descartar`, { albaranes: [Number(albaranId)] });
     toast("Descartado ✅");
+    refrescarConciliacion();
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
+/**
+ * Cerrar una factura que no lleva albarán —o reabrirla—. Se pregunta al cerrar porque es una
+ * decisión que quita la factura de la cola de revisión; reabrir no, que deshacer tiene que ser
+ * más fácil que hacer.
+ */
+async function concSinAlbaran(id, reabrir = false) {
+  if (!reabrir) {
+    const ok = await confirmModal(
+      "¿Seguro que esta factura no lleva albarán? Sale de la lista de revisión y queda marcada con tu nombre. Se puede reabrir cuando quieras.",
+      { ok: "No tiene albarán" });
+    if (!ok) return;
+  }
+  try {
+    const r = await apiSend("POST", `/api/facturas/${id}/sin-albaran`, reabrir ? { reabrir: true } : {});
+    toast(r.mensaje || "Hecho");
     refrescarConciliacion();
   } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }

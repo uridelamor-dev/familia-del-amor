@@ -651,6 +651,13 @@ async function initDB() {
     // `factor_unidad`: cuántas unidades traía cada paquete cuando la factura da la cantidad en
     // packs y el precio por unidad. Se guarda para poder explicar de dónde sale la cantidad
     // («3 PACK × 150») y para que se vea que ahí ha pasado algo.
+    // `sin_albaran`: quién y cuándo dijo que esta factura NO lleva albarán. Es una decisión,
+    // no un dato del papel, así que se guarda con firma: dentro de tres meses hay que poder
+    // saber quién cerró esto y volver atrás si se equivocó.
+    for (const col of ["sin_albaran_por TEXT", "sin_albaran_en TEXT"]) {
+      try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); }
+      catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
+    }
     // `reparto`: null = de un local; 'empresa' = de toda la sociedad, se reparte al sumar.
     try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS reparto TEXT`); }
     catch (e) { console.error("[DB] alter facturas reparto:", e.message); }
@@ -4685,6 +4692,12 @@ app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"])
           [facturas.map((f) => f.id)]).catch(() => [])
       : []);
     const propuestas = facturas.map((f) => {
+      // Cerrada a mano: no lleva albarán y alguien lo ha dicho. Sale de la cola de revisión
+      // pero no se esconde —tiene su filtro—, y se puede reabrir si el albarán aparece tarde.
+      if (f.sin_albaran_por) {
+        return { factura: f, estado: "cerrada", albaranes: [], candidatos: [], diferencia: 0,
+          motivos: [`Sin albarán · lo marcó ${f.sin_albaran_por}${f.sin_albaran_en ? " el " + String(f.sin_albaran_en).slice(0, 10) : ""}`] };
+      }
       if (f.conciliado_con) {
         const ids = (() => { try { return JSON.parse(f.conciliado_con); } catch { return []; } })();
         const ligados = albaranes.filter((a) => ids.includes(a.id));
@@ -4716,6 +4729,41 @@ app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"])
   } catch (e) {
     console.error("[facturas] conciliación:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo calcular la conciliación" });
+  }
+});
+
+/**
+ * CERRAR una factura que no lleva albarán, y punto.
+ *
+ * Hay proveedores que no dejan albarán nunca —la gestoría, el seguro, un servicio— y su factura
+ * se queda para siempre en la lista de conciliación pidiendo algo que no va a llegar. Con
+ * veinte así, la pantalla deja de servir: lo que hay que revisar se pierde entre lo que no.
+ *
+ * Se guarda QUIÉN lo dijo y CUÁNDO, porque es una decisión y no un dato del papel; y se puede
+ * reabrir, porque a veces el albarán aparece un mes después.
+ */
+app.post("/api/facturas/:id/sin-albaran", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const f = await dbGet(`SELECT id, local, conciliado_con FROM facturas WHERE id = ?`, [req.params.id]);
+    if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
+    if (!puedeAccederLocal(req, f.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const quien = req.user?.nombre || req.user?.username || null;
+
+    if (req.body?.reabrir) {
+      await dbRun(`UPDATE facturas SET sin_albaran_por = NULL, sin_albaran_en = NULL WHERE id = ?`, [f.id]);
+      await ficAuditar("facturas", f.id, "sin_albaran_reabierta", quien, { local: f.local });
+      return res.json({ ok: true, mensaje: "Vuelve a la lista de conciliación." });
+    }
+    // Si ya está conciliada, cerrarla como «sin albarán» sería contradecir lo que se ve.
+    if (f.conciliado_con) return res.status(409).json({ ok: false, error: "Esta factura ya está conciliada con albaranes." });
+
+    await dbRun(`UPDATE facturas SET sin_albaran_por = ?, sin_albaran_en = ? WHERE id = ?`,
+      [quien, isoConOffset(Date.now()), f.id]);
+    await ficAuditar("facturas", f.id, "sin_albaran", quien, { local: f.local });
+    res.json({ ok: true, mensaje: "Cerrada: esta factura no lleva albarán." });
+  } catch (e) {
+    console.error("[facturas] sin albarán:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cerrar" });
   }
 });
 
@@ -5122,6 +5170,53 @@ app.post("/api/facturas/lineas/recuadrar", requireAuth(["direccion", "contabilid
  * 2. Corregir una vale para las demás iguales, si se pide. El mismo proveedor factura el mismo
  *    producto igual todos los meses: arreglar una y dejar treinta mal sería trabajo tirado.
  */
+/**
+ * Vuelve a mirar si las líneas cuadran con la base imponible y actualiza el estado.
+ *
+ * Es lo que hace que la etiqueta de «descuadre» desaparezca sola al arreglar lo que estaba mal.
+ * Sin esto, la factura se quedaría marcada para siempre y nadie volvería a mirarla.
+ */
+async function recalcularCuadre(facturaId, baseImponible) {
+  const lineas = await dbAll(`SELECT importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ?`, [facturaId]);
+  const v = validarSuma(lineas, baseImponible);
+  await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ? WHERE id = ?`,
+    [v.cuadra ? "ok" : "descuadre", mensajeValidacion(v), facturaId]);
+  return v;
+}
+
+/**
+ * BORRAR UNA LÍNEA QUE NO ES UN PRODUCTO.
+ *
+ * La lectura se cuela a veces con los SUBTOTALES: una línea «Cooperativa 128 €» que en realidad
+ * es la suma de las de arriba. Contada como producto, infla el gasto, se cuela en «Qué
+ * compramos» y descuadra la factura contra su base imponible — las tres cosas a la vez.
+ *
+ * Se borra y no se marca como «ignorada» porque no es un producto que no interese: es una línea
+ * que nunca debió existir. El documento original sigue en Drive, que es donde vive la verdad.
+ */
+app.delete("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ ok: false, error: "Falta la línea" });
+    const l = await dbGet(
+      `SELECT l.id, l.descripcion, l.importe::float AS importe, f.id AS factura_id, f.local,
+              f.base_imponible::float AS base_imponible
+         FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id WHERE l.id = ?`, [id]);
+    if (!l) return res.status(404).json({ ok: false, error: "Esa línea ya no existe" });
+    if (!puedeAccederLocal(req, l.local)) return res.status(403).json({ ok: false, error: "No puedes tocar ese establecimiento" });
+
+    await dbRun(`DELETE FROM factura_lineas WHERE id = ?`, [id]);
+    await ficAuditar("facturas", l.factura_id, "linea_borrada", req.user?.nombre || req.user?.username || null,
+      { local: l.local, detalle: { descripcion: l.descripcion, importe: l.importe } });
+
+    const v = await recalcularCuadre(l.factura_id, l.base_imponible);
+    res.json({ ok: true, suma: v.suma, base: v.base, diferencia: v.diferencia ?? 0, cuadra: !!v.cuadra });
+  } catch (e) {
+    console.error("[facturas] borrar línea:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo borrar" });
+  }
+});
+
 app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -5196,15 +5291,7 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
       tambien = otras.length;
     }
 
-    // ── Y SE VUELVE A MIRAR SI LA FACTURA CUADRA ──────────────────────────────
-    // Es el sentido de poder corregir: que al arreglar la línea mal leída desaparezca la
-    // etiqueta de «descuadre». Si el estado no se recalculara, la factura seguiría marcada
-    // para siempre y nadie volvería a tocarla.
-    const lineas = await dbAll(
-      `SELECT importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ?`, [l.factura_id]);
-    const v = validarSuma(lineas, l.base_imponible);
-    await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ? WHERE id = ?`,
-      [v.cuadra ? "ok" : "descuadre", mensajeValidacion(v), l.factura_id]);
+    const v = await recalcularCuadre(l.factura_id, l.base_imponible);
 
     res.json({ ok: true, cantidad, unidad, precio_unitario: precio, importe, tambien,
       suma: v.suma, base: v.base, diferencia: v.diferencia ?? 0, cuadra: !!v.cuadra });
