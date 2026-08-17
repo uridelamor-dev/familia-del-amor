@@ -8192,7 +8192,11 @@ async function campRedactar() {
   const caja = document.getElementById("campProp");
   caja.innerHTML = `<p class="mut" style="margin:14px 0 0">Preparándola…</p>`;
   try {
-    CAMP_PROP = await apiRaw("/api/campanas/redactar", { method: "POST", body: { texto } });
+    // `apiSend`, no `apiRaw`: apiRaw solo hace GET y se le ignoraba el método, así que esto
+    // salía como GET, caía en la ruta `/api/campanas/:id` y Postgres intentaba convertir
+    // «redactar» en un número. El banco de pruebas no lo cazó porque el servidor falso
+    // contestaba a cualquier método.
+    CAMP_PROP = await apiSend("POST", "/api/campanas/redactar", { texto });
   } catch (e) {
     CAMP_PROP = null;
     caja.innerHTML = `<p class="fic-nota" style="margin:14px 0 0">${esc(e.message || "No se pudo preparar")}</p>`;

@@ -10199,6 +10199,11 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
 // Detalle de una campaña con resultados por destinatario.
 app.get("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
+    // Un id que no es un número no se le pasa a la base: Postgres contesta «invalid input
+    // syntax for type integer» y eso sale por pantalla como un error del sistema. Pasó de
+    // verdad —una llamada mal hecha a /api/campanas/redactar cayó aquí— y lo que se leyó fue
+    // un mensaje de Postgres en medio de Campañas.
+    if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ ok: false, error: "No existe" });
     const camp = await dbGet(`SELECT * FROM campanas_wa WHERE id = ?`, [req.params.id]);
     if (!camp) return res.status(404).json({ ok: false, error: "No existe" });
     const envios = await dbAll(`SELECT telefono, nombre, estado, error, enviado_en FROM campana_envios WHERE campana_id = ? ORDER BY id DESC LIMIT 500`, [req.params.id]);

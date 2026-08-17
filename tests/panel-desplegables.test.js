@@ -56,3 +56,13 @@ describe("una respuesta a medias no puede tumbar una pantalla", () => {
     assert.match(fn, /errorCard\("No se han podido cargar los productos/);
   });
 });
+
+describe("las llamadas a la API usan la función que toca", () => {
+  test("`apiRaw` es solo GET: nadie le pasa método ni cuerpo", () => {
+    // Se le pasó `{ method: "POST", body }` y los ignoró: la petición salió como GET, cayó en
+    // la ruta `/api/campanas/:id` y lo que se vio en pantalla fue «invalid input syntax for
+    // type integer: "redactar"». Para mandar algo está `apiSend(metodo, ruta, cuerpo)`.
+    const malas = [...panel.matchAll(/apiRaw\([^)]*,\s*\{/g)].map((m) => m[0]);
+    assert.deepEqual(malas, [], "apiRaw no acepta opciones; usa apiSend");
+  });
+});
