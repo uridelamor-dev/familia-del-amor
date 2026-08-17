@@ -109,3 +109,64 @@ export function resumenHechos(hechos = [], max = 3) {
     .map((h) => h.valor)
     .join(" · ");
 }
+
+// ── El extractor: de las conversaciones a propuestas ────────────────────────
+//
+// Lo de abajo es lo que se puede probar sin llamar a ningún modelo: qué conversaciones vale la
+// pena leer, cómo se le presentan y qué de lo que devuelve es nuevo. La llamada en sí vive en
+// server.js, que es donde están las credenciales.
+
+/** Frases que no dicen nada de nadie. Leer «ok» con un modelo es pagar por nada. */
+const VACÍAS = /^(ok|okey|vale|gracias|graci?es|thx|👍+|👌+|si|sí|no|hola|buenas|adios|adiós|perfecto|genial|hasta luego)[\s!.…]*$/i;
+
+/** ¿Merece la pena leer esta conversación? */
+export function mereceLaPena(mensajes = []) {
+  const útiles = mensajes
+    .map((m) => String(m || "").trim())
+    .filter((m) => m.length > 12 && !VACÍAS.test(m));
+  // Menos de 20 caracteres útiles en total no es una conversación, es un «ok» largo.
+  return útiles.join(" ").length >= 20 ? útiles : null;
+}
+
+/**
+ * Las conversaciones de la tanda, agrupadas por teléfono y recortadas.
+ *
+ * Se recorta por dos motivos: una conversación de cien mensajes cuesta cien veces más de leer,
+ * y lo que alguien contó de sí mismo suele estar en lo último, no en el «hola» de hace un año.
+ */
+export function conversacionesParaLeer(filas = [], { maxMensajes = 12, maxConversaciones = 40 } = {}) {
+  const porTel = new Map();
+  for (const f of filas) {
+    const tel = String(f.telefono || "").trim();
+    if (!tel || !f.mensaje) continue;
+    if (!porTel.has(tel)) porTel.set(tel, []);
+    porTel.get(tel).push(String(f.mensaje));
+  }
+  const salida = [];
+  for (const [telefono, todos] of porTel) {
+    const mensajes = mereceLaPena(todos.slice(-maxMensajes));
+    if (mensajes) salida.push({ telefono, mensajes });
+  }
+  return salida.slice(0, maxConversaciones);
+}
+
+const clave = (h) => `${h.etiqueta}|${String(h.valor || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/\s+/g, " ").trim()}`;
+
+/**
+ * De lo que propone el modelo, lo que de verdad es nuevo.
+ *
+ * Se compara también con lo DESCARTADO: si alguien ya dijo que no, volver a proponérselo cada
+ * noche convierte la ficha en un sitio del que huir.
+ */
+export function hechosNuevos(propuestos = [], yaHay = []) {
+  const vistos = new Set(yaHay.map(clave));
+  const nuevos = [];
+  for (const p of propuestos) {
+    if (!p) continue;
+    const k = clave(p);
+    if (vistos.has(k)) continue;
+    vistos.add(k);
+    nuevos.push(p);
+  }
+  return nuevos;
+}

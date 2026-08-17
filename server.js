@@ -64,7 +64,7 @@ import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estado
 import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
 import { claveFalta, ordenarFaltas } from "./src/modules/marketing/faltan.js";
 import { sanearSegmento, describirSegmento } from "./src/modules/marketing/segmento.js";
-import { sanearHecho, agruparHechos, resumenHechos, ETIQUETAS } from "./src/modules/clientes/hechos.js";
+import { sanearHecho, agruparHechos, resumenHechos, ETIQUETAS, conversacionesParaLeer, hechosNuevos } from "./src/modules/clientes/hechos.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
@@ -9719,6 +9719,134 @@ app.get("/api/contactos/poblaciones", requireAuth(["direccion", "marketing"]), a
 
 // Match por los últimos 9 dígitos del teléfono (robusto al formato +34 / espacios).
 const MATCH_TEL9 = (col) => `RIGHT(regexp_replace(${col}, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(?, '[^0-9]', '', 'g'), 9)`;
+
+/**
+ * EL EXTRACTOR. Una vez al día lee lo que ha contado la gente por WhatsApp y deja PROPUESTAS
+ * en su ficha. No confirma nada: eso lo hace una persona con la frase delante.
+ *
+ * De noche y por tandas, no en cada mensaje: cuesta dinero por conversación, y lo que alguien
+ * cuenta de sí mismo no caduca en unas horas. Se recuerda por dónde iba (`hechos_ultimo_id`),
+ * así que un reinicio no vuelve a leer —ni a pagar— lo mismo.
+ */
+const EXTRACTOR_TOOL = {
+  name: "apuntar_hechos",
+  description: "Apunta lo que el cliente ha contado DE SÍ MISMO en la conversación.",
+  input_schema: {
+    type: "object",
+    properties: {
+      hechos: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            etiqueta: { type: "string", enum: Object.keys(ETIQUETAS) },
+            valor: { type: "string", description: "Corto y en minúsculas: «celíaca», «martes», «vive en Girona»" },
+            texto_original: { type: "string", description: "La frase EXACTA del cliente de la que sale. Sin ella no vale." },
+          },
+          required: ["etiqueta", "valor", "texto_original"],
+        },
+      },
+    },
+    required: ["hechos"],
+  },
+};
+
+const EXTRACTOR_SISTEMA = `Lees conversaciones de clientes de un grupo de restaurantes y apuntas lo que cuentan DE SÍ MISMOS, para que quien les atienda la próxima vez lo sepa.
+
+REGLAS:
+- SOLO lo que la persona dice de SÍ MISMA. «Mi amiga es celíaca» NO se apunta: la celíaca es la amiga, no quien escribe. Ante la duda, no apuntes.
+- Cada hecho lleva la frase EXACTA de la que sale, copiada tal cual. Si no puedes copiar una frase que lo diga, ese hecho no existe.
+- No deduzcas ni interpretes de más. «Ayer cenamos fenomenal» no es una preferencia; «siempre venimos los martes» sí.
+- No apuntes datos de contacto (teléfono, email, dirección), ni nada sobre salud que no sea una dieta o alergia alimentaria dicha por ella misma, ni opiniones sobre el servicio: para eso están las reseñas.
+- Si no hay nada que apuntar, devuelve la lista vacía. Es la respuesta correcta la mayoría de las veces.`;
+
+let _extrayendo = false;
+async function extraerHechosDeConversaciones({ tanda = 40 } = {}) {
+  if (_extrayendo || !process.env.ANTHROPIC_API_KEY) return { saltado: true };
+  _extrayendo = true;
+  const resumen = { conversaciones: 0, propuestos: 0, descartados: 0 };
+  try {
+    const desde = Number(await getConfig("hechos_ultimo_id")) || 0;
+    const filas = await dbAll(
+      `SELECT id, telefono, mensaje FROM whatsapp_messages
+        WHERE id > ? AND COALESCE(mensaje,'') <> '' ORDER BY id LIMIT 400`, [desde]);
+    if (!filas.length) return resumen;
+    const ultimoId = filas[filas.length - 1].id;
+
+    const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    for (const conv of conversacionesParaLeer(filas, { maxConversaciones: tanda })) {
+      // A quien se ha dado de baja no se le lee nada: pidió que le dejaran en paz.
+      const pref = await dbGet(`SELECT baja FROM marketing_prefs WHERE ${MATCH_TEL9("telefono")}`, [conv.telefono]);
+      if (pref?.baja) continue;
+      resumen.conversaciones++;
+      try {
+        const resp = await ai.messages.create({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 700,
+          system: EXTRACTOR_SISTEMA,
+          tools: [EXTRACTOR_TOOL],
+          tool_choice: { type: "tool", name: "apuntar_hechos" },
+          messages: [{ role: "user", content: conv.mensajes.map((m) => `Cliente: ${m}`).join("\n") }],
+        });
+        const uso = (resp.content || []).find((c) => c.type === "tool_use");
+        const crudos = Array.isArray(uso?.input?.hechos) ? uso.input.hechos : [];
+        // El saneado manda: descarta etiquetas inventadas, hechos sin frase, y marca los que
+        // suenan a que hablan de otra persona.
+        const limpios = crudos.map((h) => sanearHecho(h, { fuente: "whatsapp" })).filter(Boolean);
+        resumen.descartados += crudos.length - limpios.length;
+        const yaHay = await dbAll(`SELECT etiqueta, valor FROM cliente_hechos WHERE ${MATCH_TEL9("telefono")}`, [conv.telefono]);
+        const ahora = isoConOffset(Date.now());
+        for (const h of hechosNuevos(limpios, yaHay)) {
+          await dbRun(
+            `INSERT INTO cliente_hechos (telefono, etiqueta, valor, texto_original, fuente, estado, atribucion_dudosa, creado_en, creado_por)
+             VALUES (?,?,?,?,?,?,?,?,?)`,
+            [conv.telefono, h.etiqueta, h.valor, h.texto_original, h.fuente, h.estado, h.atribucion_dudosa, ahora, "Sara"]);
+          resumen.propuestos++;
+        }
+      } catch (e) { console.error("[hechos] conversación:", e.message); }
+    }
+    // Se avanza el marcador PASE LO QUE PASE con las conversaciones sueltas: si una falla y
+    // nos quedamos atrás, mañana se vuelve a leer entera y se paga otra vez.
+    await setConfig("hechos_ultimo_id", ultimoId);
+    if (resumen.propuestos) console.log(`[hechos] ${resumen.propuestos} propuesta(s) de ${resumen.conversaciones} conversación(es)`);
+    return resumen;
+  } catch (e) {
+    console.error("[hechos] extractor:", e.message);
+    return { ...resumen, error: e.message };
+  } finally { _extrayendo = false; }
+}
+
+// Cada seis horas, y la primera vez a los cinco minutos de arrancar: ni urgente ni caro.
+setTimeout(() => { extraerHechosDeConversaciones().catch(() => {}); }, 5 * 60 * 1000);
+setInterval(() => { extraerHechosDeConversaciones().catch(() => {}); }, 6 * 60 * 60 * 1000);
+
+// Para poder lanzarlo a mano y ver qué saca, sin esperar seis horas.
+app.post("/api/hechos/extraer", requireAuth(["direccion"]), async (req, res) => {
+  const r = await extraerHechosDeConversaciones({ tanda: Math.min(Number(req.body?.tanda) || 15, 40) });
+  res.json({ ok: true, ...r });
+});
+
+/**
+ * TODAS las propuestas pendientes, de todos los clientes.
+ *
+ * Sin esto el extractor sería trabajo que nadie ve: deja propuestas en fichas que hay que
+ * abrir una a una para enterarse. Aquí se repasan seguidas, con la frase delante.
+ */
+app.get("/api/hechos/propuestos", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const filas = await dbAll(
+      `SELECT h.*, COALESCE(l.nombre, r.nombre_reserva) AS nombre
+         FROM cliente_hechos h
+         LEFT JOIN LATERAL (SELECT nombre FROM leads l2 WHERE RIGHT(regexp_replace(l2.telefono,'[^0-9]','','g'),9) = RIGHT(regexp_replace(h.telefono,'[^0-9]','','g'),9) LIMIT 1) l ON TRUE
+         LEFT JOIN LATERAL (SELECT nombre_reserva FROM reservas r2 WHERE RIGHT(regexp_replace(r2.telefono,'[^0-9]','','g'),9) = RIGHT(regexp_replace(h.telefono,'[^0-9]','','g'),9) ORDER BY r2.creado_en DESC LIMIT 1) r ON TRUE
+        WHERE h.estado = 'propuesto'
+        ORDER BY h.atribucion_dudosa DESC, h.creado_en DESC LIMIT 200`);
+    res.json({ ok: true, data: filas, etiquetas: ETIQUETAS });
+  } catch (e) {
+    console.error("[hechos] propuestos:", e.message);
+    res.json({ ok: true, data: [] });
+  }
+});
 
 // ── Lo que sabemos de un cliente ────────────────────────────────────────────
 // El cuaderno: se lee en su ficha, se escribe a mano y —más adelante— lo irá proponiendo la

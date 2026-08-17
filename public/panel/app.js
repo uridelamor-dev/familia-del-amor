@@ -1862,7 +1862,8 @@ function renderClientes(j) {
   </div>
   <div class="toolbar" style="margin-top:-4px;align-items:center;gap:18px;flex-wrap:wrap"><span class="mut" style="font-size:12px;font-weight:600;letter-spacing:.02em">FILTROS</span>${cliChk("cCumple", "cumple", "Cumple este mes")}${cliChk("cEmail", "con_email", "Con email")}${cliChk("cTel", "con_telefono", "Con teléfono")}${cliChk("cBaja", "excluir_baja", "Excluir bajas")}
     <div style="flex:1"></div>
-    <button class="linkbtn" data-act="cli-mas-filtros">Más filtros…</button></div>
+    <button class="linkbtn" data-act="cli-mas-filtros">Más filtros…</button>
+    <button class="linkbtn" data-act="cli-propuestas" id="cliPropBtn" style="display:none"></button></div>
   ${CLI_MAS ? `<div class="toolbar" style="margin-top:-4px;flex-wrap:wrap;align-items:flex-end">
     <div class="field" style="max-width:120px"><label>Edad desde</label><input id="cEdadMin" type="number" min="0" max="120" value="${esc(CLIF.edad_min)}" placeholder="—"></div>
     <div class="field" style="max-width:120px"><label>hasta</label><input id="cEdadMax" type="number" min="0" max="120" value="${esc(CLIF.edad_max)}" placeholder="—"></div>
@@ -1886,8 +1887,11 @@ async function loadClientes() {
       CLI_POBLACIONES.length ? null : apiRaw("/api/contactos/poblaciones").catch(() => null),
       apiRaw("/api/contactos" + (cliQS() ? "?" + cliQS() : "")),
     ]);
-    if (pob) CLI_POBLACIONES = pob.data || [];
+    // Si la lista de poblaciones llega con otra forma —o no llega—, la pantalla NO puede
+    // caerse: es un desplegable, no el dato que se viene a ver.
+    if (pob && Array.isArray(pob.data)) CLI_POBLACIONES = pob.data;
     view.innerHTML = renderClientes(j);
+    cliAvisoPropuestas();   // no se espera: es un aviso, no un dato de la lista
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 // Refresca SOLO los resultados (no la barra) para no perder el foco/cursor mientras se escribe.
@@ -1999,6 +2003,67 @@ function cliMasivo() {
     } catch (e) { toast("Error: " + e.message); }
   });
 }
+/**
+ * LO QUE HA APUNTADO SARA Y ESTÁ SIN CONFIRMAR, de todos los clientes seguidos.
+ *
+ * El extractor deja propuestas en fichas que nadie abre: sin un sitio donde repasarlas, sería
+ * trabajo que no ve nadie. Van primero las de atribución dudosa —las de «mi amiga es
+ * celíaca»—, que son justo las que hay que mirar con ojo.
+ */
+async function cliAvisoPropuestas() {
+  const btn = document.getElementById("cliPropBtn");
+  if (!btn) return;
+  let n = 0;
+  try { n = ((await apiRaw("/api/hechos/propuestos")).data || []).length; } catch { return; }
+  if (!n) return;
+  btn.textContent = `${num(n)} ${n === 1 ? "cosa por confirmar" : "cosas por confirmar"}`;
+  btn.style.display = "";
+}
+
+async function cliPropuestas() {
+  let j;
+  try { j = await apiRaw("/api/hechos/propuestos"); } catch (e) { return toast(e.message); }
+  const filas = j.data || [];
+  const et = j.etiquetas || {};
+  const fila = (h) => `<div class="row" style="padding:9px 0;align-items:flex-start" data-prop="${h.id}">
+      <div class="grow" style="min-width:0">
+        <div class="t1">${esc(h.nombre || h.telefono)} · <span class="mut">${esc(et[h.etiqueta]?.label || h.etiqueta)}</span> → <b>${esc(h.valor)}</b>
+          ${h.atribucion_dudosa ? '<span class="pill bad" style="font-size:9.5px" title="La frase parecía hablar de otra persona">¿de quién?</span>' : ""}</div>
+        ${h.texto_original ? `<div class="t2" style="font-style:italic">«${esc(h.texto_original)}»</div>` : ""}
+        <div class="t2">${esc(String(h.creado_en || "").slice(0, 10))} · ${esc(h.fuente)}</div>
+      </div>
+      <button class="btn sm" data-prop-ok="${h.id}">Es así</button>
+      <button class="btn sm" data-prop-no="${h.id}">No</button>
+    </div>`;
+  const ov = modal("Por confirmar", filas.length
+    ? `<p class="mut" style="margin:0 0 12px;line-height:1.55">Lo que ha entendido Sara de lo que cuenta la gente por WhatsApp.
+        Con la frase delante: si no dice lo que pone, es que no. Lo que descartes no se vuelve a proponer.</p>
+       <div class="rows" style="max-height:52vh;overflow:auto">${filas.map(fila).join("")}</div>
+       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn" data-close>Cerrar</button></div>`
+    : `<p class="mut" style="margin:0 0 14px">Nada pendiente. Cuando alguien cuente algo por WhatsApp, aparecerá aquí.</p>
+       <div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn" id="propAhora">Leer las conversaciones ahora</button><button class="btn" data-close>Cerrar</button></div>`);
+
+  ov.querySelector("#propAhora")?.addEventListener("click", async (e) => {
+    e.target.disabled = true; e.target.textContent = "Leyendo…";
+    try {
+      const r = await apiSend("POST", "/api/hechos/extraer", { tanda: 15 });
+      toast(r.saltado ? "La IA no está configurada" : `${r.propuestos || 0} propuesta(s) de ${r.conversaciones || 0} conversación(es)`);
+      ov.remove(); cliPropuestas();
+    } catch (err) { toast("Error: " + err.message); }
+  });
+
+  ov.addEventListener("click", async (e) => {
+    const ok = e.target.closest("[data-prop-ok]"), no = e.target.closest("[data-prop-no]");
+    if (!ok && !no) return;
+    const id = (ok || no).getAttribute(ok ? "data-prop-ok" : "data-prop-no");
+    try {
+      await apiSend("PATCH", "/api/hechos/" + id, { estado: ok ? "confirmado" : "descartado" });
+      ov.querySelector(`[data-prop="${id}"]`)?.remove();
+      cliAvisoPropuestas();
+    } catch (err) { toast("Error: " + err.message); }
+  });
+}
+
 /**
  * APUNTAR UN FILTRO QUE NO TENEMOS.
  *
@@ -8774,6 +8839,7 @@ document.addEventListener("click", (e) => {
       .then(() => campFaltan()).catch(() => toast("No se pudo quitar"));
   }
   else if (act === "cli-mas-filtros") { CLI_MAS = !CLI_MAS; loadClientes(); }
+  else if (act === "cli-propuestas") cliPropuestas();
   else if (act === "cli-falta-filtro") pedirFiltroQueFalta();
   else if (act === "cli-csv") downloadClientesCsv();
   else if (act === "cli-dup") cliDuplicados();

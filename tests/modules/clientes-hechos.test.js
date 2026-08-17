@@ -1,7 +1,9 @@
 // Lo que sabemos de cada cliente: el cuaderno del camarero, escrito.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { atribucionDudosa, sanearHecho, agruparHechos, resumenHechos, ETIQUETAS } from "../../src/modules/clientes/hechos.js";
+import { atribucionDudosa, sanearHecho, agruparHechos, resumenHechos, ETIQUETAS,
+  mereceLaPena, conversacionesParaLeer, hechosNuevos } from "../../src/modules/clientes/hechos.js";
+import { readFileSync } from "node:fs";
 
 describe("«soy celíaca» no es lo mismo que «mi amiga es celíaca»", () => {
   test("hablando de uno mismo, la atribución está clara", () => {
@@ -86,5 +88,82 @@ describe("cómo se enseña", () => {
 
   test("y sin nada confirmado, no se inventa una línea", () => {
     assert.equal(resumenHechos([{ etiqueta: "dieta", valor: "x", estado: "propuesto" }]), "");
+  });
+});
+
+describe("qué conversaciones se leen", () => {
+  test("un «ok» no se manda a un modelo", () => {
+    // Leer «gracias» con IA es pagar por nada, y son la mitad de los mensajes.
+    assert.equal(mereceLaPena(["ok", "gracias", "👍"]), null);
+    assert.equal(mereceLaPena([]), null);
+  });
+
+  test("pero una frase con contenido sí", () => {
+    assert.deepEqual(mereceLaPena(["ok", "soy celíaca, ¿tenéis pan sin gluten?"]),
+      ["soy celíaca, ¿tenéis pan sin gluten?"]);
+  });
+
+  test("se agrupan por teléfono y se recorta la cola", () => {
+    // Cien mensajes cuestan cien veces más de leer, y lo que alguien cuenta de sí mismo suele
+    // estar en lo último, no en el «hola» de hace un año.
+    const filas = Array.from({ length: 30 }, (_, i) => ({ telefono: "600111222", mensaje: `mensaje con contenido número ${i}` }));
+    const convs = conversacionesParaLeer(filas, { maxMensajes: 5 });
+    assert.equal(convs.length, 1);
+    assert.equal(convs[0].mensajes.length, 5);
+    assert.match(convs[0].mensajes[4], /29/, "se queda con los últimos, no con los primeros");
+  });
+
+  test("y hay tope de conversaciones por tanda", () => {
+    const filas = Array.from({ length: 100 }, (_, i) => ({ telefono: `6001112${String(i).padStart(2, "0")}`, mensaje: "una frase con bastante contenido aquí" }));
+    assert.equal(conversacionesParaLeer(filas, { maxConversaciones: 10 }).length, 10);
+  });
+});
+
+describe("no proponer dos veces lo mismo", () => {
+  test("da igual cómo se escriba: «Celíaca» y «celiaca» son el mismo dato", () => {
+    assert.deepEqual(hechosNuevos([{ etiqueta: "dieta", valor: "Celíaca" }], [{ etiqueta: "dieta", valor: "celiaca" }]), []);
+  });
+
+  test("ni lo que ya se descartó una vez", () => {
+    // Volver a proponer cada noche lo que alguien ya dijo que no convierte la ficha en un
+    // sitio del que huir. Por eso lo descartado también cuenta como «ya visto».
+    const yaHay = [{ etiqueta: "dieta", valor: "vegano", estado: "descartado" }];
+    assert.deepEqual(hechosNuevos([{ etiqueta: "dieta", valor: "vegano" }], yaHay), []);
+  });
+
+  test("pero un dato nuevo sí pasa", () => {
+    assert.equal(hechosNuevos([{ etiqueta: "prefiere_dia", valor: "martes" }], [{ etiqueta: "dieta", valor: "celiaca" }]).length, 1);
+  });
+
+  test("y dos propuestas iguales en la misma tanda cuentan como una", () => {
+    assert.equal(hechosNuevos([{ etiqueta: "dieta", valor: "celiaca" }, { etiqueta: "dieta", valor: "Celíaca " }], []).length, 1);
+  });
+});
+
+describe("el extractor, por dentro", () => {
+  const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
+  const i = server.indexOf("async function extraerHechosDeConversaciones");
+  const fn = server.slice(i, server.indexOf("\n// Cada seis horas", i));
+
+  test("a quien se ha dado de baja no se le lee nada", () => {
+    assert.match(fn, /if \(pref\?\.baja\) continue;/);
+  });
+
+  test("lo que devuelve el modelo pasa por el saneado, no se guarda tal cual", () => {
+    assert.match(fn, /sanearHecho\(h, \{ fuente: "whatsapp" \}\)/);
+  });
+
+  test("y se recuerda por dónde iba, para no releer ni pagar dos veces", () => {
+    assert.match(fn, /getConfig\("hechos_ultimo_id"\)/);
+    assert.match(fn, /setConfig\("hechos_ultimo_id", ultimoId\)/);
+  });
+
+  test("al modelo se le dice explícitamente lo de «mi amiga»", () => {
+    assert.match(server, /«Mi amiga es celíaca» NO se apunta/);
+  });
+
+  test("no corre dos veces a la vez", () => {
+    // Dos tandas solapadas leerían las mismas conversaciones y pagarían dos veces.
+    assert.match(server, /if \(_extrayendo \|\| !process\.env\.ANTHROPIC_API_KEY\) return \{ saltado: true \};/);
   });
 });
