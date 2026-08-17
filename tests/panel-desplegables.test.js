@@ -119,3 +119,23 @@ describe("Conciliaciones usa el periodo de la barra", () => {
     assert.match(panel, /const per = periodoVista\("facturas"\);/);
   });
 });
+
+describe("las listas de personas respetan el establecimiento", () => {
+  test("Usuarios y Equipo usan la MISMA función", () => {
+    // Es la misma pregunta —«¿esta persona es de este local?»— y tenerla dos veces garantiza
+    // que un día una de las dos se quede atrás.
+    assert.match(panel, /function personasDelAmbito\(list\)/);
+    assert.match(panel, /const usuariosDelAmbito = personasDelAmbito;/);
+    assert.match(panel, /RRSEG\.workers = personasDelAmbito\(workers \|\| \[\]\);/);
+  });
+
+  test("se mira su local principal Y los extra", () => {
+    // Un encargado de Blanes que también lleva Lloret tiene que salir en los dos.
+    assert.match(panel, /const suyos = \[u\.local, \.\.\.\(Array\.isArray\(u\.locales\) \? u\.locales : \[\]\)\]\.filter\(Boolean\);/);
+  });
+
+  test("y se dice a cuánta gente se está mirando de cuánta", () => {
+    // Una lista de seis cuando el grupo tiene sesenta se lee como que falta gente.
+    assert.match(panel, /\$\{num\(\(RRSEG\.workers \|\| \[\]\)\.length\)\} de \$\{num\(RRSEG\.todos \|\| 0\)\}/);
+  });
+});

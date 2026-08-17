@@ -2412,7 +2412,7 @@ const RR_TIPO_COL = { nota: "var(--border2)", llamada: "var(--brand)", incidenci
 const RR_VAC_TIPOS = ["Jornada completa", "Jornada parcial", "Fines de semana", "Temporal"];
 function rrMesActual() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); }
 function rrAutor() { return (USER && (USER.nombre || USER.username || USER.rol)) || "panel"; }
-let RRSEG = { workers: [], llamadas: [], preguntas: [], sel: null, notas: [], ficha: null, resumen: [], mes: rrMesActual() };
+let RRSEG = { workers: [], todos: 0, llamadas: [], preguntas: [], sel: null, notas: [], ficha: null, resumen: [], mes: rrMesActual() };
 let RRPREG = { mes: rrMesActual(), preguntas: [] };
 function rrParseResp(v) { if (!v) return []; if (Array.isArray(v)) return v; try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; } }
 // Pestañas visibles por rol: el encargado solo ve a su Equipo (contratación y preguntas son
@@ -2430,7 +2430,15 @@ function rrTabs() {
   if (T.length <= 1) return "";
   return `<div class="toolbar" style="margin-bottom:12px">${T.map(([id, lab]) => `<button class="btn ${RRTAB === id ? "primary" : ""}" data-act="rr-tab" data-tab="${id}">${lab}</button>`).join("")}</div>`;
 }
-function rrPh(sub) { return `<div class="ph"><div class="eyebrow">Personas</div><h1>RR. HH.</h1><div class="sub">${esc(sub)}</div></div>`; }
+function rrPh(sub) {
+  // Con un establecimiento puesto se dice a cuánta gente se está mirando y de cuánta: sin eso,
+  // una lista de seis cuando el grupo tiene sesenta se lee como que falta gente.
+  const loc = localActualFE();
+  const ambito = loc
+    ? ` · <b>${esc(nombreCortoLocal(loc))}</b> <span class="mut">(${num((RRSEG.workers || []).length)} de ${num(RRSEG.todos || 0)})</span>`
+    : "";
+  return `<div class="ph"><div class="eyebrow">Personas</div><h1>RR. HH.</h1><div class="sub">${esc(sub)}${ambito}</div></div>`;
+}
 
 // ── Pulso anónimo del equipo ──
 let PULSO = { mes: "", resumen: null, participacion: null, contactos: null };
@@ -2843,7 +2851,12 @@ async function loadRRHH() {
       RRSEG.mes = rrMesActual();
       // El resumen se pide en crudo: además de `data` trae `contacto` (quién no tiene teléfono).
       const [workers, llamadas, preguntas, resumen] = await Promise.all([api("/api/rrhh/trabajadores"), apiOptional("/api/rrhh/llamadas/" + RRSEG.mes), apiOptional("/api/rrhh/preguntas/" + RRSEG.mes), apiRaw("/api/rrhh/resumen?mes=" + RRSEG.mes).catch(() => null)]);
-      RRSEG.workers = workers || []; RRSEG.llamadas = llamadas || []; RRSEG.preguntas = preguntas || [];
+      // Filtrado por el establecimiento de la barra: el servidor devuelve todos a dirección, y
+      // con Blanes puesto se estaban viendo los sesenta del grupo. Se filtra aquí y no en cada
+      // pantalla para que la barra lateral, la ficha y el seguimiento cuenten lo mismo.
+      RRSEG.workers = personasDelAmbito(workers || []);
+      RRSEG.todos = (workers || []).length;
+      RRSEG.llamadas = llamadas || []; RRSEG.preguntas = preguntas || [];
       RRSEG.resumen = (resumen && resumen.data) || []; RRSEG.contacto = (resumen && resumen.contacto) || null;
       if (RRSEG.sel) { const still = RRSEG.workers.find((w) => String(w.id) === String(RRSEG.sel.id)); RRSEG.sel = still || null; }
       view.innerHTML = renderRRSeg();
@@ -2996,21 +3009,25 @@ function chipsModulos(u) {
 }
 
 /**
- * A quién se enseña con un establecimiento puesto en la barra.
+ * A QUIÉN SE ENSEÑA con un establecimiento puesto en la barra. Vale para las dos listas de
+ * personas que hay en el panel —Usuarios y el Equipo de RR. HH.—, porque la pregunta es la
+ * misma: «¿esta persona es de este local?».
  *
- * Dirección NO aparece: no está asignada a ningún local. Se dice en el subtítulo, porque una
- * lista más corta y sin explicación se lee como que falta gente.
+ * Se mira su local principal Y los extra: un encargado de Blanes que también lleva Lloret tiene
+ * que salir en los dos, o al mirar Lloret parecería que ese local no tiene a nadie.
+ *
+ * Quien no tiene local —dirección— NO aparece con un filtro puesto. Se dice en el subtítulo,
+ * porque una lista más corta y sin explicación se lee como que falta gente.
  */
-function usuariosDelAmbito(list) {
+function personasDelAmbito(list) {
   const loc = localActualFE();
   if (!loc) return list || [];
   return (list || []).filter((u) => {
-    // Su local principal y los extra: un encargado de Blanes que también lleva Lloret tiene que
-    // salir en los dos, o al mirar Lloret parecería que ese local no tiene a nadie.
     const suyos = [u.local, ...(Array.isArray(u.locales) ? u.locales : [])].filter(Boolean);
     return suyos.includes(loc);
   });
 }
+const usuariosDelAmbito = personasDelAmbito;
 function renderUsuarios(list) {
   const rows = usuariosDelAmbito(list);
   const loc = localActualFE();
