@@ -291,3 +291,27 @@ describe("la ficha de una factura", () => {
     assert.match(panel, /<div class="t1">\$\{esc\(f\.proveedor \|\| "Sin proveedor"\)\}<\/div>/);
   });
 });
+
+describe("«sin fecha de pago» es una lista de proveedores, no de facturas", () => {
+  test("porque las condiciones se ponen en el proveedor", () => {
+    // Se ponen una vez en su ficha y valen para todas sus facturas, las de hoy y las que
+    // entren mañana. Enseñar la lista factura a factura invita a arreglarlo donde no es.
+    assert.match(panel, /if \(g\.clave === "sin_fecha"\)/);
+    assert.match(panel, /data-pago="prov"[^>]*>Poner condiciones</);
+  });
+
+  test("una factura suelta también se enseña como proveedor", () => {
+    // Si no, media sección serían proveedores y la otra media facturas.
+    assert.match(panel, /const comoProveedor = \(f\) => f\.facturas \? f :/);
+  });
+
+  test("y se agrupan por proveedor Y empresa, que es como se guardan las condiciones", () => {
+    // La regla de pago tiene clave (prov_clave, empresa): dos empresas del grupo necesitan
+    // dos reglas, así que son dos filas por arreglar.
+    assert.match(panel, /const k = `\$\{String\(x\.proveedor \|\| ""\)\.toLowerCase\(\)\}\|\$\{x\.empresa \|\| ""\}`/);
+  });
+
+  test("la cabecera cuenta proveedores, no facturas", () => {
+    assert.match(panel, /provs\.length === 1 \? "proveedor" : "proveedores"/);
+  });
+});

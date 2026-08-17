@@ -6149,8 +6149,56 @@ async function loadPagos() {
     <button class="btn sm" data-pago="pagada" data-id="${f.id}" title="Marcar como pagada">Pagada</button>
     <button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></div>`;
 
+  /**
+   * EN «SIN FECHA DE PAGO» LO QUE SE ARREGLA ES EL PROVEEDOR, NO LA FACTURA.
+   *
+   * Las condiciones de pago se ponen una vez en la ficha del proveedor y valen para todas sus
+   * facturas —las de hoy y las que entren—. Por eso aquí la fila es el proveedor, con lo que
+   * se le debe y un botón que lleva justo a donde se arregla; las facturas quedan dentro, para
+   * mirarlas si hace falta.
+   */
+  const filaProveedor = (g) => `<details class="row" style="display:block"><summary style="display:flex;align-items:center;gap:10px;cursor:pointer;list-style:none">
+      <div class="grow" style="min-width:0">
+        <div class="t1">${esc(g.proveedor || "—")}${g.empresa ? ` <span class="mut" style="font-weight:400">· ${esc(g.empresa)}</span>` : ""}</div>
+        <div class="t2">${num(g.facturas.length)} ${g.facturas.length === 1 ? "factura" : "facturas"} · sin condiciones de pago puestas</div>
+      </div>
+      <b class="tnum">${esc(eur(g.total))}</b>
+      <button class="btn sm primary" data-pago="prov" data-prov="${esc(g.proveedor || "")}">Poner condiciones</button>
+      <span class="mut" style="font-size:12px">ver</span></summary>
+    <div class="rows" style="margin:6px 0 0 12px;border-left:2px solid var(--border);padding-left:12px">
+      ${g.facturas.map((f) => `<div class="row" style="padding:6px 0">
+        <div class="grow"><span class="t2">${esc(fechaCorta(f.fecha) || "")} · nº ${esc(f.numero_factura || "s/n")} · ${esc(nombreCortoLocal(f.local))}</span></div>
+        <span class="tnum">${esc(eur(f.total))}</span>
+        <button class="btn sm" data-pago="pagada" data-id="${f.id}">Pagada</button>
+        <button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></div>`).join("")}
+    </div></details>`;
+
+  // Una factura suelta de un proveedor sin condiciones también es un proveedor por arreglar:
+  // se le da la misma forma para que la sección entera se lea igual.
+  const comoProveedor = (f) => f.facturas ? f : { proveedor: f.proveedor, empresa: f.empresa || null, total: f.total, facturas: [f] };
+
   const grupos = (j.grupos || []).map((g) => {
     if (!g.n) return "";
+    if (g.clave === "sin_fecha") {
+      // Se juntan por proveedor y empresa, que es como se guardan las condiciones.
+      const porProv = new Map();
+      for (const x of g.facturas.map(comoProveedor)) {
+        const k = `${String(x.proveedor || "").toLowerCase()}|${x.empresa || ""}`;
+        if (!porProv.has(k)) porProv.set(k, { ...x, facturas: [...x.facturas] });
+        else {
+          const p = porProv.get(k);
+          p.total = Math.round((p.total + x.total) * 100) / 100;
+          p.facturas.push(...x.facturas);
+        }
+      }
+      const provs = [...porProv.values()].sort((a, b) => b.total - a.total);
+      return `<div class="card p0" style="margin-bottom:14px">
+        <div class="ch" style="padding:16px 18px 6px"><h3>${esc(g.titulo)} <span class="mut" style="font-weight:400">· ${num(provs.length)} ${provs.length === 1 ? "proveedor" : "proveedores"}</span></h3>
+          <b class="tnum">${esc(eur(g.total))}</b></div>
+        <p class="mut" style="margin:0 18px 6px;font-size:12.5px">No es que no corran prisa: es que no sabemos cuándo vencen.
+          <b>Se arregla en el proveedor</b>, no en cada factura: sus condiciones valen para todas las suyas, también las que entren mañana.</p>
+        <div class="rows">${provs.map(filaProveedor).join("")}</div></div>`;
+    }
     return `<div class="card p0" style="margin-bottom:14px">
       <div class="ch" style="padding:16px 18px 6px"><h3>${esc(g.titulo)} <span class="mut" style="font-weight:400">· ${num(g.n)}</span></h3>
         <b class="tnum">${esc(eur(g.total))}</b></div>
