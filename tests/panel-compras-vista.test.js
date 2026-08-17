@@ -441,3 +441,33 @@ describe("cerrar una factura que no lleva albarán", () => {
     assert.match(panel, /if \(!reabrir\) \{\s*\n\s*const ok = await confirmModal\(/);
   });
 });
+
+describe("corregir el proveedor al revisar una factura", () => {
+  test("se puede elegir de los que ya hay, o escribir uno nuevo", () => {
+    // Es el campo que más se corrige y el que más caro sale mal: un nombre nuevo por una
+    // errata parte el gasto en dos proveedores que son el mismo. Con `datalist` caben las dos
+    // cosas —elegir y escribir—, que a veces el proveedor sí es nuevo.
+    assert.match(panel, /<input data-pf="proveedor" id="prProv" list="prProvLista"/);
+    assert.match(panel, /<datalist id="prProvLista">/);
+  });
+
+  test("la lista viene con el NIF de cada uno", () => {
+    // El servidor coge el NIF de su factura MÁS RECIENTE: si la empresa cambió de CIF el
+    // último es el bueno, y una errata vieja no pisa al de siempre.
+    assert.match(server, /array_agg\(nif ORDER BY fecha DESC NULLS LAST, id DESC\)\s*\n?\s*FILTER \(WHERE COALESCE\(nif,''\) <> ''\)/);
+  });
+
+  test("al elegir uno se rellena su CIF", () => {
+    // Arreglar el nombre y dejar el NIF del proveedor anterior es peor que no tocar nada.
+    assert.match(panel, /if \(!nif\.value\.trim\(\) \|\| teniaOtro\) nif\.value = elegido\.nif;/);
+  });
+
+  test("pero un NIF escrito a mano no se pisa", () => {
+    assert.match(panel, /const teniaOtro = provs\.some\(\(x\) => x\.nif && x\.nif === nif\.value && x\.proveedor !== elegido\.proveedor\);/);
+  });
+
+  test("y si la lista no llega, el campo sigue funcionando", () => {
+    // Es una ayuda, no un requisito: sin ella se puede revisar la factura igual.
+    assert.match(panel, /try \{ provs = \(await apiRaw\("\/api\/facturas\/proveedores"\)\)\.data \|\| \[\]; \} catch \{ return; \}/);
+  });
+});

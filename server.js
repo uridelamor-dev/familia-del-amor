@@ -5074,10 +5074,17 @@ app.post("/api/facturas/locales-raros/arreglar", requireAuth(["direccion"]), asy
 app.get("/api/facturas/proveedores", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const scope = localScope(req) || String(req.query.local || "").trim();
+    // Con su NIF: al corregir el proveedor de una factura, elegirlo tiene que traer también su
+    // CIF —si no, se arregla un dato y se deja el otro mal, que es peor que no tocar nada—.
+    // Se coge el NIF de su factura MÁS RECIENTE con NIF: si una empresa cambió de CIF, el
+    // último es el bueno; y una errata vieja no puede pisar al de siempre.
     const filas = await dbAll(
-      `SELECT proveedor, count(*)::int AS n FROM facturas
-       WHERE COALESCE(proveedor,'') <> '' ${scope ? "AND local = ?" : ""}
-       GROUP BY proveedor ORDER BY n DESC, proveedor LIMIT 400`, scope ? [scope] : []);
+      `SELECT proveedor, count(*)::int AS n,
+              (array_agg(nif ORDER BY fecha DESC NULLS LAST, id DESC)
+                 FILTER (WHERE COALESCE(nif,'') <> ''))[1] AS nif
+         FROM facturas
+        WHERE COALESCE(proveedor,'') <> '' ${scope ? "AND local = ?" : ""}
+        GROUP BY proveedor ORDER BY n DESC, proveedor LIMIT 400`, scope ? [scope] : []);
     res.json({ ok: true, data: filas });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar los proveedores" }); }
 });

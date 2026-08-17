@@ -7745,7 +7745,15 @@ function facRevisar(id) {
     <div class="prev"><div class="ld" id="prPrev">Cargando vista previa…</div></div>
     <div>
       <div class="form-grid">
-        ${fld("Proveedor", "proveedor")}${fld("NIF proveedor", "nif")}
+        ${/* EL PROVEEDOR, ELEGIBLE DE LA LISTA. Es el campo que más se corrige y el que más
+              caro sale mal: un nombre nuevo por una errata parte el gasto en dos proveedores
+              que son el mismo. Con `datalist` se puede escribir uno nuevo —que a veces es lo
+              correcto— y a la vez elegir de los que ya hay; y al elegir, se rellena su CIF,
+              porque arreglar el nombre y dejar el NIF viejo es peor que no tocar nada. */""}
+        <div class="field"><label>Proveedor <span class="mut" style="font-weight:400">· escribe o elige de la lista</span></label>
+          <input data-pf="proveedor" id="prProv" list="prProvLista" autocomplete="off" value="${esc(p.proveedor != null ? p.proveedor : "")}">
+          <datalist id="prProvLista"></datalist></div>
+        ${fld("NIF proveedor", "nif")}
         ${fld("Nº documento", "numero_factura")}${fld("Fecha", "fecha", "date")}
         ${tipoSel}${localSel}
         ${fld("Concepto", "concepto")}${fld("Base (€)", "base_imponible", "number", 'step="0.01"')}
@@ -7777,6 +7785,25 @@ function facRevisar(id) {
     }
   })();
   ov.addEventListener("click", (e) => { if ((e.target === ov || e.target.closest("[data-close]")) && blobUrl) URL.revokeObjectURL(blobUrl); });
+  // La lista de proveedores con su NIF. Se pide aparte y sin bloquear: si tarda o falla, el
+  // campo sigue siendo un campo de texto normal y se puede revisar la factura igual.
+  (async () => {
+    let provs = [];
+    try { provs = (await apiRaw("/api/facturas/proveedores")).data || []; } catch { return; }
+    const lista = ov.querySelector("#prProvLista");
+    if (!lista) return;
+    lista.innerHTML = provs.map((x) => `<option value="${esc(x.proveedor)}">${x.nif ? esc(x.nif) + " · " : ""}${num(x.n)} factura(s)</option>`).join("");
+    const inp = ov.querySelector("#prProv"), nif = ov.querySelector('[data-pf="nif"]');
+    inp?.addEventListener("change", () => {
+      const elegido = provs.find((x) => x.proveedor === inp.value);
+      // Solo se rellena si está VACÍO o si el que había es el de otro proveedor: si alguien ha
+      // escrito un NIF a mano, no se le pisa.
+      if (!elegido || !elegido.nif || !nif) return;
+      const teniaOtro = provs.some((x) => x.nif && x.nif === nif.value && x.proveedor !== elegido.proveedor);
+      if (!nif.value.trim() || teniaOtro) nif.value = elegido.nif;
+    });
+  })();
+
   ov.querySelector("#prAsignar").addEventListener("click", async () => {
     const elegido = ov.querySelector("#prLocal").value;
     if (!elegido) { toast("Elige un local"); return; }
