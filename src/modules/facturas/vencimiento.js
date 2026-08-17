@@ -100,6 +100,15 @@ export function diasHasta(hoy, fecha) {
  * quedan bonitos: lo primero es lo que ya se debía, y lo último lo que no tiene fecha —que no
  * es «no urgente», es «no se sabe», y se mira aparte—.
  */
+const MES_CORTO = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+/** «2026-09-15» → «15 sep». Una fecha en formato de base de datos, en medio de una frase, hay
+ *  que descifrarla; y esto se lee de pasada, en una lista. */
+function diaLegible(iso) {
+  const [y, m, d] = String(iso || "").split("-").map(Number);
+  if (!y || !m || !d) return String(iso || "");
+  return `${d} ${MES_CORTO[m - 1] || ""}`.trim();
+}
+
 export function estadoPago({ vencimiento, pagado, fecha } = {}, hoy) {
   if (pagado) return { estado: "pagada", orden: 5, dias: null, texto: "Pagada" };
   if (!esISO(vencimiento)) {
@@ -111,7 +120,7 @@ export function estadoPago({ vencimiento, pagado, fecha } = {}, hoy) {
   if (d < 0) return { estado: "vencida", orden: 0, dias: d, texto: `Vencida hace ${-d} ${-d === 1 ? "día" : "días"}` };
   if (d === 0) return { estado: "hoy", orden: 1, dias: 0, texto: "Vence hoy" };
   if (d <= 7) return { estado: "semana", orden: 2, dias: d, texto: `Vence en ${d} ${d === 1 ? "día" : "días"}` };
-  return { estado: "proxima", orden: 3, dias: d, texto: `Vence el ${vencimiento}` };
+  return { estado: "proxima", orden: 3, dias: d, texto: `Vence el ${diaLegible(vencimiento)}` };
 }
 
 /** Los grupos de la pantalla de pagos, en el orden en que se miran. */
@@ -193,13 +202,24 @@ export function agruparRecibos(filas = []) {
   const mapa = new Map();
   const sueltas = [];
   for (const f of filas) {
-    if (!f?.recibo || !f.vencimiento) { sueltas.push(f); continue; }
+    if (!f) continue;
+    // TAMBIÉN SE JUNTAN LAS QUE NO TIENEN FECHA. Antes solo se agrupaban las de proveedores
+    // con recibo mensual, así que las demás salían de una en una: cuatro facturas de Licefred
+    // de 2, 1, 13 y 9 € eran cuatro filas seguidas con el mismo nombre, y eso se lee como
+    // «este proveedor está duplicado» —que es justo lo que pasó—.
+    //
+    // Juntarlas no dice que se paguen de una vez: dice que a Licefred se le deben 25 €. La
+    // fila lo aclara («4 facturas · sin fecha de pago»), y cada factura sigue estando dentro.
+    if (!f.vencimiento && !f.recibo && f.pagado) { sueltas.push(f); continue; }
     // La EMPRESA entra en la clave: si dos empresas del grupo le compran al mismo proveedor,
     // son dos recibos contra dos cuentas distintas, no uno.
-    const k = `${String(f.prov_clave || f.proveedor || "").toLowerCase()}|${String(f.empresa || "")}|${f.vencimiento}`;
+    const k = `${String(f.prov_clave || f.proveedor || "").toLowerCase()}|${String(f.empresa || "")}|${f.vencimiento || ""}`;
     if (!mapa.has(k)) {
       mapa.set(k, {
-        esRecibo: true, proveedor: f.proveedor, empresa: f.empresa || null, vencimiento: f.vencimiento,
+        // `esRecibo` solo cuando de verdad lo es: un montón de facturas juntas para poder
+        // leerlas no es un cargo del banco, y llamarlo igual sería mentir en la pantalla.
+        esRecibo: !!(f.recibo && f.vencimiento),
+        proveedor: f.proveedor, empresa: f.empresa || null, vencimiento: f.vencimiento || null,
         domiciliado: !!f.domiciliado, total: 0, facturas: [],
       });
     }
@@ -207,6 +227,9 @@ export function agruparRecibos(filas = []) {
     g.total = Math.round((g.total + (Number(f.total) || 0)) * 100) / 100;
     g.facturas.push(f);
   }
-  return [...mapa.values(), ...sueltas]
+  // Un grupo de UNA factura no es un grupo: se enseña como la factura que es, sin la
+  // envoltura de «1 factura».
+  const grupos = [...mapa.values()].map((g) => (g.facturas.length === 1 && !g.esRecibo ? g.facturas[0] : g));
+  return [...grupos, ...sueltas]
     .sort((a, b) => String(a.vencimiento || "9999").localeCompare(String(b.vencimiento || "9999")));
 }

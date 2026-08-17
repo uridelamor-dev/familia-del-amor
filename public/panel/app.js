@@ -6109,11 +6109,15 @@ async function loadPagos() {
 
   // Un recibo mensual es UNA línea con su total: en el banco sale un cargo, no doce. Se puede
   // desplegar para ver de qué facturas sale, que es lo que se mira cuando no cuadra.
+  // Un grupo puede ser DOS cosas distintas y la fila tiene que decir cuál:
+  //  · un recibo de verdad —doce facturas que el banco cobra juntas el día 15—,
+  //  · o varias facturas del mismo proveedor puestas juntas para poder leerlas.
+  // Llamar «recibo» a lo segundo sería decir que se pagan de una vez, y eso no lo sabemos.
   const filaRecibo = (g) => `<details class="row" style="display:block"><summary style="display:flex;align-items:center;gap:10px;cursor:pointer;list-style:none">
       <div class="grow" style="min-width:0">
         <div class="t1"><button class="linkbtn" data-pago="prov" data-prov="${esc(g.proveedor || "")}">${esc(g.proveedor || "—")}</button>
-          <span class="pill" style="margin-left:6px">${g.domiciliado ? "recibo · por banco" : "recibo mensual"}</span></div>
-        <div class="t2">${num(g.facturas.length)} ${g.facturas.length === 1 ? "factura" : "facturas"} de ${esc(mesDeFacturas(g.facturas))} · ${esc(g._estado?.texto || "")}</div>
+          ${g.esRecibo ? `<span class="pill" style="margin-left:6px">${g.domiciliado ? "recibo · por banco" : "recibo mensual"}</span>` : ""}</div>
+        <div class="t2">${num(g.facturas.length)} ${g.facturas.length === 1 ? "factura" : "facturas"} de ${esc(mesDeFacturas(g.facturas))} · ${esc(g._estado?.texto || (g.vencimiento ? "" : "sin fecha de pago"))}</div>
       </div>
       <b class="tnum">${esc(eur(g.total))}</b>
       <span class="mut" style="font-size:12px">ver</span></summary>
@@ -6122,8 +6126,10 @@ async function loadPagos() {
         <div class="grow"><span class="t2">${esc(fechaCorta(f.fecha) || "")} · nº ${esc(f.numero_factura || "s/n")} · ${esc(nombreCortoLocal(f.local))}</span></div>
         <span class="tnum">${esc(eur(f.total))}</span>
         <button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button></div>`).join("")}
-      <div class="row" style="padding:8px 0 2px"><div class="grow mut" style="font-size:12px">Se cargan juntas el ${esc(fechaCorta(g.vencimiento) || "")}.</div>
-        <button class="btn sm" data-pago="recibo" data-ids="${g.facturas.map((f) => f.id).join(",")}">Marcar el recibo como pagado</button></div>
+      <div class="row" style="padding:8px 0 2px"><div class="grow mut" style="font-size:12px">${g.esRecibo
+        ? `Se cargan juntas el ${esc(fechaCorta(g.vencimiento) || "")}.`
+        : "Van juntas para poder leerlas; no sabemos si se pagan de una vez. Ponle condiciones de pago al proveedor en <b>Configuración</b> y saldrá su fecha."}</div>
+        <button class="btn sm" data-pago="recibo" data-ids="${g.facturas.map((f) => f.id).join(",")}">${g.esRecibo ? "Marcar el recibo como pagado" : `Marcar las ${g.facturas.length} como pagadas`}</button></div>
     </div></details>`;
 
   // De qué mes son las facturas de un recibo: es lo que le da sentido al cargo.
@@ -6134,7 +6140,7 @@ async function loadPagos() {
     return new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric" }).format(new Date(Number(y), Number(m) - 1, 15));
   };
 
-  const fila = (f) => f.esRecibo ? filaRecibo(f) : `<div class="row"><div class="grow" style="min-width:0">
+  const fila = (f) => f.facturas ? filaRecibo(f) : `<div class="row"><div class="grow" style="min-width:0">
       <div class="t1"><button class="linkbtn" data-pago="prov" data-prov="${esc(f.proveedor || "")}">${esc(f.proveedor || "—")}</button>
         <span class="mut" style="font-weight:400">· nº ${esc(f.numero_factura || "s/n")}</span></div>
       <div class="t2">${esc(fechaCorta(f.fecha) || "")} · ${esc(nombreCortoLocal(f.local))}${f._estado?.dias != null && f._estado.dias < 0 ? ` · <b>${esc(f._estado.texto)}</b>` : f._estado ? ` · ${esc(f._estado.texto)}` : ""}${f.vencimiento_origen === "factura" ? ` <span class="mut" title="La fecha viene escrita en la propia factura">· del papel</span>` : ""}</div>

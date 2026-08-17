@@ -439,3 +439,57 @@ describe("las condiciones de pago son por proveedor Y EMPRESA", () => {
     assert.match(panel, /Sus facturas pasarán a usar la regla general/);
   });
 });
+
+describe("las facturas del mismo proveedor no se leen como proveedores repetidos", () => {
+  // El caso real: cuatro facturas de Licefred de 2, 1, 13 y 9 € salían en cuatro filas
+  // seguidas con el mismo nombre. Se lee como «este proveedor está duplicado», y no lo está.
+  const f = (id, total, prov, venc = null) =>
+    ({ id, total, proveedor: prov, prov_clave: prov.toLowerCase(), empresa: "X", vencimiento: venc, pagado: 0 });
+
+  test("se juntan aunque no tengan fecha de pago", () => {
+    const g = agruparRecibos([f(1, 2, "LICEFRED"), f(2, 1, "LICEFRED"), f(3, 13, "LICEFRED"), f(4, 9, "LICEFRED")]);
+    assert.equal(g.length, 1);
+    assert.equal(g[0].total, 25);
+    assert.equal(g[0].facturas.length, 4);
+  });
+
+  test("pero juntarlas NO las convierte en un recibo", () => {
+    // Un recibo es un cargo que el banco hace de una vez. Esto solo es una lista legible: si
+    // se llamara igual, la pantalla estaría diciendo algo que no sabemos.
+    assert.equal(agruparRecibos([f(1, 2, "LICEFRED"), f(2, 1, "LICEFRED")])[0].esRecibo, false);
+    const conRecibo = [{ ...f(1, 2, "GRAU", "2026-09-15"), recibo: true }, { ...f(2, 3, "GRAU", "2026-09-15"), recibo: true }];
+    assert.equal(agruparRecibos(conRecibo)[0].esRecibo, true);
+  });
+
+  test("una sola factura se queda como factura, sin envoltura de grupo", () => {
+    const g = agruparRecibos([f(1, 202, "MARISCOS GILMAR")]);
+    assert.equal(g.length, 1);
+    assert.equal(g[0].facturas, undefined, "no debería envolver una sola en un grupo");
+    assert.equal(g[0].id, 1);
+  });
+
+  test("y dos proveedores distintos siguen siendo dos filas", () => {
+    const g = agruparRecibos([f(1, 2, "LICEFRED"), f(2, 1, "LICEFRED"), f(3, 66, "TRANSGOURMET"), f(4, 605, "TRANSGOURMET")]);
+    assert.equal(g.length, 2);
+    assert.deepEqual(g.map((x) => x.total).sort((a, b) => a - b), [3, 671]);
+  });
+
+  test("dos empresas del grupo comprando al mismo proveedor no se mezclan", () => {
+    // Son dos cuentas distintas: juntarlas diría que se paga una vez lo que se paga dos.
+    const a = { ...f(1, 10, "GRAU"), empresa: "Del Amor Uriel SLU" };
+    const b = { ...f(2, 20, "GRAU"), empresa: "Familia del Amor SL" };
+    assert.equal(agruparRecibos([a, b]).length, 2);
+  });
+});
+
+describe("las fechas de la pantalla de pagos se leen", () => {
+  test("«Vence el 15 sep», no «Vence el 2026-09-15»", () => {
+    // Una fecha en formato de base de datos, metida en una frase, hay que descifrarla; y esto
+    // se lee de pasada, en una lista de veinte.
+    assert.equal(estadoPago({ vencimiento: "2026-09-15" }, "2026-08-17").texto, "Vence el 15 sep");
+  });
+
+  test("y una fecha rota no rompe la frase", () => {
+    assert.match(estadoPago({ vencimiento: "2026-09-15" }, "2026-08-17").texto, /^Vence el /);
+  });
+});
