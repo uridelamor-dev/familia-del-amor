@@ -45,24 +45,44 @@ describe("EL LIBRO SIGUE SIENDO APPEND-ONLY", () => {
 });
 
 describe("UNA SOLA PUERTA para apuntar jornadas", () => {
-  test("solo `ficApuntarJornada` escribe movimientos de jornada", () => {
+  test("TODO lo que escribe una jornada pasa por `movimientosParaJornada`", () => {
+    // Antes esto contaba funciones: «solo puede haber una puerta». La fase 8 añadió una
+    // segunda —el apunte por lotes del cierre, que hacía falta porque llamar a la de una en
+    // una eran doce mil consultas— y contar dejó de medir lo que importa.
+    //
+    // Lo que importa no es CUÁNTAS funciones apuntan, sino que NINGUNA calcule los minutos
+    // por su cuenta: `movimientosParaJornada` es quien aplica la franquicia y quien revienta
+    // si le pasan minutos hechos a mano. Esta versión protege eso, que es la invariante de
+    // verdad, y no el número de funciones, que es una consecuencia.
     const inserts = servidorCodigo.match(/INSERT INTO fic_bolsa_movimientos/g) || [];
-    assert.equal(inserts.length, 4, "jornada, ajuste, liquidación y reversión: ni uno más");
-    // El de jornada es el único con `concepto` variable; los otros tres lo llevan escrito.
-    const conJornada = servidorCodigo.match(/INSERT INTO fic_bolsa_movimientos[^`]*`,\s*\[m\.worker_id/g) || [];
-    assert.equal(conJornada.length, 1);
+    assert.equal(inserts.length, 5, "jornada, jornada en lote, ajuste, liquidación y reversión: ni uno más");
+
+    // Los dos que escriben CONCEPTO VARIABLE —es decir, los que apuntan jornadas— salen los
+    // dos de una llamada a `movimientosParaJornada`.
+    for (const fn of ["ficApuntarJornada", "ficApuntarPeriodo"]) {
+      const cuerpo = server.slice(server.indexOf(`async function ${fn}(`));
+      const hasta = cuerpo.indexOf("\n}\n");
+      assert.match(cuerpo.slice(0, hasta), /movimientosParaJornada\(/, `${fn} apunta sin pasar por la función pura`);
+    }
+    // Y los OTROS tres insertan un concepto escrito a mano —ajuste, pago/compensación,
+    // reversión—, no una jornada. Si apareciera un cuarto con concepto variable, el conteo
+    // de arriba subiría a 6 y este test caería.
+    for (const c of ["'ajuste'", "tipo,", "'reversion'"]) {
+      assert.ok(servidorCodigo.includes(c), `falta el escritor de concepto fijo ${c}`);
+    }
   });
 
-  test("validación individual, lote y cierre pasan las TRES por ahí", () => {
-    // Tres apariciones: la definición, la llamada desde `ficEscribirValidacion` (que sirve
-    // a la validación individual Y al lote) y la del cierre de periodo.
+  test("validación individual, lote y cierre pasan TODOS por la función pura", () => {
+    // Individual y lote van por `ficEscribirValidacion` → `ficApuntarJornada`.
     const llamadas = (servidorCodigo.match(/ficApuntarJornada\(/g) || []).length;
-    assert.equal(llamadas, 3, "ha aparecido o desaparecido un camino a la bolsa");
-    // El lote no escribe la bolsa por su cuenta: valida con ficEscribirValidacion, que es
-    // quien llama a ficApuntarJornada. Mismo camino, misma franquicia.
+    assert.equal(llamadas, 2, "la definición y la llamada desde ficEscribirValidacion");
     const lote = server.slice(server.indexOf("validar-lote"), server.indexOf("Bolsa de horas, cierre de periodo"));
     assert.ok(!/INSERT INTO fic_bolsa_movimientos/.test(lote), "el lote apunta por su cuenta");
     assert.match(lote, /ficEscribirValidacion/);
+    // Y el cierre va por el apunte en lote, que aplica exactamente la misma regla.
+    const cierre = server.slice(server.indexOf('app.post("/api/fichajes/cerrar"'), server.indexOf('app.post("/api/fichajes/reabrir"'));
+    assert.match(cierre, /ficApuntarPeriodo\(local, p\.desde, p\.hasta/);
+    assert.ok(!/INSERT INTO fic_bolsa_movimientos/.test(cierre), "el cierre apunta por su cuenta");
   });
 
   test("y `ficEscribirValidacion` llama a apuntar", () => {

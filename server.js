@@ -34,6 +34,7 @@ import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocales
 // hacen en SQL (SQL_ACTIVO_EL_DIA y SQL_ESTUVO_ENTRE) porque hay que filtrar en la consulta,
 // no después. El módulo puro es la referencia y quien las prueba.
 import { activoAhora, bajaEfectiva, turnosTrasLaBaja, marcadoActivo } from "./src/modules/rrhh/vigencia.js";
+import { construirAtencion, agrupar as agruparAtencion } from "./src/modules/rrhh/atencion.js";
 import { periodoAbierto, periodoActual, antiguedadActual, historialLegible, motivoNoRecontratar,
          periodosSolapados, periodoInicialDe, compatibilidadUsers, enPeriodo } from "./src/modules/rrhh/periodos.js";
 import { estadoLaboral, filtrarPorEstado, validarAlta, planDeBaja, firmaPlan,
@@ -10018,6 +10019,86 @@ async function ficApuntarJornada(local, workerId, dia, { autor = "sistema" } = {
 }
 const diferenciaFueraDeTolerancia = (val, plan, tol) => Math.abs(Math.round(val) - Math.round(plan)) > tol;
 
+/**
+ * Lo mismo que `ficApuntarJornada`, pero para un periodo entero y en TRES consultas.
+ *
+ * EL PROBLEMA QUE RESUELVE: cerrar un mes llamaba a `ficApuntarJornada` una vez por jornada,
+ * y cada llamada hacía cuatro lecturas —dos de ellas al MISMO `hor_config` del MISMO local—.
+ * Con 100 personas eran ~12.000 viajes a la base, en serie, dentro de una sola petición HTTP.
+ * Treinta y seis segundos, sin transacción: un timeout dejaba medio periodo apuntado.
+ *
+ * NO CAMBIA NI UNA REGLA. Se llama a `movimientosParaJornada` —la misma función pura, con la
+ * misma franquicia, la misma firma y los mismos contra-asientos— para cada jornada. Lo único
+ * que desaparece es el trabajo repetido: la configuración se lee una vez y los movimientos
+ * que ya existen se traen todos de golpe.
+ *
+ * Recibe `q` para poder ejecutarse DENTRO de la transacción del cierre.
+ */
+async function ficApuntarPeriodo(local, desde, hasta, { autor = "sistema", q } = {}) {
+  const all = q ? async (sql, p) => (await q(sql, p)).rows : dbAll;
+  const one = q ? async (sql, p) => (await q(sql, p)).rows[0] : dbGet;
+
+  const cfg = await one(`SELECT dia_inicio_periodo, tolerancia_bolsa_min FROM hor_config WHERE local = ?`, [local]);
+  const tol = Number.isFinite(Number(cfg?.tolerancia_bolsa_min)) && Number(cfg.tolerancia_bolsa_min) >= 0
+    ? Math.round(Number(cfg.tolerancia_bolsa_min)) : TOLERANCIA_BOLSA_MIN;
+  const diaInicio = cfg?.dia_inicio_periodo ?? 1;
+
+  const jornadas = await all(
+    `SELECT worker_id, dia_negocio, min_planificado, min_validado, firma_eventos
+       FROM fic_jornadas WHERE local = ? AND dia_negocio BETWEEN ? AND ? AND min_validado IS NOT NULL
+      ORDER BY worker_id, dia_negocio`, [local, desde, hasta]);
+  if (!jornadas.length) return { jornadas: 0, insertados: 0 };
+
+  const ids = [...new Set(jornadas.map((j) => Number(j.worker_id)))];
+  const existentes = await all(
+    `SELECT id, worker_id, dia, concepto, minutos, clave_idem, referencia_id
+       FROM fic_bolsa_movimientos WHERE worker_id = ANY(?) AND dia BETWEEN ? AND ? ORDER BY id`,
+    [ids, desde, hasta]);
+  const porPar = new Map();
+  for (const m of existentes) {
+    const k = `${m.worker_id}|${m.dia}`;
+    if (!porPar.has(k)) porPar.set(k, []);
+    porPar.get(k).push(m);
+  }
+
+  const filas = [];
+  for (const j of jornadas) {
+    const plan = Number(j.min_planificado || 0);
+    const { insertar } = movimientosParaJornada({
+      workerId: j.worker_id, local, dia: j.dia_negocio,
+      periodo: periodoDe(j.dia_negocio, { diaInicio }).etiqueta,
+      minValidado: Number(j.min_validado), minPlanificado: plan, toleranciaMin: tol,
+      firma: j.firma_eventos, existentes: porPar.get(`${j.worker_id}|${j.dia_negocio}`) || [], autor,
+      nota: `Validado ${j.min_validado} min sobre ${plan} planificados` +
+        (diferenciaFueraDeTolerancia(Number(j.min_validado), plan, tol)
+          ? ` · diferencia ${Number(j.min_validado) - plan > 0 ? "+" : ""}${Number(j.min_validado) - plan} min, franquicia ${tol}` : ""),
+    });
+    filas.push(...insertar);
+  }
+  if (!filas.length) return { jornadas: jornadas.length, insertados: 0 };
+
+  // De 400 en 400: un INSERT con 13 parámetros por fila y miles de filas se pasa del límite
+  // de parámetros de Postgres, y eso reventaría el cierre justo en las empresas grandes.
+  const ahora = isoConOffset(Date.now());
+  let insertados = 0;
+  const run = q ? (sql, p) => q(sql, p) : (sql, p) => dbRun(sql, p);
+  for (let i = 0; i < filas.length; i += 400) {
+    const trozo = filas.slice(i, i + 400);
+    const huecos = trozo.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?)").join(",");
+    const vals = [];
+    for (const m of trozo) {
+      vals.push(m.worker_id, m.local, m.dia, m.periodo, m.concepto, m.minutos, m.clave_idem,
+                m.referencia_id ?? null, m.nota ?? null, m.autor, ahora, m.dif_min ?? null, m.tolerancia_min ?? null);
+    }
+    const r = await run(
+      `INSERT INTO fic_bolsa_movimientos (worker_id, local, dia, periodo, concepto, minutos, clave_idem,
+                                          referencia_id, nota, autor, creado_en, dif_min, tolerancia_min)
+       VALUES ${huecos} ON CONFLICT (clave_idem) DO NOTHING`, vals);
+    insertados += (r && typeof r.rowCount === "number") ? r.rowCount : trozo.length;
+  }
+  return { jornadas: jornadas.length, insertados };
+}
+
 // Saldo por persona de un periodo, con el arrastre de lo anterior.
 app.get("/api/fichajes/bolsa", requireAuth(FICHAJES_ROLES), async (req, res) => {
   try {
@@ -10338,27 +10419,51 @@ app.post("/api/fichajes/cerrar", requireAuth(["direccion", "rrhh"]), async (req,
       });
     }
 
-    // Antes de cerrar se apunta al libro TODO lo validado del periodo: el cierre tiene que
-    // reflejar lo que se decidió, no lo que hubiera apuntado quien pasara por la pantalla.
-    const validadas = await dbAll(
-      `SELECT worker_id, dia_negocio FROM fic_jornadas WHERE local = ? AND dia_negocio BETWEEN ? AND ? AND min_validado IS NOT NULL`,
-      [local, p.desde, p.hasta]);
-    for (const v of validadas) await ficApuntarJornada(local, v.worker_id, v.dia_negocio, { autor: req.user.username });
+    // ── TODO O NADA ────────────────────────────────────────────────────────────────────
+    // Apuntar el libro y sellar el cierre van en la MISMA transacción. Antes eran N llamadas
+    // sueltas seguidas de un INSERT: si la número 847 fallaba —o si la petición reventaba por
+    // tiempo— quedaban 846 jornadas apuntadas y ningún cierre, y nadie sabía por dónde iba.
+    const client = await pool.connect();
+    let resumen, hash, apuntadas;
+    try {
+      await client.query("BEGIN");
+      const q = (sql, pr = []) => client.query(toPositional(sql), pr);
 
-    const resumen = await dbAll(
-      `SELECT b.worker_id, u.nombre, sum(b.minutos)::int AS minutos FROM fic_bolsa_movimientos b
-       LEFT JOIN users u ON u.id = b.worker_id
-       WHERE b.local = ? AND b.periodo = ? GROUP BY b.worker_id, u.nombre ORDER BY u.nombre`, [local, p.etiqueta]);
-    const cuerpo = { local, periodo: p, resumen, generado: isoConOffset(Date.now()) };
-    const hash = crypto.createHash("sha256").update(serializarCanonico(cuerpo)).digest("hex");
+      // Se bloquea el cierre de ESTE local mientras dura la operación. Dos personas cerrando
+      // agosto a la vez lo apuntarían dos veces; el índice único de `clave_idem` evita
+      // duplicar los movimientos, pero no que se escriban dos filas de cierre.
+      await q(`SELECT pg_advisory_xact_lock(hashtext(?))`, [`cierre:${local}:${p.etiqueta}`]);
+      // Y se vuelve a mirar DENTRO del bloqueo: la comprobación de arriba puede haber
+      // quedado obsoleta mientras se esperaba.
+      const yaCerrado = (await q(
+        `SELECT 1 FROM fic_cierres WHERE local = ? AND etiqueta = ? AND reabierto_en IS NULL LIMIT 1`,
+        [local, p.etiqueta])).rows.length;
+      if (yaCerrado) { await client.query("ROLLBACK"); return res.status(409).json({ ok: false, error: "Ese periodo ya está cerrado" }); }
 
-    await dbRun(
-      `INSERT INTO fic_cierres (local, etiqueta, desde, hasta, resumen, hash, cerrado_en, cerrado_por)
-       VALUES (?,?,?,?,?,?,?,?)`,
-      [local, p.etiqueta, p.desde, p.hasta, JSON.stringify(cuerpo), hash, isoConOffset(Date.now()), req.user.username]);
-    await ficAuditar("cierre", null, "cerrar", req.user.username, { local, detalle: { periodo: p.etiqueta, hash, forzado: !!req.body?.forzar, sinValidar: pend.length } });
+      // El libro, en TRES consultas en vez de cuatro por jornada. Misma función pura, misma
+      // franquicia, mismos contra-asientos: solo se deja de repetir el trabajo.
+      apuntadas = await ficApuntarPeriodo(local, p.desde, p.hasta, { autor: req.user.username, q });
 
-    res.json({ ok: true, periodo: p, hash, resumen, mensaje: `Periodo ${p.etiqueta} cerrado.` });
+      resumen = (await q(
+        `SELECT b.worker_id, u.nombre, sum(b.minutos)::int AS minutos FROM fic_bolsa_movimientos b
+         LEFT JOIN users u ON u.id = b.worker_id
+         WHERE b.local = ? AND b.periodo = ? GROUP BY b.worker_id, u.nombre ORDER BY u.nombre`, [local, p.etiqueta])).rows;
+      const cuerpo = { local, periodo: p, resumen, generado: isoConOffset(Date.now()) };
+      hash = crypto.createHash("sha256").update(serializarCanonico(cuerpo)).digest("hex");
+
+      await q(`INSERT INTO fic_cierres (local, etiqueta, desde, hasta, resumen, hash, cerrado_en, cerrado_por)
+               VALUES (?,?,?,?,?,?,?,?)`,
+        [local, p.etiqueta, p.desde, p.hasta, JSON.stringify(cuerpo), hash, isoConOffset(Date.now()), req.user.username]);
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally { client.release(); }
+
+    await ficAuditar("cierre", null, "cerrar", req.user.username, { local, detalle: { periodo: p.etiqueta, hash, forzado: !!req.body?.forzar, sinValidar: pend.length, jornadas: apuntadas.jornadas, movimientos: apuntadas.insertados } });
+
+    res.json({ ok: true, periodo: p, hash, resumen, jornadas: apuntadas.jornadas,
+      mensaje: `Periodo ${p.etiqueta} cerrado con ${apuntadas.jornadas} jornada(s).` });
   } catch (e) {
     console.error("[fichajes] cerrar:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cerrar el periodo" });
@@ -11252,7 +11357,15 @@ app.post("/api/rrhh/llamada", requireAuth(RRHH_ROLES), async (req, res) => {
 });
 
 // ── RRHH: ficha del trabajador (datos + timeline + documentos) ────────────────
-const HR_CAMPOS_DIR = ["telefono", "email", "dni", "puesto", "fecha_nac", "fecha_alta", "fecha_baja", "foto_url", "activo"];
+// `fecha_alta` y `fecha_baja` YA NO están aquí, y es a propósito. Desde que existen los
+// periodos laborales son la fuente de verdad de cuándo empezó y cuándo acabó cada etapa;
+// dejarlas como dos campos más de un formulario genérico permitía escribirlas sin tocar el
+// periodo, y la ficha acababa diciendo una cosa y su historial otra. Entrar y salir de la
+// empresa son HECHOS, no casillas: se hacen con «Dar de baja», «Recontratar» o, si hay que
+// arreglar una fecha mal puesta, con «Corregir la fecha de incorporación», que sí mueve las
+// dos a la vez. `activo` se queda: apagar una cuenta es una decisión del presente que no
+// abre ni cierra ninguna etapa.
+const HR_CAMPOS_DIR = ["telefono", "email", "dni", "puesto", "fecha_nac", "foto_url", "activo"];
 const HR_CAMPOS_ENC = ["telefono", "email", "puesto", "fecha_nac", "foto_url"]; // encargado: sin DNI/alta/baja/activo
 function esEncargado(req) { return req.user && req.user.rol === "encargado"; }
 
@@ -11327,6 +11440,88 @@ app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, r
         [w.id]).catch(() => null),
     });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── NECESITA TU ATENCIÓN ─────────────────────────────────────────────────────
+//
+// La bandeja operativa. NO es un dashboard: no hay porcentajes, ni medias, ni gráficos.
+// Solo cosas que una persona puede resolver hoy, con el botón que la lleva a resolverlas.
+//
+// SIETE consultas en paralelo, todas acotadas al establecimiento. Ninguna calcula nada
+// nuevo: son las mismas preguntas que ya se hacían por separado en cuatro pantallas.
+app.get("/api/rrhh/atencion", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const hoy = hoyISO();
+    const cfg = await dbGet(`SELECT corte_dia_min, tolerancia_min, hora_cierre_min, dia_inicio_periodo FROM hor_config WHERE local = ?`, [local]);
+    const p = periodoDe(hoy, { diaInicio: cfg?.dia_inicio_periodo ?? 1 });
+    const enc = esEncargado(req);
+
+    const [jornadas, ausPend, trasBaja, docs, contratos, sinAreas, cambios] = await Promise.all([
+      // Jornadas del periodo que piden una decisión. Se reutiliza el cálculo de la fase 1,
+      // que ya está optimizado, en vez de recorrer persona × día otra vez.
+      ficCalcularPeriodo(local, sumaDias(hoy, -13), hoy, { cfg })
+        .then((r) => (r.filas || []).filter((f) => f.estado === "requiere_revision" || f.estado === "validacion_caducada"))
+        .catch(() => []),
+      dbAll(`SELECT a.id, a.worker_id, a.tipo, a.desde, a.hasta, u.nombre FROM hor_ausencias a
+               JOIN users u ON u.id = a.worker_id
+              WHERE u.local = ? AND a.estado = 'pendiente' ORDER BY a.desde LIMIT 50`, [local]),
+      // Turnos que quedaron después de una baja: un cuadrante publicado con alguien que ya
+      // no trabaja aquí, y que el resto del equipo está leyendo.
+      dbAll(`SELECT a.worker_id, u.nombre, u.fecha_baja, s.lunes, s.local, COUNT(*)::int AS turnos
+               FROM hor_asignaciones a JOIN users u ON u.id = a.worker_id
+               JOIN hor_semanas s ON s.id = a.semana_id
+              WHERE s.local = ? AND s.estado = 'publicado' AND u.fecha_baja IS NOT NULL
+                AND a.dia > u.fecha_baja AND a.dia >= ?
+              GROUP BY a.worker_id, u.nombre, u.fecha_baja, s.lunes, s.local ORDER BY s.lunes LIMIT 30`, [local, hoy]),
+      // Documentos por caducar. Se calculaba desde siempre y solo se veía abriendo la ficha
+      // de esa persona y bajando hasta Documentos.
+      dbAll(`SELECT d.id, d.worker_id, d.nombre AS doc, d.tipo, d.fecha_caducidad, d.sensible, u.nombre
+               FROM hr_documentos d JOIN users u ON u.id = d.worker_id
+              WHERE u.local = ? AND d.fecha_caducidad IS NOT NULL AND d.fecha_caducidad <= ?
+                AND u.fecha_baja IS NULL AND COALESCE(u.activo,1) = 1
+              ORDER BY d.fecha_caducidad LIMIT 30`, [local, sumaDias(hoy, 30)]),
+      dbAll(`SELECT c.id, c.worker_id, c.desde, c.hasta, u.nombre FROM hor_contratos c
+               JOIN users u ON u.id = c.worker_id WHERE u.local = ? AND ${SQL_ACTIVO_EL_DIA}`, [local, hoy, hoy]),
+      dbAll(`SELECT id, nombre, local FROM users
+              WHERE local = ? AND rol IN ('trabajador','encargado') AND areas_configuradas_en IS NULL
+                AND ${SQL_ACTIVO_EL_DIA} ORDER BY nombre LIMIT 30`, [local, hoy, hoy]),
+      dbAll(`SELECT c.id, c.worker_id, u.nombre, s.lunes FROM hor_comunicaciones c
+               JOIN users u ON u.id = c.worker_id JOIN hor_semanas s ON s.id = c.semana_id
+              WHERE u.local = ? AND c.entendido_en IS NULL AND s.lunes >= ?
+              ORDER BY s.lunes LIMIT 30`, [local, sumaDias(hoy, -7)]).catch(() => []),
+    ]);
+
+    const solapados = contratosSolapados(contratos);
+    const porWorker = new Map();
+    for (const s of solapados) {
+      for (const id of [s.a?.worker_id ?? s.worker_id, s.b?.worker_id].filter(Boolean)) {
+        porWorker.set(String(id), (porWorker.get(String(id)) || 0) + 1);
+      }
+    }
+    const nombreDe = new Map(contratos.map((c) => [String(c.worker_id), c.nombre]));
+
+    const asuntos = construirAtencion({
+      hoy, local,
+      jornadas: jornadas.slice(0, 30).map((f) => ({ worker_id: f.worker_id, nombre: f.nombre, dia: f.dia, motivo: f.motivo })),
+      ausenciasPendientes: ausPend.map((a) => ({ ...a, tipo_etiqueta: ETIQUETA_TIPO[a.tipo] || a.tipo })),
+      turnosTrasBaja: trasBaja,
+      // El encargado no ve los documentos sensibles, aquí tampoco: la bandeja no es una
+      // puerta de atrás a lo que sus pantallas ya le filtran.
+      documentos: docs.filter((d) => !(enc && (d.sensible === 1 || d.sensible === true)))
+        .map((d) => { const dr = Math.round((Date.parse(d.fecha_caducidad) - Date.parse(hoy)) / 86400000);
+                      return { ...d, diasRestantes: dr, estado: dr < 0 ? "vencido" : "porCaducar" }; }),
+      contratosSolapados: [...porWorker].map(([id, n]) => ({ worker_id: Number(id), nombre: nombreDe.get(id) || "—", n: n + 1 })),
+      sinAreas,
+      cambiosSinVer: cambios.map((c) => ({ ...c, primer_dia: c.lunes })),
+    });
+
+    res.json({ ok: true, local, periodo: p, ...agruparAtencion(asuntos) });
+  } catch (e) {
+    console.error("[rrhh] atencion:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar lo que necesita atención" });
+  }
 });
 
 // ── LA FICHA LABORAL ─────────────────────────────────────────────────────────
@@ -11584,6 +11779,64 @@ app.post("/api/rrhh/trabajador/:id/baja", requireAuth(["direccion", "rrhh"]), as
     await client.query("ROLLBACK").catch(() => {});
     console.error("[rrhh] baja:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo dar de baja" });
+  } finally { client.release(); }
+});
+
+// Corregir una fecha mal puesta. Existe porque el caso es real —«me equivoqué, Juan entró
+// el 14 y no el 15»— y porque al quitar esas dos casillas del editor genérico se quedaba sin
+// forma de arreglarlo. La diferencia con el editor viejo es que esto mueve `users` y el
+// PERIODO a la vez, en una transacción, y deja escrito qué había antes.
+app.post("/api/rrhh/trabajador/:id/corregir-fechas", requireAuth(["direccion", "rrhh"]), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const w = await dbGet(`SELECT id, nombre, local, fecha_alta, fecha_baja FROM users WHERE id = ?`, [Number(req.params.id) || 0]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "No encontrado" });
+    const motivo = String(req.body?.motivo || "").trim();
+    if (motivo.length < MOTIVO_MIN) return res.status(400).json({ ok: false, error: "Explica qué se corrige: dentro de un año nadie recordará por qué cambió una fecha de alta" });
+
+    const ok = (v) => v === null || /^\d{4}-\d{2}-\d{2}$/.test(String(v));
+    const alta = req.body?.fecha_alta === undefined ? undefined : (String(req.body.fecha_alta || "") || null);
+    const baja = req.body?.fecha_baja === undefined ? undefined : (String(req.body.fecha_baja || "") || null);
+    if ((alta !== undefined && (!ok(alta) || alta === null)) || (baja !== undefined && !ok(baja))) {
+      return res.status(400).json({ ok: false, error: "Las fechas tienen que ser días reales" });
+    }
+
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    await q(`SELECT id FROM users WHERE id = ? FOR UPDATE`, [w.id]);
+
+    const periodos = (await q(`SELECT id, worker_id, local, fecha_alta, fecha_baja FROM rrhh_periodos WHERE worker_id = ?`, [w.id])).rows;
+    const actual = periodoActual(periodos);
+    if (!actual) { await client.query("ROLLBACK"); return res.status(409).json({ ok: false, error: "No tiene ninguna incorporación registrada; corrígelo dando de alta o recontratando." }); }
+
+    const nuevaAlta = alta === undefined ? actual.fecha_alta : alta;
+    const nuevaBaja = baja === undefined ? actual.fecha_baja : baja;
+    if (nuevaBaja && nuevaBaja < nuevaAlta) { await client.query("ROLLBACK"); return res.status(400).json({ ok: false, error: "La baja no puede ser anterior al alta" }); }
+    // Y no puede pisar la etapa anterior: dos periodos vivos el mismo día darían dos
+    // antigüedades distintas según cuál se lea primero.
+    const previo = periodos.filter((x) => Number(x.id) !== Number(actual.id))
+      .sort((a, b) => String(a.fecha_alta).localeCompare(String(b.fecha_alta))).slice(-1)[0];
+    if (previo && previo.fecha_baja && nuevaAlta <= previo.fecha_baja) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: `Su etapa anterior terminó el ${previo.fecha_baja}: esta no puede empezar antes.` });
+    }
+
+    await q(`UPDATE rrhh_periodos SET fecha_alta = ?, fecha_baja = ? WHERE id = ?`, [nuevaAlta, nuevaBaja, actual.id]);
+    // `users` se mantiene sincronizado en la MISMA transacción: son la misma verdad.
+    await q(`UPDATE users SET fecha_alta = ?, fecha_baja = ? WHERE id = ?`, [nuevaAlta, nuevaBaja, w.id]);
+    await client.query("COMMIT");
+    invalidarInternos();
+
+    await ficAuditar("usuario", w.id, "corregir_fechas", req.user.username, {
+      local: w.local, workerId: w.id,
+      detalle: { antes: { alta: w.fecha_alta, baja: w.fecha_baja }, ahora: { alta: nuevaAlta, baja: nuevaBaja }, periodo_id: actual.id, motivo },
+    }).catch(() => {});
+    res.json({ ok: true, fecha_alta: nuevaAlta, fecha_baja: nuevaBaja,
+      mensaje: `Corregido: ${w.nombre} entra el ${nuevaAlta}${nuevaBaja ? ` y su último día es el ${nuevaBaja}` : ""}. Queda anotado quién lo cambió y por qué.` });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[rrhh] corregir fechas:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron corregir las fechas" });
   } finally { client.release(); }
 });
 

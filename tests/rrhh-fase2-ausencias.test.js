@@ -139,9 +139,17 @@ describe("aprobar NO toca el cuadrante", () => {
     assert.match(m, /YA PUBLICADAS/);
     assert.match(m, /versión nueva de esa semana/);
   });
-  test("la pantalla lo enseña sin ofrecer arreglarlo por detrás", () => {
-    assert.match(app, /function horAvisoTurnos\(a\)/);
-    assert.ok(!/horAvisoTurnos[\s\S]{0,400}apiSend\("DELETE"/.test(app));
+  test("la pantalla LLEVA a arreglarlo, pero no lo arregla por detrás", () => {
+    // La fase 8 convirtió el aviso en una acción: ofrece ir a la semana afectada con el
+    // establecimiento y la fecha ya puestos. Lo que sigue sin hacer —y es lo que este test
+    // protege— es tocar un horario publicado sin que nadie lo decida.
+    assert.match(app, /function horAvisoTurnos\(a, \{ local = null \} = \{\}\)/);
+    const fn = app.slice(app.indexOf("function horAvisoTurnos"), app.indexOf("// ── Proponer horario"));
+    assert.ok(!/apiSend\(/.test(fn), "el aviso está escribiendo en el servidor");
+    assert.ok(!/DELETE|nueva-version|publicar/.test(fn), "el aviso está modificando el horario");
+    // Solo navega: pone el local y la semana y va.
+    assert.match(fn, /HOR\.lunes = b\.getAttribute\("data-semana"\)/);
+    assert.match(fn, /go\("horarios"\)/);
   });
 });
 

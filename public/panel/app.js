@@ -2850,6 +2850,68 @@ function renderRRFicha() {
   return `<div class="grid" style="gap:16px">${hero}${renderRRLaboral()}${datos}${renderRRPin()}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
 }
 
+// ── Necesita tu atención ────────────────────────────────────────────────────
+// La bandeja operativa. NO es un dashboard: sin porcentajes, sin medias, sin gráficos. Solo
+// cosas que se pueden resolver hoy, cada una con el botón que lleva a resolverlas.
+const AT_NIVEL = { bloqueo: { c: "bad", t: "bloquea" }, decision: { c: "warn", t: "decide" }, aviso: { c: "", t: "avisa" } };
+
+async function rrPintarAtencion(cont) {
+  if (!cont) return;
+  let j;
+  try { j = await apiRaw("/api/rrhh/atencion?local=" + encodeURIComponent(localActualFE() || USER.local || "")); }
+  catch { cont.innerHTML = ""; return; }   // si falla, la pantalla sigue sirviendo
+
+  if (!j.total) {
+    // Un vacío que DICE algo: no es «sin datos», es que no hay nada que hacer.
+    cont.innerHTML = `<div class="card at-vacio"><div class="at-ok">✓</div>
+      <div><b>No hay nada esperándote.</b>
+      <div class="mut" style="font-size:12.5px;margin-top:2px">Ni jornadas por revisar, ni solicitudes sin responder, ni avisos del equipo.</div></div></div>`;
+    return;
+  }
+  cont.innerHTML = `<div class="card at-caja">
+    <div class="ch"><h3>Necesita tu atención</h3>
+      <span class="pill ${j.bloqueos ? "bad" : "warn"}">${num(j.total)}</span></div>
+    ${j.grupos.map((g) => `<div class="at-grupo">
+      <div class="at-cab"><b>${esc(g.titulo)}</b><span class="mut">${g.asuntos.length}</span></div>
+      <div class="rows">${g.asuntos.slice(0, 4).map((a) => `<div class="row at-fila">
+        <span class="pill ${AT_NIVEL[a.nivel].c}">${AT_NIVEL[a.nivel].t}</span>
+        <span class="grow">${esc(a.texto)}</span>
+        <button class="btn sm" data-at='${esc(JSON.stringify(a.accion))}'>${esc(a.accion.etiqueta)}</button>
+      </div>`).join("")}
+      ${g.asuntos.length > 4 ? `<div class="row mut" style="font-size:12px">y ${g.asuntos.length - 4} más</div>` : ""}</div>
+    </div>`).join("")}</div>`;
+
+  cont.onclick = (e) => {
+    const b = e.target.closest("[data-at]");
+    if (!b) return;
+    let a; try { a = JSON.parse(b.getAttribute("data-at")); } catch { return; }
+    rrIrAsunto(a);
+  };
+}
+
+// Cada asunto lleva al SITIO EXACTO con el contexto puesto. Un aviso que obliga a memorizar
+// una fecha y un nombre y buscarlos a mano es justo el trabajo que esto viene a quitar.
+function rrIrAsunto(a) {
+  if (a.local) { HOR.local = a.local; FIC.local = a.local; }
+  switch (a.destino) {
+    case "revision":
+      FIC.tab = "revision"; if (a.dia) FIC.hasta = a.dia; go("fichajes"); break;
+    case "ausencias":
+      HORCFG.tab = "ausencias"; go("horarios"); setTimeout(horConfig, 60); break;
+    case "horarios":
+      if (a.lunes) HOR.lunes = a.lunes; go("horarios"); break;
+    case "areas":
+      HORCFG.tab = "areas"; go("horarios"); setTimeout(horConfig, 60); break;
+    case "ficha":
+    case "documentos":
+      RRTAB = "seguimiento"; go("rrhh");
+      setTimeout(() => rrSelWorker(a.worker_id).then(() => {
+        if (a.destino === "documentos") document.querySelector(".card .ch h3")?.scrollIntoView?.({ behavior: "smooth" });
+      }), 200);
+      break;
+  }
+}
+
 // ── La ficha laboral ────────────────────────────────────────────────────────
 // Todo lo que antes obligaba a recorrer cuatro pantallas: el contrato vivía en Horarios →
 // Configuración, el saldo en Fichajes → Bolsa y las vacaciones en su bandeja. Aquí no se
@@ -3076,13 +3138,7 @@ function rrEditarDatos(id) {
       ov.remove(); toast("Datos guardados ✅"); rrSelWorker(id);
       // Dar de baja no borra los turnos que ya estuvieran puestos —un horario publicado no se
       // cambia por detrás— así que si quedan, se dice y se dice DÓNDE.
-      if (r && r.avisoTurnos) {
-        const a = r.avisoTurnos;
-        modal("Le quedan turnos por delante", `
-          <p style="margin:0 0 12px;line-height:1.6">${esc(a.mensaje)}</p>
-          ${a.semanas.length ? `<p class="mut" style="margin:0 0 16px">Semanas afectadas: ${a.semanas.map(esc).join(" · ")}.</p>` : ""}
-          <div style="display:flex;justify-content:flex-end"><button class="btn primary" data-close>Entendido</button></div>`);
-      }
+      if (r && r.avisoTurnos) horAvisoTurnos(r.avisoTurnos);
     }
     catch (err) { toast("Error: " + err.message); }
   });
@@ -3141,7 +3197,11 @@ function renderRRSinTelefono() {
   </details>`;
 }
 function renderRRSeg() {
-  return rrPh("El equipo, uno a uno · seguimiento de " + RRSEG.mes) + rrTabs() + renderRRResumen() + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
+  // El hueco de la bandeja va ARRIBA y se rellena aparte: es lo primero que tiene que ver un
+  // responsable al entrar, y no debe retrasar el resto de la pantalla si tarda.
+  return rrPh("El equipo, uno a uno · seguimiento de " + RRSEG.mes) + rrTabs()
+    + `<div id="rrAtencion"></div>` + renderRRResumen()
+    + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
 }
 // ── Vacantes ──
 function renderRRVac(rows) {
@@ -3203,6 +3263,7 @@ async function loadRRHH() {
       RRSEG.resumen = (resumen && resumen.data) || []; RRSEG.contacto = (resumen && resumen.contacto) || null;
       if (RRSEG.sel) { const still = RRSEG.workers.find((w) => String(w.id) === String(RRSEG.sel.id)); RRSEG.sel = still || null; }
       view.innerHTML = renderRRSeg();
+      rrPintarAtencion(document.getElementById("rrAtencion"));
     } else if (RRTAB === "pulso") {
       // Dos peticiones separadas a propósito: una sabe QUIÉN contestó, la otra QUÉ se
       // contestó. Nunca se cruzan, ni siquiera aquí.
@@ -3386,7 +3447,15 @@ async function rrDarDeBaja(id, nombre) {
         fecha_baja: ov.querySelector("#bajaFecha").value,
         motivo: ov.querySelector("#bajaMotivo").value.trim(), firma,
       });
-      ov.remove(); toast(r.mensaje || "Baja registrada ✅"); rrSelWorker(id); loadRRHH();
+      ov.remove(); toast(r.mensaje || "Baja registrada ✅");
+      // Si quedan turnos en semanas ya publicadas, se ofrece ir a arreglarlas. Es el
+      // siguiente trabajo, y el sistema sabe exactamente cuál es.
+      const sem = (r.plan && r.plan.semanasAfectadas) || [];
+      if (sem.length) {
+        horAvisoTurnos({ aviso: `${nombre} tiene ${r.plan.publicados.length} turno(s) en semanas ya publicadas. No se han tocado: para quitarlos hay que crear una versión nueva de esa semana.`, semanas: sem },
+          { local: (RRSEG.lab && RRSEG.lab.trabajador.local) || null });
+      }
+      rrSelWorker(id); loadRRHH();
     } catch (e) {
       btn.disabled = false;
       ov.querySelector("#bajaMsg").textContent = e.message;
@@ -4621,11 +4690,30 @@ function horPedirRespuesta() {
  * hay gente organizada con él, y uno en borrador lo quita quien cuadra la semana, que sabe con
  * quién lo va a tapar. Aprobar una ausencia y republicar un horario son dos decisiones.
  */
-function horAvisoTurnos(a) {
-  modal("Ojo: tiene turnos esos días", `
-    <p style="margin:0 0 12px;line-height:1.6">${esc(a.aviso)}</p>
-    ${a.semanas && a.semanas.length ? `<p class="mut" style="margin:0 0 16px">Semanas afectadas: ${a.semanas.map(esc).join(" · ")}.</p>` : ""}
-    <div style="display:flex;justify-content:flex-end"><button class="btn primary" data-close>Entendido</button></div>`);
+// El aviso deja de ser un aviso y pasa a ser una acción.
+//
+// Antes decía «Semanas afectadas: 2026-08-31» y ofrecía un botón «Entendido». Quien lo leía
+// tenía que memorizar la fecha, cerrar, ir a Horarios, buscar la semana y empezar. El
+// sistema ya sabía exactamente cuál era: ahora te lleva.
+function horAvisoTurnos(a, { local = null } = {}) {
+  const semanas = (a.semanas || []).filter(Boolean);
+  const ov = modal("Ojo: tiene turnos esos días", `
+    <p style="margin:0 0 14px;line-height:1.6">${esc(a.aviso || a.mensaje || "")}</p>
+    ${semanas.length ? `<div class="at-semanas">
+      <div class="mut" style="font-size:12px;margin-bottom:6px">${semanas.length === 1 ? "Semana afectada" : "Semanas afectadas"}:</div>
+      ${semanas.map((l) => `<button class="btn sm" data-semana="${esc(l)}">Ver la semana del ${esc(l)}</button>`).join("")}
+    </div>` : ""}
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Ahora no</button></div>`);
+  ov.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-semana]");
+    if (!b) return;
+    // Con el establecimiento y la semana puestos: no hay nada que recordar ni que buscar.
+    if (local) HOR.local = local;
+    HOR.lunes = b.getAttribute("data-semana");
+    ov.remove();
+    go("horarios");
+  });
 }
 
 // ── Proponer horario ────────────────────────────────────────────────────────
@@ -5319,7 +5407,8 @@ async function ficPintarBolsa() {
           ${j.cerrado ? '<span class="fic-tag">periodo cerrado</span>'
             : puedeCerrar ? `<button class="btn sm primary" id="ficCerrar">Cerrar periodo</button>` : ""}
         </div></div>
-      ${j.sinValidar ? `<p class="fic-nota">Quedan <b>${j.sinValidar}</b> ${j.sinValidar === 1 ? "jornada" : "jornadas"} sin validar en este periodo. Sus horas todavía <b>no están</b> en ningún saldo: valídalas en «Revisión».</p>` : ""}
+      ${j.sinValidar ? `<p class="fic-nota">Quedan <b>${j.sinValidar}</b> ${j.sinValidar === 1 ? "jornada" : "jornadas"} sin validar en este periodo. Sus horas todavía <b>no están</b> en ningún saldo.
+        <button class="linkbtn" id="ficIrRevision" style="color:var(--brand);font-weight:600">Ir a validarlas</button></p>` : ""}
       ${j.cerrado && j.cierre ? `<p class="fic-nota">Cerrado el ${esc(String(j.cierre.cerrado_en).slice(0, 10))} por ${esc(j.cierre.cerrado_por)}. Para corregir algo de estas fechas hay que reabrirlo, y queda constancia.</p>` : ""}
       ${j.llegadosTrasCerrar ? `<p class="fic-nota" style="border-color:var(--danger)"><b>${num(j.llegadosTrasCerrar)}</b> ${j.llegadosTrasCerrar === 1 ? "fichaje ha llegado" : "fichajes han llegado"} de estas fechas <b>después</b> de cerrar el periodo (una tablet que subió su cola tarde). Están registrados y <b>no han cambiado el saldo</b>: para incorporarlos hay que reabrir el periodo.</p>` : ""}
       ${conSaldo.length ? `<div class="tw"><table class="tbl">
@@ -5339,6 +5428,7 @@ async function ficPintarBolsa() {
   card.addEventListener("click", async (e) => {
     const libro = e.target.closest("[data-ficlibro]");
     if (libro) return ficAbrirLibro(Number(libro.getAttribute("data-ficlibro")));
+    if (e.target.closest("#ficIrRevision")) { FIC.tab = "revision"; return loadFichajes(); }
     if (e.target.closest("#ficCerrar")) return ficCerrarPeriodo(j.periodo);
     const exp = e.target.closest("#ficExport");
     if (exp) return ficDescargarRegistro(exp.getAttribute("data-dia"));

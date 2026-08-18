@@ -690,6 +690,28 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .bl-lista{max-height:46vh}
 }
 
+/* «Necesita tu atención»: la bandeja operativa. Es lo primero que se mira, así que
+   pesa lo justo — un borde a la izquierda y filas compactas. Una tarjeta grande y de
+   color compite con el resto de la pantalla y acaba leyéndose como decoración. */
+.at-caja{border-left:3px solid var(--warning);padding-bottom:6px}
+.at-caja:has(.pill.bad){border-left-color:var(--danger)}
+.at-grupo{margin-top:6px}
+.at-cab{display:flex;gap:8px;align-items:baseline;padding:10px 0 2px;font-size:12px;
+  text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)}
+.at-fila{gap:10px;align-items:center}
+.at-fila .pill{flex:none;min-width:66px;justify-content:center}
+/* El vacío DICE algo: no es «sin datos», es que no queda trabajo. */
+.at-vacio{display:flex;gap:14px;align-items:center}
+.at-ok{width:34px;height:34px;border-radius:999px;flex:none;display:grid;place-items:center;
+  background:var(--success-soft);color:var(--success);font-weight:700}
+.at-semanas{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+@media(max-width:620px){
+  .at-fila{flex-wrap:wrap}
+  .at-fila .grow{flex:1 1 100%;order:2}
+  .at-fila .btn{order:3;margin-left:auto;min-height:40px}
+  .at-semanas .btn{width:100%;min-height:44px}
+}
+
 /* Fila del listado de Equipo. Los dos textos son <span> y salían pegados —«Juan
    Péreztrabajador»— porque nadie los separaba. Apilados se leen como nombre y
    segunda línea, que es lo que son. */
