@@ -41,6 +41,7 @@ import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, 
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo, generarToken } from "./src/modules/rrhh/pulso.js";
 import { ensureSchemaHorarios, sembrarLocal, migrarDescansos } from "./src/modules/horarios/schema.js";
 import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descansos.js";
+import { indiceCapacidades, puedeEnArea, estaConfigurado, areasDe, resumenConfiguracion } from "./src/modules/horarios/capacidades.js";
 import { instanteANegocio, lunesDe, diasSemana, isoConOffset, aMinutos, deMinutos, epochDeLocal, sumaDias, instanteMadrid } from "./src/modules/horarios/tiempo.js";
 import { detectarConflictos, resumirConflictos, contratosSolapados } from "./src/modules/horarios/conflictos.js";
 import { validarPublicacion, construirSnapshot, cambiosPorTrabajador } from "./src/modules/horarios/versiones.js";
@@ -797,6 +798,25 @@ async function initDB() {
         )`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_hrdocs_worker ON hr_documentos(worker_id)`);
     } catch (e) { console.error("[DB] hr_documentos:", e.message); }
+    // Cuánta plantilla queda por configurar en cuanto a áreas. Se dice en el arranque porque
+    // mientras alguien esté sin configurar el generador lo sigue aceptando para CUALQUIER
+    // área: si nadie sabe que falta, se creerá que el sistema ya respeta las áreas cuando para
+    // media plantilla no lo hace, y esa es peor situación que no tenerlo.
+    try {
+      const r = await client.query(
+        `SELECT COUNT(*) FILTER (WHERE areas_configuradas_en IS NOT NULL)::int AS con,
+                COUNT(*) FILTER (WHERE areas_configuradas_en IS NULL)::int AS sin
+           FROM users WHERE rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL`);
+      const { con, sin } = r.rows[0] || { con: 0, sin: 0 };
+      if (sin) {
+        console.log(`[DB] áreas de trabajo: ${con} configurado(s), ${sin} sin configurar. ` +
+          `Mientras estén sin configurar, el generador los acepta para cualquier área ` +
+          `(Horarios → Configuración → Quién hace qué).`);
+      } else if (con) {
+        console.log(`[DB] áreas de trabajo: los ${con} de plantilla están configurados.`);
+      }
+    } catch (e) { console.error("[DB] resumen de áreas:", e.message); }
+
     // ── El CHECK de `hor_ausencias.estado`, solo si los datos lo permiten ────────────────
     // La columna aceptaba cualquier texto. Ahora que hay un circuito con cuatro estados
     // conviene cerrarla, pero NO a ciegas: si en la base hay un valor que no conocemos, no se
@@ -7371,7 +7391,7 @@ app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, re
       [chk.semana.id, chk.semana.local, worker_id, dia, area_id || null, tramo_id || null, ini, fin,
        !!req.body.fin_abierto, req.body.tipo || "turno", req.body.nota || null, isoConOffset(Date.now())]
     );
-    res.json({ ok: true, asignacion: fila });
+    res.json({ ok: true, asignacion: fila, aviso: await horAvisoArea(quien.worker, area_id, chk.semana.local) });
   } catch (e) {
     console.error("[horarios] crear asignación:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo guardar el turno" });
@@ -7390,7 +7410,7 @@ app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, re
  * laboral metería por la puerta de atrás el multi-local que hemos decidido no construir.
  */
 async function horTrabajadorDelLocal(workerId, local) {
-  const w = await dbGet(`SELECT id, nombre, local, rol, activo, fecha_alta, fecha_baja FROM users WHERE id = ?`,
+  const w = await dbGet(`SELECT id, nombre, local, rol, activo, fecha_alta, fecha_baja, areas_configuradas_en FROM users WHERE id = ?`,
     [Number(workerId) || 0]);
   if (!w) return { error: 404, mensaje: "Esa persona no existe" };
   if (!["trabajador", "encargado"].includes(w.rol)) {
@@ -7400,6 +7420,26 @@ async function horTrabajadorDelLocal(workerId, local) {
     return { error: 403, mensaje: `${w.nombre || "Esa persona"} no es de ${local}. Solo se puede planificar a la gente de este establecimiento.` };
   }
   return { worker: w };
+}
+
+/**
+ * ¿Está esta persona habilitada para esta área? Devuelve el aviso si NO lo está.
+ *
+ * AVISA, NO BLOQUEA. Un sábado a las once de la noche falta un cocinero y el encargado mete a
+ * quien tiene delante: eso pasa, es lo correcto, y un sistema que se lo impida acaba con el
+ * cuadrante hecho en un papel. El generador nunca lo propone —para él es un descarte duro—
+ * pero una persona sí puede decidirlo, y al publicar tiene que aceptar el aviso a propósito.
+ */
+async function horAvisoArea(worker, areaId, local) {
+  if (!areaId || !estaConfigurado(worker)) return null;
+  const { indice } = await horCapacidades(local);
+  if (puedeEnArea(worker, areaId, indice)) return null;
+  const area = await dbGet(`SELECT nombre FROM hor_areas WHERE id = ?`, [Number(areaId)]).catch(() => null);
+  return {
+    tipo: "area_no_habilitada",
+    mensaje: `${worker.nombre || "Esa persona"} no está habilitado habitualmente para ${area?.nombre || "esa área"}. ` +
+             `Se puede poner igualmente, pero al publicar habrá que aceptar el aviso.`,
+  };
 }
 
 // La fila de fiesta no admite turnos: no es un bloque horario, es el resultado de restar.
@@ -7428,8 +7468,9 @@ app.patch("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (re
     }
     if (!sets.length) return res.json({ ok: true, asignacion: a });
     // Reasignar el turno a otra persona pasa por la misma puerta que crearlo.
+    let quien = null;
     if (req.body.worker_id !== undefined) {
-      const quien = await horTrabajadorDelLocal(req.body.worker_id, chk.semana.local);
+      quien = await horTrabajadorDelLocal(req.body.worker_id, chk.semana.local);
       if (quien.error) return res.status(quien.error).json({ ok: false, error: quien.mensaje });
     }
     const dia = req.body.dia ?? a.dia;
@@ -7442,7 +7483,10 @@ app.patch("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (re
     }
     vals.push(a.id);
     const fila = await dbRun(`UPDATE hor_asignaciones SET ${sets.join(", ")} WHERE id = ? RETURNING *`, vals);
-    res.json({ ok: true, asignacion: fila });
+    // El aviso se recalcula con lo que ha quedado: mover un turno de sala a cocina cambia si
+    // esa persona está habilitada, aunque la persona no haya cambiado.
+    const w = quien?.worker || await dbGet(`SELECT id, nombre, areas_configuradas_en FROM users WHERE id = ?`, [fila.worker_id]);
+    res.json({ ok: true, asignacion: fila, aviso: await horAvisoArea(w, fila.area_id, chk.semana.local) });
   } catch (e) {
     console.error("[horarios] editar asignación:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo mover el turno" });
@@ -7483,6 +7527,27 @@ const AUS_DEL_LOCAL = `SELECT a.worker_id, a.tipo, a.desde, a.hasta, a.estado FR
              JOIN users u ON u.id = a.worker_id
             WHERE u.local = ? AND a.estado = 'aprobada' AND a.desde <= ? AND a.hasta >= ?`;
 
+/**
+ * Las capacidades de todo el equipo de un local, de una vez.
+ *
+ * Dos consultas y un índice en memoria. El generador prueba cada persona contra cada hueco
+ * —cientos de combinaciones— y preguntar a la base en ese bucle sería exactamente el N+1 que
+ * este módulo lleva evitando desde el principio.
+ *
+ * Las áreas DESACTIVADAS no cuentan: quitar un área del local no borra el histórico de quién
+ * la sabía hacer, pero deja de ser una capacidad viva.
+ */
+async function horCapacidades(local) {
+  const [filas, activas] = await Promise.all([
+    dbAll(`SELECT wa.worker_id, wa.area_id, wa.principal FROM hor_worker_areas wa
+             JOIN users u ON u.id = wa.worker_id
+             JOIN hor_areas a ON a.id = wa.area_id
+            WHERE u.local = ? AND a.local = ?`, [local, local]).catch(() => []),
+    dbAll(`SELECT id FROM hor_areas WHERE local = ? AND activo`, [local]).catch(() => []),
+  ]);
+  return { indice: indiceCapacidades(filas, { areasActivas: activas.map((a) => a.id) }), filas };
+}
+
 async function horContexto(local, lunes, dias) {
   // Ausencias y contratos se traían SIN filtro de local: todo el grupo entraba en el motor
   // de conflictos de cada establecimiento. No llegaba a la pantalla porque los conflictos se
@@ -7507,13 +7572,13 @@ app.get("/api/horarios/semana/:id/conflictos", requireAuth(HORARIOS_ROLES), asyn
     const dias = diasSemana(s.lunes);
     const [asignaciones, equipo, areas, tramos, ctx] = await Promise.all([
       dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]),
-      dbAll(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')`, [s.local]),
+      dbAll(`SELECT id, nombre, username, areas_configuradas_en FROM users WHERE local = ? AND rol IN ('trabajador','encargado')`, [s.local]),
       dbAll(`SELECT id, nombre FROM hor_areas WHERE local = ?`, [s.local]),
       dbAll(`SELECT id, nombre FROM hor_tramos WHERE local = ?`, [s.local]),
       horContexto(s.local, s.lunes, dias),
     ]);
-    const vecinas = await horVecinas(s.local, dias);
-    const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos, vecinas, ...ctx });
+    const [vecinas, caps] = await Promise.all([horVecinas(s.local, dias), horCapacidades(s.local)]);
+    const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos, vecinas, capacidades: caps.indice, ...ctx });
     res.json({ ok: true, ...resumirConflictos(conflictos), conflictos });
   } catch (e) {
     console.error("[horarios] conflictos:", e.message);
@@ -7556,14 +7621,17 @@ app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (
     // sus turnos tenían que copiarse. Y al revés: no basta con que esté «activo», porque
     // entonces se le copiarían también los días de después de irse.
     const equipo = await dbAll(
-      `SELECT id, nombre, fecha_alta, fecha_baja, activo FROM users WHERE local = ? AND ${SQL_PLANTILLA}`,
+      `SELECT id, nombre, fecha_alta, fecha_baja, activo, areas_configuradas_en FROM users WHERE local = ? AND ${SQL_PLANTILLA}`,
       [destino.local]);
     const porWorker = new Map(equipo.map((w) => [String(w.id), w]));
     const { ausencias } = await horContexto(destino.local, destino.lunes, diasDestino);
     const ausente = (wid, dia) => (ausencias || []).some((a) =>
       String(a.worker_id) === String(wid) && String(a.desde) <= dia && dia <= String(a.hasta));
 
-    const omitidos = [];
+    const { indice: capsCopiar } = await horCapacidades(destino.local);
+    const nombreArea = new Map((await dbAll(`SELECT id, nombre FROM hor_areas WHERE local = ?`, [destino.local]).catch(() => []))
+      .map((a) => [String(a.id), a.nombre]));
+    const omitidos = [], avisosArea = [];
     let copiadas = 0;
     if (req.body?.reemplazar) await dbRun(`DELETE FROM hor_asignaciones WHERE semana_id = ?`, [destino.id]);
     for (const l of lineas) {
@@ -7573,6 +7641,13 @@ app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (
         omitidos.push({ worker_id: l.worker_id, nombre: w.nombre, dia: l.dia,
           motivo: w.fecha_baja ? `causó baja el ${w.fecha_baja}` : "la cuenta está desactivada" });
         continue;
+      }
+      // Una semana vieja —o una plantilla— puede traer a alguien a un área para la que ya no
+      // está habilitado. La línea SE COPIA IGUAL: borrarla en silencio sería quitar trabajo
+      // planificado sin decirlo, y el encargado puede tener sus motivos. Se avisa aparte.
+      if (l.area_id != null && !puedeEnArea(w, l.area_id, capsCopiar)) {
+        avisosArea.push({ worker_id: l.worker_id, nombre: w.nombre, dia: l.dia,
+          area: nombreArea.get(String(l.area_id)) || null });
       }
       if (ausente(l.worker_id, l.dia)) { omitidos.push({ worker_id: l.worker_id, dia: l.dia, motivo: "tiene una ausencia aprobada" }); continue; }
       await dbRun(
@@ -7584,7 +7659,7 @@ app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (
     }
     await dbRun(`UPDATE hor_semanas SET origen = ? WHERE id = ?`,
       [req.body?.plantilla_id ? `plantilla:${req.body.plantilla_id}` : "copia", destino.id]);
-    res.json({ ok: true, copiadas, omitidos });
+    res.json({ ok: true, copiadas, omitidos, avisosArea });
   } catch (e) {
     console.error("[horarios] copiar:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo copiar" });
@@ -7605,7 +7680,7 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
 
     const dias = diasSemana(s.lunes);
     const asignaciones = (await q(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id])).rows;
-    const equipo = (await q(`SELECT id, nombre, username FROM users WHERE local = ? AND ${SQL_PLANTILLA}`, [s.local])).rows;
+    const equipo = (await q(`SELECT id, nombre, username, areas_configuradas_en FROM users WHERE local = ? AND ${SQL_PLANTILLA}`, [s.local])).rows;
     // La PLANTILLA del snapshot: quien estuvo en esa semana, aunque ya se haya ido. Filtrar
     // por `activo` aquí borraría del papel a quien trabajó y luego causó baja.
     const plantilla = (await q(`SELECT id, nombre, username, fecha_alta, fecha_baja FROM users
@@ -7627,7 +7702,14 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
          FROM hor_asignaciones a JOIN hor_semanas s2 ON s2.id = a.semana_id
         WHERE a.local = ? AND s2.estado = 'publicado' AND a.dia IN (?, ?)`,
       [s.local, sumaDias(dias[0], -1), sumaDias(dias[6], 1)])).rows;
-    const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos, ausencias, contratos, necesidades, vecinas });
+    // Las capacidades entran también al publicar: el aviso de «no está habilitado» tiene que
+    // aparecer aquí, que es donde se acepta, y quedar guardado en `avisos_aceptados`.
+    const capsPub = (await q(`SELECT wa.worker_id, wa.area_id FROM hor_worker_areas wa
+                                JOIN users u ON u.id = wa.worker_id
+                                JOIN hor_areas a ON a.id = wa.area_id AND a.activo
+                               WHERE u.local = ? AND a.local = ?`, [s.local, s.local])).rows;
+    const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos,
+      ausencias, contratos, necesidades, vecinas, capacidades: indiceCapacidades(capsPub) });
     const val = validarPublicacion({ estado: s.estado, conflictos, avisosAceptados: req.body?.aceptar_avisos ? true : null });
     if (!val.ok) { await client.query("ROLLBACK"); return res.status(409).json({ ok: false, ...val }); }
 
@@ -8017,6 +8099,108 @@ app.put("/api/horarios/areas", requireAuth(HORARIOS_ROLES), async (req, res) => 
   } finally { client.release(); }
 });
 
+/**
+ * Las áreas de cada persona del local, para configurarlas.
+ *
+ * Devuelve también quién está SIN CONFIGURAR, porque mientras lo esté el generador sigue
+ * aceptándolo para cualquier área. Si no se dice, se creerá que el sistema ya respeta las
+ * áreas cuando para media plantilla no lo hace, y esa es peor situación que no tenerlo.
+ */
+app.get("/api/horarios/capacidades", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const [equipo, areas, filas] = await Promise.all([
+      dbAll(`SELECT id, nombre, username, puesto, areas_configuradas_en, areas_configuradas_por
+               FROM users WHERE local = ? AND ${SQL_PLANTILLA} AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL
+              ORDER BY nombre`, [local]),
+      dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
+      dbAll(`SELECT wa.worker_id, wa.area_id, wa.principal FROM hor_worker_areas wa
+               JOIN users u ON u.id = wa.worker_id WHERE u.local = ?`, [local]).catch(() => []),
+    ]);
+    const porWorker = new Map();
+    for (const f of filas) {
+      const k = String(f.worker_id);
+      if (!porWorker.has(k)) porWorker.set(k, { areas: [], principal: null });
+      porWorker.get(k).areas.push(Number(f.area_id));
+      if (f.principal === true || f.principal === "t") porWorker.get(k).principal = Number(f.area_id);
+    }
+    res.json({
+      ok: true, local, areas,
+      resumen: resumenConfiguracion(equipo),
+      data: equipo.map((w) => ({
+        id: w.id, nombre: w.nombre || w.username, puesto: w.puesto || null,
+        configurado: estaConfigurado(w),
+        configuradoEn: w.areas_configuradas_en || null, configuradoPor: w.areas_configuradas_por || null,
+        areas: (porWorker.get(String(w.id)) || {}).areas || [],
+        principal: (porWorker.get(String(w.id)) || {}).principal || null,
+      })),
+    });
+  } catch (e) {
+    console.error("[horarios] capacidades:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar las áreas del equipo" });
+  }
+});
+
+/**
+ * Guardar las áreas de UNA persona. Entera, como todo lo demás de configuración.
+ *
+ * Guardar —aunque sea con cero áreas— marca a esa persona como CONFIGURADA, y a partir de ahí
+ * el generador le aplica la restricción. Cero áreas es una decisión legítima: alguien de
+ * oficina que no entra en el cuadrante.
+ */
+app.put("/api/horarios/capacidades/:workerId", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.params.workerId) || 0]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+
+    // Las áreas tienen que ser de SU establecimiento y estar activas. Un id de otro local no
+    // entra aunque se mande a mano, y un área desactivada no se puede volver a asignar.
+    const pedidas = [...new Set((Array.isArray(req.body?.areas) ? req.body.areas : []).map((x) => Number(x)).filter(Boolean))];
+    const validas = pedidas.length
+      ? (await dbAll(`SELECT id FROM hor_areas WHERE local = ? AND activo AND id = ANY(?)`, [w.local, pedidas])).map((a) => Number(a.id))
+      : [];
+    const rechazadas = pedidas.filter((x) => !validas.includes(x));
+    if (rechazadas.length) {
+      return res.status(400).json({ ok: false,
+        error: `Alguna de esas áreas no es de ${w.local} o está desactivada.`, rechazadas });
+    }
+    const principal = Number(req.body?.principal) || null;
+    if (principal && !validas.includes(principal)) {
+      return res.status(400).json({ ok: false, error: "El área principal tiene que ser una de las marcadas." });
+    }
+
+    const ahora = isoConOffset(Date.now());
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    // Se reemplaza el juego entero. Las áreas DESACTIVADAS que tuviera se conservan: quitar un
+    // área del local no puede borrar el histórico de quién la sabía hacer.
+    await q(`DELETE FROM hor_worker_areas WHERE worker_id = ? AND area_id IN (SELECT id FROM hor_areas WHERE local = ? AND activo)`,
+      [w.id, w.local]);
+    for (const a of validas) {
+      await q(`INSERT INTO hor_worker_areas (worker_id, area_id, principal, creado_en, creado_por)
+               VALUES (?,?,?,?,?) ON CONFLICT (worker_id, area_id) DO UPDATE SET principal = EXCLUDED.principal`,
+        [w.id, a, a === principal, ahora, req.user.username]);
+    }
+    // La marca. Es lo que distingue «configurado con cero áreas» de «sin configurar».
+    await q(`UPDATE users SET areas_configuradas_en = ?, areas_configuradas_por = ? WHERE id = ?`,
+      [ahora, req.user.username, w.id]);
+    await client.query("COMMIT");
+
+    await ficAuditar("capacidades", w.id, "guardar", req.user.username,
+      { local: w.local, workerId: w.id, detalle: { areas: validas, principal } }).catch(() => {});
+    res.json({ ok: true, areas: validas, principal,
+      mensaje: validas.length
+        ? `${w.nombre}: ${validas.length} área(s). El generador solo le propondrá esas.`
+        : `${w.nombre} queda SIN ninguna área: el generador dejará de proponerlo.` });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[horarios] guardar capacidades:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron guardar las áreas" });
+  } finally { client.release(); }
+});
+
 // Contrato. Cambiar de 20 a 30 horas NO edita la fila vieja: se cierra la anterior y se
 // abre una nueva. Si no, recalcular un mes pasado usaría el contrato de hoy y saldrían
 // desviaciones que nunca existieron.
@@ -8257,7 +8441,7 @@ app.post("/api/horarios/generar", requireAuth(HORARIOS_ROLES), async (req, res) 
       dbGet(`SELECT descanso_min_horas FROM hor_config WHERE local = ?`, [local]),
       dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
       dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden`, [local]),
-      dbAll(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
+      dbAll(`SELECT id, nombre, username, areas_configuradas_en FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
              AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [local]),
       dbAll(`SELECT * FROM hor_necesidades WHERE local = ?`, [local]),
       // `local IS NULL` recogía las filas antiguas… y también cualquiera cuyo local se
@@ -8274,11 +8458,17 @@ app.post("/api/horarios/generar", requireAuth(HORARIOS_ROLES), async (req, res) 
       return res.status(409).json({ ok: false, error: "Antes hay que decir cuánta gente hace falta cada día. Sin eso no hay nada que generar." });
     }
 
+    // Una sola carga de capacidades para toda la generación: el solver las consulta en memoria.
+    const caps = await horCapacidades(local);
     const r = generarSemana({
       lunes, areas, tramos, trabajadores, necesidades, ausencias, contratos, disponibilidad,
+      capacidades: caps.indice,
       objetivos: req.body?.solo_minimos !== true,
       ajustes: cfg?.descanso_min_horas ? { descansoHoras: Number(cfg.descanso_min_horas) } : {},
     });
+    // Mientras quede gente sin configurar, el generador sigue aceptándola para cualquier área.
+    // Si no se dice, se creerá que ya respeta las áreas cuando para media plantilla no lo hace.
+    r.configuracion = resumenConfiguracion(trabajadores);
     // Solo se PROPONE. Guardar es otra petición, y es la que decide la persona.
     res.json({ ok: true, local, lunes, ...r });
   } catch (e) {

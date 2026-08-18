@@ -9,7 +9,14 @@ const AHORA = "2026-08-10T09:00:00+02:00";
 
 describe("esquema de horarios (Postgres real)", { skip: HAY_BD ? false : motivoSalto() }, () => {
   let db;
-  before(async () => { db = await conEsquema(); await ensureSchemaHorarios(db); });
+  before(async () => {
+    db = await conEsquema();
+    // `ensureSchemaHorarios` añade columnas a `users` —la marca de «áreas configuradas»—
+    // igual que `ensureSchemaFichajes` le añade las del PIN. En el servidor `users` ya existe
+    // cuando se llama; aquí hay que crearla, como hacen los demás tests de base.
+    await db.run(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username TEXT, rol TEXT, nombre TEXT, local TEXT)`);
+    await ensureSchemaHorarios(db);
+  });
   after(async () => { if (db) await db.fin(); });
 
   test("se puede aplicar dos veces seguidas sin romper nada", async () => {
@@ -31,9 +38,27 @@ describe("esquema de horarios (Postgres real)", { skip: HAY_BD ? false : motivoS
     await sembrarLocal(db, LOCAL, AHORA);
     const areas = await db.all(`SELECT nombre FROM hor_areas WHERE local = ? ORDER BY orden`, [LOCAL]);
     assert.deepEqual(areas.map((a) => a.nombre), ["SALA", "COCINA"]);
-    const tramos = await db.all(`SELECT nombre, inicio_min, fin_min FROM hor_tramos WHERE local = ? ORDER BY orden`, [LOCAL]);
+    const tramos = await db.all(`SELECT nombre, inicio_min, fin_min, tipo FROM hor_tramos WHERE local = ? ORDER BY orden`, [LOCAL]);
     assert.deepEqual(tramos.map((t) => t.nombre), ["MAÑANA", "TARDE", "FIESTA"]);
-    assert.equal(tramos[2].fin_min, 1620, "FIESTA acaba a las 03:00 del día siguiente");
+
+    // OJO CON ESTA FILA. «FIESTA» significó dos cosas distintas y el cambio fue deliberado:
+    //
+    //   · Al principio era un TURNO de verdad, la noche de fiesta, 20:00→03:00 (fin_min 1620).
+    //     Aquellos horarios estaban copiados de un PDF y no eran los que se trabajan, así que
+    //     se quitaron de la siembra (26a4c02).
+    //   · Ahora es la FILA DE DESCANSO del cuadrante de papel: la que dice quién libra, y que
+    //     no se rellena a mano sino que sale de restar (dcca899).
+    //
+    // Este test seguía comprobando el 1620 del primer significado. Como los tests de base solo
+    // corren donde hay Postgres, nadie lo vio.
+    //
+    // Sus horas son RELLENO: la columna es NOT NULL y hay un CHECK, pero nadie las lee.
+    // `descansos.js` no las menciona, `cuadrante.js` salta esta fila en los tres sitios donde
+    // podrían importar, y el servidor impide colgarle un turno. Lo que sí hay que comprobar es
+    // que nace marcada como descanso, porque de eso SÍ depende que la fila se calcule sola.
+    assert.equal(tramos[2].tipo, "descanso", "FIESTA es la fila que se calcula, no un turno");
+    assert.equal(tramos[0].tipo, "turno");
+    assert.equal(tramos[1].tipo, "turno");
   });
 
   test("un tramo no puede acabar antes de empezar", async () => {

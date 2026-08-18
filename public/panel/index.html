@@ -626,6 +626,22 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px;box-shadow:var(--sh-lg);width:min(520px,96vw);max-height:90vh;overflow:auto}
 .modal.wide{width:min(1080px,96vw)}
 
+/* Quién hace qué: persona × área. En un móvil una tabla de cinco columnas es
+   inservible, así que por debajo de 700 px cada persona pasa a ser un bloque y
+   las áreas, botones grandes debajo de su nombre. */
+.wa-cel{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:0 8px;cursor:pointer}
+.wa-cel input{width:auto}
+.wa-nom{display:none}
+@media(max-width:700px){
+  .wa-tabla thead{display:none}
+  .wa-tabla,.wa-tabla tbody,.wa-tabla tr,.wa-tabla td{display:block;width:auto}
+  .wa-tabla tr{border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:10px}
+  .wa-tabla td{border:none;padding:3px 0;text-align:left !important}
+  /* La etiqueta del área se enseña solo aquí: en la tabla ya está en la cabecera. */
+  .wa-nom{display:inline}
+  .wa-cel{justify-content:flex-start;min-height:44px;width:100%}
+}
+
 /* Las tres secciones de Inventarios. En un móvil estrecho las pestañas se
    DESLIZAN en su fila antes que partirse en dos: una barra rota en dos líneas
    empuja el contenido y deja de leerse como una sola cosa. */

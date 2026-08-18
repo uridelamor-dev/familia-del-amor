@@ -22,6 +22,7 @@
 
 import { diasSemana, solapan, descansoHoras } from "./tiempo.js";
 import { contratoVigente } from "./conflictos.js";
+import { puedeEnArea, capacidadPorArea } from "./capacidades.js";
 
 export const ORIGEN = "solver:v1";
 
@@ -108,10 +109,20 @@ export function colocaciones(hueco) {
 // encargado «el sábado por la noche no hay nadie porque tres están de vacaciones y los
 // otros dos ya llevan seis días seguidos», en lugar de dejarle un hueco rojo y mudo.
 export function motivoDescarte(worker, hueco, ctx) {
-  const { asignadas, ausencias, disponibilidad, contratos, ajustes } = ctx;
+  const { asignadas, ausencias, disponibilidad, contratos, ajustes, capacidades } = ctx;
   const A = { ...AJUSTES, ...(ajustes || {}) };
   const id = String(worker.id);
   const mias = asignadas.get(id) || [];
+
+  // LO PRIMERO: ¿sabe hacer este trabajo? Es el descarte más estructural que hay — quien no
+  // está habilitado para cocina no es candidato a cocina pase lo que pase, y por eso va antes
+  // que las vacaciones o el descanso: decir «los tres de cocina están de vacaciones» y decir
+  // «no hay nadie de cocina» son dos problemas distintos, y el encargado los arregla de
+  // formas distintas.
+  //
+  // Mientras una persona no tenga áreas configuradas, esto no descarta a nadie: se comporta
+  // igual que antes de que existieran las áreas. Ver capacidades.js.
+  if (!puedeEnArea(worker, hueco.area_id, capacidades)) return { motivo: "area_no_habilitada" };
 
   const aus = (ausencias || []).find((a) =>
     String(a.worker_id) === id && (a.estado || "aprobada") === "aprobada" &&
@@ -228,10 +239,14 @@ const mejorQue = (a, b) =>
 export function generarSemana({
   lunes, trabajadores = [], necesidades = [], tramos = [], areas = [],
   ausencias = [], contratos = [], disponibilidad = [], ajustes = {}, objetivos = true,
+  // `Map<worker_id, Set<area_id>>`. Se carga UNA vez antes de empezar y se consulta en
+  // memoria: una consulta por persona × hueco sería exactamente el N+1 que este módulo
+  // lleva evitando desde el principio.
+  capacidades = null,
 } = {}) {
   const huecos = construirHuecos({ lunes, necesidades, tramos, objetivos });
   const asignadas = new Map();          // worker_id → [asignaciones ya puestas]
-  const ctx = { asignadas, ausencias, contratos, disponibilidad, ajustes };
+  const ctx = { asignadas, ausencias, contratos, disponibilidad, ajustes, capacidades };
   const propuestas = [];
   const sinCubrir = [];
 
@@ -313,7 +328,7 @@ export function generarSemana({
     origen: ORIGEN,
     asignaciones: propuestas.sort((a, b) => a.dia.localeCompare(b.dia) || a.inicio_min - b.inicio_min || a.nombre.localeCompare(b.nombre, "es")),
     sinCubrir: sinCubrir.sort((a, b) => (b.obligatorio - a.obligatorio) || a.dia.localeCompare(b.dia)),
-    resumen: resumir({ trabajadores, contratos, asignadas, lunes, huecos, sinCubrir, ausencias }),
+    resumen: resumir({ trabajadores, contratos, asignadas, lunes, huecos, sinCubrir, ausencias, capacidades, areas }),
   };
 }
 
@@ -327,7 +342,7 @@ function explicar(p, candidatos) {
 
 // El resumen es lo que se mira ANTES de aceptar el borrador: quién se queda corto de
 // horas, quién se pasa, y qué no ha cabido.
-function resumir({ trabajadores, contratos, asignadas, lunes, huecos, sinCubrir, ausencias = [] }) {
+function resumir({ trabajadores, contratos, asignadas, lunes, huecos, sinCubrir, ausencias = [], capacidades = null, areas = [] }) {
   const dias = diasSemana(lunes);
   const personas = trabajadores.map((w) => {
     const mias = asignadas.get(String(w.id)) || [];
@@ -373,11 +388,28 @@ function resumir({ trabajadores, contratos, asignadas, lunes, huecos, sinCubrir,
     ? `Los mínimos de esta semana suman ${capacidad.horasMinimas} h y el equipo disponible tiene ${capacidad.horasDisponibles} h contratadas. No es un problema de reparto: faltan ${Math.round(capacidad.horasMinimas - capacidad.horasDisponibles)} h de plantilla.`
     : null;
 
+  // Y la misma cuenta, por área. Cuando Cocina pide 24 h mínimas y solo hay 16 de gente que
+  // sepa cocinar, ningún reparto lo va a arreglar: es una plantilla que no da, y decirlo con
+  // dos números ahorra media hora de mover fichas en vano.
+  const porArea = capacidadPorArea({
+    huecos, trabajadores, indice: capacidades, areas,
+    horasDe: (w) => {
+      const c = contratoVigente(contratos, w.id, lunes);
+      if (!c) return 0;
+      const fuera = dias.filter((d) => (ausencias || []).some((a) =>
+        String(a.worker_id) === String(w.id) && (a.estado || "aprobada") === "aprobada" &&
+        String(a.desde) <= d && d <= String(a.hasta))).length;
+      return Number(c.horas_semana) * 60 * ((7 - fuera) / 7);
+    },
+  }).filter((a) => a.faltaGente);
+
   return {
     huecos: huecos.length,
     cubiertos: huecos.length - sinCubrir.length,
     sinCubrirObligatorios: sinCubrir.filter((s) => s.obligatorio).length,
     personas, capacidad,
+    // Solo las áreas donde la cuenta NO sale. Enseñar las que van bien sería ruido.
+    areasCortas: porArea,
     // Que alguien se quede a 8 horas de su contrato es un problema de nómina, no un
     // detalle: sale destacado y con nombre.
     cortos: personas.filter((p) => p.desviacion != null && p.desviacion < -60),

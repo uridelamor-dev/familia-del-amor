@@ -3761,15 +3761,22 @@ async function horConfig() {
     try { HORCFG.data = await apiRaw(`/api/horarios/plantilla?local=${encodeURIComponent(HOR.local)}`); }
     catch (e) { ov.querySelector(".modal-b").innerHTML = `<p class="mut">${esc(e.message)}</p>`; return; }
     const d = HORCFG.data;
+    // Las capacidades van aparte: solo se piden cuando se mira esa pestaña, para no pagar dos
+    // consultas más cada vez que alguien entra a tocar los turnos.
+    if (HORCFG.tab === "areas") {
+      try { d.areasCfg = await apiRaw(`/api/horarios/capacidades?local=${encodeURIComponent(HOR.local)}`); }
+      catch { d.areasCfg = null; }
+    }
     ov.querySelector(".modal-b").innerHTML = `
       <div class="toolbar" style="margin-bottom:14px">
-        ${[["turnos", "Turnos"], ["necesidades", "Cuánta gente hace falta"], ["contratos", "Contratos"], ["ausencias", "Vacaciones y bajas"], ["disp", "Disponibilidad"]]
+        ${[["turnos", "Turnos"], ["necesidades", "Cuánta gente hace falta"], ["areas", "Quién hace qué"], ["contratos", "Contratos"], ["ausencias", "Vacaciones y bajas"], ["disp", "Disponibilidad"]]
           .map(([k, t]) => `<button class="btn ${HORCFG.tab === k ? "primary" : ""}" data-horcfgtab="${k}">${t}</button>`).join("")}
       </div>
       <div id="horCfgCuerpo">${
         HORCFG.tab === "turnos" ? horCfgTurnos(d)
         : HORCFG.tab === "necesidades" ? horCfgNecesidades(d)
         : HORCFG.tab === "contratos" ? horCfgContratos(d)
+        : HORCFG.tab === "areas" ? horCfgAreas(d)
         : HORCFG.tab === "ausencias" ? horCfgAusencias(d)
         : horCfgDisponibilidad(d)}</div>`;
   };
@@ -3916,6 +3923,48 @@ function horCfgRefuerzoFicha(g = {}) {
                inputmode="numeric" placeholder="—"></label>`).join("")}
     </div>
   </div>`;
+}
+
+/**
+ * Quién puede trabajar en qué. Una matriz de casillas: persona × área.
+ *
+ * NO es un sistema de competencias. No hay niveles ni años ni puntuaciones: la única pregunta
+ * es si esa persona puede cubrir esa área.
+ *
+ * Lo importante de esta pantalla es la línea de arriba: mientras quede gente SIN CONFIGURAR,
+ * el generador la sigue aceptando para cualquier área. Sin ese aviso se creería que el sistema
+ * ya respeta las áreas cuando para media plantilla no lo hace.
+ */
+function horCfgAreas(d) {
+  const areas = d.areasCfg?.areas || [];
+  const gente = d.areasCfg?.data || [];
+  const r = d.areasCfg?.resumen || {};
+  if (!areas.length) {
+    return `<p class="mut" style="margin:0;line-height:1.6">Este establecimiento no tiene áreas activas.
+      Créalas en la pestaña de <b>Turnos</b> —abajo, en Áreas— y vuelve aquí.</p>`;
+  }
+  const aviso = r.sinConfigurar
+    ? `<p class="fic-nota" style="margin:0 0 14px"><b>${num(r.sinConfigurar)}</b> ${r.sinConfigurar === 1 ? "persona sigue" : "personas siguen"} sin áreas configuradas:
+        ${r.quienes.map((q) => esc(q.nombre)).join(" · ")}. Mientras lo estén, <b>el generador las acepta para cualquier área</b>.</p>`
+    : `<p class="fic-nota" style="margin:0 0 14px">Toda la plantilla tiene sus áreas configuradas: el generador las respeta para todo el mundo.</p>`;
+
+  const fila = (w) => `<tr data-warea="${w.id}">
+      <td><b>${esc(w.nombre)}</b>${w.puesto ? `<div class="mut" style="font-size:11.5px">${esc(w.puesto)}</div>` : ""}
+        ${w.configurado ? "" : '<span class="fic-tag aviso">sin configurar</span>'}</td>
+      ${areas.map((a) => `<td style="text-align:center">
+        <label class="wa-cel"><input type="checkbox" class="wa-chk" data-area="${a.id}" ${w.areas.includes(a.id) ? "checked" : ""}>
+          <span class="wa-nom">${esc(a.nombre)}</span></label></td>`).join("")}
+      <td style="text-align:right"><button class="btn sm" data-horcfg="area-guardar" data-id="${w.id}">Guardar</button></td>
+    </tr>`;
+
+  return `${aviso}
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Marca en qué áreas puede trabajar cada persona. El generador
+      solo le propondrá esas. Se puede seguir poniendo a alguien a mano en otra área —a veces hace falta— pero saldrá
+      un aviso al publicar.</p>
+    <div class="tw"><table class="tbl wa-tabla">
+      <thead><tr><th>Persona</th>${areas.map((a) => `<th style="text-align:center">${esc(a.nombre)}</th>`).join("")}<th></th></tr></thead>
+      <tbody>${gente.map(fila).join("")}</tbody></table></div>
+    <p id="waMsg" style="margin:10px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>`;
 }
 
 function horCfgContratos(d) {
@@ -4174,6 +4223,17 @@ async function horCfgAccion(e, ov, pintar) {
     } catch (err) { if (msg) msg.textContent = err.message; return; }
   }
 
+  if (act === "area-guardar") {
+    const tr = b.closest("[data-warea]");
+    const areas = [...tr.querySelectorAll(".wa-chk:checked")].map((c) => Number(c.getAttribute("data-area")));
+    const msg = ov.querySelector("#waMsg");
+    try {
+      const r = await apiSend("PUT", `/api/horarios/capacidades/${b.getAttribute("data-id")}`, { areas });
+      toast(r.mensaje || "Guardado ✅");
+      return pintar();
+    } catch (err) { if (msg) msg.textContent = err.message; return; }
+  }
+
   if (act === "ausencia-del") {
     // No se borra: se cancela. Se queda en el histórico con quién y cuándo.
     if (!await confirmModal("Se cancela esta ausencia. El generador volverá a contar con esa persona esos días, y queda constancia de que se quitó.", { ok: "Cancelar la ausencia", danger: true })) return;
@@ -4233,6 +4293,7 @@ function horAvisoTurnos(a) {
 // ninguna tabla, así que lo que sale del generador es un punto de partida, no una orden:
 // aquí se ve el reparto de horas, lo que no ha cabido y por qué, y se decide.
 const HOR_MOTIVO = {
+  area_no_habilitada: "no están habilitados para esa área",
   ausencia: "de vacaciones o de baja", no_disponible: "han dicho que ese día no pueden",
   solape: "ya trabajan a esa hora", descanso: "no llegan a las horas de descanso",
   jornada_larga: "se les haría una jornada demasiado larga", dias_seguidos: "llevarían demasiados días seguidos",

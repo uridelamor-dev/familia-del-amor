@@ -355,3 +355,85 @@ describe("solo una ausencia aprobada impide publicar", () => {
     assert.equal(c[0].severidad, BLOQUEA);
   });
 });
+
+describe("poner a alguien en un área para la que no está habilitado", () => {
+  const cfg = (w) => ({ ...w, areas_configuradas_en: "2026-08-01T10:00:00+02:00" });
+  const EQUIPO = [cfg({ id: 1, nombre: "Juan" }), { id: 2, nombre: "Nuevo" }];
+  const AREAS = [{ id: 10, nombre: "SALA" }, { id: 12, nombre: "COCINA" }];
+  const CAPS = new Map([["1", new Set(["10"])]]);      // Juan solo sala
+  const LUNES = "2026-08-17";
+  const enCocina = (worker_id) => [{ id: 5, worker_id, dia: "2026-08-19", inicio_min: 960, fin_min: 1440, area_id: 12, tramo_id: 20 }];
+
+  test("AVISA, no bloquea: un sábado a las once puede hacer falta", () => {
+    // Un sistema que se lo impida al encargado acaba con el cuadrante hecho en un papel.
+    const c = detectarConflictos({ lunes: LUNES, trabajadores: EQUIPO, areas: AREAS,
+      asignaciones: enCocina(1), capacidades: CAPS }).filter((x) => x.tipo === "area_no_habilitada");
+    assert.equal(c.length, 1);
+    assert.equal(c[0].severidad, AVISA);
+    assert.match(c[0].mensaje, /Juan no está habilitado para COCINA/);
+  });
+
+  test("a quien no está configurado no se le avisa de nada", () => {
+    const c = detectarConflictos({ lunes: LUNES, trabajadores: EQUIPO, areas: AREAS,
+      asignaciones: enCocina(2), capacidades: CAPS }).filter((x) => x.tipo === "area_no_habilitada");
+    assert.equal(c.length, 0);
+  });
+
+  test("en su área no dice nada", () => {
+    const c = detectarConflictos({ lunes: LUNES, trabajadores: EQUIPO, areas: AREAS,
+      asignaciones: [{ id: 5, worker_id: 1, dia: "2026-08-19", inicio_min: 960, fin_min: 1440, area_id: 10 }],
+      capacidades: CAPS }).filter((x) => x.tipo === "area_no_habilitada");
+    assert.equal(c.length, 0);
+  });
+
+  test("sin capacidades, ni se comprueba", () => {
+    const c = detectarConflictos({ lunes: LUNES, trabajadores: EQUIPO, areas: AREAS, asignaciones: enCocina(1) });
+    assert.equal(c.filter((x) => x.tipo === "area_no_habilitada").length, 0);
+  });
+});
+
+describe("bajo_minimo con refuerzos", () => {
+  // Una necesidad de refuerzo no tiene tramo: lo que la cubre es un turno de la duración
+  // pedida dentro de su ventana. Comparando `tramo_id` no se comprobaba de verdad.
+  const LUNES = "2026-08-17", LUN = "2026-08-17";
+  const AREAS = [{ id: 10, nombre: "SALA" }];
+  const REFUERZO = [{ area_id: 10, tramo_id: null, dow: 0, minimo: 1,
+    duracion_min: 240, ventana_inicio_min: 960, ventana_fin_min: 1440, etiqueta: "Refuerzo cena" }];
+
+  test("un turno de la duración pedida dentro de la ventana LO CUBRE", () => {
+    const c = detectarConflictos({ lunes: LUNES, areas: AREAS, necesidades: REFUERZO,
+      asignaciones: [{ id: 1, worker_id: 1, dia: LUN, inicio_min: 1080, fin_min: 1320, area_id: 10, tramo_id: null }],
+    }).filter((x) => x.tipo === "bajo_minimo");
+    assert.equal(c.length, 0);
+  });
+
+  test("y si no hay ninguno, se avisa con la etiqueta del refuerzo", () => {
+    const c = detectarConflictos({ lunes: LUNES, areas: AREAS, necesidades: REFUERZO, asignaciones: [] })
+      .filter((x) => x.tipo === "bajo_minimo");
+    assert.equal(c.length, 1);
+    assert.match(c[0].mensaje, /Refuerzo cena/);
+  });
+
+  test("un turno de otra duración NO lo cubre", () => {
+    const c = detectarConflictos({ lunes: LUNES, areas: AREAS, necesidades: REFUERZO,
+      asignaciones: [{ id: 1, worker_id: 1, dia: LUN, inicio_min: 960, fin_min: 1440, area_id: 10, tramo_id: null }],
+    }).filter((x) => x.tipo === "bajo_minimo");
+    assert.equal(c.length, 1, "8 h no son el refuerzo de 4 h que se pedía");
+  });
+
+  test("ni uno que se sale de la ventana", () => {
+    const c = detectarConflictos({ lunes: LUNES, areas: AREAS, necesidades: REFUERZO,
+      asignaciones: [{ id: 1, worker_id: 1, dia: LUN, inicio_min: 600, fin_min: 840, area_id: 10, tramo_id: null }],
+    }).filter((x) => x.tipo === "bajo_minimo");
+    assert.equal(c.length, 1);
+  });
+
+  test("las necesidades de tramo siguen comprobándose igual", () => {
+    const c = detectarConflictos({ lunes: LUNES, areas: AREAS,
+      necesidades: [{ area_id: 10, tramo_id: 20, dow: 0, minimo: 1 }],
+      tramos: [{ id: 20, nombre: "TARDE" }],
+      asignaciones: [{ id: 1, worker_id: 1, dia: LUN, inicio_min: 960, fin_min: 1440, area_id: 10, tramo_id: 20 }],
+    }).filter((x) => x.tipo === "bajo_minimo");
+    assert.equal(c.length, 0);
+  });
+});

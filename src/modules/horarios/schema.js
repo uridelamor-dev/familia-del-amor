@@ -51,6 +51,47 @@ export async function ensureSchemaHorarios(x) {
   // panel, y de ese nombre pasaría a depender que la fila se rellene o no.
   await x.run(`ALTER TABLE hor_tramos ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'turno'`);
 
+  // ── Qué trabajo sabe hacer cada persona ────────────────────────────────────
+  //
+  // El generador sabía las horas de todo el mundo, sus vacaciones y sus descansos, pero no
+  // sabía que alguien es cocinero: cubría un hueco de COCINA con quien estuviera libre. El
+  // encargado tenía que rehacer a mano lo que le proponía, que es la forma más segura de
+  // dejar de usarlo.
+  //
+  // NO ES UN SISTEMA DE COMPETENCIAS. No hay niveles, ni años, ni puntuaciones. La única
+  // pregunta es «¿puede esta persona trabajar en esta área?», y se contesta sí o no.
+  //
+  // `principal` es un desempate futuro y una etiqueta para la ficha; hoy NO cambia a quién
+  // elige el generador. La capacidad es una restricción, no una preferencia.
+  await x.run(`CREATE TABLE IF NOT EXISTS hor_worker_areas (
+    id SERIAL PRIMARY KEY,
+    worker_id INTEGER NOT NULL,
+    area_id INTEGER NOT NULL REFERENCES hor_areas(id) ON DELETE CASCADE,
+    principal BOOLEAN NOT NULL DEFAULT FALSE,
+    creado_en TEXT NOT NULL,
+    creado_por TEXT,
+    UNIQUE (worker_id, area_id)
+  )`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_wa_worker ON hor_worker_areas (worker_id)`);
+  // Como mucho una área principal por persona. Lo garantiza la base, no el código.
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_hor_wa_principal
+               ON hor_worker_areas (worker_id) WHERE principal`);
+
+  // ── «Sin configurar» NO es lo mismo que «cero áreas» ───────────────────────
+  //
+  // Es la distinción que hace que esto se pueda desplegar sin romper nada. Hoy nadie tiene
+  // áreas: si «cero filas» significara «no puede trabajar en ninguna parte», el generador
+  // dejaría de encontrar a nadie el día del despliegue.
+  //
+  //   NULL  → nunca se ha tocado. El generador se comporta como siempre (legacy).
+  //   fecha → alguien lo configuró a propósito. A partir de ahí manda lo que haya, y CERO
+  //           áreas significa de verdad «este no entra en el generador», que es un caso
+  //           legítimo: alguien de oficina, o quien está de baja larga.
+  //
+  // Contar filas no sirve para distinguirlos, y por eso hace falta la columna.
+  await x.run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS areas_configuradas_en TEXT`);
+  await x.run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS areas_configuradas_por TEXT`);
+
   // Semana + versión + estado. Columna vertebral del versionado.
   await x.run(`CREATE TABLE IF NOT EXISTS hor_semanas (
     id SERIAL PRIMARY KEY,

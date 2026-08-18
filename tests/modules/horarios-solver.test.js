@@ -1,5 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { indiceCapacidades } from "../../src/modules/horarios/capacidades.js";
 import { generarSemana, construirHuecos, colocaciones, motivoDescarte, ORIGEN, AJUSTES, PASO_REFUERZO } from "../../src/modules/horarios/solver.js";
 import { detectarConflictos, BLOQUEA } from "../../src/modules/horarios/conflictos.js";
 
@@ -536,5 +537,143 @@ describe("qué respeta el generador de las ausencias y la disponibilidad", () =>
       { worker_id: 2, dow: 0, inicio_min: 960, fin_min: 1440, preferencia: "disponible" },
     ] });
     assert.equal(r.asignaciones[0].worker_id, 1, "sin preferencia declarada, manda el orden de siempre");
+  });
+});
+
+// ── Áreas: qué trabajo sabe hacer cada persona ───────────────────────────────
+// El caso que motiva toda la fase: Cocina necesita gente y el generador ponía a quien
+// estuviera libre, aunque solo supiera servir mesas.
+describe("el generador respeta las áreas", () => {
+  const LUNES = "2026-08-17";
+  const SALA = 10, COCINA = 12;
+  const AREAS = [{ id: SALA, nombre: "SALA", orden: 1 }, { id: COCINA, nombre: "COCINA", orden: 2 }];
+  const TRAMOS = [{ id: 20, nombre: "TARDE", orden: 1, inicio_min: 960, fin_min: 1440 }];
+  const cfg = (w) => ({ ...w, areas_configuradas_en: "2026-08-01T10:00:00+02:00" });
+  const JUAN = cfg({ id: 1, nombre: "Juan" });        // solo sala
+  const MARTA = cfg({ id: 2, nombre: "Marta" });      // solo cocina
+  const PEDRO = cfg({ id: 3, nombre: "Pedro" });      // cocina y barra
+  const NUEVO = { id: 4, nombre: "Recién llegado" };  // sin configurar
+  const CAPS = indiceCapacidades([
+    { worker_id: 1, area_id: SALA },
+    { worker_id: 2, area_id: COCINA },
+    { worker_id: 3, area_id: COCINA }, { worker_id: 3, area_id: 11 },
+  ]);
+  const CONTRATOS = [1, 2, 3, 4].map((id) => ({ worker_id: id, desde: "2020-01-01", hasta: null, horas_semana: 40 }));
+  const gen = (trabajadores, extra = {}) => generarSemana({
+    lunes: LUNES, trabajadores, areas: AREAS, tramos: TRAMOS, contratos: CONTRATOS,
+    necesidades: [{ area_id: COCINA, tramo_id: 20, dow: 0, minimo: 1, objetivo: 1 }],
+    capacidades: CAPS, ...extra });
+
+  test("un hueco de COCINA no se cubre con quien solo hace SALA", () => {
+    const r = gen([JUAN, MARTA]);
+    assert.equal(r.asignaciones.length, 1);
+    assert.equal(r.asignaciones[0].worker_id, 2, "Marta, que es la de cocina");
+  });
+
+  test("y si la de cocina está de vacaciones, se queda sin cubrir en vez de meter a Juan", () => {
+    // Es el principio que sostiene la fase: rellenar el hueco con quien sea para quitar el
+    // rojo produce un cuadrante que no se puede trabajar.
+    const r = gen([JUAN, MARTA], {
+      ausencias: [{ worker_id: 2, tipo: "vacaciones", desde: LUNES, hasta: LUNES, estado: "aprobada" }] });
+    assert.equal(r.asignaciones.length, 0);
+    assert.equal(r.sinCubrir.length, 1);
+    const motivos = Object.fromEntries(r.sinCubrir[0].porque.map((p) => [p.motivo, p.quienes]));
+    assert.deepEqual(motivos.area_no_habilitada, ["Juan"]);
+    assert.deepEqual(motivos.ausencia, ["Marta"]);
+  });
+
+  test("quien tiene varias áreas vale para las suyas", () => {
+    const r = gen([JUAN, PEDRO]);
+    assert.equal(r.asignaciones[0].worker_id, 3);
+  });
+
+  test("quien NO está configurado sigue valiendo para todo", () => {
+    // La compatibilidad que permite desplegar esto sin vaciar el cuadrante del día siguiente.
+    const r = gen([NUEVO]);
+    assert.equal(r.asignaciones.length, 1);
+    assert.equal(r.asignaciones[0].worker_id, 4);
+  });
+
+  test("configurado con CERO áreas no entra en ninguna", () => {
+    const fuera = cfg({ id: 9, nombre: "Oficina" });
+    const r = generarSemana({
+      lunes: LUNES, trabajadores: [fuera], areas: AREAS, tramos: TRAMOS, contratos: CONTRATOS,
+      necesidades: [{ area_id: COCINA, tramo_id: 20, dow: 0, minimo: 1, objetivo: 1 }],
+      capacidades: CAPS });
+    assert.equal(r.asignaciones.length, 0);
+    assert.equal(r.sinCubrir[0].porque[0].motivo, "area_no_habilitada");
+  });
+
+  test("la capacidad se comprueba ANTES que todo lo demás", () => {
+    // Decir «los tres de cocina están de vacaciones» y «no hay nadie de cocina» son dos
+    // problemas distintos y se arreglan de formas distintas.
+    const r = gen([JUAN], { ausencias: [{ worker_id: 1, tipo: "baja", desde: LUNES, hasta: LUNES, estado: "aprobada" }] });
+    assert.equal(r.sinCubrir[0].porque[0].motivo, "area_no_habilitada",
+      "para un hueco de cocina, que Juan esté de baja es irrelevante: nunca sería candidato");
+  });
+
+  test("un refuerzo también respeta el área", () => {
+    const r = generarSemana({
+      lunes: LUNES, trabajadores: [JUAN, MARTA], areas: AREAS, tramos: TRAMOS, contratos: CONTRATOS,
+      capacidades: CAPS,
+      necesidades: [{ area_id: COCINA, dow: 0, minimo: 1, objetivo: 1,
+        duracion_min: 240, ventana_inicio_min: 960, ventana_fin_min: 1440, etiqueta: "Refuerzo cena" }] });
+    assert.equal(r.asignaciones.length, 1);
+    assert.equal(r.asignaciones[0].worker_id, 2);
+    assert.equal(r.asignaciones[0].refuerzo, true);
+  });
+
+  test("todas las restricciones se aplican a la vez", () => {
+    // Capacidad + ausencia + disponibilidad + contrato, juntas.
+    const r = generarSemana({
+      lunes: LUNES, trabajadores: [JUAN, MARTA, PEDRO], areas: AREAS, tramos: TRAMOS,
+      capacidades: CAPS, contratos: CONTRATOS,
+      necesidades: [{ area_id: COCINA, tramo_id: 20, dow: 0, minimo: 1, objetivo: 1 }],
+      ausencias: [{ worker_id: 2, tipo: "vacaciones", desde: LUNES, hasta: LUNES, estado: "aprobada" }],
+      disponibilidad: [{ worker_id: 3, dow: 0, inicio_min: 960, fin_min: 1440, preferencia: "no_disponible" }],
+    });
+    assert.equal(r.asignaciones.length, 0);
+    const motivos = Object.fromEntries(r.sinCubrir[0].porque.map((p) => [p.motivo, p.quienes]));
+    assert.deepEqual(motivos, { area_no_habilitada: ["Juan"], ausencia: ["Marta"], no_disponible: ["Pedro"] });
+  });
+
+  test("el reparto entre los que SÍ pueden no cambia: la capacidad no puntúa", () => {
+    // Marta y Pedro pueden los dos; decide el déficit de contrato, como siempre.
+    const r = generarSemana({
+      lunes: LUNES, trabajadores: [MARTA, PEDRO], areas: AREAS, tramos: TRAMOS, capacidades: CAPS,
+      contratos: [{ worker_id: 2, desde: "2020-01-01", hasta: null, horas_semana: 10 },
+                  { worker_id: 3, desde: "2020-01-01", hasta: null, horas_semana: 40 }],
+      necesidades: [{ area_id: COCINA, tramo_id: 20, dow: 0, minimo: 1, objetivo: 1 }] });
+    assert.equal(r.asignaciones[0].worker_id, 3, "Pedro, que va más corto respecto a su contrato");
+    assert.match(r.asignaciones[0].porque, /le faltan \d+ h/);
+  });
+
+  test("cuando un área no tiene plantilla suficiente, se dice con números", () => {
+    const r = generarSemana({
+      lunes: LUNES, trabajadores: [JUAN, MARTA], areas: AREAS, tramos: TRAMOS, capacidades: CAPS,
+      contratos: [{ worker_id: 1, desde: "2020-01-01", hasta: null, horas_semana: 40 },
+                  { worker_id: 2, desde: "2020-01-01", hasta: null, horas_semana: 10 }],
+      necesidades: [{ area_id: COCINA, tramo_id: 20, dow: 0, minimo: 1, objetivo: 1 },
+                    { area_id: COCINA, tramo_id: 20, dow: 1, minimo: 1, objetivo: 1 },
+                    { area_id: COCINA, tramo_id: 20, dow: 2, minimo: 1, objetivo: 1 }] });
+    const cocina = r.resumen.areasCortas.find((a) => a.nombre === "COCINA");
+    assert.ok(cocina, "COCINA sale como área corta");
+    assert.equal(cocina.horasMinimas, 24);
+    assert.equal(cocina.horasDisponibles, 10, "solo cuenta la gente habilitada");
+    assert.equal(cocina.habilitados, 1);
+  });
+
+  test("y si el área va sobrada, no se menciona", () => {
+    const r = gen([MARTA, PEDRO]);
+    assert.equal(r.resumen.areasCortas.length, 0);
+  });
+
+  test("sin capacidades, el generador se comporta EXACTAMENTE como antes", () => {
+    // Es la garantía de que esta fase no cambia nada para quien no la use.
+    const sin = generarSemana({
+      lunes: LUNES, trabajadores: [JUAN, MARTA], areas: AREAS, tramos: TRAMOS, contratos: CONTRATOS,
+      necesidades: [{ area_id: COCINA, tramo_id: 20, dow: 0, minimo: 1, objetivo: 1 }] });
+    assert.equal(sin.asignaciones.length, 1, "asigna a quien sea, como siempre");
+    assert.equal(sin.resumen.areasCortas.length, 0);
   });
 });

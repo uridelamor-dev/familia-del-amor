@@ -14,6 +14,7 @@
 // y entonces el sistema no sirve para nada. El encargado manda; el sistema deja constancia.
 
 import { diasSemana, solapan, duracionMin, descansoHoras, franjaCorta } from "./tiempo.js";
+import { puedeEnArea, estaConfigurado } from "./capacidades.js";
 
 export const BLOQUEA = "bloquea";
 export const AVISA = "avisa";
@@ -87,6 +88,9 @@ const saltoDias = (a, b) => Math.round((Date.parse(b + "T12:00:00Z") - Date.pars
 export function detectarConflictos({
   lunes, asignaciones = [], trabajadores = [], ausencias = [], contratos = [],
   necesidades = [], tramos = [], areas = [], limites = {},
+  // `Map<worker_id, Set<area_id>>`. Si no viene, no se comprueba la capacidad: es lo que
+  // permite que quien llame a esto sin capacidades se comporte exactamente como antes.
+  capacidades = null,
   // Turnos YA PUBLICADOS del domingo anterior y del lunes siguiente. Solo entran en la
   // comprobación del descanso: el resto de reglas son de esta semana.
   //
@@ -129,6 +133,25 @@ export function detectarConflictos({
         tipo: "jornada_larga", severidad: AVISA, worker_id: wid, dia,
         ids: orden.map((a) => a.id),
         mensaje: `${nombreDe(porId.get(String(wid)))} hace ${Math.round(minutos / 6) / 10} h el ${dia}.`,
+      });
+    }
+  }
+
+  // ── Alguien puesto en un área para la que no está habilitado ──
+  //
+  // AVISA, NO BLOQUEA, y es una decisión pensada. Un sábado a las once de la noche falta un
+  // cocinero y el encargado mete a quien tiene delante: eso pasa, es lo correcto, y un sistema
+  // que se lo impida acaba con el cuadrante hecho en un papel. El generador nunca lo propone
+  // —para él es un descarte duro— pero una persona sí puede decidirlo, y queda escrito.
+  if (capacidades) {
+    for (const a of turnos) {
+      if (a.area_id == null) continue;
+      const w = porId.get(String(a.worker_id));
+      if (!w || !estaConfigurado(w) || puedeEnArea(w, a.area_id, capacidades)) continue;
+      const area = (areas || []).find((x) => String(x.id) === String(a.area_id));
+      add({
+        tipo: "area_no_habilitada", severidad: AVISA, worker_id: a.worker_id, dia: a.dia, ids: [a.id],
+        mensaje: `${nombreDe(w)} no está habilitado para ${area ? area.nombre : "esa área"} y le has puesto turno ahí el ${a.dia}.`,
       });
     }
   }
@@ -223,11 +246,26 @@ export function detectarConflictos({
     if (!dia) continue;
     if (n.desde && String(dia) < String(n.desde)) continue;
     if (n.hasta && String(dia) > String(n.hasta)) continue;
-    const hay = turnos.filter((a) =>
-      String(a.dia) === dia && String(a.area_id) === String(n.area_id) && String(a.tramo_id) === String(n.tramo_id)
-    ).length;
+    // UN REFUERZO NO TIENE TRAMO. Comparar `tramo_id` con `tramo_id` dejaba fuera a todos:
+    // la necesidad de refuerzo lleva `tramo_id = NULL` y el turno que la cubre también, así
+    // que `String(null) === String(null)` sí casaba… pero cualquier OTRO refuerzo del mismo
+    // día y área también, y encima ningún turno de tramo podía contar para él. El resultado
+    // era que las necesidades de refuerzo no se comprobaban de verdad.
+    //
+    // Para un refuerzo lo que define la cobertura es la DURACIÓN dentro de su ventana, no el
+    // bloque: cuenta el turno cuya duración es la pedida y que cae dentro de la horquilla.
+    const esRefuerzo = Number(n.duracion_min) > 0;
+    const hay = turnos.filter((a) => {
+      if (String(a.dia) !== dia || String(a.area_id) !== String(n.area_id)) return false;
+      if (!esRefuerzo) return String(a.tramo_id) === String(n.tramo_id);
+      const dur = duracionMin(a.inicio_min, a.fin_min);
+      return dur === Number(n.duracion_min)
+        && Number(a.inicio_min) >= Number(n.ventana_inicio_min)
+        && Number(a.fin_min) <= Number(n.ventana_fin_min);
+    }).length;
     if (hay < Number(n.minimo || 0)) {
-      const area = idxArea.get(String(n.area_id)), tramo = idxTramo.get(String(n.tramo_id));
+      const area = idxArea.get(String(n.area_id));
+      const tramo = esRefuerzo ? { nombre: n.etiqueta || "refuerzo" } : idxTramo.get(String(n.tramo_id));
       add({
         tipo: "bajo_minimo", severidad: AVISA, dia,
         mensaje: `${dia}, ${tramo ? tramo.nombre : "?"} en ${area ? area.nombre : "?"}: hay ${hay} y hacen falta ${n.minimo}.`,
