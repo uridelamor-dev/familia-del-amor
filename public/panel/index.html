@@ -690,23 +690,35 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .bl-lista{max-height:46vh}
 }
 
-/* Qué se da por bueno en una jornada. Filas grandes y pinchables enteras: se decide
-   con prisa y un radio de 13 px es un blanco imposible. */
-.fic-decide{display:flex;flex-direction:column;gap:2px}
-.fic-op{display:flex;gap:12px;align-items:center;padding:10px 12px;border-radius:10px;
-  cursor:pointer;border:1px solid transparent;transition:.12s}
-.fic-op:hover{background:var(--surface2)}
-.fic-op:has(input:checked){background:var(--brand-soft);border-color:var(--brand)}
-.fic-op input{width:auto;flex:none;margin:0}
-.fic-op-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-.fic-op-txt b{font-size:13.5px}
-.fic-op-txt .mut{font-size:11.5px}
-.fic-op-min{flex:none;text-align:right;display:flex;flex-direction:column;gap:1px;white-space:nowrap}
-.fic-op-min .mut{font-size:11px}
+/* Qué horas cuentan. Las dos candidatas —la del reloj y la del cuadrante— se pulsan
+   directamente: elegir «la entrada del cuadrante y la salida fichada» es un toque en
+   cada una, no una cuenta de cabeza. */
+.fic-horas{display:flex;flex-direction:column;gap:12px}
+.fic-horas.apagado{opacity:.4;pointer-events:none}
+.fic-turno{display:flex;flex-direction:column;gap:6px}
+.fic-turno-tit{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)}
+.fic-hfila{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.fic-hlab{flex:0 0 46px;font-size:12.5px;font-weight:600;color:var(--ink2)}
+.fic-hora{display:flex;flex-direction:column;align-items:center;gap:0;
+  min-width:78px;min-height:44px;padding:4px 10px;cursor:pointer;
+  border:1px solid var(--border);border-radius:10px;background:var(--surface);
+  color:var(--ink);font:inherit;transition:.12s}
+.fic-hora b{font-size:15px;font-variant-numeric:tabular-nums;line-height:1.15}
+.fic-hora span{font-size:10.5px;color:var(--ink3);text-transform:uppercase;letter-spacing:.03em}
+.fic-hora:hover{border-color:var(--border2)}
+.fic-hora.on{background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
+.fic-hora.on span{color:var(--brand)}
+.fic-hora:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.fic-hotra{min-height:44px;text-align:center;font-variant-numeric:tabular-nums}
+.fic-total{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:var(--surface2);
+  font-size:13.5px;line-height:1.5}
+.fic-nocuenta{display:flex;gap:8px;align-items:center;margin-top:10px;
+  font-size:13px;font-weight:600;color:var(--ink2);cursor:pointer;min-height:40px}
+.fic-nocuenta input{width:auto}
 @media(max-width:560px){
-  .fic-op{flex-wrap:wrap;min-height:52px}
-  .fic-op-min{width:100%;text-align:left;flex-direction:row;gap:8px;align-items:baseline;padding-left:30px}
-  .fic-op-min .inp{font-size:16px;min-height:40px}
+  .fic-hlab{flex:1 1 100%}
+  .fic-hora{flex:1;min-width:0}
+  .fic-hotra{flex:1;width:auto;font-size:16px}
 }
 
 /* Cuánta gente hace falta. Eran 84 casillas idénticas con «—» y un párrafo explicando

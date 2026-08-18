@@ -5492,6 +5492,44 @@ async function ficValidarLote(j) {
 
 const FIC_EV_ORIGEN = { kiosco: "tablet", kiosco_offline: "tablet (sin conexión)", manual: "a mano", importado: "importado" };
 
+/**
+ * Los pares entrada/salida de una jornada, con las horas que se pueden PULSAR.
+ *
+ * Un par por turno: un día partido —cuatro horas de mañana y cuatro de tarde— tiene dos
+ * entradas y dos salidas, y cada una se elige por su lado. Para cada hueco se ofrece lo que
+ * marcó el reloj, lo que decía el cuadrante, y un campo por si no vale ninguna de las dos.
+ *
+ * Arranca con lo FICHADO marcado: es lo que se validaba antes y sigue siendo lo normal.
+ */
+function ficTramosElegibles(j) {
+  const n = Math.max((j.fichado || []).length, (j.plan || []).length, 1);
+  const opcion = (i, lado, valor, etiqueta, marcada) => valor == null ? "" :
+    `<button type="button" class="fic-hora ${marcada ? "on" : ""}" data-t="${i}" data-lado="${lado}" data-min="${valor}">
+       <b>${esc(lado === "fin" ? ficFin(valor) : ficReloj(valor))}</b><span>${esc(etiqueta)}</span></button>`;
+
+  return Array.from({ length: n }, (_, i) => {
+    const f = (j.fichado || [])[i] || null;
+    const p = (j.plan || [])[i] || null;
+    const fila = (lado, tit) => {
+      const vf = f ? (lado === "fin" ? f.fin : f.inicio) : null;
+      const vp = p ? (lado === "fin" ? p.fin : p.inicio) : null;
+      // Si el reloj no tiene esa hora —se olvidó de fichar la salida— arranca marcada la del
+      // cuadrante, que es la única que hay.
+      const porDefecto = vf != null ? "fichado" : "plan";
+      return `<div class="fic-hfila">
+          <span class="fic-hlab">${tit}</span>
+          ${opcion(i, lado, vf, "fichó", porDefecto === "fichado")}
+          ${opcion(i, lado, vp, "cuadrante", porDefecto === "plan")}
+          <input class="inp fic-hotra" data-t="${i}" data-lado="${lado}" placeholder="otra" style="width:76px">
+        </div>`;
+    };
+    return `<div class="fic-turno">
+        ${n > 1 ? `<div class="fic-turno-tit">Turno ${i + 1}</div>` : ""}
+        ${fila("inicio", "Entra")}${fila("fin", "Sale")}
+      </div>`;
+  }).join("");
+}
+
 async function ficAbrirJornada(workerId, dia) {
   const ov = modal("Jornada", '<p class="mut" id="ficJorBody">Cargando…</p>');
   const pintar = async () => {
@@ -5536,27 +5574,22 @@ async function ficAbrirJornada(workerId, dia) {
           <button class="btn" id="ficNvOk">Añadir</button>
         </div>
         <p id="ficNvMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
-        ${/* ── Qué se da por bueno ──────────────────────────────────────────────────────
-              Antes solo se podía validar lo fichado. Pero el reloj no siempre tiene razón:
-              alguien se deja la salida y ficha de más, o se acuerda un día que no sale de
-              ningún registro. Las cuatro salidas son el MISMO mecanismo con distinto número
-              —`min_validado`—, así que no hace falta ninguna regla nueva: lo que cambia es
-              quién decide la cifra. Los fichajes siguen intactos: se decide qué CUENTA, no
-              se reescribe lo que pasó. */""}
-        <div class="ch" style="margin-top:18px"><h3 style="margin:0;font-size:13px">¿Cuántas horas se dan por buenas?</h3></div>
-        <div class="fic-decide">
-          ${[["fichado", "Lo fichado", j.minEfectivo, "es lo que marcó el reloj"],
-             ...(j.minPlanificado > 0 ? [["plan", "Lo del cuadrante", j.minPlanificado, "lo que tocaba ese día"]] : []),
-             ["otro", "Otra cantidad", null, "un acuerdo que no sale del reloj"],
-             ["cero", "No contar este día", 0, "queda decidido en cero, y los fichajes se quedan"]]
-            .map(([k, tit, min, ayuda]) => `<label class="fic-op">
-              <input type="radio" name="ficDecide" value="${k}" ${k === "fichado" ? "checked" : ""}>
-              <span class="fic-op-txt"><b>${esc(tit)}</b><span class="mut">${esc(ayuda)}</span></span>
-              <span class="fic-op-min">${min === null
-                ? `<input class="inp" id="ficOtroMin" placeholder="h:mm" style="width:78px" disabled>`
-                : `<b>${esc(ficHoras(min))}</b><span class="mut">${esc(ficSigno(min - j.minPlanificado))} sobre el plan</span>`}</span>
-            </label>`).join("")}
-        </div>
+        ${/* ── Qué horas cuentan ────────────────────────────────────────────────────────
+              Se PULSA la hora buena. La del reloj y la del cuadrante están las dos ahí, y
+              se coge una de cada: la entrada del cuadrante y la salida fichada es el caso
+              de todos los días —alguien llega cinco minutos antes pero se va cuando se va—
+              y antes obligaba a calcular el total a mano.
+
+              Un par por turno: quien parte el día en mañana y tarde tiene dos entradas y
+              dos salidas, y cada una se elige por su lado.
+
+              Esto NO toca los fichajes. Sigue decidiéndose una sola cosa —cuántos minutos
+              cuentan— y lo que hace la pantalla es ayudar a llegar a esa cifra sin
+              calcularla de cabeza. */""}
+        <div class="ch" style="margin-top:18px"><h3 style="margin:0;font-size:13px">¿Qué horas cuentan?</h3></div>
+        <div class="fic-horas" id="ficHoras">${ficTramosElegibles(j)}</div>
+        <div class="fic-total" id="ficTotal"></div>
+        <label class="fic-nocuenta"><input type="checkbox" id="ficNoCuenta"> No contar este día</label>
         <div id="ficMotivoCaja" class="hidden" style="margin-top:10px">
           <input class="inp" id="ficValMotivo" placeholder="Por qué no se cuentan las horas fichadas (obligatorio)" style="width:100%">
         </div>
@@ -5576,57 +5609,98 @@ async function ficAbrirJornada(workerId, dia) {
         toast("Fichaje añadido ✅"); pintar();
       } catch (e) { msg.textContent = e.message; }
     });
-    // Cuántos minutos se van a validar según lo elegido. `null` = lo que decida el servidor
-    // (lo fichado), que es el camino de siempre y el único que no pide explicación.
-    const minutosElegidos = () => {
-      const k = (ov.querySelector('input[name="ficDecide"]:checked') || {}).value;
-      if (k === "plan") return j.minPlanificado;
-      if (k === "cero") return 0;
-      if (k === "otro") return ficLeerHoras(ov.querySelector("#ficOtroMin").value);
-      return null;
+    // ── Qué horas están elegidas ahora mismo ────────────────────────────────────────
+    // Gana lo escrito a mano sobre lo pulsado: si alguien teclea una hora es porque ninguna
+    // de las dos le vale, y esa intención es más reciente que el botón que marcó antes.
+    const horaDe = (i, lado) => {
+      const otra = ov.querySelector(`.fic-hotra[data-t="${i}"][data-lado="${lado}"]`);
+      if (otra && otra.value.trim()) { const m = horMin(otra.value.trim()); return Number.isFinite(m) && m > 0 ? m : null; }
+      const b = ov.querySelector(`.fic-hora.on[data-t="${i}"][data-lado="${lado}"]`);
+      return b ? Number(b.getAttribute("data-min")) : null;
     };
-    const refrescarPie = () => {
-      const k = (ov.querySelector('input[name="ficDecide"]:checked') || {}).value;
-      const otro = ov.querySelector("#ficOtroMin");
-      otro.disabled = k !== "otro";
-      if (k === "otro") otro.focus();
-      // El motivo solo se pide cuando de verdad hace falta: si se valida lo fichado, no hay
-      // nada que explicar. Es lo mismo que exige el servidor, dicho antes de pulsar.
-      ov.querySelector("#ficMotivoCaja").classList.toggle("hidden", k === "fichado");
-      const m = minutosElegidos();
-      ov.querySelector("#ficValidar").textContent =
-        k === "cero" ? "Validar sin contar el día"
-        : m == null ? `Validar ${ficHoras(j.minEfectivo)}`
-        : m == null || !Number.isFinite(m) ? "Validar" : `Validar ${ficHoras(m)}`;
-    };
-    ov.querySelectorAll('input[name="ficDecide"]').forEach((r) => r.addEventListener("change", refrescarPie));
-    ov.querySelector("#ficOtroMin").addEventListener("input", refrescarPie);
+    const nTurnos = ov.querySelectorAll(".fic-turno").length;
+
+    /** Los minutos que se validarían, o null si falta alguna hora o el par no tiene sentido. */
+    function calcular() {
+      if (ov.querySelector("#ficNoCuenta").checked) return { min: 0, cero: true };
+      let total = 0;
+      for (let i = 0; i < nTurnos; i++) {
+        const a = horaDe(i, "inicio"), b = horaDe(i, "fin");
+        if (a == null || b == null) return { falta: true };
+        if (b <= a) return { error: `En el turno ${i + 1}, la salida tiene que ser posterior a la entrada.` };
+        total += b - a;
+      }
+      // Las pausas registradas se restan igual que al calcular lo fichado: son tiempo que
+      // no se trabajó, elija quien elija las horas de los extremos.
+      return { min: Math.max(0, total - (j.minPausa || 0)), pausa: j.minPausa || 0 };
+    }
+
+    function refrescarPie() {
+      const r = calcular();
+      const caja = ov.querySelector("#ficTotal");
+      const btn = ov.querySelector("#ficValidar");
+      const noCuenta = ov.querySelector("#ficNoCuenta").checked;
+      ov.querySelector("#ficHoras").classList.toggle("apagado", noCuenta);
+
+      if (r.error) { caja.innerHTML = `<span style="color:var(--danger);font-weight:600">${esc(r.error)}</span>`; btn.disabled = true; return; }
+      if (r.falta) { caja.innerHTML = `<span class="mut">Elige la hora de entrada y la de salida.</span>`; btn.disabled = true; return; }
+      btn.disabled = false;
+
+      const dif = r.min - j.minPlanificado;
+      caja.innerHTML = r.cero
+        ? `<b>0 min</b> <span class="mut">· la jornada queda decidida en cero y los fichajes se quedan como están</span>`
+        : `<b>${esc(ficHoras(r.min))}</b>` +
+          (r.pausa ? ` <span class="mut">· ya descontada ${esc(ficHoras(r.pausa))} de pausa</span>` : "") +
+          ` <span class="mut">·</span> <b style="color:${dif === 0 ? "var(--ink)" : dif > 0 ? "var(--brand)" : "var(--danger)"}">${esc(ficSigno(dif))}</b> <span class="mut">sobre el cuadrante</span>`;
+
+      // La explicación solo se pide si NO coincide con lo fichado, que es la misma regla
+      // que aplica el servidor.
+      const igualAlReloj = !r.cero && r.min === j.minEfectivo;
+      ov.querySelector("#ficMotivoCaja").classList.toggle("hidden", igualAlReloj);
+      btn.textContent = r.cero ? "Validar sin contar el día" : `Validar ${ficHoras(r.min)}`;
+    }
+
+    // Pulsar una hora la marca y desmarca la otra del mismo hueco.
+    ov.querySelector("#ficHoras").addEventListener("click", (e) => {
+      const b = e.target.closest(".fic-hora");
+      if (!b) return;
+      const i = b.getAttribute("data-t"), lado = b.getAttribute("data-lado");
+      ov.querySelectorAll(`.fic-hora[data-t="${i}"][data-lado="${lado}"]`).forEach((x) => x.classList.toggle("on", x === b));
+      const otra = ov.querySelector(`.fic-hotra[data-t="${i}"][data-lado="${lado}"]`);
+      if (otra) otra.value = "";   // pulsar una hora descarta lo que se hubiera escrito
+      refrescarPie();
+    });
+    ov.querySelectorAll(".fic-hotra").forEach((c) => c.addEventListener("input", () => {
+      const i = c.getAttribute("data-t"), lado = c.getAttribute("data-lado");
+      // Escribir una hora desmarca las dos sugeridas: manda lo que se acaba de teclear.
+      if (c.value.trim()) ov.querySelectorAll(`.fic-hora[data-t="${i}"][data-lado="${lado}"]`).forEach((x) => x.classList.remove("on"));
+      refrescarPie();
+    }));
+    ov.querySelector("#ficNoCuenta").addEventListener("change", refrescarPie);
     refrescarPie();
 
     ov.querySelector("#ficValidar").addEventListener("click", async () => {
       const msg = ov.querySelector("#ficNvMsg");
-      const k = (ov.querySelector('input[name="ficDecide"]:checked') || {}).value;
-      const minutos = minutosElegidos();
-      if (k === "otro" && !Number.isFinite(minutos)) { msg.textContent = "Escribe cuántas horas se cuentan, por ejemplo 7:30"; return; }
+      const r = calcular();
+      if (r.error || r.falta) { msg.textContent = r.error || "Elige la hora de entrada y la de salida."; return; }
       const cuerpo = { worker_id: workerId, dia, aceptar_incidencias: !!j.requiereRevision };
-      if (minutos != null) {
+      // Solo se manda una cifra si NO es la del reloj: así el camino de siempre sigue siendo
+      // el que no necesita explicar nada.
+      if (r.cero || r.min !== j.minEfectivo) {
         const nota = ov.querySelector("#ficValMotivo").value.trim();
-        // Se comprueba AQUÍ y no solo en el servidor. La regla es la misma —validar algo
-        // distinto de lo fichado hay que explicarlo— pero pedirla antes de enviar dice qué
-        // falta; dejarla al servidor devuelve un error después de haber pulsado.
         if (nota.length < 5) {
-          msg.textContent = minutos === 0
+          msg.textContent = r.cero
             ? "Explica por qué este día no cuenta: dentro de seis meses nadie se acordará."
-            : `Vas a validar ${ficHoras(minutos)} en lugar de las ${ficHoras(j.minEfectivo)} fichadas: explica por qué.`;
+            : `Vas a validar ${ficHoras(r.min)} en lugar de las ${ficHoras(j.minEfectivo)} fichadas: explica por qué.`;
           ov.querySelector("#ficValMotivo").focus();
           return;
         }
-        cuerpo.minutos = minutos;
+        cuerpo.minutos = r.min;
         cuerpo.nota = nota;
       }
       try {
-        const r = await apiSend("POST", "/api/fichajes/validar", cuerpo);
-        ov.remove(); toast(r.mensaje || "Jornada validada ✅"); ficPintarRevision();
+        const resp = await apiSend("POST", "/api/fichajes/validar", cuerpo);
+        ov.remove(); toast(resp.mensaje || "Jornada validada ✅"); ficPintarRevision();
       } catch (e) { msg.textContent = e.message; }
     });
     ov.querySelector("#ficJorBody").addEventListener("click", async (e) => {
