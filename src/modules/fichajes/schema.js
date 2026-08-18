@@ -40,6 +40,14 @@ export async function ensureSchemaFichajes(x) {
   // es sería enseñárselo a quien no toca.
   await x.run(`ALTER TABLE hor_config ADD COLUMN IF NOT EXISTS wa_grupo_jid TEXT`);
 
+  // Franquicia de la bolsa: los minutos de desvío diario que no se le apuntan a nadie.
+  //
+  // Columna aparte de `tolerancia_min` A PROPÓSITO, aunque hoy las dos valgan 10. Aquella
+  // decide si un fichaje se pinta como incidencia —un aviso— y esta decide horas que se
+  // deben o se cobran. Compartirlas significaría que subir a 15 el aviso de «llegó tarde»
+  // cambia sin querer lo que se le paga a la gente, y nadie relacionaría las dos cosas.
+  await x.run(`ALTER TABLE hor_config ADD COLUMN IF NOT EXISTS tolerancia_bolsa_min INTEGER NOT NULL DEFAULT 10`);
+
   // ── Refuerzos ──────────────────────────────────────────────────────────────
   // Una necesidad puede ser de dos formas:
   //
@@ -174,6 +182,44 @@ export async function ensureSchemaFichajes(x) {
   )`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fic_bolsa_wk ON fic_bolsa_movimientos (worker_id, periodo)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fic_bolsa_loc ON fic_bolsa_movimientos (local, periodo)`);
+
+  // Lo que hizo falta para cerrar el circuito: pagar las horas, devolverlas con descanso y
+  // deshacer una de las dos si se registró por error. TODO es aditivo — ni una fila vieja se
+  // toca — porque un movimiento de bolsa es la prueba de lo que se le debe a una persona.
+  //
+  //   · `dif_min` y `tolerancia_min` guardan la diferencia BRUTA del día y la franquicia que
+  //     se le aplicó. Sin ellas, dentro de tres años un +15 sería un número sin explicación:
+  //     no se podría saber si venía de 25 con franquicia de 10 o de 15 sin franquicia. Se
+  //     rellenan al escribir, así que cambiar la franquicia mañana no reescribe el pasado.
+  //   · `fecha_efectiva` es cuándo se pagó de verdad («en la nómina del 15»), distinta de
+  //     `creado_en`, que es cuándo se registró y no lo toca nadie.
+  //   · `saldo_antes` es lo que la persona que lo autorizó tenía delante. NO es la fuente de
+  //     verdad del saldo —esa sigue siendo SUM(minutos)— sino la prueba de qué confirmó.
+  for (const col of ["dif_min INTEGER", "tolerancia_min INTEGER", "fecha_efectiva TEXT", "saldo_antes INTEGER"]) {
+    await x.run(`ALTER TABLE fic_bolsa_movimientos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+
+  // El CHECK de conceptos se rehace con la lista ampliada. Es seguro por construcción: los
+  // valores que ya hay estaban obligados por el CHECK anterior, cuya lista es un
+  // SUBCONJUNTO de la nueva, así que ninguna fila existente puede incumplirlo. No se
+  // renombra ni se convierte ningún concepto antiguo — `liquidacion` y `arrastre` siguen
+  // siendo válidos aunque hoy no los escriba nadie.
+  await x.run(`DO $$
+    DECLARE c text;
+    BEGIN
+      FOR c IN SELECT conname FROM pg_constraint
+                WHERE conrelid = 'fic_bolsa_movimientos'::regclass AND contype = 'c'
+                  AND pg_get_constraintdef(oid) LIKE '%concepto%'
+      LOOP EXECUTE format('ALTER TABLE fic_bolsa_movimientos DROP CONSTRAINT %I', c); END LOOP;
+    END $$`);
+  await x.run(`ALTER TABLE fic_bolsa_movimientos ADD CONSTRAINT fic_bolsa_conceptos
+    CHECK (concepto IN ('jornada','ajuste','contra','liquidacion','arrastre','pago','compensacion','reversion'))`);
+
+  // Un movimiento no puede deshacerse dos veces. El índice lo garantiza en la base, no solo
+  // en el código: dos pestañas pulsando «deshacer» a la vez pasan las dos la comprobación
+  // previa, y sin esto se devolverían las horas por duplicado.
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fic_bolsa_reversion
+    ON fic_bolsa_movimientos (referencia_id) WHERE concepto = 'reversion'`);
 
   // Cierre de periodo. Un periodo cerrado no admite fichajes nuevos ni correcciones: sin
   // esto, corregir un día de marzo en noviembre cambiaría una nómina ya pagada sin que

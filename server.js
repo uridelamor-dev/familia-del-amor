@@ -54,7 +54,9 @@ import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornad
 import { validarFormatoPin, estadoBloqueo, trasFallo as pinTrasFallo, trasAcierto as pinTrasAcierto } from "./src/modules/fichajes/pin.js";
 import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornadas.js";
 import { clasificarJornada, resumirRevision, mereceSalir, candidatasDeLote, LISTA, CADUCADA } from "./src/modules/fichajes/revision.js";
-import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo } from "./src/modules/fichajes/bolsa.js";
+import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo,
+         TOLERANCIA_BOLSA_MIN, movimientoBolsa, revertidos, motivoNoLiquidar, motivoNoRevertir,
+         CONCEPTOS_LIQUIDACION, enHoras, conSigno } from "./src/modules/fichajes/bolsa.js";
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { colaDeTrabajo, cobertura } from "./src/modules/facturas/diccionario.js";
@@ -9663,6 +9665,17 @@ async function ficBloqueoPorCierre(local, dia) {
 // Lleva al libro la diferencia entre lo VALIDADO y lo que tocaba según el cuadrante.
 // A la bolsa solo va lo validado: mientras una jornada esté sin revisar, sus horas no
 // entran en el saldo de nadie. Si no, el saldo se movería solo cada vez que alguien ficha.
+// La franquicia del local, con su valor por defecto. Se lee aquí y en ningún otro sitio se
+// decide: quien quiera saber cuántos minutos se perdonan pregunta a esta función.
+async function ficToleranciaBolsa(local) {
+  const c = await dbGet(`SELECT tolerancia_bolsa_min FROM hor_config WHERE local = ?`, [local]);
+  const v = Number(c?.tolerancia_bolsa_min);
+  return Number.isFinite(v) && v >= 0 ? Math.round(v) : TOLERANCIA_BOLSA_MIN;
+}
+
+// ESTE ES EL ÚNICO SITIO QUE APUNTA JORNADAS AL LIBRO. La validación individual, la de
+// lote y el cierre de periodo pasan las tres por aquí, así que la franquicia no se puede
+// aplicar en una y olvidar en otra: no hay dos caminos que mantener sincronizados.
 async function ficApuntarJornada(local, workerId, dia, { autor = "sistema" } = {}) {
   const j = await dbGet(
     `SELECT min_planificado, min_validado, firma_eventos FROM fic_jornadas WHERE worker_id = ? AND dia_negocio = ?`,
@@ -9671,27 +9684,35 @@ async function ficApuntarJornada(local, workerId, dia, { autor = "sistema" } = {
 
   const periodo = await ficPeriodoDe(local, dia);
   const existentes = await dbAll(
-    `SELECT id, concepto, minutos, clave_idem, referencia_id FROM fic_bolsa_movimientos
+    `SELECT id, dia, concepto, minutos, clave_idem, referencia_id FROM fic_bolsa_movimientos
      WHERE worker_id = ? AND dia = ? ORDER BY id`, [workerId, dia]);
 
-  const { insertar, sinCambios } = movimientosParaJornada({
+  const tol = await ficToleranciaBolsa(local);
+  const plan = Number(j.min_planificado || 0);
+  const { insertar, sinCambios, minutos, diferencia } = movimientosParaJornada({
     workerId, local, dia, periodo: periodo.etiqueta,
-    minutos: Number(j.min_validado) - Number(j.min_planificado || 0),
+    // Los minutos VALIDADOS entran tal cual. La franquicia se aplica dentro y solo decide
+    // el apunte: `min_validado` sigue diciendo 8 h 11 min, porque es lo que se trabajó.
+    minValidado: Number(j.min_validado), minPlanificado: plan, toleranciaMin: tol,
     firma: j.firma_eventos, existentes, autor,
-    nota: `Validado ${j.min_validado} min sobre ${j.min_planificado || 0} planificados`,
+    nota: `Validado ${j.min_validado} min sobre ${plan} planificados` +
+      (diferenciaFueraDeTolerancia(Number(j.min_validado), plan, tol)
+        ? ` · diferencia ${Number(j.min_validado) - plan > 0 ? "+" : ""}${Number(j.min_validado) - plan} min, franquicia ${tol}` : ""),
   });
-  if (sinCambios) return { apuntado: false, motivo: "sin cambios" };
+  if (sinCambios) return { apuntado: false, motivo: "sin cambios", minutos, diferencia, tolerancia: tol };
 
   const ahora = isoConOffset(Date.now());
   for (const m of insertar) {
     // ON CONFLICT DO NOTHING sobre la clave: dos recálculos a la vez no duplican.
     await dbRun(
-      `INSERT INTO fic_bolsa_movimientos (worker_id, local, dia, periodo, concepto, minutos, clave_idem, referencia_id, nota, autor, creado_en)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING`,
-      [m.worker_id, m.local, m.dia, m.periodo, m.concepto, m.minutos, m.clave_idem, m.referencia_id ?? null, m.nota ?? null, m.autor, ahora]);
+      `INSERT INTO fic_bolsa_movimientos (worker_id, local, dia, periodo, concepto, minutos, clave_idem, referencia_id, nota, autor, creado_en, dif_min, tolerancia_min)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING`,
+      [m.worker_id, m.local, m.dia, m.periodo, m.concepto, m.minutos, m.clave_idem, m.referencia_id ?? null, m.nota ?? null, m.autor, ahora,
+       m.dif_min ?? null, m.tolerancia_min ?? null]);
   }
-  return { apuntado: true, movimientos: insertar.length };
+  return { apuntado: true, movimientos: insertar.length, minutos, diferencia, tolerancia: tol };
 }
+const diferenciaFueraDeTolerancia = (val, plan, tol) => Math.abs(Math.round(val) - Math.round(plan)) > tol;
 
 // Saldo por persona de un periodo, con el arrastre de lo anterior.
 app.get("/api/fichajes/bolsa", requireAuth(FICHAJES_ROLES), async (req, res) => {
@@ -9763,26 +9784,37 @@ app.get("/api/fichajes/bolsa", requireAuth(FICHAJES_ROLES), async (req, res) => 
 
 app.get("/api/fichajes/bolsa/:workerId", requireAuth(FICHAJES_ROLES), async (req, res) => {
   try {
-    const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.params.workerId)]);
+    const w = await dbGet(`SELECT id, nombre, local, fecha_baja FROM users WHERE id = ?`, [Number(req.params.workerId)]);
     if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "No encontrado" });
     // DOS consultas a propósito. El saldo es `SUM(minutos)` de TODAS las filas y no admite
     // recortes; la lista que se pinta sí, porque nadie lee dos mil movimientos. Antes se
     // calculaba el saldo sobre las 500 últimas, así que el modal podía decir un número y la
     // tabla de al lado otro, y el bueno era el de la tabla.
-    const [total, movs] = await Promise.all([
+    const [total, movs, refs, tol] = await Promise.all([
       dbGet(`SELECT COALESCE(SUM(minutos),0)::int AS saldo, COUNT(*)::int AS n
                FROM fic_bolsa_movimientos WHERE worker_id = ?`, [w.id]),
-      dbAll(`SELECT id, dia, periodo, concepto, minutos, nota, autor, referencia_id, creado_en
+      dbAll(`SELECT id, dia, periodo, concepto, minutos, nota, autor, referencia_id, creado_en,
+                    dif_min, tolerancia_min, fecha_efectiva, saldo_antes
                FROM fic_bolsa_movimientos WHERE worker_id = ? ORDER BY periodo DESC, id DESC LIMIT 500`, [w.id]),
+      // Qué está deshecho se calcula sobre TODAS las reversiones, no sobre las 500 que se
+      // pintan: si el pago sale en la lista y su reversión se quedó fuera del recorte,
+      // aparecería como vigente y alguien intentaría deshacerlo dos veces.
+      dbAll(`SELECT referencia_id FROM fic_bolsa_movimientos WHERE worker_id = ? AND concepto = 'reversion'`, [w.id]),
+      ficToleranciaBolsa(w.local || ""),
     ]);
+    const anulados = revertidos(refs.map((r) => ({ concepto: "reversion", referencia_id: r.referencia_id })));
     res.json({
-      ok: true, trabajador: { id: w.id, nombre: w.nombre },
+      ok: true, trabajador: { id: w.id, nombre: w.nombre, de_baja: !!w.fecha_baja },
       saldo: Number(total?.saldo) || 0,
       movimientos: Number(total?.n) || 0,
+      tolerancia: tol,
+      // Quién ve los botones lo decide el servidor, no el navegador. El endpoint vuelve a
+      // comprobarlo igualmente: esto solo evita enseñar un botón que va a dar 403.
+      puedeLiquidar: LIQ_ROLES.includes(req.user.rol),
       // Se dice cuántos se han dejado fuera: una lista recortada en silencio hace dudar del
       // saldo, que es justo el número que no se puede poner en duda.
       recortado: (Number(total?.n) || 0) > movs.length,
-      data: movs,
+      data: movs.map((m) => ({ ...m, revertido: anulados.has(Number(m.id)) })),
     });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el libro" }); }
 });
@@ -9813,6 +9845,165 @@ app.post("/api/fichajes/bolsa/ajuste", requireAuth(["direccion", "rrhh"]), async
   } catch (e) {
     console.error("[fichajes] ajuste:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo anotar el ajuste" });
+  }
+});
+
+// ── Liquidar: pagar las horas o devolverlas con descanso ─────────────────────
+//
+// Aquí NO hay euros, ni precio/hora, ni nómina. Lo único que se registra es que esas horas
+// pendientes dejan de estarlo, y por cuál de los dos caminos. Lo que cuesta la hora lo
+// resuelve la gestoría, que es quien sabe de convenios; meterlo aquí sería inventarnos una
+// nómina paralela que nadie ha revisado.
+//
+// Es la MISMA operación para pago y para compensación —consumir saldo a favor— y por eso
+// es un solo endpoint: dos endpoints gemelos se separan solos con el tiempo y acaban con
+// una comprobación en uno que falta en el otro.
+const LIQ_ROLES = ["direccion", "rrhh"];
+
+// El encargado valida jornadas y revisa incidencias, pero no declara que unas horas ya se
+// han pagado: eso es una afirmación sobre dinero que ha salido de la empresa.
+const ficBolsaWorker = async (req, id) => {
+  const w = await dbGet(`SELECT id, nombre, local, fecha_baja FROM users WHERE id = ?`, [Number(id) || 0]);
+  return w && rrhhPuedeLocal(req, w.local || "") ? w : null;
+};
+
+// El saldo SIEMPRE se recalcula sumando el libro entero. Ni se pagina ni se filtra: un
+// saldo que se calcula sobre una parte del libro es un número que no se puede defender.
+const ficSaldoDe = async (workerId, q = dbGet) =>
+  Number((await q(`SELECT COALESCE(SUM(minutos),0)::int AS s FROM fic_bolsa_movimientos WHERE worker_id = ?`, [workerId]))?.s) || 0;
+
+// Ficha de idempotencia. La genera el navegador al ABRIR el modal, no al pulsar: así el
+// doble clic, el reintento de red y el botón de atrás mandan todos la misma, y la clave
+// única de la tabla convierte la segunda en un no-op en vez de en un segundo pago.
+// El día de negocio de HOY y su periodo, con el corte del local. Un pago registrado a las
+// dos de la madrugada pertenece al día que se está cerrando, igual que un fichaje.
+async function ficHoyYPeriodo(local) {
+  const cfg = await dbGet(`SELECT corte_dia_min, dia_inicio_periodo FROM hor_config WHERE local = ?`, [local]);
+  const dia = instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 }).diaNegocio;
+  return { dia, periodo: periodoDe(dia, { diaInicio: cfg?.dia_inicio_periodo ?? 1 }) };
+}
+
+const ficClaveIdem = (v) => {
+  const t = String(v || "").trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+  return t.length >= 8 && t.length <= 64 ? t : null;
+};
+
+app.post("/api/fichajes/bolsa/liquidar", requireAuth(LIQ_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const w = await ficBolsaWorker(req, req.body?.worker_id);
+    if (!w) return res.status(404).json({ ok: false, error: "No encontrado" });
+
+    const tipo = String(req.body?.tipo || "");
+    if (!CONCEPTOS_LIQUIDACION.includes(tipo)) return res.status(400).json({ ok: false, error: "Di si es un pago o una compensación con descanso" });
+    const ficha = ficClaveIdem(req.body?.clave_idem);
+    if (!ficha) return res.status(400).json({ ok: false, error: "Falta la referencia de la operación" });
+    const nota = String(req.body?.nota || "").trim();
+    const efectiva = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.fecha_efectiva || "")) ? String(req.body.fecha_efectiva) : null;
+    const esperado = Math.round(Number(req.body?.saldo_esperado));
+    if (!Number.isFinite(esperado)) return res.status(400).json({ ok: false, error: "Falta el saldo que se estaba confirmando" });
+
+    const clave = `${tipo}:${w.id}:${ficha}`;
+    // Si esta misma operación ya entró, se contesta que sí y no se escribe nada. Hacerlo
+    // ANTES de la transacción evita que un reintento se quede esperando el bloqueo.
+    const ya = await dbGet(`SELECT id, minutos FROM fic_bolsa_movimientos WHERE clave_idem = ?`, [clave]);
+    if (ya) return res.json({ ok: true, repetida: true, minutos: -Number(ya.minutos), saldo: await ficSaldoDe(w.id),
+      mensaje: "Esa liquidación ya estaba registrada. No se ha vuelto a apuntar." });
+
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    // Se bloquea la ficha de la persona mientras se calcula y se escribe. Sin esto, dos
+    // pestañas pulsando «pagar todo» a la vez leen las mismas 7 h 35 y apuntan 15 h 10.
+    await q(`SELECT id FROM users WHERE id = ? FOR UPDATE`, [w.id]);
+    const saldo = Number((await q(`SELECT COALESCE(SUM(minutos),0)::int AS s FROM fic_bolsa_movimientos WHERE worker_id = ?`, [w.id])).rows[0]?.s) || 0;
+
+    // El saldo que el responsable tenía delante contra el que hay AHORA. Si alguien validó
+    // una jornada mientras el modal estaba abierto, no se registra una cantidad distinta de
+    // la que se confirmó: se para y se enseña el número nuevo.
+    if (saldo !== esperado) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false, saldo, esperado, error:
+          `El saldo ha cambiado de ${conSigno(esperado)} a ${conSigno(saldo)} mientras ten\u00edas esto abierto. ` +
+          "No se ha registrado nada: míralo y vuelve a confirmarlo.",
+      });
+    }
+
+    const minutos = req.body?.todo === true ? saldo : Math.round(Number(req.body?.minutos));
+    const no = motivoNoLiquidar(saldo, minutos);
+    if (no) { await client.query("ROLLBACK"); return res.status(400).json({ ok: false, error: no, saldo }); }
+
+    // La liquidación se apunta con la fecha de HOY, no con la del día que generó las horas.
+    // Es un hecho nuevo —«esto se ha pagado»— y no una revisión de aquellas jornadas, así
+    // que cae en el periodo abierto y no hace falta reabrir marzo para pagar lo de marzo.
+    const { dia: hoyNeg, periodo: p } = await ficHoyYPeriodo(w.local);
+    const final = req.body?.final === true;
+    const cuerpo = [
+      final ? "Liquidación final" + (w.fecha_baja ? " por baja" : "") : null,
+      nota || null,
+      efectiva ? `Efectivo el ${efectiva}` : null,
+    ].filter(Boolean).join(" · ") || null;
+
+    const r = await q(
+      `INSERT INTO fic_bolsa_movimientos (worker_id, local, dia, periodo, concepto, minutos, clave_idem, nota, autor, creado_en, fecha_efectiva, saldo_antes)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING RETURNING id`,
+      [w.id, w.local, hoyNeg, p.etiqueta, tipo, -minutos, clave, cuerpo, req.user.username, isoConOffset(Date.now()), efectiva, saldo]);
+    await client.query("COMMIT");
+
+    // `DO NOTHING` con cero filas significa que otra petición idéntica ganó la carrera: la
+    // operación está hecha, que es lo que había que conseguir.
+    if (!r.rows.length) return res.json({ ok: true, repetida: true, minutos, saldo: await ficSaldoDe(w.id),
+      mensaje: "Esa liquidación ya estaba registrada. No se ha vuelto a apuntar." });
+
+    await ficAuditar("bolsa", w.id, tipo, req.user.username,
+      { local: w.local, workerId: w.id, detalle: { minutos, saldo_antes: saldo, fecha_efectiva: efectiva, final, nota } });
+    const verbo = tipo === "pago" ? "pagadas" : "devueltas con descanso";
+    res.json({
+      ok: true, minutos, saldo: saldo - minutos, movimiento_id: r.rows[0].id,
+      mensaje: `${enHoras(minutos)} ${verbo} a ${w.nombre}. Le queda ${conSigno(saldo - minutos)} de saldo.`,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[fichajes] liquidar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo registrar la liquidación" });
+  } finally { client.release(); }
+});
+
+// Deshacer una liquidación registrada por error. NO se edita la fila y NO se borra: se
+// escribe otra que la anula y apunta a ella. Las dos se quedan, y dentro de dos años se
+// puede ver que aquel pago se registró y por qué se echó atrás.
+app.post("/api/fichajes/bolsa/revertir", requireAuth(LIQ_ROLES), async (req, res) => {
+  try {
+    const id = Number(req.body?.movimiento_id) || 0;
+    const nota = String(req.body?.nota || "").trim();
+    const orig = await dbGet(
+      `SELECT id, worker_id, local, concepto, minutos FROM fic_bolsa_movimientos WHERE id = ?`, [id]);
+    if (!orig) return res.status(404).json({ ok: false, error: "Ese movimiento no existe" });
+    const w = await ficBolsaWorker(req, orig.worker_id);
+    if (!w) return res.status(404).json({ ok: false, error: "No encontrado" });
+    if (nota.length < MOTIVO_MIN) return res.status(400).json({ ok: false, error: "Explica por qué se deshace: es lo único que quedará dentro de un año" });
+
+    const hermanos = await dbAll(
+      `SELECT id, concepto, referencia_id FROM fic_bolsa_movimientos WHERE worker_id = ?`, [orig.worker_id]);
+    const no = motivoNoRevertir(orig, hermanos);
+    if (no) return res.status(409).json({ ok: false, error: no });
+
+    const { dia: hoyNeg, periodo: p } = await ficHoyYPeriodo(w.local);
+    // `reversion:<id>` es la clave: un movimiento solo se puede deshacer una vez, y lo
+    // garantiza la base. El doble clic entra en conflicto y no escribe nada.
+    const r = await dbRun(
+      `INSERT INTO fic_bolsa_movimientos (worker_id, local, dia, periodo, concepto, minutos, clave_idem, referencia_id, nota, autor, creado_en)
+       VALUES (?,?,?,?, 'reversion', ?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING RETURNING id`,
+      [w.id, w.local, hoyNeg, p.etiqueta, -Number(orig.minutos), `reversion:${orig.id}`, orig.id, nota, req.user.username, isoConOffset(Date.now())]);
+    if (!r) return res.status(409).json({ ok: false, error: "Ese movimiento ya estaba deshecho." });
+
+    await ficAuditar("bolsa", w.id, "revertir", req.user.username,
+      { local: w.local, workerId: w.id, detalle: { movimiento_id: orig.id, concepto: orig.concepto, minutos: -Number(orig.minutos), nota } });
+    res.json({ ok: true, saldo: await ficSaldoDe(w.id),
+      mensaje: `Deshecho. Le vuelven ${enHoras(orig.minutos)} al saldo, y el movimiento original sigue en el libro.` });
+  } catch (e) {
+    console.error("[fichajes] revertir:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo deshacer el movimiento" });
   }
 });
 

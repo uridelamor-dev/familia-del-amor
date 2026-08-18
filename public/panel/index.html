@@ -642,6 +642,44 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .wa-cel{justify-content:flex-start;min-height:44px;width:100%}
 }
 
+/* Libro de horas. El saldo y sus dos botones van arriba y juntos: es la pregunta
+   («¿cuánto se le debe?») y las dos respuestas posibles. En un móvil se apilan, y
+   los botones pasan a ancho completo porque decidir un pago con el pulgar sobre un
+   botón de 90 px es como se registran las cantidades equivocadas. */
+.bl-cab{display:flex;gap:14px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin:0 0 14px}
+.bl-saldo{font-size:22px;display:inline-block;margin-right:6px}
+.bl-acc{display:flex;gap:8px;flex-wrap:wrap}
+.bl-lista{max-height:340px;overflow:auto}
+/* Un movimiento deshecho NO se esconde: se queda tachado. Su reversión está justo
+   al lado y las dos suman cero, que es lo que explica el saldo. */
+.bl-anulado .bl-cn{text-decoration:line-through}
+.bl-anulado{opacity:.62}
+.bl-aj{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.bl-aj #ficAjMin{width:190px}
+.bl-aj #ficAjNota{flex:1;min-width:180px}
+.bl-form{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin:0 0 12px}
+.bl-form label,.bl-lbl{display:block;font-size:12px;font-weight:600;color:var(--ink2)}
+.bl-lbl{margin:0 0 12px}
+.bl-form .inp,.bl-lbl .inp{margin-top:4px}
+.bl-form #liqMin{width:150px}
+.bl-chk{display:flex;gap:8px;align-items:center;font-size:12.5px;min-height:44px}
+.bl-chk input{width:auto}
+@media(max-width:700px){
+  .bl-cab{flex-direction:column;gap:10px}
+  /* Uno debajo de otro y a todo lo ancho. En una fila los dos se quedan en su ancho
+     mínimo —«Pagar horas» sale a 133 px y «Compensar con descanso» a 195— y decidir
+     un pago con el pulgar sobre el más estrecho es como se pulsa el que no era. */
+  .bl-acc{width:100%;flex-direction:column}
+  .bl-acc .btn{width:100%;min-height:44px}
+  .bl-aj{flex-direction:column;align-items:stretch}
+  .bl-aj #ficAjMin,.bl-aj #ficAjNota{width:auto}
+  .bl-form{flex-direction:column;align-items:stretch}
+  .bl-form #liqMin{width:auto}
+  /* 16 px o el iPhone hace zoom al enfocar el campo y deja el modal descolocado. */
+  .bl-form .inp,.bl-lbl .inp{font-size:16px;min-height:44px}
+  .bl-lista{max-height:46vh}
+}
+
 /* Las tres secciones de Inventarios. En un móvil estrecho las pestañas se
    DESLIZAN en su fila antes que partirse en dos: una barra rota en dos líneas
    empuja el contenido y deja de leerse como una sola cosa. */

@@ -93,19 +93,24 @@ describe("bolsa — el saldo se deriva, no se guarda", () => {
 });
 
 describe("bolsa — recalcular es idempotente", () => {
-  const base = { workerId: 7, local: "Blanes", dia: "2026-08-08", periodo: "2026-08", autor: "direccion" };
+  // Un turno de 8 h. Los minutos que acaban en el libro salen SIEMPRE de la diferencia con
+  // el plan menos la franquicia: aquí se prueba el mecanismo del libro, y por eso los
+  // números se eligen para que la franquicia de 10 deje justo la cantidad que se comprueba.
+  const base = { workerId: 7, local: "Blanes", dia: "2026-08-08", periodo: "2026-08", autor: "direccion", minPlanificado: 480 };
 
   test("la primera vez escribe un movimiento", () => {
-    const r = movimientosParaJornada({ ...base, minutos: 35, firma: "A", existentes: [] });
+    const r = movimientosParaJornada({ ...base, minValidado: 525, firma: "A", existentes: [] });
     assert.equal(r.insertar.length, 1);
-    assert.equal(r.insertar[0].minutos, 35);
+    assert.equal(r.insertar[0].minutos, 35, "45 de diferencia menos 10 de franquicia");
     assert.equal(r.insertar[0].concepto, "jornada");
+    assert.equal(r.insertar[0].dif_min, 45, "y se guarda la diferencia bruta");
+    assert.equal(r.insertar[0].tolerancia_min, 10, "y la franquicia que se le aplicó");
   });
 
   test("RECALCULAR TRES VECES CON LOS MISMOS DATOS = UN SOLO MOVIMIENTO", () => {
     let libro = [];
     for (let i = 0; i < 3; i++) {
-      const r = movimientosParaJornada({ ...base, minutos: 35, firma: "A", existentes: libro });
+      const r = movimientosParaJornada({ ...base, minValidado: 525, firma: "A", existentes: libro });
       libro = libro.concat(r.insertar.map((m, k) => ({ ...m, id: libro.length + k + 1 })));
     }
     assert.equal(libro.length, 1, "el segundo y el tercero no tienen nada que escribir");
@@ -113,18 +118,18 @@ describe("bolsa — recalcular es idempotente", () => {
   });
 
   test("no se escribe una fila de cero cuando no había nada", () => {
-    assert.deepEqual(movimientosParaJornada({ ...base, minutos: 0, firma: "A", existentes: [] }).insertar, []);
+    assert.deepEqual(movimientosParaJornada({ ...base, minValidado: 480, firma: "A", existentes: [] }).insertar, []);
   });
 
   test("CORREGIR EL DÍA = DOS MOVIMIENTOS NUEVOS Y CERO MODIFICADOS", () => {
     const previo = { id: 1, concepto: "jornada", minutos: 35, clave_idem: claveJornada(7, "2026-08-08", "A") };
-    const r = movimientosParaJornada({ ...base, minutos: -25, firma: "B", existentes: [previo] });
+    const r = movimientosParaJornada({ ...base, minValidado: 445, firma: "B", existentes: [previo] });
 
     assert.equal(r.insertar.length, 2);
     assert.equal(r.insertar[0].concepto, "contra");
     assert.equal(r.insertar[0].minutos, -35, "el contra-asiento deja el anterior a cero");
     assert.equal(r.insertar[0].referencia_id, 1, "y apunta a cuál anula");
-    assert.equal(r.insertar[1].minutos, -25);
+    assert.equal(r.insertar[1].minutos, -25, "−35 de diferencia más 10 de franquicia");
     assert.equal(r.anular, undefined,
       "no se devuelve nada que modificar: el contra-asiento YA es la anulación");
 
@@ -137,16 +142,16 @@ describe("bolsa — recalcular es idempotente", () => {
     // El fallo que hubo: además del contra-asiento se marcaba el movimiento viejo, y la
     // corrección se restaba dos veces (salía −60 en lugar de −25).
     const previo = { id: 1, concepto: "jornada", minutos: 35, clave_idem: claveJornada(7, "2026-08-08", "A") };
-    const r = movimientosParaJornada({ ...base, minutos: -25, firma: "B", existentes: [previo] });
+    const r = movimientosParaJornada({ ...base, minValidado: 445, firma: "B", existentes: [previo] });
     const libro = [previo, ...r.insertar.map((m, i) => ({ ...m, id: i + 2 }))];
     assert.equal(saldoDe(libro), -25);
   });
 
   test("y volver a recalcular tras la corrección tampoco duplica", () => {
     const previo = { id: 1, concepto: "jornada", minutos: 35, clave_idem: claveJornada(7, "2026-08-08", "A") };
-    const r1 = movimientosParaJornada({ ...base, minutos: -25, firma: "B", existentes: [previo] });
+    const r1 = movimientosParaJornada({ ...base, minValidado: 445, firma: "B", existentes: [previo] });
     const libro = [previo, ...r1.insertar.map((m, i) => ({ ...m, id: i + 2 }))];
-    const r2 = movimientosParaJornada({ ...base, minutos: -25, firma: "B", existentes: libro });
+    const r2 = movimientosParaJornada({ ...base, minValidado: 445, firma: "B", existentes: libro });
     assert.equal(r2.sinCambios, true);
     assert.deepEqual(r2.insertar, []);
     assert.equal(saldoDe(libro), -25, "recalcular no mueve el saldo");

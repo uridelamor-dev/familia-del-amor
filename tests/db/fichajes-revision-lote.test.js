@@ -218,7 +218,9 @@ describe("validación en lote (Postgres real)", { skip: HAY_BD ? false : motivoS
       const existentes = await db.all(`SELECT id, concepto, minutos, clave_idem, referencia_id FROM fic_bolsa_movimientos WHERE worker_id = ? AND dia = ? ORDER BY id`, [f.worker_id, f.dia]);
       const { insertar } = movimientosParaJornada({
         workerId: f.worker_id, local: LOCAL, dia: f.dia, periodo: periodoDe(f.dia).etiqueta,
-        minutos: Number(jj.min_validado) - Number(jj.min_planificado || 0), firma: jj.firma_eventos, existentes, autor: "tester" });
+        minValidado: Number(jj.min_validado), minPlanificado: Number(jj.min_planificado || 0),
+        toleranciaMin: 0,   // el lote se prueba SIN franquicia: aquí se mide el mecanismo, no la regla
+        firma: jj.firma_eventos, existentes, autor: "tester" });
       for (const m of insertar) {
         await db.run(`INSERT INTO fic_bolsa_movimientos (worker_id, local, dia, periodo, concepto, minutos, clave_idem, referencia_id, autor, creado_en)
                       VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING`,

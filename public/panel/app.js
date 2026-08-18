@@ -4904,7 +4904,14 @@ function ficReloj(min) {
 // ── Bolsa de horas ──────────────────────────────────────────────────────────
 // Un libro, no un contador: cada minuto del saldo se puede señalar. Por eso la fila de
 // cada persona se abre y enseña de dónde sale, incluidos los contra-asientos.
-const FIC_CONCEPTO = { jornada: "Jornada", ajuste: "Ajuste manual", contra: "Anulación del anterior", liquidacion: "Pagado o disfrutado", arrastre: "Viene del periodo anterior" };
+const FIC_CONCEPTO = {
+  jornada: "Jornada", ajuste: "Ajuste manual", contra: "Anulación del anterior",
+  liquidacion: "Pagado o disfrutado", arrastre: "Viene del periodo anterior",
+  pago: "Pago de horas", compensacion: "Compensación con descanso", reversion: "Movimiento deshecho",
+};
+// Los que se pueden deshacer desde el libro. Es el espejo de CONCEPTOS_REVERSIBLES del
+// servidor, que es quien manda: aquí solo se decide si se pinta el botón.
+const FIC_REVERSIBLES = ["pago", "compensacion", "ajuste"];
 
 async function ficPintarBolsa() {
   const cont = document.getElementById("ficCuerpo");
@@ -4985,31 +4992,50 @@ async function ficDescargarRegistro(dia) {
 async function ficAbrirLibro(workerId) {
   let j;
   try { j = await apiRaw("/api/fichajes/bolsa/" + workerId); } catch (e) { toast(e.message); return; }
-  const puedeAjustar = USER.rol === "direccion" || USER.rol === "rrhh";
+  const puedeAjustar = j.puedeLiquidar;
+  // Los botones de liquidar solo salen con horas A FAVOR. Con saldo negativo la empresa no
+  // le debe nada, y qué se hace con las horas que se deben tiene consecuencias laborales
+  // que no se resuelven con un botón.
+  const aFavor = j.saldo > 0;
+
   const ov = modal(`Libro de horas · ${j.trabajador.nombre}`, `
-    <p style="margin:0 0 14px"><b style="font-size:20px">${esc(ficSigno(j.saldo))}</b>
-      <span class="mut">de saldo${j.recortado
-        ? `, suma de los ${num(j.movimientos)} movimientos. Abajo se ven los 500 últimos`
-        : ", que es la suma exacta de lo de abajo"}</span></p>
-    ${j.data.length ? `<div class="tw" style="max-height:340px;overflow:auto"><table class="tbl">
-      <thead><tr><th>Día</th><th>Concepto</th><th style="text-align:right">Minutos</th><th>Quién</th></tr></thead>
-      <tbody>${j.data.map((m) => `<tr>
-        <td class="mut" style="white-space:nowrap">${esc(m.dia || m.periodo)}</td>
-        <td>${esc(FIC_CONCEPTO[m.concepto] || m.concepto)}${m.nota ? `<div class="mut" style="font-size:11.5px">${esc(m.nota)}</div>` : ""}</td>
-        <td style="text-align:right;white-space:nowrap"><b>${esc(ficSigno(m.minutos))}</b></td>
-        <td class="mut">${esc(m.autor)}</td></tr>`).join("")}</tbody></table></div>`
+    <div class="bl-cab">
+      <div>
+        <b class="bl-saldo">${esc(ficSigno(j.saldo))}</b>
+        <span class="mut">de saldo${j.recortado
+          ? `, suma de los ${num(j.movimientos)} movimientos. Abajo se ven los 500 últimos`
+          : ", que es la suma exacta de lo de abajo"}</span>
+        <div class="mut" style="font-size:11.5px;margin-top:4px">Franquicia por jornada: ±${num(j.tolerancia)} min.
+          Las diferencias de hasta ${num(j.tolerancia)} min con el cuadrante no suman ni restan.</div>
+      </div>
+      ${puedeAjustar && aFavor ? `<div class="bl-acc">
+        <button class="btn primary" data-liq="pago">Pagar horas</button>
+        <button class="btn" data-liq="compensacion">Compensar con descanso</button>
+      </div>` : ""}
+    </div>
+    ${j.trabajador.de_baja && aFavor ? `<p class="fic-nota">Está dado de baja y sigue teniendo horas a favor. Se le liquidan igual: la baja no borra lo que se le debe.</p>` : ""}
+    ${j.saldo < 0 && puedeAjustar ? `<p class="fic-nota">El saldo es negativo. Aquí no hay nada que pagar ni que compensar: qué se hace con esas horas se decide fuera, y si hay que corregirlo es un ajuste manual con su motivo.</p>` : ""}
+    ${j.data.length ? `<div class="tw bl-lista"><table class="tbl">
+      <thead><tr><th>Día</th><th>Concepto</th><th style="text-align:right">Minutos</th><th>Quién</th><th></th></tr></thead>
+      <tbody>${j.data.map((m) => ficFilaLibro(m, puedeAjustar)).join("")}</tbody></table></div>`
     : '<p class="mut" style="margin:0">Todavía no hay ningún movimiento.</p>'}
     ${puedeAjustar ? `
       <div class="ch" style="margin-top:18px"><h3 style="margin:0;font-size:13px">Ajuste manual</h3></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <input class="inp" id="ficAjMin" placeholder="minutos (−60 para restar)" style="width:190px">
-        <input class="inp" id="ficAjNota" placeholder="Motivo (obligatorio)" style="flex:1;min-width:180px">
+      <div class="bl-aj">
+        <input class="inp" id="ficAjMin" placeholder="minutos (−60 para restar)">
+        <input class="inp" id="ficAjNota" placeholder="Motivo (obligatorio)">
         <button class="btn" id="ficAjOk">Anotar</button>
       </div>
       <p id="ficAjMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>` : ""}
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button></div>`);
 
   if (!puedeAjustar) return;
+  ov.addEventListener("click", async (e) => {
+    const liq = e.target.closest("[data-liq]");
+    if (liq) { ov.remove(); return ficLiquidar(j, liq.getAttribute("data-liq")); }
+    const rev = e.target.closest("[data-rev]");
+    if (rev) { ov.remove(); return ficRevertir(workerId, j.data.find((m) => String(m.id) === rev.getAttribute("data-rev"))); }
+  });
   ov.querySelector("#ficAjOk").addEventListener("click", async () => {
     try {
       const r = await apiSend("POST", "/api/fichajes/bolsa/ajuste", {
@@ -5018,6 +5044,98 @@ async function ficAbrirLibro(workerId) {
       });
       ov.remove(); toast(r.mensaje || "Ajuste anotado ✅"); ficPintarBolsa();
     } catch (e) { ov.querySelector("#ficAjMsg").textContent = e.message; }
+  });
+}
+
+// Una fila del libro. Lo que hace que el saldo se entienda es la línea de debajo: sin ella,
+// un «+15» junto a un día en que se trabajaron 25 minutos de más parece un error de cuentas.
+function ficFilaLibro(m, puedeAjustar) {
+  const detalle = m.dif_min != null && m.tolerancia_min != null
+    ? `Diferencia ${ficSigno(m.dif_min)} · franquicia ${m.tolerancia_min} min → bolsa ${ficSigno(m.minutos)}`
+    : m.nota || "";
+  const puedeDeshacer = puedeAjustar && !m.revertido && FIC_REVERSIBLES.includes(m.concepto);
+  return `<tr class="${m.revertido ? "bl-anulado" : ""}">
+    <td class="mut" style="white-space:nowrap">${esc(m.dia || m.periodo)}</td>
+    <td><span class="bl-cn">${esc(FIC_CONCEPTO[m.concepto] || m.concepto)}</span>
+      ${m.revertido ? '<span class="fic-tag">deshecho</span>' : ""}
+      ${m.concepto === "reversion" && m.referencia_id ? `<span class="mut" style="font-size:11.5px"> del movimiento nº ${num(m.referencia_id)}</span>` : ""}
+      ${detalle ? `<div class="mut" style="font-size:11.5px">${esc(detalle)}</div>` : ""}
+      ${m.fecha_efectiva ? `<div class="mut" style="font-size:11.5px">Efectivo el ${esc(m.fecha_efectiva)}</div>` : ""}</td>
+    <td style="text-align:right;white-space:nowrap"><b>${esc(ficSigno(m.minutos))}</b></td>
+    <td class="mut">${esc(m.autor)}</td>
+    <td style="text-align:right">${puedeDeshacer ? `<button class="btn sm" data-rev="${m.id}">Deshacer</button>` : ""}</td></tr>`;
+}
+
+// La ficha de idempotencia se genera al ABRIR el modal, no al pulsar. Así el doble clic, el
+// reintento tras un corte de red y el «volver a intentarlo» mandan todos la misma, y el
+// servidor sabe que son la misma operación en vez de tres pagos seguidos.
+async function ficLiquidar(j, tipo) {
+  const ficha = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/[^a-z0-9-]/gi, "").toLowerCase();
+  const esPago = tipo === "pago";
+  const ov = modal(esPago ? `Pagar horas · ${j.trabajador.nombre}` : `Compensar con descanso · ${j.trabajador.nombre}`, `
+    <p style="margin:0 0 14px">Saldo pendiente: <b>${esc(ficSigno(j.saldo))}</b></p>
+    <div class="bl-form">
+      <label>Cuánto se ${esPago ? "paga" : "devuelve"}
+        <input class="inp" id="liqMin" type="number" min="1" max="${j.saldo}" value="${j.saldo}"></label>
+      <label>Minutos<span class="mut" style="font-weight:400"> · el saldo entero son ${num(j.saldo)}</span>
+        <button class="btn sm" id="liqTodo" type="button">Poner el saldo completo</button></label>
+    </div>
+    <label class="bl-lbl">Concepto o nota <span class="mut">(opcional)</span>
+      <input class="inp" id="liqNota" placeholder="${esPago ? "Nómina de agosto" : "Se libra el viernes 22"}"></label>
+    <label class="bl-lbl">Fecha en que se ${esPago ? "paga" : "disfruta"} <span class="mut">(opcional)</span>
+      <input class="inp" id="liqFecha" type="date"></label>
+    ${j.trabajador.de_baja && esPago ? `<label class="bl-chk"><input type="checkbox" id="liqFinal" checked> Es la liquidación final por su baja</label>` : ""}
+    <p class="fic-nota" style="margin-top:14px">No se registra ningún importe. Solo queda anotado que esas horas
+      ${esPago ? "se han pagado" : "se han devuelto con descanso"}; lo que valen lo resuelve la nómina.
+      ${esPago ? "" : "Esto <b>no</b> toca el cuadrante: el día libre hay que ponerlo en Horarios."}</p>
+    <p id="liqMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="liqOk">${esPago ? "Registrar el pago" : "Registrar la compensación"}</button></div>`);
+
+  ov.querySelector("#liqTodo").addEventListener("click", () => { ov.querySelector("#liqMin").value = j.saldo; });
+  ov.querySelector("#liqOk").addEventListener("click", async () => {
+    const min = Math.round(Number(ov.querySelector("#liqMin").value));
+    const btn = ov.querySelector("#liqOk");
+    btn.disabled = true;
+    try {
+      const r = await apiSend("POST", "/api/fichajes/bolsa/liquidar", {
+        worker_id: j.trabajador.id, tipo, minutos: min, todo: min === j.saldo,
+        saldo_esperado: j.saldo, clave_idem: ficha,
+        nota: ov.querySelector("#liqNota").value.trim(),
+        fecha_efectiva: ov.querySelector("#liqFecha").value || null,
+        final: !!ov.querySelector("#liqFinal")?.checked,
+      });
+      ov.remove(); toast(r.mensaje || "Registrado ✅"); ficPintarBolsa();
+    } catch (e) {
+      btn.disabled = false;
+      ov.querySelector("#liqMsg").textContent = e.message;
+    }
+  });
+}
+
+async function ficRevertir(workerId, mov) {
+  if (!mov) return;
+  const ov = modal("Deshacer un movimiento", `
+    <p style="margin:0 0 14px">Se va a deshacer: <b>${esc(FIC_CONCEPTO[mov.concepto] || mov.concepto)}</b>
+      de <b>${esc(ficSigno(mov.minutos))}</b> del ${esc(mov.dia || mov.periodo)}, anotado por ${esc(mov.autor)}.</p>
+    <p class="fic-nota">El movimiento original <b>no se borra</b>: se queda en el libro y al lado aparece el que lo deshace.
+      Las ${esc(ficHoras(Math.abs(mov.minutos)))} vuelven al saldo.</p>
+    <label class="bl-lbl">Por qué se deshace <span class="mut">(obligatorio)</span>
+      <input class="inp" id="revNota" placeholder="Se registró antes de mandarlo a la gestoría"></label>
+    <p id="revMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn danger" id="revOk">Deshacer</button></div>`);
+
+  ov.querySelector("#revOk").addEventListener("click", async () => {
+    const btn = ov.querySelector("#revOk"); btn.disabled = true;
+    try {
+      const r = await apiSend("POST", "/api/fichajes/bolsa/revertir", {
+        movimiento_id: mov.id, nota: ov.querySelector("#revNota").value.trim(),
+      });
+      ov.remove(); toast(r.mensaje || "Deshecho ✅"); ficPintarBolsa();
+    } catch (e) { btn.disabled = false; ov.querySelector("#revMsg").textContent = e.message; }
   });
 }
 

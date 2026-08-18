@@ -20,6 +20,7 @@ export async function ensureSchemaHorarios(x) {
     hora_cierre_min INTEGER,
     descanso_min_horas NUMERIC NOT NULL DEFAULT 12,
     tolerancia_min INTEGER NOT NULL DEFAULT 10,
+    tolerancia_bolsa_min INTEGER NOT NULL DEFAULT 10,
     actualizado_en TEXT
   )`);
 

@@ -22,7 +22,39 @@ export const CONCEPTOS = {
   contra:       "Anulación de un movimiento anterior",
   liquidacion:  "Horas pagadas o disfrutadas",
   arrastre:     "Saldo que viene del periodo anterior",
+  pago:         "Horas pendientes liquidadas mediante pago",
+  compensacion: "Horas pendientes devueltas con descanso",
+  reversion:    "Deshace una liquidación registrada por error",
 };
+
+// Los que consumen saldo a favor. `liquidacion` es el nombre antiguo y genérico: no lo
+// escribe nadie, pero puede haber filas suyas y se quedan donde están.
+export const CONCEPTOS_LIQUIDACION = ["pago", "compensacion"];
+
+// Lo que se puede deshacer desde la pantalla. NO están `jornada` ni `contra`: esos los
+// mueve el registro horario, y deshacerlos a mano por encima sería decidir las horas de
+// alguien desde un botón en vez de desde sus fichajes.
+export const CONCEPTOS_REVERSIBLES = ["pago", "compensacion", "ajuste"];
+
+// ── La franquicia de la bolsa ────────────────────────────────────────────────
+// NO es un umbral. Un umbral diría «a partir de 11 minutos cuenta todo», y entonces salir
+// once minutos tarde valdría once y salir diez valdría cero: un salto de once minutos por
+// un minuto de diferencia, y la tentación de quedarse siempre en el diez.
+//
+// Es una FRANQUICIA: los diez primeros minutos no se cuentan NUNCA, ni a favor ni en
+// contra. Salir 25 tarde apunta 15. Salir 11 tarde apunta 1. La curva es continua.
+//
+// Y lo más importante: esto NO toca el tiempo trabajado. Quien hizo 8 h 11 min hizo
+// 8 h 11 min en los eventos, en la jornada y en el registro legal. Lo único que decide
+// esta función es cuántos minutos de esa diferencia se le deben o debe.
+export const TOLERANCIA_BOLSA_MIN = 10;
+
+export function movimientoBolsa(minValidado, minPlanificado, toleranciaMin) {
+  const dif = Math.round(Number(minValidado) || 0) - Math.round(Number(minPlanificado) || 0);
+  const t = Math.max(0, Math.round(Number(toleranciaMin ?? TOLERANCIA_BOLSA_MIN) || 0));
+  if (Math.abs(dif) <= t) return 0;
+  return dif > 0 ? dif - t : dif + t;
+}
 
 // ── Periodos de nómina ───────────────────────────────────────────────────────
 // `diaInicio = 1` es el mes natural. `diaInicio = 21` es el otro caso habitual en
@@ -114,23 +146,107 @@ export function vigentesDeJornada(movimientos = []) {
 //   · Si ya existe un movimiento vigente con esta misma clave → no hay nada que hacer.
 //   · Si existen movimientos de este día con OTRA clave → están obsoletos: se contra-asientan
 //     y se escribe el nuevo. Los tres se quedan en el libro.
-//   · Si el resultado es 0 minutos y no había nada, no se escribe una fila de cero.
+//   · Si tras la franquicia el resultado es 0, no se escribe fila: los contra-asientos de
+//     lo que hubiera sí se escriben, así que el saldo del día vuelve a cero igual.
 export function movimientosParaJornada({
-  workerId, local, dia, minutos, firma, periodo, existentes = [], autor = "sistema", nota = null,
+  workerId, local, dia, minValidado, minPlanificado, toleranciaMin,
+  firma, periodo, existentes = [], autor = "sistema", nota = null, ...resto
 } = {}) {
+  // La franquicia se aplica AQUÍ DENTRO y no se puede sortear: quien pase `minutos` hechos
+  // por su cuenta se lleva un error, no una jornada sin tolerancia colada en el libro. Es
+  // la única defensa real contra que dentro de un año un endpoint nuevo apunte en crudo.
+  if ("minutos" in resto) {
+    throw new Error("movimientosParaJornada calcula los minutos: pásale minValidado y minPlanificado");
+  }
+  const dif = Math.round(Number(minValidado) || 0) - Math.round(Number(minPlanificado) || 0);
+  const tol = Math.max(0, Math.round(Number(toleranciaMin ?? TOLERANCIA_BOLSA_MIN) || 0));
+  const minutos = movimientoBolsa(minValidado, minPlanificado, tol);
+
   const clave = claveJornada(workerId, dia, firma);
-  const vigentes = vigentesDeJornada(existentes);
-  if (vigentes.some((m) => m.clave_idem === clave)) return { insertar: [], sinCambios: true };
+  // Solo los movimientos DE ESTE DÍA. Quien le pase el libro entero por descuido
+  // contra-asentaría el lunes al apuntar el martes y borraría horas de días que nadie ha
+  // tocado. Las filas que no traen `dia` se aceptan por compatibilidad con lo ya escrito.
+  const delDia = existentes.filter((m) => m.dia == null || String(m.dia) === String(dia));
+  const vigentes = vigentesDeJornada(delDia);
+  if (vigentes.some((m) => m.clave_idem === clave)) return { insertar: [], sinCambios: true, minutos, diferencia: dif, tolerancia: tol };
 
   const insertar = vigentes.map((m) => ({
     worker_id: workerId, local, dia, periodo, concepto: "contra", minutos: -Number(m.minutos || 0),
     clave_idem: `contra:${m.id}`, referencia_id: m.id, autor,
     nota: "Anula el movimiento anterior de este día porque el registro cambió",
   }));
-  if (minutos !== 0 || vigentes.length) {
-    insertar.push({ worker_id: workerId, local, dia, periodo, concepto: "jornada", minutos, clave_idem: clave, autor, nota });
+  // Sin fila de cero. Con franquicia, la inmensa mayoría de los días caen dentro y el libro
+  // se llenaría de miles de líneas que no dicen nada y esconderían las que sí. Que no haya
+  // movimiento ES la información: ese día no desvió nada. La prueba de lo trabajado está en
+  // los eventos y en la jornada validada, que es donde tiene que estar.
+  //
+  // Revalidar a la baja sigue funcionando: los vigentes se contra-asientan igual, así que
+  // un +15 que pasa a caer dentro de la franquicia deja su −15 y el saldo vuelve a cero.
+  if (minutos !== 0) {
+    insertar.push({
+      worker_id: workerId, local, dia, periodo, concepto: "jornada", minutos, clave_idem: clave, autor, nota,
+      dif_min: dif, tolerancia_min: tol,
+    });
   }
-  return { insertar, sinCambios: false };
+  return { insertar, sinCambios: false, minutos, diferencia: dif, tolerancia: tol };
+}
+
+// Minutos en horas y minutos. Vive aquí y no en el navegador porque los mensajes del
+// servidor («7 h 35 min pagadas») y los de la pantalla tienen que decir lo mismo: dos
+// formateadores distintos acaban enseñando 455 min en un sitio y 7:35 en el de al lado.
+export function enHoras(min) {
+  const n = Math.abs(Math.round(Number(min) || 0));
+  const h = Math.floor(n / 60), m = n % 60;
+  return h ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min`;
+}
+export const conSigno = (min) => {
+  const n = Math.round(Number(min) || 0);
+  return n === 0 ? "0" : (n > 0 ? "+" : "\u2212") + enHoras(n);
+};
+
+// ── Liquidaciones ────────────────────────────────────────────────────────────
+// Qué movimientos han sido deshechos. Igual que con las jornadas, NO hace falta ninguna
+// columna de estado: la reversión es una fila más que apunta a la que anula. Preguntar
+// «¿está revertido?» es mirar si alguien le apunta, no leer una marca que habría que
+// mantener al día — y mantenerla al día significa un UPDATE, que aquí no existe.
+export function revertidos(movimientos = []) {
+  return new Set(movimientos
+    .filter((m) => m.concepto === "reversion" && m.referencia_id != null)
+    .map((m) => Number(m.referencia_id)));
+}
+
+export const estaRevertido = (mov, movimientos = []) => revertidos(movimientos).has(Number(mov?.id));
+
+/**
+ * ¿Se puede liquidar esta cantidad? Devuelve el motivo por el que NO, o null si sí.
+ *
+ * El saldo que entra aquí tiene que venir de sumar el libro entero en el servidor, nunca
+ * del número que enseñaba la pantalla: entre que se abre el modal y se pulsa el botón
+ * cabe una validación de otra persona.
+ */
+export function motivoNoLiquidar(saldo, minutos) {
+  const s = Math.round(Number(saldo) || 0);
+  const m = Math.round(Number(minutos) || 0);
+  if (s <= 0) {
+    return s === 0
+      ? "No hay horas pendientes: el saldo está a cero."
+      : "El saldo es negativo. Lo que hace la empresa con las horas que se deben no se decide desde aquí.";
+  }
+  if (!Number.isFinite(m) || m <= 0) return "Pon cuántos minutos se liquidan.";
+  if (m > s) return `No se pueden liquidar ${m} min: el saldo pendiente es de ${s}.`;
+  return null;
+}
+
+/** Se puede deshacer un pago o una compensación; una jornada NO. */
+export function motivoNoRevertir(mov, movimientos = []) {
+  if (!mov) return "Ese movimiento no existe.";
+  if (!CONCEPTOS_REVERSIBLES.includes(mov.concepto)) {
+    return mov.concepto === "jornada" || mov.concepto === "contra"
+      ? "Las horas de una jornada no se deshacen desde aquí: se corrigen sus fichajes y se vuelve a validar."
+      : "Ese movimiento no se puede deshacer.";
+  }
+  if (estaRevertido(mov, movimientos)) return "Ese movimiento ya estaba deshecho.";
+  return null;
 }
 
 // ── Cierre ───────────────────────────────────────────────────────────────────
