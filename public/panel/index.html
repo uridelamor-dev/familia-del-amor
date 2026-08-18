@@ -625,6 +625,39 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .modal-ov{position:fixed;inset:0;background:rgba(15,17,12,.44);backdrop-filter:blur(3px);z-index:150;display:grid;place-items:center;padding:20px}
 .modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px;box-shadow:var(--sh-lg);width:min(520px,96vw);max-height:90vh;overflow:auto}
 .modal.wide{width:min(1080px,96vw)}
+
+/* ── Elegir productos de una lista (Inventarios) ──────────────────────────────
+   La lista tiene su PROPIO scroll y el pie queda fuera: con cuarenta filas
+   apiladas en un móvil, una barra pegada al final del modal se pierde por
+   debajo y hay que hacer scroll para encontrar el botón que se acaba de
+   ganar el derecho a pulsar. */
+.invcatbox{display:flex;flex-direction:column;gap:0}
+.invcatlist{max-height:52vh;overflow:auto;margin:0 -4px;padding:0 4px}
+.invcatsec{margin-bottom:14px}
+.invcath{display:flex;align-items:center;gap:10px;justify-content:space-between;
+  padding:6px 2px;font-size:12.5px;position:sticky;top:0;background:var(--surface);z-index:1}
+/* Toda la fila es zona de toque: con el dedo, un cuadradito de 13 px no se da. */
+.invcat{display:flex;align-items:center;gap:11px;padding:9px 8px;border-radius:10px;cursor:pointer}
+.invcat:hover{background:var(--surface2)}
+.invcat input[type=checkbox]{width:auto;flex:none}
+.invcat .t1{font-size:13.5px;font-weight:600}
+.invcat .t2{font-size:11.5px;color:var(--ink3)}
+.invcat.yaesta{opacity:.5;cursor:default}
+.invcat select{font-size:16px;padding:4px 6px;max-width:130px}
+/* Ámbar, no relleno en silencio: la unidad de la factura es la de COMPRA y aquí se
+   cuenta en otra. Que se vea cuál hay que mirar. */
+.invcat select.revisa{border-color:#c8912a;background:#fdf6e6}
+.invcatpie{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;
+  padding-top:12px;border-top:1px solid var(--border)}
+@media(max-width:520px){
+  /* Casilla y nombre arriba; el resto a lo ancho debajo: los cuatro en una línea no
+     entran en 374 px. */
+  .invcat{flex-wrap:wrap;gap:8px}
+  .invcat .grow{flex:1 1 60%}
+  .invcat select,.invcat .pill,.invcat .mut{flex:1 1 100%;max-width:none}
+  .invcatlist{max-height:46vh}
+  .invcatpie .btn{flex:1 1 100%}
+}
 .modal:has(.rng){width:min(700px,96vw)}
 .revrev{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;align-items:start}
 .revrev .prev{position:sticky;top:0;background:var(--bg,#f4f2ec);border:1px solid var(--border);border-radius:12px;overflow:hidden;height:min(72vh,760px)}

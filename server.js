@@ -64,6 +64,8 @@ import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estado
 import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
 import { repartirImporte, pesosPorVentas, textoReparto, imputarGastoEmpresa } from "./src/modules/facturas/reparto.js";
 import { mensajeDeErrorIA, seCorto } from "./src/modules/ia/errores.js";
+import { unidadSugerida } from "./src/modules/inventario/unidades.js";
+import { variantesDeProveedor, sugerenciasDeProveedor, marcarYaConfigurados, fusionarFuentes, normalizarLote, TOPE_LOTE } from "./src/modules/inventario/catalogo.js";
 import { indiceDescartes, descartadosDe } from "./src/modules/facturas/descartes.js";
 import { debeSincronizar, siguebloqueado, edadMinutos } from "./src/modules/agora/programacion.js";
 import { claveFalta, ordenarFaltas } from "./src/modules/marketing/faltan.js";
@@ -862,6 +864,15 @@ async function initDB() {
       await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_prod_prov ON inv_productos(proveedor_id)`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_prov_local ON inv_proveedores(local)`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_inv_ped_local ON inv_pedidos(local)`);
+      // El puente con las facturas: la clave del producto en el diccionario de Compras, copiada
+      // en el momento del alta. Sin ella, saber si un producto ya está montado dependería de que
+      // el nombre no cambiara nunca — y en cuanto alguien edite «Coca Cola 33cl» → «Cocacola 33»,
+      // el catálogo lo volvería a ofrecer y crearía el duplicado.
+      //
+      // SIN índice único a propósito: con NULLs y productos legítimamente parecidos, un único
+      // convertiría un alta en lote en un 500. La unicidad se aplica en la aplicación, donde se
+      // puede contestar «14 creados, 3 ya estaban» en vez de reventar.
+      await client.query(`ALTER TABLE inv_productos ADD COLUMN IF NOT EXISTS clave_producto TEXT`);
     } catch (e) { console.error("[DB] inventario:", e.message); }
     // sheet_synced: 1 = proyectada a Sheets; 0 = pendiente (la cola de reintentos la reproyecta desde la BD).
     // Las facturas existentes se asumen sincronizadas (default 1); las nuevas insertan 0 y pasan a 1 al proyectar.
@@ -2027,6 +2038,20 @@ const SIN_DUDAS = "COALESCE(dup_estado,'') <> 'duda'";
 // darían 1.640 €. Así que el dinero se cuenta solo sobre facturas y tickets. Los albaranes
 // siguen viéndose en la lista y se concilian aparte.
 const SIN_ALBARANES = "COALESCE(tipo,'factura') <> 'albaran'";
+
+// La línea de un albarán se descuenta SOLO si ese albarán ya está conciliado con una factura y
+// esa factura trae su propio detalle. Si la factura es un resumen sin líneas («según albaranes
+// adjuntos»), el albarán es la ÚNICA fuente de lo que entró por la puerta y quitarlo perdería el
+// producto entero, que es peor que contarlo dos veces.
+//
+// Vive aquí, y no dentro de la consulta que la estrenó, porque ahora la usan dos: el «Qué
+// compramos» y el catálogo de un proveedor de inventario. Con una copia en cada sitio, dentro de
+// un año serían dos reglas de conciliación distintas sin que nadie hubiera decidido separarlas.
+// Espera que la tabla `facturas` venga con el alias `f`.
+const ALBARAN_YA_CONTADO = `(COALESCE(f.tipo,'factura') = 'albaran' AND f.conciliado_con IS NOT NULL AND EXISTS (
+    SELECT 1 FROM facturas ff
+     WHERE ff.id = NULLIF(regexp_replace(f.conciliado_con, '[^0-9]', '', 'g'), '')::int
+       AND ff.lineas_estado IN ('ok','dudas','descuadre')))`;
 
 function facturasWhere(query = {}) {
   const { local, empresa, tipo, estado, from, to, q, proveedor } = query;
@@ -3875,10 +3900,6 @@ async function comprasDeLocal(query, local) {
     // La regla, entonces: se descuenta la línea de un albarán solo si YA está conciliado con
     // una factura y esa factura TIENE su propio detalle. Si la factura no lo trae, o si el
     // albarán aún no tiene factura, la línea del albarán cuenta — es lo único que hay.
-    const ALBARAN_YA_CONTADO = `(COALESCE(f.tipo,'factura') = 'albaran' AND f.conciliado_con IS NOT NULL AND EXISTS (
-        SELECT 1 FROM facturas ff
-         WHERE ff.id = NULLIF(regexp_replace(f.conciliado_con, '[^0-9]', '', 'g'), '')::int
-           AND ff.lineas_estado IN ('ok','dudas','descuadre')))`;
     condLin.push(`NOT ${ALBARAN_YA_CONTADO}`);
     // Una línea sin descripción legible tiene la clave vacía y no es un producto: agrupadas
     // todas juntas saldría un «producto fantasma» sin nombre y con un gasto que no es de nada.
@@ -9878,6 +9899,184 @@ app.delete("/api/inventario/productos/:id", requireAuth(INV_ROLES), async (req, 
     await dbRun("DELETE FROM inv_productos WHERE id = ?", [prod.id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── El catálogo de un proveedor: qué se le puede añadir sin escribirlo a mano ────────────────
+//
+// Montar un proveedor con cuarenta referencias eran cuarenta modales de diez campos, escribiendo
+// una lista que YA existe en dos sitios: sus facturas y, muchas veces, el mismo proveedor montado
+// en otro local. Esto las junta y deja marcar las que se quieran.
+//
+// LO QUE NO DEVUELVE, y es deliberado: ni importe, ni precio, ni número de factura. Inventarios lo
+// usa un ENCARGADO, que hoy no puede ver Compras. El nombre de lo que se compra no es sensible
+// —es lo que descarga del camión— pero a cuánto nos lo cobran, sí. No es una opción que se pueda
+// configurar mal: esas columnas no están en el SELECT.
+app.get("/api/inventario/proveedores/:id/catalogo", requireAuth(INV_ROLES), async (req, res) => {
+  try {
+    const p = await invProveedor(req.params.id);
+    if (!p) return res.status(404).json({ ok: false, error: "Proveedor no encontrado" });
+    if (!puedeAccederLocal(req, p.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+
+    // Dirección ve todos los locales —lo pidió así—; un encargado, solo los suyos: el de Tordera
+    // no tiene por qué saber qué se compra en Girona. La rama es EXPLÍCITA porque un array vacío
+    // en `= ANY(?)` significa «ninguno», no «todos».
+    const restringido = req.user?.rol !== "direccion";
+    const susLocales = restringido ? localesDe(req.user) : [];
+    if (restringido && !susLocales.length) return res.status(403).json({ ok: false, error: "Sin locales asignados" });
+
+    // Ventana de 18 meses (~548 días): un proveedor de cinco años devuelve productos que ya no se
+    // compran, y la lista deja de servir para elegir.
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.desde || "")) ? req.query.desde : addDaysISO(hoyISO(), -548);
+    const buscado = String(p.factura_proveedor || p.nombre || "").trim();
+
+    const [conocidos, existentes] = await Promise.all([
+      dbAll(`SELECT DISTINCT proveedor FROM facturas WHERE proveedor IS NOT NULL AND TRIM(proveedor) <> ''`).catch(() => []),
+      invProductosDe(p.id, false),
+    ]);
+    const variantes = variantesDeProveedor(buscado, conocidos.map((x) => x.proveedor));
+
+    // Lo comprado. Misma agrupación que «Qué compramos» —incluido el diccionario, para que dos
+    // escrituras ya unificadas salgan como UN producto y con el nombre bueno— y recortada a lo
+    // que hace falta aquí.
+    const filas = await dbAll(
+      `SELECT COALESCE('p:' || a.producto_id::text, l.clave)              AS clave,
+              (array_agg(COALESCE(p2.nombre, l.descripcion)
+                         ORDER BY f.fecha DESC NULLS LAST, l.id DESC))[1] AS descripcion,
+              count(*)::int                                              AS veces,
+              MAX(f.fecha)                                               AS ultima,
+              (array_agg(DISTINCT l.unidad)
+                 FILTER (WHERE COALESCE(l.unidad,'') <> ''))             AS unidades,
+              array_agg(DISTINCT f.local)                                AS locales
+         FROM factura_lineas l
+         JOIN facturas f ON f.id = l.factura_id
+         LEFT JOIN producto_alias a ON a.clave = l.clave AND a.producto_id IS NOT NULL
+         LEFT JOIN productos_canonicos p2 ON p2.id = a.producto_id
+        WHERE COALESCE(f.dup_estado,'') <> 'duda' AND COALESCE(l.clave,'') <> ''
+          AND f.proveedor = ANY(?) AND f.fecha >= ?
+          ${restringido ? "AND f.local = ANY(?)" : ""}
+          AND NOT ${ALBARAN_YA_CONTADO}
+        GROUP BY 1
+        ORDER BY veces DESC, ultima DESC NULLS LAST
+        LIMIT 300`,
+      restringido ? [variantes, desde, susLocales] : [variantes, desde]).catch(() => []);
+
+    const deFacturas = (filas || []).map((r) => ({
+      nombre: r.descripcion, clave_producto: r.clave, veces: r.veces, ultima: r.ultima,
+      // La unidad de la factura es la de COMPRA; la del inventario, la de CONTEO. Se compra en
+      // cajas y se cuenta en botellas. Va como sugerencia, y cuando no se reconoce va `null`
+      // para que la pantalla lo marque en vez de rellenarlo en silencio.
+      unidad_sugerida: unidadSugerida(r.unidades || []),
+      locales: r.locales || [],
+    }));
+
+    // El mismo proveedor montado en otro local. Traen unidad y stock decididos por una persona,
+    // así que valen más que cualquier deducción nuestra.
+    const otrosProv = await dbAll(
+      `SELECT id, local, nombre FROM inv_proveedores WHERE id <> ?${restringido ? " AND local = ANY(?)" : ""}`,
+      restringido ? [p.id, susLocales] : [p.id]).catch(() => []);
+    const gemelos = (otrosProv || []).filter((x) => x.local !== p.local
+      && variantesDeProveedor(p.nombre, [x.nombre]).length > 1);
+    const deOtros = gemelos.length
+      ? await dbAll(`SELECT id, local, nombre, unidad, stock_minimo, stock_objetivo, temporada_stock,
+                            temporada_inicio, temporada_fin, observaciones, clave_producto
+                       FROM inv_productos WHERE proveedor_id = ANY(?) AND activo = TRUE ORDER BY orden, nombre`,
+          [gemelos.map((x) => x.id)]).catch(() => [])
+      : [];
+
+    const fus = fusionarFuentes(deFacturas, deOtros);
+    res.json({
+      ok: true,
+      proveedor: { id: p.id, nombre: p.nombre, local: p.local, factura_proveedor: p.factura_proveedor || null },
+      buscado: {
+        nombre: buscado, variantes, desde,
+        locales: restringido ? susLocales : [],
+        // Si no se ha encontrado nada, lo más probable es que el nombre del inventario no sea el
+        // de las facturas («Grau» vs «VINS I LICORS GRAU SA»). Se PROPONE, no se adivina:
+        // «Grau» también está dentro de «Graupera SL», y una lista del proveedor equivocado no se
+        // nota hasta que alguien pide una caja de algo que ese señor no vende.
+        sugerencias: deFacturas.length ? [] : sugerenciasDeProveedor(buscado, conocidos.map((x) => x.proveedor)).slice(0, 6),
+      },
+      facturas: marcarYaConfigurados(fus.facturas, existentes),
+      otros_locales: marcarYaConfigurados(fus.otrosLocales, existentes),
+      ya_configurados: existentes.length,
+    });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// Alta de VARIOS productos de una vez. Una transacción: un lote de cuarenta que se queda a medias
+// deja a quien lo hizo sin saber qué entró, y su reacción será volver a darle y duplicar la
+// primera mitad.
+app.post("/api/inventario/productos/lote", requireAuth(INV_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const p = await invProveedor(req.body?.proveedor_id);
+    if (!p) return res.status(404).json({ ok: false, error: "Proveedor no encontrado" });
+    if (!puedeAccederLocal(req, p.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+
+    // Las líneas con `copiar_de` se resuelven EN EL SERVIDOR leyendo el producto de origen y
+    // comprobando el permiso sobre SU local. Si esos valores viajaran desde el navegador, el
+    // panel sería la fuente de la verdad de un dato que ya está en la base.
+    const pedidas = Array.isArray(req.body?.productos) ? req.body.productos.slice(0, TOPE_LOTE + 1) : [];
+    const aCopiar = pedidas.filter((x) => x && x.copiar_de).map((x) => x.copiar_de);
+    const origenes = aCopiar.length
+      ? await dbAll(`SELECT * FROM inv_productos WHERE id = ANY(?)`, [aCopiar]).catch(() => []) : [];
+    const porId = new Map(origenes.map((o) => [String(o.id), o]));
+    const lineas = [];
+    for (const x of pedidas) {
+      if (!x || !x.copiar_de) { lineas.push(x); continue; }
+      const o = porId.get(String(x.copiar_de));
+      if (!o) return res.status(400).json({ ok: false, error: "Un producto a copiar ya no existe. Vuelve a abrir la lista." });
+      if (!puedeAccederLocal(req, o.local)) return res.status(403).json({ ok: false, error: "Sin acceso al local de origen" });
+      lineas.push({
+        nombre: o.nombre, unidad: o.unidad, clave_producto: o.clave_producto || null,
+        stock_objetivo: o.stock_objetivo, stock_minimo: o.stock_minimo, temporada_stock: o.temporada_stock,
+        temporada_inicio: o.temporada_inicio, temporada_fin: o.temporada_fin, observaciones: o.observaciones,
+      });
+    }
+
+    // Todo se valida ANTES de abrir la transacción: un nombre vacío devuelve un 400 diciendo qué
+    // línea, con CERO escrituras. Lo que no puede pasar es que entren 37 y falten 3 sin saber
+    // cuáles.
+    const existentesPrev = await invProductosDe(p.id, false);
+    const prev = normalizarLote(lineas, { existentes: existentesPrev, stockDefecto: req.body?.stock_objetivo_defecto });
+    if (prev.errores.length) {
+      return res.status(400).json({ ok: false, error: prev.errores[0].motivo, errores: prev.errores });
+    }
+
+    await client.query("BEGIN");
+    const q = (sql, par = []) => client.query(toPositional(sql), par);
+    // En READ COMMITTED, dos peticiones a la vez colarían el mismo producto dos veces. Esto las
+    // pone en fila por una línea de código.
+    await q(`SELECT id FROM inv_proveedores WHERE id = ? FOR UPDATE`, [p.id]);
+
+    // Se relee DENTRO de la transacción: la comprobación de antes es de comodidad, y sin esta la
+    // protección contra duplicados sería cosmética (dos pestañas abiertas la saltan).
+    const dentro = (await q(`SELECT * FROM inv_productos WHERE proveedor_id = ?`, [p.id])).rows;
+    const { altas, reactivar, omitidos } = normalizarLote(lineas, { existentes: dentro, stockDefecto: req.body?.stock_objetivo_defecto });
+
+    // El orden en que se ven en la lista suele ser el del albarán, que es el orden en que se
+    // cuenta el almacén. Naciendo todos con 0 se perdía.
+    const maxOrden = Number((await q(`SELECT COALESCE(MAX(orden),0) AS m FROM inv_productos WHERE proveedor_id = ?`, [p.id])).rows[0]?.m) || 0;
+    const ahora = new Date().toISOString();
+    const ids = [];
+    for (let i = 0; i < altas.length; i++) {
+      const d = altas[i];
+      const row = await q(
+        `INSERT INTO inv_productos (proveedor_id, local, nombre, unidad, stock_minimo, stock_objetivo,
+           temporada_stock, temporada_inicio, temporada_fin, activo, orden, observaciones, clave_producto, creado_en)
+         VALUES (?,?,?,?,?,?,?,?,?,TRUE,?,?,?,?) RETURNING id`,
+        [p.id, p.local, d.nombre, d.unidad, d.stock_minimo, d.stock_objetivo, d.temporada_stock,
+         d.temporada_inicio, d.temporada_fin, maxOrden + i + 1, d.observaciones, d.clave_producto, ahora]);
+      ids.push(row.rows[0].id);
+    }
+    for (const r of reactivar) await q(`UPDATE inv_productos SET activo = TRUE WHERE id = ?`, [r.id]);
+    await client.query("COMMIT");
+
+    res.json({ ok: true, creados: altas.length, reactivados: reactivar.length, omitidos, ids });
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch { /* la conexión ya estaba mal */ }
+    res.status(500).json({ ok: false, error: e.message });
+  } finally { client.release(); }
 });
 
 // 3-5) Sesión de conteo: obtiene (o crea) el inventario EN CURSO del proveedor y sus productos

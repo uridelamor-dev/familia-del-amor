@@ -1588,7 +1588,13 @@ async function invNuevoProveedor() {
   ov.querySelector("#fInvProv").addEventListener("submit", async (e) => {
     e.preventDefault();
     const nombre = e.target.nombre.value.trim(); if (!nombre) return;
-    try { await apiSend("POST", "/api/inventario/proveedores", { local: INV.local, nombre, factura_proveedor: nombre }); ov.remove(); toast("Proveedor creado ✅"); loadInvProveedores(); }
+    try {
+      const r = await apiSend("POST", "/api/inventario/proveedores", { local: INV.local, nombre, factura_proveedor: nombre });
+      ov.remove(); toast("Proveedor creado ✅");
+      // Se entra directo a configurarlo. Volver a la lista dejaba mirando una tarjeta que pone
+      // «0 producto(s)», que es justo lo que se acaba de venir a resolver.
+      if (r && r.id) loadInvConfig(r.id, nombre); else loadInvProveedores();
+    }
     catch (err) { toast("Error: " + err.message); }
   });
 }
@@ -1765,11 +1771,15 @@ async function loadInvConfig(proveedorId, nombre) {
 }
 function renderInvConfig(list) {
   const back = { act: "inv-volver-prov", label: "Proveedores" };
-  const toolbar = `<div class="toolbar"><div class="mut" style="flex:1;font-size:13px">Configura productos, unidad y stock necesario (por local).</div><button class="btn primary" data-act="inv-nuevo-prod">+ Producto</button></div>`;
+  // Para un proveedor nuevo, la lista es el camino bueno y escribirlos a mano la excepción: por
+  // eso el primario es «de una lista».
+  const toolbar = `<div class="toolbar"><div class="mut" style="flex:1;font-size:13px">Configura productos, unidad y stock necesario (por local).</div><button class="btn primary" data-act="inv-catalogo">+ Añadir de una lista</button><button class="btn" data-act="inv-nuevo-prod">+ Producto suelto</button></div>`;
   const rows = list.length ? `<div class="card p0"><div class="rows">${list.map((p) => {
     const temp = (p.temporada_stock != null && p.temporada_stock !== "" && p.temporada_inicio) ? ` · temporada ${num(p.temporada_stock)} (${esc(p.temporada_inicio)}→${esc(p.temporada_fin || "")})` : "";
     return `<div class="row"><div class="grow"><div class="t1">${esc(p.nombre)} ${p.activo ? "" : '<span class="pill bad" style="font-size:10px">inactivo</span>'}</div><div class="t2">${esc(p.unidad)} · necesario ${num(p.stock_objetivo)}${temp}${p.observaciones ? " · " + esc(p.observaciones) : ""}</div></div><button class="linkbtn" style="color:var(--brand)" data-act="inv-edit-prod" data-id="${p.id}">Editar</button> · <button class="linkbtn" data-act="inv-del-prod" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Borrar</button></div>`;
-  }).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin productos. Añade el primero con «+ Producto».</div></div>`;
+  }).join("")}</div></div>` : `<div class="card"><div class="ch"><h3>Sin productos todavía</h3></div>
+      <p class="mut" style="margin:0 0 14px;line-height:1.6">No hace falta escribirlos uno a uno: puedo sacarlos de <b>lo que ya le compramos según sus facturas</b> y, si este proveedor está montado en otro establecimiento, de <b>los que ya tiene allí</b> con su unidad y su stock.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" data-act="inv-catalogo">Ver la lista y elegir</button><button class="btn" data-act="inv-nuevo-prod">Escribir uno a mano</button></div></div>`;
   return `${invHeader("Configurar · " + esc(INV.proveedorNombre), esc(INV.local), back)}${toolbar}${rows}`;
 }
 const INV_UNIDADES = ["unidades", "cajas", "botellas", "kilos", "bolsas", "barriles", "litros", "packs"];
@@ -1819,6 +1829,155 @@ async function invDelProducto(id, nombre) {
   if (!(await confirmModal(`¿Borrar el producto "${nombre}"?`, { ok: "Borrar", danger: true }))) return;
   try { await apiSend("DELETE", "/api/inventario/productos/" + encodeURIComponent(id)); toast("Producto borrado ✅"); loadInvConfig(); }
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
+// ── Añadir productos de una lista, en vez de escribirlos de uno en uno ───────────────────────
+//
+// Dos fuentes en el MISMO sitio, y no en pestañas, por tres razones concretas: lo marcado en la
+// pestaña que no se ve es invisible (marcas 8, cambias, el contador dice 8 y no se ve ninguno);
+// habría que buscar dos veces; y muchos productos están en las dos, así que en pestañas saldrían
+// duplicados — justo lo que todo esto evita.
+//
+// El estado va en el DOM, no en una variable global como FAC_SEL: aquellas viven en tablas que se
+// repintan, y esto se abre y se cierra. Una Set global se quedaría con basura de la vez anterior
+// si algo falla a medias.
+async function invCatalogo() {
+  let j;
+  try { j = await apiRaw(`/api/inventario/proveedores/${encodeURIComponent(INV.proveedorId)}/catalogo`); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); return; }
+
+  const otros = j.otros_locales || [], facturas = j.facturas || [];
+  const uniOpts = (sel) => INV_UNIDADES.map((u) => `<option value="${u}" ${u === sel ? "selected" : ""}>${u}</option>`).join("");
+
+  // Toda la fila es la zona de toque (un <label>): con el dedo, un cuadradito de 13 px no se da.
+  const filaOtro = (p) => `<label class="invcat ${p.ya_esta && !p.ya_inactivo ? "yaesta" : ""}">
+    <input type="checkbox" class="invCatChk" data-copiar="${p.id}" ${p.ya_esta && !p.ya_inactivo ? "disabled" : ""}>
+    <div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div>
+      <div class="t2">${esc(p.unidad || "")} · necesario ${num(p.stock_objetivo)} · de ${esc(nombreCortoLocal(p.local))}${p.veces ? ` · ${num(p.veces)} compras` : ""}</div></div>
+    ${p.ya_esta && !p.ya_inactivo ? '<span class="pill">ya está</span>'
+      : p.ya_inactivo ? '<span class="pill bad">desactivado · se reactiva</span>'
+      : '<span class="mut" style="font-size:11px">copia su configuración</span>'}</label>`;
+
+  const filaFactura = (p) => `<label class="invcat ${p.ya_esta && !p.ya_inactivo ? "yaesta" : ""}">
+    <input type="checkbox" class="invCatChk" data-nombre="${esc(p.nombre)}" data-clave="${esc(p.clave_producto || "")}" ${p.ya_esta && !p.ya_inactivo ? "disabled" : ""}>
+    <div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div>
+      <div class="t2">${num(p.veces)} ${p.veces === 1 ? "compra" : "compras"}${p.ultima ? " · última " + esc(fechaCorta(p.ultima)) : ""}</div></div>
+    ${p.ya_esta && !p.ya_inactivo ? '<span class="pill">ya está</span>'
+      : `<select class="invCatUni ${p.unidad_sugerida ? "" : "revisa"}" title="${p.unidad_sugerida ? "Unidad de sus facturas" : "Sus facturas no dicen la unidad, o dicen varias: revísala"}">${uniOpts(p.unidad_sugerida || "unidades")}</select>`}</label>`;
+
+  const seccion = (titulo, filas, marca) => filas.length ? `<div class="invcatsec" data-sec="${marca}">
+      <div class="invcath"><b>${titulo} · ${num(filas.length)}</b><button type="button" class="linkbtn" data-marca="${marca}">Marcar los visibles</button></div>
+      ${filas.join("")}</div>` : "";
+
+  // Si no se ha encontrado nada, lo más probable es que el nombre del inventario no sea el de las
+  // facturas. Se dice, con el nombre buscado delante: un modal vacío parecería que no le compramos
+  // nada a este proveedor, que es una conclusión muy distinta.
+  const b = j.buscado || {};
+  const vacio = !otros.length && !facturas.length ? `<div class="card" style="margin:0">
+      <div class="mut" style="line-height:1.6">No he encontrado productos de <b>${esc(b.nombre || "")}</b>.
+      ${(b.sugerencias || []).length
+        ? `En las facturas hay estos proveedores parecidos:<br>${b.sugerencias.map((x) => `<button type="button" class="linkbtn invCatSug" data-prov="${esc(x)}" style="color:var(--brand)">${esc(x)}</button>`).join(" · ")}<br>
+           Si es uno de ellos, púlsalo: se guarda como su nombre en las facturas y la lista se llena.`
+        : `Puede que en las facturas se llame de otra forma. Cámbialo en «Editar proveedor», en el campo del nombre de facturas.`}
+      ${(b.locales || []).length ? `<br><span style="font-size:12px">Buscado en: ${b.locales.map((l) => esc(nombreCortoLocal(l))).join(", ")}.</span>` : ""}</div></div>` : "";
+
+  const cuerpo = `<div class="invcatbox">
+      <div class="toolbar" style="margin:0 0 10px">
+        <div class="field" style="flex:1;min-width:160px"><input class="inp" id="invCatQ" placeholder="Buscar producto…" autocomplete="off"></div>
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;white-space:nowrap"><input type="checkbox" id="invCatFaltan" checked style="width:auto"> Solo los que faltan</label>
+      </div>
+      <div class="invcatlist" id="invCatList">
+        ${vacio}
+        ${seccion("Ya montados en otro establecimiento", otros.map(filaOtro), "otro")}
+        ${seccion(`Comprados a este proveedor${b.desde ? " (desde " + esc(fechaCorta(b.desde)) + ")" : ""}`, facturas.map(filaFactura), "fac")}
+      </div>
+      <div class="invcatpie">
+        <b id="invCatN">0 marcados</b>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;margin-left:auto">Stock necesario<input type="number" min="0" step="any" id="invCatStock" value="0" style="width:72px"></label>
+        <button class="btn primary" id="invCatAdd" disabled>Añadir</button>
+      </div>
+    </div>`;
+
+  const ov = modal("Añadir productos · " + INV.proveedorNombre, cuerpo);
+  ov.querySelector(".modal").classList.add("wide");
+
+  const chks = () => [...ov.querySelectorAll(".invCatChk")];
+  const marcados = () => chks().filter((c) => c.checked && !c.disabled);
+  const contar = () => {
+    const n = marcados().length;
+    ov.querySelector("#invCatN").textContent = `${n} marcado${n === 1 ? "" : "s"}`;
+    const add = ov.querySelector("#invCatAdd");
+    add.disabled = !n; add.textContent = n ? `Añadir los ${n}` : "Añadir";
+  };
+
+  // Filtrar en memoria: el catálogo entero ya está en el navegador. Ojo, una fila oculta sigue
+  // marcada a propósito —buscas, marcas, buscas otra cosa, marcas— y el contador las cuenta todas.
+  const filtrar = () => {
+    const q = (ov.querySelector("#invCatQ").value || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+    const soloFaltan = ov.querySelector("#invCatFaltan").checked;
+    for (const fila of ov.querySelectorAll(".invcat")) {
+      const txt = (fila.querySelector(".t1").textContent || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+      const ya = fila.classList.contains("yaesta");
+      fila.style.display = (!q || txt.includes(q)) && !(soloFaltan && ya) ? "" : "none";
+    }
+    for (const sec of ov.querySelectorAll(".invcatsec")) {
+      sec.style.display = [...sec.querySelectorAll(".invcat")].some((f) => f.style.display !== "none") ? "" : "none";
+    }
+  };
+
+  ov.querySelector("#invCatQ").addEventListener("input", filtrar);
+  ov.querySelector("#invCatFaltan").addEventListener("change", filtrar);
+  ov.addEventListener("change", (e) => { if (e.target.classList.contains("invCatChk")) contar(); });
+  ov.addEventListener("click", (e) => {
+    // Marca los VISIBLES, no todos: es lo que espera quien acaba de escribir «damm». Marcar
+    // treinta y cuatro de golpe sin mirar es lo que llena el inventario de cosas que nadie cuenta.
+    const m = e.target.closest("[data-marca]");
+    if (m) {
+      for (const fila of ov.querySelectorAll(`.invcatsec[data-sec="${m.getAttribute("data-marca")}"] .invcat`)) {
+        if (fila.style.display === "none") continue;
+        const c = fila.querySelector(".invCatChk"); if (c && !c.disabled) c.checked = true;
+      }
+      contar(); return;
+    }
+    const sug = e.target.closest(".invCatSug");
+    if (sug) { invUsarProveedorFacturas(sug.getAttribute("data-prov"), ov); return; }
+  });
+
+  ov.querySelector("#invCatAdd").addEventListener("click", async () => {
+    const productos = marcados().map((c) => {
+      if (c.getAttribute("data-copiar")) return { copiar_de: Number(c.getAttribute("data-copiar")) };
+      const fila = c.closest(".invcat"), uni = fila.querySelector(".invCatUni");
+      return { nombre: c.getAttribute("data-nombre"), unidad: uni ? uni.value : "unidades", clave_producto: c.getAttribute("data-clave") || "" };
+    });
+    const stockPuesto = Number(ov.querySelector("#invCatStock").value) > 0;
+    const btn = ov.querySelector("#invCatAdd"); btn.disabled = true; btn.textContent = "Añadiendo…";
+    try {
+      const r = await apiSend("POST", "/api/inventario/productos/lote", {
+        proveedor_id: INV.proveedorId, stock_objetivo_defecto: ov.querySelector("#invCatStock").value, productos });
+      ov.remove();
+      const partes = [];
+      if (r.creados) partes.push(`${r.creados} producto${r.creados === 1 ? "" : "s"} añadido${r.creados === 1 ? "" : "s"}`);
+      if (r.reactivados) partes.push(`${r.reactivados} reactivado${r.reactivados === 1 ? "" : "s"}`);
+      if ((r.omitidos || []).length) partes.push(`${r.omitidos.length} ya estaban`);
+      toast(partes.join(" · ") + " ✅");
+      // Con stock necesario 0, el primer pedido sugeriría 0 de todo y parecería que esto no
+      // funciona. Se avisa una vez, sin bloquear: ponerle el stock a cuarenta productos en el
+      // momento del alta no lo hace nadie, y esperar a saberlo es lo razonable.
+      if (r.creados && !stockPuesto) setTimeout(() => toast("Ponles el stock necesario cuando lo sepas: el inventario ya los cuenta"), 2600);
+      loadInvConfig();
+    } catch (e) { btn.disabled = false; btn.textContent = "Añadir"; toast("Error: " + e.message); }
+  });
+
+  contar(); filtrar();
+}
+
+// «¿Quisiste decir VINS I LICORS GRAU SA?» — guarda ese nombre como el de las facturas y vuelve a
+// abrir la lista. Arregla el campo para siempre, no solo para esta vez.
+async function invUsarProveedorFacturas(prov, ov) {
+  try {
+    await apiSend("PUT", "/api/inventario/proveedores/" + encodeURIComponent(INV.proveedorId), { factura_proveedor: prov });
+    ov.remove(); toast("Guardado ✅"); invCatalogo();
+  } catch (e) { toast("Error: " + e.message); }
 }
 
 // ════════════════════════ VISTA: CLIENTES ════════════════════════
@@ -9212,6 +9371,7 @@ document.addEventListener("click", (e) => {
   else if (act === "inv-aprobar-pedido") invCambiarEstadoPedido("APPROVED", "Aprobar pedido");
   else if (act === "inv-cancelar-pedido") invCambiarEstadoPedido("CANCELLED", "Cancelar pedido");
   else if (act === "inv-nuevo-prod") invNuevoProducto();
+  else if (act === "inv-catalogo") invCatalogo();
   else if (act === "inv-edit-prod") invEditProducto(t.getAttribute("data-id"));
   else if (act === "inv-del-prod") invDelProducto(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "faltan-quitar") {
