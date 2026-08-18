@@ -79,10 +79,23 @@ export function planRepetir({
 }
 
 const fecha = (v) => { const s = String(v == null ? "" : v).slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; };
-/** 0 = domingo, como `hor_disponibilidad.dow`. */
+
+/**
+ * El día de la semana con la convención de ESTE sistema: 0 = LUNES.
+ *
+ * No es la de JavaScript. `getUTCDay()` cuenta desde el domingo, y aquí `dow` significa
+ * «posición dentro de la semana que empieza el lunes»: el solver hace `diasSemana(lunes)[n.dow]`
+ * y `hor_disponibilidad` se guarda desde el panel con el índice de la lista Lunes…Domingo.
+ *
+ * Lo escribí con `getUTCDay()` y estaba desplazado un día: repetir un turno a un miércoles
+ * miraba la disponibilidad del martes, así que el aviso salía en el día que no era —o no
+ * salía—. Solo se ve comparando las dos convenciones, porque cada una por su lado es
+ * coherente consigo misma.
+ */
 export function diaSemanaDe(dia) {
   const d = fecha(dia);
-  return d ? new Date(d + "T12:00:00Z").getUTCDay() : -1;
+  if (!d) return -1;
+  return (new Date(d + "T12:00:00Z").getUTCDay() + 6) % 7;   // domingo 0 → 6; lunes 1 → 0
 }
 function enPlantillaEseDia(p, dia) {
   const alta = fecha(p.fecha_alta), baja = fecha(p.fecha_baja), d = fecha(dia);

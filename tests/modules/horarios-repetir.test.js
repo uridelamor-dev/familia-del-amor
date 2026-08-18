@@ -124,15 +124,17 @@ describe("repetir un turno en otros días", () => {
   });
 
   test("la disponibilidad declarada también avisa", () => {
+    // Martes = dow 1 (0 es lunes). Con el desplazamiento que había, este aviso salía el día
+    // de al lado y nadie se enteraba.
     const p = planRepetir({ turno, dias: ["2026-08-25"], asignaciones: [turno], persona,
-      disponibilidad: [{ worker_id: 7, dow: 2, inicio_min: 900, fin_min: 1200, preferencia: "no_disponible" }] });
+      disponibilidad: [{ worker_id: 7, dow: 1, inicio_min: 900, fin_min: 1200, preferencia: "no_disponible" }] });
     assert.match(p.dias[0].motivo, /ha dicho que no puede/);
     assert.deepEqual(p.aCrear, ["2026-08-25"], "pero se crea igual: lo decide una persona");
   });
 
   test("«prefiere no» se dice distinto de «no puede»", () => {
     const p = planRepetir({ turno, dias: ["2026-08-25"], asignaciones: [turno], persona,
-      disponibilidad: [{ worker_id: 7, dow: 2, inicio_min: 900, fin_min: 1200, preferencia: "prefiere" }] });
+      disponibilidad: [{ worker_id: 7, dow: 1, inicio_min: 900, fin_min: 1200, preferencia: "prefiere" }] });
     assert.match(p.dias[0].motivo, /prefiere no trabajar/);
   });
 
@@ -165,10 +167,24 @@ describe("repetir un turno en otros días", () => {
     assert.equal(p.dias[0].motivo, null);
   });
 
-  test("el día de la semana se cuenta como en la disponibilidad: 0 = domingo", () => {
-    assert.equal(diaSemanaDe("2026-08-24"), 1, "lunes");
-    assert.equal(diaSemanaDe("2026-08-30"), 0, "domingo");
+  test("EL DÍA DE LA SEMANA SE CUENTA COMO EN EL RESTO DEL SISTEMA: 0 = LUNES", () => {
+    // Este test afirmaba «0 = domingo» y protegía la convención EQUIVOCADA, así que pasaba
+    // mientras el código miraba el día de al lado. La convención real es la del solver:
+    // `diasSemana(lunes)[0]` es el lunes, y el panel guarda la disponibilidad con el índice
+    // de la lista Lunes…Domingo.
+    assert.equal(diaSemanaDe("2026-08-24"), 0, "lunes");
+    assert.equal(diaSemanaDe("2026-08-25"), 1, "martes");
+    assert.equal(diaSemanaDe("2026-08-26"), 2, "miércoles");
+    assert.equal(diaSemanaDe("2026-08-30"), 6, "domingo");
     assert.equal(diaSemanaDe("nada"), -1);
+  });
+
+  test("y coincide con el índice que usa el solver para las necesidades", async () => {
+    const { diasSemana } = await import("../../src/modules/horarios/tiempo.js");
+    const dias = diasSemana("2026-08-24");
+    for (let dow = 0; dow < 7; dow++) {
+      assert.equal(diaSemanaDe(dias[dow]), dow, `desalineado en dow ${dow}`);
+    }
   });
 
   test("un turno partido: se repite EL TRAMO elegido, no el día entero", () => {
