@@ -5562,8 +5562,12 @@ async function ficAbrirJornada(workerId, dia) {
         ${j.incidencias.length ? `<div style="margin-bottom:14px">${j.incidencias.map((i) => `<span class="fic-tag ${i.nivel === "revisar" ? "aviso" : ""}">${esc(i.texto)}${i.minutos ? " · " + esc(ficHoras(i.minutos)) : ""}</span>`).join("")}</div>` : ""}
         ${j.validacion ? `<p class="mut" style="margin:0 0 14px">Validado ${esc(ficHoras(j.validacion.minutos))} por ${esc(j.validacion.por)} el ${esc(String(j.validacion.en).slice(0, 10))}${j.validacion.caducada ? " — <b>pero el registro ha cambiado desde entonces</b>" : ""}${j.validacion.nota ? `<br>«${esc(j.validacion.nota)}»` : ""}</p>` : ""}
         ${evs}
-        <div class="ch" style="margin-top:18px"><h3 style="margin:0;font-size:13px">Añadir un fichaje que falta</h3></div>
-        <p class="mut" style="margin:0 0 10px;line-height:1.5">Escribe la hora <b>real</b>, no la del cuadrante. Para la madrugada usa 26:10 en lugar de 02:10.</p>
+        ${/* Plegado: añadir un fichaje que falta hace falta de vez en cuando, pero ocupaba
+              cuatro campos y un párrafo SIEMPRE, empujando hacia abajo la decisión que sí
+              se toma cada vez. */""}
+        <details class="fic-plegable">
+        <summary><b>Añadir un fichaje que falta</b><span class="mut">si falta una entrada o una salida</span></summary>
+        <p class="mut" style="margin:8px 0 10px;line-height:1.5">Escribe la hora <b>real</b>, no la del cuadrante. Para la madrugada usa 26:10 en lugar de 02:10.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <select class="inp" id="ficNvTipo" style="width:auto">
             <option value="entrada">Entrada</option><option value="salida">Salida</option>
@@ -5573,6 +5577,7 @@ async function ficAbrirJornada(workerId, dia) {
           <input class="inp" id="ficNvMotivo" placeholder="Motivo (obligatorio)" style="flex:1;min-width:180px">
           <button class="btn" id="ficNvOk">Añadir</button>
         </div>
+        </details>
         <p id="ficNvMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
         ${/* ── Qué horas cuentan ────────────────────────────────────────────────────────
               Se PULSA la hora buena. La del reloj y la del cuadrante están las dos ahí, y
@@ -5667,13 +5672,16 @@ async function ficAbrirJornada(workerId, dia) {
       const i = b.getAttribute("data-t"), lado = b.getAttribute("data-lado");
       ov.querySelectorAll(`.fic-hora[data-t="${i}"][data-lado="${lado}"]`).forEach((x) => x.classList.toggle("on", x === b));
       const otra = ov.querySelector(`.fic-hotra[data-t="${i}"][data-lado="${lado}"]`);
-      if (otra) otra.value = "";   // pulsar una hora descarta lo que se hubiera escrito
+      if (otra) { otra.value = ""; otra.classList.remove("on"); }   // pulsar descarta lo escrito
       refrescarPie();
     });
     ov.querySelectorAll(".fic-hotra").forEach((c) => c.addEventListener("input", () => {
       const i = c.getAttribute("data-t"), lado = c.getAttribute("data-lado");
+      const escrito = c.value.trim();
       // Escribir una hora desmarca las dos sugeridas: manda lo que se acaba de teclear.
-      if (c.value.trim()) ov.querySelectorAll(`.fic-hora[data-t="${i}"][data-lado="${lado}"]`).forEach((x) => x.classList.remove("on"));
+      if (escrito) ov.querySelectorAll(`.fic-hora[data-t="${i}"][data-lado="${lado}"]`).forEach((x) => x.classList.remove("on"));
+      // Y se marca en verde igual que ellas: la elegida se ve, la escriba quien la escriba.
+      c.classList.toggle("on", !!escrito && Number.isFinite(horMin(escrito)) && horMin(escrito) > 0);
       refrescarPie();
     }));
     ov.querySelector("#ficNoCuenta").addEventListener("change", refrescarPie);

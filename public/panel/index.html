@@ -690,6 +690,25 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .bl-lista{max-height:46vh}
 }
 
+/* Un bloque que se abre solo cuando hace falta. Sin esto, «añadir un fichaje que
+   falta» ocupaba cuatro campos y un párrafo SIEMPRE, aunque casi nunca se usara, y
+   empujaba hacia abajo la decisión que sí se toma cada vez. */
+.fic-plegable{margin-top:16px;border-top:1px solid var(--border);padding-top:12px}
+.fic-plegable>summary{display:flex;gap:8px;align-items:baseline;cursor:pointer;
+  list-style:none;min-height:32px;font-size:13px}
+.fic-plegable>summary::-webkit-details-marker{display:none}
+.fic-plegable>summary::before{content:"›";display:inline-block;color:var(--ink3);
+  font-size:15px;transition:transform .15s ease}
+.fic-plegable[open]>summary::before{transform:rotate(90deg)}
+.fic-plegable>summary .mut{font-size:11.5px}
+/* En el móvil no caben título y aclaración en la misma línea: el título se partía en
+   dos y la nota quedaba flotando a la derecha. La nota baja entera, alineada. */
+@media(max-width:560px){
+  .fic-plegable>summary{flex-wrap:wrap}
+  .fic-plegable>summary b{flex:1 1 auto}
+  .fic-plegable>summary .mut{flex-basis:100%;margin-left:18px}
+}
+
 /* Qué horas cuentan. Las dos candidatas —la del reloj y la del cuadrante— se pulsan
    directamente: elegir «la entrada del cuadrante y la salida fichada» es un toque en
    cada una, no una cuenta de cabeza. */
@@ -710,6 +729,9 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .fic-hora.on span{color:var(--brand)}
 .fic-hora:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .fic-hotra{min-height:44px;text-align:center;font-variant-numeric:tabular-nums}
+/* Escrita a mano, pero elegida igual: se marca como las otras dos o no se sabe
+   cuál manda. */
+.fic-hotra.on{background:var(--brand-soft);border-color:var(--brand);color:var(--brand);font-weight:650}
 .fic-total{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:var(--surface2);
   font-size:13.5px;line-height:1.5}
 .fic-nocuenta{display:flex;gap:8px;align-items:center;margin-top:10px;
