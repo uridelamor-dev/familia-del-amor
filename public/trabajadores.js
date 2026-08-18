@@ -439,7 +439,17 @@ document.getElementById("dispGuardar")?.addEventListener("click", async () => {
     const todo = dia.querySelector(".disp-todoeldia").checked;
     // Hasta 26:00 en minutos absolutos: la noche que acaba de madrugada sigue siendo del día.
     const ini = todo ? 0 : (horaAMinutos(dia.querySelector(".disp-ini").value) ?? 0);
-    const fin = todo ? 1560 : (horaAMinutos(dia.querySelector(".disp-fin").value) ?? 1440);
+    // Igual que en el cuadrante: un `<input type="time">` no sabe decir «24:00», así que
+    // «hasta medianoche» llega como 00:00. Si el fin no es posterior al inicio, es que
+    // cruza el día, y son los minutos del día siguiente.
+    //
+    // EL CALLEJÓN QUE ESTO CIERRA: Carlos declaraba «no puedo de 16:00 a 24:00» el viernes,
+    // se guardaba bien (1440), y al volver a entrar el campo mostraba 00:00. La siguiente
+    // vez que pulsara Guardar —aunque solo viniera a cambiar el miércoles— el sistema le
+    // paraba con un error sobre el viernes, y no había forma de arreglarlo desde la
+    // pantalla porque «24:00» no se puede escribir.
+    const finBruto = todo ? 1560 : (horaAMinutos(dia.querySelector(".disp-fin").value) ?? 1440);
+    const fin = todo ? finBruto : (finBruto <= ini ? finBruto + 1440 : finBruto);
     if (fin <= ini) { if (msg) msg.textContent = `En ${DIAS_DISP[Number(dia.getAttribute("data-dow"))]}, la hora de fin tiene que ser posterior a la de inicio.`; return; }
     franjas.push({ dow: Number(dia.getAttribute("data-dow")), preferencia: pref, inicio_min: ini, fin_min: fin });
   }
