@@ -4828,7 +4828,7 @@ async function horGenerar() {
   const ov = modal("Propuesta de horario", `
     ${cap.mensaje ? `<p class="fic-nota" style="margin-top:0"><b>${esc(cap.mensaje)}</b></p>` : ""}
     <p style="margin:0 0 14px;line-height:1.55">
-      <b>${j.asignaciones.length} turnos</b> para cubrir ${j.resumen.cubiertos} de ${j.resumen.huecos} huecos.
+      <b>${j.asignaciones.length} ${j.asignaciones.length === 1 ? "turno" : "turnos"}</b> para cubrir ${j.resumen.cubiertos} de ${j.resumen.huecos} ${j.resumen.huecos === 1 ? "hueco" : "huecos"}.
       ${faltan.length ? `Quedan <b>${faltan.length}</b> por debajo del mínimo.` : "Todos los mínimos quedan cubiertos."}
       Esto es un <b>borrador</b>: se guarda sin publicar y lo puedes cambiar entero.</p>
 
