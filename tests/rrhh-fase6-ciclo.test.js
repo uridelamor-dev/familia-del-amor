@@ -383,7 +383,9 @@ describe("los invariantes de las fases anteriores", () => {
     assert.match(server, /puedeEnArea|horAvisoArea/);
   });
   test("y no se ha tocado nada de nómina, euros ni firma", () => {
-    const zona = servicio + baja + fichaLab;
+    // Sobre el CÓDIGO: los comentarios nombran «convenio» justo para decir que la antigüedad
+    // reconocida no se calcula aquí, que es la decisión que hay que dejar escrita.
+    const zona = sinComentarios(servicio + baja + fichaLab);
     for (const p of ["€", "euro", "nomina_", "salario", "convenio", "irpf", "firma_contrato", "onboarding"]) {
       assert.ok(!zona.toLowerCase().includes(p), `«${p}» no es de esta fase`);
     }

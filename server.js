@@ -34,8 +34,11 @@ import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocales
 // hacen en SQL (SQL_ACTIVO_EL_DIA y SQL_ESTUVO_ENTRE) porque hay que filtrar en la consulta,
 // no después. El módulo puro es la referencia y quien las prueba.
 import { activoAhora, bajaEfectiva, turnosTrasLaBaja, marcadoActivo } from "./src/modules/rrhh/vigencia.js";
+import { periodoAbierto, periodoActual, antiguedadActual, historialLegible, motivoNoRecontratar,
+         periodosSolapados, periodoInicialDe, compatibilidadUsers, enPeriodo } from "./src/modules/rrhh/periodos.js";
 import { estadoLaboral, filtrarPorEstado, validarAlta, planDeBaja, firmaPlan,
-         resumenDisponibilidad, ausenciasDeLaFicha, esPlantilla, ROLES_PLANTILLA } from "./src/modules/rrhh/ciclo.js";
+         resumenDisponibilidad, ausenciasDeLaFicha, esPlantilla, ROLES_PLANTILLA,
+         asuntosPendientes } from "./src/modules/rrhh/ciclo.js";
 import { sanearSolicitud, transitar, solapesVivos, turnosDurante, paraTrabajador, paraResponsable,
   resumirBandeja, TIPOS_SOLICITABLES, ETIQUETA_TIPO } from "./src/modules/rrhh/ausencias.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
@@ -46,6 +49,7 @@ import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descans
 import { indiceCapacidades, puedeEnArea, estaConfigurado, areasDe, resumenConfiguracion } from "./src/modules/horarios/capacidades.js";
 import { instanteANegocio, lunesDe, diasSemana, isoConOffset, aMinutos, deMinutos, epochDeLocal, sumaDias, instanteMadrid } from "./src/modules/horarios/tiempo.js";
 import { detectarConflictos, resumirConflictos, contratosSolapados, contratoVigente } from "./src/modules/horarios/conflictos.js";
+import { configLegible, motivoNoGuardar, AVISO_NO_RETROACTIVO, PARAMETROS } from "./src/modules/horarios/config.js";
 import { validarPublicacion, construirSnapshot, cambiosPorTrabajador } from "./src/modules/horarios/versiones.js";
 import { serializarCanonico } from "./src/core/canonico.js";
 import { construirCuadrante } from "./src/modules/horarios/cuadrante.js";
@@ -821,6 +825,28 @@ async function initDB() {
       }
     } catch (e) { console.error("[DB] resumen de áreas:", e.message); }
 
+    // ── Periodo inicial de quien ya estaba ────────────────────────────────────────────
+    // SOLO se crea cuando la fecha es determinista, es decir cuando `users.fecha_alta`
+    // existe. A quien no la tiene NO se le inventa ninguna: ni hoy, ni su primer fichaje,
+    // ni 1970. Esa fecha decide antigüedad y finiquito, y ponerla a ojo es escribir un dato
+    // que parece bueno y no lo es. Sale en el diagnóstico y lo arregla una persona.
+    try {
+      const r = await client.query(`
+        INSERT INTO rrhh_periodos (worker_id, local, fecha_alta, fecha_baja, creado_en, creado_por)
+        SELECT u.id, u.local, u.fecha_alta, u.fecha_baja, $1, 'migracion'
+          FROM users u
+         WHERE u.rol IN ('trabajador','encargado')
+           AND u.fecha_alta IS NOT NULL AND u.fecha_alta <> ''
+           AND (u.fecha_baja IS NULL OR u.fecha_baja >= u.fecha_alta)
+           AND NOT EXISTS (SELECT 1 FROM rrhh_periodos p WHERE p.worker_id = u.id)
+        RETURNING id`, [isoConOffset(Date.now())]);
+      if (r.rowCount) console.log(`[DB] periodos laborales: creados ${r.rowCount} a partir de la ficha de cada uno.`);
+      const sin = (await client.query(`
+        SELECT COUNT(*)::int AS n FROM users u WHERE u.rol IN ('trabajador','encargado')
+           AND NOT EXISTS (SELECT 1 FROM rrhh_periodos p WHERE p.worker_id = u.id)`)).rows[0];
+      if (sin?.n) console.log(`[DB] periodos laborales: ${sin.n} sin migrar por no tener una fecha de alta fiable. No se les ha inventado ninguna.`);
+    } catch (e) { console.error("[DB] periodos laborales:", e.message); }
+
     // Datos laborales que no cuadran. NO SE CORRIGE NADA: cada uno de estos casos tiene dos
     // arreglos posibles y elegir por una persona escribiría una fecha de alta o una de baja
     // que nadie ha decidido — y esas fechas deciden antigüedad, finiquito y cuadrante. Se
@@ -855,6 +881,31 @@ async function initDB() {
       if (c.n) partes.push(`${c.n} contrato(s) siguen abiertos después de la baja de su titular`);
       if (b.n) partes.push(`${b.n} persona(s) de baja con saldo vivo en la bolsa`);
       if (t.n) partes.push(`${t.n} turno(s) planificados después de la baja de quien los tiene`);
+
+      // Los periodos, ahora que existen. Dos abiertos no puede pasar —lo corta un índice
+      // único— pero sí puede haber gente sin ninguno, o con `users` diciendo una cosa y su
+      // periodo otra, y eso hay que verlo antes de que alguien lo descubra en una nómina.
+      const p = (await client.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE per.n IS NULL)::int                                          AS sin_periodo,
+          COUNT(*) FILTER (WHERE COALESCE(u.activo,1) = 1 AND u.fecha_baja IS NULL
+                             AND per.abiertos = 0 AND per.n > 0)::int                          AS activo_sin_abierto,
+          COUNT(*) FILTER (WHERE per.ultima_alta IS NOT NULL AND per.ultima_alta <> u.fecha_alta)::int AS desincronizado
+        FROM users u LEFT JOIN LATERAL (
+          SELECT COUNT(*)::int AS n, COUNT(*) FILTER (WHERE fecha_baja IS NULL)::int AS abiertos,
+                 MAX(fecha_alta) AS ultima_alta
+            FROM rrhh_periodos WHERE worker_id = u.id) per ON TRUE
+        WHERE u.rol IN ('trabajador','encargado')`)).rows[0] || {};
+      const sol = (await client.query(`
+        SELECT COUNT(*)::int AS n FROM rrhh_periodos a JOIN rrhh_periodos b
+          ON b.worker_id = a.worker_id AND b.id > a.id
+         WHERE (a.fecha_baja IS NULL OR b.fecha_alta <= a.fecha_baja)
+           AND (b.fecha_baja IS NULL OR a.fecha_alta <= b.fecha_baja)`)).rows[0] || {};
+      if (p.sin_periodo) partes.push(`${p.sin_periodo} sin ninguna incorporación registrada`);
+      if (p.activo_sin_abierto) partes.push(`${p.activo_sin_abierto} en plantilla cuya última incorporación figura cerrada`);
+      if (p.desincronizado) partes.push(`${p.desincronizado} con la fecha de la ficha distinta de la de su incorporación`);
+      if (sol.n) partes.push(`${sol.n} par(es) de incorporaciones que se pisan`);
+
       if (partes.length) console.log(`[DB] revisar en Equipo: ${partes.join("; ")}. No se ha corregido nada.`);
     } catch (e) { console.error("[DB] diagnóstico laboral:", e.message); }
 
@@ -3339,11 +3390,17 @@ const LOCALES_SIN_PUBLICO = new Set(["Oficina"]);
 const normLocal = (s) => String(s || "").trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 const SIN_PUBLICO_NORM = new Set([...LOCALES_SIN_PUBLICO].map(normLocal));
 const esLocalSinPublico = (l) => SIN_PUBLICO_NORM.has(normLocal(l));
-// Locales a los que el usuario tiene acceso: dirección = todos; encargado = solo su local.
+// Locales a los que el usuario tiene acceso: dirección = todos; el resto, LOS SUYOS.
+//
+// Devolvía uno solo —`localScope`, que es «en cuál está mirando ahora»— mientras
+// `puedeAccederLocal` ya le reconocía todos. Al encargado de la Cooperativa, que lleva
+// también La Tapeta de Blanes, el selector de Inventarios le enseñaba un local y la API le
+// dejaba operar en los dos: no era un agujero de seguridad, era el fallo contrario —una
+// pantalla que escondía trabajo suyo—. Ahora las dos preguntas se contestan con la misma
+// lista, que es la que va firmada en su token.
 function localesAccesibles(req) {
   if (req.user && req.user.rol === "direccion") return [...INV_LOCALES];
-  const s = localScope(req);
-  return s ? [s] : [];
+  return localesDe(req && req.user);
 }
 // ¿El usuario puede operar sobre este local? Validación de aislamiento (SIEMPRE en backend).
 // «¿Puede esta persona tocar ESTE local?» — distinto de «¿en cuál está mirando ahora?».
@@ -7292,6 +7349,12 @@ async function rrhhCrearTrabajador({ req, datos, client, extras = {}, auditar = 
     throw e;
   }
 
+  // El PRIMER periodo laboral. Se abre aquí, con el alta, porque un trabajador sin periodo
+  // es alguien de quien no consta cuándo empezó: la ficha no sabría desde cuándo contar y el
+  // día que se fuera no habría nada que cerrar.
+  await q(`INSERT INTO rrhh_periodos (worker_id, local, fecha_alta, fecha_baja, creado_en, creado_por)
+           VALUES (?,?,?,NULL,?,?)`, [id, d.local, d.fecha_alta, ahora, req.user.username]);
+
   // Contrato, si se puso. Va con el alta y no después porque un trabajador sin horas
   // contratadas no entra en el reparto del generador y nadie sabe por qué.
   if (d.contrato) {
@@ -8381,6 +8444,67 @@ app.put("/api/horarios/capacidades/:workerId", requireAuth(HORARIOS_ROLES), asyn
     console.error("[horarios] guardar capacidades:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron guardar las áreas" });
   } finally { client.release(); }
+});
+
+// ── Configuración operativa del establecimiento ──────────────────────────────
+// Los cuatro parámetros que decidían cosas —qué se señala, qué horas se deben, cuándo
+// empieza el mes de nómina y a qué jornada pertenece un fichaje de madrugada— y que hasta
+// ahora solo se podían cambiar entrando en la base a mano.
+const CONFIG_ROLES = ["direccion", "rrhh", "encargado"];   // el encargado, solo lectura
+
+app.get("/api/horarios/config-operativa", requireAuth(CONFIG_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const fila = await dbGet(`SELECT corte_dia_min, tolerancia_min, tolerancia_bolsa_min, dia_inicio_periodo
+                                FROM hor_config WHERE local = ?`, [local]) || {};
+    const puedeEditar = rrhhTodoLocal(req);
+    res.json({ ok: true, local, puedeEditar, avisoNoRetroactivo: AVISO_NO_RETROACTIVO,
+      data: configLegible(fila, { puedeEditar }) });
+  } catch (e) {
+    console.error("[horarios] config:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar la configuración" });
+  }
+});
+
+app.put("/api/horarios/config-operativa", requireAuth(["direccion", "rrhh"]), async (req, res) => {
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const cambios = req.body?.cambios && typeof req.body.cambios === "object" ? req.body.cambios : {};
+    const claves = Object.keys(cambios).filter((k) => PARAMETROS[k]);
+    if (!claves.length) return res.status(400).json({ ok: false, error: "No hay nada que cambiar" });
+
+    // Se valida TODO antes de escribir NADA. Si un valor no vale, no se guarda ni el que sí:
+    // media configuración aplicada es peor que ninguna, porque nadie sabe cuál quedó.
+    for (const k of claves) {
+      const no = motivoNoGuardar(k, cambios[k]);
+      if (no) return res.status(400).json({ ok: false, error: `${PARAMETROS[k].etiqueta}: ${no}` });
+    }
+    const antes = await dbGet(`SELECT corte_dia_min, tolerancia_min, tolerancia_bolsa_min, dia_inicio_periodo
+                                 FROM hor_config WHERE local = ?`, [local]) || {};
+    // El local puede no tener fila todavía: se crea con los valores por defecto.
+    await dbRun(`INSERT INTO hor_config (local) VALUES (?) ON CONFLICT (local) DO NOTHING`, [local]);
+    const sets = claves.map((k) => `${k} = ?`).join(", ");
+    await dbRun(`UPDATE hor_config SET ${sets}, actualizado_en = ? WHERE local = ?`,
+      [...claves.map((k) => Math.round(Number(cambios[k]))), isoConOffset(Date.now()), local]);
+
+    // Qué valía antes y qué vale ahora, con nombre y fecha. Un ajuste que cambia lo que se
+    // le paga a la gente no puede cambiar sin dejar quién lo tocó.
+    for (const k of claves) {
+      await ficAuditar("config", null, "cambiar_ajuste", req.user.username, {
+        local, detalle: { ajuste: k, etiqueta: PARAMETROS[k].etiqueta,
+                          antes: antes[k] ?? PARAMETROS[k].defecto, ahora: Math.round(Number(cambios[k])) },
+      }).catch(() => {});
+    }
+    const fila = await dbGet(`SELECT corte_dia_min, tolerancia_min, tolerancia_bolsa_min, dia_inicio_periodo
+                                FROM hor_config WHERE local = ?`, [local]);
+    res.json({ ok: true, data: configLegible(fila, { puedeEditar: true }),
+      mensaje: `Guardado. ${AVISO_NO_RETROACTIVO}` });
+  } catch (e) {
+    console.error("[horarios] guardar config:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar la configuración" });
+  }
 });
 
 // Contrato. Cambiar de 20 a 30 horas NO edita la fila vieja: se cierra la anterior y se
@@ -11236,7 +11360,7 @@ app.get("/api/rrhh/trabajador/:id/ficha-laboral", requireAuth(RRHH_ROLES), async
     const lunes = lunesDe(hoy);
     const domingo = sumaDias(lunes, 6);
 
-    const [contratos, areas, disp, ausencias, semana, delPeriodo, bolsa, docs, notas, checkins, pendientes] = await Promise.all([
+    const [contratos, areas, disp, ausencias, semana, delPeriodo, bolsa, docs, notas, checkins, periodos, pendientes] = await Promise.all([
       dbAll(`SELECT id, worker_id, desde, hasta, horas_semana, dias_semana, creado_en, creado_por
                FROM hor_contratos WHERE worker_id = ? ORDER BY desde DESC, id DESC`, [w.id]),
       dbAll(`SELECT a.id, a.nombre, a.activo, wa.principal FROM hor_worker_areas wa
@@ -11258,6 +11382,7 @@ app.get("/api/rrhh/trabajador/:id/ficha-laboral", requireAuth(RRHH_ROLES), async
       dbAll(`SELECT * FROM hr_documentos WHERE worker_id = ? ORDER BY creado_en DESC`, [w.id]),
       dbAll(`SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC LIMIT 30`, [w.id]),
       dbAll(`SELECT * FROM hr_llamadas_mes WHERE worker_id = ? ORDER BY mes DESC LIMIT 12`, [w.id]),
+      dbAll(`SELECT id, worker_id, local, fecha_alta, fecha_baja, motivo_baja FROM rrhh_periodos WHERE worker_id = ? ORDER BY fecha_alta`, [w.id]),
       dbGet(`SELECT COUNT(*)::int AS n FROM fic_jornadas
               WHERE worker_id = ? AND dia_negocio BETWEEN ? AND ? AND min_validado IS NULL AND min_fichado > 0`,
         [w.id, periodo.desde, periodo.hasta]),
@@ -11272,11 +11397,21 @@ app.get("/api/rrhh/trabajador/:id/ficha-laboral", requireAuth(RRHH_ROLES), async
     const ausVistas = ausencias.map((a) => paraResponsable(a, { verSensible: rrhhTodoLocal(req) }));
 
     const vigente = contratoVigente(contratos, w.id, hoy);
-    res.json({
+    const cuerpo = {
       ok: true,
       trabajador: persona,
       estado: estadoLaboral(w, hoy),
-      antiguedad: rrhhAntiguedad(w.fecha_alta, hoy),
+      // La antigüedad que se enseña es la de la INCORPORACIÓN ACTUAL, no la suma de las
+      // anteriores: un «3 años» que en realidad son 2+1 con año y medio de por medio se lee
+      // como antigüedad reconocida, y cuánta se reconoce al volver lo dice el convenio.
+      antiguedad: antiguedadActual(periodos, hoy) || rrhhAntiguedad(w.fecha_alta, hoy),
+      periodos: {
+        historial: historialLegible(periodos),
+        actual: periodoActual(periodos), abierto: periodoAbierto(periodos),
+        solapados: periodosSolapados(periodos),
+        // Se puede recontratar a quien no tiene ninguna incorporación abierta.
+        puedeRecontratar: !periodoAbierto(periodos) && LIQ_ROLES.includes(req.user.rol),
+      },
       contrato: { vigente, historico: contratos, solapados: contratosSolapados(contratos) },
       areas: {
         // «Sin configurar» y «cero áreas» no son lo mismo, y la fase 4 lo distingue con una
@@ -11302,7 +11437,11 @@ app.get("/api/rrhh/trabajador/:id/ficha-laboral", requireAuth(RRHH_ROLES), async
       },
       documentos, alertasDoc: documentosPorCaducar(documentos, hoy, 30),
       seguimiento: { timeline: construyeTimeline(notas, checkins, documentos), notas, checkins },
-    });
+    };
+    // Lo que hay que HACER con esta persona, arriba del todo. Se calcula al final porque
+    // necesita la respuesta entera, y solo entra lo que alguien puede resolver.
+    cuerpo.asuntos = asuntosPendientes(cuerpo, hoy);
+    res.json(cuerpo);
   } catch (e) {
     console.error("[rrhh] ficha laboral:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar la ficha" });
@@ -11388,6 +11527,11 @@ app.post("/api/rrhh/trabajador/:id/baja", requireAuth(["direccion", "rrhh"]), as
       return res.status(409).json({ ok: false, error: "Algo ha cambiado desde que viste el resumen. No se ha hecho nada: vuelve a mirarlo.", plan, firma });
     }
 
+    // El periodo abierto se cierra con la misma fecha. `users.fecha_baja` se mantiene
+    // sincronizado porque medio sistema —login, cuadrante, kiosco— todavía lo lee: son la
+    // misma verdad escrita en dos sitios, no dos verdades.
+    await q(`UPDATE rrhh_periodos SET fecha_baja = ?, motivo_baja = ?
+              WHERE worker_id = ? AND fecha_baja IS NULL`, [fechaBaja, motivo, w.id]);
     await q(`UPDATE users SET fecha_baja = ? WHERE id = ?`, [fechaBaja, w.id]);
 
     // 1. Turnos en BORRADOR posteriores. Se retiran: un borrador no se ha mandado a nadie y
@@ -11440,6 +11584,98 @@ app.post("/api/rrhh/trabajador/:id/baja", requireAuth(["direccion", "rrhh"]), as
     await client.query("ROLLBACK").catch(() => {});
     console.error("[rrhh] baja:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo dar de baja" });
+  } finally { client.release(); }
+});
+
+// ── RECONTRATAR ──────────────────────────────────────────────────────────────
+//
+// Juan trabajó de 2022 a 2024, se fue, y vuelve en 2026. Hasta ahora solo cabían dos
+// salidas y las dos eran malas: crear `juan.blanes2` —dos personas donde hay una, con el
+// histórico partido— o pisar la fecha de 2022, que BORRA que estuvo aquí dos años y medio.
+//
+// Es la MISMA persona con dos incorporaciones. Todo lo suyo —fichajes, bolsa, documentos,
+// contratos viejos, notas— sigue donde estaba y se puede seguir consultando.
+app.post("/api/rrhh/trabajador/:id/recontratar", requireAuth(["direccion", "rrhh"]), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const w = await dbGet(`SELECT id, nombre, local, rol, activo FROM users WHERE id = ?`, [Number(req.params.id) || 0]);
+    if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "No encontrado" });
+
+    const desde = String(req.body?.fecha_alta || "");
+    const local = String(req.body?.local || w.local || "").trim();
+    if (!rrhhPuedeLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a ese establecimiento" });
+
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    await q(`SELECT id FROM users WHERE id = ? FOR UPDATE`, [w.id]);
+
+    const periodos = (await q(`SELECT id, worker_id, local, fecha_alta, fecha_baja FROM rrhh_periodos WHERE worker_id = ?`, [w.id])).rows;
+    const no = motivoNoRecontratar(periodos, desde);
+    if (no) { await client.query("ROLLBACK"); return res.status(409).json({ ok: false, error: no }); }
+
+    const ahora = isoConOffset(Date.now());
+    await q(`INSERT INTO rrhh_periodos (worker_id, local, fecha_alta, fecha_baja, creado_en, creado_por)
+             VALUES (?,?,?,NULL,?,?)`, [w.id, local, desde, ahora, req.user.username]);
+    // `users` vuelve a reflejar la incorporación de ahora: sin limpiar la fecha de baja,
+    // el login le seguiría cerrando la puerta a alguien que ya ha vuelto.
+    await q(`UPDATE users SET fecha_alta = ?, fecha_baja = NULL, activo = 1, local = ?,
+                    login_intentos = 0, login_bloqueado_hasta = NULL WHERE id = ?`, [desde, local, w.id]);
+    if (req.body?.puesto !== undefined) await q(`UPDATE users SET puesto = ? WHERE id = ?`, [String(req.body.puesto || "").trim() || null, w.id]);
+
+    // NADA se hereda del periodo anterior. Las horas de 2024 no son las de 2026 y las áreas
+    // de entonces pueden no ser las de ahora: darlas por buenas metería en el generador un
+    // contrato que nadie ha vuelto a firmar. Se piden otra vez, y punto.
+    const horas = Number(req.body?.horas_semana);
+    let contrato = null;
+    if (Number.isFinite(horas) && horas > 0) {
+      if (horas > 60) { await client.query("ROLLBACK"); return res.status(400).json({ ok: false, error: "Las horas semanales van de 1 a 60" }); }
+      await q(`INSERT INTO hor_contratos (worker_id, desde, hasta, horas_semana, creado_en, creado_por)
+               VALUES (?,?,NULL,?,?,?)`, [w.id, desde, horas, ahora, req.user.username]);
+      contrato = horas;
+    }
+    let areas = 0;
+    if (Array.isArray(req.body?.areas)) {
+      const pedidas = [...new Set(req.body.areas.map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+      const validas = (await q(`SELECT id FROM hor_areas WHERE local = ? AND activo`, [local])).rows.map((a) => String(a.id));
+      // MISMO acotado que al editar capacidades: solo se reemplazan las áreas ACTIVAS de su
+      // local. Las desactivadas se quedan —si SALA se reactiva mañana, su capacidad sigue— y
+      // las de un local anterior también, porque son inertes: el índice de capacidades se
+      // construye por establecimiento, así que un área de Blanes no existe para Lloret.
+      // Borrarlas «para limpiar» perdería el único rastro de qué sabía hacer entonces.
+      await q(`DELETE FROM hor_worker_areas WHERE worker_id = ?
+                 AND area_id IN (SELECT id FROM hor_areas WHERE local = ? AND activo)`, [w.id, local]);
+      for (const a of pedidas.filter((x) => validas.includes(String(x)))) {
+        await q(`INSERT INTO hor_worker_areas (worker_id, area_id, principal, creado_en, creado_por)
+                 VALUES (?,?,FALSE,?,?) ON CONFLICT DO NOTHING`, [w.id, a, ahora, req.user.username]);
+        areas++;
+      }
+      await q(`UPDATE users SET areas_configuradas_en = ?, areas_configuradas_por = ? WHERE id = ?`, [ahora, req.user.username, w.id]);
+    }
+
+    // El saldo de la bolsa NO se toca. Si se fue debiéndosele horas, se le siguen debiendo:
+    // volver no las paga. Se dice, y se liquida desde el libro cuando se decida cómo.
+    const saldo = Number((await q(`SELECT COALESCE(SUM(minutos),0)::int AS s FROM fic_bolsa_movimientos WHERE worker_id = ?`, [w.id])).rows[0]?.s) || 0;
+
+    await client.query("COMMIT");
+    invalidarInternos();
+    await ficAuditar("usuario", w.id, "recontratar", req.user.username, {
+      local, workerId: w.id,
+      detalle: { fecha_alta: desde, local, contrato, areas, periodos_previos: periodos.length, saldo_bolsa: saldo },
+    }).catch(() => {});
+
+    const falta = [];
+    if (!contrato) falta.push("el contrato");
+    if (!areas && Array.isArray(req.body?.areas)) falta.push("las áreas");
+    res.json({
+      ok: true, saldoBolsa: saldo, periodos: periodos.length + 1,
+      mensaje: `${w.nombre} vuelve a ${local} desde el ${desde}.`
+        + (falta.length ? ` Queda por poner ${falta.join(" y ")}.` : "")
+        + (saldo > 0 ? ` OJO: conserva ${enHoras(saldo)} a favor de antes; volver no las liquida.` : ""),
+    });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[rrhh] recontratar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo recontratar" });
   } finally { client.release(); }
 });
 

@@ -214,9 +214,6 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 
 .stat .sub{font-size:12px;color:var(--ink3)}
 .delta{font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.up{color:var(--success)}.down{color:var(--danger)}.flat{color:var(--ink3)}
-.pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--surface2);color:var(--ink2);border:1px solid var(--border)}
-.pill.ok{background:var(--success-soft);color:var(--success);border-color:transparent}.pill.warn{background:var(--warning-soft);color:var(--warning);border-color:transparent}
-.pill.bad{background:var(--danger-soft);color:var(--danger);border-color:transparent}
 /* `imp` (importante) lo genera el JS en incidencias y candidaturas; sin esta regla salía gris. */
 .pill.imp{background:var(--warning-soft);color:var(--warning);border-color:transparent}.pill.info{background:var(--info-soft);color:var(--info);border-color:transparent}.pill.brand{background:var(--brand-soft);color:var(--brand);border-color:transparent}
 .chip{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border-radius:999px;border:1px solid var(--border);background:var(--surface);font-size:12.5px;font-weight:550;color:var(--ink2);transition:.12s}.chip:hover{border-color:var(--border2);color:var(--ink)}.chip.on{background:var(--brand);color:var(--brand-ink);border-color:transparent}
@@ -286,9 +283,22 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .fic-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ink3);vertical-align:middle;margin-right:2px}
 .fic-dot.dentro{background:var(--success)}
 .fic-dot.pausa{background:var(--warning)}
-.fic-tag{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid var(--border);background:var(--surface2);font-size:11px;font-weight:600;color:var(--ink3);white-space:nowrap;margin-right:4px}
-.fic-tag.ok{border-color:transparent;background:var(--brand-soft);color:var(--brand)}
-.fic-tag.aviso{border-color:transparent;background:var(--danger-soft);color:var(--danger)}
+/* UN SOLO VOCABULARIO DE ESTADO. Convivían dos —`.pill` en Equipo y `.fic-tag` en
+   Fichajes— con la misma palabra significando cosas distintas: `.pill.ok` era verde y
+   `.fic-tag.ok` azul, y `.fic-tag.aviso` pintaba de ROJO cosas que solo piden atención
+   («pendiente», «sin configurar»). El resultado era que el mismo estado se veía de dos
+   colores según en qué fase se hubiera escrito la pantalla.
+
+   El color significa una cosa y solo una:
+     gris  = información            verde = confirmado
+     ámbar = necesita atención      rojo  = problema o bloqueo
+
+   `.fic-tag` se queda como alias para no reescribir 27 sitios sin ganar nada. */
+.fic-tag,.pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;
+  padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--surface2);color:var(--ink2);white-space:nowrap}
+.fic-tag.ok,.pill.ok{background:var(--success-soft);color:var(--success);border-color:transparent}
+.fic-tag.aviso,.fic-tag.warn,.pill.warn{background:var(--warning-soft);color:var(--warning);border-color:transparent}
+.fic-tag.bad,.pill.bad{background:var(--danger-soft);color:var(--danger);border-color:transparent}
 .fic-evs{list-style:none;margin:0;padding:0}
 .fic-evs li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px}
 .fic-evs li:last-child{border-bottom:none}
@@ -679,6 +689,46 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .bl-form .inp,.bl-lbl .inp{font-size:16px;min-height:44px}
   .bl-lista{max-height:46vh}
 }
+
+/* Fila del listado de Equipo. Los dos textos son <span> y salían pegados —«Juan
+   Péreztrabajador»— porque nadie los separaba. Apilados se leen como nombre y
+   segunda línea, que es lo que son. */
+.rr-fila{display:flex;flex-direction:column;gap:1px}
+.rr-fila .t2{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Menú «···»: lo que casi nunca se pulsa no compite con lo que se pulsa siempre. */
+.rr-mas{position:relative;flex:none}
+.rr-mas summary{list-style:none;cursor:pointer;user-select:none}
+.rr-mas summary::-webkit-details-marker{display:none}
+.rr-mas-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:20;background:var(--surface);
+  border:1px solid var(--border);border-radius:12px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.12);min-width:250px}
+@media(max-width:480px){ .rr-mas-menu{position:fixed;left:12px;right:12px;top:auto;min-width:0} }
+
+/* Configuración operativa: texto a la izquierda, valor a la derecha. Cada ajuste
+   necesita tres líneas de explicación —lo que hace, un ejemplo y a veces por qué no
+   se puede tocar— y en un móvil eso no cabe al lado de un campo: se apila. */
+.cfg-lista{display:flex;flex-direction:column;gap:2px}
+.cfg-item{display:flex;gap:18px;align-items:flex-start;justify-content:space-between;
+  padding:14px 0;border-bottom:1px solid var(--border)}
+.cfg-item:last-child{border-bottom:none}
+.cfg-txt{min-width:0;flex:1}
+.cfg-val{display:flex;gap:8px;align-items:center;flex:none}
+.cfg-val .inp{width:88px;text-align:right}
+@media(max-width:620px){
+  .cfg-item{flex-direction:column;gap:10px}
+  .cfg-val{width:100%}
+  /* 16 px o el iPhone hace zoom al enfocar y descoloca el diálogo. */
+  .cfg-val .inp{width:auto;flex:1;font-size:16px;min-height:44px;text-align:left}
+}
+
+/* «Necesita atención»: lo único que se mira antes que el nombre. Un borde a la
+   izquierda y nada más — una tarjeta roja entera compite con el resto de la ficha
+   y acaba leyéndose como decoración. */
+.lab-atencion{border-left:3px solid var(--warning)}
+.lab-atencion:has(.pill.bad){border-left-color:var(--danger)}
+.lab-atencion .row{gap:10px;align-items:center}
+/* Los cinco sitios donde sigue la vida de esta persona, en una fila. */
+.lab-ir{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+@media(max-width:480px){ .lab-ir .btn{flex:1 1 45%;min-height:40px} .lab-atencion .row{flex-wrap:wrap} }
 
 /* Ficha laboral: los cuatro datos que resumen la situación de alguien. En un
    móvil una rejilla de cuatro columnas deja cada número en 80 px, así que baja a

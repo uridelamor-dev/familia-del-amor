@@ -40,6 +40,31 @@ export async function ensureSchemaFichajes(x) {
   // es sería enseñárselo a quien no toca.
   await x.run(`ALTER TABLE hor_config ADD COLUMN IF NOT EXISTS wa_grupo_jid TEXT`);
 
+  // ── Periodos laborales ─────────────────────────────────────────────────────
+  // «Trabajó aquí entre estas dos fechas». NADA más: ni horas, ni áreas, ni sueldo — eso es
+  // el contrato, que vive en `hor_contratos` y puede cambiar varias veces dentro del mismo
+  // periodo. Confundirlos obligaría a cerrar el periodo cada vez que alguien pasa de 20 a 30
+  // horas, y entonces su histórico diría que se fue y volvió cuatro veces.
+  //
+  // `fecha_baja` es el ÚLTIMO DÍA TRABAJADO, inclusive: el mismo convenio que `users` y que
+  // `hor_contratos.hasta`.
+  await x.run(`CREATE TABLE IF NOT EXISTS rrhh_periodos (
+    id SERIAL PRIMARY KEY,
+    worker_id INTEGER NOT NULL,
+    local TEXT,
+    fecha_alta TEXT NOT NULL,
+    fecha_baja TEXT,
+    motivo_baja TEXT,
+    creado_en TEXT NOT NULL, creado_por TEXT,
+    CHECK (fecha_baja IS NULL OR fecha_baja >= fecha_alta)
+  )`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_rrhh_per ON rrhh_periodos (worker_id, fecha_alta)`);
+  // UNA SOLA incorporación abierta por persona. Lo garantiza la base y no solo el código:
+  // dos peticiones de recontratar a la vez pasan las dos la comprobación previa, y con dos
+  // periodos abiertos la antigüedad depende de cuál se lea primero.
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rrhh_per_abierto
+    ON rrhh_periodos (worker_id) WHERE fecha_baja IS NULL`);
+
   // Franquicia de la bolsa: los minutos de desvío diario que no se le apuntan a nadie.
   //
   // Columna aparte de `tolerancia_min` A PROPÓSITO, aunque hoy las dos valgan 10. Aquella
