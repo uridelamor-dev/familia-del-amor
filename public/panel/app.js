@@ -3767,7 +3767,9 @@ async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cue
 // (src/modules/horarios/cuadrante.js), porque el panel no puede importar ESM.
 let HOR = { local: "", lunes: "", dias: [], areas: [], tramos: [], equipo: [], asignaciones: [], semana: null, vista: "areas", drag: null, conflictos: null };
 function horScope() { HOR.local = localActualFE(); return HOR.local; }
-const horEditable = () => HOR.semana && HOR.semana.estado === "borrador";
+// Sin semana TAMBIÉN se puede editar: la fila se abre sola al guardar el primer turno.
+// Lo único que no se toca es una semana ya publicada, que exige una versión nueva.
+const horEditable = () => !HOR.semana || HOR.semana.estado === "borrador";
 
 async function loadHorarios() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -3809,11 +3811,15 @@ const horNombre = (id) => { const w = (HOR.equipo || []).find((x) => String(x.id
 function renderHorarios() {
   const d = HOR.dias || [];
   const etiqueta = d.length ? `${fechaCorta(d[0])} – ${fechaCorta(d[6])}` : "";
-  const est = HOR.semana
-    ? (HOR.semana.estado === "borrador"
+  // Tres estados, y se distinguen a la vista: sin nada, borrador con turnos, publicado.
+  // «Sin horario» y «borrador a medias» no son lo mismo, y confundirlos hace que nadie sepa
+  // si la semana está por hacer o por terminar.
+  const nTurnos = (HOR.asignaciones || []).length;
+  const est = !HOR.semana || !nTurnos
+    ? `<span class="pill warn">Sin horario</span>`
+    : (HOR.semana.estado === "borrador"
         ? `<span class="pill warn">Borrador · v${HOR.semana.version}</span>`
-        : `<span class="pill ok">Publicado · v${HOR.semana.version}</span>`)
-    : `<span class="pill">Sin empezar</span>`;
+        : `<span class="pill ok">Publicado · v${HOR.semana.version}</span>`);
   const nav = `<div class="agnav">
     <button class="btn sm" data-act="hor-prev">‹</button>
     <button class="btn sm" data-act="hor-hoy">Esta semana</button>
@@ -3828,12 +3834,20 @@ function renderHorarios() {
     ${horAcciones()}
   </div>`;
 
-  if (!HOR.semana) {
-    return horPh() + nav + `<div class="card"><div class="ch"><h3>Esta semana está sin planificar</h3></div>
-      <p class="mut" style="margin:0;line-height:1.6">Dale a «Empezar esta semana» y podrás ir poniendo turnos. Nada se publica hasta que tú lo digas.</p></div>`;
-  }
-  const aviso = horEditable() ? "" :
-    `<div class="pendingblock" style="margin-bottom:12px">Estás viendo el horario <b>publicado</b>. Para cambiarlo hay que crear una versión nueva — así queda constancia de lo que vio el equipo.</div>`;
+  // EL CUADRANTE SE VE SIEMPRE, exista o no la semana en la base.
+  //
+  // Antes, una semana sin planificar enseñaba una tarjeta con un botón «Empezar esta semana»
+  // y nada más. Para quien lo usa eso no significa nada: él está mirando la semana del 24 y
+  // quiere poner a Carlos el lunes. Crear la fila es cosa del sistema, y se hace sola al
+  // guardar el primer turno.
+  const sinSemana = !HOR.semana;
+  const vacia = sinSemana || !(HOR.asignaciones || []).length;
+  const aviso = sinSemana || vacia
+    ? `<div class="pendingblock hor-vacia" style="margin-bottom:12px">
+        <b>Esta semana todavía no tiene horario.</b>
+        <div style="margin-top:2px">Empieza poniendo turnos en la rejilla, o pide una propuesta al generador. Nada se publica hasta que tú lo digas.</div></div>`
+    : horEditable() ? ""
+    : `<div class="pendingblock" style="margin-bottom:12px">Estás viendo el horario <b>publicado</b>. Para cambiarlo hay que crear una versión nueva — así queda constancia de lo que vio el equipo.</div>`;
   return horPh() + nav + aviso + `<div id="horAvisos">${horAvisosHtml(HOR.conflictos)}</div>` + (HOR.vista === "personas" ? horPorPersona() : horRejilla()) + horResumen();
 }
 
@@ -3851,7 +3865,10 @@ function horDescChip(x) {
 function horBloqueDescanso(tramo, cab) {
   const d = HOR.descansos;
   const dias = HOR.dias || [];
-  if (!d) return "";
+  // `{}` también es «no hay descansos calculados»: el guard miraba solo `null` y un objeto
+  // vacío se colaba hasta `d.areas[i]`, que reventaba la pantalla ENTERA. No se llegaba
+  // nunca porque una semana sin planificar ni siquiera pintaba la rejilla; ahora sí.
+  if (!d || !Array.isArray(d.areas)) return "";
   const filas = (HOR.areas || []).map((area, i) => {
     const celdas = dias.map((_, di) => `<div class="horcell horslot nodrop">${((d.areas[i] || {}).dias?.[di] || []).map(horDescChip).join("")}</div>`).join("");
     return `<div class="horcell horarea">${esc(area.nombre)}</div>${celdas}`;
@@ -3910,7 +3927,9 @@ function horListaDias() {
   const dias = (HOR.dias || []).map((dia, i) => {
     const bloques = (HOR.tramos || []).map((tramo) => {
       if (horEsDescanso(tramo)) {
-        const d = HOR.descansos; if (!d) return "";
+        // Igual que en la rejilla: `{}` es tan «no hay» como `null`, y `d.areas[ai]` sobre
+        // un objeto vacío tira la pantalla del móvil entera.
+        const d = HOR.descansos; if (!d || !Array.isArray(d.areas)) return "";
         const filas = (HOR.areas || []).map((area, ai) => {
           const g = (d.areas[ai] || {}).dias?.[i] || [];
           return g.length ? `<div class="hord-area"><span class="hord-et">${esc(area.nombre)}</span>
@@ -3997,10 +4016,21 @@ function horSolapes() {
 }
 
 // Botonera según el estado. Publicar solo aparece cuando hay algo que publicar.
+// Copiar otra semana o aplicar una plantilla sobre una semana que todavía no existe es el
+// caso normal, no la excepción: se abre la fila antes y ya está.
+async function horAsegurarSemana() {
+  if (HOR.semana) return HOR.semana;
+  const r = await apiSend("POST", "/api/horarios/semana", { local: HOR.local, lunes: HOR.dias[0] });
+  HOR.semana = r.semana;
+  return HOR.semana;
+}
+
 function horAcciones() {
-  if (!HOR.semana) return `<button class="btn primary" data-act="hor-crear">Empezar esta semana</button>`;
+  // Ya no hay «Empezar esta semana»: la semana se abre sola al guardar el primer turno. Lo
+  // que se ofrece sin nada planificado es lo único útil ahí — pedir una propuesta o copiar
+  // otra semana— y lo demás se activa cuando hay algo que publicar.
   const n = (HOR.asignaciones || []).length;
-  const pdf = `<button class="btn" data-act="hor-pdf" ${n ? "" : "disabled"} title="Descargar el cuadrante en PDF">${ic("receipt", 15)} PDF</button>`;
+  const pdf = `<button class="btn" data-act="hor-pdf" ${n && HOR.semana ? "" : "disabled"} title="Descargar el cuadrante en PDF">${ic("receipt", 15)} PDF</button>`;
   if (horEditable()) {
     return `<button class="btn" data-act="hor-generar" title="Proponer un cuadrante a partir de las necesidades, los contratos y las ausencias">Proponer horario</button>
       <button class="btn" data-act="hor-copiar">Copiar semana</button>
@@ -4050,6 +4080,7 @@ async function horCopiar() {
     const lunes = document.getElementById("horCopiaDe").value;
     if (!lunes) { toast("Elige la semana de origen"); return; }
     try {
+      await horAsegurarSemana();
       const j = await apiSend("POST", `/api/horarios/semana/${HOR.semana.id}/copiar`, { lunes, reemplazar: ov.querySelector("#horReemplazar").checked });
       ov.remove();
       toast(`${num(j.copiadas)} turno(s) copiados${j.omitidos.length ? ` · ${num(j.omitidos.length)} omitidos` : ""}`);
@@ -4076,6 +4107,7 @@ async function horPlantillas() {
     const ap = e.target.closest("[data-horpl]");
     if (!ap) return;
     try {
+      await horAsegurarSemana();
       const r = await apiSend("POST", `/api/horarios/semana/${HOR.semana.id}/copiar`, { plantilla_id: ap.getAttribute("data-horpl"), reemplazar: true });
       ov.remove(); toast(`${num(r.copiadas)} turno(s) aplicados`);
       if (r.omitidos.length) horOmitidos(r.omitidos);
@@ -4950,7 +4982,8 @@ function horModal(asig, ctx) {
     <div class="field full"><label>Nota (opcional)</label><input id="hmN" value="${esc(asig?.nota || "")}"></div>
   </div>
   <div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px">
-    <div>${editando ? `<button class="btn danger" id="hmDel">Quitar turno</button>` : ""}</div>
+    <div style="display:flex;gap:8px">${editando ? `<button class="btn danger" id="hmDel">Quitar turno</button>
+      <button class="btn" id="hmRep">Repetir en otros días</button>` : ""}</div>
     <div style="display:flex;gap:8px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="hmOk">${editando ? "Guardar" : "Añadir"}</button></div>
   </div>`;
   const ov = modal(editando ? "Turno de " + horNombre(asig.worker_id) : "Nuevo turno", body);
@@ -4972,12 +5005,16 @@ function horModal(asig, ctx) {
       tramo_id: ov.querySelector("#hmT").value || null,
       area_id: ov.querySelector("#hmA").value || null,
       inicio_min: horMin(ov.querySelector("#hmI").value),
-      fin_min: abierto ? (horMin(ov.querySelector("#hmI").value) + 360) : horMin(ov.querySelector("#hmF").value),
+      fin_min: abierto ? (horMin(ov.querySelector("#hmI").value) + 360)
+                       : horFinMin(ov.querySelector("#hmI").value, ov.querySelector("#hmF").value),
       fin_abierto: abierto,
       tipo: ov.querySelector("#hmTipo").value,
       nota: ov.querySelector("#hmN").value.trim() || null,
     };
     if (!cuerpo.worker_id) { toast("Elige a la persona"); return; }
+    if (!abierto && cuerpo.fin_min === cuerpo.inicio_min) { toast("El turno tiene que durar algo: entra y sale a la misma hora"); return; }
+    // Si todavía no hay semana, se manda el lunes y el servidor la abre al escribir el turno.
+    if (!HOR.semana) { delete cuerpo.semana_id; cuerpo.local = HOR.local; cuerpo.lunes = HOR.dias[0]; }
     try {
       if (editando) await apiSend("PATCH", "/api/horarios/asignacion/" + asig.id, cuerpo);
       else await apiSend("POST", "/api/horarios/asignacion", cuerpo);
@@ -4990,9 +5027,96 @@ function horModal(asig, ctx) {
     try { await apiSend("DELETE", "/api/horarios/asignacion/" + asig.id); ov.remove(); loadHorarios(); }
     catch (e) { toast("Error: " + e.message); }
   });
+  const rep = ov.querySelector("#hmRep");
+  if (rep) rep.addEventListener("click", () => { ov.remove(); horRepetir(asig); });
+}
+
+// ── Repetir un turno en otros días ──────────────────────────────────────────
+// Carlos entra el lunes de 16:00 a 00:00 y hace lo mismo el resto de la semana. Eran cinco
+// veces el mismo diálogo con los mismos cinco campos.
+//
+// Se enseña lo que va a pasar ANTES de escribir nada, día a día. Un «Error» sin explicación
+// obliga a probar de uno en uno hasta dar con el que fallaba.
+async function horRepetir(asig) {
+  const dias = HOR.dias || [];
+  const idx = dias.indexOf(String(asig.dia));
+  const nombre = horNombre(asig.worker_id);
+  const franja = `${horHHMM(asig.inicio_min)}–${asig.fin_abierto ? "cierre" : horHHMM(asig.fin_min)}`;
+
+  const ov = modal(`Repetir el turno de ${nombre}`, `
+    <p style="margin:0 0 14px">Turno del <b>${esc(WD[idx] || "")} ${esc(String(asig.dia).slice(-2))}</b>, de <b>${esc(franja)}</b>.
+      Se creará el mismo en los días que marques.</p>
+    <div class="rep-dias">${dias.map((d, i) => i === idx
+      ? `<label class="rep-dia rep-origen" title="Es el día que ya tiene"><input type="checkbox" disabled> ${esc(WD[i])} <span class="mut">${esc(d.slice(-2))}</span></label>`
+      : `<label class="rep-dia"><input type="checkbox" class="repD" value="${esc(d)}"> ${esc(WD[i])} <span class="mut">${esc(d.slice(-2))}</span></label>`).join("")}</div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn sm" id="repResto">El resto de la semana</button>
+      <button class="btn sm" id="repNada">Ninguno</button>
+    </div>
+    <div id="repPlan" class="mut" style="margin:14px 0;min-height:24px;font-size:12.5px">Marca los días para ver qué pasará.</div>
+    <p id="repMsg" style="margin:6px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="repOk" disabled>Repetir</button></div>`);
+
+  const marcados = () => [...ov.querySelectorAll(".repD")].filter((c) => c.checked).map((c) => c.value);
+  const NIV = { crear: "", omitir: "", bloqueado: "bad" };
+
+  async function verPlan() {
+    const d = marcados();
+    const caja = ov.querySelector("#repPlan"), btn = ov.querySelector("#repOk");
+    btn.disabled = true;
+    if (!d.length) { caja.textContent = "Marca los días para ver qué pasará."; return; }
+    caja.innerHTML = '<span class="mut">Comprobando…</span>';
+    try {
+      const r = await apiSend("POST", `/api/horarios/asignacion/${asig.id}/repetir?plan=1`, { dias: d });
+      caja.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${esc(r.resumen)}</div>` +
+        r.plan.dias.map((x) => {
+          const i = dias.indexOf(x.dia);
+          const et = x.accion === "crear" ? (x.avisos.length ? "se crea, pero" : "se crea")
+                   : x.accion === "omitir" ? "no hace falta" : "no se puede";
+          return `<div class="rep-linea"><span class="pill ${x.avisos && x.avisos.length ? "warn" : NIV[x.accion]}">${esc(et)}</span>
+            <b>${esc(WD[i] || x.dia)}</b> <span class="mut">${esc(x.motivo || "")}</span></div>`;
+        }).join("");
+      btn.disabled = !r.plan.aCrear.length;
+    } catch (e) { caja.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
+  }
+
+  ov.querySelectorAll(".repD").forEach((c) => c.addEventListener("change", verPlan));
+  // «El resto de la semana» marca los días POSTERIORES y los enseña marcados antes de
+  // confirmar: en hostelería el fin de semana se trabaja, así que no se decide por nadie.
+  ov.querySelector("#repResto").addEventListener("click", () => {
+    ov.querySelectorAll(".repD").forEach((c) => { c.checked = dias.indexOf(c.value) > idx; });
+    verPlan();
+  });
+  ov.querySelector("#repNada").addEventListener("click", () => {
+    ov.querySelectorAll(".repD").forEach((c) => { c.checked = false; }); verPlan();
+  });
+  ov.querySelector("#repOk").addEventListener("click", async () => {
+    const btn = ov.querySelector("#repOk"); btn.disabled = true;
+    try {
+      const r = await apiSend("POST", `/api/horarios/asignacion/${asig.id}/repetir`, { dias: marcados() });
+      ov.remove(); toast(r.mensaje || "Repetido ✅"); loadHorarios();
+    } catch (e) { btn.disabled = false; ov.querySelector("#repMsg").textContent = e.message; }
+  });
 }
 const horHHMM = (m) => { const b = ((Math.round(Number(m) || 0) % 1440) + 1440) % 1440; return `${String(Math.floor(b / 60)).padStart(2, "0")}:${String(b % 60).padStart(2, "0")}`; };
 const horMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "")); return m ? (+m[1]) * 60 + (+m[2]) : 0; };
+/**
+ * La hora de salida en minutos, entendiendo que un turno puede cruzar la medianoche.
+ *
+ * ESTE ERA EL BUG DE «un turno de 4 horas da error»: no era la duración. Un `<input
+ * type="time">` no sabe decir «24:00», así que quien ponía 20:00–00:00 —cuatro horas justas—
+ * mandaba `fin_min: 0`, el servidor veía que la salida era ANTES que la entrada y contestaba
+ * «El horario no es válido», sin decir por qué. Lo mismo le pasaba a 23:00–03:00.
+ *
+ * En hostelería salir después de medianoche es lo normal, y el modelo ya lo contempla:
+ * `fin_min` llega hasta 2160 justamente para eso. Solo faltaba entenderlo aquí.
+ */
+const horFinMin = (entrada, salida) => {
+  const i = horMin(entrada), f = horMin(salida);
+  return f < i ? f + 1440 : f;
+};
 
 function horEditar(id) {
   const a = (HOR.asignaciones || []).find((x) => String(x.id) === String(id));
