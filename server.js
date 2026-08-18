@@ -50,6 +50,7 @@ import { ensureSchemaFichajes } from "./src/modules/fichajes/schema.js";
 import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
 import { validarFormatoPin, estadoBloqueo, trasFallo as pinTrasFallo, trasAcierto as pinTrasAcierto } from "./src/modules/fichajes/pin.js";
 import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornadas.js";
+import { clasificarJornada, resumirRevision, mereceSalir, candidatasDeLote, LISTA, CADUCADA } from "./src/modules/fichajes/revision.js";
 import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo } from "./src/modules/fichajes/bolsa.js";
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
@@ -8735,6 +8736,157 @@ async function ficCalcularJornada(local, workerId, dia, { cfg = null } = {}) {
   };
 }
 
+/**
+ * Calcula TODAS las jornadas de un periodo con un número fijo de consultas.
+ *
+ * ANTES: `ficCalcularJornada` por cada pareja (persona, día). Cada una hacía cinco viajes a la
+ * base —eventos, semana publicada, asignaciones, jornada guardada y el UPSERT—, en serie. Un
+ * mes de quince personas son unas cuatrocientas parejas: dos mil consultas para pintar una
+ * pantalla. Con cincuenta personas, seis mil.
+ *
+ * AHORA: siete consultas, pasen las parejas que pasen, y el cálculo en memoria con las MISMAS
+ * funciones puras. No se ha tocado ni una regla: `construirJornada` y `firmaDeEventos` son las
+ * de siempre, y los datos que reciben son exactamente los mismos que recibían.
+ *
+ * DOS DETALLES QUE PARECEN MENORES Y NO LO SON:
+ *
+ *   · Los eventos se traen por (worker_id, dia_negocio) y NO por local. Es lo que hacía el
+ *     cálculo de una jornada, y cambiarlo alteraría el resultado de quien fichara en dos
+ *     sitios el mismo día: se le partiría la jornada en dos mitades sin que nadie lo pidiera.
+ *   · Las parejas salen de quien FICHÓ o TENÍA TURNO. Un día sin turno y sin fichajes no es
+ *     una jornada, es un día libre, y meterlo daría cientos de filas vacías que revisar.
+ */
+async function ficCalcularPeriodo(local, desde, hasta, { cfg = null, soloWorker = null } = {}) {
+  const conf = cfg || await dbGet(`SELECT corte_dia_min, tolerancia_min, hora_cierre_min FROM hor_config WHERE local = ?`, [local]);
+  const corte = conf?.corte_dia_min ?? 360;
+  const hoy = instanteANegocio(Date.now(), { corteMin: corte });
+
+  // ── 1 y 2: quién tiene algo que mirar ────────────────────────────────────────────────
+  const filtroW = soloWorker ? " AND worker_id = ?" : "";
+  const [fichados, planificados] = await Promise.all([
+    dbAll(`SELECT DISTINCT worker_id, dia_negocio AS dia FROM fic_eventos
+            WHERE local = ? AND dia_negocio BETWEEN ? AND ?${filtroW}`,
+      soloWorker ? [local, desde, hasta, soloWorker] : [local, desde, hasta]),
+    dbAll(`SELECT DISTINCT a.worker_id, a.dia FROM hor_asignaciones a
+             JOIN hor_semanas s ON s.id = a.semana_id
+            WHERE a.local = ? AND s.estado = 'publicado' AND a.tipo = 'turno' AND a.dia BETWEEN ? AND ?
+              ${soloWorker ? "AND a.worker_id = ?" : ""}`,
+      soloWorker ? [local, desde, hasta, soloWorker] : [local, desde, hasta]),
+  ]);
+  const pares = new Map();
+  for (const r of [...fichados, ...planificados]) {
+    pares.set(`${r.worker_id}|${r.dia}`, { worker_id: Number(r.worker_id), dia: r.dia });
+  }
+  if (!pares.size) return { filas: [], hoy, conf };
+  const ids = [...new Set([...pares.values()].map((x) => x.worker_id))];
+
+  // ── 3 a 7: todo lo demás, de golpe ───────────────────────────────────────────────────
+  const [eventos, asignaciones, guardadas, nombres, cierres] = await Promise.all([
+    // Sin filtro de local, a propósito (ver la cabecera).
+    dbAll(`SELECT id, worker_id, dia_negocio, tipo, ocurrido_en, epoch_ms, minuto_local, origen, motivo, autor, anulado_por
+             FROM fic_eventos WHERE worker_id = ANY(?) AND dia_negocio BETWEEN ? AND ?
+            ORDER BY worker_id, dia_negocio, epoch_ms ASC, id ASC`, [ids, desde, hasta]),
+    dbAll(`SELECT a.id, a.worker_id, a.dia, a.inicio_min, a.fin_min, a.fin_abierto, a.tipo, a.semana_id
+             FROM hor_asignaciones a JOIN hor_semanas s ON s.id = a.semana_id
+            WHERE s.local = ? AND s.estado = 'publicado' AND a.dia BETWEEN ? AND ?
+              AND a.worker_id = ANY(?)`, [local, desde, hasta, ids]),
+    dbAll(`SELECT worker_id, dia_negocio, min_validado, firma_eventos, validado_en, validado_por, validado_nota
+             FROM fic_jornadas WHERE worker_id = ANY(?) AND dia_negocio BETWEEN ? AND ?`, [ids, desde, hasta]),
+    // Por id y no por local: quien cambió de establecimiento tiene que seguir leyéndose en el
+    // histórico del anterior (Fase 0).
+    dbAll(`SELECT id, nombre FROM users WHERE id = ANY(?)`, [ids]),
+    ficCierresDe(local),
+  ]);
+
+  const evPorPar = new Map();
+  for (const e of eventos) {
+    const k = `${e.worker_id}|${e.dia_negocio}`;
+    if (!evPorPar.has(k)) evPorPar.set(k, []);
+    evPorPar.get(k).push(e);
+  }
+  const asigPorPar = new Map();
+  const semanaPorDia = new Map();
+  for (const a of asignaciones) {
+    const k = `${a.worker_id}|${a.dia}`;
+    if (!asigPorPar.has(k)) asigPorPar.set(k, []);
+    asigPorPar.get(k).push(a);
+    if (!semanaPorDia.has(a.dia)) semanaPorDia.set(a.dia, a.semana_id);
+  }
+  const guardadaPorPar = new Map(guardadas.map((g) => [`${g.worker_id}|${g.dia_negocio}`, g]));
+  const nombrePorId = new Map(nombres.map((u) => [u.id, u.nombre]));
+
+  // ── El cálculo, en memoria y con las funciones de siempre ────────────────────────────
+  const filas = [];
+  for (const { worker_id, dia } of pares.values()) {
+    const k = `${worker_id}|${dia}`;
+    const evs = evPorPar.get(k) || [];
+    const asigs = asigPorPar.get(k) || [];
+    const j = construirJornada({
+      eventos: evs,
+      asignaciones: asigs,
+      toleranciaMin: conf?.tolerancia_min ?? 10,
+      horaCierreMin: conf?.hora_cierre_min ?? null,
+      diaCerrado: dia < hoy.diaNegocio,
+    });
+    const g = guardadaPorPar.get(k) || null;
+    const validacion = g && g.min_validado != null
+      ? { minutos: g.min_validado, firma: g.firma_eventos, en: g.validado_en, por: g.validado_por, nota: g.validado_nota }
+      : null;
+    if (!mereceSalir(j, { validacion, eventos: evs })) continue;
+
+    const firma = firmaDeEventos(evs);
+    const c = clasificarJornada({
+      jornada: j, eventos: evs, validacion, firmaActual: firma,
+      diaCerrado: dia < hoy.diaNegocio,
+      periodoCerrado: estaCerrado(cierres, local, dia),
+    });
+    filas.push({
+      worker_id, dia, nombre: nombrePorId.get(worker_id) || "—",
+      semanaId: semanaPorDia.get(dia) || null,
+      jornada: j, eventos: evs, firma, validacion,
+      estado: c.estado, puedeLote: c.puedeLote, motivo: c.motivo,
+      minPlanificado: j.minPlanificado, minFichado: j.minFichado,
+      minPausa: j.minPausa, minEfectivo: j.minEfectivo, minDesviacion: j.minDesviacion,
+      incidencias: j.incidencias,
+    });
+  }
+  return { filas, hoy, conf, cierres };
+}
+
+/**
+ * Guarda la proyección de un lote de jornadas de una vez.
+ *
+ * `fic_jornadas` no es fuente de verdad —se recalcula entera— pero sí se guarda para poder
+ * listar pendientes sin rehacer medio mes, y `min_planificado` es lo que lee la bolsa al
+ * apuntar. Antes era un UPSERT por pareja; aquí van en bloques de doscientas.
+ */
+async function ficGuardarProyeccion(local, filas) {
+  const ahora = isoConOffset(Date.now());
+  const TROZO = 200;
+  for (let i = 0; i < filas.length; i += TROZO) {
+    const trozo = filas.slice(i, i + TROZO);
+    const valores = [], params = [];
+    for (const f of trozo) {
+      valores.push("(?,?,?,?,?,?,?,?,?,?)");
+      params.push(f.worker_id, local, f.dia, f.semanaId, f.jornada.minPlanificado, f.jornada.minFichado, f.jornada.minPausa,
+        JSON.stringify(f.jornada.incidencias.map((x) => ({ tipo: x.tipo, nivel: x.nivel, minutos: x.minutos ?? null }))),
+        // `requiere_revision` es el MISMO valor que escribía el cálculo de una jornada: sus
+        // incidencias de nivel revisar, o una validación que ha caducado.
+        f.jornada.requiereRevision || f.estado === CADUCADA, ahora);
+    }
+    await dbRun(
+      `INSERT INTO fic_jornadas (worker_id, local, dia_negocio, semana_id, min_planificado, min_fichado, min_pausa,
+                                 incidencias, requiere_revision, calculado_en)
+       VALUES ${valores.join(",")}
+       ON CONFLICT (worker_id, dia_negocio) DO UPDATE SET
+         local = EXCLUDED.local, semana_id = EXCLUDED.semana_id,
+         min_planificado = EXCLUDED.min_planificado, min_fichado = EXCLUDED.min_fichado,
+         min_pausa = EXCLUDED.min_pausa, incidencias = EXCLUDED.incidencias,
+         requiere_revision = EXCLUDED.requiere_revision, calculado_en = EXCLUDED.calculado_en`,
+      params);
+  }
+}
+
 app.get("/api/fichajes/jornada", requireAuth(FICHAJES_ROLES), async (req, res) => {
   try {
     const local = horLocal(req, req.query.local);
@@ -8761,42 +8913,33 @@ app.get("/api/fichajes/revision", requireAuth(FICHAJES_ROLES), async (req, res) 
     const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.hasta || "")) ? String(req.query.hasta) : hoy.diaNegocio;
     const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.desde || "")) ? String(req.query.desde) : sumaDias(hasta, -13);
 
-    // Días × personas con algo que mirar: o ficharon, o tenían turno.
-    const [fichados, planificados] = await Promise.all([
-      dbAll(`SELECT DISTINCT worker_id, dia_negocio AS dia FROM fic_eventos
-             WHERE local = ? AND dia_negocio BETWEEN ? AND ?`, [local, desde, hasta]),
-      dbAll(`SELECT DISTINCT a.worker_id, a.dia FROM hor_asignaciones a
-             JOIN hor_semanas s ON s.id = a.semana_id
-             WHERE a.local = ? AND s.estado = 'publicado' AND a.tipo = 'turno' AND a.dia BETWEEN ? AND ?`,
-        [local, desde, hasta]),
-    ]);
-    const pares = new Map();
-    for (const r of [...fichados, ...planificados]) pares.set(`${r.worker_id}|${r.dia}`, { worker_id: Number(r.worker_id), dia: r.dia });
+    const { filas } = await ficCalcularPeriodo(local, desde, hasta, { cfg });
+    // La proyección se guarda igual que antes, pero de doscientas en doscientas.
+    if (filas.length) await ficGuardarProyeccion(local, filas);
 
-    // Los nombres se buscan por los IDS QUE SALEN en este periodo, no por «quién es de este
-    // local ahora». Al cambiar a alguien de establecimiento, su nombre desaparecía del
-    // histórico del anterior y sus jornadas pasadas salían como «—»: el registro seguía
-    // completo pero dejaba de poder leerse, que para un papel que se entrega a la Inspección
-    // es casi lo mismo que perderlo.
-    const idsVistos = [...new Set([...pares.values()].map((x) => x.worker_id))];
-    const nombres = new Map(idsVistos.length
-      ? (await dbAll(`SELECT id, nombre FROM users WHERE id = ANY(?)`, [idsVistos])).map((u) => [u.id, u.nombre])
-      : []);
-    const filas = [];
-    for (const { worker_id, dia } of pares.values()) {
-      const j = await ficCalcularJornada(local, worker_id, dia, { cfg });
-      if (!j.requiereRevision && !j.incidencias.length && !j.validacion?.caducada) continue;
-      filas.push({
-        worker_id, nombre: nombres.get(worker_id) || "—", dia,
-        minPlanificado: j.minPlanificado, minFichado: j.minFichado, minEfectivo: j.minEfectivo,
-        minDesviacion: j.minDesviacion, requiereRevision: j.requiereRevision,
-        validado: j.validacion ? j.validacion.minutos : null,
-        validacionCaducada: !!j.validacion?.caducada,
-        incidencias: j.incidencias.map((i) => ({ tipo: i.tipo, nivel: i.nivel, texto: i.texto, minutos: i.minutos ?? null })),
-      });
-    }
-    filas.sort((a, b) => (b.dia.localeCompare(a.dia)) || a.nombre.localeCompare(b.nombre, "es"));
-    res.json({ ok: true, local, desde, hasta, data: filas });
+    res.json({
+      ok: true, local, desde, hasta,
+      // El resumen sale de la MISMA clasificación que decide el lote: si el botón dice 184,
+      // el lote toca 184. Dos reglas separadas acabarían diciendo números distintos.
+      resumen: resumirRevision(filas),
+      data: filas
+        .sort((a, b) => b.dia.localeCompare(a.dia) || a.nombre.localeCompare(b.nombre, "es"))
+        .map((f) => ({
+          worker_id: f.worker_id, nombre: f.nombre, dia: f.dia,
+          estado: f.estado, puedeLote: f.puedeLote, motivo: f.motivo,
+          minPlanificado: f.minPlanificado, minFichado: f.minFichado,
+          minPausa: f.minPausa, minEfectivo: f.minEfectivo, minDesviacion: f.minDesviacion,
+          // Se mandan las horas de plan y de reloj para poder enseñar la comparación sin
+          // tener que abrir la jornada.
+          plan: f.jornada.plan.map((t) => ({ inicio: t.inicio, fin: t.fin, abierto: !!t.abierto })),
+          fichado: f.jornada.fichado.map((t) => ({ inicio: t.inicio, fin: t.fin, pausa: t.pausa || 0 })),
+          requiereRevision: f.jornada.requiereRevision,
+          validado: f.validacion ? f.validacion.minutos : null,
+          validadoPor: f.validacion ? f.validacion.por : null,
+          validacionCaducada: f.estado === CADUCADA,
+          incidencias: f.incidencias.map((i) => ({ tipo: i.tipo, nivel: i.nivel, texto: i.texto, minutos: i.minutos ?? null })),
+        })),
+    });
   } catch (e) {
     console.error("[fichajes] revision:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar la revisión" });
@@ -8896,6 +9039,37 @@ app.get("/api/fichajes/correcciones", requireAuth(FICHAJES_ROLES), async (req, r
 // ── Validación ───────────────────────────────────────────────────────────────
 // «Estas son las horas que se pagan». Firmada: queda quién, cuándo y sobre QUÉ eventos.
 // Si después cambia el registro, la firma deja de coincidir y la jornada vuelve a la lista.
+/**
+ * Escribe UNA validación y la lleva a la bolsa. La usan la validación individual y la de lote,
+ * y son exactamente las mismas dos operaciones en el mismo orden.
+ *
+ * Existe porque estaba pegada al endpoint individual: copiarla en el del lote habría creado dos
+ * caminos que empiezan iguales y acaban divergiendo, y el sitio donde eso se nota es la nómina.
+ *
+ * `soloSiSinValidar` es el candado del lote. La condición `min_validado IS NULL` va DENTRO del
+ * UPDATE, así que dos peticiones simultáneas —o un doble clic en el botón— no pueden validar
+ * dos veces la misma jornada: la segunda no toca ninguna fila y se sabe porque no vuelve nada.
+ * La bolsa además es idempotente por su cuenta (la clave lleva la firma de los eventos), así
+ * que aquí hay dos frenos y no uno.
+ */
+async function ficEscribirValidacion({ local, workerId, dia, minutos, nota, autor, firma, soloSiSinValidar = false }) {
+  const fila = await dbRun(
+    `UPDATE fic_jornadas SET min_validado = ?, firma_eventos = ?, validado_en = ?, validado_por = ?,
+            validado_nota = ?, requiere_revision = FALSE
+      WHERE worker_id = ? AND dia_negocio = ?${soloSiSinValidar ? " AND min_validado IS NULL" : ""}
+      RETURNING worker_id`,
+    [minutos, firma, isoConOffset(Date.now()), autor, nota || null, workerId, dia]);
+  if (!fila) return { escrita: false, motivo: "ya_validada" };
+
+  await ficAuditar("jornada", null, "validar", autor, {
+    local, workerId, detalle: { dia, minutos, nota: nota || null, lote: !!soloSiSinValidar } });
+
+  // Validar es lo que mete horas en la bolsa. Mismo mecanismo que siempre: la diferencia entre
+  // lo validado y lo que tocaba según el cuadrante, con su clave de idempotencia.
+  const bolsa = await ficApuntarJornada(local, workerId, dia, { autor });
+  return { escrita: true, bolsa };
+}
+
 app.post("/api/fichajes/validar", requireAuth(FICHAJES_ROLES), async (req, res) => {
   try {
     const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.body?.worker_id || 0)]);
@@ -8920,21 +9094,104 @@ app.post("/api/fichajes/validar", requireAuth(FICHAJES_ROLES), async (req, res) 
     }
 
     const eventos = await dbAll(`SELECT id, tipo, epoch_ms, anulado_por FROM fic_eventos WHERE worker_id = ? AND dia_negocio = ?`, [w.id, dia]);
-    await dbRun(
-      `UPDATE fic_jornadas SET min_validado = ?, firma_eventos = ?, validado_en = ?, validado_por = ?, validado_nota = ?, requiere_revision = FALSE
-       WHERE worker_id = ? AND dia_negocio = ?`,
-      [minutos, firmaDeEventos(eventos), isoConOffset(Date.now()), req.user.username, nota || null, w.id, dia]);
-    await ficAuditar("jornada", null, "validar", req.user.username, {
-      local: w.local, workerId: w.id, detalle: { dia, minutos, fichado: propuesto, nota: nota || null } });
-
-    // Validar es lo que mete horas en la bolsa. Antes de eso, las de un día sin revisar no
-    // están en el saldo de nadie: si no, el saldo se movería solo cada vez que alguien ficha.
-    const bolsa = await ficApuntarJornada(w.local, w.id, dia, { autor: req.user.username });
+    // Sin `soloSiSinValidar`: aquí SÍ se puede volver a validar una jornada ya validada, que es
+    // lo que hace falta cuando una validación caduca y hay que rehacerla.
+    const { bolsa } = await ficEscribirValidacion({
+      local: w.local, workerId: w.id, dia, minutos, nota, autor: req.user.username,
+      firma: firmaDeEventos(eventos),
+    });
 
     res.json({ ok: true, minutos, bolsa, mensaje: `Jornada de ${w.nombre} validada: ${deMinutos(minutos, { formato: "absoluto" })}.` });
   } catch (e) {
     console.error("[fichajes] validar:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo validar" });
+  }
+});
+
+/**
+ * Validar de golpe las jornadas que no necesitan que nadie decida nada.
+ *
+ * NO SE FÍA DE LA LISTA QUE MANDE EL NAVEGADOR. Vuelve a calcular el periodo entero aquí y
+ * ahora, y solo toca lo que EN ESTE MOMENTO sale como `lista_para_validar`. Si mientras la
+ * persona miraba la pantalla llegó un fichaje, se cerró el periodo o apareció una incidencia,
+ * esa jornada se queda fuera y se dice por qué. La lista del cliente solo puede RECORTAR lo
+ * que se valida, nunca ampliarlo: sirve para que el botón haga exactamente lo que prometía.
+ *
+ * NO ES TODO O NADA. Si una jornada se cae, las demás entran igual: un lote de doscientas que
+ * se deshace entero porque una cambió obliga a repetirlo sin saber cuál era, y eso acaba en
+ * que nadie valida.
+ */
+app.post("/api/fichajes/validar-lote", requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.body?.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const cfg = await dbGet(`SELECT corte_dia_min, tolerancia_min, hora_cierre_min FROM hor_config WHERE local = ?`, [local]);
+    const hoy = instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 });
+    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.hasta || "")) ? String(req.body.hasta) : hoy.diaNegocio;
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.desde || "")) ? String(req.body.desde) : sumaDias(hasta, -13);
+
+    // Se recalcula TODO otra vez. Es la única forma de no validar sobre una foto vieja.
+    const { filas } = await ficCalcularPeriodo(local, desde, hasta, { cfg });
+    if (filas.length) await ficGuardarProyeccion(local, filas);
+
+    let candidatas = candidatasDeLote(filas);
+    // Si el cliente manda una lista, se INTERSECA: nunca añade, solo acota.
+    const pedidas = Array.isArray(req.body?.jornadas) ? req.body.jornadas : null;
+    if (pedidas) {
+      const quiere = new Set(pedidas.map((x) => `${Number(x.worker_id)}|${String(x.dia)}`));
+      candidatas = candidatas.filter((f) => quiere.has(`${f.worker_id}|${f.dia}`));
+    }
+    if (!candidatas.length) {
+      return res.json({ ok: true, validadas: 0, omitidas: [], resumen: resumirRevision(filas),
+        mensaje: "No hay ninguna jornada lista para validar en estas fechas." });
+    }
+
+    // Última comprobación, lo más pegada posible a la escritura: se releen los eventos de las
+    // candidatas y se compara la firma. Si una recibió un fichaje entre el cálculo y esto, su
+    // firma ya no coincide y se queda fuera. Una sola consulta para todas.
+    const ids = [...new Set(candidatas.map((f) => f.worker_id))];
+    const frescos = await dbAll(
+      `SELECT id, worker_id, dia_negocio, tipo, epoch_ms, anulado_por FROM fic_eventos
+        WHERE worker_id = ANY(?) AND dia_negocio BETWEEN ? AND ? ORDER BY worker_id, dia_negocio, epoch_ms, id`,
+      [ids, desde, hasta]);
+    const frescosPorPar = new Map();
+    for (const e of frescos) {
+      const k = `${e.worker_id}|${e.dia_negocio}`;
+      if (!frescosPorPar.has(k)) frescosPorPar.set(k, []);
+      frescosPorPar.get(k).push(e);
+    }
+
+    const omitidas = [];
+    let validadas = 0, minutos = 0;
+    for (const f of candidatas) {
+      const firmaAhora = firmaDeEventos(frescosPorPar.get(`${f.worker_id}|${f.dia}`) || []);
+      if (firmaAhora !== f.firma) {
+        omitidas.push({ worker_id: f.worker_id, nombre: f.nombre, dia: f.dia, motivo: "cambió mientras se validaba" });
+        continue;
+      }
+      // Los minutos son los mismos que propondría la validación individual: lo fichado menos
+      // las pausas. El lote NO redondea nada — la tolerancia sirve para clasificar una
+      // incidencia, no para cambiar en silencio el tiempo que alguien trabajó.
+      const r = await ficEscribirValidacion({
+        local, workerId: f.worker_id, dia: f.dia, minutos: f.minEfectivo,
+        nota: null, autor: req.user.username, firma: f.firma, soloSiSinValidar: true,
+      });
+      if (!r.escrita) {
+        omitidas.push({ worker_id: f.worker_id, nombre: f.nombre, dia: f.dia, motivo: "ya estaba validada" });
+        continue;
+      }
+      validadas++; minutos += f.minEfectivo;
+    }
+
+    await ficAuditar("jornada", null, "validar_lote", req.user.username, {
+      local, detalle: { desde, hasta, validadas, omitidas: omitidas.length } });
+
+    const partes = [`${validadas} ${validadas === 1 ? "jornada validada" : "jornadas validadas"}`];
+    if (omitidas.length) partes.push(`${omitidas.length} ${omitidas.length === 1 ? "cambió" : "cambiaron"} mientras se procesaban y sigue${omitidas.length === 1 ? "" : "n"} pendiente${omitidas.length === 1 ? "" : "s"}`);
+    res.json({ ok: true, validadas, minutos, omitidas, mensaje: partes.join(". ") + "." });
+  } catch (e) {
+    console.error("[fichajes] validar-lote:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo validar el lote" });
   }
 });
 

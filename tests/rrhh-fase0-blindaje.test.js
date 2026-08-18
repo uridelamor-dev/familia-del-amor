@@ -185,8 +185,10 @@ describe("12 · un fichaje que llega a un periodo cerrado", () => {
 
 describe("13 · cambiar de local no hace ilegible el histórico", () => {
   test("los nombres de la revisión se buscan por los ids que salen, no por el local de hoy", () => {
-    const b = bloque('app.get("/api/fichajes/revision"', "// ── Correcciones");
-    assert.match(b, /const idsVistos = \[\.\.\.new Set\(\[\.\.\.pares\.values\(\)\]/);
+    // La garantía es la misma; en la Fase 1 el cálculo se movió del endpoint a
+    // `ficCalcularPeriodo`, que es donde se cargan ahora todos los datos de golpe.
+    const b = bloque("async function ficCalcularPeriodo(", "async function ficGuardarProyeccion(");
+    assert.match(b, /const ids = \[\.\.\.new Set\(\[\.\.\.pares\.values\(\)\]\.map\(\(x\) => x\.worker_id\)\)\]/);
     assert.match(b, /FROM users WHERE id = ANY\(\?\)/);
     assert.ok(!/SELECT id, nombre FROM users WHERE local = \?`, \[local\]/.test(b));
   });

@@ -4468,6 +4468,35 @@ function ficSigno(min) {
   return (n > 0 ? "+" : "−") + ficHoras(Math.abs(n));
 }
 
+const FIC_ESTADO = {
+  requiere_revision: { t: "Necesitan una decisión", c: "aviso", orden: 1 },
+  abierta:           { t: "Todavía abiertas", c: "", orden: 2 },
+  lista_para_validar:{ t: "Listas para validar", c: "ok", orden: 3 },
+  validacion_caducada:{ t: "Validación caducada", c: "aviso", orden: 1 },
+  validada:          { t: "Ya validadas", c: "ok", orden: 4 },
+};
+// Espejo de `deMinutos` del servidor, para poder enseñar la comparación plan/reloj sin abrir
+// la jornada. Los minutos pueden pasar de 1440 (un turno que acaba a las 02:00 vale 1560).
+function ficHora(min) {
+  if (min == null) return "—";
+  const b = ((Math.round(min) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(b / 60)).padStart(2, "0")}:${String(b % 60).padStart(2, "0")}`;
+}
+// Medianoche COMO FINAL se escribe 24:00, no 00:00. Misma convención que `franjaCorta` en el
+// servidor y `horFranja` en el cuadrante: un turno de 16:00 a 00:00 escrito «16:00–00:00» se
+// lee como que dura cero.
+const ficFin = (min) => (min > 0 && min % 1440 === 0 ? "24:00" : ficHora(min));
+const ficTramos = (ts) => (ts || []).length
+  ? ts.map((t) => `${ficHora(t.inicio)}–${t.abierto ? "cierre" : (t.fin == null ? "?" : ficFin(t.fin))}`).join(" · ")
+  : "—";
+
+/**
+ * Revisión POR EXCEPCIONES.
+ *
+ * Lo primero que se ve son las que piden una decisión y el botón que resuelve el resto. Antes
+ * esta pantalla enseñaba una tabla plana de todo lo que tuviera cualquier incidencia y había
+ * que abrir doscientas jornadas para descubrir que ciento ochenta no decían nada.
+ */
 async function ficPintarRevision() {
   const cont = document.getElementById("ficCuerpo");
   if (!cont) return;
@@ -4479,37 +4508,133 @@ async function ficPintarRevision() {
     if (FIC.hasta) qs.set("hasta", FIC.hasta);
     j = await apiRaw("/api/fichajes/revision?" + qs.toString());
   } catch { cont.innerHTML = `<div class="card"><p class="mut" style="margin:0">No se pudo cargar la revisión.</p></div>`; return; }
+  FIC.rev = j;
 
-  const urge = j.data.filter((f) => f.requiereRevision || f.validacionCaducada);
-  const resto = j.data.filter((f) => !f.requiereRevision && !f.validacionCaducada);
-  const fila = (f) => `<tr data-ficjor="${f.worker_id}|${esc(f.dia)}" style="cursor:pointer">
-      <td class="mut">${esc(f.dia)}</td>
-      <td><b>${esc(f.nombre)}</b></td>
-      <td>${f.incidencias.map((i) => `<span class="fic-tag ${i.nivel === "revisar" ? "aviso" : ""}">${esc(i.texto)}${i.minutos ? " · " + esc(ficHoras(i.minutos)) : ""}</span>`).join("")}
-        ${f.validacionCaducada ? '<span class="fic-tag aviso">validación caducada</span>' : ""}</td>
+  const r = j.resumen || {};
+  const porEstado = (e) => j.data.filter((f) => f.estado === e);
+
+  // ── La cabecera: dos números y un botón ──────────────────────────────────────────────
+  const dato = (n, txt, col) => `<div style="min-width:0"><div class="big tnum" style="font-size:26px${col ? ";color:" + col : ""}">${num(n)}</div><div class="mut" style="font-size:12px">${txt}</div></div>`;
+  const cabecera = `<div class="card">
+    <div class="ch"><h3>Del ${esc(j.desde)} al ${esc(j.hasta)}</h3></div>
+    <div style="display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end">
+      ${dato(r.listas_para_validar || 0, "sin nada que decidir", "var(--brand)")}
+      ${dato(r.requieren_revision || 0, "piden una decisión", (r.requieren_revision || r.caducadas) ? "var(--danger)" : null)}
+      ${r.caducadas ? dato(r.caducadas, "validaciones caducadas", "var(--danger)") : ""}
+      ${dato(r.abiertas || 0, "todavía abiertas")}
+      ${dato(r.validadas || 0, "ya validadas")}
+      <div style="flex:1"></div>
+      ${r.listas_para_validar
+        // El botón DICE CUÁNTAS y dice que son las que no tienen incidencias. «Validar todo»
+        // daría a entender que también se están aprobando las que sí las tienen.
+        ? `<button class="btn primary" id="ficLote">Validar ${num(r.listas_para_validar)} ${r.listas_para_validar === 1 ? "jornada correcta" : "jornadas correctas"}</button>`
+        : ""}
+    </div>
+    ${r.bloqueadas_por_cierre ? `<p class="fic-nota" style="margin-top:14px"><b>${num(r.bloqueadas_por_cierre)}</b> ${r.bloqueadas_por_cierre === 1 ? "jornada está limpia pero su periodo ya está cerrado" : "jornadas están limpias pero su periodo ya está cerrado"}. Para incorporarlas hay que reabrirlo.</p>` : ""}
+  </div>`;
+
+  // ── Una tarjeta por jornada que pide algo, con la comparación delante ────────────────
+  const ficha = (f) => `<div class="row" data-ficjor="${f.worker_id}|${esc(f.dia)}" style="cursor:pointer;align-items:flex-start">
+      <div class="grow" style="min-width:0">
+        <div class="t1">${esc(f.nombre)} <span class="mut" style="font-weight:400">· ${esc(fechaCorta(f.dia) || f.dia)}</span></div>
+        <div class="t2" style="margin-top:2px">Cuadrante <b>${esc(ficTramos(f.plan))}</b> · Fichado <b>${esc(ficTramos(f.fichado))}</b></div>
+        <div style="margin-top:6px">${f.incidencias.map((i) => `<span class="fic-tag ${i.nivel === "revisar" ? "aviso" : ""}">${esc(i.texto)}${i.minutos ? " · " + esc(ficHoras(i.minutos)) : ""}</span>`).join("")}
+          ${f.validacionCaducada ? '<span class="fic-tag aviso">se validó y luego cambió</span>' : ""}
+          ${!f.incidencias.length && !f.validacionCaducada && f.motivo ? `<span class="fic-tag">${esc(f.motivo)}</span>` : ""}</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap">
+        <div class="tnum"><b>${esc(ficHoras(f.minEfectivo))}</b></div>
+        <div class="mut" style="font-size:11.5px">${esc(ficSigno(f.minDesviacion))} sobre el plan</div>
+      </div>
+      <button class="btn sm">Revisar</button>
+    </div>`;
+
+  // Una tabla corta para lo que no pide nada: se enseña, pero no ocupa la pantalla.
+  const filaCorta = (f) => `<tr data-ficjor="${f.worker_id}|${esc(f.dia)}" style="cursor:pointer">
+      <td class="mut">${esc(fechaCorta(f.dia) || f.dia)}</td><td><b>${esc(f.nombre)}</b></td>
       <td style="text-align:right" class="mut">${esc(ficHoras(f.minPlanificado))}</td>
       <td style="text-align:right">${esc(ficHoras(f.minEfectivo))}</td>
       <td style="text-align:right"><b>${esc(ficSigno(f.minDesviacion))}</b></td>
       <td style="text-align:right">${f.validado != null ? `<span class="fic-tag ok">${esc(ficHoras(f.validado))}</span>` : '<span class="mut">—</span>'}</td>
     </tr>`;
-  const tabla = (filas) => `<div class="tw"><table class="tbl">
-      <thead><tr><th>Día</th><th>Persona</th><th>Qué pasa</th><th style="text-align:right">Cuadrante</th>
+  const tablaCorta = (filas) => `<div class="tw"><table class="tbl">
+      <thead><tr><th>Día</th><th>Persona</th><th style="text-align:right">Cuadrante</th>
       <th style="text-align:right">Fichado</th><th style="text-align:right">Dif.</th><th style="text-align:right">Validado</th></tr></thead>
-      <tbody>${filas.map(fila).join("")}</tbody></table></div>`;
+      <tbody>${filas.map(filaCorta).join("")}</tbody></table></div>`;
 
-  cont.innerHTML = `
-    <div class="card">
-      <div class="ch"><h3>Del ${esc(j.desde)} al ${esc(j.hasta)}</h3>
-        <span class="mut">${urge.length ? `${urge.length} ${urge.length === 1 ? "jornada pide" : "jornadas piden"} una decisión` : "Nada pendiente de decidir"}</span></div>
-      ${j.data.length ? `${urge.length ? tabla(urge) : ""}${resto.length ? `<div class="mut" style="margin:14px 0 6px;font-size:12px">Desviaciones dentro de lo normal</div>${tabla(resto)}` : ""}`
-      : `<p class="mut" style="margin:0;line-height:1.6">Todo cuadra en estos días: lo fichado coincide con el cuadrante publicado dentro de la tolerancia.</p>`}
-    </div>`;
+  // El orden es la prioridad, y la forma también: lo que pide una decisión va en una tarjeta
+  // ABIERTA, porque es a lo que se viene. Lo informativo va plegado, cerrado de casa, como
+  // todo lo demás del panel: un desplegable que se abre solo decide por quien mira.
+  const seccionFija = (estados, titulo) => {
+    const filas = estados.flatMap(porEstado);
+    if (!filas.length) return "";
+    return `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>${titulo}</h3>
+      <span class="pill ${estados.includes("requiere_revision") ? "bad" : ""}">${num(filas.length)}</span></div>
+      <div class="rows">${filas.map(ficha).join("")}</div></div>`;
+  };
+  const seccionPlegada = (estados, titulo) => {
+    const filas = estados.flatMap(porEstado);
+    if (!filas.length) return "";
+    return `<details class="card fold"><summary><h3>${titulo}</h3>
+      <span class="foldr"><span>${num(filas.length)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+      ${tablaCorta(filas)}</details>`;
+  };
 
-  cont.firstElementChild.addEventListener("click", (e) => {
-    const tr = e.target.closest("[data-ficjor]"); if (!tr) return;
-    const [w, dia] = tr.getAttribute("data-ficjor").split("|");
+  cont.innerHTML = j.data.length
+    ? `${cabecera}
+       <div style="margin-top:14px;display:flex;flex-direction:column;gap:14px">
+         ${seccionFija(["requiere_revision", "validacion_caducada"], "Necesitan una decisión")}
+         ${seccionPlegada(["abierta"], "Todavía abiertas")}
+         ${seccionPlegada(["lista_para_validar"], "Listas para validar")}
+         ${seccionPlegada(["validada"], "Ya validadas")}
+       </div>`
+    : `${cabecera}<div class="card" style="margin-top:14px"><p class="mut" style="margin:0;line-height:1.6">No hay ninguna jornada en estas fechas: ni fichajes ni turnos publicados.</p></div>`;
+
+  // `onclick` y no `addEventListener`: este contenedor NO se repinta al volver a pintar la
+  // revisión —solo su contenido—, así que un listener por llamada se iría acumulando y al
+  // tercer repintado cada clic abriría tres modales.
+  cont.onclick = (e) => {
+    if (e.target.closest("#ficLote")) return ficValidarLote(j);
+    const fila = e.target.closest("[data-ficjor]"); if (!fila) return;
+    const [w, dia] = fila.getAttribute("data-ficjor").split("|");
     ficAbrirJornada(Number(w), dia);
-  });
+  };
+}
+
+/**
+ * El botón de validar en lote.
+ *
+ * La confirmación dice lo que se valida Y LO QUE NO: sin la segunda mitad, pulsar «validar
+ * 184» se lee como «dar por buenas las 205».
+ */
+async function ficValidarLote(j) {
+  const r = j.resumen || {};
+  const n = r.listas_para_validar || 0;
+  if (!n) return;
+  const ok = await confirmModal(
+    `Se validarán ${n} ${n === 1 ? "jornada" : "jornadas"} sin incidencias que requieran revisión.` +
+    (r.requieren_revision || r.caducadas
+      ? ` Las ${(r.requieren_revision || 0) + (r.caducadas || 0)} que piden una decisión seguirán pendientes.`
+      : ""),
+    { ok: `Validar ${n}` });
+  if (!ok) return;
+
+  const btn = document.getElementById("ficLote");
+  if (btn) { btn.disabled = true; btn.textContent = "Validando…"; }
+  try {
+    // Se manda la lista de lo que se ha enseñado: el servidor la usa para NO validar de más,
+    // pero vuelve a comprobar cada una por su cuenta.
+    const res = await apiSend("POST", "/api/fichajes/validar-lote", {
+      local: FIC.local, desde: j.desde, hasta: j.hasta,
+      jornadas: j.data.filter((f) => f.estado === "lista_para_validar" && f.puedeLote)
+        .map((f) => ({ worker_id: f.worker_id, dia: f.dia })),
+    });
+    toast(res.mensaje || "Listo ✅");
+    ficPintarRevision();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = `Validar ${n}`; }
+    if (e.message !== "noauth") toast("Error: " + e.message);
+  }
 }
 
 const FIC_EV_ORIGEN = { kiosco: "tablet", kiosco_offline: "tablet (sin conexión)", manual: "a mano", importado: "importado" };
@@ -4534,10 +4659,14 @@ async function ficAbrirJornada(workerId, dia) {
     ov.querySelector(".modal-b").innerHTML = `
       <div id="ficJorBody">
         <div class="ch" style="margin-top:0"><h3 style="margin:0">${esc(j.trabajador.nombre)} · ${esc(dia)}</h3></div>
-        <div class="grid g3" style="gap:12px;margin-bottom:14px">
-          <div><div class="t2">Cuadrante</div><div class="t1">${planTxt}</div></div>
-          <div><div class="t2">Fichado (sin pausas)</div><div class="t1">${esc(ficHoras(j.minEfectivo))}</div></div>
-          <div><div class="t2">Diferencia</div><div class="t1">${esc(ficSigno(j.minDesviacion))}</div></div>
+        ${/* La comparación, en una sola línea de lectura: qué tocaba, qué pasó y en qué se
+              diferencian. Antes había que deducirlo de tres cifras sueltas. */""}
+        <div class="fic-comp">
+          <div><div class="t2">Cuadrante</div><div class="t1">${planTxt}</div><div class="mut">${esc(ficHoras(j.minPlanificado))}</div></div>
+          <div><div class="t2">Fichado</div><div class="t1">${esc(ficTramos(j.fichado.map((t) => ({ inicio: t.inicio, fin: t.fin }))))}</div><div class="mut">${esc(ficHoras(j.minFichado))}</div></div>
+          <div><div class="t2">Pausas</div><div class="t1">${j.minPausa ? esc(ficHoras(j.minPausa)) : "—"}</div></div>
+          <div><div class="t2">Efectivo</div><div class="t1"><b>${esc(ficHoras(j.minEfectivo))}</b></div></div>
+          <div><div class="t2">Contra el plan</div><div class="t1"><b style="color:${j.minDesviacion === 0 ? "var(--ink)" : j.minDesviacion > 0 ? "var(--brand)" : "var(--danger)"}">${esc(ficSigno(j.minDesviacion))}</b></div></div>
         </div>
         ${j.incidencias.length ? `<div style="margin-bottom:14px">${j.incidencias.map((i) => `<span class="fic-tag ${i.nivel === "revisar" ? "aviso" : ""}">${esc(i.texto)}${i.minutos ? " · " + esc(ficHoras(i.minutos)) : ""}</span>`).join("")}</div>` : ""}
         ${j.validacion ? `<p class="mut" style="margin:0 0 14px">Validado ${esc(ficHoras(j.validacion.minutos))} por ${esc(j.validacion.por)} el ${esc(String(j.validacion.en).slice(0, 10))}${j.validacion.caducada ? " — <b>pero el registro ha cambiado desde entonces</b>" : ""}${j.validacion.nota ? `<br>«${esc(j.validacion.nota)}»` : ""}</p>` : ""}
