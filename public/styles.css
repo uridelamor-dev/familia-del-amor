@@ -3654,3 +3654,23 @@ h1, h2, h3 {
 .disp-horas { display: flex; align-items: center; gap: 0.4rem; }
 /* Por debajo de 16 px, iOS hace zoom al tocar el campo y descoloca la pantalla. */
 .disp-horas input[type="time"] { font-size: 16px; padding: 0.35rem 0.5rem; }
+
+/* ── Tu horario ha cambiado (panel del trabajador) ──────────────────────────────
+   ANTES / AHORA en dos columnas que se apilan en cuanto no caben. Nada de tabla
+   horizontal: esto se lee de pie y con una mano. */
+#cambiosBloque { border-left: 4px solid #c8912a; padding-left: 1rem; }
+#cambiosBloque h2::before { content: "⚠️ "; }
+.cmb { margin-bottom: 0.9rem; }
+.cmb-viejo { opacity: 0.72; border-top: 1px dashed var(--line, #e2ddd0); padding-top: 0.8rem; }
+.cmb-cab { font-size: 0.8rem; color: #6b6658; margin-bottom: 0.5rem; }
+.cmb-dias { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.cmb-dia { border: 1px solid var(--line, #e2ddd0); border-radius: 12px; padding: 0.8rem 0.95rem; background: #fff; }
+.cmb-dia-cab { display: flex; justify-content: space-between; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.cmb-tipo { font-size: 0.78rem; padding: 0.12rem 0.5rem; border-radius: 999px; background: #f0ece1; white-space: nowrap; }
+.cmb-tipo.anadido { background: #e8f3ea; }
+.cmb-tipo.quitado { background: #f7e9e7; }
+/* Dos columnas iguales: el antes y el ahora se leen en paralelo, no en fila. */
+.cmb-comp { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin-top: 0.55rem; }
+.cmb-comp small { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: #8a8474; }
+.cmb-comp span, .cmb-comp b { font-size: 0.98rem; }
+@media (max-width: 420px) { .cmb-comp { grid-template-columns: 1fr; gap: 0.25rem; } }

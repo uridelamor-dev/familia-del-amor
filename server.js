@@ -43,7 +43,7 @@ import { ensureSchemaHorarios, sembrarLocal, migrarDescansos } from "./src/modul
 import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descansos.js";
 import { instanteANegocio, lunesDe, diasSemana, isoConOffset, aMinutos, deMinutos, epochDeLocal, sumaDias, instanteMadrid } from "./src/modules/horarios/tiempo.js";
 import { detectarConflictos, resumirConflictos, contratosSolapados } from "./src/modules/horarios/conflictos.js";
-import { validarPublicacion, construirSnapshot } from "./src/modules/horarios/versiones.js";
+import { validarPublicacion, construirSnapshot, cambiosPorTrabajador } from "./src/modules/horarios/versiones.js";
 import { serializarCanonico } from "./src/core/canonico.js";
 import { construirCuadrante } from "./src/modules/horarios/cuadrante.js";
 import { generarSemana, ORIGEN as ORIGEN_SOLVER } from "./src/modules/horarios/solver.js";
@@ -7633,6 +7633,17 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
 
     const ahora = isoConOffset(Date.now());
     const quien = req.user.nombre || req.user.username;
+
+    // El snapshot que estaba vigente hasta este momento. Se lee AQUÍ, dentro de la misma
+    // transacción y antes de tocar nada, porque es contra él contra lo que se va a comparar:
+    // la comunicación tiene que poder reconstruirse igual dentro de dos años, y para eso los
+    // dos lados de la comparación tienen que ser datos congelados, nunca los de hoy.
+    const anteriorPub = (await q(
+      `SELECT p.id, p.version, p.snapshot FROM hor_publicaciones p
+         JOIN hor_semanas s2 ON s2.id = p.semana_id
+        WHERE s2.local = ? AND s2.lunes = ? AND s2.estado = 'publicado'
+        ORDER BY p.version DESC LIMIT 1`, [s.local, s.lunes])).rows[0] || null;
+
     // La anterior publicada pasa a sustituida, con la hora exacta: es lo que permite
     // preguntar dentro de dos años qué horario regía un día concreto.
     await q(`UPDATE hor_semanas SET estado = 'sustituido', sustituido_en = ? WHERE local = ? AND lunes = ? AND estado = 'publicado'`,
@@ -7645,8 +7656,42 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
     await q(`INSERT INTO hor_publicaciones (semana_id, local, lunes, version, snapshot, hash, publicado_en, publicado_por)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (semana_id) DO NOTHING`,
       [s.id, s.local, s.lunes, s.version, texto, crypto.createHash("sha256").update(texto).digest("hex"), ahora, quien]);
+
+    // ── A quién le cambia algo, y qué ────────────────────────────────────────────────────
+    // Va DENTRO de la transacción de publicar a propósito. Si se hiciera después y fallara,
+    // quedaría un horario publicado del que nadie se ha enterado —el peor de los dos mundos—.
+    // Y si falla, no se publica: es preferible reintentar a publicar a ciegas.
+    //
+    // La primera publicación de una semana no genera nada: no es un cambio, es el horario.
+    let comunicadas = 0;
+    if (anteriorPub) {
+      const cambios = cambiosPorTrabajador(JSON.parse(anteriorPub.snapshot), snapshot);
+      for (const c of cambios) {
+        const cuerpo = {
+          worker_id: c.worker_id, lunes: s.lunes, local: s.local,
+          versionAnterior: anteriorPub.version, versionNueva: s.version, dias: c.dias,
+        };
+        const canon = serializarCanonico(cuerpo);
+        await q(
+          `INSERT INTO hor_cambios_comunicados
+             (local, lunes, worker_id, semana_id, publicacion_anterior_id, publicacion_nueva_id,
+              version_anterior, version_nueva, diff, hash, publicado_en, creado_en)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT (publicacion_nueva_id, worker_id) DO NOTHING`,
+          [s.local, s.lunes, c.worker_id, s.id, anteriorPub.id, s.id,
+           anteriorPub.version, s.version, canon,
+           crypto.createHash("sha256").update(canon).digest("hex"), ahora, ahora]);
+        comunicadas++;
+      }
+    }
+
     await client.query("COMMIT");
-    res.json({ ok: true, version: s.version, avisos: conflictos.filter((c) => c.severidad === "avisa").length });
+    if (comunicadas) {
+      await ficAuditar("horario", s.id, "comunicar_cambios", quien,
+        { local: s.local, detalle: { lunes: s.lunes, version: s.version, afectados: comunicadas } }).catch(() => {});
+    }
+    res.json({ ok: true, version: s.version, afectados: comunicadas,
+      avisos: conflictos.filter((c) => c.severidad === "avisa").length });
   } catch (e) {
     try { await client.query("ROLLBACK"); } catch { /* ya deshecha */ }
     console.error("[horarios] publicar:", e.message);
@@ -8358,6 +8403,57 @@ function fechaLarga(iso) {
   const [, m, d] = String(iso || "").split("-");
   return d ? `${Number(d)} de ${MESES_LARGO[Number(m) - 1]}` : String(iso || "");
 }
+
+/**
+ * Quién se ha enterado del cambio. Visibilidad operativa, no un CRM.
+ *
+ * Se puede pedir por semana (`?lunes=`) o por una publicación concreta (`?publicacion=`), que
+ * es lo que permite mirar el histórico: «en la V2 hubo 4 afectados y 3 lo confirmaron», aunque
+ * después exista una V3.
+ */
+app.get("/api/horarios/comunicaciones", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    const lunes = lunesDe(String(req.query.lunes || "")) || null;
+    const pub = Number(req.query.publicacion) || null;
+    if (!lunes && !pub) return res.status(400).json({ ok: false, error: "Falta la semana" });
+
+    // El `local` de la consulta manda SIEMPRE. Pedir una publicación de otro establecimiento
+    // por su id no devuelve nada: la fila lleva su propio local y aquí se cruza con el del
+    // ámbito, que `horLocal` ya ha forzado al del encargado.
+    const filas = await dbAll(
+      `SELECT c.id, c.worker_id, c.version_anterior, c.version_nueva, c.publicacion_nueva_id,
+              c.diff, c.publicado_en, c.entendido_en, u.nombre
+         FROM hor_cambios_comunicados c LEFT JOIN users u ON u.id = c.worker_id
+        WHERE c.local = ? ${pub ? "AND c.publicacion_nueva_id = ?" : "AND c.lunes = ?"}
+        ORDER BY c.version_nueva DESC, u.nombre`,
+      [local, pub || lunes]);
+
+    const data = filas.map((f) => {
+      let d = {};
+      try { d = JSON.parse(f.diff); } catch { /* ilegible: se enseña el resto igual */ }
+      return {
+        id: f.id, worker_id: f.worker_id, nombre: f.nombre || "—",
+        versionAnterior: f.version_anterior, versionNueva: f.version_nueva,
+        publicacionId: f.publicacion_nueva_id, publicadoEn: f.publicado_en,
+        entendidoEn: f.entendido_en,
+        // Lo justo para que el responsable sepa de qué va: qué días le cambiaron y cómo. Ni el
+        // motivo, ni nada más: no lo necesita.
+        dias: (Array.isArray(d.dias) ? d.dias : []).map((x) => ({ dia: x.dia, tipo: x.tipo })),
+      };
+    });
+    res.json({
+      ok: true, local,
+      resumen: { afectados: data.length, entendidos: data.filter((x) => x.entendidoEn).length,
+        pendientes: data.filter((x) => !x.entendidoEn).length },
+      data,
+    });
+  } catch (e) {
+    console.error("[horarios] comunicaciones:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar las confirmaciones" });
+  }
+});
 
 // Histórico de versiones de una semana. Contesta "qué horario vio el equipo".
 app.get("/api/horarios/historico", requireAuth(HORARIOS_ROLES), async (req, res) => {
@@ -9770,6 +9866,75 @@ app.get("/api/mi-registro/csv", requireAuth(), async (req, res) => {
     res.setHeader("Content-Disposition", `attachment; filename="${nombreFicheroRegistro(yo.nombre || "mi-registro", p.etiqueta)}"`);
     res.send(construirCsv(eventos.map((e) => ({ ...e, nombre: yo.nombre, dni: yo.dni }))));
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo generar tu registro" }); }
+});
+
+// ════════════════════════ CAMBIOS DE MI HORARIO ════════════════════════
+// Publicar una versión nueva ya dejaba constancia de todo; lo que faltaba era que la persona a
+// la que le cambia el turno se entere. El PDF del grupo decía «⚠️ Es la versión 2» y nada más:
+// ni qué cambió, ni a quién le afectaba.
+//
+// `Entendido` NO decide nada. El horario es oficial desde que se publica, lo pulse o no lo
+// pulse nadie. Solo deja constancia de que lo vio.
+
+/** Sus cambios: lo que tiene sin ver y lo último que ya confirmó. */
+app.get("/api/mi-horario/cambios", requireAuth(), async (req, res) => {
+  try {
+    const filas = await dbAll(
+      `SELECT id, lunes, version_anterior, version_nueva, diff, publicado_en, entendido_en
+         FROM hor_cambios_comunicados WHERE worker_id = ?
+        ORDER BY publicado_en DESC, id DESC LIMIT 40`, [req.user.id]);
+    const pinta = (f) => {
+      let d = {};
+      try { d = JSON.parse(f.diff); } catch { /* una fila ilegible no puede tumbar la pantalla */ }
+      return {
+        id: f.id, lunes: f.lunes, versionAnterior: f.version_anterior, versionNueva: f.version_nueva,
+        publicadoEn: f.publicado_en, entendidoEn: f.entendido_en,
+        dias: Array.isArray(d.dias) ? d.dias : [],
+      };
+    };
+    const todos = filas.map(pinta);
+    res.json({
+      ok: true,
+      // Lo que tiene que mirar, de lo más reciente a lo más antiguo. Una comunicación vieja sin
+      // confirmar NO se borra ni se da por vista: se enseña detrás de la última.
+      pendientes: todos.filter((f) => !f.entendidoEn),
+      confirmados: todos.filter((f) => f.entendidoEn).slice(0, 10),
+    });
+  } catch (e) {
+    console.error("[mi-horario] cambios:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar los cambios" });
+  }
+});
+
+/**
+ * «Entendido». Registra que lo vio, y nada más.
+ *
+ * NO publica, no valida, no toca asignaciones, ni el snapshot, ni fichajes, ni la bolsa.
+ *
+ * El `worker_id` sale del token y la condición `entendido_en IS NULL` va DENTRO del UPDATE:
+ * dos pestañas del mismo móvil pulsando a la vez escriben una sola confirmación, y la segunda
+ * lo sabe porque no vuelve ninguna fila. Confirmar la V2 no confirma la V3: son filas
+ * distintas y cada una lleva su propio diff congelado.
+ */
+app.post("/api/mi-horario/cambios/:id/entendido", requireAuth(), async (req, res) => {
+  try {
+    const fila = await dbRun(
+      `UPDATE hor_cambios_comunicados SET entendido_en = ?, entendido_por = ?
+        WHERE id = ? AND worker_id = ? AND entendido_en IS NULL
+        RETURNING id, entendido_en`,
+      [isoConOffset(Date.now()), req.user.username, Number(req.params.id) || 0, req.user.id]);
+    if (!fila) {
+      const y = await dbGet(`SELECT worker_id, entendido_en FROM hor_cambios_comunicados WHERE id = ?`,
+        [Number(req.params.id) || 0]);
+      if (!y || Number(y.worker_id) !== Number(req.user.id)) return res.status(404).json({ ok: false, error: "No encontrado" });
+      // Ya estaba confirmado: pulsar dos veces no es un error, es un dedo.
+      return res.json({ ok: true, entendidoEn: y.entendido_en, repetido: true });
+    }
+    res.json({ ok: true, entendidoEn: fila.entendido_en });
+  } catch (e) {
+    console.error("[mi-horario] entendido:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo registrar" });
+  }
 });
 
 // ════════════════════════ MIS AUSENCIAS Y MI DISPONIBILIDAD ════════════════════════

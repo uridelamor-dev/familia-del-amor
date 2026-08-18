@@ -5,6 +5,7 @@ requireRole(["trabajador", "encargado", "direccion"]).then((user) => {
   loadRegistro();
   loadAnnouncements();
   loadPulso();
+  loadCambios();
   loadAusencias();
   loadDisponibilidad();
 });
@@ -450,4 +451,102 @@ document.getElementById("dispGuardar")?.addEventListener("click", async () => {
     const data = await res.json();
     if (msg) msg.textContent = data.ok ? (data.mensaje || "Guardada ✅") : (data.error || "No se pudo guardar");
   } catch { if (msg) msg.textContent = "Error de conexión"; }
+});
+
+// ── Los cambios de mi horario ────────────────────────────────────────────────
+// Publicar una versión nueva ya dejaba constancia de todo. Lo que faltaba era que la persona a
+// la que le mueven el turno del jueves se entere sin tener que comparar dos PDF del grupo.
+//
+// «Entendido» no aprueba nada: el horario es oficial desde que se publica. Solo deja escrito
+// que lo vio.
+const DIAS_SEM = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+const CAMBIO_TITULO = { anadido: "Nuevo turno", quitado: "Turno quitado", modificado: "Cambia el horario" };
+
+/** 1470 → «00:30». Medianoche COMO FINAL se escribe 24:00: «16:00–00:00» se lee como cero. */
+function horaTramo(min, esFin) {
+  const n = Math.round(Number(min) || 0);
+  if (esFin && n > 0 && n % 1440 === 0) return "24:00";
+  const b = ((n % 1440) + 1440) % 1440;
+  return `${String(Math.floor(b / 60)).padStart(2, "0")}:${String(b % 60).padStart(2, "0")}`;
+}
+const tramosTexto = (ts) => (ts || []).length
+  ? ts.map((t) => `${horaTramo(t.inicio_min)}–${t.fin_abierto ? "cierre" : horaTramo(t.fin_min, true)}`).join(" · ")
+  : "Sin turno";
+
+/** «jueves 20 de agosto» a partir de un ISO, sin objetos Date que se muevan con el huso. */
+function diaLargo(iso) {
+  const M = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+  const [y, m, d] = String(iso).split("-").map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return `${DIAS_SEM[dow]} ${d} de ${M[m - 1]}`;
+}
+function cuandoCorto(iso) {
+  const f = String(iso || "").slice(0, 10), h = String(iso || "").slice(11, 16);
+  return f ? `${diaLargo(f)}${h ? ` a las ${h}` : ""}` : "";
+}
+
+let CAMBIOS_PENDIENTES = [];
+
+async function loadCambios() {
+  const bloque = document.getElementById("cambiosBloque");
+  const lista = document.getElementById("cambiosLista");
+  if (!bloque || !lista) return;
+  let data;
+  try {
+    const res = await authFetch("/api/mi-horario/cambios");
+    data = await res.json();
+    if (!data.ok) return;
+  } catch { return; }
+
+  CAMBIOS_PENDIENTES = data.pendientes || [];
+  if (!CAMBIOS_PENDIENTES.length) { bloque.classList.add("hidden"); return; }
+  bloque.classList.remove("hidden");
+
+  // Manda EL ÚLTIMO: es el que dice cómo queda su horario ahora. Los anteriores sin confirmar
+  // se enseñan detrás, sin esconderlos y sin darlos por vistos, porque nunca lo estuvieron.
+  const [ultimo, ...anteriores] = CAMBIOS_PENDIENTES;
+  const sub = document.getElementById("cambiosSub");
+  if (sub) {
+    sub.textContent = anteriores.length
+      ? `Tu horario ha cambiado ${CAMBIOS_PENDIENTES.length} veces desde la última vez que lo confirmaste. Abajo tienes el cambio más reciente y, detrás, los anteriores.`
+      : `Publicado el ${cuandoCorto(ultimo.publicadoEn)}.`;
+  }
+
+  const dia = (d) => `<li class="cmb-dia">
+      <div class="cmb-dia-cab"><b>${escapeHtml(diaLargo(d.dia))}</b>
+        <span class="cmb-tipo ${escapeHtml(d.tipo)}">${escapeHtml(CAMBIO_TITULO[d.tipo] || d.tipo)}</span></div>
+      <div class="cmb-comp">
+        <div><small>Antes</small><span>${escapeHtml(tramosTexto(d.antes))}</span></div>
+        <div><small>Ahora</small><b>${escapeHtml(tramosTexto(d.ahora))}</b></div>
+      </div>
+    </li>`;
+  const grupo = (c, viejo) => `<div class="cmb ${viejo ? "cmb-viejo" : ""}">
+      ${viejo ? `<div class="cmb-cab">Cambio anterior que no llegaste a ver · ${escapeHtml(cuandoCorto(c.publicadoEn))}</div>` : ""}
+      <ul class="cmb-dias">${c.dias.map(dia).join("")}</ul>
+    </div>`;
+
+  lista.innerHTML = grupo(ultimo, false) + anteriores.map((c) => grupo(c, true)).join("");
+  const btn = document.getElementById("cambiosOk");
+  if (btn) btn.textContent = CAMBIOS_PENDIENTES.length > 1 ? `Entendido (${CAMBIOS_PENDIENTES.length} avisos)` : "Entendido";
+}
+
+document.getElementById("cambiosOk")?.addEventListener("click", async () => {
+  const msg = document.getElementById("cambiosMsg");
+  const btn = document.getElementById("cambiosOk");
+  if (btn) btn.disabled = true;
+  if (msg) msg.textContent = "Guardando…";
+  // Cada aviso se confirma por separado, aunque el botón sea uno: así queda escrito qué vio y
+  // cuándo de CADA publicación. Si mientras tanto ha llegado otro, ese se queda pendiente.
+  let fallos = 0;
+  for (const c of CAMBIOS_PENDIENTES) {
+    try {
+      const res = await authFetch(`/api/mi-horario/cambios/${c.id}/entendido`, { method: "POST" });
+      const d = await res.json();
+      if (!d.ok) fallos++;
+    } catch { fallos++; }
+  }
+  if (btn) btn.disabled = false;
+  if (msg) msg.textContent = fallos ? "Alguno no se pudo registrar. Vuelve a intentarlo." : "";
+  loadCambios();
+  loadCuadrante();
 });

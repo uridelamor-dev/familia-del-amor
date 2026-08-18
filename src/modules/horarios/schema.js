@@ -114,6 +114,42 @@ export async function ensureSchemaHorarios(x) {
     publicado_por TEXT
   )`);
 
+  // ── Lo que se le comunicó a cada persona cuando cambió su horario ──────────
+  //
+  // Una fila = una persona × una publicación que le cambió algo. `diff` es el cambio CONGELADO
+  // tal y como se le enseñó: no se recalcula nunca contra los datos de hoy, porque dentro de
+  // un año la pregunta es «qué se le comunicó», no «qué habría cambiado».
+  //
+  // `entendido_en` es la ÚNICA columna que se actualiza en toda la tabla, y solo una vez, de
+  // NULL a una fecha. Es el mismo trato que `anulado_por` en los fichajes y por el mismo
+  // motivo: lo que prueba algo tiene que ser lo que se escribió, no lo que quedó al final.
+  //
+  // Y NO BLOQUEA NADA. El horario es oficial desde que se publica, pulse o no pulse nadie.
+  await x.run(`CREATE TABLE IF NOT EXISTS hor_cambios_comunicados (
+    id SERIAL PRIMARY KEY,
+    local TEXT NOT NULL,
+    lunes TEXT NOT NULL,
+    worker_id INTEGER NOT NULL,
+    semana_id INTEGER NOT NULL,
+    publicacion_anterior_id INTEGER,
+    publicacion_nueva_id INTEGER NOT NULL,
+    version_anterior INTEGER,
+    version_nueva INTEGER NOT NULL,
+    diff TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    publicado_en TEXT NOT NULL,
+    creado_en TEXT NOT NULL,
+    entendido_en TEXT,
+    entendido_por TEXT,
+    UNIQUE (publicacion_nueva_id, worker_id)
+  )`);
+  // Lo que pregunta el trabajador al entrar: «¿tengo algo sin ver?».
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_camb_wk
+               ON hor_cambios_comunicados (worker_id, entendido_en)`);
+  // Y lo que pregunta el encargado tras publicar: «¿quién lo ha visto?».
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_camb_pub
+               ON hor_cambios_comunicados (publicacion_nueva_id)`);
+
   // Plantillas: por día de la semana (0=lunes), no por fecha.
   await x.run(`CREATE TABLE IF NOT EXISTS hor_plantillas (
     id SERIAL PRIMARY KEY,
@@ -206,19 +242,6 @@ export async function ensureSchemaHorarios(x) {
   // La bandeja pregunta siempre por estado + fechas.
   await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_aus_estado ON hor_ausencias (estado, desde)`);
 
-  // ── Disponibilidad: quién la escribió ──────────────────────────────────────
-  // Hasta ahora la escribía siempre un responsable desde Horarios → Configuración, porque el
-  // trabajador no tenía dónde. Al abrirle la puerta hace falta poder distinguir lo que declaró
-  // él de lo que le cambió otro: no para discutir, sino para que el encargado sepa qué está
-  // mirando cuando el generador no asigna a alguien.
-  for (const col of [
-    "origen TEXT NOT NULL DEFAULT 'trabajador'",   // 'trabajador' | 'administrativo'
-    "autor TEXT",
-    "actualizado_en TEXT",
-  ]) {
-    await x.run(`ALTER TABLE hor_disponibilidad ADD COLUMN IF NOT EXISTS ${col}`);
-  }
-  await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_disp_wk ON hor_disponibilidad (worker_id)`);
 
   // Disponibilidad declarada. Alimenta avisos ahora y el generador después.
   await x.run(`CREATE TABLE IF NOT EXISTS hor_disponibilidad (
@@ -231,6 +254,24 @@ export async function ensureSchemaHorarios(x) {
     CHECK (dow BETWEEN 0 AND 6),
     CHECK (preferencia IN ('disponible','prefiere','no_disponible'))
   )`);
+
+  // ── Disponibilidad: quién la escribió ──────────────────────────────────────
+  // Hasta la fase de ausencias la escribía siempre un responsable desde Horarios →
+  // Configuración, porque el trabajador no tenía dónde. Al abrirle la puerta hace falta poder
+  // distinguir lo que declaró él de lo que le cambió otro: no para discutir, sino para que el
+  // encargado sepa qué está mirando cuando el generador no asigna a alguien.
+  //
+  // Estos ALTER van AQUÍ, detrás del CREATE. Estaban más arriba y en una base existente
+  // funcionaban de casualidad; en una nueva, la tabla todavía no existía y el esquema entero
+  // se caía en ese punto.
+  for (const col of [
+    "origen TEXT NOT NULL DEFAULT 'trabajador'",   // 'trabajador' | 'administrativo'
+    "autor TEXT",
+    "actualizado_en TEXT",
+  ]) {
+    await x.run(`ALTER TABLE hor_disponibilidad ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_disp_wk ON hor_disponibilidad (worker_id)`);
 }
 
 // Áreas y tramos por defecto para un local que empieza. Se siembran una sola vez, al

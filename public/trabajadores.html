@@ -33,6 +33,18 @@
         </div>
       </section>
 
+      <!-- Los cambios de horario van ANTES que el propio horario: si alguien le ha movido el
+           turno del jueves, eso es lo primero que tiene que saber, no lo tercero. -->
+      <section class="block hidden" id="cambiosBloque">
+        <div class="section-head">
+          <h2 id="cambiosTitulo">Tu horario ha cambiado</h2>
+          <p id="cambiosSub"></p>
+        </div>
+        <div id="cambiosLista"></div>
+        <p class="form-note" id="cambiosMsg" role="status" aria-live="polite"></p>
+        <button class="btn" type="button" id="cambiosOk">Entendido</button>
+      </section>
+
       <!-- Su cuadrante y su registro van ARRIBA del todo: es a lo que entra la gente,
            no a rellenar el perfil. Solo aparecen si tiene local asignado. -->
       <section class="block hidden" id="cuadranteBloque">

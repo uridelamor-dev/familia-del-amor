@@ -4330,12 +4330,54 @@ async function horMandarAlGrupo() {
   catch (e) { toast(e.message); }
 }
 
+/**
+ * Quién se ha enterado del cambio. Se abre desde el histórico de versiones, que es donde ya se
+ * mira qué se publicó y cuándo.
+ *
+ * NO bloquea nada: el horario es oficial desde que se publica. Esto es visibilidad, para poder
+ * llamar por teléfono a los dos que no lo han visto antes de que se presenten a la hora vieja.
+ */
+// El botón vive dentro del modal del histórico, así que se engancha en el clic global.
+document.addEventListener("click", (e) => {
+  if (e.target.closest('[data-act="hor-quien"]')) {
+    e.target.closest(".modal-ov")?.remove();
+    horComunicaciones();
+  }
+});
+
+async function horComunicaciones() {
+  let j;
+  try { j = await apiRaw(`/api/horarios/comunicaciones?local=${encodeURIComponent(HOR.local)}&lunes=${HOR.lunes}`); }
+  catch (e) { return toast(e.message); }
+  const r = j.resumen || {};
+  const fila = (c) => `<div class="row">
+      <div class="grow" style="min-width:0">
+        <div class="t1">${esc(c.nombre)}</div>
+        <div class="t2">v${esc(String(c.versionAnterior))}→v${esc(String(c.versionNueva))} · ${c.dias.map((d) => `${esc(fechaCorta(d.dia) || d.dia)} (${esc(d.tipo)})`).join(" · ")}</div>
+      </div>
+      ${c.entendidoEn
+        ? `<span class="fic-tag ok">entendido ${esc(String(c.entendidoEn).slice(11, 16))}</span>`
+        : '<span class="fic-tag aviso">pendiente</span>'}
+    </div>`;
+  modal(`Quién se ha enterado · semana del ${HOR.lunes}`, `
+    ${j.data.length ? `<p style="margin:0 0 14px;line-height:1.6">
+        <b>${num(r.afectados)}</b> ${r.afectados === 1 ? "persona afectada" : "personas afectadas"} ·
+        <b>${num(r.entendidos)}</b> lo ha${r.entendidos === 1 ? "" : "n"} confirmado ·
+        <b>${num(r.pendientes)}</b> pendiente${r.pendientes === 1 ? "" : "s"}.</p>
+      <div class="rows">${j.data.map(fila).join("")}</div>
+      <p class="mut" style="margin:14px 0 0;line-height:1.55">El horario es oficial desde que se publica: que alguien no lo haya confirmado no cambia su turno.</p>`
+    : `<p class="mut" style="margin:0;line-height:1.6">Nadie ha recibido ningún aviso de esta semana. Pasa cuando solo hay una publicación —la primera no es un cambio— o cuando la versión nueva no le movió el turno a nadie.</p>`}
+    <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button></div>`);
+}
+
 async function horHistorico() {
   let j; try { j = await apiRaw(`/api/horarios/historico?local=${encodeURIComponent(HOR.local)}&lunes=${HOR.lunes}`); } catch { toast("No se pudo cargar"); return; }
   const pill = (e) => e === "publicado" ? '<span class="pill ok">Publicado</span>' : e === "borrador" ? '<span class="pill warn">Borrador</span>' : e === "cerrado" ? '<span class="pill">Cerrado</span>' : '<span class="pill">Sustituido</span>';
   modal("Versiones de esta semana", `<div class="card p0"><div class="rows">${(j.data || []).map((v) => `<div class="row"><div class="grow"><div class="t1">Versión ${v.version} ${v.origen ? `<span class="mut" style="font-weight:400">· ${esc(v.origen)}</span>` : ""}</div><div class="t2">${v.publicado_en ? `Publicada ${esc(String(v.publicado_en).slice(0, 16).replace("T", " "))} por ${esc(v.publicado_por || "—")}` : `Creada ${esc(String(v.creado_en).slice(0, 10))}`}${v.sustituido_en ? ` · sustituida ${esc(String(v.sustituido_en).slice(0, 16).replace("T", " "))}` : ""}</div></div>${pill(v.estado)}</div>`).join("")}</div></div>
     <div class="mut" style="font-size:12px;margin-top:10px">De cada versión publicada se guarda una copia congelada. Dentro de dos años se podrá saber exactamente qué horario estaba puesto un día concreto.</div>
-    <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn primary" data-close>Cerrar</button></div>`);
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+      <button class="btn" data-act="hor-quien">Quién se ha enterado</button>
+      <button class="btn primary" data-close>Cerrar</button></div>`);
 }
 
 // ── Acciones ──
