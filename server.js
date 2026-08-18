@@ -30,13 +30,17 @@ import { extraerScripts, extraerRutasApi, clasificarRutas, extraerClrTypes, clas
 import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
 import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos, moduloDeRuta } from "./src/modules/usuarios/permisos.js";
 import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocalesExtra, parseLocales } from "./src/modules/usuarios/locales.js";
+// `activoEnFecha` y `pertenecioAlPeriodo` no se importan: en el servidor esas dos preguntas se
+// hacen en SQL (SQL_ACTIVO_EL_DIA y SQL_ESTUVO_ENTRE) porque hay que filtrar en la consulta,
+// no después. El módulo puro es la referencia y quien las prueba.
+import { activoAhora, bajaEfectiva, turnosTrasLaBaja, marcadoActivo } from "./src/modules/rrhh/vigencia.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo, generarToken } from "./src/modules/rrhh/pulso.js";
 import { ensureSchemaHorarios, sembrarLocal, migrarDescansos } from "./src/modules/horarios/schema.js";
 import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descansos.js";
 import { instanteANegocio, lunesDe, diasSemana, isoConOffset, aMinutos, deMinutos, epochDeLocal, sumaDias, instanteMadrid } from "./src/modules/horarios/tiempo.js";
-import { detectarConflictos, resumirConflictos } from "./src/modules/horarios/conflictos.js";
+import { detectarConflictos, resumirConflictos, contratosSolapados } from "./src/modules/horarios/conflictos.js";
 import { validarPublicacion, construirSnapshot } from "./src/modules/horarios/versiones.js";
 import { serializarCanonico } from "./src/core/canonico.js";
 import { construirCuadrante } from "./src/modules/horarios/cuadrante.js";
@@ -152,24 +156,25 @@ console.log(`[auth] JWT secret: ${jwtStatus} (fuente: ${jwtSource})`);
 // Copia REVERSIBLE de la contraseña, cifrada AES-256-GCM, para que Dirección pueda "verla"
 // desde el panel (petición explícita). El login sigue usando el hash bcrypt (irreversible);
 // esta copia es solo para mostrarla. Nota de seguridad: es recuperable si se filtra la BD.
-const USER_PASS_KEY = crypto.scryptSync(String(JWT_SECRET || "tapeta"), "user-pass-v1", 32);
-function encUserPass(plain) {
-  if (!plain) return null;
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv("aes-256-gcm", USER_PASS_KEY, iv);
-  const enc = Buffer.concat([c.update(String(plain), "utf8"), c.final()]);
-  const tag = c.getAuthTag();
-  return `${iv.toString("hex")}:${tag.toString("hex")}:${enc.toString("hex")}`;
-}
-function decUserPass(stored) {
-  if (!stored || typeof stored !== "string" || !stored.includes(":")) return null;
-  try {
-    const [ivh, tagh, dh] = stored.split(":");
-    const d = crypto.createDecipheriv("aes-256-gcm", USER_PASS_KEY, Buffer.from(ivh, "hex"));
-    d.setAuthTag(Buffer.from(tagh, "hex"));
-    return Buffer.concat([d.update(Buffer.from(dh, "hex")), d.final()]).toString("utf8");
-  } catch { return null; }
-}
+// RETIRADO. Una contraseña se puede RESTABLECER; no se debe poder CONSULTAR.
+//
+// Aquí había una copia reversible (AES-256-GCM con una clave derivada de JWT_SECRET) para que
+// dirección pudiera «ver» la contraseña desde el panel. El problema no es el cifrado: es que
+// con la base de datos y el JWT_SECRET —que viajan juntos en cualquier copia de seguridad— se
+// recuperan en claro las contraseñas de TODA la plantilla. Y son las mismas que la gente usa
+// en otros sitios.
+//
+// La columna `password_enc` NO se borra en esta fase (una migración destructiva de esquema no
+// hace falta para cerrar el riesgo) pero se vacía y ya no se escribe nunca. El flujo pasa a
+// ser: generar una temporal, enseñarla UNA vez y obligar a cambiarla al entrar.
+const passwordTemporal = () => {
+  // Legible por teléfono: sin caracteres que se confundan (0/O, 1/l/I).
+  const abc = "abcdefghijkmnpqrstuvwxyz", num = "23456789";
+  const pick = (s) => s[crypto.randomInt(0, s.length)];
+  return Array.from({ length: 4 }, () => pick(abc)).join("") + "-" +
+         Array.from({ length: 4 }, () => pick(abc)).join("") + "-" +
+         Array.from({ length: 2 }, () => pick(num)).join("");
+};
 
 // Va ANTES que todo lo que responde: comprime el HTML, el JS y el JSON de la API.
 // `public/panel/app.js` son 474 KB que salían sin comprimir en cada primera visita.
@@ -225,6 +230,14 @@ const uploadFacturaMem = multer({ storage: multer.memoryStorage(), limits: { fil
 // Subida de CV endurecida (Iteración 1A): se guarda primero en un directorio PRIVADO fuera de
 // public/, con límite de tamaño y allowlist de extensión+MIME; solo se publica tras validar los
 // magic bytes reales (ver el handler de /api/hr/applications con finalizeCvUpload).
+// Documentos de RR.HH. Van FUERA de `public/` a propósito: ahí dentro cualquiera con el
+// enlace abre el fichero sin sesión, y en `hr_documentos` hay DNIs, contratos y bajas.
+//
+// No se cierra `public/uploads` entero porque lo comparten los CV de las candidaturas, las
+// imágenes de la web y las fotos: cerrarlo de golpe rompería tres cosas ajenas a RR.HH.
+const rrhhDocsDir = path.join(__dirname, "private_uploads", "rrhh");
+if (!fs.existsSync(rrhhDocsDir)) fs.mkdirSync(rrhhDocsDir, { recursive: true });
+
 const uploadsTmpDir = path.join(__dirname, "tmp_uploads");
 if (!fs.existsSync(uploadsTmpDir)) fs.mkdirSync(uploadsTmpDir, { recursive: true });
 const cvStorage = multer.diskStorage({
@@ -781,6 +794,44 @@ async function initDB() {
         )`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_hrdocs_worker ON hr_documentos(worker_id)`);
     } catch (e) { console.error("[DB] hr_documentos:", e.message); }
+    // Se vacían las copias reversibles de contraseña que quedaran. NO se borra la columna —una
+    // migración de esquema aquí no aporta nada y sí puede fallar en el despliegue—, pero sí su
+    // contenido: mientras exista, quien tenga una copia de la base y el JWT_SECRET recupera en
+    // claro las contraseñas de toda la plantilla. Nadie pierde el acceso: el hash sigue intacto.
+    try {
+      const r = await client.query(`UPDATE users SET password_enc = NULL WHERE password_enc IS NOT NULL`);
+      if (r.rowCount) console.log(`[DB] copias reversibles de contraseña eliminadas: ${r.rowCount}`);
+    } catch (e) { console.error("[DB] limpiar password_enc:", e.message); }
+
+    // Los documentos de RR.HH. que se subieron cuando vivían en `public/uploads` siguen
+    // accesibles por su URL sin sesión. Se trasladan al directorio privado.
+    //
+    // NO ES DESTRUCTIVO Y ES IDEMPOTENTE: se COPIA primero, solo si la copia sale bien se
+    // apunta la url nueva, y solo si la url quedó apuntada se borra la pública. Si algo falla
+    // a mitad, lo peor que queda es el fichero por duplicado y la url vieja, que sigue
+    // funcionando. En ningún orden de fallo se pierde un documento.
+    try {
+      const viejos = await client.query(
+        `SELECT id, url FROM hr_documentos WHERE url LIKE '/uploads/%'`);
+      let movidos = 0, fallidos = 0;
+      for (const d of viejos.rows) {
+        const fichero = path.basename(String(d.url));
+        const origen = path.join(uploadsDir, fichero), destino = path.join(rrhhDocsDir, fichero);
+        try {
+          if (!fs.existsSync(origen)) {
+            // El fichero ya no está en disco (un redespliegue se lo llevó). La fila se queda
+            // como está: perder el rastro de que existió sería peor que un enlace roto.
+            fallidos++; continue;
+          }
+          if (!fs.existsSync(destino)) fs.copyFileSync(origen, destino);
+          await client.query(`UPDATE hr_documentos SET url = $1 WHERE id = $2`, [`rrhh:${fichero}`, d.id]);
+          try { fs.unlinkSync(origen); } catch { /* el duplicado no molesta; la fila ya apunta al privado */ }
+          movidos++;
+        } catch (e) { fallidos++; console.error(`[DB] documento ${d.id} no se pudo proteger:`, e.message); }
+      }
+      if (movidos || fallidos) console.log(`[DB] documentos de RR.HH. protegidos: ${movidos} movidos, ${fallidos} sin mover`);
+    } catch (e) { console.error("[DB] migrar documentos rrhh:", e.message); }
+
     // Backfill cosmético e idempotente: fecha de alta = alta del usuario para el equipo existente.
     try { await client.query(`UPDATE users SET fecha_alta = creado_en WHERE fecha_alta IS NULL AND rol IN ('trabajador','encargado')`); } catch (e) { console.error("[DB] backfill fecha_alta:", e.message); }
 
@@ -3246,6 +3297,18 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ ok: false, error: "Credenciales incorrectas" });
     }
 
+    // Baja o cuenta desactivada: la contraseña era buena, pero ya no trabaja aquí. Se
+    // comprueba DESPUÉS de bcrypt a propósito —antes convertiría el login en un buscador de
+    // quién sigue en plantilla— y con la fecha de HOY, para que una baja futura no eche a
+    // nadie antes de tiempo: quien causa baja el 31 entra el 25 y también el 31.
+    // No se usa `activoAhora` aquí: esa incluye la fecha de ALTA, y a quien empieza el mes
+    // que viene hay que poder darle su usuario para que lo pruebe antes del primer día.
+    if (!marcadoActivo(user) || bajaEfectiva(user, hoyISO())) {
+      await ficAuditar("acceso", user.id, "login_bloqueado_baja", user.username,
+        { local: user.local, workerId: user.id, detalle: { fecha_baja: user.fecha_baja || null, activo: user.activo } }).catch(() => {});
+      return res.status(403).json({ ok: false, error: "Esta cuenta ya no está activa. Habla con tu responsable." });
+    }
+
     const ok = trasLoginCorrecto();
     await dbRun("UPDATE users SET login_intentos = ?, login_bloqueado_hasta = ? WHERE id = ?",
       [ok.login_intentos, ok.login_bloqueado_hasta, user.id]).catch(() => {});
@@ -3280,9 +3343,12 @@ app.put("/api/mi-password", requireAuth(), async (req, res) => {
     const v = validarPassword(nueva, { username: u.username });
     if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
 
+    // `password_enc = NULL` y no una copia nueva. Era el caso más feo de todos: la contraseña
+    // que alguien elige en privado, para él solo, quedaba guardada en una forma que dirección
+    // podía leer desde el panel.
     await dbRun(
-      "UPDATE users SET password_hash = ?, password_enc = ?, pass_temporal = FALSE, pass_cambiada_en = ? WHERE id = ?",
-      [await bcrypt.hash(nueva, 10), encUserPass(nueva), isoConOffset(Date.now()), u.id]);
+      "UPDATE users SET password_hash = ?, password_enc = NULL, pass_temporal = FALSE, pass_cambiada_en = ? WHERE id = ?",
+      [await bcrypt.hash(nueva, 10), isoConOffset(Date.now()), u.id]);
 
     // Token nuevo sin la marca: si no, seguiría bloqueado hasta volver a entrar.
     const fresco = await dbGet("SELECT * FROM users WHERE id = ?", [u.id]);
@@ -3319,7 +3385,7 @@ app.get("/api/users/catalogo-modulos", requireAuth(["direccion"]), (req, res) =>
 
 app.get("/api/users", requireAuth(["direccion"]), async (req, res) => {
   try {
-    const rows = await dbAll("SELECT id, username, rol, nombre, local, modulos, locales_extra, password_enc, creado_en FROM users ORDER BY rol");
+    const rows = await dbAll("SELECT id, username, rol, nombre, local, modulos, locales_extra, creado_en FROM users ORDER BY rol");
     const data = (rows || []).map((u) => ({
       id: u.id, username: u.username, rol: u.rol, nombre: u.nombre, local: u.local, creado_en: u.creado_en,
       // TODOS sus locales, no solo el principal. El panel filtra la lista por el
@@ -3329,7 +3395,7 @@ app.get("/api/users", requireAuth(["direccion"]), async (req, res) => {
       locales_extra: u.locales_extra || null,
       modulos: modulosEfectivos(u.rol, u.modulos),      // módulos que realmente puede ver
       restringido: !!(u.modulos && String(u.modulos).trim()), // tiene allowlist propia
-      pass_visible: !!u.password_enc,                    // ¿hay copia recuperable para "ver"?
+      // `pass_visible` ya no existe: no hay copia recuperable de ninguna contraseña.
     }));
     res.json({ ok: true, data });
   } catch (e) {
@@ -3352,9 +3418,9 @@ app.post("/api/users", requireAuth(["direccion"]), async (req, res) => {
     // vía por la que se crean casi todos los usuarios— y por eso el cambio obligatorio no
     // saltaba nunca. Hay un test que ahora recorre todos los INSERT de usuarios.
     const row = await dbRun(
-      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, modulos, locales_extra, pass_temporal, creado_en)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?) RETURNING id`,
-      [username, hash, encUserPass(password), rol, nombre || "", local || "", mods ? JSON.stringify(mods) : null,
+      `INSERT INTO users (username, password_hash, rol, nombre, local, modulos, locales_extra, pass_temporal, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, ?) RETURNING id`,
+      [username, hash, rol, nombre || "", local || "", mods ? JSON.stringify(mods) : null,
        (() => { const x = sanearLocalesExtra(local, req.body.locales_extra, INV_LOCALES); return x ? JSON.stringify(x) : null; })(), creado_en]
     );
     invalidarInternos();
@@ -3388,30 +3454,87 @@ app.put("/api/users/:id/password", requireAuth(["direccion"]), async (req, res) 
   if (!password) return res.status(400).json({ ok: false, error: "Contraseña requerida" });
   try {
     const hash = await bcrypt.hash(password, 10);
-    await dbRun("UPDATE users SET password_hash = ?, password_enc = ? WHERE id = ?", [hash, encUserPass(password), req.params.id]);
-    res.json({ ok: true });
+    await dbRun("UPDATE users SET password_hash = ?, password_enc = NULL, pass_temporal = TRUE WHERE id = ?", [hash, req.params.id]);
+    // `pass_temporal`: la contraseña la ha elegido otra persona y se la va a decir de viva voz,
+    // así que la sabe más de uno. Hasta que su dueño la cambie, la cuenta no hace nada más.
+    res.json({ ok: true, mensaje: "Contraseña puesta. Al entrar le pedirá cambiarla." });
   } catch (err) {
     res.status(500).json({ ok: false, error: "Error actualizando contraseña" });
   }
 });
 
-// Ver la contraseña en claro (solo dirección). Descifra la copia AES-GCM. Las cuentas creadas
-// antes de esta función no tienen copia → { disponible:false } y hay que restablecerla.
-app.get("/api/users/:id/password", requireAuth(["direccion"]), async (req, res) => {
-  try {
-    const row = await dbGet("SELECT password_enc FROM users WHERE id = ?", [req.params.id]);
-    if (!row) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
-    const plain = decUserPass(row.password_enc);
-    if (!plain) return res.json({ ok: true, disponible: false });
-    res.json({ ok: true, disponible: true, password: plain });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: "Error leyendo la contraseña" });
-  }
+// Ya no se puede consultar una contraseña. La ruta se queda para que una pestaña vieja del
+// panel reciba una explicación en vez de un 404 sin sentido.
+app.get("/api/users/:id/password", requireAuth(["direccion"]), (req, res) => {
+  res.status(410).json({ ok: false, error: "Las contraseñas ya no se pueden consultar. Restablécela y se genera una nueva." });
 });
+
+// Restablecer: genera una temporal, la enseña UNA vez y obliga a cambiarla al entrar.
+app.post("/api/users/:id/reset-password", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const u = await dbGet("SELECT id, username, nombre, local FROM users WHERE id = ?", [Number(req.params.id) || 0]);
+    if (!u) return res.status(404).json({ ok: false, error: "Usuario no encontrado" });
+    const nueva = passwordTemporal();
+    await dbRun("UPDATE users SET password_hash = ?, password_enc = NULL, pass_temporal = TRUE, login_intentos = 0, login_bloqueado_hasta = NULL WHERE id = ?",
+      [await bcrypt.hash(nueva, 10), u.id]);
+    await ficAuditar("usuario", u.id, "reset_password", req.user.username, { local: u.local, workerId: u.id }).catch(() => {});
+    res.json({ ok: true, password: nueva, mensaje: `${u.nombre || u.username} entra con esta contraseña. Al entrar le pedirá cambiarla.` });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo restablecer" }); }
+});
+
+/**
+ * Lo que una persona deja detrás. Se consulta ANTES de borrarla.
+ *
+ * Ninguna de estas tablas tiene clave ajena contra `users`, y es a propósito: un
+ * `ON DELETE CASCADE` sobre `fic_eventos` borraría el registro de jornada que la ley obliga a
+ * conservar cuatro años. Pero sin cascada y sin esta comprobación, borrar dejaba huérfano todo
+ * eso: el CSV de la Inspección salía con la columna «Trabajador» vacía y nadie podía saber de
+ * quién eran esas horas.
+ *
+ * El orden importa: primero lo que no se puede perder por ley.
+ */
+const HISTORICO_LABORAL = [
+  { tabla: "fic_eventos", que: "fichajes" },
+  { tabla: "fic_bolsa_movimientos", que: "movimientos de la bolsa de horas" },
+  { tabla: "fic_jornadas", que: "jornadas calculadas" },
+  { tabla: "fic_correcciones", que: "correcciones de fichaje" },
+  { tabla: "hor_asignaciones", que: "turnos en cuadrantes" },
+  { tabla: "hor_contratos", que: "contratos" },
+  { tabla: "hor_ausencias", que: "ausencias" },
+  { tabla: "hr_documentos", que: "documentos" },
+  { tabla: "hr_worker_notes", que: "notas" },
+  { tabla: "hr_llamadas_mes", que: "check-ins" },
+];
+async function historicoLaboralDe(workerId) {
+  const encontrado = [];
+  for (const { tabla, que } of HISTORICO_LABORAL) {
+    const r = await dbGet(`SELECT COUNT(*)::int AS n FROM ${tabla} WHERE worker_id = ?`, [workerId]).catch(() => null);
+    if (r && Number(r.n) > 0) encontrado.push({ tabla, que, n: Number(r.n) });
+  }
+  return encontrado;
+}
 
 app.delete("/api/users/:id", requireAuth(["direccion"]), async (req, res) => {
   try {
-    await dbRun("DELETE FROM users WHERE id = ?", [req.params.id]);
+    const id = Number(req.params.id) || 0;
+    const u = await dbGet("SELECT id, nombre, username, rol, local, fecha_baja FROM users WHERE id = ?", [id]);
+    if (!u) return res.json({ ok: true });
+
+    const historico = await historicoLaboralDe(id);
+    if (historico.length) {
+      const detalle = historico.map((h) => `${h.n} ${h.que}`).join(", ");
+      return res.status(409).json({
+        ok: false, historico,
+        error: `${u.nombre || u.username} tiene histórico laboral (${detalle}) y no puede eliminarse. ` +
+               `Dale de baja: se conserva todo y deja de entrar y de aparecer en los cuadrantes.`,
+      });
+    }
+    // Sin nada detrás, se borra como siempre: son las cuentas administrativas creadas por
+    // error, que es el caso para el que estaba pensado este botón.
+    await dbRun("DELETE FROM users WHERE id = ?", [id]);
+    await ficAuditar("usuario", id, "borrar", req.user.username,
+      { local: u.local, workerId: id, detalle: { username: u.username, rol: u.rol } }).catch(() => {});
+    invalidarInternos();
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: "Error eliminando usuario" });
@@ -6943,9 +7066,9 @@ app.post("/api/hr/applications/:id/contratar", requireAuth(["rrhh", "direccion"]
     const now = new Date().toISOString();
     const u = await dbRun(
       // pass_temporal: igual que en el resto de altas, la primera contraseña es prestada.
-      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, telefono, email, puesto, fecha_alta, activo, pass_temporal, creado_en)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, TRUE, ?) RETURNING id`,
-      [username, hash, encUserPass(password), rol, cand.nombre || "", local, cand.telefono || null, cand.email || null, cand.puesto || null, now.slice(0, 10), now]);
+      `INSERT INTO users (username, password_hash, rol, nombre, local, telefono, email, puesto, fecha_alta, activo, pass_temporal, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, TRUE, ?) RETURNING id`,
+      [username, hash, rol, cand.nombre || "", local, cand.telefono || null, cand.email || null, cand.puesto || null, now.slice(0, 10), now]);
     if (cand.cv_url) {
       await dbRun(`INSERT INTO hr_documentos (worker_id, tipo, nombre, url, sensible, autor, creado_en) VALUES (?, 'otro', ?, ?, 0, ?, ?)`,
         [u.id, "CV de la candidatura", cand.cv_url, req.user?.nombre || req.user?.username || null, now]);
@@ -6961,6 +7084,18 @@ app.post("/api/hr/applications/:id/contratar", requireAuth(["rrhh", "direccion"]
 // ── RRHH: Seguimiento de trabajadores ─────────────────────────────────────
 // Acceso: dirección y rol `rrhh` ven TODOS los locales; `encargado` solo el suyo (validado aquí,
 // no en el front). RRHH_ROLES abre los endpoints de seguimiento también al encargado.
+// Espejo en SQL de src/modules/rrhh/vigencia.js. Existen porque el filtro estaba escrito a
+// mano en nueve consultas con TRES criterios distintos, y ninguna de las tres decía lo mismo.
+// Los `?` van en el orden en que aparecen en el texto.
+const SQL_PLANTILLA = "rol IN ('trabajador','encargado')";
+// activoAhora(persona, dia): trabaja ESE día. `activo = 0` corta siempre.  ? = dia, dia
+const SQL_ACTIVO_EL_DIA = `${SQL_PLANTILLA} AND COALESCE(activo,1) = 1
+  AND (fecha_alta IS NULL OR fecha_alta <= ?) AND (fecha_baja IS NULL OR fecha_baja >= ?)`;
+// pertenecioAlPeriodo(persona, desde, hasta): estuvo en algún momento. SIN filtro de `activo`:
+// quien se fue tiene que seguir saliendo en su propio histórico.  ? = hasta, desde
+const SQL_ESTUVO_ENTRE = `${SQL_PLANTILLA}
+  AND (fecha_alta IS NULL OR fecha_alta <= ?) AND (fecha_baja IS NULL OR fecha_baja >= ?)`;
+
 const RRHH_ROLES = ["rrhh", "direccion", "encargado"];
 function rrhhTodoLocal(req) { return req.user && (req.user.rol === "direccion" || req.user.rol === "rrhh"); }
 function rrhhLocalScope(req) { return rrhhTodoLocal(req) ? null : localScope(req); } // null = sin restricción
@@ -7000,9 +7135,9 @@ app.post("/api/rrhh/trabajador", requireAuth(RRHH_ROLES), async (req, res) => {
     const hash = await bcrypt.hash(inicial, 10);
     const now = new Date().toISOString();
     const row = await dbRun(
-      `INSERT INTO users (username, password_hash, password_enc, rol, nombre, local, fecha_alta, activo, pass_temporal, creado_en)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, TRUE, ?) RETURNING id`,
-      [username, hash, encUserPass(inicial), rol, nombre, local, now.slice(0, 10), now]);
+      `INSERT INTO users (username, password_hash, rol, nombre, local, fecha_alta, activo, pass_temporal, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, 1, TRUE, ?) RETURNING id`,
+      [username, hash, rol, nombre, local, now.slice(0, 10), now]);
     invalidarInternos();
     res.json({
       ok: true, id: row.id, username, passwordInicial: inicial,
@@ -7020,8 +7155,10 @@ app.post("/api/rrhh/trabajador/:id/reset-password", requireAuth(RRHH_ROLES), asy
     const w = await dbGet("SELECT id, username, nombre, local FROM users WHERE id = ?", [Number(req.params.id)]);
     if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "No encontrado" });
     const inicial = passwordInicial(w.username);
-    await dbRun("UPDATE users SET password_hash = ?, password_enc = ?, pass_temporal = TRUE, login_intentos = 0, login_bloqueado_hasta = NULL WHERE id = ?",
-      [await bcrypt.hash(inicial, 10), encUserPass(inicial), w.id]);
+    // `password_enc = NULL`: si quedaba una copia reversible de la contraseña vieja, se va con
+    // ella. Dejarla ahí sería cerrar la puerta y olvidarse la llave puesta.
+    await dbRun("UPDATE users SET password_hash = ?, password_enc = NULL, pass_temporal = TRUE, login_intentos = 0, login_bloqueado_hasta = NULL WHERE id = ?",
+      [await bcrypt.hash(inicial, 10), w.id]);
     await ficAuditar("usuario", w.id, "reset_password", req.user.username, { local: w.local, workerId: w.id });
     res.json({ ok: true, mensaje: `${w.nombre} vuelve a entrar con «${inicial}» y tendrá que cambiarla.` });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo restablecer" }); }
@@ -7118,9 +7255,8 @@ app.get("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) =>
       // Ojo: aquí NO se filtra por fecha_baja para poder pintar la parte de la semana que sí
       // trabajó; lo decide `descansosPorDia` día a día.
       dbAll(`SELECT id, nombre, username, puesto, fecha_alta, fecha_baja FROM users
-             WHERE local = ? AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1
-               AND (fecha_baja IS NULL OR fecha_baja >= ?)
-             ORDER BY nombre`, [local, lunes]),
+             WHERE local = ? AND COALESCE(activo,1) = 1 AND ${SQL_ESTUVO_ENTRE}
+             ORDER BY nombre`, [local, sumaDias(lunes, 6), lunes]),
     ]);
     // Se trabaja siempre sobre el borrador; si no hay, se ve la publicada en solo lectura.
     const semana = await dbGet(
@@ -7133,8 +7269,10 @@ app.get("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) =>
         ? dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ? ORDER BY dia, inicio_min, orden`, [semana.id])
         : Promise.resolve([]),
       // Vacaciones y bajas que pisan esta semana: es lo que distingue «libra» de «está de baja».
-      dbAll(`SELECT worker_id, tipo, desde, hasta, estado FROM hor_ausencias
-             WHERE desde <= ? AND hasta >= ?`, [dias[6], dias[0]]).catch(() => []),
+      // Solo las de la gente de ESTE local. Sin el JOIN entraban las de todo el grupo, y de
+      // ahí pasaban al snapshot publicado: las bajas médicas de Lloret acababan guardadas
+      // dentro del horario de Blanes.
+      dbAll(`${AUS_DEL_LOCAL}`, [local, dias[6], dias[0]]).catch(() => []),
     ]);
     // La fila de fiesta se manda ya calculada: la pantalla no la deduce por su cuenta, para
     // que no pueda decir una cosa distinta de la que dice el PDF.
@@ -7188,6 +7326,8 @@ app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, re
     const chk = await horSemanaEditable(req, semana_id);
     if (chk.error) return res.status(chk.error).json({ ok: false, error: chk.mensaje });
     if (!worker_id || !dia) return res.status(400).json({ ok: false, error: "Faltan la persona y el día" });
+    const quien = await horTrabajadorDelLocal(worker_id, chk.semana.local);
+    if (quien.error) return res.status(quien.error).json({ ok: false, error: quien.mensaje });
     const ini = Number(inicio_min), fin = Number(fin_min);
     if (!Number.isInteger(ini) || !Number.isInteger(fin) || fin < ini || fin > 2160) {
       return res.status(400).json({ ok: false, error: "El horario no es válido" });
@@ -7210,6 +7350,30 @@ app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, re
     res.status(500).json({ ok: false, error: "No se pudo guardar el turno" });
   }
 });
+
+/**
+ * ¿Se le puede poner un turno a esta persona en ESTE local?
+ *
+ * Se comprobaba el local de la SEMANA pero no el del trabajador, así que una petición a mano
+ * podía colgar el `worker_id` de Lloret en el cuadrante de Blanes: se publicaba, entraba en el
+ * snapshot y luego aparecía como incidencia fantasma en la revisión del local equivocado.
+ *
+ * La referencia es `users.local`, NO `locales_extra`. Hoy nadie trabaja en dos sitios en la
+ * misma semana, y `locales_extra` es un permiso de acceso al panel: tomarlo por autorización
+ * laboral metería por la puerta de atrás el multi-local que hemos decidido no construir.
+ */
+async function horTrabajadorDelLocal(workerId, local) {
+  const w = await dbGet(`SELECT id, nombre, local, rol, activo, fecha_alta, fecha_baja FROM users WHERE id = ?`,
+    [Number(workerId) || 0]);
+  if (!w) return { error: 404, mensaje: "Esa persona no existe" };
+  if (!["trabajador", "encargado"].includes(w.rol)) {
+    return { error: 400, mensaje: `${w.nombre || "Esa cuenta"} no es personal de sala o cocina: no se le puede poner turno.` };
+  }
+  if (String(w.local || "") !== String(local)) {
+    return { error: 403, mensaje: `${w.nombre || "Esa persona"} no es de ${local}. Solo se puede planificar a la gente de este establecimiento.` };
+  }
+  return { worker: w };
+}
 
 // La fila de fiesta no admite turnos: no es un bloque horario, es el resultado de restar.
 // Se comprueba en el servidor y no solo en la pantalla porque el arrastrar-y-soltar y el
@@ -7236,6 +7400,11 @@ app.patch("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (re
       vals.push(k === "fin_abierto" ? !!req.body[k] : (req.body[k] === "" ? null : req.body[k]));
     }
     if (!sets.length) return res.json({ ok: true, asignacion: a });
+    // Reasignar el turno a otra persona pasa por la misma puerta que crearlo.
+    if (req.body.worker_id !== undefined) {
+      const quien = await horTrabajadorDelLocal(req.body.worker_id, chk.semana.local);
+      if (quien.error) return res.status(quien.error).json({ ok: false, error: quien.mensaje });
+    }
     const dia = req.body.dia ?? a.dia;
     if (!diasSemana(chk.semana.lunes).includes(String(dia))) {
       return res.status(400).json({ ok: false, error: "Ese día no es de esta semana" });
@@ -7265,10 +7434,35 @@ app.delete("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (r
 });
 
 // Contexto para detectar conflictos: ausencias, contratos y necesidades del local.
+/**
+ * Turnos YA PUBLICADOS del día anterior al lunes y del siguiente al domingo.
+ *
+ * Solo se usan para medir el descanso entre jornadas. Se piden del horario PUBLICADO y no del
+ * borrador de la semana de al lado: un borrador es una idea a medias, y avisar de un descanso
+ * corto contra un turno que todavía puede cambiar sería ruido.
+ */
+async function horVecinas(local, dias) {
+  return dbAll(
+    `SELECT a.id, a.worker_id, a.dia, a.inicio_min, a.fin_min, a.tipo
+       FROM hor_asignaciones a JOIN hor_semanas s ON s.id = a.semana_id
+      WHERE a.local = ? AND s.estado = 'publicado' AND a.dia IN (?, ?)`,
+    [local, sumaDias(dias[0], -1), sumaDias(dias[6], 1)]).catch(() => []);
+}
+
+const AUS_DEL_LOCAL = `SELECT a.worker_id, a.tipo, a.desde, a.hasta, a.estado FROM hor_ausencias a
+             JOIN users u ON u.id = a.worker_id
+            WHERE u.local = ? AND a.desde <= ? AND a.hasta >= ?`;
+
 async function horContexto(local, lunes, dias) {
+  // Ausencias y contratos se traían SIN filtro de local: todo el grupo entraba en el motor
+  // de conflictos de cada establecimiento. No llegaba a la pantalla porque los conflictos se
+  // calculan sobre los turnos de la semana, pero sí llegaba al snapshot que se guarda para
+  // siempre. Se filtran con un JOIN sobre `users`, que es quien sabe de qué local es cada uno.
   const [ausencias, contratos, necesidades] = await Promise.all([
-    dbAll(`SELECT * FROM hor_ausencias WHERE estado = 'aprobada' AND hasta >= ? AND desde <= ?`, [dias[0], dias[6]]),
-    dbAll(`SELECT * FROM hor_contratos WHERE desde <= ? AND (hasta IS NULL OR hasta >= ?)`, [dias[6], dias[0]]),
+    dbAll(`SELECT a.* FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
+            WHERE u.local = ? AND a.estado = 'aprobada' AND a.hasta >= ? AND a.desde <= ?`, [local, dias[0], dias[6]]),
+    dbAll(`SELECT c.* FROM hor_contratos c JOIN users u ON u.id = c.worker_id
+            WHERE u.local = ? AND c.desde <= ? AND (c.hasta IS NULL OR c.hasta >= ?)`, [local, dias[6], dias[0]]),
     dbAll(`SELECT * FROM hor_necesidades WHERE local = ?`, [local]),
   ]);
   return { ausencias, contratos, necesidades };
@@ -7288,7 +7482,8 @@ app.get("/api/horarios/semana/:id/conflictos", requireAuth(HORARIOS_ROLES), asyn
       dbAll(`SELECT id, nombre FROM hor_tramos WHERE local = ?`, [s.local]),
       horContexto(s.local, s.lunes, dias),
     ]);
-    const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos, ...ctx });
+    const vecinas = await horVecinas(s.local, dias);
+    const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos, vecinas, ...ctx });
     res.json({ ok: true, ...resumirConflictos(conflictos), conflictos });
   } catch (e) {
     console.error("[horarios] conflictos:", e.message);
@@ -7326,11 +7521,14 @@ app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (
 
     // Al copiar se COMPRUEBA quién sigue: dar de baja a alguien y que reaparezca en el
     // cuadrante de la semana que viene sería un fallo grave y silencioso.
+    // Se traen TODOS con sus fechas y se decide DÍA A DÍA, no de golpe. `fecha_baja IS NULL`
+    // dejaba fuera a quien causa baja el jueves: los lunes, martes y miércoles sí trabaja y
+    // sus turnos tenían que copiarse. Y al revés: no basta con que esté «activo», porque
+    // entonces se le copiarían también los días de después de irse.
     const equipo = await dbAll(
-      `SELECT id, nombre FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
-       AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL`, [destino.local]
-    );
-    const vivos = new Set(equipo.map((w) => String(w.id)));
+      `SELECT id, nombre, fecha_alta, fecha_baja, activo FROM users WHERE local = ? AND ${SQL_PLANTILLA}`,
+      [destino.local]);
+    const porWorker = new Map(equipo.map((w) => [String(w.id), w]));
     const { ausencias } = await horContexto(destino.local, destino.lunes, diasDestino);
     const ausente = (wid, dia) => (ausencias || []).some((a) =>
       String(a.worker_id) === String(wid) && String(a.desde) <= dia && dia <= String(a.hasta));
@@ -7339,7 +7537,13 @@ app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (
     let copiadas = 0;
     if (req.body?.reemplazar) await dbRun(`DELETE FROM hor_asignaciones WHERE semana_id = ?`, [destino.id]);
     for (const l of lineas) {
-      if (!vivos.has(String(l.worker_id))) { omitidos.push({ worker_id: l.worker_id, dia: l.dia, motivo: "ya no está en el equipo" }); continue; }
+      const w = porWorker.get(String(l.worker_id));
+      if (!w) { omitidos.push({ worker_id: l.worker_id, dia: l.dia, motivo: "ya no está en el equipo" }); continue; }
+      if (!activoAhora(w, l.dia)) {
+        omitidos.push({ worker_id: l.worker_id, nombre: w.nombre, dia: l.dia,
+          motivo: w.fecha_baja ? `causó baja el ${w.fecha_baja}` : "la cuenta está desactivada" });
+        continue;
+      }
       if (ausente(l.worker_id, l.dia)) { omitidos.push({ worker_id: l.worker_id, dia: l.dia, motivo: "tiene una ausencia aprobada" }); continue; }
       await dbRun(
         `INSERT INTO hor_asignaciones (semana_id, local, worker_id, dia, area_id, tramo_id, inicio_min, fin_min, fin_abierto, tipo, nota, creado_en)
@@ -7371,14 +7575,29 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
 
     const dias = diasSemana(s.lunes);
     const asignaciones = (await q(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id])).rows;
-    const equipo = (await q(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')`, [s.local])).rows;
+    const equipo = (await q(`SELECT id, nombre, username FROM users WHERE local = ? AND ${SQL_PLANTILLA}`, [s.local])).rows;
+    // La PLANTILLA del snapshot: quien estuvo en esa semana, aunque ya se haya ido. Filtrar
+    // por `activo` aquí borraría del papel a quien trabajó y luego causó baja.
+    const plantilla = (await q(`SELECT id, nombre, username, fecha_alta, fecha_baja FROM users
+                                WHERE local = ? AND ${SQL_ESTUVO_ENTRE}`, [s.local, dias[6], dias[0]])).rows;
     const areas = (await q(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? ORDER BY orden`, [s.local])).rows;
     const tramos = (await q(`SELECT id, nombre, orden, inicio_min, fin_min, tipo FROM hor_tramos WHERE local = ? ORDER BY orden`, [s.local])).rows;
-    const ausencias = (await q(`SELECT * FROM hor_ausencias WHERE estado = 'aprobada' AND hasta >= ? AND desde <= ?`, [dias[0], dias[6]])).rows;
-    const contratos = (await q(`SELECT * FROM hor_contratos WHERE desde <= ?`, [dias[6]])).rows;
+    // AQUÍ estaba el daño: este array se guarda dentro de `hor_publicaciones.snapshot`, así
+    // que las vacaciones y las BAJAS MÉDICAS de todos los locales quedaban escritas para
+    // siempre dentro del horario de uno solo. Un tipo='baja' es dato de salud.
+    const ausencias = (await q(`SELECT a.* FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
+                                 WHERE u.local = ? AND a.estado = 'aprobada' AND a.hasta >= ? AND a.desde <= ?`,
+      [s.local, dias[0], dias[6]])).rows;
+    const contratos = (await q(`SELECT c.* FROM hor_contratos c JOIN users u ON u.id = c.worker_id
+                                 WHERE u.local = ? AND c.desde <= ?`, [s.local, dias[6]])).rows;
     const necesidades = (await q(`SELECT * FROM hor_necesidades WHERE local = ?`, [s.local])).rows;
 
-    const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos, ausencias, contratos, necesidades });
+    const vecinas = (await q(
+      `SELECT a.id, a.worker_id, a.dia, a.inicio_min, a.fin_min, a.tipo
+         FROM hor_asignaciones a JOIN hor_semanas s2 ON s2.id = a.semana_id
+        WHERE a.local = ? AND s2.estado = 'publicado' AND a.dia IN (?, ?)`,
+      [s.local, sumaDias(dias[0], -1), sumaDias(dias[6], 1)])).rows;
+    const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos, ausencias, contratos, necesidades, vecinas });
     const val = validarPublicacion({ estado: s.estado, conflictos, avisosAceptados: req.body?.aceptar_avisos ? true : null });
     if (!val.ok) { await client.query("ROLLBACK"); return res.status(409).json({ ok: false, ...val }); }
 
@@ -7391,7 +7610,7 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
     await q(`UPDATE hor_semanas SET estado = 'publicado', publicado_en = ?, publicado_por = ?, avisos_aceptados = ? WHERE id = ?`,
       [ahora, quien, conflictos.length ? JSON.stringify({ por: quien, en: ahora, avisos: conflictos.filter((c) => c.severidad === "avisa") }) : null, s.id]);
 
-    const snapshot = construirSnapshot({ semana: s, areas, tramos, asignaciones, trabajadores: equipo, ausencias, dias });
+    const snapshot = construirSnapshot({ semana: s, areas, tramos, asignaciones, trabajadores: plantilla, ausencias, dias });
     const texto = serializarCanonico(snapshot);
     await q(`INSERT INTO hor_publicaciones (semana_id, local, lunes, version, snapshot, hash, publicado_en, publicado_por)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (semana_id) DO NOTHING`,
@@ -7522,7 +7741,9 @@ async function horPdfDeSemana(s) {
       dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]),
       dbAll(`SELECT id, nombre, username, fecha_alta, fecha_baja FROM users
              WHERE local = ? AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1`, [s.local]),
-      dbAll(`SELECT worker_id, tipo, desde, hasta, estado FROM hor_ausencias WHERE desde <= ? AND hasta >= ?`, [dias[6], dias[0]]).catch(() => []),
+      dbAll(`SELECT a.worker_id, a.tipo, a.desde, a.hasta, a.estado FROM hor_ausencias a
+             JOIN users u ON u.id = a.worker_id
+            WHERE u.local = ? AND a.desde <= ? AND a.hasta >= ?`, [s.local, dias[6], dias[0]]).catch(() => []),
     ]);
   }
   const cuadrante = construirCuadrante({ lunes: s.lunes, tramos, areas, asignaciones, trabajadores: equipo, ausencias });
@@ -7561,7 +7782,9 @@ app.get("/api/horarios/plantilla", requireAuth(HORARIOS_ROLES), async (req, res)
       dbAll(`SELECT d.id, d.worker_id, d.dow, d.inicio_min, d.fin_min, d.preferencia FROM hor_disponibilidad d
              JOIN users u ON u.id = d.worker_id WHERE u.local = ? ORDER BY d.worker_id, d.dow`, [local]),
     ]);
-    res.json({ ok: true, local, areas, tramos, equipo, necesidades, contratos, ausencias, disponibilidad });
+    res.json({ ok: true, local, areas, tramos, equipo, necesidades, contratos, ausencias, disponibilidad,
+      // Solo lectura: si hay contratos pisándose, que se vean. No se arreglan solos.
+      contratosSolapados: contratosSolapados(contratos) });
   } catch (e) {
     console.error("[horarios] plantilla:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar la configuración" });
@@ -7595,7 +7818,12 @@ app.put("/api/horarios/necesidades", requireAuth(HORARIOS_ROLES), async (req, re
       const vFin = f.ventana_fin_min == null ? null : Math.round(Number(f.ventana_fin_min));
       if (duracion > 0) {
         if (!Number.isFinite(vIni) || !Number.isFinite(vFin) || vFin - vIni < duracion) {
-          return res.status(400).json({ ok: false, error: "Un refuerzo necesita una horquilla al menos tan larga como su duración" });
+          // `throw`, no `return`: un `return` aquí dentro salía de la función con la
+          // transacción abierta, y el `finally` devolvía al pool una conexión con un DELETE
+          // sin confirmar. La siguiente petición que la cogiera heredaba esa transacción.
+          const err = new Error("Un refuerzo necesita una horquilla al menos tan larga como su duración");
+          err.publico = 400;
+          throw err;
         }
       }
 
@@ -7611,6 +7839,7 @@ app.put("/api/horarios/necesidades", requireAuth(HORARIOS_ROLES), async (req, re
     res.json({ ok: true, guardadas: n });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
+    if (e.publico) return res.status(e.publico).json({ ok: false, error: e.message });
     console.error("[horarios] necesidades:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron guardar las necesidades" });
   } finally { client.release(); }
@@ -7724,12 +7953,25 @@ app.post("/api/horarios/contrato", requireAuth(["direccion", "rrhh"]), async (re
     const ahora = isoConOffset(Date.now());
     // Se cierra el anterior el día antes: dos contratos vigentes a la vez darían dos
     // respuestas distintas a "cuántas horas tiene contratadas".
-    await dbRun(`UPDATE hor_contratos SET hasta = ? WHERE worker_id = ? AND hasta IS NULL AND desde < ?`,
+    // `desde < ?` dejaba vivo el contrato que empezaba el MISMO día, y quedaban dos vigentes.
+    // Con `<=`, el que se reemplaza el mismo día queda cerrado el día antes de empezar: no se
+    // borra —sigue en el histórico con quién y cuándo lo puso— pero deja de estar vigente,
+    // que es exactamente lo que significa sustituirlo antes de que llegara a aplicarse.
+    await dbRun(`UPDATE hor_contratos SET hasta = ? WHERE worker_id = ? AND hasta IS NULL AND desde <= ?`,
       [sumaDias(desde, -1), w.id, desde]);
     await dbRun(`INSERT INTO hor_contratos (worker_id, desde, hasta, horas_semana, dias_semana, creado_en, creado_por)
                  VALUES (?,?,NULL,?,?,?,?)`,
       [w.id, desde, horas, req.body?.dias_semana ? Number(req.body.dias_semana) : null, ahora, req.user.username]);
-    res.json({ ok: true, mensaje: `${w.nombre}: ${horas} h/semana desde el ${desde}.` });
+    // Si en la base había ya contratos pisándose de antes, se DICE y no se toca nada: con dos
+    // solapados no se puede saber cuál se quiso poner, y elegir por el usuario escribiría en
+    // una nómina una cifra que nadie ha decidido.
+    const suyos = await dbAll(`SELECT id, worker_id, desde, hasta, horas_semana FROM hor_contratos WHERE worker_id = ? ORDER BY desde, id`, [w.id]);
+    const solapados = contratosSolapados(suyos);
+    res.json({
+      ok: true, solapados,
+      mensaje: `${w.nombre}: ${horas} h/semana desde el ${desde}.`
+        + (solapados.length ? ` OJO: le quedan ${solapados.length} contrato(s) pisándose de antes; revísalos.` : ""),
+    });
   } catch (e) {
     console.error("[horarios] contrato:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo guardar el contrato" });
@@ -7815,7 +8057,9 @@ app.post("/api/horarios/generar", requireAuth(HORARIOS_ROLES), async (req, res) 
       dbAll(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
              AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [local]),
       dbAll(`SELECT * FROM hor_necesidades WHERE local = ?`, [local]),
-      dbAll(`SELECT * FROM hor_ausencias WHERE local = ? OR local IS NULL`, [local]),
+      // `local IS NULL` recogía las filas antiguas… y también cualquiera cuyo local se
+      // hubiera perdido. El JOIN con `users` es el criterio de verdad.
+      dbAll(`SELECT a.* FROM hor_ausencias a JOIN users u ON u.id = a.worker_id WHERE u.local = ?`, [local]),
       dbAll(`SELECT c.* FROM hor_contratos c JOIN users u ON u.id = c.worker_id WHERE u.local = ?`, [local]),
       dbAll(`SELECT d.* FROM hor_disponibilidad d JOIN users u ON u.id = d.worker_id WHERE u.local = ?`, [local]),
     ]);
@@ -7864,19 +8108,30 @@ app.post("/api/horarios/generar/aceptar", requireAuth(HORARIOS_ROLES), async (re
       await q(`UPDATE hor_semanas SET origen = $1 WHERE id = $2`, [ORIGEN_SOLVER, semana.id]);
     }
 
+    // La propuesta da la vuelta por el navegador antes de volver, así que el `worker_id` que
+    // llega aquí es del cliente: se comprueba contra la plantilla del local igual que en el
+    // alta manual de un turno. Una sola consulta para todos, no una por línea.
+    const suyos = new Set((await q(`SELECT id FROM users WHERE local = ? AND ${SQL_PLANTILLA}`, [local]))
+      .rows.map((w) => String(w.id)));
     let n = 0;
+    const rechazadas = [];
     for (const a of propuestas) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.dia || ""))) continue;
+      if (!diasSemana(lunes).includes(String(a.dia))) { rechazadas.push({ dia: a.dia, motivo: "no es de esta semana" }); continue; }
+      if (!suyos.has(String(Number(a.worker_id)))) { rechazadas.push({ worker_id: a.worker_id, motivo: "no es de este establecimiento" }); continue; }
+      const ini = Number(a.inicio_min), fin = Number(a.fin_min);
+      if (!Number.isInteger(ini) || !Number.isInteger(fin) || fin < ini || fin > 2160) { rechazadas.push({ dia: a.dia, motivo: "horario no válido" }); continue; }
       await q(
         `INSERT INTO hor_asignaciones (semana_id, local, worker_id, dia, area_id, tramo_id, inicio_min, fin_min, tipo, nota, creado_en)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'turno',$9,$10)`,
         [semana.id, local, Number(a.worker_id), a.dia, a.area_id ?? null, a.tramo_id ?? null,
-         Number(a.inicio_min), Number(a.fin_min), a.porque ? String(a.porque).slice(0, 200) : null, ahora]);
+         ini, fin, a.porque ? String(a.porque).slice(0, 200) : null, ahora]);
       n++;
     }
     await client.query("COMMIT");
     await ficAuditar("horario", semana.id, "generar", req.user.username, { local, detalle: { lunes, turnos: n } });
-    res.json({ ok: true, semana_id: semana.id, guardadas: n, mensaje: `${n} turnos en el borrador. Revísalo antes de publicar.` });
+    res.json({ ok: true, semana_id: semana.id, guardadas: n, rechazadas,
+      mensaje: `${n} turnos en el borrador. Revísalo antes de publicar.${rechazadas.length ? ` (${rechazadas.length} descartados por no encajar.)` : ""}` });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("[horarios] aceptar propuesta:", e.message);
@@ -8042,9 +8297,11 @@ app.get("/api/fichar/:token", async (req, res) => {
     // Solo la plantilla de ESTE local: no se puede fichar en un local que no es el tuyo
     // (si alguien cubre fuera, lo mete el encargado a mano con motivo).
     const equipo = await dbAll(
+      // `fecha_baja IS NULL` dejaba fuera a quien tiene la baja puesta para dentro de una
+      // semana: sigue viniendo a trabajar y no podía fichar. Ahora se compara con el día.
       `SELECT id, nombre, pin_hash IS NOT NULL AS tiene_pin FROM users
-       WHERE local = ? AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL
-       ORDER BY nombre ASC`, [disp.local]);
+       WHERE local = ? AND ${SQL_ACTIVO_EL_DIA}
+       ORDER BY nombre ASC`, [disp.local, m.diaNegocio, m.diaNegocio]);
 
     const eventos = await dbAll(
       `SELECT worker_id, id, tipo, ocurrido_en, epoch_ms, anulado_por FROM fic_eventos
@@ -8211,12 +8468,34 @@ app.post("/api/fichar/:token/evento", async (req, res) => {
         { local: disp.local, workerId: worker.id, detalle: { tipo, dia: m.diaNegocio } });
     }
 
+    // ── Un fichaje que llega a un periodo YA CERRADO ────────────────────────────────────
+    // No se rechaza: la persona trabajó y eso pasó de verdad; tirarlo sería borrar una prueba
+    // por un problema administrativo nuestro. Y tampoco muta nada de lo cerrado, sin que haga
+    // falta ningún estado nuevo: `fic_jornadas` es una proyección que se recalcula, la bolsa
+    // solo la escriben `validar` y `cerrar` —y las dos comprueban el cierre— y la firma de la
+    // validación deja de coincidir sola, así que la jornada vuelve a la lista de revisión
+    // marcada como caducada.
+    //
+    // Lo único que faltaba era que se VIERA. Queda en auditoría, y se le dice a la persona.
+    const cerrado = await ficBloqueoPorCierre(disp.local, m.diaNegocio);
+    if (cerrado) {
+      await ficAuditar("evento", ultimo?.id, "en_periodo_cerrado", "kiosco", {
+        local: disp.local, workerId: worker.id,
+        detalle: { tipo, dia: m.diaNegocio, diferido: enDiferido, llegado: isoConOffset(ahora) },
+      });
+      console.warn(`[fichar] fichaje de ${worker.nombre} del ${m.diaNegocio} llega con el periodo ya cerrado`);
+    }
+
     const despues = await ficEventosDe(worker.id, m.diaNegocio);
     const estado = estadoDe(despues);
     res.json({
       ok: true, evento: ultimo, hora: m.hora.slice(0, 5), estado,
       acciones: accionesPermitidas(estado), incidencia: v.incidencia || null,
       diferido: enDiferido,
+      // La tablet lo dice sin alarmar: el fichaje está guardado y lo que queda por hacer es
+      // administrativo, no cosa suya.
+      periodoCerrado: !!cerrado,
+      avisoPeriodo: cerrado ? "Queda registrado. Ese mes ya estaba cerrado, así que lo tiene que revisar tu encargado." : null,
       mensaje: v.mensaje || null, jornada: calcularJornada(despues, { hastaMs: ahora }),
     });
   } catch (e) {
@@ -8494,7 +8773,15 @@ app.get("/api/fichajes/revision", requireAuth(FICHAJES_ROLES), async (req, res) 
     const pares = new Map();
     for (const r of [...fichados, ...planificados]) pares.set(`${r.worker_id}|${r.dia}`, { worker_id: Number(r.worker_id), dia: r.dia });
 
-    const nombres = new Map((await dbAll(`SELECT id, nombre FROM users WHERE local = ?`, [local])).map((u) => [u.id, u.nombre]));
+    // Los nombres se buscan por los IDS QUE SALEN en este periodo, no por «quién es de este
+    // local ahora». Al cambiar a alguien de establecimiento, su nombre desaparecía del
+    // histórico del anterior y sus jornadas pasadas salían como «—»: el registro seguía
+    // completo pero dejaba de poder leerse, que para un papel que se entrega a la Inspección
+    // es casi lo mismo que perderlo.
+    const idsVistos = [...new Set([...pares.values()].map((x) => x.worker_id))];
+    const nombres = new Map(idsVistos.length
+      ? (await dbAll(`SELECT id, nombre FROM users WHERE id = ANY(?)`, [idsVistos])).map((u) => [u.id, u.nombre])
+      : []);
     const filas = [];
     for (const { worker_id, dia } of pares.values()) {
       const j = await ficCalcularJornada(local, worker_id, dia, { cfg });
@@ -8712,13 +8999,29 @@ app.get("/api/fichajes/bolsa", requireAuth(FICHAJES_ROLES), async (req, res) => 
     const p = periodoDe(/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.dia || "")) ? String(req.query.dia) : hoy.diaNegocio,
       { diaInicio: cfg?.dia_inicio_periodo ?? 1 });
 
-    const [delPeriodo, anteriores, gente, cierres] = await Promise.all([
+    const [delPeriodo, anteriores, gente, cierres, tardios] = await Promise.all([
       dbAll(`SELECT worker_id, concepto, minutos FROM fic_bolsa_movimientos WHERE local = ? AND periodo = ?`, [local, p.etiqueta]),
       dbAll(`SELECT worker_id, sum(minutos) AS min FROM fic_bolsa_movimientos
              WHERE local = ? AND periodo < ? GROUP BY worker_id`, [local, p.etiqueta]),
-      dbAll(`SELECT id, nombre FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
-             AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [local]),
+      // Quien se fue con horas a favor tiene que seguir saliendo hasta que se le liquiden:
+      // desaparecer de la pantalla no le quita el saldo, solo lo esconde.
+      // La plantilla del periodo MÁS cualquiera que tenga movimientos en este local, aunque
+      // ya no sea de aquí. Quien se cambió de establecimiento con saldo pendiente en el
+      // anterior desaparecía de esa pantalla, y sus horas con él.
+      dbAll(`SELECT id, nombre FROM users
+              WHERE (local = ? AND ${SQL_ESTUVO_ENTRE})
+                 OR id IN (SELECT DISTINCT worker_id FROM fic_bolsa_movimientos WHERE local = ?)
+              ORDER BY nombre`,
+        [local, p.hasta, p.desde, local]),
       ficCierresDe(local),
+      // Fichajes que aterrizaron DESPUÉS de cerrar este periodo: una tablet que subió su cola
+      // tarde. No han cambiado nada de lo cerrado —la bolsa solo la escriben validar y cerrar,
+      // y las dos comprueban el cierre— pero alguien tiene que decidir si se reabre.
+      dbGet(`SELECT COUNT(*)::int AS n FROM fic_eventos e
+              JOIN fic_cierres c ON c.local = e.local AND c.reabierto_en IS NULL
+                                AND e.dia_negocio BETWEEN c.desde AND c.hasta
+             WHERE e.local = ? AND c.etiqueta = ? AND e.creado_en > c.cerrado_en`, [local, p.etiqueta])
+        .catch(() => ({ n: 0 })),
     ]);
 
     const porPersona = new Map();
@@ -8746,6 +9049,7 @@ app.get("/api/fichajes/bolsa", requireAuth(FICHAJES_ROLES), async (req, res) => 
       sinValidar: pend?.n || 0,
       cerrado: estaCerrado(cierres, local, p.hasta),
       cierre: cierres.find((c) => c.etiqueta === p.etiqueta && !c.reabierto_en) || null,
+      llegadosTrasCerrar: Number(tardios?.n) || 0,
     });
   } catch (e) {
     console.error("[fichajes] bolsa:", e.message);
@@ -8757,10 +9061,25 @@ app.get("/api/fichajes/bolsa/:workerId", requireAuth(FICHAJES_ROLES), async (req
   try {
     const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.params.workerId)]);
     if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "No encontrado" });
-    const movs = await dbAll(
-      `SELECT id, dia, periodo, concepto, minutos, nota, autor, referencia_id, creado_en
-       FROM fic_bolsa_movimientos WHERE worker_id = ? ORDER BY periodo DESC, id DESC LIMIT 500`, [w.id]);
-    res.json({ ok: true, trabajador: { id: w.id, nombre: w.nombre }, saldo: saldoDe(movs), data: movs });
+    // DOS consultas a propósito. El saldo es `SUM(minutos)` de TODAS las filas y no admite
+    // recortes; la lista que se pinta sí, porque nadie lee dos mil movimientos. Antes se
+    // calculaba el saldo sobre las 500 últimas, así que el modal podía decir un número y la
+    // tabla de al lado otro, y el bueno era el de la tabla.
+    const [total, movs] = await Promise.all([
+      dbGet(`SELECT COALESCE(SUM(minutos),0)::int AS saldo, COUNT(*)::int AS n
+               FROM fic_bolsa_movimientos WHERE worker_id = ?`, [w.id]),
+      dbAll(`SELECT id, dia, periodo, concepto, minutos, nota, autor, referencia_id, creado_en
+               FROM fic_bolsa_movimientos WHERE worker_id = ? ORDER BY periodo DESC, id DESC LIMIT 500`, [w.id]),
+    ]);
+    res.json({
+      ok: true, trabajador: { id: w.id, nombre: w.nombre },
+      saldo: Number(total?.saldo) || 0,
+      movimientos: Number(total?.n) || 0,
+      // Se dice cuántos se han dejado fuera: una lista recortada en silencio hace dudar del
+      // saldo, que es justo el número que no se puede poner en duda.
+      recortado: (Number(total?.n) || 0) > movs.length,
+      data: movs,
+    });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el libro" }); }
 });
 
@@ -8871,8 +9190,12 @@ app.get("/api/fichajes/cierres", requireAuth(FICHAJES_ROLES), async (req, res) =
     const local = horLocal(req, req.query.local);
     if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
     res.json({ ok: true, data: await dbAll(
-      `SELECT id, etiqueta, desde, hasta, hash, cerrado_en, cerrado_por, reabierto_en, reabierto_por, reabierto_motivo
-       FROM fic_cierres WHERE local = ? ORDER BY desde DESC`, [local]) });
+      `SELECT c.id, c.etiqueta, c.desde, c.hasta, c.hash, c.cerrado_en, c.cerrado_por,
+              c.reabierto_en, c.reabierto_por, c.reabierto_motivo,
+              (SELECT COUNT(*)::int FROM fic_eventos e
+                WHERE e.local = c.local AND e.dia_negocio BETWEEN c.desde AND c.hasta
+                  AND e.creado_en > c.cerrado_en) AS llegados_tras_cerrar
+         FROM fic_cierres c WHERE c.local = ? ORDER BY c.desde DESC`, [local]) });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudieron cargar los cierres" }); }
 });
 
@@ -9587,7 +9910,7 @@ app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, r
     if (!rrhhPuedeLocal(req, w.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
     const notas = await dbAll("SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC", [w.id]);
     const checkins = await dbAll("SELECT * FROM hr_llamadas_mes WHERE worker_id = ? ORDER BY mes DESC", [w.id]);
-    let documentos = await dbAll("SELECT * FROM hr_documentos WHERE worker_id = ? ORDER BY creado_en DESC", [w.id]);
+    let documentos = (await dbAll("SELECT * FROM hr_documentos WHERE worker_id = ? ORDER BY creado_en DESC", [w.id])).map(docParaPanel);
     // El encargado NO ve DNI ni documentos sensibles (RGPD).
     if (esEncargado(req)) { w.dni = null; documentos = documentos.filter((d) => !(d.sensible === 1 || d.sensible === true)); }
     const hoy = hoyISO();
@@ -9620,7 +9943,41 @@ app.put("/api/rrhh/trabajador/:id", requireAuth(RRHH_ROLES), async (req, res) =>
     vals.push(w.id);
     await dbRun(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`, vals);
     invalidarInternos(); // el teléfono puede haber cambiado
-    res.json({ ok: true });
+
+    // ── Si se le ha dado de baja, ¿le quedan turnos por delante? ────────────────────────
+    // NO se borra ninguno. Un turno publicado se mandó al grupo y hay gente organizada con
+    // él: quitarlo por detrás sería cambiar en silencio un horario oficial, que es
+    // exactamente lo que este módulo nunca hace. Lo que sí se puede hacer es AVISAR, y
+    // separar lo que está en un borrador —que se arregla sin consecuencias— de lo que ya se
+    // publicó, que necesita una versión nueva.
+    const daDeBaja = req.body.fecha_baja !== undefined || req.body.activo !== undefined;
+    let avisoTurnos = null;
+    if (daDeBaja) {
+      const persona = await dbGet("SELECT id, activo, fecha_alta, fecha_baja FROM users WHERE id = ?", [w.id]);
+      if (!activoAhora(persona, hoyISO()) || persona.fecha_baja) {
+        const futuras = await dbAll(
+          `SELECT a.id, a.dia, s.estado, s.lunes FROM hor_asignaciones a
+             JOIN hor_semanas s ON s.id = a.semana_id
+            WHERE a.worker_id = ? AND s.estado IN ('borrador','publicado') AND a.dia >= ?
+            ORDER BY a.dia`,
+          [w.id, persona.fecha_baja || hoyISO()]).catch(() => []);
+        const r = turnosTrasLaBaja(futuras.map((x) => ({ ...x, worker_id: w.id })), persona);
+        if (r.total) {
+          avisoTurnos = {
+            total: r.total,
+            enBorrador: r.borrador.length,
+            publicados: r.publicados.length,
+            semanas: [...new Set(futuras.map((x) => x.lunes))],
+            mensaje: r.publicados.length
+              ? `Le quedan ${r.total} turno(s) después de la baja, y ${r.publicados.length} están en semanas YA PUBLICADAS. No se han tocado: para quitarlos hay que crear una versión nueva de esa semana y volver a publicarla.`
+              : `Le quedan ${r.total} turno(s) después de la baja, todos en borrador. No se han tocado: quítalos desde el cuadrante.`,
+          };
+          await ficAuditar("usuario", w.id, "baja_con_turnos_futuros", req.user.username,
+            { local: w.local, workerId: w.id, detalle: avisoTurnos }).catch(() => {});
+        }
+      }
+    }
+    res.json({ ok: true, avisoTurnos });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -9629,7 +9986,7 @@ app.get("/api/rrhh/trabajador/:id/documentos", requireAuth(RRHH_ROLES), async (r
     const wl = await rrhhWorkerLocal(req.params.id);
     if (wl === null) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
     if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
-    let docs = await dbAll("SELECT * FROM hr_documentos WHERE worker_id = ? ORDER BY creado_en DESC", [req.params.id]);
+    let docs = (await dbAll("SELECT * FROM hr_documentos WHERE worker_id = ? ORDER BY creado_en DESC", [req.params.id])).map(docParaPanel);
     if (esEncargado(req)) docs = docs.filter((d) => !(d.sensible === 1 || d.sensible === true));
     res.json({ ok: true, data: docs, alertas: documentosPorCaducar(docs, hoyISO(), 30) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -9647,24 +10004,84 @@ app.post("/api/rrhh/trabajador/:id/documento", requireAuth(RRHH_ROLES), (req, re
     if (wl === null) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
     if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
     if (!req.file) return res.status(400).json({ ok: false, error: "Falta el archivo" });
+    // Se valida el CONTENIDO igual que antes (magic bytes) y se publica en `uploads`… y de
+    // ahí se traslada al directorio privado. Se reaprovecha `finalizeCvUpload` para no tener
+    // dos validaciones de fichero distintas, que es como acaban divergiendo.
     const fin = finalizeCvUpload({ tmpPath: req.file.path, filename: req.file.filename, originalname: req.file.originalname, publicDir: uploadsDir });
     if (!fin.ok) return res.status(400).json({ ok: false, error: "Archivo no válido (tipo o contenido)" });
+    try { fs.renameSync(path.join(uploadsDir, req.file.filename), path.join(rrhhDocsDir, req.file.filename)); }
+    catch (e) {
+      // Si no se puede sacar de `public/`, NO se guarda: quedaría un DNI accesible por URL,
+      // que es justo lo que este cambio viene a cerrar.
+      try { fs.unlinkSync(path.join(uploadsDir, req.file.filename)); } catch { /* ya no está */ }
+      console.error("[rrhh] documento a privado:", e.message);
+      return res.status(500).json({ ok: false, error: "No se pudo guardar el documento de forma segura" });
+    }
     const sensible = esEncargado(req) ? 0 : (req.body.sensible === "1" || req.body.sensible === "true" || req.body.sensible === true ? 1 : 0);
     const row = await dbRun(
       `INSERT INTO hr_documentos (worker_id, tipo, nombre, url, sensible, fecha_emision, fecha_caducidad, autor, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-      [req.params.id, String(req.body.tipo || "otro"), req.body.nombre || req.file.originalname, `/uploads/${req.file.filename}`, sensible, req.body.fecha_emision || null, req.body.fecha_caducidad || null, req.user?.nombre || req.user?.username || null, new Date().toISOString()]);
-    res.json({ ok: true, id: row.id, url: `/uploads/${req.file.filename}` });
+      [req.params.id, String(req.body.tipo || "otro"), req.body.nombre || req.file.originalname, `rrhh:${req.file.filename}`, sensible, req.body.fecha_emision || null, req.body.fecha_caducidad || null, req.user?.nombre || req.user?.username || null, new Date().toISOString()]);
+    res.json({ ok: true, id: row.id, url: `/api/rrhh/documento/${row.id}/archivo` });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/**
+ * El fichero de un documento de RR.HH. La única puerta.
+ *
+ * Repite las tres comprobaciones del listado —quién eres, de qué local es esa persona y si el
+ * documento es sensible— porque esconder la URL en la pantalla no protege nada: lo que protege
+ * es que el fichero no esté servido desde `public/`.
+ */
+/** Lo que se manda al panel: la url pasa a ser la del endpoint, nunca la ruta del fichero. */
+const docParaPanel = (d) => ({ ...d, url: `/api/rrhh/documento/${d.id}/archivo` });
+
+app.get("/api/rrhh/documento/:id/archivo", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const doc = await dbGet("SELECT id, worker_id, nombre, url, sensible FROM hr_documentos WHERE id = ?", [Number(req.params.id) || 0]);
+    if (!doc) return res.status(404).json({ ok: false, error: "Documento no encontrado" });
+    const wl = await rrhhWorkerLocal(doc.worker_id);
+    if (wl === null || !rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
+    if (esEncargado(req) && (doc.sensible === 1 || doc.sensible === true)) {
+      return res.status(403).json({ ok: false, error: "Este documento es confidencial" });
+    }
+
+    // Dos formas de `url` conviven a propósito: `rrhh:<fichero>` es la nueva, en el directorio
+    // privado; `/uploads/<fichero>` es la de los documentos de antes, que se sirven igual
+    // mientras la migración no los haya trasladado. En ninguno de los dos casos se acepta una
+    // ruta del cliente: el nombre sale de la base y se le quita todo lo que no sea el fichero.
+    const guardada = String(doc.url || "");
+    const fichero = path.basename(guardada.startsWith("rrhh:") ? guardada.slice(5) : guardada);
+    if (!fichero || fichero === "." || fichero === "..") return res.status(404).json({ ok: false, error: "Documento no encontrado" });
+    const candidatos = [path.join(rrhhDocsDir, fichero), path.join(uploadsDir, fichero)];
+    const ruta = candidatos.find((c) => fs.existsSync(c));
+    if (!ruta) return res.status(404).json({ ok: false, error: "El archivo ya no está" });
+
+    // `inline` para poder mirarlo sin descargar, y sin caché compartida: es documentación
+    // personal y no puede quedarse en la caché de un proxy.
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Content-Disposition", `inline; filename="${path.basename(fichero).replace(/[^\w.\-]/g, "_")}"`);
+    res.sendFile(ruta);
+  } catch (e) {
+    console.error("[rrhh] servir documento:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo abrir el documento" });
+  }
 });
 
 app.delete("/api/rrhh/documento/:id", requireAuth(RRHH_ROLES), async (req, res) => {
   try {
-    const doc = await dbGet("SELECT worker_id, sensible FROM hr_documentos WHERE id = ?", [req.params.id]);
+    const doc = await dbGet("SELECT worker_id, sensible, url FROM hr_documentos WHERE id = ?", [req.params.id]);
     if (!doc) return res.json({ ok: true });
     const wl = await rrhhWorkerLocal(doc.worker_id);
     if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso" });
     if (esEncargado(req) && (doc.sensible === 1 || doc.sensible === true)) return res.status(403).json({ ok: false, error: "Documento sensible" });
     await dbRun("DELETE FROM hr_documentos WHERE id = ?", [req.params.id]);
+    // El fichero también, y solo el del directorio privado: en `public/uploads` puede haber
+    // quedado el original de antes de la migración y borrarlo a ciegas es tocar el disco de
+    // otro módulo. El huérfano de `uploads` lo limpia la migración, no esto.
+    const suelto = String(doc.url || "");
+    if (suelto.startsWith("rrhh:")) {
+      try { fs.unlinkSync(path.join(rrhhDocsDir, path.basename(suelto.slice(5)))); } catch { /* ya no estaba */ }
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });

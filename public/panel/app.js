@@ -2800,7 +2800,7 @@ function renderRRDocs() {
   const list = docs.length ? docs.map((d) => {
     const al = alertaKey[d.id];
     const cad = d.fecha_caducidad ? (al ? `<span class="pill ${al.estado === "vencido" ? "bad" : "warn"}">${al.estado === "vencido" ? "Vencido" : "Caduca en " + al.diasRestantes + "d"}</span>` : `<span class="mut">caduca ${esc(d.fecha_caducidad)}</span>`) : "";
-    return `<div class="row"><div class="grow"><div class="t1"><a href="${esc(d.url)}" target="_blank" rel="noopener" style="color:var(--brand)">${esc(d.nombre || d.tipo)}</a> ${d.sensible ? '<span class="pill" title="Sensible">🔒</span>' : ""}</div><div class="t2">${esc(RR_DOC_TIPOS[d.tipo] || d.tipo)} ${cad}</div></div><button class="btn sm danger" data-act="rr-doc-del" data-id="${d.id}">✕</button></div>`;
+    return `<div class="row"><div class="grow"><div class="t1"><button class="linkbtn" data-act="rr-doc-ver" data-id="${d.id}" style="color:var(--brand)">${esc(d.nombre || d.tipo)}</button> ${d.sensible ? '<span class="pill" title="Sensible">🔒</span>' : ""}</div><div class="t2">${esc(RR_DOC_TIPOS[d.tipo] || d.tipo)} ${cad}</div></div><button class="btn sm danger" data-act="rr-doc-del" data-id="${d.id}">✕</button></div>`;
   }).join("") : `<div class="mut" style="padding:8px 14px">Sin documentos.</div>`;
   return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Documentos</h3><button class="btn sm" data-act="rr-doc-subir" data-id="${RRSEG.sel.id}">+ Subir</button></div><div class="rows">${list}</div></div>`;
 }
@@ -2926,7 +2926,19 @@ function rrEditarDatos(id) {
     e.preventDefault(); const fm = e.target;
     const data = { nombre: fm.nombre.value.trim(), puesto: fm.puesto.value.trim(), telefono: fm.telefono.value.trim(), email: fm.email.value.trim(), fecha_nac: fm.fecha_nac.value };
     if (esDir) { data.dni = fm.dni.value.trim(); data.fecha_alta = fm.fecha_alta.value; data.fecha_baja = fm.fecha_baja.value; data.activo = fm.activo.checked ? 1 : 0; }
-    try { await apiSend("PUT", "/api/rrhh/trabajador/" + encodeURIComponent(id), data); ov.remove(); toast("Datos guardados ✅"); rrSelWorker(id); }
+    try {
+      const r = await apiSend("PUT", "/api/rrhh/trabajador/" + encodeURIComponent(id), data);
+      ov.remove(); toast("Datos guardados ✅"); rrSelWorker(id);
+      // Dar de baja no borra los turnos que ya estuvieran puestos —un horario publicado no se
+      // cambia por detrás— así que si quedan, se dice y se dice DÓNDE.
+      if (r && r.avisoTurnos) {
+        const a = r.avisoTurnos;
+        modal("Le quedan turnos por delante", `
+          <p style="margin:0 0 12px;line-height:1.6">${esc(a.mensaje)}</p>
+          ${a.semanas.length ? `<p class="mut" style="margin:0 0 16px">Semanas afectadas: ${a.semanas.map(esc).join(" · ")}.</p>` : ""}
+          <div style="display:flex;justify-content:flex-end"><button class="btn primary" data-close>Entendido</button></div>`);
+      }
+    }
     catch (err) { toast("Error: " + err.message); }
   });
 }
@@ -3307,20 +3319,36 @@ function openEditarUsuario(id) {
     try { await apiSend("PUT", "/api/users/" + encodeURIComponent(id), data); ov.remove(); toast("Usuario actualizado ✅"); loadUsuarios(); } catch (err) { toast("Error: " + err.message); }
   });
 }
-// Ver la contraseña actual (si hay copia recuperable) y/o cambiarla, en un solo modal.
+// Restablecer la contraseña. Ya NO se puede ver la actual: una contraseña se restablece, no
+// se consulta. Se genera una temporal, se enseña UNA vez para poder dictarla, y quien la
+// reciba tiene que cambiarla al entrar.
 async function userPass(id, nombre) {
-  const ov = modal(`Contraseña de ${nombre}`, `<div id="pwCur" class="mut" style="margin-bottom:16px">Cargando…</div><div class="field"><label>Nueva contraseña</label><input id="pwNew" type="text" placeholder="Escribe para cambiarla" autocomplete="off"></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button><button class="btn primary" data-ok>Actualizar</button></div>`);
-  const cur = ov.querySelector("#pwCur");
-  try {
-    const r = await apiSend("GET", "/api/users/" + encodeURIComponent(id) + "/password");
-    if (r && r.disponible) cur.innerHTML = `Contraseña actual: <b style="font-family:ui-monospace,monospace;user-select:all;background:var(--bg2,#0000000d);padding:2px 8px;border-radius:6px">${esc(r.password)}</b>`;
-    else cur.textContent = "La contraseña actual no se puede mostrar (cuenta anterior a esta función). Escribe una nueva y a partir de ahí podrás verla.";
-  } catch (e) { if (e.message !== "noauth") cur.textContent = "No se pudo leer la contraseña."; }
+  const ov = modal(`Contraseña de ${nombre}`, `
+    <p class="mut" style="margin:0 0 16px;line-height:1.6">La contraseña actual no se puede ver: solo se guarda cifrada de una forma que no se puede deshacer, ni siquiera desde aquí. Lo que sí se puede es <b>poner una nueva</b>.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn" id="pwGen">Generar una y enseñármela</button>
+    </div>
+    <div id="pwOut" class="mut" style="margin-bottom:14px"></div>
+    <div class="field"><label>…o escribe tú una</label><input id="pwNew" type="text" placeholder="Déjalo vacío si has generado una" autocomplete="off"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button><button class="btn primary" data-ok>Guardar la escrita</button></div>`);
+
+  ov.querySelector("#pwGen").addEventListener("click", async () => {
+    try {
+      const r = await apiSend("POST", "/api/users/" + encodeURIComponent(id) + "/reset-password", {});
+      // Se enseña una vez y no se vuelve a poder recuperar: hay que dictarla ahora.
+      ov.querySelector("#pwOut").innerHTML = `Nueva contraseña de <b>${esc(nombre)}</b>:
+        <b style="font-family:ui-monospace,monospace;user-select:all;background:var(--surface2);padding:3px 10px;border-radius:6px;font-size:15px">${esc(r.password)}</b>
+        <div style="margin-top:6px">Anótala o dísela ahora: <b>no se va a poder volver a ver</b>. Al entrar le pedirá cambiarla.</div>`;
+      loadUsuarios();
+    } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+  });
+
   ov.addEventListener("click", async (e) => {
     if (!e.target.closest("[data-ok]")) return;
     const p = (ov.querySelector("#pwNew").value || "").trim();
-    if (!p) { toast("Escribe una contraseña nueva"); return; }
-    try { await apiSend("PUT", "/api/users/" + encodeURIComponent(id) + "/password", { password: p }); ov.remove(); toast("Contraseña actualizada ✅"); loadUsuarios(); } catch (er) { if (er.message !== "noauth") toast("Error: " + er.message); }
+    if (!p) { toast("Escribe una contraseña o genera una"); return; }
+    try { await apiSend("PUT", "/api/users/" + encodeURIComponent(id) + "/password", { password: p }); ov.remove(); toast("Contraseña puesta. Al entrar le pedirá cambiarla ✅"); loadUsuarios(); }
+    catch (er) { if (er.message !== "noauth") toast("Error: " + er.message); }
   });
 }
 async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cuenta ${nombre}? No se puede deshacer.`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/users/" + encodeURIComponent(id)); toast("Usuario eliminado ✅"); loadUsuarios(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
@@ -4588,6 +4616,7 @@ async function ficPintarBolsa() {
         </div></div>
       ${j.sinValidar ? `<p class="fic-nota">Quedan <b>${j.sinValidar}</b> ${j.sinValidar === 1 ? "jornada" : "jornadas"} sin validar en este periodo. Sus horas todavía <b>no están</b> en ningún saldo: valídalas en «Revisión».</p>` : ""}
       ${j.cerrado && j.cierre ? `<p class="fic-nota">Cerrado el ${esc(String(j.cierre.cerrado_en).slice(0, 10))} por ${esc(j.cierre.cerrado_por)}. Para corregir algo de estas fechas hay que reabrirlo, y queda constancia.</p>` : ""}
+      ${j.llegadosTrasCerrar ? `<p class="fic-nota" style="border-color:var(--danger)"><b>${num(j.llegadosTrasCerrar)}</b> ${j.llegadosTrasCerrar === 1 ? "fichaje ha llegado" : "fichajes han llegado"} de estas fechas <b>después</b> de cerrar el periodo (una tablet que subió su cola tarde). Están registrados y <b>no han cambiado el saldo</b>: para incorporarlos hay que reabrir el periodo.</p>` : ""}
       ${conSaldo.length ? `<div class="tw"><table class="tbl">
         <thead><tr><th>Persona</th><th style="text-align:right">Venía de antes</th><th style="text-align:right">Este periodo</th>
         <th style="text-align:right">Saldo</th><th></th></tr></thead>
@@ -4613,6 +4642,24 @@ async function ficPintarBolsa() {
 
 // El export va por fetch con el token, no por un <a href>: un enlace directo no lleva la
 // cabecera de sesión y devolvería un 401 en forma de fichero.
+// Los documentos de RR.HH. ya no viven en `public/`: se piden con la sesión y se abren desde
+// memoria. Un <a href> directo devolvería un 401 en forma de página en blanco.
+async function rrVerDocumento(id) {
+  try {
+    const r = await fetch(`/api/rrhh/documento/${encodeURIComponent(id)}/archivo`,
+      { headers: { Authorization: "Bearer " + token() } });
+    if (!r.ok) {
+      let msg = "No se pudo abrir el documento";
+      try { msg = (await r.json()).error || msg; } catch { /* no era json */ }
+      return toast(msg);
+    }
+    const url = URL.createObjectURL(await r.blob());
+    window.open(url, "_blank", "noopener");
+    // Se suelta al rato: revocarlo al instante deja la pestaña nueva en blanco.
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch { toast("No se pudo abrir el documento"); }
+}
+
 async function ficDescargarRegistro(dia) {
   try {
     const r = await fetch(`/api/fichajes/export?local=${encodeURIComponent(FIC.local)}&dia=${encodeURIComponent(dia)}`,
@@ -4632,7 +4679,9 @@ async function ficAbrirLibro(workerId) {
   const puedeAjustar = USER.rol === "direccion" || USER.rol === "rrhh";
   const ov = modal(`Libro de horas · ${j.trabajador.nombre}`, `
     <p style="margin:0 0 14px"><b style="font-size:20px">${esc(ficSigno(j.saldo))}</b>
-      <span class="mut">de saldo, que es la suma exacta de lo de abajo</span></p>
+      <span class="mut">de saldo${j.recortado
+        ? `, suma de los ${num(j.movimientos)} movimientos. Abajo se ven los 500 últimos`
+        : ", que es la suma exacta de lo de abajo"}</span></p>
     ${j.data.length ? `<div class="tw" style="max-height:340px;overflow:auto"><table class="tbl">
       <thead><tr><th>Día</th><th>Concepto</th><th style="text-align:right">Minutos</th><th>Quién</th></tr></thead>
       <tbody>${j.data.map((m) => `<tr>
@@ -9420,6 +9469,7 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-pin") rrAsignarPin(t.getAttribute("data-id"));
   else if (act === "rr-reset-pass") rrResetPassword(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-doc-subir") rrDocSubir(t.getAttribute("data-id"));
+  else if (act === "rr-doc-ver") rrVerDocumento(t.getAttribute("data-id"));
   else if (act === "rr-doc-del") rrDocDel(t.getAttribute("data-id"));
   else if (act === "cand-contratar") rrContratar(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-agora-import") rrImportarOperadores();

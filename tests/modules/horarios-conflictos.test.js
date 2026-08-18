@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { detectarConflictos, resumirConflictos, contratoVigente, BLOQUEA, AVISA } from "../../src/modules/horarios/conflictos.js";
+import { detectarConflictos, resumirConflictos, contratoVigente, contratosSolapados, BLOQUEA, AVISA } from "../../src/modules/horarios/conflictos.js";
 import { transitar, puedeTransitar, validarPublicacion, construirSnapshot, versionVigenteEn, compararSnapshots } from "../../src/modules/horarios/versiones.js";
 import { canonicalizar, serializarCanonico, hashCanonico } from "../../src/core/canonico.js";
 
@@ -224,5 +224,102 @@ describe("versiones — el snapshot y la pregunta de dentro de dos años", () =>
     const d = compararSnapshots(antes, despues);
     assert.equal(d.anadidos.length, 2);
     assert.equal(d.quitados.length, 1);
+  });
+});
+
+// ── El descanso que cruza de una semana a otra ───────────────────────────────
+// Es el salto que más se incumple en hostelería —cerrar el domingo a las 02:00 y abrir el
+// lunes a las 08:00— y era justo el único que no se comprobaba, porque el detector solo
+// miraba dentro de la semana que tenía delante.
+describe("descanso entre el domingo y el lunes siguiente", () => {
+  const EQUIPO = [{ id: 1, nombre: "Ana" }];
+  const LUNES = "2026-08-17";          // semana del 17 al 23 de agosto de 2026
+  const DOMINGO = "2026-08-23";
+  const LUNES_SIG = "2026-08-24";
+
+  test("cerrar el domingo y abrir el lunes siguiente demasiado pronto AVISA", () => {
+    const c = detectarConflictos({
+      lunes: LUNES, trabajadores: EQUIPO,
+      asignaciones: [{ id: 10, worker_id: 1, dia: DOMINGO, inicio_min: 1200, fin_min: 1560 }],  // 20:00 → 02:00
+      vecinas: [{ id: 99, worker_id: 1, dia: LUNES_SIG, inicio_min: 480, fin_min: 960 }],       // 08:00 → 16:00
+    });
+    const d = c.filter((x) => x.tipo === "descanso_insuficiente");
+    assert.equal(d.length, 1, "6 h de descanso, el mínimo son 12");
+    assert.equal(d[0].severidad, AVISA, "avisa, no bloquea: sigue siendo decisión del encargado");
+    assert.equal(d[0].cruzaSemana, true);
+    assert.match(d[0].mensaje, /entre dos semanas/);
+  });
+
+  test("con descanso suficiente no dice nada", () => {
+    const c = detectarConflictos({
+      lunes: LUNES, trabajadores: EQUIPO,
+      asignaciones: [{ id: 10, worker_id: 1, dia: DOMINGO, inicio_min: 660, fin_min: 900 }],    // 11:00 → 15:00
+      vecinas: [{ id: 99, worker_id: 1, dia: LUNES_SIG, inicio_min: 660, fin_min: 900 }],       // 20 h después
+    });
+    assert.equal(c.filter((x) => x.tipo === "descanso_insuficiente").length, 0);
+  });
+
+  test("también hacia atrás: el domingo ANTERIOR contra el lunes de esta semana", () => {
+    const c = detectarConflictos({
+      lunes: LUNES, trabajadores: EQUIPO,
+      asignaciones: [{ id: 10, worker_id: 1, dia: LUNES, inicio_min: 480, fin_min: 960 }],
+      vecinas: [{ id: 99, worker_id: 1, dia: "2026-08-16", inicio_min: 1200, fin_min: 1560 }],
+    });
+    assert.equal(c.filter((x) => x.tipo === "descanso_insuficiente").length, 1);
+  });
+
+  test("los turnos de fuera NO cuentan como horas ni como días seguidos de esta semana", () => {
+    // Si contaran, publicar una semana normal empezaría a dar avisos de exceso semanal por
+    // horas que pertenecen a otra semana y a otra nómina.
+    const c = detectarConflictos({
+      lunes: LUNES, trabajadores: EQUIPO,
+      contratos: [{ worker_id: 1, desde: "2020-01-01", hasta: null, horas_semana: 8 }],
+      asignaciones: [{ id: 10, worker_id: 1, dia: LUNES, inicio_min: 660, fin_min: 1140 }],   // 8 h justas
+      vecinas: [{ id: 99, worker_id: 1, dia: "2026-08-16", inicio_min: 480, fin_min: 960 }],
+    });
+    assert.equal(c.filter((x) => x.tipo === "exceso_semanal").length, 0);
+  });
+
+  test("sin vecinas se comporta exactamente como antes", () => {
+    const c = detectarConflictos({
+      lunes: LUNES, trabajadores: EQUIPO,
+      asignaciones: [{ id: 10, worker_id: 1, dia: DOMINGO, inicio_min: 1200, fin_min: 1560 }],
+    });
+    assert.equal(c.filter((x) => x.tipo === "descanso_insuficiente").length, 0);
+  });
+});
+
+describe("dos contratos vigentes a la vez", () => {
+  test("con el mismo «desde» gana el último escrito, y siempre el mismo", () => {
+    // Antes dependía del orden en que Postgres devolviera las filas: «cuántas horas tiene
+    // contratadas» podía contestar 20 o 30 en dos peticiones seguidas.
+    const cs = [
+      { id: 1, worker_id: 7, desde: "2026-01-01", hasta: null, horas_semana: 20 },
+      { id: 2, worker_id: 7, desde: "2026-01-01", hasta: null, horas_semana: 30 },
+    ];
+    assert.equal(contratoVigente(cs, 7, "2026-06-01").horas_semana, 30);
+    assert.equal(contratoVigente([...cs].reverse(), 7, "2026-06-01").horas_semana, 30, "da igual el orden de entrada");
+  });
+
+  test("contratosSolapados los encuentra y NO los arregla", () => {
+    // Con dos contratos pisándose no se puede saber cuál se quiso poner. Elegir por el
+    // usuario escribiría en una nómina una cifra que nadie ha decidido.
+    const cs = [
+      { id: 1, worker_id: 7, desde: "2026-01-01", hasta: null, horas_semana: 20 },
+      { id: 2, worker_id: 7, desde: "2026-06-01", hasta: null, horas_semana: 30 },
+      { id: 3, worker_id: 8, desde: "2026-01-01", hasta: "2026-05-31", horas_semana: 15 },
+      { id: 4, worker_id: 8, desde: "2026-06-01", hasta: null, horas_semana: 25 },
+    ];
+    const sol = contratosSolapados(cs);
+    assert.equal(sol.length, 1, "solo los de la persona 7");
+    assert.equal(sol[0].worker_id, "7");
+    assert.deepEqual(sol[0].ids, [1, 2]);
+  });
+
+  test("una sucesión bien cerrada no se marca", () => {
+    assert.equal(contratosSolapados([
+      { id: 1, worker_id: 7, desde: "2026-01-01", hasta: "2026-05-31", horas_semana: 20 },
+      { id: 2, worker_id: 7, desde: "2026-06-01", hasta: null, horas_semana: 30 },
+    ]).length, 0);
   });
 });

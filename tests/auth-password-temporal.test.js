@@ -91,7 +91,19 @@ describe("avisa, pero deja trabajar", () => {
   });
 
   test("reiniciar la contraseña de alguien vuelve a marcarla", () => {
-    assert.match(server, /UPDATE users SET password_hash = \?, password_enc = \?, pass_temporal = TRUE/);
+    // Antes este test exigía `password_enc = ?`: se guardaba también una copia REVERSIBLE de
+    // la contraseña para poder enseñarla desde el panel. Se ha retirado a propósito —una
+    // contraseña se restablece, no se consulta— y ahora la copia se BORRA en el mismo UPDATE.
+    // Lo que el test protege sigue siendo lo mismo: que restablecer vuelva a obligar a
+    // cambiarla.
+    assert.match(server, /UPDATE users SET password_hash = \?, password_enc = NULL, pass_temporal = TRUE/);
+  });
+
+  test("y ya no queda ni un solo sitio que guarde la contraseña de forma recuperable", () => {
+    assert.ok(!/password_enc\s*=\s*\?/.test(server), "algún UPDATE vuelve a escribir password_enc");
+    assert.ok(!/encUserPass|decUserPass/.test(server), "ha vuelto el cifrado reversible de contraseñas");
+    // Y el endpoint que las devolvía en claro contesta que ya no se puede.
+    assert.match(server, /Las contraseñas ya no se pueden consultar/);
   });
 });
 

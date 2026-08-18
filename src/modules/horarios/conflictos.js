@@ -42,13 +42,58 @@ export function contratoVigente(contratos, workerId, fecha) {
   const suyos = (contratos || [])
     .filter((c) => String(c.worker_id) === String(workerId) && String(c.desde) <= String(fecha))
     .filter((c) => !c.hasta || String(c.hasta) >= String(fecha))
-    .sort((a, b) => String(b.desde).localeCompare(String(a.desde)));
+    // El desempate por `id` NO es cosmético. Si dos contratos empiezan el mismo día —cosa que
+    // el alta permitía— esta función devolvía uno u otro según el orden en que Postgres
+    // hubiera leído las filas, y «cuántas horas tiene contratadas» tenía dos respuestas
+    // distintas en dos peticiones seguidas. Con el id, gana el último que se escribió, que es
+    // el que quiso poner quien lo escribió.
+    .sort((a, b) => String(b.desde).localeCompare(String(a.desde)) || (Number(b.id) || 0) - (Number(a.id) || 0));
   return suyos[0] || null;
 }
+
+/**
+ * Contratos que se pisan: dos vigentes a la vez para la misma persona.
+ *
+ * Es de SOLO LECTURA y no arregla nada, a propósito. Si en la base hay dos contratos
+ * solapados no se puede saber cuál quiso poner quien los metió —¿20 h o 30 h?—, y elegir por
+ * él escribiría en una nómina una cifra que nadie ha decidido. Se enseñan y que lo resuelva
+ * una persona.
+ */
+export function contratosSolapados(contratos = []) {
+  const porWorker = new Map();
+  for (const c of contratos) {
+    const k = String(c.worker_id);
+    if (!porWorker.has(k)) porWorker.set(k, []);
+    porWorker.get(k).push(c);
+  }
+  const fuera = [];
+  for (const [worker_id, lista] of porWorker) {
+    const orden = [...lista].sort((a, b) => String(a.desde).localeCompare(String(b.desde)) || (Number(a.id) || 0) - (Number(b.id) || 0));
+    for (let i = 0; i < orden.length - 1; i++) {
+      for (let j = i + 1; j < orden.length; j++) {
+        const a = orden[i], b = orden[j];
+        // Se pisan si a no ha terminado cuando b empieza.
+        if (a.hasta && String(a.hasta) < String(b.desde)) continue;
+        fuera.push({ worker_id, ids: [a.id, b.id], desde: [a.desde, b.desde], horas: [a.horas_semana, b.horas_semana] });
+      }
+    }
+  }
+  return fuera;
+}
+
+/** Días de diferencia entre dos fechas ISO, sin objetos Date que se muevan con el huso. */
+const saltoDias = (a, b) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 86400000);
 
 export function detectarConflictos({
   lunes, asignaciones = [], trabajadores = [], ausencias = [], contratos = [],
   necesidades = [], tramos = [], areas = [], limites = {},
+  // Turnos YA PUBLICADOS del domingo anterior y del lunes siguiente. Solo entran en la
+  // comprobación del descanso: el resto de reglas son de esta semana.
+  //
+  // Sin esto, el descanso entre jornadas se miraba únicamente dentro de la semana, así que el
+  // salto que más se incumple en hostelería —cerrar el domingo a las 02:00 y abrir el lunes a
+  // las 08:00— era justo el único que no se comprobaba nunca.
+  vecinas = [],
 } = {}) {
   const L = { ...LIMITES, ...limites };
   const dias = diasSemana(lunes);
@@ -107,25 +152,40 @@ export function detectarConflictos({
     if (!porPersona.has(String(a.worker_id))) porPersona.set(String(a.worker_id), []);
     porPersona.get(String(a.worker_id)).push(a);
   }
+  const vecinasPorPersona = new Map();
+  for (const a of (vecinas || []).filter((x) => (x.tipo || "turno") === "turno")) {
+    const k = String(a.worker_id);
+    if (!vecinasPorPersona.has(k)) vecinasPorPersona.set(k, []);
+    vecinasPorPersona.get(k).push(a);
+  }
   for (const [wid, lista] of porPersona) {
     const porDia = new Map();
-    for (const a of lista) {
+    // Los turnos de fuera de la semana entran SOLO aquí, y marcados: sirven para medir el
+    // descanso, no para contar horas ni días seguidos de esta semana.
+    const deFuera = new Set();
+    for (const a of [...lista, ...(vecinasPorPersona.get(wid) || [])]) {
       if (!porDia.has(a.dia)) porDia.set(a.dia, []);
       porDia.get(a.dia).push(a);
+      if (!dias.includes(a.dia)) deFuera.add(a.dia);
     }
     const diasCon = [...porDia.keys()].sort();
     for (let i = 0; i < diasCon.length - 1; i++) {
       const d1 = diasCon[i], d2 = diasCon[i + 1];
-      const salto = dias.indexOf(d2) - dias.indexOf(d1);
+      // Diferencia real de fechas, no posición dentro del array de la semana: con
+      // `dias.indexOf` un día de fuera daba −1 y el salto salía cualquier cosa.
+      const salto = saltoDias(d1, d2);
       if (salto !== 1) continue;                       // no son días consecutivos
       const fin = Math.max(...porDia.get(d1).map((a) => a.fin_min));
       const ini = Math.min(...porDia.get(d2).map((a) => a.inicio_min));
       const h = descansoHoras(fin, ini, 1);
       if (h < L.descansoHoras) {
+        const cruzaSemana = deFuera.has(d1) || deFuera.has(d2);
         add({
-          tipo: "descanso_insuficiente", severidad: AVISA, worker_id: wid, dia: d2,
+          tipo: "descanso_insuficiente", severidad: AVISA, worker_id: wid, dia: dias.includes(d2) ? d2 : d1,
           ids: [...porDia.get(d1).map((a) => a.id), ...porDia.get(d2).map((a) => a.id)],
-          mensaje: `${nombreDe(porId.get(String(wid)))} descansa ${Math.round(h * 10) / 10} h entre el ${d1} y el ${d2} (el mínimo son ${L.descansoHoras}).`,
+          cruzaSemana,
+          mensaje: `${nombreDe(porId.get(String(wid)))} descansa ${Math.round(h * 10) / 10} h entre el ${d1} y el ${d2} (el mínimo son ${L.descansoHoras}).`
+            + (cruzaSemana ? " Es el salto entre dos semanas, con el horario ya publicado de la otra." : ""),
         });
       }
     }
