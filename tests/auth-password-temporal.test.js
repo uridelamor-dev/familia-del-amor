@@ -17,7 +17,12 @@ describe("toda cuenta nueva nace obligada a cambiar la contraseña", () => {
     .map((m) => ({ columnas: m[1].split(",").map((c) => c.trim()), pos: m.index }));
 
   test("hay varias vías de alta que revisar", () => {
-    assert.ok(inserts.length >= 4, `solo se han encontrado ${inserts.length}`);
+    // Eran cuatro. La fase 6 juntó las tres LABORALES en un solo servicio —el alta manual,
+    // contratar a un candidato y crear un trabajador desde administración— y queda esa más
+    // la del usuario administrativo, que no es plantilla. Menos vías es mejor, pero la
+    // comprobación de abajo sigue recorriéndolas TODAS: lo que no puede pasar es que
+    // aparezca una nueva sin la marca.
+    assert.ok(inserts.length >= 2, `solo se han encontrado ${inserts.length}`);
   });
 
   test("TODAS marcan pass_temporal: si una se olvida, esas cuentas se quedan sin pedirlo", () => {

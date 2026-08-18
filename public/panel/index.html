@@ -680,6 +680,14 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .bl-lista{max-height:46vh}
 }
 
+/* Ficha laboral: los cuatro datos que resumen la situación de alguien. En un
+   móvil una rejilla de cuatro columnas deja cada número en 80 px, así que baja a
+   dos y luego a una: se lee en vertical antes que ilegible en horizontal. */
+.lab-g{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.lab-g .t1{font-size:15px;font-weight:600}
+@media(max-width:900px){ .lab-g{grid-template-columns:repeat(2,1fr)} }
+@media(max-width:480px){ .lab-g{grid-template-columns:1fr;gap:10px} }
+
 /* Las tres secciones de Inventarios. En un móvil estrecho las pestañas se
    DESLIZAN en su fila antes que partirse en dos: una barra rota en dos líneas
    empuja el contenido y deja de leerse como una sola cosa. */

@@ -174,9 +174,19 @@ describe("Equipo · un id cambiado a mano no salta el ámbito", () => {
   });
 
   test("el encargado no puede crear gente en otro local ni ascender a nadie", () => {
+    // El alta pasa por un servicio común desde la fase 6, así que el forzado se hace sobre
+    // los datos que se le entregan y la comprobación de ámbito vive dentro del servicio.
+    // Mismo efecto y en el mismo sitio que importa: el SERVIDOR.
     const b = bloque('app.post("/api/rrhh/trabajador"', "// Volver a poner la contraseña inicial");
-    assert.match(b, /if \(esEncargado\(req\)\) \{ local = localScope\(req\); rol = "trabajador"; \}/);
-    assert.match(b, /if \(!rrhhPuedeLocal\(req, local\)\)/);
+    assert.match(b, /if \(esEncargado\(req\)\) \{ datos\.local = localScope\(req\); datos\.rol = "trabajador"; \}/);
+    // Y no le deja poner el contrato: las horas contratadas son la base de lo que se le
+    // acaba pagando a alguien, y eso no lo decide quien cuadra la semana.
+    assert.match(b, /if \(esEncargado\(req\)\) \{ delete datos\.horas_semana;/);
+    const srv = bloque("async function rrhhCrearTrabajador", "async function rrhhAltaTransaccion");
+    assert.match(srv, /if \(!rrhhPuedeLocal\(req, d\.local\)\)/);
+    // El local nunca sale del cuerpo sin pasar por ahí: la validación lo normaliza y el
+    // servicio lo comprueba contra el ámbito de quien pide.
+    assert.match(srv, /validarAlta\(datos, \{ locales: INV_LOCALES/);
   });
 });
 

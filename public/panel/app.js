@@ -2769,7 +2769,16 @@ function renderRRSegSidebar() {
   }).join("");
   const addBtn = '<button class="btn sm" data-act="rr-worker-add">+ Añadir</button>';
   const agoraBtn = '<button class="btn sm" data-act="rr-agora-import" title="Enlazar operadores de Ágora">Ágora</button>';
-  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3><span style="display:flex;gap:6px">${agoraBtn}${addBtn}</span></div>${groups || '<div class="mut" style="padding:14px">Sin trabajadores.</div>'}</div>`;
+  // El filtro DICE cuántos hay de cada. Uno que esconde gente sin decir cuánta hace pensar
+  // que la plantilla es más pequeña de lo que es.
+  const c = RRSEG.cuentas;
+  const est = RRSEG.estado || "activos";
+  const filtro = c ? `<div class="invsecs" style="display:flex;gap:6px;padding:10px 16px 0">
+      ${[["activos", `En plantilla (${c.activos})`], ["bajas", `Bajas (${c.bajas})`], ["todos", `Todos (${c.total})`]]
+        .map(([k, t]) => `<button class="btn sm ${est === k ? "primary" : ""}" data-act="rr-estado" data-estado="${k}">${esc(t)}</button>`).join("")}
+    </div>` : "";
+  const vacio = est === "bajas" ? "Nadie de baja en este establecimiento." : "Sin trabajadores.";
+  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3><span style="display:flex;gap:6px">${agoraBtn}${addBtn}</span></div>${filtro}${groups || `<div class="mut" style="padding:14px">${vacio}</div>`}</div>`;
 }
 function renderRRCheckin() {
   const w = RRSEG.sel; if (!w) return "";
@@ -2809,15 +2818,101 @@ function renderRRFicha() {
   if (!w) return `<div class="card" style="min-height:200px;display:grid;place-items:center"><div class="mut">Selecciona un trabajador para ver su ficha, datos, documentos y check-in.</div></div>`;
   const f = RRSEG.ficha; const t = (f && f.trabajador) || w;
   const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
-  const baja = t.activo === 0 || t.activo === false || t.fecha_baja;
-  const estado = baja ? '<span class="pill bad">Baja</span>' : '<span class="pill ok">Activo</span>';
+  // El estado lo decide el SERVIDOR con las funciones de vigencia. Antes se calculaba aquí
+  // con `activo === 0 || fecha_baja`, así que quien tenía la baja puesta para dentro de un
+  // mes salía ya como «Baja» aunque siguiera viniendo a trabajar todos los días.
+  const est = (RRSEG.lab && RRSEG.lab.estado) || null;
+  const baja = est ? ["baja", "desactivado"].includes(est.clave) : (t.activo === 0 || t.activo === false || t.fecha_baja);
+  const PILL = { activo: "ok", baja_futura: "warn", pendiente: "warn", baja: "bad", desactivado: "bad" };
+  const estado = est
+    ? `<span class="pill ${PILL[est.clave] || ""}">${esc(est.etiqueta)}</span>`
+    : (baja ? '<span class="pill bad">Baja</span>' : '<span class="pill ok">Activo</span>');
   const antig = f && f.antiguedad ? ` · ${esc(f.antiguedad.texto)} en la empresa` : "";
   const ini = (t.nombre || t.username || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   const foto = t.foto_url ? `<img src="${esc(t.foto_url)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : `<span class="avatar" style="width:56px;height:56px;font-size:20px;flex:none">${esc(ini)}</span>`;
   const dato = (lab, val) => val ? `<div><div class="t2">${lab}</div><div class="t1">${esc(val)}</div></div>` : "";
   const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Puesto", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
   const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(t.rol || "")}${t.local ? " · " + esc(t.local) : ""}${t.username ? " · @" + esc(t.username) : ""}${antig}</div></div></div>${esDir ? `<button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(t.nombre || t.username || "")}">Eliminar</button>` : ""}</div></div>`;
-  return `<div class="grid" style="gap:16px">${hero}${datos}${renderRRPin()}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
+  return `<div class="grid" style="gap:16px">${hero}${renderRRLaboral()}${datos}${renderRRPin()}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
+}
+
+// ── La ficha laboral ────────────────────────────────────────────────────────
+// Todo lo que antes obligaba a recorrer cuatro pantallas: el contrato vivía en Horarios →
+// Configuración, el saldo en Fichajes → Bolsa y las vacaciones en su bandeja. Aquí no se
+// guarda nada nuevo: cada bloque viene de su tabla de siempre.
+function renderRRLaboral() {
+  const f = RRSEG.lab;
+  if (!f) return "";
+  const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
+  const h = (m) => ficHoras(Math.abs(Math.round(m || 0)));
+  const c = f.contrato.vigente;
+
+  const resumen = `<div class="lab-g">
+    <div><div class="t2">Estado</div><div class="t1">${esc(f.estado.etiqueta)}</div>
+      ${f.estado.detalle ? `<div class="mut" style="font-size:11.5px">${esc(f.estado.detalle)}</div>` : ""}</div>
+    <div><div class="t2">Antigüedad</div><div class="t1">${esc(f.antiguedad?.texto || "—")}</div>
+      <div class="mut" style="font-size:11.5px">desde el ${esc((f.trabajador.fecha_alta || "—").slice(0, 10))}</div></div>
+    <div><div class="t2">Contrato</div><div class="t1">${c ? esc(c.horas_semana + " h/semana") : "<span class=\"mut\">sin contrato</span>"}</div>
+      ${c ? `<div class="mut" style="font-size:11.5px">desde el ${esc(c.desde)}${c.hasta ? ` hasta el ${esc(c.hasta)}` : ""}</div>`
+          : `<div class="mut" style="font-size:11.5px">sin horas no entra en el generador</div>`}</div>
+    <div><div class="t2">Bolsa de horas</div><div class="t1">${esc(ficSigno(f.bolsa.saldo))}</div>
+      ${f.bolsa.puedeVerLibro ? `<button class="linkbtn" data-act="rr-libro" data-id="${f.trabajador.id}" style="color:var(--brand);font-size:11.5px">Ver el libro</button>` : ""}</div>
+  </div>`;
+
+  // Áreas. «Sin configurar» y «ninguna» NO son lo mismo, y decirlo importa: mientras esté
+  // sin configurar, el generador la acepta para cualquier área.
+  const areas = !f.areas.configurado
+    ? `<p class="fic-nota" style="margin:0">Áreas <b>sin configurar</b>. Mientras lo estén, el generador puede ponerle en cualquier área.
+        <button class="linkbtn" data-act="rr-areas" style="color:var(--brand)">Configurarlas</button></p>`
+    : `<div>${(f.areas.data.length
+        ? f.areas.data.map((a) => `<span class="pill ${a.principal ? "ok" : ""}">${esc(a.nombre)}${a.principal ? " · principal" : ""}${a.activo ? "" : " (área desactivada)"}</span>`).join(" ")
+        : '<span class="mut">Ninguna, a propósito: no entra en el generador.</span>')}
+        <button class="linkbtn" data-act="rr-areas" style="color:var(--brand);margin-left:8px">Cambiar</button></div>`;
+
+  const disp = f.disponibilidad.resumen.length
+    ? `<div class="rows">${f.disponibilidad.resumen.map((d) => `<div class="row"><div class="grow"><b>${esc(d.dia)}</b> <span class="mut">${esc(d.texto)}</span></div></div>`).join("")}</div>`
+    : `<div class="mut" style="padding:8px 0">No ha declarado ninguna restricción: el generador la cuenta disponible siempre.</div>`;
+
+  const aus = f.ausencias;
+  const linAus = (a, pre) => `<div class="row"><div class="grow"><b>${esc(pre)}</b> <span class="mut">${esc(a.tipo)} · del ${esc(a.desde)} al ${esc(a.hasta)}${a.estado !== "aprobada" ? " · " + esc(a.estado) : ""}</span></div></div>`;
+  const bloqueAus = (aus.actual || aus.proxima || aus.pendientes.length || aus.pasadas.length)
+    ? `<div class="rows">
+        ${aus.actual ? linAus(aus.actual, "Ahora mismo:") : ""}
+        ${aus.proxima ? linAus(aus.proxima, "La próxima:") : ""}
+        ${aus.pendientes.map((a) => linAus(a, "Pendiente de decidir:")).join("")}
+        ${aus.pasadas.map((a) => linAus(a, "Última:")).join("")}</div>`
+    : `<div class="mut" style="padding:8px 0">Sin ausencias registradas.</div>`;
+
+  const horas = `<div class="lab-g">
+    <div><div class="t2">Esta semana, planificadas</div><div class="t1">${esc(h(f.horas.semana.planificadas))}</div>
+      <div class="mut" style="font-size:11.5px">${f.horas.semana.turnos} turno(s) · semana del ${esc(f.horas.semana.lunes)}</div></div>
+    <div><div class="t2">Validadas este periodo</div><div class="t1">${esc(h(f.horas.periodo.validadas))}</div>
+      <div class="mut" style="font-size:11.5px">${f.horas.periodo.dias} día(s) · ${esc(f.horas.periodo.etiqueta)}</div></div>
+    <div><div class="t2">Franquicia de la bolsa</div><div class="t1">±${f.bolsa.tolerancia} min</div>
+      <div class="mut" style="font-size:11.5px">por jornada, sobre el cuadrante</div></div>
+  </div>
+  ${f.horas.sinValidar ? `<p class="fic-nota" style="margin:10px 0 0"><b>${f.horas.sinValidar}</b> jornada(s) suyas de este periodo están sin validar. Sus horas todavía no están en ningún saldo.</p>` : ""}`;
+
+  const hist = f.contrato.historico.length > 1
+    ? `<details style="margin-top:10px"><summary class="mut" style="cursor:pointer">Contratos anteriores (${f.contrato.historico.length - 1})</summary>
+        <div class="rows">${f.contrato.historico.slice(1).map((x) => `<div class="row"><div class="grow"><b>${esc(x.horas_semana)} h/semana</b> <span class="mut">del ${esc(x.desde)} ${x.hasta ? "al " + esc(x.hasta) : "(abierto)"}${x.creado_por ? " · lo puso " + esc(x.creado_por) : ""}</span></div></div>`).join("")}</div></details>`
+    : "";
+  const solap = f.contrato.solapados.length
+    ? `<p class="fic-nota" style="margin:10px 0 0;border-color:var(--danger)">Tiene <b>${f.contrato.solapados.length}</b> contrato(s) que se pisan. No se toca ninguno automáticamente: con dos vigentes no se puede saber cuál son sus horas, y eso decide lo que se le paga.</p>`
+    : "";
+
+  const accion = (t, id) => `<button class="btn sm" data-act="${id}">${t}</button>`;
+  return `
+    <div class="card"><div class="ch"><h3>Situación laboral</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${esDir ? accion("Cambiar contrato", "rr-contrato") : ""}
+        ${esDir && f.estado.clave !== "baja" ? accion("Dar de baja", "rr-baja") : ""}
+      </div></div>
+      ${resumen}${solap}${hist}</div>
+    <div class="card"><div class="ch"><h3>Áreas en las que puede trabajar</h3></div>${areas}</div>
+    <div class="card"><div class="ch"><h3>Horas</h3></div>${horas}</div>
+    <div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Ausencias</h3></div>${bloqueAus}</div>
+    <div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Disponibilidad declarada</h3></div>${disp}</div>`;
 }
 
 // PIN del kiosco. Se asigna desde aquí porque es donde se está cuando alguien entra a
@@ -3043,7 +3138,12 @@ async function loadRRHH() {
     } else if (RRTAB === "seguimiento") {
       RRSEG.mes = rrMesActual();
       // El resumen se pide en crudo: además de `data` trae `contacto` (quién no tiene teléfono).
-      const [workers, llamadas, preguntas, resumen] = await Promise.all([api("/api/rrhh/trabajadores"), apiOptional("/api/rrhh/llamadas/" + RRSEG.mes), apiOptional("/api/rrhh/preguntas/" + RRSEG.mes), apiRaw("/api/rrhh/resumen?mes=" + RRSEG.mes).catch(() => null)]);
+      // Por defecto, quien trabaja hoy. Una plantilla de treinta personas con ochenta
+      // antiguos mezclados no es una plantilla: quien se fue se pide a propósito.
+      const wj = await apiRaw("/api/rrhh/trabajadores?estado=" + (RRSEG.estado || "activos")).catch(() => null);
+      const [llamadas, preguntas, resumen] = await Promise.all([apiOptional("/api/rrhh/llamadas/" + RRSEG.mes), apiOptional("/api/rrhh/preguntas/" + RRSEG.mes), apiRaw("/api/rrhh/resumen?mes=" + RRSEG.mes).catch(() => null)]);
+      const workers = (wj && wj.data) || [];
+      RRSEG.cuentas = (wj && wj.cuentas) || null;
       // Filtrado por el establecimiento de la barra: el servidor devuelve todos a dirección, y
       // con Blanes puesto se estaban viendo los sesenta del grupo. Se filtra aquí y no en cada
       // pantalla para que la barra lateral, la ficha y el seguimiento cuenten lo mismo.
@@ -3078,7 +3178,13 @@ async function rrSelWorker(id) {
   const w = RRSEG.workers.find((x) => String(x.id) === String(id)); if (!w) return;
   RRSEG.sel = w; RRSEG.ficha = null;
   try { RRSEG.notas = (await apiOptional("/api/rrhh/trabajador/" + id + "/notas")) || []; } catch { RRSEG.notas = []; }
-  try { RRSEG.ficha = await apiRaw("/api/rrhh/trabajador/" + id + "/ficha"); } catch { RRSEG.ficha = null; }
+  // Las dos a la vez. La de siempre trae datos, PIN y documentos; la laboral agrega
+  // contrato, áreas, disponibilidad, ausencias, horas y bolsa desde sus tablas.
+  const [fi, lab] = await Promise.all([
+    apiRaw("/api/rrhh/trabajador/" + id + "/ficha").catch(() => null),
+    apiRaw("/api/rrhh/trabajador/" + id + "/ficha-laboral").catch(() => null),
+  ]);
+  RRSEG.ficha = fi; RRSEG.lab = lab;
   const v = document.getElementById("view"); if (v && CURRENT === "rrhh" && RRTAB === "seguimiento") v.innerHTML = renderRRSeg();
 }
 function rrRepaintFicha() { const f = document.getElementById("rrFicha"); if (f) f.innerHTML = renderRRFicha(); else if (CURRENT === "rrhh") loadRRHH(); }
@@ -3119,15 +3225,58 @@ function rrWorkerAdd() {
   // Ya no se pide contraseña: la inicial es el propio usuario y el sistema obliga a
   // cambiarla al entrar. Antes venía «tapeta2024» rellenada y nadie la cambiaba nunca,
   // porque además el trabajador no podía.
-  const ov = modal("Añadir trabajador", `<form id="fWorker" class="grid" style="gap:12px">
-    <div class="field"><label>Nombre</label><input name="nombre" required></div>
-    <div class="field"><label>Usuario</label><input name="username" required placeholder="nombre.local"></div>
-    ${localField}${rolField}
+  const hoy = new Date().toISOString().slice(0, 10);
+  // El alta corta se acabó dejando a la gente a medio montar: sin contrato no entraban en el
+  // generador y sin áreas se les podía poner en cocina. Se piden aquí, y solo esto: el DNI,
+  // el teléfono y los documentos se completan después en la ficha, cuando se tengan.
+  const ov = modal("Nuevo trabajador", `<form id="fWorker" class="grid" style="gap:14px">
+    <div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Datos básicos</h3></div>
+      <div class="form-grid">
+        <div class="field"><label>Nombre</label><input name="nombre" required></div>
+        <div class="field"><label>Usuario</label><input name="username" required placeholder="nombre.local"></div>
+        ${localField}${rolField}
+        <div class="field"><label>Puesto <span class="mut">(opcional)</span></label><input name="puesto" placeholder="Camarero"></div>
+        <div class="field"><label>Primer día de trabajo</label><input name="fecha_alta" type="date" value="${hoy}"></div>
+      </div></div>
+    ${enc ? "" : `<div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Contrato</h3></div>
+      <div class="form-grid">
+        <div class="field"><label>Horas por semana</label><input name="horas_semana" type="number" min="1" max="60" step="0.5" placeholder="40"></div>
+        <div class="field"><label>Desde <span class="mut">(si no, el primer día)</span></label><input name="contrato_desde" type="date"></div>
+      </div>
+      <p class="mut" style="margin:6px 0 0;font-size:11.5px">Sin horas contratadas no entra en el reparto del generador.</p></div>`}
+    <div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Áreas en las que puede trabajar</h3></div>
+      <div id="altaAreas" class="mut" style="font-size:12.5px">Elige el establecimiento para ver sus áreas.</div>
+      <p class="mut" style="margin:6px 0 0;font-size:11.5px">Si no marcas ninguna, el generador podrá ponerle en cualquiera hasta que se configuren.</p></div>
     <p class="mut" style="margin:0;line-height:1.55">Entrará con <b>su usuario como contraseña</b> y lo primero que
       le pedirá el sistema es cambiarla. Hasta que lo haga no puede ver nada del panel.</p>
-    <button class="btn primary" type="submit">Crear</button></form>`);
+    <button class="btn primary" type="submit">Crear trabajador</button></form>`);
+
+  // Las áreas son las del local elegido, y se recargan si se cambia: ofrecer las de Blanes
+  // para alguien de Lloret sería regalar un id que el servidor va a rechazar.
+  async function cargarAreas() {
+    const caja = ov.querySelector("#altaAreas");
+    const local = ov.querySelector("[name=local]")?.value || USER.local || "";
+    if (!local) return;
+    try {
+      const r = await apiRaw("/api/horarios/plantilla?local=" + encodeURIComponent(local));
+      const act = (r.areas || []).filter((a) => a.activo !== false);
+      caja.innerHTML = act.length
+        ? act.map((a) => `<label class="wa-cel"><input type="checkbox" class="altaArea" value="${a.id}"> ${esc(a.nombre)}</label>`).join("")
+        : '<span class="mut">Este establecimiento todavía no tiene áreas.</span>';
+    } catch { caja.innerHTML = '<span class="mut">No se han podido cargar las áreas. Se pueden poner después.</span>'; }
+  }
+  ov.querySelector("[name=local]")?.addEventListener("change", cargarAreas);
+  cargarAreas();
+
   ov.querySelector("#fWorker").addEventListener("submit", async (e) => {
-    e.preventDefault(); const data = Object.fromEntries(new FormData(e.target).entries());
+    e.preventDefault();
+    const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true;
+    const data = Object.fromEntries(new FormData(e.target).entries());
+    const marcadas = [...ov.querySelectorAll(".altaArea")].filter((c) => c.checked).map((c) => Number(c.value));
+    // La lista solo viaja si hay áreas que ofrecer. Mandar `[]` cuando el local no tiene
+    // ninguna marcaría la ficha como «configurada con cero», que en la fase 4 significa
+    // «este no entra en el generador» — y no es lo que ha decidido nadie aquí.
+    if (ov.querySelectorAll(".altaArea").length) data.areas = marcadas;
     try {
       const r = await apiSend("POST", "/api/rrhh/trabajador", data);
       ov.remove();
@@ -3137,9 +3286,91 @@ function rrWorkerAdd() {
           puedes volver a dejarlo como al principio.</p>
         <div style="display:flex;justify-content:flex-end"><button class="btn primary" data-close>Entendido</button></div>`);
       loadRRHH();
-    } catch (err) { toast("Error: " + err.message); }
+    } catch (err) { btn.disabled = false; toast("Error: " + err.message); }
   });
 }
+// ── Dar de baja ─────────────────────────────────────────────────────────────
+// Dos pasos a propósito: primero se enseña TODO lo que va a pasar y después se confirma.
+// Una baja toca cinco sitios y ninguno se ve desde el botón.
+async function rrDarDeBaja(id, nombre) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const ov = modal(`Dar de baja · ${nombre}`, `
+    <label class="bl-lbl">Último día que trabaja <span class="mut">(ese día sí trabaja)</span>
+      <input class="inp" id="bajaFecha" type="date" value="${hoy}"></label>
+    <label class="bl-lbl">Motivo interno <span class="mut">(opcional, no lo ve el trabajador)</span>
+      <input class="inp" id="bajaMotivo" placeholder="Fin de contrato de temporada"></label>
+    <div id="bajaPlan" class="mut" style="margin:12px 0;min-height:40px">Calculando qué pasará…</div>
+    <p id="bajaMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn danger" id="bajaOk" disabled>Dar de baja</button></div>`);
+
+  let firma = null;
+  const NIVEL = { atencion: "border-color:var(--danger)", info: "" };
+  async function verPlan() {
+    const fecha = ov.querySelector("#bajaFecha").value;
+    const caja = ov.querySelector("#bajaPlan"), btn = ov.querySelector("#bajaOk");
+    btn.disabled = true; firma = null;
+    if (!fecha) { caja.textContent = "Pon la fecha."; return; }
+    caja.innerHTML = '<span class="mut">Calculando qué pasará…</span>';
+    try {
+      const r = await apiRaw(`/api/rrhh/trabajador/${id}/baja/plan?fecha=${encodeURIComponent(fecha)}`);
+      firma = r.firma;
+      // La fecha que se enseña es la que ha entendido el SERVIDOR, no la que hay en el
+      // campo: si algún día las dos dejaran de coincidir, lo que manda es la de abajo.
+      caja.innerHTML = `<p style="margin:0 0 10px">${esc(nombre)} causará baja el <b>${esc(r.plan.fecha_baja)}</b>, que será su último día trabajado.</p>`
+        + (r.plan.avisos.length
+          ? r.plan.avisos.map((a) => `<p class="fic-nota" style="margin:0 0 8px;${NIVEL[a.nivel] || ""}">${esc(a.texto)}${
+              a.tipo === "turnos_publicados" && a.semanas.length ? ` <b>Semanas: ${a.semanas.map(esc).join(", ")}</b>.` : ""}</p>`).join("")
+          : '<p class="mut" style="margin:0">No queda nada pendiente: ni turnos, ni contrato abierto, ni ausencias, ni horas a favor.</p>');
+      btn.disabled = false;
+    } catch (e) { caja.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
+  }
+  ov.querySelector("#bajaFecha").addEventListener("change", verPlan);
+  verPlan();
+
+  ov.querySelector("#bajaOk").addEventListener("click", async () => {
+    const btn = ov.querySelector("#bajaOk"); btn.disabled = true;
+    try {
+      const r = await apiSend("POST", `/api/rrhh/trabajador/${id}/baja`, {
+        fecha_baja: ov.querySelector("#bajaFecha").value,
+        motivo: ov.querySelector("#bajaMotivo").value.trim(), firma,
+      });
+      ov.remove(); toast(r.mensaje || "Baja registrada ✅"); rrSelWorker(id); loadRRHH();
+    } catch (e) {
+      btn.disabled = false;
+      ov.querySelector("#bajaMsg").textContent = e.message;
+      // El 409 significa que algo cambió: se vuelve a enseñar el plan nuevo antes que
+      // dejarle confirmar a ciegas algo distinto de lo que leyó.
+      if (/ha cambiado/i.test(e.message)) verPlan();
+    }
+  });
+}
+
+// Cambiar contrato: NO se edita el anterior. Se cierra y se abre otro, porque recalcular un
+// mes pasado con las horas de hoy sacaría desviaciones que nunca existieron.
+async function rrCambiarContrato(id, nombre, actual) {
+  const ov = modal(`Cambiar contrato · ${nombre}`, `
+    <p style="margin:0 0 14px">${actual ? `Ahora tiene <b>${esc(actual.horas_semana)} h/semana</b> desde el ${esc(actual.desde)}.` : "Todavía no tiene contrato."}</p>
+    <div class="bl-form">
+      <label>Horas por semana<input class="inp" id="ctrHoras" type="number" min="1" max="60" step="0.5" value="${actual ? esc(actual.horas_semana) : 40}"></label>
+      <label>Desde<input class="inp" id="ctrDesde" type="date" value="${new Date().toISOString().slice(0, 10)}"></label>
+    </div>
+    <p class="fic-nota">El contrato de ahora <b>no se borra</b>: se cierra el día antes y se queda en el histórico con quién lo puso.
+      Así, recalcular un mes pasado sigue usando las horas que había entonces.</p>
+    <p id="ctrMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button><button class="btn primary" id="ctrOk">Guardar</button></div>`);
+  ov.querySelector("#ctrOk").addEventListener("click", async () => {
+    const btn = ov.querySelector("#ctrOk"); btn.disabled = true;
+    try {
+      const r = await apiSend("POST", "/api/horarios/contrato", {
+        worker_id: id, horas_semana: Number(ov.querySelector("#ctrHoras").value), desde: ov.querySelector("#ctrDesde").value });
+      ov.remove(); toast(r.mensaje || "Contrato guardado ✅"); rrSelWorker(id);
+    } catch (e) { btn.disabled = false; ov.querySelector("#ctrMsg").textContent = e.message; }
+  });
+}
+
 function rrContratar(id, nombre) {
   const localOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
   const base = String(nombre || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "");
@@ -9893,6 +10124,17 @@ document.addEventListener("click", (e) => {
   else if (act === "cand-estado") candEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
   else if (act === "rr-worker") rrSelWorker(t.getAttribute("data-id"));
   else if (act === "rr-editar-datos") rrEditarDatos(t.getAttribute("data-id"));
+  // Ciclo de vida laboral. El nombre sale de la ficha ya cargada: es el que se enseña.
+  else if (act === "rr-estado") { RRSEG.estado = t.getAttribute("data-estado"); RRSEG.sel = null; loadRRHH(); }
+  else if (act === "rr-baja") { const f = RRSEG.lab; if (f) rrDarDeBaja(f.trabajador.id, f.trabajador.nombre); }
+  else if (act === "rr-contrato") { const f = RRSEG.lab; if (f) rrCambiarContrato(f.trabajador.id, f.trabajador.nombre, f.contrato.vigente); }
+  else if (act === "rr-libro") ficAbrirLibro(Number(t.getAttribute("data-id")));
+  // Las áreas se editan donde se editan siempre —Horarios → Configuración → Quién hace qué—
+  // y no se reimplementa aquí: dos editores del mismo dato acaban discrepando.
+  else if (act === "rr-areas") {
+    const f = RRSEG.lab;
+    if (f) { HOR.local = f.trabajador.local; HORCFG.tab = "areas"; go("horarios"); setTimeout(horConfig, 60); }
+  }
   else if (act === "rr-pin") rrAsignarPin(t.getAttribute("data-id"));
   else if (act === "rr-reset-pass") rrResetPassword(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-doc-subir") rrDocSubir(t.getAttribute("data-id"));
