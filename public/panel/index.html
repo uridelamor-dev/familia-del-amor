@@ -626,6 +626,12 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .modal{background:var(--surface);border:1px solid var(--border2);border-radius:16px;box-shadow:var(--sh-lg);width:min(520px,96vw);max-height:90vh;overflow:auto}
 .modal.wide{width:min(1080px,96vw)}
 
+/* Las tres secciones de Inventarios. En un móvil estrecho las pestañas se
+   DESLIZAN en su fila antes que partirse en dos: una barra rota en dos líneas
+   empuja el contenido y deja de leerse como una sola cosa. */
+.invsecs{margin:0 0 14px;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.invsecs button{white-space:nowrap}
+
 /* ── Elegir productos de una lista (Inventarios) ──────────────────────────────
    La lista tiene su PROPIO scroll y el pie queda fuera: con cuarenta filas
    apiladas en un móvil, una barra pegada al final del modal se pierde por

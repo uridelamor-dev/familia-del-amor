@@ -1512,9 +1512,27 @@ function openNuevaIncidencia() {
 // Flujo móvil: Local → Proveedor → Contar → Revisar → Pedido. Guardado automático.
 let INV = { local: "", proveedorId: null, proveedorNombre: "", sesionId: null, productos: [], filtro: "", pedidoId: null };
 const _invTimers = {};
-function invHeader(titulo, sub, back) {
+// Las tres secciones de Inventarios, siempre a la vista.
+//
+// Antes «Historial» y «Pedidos» eran dos botones sueltos en la barra de la pantalla de
+// proveedores: en cuanto entrabas a configurar o a contar, desaparecían, y para ver un pedido
+// había que salir primero. Como pestañas fijas se ve dónde estás y se cambia de sección desde
+// cualquier sitio.
+const INV_SECCIONES = [["prov", "Proveedores", "inv-volver-prov"], ["pedidos", "Pedidos", "inv-pedidos"], ["historial", "Historial", "inv-historial"]];
+function invTabs(activa) {
+  return `<div class="seg invsecs">${INV_SECCIONES.map(([k, t, act]) =>
+    `<button class="${activa === k ? "on" : ""}" data-act="${act}">${t}</button>`).join("")}</div>`;
+}
+/**
+ * `back` solo cuando se está DENTRO de algo (contando, configurando, viendo un pedido). En las
+ * tres pantallas de sección sobra: iría al mismo sitio que la pestaña que ya está marcada, y son
+ * doce píxeles de alto y un botón que no dice nada nuevo.
+ */
+function invHeader(titulo, sub, back, seccion = "prov") {
   const b = back ? `<button class="btn" data-act="${back.act}" ${back.data || ""} style="margin-bottom:12px">‹ ${esc(back.label)}</button>` : "";
-  return `${b}<div class="ph"><div class="eyebrow">Inventarios</div><h1>${esc(titulo)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+  // `seccion: null` = sin pestañas. Es el caso de «elige un establecimiento»: sin local, las
+  // tres secciones llevarían a un 403.
+  return `${b}<div class="ph"><div class="eyebrow">Inventarios</div><h1>${esc(titulo)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}</div>${seccion ? invTabs(seccion) : ""}`;
 }
 // El local sale del selector de la barra de arriba, como en el resto del panel. Antes
 // Inventarios tenía su propia pantalla de «elige local», que era un paso de más y encima
@@ -1526,7 +1544,7 @@ async function loadInventario() {
   invScope();
   if (sinPublico(INV.local)) { view.innerHTML = avisoSinPublico("Inventarios", "Operación", "inventarios"); return; }
   if (!INV.local) {
-    view.innerHTML = invHeader("Inventarios", "Elige un establecimiento") +
+    view.innerHTML = invHeader("Inventarios", "Elige un establecimiento", null, null) +
       `<div class="card"><div class="ch"><h3>Elige un establecimiento</h3></div><p class="mut" style="margin:0">El inventario es de un local concreto. Selecciónalo arriba, en la barra.</p></div>`;
     return;
   }
@@ -1543,7 +1561,8 @@ async function loadInvProveedores() {
 function renderInvProveedores(list) {
   // Sin botón de «Locales»: el establecimiento se cambia arriba, en la barra.
   const back = null;
-  const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn" data-act="inv-historial">Historial</button><button class="btn" data-act="inv-pedidos">Pedidos</button><button class="btn primary" data-act="inv-nuevo-prov">+ Proveedor</button></div>`;
+  // Historial y Pedidos ya no van aquí: son pestañas fijas, arriba.
+  const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn primary" data-act="inv-nuevo-prov">+ Proveedor</button></div>`;
   const cards = list.length ? `<div class="grid g2">${list.map((p) => {
     const ultimo = p.ultimo_inventario ? fechaCorta(String(p.ultimo_inventario).slice(0, 10)) : "—";
     const estado = Number(p.en_curso) > 0 ? '<span class="pill warn">Inventario en curso</span>' : '<span class="pill ok">Al día</span>';
@@ -1558,11 +1577,10 @@ function renderInvProveedores(list) {
  */
 async function loadInvHistorial() {
   const view = document.getElementById("view");
-  const back = { act: "inv-volver-prov", label: "Proveedores" };
-  view.innerHTML = invHeader("Historial de inventarios", esc(nombreCortoLocal(INV.local)), back) + `<p class="mut">Cargando…</p>`;
+  view.innerHTML = invHeader("Historial de inventarios", esc(nombreCortoLocal(INV.local)), null, "historial") + `<p class="mut">Cargando…</p>`;
   let j;
   try { j = await apiRaw("/api/inventario/historial?local=" + encodeURIComponent(INV.local)); }
-  catch (e) { view.innerHTML = invHeader("Historial de inventarios", "", back) + errorCard(e.message); return; }
+  catch (e) { view.innerHTML = invHeader("Historial de inventarios", "", null, "historial") + errorCard(e.message); return; }
 
   const filas = (j.data || []).map((s) => `<div class="row">
       <div class="grow" style="min-width:0">
@@ -1574,7 +1592,7 @@ async function loadInvHistorial() {
         : `<span class="mut" style="font-size:12px">sin pedido</span>`}
     </div>`).join("");
 
-  view.innerHTML = invHeader("Historial de inventarios", esc(nombreCortoLocal(INV.local)), back) +
+  view.innerHTML = invHeader("Historial de inventarios", esc(nombreCortoLocal(INV.local)), null, "historial") +
     (filas ? `<div class="card p0"><div class="rows">${filas}</div></div>`
            : `<div class="card"><p class="mut" style="margin:0">Todavía no hay ningún inventario cerrado en este establecimiento.</p></div>`);
 }
@@ -1712,7 +1730,7 @@ function renderInvPedido(j) {
   const editable = ped.estado === "DRAFT";
   const estadoPill = ped.estado === "APPROVED" ? '<span class="pill ok">Aprobado</span>' : ped.estado === "CANCELLED" ? '<span class="pill bad">Cancelado</span>' : '<span class="pill warn">Borrador</span>';
   const back = { act: "inv-pedidos", label: "Pedidos" };
-  const head = invHeader("Pedido a " + esc(j.proveedor ? j.proveedor.nombre : ""), `${esc(ped.local)} · ${esc((ped.creado_en || "").slice(0, 10))} ${estadoPill}`, back);
+  const head = invHeader("Pedido a " + esc(j.proveedor ? j.proveedor.nombre : ""), `${esc(ped.local)} · ${esc((ped.creado_en || "").slice(0, 10))} ${estadoPill}`, back, "pedidos");
   const bt = "width:44px;height:44px;font-size:22px;line-height:1;border-radius:12px;flex:0 0 auto";
   const filas = lineas.length ? lineas.map((l) => `<div class="card" style="padding:12px;margin-bottom:8px">
     <div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:600">${esc(l.nombre)}</div>${editable ? `<button class="linkbtn" data-act="inv-linea-del" data-id="${l.id}" title="Quitar">✕</button>` : ""}</div>
@@ -1756,10 +1774,9 @@ async function loadInvPedidos() {
   catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function renderInvPedidos(list) {
-  const back = { act: "inv-volver-prov", label: "Proveedores" };
   const pill = (e) => e === "APPROVED" ? '<span class="pill ok">Aprobado</span>' : e === "CANCELLED" ? '<span class="pill bad">Cancelado</span>' : '<span class="pill warn">Borrador</span>';
   const rows = list.length ? `<div class="card p0"><div class="rows">${list.map((p) => `<div class="row" data-act="inv-ver-pedido" data-id="${p.id}" style="cursor:pointer"><div class="grow"><div class="t1">${esc(p.proveedor_nombre || "—")}</div><div class="t2">${esc((p.creado_en || "").slice(0, 10))} · ${num(p.n_lineas)} línea(s) · ${num(p.total_unidades)} uds</div></div>${pill(p.estado)}</div>`).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay pedidos en este local.</div></div>`;
-  return `${invHeader("Pedidos", esc(INV.local), back)}${rows}`;
+  return `${invHeader("Pedidos", esc(INV.local), null, "pedidos")}${rows}`;
 }
 
 // ── Configuración de productos del proveedor ──
