@@ -5,6 +5,8 @@ requireRole(["trabajador", "encargado", "direccion"]).then((user) => {
   loadRegistro();
   loadAnnouncements();
   loadPulso();
+  loadAusencias();
+  loadDisponibilidad();
 });
 
 // Enlace a la encuesta del mes, por si perdió el WhatsApp o lo borró. Pedirlo ROTA el
@@ -268,3 +270,184 @@ async function loadAnnouncements() {
     list.innerHTML = `<div class="card">Error de conexión al cargar comunicados.</div>`;
   }
 }
+
+// ── Mis ausencias ────────────────────────────────────────────────────────────
+// Pedir unas vacaciones y ver si te las han dado. Hasta ahora esto era un WhatsApp que se
+// perdía en el grupo y una respuesta que nadie recordaba haber dado.
+const AUS_ESTADO_CLASE = { pendiente: "pend", aprobada: "ok", rechazada: "no", cancelada: "can" };
+
+async function loadAusencias() {
+  const bloque = document.getElementById("ausenciasBloque");
+  const lista = document.getElementById("ausLista");
+  if (!bloque || !lista) return;
+  let data;
+  try {
+    const res = await authFetch("/api/mis-ausencias");
+    data = await res.json();
+    if (!data.ok) return;
+  } catch { return; }
+  bloque.classList.remove("hidden");
+
+  // El selector de tipo lo manda el servidor: la baja médica NO está, y no puede estarlo.
+  const sel = document.getElementById("ausTipo");
+  if (sel && !sel.options.length) {
+    sel.innerHTML = (data.tipos || []).map((t) => `<option value="${escapeHtml(t.valor)}">${escapeHtml(t.etiqueta)}</option>`).join("");
+  }
+
+  if (!data.data.length) {
+    lista.innerHTML = `<p class="mut">Todavía no has pedido ninguna. Cuando lo hagas, aparecerá aquí con su estado.</p>`;
+    return;
+  }
+  lista.innerHTML = `<ul class="aus-lista">${data.data.map((a) => `<li class="aus ${AUS_ESTADO_CLASE[a.estado] || ""}">
+      <div class="aus-cab">
+        <b>${escapeHtml(a.etiquetaTipo)}</b>
+        <span class="aus-estado">${escapeHtml(a.etiquetaEstado)}</span>
+      </div>
+      <div class="aus-fechas">${escapeHtml(rangoCorto(a.desde, a.hasta))}</div>
+      ${a.comentario ? `<div class="aus-nota">«${escapeHtml(a.comentario)}»</div>` : ""}
+      ${a.respuesta ? `<div class="aus-resp">Respuesta: ${escapeHtml(a.respuesta)}</div>` : ""}
+      ${a.puedeCancelar ? `<button class="btn ghost btn-sm" type="button" data-aus-cancelar="${a.id}">Cancelar solicitud</button>` : ""}
+    </li>`).join("")}</ul>`;
+}
+
+/** «24–27 de agosto» o «14 de septiembre» si es un solo día. */
+function rangoCorto(desde, hasta) {
+  const M = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+  const [, m1, d1] = String(desde).split("-");
+  const [, m2, d2] = String(hasta).split("-");
+  if (desde === hasta) return `${Number(d1)} de ${M[Number(m1) - 1]}`;
+  if (m1 === m2) return `${Number(d1)}–${Number(d2)} de ${M[Number(m1) - 1]}`;
+  return `${Number(d1)} de ${M[Number(m1) - 1]} – ${Number(d2)} de ${M[Number(m2) - 1]}`;
+}
+
+document.getElementById("ausNueva")?.addEventListener("click", () => {
+  document.getElementById("ausForm")?.classList.remove("hidden");
+  document.getElementById("ausNueva")?.classList.add("hidden");
+});
+document.getElementById("ausCancelar")?.addEventListener("click", () => {
+  document.getElementById("ausForm")?.classList.add("hidden");
+  document.getElementById("ausNueva")?.classList.remove("hidden");
+  const msg = document.getElementById("ausMsg"); if (msg) msg.textContent = "";
+});
+
+document.getElementById("ausForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("ausMsg");
+  const cuerpo = {
+    tipo: document.getElementById("ausTipo").value,
+    desde: document.getElementById("ausDesdeValue").value,
+    hasta: document.getElementById("ausHastaValue").value || document.getElementById("ausDesdeValue").value,
+    comentario: document.getElementById("ausComentario").value,
+  };
+  if (!cuerpo.desde) { if (msg) msg.textContent = "Elige al menos la fecha de inicio."; return; }
+  if (msg) msg.textContent = "Enviando…";
+  try {
+    const res = await authFetch("/api/mis-ausencias", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo),
+    });
+    const data = await res.json();
+    if (!data.ok) { if (msg) msg.textContent = data.error || "No se pudo enviar"; return; }
+    document.getElementById("ausForm").reset();
+    document.getElementById("ausDesdeValue").value = "";
+    document.getElementById("ausHastaValue").value = "";
+    document.getElementById("ausCancelar").click();
+    const aviso = document.getElementById("ausAviso");
+    if (aviso) aviso.textContent = data.mensaje || "Solicitud enviada.";
+    loadAusencias();
+  } catch { if (msg) msg.textContent = "Error de conexión"; }
+});
+
+document.getElementById("ausLista")?.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-aus-cancelar]");
+  if (!b) return;
+  if (!confirm("¿Cancelar esta solicitud?")) return;
+  try {
+    const res = await authFetch(`/api/mis-ausencias/${b.getAttribute("data-aus-cancelar")}/cancelar`, { method: "POST" });
+    const data = await res.json();
+    const aviso = document.getElementById("ausAviso");
+    if (aviso) aviso.textContent = data.ok ? (data.mensaje || "Cancelada.") : (data.error || "No se pudo cancelar");
+    loadAusencias();
+  } catch { /* sin conexión: se reintenta al recargar */ }
+});
+
+// ── Mi disponibilidad ────────────────────────────────────────────────────────
+// Siete filas, tres opciones y una franja opcional. Se rellena con el móvil en la mano, así
+// que va apilado y con botones grandes: nada de tabla de siete columnas.
+const DIAS_DISP = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+const PREFS = [["disponible", "Disponible"], ["prefiere", "Prefiero no"], ["no_disponible", "No puedo"]];
+
+async function loadDisponibilidad() {
+  const bloque = document.getElementById("dispBloque");
+  const caja = document.getElementById("dispDias");
+  if (!bloque || !caja) return;
+  let data;
+  try {
+    const res = await authFetch("/api/mi-disponibilidad");
+    data = await res.json();
+    if (!data.ok) return;
+  } catch { return; }
+  bloque.classList.remove("hidden");
+
+  // Solo se guardan `prefiere` y `no_disponible`: lo que no está es que se puede.
+  const porDow = new Map((data.data || []).map((f) => [Number(f.dow), f]));
+  caja.innerHTML = DIAS_DISP.map((nombre, dow) => {
+    const f = porDow.get(dow);
+    const pref = f ? f.preferencia : "disponible";
+    const todoElDia = !f || (Number(f.inicio_min) === 0 && Number(f.fin_min) >= 1560);
+    return `<div class="disp-dia" data-dow="${dow}">
+      <div class="disp-nombre">${escapeHtml(nombre)}${f && f.origen === "administrativo"
+        ? ` <small class="disp-admin">lo cambió ${escapeHtml(f.autor || "administración")}</small>` : ""}</div>
+      <div class="disp-opts">${PREFS.map(([v, t]) => `<label class="disp-opt ${pref === v ? "on" : ""}">
+        <input type="radio" name="disp-${dow}" value="${v}" ${pref === v ? "checked" : ""}> ${escapeHtml(t)}</label>`).join("")}</div>
+      <div class="disp-franja ${pref === "disponible" ? "hidden" : ""}">
+        <label class="disp-todo"><input type="checkbox" class="disp-todoeldia" ${todoElDia ? "checked" : ""}> Todo el día</label>
+        <span class="disp-horas ${todoElDia ? "hidden" : ""}">
+          de <input type="time" class="disp-ini" value="${escapeHtml(minAHora(f ? f.inicio_min : 0))}">
+          a <input type="time" class="disp-fin" value="${escapeHtml(minAHora(f ? f.fin_min : 1440))}">
+        </span>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+const minAHora = (min) => {
+  const b = ((Math.round(Number(min) || 0) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(b / 60)).padStart(2, "0")}:${String(b % 60).padStart(2, "0")}`;
+};
+const horaAMinutos = (v) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(v || "")); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+
+document.getElementById("dispDias")?.addEventListener("change", (e) => {
+  const dia = e.target.closest(".disp-dia");
+  if (!dia) return;
+  if (e.target.type === "radio") {
+    dia.querySelectorAll(".disp-opt").forEach((l) => l.classList.toggle("on", l.contains(e.target)));
+    // «Disponible» no tiene franja que elegir: no hay nada que acotar.
+    dia.querySelector(".disp-franja").classList.toggle("hidden", e.target.value === "disponible");
+  }
+  if (e.target.classList.contains("disp-todoeldia")) {
+    dia.querySelector(".disp-horas").classList.toggle("hidden", e.target.checked);
+  }
+});
+
+document.getElementById("dispGuardar")?.addEventListener("click", async () => {
+  const msg = document.getElementById("dispMsg");
+  const franjas = [];
+  for (const dia of document.querySelectorAll(".disp-dia")) {
+    const pref = dia.querySelector('input[type="radio"]:checked')?.value;
+    if (!pref || pref === "disponible") continue;
+    const todo = dia.querySelector(".disp-todoeldia").checked;
+    // Hasta 26:00 en minutos absolutos: la noche que acaba de madrugada sigue siendo del día.
+    const ini = todo ? 0 : (horaAMinutos(dia.querySelector(".disp-ini").value) ?? 0);
+    const fin = todo ? 1560 : (horaAMinutos(dia.querySelector(".disp-fin").value) ?? 1440);
+    if (fin <= ini) { if (msg) msg.textContent = `En ${DIAS_DISP[Number(dia.getAttribute("data-dow"))]}, la hora de fin tiene que ser posterior a la de inicio.`; return; }
+    franjas.push({ dow: Number(dia.getAttribute("data-dow")), preferencia: pref, inicio_min: ini, fin_min: fin });
+  }
+  if (msg) msg.textContent = "Guardando…";
+  try {
+    const res = await authFetch("/api/mi-disponibilidad", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ franjas }),
+    });
+    const data = await res.json();
+    if (msg) msg.textContent = data.ok ? (data.mensaje || "Guardada ✅") : (data.error || "No se pudo guardar");
+  } catch { if (msg) msg.textContent = "Error de conexión"; }
+});

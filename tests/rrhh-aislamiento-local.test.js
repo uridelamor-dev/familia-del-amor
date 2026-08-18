@@ -66,7 +66,14 @@ describe("Horarios · las ausencias de un local son solo las de su gente", () =>
     assert.ok(consultas.length >= 5, `solo se han encontrado ${consultas.length} consultas de ausencias`);
     for (const q of consultas) {
       const acotada = /JOIN users u ON u\.id = a\.worker_id/.test(q) || /WHERE worker_id = \?/.test(q) || /WHERE id = \?/.test(q);
-      assert.ok(acotada, `consulta de ausencias sin acotar por persona ni por local:\n${q.slice(0, 200)}`);
+      // Excepción razonada: una consulta que no selecciona NINGÚN dato de nadie no puede
+      // filtrar nada entre locales. Es el caso de la migración que revisa qué valores de
+      // `estado` hay en la tabla antes de cerrarla con un CHECK.
+      // (El trozo capturado empieza en `FROM hor_ausencias`, así que se reconoce por su WHERE.)
+      const sinDatosDeNadie = /^FROM hor_ausencias\s+WHERE estado IS NULL/.test(q.trim())
+        && !/worker_id|motivo|comentario|tipo/.test(q);
+      assert.ok(acotada || sinDatosDeNadie,
+        `consulta de ausencias sin acotar por persona ni por local:\n${q.slice(0, 200)}`);
     }
   });
 

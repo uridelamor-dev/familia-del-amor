@@ -3615,3 +3615,42 @@ h1, h2, h3 {
   .cedit-lang { min-height: 34px; min-width: 40px; }
 }
 
+
+/* ── Mis ausencias y mi disponibilidad (panel del trabajador) ───────────────────
+   Las dos cosas que la gente va a abrir con el móvil en la mano y de pie. Todo
+   apilado: nada de tablas de siete columnas ni de rejillas que se salen. */
+.aus-lista { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: 0.7rem; }
+.aus {
+  border: 1px solid var(--line, #e2ddd0); border-left-width: 4px; border-radius: 12px;
+  padding: 0.85rem 1rem; background: #fff;
+}
+.aus.pend { border-left-color: #c8912a; }
+.aus.ok   { border-left-color: #3f9b52; }
+.aus.no   { border-left-color: #c0392b; }
+.aus.can  { border-left-color: #b9b3a4; opacity: 0.72; }
+.aus-cab { display: flex; justify-content: space-between; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.aus-estado { font-size: 0.82rem; color: #6b6658; white-space: nowrap; }
+.aus-fechas { margin-top: 0.15rem; font-size: 0.95rem; }
+.aus-nota, .aus-resp { margin-top: 0.4rem; font-size: 0.85rem; color: #6b6658; line-height: 1.45; }
+.aus-resp { color: #3c382e; }
+.aus .btn { margin-top: 0.65rem; }
+
+.disp-dia { border-top: 1px solid var(--line, #e2ddd0); padding: 0.85rem 0; }
+.disp-dia:first-child { border-top: none; }
+.disp-nombre { font-weight: 650; margin-bottom: 0.5rem; }
+.disp-admin { font-weight: 400; color: #8a8474; font-size: 0.78rem; }
+/* Tres botones grandes en una fila; si no caben, se reparten en dos. Con el pulgar,
+   un radio nativo de 13 px es inutilizable, así que se toca la etiqueta entera. */
+.disp-opts { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.disp-opt {
+  flex: 1 1 30%; min-height: 44px; display: flex; align-items: center; justify-content: center;
+  gap: 0.4rem; padding: 0 0.6rem; border: 1px solid var(--line, #e2ddd0); border-radius: 10px;
+  font-size: 0.88rem; cursor: pointer; background: #fff; text-align: center;
+}
+.disp-opt.on { border-color: var(--accent-2, #3f9b52); background: #f2f8f3; font-weight: 650; }
+.disp-opt input { margin: 0; }
+.disp-franja { margin-top: 0.6rem; display: flex; gap: 0.9rem; flex-wrap: wrap; align-items: center; font-size: 0.88rem; }
+.disp-todo { display: flex; align-items: center; gap: 0.4rem; min-height: 36px; }
+.disp-horas { display: flex; align-items: center; gap: 0.4rem; }
+/* Por debajo de 16 px, iOS hace zoom al tocar el campo y descoloca la pantalla. */
+.disp-horas input[type="time"] { font-size: 16px; padding: 0.35rem 0.5rem; }

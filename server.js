@@ -34,6 +34,8 @@ import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocales
 // hacen en SQL (SQL_ACTIVO_EL_DIA y SQL_ESTUVO_ENTRE) porque hay que filtrar en la consulta,
 // no después. El módulo puro es la referencia y quien las prueba.
 import { activoAhora, bajaEfectiva, turnosTrasLaBaja, marcadoActivo } from "./src/modules/rrhh/vigencia.js";
+import { sanearSolicitud, transitar, solapesVivos, turnosDurante, paraTrabajador, paraResponsable,
+  resumirBandeja, TIPOS_SOLICITABLES, ETIQUETA_TIPO } from "./src/modules/rrhh/ausencias.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo, generarToken } from "./src/modules/rrhh/pulso.js";
@@ -795,6 +797,30 @@ async function initDB() {
         )`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_hrdocs_worker ON hr_documentos(worker_id)`);
     } catch (e) { console.error("[DB] hr_documentos:", e.message); }
+    // ── El CHECK de `hor_ausencias.estado`, solo si los datos lo permiten ────────────────
+    // La columna aceptaba cualquier texto. Ahora que hay un circuito con cuatro estados
+    // conviene cerrarla, pero NO a ciegas: si en la base hay un valor que no conocemos, no se
+    // puede saber qué quiso decir quien lo escribió, y convertirlo por nuestra cuenta sería
+    // inventarse una decisión de RR.HH. Se mira primero; si hay algo raro, se informa y se
+    // deja la tabla como está.
+    try {
+      const raros = await client.query(
+        `SELECT DISTINCT estado FROM hor_ausencias
+          WHERE estado IS NULL OR estado NOT IN ('pendiente','aprobada','rechazada','cancelada')`);
+      if (raros.rows.length) {
+        console.warn(`[DB] hor_ausencias.estado tiene valores fuera de la lista: ` +
+          `${raros.rows.map((r) => JSON.stringify(r.estado)).join(", ")}. ` +
+          `No se añade la restricción y NO se ha tocado ni una fila: revísalos a mano.`);
+      } else {
+        await client.query(
+          `ALTER TABLE hor_ausencias ADD CONSTRAINT hor_ausencias_estado_ck
+             CHECK (estado IN ('pendiente','aprobada','rechazada','cancelada'))`);
+      }
+    } catch (e) {
+      // `duplicate_object` = ya estaba puesto en un arranque anterior. Lo demás sí se cuenta.
+      if (e.code !== "42710") console.error("[DB] check estado ausencias:", e.message);
+    }
+
     // Se vacían las copias reversibles de contraseña que quedaran. NO se borra la columna —una
     // migración de esquema aquí no aporta nada y sí puede fallar en el despliegue—, pero sí su
     // contenido: mientras exista, quien tenga una copia de la base y el JWT_SECRET recupera en
@@ -7450,9 +7476,12 @@ async function horVecinas(local, dias) {
     [local, sumaDias(dias[0], -1), sumaDias(dias[6], 1)]).catch(() => []);
 }
 
+// `estado = 'aprobada'` NO es un detalle: sin él, en cuanto alguien PIDE unas vacaciones su
+// nombre aparecería en la fila de fiesta del cuadrante marcado como «vacaciones», antes de que
+// nadie se las haya concedido. Una solicitud no cambia el horario hasta que se aprueba.
 const AUS_DEL_LOCAL = `SELECT a.worker_id, a.tipo, a.desde, a.hasta, a.estado FROM hor_ausencias a
              JOIN users u ON u.id = a.worker_id
-            WHERE u.local = ? AND a.desde <= ? AND a.hasta >= ?`;
+            WHERE u.local = ? AND a.estado = 'aprobada' AND a.desde <= ? AND a.hasta >= ?`;
 
 async function horContexto(local, lunes, dias) {
   // Ausencias y contratos se traían SIN filtro de local: todo el grupo entraba en el motor
@@ -7744,7 +7773,7 @@ async function horPdfDeSemana(s) {
              WHERE local = ? AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1`, [s.local]),
       dbAll(`SELECT a.worker_id, a.tipo, a.desde, a.hasta, a.estado FROM hor_ausencias a
              JOIN users u ON u.id = a.worker_id
-            WHERE u.local = ? AND a.desde <= ? AND a.hasta >= ?`, [s.local, dias[6], dias[0]]).catch(() => []),
+            WHERE u.local = ? AND a.estado = 'aprobada' AND a.desde <= ? AND a.hasta >= ?`, [s.local, dias[6], dias[0]]).catch(() => []),
     ]);
   }
   const cuadrante = construirCuadrante({ lunes: s.lunes, tramos, areas, asignaciones, trabajadores: equipo, ausencias });
@@ -7777,11 +7806,15 @@ app.get("/api/horarios/plantilla", requireAuth(HORARIOS_ROLES), async (req, res)
              FROM hor_necesidades WHERE local = ?`, [local]),
       dbAll(`SELECT c.id, c.worker_id, c.desde, c.hasta, c.horas_semana, c.dias_semana FROM hor_contratos c
              JOIN users u ON u.id = c.worker_id WHERE u.local = ? ORDER BY c.worker_id, c.desde DESC`, [local]),
-      dbAll(`SELECT a.id, a.worker_id, a.tipo, a.desde, a.hasta, a.estado, a.motivo FROM hor_ausencias a
-             JOIN users u ON u.id = a.worker_id WHERE u.local = ? AND a.hasta >= ? ORDER BY a.desde`,
+      dbAll(`SELECT a.id, a.worker_id, a.tipo, a.desde, a.hasta, a.estado, a.motivo, a.origen,
+                    a.comentario, a.respuesta, a.solicitado_por, a.resuelto_por
+               FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
+              WHERE u.local = ? AND a.hasta >= ? ORDER BY a.desde`,
         [local, sumaDias(instanteANegocio(Date.now()).diaNegocio, -30)]),
-      dbAll(`SELECT d.id, d.worker_id, d.dow, d.inicio_min, d.fin_min, d.preferencia FROM hor_disponibilidad d
-             JOIN users u ON u.id = d.worker_id WHERE u.local = ? ORDER BY d.worker_id, d.dow`, [local]),
+      dbAll(`SELECT d.id, d.worker_id, d.dow, d.inicio_min, d.fin_min, d.preferencia,
+                    d.origen, d.autor, d.actualizado_en
+               FROM hor_disponibilidad d JOIN users u ON u.id = d.worker_id
+              WHERE u.local = ? ORDER BY d.worker_id, d.dow`, [local]),
     ]);
     res.json({ ok: true, local, areas, tramos, equipo, necesidades, contratos, ausencias, disponibilidad,
       // Solo lectura: si hay contratos pisándose, que se vean. No se arreglan solos.
@@ -7988,24 +8021,144 @@ app.post("/api/horarios/ausencia", requireAuth(HORARIOS_ROLES), async (req, res)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta)) return res.status(400).json({ ok: false, error: "Faltan las fechas" });
     if (hasta < desde) return res.status(400).json({ ok: false, error: "La fecha de fin es anterior a la de inicio" });
 
-    await dbRun(`INSERT INTO hor_ausencias (worker_id, local, tipo, desde, hasta, estado, motivo, autor, creado_en)
-                 VALUES (?,?,?,?,?,?,?,?,?)`,
-      [w.id, w.local, tipo, desde, hasta, String(req.body?.estado || "aprobada"),
-       req.body?.motivo ? String(req.body.motivo).slice(0, 300) : null, req.user.username, isoConOffset(Date.now())]);
-    res.json({ ok: true, mensaje: `${w.nombre}: ${tipo} del ${desde} al ${hasta}.` });
+    // ADJUDICADA: la mete un responsable y nace aprobada. Obligar a dirección a solicitarse a
+    // sí misma una baja para luego aprobársela sería un trámite inventado.
+    const ahora = isoConOffset(Date.now());
+    const estado = ["pendiente", "aprobada"].includes(String(req.body?.estado)) ? String(req.body.estado) : "aprobada";
+    const fila = await dbRun(
+      `INSERT INTO hor_ausencias (worker_id, local, tipo, desde, hasta, estado, origen, motivo, autor,
+                                  resuelto_por, resuelto_en, creado_en)
+       VALUES (?,?,?,?,?,?, 'adjudicada', ?,?,?,?,?) RETURNING id`,
+      [w.id, w.local, tipo, desde, hasta, estado,
+       req.body?.motivo ? String(req.body.motivo).slice(0, 300) : null, req.user.username,
+       estado === "aprobada" ? req.user.username : null, estado === "aprobada" ? ahora : null, ahora]);
+    await ficAuditar("ausencia", fila.id, "adjudicar", req.user.username,
+      { local: w.local, workerId: w.id, detalle: { tipo, desde, hasta, estado } });
+
+    // Si ya tenía turnos dentro, se DICE. No se borra ninguno: ver el comentario de resolver.
+    const aviso = await horTurnosEnAusencia(w.id, desde, hasta);
+    res.json({ ok: true, id: fila.id, avisoTurnos: aviso.total ? aviso : null,
+      mensaje: `${w.nombre}: ${tipo} del ${desde} al ${hasta}.` });
   } catch (e) {
     console.error("[horarios] ausencia:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo guardar la ausencia" });
   }
 });
 
+/**
+ * Quitar una ausencia. NO la borra: la deja `cancelada`.
+ *
+ * Un DELETE aquí perdía el rastro de que existió, de quién la puso y de por qué. Y con el
+ * circuito nuevo sería peor: se borraría también que alguien la pidió y que se le aprobó.
+ * La ruta sigue siendo DELETE porque es lo que llama el panel, pero lo que hace es cancelar.
+ */
 app.delete("/api/horarios/ausencia/:id", requireAuth(HORARIOS_ROLES), async (req, res) => {
   try {
-    const a = await dbGet(`SELECT a.id, u.local FROM hor_ausencias a JOIN users u ON u.id = a.worker_id WHERE a.id = ?`, [Number(req.params.id)]);
+    const a = await dbGet(`SELECT a.id, a.estado, a.worker_id, u.local FROM hor_ausencias a JOIN users u ON u.id = a.worker_id WHERE a.id = ?`, [Number(req.params.id)]);
     if (!a || !rrhhPuedeLocal(req, a.local || "")) return res.status(404).json({ ok: false, error: "No encontrada" });
-    await dbRun(`DELETE FROM hor_ausencias WHERE id = ?`, [a.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo borrar" }); }
+    if (a.estado === "cancelada") return res.json({ ok: true });
+    await dbRun(`UPDATE hor_ausencias SET estado = 'cancelada', cancelado_por = ?, cancelado_en = ? WHERE id = ?`,
+      [req.user.username, isoConOffset(Date.now()), a.id]);
+    await ficAuditar("ausencia", a.id, "cancelar", req.user.username,
+      { local: a.local, workerId: a.worker_id, detalle: { estadoAnterior: a.estado } });
+    res.json({ ok: true, mensaje: "Ausencia cancelada. Se conserva en el histórico." });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cancelar" }); }
+});
+
+/**
+ * Los turnos que una persona tiene dentro de unas fechas, con el estado de su semana.
+ *
+ * Se consulta al aprobar o adjudicar una ausencia para poder AVISAR. No borra nada: un turno
+ * publicado se mandó al grupo y hay gente organizada con él, y uno en borrador lo tiene que
+ * quitar quien cuadra la semana, que sabe con quién lo va a tapar.
+ */
+async function horTurnosEnAusencia(workerId, desde, hasta) {
+  const filas = await dbAll(
+    `SELECT a.id, a.worker_id, a.dia, a.tipo, s.estado AS estado_semana, s.lunes
+       FROM hor_asignaciones a JOIN hor_semanas s ON s.id = a.semana_id
+      WHERE a.worker_id = ? AND a.dia BETWEEN ? AND ? AND s.estado IN ('borrador','publicado')`,
+    [workerId, desde, hasta]).catch(() => []);
+  return turnosDurante(filas, { worker_id: workerId, desde, hasta });
+}
+
+/** La bandeja: lo que hay que resolver, y el histórico si se pide. */
+app.get("/api/horarios/ausencias", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
+    const estado = ["pendiente", "aprobada", "rechazada", "cancelada"].includes(String(req.query.estado || ""))
+      ? String(req.query.estado) : null;
+    // Por defecto, lo que sigue teniendo efecto o está por decidir: el histórico completo se
+    // pide a propósito. Una bandeja con dos años de ausencias canceladas no es una bandeja.
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.desde || "")) ? String(req.query.desde) : sumaDias(hoyISO(), -90);
+
+    const filas = await dbAll(
+      `SELECT a.*, u.nombre FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
+        WHERE u.local = ? ${estado ? "AND a.estado = ?" : ""} AND a.hasta >= ?
+        ORDER BY CASE a.estado WHEN 'pendiente' THEN 0 ELSE 1 END, a.desde DESC, a.id DESC
+        LIMIT 300`,
+      estado ? [local, estado, desde] : [local, desde]);
+
+    // El encargado no ve la nota interna de una baja: es dato de salud y para cuadrar la
+    // semana no aporta nada. RR.HH. y dirección sí.
+    const verSensible = rrhhTodoLocal(req);
+    res.json({ ok: true, local, resumen: resumirBandeja(filas),
+      data: filas.map((a) => paraResponsable(a, { verSensible })) });
+  } catch (e) {
+    console.error("[horarios] ausencias:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar las ausencias" });
+  }
+});
+
+/**
+ * Aprobar o rechazar. Atómico: la condición `estado = 'pendiente'` va DENTRO del UPDATE.
+ *
+ * Sin eso, dos encargados mirando la misma bandeja podrían aprobar y rechazar la misma
+ * solicitud casi a la vez y ganaría el último en escribir, sin que ninguno se enterara.
+ */
+app.post("/api/horarios/ausencia/:id/resolver", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const a = await dbGet(
+      `SELECT a.*, u.local AS local_worker, u.nombre FROM hor_ausencias a JOIN users u ON u.id = a.worker_id WHERE a.id = ?`,
+      [Number(req.params.id) || 0]);
+    if (!a || !rrhhPuedeLocal(req, a.local_worker || "")) return res.status(404).json({ ok: false, error: "No encontrada" });
+    // Nadie resuelve lo suyo, ni siquiera dirección: es la única regla de este circuito que no
+    // depende del rol.
+    if (Number(a.worker_id) === Number(req.user.id)) {
+      return res.status(403).json({ ok: false, error: "No puedes resolver tu propia solicitud." });
+    }
+
+    const accion = String(req.body?.accion || "");
+    if (!["aprobar", "rechazar"].includes(accion)) return res.status(400).json({ ok: false, error: "Acción no válida" });
+    const t = transitar(a.estado, accion);
+    if (t.error) return res.status(409).json({ ok: false, error: t.error, estado: a.estado });
+
+    const respuesta = String(req.body?.respuesta || "").trim().slice(0, 300) || null;
+    const ahora = isoConOffset(Date.now());
+    const fila = await dbRun(
+      `UPDATE hor_ausencias SET estado = ?, resuelto_por = ?, resuelto_en = ?, respuesta = ?
+        WHERE id = ? AND estado = 'pendiente' RETURNING *`,
+      [t.estado, req.user.username, ahora, respuesta, a.id]);
+    if (!fila) {
+      const ahoraEs = await dbGet(`SELECT estado FROM hor_ausencias WHERE id = ?`, [a.id]);
+      return res.status(409).json({ ok: false,
+        error: `Alguien la ha resuelto antes que tú: ahora está ${ahoraEs?.estado}.`, estado: ahoraEs?.estado });
+    }
+    await ficAuditar("ausencia", a.id, accion, req.user.username, {
+      local: a.local_worker, workerId: a.worker_id,
+      detalle: { tipo: a.tipo, desde: a.desde, hasta: a.hasta, respuesta } });
+
+    // Al aprobar se mira si le quedan turnos dentro. Se AVISA; no se toca ninguno.
+    const aviso = t.estado === "aprobada" ? await horTurnosEnAusencia(a.worker_id, a.desde, a.hasta) : { total: 0 };
+    res.json({
+      ok: true, estado: t.estado,
+      avisoTurnos: aviso.total ? aviso : null,
+      mensaje: `${a.nombre}: ${ETIQUETA_TIPO[a.tipo] || a.tipo} del ${a.desde} al ${a.hasta} — ${t.estado}.`,
+    });
+  } catch (e) {
+    console.error("[horarios] resolver ausencia:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo resolver" });
+  }
 });
 
 // Disponibilidad de una persona: se guarda entera, como las necesidades.
@@ -8026,13 +8179,17 @@ app.put("/api/horarios/disponibilidad/:workerId", requireAuth(HORARIOS_ROLES), a
       if (!(dow >= 0 && dow <= 6)) continue;
       if (!["disponible", "prefiere", "no_disponible"].includes(f.preferencia)) continue;
       if (f.preferencia === "disponible") continue;   // es el valor por defecto: no se guarda
-      await q(`INSERT INTO hor_disponibilidad (worker_id, dow, inicio_min, fin_min, preferencia, creado_en)
-               VALUES (?,?,?,?,?,?)`,
-        [w.id, dow, Number(f.inicio_min) || 0, Number(f.fin_min) || 1560, f.preferencia, ahora]);
+      await q(`INSERT INTO hor_disponibilidad (worker_id, dow, inicio_min, fin_min, preferencia,
+                                              origen, autor, creado_en, actualizado_en)
+               VALUES (?,?,?,?,?, 'administrativo', ?, ?, ?)`,
+        [w.id, dow, Number(f.inicio_min) || 0, Number(f.fin_min) || 1560, f.preferencia, req.user.username, ahora, ahora]);
       n++;
     }
     await client.query("COMMIT");
-    res.json({ ok: true, guardadas: n });
+    await ficAuditar("disponibilidad", w.id, "guardar_administrativa", req.user.username,
+      { local: w.local, workerId: w.id, detalle: { franjas: n } }).catch(() => {});
+    res.json({ ok: true, guardadas: n,
+      mensaje: `Disponibilidad de ${w.nombre} guardada. Queda marcada como cambiada por administración.` });
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
     res.status(500).json({ ok: false, error: "No se pudo guardar la disponibilidad" });
@@ -8060,7 +8217,11 @@ app.post("/api/horarios/generar", requireAuth(HORARIOS_ROLES), async (req, res) 
       dbAll(`SELECT * FROM hor_necesidades WHERE local = ?`, [local]),
       // `local IS NULL` recogía las filas antiguas… y también cualquiera cuyo local se
       // hubiera perdido. El JOIN con `users` es el criterio de verdad.
-      dbAll(`SELECT a.* FROM hor_ausencias a JOIN users u ON u.id = a.worker_id WHERE u.local = ?`, [local]),
+      // Solo las aprobadas. El solver además lo comprueba por su cuenta —y hay un test que lo
+      // sujeta— pero acotarlo aquí evita que una solicitud pendiente llegue siquiera a
+      // planteárselo.
+      dbAll(`SELECT a.* FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
+              WHERE u.local = ? AND a.estado = 'aprobada'`, [local]),
       dbAll(`SELECT c.* FROM hor_contratos c JOIN users u ON u.id = c.worker_id WHERE u.local = ?`, [local]),
       dbAll(`SELECT d.* FROM hor_disponibilidad d JOIN users u ON u.id = d.worker_id WHERE u.local = ?`, [local]),
     ]);
@@ -9609,6 +9770,137 @@ app.get("/api/mi-registro/csv", requireAuth(), async (req, res) => {
     res.setHeader("Content-Disposition", `attachment; filename="${nombreFicheroRegistro(yo.nombre || "mi-registro", p.etiqueta)}"`);
     res.send(construirCsv(eventos.map((e) => ({ ...e, nombre: yo.nombre, dni: yo.dni }))));
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo generar tu registro" }); }
+});
+
+// ════════════════════════ MIS AUSENCIAS Y MI DISPONIBILIDAD ════════════════════════
+// Los dos circuitos que el backend ya entendía a medias: `hor_ausencias` llevaba desde el
+// principio bloqueando la planificación cuando estaba aprobada, y `hor_disponibilidad` la leía
+// el generador. Lo que no existía era la puerta por la que entra el trabajador.
+
+/** Sus ausencias. Solo las suyas, y sin las notas internas de nadie. */
+app.get("/api/mis-ausencias", requireAuth(), async (req, res) => {
+  try {
+    const filas = await dbAll(
+      `SELECT * FROM hor_ausencias WHERE worker_id = ? ORDER BY desde DESC, id DESC LIMIT 100`, [req.user.id]);
+    res.json({ ok: true, data: filas.map(paraTrabajador), tipos: TIPOS_SOLICITABLES.map((t) => ({ valor: t, etiqueta: ETIQUETA_TIPO[t] })) });
+  } catch (e) {
+    console.error("[mis-ausencias]:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar tus ausencias" });
+  }
+});
+
+/**
+ * Pedir una ausencia. Nace `pendiente` y `solicitada`.
+ *
+ * `worker_id` sale del TOKEN, nunca del cuerpo: si viniera de fuera, cualquiera podría pedir
+ * vacaciones en nombre de otro.
+ */
+app.post("/api/mis-ausencias", requireAuth(), async (req, res) => {
+  try {
+    const yo = await dbGet(`SELECT id, nombre, local, rol, activo, fecha_alta, fecha_baja FROM users WHERE id = ?`, [req.user.id]);
+    if (!yo || !yo.local) return res.status(400).json({ ok: false, error: "Tu cuenta no tiene establecimiento asignado. Díselo a tu responsable." });
+
+    const v = sanearSolicitud(req.body || {}, { hoy: hoyISO() });
+    if (v.error) return res.status(400).json({ ok: false, error: v.error });
+
+    // Pedir las mismas fechas dos veces no es un error del sistema, es un despiste: se dice.
+    const suyas = await dbAll(`SELECT id, desde, hasta, estado, tipo FROM hor_ausencias WHERE worker_id = ?`, [yo.id]);
+    const choques = solapesVivos({ id: null, desde: v.desde, hasta: v.hasta }, suyas);
+    if (choques.length) {
+      const c = choques[0];
+      return res.status(409).json({ ok: false,
+        error: `Ya tienes una ausencia ${c.estado === "pendiente" ? "pedida" : "aprobada"} del ${c.desde} al ${c.hasta}.` });
+    }
+
+    const ahora = isoConOffset(Date.now());
+    const fila = await dbRun(
+      `INSERT INTO hor_ausencias (worker_id, local, tipo, desde, hasta, estado, origen,
+                                  comentario, solicitado_por, solicitado_en, autor, creado_en)
+       VALUES (?,?,?,?,?,'pendiente','solicitada',?,?,?,?,?) RETURNING *`,
+      [yo.id, yo.local, v.tipo, v.desde, v.hasta, v.comentario, req.user.username, ahora, req.user.username, ahora]);
+    await ficAuditar("ausencia", fila.id, "solicitar", req.user.username,
+      { local: yo.local, workerId: yo.id, detalle: { tipo: v.tipo, desde: v.desde, hasta: v.hasta, dias: v.dias } });
+
+    res.json({ ok: true, ausencia: paraTrabajador(fila), mensaje: "Solicitud enviada. Tu responsable la verá en su panel." });
+  } catch (e) {
+    console.error("[mis-ausencias] crear:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo enviar la solicitud" });
+  }
+});
+
+/**
+ * Cancelar la suya, solo mientras siga pendiente. NUNCA se borra: se queda como `cancelada`
+ * con quién y cuándo, porque «lo pedí y me arrepentí» también es parte de la historia.
+ */
+app.post("/api/mis-ausencias/:id/cancelar", requireAuth(), async (req, res) => {
+  try {
+    // La condición va DENTRO del UPDATE: si otro la acaba de aprobar, no hay carrera que valga.
+    const fila = await dbRun(
+      `UPDATE hor_ausencias SET estado = 'cancelada', cancelado_por = ?, cancelado_en = ?
+        WHERE id = ? AND worker_id = ? AND estado = 'pendiente' AND origen = 'solicitada'
+        RETURNING *`,
+      [req.user.username, isoConOffset(Date.now()), Number(req.params.id) || 0, req.user.id]);
+    if (!fila) {
+      const a = await dbGet(`SELECT estado, worker_id FROM hor_ausencias WHERE id = ?`, [Number(req.params.id) || 0]);
+      if (!a || Number(a.worker_id) !== Number(req.user.id)) return res.status(404).json({ ok: false, error: "No encontrada" });
+      return res.status(409).json({ ok: false,
+        error: a.estado === "aprobada"
+          ? "Ya te la han aprobado. Para deshacerla, háblalo con tu responsable: el cuadrante ya cuenta con ella."
+          : `Esa solicitud ya está ${a.estado}.` });
+    }
+    await ficAuditar("ausencia", fila.id, "cancelar_propia", req.user.username,
+      { local: fila.local, workerId: req.user.id, detalle: { desde: fila.desde, hasta: fila.hasta } });
+    res.json({ ok: true, ausencia: paraTrabajador(fila), mensaje: "Solicitud cancelada." });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cancelar" }); }
+});
+
+/** Su disponibilidad declarada. */
+app.get("/api/mi-disponibilidad", requireAuth(), async (req, res) => {
+  try {
+    const filas = await dbAll(
+      `SELECT id, dow, inicio_min, fin_min, preferencia, origen, autor, actualizado_en
+         FROM hor_disponibilidad WHERE worker_id = ? ORDER BY dow, inicio_min`, [req.user.id]);
+    res.json({ ok: true, data: filas });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar tu disponibilidad" }); }
+});
+
+/**
+ * Guardar la suya. Entera, como la de Horarios: es una rejilla de siete días y guardarla día a
+ * día dejaría media semana escrita si se cae la conexión.
+ *
+ * `disponible` NO se guarda: es el valor por defecto y ocupar una fila por cada día en que
+ * alguien puede trabajar llenaría la tabla de nada.
+ */
+app.put("/api/mi-disponibilidad", requireAuth(), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const franjas = Array.isArray(req.body?.franjas) ? req.body.franjas.slice(0, 40) : [];
+    await client.query("BEGIN");
+    const q = (sql, p = []) => client.query(toPositional(sql), p);
+    await q(`DELETE FROM hor_disponibilidad WHERE worker_id = ?`, [req.user.id]);
+    const ahora = isoConOffset(Date.now());
+    let n = 0;
+    for (const f of franjas) {
+      const dow = Number(f.dow);
+      if (!(dow >= 0 && dow <= 6)) continue;
+      if (!["prefiere", "no_disponible"].includes(f.preferencia)) continue;
+      const ini = Number.isFinite(Number(f.inicio_min)) ? Math.max(0, Math.round(Number(f.inicio_min))) : 0;
+      const fin = Number.isFinite(Number(f.fin_min)) ? Math.min(2160, Math.round(Number(f.fin_min))) : 1560;
+      if (fin <= ini) continue;
+      await q(`INSERT INTO hor_disponibilidad (worker_id, dow, inicio_min, fin_min, preferencia, origen, autor, creado_en, actualizado_en)
+               VALUES (?,?,?,?,?, 'trabajador', ?, ?, ?)`,
+        [req.user.id, dow, ini, fin, f.preferencia, req.user.username, ahora, ahora]);
+      n++;
+    }
+    await client.query("COMMIT");
+    await ficAuditar("disponibilidad", req.user.id, "guardar_propia", req.user.username,
+      { workerId: req.user.id, detalle: { franjas: n } }).catch(() => {});
+    res.json({ ok: true, guardadas: n, mensaje: "Disponibilidad guardada." });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[mi-disponibilidad]:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  } finally { client.release(); }
 });
 
 // ════════════════════════ PULSO ANÓNIMO DEL EQUIPO ════════════════════════

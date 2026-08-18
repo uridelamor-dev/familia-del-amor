@@ -3934,11 +3934,37 @@ function horCfgContratos(d) {
       </tr>`; }).join("")}</tbody></table></div>`;
 }
 
+/**
+ * La bandeja de solicitudes. Va ARRIBA de la lista de ausencias y solo aparece si hay algo que
+ * resolver: una bandeja vacía permanente se convierte en parte del decorado y se deja de mirar.
+ */
+function horCfgBandeja(d) {
+  const pend = (d.ausencias || []).filter((a) => a.estado === "pendiente");
+  if (!pend.length) return "";
+  const fila = (a) => {
+    const w = (d.equipo || []).find((x) => +x.id === +a.worker_id);
+    return `<div class="row" style="align-items:flex-start">
+      <div class="grow" style="min-width:0">
+        <div class="t1">${esc(w ? w.nombre : "—")} <span class="mut" style="font-weight:400">· ${esc(HOR_TIPO_AUS[a.tipo] || a.tipo)}</span></div>
+        <div class="t2">${esc(a.desde)} → ${esc(a.hasta)}${a.solicitado_por ? " · lo pidió " + esc(a.solicitado_por) : ""}</div>
+        ${a.comentario ? `<div class="mut" style="font-size:11.5px;margin-top:3px">«${esc(a.comentario)}»</div>` : ""}
+      </div>
+      <button class="btn sm" data-horcfg="aus-rechazar" data-id="${a.id}">Rechazar</button>
+      <button class="btn sm primary" data-horcfg="aus-aprobar" data-id="${a.id}">Aprobar</button>
+    </div>`;
+  };
+  return `<div class="card p0" style="margin-bottom:16px">
+    <div class="ch" style="padding:18px 18px 0"><h3>Solicitudes pendientes</h3><span class="pill bad">${num(pend.length)}</span></div>
+    <div class="rows">${pend.map(fila).join("")}</div></div>`;
+}
+
 function horCfgAusencias(d) {
   const nombre = (id) => (d.equipo.find((w) => +w.id === +id) || {}).nombre || "—";
   return `
-    <p class="mut" style="margin:0 0 12px;line-height:1.55">Vacaciones, bajas y permisos. El generador no pone a
-      trabajar a quien esté de baja, y en la revisión de fichajes explican un día sin fichar sin que salte una incidencia.</p>
+    ${horCfgBandeja(d)}
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Vacaciones, bajas y permisos. Lo que se añade aquí queda
+      <b>aprobado directamente</b>: es un hecho ya acordado, no una solicitud. El generador no pone a trabajar a quien
+      esté de baja, y solo cuenta lo aprobado — una solicitud pendiente no cambia el cuadrante.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:14px">
       <label style="flex:1;min-width:150px"><span class="t2">Persona</span>
         <select class="inp" id="ausW" style="width:100%">${d.equipo.map((w) => `<option value="${w.id}">${esc(w.nombre || w.username)}</option>`).join("")}</select></label>
@@ -3953,9 +3979,12 @@ function horCfgAusencias(d) {
       <thead><tr><th>Persona</th><th>Motivo</th><th>Desde</th><th>Hasta</th><th></th></tr></thead>
       <tbody>${d.ausencias.map((a) => `<tr>
         <td><b>${esc(nombre(a.worker_id))}</b></td>
-        <td>${esc(HOR_TIPO_AUS[a.tipo] || a.tipo)}${a.estado !== "aprobada" ? ' <span class="fic-tag">pendiente</span>' : ""}</td>
+        <td>${esc(HOR_TIPO_AUS[a.tipo] || a.tipo)}
+          ${a.estado !== "aprobada" ? `<span class="fic-tag ${a.estado === "pendiente" ? "aviso" : ""}">${esc(a.estado)}</span>` : ""}
+          ${a.origen === "solicitada" ? '<span class="fic-tag">la pidió</span>' : ""}</td>
         <td class="mut">${esc(a.desde)}</td><td class="mut">${esc(a.hasta)}</td>
-        <td style="text-align:right"><button class="btn sm danger" data-horcfg="ausencia-del" data-id="${a.id}">Quitar</button></td>
+        <td style="text-align:right">${a.estado === "cancelada" ? '<span class="mut">—</span>'
+          : `<button class="btn sm danger" data-horcfg="ausencia-del" data-id="${a.id}">Quitar</button>`}</td>
       </tr>`).join("")}</tbody></table></div>`
     : `<p class="mut" style="margin:0">Nada apuntado. Se ven las de los últimos 30 días en adelante.</p>`}`;
 }
@@ -4140,15 +4169,63 @@ async function horCfgAccion(e, ov, pintar) {
         desde: ov.querySelector("#ausDesde").value, hasta: ov.querySelector("#ausHasta").value,
       });
       toast(r.mensaje || "Apuntado ✅");
+      if (r.avisoTurnos) horAvisoTurnos(r.avisoTurnos);
       return pintar();
     } catch (err) { if (msg) msg.textContent = err.message; return; }
   }
 
   if (act === "ausencia-del") {
-    if (!await confirmModal("Se quita esta ausencia. El generador volverá a contar con esa persona esos días.", { ok: "Quitar", danger: true })) return;
-    try { await apiSend("DELETE", "/api/horarios/ausencia/" + b.getAttribute("data-id")); toast("Quitada"); } catch (err) { toast(err.message); }
+    // No se borra: se cancela. Se queda en el histórico con quién y cuándo.
+    if (!await confirmModal("Se cancela esta ausencia. El generador volverá a contar con esa persona esos días, y queda constancia de que se quitó.", { ok: "Cancelar la ausencia", danger: true })) return;
+    try { const r = await apiSend("DELETE", "/api/horarios/ausencia/" + b.getAttribute("data-id")); toast(r.mensaje || "Cancelada"); } catch (err) { toast(err.message); }
     return pintar();
   }
+
+  if (act === "aus-aprobar" || act === "aus-rechazar") {
+    const aprobar = act === "aus-aprobar";
+    // Al rechazar se puede escribir una razón que VE el trabajador. No es obligatoria, pero un
+    // «rechazada» a secas es lo que hace que la gente vuelva a preguntar por WhatsApp.
+    const respuesta = aprobar ? "" : await horPedirRespuesta();
+    if (respuesta === null) return;
+    try {
+      const r = await apiSend("POST", `/api/horarios/ausencia/${b.getAttribute("data-id")}/resolver`,
+        { accion: aprobar ? "aprobar" : "rechazar", respuesta });
+      toast(r.mensaje || "Hecho ✅");
+      if (r.avisoTurnos) horAvisoTurnos(r.avisoTurnos);
+    } catch (err) { toast("Error: " + err.message); }
+    return pintar();
+  }
+}
+
+/** Un cuadro de texto para el motivo del rechazo. Devuelve null si se cancela. */
+function horPedirRespuesta() {
+  return new Promise((resolve) => {
+    const ov = modal("Rechazar la solicitud", `
+      <p class="mut" style="margin:0 0 12px;line-height:1.55">Si escribes algo aquí, lo verá la persona que la pidió.
+        Un «rechazada» a secas es lo que hace que vuelva a preguntar por WhatsApp.</p>
+      <div class="field"><label>Motivo <span class="mut" style="font-weight:400">· opcional</span></label>
+        <input class="inp" id="ausResp" maxlength="300" placeholder="Ya hay demasiadas vacaciones aprobadas esos días"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+        <button class="btn" data-close>Cancelar</button>
+        <button class="btn danger" data-ok>Rechazar</button></div>`);
+    let resuelto = false;
+    ov.addEventListener("click", (e) => {
+      if (e.target.closest("[data-ok]")) { resuelto = true; const v = ov.querySelector("#ausResp").value.trim(); ov.remove(); resolve(v); }
+      else if (e.target === ov || e.target.closest("[data-close]")) { if (!resuelto) resolve(null); }
+    });
+  });
+}
+
+/**
+ * «Le quedan 4 turnos en esas fechas». NO se borra ninguno: uno publicado se mandó al grupo y
+ * hay gente organizada con él, y uno en borrador lo quita quien cuadra la semana, que sabe con
+ * quién lo va a tapar. Aprobar una ausencia y republicar un horario son dos decisiones.
+ */
+function horAvisoTurnos(a) {
+  modal("Ojo: tiene turnos esos días", `
+    <p style="margin:0 0 12px;line-height:1.6">${esc(a.aviso)}</p>
+    ${a.semanas && a.semanas.length ? `<p class="mut" style="margin:0 0 16px">Semanas afectadas: ${a.semanas.map(esc).join(" · ")}.</p>` : ""}
+    <div style="display:flex;justify-content:flex-end"><button class="btn primary" data-close>Entendido</button></div>`);
 }
 
 // ── Proponer horario ────────────────────────────────────────────────────────

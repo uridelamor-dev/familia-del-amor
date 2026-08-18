@@ -412,3 +412,129 @@ describe("solver — el primer hueco que se resuelve es el más difícil", () =>
     assert.equal(sabadoNoche[0].worker_id, 4);
   });
 });
+
+// ── Ausencias y disponibilidad: qué respeta el generador ─────────────────────
+// Estos tests no cambian el solver: comprueban que consume de verdad lo que la Fase 2 le
+// empieza a dar de comer, y que distingue una ausencia (restricción real) de una preferencia.
+describe("qué respeta el generador de las ausencias y la disponibilidad", () => {
+  const LUNES = "2026-08-17";
+  const EQUIPO = [{ id: 1, nombre: "Ana" }, { id: 2, nombre: "Beto" }];
+  const AREAS = [{ id: 10, nombre: "SALA", orden: 1 }];
+  const TRAMOS = [{ id: 20, nombre: "TARDE", orden: 1, inicio_min: 960, fin_min: 1440 }];
+  // Una sola plaza el lunes: así se ve exactamente a quién elige.
+  const NECESIDADES = [{ area_id: 10, tramo_id: 20, dow: 0, minimo: 1, objetivo: 1 }];
+  const CONTRATOS = [
+    { worker_id: 1, desde: "2020-01-01", hasta: null, horas_semana: 40 },
+    { worker_id: 2, desde: "2020-01-01", hasta: null, horas_semana: 40 },
+  ];
+  const generar = (extra) => generarSemana({
+    lunes: LUNES, trabajadores: EQUIPO, areas: AREAS, tramos: TRAMOS,
+    necesidades: NECESIDADES, contratos: CONTRATOS, ...extra });
+
+  test("una ausencia APROBADA impide asignar", () => {
+    const r = generar({ ausencias: [{ worker_id: 1, tipo: "vacaciones", desde: LUNES, hasta: "2026-08-21", estado: "aprobada" }] });
+    assert.equal(r.asignaciones.length, 1);
+    assert.equal(r.asignaciones[0].worker_id, 2, "le toca al otro");
+  });
+
+  test("una PENDIENTE no impide nada: todavía no se la han concedido a nadie", () => {
+    // Es la diferencia que sostiene todo el circuito. Si una solicitud bloqueara, pedir
+    // vacaciones sería concedérselas.
+    const r = generar({ ausencias: [{ worker_id: 1, tipo: "vacaciones", desde: LUNES, hasta: "2026-08-21", estado: "pendiente" }] });
+    assert.equal(r.asignaciones.length, 1);
+    assert.equal(r.asignaciones[0].worker_id, 1, "sigue siendo la primera candidata");
+  });
+
+  test("una RECHAZADA tampoco", () => {
+    const r = generar({ ausencias: [{ worker_id: 1, tipo: "vacaciones", desde: LUNES, hasta: "2026-08-21", estado: "rechazada" }] });
+    assert.equal(r.asignaciones[0].worker_id, 1);
+  });
+
+  test("y una CANCELADA tampoco", () => {
+    const r = generar({ ausencias: [{ worker_id: 1, tipo: "vacaciones", desde: LUNES, hasta: "2026-08-21", estado: "cancelada" }] });
+    assert.equal(r.asignaciones[0].worker_id, 1);
+  });
+
+  test("cuando no hay nadie porque están todos de vacaciones, lo DICE con nombres", () => {
+    const r = generar({ ausencias: [
+      { worker_id: 1, tipo: "vacaciones", desde: LUNES, hasta: "2026-08-21", estado: "aprobada" },
+      { worker_id: 2, tipo: "baja", desde: LUNES, hasta: "2026-08-21", estado: "aprobada" },
+    ] });
+    assert.equal(r.asignaciones.length, 0);
+    assert.equal(r.sinCubrir.length, 1);
+    const porque = r.sinCubrir[0].porque.find((p) => p.motivo === "ausencia");
+    assert.equal(porque.n, 2);
+    assert.deepEqual(porque.quienes.sort(), ["Ana", "Beto"]);
+  });
+
+  test("«no disponible» esa franja también impide asignar", () => {
+    const r = generar({ disponibilidad: [
+      { worker_id: 1, dow: 0, inicio_min: 960, fin_min: 1440, preferencia: "no_disponible" },
+    ] });
+    assert.equal(r.asignaciones[0].worker_id, 2);
+  });
+
+  test("pero solo en la franja que se pisa con el turno", () => {
+    // «Los lunes no puedo antes de las 16:00» no impide un turno de tarde.
+    const r = generar({ disponibilidad: [
+      { worker_id: 1, dow: 0, inicio_min: 0, fin_min: 960, preferencia: "no_disponible" },
+    ] });
+    assert.equal(r.asignaciones[0].worker_id, 1, "el turno empieza justo a las 16:00: no se pisan");
+  });
+
+  test("y solo ese día de la semana", () => {
+    const r = generar({ disponibilidad: [
+      { worker_id: 1, dow: 3, inicio_min: 960, fin_min: 1440, preferencia: "no_disponible" },
+    ] });
+    assert.equal(r.asignaciones[0].worker_id, 1);
+  });
+
+  test("«prefiere» NO prohíbe: es una preferencia y desempata a favor", () => {
+    // Con las dos igual de libres, gana quien lo ha pedido. Pero si fuera una prohibición,
+    // marcar «prefiero trabajar los lunes» acabaría dejando sin cubrir el lunes.
+    const r = generar({ disponibilidad: [
+      { worker_id: 2, dow: 0, inicio_min: 960, fin_min: 1440, preferencia: "prefiere" },
+    ] });
+    assert.equal(r.asignaciones[0].worker_id, 2);
+    assert.match(r.asignaciones[0].porque, /lo había pedido/);
+  });
+
+  test("y si el que lo prefiere no puede, se asigna igual al otro", () => {
+    const r = generar({
+      disponibilidad: [{ worker_id: 2, dow: 0, inicio_min: 960, fin_min: 1440, preferencia: "prefiere" }],
+      ausencias: [{ worker_id: 2, tipo: "baja", desde: LUNES, hasta: LUNES, estado: "aprobada" }],
+    });
+    assert.equal(r.asignaciones[0].worker_id, 1, "una preferencia no deja un turno sin cubrir");
+  });
+
+  test("la ausencia manda sobre la disponibilidad", () => {
+    // Quien está de vacaciones no trabaja aunque haya declarado que prefiere ese día.
+    const r = generar({
+      disponibilidad: [{ worker_id: 1, dow: 0, inicio_min: 960, fin_min: 1440, preferencia: "prefiere" }],
+      ausencias: [{ worker_id: 1, tipo: "vacaciones", desde: LUNES, hasta: LUNES, estado: "aprobada" }],
+    });
+    assert.equal(r.asignaciones[0].worker_id, 2);
+  });
+
+  test("las fechas de vigencia de una franja se respetan", () => {
+    // `desde`/`hasta` en hor_disponibilidad permiten una excepción temporal. El modelo lo
+    // soporta y el solver lo lee; la pantalla del trabajador todavía no las escribe.
+    const fuera = generar({ disponibilidad: [
+      { worker_id: 1, dow: 0, inicio_min: 960, fin_min: 1440, preferencia: "no_disponible",
+        desde: "2026-09-01", hasta: "2026-09-30" },
+    ] });
+    assert.equal(fuera.asignaciones[0].worker_id, 1, "esa semana la franja no está vigente");
+    const dentro = generar({ disponibilidad: [
+      { worker_id: 1, dow: 0, inicio_min: 960, fin_min: 1440, preferencia: "no_disponible",
+        desde: "2026-08-01", hasta: "2026-08-31" },
+    ] });
+    assert.equal(dentro.asignaciones[0].worker_id, 2, "dentro de su vigencia sí impide");
+  });
+
+  test("«disponible» explícito no cambia nada", () => {
+    const r = generar({ disponibilidad: [
+      { worker_id: 2, dow: 0, inicio_min: 960, fin_min: 1440, preferencia: "disponible" },
+    ] });
+    assert.equal(r.asignaciones[0].worker_id, 1, "sin preferencia declarada, manda el orden de siempre");
+  });
+});

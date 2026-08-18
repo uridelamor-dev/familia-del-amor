@@ -179,6 +179,47 @@ export async function ensureSchemaHorarios(x) {
   )`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_aus ON hor_ausencias (worker_id, desde, hasta)`);
 
+  // ── El circuito humano de una ausencia ─────────────────────────────────────
+  // La tabla ya servía para lo que hace Horarios —bloquear la planificación— porque los tres
+  // consumidores (descansos, conflictos y el generador) ya filtraban `estado = 'aprobada'`.
+  // Lo que faltaba era el flujo: quién la pidió, quién la resolvió y qué se le contestó.
+  //
+  // Todo aditivo. Ninguna fila existente cambia de significado: `origen = 'adjudicada'` por
+  // defecto es exactamente lo que eran todas —las metía un responsable— y `estado` sigue
+  // naciendo 'aprobada'.
+  for (const col of [
+    // 'solicitada' = la pidió el trabajador · 'adjudicada' = la metió un responsable, ya acordada
+    "origen TEXT NOT NULL DEFAULT 'adjudicada'",
+    "solicitado_por TEXT",       // quién la pidió (el propio trabajador)
+    "solicitado_en TEXT",
+    "comentario TEXT",           // lo que escribió el TRABAJADOR al pedirla
+    "resuelto_por TEXT",         // quién aprobó o rechazó
+    "resuelto_en TEXT",
+    // Lo que se le contesta al trabajador. Aparte de `motivo`, que es la nota interna de quien
+    // la creó: en una baja médica ahí puede haber información que al encargado no le toca ver.
+    "respuesta TEXT",
+    "cancelado_por TEXT",
+    "cancelado_en TEXT",
+  ]) {
+    await x.run(`ALTER TABLE hor_ausencias ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+  // La bandeja pregunta siempre por estado + fechas.
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_aus_estado ON hor_ausencias (estado, desde)`);
+
+  // ── Disponibilidad: quién la escribió ──────────────────────────────────────
+  // Hasta ahora la escribía siempre un responsable desde Horarios → Configuración, porque el
+  // trabajador no tenía dónde. Al abrirle la puerta hace falta poder distinguir lo que declaró
+  // él de lo que le cambió otro: no para discutir, sino para que el encargado sepa qué está
+  // mirando cuando el generador no asigna a alguien.
+  for (const col of [
+    "origen TEXT NOT NULL DEFAULT 'trabajador'",   // 'trabajador' | 'administrativo'
+    "autor TEXT",
+    "actualizado_en TEXT",
+  ]) {
+    await x.run(`ALTER TABLE hor_disponibilidad ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_disp_wk ON hor_disponibilidad (worker_id)`);
+
   // Disponibilidad declarada. Alimenta avisos ahora y el generador después.
   await x.run(`CREATE TABLE IF NOT EXISTS hor_disponibilidad (
     id SERIAL PRIMARY KEY,

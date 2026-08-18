@@ -48,6 +48,64 @@
         <div id="cuadranteLista"></div>
       </section>
 
+      <!-- Pedir unas vacaciones y decir cuándo se puede trabajar. Las dos cosas por las que
+           hasta ahora había que mandar un WhatsApp que se perdía en el grupo. -->
+      <section class="block hidden" id="ausenciasBloque">
+        <div class="section-head">
+          <h2>Mis ausencias</h2>
+          <p>Vacaciones, permisos y días de asuntos propios. Tu responsable las ve en su panel
+            y aquí verás si te las aprueban.</p>
+        </div>
+        <div id="ausAviso" class="form-note" role="status" aria-live="polite"></div>
+        <div id="ausLista"></div>
+        <button class="btn" type="button" id="ausNueva">Solicitar ausencia</button>
+
+        <form id="ausForm" class="form hidden">
+          <div class="form-row">
+            <label>
+              <span>Tipo</span>
+              <select id="ausTipo" required></select>
+            </label>
+          </div>
+          <div class="form-row">
+            <label>
+              <span>Desde</span>
+              <input type="text" id="ausDesdeDisplay" data-date-input="ausDesde" placeholder="dd/mm/aaaa" readonly />
+              <input type="hidden" id="ausDesdeValue" />
+            </label>
+            <label>
+              <span>Hasta</span>
+              <input type="text" id="ausHastaDisplay" data-date-input="ausHasta" placeholder="dd/mm/aaaa" readonly />
+              <input type="hidden" id="ausHastaValue" />
+            </label>
+          </div>
+          <div class="form-row">
+            <label>
+              <span>Comentario <small>(opcional)</small></span>
+              <input type="text" id="ausComentario" maxlength="300" placeholder="Si quieres explicar algo" />
+            </label>
+          </div>
+          <p class="form-note" id="ausMsg" role="status" aria-live="polite"></p>
+          <div class="form-acciones">
+            <button class="btn ghost" type="button" id="ausCancelar">Cancelar</button>
+            <button class="btn" type="submit">Enviar solicitud</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="block hidden" id="dispBloque">
+        <div class="section-head">
+          <h2>Mi disponibilidad</h2>
+          <!-- Este párrafo existe para que nadie ponga «no disponible toda la semana» creyendo
+               que ha pedido vacaciones. -->
+          <p>Dice a tu responsable qué horarios te van bien. <b>No son vacaciones</b>: para eso
+            usa «Solicitar ausencia», aquí arriba.</p>
+        </div>
+        <div id="dispDias"></div>
+        <p class="form-note" id="dispMsg" role="status" aria-live="polite"></p>
+        <button class="btn" type="button" id="dispGuardar">Guardar mi disponibilidad</button>
+      </section>
+
       <section class="block hidden" id="registroBloque">
         <div class="section-head">
           <h2>Mi registro de jornada</h2>

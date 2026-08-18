@@ -323,3 +323,35 @@ describe("dos contratos vigentes a la vez", () => {
     ]).length, 0);
   });
 });
+
+describe("solo una ausencia aprobada impide publicar", () => {
+  const EQUIPO = [{ id: 1, nombre: "Ana" }];
+  const LUNES = "2026-08-17";
+  const TURNO = [{ id: 5, worker_id: 1, dia: "2026-08-19", inicio_min: 960, fin_min: 1440 }];
+  const con = (estado) => detectarConflictos({
+    lunes: LUNES, trabajadores: EQUIPO, asignaciones: TURNO,
+    ausencias: [{ worker_id: 1, tipo: "vacaciones", desde: "2026-08-18", hasta: "2026-08-21", estado }],
+  }).filter((c) => c.tipo === "ausencia");
+
+  test("aprobada BLOQUEA: no puede estar trabajando durante sus vacaciones", () => {
+    const c = con("aprobada");
+    assert.equal(c.length, 1);
+    assert.equal(c[0].severidad, BLOQUEA);
+  });
+  test("pendiente no bloquea: pedirlas no es tenerlas", () => {
+    assert.equal(con("pendiente").length, 0);
+  });
+  test("rechazada ni cancelada tampoco", () => {
+    assert.equal(con("rechazada").length, 0);
+    assert.equal(con("cancelada").length, 0);
+  });
+  test("una fila antigua sin estado se sigue tratando como aprobada", () => {
+    // Es lo que eran todas antes de que existiera el circuito de solicitudes.
+    const c = detectarConflictos({
+      lunes: LUNES, trabajadores: EQUIPO, asignaciones: TURNO,
+      ausencias: [{ worker_id: 1, tipo: "baja", desde: "2026-08-18", hasta: "2026-08-21" }],
+    }).filter((x) => x.tipo === "ausencia");
+    assert.equal(c.length, 1);
+    assert.equal(c[0].severidad, BLOQUEA);
+  });
+});
