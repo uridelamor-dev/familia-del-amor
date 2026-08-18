@@ -10,6 +10,8 @@
 // bloque queda "sin datos" y el resto del dashboard sigue funcionando (nunca tumba la pantalla).
 // Recibe x = { get, all } (wrappers dbGet/dbAll de server.js; placeholders `?`).
 
+import { imputarGastoEmpresa } from "../facturas/reparto.js";
+
 const DOW = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 function addDays(iso, n) { const d = new Date(iso + "T00:00:00.000Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 function addMonths(ym, n) { const [y, m] = ym.split("-").map(Number); const d = new Date(Date.UTC(y, m - 1 + n, 1)); return d.toISOString().slice(0, 7); }
@@ -65,6 +67,7 @@ const NOMBRES_SENAL = [
   "candidaturas", "facturas-pendientes",
   "serie-reservas", "reseñas-sin-responder",
   "ventas", "ventas-por-local",
+  "gasto-empresa", "locales-por-empresa",
 ];
 
 async function gatherSignals(x, { hoy, local }) {
@@ -89,6 +92,7 @@ async function gatherSignals(x, { hoy, local }) {
     cand, facPend,                                              // pendientes
     serieRes, sinResp,                                          // serie de reservas + reseñas sin responder
     ventasTot, ventasLocal,                                     // ventas (Ágora) — vacío hasta conectar
+    gastoEmpresa, localesEmpresa,                               // gasto de empresa, para repartirlo
   ] = await mapLimit([
     // — cómo fue ayer —
     () => safe(() => x.get(`SELECT COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia = ?${lf}`, [ayer, ...lp]), null),
@@ -111,8 +115,8 @@ async function gatherSignals(x, { hoy, local }) {
     () => safe(() => x.get(`SELECT COUNT(*)::int n, COALESCE(SUM(total),0)::float total FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND COALESCE(pagado,0) = 0${lf}`, [...lp]), null),
     () => safe(() => x.all(`SELECT proveedor, COALESCE(SUM(total),0)::float t, COUNT(*)::int n FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND COALESCE(pagado,0) = 0 AND proveedor IS NOT NULL AND proveedor <> ''${lf} GROUP BY proveedor ORDER BY t DESC LIMIT 5`, [...lp]), []),
     () => safe(() => x.get(`SELECT proveedor, total::float total, fecha FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND COALESCE(pagado,0) = 0 AND fecha IS NOT NULL AND fecha <> ''${lf} ORDER BY fecha::date ASC LIMIT 1`, [...lp]), null),
-    () => safe(() => x.all(`SELECT local, COALESCE(SUM(total),0)::float t FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND TO_CHAR(fecha::date,'YYYY-MM') = ? GROUP BY local`, [mesActual]), []),
-    () => safe(() => x.all(`SELECT local, COALESCE(SUM(total),0)::float t FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND TO_CHAR(fecha::date,'YYYY-MM') = ? GROUP BY local`, [mesPrev]), []),
+    () => safe(() => x.all(`SELECT local, COALESCE(SUM(total),0)::float t FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND COALESCE(reparto,'') <> 'empresa' AND TO_CHAR(fecha::date,'YYYY-MM') = ? GROUP BY local`, [mesActual]), []),
+    () => safe(() => x.all(`SELECT local, COALESCE(SUM(total),0)::float t FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND COALESCE(reparto,'') <> 'empresa' AND TO_CHAR(fecha::date,'YYYY-MM') = ? GROUP BY local`, [mesPrev]), []),
     // — proveedores (subida de gasto) —
     () => safe(() => x.all(`SELECT proveedor, COALESCE(SUM(total),0)::float t FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND proveedor IS NOT NULL AND proveedor <> '' AND fecha::date >= ?::date${lf} GROUP BY proveedor`, [addDays(hoy, -30), ...lp]), []),
     () => safe(() => x.all(`SELECT proveedor, COALESCE(SUM(total),0)::float t FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND proveedor IS NOT NULL AND proveedor <> '' AND fecha::date >= ?::date AND fecha::date < ?::date${lf} GROUP BY proveedor`, [addDays(hoy, -60), addDays(hoy, -30), ...lp]), []),
@@ -133,6 +137,11 @@ async function gatherSignals(x, { hoy, local }) {
     // — ventas (Ágora): total últimos 30 días + por local. Vacío hasta conectar el TPV. —
     () => safe(() => x.get(`SELECT COALESCE(SUM(ventas),0)::float total, COUNT(DISTINCT dia)::int dias FROM ventas_diarias WHERE dia::date >= ?::date${lf}`, [addDays(hoy, -30), ...lp]), null),
     () => safe(() => x.all(`SELECT local, COALESCE(SUM(ventas),0)::float total FROM ventas_diarias WHERE dia::date >= ?::date GROUP BY local ORDER BY total DESC`, [addDays(hoy, -30)]), []),
+    // — gasto de empresa: el que no es de un local sino de todos los suyos —
+    // Una sola consulta para los dos meses: son dos filas por empresa, y partirla en dos era
+    // pagar un viaje más a la base en la pantalla que ya se quejaba de lenta.
+    () => safe(() => x.all(`SELECT empresa, TO_CHAR(fecha::date,'YYYY-MM') AS mes, COALESCE(SUM(total),0)::float total FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND reparto = 'empresa' AND TO_CHAR(fecha::date,'YYYY-MM') IN (?, ?) GROUP BY empresa, TO_CHAR(fecha::date,'YYYY-MM')`, [mesActual, mesPrev]), []),
+    () => safe(() => x.all(`SELECT local, empresa FROM facturas_locales`, []), []),
   ], CONCURRENCIA, tiempos);
 
   // Si la recogida se ha ido de tiempo, se dice CUÁL ha sido y cuánto: un aviso de «va lento»
@@ -165,12 +174,25 @@ async function gatherSignals(x, { hoy, local }) {
     .filter((r) => r.delta != null && r.delta >= 15 && r.actual >= 200).sort((a, b) => b.delta - a.delta);
 
   // Gasto por local: mes actual vs mes anterior.
-  const gPrevMap = new Map((gastoPrev || []).map((r) => [r.local, r.t]));
-  const gastoLocal = (gastoAct || []).map((r) => { const prev = gPrevMap.get(r.local) || 0; const delta = prev > 0 ? (r.t - prev) / prev * 100 : null; return { local: r.local, actual: r.t, prev, delta }; })
+  // A cada local, su parte del gasto de empresa. Sin esto, la gestoría de las tres sociedades
+  // caía entera sobre el local donde está archivado el papel: ese salía disparado y los otros
+  // dos, limpios. El aviso de «el gasto de X se ha disparado» se disparaba justo por eso.
+  const repartirGasto = (filas, mes) => imputarGastoEmpresa({
+    base: filas || [], campo: "t", locEmp: localesEmpresa || [],
+    deEmpresa: (gastoEmpresa || []).filter((e) => e.mes === mes),
+    // Los pesos son las ventas de los últimos 30 días, no las del mes exacto: aquí solo deciden
+    // la PROPORCIÓN, y el total repartido es el mismo con unas ventas o con otras.
+    ventas: (ventasLocal || []).map((v) => ({ local: v.local, ventas: v.total })),
+  }).porLocal;
+  const gastoActR = repartirGasto(gastoAct, mesActual);
+  const gastoPrevR = repartirGasto(gastoPrev, mesPrev);
+
+  const gPrevMap = new Map((gastoPrevR || []).map((r) => [r.local, r.t]));
+  const gastoLocal = (gastoActR || []).map((r) => { const prev = gPrevMap.get(r.local) || 0; const delta = prev > 0 ? (r.t - prev) / prev * 100 : null; return { local: r.local, actual: r.t, prev, delta }; })
     .sort((a, b) => b.actual - a.actual);
 
   // Radar por local: cruza ocupación próxima + incidencias abiertas + gasto del mes.
-  const radar = buildRadar({ hoyLocal, ayerLocal, incPorLocal, gastoAct });
+  const radar = buildRadar({ hoyLocal, ayerLocal, incPorLocal, gastoAct: gastoActR });
 
   return {
     hoy, ayer, dow, local, mesActual,

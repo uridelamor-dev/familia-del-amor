@@ -80,6 +80,10 @@ export function fusionarPeriodo(partes = []) {
       disponible: hayGastos, total: red(gastos),
       base: red(suma(buenas, (p) => p.gastos?.base)),
       n: suma(buenas, (p) => p.gastos?.n),
+      // La parte de gasto de empresa imputada a estos locales. Se suma como todo lo demás: cada
+      // parte trae solo la suya, así que mirando dos locales de tres no aparece el tercio ajeno.
+      empresa: red(suma(buenas, (p) => p.gastos?.empresa)),
+      notaEmpresa: (buenas.find((p) => p.gastos?.notaEmpresa) || {}).gastos?.notaEmpresa || "",
     },
     resultado: (hayVentas || hayGastos) ? red(ventasTotal - gastos) : null,
   };

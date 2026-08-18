@@ -1004,9 +1004,14 @@ function renderDashboard(d) {
   // El rótulo va corto para que quepa dentro de la tarjeta; las fechas exactas de la
   // comparación se ven al pasar el ratón, que es donde se miran cuando se dudan.
   const cuando = cmp ? `Comparado con ${fechaCorta(cmp.desde)} – ${fechaCorta(cmp.hasta)}` : "";
-  const stat3 = (lab, val, col, pct) => `<div style="min-width:0"><div class="mut" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">${lab}</div><div class="big tnum" style="font-size:22px${col ? ";color:" + col : ""}">${val}</div>${pct != null ? `<div style="margin-top:2px" title="${esc(cuando)}">${deltaEl(pct, contra)}</div>` : ""}</div>`;
+  const stat3 = (lab, val, col, pct, nota) => `<div style="min-width:0"><div class="mut" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">${lab}</div><div class="big tnum" style="font-size:22px${col ? ";color:" + col : ""}">${val}</div>${pct != null ? `<div style="margin-top:2px" title="${esc(cuando)}">${deltaEl(pct, contra)}</div>` : ""}${nota ? `<div class="mut" style="font-size:10px;margin-top:1px">${esc(nota)}</div>` : ""}</div>`;
+  // Parte del gasto que no es de este local sino de toda su empresa (la gestoría, el seguro) y
+  // que se le imputa al sumar. Se dice SIEMPRE que la hay: un número repartido sin avisar se lee
+  // como un número medido, y luego nadie entiende por qué no cuadra con la lista de facturas.
+  const gEmp = gOk ? Number(per.gastos.empresa) || 0 : 0;
+  const notaGasto = gEmp ? `incl. ${eur(gEmp)} de empresa` : "";
   const ventasBox = (vOk || gOk)
-    ? `<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && cmp ? cmp.ventas : null)}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && cmp ? cmp.gastos : null)}${stat3("Resultado", res != null ? eur(res) : "—", resCol, res != null && cmp ? cmp.resultado : null)}</div>`
+    ? `<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && cmp ? cmp.ventas : null)}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && cmp ? cmp.gastos : null, notaGasto)}${stat3("Resultado", res != null ? eur(res) : "—", resCol, res != null && cmp ? cmp.resultado : null)}</div>`
     : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y resultado<br><span class="hl">${DASH_RANGE.to === todayStr() && DASH_RANGE.from === todayStr() ? "aún sin cierre de hoy" : "al conectar Ágora"}</span></div>`;
   // Al pasar el ratón se ve el día, cuántas reservas y —si Ágora está conectado— lo que
   // se facturó ESE día. Es la pregunta que uno se hace mirando el pico del sábado.
@@ -4642,7 +4647,14 @@ function renderFacturas(list, pend, stats, empresas) {
   // PLEGADOS Y AL FINAL. Están bien tenerlos, pero encima de la tabla se comían el sitio de lo
   // que se viene a ver aquí, que son las facturas.
   const totalLocales = (stats?.porLocal || []).reduce((s2, x) => s2 + (Number(x.total) || 0), 0);
-  const porLocal = (!FACF.local && stats && stats.porLocal && stats.porLocal.length) ? `<details class="card fold"><summary><h3>Gasto por local (año)</h3><span class="foldr"><span>${num(stats.porLocal.length)} · ${eur(totalLocales)}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div></details>` : "";
+  // Cómo se ha repartido el gasto que es de toda una empresa, y —lo importante— si algo NO se ha
+  // podido repartir: ese dinero está fuera de la lista de arriba, y sin decirlo aquí desaparece
+  // de la suma sin que se note.
+  const repNota = (stats && stats.repartos && stats.repartos.length)
+    ? `<div class="mut" style="font-size:11px;margin-top:9px;line-height:1.45">${stats.repartos.map((r) => `${eur(r.total)} de ${esc(r.empresa || "empresa")}, ${esc(r.texto)}.`).join("<br>")}</div>` : "";
+  const repAviso = (stats && stats.sinRepartir && stats.sinRepartir.length)
+    ? `<div style="font-size:11px;margin-top:7px;color:var(--danger);line-height:1.45">${stats.sinRepartir.map((r) => `${eur(r.total)} de ${esc(r.empresa)} no se han podido repartir: esa empresa no tiene locales en Compras → Configuración, así que no están sumados arriba.`).join("<br>")}</div>` : "";
+  const porLocal = (!FACF.local && stats && stats.porLocal && stats.porLocal.length) ? `<details class="card fold"><summary><h3>Gasto por local (año)</h3><span class="foldr"><span>${num(stats.porLocal.length)} · ${eur(totalLocales)}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="rows" style="gap:9px;padding:2px 0">${stats.porLocal.map((x) => `<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>${esc(x.local || "—")}</span><b class="tnum">${eur(x.total)}</b></div><div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${Math.round((Number(x.total) || 0) / maxLocal * 100)}%;background:var(--brand)"></div></div></div>`).join("")}</div>${repNota}${repAviso}</details>` : "";
   // Plegable y cerrada por defecto: es una lista larga que casi nunca se consulta,
   // y estorbaba entre los filtros y la tabla de facturas.
   const nProv = (stats && stats.topProveedores && stats.topProveedores.length) || 0;

@@ -73,3 +73,54 @@ export function parteDe(local, total, pesos) {
   const r = repartirImporte(total, pesos).find((x) => x.local === local);
   return r ? r.importe : 0;
 }
+
+const red = (x) => Math.round((Number(x) || 0) * 100) / 100;
+
+/**
+ * Imputa a cada local la parte que le toca del gasto de empresa. PURO.
+ *
+ * Es la operación que faltaba en todas partes menos en «Gasto por local»: el documento se queda
+ * entero y archivado donde está, pero al SUMAR POR LOCAL cada uno carga solo con su parte.
+ *
+ *   base      [{local, total}]   el gasto propio de cada local, YA SIN las facturas de empresa
+ *   deEmpresa [{empresa, total}] lo que factura cada empresa a todos sus locales
+ *   locEmp    [{local, empresa}] qué locales tiene cada empresa
+ *   ventas    [{local, ventas}]  con qué se reparte
+ *
+ *   → { porLocal: [{local, total, propio, deEmpresa}], repartos: [...], sinRepartir: [...] }
+ *
+ * LA INVARIANTE: la suma de los locales es la misma antes y después. Esto no crea ni destruye
+ * gasto, solo cambia a quién se le imputa; si el total se moviera, sería un error, no un matiz.
+ *
+ * Por eso `sinRepartir` no es un detalle: si una empresa se quedó sin locales configurados no se
+ * puede repartir lo suyo, y callarlo haría desaparecer ese dinero de la suma sin que se note.
+ */
+export function imputarGastoEmpresa({ base = [], deEmpresa = [], locEmp = [], ventas = [], campo = "total" } = {}) {
+  const filas = new Map();
+  for (const r of base || []) {
+    if (!r || r.local == null || r.local === "") continue;
+    filas.set(r.local, { ...r, propio: red(r[campo]), deEmpresa: 0 });
+  }
+
+  const repartos = [], sinRepartir = [];
+  for (const e of deEmpresa || []) {
+    if (!e) continue;
+    const total = Number(e.total) || 0;
+    const suyos = (locEmp || []).filter((l) => l && l.empresa === e.empresa).map((l) => l.local);
+    if (!suyos.length) { if (total) sinRepartir.push({ empresa: e.empresa || "(sin empresa)", total: red(total) }); continue; }
+
+    const { pesos, base: baseReparto, faltan } = pesosPorVentas(ventas, suyos);
+    for (const parte of repartirImporte(total, pesos)) {
+      const fila = filas.get(parte.local) || { local: parte.local, [campo]: 0, propio: 0, deEmpresa: 0 };
+      fila.deEmpresa = red(fila.deEmpresa + parte.importe);
+      filas.set(parte.local, fila);
+    }
+    repartos.push({ empresa: e.empresa, total: red(total), locales: suyos.length,
+      texto: textoReparto({ base: baseReparto, faltan, locales: suyos }) });
+  }
+
+  const porLocal = [...filas.values()]
+    .map((f) => ({ ...f, [campo]: red(f.propio + f.deEmpresa) }))
+    .sort((a, b) => b[campo] - a[campo] || String(a.local).localeCompare(String(b.local)));
+  return { porLocal, repartos, sinRepartir };
+}

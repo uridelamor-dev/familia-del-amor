@@ -62,7 +62,8 @@ import { repasarLote, resumenRepaso, pideRelecturaDeLineas, esAlcanceValido, ALC
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
 import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
 import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
-import { repartirImporte, pesosPorVentas, textoReparto } from "./src/modules/facturas/reparto.js";
+import { repartirImporte, pesosPorVentas, textoReparto, imputarGastoEmpresa } from "./src/modules/facturas/reparto.js";
+import { mensajeDeErrorIA, seCorto } from "./src/modules/ia/errores.js";
 import { indiceDescartes, descartadosDe } from "./src/modules/facturas/descartes.js";
 import { debeSincronizar, siguebloqueado, edadMinutos } from "./src/modules/agora/programacion.js";
 import { claveFalta, ordenarFaltas } from "./src/modules/marketing/faltan.js";
@@ -2725,31 +2726,21 @@ app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async
          FROM facturas
         WHERE ${SIN_ALBARANES} AND reparto = 'empresa' AND TO_CHAR(fecha::date, 'YYYY') = ?
         GROUP BY empresa`, [String(año)]).catch(() => []);
-    const repartos = [];
+    let repartos = [], sinRepartir = [];
     if (deEmpresa.length) {
       const [locEmp, ventas] = await Promise.all([
         dbAll(`SELECT local, empresa FROM facturas_locales`).catch(() => []),
         dbAll(`SELECT local, COALESCE(SUM(ventas),0)::float AS ventas FROM ventas_diarias
                 WHERE TO_CHAR(dia::date, 'YYYY') = ? GROUP BY local`, [String(año)]).catch(() => []),
       ]);
-      const porTotal = new Map(porLocal.map((x) => [x.local, Number(x.total) || 0]));
-      for (const e of deEmpresa) {
-        const suyos = locEmp.filter((l) => l.empresa === e.empresa).map((l) => l.local);
-        if (!suyos.length) continue;
-        const { pesos, base, faltan } = pesosPorVentas(ventas, suyos);
-        for (const parte of repartirImporte(e.total, pesos)) {
-          porTotal.set(parte.local, Math.round(((porTotal.get(parte.local) || 0) + parte.importe) * 100) / 100);
-        }
-        repartos.push({ empresa: e.empresa, total: Number(e.total), locales: suyos.length,
-          texto: textoReparto({ base, faltan, locales: suyos }) });
-      }
-      // Se reconstruye la lista con el reparto dentro, y se vuelve a ordenar por gasto.
+      const r = imputarGastoEmpresa({ base: porLocal, deEmpresa, locEmp, ventas });
+      repartos = r.repartos; sinRepartir = r.sinRepartir;
       porLocal.length = 0;
-      for (const [l, total] of [...porTotal.entries()].sort((a, b) => b[1] - a[1])) porLocal.push({ local: l, total });
+      porLocal.push(...r.porLocal);
       // Con un local en el filtro, solo interesa el suyo.
       if (local) { const suyo = porLocal.filter((x) => x.local === local); porLocal.length = 0; porLocal.push(...suyo); }
     }
-    res.json({ ok: true, data: { mensual, topProveedores, porLocal, resumenAnual, repartos, año, local: local || null } });
+    res.json({ ok: true, data: { mensual, topProveedores, porLocal, resumenAnual, repartos, sinRepartir, año, local: local || null } });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
@@ -6319,13 +6310,16 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
       return res.status(400).json({ ok: false, error: "Rango inválido" });
     }
     const deLosLocales = async (q) => {
+      const desde = String(q.from || "").slice(0, 10), hasta = String(q.to || "").slice(0, 10);
+      // Una sola vez para todos los locales del ámbito, y solo si alguno mira un local concreto.
+      const empresaPartes = locales.length ? await gastoDeEmpresaPorLocal(desde, hasta) : null;
       if (locales.length > 1) {
         // Varios locales: uno a uno con la consulta de siempre y se suman (ver fusion.js).
         const partes = [];
-        for (const l of locales) partes.push(await periodoDeLocal(q, l));
+        for (const l of locales) partes.push(await periodoDeLocal(q, l, empresaPartes));
         return fusionarPeriodo(partes);
       }
-      return periodoDeLocal(q, locales[0] || null);
+      return periodoDeLocal(q, locales[0] || null, empresaPartes);
     };
 
     const data = await deLosLocales(req.query);
@@ -6360,8 +6354,33 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// El gasto que es de toda una empresa (la gestoría, el seguro), repartido entre sus locales.
+//
+// Se calcula UNA sola vez por petición aunque se miren ocho establecimientos: es exactamente la
+// misma cuenta para todos, y hacerla dentro del bucle eran tres consultas más por local en la
+// pantalla que ya iba lenta. Devuelve null si no hay nada de empresa en el rango, y entonces no
+// se paga ninguna consulta extra.
+async function gastoDeEmpresaPorLocal(from, to) {
+  const deEmpresa = await dbAll(
+    `SELECT empresa, COALESCE(SUM(total),0)::float AS total FROM facturas
+      WHERE ${SIN_ALBARANES} AND reparto = 'empresa' AND fecha >= ? AND fecha <= ? GROUP BY empresa`,
+    [from, to]).catch(() => []);
+  if (!deEmpresa.length) return null;
+  const [locEmp, ventas] = await Promise.all([
+    dbAll(`SELECT local, empresa FROM facturas_locales`).catch(() => []),
+    dbAll(`SELECT local, COALESCE(SUM(ventas),0)::float AS ventas FROM ventas_diarias
+            WHERE dia >= ? AND dia <= ? GROUP BY local`, [from, to]).catch(() => []),
+  ]);
+  const r = imputarGastoEmpresa({ base: [], deEmpresa, locEmp, ventas });
+  return {
+    porLocal: new Map(r.porLocal.map((x) => [x.local, x.total])),
+    texto: (r.repartos[0] || {}).texto || "",
+    sinRepartir: r.sinRepartir,
+  };
+}
+
 // El cuerpo de arriba, por local, para poder pedirlo una vez por establecimiento.
-async function periodoDeLocal(query, local) {
+async function periodoDeLocal(query, local, empresaPartes = null) {
   {
     const req = { query };
     const from = String(req.query.from || "").slice(0, 10);
@@ -6396,8 +6415,16 @@ async function periodoDeLocal(query, local) {
       }
     }
     // Gastos (facturas) del MISMO rango, para cuadrar el resultado (ventas − gastos).
-    const gasRow = await dbGet(`SELECT COUNT(*)::int n, COALESCE(SUM(total),0)::float total, COALESCE(SUM(base_imponible),0)::float base FROM facturas WHERE fecha >= ? AND fecha <= ?${lf}`, [from, to, ...lp]);
-    const gastosTotal = gasRow ? gasRow.total : 0;
+    //
+    // Los ALBARANES no se suman. Viven en la misma tabla que las facturas y son el papel de la
+    // entrega, no un gasto aparte: su factura ya está aquí. Contarlos duplicaba el gasto de todo
+    // proveedor que deja albarán, y este número se resta de las ventas para dar el resultado.
+    //
+    // Y lo que es de toda la EMPRESA sale de aquí cuando se mira un local, porque se le imputa
+    // abajo solo su parte. Sin filtro de local no hace falta: se cuenta entero una vez.
+    const gasRow = await dbGet(`SELECT COUNT(*)::int n, COALESCE(SUM(total),0)::float total, COALESCE(SUM(base_imponible),0)::float base FROM facturas WHERE ${SIN_ALBARANES} AND fecha >= ? AND fecha <= ?${local ? " AND COALESCE(reparto,'') <> 'empresa'" : ""}${lf}`, [from, to, ...lp]);
+    const parteEmpresa = (local && empresaPartes) ? (empresaPartes.porLocal.get(local) || 0) : 0;
+    const gastosTotal = (gasRow ? gasRow.total : 0) + parteEmpresa;
     const reservasTotal = resRows.reduce((s, r) => s + r.n, 0);
     const personasTotal = resRows.reduce((s, r) => s + r.personas, 0);
     const ventasTotal = ventasSerie.reduce((s, r) => s + (r.ventas || 0), 0);
@@ -6406,7 +6433,16 @@ async function periodoDeLocal(query, local) {
       from, to, hoy, hoyEnVivo,
       reservas: { total: reservasTotal, personas: personasTotal, serie: resRows },
       ventas: { disponible: ventasSerie.length > 0, total: Math.round(ventasTotal * 100) / 100, tickets: ticketsTotal, ticket_medio: ticketsTotal ? Math.round(ventasTotal / ticketsTotal * 100) / 100 : 0, serie: ventasSerie, fuente: fuenteVentas },
-      gastos: { disponible: !!(gasRow && gasRow.n > 0), total: Math.round(gastosTotal * 100) / 100, base: Math.round((gasRow ? gasRow.base : 0) * 100) / 100, n: gasRow ? gasRow.n : 0 },
+      gastos: {
+        // `disponible` mira también la parte imputada: un local puede no tener ninguna factura
+        // propia en el rango y aun así cargar con su trozo de la gestoría.
+        disponible: !!((gasRow && gasRow.n > 0) || parteEmpresa),
+        total: Math.round(gastosTotal * 100) / 100,
+        base: Math.round((gasRow ? gasRow.base : 0) * 100) / 100,
+        n: gasRow ? gasRow.n : 0,
+        empresa: Math.round(parteEmpresa * 100) / 100,
+        notaEmpresa: parteEmpresa ? (empresaPartes.texto || "") : "",
+      },
       resultado: (ventasSerie.length || (gasRow && gasRow.n)) ? Math.round((ventasTotal - gastosTotal) * 100) / 100 : null,
     };
   }
@@ -10192,6 +10228,11 @@ async function extraerHechosDeConversaciones({ tanda = 40 } = {}) {
           tool_choice: { type: "tool", name: "apuntar_hechos" },
           messages: [{ role: "user", content: conv.mensajes.map((m) => `Cliente: ${m}`).join("\n") }],
         });
+        // Cortado por el tope: el último «hecho» puede ser media frase, y aquí eso se guardaría
+        // como algo que sabemos de una persona. Se salta la conversación entera y no vuelve —el
+        // marcador avanza igual—, pero perder un hecho es mucho menos malo que apuntar medio:
+        // lo que se guarda aquí acaba diciendo que alguien es celíaco.
+        if (seCorto(resp)) { console.warn(`[hechos] respuesta cortada en ${conv.telefono}: la salto`); continue; }
         const uso = (resp.content || []).find((c) => c.type === "tool_use");
         const crudos = Array.isArray(uso?.input?.hechos) ? uso.input.hechos : [];
         // El saneado manda: descarta etiquetas inventadas, hechos sin frase, y marca los que
@@ -10799,8 +10840,21 @@ REGLAS QUE NO SE SALTAN:
       tool_choice: { type: "tool", name: "proponer_campana" },
       messages: [{ role: "user", content: texto }],
     });
+    // Si se cortó por el tope de tokens, el mensaje llega a medias y el segmento puede venir
+    // incompleto. Proponer eso es peor que no proponer nada: la campaña PARECE buena y se
+    // enviaría un WhatsApp cortado a mitad de frase a cientos de personas.
+    if (seCorto(resp)) {
+      console.warn("[campanas] la respuesta se cortó por max_tokens");
+      return res.status(502).json({ ok: false, error: "La respuesta se ha cortado. Prueba a pedirlo más corto." });
+    }
     const uso = (resp.content || []).find((c) => c.type === "tool_use");
-    if (!uso) return res.status(502).json({ ok: false, error: "No he sabido convertir eso en una campaña. Prueba a decirlo de otra manera." });
+    if (!uso) {
+      // Lo que contestó en vez de usar la herramienta es LO ÚNICO con lo que se puede depurar
+      // esto luego; sin ello solo queda «no supo», que no dice nada.
+      const dijo = (resp.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ").slice(0, 300);
+      console.warn(`[campanas] sin herramienta (stop=${resp.stop_reason}). Contestó: ${dijo || "(nada)"}`);
+      return res.status(502).json({ ok: false, error: "No he sabido convertir eso en una campaña. Prueba a decirlo de otra manera." });
+    }
 
     const { segmento, descartados } = sanearSegmento(uso.input?.segmento || {}, { locales: INV_LOCALES });
     // Nunca se escribe a quien se ha dado de baja, lo pida quien lo pida.
@@ -10839,8 +10893,8 @@ REGLAS QUE NO SE SALTAN:
       noTraducido,
     });
   } catch (e) {
-    console.error("[campanas] redactar:", e.message);
-    res.status(500).json({ ok: false, error: "No se pudo preparar la propuesta" });
+    console.error(`[campanas] redactar (${e.status || "sin status"}):`, e.message);
+    res.status(500).json({ ok: false, error: mensajeDeErrorIA(e, "la propuesta") });
   }
 });
 
