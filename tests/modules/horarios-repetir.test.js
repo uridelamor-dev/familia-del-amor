@@ -219,6 +219,23 @@ describe("la semana se abre sola", () => {
     const esquema = readFileSync("src/modules/horarios/schema.js", "utf8");
     assert.match(esquema, /idx_hor_sem_bor/);
   });
+  test("AÑADIR EL PRIMER TURNO NO PUEDE LEER `HOR.semana.id`", () => {
+    // El fallo que llegó a producción: `semana_id: HOR.semana.id` estaba DENTRO del literal
+    // del cuerpo, y se evaluaba antes del `if (!HOR.semana)` que venía tres líneas después.
+    // En una semana vacía eso lanza un TypeError y se lleva por delante el listener entero:
+    // pulsar «Añadir» no hacía nada. Ni turno, ni aviso, ni error. Lo peor que puede pasar,
+    // porque no hay nada que leer para saber qué ha fallado.
+    const i = app.indexOf('ov.querySelector("#hmOk").addEventListener');
+    const listener = app.slice(i, app.indexOf("const del = ov.querySelector", i));
+    assert.ok(listener.length > 100, "no se encuentra el listener de guardar turno");
+
+    // El acceso va SIEMPRE detrás de la comprobación, en el mismo sitio: un spread condicional.
+    assert.match(listener, /\.\.\.\(HOR\.semana \? \{ semana_id: HOR\.semana\.id \} : \{ local: HOR\.local, lunes: HOR\.dias\[0\] \}\)/);
+    // Y no queda ningún `HOR.semana.` suelto sin guardar.
+    const sinGuarda = listener.replace(/HOR\.semana \? \{ semana_id: HOR\.semana\.id \}/, "");
+    assert.ok(!/HOR\.semana\./.test(sinGuarda), "hay otro acceso a HOR.semana sin comprobar que existe");
+  });
+
   test("el cuadrante se pinta aunque no haya semana", () => {
     assert.match(app, /const sinSemana = !HOR\.semana/);
     assert.match(app, /const horEditable = \(\) => !HOR\.semana \|\| HOR\.semana\.estado === "borrador"/);

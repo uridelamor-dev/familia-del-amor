@@ -4998,8 +4998,12 @@ function horModal(asig, ctx) {
   });
   ov.querySelector("#hmOk").addEventListener("click", async () => {
     const abierto = cierre.checked;
+    // OJO CON EL ORDEN: `HOR.semana` puede ser null —una semana que todavía no existe— y
+    // leer `.id` aquí reventaba el listener ENTERO antes de llegar a comprobarlo. El efecto
+    // era el peor posible: pulsar «Añadir» no hacía nada. Ni turno, ni aviso, ni error.
+    // Cuando no hay semana se manda el lunes y el servidor la abre al escribir el turno.
     const cuerpo = {
-      semana_id: HOR.semana.id,
+      ...(HOR.semana ? { semana_id: HOR.semana.id } : { local: HOR.local, lunes: HOR.dias[0] }),
       worker_id: ov.querySelector("#hmW").value,
       dia: ov.querySelector("#hmD").value,
       tramo_id: ov.querySelector("#hmT").value || null,
@@ -5013,8 +5017,6 @@ function horModal(asig, ctx) {
     };
     if (!cuerpo.worker_id) { toast("Elige a la persona"); return; }
     if (!abierto && cuerpo.fin_min === cuerpo.inicio_min) { toast("El turno tiene que durar algo: entra y sale a la misma hora"); return; }
-    // Si todavía no hay semana, se manda el lunes y el servidor la abre al escribir el turno.
-    if (!HOR.semana) { delete cuerpo.semana_id; cuerpo.local = HOR.local; cuerpo.lunes = HOR.dias[0]; }
     try {
       if (editando) await apiSend("PATCH", "/api/horarios/asignacion/" + asig.id, cuerpo);
       else await apiSend("POST", "/api/horarios/asignacion", cuerpo);
