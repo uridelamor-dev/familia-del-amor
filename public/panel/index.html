@@ -690,6 +690,47 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .bl-lista{max-height:46vh}
 }
 
+/* Cuánta gente hace falta. Eran 84 casillas idénticas con «—» y un párrafo explicando
+   que la de arriba era el mínimo y la de abajo el objetivo. Ahora cada fila lleva su
+   nombre al lado, y el ideal —que es opcional— se pliega si no se usa. */
+.horcfg-cab{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;margin:0 0 12px}
+.horcfg-toggle{display:flex;gap:7px;align-items:center;font-size:12.5px;font-weight:600;
+  color:var(--ink2);white-space:nowrap;cursor:pointer;min-height:32px}
+.horcfg-toggle input{width:auto}
+.horcfg-nec td{padding:3px 4px;vertical-align:middle}
+.horcfg-sitio{white-space:nowrap;padding-right:12px !important}
+.horcfg-sitio b{display:block;line-height:1.25}
+.horcfg-sitio .mut{font-size:11.5px}
+/* La etiqueta que quita el párrafo de instrucciones. */
+.horcfg-et{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);
+  white-space:nowrap;padding-right:8px !important;text-align:right}
+.horcfg-fila-obj.plegada{display:none}
+.horcfg-fila-min td{padding-top:10px !important;border-top:1px solid var(--border)}
+.horcfg-nec tbody tr:first-child td{border-top:none}
+.horcfg-rep{padding-left:10px !important}
+.horcfg-rep .btn{font-size:11px;padding:2px 8px}
+/* El mínimo pesa más que el ideal: se ve cuál manda sin leer la etiqueta. */
+.horcfg-n{width:46px;text-align:center;font-variant-numeric:tabular-nums}
+.horcfg-n.es-min{font-weight:650}
+.horcfg-n.es-obj{color:var(--ink2)}
+.horcfg-n::placeholder{color:var(--ink3);opacity:.5}
+@media(max-width:700px){
+  .horcfg-n{width:38px;font-size:16px;min-height:38px}
+  .horcfg-et{font-size:10px}
+  .horcfg-rep .btn{min-height:36px}
+}
+
+/* Configuración de Horarios: la caja NO cambia de tamaño al cambiar de pestaña.
+   Con la altura puesta por el contenido, el diálogo pegaba un salto entre «Turnos» y
+   «Cuánta gente hace falta», y las pestañas se movían bajo el dedo justo cuando ibas
+   a pulsarlas. Alto fijo, pestañas ancladas arriba y scroll solo en el contenido. */
+.modal.hor-cfg{width:min(1000px,96vw);height:min(780px,88vh);max-height:88vh;
+  display:flex;flex-direction:column;overflow:hidden}
+.modal.hor-cfg>.modal-b{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.modal.hor-cfg .toolbar{flex:none}
+.modal.hor-cfg #horCfgCuerpo{flex:1;overflow:auto;min-height:0;padding-right:4px}
+@media(max-width:700px){ .modal.hor-cfg{height:92vh;max-height:92vh} }
+
 /* Repetir turno: los siete días como botones grandes. Un <select> múltiple o siete
    casillas diminutas obligan a apuntar; así se ve de un vistazo qué se ha marcado. */
 .rep-dias{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}

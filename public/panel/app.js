@@ -4193,7 +4193,11 @@ async function horConfig() {
   // Ancho: la rejilla son 7 días × 2 números y los refuerzos llevan dos horas dentro. Con
   // los 520 px del diálogo normal se corta el domingo, que es justo la columna que más se
   // mira. Se toca `width` y no `max-width` porque .modal fija el ancho, no el máximo.
-  ov.querySelector(".modal").style.width = "min(940px, 96vw)";
+  // Tamaño FIJO. Antes la altura la ponía el contenido, así que el diálogo daba un salto
+  // cada vez que se cambiaba de pestaña —«Turnos» es corto y «Cuánta gente hace falta» es
+  // largo— y las propias pestañas se movían bajo el dedo. Ahora la caja no se mueve: lo que
+  // se desplaza es el contenido de dentro.
+  ov.querySelector(".modal").classList.add("hor-cfg");
   const pintar = async () => {
     try { HORCFG.data = await apiRaw(`/api/horarios/plantilla?local=${encodeURIComponent(HOR.local)}`); }
     catch (e) { ov.querySelector(".modal-b").innerHTML = `<p class="mut">${esc(e.message)}</p>`; return; }
@@ -4220,6 +4224,11 @@ async function horConfig() {
     // Los ajustes se piden aparte, ya pintado el hueco: no hacen falta para las otras seis
     // pestañas y no tiene sentido pagarlos cada vez que alguien entra a tocar los turnos.
     if (HORCFG.tab === "ajustes") horCfgOperativa(d);
+    // El interruptor del «ideal»: pliega o despliega esas filas sin repintar nada.
+    const verObj = ov.querySelector("#horcfgVerObj");
+    if (verObj) verObj.addEventListener("change", () => {
+      ov.querySelectorAll(".horcfg-fila-obj").forEach((f) => f.classList.toggle("plegada", !verObj.checked));
+    });
   };
 
   // UN escuchador, puesto una sola vez sobre `.modal-b`, que es el nodo que sobrevive a los
@@ -4293,22 +4302,52 @@ function horCfgTurnos(d) {
 function horCfgNecesidades(d) {
   if (!d.areas.length || !d.tramos.length) return `<p class="mut">Este local no tiene áreas ni tramos configurados.</p>`;
   const val = (a, t, dow) => d.necesidades.find((n) => +n.area_id === +a && +n.tramo_id === +t && +n.dow === dow) || {};
-  const celda = (a, t, dow, nombre) => {
+  // Si nadie ha puesto ningún objetivo, la fila del objetivo empieza plegada: es opcional y
+  // ocupaba la mitad de la rejilla siempre, aunque no se usara.
+  const hayObjetivos = d.necesidades.some((n) => n.objetivo != null && n.objetivo !== "");
+
+  const campo = (a, t, dow, k, nombre) => {
     const n = val(a, t, dow);
-    const campo = (k, cls, tit) => `<input class="inp horcfg-n ${cls}" data-a="${a}" data-t="${t}" data-d="${dow}" data-k="${k}"
-      value="${n[k] ?? ""}" inputmode="numeric" placeholder="—" title="${esc(tit)} · ${esc(nombre)} · ${DOW[dow]}">`;
-    return `<td class="horcfg-celda">${campo("minimo", "es-min", "Mínimo")}${campo("objetivo", "es-obj", "Objetivo")}</td>`;
+    return `<input class="inp horcfg-n es-${k === "minimo" ? "min" : "obj"}" data-a="${a}" data-t="${t}" data-d="${dow}" data-k="${k}"
+      value="${n[k] ?? ""}" inputmode="numeric" placeholder="·"
+      aria-label="${k === "minimo" ? "Mínimo" : "Objetivo"} · ${esc(nombre)} · ${DOW[dow]}"
+      title="${k === "minimo" ? "Mínimo" : "Objetivo"} · ${esc(nombre)} · ${DOW[dow]}">`;
   };
+
+  // Dos filas por sitio, cada una CON SU NOMBRE. Antes se distinguían solo por estar una
+  // encima de otra, y hacía falta un párrafo para explicar cuál era cuál. Si una tabla
+  // necesita instrucciones, el problema es la tabla.
+  const filas = d.areas.flatMap((a) => d.tramos.map((t) => {
+    const nombre = `${a.nombre} ${t.nombre}`;
+    // SIN `rowspan`: al plegar la fila del ideal, una celda que abarca dos filas sigue
+    // reservando las dos y los nombres se descolocaban hacia dentro de la tabla. El nombre
+    // va en la fila del mínimo y la del ideal deja el hueco.
+    return `<tr class="horcfg-fila-min">
+        <td class="horcfg-sitio"><b>${esc(a.nombre)}</b><span class="mut">${esc(t.nombre)}</span></td>
+        <td class="horcfg-et">mínimo</td>
+        ${DOW.map((_, dow) => `<td>${campo(a.id, t.id, dow, "minimo", nombre)}</td>`).join("")}
+        <td class="horcfg-rep"><button class="btn sm" data-horcfg="nec-semana" data-a="${a.id}" data-t="${t.id}" data-k="minimo"
+          title="Poner el mismo número el resto de la semana">semana</button></td>
+      </tr>
+      <tr class="horcfg-fila-obj ${hayObjetivos ? "" : "plegada"}">
+        <td class="horcfg-sitio"></td>
+        <td class="horcfg-et">ideal</td>
+        ${DOW.map((_, dow) => `<td>${campo(a.id, t.id, dow, "objetivo", nombre)}</td>`).join("")}
+        <td class="horcfg-rep"><button class="btn sm" data-horcfg="nec-semana" data-a="${a.id}" data-t="${t.id}" data-k="objetivo"
+          title="Poner el mismo número el resto de la semana">semana</button></td>
+      </tr>`;
+  }));
+
   return `
-    <p class="mut" style="margin:0 0 12px;line-height:1.55">Cuántas personas hacen falta en cada sitio.
-      <b>Arriba el mínimo</b> (sin eso no se puede abrir) y <b>abajo el objetivo</b>, más claro (lo ideal si hay
-      gente). El objetivo se puede dejar vacío. Se lee por filas: la de arriba son los mínimos de toda la semana.</p>
+    <div class="horcfg-cab">
+      <p class="mut" style="margin:0;line-height:1.55;flex:1;min-width:220px">Cuánta gente hace falta en cada sitio.
+        El <b>mínimo</b> es lo que no se puede bajar; el <b>ideal</b>, lo que se pondría habiendo gente.
+        Escribe un día y pulsa <b>semana</b> para repetirlo en los que estén vacíos.</p>
+      <label class="horcfg-toggle"><input type="checkbox" id="horcfgVerObj" ${hayObjetivos ? "checked" : ""}> Marcar también un ideal</label>
+    </div>
     <div class="tw"><table class="tbl horcfg-nec">
-      <thead><tr><th>Área · Tramo</th>${DOW.map((x) => `<th style="text-align:center">${x}</th>`).join("")}</tr></thead>
-      <tbody>${d.areas.flatMap((a) => d.tramos.map((t) => `<tr>
-        <td style="white-space:nowrap"><b>${esc(a.nombre)}</b> <span class="mut">${esc(t.nombre)}</span></td>
-        ${DOW.map((_, dow) => celda(a.id, t.id, dow, `${a.nombre} ${t.nombre}`)).join("")}
-      </tr>`)).join("")}</tbody></table></div>
+      <thead><tr><th>Sitio</th><th></th>${DOW.map((x) => `<th style="text-align:center">${x}</th>`).join("")}<th></th></tr></thead>
+      <tbody>${filas.join("")}</tbody></table></div>
 
     ${horCfgRefuerzos(d)}
 
@@ -4316,9 +4355,6 @@ function horCfgNecesidades(d) {
       <button class="btn primary" data-horcfg="guardar-nec">Guardar</button></div>`;
 }
 
-// Refuerzos: 4 h que caen donde quepan dentro de una horquilla. Van aparte de la rejilla
-// de arriba porque NO tienen hora fija — uno puede ser de 10 a 14 y otro de 11 a 15 — y
-// meterlos en una columna de «tramo» sería volver al problema que esto viene a arreglar.
 function horCfgRefuerzos(d) {
   // Cada refuerzo es una etiqueta + duración + ventana. Los días llevan solo el número.
   const porGrupo = new Map();
@@ -4584,6 +4620,20 @@ async function horCfgAccion(e, ov, pintar) {
     if (!caja.querySelector(".horcfg-ref")) {
       caja.innerHTML = '<p class="mut horcfg-ref-vacio" style="margin:0 0 10px">Ningún refuerzo configurado.</p>';
     }
+    return;
+  }
+
+  // «semana»: coge el primer número escrito de esa fila y lo pone en los días que estén
+  // VACÍOS. No pisa lo que ya haya: si el sábado tiene otro número es porque alguien lo
+  // decidió, y machacarlo sería peor que no tener el botón.
+  if (act === "nec-semana") {
+    const a = b.getAttribute("data-a"), t = b.getAttribute("data-t"), k = b.getAttribute("data-k");
+    const campos = [...document.querySelectorAll(`.horcfg-n[data-a="${a}"][data-t="${t}"][data-k="${k}"]`)];
+    const modelo = campos.find((c) => String(c.value).trim() !== "");
+    if (!modelo) { toast("Escribe primero un número en un día"); return; }
+    let n = 0;
+    for (const c of campos) if (String(c.value).trim() === "") { c.value = modelo.value; n++; }
+    toast(n ? `Puesto en ${n} ${n === 1 ? "día" : "días"} más` : "Todos los días ya tenían número");
     return;
   }
 
