@@ -690,6 +690,27 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .bl-lista{max-height:46vh}
 }
 
+/* Repetir turno: los siete días como botones grandes. Un <select> múltiple o siete
+   casillas diminutas obligan a apuntar; así se ve de un vistazo qué se ha marcado. */
+.rep-dias{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.rep-dia{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 4px;
+  border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:12px;font-weight:600;
+  user-select:none;transition:.12s}
+.rep-dia:hover{border-color:var(--border2)}
+.rep-dia:has(input:checked){background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
+.rep-dia input{width:auto;margin:0}
+.rep-origen{opacity:.45;cursor:default;background:var(--surface2)}
+.rep-linea{display:flex;gap:8px;align-items:baseline;padding:3px 0}
+.rep-linea .pill{flex:none;min-width:96px;justify-content:center}
+/* Aviso de semana sin horario: ámbar, no rojo. No hay nada roto — hay trabajo por hacer. */
+.hor-vacia{border-left:3px solid var(--warning)}
+@media(max-width:620px){
+  /* Siete columnas en 374 px dan 45 px por día: se toca mal. Dos filas de cuatro y tres. */
+  .rep-dias{grid-template-columns:repeat(4,1fr)}
+  .rep-dia{min-height:52px}
+  .rep-linea{flex-wrap:wrap}
+}
+
 /* «Necesita tu atención»: la bandeja operativa. Es lo primero que se mira, así que
    pesa lo justo — un borde a la izquierda y filas compactas. Una tarjeta grande y de
    color compite con el resto de la pantalla y acaba leyéndose como decoración. */

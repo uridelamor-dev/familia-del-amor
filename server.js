@@ -50,6 +50,7 @@ import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descans
 import { indiceCapacidades, puedeEnArea, estaConfigurado, areasDe, resumenConfiguracion } from "./src/modules/horarios/capacidades.js";
 import { instanteANegocio, lunesDe, diasSemana, isoConOffset, aMinutos, deMinutos, epochDeLocal, sumaDias, instanteMadrid } from "./src/modules/horarios/tiempo.js";
 import { detectarConflictos, resumirConflictos, contratosSolapados, contratoVigente } from "./src/modules/horarios/conflictos.js";
+import { planRepetir, resumenPlan } from "./src/modules/horarios/repetir.js";
 import { configLegible, motivoNoGuardar, AVISO_NO_RETROACTIVO, PARAMETROS } from "./src/modules/horarios/config.js";
 import { validarPublicacion, construirSnapshot, cambiosPorTrabajador } from "./src/modules/horarios/versiones.js";
 import { serializarCanonico } from "./src/core/canonico.js";
@@ -7613,10 +7614,51 @@ async function horSemanaEditable(req, semanaId) {
   return { semana: s };
 }
 
+/**
+ * La semana en la que escribir, creándola si hace falta.
+ *
+ * Antes había que pulsar «Empezar esta semana» antes de poder poner el primer turno. Para
+ * quien lo usa eso no significa nada: él está mirando la semana del 24 y quiere poner a
+ * Carlos el lunes. «Crear la semana» es una fila de una tabla, no un paso de su trabajo.
+ *
+ * Se sigue pudiendo pasar `semana_id` —es lo que hace el panel cuando ya existe— y entonces
+ * esto no crea nada. Solo cuando llega `lunes` sin `semana_id` se abre el borrador.
+ */
+async function horSemanaParaEscribir(req, { semana_id, local, lunes }) {
+  if (semana_id) return horSemanaEditable(req, semana_id);
+  const loc = horLocal(req, local);
+  if (!loc) return { error: 403, mensaje: "Sin acceso a este establecimiento" };
+  const l = lunesDe(String(lunes || ""));
+  if (!l) return { error: 400, mensaje: "Semana no válida" };
+
+  const cerrada = await dbGet(`SELECT id FROM hor_semanas WHERE local = ? AND lunes = ? AND estado = 'cerrado'`, [loc, l]);
+  if (cerrada) return { error: 409, mensaje: "Esa semana está cerrada y no se puede replanificar." };
+  const ya = await dbGet(`SELECT * FROM hor_semanas WHERE local = ? AND lunes = ? AND estado = 'borrador'`, [loc, l]);
+  if (ya) return { semana: ya };
+
+  // Publicada y sin borrador: NO se abre uno a escondidas. Cambiar un horario publicado
+  // exige una versión nueva a propósito, que es la regla que sostiene todo el módulo.
+  const pub = await dbGet(`SELECT id FROM hor_semanas WHERE local = ? AND lunes = ? AND estado = 'publicado'`, [loc, l]);
+  if (pub) return { error: 409, mensaje: "Esa semana ya está publicada. Para cambiarla, crea una versión nueva." };
+
+  const max = await dbGet(`SELECT COALESCE(MAX(version), 0) AS v FROM hor_semanas WHERE local = ? AND lunes = ?`, [loc, l]);
+  // `ON CONFLICT DO NOTHING` + relectura: dos personas poniendo el primer turno a la vez
+  // pasan las dos por aquí, y el índice único del borrador impide que salgan dos semanas.
+  await dbRun(
+    `INSERT INTO hor_semanas (local, lunes, version, estado, origen, creado_en, creado_por)
+     VALUES (?, ?, ?, 'borrador', 'manual', ?, ?) ON CONFLICT DO NOTHING`,
+    [loc, l, Number(max.v) + 1, isoConOffset(Date.now()), req.user.nombre || req.user.username]);
+  const fila = await dbGet(`SELECT * FROM hor_semanas WHERE local = ? AND lunes = ? AND estado = 'borrador'`, [loc, l]);
+  if (!fila) return { error: 500, mensaje: "No se pudo abrir la semana" };
+  return { semana: fila, creada: true };
+}
+
 app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, res) => {
   try {
     const { semana_id, worker_id, dia, area_id, tramo_id, inicio_min, fin_min } = req.body || {};
-    const chk = await horSemanaEditable(req, semana_id);
+    // Si no hay semana todavía, se abre al poner el primer turno: quien lo usa está mirando
+    // la semana del 24, no creando una entidad.
+    const chk = await horSemanaParaEscribir(req, { semana_id, local: req.body?.local, lunes: req.body?.lunes });
     if (chk.error) return res.status(chk.error).json({ ok: false, error: chk.mensaje });
     if (!worker_id || !dia) return res.status(400).json({ ok: false, error: "Faltan la persona y el día" });
     const quien = await horTrabajadorDelLocal(worker_id, chk.semana.local);
@@ -7637,7 +7679,8 @@ app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, re
       [chk.semana.id, chk.semana.local, worker_id, dia, area_id || null, tramo_id || null, ini, fin,
        !!req.body.fin_abierto, req.body.tipo || "turno", req.body.nota || null, isoConOffset(Date.now())]
     );
-    res.json({ ok: true, asignacion: fila, aviso: await horAvisoArea(quien.worker, area_id, chk.semana.local) });
+    res.json({ ok: true, asignacion: fila, semana: chk.semana, semanaCreada: !!chk.creada,
+      aviso: await horAvisoArea(quien.worker, area_id, chk.semana.local) });
   } catch (e) {
     console.error("[horarios] crear asignación:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo guardar el turno" });
@@ -7736,6 +7779,67 @@ app.patch("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (re
   } catch (e) {
     console.error("[horarios] editar asignación:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo mover el turno" });
+  }
+});
+
+// ── Repetir un turno en otros días ───────────────────────────────────────────
+// Carlos entra el lunes de 16:00 a 00:00 y hace lo mismo el resto de la semana. Hoy eso son
+// cinco veces el mismo diálogo. NO crea ninguna serie ni vínculo: escribe turnos normales,
+// idénticos a los que se harían a mano, y cada uno vive su vida a partir de ahí.
+//
+// Dos pasos: primero se enseña qué pasaría —incluidos los días con algo que mirar— y
+// después se confirma. `?plan=1` devuelve solo la previsualización, sin escribir nada.
+app.post("/api/horarios/asignacion/:id/repetir", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const t = await dbGet(`SELECT * FROM hor_asignaciones WHERE id = ?`, [Number(req.params.id) || 0]);
+    if (!t) return res.status(404).json({ ok: false, error: "Ese turno ya no existe" });
+    const chk = await horSemanaEditable(req, t.semana_id);
+    if (chk.error) return res.status(chk.error).json({ ok: false, error: chk.mensaje });
+
+    const dias = Array.isArray(req.body?.dias) ? req.body.dias.map(String) : [];
+    const validos = diasSemana(chk.semana.lunes);
+    const fuera = dias.filter((d) => !validos.includes(d));
+    if (fuera.length) return res.status(400).json({ ok: false, error: "Hay días que no son de esta semana" });
+
+    const [persona, asignaciones, ausencias, disponibilidad] = await Promise.all([
+      dbGet(`SELECT id, nombre, local, fecha_alta, fecha_baja FROM users WHERE id = ?`, [t.worker_id]),
+      dbAll(`SELECT id, worker_id, dia, area_id, inicio_min, fin_min FROM hor_asignaciones WHERE semana_id = ?`, [chk.semana.id]),
+      dbAll(`SELECT worker_id, tipo, desde, hasta, estado FROM hor_ausencias
+              WHERE worker_id = ? AND estado = 'aprobada' AND hasta >= ? AND desde <= ?`,
+        [t.worker_id, validos[0], validos[6]]),
+      dbAll(`SELECT worker_id, dow, inicio_min, fin_min, preferencia FROM hor_disponibilidad WHERE worker_id = ?`, [t.worker_id]),
+    ]);
+    // El turno es de esta semana y la semana es de este local, pero se comprueba igual: es
+    // la misma guarda que impide colgar a alguien de Lloret en el cuadrante de Blanes.
+    if (!persona || String(persona.local || "") !== String(chk.semana.local)) {
+      return res.status(403).json({ ok: false, error: "Esa persona no es de este establecimiento" });
+    }
+
+    const plan = planRepetir({ turno: t, dias, asignaciones, ausencias, disponibilidad, persona });
+    if (!plan.ok) return res.status(400).json({ ok: false, error: plan.error });
+    if (req.query.plan === "1") {
+      return res.json({ ok: true, plan, resumen: resumenPlan(plan, persona.nombre), persona: { id: persona.id, nombre: persona.nombre } });
+    }
+
+    const ahora = isoConOffset(Date.now());
+    const creados = [];
+    for (const dia of plan.aCrear) {
+      const fila = await dbRun(
+        `INSERT INTO hor_asignaciones (semana_id, local, worker_id, dia, area_id, tramo_id, inicio_min, fin_min, fin_abierto, tipo, nota, creado_en)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *`,
+        [chk.semana.id, chk.semana.local, t.worker_id, dia, t.area_id, t.tramo_id, t.inicio_min, t.fin_min,
+         t.fin_abierto, t.tipo, t.nota, ahora]);
+      creados.push(fila);
+    }
+    await ficAuditar("horario", t.worker_id, "repetir_turno", req.user.username, {
+      local: chk.semana.local, workerId: t.worker_id,
+      detalle: { origen: t.id, dias: plan.aCrear, omitidos: plan.omitidos, bloqueados: plan.bloqueados, semana: chk.semana.lunes },
+    }).catch(() => {});
+
+    res.json({ ok: true, creados, plan, mensaje: resumenPlan({ ...plan, aCrear: plan.aCrear }, persona.nombre) });
+  } catch (e) {
+    console.error("[horarios] repetir turno:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo repetir el turno" });
   }
 });
 
