@@ -256,3 +256,53 @@ export function ausenciasDeLaFicha(ausencias = [], hoy, { ultimas = 4 } = {}) {
     .sort((a, b) => String(b.hasta).localeCompare(String(a.hasta))).slice(0, ultimas);
   return { actual, proxima, pendientes, pasadas };
 }
+
+// ── Lo que hay que hacer con esta persona ────────────────────────────────────
+/**
+ * Los asuntos ACCIONABLES de alguien, para ponerlos arriba del todo.
+ *
+ * La regla que evita que esto se convierta en ruido: solo entra lo que alguien puede
+ * RESOLVER. «Tiene 40 h de contrato» es un dato, no un asunto. «Tiene dos contratos que se
+ * pisan» sí, porque hay algo que arreglar. En cuanto una ficha enseña ocho avisos de los
+ * cuales seis son informativos, se dejan de leer los ocho.
+ *
+ * Ordenados por lo que cuesta si se ignora, no por el orden en que se calculan.
+ */
+export function asuntosPendientes(f = {}, hoy) {
+  const a = [];
+  const add = (nivel, texto, accion = null) => a.push({ nivel, texto, accion });
+
+  if (f.contrato?.solapados?.length) {
+    add("problema", `Tiene ${f.contrato.solapados.length} contrato(s) que se pisan: no se puede saber cuántas horas tiene.`, "contrato");
+  }
+  if (!f.contrato?.vigente && f.estado?.enPlantilla) {
+    add("atencion", "No tiene contrato en vigor, así que el generador no le reparte turnos.", "contrato");
+  }
+  if (f.areas && !f.areas.configurado && f.estado?.enPlantilla) {
+    add("atencion", "Sus áreas están sin configurar: el generador puede ponerle en cualquiera.", "areas");
+  }
+  if (f.ausencias?.pendientes?.length) {
+    add("atencion", `${f.ausencias.pendientes.length} ausencia(s) suyas esperan una decisión.`, "ausencias");
+  }
+  if (f.horas?.sinValidar) {
+    add("atencion", `${f.horas.sinValidar} jornada(s) suyas de este periodo están sin validar; sus horas no están en ningún saldo.`, "revision");
+  }
+  if (f.estado?.clave === "baja_futura") {
+    add("info", f.estado.detalle || "Tiene una baja programada.", null);
+  }
+  // El saldo solo es un asunto cuando hay que hacer algo con él. Doce minutos no lo son.
+  if (Number(f.bolsa?.saldo) >= 240) {
+    add("atencion", "Se le deben horas suficientes como para decidir si se pagan o se compensan.", "bolsa");
+  }
+  if (Number(f.bolsa?.saldo) < 0 && !f.estado?.enPlantilla) {
+    add("info", "Se fue con saldo negativo en la bolsa.", "bolsa");
+  }
+  if (!f.estado?.enPlantilla && Number(f.bolsa?.saldo) > 0) {
+    add("problema", "Ya no está en plantilla y se le siguen debiendo horas.", "bolsa");
+  }
+  if (f.periodos?.solapados?.length) {
+    add("problema", "Sus incorporaciones se pisan entre ellas: hay fechas que están en dos a la vez.", null);
+  }
+  const orden = { problema: 0, atencion: 1, info: 2 };
+  return a.sort((x, y) => orden[x.nivel] - orden[y.nivel]);
+}

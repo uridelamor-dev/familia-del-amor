@@ -2763,7 +2763,16 @@ function renderRRSegSidebar() {
     const items = ws.map((w) => {
       const done = !!rrWorkerLlamada(w.id);
       const on = RRSEG.sel && String(RRSEG.sel.id) === String(w.id);
-      return `<button class="row" data-act="rr-worker" data-id="${w.id}" style="width:100%;text-align:left;background:${on ? "var(--surface2)" : "transparent"}"><span class="sdot" style="background:${done ? "var(--success)" : "var(--border2)"};width:8px;height:8px;border-radius:999px;flex:none"></span><span class="grow" style="min-width:0"><span class="t1">${esc(w.nombre || w.username || "—")}</span><span class="t2">${esc(w.rol || "")}</span></span></button>`;
+      // Antes ponía solo el nombre y el rol —«Juan Pérez / trabajador»— que es lo único que
+      // ya se sabe al buscarle. Ahora la segunda línea dice lo que se venía a mirar.
+      const est = w.estado || {};
+      const sub = [w.puesto, est.clave === "baja_futura" ? "se va el " + String(w.fecha_baja || "").slice(5)
+                           : est.clave === "pendiente" ? "empieza el " + String(w.fecha_alta || "").slice(5)
+                           : est.clave === "baja" ? "hasta el " + String(w.fecha_baja || "").slice(0, 10)
+                           : est.clave === "desactivado" ? "cuenta desactivada" : null].filter(Boolean).join(" · ");
+      const PILL = { baja_futura: "warn", pendiente: "warn", baja: "bad", desactivado: "bad" };
+      const tag = est.clave && est.clave !== "activo" ? `<span class="pill ${PILL[est.clave] || ""}">${esc(est.etiqueta)}</span>` : "";
+      return `<button class="row" data-act="rr-worker" data-id="${w.id}" style="width:100%;text-align:left;background:${on ? "var(--surface2)" : "transparent"}"><span class="sdot" style="background:${done ? "var(--success)" : "var(--border2)"};width:8px;height:8px;border-radius:999px;flex:none"></span><span class="grow rr-fila" style="min-width:0"><span class="t1">${esc(w.nombre || w.username || "—")}</span><span class="t2">${esc(sub || w.rol || "")}</span></span>${tag}</button>`;
     }).join("");
     return `<div><div class="ch" style="padding:10px 14px 4px;margin:0"><h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)">${esc(loc)}</h3><span class="pill ${hechos === ws.length ? "ok" : ""}">${hechos}/${ws.length}</span></div><div class="rows">${items}</div></div>`;
   }).join("");
@@ -2832,7 +2841,12 @@ function renderRRFicha() {
   const foto = t.foto_url ? `<img src="${esc(t.foto_url)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : `<span class="avatar" style="width:56px;height:56px;font-size:20px;flex:none">${esc(ini)}</span>`;
   const dato = (lab, val) => val ? `<div><div class="t2">${lab}</div><div class="t1">${esc(val)}</div></div>` : "";
   const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Puesto", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
-  const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(t.rol || "")}${t.local ? " · " + esc(t.local) : ""}${t.username ? " · @" + esc(t.username) : ""}${antig}</div></div></div>${esDir ? `<button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(t.nombre || t.username || "")}">Eliminar</button>` : ""}</div></div>`;
+  const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(t.rol || "")}${t.local ? " · " + esc(t.local) : ""}${t.username ? " · @" + esc(t.username) : ""}${antig}</div></div></div>${esDir ? `<details class="rr-mas"><summary class="btn sm" title="Más acciones">···</summary>
+      <div class="rr-mas-menu">
+        <button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(t.nombre || t.username || "")}">Eliminar del sistema</button>
+        <p class="mut" style="margin:8px 0 0;font-size:11.5px;max-width:230px;line-height:1.5">Borra su acceso y su ficha.
+          Para alguien que se va, lo que toca es <b>Dar de baja</b>: conserva su histórico.</p>
+      </div></details>` : ""}</div></div>`;
   return `<div class="grid" style="gap:16px">${hero}${renderRRLaboral()}${datos}${renderRRPin()}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
 }
 
@@ -2901,14 +2915,50 @@ function renderRRLaboral() {
     ? `<p class="fic-nota" style="margin:10px 0 0;border-color:var(--danger)">Tiene <b>${f.contrato.solapados.length}</b> contrato(s) que se pisan. No se toca ninguno automáticamente: con dos vigentes no se puede saber cuál son sus horas, y eso decide lo que se le paga.</p>`
     : "";
 
+  // ── Lo que hay que hacer con esta persona, arriba del todo ────────────────
+  // Solo lo ACCIONABLE. Una ficha con ocho avisos de los cuales seis son informativos deja
+  // de leerse entera, y entonces el que importaba tampoco se ve.
+  const NIV = { problema: "bad", atencion: "warn", info: "" };
+  const IR = { contrato: "rr-contrato", areas: "rr-areas", bolsa: "rr-libro",
+               ausencias: "rr-ir-ausencias", revision: "rr-ir-revision" };
+  const asuntos = (f.asuntos || []).length ? `
+    <div class="card lab-atencion"><div class="ch"><h3>Necesita atención</h3>
+      <span class="pill ${f.asuntos.some((x) => x.nivel === "problema") ? "bad" : "warn"}">${f.asuntos.length}</span></div>
+      <div class="rows">${f.asuntos.map((x) => `<div class="row">
+        <span class="pill ${NIV[x.nivel]}">${x.nivel === "problema" ? "problema" : x.nivel === "atencion" ? "revisar" : "aviso"}</span>
+        <span class="grow">${esc(x.texto)}</span>
+        ${x.accion && IR[x.accion] ? `<button class="btn sm" data-act="${IR[x.accion]}" data-id="${f.trabajador.id}">Ir</button>` : ""}
+      </div>`).join("")}</div></div>` : "";
+
+  // Los cinco sitios donde sigue la vida de esta persona. Antes había que salir a buscarlos
+  // por el menú, y volver: Equipo → Horarios → Fichajes → Equipo para una sola pregunta.
+  const irA = `<div class="lab-ir">
+    <button class="btn sm" data-act="rr-ir-horario" data-id="${f.trabajador.id}">Ver su horario</button>
+    <button class="btn sm" data-act="rr-ir-revision" data-id="${f.trabajador.id}">Ver sus fichajes</button>
+    ${f.bolsa.puedeVerLibro ? `<button class="btn sm" data-act="rr-libro" data-id="${f.trabajador.id}">Libro de horas</button>` : ""}
+    <button class="btn sm" data-act="rr-ir-ausencias" data-id="${f.trabajador.id}">Ausencias</button>
+    <button class="btn sm" data-act="rr-areas">Áreas</button></div>`;
+
+  // Las incorporaciones anteriores solo se enseñan si HAY más de una: para el 95 % de la
+  // plantilla es una línea que no dice nada, y ese ruido es lo que hace que no se lea el resto.
+  const per = f.periodos?.historial || [];
+  const incorporaciones = per.length > 1 ? `
+    <details style="margin-top:10px"><summary class="mut" style="cursor:pointer">Incorporaciones (${per.length})</summary>
+      <div class="rows">${per.map((x) => `<div class="row"><div class="grow">
+        <b>${esc(x.texto)}</b> <span class="mut">${esc(x.local || "")}${x.motivo ? " · " + esc(x.motivo) : ""}</span></div>
+        ${x.abierto ? '<span class="pill ok">actual</span>' : ""}</div>`).join("")}</div>
+      <p class="mut" style="margin:8px 0 0;font-size:11.5px">La antigüedad de arriba es la de la incorporación actual.
+        Lo que se reconoce de las anteriores no lo decide el sistema.</p></details>` : "";
+
   const accion = (t, id) => `<button class="btn sm" data-act="${id}">${t}</button>`;
-  return `
+  return `${asuntos}
     <div class="card"><div class="ch"><h3>Situación laboral</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${esDir ? accion("Cambiar contrato", "rr-contrato") : ""}
-        ${esDir && f.estado.clave !== "baja" ? accion("Dar de baja", "rr-baja") : ""}
+        ${esDir && f.estado.enPlantilla ? accion("Dar de baja", "rr-baja") : ""}
+        ${f.periodos?.puedeRecontratar ? `<button class="btn sm primary" data-act="rr-recontratar">Recontratar</button>` : ""}
       </div></div>
-      ${resumen}${solap}${hist}</div>
+      ${resumen}${solap}${hist}${incorporaciones}${irA}</div>
     <div class="card"><div class="ch"><h3>Áreas en las que puede trabajar</h3></div>${areas}</div>
     <div class="card"><div class="ch"><h3>Horas</h3></div>${horas}</div>
     <div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Ausencias</h3></div>${bloqueAus}</div>
@@ -3344,6 +3394,61 @@ async function rrDarDeBaja(id, nombre) {
       // dejarle confirmar a ciegas algo distinto de lo que leyó.
       if (/ha cambiado/i.test(e.message)) verPlan();
     }
+  });
+}
+
+// Recontratar. NADA se hereda del periodo anterior: las horas de 2024 no son las de 2026 y
+// las áreas de entonces pueden no ser las de ahora. Se pre-rellena lo que sabemos como
+// SUGERENCIA visible, y hay que confirmarlo.
+async function rrRecontratar(f) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const ult = (f.periodos?.historial || [])[0];
+  const ov = modal(`Recontratar · ${f.trabajador.nombre}`, `
+    <p style="margin:0 0 14px">${ult ? `Su última etapa fue <b>${esc(ult.texto)}</b>${ult.local ? ` en ${esc(ult.local)}` : ""}.` : ""}
+      Se abre una etapa nueva; todo lo anterior se queda como está.</p>
+    ${f.bolsa.saldo > 0 ? `<p class="fic-nota" style="border-color:var(--warning)">Conserva <b>${esc(ficSigno(f.bolsa.saldo))}</b> a favor de antes.
+      Volver <b>no</b> se las liquida: eso se hace desde el libro de horas cuando se decida cómo.</p>` : ""}
+    <div class="bl-form">
+      <label>Primer día<input class="inp" id="recFecha" type="date" value="${hoy}"></label>
+      <label>Establecimiento<select class="inp" id="recLocal">${LOCALES.map((l) => `<option ${l === f.trabajador.local ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+      <label>Horas por semana<input class="inp" id="recHoras" type="number" min="1" max="60" step="0.5" placeholder="40"></label>
+    </div>
+    <label class="bl-lbl">Puesto <span class="mut">(opcional)</span><input class="inp" id="recPuesto" value="${esc(f.trabajador.puesto || "")}"></label>
+    <div class="bl-lbl">Áreas en las que podrá trabajar
+      <div id="recAreas" class="mut" style="font-size:12.5px;margin-top:6px">Cargando…</div>
+      <p class="mut" style="margin:6px 0 0;font-size:11.5px">No se heredan las de antes: hay que volver a marcarlas.</p></div>
+    <p id="recMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button><button class="btn primary" id="recOk">Recontratar</button></div>`);
+
+  async function cargarAreas() {
+    const caja = ov.querySelector("#recAreas");
+    try {
+      const r = await apiRaw("/api/horarios/plantilla?local=" + encodeURIComponent(ov.querySelector("#recLocal").value));
+      const act = (r.areas || []).filter((a) => a.activo !== false);
+      caja.innerHTML = act.length
+        ? act.map((a) => `<label class="wa-cel"><input type="checkbox" class="recArea" value="${a.id}"> ${esc(a.nombre)}</label>`).join("")
+        : '<span class="mut">Ese establecimiento todavía no tiene áreas.</span>';
+    } catch { caja.innerHTML = '<span class="mut">No se han podido cargar. Se pueden poner después.</span>'; }
+  }
+  ov.querySelector("#recLocal").addEventListener("change", cargarAreas);
+  cargarAreas();
+
+  ov.querySelector("#recOk").addEventListener("click", async () => {
+    const btn = ov.querySelector("#recOk"); btn.disabled = true;
+    const marcadas = [...ov.querySelectorAll(".recArea")].filter((c) => c.checked).map((c) => Number(c.value));
+    const cuerpo = {
+      fecha_alta: ov.querySelector("#recFecha").value,
+      local: ov.querySelector("#recLocal").value,
+      puesto: ov.querySelector("#recPuesto").value.trim(),
+    };
+    const horas = Number(ov.querySelector("#recHoras").value);
+    if (horas > 0) cuerpo.horas_semana = horas;
+    if (ov.querySelectorAll(".recArea").length) cuerpo.areas = marcadas;
+    try {
+      const r = await apiSend("POST", `/api/rrhh/trabajador/${f.trabajador.id}/recontratar`, cuerpo);
+      ov.remove(); toast(r.mensaje || "Recontratado ✅"); rrSelWorker(f.trabajador.id); loadRRHH();
+    } catch (e) { btn.disabled = false; ov.querySelector("#recMsg").textContent = e.message; }
   });
 }
 
@@ -3999,8 +4104,8 @@ async function horConfig() {
       catch { d.areasCfg = null; }
     }
     ov.querySelector(".modal-b").innerHTML = `
-      <div class="toolbar" style="margin-bottom:14px">
-        ${[["turnos", "Turnos"], ["necesidades", "Cuánta gente hace falta"], ["areas", "Quién hace qué"], ["contratos", "Contratos"], ["ausencias", "Vacaciones y bajas"], ["disp", "Disponibilidad"]]
+      <div class="toolbar invsecs" style="margin-bottom:14px;flex-wrap:nowrap">
+        ${[["turnos", "Turnos"], ["necesidades", "Cuánta gente hace falta"], ["areas", "Quién hace qué"], ["contratos", "Contratos"], ["ausencias", "Vacaciones y bajas"], ["disp", "Disponibilidad"], ["ajustes", "Cómo cuenta las horas"]]
           .map(([k, t]) => `<button class="btn ${HORCFG.tab === k ? "primary" : ""}" data-horcfgtab="${k}">${t}</button>`).join("")}
       </div>
       <div id="horCfgCuerpo">${
@@ -4009,7 +4114,11 @@ async function horConfig() {
         : HORCFG.tab === "contratos" ? horCfgContratos(d)
         : HORCFG.tab === "areas" ? horCfgAreas(d)
         : HORCFG.tab === "ausencias" ? horCfgAusencias(d)
+        : HORCFG.tab === "ajustes" ? '<div class="mut">Cargando…</div>'
         : horCfgDisponibilidad(d)}</div>`;
+    // Los ajustes se piden aparte, ya pintado el hueco: no hacen falta para las otras seis
+    // pestañas y no tiene sentido pagarlos cada vez que alguien entra a tocar los turnos.
+    if (HORCFG.tab === "ajustes") horCfgOperativa(d);
   };
 
   // UN escuchador, puesto una sola vez sobre `.modal-b`, que es el nodo que sobrevive a los
@@ -4523,6 +4632,55 @@ function horAvisoTurnos(a) {
 // La propuesta se ENSEÑA antes de guardar nada. El encargado sabe cosas que no están en
 // ninguna tabla, así que lo que sale del generador es un punto de partida, no una orden:
 // aquí se ve el reparto de horas, lo que no ha cabido y por qué, y se decide.
+// ── Configuración operativa del establecimiento ─────────────────────────────
+// Los cuatro parámetros que decidían cosas y solo se podían cambiar entrando en la base.
+// Cada uno se enseña por lo que HACE, con un ejemplo con su valor puesto: «tolerancia_min:
+// 10» no dice nada y por eso nunca lo tocaba nadie.
+async function horCfgOperativa(d) {
+  const cont = document.getElementById("horCfgCuerpo");
+  if (!cont) return;
+  let j;
+  try { j = await apiRaw("/api/horarios/config-operativa?local=" + encodeURIComponent(HOR.local)); }
+  catch (e) { cont.innerHTML = `<div class="card"><p class="mut" style="margin:0">${esc(e.message)}</p></div>`; return; }
+
+  cont.innerHTML = `<div class="card">
+    <div class="ch"><h3>Cómo cuenta las horas ${esc(j.local)}</h3>
+      ${j.puedeEditar ? '<button class="btn sm primary" id="cfgGuardar">Guardar</button>' : '<span class="pill">solo lectura</span>'}</div>
+    <p class="fic-nota">${esc(j.avisoNoRetroactivo)}</p>
+    <div class="cfg-lista">${j.data.map((p) => `
+      <div class="cfg-item">
+        <div class="cfg-txt">
+          <div class="t1">${esc(p.etiqueta)}</div>
+          <div class="mut" style="font-size:12px;line-height:1.5">${esc(p.ayuda)}</div>
+          <div class="mut" style="font-size:11.5px;margin-top:4px">${esc(p.ejemplo)}</div>
+          ${p.aviso ? `<div style="font-size:11.5px;margin-top:4px;color:var(--warning);font-weight:550">${esc(p.aviso)}</div>` : ""}
+          ${p.porQueNo ? `<div class="mut" style="font-size:11.5px;margin-top:4px"><b>No se puede cambiar desde aquí.</b> ${esc(p.porQueNo)}</div>` : ""}
+        </div>
+        <div class="cfg-val">
+          ${p.editable
+            ? `<input class="inp cfgCampo" data-clave="${p.clave}" type="number" min="${p.min}" max="${p.max}" value="${p.valor}">
+               <span class="mut" style="font-size:11.5px">${esc(p.unidad)}</span>`
+            : `<b>${esc(p.valorTexto)}</b> <span class="mut" style="font-size:11.5px">${esc(p.unidad)}</span>`}
+        </div>
+      </div>`).join("")}</div>
+    <p id="cfgMsg" style="margin:12px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p></div>`;
+
+  const btn = cont.querySelector("#cfgGuardar");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    const cambios = {};
+    cont.querySelectorAll(".cfgCampo").forEach((i) => { cambios[i.getAttribute("data-clave")] = Number(i.value); });
+    btn.disabled = true;
+    try {
+      const r = await apiSend("PUT", "/api/horarios/config-operativa", { local: HOR.local, cambios });
+      toast("Configuración guardada");
+      cont.querySelector("#cfgMsg").textContent = "";
+      horCfgOperativa(d);
+    } catch (e) { cont.querySelector("#cfgMsg").textContent = e.message; }
+    finally { btn.disabled = false; }
+  });
+}
+
 const HOR_MOTIVO = {
   area_no_habilitada: "no están habilitados para esa área",
   ausencia: "de vacaciones o de baja", no_disponible: "han dicho que ese día no pueden",
@@ -10126,6 +10284,12 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-editar-datos") rrEditarDatos(t.getAttribute("data-id"));
   // Ciclo de vida laboral. El nombre sale de la ficha ya cargada: es el que se enseña.
   else if (act === "rr-estado") { RRSEG.estado = t.getAttribute("data-estado"); RRSEG.sel = null; loadRRHH(); }
+  // Navegación contextual: se lleva el establecimiento y la persona, para no aterrizar en
+  // una pantalla vacía que obligue a volver a elegir lo que ya estaba elegido.
+  else if (act === "rr-ir-horario") { const f = RRSEG.lab; if (f) { HOR.local = f.trabajador.local; go("horarios"); } }
+  else if (act === "rr-ir-revision") { const f = RRSEG.lab; if (f) { FIC.local = f.trabajador.local; FIC.tab = "revision"; FIC.q = f.trabajador.nombre; go("fichajes"); } }
+  else if (act === "rr-ir-ausencias") { const f = RRSEG.lab; if (f) { HOR.local = f.trabajador.local; HORCFG.tab = "ausencias"; go("horarios"); setTimeout(horConfig, 60); } }
+  else if (act === "rr-recontratar") { const f = RRSEG.lab; if (f) rrRecontratar(f); }
   else if (act === "rr-baja") { const f = RRSEG.lab; if (f) rrDarDeBaja(f.trabajador.id, f.trabajador.nombre); }
   else if (act === "rr-contrato") { const f = RRSEG.lab; if (f) rrCambiarContrato(f.trabajador.id, f.trabajador.nombre, f.contrato.vigente); }
   else if (act === "rr-libro") ficAbrirLibro(Number(t.getAttribute("data-id")));
