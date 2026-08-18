@@ -690,6 +690,25 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .bl-lista{max-height:46vh}
 }
 
+/* Qué se da por bueno en una jornada. Filas grandes y pinchables enteras: se decide
+   con prisa y un radio de 13 px es un blanco imposible. */
+.fic-decide{display:flex;flex-direction:column;gap:2px}
+.fic-op{display:flex;gap:12px;align-items:center;padding:10px 12px;border-radius:10px;
+  cursor:pointer;border:1px solid transparent;transition:.12s}
+.fic-op:hover{background:var(--surface2)}
+.fic-op:has(input:checked){background:var(--brand-soft);border-color:var(--brand)}
+.fic-op input{width:auto;flex:none;margin:0}
+.fic-op-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.fic-op-txt b{font-size:13.5px}
+.fic-op-txt .mut{font-size:11.5px}
+.fic-op-min{flex:none;text-align:right;display:flex;flex-direction:column;gap:1px;white-space:nowrap}
+.fic-op-min .mut{font-size:11px}
+@media(max-width:560px){
+  .fic-op{flex-wrap:wrap;min-height:52px}
+  .fic-op-min{width:100%;text-align:left;flex-direction:row;gap:8px;align-items:baseline;padding-left:30px}
+  .fic-op-min .inp{font-size:16px;min-height:40px}
+}
+
 /* Cuánta gente hace falta. Eran 84 casillas idénticas con «—» y un párrafo explicando
    que la de arriba era el mínimo y la de abajo el objetivo. Ahora cada fila lleva su
    nombre al lado, y el ideal —que es opcional— se pliega si no se usa. */

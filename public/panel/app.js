@@ -5244,6 +5244,26 @@ async function loadFichajes() {
 
 const FIC_ESTADO_TXT = { dentro: "Dentro", pausa: "En pausa", fuera: "Fuera" };
 const FIC_EV_TXT = { entrada: "Entrada", salida: "Salida", pausa_inicio: "Pausa", pausa_fin: "Vuelta" };
+/**
+ * «7:30», «7.5», «7h30», «450» → minutos. Devuelve NaN si no se entiende.
+ *
+ * Se admiten las tres formas porque cada persona escribe una: quien viene de la nómina pone
+ * 7,5 y quien mira el reloj pone 7:30. Rechazar una de ellas es hacerle perder el tiempo a
+ * alguien por no adivinar el formato que esperaba el programa.
+ */
+function ficLeerHoras(v) {
+  const t = String(v || "").trim().replace(",", ".").toLowerCase();
+  if (!t) return NaN;
+  let m = /^(\d{1,2})\s*[:h]\s*(\d{1,2})$/.exec(t);
+  if (m) return Number(m[1]) * 60 + Number(m[2]);
+  m = /^(\d{1,2})\s*h$/.exec(t);
+  if (m) return Number(m[1]) * 60;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) return NaN;
+  // Un número suelto: hasta 24 son horas (7.5 → 7 h 30); por encima, minutos (450).
+  return n <= 24 ? Math.round(n * 60) : Math.round(n);
+}
+
 function ficHoras(min) {
   const h = Math.floor((min || 0) / 60), m = (min || 0) % 60;
   return h ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min`;
@@ -5516,6 +5536,30 @@ async function ficAbrirJornada(workerId, dia) {
           <button class="btn" id="ficNvOk">Añadir</button>
         </div>
         <p id="ficNvMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
+        ${/* ── Qué se da por bueno ──────────────────────────────────────────────────────
+              Antes solo se podía validar lo fichado. Pero el reloj no siempre tiene razón:
+              alguien se deja la salida y ficha de más, o se acuerda un día que no sale de
+              ningún registro. Las cuatro salidas son el MISMO mecanismo con distinto número
+              —`min_validado`—, así que no hace falta ninguna regla nueva: lo que cambia es
+              quién decide la cifra. Los fichajes siguen intactos: se decide qué CUENTA, no
+              se reescribe lo que pasó. */""}
+        <div class="ch" style="margin-top:18px"><h3 style="margin:0;font-size:13px">¿Cuántas horas se dan por buenas?</h3></div>
+        <div class="fic-decide">
+          ${[["fichado", "Lo fichado", j.minEfectivo, "es lo que marcó el reloj"],
+             ...(j.minPlanificado > 0 ? [["plan", "Lo del cuadrante", j.minPlanificado, "lo que tocaba ese día"]] : []),
+             ["otro", "Otra cantidad", null, "un acuerdo que no sale del reloj"],
+             ["cero", "No contar este día", 0, "queda decidido en cero, y los fichajes se quedan"]]
+            .map(([k, tit, min, ayuda]) => `<label class="fic-op">
+              <input type="radio" name="ficDecide" value="${k}" ${k === "fichado" ? "checked" : ""}>
+              <span class="fic-op-txt"><b>${esc(tit)}</b><span class="mut">${esc(ayuda)}</span></span>
+              <span class="fic-op-min">${min === null
+                ? `<input class="inp" id="ficOtroMin" placeholder="h:mm" style="width:78px" disabled>`
+                : `<b>${esc(ficHoras(min))}</b><span class="mut">${esc(ficSigno(min - j.minPlanificado))} sobre el plan</span>`}</span>
+            </label>`).join("")}
+        </div>
+        <div id="ficMotivoCaja" class="hidden" style="margin-top:10px">
+          <input class="inp" id="ficValMotivo" placeholder="Por qué no se cuentan las horas fichadas (obligatorio)" style="width:100%">
+        </div>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
           <button class="btn" data-close>Cerrar</button>
           <button class="btn primary" id="ficValidar">Validar ${esc(ficHoras(j.minEfectivo))}</button>
@@ -5532,11 +5576,58 @@ async function ficAbrirJornada(workerId, dia) {
         toast("Fichaje añadido ✅"); pintar();
       } catch (e) { msg.textContent = e.message; }
     });
+    // Cuántos minutos se van a validar según lo elegido. `null` = lo que decida el servidor
+    // (lo fichado), que es el camino de siempre y el único que no pide explicación.
+    const minutosElegidos = () => {
+      const k = (ov.querySelector('input[name="ficDecide"]:checked') || {}).value;
+      if (k === "plan") return j.minPlanificado;
+      if (k === "cero") return 0;
+      if (k === "otro") return ficLeerHoras(ov.querySelector("#ficOtroMin").value);
+      return null;
+    };
+    const refrescarPie = () => {
+      const k = (ov.querySelector('input[name="ficDecide"]:checked') || {}).value;
+      const otro = ov.querySelector("#ficOtroMin");
+      otro.disabled = k !== "otro";
+      if (k === "otro") otro.focus();
+      // El motivo solo se pide cuando de verdad hace falta: si se valida lo fichado, no hay
+      // nada que explicar. Es lo mismo que exige el servidor, dicho antes de pulsar.
+      ov.querySelector("#ficMotivoCaja").classList.toggle("hidden", k === "fichado");
+      const m = minutosElegidos();
+      ov.querySelector("#ficValidar").textContent =
+        k === "cero" ? "Validar sin contar el día"
+        : m == null ? `Validar ${ficHoras(j.minEfectivo)}`
+        : m == null || !Number.isFinite(m) ? "Validar" : `Validar ${ficHoras(m)}`;
+    };
+    ov.querySelectorAll('input[name="ficDecide"]').forEach((r) => r.addEventListener("change", refrescarPie));
+    ov.querySelector("#ficOtroMin").addEventListener("input", refrescarPie);
+    refrescarPie();
+
     ov.querySelector("#ficValidar").addEventListener("click", async () => {
+      const msg = ov.querySelector("#ficNvMsg");
+      const k = (ov.querySelector('input[name="ficDecide"]:checked') || {}).value;
+      const minutos = minutosElegidos();
+      if (k === "otro" && !Number.isFinite(minutos)) { msg.textContent = "Escribe cuántas horas se cuentan, por ejemplo 7:30"; return; }
+      const cuerpo = { worker_id: workerId, dia, aceptar_incidencias: !!j.requiereRevision };
+      if (minutos != null) {
+        const nota = ov.querySelector("#ficValMotivo").value.trim();
+        // Se comprueba AQUÍ y no solo en el servidor. La regla es la misma —validar algo
+        // distinto de lo fichado hay que explicarlo— pero pedirla antes de enviar dice qué
+        // falta; dejarla al servidor devuelve un error después de haber pulsado.
+        if (nota.length < 5) {
+          msg.textContent = minutos === 0
+            ? "Explica por qué este día no cuenta: dentro de seis meses nadie se acordará."
+            : `Vas a validar ${ficHoras(minutos)} en lugar de las ${ficHoras(j.minEfectivo)} fichadas: explica por qué.`;
+          ov.querySelector("#ficValMotivo").focus();
+          return;
+        }
+        cuerpo.minutos = minutos;
+        cuerpo.nota = nota;
+      }
       try {
-        const r = await apiSend("POST", "/api/fichajes/validar", { worker_id: workerId, dia, aceptar_incidencias: !!j.requiereRevision });
+        const r = await apiSend("POST", "/api/fichajes/validar", cuerpo);
         ov.remove(); toast(r.mensaje || "Jornada validada ✅"); ficPintarRevision();
-      } catch (e) { ov.querySelector("#ficNvMsg").textContent = e.message; }
+      } catch (e) { msg.textContent = e.message; }
     });
     ov.querySelector("#ficJorBody").addEventListener("click", async (e) => {
       const b = e.target.closest("[data-ficanul]"); if (!b) return;
