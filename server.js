@@ -9158,7 +9158,7 @@ app.get("/api/fichar/:token", async (req, res) => {
     const equipo = await dbAll(
       // `fecha_baja IS NULL` dejaba fuera a quien tiene la baja puesta para dentro de una
       // semana: sigue viniendo a trabajar y no podía fichar. Ahora se compara con el día.
-      `SELECT id, nombre, pin_hash IS NOT NULL AS tiene_pin FROM users
+      `SELECT id, nombre, pin_hash IS NOT NULL AS tiene_pin, pin_len FROM users
        WHERE local = ? AND ${SQL_ACTIVO_EL_DIA}
        ORDER BY nombre ASC`, [disp.local, m.diaNegocio, m.diaNegocio]);
 
@@ -9179,6 +9179,8 @@ app.get("/api/fichar/:token", async (req, res) => {
       dia: m.diaNegocio, hora: m.hora.slice(0, 5), servidorMs: ahora,
       equipo: equipo.map((w) => ({
         id: w.id, nombre: w.nombre, tienePin: !!w.tiene_pin,
+        // Cuántos dígitos tiene su PIN, para que el teclado entre solo al completarlo.
+        pinLen: Number(w.pin_len) || null,
         estado: estadoDe(porPersona.get(w.id) || []),
       })),
     });
@@ -9493,8 +9495,8 @@ app.put("/api/fichajes/pin/:workerId", requireAuth(FICHAJES_ROLES), async (req, 
     if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
 
     await dbRun(
-      `UPDATE users SET pin_hash = ?, pin_temporal = TRUE, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
-      [await bcrypt.hash(pin, 10), isoConOffset(Date.now()), w.id]);
+      `UPDATE users SET pin_hash = ?, pin_len = ?, pin_temporal = TRUE, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
+      [await bcrypt.hash(pin, 10), pin.length, isoConOffset(Date.now()), w.id]);
     // En auditoría queda QUIÉN lo cambió y CUÁNDO. El PIN, evidentemente, no.
     await ficAuditar("pin", w.id, "asignar", req.user.username, { local: w.local, workerId: w.id });
     res.json({ ok: true, mensaje: `PIN asignado a ${w.nombre}. Dile que lo cambie desde su perfil.` });
@@ -9521,8 +9523,8 @@ app.put("/api/mi-pin", requireAuth(), async (req, res) => {
       }
     }
     await dbRun(
-      `UPDATE users SET pin_hash = ?, pin_temporal = FALSE, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
-      [await bcrypt.hash(nuevo, 10), isoConOffset(Date.now()), yo.id]);
+      `UPDATE users SET pin_hash = ?, pin_len = ?, pin_temporal = FALSE, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
+      [await bcrypt.hash(nuevo, 10), nuevo.length, isoConOffset(Date.now()), yo.id]);
     await ficAuditar("pin", yo.id, "cambio_propio", req.user.username, { local: yo.local, workerId: yo.id });
     res.json({ ok: true, mensaje: "PIN actualizado." });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cambiar el PIN" }); }

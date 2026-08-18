@@ -11,8 +11,11 @@
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  background: #14201b;
-  color: #f5f3f0;
+  /* Un degradado muy sutil: sobre negro plano, las tarjetas oscuras no se despegaban. */
+  background: #0f1a16;
+  background-image: radial-gradient(120% 80% at 50% -10%, #1b2c25 0%, #0f1a16 60%);
+  background-attachment: fixed;
+  color: #f2f6f4;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-user-select: none;
   user-select: none;
@@ -22,37 +25,51 @@
 
 .fic-head {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 1rem; padding: 1rem 1.5rem;
-  background: #0e1714; border-bottom: 1px solid #24352e;
+  gap: 1rem; padding: 1rem 1.75rem;
+  background: rgba(10,18,15,.72); backdrop-filter: blur(8px);
+  border-bottom: 1px solid #223129;
 }
 .fic-local { display: block; font-size: 1.05rem; font-weight: 700; letter-spacing: .01em; }
 .fic-disp { display: block; font-size: .85rem; color: #8fa79b; }
-.fic-reloj { font-size: 2.4rem; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.fic-reloj { font-size: 2rem; font-weight: 300; font-variant-numeric: tabular-nums;
+  letter-spacing: .02em; color: #cfded7; }
 
 .fic-cola {
   padding: .6rem 1.5rem; background: #7a5c12; color: #fff;
   font-size: .95rem; font-weight: 600;
 }
 
-.fic-main { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 1.5rem; }
-.fic-paso { width: 100%; max-width: 900px; }
-.fic-titulo { margin: 0 0 1.25rem; font-size: 2rem; font-weight: 600; text-align: center; }
+/* CENTRADO, no pegado arriba. Con el contenido arriba quedaban cuatrocientos píxeles de
+   negro debajo y la pantalla parecía a medio cargar. */
+.fic-main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 1.75rem; }
+.fic-paso { width: 100%; max-width: 940px; }
+/* Sans en TODO el kiosco. El serif de la marca es para la web pública; aquí, a un metro y
+   con prisa, lo que hace falta es que se lea de un vistazo. */
+.fic-titulo { margin: 0 0 1.75rem; font-size: 2.1rem; font-weight: 650; text-align: center;
+  font-family: inherit; letter-spacing: -.01em; }
 
 /* ── 1 · Quién eres ─────────────────────────────────────────────────────── */
-.fic-equipo { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .9rem; }
+/* FLEX y no grid, y con la última fila CENTRADA. Con nueve personas y cuatro columnas, una
+   rejilla deja la novena sola pegada a la izquierda y se ve como un error. Con `flex-wrap`
+   y `justify-content: center`, las que sobran quedan centradas y todas miden lo mismo. */
+.fic-equipo { display: flex; flex-wrap: wrap; justify-content: center; gap: 1rem; }
+.fic-persona { flex: 0 1 232px; }
 .fic-persona {
   display: flex; align-items: center; gap: .8rem;
-  min-height: 88px; padding: .9rem 1rem;
-  background: #1d2d26; border: 2px solid #2b4038; border-radius: 14px;
+  min-height: 96px; padding: 1rem 1.1rem;
+  background: linear-gradient(#22352d, #1b2a24);
+  border: 1px solid #334a41; border-radius: 18px;
+  box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 6px 18px rgba(0,0,0,.28);
   color: inherit; font: inherit; text-align: left; cursor: pointer;
   transition: transform .08s ease, background .12s ease;
 }
-.fic-persona:active { transform: scale(.97); background: #263a32; }
+.fic-persona:active { transform: scale(.97); background: #2b4239; }
+.fic-persona:focus-visible { outline: 3px solid #4ade80; outline-offset: 3px; }
 .fic-persona[disabled] { opacity: .38; cursor: not-allowed; }
 .fic-inicial {
   flex: 0 0 auto; width: 52px; height: 52px; border-radius: 50%;
   display: grid; place-items: center;
-  background: #2c4a3e; font-size: 1.35rem; font-weight: 700;
+  background: linear-gradient(#37584a, #2a4438); font-size: 1.3rem; font-weight: 700; letter-spacing: .02em;
 }
 .fic-nombre { font-size: 1.1rem; font-weight: 600; line-height: 1.2; }
 /* Quién está dentro se ve desde la barra sin tocar nada: es media respuesta al «¿ha llegado ya?» */
@@ -64,40 +81,66 @@
 
 /* ── 2 · PIN ────────────────────────────────────────────────────────────── */
 .fic-volver {
-  background: none; border: none; color: #8fa79b; font: inherit; font-size: 1rem;
-  padding: .5rem .2rem; cursor: pointer;
+  display: block; margin: 0 auto 1rem;
+  background: none; border: 1px solid #2b4038; border-radius: 999px;
+  color: #9db3a9; font: inherit; font-size: 1rem;
+  padding: .5rem 1.1rem; cursor: pointer;
 }
-.fic-puntos { display: flex; justify-content: center; gap: .9rem; min-height: 30px; margin-bottom: .5rem; }
-.fic-punto-pin { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #4c6b5e; }
-.fic-punto-pin.lleno { background: #f5f3f0; border-color: #f5f3f0; }
+.fic-volver:active { background: #22332c; }
+.fic-puntos { display: flex; justify-content: center; gap: 1.1rem; min-height: 34px; margin: .25rem 0 1rem; }
+/* Se pintan también los VACÍOS: así se ve cuántos faltan sin tener que contarlos. */
+.fic-punto-pin { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #40594e;
+  transition: transform .12s ease, background .12s ease; }
+.fic-punto-pin.lleno { background: #f2f6f4; border-color: #f2f6f4; transform: scale(1.06); }
+/* Un temblor corto al fallar: se nota sin leer, que es lo que hace falta con prisa. */
+.fic-puntos.mal { animation: fic-tiembla .32s ease; }
+@keyframes fic-tiembla { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-9px)} 60%{transform:translateX(9px)} }
 .fic-error { min-height: 1.6rem; margin: 0 0 .8rem; text-align: center; color: #fca5a5; font-size: 1rem; font-weight: 600; }
 
 .fic-teclado {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: .8rem;
-  max-width: 380px; margin: 0 auto;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: .9rem;
+  max-width: 430px; margin: 0 auto;
+  transition: opacity .15s ease;
 }
+/* Mientras se comprueba el PIN el teclado no acepta más: dos envíos gastarían dos intentos. */
+.fic-teclado.comprobando { opacity: .45; pointer-events: none; }
+.fic-tecla-hueco { display: block; }
 .fic-tecla {
-  min-height: 78px; border-radius: 14px;
-  background: #1d2d26; border: 2px solid #2b4038; color: inherit;
-  font-size: 1.9rem; font-weight: 500; cursor: pointer;
+  min-height: 86px; border-radius: 16px;
+  background: linear-gradient(#243830, #1c2b25); border: 1px solid #334a41; color: inherit;
+  font-size: 2.1rem; font-weight: 500; cursor: pointer;
+  box-shadow: 0 1px 0 rgba(255,255,255,.05) inset, 0 4px 12px rgba(0,0,0,.25);
+  font-variant-numeric: tabular-nums;
   transition: transform .06s ease, background .12s ease;
 }
-.fic-tecla:active { transform: scale(.94); background: #2c4a3e; }
-.fic-tecla--aux { font-size: 1.1rem; font-weight: 600; }
-.fic-tecla--ok { background: #2c4a3e; border-color: #3d6555; }
+.fic-tecla:active { transform: scale(.94); background: #33513f; }
+.fic-tecla:focus-visible { outline: 3px solid #4ade80; outline-offset: 3px; }
+.fic-tecla--aux { font-size: 1.7rem; color: #9db3a9; }
 
 /* ── 3 · Acciones ───────────────────────────────────────────────────────── */
 .fic-estado { text-align: center; color: #9db3a9; font-size: 1.1rem; margin: 0 0 1.5rem; }
 .fic-acciones { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center; }
 .fic-accion {
-  flex: 1 1 220px; max-width: 320px; min-height: 120px;
-  border-radius: 18px; border: 2px solid #2b4038; background: #1d2d26;
-  color: inherit; font-size: 1.5rem; font-weight: 600; cursor: pointer;
+  flex: 1 1 240px; max-width: 340px; min-height: 132px;
+  border-radius: 20px; border: 1px solid #334a41;
+  background: linear-gradient(#243830, #1c2b25);
+  box-shadow: 0 6px 18px rgba(0,0,0,.28);
+  color: inherit; font-size: 1.55rem; font-weight: 600; cursor: pointer;
   transition: transform .08s ease;
 }
 .fic-accion:active { transform: scale(.96); }
-.fic-accion--principal { background: #2c4a3e; border-color: #4ade80; }
-.fic-accion--salir { background: #43241f; border-color: #7f3f36; }
+.fic-accion:focus-visible { outline: 3px solid #4ade80; outline-offset: 3px; }
+/* La que casi siempre toca se ve a un metro: es la diferencia entre mirar y buscar. */
+.fic-accion--principal { background: linear-gradient(#2f6b4a, #23523a); border-color: #4ade80;
+  box-shadow: 0 0 0 1px rgba(74,222,128,.25), 0 8px 24px rgba(31,120,80,.3); }
+/* DESPUÉS de `--principal` y anulando su halo: terminar la jornada es a la vez la acción
+   principal y una salida, y con las dos clases quedaba un resplandor VERDE sobre un botón
+   ROJO. El color tiene que decir una cosa sola. */
+.fic-accion--salir,
+.fic-accion--salir.fic-accion--principal {
+  background: linear-gradient(#5a3129, #43241f); border-color: #a55446;
+  box-shadow: 0 0 0 1px rgba(220,120,100,.22), 0 8px 24px rgba(0,0,0,.3);
+}
 
 .fic-hoy { list-style: none; margin: 1.75rem auto 0; padding: 0; max-width: 420px; }
 .fic-hoy li {
@@ -108,17 +151,19 @@
 .fic-hoy .fic-tot { font-weight: 700; color: #f5f3f0; border-top: 2px solid #24352e; }
 .fic-aviso { max-width: 420px; margin: 1.25rem auto 0; padding: .8rem 1rem; border-radius: 10px; background: #7a5c12; font-size: .95rem; }
 .fic-salir {
-  display: block; margin: 2rem auto 0; padding: .8rem 2rem;
+  display: block; margin: 2.25rem auto 0; padding: .8rem 2rem;
   background: none; border: 2px solid #2b4038; border-radius: 12px;
   color: #8fa79b; font: inherit; font-size: 1rem; cursor: pointer;
 }
 
 /* ── 4 · Confirmación ───────────────────────────────────────────────────── */
-.fic-ok { text-align: center; padding-top: 3rem; }
+.fic-ok { text-align: center; }
 .fic-tic {
   width: 130px; height: 130px; margin: 0 auto 1.5rem; border-radius: 50%;
   display: grid; place-items: center; font-size: 4rem;
-  background: #2c4a3e; color: #4ade80; animation: fic-pop .35s ease;
+  background: linear-gradient(#2f6b4a, #23523a); color: #b9f5d0;
+  box-shadow: 0 0 0 10px rgba(74,222,128,.10), 0 0 60px rgba(74,222,128,.18);
+  animation: fic-pop .35s ease;
 }
 .fic-tic.fic-tic--aviso { background: #7a5c12; color: #fff; }
 @keyframes fic-pop { from { transform: scale(.6); opacity: 0 } to { transform: scale(1); opacity: 1 } }
@@ -131,9 +176,21 @@
 
 /* Tablet pequeña o móvil en vertical: el teclado no debe empujar nada fuera de pantalla. */
 @media (max-width: 560px) {
-  .fic-reloj { font-size: 1.8rem }
-  .fic-titulo { font-size: 1.5rem }
-  .fic-equipo { grid-template-columns: 1fr 1fr; gap: .6rem }
-  .fic-tecla { min-height: 64px; font-size: 1.6rem }
-  .fic-accion { min-height: 96px; font-size: 1.2rem }
+  .fic-main { align-items: flex-start; padding: 1rem }
+  .fic-reloj { font-size: 1.7rem }
+  .fic-titulo { font-size: 1.55rem; margin-bottom: 1.25rem }
+  .fic-equipo { grid-template-columns: 1fr 1fr; gap: .7rem }
+  .fic-persona { min-height: 84px; padding: .8rem }
+  .fic-inicial { width: 44px; height: 44px; font-size: 1.1rem }
+  .fic-tecla { min-height: 68px; font-size: 1.8rem }
+  .fic-accion { min-height: 104px; font-size: 1.25rem }
+  .fic-tic { width: 104px; height: 104px; font-size: 3rem }
+  .fic-okhora { font-size: 2.6rem }
+}
+
+/* Tablet en horizontal, que es donde vive de verdad: el teclado no debe obligar a estirar
+   el brazo, así que se queda a la altura del pulgar. */
+@media (min-width: 900px) and (orientation: landscape) {
+  .fic-teclado { max-width: 460px }
+  .fic-tecla { min-height: 92px }
 }

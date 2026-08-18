@@ -73,7 +73,31 @@
   }
 
   // ── 1 · Quién eres ───────────────────────────────────────────────────────
+  /**
+   * La plantilla se pinta ANTES de que conteste el servidor.
+   *
+   * En una tablet clavada en la barra, con el wifi del local, esperar a la respuesta eran
+   * uno o dos segundos de pantalla negra cada vez que alguien iba a fichar. Los nombres ya
+   * están guardados de la última vez y cambian una vez cada varios meses: se enseñan de
+   * inmediato y se corrigen cuando llega la respuesta de verdad.
+   *
+   * Lo que NO se pinta de la caché son los estados (dentro/fuera/pausa): un «dentro» de
+   * ayer diría que sigue trabajando quien ya se fue. Sin respuesta, nadie tiene estado.
+   */
+  function pintarDesdeCache() {
+    if (estado.equipo.length) return Promise.resolve();
+    return leerPlantilla().then(function (g) {
+      if (!g || estado.equipo.length) return;
+      estado.local = g.local;
+      estado.equipo = g.equipo.map(function (p) { return { id: p.id, nombre: p.nombre, tienePin: p.tienePin, pinLen: p.pinLen, estado: null }; });
+      $("ficLocal").textContent = g.local;
+      $("ficDisp").textContent = g.dispositivo || "";
+      pintarEquipo();
+    }).catch(function () {});
+  }
+
   function cargarEquipo() {
+    pintarDesdeCache();
     api("").then(function (r) {
       if (!r.datos.ok) return pintarVacio(r.datos.error || "Este dispositivo no está dado de alta.");
       estado.equipo = r.datos.equipo || [];
@@ -88,7 +112,7 @@
       // "dentro/fuera" de ayer diría que sigue trabajando quien ya se fue, y esa pantalla
       // sería mentira; los nombres, en cambio, cambian una vez cada varios meses.
       guardarPlantilla({ local: r.datos.local, dispositivo: r.datos.dispositivo,
-        equipo: estado.equipo.map(function (p) { return { id: p.id, nombre: p.nombre, tienePin: p.tienePin }; }) });
+        equipo: estado.equipo.map(function (p) { return { id: p.id, nombre: p.nombre, tienePin: p.tienePin, pinLen: p.pinLen }; }) });
       subirCola();
     }).catch(function () {
       // Sin línea se enseña la plantilla guardada, sin estados: la pantalla en blanco no
@@ -97,7 +121,7 @@
         if (!guardada) return pintarVacio("Sin conexión con el servidor. Los fichajes pendientes se enviarán solos.");
         estado.sinLinea = true;
         estado.local = guardada.local;
-        estado.equipo = guardada.equipo.map(function (p) { return { id: p.id, nombre: p.nombre, tienePin: p.tienePin, estado: "fuera" }; });
+        estado.equipo = guardada.equipo.map(function (p) { return { id: p.id, nombre: p.nombre, tienePin: p.tienePin, pinLen: p.pinLen, estado: "fuera" }; });
         $("ficLocal").textContent = guardada.local;
         $("ficDisp").textContent = guardada.dispositivo || "";
         pintarEquipo();
@@ -159,6 +183,7 @@
 
   // ── 2 · PIN ──────────────────────────────────────────────────────────────
   function irAlPin(persona) {
+    cancelarAuto();
     estado.worker = persona; estado.pin = "";
     $("ficPinNombre").textContent = persona.nombre;
     $("ficPinError").textContent = "";
@@ -170,51 +195,93 @@
   function pintarPuntos() {
     var c = $("ficPuntos");
     c.innerHTML = "";
-    for (var i = 0; i < estado.pin.length; i++) {
+    // Se pintan TODOS los huecos, no solo los llenos: así se ve cuántos faltan sin contar.
+    var total = largoEsperado() || Math.max(4, estado.pin.length);
+    for (var i = 0; i < total; i++) {
       var d = document.createElement("span");
-      d.className = "fic-punto-pin lleno";
+      d.className = "fic-punto-pin" + (i < estado.pin.length ? " lleno" : "");
       c.appendChild(d);
     }
   }
 
   function montarTeclado() {
     var t = $("ficTeclado");
-    var teclas = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "borrar", "0", "ok"];
+    // Ya no hay tecla «Entrar»: se entra solo al completar el PIN. El hueco que deja se
+    // rellena centrando el cero, que es donde el pulgar lo busca.
+    // El hueco a la IZQUIERDA: así el 0 queda centrado y el borrar a la derecha, que es
+    // donde los tiene cualquier teclado numérico de móvil. Al revés el 0 se descoloca.
+    var teclas = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "borrar"];
     teclas.forEach(function (k) {
+      if (k === "") { var hueco = document.createElement("span"); hueco.className = "fic-tecla-hueco"; t.appendChild(hueco); return; }
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "fic-tecla" + (k === "ok" ? " fic-tecla--ok fic-tecla--aux" : k === "borrar" ? " fic-tecla--aux" : "");
-      b.textContent = k === "borrar" ? "Borrar" : k === "ok" ? "Entrar" : k;
+      b.className = "fic-tecla" + (k === "borrar" ? " fic-tecla--aux" : "");
+      b.setAttribute("aria-label", k === "borrar" ? "Borrar el último dígito" : k);
+      b.textContent = k === "borrar" ? "⌫" : k;
       b.addEventListener("click", function () { pulsar(k); });
       t.appendChild(b);
     });
   }
 
+  /**
+   * Cuántos dígitos tiene el PIN de quien está tecleando.
+   *
+   * Lo dice el servidor (`pinLen`). A quien todavía no lo tenga guardado —los PINes de
+   * antes de esto— se le trata como de 4, que es lo normal, y se le da un respiro: si sigue
+   * tecleando un quinto dígito antes de que salte, se cancela el envío. Así nadie gasta un
+   * intento de los cinco por una prisa del programa.
+   */
+  function largoEsperado() {
+    var n = estado.worker && Number(estado.worker.pinLen);
+    return n >= 4 && n <= 6 ? n : null;
+  }
+
+  var temporizadorAuto = null;
+  function cancelarAuto() { if (temporizadorAuto) { clearTimeout(temporizadorAuto); temporizadorAuto = null; } }
+
   function pulsar(k) {
     aplazarVuelta();
+    cancelarAuto();
     $("ficPinError").textContent = "";
     if (k === "borrar") { estado.pin = estado.pin.slice(0, -1); return pintarPuntos(); }
-    if (k === "ok") return enviarPin();
     if (estado.pin.length >= 6) return;
     estado.pin += k;
     pintarPuntos();
-    // Con 4 dígitos NO se envía solo: hay PINes de 6 y enviar a los 4 gastaría un intento
-    // (y con 5 intentos hasta el bloqueo, gastarlos por una prisa del programa es cruel).
+
+    // ENTRA SOLO. Nadie tiene que buscar un botón con las manos mojadas.
+    var largo = largoEsperado();
+    if (largo) {
+      if (estado.pin.length === largo) temporizadorAuto = setTimeout(enviarPin, 140);   // deja ver el último punto
+    } else if (estado.pin.length === 6) {
+      temporizadorAuto = setTimeout(enviarPin, 140);                                    // el máximo: no cabe más
+    } else if (estado.pin.length === 4) {
+      temporizadorAuto = setTimeout(enviarPin, 900);                                    // sin longitud conocida, con respiro
+    }
   }
 
   function enviarPin() {
+    cancelarAuto();
     if (estado.pin.length < 4) { $("ficPinError").textContent = "El PIN tiene 4 dígitos como mínimo."; return; }
     var pin = estado.pin;
+    // Se bloquea el teclado mientras se comprueba: dos envíos gastarían dos intentos.
+    $("ficTeclado").classList.add("comprobando");
     estado.pin = ""; pintarPuntos();
     api("/pin", { method: "POST", body: JSON.stringify({ worker_id: estado.worker.id, pin: pin }) })
       .then(function (r) {
-        if (!r.datos.ok) { $("ficPinError").textContent = r.datos.error || "PIN incorrecto."; return; }
+        $("ficTeclado").classList.remove("comprobando");
+        if (!r.datos.ok) {
+          $("ficPinError").textContent = r.datos.error || "PIN incorrecto.";
+          // Un temblor corto: se nota sin leer, que es lo que hace falta con prisa.
+          var caja = $("ficPuntos"); caja.classList.remove("mal"); void caja.offsetWidth; caja.classList.add("mal");
+          return;
+        }
         estado.ticket = r.datos.ticket;
         estado.pinTemporal = !!r.datos.pinTemporal;
         estado.sinLinea = false;
         pintarAcciones(r.datos);
       })
       .catch(function () {
+        $("ficTeclado").classList.remove("comprobando");
         // Sin línea NO se puede comprobar un PIN, y no se va a fingir que sí: dejar entrar
         // sin comprobarlo permitiría fichar en nombre de cualquiera. Se dice qué hacer.
         $("ficPinError").textContent = "Sin conexión: no se puede comprobar el PIN ahora. Apunta tu hora y dísela a tu encargado.";

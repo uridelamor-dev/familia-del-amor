@@ -29,6 +29,18 @@ export async function ensureSchemaFichajes(x) {
     await x.run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ${col}`);
   }
 
+  // Cuántos dígitos tiene el PIN de cada uno. NO es el PIN ni parte de él: es su LONGITUD,
+  // y sirve para que el kiosco sepa cuándo está completo y entre solo, sin que nadie tenga
+  // que buscar el botón «Entrar» con las manos mojadas.
+  //
+  // Sin esto había que elegir entre dos males: enviar a los 4 dígitos —y gastarle un intento
+  // de los cinco a quien tiene el PIN de 6— o pedir siempre una pulsación más. Saber la
+  // longitud quita el dilema.
+  //
+  // Que se sepa si un PIN es de 4 o de 6 no lo debilita de forma apreciable: el freno real
+  // son los cinco intentos y el bloqueo, no la incertidumbre sobre cuántos dígitos tiene.
+  await x.run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_len INTEGER`);
+
   // Día en que arranca el periodo de nómina. 1 = mes natural (lo habitual); 21 = del 21 al
   // 20, que también se usa mucho en hostelería. Es un ajuste por local, no una decisión que
   // haya que tomar para siempre: cambiarlo no toca ningún periodo ya cerrado.
