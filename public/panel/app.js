@@ -53,11 +53,23 @@ async function apiSend(method, path, body) {
 // solo toca dirección (Sistema). Los grupos que quedan vacíos para un rol no se pintan, así que
 // un encargado ve tres bloques cortos en vez de cuatro largos con casi todo en gris.
 /**
- * Qué hacer con un 401/403: se decide en un solo sitio y no en cinco copias, porque el día que
+ * Qué hacer con un 401: se decide en un solo sitio y no en cinco copias, porque el día que
  * cambie la regla habría que acordarse de las cinco.
+ *
+ * SOLO el 401. El 403 NO cierra la sesión, y esto es una corrección, no un descuido: son dos
+ * cosas distintas y tratarlas igual echaba a la gente del panel. 401 es «no sé quién eres»
+ * —token caducado o inválido—, y ahí volver a entrar es lo único que se puede hacer. 403 es
+ * «sé quién eres y esto no es para ti»: un establecimiento que no te toca, un módulo que te
+ * han quitado, una pantalla que necesita un local concreto y no se le ha dado.
+ *
+ * Con la regla anterior, un 403 borraba el token y te mandaba al login. El fallo que lo
+ * destapó: con «Todos los establecimientos» puesto en la barra, Equipo y Fichajes pedían
+ * `?local=` vacío, el servidor contestaba 403 «Sin acceso a este establecimiento» y el panel
+ * lo leía como sesión caducada. Entrabas, pulsabas Equipo, y aparecías en el login sin
+ * ninguna explicación. Ahora el 403 llega a la pantalla como lo que es: un mensaje.
  */
 async function fueraDeSesion(r) {
-  if (r.status !== 401 && r.status !== 403) return false;
+  if (r.status !== 401) return false;
   localStorage.removeItem("token");
   location.href = "/login.html";
   return true;
@@ -156,6 +168,26 @@ function etiquetaAmbito() {
   if (n.length <= 1) return n[0] || "";
   if (n.length <= 3) return n.slice(0, -1).join(", ") + " y " + n[n.length - 1];
   return `${n.length} establecimientos`;
+}
+
+/**
+ * «Esta pantalla es de un establecimiento concreto». Con los botones para elegirlo AQUÍ.
+ *
+ * Horarios, Fichajes y la bandeja de Equipo miran un local y solo uno: un cuadrante de dos
+ * sitios a la vez no existe, y quién está dentro ahora mismo tampoco se suma. Antes, con
+ * «Todos» puesto, pedían `?local=` vacío y el servidor contestaba 403 —que el panel leía como
+ * sesión caducada—. Ahora se pregunta antes de pedir nada.
+ *
+ * Y se pregunta con la lista delante, no con un «selecciónalo arriba en la barra»: mandar a
+ * alguien a buscar un menú es pedirle que haga dos clics y se acuerde de a qué venía.
+ */
+function pideEstablecimiento(que, porque) {
+  const lista = localesBase();
+  return `<div class="card"><div class="ch"><h3>${esc(que)}</h3></div>
+    <p class="mut" style="margin:0 0 12px;line-height:1.5">${esc(porque)}</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${lista.map((l) =>
+      `<button class="btn" data-act="estab-pick" data-local="${esc(l)}" style="min-height:44px">${esc(nombreCortoLocal(l))}</button>`).join("")}</div>
+    ${lista.length ? "" : `<p class="mut" style="margin:0">No hay establecimientos configurados.</p>`}</div>`;
 }
 
 // El que se está mirando ahora. Con varios devuelve "" (sin filtro) SOLO para pintar rótulos;
@@ -2857,8 +2889,17 @@ const AT_NIVEL = { bloqueo: { c: "bad", t: "bloquea" }, decision: { c: "warn", t
 
 async function rrPintarAtencion(cont) {
   if (!cont) return;
+  // La bandeja es de UN establecimiento: junta jornadas por revisar, ausencias pendientes y
+  // avisos de un sitio. Sin local no se pide (daba 403 y con la regla vieja echaba al login);
+  // el resto de la pantalla de Equipo sí funciona sin él, así que solo se sustituye la caja.
+  const local = localActualFE() || USER.local || "";
+  if (!local) {
+    cont.innerHTML = pideEstablecimiento("¿De qué establecimiento?",
+      "Lo que necesita tu atención —jornadas por revisar, ausencias sin responder— es de un local concreto. El resto de esta pantalla ya funciona.");
+    return;
+  }
   let j;
-  try { j = await apiRaw("/api/rrhh/atencion?local=" + encodeURIComponent(localActualFE() || USER.local || "")); }
+  try { j = await apiRaw("/api/rrhh/atencion?local=" + encodeURIComponent(local)); }
   catch { cont.innerHTML = ""; return; }   // si falla, la pantalla sigue sirviendo
 
   if (!j.total) {
@@ -3776,7 +3817,7 @@ async function loadHorarios() {
   horLimpiaDrag();                     // el HTML se repinta al soltar: dragend puede no llegar
   horScope();
   if (sinPublico(HOR.local)) { view.innerHTML = avisoSinPublico("Horarios", "Personas", "turnos"); return; }
-  if (!HOR.local) { view.innerHTML = horPh() + `<div class="card"><div class="ch"><h3>Elige un establecimiento</h3></div><p class="mut" style="margin:0">El cuadrante es de un local concreto. Selecciónalo arriba, en la barra.</p></div>`; return; }
+  if (!HOR.local) { view.innerHTML = horPh() + pideEstablecimiento("Elige un establecimiento", "El cuadrante es de un local concreto: no existe una semana de dos sitios a la vez."); return; }
   try {
     if (!HOR.lunes) HOR.lunes = resLunes(todayStr());
     const j = await apiRaw(`/api/horarios/semana?local=${encodeURIComponent(HOR.local)}&lunes=${HOR.lunes}`);
@@ -5214,6 +5255,12 @@ async function loadFichajes() {
   const amb = localActualFE();
   if (sinPublico(amb)) { view.innerHTML = avisoSinPublico("Fichajes", "Personas", "fichajes"); return; }
   FIC.local = amb;
+  // Sin local no se pide NADA: quién está dentro, la bolsa y las tablets son de un sitio.
+  if (!amb) {
+    view.innerHTML = `<div class="ph"><div class="eyebrow">Personas</div><h1>Fichajes</h1><div class="sub">Registro de jornada</div></div>`
+      + pideEstablecimiento("Elige un establecimiento", "Quién está dentro, la bolsa de horas y las tablets son de un local concreto.");
+    return;
+  }
 
   view.innerHTML = `<div class="ph"><div class="eyebrow">Personas</div><h1>Fichajes</h1><div class="sub">Registro de jornada${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>
     <div class="toolbar" style="margin-bottom:12px" id="ficTabs">
