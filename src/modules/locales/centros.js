@@ -31,7 +31,7 @@ export const CENTROS = [
     principal: "La Tapeta - Blanes",
     barras: ["La Tapeta - Blanes", "Cooperativa - Blanes"],
     // Se juntan del todo: se lee y se ESCRIBE bajo el centro.
-    juntos: ["ventas", "compras", "personal", "inventarios"],
+    juntos: ["ventas", "compras", "personal", "inventarios", "mantenimiento", "usuarios"],
     // Se juntan SOLO PARA VER. Dentro del panel, la agenda y las reseñas de las dos barras
     // salen en la misma pantalla —quien trabaja allí las lleva a la vez—, pero cada fila
     // conserva su barra y se escribe donde toca: una mesa reservada en la Cooperativa es una
@@ -66,6 +66,11 @@ export const AMBITO_POR_RUTA = [
   ["/api/fichajes", "personal"],
   ["/api/inventario", "inventarios"],
   ["/api/inv/", "inventarios"],
+  // Una incidencia («se ha roto la cámara») la arregla la misma persona en las dos barras, y
+  // un usuario pertenece al centro, no a una de ellas. Dentro del panel, uno.
+  ["/api/maintenance", "mantenimiento"],
+  ["/api/mantenimiento", "mantenimiento"],
+  ["/api/usuarios", "usuarios"],
   // Estos dos NO están en `juntos`: se ven juntos pero cada fila conserva su barra, porque
   // una mesa y una reseña pasan en un sitio concreto.
   ["/api/reservas", "reservas"],
@@ -156,6 +161,33 @@ export function detalleCentro(local, ambito) {
   const otras = c.barras.filter((b) => b !== c.principal);
   if (!otras.length) return null;
   return `Incluye ${otras.join(" y ")}`;
+}
+
+/**
+ * Agrupa filas «por local» bajo su centro, sumando lo que se le diga.
+ *
+ * Hace falta porque hay dos cosas que siguen escribiéndose con el nombre de cada barra y no se
+ * pueden cambiar: las ventas (las manda el TPV de cada una) y las reservas (una mesa está
+ * donde está). Sin esto, la Cooperativa reaparecía en los desgloses del Dashboard aunque ya no
+ * se pudiera elegir en ninguna parte — que es justo la confusión que se quería quitar.
+ *
+ * `campos` son las columnas numéricas que se suman. El resto se queda con el de la primera fila.
+ */
+export function agruparPorCentro(filas = [], campos = [], { clave = "local" } = {}) {
+  const out = [];
+  const porNombre = new Map();
+  for (const f of (Array.isArray(filas) ? filas : [])) {
+    const c = centroDe(f && f[clave]);
+    const destino = c ? c.principal : texto(f && f[clave]);
+    if (!porNombre.has(destino)) {
+      const copia = { ...f, [clave]: destino };
+      porNombre.set(destino, copia); out.push(copia);
+      continue;
+    }
+    const ya = porNombre.get(destino);
+    for (const k of campos) ya[k] = (Number(ya[k]) || 0) + (Number(f[k]) || 0);
+  }
+  return out;
 }
 
 /** ¿Es una barra secundaria? Sirve para no ofrecerla donde ya no se puede elegir. */

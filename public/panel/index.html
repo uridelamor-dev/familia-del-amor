@@ -720,6 +720,34 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .fic-plegable>summary .mut{flex-basis:100%;margin-left:18px}
 }
 
+/* Modal de turno. Qué es (turno, libra, vacaciones) se elige PRIMERO y con botones: son
+   cinco opciones cortas y decidían si hacía falta rellenar medio formulario. */
+.hm-tipos{display:flex;gap:6px;flex-wrap:wrap}
+.hm-tipo{flex:1 1 auto;min-width:76px;min-height:40px;padding:8px 10px;border:1px solid var(--border);
+  border-radius:10px;background:var(--surface);color:var(--ink2);font:inherit;font-size:13px;
+  font-weight:600;cursor:pointer;transition:.12s}
+.hm-tipo:hover{border-color:var(--border2)}
+.hm-tipo.on{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
+.hm-lab{font-size:12px;font-weight:600;color:var(--ink3);margin:14px 0 6px}
+/* Los tramos, con su horario a la vista: elegir «MAÑANA» ya pone las horas, y se ve cuál es
+   cuál sin abrir un desplegable. */
+.hm-tramos{display:flex;gap:6px;flex-wrap:wrap}
+.hm-tramo{flex:1 1 110px;min-height:48px;padding:6px 10px;border:1px solid var(--border);
+  border-radius:10px;background:var(--surface);color:var(--ink);font:inherit;cursor:pointer;
+  display:flex;flex-direction:column;align-items:flex-start;gap:1px;transition:.12s}
+.hm-tramo b{font-size:12.5px;font-weight:650}
+.hm-tramo span{font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums}
+.hm-tramo:hover{border-color:var(--border2)}
+.hm-tramo.on{background:var(--brand-soft);border-color:var(--brand)}
+.hm-tramo.on b,.hm-tramo.on span{color:var(--brand)}
+/* «Hasta cierre» va pegado a la hora de salida, que es a lo que afecta. Suelto en otra
+   columna parecía un ajuste más y quedaba desalineado. */
+.hm-cierre{display:flex;align-items:center;gap:9px;margin-top:10px;padding:9px 11px;
+  border:1px solid var(--border);border-radius:10px;background:var(--surface2);cursor:pointer;
+  font-size:12.5px;line-height:1.4;color:var(--ink2)}
+.hm-cierre input{width:auto;margin:0;flex:none}
+@media(max-width:520px){.hm-tipo{flex:1 1 calc(50% - 3px)}.hm-tramo{flex:1 1 100%}}
+
 /* Qué horas cuentan. Las dos candidatas —la del reloj y la del cuadrante— se pulsan
    directamente: elegir «la entrada del cuadrante y la salida fichada» es un toque en
    cada una, no una cuenta de cabeza. */

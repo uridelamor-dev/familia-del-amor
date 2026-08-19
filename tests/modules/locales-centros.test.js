@@ -14,7 +14,7 @@ const COOP = "Cooperativa - Blanes";
 //   JUNTOS  se lee y se ESCRIBE bajo el centro
 //   VISTA   se ven en la misma pantalla, pero cada fila conserva su barra
 //   APARTE  ni se juntan ni se ven juntos: configuran lo que ve el cliente
-const JUNTOS = ["ventas", "compras", "personal", "inventarios"];
+const JUNTOS = ["ventas", "compras", "personal", "inventarios", "mantenimiento", "usuarios"];
 const VISTA = ["reservas", "reviews"];
 const APARTE = ["web", "whatsapp"];
 const SEPARADOS = [...VISTA, ...APARTE];

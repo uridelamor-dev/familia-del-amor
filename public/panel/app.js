@@ -153,7 +153,7 @@ function localFijadoFE() { const m = misLocales(); return m.length === 1 ? m[0] 
 const CENTROS_FE = [{
   principal: "La Tapeta - Blanes",
   barras: ["La Tapeta - Blanes", "Cooperativa - Blanes"],
-  juntos: ["ventas", "compras", "personal", "inventarios"],
+  juntos: ["ventas", "compras", "personal", "inventarios", "mantenimiento", "usuarios"],
   vistaJunta: ["reservas", "reviews"],
 }];
 // De qué ámbito es cada pantalla. Lo que no está aquí no junta nada y se comporta como antes
@@ -165,6 +165,8 @@ const AMBITO_POR_VISTA = {
   inventarios: "inventarios",
   // Estas dos se VEN juntas pero no se mezclan: cada reserva y cada reseña conserva su barra.
   reservas: "reservas", reviews: "reviews",
+  // Una incidencia la arregla la misma persona en las dos barras y un usuario es del centro.
+  mantenimiento: "mantenimiento", usuarios: "usuarios",
 };
 const ambitoDeVista = (v) => AMBITO_POR_VISTA[v || CURRENT] || null;
 const centroDeFE = (local) => CENTROS_FE.find((c) => c.barras.includes(String(local || "").trim())) || null;
@@ -183,6 +185,22 @@ function visiblesFE(_ambito, lista) {
   for (const c of CENTROS_FE) for (const b of c.barras) if (b !== c.principal) fuera.add(b);
   return (Array.isArray(lista) ? lista : []).filter((l) => !fuera.has(String(l || "").trim()));
 }
+/**
+ * Los establecimientos que puede elegir un formulario del panel. TODOS los de dentro usan
+ * esto y no `LOCALES` a pelo.
+ *
+ * La diferencia importa: dar de alta a alguien en «Cooperativa - Blanes» lo dejaría fuera del
+ * centro —su cuadrante, sus fichajes y su ficha vivirían en una barra que el panel ya no
+ * enseña— y nadie entendería por qué ha desaparecido. Los ÚNICOS que siguen ofreciendo las dos
+ * barras son los de cara al cliente: el alta de una reserva (una mesa está en un sitio), la
+ * web y los grupos de WhatsApp.
+ */
+function opcionesLocal(sel = "", { vacio = "" } = {}) {
+  const lista = visiblesFE(null, LOCALES);
+  return (vacio ? [`<option value="">${vacio}</option>`] : [])
+    .concat(lista.map((l) => `<option value="${esc(l)}" ${l === sel ? "selected" : ""}>${esc(nombreCortoLocal(l))}</option>`)).join("");
+}
+
 /** ¿Es la barra secundaria de un centro? Sirve para marcar de cuál es cada fila. */
 function esBarraSecundariaFE(local) {
   const c = centroDeFE(local);
@@ -1507,7 +1525,11 @@ function resNavega(dir) {
 }
 function openNuevaReserva() {
   const fijo = localFijadoFE();
-  const localOpts = fijo ? `<option value="${esc(fijo)}" selected>${esc(fijo)}</option>` : LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  // También el centro: hay UN grupo de WhatsApp de reservas para las dos barras, así que una
+  // reserva de Blanes es de Blanes y no había forma de decir «esta es de la Cooperativa» sin
+  // inventárselo. De cara al cliente siguen siendo dos sitios —web y ficha de Google aparte—,
+  // pero dentro del panel la agenda es una.
+  const localOpts = fijo ? `<option value="${esc(fijo)}" selected>${esc(fijo)}</option>` : opcionesLocal();
   const body = `<form id="fReserva"><div class="form-grid">
     <div class="field full"><label>Local</label><select name="local" required>${localOpts}</select></div>
     <div class="field"><label>Día</label><input type="date" name="dia" value="${todayStr()}" required></div>
@@ -1574,7 +1596,7 @@ function applyMantFilter() {
 async function mantEstado(id, estado) { try { await apiSend("PUT", "/api/maintenance/" + encodeURIComponent(id), { estado }); toast("Incidencia actualizada ✅"); loadMant(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 function openNuevaIncidencia() {
   const fijo = localFijadoFE();
-  const localOpts = fijo ? `<option value="${esc(fijo)}" selected>${esc(fijo)}</option>` : LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const localOpts = fijo ? `<option value="${esc(fijo)}" selected>${esc(fijo)}</option>` : opcionesLocal();
   const body = `<form id="fInc"><div class="form-grid"><div class="field full"><label>Local</label><select name="local" required>${localOpts}</select></div><div class="field full"><label>Título</label><input type="text" name="titulo" required></div><div class="field full"><label>Descripción</label><input type="text" name="descripcion" required></div><div class="field full"><label>Foto (opcional)</label><input type="file" id="incFoto" accept="image/*" capture="environment"><div class="mut" style="font-size:12px;margin-top:4px">Adjunta una imagen o haz una foto con la cámara.</div><div id="incFotoPrev"></div></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear incidencia</button></div></form>`;
   const ov = modal("Nueva incidencia", body);
   // Vista previa de la foto elegida (mejor feedback antes de subir).
@@ -2138,7 +2160,7 @@ function cliTable(rows) {
 function cliSubTxt(rows, total) { return `${num(total)} contacto${total === 1 ? "" : "s"}${rows.length < total ? ` · mostrando ${rows.length}` : ""}`; }
 function renderClientes(j) {
   const rows = j.data || []; const total = j.total != null ? j.total : rows.length; CLI_TOTAL = total;
-  const localOpts = ['<option value="">Cualquier local</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${CLIF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  const localOpts = ['<option value="">Cualquier local</option>'].concat(visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${CLIF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
   const pobOpts = ['<option value="">Todas las poblaciones</option>'].concat((CLI_POBLACIONES || []).map((p) => `<option value="${esc(p)}" ${CLIF.poblacion === p ? "selected" : ""}>${esc(p)}</option>`)).join("");
   // Barra 1: búsqueda + selectores. Barra 2: casillas de filtro agrupadas. Sin botón «Buscar»:
   // el listado se auto-actualiza al escribir, seleccionar o marcar (ver listeners globales).
@@ -3311,7 +3333,7 @@ function renderRRSeg() {
 // ── Vacantes ──
 function renderRRVac(rows) {
   rows = rows || [];
-  const locOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const locOpts = visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
   const tipoOpts = RR_VAC_TIPOS.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
   const form = `<div class="card"><div class="ch"><h3>Nueva vacante</h3></div><div class="toolbar"><div class="field"><label>Título</label><input id="vacTitulo" placeholder="Camarero/a…"></div><div class="field"><label>Local</label><select id="vacLocal">${locOpts}</select></div><div class="field"><label>Tipo</label><select id="vacTipo">${tipoOpts}</select></div></div><div class="field" style="width:100%"><label>Descripción</label><textarea id="vacDesc" rows="2" placeholder="Requisitos, horario…"></textarea></div><button class="btn primary" data-act="rr-vac-add">Publicar vacante</button></div>`;
   const table = rows.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Título</th><th>Local</th><th>Tipo</th><th>Estado</th><th></th></tr></thead><tbody>${rows.map((v) => `<tr><td>${esc(v.titulo || "")}</td><td>${esc(v.local || "")}</td><td class="mut">${esc(v.tipo || "")}</td><td><span class="pill ${v.activo ? "ok" : "bad"}">${v.activo ? "Abierta" : "Cerrada"}</span></td><td class="r"><button class="linkbtn" style="color:var(--brand)" data-act="rr-vac-toggle" data-id="${v.id}" data-activo="${v.activo ? 1 : 0}">${v.activo ? "Cerrar" : "Reabrir"}</button></td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin vacantes creadas.</div></div>`;
@@ -3436,7 +3458,7 @@ function rrWorkerAdd() {
   const enc = USER.rol === "encargado";
   const localField = enc
     ? `<input type="hidden" name="local" value="${esc(USER.local || "")}"><div class="field"><label>Local</label><input value="${esc(USER.local || "")}" disabled></div>`
-    : `<div class="field"><label>Local</label><select name="local">${LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("")}</select></div>`;
+    : `<div class="field"><label>Local</label><select name="local">${opcionesLocal()}</select></div>`;
   const rolField = enc ? `<input type="hidden" name="rol" value="trabajador">` : `<div class="field"><label>Rol</label><select name="rol"><option value="trabajador">Trabajador</option><option value="encargado">Encargado</option></select></div>`;
   // Ya no se pide contraseña: la inicial es el propio usuario y el sistema obliga a
   // cambiarla al entrar. Antes venía «tapeta2024» rellenada y nadie la cambiaba nunca,
@@ -3584,7 +3606,7 @@ async function rrRecontratar(f) {
       Volver <b>no</b> se las liquida: eso se hace desde el libro de horas cuando se decida cómo.</p>` : ""}
     <div class="bl-form">
       <label>Primer día<input class="inp" id="recFecha" type="date" value="${hoy}"></label>
-      <label>Establecimiento<select class="inp" id="recLocal">${LOCALES.map((l) => `<option ${l === f.trabajador.local ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+      <label>Establecimiento<select class="inp" id="recLocal">${visiblesFE(null, LOCALES).map((l) => `<option ${l === f.trabajador.local ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
       <label>Horas por semana<input class="inp" id="recHoras" type="number" min="1" max="60" step="0.5" placeholder="40"></label>
     </div>
     <label class="bl-lbl">Puesto <span class="mut">(opcional)</span><input class="inp" id="recPuesto" value="${esc(f.trabajador.puesto || "")}"></label>
@@ -3651,7 +3673,7 @@ async function rrCambiarContrato(id, nombre, actual) {
 }
 
 function rrContratar(id, nombre) {
-  const localOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const localOpts = opcionesLocal();
   const base = String(nombre || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "");
   const body = `<form id="fContratar"><div class="mut" style="margin-bottom:10px">Se creará la ficha de <b>${esc(nombre)}</b> (con su CV como primer documento) y la candidatura pasará a «contratada».</div><div class="form-grid"><div class="field"><label>Usuario</label><input name="username" required value="${esc(base)}"></div><div class="field"><label>Contraseña</label><input name="password" type="text" required value="tapeta2024"></div><div class="field"><label>Local</label><select name="local">${localOpts}</select></div><div class="field"><label>Rol</label><select name="rol"><option value="trabajador">trabajador</option><option value="encargado">encargado</option></select></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Contratar</button></div></form>`;
   const ov = modal("Contratar candidato", body);
@@ -3774,7 +3796,7 @@ function modsCheckboxesHtml(rol, sel) {
 // están pegadas: con uno solo había que darle dos cuentas. Aquí se marcan los de más; el
 // principal es el de arriba y no sale, porque ya lo tiene.
 function localesExtraHtml(principal, sel) {
-  const otros = LOCALES.filter((l) => l !== principal);
+  const otros = visiblesFE(null, LOCALES).filter((l) => l !== principal);
   const items = otros.map((l) => `<label style="display:flex;align-items:center;gap:8px;padding:5px 2px">
       <input type="checkbox" name="locextra" value="${esc(l)}" ${sel.has(l) ? "checked" : ""} style="width:auto;margin:0">
       <span>${esc(l)}</span></label>`).join("");
@@ -3787,7 +3809,7 @@ function localesExtraSeleccionados(ov) {
 }
 
 function localOptionsHtml(sel) {
-  return ['<option value="">— sin local (todos) —</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${l === sel ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  return opcionesLocal(sel, { vacio: "— sin local (todos) —" });
 }
 // Cablea el rerender de módulos al cambiar el rol dentro de un modal de usuario.
 function wireUserModal(ov) {
@@ -5125,17 +5147,38 @@ function horModal(asig, ctx) {
   const fin = asig ? asig.fin_min : (tramo ? tramo.fin_min : 960);
   const opt = (arr, sel, vacio) => [vacio ? `<option value="">${vacio}</option>` : ""].concat(
     arr.map((x) => `<option value="${x.id}" ${String(sel) === String(x.id) ? "selected" : ""}>${esc(x.nombre || x.username)}</option>`)).join("");
-  const body = `<div class="form-grid">
-    <div class="field"><label>Persona</label><select id="hmW">${opt(HOR.equipo, asig?.worker_id ?? ctx?.worker, "Elegir…")}</select></div>
-    <div class="field"><label>Día</label><select id="hmD">${HOR.dias.map((d, i) => `<option value="${d}" ${String(asig?.dia ?? ctx?.dia) === d ? "selected" : ""}>${WD[i]} ${Number(d.slice(-2))}</option>`).join("")}</select></div>
-    <div class="field"><label>Tramo</label><select id="hmT">${opt((HOR.tramos || []).filter((t) => !horEsDescanso(t)), asig?.tramo_id ?? ctx?.tramo, "Sin tramo")}</select></div>
-    <div class="field"><label>Área</label><select id="hmA">${opt(HOR.areas, asig?.area_id ?? ctx?.area, "Sin área")}</select></div>
-    <div class="field"><label>Entra</label><input id="hmI" type="time" value="${horHHMM(ini)}"></div>
-    <div class="field"><label>Sale</label><input id="hmF" type="time" value="${horHHMM(fin)}" ${asig?.fin_abierto ? "disabled" : ""}></div>
-    <label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="hmC" ${asig?.fin_abierto ? "checked" : ""} style="width:auto"> Hasta cierre</label>
-    <div class="field"><label>Tipo</label><select id="hmTipo">${["turno", "libranza", "vacaciones", "baja", "formacion"].map((t) => `<option value="${t}" ${(asig?.tipo || "turno") === t ? "selected" : ""}>${cap(t)}</option>`).join("")}</select></div>
-    <div class="field full"><label>Nota (opcional)</label><input id="hmN" value="${esc(asig?.nota || "")}"></div>
-  </div>
+  const TIPOS = [["turno", "Turno"], ["libranza", "Libra"], ["vacaciones", "Vacaciones"], ["baja", "Baja"], ["formacion", "Formación"]];
+  const tipoAhora = asig?.tipo || "turno";
+  const body = `
+    <div class="hm-tipos" id="hmTipos">${TIPOS.map(([v, l]) =>
+      `<button type="button" class="hm-tipo ${v === tipoAhora ? "on" : ""}" data-tipo="${v}">${l}</button>`).join("")}</div>
+    <select id="hmTipo" hidden>${TIPOS.map(([v, l]) => `<option value="${v}" ${v === tipoAhora ? "selected" : ""}>${l}</option>`).join("")}</select>
+
+    <div class="form-grid" style="margin-top:14px">
+      <div class="field"><label>Persona</label><select id="hmW">${opt(HOR.equipo, asig?.worker_id ?? ctx?.worker, "Elegir…")}</select></div>
+      <div class="field"><label>Día</label><select id="hmD">${HOR.dias.map((d, i) => `<option value="${d}" ${String(asig?.dia ?? ctx?.dia) === d ? "selected" : ""}>${WD[i]} ${Number(d.slice(-2))}</option>`).join("")}</select></div>
+    </div>
+
+    <div id="hmHorario">
+      ${(HOR.tramos || []).filter((t) => !horEsDescanso(t)).length ? `<div class="hm-lab">Tramo</div>
+      <div class="hm-tramos" id="hmTramos">${(HOR.tramos || []).filter((t) => !horEsDescanso(t)).map((t) =>
+        `<button type="button" class="hm-tramo ${String(asig?.tramo_id ?? ctx?.tramo) === String(t.id) ? "on" : ""}" data-tramo="${t.id}" data-i="${t.inicio_min}" data-f="${t.fin_min}">
+           <b>${esc(t.nombre)}</b><span>${esc(horFranja(t.inicio_min, t.fin_min))}</span></button>`).join("")}
+        <button type="button" class="hm-tramo ${!(asig?.tramo_id ?? ctx?.tramo) ? "on" : ""}" data-tramo=""><b>Sin tramo</b><span>a mano</span></button>
+      </div>` : ""}
+      <select id="hmT" hidden>${opt((HOR.tramos || []).filter((t) => !horEsDescanso(t)), asig?.tramo_id ?? ctx?.tramo, "Sin tramo")}</select>
+
+      <div class="form-grid" style="margin-top:12px">
+        <div class="field"><label>Entra</label><input id="hmI" type="time" value="${horHHMM(ini)}"></div>
+        <div class="field"><label>Sale <span class="mut" id="hmDur"></span></label><input id="hmF" type="time" value="${horHHMM(fin)}" ${asig?.fin_abierto ? "disabled" : ""}></div>
+      </div>
+      <label class="hm-cierre"><input type="checkbox" id="hmC" ${asig?.fin_abierto ? "checked" : ""}>
+        <span><b>Hasta cierre</b> — sale cuando se cierre, sin hora fija</span></label>
+
+      <div class="field" style="margin-top:12px"><label>Área</label><select id="hmA">${opt(HOR.areas, asig?.area_id ?? ctx?.area, "Sin área")}</select></div>
+    </div>
+
+    <div class="field" style="margin-top:12px"><label>Nota <span class="mut">(opcional)</span></label><input id="hmN" value="${esc(asig?.nota || "")}" placeholder="Cubre la baja de Marta, entra por la puerta de atrás…"></div>
   <div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px">
     <div style="display:flex;gap:8px">${editando ? `<button class="btn danger" id="hmDel">Quitar turno</button>
       <button class="btn" id="hmRep">Repetir en otros días</button>` : ""}</div>
@@ -5143,14 +5186,51 @@ function horModal(asig, ctx) {
   </div>`;
   const ov = modal(editando ? "Turno de " + horNombre(asig.worker_id) : "Nuevo turno", body);
   const cierre = ov.querySelector("#hmC");
-  cierre.addEventListener("change", () => { ov.querySelector("#hmF").disabled = cierre.checked; });
-  // Al cambiar de tramo, se reajustan las horas: es el caso normal.
-  ov.querySelector("#hmT").addEventListener("change", (e) => {
-    const t = (HOR.tramos || []).find((x) => String(x.id) === e.target.value);
-    if (!t) return;
-    ov.querySelector("#hmI").value = horHHMM(t.inicio_min);
-    ov.querySelector("#hmF").value = horHHMM(t.fin_min);
+  const dur = ov.querySelector("#hmDur");
+  const horario = ov.querySelector("#hmHorario");
+
+  // Cuánto dura, escrito al lado. Es el número que se mira al montar un cuadrante —«¿le he
+  // puesto ocho horas o nueve?»— y hasta ahora había que restarlo de cabeza, con el añadido
+  // de que un turno de 16:00 a 00:00 no se resta como parece.
+  function pintarDuracion() {
+    if (cierre.checked) { dur.textContent = "· sin hora fija"; return; }
+    const i = horMin(ov.querySelector("#hmI").value), f = horFinMin(ov.querySelector("#hmI").value, ov.querySelector("#hmF").value);
+    const m = f - i;
+    dur.textContent = Number.isFinite(m) && m > 0 ? "· " + ficHoras(m) : "";
+  }
+  // Qué se pregunta depende de QUÉ es: unas vacaciones no tienen hora de entrada ni área, y
+  // enseñar esas casillas invita a rellenarlas con algo que luego nadie sabe qué significa.
+  function pintarTipo() {
+    const t = ov.querySelector("#hmTipo").value;
+    horario.style.display = t === "turno" ? "" : "none";
+    ov.querySelectorAll(".hm-tipo").forEach((b) => b.classList.toggle("on", b.getAttribute("data-tipo") === t));
+  }
+  ov.querySelector("#hmTipos").addEventListener("click", (e) => {
+    const b = e.target.closest(".hm-tipo"); if (!b) return;
+    ov.querySelector("#hmTipo").value = b.getAttribute("data-tipo");
+    pintarTipo();
   });
+
+  cierre.addEventListener("change", () => { ov.querySelector("#hmF").disabled = cierre.checked; pintarDuracion(); });
+  ov.querySelector("#hmI").addEventListener("input", pintarDuracion);
+  ov.querySelector("#hmF").addEventListener("input", pintarDuracion);
+
+  // Los tramos, pulsables y con su horario a la vista: son dos o tres y elegir «MAÑANA» ya
+  // pone las horas. Antes era un desplegable que había que abrir para ver qué había dentro.
+  const tramos = ov.querySelector("#hmTramos");
+  if (tramos) tramos.addEventListener("click", (e) => {
+    const b = e.target.closest(".hm-tramo"); if (!b) return;
+    tramos.querySelectorAll(".hm-tramo").forEach((x) => x.classList.toggle("on", x === b));
+    ov.querySelector("#hmT").value = b.getAttribute("data-tramo") || "";
+    const i = b.getAttribute("data-i"), f = b.getAttribute("data-f");
+    if (i != null && f != null) {
+      ov.querySelector("#hmI").value = horHHMM(Number(i));
+      ov.querySelector("#hmF").value = horHHMM(Number(f));
+      if (cierre.checked) { cierre.checked = false; ov.querySelector("#hmF").disabled = false; }
+    }
+    pintarDuracion();
+  });
+  pintarTipo(); pintarDuracion();
   ov.querySelector("#hmOk").addEventListener("click", async () => {
     const abierto = cierre.checked;
     // OJO CON EL ORDEN: `HOR.semana` puede ser null —una semana que todavía no existe— y
@@ -7387,7 +7467,7 @@ function facFicha(id) {
   const fld = (lab, key, type = "text", extra = "") => `<div class="field"><label>${lab}</label><input data-fic="${key}" type="${type}" value="${esc(f[key] == null ? "" : f[key])}" ${extra}></div>`;
   const fechaFld = `<div class="field"><label>Fecha</label>${dpField("ficFecha", f.fecha, "Sin fecha", { attr: 'data-fic="fecha"' })}</div>`;
   const tipoSel = `<div class="field"><label>Tipo</label><select data-fic="tipo">${["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${f.tipo === t ? "selected" : ""}>${cap(t)}</option>`).join("")}</select></div>`;
-  const localSel = `<div class="field"><label>Local</label><select data-fic="local"><option value="">—</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${f.local === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`;
+  const localSel = `<div class="field"><label>Local</label><select data-fic="local"><option value="">—</option>${visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${f.local === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>`;
   const revisar = facRevisarTxt(f);
 
   // Lo que ya se sabía de esta factura y no se enseñaba: si está pagada o cuándo vence, si su
@@ -7612,7 +7692,7 @@ async function loadSubirFactura() {
       <label>Local</label>
       <select class="inp" id="sfLocal">
         <option value="">Detectarlo de la factura</option>
-        ${LOCALES.map((l) => `<option value="${esc(l)}" ${l === local ? "selected" : ""}>${esc(l)}</option>`).join("")}
+        ${visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${l === local ? "selected" : ""}>${esc(l)}</option>`).join("")}
       </select></div>`;
 
   view.innerHTML = `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Subir factura</h1>
@@ -7686,7 +7766,7 @@ async function sfEnviar(files) {
 }
 
 function facSubir() {
-  const localOpts = ['<option value="">Detectar automáticamente (por NIF, empresa o proveedor)</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
+  const localOpts = ['<option value="">Detectar automáticamente (por NIF, empresa o proveedor)</option>'].concat(visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
   const ov = modal("Subir facturas", `<div class="field" style="width:100%"><label>Archivos (PDF o imágenes, puedes elegir varios)</label><input type="file" id="fsFile" accept="application/pdf,image/*" multiple></div><div class="field" style="width:100%"><label>Local</label><select id="fsLocal">${localOpts}</select></div><label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:10px"><input type="checkbox" id="fsCombinar" style="width:auto"> Son páginas de la <b>misma factura</b> (se unirán en un solo documento)</label><div class="mut" style="font-size:12px">Se procesan en segundo plano con la misma IA, orden en Drive y control de duplicados que WhatsApp/correo. Requiere Google conectado. Puedes cerrar y seguir trabajando; te aviso al terminar.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fsSend">Subir y procesar</button></div>`);
   ov.querySelector("#fsSend").addEventListener("click", () => {
     const inp = ov.querySelector("#fsFile"); const files = inp && inp.files ? Array.from(inp.files) : [];
@@ -7722,7 +7802,7 @@ function facSubir() {
   });
 }
 
-function facLocalSelect(id, sel) { return `<select id="${id}"><option value="">Elegir local…</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${sel === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`; }
+function facLocalSelect(id, sel) { return `<select id="${id}"><option value="">Elegir local…</option>${visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${sel === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`; }
 // Un canal apuntando a un nombre que no es ningún establecimiento manda mal TODO lo que entre
 // por él. Aquí es donde se ve, junto al canal, y no en un informe aparte.
 function facLocalCelda(v) {
@@ -9339,7 +9419,7 @@ function facRevisar(id) {
   // pendientes para siempre, pidiendo una decisión que no se puede tomar.
   const empresas = [...new Set((FAC_EMPRESAS || []).map((e) => (typeof e === "string" ? e : e.empresa)).filter(Boolean))];
   const localSel = `<div class="field"><label>Local${sug.local ? ` · <span class="mut">sugerido: ${esc(nombreCortoLocal(sug.local))}</span>` : ""}</label>
-    <select id="prLocal"><option value="">Elegir local…</option>${LOCALES.map((l) => `<option value="${esc(l)}" ${sug.local === l ? "selected" : ""}>${esc(l)}</option>`).join("")}
+    <select id="prLocal"><option value="">Elegir local…</option>${visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${sug.local === l ? "selected" : ""}>${esc(l)}</option>`).join("")}
       ${empresas.length ? `<optgroup label="Gasto de toda una empresa">${empresas.map((e) => `<option value="empresa:${esc(e)}">Toda la empresa · ${esc(e)}</option>`).join("")}</optgroup>` : ""}
     </select>
     <p class="mut" style="margin:6px 0 0;font-size:11.5px">La gestoría, el seguro o el alquiler de la sociedad no son de un local: elígelos como «toda la empresa» y el gasto se reparte entre los suyos.</p></div>`;
@@ -9438,7 +9518,10 @@ function renderWhatsApp(status, qr, links, groups) {
   const connected = status && status.connected;
   const linkMap = {}; (links || []).forEach((l) => { linkMap[l.local] = l.group_jid; });
   const conn = `<div class="card"><div class="ch"><h3>Conexión de Sara</h3><span class="pill ${connected ? "ok" : "bad"}">${connected ? "Conectado" : "Desconectado"}</span></div>${connected ? `<p class="mut">Sara está conectada y atiende reservas por WhatsApp automáticamente.</p>` : `<p class="mut">Escanea este código desde WhatsApp → Dispositivos vinculados para reconectar a Sara:</p>${qr && qr.qr ? `<div style="text-align:center;padding:10px"><img src="${esc(qr.qr)}" alt="Código QR" style="width:240px;height:240px;border-radius:12px;background:#fff;padding:8px"></div><div class="mut" style="text-align:center;font-size:12px">El código se actualiza solo; en cuanto vincules, esta pantalla lo detectará.</div>` : '<p class="mut">Generando código QR…</p>'}`}</div>`;
-  const linksCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos por local</h3>${connected ? "" : '<span class="pill">Conecta Sara para elegir grupos</span>'}</div><div class="rows">${LOCALES.map((local) => { const cur = linkMap[local] || ""; return `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(local)}</div>${cur ? `<div class="t2">Vinculado</div>` : `<div class="t2">Sin vincular</div>`}</div><select class="waSel" style="max-width:210px" ${connected ? "" : "disabled"}>${waGroupOpts(cur, groups)}</select><button class="btn sm" data-act="wa-link" data-local="${esc(local)}" ${connected ? "" : "disabled"}>Guardar</button></div>`; }).join("")}</div><div class="mut" style="padding:12px 18px;font-size:12px">El grupo de cada local recibe los avisos de reservas y cancelaciones.</div></div>`;
+  // Los establecimientos del panel: hay UN grupo de reservas y UNO de facturas para las dos
+  // barras de Blanes, así que listar la Cooperativa aparte pedía vincular un grupo que no
+  // existe. Si algún día tiene el suyo, se añade aquí y en centros.js a la vez.
+  const linksCard = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Grupos por local</h3>${connected ? "" : '<span class="pill">Conecta Sara para elegir grupos</span>'}</div><div class="rows">${visiblesFE(null, LOCALES).map((local) => { const cur = linkMap[local] || ""; return `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(local)}</div>${cur ? `<div class="t2">Vinculado</div>` : `<div class="t2">Sin vincular</div>`}</div><select class="waSel" style="max-width:210px" ${connected ? "" : "disabled"}>${waGroupOpts(cur, groups)}</select><button class="btn sm" data-act="wa-link" data-local="${esc(local)}" ${connected ? "" : "disabled"}>Guardar</button></div>`; }).join("")}</div><div class="mut" style="padding:12px 18px;font-size:12px">El grupo de cada local recibe los avisos de reservas y cancelaciones.</div></div>`;
   return `<div class="ph"><div class="eyebrow">Comunicación</div><h1>WhatsApp / Sara</h1><div class="sub">Estado de la conexión y vinculación de grupos por local</div></div><div class="grid g2">${conn}${linksCard}</div>`;
 }
 async function waLink(local, btn) {
@@ -9588,7 +9671,7 @@ async function saraRegDel(id) {
 // ── Comunicados (avisos al equipo) ────────────────────────────────────────────
 function renderComunicados(list) {
   list = list || [];
-  const locOpts = LOCALES.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const locOpts = visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
   const form = `<div class="card"><div class="ch"><h3>Publicar comunicado</h3></div><div class="toolbar"><div class="field"><label>Local</label><select id="comLocal">${locOpts}</select></div></div><div class="field" style="width:100%"><label>Mensaje para el equipo</label><textarea id="comMsg" rows="3" placeholder="Escribe el aviso que verán los trabajadores…"></textarea></div><button class="btn primary" data-act="com-add">Publicar comunicado</button></div>`;
   const items = list.length ? list.map((a) => `<div class="card" style="padding:14px 16px"><div class="t2">${esc(a.local || "")} · ${esc(String(a.creado_en || "").slice(0, 10))}</div><div style="white-space:pre-wrap;margin-top:4px">${esc(a.mensaje || "")}</div></div>`).join("") : `<div class="card"><div class="mut" style="padding:6px">Sin comunicados publicados.</div></div>`;
   return `<div class="ph"><div class="eyebrow">Operación</div><h1>Comunicados</h1><div class="sub">Avisos que verán los trabajadores en su panel</div></div>${form}<div class="grid" style="gap:10px;margin-top:16px">${items}</div>`;
@@ -9660,7 +9743,8 @@ function renderAgora() {
   const head = `<div class="ph"><div class="eyebrow">Sistema · Integraciones</div><h1>Ágora (TPV)</h1><div class="sub">Conecta el TPV de cada local para traer las ventas. El apiToken se guarda cifrado y nunca se muestra.</div><div class="acts"><button class="btn primary" data-act="ag-sync">Sincronizar ventas ahora</button></div></div>`;
   const info = `<div class="card"><div class="mut" style="font-size:13px">El servidor del TPV solo responde con el <b>local abierto</b> (programa Ágora encendido). Requisitos: licencia de integración, v6.0.6, DynDNS y el puerto 8984 abierto.${AGORA.lastSync ? ` · Última sincronización: <b>${esc(String(AGORA.lastSync).slice(0, 16).replace("T", " "))}</b>` : " · Aún no se ha sincronizado."}</div></div>`;
   const vivo = `<div id="agVivo" style="margin-top:6px"><div class="card"><div class="mut" style="font-size:13px">Cargando ventas en vivo…</div></div></div>`;
-  const rows = LOCALES.map((l, i) => renderAgoraRow(l, i)).join("");
+  // Un solo terminal de TPV para las dos barras de Blanes: una fila, no dos.
+  const rows = visiblesFE(null, LOCALES).map((l, i) => renderAgoraRow(l, i)).join("");
   return head + info + vivo + `<div class="grid" style="gap:14px;margin-top:6px">${rows}</div>`;
 }
 // Reflejo puro (src/modules/agora/ventas.js) del resumen en vivo por local.
@@ -10249,7 +10333,7 @@ function openCampana(mode = "nueva", pre = {}) {
   const s = pre.seg || {};
   const editar = mode === "editar";
   const val = (k, d = "") => esc(s[k] != null ? s[k] : d);
-  const localOpts = ['<option value="">Todos los locales</option>'].concat(LOCALES.map((l) => `<option value="${esc(l)}" ${s.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
+  const localOpts = ['<option value="">Todos los locales</option>'].concat(visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${s.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
   const plantOpts = ['<option value="">— Insertar plantilla (opcional) —</option>'].concat((CAMP.plantillas || []).map((p) => `<option value="${p.id}">${esc(p.nombre)}</option>`)).join("");
   const audOpts = ['<option value="">— Cargar audiencia guardada —</option>'].concat((CAMP.audiencias || []).map((a) => `<option value="${a.id}">${esc(a.nombre)}</option>`)).join("");
   const objBtns = CAMP_OBJETIVOS.map((o) => `<button type="button" class="btn sm" data-obj="${esc(o.txt)}">${esc(o.obj)}</button>`).join("");

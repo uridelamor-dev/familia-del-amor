@@ -11,6 +11,7 @@
 // Recibe x = { get, all } (wrappers dbGet/dbAll de server.js; placeholders `?`).
 
 import { imputarGastoEmpresa } from "../facturas/reparto.js";
+import { agruparPorCentro } from "../locales/centros.js";
 
 const DOW = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 function addDays(iso, n) { const d = new Date(iso + "T00:00:00.000Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
@@ -177,31 +178,44 @@ async function gatherSignals(x, { hoy, local }) {
   // A cada local, su parte del gasto de empresa. Sin esto, la gestoría de las tres sociedades
   // caía entera sobre el local donde está archivado el papel: ese salía disparado y los otros
   // dos, limpios. El aviso de «el gasto de X se ha disparado» se disparaba justo por eso.
+  // Los desgloses «por local» se agrupan por CENTRO antes de nada. Dos de las fuentes siguen
+  // escribiendo con el nombre de cada barra y no se pueden cambiar —las ventas las manda el
+  // TPV de cada una y una reserva está donde está—, así que sin esto la Cooperativa reaparecía
+  // aquí como un establecimiento más aunque ya no se pueda elegir en ninguna pantalla. Y el
+  // gasto del Dashboard diría una cosa y el de Compras otra.
+  const porCentro = (filas, campos) => agruparPorCentro(filas || [], campos);
+  const hoyLocalC = porCentro(hoyLocal, ["n", "personas"]);
+  const ayerLocalC = porCentro(ayerLocal, ["n", "personas"]);
+  const incPorLocalC = porCentro(incPorLocal, ["n"]);
+  const gastoActC = porCentro(gastoAct, ["t"]);
+  const gastoPrevC = porCentro(gastoPrev, ["t"]);
+  const ventasLocalC = porCentro(ventasLocal, ["total"]);
+
   const repartirGasto = (filas, mes) => imputarGastoEmpresa({
     base: filas || [], campo: "t", locEmp: localesEmpresa || [],
     deEmpresa: (gastoEmpresa || []).filter((e) => e.mes === mes),
     // Los pesos son las ventas de los últimos 30 días, no las del mes exacto: aquí solo deciden
     // la PROPORCIÓN, y el total repartido es el mismo con unas ventas o con otras.
-    ventas: (ventasLocal || []).map((v) => ({ local: v.local, ventas: v.total })),
+    ventas: (ventasLocalC || []).map((v) => ({ local: v.local, ventas: v.total })),
   }).porLocal;
-  const gastoActR = repartirGasto(gastoAct, mesActual);
-  const gastoPrevR = repartirGasto(gastoPrev, mesPrev);
+  const gastoActR = repartirGasto(gastoActC, mesActual);
+  const gastoPrevR = repartirGasto(gastoPrevC, mesPrev);
 
   const gPrevMap = new Map((gastoPrevR || []).map((r) => [r.local, r.t]));
   const gastoLocal = (gastoActR || []).map((r) => { const prev = gPrevMap.get(r.local) || 0; const delta = prev > 0 ? (r.t - prev) / prev * 100 : null; return { local: r.local, actual: r.t, prev, delta }; })
     .sort((a, b) => b.actual - a.actual);
 
   // Radar por local: cruza ocupación próxima + incidencias abiertas + gasto del mes.
-  const radar = buildRadar({ hoyLocal, ayerLocal, incPorLocal, gastoAct: gastoActR });
+  const radar = buildRadar({ hoyLocal: hoyLocalC, ayerLocal: ayerLocalC, incPorLocal: incPorLocalC, gastoAct: gastoActR });
 
   return {
     hoy, ayer, dow, local, mesActual,
-    ayerTot, ayerLocal, base, hoyTot, hoyLocal, prox7,
-    recur, aging, openInc, incPorLocal,
+    ayerTot, ayerLocal: ayerLocalC, base, hoyTot, hoyLocal: hoyLocalC, prox7,
+    recur, aging, openInc, incPorLocal: incPorLocalC,
     resAgg, low, lowCorr, repLocal,
     porPagar, acreedores, masAntigua, gastoLocal, risers,
     incWorkers, plantilla, checkinsMes,
-    churn, mejores, cand, facPend, radar, serieRes, sinResp, ventasTot, ventasLocal,
+    churn, mejores, cand, facPend, radar, serieRes, sinResp, ventasTot, ventasLocal: ventasLocalC,
   };
 }
 
