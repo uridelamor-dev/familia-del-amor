@@ -28,7 +28,10 @@ const norm = (s) => String(s || "")
 // Formas sueltas que se han visto de verdad en las facturas y en la configuración vieja.
 // Se listan a mano en vez de inventar reglas: las abreviaturas de cada casa son suyas y
 // una heurística que acierte «Lloret» acabaría acertando también donde no debe.
-const ALIAS = {
+// Se exporta porque es, de hecho, el catálogo de CÓMO SE ESCRIBEN los nombres de la casa en
+// las facturas. `no-es-producto.js` lo reutiliza para saber cuándo una línea es el nombre de
+// un local en vez de un artículo, y así no hay dos listas que mantener.
+export const ALIAS = {
   // La Tapeta - Blanes
   "tapeta blanes": "La Tapeta - Blanes",
   "la tapeta blanes": "La Tapeta - Blanes",

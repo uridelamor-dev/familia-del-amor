@@ -80,6 +80,7 @@ import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados
 import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
+import { nombresDeLaCasa, noEsProducto } from "./src/modules/facturas/no-es-producto.js";
 import { repasarLote, resumenRepaso, pideRelecturaDeLineas, esAlcanceValido, ALCANCES_REPASO, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
 import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
@@ -643,6 +644,14 @@ async function initDB() {
         confirmado_en TEXT
       )
     `);
+    // «Esto NO es un producto». Distinto de «dejado aparte», que es un producto que va solo:
+    // aquí se dice que la línea no es mercancía —el nombre de un local que se coló, horas de
+    // operario, media hoja de la gestoría— y sale del catálogo entero, no solo de la cola.
+    // La línea de la factura NO se toca: el documento dice lo que dice y ese dinero se pagó.
+    try {
+      await client.query(`ALTER TABLE producto_alias ADD COLUMN IF NOT EXISTS descartado BOOLEAN NOT NULL DEFAULT FALSE`);
+      await client.query(`ALTER TABLE producto_alias ADD COLUMN IF NOT EXISTS descarte_motivo TEXT`);
+    } catch (e) { console.error("[DB] alter producto_alias descartado:", e.message); }
 
     // Segundo nivel: «Bebidas · Vinos y cavas». Un proveedor es de UNA categoría con su
     // subcategoría, no de dos categorías sueltas: así el gasto va entero a un sitio y la
@@ -4221,7 +4230,16 @@ async function comprasDeLocal(query, local) {
     // también, y lo cazó un test al portarlo.
     condLin.push(`COALESCE(l.clave,'') <> ''`);
 
+    // Lo que una persona ha marcado como «esto no es un producto»: el nombre de un local que
+    // se coló, horas de operario, media hoja de la gestoría. Sale del catálogo y de los
+    // totales —así se decidió— pero NO en silencio: se cuenta aparte y la pantalla lo dice.
+    // Un total que baja sin explicación es peor que el problema que venía a resolver.
+    const APARTADO = `EXISTS (SELECT 1 FROM producto_alias ap WHERE ap.clave = l.clave AND ap.descartado)`;
+    const condApartadas = [...condLin, APARTADO];
+    condLin.push(`NOT ${APARTADO}`);
+
     const whereLin = condLin.length ? "WHERE " + condLin.join(" AND ") : "";
+    const whereApartadas = "WHERE " + condApartadas.join(" AND ");
     const whereFac = condFac.length ? "WHERE " + condFac.join(" AND ") : "";
 
     // AGRUPA LA BASE, NO EL SERVIDOR. Un producto comprado quinientas veces es UNA fila, no
@@ -4279,6 +4297,12 @@ async function comprasDeLocal(query, local) {
       `SELECT count(DISTINCT f.id)::int AS n FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
         WHERE ${[...condFac, ALBARAN_YA_CONTADO].join(" AND ")}`, parFac);
 
+    // Y cuánto se ha apartado a mano por no ser un producto. Mismo motivo: se dice.
+    const apartadas = await dbGet(
+      `SELECT count(DISTINCT l.clave)::int AS n, COALESCE(SUM(l.importe),0)::float AS gasto
+         FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
+        ${whereApartadas}`, parLin);
+
     const grupos = filas.map(grupoDeSQL);
     // Cuántas facturas del periodo NO tienen detalle: sin esto, un total parcial parecería
     // el total de verdad. Es la diferencia entre un dato y un dato en el que se puede confiar.
@@ -4323,6 +4347,10 @@ async function comprasDeLocal(query, local) {
       },
       // Los albaranes que ya trae su factura y por eso no se cuentan dos veces.
       albaranesYaFacturados: dobles?.n || 0,
+      // Lo apartado a mano por no ser un producto: cuántas cosas y cuánto dinero. La pantalla
+      // lo enseña; si no, el total baja y nadie sabe por qué.
+      apartadas: apartadas?.n || 0,
+      apartadasGasto: apartadas?.gasto || 0,
       // Si hay más productos distintos de los que caben, se dice: el total sería el de los
       // 300 que más gasto tienen y se leería como el de todos.
       topeProductos: filas.length >= TOPE_PRODUCTOS ? TOPE_PRODUCTOS : 0,
@@ -4343,6 +4371,22 @@ async function comprasDeLocal(query, local) {
 // La cola de trabajo: qué descripciones no se han revisado todavía, ordenadas POR EL DINERO
 // QUE MUEVEN. Con cientos de textos distintos, las veinte primeras confirmaciones cubren la
 // mayor parte del histórico; por orden alfabético no termina nadie.
+/**
+ * Los nombres de la casa, con las sociedades que hay en la base. Se cachean cinco minutos: se
+ * consultan en cada listado de productos y cambian una vez al año.
+ */
+let _nombresCasa = { ts: 0, lista: null };
+async function nombresCasa() {
+  if (_nombresCasa.lista && Date.now() - _nombresCasa.ts < 5 * 60 * 1000) return _nombresCasa.lista;
+  let empresas = [];
+  try {
+    const rows = await dbAll(`SELECT DISTINCT empresa FROM facturas_locales WHERE COALESCE(empresa,'') <> ''`);
+    empresas = (rows || []).map((r) => r.empresa);
+  } catch { /* sin la tabla, se tira con los establecimientos */ }
+  _nombresCasa = { ts: Date.now(), lista: nombresDeLaCasa({ empresas }) };
+  return _nombresCasa.lista;
+}
+
 app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     // LA COLA se puede acotar a un establecimiento; EL DICCIONARIO no. Son cosas distintas:
@@ -4380,9 +4424,17 @@ app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]),
          JOIN producto_alias a ON a.clave = l.clave
         WHERE ${SIN_DUDAS}${local ? " AND f.local = ?" : ""} GROUP BY a.clave`, local ? [local] : []);
 
+    // Cada pendiente dice si PARECE que no es un producto, y por qué. Solo señala: la
+    // decisión sigue siendo de quien mira, con el motivo delante para poder juzgarlo.
+    const casa = await nombresCasa();
+    const cola = colaDeTrabajo(pendientes, productos).map((p) => {
+      const aviso = noEsProducto(p.descripcion, casa);
+      return aviso ? { ...p, aviso } : p;
+    });
+
     res.json({
       ok: true,
-      cola: colaDeTrabajo(pendientes, productos),
+      cola,
       productos,
       cobertura: cobertura(resueltos, pendientes),
       local: local || null,
@@ -4406,7 +4458,13 @@ app.post("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"])
     const descripcion = String(req.body?.descripcion || "").trim() || null;
 
     let productoId = null;
-    if (req.body?.aparte) {
+    // «No es un producto» viaja por aquí y no por un endpoint aparte: es una decisión más
+    // sobre la misma clave, y separarla habría duplicado el `ON CONFLICT` de abajo.
+    const noProducto = !!req.body?.no_producto;
+    const motivoDescarte = String(req.body?.motivo || "").trim().slice(0, 120) || null;
+    if (noProducto) {
+      productoId = null;                                   // no es mercancía: fuera del catálogo
+    } else if (req.body?.aparte) {
       productoId = null;                                   // revisado, pero no se une a nada
     } else if (req.body?.nombre_nuevo) {
       const nombre = String(req.body.nombre_nuevo).trim().slice(0, 120);
@@ -4427,14 +4485,15 @@ app.post("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"])
     }
 
     await dbRun(
-      `INSERT INTO producto_alias (clave, producto_id, descripcion, confirmado_por, confirmado_en)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO producto_alias (clave, producto_id, descripcion, confirmado_por, confirmado_en, descartado, descarte_motivo)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (clave) DO UPDATE SET producto_id = EXCLUDED.producto_id,
          descripcion = EXCLUDED.descripcion, confirmado_por = EXCLUDED.confirmado_por,
-         confirmado_en = EXCLUDED.confirmado_en`,
-      [clave, productoId, descripcion, quien, ahora]);
+         confirmado_en = EXCLUDED.confirmado_en, descartado = EXCLUDED.descartado,
+         descarte_motivo = EXCLUDED.descarte_motivo`,
+      [clave, productoId, descripcion, quien, ahora, noProducto, noProducto ? motivoDescarte : null]);
 
-    res.json({ ok: true, producto_id: productoId });
+    res.json({ ok: true, producto_id: productoId, descartado: noProducto });
   } catch (e) {
     console.error("[facturas] confirmar diccionario:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo guardar" });
@@ -4573,6 +4632,48 @@ app.delete("/api/facturas/productos/:id", requireAuth(["direccion", "contabilida
   } catch (e) {
     console.error("[facturas] borrar producto:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo borrar" });
+  }
+});
+
+/**
+ * Lo que se ha sacado del catálogo por no ser un producto.
+ *
+ * Existe porque apartar no puede ser un agujero negro: si algo desaparece de la pantalla y no
+ * hay dónde mirarlo, nadie se atreve a apartar nada — y el catálogo se queda sucio, que es de
+ * lo que veníamos.
+ */
+app.get("/api/facturas/productos/apartados", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const filas = await dbAll(
+      `SELECT a.clave, a.descarte_motivo AS motivo, a.confirmado_por AS quien, a.confirmado_en AS cuando,
+              COALESCE(MAX(l.descripcion), a.descripcion) AS descripcion,
+              COUNT(l.id)::int AS veces, COALESCE(SUM(l.importe),0)::float AS gasto,
+              string_agg(DISTINCT f.proveedor, ' · ') AS proveedores
+         FROM producto_alias a
+         LEFT JOIN factura_lineas l ON l.clave = a.clave
+         LEFT JOIN facturas f ON f.id = l.factura_id
+        WHERE a.descartado
+        GROUP BY a.clave, a.descarte_motivo, a.confirmado_por, a.confirmado_en, a.descripcion
+        ORDER BY gasto DESC NULLS LAST LIMIT 300`);
+    res.json({ ok: true, data: filas || [] });
+  } catch (e) {
+    console.error("[facturas] apartados:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar" });
+  }
+});
+
+/** Devolverlo al catálogo: vuelve a la cola tal y como estaba. */
+app.post("/api/facturas/productos/devolver", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const clave = String(req.body?.clave || "").trim();
+    if (!clave) return res.status(400).json({ ok: false, error: "Falta el producto" });
+    // Se borra el alias entero: la clave vuelve a la cola de revisar como si nunca se hubiera
+    // tocado. Dejar la fila con `descartado = FALSE` la sacaría de la cola y la dejaría en
+    // tierra de nadie — ni apartada, ni por revisar.
+    await dbRun(`DELETE FROM producto_alias WHERE clave = ? AND descartado`, [clave]);
+    res.json({ ok: true, mensaje: "Vuelve a la cola de revisar." });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "No se pudo devolver" });
   }
 });
 

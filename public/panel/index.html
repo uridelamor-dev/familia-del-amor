@@ -720,6 +720,22 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .fic-plegable>summary .mut{flex-basis:100%;margin-left:18px}
 }
 
+/* Una línea de la cola que no parece un producto: se marca la fila y el motivo va debajo,
+   escrito. Discreto y no rojo: es una sospecha, no un error. */
+.np-fila{background:var(--warning-soft)}
+.np-aviso{margin-top:3px;font-size:11.5px;color:var(--ink3);line-height:1.4}
+.np-aviso b{color:var(--ink2);font-weight:650}
+
+/* «Esto no es un producto»: los motivos, como botones. Se escribe el porqué porque la lista
+   de apartados hay que poder leerla dentro de seis meses y entender qué hace ahí cada cosa. */
+.np-motivos{display:flex;gap:6px;flex-wrap:wrap}
+.np-m{flex:1 1 200px;min-height:40px;padding:8px 11px;border:1px solid var(--border);
+  border-radius:10px;background:var(--surface);color:var(--ink2);font:inherit;font-size:12.5px;
+  text-align:left;cursor:pointer;transition:.12s}
+.np-m:hover{border-color:var(--border2)}
+.np-m.on{background:var(--brand-soft);border-color:var(--brand);color:var(--brand);font-weight:600}
+@media(max-width:520px){.np-m{flex:1 1 100%}}
+
 /* Elegir proveedor al dar de alta uno de inventario. Lista propia y no `<datalist>`: el
    nativo lo pinta cada navegador a su manera, filtra solo por el principio de la palabra y no
    deja poner nada al lado del nombre. */

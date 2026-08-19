@@ -8381,6 +8381,9 @@ async function dicPedir() {
   const loc = localActualFE();
   try { DICC = await apiRaw("/api/facturas/diccionario" + (loc ? "?local=" + encodeURIComponent(loc) : "")); }
   catch { DICC = null; }
+  // Lo apartado se pide aparte y no se espera: si falla, la cola se pinta igual. Es una lista
+  // de consulta, no un dato del que dependa nada de lo de arriba.
+  if (DICC) apiOptional("/api/facturas/productos/apartados").then((a) => { if (DICC) { DICC.apartados = a || []; dicPintar(); } });
   dicPintar();
 }
 
@@ -8402,10 +8405,13 @@ function dicPintar() {
     return;
   }
 
-  const fila = (p) => `<div class="row" data-dic-fila="${esc(p.clave)}">
+  const fila = (p) => `<div class="row ${p.aviso ? "np-fila" : ""}" data-dic-fila="${esc(p.clave)}">
       <div class="grow" style="min-width:0">
         <div class="t1">${esc(p.descripcion)}</div>
         <div class="t2">${esc(eur(p.gasto))} · ${num(p.veces)} ${p.veces === 1 ? "vez" : "veces"}${p.proveedores ? ` · ${esc(p.proveedores)}` : ""}</div>
+        ${/* El aviso va DEBAJO y con su motivo escrito: un aviso que no se puede juzgar se
+              acaba ignorando entero, y entonces deja de avisar de nada. */""}
+        ${p.aviso ? `<div class="np-aviso">Esto no parece un producto: <b>${esc(p.aviso.motivo)}</b>${p.aviso.detalle ? ` (${esc(p.aviso.detalle)})` : ""}</div>` : ""}
       </div>
       ${p.sugerido ? `<button class="btn sm primary" data-dic="unir" data-clave="${esc(p.clave)}" data-id="${p.sugerido.id}" data-desc="${esc(p.descripcion)}"
           title="Se parece un ${p.sugerido.score} %">Es «${esc(p.sugerido.nombre)}»</button>` : ""}
@@ -8413,12 +8419,18 @@ function dicPintar() {
         data-desc="${esc(p.descripcion)}">Es nuevo</button>
       <button class="btn sm" data-dic="otro" data-clave="${esc(p.clave)}" data-desc="${esc(p.descripcion)}">Otro…</button>
       <button class="btn sm" data-dic="aparte" data-clave="${esc(p.clave)}" data-desc="${esc(p.descripcion)}"
-        title="Revisado, pero no se une a ningún producto">Dejar aparte</button>
+        title="Es un producto, pero va solo: no se une a ningún otro">Va solo</button>
+      ${/* «No es un producto» es distinto de «va solo»: horas de operario, el nombre de un
+            local que se coló o media hoja de la gestoría son gasto de verdad, pero no
+            mercancía. Sin esto se quedaban en el catálogo para siempre ensuciando el precio
+            por producto, y revisar la cola no servía para quitarlos. */""}
+      <button class="btn sm danger" data-dic="noprod" data-clave="${esc(p.clave)}" data-desc="${esc(p.descripcion)}"
+        title="No es mercancía: sale del catálogo de productos. La factura no se toca">No es un producto</button>
     </div>`;
 
   pintarConservandoPliegues(caja, `<details class="card fold" style="margin-bottom:14px">
     <summary><h3>Unificar productos</h3><span class="foldr">
-      <span>${num(cola.length)} sin revisar${DICC.hayMas ? "+" : ""}${DICC.local ? ` en ${esc(nombreCortoLocal(DICC.local))}` : ""}${c.pct ? ` · ${c.pct} % del gasto ya revisado` : ""}</span>
+      <span>${num(cola.length)} sin revisar${DICC.hayMas ? "+" : ""}${DICC.local ? ` en ${esc(nombreCortoLocal(DICC.local))}` : ""}${(() => { const n = cola.filter((x) => x.aviso).length; return n ? ` · ${num(n)} no parece${n === 1 ? "" : "n"} product${n === 1 ? "o" : "os"}` : ""; })()}${c.pct ? ` · ${c.pct} % del gasto ya revisado` : ""}</span>
       <span class="car">${ic("chev", 16)}</span></span></summary>
     <p class="mut" style="margin:0 0 12px;line-height:1.55">El mismo producto se llama de dos maneras según quién
       escriba la factura, y así cuenta como dos. Diciendo cuál es cuál se puede contestar <b>cuánto compramos de
@@ -8426,9 +8438,40 @@ function dicPintar() {
       ${c.pct ? `Llevas <b>${c.pct} %</b> del gasto revisado.` : ""}
       ${DICC.local ? `Esta cola es la de <b>${esc(nombreCortoLocal(DICC.local))}</b> —cambia de establecimiento arriba para ver otra—, pero
         lo que decidas vale para todos: el producto es el mismo en todas partes.` : ""}</p>
-    <div class="rows">${cola.slice(0, 25).map(fila).join("")}</div>
+    ${/* Primero las señaladas: se despachan de un vistazo y quitan ruido de la cola. El
+          resto sigue ordenado por gasto, que es el criterio de siempre. */""}
+    <div class="rows">${[...cola].sort((a, b) => (b.aviso ? 1 : 0) - (a.aviso ? 1 : 0)).slice(0, 25).map(fila).join("")}</div>
     ${cola.length > 25 ? `<p class="mut" style="margin:10px 0 0;font-size:12px">Y ${num(cola.length - 25)} más, que irán apareciendo según decidas estas.</p>` : ""}
-  </details>${dicProductosHtml()}`);
+  </details>${dicProductosHtml()}${dicApartadosHtml()}`);
+}
+
+/**
+ * Lo que se ha sacado del catálogo por no ser un producto.
+ *
+ * Apartar no puede ser un agujero negro: si algo desaparece de la pantalla y no hay dónde
+ * mirarlo, nadie se atreve a apartar nada — y el catálogo se queda sucio, que es de lo que
+ * veníamos. Aquí se ve qué hay, por qué, quién lo decidió y cuánto dinero es; y se devuelve.
+ */
+function dicApartadosHtml() {
+  const ap = DICC?.apartados || [];
+  if (!ap.length) return "";
+  const total = ap.reduce((a, x) => a + (Number(x.gasto) || 0), 0);
+  return `<details class="card fold" style="margin-bottom:14px">
+    <summary><h3>No son productos</h3><span class="foldr">
+      <span>${num(ap.length)} · ${esc(eur(total))}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Gastos que no son mercancía: mano de obra, gestiones,
+      el nombre de un local que se coló en una factura. <b>No cuentan como productos</b> ni suman en los totales de
+      esta pantalla. Sus facturas siguen intactas y ese dinero se sigue habiendo pagado.</p>
+    <div class="rows">${ap.map((x) => `<div class="row" data-apart-fila="${esc(x.clave)}">
+        <div class="grow" style="min-width:0">
+          <div class="t1">${esc(x.descripcion || x.clave)}</div>
+          <div class="t2">${esc(eur(x.gasto))} · ${num(x.veces)} ${x.veces === 1 ? "vez" : "veces"}${x.proveedores ? ` · ${esc(x.proveedores)}` : ""}</div>
+          ${x.motivo ? `<div class="np-aviso"><b>${esc(x.motivo)}</b>${x.quien ? ` · ${esc(x.quien)}` : ""}</div>` : ""}
+        </div>
+        <button class="btn sm" data-apart="devolver" data-clave="${esc(x.clave)}"
+          title="Vuelve a la cola de revisar, como si no se hubiera tocado">Devolver</button>
+      </div>`).join("")}</div>
+  </details>`;
 }
 
 /**
@@ -8496,6 +8539,47 @@ async function dicGuardar(cuerpo, fila) {
   } catch (e) { toast("Error: " + e.message); }
 }
 
+/**
+ * «Esto no es un producto»: sale del catálogo, no de la factura.
+ *
+ * Se pregunta el MOTIVO y no se da por hecho, por dos razones: la lista de apartados hay que
+ * poder leerla dentro de seis meses y entender por qué está cada cosa, y escribir el motivo
+ * obliga a pensar un segundo antes de sacar algo del catálogo.
+ */
+function dicNoEsProducto(clave, descripcion, fila) {
+  const MOTIVOS = ["Es el nombre de un local nuestro", "Mano de obra u horas de operario",
+                   "Trabajo de mantenimiento", "Gestión (asesoría, laboral, seguros)",
+                   "Referencia de un albarán o documento", "Cuota, alquiler o suscripción"];
+  const ov = modal("Esto no es un producto", `
+    <p class="mut" style="margin:0 0 12px;line-height:1.55">Sale del catálogo de productos y de sus totales.
+      <b>La factura no se toca</b>: el documento sigue igual y ese dinero se sigue habiendo pagado.
+      Se puede deshacer.</p>
+    <div class="card" style="padding:10px 12px;margin-bottom:12px"><b style="font-size:13px">${esc(descripcion)}</b></div>
+    <div class="field"><label>¿Por qué no lo es?</label>
+      <div class="np-motivos">${MOTIVOS.map((m) => `<button type="button" class="np-m" data-m="${esc(m)}">${esc(m)}</button>`).join("")}</div>
+      <input id="npOtro" placeholder="…o escríbelo" style="margin-top:8px"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn danger" id="npOk">Sacarlo del catálogo</button></div>`);
+  let motivo = "";
+  ov.querySelector(".np-motivos").addEventListener("click", (e) => {
+    const b = e.target.closest(".np-m"); if (!b) return;
+    motivo = b.getAttribute("data-m");
+    ov.querySelectorAll(".np-m").forEach((x) => x.classList.toggle("on", x === b));
+    ov.querySelector("#npOtro").value = "";
+  });
+  ov.querySelector("#npOtro").addEventListener("input", (e) => {
+    if (e.target.value.trim()) { motivo = ""; ov.querySelectorAll(".np-m").forEach((x) => x.classList.remove("on")); }
+  });
+  ov.querySelector("#npOk").addEventListener("click", async () => {
+    const escrito = ov.querySelector("#npOtro").value.trim();
+    const m = escrito || motivo;
+    if (!m) { toast("Di por qué no es un producto"); return; }
+    ov.remove();
+    await dicGuardar({ clave, descripcion, no_producto: true, motivo: m }, fila);
+  });
+}
+
 /** Elegir a mano entre los productos que ya existen, con buscador. */
 function dicElegir(clave, descripcion, fila) {
   const productos = (DICC?.productos || []);
@@ -8534,7 +8618,19 @@ async function loadProductos() {
   comprasPaquetes();                 // tampoco se espera: es un aviso, no un dato de la tabla
   dicPedir();                        // no se espera: la cola llega cuando llegue
 
-  document.getElementById("dicRes")?.addEventListener("click", (e) => {
+  document.getElementById("dicRes")?.addEventListener("click", async (e) => {
+    const dev = e.target.closest('[data-apart="devolver"]');
+    if (dev) {
+      e.preventDefault();
+      const clave = dev.getAttribute("data-clave");
+      try {
+        await apiSend("POST", "/api/facturas/productos/devolver", { clave });
+        dev.closest("[data-apart-fila]")?.remove();
+        if (DICC) DICC.apartados = (DICC.apartados || []).filter((x) => x.clave !== clave);
+        toast("Vuelve a la cola de revisar ✅"); comprasDebounced(); dicPedir();
+      } catch (err) { toast("Error: " + err.message); }
+      return;
+    }
     const b = e.target.closest("[data-dic]");
     if (!b) return;
     const clave = b.getAttribute("data-clave");
@@ -8543,6 +8639,7 @@ async function loadProductos() {
     const q = b.getAttribute("data-dic");
     if (q === "unir") return dicGuardar({ clave, descripcion: desc, producto_id: Number(b.getAttribute("data-id")) }, fila);
     if (q === "aparte") return dicGuardar({ clave, descripcion: desc, aparte: true }, fila);
+    if (q === "noprod") return dicNoEsProducto(clave, desc, fila);
     if (q === "otro") return dicElegir(clave, desc, fila);
     if (q === "nuevo") {
       const nombre = prompt("¿Cómo se llama este producto?", b.getAttribute("data-nombre") || desc);
@@ -8921,8 +9018,34 @@ async function comprasHistorial(clave, nombre) {
       <thead><tr><th>Fecha</th><th>Proveedor</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Importe</th><th></th></tr></thead>
       <tbody>${j.compras.map(fila).join("")}</tbody></table></div>`
       : '<p class="mut">No hay compras de esto en el periodo elegido.</p>'}
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button></div>`);
+    ${/* Esta pantalla solo tenía «Cerrar»: era donde uno miraba «La Cooperativa (Blanes)»
+          metida entre los productos y no podía hacer nada. Se arregla donde se ve. */""}
+    <div style="display:flex;gap:10px;justify-content:space-between;margin-top:16px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="chRen">Cambiar el nombre</button>
+        <button class="btn danger" id="chNoProd">No es un producto</button>
+      </div>
+      <button class="btn" data-close>Cerrar</button></div>`);
   ov.querySelector(".modal").style.width = "min(880px, 96vw)";
+
+  // Renombrar. Dos caminos porque hay dos clases de fila y el usuario no tiene por qué saberlo:
+  // si ya es del diccionario se le cambia el nombre; si es una línea suelta se crea el producto
+  // con el nombre bueno y se le engancha la clave. Las dos vías ya existían en el servidor.
+  ov.querySelector("#chRen").addEventListener("click", async () => {
+    const actual = j.nombre || nombre || "";
+    const nuevo = prompt("¿Cómo debería llamarse?", actual);
+    if (!nuevo || !nuevo.trim() || nuevo.trim() === actual) return;
+    const esDelDiccionario = String(clave || "").startsWith("p:");
+    try {
+      if (esDelDiccionario) await apiSend("PUT", "/api/facturas/productos/" + String(clave).slice(2), { nombre: nuevo.trim() });
+      else await apiSend("POST", "/api/facturas/diccionario", { clave, descripcion: actual, nombre_nuevo: nuevo.trim() });
+      ov.remove(); toast("Nombre cambiado ✅"); comprasDebounced();
+    } catch (e) { toast("Error: " + e.message); }
+  });
+  ov.querySelector("#chNoProd").addEventListener("click", () => {
+    ov.remove();
+    dicNoEsProducto(clave, j.nombre || nombre, null);
+  });
   ov.addEventListener("click", (e) => {
     const b = e.target.closest("[data-vfac]");
     if (b) { ov.remove(); return comprasVerFactura(b.getAttribute("data-vfac")); }
