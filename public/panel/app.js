@@ -1032,7 +1032,13 @@ function openEstabMenu() {
   if (fijado) return;   // un solo local: no hay nada que elegir
   const mios = misLocales();
   const elegibles = MODULOS_SOLO_PUBLICO.has(CURRENT) ? localesBase().filter((l) => !sinPublico(l)) : localesBase();
-  const marcados = new Set(viendoVarios() ? localesDelAmbito() : (localActualFE() ? [localActualFE()] : []));
+  // LO QUE SE ESTÁ MARCANDO MANDA. Antes esto solo miraba el ámbito ya aplicado, así que el
+  // contador del botón se quedaba clavado en 1 —el local actual— por muchas casillas que
+  // marcaras: «Marca dos o más para juntarlos», deshabilitado, para siempre. Juntar dos
+  // establecimientos era imposible, y la casilla parecía no hacer nada.
+  const marcados = new Set(SELECCION.length ? SELECCION
+    : viendoVarios() ? localesDelAmbito()
+    : (localActualFE() ? [localActualFE()] : []));
 
   // Dos gestos en cada fila, y esa es toda la idea:
   //   · pulsar el NOMBRE  → ir solo a ese (el caso de siempre, un clic)
@@ -10813,7 +10819,10 @@ document.addEventListener("click", (e) => {
   // ámbito en cada clic haría tres recargas para juntar tres locales.
   else if (act === "estab-marca") {
     const l = t.getAttribute("data-local") || "";
-    const actuales = new Set(viendoVarios() ? localesDelAmbito() : (localActualFE() ? [localActualFE()] : []));
+    // Mismo criterio que al pintar: se parte de lo que ya hay marcado, no del ámbito aplicado.
+    const actuales = new Set(SELECCION.length ? SELECCION
+      : viendoVarios() ? localesDelAmbito()
+      : (localActualFE() ? [localActualFE()] : []));
     if (t.checked) actuales.add(l); else actuales.delete(l);
     SELECCION = localesBase().filter((x) => actuales.has(x));   // en el orden de la lista, no en el de los clics
     openEstabMenu();
