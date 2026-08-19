@@ -30,7 +30,14 @@ export const CENTROS = [
     nombre: "Blanes",
     principal: "La Tapeta - Blanes",
     barras: ["La Tapeta - Blanes", "Cooperativa - Blanes"],
+    // Se juntan del todo: se lee y se ESCRIBE bajo el centro.
     juntos: ["ventas", "compras", "personal", "inventarios"],
+    // Se juntan SOLO PARA VER. Dentro del panel, la agenda y las reseñas de las dos barras
+    // salen en la misma pantalla —quien trabaja allí las lleva a la vez—, pero cada fila
+    // conserva su barra y se escribe donde toca: una mesa reservada en la Cooperativa es una
+    // mesa de la Cooperativa, y una reseña la deja un cliente en una ficha de Google concreta.
+    // De cara al cliente siguen siendo dos locales; dentro del panel, uno.
+    vistaJunta: ["reservas", "reviews"],
   },
 ];
 
@@ -59,9 +66,13 @@ export const AMBITO_POR_RUTA = [
   ["/api/fichajes", "personal"],
   ["/api/inventario", "inventarios"],
   ["/api/inv/", "inventarios"],
-  // Sin entrada, y es una decisión: /api/reservas, /api/web, /api/reviews y /api/whatsapp
-  // siguen viendo las dos barras por separado. Y /api/dashboard tampoco entra: mezcla gasto
-  // con reservas en la misma pantalla, así que juntarlo entero juntaría también las mesas.
+  // Estos dos NO están en `juntos`: se ven juntos pero cada fila conserva su barra, porque
+  // una mesa y una reseña pasan en un sitio concreto.
+  ["/api/reservas", "reservas"],
+  ["/api/reviews", "reviews"],
+  // Sin entrada, a propósito: /api/web y /api/whatsapp configuran lo que ve el cliente y
+  // necesitan las dos barras enteras. Y /api/dashboard tampoco entra: junta ocho locales de
+  // un vistazo y ahí el desglose por barra es justo lo que se está mirando.
 ];
 
 /** El ámbito de una ruta, o null si no está mapeada (entonces no se junta nada). */
@@ -84,6 +95,12 @@ export function centroDe(local) {
 export function esJunto(centro, ambito) {
   const a = texto(ambito);
   return !!(centro && a && centro.juntos.includes(a));
+}
+
+/** ¿Se ven en la misma pantalla? Incluye lo que se junta del todo y lo que solo se junta al ver. */
+export function seVeJunto(centro, ambito) {
+  const a = texto(ambito);
+  return esJunto(centro, ambito) || !!(centro && a && (centro.vistaJunta || []).includes(a));
 }
 
 /**
@@ -110,7 +127,7 @@ export function canonico(local, ambito) {
 export function barras(local, ambito) {
   const l = texto(local);
   const c = centroDe(l);
-  return esJunto(c, ambito) ? [...c.barras] : (l ? [l] : []);
+  return seVeJunto(c, ambito) ? [...c.barras] : (l ? [l] : []);
 }
 
 /**
@@ -118,12 +135,14 @@ export function barras(local, ambito) {
  * barra secundaria desaparece de la lista porque elegirla no querría decir nada —los datos
  * que enseñaría son los del centro entero—.
  */
-export function visiblesEn(ambito, lista = []) {
+export function visiblesEn(_ambito, lista = []) {
+  // SIN mirar el ámbito, y es la corrección que pidió Uriel al ver «Blanes» y «Cooperativa -
+  // Blanes» los dos en el selector: dentro del panel es UN establecimiento, en todas las
+  // pantallas. Los dos locales separados son de cara al cliente —la web, la ficha de Google,
+  // el sitio donde se sienta— y eso se configura en pantallas que tienen su propia lista
+  // completa (Web, grupos de WhatsApp, alta de reserva), no en este selector.
   const fuera = new Set();
-  for (const c of CENTROS) {
-    if (!esJunto(c, ambito)) continue;
-    for (const b of c.barras) if (b !== c.principal) fuera.add(b);
-  }
+  for (const c of CENTROS) for (const b of c.barras) if (b !== c.principal) fuera.add(b);
   return (Array.isArray(lista) ? lista : []).filter((l) => !fuera.has(texto(l)));
 }
 
@@ -133,7 +152,7 @@ export function visiblesEn(ambito, lista = []) {
  */
 export function detalleCentro(local, ambito) {
   const c = centroDe(local);
-  if (!esJunto(c, ambito) || texto(local) !== c.principal) return null;
+  if (!seVeJunto(c, ambito) || texto(local) !== c.principal) return null;
   const otras = c.barras.filter((b) => b !== c.principal);
   if (!otras.length) return null;
   return `Incluye ${otras.join(" y ")}`;

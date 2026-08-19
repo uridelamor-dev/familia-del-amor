@@ -104,6 +104,10 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 /* Qué lleva dentro el establecimiento en esta pantalla («Incluye Cooperativa - Blanes»).
    Va dentro del propio botón y en pequeño: es un dato de apoyo, no otro control. En el móvil
    se esconde —no cabe— y el dato sigue estando en el title y en el propio selector. */
+/* De qué barra es una fila cuando la pantalla junta las dos (una reserva de la Cooperativa
+   dentro de la agenda de Blanes). Solo se pinta en la secundaria, así que en los demás
+   establecimientos no aparece nada. */
+.pill.barra{background:var(--brand-soft);color:var(--brand);border-color:var(--brand);font-size:10.5px;padding:1px 6px}
 .pick .pick-det{color:var(--ink3);font-weight:500;font-size:11px;border-left:1px solid var(--border);
   padding-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;min-width:0}
 @media(max-width:900px){.pick .pick-det{display:none}}

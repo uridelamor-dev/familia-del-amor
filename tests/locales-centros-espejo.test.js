@@ -61,12 +61,20 @@ describe("cada pantalla junta lo mismo que su ruta", () => {
     });
   }
 
-  test("reservas, reseñas y web NO se juntan en ninguno de los dos", () => {
-    for (const v of ["reservas", "reviews", "web", "dashboard"]) {
-      assert.ok(!new RegExp(`\\b${v}:`).test(mapaFE), `el panel junta ${v}, y sus datos son de cada barra`);
+  test("reservas y reseñas se ven juntas en los dos, con su ámbito propio", () => {
+    // Ámbito propio y NO «juntos»: se ven en la misma pantalla, pero cada reserva y cada
+    // reseña sigue colgando de su barra. De cara al cliente son dos locales.
+    for (const v of ["reservas", "reviews"]) {
+      assert.match(mapaFE, new RegExp(`${v}: "${v}"`), `al panel le falta el ámbito ${v}`);
+      assert.ok(AMBITO_POR_RUTA.some(([p, a]) => p === `/api/${v}` && a === v), `al servidor le falta /api/${v}`);
+      for (const c of CENTROS) assert.ok(!c.juntos.includes(v), `${v} no puede canonizarse: movería una mesa de sitio`);
     }
-    for (const r of ["/api/reservas", "/api/reviews", "/api/web", "/api/dashboard"]) {
-      assert.ok(!AMBITO_POR_RUTA.some(([p]) => p === r), `el servidor junta ${r}`);
+  });
+
+  test("la web, WhatsApp y el Dashboard quedan fuera de los dos", () => {
+    for (const v of ["web", "whatsapp", "dashboard"]) {
+      assert.ok(!new RegExp(`\\b${v}: "`).test(mapaFE), `el panel junta ${v}`);
+      assert.ok(!AMBITO_POR_RUTA.some(([p]) => p === `/api/${v}`), `el servidor junta ${v}`);
     }
   });
 });

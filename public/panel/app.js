@@ -154,6 +154,7 @@ const CENTROS_FE = [{
   principal: "La Tapeta - Blanes",
   barras: ["La Tapeta - Blanes", "Cooperativa - Blanes"],
   juntos: ["ventas", "compras", "personal", "inventarios"],
+  vistaJunta: ["reservas", "reviews"],
 }];
 // De qué ámbito es cada pantalla. Lo que no está aquí no junta nada y se comporta como antes
 // —incluido el Dashboard, que mezcla gasto con reservas y juntarlo juntaría también las mesas.
@@ -162,6 +163,8 @@ const AMBITO_POR_VISTA = {
   facturas: "compras", productos: "compras", subirfactura: "compras",
   rrhh: "personal", horarios: "personal", fichajes: "personal",
   inventarios: "inventarios",
+  // Estas dos se VEN juntas pero no se mezclan: cada reserva y cada reseña conserva su barra.
+  reservas: "reservas", reviews: "reviews",
 };
 const ambitoDeVista = (v) => AMBITO_POR_VISTA[v || CURRENT] || null;
 const centroDeFE = (local) => CENTROS_FE.find((c) => c.barras.includes(String(local || "").trim())) || null;
@@ -172,15 +175,24 @@ function centroFE(local, ambito) {
   return juntoFE(c, ambito) ? c.principal : String(local || "").trim();
 }
 /** Lo que se ofrece en el selector: donde va junto, la barra secundaria no se puede elegir. */
-function visiblesFE(ambito, lista) {
+function visiblesFE(_ambito, lista) {
+  // Sin mirar la pantalla: dentro del panel es UN establecimiento en todas. Los dos locales
+  // separados son de cara al cliente, y eso se configura en pantallas con su propia lista
+  // completa (Web, grupos de WhatsApp, alta de reserva), no en este selector.
   const fuera = new Set();
-  for (const c of CENTROS_FE) if (juntoFE(c, ambito)) for (const b of c.barras) if (b !== c.principal) fuera.add(b);
+  for (const c of CENTROS_FE) for (const b of c.barras) if (b !== c.principal) fuera.add(b);
   return (Array.isArray(lista) ? lista : []).filter((l) => !fuera.has(String(l || "").trim()));
+}
+/** ¿Es la barra secundaria de un centro? Sirve para marcar de cuál es cada fila. */
+function esBarraSecundariaFE(local) {
+  const c = centroDeFE(local);
+  return !!c && String(local || "").trim() !== c.principal;
 }
 /** Qué lleva dentro, para que nadie mire el gasto de Blanes y piense que falta la mitad. */
 function detalleCentroFE(local, ambito) {
   const c = centroDeFE(local);
-  if (!juntoFE(c, ambito) || String(local || "").trim() !== c.principal) return "";
+  const seVe = juntoFE(c, ambito) || !!(c && ambito && (c.vistaJunta || []).includes(ambito));
+  if (!seVe || String(local || "").trim() !== c.principal) return "";
   const otras = c.barras.filter((b) => b !== c.principal);
   return otras.length ? `Incluye ${otras.join(" y ")}` : "";
 }
@@ -1360,7 +1372,7 @@ function resNav(label) {
 function resCargaDot(carga) { return `<span class="dot" style="background:${CARGA_COL[carga]}" title="Carga ${carga}"></span>`; }
 function resResRow(r) {
   const tel = String(r.telefono || "").replace(/[^0-9+]/g, "");
-  return `<div class="agres"><span class="hh">${esc(r.hora || "")}</span><div class="who"><div class="t1">${esc(r.nombre_reserva || "(sin nombre)")}</div><div class="t2">${esc(r.local || "")} · ${esc(r.telefono || "")}</div></div><span class="pill">${esc(r.personas)} pax</span>${tel ? `<a class="btn sm" href="tel:${esc(tel)}" title="Llamar">Llamar</a>` : ""}<button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></div>`;
+  return `<div class="agres"><span class="hh">${esc(r.hora || "")}</span><div class="who"><div class="t1">${esc(r.nombre_reserva || "(sin nombre)")}</div><div class="t2">${esBarraSecundariaFE(r.local) ? `<span class="pill barra">${esc(nombreCortoLocal(r.local))}</span> ` : ""}${esc(nombreCortoLocal(r.local || ""))} · ${esc(r.telefono || "")}</div></div><span class="pill">${esc(r.personas)} pax</span>${tel ? `<a class="btn sm" href="tel:${esc(tel)}" title="Llamar">Llamar</a>` : ""}<button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></div>`;
 }
 function renderResDia(list) {
   const a = resAgendaDia(list, RESF.foco);

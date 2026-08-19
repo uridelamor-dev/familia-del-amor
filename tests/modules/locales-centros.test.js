@@ -10,8 +10,14 @@ import {
 // porque eso sí es de cada barra: dos direcciones, dos cartas, dos agendas de mesas.
 const TAPETA = "La Tapeta - Blanes";
 const COOP = "Cooperativa - Blanes";
+// Tres categorías, y la del medio es la que pidió Uriel al ver dos «Blanes» en el selector:
+//   JUNTOS  se lee y se ESCRIBE bajo el centro
+//   VISTA   se ven en la misma pantalla, pero cada fila conserva su barra
+//   APARTE  ni se juntan ni se ven juntos: configuran lo que ve el cliente
 const JUNTOS = ["ventas", "compras", "personal", "inventarios"];
-const SEPARADOS = ["reservas", "web", "reviews", "whatsapp"];
+const VISTA = ["reservas", "reviews"];
+const APARTE = ["web", "whatsapp"];
+const SEPARADOS = [...VISTA, ...APARTE];
 
 describe("qué barra pertenece a qué centro", () => {
   test("las dos de Blanes son el mismo centro", () => {
@@ -37,6 +43,15 @@ describe("el nombre con el que se lee y se escribe", () => {
 
   test("en lo que NO se junta, la Cooperativa sigue siendo ella", () => {
     for (const a of SEPARADOS) assert.equal(canonico(COOP, a), COOP, `no debe juntarse en ${a}`);
+  });
+
+  test("una reserva y una reseña NUNCA cambian de barra, aunque se vean juntas", () => {
+    // Es el candado del asunto: verlas en la misma pantalla es cosa del panel; el sitio donde
+    // se sienta un cliente y la ficha de Google donde deja su reseña son de una barra concreta.
+    for (const a of VISTA) {
+      assert.equal(canonico(COOP, a), COOP, `${a}: se estaría moviendo de barra`);
+      assert.equal(canonico(TAPETA, a), TAPETA);
+    }
   });
 
   test("sin ámbito no se junta nada: no se toca a ciegas", () => {
@@ -67,8 +82,12 @@ describe("las barras que hay que mirar (para lo que no se puede reescribir)", ()
     }
   });
 
-  test("en lo separado, solo la suya", () => {
-    for (const a of SEPARADOS) assert.deepEqual(barras(COOP, a), [COOP]);
+  test("y en lo que se ve junto —reservas y reseñas— también las dos", () => {
+    for (const a of VISTA) assert.deepEqual([...barras(COOP, a)].sort(), [COOP, TAPETA].sort(), `falla en ${a}`);
+  });
+
+  test("en lo que va aparte del todo, solo la suya", () => {
+    for (const a of APARTE) assert.deepEqual(barras(COOP, a), [COOP], `falla en ${a}`);
   });
 
   test("siempre un array, para que quien lo use no tenga que preguntar", () => {
@@ -87,20 +106,18 @@ describe("las barras que hay que mirar (para lo que no se puede reescribir)", ()
 describe("qué se ofrece en la barra del panel", () => {
   const TODOS = [TAPETA, COOP, "La Tapeta - Lloret", "Oficina"];
 
-  test("en lo que se junta, la Cooperativa desaparece de la lista", () => {
-    for (const a of JUNTOS) {
+  test("la Cooperativa NO se ofrece en ninguna pantalla del panel", () => {
+    // Dentro del panel es un solo establecimiento, siempre. Ver «Blanes» y «Cooperativa -
+    // Blanes» los dos en el mismo selector es justo lo que había que quitar.
+    for (const a of [...JUNTOS, ...SEPARADOS, null, "loquesea"]) {
       const v = visiblesEn(a, TODOS);
-      assert.ok(!v.includes(COOP), `la Cooperativa no debería poder elegirse en ${a}`);
+      assert.ok(!v.includes(COOP), `la Cooperativa sigue ofreciéndose en ${a}`);
       assert.ok(v.includes(TAPETA) && v.includes("La Tapeta - Lloret") && v.includes("Oficina"));
     }
   });
 
-  test("en reservas, web y reseñas sigue estando", () => {
-    for (const a of SEPARADOS) assert.deepEqual(visiblesEn(a, TODOS), TODOS, `falla en ${a}`);
-  });
-
-  test("sin ámbito se ofrece todo, como siempre", () => {
-    assert.deepEqual(visiblesEn(null, TODOS), TODOS);
+  test("pero los demás establecimientos siguen todos", () => {
+    assert.deepEqual(visiblesEn("compras", TODOS), [TAPETA, "La Tapeta - Lloret", "Oficina"]);
   });
 
   test("una lista vacía o basura no revienta", () => {
@@ -121,9 +138,13 @@ describe("de qué ámbito es cada ruta", () => {
     test(`${ruta} → ${esperado}`, () => assert.equal(ambitoDeRuta(ruta), esperado));
   }
 
+  test("reservas y reseñas tienen ámbito propio: se ven juntas, no se mezclan", () => {
+    assert.equal(ambitoDeRuta("/api/reservas"), "reservas");
+    assert.equal(ambitoDeRuta("/api/reviews/x"), "reviews");
+  });
+
   test("lo no mapeado devuelve null y se comporta como antes", () => {
-    for (const r of ["/api/reservas", "/api/reviews/x", "/api/web/y", "/api/whatsapp/z",
-                     "/api/dashboard", "/api/auth/me", "/", ""]) {
+    for (const r of ["/api/web/y", "/api/whatsapp/z", "/api/dashboard", "/api/auth/me", "/", ""]) {
       assert.equal(ambitoDeRuta(r), null, `${r} no debería juntar nada`);
     }
   });
@@ -132,9 +153,11 @@ describe("de qué ámbito es cada ruta", () => {
     assert.equal(ambitoDeRuta("/api/horarios/semana?local=Cooperativa%20-%20Blanes"), "personal");
   });
 
-  test("las reservas NO están en el mapa, y es la mitad del sentido de todo esto", () => {
-    assert.ok(!AMBITO_POR_RUTA.some(([p]) => p.startsWith("/api/reservas")),
-      "juntar las reservas sentaría a dos grupos en la misma mesa");
+  test("la web y WhatsApp quedan fuera: configuran lo que ve el cliente", () => {
+    for (const r of ["/api/web", "/api/whatsapp"]) {
+      assert.ok(!AMBITO_POR_RUTA.some(([p]) => p.startsWith(r)),
+        `${r} necesita las dos barras enteras: de cara al cliente son dos locales`);
+    }
   });
 });
 
@@ -143,8 +166,12 @@ describe("lo que se le dice a quien mira", () => {
     assert.match(detalleCentro(TAPETA, "compras") || "", /Cooperativa/);
   });
 
+  test("también donde solo se juntan para verse", () => {
+    assert.match(detalleCentro(TAPETA, "reservas") || "", /Cooperativa/);
+  });
+
   test("donde no se junta, no se dice nada", () => {
-    assert.equal(detalleCentro(TAPETA, "reservas"), null);
+    assert.equal(detalleCentro(TAPETA, "web"), null);
     assert.equal(detalleCentro("La Tapeta - Lloret", "compras"), null);
   });
 
@@ -174,8 +201,14 @@ describe("el catálogo está bien formado", () => {
 
   test("solo se juntan ámbitos que existen", () => {
     const conocidos = new Set([...JUNTOS, ...SEPARADOS]);
-    for (const c of CENTROS) for (const a of c.juntos) {
+    for (const c of CENTROS) for (const a of [...c.juntos, ...(c.vistaJunta || [])]) {
       assert.ok(conocidos.has(a), `${c.id} junta un ámbito desconocido: ${a}`);
+    }
+  });
+
+  test("ningún ámbito está a la vez en «juntos» y en «solo verse»", () => {
+    for (const c of CENTROS) for (const a of (c.vistaJunta || [])) {
+      assert.ok(!c.juntos.includes(a), `${c.id}: ${a} no puede ser las dos cosas`);
     }
   });
 });

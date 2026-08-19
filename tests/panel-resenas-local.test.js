@@ -66,7 +66,10 @@ describe("«Sin responder» sigue estando, y solo una vez", () => {
 describe("el nombre de la ficha de Google no se toca", () => {
   test("el local se traduce a fichas con locationNamesDeLocal, no se compara a pelo", () => {
     const manage = server.slice(server.indexOf('app.get("/api/reviews/manage"'), server.indexOf("// Genera un borrador"));
-    assert.match(manage, /locationNamesDeLocal\(scope, allNames\)/);
+    // Sigue siendo el ÚNICO camino; lo que cambia es que se traducen las dos barras del
+    // centro, porque dentro del panel las reseñas de Blanes son las de sus dos fichas.
+    assert.match(manage, /locationNamesDeLocal\(b, allNames\)/);
+    assert.match(manage, /barrasDelCentro\(scope, "reviews"\)/);
     assert.doesNotMatch(manage, /UPDATE google_reviews SET location_name/, "renombrar la ficha rompería el casado");
   });
 

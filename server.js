@@ -3216,7 +3216,10 @@ app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabili
     let scopeCond = "", scopeParams = [], fichas = [];
     if (scope) {
       const allNames = (await dbAll(`SELECT DISTINCT location_name FROM google_reviews WHERE location_name IS NOT NULL AND location_name <> ''`)).map((r) => r.location_name);
-      fichas = locationNamesDeLocal(scope, allNames);
+      // Las dos barras del centro a la vez: dentro del panel, las reseñas de Blanes son las
+      // de las dos fichas. Cada reseña sigue colgando de SU ficha de Google —de cara al
+      // cliente son dos locales— y responder una responde en la ficha que le toca.
+      fichas = [...new Set(barrasDelCentro(scope, "reviews").flatMap((b) => locationNamesDeLocal(b, allNames)))];
       scopeCond = fichas.length ? `location_name IN (${fichas.map(() => "?").join(",")})` : "1=0";
       scopeParams = fichas.length ? fichas : [];
     }
@@ -6249,7 +6252,9 @@ app.get("/api/reservas", requireAuth(["direccion", "encargado"]), async (req, re
     const local = scope || req.query.local; // encargado con local → siempre su local
     const where = [];
     const params = [];
-    if (local) { where.push(`local = ?`); params.push(local); }
+    // Las dos barras de Blanes en la misma agenda: quien está allí las lleva a la vez. Cada
+    // reserva conserva su local —una mesa es de un sitio— y la fila dice de cuál es.
+    if (local) { where.push(`local = ANY(?)`); params.push(barrasDelCentro(local, "reservas")); }
     if (from) { where.push(`dia >= ?`); params.push(from); }
     if (to) { where.push(`dia <= ?`); params.push(to); }
     // El historial pide de más reciente a más antigua y con tope: «todo el año pasado» de los
