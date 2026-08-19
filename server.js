@@ -12357,12 +12357,36 @@ app.get("/api/inventario/proveedores", requireAuth(INV_ROLES), async (req, res) 
 });
 
 // Sugerencias de proveedores ya vistos en facturas de compra (para no duplicar al configurar).
+/**
+ * A quién le compramos, para montar un proveedor de inventario sin escribirlo a mano.
+ *
+ * TRES MOTIVOS por los que antes faltaban proveedores, y los tres callados:
+ *
+ *  1. `LIMIT 200` con orden alfabético. Con años de facturas, todo lo que empezaba por S en
+ *     adelante simplemente no existía — y la lista no decía que estuviera cortada.
+ *  2. `WHERE local = ?`. Un proveedor al que se le compra desde otro establecimiento no salía
+ *     al montar el inventario de este, aunque sea el mismo proveedor y el mismo camión.
+ *  3. Ordenado por nombre, así que el que entra cada semana aparecía en mitad de doscientos.
+ *
+ * Ahora: todos los establecimientos a los que llega el usuario (dirección, todos), ordenados
+ * por cuántas veces ha venido, con la fecha de la última. Un encargado sigue viendo solo los
+ * suyos: el filtro es `localesDe`, no la ausencia de filtro.
+ */
 app.get("/api/inventario/facturas-proveedores", requireAuth(INV_ROLES), async (req, res) => {
   const local = String(req.query.local || "").trim();
-  if (!puedeAccederLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
+  if (local && !puedeAccederLocal(req, local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
   try {
-    const rows = await dbAll(`SELECT DISTINCT proveedor FROM facturas WHERE local = ? AND proveedor IS NOT NULL AND TRIM(proveedor) <> '' ORDER BY proveedor LIMIT 200`, [local]);
-    res.json({ ok: true, data: (rows || []).map((r) => r.proveedor) });
+    const mios = localesDe(req.user);            // [] = dirección, sin restricción
+    const rows = await dbAll(
+      `SELECT proveedor AS nombre, COUNT(*)::int AS veces, MAX(fecha) AS ultima
+         FROM facturas
+        WHERE proveedor IS NOT NULL AND TRIM(proveedor) <> ''
+          AND (? = FALSE OR local = ANY(?))
+        GROUP BY proveedor
+        ORDER BY veces DESC, ultima DESC NULLS LAST, proveedor ASC
+        LIMIT 2000`,
+      [mios.length > 0, mios.length ? mios : [""]]);
+    res.json({ ok: true, data: rows || [], ambito: mios.length ? mios : "todos" });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

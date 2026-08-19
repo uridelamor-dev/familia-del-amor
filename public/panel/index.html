@@ -720,6 +720,26 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .fic-plegable>summary .mut{flex-basis:100%;margin-left:18px}
 }
 
+/* Elegir proveedor al dar de alta uno de inventario. Lista propia y no `<datalist>`: el
+   nativo lo pinta cada navegador a su manera, filtra solo por el principio de la palabra y no
+   deja poner nada al lado del nombre. */
+.ip-lista{margin-top:8px;max-height:270px;overflow-y:auto;border:1px solid var(--border);
+  border-radius:11px;background:var(--surface);-webkit-overflow-scrolling:touch}
+.ip-op{display:flex;align-items:baseline;gap:10px;width:100%;min-height:42px;padding:9px 12px;
+  border:0;border-bottom:1px solid var(--border);background:none;color:inherit;font:inherit;
+  text-align:left;cursor:pointer;transition:.1s}
+.ip-op:last-child{border-bottom:0}
+.ip-op:hover{background:var(--surface2)}
+.ip-op.on{background:var(--brand-soft)}
+.ip-op.on .ip-nom{color:var(--brand);font-weight:650}
+.ip-nom{flex:1 1 auto;min-width:0;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ip-det{flex:none;font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums}
+@media(max-width:520px){
+  .ip-lista{max-height:210px}
+  .ip-op{flex-direction:column;align-items:flex-start;gap:1px;min-height:46px}
+  .ip-nom{white-space:normal}
+}
+
 /* Modal de turno. Qué es (turno, libra, vacaciones) se elige PRIMERO y con botones: son
    cinco opciones cortas y decidían si hacía falta rellenar medio formulario. */
 .hm-tipos{display:flex;gap:6px;flex-wrap:wrap}

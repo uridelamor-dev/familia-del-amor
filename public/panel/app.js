@@ -1721,12 +1721,75 @@ async function loadInvHistorial() {
            : `<div class="card"><p class="mut" style="margin:0">Todavía no hay ningún inventario cerrado en este establecimiento.</p></div>`);
 }
 
+// Da de alta un proveedor de inventario eligiéndolo de los que ya nos facturan.
+//
+// Antes era un `<datalist>`, el autocompletado nativo del navegador: cada navegador lo pinta a
+// su manera, filtra como quiere —Safari solo por el principio de la palabra— y con doscientas
+// opciones no hay forma de mirarlas. Encima no cabía ninguna información al lado, así que
+// «DAMM» y «Damm Distribución S.A.» eran dos líneas idénticas sin nada que las distinga.
+//
+// Ahora la lista es nuestra: se busca sin acentos ni mayúsculas y en cualquier parte del
+// nombre, cada uno dice cuántas facturas suyas hay y cuándo fue la última, y se puede escribir
+// uno que no está.
 async function invNuevoProveedor() {
-  let sugerencias = [];
-  try { sugerencias = (await apiRaw("/api/inventario/facturas-proveedores?local=" + encodeURIComponent(INV.local))).data || []; } catch { /* opcional */ }
-  const dl = sugerencias.length ? `<datalist id="invProvSug">${sugerencias.map((s) => `<option value="${esc(s)}"></option>`).join("")}</datalist>` : "";
-  const body = `<form id="fInvProv">${dl}<div class="field"><label>Nombre del proveedor</label><input name="nombre" required list="invProvSug" placeholder="Ej. Estrella Damm" autocomplete="off"></div><div class="mut" style="font-size:12px;margin-top:2px">${sugerencias.length ? "Puedes elegir uno de los proveedores ya vistos en tus facturas." : ""}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear</button></div></form>`;
+  let provs = [];
+  try { provs = (await apiRaw("/api/inventario/facturas-proveedores?local=" + encodeURIComponent(INV.local))).data || []; } catch { /* opcional */ }
+  // El servidor pasó de devolver nombres sueltos a devolver filas; se aceptan las dos formas
+  // para que un despliegue a medias no deje el modal en blanco.
+  provs = provs.map((p) => (typeof p === "string" ? { nombre: p, veces: 0, ultima: null } : p)).filter((p) => p && p.nombre);
+
+  const body = `<form id="fInvProv">
+    <div class="field"><label>Nombre del proveedor</label>
+      <input name="nombre" id="invProvQ" required placeholder="Busca o escribe el nombre…" autocomplete="off"></div>
+    <div class="ip-lista" id="invProvLista"></div>
+    <p class="mut" id="invProvPie" style="font-size:12px;margin:8px 0 0;line-height:1.5"></p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button type="button" class="btn" data-close>Cancelar</button>
+      <button type="submit" class="btn primary">Crear</button></div></form>`;
   const ov = modal("Nuevo proveedor", body);
+
+  const inp = ov.querySelector("#invProvQ"), lista = ov.querySelector("#invProvLista"), pie = ov.querySelector("#invProvPie");
+  const norm = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  let marcado = -1;
+
+  function pintar() {
+    const q = norm(inp.value.trim());
+    // En cualquier parte del nombre, no solo al principio: «damm» tiene que encontrar
+    // «Cervezas Damm», que es como está escrito en la factura.
+    const hay = q ? provs.filter((p) => norm(p.nombre).includes(q)) : provs;
+    const ver = hay.slice(0, 60);
+    if (marcado >= ver.length) marcado = ver.length - 1;
+    lista.innerHTML = ver.length ? ver.map((p, i) => `<button type="button" class="ip-op ${i === marcado ? "on" : ""}" data-n="${esc(p.nombre)}">
+        <span class="ip-nom">${esc(p.nombre)}</span>
+        <span class="ip-det">${p.veces ? `${num(p.veces)} factura${p.veces === 1 ? "" : "s"}` : ""}${p.ultima ? ` · ${esc(fechaCorta(String(p.ultima).slice(0, 10)) || String(p.ultima).slice(0, 10))}` : ""}</span>
+      </button>`).join("") : "";
+    lista.style.display = ver.length ? "" : "none";
+    pie.textContent = !provs.length ? "Todavía no hay facturas de las que sacar proveedores: escribe el nombre."
+      : !hay.length ? `Ninguno se llama así. Pulsa «Crear» y se dará de alta «${inp.value.trim()}».`
+      : hay.length > ver.length ? `${num(hay.length)} coinciden; se enseñan los ${ver.length} primeros. Sigue escribiendo para afinar.`
+      : `${num(hay.length)} de ${num(provs.length)} proveedores. Ordenados por los que más facturan.`;
+  }
+  inp.addEventListener("input", () => { marcado = -1; pintar(); });
+  // Con el teclado también: bajar, subir y Enter para elegir sin soltar las manos.
+  inp.addEventListener("keydown", (e) => {
+    const ops = [...lista.querySelectorAll(".ip-op")];
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!ops.length) return;
+      marcado = e.key === "ArrowDown" ? Math.min(marcado + 1, ops.length - 1) : Math.max(marcado - 1, 0);
+      pintar();
+      const el = lista.querySelector(".ip-op.on"); if (el) el.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && marcado >= 0 && ops[marcado]) {
+      e.preventDefault(); inp.value = ops[marcado].getAttribute("data-n"); marcado = -1; pintar();
+    }
+  });
+  lista.addEventListener("click", (e) => {
+    const b = e.target.closest(".ip-op"); if (!b) return;
+    inp.value = b.getAttribute("data-n"); marcado = -1; pintar(); inp.focus();
+  });
+  pintar();
+  setTimeout(() => inp.focus(), 30);
+
   ov.querySelector("#fInvProv").addEventListener("submit", async (e) => {
     e.preventDefault();
     const nombre = e.target.nombre.value.trim(); if (!nombre) return;
