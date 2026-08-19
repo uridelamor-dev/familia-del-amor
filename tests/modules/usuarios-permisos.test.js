@@ -162,10 +162,35 @@ describe("espejo con el panel (public/panel/app.js)", () => {
       "la lista de módulos que dependen del establecimiento no coincide");
   });
 
-  test("cada módulo tiene su entrada de menú y su vista", () => {
-    for (const m of CATALOGO_MODULOS) {
-      assert.ok(new RegExp(`\\["${m.id}",`).test(panel), `"${m.id}" no está en el menú (NAV)`);
+  // Se busca DENTRO del bloque NAV y no en todo el fichero: `["contratacion", …]` también
+  // aparece en la lista de pestañas de Equipo, y buscar suelto daba un falso positivo.
+  const NAV_TXT = (() => {
+    const i = panel.indexOf("const NAV = [");
+    const j = panel.indexOf("\n];", i);
+    assert.notEqual(i, -1, "no está NAV");
+    return panel.slice(i, j);
+  })();
+
+  test("cada módulo-PANTALLA tiene su entrada de menú y su vista", () => {
+    for (const m of CATALOGO_MODULOS.filter((x) => !x.dentroDe)) {
+      assert.ok(new RegExp(`\\["${m.id}",`).test(NAV_TXT), `"${m.id}" no está en el menú (NAV)`);
       assert.ok(new RegExp(`\\b${m.id}\\s*:\\s*load`).test(panel), `"${m.id}" no está enrutado (VIEWS)`);
+    }
+  });
+
+  test("y los que son PESTAÑA de otro no salen en el menú, que es lo que los distingue", () => {
+    // `contratacion`, `pulso` y `preguntas` viven dentro de Equipo: son casillas de permiso,
+    // no entradas de menú. Si alguno apareciera en NAV, saldría una entrada suelta que al
+    // pulsarla no llevaría a ninguna parte.
+    const hijos = CATALOGO_MODULOS.filter((x) => x.dentroDe);
+    assert.ok(hijos.length, "el desglose de Equipo tiene que existir");
+    for (const m of hijos) {
+      assert.ok(!new RegExp(`\\["${m.id}",`).test(NAV_TXT), `"${m.id}" no debería estar en el menú`);
+      assert.ok(CATALOGO_MODULOS.some((x) => x.id === m.dentroDe), `"${m.id}" cuelga de un módulo que no existe`);
+      // Y sus roles no pueden ser más amplios que los del padre: una pestaña de dentro de
+      // Equipo a la que llegue alguien que no puede entrar en Equipo es una puerta trasera.
+      const padre = CATALOGO_MODULOS.find((x) => x.id === m.dentroDe);
+      for (const r of m.roles) assert.ok(padre.roles.includes(r), `"${m.id}" da acceso a ${r}, que no tiene "${padre.id}"`);
     }
   });
 });

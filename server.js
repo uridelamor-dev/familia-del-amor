@@ -3404,7 +3404,7 @@ function localesScope(req) {
 
 // Lista canónica de establecimientos (espejo de public/auth.js window.LOCALES). Solo lectura.
 const INV_LOCALES = [
-  "La Tapeta - Blanes", "Cooperativa - Blanes", "La Tapeta - Lloret",
+  "La Tapeta - Blanes", "La Tapeta - Lloret",
   "La Tapeta - Girona", "Can Mateu - Tordera", "La Tapa Ibérica - Tordera",
   "Botiga d'en Mateu - Tordera", "Oficina",
 ];
@@ -4184,7 +4184,7 @@ async function comprasDeLocal(query, local) {
     // base de reemplazos es la clase de cosa que un día deja de funcionar en silencio.
     const req = { query };
     const condFac = ["COALESCE(f.dup_estado,'') <> 'duda'"], parFac = [];
-    if (local) { condFac.push("f.local = ?"); parFac.push(local); }
+    if (local) { condFac.push("f.local = ANY(?)"); parFac.push(comprasDe(local)); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ""))) { condFac.push("f.fecha >= ?"); parFac.push(req.query.from); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || ""))) { condFac.push("f.fecha <= ?"); parFac.push(req.query.to); }
     if (String(req.query.proveedor || "").trim()) { condFac.push("LOWER(f.proveedor) = LOWER(?)"); parFac.push(String(req.query.proveedor).trim()); }
@@ -4395,7 +4395,7 @@ app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]),
     // «lo que compro en Blanes» de una sentada, en vez de las siete mezcladas.
     const local = localScope(req) || String(req.query.local || "").trim();
     const cond = ["a.clave IS NULL", "COALESCE(l.clave,'') <> ''", SIN_DUDAS], par = [];
-    if (local) { cond.push("f.local = ?"); par.push(local); }
+    if (local) { cond.push("f.local = ANY(?)"); par.push(comprasDe(local)); }
     const pendientes = await dbAll(
       `SELECT l.clave, MAX(l.descripcion) AS descripcion, SUM(l.importe)::float AS gasto,
               COUNT(*)::int AS veces, string_agg(DISTINCT f.proveedor, ' · ') AS proveedores
@@ -4422,7 +4422,7 @@ app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]),
       `SELECT SUM(l.importe)::float AS gasto
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
          JOIN producto_alias a ON a.clave = l.clave
-        WHERE ${SIN_DUDAS}${local ? " AND f.local = ?" : ""} GROUP BY a.clave`, local ? [local] : []);
+        WHERE ${SIN_DUDAS}${local ? " AND f.local = ANY(?)" : ""} GROUP BY a.clave`, local ? [comprasDe(local)] : []);
 
     // Cada pendiente dice si PARECE que no es un producto, y por qué. Solo señala: la
     // decisión sigue siendo de quien mira, con el motivo delante para poder juzgarlo.
@@ -4758,7 +4758,7 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
     if (unificado) { cond.push("l.clave IN (SELECT clave FROM producto_alias WHERE producto_id = ?)"); par.push(Number(unificado[1])); }
     else { cond.push("l.clave = ?"); par.push(clave); }
     const local = localScope(req) || String(req.query.local || "").trim();
-    if (local) { cond.push("f.local = ?"); par.push(local); }
+    if (local) { cond.push("f.local = ANY(?)"); par.push(comprasDe(local)); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ""))) { cond.push("f.fecha >= ?"); par.push(req.query.from); }
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || ""))) { cond.push("f.fecha <= ?"); par.push(req.query.to); }
 
@@ -7411,6 +7411,11 @@ const RRHH_ROLES = ["rrhh", "direccion", "encargado"];
  * sin depender de que nadie haya corrido una migración.
  */
 const personasDe = (local) => barrasDelCentro(local, "personal");
+// Las barras donde puede estar guardado el gasto y el inventario de este centro. Igual que con
+// las personas: el histórico se LEE sumando en vez de reescribirlo, así funciona con los datos
+// tal como están y sin depender de que nadie haya corrido una migración.
+const comprasDe = (local) => barrasDelCentro(local, "compras");
+const inventarioDe = (local) => barrasDelCentro(local, "inventarios");
 /** ¿Son el mismo sitio a efectos de personal? Dos barras de un centro lo son. */
 const mismoCentroPersonal = (a, b) => !!a && !!b && localCentro(a, "personal") === localCentro(b, "personal");
 function rrhhTodoLocal(req) { return req.user && (req.user.rol === "direccion" || req.user.rol === "rrhh"); }
@@ -11555,7 +11560,10 @@ app.delete("/api/rrhh/nota/:id", requireAuth(RRHH_ROLES), async (req, res) => {
   }
 });
 
-app.get("/api/rrhh/preguntas/:mes", requireAuth(RRHH_ROLES), async (req, res) => {
+// Las preguntas del mes son del pulso, no de la ficha de nadie: mismos roles que el resto del
+// pulso. Con RRHH_ROLES entraba también el encargado, así que esconderle la pestaña no servía
+// de nada —la API le contestaba igual pidiéndola a mano—.
+app.get("/api/rrhh/preguntas/:mes", requireAuth(["direccion", "rrhh"]), async (req, res) => {
   try {
     const rows = await dbAll(
       `SELECT * FROM hr_preguntas_mes WHERE mes = ? ORDER BY orden ASC`,
@@ -12471,7 +12479,7 @@ app.get("/api/inventario/proveedores", requireAuth(INV_ROLES), async (req, res) 
         (SELECT COUNT(*) FROM inv_productos pr WHERE pr.proveedor_id = p.id AND pr.activo = TRUE) AS n_productos,
         (SELECT MAX(finalizado_en) FROM inv_sesiones s WHERE s.proveedor_id = p.id AND s.estado = 'finalizado') AS ultimo_inventario,
         (SELECT COUNT(*) FROM inv_sesiones s WHERE s.proveedor_id = p.id AND s.estado = 'en_curso') AS en_curso
-      FROM inv_proveedores p WHERE p.local = ? ORDER BY p.orden, p.nombre`, [local]);
+      FROM inv_proveedores p WHERE p.local = ANY(?) ORDER BY p.orden, p.nombre`, [inventarioDe(local)]);
     res.json({ ok: true, data: rows });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -13890,7 +13898,7 @@ app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), async (req, res) =
 
 // ── Configurador conversacional de Sara ─────────────────────────────────────
 const SARA_LOCALES = [
-  "La Tapeta - Blanes", "Cooperativa - Blanes", "La Tapeta - Lloret",
+  "La Tapeta - Blanes", "La Tapeta - Lloret",
   "La Tapeta - Girona", "Can Mateu - Tordera", "La Tapa Ibérica - Tordera",
   "Botiga d'en Mateu - Tordera"
 ];

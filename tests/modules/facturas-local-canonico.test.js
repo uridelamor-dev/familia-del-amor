@@ -29,7 +29,8 @@ describe("local canónico — lo que había suelto en las facturas", () => {
   });
   test("y cuando viene dentro de una frase entera", () => {
     assert.equal(canonizarLocal("Factura para LA TAPETA - LLORET, Carrer Sant Pere 84"), "La Tapeta - Lloret");
-    assert.equal(canonizarLocal("Entrega en cooperativa"), "Cooperativa - Blanes");
+    // «cooperativa» apunta al centro: por dentro, Blanes es un solo establecimiento.
+    assert.equal(canonizarLocal("Entrega en cooperativa"), "La Tapeta - Blanes");
   });
 });
 

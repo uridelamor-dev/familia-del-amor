@@ -10,14 +10,13 @@ import {
 // porque eso sí es de cada barra: dos direcciones, dos cartas, dos agendas de mesas.
 const TAPETA = "La Tapeta - Blanes";
 const COOP = "Cooperativa - Blanes";
-// Tres categorías, y la del medio es la que pidió Uriel al ver dos «Blanes» en el selector:
-//   JUNTOS  se lee y se ESCRIBE bajo el centro
-//   VISTA   se ven en la misma pantalla, pero cada fila conserva su barra
-//   APARTE  ni se juntan ni se ven juntos: configuran lo que ve el cliente
-const JUNTOS = ["ventas", "compras", "personal", "inventarios", "mantenimiento", "usuarios"];
-const VISTA = ["reservas", "reviews"];
+// Dos categorías, no tres. Por dentro es UN establecimiento en todos los departamentos
+// —reservas y reseñas incluidas—; los dos locales de cara al cliente viven en la web pública
+// y en las fichas de Google, que no pasan por aquí.
+const JUNTOS = ["ventas", "compras", "personal", "inventarios", "mantenimiento", "usuarios",
+                "reservas", "reviews"];
 const APARTE = ["web", "whatsapp"];
-const SEPARADOS = [...VISTA, ...APARTE];
+const SEPARADOS = [...APARTE];
 
 describe("qué barra pertenece a qué centro", () => {
   test("las dos de Blanes son el mismo centro", () => {
@@ -45,13 +44,10 @@ describe("el nombre con el que se lee y se escribe", () => {
     for (const a of SEPARADOS) assert.equal(canonico(COOP, a), COOP, `no debe juntarse en ${a}`);
   });
 
-  test("una reserva y una reseña NUNCA cambian de barra, aunque se vean juntas", () => {
-    // Es el candado del asunto: verlas en la misma pantalla es cosa del panel; el sitio donde
-    // se sienta un cliente y la ficha de Google donde deja su reseña son de una barra concreta.
-    for (const a of VISTA) {
-      assert.equal(canonico(COOP, a), COOP, `${a}: se estaría moviendo de barra`);
-      assert.equal(canonico(TAPETA, a), TAPETA);
-    }
+  test("las reservas y las reseñas también van al centro", () => {
+    // Hay UN grupo de WhatsApp de reservas para las dos barras y el alta del panel solo
+    // ofrece Blanes: una reserva de la Cooperativa no puede entrar por ningún sitio.
+    for (const a of ["reservas", "reviews"]) assert.equal(canonico(COOP, a), TAPETA, a);
   });
 
   test("sin ámbito no se junta nada: no se toca a ciegas", () => {
@@ -80,10 +76,6 @@ describe("las barras que hay que mirar (para lo que no se puede reescribir)", ()
       assert.deepEqual([...barras(COOP, a)].sort(), [COOP, TAPETA].sort(), `falla en ${a}`);
       assert.deepEqual([...barras(TAPETA, a)].sort(), [COOP, TAPETA].sort());
     }
-  });
-
-  test("y en lo que se ve junto —reservas y reseñas— también las dos", () => {
-    for (const a of VISTA) assert.deepEqual([...barras(COOP, a)].sort(), [COOP, TAPETA].sort(), `falla en ${a}`);
   });
 
   test("en lo que va aparte del todo, solo la suya", () => {
@@ -201,14 +193,14 @@ describe("el catálogo está bien formado", () => {
 
   test("solo se juntan ámbitos que existen", () => {
     const conocidos = new Set([...JUNTOS, ...SEPARADOS]);
-    for (const c of CENTROS) for (const a of [...c.juntos, ...(c.vistaJunta || [])]) {
+    for (const c of CENTROS) for (const a of c.juntos) {
       assert.ok(conocidos.has(a), `${c.id} junta un ámbito desconocido: ${a}`);
     }
   });
 
-  test("ningún ámbito está a la vez en «juntos» y en «solo verse»", () => {
-    for (const c of CENTROS) for (const a of (c.vistaJunta || [])) {
-      assert.ok(!c.juntos.includes(a), `${c.id}: ${a} no puede ser las dos cosas`);
+  test("la web y WhatsApp NO se juntan: son lo que ve el cliente", () => {
+    for (const c of CENTROS) for (const a of APARTE) {
+      assert.ok(!c.juntos.includes(a), `${c.id} junta ${a}, y ahí es donde el cliente ve dos locales`);
     }
   });
 });

@@ -16,7 +16,17 @@ export const CATALOGO_MODULOS = [
   { id: "comunicados", label: "Comunicados", roles: ["direccion", "encargado"], porLocal: false },
   { id: "mantenimiento", label: "Mantenimiento", roles: ["direccion", "encargado"], porLocal: true },
   { id: "clientes", label: "Clientes", roles: ["direccion", "marketing"], porLocal: false },
-  { id: "rrhh", label: "RR. HH.", roles: ["direccion", "rrhh", "encargado"], porLocal: true },
+  { id: "rrhh", label: "Equipo", roles: ["direccion", "rrhh", "encargado"], porLocal: true },
+  // Las tres pestañas de dentro de Equipo, sueltas. Antes «RR. HH.» era una sola casilla que
+  // daba las cuatro cosas a la vez, y dar acceso a la ficha de la gente obligaba a dar también
+  // la contratación y las respuestas del pulso. Son datos muy distintos:
+  //   · Equipo      la ficha de cada uno: contrato, documentos, horas.
+  //   · Contratación candidaturas y vacantes: currículums de gente de fuera.
+  //   · Pulso       lo que el equipo contesta sobre cómo está. Se lee agregado, y aun así.
+  //   · Preguntas   qué se les pregunta cada mes.
+  { id: "contratacion", label: "Contratación", roles: ["direccion", "rrhh"], porLocal: true, dentroDe: "rrhh" },
+  { id: "pulso", label: "Pulso del equipo", roles: ["direccion", "rrhh"], porLocal: true, dentroDe: "rrhh" },
+  { id: "preguntas", label: "Preguntas del mes", roles: ["direccion", "rrhh"], porLocal: false, dentroDe: "rrhh" },
   // Horarios y fichajes van SEPARADOS a propósito: contabilidad necesita los fichajes para
   // la nómina pero no debe poder tocar el cuadrante, y al revés el encargado planifica pero
   // no cierra periodos. Ojo: hay un espejo manual de esta lista en public/panel/app.js
@@ -77,6 +87,22 @@ export function modulosEfectivos(rol, modulosGuardados, catalogo = CATALOGO_MODU
   const guard = parseModulos(modulosGuardados);
   if (!guard.length) return delRol;
   const permit = new Set(guard);
+  // HERENCIA, y no es un capricho: el día que un módulo se parte en varios, las allowlist ya
+  // guardadas hablan del padre y no saben nada de los hijos. Sin esto, partir «RR. HH.» en
+  // cuatro le quitaría de golpe la contratación y el pulso a quien los tenía —sin que nadie
+  // lo decidiera y sin que se note hasta que alguien busca una pantalla que ya no está—.
+  //
+  // La regla: si la lista NO menciona a NINGÚN hijo de un padre que sí está, se entiende que
+  // los tiene todos. En cuanto se guarde una vez desde el panel, la lista pasa a ser explícita
+  // y manda ella.
+  const lista = (Array.isArray(catalogo) ? catalogo : []);
+  // Se decide ANTES de tocar nada: qué padres están en la lista sin ninguno de sus hijos. Si
+  // se fueran añadiendo sobre la marcha, al meter el primer hijo los demás verían un hermano
+  // ya presente y se quedarían fuera — heredaría uno solo de los tres.
+  const padres = [...new Set(lista.filter((m) => m.dentroDe).map((m) => m.dentroDe))];
+  const heredan = padres.filter((p) => permit.has(p)
+    && !lista.some((x) => x.dentroDe === p && permit.has(x.id)));
+  for (const m of lista) if (m.dentroDe && heredan.includes(m.dentroDe)) permit.add(m.id);
   return delRol.filter((id) => permit.has(id));
 }
 
@@ -117,6 +143,12 @@ export const MODULO_POR_RUTA = [
   ["/api/plantillas", "campanas"],
   ["/api/audiencias", "campanas"],
   ["/api/reviews", "reviews"],
+  // OJO AL ORDEN: se recorre de arriba abajo y gana la primera que casa, así que las hijas
+  // van antes que `/api/rrhh`. Al revés, «pulso» nunca se alcanzaría.
+  ["/api/rrhh/pulso", "pulso"],
+  ["/api/rrhh/preguntas", "preguntas"],
+  ["/api/hr/", "contratacion"],
+  ["/api/rrhh", "rrhh"],
   ["/api/horarios", "horarios"],
   ["/api/fichajes", "fichajes"],
   ["/api/agora", "analitica"],

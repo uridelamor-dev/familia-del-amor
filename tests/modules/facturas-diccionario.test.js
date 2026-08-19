@@ -165,7 +165,7 @@ describe("cableado del diccionario", () => {
     // Un producto es el mismo en Blanes y en Lloret —de eso va unificar, de poder comparar el
     // precio entre locales—; lo que se acota es el trabajo de revisar, no lo decidido.
     const fn = server.slice(server.indexOf('app.get("/api/facturas/diccionario"'), server.indexOf('app.post("/api/facturas/diccionario"'));
-    assert.match(fn, /if \(local\) \{ cond\.push\("f\.local = \?"\); par\.push\(local\); \}/);
+    assert.match(fn, /if \(local\) \{ cond\.push\("f\.local = ANY\(\?\)"\); par\.push\(comprasDe\(local\)\); \}/);
     // La lista de productos canónicos NO lleva filtro de local.
     const listaProductos = fn.slice(fn.indexOf("FROM productos_canonicos"), fn.indexOf("FROM productos_canonicos") + 300);
     assert.doesNotMatch(listaProductos, /f\.local/);

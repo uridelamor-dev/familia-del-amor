@@ -215,9 +215,11 @@
   // ── Locales (fuente única de verdad) ───────────────────────────────────
   // Antes esta lista estaba copiada a mano en ~13 sitios con órdenes
   // distintos. Ahora vive aquí y los <select> se rellenan solos.
+  // La Cooperativa NO está: por dentro, Blanes es un solo establecimiento en todos los
+  // departamentos. De cara al cliente sigue siendo un local aparte, pero eso vive en la web
+  // pública (que tiene su propia lista con su página) y en su ficha de Google.
   const LOCALES = [
     "La Tapeta - Blanes",
-    "Cooperativa - Blanes",
     "La Tapeta - Lloret",
     "La Tapeta - Girona",
     "Can Mateu - Tordera",

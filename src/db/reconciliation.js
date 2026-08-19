@@ -8,7 +8,6 @@ import crypto from "crypto";
 // Catálogo canónico inicial (sin inventar empresas ni CIF).
 export const CATALOGO_CANONICO = [
   "La Tapeta - Blanes",
-  "Cooperativa - Blanes",
   "La Tapeta - Lloret",
   "La Tapeta - Girona",
   "Can Mateu - Tordera",

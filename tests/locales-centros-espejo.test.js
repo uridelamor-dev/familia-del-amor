@@ -61,13 +61,14 @@ describe("cada pantalla junta lo mismo que su ruta", () => {
     });
   }
 
-  test("reservas y reseñas se ven juntas en los dos, con su ámbito propio", () => {
-    // Ámbito propio y NO «juntos»: se ven en la misma pantalla, pero cada reserva y cada
-    // reseña sigue colgando de su barra. De cara al cliente son dos locales.
+  test("reservas y reseñas van al centro como todo lo demás", () => {
+    // Por dentro es UN establecimiento en todos los departamentos. Los dos locales de cara al
+    // cliente no salen de aquí: la web va por WEB_LOCALES y las reseñas se casan con la ficha
+    // de Google por su nombre.
     for (const v of ["reservas", "reviews"]) {
       assert.match(mapaFE, new RegExp(`${v}: "${v}"`), `al panel le falta el ámbito ${v}`);
       assert.ok(AMBITO_POR_RUTA.some(([p, a]) => p === `/api/${v}` && a === v), `al servidor le falta /api/${v}`);
-      for (const c of CENTROS) assert.ok(!c.juntos.includes(v), `${v} no puede canonizarse: movería una mesa de sitio`);
+      for (const c of CENTROS) assert.ok(c.juntos.includes(v), `${v} debería juntarse`);
     }
   });
 

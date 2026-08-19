@@ -183,7 +183,9 @@ describe("cableado en el servidor", () => {
     assert.match(bloque, /for \(const l of locales\) partes\.push\(await comprasDeLocal/);
     assert.match(bloque, /fusionarCompras\(partes/);
     const fn = server.indexOf("async function comprasDeLocal(");
-    assert.match(server.slice(fn, fn + 900), /condFac\.push\("f\.local = \?"\)/);
+    // Acotado sigue estando; lo que cambia es que un centro son sus dos barras y el gasto de
+    // la Cooperativa se lee sin haber reescrito ninguna factura.
+    assert.match(server.slice(fn, fn + 900), /condFac\.push\("f\.local = ANY\(\?\)"\); parFac\.push\(comprasDe\(local\)\)/);
   });
 
   test("el panel manda los locales elegidos cuando se están mirando varios", () => {

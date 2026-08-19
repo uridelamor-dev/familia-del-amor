@@ -220,7 +220,7 @@ describe("la cola del diccionario se puede despachar por establecimiento", () =>
 
   test("y la cobertura se mide sobre lo mismo que la cola", () => {
     // Si la cola es de Blanes y el «ya revisado» de los siete, el porcentaje no dice nada.
-    assert.match(server, /WHERE \$\{SIN_DUDAS\}\$\{local \? " AND f\.local = \?" : ""\} GROUP BY a\.clave/);
+    assert.match(server, /WHERE \$\{SIN_DUDAS\}\$\{local \? " AND f\.local = ANY\(\?\)" : ""\} GROUP BY a\.clave/);
   });
 
   test("y se dice en pantalla que lo decidido vale para todos los locales", () => {

@@ -13,8 +13,16 @@
 // que lo asigne una persona. Adivinar mal es peor que no adivinar — una factura de Lloret
 // contada en Blanes descuadra los dos locales a la vez.
 
+// LA COOPERATIVA NO ESTÁ, y es una decisión: por dentro, Blanes es UN establecimiento. Sus
+// alias («cooperativa», «coop blanes») apuntan al centro, así que una factura que llegue
+// nombrándola se guarda ya donde toca. De cara al cliente sigue siendo un local aparte —con su
+// página web y su ficha de Google—, pero eso no pasa por esta lista.
+//
+// Lo histórico guardado como «Cooperativa - Blanes» se sigue leyendo: de eso se encarga
+// `src/modules/locales/centros.js`, que dice DÓNDE HAY QUE MIRAR. Esta lista dice DÓNDE SE
+// ESCRIBE. Son dos preguntas distintas y confundirlas haría desaparecer lo viejo.
 export const LOCALES = [
-  "La Tapeta - Blanes", "Cooperativa - Blanes", "La Tapeta - Lloret",
+  "La Tapeta - Blanes", "La Tapeta - Lloret",
   "La Tapeta - Girona", "Can Mateu - Tordera", "La Tapa Ibérica - Tordera",
   "Botiga d'en Mateu - Tordera", "Oficina",
 ];
@@ -37,10 +45,10 @@ export const ALIAS = {
   "la tapeta blanes": "La Tapeta - Blanes",
   "blanes": "La Tapeta - Blanes",
   "tapeta muralla 21": "La Tapeta - Blanes",
-  // Cooperativa - Blanes
-  "cooperativa": "Cooperativa - Blanes",
-  "cooperativa blanes": "Cooperativa - Blanes",
-  "coop blanes": "Cooperativa - Blanes",
+  // La Cooperativa es la otra barra del MISMO establecimiento: su gasto es gasto de Blanes.
+  "cooperativa": "La Tapeta - Blanes",
+  "cooperativa blanes": "La Tapeta - Blanes",
+  "coop blanes": "La Tapeta - Blanes",
   // La Tapeta - Lloret
   "tapeta lloret": "La Tapeta - Lloret",
   "la tapeta lloret": "La Tapeta - Lloret",

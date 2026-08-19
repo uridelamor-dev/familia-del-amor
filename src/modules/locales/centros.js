@@ -30,14 +30,17 @@ export const CENTROS = [
     nombre: "Blanes",
     principal: "La Tapeta - Blanes",
     barras: ["La Tapeta - Blanes", "Cooperativa - Blanes"],
-    // Se juntan del todo: se lee y se ESCRIBE bajo el centro.
-    juntos: ["ventas", "compras", "personal", "inventarios", "mantenimiento", "usuarios"],
-    // Se juntan SOLO PARA VER. Dentro del panel, la agenda y las reseñas de las dos barras
-    // salen en la misma pantalla —quien trabaja allí las lleva a la vez—, pero cada fila
-    // conserva su barra y se escribe donde toca: una mesa reservada en la Cooperativa es una
-    // mesa de la Cooperativa, y una reseña la deja un cliente en una ficha de Google concreta.
-    // De cara al cliente siguen siendo dos locales; dentro del panel, uno.
-    vistaJunta: ["reservas", "reviews"],
+    // TODO. Por dentro es UN establecimiento, en todos los departamentos, sin excepciones:
+    // reservas y reseñas incluidas. Estuvieron un tiempo a medias —se veían juntas pero cada
+    // fila conservaba su barra— y ya no tiene sentido: hay un solo grupo de WhatsApp de
+    // reservas para las dos y el alta del panel solo ofrece Blanes, así que una reserva de la
+    // Cooperativa no puede entrar por ningún sitio.
+    //
+    // LOS DOS LOCALES DE CARA AL CLIENTE NO SALEN DE AQUÍ, y por eso se puede tener todo: la
+    // web pública va por `WEB_LOCALES` (su propia lista, con la página de la Cooperativa) y
+    // las reseñas se casan con la ficha de Google por su nombre, no por este identificador.
+    juntos: ["ventas", "compras", "personal", "inventarios", "mantenimiento", "usuarios",
+             "reservas", "reviews"],
   },
 ];
 
@@ -102,11 +105,6 @@ export function esJunto(centro, ambito) {
   return !!(centro && a && centro.juntos.includes(a));
 }
 
-/** ¿Se ven en la misma pantalla? Incluye lo que se junta del todo y lo que solo se junta al ver. */
-export function seVeJunto(centro, ambito) {
-  const a = texto(ambito);
-  return esJunto(centro, ambito) || !!(centro && a && (centro.vistaJunta || []).includes(a));
-}
 
 /**
  * El nombre con el que hay que leer y escribir en este ámbito.
@@ -132,7 +130,7 @@ export function canonico(local, ambito) {
 export function barras(local, ambito) {
   const l = texto(local);
   const c = centroDe(l);
-  return seVeJunto(c, ambito) ? [...c.barras] : (l ? [l] : []);
+  return esJunto(c, ambito) ? [...c.barras] : (l ? [l] : []);
 }
 
 /**
@@ -157,7 +155,7 @@ export function visiblesEn(_ambito, lista = []) {
  */
 export function detalleCentro(local, ambito) {
   const c = centroDe(local);
-  if (!seVeJunto(c, ambito) || texto(local) !== c.principal) return null;
+  if (!esJunto(c, ambito) || texto(local) !== c.principal) return null;
   const otras = c.barras.filter((b) => b !== c.principal);
   if (!otras.length) return null;
   return `Incluye ${otras.join(" y ")}`;

@@ -117,10 +117,10 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { contratacion: "Contratación", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], contratacion: ["direccion", "rrhh"], pulso: ["direccion", "rrhh"], preguntas: ["direccion", "rrhh"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
-const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "horarios", "fichajes", "usuarios"]);
+const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "contratacion", "pulso", "horarios", "fichajes", "usuarios"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
 function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol)); }
 // ¿El usuario actual puede entrar a `view`? Respeta rol + allowlist efectiva (USER.modulos del token).
@@ -2787,11 +2787,15 @@ function rrParseResp(v) { if (!v) return []; if (Array.isArray(v)) return v; try
 // centrales de RRHH/dirección).
 function rrTabsPermitidas() {
   // «Equipo» va primero: es lo que se abre a diario. Contratar es puntual.
-  // «Pulso» no está para el encargado: la pregunta 2 va sobre él, y en un local pequeño
-  // ver la media de su equipo es leer las respuestas de su gente. El filtro de abajo ya
-  // lo deja solo con «Equipo», así que basta con no añadírsela.
-  const T = [["seguimiento", "Equipo"], ["contratacion", "Contratación"], ["pulso", "Pulso del equipo"], ["preguntas", "Preguntas del mes"]];
-  return USER.rol === "encargado" ? T.filter(([id]) => id === "seguimiento") : T;
+  //
+  // POR PERMISO, NO POR ROL. Antes bastaba con ser encargado para quedarse solo con «Equipo»,
+  // y no había forma de dar la ficha del equipo a alguien de RR. HH. sin darle además las
+  // candidaturas y lo que su gente contesta en el pulso. Ahora cada pestaña es una casilla en
+  // los permisos de su usuario. Y esconderla no es la protección: los endpoints de detrás
+  // comprueban lo mismo (ver `moduloDeRuta` y los roles de /api/rrhh/pulso y /api/hr).
+  const T = [["seguimiento", "Equipo", "rrhh"], ["contratacion", "Contratación", "contratacion"],
+             ["pulso", "Pulso del equipo", "pulso"], ["preguntas", "Preguntas del mes", "preguntas"]];
+  return T.filter(([, , mod]) => puedeVer(mod)).map(([id, lab]) => [id, lab]);
 }
 function rrTabs() {
   const T = rrTabsPermitidas();
