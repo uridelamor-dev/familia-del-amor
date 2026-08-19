@@ -131,11 +131,15 @@ describe("Fichajes · cada endpoint comprueba el local en el servidor", () => {
 
   test("el kiosco solo deja fichar a la gente de la tablet, y solo si está activa hoy", () => {
     const b = bloque('app.get("/api/fichar/:token"', '// PIN. Rate limit MUY corto');
-    assert.match(b, /WHERE local = \? AND \$\{SQL_ACTIVO_EL_DIA\}/);
+    // Acotado sigue estando: `personasDe` son las barras del CENTRO de esa tablet —las dos de
+    // Blanes, una sola para el resto— y nunca la gente de otro establecimiento.
+    assert.match(b, /WHERE local = ANY\(\?\) AND \$\{SQL_ACTIVO_EL_DIA\}/);
+    assert.match(b, /personasDe\(disp\.local\)/);
     const pin = bloque('app.post("/api/fichar/:token/pin"', "// El fichaje. La hora sale de");
-    assert.match(pin, /worker\.local !== disp\.local/, "un PIN de otro local no vale en esta tablet");
+    assert.match(pin, /mismoCentroPersonal\(worker\.local, disp\.local\)/, "un PIN de otro centro no vale en esta tablet");
+    assert.match(server, /const mismoCentroPersonal = \(a, b\) => !!a && !!b && localCentro\(a, "personal"\) === localCentro\(b, "personal"\)/);
     const ev = bloque('app.post("/api/fichar/:token/evento"', "// ── Panel: quién está dentro");
-    assert.match(ev, /worker\.local !== disp\.local/);
+    assert.match(ev, /mismoCentroPersonal\(worker\.local, disp\.local\)/);
   });
 
   test("el ticket del kiosco está atado a SU tablet", () => {
@@ -170,7 +174,10 @@ describe("Equipo · un id cambiado a mano no salta el ámbito", () => {
   test("el listado de trabajadores acota al local del encargado en el SERVIDOR", () => {
     const b = bloque('app.get("/api/rrhh/trabajadores"', "// Alta de trabajador desde RRHH");
     assert.match(b, /const scope = rrhhLocalScope\(req\)/);
-    assert.match(b, /AND local = \?/);
+    // Acotado al centro, no a la barra: quien está dado de alta en la Cooperativa es de la
+    // misma plantilla que quien está en La Tapeta, y filtrando por barra desaparecía.
+    assert.match(b, /AND local = ANY\(\?\)/);
+    assert.match(b, /personasDe\(scope\)/);
   });
 
   test("el encargado no puede crear gente en otro local ni ascender a nadie", () => {

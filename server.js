@@ -7399,6 +7399,20 @@ const SQL_ESTUVO_ENTRE = `${SQL_PLANTILLA}
   AND (fecha_alta IS NULL OR fecha_alta <= ?) AND (fecha_baja IS NULL OR fecha_baja >= ?)`;
 
 const RRHH_ROLES = ["rrhh", "direccion", "encargado"];
+/**
+ * Las barras donde puede estar una persona de este centro.
+ *
+ * `users.local` guarda la barra concreta en la que se dio de alta a cada uno, y esa columna no
+ * se traduce sola: el cableado de centros traduce lo que se PIDE, no lo que hay en cada ficha.
+ * Sin esto, quien esté dado de alta en la Cooperativa desaparecía del cuadrante, del kiosco y
+ * de la revisión de fichajes de Blanes — gente que se esfuma, que es el peor fallo posible.
+ *
+ * Se lee sumando en vez de reescribir las fichas: así funciona con los datos como están hoy,
+ * sin depender de que nadie haya corrido una migración.
+ */
+const personasDe = (local) => barrasDelCentro(local, "personal");
+/** ¿Son el mismo sitio a efectos de personal? Dos barras de un centro lo son. */
+const mismoCentroPersonal = (a, b) => !!a && !!b && localCentro(a, "personal") === localCentro(b, "personal");
 function rrhhTodoLocal(req) { return req.user && (req.user.rol === "direccion" || req.user.rol === "rrhh"); }
 function rrhhLocalScope(req) { return rrhhTodoLocal(req) ? null : localScope(req); } // null = sin restricción
 function rrhhPuedeLocal(req, local) {
@@ -7416,7 +7430,7 @@ app.get("/api/rrhh/trabajadores", requireAuth(RRHH_ROLES), async (req, res) => {
     // personas con ochenta antiguos mezclados no es una plantilla: por defecto se enseña a
     // quien trabaja hoy, y quien se fue se pide a propósito.
     const rows = scope
-      ? await dbAll(`SELECT id, username, nombre, rol, local, puesto, fecha_alta, fecha_baja, activo FROM users WHERE rol IN ('trabajador','encargado') AND local = ? ORDER BY nombre ASC`, [scope])
+      ? await dbAll(`SELECT id, username, nombre, rol, local, puesto, fecha_alta, fecha_baja, activo FROM users WHERE rol IN ('trabajador','encargado') AND local = ANY(?) ORDER BY nombre ASC`, [personasDe(scope)])
       : await dbAll(`SELECT id, username, nombre, rol, local, puesto, fecha_alta, fecha_baja, activo FROM users WHERE rol IN ('trabajador','encargado') ORDER BY local ASC, nombre ASC`);
     const hoy = hoyISO();
     const conEstado = (rows || []).map((w) => ({ ...w, estado: estadoLaboral(w, hoy) }));
@@ -7595,7 +7609,7 @@ app.get("/api/rrhh/resumen", requireAuth(RRHH_ROLES), async (req, res) => {
     const scope = rrhhLocalScope(req);
     const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes || "")) ? req.query.mes : new Date().toISOString().slice(0, 7);
     const trabajadores = scope
-      ? await dbAll("SELECT id, nombre, local, activo, fecha_alta, fecha_baja, fecha_nac, telefono FROM users WHERE rol IN ('trabajador','encargado') AND local = ?", [scope])
+      ? await dbAll("SELECT id, nombre, local, activo, fecha_alta, fecha_baja, fecha_nac, telefono FROM users WHERE rol IN ('trabajador','encargado') AND local = ANY(?)", [personasDe(scope)])
       : await dbAll("SELECT id, nombre, local, activo, fecha_alta, fecha_baja, fecha_nac, telefono FROM users WHERE rol IN ('trabajador','encargado')");
     // Sin teléfono no les podemos escribir (ni el pulso, ni avisos). Lo rellenan ellos
     // desde su perfil, pero conviene ver de un vistazo a cuántos les falta.
@@ -7681,8 +7695,8 @@ app.get("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) =>
       // Ojo: aquí NO se filtra por fecha_baja para poder pintar la parte de la semana que sí
       // trabajó; lo decide `descansosPorDia` día a día.
       dbAll(`SELECT id, nombre, username, puesto, fecha_alta, fecha_baja FROM users
-             WHERE local = ? AND COALESCE(activo,1) = 1 AND ${SQL_ESTUVO_ENTRE}
-             ORDER BY nombre`, [local, sumaDias(lunes, 6), lunes]),
+             WHERE local = ANY(?) AND COALESCE(activo,1) = 1 AND ${SQL_ESTUVO_ENTRE}
+             ORDER BY nombre`, [personasDe(local), sumaDias(lunes, 6), lunes]),
     ]);
     // Se trabaja siempre sobre el borrador; si no hay, se ve la publicada en solo lectura.
     const semana = await dbGet(
@@ -8054,7 +8068,7 @@ app.get("/api/horarios/semana/:id/conflictos", requireAuth(HORARIOS_ROLES), asyn
     const dias = diasSemana(s.lunes);
     const [asignaciones, equipo, areas, tramos, ctx] = await Promise.all([
       dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]),
-      dbAll(`SELECT id, nombre, username, areas_configuradas_en FROM users WHERE local = ? AND rol IN ('trabajador','encargado')`, [s.local]),
+      dbAll(`SELECT id, nombre, username, areas_configuradas_en FROM users WHERE local = ANY(?) AND rol IN ('trabajador','encargado')`, [personasDe(s.local)]),
       dbAll(`SELECT id, nombre FROM hor_areas WHERE local = ?`, [s.local]),
       dbAll(`SELECT id, nombre FROM hor_tramos WHERE local = ?`, [s.local]),
       horContexto(s.local, s.lunes, dias),
@@ -8103,7 +8117,7 @@ app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (
     // sus turnos tenían que copiarse. Y al revés: no basta con que esté «activo», porque
     // entonces se le copiarían también los días de después de irse.
     const equipo = await dbAll(
-      `SELECT id, nombre, fecha_alta, fecha_baja, activo, areas_configuradas_en FROM users WHERE local = ? AND ${SQL_PLANTILLA}`,
+      `SELECT id, nombre, fecha_alta, fecha_baja, activo, areas_configuradas_en FROM users WHERE local = ANY(?) AND ${SQL_PLANTILLA}`,
       [destino.local]);
     const porWorker = new Map(equipo.map((w) => [String(w.id), w]));
     const { ausencias } = await horContexto(destino.local, destino.lunes, diasDestino);
@@ -8162,7 +8176,7 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
 
     const dias = diasSemana(s.lunes);
     const asignaciones = (await q(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id])).rows;
-    const equipo = (await q(`SELECT id, nombre, username, areas_configuradas_en FROM users WHERE local = ? AND ${SQL_PLANTILLA}`, [s.local])).rows;
+    const equipo = (await q(`SELECT id, nombre, username, areas_configuradas_en FROM users WHERE local = ANY(?) AND ${SQL_PLANTILLA}`, [personasDe(s.local)])).rows;
     // La PLANTILLA del snapshot: quien estuvo en esa semana, aunque ya se haya ido. Filtrar
     // por `activo` aquí borraría del papel a quien trabajó y luego causó baja.
     const plantilla = (await q(`SELECT id, nombre, username, fecha_alta, fecha_baja FROM users
@@ -8414,7 +8428,7 @@ app.get("/api/horarios/plantilla", requireAuth(HORARIOS_ROLES), async (req, res)
                     duracion_min, ventana_inicio_min, ventana_fin_min, etiqueta
              FROM hor_necesidades WHERE local = ?`, [local]),
       dbAll(`SELECT c.id, c.worker_id, c.desde, c.hasta, c.horas_semana, c.dias_semana FROM hor_contratos c
-             JOIN users u ON u.id = c.worker_id WHERE u.local = ? ORDER BY c.worker_id, c.desde DESC`, [local]),
+             JOIN users u ON u.id = c.worker_id WHERE u.local = ANY(?) ORDER BY c.worker_id, c.desde DESC`, [personasDe(local)]),
       dbAll(`SELECT a.id, a.worker_id, a.tipo, a.desde, a.hasta, a.estado, a.motivo, a.origen,
                     a.comentario, a.respuesta, a.solicitado_por, a.resuelto_por
                FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
@@ -8594,11 +8608,11 @@ app.get("/api/horarios/capacidades", requireAuth(HORARIOS_ROLES), async (req, re
     if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
     const [equipo, areas, filas] = await Promise.all([
       dbAll(`SELECT id, nombre, username, puesto, areas_configuradas_en, areas_configuradas_por
-               FROM users WHERE local = ? AND ${SQL_PLANTILLA} AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL
+               FROM users WHERE local = ANY(?) AND ${SQL_PLANTILLA} AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL
               ORDER BY nombre`, [local]),
       dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
       dbAll(`SELECT wa.worker_id, wa.area_id, wa.principal FROM hor_worker_areas wa
-               JOIN users u ON u.id = wa.worker_id WHERE u.local = ?`, [local]).catch(() => []),
+               JOIN users u ON u.id = wa.worker_id WHERE u.local = ANY(?)`, [personasDe(local)]).catch(() => []),
     ]);
     const porWorker = new Map();
     for (const f of filas) {
@@ -8994,8 +9008,8 @@ app.post("/api/horarios/generar", requireAuth(HORARIOS_ROLES), async (req, res) 
       // planteárselo.
       dbAll(`SELECT a.* FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
               WHERE u.local = ? AND a.estado = 'aprobada'`, [local]),
-      dbAll(`SELECT c.* FROM hor_contratos c JOIN users u ON u.id = c.worker_id WHERE u.local = ?`, [local]),
-      dbAll(`SELECT d.* FROM hor_disponibilidad d JOIN users u ON u.id = d.worker_id WHERE u.local = ?`, [local]),
+      dbAll(`SELECT c.* FROM hor_contratos c JOIN users u ON u.id = c.worker_id WHERE u.local = ANY(?)`, [personasDe(local)]),
+      dbAll(`SELECT d.* FROM hor_disponibilidad d JOIN users u ON u.id = d.worker_id WHERE u.local = ANY(?)`, [personasDe(local)]),
     ]);
     if (!necesidades.length) {
       return res.status(409).json({ ok: false, error: "Antes hay que decir cuánta gente hace falta cada día. Sin eso no hay nada que generar." });
@@ -9051,7 +9065,7 @@ app.post("/api/horarios/generar/aceptar", requireAuth(HORARIOS_ROLES), async (re
     // La propuesta da la vuelta por el navegador antes de volver, así que el `worker_id` que
     // llega aquí es del cliente: se comprueba contra la plantilla del local igual que en el
     // alta manual de un turno. Una sola consulta para todos, no una por línea.
-    const suyos = new Set((await q(`SELECT id FROM users WHERE local = ? AND ${SQL_PLANTILLA}`, [local]))
+    const suyos = new Set((await q(`SELECT id FROM users WHERE local = ANY(?) AND ${SQL_PLANTILLA}`, [personasDe(local)]))
       .rows.map((w) => String(w.id)));
     let n = 0;
     const rechazadas = [];
@@ -9297,8 +9311,8 @@ app.get("/api/fichar/:token", async (req, res) => {
       // `fecha_baja IS NULL` dejaba fuera a quien tiene la baja puesta para dentro de una
       // semana: sigue viniendo a trabajar y no podía fichar. Ahora se compara con el día.
       `SELECT id, nombre, pin_hash IS NOT NULL AS tiene_pin, pin_len FROM users
-       WHERE local = ? AND ${SQL_ACTIVO_EL_DIA}
-       ORDER BY nombre ASC`, [disp.local, m.diaNegocio, m.diaNegocio]);
+       WHERE local = ANY(?) AND ${SQL_ACTIVO_EL_DIA}
+       ORDER BY nombre ASC`, [personasDe(disp.local), m.diaNegocio, m.diaNegocio]);
 
     const eventos = await dbAll(
       `SELECT worker_id, id, tipo, ocurrido_en, epoch_ms, anulado_por FROM fic_eventos
@@ -9341,7 +9355,12 @@ app.post("/api/fichar/:token/pin", async (req, res) => {
       `SELECT id, nombre, local, pin_hash, pin_temporal, pin_intentos, pin_bloqueado_hasta FROM users WHERE id = ?`, [workerId]);
     // Mismo mensaje si no existe, si es de otro local o si no tiene PIN: la pantalla del
     // kiosco no debe servir para averiguar quién trabaja dónde.
-    if (!worker || worker.local !== disp.local || !worker.pin_hash) {
+    //
+    // «De otro local» significa de otro CENTRO: las dos barras de Blanes son un sitio y su
+    // gente ficha en cualquiera de las dos tablets. Comparando la barra a pelo, quien está
+    // dado de alta en la Cooperativa salía en la lista de la tablet de La Tapeta y su PIN se
+    // rechazaba — que es peor que no salir, porque parece que el PIN está mal.
+    if (!worker || !mismoCentroPersonal(worker.local, disp.local) || !worker.pin_hash) {
       return res.status(401).json({ ok: false, error: "PIN incorrecto." });
     }
 
@@ -9404,7 +9423,7 @@ app.post("/api/fichar/:token/evento", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Acción no válida" });
     }
     const worker = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [sesion.workerId]);
-    if (!worker || worker.local !== disp.local) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    if (!worker || !mismoCentroPersonal(worker.local, disp.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
 
     // Idempotencia: la tablet manda el mismo id si reintenta. La UNIQUE de la columna es
     // la que de verdad lo garantiza; esto solo evita el error feo en el caso normal.
@@ -11727,7 +11746,7 @@ app.get("/api/rrhh/atencion", requireAuth(RRHH_ROLES), async (req, res) => {
                 AND u.fecha_baja IS NULL AND COALESCE(u.activo,1) = 1
               ORDER BY d.fecha_caducidad LIMIT 30`, [local, sumaDias(hoy, 30)]),
       dbAll(`SELECT c.id, c.worker_id, c.desde, c.hasta, u.nombre FROM hor_contratos c
-               JOIN users u ON u.id = c.worker_id WHERE u.local = ? AND ${SQL_ACTIVO_EL_DIA}`, [local, hoy, hoy]),
+               JOIN users u ON u.id = c.worker_id WHERE u.local = ANY(?) AND ${SQL_ACTIVO_EL_DIA}`, [personasDe(local), hoy, hoy]),
       dbAll(`SELECT id, nombre, local FROM users
               WHERE local = ? AND rol IN ('trabajador','encargado') AND areas_configuradas_en IS NULL
                 AND ${SQL_ACTIVO_EL_DIA} ORDER BY nombre LIMIT 30`, [local, hoy, hoy]),

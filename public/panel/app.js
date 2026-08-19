@@ -2943,7 +2943,10 @@ function renderRRCand(rows) {
 function rrWorkerLlamada(id) { return RRSEG.llamadas.find((l) => String(l.worker_id) === String(id) && l.realizada); }
 function renderRRSegSidebar() {
   const byLocal = {};
-  RRSEG.workers.forEach((w) => { const k = w.local || "Sin local"; (byLocal[k] = byLocal[k] || []).push(w); });
+  // Se agrupa por CENTRO, no por la barra en la que cada uno se dio de alta: quien está en la
+  // Cooperativa y quien está en La Tapeta son la misma plantilla, y salían como dos equipos.
+  // La ficha de cada uno conserva su barra; lo que cambia es cómo se junta la lista.
+  RRSEG.workers.forEach((w) => { const k = centroFE(w.local, "personal") || "Sin local"; (byLocal[k] = byLocal[k] || []).push(w); });
   const groups = Object.keys(byLocal).sort().map((loc) => {
     const ws = byLocal[loc];
     const hechos = ws.filter((w) => rrWorkerLlamada(w.id)).length;
@@ -3528,7 +3531,12 @@ function rrWorkerAdd() {
   const localField = enc
     ? `<input type="hidden" name="local" value="${esc(USER.local || "")}"><div class="field"><label>Local</label><input value="${esc(USER.local || "")}" disabled></div>`
     : `<div class="field"><label>Local</label><select name="local">${opcionesLocal()}</select></div>`;
-  const rolField = enc ? `<input type="hidden" name="rol" value="trabajador">` : `<div class="field"><label>Rol</label><select name="rol"><option value="trabajador">Trabajador</option><option value="encargado">Encargado</option></select></div>`;
+  // El rol son DOS opciones: un desplegable para eso obliga a abrir para ver que solo hay dos.
+  const rolField = enc ? `<input type="hidden" name="rol" value="trabajador">` : `<div class="field"><label>Rol</label>
+    <div class="segm" id="altaRol">
+      <button type="button" class="segm-b on" data-rol="trabajador">Trabajador</button>
+      <button type="button" class="segm-b" data-rol="encargado">Encargado</button>
+    </div><input type="hidden" name="rol" value="trabajador"></div>`;
   // Ya no se pide contraseña: la inicial es el propio usuario y el sistema obliga a
   // cambiarla al entrar. Antes venía «tapeta2024» rellenada y nadie la cambiaba nunca,
   // porque además el trabajador no podía.
@@ -3547,7 +3555,9 @@ function rrWorkerAdd() {
       </div></div>
     ${enc ? "" : `<div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Contrato</h3></div>
       <div class="form-grid">
-        <div class="field"><label>Horas por semana</label><input name="horas_semana" type="number" min="1" max="60" step="0.5" placeholder="40"></div>
+        <div class="field"><label>Horas por semana</label>
+          <div class="chips" id="altaHoras">${[20, 30, 40].map((h) => `<button type="button" class="chip" data-h="${h}">${h} h</button>`).join("")}</div>
+          <input name="horas_semana" type="number" min="1" max="60" step="0.5" placeholder="u otras…" style="margin-top:6px"></div>
         <div class="field"><label>Desde <span class="mut">(si no, el primer día)</span></label><input name="contrato_desde" type="date"></div>
       </div>
       <p class="mut" style="margin:6px 0 0;font-size:11.5px">Sin horas contratadas no entra en el reparto del generador.</p></div>`}
@@ -3568,12 +3578,52 @@ function rrWorkerAdd() {
       const r = await apiRaw("/api/horarios/plantilla?local=" + encodeURIComponent(local));
       const act = (r.areas || []).filter((a) => a.activo !== false);
       caja.innerHTML = act.length
-        ? act.map((a) => `<label class="wa-cel"><input type="checkbox" class="altaArea" value="${a.id}"> ${esc(a.nombre)}</label>`).join("")
+        ? `<div class="chips">${act.map((a) => `<label class="chip"><input type="checkbox" class="altaArea" value="${a.id}" hidden> ${esc(a.nombre)}</label>`).join("")}</div>`
         : '<span class="mut">Este establecimiento todavía no tiene áreas.</span>';
     } catch { caja.innerHTML = '<span class="mut">No se han podido cargar las áreas. Se pueden poner después.</span>'; }
   }
   ov.querySelector("[name=local]")?.addEventListener("change", cargarAreas);
   cargarAreas();
+
+  // Rol: dos botones, un campo oculto. Lo que viaja al servidor no cambia.
+  ov.querySelector("#altaRol")?.addEventListener("click", (e) => {
+    const b = e.target.closest(".segm-b"); if (!b) return;
+    ov.querySelectorAll("#altaRol .segm-b").forEach((x) => x.classList.toggle("on", x === b));
+    ov.querySelector("[name=rol]").value = b.getAttribute("data-rol");
+  });
+  // Horas: 20, 30 y 40 son casi siempre la respuesta. El campo sigue estando para el resto.
+  ov.querySelector("#altaHoras")?.addEventListener("click", (e) => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    const h = b.getAttribute("data-h");
+    const campo = ov.querySelector("[name=horas_semana]");
+    const ya = String(campo.value) === h;
+    campo.value = ya ? "" : h;
+    ov.querySelectorAll("#altaHoras .chip").forEach((x) => x.classList.toggle("on", !ya && x === b));
+  });
+  ov.querySelector("[name=horas_semana]")?.addEventListener("input", (e) => {
+    ov.querySelectorAll("#altaHoras .chip").forEach((x) => x.classList.toggle("on", x.getAttribute("data-h") === String(e.target.value)));
+  });
+  // Las áreas marcadas se ven marcadas: la casilla va oculta y manda el aspecto del chip.
+  ov.querySelector("#altaAreas")?.addEventListener("change", (e) => {
+    const c = e.target.closest(".altaArea"); if (!c) return;
+    c.closest(".chip")?.classList.toggle("on", c.checked);
+  });
+
+  // El usuario se propone solo a partir del nombre y del establecimiento: «Kevin Soler» en
+  // Blanes → «kevin.blanes». Se puede cambiar, pero deja de ser un campo que hay que pensar
+  // —y de paso salen todos con el mismo formato, que es lo que hacía falta para reconocerlos.
+  const campoUser = ov.querySelector("[name=username]");
+  const proponerUsuario = () => {
+    if (campoUser.dataset.tocado === "1") return;
+    const nom = (ov.querySelector("[name=nombre]")?.value || "").trim().split(/\s+/)[0] || "";
+    const loc = ov.querySelector("[name=local]")?.value || USER.local || "";
+    const limpia = (x) => String(x).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "");
+    const corto = limpia(nombreCortoLocal(loc).split(/[-·]/)[0]);
+    campoUser.value = nom ? limpia(nom) + (corto ? "." + corto : "") : "";
+  };
+  campoUser.addEventListener("input", () => { campoUser.dataset.tocado = campoUser.value.trim() ? "1" : ""; });
+  ov.querySelector("[name=nombre]")?.addEventListener("input", proponerUsuario);
+  ov.querySelector("[name=local]")?.addEventListener("change", proponerUsuario);
 
   ov.querySelector("#fWorker").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -3818,7 +3868,10 @@ function personasDelAmbito(list) {
   if (!loc) return list || [];
   return (list || []).filter((u) => {
     const suyos = [u.local, ...(Array.isArray(u.locales) ? u.locales : [])].filter(Boolean);
-    return suyos.includes(loc);
+    // Por CENTRO: quien está dado de alta en la Cooperativa es de Blanes. Comparando la barra
+    // a pelo desaparecía de su propia plantilla, y desaparecer es el peor fallo posible
+    // porque nadie echa de menos lo que no ve.
+    return suyos.some((l) => centroFE(l, "personal") === centroFE(loc, "personal"));
   });
 }
 const usuariosDelAmbito = personasDelAmbito;
