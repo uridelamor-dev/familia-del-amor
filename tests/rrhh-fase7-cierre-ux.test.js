@@ -132,12 +132,22 @@ describe("localesAccesibles", () => {
     // Devolvía uno solo mientras la API ya le dejaba operar en los dos: no era un agujero,
     // era una pantalla que escondía trabajo suyo.
     const f = bloque("function localesAccesibles(req)", "function puedeAccederLocal");
-    assert.match(f, /return localesDe\(req && req\.user\)/);
+    assert.match(f, /localesDe\(req && req\.user\)/);
     assert.ok(!/localScope\(req\)/.test(f), "sigue usando «en cuál está mirando ahora»");
-    assert.match(f, /rol === "direccion"\) return \[\.\.\.INV_LOCALES\]/, "dirección sigue viéndolos todos");
+    assert.match(f, /rol === "direccion"\) \? \[\.\.\.INV_LOCALES\]/, "dirección sigue viéndolos todos");
+    // Lo único que puede quitar de esa lista es el agrupado por centro: en compras o personal
+    // no se ofrece la Cooperativa porque sus datos ya son los del centro. Filtrar por
+    // cualquier otro motivo volvería a esconderle trabajo suyo a quien lleva dos.
+    assert.match(f, /visiblesEn\(ambitoDeRuta/);
   });
-  test("y no se ha tocado la comprobación de acceso, que es lo que protege", () => {
-    assert.match(server, /function puedeAccederLocal\(req, local\) \{\s*\n\s*return puedeLocal\(req && req\.user, local\);/);
+  test("y la comprobación de acceso solo AMPLÍA, nunca restringe", () => {
+    // Es lo que protege el aislamiento entre establecimientos: sigue empezando por
+    // `puedeLocal` y devolviendo true en cuanto el local es suyo. Lo añadido después
+    // reconoce la otra barra del mismo centro, que también es suya.
+    const f = bloque("function puedeAccederLocal(req, local)", "// Auth endpoints");
+    assert.match(f, /if \(puedeLocal\(req && req\.user, local\)\) return true;/);
+    assert.match(f, /barrasDelCentro\(local, ambitoDeRuta\(req && req\.path\)\)\.some/);
+    assert.ok(!/return false;/.test(f.split("barrasDelCentro")[0]), "no puede cortar antes de mirar el centro");
   });
 });
 

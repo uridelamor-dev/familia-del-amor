@@ -100,7 +100,10 @@ describe("cableado en el servidor", () => {
     const i = src.indexOf("function puedeAccederLocal(req, local)");
     assert.match(src.slice(i, i + 250), /puedeLocal\(/);
     const j = src.indexOf("function rrhhPuedeLocal(req, local)");
-    assert.match(src.slice(j, j + 250), /puedeLocal\(req\.user, local\)/);
+    // Delega en `puedeAccederLocal` (la línea de arriba), que empieza por `puedeLocal`. La
+    // cadena acaba en la misma pieza probada; lo que no puede aparecer aquí es `localScope`.
+    assert.match(src.slice(j, j + 300), /puedeAccederLocal\(req, local\)/);
+    assert.ok(!/localScope\(/.test(src.slice(j, j + 300)), "«en cuál está mirando» no decide el acceso");
   });
 
   test("los locales extra se sanean contra el catálogo antes de guardarse", () => {

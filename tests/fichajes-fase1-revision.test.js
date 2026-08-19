@@ -169,7 +169,12 @@ describe("aislamiento y permisos del lote", () => {
   });
   test("y todo lo que calcula va acotado a ese local", () => {
     const b = bloque("async function ficCalcularPeriodo(", "async function ficGuardarProyeccion(");
-    assert.match(b, /FROM fic_eventos\s*\n?\s*WHERE local = \?/);
+    // Acotado sigue estando: `ficLocales` devuelve las barras del CENTRO —las dos de Blanes,
+    // una sola para el resto— y nunca un establecimiento ajeno. El histórico de fichajes no
+    // se puede mover de barra (`fic_eventos` es inmutable), así que se lee sumando.
+    assert.match(b, /FROM fic_eventos\s*\n?\s*WHERE local = ANY\(\?\)/);
+    assert.match(b, /ficLocales\(local\), desde, hasta/);
+    assert.match(server, /const ficLocales = \(local\) => barrasDelCentro\(local, "personal"\)/);
     assert.match(b, /WHERE a\.local = \? AND s\.estado = 'publicado'/);
     assert.match(b, /WHERE s\.local = \? AND s\.estado = 'publicado'/);
   });

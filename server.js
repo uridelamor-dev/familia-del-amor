@@ -30,6 +30,10 @@ import { extraerScripts, extraerRutasApi, clasificarRutas, extraerClrTypes, clas
 import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
 import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos, moduloDeRuta } from "./src/modules/usuarios/permisos.js";
 import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocalesExtra, parseLocales } from "./src/modules/usuarios/locales.js";
+// Centros: dos barras que son un mismo negocio (Blanes + Cooperativa). Traduce el local
+// UNA vez, en los helpers de ámbito, y las ~190 consultas con `local = ?` operan solas sobre
+// el centro sin tocar ninguna. src/modules/locales/centros.js explica qué se junta y qué no.
+import { ambitoDeRuta, canonico as localCentro, barras as barrasDelCentro, visiblesEn, detalleCentro, centroDe } from "./src/modules/locales/centros.js";
 // `activoEnFecha` y `pertenecioAlPeriodo` no se importan: en el servidor esas dos preguntas se
 // hacen en SQL (SQL_ACTIVO_EL_DIA y SQL_ESTUVO_ENTRE) porque hay que filtrar en la consulta,
 // no después. El módulo puro es la referencia y quien las prueba.
@@ -3356,7 +3360,12 @@ function requireAuth(roles = []) {
  */
 function localScope(req, pedido) {
   if (!req || !req.user) return null;
-  return localPermitido(req.user, pedido !== undefined ? pedido : (req.query && req.query.local));
+  const suyo = localPermitido(req.user, pedido !== undefined ? pedido : (req.query && req.query.local));
+  // Y AQUÍ se juntan las dos barras de Blanes, en un solo sitio. Primero se comprueba que el
+  // local es suyo (eso no cambia) y solo después se traduce al centro, y solo en los ámbitos
+  // que van juntos: pedir la Cooperativa en Compras responde con el centro entero; pedirla en
+  // Reservas responde con la Cooperativa, porque sus mesas son suyas.
+  return suyo ? localCentro(suyo, ambitoDeRuta(req.path)) : suyo;
 }
 
 /**
@@ -3372,7 +3381,10 @@ function localesScope(req) {
   const pedidos = req.query && req.query.locales;
   if (pedidos) {
     const lista = localesPermitidos(req.user, pedidos);
-    if (lista.length) return lista;
+    // Elegir las dos barras de Blanes en un ámbito que va junto es elegir el centro UNA vez:
+    // sin el Set, el gasto de Blanes saldría contado dos veces.
+    const amb = ambitoDeRuta(req.path);
+    if (lista.length) return [...new Set(lista.map((l) => localCentro(l, amb)))];
   }
   const uno = localScope(req);
   return uno ? [uno] : [];
@@ -3401,14 +3413,21 @@ const esLocalSinPublico = (l) => SIN_PUBLICO_NORM.has(normLocal(l));
 // pantalla que escondía trabajo suyo—. Ahora las dos preguntas se contestan con la misma
 // lista, que es la que va firmada en su token.
 function localesAccesibles(req) {
-  if (req.user && req.user.rol === "direccion") return [...INV_LOCALES];
-  return localesDe(req && req.user);
+  const todos = (req.user && req.user.rol === "direccion") ? [...INV_LOCALES] : localesDe(req && req.user);
+  // En ventas, compras, personal e inventarios la Cooperativa no se ofrece: elegirla no
+  // querría decir nada, porque los datos que enseñaría son ya los del centro entero.
+  return visiblesEn(ambitoDeRuta(req && req.path), todos);
 }
 // ¿El usuario puede operar sobre este local? Validación de aislamiento (SIEMPRE en backend).
 // «¿Puede esta persona tocar ESTE local?» — distinto de «¿en cuál está mirando ahora?».
 // Comparar contra localScope() dejaba fuera los demás locales del usuario, que sí son suyos.
 function puedeAccederLocal(req, local) {
-  return puedeLocal(req && req.user, local);
+  if (puedeLocal(req && req.user, local)) return true;
+  // Con las dos barras juntas, quien lleva una lleva el centro. Sin esto, el encargado que
+  // solo tiene la Cooperativa asignada se quedaría fuera de su propio inventario y de su
+  // propio cuadrante en cuanto pasaran a vivir bajo «La Tapeta - Blanes». AMPLÍA, no
+  // restringe: si el local ya era suyo, arriba se ha devuelto true sin llegar aquí.
+  return barrasDelCentro(local, ambitoDeRuta(req && req.path)).some((b) => puedeLocal(req && req.user, b));
 }
 
 // Auth endpoints
@@ -6447,7 +6466,10 @@ async function runAgoraSync() {
 app.get("/api/ventas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const cond = [], params = [];
-    if (req.query.local) { cond.push("local = ?"); params.push(String(req.query.local)); }
+    // Las ventas las escribe el TPV de cada barra con su propio nombre, así que pedir Blanes
+    // es pedir las dos: `ventas_diarias` no se migra —así se conserva el desglose de cuánto
+    // vende cada una— y se suman al leer.
+    if (req.query.local) { cond.push("local = ANY(?)"); params.push(barrasDelCentro(String(req.query.local), "ventas")); }
     if (req.query.from) { cond.push("dia >= ?"); params.push(String(req.query.from)); }
     if (req.query.to) { cond.push("dia <= ?"); params.push(String(req.query.to)); }
     const where = cond.length ? "WHERE " + cond.join(" AND ") : "";
@@ -7275,7 +7297,9 @@ function rrhhTodoLocal(req) { return req.user && (req.user.rol === "direccion" |
 function rrhhLocalScope(req) { return rrhhTodoLocal(req) ? null : localScope(req); } // null = sin restricción
 function rrhhPuedeLocal(req, local) {
   if (rrhhTodoLocal(req)) return true;
-  return puedeLocal(req.user, local);   // cualquiera de los suyos, no solo en el que esté mirando
+  // Cualquiera de los suyos, no solo el que esté mirando — y las dos barras de un mismo
+  // centro cuentan como una (ver puedeAccederLocal).
+  return puedeAccederLocal(req, local);
 }
 async function rrhhWorkerLocal(id) { const r = await dbGet("SELECT local FROM users WHERE id = ?", [id]); return r ? (r.local || "") : null; }
 
@@ -7528,7 +7552,9 @@ app.get("/api/horarios/config", requireAuth(HORARIOS_ROLES), async (req, res) =>
 
 // Resuelve el local pedido respetando el ámbito del usuario. Devuelve null si no puede.
 function horLocal(req, pedido) {
-  const local = rrhhLocalScope(req) || String(pedido || "").trim();
+  // Dirección no pasa por `localScope` (no está limitada a ninguno), así que su `?local=` se
+  // traduce aquí: pedir la Cooperativa en horarios o fichajes es pedir el centro de Blanes.
+  const local = rrhhLocalScope(req) || localCentro(String(pedido || "").trim(), ambitoDeRuta(req.path));
   if (!local || !rrhhPuedeLocal(req, local)) return null;
   return local;
 }
@@ -9083,6 +9109,12 @@ app.get("/api/horarios/historico", requireAuth(HORARIOS_ROLES), async (req, res)
 //      sin haber fichado la entrada, se guarda igual y se marca como incidencia.
 const FICHAJES_ROLES = ["direccion", "rrhh", "encargado"];
 
+// `fic_eventos` guarda EN QUÉ BARRA se fichó, y esa columna no se puede reescribir: la tabla
+// es inmutable por ley (RD-ley 8/2019) y hay un candado que lo comprueba. Así que el histórico
+// de la Cooperativa se lee sumando las dos barras del centro, no moviéndolo de sitio. Para
+// los locales que no son de ningún centro devuelve una lista de uno y todo sigue igual.
+const ficLocales = (local) => barrasDelCentro(local, "personal");
+
 const ficHash = (t) => crypto.createHash("sha256").update(String(t || "")).digest("hex");
 const ficToken = () => generarToken((n) => crypto.randomBytes(n));
 
@@ -9164,7 +9196,7 @@ app.get("/api/fichar/:token", async (req, res) => {
 
     const eventos = await dbAll(
       `SELECT worker_id, id, tipo, ocurrido_en, epoch_ms, anulado_por FROM fic_eventos
-       WHERE local = ? AND dia_negocio = ? ORDER BY epoch_ms ASC, id ASC`, [disp.local, m.diaNegocio]);
+       WHERE local = ANY(?) AND dia_negocio = ? ORDER BY epoch_ms ASC, id ASC`, [ficLocales(disp.local), m.diaNegocio]);
     const porPersona = new Map();
     for (const e of eventos) {
       if (!porPersona.has(e.worker_id)) porPersona.set(e.worker_id, []);
@@ -9378,7 +9410,7 @@ app.get("/api/fichajes/hoy", requireAuth(FICHAJES_ROLES), async (req, res) => {
     const eventos = await dbAll(
       `SELECT e.worker_id, e.id, e.tipo, e.ocurrido_en, e.epoch_ms, e.origen, e.motivo, e.anulado_por, u.nombre
        FROM fic_eventos e LEFT JOIN users u ON u.id = e.worker_id
-       WHERE e.local = ? AND e.dia_negocio = ? ORDER BY e.epoch_ms ASC, e.id ASC`, [local, dia]);
+       WHERE e.local = ANY(?) AND e.dia_negocio = ? ORDER BY e.epoch_ms ASC, e.id ASC`, [ficLocales(local), dia]);
 
     const porPersona = new Map();
     for (const e of eventos) {
@@ -9625,8 +9657,8 @@ async function ficCalcularPeriodo(local, desde, hasta, { cfg = null, soloWorker 
   const filtroW = soloWorker ? " AND worker_id = ?" : "";
   const [fichados, planificados] = await Promise.all([
     dbAll(`SELECT DISTINCT worker_id, dia_negocio AS dia FROM fic_eventos
-            WHERE local = ? AND dia_negocio BETWEEN ? AND ?${filtroW}`,
-      soloWorker ? [local, desde, hasta, soloWorker] : [local, desde, hasta]),
+            WHERE local = ANY(?) AND dia_negocio BETWEEN ? AND ?${filtroW}`,
+      soloWorker ? [ficLocales(local), desde, hasta, soloWorker] : [ficLocales(local), desde, hasta]),
     dbAll(`SELECT DISTINCT a.worker_id, a.dia FROM hor_asignaciones a
              JOIN hor_semanas s ON s.id = a.semana_id
             WHERE a.local = ? AND s.estado = 'publicado' AND a.tipo = 'turno' AND a.dia BETWEEN ? AND ?
@@ -10236,7 +10268,7 @@ app.get("/api/fichajes/bolsa", requireAuth(FICHAJES_ROLES), async (req, res) => 
       dbGet(`SELECT COUNT(*)::int AS n FROM fic_eventos e
               JOIN fic_cierres c ON c.local = e.local AND c.reabierto_en IS NULL
                                 AND e.dia_negocio BETWEEN c.desde AND c.hasta
-             WHERE e.local = ? AND c.etiqueta = ? AND e.creado_en > c.cerrado_en`, [local, p.etiqueta])
+             WHERE e.local = ANY(?) AND c.etiqueta = ? AND e.creado_en > c.cerrado_en`, [ficLocales(local), p.etiqueta])
         .catch(() => ({ n: 0 })),
     ]);
 
@@ -10625,9 +10657,9 @@ app.get("/api/fichajes/export", requireAuth(FICHAJES_ROLES), async (req, res) =>
     const eventos = await dbAll(
       `SELECT e.worker_id, u.nombre, u.dni, e.dia_negocio, e.tipo, e.ocurrido_en, e.minuto_local, e.origen, e.autor, e.motivo, e.anulado_por
        FROM fic_eventos e LEFT JOIN users u ON u.id = e.worker_id
-       WHERE e.local = ? AND e.dia_negocio BETWEEN ? AND ? ${soloWorker ? "AND e.worker_id = ?" : ""}
+       WHERE e.local = ANY(?) AND e.dia_negocio BETWEEN ? AND ? ${soloWorker ? "AND e.worker_id = ?" : ""}
        ORDER BY u.nombre, e.dia_negocio, e.epoch_ms, e.id`,
-      soloWorker ? [local, p.desde, p.hasta, soloWorker] : [local, p.desde, p.hasta]);
+      soloWorker ? [ficLocales(local), p.desde, p.hasta, soloWorker] : [ficLocales(local), p.desde, p.hasta]);
 
     // El CSV se construye en src/modules/fichajes/export.js, con sus tests: es un documento
     // que puede acabar delante de un inspector, y un punto y coma dentro de un motivo que

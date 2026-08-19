@@ -139,6 +139,51 @@ function misLocales() {
 }
 // Local FIJADO = no hay nada que elegir. Con varios ya no está fijado: se elige entre los suyos.
 function localFijadoFE() { const m = misLocales(); return m.length === 1 ? m[0] : null; }
+
+/**
+ * CENTROS: dos barras que son un mismo negocio. Espejo de src/modules/locales/centros.js,
+ * porque el panel no puede importar ESM. Hay un test que falla si las dos dejan de decir lo
+ * mismo — un espejo que se desincroniza es peor que no tenerlo: la pantalla enseñaría un
+ * establecimiento y la API contestaría con otro.
+ *
+ * La Tapeta de Blanes y la Cooperativa comparten equipo, proveedores, sociedad y CIF, así que
+ * en ventas, compras, personal e inventarios son UNO. En reservas, web y reseñas siguen
+ * separadas: son dos direcciones, con dos cartas y dos agendas de mesas.
+ */
+const CENTROS_FE = [{
+  principal: "La Tapeta - Blanes",
+  barras: ["La Tapeta - Blanes", "Cooperativa - Blanes"],
+  juntos: ["ventas", "compras", "personal", "inventarios"],
+}];
+// De qué ámbito es cada pantalla. Lo que no está aquí no junta nada y se comporta como antes
+// —incluido el Dashboard, que mezcla gasto con reservas y juntarlo juntaría también las mesas.
+const AMBITO_POR_VISTA = {
+  analitica: "ventas", agora: "ventas",
+  facturas: "compras", productos: "compras", subirfactura: "compras",
+  rrhh: "personal", horarios: "personal", fichajes: "personal",
+  inventarios: "inventarios",
+};
+const ambitoDeVista = (v) => AMBITO_POR_VISTA[v || CURRENT] || null;
+const centroDeFE = (local) => CENTROS_FE.find((c) => c.barras.includes(String(local || "").trim())) || null;
+const juntoFE = (c, amb) => !!(c && amb && c.juntos.includes(amb));
+/** El nombre con el que se pide y se rotula en esta pantalla. */
+function centroFE(local, ambito) {
+  const c = centroDeFE(local);
+  return juntoFE(c, ambito) ? c.principal : String(local || "").trim();
+}
+/** Lo que se ofrece en el selector: donde va junto, la barra secundaria no se puede elegir. */
+function visiblesFE(ambito, lista) {
+  const fuera = new Set();
+  for (const c of CENTROS_FE) if (juntoFE(c, ambito)) for (const b of c.barras) if (b !== c.principal) fuera.add(b);
+  return (Array.isArray(lista) ? lista : []).filter((l) => !fuera.has(String(l || "").trim()));
+}
+/** Qué lleva dentro, para que nadie mire el gasto de Blanes y piense que falta la mitad. */
+function detalleCentroFE(local, ambito) {
+  const c = centroDeFE(local);
+  if (!juntoFE(c, ambito) || String(local || "").trim() !== c.principal) return "";
+  const otras = c.barras.filter((b) => b !== c.principal);
+  return otras.length ? `Incluye ${otras.join(" y ")}` : "";
+}
 /**
  * EL ÁMBITO: qué establecimientos se están mirando.
  *
@@ -152,7 +197,7 @@ function localFijadoFE() { const m = misLocales(); return m.length === 1 ? m[0] 
  */
 const VARIOS = "*varios*";
 // La lista completa entre la que se puede elegir: los suyos si tiene asignados, todos si no.
-function localesBase() { const m = misLocales(); return m.length ? m : LOCALES; }
+function localesBase() { const m = misLocales(); return visiblesFE(ambitoDeVista(), m.length ? m : LOCALES); }
 // Los establecimientos en juego cuando se ven varios a la vez. Se filtra siempre contra la
 // base: una selección guardada de hace meses puede nombrar un local que ya no le toca.
 function localesDelAmbito() {
@@ -195,8 +240,12 @@ function pideEstablecimiento(que, porque) {
 function localActualFE() {
   const m = misLocales();
   if (viendoVarios()) return "";
-  if (!m.length) return DASH_LOCAL === VARIOS ? "" : (DASH_LOCAL || "");
-  return m.includes(DASH_LOCAL) ? DASH_LOCAL : m[0];
+  const elegido = !m.length ? (DASH_LOCAL === VARIOS ? "" : (DASH_LOCAL || ""))
+                            : (m.includes(DASH_LOCAL) ? DASH_LOCAL : m[0]);
+  // Tener la Cooperativa puesta y entrar en Compras es pedir el centro; entrar en Reservas
+  // sigue siendo pedir la Cooperativa. Se traduce aquí, al pedir, y no al guardar: así el
+  // ámbito elegido no se pierde al pasar por una pantalla que junta.
+  return centroFE(elegido, ambitoDeVista());
 }
 
 /**
@@ -349,6 +398,9 @@ function shell(active, bodyHtml) {
   const estabLbl = fijado ? nombreCortoLocal(fijado)
     : viendoVarios() ? etiquetaAmbito()
     : actual ? nombreCortoLocal(actual) : "Todos los establecimientos";
+  // Qué lleva dentro este establecimiento en ESTA pantalla. Sin decirlo, alguien mira el gasto
+  // de Blanes y piensa que falta la mitad, porque la Cooperativa ya no aparece por ningún lado.
+  const estabDet = detalleCentroFE(fijado || actual, ambitoDeVista(active));
   // El selector de periodo solo se pinta donde manda algo. En Reservas o en Usuarios era un
   // control vivo que no hacía nada.
   const grupo = grupoPeriodo(active);
@@ -369,8 +421,8 @@ function shell(active, bodyHtml) {
       <header class="topbar">
         <button class="iconbtn" data-act="mtoggle" aria-label="Menú">${ic("menu")}</button>
         ${fijado
-          ? `<span class="pick fijo" title="Tu usuario está asignado a este establecimiento"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span></span>`
-          : `<button class="pick" data-act="estabmenu" title="Cambiar establecimiento"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span><span class="car">▾</span></button>`}
+          ? `<span class="pick fijo" title="Tu usuario está asignado a este establecimiento${estabDet ? " · " + estabDet : ""}"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span>${estabDet ? `<span class="pick-det">${esc(estabDet)}</span>` : ""}</span>`
+          : `<button class="pick" data-act="estabmenu" title="Cambiar establecimiento${estabDet ? " · " + estabDet : ""}"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span>${estabDet ? `<span class="pick-det">${esc(estabDet)}</span>` : ""}<span class="car">▾</span></button>`}
         ${seg ? `<div class="seg hidesm">${seg}</div>` : ""}
         <button class="sbtn hidesm" data-act="cmdk">${ic("search", 16)}<span>Buscar o ir a…</span><span class="kbd">⌘K</span></button>
         <div class="spacer"></div>

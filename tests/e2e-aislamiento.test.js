@@ -96,7 +96,12 @@ describe("BLANES → LLORET: cada puerta tiene su guarda", () => {
 
 describe("y las guardas hacen lo que dicen", () => {
   test("rrhhPuedeLocal se apoya en puedeLocal, que es la pieza probada arriba", () => {
-    assert.match(server, /function rrhhPuedeLocal\(req, local\) \{[\s\S]{0,180}return puedeLocal\(req\.user, local\)/);
+    // Ahora pasa por `puedeAccederLocal` —que es quien reconoce además la otra barra del
+    // mismo centro—, pero la pieza que decide sigue siendo la misma y no `localScope`.
+    assert.match(server, /function rrhhPuedeLocal\(req, local\) \{[\s\S]{0,260}return puedeAccederLocal\(req, local\)/);
+    assert.match(server, /function puedeAccederLocal\(req, local\) \{[\s\S]{0,120}puedeLocal\(req && req\.user, local\)/);
+    const i = server.indexOf("function rrhhPuedeLocal(req, local)");
+    assert.ok(!/localScope\(/.test(server.slice(i, i + 260)), "«en cuál está mirando» no decide quién puede tocar qué");
   });
   test("horLocal nunca devuelve un establecimiento ajeno", () => {
     assert.match(server, /function localScope\(req, pedido\) \{[\s\S]{0,160}localPermitido\(req\.user/);

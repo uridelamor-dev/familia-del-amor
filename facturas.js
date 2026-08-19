@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { normalizarLineas, validarSuma, mensajeValidacion, claveProducto } from "./src/modules/facturas/lineas.js";
 import { canonizarLocal, esLocalCanonico } from "./src/modules/facturas/local-canonico.js";
+import { canonico as localCentro } from "./src/modules/locales/centros.js";
 import { claveProveedor, seLeenLineas, nombreCanonico } from "./src/modules/facturas/categorias.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { corregirEmisorReceptor } from "./src/modules/facturas/emisor.js";
@@ -779,7 +780,10 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   {
     const canon = canonizarLocal(local);
     if (!canon) throw new Error(`«${local}» no es ningún establecimiento. Revisa a qué local está vinculado este canal de entrada.`);
-    local = canon;
+    // Y si ese establecimiento es una barra de un centro, la factura es del CENTRO. La
+    // Cooperativa tiene su propio grupo de WhatsApp —y lo conserva—, pero lo que entra por
+    // él es gasto de Blanes: misma sociedad, mismo CIF, mismo libro de facturas recibidas.
+    local = localCentro(canon, "compras");
   }
   // 1. Hash para detección de duplicados
   const fileHash = createHash("sha256").update(buffer).digest("hex");

@@ -99,7 +99,14 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .iconbtn{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:var(--ink2);transition:.12s}.iconbtn:hover{background:var(--surface2);color:var(--ink)}
 .sbtn{display:flex;align-items:center;gap:10px;height:36px;padding:0 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--ink3);min-width:210px;transition:.12s}.sbtn:hover{border-color:var(--border2);color:var(--ink2)}
 .sbtn .kbd{margin-left:auto;font-family:var(--mono);font-size:11px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:1px 6px}
-.pick{display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border-radius:11px;border:1px solid var(--border);background:var(--surface);font-weight:600;font-size:13px;transition:.12s;max-width:230px;min-width:0}.pick:hover{border-color:var(--border2);box-shadow:var(--sh-sm)}
+.pick{display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border-radius:11px;border:1px solid var(--border);background:var(--surface);font-weight:600;font-size:13px;transition:.12s;max-width:230px;min-width:0}
+@media(min-width:901px){.pick{max-width:380px}}.pick:hover{border-color:var(--border2);box-shadow:var(--sh-sm)}
+/* Qué lleva dentro el establecimiento en esta pantalla («Incluye Cooperativa - Blanes»).
+   Va dentro del propio botón y en pequeño: es un dato de apoyo, no otro control. En el móvil
+   se esconde —no cabe— y el dato sigue estando en el title y en el propio selector. */
+.pick .pick-det{color:var(--ink3);font-weight:500;font-size:11px;border-left:1px solid var(--border);
+  padding-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;min-width:0}
+@media(max-width:900px){.pick .pick-det{display:none}}
 .pick .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pick .dot{width:8px;height:8px;border-radius:999px;background:var(--brand);flex:none}.pick .car{color:var(--ink3);flex:none}
 .seg{display:inline-flex;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:3px}.seg button{height:30px;padding:0 12px;border-radius:8px;font-size:12.5px;font-weight:600;color:var(--ink2)}.seg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--sh-sm)}
 .spacer{flex:1}.avatar{width:34px;height:34px;border-radius:999px;background:linear-gradient(140deg,var(--brand),var(--brand2));color:var(--brand-ink);display:grid;place-items:center;font-weight:700;font-size:13px;flex:none}
