@@ -3408,8 +3408,10 @@ const INV_LOCALES = [
   "La Tapeta - Girona", "Can Mateu - Tordera", "La Tapa Ibérica - Tordera",
   "Botiga d'en Mateu - Tordera", "Oficina",
 ];
-// Centros sin atención al público: reciben facturas, incidencias, personal e inventario,
-// pero NO se puede reservar mesa en ellos. Espejo de window.LOCALES_SIN_PUBLICO (auth.js).
+// Centros sin atención al público. Tienen personal —con sus horarios y sus fichajes—, facturas
+// e incidencias, como cualquier otro: no tener clientes no significa que no trabaje nadie. Lo
+// que no tienen es lo que necesita clientes (reservas y ventas de TPV) ni inventario, porque
+// allí no se cuenta material. Espejo de window.LOCALES_SIN_PUBLICO (auth.js).
 const LOCALES_SIN_PUBLICO = new Set(["Oficina"]);
 // Comparación tolerante (mayúsculas, tildes, espacios sobrantes): "oficina" u " Oficina "
 // deben bloquearse igual que "Oficina".

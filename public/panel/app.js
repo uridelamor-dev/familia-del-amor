@@ -1538,7 +1538,7 @@ function resScope() { RESF.local = localActualFE(); return RESF.local; }
 // Aviso para cuando el ámbito es un centro sin atención al público (la oficina).
 function avisoSinPublico(titulo, eyebrow, que) {
   return `<div class="ph"><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(titulo)}</h1><div class="sub">${esc(nombreCortoLocal(DASH_LOCAL))}</div></div>
-    <div class="card"><div class="ch"><h3>Aquí no hay ${esc(que)}</h3></div><p class="mut" style="margin:0;line-height:1.6"><b>${esc(nombreCortoLocal(DASH_LOCAL))}</b> es un centro sin atención al público: recibe facturas, incidencias y personal, pero no ${esc(que)}.<br>Elige otro establecimiento en la barra de arriba.</p></div>`;
+    <div class="card"><div class="ch"><h3>Aquí no hay ${esc(que)}</h3></div><p class="mut" style="margin:0;line-height:1.6"><b>${esc(nombreCortoLocal(DASH_LOCAL))}</b> es un centro sin atención al público. Tiene <b>personal, horarios, fichajes, facturas e incidencias</b> como cualquier otro; lo que no tiene es ${esc(que)}.<br>Elige otro establecimiento en la barra de arriba.</p></div>`;
 }
 async function loadReservas() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -4074,7 +4074,10 @@ async function loadHorarios() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   horLimpiaDrag();                     // el HTML se repinta al soltar: dragend puede no llegar
   horScope();
-  if (sinPublico(HOR.local)) { view.innerHTML = avisoSinPublico("Horarios", "Personas", "turnos"); return; }
+  // La Oficina NO se bloquea aquí, y es una corrección: no tener atención al público significa
+  // que no se reserva mesa, no que no trabaje nadie. Quien está en la oficina tiene turnos y
+  // ficha como cualquiera. Fichajes, igual. Lo que sigue vetado es Reservas, la Analítica de
+  // ventas —las dos necesitan clientes— e Inventarios, que ahí no se cuenta material.
   if (!HOR.local) { view.innerHTML = horPh() + pideEstablecimiento("Elige un establecimiento", "El cuadrante es de un local concreto: no existe una semana de dos sitios a la vez."); return; }
   try {
     if (!HOR.lunes) HOR.lunes = resLunes(todayStr());
@@ -5569,7 +5572,6 @@ async function loadFichajes() {
   clearInterval(FIC_TIMER); FIC_TIMER = null;
   const view = document.getElementById("view");
   const amb = localActualFE();
-  if (sinPublico(amb)) { view.innerHTML = avisoSinPublico("Fichajes", "Personas", "fichajes"); return; }
   FIC.local = amb;
   // Sin local no se pide NADA: quién está dentro, la bolsa y las tablets son de un sitio.
   if (!amb) {
