@@ -7438,7 +7438,23 @@ app.get("/api/rrhh/trabajadores", requireAuth(RRHH_ROLES), async (req, res) => {
       ? await dbAll(`SELECT id, username, nombre, rol, local, puesto, fecha_alta, fecha_baja, activo FROM users WHERE rol IN ('trabajador','encargado') AND local = ANY(?) ORDER BY nombre ASC`, [personasDe(scope)])
       : await dbAll(`SELECT id, username, nombre, rol, local, puesto, fecha_alta, fecha_baja, activo FROM users WHERE rol IN ('trabajador','encargado') ORDER BY local ASC, nombre ASC`);
     const hoy = hoyISO();
-    const conEstado = (rows || []).map((w) => ({ ...w, estado: estadoLaboral(w, hoy) }));
+    // El área de cada uno viaja con la lista: es lo que le pone color en la plantilla y en el
+    // cuadrante. Una consulta más para todos, no una por persona.
+    const areasPorWorker = new Map();
+    try {
+      const wa = await dbAll(
+        `SELECT wa.worker_id, wa.principal, a.nombre
+           FROM hor_worker_areas wa JOIN hor_areas a ON a.id = wa.area_id
+          WHERE wa.worker_id = ANY(?) ORDER BY wa.principal DESC, a.orden, a.nombre`,
+        [(rows || []).map((w) => w.id)]);
+      for (const r of (wa || [])) {
+        if (!areasPorWorker.has(r.worker_id)) areasPorWorker.set(r.worker_id, []);
+        areasPorWorker.get(r.worker_id).push({ nombre: r.nombre, principal: !!r.principal });
+      }
+    } catch { /* sin áreas configuradas, la plantilla se pinta igual */ }
+    const conEstado = (rows || []).map((w) => ({
+      ...w, estado: estadoLaboral(w, hoy), areas: areasPorWorker.get(w.id) || [],
+    }));
     const filtro = ["activos", "bajas", "todos"].includes(String(req.query.estado || "")) ? String(req.query.estado) : "activos";
     const data = filtrarPorEstado(conEstado, filtro, hoy);
     res.json({

@@ -201,6 +201,46 @@ function opcionesLocal(sel = "", { vacio = "" } = {}) {
     .concat(lista.map((l) => `<option value="${esc(l)}" ${l === sel ? "selected" : ""}>${esc(nombreCortoLocal(l))}</option>`)).join("");
 }
 
+/**
+ * UN COLOR POR ÁREA — espejo de src/modules/horarios/colores.js, con su test de espejo.
+ *
+ * El color se DERIVA del nombre, no se guarda: funciona con las áreas que ya existan, es el
+ * mismo en todas las pantallas y en todos los locales, y un área inventada también tiene el
+ * suyo. Se devuelve un TONO y no un color hecho, porque el panel se ve en claro y en oscuro y
+ * un hex que queda bien en uno queda mal en el otro; el CSS pone la luminosidad de cada tema.
+ *
+ * Ni verde ni rojo: el verde es la marca y el rojo es peligro. Un área de esos colores
+ * parecería un estado y no un sitio.
+ */
+const TONOS_AREA = { sala: 212, comedor: 212, barra: 42, cocina: 280, terraza: 190, office: 320, reparto: 255, almacen: 28 };
+function tonoDeArea(area) {
+  const nombre = typeof area === "string" ? area : (area && area.nombre);
+  const clave = String(nombre || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  if (!clave) return null;
+  if (TONOS_AREA[clave] != null) return TONOS_AREA[clave];
+  for (const k of Object.keys(TONOS_AREA)) if (clave === k || clave.startsWith(k + " ") || clave.endsWith(" " + k)) return TONOS_AREA[k];
+  let h = 0;
+  for (let i = 0; i < clave.length; i++) h = (h * 31 + clave.charCodeAt(i)) % 360;
+  const prohibido = (t) => (t >= 130 && t <= 170) || t <= 20 || t >= 345;
+  let t = h;
+  for (let i = 0; i < 360 && prohibido(t); i++) t = (t + 7) % 360;
+  return t;
+}
+/** El área que le pone color: la principal si la tiene, si no la primera. Sin áreas, ninguno. */
+function colorDePersona(areas) {
+  const lista = (Array.isArray(areas) ? areas : []).filter(Boolean);
+  if (!lista.length) return null;
+  const a = lista.find((x) => x && x.principal) || lista[0];
+  const nombre = typeof a === "string" ? a : a.nombre;
+  const tono = tonoDeArea(a);
+  return tono == null ? null : { nombre, tono };
+}
+/** La etiqueta del área, para una fila de persona. Vacío si no tiene: no se inventa. */
+function etiquetaArea(areas) {
+  const c = colorDePersona(areas);
+  return c ? `<span class="area-tag" style="--h:${c.tono}">${esc(c.nombre)}</span>` : "";
+}
+
 /** ¿Es la barra secundaria de un centro? Sirve para marcar de cuál es cada fila. */
 function esBarraSecundariaFE(local) {
   const c = centroDeFE(local);
@@ -2966,7 +3006,7 @@ function renderRRSegSidebar() {
                            : est.clave === "desactivado" ? "cuenta desactivada" : null].filter(Boolean).join(" · ");
       const PILL = { baja_futura: "warn", pendiente: "warn", baja: "bad", desactivado: "bad" };
       const tag = est.clave && est.clave !== "activo" ? `<span class="pill ${PILL[est.clave] || ""}">${esc(est.etiqueta)}</span>` : "";
-      return `<button class="row" data-act="rr-worker" data-id="${w.id}" style="width:100%;text-align:left;background:${on ? "var(--surface2)" : "transparent"}"><span class="sdot" style="background:${done ? "var(--success)" : "var(--border2)"};width:8px;height:8px;border-radius:999px;flex:none"></span><span class="grow rr-fila" style="min-width:0"><span class="t1">${esc(w.nombre || w.username || "—")}</span><span class="t2">${esc(sub || w.rol || "")}</span></span>${tag}</button>`;
+      return `<button class="row" data-act="rr-worker" data-id="${w.id}" style="width:100%;text-align:left;background:${on ? "var(--surface2)" : "transparent"}"><span class="sdot" style="background:${done ? "var(--success)" : "var(--border2)"};width:8px;height:8px;border-radius:999px;flex:none"></span><span class="grow rr-fila" style="min-width:0"><span class="t1">${esc(w.nombre || w.username || "—")}</span><span class="t2">${esc(sub || w.rol || "")}</span></span>${etiquetaArea(w.areas)}${tag}</button>`;
     }).join("");
     return `<div><div class="ch" style="padding:10px 14px 4px;margin:0"><h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3)">${esc(loc)}</h3><span class="pill ${hechos === ws.length ? "ok" : ""}">${hechos}/${ws.length}</span></div><div class="rows">${items}</div></div>`;
   }).join("");
@@ -4020,6 +4060,12 @@ async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cue
 // (src/modules/horarios/cuadrante.js), porque el panel no puede importar ESM.
 let HOR = { local: "", lunes: "", dias: [], areas: [], tramos: [], equipo: [], asignaciones: [], semana: null, vista: "areas", drag: null, conflictos: null };
 function horScope() { HOR.local = localActualFE(); return HOR.local; }
+/** El tono del área de un turno, para pintarlo. Sin área, sin color: no se inventa. */
+function horTono(areaId) {
+  const a = (HOR.areas || []).find((x) => String(x.id) === String(areaId));
+  const t = a ? tonoDeArea(a.nombre) : null;
+  return t == null ? "" : ` style="--h:${t}"`;
+}
 // Sin semana TAMBIÉN se puede editar: la fila se abre sola al guardar el primer turno.
 // Lo único que no se toca es una semana ya publicada, que exige una versión nueva.
 const horEditable = () => !HOR.semana || HOR.semana.estado === "borrador";
@@ -4152,11 +4198,11 @@ function horRejilla() {
           .filter((a) => String(a.dia) === dia && String(a.tramo_id) === String(tramo.id) && String(a.area_id) === String(area.id) && (a.tipo || "turno") === "turno")
           .map((a) => ({ ...a, franja: horFranjaSiDifiere(a, tramo) }))
           .sort((a, b) => (!a.franja && b.franja ? -1 : a.franja && !b.franja ? 1 : a.inicio_min - b.inicio_min));
-        const items = gente.map((a) => `<div class="horchip" draggable="${horEditable()}" data-horasig="${a.id}" data-act="hor-editar" data-id="${a.id}" title="${esc(horFranja(a.inicio_min, a.fin_min, a.fin_abierto))}">${a.franja ? `<span class="hf">${esc(a.franja)}</span>` : ""}${esc(horNombre(a.worker_id))}</div>`).join("");
+        const items = gente.map((a) => `<div class="horchip"${horTono(a.area_id)} draggable="${horEditable()}" data-horasig="${a.id}" data-act="hor-editar" data-id="${a.id}" title="${esc(horFranja(a.inicio_min, a.fin_min, a.fin_abierto))}">${a.franja ? `<span class="hf">${esc(a.franja)}</span>` : ""}${esc(horNombre(a.worker_id))}</div>`).join("");
         const mas = horEditable() ? `<button class="hormas" data-act="hor-nuevo" data-dia="${dia}" data-tramo="${tramo.id}" data-area="${area.id}" title="Añadir">+</button>` : "";
         return `<div class="horcell horslot" data-horcell data-dia="${dia}" data-tramo="${tramo.id}" data-area="${area.id}">${items}${mas}</div>`;
       }).join("");
-      return `<div class="horcell horarea">${esc(area.nombre)}</div>${celdas}`;
+      return `<div class="horcell horarea"${horTono(area.id)}>${esc(area.nombre)}</div>${celdas}`;
     }).join("");
     return `<div class="hortramo"><div class="hortramo-t">${esc(tramo.nombre)} <span class="mut">${esc(horFranja(tramo.inicio_min, tramo.fin_min))}</span></div>
       <div class="horgrid">${cab}${filas}</div></div>`;
@@ -4200,7 +4246,7 @@ function horListaDias() {
           .sort((a, b) => a.inicio_min - b.inicio_min);
         if (!gente.length) return "";
         return `<div class="hord-area"><span class="hord-et">${esc(area.nombre)}</span>
-          <span class="hord-gente">${gente.map((a) => `<button class="horchip" data-act="hor-editar" data-id="${a.id}">${a.franja ? `<span class="hf">${esc(a.franja)}</span>` : ""}${esc(horNombre(a.worker_id))}</button>`).join("")}</span></div>`;
+          <span class="hord-gente">${gente.map((a) => `<button class="horchip"${horTono(a.area_id)} data-act="hor-editar" data-id="${a.id}">${a.franja ? `<span class="hf">${esc(a.franja)}</span>` : ""}${esc(horNombre(a.worker_id))}</button>`).join("")}</span></div>`;
       }).join("");
       if (!areas) return "";
       return `<div class="hord-tramo"><div class="hord-th">${esc(tramo.nombre)} <span class="mut">${esc(horFranja(tramo.inicio_min, tramo.fin_min))}</span></div>${areas}</div>`;

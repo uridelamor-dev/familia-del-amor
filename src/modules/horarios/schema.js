@@ -320,8 +320,10 @@ export async function ensureSchemaHorarios(x) {
 // abrir el módulo: sin esto la primera pantalla estaría vacía y no se podría crear nada.
 // Reproducen la estructura del PDF que se venía haciendo a mano.
 export const AREAS_POR_DEFECTO = [
+  // En el orden en que se recorre el local, que es como se lee un cuadrante.
   { nombre: "SALA", orden: 1 },
-  { nombre: "COCINA", orden: 2 },
+  { nombre: "BARRA", orden: 2 },
+  { nombre: "COCINA", orden: 3 },
 ];
 // Los dos turnos que se hacen de verdad. Son un PUNTO DE PARTIDA para un local que
 // empieza, no una verdad: se editan desde Horarios → Configuración → Turnos, y cada local

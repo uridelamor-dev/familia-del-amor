@@ -62,8 +62,11 @@ describe("los colores del panel salen de tokens que existen", () => {
     const oscuro = html.slice(html.indexOf(':root[data-theme="dark"]'), html.indexOf("@media (prefers-color-scheme:dark)"));
     const enOscuro = new Set([...oscuro.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
     // `--cat` se fija por elemento y su valor por defecto ya es un token temado (`--brand`),
-    // así que no necesita —ni debe tener— una versión oscura propia.
-    const noColor = new Set(["--sh-sm", "--sh-md", "--sh-lg", "--r-sm", "--r-md", "--r-lg", "--sb", "--font", "--mono", "--cat"]);
+    // así que no necesita —ni debe tener— una versión oscura propia. `--h` es el mismo caso y
+    // además NO es un color: es el TONO de un área, y de él se calcula la luminosidad de cada
+    // tema en la propia regla. Redefinirlo en oscuro cambiaría el color del área, que tiene
+    // que ser el mismo en los dos temas para poder reconocerla.
+    const noColor = new Set(["--sh-sm", "--sh-md", "--sh-lg", "--r-sm", "--r-md", "--r-lg", "--sb", "--font", "--mono", "--cat", "--h"]);
     const faltan = [...declarados].filter((t) => !noColor.has(t) && !enOscuro.has(t));
     assert.deepEqual(faltan, [], "tokens de color sin versión oscura");
   });

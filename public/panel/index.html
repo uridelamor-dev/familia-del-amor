@@ -28,7 +28,10 @@
   --cat-limpieza:#3E8F84;--cat-envase:#6B7A8F;--cat-menaje:#7A6A55;--cat-marketing:#9B5178;
   --cat-gris:#8B8F80;
   --font:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;color-scheme:light}
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;color-scheme:light
+  /* Tono del área (sala, barra, cocina…). Cada etiqueta lo sobreescribe en su `style`;
+     esto es el valor de reserva. Ver src/modules/horarios/colores.js. */
+  --h:212;}
 :root[data-theme="dark"]{
   --bg:#0F110C;--bg2:#0B0D09;--surface:#171A13;--surface2:#1E2219;--surface3:#242A1E;
   --border:#2A2F23;--border2:#3B4230;--ink:#ECEADF;--ink2:#AEB2A2;--ink3:#787C6D;
@@ -737,6 +740,28 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .np-fila{background:var(--warning-soft)}
 .np-aviso{margin-top:3px;font-size:11.5px;color:var(--ink3);line-height:1.4}
 .np-aviso b{color:var(--ink2);font-weight:650}
+
+/* UN COLOR POR ÁREA. Se recibe un TONO (`--h`) y aquí se calcula la luminosidad de cada tema:
+   un color hecho que queda bien en claro queda turbio en oscuro, y al revés. Con el tono, los
+   dos salen legibles y el área es reconocible en las dos. */
+.area-tag{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.03em;padding:2px 7px;
+  border-radius:999px;background:hsl(var(--h) 62% 93%);color:hsl(var(--h) 58% 30%);
+  border:1px solid hsl(var(--h) 45% 84%);white-space:nowrap}
+.horchip[style*="--h"]{background:hsl(var(--h) 62% 94%);border-color:hsl(var(--h) 45% 82%);color:hsl(var(--h) 55% 27%)}
+.horcell.horarea[style*="--h"]{color:hsl(var(--h) 55% 32%);box-shadow:inset 3px 0 0 hsl(var(--h) 55% 55%)}
+:root:not([data-theme="light"]){
+  @media(prefers-color-scheme:dark){
+    .area-tag{background:hsl(var(--h) 38% 19%);color:hsl(var(--h) 70% 76%);border-color:hsl(var(--h) 35% 30%)}
+    .horchip[style*="--h"]{background:hsl(var(--h) 34% 18%);border-color:hsl(var(--h) 32% 30%);color:hsl(var(--h) 68% 78%)}
+    .horcell.horarea[style*="--h"]{color:hsl(var(--h) 62% 72%)}
+  }
+}
+:root[data-theme="dark"]{
+  .area-tag{background:hsl(var(--h) 38% 19%);color:hsl(var(--h) 70% 76%);border-color:hsl(var(--h) 35% 30%)}
+  .horchip[style*="--h"]{background:hsl(var(--h) 34% 18%);border-color:hsl(var(--h) 32% 30%);color:hsl(var(--h) 68% 78%)}
+  .horcell.horarea[style*="--h"]{color:hsl(var(--h) 62% 72%)}
+}
+@media(max-width:640px){.area-tag{font-size:11px;padding:3px 8px}}
 
 /* Dos o tres opciones que se ven de una: un desplegable para eso obliga a abrir para
    descubrir que solo hay dos. */
