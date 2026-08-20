@@ -8023,6 +8023,38 @@ app.delete("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (r
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo borrar el turno" }); }
 });
 
+/**
+ * Vaciar la semana: quitar los turnos de golpe para volver a empezar.
+ *
+ * Se borran SOLO los turnos. Las libranzas, las vacaciones y las bajas se quedan, y esa es la
+ * decisión que importa: no son planificación, son el estado de una persona. Que alguien esté
+ * de vacaciones no deja de ser cierto porque se rehaga el cuadrante, y borrarlas obligaría a
+ * volver a ponerlas una a una con el riesgo de olvidar alguna — justo la clase de error que
+ * termina con alguien citado un día que no estaba.
+ *
+ * Y solo sobre un BORRADOR: `horSemanaEditable` corta si la semana está publicada. Vaciar un
+ * horario que el equipo ya está leyendo no es editar, es dejarles sin turnos sin avisar.
+ *
+ * Devuelve cuántos se han quitado, para poder decirlo. Se cuentan ANTES de borrar: `dbRun`
+ * devuelve la fila del RETURNING, no el número de filas tocadas.
+ */
+app.post("/api/horarios/semana/:id/vaciar", requireAuth(HORARIOS_ROLES), async (req, res) => {
+  try {
+    const chk = await horSemanaEditable(req, req.params.id);
+    if (chk.error) return res.status(chk.error).json({ ok: false, error: chk.mensaje });
+    const n = await dbGet(
+      `SELECT COUNT(*)::int AS n FROM hor_asignaciones WHERE semana_id = ? AND COALESCE(tipo,'turno') = 'turno'`,
+      [chk.semana.id]);
+    await dbRun(`DELETE FROM hor_asignaciones WHERE semana_id = ? AND COALESCE(tipo,'turno') = 'turno'`, [chk.semana.id]);
+    const quitados = n?.n || 0;
+    res.json({ ok: true, quitados,
+      mensaje: quitados ? `Semana vaciada: ${quitados} turno${quitados === 1 ? "" : "s"} fuera.` : "La semana ya estaba vacía." });
+  } catch (e) {
+    console.error("[horarios] vaciar semana:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo vaciar la semana" });
+  }
+});
+
 // Contexto para detectar conflictos: ausencias, contratos y necesidades del local.
 /**
  * Turnos YA PUBLICADOS del día anterior al lunes y del siguiente al domingo.

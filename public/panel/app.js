@@ -644,9 +644,15 @@ function drawer(titulo, cuerpoHtml, { aplicar = "Aplicar", limpiar = "Quitar fil
 }
 
 // Confirmación in-app (sustituye confirm() nativo). Devuelve Promise<boolean>.
-function confirmModal(message, { ok = "Confirmar", danger = false } = {}) {
+/**
+ * `html: true` deja pasar el marcado del mensaje. Por defecto NO —se escapa—, que es lo
+ * seguro: casi todos los mensajes llevan dentro un nombre o una descripción que viene de la
+ * base, y ahí el escapado es la protección. Solo se pide cuando el texto lo compone el propio
+ * panel y necesita destacar la cifra que hay que leer antes de pulsar.
+ */
+function confirmModal(message, { ok = "Confirmar", danger = false, html = false } = {}) {
   return new Promise((resolve) => {
-    const ov = modal("Confirmar", `<p style="margin:0 0 18px;line-height:1.55">${esc(message)}</p><div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" data-close>Cancelar</button><button class="btn ${danger ? "danger" : "primary"}" data-ok>${esc(ok)}</button></div>`);
+    const ov = modal("Confirmar", `<p style="margin:0 0 18px;line-height:1.55">${html ? message : esc(message)}</p><div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" data-close>Cancelar</button><button class="btn ${danger ? "danger" : "primary"}" data-ok>${esc(ok)}</button></div>`);
     ov.addEventListener("click", (e) => {
       if (e.target.closest("[data-ok]")) { ov.remove(); resolve(true); }
       else if (e.target === ov || e.target.closest("[data-close]")) resolve(false);
@@ -4332,11 +4338,15 @@ function horAcciones() {
   // que se ofrece sin nada planificado es lo único útil ahí — pedir una propuesta o copiar
   // otra semana— y lo demás se activa cuando hay algo que publicar.
   const n = (HOR.asignaciones || []).length;
+  const turnos = (HOR.asignaciones || []).filter((a) => (a.tipo || "turno") === "turno").length;
   const pdf = `<button class="btn" data-act="hor-pdf" ${n && HOR.semana ? "" : "disabled"} title="Descargar el cuadrante en PDF">${ic("receipt", 15)} PDF</button>`;
   if (horEditable()) {
     return `<button class="btn" data-act="hor-generar" title="Proponer un cuadrante a partir de las necesidades, los contratos y las ausencias">Proponer horario</button>
       <button class="btn" data-act="hor-copiar">Copiar semana</button>
       <button class="btn" data-act="hor-plantillas">Plantillas</button>
+      ${/* Solo si hay turnos que quitar: un botón de vaciar sobre una semana vacía es un
+            botón que no hace nada y encima da miedo pulsarlo. */""}
+      ${turnos ? '<button class="btn danger" data-act="hor-vaciar" title="Quitar todos los turnos de esta semana y empezar de cero">Vaciar semana</button>' : ""}
       ${pdf}
       <button class="btn primary" data-act="hor-publicar" ${n ? "" : "disabled"}>Publicar</button>`;
   }
@@ -5441,6 +5451,31 @@ function horModal(asig, ctx) {
   });
   const rep = ov.querySelector("#hmRep");
   if (rep) rep.addEventListener("click", () => { ov.remove(); horRepetir(asig); });
+}
+
+/**
+ * Vaciar la semana. Se dice CUÁNTO se va a quitar y qué se queda, antes de tocar nada.
+ *
+ * No se borran las libranzas ni las vacaciones: no son planificación, son el estado de una
+ * persona. Que alguien esté de vacaciones no deja de ser cierto porque se rehaga el cuadrante,
+ * y volver a ponerlas a mano una a una es como se acaba citando a alguien un día que no está.
+ */
+async function horVaciar() {
+  const turnos = (HOR.asignaciones || []).filter((a) => (a.tipo || "turno") === "turno").length;
+  if (!turnos) return toast("Esta semana ya está vacía");
+  const otros = (HOR.asignaciones || []).length - turnos;
+  const sem = HOR.semana ? `<div class="mut" style="font-size:12.5px;margin-top:8px">Semana del <b>${esc(fechaCorta(HOR.lunes) || HOR.lunes)}</b> · ${esc(nombreCortoLocal(HOR.local))}</div>` : "";
+  const ok = await confirmModal(
+    `<b>Se quitan ${num(turnos)} turno${turnos === 1 ? "" : "s"}</b> de esta semana y la rejilla queda en blanco.` +
+    (otros ? ` Las vacaciones, libranzas y bajas <b>se quedan</b> (${num(otros)}): eso no es planificación, es dónde está cada uno.` : "") +
+    ` Esto no se puede deshacer.${sem}`,
+    { ok: "Vaciar la semana", danger: true, html: true });
+  if (!ok) return;
+  try {
+    const r = await apiSend("POST", `/api/horarios/semana/${HOR.semana.id}/vaciar`, {});
+    toast(r.mensaje || "Semana vaciada ✅");
+    loadHorarios();
+  } catch (e) { toast("Error: " + e.message); }
 }
 
 // ── Repetir un turno en otros días ──────────────────────────────────────────
@@ -11135,6 +11170,7 @@ document.addEventListener("click", (e) => {
   else if (act === "hor-editar") horEditar(t.getAttribute("data-id"));
   else if (act === "hor-nuevo") horModal(null, { dia: t.getAttribute("data-dia"), tramo: t.getAttribute("data-tramo"), area: t.getAttribute("data-area") });
   else if (act === "hor-copiar") horCopiar();
+  else if (act === "hor-vaciar") horVaciar();
   else if (act === "hor-plantillas") horPlantillas();
   else if (act === "hor-publicar") horPublicar();
   else if (act === "hor-nueva-version") horNuevaVersion();
