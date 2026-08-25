@@ -489,12 +489,17 @@ function shell(active, bodyHtml) {
     </aside>
     <div class="main">
       <header class="topbar">
-        <button class="iconbtn" data-act="mtoggle" aria-label="Menú">${ic("menu")}</button>
+        ${/* SOLO EN MÓVIL. En una pantalla ancha el menú lateral ya está a la vista, así que
+              el botón no servía para abrirlo: lo que hacía era plegarlo a modo icono, y eso
+              nadie lo pedía ni se adivinaba mirándolo. */""}
+        <button class="iconbtn solosm" data-act="mtoggle" aria-label="Menú">${ic("menu")}</button>
         ${fijado
           ? `<span class="pick fijo" title="Tu usuario está asignado a este establecimiento${estabDet ? " · " + estabDet : ""}"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span>${estabDet ? `<span class="pick-det">${esc(estabDet)}</span>` : ""}</span>`
           : `<button class="pick" data-act="estabmenu" title="Cambiar establecimiento${estabDet ? " · " + estabDet : ""}"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span>${estabDet ? `<span class="pick-det">${esc(estabDet)}</span>` : ""}<span class="car">▾</span></button>`}
         ${seg ? `<div class="seg hidesm">${seg}</div>` : ""}
-        <button class="sbtn hidesm" data-act="cmdk">${ic("search", 16)}<span>Buscar o ir a…</span><span class="kbd">⌘K</span></button>
+        ${/* Aquí estaba el cuadro «Buscar o ir a…». Fuera: no se usaba, y una barra se mide
+              por lo que se usa. Lo que abría sigue existiendo en «Acción rápida», en el
+              Dashboard, que es donde tiene nombre propio. */""}
         <div class="spacer"></div>
         <span id="waPill" class="gstat"><span class="sdot st-off"></span>WhatsApp…</span>
         <button class="iconbtn bell hidesm" data-view="dashboard" aria-label="Alertas">${ic("bell")}${DASH_CONCERNS ? `<span class="n">${DASH_CONCERNS}</span>` : ""}</button>
@@ -11125,7 +11130,10 @@ document.addEventListener("click", (e) => {
   if (act === "nav-grupo") { navToggleGrupo(t.getAttribute("data-g")); return; }
   // Modo icono: los grupos se ven todos, pero eso lo hace el CSS. Aquí no se repinta nada,
   // porque repintar la barra tira también la vista y con ella sus listeners.
-  if (act === "mtoggle") { const a = document.getElementById("appEl"); if (!a) return; if (window.innerWidth <= 820) a.classList.toggle("mopen"); else { COLLAPSED = !COLLAPSED; a.classList.toggle("collapsed"); } }
+  // Abrir y cerrar el menú del móvil, y nada más. El modo icono de escritorio se quitó con el
+  // botón: colgaba de él y no había otra forma de llegar. Sus estilos (`.app.collapsed`) siguen
+  // en el CSS por si algún día se recupera con un control propio.
+  if (act === "mtoggle") { const a = document.getElementById("appEl"); if (a) a.classList.toggle("mopen"); }
   else if (act === "mclose") { const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); }
   else if (act === "dash-parte") {
     const p = DASH_PARTE || {};
@@ -11432,7 +11440,6 @@ document.addEventListener("drop", (e) => { const it = e.target.closest("[data-ga
   const cl = document.getElementById("cmdl"); if (cl) cl.addEventListener("click", (e) => { const r = e.target.closest("[data-cmd]"); if (r) runCmd(+r.getAttribute("data-cmd")); });
   const inp = document.getElementById("cmdin"); if (inp) inp.addEventListener("input", (e) => fillCmd(e.target.value));
   document.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); const open = document.getElementById("cmdk").classList.contains("open"); open ? closeCmd() : openCmd(); return; }
     const open = document.getElementById("cmdk") && document.getElementById("cmdk").classList.contains("open");
     if (!open) return;
     if (e.key === "Escape") closeCmd();
