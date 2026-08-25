@@ -3941,14 +3941,16 @@ function sqlContactosUnificados(filtros = {}, params = []) {
 
   // También por teléfono normalizado: si el lead guardó "+34 600…" y la reserva "600…",
   // con el IN exacto el cliente desaparecía al filtrar por local.
+  // Por CENTRO y no por barra: las reservas de la Cooperativa son de Blanes, y con `= ?` sus
+  // clientes no aparecían al segmentar por el establecimiento. Igual que en el resto del panel.
   let localFilter = local
     ? `AND EXISTS (
          SELECT 1 FROM reservas rl
-         WHERE rl.local = ?
+         WHERE rl.local = ANY(?)
            AND RIGHT(regexp_replace(rl.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
        )`
     : "";
-  if (local) params.push(local);
+  if (local) params.push(barrasDelCentro(local, "reservas"));
 
   let sql = `
     SELECT
@@ -13526,50 +13528,12 @@ app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), async
   }
 });
 
-app.post("/api/campanas/enviar", requireAuth(["direccion", "marketing"]), async (req, res) => {
-  const { nombre_campana, mensaje, genero, poblacion, local, cumple_mes } = req.body;
-  if (!mensaje || !nombre_campana) return res.status(400).json({ ok: false, error: "Faltan campos" });
-  if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
-
-  try {
-    const params = [];
-    const sql = sqlContactosUnificados(req.body, params);
-    const contactos = await dbAll(sql, params);
-    if (!contactos.length) return res.json({ ok: false, error: "No hay contactos con ese filtro" });
-
-    const segmento = { genero, poblacion, local, cumple_mes };
-    const campanaRow = await dbRun(
-      `INSERT INTO campanas_wa (nombre, segmento_json, mensaje, total_enviados) VALUES (?, ?, ?, 0) RETURNING id`,
-      [nombre_campana, JSON.stringify(segmento), mensaje]
-    );
-    const campanaId = campanaRow.id;
-    res.json({ ok: true, total: contactos.length, campana_id: campanaId });
-
-    // Enviar en background con delay
-    (async () => {
-      let enviados = 0, errores = 0;
-      for (const c of contactos) {
-        try {
-          const texto = mensaje
-            .replace(/\{nombre\}/gi, c.nombre)
-            .replace(/\{apellidos\}/gi, c.apellidos)
-            .replace(/\{nombre_completo\}/gi, `${c.nombre} ${c.apellidos}`);
-          await sendMensajeLibre(c.telefono, texto);
-          enviados++;
-        } catch (_) { errores++; }
-        await new Promise(r => setTimeout(r, 4000));
-      }
-      await dbRun(
-        `UPDATE campanas_wa SET total_enviados=?, total_errores=?, finalizado_en=CURRENT_TIMESTAMP WHERE id=?`,
-        [enviados, errores, campanaId]
-      );
-      console.log(`📣 Campaña "${nombre_campana}" completada: ${enviados} enviados, ${errores} errores`);
-    })();
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
+// AQUÍ VIVÍA `POST /api/campanas/enviar`, y se ha borrado porque escribía a quien se había
+// dado de BAJA: mandaba a todo lo que devolvía la consulta sin pasar por `filtrarEnviablesWA`,
+// que es la pieza que aplica esa regla. Tampoco traducía, no registraba los envíos en
+// `campana_envios`, guardaba un segmento incompleto y escribía «null» en el mensaje cuando
+// faltaba el nombre. El panel ya no lo usaba —envía por `/api/campanas/:id/enviar`, que hace
+// todo eso bien—, así que era una puerta abierta y nada más.
 app.get("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const rows = await dbAll(`SELECT * FROM campanas_wa ORDER BY creado_en DESC LIMIT 50`);
@@ -13791,6 +13755,10 @@ const CAMPANA_TOOL = {
         type: "array", items: { type: "string" },
         description: "Cada cosa que ha pedido y NO se puede expresar con los campos de arriba, con sus palabras. P. ej. «que sean españoles» (no guardamos nacionalidad) o «que tengan hijos».",
       },
+      // Sin este campo, «que les llegue en su idioma» no tenía a dónde ir y se aproximaba con
+      // el filtro `idioma`, que hace lo contrario: excluir. El sistema sabe traducir —con
+      // caché y volviendo al original si algo se rompe—; solo faltaba poder pedirlo.
+      traducir: { type: "boolean", description: "true si piden que el mensaje llegue a cada uno en SU idioma. Se traduce solo para quien tenga otro idioma detectado; los demás lo reciben en español" },
       explicacion: { type: "string", description: "Una frase explicando por qué ese segmento" },
     },
     required: ["nombre", "mensaje", "segmento"],
@@ -13812,10 +13780,23 @@ REGLAS QUE NO SE SALTAN:
 - Las fechas relativas las resuelves tú a fechas concretas: «el mes pasado» son del 1 al último día del mes anterior a hoy.
 - NO inventes ofertas, precios, descuentos ni horarios que no te hayan dicho. Si te piden «regalar un café», el café se regala; nada más.
 - Si algo de lo que piden NO se puede expresar con los campos disponibles, NO lo aproximes con otro campo parecido: ponlo en "no_traducido" con las palabras de quien lo pidió.
-- El mensaje: español, de tú, dos o tres frases, sin emojis de relleno y sin prometer nada que no se haya pedido. Si hace falta que la persona conteste algo, pídelo claro.`;
+- El mensaje: español, de tú, dos o tres frases, sin emojis de relleno y sin prometer nada que no se haya pedido. Si hace falta que la persona conteste algo, pídelo claro.
+
+CADA FILTRO QUE PONES DEJA GENTE FUERA. Ante la duda, NO lo pongas: es peor no escribir a quien tocaba que escribir de más — y los dos errores se pagan, así que solo filtra por lo que te hayan pedido de verdad.
+
+TRES CASOS QUE SE CONFUNDEN, con la respuesta buena:
+1. «…y que les llegue en su idioma» → traducir: true. NO pongas "idioma": ese campo sirve para escribir SOLO a los de una lengua y dejar fuera al resto.
+2. «a todos los clientes que han reservado en X esta semana» → local: "X" + reservo_from/reservo_to. NO pongas "origen": «reserva» significa «los que NO tienen ficha», y dejaría fuera a los clientes más conocidos.
+3. «a los que vinieron el mes pasado» → reservo_from/reservo_to con las fechas del mes anterior. NO uses from/to: esos son cuándo se tocó su ficha, que es otra cosa.`;
 
     const resp = await ai.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      // Sonnet y no Haiku, y temperatura 0. De esta llamada depende A CUÁNTA GENTE se le manda
+      // un WhatsApp que no se puede retirar: con temperatura 1 la misma frase daba filtros
+      // distintos en dos intentos, y el modelo pequeño es donde se cometen los errores de
+      // matiz («en su idioma» → filtrar por idioma). La diferencia de coste son céntimos por
+      // campaña; equivocarse en quién la recibe no tiene vuelta atrás.
+      model: "claude-sonnet-5",
+      temperature: 0,
       max_tokens: 1200,
       system: sistema,
       tools: [CAMPANA_TOOL],
@@ -13839,6 +13820,9 @@ REGLAS QUE NO SE SALTAN:
     }
 
     const { segmento, descartados } = sanearSegmento(uso.input?.segmento || {}, { locales: INV_LOCALES });
+    // `traducir` no es un filtro —no decide a quién se escribe, sino en qué idioma— así que no
+    // pasa por el saneado de segmentos; viaja aparte y llega hasta el envío.
+    if (uso.input?.traducir) segmento.traducir = true;
     // Nunca se escribe a quien se ha dado de baja, lo pida quien lo pida.
     const seg = { ...segmento, excluir_baja: 1 };
     const params = [];
@@ -14510,7 +14494,10 @@ const server = app.listen(PORT, async () => {
       if (!dest.length) return;
       const row = await dbRun(`INSERT INTO campanas_wa (nombre, segmento_json, mensaje, canal, estado, total_enviados) VALUES (?, ?, ?, 'whatsapp', 'enviando', 0) RETURNING id`,
         [`🎂 Cumpleaños ${hm.iso}`, JSON.stringify({ auto: "cumple" }), plantilla]);
-      enviarLoteWA({ contactos: dest, mensaje: plantilla, campanaId: row.id });
+      // En su idioma, como cualquier otra campaña: felicitar a alguien en un idioma que no es
+      // el suyo es justo lo contrario de lo que se busca con una felicitación.
+      const resolverCumple = await construirResolverIdioma(plantilla, dest).catch(() => null);
+      enviarLoteWA({ contactos: dest, mensaje: plantilla, campanaId: row.id, resolverMensaje: resolverCumple });
       console.log(`🎂 Cumpleaños: enviando felicitación a ${dest.length} contacto(s)`);
     } catch (e) { console.error("[cumpleaños]", e.message); }
   }, 5 * 60 * 1000);

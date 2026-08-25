@@ -10472,13 +10472,38 @@ const CAMP_PLANTILLAS = [
     mensaje:"{nombre}, {local} cumple años y lo queremos celebrar con quien lo ha hecho posible 🥂 Pásate esta semana y te invitamos a brindar con nosotros.",
     nota:"Funciona porque no pide nada. Si le metes un descuento encima, pierde lo que la hace especial." },
 ];
-// Reflejo de src/modules/campaigns/campaigns.service.js (el panel no importa ESM).
-const CLAVES_SEGMENTO = ["q", "genero", "poblacion", "local", "idioma", "origen", "from", "to"];
+/** Un filtro heredado, en palabras. Un chip que ponga «reservo_from: 2026-08-20» no es un aviso. */
+function etiquetaFiltro(k, v) {
+  const f = (d) => fechaCorta(String(d)) || d;
+  switch (k) {
+    case "reservo_from": return `reservaron desde el ${f(v)}`;
+    case "reservo_to": return `reservaron hasta el ${f(v)}`;
+    case "edad_min": return `de ${v} años o más`;
+    case "edad_max": return `de hasta ${v} años`;
+    case "cumple_en_dias": return Number(v) === 0 ? "cumplen años hoy" : `cumplen años en ${v} días`;
+    case "hecho_etiqueta": return `sabemos algo de «${v}»`;
+    case "hecho_valor": return `en concreto «${v}»`;
+    case "sin_nacimiento": return "sin fecha de nacimiento";
+    case "sin_email": return "sin email";
+    case "sin_poblacion": return "sin población";
+    default: return `${k}: ${v}`;
+  }
+}
+
+// Reflejo de src/modules/campaigns/campaigns.service.js (el panel no importa ESM). Hay un test
+// que falla si dejan de coincidir, y no es un detalle: cuando esta lista se quedó corta, los
+// filtros que el formulario no conocía —las fechas de reserva, la edad— se PERDÍAN al pasar por
+// aquí, y la campaña salía a mucha más gente de la que se había visto en la propuesta.
+const CLAVES_SEGMENTO = [
+  "q", "genero", "poblacion", "local", "idioma", "origen", "from", "to",
+  "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
+  "hecho_etiqueta", "hecho_valor",
+];
+const CLAVES_SEGMENTO_BOOL = ["con_email", "con_telefono", "sin_nacimiento", "sin_email", "sin_poblacion"];
 function construirSegmento(input = {}, mesActual) {
   const seg = {};
   for (const k of CLAVES_SEGMENTO) { const v = input[k]; if (v != null && String(v).trim() !== "") seg[k] = typeof v === "string" ? v.trim() : v; }
-  if (input.con_email) seg.con_email = 1;
-  if (input.con_telefono) seg.con_telefono = 1;
+  for (const k of CLAVES_SEGMENTO_BOOL) if (input[k]) seg[k] = 1;
   if (input.cumple_mes) seg.cumple_mes = String(mesActual != null ? mesActual : new Date().getMonth() + 1).padStart(2, "0");
   const excl = Array.isArray(input.excluir_telefonos) ? input.excluir_telefonos.filter(Boolean) : [];
   if (excl.length) seg.excluir_telefonos = excl;
@@ -10493,6 +10518,17 @@ function describirAudiencia(f = {}) {
   // guardaba otra: siguen apareciendo en los segmentos ya guardados.
   if (f.genero) p.push(["M", "hombre"].includes(f.genero) ? "Hombres" : ["F", "mujer"].includes(f.genero) ? "Mujeres" : `Género ${f.genero}`);
   if (f.idioma) p.push(`Idioma: ${f.idioma}`);
+  // Sin estos, una audiencia guardada que filtra por fechas de reserva o por edad se describía
+  // como «Todos los contactos»: el texto decía que no filtraba justo cuando más filtraba.
+  if (f.cumple_en_dias === 0) p.push("Cumplen hoy");
+  else if (f.cumple_en_dias) p.push(`Cumplen en ${f.cumple_en_dias} días`);
+  if (f.edad_min != null || f.edad_max != null) p.push(`Edad ${f.edad_min ?? "…"}–${f.edad_max ?? "…"}`);
+  if (f.reservo_from || f.reservo_to) p.push(`Reservó ${f.reservo_from || "…"}→${f.reservo_to || "…"}`);
+  if (f.hecho_etiqueta) p.push(`Sabemos: ${f.hecho_etiqueta}${f.hecho_valor ? " " + f.hecho_valor : ""}`);
+  if (f.sin_nacimiento) p.push("Sin fecha de nacimiento");
+  if (f.sin_email) p.push("Sin email");
+  if (f.sin_poblacion) p.push("Sin población");
+  if (f.traducir) p.push("Traducido a su idioma");
   if (f.origen) p.push(`Origen: ${f.origen}`);
   if (f.con_email) p.push("Con email");
   if (f.con_telefono) p.push("Con teléfono");
@@ -10697,6 +10733,7 @@ function openCampana(mode = "nueva", pre = {}) {
     <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" name="cumple_mes" ${s.cumple_mes ? "checked" : ""} style="width:auto;height:auto"> Cumpleaños este mes</label>
     <label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:16px"><input type="checkbox" id="campOptin" ${s.soloOptIn ? "checked" : ""} style="width:auto;height:auto"> Solo opt-in</label>
     <label class="field full" style="flex-direction:row;align-items:center;gap:7px"><input type="checkbox" id="campTraducir" ${s.traducir ? "checked" : ""} style="width:auto;height:auto"> 🌐 Traducir al idioma de cada cliente (detectado de sus mensajes; castellano por defecto)</label>
+    <div class="field full" id="campHeredados"></div>
     <div class="field full"><label>Destinatarios</label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn sm" id="campVerDests">Ver / editar destinatarios</button><span id="campPrev" class="mut" style="font-size:12.5px"></span></div><div id="campDests" style="display:none;max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:10px;margin-top:8px"></div></div>
     ${editar ? "" : '<div class="field"><label>Programar para (opcional)</label><input type="datetime-local" id="campWhen"></div>'}
   </div>
@@ -10706,11 +10743,43 @@ function openCampana(mode = "nueva", pre = {}) {
   let campAdjunto = pre.adjunto_url || "";
   const excluir = new Set(Array.isArray(s.excluir_telefonos) ? s.excluir_telefonos : []);
   // Construye el objeto de filtros desde el formulario (reflejo de construirSegmento del servicio).
+  // Filtros que llegaron en la propuesta y que este formulario NO sabe editar: fechas de
+  // reserva, edad, cumpleaños en N días, lo que sabemos de la gente. Se guardan aparte y viajan
+  // intactos hasta el envío.
+  //
+  // ESTE ERA EL FALLO GRANDE. Al reconstruir el segmento solo desde el formulario, «los que
+  // reservaron entre el 20 y el 25» se convertía en «todos los del local» al pulsar continuar:
+  // el contador subía —lo que parece que por fin funciona— y el mensaje salía a gente que no
+  // tocaba. Sin error, sin aviso y sin vuelta atrás.
+  const HEREDABLES = ["reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
+                      "hecho_etiqueta", "hecho_valor", "sin_nacimiento", "sin_email", "sin_poblacion"];
+  const heredados = {};
+  for (const k of HEREDABLES) if (s[k] != null && s[k] !== "" && s[k] !== false) heredados[k] = s[k];
+
   const filtros = () => {
     const f = Object.fromEntries(new FormData(ov.querySelector("#fCamp")).entries());
-    const base = { q: f.q, genero: f.genero, poblacion: f.poblacion, local: f.local, idioma: f.idioma, origen: f.origen, from: f.from, to: f.to, con_email: !!f.con_email, con_telefono: !!f.con_telefono, cumple_mes: !!f.cumple_mes, soloOptIn: ov.querySelector("#campOptin").checked, excluir_telefonos: [...excluir] };
+    const base = { ...heredados, q: f.q, genero: f.genero, poblacion: f.poblacion, local: f.local, idioma: f.idioma, origen: f.origen, from: f.from, to: f.to, con_email: !!f.con_email, con_telefono: !!f.con_telefono, cumple_mes: !!f.cumple_mes, soloOptIn: ov.querySelector("#campOptin").checked, excluir_telefonos: [...excluir] };
     return construirSegmento(base);
   };
+
+  // Y se ENSEÑAN, con su equis para quitarlos: un filtro que viaja sin verse es tan peligroso
+  // como uno que se pierde. Aquí es donde se mira a cuánta gente se va a escribir.
+  const pintarHeredados = () => {
+    const caja = ov.querySelector("#campHeredados");
+    if (!caja) return;
+    const chips = Object.keys(heredados).map((k) => `<span class="chip on" data-heredado="${esc(k)}" style="cursor:default">
+        ${esc(etiquetaFiltro(k, heredados[k]))}
+        <button type="button" class="chipx" data-quitar="${esc(k)}" title="Quitar este filtro">×</button></span>`).join("");
+    caja.innerHTML = chips
+      ? `<div class="mut" style="font-size:12px;margin-bottom:6px">Además, de la propuesta:</div><div class="chips">${chips}</div>`
+      : "";
+  };
+  ov.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-quitar]"); if (!b) return;
+    delete heredados[b.getAttribute("data-quitar")];
+    pintarHeredados();
+    ov.querySelector("#campPrev").textContent = "Filtro quitado. Pulsa «Ver/editar» para recalcular.";
+  });
   const updateBubble = () => {
     const raw = ov.querySelector("#campMsg").value || "";
     const txt = raw.replace(/\{nombre_completo\}/gi, "Ana Pérez").replace(/\{nombre\}/gi, "Ana").replace(/\{apellidos\}/gi, "Pérez").replace(/\{local\}/gi, "La Tapeta - Blanes");
@@ -10773,6 +10842,7 @@ function openCampana(mode = "nueva", pre = {}) {
     ov.querySelector("#campPrev").textContent = `Excluidos ${excluir.size}. Pulsa "Ver/editar" para recalcular enviables.`;
   });
   updateBubble();
+  pintarHeredados();
   const payload = (extra = {}) => {
     const d = { nombre: (ov.querySelector('[name="nombre"]').value || "").trim(), mensaje: ov.querySelector("#campMsg").value || "", ...filtros(), soloOptIn: ov.querySelector("#campOptin").checked, traducir: ov.querySelector("#campTraducir").checked, ...extra };
     if (campAdjunto) d.adjunto_url = campAdjunto;

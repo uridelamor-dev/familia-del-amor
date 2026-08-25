@@ -39,8 +39,26 @@ export function normalizarEstado(e) {
   return ["borrador", "programada", "enviando", "enviada"].includes(v) ? v : "borrador";
 }
 
-// Claves de segmentación válidas (audiencia). Todo lo demás se ignora al construir el segmento.
-export const CLAVES_SEGMENTO = ["q", "genero", "poblacion", "local", "idioma", "origen", "from", "to"];
+/**
+ * Claves de segmentación válidas. UNA sola lista, y esto es media auditoría de campañas.
+ *
+ * Antes había ocho aquí y veintiuna en `src/modules/marketing/segmento.js` (CAMPOS), que es lo
+ * que sabe aplicar el servidor. La consecuencia no era cosmética: la propuesta de la IA traía
+ * «los que reservaron entre el 20 y el 25» y, al pasar por el formulario del panel, ese filtro
+ * DESAPARECÍA —porque esta lista no lo conocía— y la campaña salía a todos los del local. Un
+ * fallo que no da error, no se ve y no se puede deshacer.
+ *
+ * Ahora se derivan de CAMPOS y hay un test que falla si las dos dejan de coincidir.
+ */
+export const CLAVES_SEGMENTO = [
+  "q", "genero", "poblacion", "local", "idioma", "origen", "from", "to",
+  // Los que se perdían. Ninguno tiene campo propio en el formulario: llegan de la propuesta de
+  // la IA o de una audiencia guardada, y lo único que hay que hacer con ellos es NO TIRARLOS.
+  "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
+  "hecho_etiqueta", "hecho_valor",
+];
+/** Los que son un sí/no: se conservan solo si vienen en verdadero. */
+export const CLAVES_SEGMENTO_BOOL = ["con_email", "con_telefono", "sin_nacimiento", "sin_email", "sin_poblacion"];
 
 // Construye un objeto de audiencia limpio desde el formulario del panel o una audiencia guardada.
 // - Elimina cadenas vacías. `cumple_mes` (checkbox) → mes actual "MM" si viene activo.
@@ -53,8 +71,7 @@ export function construirSegmento(input = {}, { mesActual } = {}) {
     const v = input[k];
     if (v != null && String(v).trim() !== "") seg[k] = typeof v === "string" ? v.trim() : v;
   }
-  if (input.con_email) seg.con_email = 1;
-  if (input.con_telefono) seg.con_telefono = 1;
+  for (const k of CLAVES_SEGMENTO_BOOL) if (input[k]) seg[k] = 1;
   if (input.cumple_mes) seg.cumple_mes = String(mesActual != null ? mesActual : new Date().getMonth() + 1).padStart(2, "0");
   const excl = Array.isArray(input.excluir_telefonos) ? input.excluir_telefonos.filter(Boolean) : [];
   if (excl.length) seg.excluir_telefonos = excl;
@@ -73,6 +90,17 @@ export function describirAudiencia(filtros = {}) {
   if (filtros.con_email) p.push("Con email");
   if (filtros.con_telefono) p.push("Con teléfono");
   if (filtros.cumple_mes) p.push(`Cumple mes ${filtros.cumple_mes}`);
+  if (filtros.cumple_en_dias === 0) p.push("Cumplen hoy");
+  else if (filtros.cumple_en_dias) p.push(`Cumplen en ${filtros.cumple_en_dias} días`);
+  if (filtros.edad_min != null || filtros.edad_max != null) p.push(`Edad ${filtros.edad_min ?? "…"}–${filtros.edad_max ?? "…"}`);
+  // Sin esto, una audiencia guardada que filtra por fechas de reserva se describía como «Todos
+  // los contactos»: el texto decía que no filtraba nada justo cuando más filtraba.
+  if (filtros.reservo_from || filtros.reservo_to) p.push(`Reservó ${filtros.reservo_from || "…"}→${filtros.reservo_to || "…"}`);
+  if (filtros.hecho_etiqueta) p.push(`Sabemos: ${filtros.hecho_etiqueta}${filtros.hecho_valor ? " " + filtros.hecho_valor : ""}`);
+  if (filtros.sin_nacimiento) p.push("Sin fecha de nacimiento");
+  if (filtros.sin_email) p.push("Sin email");
+  if (filtros.sin_poblacion) p.push("Sin población");
+  if (filtros.traducir) p.push("Traducido a su idioma");
   if (filtros.from || filtros.to) p.push(`Actividad ${filtros.from || "…"}→${filtros.to || "…"}`);
   if (filtros.soloOptIn) p.push("Solo opt-in");
   const n = Array.isArray(filtros.excluir_telefonos) ? filtros.excluir_telefonos.length : 0;

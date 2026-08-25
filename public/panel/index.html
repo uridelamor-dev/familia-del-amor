@@ -784,6 +784,10 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:.12s;user-select:none}
 .chip:hover{border-color:var(--border2)}
 .chip.on{background:var(--brand-soft);border-color:var(--brand);color:var(--brand)}
+/* La equis de un chip que se puede quitar (los filtros heredados de una propuesta). */
+.chipx{border:0;background:none;color:inherit;font:inherit;font-size:15px;line-height:1;
+  cursor:pointer;padding:0 0 0 2px;opacity:.6}
+.chipx:hover{opacity:1}
 @media(max-width:640px){.segm{height:44px}.chip{min-height:42px;font-size:13.5px}}
 
 /* «Esto no es un producto»: los motivos, como botones. Se escribe el porqué porque la lista
