@@ -7721,6 +7721,13 @@ app.get("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) =>
     if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
     const lunes = lunesDe(String(req.query.lunes || "")) || lunesDe(instanteANegocio(Date.now()).diaNegocio);
 
+    // La configuración se siembra AQUÍ TAMBIÉN, no solo al abrir Configuración o Plantilla.
+    // Un establecimiento que nunca ha pasado por esas dos pantallas abría el cuadrante sin
+    // áreas ni tramos: una rejilla vacía, sin una sola fila donde poner un turno. Se ve desde
+    // que la Oficina tiene horarios. `sembrarLocal` es idempotente (ON CONFLICT DO NOTHING),
+    // así que pasar por aquí cada semana no duplica nada.
+    await sembrarLocal({ run: dbRun }, local, isoConOffset(Date.now())).catch(() => {});
+
     const [areas, tramos, equipo] = await Promise.all([
       dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
       dbAll(`SELECT id, nombre, orden, inicio_min, fin_min, tipo FROM hor_tramos WHERE local = ? AND activo ORDER BY orden, inicio_min`, [local]),
@@ -7746,7 +7753,7 @@ app.get("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) =>
       // Solo las de la gente de ESTE local. Sin el JOIN entraban las de todo el grupo, y de
       // ahí pasaban al snapshot publicado: las bajas médicas de Lloret acababan guardadas
       // dentro del horario de Blanes.
-      dbAll(`${AUS_DEL_LOCAL}`, [local, dias[6], dias[0]]).catch(() => []),
+      dbAll(`${AUS_DEL_LOCAL}`, [personasDe(local), dias[6], dias[0]]).catch(() => []),
     ]);
     // La fila de fiesta se manda ya calculada: la pantalla no la deduce por su cuenta, para
     // que no pueda decir una cosa distinta de la que dice el PDF.
@@ -8085,9 +8092,12 @@ async function horVecinas(local, dias) {
 // `estado = 'aprobada'` NO es un detalle: sin él, en cuanto alguien PIDE unas vacaciones su
 // nombre aparecería en la fila de fiesta del cuadrante marcado como «vacaciones», antes de que
 // nadie se las haya concedido. Una solicitud no cambia el horario hasta que se aprueba.
+// Por CENTRO, no por barra. Quien está dado de alta en la Cooperativa y se va de vacaciones
+// tiene que salir como ausente en el cuadrante de Blanes: si no, se le pone un turno y nadie
+// se entera hasta que no aparece.
 const AUS_DEL_LOCAL = `SELECT a.worker_id, a.tipo, a.desde, a.hasta, a.estado FROM hor_ausencias a
              JOIN users u ON u.id = a.worker_id
-            WHERE u.local = ? AND a.estado = 'aprobada' AND a.desde <= ? AND a.hasta >= ?`;
+            WHERE u.local = ANY(?) AND a.estado = 'aprobada' AND a.desde <= ? AND a.hasta >= ?`;
 
 /**
  * Las capacidades de todo el equipo de un local, de una vez.
@@ -8104,7 +8114,7 @@ async function horCapacidades(local) {
     dbAll(`SELECT wa.worker_id, wa.area_id, wa.principal FROM hor_worker_areas wa
              JOIN users u ON u.id = wa.worker_id
              JOIN hor_areas a ON a.id = wa.area_id
-            WHERE u.local = ? AND a.local = ?`, [local, local]).catch(() => []),
+            WHERE u.local = ANY(?) AND a.local = ?`, [personasDe(local), local]).catch(() => []),
     dbAll(`SELECT id FROM hor_areas WHERE local = ? AND activo`, [local]).catch(() => []),
   ]);
   return { indice: indiceCapacidades(filas, { areasActivas: activas.map((a) => a.id) }), filas };
@@ -8117,9 +8127,9 @@ async function horContexto(local, lunes, dias) {
   // siempre. Se filtran con un JOIN sobre `users`, que es quien sabe de qué local es cada uno.
   const [ausencias, contratos, necesidades] = await Promise.all([
     dbAll(`SELECT a.* FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
-            WHERE u.local = ? AND a.estado = 'aprobada' AND a.hasta >= ? AND a.desde <= ?`, [local, dias[0], dias[6]]),
+            WHERE u.local = ANY(?) AND a.estado = 'aprobada' AND a.hasta >= ? AND a.desde <= ?`, [personasDe(local), dias[0], dias[6]]),
     dbAll(`SELECT c.* FROM hor_contratos c JOIN users u ON u.id = c.worker_id
-            WHERE u.local = ? AND c.desde <= ? AND (c.hasta IS NULL OR c.hasta >= ?)`, [local, dias[6], dias[0]]),
+            WHERE u.local = ANY(?) AND c.desde <= ? AND (c.hasta IS NULL OR c.hasta >= ?)`, [personasDe(local), dias[6], dias[0]]),
     dbAll(`SELECT * FROM hor_necesidades WHERE local = ?`, [local]),
   ]);
   return { ausencias, contratos, necesidades };
@@ -8246,17 +8256,17 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
     // La PLANTILLA del snapshot: quien estuvo en esa semana, aunque ya se haya ido. Filtrar
     // por `activo` aquí borraría del papel a quien trabajó y luego causó baja.
     const plantilla = (await q(`SELECT id, nombre, username, fecha_alta, fecha_baja FROM users
-                                WHERE local = ? AND ${SQL_ESTUVO_ENTRE}`, [s.local, dias[6], dias[0]])).rows;
+                                WHERE local = ANY(?) AND ${SQL_ESTUVO_ENTRE}`, [personasDe(s.local), dias[6], dias[0]])).rows;
     const areas = (await q(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? ORDER BY orden`, [s.local])).rows;
     const tramos = (await q(`SELECT id, nombre, orden, inicio_min, fin_min, tipo FROM hor_tramos WHERE local = ? ORDER BY orden`, [s.local])).rows;
     // AQUÍ estaba el daño: este array se guarda dentro de `hor_publicaciones.snapshot`, así
     // que las vacaciones y las BAJAS MÉDICAS de todos los locales quedaban escritas para
     // siempre dentro del horario de uno solo. Un tipo='baja' es dato de salud.
     const ausencias = (await q(`SELECT a.* FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
-                                 WHERE u.local = ? AND a.estado = 'aprobada' AND a.hasta >= ? AND a.desde <= ?`,
-      [s.local, dias[0], dias[6]])).rows;
+                                 WHERE u.local = ANY(?) AND a.estado = 'aprobada' AND a.hasta >= ? AND a.desde <= ?`,
+      [personasDe(s.local), dias[0], dias[6]])).rows;
     const contratos = (await q(`SELECT c.* FROM hor_contratos c JOIN users u ON u.id = c.worker_id
-                                 WHERE u.local = ? AND c.desde <= ?`, [s.local, dias[6]])).rows;
+                                 WHERE u.local = ANY(?) AND c.desde <= ?`, [personasDe(s.local), dias[6]])).rows;
     const necesidades = (await q(`SELECT * FROM hor_necesidades WHERE local = ?`, [s.local])).rows;
 
     const vecinas = (await q(
@@ -8269,7 +8279,7 @@ app.post("/api/horarios/semana/:id/publicar", requireAuth(HORARIOS_ROLES), async
     const capsPub = (await q(`SELECT wa.worker_id, wa.area_id FROM hor_worker_areas wa
                                 JOIN users u ON u.id = wa.worker_id
                                 JOIN hor_areas a ON a.id = wa.area_id AND a.activo
-                               WHERE u.local = ? AND a.local = ?`, [s.local, s.local])).rows;
+                               WHERE u.local = ANY(?) AND a.local = ?`, [personasDe(s.local), s.local])).rows;
     const conflictos = detectarConflictos({ lunes: s.lunes, asignaciones, trabajadores: equipo, areas, tramos,
       ausencias, contratos, necesidades, vecinas, capacidades: indiceCapacidades(capsPub) });
     const val = validarPublicacion({ estado: s.estado, conflictos, avisosAceptados: req.body?.aceptar_avisos ? true : null });
@@ -8459,10 +8469,10 @@ async function horPdfDeSemana(s) {
       dbAll(`SELECT id, nombre, orden, inicio_min, fin_min, tipo FROM hor_tramos WHERE local = ? AND activo ORDER BY orden`, [s.local]),
       dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]),
       dbAll(`SELECT id, nombre, username, fecha_alta, fecha_baja FROM users
-             WHERE local = ? AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1`, [s.local]),
+             WHERE local = ANY(?) AND rol IN ('trabajador','encargado') AND COALESCE(activo,1) = 1`, [personasDe(s.local)]),
       dbAll(`SELECT a.worker_id, a.tipo, a.desde, a.hasta, a.estado FROM hor_ausencias a
              JOIN users u ON u.id = a.worker_id
-            WHERE u.local = ? AND a.estado = 'aprobada' AND a.desde <= ? AND a.hasta >= ?`, [s.local, dias[6], dias[0]]).catch(() => []),
+            WHERE u.local = ANY(?) AND a.estado = 'aprobada' AND a.desde <= ? AND a.hasta >= ?`, [personasDe(s.local), dias[6], dias[0]]).catch(() => []),
     ]);
   }
   const cuadrante = construirCuadrante({ lunes: s.lunes, tramos, areas, asignaciones, trabajadores: equipo, ausencias });
@@ -8488,8 +8498,8 @@ app.get("/api/horarios/plantilla", requireAuth(HORARIOS_ROLES), async (req, res)
     const [areas, tramos, equipo, necesidades, contratos, ausencias, disponibilidad] = await Promise.all([
       dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
       dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden, inicio_min`, [local]),
-      dbAll(`SELECT id, nombre, username FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
-             AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [local]),
+      dbAll(`SELECT id, nombre, username FROM users WHERE local = ANY(?) AND rol IN ('trabajador','encargado')
+             AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [personasDe(local)]),
       dbAll(`SELECT id, area_id, tramo_id, dow, minimo, objetivo,
                     duracion_min, ventana_inicio_min, ventana_fin_min, etiqueta
              FROM hor_necesidades WHERE local = ?`, [local]),
@@ -8498,12 +8508,12 @@ app.get("/api/horarios/plantilla", requireAuth(HORARIOS_ROLES), async (req, res)
       dbAll(`SELECT a.id, a.worker_id, a.tipo, a.desde, a.hasta, a.estado, a.motivo, a.origen,
                     a.comentario, a.respuesta, a.solicitado_por, a.resuelto_por
                FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
-              WHERE u.local = ? AND a.hasta >= ? ORDER BY a.desde`,
-        [local, sumaDias(instanteANegocio(Date.now()).diaNegocio, -30)]),
+              WHERE u.local = ANY(?) AND a.hasta >= ? ORDER BY a.desde`,
+        [personasDe(local), sumaDias(instanteANegocio(Date.now()).diaNegocio, -30)]),
       dbAll(`SELECT d.id, d.worker_id, d.dow, d.inicio_min, d.fin_min, d.preferencia,
                     d.origen, d.autor, d.actualizado_en
                FROM hor_disponibilidad d JOIN users u ON u.id = d.worker_id
-              WHERE u.local = ? ORDER BY d.worker_id, d.dow`, [local]),
+              WHERE u.local = ANY(?) ORDER BY d.worker_id, d.dow`, [personasDe(local)]),
     ]);
     res.json({ ok: true, local, areas, tramos, equipo, necesidades, contratos, ausencias, disponibilidad,
       // Solo lectura: si hay contratos pisándose, que se vean. No se arreglan solos.
@@ -8946,10 +8956,10 @@ app.get("/api/horarios/ausencias", requireAuth(HORARIOS_ROLES), async (req, res)
 
     const filas = await dbAll(
       `SELECT a.*, u.nombre FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
-        WHERE u.local = ? ${estado ? "AND a.estado = ?" : ""} AND a.hasta >= ?
+        WHERE u.local = ANY(?) ${estado ? "AND a.estado = ?" : ""} AND a.hasta >= ?
         ORDER BY CASE a.estado WHEN 'pendiente' THEN 0 ELSE 1 END, a.desde DESC, a.id DESC
         LIMIT 300`,
-      estado ? [local, estado, desde] : [local, desde]);
+      estado ? [personasDe(local), estado, desde] : [personasDe(local), desde]);
 
     // El encargado no ve la nota interna de una baja: es dato de salud y para cuadrar la
     // semana no aporta nada. RR.HH. y dirección sí.
@@ -9064,8 +9074,8 @@ app.post("/api/horarios/generar", requireAuth(HORARIOS_ROLES), async (req, res) 
       dbGet(`SELECT descanso_min_horas FROM hor_config WHERE local = ?`, [local]),
       dbAll(`SELECT id, nombre, orden FROM hor_areas WHERE local = ? AND activo ORDER BY orden, nombre`, [local]),
       dbAll(`SELECT id, nombre, orden, inicio_min, fin_min FROM hor_tramos WHERE local = ? AND activo ORDER BY orden`, [local]),
-      dbAll(`SELECT id, nombre, username, areas_configuradas_en FROM users WHERE local = ? AND rol IN ('trabajador','encargado')
-             AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [local]),
+      dbAll(`SELECT id, nombre, username, areas_configuradas_en FROM users WHERE local = ANY(?) AND rol IN ('trabajador','encargado')
+             AND COALESCE(activo,1) = 1 AND fecha_baja IS NULL ORDER BY nombre`, [personasDe(local)]),
       dbAll(`SELECT * FROM hor_necesidades WHERE local = ?`, [local]),
       // `local IS NULL` recogía las filas antiguas… y también cualquiera cuyo local se
       // hubiera perdido. El JOIN con `users` es el criterio de verdad.
@@ -9073,7 +9083,7 @@ app.post("/api/horarios/generar", requireAuth(HORARIOS_ROLES), async (req, res) 
       // sujeta— pero acotarlo aquí evita que una solicitud pendiente llegue siquiera a
       // planteárselo.
       dbAll(`SELECT a.* FROM hor_ausencias a JOIN users u ON u.id = a.worker_id
-              WHERE u.local = ? AND a.estado = 'aprobada'`, [local]),
+              WHERE u.local = ANY(?) AND a.estado = 'aprobada'`, [personasDe(local)]),
       dbAll(`SELECT c.* FROM hor_contratos c JOIN users u ON u.id = c.worker_id WHERE u.local = ANY(?)`, [personasDe(local)]),
       dbAll(`SELECT d.* FROM hor_disponibilidad d JOIN users u ON u.id = d.worker_id WHERE u.local = ANY(?)`, [personasDe(local)]),
     ]);
@@ -10448,10 +10458,10 @@ app.get("/api/fichajes/bolsa", requireAuth(FICHAJES_ROLES), async (req, res) => 
       // ya no sea de aquí. Quien se cambió de establecimiento con saldo pendiente en el
       // anterior desaparecía de esa pantalla, y sus horas con él.
       dbAll(`SELECT id, nombre FROM users
-              WHERE (local = ? AND ${SQL_ESTUVO_ENTRE})
+              WHERE (local = ANY(?) AND ${SQL_ESTUVO_ENTRE})
                  OR id IN (SELECT DISTINCT worker_id FROM fic_bolsa_movimientos WHERE local = ?)
               ORDER BY nombre`,
-        [local, p.hasta, p.desde, local]),
+        [personasDe(local), p.hasta, p.desde, local]),
       ficCierresDe(local),
       // Fichajes que aterrizaron DESPUÉS de cerrar este periodo: una tablet que subió su cola
       // tarde. No han cambiado nada de lo cerrado —la bolsa solo la escriben validar y cerrar,
@@ -11656,7 +11666,7 @@ app.get("/api/rrhh/llamadas/:mes", requireAuth(RRHH_ROLES), async (req, res) => 
   try {
     const scope = rrhhLocalScope(req);
     const rows = scope
-      ? await dbAll(`SELECT l.* FROM hr_llamadas_mes l JOIN users u ON u.id = l.worker_id WHERE l.mes = ? AND u.local = ?`, [req.params.mes, scope])
+      ? await dbAll(`SELECT l.* FROM hr_llamadas_mes l JOIN users u ON u.id = l.worker_id WHERE l.mes = ? AND u.local = ANY(?)`, [req.params.mes, personasDe(scope)])
       : await dbAll(`SELECT * FROM hr_llamadas_mes WHERE mes = ?`, [req.params.mes]);
     res.json({ ok: true, data: rows || [] });
   } catch (e) {
@@ -11798,7 +11808,7 @@ app.get("/api/rrhh/atencion", requireAuth(RRHH_ROLES), async (req, res) => {
         .catch(() => []),
       dbAll(`SELECT a.id, a.worker_id, a.tipo, a.desde, a.hasta, u.nombre FROM hor_ausencias a
                JOIN users u ON u.id = a.worker_id
-              WHERE u.local = ? AND a.estado = 'pendiente' ORDER BY a.desde LIMIT 50`, [local]),
+              WHERE u.local = ANY(?) AND a.estado = 'pendiente' ORDER BY a.desde LIMIT 50`, [personasDe(local)]),
       // Turnos que quedaron después de una baja: un cuadrante publicado con alguien que ya
       // no trabaja aquí, y que el resto del equipo está leyendo.
       dbAll(`SELECT a.worker_id, u.nombre, u.fecha_baja, s.lunes, s.local, COUNT(*)::int AS turnos
@@ -11811,9 +11821,9 @@ app.get("/api/rrhh/atencion", requireAuth(RRHH_ROLES), async (req, res) => {
       // de esa persona y bajando hasta Documentos.
       dbAll(`SELECT d.id, d.worker_id, d.nombre AS doc, d.tipo, d.fecha_caducidad, d.sensible, u.nombre
                FROM hr_documentos d JOIN users u ON u.id = d.worker_id
-              WHERE u.local = ? AND d.fecha_caducidad IS NOT NULL AND d.fecha_caducidad <= ?
+              WHERE u.local = ANY(?) AND d.fecha_caducidad IS NOT NULL AND d.fecha_caducidad <= ?
                 AND u.fecha_baja IS NULL AND COALESCE(u.activo,1) = 1
-              ORDER BY d.fecha_caducidad LIMIT 30`, [local, sumaDias(hoy, 30)]),
+              ORDER BY d.fecha_caducidad LIMIT 30`, [personasDe(local), sumaDias(hoy, 30)]),
       dbAll(`SELECT c.id, c.worker_id, c.desde, c.hasta, u.nombre FROM hor_contratos c
                JOIN users u ON u.id = c.worker_id WHERE u.local = ANY(?) AND ${SQL_ACTIVO_EL_DIA}`, [personasDe(local), hoy, hoy]),
       dbAll(`SELECT id, nombre, local FROM users
@@ -11821,8 +11831,8 @@ app.get("/api/rrhh/atencion", requireAuth(RRHH_ROLES), async (req, res) => {
                 AND ${SQL_ACTIVO_EL_DIA} ORDER BY nombre LIMIT 30`, [local, hoy, hoy]),
       dbAll(`SELECT c.id, c.worker_id, u.nombre, s.lunes FROM hor_comunicaciones c
                JOIN users u ON u.id = c.worker_id JOIN hor_semanas s ON s.id = c.semana_id
-              WHERE u.local = ? AND c.entendido_en IS NULL AND s.lunes >= ?
-              ORDER BY s.lunes LIMIT 30`, [local, sumaDias(hoy, -7)]).catch(() => []),
+              WHERE u.local = ANY(?) AND c.entendido_en IS NULL AND s.lunes >= ?
+              ORDER BY s.lunes LIMIT 30`, [personasDe(local), sumaDias(hoy, -7)]).catch(() => []),
     ]);
 
     const solapados = contratosSolapados(contratos);
@@ -12433,7 +12443,7 @@ app.get("/api/rrhh/agora/operadores", requireAuth(RRHH_ROLES), async (req, res) 
     const r = await runInformeAgora("empleado", { local, from, to });
     if (r.sinCredenciales) return res.json({ ok: true, operadores: [], sinCredenciales: true, from, to });
     const userNames = [...new Set(r.filas.map((f) => f.empleado).filter(Boolean))];
-    const perfiles = await dbAll(`SELECT id, nombre, agora_username, local FROM users WHERE rol IN ('trabajador','encargado')${scope ? " AND local = ?" : ""}`, scope ? [scope] : []);
+    const perfiles = await dbAll(`SELECT id, nombre, agora_username, local FROM users WHERE rol IN ('trabajador','encargado')${scope ? " AND local = ANY(?)" : ""}`, scope ? [personasDe(scope)] : []);
     const operadores = emparejaOperadores(userNames, perfiles);
     res.json({ ok: true, operadores, from, to, sinDatos: !userNames.length, errores: r.errores });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }

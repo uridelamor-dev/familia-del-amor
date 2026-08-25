@@ -85,7 +85,7 @@ describe("aislamiento por establecimiento", () => {
     // `hor_ausencias.local` se copió al crearla y no se mueve si la persona cambia de
     // establecimiento. El JOIN con `users` es el criterio de verdad, igual que en la Fase 0.
     assert.match(bloque('app.get("/api/horarios/ausencias"', "/**\n * Aprobar o rechazar"),
-      /JOIN users u ON u\.id = a\.worker_id\s*\n?\s*WHERE u\.local = \?/);
+      /JOIN users u ON u\.id = a\.worker_id\s*\n?\s*WHERE u\.local = ANY\(\?\)/);
   });
 });
 
@@ -121,7 +121,7 @@ describe("solo lo aprobado toca el horario", () => {
   });
   test("y el generador", () => {
     assert.match(bloque('app.post("/api/horarios/generar"', "// Aceptar la propuesta"),
-      /FROM hor_ausencias a JOIN users u ON u\.id = a\.worker_id\s*\n?\s*WHERE u\.local = \? AND a\.estado = 'aprobada'/);
+      /FROM hor_ausencias a JOIN users u ON u\.id = a\.worker_id\s*\n?\s*WHERE u\.local = ANY\(\?\) AND a\.estado = 'aprobada'/);
   });
 });
 

@@ -79,8 +79,8 @@ describe("Horarios · las ausencias de un local son solo las de su gente", () =>
 
   test("al publicar, las ausencias que entran en el snapshot son las del local", () => {
     const b = bloque('app.post("/api/horarios/semana/:id/publicar"', "// Crear una versión nueva");
-    assert.match(b, /FROM hor_ausencias a JOIN users u ON u\.id = a\.worker_id\s*\n?\s*WHERE u\.local = \?/);
-    assert.match(b, /FROM hor_contratos c JOIN users u ON u\.id = c\.worker_id\s*\n?\s*WHERE u\.local = \?/);
+    assert.match(b, /FROM hor_ausencias a JOIN users u ON u\.id = a\.worker_id\s*\n?\s*WHERE u\.local = ANY\(\?\)/);
+    assert.match(b, /FROM hor_contratos c JOIN users u ON u\.id = c\.worker_id\s*\n?\s*WHERE u\.local = ANY\(\?\)/);
   });
 
   test("el contexto de conflictos tampoco arrastra el grupo entero", () => {
