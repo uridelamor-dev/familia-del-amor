@@ -4094,7 +4094,16 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   if (filtros.sin_email) sql += ` AND COALESCE(c.correo, '') = ''`;
   if (filtros.sin_poblacion) sql += ` AND COALESCE(c.poblacion, '') = ''`;
   if (origen) { sql += ` AND c.origen = ?`; params.push(origen); }
-  if (idioma) { sql += ` AND mp.idioma = ?`; params.push(idioma); }
+  // EL CASTELLANO NO SE GUARDA. `marketing_prefs.idioma` solo se rellena cuando se detecta un
+  // idioma DISTINTO del base (ver el repaso de idiomas y `idiomaDeContacto`, i18n.js): quien
+  // habla español tiene la columna vacía. Así que `mp.idioma = 'es'` no casaba con NADIE y
+  // cualquier campaña que filtrara por español salía con cero destinatarios, sin decir por qué.
+  // El criterio correcto es el mismo que usa el envío: sin idioma guardado, el base.
+  if (idioma) {
+    if (idioma === IDIOMA_BASE) sql += ` AND (mp.idioma IS NULL OR mp.idioma = '' OR mp.idioma = ?)`;
+    else sql += ` AND mp.idioma = ?`;
+    params.push(idioma);
+  }
   if (excluir_baja) sql += ` AND COALESCE(mp.baja, 0) = 0`;
   // Exclusión manual de destinatarios concretos (editar la lista a mano en el panel).
   if (Array.isArray(filtros.excluir_telefonos) && filtros.excluir_telefonos.length) {
@@ -13758,8 +13767,16 @@ const CAMPANA_TOOL = {
           genero: { type: "string", enum: ["hombre", "mujer"] },
           poblacion: { type: "string" },
           local: { type: "string", description: "Nombre EXACTO de un establecimiento de la lista" },
-          origen: { type: "string", enum: ["lead", "reserva"], description: "lead = tiene ficha con datos; reserva = solo ha reservado" },
-          idioma: { type: "string", enum: ["es", "ca", "en"] },
+          // También EXCLUYE: «reserva» deja fuera a los clientes que además tienen ficha, que
+          // suelen ser los más conocidos. «Todos los que han reservado» NO es esto: para eso
+          // basta con las fechas de reserva.
+          origen: { type: "string", enum: ["lead", "reserva"],
+            description: "SOLO si piden distinguir por cómo los conocemos: lead = tiene ficha de cliente; reserva = solo ha reservado y no tiene ficha. Para «todos los que han reservado» NO uses esto, usa reservo_from/reservo_to" },
+          // OJO: es un filtro que EXCLUYE, no una instrucción de traducción. «Que les llegue en
+          // su idioma» NO se pone aquí —el envío ya traduce solo a quien tenga otro idioma—;
+          // ponerlo dejaría fuera justo a los que se quiere alcanzar.
+          idioma: { type: "string", enum: ["es", "ca", "en"],
+            description: "SOLO si piden escribir a los de un idioma concreto y dejar fuera a los demás («solo a los ingleses»). Si piden que el mensaje llegue en el idioma de cada uno, NO uses este campo: el envío ya traduce por su cuenta" },
           edad_min: { type: "integer" }, edad_max: { type: "integer" },
           cumple_mes: { type: "string", description: "MM" },
           cumple_en_dias: { type: "integer", description: "0 = hoy, 7 = esta semana" },
