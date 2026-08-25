@@ -82,9 +82,13 @@ describe("nadie escribe a quien se dio de baja", () => {
   });
 
   test("y todos los caminos de envío pasan por el filtro legal", () => {
-    for (const fn of ["dispatchCampana", "/api/contactos/mensaje-masivo"]) {
-      const i = server.indexOf(fn);
-      assert.match(server.slice(i, i + 1400), /filtrarEnviablesWA/, `${fn} no filtra enviables`);
+    // Se busca la DEFINICIÓN, no la primera mención: `dispatchCampana` se nombra antes en el
+    // reloj que la despacha, y desde ahí el filtro no se ve.
+    for (const [fn, ancla] of [["dispatchCampana", "async function dispatchCampana"],
+                               ["mensaje-masivo", 'app.post("/api/contactos/mensaje-masivo"']]) {
+      const i = server.indexOf(ancla);
+      assert.notEqual(i, -1, `no está ${ancla}`);
+      assert.match(server.slice(i, i + 2200), /filtrarEnviablesWA/, `${fn} no filtra enviables`);
     }
   });
 });
@@ -136,5 +140,49 @@ describe("el cumpleaños felicita en el idioma de cada uno", () => {
     assert.notEqual(i, -1);
     assert.match(server.slice(Math.max(0, i - 700), i), /construirResolverIdioma\(plantilla, dest\)/);
     assert.match(server.slice(Math.max(0, i - 700), i), /resolverMensaje: resolverCumple/);
+  });
+});
+
+// SEGUNDO PASE de la auditoría: el envío en sí. Dos fallos que no se ven desde la pantalla.
+describe("el tope diario también vale para las campañas", () => {
+  const fn = server.slice(server.indexOf("async function enviarLoteWA"), server.indexOf("async function dispatchCampana"));
+
+  test("se aplica, no solo se cuenta", () => {
+    // `dividirPorTope` existía, estaba probada y solo la usaba el pulso del equipo: las
+    // campañas CONTABAN contra el tope pero no lo respetaban, justo al revés de lo que hace
+    // falta. Una de trescientos salía de una sentada y eso es lo que quema el número.
+    assert.match(fn, /dividirPorTope\(contactos, \{ maxDiario, yaEnviadosHoy: yaHoy \}\)/);
+    assert.match(fn, /for \(const c of aEnviar\)/, "el bucle tiene que recorrer lo que entra hoy, no todo");
+  });
+
+  test("lo que no entra hoy NO se pierde: la campaña queda abierta", () => {
+    assert.match(fn, /const fin = pospuestos\.length \? "enviando" : "enviada"/);
+  });
+
+  test("y el contador SUMA, no se reinicia al retomar", () => {
+    assert.match(fn, /total_enviados = COALESCE\(total_enviados,0\) \+ \?/);
+  });
+});
+
+describe("nadie recibe el mismo mensaje dos veces", () => {
+  const fn = server.slice(server.indexOf("async function dispatchCampana"), server.indexOf("app.post(\"/api/contactos/mensaje-masivo\""));
+
+  test("al despachar se salta a quien ya lo recibió", () => {
+    assert.match(fn, /FROM campana_envios WHERE campana_id = \? AND estado = 'enviado'/);
+    assert.match(fn, /aptos\.filter\(\(c\) => !yaEnviados\.has\(clave9\(c\.telefono\)\)\)/);
+  });
+
+  test("si ya no queda nadie, la campaña se cierra en vez de repetirse", () => {
+    assert.match(fn, /if \(!pendientes\.length\)/);
+    assert.match(fn, /estado='enviada'/);
+  });
+
+  test("una campaña cortada se retoma sola, pero no antes de media hora", () => {
+    // Un redespliegue corta el reparto a mitad; sin esto se quedaba en «enviando» para
+    // siempre y a los que faltaban no les llegaba nunca.
+    const sched = server.slice(server.indexOf("1b) Campañas que se quedaron"), server.indexOf("2) Cumpleaños"));
+    assert.match(sched, /estado = 'enviando'/);
+    assert.match(sched, /30 \* 60 \* 1000/, "esperar evita pisar un envío que sigue vivo");
+    assert.match(sched, /dispatchCampana/);
   });
 });

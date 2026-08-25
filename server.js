@@ -13451,9 +13451,26 @@ async function contarEnvioWA(n = 1) {
   } catch { /* nunca debe tumbar un envío */ }
 }
 
+/**
+ * Envía un lote por WhatsApp, con ritmo y CON EL TOPE DIARIO PUESTO.
+ *
+ * El tope existía, estaba probado y lo aplicaba solo el pulso del equipo: las campañas lo
+ * CONTABAN pero no lo respetaban, justo al revés de lo que hace falta. El comentario de
+ * `contarEnvioWA` ya avisaba de que las campañas «son las que de verdad pueden quemar el
+ * número», y una de trescientos salía entera de una sentada.
+ *
+ * Lo que no entra hoy NO se pierde: la campaña se queda en «enviando» y el reloj la retoma
+ * mañana. Y como al retomar se saltan los que ya recibieron (ver `dispatchCampana`), nadie
+ * recibe el mismo mensaje dos veces.
+ */
 async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 6000, maxMs = 15000, resolverMensaje = null }) {
   let enviados = 0, errores = 0;
-  for (const c of contactos) {
+  const hoyEnv = hoyISO();
+  const yaHoy = Number((await getConfig("wa_enviados_" + hoyEnv)) || 0);
+  const maxDiario = Number(await getConfig("wa_max_diario")) || 40;
+  const { aEnviar, pospuestos } = dividirPorTope(contactos, { maxDiario, yaEnviadosHoy: yaHoy });
+  if (pospuestos.length) console.log(`[campaña ${campanaId || "-"}] tope diario (${maxDiario}): ${pospuestos.length} se quedan para mañana`);
+  for (const c of aEnviar) {
     let estado = "enviado", err = null;
     try {
       const base = resolverMensaje ? resolverMensaje(c) : mensaje;
@@ -13470,9 +13487,18 @@ async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = nu
     await new Promise((r) => setTimeout(r, delayConJitter(minMs, maxMs)));
   }
   if (campanaId) {
-    try { await dbRun(`UPDATE campanas_wa SET total_enviados=?, total_errores=?, estado='enviada', finalizado_en=CURRENT_TIMESTAMP WHERE id=?`, [enviados, errores, campanaId]); } catch { /* noop */ }
+    // Se SUMA a lo que ya hubiera: una campaña que se retoma al día siguiente no puede
+    // empezar el contador de cero, o el resumen diría que se envió a menos gente de la real.
+    // Y solo se marca «enviada» cuando de verdad no queda nadie.
+    const fin = pospuestos.length ? "enviando" : "enviada";
+    try {
+      await dbRun(
+        `UPDATE campanas_wa SET total_enviados = COALESCE(total_enviados,0) + ?, total_errores = COALESCE(total_errores,0) + ?,
+                estado = ?, finalizado_en = CASE WHEN ? = 'enviada' THEN CURRENT_TIMESTAMP ELSE finalizado_en END
+          WHERE id = ?`, [enviados, errores, fin, fin, campanaId]);
+    } catch { /* noop */ }
   }
-  return { enviados, errores };
+  return { enviados, errores, pospuestos: pospuestos.length };
 }
 
 // Segmenta desde el segmento guardado y envía una campaña (usado al enviar ya y por el scheduler).
@@ -13484,10 +13510,26 @@ async function dispatchCampana(campanaId) {
   const params = []; const sql = sqlContactosUnificados(seg, params);
   const contactos = await dbAll(sql, params);
   const { aptos } = filtrarEnviablesWA(contactos, { soloOptIn: !!seg.soloOptIn });
+
+  // QUIEN YA LO RECIBIÓ, NO LO RECIBE OTRA VEZ. Sin esto, una campaña cortada a medias —por un
+  // redespliegue, que aquí pasa a menudo, o por el tope diario— volvía a empezar por el
+  // principio al retomarla y los primeros recibían el mismo mensaje dos veces. Un WhatsApp
+  // repetido no se puede retirar.
+  let yaEnviados = new Set();
+  try {
+    const filas = await dbAll(`SELECT telefono FROM campana_envios WHERE campana_id = ? AND estado = 'enviado'`, [campanaId]);
+    yaEnviados = new Set((filas || []).map((f) => clave9(f.telefono)).filter(Boolean));
+  } catch { /* si no se puede leer, se sigue: el riesgo es repetir, no dejar de enviar */ }
+  const pendientes = yaEnviados.size ? aptos.filter((c) => !yaEnviados.has(clave9(c.telefono))) : aptos;
+  if (!pendientes.length) {
+    await dbRun(`UPDATE campanas_wa SET estado='enviada', finalizado_en=CURRENT_TIMESTAMP WHERE id = ?`, [campanaId]).catch(() => {});
+    return { ok: true, enviables: 0, yaEstaba: true };
+  }
+
   await dbRun(`UPDATE campanas_wa SET estado='enviando' WHERE id = ?`, [campanaId]);
-  const resolverMensaje = seg.traducir ? await construirResolverIdioma(camp.mensaje, aptos) : null;
-  enviarLoteWA({ contactos: aptos, mensaje: camp.mensaje, campanaId, adjunto: cargarAdjunto(camp.adjunto_url), resolverMensaje });
-  return { ok: true, enviables: aptos.length };
+  const resolverMensaje = seg.traducir ? await construirResolverIdioma(camp.mensaje, pendientes) : null;
+  enviarLoteWA({ contactos: pendientes, mensaje: camp.mensaje, campanaId, adjunto: cargarAdjunto(camp.adjunto_url), resolverMensaje });
+  return { ok: true, enviables: pendientes.length };
 }
 
 // Mensaje MASIVO al conjunto filtrado (excluye SIEMPRE bajas; consentimiento opcional).
@@ -14473,6 +14515,26 @@ const server = app.listen(PORT, async () => {
       const ahora = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Madrid" }).replace(" ", "T");
       const prog = await dbAll(`SELECT id FROM campanas_wa WHERE estado = 'programada' AND programada_para IS NOT NULL AND programada_para <= ?`, [ahora]);
       for (const c of prog) { try { await dispatchCampana(c.id); } catch (e) { console.error("[campaña programada]", e.message); } }
+
+      // 1b) Campañas que se quedaron A MEDIAS. Pasa de dos maneras y las dos son normales
+      // aquí: el tope diario deja gente para el día siguiente, y un redespliegue de Replit
+      // corta el proceso a mitad del reparto. Sin esto, la campaña se quedaba en «enviando»
+      // para siempre y a los que faltaban no les llegaba nunca — sin que nadie se enterara.
+      //
+      // Retomar es seguro porque `dispatchCampana` salta a quien ya recibió. Se espera media
+      // hora antes de tocarla para no pisar un envío que sigue vivo.
+      const haceRato = new Date(Date.now() - 30 * 60 * 1000).toLocaleString("sv-SE", { timeZone: "Europe/Madrid" }).replace(" ", "T");
+      const aMedias = await dbAll(
+        `SELECT c.id FROM campanas_wa c
+          WHERE c.estado = 'enviando'
+            AND COALESCE((SELECT MAX(enviado_en) FROM campana_envios e WHERE e.campana_id = c.id), c.creado_en) < ?
+          LIMIT 3`, [haceRato]);
+      for (const c of aMedias) {
+        try {
+          const r = await dispatchCampana(c.id);
+          if (r?.enviables) console.log(`[campaña ${c.id}] retomada: quedaban ${r.enviables}`);
+        } catch (e) { console.error("[campaña a medias]", e.message); }
+      }
     } catch (e) { console.error("[scheduler campañas]", e.message); }
 
     // 2) Cumpleaños: una sola vez al día, en la franja 10:xx (Madrid), si está activado.
