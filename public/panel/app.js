@@ -7520,6 +7520,23 @@ function facRevisarTxt(f) {
 }
 
 /**
+ * El aviso de que el año está mal leído, con el botón que lo arregla.
+ *
+ * Va SEPARADO del resto de avisos porque es el único que trae una propuesta que se puede
+ * aplicar: los demás dicen «mira esto», este dice «creo que es 2026, ¿lo cambio?». Corregir la
+ * fecha pasa de abrir el PDF, buscarla y editarla, a un clic — y esa diferencia es la que hace
+ * que un aviso se atienda en vez de acumularse.
+ */
+function facAvisoAnio(f, revisar) {
+  const t = (revisar || []).find((x) => /mal leído/.test(x));
+  if (!t) return "";
+  const m = /sería (\d{4})/.exec(t);
+  const prop = m && f.fecha ? m[1] + String(f.fecha).slice(4) : null;
+  return `<p class="fic-nota" style="margin:0 0 12px;border-color:var(--danger)"><b>Puede que el año esté mal.</b> ${esc(t)}
+    ${prop ? `<button class="btn sm primary" data-act="fac-fecha-ok" data-id="${f.id}" data-fecha="${esc(prop)}" style="margin-left:8px">Cambiar a ${esc(fechaCorta(prop) || prop)}</button>` : ""}</p>`;
+}
+
+/**
  * Las miniaturas del papel, cargadas de verdad.
  *
  * NO se puede poner `<img src="/api/facturas/1/miniatura">`: el panel se autentica con una
@@ -7881,7 +7898,8 @@ function facFicha(id) {
             <div class="t2">${esc(f.numero_factura || "sin número")} · ${esc(fechaCorta(f.fecha) || "sin fecha")}</div></div>
           <div class="fic-pills">${pills}</div>
         </div>
-        ${revisar.length ? `<p class="fic-nota" style="margin:0 0 12px"><b>Revisa lo leído.</b> ${revisar.map(esc).join(" ")}</p>` : ""}
+        ${facAvisoAnio(f, revisar)}
+        ${revisar.filter((t) => !/mal leído/.test(t)).length ? `<p class="fic-nota" style="margin:0 0 12px"><b>Revisa lo leído.</b> ${revisar.filter((t) => !/mal leído/.test(t)).map(esc).join(" ")}</p>` : ""}
 
         <div class="fic-g"><span class="fic-gt">Quién</span>
           <div class="form-grid">${fld("Proveedor", "proveedor")}${fld("NIF", "nif")}</div>
@@ -9773,6 +9791,30 @@ async function facColocarRaiz() {
  * enseña la respuesta, incluida la de «Google no tiene permiso para leer el correo», que es la
  * que se tarda semanas en descubrir.
  */
+/**
+ * Aplicar el año propuesto.
+ *
+ * Se avisa ANTES de lo que arrastra: cambiar la fecha mueve el PDF de carpeta, rehace dos
+ * pestañas del Sheet y puede cambiar el trimestre en que se declara el IVA. Eso no es un cambio
+ * cosmético y no se hace sin decirlo.
+ */
+async function facCorregirFecha(id, fecha, btn) {
+  const ok = await confirmModal(
+    `Se cambia la fecha a ${fechaCorta(fecha) || fecha}. El documento se mueve a la carpeta de ese mes en Drive, se rehacen las hojas y se recalcula el vencimiento. Si ese mes ya estaba declarado, la factura cambia de trimestre.`,
+    { ok: "Cambiar la fecha" });
+  if (!ok) return;
+  if (btn) { btn.disabled = true; btn.textContent = "Cambiando…"; }
+  try {
+    const r = await apiSend("POST", `/api/facturas/${id}/fecha`, { fecha });
+    toast(r.mensaje || "Fecha corregida");
+    document.querySelectorAll(".ovl,.modal").forEach((x) => x.remove());
+    refrescarCompras();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Reintentar"; }
+    if (e.message !== "noauth") toast("Error: " + e.message);
+  }
+}
+
 async function facGmailAhora(btn) {
   const antes = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "Mirando el buzón…"; }
@@ -11633,6 +11675,7 @@ document.addEventListener("click", (e) => {
   else if (act === "sf-archivo") document.getElementById("sfFile")?.click();
   else if (act === "fac-303-csv") fac303Csv();
   else if (act === "fac-migrar") facMigrar();
+  else if (act === "fac-fecha-ok") facCorregirFecha(t.getAttribute("data-id"), t.getAttribute("data-fecha"), t);
   else if (act === "fac-gmail-ahora") facGmailAhora(t);
   else if (act === "fac-colocar-raiz") facColocarRaiz();
   else if (act === "fac-drive-add") facDriveAdd();

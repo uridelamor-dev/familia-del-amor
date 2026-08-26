@@ -17,6 +17,7 @@
 // veces, tampoco. Pero solo uno de los dos se puede deshacer.
 
 import { revisarCoherencia, textosDe } from "./coherencia.js";
+import { revisarFecha } from "./fecha-documento.js";
 import { buscarParecida, resumenMotivos } from "./duplicados.js";
 
 /**
@@ -85,11 +86,23 @@ export function comoDocumento(fila = {}) {
     nif_proveedor: fila.nif,
     fecha: fila.fecha,
     numero_factura: fila.numero_factura,
+    // Para poder repasar también la FECHA hacia atrás. `vencimiento` solo cuenta si se leyó del
+    // papel, y `concepto` es lo que distingue un abono —donde una fecha vieja es normal—.
+    vencimiento: fila.vencimiento,
+    concepto: fila.concepto,
+    tipo: fila.tipo,
     base_imponible: fila.base_imponible,
     porcentaje_iva: fila.porcentaje_iva,
     cuota_iva: fila.cuota_iva,
     total: fila.total,
   };
+}
+
+/** Los años que había escritos en el PDF, guardados al dar de alta. */
+function pistasGuardadas(fila) {
+  if (!fila || !fila.fecha_pistas) return null;
+  try { const p = typeof fila.fecha_pistas === "string" ? JSON.parse(fila.fecha_pistas) : fila.fecha_pistas;
+    return p && p.hayTexto ? p : null; } catch { return null; }
 }
 
 const mismosTextos = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -106,9 +119,10 @@ const mismosTextos = (a, b) => a.length === b.length && a.every((x, i) => x === 
  * revisiones: facturas cuyos avisos de coherencia cambian (aparecen, cambian o desaparecen).
  * sospechas:  facturas que se parecen demasiado a otra ANTERIOR y habría que apartar.
  */
-export function repasarLote(filas = [], { ventanaDias = 10, maxHistorial = 40 } = {}) {
+export function repasarLote(filas = [], { ventanaDias = 10, maxHistorial = 40, hoy = null } = {}) {
   const revisiones = [];
   const sospechas = [];
+  const fechas = [];
 
   // Historial por proveedor, que se va construyendo según se avanza: cuando le toca a una
   // factura, dentro solo están las que entraron antes que ella.
@@ -139,13 +153,31 @@ export function repasarLote(filas = [], { ventanaDias = 10, maxHistorial = 40 } 
     const historial = {
       nifs: previas.map((x) => normNif(x.nif)).filter(Boolean),
       totales: previas.map((x) => x.total),
+      fechas: previas.map((x) => x.fecha).filter(Boolean),
     };
-    const r = revisarCoherencia(comoDocumento(f), historial);
-    const textos = textosDe(r.avisos);
+    const doc = comoDocumento(f);
+    const r = revisarCoherencia(doc, historial);
+    // Y LA FECHA. Se pasa la evidencia que se guardó del PDF —los años que había escritos— para
+    // poder repetir la comprobación más fuerte sin volver a bajar el documento.
+    const rf = revisarFecha(doc, {
+      hoy, recibida: f.creado_en ? String(f.creado_en).slice(0, 10) : null,
+      pistas: pistasGuardadas(f),
+      vencimientoDelPapel: f.vencimiento_origen === "factura",
+      historial,
+    });
+    const textos = [...textosDe(r.avisos), ...textosDe(rf.avisos)];
     const antes = avisosGuardados(f);
     if (!mismosTextos(antes, textos)) {
       revisiones.push({ id: f.id, local: f.local, proveedor: f.proveedor, fecha: f.fecha,
-        numero_factura: f.numero_factura, antes, textos, grave: r.grave });
+        numero_factura: f.numero_factura, antes, textos, grave: r.grave || rf.grave });
+    }
+    // Las que traen una PROPUESTA van aparte: un aviso se lee, una propuesta se aplica, y la
+    // pantalla necesita poder ofrecer el botón.
+    if (rf.anioProbable) {
+      fechas.push({ id: f.id, local: f.local, proveedor: f.proveedor, numero_factura: f.numero_factura,
+        total: f.total, drive_url: f.drive_url, fecha: f.fecha,
+        anioProbable: rf.anioProbable, propuesta: rf.propuesta,
+        fuentes: rf.fuentes.filter((x) => x.anio === rf.anioProbable).map((x) => x.texto) });
     }
 
     // 2) Duplicados. Solo se mira la que no tiene ya un veredicto: si alguien decidió que es
@@ -167,11 +199,11 @@ export function repasarLote(filas = [], { ventanaDias = 10, maxHistorial = 40 } 
     empujar(previasPorNif, nif, f);
   }
 
-  return { revisiones, sospechas };
+  return { revisiones, sospechas, fechas };
 }
 
 /** Cuatro números para contarlo en una frase, sin recorrer las listas fuera de aquí. */
-export function resumenRepaso({ revisiones = [], sospechas = [] } = {}) {
+export function resumenRepaso({ revisiones = [], sospechas = [], fechas = [] } = {}) {
   return {
     avisosNuevos: revisiones.filter((r) => !r.antes.length && r.textos.length).length,
     avisosQuitados: revisiones.filter((r) => r.antes.length && !r.textos.length).length,
@@ -179,5 +211,6 @@ export function resumenRepaso({ revisiones = [], sospechas = [] } = {}) {
     graves: revisiones.filter((r) => r.grave).length,
     sospechas: sospechas.length,
     certezas: sospechas.filter((s) => s.veredicto === "duplicada").length,
+    fechas: fechas.length,
   };
 }

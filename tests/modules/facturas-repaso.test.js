@@ -168,7 +168,7 @@ describe("el resumen", () => {
   });
 
   test("sin facturas no hay nada que decir", () => {
-    assert.deepEqual(repasarLote([]), { revisiones: [], sospechas: [] });
+    assert.deepEqual(repasarLote([]), { revisiones: [], sospechas: [], fechas: [] });
     assert.equal(resumenRepaso().sospechas, 0);
   });
 });

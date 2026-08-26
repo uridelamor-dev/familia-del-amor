@@ -11,7 +11,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago } from "./facturas.js";
+import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -748,7 +748,12 @@ async function initDB() {
       "vencimiento TEXT", "vencimiento_origen TEXT",
       // Cuántas veces ha fallado la lectura del detalle. Sin esto, un fallo pasajero —la IA
       // saturada dos minutos— marcaba la factura como ilegible para el resto de su vida.
-      "lineas_intentos INTEGER DEFAULT 0"]) {
+      "lineas_intentos INTEGER DEFAULT 0",
+      // Los años que había escritos en el PDF, para poder recalcular el aviso de la fecha sin
+      // volver a bajar el documento. Se guarda la EVIDENCIA y no el aviso: «Repasar» reescribe
+      // la columna de avisos con lo que sepa recalcular, y sin esto la comprobación más fuerte
+      // que hay sobre la fecha se borraría sola en el primer repaso.
+      "fecha_pistas TEXT"]) {
       try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
     }
     await client.query(`
@@ -2416,6 +2421,60 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
       } catch (e) { console.error("[PATCH factura] resync:", e.message); }
     })();
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/**
+ * Corregir la FECHA de una factura, con todo lo que eso arrastra.
+ *
+ * Existe aparte del `PATCH` general porque cambiar la fecha no es cambiar un campo: es cambiar
+ * en qué carpeta vive el papel, en qué pestaña del Sheet aparece, EN QUÉ TRIMESTRE SE DECLARA
+ * y cuándo hay que pagarla. Hasta ahora el `PATCH` rehacía las hojas y nada más, así que
+ * arreglar un año dejaba el PDF archivado en el mes equivocado y el vencimiento en el año
+ * equivocado — la mitad del trabajo, y justo la mitad que no se ve.
+ *
+ * Las cuatro cosas van EN ESTE ORDEN y solo la primera es obligatoria: si Drive o el Sheet
+ * fallan, la fecha ya está bien en la base, que es la fuente de verdad, y lo demás se puede
+ * rehacer con «Reordenar Drive» y «Verificar y reparar».
+ */
+app.post("/api/facturas/:id/fecha", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const fecha = String(req.body?.fecha || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return res.status(400).json({ ok: false, error: "La fecha tiene que ser AAAA-MM-DD." });
+    const f = await dbGet("SELECT * FROM facturas WHERE id = ?", [req.params.id]);
+    if (!f) return res.status(404).json({ ok: false, error: "Esa factura no existe." });
+    if (f.fecha === fecha) return res.json({ ok: true, sinCambios: true, mensaje: "Ya tenía esa fecha." });
+
+    // 1. El dato. Y con él, el vencimiento — salvo que se leyera del papel, porque entonces es
+    //    un hecho del documento y no una cuenta nuestra.
+    let venc = { vencimiento: f.vencimiento, origen: f.vencimiento_origen };
+    if (f.vencimiento_origen !== "factura") {
+      venc = calcularVencimiento({ fecha, vencimientoLeido: null,
+        condiciones: await condicionesDePago(dbGet, f.proveedor, f.empresa) });
+    }
+    await dbRun(`UPDATE facturas SET fecha = ?, vencimiento = ?, vencimiento_origen = ? WHERE id = ?`,
+      [fecha, venc.vencimiento, venc.origen, f.id]);
+    // El aviso de la fecha deja de tener sentido en cuanto alguien la decide a mano.
+    await dbRun(`UPDATE facturas SET revisar = NULL WHERE id = ? AND revisar LIKE '%mal leído%'`, [f.id]).catch(() => {});
+
+    res.json({
+      ok: true, fecha, vencimiento: venc.vencimiento,
+      mensaje: `Fecha cambiada a ${fecha}${venc.vencimiento && venc.vencimiento !== f.vencimiento ? ` · vence el ${venc.vencimiento}` : ""}.`,
+    });
+
+    // 2, 3 y 4: el papel y las hojas, en segundo plano y sin poder tumbar lo anterior.
+    (async () => {
+      try {
+        const r = await reubicarEnDrive({ factura: { ...f, fecha }, getToken: getDriveAccessToken, dbGet });
+        if (!r.movido && r.motivo && r.motivo !== "ya estaba en su sitio") console.warn(`[facturas] #${f.id} no se pudo mover en Drive: ${r.motivo}`);
+        const deps = { getToken: getDriveAccessToken, dbGet, dbAll, dbRun };
+        if (f.local && f.fecha) await resincronizarSheetsFactura(deps, f.local, f.fecha);   // el mes viejo
+        if (f.local) await resincronizarSheetsFactura(deps, f.local, fecha);                 // y el nuevo
+      } catch (e) { console.error(`[facturas] #${f.id} tras cambiar la fecha:`, e.message); }
+    })();
+  } catch (e) {
+    console.error("[facturas] cambiar fecha:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // Eliminar una factura (errores). Quita la fila y re-proyecta la pestaña afectada.
@@ -5980,7 +6039,10 @@ async function repasoLineasSiToca() {
 const REPASO_COLS = `id, local, tipo, fecha, numero_factura, proveedor, nif,
    base_imponible::float AS base_imponible, porcentaje_iva::float AS porcentaje_iva,
    cuota_iva::float AS cuota_iva, total::float AS total, dup_estado, dup_de, revisar,
-   lineas_estado, lineas_version, drive_url`;
+   lineas_estado, lineas_version, drive_url,
+   -- Para poder repasar también la FECHA hacia atrás: la evidencia del PDF, cuándo llegó el
+   -- documento y si el vencimiento se leyó del papel o lo calculamos nosotros.
+   fecha_pistas, creado_en, vencimiento, vencimiento_origen, concepto`;
 // Techo de seguridad: el repaso carga las facturas en memoria para compararlas entre sí. Con
 // unos miles va sobrado; poner un límite evita que el día que haya cientos de miles esto se
 // convierta en una petición que tumba el proceso en vez de en una que dice que no puede.
@@ -5996,7 +6058,7 @@ app.get("/api/facturas/repaso", requireAuth(["direccion", "contabilidad"]), asyn
   try {
     const scope = localScope(req);
     const filas = await repasoCargar(scope);
-    const r = repasarLote(filas);
+    const r = repasarLote(filas, { hoy: hoyISO() });
     const alcance = esAlcanceValido(req.query?.alcance) ? String(req.query.alcance) : "faltan";
     const porReleer = filas.filter((f) => pideRelecturaDeLineas(f, alcance));
     res.json({
@@ -6005,6 +6067,9 @@ app.get("/api/facturas/repaso", requireAuth(["direccion", "contabilidad"]), asyn
       tope: filas.length >= REPASO_MAX,
       ...resumenRepaso(r),
       porReleer: porReleer.length,
+      // Las que traen una propuesta de año, para poder enseñarlas con su botón. Un aviso se
+      // lee; una propuesta se aplica, y esa es la diferencia entre que se atienda o se acumule.
+      fechasDudosas: r.fechas.slice(0, 25),
       alcance,
       // Cuántas hay en cada alcance, para poder elegir con el número delante y no a ciegas.
       alcances: ALCANCES_REPASO.map((a) => ({ ...a, n: filas.filter((f) => pideRelecturaDeLineas(f, a.clave)).length })),
@@ -6026,7 +6091,7 @@ app.post("/api/facturas/repaso", requireAuth(["direccion", "contabilidad"]), asy
     const scope = localScope(req);
     const conDuplicados = req.body?.duplicados !== false;
     const filas = await repasoCargar(scope);
-    const r = repasarLote(filas);
+    const r = repasarLote(filas, { hoy: hoyISO() });
 
     let avisos = 0;
     for (const v of r.revisiones) {

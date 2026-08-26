@@ -7,6 +7,7 @@ import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicado
 import { corregirEmisorReceptor } from "./src/modules/facturas/emisor.js";
 import { revisarCoherencia, textosDe } from "./src/modules/facturas/coherencia.js";
 import { extraerTextoPdf, bloqueTextoParaClaude } from "./src/modules/facturas/pdf-texto.js";
+import { pistasDeFecha, revisarFecha } from "./src/modules/facturas/fecha-documento.js";
 import { VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { calcularVencimiento } from "./src/modules/facturas/vencimiento.js";
 import { precioReferencia, revisarPrecios } from "./src/modules/facturas/precio-referencia.js";
@@ -38,7 +39,7 @@ const CABECERAS = [
   "Canal", "Archivo Drive", "Registrado"
 ];
 
-const PROMPT_EXTRACCION = `Analiza este documento (factura, albarán o ticket) y extrae los datos.
+const PROMPT_BASE = `Analiza este documento (factura, albarán o ticket) y extrae los datos.
 Devuelve ÚNICAMENTE un JSON válido, sin texto adicional y SIN envolverlo en un bloque de código
 markdown, con esta estructura exacta
 (usa null para los campos que no aparezcan):
@@ -71,6 +72,33 @@ QUIÉN EMITE Y QUIÉN RECIBE. Es el error más fácil de cometer y el más caro:
   Si no encuentras el NIF de alguna de las dos partes, pon null; no pongas otro número.
 - En facturas de servicios (gestoría, seguros, suministros) no hay líneas de producto que
   ayuden: fíjate en el membrete para saber quién emite.
+LA FECHA DE LA FACTURA. De ella cuelga todo lo demás: en qué mes se archiva, en qué trimestre
+se declara el IVA y cuándo hay que pagarla. Un año mal leído no se nota hasta que ya está
+declarado.
+- "fecha" es la FECHA DE EMISIÓN: la que va en la cabecera junto al número de factura, como
+  "Fecha", "Fecha factura", "Fecha de expedición", "Data". Ninguna otra.
+- NO SON la fecha de emisión, aunque estén más a la vista: la de vencimiento o pago, la del
+  albarán o el pedido que la factura agrupa, la de entrega o salida de almacén, la de impresión
+  o descarga del PDF, el periodo facturado ("del 01/11 al 30/11"), la fecha de registro contable
+  y el sello de recepción. Si solo encuentras una de esas, pon null.
+- FORMATO ESPAÑOL: dd/mm/aaaa. "03/12/2026" es el 3 de diciembre de 2026, NO el 12 de marzo.
+  Solo se lee mm/dd si el propio documento lo escribe así en inglés ("December 3, 2026").
+- EL AÑO SE COPIA, NO SE DEDUCE. Cópialo dígito a dígito de donde está escrito. No lo ajustes a
+  lo que te parezca el año en curso, ni al de otras facturas, ni a lo que te resulte familiar:
+  si el papel pone 2026, la fecha es de 2026 aunque te suene lejano. Poner un año que no está
+  escrito en el documento es el error más caro que puedes cometer aquí.
+- Si el año viene con dos cifras ("03/12/26", "3-dic-26"), es 20xx: 26 → 2026.
+- SI HAY VARIAS FECHAS y dudas de cuál es la de emisión, contrástalas antes de elegir: el número
+  de factura suele llevar su año dentro ("FRA-2026-0123", "2026/00145"), y el vencimiento es
+  siempre igual o posterior a la emisión, nunca anterior. Elige la que encaje con las dos.
+- Si el documento trae capa de texto (el bloque de más abajo), el año que manda es el de la capa
+  de texto: ahí están los dígitos exactos, sin error de lectura.
+- Si no hay ninguna fecha de emisión legible, pon null. Sin fecha se ve que falta; con una fecha
+  inventada, no se ve nada.
+Hoy es {HOY}. Úsalo SOLO para descartar imposibles —ninguna factura está fechada dentro de un
+año—, nunca para rellenar ni para acercar una fecha dudosa. Si el documento no lleva fecha, la
+respuesta es null, no la de hoy.
+
 En "vencimiento" pon la fecha en que hay que pagar, SOLO si aparece escrita: suele venir como
 "Vencimiento", "Fecha de vencimiento", "Vto." o "Fecha de pago". Si lo que pone son condiciones
 ("a 30 días", "pago a 60 días fecha factura") y no una fecha concreta, pon null: la fecha la
@@ -321,7 +349,17 @@ export class FacturaDuplicadaError extends Error {
 
 // ── Claude: extracción de datos ────────────────────────────────────────────
 
-export async function extraerDatosDocumento(buffer, mimeType) {
+/**
+ * El prompt, con la fecha de hoy dentro.
+ *
+ * `hoy` se INYECTA y no se lee de `new Date()`: así los tests pueden fijar el día y comprobar
+ * que las reglas de la fecha siguen ahí. Y va acotado a descartar imposibles, nunca a rellenar:
+ * dar «hoy» sin más invita a poner esa fecha cuando no encuentra ninguna, y una fecha razonable
+ * pero inventada no la caza después ninguna comprobación.
+ */
+export const promptExtraccion = (hoy) => PROMPT_BASE.replace("{HOY}", String(hoy || "").slice(0, 10) || "desconocido");
+
+export async function extraerDatosDocumento(buffer, mimeType, { hoy = null } = {}) {
   const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const base64 = buffer.toString("base64");
 
@@ -336,16 +374,21 @@ export async function extraerDatosDocumento(buffer, mimeType) {
   // el texto aporta los caracteres sin error de lectura: el nº de factura, el NIF, los importes.
   // Ver src/modules/facturas/pdf-texto.js.
   const contenido = [adjunto];
+  // La capa de texto se GUARDA además de mandarse. Antes se tiraba, y con ella la única prueba
+  // deterministe que existe de qué año hay escrito en el papel: los dígitos exactos que puso el
+  // emisor. Es lo que permite decir «ese año no está en el documento» sin volver a leer nada.
+  let pistas = null;
   if (isPdf) {
     const capa = extraerTextoPdf(buffer);
     if (capa.hayTexto) {
       contenido.push({ type: "text", text: bloqueTextoParaClaude(capa.texto) });
+      pistas = pistasDeFecha(capa.texto);
       console.log(`[Facturas] PDF con capa de texto: ${capa.texto.length} caracteres extraídos del archivo`);
     } else {
       console.log(`[Facturas] PDF sin capa de texto aprovechable (${capa.motivo}): se lee solo la imagen`);
     }
   }
-  contenido.push({ type: "text", text: PROMPT_EXTRACCION });
+  contenido.push({ type: "text", text: promptExtraccion(hoy || new Date().toISOString().slice(0, 10)) });
 
   const response = await ai.messages.create({
     model: "claude-haiku-4-5-20251001",
@@ -367,6 +410,9 @@ export async function extraerDatosDocumento(buffer, mimeType) {
   }
   if (!r.ok) throw new Error(`Claude no devolvió JSON válido (${r.motivo}): ` + text.slice(0, 200));
   if (r.recortado) console.warn(`[Facturas] respuesta incompleta: se aprovechan ${(r.valor.lineas || []).length} líneas enteras`);
+  // Las pistas van con guión bajo para que se vea de un vistazo que NO vienen del modelo: son
+  // lo que había escrito en el papel, y sirven precisamente para contrastarlas con lo que dijo.
+  if (pistas) r.valor._pistasFecha = pistas;
   return r.valor;
 }
 
@@ -802,7 +848,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   const datos = await leerDocumento(buffer, mimeType);
   await revisarEmisorReceptor(datos, dbAll);   // ver por qué en revisarEmisorReceptor
   await aplicarNombreProveedor(datos, dbAll);   // lo que ya se corrigió a mano, aprendido
-  const coher = await revisarCoherenciaFactura(datos, dbAll);
+  const coher = await revisarCoherenciaFactura(datos, dbAll, { hoy: hoyISOFactura(), recibida: hoyISOFactura() });
   console.log(`[Facturas] Datos extraídos para ${local}:`, JSON.stringify(datos));
 
   // 3. Comprobar duplicados antes de subir nada (facturas procesadas y pendientes)
@@ -866,15 +912,16 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   const ins = await dbRun(
     `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
       base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal,
-      dup_estado, dup_de, dup_motivos, revisar, vencimiento, vencimiento_origen, sheet_synced)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
+      dup_estado, dup_de, dup_motivos, revisar, vencimiento, vencimiento_origen, fecha_pistas, sheet_synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
     [local, empresa, datos.tipo, datos.fecha, datos.numero_factura, datos.proveedor,
      datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
      datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash, canal,
      enDuda ? "duda" : null, enDuda ? enDuda.contra.id : null,
      enDuda ? JSON.stringify(enDuda.motivos) : null,
      coher.avisos.length ? JSON.stringify(textosDe(coher.avisos)) : null,
-     venc.vencimiento, venc.origen]
+     venc.vencimiento, venc.origen,
+     datos._pistasFecha ? JSON.stringify(datos._pistasFecha) : null]
   );
   if (enDuda) console.warn(`[Facturas] posible duplicado de #${enDuda.contra.id}: ${resumenMotivos(enDuda.motivos)}`);
   const facturaId = ins?.id;
@@ -953,6 +1000,52 @@ function extractDriveFileId(url) {
   const m = (url || "").match(/(?:file\/d\/|id=)([a-zA-Z0-9_-]+)/);
   return m ? m[1] : null;
 }
+
+/**
+ * Deja UNA factura en la carpeta que le toca por su empresa, su local y su mes.
+ *
+ * Extraído de la migración masiva porque hace falta al corregir una fecha a mano: hasta ahora
+ * cambiar el año dejaba el PDF archivado en «Diciembre 2025» para siempre. El dato se arreglaba
+ * y el papel se quedaba donde estaba, que es la mitad del trabajo y la mitad que no se ve.
+ *
+ * Devuelve `{ movido, motivo }`. NUNCA lanza: mover un archivo no puede costar la corrección.
+ */
+export async function reubicarEnDrive({ factura, getToken, dbGet }) {
+  try {
+    const fileId = extractDriveFileId(factura?.drive_url);
+    if (!fileId) return { movido: false, motivo: "sin archivo en Drive" };
+    const token = await getToken();
+    const cfgRaiz = await dbGet("SELECT value FROM config WHERE key = 'drive_facturas_root_id'");
+    if (!cfgRaiz?.value) return { movido: false, motivo: "sin carpeta raíz" };
+
+    const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,parents`,
+      { headers: { Authorization: `Bearer ${token}` } });
+    const meta = await metaRes.json();
+    if (meta.error) return { movido: false, motivo: meta.error.message };
+    const oldParentId = meta.parents?.[0];
+
+    const localRow = await dbGet("SELECT empresa, local_contable FROM facturas_locales WHERE local = ?", [factura.local]);
+    const empresa = factura.empresa || localRow?.empresa || "Sin empresa asignada";
+    const localContable = localRow?.local_contable || factura.local;
+    const fechaDoc = factura.fecha ? new Date(factura.fecha + "T12:00:00") : new Date(factura.creado_en);
+    const mesLabel = `${MESES_ES[fechaDoc.getMonth()]} ${fechaDoc.getFullYear()}`;
+    const empresaId = await findOrCreateFolder(token, empresa, rootIdDe(cfgRaiz));
+    const localId = await findOrCreateFolder(token, localContable, empresaId);
+    const mesId = await findOrCreateFolder(token, mesLabel, localId);
+    if (oldParentId === mesId) return { movido: false, motivo: "ya estaba en su sitio" };
+
+    const moveRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${mesId}${oldParentId ? "&removeParents=" + oldParentId : ""}&fields=id`,
+      { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}" });
+    const moveData = await moveRes.json();
+    if (moveData.error) return { movido: false, motivo: moveData.error.message };
+    console.log(`[Facturas] #${factura.id} movido a ${empresa}/${localContable}/${mesLabel}`);
+    return { movido: true, carpeta: `${empresa}/${localContable}/${mesLabel}` };
+  } catch (e) {
+    return { movido: false, motivo: e.message };
+  }
+}
+const rootIdDe = (cfg) => cfg.value;
 
 export async function migrarEstructuraDrive({ getToken, dbAll, dbGet }) {
   const token = await getToken();
@@ -1053,23 +1146,43 @@ async function aplicarNombreProveedor(datos, dbAll) {
   } catch (e) { console.error("[Facturas] aplicarNombreProveedor:", e.message); }
 }
 
-async function revisarCoherenciaFactura(datos, dbAll) {
+/** El día de hoy en Madrid, para contrastar fechas sin depender del huso del servidor. */
+const hoyISOFactura = () => new Date(Date.now() + 2 * 3600 * 1000).toISOString().slice(0, 10);
+
+async function revisarCoherenciaFactura(datos, dbAll, ctx = null) {
   try {
-    if (!datos) return { avisos: [], grave: false };
+    if (!datos) return { avisos: [], grave: false, anioProbable: null };
     let historial = {};
     const prov = (datos.proveedor || "").trim();
     if (dbAll && prov) {
       const previas = await dbAll(
-        `SELECT nif, total::float AS total FROM facturas
+        `SELECT nif, total::float AS total, fecha FROM facturas
           WHERE LOWER(proveedor) = LOWER(?) AND COALESCE(dup_estado,'') <> 'duda'
           ORDER BY id DESC LIMIT 40`, [prov]).catch(() => []);
       historial = { nifs: previas.map((x) => String(x.nif || "").replace(/[\s.\-/]/g, "").toUpperCase()).filter(Boolean),
-        totales: previas.map((x) => x.total) };
+        totales: previas.map((x) => x.total),
+        // Las fechas de sus facturas anteriores: una de hace un año, cuando la última es de la
+        // semana pasada, es una pista de que el año se ha leído mal.
+        fechas: previas.map((x) => x.fecha).filter(Boolean) };
     }
     const r = revisarCoherencia(datos, historial);
-    if (r.avisos.length) console.warn(`[Facturas] revisar (${prov || "?"}): ${textosDe(r.avisos).join(" | ")}`);
-    return r;
-  } catch (e) { console.error("[Facturas] revisarCoherencia:", e.message); return { avisos: [], grave: false }; }
+
+    // ── Y la fecha, que hasta ahora no la miraba nadie ────────────────────────────────────
+    // Va aquí y no aparte porque es la misma pregunta: ¿me creo lo que se ha leído? Sus avisos
+    // acaban en la misma columna y en la misma etiqueta de «revisar» que los de los importes.
+    const f = revisarFecha(datos, {
+      hoy: ctx?.hoy || hoyISOFactura(),
+      recibida: ctx?.recibida || null,
+      pistas: datos._pistasFecha || null,
+      // Solo cuenta si el vencimiento se LEYÓ del papel. Si lo calculamos nosotros a partir de
+      // la fecha, contrastarlo sería compararla consigo misma.
+      vencimientoDelPapel: !!datos.vencimiento,
+      historial,
+    });
+    const avisos = [...r.avisos, ...f.avisos];
+    if (avisos.length) console.warn(`[Facturas] revisar (${prov || "?"}): ${textosDe(avisos).join(" | ")}`);
+    return { avisos, grave: r.grave || f.grave, anioProbable: f.anioProbable, propuestaFecha: f.propuesta };
+  } catch (e) { console.error("[Facturas] revisarCoherencia:", e.message); return { avisos: [], grave: false, anioProbable: null }; }
 }
 
 async function revisarEmisorReceptor(datos, dbAll) {
