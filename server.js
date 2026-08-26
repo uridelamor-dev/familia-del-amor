@@ -3276,7 +3276,10 @@ async function draftReplyForReview(review) {
   return extractText(response);
 }
 
-app.post("/api/reviews/draft", requireAuth(["direccion", "encargado"]), async (req, res) => {
+// Responder una reseña es hablar en nombre de la casa, en público y para siempre: lo hacen
+// dirección y marketing. El encargado y contabilidad ven las reseñas —les sirve para saber qué
+// pasa en su local— pero no escriben. Esconder el botón no es la protección: es esto.
+app.post("/api/reviews/draft", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     let review = req.body || {};
     if (review.id) {
@@ -3292,7 +3295,7 @@ app.post("/api/reviews/draft", requireAuth(["direccion", "encargado"]), async (r
 });
 
 // Borradores IA en lote (respuestas masivas). Máx 12 por llamada.
-app.post("/api/reviews/draft-bulk", requireAuth(["direccion", "encargado"]), async (req, res) => {
+app.post("/api/reviews/draft-bulk", requireAuth(["direccion", "marketing"]), async (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 12) : [];
   if (!ids.length) return res.status(400).json({ ok: false, error: "Sin reseñas seleccionadas" });
   const out = [];
@@ -3310,7 +3313,7 @@ app.post("/api/reviews/draft-bulk", requireAuth(["direccion", "encargado"]), asy
 // Guarda la respuesta (modo borrador/registro interno). La publicación DIRECTA en Google
 // (updateReply) queda pendiente de aprobación de cuota de la Business Profile API + persistir
 // el resource name de cada reseña; hoy la respuesta solo se guarda aquí.
-app.post("/api/reviews/:id/reply", requireAuth(["direccion", "encargado"]), async (req, res) => {
+app.post("/api/reviews/:id/reply", requireAuth(["direccion", "marketing"]), async (req, res) => {
   const reply = String(req.body?.reply || "").trim();
   if (!reply) return res.status(400).json({ ok: false, error: "Respuesta vacía" });
   try {
