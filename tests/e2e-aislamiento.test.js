@@ -118,7 +118,7 @@ describe("y las guardas hacen lo que dicen", () => {
 });
 
 describe("TRABAJADOR → DATOS DE TERCEROS", () => {
-  const ROL = /requireAuth\((RRHH_ROLES|HORARIOS_ROLES|FICHAJES_ROLES|LIQ_ROLES|CONFIG_ROLES|\["[^\]]*\])/;
+  const ROL = /requireAuth\((RRHH_ROLES|HORARIOS_ROLES|FICHAJES_ROLES|VALIDAR_ROLES|LIQ_ROLES|CONFIG_ROLES|\["[^\]]*\])/;
   test("ninguna ruta de responsable está abierta a cualquiera", () => {
     for (const [ruta] of RUTAS) {
       const i = server.indexOf(ruta);
@@ -128,7 +128,7 @@ describe("TRABAJADOR → DATOS DE TERCEROS", () => {
     }
   });
   test("y `trabajador` no está en ninguna de las listas de rol", () => {
-    for (const lista of ["RRHH_ROLES", "HORARIOS_ROLES", "FICHAJES_ROLES", "LIQ_ROLES", "CONFIG_ROLES"]) {
+    for (const lista of ["RRHH_ROLES", "HORARIOS_ROLES", "FICHAJES_ROLES", "VALIDAR_ROLES", "LIQ_ROLES", "CONFIG_ROLES"]) {
       const m = new RegExp(`const ${lista} = \\[([^\\]]*)\\]`).exec(server);
       assert.ok(m, `no se encuentra ${lista}`);
       assert.ok(!/"trabajador"/.test(m[1]), `${lista} incluye a los trabajadores: ${m[1]}`);
@@ -199,7 +199,7 @@ describe("KIOSCO", () => {
     for (const ruta of ['app.get("/api/rrhh/atencion"', 'app.get("/api/fichajes/revision"',
                         'app.get("/api/fichajes/bolsa"', 'app.post("/api/horarios/asignacion"']) {
       const cab = server.slice(server.indexOf(ruta), server.indexOf(ruta) + 200);
-      assert.match(cab, /requireAuth\((RRHH_ROLES|HORARIOS_ROLES|FICHAJES_ROLES|\[)/, `${ruta} sin rol`);
+      assert.match(cab, /requireAuth\((RRHH_ROLES|HORARIOS_ROLES|FICHAJES_ROLES|VALIDAR_ROLES|\[)/, `${ruta} sin rol`);
     }
   });
 });

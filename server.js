@@ -9309,6 +9309,18 @@ app.get("/api/horarios/historico", requireAuth(HORARIOS_ROLES), async (req, res)
 //   3. NUNCA se rechaza registrar algo que ha pasado de verdad. Si alguien ficha la salida
 //      sin haber fichado la entrada, se guarda igual y se marca como incidencia.
 const FICHAJES_ROLES = ["direccion", "rrhh", "encargado"];
+/**
+ * Quién puede VALIDAR horas. El encargado no.
+ *
+ * Corregir un fichaje y aprobar las horas que cuentan son dos cosas distintas, y separarlas es
+ * lo que hace que el registro valga algo. El encargado es quien sabe que alguien se olvidó de
+ * fichar la salida —está allí— y por eso sigue pudiendo escribir esa hora, con su motivo y su
+ * nombre. Pero validar es decir «estas son las horas que cuentan», y de ahí salen el saldo de
+ * la bolsa y la nómina: quien corrige no se aprueba a sí mismo.
+ *
+ * Leer la revisión sí la ve el encargado, y le hace falta: es su equipo y su cuadrante.
+ */
+const VALIDAR_ROLES = ["direccion", "rrhh"];
 
 // `fic_eventos` guarda EN QUÉ BARRA se fichó, y esa columna no se puede reescribir: la tabla
 // es inmutable por ley (RD-ley 8/2019) y hay un candado que lo comprueba. Así que el histórico
@@ -10207,7 +10219,7 @@ async function ficEscribirValidacion({ local, workerId, dia, minutos, nota, auto
   return { escrita: true, bolsa };
 }
 
-app.post("/api/fichajes/validar", requireAuth(FICHAJES_ROLES), async (req, res) => {
+app.post("/api/fichajes/validar", requireAuth(VALIDAR_ROLES), async (req, res) => {
   try {
     const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.body?.worker_id || 0)]);
     if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
@@ -10258,7 +10270,7 @@ app.post("/api/fichajes/validar", requireAuth(FICHAJES_ROLES), async (req, res) 
  * se deshace entero porque una cambió obliga a repetirlo sin saber cuál era, y eso acaba en
  * que nadie valida.
  */
-app.post("/api/fichajes/validar-lote", requireAuth(FICHAJES_ROLES), async (req, res) => {
+app.post("/api/fichajes/validar-lote", requireAuth(VALIDAR_ROLES), async (req, res) => {
   try {
     const local = horLocal(req, req.body?.local);
     if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });

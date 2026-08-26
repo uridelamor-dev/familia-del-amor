@@ -164,8 +164,12 @@ describe("aislamiento y permisos del lote", () => {
     assert.match(bloque('app.post("/api/fichajes/validar-lote"', "// ── Bolsa de horas"),
       /const local = horLocal\(req, req\.body\?\.local\)/);
   });
-  test("exige los roles de fichajes", () => {
-    assert.match(server, /app\.post\("\/api\/fichajes\/validar-lote", requireAuth\(FICHAJES_ROLES\)/);
+  test("exige los roles de VALIDAR, que no son los de fichajes", () => {
+    // El encargado entra en Fichajes y ve la revisión —es su equipo y su cuadrante— pero no
+    // aprueba horas: de ahí salen el saldo de la bolsa y la nómina, y quien corrige un
+    // fichaje no se aprueba a sí mismo.
+    assert.match(server, /app\.post\("\/api\/fichajes\/validar-lote", requireAuth\(VALIDAR_ROLES\)/);
+    assert.match(server, /const VALIDAR_ROLES = \["direccion", "rrhh"\]/);
   });
   test("y todo lo que calcula va acotado a ese local", () => {
     const b = bloque("async function ficCalcularPeriodo(", "async function ficGuardarProyeccion(");

@@ -5800,6 +5800,7 @@ function ficPintarRevisionDatos(cont, j) {
   // el envío manda esta misma lista: si dijeran cosas distintas, con el filtro puesto el botón
   // prometería validar doce jornadas y validaría las doscientas del periodo.
   const paraLote = visibles.filter((f) => f.estado === "lista_para_validar" && f.puedeLote);
+  const puedoValidar = ficPuedeValidar();
   const r = q ? { ...ficContar(visibles), listas_para_validar: paraLote.length } : (j.resumen || {});
   const porEstado = (e) => visibles.filter((f) => f.estado === e);
 
@@ -5835,12 +5836,13 @@ function ficPintarRevisionDatos(cont, j) {
       ${dato(r.abiertas || 0, "todavía abiertas")}
       ${dato(r.validadas || 0, "ya validadas")}
       <div style="flex:1"></div>
-      ${r.listas_para_validar
+      ${r.listas_para_validar && puedoValidar
         // El botón DICE CUÁNTAS y dice que son las que no tienen incidencias. «Validar todo»
         // daría a entender que también se están aprobando las que sí las tienen.
         ? `<button class="btn primary" id="ficLote">Validar ${num(r.listas_para_validar)} ${r.listas_para_validar === 1 ? "jornada correcta" : "jornadas correctas"}</button>`
         : ""}
     </div>
+    ${!puedoValidar ? `<p class="fic-nota" style="margin-top:14px">Aquí se ve lo que no cuadra entre el cuadrante y el reloj, y se pueden <b>corregir los fichajes</b> que falten. <b>Validar las horas</b> —decidir cuáles cuentan para el saldo y la nómina— es cosa de dirección y RR. HH.</p>` : ""}
     ${r.bloqueadas_por_cierre ? `<p class="fic-nota" style="margin-top:14px"><b>${num(r.bloqueadas_por_cierre)}</b> ${r.bloqueadas_por_cierre === 1 ? "jornada está limpia pero su periodo ya está cerrado" : "jornadas están limpias pero su periodo ya está cerrado"}. Para incorporarlas hay que reabrirlo.</p>` : ""}
   </div>`;
 
@@ -5863,7 +5865,7 @@ function ficPintarRevisionDatos(cont, j) {
         <div class="mut" style="font-size:11.5px">${f.cuentaOrigen === "validado" ? "decidido" + (f.validadoPor ? " por " + esc(f.validadoPor) : "") : "propuesto"} · ${esc(ficSigno(f.minDesviacion))} sobre el plan</div>
       </div>
       <div class="fic-acc">
-        ${f.unClic ? `<button class="btn sm primary" data-ficok="${f.worker_id}|${esc(f.dia)}">Validar ${esc(ficHoras(f.minCuenta != null ? f.minCuenta : f.minEfectivo))}</button>` : ""}
+        ${f.unClic && puedoValidar ? `<button class="btn sm primary" data-ficok="${f.worker_id}|${esc(f.dia)}">Validar ${esc(ficHoras(f.minCuenta != null ? f.minCuenta : f.minEfectivo))}</button>` : ""}
         <button class="btn sm">Revisar</button>
       </div>
     </div>`;
@@ -5946,6 +5948,16 @@ function ficPintarRevisionDatos(cont, j) {
     ficAbrirJornada(Number(w), dia);
   };
 }
+
+/**
+ * ¿Este usuario puede VALIDAR horas? Espejo de `VALIDAR_ROLES` del servidor.
+ *
+ * El encargado corrige fichajes —es quien sabe que alguien se olvidó de fichar la salida—
+ * pero no aprueba las horas que cuentan: de ahí salen el saldo y la nómina, y quien corrige no
+ * se aprueba a sí mismo. Aquí solo se esconde lo que el servidor va a rechazar igualmente;
+ * quien manda es él.
+ */
+const ficPuedeValidar = () => ["direccion", "rrhh"].includes(USER.rol);
 
 const ficNorm = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
 
@@ -6082,6 +6094,9 @@ function ficTramosElegibles(j) {
 }
 
 async function ficAbrirJornada(workerId, dia) {
+  // Corregir un fichaje que falta lo puede hacer el encargado —es quien sabe que alguien se
+  // olvidó de fichar—. Decidir cuántas horas cuentan, no: de ahí salen el saldo y la nómina.
+  const validador = ficPuedeValidar();
   const ov = modal("Jornada", '<p class="mut" id="ficJorBody">Cargando…</p>');
   const pintar = async () => {
     let j;
@@ -6142,16 +6157,18 @@ async function ficAbrirJornada(workerId, dia) {
               Esto NO toca los fichajes. Sigue decidiéndose una sola cosa —cuántos minutos
               cuentan— y lo que hace la pantalla es ayudar a llegar a esa cifra sin
               calcularla de cabeza. */""}
+        ${validador ? `
         <div class="ch" style="margin-top:18px"><h3 style="margin:0;font-size:13px">¿Qué horas cuentan?</h3></div>
         <div class="fic-horas" id="ficHoras">${ficTramosElegibles(j)}</div>
         <div class="fic-total" id="ficTotal"></div>
         <label class="fic-nocuenta"><input type="checkbox" id="ficNoCuenta"> No contar este día</label>
         <div id="ficMotivoCaja" class="hidden" style="margin-top:10px">
           <input class="inp" id="ficValMotivo" placeholder="Por qué no se cuentan las horas fichadas (obligatorio)" style="width:100%">
-        </div>
+        </div>` : `
+        <p class="fic-nota" style="margin-top:18px">Corregir un fichaje que falta sí, aquí arriba. <b>Decidir cuántas horas cuentan</b> —lo que va al saldo y a la nómina— lo hacen dirección y RR. HH.</p>`}
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
           <button class="btn" data-close>Cerrar</button>
-          <button class="btn primary" id="ficValidar">Validar ${esc(ficHoras(j.minEfectivo))}</button>
+          ${validador ? `<button class="btn primary" id="ficValidar">Validar ${esc(ficHoras(j.minEfectivo))}</button>` : ""}
         </div>
       </div>`;
 
@@ -6217,7 +6234,7 @@ async function ficAbrirJornada(workerId, dia) {
     }
 
     // Pulsar una hora la marca y desmarca la otra del mismo hueco.
-    ov.querySelector("#ficHoras").addEventListener("click", (e) => {
+    if (validador) ov.querySelector("#ficHoras").addEventListener("click", (e) => {
       const b = e.target.closest(".fic-hora");
       if (!b) return;
       const i = b.getAttribute("data-t"), lado = b.getAttribute("data-lado");
@@ -6235,10 +6252,10 @@ async function ficAbrirJornada(workerId, dia) {
       c.classList.toggle("on", !!escrito && Number.isFinite(horMin(escrito)) && horMin(escrito) > 0);
       refrescarPie();
     }));
-    ov.querySelector("#ficNoCuenta").addEventListener("change", refrescarPie);
-    refrescarPie();
+    if (validador) ov.querySelector("#ficNoCuenta").addEventListener("change", refrescarPie);
+    if (validador) refrescarPie();
 
-    ov.querySelector("#ficValidar").addEventListener("click", async () => {
+    if (validador) ov.querySelector("#ficValidar").addEventListener("click", async () => {
       const msg = ov.querySelector("#ficNvMsg");
       const r = calcular();
       if (r.error || r.falta) { msg.textContent = r.error || "Elige la hora de entrada y la de salida."; return; }
@@ -6308,7 +6325,11 @@ async function ficPintarBolsa() {
             : puedeCerrar ? `<button class="btn sm primary" id="ficCerrar">Cerrar periodo</button>` : ""}
         </div></div>
       ${j.sinValidar ? `<p class="fic-nota">Quedan <b>${j.sinValidar}</b> ${j.sinValidar === 1 ? "jornada" : "jornadas"} sin validar en este periodo. Sus horas todavía <b>no están</b> en ningún saldo.
-        <button class="linkbtn" id="ficIrRevision" style="color:var(--brand);font-weight:600">Ir a validarlas</button></p>` : ""}
+        ${ficPuedeValidar()
+          ? `<button class="linkbtn" id="ficIrRevision" style="color:var(--brand);font-weight:600">Ir a validarlas</button>`
+          // A quien no puede validar no se le manda a un sitio donde no va a poder hacerlo:
+          // se le dice quién lo hace y se le ofrece ver qué falta, que sí le sirve.
+          : `Las valida dirección o RR. HH. <button class="linkbtn" id="ficIrRevision" style="color:var(--brand);font-weight:600">Ver cuáles son</button>`}</p>` : ""}
       ${j.cerrado && j.cierre ? `<p class="fic-nota">Cerrado el ${esc(String(j.cierre.cerrado_en).slice(0, 10))} por ${esc(j.cierre.cerrado_por)}. Para corregir algo de estas fechas hay que reabrirlo, y queda constancia.</p>` : ""}
       ${j.llegadosTrasCerrar ? `<p class="fic-nota" style="border-color:var(--danger)"><b>${num(j.llegadosTrasCerrar)}</b> ${j.llegadosTrasCerrar === 1 ? "fichaje ha llegado" : "fichajes han llegado"} de estas fechas <b>después</b> de cerrar el periodo (una tablet que subió su cola tarde). Están registrados y <b>no han cambiado el saldo</b>: para incorporarlos hay que reabrir el periodo.</p>` : ""}
       ${conSaldo.length ? `<div class="tw"><table class="tbl">

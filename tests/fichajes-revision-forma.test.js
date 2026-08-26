@@ -69,7 +69,7 @@ describe("validar desde la fila", () => {
     // Las reglas de qué se puede validar viven en `revision.js`. Si el panel las dedujera,
     // habría dos sitios donde cambiarlas y uno de los dos se quedaría viejo.
     assert.match(server, /unClic: f\.unClic, motivoUnClic: f\.motivoUnClic/);
-    assert.match(app, /f\.unClic \?/);
+    assert.match(app, /f\.unClic && puedoValidar \?/);
     assert.ok(!/nivel === "revisar"[\s\S]{0,120}puedeLote/.test(app), "el panel está decidiendo qué es validable");
   });
 
