@@ -263,3 +263,108 @@ export function motivoBloqueo(cierres, local, dia) {
   return `El periodo ${c.etiqueta} (del ${c.desde} al ${c.hasta}) está cerrado desde el ${String(c.cerrado_en || "").slice(0, 10)}. ` +
          "Para tocar ese día hay que reabrirlo, y queda constancia de quién lo hizo.";
 }
+
+// ── Navegar por la revisión ──────────────────────────────────────────────────
+// TODA la aritmética de calendario de la pantalla de Revisión vive aquí, y es a propósito.
+// El panel no tiene bundler —no puede importar esto— así que la alternativa era escribir un
+// espejo en el navegador, y un espejo de fechas acaba diciendo un mes distinto en febrero,
+// o el día que se cambie `dia_inicio_periodo`. El servidor manda los rangos ya calculados y
+// el panel solo pinta lo que le llega.
+
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+
+const nombreMes = (iso) => MESES[Number(String(iso).slice(5, 7)) - 1] || "";
+const anyoDe = (iso) => String(iso).slice(0, 4);
+
+/** Cuántos días hay de una fecha a otra, contando las dos. */
+const largo = (desde, hasta) => {
+  let n = 1, d = desde;
+  while (d < hasta && n < 400) { d = sumaDia(d); n++; }
+  return n;
+};
+const restaDias = (f, n) => { let d = f; for (let i = 0; i < n; i++) d = restaUnDia(d); return d; };
+const sumaDiasLocal = (f, n) => { let d = f; for (let i = 0; i < n; i++) d = sumaDia(d); return d; };
+
+/** El lunes de esa semana. `dow` local: 0 = lunes, como en todo el módulo de horarios. */
+function lunesDeIso(iso) {
+  const [a, m, d] = String(iso).split("-").map(Number);
+  const dow = (new Date(Date.UTC(a, m - 1, d)).getUTCDay() + 6) % 7;
+  return restaDias(iso, dow);
+}
+
+/** El título de un rango, según lo que sea. Lo escribe el servidor para que sea uno solo. */
+function tituloDe(desde, hasta, modo, hoy) {
+  const mismoAnyo = anyoDe(hasta) === anyoDe(hoy);
+  if (modo === "periodo") {
+    // La nómina se llama por el mes en que TERMINA: la del 21 de julio al 20 de agosto es
+    // «la de agosto» y así la llama todo el mundo en la casa.
+    return `Nómina de ${nombreMes(hasta)}${mismoAnyo ? "" : " de " + anyoDe(hasta)}`;
+  }
+  if (modo === "semana") {
+    return `Semana del ${Number(String(desde).slice(8, 10))} de ${nombreMes(desde)}${mismoAnyo ? "" : " de " + anyoDe(desde)}`;
+  }
+  return `${largo(desde, hasta)} días`;
+}
+
+const rango = (desde, hasta, modo, hoy) => ({ desde, hasta, modo, titulo: tituloDe(desde, hasta, modo, hoy) });
+
+/**
+ * Qué rango se está mirando y a cuáles se puede saltar.
+ *
+ * El modo se INFIERE de las fechas comparándolas con el periodo y con la semana que las
+ * contienen. Sin modo guardado en ningún sitio: así el deep-link de un aviso —que solo trae
+ * un día— y el botón de la bolsa —que trae un periodo— caen los dos donde tienen que caer,
+ * sin un tercer parámetro que sincronizar.
+ *
+ * `siguiente` es `null` cuando el rango de ahora ya alcanza hoy: hacia delante solo hay
+ * jornadas abiertas, y una flecha que lleva a una pantalla vacía es una promesa incumplida.
+ */
+export function navegarRevision({ desde, hasta, hoy, diaInicio = 1 } = {}) {
+  const p = periodoDe(hasta, { diaInicio });
+  const lun = lunesDeIso(hasta);
+  const dom = sumaDiasLocal(lun, 6);
+
+  const modo = (p && desde === p.desde && hasta === p.hasta) ? "periodo"
+    : (desde === lun && hasta === dom) ? "semana"
+    : "custom";
+
+  // El ancla de los atajos: el día que se está mirando, o hoy si el rango ya lo alcanza. Así
+  // «Semana» desde el periodo en curso lleva a la semana de hoy, y desde junio a la última
+  // semana de junio — que es lo que espera quien lo pulsa.
+  const ancla = hasta >= hoy ? hoy : hasta;
+  const pAncla = periodoDe(ancla, { diaInicio });
+  const lunAncla = lunesDeIso(ancla);
+
+  let anterior, siguiente;
+  if (modo === "periodo") {
+    const a = periodoDe(restaUnDia(desde), { diaInicio });
+    const s = periodoDe(sumaDia(hasta), { diaInicio });
+    anterior = a ? rango(a.desde, a.hasta, "periodo", hoy) : null;
+    siguiente = s ? rango(s.desde, s.hasta, "periodo", hoy) : null;
+  } else if (modo === "semana") {
+    anterior = rango(restaDias(desde, 7), restaDias(hasta, 7), "semana", hoy);
+    siguiente = rango(sumaDiasLocal(desde, 7), sumaDiasLocal(hasta, 7), "semana", hoy);
+  } else {
+    const n = largo(desde, hasta);
+    anterior = rango(restaDias(desde, n), restaDias(hasta, n), "custom", hoy);
+    siguiente = rango(sumaDiasLocal(desde, n), sumaDiasLocal(hasta, n), "custom", hoy);
+  }
+  // Hacia delante no hay nada que revisar todavía.
+  if (hasta >= hoy || (siguiente && siguiente.desde > hoy)) siguiente = null;
+
+  return {
+    modo,
+    titulo: tituloDe(desde, hasta, modo, hoy),
+    actual: { desde, hasta },
+    anterior, siguiente,
+    periodo: pAncla ? rango(pAncla.desde, pAncla.hasta, "periodo", hoy) : null,
+    semana: rango(lunAncla, sumaDiasLocal(lunAncla, 6), "semana", hoy),
+  };
+}
+
+/** El rango con el que abrir la revisión: el periodo de nómina que contiene ese día. */
+export function rangoPorDefecto(dia, { diaInicio = 1 } = {}) {
+  const p = periodoDe(dia, { diaInicio });
+  return p ? { desde: p.desde, hasta: p.hasta } : { desde: dia, hasta: dia };
+}

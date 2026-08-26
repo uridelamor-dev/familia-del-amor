@@ -45,7 +45,8 @@ import { estadoLaboral, filtrarPorEstado, validarAlta, planDeBaja, firmaPlan,
          resumenDisponibilidad, ausenciasDeLaFicha, esPlantilla, ROLES_PLANTILLA,
          asuntosPendientes } from "./src/modules/rrhh/ciclo.js";
 import { sanearSolicitud, transitar, solapesVivos, turnosDurante, paraTrabajador, paraResponsable,
-  resumirBandeja, TIPOS_SOLICITABLES, ETIQUETA_TIPO } from "./src/modules/rrhh/ausencias.js";
+  resumirBandeja, TIPOS_SOLICITABLES, ETIQUETA_TIPO, indiceDeAusencias,
+  ausenciaDelDia } from "./src/modules/rrhh/ausencias.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo, generarToken } from "./src/modules/rrhh/pulso.js";
@@ -65,10 +66,11 @@ import { ensureSchemaFichajes } from "./src/modules/fichajes/schema.js";
 import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
 import { validarFormatoPin, estadoBloqueo, trasFallo as pinTrasFallo, trasAcierto as pinTrasAcierto } from "./src/modules/fichajes/pin.js";
 import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornadas.js";
-import { clasificarJornada, resumirRevision, mereceSalir, candidatasDeLote, LISTA, CADUCADA } from "./src/modules/fichajes/revision.js";
+import { clasificarJornada, resumirRevision, mereceSalir, candidatasDeLote, cuentaDeJornada,
+         conContextoDeAusencia, LISTA, CADUCADA } from "./src/modules/fichajes/revision.js";
 import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo,
          TOLERANCIA_BOLSA_MIN, movimientoBolsa, revertidos, motivoNoLiquidar, motivoNoRevertir,
-         CONCEPTOS_LIQUIDACION, enHoras, conSigno } from "./src/modules/fichajes/bolsa.js";
+         CONCEPTOS_LIQUIDACION, enHoras, conSigno, navegarRevision, rangoPorDefecto } from "./src/modules/fichajes/bolsa.js";
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { colaDeTrabajo, cobertura } from "./src/modules/facturas/diccionario.js";
@@ -9941,6 +9943,7 @@ async function ficCalcularPeriodo(local, desde, hasta, { cfg = null, soloWorker 
       semanaId: semanaPorDia.get(dia) || null,
       jornada: j, eventos: evs, firma, validacion,
       estado: c.estado, puedeLote: c.puedeLote, motivo: c.motivo,
+      unClic: c.unClic, motivoUnClic: c.motivoUnClic,
       minPlanificado: j.minPlanificado, minFichado: j.minFichado,
       minPausa: j.minPausa, minEfectivo: j.minEfectivo, minDesviacion: j.minDesviacion,
       incidencias: j.incidencias,
@@ -9990,7 +9993,10 @@ app.get("/api/fichajes/jornada", requireAuth(FICHAJES_ROLES), async (req, res) =
     const dia = String(req.query.dia || "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return res.status(400).json({ ok: false, error: "Falta el día" });
     const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.query.worker || 0)]);
-    if (!w || w.local !== local) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
+    // Por CENTRO y no por barra: Blanes es un solo negocio con dos barras, y quien está de
+    // alta en la Cooperativa sale en la lista de revisión de La Tapeta. Comparando el local a
+    // pelo, esa fila se veía pero daba 404 al pulsarla: no se abría nada y sin explicación.
+    if (!w || !mismoCentroPersonal(w.local, local)) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
     res.json({ ok: true, trabajador: { id: w.id, nombre: w.nombre }, ...(await ficCalcularJornada(local, w.id, dia)) });
   } catch (e) {
     console.error("[fichajes] jornada:", e.message);
@@ -10004,37 +10010,68 @@ app.get("/api/fichajes/revision", requireAuth(FICHAJES_ROLES), async (req, res) 
   try {
     const local = horLocal(req, req.query.local);
     if (!local) return res.status(403).json({ ok: false, error: "Sin acceso a este establecimiento" });
-    const cfg = await dbGet(`SELECT corte_dia_min, tolerancia_min, hora_cierre_min FROM hor_config WHERE local = ?`, [local]);
+    const cfg = await dbGet(`SELECT corte_dia_min, tolerancia_min, hora_cierre_min, dia_inicio_periodo FROM hor_config WHERE local = ?`, [local]);
     const hoy = instanteANegocio(Date.now(), { corteMin: cfg?.corte_dia_min ?? 360 });
-    const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.hasta || "")) ? String(req.query.hasta) : hoy.diaNegocio;
-    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.desde || "")) ? String(req.query.desde) : sumaDias(hasta, -13);
+    const diaInicio = cfg?.dia_inicio_periodo ?? 1;
+
+    // EL RANGO POR DEFECTO ES EL PERIODO DE NÓMINA, el mismo que usan la bolsa y el cierre.
+    // Antes eran catorce días sueltos que no se podían cambiar, así que el mes pasado era
+    // inalcanzable y el rango no coincidía con la unidad en la que se cierra de verdad.
+    // Cuando llega un solo día —el deep-link de un aviso— se abre el periodo que lo contiene:
+    // enseñar ese día a solas escondería el resto de lo que hay que decidir esa nómina.
+    const fecha = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : null);
+    const qDesde = fecha(req.query.desde), qHasta = fecha(req.query.hasta);
+    let desde, hasta;
+    if (qDesde && qHasta) { desde = qDesde < qHasta ? qDesde : qHasta; hasta = qDesde < qHasta ? qHasta : qDesde; }
+    else ({ desde, hasta } = rangoPorDefecto(qHasta || qDesde || hoy.diaNegocio, { diaInicio }));
+    const nav = navegarRevision({ desde, hasta, hoy: hoy.diaNegocio, diaInicio });
 
     const { filas } = await ficCalcularPeriodo(local, desde, hasta, { cfg });
     // La proyección se guarda igual que antes, pero de doscientas en doscientas.
     if (filas.length) await ficGuardarProyeccion(local, filas);
 
+    // CONTEXTO, NO EXCUSA. Quién estaba de baja o de vacaciones ese día se consulta AQUÍ y no
+    // dentro del cálculo, a propósito: un turno publicado durante una ausencia aprobada es una
+    // incoherencia real del cuadrante y tiene que seguir saltando como incidencia. Lo único
+    // que cambia es que quien revisa puede leer el porqué sin salir de la pantalla, en vez de
+    // abrir la jornada, no ver nada, y quedarse sin saber si esa persona faltó al trabajo.
+    const paradas = filas.length
+      ? await dbAll(AUS_DEL_LOCAL, [personasDe(local), hasta, desde]).catch(() => [])
+      : [];
+    const idxParadas = indiceDeAusencias(paradas);
+
     res.json({
-      ok: true, local, desde, hasta,
+      ok: true, local, desde, hasta, nav,
       // El resumen sale de la MISMA clasificación que decide el lote: si el botón dice 184,
       // el lote toca 184. Dos reglas separadas acabarían diciendo números distintos.
       resumen: resumirRevision(filas),
       data: filas
         .sort((a, b) => b.dia.localeCompare(a.dia) || a.nombre.localeCompare(b.nombre, "es"))
-        .map((f) => ({
-          worker_id: f.worker_id, nombre: f.nombre, dia: f.dia,
-          estado: f.estado, puedeLote: f.puedeLote, motivo: f.motivo,
-          minPlanificado: f.minPlanificado, minFichado: f.minFichado,
-          minPausa: f.minPausa, minEfectivo: f.minEfectivo, minDesviacion: f.minDesviacion,
-          // Se mandan las horas de plan y de reloj para poder enseñar la comparación sin
-          // tener que abrir la jornada.
-          plan: f.jornada.plan.map((t) => ({ inicio: t.inicio, fin: t.fin, abierto: !!t.abierto })),
-          fichado: f.jornada.fichado.map((t) => ({ inicio: t.inicio, fin: t.fin, pausa: t.pausa || 0 })),
-          requiereRevision: f.jornada.requiereRevision,
-          validado: f.validacion ? f.validacion.minutos : null,
-          validadoPor: f.validacion ? f.validacion.por : null,
-          validacionCaducada: f.estado === CADUCADA,
-          incidencias: f.incidencias.map((i) => ({ tipo: i.tipo, nivel: i.nivel, texto: i.texto, minutos: i.minutos ?? null })),
-        })),
+        .map((f) => {
+          // La tercera magnitud: ni el cuadrante ni el reloj, LO QUE CUENTA. Viaja calculada
+          // para que la fila pueda enseñar las tres sin abrir la jornada.
+          const cuenta = cuentaDeJornada({ jornada: f.jornada, validacion: f.validacion, caducada: f.estado === CADUCADA });
+          return conContextoDeAusencia({
+            worker_id: f.worker_id, nombre: f.nombre, dia: f.dia,
+            estado: f.estado, puedeLote: f.puedeLote, motivo: f.motivo,
+            // Permiso distinto de `puedeLote`: el lote es un automatismo y solo se lleva lo
+            // limpio; un clic tiene a una persona leyendo esa fila. Lo decide el servidor
+            // porque las reglas viven en `revision.js`, no en el navegador.
+            unClic: f.unClic, motivoUnClic: f.motivoUnClic,
+            minPlanificado: f.minPlanificado, minFichado: f.minFichado,
+            minPausa: f.minPausa, minEfectivo: f.minEfectivo, minDesviacion: f.minDesviacion,
+            minCuenta: cuenta.minutos, cuentaOrigen: cuenta.origen,
+            // Se mandan las horas de plan y de reloj para poder enseñar la comparación sin
+            // tener que abrir la jornada.
+            plan: f.jornada.plan.map((t) => ({ inicio: t.inicio, fin: t.fin, abierto: !!t.abierto })),
+            fichado: f.jornada.fichado.map((t) => ({ inicio: t.inicio, fin: t.fin, pausa: t.pausa || 0 })),
+            requiereRevision: f.jornada.requiereRevision,
+            validado: f.validacion ? f.validacion.minutos : null,
+            validadoPor: f.validacion ? f.validacion.por : null,
+            validacionCaducada: f.estado === CADUCADA,
+            incidencias: f.incidencias.map((i) => ({ tipo: i.tipo, nivel: i.nivel, texto: i.texto, minutos: i.minutos ?? null })),
+          }, ausenciaDelDia(idxParadas, f.worker_id, f.dia));
+        }),
     });
   } catch (e) {
     console.error("[fichajes] revision:", e.message);

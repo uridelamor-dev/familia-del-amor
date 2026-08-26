@@ -323,6 +323,23 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 /* Anulado NO se oculta: la fila sigue ahí, tachada, porque el registro no se borra. */
 .fic-evs li.anulado>span:first-child{text-decoration:line-through;color:var(--ink3)}
 .fic-nota{margin:0 0 14px;padding:10px 12px;border-radius:8px;background:var(--surface2);border:1px solid var(--border);font-size:12.5px;line-height:1.5;color:var(--ink2)}
+/* Revisión: moverse por las fechas y filtrar. La barra va ARRIBA del todo porque lo primero
+   que hay que saber es de qué periodo se está hablando: los números de debajo no significan
+   nada sin esa frase. */
+.fic-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+.fic-nav .fic-rango{font-size:13.5px;white-space:nowrap}
+.fic-nav .grow{flex:1}
+.fic-nav .fic-q{display:inline-flex;gap:6px;align-items:center}
+.fic-nav .fic-q .inp{height:32px;font-size:12.5px;width:170px}
+/* Los dos modos son un selector, no dos acciones sueltas: se elige uno de los dos. */
+.fic-modos{padding:3px;gap:2px}
+.fic-modos .btn{border:0;background:transparent;box-shadow:none;height:26px;padding:0 10px}
+.fic-modos .btn.on{background:var(--surface);color:var(--ink);box-shadow:var(--sh-sm)}
+.fic-datos{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end}
+.fic-fila .fic-acc{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+/* LA TERCERA MAGNITUD. Va aquí, destacada y con su rótulo, y no repetida dentro del texto:
+   el mismo número dos veces en la misma fila hace dudar de si son dos cosas distintas. */
+.fic-fila .fic-cuenta{text-align:right;white-space:nowrap;min-width:126px}
 
 /* Rejilla de «cuánta gente hace falta»: dos números apilados por celda (mínimo arriba,
    objetivo abajo). Apilados y no en fila porque así cada fila se lee de un tirón: todos
@@ -1026,6 +1043,37 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 .fic-comp .t1{font-size:13.5px;line-height:1.35}
 .fic-comp .mut{font-size:11.5px}
 @media(max-width:640px){ .fic-comp{grid-template-columns:1fr 1fr} }
+@media(max-width:640px){
+  /* Cinco cifras en fila se apilan en alturas irregulares y se comen la pantalla antes de
+     llegar a lo que hay que revisar. En rejilla caben dos o tres por línea y se leen. */
+  .fic-datos{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:14px 12px}
+  .fic-datos .big{font-size:21px!important}
+  .fic-datos>div[style*="flex:1"]{display:none}
+  #ficLote{width:100%;grid-column:1/-1}
+  .fic-nav .fic-rango{flex:1;text-align:center;white-space:normal;font-size:12.5px}
+  .fic-nav .fic-q{flex:1 0 100%;order:5}
+  .fic-nav .fic-q .inp{flex:1;width:auto;height:40px;font-size:16px}
+  .fic-modos{order:4;flex:1 0 100%;justify-content:center}
+  /* El rótulo del periodo, entero y en su línea: partido en tres renglones entre las dos
+     flechas no se lee, y es lo primero que hay que saber al entrar. */
+  /* Que se parta BIEN: el nombre de la nómina en una línea y las fechas en la siguiente.
+     Entre las dos flechas quedan unos 250 px y todo seguido salían cuatro renglones rotos. */
+  .fic-nav .fic-rango{flex:1;min-width:0;font-size:13px}
+  .fic-nav{gap:5px}
+  /* El separador elástico compite por el sitio con el rótulo y lo parte en cuatro renglones. */
+  .fic-nav .grow{display:none}
+  .fic-nav .btn{padding:0 9px}
+  .fic-nav .fic-sep{display:none}
+  .fic-nav .fic-fechas{display:block;font-size:12px}
+  .fic-fila .fic-cuenta{text-align:left;min-width:0;flex:1 0 100%;margin-top:6px}
+  .fic-fila .fic-cuenta>div{display:inline;margin-right:6px}
+  /* El origen y la desviación, en su renglón: seguidos se salían por el borde derecho. */
+  .fic-fila .fic-cuenta>div:last-child{display:block;margin-top:2px}
+  /* El botón de validar y el de revisar, en su propia línea: en una sola fila con el nombre
+     y las horas quedaban a treinta píxeles y no se acierta con el dedo. */
+  .row.fic-fila .fic-acc{flex:1 0 100%;margin-top:8px}
+  .row.fic-fila .fic-acc .btn{min-height:38px}
+}
 
 /* ── Elegir productos de una lista (Inventarios) ──────────────────────────────
    La lista tiene su PROPIO scroll y el pie queda fuera: con cuarenta filas

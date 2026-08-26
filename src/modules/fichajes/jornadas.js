@@ -180,3 +180,26 @@ export function firmaDeEventos(eventos = []) {
     .map((e) => `${e.id}:${e.tipo}:${e.epoch_ms}:${e.anulado_por ? "x" : "v"}`)
     .join("|");
 }
+
+/**
+ * ¿Se sabe cuántas horas hizo?
+ *
+ * NO es lo mismo que «no tiene incidencias». Quien fichó un día que no le tocaba tiene una
+ * incidencia que pide decisión, pero sus horas están completas y se sabe qué contar. Quien se
+ * fue sin fichar la salida, no: ahí no hay ninguna cifra que valga, hay que decidirla.
+ *
+ * Se lee de la FORMA de la jornada —un tramo al que le falta un extremo, un turno del cuadrante
+ * que no emparejó con nada— y no de una lista de nombres de incidencia. Así, el día que se
+ * añada un tipo nuevo, esto sigue diciendo la verdad sin que nadie se acuerde de tocarlo.
+ *
+ * Un día que todavía corre nunca está completo, y es correcto: aún puede fichar la salida.
+ */
+export function horasCompletas(jornada) {
+  if (!jornada) return false;
+  const fichado = jornada.fichado || [];
+  if (!(Number(jornada.minFichado) > 0)) return false;          // no fichó nada que contar
+  if (fichado.some((t) => t.inicio == null || t.fin == null)) return false;  // falta un extremo
+  // Un turno del cuadrante que no emparejó con ningún fichaje. `parejas` sale de `emparejar`,
+  // así que la resta dice exactamente cuántos se quedaron fuera.
+  return (jornada.plan || []).length <= (jornada.parejas || []).length;
+}

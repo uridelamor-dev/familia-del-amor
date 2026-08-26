@@ -180,3 +180,33 @@ export function resumirBandeja(lista = []) {
   }
   return r;
 }
+
+// ── Contexto para la revisión de fichajes ────────────────────────────────────
+// Aquí y no en Fichajes porque las reglas de qué es una ausencia viva viven en este fichero.
+// Lo usa la pantalla de Revisión para poder decir «estaba de baja» al lado de la incidencia
+// —que sigue saltando, ver `conContextoDeAusencia`—.
+
+/** Índice worker → sus ausencias, para no recorrer la lista entera por cada jornada. */
+export function indiceDeAusencias(ausencias = []) {
+  const m = new Map();
+  for (const a of (Array.isArray(ausencias) ? ausencias : [])) {
+    if (!a || !bloqueaHorario(a)) continue;   // solo las aprobadas son una realidad
+    const k = Number(a.worker_id);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(a);
+  }
+  return m;
+}
+
+/**
+ * La ausencia aprobada que cubría ese día, o null.
+ *
+ * Los dos extremos entran: `hasta` es el último día de ausencia, no el de vuelta al trabajo
+ * —mismo criterio que `fecha_baja` y que `hor_contratos.hasta` en toda la casa—.
+ */
+export function ausenciaDelDia(indice, workerId, dia) {
+  const lista = (indice instanceof Map ? indice.get(Number(workerId)) : null) || [];
+  const a = lista.find((x) => String(x.desde) <= String(dia) && String(dia) <= String(x.hasta));
+  if (!a) return null;
+  return { tipo: a.tipo, etiqueta: ETIQUETA_TIPO[a.tipo] || a.tipo, desde: a.desde, hasta: a.hasta };
+}

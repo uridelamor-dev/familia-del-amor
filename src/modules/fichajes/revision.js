@@ -11,7 +11,7 @@
 // LA REGLA DE FONDO, y es la única que importa: en el lote solo entra lo que NO necesita
 // criterio. Ante la duda, a revisión. Validar de más es escribir horas que nadie ha mirado.
 
-import { REVISAR } from "./jornadas.js";
+import { REVISAR, horasCompletas } from "./jornadas.js";
 
 export const LISTA = "lista_para_validar";
 export const REVISION = "requiere_revision";
@@ -27,6 +27,9 @@ export const MOTIVOS = {
   caducada: "Se validó y después cambió el registro",
   validada: "Ya está validada",
   periodo_cerrado: "El periodo está cerrado",
+  // Solo para el atajo de un clic: no dice que la jornada esté mal, dice que no hay ninguna
+  // cifra que ofrecer sin que alguien la decida.
+  horas_incompletas: "Falta una hora del registro: hay que decidirla",
 };
 
 /** ¿Tiene algún fichaje metido o corregido por una persona? Los anulados también cuentan. */
@@ -50,7 +53,7 @@ export function tieneCorreccionAMano(eventos = []) {
  * —validada o caducada— porque eso manda sobre todo lo demás: una jornada validada no
  * vuelve a la cola por mucho que tenga una incidencia informativa.
  */
-export function clasificarJornada({
+function situacionDe({
   jornada, eventos = [], validacion = null, firmaActual = null,
   diaCerrado = false, periodoCerrado = false,
 } = {}) {
@@ -88,6 +91,79 @@ export function clasificarJornada({
   if (periodoCerrado) return salida(LISTA, false, MOTIVOS.periodo_cerrado);
 
   return salida(LISTA, true, null);
+}
+
+/**
+ * ¿Se puede validar esta jornada de un solo clic, desde la lista y sin abrirla?
+ *
+ * ES UN PERMISO DISTINTO DE `puedeLote`, y la diferencia es quién decide:
+ *
+ *   · `puedeLote` es un AUTOMATISMO. Se lleva por delante decenas de jornadas de golpe, así
+ *     que solo puede tocar lo que no necesita criterio de nadie.
+ *   · `unClic` tiene UNA PERSONA DELANTE que está leyendo esa fila. Por eso sí puede aceptar
+ *     una incidencia: quien fichó un día que no le tocaba tiene algo que decidir, pero sus
+ *     horas se saben, y obligar a abrir el modal para pulsar el mismo botón no protege nada.
+ *
+ * Lo que NUNCA entra es aquello de lo que no hay cifra: si falta la entrada, la salida o el
+ * fichaje entero, no hay nada que contar y hace falta escribir una hora a mano, con su motivo.
+ * Ahí el modal no es un trámite, es el sitio donde se toma la decisión.
+ */
+function permisoUnClic(base, { jornada, periodoCerrado = false } = {}) {
+  if (base.estado === VALIDADA) return { puede: false, motivo: MOTIVOS.validada };
+  if (base.estado === ABIERTA) return { puede: false, motivo: MOTIVOS.abierta };
+  if (periodoCerrado) return { puede: false, motivo: MOTIVOS.periodo_cerrado };
+  if (!horasCompletas(jornada)) return { puede: false, motivo: MOTIVOS.horas_incompletas };
+  return { puede: true, motivo: null };
+}
+
+/** En qué situación está una jornada, y si se puede resolver desde la lista. */
+export function clasificarJornada(args = {}) {
+  const base = situacionDe(args);
+  const uc = permisoUnClic(base, args);
+  return { ...base, unClic: uc.puede, motivoUnClic: uc.motivo };
+}
+
+/**
+ * La tercera magnitud: LO QUE CUENTA. Ni el cuadrante ni el reloj.
+ *
+ * Son tres cosas distintas y hasta ahora solo se veían dos. Lo que se paga y lo que se apunta
+ * en la bolsa sale de aquí: mientras nadie ha decidido, es una propuesta —lo que marcó el
+ * reloj, descontadas las pausas—; en cuanto alguien valida, es su decisión, con su nombre.
+ *
+ * Enseñarla al lado de las otras dos es lo que convierte la pantalla en una comparación de
+ * verdad. Verla NO es poder editarla: cambiarla exige un motivo escrito y eso se hace en el
+ * detalle, donde además se puede elegir la hora de entrada y de salida de cada turno.
+ */
+export function cuentaDeJornada({ jornada = null, validacion = null, caducada = false } = {}) {
+  const propuesto = Math.max(0, Number(jornada?.minEfectivo) || 0);
+  const decidido = validacion && validacion.minutos != null ? Number(validacion.minutos) || 0 : null;
+  // CADUCADA: se validó y DESPUÉS llegó o se anuló un fichaje. La cifra vieja ya no describe
+  // lo que pasó ese día, así que lo que se ofrece es la nueva —que es la que se escribiría al
+  // volver a validar—. Enseñar la vieja haría que el botón dijera una cantidad y guardara otra.
+  // La anterior se conserva al lado para poder ver de dónde se viene.
+  if (caducada) return { minutos: propuesto, origen: "propuesto", propuesto, decididoAntes: decidido };
+  if (decidido != null) return { minutos: decidido, origen: "validado", propuesto, decididoAntes: null };
+  return { minutos: propuesto, origen: "propuesto", propuesto, decididoAntes: null };
+}
+
+/**
+ * Cuelga de la fila la ausencia aprobada que cubría ese día. CONTEXTO, NO EXCUSA.
+ *
+ * El caso: alguien tenía turno publicado, se le aprobó después una baja, y la revisión decía
+ * «tenía turno y no consta ningún fichaje» sin más. Quien revisa abría la jornada, no veía
+ * nada, y se quedaba sin saber si faltó al trabajo o estaba en el médico.
+ *
+ * LA INCIDENCIA SIGUE AHÍ Y SIGUE PIDIENDO DECISIÓN, y es a propósito: un turno publicado
+ * durante una ausencia aprobada es una incoherencia real del cuadrante, y se arregla
+ * republicando el horario, no escondiendo el aviso. Lo único que cambia es que ahora se lee
+ * el porqué sin salir de la pantalla.
+ *
+ * Esta función existe —aunque solo añada un campo— para que haya UN SOLO SITIO al que apuntar
+ * el test que dice «esto no silencia nada». El día que alguien intente filtrar por ausencia,
+ * tendrá que hacerlo aquí, y saltará.
+ */
+export function conContextoDeAusencia(fila, ausencia = null) {
+  return { ...fila, ausencia: ausencia || null };
 }
 
 /**
