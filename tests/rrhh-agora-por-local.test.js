@@ -60,3 +60,52 @@ describe("y las fichas a las que se puede enlazar, también", () => {
     assert.match(fn, /operador\(es\) detectados\$\{localBarra \? " en <b>"/);
   });
 });
+
+describe("un operador sin ficha se puede crear desde aquí", () => {
+  test("hay botón, y está SIEMPRE — sobre todo si no hay nadie a quien enlazar", () => {
+    // El caso en que más falta hace es justo cuando el desplegable está vacío.
+    assert.match(fn, /const crear = `<button class="btn sm" data-rr-crear/);
+    assert.ok(!/workers\.length\s*\n?\s*\? `<button class="btn sm" data-rr-crear/.test(fn),
+      "el botón vuelve a depender de que ya haya gente");
+  });
+
+  test("abre el alta de siempre con el nombre del operador puesto", () => {
+    // Y NO se crea sola: el rol, las horas y las áreas los decide una persona, que es justo lo
+    // que el TPV no sabe. Un operador puede ser «CAJA1» o «BARRA», no una persona.
+    assert.match(fn, /rrWorkerAdd\(\{ nombre: nom, agora: nom, alCerrar: \(\) => rrImportarOperadores\(\) \}\)/);
+    const alta = app.slice(app.indexOf("function rrWorkerAdd(pre = {})"), app.indexOf("// ── Dar de baja"));
+    assert.match(alta, /value="\$\{esc\(pre\.nombre \|\| ""\)\}"/);
+  });
+
+  test("y al crearla se enlaza sola, diciendo con qué", () => {
+    const alta = app.slice(app.indexOf("function rrWorkerAdd(pre = {})"), app.indexOf("// ── Dar de baja"));
+    assert.match(alta, /Al crearla se enlazará con el operador <b>\$\{esc\(pre\.agora\)\}<\/b>/);
+    assert.match(alta, /apiSend\("POST", "\/api\/rrhh\/agora\/enlazar", \{ agora_username: pre\.agora, worker_id: r\.id \}\)/);
+  });
+
+  test("si el enlace falla, la ficha NO se pierde y se dice", () => {
+    // Perder un alta entera por un fallo de enlace sería mucho peor que quedarse sin enlazar:
+    // eso se arregla en dos clics desde esta misma pantalla.
+    const alta = app.slice(app.indexOf("function rrWorkerAdd(pre = {})"), app.indexOf("// ── Dar de baja"));
+    assert.match(alta, /catch \{ \/\* se dirá que ha quedado sin enlazar \*\/ \}/);
+    assert.match(alta, /No se ha podido enlazar con \$\{esc\(pre\.agora\)\}/);
+  });
+
+  test("y se vuelve a la lista al CERRAR el aviso, no encima de él", () => {
+    // Dos modales apilados no se entienden, y el de debajo se queda con datos viejos.
+    const alta = app.slice(app.indexOf("function rrWorkerAdd(pre = {})"), app.indexOf("// ── Dar de baja"));
+    assert.match(alta, /if \(typeof pre\.alCerrar === "function"\)/);
+    assert.match(alta, /setTimeout\(pre\.alCerrar, 0\)/);
+  });
+});
+
+describe("el nombre que viene puesto también pide su usuario", () => {
+  test("rellenar el value por HTML no dispara ningún evento", () => {
+    // Sin esto el campo de usuario se quedaba vacío y, como es obligatorio, el formulario no
+    // llegaba a enviarse: el botón «Crear ficha» abría el alta y ahí se quedaba todo.
+    const alta = app.slice(app.indexOf("function rrWorkerAdd(pre = {})"), app.indexOf("// ── Dar de baja"));
+    assert.match(alta, /if \(pre\.nombre\) proponerUsuario\(\);/);
+    assert.ok(alta.indexOf("const proponerUsuario = async") < alta.indexOf("if (pre.nombre) proponerUsuario();"),
+      "se llama antes de definirla");
+  });
+});

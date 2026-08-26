@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 // el establecimiento teniendo uno puesto en la barra de arriba.
 const app = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
 const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
-const modal = app.slice(app.indexOf("function rrWorkerAdd()"), app.indexOf("// ── Dar de baja"));
+const modal = app.slice(app.indexOf("function rrWorkerAdd("), app.indexOf("// ── Dar de baja"));
 
 describe("el alta pregunta solo lo que hace falta", () => {
   test("ya no pide el puesto: el rol y las áreas dicen lo mismo mejor", () => {

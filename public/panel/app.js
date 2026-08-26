@@ -3387,10 +3387,24 @@ async function rrImportarOperadores() {
       if (o.match === "exacto") return `<div class="row"><div class="grow"><b>${esc(o.userName)}</b> <span class="pill ok">enlazado</span></div></div>`;
       const sel = o.worker_id || (o.candidatos[0] && o.candidatos[0].id) || "";
       const badge = o.match === "probable" ? '<span class="pill warn">probable</span>' : '<span class="pill">sin match</span>';
-      return `<div class="row" id="rrop-row-${i}"><div class="grow"><b>${esc(o.userName)}</b> ${badge}</div><select id="rrop-${i}" style="max-width:220px">${wopts(sel)}</select> <button class="btn sm primary" data-rr-enlazar="${i}" data-agora="${esc(o.userName)}">Enlazar</button></div>`;
+      // «Crear ficha» para quien todavía no la tiene. Antes había que cerrar esto, ir a Equipo,
+      // dar de alta y volver aquí a enlazar; y al volver ya no se recordaba cuál era. Se abre
+      // el alta de siempre con el nombre puesto, porque el rol, las horas y las áreas los
+      // decide una persona: eso el TPV no lo sabe.
+      const crear = `<button class="btn sm" data-rr-crear="${i}" data-agora="${esc(o.userName)}" title="Dar de alta a esta persona y enlazarla">Crear ficha</button>`;
+      return `<div class="row" id="rrop-row-${i}"><div class="grow"><b>${esc(o.userName)}</b> ${badge}</div><select id="rrop-${i}" style="max-width:220px">${wopts(sel)}</select> <button class="btn sm primary" data-rr-enlazar="${i}" data-agora="${esc(o.userName)}">Enlazar</button>${crear}</div>`;
     }).join("");
   } catch (e) { body.innerHTML = "Error: " + esc(e.message); return; }
   ov.addEventListener("click", async (e) => {
+    const c = e.target.closest("[data-rr-crear]");
+    if (c) {
+      const i = c.getAttribute("data-rr-crear"), nom = c.getAttribute("data-agora");
+      ov.remove();
+      // El nombre del operador va tal cual: puede ser «M.SOLER» o «CAJA1» y adivinar cómo se
+      // llama esa persona sería inventárselo. Es un punto de partida, y el campo se edita.
+      rrWorkerAdd({ nombre: nom, agora: nom, alCerrar: () => rrImportarOperadores() });
+      return;
+    }
     const b = e.target.closest("[data-rr-enlazar]"); if (!b) return;
     const i = b.getAttribute("data-rr-enlazar"); const agora = b.getAttribute("data-agora");
     const sel = document.getElementById("rrop-" + i); const wid = sel ? sel.value : null; if (!wid) return;
@@ -3602,7 +3616,14 @@ async function rrNotaDel(id) {
   try { await apiSend("DELETE", "/api/rrhh/nota/" + id); if (w) RRSEG.notas = (await apiOptional("/api/rrhh/trabajador/" + w.id + "/notas")) || RRSEG.notas; toast("Nota eliminada ✅"); rrRepaintFicha(); }
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
-function rrWorkerAdd() {
+/**
+ * Dar de alta a alguien.
+ *
+ * `pre` deja entrar con parte del trabajo hecho: se usa desde el enlace con Ágora, donde ya se
+ * sabe el nombre del operador y a qué hay que enlazarlo. Lo que NO se rellena solo es el rol,
+ * las horas y las áreas — que es justo lo que el TPV no sabe y lo que decide una persona.
+ */
+function rrWorkerAdd(pre = {}) {
   // Alta vía endpoint propio de RRHH: el encargado puede crear en SU local (rol fijo trabajador).
   const enc = USER.rol === "encargado";
   // EL LOCAL SALE DE LA BARRA DE ARRIBA. Si hay un establecimiento puesto, dar de alta ahí es
@@ -3629,7 +3650,7 @@ function rrWorkerAdd() {
     <div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Datos básicos</h3>
       ${localBarra ? `<span class="mut" style="font-size:12px">en <b>${esc(nombreCortoLocal(localBarra))}</b></span>` : ""}</div>
       <div class="form-grid">
-        <div class="field"><label>Nombre</label><input name="nombre" required></div>
+        <div class="field"><label>Nombre</label><input name="nombre" required value="${esc(pre.nombre || "")}"></div>
         <div class="field"><label>Usuario</label><input name="username" required placeholder="se propone solo"></div>
         ${localField}${rolField}
       </div></div>
@@ -3643,6 +3664,7 @@ function rrWorkerAdd() {
     <div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Áreas en las que puede trabajar</h3></div>
       <div id="altaAreas" class="mut" style="font-size:12.5px">Cargando las áreas…</div>
       <p class="mut" style="margin:6px 0 0;font-size:11.5px">Si no marcas ninguna, el generador podrá ponerle en cualquiera hasta que se configuren.</p></div>
+    ${pre.agora ? `<p class="fic-nota" style="margin:0">Al crearla se enlazará con el operador <b>${esc(pre.agora)}</b> de Ágora, así sus ventas empezarán a contar en su ficha.</p>` : ""}
     <p class="mut" style="margin:0;line-height:1.55">Entrará con <b>su usuario como contraseña</b> y lo primero que
       le pedirá el sistema es cambiarla. Hasta que lo haga no puede ver nada del panel.</p>
     <button class="btn primary" type="submit">Crear trabajador</button></form>`);
@@ -3709,6 +3731,10 @@ function rrWorkerAdd() {
     } catch { /* sin propuesta se escribe a mano: no es un error que haya que enseñar */ }
   };
   campoUser.addEventListener("input", () => { campoUser.dataset.tocado = campoUser.value.trim() ? "1" : ""; });
+  // Si el nombre viene puesto de partida —desde el enlace con Ágora— hay que pedir el usuario
+  // igual: rellenar el `value` en el HTML no dispara ningún evento, así que el campo se quedaba
+  // vacío y, como es obligatorio, el formulario no llegaba a enviarse.
+  if (pre.nombre) proponerUsuario();
   let _tUser = null;
   ov.querySelector("[name=nombre]")?.addEventListener("input", () => {
     // Se espera a que deje de escribir: proponer con cada tecla serían diez consultas para
@@ -3728,12 +3754,27 @@ function rrWorkerAdd() {
     if (ov.querySelectorAll(".altaArea").length) data.areas = marcadas;
     try {
       const r = await apiSend("POST", "/api/rrhh/trabajador", data);
+      // El enlace con Ágora, si se vino de ahí. NO fatal: la ficha ya está creada y el enlace
+      // se puede hacer a mano; perderla por un fallo de enlace sería mucho peor.
+      let enlazado = null;
+      if (pre.agora && r.id) {
+        try { await apiSend("POST", "/api/rrhh/agora/enlazar", { agora_username: pre.agora, worker_id: r.id }); enlazado = pre.agora; }
+        catch { /* se dirá que ha quedado sin enlazar */ }
+      }
       ov.remove();
-      modal("Trabajador creado", `
+      const fin = modal("Trabajador creado", `
         <p style="margin:0 0 14px;line-height:1.6">${esc(r.mensaje || "Creado.")}</p>
+        ${pre.agora ? `<p class="mut" style="margin:0 0 14px;line-height:1.55">${enlazado
+          ? `Enlazado con <b>${esc(pre.agora)}</b> de Ágora.`
+          : `<b>No se ha podido enlazar con ${esc(pre.agora)}</b>: hazlo desde «Enlazar operadores de Ágora».`}</p>` : ""}
         <p class="mut" style="margin:0 0 16px;line-height:1.55">Díselo en persona. Si se le olvida, desde su ficha
           puedes volver a dejarlo como al principio.</p>
         <div style="display:flex;justify-content:flex-end"><button class="btn primary" data-close>Entendido</button></div>`);
+      // Al cerrar el aviso se vuelve donde se estaba —la lista de operadores—, no encima de él:
+      // dos modales apilados no se entienden y el de debajo se queda con datos viejos.
+      if (typeof pre.alCerrar === "function") {
+        fin.addEventListener("click", (ev) => { if (ev.target === fin || ev.target.closest("[data-close]")) setTimeout(pre.alCerrar, 0); });
+      }
       loadRRHH();
     } catch (err) { btn.disabled = false; toast("Error: " + err.message); }
   });
