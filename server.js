@@ -49,6 +49,7 @@ import { sanearSolicitud, transitar, solapesVivos, turnosDurante, paraTrabajador
   ausenciaDelDia } from "./src/modules/rrhh/ausencias.js";
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
+import { primerUsuarioLibre } from "./src/modules/rrhh/usuario.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo, generarToken } from "./src/modules/rrhh/pulso.js";
 import { ensureSchemaHorarios, sembrarLocal, migrarDescansos } from "./src/modules/horarios/schema.js";
 import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descansos.js";
@@ -7822,6 +7823,31 @@ function rrhhMensajeAlta(r) {
   if (falta.length) partes.push(`Queda por poner ${falta.join(" y ")}.`);
   return partes.join(" ");
 }
+
+/**
+ * Qué usuario le toca a alguien que se llama así.
+ *
+ * El usuario es ÚNICO en toda la casa y con ocho establecimientos hay más de una Erika. Antes
+ * eso se resolvía metiendo el local dentro —«erika.girona»—, pero el local no dice quién es esa
+ * persona, dice dónde estaba el día que entró: quien cambia de local se queda con un usuario
+ * que miente y nadie lo renombra, porque es con lo que se identifica.
+ *
+ * Se pregunta al escribir el nombre, así que el choque se resuelve ANTES de rellenar el resto y
+ * no como un error al pulsar el botón, con todo lo demás ya escrito.
+ */
+app.get("/api/rrhh/usuario-libre", requireAuth(RRHH_ROLES), async (req, res) => {
+  try {
+    const nombre = String(req.query?.nombre || "").trim();
+    if (!nombre) return res.json({ ok: true, usuario: null });
+    // TODOS los usuarios, no solo los del local de quien pregunta: la unicidad es de la casa
+    // entera, y proponer uno mirando solo el propio local daría un choque garantizado.
+    const filas = await dbAll("SELECT username FROM users", []);
+    res.json({ ok: true, usuario: primerUsuarioLibre(nombre, filas.map((f) => f.username)) });
+  } catch (e) {
+    console.error("[rrhh] usuario-libre:", e.message);
+    res.json({ ok: true, usuario: null });   // sin propuesta se escribe a mano; no es un error
+  }
+});
 
 app.post("/api/rrhh/trabajador", requireAuth(RRHH_ROLES), async (req, res) => {
   try {

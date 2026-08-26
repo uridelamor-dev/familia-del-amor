@@ -344,7 +344,13 @@ describe("la pantalla", () => {
     const a = app.slice(app.indexOf("function rrWorkerAdd"), app.indexOf("async function rrDarDeBaja"));
     assert.match(a, /name="horas_semana"/);
     assert.match(a, /altaArea/);
-    assert.match(a, /name="fecha_alta"/);
+    // La fecha de alta YA NO SE PIDE: es hoy, y preguntarla era un campo más que rellenar
+    // siempre con lo mismo. Lo que no puede pasar es que alguien entre sin ella —sin fecha la
+    // ficha no sabe desde cuándo contar—, así que lo que se comprueba es que la ponga el
+    // servidor y no el formulario.
+    assert.ok(!/name="fecha_alta"/.test(a), "vuelve a pedir la fecha de alta");
+    const ciclo = readFileSync(new URL("../src/modules/rrhh/ciclo.js", import.meta.url), "utf8");
+    assert.match(ciclo, /const alta = fecha\(datos\.fecha_alta\) \|\| fecha\(hoy\)/);
     // Al encargado no se le enseña el contrato, igual que el servidor se lo quita.
     assert.match(a, /\$\{enc \? "" : `<div>/);
   });

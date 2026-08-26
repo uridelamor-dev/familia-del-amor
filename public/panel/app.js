@@ -3593,8 +3593,13 @@ async function rrNotaDel(id) {
 function rrWorkerAdd() {
   // Alta vía endpoint propio de RRHH: el encargado puede crear en SU local (rol fijo trabajador).
   const enc = USER.rol === "encargado";
-  const localField = enc
-    ? `<input type="hidden" name="local" value="${esc(USER.local || "")}"><div class="field"><label>Local</label><input value="${esc(USER.local || "")}" disabled></div>`
+  // EL LOCAL SALE DE LA BARRA DE ARRIBA. Si hay un establecimiento puesto, dar de alta ahí es
+  // lo único que tiene sentido: se está mirando su equipo. Volver a preguntarlo es pedir dos
+  // veces lo mismo y abrir la puerta a que no coincidan. Solo se pregunta cuando la barra dice
+  // «todos», porque entonces no hay respuesta.
+  const localBarra = enc ? (USER.local || "") : (localActualFE() || "");
+  const localField = localBarra
+    ? `<input type="hidden" name="local" value="${esc(localBarra)}">`
     : `<div class="field"><label>Local</label><select name="local">${opcionesLocal()}</select></div>`;
   // El rol son DOS opciones: un desplegable para eso obliga a abrir para ver que solo hay dos.
   const rolField = enc ? `<input type="hidden" name="rol" value="trabajador">` : `<div class="field"><label>Rol</label>
@@ -3605,29 +3610,26 @@ function rrWorkerAdd() {
   // Ya no se pide contraseña: la inicial es el propio usuario y el sistema obliga a
   // cambiarla al entrar. Antes venía «tapeta2024» rellenada y nadie la cambiaba nunca,
   // porque además el trabajador no podía.
-  const hoy = new Date().toISOString().slice(0, 10);
   // El alta corta se acabó dejando a la gente a medio montar: sin contrato no entraban en el
   // generador y sin áreas se les podía poner en cocina. Se piden aquí, y solo esto: el DNI,
   // el teléfono y los documentos se completan después en la ficha, cuando se tengan.
   const ov = modal("Nuevo trabajador", `<form id="fWorker" class="grid" style="gap:14px">
-    <div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Datos básicos</h3></div>
+    <div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Datos básicos</h3>
+      ${localBarra ? `<span class="mut" style="font-size:12px">en <b>${esc(nombreCortoLocal(localBarra))}</b></span>` : ""}</div>
       <div class="form-grid">
         <div class="field"><label>Nombre</label><input name="nombre" required></div>
-        <div class="field"><label>Usuario</label><input name="username" required placeholder="nombre.local"></div>
+        <div class="field"><label>Usuario</label><input name="username" required placeholder="se propone solo"></div>
         ${localField}${rolField}
-        <div class="field"><label>Puesto <span class="mut">(opcional)</span></label><input name="puesto" placeholder="Camarero"></div>
-        <div class="field"><label>Primer día de trabajo</label><input name="fecha_alta" type="date" value="${hoy}"></div>
       </div></div>
     ${enc ? "" : `<div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Contrato</h3></div>
       <div class="form-grid">
         <div class="field"><label>Horas por semana</label>
           <div class="chips" id="altaHoras">${[20, 30, 40].map((h) => `<button type="button" class="chip" data-h="${h}">${h} h</button>`).join("")}</div>
           <input name="horas_semana" type="number" min="1" max="60" step="0.5" placeholder="u otras…" style="margin-top:6px"></div>
-        <div class="field"><label>Desde <span class="mut">(si no, el primer día)</span></label><input name="contrato_desde" type="date"></div>
       </div>
       <p class="mut" style="margin:6px 0 0;font-size:11.5px">Sin horas contratadas no entra en el reparto del generador.</p></div>`}
     <div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Áreas en las que puede trabajar</h3></div>
-      <div id="altaAreas" class="mut" style="font-size:12.5px">Elige el establecimiento para ver sus áreas.</div>
+      <div id="altaAreas" class="mut" style="font-size:12.5px">Cargando las áreas…</div>
       <p class="mut" style="margin:6px 0 0;font-size:11.5px">Si no marcas ninguna, el generador podrá ponerle en cualquiera hasta que se configuren.</p></div>
     <p class="mut" style="margin:0;line-height:1.55">Entrará con <b>su usuario como contraseña</b> y lo primero que
       le pedirá el sistema es cambiarla. Hasta que lo haga no puede ver nada del panel.</p>
@@ -3674,21 +3676,34 @@ function rrWorkerAdd() {
     c.closest(".chip")?.classList.toggle("on", c.checked);
   });
 
-  // El usuario se propone solo a partir del nombre y del establecimiento: «Kevin Soler» en
-  // Blanes → «kevin.blanes». Se puede cambiar, pero deja de ser un campo que hay que pensar
-  // —y de paso salen todos con el mismo formato, que es lo que hacía falta para reconocerlos.
+  // EL USUARIO ES EL NOMBRE. Antes se proponía «nombre.local» —«kevin.blanes»— para esquivar
+  // los choques, porque el usuario es único en toda la casa y hay más de una Erika. Pero el
+  // local dentro del usuario no dice quién es esa persona, dice dónde estaba el día que entró:
+  // quien cambia de local se queda con un usuario que miente y nadie lo renombra, porque es con
+  // lo que se identifica. El choque lo resuelve el servidor, que sí conoce a todos.
   const campoUser = ov.querySelector("[name=username]");
-  const proponerUsuario = () => {
+  let pidiendo = null;
+  const proponerUsuario = async () => {
     if (campoUser.dataset.tocado === "1") return;
-    const nom = (ov.querySelector("[name=nombre]")?.value || "").trim().split(/\s+/)[0] || "";
-    const loc = ov.querySelector("[name=local]")?.value || USER.local || "";
-    const limpia = (x) => String(x).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "");
-    const corto = limpia(nombreCortoLocal(loc).split(/[-·]/)[0]);
-    campoUser.value = nom ? limpia(nom) + (corto ? "." + corto : "") : "";
+    const nom = (ov.querySelector("[name=nombre]")?.value || "").trim();
+    if (!nom) { campoUser.value = ""; return; }
+    const mio = Symbol();
+    pidiendo = mio;
+    try {
+      const r = await apiRaw("/api/rrhh/usuario-libre?nombre=" + encodeURIComponent(nom));
+      // Si mientras llegaba la respuesta se ha seguido escribiendo, esta ya no vale.
+      if (pidiendo !== mio || campoUser.dataset.tocado === "1") return;
+      if (r.usuario) campoUser.value = r.usuario;
+    } catch { /* sin propuesta se escribe a mano: no es un error que haya que enseñar */ }
   };
   campoUser.addEventListener("input", () => { campoUser.dataset.tocado = campoUser.value.trim() ? "1" : ""; });
-  ov.querySelector("[name=nombre]")?.addEventListener("input", proponerUsuario);
-  ov.querySelector("[name=local]")?.addEventListener("change", proponerUsuario);
+  let _tUser = null;
+  ov.querySelector("[name=nombre]")?.addEventListener("input", () => {
+    // Se espera a que deje de escribir: proponer con cada tecla serían diez consultas para
+    // escribir «Erika», y las nueve primeras hablan de un nombre a medias.
+    clearTimeout(_tUser);
+    _tUser = setTimeout(proponerUsuario, 300);
+  });
 
   ov.querySelector("#fWorker").addEventListener("submit", async (e) => {
     e.preventDefault();
