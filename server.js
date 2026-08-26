@@ -78,6 +78,12 @@ import { gruposDuplicados } from "./src/modules/facturas/proveedores-duplicados.
 import { grupoDeSQL, claveProducto, validarSuma, mensajeValidacion } from "./src/modules/facturas/lineas.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { CLAVES as GM, DIAS_ATRAS as GM_DIAS, consultaGmail, explicarError, resumirGmail } from "./src/modules/facturas/gmail-estado.js";
+import { TANDA as REL_TANDA, CADA_HORAS as REL_HORAS, tocaRepasar, estadoTrasFallo,
+         resumirRepaso } from "./src/modules/facturas/relectura.js";
+// Claves del rastro del repaso automático de líneas. Se leen desde el panel; no son secretos.
+// Aquí arriba y no junto a su función: las usa `/api/facturas/status`, que está mucho antes.
+const REL = { ultimo: "lineas_ultimo_repaso", leidas: "lineas_ultimo_leidas",
+  quedan: "lineas_ultimo_quedan", rendidas: "lineas_ultimo_rendidas" };
 import { proponerConciliacion, resumenConciliacion, estadoConciliada } from "./src/modules/facturas/conciliacion.js";
 import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados.js";
 import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
@@ -739,7 +745,10 @@ async function initDB() {
     // o calculado con lo pactado— y no es un adorno: si cambian las condiciones del proveedor,
     // se recalculan las calculadas y NO se tocan las que traía escritas la factura.
     for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT", "lineas_version INTEGER", "drive_thumb TEXT",
-      "vencimiento TEXT", "vencimiento_origen TEXT"]) {
+      "vencimiento TEXT", "vencimiento_origen TEXT",
+      // Cuántas veces ha fallado la lectura del detalle. Sin esto, un fallo pasajero —la IA
+      // saturada dos minutos— marcaba la factura como ilegible para el resto de su vida.
+      "lineas_intentos INTEGER DEFAULT 0"]) {
       try { await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter facturas " + col + ":", e.message); }
     }
     await client.query(`
@@ -2060,6 +2069,16 @@ app.get("/api/facturas/status", requireAuth(["direccion", "contabilidad"]), asyn
   try { const r = await dbGet("SELECT COUNT(*) AS n FROM facturas WHERE COALESCE(sheet_synced,0)=0", []); out.pendientes_sheet = Number(r?.n || 0); }
   catch { /* columna nueva */ }
   try { out.ultimo_reintento = (await getConfig("facturas_ultimo_reintento")) || null; } catch { /* noop */ }
+  // El repaso que relee solo el detalle que faltó. Se cuenta aquí porque es lo mismo que el
+  // volcado: algo que pasa sin que nadie lo pida y de lo que hay que poder saber si va.
+  try {
+    const c = {};
+    for (const k of Object.values(REL)) c[k] = await getConfig(k);
+    out.relectura = {
+      ...resumirRepaso({ ultimo: c[REL.ultimo], leidas: c[REL.leidas], quedan: c[REL.quedan], rendidas: c[REL.rendidas] }),
+      ultimo: c[REL.ultimo] || null, cadaHoras: REL_HORAS,
+    };
+  } catch { out.relectura = null; }
   // Los campos van EN LA RAÍZ —así los lee `public/direccion.js`— y REPETIDOS dentro de `data`,
   // que es lo que devuelve `apiOptional` en el panel. Sin ese `data`, el panel recibía
   // `undefined`, lo pintaba como «No se ha podido comprobar» y esa etiqueta no dijo la verdad
@@ -5833,50 +5852,70 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
   }
 });
 
+/**
+ * Leer el detalle de una tanda de facturas que se quedaron sin él.
+ *
+ * Separado del endpoint porque lo usan DOS: el botón de «Leer las que faltan», y el repaso que
+ * corre solo cada pocas horas. Una sola función para que las dos hagan exactamente lo mismo —si
+ * fueran dos, una acabaría teniendo una regla que la otra no—.
+ */
+async function releerTanda({ tanda = REL_TANDA, scope = null } = {}) {
+  const n = Math.min(Math.max(Number(tanda) || REL_TANDA, 1), 40);
+  const filas = await dbAll(
+    `SELECT id, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, drive_url,
+            COALESCE(lineas_intentos,0)::int AS intentos
+       FROM facturas
+      WHERE lineas_estado IS NULL AND drive_url IS NOT NULL ${scope ? "AND local = ?" : ""}
+      -- Las que ya han fallado alguna vez, LAS ÚLTIMAS. Si no, una que falla siempre se
+      -- llevaría la cabeza de cada tanda y las demás no avanzarían nunca.
+      ORDER BY COALESCE(lineas_intentos,0) ASC, fecha DESC NULLS LAST, id DESC LIMIT ?`,
+    scope ? [scope, n] : [n]);
+
+  const resultado = { leidas: 0, conAviso: 0, fallidas: 0, saltadas: 0, rendidas: 0, detalles: [] };
+  for (const f of filas) {
+    try {
+      // El alquiler, la luz o el gestor no se leen: su línea no es un producto y cada
+      // lectura cuesta una llamada al modelo. Se marca `no_aplica` para que no vuelva a
+      // salir en la siguiente tanda.
+      if (!(await proveedorConLineas(dbGet, f.proveedor))) {
+        await dbRun(`UPDATE facturas SET lineas_estado = 'no_aplica', lineas_leidas_en = ? WHERE id = ?`, [isoConOffset(Date.now()), f.id]);
+        resultado.saltadas += 1;
+        resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, saltada: "gasto estructural" });
+        continue;
+      }
+      const r = await releerLineasFactura({ factura: f, getToken: getDriveAccessToken, dbRun });
+      resultado.leidas += 1;
+      if (r.aviso) resultado.conAviso += 1;
+      resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, lineas: r.n, aviso: r.aviso || null });
+    } catch (e) {
+      resultado.fallidas += 1;
+      // ANTES cualquier fallo la marcaba como ilegible PARA SIEMPRE. Si la IA estaba saturada
+      // dos minutos, esa factura se quedaba sin detalle el resto de su vida y nadie se
+      // enteraba. Un error de red no dice nada sobre el PDF: eso se reintenta. Lo que sí es
+      // del documento —ya no está en Drive, está corrupto— se marca a la primera, porque
+      // volver a intentarlo es gastar tres veces para el mismo resultado.
+      const d = estadoTrasFallo({ motivo: e.message, intentos: f.intentos });
+      if (!d.seReintenta) resultado.rendidas += 1;
+      await dbRun(
+        `UPDATE facturas SET lineas_estado = ?, lineas_aviso = ?, lineas_intentos = ?, lineas_leidas_en = ? WHERE id = ?`,
+        [d.estado, d.motivo, d.intentos, isoConOffset(Date.now()), f.id]).catch(() => {});
+      resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, error: e.message, seReintenta: d.seReintenta });
+      console.error(`[facturas] releer #${f.id}${d.seReintenta ? " (se reintentará)" : ""}:`, e.message);
+    }
+  }
+
+  const quedan = await dbGet(
+    `SELECT count(*)::int AS n FROM facturas WHERE lineas_estado IS NULL AND drive_url IS NOT NULL ${scope ? "AND local = ?" : ""}`,
+    scope ? [scope] : []);
+  return { ...resultado, quedan: quedan?.n || 0 };
+}
+
 app.post("/api/facturas/lineas/releer", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   if (_releyendo) return res.status(409).json({ ok: false, error: "Ya hay una relectura en marcha. Espera a que termine." });
   _releyendo = true;
   try {
-    const scope = localScope(req);
-    const tanda = Math.min(Math.max(Number(req.body?.tanda) || 15, 1), 40);
-    const filas = await dbAll(
-      `SELECT id, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, drive_url
-       FROM facturas
-       WHERE lineas_estado IS NULL AND drive_url IS NOT NULL ${scope ? "AND local = ?" : ""}
-       ORDER BY fecha DESC NULLS LAST, id DESC LIMIT ?`,
-      scope ? [scope, tanda] : [tanda]);
-
-    const resultado = { leidas: 0, conAviso: 0, fallidas: 0, saltadas: 0, detalles: [] };
-    for (const f of filas) {
-      try {
-        // El alquiler, la luz o el gestor no se leen: su línea no es un producto y cada
-        // lectura cuesta una llamada al modelo. Se marca `no_aplica` para que no vuelva a
-        // salir en la siguiente tanda.
-        if (!(await proveedorConLineas(dbGet, f.proveedor))) {
-          await dbRun(`UPDATE facturas SET lineas_estado = 'no_aplica', lineas_leidas_en = ? WHERE id = ?`, [isoConOffset(Date.now()), f.id]);
-          resultado.saltadas += 1;
-          resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, saltada: "gasto estructural" });
-          continue;
-        }
-        const r = await releerLineasFactura({ factura: f, getToken: getDriveAccessToken, dbRun });
-        resultado.leidas += 1;
-        if (r.aviso) resultado.conAviso += 1;
-        resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, lineas: r.n, aviso: r.aviso || null });
-      } catch (e) {
-        resultado.fallidas += 1;
-        // Se marca para no volver a intentarlo en cada tanda: si no, una factura cuyo PDF
-        // ya no está en Drive bloquearía el avance para siempre.
-        await dbRun(`UPDATE facturas SET lineas_estado = 'no_leible', lineas_aviso = ?, lineas_leidas_en = ? WHERE id = ?`,
-          [String(e.message || "").slice(0, 300), isoConOffset(Date.now()), f.id]).catch(() => {});
-        resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, error: e.message });
-        console.error(`[facturas] releer #${f.id}:`, e.message);
-      }
-    }
-
-    const quedan = await dbGet(
-      `SELECT count(*)::int AS n FROM facturas WHERE lineas_estado IS NULL AND drive_url IS NOT NULL ${scope ? "AND local = ?" : ""}`,
-      scope ? [scope] : []);
-    res.json({ ok: true, ...resultado, quedan: quedan?.n || 0 });
+    const r = await releerTanda({ tanda: Number(req.body?.tanda) || 15, scope: localScope(req) });
+    res.json({ ok: true, ...r });
   } catch (e) {
     console.error("[facturas] releer:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo releer: " + e.message });
@@ -5884,6 +5923,42 @@ app.post("/api/facturas/lineas/releer", requireAuth(["direccion", "contabilidad"
     _releyendo = false;
   }
 });
+
+/**
+ * El repaso que corre SOLO: relee el detalle de las que se quedaron sin él.
+ *
+ * NO ES UN TEMPORIZADOR SEMANAL, y esa es la parte que importa. En Replit el proceso se
+ * reinicia a menudo, así que un `setInterval` de días no llega a dispararse nunca: la cuenta
+ * vuelve a cero en cada arranque. Lo que sobrevive es mirar cada poco «¿cuánto hace de la
+ * última?» contra una marca guardada en la base — el mismo patrón que la sincronización de
+ * Ágora. Con eso da igual cuántas veces se reinicie el servidor.
+ *
+ * Y si no hay nada pendiente no gasta nada: la consulta devuelve cero filas y se acabó.
+ */
+async function repasoLineasSiToca() {
+  if (_releyendo) return;                                   // alguien lo está haciendo a mano
+  try {
+    const ultimo = await getConfig(REL.ultimo);
+    if (!tocaRepasar({ ultimo, ahora: new Date().toISOString(), cadaHoras: REL_HORAS })) return;
+    // La marca se escribe ANTES de leer nada: si el proceso se cae a mitad, el siguiente
+    // arranque no vuelve a empezar de cero y encadenar tandas sin freno.
+    await setConfig(REL.ultimo, new Date().toISOString());
+    if (!(await getConfig("google_drive_refresh_token"))) return;   // sin Drive no hay nada que descargar
+
+    _releyendo = true;
+    const r = await releerTanda({ tanda: REL_TANDA });
+    await setConfig(REL.leidas, r.leidas);
+    await setConfig(REL.quedan, r.quedan);
+    await setConfig(REL.rendidas, r.rendidas);
+    if (r.leidas || r.fallidas) {
+      console.log(`[facturas] repaso automático: ${r.leidas} leídas, ${r.fallidas} fallidas, quedan ${r.quedan}`);
+    }
+  } catch (e) {
+    console.error("[facturas] repaso automático:", e.message);
+  } finally {
+    _releyendo = false;
+  }
+}
 
 // ── Repaso de las facturas ya guardadas ─────────────────────────────────────
 // Las comprobaciones se han ido añadiendo con el tiempo y todas actúan sobre la factura que
@@ -15055,6 +15130,14 @@ const server = app.listen(PORT, async () => {
   };
   setTimeout(reintentarSheets, 90 * 1000);
   setInterval(reintentarSheets, 10 * 60 * 1000);
+
+  // ── El detalle que se quedó sin leer, repasado solo ──────────────────────
+  // Se PREGUNTA cada media hora y solo actúa si han pasado las horas del repaso. Poner aquí un
+  // `setInterval` de seis horas —o de una semana— sería no hacerlo nunca: en Replit el proceso
+  // se reinicia mucho antes y la cuenta vuelve a empezar de cero cada vez. La marca está en la
+  // base, así que los reinicios no la borran.
+  setTimeout(repasoLineasSiToca, 3 * 60 * 1000);
+  setInterval(repasoLineasSiToca, 30 * 60 * 1000);
 
   // ── Resumen mensual por WhatsApp: día 10 de cada mes a las 9:00h (Madrid) ──
   const MESES_CAP = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];

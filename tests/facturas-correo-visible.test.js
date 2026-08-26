@@ -121,3 +121,54 @@ describe("la pantalla cuenta lo que pasa con el correo", () => {
     assert.match(app, /<span class="pill \$\{gm\.estado\.nivel\}">\$\{esc\(gm\.estado\.titulo\)\}<\/span>/);
   });
 });
+
+describe("el detalle se repasa solo, sin que nadie lo pulse", () => {
+  test("NO es un temporizador de días: se pregunta cada poco contra una marca guardada", () => {
+    // En Replit el proceso se reinicia a menudo. Un `setInterval` de seis horas —o de una
+    // semana— no llega a dispararse nunca, porque la cuenta vuelve a cero en cada arranque.
+    assert.match(server, /setInterval\(repasoLineasSiToca, 30 \* 60 \* 1000\)/);
+    assert.match(server, /tocaRepasar\(\{ ultimo, ahora: new Date\(\)\.toISOString\(\), cadaHoras: REL_HORAS \}\)/);
+    assert.ok(!/setInterval\(repasoLineasSiToca, \d+ \* 60 \* 60 \* 1000\)/.test(server), "vuelve a ser un temporizador de horas");
+  });
+
+  test("la marca se escribe ANTES de leer nada", () => {
+    // Si el proceso se cae a mitad del repaso, el siguiente arranque no puede volver a empezar
+    // de cero y encadenar tandas sin freno.
+    const fn = server.slice(server.indexOf("async function repasoLineasSiToca()"), server.indexOf("app.get(\"/api/facturas/repaso\""));
+    const iMarca = fn.indexOf(`setConfig(REL.ultimo`);
+    const iLeer = fn.indexOf("await releerTanda(");
+    assert.ok(iMarca > 0 && iLeer > iMarca, "se lee antes de anotar que se ha empezado");
+  });
+
+  test("no pisa una relectura que esté haciendo alguien a mano", () => {
+    const fn = server.slice(server.indexOf("async function repasoLineasSiToca()"), server.indexOf("app.get(\"/api/facturas/repaso\""));
+    assert.match(fn, /if \(_releyendo\) return;/);
+  });
+
+  test("el botón y el repaso automático hacen EXACTAMENTE lo mismo", () => {
+    // Si fueran dos funciones, una acabaría teniendo una regla que la otra no.
+    assert.match(server, /async function releerTanda\(/);
+    assert.match(server, /const r = await releerTanda\(\{ tanda: Number\(req\.body\?\.tanda\) \|\| 15, scope: localScope\(req\) \}\)/);
+    assert.match(server, /const r = await releerTanda\(\{ tanda: REL_TANDA \}\)/);
+  });
+
+  test("un fallo pasajero ya NO marca la factura como ilegible para siempre", () => {
+    // Si la IA estaba saturada dos minutos, esa factura se quedaba sin detalle el resto de su
+    // vida. La decisión vive en el módulo puro, no en un `if` dentro del endpoint.
+    const fn = server.slice(server.indexOf("async function releerTanda("), server.indexOf("app.post(\"/api/facturas/lineas/releer\""));
+    assert.match(fn, /estadoTrasFallo\(\{ motivo: e\.message, intentos: f\.intentos \}\)/);
+    assert.ok(!/lineas_estado = 'no_leible'/.test(fn), "vuelve a rendirse a la primera");
+    assert.match(fn, /lineas_intentos = \?/);
+  });
+
+  test("y las que ya fallaron no se llevan la cabeza de cada tanda", () => {
+    // Si no, una factura que falla siempre bloquearía el avance de todas las demás.
+    const fn = server.slice(server.indexOf("async function releerTanda("), server.indexOf("app.post(\"/api/facturas/lineas/releer\""));
+    assert.match(fn, /ORDER BY COALESCE\(lineas_intentos,0\) ASC/);
+  });
+
+  test("y en pantalla se dice cuándo fue y qué queda", () => {
+    assert.match(app, /Se relee solo lo que se quedó sin leer|drv\.relectura\.texto/);
+    assert.match(app, /se repasa solo cada \$\{num\(drv\.relectura\.cadaHoras/);
+  });
+});
