@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -50,6 +50,8 @@ import { sanearSolicitud, transitar, solapesVivos, turnosDurante, paraTrabajador
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { primerUsuarioLibre } from "./src/modules/rrhh/usuario.js";
+import { puedePreguntarse, siguesATiempo, enlaceResena, clasificarRespuesta, veredictoFinal,
+         respuestaASeguimiento, CONTENTO, DESCONTENTO } from "./src/modules/reservas/seguimiento.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo, generarToken } from "./src/modules/rrhh/pulso.js";
 import { ensureSchemaHorarios, sembrarLocal, migrarDescansos } from "./src/modules/horarios/schema.js";
 import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descansos.js";
@@ -482,6 +484,14 @@ async function initDB() {
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // Para poder MIRARLO. Antes no quedaba rastro de nada: ni de qué se mandó, ni de qué
+    // contestaron, ni de a quién se le pidió reseña. Un mecanismo que no se puede mirar es un
+    // mecanismo del que no se puede saber si funciona — y este llevaba tiempo sin funcionar.
+    for (const col of ["enviado_en TEXT", "respuesta TEXT", "respondido_en TEXT",
+                       "veredicto TEXT", "resena_pedida INTEGER DEFAULT 0", "resultado TEXT"]) {
+      try { await client.query(`ALTER TABLE followup_scheduled ADD COLUMN IF NOT EXISTS ${col}`); }
+      catch (e) { console.error("[DB] alter followup_scheduled " + col + ":", e.message); }
+    }
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS whatsapp_messages (
@@ -6558,6 +6568,12 @@ app.post("/api/reservas", async (req, res) => {
     const pendiente = parseInt(personas) > 8;
     const reserva = { local, personas, dia, hora, telefono, nombre_reserva };
     upsertLeadFromReserva({ nombre_reserva, telefono });
+    // AQUÍ NO HABÍA NADA. Las reservas del panel —las de teléfono, las de la puerta— son casi
+    // todas, y ninguna programaba el seguimiento del día siguiente: solo lo hacían las que se
+    // reservaban hablando con Sara. Por eso el sistema parecía montado y no le llegaba a nadie.
+    programarSeguimiento({ telefono, nombre: nombre_reserva, local, dia, pendiente })
+      .then((r) => { if (!r.ok && r.motivo !== "reserva_pendiente") console.log(`[seguimiento] no se programa (${r.motivo})`); })
+      .catch(() => {});
     console.log(`[Reserva] WhatsApp listo: ${isReady()} | ${pendiente ? "PENDIENTE" : "Confirmación"} a ${telefono}`);
     if (pendiente) {
       if (isReady()) sendConfirmacionPendienteCliente(telefono, reserva);
@@ -12734,6 +12750,132 @@ app.delete("/api/rrhh/documento/:id", requireAuth(RRHH_ROLES), async (req, res) 
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// ── El «¿qué tal fue?» del día siguiente ────────────────────────────────────
+//
+// UN SOLO SITIO que lo programa, y por eso existe esta función: antes el `INSERT` estaba dentro
+// del flujo de reservar hablando con Sara, así que las reservas del PANEL —las de teléfono, las
+// de la puerta, que son casi todas— no programaban nada. El seguimiento parecía montado y en la
+// práctica no le llegaba a casi nadie.
+//
+// Y respeta la lista de bajas y el descanso de tres meses, que antes tampoco: escribía directo.
+async function programarSeguimiento({ telefono, nombre, local, dia, pendiente = false }) {
+  try {
+    if (pendiente) return { ok: false, motivo: "reserva_pendiente" };   // aún no está confirmada
+    const tel = String(telefono || "").replace(/\D/g, "");
+    // La baja vive en `marketing_prefs`, que es la tabla de consentimiento por teléfono — la
+    // misma que respetan las campañas. Se compara por los últimos nueve dígitos porque el
+    // número llega escrito de mil formas: con prefijo, con espacios, con guiones.
+    const prefs = await dbGet(
+      `SELECT baja FROM marketing_prefs WHERE RIGHT(REGEXP_REPLACE(telefono, '[^0-9]', '', 'g'), 9) = ?`,
+      [tel.slice(-9)]).catch(() => null);
+    // Los YA ENVIADOS y también LOS QUE ESTÁN EN COLA: si alguien reserva dos veces la misma
+    // semana, sin esto se le programan dos y recibe dos mensajes. El freno tiene que mirar lo
+    // que va a salir, no solo lo que salió.
+    const ultimo = await dbGet(
+      `SELECT MAX(dia) AS dia FROM followup_scheduled WHERE RIGHT(REGEXP_REPLACE(jid, '[^0-9]', '', 'g'), 9) = ?
+         AND COALESCE(resultado,'') <> 'caducado'`, [tel.slice(-9)]).catch(() => null);
+    const puede = puedePreguntarse({ telefono: tel, baja: prefs?.baja, ultimo: ultimo?.dia || null, hoy: hoyISO() });
+    if (!puede.ok) return { ok: false, motivo: puede.motivo };
+
+    const jid = tel.replace(/^00/, "").replace(/^(?!34)([679])/, "34$1") + "@s.whatsapp.net";
+    const [y, m, d] = String(dia).split("-").map(Number);
+    const sig = new Date(y, m - 1, d + 1);
+    const sendAt = `${sig.getFullYear()}-${String(sig.getMonth() + 1).padStart(2, "0")}-${String(sig.getDate()).padStart(2, "0")}T11:00:00`;
+    await dbRun(`INSERT INTO followup_scheduled (jid, nombre, local, dia, send_at) VALUES (?, ?, ?, ?, ?)`,
+      [jid, nombre || "", local, dia, sendAt]);
+    return { ok: true, sendAt };
+  } catch (e) {
+    console.error("[seguimiento] no se pudo programar:", e.message);
+    return { ok: false, motivo: "error" };
+  }
+}
+
+/**
+ * Qué se le contesta a quien responde al «¿qué tal fue?», y si se le pide reseña.
+ *
+ * Dos lecturas del mismo texto, y la más dura manda: primero las palabras del cliente —una lista
+ * cerrada, sin llamar a nadie— y luego, si eso no concluye, la IA. La IA puede AFINAR un
+ * «dudoso» pero NO puede ablandar una queja: cuando alguien escribe «tardaron mucho», eso pesa
+ * más que cualquier opinión de un modelo, porque equivocarse ahí cuesta una estrella pública.
+ */
+/**
+ * Qué ha pasado con los seguimientos. LO QUE NO SE PUEDE MIRAR NO SE PUEDE SABER SI FUNCIONA:
+ * esto llevaba tiempo sin llegarle a casi nadie y no había ni una pantalla que lo dijera.
+ */
+app.get("/api/reservas/seguimiento", requireAuth(["direccion", "marketing", "encargado"]), async (req, res) => {
+  try {
+    const scope = localScope(req);
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.desde || "")) ? String(req.query.desde) : addDaysISO(hoyISO(), -30);
+    const cond = scope ? " AND local = ANY(?)" : "";
+    const par = scope ? [desde, personasDe(scope)] : [desde];
+    const filas = await dbAll(
+      `SELECT id, nombre, local, dia, send_at, sent, enviado_en, respuesta, respondido_en,
+              veredicto, resena_pedida, resultado
+         FROM followup_scheduled WHERE dia >= ?${cond} ORDER BY dia DESC, id DESC LIMIT 300`, par);
+    const n = (f) => filas.filter(f).length;
+    res.json({
+      ok: true, desde, data: filas,
+      resumen: {
+        total: filas.length,
+        programados: n((f) => !f.sent),
+        enviados: n((f) => f.sent && f.resultado !== "caducado"),
+        caducados: n((f) => f.resultado === "caducado"),
+        respondidos: n((f) => f.respuesta),
+        contentos: n((f) => f.veredicto === "contento"),
+        descontentos: n((f) => f.veredicto === "descontento"),
+        resenas_pedidas: n((f) => f.resena_pedida),
+      },
+    });
+  } catch (e) {
+    console.error("[seguimiento] listar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar el seguimiento" });
+  }
+});
+
+setSeguimientoResolver(async ({ ctx, texto }) => {
+  const delTexto = clasificarRespuesta(texto);
+  let deLaIA = null;
+  // Solo se pregunta cuando las palabras no concluyen: es donde aporta y donde no hay riesgo.
+  if (delTexto !== DESCONTENTO && process.env.ANTHROPIC_API_KEY) {
+    try {
+      const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const r = await ai.messages.create({
+        model: "claude-haiku-4-5-20251001", max_tokens: 12, temperature: 0,
+        system: "Un cliente contesta a «¿qué tal fue tu visita al restaurante?». Responde SOLO una palabra: "
+          + "contento (si se le ve satisfecho), descontento (si se queja de algo) o dudoso (si no está claro, "
+          + "si es ambiguo o si habla de otra cosa). ANTE LA DUDA, dudoso.",
+        messages: [{ role: "user", content: String(texto || "").slice(0, 400) }],
+      });
+      const t = (r.content.find((b) => b.type === "text")?.text || "").toLowerCase().trim();
+      if (/contento/.test(t) && !/descontento/.test(t)) deLaIA = CONTENTO;
+      else if (/descontento/.test(t)) deLaIA = DESCONTENTO;
+      else deLaIA = "dudoso";
+    } catch (e) { console.error("[seguimiento] la IA no ha podido leerlo:", e.message); }
+  }
+  const veredicto = veredictoFinal({ deLaIA, delTexto });
+
+  // El enlace sale del `place_id` de la ficha de Google que ya se vinculó. Sin ficha no hay
+  // enlace, y entonces se dan las gracias y punto: pedir una reseña sin decir dónde dejarla es
+  // hacerle perder el tiempo a quien acaba de hacerte un favor.
+  let enlace = null;
+  try {
+    const raw = await getConfig("places_ids");
+    const arr = raw ? JSON.parse(raw) : [];
+    const ficha = arr.find((x) => x && x.name === ctx.local && x.placeId);
+    enlace = enlaceResena(ficha?.placeId);
+  } catch { /* sin enlace se agradece igual */ }
+
+  const plan = respuestaASeguimiento({ veredicto, nombre: ctx.nombre, local: ctx.local, enlace });
+  // Y queda anotado, que era lo que faltaba: sin esto no había forma de saber ni qué se mandó
+  // ni qué contestaron.
+  try {
+    await dbRun(
+      `UPDATE followup_scheduled SET respuesta = ?, respondido_en = ?, veredicto = ?, resena_pedida = ?, resultado = 'respondido' WHERE id = ?`,
+      [String(texto || "").slice(0, 900), isoConOffset(Date.now()), veredicto, plan.pideResena ? 1 : 0, ctx.id || 0]);
+  } catch (e) { console.error("[seguimiento] no se pudo anotar la respuesta:", e.message); }
+  return { ...plan, veredicto };
+});
+
 // ── RRHH: enlace con operadores de Ágora + rendimiento por empleado (solo lectura) ──
 // Descubre los operadores que han facturado (informe `empleado`) y propone a qué perfil enlazarlos.
 app.get("/api/rrhh/agora/operadores", requireAuth(RRHH_ROLES), async (req, res) => {
@@ -14700,17 +14842,8 @@ const server = app.listen(PORT, async () => {
         }
       }
 
-      // Programar follow-up al día siguiente a las 11h (solo reservas confirmadas)
-      if (!pendiente) {
-        const jidFu = telefono.replace(/\D/g, "").replace(/^00/, "").replace(/^(?!34)([679])/, "34$1") + "@s.whatsapp.net";
-        const [y, m, d] = dia.split("-").map(Number);
-        const nextDay = new Date(y, m - 1, d + 1);
-        const sendAt = `${nextDay.getFullYear()}-${String(nextDay.getMonth()+1).padStart(2,"0")}-${String(nextDay.getDate()).padStart(2,"0")}T11:00:00`;
-        await dbRun(
-          `INSERT INTO followup_scheduled (jid, nombre, local, dia, send_at) VALUES (?, ?, ?, ?, ?)`,
-          [jidFu, nombre_reserva, local, dia, sendAt]
-        );
-      }
+      // El «¿qué tal fue?» del día siguiente, por la MISMA puerta que las del panel.
+      await programarSeguimiento({ telefono, nombre: nombre_reserva, local, dia, pendiente });
     } catch (e) {
       console.error("Error guardando reserva WhatsApp:", e.message);
     }
@@ -14811,6 +14944,14 @@ const server = app.listen(PORT, async () => {
       );
       for (const row of pendientes) {
         try {
+          // «AYER ESTUVISTE» TIENE CADUCIDAD. Si WhatsApp estuvo caído —lo normal tras cada
+          // redespliegue— el mensaje se quedaba esperando y salía igual al volver, tres días
+          // después. Un mensaje que miente es peor que ninguno: se descarta y se anota.
+          if (!siguesATiempo({ enviarA: row.send_at, ahora })) {
+            await dbRun(`UPDATE followup_scheduled SET sent = 1, resultado = 'caducado' WHERE id = ?`, [row.id]).catch(() => {});
+            console.log(`⏭️  Follow-up caducado (${row.send_at}), no se manda a ${row.jid}`);
+            continue;
+          }
           const nombre = row.nombre.split(" ")[0];
           const msg =
             `¡Hola ${nombre}! 😊 Soy Sara, del equipo de Familia del Amor.\n\n` +
@@ -14818,8 +14959,8 @@ const server = app.listen(PORT, async () => {
             `Si hay algo en lo que podamos mejorar, o simplemente quieres compartir tu experiencia, ` +
             `aquí estamos 🙏\n\n¡Gracias y hasta pronto!`;
           await sendMensajeLibre(row.jid.split("@")[0], msg);
-          await dbRun(`UPDATE followup_scheduled SET sent = 1 WHERE id = ?`, [row.id]);
-          markAwaitingFollowup(row.jid, { nombre: row.nombre, local: row.local, dia: row.dia });
+          await dbRun(`UPDATE followup_scheduled SET sent = 1, enviado_en = ? WHERE id = ?`, [ahora, row.id]);
+          markAwaitingFollowup(row.jid, { nombre: row.nombre, local: row.local, dia: row.dia, id: row.id });
           console.log(`📤 Follow-up enviado a ${row.jid}`);
         } catch (e) {
           console.error(`Error enviando follow-up a ${row.jid}:`, e.message);

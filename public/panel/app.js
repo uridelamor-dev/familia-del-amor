@@ -1551,6 +1551,61 @@ function avisoSinPublico(titulo, eyebrow, que) {
   return `<div class="ph"><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(titulo)}</h1><div class="sub">${esc(nombreCortoLocal(DASH_LOCAL))}</div></div>
     <div class="card"><div class="ch"><h3>Aquí no hay ${esc(que)}</h3></div><p class="mut" style="margin:0;line-height:1.6"><b>${esc(nombreCortoLocal(DASH_LOCAL))}</b> es un centro sin atención al público. Tiene <b>personal, horarios, fichajes, facturas e incidencias</b> como cualquier otro; lo que no tiene es ${esc(que)}.<br>Elige otro establecimiento en la barra de arriba.</p></div>`;
 }
+/**
+ * El «¿qué tal fue?» del día siguiente: qué se ha mandado y qué han contestado.
+ *
+ * Existe porque no existía. El seguimiento llevaba tiempo funcionando a medias —solo se
+ * programaba desde las reservas hechas hablando con Sara— y no había ni una pantalla que lo
+ * dijera: las respuestas de los clientes iban a un WhatsApp personal y ahí se quedaban.
+ */
+async function resSeguimiento() {
+  const caja = document.getElementById("resSeg");
+  if (!caja) return;
+  let j;
+  try { j = await apiRaw("/api/reservas/seguimiento"); } catch { return; }
+  const r = j.resumen || {};
+  if (!r.total) {
+    caja.innerHTML = `<details class="card fold" style="margin-top:16px"><summary><h3>Seguimiento de visitas</h3>
+      <span class="foldr"><span class="mut">sin nada</span><span class="car">${ic("chev", 16)}</span></span></summary>
+      <p class="mut" style="padding:0 18px 18px;line-height:1.6">Todavía no se ha mandado ningún «¿qué tal fue?».
+      Se programa solo al día siguiente de cada reserva confirmada con teléfono.</p></details>`;
+    return;
+  }
+  const resp = (j.data || []).filter((f) => f.respuesta);
+  const pill = (v) => v === "contento" ? "ok" : v === "descontento" ? "bad" : "";
+  const dato = (n, txt, col) => `<div style="min-width:0"><div class="big tnum" style="font-size:22px${col ? ";color:" + col : ""}">${num(n)}</div><div class="mut" style="font-size:12px">${txt}</div></div>`;
+  // Lo que pide una acción se ve SIN abrir nada. Abrir el desplegable de casa decidiría por
+  // quien mira —le ocupa la pantalla con algo que no ha pedido y esconde lo de debajo—, así que
+  // lo urgente sale fuera y el desplegable sigue cerrado, como todos los del panel.
+  const alerta = r.descontentos
+    ? `<p class="fic-nota" style="margin:16px 0 0;border-color:var(--danger)"><b>${num(r.descontentos)} ${r.descontentos === 1 ? "cliente ha contestado" : "clientes han contestado"} que no fue bien.</b> Están abajo, en el seguimiento de visitas. A esos no se les ha pedido reseña.</p>`
+    : "";
+  caja.innerHTML = alerta + `<details class="card fold p0" style="margin-top:16px">
+    <summary style="padding:18px 18px 14px"><h3>Seguimiento de visitas</h3>
+      <span class="foldr"><span class="mut">${num(r.respondidos)} de ${num(r.enviados)} han contestado${r.descontentos ? " · " + num(r.descontentos) + " no fue bien" : ""}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;padding:0 18px 14px">
+      ${dato(r.enviados, "preguntas enviadas")}
+      ${dato(r.respondidos, "han contestado")}
+      ${dato(r.contentos, "salieron contentos", "var(--brand)")}
+      ${dato(r.descontentos, "no tanto", r.descontentos ? "var(--danger)" : null)}
+      ${dato(r.resenas_pedidas, "reseñas pedidas")}
+      ${r.programados ? dato(r.programados, "por mandar") : ""}
+      ${r.caducados ? dato(r.caducados, "no salieron a tiempo", "var(--danger)") : ""}
+    </div>
+    ${resp.length ? `<div class="rows">${resp.slice(0, 25).map((f) => `<div class="row" style="align-items:flex-start">
+      <div class="grow" style="min-width:0">
+        <div class="t1">${esc(f.nombre || "—")} <span class="mut" style="font-weight:400">· ${esc(nombreCortoLocal(f.local))} · ${esc(fechaCorta(f.dia) || f.dia)}</span></div>
+        <div class="t2" style="margin-top:2px;white-space:normal">${esc(f.respuesta)}</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap">
+        <span class="pill ${pill(f.veredicto)}">${esc(f.veredicto || "sin leer")}</span>
+        ${f.resena_pedida ? '<div class="mut" style="font-size:11px;margin-top:4px">reseña pedida</div>' : ""}
+      </div></div>`).join("")}</div>`
+      : `<p class="mut" style="padding:0 18px 18px;line-height:1.6">Todavía no ha contestado nadie.</p>`}
+    ${r.caducados ? `<p class="fic-nota" style="margin:0 18px 18px">${num(r.caducados)} ${r.caducados === 1 ? "no salió" : "no salieron"} a tiempo porque WhatsApp estaba desconectado. No se mandan tarde a propósito: «ayer estuviste» deja de ser verdad a los dos días.</p>` : ""}
+  </details>`;
+}
+
 async function loadReservas() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   if (!RESF.foco) RESF.foco = todayStr();
@@ -1570,7 +1625,8 @@ async function loadReservas() {
     RESH.hayMas = !!j.hayMas;
     const datos = j.data || [];
     if (RESF.vista === "historial") RESH.datos = datos;
-    view.innerHTML = renderReservas(datos);
+    view.innerHTML = renderReservas(datos) + '<div id="resSeg"></div>';
+    resSeguimiento();   // no se espera: la lista ya está en pantalla
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function resVista(v) { RESF.vista = v; loadReservas(); }

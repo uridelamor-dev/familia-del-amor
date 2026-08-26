@@ -397,6 +397,16 @@ export function markAwaitingFollowup(jid, ctx) {
   followupAwaitingReply.set(jid, ctx);
 }
 
+/**
+ * Quién decide qué se contesta a un «¿qué tal fue?».
+ *
+ * Lo registra `server.js`, que es quien tiene la base y el enlace de reseñas de cada local. Aquí
+ * antes se contestaba SIEMPRE lo mismo —«gracias, nos ayuda a mejorar»— dijera el cliente que
+ * todo genial o que esperó cuarenta minutos, y nunca se pedía una reseña a nadie.
+ */
+let seguimientoResolver = null;
+export function setSeguimientoResolver(fn) { seguimientoResolver = fn; }
+
 async function notificarLaura(texto) {
   if (!clientReady || !sock) return;
   try {
@@ -676,15 +686,28 @@ async function procesarBatch(jid, items) {
   if (followupAwaitingReply.has(jid)) {
     const ctx = followupAwaitingReply.get(jid);
     followupAwaitingReply.delete(jid);
-    const ack = `¡Gracias por contárnoslo! 🙏 Tu opinión nos ayuda a seguir mejorando. En caso de haber algo que podamos hacer mejor, ya lo hemos reportado al equipo. ¡Hasta pronto!`;
+    // Qué se contesta lo decide `server.js`: a quien salió contento se le manda el enlace para
+    // dejar la reseña, y a quien no —o a quien no se entiende— NUNCA. Pedirle una reseña
+    // pública a alguien que acaba de contarte que esperó cuarenta minutos es la forma más
+    // rápida de convertir una queja privada en una estrella.
+    let plan = null;
+    if (seguimientoResolver) {
+      try { plan = await seguimientoResolver({ jid, ctx, texto: textoCombinado }); }
+      catch (e) { console.error("Error resolviendo el seguimiento:", e.message); }
+    }
+    const ack = (plan && plan.texto)
+      || `¡Gracias por contárnoslo! 🙏 Tu opinión nos ayuda a seguir mejorando. ¡Hasta pronto!`;
     try {
       await sock.sendPresenceUpdate("composing", jid);
       await sock.sendMessage(jid, { text: ack });
-      await notificarLaura(
-        `💬 *Feedback de cliente*\n\n` +
-        `👤 ${ctx.nombre}\n📍 ${ctx.local}\n📅 Visita: ${ctx.dia}\n\n` +
-        `Mensaje: ${textoCombinado}`
-      );
+      // A una respuesta buena no se interrumpe a nadie; a una mala, sí y en el momento.
+      if (!plan || plan.avisar !== false) {
+        await notificarLaura(
+          `💬 *Feedback de cliente*${plan && plan.veredicto ? ` · ${plan.veredicto.toUpperCase()}` : ""}\n\n` +
+          `👤 ${ctx.nombre}\n📍 ${ctx.local}\n📅 Visita: ${ctx.dia}\n\n` +
+          `Mensaje: ${textoCombinado}`
+        );
+      }
       if (onMessage) onMessage({ jid, texto: textoCombinado, respuesta: ack });
     } catch (err) {
       console.error("Error gestionando follow-up reply:", err.message);
