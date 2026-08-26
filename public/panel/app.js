@@ -8218,13 +8218,20 @@ function renderFacturasConfig() {
   const estadoPill = (o, siOk) => o === null
     ? '<span class="pill warn" title="La comprobación no ha respondido; no quiere decir que esté desconectado">No se ha podido comprobar</span>'
     : `<span class="pill ${o.conectado ? "ok" : "bad"}">${o.conectado ? siOk : "Sin conectar"}</span>`;
+  // Lo que el servidor no ha podido leer se DICE, con el motivo. Callarlo es lo que hacía que
+  // «No se ha podido comprobar» no se pudiera distinguir de «está roto».
+  const avisosDe = (o) => (o && o.avisos && o.avisos.length)
+    ? `<div class="mut" style="font-size:11.5px;color:var(--danger);margin-top:3px">${o.avisos.map(esc).join("<br>")}</div>` : "";
   const master = FCFG.master || {};
   const integ = `<div class="card"><div class="ch"><h3>Integraciones (Google)</h3></div><div class="rows" style="padding:0">
-    <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Drive / Sheets</div><div class="t2">Guarda y ordena las facturas por empresa/local/mes</div></div>${estadoPill(drv, "Conectado")}</div>
-    <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Correo (Gmail)</div><div class="t2">${gm && gm.conectado ? `${num((gm.emails && gm.emails.length) || 0)} correos procesados` : "Lee las facturas que llegan por email"}</div></div>${estadoPill(gm, "Activo")}</div>
+    <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Drive / Sheets</div><div class="t2">Guarda y ordena las facturas por empresa/local/mes</div>${avisosDe(drv)}</div>${estadoPill(drv, "Conectado")}</div>
+    <div class="row" style="padding-left:0;padding-right:0"><div class="grow" style="min-width:0"><div class="t1">Correo (Gmail)</div>
+      <div class="t2">${gm && gm.estado ? esc(gm.estado.detalle) : "Lee las facturas que llegan por email"}</div>
+      ${gm && gm.estado ? `<div class="mut" style="font-size:11.5px;margin-top:3px">${gm.estado.intento ? "Última mirada al buzón: " + esc(String(gm.estado.intento).slice(0, 16).replace("T", " ")) : "Todavía no se ha mirado"}${gm.estado.ok ? " · última factura que entró: " + esc(String(gm.estado.ok).slice(0, 16).replace("T", " ")) : ""} · se mira solo cada 5 minutos</div>` : ""}
+      </div>${gm && gm.estado ? `<span class="pill ${gm.estado.nivel}">${esc(gm.estado.titulo)}</span>` : estadoPill(gm, "Activo")}</div>
     <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Sheet maestro consolidado</div><div class="t2">${master.url ? "Todas las facturas de todos los locales en una hoja" : "Se crea al procesar la primera factura o al reconstruir"}</div></div>${master.url ? `<a class="link" href="${esc(master.url)}" target="_blank" rel="noopener">Abrir ↗</a>` : '<span class="pill">Sin crear</span>'}</div>
     <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Volcado a Sheets</div><div class="t2">${((drv && drv.pendientes_sheet) || 0) > 0 ? `${num(drv && drv.pendientes_sheet)} factura(s) pendientes de volcar (se reintenta solo cada 10 min)` : "Todo volcado. La BD es la fuente de verdad; los Sheets son su reflejo."}${drv && drv.ultimo_reintento ? ` · último reintento ${esc(String(drv.ultimo_reintento).slice(0, 16).replace("T", " "))}` : ""}</div></div>${drv === null ? '<span class="pill warn">No se ha podido comprobar</span>' : `<span class="pill ${(drv.pendientes_sheet || 0) > 0 ? "warn" : "ok"}">${(drv.pendientes_sheet || 0) > 0 ? "Pendiente" : "Al día"}</span>`}</div>
-  </div><div class="toolbar" style="padding:12px 0 0"><a class="btn" href="/auth/google-facturas">${drv && drv.conectado ? "Reconectar Google" : "Conectar Google"}</a><button class="btn" data-act="fac-migrar">Reordenar Drive</button>${((drv && drv.pendientes_sheet) || 0) > 0 ? '<button class="btn primary" data-act="fac-reproyectar">Reintentar volcado</button>' : ""}<button class="btn" data-act="fac-reparar">Verificar y reparar Sheets</button><button class="btn danger" data-act="fac-empezar-cero">Empezar de cero</button></div><div class="mut" style="font-size:12px;margin-top:6px">"Reparar" reescribe todas las hojas y el maestro desde la base de datos (la fuente de verdad). "Empezar de cero" limpia todas las facturas de la base de datos (no borra Drive; eso se hace a mano).</div></div>`;
+  </div><div class="toolbar" style="padding:12px 0 0"><a class="btn" href="/auth/google-facturas">${drv && drv.conectado ? "Reconectar Google" : "Conectar Google"}</a><button class="btn" data-act="fac-gmail-ahora">Revisar el correo ahora</button><button class="btn" data-act="fac-migrar">Reordenar Drive</button>${((drv && drv.pendientes_sheet) || 0) > 0 ? '<button class="btn primary" data-act="fac-reproyectar">Reintentar volcado</button>' : ""}<button class="btn" data-act="fac-reparar">Verificar y reparar Sheets</button><button class="btn danger" data-act="fac-empezar-cero">Empezar de cero</button></div><div class="mut" style="font-size:12px;margin-top:6px">"Reparar" reescribe todas las hojas y el maestro desde la base de datos (la fuente de verdad). "Empezar de cero" limpia todas las facturas de la base de datos (no borra Drive; eso se hace a mano).</div></div>`;
   // Carpetas de Drive vigiladas (tercer canal de ingesta)
   const carp = FCFG.carpetas || [];
   const drive = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Carpetas de Drive vigiladas</h3></div><div class="mut" style="padding:0 18px;font-size:12.5px">Deja una factura (PDF/imagen) en la carpeta de Drive de un local y entrará sola cada pocos minutos.</div><div class="tw"><table class="tbl"><thead><tr><th>Local</th><th>Carpeta</th><th></th></tr></thead><tbody>${carp.map((c) => `<tr><td>${facLocalCelda(c.local)}</td><td class="mut">${c.folder_url ? `<a class="link" href="${esc(c.folder_url)}" target="_blank" rel="noopener">${esc(c.folder_id)}</a>` : esc(c.folder_id)}</td><td class="r"><button class="linkbtn" data-act="fac-drive-del" data-local="${esc(c.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin carpetas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fdLocal")}<input id="fdFolder" placeholder="Enlace o ID de la carpeta de Drive" style="flex:1;min-width:0"><button class="btn primary" data-act="fac-drive-add">Vincular</button></div></div>`;
@@ -9754,6 +9761,33 @@ async function facColocarRaiz() {
   try { const j = await apiSend("POST", "/api/facturas/drive-colocar-raiz"); toast(j.mensaje || "Hecho ✅"); facDiagnosticoDrive(); }
   catch (e) { toast("Error: " + e.message); }
 }
+/**
+ * Mirar el buzón AHORA, sin esperar al turno de los cinco minutos.
+ *
+ * La razón de que exista: cuando el correo fallaba, el error se quedaba en la consola del
+ * servidor y desde aquí era indistinguible de «no había nada que leer». Esto lo pregunta y
+ * enseña la respuesta, incluida la de «Google no tiene permiso para leer el correo», que es la
+ * que se tarda semanas en descubrir.
+ */
+async function facGmailAhora(btn) {
+  const antes = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Mirando el buzón…"; }
+  try {
+    const r = await apiSend("POST", "/api/facturas/gmail-poll", {});
+    toast(r.mensaje || "Correo revisado");
+    loadFacturas();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = antes; }
+    if (e.message !== "noauth") {
+      // El motivo ENTERO, no un «error» a secas: es el dato que dice qué hacer a continuación
+      // —y en el caso que importa, «vuelve a conectar Google», que si no se tarda semanas en
+      // descubrir—. Por eso va en un cuadro que hay que cerrar y no en un aviso que se va solo.
+      await confirmModal(e.message, { ok: "Entendido" });
+      loadFacturas();
+    }
+  }
+}
+
 async function facMigrar() { if (!(await confirmModal("¿Reordenar en Drive todas las facturas a su carpeta Empresa/Local/Mes?", { ok: "Reordenar" }))) return; try { const j = await apiSend("POST", "/api/facturas/migrar-estructura"); toast(`Reordenadas: ${j.resultado ? j.resultado.movidos : "OK"} ✅`); facDiagnosticoDrive(); } catch (e) { toast("Error: " + e.message); } }
 async function facDriveAdd() { const local = facVal("fdLocal"), folder = facVal("fdFolder"); if (!local || !folder) { toast("Local y carpeta obligatorios"); return; } try { await apiSend("POST", "/api/facturas/drive-carpetas", { local, folder }); toast("Carpeta vinculada ✅"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facDriveDel(local) { if (!(await confirmModal(`¿Dejar de vigilar la carpeta de ${local}?`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/facturas/drive-carpetas/" + encodeURIComponent(local)); toast("Eliminada"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
@@ -11595,6 +11629,7 @@ document.addEventListener("click", (e) => {
   else if (act === "sf-archivo") document.getElementById("sfFile")?.click();
   else if (act === "fac-303-csv") fac303Csv();
   else if (act === "fac-migrar") facMigrar();
+  else if (act === "fac-gmail-ahora") facGmailAhora(t);
   else if (act === "fac-colocar-raiz") facColocarRaiz();
   else if (act === "fac-drive-add") facDriveAdd();
   else if (act === "fac-drive-del") facDriveDel(t.getAttribute("data-local"));

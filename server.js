@@ -77,6 +77,7 @@ import { colaDeTrabajo, cobertura } from "./src/modules/facturas/diccionario.js"
 import { gruposDuplicados } from "./src/modules/facturas/proveedores-duplicados.js";
 import { grupoDeSQL, claveProducto, validarSuma, mensajeValidacion } from "./src/modules/facturas/lineas.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
+import { CLAVES as GM, DIAS_ATRAS as GM_DIAS, consultaGmail, explicarError, resumirGmail } from "./src/modules/facturas/gmail-estado.js";
 import { proponerConciliacion, resumenConciliacion, estadoConciliada } from "./src/modules/facturas/conciliacion.js";
 import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados.js";
 import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
@@ -1881,19 +1882,47 @@ async function pollDriveFacturas() {
   } catch (e) { console.error("[pollDriveFacturas]", e.message); }
 }
 
-async function pollGmail() {
+/**
+ * Mira el buzón y mete las facturas que vengan por correo.
+ *
+ * DEJA RASTRO DE TODO, y esa es la mitad del trabajo: antes sus errores iban a `console.error`
+ * —la consola del servidor, que desde el panel no se ve— así que cuando algo fallaba no había
+ * ninguna forma de enterarse. La pantalla decía «No se ha podido comprobar» y ahí se acababa.
+ *
+ * Y YA NO BUSCA `is:unread`. Ahí estaba el fallo de verdad: abrir el correo en el móvil antes de
+ * que pasara el turno dejaba esa factura fuera para siempre, sin reintento y sin avisar. La
+ * memoria de lo ya hecho es `facturas_emails_procesados`, que es donde tiene que estar.
+ */
+async function pollGmail({ dias = GM_DIAS } = {}) {
+  const marca = new Date().toISOString();
+  let vistos = 0, nuevos = 0, procesadosTotal = 0;
+  const anotar = async (error) => {
+    await setConfig(GM.intento, marca).catch(() => {});
+    await setConfig(GM.error, error || "").catch(() => {});
+    await setConfig(GM.vistos, vistos).catch(() => {});
+    await setConfig(GM.nuevos, nuevos).catch(() => {});
+    await setConfig(GM.procesados, procesadosTotal).catch(() => {});
+    if (procesadosTotal > 0) await setConfig(GM.ok, marca).catch(() => {});
+  };
   try {
     const token = await getDriveAccessToken();
 
-    const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent("is:unread has:attachment")}&maxResults=20`;
+    const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(consultaGmail(dias))}&maxResults=60`;
     const listRes = await fetch(listUrl, { headers: { Authorization: `Bearer ${token}` } });
     const listData = await listRes.json();
-    if (listData.error) { console.error("[Gmail] Error listando:", JSON.stringify(listData.error)); return; }
-    if (!listData.messages || listData.messages.length === 0) return;
+    if (listData.error) {
+      const txt = explicarError(listData.error);
+      console.error("[Gmail] Error listando:", JSON.stringify(listData.error));
+      await anotar(txt);
+      return { ok: false, error: txt };
+    }
+    vistos = (listData.messages || []).length;
+    if (!vistos) { await anotar(null); return { ok: true, vistos: 0, nuevos: 0, procesados: 0 }; }
 
     for (const { id: msgId } of listData.messages) {
       const yaProcesado = await dbGet("SELECT id FROM facturas_emails_procesados WHERE gmail_id = ?", [msgId]);
-      if (yaProcesado) continue;
+      if (yaProcesado) continue;   // la memoria de lo ya hecho, ahora que no manda el «no leído»
+      nuevos++;
 
       const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}?format=full`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -1965,11 +1994,16 @@ async function pollGmail() {
         "INSERT INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, ?) ON CONFLICT(gmail_id) DO NOTHING",
         [msgId, senderEmail, subject, localConocido || "auto", procesados]
       );
+      procesadosTotal += procesados;
       console.log(`[Gmail] ${senderEmail} → ${localConocido || "auto-detect"} (${procesados} adjunto/s)`);
     }
+    await anotar(null);
+    return { ok: true, vistos, nuevos, procesados: procesadosTotal };
   } catch (err) {
-    if (err.message.includes("no conectado")) return;
+    const txt = explicarError(err && err.message);
     console.error("[Gmail] Error en poll:", err.message);
+    await anotar(txt);
+    return { ok: false, error: txt };
   }
 }
 
@@ -2014,12 +2048,23 @@ app.get("/auth/google-facturas/callback", async (req, res) => {
 });
 
 // ── API: estado y grupos de facturas ───────────────────────────────────────
+// El estado de Drive. CADA DATO POR SU CUENTA y con red: sin esto, un fallo en cualquiera de
+// las tres consultas devolvía un 500 y el panel se quedaba sin saber nada de nada — pintaba
+// «No se ha podido comprobar» en tres filas a la vez, con Drive funcionando perfectamente.
 app.get("/api/facturas/status", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
-  const token = await getConfig("google_drive_refresh_token");
-  const grupos = await dbAll("SELECT * FROM facturas_grupos ORDER BY local", []);
-  let pendientesSheet = 0;
-  try { const r = await dbGet("SELECT COUNT(*) AS n FROM facturas WHERE COALESCE(sheet_synced,0)=0", []); pendientesSheet = Number(r?.n || 0); } catch { /* columna nueva */ }
-  res.json({ ok: true, conectado: !!token, grupos, pendientes_sheet: pendientesSheet, ultimo_reintento: (await getConfig("facturas_ultimo_reintento")) || null });
+  const out = { ok: true, conectado: false, grupos: [], pendientes_sheet: 0, ultimo_reintento: null, avisos: [] };
+  try { out.conectado = !!(await getConfig("google_drive_refresh_token")); }
+  catch (e) { out.avisos.push("No se ha podido leer la conexión guardada: " + e.message); }
+  try { out.grupos = await dbAll("SELECT * FROM facturas_grupos ORDER BY local", []); }
+  catch (e) { out.avisos.push("No se han podido leer los grupos: " + e.message); }
+  try { const r = await dbGet("SELECT COUNT(*) AS n FROM facturas WHERE COALESCE(sheet_synced,0)=0", []); out.pendientes_sheet = Number(r?.n || 0); }
+  catch { /* columna nueva */ }
+  try { out.ultimo_reintento = (await getConfig("facturas_ultimo_reintento")) || null; } catch { /* noop */ }
+  // Los campos van EN LA RAÍZ —así los lee `public/direccion.js`— y REPETIDOS dentro de `data`,
+  // que es lo que devuelve `apiOptional` en el panel. Sin ese `data`, el panel recibía
+  // `undefined`, lo pintaba como «No se ha podido comprobar» y esa etiqueta no dijo la verdad
+  // ni una sola vez: Drive podía estar subiendo facturas y ahí seguía el aviso.
+  res.json({ ...out, data: { ...out } });
 });
 
 /**
@@ -2885,10 +2930,45 @@ app.post("/api/facturas/migrar-estructura", requireAuth(["direccion"]), async (r
   }
 });
 
+// Qué está pasando con el correo. Antes solo decía «conectado sí/no» y la lista de los últimos
+// veinte; cuando Google rechazaba la lectura, eso no aparecía por ninguna parte —el error se
+// quedaba en la consola del servidor— y desde el panel era indistinguible de «no había correo».
 app.get("/api/facturas/gmail-status", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
-  const token = await getConfig("google_drive_refresh_token");
-  const ultimosEmails = await dbAll("SELECT * FROM facturas_emails_procesados ORDER BY procesado DESC LIMIT 20", []);
-  res.json({ ok: true, conectado: !!token, emails: ultimosEmails });
+  const out = { ok: true, conectado: false, emails: [], dias: GM_DIAS, estado: null };
+  try { out.conectado = !!(await getConfig("google_drive_refresh_token")); } catch { /* noop */ }
+  try { out.emails = await dbAll("SELECT * FROM facturas_emails_procesados ORDER BY procesado DESC LIMIT 20", []); }
+  catch { /* la tabla se crea al arrancar; si aún no está, la lista va vacía */ }
+  let total = 0;
+  try { const r = await dbGet("SELECT COUNT(*)::int AS n FROM facturas_emails_procesados", []); total = Number(r?.n || 0); } catch { /* noop */ }
+  const cfg = {};
+  for (const k of Object.values(GM)) { try { cfg[k] = await getConfig(k); } catch { cfg[k] = null; } }
+  out.estado = resumirGmail({ conectado: out.conectado, cfg, procesadosEnBase: total });
+  // Raíz + `data`, por lo mismo que en el estado de Drive.
+  res.json({ ...out, data: { ...out } });
+});
+
+/**
+ * Mirar el buzón AHORA, sin esperar al turno de los cinco minutos.
+ *
+ * Existe para poder ver el resultado en el momento: si Google rechaza el permiso, la respuesta
+ * lo dice con todas las letras en vez de dejarlo en un log que nadie lee. Y sirve de repesca
+ * cuando ha entrado una factura por correo y uno quiere comprobar que la ha cogido.
+ */
+app.post("/api/facturas/gmail-poll", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const r = await pollGmail({ dias: Math.min(60, Math.max(1, Number(req.body?.dias) || GM_DIAS)) });
+    if (r && r.ok === false) return res.status(200).json({ ok: false, error: r.error || "No se ha podido leer el correo." });
+    const p = (r && r.procesados) || 0, n = (r && r.nuevos) || 0, v = (r && r.vistos) || 0;
+    res.json({
+      ok: true, ...r,
+      mensaje: p ? `${p} ${p === 1 ? "factura nueva" : "facturas nuevas"} del correo.`
+        : n ? `${n} ${n === 1 ? "correo nuevo" : "correos nuevos"}, ninguno traía una factura que se pudiera leer.`
+        : `Revisados ${v} ${v === 1 ? "correo" : "correos"} con adjunto: no había nada nuevo.`,
+    });
+  } catch (e) {
+    console.error("[Gmail] poll manual:", e.message);
+    res.status(500).json({ ok: false, error: explicarError(e.message) });
+  }
 });
 
 // ── Estadísticas y Modelo 303 ─────────────────────────────────────────────
