@@ -12738,16 +12738,27 @@ app.delete("/api/rrhh/documento/:id", requireAuth(RRHH_ROLES), async (req, res) 
 // Descubre los operadores que han facturado (informe `empleado`) y propone a qué perfil enlazarlos.
 app.get("/api/rrhh/agora/operadores", requireAuth(RRHH_ROLES), async (req, res) => {
   try {
-    const scope = rrhhLocalScope(req); // encargado → su local; dirección/rrhh → todos (o ?local)
-    const local = scope || (req.query.local ? String(req.query.local).trim() : null);
+    // El local con el que se trabaja: el del encargado —que no puede elegir— o, para dirección
+    // y RR. HH., EL QUE TENGAN PUESTO EN LA BARRA. Sin esto, dirección veía los operadores de
+    // los ocho establecimientos mezclados en una sola lista y tenía que adivinar cuál era de
+    // dónde. Con «todos» puesto no llega `?local` y se sigue viendo todo, que es lo pedido.
+    const scope = rrhhLocalScope(req);
+    const pedido = req.query.local ? String(req.query.local).trim() : null;
+    const local = scope || (pedido && rrhhPuedeLocal(req, pedido) ? pedido : null);
     const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || "")) ? req.query.to : hoyISO();
     const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || "")) ? req.query.from : addDaysISO(to, -90);
     const r = await runInformeAgora("empleado", { local, from, to });
-    if (r.sinCredenciales) return res.json({ ok: true, operadores: [], sinCredenciales: true, from, to });
+    if (r.sinCredenciales) return res.json({ ok: true, operadores: [], sinCredenciales: true, from, to, local });
     const userNames = [...new Set(r.filas.map((f) => f.empleado).filter(Boolean))];
-    const perfiles = await dbAll(`SELECT id, nombre, agora_username, local FROM users WHERE rol IN ('trabajador','encargado')${scope ? " AND local = ANY(?)" : ""}`, scope ? [personasDe(scope)] : []);
+    // Y LAS FICHAS A LAS QUE ENLAZAR, DEL MISMO LOCAL. Filtrar los operadores y no las fichas
+    // dejaba el desplegable con la plantilla entera: se podía enlazar por error a alguien de
+    // otro establecimiento, y eso son las ventas de una persona atribuidas a otra.
+    // `personasDe` porque las dos barras de un centro son un solo equipo.
+    const perfiles = await dbAll(
+      `SELECT id, nombre, agora_username, local FROM users WHERE rol IN ('trabajador','encargado')${local ? " AND local = ANY(?)" : ""}`,
+      local ? [personasDe(local)] : []);
     const operadores = emparejaOperadores(userNames, perfiles);
-    res.json({ ok: true, operadores, from, to, sinDatos: !userNames.length, errores: r.errores });
+    res.json({ ok: true, operadores, from, to, local, sinDatos: !userNames.length, errores: r.errores });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

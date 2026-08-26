@@ -3362,16 +3362,28 @@ async function rrCargarRendimiento(id) {
   } catch (e) { if (box) box.innerHTML = `<div class="mut" style="padding:2px">Error: ${esc(e.message)}</div>`; }
 }
 async function rrImportarOperadores() {
-  const ov = modal("Enlazar operadores de Ágora", '<div id="rrOpBody" class="mut">Consultando Ágora (últimos 90 días)…</div>');
+  // EL LOCAL SALE DE LA BARRA DE ARRIBA. Sin mandarlo, dirección veía los operadores de los
+  // ocho establecimientos en una sola lista y tenía que adivinar cuál era de dónde — mientras
+  // que un encargado, que no puede elegir, solo veía los suyos. Con «todos» puesto no se manda
+  // y se sigue viendo todo, que es lo que toca cuando no se ha elegido ninguno.
+  const localBarra = localActualFE() || "";
+  const ov = modal(`Enlazar operadores de Ágora${localBarra ? " · " + nombreCortoLocal(localBarra) : ""}`,
+    '<div id="rrOpBody" class="mut">Consultando Ágora (últimos 90 días)…</div>');
   const body = ov.querySelector("#rrOpBody");
   try {
-    const j = await apiRaw("/api/rrhh/agora/operadores");
+    const j = await apiRaw("/api/rrhh/agora/operadores" + (localBarra ? "?local=" + encodeURIComponent(localBarra) : ""));
     if (j.sinCredenciales) { body.innerHTML = "Ágora no está configurado. Configúralo en «Ágora (TPV)»."; return; }
     const ops = j.operadores || [];
     if (!ops.length) { body.innerHTML = "No se han detectado operadores con ventas en el periodo (o el TPV está cerrado)."; return; }
-    const workers = RRSEG.workers || [];
-    const wopts = (sel) => workers.map((w) => `<option value="${w.id}" ${String(w.id) === String(sel) ? "selected" : ""}>${esc(w.nombre)} · ${esc(w.local || "")}</option>`).join("");
-    body.innerHTML = `<div class="mut" style="margin-bottom:10px;font-size:12.5px">${ops.length} operador(es) detectados. Enlaza cada uno a su ficha.</div>` + ops.map((o, i) => {
+    // A quién se puede enlazar: la gente de ESE local. Ofrecer la plantilla entera permitía
+    // enlazar por error a alguien de otro establecimiento, y eso son las ventas de una persona
+    // atribuidas a otra — un error que después no se ve por ninguna parte.
+    // `centroFE` con el ámbito de personal: las dos barras de Blanes son un solo equipo.
+    const workers = (RRSEG.workers || []).filter((w) => !localBarra
+      || centroFE(w.local, "personal") === centroFE(localBarra, "personal"));
+    const unSoloLocal = !!localBarra;
+    const wopts = (sel) => workers.map((w) => `<option value="${w.id}" ${String(w.id) === String(sel) ? "selected" : ""}>${esc(w.nombre)}${unSoloLocal ? "" : " · " + esc(w.local || "")}</option>`).join("");
+    body.innerHTML = `<div class="mut" style="margin-bottom:10px;font-size:12.5px">${ops.length} operador(es) detectados${localBarra ? " en <b>" + esc(nombreCortoLocal(localBarra)) + "</b>" : ""}. Enlaza cada uno a su ficha.</div>` + ops.map((o, i) => {
       if (o.match === "exacto") return `<div class="row"><div class="grow"><b>${esc(o.userName)}</b> <span class="pill ok">enlazado</span></div></div>`;
       const sel = o.worker_id || (o.candidatos[0] && o.candidatos[0].id) || "";
       const badge = o.match === "probable" ? '<span class="pill warn">probable</span>' : '<span class="pill">sin match</span>';
