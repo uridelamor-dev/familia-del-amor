@@ -12,7 +12,6 @@ import { calcularVencimiento } from "./src/modules/facturas/vencimiento.js";
 import { precioReferencia, revisarPrecios } from "./src/modules/facturas/precio-referencia.js";
 import { extraerJson } from "./src/modules/facturas/json-cortado.js";
 import { createHash } from "crypto";
-import { PDFDocument } from "pdf-lib";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 
 // Serializa el procesamiento de un MISMO archivo (por hash) para evitar duplicados por carrera:
@@ -773,7 +772,16 @@ export async function repararTodosLosSheets({ getToken, dbGet, dbAll, dbRun }) {
 
 // ── Pipeline principal ──────────────────────────────────────────────────────
 
-export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbAll, dbRun, backupFn }) {
+/**
+ * El alta de una factura, venga por donde venga.
+ *
+ * `leerDocumento` se puede sustituir, y es a propósito: la base, Drive y el token ya se inyectan
+ * —el módulo entero está escrito así— y la lectura con IA era la única pieza que quedaba fija,
+ * lo que hacía imposible ejecutar este camino en un test sin gastar en llamadas al modelo. Sin
+ * poder ejecutarlo, un `ReferenceError` colado entre el INSERT y el detalle estuvo nueve días
+ * rompiendo cada factura que entraba sin que ningún test dijera nada.
+ */
+export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbAll, dbRun, backupFn, leerDocumento = extraerDatosDocumento }) {
   // El local SIEMPRE se guarda con el nombre del establecimiento, nunca como llegue.
   // De no hacerlo acabaron conviviendo «La Tapeta - Lloret», «Lloret» y «BLANES» en la
   // misma columna, y filtrando por el nombre bueno faltaban facturas.
@@ -791,7 +799,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   return withHashLock(fileHash, async () => {
 
   // 2. Extraer datos con Claude
-  const datos = await extraerDatosDocumento(buffer, mimeType);
+  const datos = await leerDocumento(buffer, mimeType);
   await revisarEmisorReceptor(datos, dbAll);   // ver por qué en revisarEmisorReceptor
   await aplicarNombreProveedor(datos, dbAll);   // lo que ya se corrigió a mano, aprendido
   const coher = await revisarCoherenciaFactura(datos, dbAll);
@@ -870,11 +878,6 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   );
   if (enDuda) console.warn(`[Facturas] posible duplicado de #${enDuda.contra.id}: ${resumenMotivos(enDuda.motivos)}`);
   const facturaId = ins?.id;
-  // La marca de «esto es de toda la empresa» va justo después del alta: el documento queda
-  // archivado como cualquier otro y lo único que cambia es cómo se reparte al sumar por local.
-  if (reparto === "empresa" && facturaId) {
-    await dbRun(`UPDATE facturas SET reparto = 'empresa' WHERE id = ?`, [facturaId]).catch(() => {});
-  }
 
   // 8b. El detalle línea a línea. NO fatal: si falla, la factura ya está guardada y lo que
   // se pierde es el desglose, no el gasto.
@@ -1089,6 +1092,12 @@ async function revisarEmisorReceptor(datos, dbAll) {
 // Para facturas de varias hojas: cada imagen pasa a ser una página y los PDFs
 // se fusionan en orden. El resultado se procesa como UN solo documento.
 export async function combinarArchivosEnPdf(archivos) {
+  // `pdf-lib` se carga AQUÍ y no arriba: es la única dependencia npm que usa este fichero y solo
+  // hace falta para combinar varios archivos en uno. Cargándola arriba, todo `facturas.js`
+  // —el alta entera— dejaba de poder importarse allí donde no estuviera instalada, y por eso
+  // sus tests se saltaban en silencio. Una dependencia de un caso concreto no puede decidir si
+  // el resto del módulo se puede probar.
+  const { PDFDocument } = await import("pdf-lib");
   const out = await PDFDocument.create();
   for (const { buffer, mimetype, originalname } of archivos) {
     if (mimetype === "application/pdf") {
@@ -1255,6 +1264,17 @@ export async function asignarFacturaPendiente({ pendiente, local, reparto = null
      pendiente.porcentaje_iva, pendiente.cuota_iva, pendiente.total, driveUrl, sheetId, pendiente.file_hash, canal]
   );
   const facturaId = ins?.id;
+
+  // La marca de «esto es de toda la empresa» va justo después del alta: el documento queda
+  // archivado como cualquier otro y lo único que cambia es cómo se reparte al sumar por local.
+  // AQUÍ y no en el alta normal: `reparto` es una decisión que se toma AL ASIGNAR la pendiente
+  // —es esta función la que lo recibe—. Estuvo nueve días en `procesarFactura`, donde esa
+  // variable no existe, y como el bloque cae después de subir a Drive y después del INSERT y
+  // fuera de todo `try`, cada factura que entraba se quedaba sin detalle y sin volcar, y quien
+  // la mandaba veía un error aunque sí hubiera entrado.
+  if (reparto === "empresa" && facturaId) {
+    await dbRun(`UPDATE facturas SET reparto = 'empresa' WHERE id = ?`, [facturaId]).catch(() => {});
+  }
 
   // El detalle que se leyó cuando llegó la factura, recuperado tal cual. Misma regla que en la
   // vía normal: del gasto estructural no se guarda el desglose (ver proveedorConLineas).

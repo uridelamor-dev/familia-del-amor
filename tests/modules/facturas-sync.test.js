@@ -1,16 +1,18 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-// `facturas.js` importa `pdf-lib`, que aquí no está instalado (npm install no funciona en
-// local: el lockfile apunta al firewall de Replit). Se carga en tiempo de ejecución y, si
-// falta, estos tests se SALTAN con el motivo escrito. Dejarlos en rojo por una dependencia
-// que sí existe en producción enseña a ignorar el rojo, que es peor que no tenerlos.
-let FACT = null, MOTIVO_SALTO = null;
-try { FACT = await import("../../facturas.js"); }
-catch (e) { MOTIVO_SALTO = `facturas.js no se puede cargar aquí: ${e.message.split("\n")[0]}`; }
+// Estos tests SE SALTABAN en silencio. `facturas.js` importaba `pdf-lib` arriba del todo —una
+// dependencia que aquí no está instalada, porque `npm install` no funciona en local— así que el
+// módulo entero no se podía cargar y todo esto quedaba en «skip». Ahora `pdf-lib` se carga solo
+// cuando hace falta (combinar archivos), el módulo se importa sin problema, y estas
+// comprobaciones vuelven a correr de verdad. Un test que se salta no protege de nada.
+import * as FACT from "../../facturas.js";
+const MOTIVO_SALTO = false;
+// Al nivel del fichero: estaba dentro del primer `describe`, así que el segundo no las veía.
+// Un fallo que llevaba escondido justo porque estos tests no llegaban a ejecutarse.
+const { mesLabelDeFecha, filaFacturaSheet } = FACT;
 
 
 describe("facturas.mesLabelDeFecha", { skip: MOTIVO_SALTO }, () => {
-  const { mesLabelDeFecha, filaFacturaSheet } = FACT || {};
   test("fecha ISO → 'Mes AAAA' en español", () => {
     assert.equal(mesLabelDeFecha("2026-08-06"), "Agosto 2026");
     assert.equal(mesLabelDeFecha("2026-01-15"), "Enero 2026");

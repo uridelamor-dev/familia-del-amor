@@ -7,13 +7,11 @@ import {
   normalizarLinea, normalizarLineas, validarSuma, mensajeValidacion,
   claveProducto, grupoDeSQL } from "../../src/modules/facturas/lineas.js";
 import { agrupaComoLaBase } from "../helpers/agrupa-como-la-base.js";
-// `facturas.js` importa `pdf-lib`, que aquí no está instalado (npm install no funciona en
-// local: el lockfile apunta al firewall de Replit). Se carga en tiempo de ejecución y, si
-// falta, estos tests se SALTAN con el motivo escrito. Dejarlos en rojo por una dependencia
-// que sí existe en producción enseña a ignorar el rojo, que es peor que no tenerlos.
-let FACT = null, MOTIVO_SALTO = null;
-try { FACT = await import("../../facturas.js"); }
-catch (e) { MOTIVO_SALTO = `facturas.js no se puede cargar aquí: ${e.message.split("\n")[0]}`; }
+// Estos tests se SALTABAN en silencio: `facturas.js` importaba `pdf-lib` arriba del todo, una
+// dependencia que aquí no está instalada, así que el módulo entero no se podía cargar. Ahora
+// `pdf-lib` se carga solo cuando hace falta y esto vuelve a correr de verdad.
+import * as FACT from "../../facturas.js";
+const MOTIVO_SALTO = false;
 
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
