@@ -10061,6 +10061,10 @@ app.get("/api/fichajes/revision", requireAuth(FICHAJES_ROLES), async (req, res) 
             minPlanificado: f.minPlanificado, minFichado: f.minFichado,
             minPausa: f.minPausa, minEfectivo: f.minEfectivo, minDesviacion: f.minDesviacion,
             minCuenta: cuenta.minutos, cuentaOrigen: cuenta.origen,
+            // Lo que se había validado antes de que el registro cambiara. Solo tiene valor en
+            // una caducada, y es con lo que se compara: sin la cifra vieja, «se validó y luego
+            // cambió» no dice si el cambio fue de dos minutos o de dos horas.
+            cuentaAntes: cuenta.decididoAntes,
             // Se mandan las horas de plan y de reloj para poder enseñar la comparación sin
             // tener que abrir la jornada.
             plan: f.jornada.plan.map((t) => ({ inicio: t.inicio, fin: t.fin, abierto: !!t.abierto })),

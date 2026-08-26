@@ -5780,10 +5780,10 @@ async function ficPintarRevision() {
     if (FIC.hasta) qs.set("hasta", FIC.hasta);
     j = await apiRaw("/api/fichajes/revision?" + qs.toString());
   } catch { cont.innerHTML = `<div class="card"><p class="mut" style="margin:0">No se pudo cargar la revisión.</p></div>`; return; }
-  FIC.rev = j;
-  // El servidor manda el rango que ha usado. Se guarda para que las flechas partan de él y
-  // para que el lote valide exactamente lo que se está viendo.
-  FIC.desde = j.desde; FIC.hasta = j.hasta;
+  // NO se guarda el rango que ha devuelto el servidor. Si se guardara, el periodo quedaría
+  // congelado: quien entrara hoy seguiría viendo esta nómina dentro de un mes, sin haber
+  // pedido nada. Las flechas y los atajos sí escriben en `FIC.desde/hasta` —ahí SÍ lo ha
+  // pedido alguien— y el lote valida el rango que venga en la respuesta.
   ficPintarRevisionDatos(cont, j);
 }
 
@@ -5853,7 +5853,7 @@ function ficPintarRevisionDatos(cont, j) {
         <div class="t1">${esc(f.nombre)} <span class="mut" style="font-weight:400">· ${esc(fechaCorta(f.dia) || f.dia)}</span></div>
         <div class="t2" style="margin-top:2px">Cuadrante <b>${esc(ficTramos(f.plan))}</b> · Fichado <b>${esc(ficTramos(f.fichado))}</b></div>
         <div style="margin-top:6px">${f.incidencias.map((i) => `<span class="fic-tag ${i.nivel === "revisar" ? "aviso" : ""}">${esc(i.texto)}${i.minutos ? " · " + esc(ficHoras(i.minutos)) : ""}</span>`).join("")}
-          ${f.validacionCaducada ? '<span class="fic-tag aviso">se validó y luego cambió</span>' : ""}
+          ${f.validacionCaducada ? `<span class="fic-tag aviso">se validó${f.cuentaAntes != null ? " " + esc(ficHoras(f.cuentaAntes)) : ""} y luego cambió el registro</span>` : ""}
           ${ficEtiquetaAusencia(f)}
           ${!f.incidencias.length && !f.validacionCaducada && f.motivo ? `<span class="fic-tag">${esc(f.motivo)}</span>` : ""}</div>
       </div>
@@ -5863,7 +5863,7 @@ function ficPintarRevisionDatos(cont, j) {
         <div class="mut" style="font-size:11.5px">${f.cuentaOrigen === "validado" ? "decidido" + (f.validadoPor ? " por " + esc(f.validadoPor) : "") : "propuesto"} · ${esc(ficSigno(f.minDesviacion))} sobre el plan</div>
       </div>
       <div class="fic-acc">
-        ${f.unClic ? `<button class="btn sm primary" data-ficok="${f.worker_id}|${esc(f.dia)}|${Number(f.minCuenta || 0)}">Validar ${esc(ficHoras(f.minCuenta != null ? f.minCuenta : f.minEfectivo))}</button>` : ""}
+        ${f.unClic ? `<button class="btn sm primary" data-ficok="${f.worker_id}|${esc(f.dia)}">Validar ${esc(ficHoras(f.minCuenta != null ? f.minCuenta : f.minEfectivo))}</button>` : ""}
         <button class="btn sm">Revisar</button>
       </div>
     </div>`;
@@ -5917,7 +5917,16 @@ function ficPintarRevisionDatos(cont, j) {
 
   const caja = cont.querySelector("#ficQ");
   if (caja) {
-    caja.oninput = () => { FIC.q = caja.value; ficPintarRevisionDatos(cont, j); const c2 = cont.querySelector("#ficQ"); if (c2) { c2.focus(); c2.setSelectionRange(c2.value.length, c2.value.length); } };
+    caja.oninput = () => {
+      // Filtrar repinta la lista entera, y con ella el propio buscador. Hay que devolverle el
+      // foco Y EL CURSOR DONDE ESTABA: mandarlo al final hacía que corregir una letra de en
+      // medio dejara el resto de la palabra detrás y lo siguiente se escribiera al revés.
+      const pos = caja.selectionStart;
+      FIC.q = caja.value;
+      ficPintarRevisionDatos(cont, j);
+      const c2 = cont.querySelector("#ficQ");
+      if (c2) { c2.focus(); c2.setSelectionRange(pos, pos); }
+    };
   }
 
   // `onclick` y no `addEventListener`: este contenedor NO se repinta al volver a pintar la
@@ -5989,9 +5998,10 @@ async function ficValidarUna(btn) {
     ficPintarRevision();
   } catch (e) {
     btn.disabled = false; btn.textContent = antes;
-    if (e.message !== "noauth") toast("Error: " + e.message);
+    if (e.message === "noauth") return;
+    toast("Error: " + e.message);
     // La lista podía estar vieja —otro la validó, o se cerró el periodo—: se vuelve a pedir.
-    if (e.message !== "noauth") ficPintarRevision();
+    ficPintarRevision();
   }
 }
 

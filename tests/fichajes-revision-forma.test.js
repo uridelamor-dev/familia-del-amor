@@ -122,6 +122,50 @@ describe("el filtro por persona", () => {
   });
 });
 
+describe("lo que se encontró al repasarlo antes de publicar", () => {
+  test("el buscador conserva el cursor donde estaba", () => {
+    // Filtrar repinta la lista entera, y con ella el propio buscador. Mandando el cursor al
+    // final, corregir una letra de en medio dejaba el resto de la palabra detrás y lo
+    // siguiente se escribía al revés: «mrta» + Z daba «mrtaZ» en vez de «mZrta».
+    // OJO: `cont.onclick` aparece antes en el fichero, en otra pantalla. Se busca el final
+    // A PARTIR del principio del trozo, no desde el principio de todo.
+    const i = app.indexOf('const caja = cont.querySelector("#ficQ")');
+    assert.ok(i > 0, "no se encuentra el buscador");
+    const fn = app.slice(i, app.indexOf("cont.onclick = (e) =>", i));
+    assert.match(fn, /const pos = caja\.selectionStart/);
+    assert.match(fn, /setSelectionRange\(pos, pos\)/);
+    assert.ok(!/setSelectionRange\(c2\.value\.length/.test(app), "vuelve a mandar el cursor al final");
+  });
+
+  test("el rango que devuelve el servidor NO se guarda", () => {
+    // Si se guardara, el periodo quedaría congelado: quien entrara hoy seguiría viendo esta
+    // nómina dentro de un mes sin haber pedido nada. Solo escriben en `FIC.desde/hasta` las
+    // flechas y los atajos, que sí los pulsa alguien.
+    const fn = app.slice(app.indexOf("async function ficPintarRevision()"), app.indexOf("function ficPintarRevisionDatos"));
+    assert.ok(!/FIC\.desde = j\.desde/.test(fn), "el rango se está congelando");
+    assert.match(app, /FIC\.desde = d; FIC\.hasta = h; return ficPintarRevision\(\)/);
+  });
+
+  test("no se guarda nada que luego no lea nadie", () => {
+    // Es el mismo fallo que tenía `FIC.q`: una variable que se escribe, no se lee, y hace
+    // creer que la pantalla hace algo que no hace.
+    for (const v of ["FIC.rev"]) {
+      const usos = (app.match(new RegExp(v.replace(".", "\\."), "g")) || []).length;
+      assert.equal(usos, 0, `${v} se escribe y no lo lee nadie`);
+    }
+    // Y el atajo lleva en su atributo solo lo que `ficValidarUna` lee: persona y día.
+    assert.match(app, /data-ficok="\$\{f\.worker_id\}\|\$\{esc\(f\.dia\)\}"/);
+    assert.match(app, /const \[w, dia\] = btn\.getAttribute\("data-ficok"\)\.split\("\|"\)/);
+  });
+
+  test("una validación caducada dice CUÁNTO se había validado antes", () => {
+    // «Se validó y luego cambió» no dice si el cambio fue de dos minutos o de dos horas, que
+    // es justo lo que hay que saber para decidir.
+    assert.match(server, /cuentaAntes: cuenta\.decididoAntes/);
+    assert.match(app, /se validó\$\{f\.cuentaAntes != null/);
+  });
+});
+
 describe("las ausencias se ven, pero no tapan nada", () => {
   test("el cálculo de la jornada sigue sin saber qué es una ausencia", () => {
     // Un turno publicado durante una baja aprobada es una incoherencia REAL del cuadrante y
