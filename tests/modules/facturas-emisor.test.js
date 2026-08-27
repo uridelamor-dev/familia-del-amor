@@ -120,6 +120,10 @@ describe("cableado: por qué el filtro que ya existía no saltaba", () => {
     const src = readFileSync(new URL("../../facturas.js", import.meta.url), "utf8");
     assert.ok(!/UPPER\(TRIM\(empresa\)\) = UPPER\(TRIM\(\?\)\)/.test(src),
       "la comparación literal tiene que haber desaparecido");
-    assert.match(src, /corregirEmisorReceptor\(datos, nuestras\)/);
+    // Y ahora se le pasan también los nombres CON LOS QUE EXISTIMOS DE CARA AL MUNDO —«LA
+    // TAPETA», «CAN MATEU»— además del nombre fiscal: en una factura ponemos esos, no «DEL AMOR
+    // URIEL SLU», y sin ellos esas facturas entraban con nosotros mismos como proveedor.
+    assert.match(src, /corregirEmisorReceptor\(datos, nuestras, propios\)/);
+    assert.match(src, /nombresPropios\(LOCALES, marcados\.map/);
   });
 });

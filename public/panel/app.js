@@ -7106,7 +7106,8 @@ function facCategoriasHtml() {
       : '<span class="pill bad">sin categoría</span>'}
       ${p.categorias.length && !p.categorias.some((c) => !CATS_SIN_LINEAS.has(c.categoria))
         ? '<div class="t2">gasto estructural · no se lee el detalle</div>' : ""}</td>
-    <td class="r"><button class="btn sm" data-act="fac-cat-editar" data-prov="${esc(p.proveedor)}">Cambiar</button></td></tr>`;
+    <td class="r"><button class="btn sm" data-act="fac-cat-editar" data-prov="${esc(p.proveedor)}">Cambiar</button>
+      <button class="btn sm" data-act="fac-somos" data-prov="${esc(p.proveedor)}" title="Esto no es un proveedor: somos nosotros">No es proveedor</button></td></tr>`;
 
   const sin = j.sinEtiquetar || 0;
   return `<details class="card fold" style="margin-bottom:16px">
@@ -9950,6 +9951,27 @@ async function facCorregirFecha(id, fecha, btn) {
   }
 }
 
+/**
+ * «Esto no es un proveedor, somos nosotros».
+ *
+ * Los nombres de los establecimientos se reconocen solos, pero un nombre fiscal de persona no
+ * hay forma de adivinarlo: parecerse a un apellido no basta para decidirlo, porque hay
+ * proveedores que se llaman como personas. Se marca UNA VEZ y el sistema lo aprende.
+ */
+async function facSomosNosotros(prov) {
+  if (!prov) return;
+  const ok = await confirmModal(
+    `«${prov}» no es un proveedor, somos nosotros. Se apunta para que las próximas facturas no vuelvan a entrar así, `
+    + "y las que ya están quedan marcadas para que mires quién las emite de verdad. No se borra ninguna.",
+    { ok: "Sí, somos nosotros" });
+  if (!ok) return;
+  try {
+    const r = await apiSend("POST", "/api/facturas/somos-nosotros", { proveedor: prov });
+    toast(r.mensaje || "Apuntado");
+    facCargarCategorias();
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
 /** Dejar en blanco el NIF de las facturas donde se coló un CIF nuestro. */
 async function facLimpiarNifPropio() {
   const mal = (PROVDUP && PROVDUP.conNifNuestro) || { n: 0 };
@@ -11827,6 +11849,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-303-csv") fac303Csv();
   else if (act === "fac-migrar") facMigrar();
   else if (act === "fac-nif-propio") facLimpiarNifPropio();
+  else if (act === "fac-somos") facSomosNosotros(t.getAttribute("data-prov"));
   else if (act === "fac-fecha-ok") facCorregirFecha(t.getAttribute("data-id"), t.getAttribute("data-fecha"), t);
   else if (act === "fac-gmail-ahora") facGmailAhora(t);
   else if (act === "fac-colocar-raiz") facColocarRaiz();

@@ -1,10 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { normalizarLineas, validarSuma, mensajeValidacion, claveProducto } from "./src/modules/facturas/lineas.js";
-import { canonizarLocal, esLocalCanonico } from "./src/modules/facturas/local-canonico.js";
+import { canonizarLocal, esLocalCanonico, LOCALES } from "./src/modules/facturas/local-canonico.js";
 import { canonico as localCentro } from "./src/modules/locales/centros.js";
 import { claveProveedor, seLeenLineas, nombreCanonico } from "./src/modules/facturas/categorias.js";
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
-import { corregirEmisorReceptor } from "./src/modules/facturas/emisor.js";
+import { corregirEmisorReceptor, nombresPropios } from "./src/modules/facturas/emisor.js";
 import { revisarCoherencia, textosDe } from "./src/modules/facturas/coherencia.js";
 import { extraerTextoPdf, bloqueTextoParaClaude } from "./src/modules/facturas/pdf-texto.js";
 import { pistasDeFecha, revisarFecha } from "./src/modules/facturas/fecha-documento.js";
@@ -1190,7 +1190,13 @@ async function revisarEmisorReceptor(datos, dbAll) {
     if (!datos || !dbAll) return null;
     const nuestras = await dbAll("SELECT empresa, cif FROM facturas_locales").catch(() => []);
     if (!nuestras.length) return null;
-    const r = corregirEmisorReceptor(datos, nuestras);
+    // Además del nombre fiscal, los nombres con los que existimos de cara al mundo: los de los
+    // establecimientos —«LA TAPETA», «CAN MATEU»— y los que alguien haya marcado a mano como
+    // nuestros. En una factura ponemos esos, no «DEL AMOR URIEL SLU», y sin ellos esas facturas
+    // entraban con NOSOTROS MISMOS como proveedor.
+    const marcados = await dbAll("SELECT nombre FROM facturas_somos_nosotros").catch(() => []);
+    const propios = nombresPropios(LOCALES, marcados.map((x) => x.nombre));
+    const r = corregirEmisorReceptor(datos, nuestras, propios);
     if (r.corregido) {
       Object.assign(datos, r.datos);
       console.log("[Facturas] emisor/receptor invertidos → corregido. Proveedor real:", datos.proveedor);

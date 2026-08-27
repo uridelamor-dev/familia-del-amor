@@ -697,6 +697,14 @@ async function initDB() {
     // la lectura se equivoca siempre igual, así que corregirlo una vez vale para las
     // siguientes. Se guarda por NIF y por clave del nombre; el NIF es lo que no cambia.
     await client.query(`
+      CREATE TABLE IF NOT EXISTS facturas_somos_nosotros (
+        clave TEXT PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        autor TEXT,
+        creado_en TEXT
+      )
+    `);
+    await client.query(`
       CREATE TABLE IF NOT EXISTS facturas_proveedor_alias (
         clave TEXT PRIMARY KEY,
         nif TEXT,
@@ -5223,6 +5231,46 @@ app.get("/api/facturas/proveedores-duplicados", requireAuth(["direccion", "conta
  * sustituye: sin NIF se ve que falta; con el nuestro, no se ve nada y encima agrupa proveedores
  * que no tienen nada que ver.
  */
+/**
+ * «Esto no es un proveedor, somos nosotros».
+ *
+ * Los nombres de los establecimientos se reconocen solos, pero un nombre fiscal de persona
+ * —«DEL AMOR SALINAS, MATEO»— no hay forma de adivinarlo: no está en ninguna lista y parecerse
+ * a un apellido no basta para decidirlo (hay proveedores que se llaman como personas). Así que
+ * se marca UNA VEZ y el sistema lo aprende: la próxima factura que llegue con ese nombre ya no
+ * entra como proveedor. Es la misma idea que los alias de proveedor, que ya funcionan así.
+ *
+ * Las facturas que ya están se marcan para revisar, no se borran: su proveedor de verdad sigue
+ * sin saberse, y eso lo tiene que mirar una persona con el papel delante.
+ */
+app.post("/api/facturas/somos-nosotros", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const nombre = String(req.body?.proveedor || "").trim();
+    if (nombre.length < 3) return res.status(400).json({ ok: false, error: "Falta el nombre" });
+    const clave = claveProveedor(nombre);
+    if (!clave) return res.status(400).json({ ok: false, error: "Ese nombre no se puede usar" });
+    await dbRun(
+      `INSERT INTO facturas_somos_nosotros (clave, nombre, autor, creado_en) VALUES (?,?,?,?)
+       ON CONFLICT (clave) DO UPDATE SET nombre = EXCLUDED.nombre`,
+      [clave, nombre, req.user.username, isoConOffset(Date.now())]);
+    // Lo ya guardado se SEÑALA, no se toca: quién emitió esas facturas sigue sin saberse.
+    const filas = await dbAll(`SELECT id, revisar FROM facturas WHERE proveedor = ?`, [nombre]);
+    const aviso = `«${nombre}» somos nosotros, no un proveedor: la lectura puso a quien RECIBE la factura. Mira el documento y pon quién la emite.`;
+    for (const f of filas) {
+      let av = [];
+      try { av = f.revisar ? JSON.parse(f.revisar) : []; } catch { av = []; }
+      if (!av.includes(aviso)) av.push(aviso);
+      await dbRun(`UPDATE facturas SET revisar = ? WHERE id = ?`, [JSON.stringify(av), f.id]).catch(() => {});
+    }
+    await ficAuditar("facturas", 0, "somos_nosotros", req.user.username, { nombre, facturas: filas.length }).catch(() => {});
+    res.json({ ok: true, marcadas: filas.length,
+      mensaje: `Apuntado: «${nombre}» somos nosotros. ${filas.length ? `${filas.length} ${filas.length === 1 ? "factura queda marcada" : "facturas quedan marcadas"} para que mires quién las emite.` : ""} Las próximas ya no entrarán así.` });
+  } catch (e) {
+    console.error("[facturas] somos-nosotros:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.post("/api/facturas/nif-propio/limpiar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const nuestros = (await dbAll(`SELECT DISTINCT cif FROM facturas_locales WHERE cif IS NOT NULL AND cif <> ''`))

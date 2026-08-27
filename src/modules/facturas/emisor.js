@@ -13,8 +13,10 @@
 /** Quita puntos, guiones y espacios, y sube a mayúsculas. */
 export const normNif = (s) => String(s || "").replace(/[\s.\-/]/g, "").toUpperCase();
 
+// La barra y el guion separan igual que un espacio: «P.AYLLON/CAN MATEU» son tres palabras, no
+// una. Sin esto, un nombre nuestro pegado con barra a otra cosa no se reconocía.
 const norm = (s) => String(s || "").trim().toLowerCase()
-  .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[.,]/g, " ").replace(/\s+/g, " ").trim();
+  .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[.,/\-]/g, " ").replace(/\s+/g, " ").trim();
 
 const LETRAS_DNI = "TRWAGMYFPDXBNJZSQVHLCKE";
 
@@ -42,11 +44,31 @@ export function nifValido(valor) {
  * ¿Este par (nombre, NIF) es una de NUESTRAS empresas?
  * `nuestras` viene de facturas_locales: [{empresa, cif}].
  */
-export function esNuestra(nombre, nif, nuestras = []) {
+/**
+ * Los nombres con los que nos llamamos a nosotros mismos, más allá del nombre fiscal.
+ *
+ * `facturas_locales.empresa` tiene «DEL AMOR URIEL SLU», que es como consta en el registro —
+ * pero en una factura ponemos «LA TAPETA», «CAN MATEU» o «LA TAPA IBERICA», que son los
+ * nombres con los que existimos de cara al mundo. Sin esto, esas facturas entraban con
+ * NOSOTROS MISMOS como proveedor, y acababan en «de qué es cada proveedor» pidiendo que
+ * alguien les pusiera categoría.
+ */
+export const nombresPropios = (locales = [], extra = []) =>
+  [...locales, ...extra].map((x) => String(x || "").split(/\s+-\s+/)[0]).filter((x) => x && x.length > 3);
+
+export function esNuestra(nombre, nif, nuestras = [], propios = []) {
   const n = normNif(nif);
   if (n && nuestras.some((x) => normNif(x.cif) && normNif(x.cif) === n)) return "cif";
   const nom = norm(nombre);
   if (!nom) return null;
+  // Los nombres de nuestros establecimientos y los que se hayan marcado a mano. Se comparan
+  // ENTEROS o como principio/final —«LA TAPETA» dentro de «P.AYLLON/CAN MATEU» sí, pero
+  // «Tapetería García» no—: la misma regla de «es», no «contiene», que ya usa el catálogo.
+  for (const raw of propios) {
+    const pn = norm(raw);
+    if (!pn || pn.length < 4) continue;
+    if (nom === pn || nom.startsWith(pn + " ") || nom.endsWith(" " + pn) || nom.includes(" " + pn + " ")) return "propio";
+  }
   for (const x of nuestras) {
     const e = norm(x.empresa);
     if (!e) continue;
@@ -71,8 +93,9 @@ export function esNuestra(nombre, nif, nuestras = []) {
 
 /** ¿Es nuestra POR EL NOMBRE? Sirve para distinguir «se han cambiado los papeles» de «se ha
  * colado nuestro CIF en la casilla del proveedor», que piden respuestas distintas. */
-export function esNuestraPorNombre(nombre, nuestras = []) {
-  return esNuestra(nombre, null, nuestras) === "nombre";
+export function esNuestraPorNombre(nombre, nuestras = [], propios = []) {
+  const r = esNuestra(nombre, null, nuestras, propios);
+  return r === "nombre" || r === "propio";
 }
 
 /**
@@ -84,10 +107,10 @@ export function esNuestraPorNombre(nombre, nuestras = []) {
  * «receptor» no lo es. Con una sola no se toca nada — cambiar los datos de una factura a medias
  * es peor que dejarla mal, porque encima parece revisada.
  */
-export function corregirEmisorReceptor(datos = {}, nuestras = []) {
+export function corregirEmisorReceptor(datos = {}, nuestras = [], propios = []) {
   const d = { ...datos };
-  const provEsNuestro = esNuestra(d.proveedor, d.nif_proveedor, nuestras);
-  const recEsNuestro = esNuestra(d.nombre_receptor, d.nif_receptor, nuestras);
+  const provEsNuestro = esNuestra(d.proveedor, d.nif_proveedor, nuestras, propios);
+  const recEsNuestro = esNuestra(d.nombre_receptor, d.nif_receptor, nuestras, propios);
 
   if (provEsNuestro && !recEsNuestro && (d.nombre_receptor || d.nif_receptor)) {
     return {
