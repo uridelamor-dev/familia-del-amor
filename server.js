@@ -50,6 +50,8 @@ import { sanearSolicitud, transitar, solapesVivos, turnosDurante, paraTrabajador
 import { stockNecesario as invStockNecesario, cantidadAPedir as invCantidadAPedir, construirRevision as invConstruirRevision, lineasPropuestaPedido as invLineasPedido, sanitizarCantidad as invSanitizarCantidad, esEstadoPedidoValido, esMMDDValido } from "./src/modules/inventario/calculo.js";
 import { construyeTimeline, antiguedad as rrhhAntiguedad, documentosPorCaducar, resumenEquipoPorLocal, diasHastaCumple } from "./src/modules/rrhh/ficha.js";
 import { primerUsuarioLibre } from "./src/modules/rrhh/usuario.js";
+import { tocaRefrescar, sirveGuardado, edadEnPalabras, claveRango, CLAVE_VIVO,
+         CADA_MIN as AG_CACHE_MIN } from "./src/modules/agora/cache.js";
 import { puedePreguntarse, siguesATiempo, enlaceResena, clasificarRespuesta, veredictoFinal,
          respuestaASeguimiento, CONTENTO, DESCONTENTO } from "./src/modules/reservas/seguimiento.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo, generarToken } from "./src/modules/rrhh/pulso.js";
@@ -1440,6 +1442,13 @@ async function initDB() {
     // Ventas diarias por establecimiento (integración Ágora TPV). Aditiva; se llena por el job de
     // sincronización cuando haya locales configurados (env AGORA_LOCALES). Vacía = dashboard honesto.
     await client.query(`
+      CREATE TABLE IF NOT EXISTS agora_cache (
+        clave TEXT PRIMARY KEY,
+        valor TEXT NOT NULL,
+        guardado_en TEXT NOT NULL
+      )
+    `);
+    await client.query(`
       CREATE TABLE IF NOT EXISTS ventas_diarias (
         id SERIAL PRIMARY KEY,
         local TEXT NOT NULL,
@@ -1832,6 +1841,25 @@ setTimeout(() => { lanzarAgoraSync("arranque"); }, 60 * 1000);
 // temporizador de 15: así «cada 15 minutos» significa «nunca más viejo de 15 minutos», venga el
 // disparo de donde venga —el temporizador, alguien entrando al panel o el botón—.
 setInterval(() => { agoraSyncSiToca("timer").catch((e) => console.error("Ágora sync:", e.message)); }, 5 * 60 * 1000);
+
+/**
+ * Deja las ventas por local ya pedidas, para que quien entre no espere.
+ *
+ * Se PREGUNTA cada cinco minutos y solo va al TPV si han pasado los quince. La marca está en la
+ * base, así que un reinicio no la borra — que era justo el problema: la caché vivía en memoria
+ * y con cada despliegue volvía a estar vacía.
+ */
+async function calentarVentasVivo() {
+  try {
+    const dbc = await cacheLeer(CLAVE_VIVO);
+    if (!tocaRefrescar({ guardadoEn: dbc?.guardadoEn || null, ahora: new Date().toISOString(), cadaMin: AG_CACHE_MIN })) return;
+    if (!(await loadAgoraConfigsActive()).length) return;   // sin TPV configurado no hay nada que pedir
+    await ventasVivoData(true);
+    console.log("[Agora] ventas por local, ya listas para cuando alguien entre");
+  } catch (e) { console.error("[Agora] calentar ventas:", e.message); }
+}
+setTimeout(calentarVentasVivo, 75 * 1000);
+setInterval(calentarVentasVivo, 5 * 60 * 1000);
 
 // ── Google Drive / Sheets OAuth (cuenta separada para facturas) ────────────
 const GOOGLE_DRIVE_CLIENT_ID     = process.env.GOOGLE_DRIVE_CLIENT_ID     || "";
@@ -6937,10 +6965,44 @@ app.get("/api/ventas", requireAuth(["direccion", "contabilidad"]), async (req, r
 // Ventas EN VIVO por local (últimos 8 días incluido HOY, tiempo real) vía el informe global.
 // Caché de 3 min para no martillear el TPV; también persiste días cerrados en ventas_diarias.
 let _ventasVivoCache = { ts: 0, data: null };
+/**
+ * La caché de Ágora, EN LA BASE y no en memoria.
+ *
+ * Estaba en un `Map` del proceso, y en Replit el proceso se reinicia tanto que estaba fría casi
+ * siempre: cada visita al Dashboard esperaba a que respondiera cada TPV, en serie y con veinte
+ * segundos de margen por local. Guardada, quien entra lee al instante.
+ */
+async function cacheLeer(clave) {
+  try {
+    const r = await dbGet(`SELECT valor, guardado_en FROM agora_cache WHERE clave = ?`, [clave]);
+    if (!r) return null;
+    return { valor: JSON.parse(r.valor), guardadoEn: r.guardado_en };
+  } catch { return null; }
+}
+async function cacheGuardar(clave, valor) {
+  try {
+    await dbRun(
+      `INSERT INTO agora_cache (clave, valor, guardado_en) VALUES (?,?,?)
+       ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, guardado_en = EXCLUDED.guardado_en`,
+      [clave, JSON.stringify(valor), new Date().toISOString()]);
+  } catch (e) { console.error("[Agora] no se pudo guardar la caché:", e.message); }
+}
+
 async function ventasVivoData(force) {
   const ahora = Date.now();
+  const nowIso = new Date().toISOString();
   if (!force && _ventasVivoCache.data && (ahora - _ventasVivoCache.ts) < 3 * 60 * 1000) {
-    return { cache: true, ...(_ventasVivoCache.data) };
+    // La edad va SIEMPRE, también por este camino: es el más frecuente, y un número sin hora
+    // al lado no se sabe si es de ahora o de hace media mañana.
+    const g = _ventasVivoCache.guardadoEn || new Date(_ventasVivoCache.ts).toISOString();
+    return { cache: true, guardadoEn: g, edad: edadEnPalabras({ guardadoEn: g, ahora: nowIso }), ...(_ventasVivoCache.data) };
+  }
+  // Lo guardado en la BASE, que es lo que sobrevive a un reinicio. Si no toca refrescarlo
+  // todavía, se devuelve tal cual: al instante y con la hora de cuándo se pidió.
+  const dbc = await cacheLeer(CLAVE_VIVO);
+  if (dbc && !tocaRefrescar({ guardadoEn: dbc.guardadoEn, ahora: nowIso, forzar: force })) {
+    _ventasVivoCache = { ts: ahora, data: dbc.valor, guardadoEn: dbc.guardadoEn };
+    return { cache: true, guardadoEn: dbc.guardadoEn, edad: edadEnPalabras({ guardadoEn: dbc.guardadoEn, ahora: nowIso }), ...dbc.valor };
   }
   const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password);
   const hoy = hoyISO();
@@ -6968,8 +7030,16 @@ async function ventasVivoData(force) {
     }
   }
   const data = { hoy, desde, locales, generado: new Date().toISOString() };
-  _ventasVivoCache = { ts: ahora, data };
-  return { cache: false, ...data };
+  _ventasVivoCache = { ts: ahora, data, guardadoEn: data.generado };
+  // Si NINGÚN TPV ha respondido, no se pisa lo que había: un cero recién hecho es peor que un
+  // número de hace veinte minutos con su hora al lado.
+  const algo = locales.some((L) => !L.error && (L.dias || []).length);
+  if (algo || !dbc) await cacheGuardar(CLAVE_VIVO, data);
+  else if (dbc && sirveGuardado({ guardadoEn: dbc.guardadoEn, ahora: nowIso })) {
+    return { cache: true, guardadoEn: dbc.guardadoEn, edad: edadEnPalabras({ guardadoEn: dbc.guardadoEn, ahora: nowIso }),
+             sinRespuesta: true, ...dbc.valor };
+  }
+  return { cache: false, guardadoEn: data.generado, edad: "ahora mismo", ...data };
 }
 app.get("/api/agora/ventas-vivo", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
@@ -7041,18 +7111,33 @@ app.get("/api/agora/informe/:tipo", requireAuth(["direccion", "contabilidad"]), 
 const _ventasRangoCache = new Map();
 async function ventasRangoLive(local, from, to) {
   const key = `${local || "*"}|${from}_${to}`;
+  const nowIso = new Date().toISOString();
   const cached = _ventasRangoCache.get(key);
   if (cached && (Date.now() - cached.ts) < 3 * 60 * 1000) return cached.serie;
+  // Y ANTES DE IR AL TPV, lo guardado en la base. Es lo que hacía esperar: la caché vivía solo
+  // en memoria y con cada reinicio del proceso —que en Replit son muchos— volvía a estar vacía,
+  // así que el Dashboard preguntaba a los ocho TPV con veinte segundos de margen cada uno.
+  const dbc = await cacheLeer(claveRango(local, from, to));
+  if (dbc && !tocaRefrescar({ guardadoEn: dbc.guardadoEn, ahora: nowIso })) {
+    _ventasRangoCache.set(key, { ts: Date.now(), serie: dbc.valor });
+    return dbc.valor;
+  }
   const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (local ? c.local === local : true));
   if (!configs.length) return null;
   const conTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
   const results = await Promise.all(configs.map((cfg) => conTimeout(createAgoraClient(cfg).getVentasRango(from, to), 20000).then((d) => d).catch(() => null)));
   const ok = results.filter(Boolean);
-  if (!ok.length) return null; // TPV cerrado/errores → respaldo en ventas_diarias
+  if (!ok.length) {
+    // Ningún TPV ha respondido. Si hay algo guardado y no está rancio, mejor eso que nada: un
+    // dato de hace media hora con su hora al lado es más útil que una pantalla girando.
+    if (dbc && sirveGuardado({ guardadoEn: dbc.guardadoEn, ahora: nowIso })) return dbc.valor;
+    return null; // TPV cerrado/errores → respaldo en ventas_diarias
+  }
   const byDia = {};
   for (const dias of ok) for (const v of dias) { const e = byDia[v.dia] || (byDia[v.dia] = { dia: v.dia, ventas: 0, tickets: 0 }); e.ventas += v.ventas || 0; e.tickets += v.tickets || 0; }
   const serie = Object.values(byDia).map((e) => ({ dia: e.dia, ventas: Math.round(e.ventas * 100) / 100, tickets: e.tickets })).sort((a, b) => a.dia.localeCompare(b.dia));
   _ventasRangoCache.set(key, { ts: Date.now(), serie });
+  await cacheGuardar(claveRango(local, from, to), serie);
   return serie;
 }
 

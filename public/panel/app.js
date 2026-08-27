@@ -10532,7 +10532,7 @@ function renderAgoraVivo(vivo) {
       <div style="margin-top:12px">${bars}</div>
       <div class="mut" style="font-size:11px;margin-top:4px">Últimos días cerrados: <b>${eur(r.total7)}</b> · ${num(r.tickets7)} tickets</div></div>`;
   };
-  return `<div class="ch" style="padding:0 2px 6px"><h3>Ventas por local · hoy en vivo</h3><button class="btn sm" data-act="ag-vivo-refresh">Actualizar</button></div><div class="grid g2" style="gap:14px">${vivo.locales.map(card).join("")}</div>${vivo.generado ? `<div class="mut" style="font-size:11px;margin-top:6px">Actualizado ${esc(String(vivo.generado).slice(11, 16))}${vivo.cache ? " (caché)" : ""}</div>` : ""}`;
+  return `<div class="ch" style="padding:0 2px 6px"><h3>Ventas por local · hoy en vivo</h3><button class="btn sm" data-act="ag-vivo-refresh">Actualizar</button></div><div class="grid g2" style="gap:14px">${vivo.locales.map(card).join("")}</div>${vivo.generado ? `<div class="mut" style="font-size:11px;margin-top:6px">Datos de ${esc(vivo.edad || String(vivo.generado).slice(11, 16))}${vivo.sinRespuesta ? " · el TPV no ha contestado ahora, esto es lo último que se pudo pedir" : ""} · se piden solos cada ${num(15)} minutos</div>` : ""}`;
 }
 async function loadAgoraVivo(force) {
   const cont = document.getElementById("agVivo"); if (!cont) return;
