@@ -5190,7 +5190,23 @@ app.get("/api/facturas/proveedores-duplicados", requireAuth(["direccion", "conta
         WHERE f.proveedor IS NOT NULL AND f.proveedor <> '' AND COALESCE(f.dup_estado,'') <> 'duda' 
         GROUP BY f.proveedor ORDER BY gasto DESC NULLS LAST`, []);
 
-    res.json({ ok: true, grupos: gruposDuplicados(filas).slice(0, 40), proveedores: filas.length });
+    // Nuestros CIF no pueden agrupar proveedores: si uno se cuela como NIF de proveedor, esta
+    // pantalla propondría unir empresas que no tienen nada que ver.
+    const nuestros = (await dbAll(`SELECT DISTINCT cif FROM facturas_locales WHERE cif IS NOT NULL AND cif <> ''`).catch(() => []))
+      .map((x) => x.cif);
+    // Y se DICE cuántas facturas ya guardadas llevan un CIF nuestro en la casilla del
+    // proveedor. Quitarlo del agrupador arregla la pantalla; esto arregla el dato.
+    let conNifNuestro = { n: 0, proveedores: [] };
+    if (nuestros.length) {
+      const r = await dbAll(
+        `SELECT proveedor, count(*)::int AS n FROM facturas
+          WHERE REPLACE(REPLACE(REPLACE(UPPER(nif),'-',''),'.',''),' ','') = ANY(?)
+          GROUP BY proveedor ORDER BY n DESC`,
+        [nuestros.map((c) => String(c).replace(/[\s.\-/]/g, "").toUpperCase())]).catch(() => []);
+      conNifNuestro = { n: r.reduce((a, x) => a + x.n, 0), proveedores: r.slice(0, 12) };
+    }
+    res.json({ ok: true, grupos: gruposDuplicados(filas, { nuestrosCif: nuestros }).slice(0, 40),
+      proveedores: filas.length, conNifNuestro });
   } catch (e) {
     console.error("[facturas] proveedores duplicados:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron buscar los repetidos" });
@@ -5198,6 +5214,35 @@ app.get("/api/facturas/proveedores-duplicados", requireAuth(["direccion", "conta
 });
 
 // Corregir el nombre de un proveedor Y APRENDERLO para las siguientes.
+/**
+ * Quitar NUESTRO CIF de la casilla del NIF del proveedor.
+ *
+ * Nadie nos factura con nuestro propio CIF: cuando aparece ahí, la lectura se equivocó de
+ * casilla. Es de las poquísimas correcciones masivas que se pueden hacer sin preguntar caso por
+ * caso, porque no hay ninguna lectura en la que ese dato sea correcto. Se BORRA, no se
+ * sustituye: sin NIF se ve que falta; con el nuestro, no se ve nada y encima agrupa proveedores
+ * que no tienen nada que ver.
+ */
+app.post("/api/facturas/nif-propio/limpiar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
+  try {
+    const nuestros = (await dbAll(`SELECT DISTINCT cif FROM facturas_locales WHERE cif IS NOT NULL AND cif <> ''`))
+      .map((x) => String(x.cif).replace(/[\s.\-/]/g, "").toUpperCase()).filter(Boolean);
+    if (!nuestros.length) return res.json({ ok: true, limpiadas: 0, mensaje: "No hay ningún CIF de empresa configurado." });
+    const antes = await dbGet(
+      `SELECT count(*)::int AS n FROM facturas WHERE REPLACE(REPLACE(REPLACE(UPPER(nif),'-',''),'.',''),' ','') = ANY(?)`, [nuestros]);
+    const n = Number(antes?.n || 0);
+    if (!n) return res.json({ ok: true, limpiadas: 0, mensaje: "No hay ninguna factura con un CIF vuestro como NIF de proveedor." });
+    await dbRun(
+      `UPDATE facturas SET nif = NULL WHERE REPLACE(REPLACE(REPLACE(UPPER(nif),'-',''),'.',''),' ','') = ANY(?)`, [nuestros]);
+    console.log(`[facturas] quitado nuestro CIF del NIF de proveedor en ${n} facturas`);
+    res.json({ ok: true, limpiadas: n,
+      mensaje: `${n} ${n === 1 ? "factura tenía" : "facturas tenían"} un CIF vuestro como NIF del proveedor. Se ha dejado en blanco.` });
+  } catch (e) {
+    console.error("[facturas] limpiar nif propio:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.put("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const client = await pool.connect();
   try {

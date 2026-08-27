@@ -69,6 +69,12 @@ export function esNuestra(nombre, nif, nuestras = []) {
   return null;
 }
 
+/** ¿Es nuestra POR EL NOMBRE? Sirve para distinguir «se han cambiado los papeles» de «se ha
+ * colado nuestro CIF en la casilla del proveedor», que piden respuestas distintas. */
+export function esNuestraPorNombre(nombre, nuestras = []) {
+  return esNuestra(nombre, null, nuestras) === "nombre";
+}
+
 /**
  * Corrige la lectura si se han cambiado los papeles.
  *
@@ -101,7 +107,29 @@ export function corregirEmisorReceptor(datos = {}, nuestras = []) {
       aviso: `El proveedor leído («${datos.proveedor}») somos nosotros, y no se ha leído ningún otro nombre. Revisa quién emite esta factura.` };
   }
 
-  // Ni idea de quién es quién: los dos parecen nuestros.
+  // NUESTRO PROPIO CIF COMO NIF DEL PROVEEDOR. Es el caso más silencioso de todos: el nombre
+  // del proveedor está BIEN leído —«TRANSGOURMET»— y lo que se ha colado es nuestro CIF en la
+  // casilla de su NIF. Como el nombre no es nuestro pero el NIF sí, `esNuestra` decía «sí» por
+  // el CIF y esto acababa en «los dos parecen nuestros»: se avisaba y SE GUARDABA IGUAL.
+  //
+  // El daño no está en la factura suelta: cinco proveedores que no tienen nada que ver
+  // acababan compartiendo NIF, y la pantalla de proveedores repetidos los proponía para UNIR
+  // —«cuando comparten NIF son la misma empresa»— con un botón que habría fusionado treinta y
+  // una facturas de empresas distintas.
+  //
+  // Nadie nos factura con nuestro propio CIF. Eso no es una heurística, es un hecho: se quita
+  // el NIF y se avisa. Sin NIF se ve que falta; con el nuestro, no se ve nada.
+  const nifEsNuestro = provEsNuestro === "cif" && !esNuestraPorNombre(d.proveedor, nuestras);
+  if (nifEsNuestro) {
+    return {
+      datos: { ...d, nif_proveedor: null },
+      corregido: true,
+      aviso: `«${datos.nif_proveedor}» es NUESTRO CIF, así que no puede ser el del proveedor. `
+        + `Se ha dejado el NIF de «${datos.proveedor}» en blanco: ponlo tú si lo tienes a mano.`,
+    };
+  }
+
+  // Ni idea de quién es quién: los dos parecen nuestros, también por el nombre.
   if (provEsNuestro && recEsNuestro) {
     return { datos: d, corregido: false,
       aviso: "Tanto el emisor como el receptor parecen empresas nuestras. Revísalo." };

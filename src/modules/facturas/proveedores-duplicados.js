@@ -57,10 +57,19 @@ export const MINIMO_NOMBRE = 60;
  * `filas` = [{ proveedor, nif, facturas, gasto }] — una por forma de escribirlo, ya agregada.
  * Devuelve grupos de 2 o más, con el motivo y con cuál conviene quedarse.
  */
-export function gruposDuplicados(filas = [], { minimo = MINIMO_NOMBRE } = {}) {
+export function gruposDuplicados(filas = [], { minimo = MINIMO_NOMBRE, nuestrosCif = [] } = {}) {
+  // NUESTROS PROPIOS CIF NO AGRUPAN A NADIE. Si la lectura de una factura cuela nuestro CIF en
+  // la casilla del NIF del proveedor —pasa, y con el nombre bien leído— aquí acababan cinco
+  // empresas que no tienen nada que ver compartiendo NIF, y esta pantalla las proponía para
+  // UNIR con un botón que habría fusionado treinta y una facturas ajenas en una sola ficha.
+  // Que dos proveedores compartan NUESTRO CIF no dice nada de ellos: dice que la lectura falló.
+  const mios = new Set((nuestrosCif || []).map((c) => nifUtil(c)).filter(Boolean));
   const items = (filas || [])
     .filter((f) => f && f.proveedor)
-    .map((f) => ({ ...f, clave: claveProveedor(f.proveedor), nif: nifUtil(f.nif) }))
+    .map((f) => {
+      const nif = nifUtil(f.nif);
+      return { ...f, clave: claveProveedor(f.proveedor), nif: mios.has(nif) ? null : nif };
+    })
     .filter((f) => f.clave);
 
   // Una fila por CLAVE: las variantes de escritura del mismo nombre ya las junta la clave, y

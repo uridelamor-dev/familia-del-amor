@@ -7044,9 +7044,20 @@ async function facProvDuplicados() {
   if (!caja) return;
   try { PROVDUP = await apiRaw("/api/facturas/proveedores-duplicados"); } catch { return; }
   const g = PROVDUP.grupos || [];
-  if (!g.length) { caja.innerHTML = ""; return; }
+  // NUESTRO CIF EN LA CASILLA DEL PROVEEDOR. Es lo que hacía que cinco empresas que no tienen
+  // nada que ver salieran aquí como «la misma»: la lectura coló nuestro CIF y esta pantalla
+  // proponía unirlas. Ya no agrupan, pero el dato sigue mal en las facturas y hay que decirlo.
+  const mal = PROVDUP.conNifNuestro || { n: 0, proveedores: [] };
+  const avisoNif = mal.n ? `<div class="card" style="margin-bottom:16px;border-color:var(--danger)">
+      <div class="t1">Hay ${num(mal.n)} ${mal.n === 1 ? "factura" : "facturas"} con un CIF vuestro como NIF del proveedor</div>
+      <p class="mut" style="margin:6px 0 0;line-height:1.55">Nadie os factura con vuestro propio CIF: cuando aparece ahí,
+        la lectura se equivocó de casilla. Afecta a ${mal.proveedores.map((x) => `<b>${esc(x.proveedor)}</b>`).join(", ")}.
+        Se puede dejar el NIF en blanco de una vez — sin NIF se ve que falta; con el vuestro, no se ve nada.</p>
+      <div class="toolbar" style="padding:12px 0 0"><button class="btn danger" data-act="fac-nif-propio">Quitar ese NIF de ${num(mal.n)} ${mal.n === 1 ? "factura" : "facturas"}</button></div>
+    </div>` : "";
+  if (!g.length) { caja.innerHTML = avisoNif; return; }
 
-  pintarConservandoPliegues(caja, `<details class="card fold" style="margin-bottom:16px">
+  pintarConservandoPliegues(caja, avisoNif + `<details class="card fold" style="margin-bottom:16px">
     <summary><h3>Proveedores repetidos</h3><span class="foldr">
       <span>${num(g.length)} ${g.length === 1 ? "caso" : "casos"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <p class="mut" style="margin:0 0 12px;line-height:1.55">El mismo proveedor metido con dos nombres. Cuando comparten
@@ -9939,6 +9950,22 @@ async function facCorregirFecha(id, fecha, btn) {
   }
 }
 
+/** Dejar en blanco el NIF de las facturas donde se coló un CIF nuestro. */
+async function facLimpiarNifPropio() {
+  const mal = (PROVDUP && PROVDUP.conNifNuestro) || { n: 0 };
+  const ok = await confirmModal(
+    `Se deja en blanco el NIF del proveedor en ${mal.n} ${mal.n === 1 ? "factura" : "facturas"}. `
+    + "Solo se tocan las que tienen un CIF VUESTRO ahí, que es seguro que está mal: nadie os factura con vuestro propio CIF. "
+    + "No se cambia nada más de esas facturas.",
+    { ok: "Quitar el NIF", danger: true });
+  if (!ok) return;
+  try {
+    const r = await apiSend("POST", "/api/facturas/nif-propio/limpiar", {});
+    toast(r.mensaje || "Listo");
+    facProvDuplicados();
+  } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
 async function facGmailAhora(btn) {
   const antes = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "Mirando el buzón…"; }
@@ -11799,6 +11826,7 @@ document.addEventListener("click", (e) => {
   else if (act === "sf-archivo") document.getElementById("sfFile")?.click();
   else if (act === "fac-303-csv") fac303Csv();
   else if (act === "fac-migrar") facMigrar();
+  else if (act === "fac-nif-propio") facLimpiarNifPropio();
   else if (act === "fac-fecha-ok") facCorregirFecha(t.getAttribute("data-id"), t.getAttribute("data-fecha"), t);
   else if (act === "fac-gmail-ahora") facGmailAhora(t);
   else if (act === "fac-colocar-raiz") facColocarRaiz();
