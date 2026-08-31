@@ -29,12 +29,35 @@ export function esTelefonoInterno(telefono, internos) {
   return typeof internos.has === "function" ? internos.has(k) : false;
 }
 
+/**
+ * De dónde sale `{local}`, por orden.
+ *
+ * EL FALLO QUE ARREGLA: `{local}` salía VACÍO en todas las campañas enviadas hasta hoy. Se
+ * buscaba en `contacto.local` o `contacto.ultimo_local`, y la consulta de contactos no devolvía
+ * ninguna de las dos — así que la plantilla de cumpleaños llegaba al cliente como «¡Felicidades,
+ * Erika! 🎂 Desde queremos celebrarlo contigo». Las diez plantillas del catálogo usan `{local}`.
+ *
+ * El orden importa y no es arbitrario:
+ *  1. `local` — el de la CAMPAÑA. Si se está escribiendo «a los de Can Mateu», el mensaje dice
+ *     Can Mateu aunque esa persona fuera una vez a Blanes: se le habla de la casa desde la que
+ *     se le escribe.
+ *  2. `ultimo_local` — dónde estuvo la última vez. Es lo correcto cuando la campaña va a todos.
+ *  3. El nombre de la casa. Sin respaldo, una campaña general a un lead que nunca ha reservado
+ *     volvería a dejar la frase rota; y aquí el hueco no se nota al escribirla, solo al leerla
+ *     el cliente.
+ */
+export const CASA = "Familia del Amor";
+
+export function localDeContacto(contacto = {}, { casa = CASA } = {}) {
+  return String(contacto.local || contacto.ultimo_local || casa || "").trim();
+}
+
 // Sustituye variables de plantilla en el texto. Reutilizable por Campañas.
 // Soporta {nombre} {apellidos} {nombre_completo} {local}. Sin valor → cadena vacía.
-export function aplicarVariables(texto, contacto = {}) {
+export function aplicarVariables(texto, contacto = {}, { casa = CASA } = {}) {
   const nombre = (contacto.nombre || "").trim();
   const apellidos = (contacto.apellidos || "").trim();
-  const local = (contacto.local || contacto.ultimo_local || "").trim();
+  const local = localDeContacto(contacto, { casa });
   const completo = `${nombre} ${apellidos}`.trim();
   return String(texto == null ? "" : texto)
     .replace(/\{nombre_completo\}/gi, completo)

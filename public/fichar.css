@@ -174,6 +174,41 @@
 .fic-okhora { font-size: 3.2rem; font-weight: 300; margin: .5rem 0; font-variant-numeric: tabular-nums; }
 .fic-okmsg { color: #9db3a9; font-size: 1.1rem; max-width: 520px; margin: 0 auto; line-height: 1.5 }
 
+/* Cómo viene el día — las mesas que quedan, debajo de todo y ANTES del PIN.
+
+   Deliberadamente pequeño y en segundo plano: lo que se viene a hacer aquí es fichar, y esto
+   es de paso. Va detrás de la rejilla de personas, con menos contraste y letra más chica; si
+   compitiera con los botones, estorbaría a la única tarea que importa. Las mesas se reparten
+   en columnas en vez de apilarse, para que veinte reservas no empujen nada fuera de pantalla. */
+.fic-dia {
+  width: 100%; max-width: 900px; margin: 1.5rem auto 0;
+  border-top: 1px solid #223129; padding-top: .8rem;
+}
+.fic-dia-tit {
+  margin: 0 0 .5rem; font-size: .95rem; font-weight: 700; color: #cfded7;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .7rem;
+}
+.fic-dia-sub { font-size: .8rem; font-weight: 500; color: #7d968a; }
+/* `auto-fill` y no un número de columnas: la misma regla sirve para el móvil de 390 (una
+   columna) y para la tablet en horizontal (tres), sin duplicar nada en una media query. */
+#ficDiaTurnos { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: .2rem .6rem }
+.fic-res {
+  display: flex; align-items: baseline; gap: .5rem;
+  padding: .22rem .45rem; border-radius: 6px; font-size: .88rem;
+  background: rgba(255,255,255,.03);
+}
+.fic-res-hora { font-variant-numeric: tabular-nums; font-weight: 700; color: #e7efeb; min-width: 3.2em }
+/* Las personas, en pastilla: es el número que se busca al repasar la sala. */
+.fic-res-pax {
+  min-width: 1.7em; text-align: center; font-weight: 700; font-size: .78rem;
+  padding: .05rem .35rem; border-radius: 999px; background: #1e3a30; color: #9fd9c2;
+}
+/* El nombre se corta con puntos suspensivos en vez de partir la fila en dos: con doce mesas,
+   una lista que baila de altura no se lee de un vistazo. */
+.fic-res-nom { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cfded7 }
+.fic-res-eti { font-size: .72rem; color: #7d968a; white-space: nowrap }
+.fic-res-mas { padding: .22rem .45rem; font-size: .8rem; color: #7d968a }
+
 /* Tablet pequeña o móvil en vertical: el teclado no debe empujar nada fuera de pantalla. */
 @media (max-width: 560px) {
   .fic-main { align-items: flex-start; padding: 1rem }
@@ -186,6 +221,11 @@
   .fic-accion { min-height: 104px; font-size: 1.25rem }
   .fic-tic { width: 104px; height: 104px; font-size: 3rem }
   .fic-okhora { font-size: 2.6rem }
+  /* En vertical solo cabe una columna (lo resuelve el `auto-fill`), así que aquí basta con
+     apretar un poco: la hora y las personas se quedan, el nombre cede. */
+  .fic-dia { margin-top: 1.1rem }
+  .fic-res { font-size: .85rem; gap: .4rem }
+  .fic-res-hora { min-width: 3em }
 }
 
 /* Tablet en horizontal, que es donde vive de verdad: el teclado no debe obligar a estirar

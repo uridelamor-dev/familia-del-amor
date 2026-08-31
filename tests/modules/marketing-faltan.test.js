@@ -88,11 +88,53 @@ describe("los filtros nuevos de segmentación", () => {
     assert.match(server, /: ` AND \(\$\{expr\} >= \$\{a\} OR \$\{expr\} <= \$\{b\}\)`/);
   });
 
-  test("y los filtros nuevos se guardan en el segmento de la campaña", () => {
-    // Si no, una campaña programada saldría a otra gente que la que se vio al crearla, y eso
-    // no se nota hasta que ya ha salido.
-    assert.match(server, /reservo_from: req\.body\.reservo_from, reservo_to: req\.body\.reservo_to,/);
-    assert.match(server, /edad_min: req\.body\.edad_min, edad_max: req\.body\.edad_max, cumple_en_dias: req\.body\.cumple_en_dias,/);
+  test("NINGÚN filtro se queda fuera del segmento de la campaña", () => {
+    // Si uno se cae, la campaña sale a otra gente que la que se vio al crearla, y eso no se
+    // nota hasta que ya ha salido.
+    //
+    // Este candado exigía tres claves escritas a mano —`reservo_from`, `edad_min`,
+    // `cumple_en_dias`— porque eran las tres que se habían perdido aquella vez. Y aun así se
+    // perdieron otras cinco después (`hecho_etiqueta`, `hecho_valor`, `sin_nacimiento`,
+    // `sin_email`, `sin_poblacion`): el test las dejó pasar porque solo miraba las suyas.
+    //
+    // La lección no era «añadir la clave nueva al test». Era que no puede haber una lista
+    // escrita a mano en el endpoint. Ahora se exige lo contrario: que NO la haya y que el
+    // segmento salga de `CLAVES_SEGMENTO`, que se deriva de `CAMPOS`. Así el candado cubre las
+    // veintidós y las que vengan, en vez de tres.
+    const post = server.slice(server.indexOf('app.post("/api/campanas", requireAuth'),
+                              server.indexOf('app.get("/api/campanas/:id"'));
+    assert.match(post, /segmentoDelBody\(/,
+      "el segmento tiene que salir de la lista canónica, no de claves escritas a una a una");
+    assert.doesNotMatch(post, /req\.body\.genero/,
+      "vuelve a haber filtros nombrados a mano aquí: es por donde se pierden");
+
+    // Y el helper, de verdad, no solo de nombre.
+    const helper = server.slice(server.indexOf("function segmentoDelBody("),
+                                server.indexOf("function traeSegmento("));
+    assert.match(helper, /construirSegmento\(/);
+    assert.match(helper, /sanearSegmento\(/, "un valor imposible del formulario también se rechaza");
+    assert.match(helper, /excluir_baja = 1/, "nunca a quien pidió que no le escribieran");
+  });
+
+  test("la vista previa cuenta con el MISMO segmento con el que se envía", () => {
+    // El fallo de fondo: la previa partía del cuerpo de la petición y el envío del segmento
+    // guardado. Dos entradas distintas para la misma pregunta, y por ahí se colaba que la
+    // previa dijera 40 y salieran 300.
+    const prev = server.slice(server.indexOf('app.post("/api/campanas/preview"'),
+                              server.indexOf('app.get("/api/campanas"'));
+    assert.match(prev, /segmentoDelBody\(req\.body\)/);
+    assert.doesNotMatch(prev, /sqlContactosUnificados\(\{ \.\.\.req\.body/,
+      "la previa no puede consultar con el cuerpo crudo mientras el envío usa el saneado");
+  });
+
+  test("quitar un filtro al editar lo quita de verdad", () => {
+    // La equis de un chip no borraba nada: el PATCH recorría once claves y fusionaba, así que
+    // el filtro seguía en `segmento_json` y la campaña salía a quien la pantalla decía que ya
+    // no iba a salir.
+    const patch = server.slice(server.indexOf('app.patch("/api/campanas/:id"'),
+                               server.indexOf('app.post("/api/campanas/redactar"'));
+    assert.match(patch, /if \(traeSegmento\(b\)\)/, "hay que reemplazar el segmento, no fusionarlo");
+    assert.doesNotMatch(patch, /for \(const k of \["q", "genero"/, "la lista de once no puede volver");
   });
 });
 

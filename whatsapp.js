@@ -625,16 +625,36 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
       const telefono = await resolverTelefono(jid);
       const resultado = await onModificarReserva({ ...input, telefono }, jid);
       if (!resultado || resultado.ok === false) {
-        if (resultado && resultado.motivo === "sin cambios") {
-          return { content: "No se indicó ningún cambio. Pregúntale al cliente qué quiere modificar (personas, hora, día o zona).", is_error: false };
-        }
+        // CADA MOTIVO DICE LO SUYO. Antes todo lo que no fuera «sin cambios» se contestaba con
+        // «no encuentro una reserva que coincida», y eso es mentira en la mitad de los casos:
+        // la reserva existe, lo que pasa es que no se puede mover a ese día. Un cliente al que
+        // le dices que no tiene reserva cuando sí la tiene cuelga y llama al local enfadado.
+        const motivos = {
+          "sin cambios": "No se indicó ningún cambio. Pregúntale al cliente qué quiere modificar (personas, hora, día o zona).",
+          fecha_pasada: "Ese día ya ha pasado. Dile que su reserva sigue como estaba y pregúntale a qué día quiere moverla.",
+          hora_pasada: "Esa hora ya ha pasado hoy. Su reserva sigue como estaba; pregúntale otra hora o si prefiere otro día.",
+          bloqueado: "Ese día el local no acepta reservas. Su reserva sigue como estaba; ofrécele otro día cercano.",
+          fecha_invalida: "La fecha no se ha entendido. Pídesela otra vez, con día y mes.",
+          hora_invalida: "La hora no se ha entendido. Pídesela otra vez, en formato de horas y minutos.",
+          personas_invalidas: "Ese número de personas no es válido. Pregúntale cuántos van a ser.",
+        };
         return {
-          content: "No encuentro una reserva que coincida para modificar. Pídele al cliente el día exacto de su reserva y el nombre, o dile que llame al local.",
+          content: motivos[resultado && resultado.motivo]
+            || "No encuentro una reserva que coincida para modificar. Pídele al cliente el día exacto de su reserva y el nombre, o dile que llame al local.",
+          is_error: false
+        };
+      }
+      // Un grupo grande lo confirma el local, igual que al reservar: Sara no da por buena una
+      // mesa de doce por su cuenta, así que aquí no se le dice al cliente que está hecho.
+      if (resultado.pendiente) {
+        return {
+          content: `Cambio anotado (${resultado.resumen || "modificación"}) y avisado el local. Al ser un grupo grande queda PENDIENTE de que el local lo confirme: díselo al cliente con amabilidad, sin darlo por cerrado.`,
           is_error: false
         };
       }
       return {
-        content: "Reserva modificada correctamente y avisado el local. Confírmale al cliente con amabilidad los datos actualizados de su reserva.",
+        content: `Reserva modificada correctamente (${resultado.resumen || "modificación"}) y avisado el local. Confírmale al cliente con amabilidad los datos actualizados de su reserva.`
+          + (resultado.fueraDeFranja ? " La hora queda fuera del servicio habitual: dile que el local se lo confirmará." : ""),
         is_error: false
       };
     }

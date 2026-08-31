@@ -108,6 +108,7 @@
       $("ficDisp").textContent = r.datos.dispositivo || "";
       pintarReloj();
       pintarEquipo();
+      pintarDia(r.datos.reservas);
       // Se guarda la PLANTILLA (nombres y quién tiene PIN), nunca el estado. Un
       // "dentro/fuera" de ayer diría que sigue trabajando quien ya se fue, y esa pantalla
       // sería mentira; los nombres, en cambio, cambian una vez cada varios meses.
@@ -125,8 +126,70 @@
         $("ficLocal").textContent = guardada.local;
         $("ficDisp").textContent = guardada.dispositivo || "";
         pintarEquipo();
+        // Las reservas NO se guardan para el modo sin línea, por lo mismo que no se guardan
+        // los estados: una agenda de ayer no se distingue de la de hoy mirando la pantalla, y
+        // organizar el servicio con las mesas del día anterior es peor que no ver ninguna.
+        pintarDia(null);
       });
     });
+  }
+
+  // ── Cómo viene el día ────────────────────────────────────────────────────
+  /**
+   * Las mesas que quedan por llegar, en la pantalla de inicio y sin pedir PIN.
+   *
+   * Va ANTES del PIN porque la tablet está en la zona de trabajo: se mira al pasar, sin sacar
+   * el móvil ni abrir el panel. Y OCUPA POCO a propósito —una cabecera y una rejilla de líneas
+   * finas, debajo de todo—: esto es una chuleta, no la pantalla de reservas. Lo que la tablet
+   * tiene que hacer bien es que se fiche, y los botones del equipo mandan sobre esto.
+   *
+   * Llega ya masticado del servidor (`src/modules/reservas/kiosco.js`): qué queda, en qué
+   * orden y qué se dice en la cabecera. Aquí no se decide nada, solo se dibuja.
+   *
+   * NO HAY TELÉFONOS, y el servidor tampoco los manda: la llave de esta pantalla va en la URL
+   * de la tablet, así que hay que dar por hecho que lo que se ve aquí puede verse desde fuera.
+   */
+  function pintarDia(resumen) {
+    var caja = $("ficDia");
+    var cont = $("ficDiaTurnos");
+    cont.innerHTML = "";
+    if (!resumen || !resumen.cabecera) { caja.classList.add("hidden"); return; }
+    caja.classList.remove("hidden");
+    $("ficDiaTit").textContent = resumen.cabecera.principal;
+    $("ficDiaSub").textContent = resumen.cabecera.secundario || "";
+
+    (resumen.lista || []).forEach(function (r) {
+      var fila = document.createElement("div");
+      fila.className = "fic-res";
+      var hora = document.createElement("span");
+      hora.className = "fic-res-hora";
+      hora.textContent = r.hora || "--:--";
+      var pax = document.createElement("span");
+      pax.className = "fic-res-pax";
+      pax.textContent = r.personas || "?";
+      var nom = document.createElement("span");
+      nom.className = "fic-res-nom";
+      // textContent y no innerHTML: el nombre lo escribe quien coge el teléfono y acaba en
+      // una pantalla pública. No se construye HTML con texto de fuera, nunca.
+      nom.textContent = r.nombre || "Sin nombre";
+      fila.appendChild(hora); fila.appendChild(pax); fila.appendChild(nom);
+      // El turno solo viene cuando quedan mesas de más de uno; la barra, solo en Blanes.
+      [r.turno, r.barra].forEach(function (t) {
+        if (!t) return;
+        var e = document.createElement("span");
+        e.className = "fic-res-eti";
+        e.textContent = t;
+        fila.appendChild(e);
+      });
+      cont.appendChild(fila);
+    });
+
+    if (resumen.mas) {
+      var mas = document.createElement("div");
+      mas.className = "fic-res-mas";
+      mas.textContent = "+" + resumen.mas + " más en el panel";
+      cont.appendChild(mas);
+    }
   }
 
   // La plantilla vive en la misma base que la cola, con una clave reservada.

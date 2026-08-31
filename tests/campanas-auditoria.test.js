@@ -125,10 +125,23 @@ describe("la IA propone, no adivina", () => {
 
 describe("el establecimiento se lee por centro", () => {
   test("las reservas de las dos barras de Blanes cuentan", () => {
-    const i = server.indexOf("let localFilter = local");
-    const fn = server.slice(i, i + 500);
+    // Elegir «Blanes» tiene que mirar también la Cooperativa: son la misma agenda. Antes esto
+    // exigía la línea literal `barrasDelCentro(local, ...)`; ahora el filtro admite VARIOS
+    // establecimientos («los de Tordera») y la llamada va dentro de un flatMap, así que se
+    // comprueba lo que importa —que se expande por centro y se consulta con ANY— y no cómo
+    // está escrito.
+    const i = server.indexOf("const barrasPedidas");
+    assert.ok(i > 0, "no encuentro el filtro por establecimiento");
+    const fn = server.slice(i, i + 900);
     assert.match(fn, /rl\.local = ANY\(\?\)/);
-    assert.match(server.slice(i, i + 700), /barrasDelCentro\(local, "reservas"\)/);
+    assert.match(fn, /barrasDelCentro\(l, "reservas"\)/, "el ámbito tiene que ser el de reservas");
+    assert.match(fn, /\.flatMap\(/, "cada establecimiento pedido se expande a sus barras");
+  });
+
+  test("y varios establecimientos a la vez no repiten barras", () => {
+    // Pedir Blanes y Cooperativa juntas no puede pasar la misma barra dos veces al ANY.
+    const fn = server.slice(server.indexOf("const barrasPedidas"), server.indexOf("const barrasPedidas") + 400);
+    assert.match(fn, /new Set\(/);
   });
 });
 

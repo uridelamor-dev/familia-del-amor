@@ -37,6 +37,26 @@ export const CAMPOS = {
   // confirmado, y por eso se puede usar para decidir a quién se escribe.
   hecho_etiqueta: { tipo: "enum", valores: ["dieta", "no_le_gusta", "prefiere_dia", "prefiere_local", "con_ninos", "vive_fuera", "horario", "ocasion", "trabajo", "otro"] },
   hecho_valor: { tipo: "texto" },
+
+  // ── LO QUE HACE, no quién es ──────────────────────────────────────────────
+  // Hasta aquí todo eran datos de ficha: edad, género, población, cumpleaños. Con eso se puede
+  // preguntar «mujeres de Blanes de 35 a 50» y no «los que han venido tres veces y llevan
+  // cuatro meses sin aparecer», que es la pregunta que trae dinero. Estos salen de
+  // `cliente_metricas` y por eso no existían antes: no había dónde guardarlos.
+  visitas_min: { tipo: "entero", min: 0, max: 500 },
+  visitas_max: { tipo: "entero", min: 0, max: 500 },
+  nunca_ha_venido: { tipo: "bool" },
+  es_nuevo: { tipo: "bool" },                       // una sola visita
+  // FECHA ABSOLUTA, no «hace N días», y esto importa: el segmento se guarda y se vuelve a
+  // ejecutar el día que la campaña sale. Un «hace 90 días» guardado significa cosas distintas
+  // el día que se crea y el día que se envía; una fecha, no. La pantalla convierte «hace tres
+  // meses» a fecha al construir el filtro, y enseña la fecha resultante antes de guardar.
+  sin_venir_desde: { tipo: "fecha" },               // última visita ANTERIOR a esta fecha
+  visito_desde: { tipo: "fecha" },                  // última visita POSTERIOR a esta fecha
+  // Sobre la cota BAJA del valor estimado, nunca la alta: quien entre, entra seguro.
+  valor_min: { tipo: "entero", min: 0, max: 100000 },
+  // Varios establecimientos a la vez, para poder decir «los de Tordera». Se valida cada uno.
+  locales: { tipo: "catalogo_lista" },
 };
 
 const esFecha = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ""));
@@ -58,6 +78,17 @@ export function sanearSegmento(crudo = {}, { locales = [] } = {}) {
       const val = String(v).toLowerCase().trim();
       if (def.valores.includes(val)) seg[k] = val;
       else descartados.push({ campo: k, valor: v, motivo: `solo puede ser ${def.valores.join(" o ")}` });
+    } else if (def.tipo === "catalogo_lista") {
+      // Cada nombre por separado: si uno no existe, se cae ese y se dice, en vez de tirar la
+      // lista entera o —peor— guardarla con un nombre que no filtra nada.
+      const lista = Array.isArray(v) ? v : [v];
+      const buenos = [];
+      for (const uno of lista) {
+        const exacto = locales.find((l) => l.toLowerCase() === String(uno).toLowerCase());
+        if (exacto) buenos.push(exacto);
+        else descartados.push({ campo: k, valor: uno, motivo: "no es ninguno de los establecimientos" });
+      }
+      if (buenos.length) seg[k] = [...new Set(buenos)];
     } else if (def.tipo === "catalogo") {
       // El nombre del local tiene que ser uno de los de verdad: «Blanes» a secas no vale, y
       // guardarlo colaría una campaña que no filtra por ningún local.
@@ -111,6 +142,10 @@ export function describirSegmento(seg = {}) {
   if (seg.origen) p.push(seg.origen === "lead" ? "con ficha completa (leads)" : "que solo han reservado");
   if (seg.poblacion) p.push(`de ${seg.poblacion}`);
   if (seg.local) p.push(`que han reservado en ${seg.local}`);
+  if (Array.isArray(seg.locales) && seg.locales.length) {
+    p.push(seg.locales.length === 1 ? `que han reservado en ${seg.locales[0]}`
+      : `que han reservado en ${seg.locales.join(", ")}`);
+  }
   if (seg.idioma) p.push(`que hablan ${{ es: "español", ca: "catalán", en: "inglés" }[seg.idioma]}`);
 
   if (seg.edad_min != null && seg.edad_max != null) p.push(`de ${seg.edad_min} a ${seg.edad_max} años`);
@@ -135,6 +170,14 @@ export function describirSegmento(seg = {}) {
       con_ninos: "que vienen con niños", vive_fuera: "que viven fuera", horario: "de horario", ocasion: "que celebran", trabajo: "que trabajan en", otro: "de quienes sabemos" }[seg.hecho_etiqueta];
     p.push(seg.hecho_valor ? `${et} ${seg.hecho_valor}` : `de quienes sabemos algo sobre «${seg.hecho_etiqueta}»`);
   }
+  if (seg.nunca_ha_venido) p.push("que NO han venido nunca");
+  if (seg.es_nuevo) p.push("que han venido una sola vez");
+  if (seg.visitas_min != null && seg.visitas_max != null) p.push(`con entre ${seg.visitas_min} y ${seg.visitas_max} visitas`);
+  else if (seg.visitas_min != null) p.push(`con ${seg.visitas_min} visitas o más`);
+  else if (seg.visitas_max != null) p.push(`con ${seg.visitas_max} visitas o menos`);
+  if (seg.sin_venir_desde) p.push(`que no vienen desde el ${seg.sin_venir_desde}`);
+  if (seg.visito_desde) p.push(`que han venido desde el ${seg.visito_desde}`);
+  if (seg.valor_min != null) p.push(`que han traído al menos ${seg.valor_min} € (estimado)`);
   if (seg.q) p.push(`cuyo nombre o contacto contiene «${seg.q}»`);
 
   if (!p.length) return "Todos los contactos, sin ningún filtro";

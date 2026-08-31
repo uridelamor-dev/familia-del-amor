@@ -56,9 +56,14 @@ export const CLAVES_SEGMENTO = [
   // la IA o de una audiencia guardada, y lo único que hay que hacer con ellos es NO TIRARLOS.
   "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
   "hecho_etiqueta", "hecho_valor",
+  // Los de comportamiento, que salen de `cliente_metricas`. Sin darlos de alta aquí, el
+  // formulario del panel los tiraría en silencio y la campaña saldría al local entero — que es
+  // exactamente el fallo que documenta el comentario de arriba, repetido.
+  "visitas_min", "visitas_max", "sin_venir_desde", "visito_desde", "valor_min", "locales",
 ];
 /** Los que son un sí/no: se conservan solo si vienen en verdadero. */
-export const CLAVES_SEGMENTO_BOOL = ["con_email", "con_telefono", "sin_nacimiento", "sin_email", "sin_poblacion"];
+export const CLAVES_SEGMENTO_BOOL = ["con_email", "con_telefono", "sin_nacimiento", "sin_email", "sin_poblacion",
+  "nunca_ha_venido", "es_nuevo"];
 
 // Construye un objeto de audiencia limpio desde el formulario del panel o una audiencia guardada.
 // - Elimina cadenas vacías. `cumple_mes` (checkbox) → mes actual "MM" si viene activo.
@@ -69,7 +74,11 @@ export function construirSegmento(input = {}, { mesActual } = {}) {
   const seg = {};
   for (const k of CLAVES_SEGMENTO) {
     const v = input[k];
-    if (v != null && String(v).trim() !== "") seg[k] = typeof v === "string" ? v.trim() : v;
+    if (v == null) continue;
+    // `locales` viaja como lista: un `String(v).trim()` la convertiría en «A,B,C» y el filtro
+    // dejaría de casar con ningún establecimiento.
+    if (Array.isArray(v)) { if (v.length) seg[k] = v; continue; }
+    if (String(v).trim() !== "") seg[k] = typeof v === "string" ? v.trim() : v;
   }
   for (const k of CLAVES_SEGMENTO_BOOL) if (input[k]) seg[k] = 1;
   if (input.cumple_mes) seg.cumple_mes = String(mesActual != null ? mesActual : new Date().getMonth() + 1).padStart(2, "0");

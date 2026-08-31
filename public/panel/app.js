@@ -2687,7 +2687,7 @@ function renderReviews() {
   const puedeActualizar = USER.rol === "direccion" || USER.rol === "marketing";
   const st = REV_STATUS;
   const fuenteTxt = (s) => s === "places" ? "Places" : s === "business_profile" ? "Business Profile" : (!s || s === "none") ? "Ninguna" : esc(s);
-  const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "OAuth conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">Fuente: ${fuenteTxt(st.source)} · ${num(st.reviews_count || 0)} reseñas${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}${st.last_attempt ? ` · último intento ${esc(String(st.last_attempt).slice(0, 16).replace("T", " "))}` : ""}${st.last_error ? ` · último error: ${esc(String(st.last_error).slice(0, 80))}` : ""}</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">${USER.rol === "direccion" ? '${revPuedeResponder() ? `<button class="btn" data-act="rev-vincular">Vincular fichas de Google</button>` : ""}' : ""}${puedeActualizar ? '${revPuedeResponder() ? `<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>` : ""}' : ""}</div></div>` : "";
+  const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "OAuth conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">Fuente: ${fuenteTxt(st.source)} · ${num(st.reviews_count || 0)} reseñas${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}${st.last_attempt ? ` · último intento ${esc(String(st.last_attempt).slice(0, 16).replace("T", " "))}` : ""}${st.last_error ? ` · último error: ${esc(String(st.last_error).slice(0, 80))}` : ""}</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">${USER.rol === "direccion" && revPuedeResponder() ? `<button class="btn" data-act="rev-vincular">Vincular fichas de Google</button>` : ""}${puedeActualizar && revPuedeResponder() ? `<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>` : ""}</div></div>` : "";
   const cont = `<div class="grid g3" style="margin-bottom:14px">${stat("Total reseñas", "star", num(REV_CONT.total))}${stat("Pendientes", "bell", num(REV_CONT.pendientes))}${stat("Respondidas", "chat", num(REV_CONT.respondidas))}</div>`;
   // Cero reseñas por falta de ficha vinculada NO es lo mismo que cero reseñas. Sin este aviso,
   // la pantalla vacía parece un local sin opiniones y nadie va a mirar el vínculo con Google.
@@ -2779,7 +2779,7 @@ async function loadReviews(append = false) {
       qs.set("offset", String(REV_PAGINA * REV_TAM));
       return "/api/reviews/manage?" + qs.toString();
     };
-    const promStatus = append ? Promise.resolve(REV_STATUS) : fetch("/api/google/status").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    const promStatus = append ? Promise.resolve(REV_STATUS) : fetch("/api/google/status", { headers: { Authorization: "Bearer " + token() } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
     const [j, status] = await Promise.all([revPedir(montaUrl), promStatus]);
     const data = j.data || [];
     if (append) REV_DATA = REV_DATA.concat(data);
@@ -10922,11 +10922,15 @@ const CLAVES_SEGMENTO = [
   "q", "genero", "poblacion", "local", "idioma", "origen", "from", "to",
   "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
   "hecho_etiqueta", "hecho_valor",
+  // Los de comportamiento: visitas, hace cuánto que no viene, valor. Salen de cliente_metricas.
+  "visitas_min", "visitas_max", "sin_venir_desde", "visito_desde", "valor_min", "locales",
 ];
-const CLAVES_SEGMENTO_BOOL = ["con_email", "con_telefono", "sin_nacimiento", "sin_email", "sin_poblacion"];
+const CLAVES_SEGMENTO_BOOL = ["con_email", "con_telefono", "sin_nacimiento", "sin_email", "sin_poblacion",
+  "nunca_ha_venido", "es_nuevo"];
 function construirSegmento(input = {}, mesActual) {
   const seg = {};
-  for (const k of CLAVES_SEGMENTO) { const v = input[k]; if (v != null && String(v).trim() !== "") seg[k] = typeof v === "string" ? v.trim() : v; }
+  // `locales` viaja como lista; un String(v).trim() la aplanaría a «A,B,C» y dejaría de casar.
+  for (const k of CLAVES_SEGMENTO) { const v = input[k]; if (v == null) continue; if (Array.isArray(v)) { if (v.length) seg[k] = v; continue; } if (String(v).trim() !== "") seg[k] = typeof v === "string" ? v.trim() : v; }
   for (const k of CLAVES_SEGMENTO_BOOL) if (input[k]) seg[k] = 1;
   if (input.cumple_mes) seg.cumple_mes = String(mesActual != null ? mesActual : new Date().getMonth() + 1).padStart(2, "0");
   const excl = Array.isArray(input.excluir_telefonos) ? input.excluir_telefonos.filter(Boolean) : [];

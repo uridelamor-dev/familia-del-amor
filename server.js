@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -54,6 +54,11 @@ import { tocaRefrescar, sirveGuardado, edadEnPalabras, claveRango, CLAVE_VIVO,
          CADA_MIN as AG_CACHE_MIN } from "./src/modules/agora/cache.js";
 import { puedePreguntarse, siguesATiempo, enlaceResena, clasificarRespuesta, veredictoFinal,
          respuestaASeguimiento, CONTENTO, DESCONTENTO } from "./src/modules/reservas/seguimiento.js";
+import { resumenDelDia } from "./src/modules/reservas/kiosco.js";
+import { cambiosDe, validarModificacion, quedaPendiente } from "./src/modules/reservas/modificacion.js";
+import { tocaRecalcular as cmToca, SQL_RECALCULO as CM_SQL, SQL_PODAR as CM_PODAR,
+         CADA_HORAS as CM_HORAS, segmentoDe, edadDelCalculo } from "./src/modules/clientes/metricas.js";
+import { PC_SUELO, PC_TECHO, valorDe, ETIQUETA_VALOR, NOTA_VALOR } from "./src/modules/clientes/valor.js";
 import { agregarPorLocal, serieMensual, puedeMostrarComentarios, barajar, mesAnterior, ultimosMeses, finDePlazo, generarToken } from "./src/modules/rrhh/pulso.js";
 import { ensureSchemaHorarios, sembrarLocal, migrarDescansos } from "./src/modules/horarios/schema.js";
 import { descansosPorDia, esTramoDescanso } from "./src/modules/horarios/descansos.js";
@@ -117,7 +122,8 @@ import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope,
 // dar de alta o editar un trabajador para que el cambio no espere al TTL de 10 min.
 let invalidarInternos = () => {};
 import { detectarIdioma, normalizarIdioma, idiomaDeContacto, necesitaTraduccion, idiomasPresentes, placeholdersIntactos, construirTraduccionRequest, IDIOMA_BASE } from "./src/modules/messaging/i18n.js";
-import { esCumpleHoy, hoyMadrid, resumenEnvios } from "./src/modules/campaigns/campaigns.service.js";
+import { esCumpleHoy, hoyMadrid, resumenEnvios, construirSegmento,
+         CLAVES_SEGMENTO, CLAVES_SEGMENTO_BOOL } from "./src/modules/campaigns/campaigns.service.js";
 import { createAgoraClient } from "./src/integrations/agora/client.js";
 import { syncVentas } from "./src/integrations/agora/sync.js";
 
@@ -1264,6 +1270,41 @@ async function initDB() {
      *
      * `veces` sube en vez de crear filas nuevas: lo que importa no es que se pidió, es cuántas.
      */
+    /**
+     * QUIÉN VIENE, CUÁNTAS VECES Y HACE CUÁNTO.
+     *
+     * Tabla DERIVADA al cien por cien: se puede borrar entera y se reconstruye sola desde
+     * `reservas` y `ventas_diarias`. Por eso no lleva ni FK ni restricciones: no es la verdad,
+     * es una foto de la verdad hecha cada pocas horas.
+     *
+     * Solo hay fila para quien TIENE alguna visita pasada. Quien nunca ha reservado no aparece,
+     * y en el listado sale con cero visitas por el LEFT JOIN — así la tabla es la mitad de
+     * grande y «nunca ha venido» sigue siendo un segmento que se puede pedir.
+     *
+     * Y NO guarda «días sin venir»: eso sería un número que envejece en silencio. Si un
+     * recálculo falla tres días, la tabla seguiría diciendo 90 cuando ya son 93. Los días se
+     * restan contra hoy al preguntar (`segmentoDe`).
+     */
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS cliente_metricas (
+        tel9 TEXT PRIMARY KEY,
+        telefono_muestra TEXT,
+        visitas INTEGER NOT NULL DEFAULT 0,
+        comensales_total INTEGER NOT NULL DEFAULT 0,
+        primera_visita TEXT,
+        ultima_visita TEXT,
+        visitas_12m INTEGER NOT NULL DEFAULT 0,
+        locales TEXT,
+        local_habitual TEXT,
+        ultimo_local TEXT,
+        gasto_est_min NUMERIC,
+        gasto_est_max NUMERIC,
+        visitas_con_tpv INTEGER NOT NULL DEFAULT 0,
+        hueco_max INTEGER NOT NULL DEFAULT 0,
+        calculado_en TEXT NOT NULL
+      )
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS marketing_faltan (
         id SERIAL PRIMARY KEY,
@@ -1491,6 +1532,32 @@ async function initDB() {
       "CREATE INDEX IF NOT EXISTS idx_hrapps_estado ON hr_applications(estado)",
       "CREATE INDEX IF NOT EXISTS idx_bloqueos_local ON bloqueos_reservas(local)",
       "CREATE INDEX IF NOT EXISTS idx_ventas_local_dia ON ventas_diarias(local, dia)",
+
+      // POR LOS ÚLTIMOS NUEVE DÍGITOS, que es como se identifica a una persona en toda la casa.
+      //
+      // `idx_reservas_telefono` (ahí arriba) es sobre la columna TAL CUAL, y por eso no sirve
+      // para nada aquí: nadie compara `telefono`, se compara `RIGHT(regexp_replace(telefono,…),9)`
+      // —lo que hacen `MATCH_TEL9` y `TEL9`—, y para Postgres eso es otra cosa. Se puede indexar
+      // una expresión mientras dé siempre lo mismo para la misma entrada, y esta lo da. Hay
+      // precedente en casa: `idx_hechos_tel`, unas líneas más arriba.
+      //
+      // MEDIDO sobre 150.000 reservas y 40.000 leads, que es el orden de magnitud real:
+      //   · buscar UNA persona por su móvil:  35,9 ms → 0,04 ms   (la ficha de cliente, el
+      //     seguimiento post-visita, y cualquier cruce futuro por teléfono)
+      //   · el listado entero de contactos: 1.520 ms → 1.250 ms   (un 18 %)
+      //
+      // Lo segundo mejora poco A PROPÓSITO, y conviene saberlo: esa consulta recorre a TODO el
+      // mundo, así que leer las tablas enteras es el plan correcto y ningún índice lo va a
+      // cambiar. El listado sigue tardando más de un segundo, y eso no se arregla aquí: se
+      // arregla dejando de recalcularlo en cada petición.
+      "CREATE INDEX IF NOT EXISTS idx_reservas_tel9 ON reservas (RIGHT(regexp_replace(telefono, '[^0-9]', '', 'g'), 9))",
+      "CREATE INDEX IF NOT EXISTS idx_leads_tel9 ON leads (RIGHT(regexp_replace(telefono, '[^0-9]', '', 'g'), 9))",
+      // Y el compuesto para el filtro por establecimiento, que es un EXISTS sobre las dos cosas
+      // a la vez: «¿ha reservado esta persona en alguno de estos locales?».
+      "CREATE INDEX IF NOT EXISTS idx_reservas_tel9_local ON reservas (RIGHT(regexp_replace(telefono, '[^0-9]', '', 'g'), 9), local)",
+      // Para los segmentos por comportamiento: «los que llevan X sin venir» y «los de N visitas».
+      "CREATE INDEX IF NOT EXISTS idx_cm_ultima ON cliente_metricas (ultima_visita)",
+      "CREATE INDEX IF NOT EXISTS idx_cm_visitas ON cliente_metricas (visitas)",
     ];
     for (const sql of INDICES) {
       try { await client.query(sql); } catch (e) { console.warn("Índice omitido (no crítico):", e.message); }
@@ -1825,14 +1892,37 @@ async function runReviewsSync() {
 }
 
 // Refresco diario de reseñas (cada 24h). Fallback automático Business → Places.
-setInterval(async () => {
+/**
+ * Refresco de reseñas: MARCA EN LA BASE, no un temporizador de un día.
+ *
+ * Era `setInterval(..., 24 h)`, y en Replit eso no se dispara casi nunca: el proceso se
+ * reinicia en cada despliegue y a veces solo, así que la cuenta atrás vuelve a empezar de cero
+ * una y otra vez. Tampoco corría al arrancar. Resultado: la pantalla podía llevar semanas sin
+ * traer una reseña nueva y el banner enseñaba una fecha de sincronización antigua sin que nada
+ * dijera por qué.
+ *
+ * Es el mismo patrón que ya se usa en el repaso de facturas y en la caché de Ágora: preguntar
+ * cada poco «¿cuánto hace de la última?» contra algo que sobrevive al reinicio.
+ */
+const REVIEWS_CADA_HORAS = 24;
+let _sincronizandoReviews = false;
+async function reviewsSyncSiToca() {
+  if (_sincronizandoReviews) return;
   try {
     const refresh = await getConfig("google_refresh_token");
-    if (refresh || GOOGLE_PLACES_API_KEY) await runReviewsSync();
+    if (!refresh && !GOOGLE_PLACES_API_KEY) return;      // sin conectar no hay nada que hacer
+    const ultimo = await getConfig("reviews_last_attempt");
+    if (!tocaRepasar({ ultimo, ahora: new Date().toISOString(), cadaHoras: REVIEWS_CADA_HORAS })) return;
+    _sincronizandoReviews = true;
+    await runReviewsSync();       // ya escribe `reviews_last_attempt` él mismo
   } catch (e) {
     console.error("[Google Reviews] Auto-refresh:", e.message);
-  }
-}, 24 * 60 * 60 * 1000);
+  } finally { _sincronizandoReviews = false; }
+}
+// Se pregunta cada media hora; la marca decide. Y al arrancar, tras dar tiempo a que la base
+// esté lista: si el último intento es de hace tres semanas, se hace ahora y no dentro de un día.
+setInterval(() => { reviewsSyncSiToca().catch(() => {}); }, 30 * 60 * 1000);
+setTimeout(() => { reviewsSyncSiToca().catch(() => {}); }, 90 * 1000);
 
 // Sincronización de ventas de Ágora (oportunista + catch-up). No hace NADA si no hay locales
 // configurados (AGORA_LOCALES vacío). Arranque diferido 60s + cada 45 min.
@@ -3290,7 +3380,11 @@ app.get("/auth/google/callback", async (req, res) => {
   }
 });
 
-app.get("/api/google/status", async (req, res) => {
+// CON SESIÓN. Estaba abierto a cualquiera y contaba el último error de Google, si la conexión
+// está viva y cuántas fichas hay configuradas: diagnóstico interno, útil para quien quiera
+// saber por dónde anda el sistema. Los dos únicos sitios que lo piden son los paneles, y los
+// dos tienen sesión; que estuviera abierto no lo usaba nadie más.
+app.get("/api/google/status", requireAuth(["direccion", "encargado", "contabilidad", "marketing"]), async (req, res) => {
   const token = await getConfig("google_refresh_token");
   const count = await dbGet("SELECT COUNT(*) as n FROM google_reviews");
   const placesCount = await contarPlaceIds();
@@ -3313,8 +3407,13 @@ app.get("/api/reviews", async (req, res) => {
   const limit  = Math.min(parseInt(req.query.limit)  || 20, 50);
   const rating = parseInt(req.query.rating) || 4;
   try {
+    // COLUMNAS NOMBRADAS, y no el asterisco. Esta ruta la sirve la web pública sin sesión, y
+    // con el asterisco salían también la respuesta guardada, quién de la casa la escribió y
+    // cuándo. Es trabajo interno y no pinta nada en la portada: ahí hace falta la opinión, la
+    // nota, quién la dejó y la fecha.
     const rows = await dbAll(
-      `SELECT * FROM google_reviews WHERE rating >= ? AND text != '' ORDER BY fecha DESC LIMIT ?`,
+      `SELECT id, location_name, author, rating, text, fecha
+         FROM google_reviews WHERE rating >= ? AND text != '' ORDER BY fecha DESC LIMIT ?`,
       [rating, limit]
     );
     res.json({ ok: true, data: rows });
@@ -4153,24 +4252,61 @@ function sqlContactosUnificados(filtros = {}, params = []) {
   // con el IN exacto el cliente desaparecía al filtrar por local.
   // Por CENTRO y no por barra: las reservas de la Cooperativa son de Blanes, y con `= ?` sus
   // clientes no aparecían al segmentar por el establecimiento. Igual que en el resto del panel.
-  let localFilter = local
+  // Varios establecimientos a la vez («los de Tordera»). `local` (uno solo) se conserva porque
+  // hay campañas guardadas con esa forma dentro de su `segmento_json`: cambiarla haría que una
+  // campaña programada saliera a otra gente.
+  const barrasPedidas = [...new Set(
+    (Array.isArray(filtros.locales) && filtros.locales.length ? filtros.locales : [local])
+      .filter(Boolean).flatMap((l) => barrasDelCentro(l, "reservas"))
+  )];
+  let localFilter = barrasPedidas.length
     ? `AND EXISTS (
          SELECT 1 FROM reservas rl
          WHERE rl.local = ANY(?)
            AND RIGHT(regexp_replace(rl.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
        )`
     : "";
-  if (local) params.push(barrasDelCentro(local, "reservas"));
+  if (barrasPedidas.length) params.push(barrasPedidas);
 
   let sql = `
     SELECT
       c.nombre, c.apellidos, c.telefono, c.correo,
       c.nacimiento, c.poblacion, c.genero, c.origen,
       c.ultima_actividad,
+      -- DÓNDE ESTUVO LA ÚLTIMA VEZ. Es lo que rellena la variable {local} de las plantillas, y
+      -- hasta hoy no lo devolvía nadie: por eso los mensajes salían con un hueco donde tenía
+      -- que ir el nombre del local. Va por el índice de expresión idx_reservas_tel9, así que
+      -- es una búsqueda y no un recorrido. Sale NULL para quien nunca ha reservado, y ahí entra
+      -- el respaldo de localDeContacto, que pone el nombre de la casa.
+      (SELECT rl2.local FROM reservas rl2
+        WHERE RIGHT(regexp_replace(rl2.telefono, '[^0-9]', '', 'g'), 9)
+            = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
+        ORDER BY rl2.dia DESC, rl2.id DESC LIMIT 1) AS ultimo_local,
       COALESCE(mp.baja, 0) AS baja,
       COALESCE(mp.opt_in_wa, 0) AS opt_in_wa,
       COALESCE(mp.opt_in_email, 0) AS opt_in_email,
       mp.idioma AS idioma,
+      -- LO QUE HACE, no solo quién es. Hasta ahora solo se podía segmentar por datos de ficha
+      -- —edad, género, población— y nunca por comportamiento. Estas columnas son lo que permite
+      -- preguntar «los que han venido tres veces y llevan cuatro meses sin aparecer».
+      --
+      -- Es un LEFT JOIN, y esa es la propiedad que hace segura toda la pieza: NO PUEDE QUITAR
+      -- FILAS. Si la tabla está vacía, si el recálculo nunca ha corrido o si falla entero, todo
+      -- el mundo sale con cero visitas y los nueve endpoints que usan esta consulta devuelven
+      -- exactamente las mismas personas que antes.
+      COALESCE(cm.visitas, 0) AS visitas,
+      COALESCE(cm.visitas_12m, 0) AS visitas_12m,
+      COALESCE(cm.comensales_total, 0) AS comensales_total,
+      cm.primera_visita, cm.ultima_visita,
+      cm.local_habitual,
+      -- Y de paso arregla la variable {local} de las plantillas por el camino bueno: hasta hoy
+      -- se resolvía con un subselect por fila (ver más abajo), y ahora está ya calculado.
+      cm.ultimo_local AS ultimo_local_cm,
+      cm.gasto_est_min::float AS gasto_est_min,
+      cm.gasto_est_max::float AS gasto_est_max,
+      COALESCE(cm.visitas_con_tpv, 0) AS visitas_con_tpv,
+      COALESCE(cm.hueco_max, 0) AS hueco_max,
+      cm.calculado_en AS metricas_calculado_en,
       CASE WHEN EXISTS (
         SELECT 1 FROM wa_clientes w
         WHERE RIGHT(regexp_replace(w.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
@@ -4209,6 +4345,8 @@ function sqlContactosUnificados(filtros = {}, params = []) {
     ) c
     LEFT JOIN marketing_prefs mp
       ON RIGHT(regexp_replace(mp.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
+    LEFT JOIN cliente_metricas cm
+      ON cm.tel9 = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
     WHERE 1=1
     ${localFilter}
   `;
@@ -4302,6 +4440,21 @@ function sqlContactosUnificados(filtros = {}, params = []) {
     sql += ` AND EXISTS (SELECT 1 FROM cliente_hechos h WHERE ${cond.join(" AND ")})`;
     params.push(...par);
   }
+  // ── FILTROS POR COMPORTAMIENTO ────────────────────────────────────────────
+  // Van contra `cliente_metricas`, que es la foto que se recalcula cada pocas horas. Con la
+  // tabla vacía (primer despliegue, o recálculo que nunca corrió) todo el mundo tiene cero
+  // visitas: «los que han venido 3 veces» devolvería a nadie, no a todos. Es el lado correcto.
+  if (filtros.visitas_min != null) { sql += ` AND COALESCE(cm.visitas, 0) >= ?`; params.push(Number(filtros.visitas_min)); }
+  if (filtros.visitas_max != null) { sql += ` AND COALESCE(cm.visitas, 0) <= ?`; params.push(Number(filtros.visitas_max)); }
+  if (filtros.nunca_ha_venido) sql += ` AND COALESCE(cm.visitas, 0) = 0`;
+  if (filtros.es_nuevo) sql += ` AND COALESCE(cm.visitas, 0) = 1`;
+  // «No viene desde el X»: hace falta que HAYA venido alguna vez, o entrarían también todos los
+  // leads que nunca han pisado el local y a esos no se les puede echar de menos.
+  if (filtros.sin_venir_desde) { sql += ` AND cm.ultima_visita IS NOT NULL AND cm.ultima_visita < ?`; params.push(String(filtros.sin_venir_desde)); }
+  if (filtros.visito_desde) { sql += ` AND cm.ultima_visita IS NOT NULL AND cm.ultima_visita >= ?`; params.push(String(filtros.visito_desde)); }
+  // Sobre la cota BAJA del valor estimado: filtrando por la alta entraría gente que igual ha
+  // traído la mitad. Con la baja, quien entra, entra seguro.
+  if (filtros.valor_min != null) { sql += ` AND cm.gasto_est_min >= ?`; params.push(Number(filtros.valor_min)); }
   if (filtros.sin_nacimiento) sql += ` AND COALESCE(c.nacimiento, '') = ''`;
   if (filtros.sin_email) sql += ` AND COALESCE(c.correo, '') = ''`;
   if (filtros.sin_poblacion) sql += ` AND COALESCE(c.poblacion, '') = ''`;
@@ -6126,6 +6279,52 @@ app.post("/api/facturas/lineas/releer", requireAuth(["direccion", "contabilidad"
  *
  * Y si no hay nada pendiente no gasta nada: la consulta devuelve cero filas y se acabó.
  */
+/**
+ * RECALCULAR LAS MÉTRICAS DE CLIENTE.
+ *
+ * Mismo patrón que el repaso de facturas y la caché de Ágora, por la misma razón: en Replit el
+ * proceso se reinicia constantemente y un `setInterval` de seis horas no llegaría a dispararse.
+ * Se pregunta cada media hora y decide una marca guardada en la base.
+ *
+ * Las dos consultas van en una transacción: si se recalcula y falla el podado, la tabla
+ * quedaría con clientes que ya no tienen ninguna reserva y esos saldrían en los segmentos.
+ */
+const CM_ULTIMO = "cliente_metricas_ultimo";
+let _recalculandoMetricas = false;
+async function recalcularMetricasSiToca({ forzar = false } = {}) {
+  if (_recalculandoMetricas) return { saltado: true };
+  const ahora = new Date().toISOString();
+  if (!forzar && !cmToca({ ultimo: await getConfig(CM_ULTIMO), ahora, cadaHoras: CM_HORAS })) return { saltado: true };
+  // La marca ANTES del trabajo, como en el repaso de facturas: si el proceso se cae a mitad, el
+  // siguiente arranque no encadena pasadas sin freno. El precio es esperar otras seis horas,
+  // que para un dato derivado es el lado correcto en el que equivocarse.
+  await setConfig(CM_ULTIMO, ahora);
+  _recalculandoMetricas = true;
+  const t0 = Date.now();
+  const client = await pool.connect();
+  try {
+    const hoy = hoyISO();
+    // Sin usar `addDiasISO`, que se declara mucho más abajo: esto solo funcionaría por el orden
+    // en que se ejecuta, y basta con que alguien adelante el arranque para que reviente.
+    const hace12m = new Date(Date.parse(hoy + "T12:00:00Z") - 365 * 86400000).toISOString().slice(0, 10);
+    await client.query("BEGIN");
+    await client.query(CM_SQL, [hoy, hace12m, PC_SUELO, PC_TECHO, ahora]);
+    await client.query(CM_PODAR, [hoy]);
+    await client.query("COMMIT");
+    const n = await client.query("SELECT COUNT(*)::int AS n FROM cliente_metricas");
+    const filas = n.rows[0]?.n || 0;
+    console.log(`[clientes] métricas recalculadas: ${filas} personas en ${Math.round((Date.now() - t0) / 1000)}s`);
+    return { ok: true, filas };
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[clientes] métricas:", e.message);
+    return { ok: false, error: e.message };
+  } finally {
+    client.release();
+    _recalculandoMetricas = false;
+  }
+}
+
 async function repasoLineasSiToca() {
   if (_releyendo) return;                                   // alguien lo está haciendo a mano
   try {
@@ -9858,10 +10057,36 @@ app.get("/api/fichar/:token", async (req, res) => {
 
     dbRun(`UPDATE fic_dispositivos SET ultimo_visto = ? WHERE id = ?`, [m.iso, disp.id]).catch(() => {});
 
+    // LAS RESERVAS DEL DÍA. Se ven al llegar, sin tener que meter el PIN ni sacar el móvil: la
+    // tablet está en la zona de trabajo y saber cómo viene el día es lo primero que se mira.
+    //
+    // SIN TELÉFONO, y no es un descuido. Este endpoint es el ÚNICO del sistema que contesta sin
+    // sesión: se entra con el token de la tablet, que va en la URL. Quien copie ese enlace ve
+    // esta pantalla desde fuera del local — da igual dónde esté la tablet. El nombre y la hora
+    // hacen falta para atender la mesa; el número de teléfono no aporta nada aquí y es el dato
+    // que más daño hace si se filtra. Se queda en el panel, que sí pide contraseña.
+    let reservas = [];
+    try {
+      // «reservas» y no «personal»: en Blanes las dos barras llevan una sola agenda, y la fila
+      // guarda de cuál es cada mesa. Es el mismo ámbito que usa la pantalla de Reservas.
+      reservas = await dbAll(
+        `SELECT local, hora, personas::int AS personas, nombre_reserva
+           FROM reservas WHERE local = ANY(?) AND dia = ? ORDER BY hora ASC, id ASC`,
+        [barrasDelCentro(disp.local, "reservas"), m.diaNegocio]);
+    } catch { /* si falla, el kiosco sigue sirviendo para fichar, que es a lo que viene */ }
+
     res.json({
       ok: true,
       local: disp.local, dispositivo: disp.nombre,
       dia: m.diaNegocio, hora: m.hora.slice(0, 5), servidorMs: ahora,
+      reservas: resumenDelDia(reservas.map((r) => ({
+        hora: String(r.hora || "").slice(0, 5),
+        personas: Number(r.personas) || 0,
+        nombre: String(r.nombre_reserva || "").trim(),
+        // Solo se dice de qué barra es cuando hay más de una: en los siete locales que no son
+        // Blanes, repetir el nombre del sitio en cada línea es ruido.
+        barra: barrasDelCentro(disp.local, "reservas").length > 1 ? String(r.local || "") : null,
+      })), { ahora: m.hora.slice(0, 5) }),
       equipo: equipo.map((w) => ({
         id: w.id, nombre: w.nombre, tienePin: !!w.tiene_pin,
         // Cuántos dígitos tiene su PIN, para que el teclado entre solo al completarlo.
@@ -13961,6 +14186,44 @@ app.delete("/api/hechos/:id", requireAuth(["direccion", "marketing"]), async (re
 });
 
 // Ficha de un contacto: datos, visitas/reservas, estado WhatsApp y consentimiento.
+/**
+ * DE CUÁNDO SON LOS NÚMEROS.
+ *
+ * Esta mitad no es opcional: una cifra sin hora no se distingue de una de la semana pasada, y
+ * las decisiones que se toman con «visitas» y «hace cuánto» dependen de que estén al día. Si el
+ * recálculo se atasca, aquí se ve.
+ */
+app.get("/api/clientes/metricas/estado", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const ultimo = await getConfig(CM_ULTIMO);
+    const fila = await dbGet(`SELECT COUNT(*)::int AS filas,
+                                     COALESCE(SUM(visitas), 0)::int AS visitas,
+                                     COUNT(*) FILTER (WHERE visitas_con_tpv > 0)::int AS con_tpv
+                                FROM cliente_metricas`);
+    res.json({ ok: true, data: {
+      ultimo,
+      edad: edadDelCalculo({ calculadoEn: ultimo, ahora: new Date().toISOString() }),
+      filas: fila?.filas || 0,
+      visitas: fila?.visitas || 0,
+      // Qué parte de la base tiene datos de caja. Con Ágora a medio configurar esto será bajo,
+      // y explica por qué muchos clientes no tienen valor estimado.
+      cobertura_tpv: fila?.filas ? Math.round((fila.con_tpv / fila.filas) * 100) : 0,
+      etiqueta_valor: ETIQUETA_VALOR,
+      nota_valor: NOTA_VALOR,
+    } });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/** Recalcular a mano, para no esperar seis horas después de tocar algo. */
+app.post("/api/clientes/metricas/recalcular", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const r = await recalcularMetricasSiToca({ forzar: true });
+    if (r.saltado) return res.status(409).json({ ok: false, error: "Ya se está recalculando ahora mismo" });
+    if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
+    res.json({ ok: true, filas: r.filas });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.get("/api/contactos/:telefono", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const tel = req.params.telefono;
@@ -14106,7 +14369,7 @@ async function contarEnvioWA(n = 1) {
  * mañana. Y como al retomar se saltan los que ya recibieron (ver `dispatchCampana`), nadie
  * recibe el mismo mensaje dos veces.
  */
-async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 6000, maxMs = 15000, resolverMensaje = null }) {
+async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 6000, maxMs = 15000, resolverMensaje = null, localCampana = null }) {
   let enviados = 0, errores = 0;
   const hoyEnv = hoyISO();
   const yaHoy = Number((await getConfig("wa_enviados_" + hoyEnv)) || 0);
@@ -14117,7 +14380,11 @@ async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = nu
     let estado = "enviado", err = null;
     try {
       const base = resolverMensaje ? resolverMensaje(c) : mensaje;
-      const texto = aplicarVariables(base, c);
+      // El local de la CAMPAÑA manda sobre el de la persona: si se escribe «a los de Can
+      // Mateu», el mensaje dice Can Mateu aunque esa persona fuera una vez a Blanes. Si la
+      // campaña no filtra por local, cada uno recibe el suyo, y quien no tenga ninguno recibe
+      // el nombre de la casa (localDeContacto). Antes de esto, {local} salía siempre vacío.
+      const texto = aplicarVariables(base, localCampana ? { ...c, local: localCampana } : c);
       if (adjunto && adjunto.buffer) await sendMediaLibre(c.telefono, adjunto.buffer, adjunto.filename, adjunto.mimetype, texto);
       else await sendMensajeLibre(c.telefono, texto);
       enviados++;
@@ -14142,6 +14409,48 @@ async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = nu
     } catch { /* noop */ }
   }
   return { enviados, errores, pospuestos: pospuestos.length };
+}
+
+/**
+ * EL SEGMENTO DE UNA CAMPAÑA, EN UN SOLO SITIO.
+ *
+ * EL FALLO QUE ARREGLA: cada endpoint construía su propia lista de filtros a mano. `POST
+ * /api/campanas` tenía dieciséis claves escritas una a una y se dejaba fuera cinco que sí
+ * existen, sí sabe aplicar la consulta y sí manda el panel: `hecho_etiqueta`, `hecho_valor`,
+ * `sin_nacimiento`, `sin_email` y `sin_poblacion`. La consecuencia no era cosmética: la vista
+ * previa contaba con esos filtros y el envío no, así que **el mensaje salía a más gente de la
+ * que se había visto al crear la campaña**. Y eso no da error, no se ve, y no se puede deshacer.
+ *
+ * Lo irónico es que justo encima de aquel objeto había un comentario explicando por qué esto es
+ * peligroso, escrito cuando se arreglaron otros tres filtros que se perdían igual. La lección no
+ * es «acordarse de la lista»: es que no puede haber una lista escrita a mano. Ahora las claves
+ * salen de `CLAVES_SEGMENTO`, que se deriva de `CAMPOS` —la única lista que manda—, y hay un
+ * test que falla si las dos dejan de coincidir.
+ *
+ * Además pasa por `sanearSegmento`, que hasta hoy solo usaba la propuesta de la IA: un filtro
+ * inventado o un valor imposible se rechazaba si venía del modelo y se colaba en silencio si
+ * venía del formulario. El que se cuela es peor, porque nadie lo revisa.
+ *
+ * → { segmento, descartados }
+ */
+function segmentoDelBody(body = {}, { mesActual } = {}) {
+  const crudo = construirSegmento(body, { mesActual });
+  const { segmento, descartados } = sanearSegmento(crudo, { locales: INV_LOCALES });
+  // Estos tres no son filtros de gente, son cómo se envía, así que `sanearSegmento` no los
+  // conoce y los descartaría. Se copian aparte y a propósito.
+  if (Array.isArray(crudo.excluir_telefonos) && crudo.excluir_telefonos.length) segmento.excluir_telefonos = crudo.excluir_telefonos;
+  if (crudo.soloOptIn) segmento.soloOptIn = true;
+  if (body.traducir) segmento.traducir = true;
+  // Nunca a quien se dio de baja. Va aquí y no en cada endpoint porque olvidarlo en uno solo
+  // es escribir a quien pidió que no le escribieran.
+  segmento.excluir_baja = 1;
+  return { segmento, descartados: (descartados || []).filter((d) => !["excluir_telefonos", "soloOptIn", "traducir", "excluir_baja"].includes(d.campo)) };
+}
+
+/** ¿El cuerpo de una petición trae algún filtro? Para no borrar el segmento de un PATCH parcial. */
+function traeSegmento(body = {}) {
+  return [...CLAVES_SEGMENTO, ...CLAVES_SEGMENTO_BOOL, "excluir_telefonos", "soloOptIn", "traducir"]
+    .some((k) => body[k] !== undefined);
 }
 
 // Segmenta desde el segmento guardado y envía una campaña (usado al enviar ya y por el scheduler).
@@ -14171,7 +14480,10 @@ async function dispatchCampana(campanaId) {
 
   await dbRun(`UPDATE campanas_wa SET estado='enviando' WHERE id = ?`, [campanaId]);
   const resolverMensaje = seg.traducir ? await construirResolverIdioma(camp.mensaje, pendientes) : null;
-  enviarLoteWA({ contactos: pendientes, mensaje: camp.mensaje, campanaId, adjunto: cargarAdjunto(camp.adjunto_url), resolverMensaje });
+  enviarLoteWA({ contactos: pendientes, mensaje: camp.mensaje, campanaId, adjunto: cargarAdjunto(camp.adjunto_url), resolverMensaje,
+    // Solo cuando la campaña va a UN establecimiento. Con varios («los de Tordera») no hay un
+    // nombre que valga para todos, y cada uno recibe el suyo.
+    localCampana: (!Array.isArray(seg.locales) || seg.locales.length <= 1) ? (seg.local || null) : null });
   return { ok: true, enviables: pendientes.length };
 }
 
@@ -14182,16 +14494,19 @@ app.post("/api/contactos/mensaje-masivo", requireAuth(["direccion", "marketing"]
   if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
   try {
     const params = [];
-    const sql = sqlContactosUnificados(req.body, params);
+    const { segmento } = segmentoDelBody({ ...req.body, soloOptIn });
+    const sql = sqlContactosUnificados(segmento, params);
     const contactos = await dbAll(sql, params);
     const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: !!soloOptIn });
     if (!aptos.length) return res.json({ ok: true, total: contactos.length, enviables: 0, omitidos, aviso: "No hay destinatarios enviables (revisa bajas/consentimiento)." });
-    const segmento = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes };
+    // El MISMO segmento con el que se acaba de filtrar. Antes se guardaba una versión recortada
+    // a cinco claves, así que la fila de `campanas_wa` no describía a quién se había escrito de
+    // verdad: al mirarla un mes después, el registro mentía.
     const row = await dbRun(`INSERT INTO campanas_wa (nombre, segmento_json, mensaje, total_enviados) VALUES (?, ?, ?, 0) RETURNING id`,
       [nombre_campana || ("Mensaje rápido " + hoyISO()), JSON.stringify(segmento), mensaje]);
     const campanaId = row.id;
     res.json({ ok: true, total: contactos.length, enviables: aptos.length, omitidos, campana_id: campanaId });
-    enviarLoteWA({ contactos: aptos, mensaje, campanaId });
+    enviarLoteWA({ contactos: aptos, mensaje, campanaId, localCampana: req.body.local || null });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -14201,13 +14516,21 @@ app.post("/api/contactos/mensaje-masivo", requireAuth(["direccion", "marketing"]
 app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const params = [];
-    const sql = sqlContactosUnificados({ ...req.body, excluir_baja: 1 }, params);
+    // POR EL MISMO SITIO QUE EL ENVÍO. La vista previa contaba con el cuerpo de la petición tal
+    // cual y el envío con el segmento ya guardado: dos entradas distintas para la misma
+    // pregunta, y por ahí es por donde se colaba que la previa dijera 40 y salieran 300.
+    // Ahora las dos parten de `segmentoDelBody`, así que lo que se cuenta aquí es exactamente
+    // lo que se va a enviar.
+    const { segmento: segPrev, descartados: descPrev } = segmentoDelBody(req.body);
+    const sql = sqlContactosUnificados(segPrev, params);
     const rows = await dbAll(sql, params);
-    const { aptos, omitidos } = filtrarEnviablesWA(rows, { soloOptIn: !!req.body.soloOptIn });
+    const { aptos, omitidos } = filtrarEnviablesWA(rows, { soloOptIn: !!segPrev.soloOptIn });
     const aptosSet = new Set(aptos.map((c) => c.telefono));
     // Lista editable (nombre/teléfono + si es enviable) para "ver/editar destinatarios". Cap 500.
     const lista = rows.slice(0, 500).map((c) => ({ nombre: c.nombre, apellidos: c.apellidos, telefono: c.telefono, enviable: aptosSet.has(c.telefono) }));
-    res.json({ ok: true, total: rows.length, enviables: aptos.length, omitidos, muestra: rows.slice(0, 5), lista });
+    // `descartados` viaja hasta la pantalla: un filtro que no se puede aplicar se DICE, no se
+    // tira en silencio. Es la misma regla que ya seguía la propuesta de la IA.
+    res.json({ ok: true, total: rows.length, enviables: aptos.length, omitidos, muestra: rows.slice(0, 5), lista, descartados: descPrev });
   } catch (e) {
     res.status(500).json({ ok: false });
   }
@@ -14234,12 +14557,8 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
   if (!nombre || !mensaje) return res.status(400).json({ ok: false, error: "Faltan nombre y mensaje" });
   if (canal !== "whatsapp") return res.status(400).json({ ok: false, error: "El canal email aún no está disponible" });
   try {
-    const seg = { q: req.body.q, genero: req.body.genero, poblacion: req.body.poblacion, local: req.body.local, cumple_mes: req.body.cumple_mes, con_email: req.body.con_email, con_telefono: req.body.con_telefono, idioma: req.body.idioma, origen: req.body.origen, from: req.body.from, to: req.body.to,
-      // Los tres nuevos: quién vino de verdad, la edad y el cumpleaños por días. Si no se
-      // guardan en el segmento, la campaña programada se enviaría a otra gente que la que se
-      // vio al crearla — y eso no se nota hasta que ya ha salido.
-      reservo_from: req.body.reservo_from, reservo_to: req.body.reservo_to,
-      edad_min: req.body.edad_min, edad_max: req.body.edad_max, cumple_en_dias: req.body.cumple_en_dias, excluir_telefonos: Array.isArray(req.body.excluir_telefonos) ? req.body.excluir_telefonos : [], traducir: !!req.body.traducir, excluir_baja: 1, soloOptIn: !!soloOptIn };
+    // Todas las claves de CAMPOS, sin lista escrita a mano. Ver `segmentoDelBody`.
+    const { segmento: seg, descartados } = segmentoDelBody({ ...req.body, soloOptIn });
     // Recuento de enviables para informar
     const params = []; const contactos = await dbAll(sqlContactosUnificados(seg, params), params);
     const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: !!soloOptIn });
@@ -14255,7 +14574,7 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
       if (!isReady()) { await dbRun(`UPDATE campanas_wa SET estado='borrador' WHERE id=?`, [id]); return res.status(503).json({ ok: false, error: "WhatsApp no conectado", campana_id: id }); }
       res.json({ ok: true, campana_id: id, estado: "enviando", enviables: aptos.length, omitidos });
       const resolverMensaje = seg.traducir ? await construirResolverIdioma(mensaje, aptos) : null;
-      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id, adjunto: cargarAdjunto(adjunto_url), resolverMensaje });
+      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id, adjunto: cargarAdjunto(adjunto_url), resolverMensaje, localCampana: seg.local || null });
       return;
     }
     res.json({ ok: true, campana_id: id, estado, enviables: aptos.length, omitidos });
@@ -14306,14 +14625,18 @@ app.patch("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (r
     if (!["borrador", "programada"].includes(camp.estado)) return res.status(409).json({ ok: false, error: "Solo se pueden editar campañas en borrador o programadas" });
     const b = req.body || {};
     let seg = {}; try { seg = JSON.parse(camp.segmento_json || "{}"); } catch { /* noop */ }
-    // Campos de segmentación editables (los que llegan se reemplazan).
-    for (const k of ["q", "genero", "poblacion", "local", "cumple_mes", "con_email", "con_telefono", "idioma", "origen", "from", "to"]) {
-      if (b[k] !== undefined) seg[k] = b[k];
+    // SE REEMPLAZA ENTERO, no se fusiona clave a clave. Antes se recorría una lista de once, y
+    // por eso la equis de un filtro heredado no lo quitaba de ninguna parte: el filtro seguía en
+    // `segmento_json` y la campaña salía a quien decía la pantalla que ya no iba a salir. El
+    // panel manda el segmento completo (`filtros()` en app.js), así que lo que llega ES el
+    // segmento — incluido lo que se ha quitado, por ausencia.
+    if (traeSegmento(b)) {
+      const { segmento } = segmentoDelBody(b);
+      seg = segmento;
+    } else {
+      // Un PATCH que solo cambia el nombre o la fecha no puede vaciar la audiencia.
+      seg.excluir_baja = 1;
     }
-    if (b.excluir_telefonos !== undefined) seg.excluir_telefonos = Array.isArray(b.excluir_telefonos) ? b.excluir_telefonos : [];
-    if (b.soloOptIn !== undefined) seg.soloOptIn = !!b.soloOptIn;
-    if (b.traducir !== undefined) seg.traducir = !!b.traducir;
-    seg.excluir_baja = 1;
     const nombre = b.nombre !== undefined ? b.nombre : camp.nombre;
     const mensaje = b.mensaje !== undefined ? b.mensaje : camp.mensaje;
     const adjunto_url = b.adjunto_url !== undefined ? b.adjunto_url : camp.adjunto_url;
@@ -15189,7 +15512,13 @@ const server = app.listen(PORT, async () => {
       await setConfig("cumple_last", hm.iso); // marca ANTES de enviar (evita duplicados si reintenta)
       const plantilla = (await getConfig("cumple_plantilla")) || "¡Feliz cumpleaños, {nombre}! 🎉 Te esperamos en Familia del Amor.";
       const leads = await dbAll(
-        `SELECT l.nombre, l.apellidos, l.telefono, l.nacimiento, COALESCE(mp.baja, 0) AS baja
+        // `ultimo_local` también aquí: esta consulta no pasa por sqlContactosUnificados y la
+        // plantilla de cumpleaños es justo una de las que usa {local}.
+        `SELECT l.nombre, l.apellidos, l.telefono, l.nacimiento, COALESCE(mp.baja, 0) AS baja,
+                (SELECT rl.local FROM reservas rl
+                  WHERE RIGHT(regexp_replace(rl.telefono, '[^0-9]', '', 'g'), 9)
+                      = RIGHT(regexp_replace(l.telefono, '[^0-9]', '', 'g'), 9)
+                  ORDER BY rl.dia DESC, rl.id DESC LIMIT 1) AS ultimo_local
          FROM leads l LEFT JOIN marketing_prefs mp
            ON RIGHT(regexp_replace(mp.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(l.telefono, '[^0-9]', '', 'g'), 9)
          WHERE l.nacimiento IS NOT NULL AND l.nacimiento <> '' AND l.telefono IS NOT NULL AND l.telefono <> ''`
@@ -15379,6 +15708,73 @@ const server = app.listen(PORT, async () => {
     }
   });
 
+  /**
+   * MODIFICAR UNA RESERVA. Lo que llevaba roto desde el principio.
+   *
+   * `whatsapp.js` exporta `setOnModificarReserva` desde que existe la herramienta, y aquí no se
+   * registraba: el manejador lanzaba «sistema de modificaciones no disponible» y el cliente
+   * recibía «ha habido un problema técnico». Sin error en pantalla y sin que nadie lo supiera.
+   * Lo único que había que hacer es esto.
+   *
+   * Se localiza igual que en cancelar —por los últimos 9 dígitos y el día—, y se aplican las
+   * MISMAS reglas que al crear una reserva: si no, esto sería la puerta de atrás para meter una
+   * a las cuatro de la mañana o en un día cerrado, creando una válida y cambiándola después.
+   */
+  setOnModificarReserva(async (input, jid) => {
+    try {
+      const clave = (input.telefono || "").replace(/\D/g, "");
+      if (clave.length < 9 || !input.dia) return { ok: false, motivo: "faltan datos" };
+      const cola = clave.slice(-9);
+      const rows = await dbAll(
+        `SELECT * FROM reservas WHERE dia = ?${input.local ? " AND local = ?" : ""} ORDER BY creado_en DESC`,
+        input.local ? [input.dia, input.local] : [input.dia]
+      );
+      const reserva = rows.find((r) => (r.telefono || "").replace(/\D/g, "").endsWith(cola));
+      if (!reserva) return { ok: false, motivo: "no encontrada" };
+
+      const { cambios, hayCambios, resumen } = cambiosDe(reserva, input);
+      // «Sin cambios» tiene respuesta propia en el manejador: se le pregunta al cliente qué
+      // quiere cambiar, en vez de confirmarle una modificación que no ha ocurrido.
+      if (!hayCambios) return { ok: false, motivo: "sin cambios" };
+
+      const destino = cambios.dia || reserva.dia;
+      const bloqueo = await estaBloqueado(reserva.local, destino);
+      const ahora = instanteMadrid(new Date());   // sin el Date, devuelve «Invalid Date»
+      const v = validarModificacion({
+        reserva, cambios, hoy: hoyISO(), ahoraHHMM: ahora.hora.slice(0, 5), bloqueado: !!bloqueo,
+      });
+      if (!v.ok) return { ok: false, motivo: v.motivo };
+
+      // La zona no tiene columna todavía (Sara la pregunta y hoy se pierde), así que no entra
+      // en el UPDATE: viaja al aviso del local, que es quien puede hacer algo con ella.
+      const sets = [], vals = [];
+      if (cambios.personas != null) { sets.push("personas = ?"); vals.push(cambios.personas); }
+      if (cambios.hora) { sets.push("hora = ?"); vals.push(cambios.hora); }
+      if (cambios.dia) { sets.push("dia = ?"); vals.push(cambios.dia); }
+      if (sets.length) {
+        vals.push(reserva.id);
+        await dbRun(`UPDATE reservas SET ${sets.join(", ")} WHERE id = ?`, vals);
+      }
+      const actualizada = { ...reserva, ...cambios };
+      console.log(`🔄 Reserva modificada por Sara (id ${reserva.id}): ${resumen}`);
+
+      // El local se entera SIEMPRE, con el antes y el después: es quien tiene que mover la mesa.
+      const row = await dbGet(`SELECT group_jid FROM wa_links WHERE local = ?`, [reserva.local]);
+      if (row?.group_jid && isReady()) {
+        const detalle = {};
+        for (const k of Object.keys(cambios)) detalle[k] = { antes: reserva[k] ?? "—", despues: cambios[k] };
+        sendModificacionGrupo(row.group_jid, actualizada, detalle).catch(() => {});
+      }
+      // Si al crecer pasa a ser grupo grande, lo confirma el local — el mismo umbral que al
+      // reservar. Sara no puede dar por buena una mesa de doce por su cuenta.
+      return { ok: true, reserva: actualizada, cambios, resumen,
+        pendiente: quedaPendiente(actualizada.personas), fueraDeFranja: !!v.fueraDeFranja };
+    } catch (e) {
+      console.error("Error modificando reserva (WA):", e.message);
+      return { ok: false, motivo: e.message };
+    }
+  });
+
   setSaraConfigLoader(async () => {
     try {
       const partes = [];
@@ -15559,6 +15955,9 @@ const server = app.listen(PORT, async () => {
   // base, así que los reinicios no la borran.
   setTimeout(repasoLineasSiToca, 3 * 60 * 1000);
   setInterval(repasoLineasSiToca, 30 * 60 * 1000);
+  // Las métricas de cliente, en el mismo latido. La marca decide si toca de verdad.
+  setInterval(() => { recalcularMetricasSiToca().catch(() => {}); }, 30 * 60 * 1000);
+  setTimeout(() => { recalcularMetricasSiToca().catch(() => {}); }, 60 * 1000);
 
   // ── Resumen mensual por WhatsApp: día 10 de cada mes a las 9:00h (Madrid) ──
   const MESES_CAP = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];

@@ -19,7 +19,7 @@ async function initGoogleStatus() {
   const el = document.getElementById("googleStatus");
   if (!el) return;
   try {
-    const res = await fetch("/api/google/status");
+    const res = await authFetch("/api/google/status");
     const data = await res.json();
     if (data.connected && data.reviews_count > 0) {
       const fecha = data.last_fetch ? new Date(data.last_fetch).toLocaleString("es") : "—";
