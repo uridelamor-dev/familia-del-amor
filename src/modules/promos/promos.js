@@ -115,6 +115,24 @@ export function estadoDe(qr, promo, { hoy = "", local = "", canjesCliente = 0 } 
   return "valido";
 }
 
+/**
+ * Dónde vale esta promoción, dicho para el cliente.
+ *
+ * NO se escribe a mano en la descripción de cada promoción: se calcula de sus locales. Una
+ * descripción que dice «válido en todos los locales» se queda mintiendo en cuanto alguien
+ * limita la promoción a una barra, y nadie se acuerda de bajar a corregir el texto. Aquí lo
+ * dice el mismo dato que decide si el cupón se acepta o no.
+ *
+ * Sale por igual en el WhatsApp que se le manda y en la página que abre en el móvil: las dos
+ * frases vienen de esta función, así que no pueden contradecirse.
+ */
+export function dondeVale(locales) {
+  const lista = String(locales || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!lista.length) return "Válido en cualquiera de nuestros locales.";
+  if (lista.length === 1) return `Válido en ${lista[0]}.`;
+  return `Válido en ${lista.slice(0, -1).join(", ")} y ${lista[lista.length - 1]}.`;
+}
+
 /** «3 de septiembre a las 21:40», hora de Madrid. */
 export function fechaBonita(iso, { conHora = false } = {}) {
   if (!iso) return "";
@@ -153,7 +171,9 @@ export function textoEstado(estado, { promo = null, qr = null, ultimoCanje = nul
     case "fuera_de_fechas":
       return promo && promo.hasta ? `Esta promoción terminó el ${fechaBonita(promo.hasta)}.` : "Esta promoción no está vigente.";
     case "fuera_de_local":
-      return promo && promo.locales ? `Solo vale en ${promo.locales.split(",").join(" y ")}.` : "No vale en esta barra.";
+      // La misma frase que se le mandó por WhatsApp, para que el camarero pueda señalarla en
+      // el móvil del cliente en vez de discutir.
+      return promo && promo.locales ? dondeVale(promo.locales) : "No vale en esta barra.";
     default:
       return "No se puede validar.";
   }

@@ -78,7 +78,7 @@ import { ensureSchemaPromos } from "./src/modules/promos/schema.js";
 // nombre aquí abajo, y son dos cosas sin ninguna relación.
 import { generarCodigo as proGenerarCodigo, tel9 as proTel9, normalizarEntrada as proNormalizar,
          estadoDe as proEstadoDe, textoEstado as proTexto, esCanjeable as proCanjeable,
-         sanearPromocion as proSanear, SQL_CANJEAR as PRO_SQL_CANJEAR,
+         sanearPromocion as proSanear, dondeVale as proDondeVale, SQL_CANJEAR as PRO_SQL_CANJEAR,
          SQL_CANJES_CLIENTE as PRO_SQL_CANJES_CLIENTE,
          SQL_ULTIMO_CANJE as PRO_SQL_ULTIMO_CANJE } from "./src/modules/promos/promos.js";
 import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
@@ -10572,7 +10572,10 @@ app.get("/api/cupon/:token", async (req, res) => {
       texto: info.texto,
       vale: info.canjeable,
       titular: qr.nombre || "",
-      promocion: promo ? { nombre: promo.nombre, descripcion: promo.descripcion, locales: promo.locales, hasta: promo.hasta } : null,
+      promocion: promo ? { nombre: promo.nombre, descripcion: promo.descripcion, hasta: promo.hasta,
+        // La frase la compone el servidor, con la misma función que el WhatsApp: si cada uno
+        // la montara por su cuenta, el mensaje y la página podrían decir cosas distintas.
+        donde: proDondeVale(promo.locales) } : null,
       codigo: qr.codigo,
       caduca_en: qr.caduca_en,
       qr: imagen,
@@ -10630,9 +10633,16 @@ async function proEnviarWA(qr, url, { promo = null } = {}) {
     if (!isReady()) return "WhatsApp no está conectado";
 
     const nombre = String(qr.nombre || "").split(" ")[0];
+    // Qué se le dice: el nombre de la promoción, lo que Marketing haya escrito para el
+    // cliente (si ha escrito algo) y DÓNDE VALE, que se calcula de los locales de la
+    // promoción y no se escribe a mano. Una descripción que dice «en todos los locales» se
+    // queda mintiendo en cuanto alguien limita la promoción a una barra.
+    const lineas = promo
+      ? [promo.nombre, promo.descripcion || null, proDondeVale(promo.locales)].filter(Boolean)
+      : ["Tienes un descuento"];
     const texto = qr.clase === "carnet"
       ? `Hola ${nombre} 👋\n\nEste es tu carné de Familia del Amor. Enséñalo cuando vengas y te reconocemos al momento.\n\n${url}`
-      : `Hola ${nombre} 👋\n\n${promo ? promo.nombre : "Tienes un descuento"}${promo && promo.descripcion ? `\n${promo.descripcion}` : ""}\n\nEnséñanos este código cuando vengas:\n${url}`;
+      : `Hola ${nombre} 👋\n\n${lineas.join("\n")}\n\nEnséñanos este código cuando vengas:\n${url}`;
 
     await sendMensajeLibre(qr.telefono, texto);
     await contarEnvioWA();

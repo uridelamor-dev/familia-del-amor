@@ -56,13 +56,14 @@
     est.className = "cup-estado" + (d.vale ? " hidden" : " mal");
     $("cupCard").classList.toggle("gastado", !d.vale);
 
-    // El pie: hasta cuándo y dónde. Solo lo que de verdad limita — decir «vale en todas las
-    // barras» es ruido.
+    // El pie: dónde vale y hasta cuándo. La frase de los locales viene YA HECHA del servidor
+    // (`dondeVale` en src/modules/promos/promos.js), la misma que se le mandó por WhatsApp.
+    // Montarla aquí por separado permitiría que el mensaje y esta pantalla se contradijeran.
     var pie = [];
     if (d.vale) {
+      if (promo.donde) pie.push(promo.donde);
       var hasta = d.caduca_en || promo.hasta;
-      if (hasta) pie.push("Válido hasta el " + hasta.split("-").reverse().join("/"));
-      if (promo.locales) pie.push("Solo en " + promo.locales.split(",").join(" y "));
+      if (hasta) pie.push("Hasta el " + hasta.split("-").reverse().join("/"));
     }
     $("cupPie").textContent = pie.join(" · ");
   }

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   CODIGO_LARGO, generarCodigo, tel9, normalizarEntrada, localEnLista,
-  estadoDe, textoEstado, esCanjeable, fechaBonita, sanearPromocion,
+  estadoDe, textoEstado, esCanjeable, fechaBonita, sanearPromocion, dondeVale,
   SQL_CANJEAR, SQL_CANJES_CLIENTE,
 } from "../../src/modules/promos/promos.js";
 
@@ -129,6 +129,34 @@ test("estadoDe: el carné no caduca, no se agota y no necesita promoción", () =
   const carnet = { clase: "carnet", usos: 47, usos_max: 0, anulado_en: null, caduca_en: null };
   assert.equal(estadoDe(carnet, null, { hoy: HOY, local: "Blanes" }), "valido");
   assert.equal(estadoDe({ ...carnet, anulado_en: "2026-08-01" }, null, { hoy: HOY }), "anulado");
+});
+
+// ── Dónde vale, dicho para el cliente ────────────────────────────────────────
+test("dondeVale: sin locales, vale en todos", () => {
+  assert.equal(dondeVale(""), "Válido en cualquiera de nuestros locales.");
+  assert.equal(dondeVale(null), "Válido en cualquiera de nuestros locales.");
+  assert.equal(dondeVale("  ,  "), "Válido en cualquiera de nuestros locales.");
+});
+
+test("dondeVale: con un solo local, se nombra ese y solo ese", () => {
+  assert.equal(dondeVale("La Tapeta - Blanes"), "Válido en La Tapeta - Blanes.");
+});
+
+test("dondeVale: con varios, se enumeran bien", () => {
+  assert.equal(dondeVale("La Tapeta - Blanes,La Tapeta - Lloret"),
+    "Válido en La Tapeta - Blanes y La Tapeta - Lloret.");
+  assert.equal(dondeVale("A,B,C"), "Válido en A, B y C.");
+});
+
+test("dondeVale aguanta espacios sobrantes y comas de más", () => {
+  assert.equal(dondeVale(" A , , B "), "Válido en A y B.");
+});
+
+test("dondeVale nunca dice que vale en todos si está limitada", () => {
+  // Este es el fallo que la función existe para evitar: la frase se calculaba a mano en la
+  // descripción y se quedaba diciendo «en todos los locales» al limitar la promoción.
+  const t = dondeVale("La Tapeta - Blanes");
+  assert.ok(!/cualquiera|todos/i.test(t), t);
 });
 
 // ── Las frases que se leen en la barra ───────────────────────────────────────

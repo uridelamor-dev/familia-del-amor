@@ -97,7 +97,43 @@ describe("nada se emite retroactivamente", () => {
     // A los leads antiguos no se les emite nada: serían cientos de mensajes que nadie ha
     // pedido. Y si Marketing la renombra o la para, se respeta.
     assert.match(esquema, /ON CONFLICT DO NOTHING/);
-    assert.ok(!/UPDATE pro_promociones/.test(esquema), "el esquema no puede reescribir la promoción");
+    // El esquema SÍ puede corregir un texto suyo de una vez, pero solo si nadie lo ha tocado:
+    // toda sentencia que escriba sobre la promoción tiene que ir condicionada al valor exacto
+    // que se quiere corregir. Un UPDATE a secas pisaría lo que Marketing haya escrito, en cada
+    // arranque y sin que nadie se entere.
+    for (const m of esquema.matchAll(/UPDATE pro_promociones[\s\S]{0,400}?`/g)) {
+      assert.match(m[0], /WHERE[\s\S]{0,120}descripcion = \?/,
+        "un UPDATE sobre la promoción tiene que ir guardado por el texto que corrige");
+    }
+  });
+});
+
+describe("lo que se le dice al cliente", () => {
+  const envio = server.slice(server.indexOf("async function proEnviarWA"));
+  const plantilla = envio.slice(0, envio.indexOf("await sendMensajeLibre"));
+
+  test("no se le recuerda que nos dio sus datos", () => {
+    // Se le está haciendo un regalo, no cobrando un peaje. La frase original decía «por
+    // dejarnos tus datos en la web» y convertía el detalle en una transacción.
+    assert.ok(!/dejarnos tus datos|a cambio|por darnos/i.test(plantilla), plantilla);
+    // Y la promoción nace sin esa muletilla: la descripción va vacía.
+    assert.match(esquema, /"10 % de descuento", "", 1, "bienvenida_web"/);
+  });
+
+  test("el mensaje dice DÓNDE vale, calculado de los locales", () => {
+    // No escrito a mano en la descripción: una descripción que diga «en todos los locales» se
+    // queda mintiendo en cuanto alguien limita la promoción a una barra.
+    assert.match(plantilla, /proDondeVale\(promo\.locales\)/);
+  });
+
+  test("la página del cupón usa esa misma frase, no una suya", () => {
+    const cupon = readFileSync(new URL("../public/cupon.js", import.meta.url), "utf8");
+    assert.match(cupon, /promo\.donde/);
+    assert.ok(!/promo\.locales/.test(cupon), "la página no puede montar la frase por su cuenta");
+  });
+
+  test("la corrección del texto viejo solo toca lo que nadie ha editado", () => {
+    assert.match(esquema, /descripcion = \?[\s\S]{0,120}Descuento de bienvenida por dejarnos tus datos/);
   });
 });
 

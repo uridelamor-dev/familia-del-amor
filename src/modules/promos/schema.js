@@ -132,9 +132,25 @@ export async function ensureSchemaPromos(x) {
   // A los leads que ya existen NO se les emite cupón. Serían cientos de mensajes que nadie
   // ha pedido, y un descuento que se prometió hace dos años. Esta promoción cuenta desde
   // hoy; a quien reclame uno antiguo se le emite a mano desde Marketing.
+  // La descripción va VACÍA. Lo que el cliente lee debajo del nombre —dónde vale— lo compone
+  // `dondeVale()` a partir de los locales de la promoción, no un texto escrito a mano: una
+  // descripción que diga «válido en todos los locales» se queda mintiendo en cuanto alguien
+  // limita la promoción a una barra, y nadie baja a corregirla. Marketing puede escribir aquí
+  // lo que quiera desde el panel, y entonces se dice además de dónde vale.
   await x.run(
     `INSERT INTO pro_promociones (nombre, descripcion, usos_por_cliente, automatica, creado_en, creado_por)
      VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
-    ["10 % de descuento", "Descuento de bienvenida por dejarnos tus datos en la web.", 1,
-     "bienvenida_web", new Date().toISOString(), "sistema"]);
+    ["10 % de descuento", "", 1, "bienvenida_web", new Date().toISOString(), "sistema"]);
+
+  // Corrección de una sola vez del texto con el que nació esta promoción, que hablaba de «dejarnos
+  // tus datos en la web». Al cliente no se le recuerda lo que nos dio a cambio del descuento.
+  //
+  // El WHERE con el texto literal es lo que hace esto seguro: solo toca la fila si NADIE la ha
+  // editado desde el panel. En cuanto Marketing escriba cualquier otra cosa —o ya la haya
+  // escrito—, esta sentencia deja de encontrar nada y no vuelve a hacer nada nunca más. Por eso
+  // no hace falta una marca de «ya migrado»: la condición es la marca.
+  await x.run(
+    `UPDATE pro_promociones SET descripcion = ''
+      WHERE automatica = 'bienvenida_web' AND descripcion = ?`,
+    ["Descuento de bienvenida por dejarnos tus datos en la web."]);
 }
