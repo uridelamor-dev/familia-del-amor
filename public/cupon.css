@@ -1,0 +1,66 @@
+/* La página del cupón en el móvil del cliente. Fichero aparte y todas las clases con prefijo
+   `cup-`: no toca ni una regla del resto de la web.
+
+   El contexto: alguien de pie en la barra, con el móvil en una mano, enseñándoselo a un
+   camarero que tiene que leerlo con una tablet a medio metro. Por eso va sobre BLANCO y no
+   sobre el verde de la marca — un QR sobre fondo de color se lee peor, y el brillo de la
+   pantalla no se puede subir desde la web. Aquí la marca cede ante que funcione. */
+
+.cup-body {
+  margin: 0;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1.25rem;
+  background: #f4f2ed;
+  color: #1c211f;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+.cup-wrap { width: 100%; max-width: 460px; text-align: center; }
+.cup-marca { margin: 0 0 1rem; font-size: .82rem; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase; color: #6d7a74; }
+
+.cup-cargando { padding: 3rem 0; color: #6d7a74; font-size: 1rem; }
+
+.cup-card {
+  background: #fff; border-radius: 22px; padding: 1.75rem 1.5rem 1.5rem;
+  box-shadow: 0 2px 4px rgba(20,32,27,.05), 0 12px 32px rgba(20,32,27,.09);
+}
+.cup-titulo { margin: 0; font-size: 1.6rem; font-weight: 700; letter-spacing: -.015em; line-height: 1.2; }
+.cup-desc { margin: .6rem 0 0; font-size: 1rem; line-height: 1.5; color: #4c5854; }
+
+/* El QR: blanco puro, cuadrado y sin nada encima. Lo más grande que quepa. */
+.cup-qr { margin: 1.5rem auto 0; width: 100%; max-width: 300px; aspect-ratio: 1;
+  background: #fff; border-radius: 14px; display: flex; align-items: center; justify-content: center; }
+.cup-qr img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+.cup-codigo-eti { margin: 1.25rem 0 .25rem; font-size: .85rem; color: #6d7a74; }
+/* Cifras tabulares y muy separadas: esto se dicta en voz alta en una barra con ruido. */
+.cup-codigo { margin: 0; font-size: 1.9rem; font-weight: 700;
+  font-variant-numeric: tabular-nums; letter-spacing: .12em; color: #1c211f; }
+
+.cup-estado { margin: 1.25rem 0 0; padding: .8rem 1rem; border-radius: 12px;
+  font-size: 1rem; font-weight: 600; line-height: 1.45; }
+.cup-estado.mal { background: #fdeaea; color: #9b1c1c; }
+
+.cup-pie { margin: 1rem 0 0; font-size: .88rem; color: #6d7a74; line-height: 1.45; }
+
+/* Gastado o caducado: el QR se apaga. Que siga igual de vistoso que uno bueno es lo que hace
+   que alguien lo enseñe en la barra convencido de que vale. */
+.cup-card.gastado .cup-qr { opacity: .18; filter: grayscale(1); }
+.cup-card.gastado .cup-codigo { color: #9aa5a0; }
+
+.cup-aviso { background: #fff; border-radius: 18px; padding: 1.5rem;
+  color: #4c5854; font-size: 1rem; line-height: 1.55;
+  box-shadow: 0 2px 4px rgba(20,32,27,.05), 0 12px 32px rgba(20,32,27,.09); }
+
+.hidden { display: none !important; }
+
+@media (max-width: 380px) {
+  .cup-card { padding: 1.4rem 1.1rem 1.2rem; }
+  .cup-titulo { font-size: 1.4rem; }
+  .cup-codigo { font-size: 1.6rem; }
+}

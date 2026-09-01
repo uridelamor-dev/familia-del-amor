@@ -73,6 +73,14 @@ import { construirCuadrante } from "./src/modules/horarios/cuadrante.js";
 import { generarSemana, ORIGEN as ORIGEN_SOLVER } from "./src/modules/horarios/solver.js";
 import { construirPdfSemana, nombreFichero } from "./src/modules/horarios/pdf/schedule-pdf.service.js";
 import { ensureSchemaFichajes } from "./src/modules/fichajes/schema.js";
+import { ensureSchemaPromos } from "./src/modules/promos/schema.js";
+// `estadoDe` se renombra: el de fichajes (la máquina de estados de la jornada) ya ocupa ese
+// nombre aquí abajo, y son dos cosas sin ninguna relación.
+import { generarCodigo as proGenerarCodigo, tel9 as proTel9, normalizarEntrada as proNormalizar,
+         estadoDe as proEstadoDe, textoEstado as proTexto, esCanjeable as proCanjeable,
+         sanearPromocion as proSanear, SQL_CANJEAR as PRO_SQL_CANJEAR,
+         SQL_CANJES_CLIENTE as PRO_SQL_CANJES_CLIENTE,
+         SQL_ULTIMO_CANJE as PRO_SQL_ULTIMO_CANJE } from "./src/modules/promos/promos.js";
 import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
 import { validarFormatoPin, estadoBloqueo, trasFallo as pinTrasFallo, trasAcierto as pinTrasAcierto } from "./src/modules/fichajes/pin.js";
 import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornadas.js";
@@ -116,7 +124,7 @@ import { sanearHecho, agruparHechos, resumenHechos, ETIQUETAS, conversacionesPar
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
 import { emparejaOperadores, rendimientoDeEmpleado } from "./src/modules/rrhh/matching.js";
-import { formatTelefonoES, aplicarVariables, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
+import { formatTelefonoES, aplicarVariables, pideCupon, filtrarEnviablesWA, dividirPorTope, delayConJitter, esTelefonoInterno, clave9 } from "./src/modules/messaging/queue.js";
 
 // Invalida la caché de teléfonos internos (se define al arrancar WhatsApp). Se llama al
 // dar de alta o editar un trabajador para que el cambio no espere al TTL de 10 min.
@@ -1628,6 +1636,15 @@ async function initDB() {
       await migrarDescansos(schemaX, isoConOffset(Date.now()));
     } catch (e) {
       console.error("[DB] Aviso: esquema de horarios no inicializado (no fatal):", e.message);
+    }
+
+    // Promociones. Aparte y con su propio try por lo mismo: si esto fallara, el kiosco tiene
+    // que seguir dejando fichar. Validar un cupón puede esperar; una jornada, no.
+    try {
+      const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
+      await ensureSchemaPromos(schemaX);
+    } catch (e) {
+      console.error("[DB] Aviso: esquema de promociones no inicializado (no fatal):", e.message);
     }
 
     console.log("[DB] Esquema PostgreSQL inicializado");
@@ -4053,7 +4070,61 @@ app.delete("/api/users/:id", requireAuth(["direccion"]), async (req, res) => {
 });
 
 // Leads
+/**
+ * El descuento de bienvenida de la web, ya como cupón de verdad.
+ *
+ * Durante años esto fue el texto «10% de descuento» guardado en `leads.premio` y nada más: no
+ * había código, ni caducidad, ni forma de saber si alguien lo había usado. La consecuencia es
+ * que la misma persona podía pedirlo las veces que quisiera, y en la barra no había manera de
+ * comprobar nada de lo que enseñaba.
+ *
+ * Tres respuestas posibles, y las tres dicen la verdad:
+ *
+ *   · `nuevo`       primera vez: se emite y SE ENSEÑA aquí mismo. Acaba de dejar sus datos en
+ *                   esta pantalla; hacerle salir a WhatsApp para ver su cupón pierde a la mitad.
+ *   · `ya_emitido`  ya lo tiene sin usar: no se emite otro y NO se enseña en pantalla, se
+ *                   REENVÍA al móvil. Así, quien vaya probando teléfonos ajenos no se lleva el
+ *                   cupón de nadie: solo un mensaje que no le confirma gran cosa.
+ *   · `ya_usado`    ya lo gastó: no se emite nada y se le dice cuándo fue.
+ *
+ * Devuelve null —y el formulario se comporta como siempre— si Marketing ha parado la
+ * promoción, si no hay teléfono o si algo falla. UN LEAD NO SE PIERDE NUNCA porque el cupón
+ * no haya salido: el dato del cliente vale mucho más que el descuento.
+ */
+async function bienvenidaWeb(req, { telefono, nombre }) {
+  const promo = await dbGet(`SELECT * FROM pro_promociones WHERE automatica = 'bienvenida_web'`);
+  if (!promo || !promo.activa) return null;
+  const tel = proTel9(telefono);
+  if (!tel) return null;
+
+  // Se busca por TELÉFONO y no por lead: los leads se unifican por tel9 o por correo, así que
+  // quien vuelve con otro correo pero el mismo móvil es la misma persona y ya tuvo lo suyo.
+  const previo = await dbGet(
+    `SELECT * FROM pro_qr WHERE promocion_id = ? AND telefono = ? AND anulado_en IS NULL
+      ORDER BY id DESC LIMIT 1`, [promo.id, tel]);
+
+  if (previo) {
+    const info = await proEvaluar(previo, promo, {});
+    if (!info.canjeable) return { estado: "ya_usado", texto: info.texto };
+    await proEnviarWA(previo, proUrl(req, previo.token), { promo });
+    return { estado: "ya_emitido" };
+  }
+
+  const qr = await proEmitir({
+    clase: "cupon", promocionId: promo.id, telefono: tel,
+    nombre: nombre || "", usosMax: 1, autor: "web" });
+  const url = proUrl(req, qr.token);
+  await proEnviarWA(qr, url, { promo });
+
+  let imagen = null;
+  try { imagen = await QRCode.toDataURL(url, { width: 420, margin: 1 }); } catch { /* queda el código */ }
+  return { estado: "nuevo", url, codigo: qr.codigo, qr: imagen, promocion: promo.nombre };
+}
+
 app.post("/api/leads", async (req, res) => {
+  // Esta ruta es pública y hasta ahora no tenía freno ninguno. Desde el momento en que emite
+  // un cupón de verdad, sí: si no, se enumeran teléfonos y se emiten descuentos en bucle.
+  if (!pulsoRateLimit(req, res, 10)) return;
   const { nombre, apellidos, nacimiento, poblacion, telefono, correo, fuente, genero } = req.body;
   if (!nombre || !apellidos || !nacimiento || !poblacion || !telefono || !correo) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
@@ -4089,7 +4160,9 @@ app.post("/api/leads", async (req, res) => {
         [nombre, apellidos, nacimiento, poblacion, generoVal, fuenteVal, ahora, existing.id]
       );
       await registrarConsent();
-      return res.json({ ok: true, premio, actualizado: true });
+      // El consentimiento va ANTES del cupón: `proEnviarWA` mira `marketing_prefs.baja`, y si
+      // no estuviera registrado todavía, a quien acaba de aceptar no se le mandaría nada.
+      return res.json({ ok: true, premio, actualizado: true, bienvenida: await conCupon(req, telefono, nombre) });
     } else {
       await dbRun(
         `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio, fuente, genero, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -4097,12 +4170,18 @@ app.post("/api/leads", async (req, res) => {
       );
       mirrorLeadToSheet({ nombre, apellidos, telefono, correo, poblacion, nacimiento, genero: generoVal, fuente: fuenteVal, premio });
       await registrarConsent();
-      return res.json({ ok: true, premio });
+      return res.json({ ok: true, premio, bienvenida: await conCupon(req, telefono, nombre) });
     }
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error guardando lead" });
   }
 });
+
+/** El cupón de bienvenida, envuelto para que NADA de aquí pueda tumbar el alta del lead. */
+async function conCupon(req, telefono, nombre) {
+  try { return await bienvenidaWeb(req, { telefono, nombre }); }
+  catch (e) { console.error("[leads] cupón de bienvenida:", e.message); return null; }
+}
 
 // Crea/actualiza un lead por teléfono.
 async function upsertLead({ nombre = "", apellidos = "", telefono, fuente = "web" }) {
@@ -10282,6 +10361,499 @@ app.post("/api/fichar/:token/evento", async (req, res) => {
   }
 });
 
+// ── Kiosco: validar un cupón ─────────────────────────────────────────────────
+//
+// Va en el kiosco y no en un aparato aparte porque la tablet ya está ahí, en la barra, y ya
+// sabe quién la está usando. Se reutiliza TAL CUAL el ticket que emite el PIN: prueba que
+// esta persona tecleó su PIN en esta tablet, dura dos minutos y no vale en otra. No hacía
+// falta inventar ninguna credencial nueva, y así el canje lleva nombre y apellidos.
+//
+// El fichaje sigue siendo lo primero: el botón de validar está debajo de la lista de gente,
+// y quien va a fichar no se cruza con él.
+
+/** Busca el QR por token o por código, con su promoción al lado. */
+async function proBuscar(entrada) {
+  const e = proNormalizar(entrada);
+  if (!e) return null;
+  const qr = await dbGet(
+    `SELECT * FROM pro_qr WHERE ${e.tipo === "token" ? "token" : "codigo"} = ?`, [e.valor]);
+  if (!qr) return null;
+  const promo = qr.promocion_id ? await dbGet(`SELECT * FROM pro_promociones WHERE id = ?`, [qr.promocion_id]) : null;
+  return { qr, promo };
+}
+
+/**
+ * El estado de un QR con todo lo que hace falta para contarlo en pantalla.
+ *
+ * La frase la compone el SERVIDOR, no la tablet. `public/fichar.js` es un script clásico
+ * dentro de un IIFE y no puede importar el módulo donde vive `textoEstado`; duplicar allí
+ * las reglas sería tener dos verdades sobre si un cupón vale. Mismo motivo por el que las
+ * reservas del kiosco se preparan en src/modules/reservas/kiosco.js.
+ */
+async function proEvaluar(qr, promo, { local = "" } = {}) {
+  const hoy = hoyISO();
+  const tel = proTel9(qr.telefono);
+  let canjesCliente = 0;
+  if (promo && tel) {
+    const c = await dbGet(PRO_SQL_CANJES_CLIENTE, [promo.id, tel]);
+    canjesCliente = Number(c?.n || 0);
+  }
+  const estado = proEstadoDe(qr, promo, { hoy, local, canjesCliente });
+  const ultimoCanje = estado === "valido" ? null : await dbGet(PRO_SQL_ULTIMO_CANJE, [qr.id]);
+  return {
+    estado,
+    canjeable: proCanjeable(estado),
+    texto: proTexto(estado, { promo, qr, ultimoCanje }),
+    clase: qr.clase,
+    titular: qr.nombre || "",
+    promocion: promo ? { id: promo.id, nombre: promo.nombre, descripcion: promo.descripcion } : null,
+    canjesCliente,
+  };
+}
+
+/** Comprobar sin gastar: el camarero ve qué es y a quién antes de confirmar nada. */
+app.post("/api/fichar/:token/cupon/ver", async (req, res) => {
+  if (!pulsoRateLimit(req, res, 30)) return;
+  try {
+    const disp = await ficDispositivo(req.params.token);
+    if (!disp) return res.status(404).json({ ok: false, error: "Este dispositivo no está dado de alta" });
+    // Sin gracia offline: un canje no se encola (ver más abajo), así que aquí no hay ningún
+    // ticket viejo legítimo que aceptar.
+    const sesion = ficLeerTicket(req.body?.ticket, disp.id, Date.now());
+    if (!sesion) return res.status(401).json({ ok: false, error: "Vuelve a introducir tu PIN." });
+
+    const hallazgo = await proBuscar(req.body?.codigo);
+    if (!hallazgo) {
+      return res.json({ ok: true, estado: "no_existe", canjeable: false, texto: proTexto("no_existe") });
+    }
+    const { qr, promo } = hallazgo;
+
+    // Un carné no lleva promoción dentro: identifica a la persona, y lo que se le puede
+    // aplicar son las promociones vigentes de esta barra. Se le ofrecen para elegir.
+    if (qr.clase === "carnet") {
+      const base = await proEvaluar(qr, null, { local: disp.local });
+      if (!base.canjeable) return res.json({ ok: true, qr_id: qr.id, ...base, promociones: [] });
+      const hoy = hoyISO();
+      const tel = proTel9(qr.telefono);
+      const vigentes = await dbAll(
+        `SELECT * FROM pro_promociones WHERE activa
+           AND (desde IS NULL OR desde <= ?) AND (hasta IS NULL OR hasta >= ?)
+         ORDER BY id DESC LIMIT 20`, [hoy, hoy]);
+      const promociones = [];
+      for (const p of vigentes) {
+        const c = tel ? await dbGet(PRO_SQL_CANJES_CLIENTE, [p.id, tel]) : { n: 0 };
+        const est = proEstadoDe(qr, p, { hoy, local: disp.local, canjesCliente: Number(c?.n || 0) });
+        // Las que no vienen a cuento aquí —otra barra, fuera de fechas— no se pintan; las que
+        // ya ha usado sí, en gris: si no, el camarero no entiende por qué falta la que el
+        // cliente le está enseñando en el móvil.
+        if (est === "fuera_de_local" || est === "fuera_de_fechas" || est === "promo_inactiva") continue;
+        promociones.push({
+          id: p.id, nombre: p.nombre, descripcion: p.descripcion,
+          estado: est, canjeable: proCanjeable(est), texto: proTexto(est, { promo: p, qr }),
+        });
+      }
+      return res.json({ ok: true, qr_id: qr.id, ...base, promociones });
+    }
+
+    const info = await proEvaluar(qr, promo, { local: disp.local });
+    res.json({ ok: true, qr_id: qr.id, ...info });
+  } catch (e) {
+    console.error("[fichar] cupon/ver:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo comprobar el cupón" });
+  }
+});
+
+/**
+ * El canje. Aquí sí se gasta.
+ *
+ * NO SE ENCOLA NUNCA si no hay línea, al revés que los fichajes. Un fichaje que se pierde es
+ * peor que uno que llega tarde, así que aquel se guarda en la tablet y sube después. Un canje
+ * en la cola es un cupón que se puede gastar otra vez en la otra tablet mientras tanto. Si no
+ * hay conexión, la tablet dice que no se puede validar y ya está.
+ */
+app.post("/api/fichar/:token/cupon/canjear", async (req, res) => {
+  if (!pulsoRateLimit(req, res, 30)) return;
+  try {
+    const disp = await ficDispositivo(req.params.token);
+    if (!disp) return res.status(404).json({ ok: false, error: "Este dispositivo no está dado de alta" });
+
+    const ahora = Date.now();
+    const sesion = ficLeerTicket(req.body?.ticket, disp.id, ahora);
+    if (!sesion) return res.status(401).json({ ok: false, error: "Vuelve a introducir tu PIN." });
+
+    // Idempotencia: si la tablet reintenta, el mismo id. La UNIQUE de la columna es la que
+    // de verdad lo garantiza; esto solo evita el error feo en el caso normal.
+    const clave = String(req.body?.cliente_id || "").slice(0, 64) || null;
+    if (clave) {
+      const ya = await dbGet(`SELECT id, canjeado_en FROM pro_canjes WHERE idempotencia_key = ?`, [clave]);
+      if (ya) return res.json({ ok: true, repetido: true, canje: ya });
+    }
+
+    const hallazgo = await proBuscar(req.body?.codigo);
+    if (!hallazgo) return res.status(404).json({ ok: false, estado: "no_existe", error: proTexto("no_existe") });
+    const { qr } = hallazgo;
+
+    // En un carné, la promoción la elige el camarero de la lista que le salió al escanear.
+    let promo = hallazgo.promo;
+    if (qr.clase === "carnet") {
+      const pedida = Number(req.body?.promocion_id);
+      if (!Number.isInteger(pedida)) return res.status(400).json({ ok: false, error: "Elige qué promoción se le aplica" });
+      promo = await dbGet(`SELECT * FROM pro_promociones WHERE id = ?`, [pedida]);
+      if (!promo) return res.status(404).json({ ok: false, error: "Esa promoción ya no existe" });
+    }
+
+    const info = await proEvaluar(qr, promo, { local: disp.local });
+    if (!info.canjeable) return res.status(409).json({ ok: false, estado: info.estado, error: info.texto });
+
+    const worker = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [sesion.workerId]);
+    if (!worker || !mismoCentroPersonal(worker.local, disp.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+
+    // Se gasta el uso ANTES de escribir el canje, y en una sola sentencia: el filtro va dentro
+    // del UPDATE, así que dos tablets a la vez no pueden pasar las dos. Si devuelve nada, es
+    // que entre el «ver» y el «confirmar» se lo ha gastado otro.
+    const gastado = await dbRun(PRO_SQL_CANJEAR, [qr.id]);
+    if (!gastado) {
+      const info2 = await proEvaluar({ ...qr, usos: qr.usos + 1 }, promo, { local: disp.local });
+      return res.status(409).json({ ok: false, estado: "agotado", error: info2.texto });
+    }
+
+    const tel = proTel9(qr.telefono);
+    try {
+      await dbRun(
+        `INSERT INTO pro_canjes (qr_id, promocion_id, telefono, uso_n, local, dispositivo_id,
+                                 worker_id, worker_nombre, canjeado_en, epoch_ms, idempotencia_key)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        [qr.id, promo ? promo.id : null, tel, info.canjesCliente + 1, disp.local, disp.id,
+         worker.id, worker.nombre, isoConOffset(ahora), ahora, clave]);
+    } catch (e) {
+      // La UNIQUE de (promocion_id, telefono, uso_n) saltando significa que otra tablet
+      // acaba de canjearle a esta misma persona esta misma promoción. Se devuelve el uso
+      // que se había gastado: si no, el cupón quedaría quemado sin que nadie lo disfrute.
+      await dbRun(`UPDATE pro_qr SET usos = usos - 1 WHERE id = ? AND usos > 0`, [qr.id]).catch(() => {});
+      const dup = /duplicate key|unique/i.test(String(e.message || ""));
+      if (!dup) throw e;
+      return res.status(409).json({ ok: false, estado: "limite_cliente", error: "Ya se le ha validado hace un momento." });
+    }
+
+    res.json({
+      ok: true,
+      titular: qr.nombre || "",
+      promocion: promo ? promo.nombre : "Cliente identificado",
+      hora: isoConOffset(ahora).slice(11, 16),
+    });
+  } catch (e) {
+    console.error("[fichar] cupon/canjear:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo validar el cupón" });
+  }
+});
+
+// ── El cupón que ve el cliente en su móvil ───────────────────────────────────
+// Público y sin sesión, como el pulso. NO se le dice en qué barra puede canjearlo si la
+// promoción no lo limita, y NO se comprueba el local: desde su móvil no se sabe dónde va a
+// usarlo, y un «no vale» ahí sería mentira.
+app.get("/api/cupon/:token", async (req, res) => {
+  if (!pulsoRateLimit(req, res, 30)) return;
+  try {
+    const hallazgo = await proBuscar(req.params.token);
+    if (!hallazgo) return res.status(404).json({ ok: false, error: "Este enlace no es válido." });
+    const { qr, promo } = hallazgo;
+    const info = await proEvaluar(qr, promo, {});
+
+    const base = (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+    let imagen = null;
+    try {
+      imagen = await QRCode.toDataURL(`${base}/cupon.html?t=${qr.token}`, { width: 512, margin: 1 });
+    } catch { /* con el código de ocho dígitos se puede validar igual */ }
+
+    res.json({
+      ok: true,
+      clase: qr.clase,
+      estado: info.estado,
+      texto: info.texto,
+      vale: info.canjeable,
+      titular: qr.nombre || "",
+      promocion: promo ? { nombre: promo.nombre, descripcion: promo.descripcion, locales: promo.locales, hasta: promo.hasta } : null,
+      codigo: qr.codigo,
+      caduca_en: qr.caduca_en,
+      qr: imagen,
+    });
+  } catch (e) {
+    console.error("[cupon] ver:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar el cupón" });
+  }
+});
+
+// ── Panel (Marketing): promociones y emisión de QR ───────────────────────────
+const PROMOS_ROLES = ["direccion", "marketing"];
+
+const proUrl = (req, token) =>
+  `${(process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "")}/cupon.html?t=${token}`;
+
+/**
+ * Emite un QR. Reintenta si el código de ocho dígitos ya existía.
+ *
+ * La UNIQUE de la base es la que garantiza que no se repita, no la estadística: con 10⁸
+ * combinaciones la colisión es rarísima, pero «rarísima» y «no puede pasar» son cosas
+ * distintas, y dos cupones con el mismo código se canjearían el uno al otro.
+ */
+async function proEmitir({ clase, promocionId = null, telefono = "", nombre = "", caducaEn = null, usosMax = 1, autor = "" }) {
+  const ahora = new Date().toISOString();
+  for (let intento = 0; intento < 5; intento++) {
+    const token = generarToken((n) => crypto.randomBytes(n));
+    const codigo = proGenerarCodigo((n) => crypto.randomBytes(n));
+    try {
+      return await dbRun(
+        `INSERT INTO pro_qr (clase, token, codigo, promocion_id, telefono, nombre, usos_max, caduca_en, creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING *`,
+        [clase, token, codigo, promocionId, proTel9(telefono), String(nombre || "").slice(0, 80),
+         clase === "carnet" ? 0 : usosMax, caducaEn, ahora, autor]);
+    } catch (e) {
+      if (/duplicate key|unique/i.test(String(e.message || "")) && intento < 4) continue;
+      throw e;
+    }
+  }
+  throw new Error("No se pudo generar un código libre");
+}
+
+/**
+ * Manda el enlace por WhatsApp. Devuelve el motivo si no se manda, nunca lanza.
+ *
+ * EMITIR NO ES ESCRIBIR. A quien está de baja se le puede emitir el QR igual —puede haberlo
+ * pedido en la barra— pero no se le escribe: `baja = 1` significa que pidió que no le
+ * escribiéramos, y saltárselo aquí sería colar publicidad por la puerta de atrás.
+ */
+async function proEnviarWA(qr, url, { promo = null } = {}) {
+  if (!qr.telefono) return "Sin teléfono";
+  try {
+    const pref = await dbGet(`SELECT opt_in_wa, baja FROM marketing_prefs WHERE ${MATCH_TEL9("telefono")} LIMIT 1`, [qr.telefono]);
+    if (pref && Number(pref.baja) === 1) return "Pidió no recibir mensajes";
+    if (!isReady()) return "WhatsApp no está conectado";
+
+    const nombre = String(qr.nombre || "").split(" ")[0];
+    const texto = qr.clase === "carnet"
+      ? `Hola ${nombre} 👋\n\nEste es tu carné de Familia del Amor. Enséñalo cuando vengas y te reconocemos al momento.\n\n${url}`
+      : `Hola ${nombre} 👋\n\n${promo ? promo.nombre : "Tienes un descuento"}${promo && promo.descripcion ? `\n${promo.descripcion}` : ""}\n\nEnséñanos este código cuando vengas:\n${url}`;
+
+    await sendMensajeLibre(qr.telefono, texto);
+    await contarEnvioWA();
+    await dbRun(`UPDATE pro_qr SET enviado_en = ?, enviado_error = NULL WHERE id = ?`, [new Date().toISOString(), qr.id]);
+    return null;
+  } catch (e) {
+    const motivo = String(e.message || "error").slice(0, 200);
+    await dbRun(`UPDATE pro_qr SET enviado_error = ? WHERE id = ?`, [motivo, qr.id]).catch(() => {});
+    return motivo;
+  }
+}
+
+app.get("/api/promos", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    // Emitidos y canjeados en la misma consulta: es la única pregunta que se hace de verdad
+    // sobre una promoción, y tenerla que sacar aparte significaba no mirarla nunca.
+    const filas = await dbAll(
+      `SELECT p.*,
+              (SELECT COUNT(*)::int FROM pro_qr q WHERE q.promocion_id = p.id) AS emitidos,
+              (SELECT COUNT(*)::int FROM pro_qr q WHERE q.promocion_id = p.id AND q.enviado_en IS NOT NULL) AS enviados,
+              (SELECT COUNT(*)::int FROM pro_canjes c WHERE c.promocion_id = p.id) AS canjeados,
+              (SELECT COUNT(*)::int FROM pro_qr q WHERE q.promocion_id = p.id AND q.anulado_en IS NULL AND q.usos = 0) AS sin_usar
+         FROM pro_promociones p ORDER BY p.activa DESC, p.id DESC`);
+    res.json({ ok: true, data: filas, locales: INV_LOCALES });
+  } catch (e) {
+    console.error("[promos] listar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar las promociones" });
+  }
+});
+
+app.post("/api/promos", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const { promocion, descartados } = proSanear(req.body, { locales: INV_LOCALES });
+    if (!promocion.nombre) return res.status(400).json({ ok: false, error: "Ponle un nombre a la promoción", descartados });
+    const fila = await dbRun(
+      `INSERT INTO pro_promociones (nombre, descripcion, locales, desde, hasta, usos_por_cliente, activa, creado_en, creado_por)
+       VALUES (?,?,?,?,?,?,?,?,?) RETURNING *`,
+      [promocion.nombre, promocion.descripcion, promocion.locales, promocion.desde, promocion.hasta,
+       promocion.usos_por_cliente, promocion.activa, new Date().toISOString(), req.user.username]);
+    res.json({ ok: true, promocion: fila, descartados });
+  } catch (e) {
+    console.error("[promos] crear:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo crear la promoción" });
+  }
+});
+
+app.patch("/api/promos/:id", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const actual = await dbGet(`SELECT * FROM pro_promociones WHERE id = ?`, [id]);
+    if (!actual) return res.status(404).json({ ok: false, error: "Esa promoción no existe" });
+    const { promocion, descartados } = proSanear({ ...actual, ...req.body }, { locales: INV_LOCALES });
+    if (!promocion.nombre) return res.status(400).json({ ok: false, error: "Ponle un nombre a la promoción", descartados });
+    const fila = await dbRun(
+      `UPDATE pro_promociones SET nombre=?, descripcion=?, locales=?, desde=?, hasta=?, usos_por_cliente=?, activa=?
+        WHERE id = ? RETURNING *`,
+      [promocion.nombre, promocion.descripcion, promocion.locales, promocion.desde, promocion.hasta,
+       promocion.usos_por_cliente, promocion.activa, id]);
+    res.json({ ok: true, promocion: fila, descartados });
+  } catch (e) {
+    console.error("[promos] editar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar la promoción" });
+  }
+});
+
+/**
+ * Emitir QR a una o varias personas.
+ *
+ * Los destinatarios llegan ya elegidos desde el buscador de contactos del panel (el mismo de
+ * Clientes), no con un segmento: emitir es un acto deliberado sobre gente concreta, y una
+ * promoción emitida «a todo el que cumpla X» por error son cientos de cupones vivos que hay
+ * que anular uno a uno. El envío masivo por segmento se hace desde Campañas.
+ */
+app.post("/api/promos/emitir", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const clase = req.body?.clase === "carnet" ? "carnet" : "cupon";
+    const enviar = req.body?.enviar !== false;
+    const caducaEn = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.caduca_en || "")) ? req.body.caduca_en : null;
+
+    let promo = null;
+    if (clase === "cupon") {
+      promo = await dbGet(`SELECT * FROM pro_promociones WHERE id = ?`, [Number(req.body?.promocion_id)]);
+      if (!promo) return res.status(400).json({ ok: false, error: "Elige una promoción" });
+    }
+
+    const destinatarios = (Array.isArray(req.body?.destinatarios) ? req.body.destinatarios : []).slice(0, 200);
+    if (!destinatarios.length) return res.status(400).json({ ok: false, error: "Elige al menos a una persona" });
+
+    const resultados = [];
+    for (const d of destinatarios) {
+      const tel = proTel9(d?.telefono);
+      if (!tel) { resultados.push({ nombre: d?.nombre || "", error: "Sin teléfono" }); continue; }
+      try {
+        // Un carné por persona: si ya tiene uno vivo se le devuelve ese, no se le crea otro.
+        // Dos carnés serían dos identidades y sus visitas se contarían por separado.
+        let qr = clase === "carnet"
+          ? await dbGet(`SELECT * FROM pro_qr WHERE clase = 'carnet' AND telefono = ? AND anulado_en IS NULL`, [tel])
+          : null;
+        const yaTenia = !!qr;
+        if (!qr) {
+          qr = await proEmitir({
+            clase, promocionId: promo ? promo.id : null, telefono: tel, nombre: d?.nombre || "",
+            caducaEn, usosMax: 1, autor: req.user.username });
+        }
+        const url = proUrl(req, qr.token);
+        const motivo = enviar ? await proEnviarWA(qr, url, { promo }) : "No se pidió enviar";
+        resultados.push({ id: qr.id, nombre: qr.nombre, telefono: tel, codigo: qr.codigo, url, yaTenia, error: motivo });
+      } catch (e) {
+        console.error("[promos] emitir:", e.message);
+        resultados.push({ nombre: d?.nombre || "", telefono: tel, error: "No se pudo emitir" });
+      }
+    }
+    res.json({ ok: true, resultados });
+  } catch (e) {
+    console.error("[promos] emitir lote:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron emitir los QR" });
+  }
+});
+
+app.get("/api/promos/qr", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const cond = [], params = [];
+    if (req.query.promocion_id) { cond.push("q.promocion_id = ?"); params.push(Number(req.query.promocion_id)); }
+    if (req.query.telefono) { cond.push("q.telefono = ?"); params.push(proTel9(req.query.telefono)); }
+    if (req.query.clase) { cond.push("q.clase = ?"); params.push(String(req.query.clase)); }
+    const filas = await dbAll(
+      `SELECT q.*, p.nombre AS promocion
+         FROM pro_qr q LEFT JOIN pro_promociones p ON p.id = q.promocion_id
+        ${cond.length ? "WHERE " + cond.join(" AND ") : ""}
+        ORDER BY q.id DESC LIMIT 300`, params);
+    res.json({ ok: true, data: filas.map((q) => ({ ...q, url: proUrl(req, q.token) })) });
+  } catch (e) {
+    console.error("[promos] qr:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar los QR" });
+  }
+});
+
+app.post("/api/promos/qr/:id/anular", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    // Anular no borra: el QR se queda, y con él los canjes que ya tenga. Borrarlo dejaría
+    // huérfanas las filas de pro_canjes, que son justo las que no se pueden perder.
+    const fila = await dbRun(
+      `UPDATE pro_qr SET anulado_en = ?, anulado_por = ? WHERE id = ? AND anulado_en IS NULL RETURNING id`,
+      [new Date().toISOString(), req.user.username, Number(req.params.id)]);
+    if (!fila) return res.status(404).json({ ok: false, error: "Ese QR no existe o ya estaba anulado" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[promos] anular:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo anular" });
+  }
+});
+
+app.post("/api/promos/qr/:id/enviar", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const qr = await dbGet(`SELECT * FROM pro_qr WHERE id = ?`, [Number(req.params.id)]);
+    if (!qr) return res.status(404).json({ ok: false, error: "Ese QR no existe" });
+    const promo = qr.promocion_id ? await dbGet(`SELECT * FROM pro_promociones WHERE id = ?`, [qr.promocion_id]) : null;
+    const motivo = await proEnviarWA(qr, proUrl(req, qr.token), { promo });
+    if (motivo) return res.status(409).json({ ok: false, error: motivo });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[promos] enviar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo enviar" });
+  }
+});
+
+/**
+ * Anular de golpe los cupones sin usar de una promoción.
+ *
+ * Existe porque el error caro de esto es emitir a quien no tocaba: doscientos cupones vivos que
+ * de uno en uno no se anulan nunca. Solo toca los que NADIE ha usado todavía —`usos = 0`—:
+ * quitarle un descuento a alguien que ya lo canjeó no tendría sentido y además borraría el
+ * sentido de su canje.
+ *
+ * Devuelve cuántos, para poder decirlo en pantalla.
+ */
+app.post("/api/promos/:id/anular-sin-usar", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const promo = await dbGet(`SELECT id, nombre FROM pro_promociones WHERE id = ?`, [id]);
+    if (!promo) return res.status(404).json({ ok: false, error: "Esa promoción no existe" });
+
+    // Se manda de vuelta el número que se vio en pantalla: si entre medias ha salido una
+    // campaña y hay cupones nuevos, la operación se niega y hay que volver a mirar. Es el
+    // mismo trato que reciben las fichas repetidas de Clientes, y por la misma razón.
+    const vivos = await dbGet(
+      `SELECT COUNT(*)::int AS n FROM pro_qr WHERE promocion_id = ? AND anulado_en IS NULL AND usos = 0`, [id]);
+    const esperado = Number(req.body?.esperados);
+    if (Number.isInteger(esperado) && esperado !== Number(vivos.n)) {
+      return res.status(409).json({ ok: false, error: `Ahora hay ${vivos.n} sin usar, no ${esperado}. Vuelve a mirarlo.`, ahora: vivos.n });
+    }
+
+    const filas = await dbAll(
+      `UPDATE pro_qr SET anulado_en = ?, anulado_por = ?
+        WHERE promocion_id = ? AND anulado_en IS NULL AND usos = 0 RETURNING id`,
+      [new Date().toISOString(), req.user.username, id]);
+    res.json({ ok: true, anulados: filas.length });
+  } catch (e) {
+    console.error("[promos] anular en masa:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron anular" });
+  }
+});
+
+app.get("/api/promos/canjes", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const cond = [], params = [];
+    if (req.query.promocion_id) { cond.push("c.promocion_id = ?"); params.push(Number(req.query.promocion_id)); }
+    const filas = await dbAll(
+      `SELECT c.*, q.nombre AS titular, q.codigo, p.nombre AS promocion
+         FROM pro_canjes c
+         LEFT JOIN pro_qr q ON q.id = c.qr_id
+         LEFT JOIN pro_promociones p ON p.id = c.promocion_id
+        ${cond.length ? "WHERE " + cond.join(" AND ") : ""}
+        ORDER BY c.epoch_ms DESC LIMIT 300`, params);
+    res.json({ ok: true, data: filas });
+  } catch (e) {
+    console.error("[promos] canjes:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar los canjes" });
+  }
+});
+
 // ── Panel: quién está dentro, tablets y PINes ────────────────────────────────
 app.get("/api/fichajes/hoy", requireAuth(FICHAJES_ROLES), async (req, res) => {
   try {
@@ -14369,7 +14941,7 @@ async function contarEnvioWA(n = 1) {
  * mañana. Y como al retomar se saltan los que ya recibieron (ver `dispatchCampana`), nadie
  * recibe el mismo mensaje dos veces.
  */
-async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 6000, maxMs = 15000, resolverMensaje = null, localCampana = null }) {
+async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 6000, maxMs = 15000, resolverMensaje = null, localCampana = null, promocion = null, baseUrl = "" }) {
   let enviados = 0, errores = 0;
   const hoyEnv = hoyISO();
   const yaHoy = Number((await getConfig("wa_enviados_" + hoyEnv)) || 0);
@@ -14378,19 +14950,53 @@ async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = nu
   if (pospuestos.length) console.log(`[campaña ${campanaId || "-"}] tope diario (${maxDiario}): ${pospuestos.length} se quedan para mañana`);
   for (const c of aEnviar) {
     let estado = "enviado", err = null;
+    let qrEmitido = null;
     try {
       const base = resolverMensaje ? resolverMensaje(c) : mensaje;
+
+      // ── El cupón personal, si la campaña lleva promoción y el texto lo pide ──────────
+      // Se emite AQUÍ, uno por persona y justo antes de mandarle el mensaje. No antes y en
+      // bloque: una campaña de trescientos que se corta a la mitad —un redespliegue, que aquí
+      // pasa a menudo, o el tope diario— habría dejado ciento cincuenta cupones vivos en manos
+      // de nadie, imposibles de distinguir de los que sí se entregaron.
+      //
+      // Y si no se puede emitir, NO SE ENVÍA: el `throw` lo cuenta como error y pasa al
+      // siguiente. Un «te invitamos a un café 👉» con el hueco vacío detrás es peor que no
+      // escribir, porque el cliente viene a reclamar algo que no existe.
+      let destinatario = c;
+      if (promocion && pideCupon(base)) {
+        const tel = proTel9(c.telefono);
+        if (!tel) throw new Error("sin teléfono para emitir el cupón");
+        // Sin dirección base el enlace saldría relativo, y un «/cupon.html?t=…» en un WhatsApp
+        // no lleva a ninguna parte. Antes de mandar eso, se cuenta como error y no se envía.
+        if (!baseUrl) throw new Error("no hay dirección pública configurada para el enlace");
+        qrEmitido = await proEmitir({
+          clase: "cupon", promocionId: promocion.id, telefono: tel,
+          nombre: `${c.nombre || ""} ${c.apellidos || ""}`.trim(),
+          usosMax: 1, autor: `campaña ${campanaId || "-"}` });
+        destinatario = { ...c, cupon: `${baseUrl}/cupon.html?t=${qrEmitido.token}` };
+      }
+
       // El local de la CAMPAÑA manda sobre el de la persona: si se escribe «a los de Can
       // Mateu», el mensaje dice Can Mateu aunque esa persona fuera una vez a Blanes. Si la
       // campaña no filtra por local, cada uno recibe el suyo, y quien no tenga ninguno recibe
       // el nombre de la casa (localDeContacto). Antes de esto, {local} salía siempre vacío.
-      const texto = aplicarVariables(base, localCampana ? { ...c, local: localCampana } : c);
+      const texto = aplicarVariables(base, localCampana ? { ...destinatario, local: localCampana } : destinatario);
       if (adjunto && adjunto.buffer) await sendMediaLibre(c.telefono, adjunto.buffer, adjunto.filename, adjunto.mimetype, texto);
       else await sendMensajeLibre(c.telefono, texto);
       enviados++;
       await contarEnvioWA(); // el tope diario solo es real si lo cuentan TODOS los caminos
+      // El QR se marca como enviado DESPUÉS de que el mensaje salga de verdad. Marcarlo antes
+      // haría que en Promociones apareciera como entregado un cupón que nadie ha recibido, y
+      // ese es justo el listado desde el que se reenvía a quien se quedó sin él.
+      if (qrEmitido) await dbRun(`UPDATE pro_qr SET enviado_en = ? WHERE id = ?`, [new Date().toISOString(), qrEmitido.id]).catch(() => {});
     }
-    catch (e) { errores++; estado = "error"; err = (e && e.message) ? String(e.message).slice(0, 200) : "error"; }
+    catch (e) {
+      errores++; estado = "error"; err = (e && e.message) ? String(e.message).slice(0, 200) : "error";
+      // Si el cupón llegó a emitirse pero el mensaje no salió, queda anotado en el propio QR:
+      // así aparece en Promociones como «no salió» y se puede reenviar sin emitir otro.
+      if (qrEmitido) await dbRun(`UPDATE pro_qr SET enviado_error = ? WHERE id = ?`, [err, qrEmitido.id]).catch(() => {});
+    }
     if (campanaId) {
       try { await dbRun(`INSERT INTO campana_envios (campana_id, telefono, nombre, estado, error) VALUES (?, ?, ?, ?, ?)`, [campanaId, c.telefono, `${c.nombre || ""} ${c.apellidos || ""}`.trim(), estado, err]); } catch { /* noop */ }
     }
@@ -14454,6 +15060,34 @@ function traeSegmento(body = {}) {
 }
 
 // Segmenta desde el segmento guardado y envía una campaña (usado al enviar ya y por el scheduler).
+/**
+ * La promoción que lleva una campaña, si lleva alguna.
+ *
+ * Se comprueba que exista y que esté ACTIVA en el momento de enviar, no en el de escribirla:
+ * entre que se programa una campaña para el viernes y sale, Marketing puede haber parado la
+ * promoción. Mandar cupones de una promoción parada es prometer algo que en la barra no se va
+ * a aceptar.
+ */
+async function promocionDeCampana(promocionId) {
+  if (!promocionId) return null;
+  const p = await dbGet(`SELECT * FROM pro_promociones WHERE id = ? AND activa`, [Number(promocionId)]);
+  return p || null;
+}
+
+/**
+ * La dirección pública con la que se construyen los enlaces que se mandan por WhatsApp.
+ *
+ * Misma cadena que usa el pulso del equipo (ver `enviarPulsoLote`), y por el mismo motivo: al
+ * enviar desde el reloj programado NO HAY PETICIÓN, así que no se puede sacar el host de
+ * `req`. Sin el respaldo del final, un envío automático mandaría «/cupon.html?t=…» a secas y
+ * el cliente recibiría un enlace que no lleva a ninguna parte.
+ */
+async function baseEnlaces(req = null) {
+  const cfg = await getConfig("pulso_base_url").catch(() => null);
+  const base = cfg || process.env.PUBLIC_URL || (req ? `${req.protocol}://${req.get("host")}` : "") || "https://familiadelamor.org";
+  return String(base).replace(/\/+$/, "");
+}
+
 async function dispatchCampana(campanaId) {
   const camp = await dbGet(`SELECT * FROM campanas_wa WHERE id = ?`, [campanaId]);
   if (!camp) return { ok: false };
@@ -14480,7 +15114,9 @@ async function dispatchCampana(campanaId) {
 
   await dbRun(`UPDATE campanas_wa SET estado='enviando' WHERE id = ?`, [campanaId]);
   const resolverMensaje = seg.traducir ? await construirResolverIdioma(camp.mensaje, pendientes) : null;
+  const promocion = await promocionDeCampana(camp.promocion_id);
   enviarLoteWA({ contactos: pendientes, mensaje: camp.mensaje, campanaId, adjunto: cargarAdjunto(camp.adjunto_url), resolverMensaje,
+    promocion, baseUrl: await baseEnlaces(),
     // Solo cuando la campaña va a UN establecimiento. Con varios («los de Tordera») no hay un
     // nombre que valga para todos, y cada uno recibe el suyo.
     localCampana: (!Array.isArray(seg.locales) || seg.locales.length <= 1) ? (seg.local || null) : null });
@@ -14530,7 +15166,29 @@ app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), async
     const lista = rows.slice(0, 500).map((c) => ({ nombre: c.nombre, apellidos: c.apellidos, telefono: c.telefono, enviable: aptosSet.has(c.telefono) }));
     // `descartados` viaja hasta la pantalla: un filtro que no se puede aplicar se DICE, no se
     // tira en silencio. Es la misma regla que ya seguía la propuesta de la IA.
-    res.json({ ok: true, total: rows.length, enviables: aptos.length, omitidos, muestra: rows.slice(0, 5), lista, descartados: descPrev });
+    // El mensaje TAL CUAL le va a llegar al primero de la lista. Aquí ya hubo un fallo caro
+    // —la previa decía 40 y salían 300— y la lección fue que la vista previa tiene que pasar
+    // por lo mismo que el envío. Con `{cupon}` vale igual: se enseña un enlace de ejemplo, no
+    // la llave literal, para que se vea dónde acaba y que la frase se lee bien con él dentro.
+    let ejemplo = null;
+    if (req.body?.mensaje) {
+      const quien = aptos[0] || rows[0] || {};
+      const base = await baseEnlaces(req);
+      ejemplo = aplicarVariables(req.body.mensaje, {
+        ...quien,
+        local: segPrev.local || quien.local,
+        // De ejemplo y se dice que lo es: emitir un cupón de verdad para una previsualización
+        // dejaría uno vivo cada vez que alguien toca el texto.
+        cupon: `${base}/cupon.html?t=EJEMPLO`,
+      });
+    }
+    const promoPrev = await promocionDeCampana(req.body?.promocion_id);
+    res.json({ ok: true, total: rows.length, enviables: aptos.length, omitidos, muestra: rows.slice(0, 5), lista,
+      descartados: descPrev, ejemplo,
+      // Que el mensaje pida un cupón y no haya promoción detrás se avisa AQUÍ, que es cuando
+      // aún se puede arreglar, y no al pulsar enviar.
+      avisoCupon: pideCupon(req.body?.mensaje || "") && !promoPrev
+        ? "El mensaje dice {cupon} pero no has elegido ninguna promoción." : null });
   } catch (e) {
     res.status(500).json({ ok: false });
   }
@@ -14553,7 +15211,7 @@ app.get("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, re
 
 // Crear una campaña: guardar borrador, programar o enviar ya (según `accion`).
 app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, res) => {
-  const { nombre, mensaje, asunto = null, canal = "whatsapp", plantilla_id = null, accion = "borrador", programada_para = null, soloOptIn = false, adjunto_url = null } = req.body || {};
+  const { nombre, mensaje, asunto = null, canal = "whatsapp", plantilla_id = null, accion = "borrador", programada_para = null, soloOptIn = false, adjunto_url = null, promocion_id = null } = req.body || {};
   if (!nombre || !mensaje) return res.status(400).json({ ok: false, error: "Faltan nombre y mensaje" });
   if (canal !== "whatsapp") return res.status(400).json({ ok: false, error: "El canal email aún no está disponible" });
   try {
@@ -14562,19 +15220,25 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
     // Recuento de enviables para informar
     const params = []; const contactos = await dbAll(sqlContactosUnificados(seg, params), params);
     const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: !!soloOptIn });
+    // La promoción se valida ANTES de guardar: una campaña que dice {cupon} y apunta a una
+    // promoción que no existe saldría con el hueco vacío, y eso no se puede retirar.
+    const promo = await promocionDeCampana(promocion_id);
+    if (promocion_id && !promo) return res.status(400).json({ ok: false, error: "Esa promoción no existe o está parada" });
+    if (pideCupon(mensaje) && !promo) return res.status(400).json({ ok: false, error: "El mensaje dice {cupon}: elige de qué promoción es." });
     let estado = "borrador";
     if (accion === "programar" && programada_para) estado = "programada";
     else if (accion === "enviar") estado = "enviando";
     const row = await dbRun(
-      `INSERT INTO campanas_wa (nombre, segmento_json, mensaje, asunto, canal, plantilla_id, estado, programada_para, adjunto_url, total_enviados) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
-      [nombre, JSON.stringify(seg), mensaje, asunto, canal, plantilla_id, estado, accion === "programar" ? programada_para : null, adjunto_url]
+      `INSERT INTO campanas_wa (nombre, segmento_json, mensaje, asunto, canal, plantilla_id, estado, programada_para, adjunto_url, promocion_id, total_enviados) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
+      [nombre, JSON.stringify(seg), mensaje, asunto, canal, plantilla_id, estado, accion === "programar" ? programada_para : null, adjunto_url, promo ? promo.id : null]
     );
     const id = row.id;
     if (accion === "enviar") {
       if (!isReady()) { await dbRun(`UPDATE campanas_wa SET estado='borrador' WHERE id=?`, [id]); return res.status(503).json({ ok: false, error: "WhatsApp no conectado", campana_id: id }); }
       res.json({ ok: true, campana_id: id, estado: "enviando", enviables: aptos.length, omitidos });
       const resolverMensaje = seg.traducir ? await construirResolverIdioma(mensaje, aptos) : null;
-      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id, adjunto: cargarAdjunto(adjunto_url), resolverMensaje, localCampana: seg.local || null });
+      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id, adjunto: cargarAdjunto(adjunto_url), resolverMensaje, localCampana: seg.local || null,
+        promocion: promo, baseUrl: await baseEnlaces(req) });
       return;
     }
     res.json({ ok: true, campana_id: id, estado, enviables: aptos.length, omitidos });
@@ -14642,8 +15306,12 @@ app.patch("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (r
     const adjunto_url = b.adjunto_url !== undefined ? b.adjunto_url : camp.adjunto_url;
     const programada_para = b.programada_para !== undefined ? b.programada_para : camp.programada_para;
     const estado = programada_para ? "programada" : "borrador";
-    await dbRun(`UPDATE campanas_wa SET nombre=?, mensaje=?, segmento_json=?, adjunto_url=?, programada_para=?, estado=? WHERE id=?`,
-      [nombre, mensaje, JSON.stringify(seg), adjunto_url, programada_para || null, estado, req.params.id]);
+    const promocionId = b.promocion_id !== undefined ? b.promocion_id : camp.promocion_id;
+    const promo = await promocionDeCampana(promocionId);
+    if (promocionId && !promo) return res.status(400).json({ ok: false, error: "Esa promoción no existe o está parada" });
+    if (pideCupon(mensaje) && !promo) return res.status(400).json({ ok: false, error: "El mensaje dice {cupon}: elige de qué promoción es." });
+    await dbRun(`UPDATE campanas_wa SET nombre=?, mensaje=?, segmento_json=?, adjunto_url=?, programada_para=?, estado=?, promocion_id=? WHERE id=?`,
+      [nombre, mensaje, JSON.stringify(seg), adjunto_url, programada_para || null, estado, promo ? promo.id : null, req.params.id]);
     res.json({ ok: true, estado });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });

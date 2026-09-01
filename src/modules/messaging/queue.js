@@ -52,14 +52,26 @@ export function localDeContacto(contacto = {}, { casa = CASA } = {}) {
   return String(contacto.local || contacto.ultimo_local || casa || "").trim();
 }
 
+/** ¿Este texto pide un cupón personal? Lo consulta el envío para saber si tiene que emitir uno. */
+export const pideCupon = (texto) => /\{cupon\}/i.test(String(texto == null ? "" : texto));
+
 // Sustituye variables de plantilla en el texto. Reutilizable por Campañas.
-// Soporta {nombre} {apellidos} {nombre_completo} {local}. Sin valor → cadena vacía.
+// Soporta {nombre} {apellidos} {nombre_completo} {local} {cupon}. Sin valor → cadena vacía.
+//
+// `{cupon}` es distinta de las demás: las otras salen de datos que ya existen, y esta obliga a
+// EMITIR algo —un cupón de un solo uso, distinto para cada persona— antes de poder sustituirla.
+// Por eso el envío la resuelve aparte y deja aquí la dirección ya hecha, en `contacto.cupon`.
+// Si llegara vacía no se manda el mensaje: ver `enviarLoteWA` en server.js. Un «te invitamos a
+// un café 👉» sin enlace detrás es peor que no escribir.
 export function aplicarVariables(texto, contacto = {}, { casa = CASA } = {}) {
   const nombre = (contacto.nombre || "").trim();
   const apellidos = (contacto.apellidos || "").trim();
   const local = localDeContacto(contacto, { casa });
   const completo = `${nombre} ${apellidos}`.trim();
-  return String(texto == null ? "" : texto)
+  const limpio = String(texto == null ? "" : texto)
+    // Primero el cupón: es una dirección web y no debe pasar por las limpiezas de puntuación
+    // pensadas para nombres. Se sustituye antes para que lo que quede ya sea texto final.
+    .replace(/\{cupon\}/gi, String(contacto.cupon || "").trim())
     .replace(/\{nombre_completo\}/gi, completo)
     .replace(/\{nombre\}/gi, nombre)
     .replace(/\{apellidos\}/gi, apellidos)
@@ -76,8 +88,13 @@ export function aplicarVariables(texto, contacto = {}, { casa = CASA } = {}) {
     // nombre daba «¡Felicidades,!». Una coma pegada a un cierre o al final sobra siempre.
     .replace(/[,;:]+(?=\s*[!?.…]|$)/g, "")
     .replace(/\s+,/g, ",")
-    .trim()
-    .replace(/^([a-záéíóúüñ])/, (c) => c.toUpperCase());
+    .trim();
+
+  // La mayúscula inicial se pone porque quitar un «{nombre}» vacío suele dejar la frase
+  // empezando en minúscula. PERO NO si el mensaje arranca con una dirección web: un mensaje
+  // que es solo «{cupon}» salía como «Https://…», y ese ya no es el mismo enlace — hay
+  // clientes que con el esquema en mayúscula no lo convierten en enlace pulsable.
+  return /^(https?:\/\/|www\.)/i.test(limpio) ? limpio : limpio.replace(/^([a-záéíóúüñ])/, (c) => c.toUpperCase());
 }
 
 // ¿Se puede enviar por WhatsApp a este contacto? Regla legal: nunca a bajas.

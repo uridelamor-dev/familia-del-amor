@@ -81,8 +81,6 @@ const i18n = {
       "Bares de tapas con mucho ambiente, cocina honesta y un equipo que cuida cada detalle.",
     companies_title: "Locales",
     companies_sub: "Cada local con su carácter, historia y sabor.",
-    history_title: "Historia y valores",
-    history_sub: "Nuestra manera de hacer las cosas, desde dentro.",
     team_title: "Equipo y familia",
     team_text: "Somos una familia que crece con cada local y cada historia compartida.",
     events_title: "Eventos y experiencias",
@@ -151,6 +149,10 @@ const i18n = {
     err_generic: "No se pudo completar. Inténtalo de nuevo.",
     reserva_bloqueada: "Esos días no aceptamos reservas en {local} 🎉 ¡Te esperamos en otra fecha o en otro de nuestros locales!",
     success_lead: "¡Descuento activado!",
+    lead_qr_listo: "¡Listo! Este es tu descuento. Enséñalo cuando vengas.",
+    lead_codigo: "Si no lo leen, di este número:",
+    lead_ya_emitido: "Ya tienes tu descuento de bienvenida. Te lo hemos vuelto a enviar por WhatsApp.",
+    lead_ya_usado: "Ya usaste tu descuento de bienvenida.",
     success_hr: "Candidatura enviada. Gracias.",
     err_hr: "No se pudo enviar. Inténtalo de nuevo.",
     reservation_success_back: "Hacer otra reserva",
@@ -218,8 +220,6 @@ const i18n = {
       "Bars de tapes amb molt ambient, cuina honesta i un equip que cuida cada detall.",
     companies_title: "Locals",
     companies_sub: "Cada local amb el seu caràcter, història i sabor.",
-    history_title: "Història i valors",
-    history_sub: "La nostra manera de fer les coses, des de dins.",
     team_title: "Equip i família",
     team_text: "Som una família que creix amb cada local i cada història compartida.",
     events_title: "Esdeveniments i experiències",
@@ -288,6 +288,10 @@ const i18n = {
     err_generic: "No s'ha pogut completar. Torna-ho a intentar.",
     reserva_bloqueada: "Aquests dies no acceptem reserves a {local} 🎉 T'esperem en una altra data o en un altre dels nostres locals!",
     success_lead: "¡Descompte activat!",
+    lead_qr_listo: "Ja el tens! Aquest és el teu descompte. Ensenya\'l quan vinguis.",
+    lead_codigo: "Si no el llegeixen, digues aquest número:",
+    lead_ya_emitido: "Ja tens el teu descompte de benvinguda. Te l'hem tornat a enviar per WhatsApp.",
+    lead_ya_usado: "Ja vas fer servir el teu descompte de benvinguda.",
     success_hr: "Candidatura enviada. Gràcies.",
     err_hr: "No s'ha pogut enviar. Torna-ho a intentar.",
     reservation_success_back: "Fer una altra reserva",
@@ -355,8 +359,6 @@ const i18n = {
       "Tapas bars with great atmosphere, honest cooking, and a team that cares about every detail.",
     companies_title: "Venues",
     companies_sub: "Each venue with its own character, history, and flavor.",
-    history_title: "History and values",
-    history_sub: "Our way of doing things, from the inside.",
     team_title: "Team and family",
     team_text: "We are a family that grows with every venue and shared story.",
     events_title: "Events and experiences",
@@ -425,6 +427,10 @@ const i18n = {
     err_generic: "Could not complete. Please try again.",
     reserva_bloqueada: "We're not taking bookings at {local} on those dates 🎉 We'd love to see you another day or at one of our other venues!",
     success_lead: "Discount activated!",
+    lead_qr_listo: "All set! Here is your discount. Just show it when you come.",
+    lead_codigo: "If it will not scan, read out this number:",
+    lead_ya_emitido: "You already have your welcome discount. We have sent it to you again on WhatsApp.",
+    lead_ya_usado: "You have already used your welcome discount.",
     success_hr: "Application sent. Thank you.",
     err_hr: "Could not send. Please try again.",
     reservation_success_back: "Make another reservation",
@@ -968,6 +974,50 @@ bindPoblacionAutocomplete(document.getElementById("poblacionReservaInput"), docu
 const leadForm = document.getElementById("leadForm");
 const leadMsg = document.getElementById("leadMsg");
 
+/**
+ * El cupón recién emitido, dentro del propio popup.
+ *
+ * Se construye con `textContent` y `src`, nunca con innerHTML: el nombre de la promoción y el
+ * código vienen del servidor, y aquí no se monta HTML con texto de fuera. La imagen es un
+ * `data:` que ya llega generado — no hay ninguna librería de QR en el navegador ni se puede
+ * añadir.
+ *
+ * Debajo va el enlace permanente: el popup se cierra, el móvil se pierde, y ese enlace es la
+ * forma de volver a encontrarlo sin tener que rebuscar en WhatsApp.
+ */
+function pintarCuponLead(b, t2) {
+  const caja = document.getElementById("leadQr");
+  if (!caja) return;
+  caja.innerHTML = "";
+
+  if (b.qr) {
+    const img = document.createElement("img");
+    img.src = b.qr;
+    img.alt = b.promocion || "";
+    caja.appendChild(img);
+  }
+  if (b.codigo) {
+    const eti = document.createElement("p");
+    eti.className = "lead-qr-eti";
+    eti.textContent = t2.lead_codigo;
+    const cod = document.createElement("p");
+    cod.className = "lead-qr-cod";
+    // Partido por la mitad: ocho dígitos seguidos se dictan fatal en una barra con ruido.
+    cod.textContent = b.codigo.length === 8 ? b.codigo.slice(0, 4) + " " + b.codigo.slice(4) : b.codigo;
+    caja.appendChild(eti); caja.appendChild(cod);
+  }
+  if (b.url) {
+    const a = document.createElement("a");
+    a.className = "lead-qr-link";
+    a.href = b.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = b.url.replace(/^https?:\/\//, "");
+    caja.appendChild(a);
+  }
+  caja.classList.add("show");
+}
+
 if (leadForm) leadForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   leadMsg.textContent = "";
@@ -987,6 +1037,31 @@ if (leadForm) leadForm.addEventListener("submit", async (e) => {
     const data = await res.json();
     const t2 = i18n[currentLang] || i18n.es;
     if (data.ok) {
+      const b = data.bienvenida;
+      if (b && b.estado === "nuevo") {
+        // La primera vez el cupón se enseña AQUÍ. Ya está también en su WhatsApp, pero mandar
+        // a alguien a otra aplicación para ver lo que acaba de ganar pierde a la mitad.
+        leadMsg.textContent = t2.lead_qr_listo;
+        pintarCuponLead(b, t2);
+        leadForm.reset();
+        return;                       // no se cierra solo: tiene que poder guardarlo
+      }
+      if (b && b.estado === "ya_emitido") {
+        // No se enseña en pantalla a propósito: se le reenvía al móvil. Ver el comentario de
+        // `bienvenidaWeb` en server.js — es lo que impide que se saquen cupones ajenos
+        // probando teléfonos.
+        leadMsg.textContent = t2.lead_ya_emitido;
+        leadForm.reset();
+        setTimeout(() => popup.classList.remove("show"), 4500);
+        return;
+      }
+      if (b && b.estado === "ya_usado") {
+        leadMsg.textContent = b.texto ? `${t2.lead_ya_usado} ${b.texto}` : t2.lead_ya_usado;
+        leadForm.reset();
+        setTimeout(() => popup.classList.remove("show"), 4500);
+        return;
+      }
+      // Sin cupón detrás (Marketing ha parado la promoción, o no había teléfono): como siempre.
       leadMsg.textContent = `${t2.success_lead}${data.premio ? " — " + data.premio : ""}`;
       leadForm.reset();
       setTimeout(() => popup.classList.remove("show"), 2500);

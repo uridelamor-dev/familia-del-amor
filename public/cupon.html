@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>Tu descuento · Familia del Amor</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="cupon.css" />
+  </head>
+  <!-- La página que abre el CLIENTE en su móvil, desde el enlace que le llega por WhatsApp.
+       Sin sesión: la llave es el token de la URL. No carga app.js ni auth.js. -->
+  <body class="cup-body">
+    <main class="cup-wrap">
+      <p class="cup-marca">Familia del Amor</p>
+
+      <div class="cup-cargando" id="cupCargando">Un momento…</div>
+
+      <section class="cup-card hidden" id="cupCard">
+        <h1 class="cup-titulo" id="cupTitulo">—</h1>
+        <p class="cup-desc" id="cupDesc"></p>
+
+        <!-- El QR sobre BLANCO PURO y lo más grande que quepa: es lo único que hace falta que
+             la cámara de la barra lea a la primera. No se puede subir el brillo del móvil
+             desde la web, así que lo que sí está en nuestra mano es el contraste. -->
+        <div class="cup-qr" id="cupQrCaja"><img id="cupQr" alt="Tu código" /></div>
+
+        <p class="cup-codigo-eti">Si no lo lee, dile este número:</p>
+        <p class="cup-codigo" id="cupCodigo">—</p>
+
+        <p class="cup-estado" id="cupEstado"></p>
+        <p class="cup-pie" id="cupPie"></p>
+      </section>
+
+      <div class="cup-aviso hidden" id="cupAviso"></div>
+    </main>
+    <script src="cupon.js"></script>
+  </body>
+</html>

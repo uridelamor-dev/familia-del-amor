@@ -209,6 +209,66 @@
 .fic-res-eti { font-size: .72rem; color: #7d968a; white-space: nowrap }
 .fic-res-mas { padding: .22rem .45rem; font-size: .8rem; color: #7d968a }
 
+
+/* ── 5 · Validar un cupón ─────────────────────────────────────────────────── */
+/* La entrada, debajo de la lista de gente y deliberadamente APAGADA: esta pantalla es para
+   fichar. Un botón con el mismo peso que los nombres haría dudar a quien viene a fichar. */
+.fic-cupon-abrir {
+  display: block; margin: 1.75rem auto 0; padding: .8rem 1.4rem;
+  min-height: 56px; border-radius: 12px;
+  background: transparent; border: 1px solid #2c4137; color: #8fa79b;
+  font: inherit; font-size: 1rem; font-weight: 600; cursor: pointer;
+}
+.fic-cupon-abrir:active { background: #1b2a24 }
+/* Encendido: se ha pedido validar y ahora el PIN es para eso. Que se note mucho, porque si
+   no, uno ficha creyendo que está canjeando. */
+.fic-cupon-abrir.on { background: #2f6b4a; border-color: #4ade80; color: #eafff2 }
+.fic-cupon-abrir:focus-visible { outline: 3px solid #4ade80; outline-offset: 3px }
+
+/* El visor. Alto fijo y `object-fit: cover`: sin esto, una cámara 4:3 en una pantalla ancha
+   deja dos franjas negras y el marco de puntería queda flotando en el vacío. */
+.fic-scan { position: relative; max-width: 560px; margin: 0 auto 1.25rem;
+  aspect-ratio: 4 / 3; border-radius: 18px; overflow: hidden; background: #0a120f;
+  border: 1px solid #2c4137 }
+.fic-video { width: 100%; height: 100%; object-fit: cover; display: block;
+  /* En espejo: la cámara frontal enseña la escena al revés y el camarero, al ver su mano ir
+     hacia el lado contrario, corrige mal. Al QR le da igual — lo lee el detector, no el ojo. */
+  transform: scaleX(-1) }
+.fic-mira { position: absolute; inset: 18%; border: 3px solid rgba(74,222,128,.85);
+  border-radius: 14px; box-shadow: 0 0 0 100vmax rgba(10,18,15,.45) }
+
+.fic-cupon-manual { max-width: 460px; margin: 0 auto }
+.fic-cupon-alt {
+  display: block; margin: 0 auto; padding: .7rem 1.2rem; min-height: 52px;
+  background: none; border: 0; color: #8fa79b; font: inherit; font-size: 1rem;
+  font-weight: 600; text-decoration: underline; cursor: pointer;
+}
+
+/* El resultado. El color lo dice antes que el texto: a un metro de distancia y con prisa,
+   verde o rojo se entiende sin leer. */
+.fic-cupon-res { margin-top: .5rem }
+.fic-cupon-card { padding: 1.5rem; border-radius: 18px; margin-bottom: 1.5rem;
+  border: 2px solid #2c4137; background: #1b2a24; text-align: center }
+.fic-cupon-card.ok { border-color: #4ade80; background: linear-gradient(#22402f, #1b2a24) }
+.fic-cupon-card.mal { border-color: #f87171; background: linear-gradient(#3a2222, #241b1b) }
+.fic-cupon-que { font-size: 1.9rem; font-weight: 700; letter-spacing: -.01em }
+.fic-cupon-quien { margin-top: .3rem; font-size: 1.2rem; color: #cfded7 }
+.fic-cupon-txt { margin-top: .7rem; font-size: 1.05rem; color: #9db3a9; line-height: 1.5 }
+
+/* Las promociones que se le pueden dar a un carné. Botones grandes: se pulsan con el cliente
+   delante, y equivocarse aquí es regalarle lo que no era. */
+.fic-cupon-promos { display: flex; flex-direction: column; gap: .7rem; margin-top: 1.25rem }
+.fic-cupon-promo {
+  display: block; width: 100%; min-height: 76px; padding: .9rem 1.1rem;
+  border-radius: 14px; border: 1px solid #4ade80; background: #22402f;
+  color: #f2f6f4; font: inherit; text-align: left; cursor: pointer;
+}
+.fic-cupon-promo:active { transform: scale(.98) }
+.fic-cupon-promo.gastada { border-color: #35493f; background: #1b2a24; color: #7d968a;
+  cursor: default; opacity: .75 }
+.fic-cupon-promo-n { display: block; font-size: 1.15rem; font-weight: 700 }
+.fic-cupon-promo-t { display: block; margin-top: .2rem; font-size: .95rem; color: #9db3a9 }
+
 /* Tablet pequeña o móvil en vertical: el teclado no debe empujar nada fuera de pantalla. */
 @media (max-width: 560px) {
   .fic-main { align-items: flex-start; padding: 1rem }
@@ -226,6 +286,12 @@
   .fic-dia { margin-top: 1.1rem }
   .fic-res { font-size: .85rem; gap: .4rem }
   .fic-res-hora { min-width: 3em }
+  /* El visor cede altura: con el 4:3 entero, el aviso y el botón de escribir el código se
+     iban debajo del pliegue y parecía que no había alternativa a la cámara. */
+  .fic-scan { aspect-ratio: 1 / 1; margin-bottom: 1rem }
+  .fic-cupon-card { padding: 1.1rem }
+  .fic-cupon-que { font-size: 1.5rem }
+  .fic-cupon-abrir { margin-top: 1.25rem; min-height: 52px; font-size: .95rem }
 }
 
 /* Tablet en horizontal, que es donde vive de verdad: el teclado no debe obligar a estirar
@@ -233,4 +299,7 @@
 @media (min-width: 900px) and (orientation: landscape) {
   .fic-teclado { max-width: 460px }
   .fic-tecla { min-height: 92px }
+  /* Apaisado hay altura de sobra a los lados pero poca por arriba: el visor se ensancha y se
+     achata para que el resultado quepa sin desplazar la pantalla. */
+  .fic-scan { max-width: 620px; aspect-ratio: 16 / 9 }
 }

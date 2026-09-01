@@ -15,7 +15,7 @@
  *    local sería el camino más corto para falsificar un registro de jornada.
  */
 
-const CACHE = "fichar-v1";
+const CACHE = "fichar-v2";
 const ESTATICOS = [
   "/fichar.html",
   "/fichar.js",

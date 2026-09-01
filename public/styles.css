@@ -1927,6 +1927,40 @@ h1, h2, h3 {
   color: var(--muted);
 }
 
+/* El cupón de bienvenida, dentro del propio popup del formulario.
+   Sobre BLANCO PURO y no sobre el crema de la marca: aquí lo que importa es que la cámara de
+   la barra lo lea a la primera, y un QR sobre fondo de color se lee peor. El brillo de la
+   pantalla no se puede subir desde la web, así que el contraste es lo único en nuestra mano. */
+.lead-qr {
+  display: none;
+  margin-top: 1.25rem;
+  padding: 1.25rem 1rem 1rem;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  text-align: center;
+}
+.lead-qr.show { display: block; }
+.lead-qr img { width: 100%; max-width: 240px; height: auto; display: block; margin: 0 auto; }
+.lead-qr-eti { margin: 1rem 0 0.2rem; font-size: 0.85rem; color: #6d7a74; }
+/* Cifras tabulares y muy separadas: esto se dicta en voz alta. */
+.lead-qr-cod {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.1em;
+  color: #1c211f;
+}
+/* El enlace permanente: el popup se cierra y el cupón tiene que poder recuperarse. */
+.lead-qr-link {
+  display: inline-block;
+  margin-top: 0.9rem;
+  font-size: 0.8rem;
+  color: #6d7a74;
+  word-break: break-all;
+}
+
 .popup {
   position: fixed;
   inset: 0;

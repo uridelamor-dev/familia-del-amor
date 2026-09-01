@@ -21,7 +21,9 @@
   var VUELTA_MS = 20000;          // inactividad → volver a la lista
   var OK_MS = 3200;               // cuánto se queda la confirmación en pantalla
 
-  var estado = { equipo: [], local: "", ticket: null, worker: null, pin: "", pinTemporal: false, sinLinea: false };
+  var estado = { equipo: [], local: "", ticket: null, worker: null, pin: "", pinTemporal: false, sinLinea: false,
+                 // Con qué se ha venido: a fichar (lo normal) o a validar un cupón.
+                 intencion: "fichar" };
   var reloj = { servidorMs: 0, refMs: 0 };
   var temporizadorVuelta = null;
 
@@ -49,7 +51,7 @@
 
   // ── Pasos ────────────────────────────────────────────────────────────────
   function mostrar(id) {
-    ["ficPasoQuien", "ficPasoPin", "ficPasoAcciones", "ficPasoOk"].forEach(function (p) {
+    ["ficPasoQuien", "ficPasoPin", "ficPasoAcciones", "ficPasoCupon", "ficPasoOk"].forEach(function (p) {
       $(p).classList.toggle("hidden", p !== id);
     });
   }
@@ -61,6 +63,11 @@
     clearTimeout(temporizadorVuelta);
     // Se borra TODO: esta pantalla la ve el siguiente que pase por la barra.
     estado.ticket = null; estado.worker = null; estado.pin = ""; estado.pinTemporal = false;
+    // La cámara se apaga SIEMPRE al salir de la pantalla del cupón: es una tablet pública en
+    // la barra, y un vídeo encendido que nadie mira es lo que no puede pasar (y además se
+    // come la batería).
+    pararCamara();
+    cuponOlvidar();
     // También del DOM: el nombre se queda escrito en la pantalla del PIN aunque esté
     // oculta, y esta tablet la ve todo el que pase por la barra.
     $("ficPinNombre").textContent = "";
@@ -68,6 +75,11 @@
     $("ficHola").textContent = "";
     $("ficHoy").innerHTML = "";
     pintarPuntos();
+    estado.intencion = "fichar";
+    var abrirCup = $("ficAbrirCupon");
+    if (abrirCup) { abrirCup.classList.remove("on"); abrirCup.textContent = "Validar cupón de cliente"; }
+    var tit = document.querySelector("#ficPasoQuien .fic-titulo");
+    if (tit) tit.textContent = "¿Quién eres?";
     mostrar("ficPasoQuien");
     cargarEquipo();
   }
@@ -341,7 +353,10 @@
         estado.ticket = r.datos.ticket;
         estado.pinTemporal = !!r.datos.pinTemporal;
         estado.sinLinea = false;
-        pintarAcciones(r.datos);
+        // Aquí se separan los dos caminos. El ticket es el mismo —prueba que esta persona
+        // tecleó su PIN en esta tablet— y sirve igual para fichar que para validar.
+        if (estado.intencion === "cupon") abrirCupon();
+        else pintarAcciones(r.datos);
       })
       .catch(function () {
         $("ficTeclado").classList.remove("comprobando");
@@ -562,6 +577,285 @@
     });
   })();
 
+  // ── 5 · Validar un cupón ─────────────────────────────────────────────────
+  /*
+   * Se entra por el botón pequeño de la pantalla de inicio, y se pasa por el PIN igual que
+   * para fichar: así el canje queda con el nombre de quien lo validó. El ticket que emite el
+   * PIN es la credencial, tal cual — no hace falta ninguna otra.
+   *
+   * Leer un QR sin instalar nada: `BarcodeDetector`, que traen Chrome de Android y el de
+   * escritorio. Donde no está —un iPad, Firefox— no se finge ni se carga una librería que
+   * este proyecto no puede instalar: se teclea el código de ocho dígitos con el mismo teclado
+   * del PIN. Y ese camino no es solo un apaño para navegadores viejos: sirve cuando la
+   * pantalla del cliente está rota, cuando no tiene batería o cuando el QR viene en papel
+   * arrugado, que pasa más de lo que parece.
+   *
+   * UN CANJE NO SE ENCOLA NUNCA. Los fichajes sí, porque perder uno es peor que retrasarlo;
+   * un canje guardado para subir luego es un cupón que mientras tanto se puede gastar otra vez
+   * en la otra tablet. Sin línea, aquí se dice que no se puede validar y se acabó.
+   */
+  var CUPON_LARGO = 8;
+  var cam = { stream: null, detector: null, lazo: null };
+  var cupon = { codigo: "", visto: null, enviando: false };
+
+  function cuponOlvidar() {
+    cupon.codigo = ""; cupon.visto = null; cupon.enviando = false;
+    $("ficCuponError").textContent = "";
+    $("ficCuponRes").classList.add("hidden");
+    $("ficCuponPromos").innerHTML = "";
+    $("ficCuponAcciones").innerHTML = "";
+  }
+
+  function pararCamara() {
+    if (cam.lazo) { cancelAnimationFrame(cam.lazo); cam.lazo = null; }
+    if (cam.stream) {
+      cam.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* ya estaba */ } });
+      cam.stream = null;
+    }
+    var v = $("ficVideo");
+    if (v) { try { v.pause(); } catch (e) { /* da igual */ } v.srcObject = null; }
+  }
+
+  /** ¿Sabe este navegador leer un QR él solo? */
+  function hayLector() {
+    return typeof window.BarcodeDetector === "function" &&
+           typeof navigator.mediaDevices === "object" && !!navigator.mediaDevices.getUserMedia;
+  }
+
+  function abrirCupon() {
+    cuponOlvidar();
+    $("ficCuponTit").textContent = "Enséñame el código";
+    mostrar("ficPasoCupon");
+    // Un poco más de margen que los 20 s de siempre: apuntar un móvil a la cámara con el
+    // cliente buscando el mensaje en WhatsApp lleva lo suyo.
+    aplazarVuelta(60000);
+    if (hayLector()) arrancarCamara();
+    else modoManual("Este navegador no lee QR. Escribe el código de ocho dígitos.");
+  }
+
+  function arrancarCamara() {
+    $("ficScan").classList.remove("hidden");
+    $("ficCuponManual").classList.add("hidden");
+    $("ficCuponAlterna").textContent = "Escribir el código a mano";
+    $("ficCuponAlterna").classList.remove("hidden");
+
+    // Cámara FRONTAL: la tablet está clavada en la barra mirando hacia dentro, así que la de
+    // delante es la que apunta a donde está el cliente.
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 } }, audio: false })
+      .then(function (stream) {
+        cam.stream = stream;
+        var v = $("ficVideo");
+        v.srcObject = stream;
+        v.setAttribute("playsinline", "");
+        return v.play();
+      })
+      .then(function () {
+        try { cam.detector = new window.BarcodeDetector({ formats: ["qr_code"] }); }
+        catch (e) { return modoManual("No se pudo encender el lector. Escribe el código."); }
+        buscarQr();
+      })
+      .catch(function () {
+        // Permiso denegado, cámara ocupada, sin HTTPS… No se insiste: hay otro camino.
+        pararCamara();
+        modoManual("No se puede usar la cámara. Escribe el código de ocho dígitos.");
+      });
+  }
+
+  function buscarQr() {
+    if (!cam.detector || !cam.stream) return;
+    var v = $("ficVideo");
+    cam.detector.detect(v).then(function (marcas) {
+      if (marcas && marcas.length && marcas[0].rawValue) {
+        // Vibra al leer: en una barra con ruido y las manos ocupadas, enterarse de que ha
+        // pillado sin mirar la pantalla es la diferencia entre escanear una vez o cinco.
+        if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) { /* da igual */ } }
+        pararCamara();
+        return verCupon(marcas[0].rawValue);
+      }
+      cam.lazo = requestAnimationFrame(buscarQr);
+    }).catch(function () {
+      cam.lazo = requestAnimationFrame(buscarQr);
+    });
+  }
+
+  function modoManual(aviso) {
+    pararCamara();
+    $("ficScan").classList.add("hidden");
+    $("ficCuponManual").classList.remove("hidden");
+    $("ficCuponAlterna").classList.add("hidden");
+    $("ficCuponError").textContent = aviso || "";
+    cupon.codigo = "";
+    pintarPuntosCupon();
+    montarTecladoCupon();
+    aplazarVuelta(60000);
+  }
+
+  function pintarPuntosCupon() {
+    var c = $("ficCuponPuntos");
+    c.innerHTML = "";
+    for (var i = 0; i < CUPON_LARGO; i++) {
+      var d = document.createElement("span");
+      d.className = "fic-punto-pin" + (i < cupon.codigo.length ? " lleno" : "");
+      c.appendChild(d);
+    }
+  }
+
+  var tecladoCuponPuesto = false;
+  function montarTecladoCupon() {
+    if (tecladoCuponPuesto) return;
+    tecladoCuponPuesto = true;
+    var t = $("ficCuponTeclado");
+    // Mismo dibujo que el del PIN: el hueco a la izquierda deja el 0 centrado y el borrar a
+    // la derecha, donde el pulgar lo busca.
+    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "borrar"].forEach(function (k) {
+      if (k === "") { var hueco = document.createElement("span"); hueco.className = "fic-tecla-hueco"; t.appendChild(hueco); return; }
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "fic-tecla" + (k === "borrar" ? " fic-tecla--aux" : "");
+      b.setAttribute("aria-label", k === "borrar" ? "Borrar el último dígito" : k);
+      b.textContent = k === "borrar" ? "⌫" : k;
+      b.addEventListener("click", function () { pulsarCupon(k); });
+      t.appendChild(b);
+    });
+  }
+
+  function pulsarCupon(k) {
+    aplazarVuelta(60000);
+    $("ficCuponError").textContent = "";
+    if (k === "borrar") { cupon.codigo = cupon.codigo.slice(0, -1); return pintarPuntosCupon(); }
+    if (cupon.codigo.length >= CUPON_LARGO) return;
+    cupon.codigo += k;
+    pintarPuntosCupon();
+    // Entra solo al completarlo, como el PIN: aquí tampoco hay que buscar ningún botón.
+    if (cupon.codigo.length === CUPON_LARGO) setTimeout(function () { verCupon(cupon.codigo); }, 140);
+  }
+
+  /** Comprobar SIN gastar. El camarero ve qué es y de quién antes de confirmar nada. */
+  function verCupon(texto) {
+    aplazarVuelta(60000);
+    $("ficCuponError").textContent = "";
+    api("/cupon/ver", { method: "POST", body: JSON.stringify({ ticket: estado.ticket, codigo: texto }) })
+      .then(function (r) {
+        if (r.http === 401) return reintentarPin();
+        if (!r.datos.ok) return errorCupon(r.datos.error || "No se pudo comprobar.");
+        cupon.visto = r.datos;
+        pintarCupon(r.datos, texto);
+      })
+      .catch(function () {
+        // Sin línea NO se valida. Ver el comentario de arriba: un canje en la cola se gasta
+        // dos veces.
+        errorCupon("Ahora mismo no hay conexión: no se puede validar. Inténtalo en un minuto.");
+      });
+  }
+
+  function errorCupon(msg) {
+    // Se quita la tarjeta del resultado anterior: si falla al confirmar, dejarla puesta
+    // encima del visor hace pensar que el canje sí ha entrado.
+    $("ficCuponRes").classList.add("hidden");
+    $("ficCuponError").textContent = msg;
+    cupon.codigo = "";
+    if (!$("ficCuponManual").classList.contains("hidden")) pintarPuntosCupon();
+    else if (hayLector()) arrancarCamara();      // sigue mirando: puede ser el QR de al lado
+  }
+
+  function reintentarPin() {
+    // El ticket dura dos minutos. Si se ha pasado, se vuelve a pedir el PIN sin perder la
+    // intención: al acertarlo se vuelve aquí solo.
+    estado.ticket = null;
+    $("ficPinError").textContent = "Han pasado un par de minutos. Vuelve a poner tu PIN.";
+    mostrar("ficPasoPin");
+    aplazarVuelta();
+  }
+
+  function pintarCupon(d, textoLeido) {
+    $("ficScan").classList.add("hidden");
+    $("ficCuponManual").classList.add("hidden");
+    $("ficCuponAlterna").classList.add("hidden");
+    $("ficCuponRes").classList.remove("hidden");
+
+    var card = $("ficCuponCard");
+    card.className = "fic-cupon-card " + (d.canjeable ? "ok" : "mal");
+    $("ficCuponQue").textContent = d.clase === "carnet" ? "Cliente" : (d.promocion ? d.promocion.nombre : "Cupón");
+    $("ficCuponQuien").textContent = d.titular || "";
+    // El texto lo escribe el SERVIDOR: es el mismo módulo que decide si vale, así que aquí no
+    // se puede contradecir. «Ya lo usó el 3 de septiembre a las 21:40» acaba la conversación;
+    // un «no válido» a secas la empieza.
+    $("ficCuponTxt").textContent = d.canjeable ? (d.promocion && d.promocion.descripcion ? d.promocion.descripcion : "") : d.texto;
+
+    var promos = $("ficCuponPromos");
+    var acciones = $("ficCuponAcciones");
+    promos.innerHTML = ""; acciones.innerHTML = "";
+
+    if (d.clase === "carnet" && d.canjeable) {
+      // Un carné no lleva promoción dentro: identifica a la persona. Lo que se le puede
+      // aplicar se elige aquí, y las que ya ha gastado salen en gris, no desaparecen: si no,
+      // el camarero no entiende por qué falta la que el cliente le está enseñando.
+      var lista = d.promociones || [];
+      if (!lista.length) {
+        $("ficCuponTxt").textContent = "Ahora mismo no hay ninguna promoción para darle.";
+      }
+      lista.forEach(function (p) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "fic-cupon-promo" + (p.canjeable ? "" : " gastada");
+        b.disabled = !p.canjeable;
+        b.innerHTML = '<span class="fic-cupon-promo-n"></span><span class="fic-cupon-promo-t"></span>';
+        b.querySelector(".fic-cupon-promo-n").textContent = p.nombre;
+        b.querySelector(".fic-cupon-promo-t").textContent = p.canjeable ? (p.descripcion || "") : p.texto;
+        b.addEventListener("click", function () { canjear(textoLeido, p.id); });
+        promos.appendChild(b);
+      });
+    } else if (d.canjeable) {
+      var ok = document.createElement("button");
+      ok.type = "button";
+      ok.className = "fic-accion fic-accion--principal";
+      ok.textContent = "Confirmar";
+      ok.addEventListener("click", function () { canjear(textoLeido, null); });
+      acciones.appendChild(ok);
+    }
+
+    var otro = document.createElement("button");
+    otro.type = "button";
+    otro.className = "fic-accion";
+    otro.textContent = d.canjeable ? "Cancelar" : "Probar otro";
+    otro.addEventListener("click", function () { abrirCupon(); });
+    acciones.appendChild(otro);
+    aplazarVuelta(60000);
+  }
+
+  function canjear(textoLeido, promocionId) {
+    if (cupon.enviando) return;                 // dos toques seguidos no son dos canjes
+    cupon.enviando = true;
+    aplazarVuelta(OK_MS + 500);
+    api("/cupon/canjear", {
+      method: "POST",
+      body: JSON.stringify({
+        ticket: estado.ticket, codigo: textoLeido, promocion_id: promocionId,
+        // Mismo id de idempotencia que en los fichajes: si la respuesta se pierde por el
+        // camino y se reintenta, el servidor reconoce que ya lo hizo y no lo cuenta dos veces.
+        cliente_id: "c" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
+      }),
+    }).then(function (r) {
+      cupon.enviando = false;
+      if (r.http === 401) return reintentarPin();
+      if (!r.datos.ok) { pintarCupon({ canjeable: false, clase: "cupon", texto: r.datos.error || "No se pudo validar." }, textoLeido); return; }
+      confirmacionCupon(r.datos);
+    }).catch(function () {
+      cupon.enviando = false;
+      errorCupon("Se ha cortado la conexión. No se ha validado: vuelve a intentarlo.");
+    });
+  }
+
+  function confirmacionCupon(d) {
+    $("ficTic").textContent = "✓";
+    $("ficTic").className = "fic-tic";
+    $("ficOkTitulo").textContent = d.promocion || "Validado";
+    $("ficOkHora").textContent = d.titular || "";
+    $("ficOkMsg").textContent = "Aplícaselo en el TPV.";
+    mostrar("ficPasoOk");
+    aplazarVuelta(OK_MS);
+  }
+
   // ── Arranque ─────────────────────────────────────────────────────────────
   montarTeclado();
   refrescarCola();
@@ -572,6 +866,28 @@
   }
   $("ficVolver").addEventListener("click", volverAlInicio);
   $("ficSalir").addEventListener("click", volverAlInicio);
+  $("ficCuponVolver").addEventListener("click", volverAlInicio);
+  $("ficCuponAlterna").addEventListener("click", function () { modoManual(""); });
+
+  /*
+   * El botón de validar cupones.
+   *
+   * Solo aparece si el navegador puede hacer algo con él, y siempre puede: o lee QR con la
+   * cámara, o se teclea el código. Lo que hace al pulsarlo es solo cambiar la INTENCIÓN —no
+   * salta a ninguna pantalla— porque el siguiente paso es el mismo de siempre: di quién eres
+   * y pon tu PIN. Así el canje queda firmado y el camino a fichar no cambia ni un toque.
+   */
+  var abrir = $("ficAbrirCupon");
+  abrir.hidden = false;
+  abrir.addEventListener("click", function () {
+    var vaAValidar = estado.intencion !== "cupon";
+    estado.intencion = vaAValidar ? "cupon" : "fichar";
+    abrir.classList.toggle("on", vaAValidar);
+    abrir.textContent = vaAValidar ? "Dejarlo: solo quiero fichar" : "Validar cupón de cliente";
+    document.querySelector("#ficPasoQuien .fic-titulo").textContent =
+      vaAValidar ? "¿Quién lo valida?" : "¿Quién eres?";
+    aplazarVuelta();
+  });
   // Teclado físico, por si la tablet lleva uno acoplado.
   document.addEventListener("keydown", function (e) {
     if ($("ficPasoPin").classList.contains("hidden")) return;

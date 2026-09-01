@@ -37,6 +37,11 @@
           <h2 class="fic-dia-tit"><span id="ficDiaTit"></span><span class="fic-dia-sub" id="ficDiaSub"></span></h2>
           <div id="ficDiaTurnos"></div>
         </section>
+
+        <!-- Validar un cupón. Va DEBAJO de todo y en pequeño a propósito: esta pantalla es
+             para fichar, y quien viene a fichar no se tiene que cruzar con este botón. Al
+             pulsarlo se pide el PIN igual, así que el canje queda con nombre. -->
+        <button class="fic-cupon-abrir" type="button" id="ficAbrirCupon" hidden>Validar cupón de cliente</button>
       </section>
 
       <!-- 2 · Tu PIN -->
@@ -56,6 +61,36 @@
         <ul class="fic-hoy" id="ficHoy"></ul>
         <p class="fic-aviso hidden" id="ficAvisoPin"></p>
         <button class="fic-salir" type="button" id="ficSalir">Volver al inicio</button>
+      </section>
+
+      <!-- 5 · Validar cupón: cámara, o el código a mano si el navegador no sabe leer QR -->
+      <section class="fic-paso hidden" id="ficPasoCupon">
+        <button class="fic-volver" type="button" id="ficCuponVolver">‹ Dejarlo</button>
+        <h1 class="fic-titulo" id="ficCuponTit">Enséñame el código</h1>
+
+        <div class="fic-scan" id="ficScan">
+          <video class="fic-video" id="ficVideo" playsinline muted></video>
+          <div class="fic-mira" aria-hidden="true"></div>
+        </div>
+
+        <div class="fic-cupon-manual hidden" id="ficCuponManual">
+          <div class="fic-puntos" id="ficCuponPuntos" aria-label="Código del cupón"></div>
+          <div class="fic-teclado" id="ficCuponTeclado"></div>
+        </div>
+
+        <p class="fic-error" id="ficCuponError" role="alert" aria-live="assertive"></p>
+        <button class="fic-cupon-alt" type="button" id="ficCuponAlterna">Escribir el código a mano</button>
+
+        <!-- El resultado: qué es, de quién, y el botón verde solo si de verdad vale. -->
+        <div class="fic-cupon-res hidden" id="ficCuponRes">
+          <div class="fic-cupon-card" id="ficCuponCard">
+            <div class="fic-cupon-que" id="ficCuponQue"></div>
+            <div class="fic-cupon-quien" id="ficCuponQuien"></div>
+            <div class="fic-cupon-txt" id="ficCuponTxt"></div>
+            <div class="fic-cupon-promos" id="ficCuponPromos"></div>
+          </div>
+          <div class="fic-acciones" id="ficCuponAcciones"></div>
+        </div>
       </section>
 
       <!-- 4 · Confirmación a pantalla completa -->

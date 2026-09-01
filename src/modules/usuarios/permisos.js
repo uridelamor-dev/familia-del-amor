@@ -52,6 +52,11 @@ export const CATALOGO_MODULOS = [
   { id: "web", label: "Web", roles: ["direccion", "marketing"], porLocal: false },
   { id: "reviews", label: "Reseñas", roles: ["direccion", "encargado", "contabilidad", "marketing"], porLocal: true },
   { id: "campanas", label: "Campañas", roles: ["direccion", "marketing"], porLocal: false },
+  // Promociones. `porLocal: false` como Clientes y Campañas: una promoción puede limitarse a
+  // una barra, pero eso es un campo suyo, no el ámbito de quien la gestiona — el de Marketing
+  // las hace para todo el grupo. Quien SÍ trabaja por local es el kiosco, y ese no pasa por
+  // aquí: valida con el token del dispositivo, que ya lleva su barra dentro.
+  { id: "promos", label: "Promociones", roles: ["direccion", "marketing"], porLocal: false },
   { id: "analitica", label: "Analítica de ventas", roles: ["direccion", "contabilidad"], porLocal: true },
   { id: "sara", label: "Sara (IA)", roles: ["direccion", "marketing"], porLocal: false },
   { id: "whatsapp", label: "WhatsApp", roles: ["direccion", "encargado"], porLocal: false },
@@ -140,6 +145,7 @@ export const MODULO_POR_RUTA = [
   ["/api/contactos", "clientes"],
   ["/api/clientes", "clientes"],
   ["/api/campanas", "campanas"],
+  ["/api/promos", "promos"],
   ["/api/plantillas", "campanas"],
   ["/api/audiencias", "campanas"],
   ["/api/reviews", "reviews"],

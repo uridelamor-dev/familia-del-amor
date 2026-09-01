@@ -100,6 +100,7 @@ const NAV = [
   { g: "Marketing", items: [
     ["clientes", "Clientes", "users", ["direccion", "marketing"]],
     ["campanas", "Campañas", "mkt", ["direccion", "marketing"]],
+    ["promos", "Promociones", "ticket", ["direccion", "marketing"]],
     ["reviews", "Reseñas", "star", ["direccion", "encargado", "contabilidad", "marketing"]],
     ["web", "Web", "globe", ["direccion", "marketing"]],
     ["sara", "Sara (IA)", "bot", ["direccion", "marketing"]],
@@ -117,8 +118,8 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { contratacion: "Contratación", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], contratacion: ["direccion", "rrhh"], pulso: ["direccion", "rrhh"], preguntas: ["direccion", "rrhh"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { contratacion: "Contratación", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", promos: "Promociones", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], promos: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], contratacion: ["direccion", "rrhh"], pulso: ["direccion", "rrhh"], preguntas: ["direccion", "rrhh"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
 const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "contratacion", "pulso", "horarios", "fichajes", "usuarios"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
@@ -891,6 +892,7 @@ const ICONS = {
   receipt: '<path d="M6 3h12v18l-2.5-1.6L13 21l-2.5-1.6L8 21l-2-1.6zM9.5 8h5M9.5 12h5"/>',
   star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
   mkt: '<path d="M4 10v4h3l6 4V6l-6 4zM17 9.5a3 3 0 0 1 0 5"/>',
+  ticket: '<path d="M3 9.5V7a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v2.5a2.5 2.5 0 0 0 0 5V17a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2.5a2.5 2.5 0 0 0 0-5z"/><path d="M14 6v12"/>',
   chat: '<path d="M4 5h16v11H9l-4 3z"/><path d="M8 9.5h8M8 12.5h5"/>',
   cog: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M4.5 6.5l2.1 2.1M17.4 17.4l2.1 2.1M3 12h3M18 12h3M4.5 17.5l2.1-2.1M17.4 6.6l2.1-2.1"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
@@ -11092,6 +11094,8 @@ async function loadCampanas() {
       apiRaw("/api/campanas-config").catch(() => null),
     ]);
     CAMP.list = list || []; CAMP.plantillas = plantillas || []; CAMP.audiencias = audiencias || [];
+    // Para el desplegable de cupón del editor. Si falla no se rompe nada: se queda «Sin cupón».
+    if (!PROMO.list.length) apiOptional("/api/promos").then((p) => { PROMO.list = p || []; }).catch(() => {});
     CAMP.cfg = cfg ? { cumple_auto: cfg.cumple_auto, cumple_plantilla: cfg.cumple_plantilla } : { cumple_auto: false, cumple_plantilla: "" };
     view.innerHTML = renderCampanas();
     campFaltan();                      // no se espera: es una libreta, no un dato de la pantalla
@@ -11137,6 +11141,8 @@ function openCampana(mode = "nueva", pre = {}) {
   const localOpts = ['<option value="">Todos los locales</option>'].concat(visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${s.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
   const plantOpts = ['<option value="">— Insertar plantilla (opcional) —</option>'].concat((CAMP.plantillas || []).map((p) => `<option value="${p.id}">${esc(p.nombre)}</option>`)).join("");
   const audOpts = ['<option value="">— Cargar audiencia guardada —</option>'].concat((CAMP.audiencias || []).map((a) => `<option value="${a.id}">${esc(a.nombre)}</option>`)).join("");
+  const promoOpts = ['<option value="">— Sin cupón —</option>'].concat((PROMO.list || []).filter((p) => p.activa)
+    .map((p) => `<option value="${p.id}" ${String(pre.promocion_id) === String(p.id) ? "selected" : ""}>${esc(p.nombre)}</option>`)).join("");
   const objBtns = CAMP_OBJETIVOS.map((o) => `<button type="button" class="btn sm" data-obj="${esc(o.txt)}">${esc(o.obj)}</button>`).join("");
   const idiomaOpts = ["", "es", "ca", "en", "fr", "de", "it", "nl", "pt", "ru", "ar", "zh"].map((v) => `<option value="${v}" ${s.idioma === v ? "selected" : ""}>${v ? v.toUpperCase() : "Cualquiera"}</option>`).join("");
   const origenOpts = [["", "Cualquiera"], ["lead", "Ficha/lead"], ["reserva", "Solo reserva"]].map(([v, t]) => `<option value="${v}" ${s.origen === v ? "selected" : ""}>${t}</option>`).join("");
@@ -11145,9 +11151,14 @@ function openCampana(mode = "nueva", pre = {}) {
     <div class="field"><label>Plantilla</label><select id="campPlant">${plantOpts}</select></div>
     <div class="field"><label>Objetivo (rellena el mensaje)</label><div style="display:flex;gap:6px;flex-wrap:wrap">${objBtns}<button type="button" class="btn sm primary" data-act="camp-plantillas">Ver plantillas…</button></div></div>
     <div class="field full"><label>Mensaje</label>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px"><button type="button" class="btn sm" data-var="{nombre}">+ nombre</button><button type="button" class="btn sm" data-var="{apellidos}">+ apellidos</button><button type="button" class="btn sm" data-var="{local}">+ local</button><label class="btn sm" style="cursor:pointer">📎 Adjuntar<input type="file" id="campFile" accept="image/*,application/pdf" hidden></label><span id="campAdjName" class="mut" style="font-size:12px;align-self:center">${pre.adjunto_url ? "📎 adjunto actual" : ""}</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px"><button type="button" class="btn sm" data-var="{nombre}">+ nombre</button><button type="button" class="btn sm" data-var="{apellidos}">+ apellidos</button><button type="button" class="btn sm" data-var="{local}">+ local</button><button type="button" class="btn sm" data-var="{cupon}">+ cupón</button><label class="btn sm" style="cursor:pointer">📎 Adjuntar<input type="file" id="campFile" accept="image/*,application/pdf" hidden></label><span id="campAdjName" class="mut" style="font-size:12px;align-self:center">${pre.adjunto_url ? "📎 adjunto actual" : ""}</span></div>
       <textarea name="mensaje" id="campMsg" rows="3" required placeholder="Hola {nombre}! Este finde…">${esc(pre.mensaje || "")}</textarea></div>
     <div class="field full"><label>Vista previa (así lo recibe el cliente)</label><div style="background:var(--surface2);border-radius:12px;padding:12px;display:flex;justify-content:flex-end"><div id="campBubble" style="background:var(--brand);color:var(--brand-ink);border-radius:12px;border-bottom-right-radius:5px;padding:9px 12px;max-width:85%;font-size:13.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word"></div></div></div>
+    <div class="field full"><label>Cupón personal (opcional)</label>
+      <select id="campPromo">${promoOpts}</select>
+      <span class="mut" style="font-size:12px;margin-top:4px;display:block">Con una promoción elegida, escribe
+        <b>{cupon}</b> en el mensaje y cada persona recibirá el suyo, distinto y de un solo uso.
+        Déjalo en su propia línea: pegado a un punto, WhatsApp se lo traga dentro del enlace.</span></div>
     <div class="field full"><label>Audiencia</label><div style="display:flex;gap:8px;flex-wrap:wrap"><select id="campAud" style="flex:1;min-width:180px">${audOpts}</select><button type="button" class="btn sm" id="campAudSave">💾 Guardar audiencia</button></div></div>
     <div class="field"><label>Género</label><select name="genero"><option value="">Todos</option><option value="hombre" ${["hombre", "M"].includes(s.genero) ? "selected" : ""}>Hombre</option><option value="mujer" ${["mujer", "F"].includes(s.genero) ? "selected" : ""}>Mujer</option></select></div>
     <div class="field"><label>Población</label><input name="poblacion" value="${val("poblacion")}"></div>
@@ -11210,10 +11221,24 @@ function openCampana(mode = "nueva", pre = {}) {
   });
   const updateBubble = () => {
     const raw = ov.querySelector("#campMsg").value || "";
-    const txt = raw.replace(/\{nombre_completo\}/gi, "Ana Pérez").replace(/\{nombre\}/gi, "Ana").replace(/\{apellidos\}/gi, "Pérez").replace(/\{local\}/gi, "La Tapeta - Blanes");
+    // `{cupon}` se enseña como un enlace de ejemplo y no como la llave literal: es la única
+    // forma de ver cuánto ocupa y si la frase se lee bien con él dentro.
+    const txt = raw.replace(/\{nombre_completo\}/gi, "Ana Pérez").replace(/\{nombre\}/gi, "Ana").replace(/\{apellidos\}/gi, "Pérez").replace(/\{local\}/gi, "La Tapeta - Blanes")
+      .replace(/\{cupon\}/gi, location.origin + "/cupon.html?t=EJEMPLO");
     ov.querySelector("#campBubble").innerHTML = (campAdjunto ? `<div style="opacity:.9;margin-bottom:6px">📎 adjunto</div>` : "") + (txt ? esc(txt) : '<span style="opacity:.6">(escribe el mensaje…)</span>');
   };
-  ov.querySelector("#campMsg").addEventListener("input", updateBubble);
+  // Pedir {cupon} sin promoción detrás se avisa MIENTRAS SE ESCRIBE, no al pulsar enviar: el
+  // servidor lo rechaza igual, pero para entonces ya has redactado toda la campaña.
+  const avisarCupon = () => {
+    const pide = /\{cupon\}/i.test(ov.querySelector("#campMsg").value || "");
+    const sel = ov.querySelector("#campPromo");
+    const falta = pide && !sel.value;
+    sel.style.borderColor = falta ? "var(--danger)" : "";
+    const prev = ov.querySelector("#campPrev");
+    if (falta) prev.textContent = "El mensaje dice {cupon}: elige de qué promoción es.";
+  };
+  ov.querySelector("#campMsg").addEventListener("input", () => { updateBubble(); avisarCupon(); });
+  ov.querySelector("#campPromo").addEventListener("change", avisarCupon);
   ov.addEventListener("click", (e) => {
     const vb = e.target.closest("[data-var]");
     if (vb) { const ta = ov.querySelector("#campMsg"); const v = vb.getAttribute("data-var"); const p = ta.selectionStart != null ? ta.selectionStart : ta.value.length; ta.value = ta.value.slice(0, p) + v + ta.value.slice(ta.selectionEnd != null ? ta.selectionEnd : p); ta.focus(); updateBubble(); return; }
@@ -11272,7 +11297,7 @@ function openCampana(mode = "nueva", pre = {}) {
   updateBubble();
   pintarHeredados();
   const payload = (extra = {}) => {
-    const d = { nombre: (ov.querySelector('[name="nombre"]').value || "").trim(), mensaje: ov.querySelector("#campMsg").value || "", ...filtros(), soloOptIn: ov.querySelector("#campOptin").checked, traducir: ov.querySelector("#campTraducir").checked, ...extra };
+    const d = { nombre: (ov.querySelector('[name="nombre"]').value || "").trim(), mensaje: ov.querySelector("#campMsg").value || "", ...filtros(), soloOptIn: ov.querySelector("#campOptin").checked, traducir: ov.querySelector("#campTraducir").checked, promocion_id: Number(ov.querySelector("#campPromo").value) || null, ...extra };
     if (campAdjunto) d.adjunto_url = campAdjunto;
     return d;
   };
@@ -11307,12 +11332,12 @@ function openCampana(mode = "nueva", pre = {}) {
 async function campEditar(id) {
   let c; try { c = (await apiRaw("/api/campanas/" + id)).data.campana; } catch (e) { toast("Error: " + e.message); return; }
   let seg = {}; try { seg = JSON.parse(c.segmento_json || "{}"); } catch { /* */ }
-  openCampana("editar", { id: c.id, nombre: c.nombre, mensaje: c.mensaje, adjunto_url: c.adjunto_url, seg });
+  openCampana("editar", { id: c.id, nombre: c.nombre, mensaje: c.mensaje, adjunto_url: c.adjunto_url, promocion_id: c.promocion_id, seg });
 }
 async function campDuplicar(id) {
   let c; try { c = (await apiRaw("/api/campanas/" + id)).data.campana; } catch (e) { toast("Error: " + e.message); return; }
   let seg = {}; try { seg = JSON.parse(c.segmento_json || "{}"); } catch { /* */ }
-  openCampana("duplicar", { nombre: (c.nombre || "") + " (copia)", mensaje: c.mensaje, adjunto_url: c.adjunto_url, seg });
+  openCampana("duplicar", { nombre: (c.nombre || "") + " (copia)", mensaje: c.mensaje, adjunto_url: c.adjunto_url, promocion_id: c.promocion_id, seg });
 }
 async function campDetectarIdiomas() {
   if (!(await confirmModal("¿Detectar el idioma de los clientes a partir de sus mensajes de WhatsApp? Solo rellena los que no tienen idioma; podrás corregirlo en cada ficha.", { ok: "Detectar" }))) return;
@@ -11532,7 +11557,328 @@ async function webBlkUpload(input, gallery) {
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
-const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, productos: loadProductos, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+// ════════════════════════ VISTA: PROMOCIONES (QR de cliente y cupones) ════════════════════════
+//
+// Dos cosas que se parecen y no son lo mismo:
+//
+//   · CUPÓN  — para una promoción concreta. Se gasta, caduca y se cuenta.
+//   · CARNÉ  — permanente y sin promoción dentro: identifica a la persona. Lo que se le puede
+//              aplicar son las promociones vigentes, y eso lo elige el camarero al escanear.
+//
+// Se emite a gente CONCRETA, elegida a mano en la pestaña «Emitir». No hay envío por segmento
+// aquí a propósito: una promoción emitida sin querer «a todo el que cumpla X» son cientos de
+// cupones vivos que luego hay que anular uno a uno. Para eso está Campañas.
+let PROMO = { tab: "lista", list: [], locales: [], qrs: [], canjes: [], contactos: [], sel: {}, ultimo: null };
+
+const promoPct = (a, b) => (Number(b) > 0 ? Math.round((Number(a) / Number(b)) * 100) : 0);
+const promoVigencia = (p) => {
+  if (!p.desde && !p.hasta) return "Sin fecha límite";
+  if (p.desde && p.hasta) return `${p.desde} → ${p.hasta}`;
+  return p.desde ? `Desde ${p.desde}` : `Hasta ${p.hasta}`;
+};
+
+function promoTablaLista() {
+  const rows = PROMO.list || [];
+  if (!rows.length) {
+    return `<div class="card"><div class="mut" style="padding:8px">Aún no hay promociones.
+      Crea una y ya podrás darle un QR a un cliente.</div></div>`;
+  }
+  return `<div class="card p0"><div class="tw"><table class="tbl">
+    <thead><tr><th>Promoción</th><th>Vigencia</th><th>Dónde</th><th class="r">Emitidos</th><th class="r">Enviados</th><th class="r">Canjeados</th><th></th></tr></thead>
+    <tbody>${rows.map((p) => `<tr>
+      <td><div class="t1">${esc(p.nombre)}${p.activa ? "" : ' <span class="pill bad" style="font-size:10px">Parada</span>'}</div>
+        ${p.descripcion ? `<div class="t2">${esc(p.descripcion)}</div>` : ""}</td>
+      <td class="mut">${esc(promoVigencia(p))}</td>
+      <td class="mut">${esc(p.locales || "Todas las barras")}</td>
+      <td class="r tnum">${num(p.emitidos)}${p.sin_usar ? ` <span class="mut">(${num(p.sin_usar)} sin usar)</span>` : ""}</td>
+      <td class="r tnum">${num(p.enviados)}</td>
+      <td class="r tnum">${num(p.canjeados)}${p.emitidos ? ` <span class="mut">(${promoPct(p.canjeados, p.emitidos)}%)</span>` : ""}</td>
+      <td class="r" style="white-space:nowrap">
+        <button class="linkbtn" style="color:var(--brand)" data-act="promo-editar" data-id="${p.id}">Editar</button> ·
+        <button class="linkbtn" style="color:var(--brand)" data-act="promo-emitir-de" data-id="${p.id}">Dar QR</button>${
+        // Anular en masa solo aparece si hay algo que anular. Un botón peligroso que no hace
+        // nada la mayor parte del tiempo se acaba pulsando por costumbre.
+        p.sin_usar ? ` ·
+        <button class="linkbtn" style="color:var(--danger)" data-act="promo-anular-lote" data-id="${p.id}" data-n="${p.sin_usar}" data-nombre="${esc(p.nombre)}">Anular ${num(p.sin_usar)} sin usar</button>` : ""}</td>
+    </tr>`).join("")}</tbody></table></div></div>`;
+}
+
+function promoTablaEmitir() {
+  const opts = (PROMO.list || []).filter((p) => p.activa)
+    .map((p) => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("");
+  const cont = PROMO.contactos || [];
+  const lista = cont.length
+    ? cont.map((c) => {
+        const tel = c.telefono || "";
+        const nom = ((c.nombre || "") + " " + (c.apellidos || "")).trim() || "—";
+        const baja = c.baja === 1 || c.baja === true;
+        return `<label class="row" style="cursor:pointer;padding:8px 0;gap:10px;align-items:center">
+          <input type="checkbox" class="promo-chk" data-tel="${esc(tel)}" data-nombre="${esc(nom)}" ${PROMO.sel[tel] ? "checked" : ""}>
+          <span class="grow" style="min-width:0"><span class="t1">${esc(nom)}</span>
+            <span class="t2">${esc(tel)}${c.poblacion ? " · " + esc(c.poblacion) : ""}${baja ? " · pidió no recibir mensajes" : ""}</span></span></label>`;
+      }).join("")
+    : `<div class="mut" style="padding:10px 0">Busca por nombre o teléfono para elegir a quién.</div>`;
+
+  const elegidos = Object.keys(PROMO.sel).length;
+  return `<div class="grid g2">
+    <div class="card">
+      <div class="ch"><h3>A quién</h3><span class="mut" style="font-size:12px">${elegidos ? num(elegidos) + " elegidos" : "Nadie elegido"}</span></div>
+      <div class="field" style="width:100%"><label>Buscar en la base de clientes</label>
+        <input id="promoQ" placeholder="Nombre, teléfono, email…" autocomplete="off"></div>
+      <div class="rows" style="max-height:320px;overflow:auto">${lista}</div>
+    </div>
+    <div class="card">
+      <div class="ch"><h3>Qué se le da</h3></div>
+      <div class="field" style="width:100%"><label>Tipo</label>
+        <select id="promoClase">
+          <option value="cupon">Cupón de una promoción</option>
+          <option value="carnet">Carné de cliente (permanente)</option>
+        </select></div>
+      <div class="field" style="width:100%" id="promoCampoPromo"><label>Promoción</label>
+        <select id="promoSelPromo">${opts || '<option value="">Crea una promoción primero</option>'}</select></div>
+      <div class="field" style="width:100%" id="promoCampoCaduca"><label>Caduca el (opcional)</label>
+        <input id="promoCaduca" type="date"></div>
+      <label class="chip" style="cursor:pointer;margin:4px 0 12px">
+        <input type="checkbox" id="promoEnviar" checked style="margin-right:6px">Enviarlo por WhatsApp al emitirlo</label>
+      <p class="mut" style="margin:0 0 12px;line-height:1.55;font-size:12.5px">A quien pidió no recibir mensajes se le
+        emite igual, pero no se le escribe: tendrás el enlace aquí para dárselo tú.</p>
+      <button class="btn primary" data-act="promo-emitir">Emitir${elegidos ? ` a ${num(elegidos)}` : ""}</button>
+    </div>
+  </div>
+  <div id="promoResultado"></div>`;
+}
+
+function promoTablaCanjes() {
+  const rows = PROMO.canjes || [];
+  if (!rows.length) return `<div class="card"><div class="mut" style="padding:8px">Todavía no se ha canjeado ningún QR.</div></div>`;
+  return `<div class="card p0"><div class="tw"><table class="tbl">
+    <thead><tr><th>Cuándo</th><th>Promoción</th><th>Cliente</th><th>Código</th><th>Barra</th><th>Lo validó</th></tr></thead>
+    <tbody>${rows.map((c) => `<tr>
+      <td class="mut">${esc(String(c.canjeado_en || "").slice(0, 16).replace("T", " "))}</td>
+      <td>${esc(c.promocion || "Cliente identificado")}</td>
+      <td>${esc(c.titular || "—")}</td>
+      <td class="mut tnum">${esc(c.codigo || "")}</td>
+      <td class="mut">${esc(c.local || "")}</td>
+      <td class="mut">${esc(c.worker_nombre || "")}</td>
+    </tr>`).join("")}</tbody></table></div></div>`;
+}
+
+function promoTablaQr() {
+  const rows = PROMO.qrs || [];
+  if (!rows.length) return `<div class="card"><div class="mut" style="padding:8px">Aún no se ha emitido ningún QR.</div></div>`;
+  return `<div class="card p0"><div class="tw"><table class="tbl">
+    <thead><tr><th>Cliente</th><th>Qué es</th><th>Código</th><th>Estado</th><th>Enviado</th><th></th></tr></thead>
+    <tbody>${rows.map((q) => {
+      const usado = Number(q.usos) > 0;
+      const estado = q.anulado_en ? '<span class="pill bad">Anulado</span>'
+        : usado ? `<span class="pill">Usado${Number(q.usos) > 1 ? " ×" + num(q.usos) : ""}</span>`
+        : '<span class="pill good">Sin usar</span>';
+      const envio = q.enviado_en ? esc(String(q.enviado_en).slice(0, 10))
+        : q.enviado_error ? `<span class="mut" title="${esc(q.enviado_error)}">No salió</span>` : '<span class="mut">—</span>';
+      return `<tr>
+        <td>${esc(q.nombre || "—")}<div class="t2">${esc(q.telefono || "")}</div></td>
+        <td>${q.clase === "carnet" ? "Carné de cliente" : esc(q.promocion || "Cupón")}</td>
+        <td class="mut tnum">${esc(q.codigo)}</td>
+        <td>${estado}</td>
+        <td class="mut">${envio}</td>
+        <td class="r" style="white-space:nowrap">
+          <button class="linkbtn" style="color:var(--brand)" data-act="promo-copiar" data-url="${esc(q.url)}">Copiar enlace</button>
+          ${q.anulado_en ? "" : ` · <button class="linkbtn" style="color:var(--brand)" data-act="promo-reenviar" data-id="${q.id}">Reenviar</button>
+             · <button class="linkbtn" style="color:var(--danger)" data-act="promo-anular" data-id="${q.id}">Anular</button>`}</td>
+      </tr>`;
+    }).join("")}</tbody></table></div></div>`;
+}
+
+function renderPromos() {
+  const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Promociones</h1>
+    <div class="sub">Cupones y carnés con QR · se validan en la tablet de la barra</div>
+    <div class="acts"><button class="btn primary" data-act="promo-nueva">+ Nueva promoción</button></div></div>`;
+  const tabs = [["lista", "Promociones"], ["emitir", "Emitir QR"], ["qr", "QR emitidos"], ["canjes", "Canjes"]]
+    .map(([id, t]) => `<button class="tab${PROMO.tab === id ? " on" : ""}" data-act="promo-tab" data-tab="${id}">${t}</button>`).join("");
+  const cuerpo = PROMO.tab === "emitir" ? promoTablaEmitir()
+    : PROMO.tab === "qr" ? promoTablaQr()
+    : PROMO.tab === "canjes" ? promoTablaCanjes()
+    : promoTablaLista();
+  return `${head}<div class="tabs">${tabs}</div><div style="margin-top:16px">${cuerpo}</div>`;
+}
+
+async function loadPromos() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    const j = await apiRaw("/api/promos");
+    PROMO.list = j.data || []; PROMO.locales = j.locales || [];
+    if (PROMO.tab === "qr") PROMO.qrs = (await apiRaw("/api/promos/qr")).data || [];
+    if (PROMO.tab === "canjes") PROMO.canjes = (await apiRaw("/api/promos/canjes")).data || [];
+    view.innerHTML = renderPromos();
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+
+function promoTab(tab) { PROMO.tab = tab; loadPromos(); }
+
+// Formulario de promoción. Sirve para crear y para editar: es el mismo, y tenerlo dos veces
+// significaba que un campo nuevo se añadía en uno y se olvidaba en el otro.
+function promoForm(p) {
+  const esNueva = !p;
+  p = p || { nombre: "", descripcion: "", locales: "", desde: "", hasta: "", usos_por_cliente: 1, activa: true };
+  const chks = (PROMO.locales || []).map((l) => `<label class="chip" style="cursor:pointer;margin:0 6px 6px 0">
+    <input type="checkbox" class="promo-loc" value="${esc(l)}" ${String(p.locales || "").split(",").includes(l) ? "checked" : ""} style="margin-right:6px">${esc(l)}</label>`).join("");
+  const ov = modal(esNueva ? "Nueva promoción" : "Editar promoción", `
+    <div class="field" style="width:100%"><label>Nombre</label>
+      <input id="pmNombre" value="${esc(p.nombre)}" placeholder="2x1 en tapas"></div>
+    <div class="field" style="width:100%"><label>Lo que ve el cliente</label>
+      <textarea id="pmDesc" rows="2" placeholder="Trae a un amigo y la segunda tapa la ponemos nosotros.">${esc(p.descripcion)}</textarea></div>
+    <div class="field" style="width:100%"><label>Dónde vale</label>
+      <div style="display:flex;flex-wrap:wrap;margin-top:4px">${chks}</div>
+      <span class="mut" style="font-size:12px">Sin marcar ninguna, vale en todas.</span></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:140px"><label>Desde</label><input id="pmDesde" type="date" value="${esc(p.desde || "")}"></div>
+      <div class="field" style="flex:1;min-width:140px"><label>Hasta</label><input id="pmHasta" type="date" value="${esc(p.hasta || "")}"></div>
+      <div class="field" style="flex:1;min-width:140px"><label>Veces por cliente</label>
+        <input id="pmUsos" type="number" min="0" max="99" value="${esc(p.usos_por_cliente)}">
+        <span class="mut" style="font-size:12px">0 = sin límite</span></div>
+    </div>
+    <label class="chip" style="cursor:pointer;margin:4px 0 10px">
+      <input type="checkbox" id="pmActiva" ${p.activa ? "checked" : ""} style="margin-right:6px">Activa</label>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="pmSave">Guardar</button></div>`);
+  ov.querySelector("#pmSave").addEventListener("click", async () => {
+    const cuerpo = {
+      nombre: (ov.querySelector("#pmNombre").value || "").trim(),
+      descripcion: (ov.querySelector("#pmDesc").value || "").trim(),
+      locales: [...ov.querySelectorAll(".promo-loc:checked")].map((c) => c.value).join(","),
+      desde: ov.querySelector("#pmDesde").value || "",
+      hasta: ov.querySelector("#pmHasta").value || "",
+      usos_por_cliente: Number(ov.querySelector("#pmUsos").value),
+      activa: ov.querySelector("#pmActiva").checked,
+    };
+    if (!cuerpo.nombre) { toast("Ponle un nombre"); return; }
+    try {
+      const r = esNueva ? await apiSend("POST", "/api/promos", cuerpo)
+                        : await apiSend("PATCH", "/api/promos/" + p.id, cuerpo);
+      ov.remove();
+      // Lo que el servidor ha descartado se dice, no se traga: si Marketing escribe una barra
+      // que no existe y nadie avisa, se queda creyendo que la promoción está limitada.
+      const d = (r && r.descartados) || [];
+      toast(d.length ? `Guardada, pero no se pudo usar: ${d.map((x) => x.valor || x.campo).join(", ")}` : "Promoción guardada ✅");
+      loadPromos();
+    } catch (e) { toast("Error: " + e.message); }
+  });
+}
+
+function promoNueva() { promoForm(null); }
+function promoEditar(id) { promoForm((PROMO.list || []).find((p) => String(p.id) === String(id))); }
+function promoEmitirDe(id) {
+  PROMO.tab = "emitir"; PROMO.pre = id; loadPromos();
+  setTimeout(() => { const s = document.getElementById("promoSelPromo"); if (s) s.value = id; }, 60);
+}
+
+let _promoTimer = null;
+async function promoBuscar() {
+  const q = (document.getElementById("promoQ") || {}).value || "";
+  if (q.trim().length < 2) { PROMO.contactos = []; return promoPintarEmitir(); }
+  try {
+    const j = await apiRaw("/api/contactos?con_telefono=1&q=" + encodeURIComponent(q.trim()));
+    PROMO.contactos = (j.data || []).slice(0, 40);
+    promoPintarEmitir();
+  } catch (e) { if (e.message !== "noauth") toast("No se pudo buscar"); }
+}
+// Se repinta solo el cuerpo y se devuelve el foco al buscador: repintar la vista entera
+// hacía perder el cursor a cada tecla.
+function promoPintarEmitir() {
+  const view = document.getElementById("view"); if (!view || PROMO.tab !== "emitir") return;
+  const q = (document.getElementById("promoQ") || {}).value || "";
+  const clase = (document.getElementById("promoClase") || {}).value || "cupon";
+  const sel = (document.getElementById("promoSelPromo") || {}).value || "";
+  const caduca = (document.getElementById("promoCaduca") || {}).value || "";
+  const enviar = document.getElementById("promoEnviar") ? document.getElementById("promoEnviar").checked : true;
+  view.innerHTML = renderPromos();
+  const qi = document.getElementById("promoQ");
+  if (qi) { qi.value = q; qi.focus(); qi.setSelectionRange(q.length, q.length); }
+  if (document.getElementById("promoClase")) document.getElementById("promoClase").value = clase;
+  if (sel && document.getElementById("promoSelPromo")) document.getElementById("promoSelPromo").value = sel;
+  if (document.getElementById("promoCaduca")) document.getElementById("promoCaduca").value = caduca;
+  if (document.getElementById("promoEnviar")) document.getElementById("promoEnviar").checked = enviar;
+  promoSincronizarCampos();
+}
+// Un carné no tiene promoción ni caducidad: es permanente. Dejar los campos a la vista
+// hacía pensar que sí.
+function promoSincronizarCampos() {
+  const carnet = ((document.getElementById("promoClase") || {}).value || "cupon") === "carnet";
+  const cp = document.getElementById("promoCampoPromo"); if (cp) cp.style.display = carnet ? "none" : "";
+  const cc = document.getElementById("promoCampoCaduca"); if (cc) cc.style.display = carnet ? "none" : "";
+}
+
+async function promoEmitir() {
+  const destinatarios = Object.keys(PROMO.sel).map((tel) => ({ telefono: tel, nombre: PROMO.sel[tel] }));
+  if (!destinatarios.length) return toast("Elige al menos a una persona");
+  const clase = (document.getElementById("promoClase") || {}).value || "cupon";
+  const promocionId = Number((document.getElementById("promoSelPromo") || {}).value);
+  if (clase === "cupon" && !promocionId) return toast("Elige una promoción");
+  const cuerpo = {
+    clase, promocion_id: promocionId,
+    caduca_en: (document.getElementById("promoCaduca") || {}).value || null,
+    enviar: document.getElementById("promoEnviar") ? document.getElementById("promoEnviar").checked : true,
+    destinatarios,
+  };
+  const caja = document.getElementById("promoResultado");
+  if (caja) caja.innerHTML = `<p class="mut" style="margin:16px 0 0">Emitiendo…</p>`;
+  try {
+    const r = await apiSend("POST", "/api/promos/emitir", cuerpo);
+    const filas = (r.resultados || []).map((x) => `<div class="row" style="padding:8px 0">
+      <div class="grow" style="min-width:0"><div class="t1">${esc(x.nombre || x.telefono || "—")}${x.yaTenia ? ' <span class="pill" style="font-size:10px">Ya tenía carné</span>' : ""}</div>
+        <div class="t2">${x.url ? esc(x.url) : ""}${x.codigo ? " · código " + esc(x.codigo) : ""}</div>
+        ${x.error ? `<div class="t2" style="color:var(--danger)">No se le pudo enviar: ${esc(x.error)}</div>` : ""}</div>
+      ${x.url ? `<button class="linkbtn" style="color:var(--brand)" data-act="promo-copiar" data-url="${esc(x.url)}">Copiar</button>` : ""}</div>`).join("");
+    if (caja) caja.innerHTML = `<div class="card" style="margin-top:16px"><div class="ch"><h3>Emitidos</h3></div><div class="rows">${filas}</div></div>`;
+    PROMO.sel = {};
+    toast("Listo ✅");
+  } catch (e) {
+    if (caja) caja.innerHTML = `<p class="fic-nota" style="margin:16px 0 0">${esc(e.message || "No se pudo emitir")}</p>`;
+  }
+}
+
+/**
+ * Anular de golpe los cupones sin usar de una promoción.
+ *
+ * Existe porque el error caro aquí es emitir a quien no tocaba: doscientos cupones vivos que de
+ * uno en uno no se anulan nunca. Solo toca los que nadie ha canjeado.
+ *
+ * Se manda de vuelta el número que se acaba de enseñar: si entre medias ha salido una campaña
+ * y hay cupones nuevos, el servidor se niega y hay que volver a mirar. Es el mismo trato que
+ * reciben las fichas repetidas de Clientes.
+ */
+async function promoAnularLote(id, n, nombre) {
+  const ok = await confirmModal(
+    `¿Anular ${num(n)} cupón(es) sin usar de «${nombre}»? Dejarán de funcionar y no se puede deshacer. Los que ya se canjearon no se tocan.`,
+    { ok: "Anular", danger: true });
+  if (!ok) return;
+  try {
+    const r = await apiSend("POST", `/api/promos/${id}/anular-sin-usar`, { esperados: Number(n) });
+    toast(`${num(r.anulados)} anulados ✅`);
+    loadPromos();
+  } catch (e) { toast(e.message); loadPromos(); }
+}
+
+async function promoAnular(id) {
+  if (!(await confirmModal("¿Anular este QR? Dejará de funcionar y no se puede deshacer.", { ok: "Anular", danger: true }))) return;
+  try { await apiSend("POST", `/api/promos/qr/${id}/anular`); toast("Anulado ✅"); loadPromos(); }
+  catch (e) { toast("Error: " + e.message); }
+}
+async function promoReenviar(id) {
+  try { await apiSend("POST", `/api/promos/qr/${id}/enviar`); toast("Enviado ✅"); loadPromos(); }
+  catch (e) { toast(e.message); }
+}
+function promoCopiar(url) {
+  if (!url) return;
+  // `clipboard` no existe fuera de HTTPS ni en algún navegador viejo del despacho: si falla,
+  // el enlace se enseña para copiarlo a mano en vez de no hacer nada.
+  const ok = () => toast("Enlace copiado ✅");
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, () => prompt("Copia el enlace:", url));
+  else prompt("Copia el enlace:", url);
+}
+
+const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, promos: loadPromos, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, productos: loadProductos, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 /**
  * LA PANTALLA VA EN LA URL. Sin esto, recargar en cualquier sitio te devolvía al Dashboard —y
  * también hacía inútiles el botón de atrás y guardar un enlace a una pantalla concreta.
@@ -11605,6 +11951,7 @@ document.addEventListener("input", (e) => {
   // volver a preguntarle al TPV. El antirrebote es solo para no repintar en cada tecla.
   if (e.target && e.target.id === "analQ") { clearTimeout(_analTimer); const v = e.target.value; _analTimer = setTimeout(() => analBuscar(v), 180); return; }
   if (e.target && e.target.id === "reshQ") { const v = e.target.value; clearTimeout(_reshT); _reshT = setTimeout(() => resHistBuscar(v), 200); return; }
+  if (e.target && e.target.id === "promoQ") { clearTimeout(_promoTimer); _promoTimer = setTimeout(promoBuscar, 250); return; }
   if (e.target && e.target.id === "cQ") { CLIF.q = e.target.value.trim(); cliRefreshDebounced(); }
   else if (e.target && e.target.id === "facQ") { facFilterDebounced(); }
   else if (e.target && e.target.id === "invSearch") { INV.filtro = e.target.value; invRefreshList(); }
@@ -11613,7 +11960,15 @@ document.addEventListener("input", (e) => {
 // Selección de facturas. Va aquí y no en la tabla porque la tabla se repinta al filtrar.
 document.addEventListener("change", (e) => {
   const c = e.target;
+  if (c && c.id === "promoClase") return promoSincronizarCampos();
   if (!c || c.type !== "checkbox") return;
+  // Los elegidos de Promociones viven en PROMO.sel y NO en el DOM: la lista se repinta con
+  // cada búsqueda, y si la selección estuviera solo en las casillas se perdería al escribir.
+  if (c.classList && c.classList.contains("promo-chk")) {
+    const tel = c.getAttribute("data-tel");
+    if (c.checked) PROMO.sel[tel] = c.getAttribute("data-nombre") || ""; else delete PROMO.sel[tel];
+    return;
+  }
   if (c.hasAttribute("data-facsel")) facSelToggle(c.getAttribute("data-facsel"), c.checked);
   else if (c.id === "facSelAll") facSelTodas(c.checked);
   else if (c.hasAttribute("data-compsel")) compSelToggle(c.getAttribute("data-compsel"), c.getAttribute("data-desc"), c.checked);
@@ -11879,6 +12234,15 @@ document.addEventListener("click", (e) => {
   else if (act === "anal-sort") analSort(t.getAttribute("data-key"));
   else if (act === "anal-refresh") loadAnalInforme(true);
   else if (act === "anal-csv") analCsv();
+  else if (act === "promo-tab") promoTab(t.getAttribute("data-tab"));
+  else if (act === "promo-nueva") promoNueva();
+  else if (act === "promo-editar") promoEditar(t.getAttribute("data-id"));
+  else if (act === "promo-emitir-de") promoEmitirDe(t.getAttribute("data-id"));
+  else if (act === "promo-emitir") promoEmitir();
+  else if (act === "promo-anular") promoAnular(t.getAttribute("data-id"));
+  else if (act === "promo-anular-lote") promoAnularLote(t.getAttribute("data-id"), t.getAttribute("data-n"), t.getAttribute("data-nombre"));
+  else if (act === "promo-reenviar") promoReenviar(t.getAttribute("data-id"));
+  else if (act === "promo-copiar") promoCopiar(t.getAttribute("data-url"));
   else if (act === "camp-nueva") openNuevaCampana();
   else if (act === "camp-redactar") campRedactar();
   else if (act === "camp-usar-propuesta") campUsarPropuesta();
