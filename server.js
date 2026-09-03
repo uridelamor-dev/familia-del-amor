@@ -18,6 +18,8 @@ import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllow
 import { permisosV2Enabled } from "./src/core/flags.js";
 import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
 import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueStatus } from "./src/modules/mantenimiento/maintenance.service.js";
+import { validarPlan, planesQueTocan, alCompletar } from "./src/modules/mantenimiento/planes.js";
+import { normalizarEstado, ABIERTOS as MANT_ABIERTOS } from "./src/modules/mantenimiento/estados.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fusion.js";
 import { rangoAnterior, variacion } from "./src/modules/dashboard/periodos.js";
@@ -421,6 +423,29 @@ async function initDB() {
         descripcion TEXT NOT NULL,
         estado TEXT NOT NULL DEFAULT 'abierta',
         creado_en TEXT NOT NULL
+      )
+    `);
+
+    // Mantenimiento PREVENTIVO: lo que hay que hacer cada tanto («los filtros de aire de
+    // Blanes, cada 3 meses»). Un plan NO es una incidencia: es la regla que, cuando toca,
+    // fabrica una incidencia normal en `maintenance_issues` con su `plan_id`. Por eso el
+    // encargado no aprende nada nuevo y los permisos, estados y Dashboard siguen igual.
+    // El cálculo de fechas vive en src/modules/mantenimiento/planes.js, con tests.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS maintenance_planes (
+        id SERIAL PRIMARY KEY,
+        local TEXT NOT NULL,
+        titulo TEXT NOT NULL,
+        descripcion TEXT,
+        cada_n INTEGER NOT NULL,
+        unidad TEXT NOT NULL,
+        aviso_dias INTEGER NOT NULL DEFAULT 0,
+        proxima_en TEXT NOT NULL,
+        ultima_en TEXT,
+        activo BOOLEAN NOT NULL DEFAULT TRUE,
+        creado_en TEXT NOT NULL,
+        CONSTRAINT maint_plan_unidad_ck CHECK (unidad IN ('dias','meses')),
+        CONSTRAINT maint_plan_cada_ck CHECK (cada_n >= 1)
       )
     `);
 
@@ -1578,6 +1603,8 @@ async function initDB() {
       // incidencia. El índice lo hace imposible aunque dos ejecuciones del generador coincidan,
       // que es la única forma de no acabar duplicando tareas en un proceso que se reinicia solo.
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_maint_plan_venc ON maintenance_issues(plan_id, vence_en) WHERE plan_id IS NOT NULL",
+      "CREATE INDEX IF NOT EXISTS idx_maint_planes_local ON maintenance_planes(local)",
+      "CREATE INDEX IF NOT EXISTS idx_maint_planes_prox ON maintenance_planes(proxima_en) WHERE activo",
       "CREATE INDEX IF NOT EXISTS idx_greviews_fecha ON google_reviews(fecha)",
       "CREATE INDEX IF NOT EXISTS idx_greviews_location ON google_reviews(location_name)",
       "CREATE INDEX IF NOT EXISTS idx_wmsg_creado ON whatsapp_messages(creado_en)",
@@ -13968,6 +13995,196 @@ app.get("/api/rrhh/trabajador/:id/rendimiento", requireAuth(RRHH_ROLES), async (
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+/**
+ * Cuando una tarea PREVENTIVA se da por hecha, su plan calcula cuándo vuelve a tocar.
+ *
+ * Aquí es donde se aplica la decisión de diseño: la próxima cuenta desde HOY, el día en que se
+ * hizo de verdad, y no desde la fecha en que tocaba. Si tocaba el 1 de marzo y se hace el 20,
+ * la siguiente es el 20 de junio. Contando desde la fecha teórica, un retraso te deja la
+ * siguiente a diez días vista y arrastras la deuda para siempre.
+ *
+ * No propaga errores: si esto falla, la incidencia YA se ha cerrado y esa es la operación que
+ * el usuario pidió. Lo peor que pasa es que el plan se quede sin recalcular y lo arregle el
+ * repaso siguiente; devolver un 500 haría creer que no se cerró.
+ */
+async function recalcularPlanSiPreventiva(issueId, estadoPedido) {
+  try {
+    if (normalizarEstado(estadoPedido) !== "resuelta") return;
+    const inc = await dbGet("SELECT plan_id FROM maintenance_issues WHERE id = ?", [issueId]);
+    if (!inc || !inc.plan_id) return;                       // incidencia puntual: no hay plan que mover
+    const plan = await dbGet("SELECT * FROM maintenance_planes WHERE id = ?", [inc.plan_id]);
+    if (!plan) return;
+    const hoy = hoyISO();
+    const r = alCompletar(plan, hoy, hoy);
+    if (!r) return;
+    await dbRun("UPDATE maintenance_planes SET ultima_en = ?, proxima_en = ? WHERE id = ?",
+      [r.ultima_en, r.proxima_en, plan.id]);
+  } catch (e) { console.error("[Mantenimiento] recalcular plan:", e.message); }
+}
+
+// ══════════════════ MANTENIMIENTO PREVENTIVO (planes periódicos) ══════════════════
+// Un plan no es una incidencia: es la regla que la fabrica cuando toca. Todo el cálculo de
+// fechas vive en src/modules/mantenimiento/planes.js, puro y con tests; aquí solo está el
+// acceso a datos y los permisos, que son los MISMOS que los de las incidencias (`localScope`).
+
+const MANT_ABIERTOS_SQL = MANT_ABIERTOS.map(() => "?").join(",");
+
+/** Los planes que puede ver esta petición. Sin local ⇒ dirección sin filtrar: todos. */
+async function planesVisibles(req) {
+  const scope = localScope(req);
+  return scope
+    ? dbAll(`SELECT * FROM maintenance_planes WHERE local = ? ORDER BY activo DESC, proxima_en ASC`, [scope])
+    : dbAll(`SELECT * FROM maintenance_planes ORDER BY activo DESC, proxima_en ASC`);
+}
+
+/** Un plan por id, solo si es de un local de quien pregunta. */
+async function planPropio(req, id) {
+  const row = await dbGet("SELECT * FROM maintenance_planes WHERE id = ?", [id]);
+  if (!row) return { row: null, permitido: false, motivo: "no_existe" };
+  const scope = localScope(req);
+  if (scope && row.local !== scope) return { row, permitido: false, motivo: "ajeno" };
+  if (!scope && !puedeAccederLocal(req, row.local) && req.user.rol !== "direccion") {
+    return { row, permitido: false, motivo: "ajeno" };
+  }
+  return { row, permitido: true };
+}
+
+/**
+ * Materializa los planes que tocan. Devuelve cuántas incidencias ha creado.
+ *
+ * `planes` limita a un subconjunto (el botón «Hacer ahora» pasa uno solo); sin él, todos los
+ * activos. La lista de planes con incidencia abierta se consulta aquí y se le pasa al módulo
+ * puro, que es quien decide: si la anterior sigue sin resolver, no se genera otra.
+ */
+async function generarPreventivo(planes = null, hoy = hoyISO()) {
+  const activos = planes || await dbAll("SELECT * FROM maintenance_planes WHERE activo");
+  if (!activos.length) return 0;
+  const abiertas = await dbAll(
+    `SELECT DISTINCT plan_id FROM maintenance_issues WHERE plan_id IS NOT NULL AND estado IN (${MANT_ABIERTOS_SQL})`,
+    [...MANT_ABIERTOS]);
+  const pendientes = new Set(abiertas.map((r) => r.plan_id));
+  let n = 0;
+  for (const t of planesQueTocan(activos, hoy, pendientes)) {
+    try {
+      // ON CONFLICT contra el índice único (plan_id, vence_en): si dos ejecuciones coinciden,
+      // la segunda no duplica en vez de reventar. Es la red de seguridad del reinicio.
+      const r = await dbRun(
+        `INSERT INTO maintenance_issues (local, titulo, descripcion, estado, creado_en, plan_id, vence_en)
+         VALUES (?, ?, ?, 'abierta', ?, ?, ?)
+         ON CONFLICT (plan_id, vence_en) WHERE plan_id IS NOT NULL DO NOTHING RETURNING id`,
+        [t.local, t.titulo, t.descripcion, new Date().toISOString(), t.plan_id, t.vence_en]);
+      if (r) n++;
+    } catch (e) { console.error("[Mantenimiento] generar plan " + t.plan_id + ":", e.message); }
+  }
+  if (n) console.log(`[Mantenimiento] ${n} tarea(s) de mantenimiento preventivo creada(s).`);
+  return n;
+}
+
+/**
+ * El generador NO es un temporizador de un día: es una MARCA EN LA BASE.
+ *
+ * Mismo motivo que el refresco de reseñas y el repaso de facturas: en Replit el proceso se
+ * reinicia en cada despliegue y a veces solo, así que un `setInterval` de 24 h vuelve a
+ * empezar de cero una y otra vez y no llega a dispararse nunca. Se pregunta cada media hora
+ * «¿cuánto hace del último repaso?» contra algo que sobrevive al reinicio.
+ */
+let _generandoPreventivo = false;
+async function mantPreventivoSiToca() {
+  if (_generandoPreventivo) return;
+  try {
+    const ultimo = await getConfig("mant_preventivo_last");
+    if (!tocaRepasar({ ultimo, ahora: new Date().toISOString(), cadaHoras: 12 })) return;
+    _generandoPreventivo = true;
+    await generarPreventivo();
+    await setConfig("mant_preventivo_last", new Date().toISOString());
+  } catch (e) {
+    console.error("[Mantenimiento] preventivo:", e.message);
+  } finally { _generandoPreventivo = false; }
+}
+setInterval(() => { mantPreventivoSiToca().catch(() => {}); }, 30 * 60 * 1000);
+setTimeout(() => { mantPreventivoSiToca().catch(() => {}); }, 120 * 1000);
+
+// Las rutas de planes van ANTES que `/api/maintenance/:id` para que «planes» no se lea nunca
+// como un id.
+app.get("/api/maintenance/planes", requireAuth(["encargado", "direccion"]), async (req, res) => {
+  try { res.json({ ok: true, data: await planesVisibles(req) }); }
+  catch (e) { res.status(500).json({ ok: false, error: "Error cargando los planes" }); }
+});
+
+app.post("/api/maintenance/planes", requireAuth(["encargado", "direccion"]), async (req, res) => {
+  try {
+    const scope = localScope(req);
+    const local = scope || req.body.local;   // encargado con local → siempre el suyo
+    if (!scope && !puedeAccederLocal(req, local) && req.user.rol !== "direccion") {
+      return res.status(403).json({ ok: false, error: "Sin permiso sobre ese establecimiento" });
+    }
+    const v = validarPlan({ ...req.body, local }, hoyISO());
+    if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
+    const p = v.plan;
+    const r = await dbRun(
+      `INSERT INTO maintenance_planes (local, titulo, descripcion, cada_n, unidad, aviso_dias, proxima_en, ultima_en, activo, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?) RETURNING id`,
+      [p.local, p.titulo, p.descripcion, p.cada_n, p.unidad, p.aviso_dias, p.proxima_en, p.ultima_en, new Date().toISOString()]);
+    // Si toca ya (nunca se ha hecho), la primera tarea aparece al momento y no en el próximo
+    // repaso: quien acaba de dar de alta el plan espera verla.
+    const fila = await dbGet("SELECT * FROM maintenance_planes WHERE id = ?", [r && r.id]);
+    if (fila) await generarPreventivo([fila]);
+    res.json({ ok: true, id: r && r.id });
+  } catch (e) { console.error("[Mantenimiento] crear plan:", e.message); res.status(500).json({ ok: false, error: "Error guardando el plan" }); }
+});
+
+app.put("/api/maintenance/planes/:id", requireAuth(["encargado", "direccion"]), async (req, res) => {
+  try {
+    const { row, permitido } = await planPropio(req, req.params.id);
+    if (!row) return res.status(404).json({ ok: false, error: "Plan no encontrado" });
+    if (!permitido) return res.status(403).json({ ok: false, error: "Sin permiso sobre este plan" });
+
+    // Pausar/reanudar es lo único que se puede pedir suelto, sin mandar el plan entero.
+    if (Object.keys(req.body || {}).length === 1 && "activo" in req.body) {
+      await dbRun("UPDATE maintenance_planes SET activo = ? WHERE id = ?", [!!req.body.activo, row.id]);
+      return res.json({ ok: true });
+    }
+    // El local NO se puede cambiar: mover un plan de establecimiento es darlo de alta en otro.
+    const v = validarPlan({ ...req.body, local: row.local, ultima_en: row.ultima_en }, hoyISO());
+    if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
+    const p = v.plan;
+    // La próxima fecha se conserva si el ciclo no cambió: editar el título no debe mover nada.
+    const mismoCiclo = row.cada_n === p.cada_n && row.unidad === p.unidad;
+    const proxima = mismoCiclo ? row.proxima_en : p.proxima_en;
+    await dbRun(
+      `UPDATE maintenance_planes SET titulo = ?, descripcion = ?, cada_n = ?, unidad = ?, aviso_dias = ?, proxima_en = ?,
+              activo = COALESCE(?, activo) WHERE id = ?`,
+      [p.titulo, p.descripcion, p.cada_n, p.unidad, p.aviso_dias, proxima,
+       typeof req.body.activo === "boolean" ? req.body.activo : null, row.id]);
+    res.json({ ok: true });
+  } catch (e) { console.error("[Mantenimiento] editar plan:", e.message); res.status(500).json({ ok: false, error: "Error guardando el plan" }); }
+});
+
+app.delete("/api/maintenance/planes/:id", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const { row, permitido } = await planPropio(req, req.params.id);
+    if (!row) return res.status(404).json({ ok: false, error: "Plan no encontrado" });
+    if (!permitido) return res.status(403).json({ ok: false, error: "Sin permiso sobre este plan" });
+    // Las incidencias que ya generó se quedan: son trabajo hecho y son el historial. Pierden
+    // el vínculo con el plan, nada más.
+    await dbRun("UPDATE maintenance_issues SET plan_id = NULL WHERE plan_id = ?", [row.id]);
+    await dbRun("DELETE FROM maintenance_planes WHERE id = ?", [row.id]);
+    res.json({ ok: true });
+  } catch (e) { console.error("[Mantenimiento] borrar plan:", e.message); res.status(500).json({ ok: false, error: "Error borrando el plan" }); }
+});
+
+// «Hacer ahora»: adelantar una tarea sin esperar a que venza (llega el técnico antes de tiempo).
+app.post("/api/maintenance/planes/:id/ahora", requireAuth(["encargado", "direccion"]), async (req, res) => {
+  try {
+    const { row, permitido } = await planPropio(req, req.params.id);
+    if (!row) return res.status(404).json({ ok: false, error: "Plan no encontrado" });
+    if (!permitido) return res.status(403).json({ ok: false, error: "Sin permiso sobre este plan" });
+    const n = await generarPreventivo([{ ...row, proxima_en: hoyISO(), aviso_dias: 0, activo: true }], hoyISO());
+    if (!n) return res.status(409).json({ ok: false, error: "Ya hay una tarea abierta de este plan" });
+    res.json({ ok: true });
+  } catch (e) { console.error("[Mantenimiento] adelantar plan:", e.message); res.status(500).json({ ok: false, error: "Error creando la tarea" }); }
+});
+
 // Mantenimiento — enforcement por establecimiento gated por PERMISOS_V2 (Iteración 4).
 // Con el flag ausente (por defecto) el comportamiento es IDÉNTICO al anterior, incluidos los
 // mensajes de error 500. Toda la autorización vive en el servicio (no en la ruta).
@@ -14000,7 +14217,7 @@ app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (
     const scope = localScope(req);
     if (scope) { const row = await dbGet("SELECT local FROM maintenance_issues WHERE id = ?", [req.params.id]); if (row && row.local !== scope) return res.status(403).json({ ok: false, error: "Sin permiso sobre esta incidencia" }); }
     const r = await updateMaintenanceIssueStatus(maintDb, req.user, req.params.id, { estado: req.body.estado }, { enabled: permisosV2Enabled() });
-    if (r.code === "OK") return res.json({ ok: true });
+    if (r.code === "OK") { await recalcularPlanSiPreventiva(req.params.id, req.body.estado); return res.json({ ok: true }); }
     if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_id" ? "ID no válido" : r.reason === "invalid_estado" ? "Estado no válido" : "Estado requerido" });
     if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
     if (r.code === "NOT_FOUND") return res.status(404).json({ ok: false, error: "Incidencia no encontrada" });

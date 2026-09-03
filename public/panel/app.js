@@ -1051,13 +1051,14 @@ function allCmd() {
   const items = [];
   // `k` son palabras extra por las que también se encuentra: el departamento y el nombre viejo.
   // Sin esto, buscar «mantenimiento» o «rrhh» no encontraría «Incidencias» ni «Equipo».
-  const ALIAS = { rrhh: "rr hh recursos humanos personal", mantenimiento: "mantenimiento averias", facturas: "gastos proveedores", analitica: "ventas", reviews: "google opiniones", inventarios: "stock pedidos" };
+  const ALIAS = { rrhh: "rr hh recursos humanos personal", mantenimiento: "mantenimiento averias preventivo periodico planes", facturas: "gastos proveedores", analitica: "ventas", reviews: "google opiniones", inventarios: "stock pedidos" };
   NAV.forEach((grp) => grp.items.forEach(([id, label, icon]) => {
     if (puedeVer(id)) items.push({ t: label, g: "Ir a", k: `${grp.g} ${ALIAS[id] || ""}`, icon, view: id });
   }));
   const actions = [
     ["Nueva reserva", "cal", ["direccion", "encargado"], () => { go("reservas"); setTimeout(openNuevaReserva, 80); }],
-    ["Nueva incidencia", "wrench", ["direccion", "encargado"], () => { go("mantenimiento"); setTimeout(openNuevaIncidencia, 80); }],
+    ["Nueva incidencia", "wrench", ["direccion", "encargado"], () => { MANT_TAB = "inc"; go("mantenimiento"); setTimeout(openNuevaIncidencia, 80); }],
+    ["Nuevo plan periódico", "wrench", ["direccion", "encargado"], () => { MANT_TAB = "prev"; go("mantenimiento"); setTimeout(() => openPlan(null), 80); }],
     ["Actualizar reseñas", "star", ["direccion"], () => { go("reviews"); setTimeout(refreshReviews, 80); }],
     ["Cambiar tema", "sun", null, () => toggleTheme()],
   ];
@@ -1677,8 +1678,10 @@ async function downloadCsv() {
 }
 
 // ════════════════════════ VISTA: MANTENIMIENTO ════════════════════════
-let MANF = { local: "", estado: "" };
-let MAN_LIST = [];
+let MANF = { local: "", estado: "abierta" };   // por defecto solo lo pendiente: una pantalla que
+let MAN_LIST = [];                             // abre con dos años de cosas hechas no la mira nadie
+let MAN_PLANES = [];
+let MANT_TAB = "inc";                          // "inc" incidencias · "prev" preventivo
 // Espejo de src/modules/mantenimiento/estados.js. El panel se carga como script clásico y no
 // puede importar el módulo, así que la copia se ata con un test de introspección
 // (tests/mantenimiento-estados-espejo.test.js): si allí se añade un estado y aquí no, falla.
@@ -1694,19 +1697,142 @@ function renderMant(list) {
   const amb = mantScope();
   const estOpts = ['<option value="">Todos los estados</option>'].concat(MANT_ESTADOS.map((e) => `<option value="${e}" ${MANF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
   // Sin filtro de local ni botón «Buscar»: el estado se aplica solo (el filtrado es en cliente).
-  const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="mEstado">${estOpts}</select></div><div style="display:flex;gap:10px;margin-left:auto"><button class="btn primary" data-act="mant-nueva">+ Nueva incidencia</button></div></div>`;
+  const toolbar = `${mantTabs("inc")}<div class="toolbar"><div class="field"><label>Estado</label><select id="mEstado">${estOpts}</select></div><div style="display:flex;gap:10px;margin-left:auto"><button class="btn primary" data-act="mant-nueva">+ Nueva incidencia</button></div></div>`;
   const body = rows.length ? `<div class="card p0"><div class="rows">${rows.map((r) => {
     const est = r.estado || "abierta"; const next = MANT_SIGUIENTE[est] || null;
     const foto = r.foto_url ? `<a href="${esc(r.foto_url)}" target="_blank" rel="noopener" title="Ver foto" style="margin-right:10px;flex-shrink:0"><img src="${esc(r.foto_url)}" alt="Foto de la incidencia" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:block"></a>` : "";
-    return `<div class="row">${foto}<div class="grow"><div class="t1">${esc(r.titulo)}</div><div class="t2">${esc(r.local)} · ${esc(fechaCorta((r.creado_en || "").slice(0, 10)))}${r.descripcion ? " · " + esc((r.descripcion || "").slice(0, 80)) : ""}</div></div><span class="pill ${EST_PILL[est] || ""}">${esc(cap(est))}</span>${next ? `<button class="btn" data-act="mant-estado" data-id="${r.id}" data-estado="${next[0]}">${next[1]}</button>` : ""}</div>`;
+    // Marca de dónde sale y para cuándo. Una preventiva pasada de fecha se ve en rojo: es la
+    // diferencia entre «hay un plan» y «el plan se cumple».
+    const tarde = r.vence_en && est !== "resuelta" && r.vence_en < todayStr();
+    const marca = r.plan_id
+      ? `<span class="pill" title="Sale de un plan periódico">Preventivo</span>${r.vence_en ? `<span class="pill ${tarde ? "bad" : ""}">${tarde ? "venció" : "vence"} ${esc(fechaCorta(r.vence_en))}</span>` : ""}`
+      : "";
+    return `<div class="row">${foto}<div class="grow"><div class="t1">${esc(r.titulo)}</div><div class="t2">${esc(r.local)} · ${esc(fechaCorta((r.creado_en || "").slice(0, 10)))}${r.descripcion ? " · " + esc((r.descripcion || "").slice(0, 80)) : ""}</div></div>${marca}<span class="pill ${EST_PILL[est] || ""}">${esc(cap(est))}</span>${next ? `<button class="btn" data-act="mant-estado" data-id="${r.id}" data-estado="${next[0]}">${next[1]}</button>` : ""}</div>`;
   }).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin incidencias con esos filtros.</div></div>`;
-  return `<div class="ph"><div class="eyebrow">Operación</div><h1>Mantenimiento</h1><div class="sub">${rows.length} incidencia${rows.length === 1 ? "" : "s"}${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>${toolbar}${body}`;
+  const ocultas = (list || []).length - rows.length;
+  return `<div class="ph"><div class="eyebrow">Operación</div><h1>Mantenimiento</h1><div class="sub">${rows.length} incidencia${rows.length === 1 ? "" : "s"}${ocultas > 0 ? ` · ${ocultas} más con otro estado` : ""}${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>${toolbar}${body}`;
 }
 async function loadMant() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   mantScope();
+  if (MANT_TAB === "prev") return loadPlanes();
   try { const qs = MANF.local ? "?local=" + encodeURIComponent(MANF.local) : ""; MAN_LIST = await api("/api/maintenance" + qs); view.innerHTML = renderMant(MAN_LIST); }
   catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+
+// ─────────────── Preventivo: los planes que fabrican las tareas ───────────────
+//
+// Dos pestañas y no dos pantallas del menú: son la misma cosa vista desde los dos lados. En
+// «Incidencias» está lo que hay que hacer; en «Preventivo», la regla que lo pone ahí.
+function mantTabs(activa) {
+  return `<div class="seg" style="margin-bottom:14px">${[["inc", "Incidencias"], ["prev", "Preventivo"]]
+    .map(([k, t]) => `<button class="${activa === k ? "on" : ""}" data-act="mant-tab" data-tab="${k}">${t}</button>`).join("")}</div>`;
+}
+function mantTab(tab) { if (tab === MANT_TAB) return; MANT_TAB = tab; loadMant(); }
+
+// «cada 3 meses», «cada año». Espejo de textoCadencia() en planes.js; el panel no puede
+// importar el módulo (script clásico) y el test de introspección ata las dos copias.
+function textoCadenciaFE(p) {
+  const n = Number(p.cada_n);
+  if (!Number.isInteger(n) || n < 1) return "";
+  if (p.unidad === "meses") return n === 1 ? "cada mes" : n === 12 ? "cada año" : n % 12 === 0 ? `cada ${n / 12} años` : `cada ${n} meses`;
+  return n === 1 ? "cada día" : `cada ${n} días`;
+}
+
+function renderPlanes(list) {
+  const rows = (list || []).slice();
+  const amb = MANF.local;
+  const toolbar = `${mantTabs("prev")}<div class="toolbar"><div class="mut">Tareas que se repiten solas. Cuando toca, aparecen en Incidencias.</div><div style="display:flex;gap:10px;margin-left:auto"><button class="btn primary" data-act="plan-nuevo">+ Nuevo plan</button></div></div>`;
+  const body = rows.length ? `<div class="card p0"><div class="rows">${rows.map((p) => {
+    const pausado = p.activo === false || p.activo === 0;
+    const tarde = !pausado && p.proxima_en && p.proxima_en < todayStr();
+    const cuando = pausado ? `<span class="pill">En pausa</span>`
+      : `<span class="pill ${tarde ? "bad" : "ok"}">${tarde ? "vencía" : "toca"} ${esc(fechaCorta(p.proxima_en))}</span>`;
+    const ultima = p.ultima_en ? ` · última vez ${esc(fechaCorta(p.ultima_en))}` : " · nunca hecha";
+    const aviso = Number(p.aviso_dias) > 0 ? ` · avisa ${p.aviso_dias} días antes` : "";
+    return `<div class="row"><div class="grow"><div class="t1">${esc(p.titulo)}</div><div class="t2">${esc(p.local)} · ${esc(textoCadenciaFE(p))}${ultima}${aviso}</div></div>${cuando}` +
+      `<button class="btn" data-act="plan-ahora" data-id="${p.id}" title="Crear la tarea ya, sin esperar">Hacer ahora</button>` +
+      `<button class="btn" data-act="plan-editar" data-id="${p.id}">Editar</button>` +
+      `<button class="btn" data-act="plan-pausa" data-id="${p.id}" data-activo="${pausado ? "1" : "0"}">${pausado ? "Reanudar" : "Pausar"}</button>` +
+      (USER && USER.rol === "direccion" ? `<button class="btn" data-act="plan-borrar" data-id="${p.id}" data-titulo="${esc(p.titulo)}">Borrar</button>` : "") +
+      `</div>`;
+  }).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Todavía no hay ningún plan. Por ejemplo: «limpiar los filtros de aire, cada 3 meses».</div></div>`;
+  return `<div class="ph"><div class="eyebrow">Operación</div><h1>Mantenimiento preventivo</h1><div class="sub">${rows.length} plan${rows.length === 1 ? "" : "es"}${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>${toolbar}${body}`;
+}
+
+async function loadPlanes() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  mantScope();
+  // Con el mismo `?local=` que las incidencias: si no, dirección elegía Blanes en la barra de
+  // arriba, el título ponía «Blanes» y debajo salían los planes de todos los locales.
+  try { const qs = MANF.local ? "?local=" + encodeURIComponent(MANF.local) : "";
+        MAN_PLANES = await api("/api/maintenance/planes" + qs); view.innerHTML = renderPlanes(MAN_PLANES); }
+  catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+
+async function planPausa(id, reanudar) {
+  try { await apiSend("PUT", "/api/maintenance/planes/" + encodeURIComponent(id), { activo: !!reanudar }); toast(reanudar ? "Plan reanudado ✅" : "Plan en pausa"); loadPlanes(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function planAhora(id) {
+  try { await apiSend("POST", "/api/maintenance/planes/" + encodeURIComponent(id) + "/ahora", {}); toast("Tarea creada · está en Incidencias ✅"); loadPlanes(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+async function planBorrar(id, titulo) {
+  if (!(await confirmModal(`¿Borrar el plan «${titulo}»? Dejará de repetirse. Las tareas que ya generó se quedan en Incidencias.`, { ok: "Borrar plan", danger: true }))) return;
+  try { await apiSend("DELETE", "/api/maintenance/planes/" + encodeURIComponent(id)); toast("Plan borrado"); loadPlanes(); }
+  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+}
+
+/**
+ * Alta y edición de un plan.
+ *
+ * Se pregunta «¿cuándo se hizo por última vez?» y NO «¿cuándo toca la próxima?»: es la
+ * pregunta que la persona sabe contestar. Si nunca se ha hecho, la primera tarea aparece al
+ * momento, que es lo que espera quien acaba de dar el plan de alta.
+ */
+function openPlan(existente) {
+  const p = existente || {};
+  const editando = !!existente;
+  const fijo = localFijadoFE();
+  const localOpts = editando ? `<option value="${esc(p.local)}" selected>${esc(p.local)}</option>`
+    : (fijo ? `<option value="${esc(fijo)}" selected>${esc(fijo)}</option>` : opcionesLocal());
+  const uni = (v, t) => `<option value="${v}" ${(p.unidad || "meses") === v ? "selected" : ""}>${t}</option>`;
+  const body = `<form id="fPlan"><div class="form-grid">
+    <div class="field full"><label>Local</label><select name="local" required ${editando ? "disabled" : ""}>${localOpts}</select>
+      ${editando ? `<div class="mut" style="font-size:12px;margin-top:4px">El local no se cambia: mover un plan de sitio es darlo de alta en el otro.</div>` : ""}</div>
+    <div class="field full"><label>¿Qué hay que hacer?</label><input type="text" name="titulo" required maxlength="200" value="${esc(p.titulo || "")}" placeholder="Limpiar los filtros de aire"></div>
+    <div class="field full"><label>Detalle (opcional)</label><input type="text" name="descripcion" value="${esc(p.descripcion || "")}" placeholder="Quitarlos, lavarlos con agua templada y dejarlos secar"></div>
+    <div class="field"><label>Cada</label><input type="number" name="cada_n" min="1" required value="${esc(p.cada_n || 3)}"></div>
+    <div class="field"><label>&nbsp;</label><select name="unidad">${uni("meses", "meses")}${uni("dias", "días")}</select></div>
+    ${editando ? "" : `<div class="field full"><label>¿Cuándo se hizo por última vez?</label><input type="date" name="ultima_en" max="${todayStr()}">
+      <div class="mut" style="font-size:12px;margin-top:4px">Si lo dejas en blanco, la primera tarea aparece hoy mismo.</div></div>`}
+    <div class="field full"><label>Avisar con antelación (días)</label><input type="number" name="aviso_dias" min="0" max="90" value="${esc(p.aviso_dias || 0)}">
+      <div class="mut" style="font-size:12px;margin-top:4px">0 = la tarea aparece el día que toca. 15 = quince días antes, para poder organizarla.</div></div>
+  </div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">${editando ? "Guardar" : "Crear plan"}</button></div></form>`;
+  const ov = modal(editando ? "Editar plan" : "Nuevo plan periódico", body);
+  ov.querySelector("#fPlan").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target, btn = f.querySelector('button[type="submit"]');
+    const data = {
+      local: editando ? p.local : f.local.value,
+      titulo: f.titulo.value.trim(),
+      descripcion: f.descripcion.value.trim(),
+      cada_n: Number(f.cada_n.value),
+      unidad: f.unidad.value,
+      aviso_dias: Number(f.aviso_dias.value || 0),
+    };
+    if (!editando && f.ultima_en.value) data.ultima_en = f.ultima_en.value;
+    if (btn) { btn.disabled = true; btn.textContent = "Guardando…"; }
+    try {
+      if (editando) await apiSend("PUT", "/api/maintenance/planes/" + encodeURIComponent(p.id), data);
+      else await apiSend("POST", "/api/maintenance/planes", data);
+      ov.remove(); toast(editando ? "Plan guardado ✅" : "Plan creado ✅"); loadPlanes();
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.textContent = editando ? "Guardar" : "Crear plan"; }
+      if (err.message !== "noauth") toast("Error: " + err.message);
+    }
+  });
 }
 // El estado se filtra en cliente: repintamos con lo que ya tenemos, sin volver a pedirlo.
 function applyMantFilter() {
@@ -12069,6 +12195,12 @@ document.addEventListener("click", (e) => {
   else if (act === "cancel") cancelReserva(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "mant-nueva") openNuevaIncidencia();
   else if (act === "mant-estado") mantEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
+  else if (act === "mant-tab") mantTab(t.getAttribute("data-tab"));
+  else if (act === "plan-nuevo") openPlan(null);
+  else if (act === "plan-editar") openPlan(MAN_PLANES.find((x) => String(x.id) === t.getAttribute("data-id")));
+  else if (act === "plan-pausa") planPausa(t.getAttribute("data-id"), t.getAttribute("data-activo") === "1");
+  else if (act === "plan-ahora") planAhora(t.getAttribute("data-id"));
+  else if (act === "plan-borrar") planBorrar(t.getAttribute("data-id"), t.getAttribute("data-titulo"));
   else if (act === "inv-volver-prov") loadInvProveedores();
   else if (act === "inv-volver-conteo") loadInvConteo();
   else if (act === "inv-nuevo-prov") invNuevoProveedor();

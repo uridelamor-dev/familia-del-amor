@@ -14,11 +14,13 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { ESTADOS, SIGUIENTE } from "../src/modules/mantenimiento/estados.js";
+import { textoCadencia } from "../src/modules/mantenimiento/planes.js";
 
 const url = (r) => new URL(r, import.meta.url);
 const panel = readFileSync(url("../public/panel/app.js"), "utf8");
 const dashboard = readFileSync(url("../src/modules/dashboard/dashboard.service.js"), "utf8");
 const servicio = readFileSync(url("../src/modules/mantenimiento/maintenance.service.js"), "utf8");
+const server = readFileSync(url("../server.js"), "utf8");
 
 // Del `const MANT_ESTADOS = ["a", "b"]` del panel a un array de verdad.
 function arrayLiteral(texto, nombre) {
@@ -101,4 +103,60 @@ describe("Mantenimiento · la página vieja sigue borrada", () => {
       assert.ok(!existsSync(url(f)), "volvió la página vieja: escribía «en_proceso» y «cerrada»");
     });
   }
+});
+
+describe("Preventivo · el panel dice lo mismo que planes.js", () => {
+  // `textoCadenciaFE` es la segunda copia de `textoCadencia`, por el mismo motivo que los
+  // estados: el panel no puede importar. Se comprueba comparando SALIDAS, no el código.
+  const fe = new Function(`${panel.match(/function textoCadenciaFE\(p\) \{[\s\S]*?\n\}/)[0]}; return textoCadenciaFE;`)();
+
+  const casos = [
+    { cada_n: 1, unidad: "meses" }, { cada_n: 3, unidad: "meses" }, { cada_n: 12, unidad: "meses" },
+    { cada_n: 24, unidad: "meses" }, { cada_n: 36, unidad: "meses" }, { cada_n: 7, unidad: "meses" },
+    { cada_n: 1, unidad: "dias" }, { cada_n: 15, unidad: "dias" }, { cada_n: 90, unidad: "dias" },
+    { cada_n: 0, unidad: "meses" }, { cada_n: -1, unidad: "dias" },
+  ];
+  for (const c of casos) {
+    test(`«cada ${c.cada_n} ${c.unidad}» se lee igual en los dos sitios`, () => {
+      assert.equal(fe(c), textoCadencia(c), "el panel y planes.js han dejado de decir lo mismo");
+    });
+  }
+});
+
+describe("Preventivo · está cableado en el servidor", () => {
+  test("la tabla de planes se crea en initDB", () => {
+    assert.ok(server.includes("CREATE TABLE IF NOT EXISTS maintenance_planes"));
+  });
+
+  test("las rutas de planes van ANTES que /api/maintenance/:id", () => {
+    // Si no, «planes» se leería como un id de incidencia y el PUT de editar un plan acabaría
+    // en el endpoint equivocado.
+    const planes = server.indexOf('app.get("/api/maintenance/planes"');
+    const porId = server.indexOf('app.put("/api/maintenance/:id"');
+    assert.ok(planes > 0 && porId > 0, "faltan rutas");
+    assert.ok(planes < porId, "las rutas de planes tienen que registrarse primero");
+  });
+
+  test("el generador es una marca en la base, no un temporizador de un día", () => {
+    // En Replit el proceso se reinicia constantemente: un setInterval de 24 h no se dispara.
+    assert.ok(server.includes("mant_preventivo_last"), "no hay marca persistente");
+    assert.ok(/mantPreventivoSiToca[\s\S]{0,400}tocaRepasar/.test(server), "no consulta la marca");
+    assert.ok(server.includes("setTimeout(() => { mantPreventivoSiToca()"), "no se ejecuta al arrancar");
+  });
+
+  test("la generación es idempotente: ON CONFLICT contra el índice único", () => {
+    assert.ok(/ON CONFLICT \(plan_id, vence_en\)[\s\S]{0,80}DO NOTHING/.test(server),
+      "sin esto, dos ejecuciones a la vez duplican la tarea");
+  });
+
+  test("al resolver una preventiva se recalcula su plan", () => {
+    assert.ok(server.includes("recalcularPlanSiPreventiva"), "el plan no volvería a tocar nunca");
+    assert.ok(/alCompletar\(plan, hoy, hoy\)/.test(server),
+      "la próxima fecha tiene que contarse desde HOY, el día en que se hizo de verdad");
+  });
+
+  test("borrar un plan no borra el trabajo ya hecho", () => {
+    assert.ok(/UPDATE maintenance_issues SET plan_id = NULL WHERE plan_id = \?/.test(server),
+      "las incidencias que generó son el historial: se desvinculan, no se borran");
+  });
 });
