@@ -12,6 +12,12 @@
 
 import { imputarGastoEmpresa } from "../facturas/reparto.js";
 import { agruparPorCentro } from "../locales/centros.js";
+import { ABIERTOS } from "../mantenimiento/estados.js";
+
+// Qué cuenta como «pendiente», tomado de estados.js y no escrito a mano: la lista estaba
+// puesta en negativo (`NOT IN ('resuelta','cerrada')`) en cuatro consultas, y en negativo un
+// estado nuevo entra solo en el recuento sin que nadie lo decida.
+const SQL_ABIERTOS = ABIERTOS.map((e) => `'${e}'`).join(",");
 
 const DOW = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 function addDays(iso, n) { const d = new Date(iso + "T00:00:00.000Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
@@ -104,10 +110,10 @@ async function gatherSignals(x, { hoy, local }) {
     () => safe(() => x.all(`SELECT local, COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia = ? GROUP BY local ORDER BY personas DESC`, [hoy]), []),
     () => safe(() => x.get(`SELECT COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia::date > ?::date AND dia::date <= ?::date${lf}`, [hoy, finProx, ...lp]), null),
     // — mantenimiento —
-    () => safe(() => x.all(`SELECT local, titulo, COUNT(*)::int c FROM maintenance_issues WHERE creado_en::date >= ?::date${lf} GROUP BY local, titulo HAVING COUNT(*) >= 2 ORDER BY c DESC LIMIT 5`, [addDays(hoy, -56), ...lp]), []),
-    () => safe(() => x.all(`SELECT id, local, titulo, creado_en FROM maintenance_issues WHERE estado NOT IN ('resuelta','cerrada') AND creado_en::date <= ?::date${lf} ORDER BY creado_en ASC LIMIT 5`, [addDays(hoy, -3), ...lp]), []),
-    () => safe(() => x.get(`SELECT COUNT(*)::int n FROM maintenance_issues WHERE estado NOT IN ('resuelta','cerrada')${lf}`, [...lp]), null),
-    () => safe(() => x.all(`SELECT local, COUNT(*)::int n FROM maintenance_issues WHERE estado NOT IN ('resuelta','cerrada') GROUP BY local`, []), []),
+    () => safe(() => x.all(`SELECT local, titulo, COUNT(*)::int c FROM maintenance_issues WHERE plan_id IS NULL AND creado_en::date >= ?::date${lf} GROUP BY local, titulo HAVING COUNT(*) >= 2 ORDER BY c DESC LIMIT 5`, [addDays(hoy, -56), ...lp]), []),
+    () => safe(() => x.all(`SELECT id, local, titulo, creado_en FROM maintenance_issues WHERE estado IN (${SQL_ABIERTOS}) AND creado_en::date <= ?::date${lf} ORDER BY creado_en ASC LIMIT 5`, [addDays(hoy, -3), ...lp]), []),
+    () => safe(() => x.get(`SELECT COUNT(*)::int n FROM maintenance_issues WHERE estado IN (${SQL_ABIERTOS})${lf}`, [...lp]), null),
+    () => safe(() => x.all(`SELECT local, COUNT(*)::int n FROM maintenance_issues WHERE estado IN (${SQL_ABIERTOS}) GROUP BY local`, []), []),
     // — reputación —
     () => safe(() => x.get(`SELECT COALESCE(ROUND(AVG(rating)::numeric,1),0)::float media, COUNT(*)::int total FROM google_reviews WHERE COALESCE(fecha,creado_en)::date >= ?::date`, [addDays(hoy, -90)]), null),
     () => safe(() => x.all(`SELECT author, rating, text, COALESCE(fecha,creado_en) AS fecha, location_name FROM google_reviews WHERE rating <= 2 AND COALESCE(fecha,creado_en)::date >= ?::date ORDER BY COALESCE(fecha,creado_en) DESC LIMIT 3`, [addDays(hoy, -30)]), []),

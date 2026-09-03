@@ -5,11 +5,18 @@
 // parámetros de la operación y `now` inyectable.
 //
 // Resultados tipados: { code: "OK" | "VALIDATION_ERROR" | "FORBIDDEN" | "NOT_FOUND", ... }.
+//
+// El flag OFF preserva el comportamiento legado en TODO lo que es permisos, que es a lo que se
+// comprometió la Iteración 4. Hay dos cosas que ya no se comportan como antes, a propósito y
+// en las dos ramas por igual, porque son higiene del dato y no autorización: el `estado` se
+// valida contra `estados.js` (antes se guardaba en crudo) y un id inexistente contesta
+// NOT_FOUND (antes contestaba OK sin haber tocado nada).
 // Errores REALES de infraestructura durante la autorización → fail-closed (FORBIDDEN, sin
 // filtrar información). Errores inesperados de la operación de datos → se lanzan para que el
 // error handler global responda genérico.
 import { buildAccessContext, canAccessEstablecimiento, isValidId } from "../../core/access.js";
 import { resolveAllowedLocalTexts, resolveEstablishmentByLocalText } from "../../core/scope.js";
+import { normalizarEstado } from "./estados.js";
 
 const LIST_ALL_SQL = `SELECT * FROM maintenance_issues ORDER BY creado_en DESC`;
 
@@ -98,15 +105,23 @@ export async function createMaintenanceIssue(x, user, { local, titulo, descripci
 
 // ── PUT /api/maintenance/:id ─────────────────────────────────────────────────
 export async function updateMaintenanceIssueStatus(x, user, id, { estado } = {}, { enabled = false, now } = {}) {
+  // El estado se valida ANTES de mirar el flag y en las dos ramas: es higiene del dato, no
+  // permisos. Antes se guardaba en crudo lo que llegara, y por ahí entraban «en_proceso» y
+  // «cerrada» de la página vieja — valores que no salen en ningún filtro del panel.
+  const estadoOk = normalizarEstado(estado);
+  if (!estado) return { code: "VALIDATION_ERROR", reason: "missing_estado" };
+  if (!estadoOk) return { code: "VALIDATION_ERROR", reason: "invalid_estado" };
+
   if (!enabled) {
-    if (!estado) return { code: "VALIDATION_ERROR", reason: "missing_estado" };
-    await x.run(`UPDATE maintenance_issues SET estado = ? WHERE id = ?`, [estado, id]);
+    // `RETURNING id` para poder contestar 404: antes un id inexistente devolvía OK y quien
+    // llamaba se quedaba tan tranquilo creyendo que había cambiado algo.
+    const r0 = await x.run(`UPDATE maintenance_issues SET estado = ? WHERE id = ? RETURNING id`, [estadoOk, id]);
+    if (!r0) return { code: "NOT_FOUND" };
     return { code: "OK" };
   }
 
   const idNum = Number(id);
   if (!isValidId(idNum)) return { code: "VALIDATION_ERROR", reason: "invalid_id" };
-  if (!estado) return { code: "VALIDATION_ERROR", reason: "missing_estado" };
 
   // Cargar la incidencia REAL y resolver su establecimiento desde el registro (no del body).
   let row, ctx, est;
@@ -130,7 +145,7 @@ export async function updateMaintenanceIssueStatus(x, user, id, { estado } = {},
   }
   if (!permitido) return { code: "FORBIDDEN" };
 
-  const r = await x.run(`UPDATE maintenance_issues SET estado = ? WHERE id = ? RETURNING id`, [estado, idNum]);
+  const r = await x.run(`UPDATE maintenance_issues SET estado = ? WHERE id = ? RETURNING id`, [estadoOk, idNum]);
   if (!r) return { code: "NOT_FOUND" }; // RETURNING vacío ⇒ la fila desapareció (carrera)
   return { code: "OK" };
 }

@@ -840,6 +840,49 @@ async function initDB() {
     try { await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc TEXT`); } catch (e) { console.error("[DB] alter users password_enc:", e.message); }
     try { await client.query(`ALTER TABLE maintenance_issues ADD COLUMN IF NOT EXISTS foto_url TEXT`); } catch (e) { console.error("[DB] alter maintenance_issues foto_url:", e.message); }
 
+    // ── Mantenimiento: higiene de `estado` + ganchos del preventivo (aditivo) ──────────────
+    //
+    // Había DOS pantallas escribiendo estados distintos para lo mismo: el panel manda «en
+    // proceso»/«resuelta» y la página vieja `public/mantenimiento.html` mandaba
+    // «en_proceso»/«cerrada». El `PUT` guardaba en crudo lo que llegara, así que una fila en
+    // «en_proceso» no salía en ningún filtro del panel y el Dashboard la contaba como abierta
+    // para siempre. Se traduce lo guardado y se cierra la puerta con un CHECK.
+    //
+    // El CHECK va `NOT VALID` a propósito: valida TODO lo que se escriba a partir de ahora sin
+    // recorrer la tabla al arrancar. Si quedara una fila rara que el UPDATE no ha pillado, el
+    // servidor arranca igual en vez de quedarse abajo por una incidencia de hace dos años.
+    // Los valores buenos viven en src/modules/mantenimiento/estados.js, con tests.
+    try {
+      const t = await client.query(
+        `UPDATE maintenance_issues SET estado = CASE
+            WHEN lower(btrim(estado)) IN ('en_proceso','enproceso') THEN 'en proceso'
+            WHEN lower(btrim(estado)) IN ('cerrada','cerrado','resuelto') THEN 'resuelta'
+            WHEN lower(btrim(estado)) IN ('abierto','pendiente') THEN 'abierta'
+            ELSE lower(btrim(estado)) END
+          WHERE estado <> CASE
+            WHEN lower(btrim(estado)) IN ('en_proceso','enproceso') THEN 'en proceso'
+            WHEN lower(btrim(estado)) IN ('cerrada','cerrado','resuelto') THEN 'resuelta'
+            WHEN lower(btrim(estado)) IN ('abierto','pendiente') THEN 'abierta'
+            ELSE lower(btrim(estado)) END`);
+      if (t.rowCount) console.log(`[DB] Mantenimiento: ${t.rowCount} incidencia(s) con el estado escrito a la vieja usanza, traducidas.`);
+    } catch (e) { console.error("[DB] normalizar maintenance_issues.estado:", e.message); }
+    try {
+      const hay = await client.query(`SELECT 1 FROM pg_constraint WHERE conname = 'maint_estado_ck'`);
+      if (!hay.rows.length) {
+        await client.query(`ALTER TABLE maintenance_issues ADD CONSTRAINT maint_estado_ck
+                            CHECK (estado IN ('abierta','en proceso','resuelta')) NOT VALID`);
+      }
+    } catch (e) { console.error("[DB] check maintenance_issues.estado:", e.message); }
+
+    // Ganchos del mantenimiento PREVENTIVO, que llega después. Se añaden ahora para no hacer
+    // dos migraciones sobre la misma tabla. Hoy nadie los escribe y valen NULL: `plan_id` dirá
+    // de qué plan periódico salió la incidencia (NULL = puntual, que es todo lo de hoy) y
+    // `vence_en` para cuándo debería estar hecha.
+    for (const col of ["plan_id INTEGER", "vence_en TEXT"]) {
+      try { await client.query(`ALTER TABLE maintenance_issues ADD COLUMN IF NOT EXISTS ${col}`); }
+      catch (e) { console.error("[DB] alter maintenance_issues " + col + ":", e.message); }
+    }
+
     // ── RRHH: perfil de trabajador (aditivo). Enriquece `users` con datos de personal + documentos.
     // `pass_temporal`: la cuenta entra con la contraseña inicial y no puede hacer NADA más
     // que cambiarla. `login_intentos`/`login_bloqueado_hasta`: el freno a la fuerza bruta,
@@ -1531,6 +1574,10 @@ async function initDB() {
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_facturas_pend_hash ON facturas_pendientes(file_hash) WHERE file_hash IS NOT NULL",
       "CREATE INDEX IF NOT EXISTS idx_maint_estado ON maintenance_issues(estado)",
       "CREATE INDEX IF NOT EXISTS idx_maint_local ON maintenance_issues(local)",
+      // Preventivo: dos incidencias del mismo plan para el mismo vencimiento son la misma
+      // incidencia. El índice lo hace imposible aunque dos ejecuciones del generador coincidan,
+      // que es la única forma de no acabar duplicando tareas en un proceso que se reinicia solo.
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_maint_plan_venc ON maintenance_issues(plan_id, vence_en) WHERE plan_id IS NOT NULL",
       "CREATE INDEX IF NOT EXISTS idx_greviews_fecha ON google_reviews(fecha)",
       "CREATE INDEX IF NOT EXISTS idx_greviews_location ON google_reviews(location_name)",
       "CREATE INDEX IF NOT EXISTS idx_wmsg_creado ON whatsapp_messages(creado_en)",
@@ -13954,7 +14001,7 @@ app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (
     if (scope) { const row = await dbGet("SELECT local FROM maintenance_issues WHERE id = ?", [req.params.id]); if (row && row.local !== scope) return res.status(403).json({ ok: false, error: "Sin permiso sobre esta incidencia" }); }
     const r = await updateMaintenanceIssueStatus(maintDb, req.user, req.params.id, { estado: req.body.estado }, { enabled: permisosV2Enabled() });
     if (r.code === "OK") return res.json({ ok: true });
-    if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_id" ? "ID no válido" : "Estado requerido" });
+    if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_id" ? "ID no válido" : r.reason === "invalid_estado" ? "Estado no válido" : "Estado requerido" });
     if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
     if (r.code === "NOT_FOUND") return res.status(404).json({ ok: false, error: "Incidencia no encontrada" });
     return next(new Error("maintenance_update_internal"));

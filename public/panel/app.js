@@ -1679,7 +1679,12 @@ async function downloadCsv() {
 // ════════════════════════ VISTA: MANTENIMIENTO ════════════════════════
 let MANF = { local: "", estado: "" };
 let MAN_LIST = [];
-const EST_PILL = { "abierta": "bad", "en proceso": "imp", "resuelta": "ok", "cerrada": "ok" };
+// Espejo de src/modules/mantenimiento/estados.js. El panel se carga como script clásico y no
+// puede importar el módulo, así que la copia se ata con un test de introspección
+// (tests/mantenimiento-estados-espejo.test.js): si allí se añade un estado y aquí no, falla.
+const MANT_ESTADOS = ["abierta", "en proceso", "resuelta"];
+const MANT_SIGUIENTE = { "abierta": ["en proceso", "Tomar"], "en proceso": ["resuelta", "Resolver"] };
+const EST_PILL = { "abierta": "bad", "en proceso": "imp", "resuelta": "ok" };
 // Ámbito de local: selector de establecimiento de la barra superior (el local fijado manda).
 function mantScope() { MANF.local = localActualFE(); return MANF.local; }
 function renderMant(list) {
@@ -1687,11 +1692,11 @@ function renderMant(list) {
   if (MANF.estado) rows = rows.filter((r) => (r.estado || "") === MANF.estado);
   rows.sort((a, b) => String(b.creado_en).localeCompare(String(a.creado_en)));
   const amb = mantScope();
-  const estOpts = ['<option value="">Todos los estados</option>'].concat(["abierta", "en proceso", "resuelta"].map((e) => `<option value="${e}" ${MANF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
+  const estOpts = ['<option value="">Todos los estados</option>'].concat(MANT_ESTADOS.map((e) => `<option value="${e}" ${MANF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
   // Sin filtro de local ni botón «Buscar»: el estado se aplica solo (el filtrado es en cliente).
   const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="mEstado">${estOpts}</select></div><div style="display:flex;gap:10px;margin-left:auto"><button class="btn primary" data-act="mant-nueva">+ Nueva incidencia</button></div></div>`;
   const body = rows.length ? `<div class="card p0"><div class="rows">${rows.map((r) => {
-    const est = r.estado || "abierta"; const next = est === "abierta" ? ["en proceso", "Tomar"] : est === "en proceso" ? ["resuelta", "Resolver"] : null;
+    const est = r.estado || "abierta"; const next = MANT_SIGUIENTE[est] || null;
     const foto = r.foto_url ? `<a href="${esc(r.foto_url)}" target="_blank" rel="noopener" title="Ver foto" style="margin-right:10px;flex-shrink:0"><img src="${esc(r.foto_url)}" alt="Foto de la incidencia" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:block"></a>` : "";
     return `<div class="row">${foto}<div class="grow"><div class="t1">${esc(r.titulo)}</div><div class="t2">${esc(r.local)} · ${esc(fechaCorta((r.creado_en || "").slice(0, 10)))}${r.descripcion ? " · " + esc((r.descripcion || "").slice(0, 80)) : ""}</div></div><span class="pill ${EST_PILL[est] || ""}">${esc(cap(est))}</span>${next ? `<button class="btn" data-act="mant-estado" data-id="${r.id}" data-estado="${next[0]}">${next[1]}</button>` : ""}</div>`;
   }).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin incidencias con esos filtros.</div></div>`;

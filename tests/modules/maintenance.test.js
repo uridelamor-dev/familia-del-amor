@@ -29,8 +29,8 @@ function baseDb(issues = [], extra = {}) {
 const issue = (id, local, o = {}) => ({ id, local, titulo: "t", descripcion: "d", estado: "abierta", creado_en: `2026-08-0${id}`, ...o });
 const assign = (uid, eid) => ({ id: eid * 100 + uid, usuario_id: uid, establecimiento_id: eid, activo: 1, desde: PAST, hasta: null, creado_en: PAST });
 
-// ─────────── FLAG OFF: comportamiento idéntico al actual ───────────
-describe("Mantenimiento · flag OFF (idéntico)", () => {
+// ─────────── FLAG OFF: permisos idénticos al comportamiento legado ───────────
+describe("Mantenimiento · flag OFF (permisos idénticos)", () => {
   test("lista todas", async () => {
     const x = baseDb([issue(1, B), issue(2, L)]);
     const r = await listMaintenanceIssues(x, enc(10), OFF);
@@ -46,11 +46,22 @@ describe("Mantenimiento · flag OFF (idéntico)", () => {
     const r = await createMaintenanceIssue(baseDb(), enc(10), { local: "", titulo: "", descripcion: "" }, OFF);
     assert.equal(r.code, "VALIDATION_ERROR"); assert.equal(r.reason, "missing_fields");
   });
-  test("actualiza por id ⇒ OK; id inexistente ⇒ OK (sin 404, como el actual)", async () => {
+  // Estas dos ya NO son «idénticas» al comportamiento legado, y es deliberado: son higiene del
+  // dato, no permisos. El compromiso de la Iteración 4 era no cambiar la autorización.
+  test("actualiza por id ⇒ OK, guardando el estado canónico", async () => {
     const x = baseDb([issue(1, B)]);
     assert.equal((await updateMaintenanceIssueStatus(x, enc(10), 1, { estado: "cerrada" }, OFF)).code, "OK");
-    assert.equal((await updateMaintenanceIssueStatus(x, enc(10), 999, { estado: "cerrada" }, OFF)).code, "OK");
-    assert.equal(x._store.maintenance_issues[0].estado, "cerrada");
+    assert.equal(x._store.maintenance_issues[0].estado, "resuelta", "«cerrada» debe guardarse traducido");
+  });
+  test("id inexistente ⇒ NOT_FOUND (antes contestaba OK sin tocar nada)", async () => {
+    const x = baseDb([issue(1, B)]);
+    assert.equal((await updateMaintenanceIssueStatus(x, enc(10), 999, { estado: "resuelta" }, OFF)).code, "NOT_FOUND");
+  });
+  test("estado ilegible ⇒ VALIDATION_ERROR y NO se escribe nada", async () => {
+    const x = baseDb([issue(1, B)]);
+    const r = await updateMaintenanceIssueStatus(x, enc(10), 1, { estado: "vaporizada" }, OFF);
+    assert.equal(r.code, "VALIDATION_ERROR"); assert.equal(r.reason, "invalid_estado");
+    assert.equal(x._store.maintenance_issues[0].estado, "abierta", "la fila no debe haberse tocado");
   });
   test("el camino OFF NO consulta establecimientos/user_locations/legacy_access", async () => {
     const x = baseDb([issue(1, B)]);
@@ -58,7 +69,7 @@ describe("Mantenimiento · flag OFF (idéntico)", () => {
     const spy = { get: (s, p) => (seen.push(s), x.get(s, p)), all: (s, p) => (seen.push(s), x.all(s, p)), run: (s, p) => (seen.push(s), x.run(s, p)) };
     await listMaintenanceIssues(spy, enc(10), OFF);
     await createMaintenanceIssue(spy, enc(10), { local: B, titulo: "t", descripcion: "d" }, OFF);
-    await updateMaintenanceIssueStatus(spy, enc(10), 1, { estado: "x" }, OFF);
+    await updateMaintenanceIssueStatus(spy, enc(10), 1, { estado: "en proceso" }, OFF);
     const joined = seen.join(" | ");
     for (const t of ["establecimientos", "user_locations", "legacy_access"]) {
       assert.ok(!joined.includes(t), `OFF no debe consultar ${t}`);
