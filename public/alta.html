@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#f4f2ed" />
+    <title>Hazte la tarjeta · Familia del Amor</title>
+    <link rel="stylesheet" href="tarjeta.css" />
+    <link rel="stylesheet" href="alta.css" />
+  </head>
+  <!-- El alta la hace el propio cliente. Se llega aquí por dos sitios:
+         · desde la web            → /alta.html
+         · desde el cartel de una mesa → /alta.html?l=La%20Tapeta%20-%20Blanes
+       El `?l=` lo pone el QR impreso, y es lo que luego dice si el cartel sirve de algo.
+
+       Esta página SÍ se indexa (no lleva `noindex`, al revés que tarjeta.html): aquí no hay
+       ningún token, y que se pueda encontrar buscando es justo lo que se quiere. -->
+  <body class="tj-body">
+    <main class="tj-wrap">
+      <p class="tj-marca">Familia del Amor</p>
+
+      <section class="tj-card" id="altaForm">
+        <h1 class="tj-titular">Hazte la tarjeta</h1>
+        <p class="tj-sub" id="altaSub">Es gratis. Te reconocemos al llegar, guardas tus descuentos y ves tus visitas.</p>
+
+        <form id="altaF" novalidate>
+          <div class="alta-campo">
+            <label for="altaNombre">Cómo te llamas</label>
+            <input id="altaNombre" name="nombre" type="text" autocomplete="given-name"
+                   enterkeyhint="next" maxlength="80" required />
+          </div>
+
+          <div class="alta-campo">
+            <label for="altaTel">Tu móvil</label>
+            <!-- `type="tel"` y `inputmode` para que salga el teclado numérico: esto se rellena
+                 de pie, con una mano, en un local con ruido. -->
+            <input id="altaTel" name="telefono" type="tel" inputmode="tel"
+                   autocomplete="tel" enterkeyhint="next" maxlength="20" required />
+            <p class="alta-ayuda">Te mandamos ahí el enlace de tu tarjeta.</p>
+          </div>
+
+          <div class="alta-campo">
+            <label for="altaCorreo">Tu correo <span class="alta-op">(opcional)</span></label>
+            <input id="altaCorreo" name="correo" type="email" inputmode="email"
+                   autocomplete="email" enterkeyhint="done" maxlength="120" />
+          </div>
+
+          <!-- Sin marcar por defecto. La tarjeta se la puede hacer igual sin aceptar esto: son
+               dos cosas distintas y mezclarlas sería colar una lista de difusión dentro de una
+               tarjeta de fidelidad. -->
+          <label class="alta-check">
+            <input id="altaConsent" name="consent" type="checkbox" />
+            <span>Quiero que me aviséis por WhatsApp de descuentos y novedades.</span>
+          </label>
+
+          <p class="alta-error hidden" id="altaError"></p>
+
+          <button class="alta-btn" id="altaBtn" type="submit">Hazme la tarjeta</button>
+
+          <p class="alta-legal">Guardamos tu nombre y tu móvil para reconocerte y llevar la cuenta
+            de tus visitas. Puedes pedirnos que lo borremos cuando quieras.</p>
+        </form>
+      </section>
+
+      <section class="tj-card tj-centro hidden" id="altaHecho">
+        <h1 class="tj-titular" id="altaHechoT">—</h1>
+        <p class="tj-sub" id="altaHechoD"></p>
+        <a class="alta-btn alta-btn-link hidden" id="altaVer" href="#">Ver mi tarjeta</a>
+      </section>
+    </main>
+    <script src="alta.js"></script>
+  </body>
+</html>

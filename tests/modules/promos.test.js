@@ -96,7 +96,8 @@ test("estadoDe: anulado gana a todo lo demás", () => {
 
 test("estadoDe: promoción desactivada, fuera de fechas y fuera de local", () => {
   assert.equal(estadoDe(cupon(), promo({ activa: false }), { hoy: HOY }), "promo_inactiva");
-  assert.equal(estadoDe(cupon(), promo({ desde: "2026-10-01" }), { hoy: HOY }), "fuera_de_fechas");
+  // «Todavía no» y «ya no» son estados distintos: ver el test de abajo.
+  assert.equal(estadoDe(cupon(), promo({ desde: "2026-10-01" }), { hoy: HOY }), "aun_no_empieza");
   assert.equal(estadoDe(cupon(), promo({ hasta: "2026-08-31" }), { hoy: HOY }), "fuera_de_fechas");
   assert.equal(estadoDe(cupon(), promo({ hasta: "2026-09-01" }), { hoy: HOY }), "valido");  // el último día cuenta
   assert.equal(estadoDe(cupon(), promo({ locales: "Blanes" }), { hoy: HOY, local: "Lloret" }), "fuera_de_local");
@@ -166,6 +167,33 @@ test("textoEstado dice CUÁNDO se usó, no solo que no vale", () => {
   assert.match(t, /21:40/);
 });
 
+/**
+ * Una promoción que EMPIEZA el 1 de octubre no ha terminado el 1 de octubre.
+ *
+ * Los dos casos compartían el estado `fuera_de_fechas`, y como su frase mira `hasta`, a quien
+ * abría el cupón antes del día bueno le decía que había caducado. En una campaña que reparte el
+ * código semanas antes, eso es el cliente entero: cree que le han dado algo muerto y no vuelve.
+ */
+test("una promoción que aún no ha empezado NO dice que terminó", () => {
+  const futura = promo({ desde: "2026-10-01", hasta: "2026-10-01" });
+  const estado = estadoDe(cupon(), futura, { hoy: "2026-09-20" });
+
+  assert.equal(estado, "aun_no_empieza");
+  assert.equal(esCanjeable(estado), false, "todavía no se puede canjear");
+
+  const t = textoEstado(estado, { promo: futura });
+  assert.ok(!/termin|caduc/i.test(t), `dice que terminó: «${t}»`);
+  assert.match(t, /1 de octubre/, "tiene que decir CUÁNDO podrá usarlo");
+});
+
+test("el mismo día de inicio ya vale, y el día siguiente al fin ya no", () => {
+  const p = promo({ desde: "2026-10-01", hasta: "2026-10-01" });
+  assert.equal(estadoDe(cupon(), p, { hoy: "2026-09-30" }), "aun_no_empieza");
+  assert.equal(estadoDe(cupon(), p, { hoy: "2026-10-01" }), "valido");
+  assert.equal(estadoDe(cupon(), p, { hoy: "2026-10-02" }), "fuera_de_fechas");
+  assert.match(textoEstado("fuera_de_fechas", { promo: p }), /terminó el 1 de octubre/);
+});
+
 test("textoEstado dice hasta cuándo valía y dónde vale", () => {
   assert.match(textoEstado("caducado", { qr: { caduca_en: "2026-08-30" } }), /30 de agosto/);
   assert.match(textoEstado("fuera_de_fechas", { promo: { hasta: "2026-08-30" } }), /30 de agosto/);
@@ -174,7 +202,7 @@ test("textoEstado dice hasta cuándo valía y dónde vale", () => {
 
 test("textoEstado siempre devuelve algo legible", () => {
   for (const e of ["valido", "no_existe", "anulado", "caducado", "agotado", "limite_cliente",
-                   "promo_inactiva", "fuera_de_fechas", "fuera_de_local", "loquesea"]) {
+                   "promo_inactiva", "aun_no_empieza", "fuera_de_fechas", "fuera_de_local", "loquesea"]) {
     const t = textoEstado(e, { promo: { nombre: "2x1 en tapas" } });
     assert.equal(typeof t, "string");
     assert.ok(t.length > 3, `«${e}» se queda sin frase`);

@@ -188,17 +188,6 @@
         </div>
       </div>
 
-      <!-- FRANJA DESCUENTO (siempre visible) -->
-      <section class="block descuento-strip">
-        <div class="descuento-inner">
-          <div>
-            <strong data-i18n="strip_title" data-content-key="strip_title">¿Quieres conseguir un descuento?</strong>
-            <p data-i18n="strip_sub" data-content-key="strip_sub">Déjanos tus datos y te enviamos tu descuento ahora.</p>
-          </div>
-          <button class="btn" id="reopenLead" data-i18n="strip_cta" data-content-key="strip_cta">Consigue tu descuento</button>
-        </div>
-      </section>
-
       <!-- ENLACES A PÁGINAS SECUNDARIAS -->
       <section class="block">
         <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
@@ -241,52 +230,6 @@
         <a class="btn ghost" href="login.html" style="font-size:0.75rem;opacity:0.5">Acceso interno</a>
       </div>
     </footer>
-
-    <!-- POPUP LEAD (aparece tras 15s o al hacer scroll) -->
-    <div class="popup" id="leadPopup" role="dialog" aria-modal="true" aria-labelledby="leadTitle">
-      <div class="popup-card">
-        <button class="close" id="closePopup" aria-label="Cerrar">×</button>
-        <h3 id="leadTitle" data-i18n="popup_title" data-content-key="popup_title">¡10% de descuento!</h3>
-        <p data-i18n="popup_text" data-content-key="popup_text">Déjanos tus datos y te lo enviamos ahora.</p>
-        <form id="leadForm" class="form">
-          <div class="form-row">
-            <label><span>Nombre</span><input type="text" name="nombre" autocomplete="given-name" required /></label>
-            <label><span>Apellidos</span><input type="text" name="apellidos" autocomplete="family-name" required /></label>
-          </div>
-          <label>
-            <span>Fecha de nacimiento</span>
-            <input type="text" id="nacimientoDisplay" data-date-input="nacimiento" data-date-mode="birth" placeholder="dd/mm/aaaa" data-i18n-ph="ph_birth_date" readonly required />
-            <input type="hidden" id="nacimientoValue" name="nacimiento" />
-          </label>
-          <div class="form-row">
-            <label style="position:relative">
-              <span>Población</span>
-              <input type="text" id="poblacionInput" name="poblacion" autocomplete="off" required />
-              <div id="poblacionSuggestions" class="sugg-box" style="display:none"></div>
-            </label>
-            <label><span>Teléfono</span><input type="tel" name="telefono" autocomplete="tel" required /></label>
-          </div>
-          <label><span>Correo</span><input type="email" name="correo" autocomplete="email" required /></label>
-          <label>
-            <span data-i18n="lead_gender">Género <span style="color:var(--muted);font-size:0.8em">(opcional)</span></span>
-            <select name="genero">
-              <option value="">Prefiero no decirlo</option>
-              <option value="hombre">Hombre</option>
-              <option value="mujer">Mujer</option>
-              <option value="otro">Otro</option>
-            </select>
-          </label>
-          <label class="check">
-            <input type="checkbox" required />
-            <span>Acepto recibir comunicaciones y la política de privacidad.</span>
-          </label>
-          <button class="btn" type="submit" data-i18n="lead_submit">Recibir mi descuento</button>
-          <p class="form-note" id="leadMsg" role="status" aria-live="polite"></p>
-          <!-- El cupón recién emitido. Vacío hasta que hay uno; lo rellena pintarCuponLead(). -->
-          <div class="lead-qr" id="leadQr"></div>
-        </form>
-      </div>
-    </div>
 
     <!-- BOTÓN WHATSAPP FLOTANTE -->
     <a class="wa-float" href="https://wa.me/34633129031" target="_blank" rel="noopener" aria-label="Contactar por WhatsApp">

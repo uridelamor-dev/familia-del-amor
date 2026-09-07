@@ -59,11 +59,15 @@ describe("i18n de la landing", () => {
     }
   });
 
-  test("los textos del cupón de bienvenida están en los tres", () => {
-    for (const clave of ["lead_qr_listo", "lead_codigo", "lead_ya_emitido", "lead_ya_usado"]) {
-      assert.ok(es.includes(clave), `${clave} falta en castellano`);
-      assert.ok(ca.includes(clave), `${clave} falta en catalán`);
-      assert.ok(en.includes(clave), `${clave} falta en inglés`);
+  test("no quedan los textos del formulario de descuento, que ya no existe", () => {
+    // El popup del 10 % y su franja salieron de la landing: el descuento en tienda no está
+    // preparado y la captación se hace ahora en su propia ruta (`/promo.html`), que lleva sus
+    // textos aparte. Estas claves se quedaban aquí sin que las pintara nadie, y una clave
+    // muerta en tres idiomas es lo que hace que dentro de un año nadie sepa qué se puede
+    // borrar. Si el descuento vuelve, vuelven con él.
+    for (const clave of ["lead_qr_listo", "lead_codigo", "lead_ya_emitido", "lead_ya_usado",
+                         "popup_title", "popup_text", "strip_title", "strip_cta", "success_lead"]) {
+      assert.ok(!es.includes(clave), `«${clave}» sigue en el i18n y ya no la pinta nadie`);
     }
   });
 

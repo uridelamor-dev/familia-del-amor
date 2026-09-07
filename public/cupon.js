@@ -76,6 +76,15 @@
   fetch("/api/cupon/" + encodeURIComponent(TOKEN))
     .then(function (r) { return r.json().then(function (j) { return { http: r.status, datos: j }; }); })
     .then(function (r) {
+      // Un carné se enseña aquí SALVO que la tarjeta de cliente esté encendida; entonces tiene
+      // su propia página, que además es su cuenta (visitas, descuentos y los botones de la
+      // wallet). Quien lo decide es el servidor (`tarjeta`), no esta página: mientras esté
+      // apagada, un carné se ve aquí exactamente como se ha visto siempre. Y cuando se
+      // encienda, los enlaces a /cupon.html mandados por WhatsApp hace meses seguirán valiendo.
+      if (r.datos.ok && r.datos.clase === "carnet" && r.datos.tarjeta) {
+        location.replace("/tarjeta.html?t=" + encodeURIComponent(TOKEN));
+        return;
+      }
       if (!r.datos.ok) return avisar(r.datos.error || "Este enlace no es válido.");
       pintar(r.datos);
     })

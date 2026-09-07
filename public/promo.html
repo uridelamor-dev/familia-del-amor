@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- NO SE INDEXA. A esta página se entra por el enlace del anuncio y por ningún otro sitio:
+         no hay ni un enlace a ella en toda la web, y sin una campaña viva en `?c=` redirige a la
+         portada. Si Google la indexara, la promoción quedaría abierta a cualquiera que buscara. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#f4f2ed" />
+    <title>Familia del Amor</title>
+    <link rel="stylesheet" href="tarjeta.css" />
+    <link rel="stylesheet" href="alta.css" />
+    <link rel="stylesheet" href="promo.css" />
+  </head>
+  <body class="tj-body">
+    <main class="tj-wrap">
+      <p class="tj-marca">Familia del Amor</p>
+
+      <div class="tj-cargando" id="pmCargando">…</div>
+
+      <!-- El formulario. Los seis campos de siempre: es lo que hace que el dato sirva después
+           para segmentar y para felicitar el cumpleaños. -->
+      <section class="tj-card hidden" id="pmForm">
+        <h1 class="tj-titular" id="pmTitular">—</h1>
+        <p class="tj-sub" id="pmSub"></p>
+        <p class="promo-oferta hidden" id="pmOferta"></p>
+
+        <form id="pmF" novalidate>
+          <div class="alta-campo">
+            <label for="pmNombre" id="pmLNombre">Nombre</label>
+            <input id="pmNombre" name="nombre" type="text" autocomplete="given-name"
+                   enterkeyhint="next" maxlength="80" required />
+          </div>
+          <div class="alta-campo">
+            <label for="pmApellidos" id="pmLApellidos">Apellidos</label>
+            <input id="pmApellidos" name="apellidos" type="text" autocomplete="family-name"
+                   enterkeyhint="next" maxlength="80" required />
+          </div>
+          <div class="alta-campo">
+            <label for="pmNacimiento" id="pmLNacimiento">Fecha de nacimiento</label>
+            <input id="pmNacimiento" name="nacimiento" type="date" required />
+          </div>
+          <div class="alta-campo">
+            <label for="pmPoblacion" id="pmLPoblacion">Población</label>
+            <input id="pmPoblacion" name="poblacion" type="text" autocomplete="address-level2"
+                   enterkeyhint="next" maxlength="80" required />
+          </div>
+          <div class="alta-campo">
+            <label for="pmTelefono" id="pmLTelefono">Teléfono</label>
+            <input id="pmTelefono" name="telefono" type="tel" inputmode="tel"
+                   autocomplete="tel" enterkeyhint="next" maxlength="20" required />
+          </div>
+          <div class="alta-campo">
+            <label for="pmCorreo" id="pmLCorreo">Correo</label>
+            <input id="pmCorreo" name="correo" type="email" inputmode="email"
+                   autocomplete="email" enterkeyhint="done" maxlength="120" required />
+          </div>
+
+          <!-- CON `name`. El de la portada no lo tenía, así que el consentimiento no llegaba
+               nunca al servidor y `marketing_prefs` no se rellenaba jamás desde la web. -->
+          <label class="alta-check">
+            <input id="pmConsent" name="consent" type="checkbox" required />
+            <span id="pmLConsent">Acepto recibir comunicaciones y la política de privacidad.</span>
+          </label>
+
+          <!-- Trampa para robots: invisible y fuera del orden de tabulación. Una persona no lo
+               ve ni lo puede enfocar; un relleno automático sí lo rellena, y ahí se corta. -->
+          <div class="promo-tarro" aria-hidden="true">
+            <label for="pmWeb">No rellenar</label>
+            <input id="pmWeb" name="web" type="text" tabindex="-1" autocomplete="off" />
+          </div>
+
+          <p class="alta-error hidden" id="pmError"></p>
+          <button class="alta-btn" id="pmBtn" type="submit">Quiero mi código</button>
+          <p class="alta-legal" id="pmLegal"></p>
+        </form>
+      </section>
+
+      <!-- La pantalla de gracias. SIN el código: llega por WhatsApp, y eso es justo lo que
+           comprueba que el teléfono es de verdad. -->
+      <section class="tj-card tj-centro hidden" id="pmGracias">
+        <div class="promo-tic" aria-hidden="true">✓</div>
+        <h1 class="tj-titular" id="pmGtitulo">—</h1>
+        <p class="tj-sub" id="pmGtexto"></p>
+        <a class="alta-btn alta-btn-link hidden" id="pmGwa" href="#" target="_blank" rel="noopener">WhatsApp</a>
+      </section>
+
+      <div class="tj-aviso hidden" id="pmAviso"></div>
+    </main>
+    <script src="promo.js"></script>
+  </body>
+</html>

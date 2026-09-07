@@ -99,7 +99,12 @@ export function estadoDe(qr, promo, { hoy = "", local = "", canjesCliente = 0 } 
 
   if (promo) {
     if (!promo.activa) return "promo_inactiva";
-    if (hoy && promo.desde && hoy < promo.desde) return "fuera_de_fechas";
+    // «Todavía no» y «ya no» son estados DISTINTOS aunque los dos signifiquen que hoy no vale.
+    // Compartían uno solo, y como el texto de ese estado mira `hasta`, una promoción que empieza
+    // el 1 de octubre le decía a quien abría su cupón el 20 de septiembre que había «terminado el
+    // 1 de octubre». En una campaña donde el código se reparte semanas antes del día bueno, eso
+    // se lo come el cliente entero: cree que le han dado algo caducado y no vuelve.
+    if (hoy && promo.desde && hoy < promo.desde) return "aun_no_empieza";
     if (hoy && promo.hasta && hoy > promo.hasta) return "fuera_de_fechas";
     if (local && !localEnLista(local, promo.locales)) return "fuera_de_local";
   }
@@ -168,6 +173,9 @@ export function textoEstado(estado, { promo = null, qr = null, ultimoCanje = nul
         : "Este cupón ya se usó.";
     case "promo_inactiva":
       return "Esta promoción ya no está activa.";
+    case "aun_no_empieza":
+      // En positivo, y con la fecha: no es un error, es una cita. Quien lo lee todavía va a venir.
+      return promo && promo.desde ? `Podrás usarlo el ${fechaBonita(promo.desde)}.` : "Todavía no se puede usar.";
     case "fuera_de_fechas":
       return promo && promo.hasta ? `Esta promoción terminó el ${fechaBonita(promo.hasta)}.` : "Esta promoción no está vigente.";
     case "fuera_de_local":

@@ -1025,6 +1025,33 @@ async function resolverTelefono(jid) {
   return jid.split("@")[0].split(":")[0].replace(/\D/g, "");
 }
 
+/**
+ * ¿Este número tiene WhatsApp?
+ *
+ * Enviar a un número que no lo tiene NO da error: `sendMessage` se resuelve igual y el sistema
+ * lo apunta como enviado. Es el fallo más silencioso que hay aquí — el cliente espera un código
+ * que no va a llegar nunca y nosotros creemos habérselo mandado.
+ *
+ * Y hay un caso peor. `formatPhone` antepone «34» a cualquier número que empiece por 6, 7 o 9,
+ * así que un móvil francés (612345678) se convierte en un español REAL y distinto: el código se
+ * le manda a otra persona. Preguntar antes es lo único que lo caza.
+ *
+ * Devuelve `true`, `false`, o `null` cuando no se ha podido preguntar (WhatsApp caído, la
+ * consulta falla). `null` es «no lo sé», y quien llame debe tratarlo como «sigue adelante»: no
+ * se puede dejar a alguien sin su código porque nuestro socket esté a medias.
+ */
+export async function numeroTieneWhatsApp(telefono) {
+  if (!clientReady || !sock) return null;
+  try {
+    const jid = formatPhone(telefono);
+    const r = await sock.onWhatsApp(jid);
+    if (!Array.isArray(r) || !r.length) return false;
+    return !!r[0]?.exists;
+  } catch {
+    return null;
+  }
+}
+
 export async function sendMensajeLibre(telefono, texto) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
   const jid = formatPhone(telefono);

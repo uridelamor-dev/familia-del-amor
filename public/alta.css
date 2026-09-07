@@ -1,0 +1,39 @@
+/* El formulario del alta. Va encima de tarjeta.css, que ya trae el fondo, la tarjeta blanca y
+   la tipografía; aquí solo están los campos.
+
+   Todo con alto de 52px o más y tipo de letra de 16px: menos de 16px hace que Safari en iPhone
+   haga zoom al enfocar el campo, y la página se queda torcida el resto del rato. */
+
+.alta-campo { margin-top: 1.15rem; text-align: left; }
+.alta-campo label { display: block; font-size: .9rem; font-weight: 650; margin-bottom: .35rem; }
+.alta-campo input {
+  width: 100%; box-sizing: border-box; min-height: 52px; padding: .7rem .9rem;
+  font-size: 16px; font-family: inherit; color: #1c211f;
+  background: #fbfaf8; border: 1px solid #d5ded9; border-radius: 12px;
+}
+.alta-campo input:focus { outline: 2px solid #2F6B4F; outline-offset: 1px; border-color: #2F6B4F; }
+.alta-campo input[aria-invalid="true"] { border-color: #9b1c1c; background: #fdf5f5; }
+.alta-op { font-weight: 400; color: #6d7a74; }
+.alta-ayuda { margin: .35rem 0 0; font-size: .85rem; color: #6d7a74; line-height: 1.4; }
+
+/* La caja de la casilla es el objetivo táctil entero, no solo el cuadradito. */
+.alta-check { display: flex; gap: .7rem; align-items: flex-start; margin-top: 1.25rem;
+  text-align: left; font-size: .93rem; line-height: 1.45; color: #4c5854; cursor: pointer;
+  padding: .5rem 0; }
+.alta-check input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: #2F6B4F; }
+
+.alta-error { margin: 1rem 0 0; padding: .75rem .9rem; border-radius: 12px;
+  background: #fdeaea; color: #9b1c1c; font-size: .95rem; font-weight: 600; line-height: 1.45;
+  text-align: left; }
+
+.alta-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; box-sizing: border-box; min-height: 56px; margin-top: 1.35rem;
+  border: 0; border-radius: 14px; background: #2F6B4F; color: #fff;
+  font-family: inherit; font-size: 1.05rem; font-weight: 700; cursor: pointer;
+  text-decoration: none;
+}
+.alta-btn:disabled { opacity: .55; cursor: default; }
+.alta-btn-link { margin-top: 1.25rem; }
+
+.alta-legal { margin: 1.15rem 0 0; font-size: .8rem; color: #8b968f; line-height: 1.5; text-align: left; }

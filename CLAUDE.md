@@ -64,6 +64,63 @@ Otros puntos: la hora de un fichaje la pone el **servidor** (salvo los diferidos
 porque no se pueden añadir dependencias; y el generador (`solver.js`) **propone un borrador**,
 no publica.
 
+## Captación por campaña (anuncios de pago)
+La landing **ya no tiene formulario de descuento**: el popup del 10 % y su franja se quitaron. La
+captación vive en `/promo.html?c=<clave>`, a la que **solo se llega por el enlace del anuncio**
+(sin enlaces internos, `noindex`, y sin una campaña viva redirige a la portada).
+
+Invariantes, con tests que las blindan (`tests/captacion-cableado.test.js`):
+- **La pantalla de gracias NO enseña el código.** Solo viaja por WhatsApp, y eso *es* la validación
+  del teléfono. La respuesta devuelve un **token de seguimiento distinto del token del cupón**.
+- **Un cliente, un solo código.** Si ya lo tiene se le dice «ya estás registrado» y **no sale ningún
+  WhatsApp**; ni se revela ni se reenvía.
+- **El envío va por cola** (`cap_cola`, worker cada 30 s): reintentos crecientes, ritmo 6-15 s, tope
+  diario consultado, y **nada se borra** — lo fallido se ve en el panel y se puede reintentar.
+- **El idioma lo decide el servidor**: ficha → móvil (`navigator.language`) → campaña.
+- Antes de prometer nada se comprueba con `numeroTieneWhatsApp()` que ese número existe.
+
+Las campañas se crean en **Promociones → Captación** (elige promoción, clave, plazo, tope, idioma,
+textos) y sale la URL para pegar en Meta. Interruptor de pánico de la cola y píxel de Meta (apagado
+por defecto, solo dirección) en esa misma pestaña. Razones completas en
+`docs/adr/0003-captacion-campana-meta.md`.
+
+⚠️ Escribimos **primero** desde el número que lleva reservas, Sara y los grupos: es el patrón que
+más baneos provoca. Ritmo, tope y `wa_max_diario` no son adorno. Si escala → número aparte o API
+oficial.
+
+## Tarjeta de cliente y wallet — CONSTRUIDA Y APAGADA
+⚠️ **Viene apagada y de cara al cliente NO EXISTE**: nada en la landing, y `/api/tarjeta/*` y
+`/api/wallet/*` contestan 404. Decisión de negocio (sep 2026): está entera y probada, pero no se
+publica todavía. El interruptor es `config.tarjeta_activa` (`'1'` = encendida), en memoria como
+`TARJETA_ACTIVA`, y lo enciende **dirección** desde Promociones → Tarjeta de cliente, que es la
+única pestaña que se ve mientras tanto. Candado: `tests/tarjeta-apagada.test.js`.
+Con ella apagada, un carné se comporta EXACTAMENTE como antes: su enlace se queda en
+`/cupon.html` y la barra lo valida igual. Encenderla es reversible y no borra nada.
+
+La tarjeta **es** el carné de `pro_qr` (`clase = 'carnet'`), no una entidad nueva. Encendida, el
+cliente se la hace él solo en `/alta.html` (o `/alta.html?l=<local>`, el QR del cartel de una mesa)
+y su página `/tarjeta.html?t=<token>` es su cuenta: visitas, descuentos e historial. **No hay alta
+automática ni emisión en masa**; la emisión manual de Promociones → Emitir se queda como rescate.
+
+Cuatro cosas que no se tocan:
+- **Un solo sitio compone el enlace del QR**: `urlTarjeta()` en `src/modules/wallet/wallet.js`. Lo
+  usan la página, el pase de Apple y el de Google. La tablet de la barra saca el `t=` de esa URL;
+  escribirla a mano en el pase da un pase que se guarda bien y que nadie puede leer en la barra.
+- **Quien ya tenía tarjeta no la ve, se le manda**: `respuestaAlta()` no devuelve token si el
+  teléfono ya tenía una. Es lo que impide llevarse la tarjeta de otro probando móviles ajenos.
+- **Las visitas se cuentan de `pro_canjes`**, no de `pro_qr.usos` ni de `cliente_metricas`.
+- **El gasto estimado no se le enseña al cliente.** Hay test.
+
+El pase es estático a propósito (sin `webServiceURL`), así que **un pase ya guardado no se puede
+revocar**: la validez se decide siempre en el servidor al escanear. Apple exige cuenta de Apple
+Developer (99 €/año) y firma con el binario `openssl` (declarado en `.replit`); Google es gratis y
+no necesita ninguna llamada servidor-a-servidor. Cada botón sale solo si su plataforma está
+configurada, en Promociones → Tarjeta de cliente (credenciales solo para dirección).
+Razones completas en `docs/adr/0002-tarjeta-de-cliente-y-wallet.md`.
+
+Las imágenes del pase se generan **una vez** con `node tools/wallet-imagenes.mjs` (usa `sips`, solo
+macOS) y se commitean en `public/assets/wallet/`.
+
 ## Interfaz: ordenador Y móvil, siempre
 Todo cambio visual se entrega funcionando en las dos, sin que haya que pedirlo: el panel se usa
 dentro de los locales con el teléfono en la mano. Comprobar a **1440×800 y 390×844** antes de dar

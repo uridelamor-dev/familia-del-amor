@@ -9,7 +9,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -83,6 +83,24 @@ import { generarCodigo as proGenerarCodigo, tel9 as proTel9, normalizarEntrada a
          sanearPromocion as proSanear, dondeVale as proDondeVale, SQL_CANJEAR as PRO_SQL_CANJEAR,
          SQL_CANJES_CLIENTE as PRO_SQL_CANJES_CLIENTE,
          SQL_ULTIMO_CANJE as PRO_SQL_ULTIMO_CANJE } from "./src/modules/promos/promos.js";
+// La tarjeta de cliente: el carné de `pro_qr` visto como la cuenta del cliente (sus visitas y
+// sus descuentos) y guardable en Apple/Google Wallet.
+import { ensureSchemaTarjeta } from "./src/modules/tarjeta/schema.js";
+import { sanearAlta, respuestaAlta, textoWhatsApp as tjTextoWA } from "./src/modules/tarjeta/alta.js";
+import { construirCuenta, codigoLegible as tjCodigoLegible } from "./src/modules/tarjeta/cuenta.js";
+import { urlTarjeta, urlAlta, puedeIrAWallet, pasePlanoApple, objetoGoogle,
+         nombreArchivoPase } from "./src/modules/wallet/wallet.js";
+import { construirPkpass } from "./src/modules/wallet/pkpass.js";
+import { firmarPKCS7, hayOpenssl, datosDelCertificado, sha1 as walletSha1 } from "./src/modules/wallet/firma.js";
+import { enlaceGuardar as googleEnlaceGuardar, normalizarClave as googleNormalizarClave } from "./src/modules/wallet/google.js";
+import { derivarClave, cifrar as secCifrar, descifrar as secDescifrar, pista as secPista } from "./src/modules/seguridad/secretos.js";
+// Captación por campaña: la ruta a la que apunta un anuncio de pago, con su cola de envíos.
+import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
+import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
+         sanearCampana } from "./src/modules/captacion/campana.js";
+import { trasIntento, cuantasSacar, estadoParaCliente, MAX_INTENTOS } from "./src/modules/captacion/cola.js";
+import { elegirIdioma, textosDe, textoWhatsApp as capTextoWA,
+         telefonoBonito } from "./src/modules/captacion/mensaje.js";
 import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
 import { validarFormatoPin, estadoBloqueo, trasFallo as pinTrasFallo, trasAcierto as pinTrasAcierto } from "./src/modules/fichajes/pin.js";
 import { construirJornada, firmaDeEventos } from "./src/modules/fichajes/jornadas.js";
@@ -1719,6 +1737,26 @@ async function initDB() {
       await ensureSchemaPromos(schemaX);
     } catch (e) {
       console.error("[DB] Aviso: esquema de promociones no inicializado (no fatal):", e.message);
+    }
+
+    // La tarjeta de cliente. Va DESPUÉS de promociones porque le añade columnas a `pro_qr`, que
+    // se crea allí. Su propio try por lo de siempre: si esto fallara, validar carnés en la barra
+    // tiene que seguir funcionando — lo que se pierde es poder guardarla en el móvil.
+    try {
+      const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
+      await ensureSchemaTarjeta(schemaX);
+    } catch (e) {
+      console.error("[DB] Aviso: esquema de la tarjeta no inicializado (no fatal):", e.message);
+    }
+
+    // Captación. Después de promociones porque su campaña apunta a una promoción, y con su
+    // propio try: si esto fallara, la web y la barra tienen que seguir funcionando — lo que se
+    // pierde es poder lanzar una campaña nueva.
+    try {
+      const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
+      await ensureSchemaCaptacion(schemaX);
+    } catch (e) {
+      console.error("[DB] Aviso: esquema de captación no inicializado (no fatal):", e.message);
     }
 
     console.log("[DB] Esquema PostgreSQL inicializado");
@@ -4180,19 +4218,25 @@ async function bienvenidaWeb(req, { telefono, nombre }) {
   if (previo) {
     const info = await proEvaluar(previo, promo, {});
     if (!info.canjeable) return { estado: "ya_usado", texto: info.texto };
-    await proEnviarWA(previo, proUrl(req, previo.token), { promo });
-    return { estado: "ya_emitido" };
+    // Se MIRA si salió. Antes se ignoraba, y la pantalla decía «te lo hemos vuelto a enviar por
+    // WhatsApp» aunque `proEnviarWA` hubiera devuelto «WhatsApp no está conectado». En esta
+    // rama el cupón no se enseña a propósito, así que el cliente se quedaba con una promesa
+    // falsa y nada más.
+    const motivo = await proEnviarWA(previo, proUrl(req, previo.token), { promo });
+    return { estado: "ya_emitido", enviado: !motivo };
   }
 
   const qr = await proEmitir({
     clase: "cupon", promocionId: promo.id, telefono: tel,
     nombre: nombre || "", usosMax: 1, autor: "web" });
   const url = proUrl(req, qr.token);
-  await proEnviarWA(qr, url, { promo });
+  const motivoNuevo = await proEnviarWA(qr, url, { promo });
 
   let imagen = null;
   try { imagen = await QRCode.toDataURL(url, { width: 420, margin: 1 }); } catch { /* queda el código */ }
-  return { estado: "nuevo", url, codigo: qr.codigo, qr: imagen, promocion: promo.nombre };
+  // Aquí el cupón SÍ se enseña, así que un fallo de envío no deja a nadie tirado; se dice de
+  // todas formas para que la pantalla no prometa un WhatsApp que no ha salido.
+  return { estado: "nuevo", url, codigo: qr.codigo, qr: imagen, promocion: promo.nombre, enviado: !motivoNuevo };
 }
 
 app.post("/api/leads", async (req, res) => {
@@ -6862,11 +6906,10 @@ const GLOBAL_FIELDS = {
   reservations_sub:   { label: "Subtítulo reservas",    section: "Reservas",  type: "text_i18n" },
   reviews_title:      { label: "Título reseñas",        section: "Reseñas",   type: "text_i18n" },
   reviews_sub:        { label: "Valoración Google",     section: "Reseñas",   type: "text_i18n" },
-  strip_title:        { label: "Franja: título",        section: "Descuento", type: "text_i18n" },
-  strip_sub:          { label: "Franja: texto",         section: "Descuento", type: "text_i18n" },
-  strip_cta:          { label: "Franja: botón",         section: "Descuento", type: "text_i18n" },
-  popup_title:        { label: "Popup: título",         section: "Popup",     type: "text_i18n" },
-  popup_text:         { label: "Popup: texto",          section: "Popup",     type: "text_i18n" },
+  // Las secciones «Descuento» y «Popup» salieron de aquí con la franja y el popup del 10 %:
+  // dejar campos editables de algo que ya no se pinta es hacer que Marketing escriba textos
+  // que no ve nadie. Lo que hubiera guardado sigue en `contents`, así que vuelve solo el día
+  // que vuelva la sección. La captación de campaña lleva sus propios textos, por campaña.
   contact_title:      { label: "Título contacto",       section: "Contacto",  type: "text_i18n" },
   contact_text:       { label: "Texto contacto",        section: "Contacto",  type: "text_i18n" }
 };
@@ -7203,25 +7246,12 @@ app.get("/api/dashboard", requireAuth(["direccion", "encargado", "contabilidad"]
 
 // ── Ágora TPV: ventas y estado de integración ────────────────────────────────────
 // ── Cifrado del apiToken de Ágora en reposo (AES-256-GCM). El token NUNCA sale por la API. ──
-const AGORA_ENC_KEY = crypto.scryptSync(String(resolveJwtSecret() || "tapeta"), "agora-token-v1", 32);
-function agoraEncToken(plain) {
-  if (!plain) return null;
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv("aes-256-gcm", AGORA_ENC_KEY, iv);
-  const ct = Buffer.concat([c.update(String(plain), "utf8"), c.final()]);
-  return "enc:" + iv.toString("hex") + ":" + c.getAuthTag().toString("hex") + ":" + ct.toString("hex");
-}
-function agoraDecToken(stored) {
-  if (!stored) return null;
-  const s = String(stored);
-  if (!s.startsWith("enc:")) return s; // compat: valores en texto plano (p. ej. sembrados del env)
-  try {
-    const [, ivh, tagh, cth] = s.split(":");
-    const d = crypto.createDecipheriv("aes-256-gcm", AGORA_ENC_KEY, Buffer.from(ivh, "hex"));
-    d.setAuthTag(Buffer.from(tagh, "hex"));
-    return Buffer.concat([d.update(Buffer.from(cth, "hex")), d.final()]).toString("utf8");
-  } catch { return null; }
-}
+// El cifrado en sí vive en src/modules/seguridad/secretos.js desde que hay un segundo sitio que
+// lo necesita (las claves de firma de la wallet). La clave sigue siendo la de siempre —misma
+// sal, `agora-token-v1`— así que lo que ya está guardado se sigue descifrando igual.
+const AGORA_ENC_KEY = derivarClave(resolveJwtSecret() || "tapeta", "agora-token-v1");
+const agoraEncToken = (plain) => secCifrar(plain, AGORA_ENC_KEY);
+const agoraDecToken = (stored) => secDescifrar(stored, AGORA_ENC_KEY);
 // Configs activas: la BD manda; si está vacía, cae al Secret AGORA_LOCALES (compat).
 async function loadAgoraConfigsFromDB() {
   const rows = await dbAll(`SELECT local, host, token, usuario, pass_enc, local_id, activo FROM agora_locales`);
@@ -10520,7 +10550,7 @@ app.post("/api/fichar/:token/cupon/ver", async (req, res) => {
         // Las que no vienen a cuento aquí —otra barra, fuera de fechas— no se pintan; las que
         // ya ha usado sí, en gris: si no, el camarero no entiende por qué falta la que el
         // cliente le está enseñando en el móvil.
-        if (est === "fuera_de_local" || est === "fuera_de_fechas" || est === "promo_inactiva") continue;
+        if (est === "fuera_de_local" || est === "fuera_de_fechas" || est === "aun_no_empieza" || est === "promo_inactiva") continue;
         promociones.push({
           id: p.id, nombre: p.nombre, descripcion: p.descripcion,
           estado: est, canjeable: proCanjeable(est), texto: proTexto(est, { promo: p, qr }),
@@ -10633,10 +10663,13 @@ app.get("/api/cupon/:token", async (req, res) => {
     const { qr, promo } = hallazgo;
     const info = await proEvaluar(qr, promo, {});
 
-    const base = (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+    // El enlace lo compone `proEnlace`, que es lo mismo que va en el QR de la tarjeta y en el
+    // código de barras del pase de la wallet. Escribirlo aquí a mano fue lo que hubo hasta que
+    // el carné pasó a tener su propia página: dos sitios componiendo la misma URL es como se
+    // llega a que el escáner de la barra deje de leer una de las dos.
     let imagen = null;
     try {
-      imagen = await QRCode.toDataURL(`${base}/cupon.html?t=${qr.token}`, { width: 512, margin: 1 });
+      imagen = await QRCode.toDataURL(proEnlace(req, qr), { width: 512, margin: 1 });
     } catch { /* con el código de ocho dígitos se puede validar igual */ }
 
     res.json({
@@ -10653,6 +10686,10 @@ app.get("/api/cupon/:token", async (req, res) => {
       codigo: qr.codigo,
       caduca_en: qr.caduca_en,
       qr: imagen,
+      // Si la tarjeta está encendida, un carné tiene su propia página y esta redirige. Lo
+      // decide el servidor y no el front: así, con la tarjeta apagada, un carné se sigue
+      // enseñando aquí exactamente como se enseñaba antes de que existiera.
+      tarjeta: TARJETA_ACTIVA,
     });
   } catch (e) {
     console.error("[cupon] ver:", e.message);
@@ -10663,8 +10700,49 @@ app.get("/api/cupon/:token", async (req, res) => {
 // ── Panel (Marketing): promociones y emisión de QR ───────────────────────────
 const PROMOS_ROLES = ["direccion", "marketing"];
 
-const proUrl = (req, token) =>
-  `${(process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "")}/cupon.html?t=${token}`;
+/** La base pública de los enlaces que se mandan al cliente. */
+const proBase = (req) =>
+  (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+
+const proUrl = (req, token) => `${proBase(req)}/cupon.html?t=${token}`;
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────────┐
+ * │  LA TARJETA DE CLIENTE VIENE APAGADA. Mientras lo esté, NO EXISTE de puertas  │
+ * │  afuera: ni enlace en la web, ni páginas que respondan, ni botones de wallet. │
+ * └──────────────────────────────────────────────────────────────────────────────┘
+ *
+ * Está construida entera y probada, pero sacarla es una decisión de negocio que hoy no toca.
+ * En vez de borrarla —y tener que rehacerla— se queda detrás de un interruptor en `config`,
+ * apagado por defecto, que enciende dirección desde Promociones → Tarjeta de cliente.
+ *
+ * SE LEE EN MEMORIA Y NO DE LA BASE en cada petición porque `proEnlace` la necesita para
+ * decidir a qué página apunta el QR de un carné, y eso pasa en mitad de un escaneo en barra.
+ * `cargarTarjetaActiva()` la refresca al arrancar y al cambiarla.
+ */
+let TARJETA_ACTIVA = false;
+async function cargarTarjetaActiva() {
+  try { TARJETA_ACTIVA = String(await getConfig("tarjeta_activa") || "") === "1"; }
+  catch (e) { console.error("[tarjeta] leer interruptor:", e.message); TARJETA_ACTIVA = false; }
+  return TARJETA_ACTIVA;
+}
+
+/**
+ * El enlace de una fila de `pro_qr`, según lo que sea.
+ *
+ * Un cupón va siempre a `/cupon.html` (una pantalla, un descuento, se acabó). Un carné va a
+ * `/tarjeta.html` —su cuenta: visitas, descuentos y los botones de la wallet— SOLO si la
+ * tarjeta está encendida; si no, se queda en `/cupon.html`, exactamente como antes de que
+ * existiera todo esto.
+ *
+ * Las dos URL llevan el token en `?t=`, que es lo único que mira `normalizarEntrada()` cuando
+ * la tablet de la barra escanea. Por eso encender o apagar la tarjeta NO afecta a la barra: un
+ * carné emitido con el interruptor apagado se sigue escaneando igual el día que se encienda.
+ */
+const proEnlace = (req, qr) =>
+  qr && qr.clase === "carnet" && TARJETA_ACTIVA
+    ? urlTarjeta(proBase(req), qr.token)
+    : proUrl(req, qr.token);
 
 /**
  * Emite un QR. Reintenta si el código de ocho dígitos ya existía.
@@ -10673,17 +10751,17 @@ const proUrl = (req, token) =>
  * combinaciones la colisión es rarísima, pero «rarísima» y «no puede pasar» son cosas
  * distintas, y dos cupones con el mismo código se canjearían el uno al otro.
  */
-async function proEmitir({ clase, promocionId = null, telefono = "", nombre = "", caducaEn = null, usosMax = 1, autor = "" }) {
+async function proEmitir({ clase, promocionId = null, telefono = "", nombre = "", caducaEn = null, usosMax = 1, autor = "", origen = "panel", localAlta = null }) {
   const ahora = new Date().toISOString();
   for (let intento = 0; intento < 5; intento++) {
     const token = generarToken((n) => crypto.randomBytes(n));
     const codigo = proGenerarCodigo((n) => crypto.randomBytes(n));
     try {
       return await dbRun(
-        `INSERT INTO pro_qr (clase, token, codigo, promocion_id, telefono, nombre, usos_max, caduca_en, creado_en, creado_por)
-         VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING *`,
+        `INSERT INTO pro_qr (clase, token, codigo, promocion_id, telefono, nombre, usos_max, caduca_en, creado_en, creado_por, origen, local_alta)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *`,
         [clase, token, codigo, promocionId, proTel9(telefono), String(nombre || "").slice(0, 80),
-         clase === "carnet" ? 0 : usosMax, caducaEn, ahora, autor]);
+         clase === "carnet" ? 0 : usosMax, caducaEn, ahora, autor, origen, localAlta]);
     } catch (e) {
       if (/duplicate key|unique/i.test(String(e.message || "")) && intento < 4) continue;
       throw e;
@@ -10704,7 +10782,23 @@ async function proEnviarWA(qr, url, { promo = null } = {}) {
   try {
     const pref = await dbGet(`SELECT opt_in_wa, baja FROM marketing_prefs WHERE ${MATCH_TEL9("telefono")} LIMIT 1`, [qr.telefono]);
     if (pref && Number(pref.baja) === 1) return "Pidió no recibir mensajes";
-    if (!isReady()) return "WhatsApp no está conectado";
+    // QUE NO SALGA TIENE QUE DEJAR RASTRO. Antes esta rama devolvía el motivo y no tocaba la
+    // base, así que la fila quedaba idéntica a «recién emitida, aún no enviada»: en el panel
+    // salía «—» igual que las buenas, y nadie podía saber a quién había que reenviarle nada.
+    // El caso es además el más probable en producción, porque cada redespliegue de Replit
+    // desconecta WhatsApp.
+    if (!isReady()) {
+      const motivo = "WhatsApp no está conectado";
+      await dbRun(`UPDATE pro_qr SET enviado_error = ? WHERE id = ?`, [motivo, qr.id]).catch(() => {});
+      return motivo;
+    }
+    // El tope diario se CONSULTA, no solo se incrementa. Ver `cupoWA`.
+    const cupo = await cupoWA();
+    if (cupo.agotado) {
+      const motivo = `Tope diario de WhatsApp alcanzado (${cupo.max})`;
+      await dbRun(`UPDATE pro_qr SET enviado_error = ? WHERE id = ?`, [motivo, qr.id]).catch(() => {});
+      return motivo;
+    }
 
     const nombre = String(qr.nombre || "").split(" ")[0];
     // Qué se le dice: el nombre de la promoción, lo que Marketing haya escrito para el
@@ -10819,9 +10913,9 @@ app.post("/api/promos/emitir", requireAuth(PROMOS_ROLES), async (req, res) => {
         if (!qr) {
           qr = await proEmitir({
             clase, promocionId: promo ? promo.id : null, telefono: tel, nombre: d?.nombre || "",
-            caducaEn, usosMax: 1, autor: req.user.username });
+            caducaEn, usosMax: 1, autor: req.user.username, origen: "panel" });
         }
-        const url = proUrl(req, qr.token);
+        const url = proEnlace(req, qr);
         const motivo = enviar ? await proEnviarWA(qr, url, { promo }) : "No se pidió enviar";
         resultados.push({ id: qr.id, nombre: qr.nombre, telefono: tel, codigo: qr.codigo, url, yaTenia, error: motivo });
       } catch (e) {
@@ -10847,7 +10941,7 @@ app.get("/api/promos/qr", requireAuth(PROMOS_ROLES), async (req, res) => {
          FROM pro_qr q LEFT JOIN pro_promociones p ON p.id = q.promocion_id
         ${cond.length ? "WHERE " + cond.join(" AND ") : ""}
         ORDER BY q.id DESC LIMIT 300`, params);
-    res.json({ ok: true, data: filas.map((q) => ({ ...q, url: proUrl(req, q.token) })) });
+    res.json({ ok: true, data: filas.map((q) => ({ ...q, url: proEnlace(req, q) })) });
   } catch (e) {
     console.error("[promos] qr:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron cargar los QR" });
@@ -10874,7 +10968,7 @@ app.post("/api/promos/qr/:id/enviar", requireAuth(PROMOS_ROLES), async (req, res
     const qr = await dbGet(`SELECT * FROM pro_qr WHERE id = ?`, [Number(req.params.id)]);
     if (!qr) return res.status(404).json({ ok: false, error: "Ese QR no existe" });
     const promo = qr.promocion_id ? await dbGet(`SELECT * FROM pro_promociones WHERE id = ?`, [qr.promocion_id]) : null;
-    const motivo = await proEnviarWA(qr, proUrl(req, qr.token), { promo });
+    const motivo = await proEnviarWA(qr, proEnlace(req, qr), { promo });
     if (motivo) return res.status(409).json({ ok: false, error: motivo });
     res.json({ ok: true });
   } catch (e) {
@@ -10935,6 +11029,893 @@ app.get("/api/promos/canjes", requireAuth(PROMOS_ROLES), async (req, res) => {
   } catch (e) {
     console.error("[promos] canjes:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron cargar los canjes" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  LA TARJETA DE CLIENTE
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// La tarjeta ES el carné que ya existía (`pro_qr` con `clase = 'carnet'`), con dos cosas nuevas
+// alrededor: el cliente se la hace él solo, y a partir de ahí esa página es su cuenta.
+//
+// NO HAY ALTA AUTOMÁTICA NI EMISIÓN EN MASA. El formulario de la web no la crea, ni las
+// campañas: la pide quien la quiere, desde /alta.html o escaneando el cartel de una mesa. La
+// emisión manual desde Promociones → Emitir se queda como estaba, para cuando alguien la pierda
+// y haya que rehacérsela en barra.
+//
+// La llave es el token de la URL, como en el pulso, el kiosco y el cupón. Sin sesión y sin
+// contraseña: pedirle una contraseña a alguien para ver sus propias visitas en un bar es la
+// forma más rápida de que nadie use esto.
+
+const TJ_ALTA_MAX = 10;    // altas por IP y minuto: crear tarjetas manda un WhatsApp
+const TJ_VER_MAX = 30;
+
+/**
+ * Guardia de todo lo que da a la calle.
+ *
+ * Con la tarjeta apagada, sus páginas devuelven 404 y no 503: un 503 dice «esto existe y está
+ * caído», y lo que se quiere decir es que aquí no hay nada. Nadie tiene estos enlaces todavía
+ * —no hay ninguno publicado— así que el único que puede llegar es quien vaya probando rutas.
+ */
+function tarjetaApagada(res) {
+  if (TARJETA_ACTIVA) return false;
+  res.status(404).json({ ok: false, error: "No disponible." });
+  return true;
+}
+
+// ── El interruptor ───────────────────────────────────────────────────────────
+// Estas dos van ANTES que `/api/tarjeta/:token`: si no, Express le daría «activa» como token.
+//
+// El GET es público y devuelve UN BOOLEANO Y NADA MÁS. Lo usa `alta.html` para mandar a la
+// portada a quien llegue con el enlace apagado, en vez de enseñarle un formulario que va a
+// fallar al enviarlo.
+app.get("/api/tarjeta/activa", (req, res) => res.json({ ok: true, activa: TARJETA_ACTIVA }));
+
+app.post("/api/tarjeta/activa", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const activa = !!req.body?.activa;
+    await setConfig("tarjeta_activa", activa ? "1" : "0");
+    await cargarTarjetaActiva();
+    // Se deja constancia de quién y cuándo: encenderla saca páginas nuevas a la web pública,
+    // y eso es de las cosas que luego nadie recuerda haber hecho.
+    await setConfig("tarjeta_activa_por", `${req.user.username} · ${new Date().toISOString()}`);
+    res.json({ ok: true, activa: TARJETA_ACTIVA });
+  } catch (e) {
+    console.error("[tarjeta] interruptor:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
+/** La clave con la que se cifran los secretos de la wallet. Sal propia: un secreto de Ágora no
+ *  se descifra con esta ni al revés. */
+const WALLET_ENC_KEY = derivarClave(resolveJwtSecret() || "tapeta", "wallet-v1");
+
+/** Lee la configuración de una plataforma. Devuelve null si no está o si no descifra. */
+async function walletCfg(plataforma) {
+  try {
+    const fila = await dbGet(`SELECT * FROM wallet_config WHERE plataforma = ?`, [plataforma]);
+    if (!fila || !Number(fila.activo) || !fila.datos_enc) return null;
+    const plano = secDescifrar(fila.datos_enc, WALLET_ENC_KEY);
+    return plano ? JSON.parse(plano) : null;
+  } catch (e) {
+    console.error("[wallet] cfg:", plataforma, e.message);
+    return null;
+  }
+}
+
+/**
+ * Qué botones de wallet se pueden enseñar ahora mismo.
+ *
+ * Se comprueba de verdad, no se supone: si Apple no tiene certificado, o el certificado está
+ * pero no hay openssl en la máquina, el botón NO se pinta. Un botón «Añadir a Apple Wallet» que
+ * da error al pulsarlo es peor que no tenerlo, porque el cliente se queda pensando que ha hecho
+ * algo mal.
+ */
+async function walletDisponible() {
+  const [apple, google] = await Promise.all([walletCfg("apple"), walletCfg("google")]);
+  return {
+    apple: !!(apple && apple.pass_type_id && apple.team_id && apple.p12_b64 && apple.wwdr_pem && hayOpenssl()),
+    google: !!(google && google.issuer_id && google.sa_email && google.sa_key),
+  };
+}
+
+/** Las imágenes del pase, leídas del disco una vez y guardadas en memoria: son cuatro PNG que
+ *  no cambian, y leerlas del disco en cada descarga es tocar el disco por gusto. */
+let _walletImgs = null;
+function walletImagenes() {
+  if (_walletImgs) return _walletImgs;
+  const dir = path.join(__dirname, "public", "assets", "wallet");
+  const nombres = ["icon.png", "icon@2x.png", "icon@3x.png", "logo.png", "logo@2x.png"];
+  const out = [];
+  for (const n of nombres) {
+    try { out.push({ nombre: n, datos: fs.readFileSync(path.join(dir, n)) }); }
+    catch { /* las opcionales pueden faltar; construirPkpass exige las obligatorias */ }
+  }
+  _walletImgs = out;
+  return out;
+}
+
+// ── Alta: el cliente se hace la tarjeta ──────────────────────────────────────
+// Pública. La única prueba de identidad es escribir un teléfono, y por eso la respuesta NO
+// enseña la tarjeta de un teléfono que ya tenía una: ver `respuestaAlta` en tarjeta/alta.js.
+app.post("/api/tarjeta/alta", async (req, res) => {
+  if (tarjetaApagada(res)) return;
+  if (!pulsoRateLimit(req, res, TJ_ALTA_MAX)) return;
+  try {
+    const { alta, descartados } = sanearAlta(req.body, { locales: INV_LOCALES });
+    if (!alta.nombre || !alta.telefono) {
+      return res.status(400).json({ ok: false, error: descartados[0]?.motivo || "Faltan datos", descartados });
+    }
+
+    const tel = proTel9(alta.telefono);
+
+    // Un solo carné vivo por persona. Si ya lo tiene, NO se le crea otro: dos carnés son dos
+    // identidades y sus visitas se contarían por separado (el índice único de la base lo
+    // impediría igual, pero aquí se puede contestar bien en vez de con un error).
+    let qr = await dbGet(
+      `SELECT * FROM pro_qr WHERE clase = 'carnet' AND telefono = ? AND anulado_en IS NULL`, [tel]);
+    const yaTenia = !!qr;
+    if (!qr) {
+      qr = await proEmitir({
+        clase: "carnet", telefono: tel, nombre: alta.nombre,
+        autor: alta.origen, origen: alta.origen, localAlta: alta.local_alta });
+    }
+
+    // El consentimiento se guarda SIEMPRE que se haya contestado, se cree tarjeta o no: es su
+    // respuesta a una pregunta que se le ha hecho, y perderla porque ya tenía tarjeta obligaría
+    // a volver a preguntársela.
+    try {
+      await setMarketingPref(alta.telefono, {
+        correo: alta.correo || undefined,
+        opt_in_wa: alta.opt_in ? 1 : 0,
+        opt_in_email: alta.opt_in && alta.correo ? 1 : 0,
+      });
+    } catch (e) { console.error("[tarjeta] consent:", e.message); }
+
+    // Se le manda el enlace por WhatsApp al número que ha escrito. Es lo que hace que quien
+    // pruebe un teléfono ajeno no se lleve nada: el enlace llega al dueño, no a quien lo pidió.
+    const url = urlTarjeta(proBase(req), qr.token);
+    let enviado = false;
+    try {
+      const pref = await dbGet(`SELECT baja FROM marketing_prefs WHERE ${MATCH_TEL9("telefono")} LIMIT 1`, [tel]);
+      // `baja = 1` es «no me escribáis». No se salta ni aquí: acaba de pedir la tarjeta, así que
+      // se le enseña en pantalla, pero no se le manda un mensaje que dijo que no quería.
+      if (!(pref && Number(pref.baja) === 1) && isReady()) {
+        await sendMensajeLibre(alta.telefono, tjTextoWA({ nombre: alta.nombre, url, yaTenia }));
+        enviado = true;
+        await dbRun(`UPDATE pro_qr SET enviado_en = ? WHERE id = ?`, [new Date().toISOString(), qr.id]);
+      }
+    } catch (e) {
+      // Que no salga el WhatsApp NO tira el alta: la tarjeta ya existe y se le está enseñando.
+      console.error("[tarjeta] envío:", e.message);
+    }
+
+    const r = respuestaAlta({ yaTenia, token: qr.token, enviado });
+    res.json({ ok: true, ...r, descartados });
+  } catch (e) {
+    console.error("[tarjeta] alta:", e.message);
+    res.status(500).json({ ok: false, error: "No hemos podido hacerte la tarjeta. Prueba otra vez en un momento." });
+  }
+});
+
+// ── El cartel del local ──────────────────────────────────────────────────────
+// Va ANTES de `/api/tarjeta/:token`: si fuera después, Express le daría «cartel» como token.
+// Mismo motivo por el que `/api/contactos/poblaciones` va antes que `/api/contactos/:telefono`.
+app.get("/api/tarjeta/cartel", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const pedido = String(req.query.local || "");
+    const local = INV_LOCALES.find((l) => l.toLowerCase() === pedido.toLowerCase()) || "";
+    const url = urlAlta(proBase(req), local);
+    const imagen = await QRCode.toDataURL(url, { width: 900, margin: 1 });
+    res.json({ ok: true, local, url, qr: imagen });
+  } catch (e) {
+    console.error("[tarjeta] cartel:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo generar el QR del cartel" });
+  }
+});
+
+// ── Cuántas tarjetas hay y de dónde salieron ─────────────────────────────────
+app.get("/api/tarjeta/resumen", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const filas = await dbAll(
+      `SELECT COALESCE(origen,'panel') AS origen, COALESCE(local_alta,'') AS local, COUNT(*)::int AS n
+         FROM pro_qr WHERE clase = 'carnet' AND anulado_en IS NULL
+        GROUP BY 1, 2 ORDER BY 3 DESC`);
+    const wallet = await dbGet(
+      `SELECT COUNT(*) FILTER (WHERE wallet_apple_en IS NOT NULL)::int AS apple,
+              COUNT(*) FILTER (WHERE wallet_google_en IS NOT NULL)::int AS google,
+              COUNT(*)::int AS total
+         FROM pro_qr WHERE clase = 'carnet' AND anulado_en IS NULL`);
+    res.json({ ok: true, activa: TARJETA_ACTIVA, origenes: filas,
+      wallet: wallet || { apple: 0, google: 0, total: 0 },
+      disponible: await walletDisponible(),
+      encendida_por: (await getConfig("tarjeta_activa_por")) || "" });
+  } catch (e) {
+    console.error("[tarjeta] resumen:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar el resumen" });
+  }
+});
+
+// ── La cuenta del cliente ────────────────────────────────────────────────────
+// Pública, sin sesión. Enseña SUS visitas y SUS descuentos, que es lo que el RGPD llama derecho
+// de acceso y aquí es sencillamente lo que hace que la tarjeta sirva para algo.
+app.get("/api/tarjeta/:token", async (req, res) => {
+  if (tarjetaApagada(res)) return;
+  if (!pulsoRateLimit(req, res, TJ_VER_MAX)) return;
+  try {
+    const hallazgo = await proBuscar(req.params.token);
+    if (!hallazgo) return res.status(404).json({ ok: false, error: "Este enlace no es válido." });
+    const { qr } = hallazgo;
+    // Un cupón no tiene cuenta: se le manda a su página, que es la que sabe enseñarlo.
+    if (qr.clase !== "carnet") return res.status(409).json({ ok: false, cupon: true, error: "Esto es un cupón, no una tarjeta." });
+
+    const info = await proEvaluar(qr, null, {});
+    const tel = proTel9(qr.telefono);
+
+    // Sus cupones, cada uno evaluado con la MISMA función que usa la tablet de la barra. No se
+    // decide aquí nada sobre si valen: si esta pantalla dijera que sí y la barra que no, el
+    // cliente tendría razón y el camarero también.
+    const cupones = [];
+    if (tel) {
+      // El JOIN trae la promoción ENTERA, no solo lo que se pinta: `activa`, `desde` y
+      // `usos_por_cliente` son lo que decide el estado, y dejarlos fuera obligaba a releer cada
+      // promoción por separado — veinte consultas más con el cliente delante.
+      const filas = await dbAll(
+        `SELECT q.token, q.codigo, q.caduca_en, q.usos, q.usos_max, q.anulado_en, q.clase,
+                q.telefono, q.promocion_id, q.id,
+                p.nombre AS p_nombre, p.descripcion AS p_desc, p.locales AS p_locales,
+                p.desde AS p_desde, p.hasta AS p_hasta, p.activa AS p_activa,
+                p.usos_por_cliente AS p_usos_cliente
+           FROM pro_qr q LEFT JOIN pro_promociones p ON p.id = q.promocion_id
+          WHERE q.clase = 'cupon' AND q.telefono = ? AND q.anulado_en IS NULL
+          ORDER BY q.id DESC LIMIT 20`, [tel]);
+      for (const f of filas) {
+        const promo = f.promocion_id
+          ? { id: f.promocion_id, nombre: f.p_nombre, descripcion: f.p_desc, locales: f.p_locales,
+              desde: f.p_desde, hasta: f.p_hasta, activa: f.p_activa, usos_por_cliente: f.p_usos_cliente }
+          : null;
+        const est = await proEvaluar(f, promo, {});
+        cupones.push({ token: f.token, codigo: f.codigo, caduca_en: f.caduca_en,
+          estado: est.estado, texto: est.texto, promo });
+      }
+    }
+
+    // Las visitas salen de `pro_canjes`, que es el libro inmutable de lo que hizo el camarero.
+    const visitas = await dbAll(
+      `SELECT c.canjeado_en, c.local, p.nombre AS promocion
+         FROM pro_canjes c LEFT JOIN pro_promociones p ON p.id = c.promocion_id
+        WHERE c.qr_id = ? ORDER BY c.epoch_ms DESC LIMIT 50`, [qr.id]);
+
+    const metricas = tel ? await dbGet(`SELECT * FROM cliente_metricas WHERE tel9 = ?`, [tel]) : null;
+
+    const base = proBase(req);
+    const enlace = urlTarjeta(base, qr.token);
+    let imagen = null;
+    try { imagen = await QRCode.toDataURL(enlace, { width: 512, margin: 1 }); }
+    catch { /* queda el código de ocho dígitos, que basta para validar */ }
+
+    const disponible = await walletDisponible();
+    const cuenta = construirCuenta({ qr, metricas, cupones, visitas, hoy: hoyISO() });
+
+    res.json({
+      ok: true,
+      vale: info.canjeable,
+      estado: info.estado,
+      texto: info.texto,
+      qr: imagen,
+      ...cuenta,
+      // Los botones solo si la tarjeta vale: ofrecer guardar en el móvil una tarjeta anulada es
+      // prometer algo que fallará en la barra dentro de dos semanas.
+      wallet: puedeIrAWallet(qr, info.estado) ? disponible : { apple: false, google: false },
+    });
+  } catch (e) {
+    console.error("[tarjeta] ver:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar tu tarjeta" });
+  }
+});
+
+// ── Guardar en Google Wallet ─────────────────────────────────────────────────
+// Redirección al enlace firmado. El JWT se genera en cada visita y no se guarda en ningún sitio:
+// no es la tarjeta, es el permiso para guardarla, y dura cinco minutos.
+app.get("/api/wallet/google/:token", async (req, res) => {
+  if (tarjetaApagada(res)) return;
+  if (!pulsoRateLimit(req, res, TJ_VER_MAX)) return;
+  try {
+    const cfg = await walletCfg("google");
+    if (!cfg) return res.status(503).json({ ok: false, error: "Google Wallet no está configurado" });
+
+    const hallazgo = await proBuscar(req.params.token);
+    if (!hallazgo) return res.status(404).json({ ok: false, error: "Este enlace no es válido." });
+    const { qr } = hallazgo;
+    const info = await proEvaluar(qr, null, {});
+    if (!puedeIrAWallet(qr, info.estado)) return res.status(409).json({ ok: false, error: info.texto });
+
+    const base = proBase(req);
+    const carga = objetoGoogle({ qr, cfg: { ...cfg, logo_url: `${base}/assets/wallet/logo@2x.png` }, base });
+    const url = googleEnlaceGuardar(carga, {
+      saEmail: cfg.sa_email, saKey: googleNormalizarClave(cfg.sa_key), origins: [base] });
+
+    // Solo la primera vez: interesa cuánta gente la guarda, no cuántas veces pulsa el botón.
+    dbRun(`UPDATE pro_qr SET wallet_google_en = ? WHERE id = ? AND wallet_google_en IS NULL`,
+      [new Date().toISOString(), qr.id]).catch(() => {});
+
+    res.redirect(302, url);
+  } catch (e) {
+    console.error("[wallet] google:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo preparar la tarjeta para Google Wallet" });
+  }
+});
+
+// ── Guardar en Apple Wallet ──────────────────────────────────────────────────
+app.get("/api/wallet/apple/:token", async (req, res) => {
+  if (tarjetaApagada(res)) return;
+  if (!pulsoRateLimit(req, res, TJ_VER_MAX)) return;
+  try {
+    const cfg = await walletCfg("apple");
+    if (!cfg) return res.status(503).json({ ok: false, error: "Apple Wallet no está configurado" });
+    if (!hayOpenssl()) return res.status(503).json({ ok: false, error: "Falta openssl en el servidor" });
+
+    const hallazgo = await proBuscar(req.params.token);
+    if (!hallazgo) return res.status(404).json({ ok: false, error: "Este enlace no es válido." });
+    const { qr } = hallazgo;
+    const info = await proEvaluar(qr, null, {});
+    if (!puedeIrAWallet(qr, info.estado)) return res.status(409).json({ ok: false, error: info.texto });
+
+    const pase = pasePlanoApple({
+      qr, cfg, base: proBase(req), promo: null, locales: cfg.locales || [] });
+
+    const buffer = construirPkpass({
+      pase,
+      imagenes: walletImagenes(),
+      sha1: walletSha1,
+      firmar: (manifest) => firmarPKCS7(manifest, {
+        p12: Buffer.from(cfg.p12_b64, "base64"),
+        password: cfg.p12_pass || "",
+        wwdrPem: Buffer.from(cfg.wwdr_pem, "utf8"),
+      }),
+    });
+
+    dbRun(`UPDATE pro_qr SET wallet_apple_en = ? WHERE id = ? AND wallet_apple_en IS NULL`,
+      [new Date().toISOString(), qr.id]).catch(() => {});
+
+    res.setHeader("Content-Type", "application/vnd.apple.pkpass");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivoPase()}"`);
+    // Dentro va el token de una persona: ni caché compartida ni intermediarios.
+    res.setHeader("Cache-Control", "private, no-store");
+    res.end(buffer);
+  } catch (e) {
+    console.error("[wallet] apple:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo preparar la tarjeta para Apple Wallet" });
+  }
+});
+
+// ── Panel: credenciales de la wallet ─────────────────────────────────────────
+// Solo dirección. Aquí dentro hay claves privadas de firma: quien las tenga puede emitir pases
+// a nombre de la empresa.
+const WALLET_ROLES = ["direccion"];
+
+app.get("/api/wallet/config", requireAuth(WALLET_ROLES), async (req, res) => {
+  try {
+    const salida = { apple: { configurado: false }, google: { configurado: false }, openssl: hayOpenssl() };
+
+    const apple = await walletCfg("apple");
+    if (apple) {
+      salida.apple = {
+        configurado: !!(apple.p12_b64 && apple.wwdr_pem),
+        pass_type_id: apple.pass_type_id || "",
+        team_id: apple.team_id || "",
+        pass_pista: secPista(apple.p12_pass || ""),
+        locales: (apple.locales || []).length,
+      };
+      // La fecha de caducidad es lo único que evita el fallo clásico: el certificado caducó hace
+      // tres semanas y nadie se enteró hasta que un cliente dijo que no podía guardar la tarjeta.
+      try {
+        const info = datosDelCertificado(Buffer.from(apple.p12_b64, "base64"), apple.p12_pass || "");
+        salida.apple.caduca_en = info.caduca_en;
+        salida.apple.caducado = info.caducado;
+      } catch (e) { salida.apple.error = e.message; }
+    }
+
+    const google = await walletCfg("google");
+    if (google) {
+      salida.google = {
+        configurado: !!(google.issuer_id && google.sa_email && google.sa_key),
+        issuer_id: google.issuer_id || "",
+        sa_email: google.sa_email || "",
+        clave_pista: secPista(google.sa_key || ""),
+      };
+    }
+
+    // NO se devuelve `datos_enc`, ni el .p12, ni la clave privada. Ni siquiera a dirección: no
+    // hay ninguna pantalla que los necesite, y lo que no sale por la API no se filtra por un log.
+    res.json({ ok: true, ...salida });
+  } catch (e) {
+    console.error("[wallet] config:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar la configuración" });
+  }
+});
+
+app.post("/api/wallet/config", requireAuth(WALLET_ROLES), async (req, res) => {
+  try {
+    const plataforma = req.body?.plataforma === "apple" ? "apple" : req.body?.plataforma === "google" ? "google" : null;
+    if (!plataforma) return res.status(400).json({ ok: false, error: "Plataforma desconocida" });
+
+    // Se parte de lo que ya hay: los campos que llegan vacíos CONSERVAN su valor, igual que en
+    // Ágora. Si no, volver a guardar para corregir el Team ID borraría el certificado.
+    const previo = (await walletCfg(plataforma)) || {};
+    const b = req.body || {};
+    const guardar = { ...previo };
+
+    if (plataforma === "apple") {
+      if (b.pass_type_id !== undefined) guardar.pass_type_id = String(b.pass_type_id || "").trim();
+      if (b.team_id !== undefined) guardar.team_id = String(b.team_id || "").trim();
+      if (b.p12_b64) guardar.p12_b64 = String(b.p12_b64).replace(/^data:[^,]*,/, "");
+      if (b.p12_pass !== undefined && b.p12_pass !== "") guardar.p12_pass = String(b.p12_pass);
+      if (b.wwdr_pem) guardar.wwdr_pem = String(b.wwdr_pem);
+      if (Array.isArray(b.locales)) guardar.locales = b.locales.slice(0, 10);
+
+      // Se comprueba ANTES de guardar: un certificado que no abre guardado es una pantalla que
+      // dice «configurado» y un botón que falla.
+      if (guardar.p12_b64) {
+        try { datosDelCertificado(Buffer.from(guardar.p12_b64, "base64"), guardar.p12_pass || ""); }
+        catch (e) { return res.status(400).json({ ok: false, error: e.message }); }
+      }
+    } else {
+      if (b.issuer_id !== undefined) guardar.issuer_id = String(b.issuer_id || "").trim();
+      if (b.sa_email !== undefined) guardar.sa_email = String(b.sa_email || "").trim();
+      if (b.sa_key) guardar.sa_key = googleNormalizarClave(b.sa_key);
+      if (guardar.sa_key && !/BEGIN [A-Z ]*PRIVATE KEY/.test(guardar.sa_key)) {
+        return res.status(400).json({ ok: false, error: "Eso no parece una clave privada PEM de Google" });
+      }
+    }
+
+    const activo = b.activo === undefined ? 1 : (b.activo ? 1 : 0);
+    await dbRun(
+      `INSERT INTO wallet_config (plataforma, activo, datos_enc, updated_at) VALUES (?,?,?,?)
+       ON CONFLICT(plataforma) DO UPDATE SET activo = EXCLUDED.activo,
+         datos_enc = EXCLUDED.datos_enc, updated_at = EXCLUDED.updated_at`,
+      [plataforma, activo, secCifrar(JSON.stringify(guardar), WALLET_ENC_KEY), new Date().toISOString()]);
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[wallet] guardar config:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar la configuración" });
+  }
+});
+
+/**
+ * Probar la configuración sin molestar a ningún cliente.
+ *
+ * Emite un pase de mentira con un carné inventado y dice qué ha fallado EN CONCRETO. Existe
+ * porque el error de esto nunca es «no funciona»: es la contraseña del .p12, o el intermedio de
+ * Apple que no encadena, o la clave de Google pegada con los `\n` literales. Sin esta pantalla,
+ * averiguar cuál de los tres es se hace a base de guardar la tarjeta en un móvil de verdad.
+ */
+app.post("/api/wallet/probe", requireAuth(WALLET_ROLES), async (req, res) => {
+  const falso = { token: "prueba-de-configuracion", codigo: "12345678", nombre: "Prueba", clase: "carnet" };
+  const base = proBase(req);
+  const salida = { apple: null, google: null };
+
+  const apple = await walletCfg("apple");
+  if (!apple) salida.apple = { ok: false, error: "Sin configurar" };
+  else if (!hayOpenssl()) salida.apple = { ok: false, error: "Falta openssl en el servidor" };
+  else {
+    try {
+      const buffer = construirPkpass({
+        pase: pasePlanoApple({ qr: falso, cfg: apple, base, locales: apple.locales || [] }),
+        imagenes: walletImagenes(),
+        sha1: walletSha1,
+        firmar: (m) => firmarPKCS7(m, {
+          p12: Buffer.from(apple.p12_b64, "base64"), password: apple.p12_pass || "",
+          wwdrPem: Buffer.from(apple.wwdr_pem, "utf8") }),
+      });
+      salida.apple = { ok: true, bytes: buffer.length };
+    } catch (e) { salida.apple = { ok: false, error: e.message }; }
+  }
+
+  const google = await walletCfg("google");
+  if (!google) salida.google = { ok: false, error: "Sin configurar" };
+  else {
+    try {
+      const url = googleEnlaceGuardar(objetoGoogle({ qr: falso, cfg: google, base }), {
+        saEmail: google.sa_email, saKey: googleNormalizarClave(google.sa_key), origins: [base] });
+      salida.google = { ok: true, largo: url.length };
+    } catch (e) { salida.google = { ok: false, error: e.message }; }
+  }
+
+  res.json({ ok: true, ...salida });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CAPTACIÓN POR CAMPAÑA
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// La ruta a la que apunta un anuncio de pago. El cliente rellena un formulario, ve una pantalla
+// de gracias SIN el código, y el código le llega por WhatsApp.
+//
+// Tres cosas que definen el diseño y que no son adorno:
+//
+//  · LA CLAVE DE CAMPAÑA ES LA PUERTA. Sin una `?c=` viva la página redirige a la portada. No
+//    hay ni un enlace a `/promo.html` en toda la web: se entra por el anuncio o no se entra.
+//  · EL CÓDIGO NO SE ENSEÑA EN PANTALLA, solo se manda. Eso es lo que valida el teléfono: un
+//    número inventado no recibe nada. Por eso la respuesta devuelve un token de SEGUIMIENTO,
+//    distinto del token del cupón, con el que solo se puede preguntar «¿ha salido ya?».
+//  · EL ENVÍO VA POR COLA. Se le está prometiendo algo a alguien en pantalla; enviar en línea
+//    significa que si WhatsApp está caído —y cada redespliegue lo tumba— la promesa se rompe sin
+//    dejar rastro. Y de paso el ritmo lo pone la cola, no la suerte: escribir el primero a
+//    desconocidos desde el número que lleva las reservas es como se gana un baneo.
+
+const CAP_ALTA_MAX = 10;   // altas por IP y minuto
+const CAP_VER_MAX = 60;    // consultas de estado: la pantalla de gracias sondea
+
+/** Cuántos códigos lleva repartidos una campaña. Es lo que mira el tope. */
+async function capAltas(clave) {
+  const r = await dbGet(`SELECT COUNT(*)::int AS n FROM cap_cola WHERE campana = ? AND estado <> 'descartado'`, [clave]);
+  return Number(r?.n || 0);
+}
+
+async function capCampana(clave) {
+  const c = await dbGet(`SELECT * FROM cap_campanas WHERE clave = ?`, [String(clave || "").slice(0, 40)]);
+  if (!c) return null;
+  const promo = await dbGet(`SELECT * FROM pro_promociones WHERE id = ?`, [c.promocion_id]);
+  return { ...c, promo };
+}
+
+/** Lo que la página necesita para pintarse, y NADA MÁS. Ni ids, ni tope, ni cuántos van. */
+function capVistaPublica(campana, idioma) {
+  const t = textosDe(campana, idioma);
+  return {
+    clave: campana.clave, idioma,
+    titular: t.titular, subtitulo: t.subtitulo, etiquetas: t.etiquetas,
+    promocion: campana.promo ? campana.promo.nombre : "",
+    descripcion: campana.promo ? campana.promo.descripcion : "",
+    donde: campana.promo ? proDondeVale(campana.promo.locales) : "",
+  };
+}
+
+// ── La página pregunta si puede pintarse ─────────────────────────────────────
+// Va ANTES que las rutas de panel con `:algo`, y es lo primero que hace `/promo.html`.
+app.get("/api/captacion/campana/:clave", async (req, res) => {
+  if (!pulsoRateLimit(req, res, CAP_VER_MAX)) return;
+  try {
+    const campana = await capCampana(req.params.clave);
+    // Una clave que no existe y una campaña apagada contestan LO MISMO: 404. Si se
+    // distinguieran, probar claves diría cuáles existen.
+    if (!campana) return res.status(404).json({ ok: false, error: "No disponible." });
+
+    const idioma = elegirIdioma({ delMovil: req.query.lang, deCampana: campana.idioma });
+    const estado = estadoCampana(campana, { hoy: hoyISO(), altas: await capAltas(campana.clave) });
+    if (!admiteAltas(estado)) {
+      return res.json({ ok: true, abierta: false, idioma,
+        texto: textoEstadoCampana(estado, campana, idioma), ...capVistaPublica(campana, idioma) });
+    }
+    res.json({ ok: true, abierta: true, ...capVistaPublica(campana, idioma),
+      // El píxel de Meta, si está puesto. Sin él, Meta no aprende a quién enseñar el anuncio y
+      // cada formulario sale mucho más caro. Va apagado hasta que alguien escribe el id.
+      pixel: (await getConfig("meta_pixel_id")) || "" });
+  } catch (e) {
+    console.error("[captacion] campaña:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar" });
+  }
+});
+
+// ── El alta ──────────────────────────────────────────────────────────────────
+app.post("/api/captacion", async (req, res) => {
+  if (!pulsoRateLimit(req, res, CAP_ALTA_MAX)) return;
+  try {
+    const campana = await capCampana(req.body?.c);
+    if (!campana || !campana.promo) return res.status(404).json({ ok: false, error: "No disponible." });
+
+    const idioma = elegirIdioma({ delMovil: req.body?.lang, deCampana: campana.idioma });
+    const T = textosDe(campana, idioma).etiquetas;
+
+    const estado = estadoCampana(campana, { hoy: hoyISO(), altas: await capAltas(campana.clave) });
+    if (!admiteAltas(estado)) {
+      return res.status(409).json({ ok: false, cerrada: true, error: textoEstadoCampana(estado, campana, idioma) });
+    }
+
+    // Los seis campos de siempre. Se piden enteros a propósito: es lo que hace que el dato sirva
+    // luego para segmentar y para felicitar el cumpleaños.
+    const { nombre, apellidos, nacimiento, poblacion, telefono, correo, genero } = req.body || {};
+    if (!nombre || !String(nombre).trim()) return res.status(400).json({ ok: false, error: T.falta_nombre });
+    if (String(telefono || "").replace(/\D/g, "").length < 9) return res.status(400).json({ ok: false, error: T.falta_telefono });
+    if (!apellidos || !nacimiento || !poblacion || !correo) return res.status(400).json({ ok: false, error: T.error });
+
+    const tel = proTel9(telefono);
+
+    // ── UN CLIENTE, UN SOLO CÓDIGO ───────────────────────────────────────────
+    // No se le manda otro ni se le reenvía el mismo: se le dice que ya está registrado. Antes,
+    // el camino equivalente REENVIABA el cupón, lo que convertía un formulario público en una
+    // forma de hacer que le llegaran mensajes repetidos a un tercero.
+    const previo = await dbGet(
+      `SELECT id FROM pro_qr WHERE promocion_id = ? AND telefono = ? AND anulado_en IS NULL LIMIT 1`,
+      [campana.promo.id, tel]);
+    if (previo) {
+      return res.json({ ok: true, ya_registrado: true, titulo: T.ya_registrado_titulo, texto: T.ya_registrado });
+    }
+
+    // ── ¿Ese número tiene WhatsApp? ──────────────────────────────────────────
+    // Aquí el código SOLO viaja por WhatsApp, así que un número sin WhatsApp es una persona
+    // esperando algo que no va a llegar. `null` es «no se ha podido preguntar»: se sigue
+    // adelante, porque no se puede dejar a alguien sin su código por un socket a medias.
+    const tieneWA = await numeroTieneWhatsApp(telefono);
+    if (tieneWA === false) {
+      return res.status(422).json({ ok: false, sin_whatsapp: true, error: T.sin_whatsapp });
+    }
+
+    // ── El lead, con de dónde vino ───────────────────────────────────────────
+    const ahora = new Date().toISOString();
+    const utm = capUtm(req.body?.utm);
+    const yaLead = await dbGet(
+      `SELECT id FROM leads WHERE ${MATCH_TEL9("telefono")}
+          OR (COALESCE(correo,'') <> '' AND LOWER(TRIM(correo)) = LOWER(TRIM(?))) ORDER BY id LIMIT 1`,
+      [telefono, correo]);
+    if (yaLead) {
+      await dbRun(
+        `UPDATE leads SET nombre=?, apellidos=?, nacimiento=?, poblacion=?, genero=COALESCE(?,genero),
+                fuente=?, campana=?, utm=COALESCE(?,utm), landing=?, actualizado_en=? WHERE id=?`,
+        [nombre, apellidos, nacimiento, poblacion, genero || null, "campana", campana.clave,
+         utm, "promo.html", ahora, yaLead.id]);
+    } else {
+      await dbRun(
+        `INSERT INTO leads (nombre, apellidos, nacimiento, poblacion, telefono, correo, premio,
+                            fuente, genero, creado_en, campana, utm, landing)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [nombre, apellidos, nacimiento, poblacion, telefono, correo, campana.promo.nombre,
+         "campana", genero || null, ahora, campana.clave, utm, "promo.html"]);
+    }
+
+    // El consentimiento y el idioma, ANTES de emitir nada: `proEnviarWA` y la cola miran
+    // `marketing_prefs.baja`, y si no estuviera guardado todavía, a quien acaba de aceptar no se
+    // le mandaría el código.
+    const consiente = req.body?.consent === true || req.body?.consent === "1" || req.body?.consent === "on" || req.body?.consent === 1;
+    try {
+      await setMarketingPref(telefono, {
+        correo, idioma,
+        opt_in_wa: consiente ? 1 : 0,
+        opt_in_email: consiente && correo ? 1 : 0,
+      });
+    } catch (e) { console.error("[captacion] consent:", e.message); }
+
+    // ── El cupón y la cola ───────────────────────────────────────────────────
+    const qr = await proEmitir({
+      clase: "cupon", promocionId: campana.promo.id, telefono: tel, nombre,
+      usosMax: 1, autor: `campaña:${campana.clave}`, origen: "campana", localAlta: null });
+
+    const enlace = proUrl(req, qr.token);
+    const texto = capTextoWA({
+      plantilla: textosDe(campana, idioma).wa,
+      nombre, promocion: campana.promo.nombre, enlace,
+      donde: proDondeVale(campana.promo.locales),
+    });
+
+    const token = generarToken((n) => crypto.randomBytes(n));
+    await dbRun(
+      `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en)
+       VALUES (?,?,?,?,?,?,?)`,
+      [token, campana.clave, telefono, texto, qr.id, Date.now(), ahora]);
+
+    // Se intenta ya, sin esperar a la pasada del reloj: casi siempre sale a la primera y así la
+    // pantalla de gracias puede decir «ya te ha llegado» en vez de «en unos minutos».
+    capVaciarCola().catch(() => {});
+
+    res.json({
+      ok: true, token,
+      titulo: T.gracias_titulo,
+      texto: T.gracias_enviando.replace("{telefono}", telefonoBonito(telefono)),
+    });
+  } catch (e) {
+    console.error("[captacion] alta:", e.message);
+    res.status(500).json({ ok: false, error: "No hemos podido. Prueba otra vez en un momento." });
+  }
+});
+
+/** Los parámetros de campaña de la URL, en JSON y acotados. Vienen de fuera: se recortan. */
+function capUtm(crudo) {
+  if (!crudo || typeof crudo !== "object") return null;
+  const out = {};
+  for (const k of ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "fbclid"]) {
+    const v = String(crudo[k] == null ? "" : crudo[k]).trim().slice(0, 120);
+    if (v) out[k] = v;
+  }
+  return Object.keys(out).length ? JSON.stringify(out) : null;
+}
+
+// ── ¿Ha salido ya? ───────────────────────────────────────────────────────────
+// Lo único que devuelve es un estado. Ni el código, ni el enlace, ni el teléfono: esta pantalla
+// promete no enseñar el código, y una respuesta que lo llevara dentro lo estaría entregando.
+app.get("/api/captacion/estado/:token", async (req, res) => {
+  if (!pulsoRateLimit(req, res, CAP_VER_MAX)) return;
+  try {
+    const fila = await dbGet(`SELECT estado FROM cap_cola WHERE token = ?`, [String(req.params.token || "").slice(0, 80)]);
+    res.json({ ok: true, estado: estadoParaCliente(fila) });
+  } catch (e) {
+    console.error("[captacion] estado:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo consultar" });
+  }
+});
+
+// ── La cola ──────────────────────────────────────────────────────────────────
+/**
+ * Saca lo que toque de la cola. Corre cada 30 s y también justo después de cada alta.
+ *
+ * `capColaCorriendo` evita que dos pasadas se solapen: la de los 30 s y la que dispara un alta
+ * pueden coincidir, y dos a la vez mandarían el mismo mensaje dos veces.
+ */
+let capColaCorriendo = false;
+async function capVaciarCola() {
+  if (capColaCorriendo) return;
+  if ((await getConfig("captacion_cola_parada")) === "1") return;   // interruptor de pánico
+  if (!isReady()) return;                                            // ya se reintentará
+  capColaCorriendo = true;
+  try {
+    const cupo = await cupoWA();
+    if (cupo.agotado) return;
+
+    const pendientes = await dbAll(
+      `SELECT * FROM cap_cola WHERE estado = 'pendiente' AND proximo_ms <= ?
+        ORDER BY proximo_ms ASC LIMIT 50`, [Date.now()]);
+    const cuantas = cuantasSacar({ pendientes: pendientes.length, cupoQuedan: cupo.quedan });
+
+    for (const fila of pendientes.slice(0, cuantas)) {
+      if (!isReady()) break;
+
+      // Quien pidió que no le escribiéramos no recibe, ni siquiera esto. `descartado` y no
+      // `fallido`: no ha fallado nada, es que no había que mandarlo.
+      const pref = await dbGet(`SELECT baja FROM marketing_prefs WHERE ${MATCH_TEL9("telefono")} LIMIT 1`, [fila.telefono]);
+      if (pref && Number(pref.baja) === 1) {
+        await dbRun(`UPDATE cap_cola SET estado = 'descartado', ultimo_error = ? WHERE id = ?`,
+          ["Pidió no recibir mensajes", fila.id]).catch(() => {});
+        continue;
+      }
+
+      let cambio;
+      try {
+        await sendMensajeLibre(fila.telefono, fila.texto);
+        await contarEnvioWA();
+        if (fila.qr_id) {
+          await dbRun(`UPDATE pro_qr SET enviado_en = ?, enviado_error = NULL WHERE id = ?`,
+            [new Date().toISOString(), fila.qr_id]).catch(() => {});
+        }
+        cambio = trasIntento({ ok: true, intentos: fila.intentos });
+      } catch (e) {
+        cambio = trasIntento({ ok: false, intentos: fila.intentos, error: e.message });
+        if (fila.qr_id) {
+          await dbRun(`UPDATE pro_qr SET enviado_error = ? WHERE id = ?`,
+            [String(e.message || "").slice(0, 200), fila.qr_id]).catch(() => {});
+        }
+      }
+
+      await dbRun(
+        `UPDATE cap_cola SET estado = ?, intentos = COALESCE(?, intentos), ultimo_error = ?,
+                proximo_ms = COALESCE(?, proximo_ms), enviado_en = COALESCE(?, enviado_en)
+          WHERE id = ?`,
+        [cambio.estado, cambio.intentos ?? null, cambio.ultimo_error ?? null,
+         cambio.proximo_ms ?? null, cambio.enviado_en ?? null, fila.id]).catch(() => {});
+
+      // Ritmo. Es lo único que separa una campaña que funciona de un número baneado, y el
+      // número es el mismo que lleva las reservas, Sara y los grupos internos.
+      await new Promise((r) => setTimeout(r, delayConJitter()));
+    }
+  } catch (e) {
+    console.error("[captacion] cola:", e.message);
+  } finally {
+    capColaCorriendo = false;
+  }
+}
+
+// ── Panel ────────────────────────────────────────────────────────────────────
+app.get("/api/captacion/campanas", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const filas = await dbAll(
+      `SELECT c.*, p.nombre AS promocion, p.locales, p.desde AS promo_desde, p.hasta AS promo_hasta,
+              (SELECT COUNT(*)::int FROM cap_cola q WHERE q.campana = c.clave AND q.estado <> 'descartado') AS altas,
+              (SELECT COUNT(*)::int FROM cap_cola q WHERE q.campana = c.clave AND q.estado = 'enviado') AS enviados,
+              (SELECT COUNT(*)::int FROM cap_cola q WHERE q.campana = c.clave AND q.estado = 'pendiente') AS pendientes,
+              (SELECT COUNT(*)::int FROM cap_cola q WHERE q.campana = c.clave AND q.estado = 'fallido') AS fallidos,
+              (SELECT COUNT(*)::int FROM pro_canjes k WHERE k.promocion_id = c.promocion_id) AS canjeados
+         FROM cap_campanas c LEFT JOIN pro_promociones p ON p.id = c.promocion_id
+        ORDER BY c.activa DESC, c.creado_en DESC`);
+    const hoy = hoyISO();
+    res.json({
+      ok: true,
+      data: filas.map((c) => ({
+        ...c,
+        estado: estadoCampana(c, { hoy, altas: c.altas }),
+        url: urlCampana(proBase(req), c.clave),
+      })),
+      cupo: await cupoWA(),
+      wa: isReady(),
+      parada: (await getConfig("captacion_cola_parada")) === "1",
+      pixel: (await getConfig("meta_pixel_id")) || "",
+    });
+  } catch (e) {
+    console.error("[captacion] campañas:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar las campañas" });
+  }
+});
+
+app.post("/api/captacion/campanas", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const promociones = await dbAll(`SELECT id FROM pro_promociones`);
+    const { campana, descartados } = sanearCampana(req.body, { promociones });
+    if (!campana.clave || !campana.nombre || !campana.promocion_id) {
+      return res.status(400).json({ ok: false, error: descartados[0]?.motivo || "Faltan datos", descartados });
+    }
+    await dbRun(
+      `INSERT INTO cap_campanas (clave, nombre, promocion_id, textos, idioma, altas_desde, altas_hasta,
+                                 tope_altas, activa, creado_en, creado_por)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(clave) DO UPDATE SET nombre=EXCLUDED.nombre, promocion_id=EXCLUDED.promocion_id,
+         textos=EXCLUDED.textos, idioma=EXCLUDED.idioma, altas_desde=EXCLUDED.altas_desde,
+         altas_hasta=EXCLUDED.altas_hasta, tope_altas=EXCLUDED.tope_altas, activa=EXCLUDED.activa`,
+      [campana.clave, campana.nombre, campana.promocion_id, JSON.stringify(campana.textos),
+       campana.idioma, campana.altas_desde, campana.altas_hasta, campana.tope_altas,
+       campana.activa, new Date().toISOString(), req.user.username]);
+    res.json({ ok: true, clave: campana.clave, url: urlCampana(proBase(req), campana.clave), descartados });
+  } catch (e) {
+    console.error("[captacion] guardar campaña:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar la campaña" });
+  }
+});
+
+app.get("/api/captacion/cola", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const cond = ["1=1"], params = [];
+    if (req.query.campana) { cond.push("q.campana = ?"); params.push(String(req.query.campana)); }
+    if (req.query.estado) { cond.push("q.estado = ?"); params.push(String(req.query.estado)); }
+    const filas = await dbAll(
+      `SELECT q.id, q.campana, q.telefono, q.estado, q.intentos, q.ultimo_error, q.creado_en,
+              q.enviado_en, q.proximo_ms, r.nombre AS titular, r.codigo
+         FROM cap_cola q LEFT JOIN pro_qr r ON r.id = q.qr_id
+        WHERE ${cond.join(" AND ")}
+        ORDER BY q.id DESC LIMIT 300`, params);
+    res.json({ ok: true, data: filas, max_intentos: MAX_INTENTOS });
+  } catch (e) {
+    console.error("[captacion] cola panel:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cargar la cola" });
+  }
+});
+
+/** Volver a poner en cola algo que se rindió. No emite nada nuevo: es el mismo cupón. */
+app.post("/api/captacion/cola/:id/reenviar", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const fila = await dbRun(
+      `UPDATE cap_cola SET estado = 'pendiente', intentos = 0, ultimo_error = NULL, proximo_ms = ?
+        WHERE id = ? AND estado IN ('fallido','descartado') RETURNING id`,
+      [Date.now(), Number(req.params.id)]);
+    if (!fila) return res.status(404).json({ ok: false, error: "Esa fila no existe o ya está en cola" });
+    capVaciarCola().catch(() => {});
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[captacion] reenviar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo reenviar" });
+  }
+});
+
+/** El id del píxel de Meta. Solo dirección: es lo que carga un script de terceros en una página
+ *  pública, y esa decisión no es de Marketing. */
+app.post("/api/captacion/pixel", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const id = String(req.body?.pixel || "").replace(/\D/g, "").slice(0, 20);
+    await setConfig("meta_pixel_id", id);
+    res.json({ ok: true, pixel: id });
+  } catch (e) {
+    console.error("[captacion] pixel:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+/** El interruptor de pánico de la cola. Para de mandar sin tocar nada más. */
+app.post("/api/captacion/cola/parada", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const parada = !!req.body?.parada;
+    await setConfig("captacion_cola_parada", parada ? "1" : "0");
+    res.json({ ok: true, parada });
+  } catch (e) {
+    console.error("[captacion] parada:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
   }
 });
 
@@ -15204,6 +16185,23 @@ async function contarEnvioWA(n = 1) {
 }
 
 /**
+ * Cuánto queda del cupo de hoy.
+ *
+ * `contarEnvioWA` lleva la cuenta desde hace tiempo, pero solo las campañas y el pulso MIRABAN
+ * el tope. Los cupones y los carnés lo incrementaban sin consultarlo nunca, así que una tarde de
+ * campaña de captación podía sacar trescientos mensajes desde el mismo número que lleva las
+ * reservas, Sara y los grupos internos — que es exactamente como se gana un baneo.
+ *
+ * Se lee de `config`, así que el tope se cambia desde el panel sin tocar código.
+ */
+async function cupoWA() {
+  const max = Number(await getConfig("wa_max_diario")) || 40;
+  const usados = Number((await getConfig("wa_enviados_" + hoyISO())) || 0);
+  const quedan = Math.max(0, max - usados);
+  return { max, usados, quedan, agotado: quedan <= 0, cerca: quedan <= Math.ceil(max * 0.2) };
+}
+
+/**
  * Envía un lote por WhatsApp, con ritmo y CON EL TOPE DIARIO PUESTO.
  *
  * El tope existía, estaba probado y lo aplicaba solo el pulso del equipo: las campañas lo
@@ -16242,6 +17240,16 @@ const server = app.listen(PORT, async () => {
 
   // Volcar una sola vez el Secret AGORA_LOCALES a la BD (fuente de verdad ahora editable desde el panel)
   try { await seedAgoraFromEnv(); } catch (e) { console.error("[Agora] Error en seed env→BD:", e.message); }
+
+  // El interruptor de la tarjeta de cliente. Si la lectura falla se queda APAGADA, que es el
+  // lado seguro: como mucho no sale una función que hoy nadie usa; al revés, saldrían páginas
+  // públicas que se decidió no publicar.
+  await cargarTarjetaActiva();
+
+  // La cola de captación. Cada 30 s porque a alguien se le prometió en pantalla que le
+  // llegaría: media hora de retraso ya es una promesa rota. La pasada no hace nada si WhatsApp
+  // está caído, así que un despliegue no pierde nada — se recupera solo al reconectar.
+  setInterval(() => { capVaciarCola().catch(() => {}); }, 30 * 1000);
 
   setOnReserva(async (reserva, jid) => {
     const { local, personas, dia, hora, telefono, nombre_reserva, pendiente } = reserva;

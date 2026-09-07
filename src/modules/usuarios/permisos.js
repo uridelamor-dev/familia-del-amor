@@ -146,6 +146,12 @@ export const MODULO_POR_RUTA = [
   ["/api/clientes", "clientes"],
   ["/api/campanas", "campanas"],
   ["/api/promos", "promos"],
+  // La tarjeta de cliente vive dentro de Promociones (es una pestaña más, no un módulo
+  // aparte), así que sus rutas de panel se comprueban contra el mismo permiso. Las públicas
+  // —`/api/tarjeta/:token` y `/api/tarjeta/alta`— no pasan por `requireAuth` y esto no las
+  // toca. `/api/wallet` son las credenciales, y esas ya piden rol dirección.
+  ["/api/tarjeta", "promos"],
+  ["/api/wallet", "promos"],
   ["/api/plantillas", "campanas"],
   ["/api/audiencias", "campanas"],
   ["/api/reviews", "reviews"],

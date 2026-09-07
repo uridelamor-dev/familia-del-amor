@@ -107,17 +107,8 @@ const i18n = {
     contact_text: "Para cualquier consulta, escríbenos.",
     legal_title: "Legal y privacidad",
     legal_text: "Políticas de privacidad, cookies y condiciones.",
-    popup_title: "¡Bienvenidos a Familia del Amor!",
-    popup_text: "Déjanos tus datos y recibe un 10% de descuento.",
     lead_name: "Nombre",
-    lead_lastname: "Apellidos",
-    lead_birth: "Fecha de nacimiento",
-    lead_city: "Población",
     lead_phone: "Teléfono",
-    lead_email: "Correo",
-    lead_gender: "Género",
-    lead_consent: "Acepto recibir comunicaciones y la política de privacidad.",
-    lead_submit: "Recibir mi descuento",
     reservation_local_q: "¿En qué local?",
     reservation_day_q: "¿Qué día?",
     reservation_time_q: "¿A qué hora?",
@@ -148,11 +139,6 @@ const i18n = {
     success_reserva: "Reserva confirmada",
     err_generic: "No se pudo completar. Inténtalo de nuevo.",
     reserva_bloqueada: "Esos días no aceptamos reservas en {local} 🎉 ¡Te esperamos en otra fecha o en otro de nuestros locales!",
-    success_lead: "¡Descuento activado!",
-    lead_qr_listo: "¡Listo! Este es tu descuento. Enséñalo cuando vengas.",
-    lead_codigo: "Si no lo leen, di este número:",
-    lead_ya_emitido: "Ya tienes tu descuento de bienvenida. Te lo hemos vuelto a enviar por WhatsApp.",
-    lead_ya_usado: "Ya usaste tu descuento de bienvenida.",
     success_hr: "Candidatura enviada. Gracias.",
     err_hr: "No se pudo enviar. Inténtalo de nuevo.",
     reservation_success_back: "Hacer otra reserva",
@@ -164,9 +150,6 @@ const i18n = {
     reservation_extra_skip: "Ahora no",
     reservation_extra_save: "Guardar",
     reservation_extra_thanks: "¡Gracias! Lo hemos guardado.",
-    strip_title: "¿Quieres conseguir un descuento?",
-    strip_sub: "Déjanos tus datos y te enviamos tu descuento ahora.",
-    strip_cta: "Consigue tu descuento",
     nav_about: "Nosotros",
     nav_events: "Eventos",
     jobs_eyebrow: "Equipo",
@@ -246,17 +229,8 @@ const i18n = {
     contact_text: "Per a qualsevol consulta, escriu-nos.",
     legal_title: "Legal i privacitat",
     legal_text: "Polítiques de privacitat, cookies i condicions.",
-    popup_title: "Benvinguts a Familia del Amor!",
-    popup_text: "Deixa'ns les teves dades i rep un 10% de descompte.",
     lead_name: "Nom",
-    lead_lastname: "Cognoms",
-    lead_birth: "Data de naixement",
-    lead_city: "Població",
     lead_phone: "Telèfon",
-    lead_email: "Correu",
-    lead_gender: "Gènere",
-    lead_consent: "Accepto rebre comunicacions i la política de privacitat.",
-    lead_submit: "Rebre el meu descompte",
     reservation_local_q: "¿En quin local?",
     reservation_day_q: "¿Quin dia?",
     reservation_time_q: "¿A quina hora?",
@@ -287,11 +261,6 @@ const i18n = {
     success_reserva: "Reserva confirmada",
     err_generic: "No s'ha pogut completar. Torna-ho a intentar.",
     reserva_bloqueada: "Aquests dies no acceptem reserves a {local} 🎉 T'esperem en una altra data o en un altre dels nostres locals!",
-    success_lead: "¡Descompte activat!",
-    lead_qr_listo: "Ja el tens! Aquest és el teu descompte. Ensenya\'l quan vinguis.",
-    lead_codigo: "Si no el llegeixen, digues aquest número:",
-    lead_ya_emitido: "Ja tens el teu descompte de benvinguda. Te l'hem tornat a enviar per WhatsApp.",
-    lead_ya_usado: "Ja vas fer servir el teu descompte de benvinguda.",
     success_hr: "Candidatura enviada. Gràcies.",
     err_hr: "No s'ha pogut enviar. Torna-ho a intentar.",
     reservation_success_back: "Fer una altra reserva",
@@ -303,9 +272,6 @@ const i18n = {
     reservation_extra_skip: "Ara no",
     reservation_extra_save: "Desar",
     reservation_extra_thanks: "Gràcies! Ho hem desat.",
-    strip_title: "Vols aconseguir un descompte?",
-    strip_sub: "Deixa'ns les teves dades i t'enviem el teu descompte ara.",
-    strip_cta: "Aconsegueix el teu descompte",
     nav_about: "Nosaltres",
     nav_events: "Esdeveniments",
     jobs_eyebrow: "Equip",
@@ -385,17 +351,8 @@ const i18n = {
     contact_text: "For any questions, get in touch.",
     legal_title: "Legal and privacy",
     legal_text: "Privacy policy, cookies and terms.",
-    popup_title: "Welcome to Familia del Amor!",
-    popup_text: "Leave your details and receive a 10% discount.",
     lead_name: "First name",
-    lead_lastname: "Last name",
-    lead_birth: "Date of birth",
-    lead_city: "City",
     lead_phone: "Phone",
-    lead_email: "Email",
-    lead_gender: "Gender",
-    lead_consent: "I accept communications and the privacy policy.",
-    lead_submit: "Claim my discount",
     reservation_local_q: "Which venue?",
     reservation_day_q: "Which day?",
     reservation_time_q: "What time?",
@@ -426,11 +383,6 @@ const i18n = {
     success_reserva: "Reservation confirmed",
     err_generic: "Could not complete. Please try again.",
     reserva_bloqueada: "We're not taking bookings at {local} on those dates 🎉 We'd love to see you another day or at one of our other venues!",
-    success_lead: "Discount activated!",
-    lead_qr_listo: "All set! Here is your discount. Just show it when you come.",
-    lead_codigo: "If it will not scan, read out this number:",
-    lead_ya_emitido: "You already have your welcome discount. We have sent it to you again on WhatsApp.",
-    lead_ya_usado: "You have already used your welcome discount.",
     success_hr: "Application sent. Thank you.",
     err_hr: "Could not send. Please try again.",
     reservation_success_back: "Make another reservation",
@@ -442,9 +394,6 @@ const i18n = {
     reservation_extra_skip: "Not now",
     reservation_extra_save: "Save",
     reservation_extra_thanks: "Thanks! Saved.",
-    strip_title: "Want to get a discount?",
-    strip_sub: "Leave your details and we'll send your discount right away.",
-    strip_cta: "Get my discount",
     nav_about: "About us",
     nav_events: "Events",
     jobs_eyebrow: "Team",
@@ -852,69 +801,6 @@ if ("scrollRestoration" in history) {
   history.scrollRestoration = "manual";
 }
 
-const popup = document.getElementById("leadPopup");
-const closePopup = document.getElementById("closePopup");
-const POPUP_KEY = "lead_popup_next";
-const POPUP_DONE_KEY = "lead_submitted";
-const POPUP_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 horas
-
-// Cookie de respaldo (1 año) además de localStorage: sobrevive a limpiezas parciales
-// de localStorage y funciona aunque localStorage esté deshabilitado.
-function setLeadCookie() {
-  try {
-    const unAnyo = 365 * 24 * 60 * 60;
-    document.cookie = `${POPUP_DONE_KEY}=1; path=/; max-age=${unAnyo}; SameSite=Lax`;
-  } catch {}
-}
-function hasLeadCookie() {
-  return document.cookie.split(";").some(c => c.trim().startsWith(`${POPUP_DONE_KEY}=`));
-}
-
-function shouldShowPopup() {
-  // Si ya rellenó el formulario (en localStorage O en cookie), no volver a mostrarlo.
-  if (localStorage.getItem(POPUP_DONE_KEY) || hasLeadCookie()) return false;
-  const next = Number(localStorage.getItem(POPUP_KEY) || "0");
-  return Date.now() > next;
-}
-
-function markPopupSeen() {
-  localStorage.setItem(POPUP_KEY, String(Date.now() + POPUP_COOLDOWN_MS));
-}
-
-function markLeadSubmitted() {
-  try {
-    localStorage.setItem(POPUP_DONE_KEY, "1");
-    localStorage.removeItem(POPUP_KEY);
-  } catch {}
-  setLeadCookie();
-}
-
-if (popup && shouldShowPopup()) {
-  let popupShown = false;
-  function showPopupOnce() {
-    if (popupShown) return;
-    popupShown = true;
-    popup.classList.add("show");
-    markPopupSeen();
-    window.removeEventListener("scroll", onScroll);
-  }
-  function onScroll() {
-    if (window.scrollY > 300) showPopupOnce();
-  }
-  window.addEventListener("scroll", onScroll);
-  setTimeout(showPopupOnce, 12000);
-}
-
-closePopup?.addEventListener("click", () => {
-  popup?.classList.remove("show");
-});
-
-popup?.addEventListener("click", (e) => {
-  if (e.target === popup) {
-    popup.classList.remove("show");
-  }
-});
-
 // ── Autocomplete de población ──────────────────────────────────────────────
 // Sugerencias de población. NO es una lista cerrada: el campo es texto libre y se guarda
 // lo que se escriba, aunque no esté aquí. Esto solo ahorra teclear en los casos habituales,
@@ -971,108 +857,6 @@ function bindPoblacionAutocomplete(input, sugg) {
 bindPoblacionAutocomplete(document.getElementById("poblacionInput"), document.getElementById("poblacionSuggestions"));
 bindPoblacionAutocomplete(document.getElementById("poblacionReservaInput"), document.getElementById("poblacionReservaSuggestions"));
 
-const leadForm = document.getElementById("leadForm");
-const leadMsg = document.getElementById("leadMsg");
-
-/**
- * El cupón recién emitido, dentro del propio popup.
- *
- * Se construye con `textContent` y `src`, nunca con innerHTML: el nombre de la promoción y el
- * código vienen del servidor, y aquí no se monta HTML con texto de fuera. La imagen es un
- * `data:` que ya llega generado — no hay ninguna librería de QR en el navegador ni se puede
- * añadir.
- *
- * Debajo va el enlace permanente: el popup se cierra, el móvil se pierde, y ese enlace es la
- * forma de volver a encontrarlo sin tener que rebuscar en WhatsApp.
- */
-function pintarCuponLead(b, t2) {
-  const caja = document.getElementById("leadQr");
-  if (!caja) return;
-  caja.innerHTML = "";
-
-  if (b.qr) {
-    const img = document.createElement("img");
-    img.src = b.qr;
-    img.alt = b.promocion || "";
-    caja.appendChild(img);
-  }
-  if (b.codigo) {
-    const eti = document.createElement("p");
-    eti.className = "lead-qr-eti";
-    eti.textContent = t2.lead_codigo;
-    const cod = document.createElement("p");
-    cod.className = "lead-qr-cod";
-    // Partido por la mitad: ocho dígitos seguidos se dictan fatal en una barra con ruido.
-    cod.textContent = b.codigo.length === 8 ? b.codigo.slice(0, 4) + " " + b.codigo.slice(4) : b.codigo;
-    caja.appendChild(eti); caja.appendChild(cod);
-  }
-  if (b.url) {
-    const a = document.createElement("a");
-    a.className = "lead-qr-link";
-    a.href = b.url;
-    a.target = "_blank";
-    a.rel = "noopener";
-    a.textContent = b.url.replace(/^https?:\/\//, "");
-    caja.appendChild(a);
-  }
-  caja.classList.add("show");
-}
-
-if (leadForm) leadForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  leadMsg.textContent = "";
-  const formData = new FormData(leadForm);
-  const payload = Object.fromEntries(formData.entries());
-
-  // El cliente ya ha rellenado y enviado el formulario: no debe volver a aparecerle,
-  // aunque el backend falle. Marcamos como hecho ANTES de esperar la respuesta.
-  markLeadSubmitted();
-
-  try {
-    const res = await fetch("/api/leads", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    const t2 = i18n[currentLang] || i18n.es;
-    if (data.ok) {
-      const b = data.bienvenida;
-      if (b && b.estado === "nuevo") {
-        // La primera vez el cupón se enseña AQUÍ. Ya está también en su WhatsApp, pero mandar
-        // a alguien a otra aplicación para ver lo que acaba de ganar pierde a la mitad.
-        leadMsg.textContent = t2.lead_qr_listo;
-        pintarCuponLead(b, t2);
-        leadForm.reset();
-        return;                       // no se cierra solo: tiene que poder guardarlo
-      }
-      if (b && b.estado === "ya_emitido") {
-        // No se enseña en pantalla a propósito: se le reenvía al móvil. Ver el comentario de
-        // `bienvenidaWeb` en server.js — es lo que impide que se saquen cupones ajenos
-        // probando teléfonos.
-        leadMsg.textContent = t2.lead_ya_emitido;
-        leadForm.reset();
-        setTimeout(() => popup.classList.remove("show"), 4500);
-        return;
-      }
-      if (b && b.estado === "ya_usado") {
-        leadMsg.textContent = b.texto ? `${t2.lead_ya_usado} ${b.texto}` : t2.lead_ya_usado;
-        leadForm.reset();
-        setTimeout(() => popup.classList.remove("show"), 4500);
-        return;
-      }
-      // Sin cupón detrás (Marketing ha parado la promoción, o no había teléfono): como siempre.
-      leadMsg.textContent = `${t2.success_lead}${data.premio ? " — " + data.premio : ""}`;
-      leadForm.reset();
-      setTimeout(() => popup.classList.remove("show"), 2500);
-    } else {
-      leadMsg.textContent = t2.err_generic;
-    }
-  } catch (err) {
-    const t2 = i18n[currentLang] || i18n.es;
-    leadMsg.textContent = t2.err_generic;
-  }
-});
 
 const reservaForm = document.getElementById("reservaForm");
 const reservaMsg = document.getElementById("reservaMsg");
@@ -1185,9 +969,6 @@ document.getElementById("reservaPerfilForm")?.addEventListener("submit", async (
   }
 });
 
-document.getElementById("reopenLead")?.addEventListener("click", () => {
-  document.getElementById("leadPopup").classList.add("show");
-});
 
 async function loadJobs() {
   const list = document.getElementById("jobsList");
@@ -1353,14 +1134,12 @@ if (window.top !== window) {
           .canvas-selected { outline: 2px solid #f97316 !important; border-radius:3px; box-shadow: 0 0 0 4px rgba(249,115,22,0.15) !important; }
           section.canvas-selected { outline: none !important; box-shadow: inset 0 0 0 3px #f97316, 0 0 0 5px rgba(249,115,22,0.15) !important; }
           #siteLogo.canvas-selected { outline: 2px solid #f97316 !important; border-radius:4px; box-shadow: 0 0 0 4px rgba(249,115,22,0.15) !important; }
-          #leadPopup { display: none !important; }
           .wa-float { display: none !important; }
           #galeriaGrid { display:grid !important; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:0.6rem; overflow:visible !important; }
           .galeria-grid { overflow:visible !important; }
           .gallery-edit-slot:hover .gallery-edit-overlay { opacity:1; }
           .gallery-edit-slot.canvas-selected .gallery-edit-overlay { opacity:1; background:rgba(249,115,22,0.35) !important; }
         `;
-        document.getElementById("leadPopup")?.classList.remove("show");
         renderGallery();
       } else {
         styleEl?.remove();

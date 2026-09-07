@@ -5,11 +5,23 @@
 // persona podía volver al popup cada semana y llevarse el descuento otra vez.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
 const esquema = readFileSync(new URL("../src/modules/promos/schema.js", import.meta.url), "utf8");
 const landing = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+const indexHtml = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+
+/** Las páginas que ve cualquiera. Se leen del directorio y no de una lista escrita a mano: una
+ *  lista se queda corta el día que alguien añade una página, que es justo el día que importa. */
+function paginasPublicas() {
+  const dir = new URL("../public/", import.meta.url);
+  // `promo.html` es la ruta de campaña: es la que NO debe enlazarse, así que no se comprueba a
+  // sí misma.
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".html") && f !== "promo.html")
+    .map((f) => [f, readFileSync(new URL(f, dir), "utf8")]);
+}
 
 const bienvenida = (() => {
   const i = server.indexOf("async function bienvenidaWeb(");
@@ -32,7 +44,7 @@ describe("el descuento de bienvenida no se da dos veces", () => {
     const previo = bienvenida.slice(bienvenida.indexOf("if (previo)"));
     const hastaEmitir = previo.indexOf("proEmitir(");
     assert.ok(hastaEmitir > 0, "proEmitir tiene que venir después");
-    assert.ok(/return \{ estado: "ya_emitido" \}/.test(previo.slice(0, hastaEmitir)),
+    assert.ok(/return \{ estado: "ya_emitido"/.test(previo.slice(0, hastaEmitir)),
       "el camino del cupón ya emitido tiene que devolver antes de emitir otro");
   });
 
@@ -137,27 +149,29 @@ describe("lo que se le dice al cliente", () => {
   });
 });
 
-describe("la landing cuenta los tres casos", () => {
-  test("cada estado tiene su rama y su texto", () => {
-    for (const [estado, clave] of [["nuevo", "lead_qr_listo"], ["ya_emitido", "lead_ya_emitido"], ["ya_usado", "lead_ya_usado"]]) {
-      assert.ok(landing.includes(`b.estado === "${estado}"`), `falta la rama de «${estado}»`);
-      assert.ok(landing.includes(`t2.${clave}`), `falta el texto de «${estado}»`);
+describe("la landing ya no capta descuentos", () => {
+  // El popup del 10 % y su franja se fueron de la portada: el descuento en tienda no está
+  // preparado y la captación se hace ahora en su propia ruta, a la que solo se llega desde el
+  // anuncio. Estos tests son lo que impide que vuelva sin querer — un `data-i18n` copiado de
+  // otra página o un `git revert` distraído bastarían, y no daría ningún error.
+
+  test("no queda ni el popup ni la franja en el HTML", () => {
+    for (const rastro of ["leadPopup", "leadForm", "reopenLead", "descuento-strip", "leadQr"]) {
+      assert.ok(!indexHtml.includes(rastro), `la portada sigue teniendo «${rastro}»`);
     }
   });
 
-  test("con el cupón en pantalla el popup NO se cierra solo", () => {
-    // Se cierra a los 2,5 s desde siempre. Con el QR delante eso es quitárselo de las manos
-    // antes de que le dé tiempo a guardarlo.
-    const rama = landing.slice(landing.indexOf('b.estado === "nuevo"'));
-    const hasta = rama.indexOf('b.estado === "ya_emitido"');
-    assert.ok(!/popup\.classList\.remove/.test(rama.slice(0, hasta)), "esa rama no puede cerrar el popup");
+  test("no queda el código que la manejaba", () => {
+    for (const rastro of ["pintarCuponLead", "markLeadSubmitted", "showPopupOnce", '"/api/leads"']) {
+      assert.ok(!landing.includes(rastro), `public/app.js sigue teniendo «${rastro}»`);
+    }
   });
 
-  test("el cupón se pinta sin construir HTML con texto de fuera", () => {
-    const fn = landing.slice(landing.indexOf("function pintarCuponLead"));
-    const hasta = fn.indexOf("\n}\n");
-    const cuerpo = fn.slice(0, hasta);
-    assert.ok(!/innerHTML\s*=\s*[^"']/.test(cuerpo.replace('innerHTML = ""', "")),
-      "solo textContent: el nombre de la promoción viene del servidor");
+  test("y no se llega al formulario de campaña desde ninguna página pública", () => {
+    // La ruta de captación existe, pero solo se entra por el enlace del anuncio. Un enlace
+    // desde la web la convertiría en una promoción abierta a cualquiera.
+    for (const [nombre, html] of paginasPublicas()) {
+      assert.ok(!html.includes("promo.html"), `«${nombre}» enlaza la ruta de campaña`);
+    }
   });
 });

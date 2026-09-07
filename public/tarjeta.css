@@ -1,0 +1,95 @@
+/* La tarjeta de cliente en su móvil: su cuenta. Fichero aparte y todas las clases con prefijo
+   `tj-`, como `cup-` en el cupón: no toca ni una regla del resto de la web.
+
+   El contexto manda igual que en el cupón: alguien de pie en la barra, con el móvil en una mano
+   y un camarero leyéndolo con una tablet a medio metro. Por eso el QR va sobre BLANCO PURO y no
+   sobre el verde de la marca — un QR sobre color se lee peor y el brillo de la pantalla no se
+   puede subir desde la web. Aquí la marca cede ante que funcione.
+
+   Y por eso el QR va ARRIBA del todo. Lo que se hace con esta página el 90 % de las veces es
+   enseñarla: si las visitas y los descuentos fueran primero, habría que bajar con el pulgar
+   mientras el camarero espera. */
+
+.tj-body {
+  margin: 0;
+  min-height: 100dvh;
+  padding: 1.5rem 1.25rem 2.5rem;
+  background: #f4f2ed;
+  color: #1c211f;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+.tj-wrap { width: 100%; max-width: 460px; margin: 0 auto; }
+.tj-marca { margin: 0 0 1rem; text-align: center; font-size: .82rem; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase; color: #6d7a74; }
+
+.tj-cargando { padding: 3rem 0; text-align: center; color: #6d7a74; }
+
+.tj-card {
+  background: #fff; border-radius: 22px; padding: 1.5rem 1.5rem 1.35rem; margin-bottom: 1rem;
+  box-shadow: 0 2px 4px rgba(20,32,27,.05), 0 12px 32px rgba(20,32,27,.09);
+}
+.tj-card.tj-centro { text-align: center; }
+
+.tj-titular { margin: 0; font-size: 1.5rem; font-weight: 700; letter-spacing: -.015em; line-height: 1.2; }
+.tj-sub { margin: .4rem 0 0; font-size: .95rem; color: #6d7a74; }
+
+.tj-qr { margin: 1.25rem auto 0; width: 100%; max-width: 300px; aspect-ratio: 1;
+  background: #fff; border-radius: 14px; display: flex; align-items: center; justify-content: center; }
+.tj-qr img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+.tj-codigo-eti { margin: 1.1rem 0 .25rem; font-size: .85rem; color: #6d7a74; }
+/* Cifras tabulares y muy separadas: esto se dicta en voz alta en una barra con ruido. */
+.tj-codigo { margin: 0; font-size: 1.9rem; font-weight: 700;
+  font-variant-numeric: tabular-nums; letter-spacing: .12em; }
+
+.tj-estado { margin: 1.1rem 0 0; padding: .8rem 1rem; border-radius: 12px;
+  font-size: 1rem; font-weight: 600; line-height: 1.45; background: #fdeaea; color: #9b1c1c; }
+/* Anulada o caducada: el QR se apaga. Que siga igual de vistoso que una buena es lo que hace
+   que alguien la enseñe en la barra convencido de que vale. */
+.tj-card.tj-mal .tj-qr { opacity: .18; filter: grayscale(1); }
+.tj-card.tj-mal .tj-codigo { color: #9aa5a0; }
+
+/* ── Los botones de la wallet ─────────────────────────────────────────────────
+   Alto de sobra (56px) porque se pulsa de pie y con una mano. */
+.tj-wallet { margin: 1.25rem 0 0; display: grid; gap: .6rem; }
+.tj-wallet-eti { margin: 0 0 .1rem; font-size: .85rem; color: #6d7a74; }
+.tj-badge { display: flex; align-items: center; justify-content: center; gap: .6rem;
+  min-height: 56px; padding: 0 1.1rem; border-radius: 14px; text-decoration: none;
+  font-size: 1rem; font-weight: 650; border: 1px solid transparent; }
+.tj-badge img { height: 26px; width: auto; display: block; }
+.tj-badge-apple { background: #000; color: #fff; }
+.tj-badge-google { background: #fff; color: #1c211f; border-color: #d5ded9; }
+
+/* ── Visitas y descuentos ─────────────────────────────────────────────────── */
+.tj-h { margin: 0 0 .75rem; font-size: 1.05rem; font-weight: 700; }
+.tj-visitas { margin: 0; font-size: 1.15rem; font-weight: 650; line-height: 1.4; }
+.tj-ultima { margin: .35rem 0 0; font-size: .95rem; color: #4c5854; line-height: 1.45; }
+.tj-locales { margin: .6rem 0 0; font-size: .9rem; color: #6d7a74; }
+
+.tj-lista { list-style: none; margin: 0; padding: 0; }
+.tj-item { padding: .8rem 0; border-top: 1px solid #ecefed; }
+.tj-item:first-child { border-top: 0; padding-top: 0; }
+.tj-item-t { margin: 0; font-size: 1rem; font-weight: 650; line-height: 1.35; }
+.tj-item-d { margin: .2rem 0 0; font-size: .9rem; color: #6d7a74; line-height: 1.45; }
+.tj-item.tj-usado .tj-item-t { color: #9aa5a0; text-decoration: line-through; }
+
+.tj-vacio { margin: 0; font-size: .95rem; color: #6d7a74; line-height: 1.5; }
+
+.tj-hist { list-style: none; margin: 0; padding: 0; font-size: .92rem; color: #4c5854; }
+.tj-hist li { padding: .45rem 0; border-top: 1px solid #ecefed; display: flex; gap: .6rem; }
+.tj-hist li:first-child { border-top: 0; }
+.tj-hist b { font-weight: 600; }
+
+.tj-aviso { background: #fff; border-radius: 18px; padding: 1.5rem; text-align: center;
+  color: #4c5854; font-size: 1rem; line-height: 1.55;
+  box-shadow: 0 2px 4px rgba(20,32,27,.05), 0 12px 32px rgba(20,32,27,.09); }
+
+.hidden { display: none !important; }
+
+@media (max-width: 380px) {
+  .tj-card { padding: 1.25rem 1.1rem 1.1rem; }
+  .tj-titular { font-size: 1.3rem; }
+  .tj-codigo { font-size: 1.6rem; }
+}

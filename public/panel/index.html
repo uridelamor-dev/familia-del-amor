@@ -401,6 +401,19 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
    es donde se mira el cuadrante. */
 .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
 
+/* Las pestañas de Promociones. Igual que `.tw`, se usaban SIN ninguna regla detrás: eran
+   botones sueltos que fluían, y con cinco pestañas la última caía a una segunda fila en el
+   móvil. Una barra de pestañas partida en dos se lee como si la de abajo fuera de otro grupo
+   —y se come 40 px de una pantalla que se mira de pie—, así que se desliza, como `.tabstrip`.
+   `flex:none` en los botones para que no los encoja hasta partirles el texto. */
+.tabs{display:flex;gap:16px;align-items:center;flex-wrap:nowrap;overflow-x:auto;
+  scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.tabs::-webkit-scrollbar{display:none}
+.tabs>.tab{flex:none;white-space:nowrap;background:none;border:0;padding:6px 0;cursor:pointer;
+  font:inherit;font-size:13.5px;font-weight:550;color:var(--ink3);border-bottom:2px solid transparent}
+.tabs>.tab.on{color:var(--ink);border-bottom-color:var(--brand)}
+.tabs>.tab:hover{color:var(--ink)}
+
 /* Gráfico con el dato al pasar el ratón. La guía y el globo solo aparecen al entrar,
    para que el gráfico en reposo siga siendo lo mismo de siempre. */
 .chart{position:relative}

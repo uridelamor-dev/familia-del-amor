@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#f4f2ed" />
+    <title>Tu tarjeta · Familia del Amor</title>
+    <link rel="stylesheet" href="tarjeta.css" />
+  </head>
+  <!-- La tarjeta de cliente: su cuenta. La abre el CLIENTE en su móvil, desde el enlace de
+       WhatsApp o desde el pase que tiene guardado en la wallet.
+
+       Sin sesión: la llave es el token de la URL, como en el cupón, el pulso y el kiosco. NO
+       carga app.js ni auth.js. `noindex` y `no-referrer` para que el token no se filtre ni a
+       un buscador ni por la cabecera Referer al pulsar un enlace. -->
+  <body class="tj-body">
+    <main class="tj-wrap">
+      <p class="tj-marca">Familia del Amor</p>
+
+      <div class="tj-cargando" id="tjCargando">Un momento…</div>
+
+      <!-- El QR primero: es lo que se hace con esta página cuando hay alguien esperando. -->
+      <section class="tj-card tj-centro hidden" id="tjCard">
+        <h1 class="tj-titular" id="tjTitular">Tu tarjeta</h1>
+        <p class="tj-sub">Enséñala cuando vengas y te reconocemos al momento.</p>
+
+        <div class="tj-qr" id="tjQrCaja"><img id="tjQr" alt="Tu código" /></div>
+
+        <p class="tj-codigo-eti">Si no lo lee, dile este número:</p>
+        <p class="tj-codigo" id="tjCodigo">—</p>
+
+        <p class="tj-estado hidden" id="tjEstado"></p>
+
+        <div class="tj-wallet hidden" id="tjWallet">
+          <p class="tj-wallet-eti">Llévala siempre encima:</p>
+        </div>
+      </section>
+
+      <section class="tj-card hidden" id="tjVisitas">
+        <h2 class="tj-h">Tus visitas</h2>
+        <p class="tj-visitas" id="tjVisitasN">—</p>
+        <p class="tj-ultima hidden" id="tjUltima"></p>
+        <p class="tj-locales hidden" id="tjLocales"></p>
+      </section>
+
+      <section class="tj-card hidden" id="tjDtos">
+        <h2 class="tj-h">Tus descuentos</h2>
+        <ul class="tj-lista" id="tjDtosLista"></ul>
+        <p class="tj-vacio hidden" id="tjDtosVacio">Ahora mismo no tienes ninguno. Te avisamos por WhatsApp cuando haya.</p>
+      </section>
+
+      <section class="tj-card hidden" id="tjHist">
+        <h2 class="tj-h">Cuándo has venido</h2>
+        <ul class="tj-hist" id="tjHistLista"></ul>
+      </section>
+
+      <div class="tj-aviso hidden" id="tjAviso"></div>
+    </main>
+    <script src="tarjeta.js"></script>
+  </body>
+</html>

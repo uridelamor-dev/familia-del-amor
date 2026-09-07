@@ -11699,7 +11699,8 @@ async function webBlkUpload(input, gallery) {
 // Se emite a gente CONCRETA, elegida a mano en la pestaña «Emitir». No hay envío por segmento
 // aquí a propósito: una promoción emitida sin querer «a todo el que cumpla X» son cientos de
 // cupones vivos que luego hay que anular uno a uno. Para eso está Campañas.
-let PROMO = { tab: "lista", list: [], locales: [], qrs: [], canjes: [], contactos: [], sel: {}, ultimo: null };
+let PROMO = { tab: "lista", list: [], locales: [], qrs: [], canjes: [], contactos: [], sel: {}, ultimo: null,
+              tarjeta: null, wcfg: null, cap: null, capCola: [] };
 
 const promoPct = (a, b) => (Number(b) > 0 ? Math.round((Number(a) / Number(b)) * 100) : 0);
 const promoVigencia = (p) => {
@@ -11824,11 +11825,18 @@ function renderPromos() {
   const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Promociones</h1>
     <div class="sub">Cupones y carnés con QR · se validan en la tablet de la barra</div>
     <div class="acts"><button class="btn primary" data-act="promo-nueva">+ Nueva promoción</button></div></div>`;
-  const tabs = [["lista", "Promociones"], ["emitir", "Emitir QR"], ["qr", "QR emitidos"], ["canjes", "Canjes"]]
+  // La pestaña de la tarjeta solo la ve DIRECCIÓN. Está construida y probada, pero apagada por
+  // decisión de negocio: enseñársela a Marketing sería ofrecerles una función que hoy no
+  // existe de cara al cliente. Ahí dentro está el interruptor para encenderla.
+  const tabs = [["lista", "Promociones"], ["emitir", "Emitir QR"], ["qr", "QR emitidos"], ["canjes", "Canjes"],
+                ["captacion", "Captación"],
+                ...(USER.rol === "direccion" ? [["tarjeta", "Tarjeta de cliente"]] : [])]
     .map(([id, t]) => `<button class="tab${PROMO.tab === id ? " on" : ""}" data-act="promo-tab" data-tab="${id}">${t}</button>`).join("");
   const cuerpo = PROMO.tab === "emitir" ? promoTablaEmitir()
     : PROMO.tab === "qr" ? promoTablaQr()
     : PROMO.tab === "canjes" ? promoTablaCanjes()
+    : PROMO.tab === "captacion" ? promoCaptacion()
+    : PROMO.tab === "tarjeta" ? promoTarjeta()
     : promoTablaLista();
   return `${head}<div class="tabs">${tabs}</div><div style="margin-top:16px">${cuerpo}</div>`;
 }
@@ -11840,8 +11848,457 @@ async function loadPromos() {
     PROMO.list = j.data || []; PROMO.locales = j.locales || [];
     if (PROMO.tab === "qr") PROMO.qrs = (await apiRaw("/api/promos/qr")).data || [];
     if (PROMO.tab === "canjes") PROMO.canjes = (await apiRaw("/api/promos/canjes")).data || [];
+    if (PROMO.tab === "captacion") {
+      PROMO.cap = await apiRaw("/api/captacion/campanas");
+      PROMO.capCola = (await apiRaw("/api/captacion/cola")).data || [];
+    }
+    if (PROMO.tab === "tarjeta") {
+      PROMO.tarjeta = await apiRaw("/api/tarjeta/resumen");
+      // Con la tarjeta apagada no se piden los certificados: no hay nada que configurar
+      // todavía, y una petición menos es una pantalla que no se queda a medias si falla.
+      PROMO.wcfg = PROMO.tarjeta.activa ? await apiRaw("/api/wallet/config") : null;
+    }
     view.innerHTML = renderPromos();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+
+// ── Captación: campañas de anuncio y la cola de envíos ───────────────────────
+//
+// Una campaña es la puerta de una ruta pública: se crea aquí, sale la URL, se pega en Meta. Y
+// debajo, la cola — que existe porque a cada persona se le prometió en pantalla que le llegaría
+// el código, y lo que no sale tiene que VERSE, no desaparecer.
+
+const CAP_EST = {
+  viva: ["ok", "Abierta"], cerrada: ["", "Plazo cerrado"], aun_no_abre: ["", "Aún no abre"],
+  agotada: ["bad", "Agotada"], apagada: ["bad", "Apagada"], no_existe: ["bad", "—"],
+};
+const CAP_COLA_EST = {
+  pendiente: ["", "En cola"], enviado: ["ok", "Enviado"],
+  fallido: ["bad", "No salió"], descartado: ["", "No se manda"],
+};
+
+function promoCaptacion() {
+  const d = PROMO.cap || {};
+  const filas = d.data || [];
+  const cupo = d.cupo || { max: 0, usados: 0, quedan: 0 };
+
+  // Lo primero, el estado del canal. Si WhatsApp está caído o el cupo agotado, todo lo demás da
+  // igual: los códigos no salen, y quien lo mire tiene que enterarse antes de nada.
+  const salud = `<div class="card"><div class="ch"><h3>El canal</h3>
+      ${USER.rol === "direccion" ? `<button class="btn" data-act="cap-parada" data-parada="${d.parada ? "0" : "1"}">${d.parada ? "Reanudar envíos" : "Parar envíos"}</button>` : ""}</div>
+    <div class="rows">
+      <div class="row" style="justify-content:space-between;padding:6px 0">
+        <span class="t1">WhatsApp</span>
+        <span class="pill ${d.wa ? "ok" : "bad"}">${d.wa ? "Conectado" : "Caído: no sale nada"}</span></div>
+      <div class="row" style="justify-content:space-between;padding:6px 0">
+        <span><span class="t1">Mensajes de hoy</span>
+          <span class="t2">El tope protege el número, que es el mismo de las reservas y de Sara</span></span>
+        <span class="pill ${cupo.agotado ? "bad" : cupo.cerca ? "" : "ok"}">${num(cupo.usados)} / ${num(cupo.max)}</span></div>
+      ${d.parada ? `<div class="row" style="padding:6px 0"><span class="pill bad">Envíos parados a mano</span></div>` : ""}
+      ${USER.rol === "direccion" ? `<div class="row" style="justify-content:space-between;padding:6px 0">
+        <span><span class="t1">Píxel de Meta</span>
+          <span class="t2">Sin él, Meta optimiza a ciegas y cada formulario sale más caro</span></span>
+        <span>${d.pixel ? `<span class="pill ok">${esc(d.pixel)}</span>` : `<span class="pill">Sin poner</span>`}
+          <button class="linkbtn" style="color:var(--brand)" data-act="cap-pixel">Cambiar</button></span></div>` : ""}
+    </div></div>`;
+
+  const lista = filas.length
+    ? `<div class="card p0"><div class="tw"><table class="tbl">
+        <thead><tr><th>Campaña</th><th>Promoción</th><th class="r">Altas</th><th class="r">Enviados</th>
+          <th class="r">En cola</th><th class="r">No salieron</th><th class="r">Canjeados</th><th></th></tr></thead>
+        <tbody>${filas.map((c) => {
+          const [cls, txt] = CAP_EST[c.estado] || CAP_EST.no_existe;
+          return `<tr>
+            <td><div class="t1">${esc(c.nombre)} <span class="pill ${cls}" style="font-size:10px">${txt}</span></div>
+              <div class="t2">${esc(c.clave)}${c.tope_altas ? ` · tope ${num(c.tope_altas)}` : " · sin tope"}${c.altas_hasta ? ` · hasta ${esc(c.altas_hasta)}` : ""}</div></td>
+            <td class="mut">${esc(c.promocion || "—")}<div class="t2">${esc(c.locales || "Todas las barras")}</div></td>
+            <td class="r tnum">${num(c.altas)}</td>
+            <td class="r tnum">${num(c.enviados)}</td>
+            <td class="r tnum">${num(c.pendientes)}</td>
+            <td class="r tnum">${c.fallidos ? `<span style="color:var(--danger)">${num(c.fallidos)}</span>` : "0"}</td>
+            <td class="r tnum">${num(c.canjeados)}${c.altas ? ` <span class="mut">(${promoPct(c.canjeados, c.altas)}%)</span>` : ""}</td>
+            <td class="r" style="white-space:nowrap">
+              <button class="linkbtn" style="color:var(--brand)" data-act="tj-copiar" data-url="${esc(c.url)}">Copiar enlace</button> ·
+              <button class="linkbtn" style="color:var(--brand)" data-act="cap-editar" data-clave="${esc(c.clave)}">Editar</button></td>
+          </tr>`;
+        }).join("")}</tbody></table></div></div>`
+    : `<div class="card"><div class="mut" style="padding:8px">Todavía no hay campañas.
+        Crea una promoción y luego una campaña: te damos el enlace para pegar en el anuncio.</div></div>`;
+
+  // La cola, y ARRIBA lo que no salió: es lo único que hay que mirar todos los días.
+  const cola = PROMO.capCola || [];
+  const malos = cola.filter((f) => f.estado === "fallido" || f.estado === "descartado");
+  const orden = [...malos, ...cola.filter((f) => !malos.includes(f))].slice(0, 60);
+  const tablaCola = orden.length
+    ? `<div class="card p0"><div class="ch" style="padding:12px 14px 0"><h3>Los últimos envíos</h3>
+        ${malos.length ? `<span class="pill bad">${num(malos.length)} sin salir</span>` : ""}</div>
+      <div class="tw"><table class="tbl">
+        <thead><tr><th>Cuándo</th><th>Quién</th><th>Campaña</th><th>Estado</th><th></th></tr></thead>
+        <tbody>${orden.map((f) => {
+          const [cls, txt] = CAP_COLA_EST[f.estado] || ["", f.estado];
+          return `<tr>
+            <td class="mut">${esc(String(f.creado_en || "").slice(0, 16).replace("T", " "))}</td>
+            <td><div class="t1">${esc(f.titular || "—")}</div><div class="t2">${esc(f.telefono || "")}</div></td>
+            <td class="mut">${esc(f.campana || "")}</td>
+            <td><span class="pill ${cls}">${txt}</span>${f.ultimo_error ? `<div class="t2">${esc(f.ultimo_error)}${f.intentos ? ` · ${f.intentos} intentos` : ""}</div>` : ""}</td>
+            <td class="r">${(f.estado === "fallido" || f.estado === "descartado")
+              ? `<button class="linkbtn" style="color:var(--brand)" data-act="cap-reenviar" data-id="${f.id}">Reintentar</button>` : ""}</td>
+          </tr>`;
+        }).join("")}</tbody></table></div></div>`
+    : "";
+
+  const cabecera = `<div class="row" style="justify-content:flex-end;margin-bottom:10px">
+    <button class="btn primary" data-act="cap-nueva">+ Nueva campaña</button></div>`;
+
+  return cabecera + salud + `<div style="margin-top:16px">${lista}</div>` +
+         (tablaCola ? `<div style="margin-top:16px">${tablaCola}</div>` : "");
+}
+
+/**
+ * El formulario de campaña. Sirve para crear y para editar: el mismo, porque tenerlo dos veces
+ * significaba que un campo nuevo se añadía en uno y se olvidaba en el otro.
+ *
+ * Los textos van por idioma y escritos a mano. Son cuatro frases y las escribe Marketing: la
+ * frase con la que se le regala algo a un cliente no es sitio para una traducción automática.
+ */
+function capForm(c) {
+  const esNueva = !c;
+  c = c || { clave: "", nombre: "", promocion_id: "", idioma: "es", altas_desde: "", altas_hasta: "",
+             tope_altas: 0, activa: true, textos: "{}" };
+  let textos = {};
+  try { textos = typeof c.textos === "string" ? JSON.parse(c.textos || "{}") : (c.textos || {}); } catch { textos = {}; }
+
+  const opts = (PROMO.list || []).map((p) =>
+    `<option value="${p.id}" ${Number(c.promocion_id) === p.id ? "selected" : ""}>${esc(p.nombre)}${p.activa ? "" : " (parada)"}</option>`).join("");
+  const idiomas = [["es", "Castellano"], ["ca", "Català"], ["en", "English"]].map(([v, t]) =>
+    `<option value="${v}" ${c.idioma === v ? "selected" : ""}>${t}</option>`).join("");
+
+  const campoIdioma = (v, nombre) => {
+    const t = textos[v] || {};
+    return `<div class="field" style="width:100%"><label>${nombre} · titular</label>
+        <input id="capT_${v}_tit" value="${esc(t.titular || "")}" placeholder="Esmorzar gratis"></div>
+      <div class="field" style="width:100%"><label>${nombre} · debajo del titular</label>
+        <input id="capT_${v}_sub" value="${esc(t.subtitulo || "")}" placeholder="Deixa'ns el teu mòbil i t'enviem el codi."></div>
+      <div class="field" style="width:100%"><label>${nombre} · el WhatsApp que recibe</label>
+        <textarea id="capT_${v}_wa" rows="4" placeholder="Se deja vacío para usar el de por defecto">${esc(t.wa || "")}</textarea>
+        <span class="mut" style="font-size:12px">Variables: {nombre} {promocion} {enlace} {donde}</span></div>`;
+  };
+
+  const ov = modal(esNueva ? "Nueva campaña" : "Editar campaña", `
+    <div class="field" style="width:100%"><label>Nombre (para vosotros)</label>
+      <input id="capNombre" value="${esc(c.nombre)}" placeholder="Desayuno Girona · Meta octubre"></div>
+    <div class="field" style="width:100%"><label>Clave (va en el enlace del anuncio)</label>
+      <input id="capClave" value="${esc(c.clave)}" placeholder="girona-desayuno" ${esNueva ? "" : "readonly"}>
+      <span class="mut" style="font-size:12px">Minúsculas, números y guiones. No se puede cambiar después.</span></div>
+    <div class="field" style="width:100%"><label>Qué se regala</label>
+      <select id="capPromo"><option value="">Elige una promoción…</option>${opts}</select>
+      <span class="mut" style="font-size:12px">La promoción decide el regalo, en qué locales vale y qué días.</span></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:150px"><label>Altas desde</label>
+        <input id="capDesde" type="date" value="${esc(c.altas_desde || "")}"></div>
+      <div class="field" style="flex:1;min-width:150px"><label>Altas hasta</label>
+        <input id="capHasta" type="date" value="${esc(c.altas_hasta || "")}"></div>
+      <div class="field" style="flex:1;min-width:120px"><label>Tope de códigos</label>
+        <input id="capTope" type="number" min="0" value="${esc(c.tope_altas || 0)}">
+        <span class="mut" style="font-size:12px">0 = sin tope</span></div>
+      <div class="field" style="flex:1;min-width:150px"><label>Idioma por defecto</label>
+        <select id="capIdioma">${idiomas}</select>
+        <span class="mut" style="font-size:12px">Si el móvil dice otro, manda el del móvil.</span></div>
+    </div>
+    <label class="chip" style="cursor:pointer;margin:4px 0 10px">
+      <input type="checkbox" id="capActiva" ${c.activa ? "checked" : ""} style="margin-right:6px">Campaña abierta</label>
+
+    <details style="margin-bottom:10px"><summary class="mut" style="cursor:pointer">Textos por idioma (opcional)</summary>
+      <div style="padding-top:10px">${campoIdioma("ca", "Català")}${campoIdioma("es", "Castellano")}${campoIdioma("en", "English")}</div>
+    </details>
+
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="capSave">Guardar</button></div>`);
+
+  ov.querySelector("#capSave").addEventListener("click", async () => {
+    const textosOut = {};
+    for (const v of ["ca", "es", "en"]) {
+      const t = {};
+      const tit = ov.querySelector(`#capT_${v}_tit`).value.trim();
+      const sub = ov.querySelector(`#capT_${v}_sub`).value.trim();
+      const wa = ov.querySelector(`#capT_${v}_wa`).value.trim();
+      if (tit) t.titular = tit;
+      if (sub) t.subtitulo = sub;
+      if (wa) t.wa = wa;
+      if (Object.keys(t).length) textosOut[v] = t;
+    }
+    const cuerpo = {
+      clave: ov.querySelector("#capClave").value.trim(),
+      nombre: ov.querySelector("#capNombre").value.trim(),
+      promocion_id: Number(ov.querySelector("#capPromo").value),
+      altas_desde: ov.querySelector("#capDesde").value || "",
+      altas_hasta: ov.querySelector("#capHasta").value || "",
+      tope_altas: Number(ov.querySelector("#capTope").value) || 0,
+      idioma: ov.querySelector("#capIdioma").value,
+      activa: ov.querySelector("#capActiva").checked,
+      textos: textosOut,
+    };
+    try {
+      const r = await apiSend("POST", "/api/captacion/campanas", cuerpo);
+      ov.remove();
+      // Lo que el servidor ha descartado se dice, no se traga: con dinero gastado en el
+      // anuncio, un campo que desapareció en silencio se descubre tarde y caro.
+      const desc = (r && r.descartados) || [];
+      toast(desc.length ? `Guardada, pero no se pudo usar: ${desc.map((x) => x.valor || x.campo).join(", ")}`
+                        : "Campaña guardada ✅");
+      loadPromos();
+    } catch (e) { toast("Error: " + e.message); }
+  });
+}
+
+function capEditar(clave) {
+  const c = ((PROMO.cap && PROMO.cap.data) || []).find((x) => x.clave === clave);
+  if (c) capForm(c);
+}
+
+async function capReenviar(id) {
+  try {
+    await apiSend("POST", `/api/captacion/cola/${Number(id)}/reenviar`);
+    toast("Vuelve a la cola");
+    loadPromos();
+  } catch (e) { toast("Error: " + e.message); }
+}
+
+async function capPixel() {
+  const actual = (PROMO.cap && PROMO.cap.pixel) || "";
+  // Carga un script de Meta en una página pública: antes de ponerlo hay que tener claro el
+  // aviso de cookies. Por eso se dice aquí y no en una nota que nadie lee.
+  const v = prompt("Id del píxel de Meta (solo números). Déjalo vacío para quitarlo.\n\nOJO: carga un script de Meta en la página de campaña; revisa vuestro aviso de cookies antes de activarlo.", actual);
+  if (v === null) return;
+  try {
+    await apiSend("POST", "/api/captacion/pixel", { pixel: v });
+    toast(v.trim() ? "Píxel guardado ✅" : "Píxel quitado");
+    loadPromos();
+  } catch (e) { toast("Error: " + e.message); }
+}
+
+async function capParada(parada) {
+  const parar = parada === "1";
+  if (parar && !confirm("Deja de salir cualquier código de captación hasta que lo reanudes.\n\n¿Parar los envíos?")) return;
+  try {
+    await apiSend("POST", "/api/captacion/cola/parada", { parada: parar });
+    toast(parar ? "Envíos parados" : "Envíos reanudados");
+    loadPromos();
+  } catch (e) { toast("Error: " + e.message); }
+}
+
+// ── La tarjeta de cliente ────────────────────────────────────────────────────
+// Aquí NO se emiten tarjetas: se las hacen los clientes, desde la web o escaneando el cartel de
+// una mesa. Lo que hay en esta pestaña es lo que hace falta para eso: el cartel que se imprime,
+// cuántas tarjetas hay y de dónde salieron, y las credenciales de Apple y Google.
+function promoTarjeta() {
+  const d = PROMO.tarjeta || {};
+  const w = d.wallet || { apple: 0, google: 0, total: 0 };
+  const disp = d.disponible || { apple: false, google: false };
+
+  // ── Apagada: una sola tarjeta y un solo botón ──────────────────────────────
+  // Está entera y probada, pero no sale a la calle. Mientras esté así, esta pestaña no enseña
+  // ni contadores ni carteles ni certificados: enseñar el aparataje de algo que nadie puede
+  // usar es exactamente lo que hace que un panel se vuelva ilegible.
+  if (!d.activa) {
+    return `<div class="card" style="max-width:640px">
+      <div class="ch"><h3>La tarjeta de cliente está apagada</h3><span class="pill">Sin publicar</span></div>
+      <div class="mut" style="line-height:1.6">
+        Está construida y probada, pero <b>no aparece en ningún sitio</b>: ni en la web, ni en los
+        enlaces que se mandan por WhatsApp, ni en las tablets de la barra. Los carnés que se
+        emiten desde «Emitir QR» siguen funcionando exactamente igual que siempre.
+        <div style="margin-top:10px">Cuando se encienda, el cliente podrá hacérsela él solo
+          —desde la web o escaneando un cartel de una mesa— y esa página pasará a ser su cuenta:
+          sus visitas, sus descuentos y los botones para guardarla en el móvil.</div>
+        <div style="margin-top:10px">Encenderla <b>saca páginas nuevas a la web pública</b>.
+          Después habrá que cargar aquí los certificados de Apple y de Google para que aparezcan
+          los botones de la wallet.</div>
+      </div>
+      <div class="row" style="margin-top:14px"><button class="btn primary" data-act="tj-encender">Encender la tarjeta de cliente</button></div>
+    </div>`;
+  }
+
+  const cifra = (n, t) => `<div class="kpi"><span>${t}</span><b>${num(n || 0)}</b></div>`;
+  const resumen = `<div class="card"><div class="ch"><h3>Cuántas hay</h3>
+      <button class="linkbtn" style="color:var(--danger)" data-act="tj-apagar">Apagar la tarjeta</button></div>
+    <div class="kpis4" style="grid-template-columns:repeat(3,1fr)">
+      ${cifra(w.total, "Tarjetas vivas")}
+      ${cifra(w.apple, "En Apple")}
+      ${cifra(w.google, "En Google")}
+    </div>
+    ${(d.origenes || []).length ? `<div class="tw" style="margin-top:10px"><table class="tbl">
+      <thead><tr><th>De dónde salió</th><th class="r">Tarjetas</th></tr></thead>
+      <tbody>${d.origenes.map((o) => `<tr>
+        <td>${esc(o.origen === "local" ? "Cartel de " + nombreCortoLocal(o.local) : o.origen === "web" ? "La web" : "Emitida desde el panel")}</td>
+        <td class="r tnum">${num(o.n)}</td></tr>`).join("")}</tbody></table></div>` : ""}</div>`;
+
+  const opciones = (PROMO.locales || []).map((l) => `<option value="${esc(l)}">${esc(nombreCortoLocal(l))}</option>`).join("");
+  const cartel = `<div class="card"><div class="ch"><h3>El cartel del local</h3></div>
+    <div class="mut" style="margin-bottom:10px">Imprímelo y ponlo en las mesas. Cada local lleva el suyo:
+      así se sabe qué cartel funciona y cuál no.</div>
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <div class="field"><label>Local</label><select id="tjLocal">
+        <option value="">Sin local (genérico)</option>${opciones}</select></div>
+      <button class="btn primary" data-act="tj-cartel">Ver el QR</button>
+    </div>
+    <div id="tjCartelCaja" style="margin-top:12px"></div></div>`;
+
+  if (USER.rol !== "direccion") return `<div class="grid g2">${resumen}${cartel}</div>`;
+
+  const c = PROMO.wcfg || {};
+  const ap = c.apple || {}, go = c.google || {};
+  const pill = (ok, txt) => `<span class="pill ${ok ? "ok" : "bad"}">${txt}</span>`;
+  const wallet = `<div class="card"><div class="ch"><h3>Apple Wallet y Google Wallet</h3>
+      <button class="btn" data-act="tj-probar">Probar</button></div>
+    <div class="mut" style="margin-bottom:12px">El botón de cada plataforma solo le sale al cliente si aquí
+      está todo cargado. Los certificados se guardan cifrados y no vuelven a salir por ningún sitio.</div>
+
+    <div class="rows">
+      <div class="row" style="justify-content:space-between;padding:8px 0">
+        <span><span class="t1">Apple Wallet</span>
+          <span class="t2">${ap.configurado ? esc(ap.pass_type_id || "") : "Necesita una cuenta de Apple Developer (99 €/año)"}
+            ${ap.caduca_en ? " · caduca " + esc(String(ap.caduca_en)) : ""}${ap.error ? " · " + esc(ap.error) : ""}</span></span>
+        <span>${pill(disp.apple, disp.apple ? "Activo" : ap.caducado ? "Certificado caducado" : "Sin configurar")}
+          <button class="linkbtn" style="color:var(--brand)" data-act="tj-cfg" data-plat="apple">Configurar</button></span>
+      </div>
+      <div class="row" style="justify-content:space-between;padding:8px 0">
+        <span><span class="t1">Google Wallet</span>
+          <span class="t2">${go.configurado ? esc(go.sa_email || "") : "Gratis: proyecto de Google Cloud + Wallet API"}</span></span>
+        <span>${pill(disp.google, disp.google ? "Activo" : "Sin configurar")}
+          <button class="linkbtn" style="color:var(--brand)" data-act="tj-cfg" data-plat="google">Configurar</button></span>
+      </div>
+      ${c.openssl === false ? `<div class="row" style="padding:8px 0"><span class="pill bad">Falta openssl en el servidor: Apple Wallet no puede firmar</span></div>` : ""}
+    </div>
+    <div id="tjProbar" style="margin-top:10px"></div></div>`;
+
+  return `<div class="grid g2">${resumen}${cartel}</div><div style="margin-top:16px">${wallet}</div>`;
+}
+
+/**
+ * Encender o apagar la tarjeta de cliente.
+ *
+ * Encenderla se confirma porque saca páginas nuevas a la web pública, que es de las cosas que
+ * luego nadie recuerda haber hecho. Apagarla NO borra nada: los carnés emitidos se quedan, y
+ * los que ya tuvieran la tarjeta guardada en el móvil siguen pudiendo enseñar el QR — lo que
+ * deja de existir es la página de la cuenta y el alta.
+ */
+async function tjInterruptor(activa) {
+  if (activa && !confirm("Se van a publicar en la web las páginas de la tarjeta de cliente y el alta.\n\n¿Encenderla?")) return;
+  if (!activa && !confirm("Deja de aparecer el alta y la página de la cuenta.\n\nLos carnés ya emitidos NO se borran y se siguen validando en la barra.\n\n¿Apagarla?")) return;
+  try {
+    await apiSend("POST", "/api/tarjeta/activa", { activa });
+    toast(activa ? "Tarjeta de cliente encendida" : "Tarjeta de cliente apagada");
+    loadPromos();
+  } catch (e) { toast("Error: " + e.message); }
+}
+
+async function tjCartel() {
+  const sel = document.getElementById("tjLocal");
+  const caja = document.getElementById("tjCartelCaja");
+  if (!caja) return;
+  caja.innerHTML = '<div class="mut">Generando…</div>';
+  try {
+    const j = await apiRaw("/api/tarjeta/cartel?local=" + encodeURIComponent(sel ? sel.value : ""));
+    caja.innerHTML = `<div style="text-align:center">
+      <img src="${esc(j.qr)}" alt="QR de alta" style="width:100%;max-width:260px;image-rendering:pixelated">
+      <div class="t2" style="margin-top:6px;word-break:break-all">${esc(j.url)}</div>
+      <div class="row" style="gap:8px;justify-content:center;margin-top:10px">
+        <a class="btn" href="${esc(j.qr)}" download="qr-tarjeta${j.local ? "-" + esc(nombreCortoLocal(j.local)) : ""}.png">Descargar PNG</a>
+        <button class="btn" data-act="tj-copiar" data-url="${esc(j.url)}">Copiar enlace</button>
+      </div></div>`;
+  } catch (e) { caja.innerHTML = errorCard(e.message); }
+}
+
+async function tjProbar() {
+  const caja = document.getElementById("tjProbar");
+  if (!caja) return;
+  caja.innerHTML = '<div class="mut">Probando…</div>';
+  try {
+    const j = await apiSend("POST", "/api/wallet/probe");
+    // Se dice el error EXACTO de cada plataforma. El fallo de esto nunca es «no funciona»: es la
+    // contraseña del .p12, o el intermedio de Apple, o la clave de Google pegada con los \n
+    // literales, y sin el mensaje de openssl delante se tarda una tarde en saber cuál.
+    const linea = (t, r) => `<div class="row" style="gap:8px;padding:4px 0">
+      <span class="pill ${r && r.ok ? "ok" : "bad"}">${t}</span>
+      <span class="t2">${esc(r && r.ok ? "Correcto" : (r && r.error) || "Sin configurar")}</span></div>`;
+    caja.innerHTML = linea("Apple", j.apple) + linea("Google", j.google);
+  } catch (e) { caja.innerHTML = errorCard(e.message); }
+}
+
+/** El formulario de credenciales. Los campos vacíos NO borran lo que ya hay: si no, volver a
+ *  entrar para corregir el Team ID se llevaría por delante el certificado. */
+function tjConfig(plataforma) {
+  const c = PROMO.wcfg || {};
+  const esApple = plataforma === "apple";
+  const ap = c.apple || {}, go = c.google || {};
+
+  const cuerpo = esApple ? `
+    <div class="mut" style="margin-bottom:10px">De la cuenta de Apple Developer: crea un
+      <b>Pass Type ID</b>, genera su certificado y expórtalo como <b>.p12</b> con contraseña.
+      Hace falta además el intermedio <b>WWDR</b> de Apple en formato PEM.</div>
+    <div class="field" style="width:100%"><label>Pass Type ID</label>
+      <input id="wPassType" value="${esc(ap.pass_type_id || "")}" placeholder="pass.org.familiadelamor.tarjeta"></div>
+    <div class="field" style="width:100%"><label>Team ID</label>
+      <input id="wTeam" value="${esc(ap.team_id || "")}" placeholder="ABCDE12345"></div>
+    <div class="field" style="width:100%"><label>Certificado .p12</label>
+      <input id="wP12" type="file" accept=".p12,.pfx"></div>
+    <div class="field" style="width:100%"><label>Contraseña del .p12 ${ap.configurado ? "(déjala vacía para no cambiarla)" : ""}</label>
+      <input id="wP12Pass" type="password" autocomplete="new-password" placeholder="${esc(ap.pass_pista || "")}"></div>
+    <div class="field" style="width:100%"><label>Certificado WWDR de Apple (.pem o .cer en texto)</label>
+      <textarea id="wWwdr" rows="3" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>`
+  : `
+    <div class="mut" style="margin-bottom:10px">De Google Cloud: activa la <b>Google Wallet API</b>,
+      crea una <b>service account</b> y descarga su clave JSON. El <b>Issuer ID</b> sale de la
+      consola de Google Pay &amp; Wallet.</div>
+    <div class="field" style="width:100%"><label>Issuer ID</label>
+      <input id="wIssuer" value="${esc(go.issuer_id || "")}" placeholder="3388000000012345678"></div>
+    <div class="field" style="width:100%"><label>Correo de la service account</label>
+      <input id="wSaEmail" value="${esc(go.sa_email || "")}" placeholder="wallet@proyecto.iam.gserviceaccount.com"></div>
+    <div class="field" style="width:100%"><label>Clave privada (private_key del JSON) ${go.configurado ? "— déjala vacía para no cambiarla" : ""}</label>
+      <textarea id="wSaKey" rows="4" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></div>`;
+
+  const ov = modal(esApple ? "Apple Wallet" : "Google Wallet", cuerpo + `
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+      <button class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="wSave">Guardar</button></div>`);
+
+  ov.querySelector("#wSave").addEventListener("click", async () => {
+    const envio = { plataforma, activo: true };
+    try {
+      if (esApple) {
+        envio.pass_type_id = (ov.querySelector("#wPassType").value || "").trim();
+        envio.team_id = (ov.querySelector("#wTeam").value || "").trim();
+        // Los campos de secreto vacíos NO se mandan: el servidor conserva lo que ya tenía. Si se
+        // mandaran vacíos, entrar aquí a corregir el Team ID borraría el certificado.
+        const pass = ov.querySelector("#wP12Pass").value;
+        if (pass) envio.p12_pass = pass;
+        const wwdr = (ov.querySelector("#wWwdr").value || "").trim();
+        if (wwdr) envio.wwdr_pem = wwdr;
+        const f = ov.querySelector("#wP12").files[0];
+        if (f) envio.p12_b64 = await leerBase64(f);
+      } else {
+        envio.issuer_id = (ov.querySelector("#wIssuer").value || "").trim();
+        envio.sa_email = (ov.querySelector("#wSaEmail").value || "").trim();
+        const k = (ov.querySelector("#wSaKey").value || "").trim();
+        if (k) envio.sa_key = k;
+      }
+      await apiSend("POST", "/api/wallet/config", envio);
+      ov.remove();
+      toast("Guardado ✅");
+      loadPromos();
+    } catch (e) { toast("Error: " + e.message); }
+  });
+}
+
+/** Un fichero binario a base64 sin cabecera de data-URL. */
+function leerBase64(file) {
+  return new Promise((ok, mal) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(String(fr.result).replace(/^data:[^,]*,/, ""));
+    fr.onerror = () => mal(new Error("No se pudo leer el archivo"));
+    fr.readAsDataURL(file);
+  });
 }
 
 function promoTab(tab) { PROMO.tab = tab; loadPromos(); }
@@ -12379,7 +12836,17 @@ document.addEventListener("click", (e) => {
   else if (act === "promo-anular") promoAnular(t.getAttribute("data-id"));
   else if (act === "promo-anular-lote") promoAnularLote(t.getAttribute("data-id"), t.getAttribute("data-n"), t.getAttribute("data-nombre"));
   else if (act === "promo-reenviar") promoReenviar(t.getAttribute("data-id"));
-  else if (act === "promo-copiar") promoCopiar(t.getAttribute("data-url"));
+  else if (act === "promo-copiar" || act === "tj-copiar") promoCopiar(t.getAttribute("data-url"));
+  else if (act === "cap-nueva") capForm(null);
+  else if (act === "cap-editar") capEditar(t.getAttribute("data-clave"));
+  else if (act === "cap-reenviar") capReenviar(t.getAttribute("data-id"));
+  else if (act === "cap-parada") capParada(t.getAttribute("data-parada"));
+  else if (act === "cap-pixel") capPixel();
+  else if (act === "tj-encender") tjInterruptor(true);
+  else if (act === "tj-apagar") tjInterruptor(false);
+  else if (act === "tj-cartel") tjCartel();
+  else if (act === "tj-probar") tjProbar();
+  else if (act === "tj-cfg") tjConfig(t.getAttribute("data-plat"));
   else if (act === "camp-nueva") openNuevaCampana();
   else if (act === "camp-redactar") campRedactar();
   else if (act === "camp-usar-propuesta") campUsarPropuesta();
