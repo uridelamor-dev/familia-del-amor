@@ -64,6 +64,26 @@ Otros puntos: la hora de un fichaje la pone el **servidor** (salvo los diferidos
 porque no se pueden añadir dependencias; y el generador (`solver.js`) **propone un borrador**,
 no publica.
 
+## Vales impresos (cupones anónimos)
+Papeles con QR que se reparten en mano y canjea quien los traiga, sin datos. Un vale es un cupón
+de `pro_qr` **sin teléfono** — el esquema ya lo tenía previsto (`idx_pro_canje_cliente` excluye
+los canjes sin teléfono a propósito) y el canje en barra funciona igual, porque el candado de
+concurrencia está en el UPDATE atómico de `SQL_CANJEAR`, que no mira el teléfono.
+
+⚠️ **`usos_max = 0` significa ILIMITADO.** Un vale impreso con 0 son cien desayunos gratis con un
+papel, y no da ningún error. La emisión usa `USOS_POR_VALE` (= 1) y hay test.
+
+Panel → Promociones → **Emitir QR** → «Vales para imprimir · sin cliente»: promoción, nombre de la
+tirada, cuántos (máx. 200) y caducidad → se descarga un ZIP con un **SVG por vale**, el CSV que
+enlaza la imprenta y un LÉEME. **Con un solo vale baja el SVG suelto.** En «QR emitidos» hay
+además «QR» y «PNG» por fila, para sacar el de cualquier cupón ya emitido.
+- La **tirada** (`pro_qr.tirada`) agrupa: cuántos van, cuántos han vuelto, y anular un taco perdido.
+  Su nombre no se puede repetir, para que el ZIP sea siempre lo que se imprimió.
+- **El QR no baja de 3 cm** de lado: son 41 módulos, 0,67 mm cada uno. Va escrito en el LÉEME.
+- Sin identidad no hay «uno por persona»: el único límite es un uso por vale, y por eso cada vale
+  lleva su propio QR. Y el canje **no dice quién vino** — es el precio de ser anónimo.
+Razones completas en `docs/adr/0004-vales-impresos.md`.
+
 ## Captación por campaña (anuncios de pago)
 La landing **ya no tiene formulario de descuento**: el popup del 10 % y su franja se quitaron. La
 captación vive en `/promo.html?c=<clave>`, a la que **solo se llega por el enlace del anuncio**

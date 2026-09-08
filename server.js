@@ -76,6 +76,10 @@ import { generarSemana, ORIGEN as ORIGEN_SOLVER } from "./src/modules/horarios/s
 import { construirPdfSemana, nombreFichero } from "./src/modules/horarios/pdf/schedule-pdf.service.js";
 import { ensureSchemaFichajes } from "./src/modules/fichajes/schema.js";
 import { ensureSchemaPromos } from "./src/modules/promos/schema.js";
+// Vales impresos: cupones anónimos con QR para repartir en mano.
+import { sanearTirada, nombreVale, nombreZip, csvDeVales, leeme as valesLeeme,
+         USOS_POR_VALE, QR_OPCIONES as VALE_QR_OPCIONES,
+         PNG_LADO as VALE_PNG_LADO } from "./src/modules/promos/vales.js";
 // `estadoDe` se renombra: el de fichajes (la máquina de estados de la jornada) ya ocupa ese
 // nombre aquí abajo, y son dos cosas sin ninguna relación.
 import { generarCodigo as proGenerarCodigo, tel9 as proTel9, normalizarEntrada as proNormalizar,
@@ -10751,17 +10755,17 @@ const proEnlace = (req, qr) =>
  * combinaciones la colisión es rarísima, pero «rarísima» y «no puede pasar» son cosas
  * distintas, y dos cupones con el mismo código se canjearían el uno al otro.
  */
-async function proEmitir({ clase, promocionId = null, telefono = "", nombre = "", caducaEn = null, usosMax = 1, autor = "", origen = "panel", localAlta = null }) {
+async function proEmitir({ clase, promocionId = null, telefono = "", nombre = "", caducaEn = null, usosMax = 1, autor = "", origen = "panel", localAlta = null, tirada = null }) {
   const ahora = new Date().toISOString();
   for (let intento = 0; intento < 5; intento++) {
     const token = generarToken((n) => crypto.randomBytes(n));
     const codigo = proGenerarCodigo((n) => crypto.randomBytes(n));
     try {
       return await dbRun(
-        `INSERT INTO pro_qr (clase, token, codigo, promocion_id, telefono, nombre, usos_max, caduca_en, creado_en, creado_por, origen, local_alta)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *`,
+        `INSERT INTO pro_qr (clase, token, codigo, promocion_id, telefono, nombre, usos_max, caduca_en, creado_en, creado_por, origen, local_alta, tirada)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *`,
         [clase, token, codigo, promocionId, proTel9(telefono), String(nombre || "").slice(0, 80),
-         clase === "carnet" ? 0 : usosMax, caducaEn, ahora, autor, origen, localAlta]);
+         clase === "carnet" ? 0 : usosMax, caducaEn, ahora, autor, origen, localAlta, tirada]);
     } catch (e) {
       if (/duplicate key|unique/i.test(String(e.message || "")) && intento < 4) continue;
       throw e;
@@ -10974,6 +10978,181 @@ app.post("/api/promos/qr/:id/enviar", requireAuth(PROMOS_ROLES), async (req, res
   } catch (e) {
     console.error("[promos] enviar:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo enviar" });
+  }
+});
+
+// ── Vales impresos: cupones anónimos para repartir en mano ───────────────────
+//
+// Un vale es un cupón SIN TELÉFONO. Nada de esto es una excepción al sistema: el esquema ya lo
+// tenía previsto —el índice único del límite por cliente excluye a propósito los canjes sin
+// teléfono, «un cupón impreso en un flyer, que no es de nadie»— y el canje en la barra ya
+// funciona igual, porque el candado de concurrencia está en el UPDATE atómico de `SQL_CANJEAR`,
+// que no mira el teléfono para nada.
+//
+// Lo único que faltaba era una vía de emisión sin destinatarios: `POST /api/promos/emitir` exige
+// gente concreta con su móvil, y es deliberado — emitir a una persona es un acto sobre esa
+// persona. Un vale impreso es otra cosa y por eso tiene su propia puerta.
+//
+// LO QUE HAY QUE ACEPTAR: sin identidad no hay «uno por persona». El único límite es un uso por
+// vale, y por eso cada vale lleva su propio QR: si alguien fotografía el suyo y lo cuelga en un
+// grupo, el primero que llegue se lo lleva y el daño se queda en ese papel.
+//
+// Estas rutas van ANTES que `/api/promos/:id/...`: Express recorre en orden y gana la primera que
+// casa. Mismo motivo que `/api/contactos/poblaciones` antes de `/api/contactos/:telefono`.
+
+/** El QR de un cupón, en vectorial o en mapa de bits. Una sola función para las dos salidas. */
+async function proQrImagen(enlace, formato) {
+  if (formato === "png") return QRCode.toBuffer(enlace, { ...VALE_QR_OPCIONES, width: VALE_PNG_LADO });
+  return Buffer.from(await QRCode.toString(enlace, { type: "svg", ...VALE_QR_OPCIONES }), "utf8");
+}
+
+/**
+ * Emite una tirada de vales anónimos.
+ *
+ * De uno en uno y no en un solo INSERT masivo: `proEmitir` reintenta cuando el código de ocho
+ * dígitos ya existía, y esa lógica no se duplica aquí. Con doscientos como techo, doscientos
+ * INSERT son un suspiro y valen más que un camino nuevo que se pueda desincronizar.
+ */
+app.post("/api/promos/vales", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const promociones = await dbAll(`SELECT id FROM pro_promociones`);
+    const { tirada, descartados } = sanearTirada(req.body, { promociones });
+    if (!tirada.nombre || !tirada.promocion_id || !tirada.cantidad) {
+      return res.status(400).json({ ok: false, error: descartados[0]?.motivo || "Faltan datos", descartados });
+    }
+
+    // Una tirada no se puede repetir. Si se dejara, el ZIP de «buzoneo-girona» sería a veces los
+    // cien de septiembre y a veces los ciento cincuenta de septiembre y octubre, y nadie sabría
+    // cuál se imprimió. Un nombre nuevo por tirada, y el ZIP siempre es exactamente lo repartido.
+    const ya = await dbGet(`SELECT 1 AS x FROM pro_qr WHERE tirada = ? LIMIT 1`, [tirada.clave]);
+    if (ya) return res.status(409).json({ ok: false, error: `Ya hay una tirada que se llama «${tirada.clave}». Ponle otro nombre.` });
+
+    const promo = await dbGet(`SELECT * FROM pro_promociones WHERE id = ?`, [tirada.promocion_id]);
+    const emitidos = [];
+    for (let i = 0; i < tirada.cantidad; i++) {
+      const qr = await proEmitir({
+        clase: "cupon", promocionId: promo.id,
+        telefono: "", nombre: "",                 // anónimo: no es de nadie
+        caducaEn: tirada.caduca_en,
+        usosMax: USOS_POR_VALE,                   // NUNCA 0: ver el comentario en vales.js
+        autor: req.user.username, origen: "impreso", tirada: tirada.clave });
+      emitidos.push(qr.id);
+    }
+
+    res.json({ ok: true, tirada: tirada.clave, nombre: tirada.nombre, cantidad: emitidos.length, descartados });
+  } catch (e) {
+    console.error("[promos] vales emitir:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron emitir los vales" });
+  }
+});
+
+/** Las tiradas con sus contadores. Es la pantalla que dice si el reparto ha servido de algo. */
+app.get("/api/promos/vales", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const filas = await dbAll(
+      `SELECT q.tirada, MIN(q.creado_en) AS creado_en, MIN(q.creado_por) AS creado_por,
+              MIN(q.caduca_en) AS caduca_en, MIN(p.nombre) AS promocion, MIN(q.promocion_id) AS promocion_id,
+              COUNT(*)::int AS emitidos,
+              COUNT(*) FILTER (WHERE q.usos > 0)::int AS canjeados,
+              COUNT(*) FILTER (WHERE q.anulado_en IS NOT NULL)::int AS anulados
+         FROM pro_qr q LEFT JOIN pro_promociones p ON p.id = q.promocion_id
+        WHERE q.tirada IS NOT NULL
+        GROUP BY q.tirada
+        ORDER BY MIN(q.creado_en) DESC LIMIT 100`);
+    res.json({ ok: true, data: filas });
+  } catch (e) {
+    console.error("[promos] vales listar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron cargar las tiradas" });
+  }
+});
+
+/**
+ * La descarga de una tirada.
+ *
+ * Con más de un vale, un ZIP con los SVG, el CSV y un LÉEME. Con UNO SOLO, el SVG a pelo: un ZIP
+ * con un fichero dentro es una molestia y el caso de «solo voy a hacer un vale» es de los que más
+ * se dan.
+ */
+app.get("/api/promos/vales/:tirada/zip", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const clave = String(req.params.tirada || "").slice(0, 60);
+    const filas = await dbAll(
+      `SELECT q.*, p.nombre AS promocion FROM pro_qr q LEFT JOIN pro_promociones p ON p.id = q.promocion_id
+        WHERE q.tirada = ? ORDER BY q.id ASC`, [clave]);
+    if (!filas.length) return res.status(404).json({ ok: false, error: "Esa tirada no existe" });
+
+    const vales = filas.map((q) => ({ codigo: q.codigo, url: proEnlace(req, q) }));
+    const promocion = filas[0].promocion || "";
+    const caducaEn = filas[0].caduca_en || "";
+
+    if (vales.length === 1) {
+      const svg = await proQrImagen(vales[0].url, "svg");
+      res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${nombreVale(1, vales[0].codigo)}"`);
+      res.setHeader("Cache-Control", "private, no-store");
+      return res.end(svg);
+    }
+
+    const archivos = [];
+    for (let i = 0; i < vales.length; i++) {
+      archivos.push({ nombre: nombreVale(i + 1, vales[i].codigo), datos: await proQrImagen(vales[i].url, "svg") });
+    }
+    archivos.push({ nombre: "vales.csv", datos: Buffer.from(csvDeVales(vales, { promocion, caducaEn }), "utf8") });
+    archivos.push({ nombre: "LEEME.txt", datos: Buffer.from(
+      valesLeeme({ promocion, tirada: clave, cantidad: vales.length, caducaEn }), "utf8") });
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombreZip(clave)}"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.end(crearZip(archivos));
+  } catch (e) {
+    console.error("[promos] vales zip:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo preparar la descarga" });
+  }
+});
+
+/**
+ * Anula los vales SIN USAR de una tirada.
+ *
+ * Existe porque el accidente caro de esto es perder el taco de papeles, o imprimirlo mal. Solo
+ * toca los que nadie ha usado: quitarle el desayuno a alguien que ya lo canjeó no tendría sentido
+ * y además borraría el sentido de su canje.
+ */
+app.post("/api/promos/vales/:tirada/anular", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const clave = String(req.params.tirada || "").slice(0, 60);
+    const filas = await dbAll(
+      `UPDATE pro_qr SET anulado_en = ?, anulado_por = ?
+        WHERE tirada = ? AND anulado_en IS NULL AND usos = 0 RETURNING id`,
+      [new Date().toISOString(), req.user.username, clave]);
+    res.json({ ok: true, anulados: (filas || []).length });
+  } catch (e) {
+    console.error("[promos] vales anular:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudieron anular" });
+  }
+});
+
+/**
+ * El QR de CUALQUIER cupón o carné ya emitido, suelto.
+ *
+ * Para el vale de uno, y para imprimirle el suyo a alguien concreto sin volver a emitir nada.
+ * SVG para quien maqueta de verdad; PNG para pegarlo en un documento sin pelearse con el formato.
+ */
+app.get("/api/promos/qr/:id/imagen", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const qr = await dbGet(`SELECT * FROM pro_qr WHERE id = ?`, [Number(req.params.id)]);
+    if (!qr) return res.status(404).json({ ok: false, error: "Ese QR no existe" });
+
+    const formato = req.query.formato === "png" ? "png" : "svg";
+    const imagen = await proQrImagen(proEnlace(req, qr), formato);
+    res.setHeader("Content-Type", formato === "png" ? "image/png" : "image/svg+xml; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombreVale(1, qr.codigo, formato)}"`);
+    // Dentro va el token de un cupón concreto: ni caché compartida ni intermediarios.
+    res.setHeader("Cache-Control", "private, no-store");
+    res.end(imagen);
+  } catch (e) {
+    console.error("[promos] qr imagen:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo generar el QR" });
   }
 });
 

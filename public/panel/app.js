@@ -11700,7 +11700,7 @@ async function webBlkUpload(input, gallery) {
 // aquí a propósito: una promoción emitida sin querer «a todo el que cumpla X» son cientos de
 // cupones vivos que luego hay que anular uno a uno. Para eso está Campañas.
 let PROMO = { tab: "lista", list: [], locales: [], qrs: [], canjes: [], contactos: [], sel: {}, ultimo: null,
-              tarjeta: null, wcfg: null, cap: null, capCola: [] };
+              tarjeta: null, wcfg: null, cap: null, capCola: [], tiradas: [] };
 
 const promoPct = (a, b) => (Number(b) > 0 ? Math.round((Number(a) / Number(b)) * 100) : 0);
 const promoVigencia = (p) => {
@@ -11777,6 +11777,7 @@ function promoTablaEmitir() {
       <button class="btn primary" data-act="promo-emitir">Emitir${elegidos ? ` a ${num(elegidos)}` : ""}</button>
     </div>
   </div>
+  ${promoTarjetaVales()}
   <div id="promoResultado"></div>`;
 }
 
@@ -11807,16 +11808,26 @@ function promoTablaQr() {
         : '<span class="pill good">Sin usar</span>';
       const envio = q.enviado_en ? esc(String(q.enviado_en).slice(0, 10))
         : q.enviado_error ? `<span class="mut" title="${esc(q.enviado_error)}">No salió</span>` : '<span class="mut">—</span>';
+      // Un vale impreso no es de nadie, así que la columna «Cliente» diría «—» en cien filas
+      // seguidas. Se enseña su tirada, que es lo único que las distingue.
+      const quien = q.tirada
+        ? `<div class="t1">Vale impreso</div><div class="t2">${esc(q.tirada)}</div>`
+        : `${esc(q.nombre || "—")}<div class="t2">${esc(q.telefono || "")}</div>`;
       return `<tr>
-        <td>${esc(q.nombre || "—")}<div class="t2">${esc(q.telefono || "")}</div></td>
+        <td>${quien}</td>
         <td>${q.clase === "carnet" ? "Carné de cliente" : esc(q.promocion || "Cupón")}</td>
         <td class="mut tnum">${esc(q.codigo)}</td>
         <td>${estado}</td>
         <td class="mut">${envio}</td>
         <td class="r" style="white-space:nowrap">
-          <button class="linkbtn" style="color:var(--brand)" data-act="promo-copiar" data-url="${esc(q.url)}">Copiar enlace</button>
-          ${q.anulado_en ? "" : ` · <button class="linkbtn" style="color:var(--brand)" data-act="promo-reenviar" data-id="${q.id}">Reenviar</button>
-             · <button class="linkbtn" style="color:var(--danger)" data-act="promo-anular" data-id="${q.id}">Anular</button>`}</td>
+          <button class="linkbtn" style="color:var(--brand)" data-act="promo-qr-svg" data-id="${q.id}" data-codigo="${esc(q.codigo)}" title="Vectorial, para imprimir">QR</button>
+          · <button class="linkbtn" style="color:var(--brand)" data-act="promo-qr-png" data-id="${q.id}" data-codigo="${esc(q.codigo)}" title="PNG, para pegarlo en un documento">PNG</button>
+          · <button class="linkbtn" style="color:var(--brand)" data-act="promo-copiar" data-url="${esc(q.url)}">Copiar enlace</button>
+          ${q.anulado_en ? "" : `${
+            // «Reenviar» sin teléfono solo puede dar 409 («Sin teléfono»): un botón que nunca
+            // puede funcionar se acaba pulsando igual y parece que algo está roto.
+            q.telefono ? ` · <button class="linkbtn" style="color:var(--brand)" data-act="promo-reenviar" data-id="${q.id}">Reenviar</button>` : ""
+          } · <button class="linkbtn" style="color:var(--danger)" data-act="promo-anular" data-id="${q.id}">Anular</button>`}</td>
       </tr>`;
     }).join("")}</tbody></table></div></div>`;
 }
@@ -11846,6 +11857,7 @@ async function loadPromos() {
   try {
     const j = await apiRaw("/api/promos");
     PROMO.list = j.data || []; PROMO.locales = j.locales || [];
+    if (PROMO.tab === "emitir") PROMO.tiradas = (await apiRaw("/api/promos/vales")).data || [];
     if (PROMO.tab === "qr") PROMO.qrs = (await apiRaw("/api/promos/qr")).data || [];
     if (PROMO.tab === "canjes") PROMO.canjes = (await apiRaw("/api/promos/canjes")).data || [];
     if (PROMO.tab === "captacion") {
@@ -11860,6 +11872,115 @@ async function loadPromos() {
     }
     view.innerHTML = renderPromos();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+
+// ── Vales impresos ───────────────────────────────────────────────────────────
+// La otra forma de emitir: sin cliente. Va debajo del emisor de siempre y separada, porque son
+// dos actos distintos — arriba se le da un cupón A UNA PERSONA, aquí se imprimen papeles que no
+// son de nadie.
+
+function promoTarjetaVales() {
+  const tiradas = PROMO.tiradas || [];
+  const opts = (PROMO.list || []).filter((p) => p.activa)
+    .map((p) => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("");
+
+  const tabla = tiradas.length
+    ? `<div class="tw" style="margin-top:12px"><table class="tbl">
+        <thead><tr><th>Tirada</th><th>Promoción</th><th class="r">Vales</th><th class="r">Canjeados</th><th></th></tr></thead>
+        <tbody>${tiradas.map((t) => `<tr>
+          <td><div class="t1">${esc(t.tirada)}</div>
+            <div class="t2">${esc(String(t.creado_en || "").slice(0, 10))}${t.anulados ? ` · ${num(t.anulados)} anulados` : ""}${t.caduca_en ? ` · caducan ${esc(t.caduca_en)}` : ""}</div></td>
+          <td class="mut">${esc(t.promocion || "—")}</td>
+          <td class="r tnum">${num(t.emitidos)}</td>
+          <td class="r tnum">${num(t.canjeados)}${t.emitidos ? ` <span class="mut">(${promoPct(t.canjeados, t.emitidos)}%)</span>` : ""}</td>
+          <td class="r" style="white-space:nowrap">
+            <button class="linkbtn" style="color:var(--brand)" data-act="vale-bajar" data-tirada="${esc(t.tirada)}" data-n="${t.emitidos}">Descargar</button>
+            ${t.emitidos > t.canjeados + t.anulados
+              ? ` · <button class="linkbtn" style="color:var(--danger)" data-act="vale-anular" data-tirada="${esc(t.tirada)}">Anular sin usar</button>` : ""}</td>
+        </tr>`).join("")}</tbody></table></div>`
+    : `<div class="mut" style="margin-top:10px">Todavía no has hecho ninguna tirada.</div>`;
+
+  return `<div class="card" style="margin-top:16px">
+    <div class="ch"><h3>Vales para imprimir · sin cliente</h3></div>
+    <div class="mut" style="line-height:1.55;margin-bottom:12px">
+      Papeles que se reparten en mano y los canjea quien los traiga, sin darnos ningún dato.
+      <b>Cada vale lleva su propio QR y sirve una sola vez</b>: si alguien fotografía el suyo y lo
+      comparte, el primero que llegue se lo lleva y el daño se queda en ese vale.
+      Te descargas los QR y una tabla; el diseño del papel lo monta quien imprima.
+    </div>
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <div class="field" style="flex:2;min-width:180px"><label>Promoción</label>
+        <select id="valePromo">${opts || '<option value="">Crea una promoción primero</option>'}</select></div>
+      <div class="field" style="flex:2;min-width:160px"><label>Nombre de la tirada</label>
+        <input id="valeNombre" placeholder="Buzoneo Girona" maxlength="60"></div>
+      <div class="field" style="flex:1;min-width:110px"><label>Cuántos</label>
+        <input id="valeCantidad" type="number" min="1" max="200" value="50"></div>
+      <div class="field" style="flex:1;min-width:150px"><label>Caducan el (opcional)</label>
+        <input id="valeCaduca" type="date"></div>
+      <button class="btn primary" data-act="vale-emitir">Emitir y descargar</button>
+    </div>
+    ${tabla}</div>`;
+}
+
+/**
+ * Emite la tirada y baja el fichero seguido.
+ *
+ * Son dos peticiones y no una a propósito: emitir escribe en la base y descargar no. Si fueran la
+ * misma y la descarga fallara a medias, no habría forma de saber si los vales se llegaron a
+ * emitir — y volver a intentarlo emitiría el doble.
+ */
+async function valeEmitir() {
+  const nombre = (document.getElementById("valeNombre").value || "").trim();
+  const cantidad = Number(document.getElementById("valeCantidad").value);
+  const promocion_id = Number(document.getElementById("valePromo").value);
+  if (!promocion_id) return toast("Elige una promoción");
+  if (!nombre) return toast("Ponle un nombre a la tirada");
+  if (!(cantidad >= 1 && cantidad <= 200)) return toast("Entre 1 y 200 vales");
+
+  // Se confirma porque emitir vales no se deshace del todo: se pueden anular, pero los códigos
+  // quedan para siempre en la lista.
+  if (!confirm(`Se van a emitir ${cantidad} vale${cantidad > 1 ? "s" : ""} de un solo uso.\n\n¿Seguimos?`)) return;
+  try {
+    const r = await apiSend("POST", "/api/promos/vales", {
+      nombre, cantidad, promocion_id,
+      caduca_en: document.getElementById("valeCaduca").value || "",
+    });
+    toast(`${num(r.cantidad)} vales emitidos ✅`);
+    await valeBajar(r.tirada, r.cantidad);
+    loadPromos();
+  } catch (e) { toast("Error: " + e.message); }
+}
+
+/** Descarga la tirada. Con un solo vale baja el SVG suelto; con más, el ZIP. Lo decide el servidor. */
+async function valeBajar(tirada, n) {
+  toast(Number(n) === 1 ? "Preparando el QR…" : "Preparando el ZIP…");
+  try {
+    const r = await fetch(`/api/promos/vales/${encodeURIComponent(tirada)}/zip`,
+      { headers: { Authorization: "Bearer " + token() } });
+    if (!r.ok) { toast("No se pudo preparar la descarga"); return; }
+    const nombre = (r.headers.get("content-disposition") || "").match(/filename="([^"]+)"/)?.[1] || "vales.zip";
+    bajarBlob(await r.blob(), nombre);
+    toast("Descargado ✅");
+  } catch { toast("No se pudo preparar la descarga"); }
+}
+
+async function valeAnular(tirada) {
+  if (!confirm(`Se anulan los vales de «${tirada}» que NADIE ha usado todavía.\n\nLos ya canjeados no se tocan. Úsalo si se ha perdido el taco o se imprimió mal.\n\n¿Anularlos?`)) return;
+  try {
+    const r = await apiSend("POST", `/api/promos/vales/${encodeURIComponent(tirada)}/anular`);
+    toast(`${num(r.anulados)} vales anulados`);
+    loadPromos();
+  } catch (e) { toast("Error: " + e.message); }
+}
+
+/** El QR de un cupón cualquiera, suelto. Para imprimir uno solo sin montar una tirada. */
+async function promoBajarQr(id, codigo, formato) {
+  try {
+    const r = await fetch(`/api/promos/qr/${Number(id)}/imagen?formato=${formato}`,
+      { headers: { Authorization: "Bearer " + token() } });
+    if (!r.ok) { toast("No se pudo generar el QR"); return; }
+    bajarBlob(await r.blob(), `qr-${codigo || id}.${formato}`);
+  } catch { toast("No se pudo generar el QR"); }
 }
 
 // ── Captación: campañas de anuncio y la cola de envíos ───────────────────────
@@ -12837,6 +12958,11 @@ document.addEventListener("click", (e) => {
   else if (act === "promo-anular-lote") promoAnularLote(t.getAttribute("data-id"), t.getAttribute("data-n"), t.getAttribute("data-nombre"));
   else if (act === "promo-reenviar") promoReenviar(t.getAttribute("data-id"));
   else if (act === "promo-copiar" || act === "tj-copiar") promoCopiar(t.getAttribute("data-url"));
+  else if (act === "vale-emitir") valeEmitir();
+  else if (act === "vale-bajar") valeBajar(t.getAttribute("data-tirada"), t.getAttribute("data-n"));
+  else if (act === "vale-anular") valeAnular(t.getAttribute("data-tirada"));
+  else if (act === "promo-qr-svg") promoBajarQr(t.getAttribute("data-id"), t.getAttribute("data-codigo"), "svg");
+  else if (act === "promo-qr-png") promoBajarQr(t.getAttribute("data-id"), t.getAttribute("data-codigo"), "png");
   else if (act === "cap-nueva") capForm(null);
   else if (act === "cap-editar") capEditar(t.getAttribute("data-clave"));
   else if (act === "cap-reenviar") capReenviar(t.getAttribute("data-id"));

@@ -71,6 +71,18 @@ export async function ensureSchemaPromos(x) {
     CHECK (clase IN ('cupon','carnet'))
   )`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_pro_qr_promo ON pro_qr (promocion_id)`);
+
+  // ── La tirada de vales impresos ────────────────────────────────────────────
+  // Un vale impreso es un cupón ANÓNIMO: sin teléfono, un solo uso, y su QR en un papel que se
+  // reparte en mano. Todo eso ya cabía en esta tabla —el índice del canje deja fuera los que no
+  // tienen teléfono, justo por esto—; lo único que faltaba era poder agrupar los de una misma
+  // tirada.
+  //
+  // Sin esta columna, cien vales son cien filas idénticas sin nombre en el panel: no hay forma
+  // de saber cuáles son del buzoneo de Girona y cuáles del reparto del mercado, ni de volver a
+  // descargar el ZIP de una tirada concreta, ni de anular un taco que se ha perdido.
+  await x.run(`ALTER TABLE pro_qr ADD COLUMN IF NOT EXISTS tirada TEXT`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_pro_qr_tirada ON pro_qr (tirada) WHERE tirada IS NOT NULL`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_pro_qr_tel ON pro_qr (telefono)`);
   // Un solo carné vivo por persona: si se emite otro sin anular el anterior, la misma
   // persona tendría dos identidades y sus visitas se contarían por separado.
