@@ -14,7 +14,7 @@ import {
   nuevoToken, pistaToken, estadoIntegracion, caducidadDesde,
   textoParaCamarero, respuestaMiembro, carnetUtilizable,
   extraerFactura, movimientosDe, procesarFactura, respuestaFactura,
-  esquemaDe, cabecerasSeguras, urlsDeIntegracion, buscaProfunda,
+  esquemaDe, cabecerasSeguras, urlsDeIntegracion, buscaProfunda, claveDeFactura, localSlug, ALGO_DEBIL,
 } from "../../src/modules/fidelizacion/agora.js";
 
 const sha = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
@@ -33,7 +33,7 @@ function bd({ carnes = [], facturas = [] } = {}) {
   let seq = { fid_facturas: t.fid_facturas.length, fid_movimientos: 0 };
   const x = {
     get: async (q, p = []) => {
-      if (/FROM fid_facturas WHERE global_id/.test(q)) return t.fid_facturas.find((f) => f.global_id === p[0]) || null;
+      if (/FROM fid_facturas WHERE clave_factura/.test(q)) return t.fid_facturas.find((f) => f.clave_factura === p[0]) || null;
       if (/FROM pro_qr WHERE token/.test(q)) return t.pro_qr.find((c) => c.token === p[0]) || null;
       throw new Error("consulta no reconocida: " + q);
     },
@@ -41,12 +41,12 @@ function bd({ carnes = [], facturas = [] } = {}) {
     run: async (q, p = []) => {
       const n = q.replace(/\s+/g, " ");
       if (n.startsWith("INSERT INTO fid_facturas")) {
-        assert.match(n, /ON CONFLICT \(global_id\) DO NOTHING/, "la factura debe ser idempotente por global_id");
-        if (t.fid_facturas.some((f) => f.global_id === p[2])) return undefined;   // el índice único
+        assert.match(n, /ON CONFLICT \(clave_factura\) DO NOTHING/, "la factura debe ser idempotente por clave_factura");
+        if (t.fid_facturas.some((f) => f.clave_factura === p[4])) return undefined;   // el índice único
         const fila = { id: ++seq.fid_facturas, integracion_id: p[0], local: p[1], global_id: p[2],
-          clave_debil: p[3], cuerpo_hash: p[4], cuerpo_bytes: p[5], cuerpo_enc: p[6], esquema: p[7],
-          agora_version: p[8], items_n: p[9], miembros_n: p[10], importe_total: p[11], devolucion: p[12],
-          estado: p[13], recibido_en: p[14] };
+          global_id_tipo: p[3], clave_factura: p[4], clave_debil: p[5], cuerpo_hash: p[6], cuerpo_bytes: p[7],
+          cuerpo_enc: p[8], esquema: p[9], agora_version: p[10], items_n: p[11], miembros_n: p[12],
+          importe_total: p[13], devolucion: p[14], estado: p[15], recibido_en: p[16] };
         t.fid_facturas.push(fila);
         return { id: fila.id };
       }
@@ -163,7 +163,7 @@ describe("leer la factura sin inventarse el contrato", () => {
   test("saca los InvoiceItem con LoyaltyProgram, anide como anide", () => {
     // No se busca por el nombre del array: se recorre el árbol y se recoge todo lo que lleve un
     // `LoyaltyProgram`. Así una factura de varios albaranes sale bien sin adivinar nombres.
-    const e = extraerFactura(factura({ lineas: [["TOK-A", 10], ["TOK-B", 5], ["TOK-A", 2.5]] }), sha);
+    const e = extraerFactura(factura({ lineas: [["TOK-A", 10], ["TOK-B", 5], ["TOK-A", 2.5]] }), sha, { local: LOCAL_PILOTO });
     assert.equal(e.globalId, "GID-0001");
     assert.equal(e.claveDebil, false);
     assert.equal(e.lineas, 3);
@@ -173,12 +173,12 @@ describe("leer la factura sin inventarse el contrato", () => {
   });
 
   test("VARIOS MemberId en una sola factura, como avisa la guía", () => {
-    const e = extraerFactura(factura({ lineas: [["A", 1], ["B", 2], ["C", 3]] }), sha);
+    const e = extraerFactura(factura({ lineas: [["A", 1], ["B", 2], ["C", 3]] }), sha, { local: LOCAL_PILOTO });
     assert.deepEqual(e.miembros.map((m) => m.member).sort(), ["A", "B", "C"]);
   });
 
   test("líneas sin socio no cuentan", () => {
-    const e = extraerFactura(factura({ lineas: [["TOK-A", 10], [null, 99]] }), sha);
+    const e = extraerFactura(factura({ lineas: [["TOK-A", 10], [null, 99]] }), sha, { local: LOCAL_PILOTO });
     assert.equal(e.miembros.length, 1);
     assert.equal(e.importeTotal, 10);
   });
@@ -186,10 +186,10 @@ describe("leer la factura sin inventarse el contrato", () => {
   test("sin GlobalId se compone una clave y se marca DÉBIL, no se disfraza", () => {
     // Una idempotencia que no se sabe fuerte hay que poder mirarla luego. Por eso se marca.
     const sinId = factura(); delete sinId.GlobalId;
-    const e = extraerFactura(sinId, sha);
+    const e = extraerFactura(sinId, sha, { local: LOCAL_PILOTO });
     assert.equal(e.claveDebil, true);
     assert.match(e.globalId, /^debil:/);
-    assert.equal(extraerFactura(sinId, sha).globalId, e.globalId, "la clave débil debe ser estable");
+    assert.equal(extraerFactura(sinId, sha, { local: LOCAL_PILOTO }).globalId, e.globalId, "la clave débil debe ser estable");
   });
 
   test("encuentra el GlobalId aunque venga anidado", () => {
@@ -198,7 +198,7 @@ describe("leer la factura sin inventarse el contrato", () => {
   });
 
   test("detecta una devolución por los importes negativos", () => {
-    const e = extraerFactura(factura({ lineas: [["TOK-A", -12.5]] }), sha);
+    const e = extraerFactura(factura({ lineas: [["TOK-A", -12.5]] }), sha, { local: LOCAL_PILOTO });
     assert.equal(e.devolucion, true);
   });
 
@@ -212,26 +212,28 @@ describe("leer la factura sin inventarse el contrato", () => {
 
 describe("el libro: una factura aceptada es UNA visita por socio", () => {
   test("visita y consumo, con sus claves de idempotencia", () => {
-    const e = extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha);
+    const e = extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha, { local: LOCAL_PILOTO });
     const m = movimientosDe(e, { local: LOCAL_PILOTO, ahora: AHORA, facturaId: 3, hashMember });
     assert.equal(m.length, 2);
     assert.deepEqual(m.map((z) => z.concepto), ["visita", "consumo"]);
     assert.equal(m[0].unidades, 1);
     assert.equal(m[1].importe, 12.5);
-    assert.ok(m[0].clave_idem.startsWith(`${IDEM_V}:visita:GID-0001:`));
+    // La clave lleva el LOCAL dentro: si el GlobalId se repitiera entre locales, dos visitas
+    // distintas compartirían clave y una de las dos no se apuntaría, sin dar ningún error.
+    assert.ok(m[0].clave_idem.startsWith(`${IDEM_V}:${localSlug(LOCAL_PILOTO)}:visita:GID-0001:`), m[0].clave_idem);
   });
 
   test("EL MISMO socio en cinco líneas cuenta UNA visita", () => {
     // Es el caso que la guía avisa y el que más fácil sería contar mal: la clave es la misma las
     // cinco veces, y el índice único de `fid_movimientos` deja pasar solo la primera.
-    const e = extraerFactura(factura({ lineas: [["A", 1], ["A", 2], ["A", 3], ["A", 4], ["A", 5]] }), sha);
+    const e = extraerFactura(factura({ lineas: [["A", 1], ["A", 2], ["A", 3], ["A", 4], ["A", 5]] }), sha, { local: LOCAL_PILOTO });
     const m = movimientosDe(e, { local: LOCAL_PILOTO, ahora: AHORA, hashMember });
     assert.equal(m.filter((z) => z.concepto === "visita").length, 1);
     assert.equal(m.find((z) => z.concepto === "consumo").importe, 15);
   });
 
   test("una devolución genera el movimiento CONTRARIO y ninguna visita", () => {
-    const e = extraerFactura(factura({ globalId: "DEV-1", lineas: [["A", -12.5]] }), sha);
+    const e = extraerFactura(factura({ globalId: "DEV-1", lineas: [["A", -12.5]] }), sha, { local: LOCAL_PILOTO });
     const m = movimientosDe(e, { local: LOCAL_PILOTO, ahora: AHORA, hashMember });
     assert.equal(m.length, 1);
     assert.equal(m[0].concepto, "devolucion");
@@ -246,7 +248,7 @@ describe("idempotencia contra la base", () => {
 
   test("una factura nueva se guarda y apunta sus movimientos", async () => {
     const { x, t } = bd({ carnes: [carnet({ id: 11, token: "TOK-A" })] });
-    const r = await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha));
+    const r = await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha, { local: LOCAL_PILOTO }));
     assert.equal(r.repetida, false);
     assert.equal(r.movimientos, 2);
     assert.equal(t.fid_facturas.length, 1);
@@ -255,7 +257,7 @@ describe("idempotencia contra la base", () => {
 
   test("DUPLICADO SECUENCIAL: el reenvío no vuelve a sumar nada", async () => {
     const { x, t } = bd({ carnes: [carnet({ id: 11, token: "TOK-A" })] });
-    const e = extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha);
+    const e = extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha, { local: LOCAL_PILOTO });
     await guardar(x, e);
     const r2 = await guardar(x, e);
     assert.equal(r2.repetida, true);
@@ -269,7 +271,7 @@ describe("idempotencia contra la base", () => {
     // Se cruzan en el índice único de la base, no en una comprobación previa que uno de los dos
     // podría adelantar. Aquí se interfoliean de verdad en los `await`.
     const { x, t } = bd({ carnes: [carnet({ id: 11, token: "TOK-A" })] });
-    const e = extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha);
+    const e = extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha, { local: LOCAL_PILOTO });
     const [a, b] = await Promise.all([guardar(x, e), guardar(x, e)]);
     assert.equal(t.fid_facturas.length, 1);
     assert.equal(t.fid_movimientos.length, 2);
@@ -280,8 +282,8 @@ describe("idempotencia contra la base", () => {
     // No se procesa en silencio. Y no se devuelve un error: esa factura ya se aceptó una vez, y
     // fallar ahora bloquearía una caja por un problema que es nuestro.
     const { x, t } = bd({ carnes: [carnet({ id: 11, token: "TOK-A" })] });
-    await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha));
-    const r = await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 99] ] }), sha));
+    await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha, { local: LOCAL_PILOTO }));
+    const r = await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 99] ] }), sha, { local: LOCAL_PILOTO }));
     assert.equal(r.repetida, true);
     assert.equal(r.conflicto, true);
     assert.equal(r.estado, ESTADOS.CONFLICTO);
@@ -291,7 +293,7 @@ describe("idempotencia contra la base", () => {
 
   test("un socio que ya no existe: se acepta, no se apunta nada y no se crea a nadie", async () => {
     const { x, t } = bd({ carnes: [] });
-    const r = await guardar(x, extraerFactura(factura({ lineas: [["FANTASMA", 10]] }), sha));
+    const r = await guardar(x, extraerFactura(factura({ lineas: [["FANTASMA", 10]] }), sha, { local: LOCAL_PILOTO }));
     assert.equal(r.repetida, false);
     assert.equal(r.movimientos, 0);
     assert.equal(r.sinMiembro.length, 1);
@@ -302,15 +304,15 @@ describe("idempotencia contra la base", () => {
 
   test("un carné anulado tampoco resucita", async () => {
     const { x } = bd({ carnes: [carnet({ id: 11, token: "TOK-A", anulado_en: AHORA })] });
-    const r = await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 10]] }), sha));
+    const r = await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 10]] }), sha, { local: LOCAL_PILOTO }));
     assert.equal(r.movimientos, 0);
     assert.equal(r.sinMiembro[0].motivo, "anulado");
   });
 
   test("DEVOLUCIÓN y DOBLE DEVOLUCIÓN: la segunda no revierte otra vez", async () => {
     const { x, t } = bd({ carnes: [carnet({ id: 11, token: "TOK-A" })] });
-    await guardar(x, extraerFactura(factura({ globalId: "V-1", lineas: [["TOK-A", 20]] }), sha));
-    const dev = extraerFactura(factura({ globalId: "D-1", lineas: [["TOK-A", -20]] }), sha);
+    await guardar(x, extraerFactura(factura({ globalId: "V-1", lineas: [["TOK-A", 20]] }), sha, { local: LOCAL_PILOTO }));
+    const dev = extraerFactura(factura({ globalId: "D-1", lineas: [["TOK-A", -20]] }), sha, { local: LOCAL_PILOTO });
     await guardar(x, dev);
     const otra = await guardar(x, dev);
     assert.equal(otra.repetida, true);
@@ -325,7 +327,7 @@ describe("idempotencia contra la base", () => {
 
   test("varios socios en una factura: cada uno con lo suyo", async () => {
     const { x, t } = bd({ carnes: [carnet({ id: 11, token: "A" }), carnet({ id: 22, token: "B" })] });
-    const r = await guardar(x, extraerFactura(factura({ lineas: [["A", 10], ["B", 5], ["A", 2]] }), sha));
+    const r = await guardar(x, extraerFactura(factura({ lineas: [["A", 10], ["B", 5], ["A", 2]] }), sha, { local: LOCAL_PILOTO }));
     assert.equal(r.movimientos, 4, "dos socios × (visita + consumo)");
     const porQr = (id, c) => t.fid_movimientos.filter((m) => m.qr_id === id && m.concepto === c);
     assert.equal(porQr(11, "visita").length, 1);
@@ -337,7 +339,7 @@ describe("idempotencia contra la base", () => {
 describe("en esta fase no se concede NADA", () => {
   test("ni premios, ni puntos, ni canjes", async () => {
     const { x, t } = bd({ carnes: [carnet({ id: 11, token: "TOK-A" })] });
-    await procesarFactura(x, { extracto: extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha),
+    await procesarFactura(x, { extracto: extraerFactura(factura({ lineas: [["TOK-A", 12.5]] }), sha, { local: LOCAL_PILOTO }),
       integracion, ahora: AHORA, cuerpoBytes: 10, hashMember });
     assert.equal(t.fid_movimientos.filter((m) => m.concepto === "puntos").length, 0);
     assert.deepEqual(respuestaMiembro(carnet(), { visitas: 3 }).Rewards, []);

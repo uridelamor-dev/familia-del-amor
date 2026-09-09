@@ -28,14 +28,24 @@ export async function ensureSchemaFidelizacion(x) {
     ON fid_integraciones (local) WHERE revocado_en IS NULL`);
 
   // ── Las facturas que manda Ágora ───────────────────────────────────────────
-  // `global_id` es UNIQUE y ES la idempotencia: un reenvío choca contra el índice y no vuelve a
-  // sumar nada. `cuerpo_hash` distingue «el mismo reenvío» de «el mismo id con otro contenido»,
-  // que es un conflicto y se audita en vez de aplicarse en silencio.
+  // LA IDEMPOTENCIA ES `clave_factura`, NO `global_id` A SECAS. La guía no garantiza que el
+  // GlobalId sea único entre locales distintos, y si no lo fuera, un índice global haría que la
+  // factura de Lloret tapara la de Blanes el día que el piloto se amplíe: la segunda se vería como
+  // un reenvío y no apuntaría ni una visita, sin dar ningún error. La clave lleva el local dentro.
+  //
+  // `global_id_tipo` dice si el identificador es el OFICIAL de Ágora o una clave compuesta por
+  // nosotros. Nunca se mezclan sin saber cuál es cuál: una idempotencia que no se sabe fuerte hay
+  // que poder mirarla después.
+  //
+  // `cuerpo_hash` distingue «el mismo reenvío» de «el mismo id con otro contenido», que es un
+  // conflicto y se rechaza en vez de aplicarse en silencio.
   await x.run(`CREATE TABLE IF NOT EXISTS fid_facturas (
     id SERIAL PRIMARY KEY,
     integracion_id INTEGER NOT NULL,
     local TEXT NOT NULL,
     global_id TEXT NOT NULL,
+    global_id_tipo TEXT NOT NULL DEFAULT 'oficial',
+    clave_factura TEXT NOT NULL,
     clave_debil BOOLEAN NOT NULL DEFAULT FALSE,
     cuerpo_hash TEXT NOT NULL,
     cuerpo_bytes INTEGER NOT NULL,
@@ -49,7 +59,16 @@ export async function ensureSchemaFidelizacion(x) {
     estado TEXT NOT NULL,
     recibido_en TEXT NOT NULL
   )`);
-  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_factura_global ON fid_facturas (global_id)`);
+  // Aditivo, para una base que ya tuviera la tabla de una versión anterior de este esquema.
+  for (const col of ["global_id_tipo TEXT NOT NULL DEFAULT 'oficial'", "clave_factura TEXT"]) {
+    try { await x.run(`ALTER TABLE fid_facturas ADD COLUMN IF NOT EXISTS ${col}`); }
+    catch (e) { console.error("[fidelizacion] alter fid_facturas:", e.message); }
+  }
+  // El índice viejo era solo por `global_id` y no aislaba los locales. Se retira antes de poner el
+  // bueno; `IF EXISTS` lo hace idempotente y no toca ninguna fila.
+  try { await x.run(`DROP INDEX IF EXISTS idx_fid_factura_global`); }
+  catch (e) { console.error("[fidelizacion] drop idx viejo:", e.message); }
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_factura_clave ON fid_facturas (clave_factura)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_factura_fecha ON fid_facturas (recibido_en DESC)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_factura_local ON fid_facturas (local, recibido_en DESC)`);
 

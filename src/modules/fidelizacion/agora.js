@@ -28,6 +28,26 @@ export const REWARDS_FASE_1 = Object.freeze([]);
  *  calcularlas, las viejas no se confunden con las nuevas. */
 export const IDEM_V = "fid:v1";
 
+/** Versión del algoritmo que compone una clave cuando NO viene GlobalId. Va dentro de la clave:
+ *  si algún día se calcula de otra forma, las viejas no se confunden con las nuevas. */
+export const ALGO_DEBIL = "v1";
+
+/** Un local, reducido a algo que cabe en una clave sin ambigüedad. */
+export const localSlug = (l) => String(l || "").toLowerCase().normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "sin-local";
+
+/**
+ * La clave de idempotencia de una factura. LLEVA EL LOCAL DENTRO, y a propósito.
+ *
+ * La guía no garantiza que el GlobalId sea único entre locales distintos. Si no lo fuera y la
+ * clave fuese solo el GlobalId, el día que el piloto se amplíe la factura de un local taparía la
+ * de otro: la segunda se vería como un reenvío, no apuntaría ni una visita y no daría ningún
+ * error. Meter el local cuesta nada y cierra ese agujero antes de que exista.
+ */
+export function claveDeFactura(local, tipo, globalId) {
+  return `${localSlug(local)}|${tipo}|${globalId}`;
+}
+
 export const MAX_CUERPO = 4 * 1024 * 1024;
 export const MAX_POR_MINUTO = 120;      // una barra llena cierra muchas facturas seguidas
 export const VIDA_DIAS = 90;
@@ -143,7 +163,7 @@ export function buscaProfunda(raiz, nombre, { profundidad = 12 } = {}) {
  * se recorre el árbol entero y se recoge TODO objeto que lleve un `LoyaltyProgram`. Así da igual
  * cómo anide, y una factura de varios albaranes con socios distintos sale bien sin adivinar nada.
  */
-export function extraerFactura(json, sha256) {
+export function extraerFactura(json, sha256, { local = "" } = {}) {
   const lineas = [];
   const visto = new Set();
   const recorre = (v, d) => {
@@ -174,12 +194,14 @@ export function extraerFactura(json, sha256) {
   // de GlobalId, porque una idempotencia que no se sabe fuerte hay que poder mirarla luego.
   const oficial = buscaProfunda(json, "GlobalId");
   const cuerpoHash = sha256(JSON.stringify(json));
-  let globalId = oficial, claveDebil = false;
+  let globalId = oficial, claveDebil = false, tipo = "oficial";
   if (!globalId) {
     const partes = ["SerialNumber", "Number", "InvoiceNumber", "Date", "BusinessDay"]
       .map((n) => buscaProfunda(json, n)).filter(Boolean);
-    globalId = `debil:${sha256(partes.join("|") + "|" + cuerpoHash).slice(0, 32)}`;
-    claveDebil = true;
+    // Lleva el local y la versión del algoritmo DENTRO, no solo el hash: una clave de respaldo
+    // que no diga de dónde sale ni cómo se calculó no se puede auditar el día que haya que hacerlo.
+    globalId = `debil:${ALGO_DEBIL}:${localSlug(local)}:${sha256(partes.join("|") + "|" + cuerpoHash).slice(0, 32)}`;
+    claveDebil = true; tipo = "debil";
   }
 
   const porMiembro = new Map();
@@ -193,7 +215,7 @@ export function extraerFactura(json, sha256) {
   const importeTotal = miembros.reduce((s, m) => s + m.importe, 0);
 
   return {
-    globalId, claveDebil, cuerpoHash,
+    globalId, claveDebil, tipo, claveFactura: claveDeFactura(local, tipo, globalId), cuerpoHash,
     lineas: lineas.length,
     miembros,
     importeTotal,
@@ -213,6 +235,9 @@ export function extraerFactura(json, sha256) {
  * que es donde se cruzan dos reenvíos simultáneos.
  */
 export function movimientosDe(extracto, { local, autor = "agora", ahora, facturaId = null, hashMember }) {
+  // El local va en la clave por lo mismo que en la de la factura: si el GlobalId se repitiera
+  // entre locales, dos visitas distintas compartirían clave y una de las dos no se apuntaría.
+  const ll = localSlug(local);
   const out = [];
   for (const m of extracto.miembros) {
     const h = hashMember(m.member);
@@ -221,13 +246,13 @@ export function movimientosDe(extracto, { local, autor = "agora", ahora, factura
     if (extracto.devolucion) {
       // Movimiento CONTRARIO, nunca un borrado. Y una sola vez: la clave lo impide dos veces.
       out.push({ ...base, concepto: "devolucion", unidades: 0, importe: m.importe,
-                 clave_idem: `${IDEM_V}:devolucion:${extracto.globalId}:${h}` });
+                 clave_idem: `${IDEM_V}:${ll}:devolucion:${extracto.globalId}:${h}` });
       continue;
     }
     out.push({ ...base, concepto: "visita", unidades: 1, importe: 0,
-               clave_idem: `${IDEM_V}:visita:${extracto.globalId}:${h}` });
+               clave_idem: `${IDEM_V}:${ll}:visita:${extracto.globalId}:${h}` });
     out.push({ ...base, concepto: "consumo", unidades: 0, importe: m.importe,
-               clave_idem: `${IDEM_V}:consumo:${extracto.globalId}:${h}` });
+               clave_idem: `${IDEM_V}:${ll}:consumo:${extracto.globalId}:${h}` });
   }
   return out;
 }
@@ -247,16 +272,18 @@ export async function procesarFactura(x, { extracto, integracion, ahora, cuerpoB
   // `ON CONFLICT DO NOTHING` es la idempotencia de verdad: dos reenvíos simultáneos se cruzan en
   // el índice único de la base, no en una comprobación previa que uno de los dos podría adelantar.
   const nueva = await x.run(
-    `INSERT INTO fid_facturas (integracion_id, local, global_id, clave_debil, cuerpo_hash, cuerpo_bytes,
-       cuerpo_enc, esquema, agora_version, items_n, miembros_n, importe_total, devolucion, estado, recibido_en)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-     ON CONFLICT (global_id) DO NOTHING RETURNING id`,
-    [integracion.id, integracion.local, extracto.globalId, extracto.claveDebil, extracto.cuerpoHash,
+    `INSERT INTO fid_facturas (integracion_id, local, global_id, global_id_tipo, clave_factura, clave_debil,
+       cuerpo_hash, cuerpo_bytes, cuerpo_enc, esquema, agora_version, items_n, miembros_n, importe_total,
+       devolucion, estado, recibido_en)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT (clave_factura) DO NOTHING RETURNING id`,
+    [integracion.id, integracion.local, extracto.globalId, extracto.tipo, extracto.claveFactura,
+     extracto.claveDebil, extracto.cuerpoHash,
      cuerpoBytes, cuerpoEnc, esquema, version, extracto.lineas, extracto.miembros.length,
      extracto.importeTotal, extracto.devolucion, ESTADOS.ACEPTADA, ahora]);
 
   if (!nueva) {
-    const previa = await x.get(`SELECT id, cuerpo_hash FROM fid_facturas WHERE global_id = ?`, [extracto.globalId]);
+    const previa = await x.get(`SELECT id, cuerpo_hash FROM fid_facturas WHERE clave_factura = ?`, [extracto.claveFactura]);
     // Mismo identificador, otro contenido. NO se procesa en silencio: se anota el conflicto y se
     // acepta igual, porque esa factura ya se aceptó una vez y devolver un error ahora bloquearía
     // una caja por un problema que es nuestro, no suyo.

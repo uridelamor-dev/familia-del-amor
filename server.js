@@ -17571,7 +17571,7 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
   }
 
   let extracto;
-  try { extracto = fidExtraerFactura(json, fidHash); }
+  try { extracto = fidExtraerFactura(json, fidHash, { local: integ.fila.local }); }
   catch { return res.status(200).json({ Status: "rejected", RejectReason: "Formato no reconocido" }); }
 
   const ahora = isoConOffset(Date.now());
@@ -17589,9 +17589,21 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
       });
     });
   } catch (e) {
-    // Rápido y sin detalles: al TPV no se le cuenta qué ha fallado por dentro.
+    // AQUÍ NO SE PUEDE CONTESTAR 200. Ni `accepted` ni `rejected`.
+    //
+    // Un `rejected` significa «lo he recibido y no lo quiero»: Ágora lo da por entregado y NO lo
+    // reenvía. Pero si la base se ha caído, ha dado tiempo límite o ha saltado una excepción, no
+    // sabemos si la factura quedó guardada — y decir que sí es convertir un fallo técnico en una
+    // pérdida silenciosa. Hoy, sin premios, se perdería una visita. Con puntos serán puntos que
+    // el cliente cree tener y no tiene, y eso se descubre en la barra.
+    //
+    // Un 500 impide cerrar la factura, sí. Es el precio correcto: Ágora conserva la posibilidad de
+    // reenviarla y el camarero tiene la salida documentada —desasociar al participante y cobrar sin
+    // fidelización— que es un paso manual, pero no pierde nada.
+    //
+    // Sin detalles: al TPV no se le cuenta qué ha fallado por dentro.
     console.error("[fidelizacion] factura:", e.message);
-    return res.status(200).json({ Status: "rejected", RejectReason: "No se pudo registrar" });
+    return res.status(500).json({ Status: "error" });
   }
 
   // La auditoría va DESPUÉS del COMMIT y fuera de la transacción: es un registro, no una condición.
@@ -17603,6 +17615,15 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
                  movimientos: resultado.movimientos, sin_miembro: resultado.sinMiembro.length, agora_version: version || null },
     });
   } catch { /* la auditoría no puede tumbar la respuesta */ }
+
+  // Mismo identificador, cuerpo distinto: NO se confirma. Un `accepted` aquí diría que hemos
+  // aceptado ESTE documento, y lo que tenemos guardado es otro. Se contesta `rejected` —que es un
+  // 200 y no bloquea la caja— con un motivo genérico, sin nada del cuerpo. El conflicto ya está
+  // marcado en la factura y auditado; se mira desde el panel con calma.
+  if (resultado.conflicto) {
+    return res.status(200).set("Cache-Control", "no-store")
+      .json({ Status: "rejected", RejectReason: "Documento no coincide con el ya registrado" });
+  }
 
   // `accepted` SOLO después del COMMIT: si se contestara antes y la transacción fallara, Ágora
   // daría por buena una factura que no existe en ningún sitio.
@@ -17698,6 +17719,26 @@ app.get("/api/fidelizacion/facturas/:id", requireAuth(["direccion"]), async (req
 
 /** Un socio de prueba: visitas y consumo desde el libro. Se busca por su token, nunca por
  *  teléfono ni por nombre. */
+/**
+ * Borra los cuerpos capturados cuando el piloto termine, SIN tocar el libro.
+ *
+ * Son dos cosas distintas y por eso se borran por separado: el JSON completo es una muestra para
+ * diseñar la Fase 2 y deja de hacer falta en cuanto la tengamos; el libro de visitas y consumo es
+ * contable y se queda. Vaciar `cuerpo_enc` conserva la fila, su hash y su idempotencia.
+ */
+app.post("/api/fidelizacion/facturas/purgar-cuerpos", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const r = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_facturas WHERE cuerpo_enc IS NOT NULL`);
+    await dbRun(`UPDATE fid_facturas SET cuerpo_enc = NULL WHERE cuerpo_enc IS NOT NULL`);
+    await ficAuditar("fidelizacion", null, "cuerpos_purgados", req.user.username,
+      { local: FID_LOCAL, detalle: { facturas: r ? r.n : 0 } });
+    res.json({ ok: true, purgadas: r ? r.n : 0 });
+  } catch (e) {
+    console.error("[fidelizacion] purgar cuerpos:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo purgar" });
+  }
+});
+
 app.get("/api/fidelizacion/miembro", requireAuth(["direccion"]), async (req, res) => {
   try {
     const token = String(req.query.token || "").trim();

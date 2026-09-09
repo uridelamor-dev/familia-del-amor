@@ -10679,10 +10679,12 @@ function renderFidPiloto() {
       ${i && !i.revocado_en ? `<button class="btn sm danger" data-act="fid-revocar" data-id="${i.id}">Revocar</button>` : ""}
       <button class="btn sm" data-act="fid-facturas">Ver facturas</button>
       <button class="btn sm" data-act="fid-miembro">Buscar socio</button>
+      <button class="btn sm" data-act="fid-purgar">Borrar JSON guardados</button>
     </span>`;
 
   return `<div class="card"><div class="ch"><h3>Fidelización Ágora · Piloto Lloret</h3>${estado}</div>
     <div class="mut" style="font-size:13px;padding:2px 2px 6px">Fase 1: se identifica al cliente y se cuentan visitas y consumo. <b>No se conceden premios ni descuentos</b> — <code>Rewards</code> siempre va vacío. Estas URLs se pegan en Ágora; aquí no se configura nada del TPV.</div>
+    <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px">Si desactivas o revocas con una factura ya asociada a un socio, Ágora <b>no podrá cerrarla</b>: el camarero tiene que <b>desasociar al participante</b> y cobrar sin fidelización. No se pierde la venta ni queda nada a medias.</div>
     ${datos}${urls}<div style="margin-top:12px">${botones}</div></div>`;
 }
 
@@ -10710,8 +10712,19 @@ async function fidGenerar() {
 }
 
 async function fidActivo(id, v) {
+  // Desactivar con una factura abierta y asociada deja al TPV sin poder cerrarla. No es un
+  // problema —el camarero desasocia y cobra— pero hay que decirlo antes, no después.
+  if (v === "0" && !confirm("Al desactivar, una factura ya asociada a un socio NO podrá cerrarse: el camarero tendrá que desasociar al participante y cobrar sin fidelización. ¿Seguir?")) return;
   try { await apiSend("POST", `/api/fidelizacion/integracion/${id}/activo`, { activo: v === "1" }); await loadFidPiloto(); toast(v === "1" ? "Activada" : "Desactivada"); }
   catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+async function fidPurgarCuerpos() {
+  // Se borran los JSON capturados y NO el libro: son dos cosas distintas. El JSON es la muestra
+  // para diseñar la Fase 2; las visitas y el consumo son contables y se quedan.
+  if (!confirm("Se borrarán los JSON completos guardados de las facturas. Las visitas, el consumo y el resto del libro NO se tocan. ¿Seguir?")) return;
+  try { const j = await apiSend("POST", "/api/fidelizacion/facturas/purgar-cuerpos", {}); toast(`${j.purgadas} JSON borrados`); await loadFidPiloto(); }
+  catch (e) { toast(e.message || "No se pudo purgar"); }
 }
 
 async function fidRevocar(id) {
@@ -13059,6 +13072,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fid-facturas") fidFacturas();
   else if (act === "fid-factura") fidFactura(t.getAttribute("data-id"));
   else if (act === "fid-miembro") fidMiembro();
+  else if (act === "fid-purgar") fidPurgarCuerpos();
   else if (act === "anal-tab") analTab(t.getAttribute("data-tipo"));
   else if (act === "anal-area") analArea(t.getAttribute("data-area"));
   else if (act === "anal-period") analPeriod(t.getAttribute("data-p"));

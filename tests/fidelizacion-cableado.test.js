@@ -43,11 +43,16 @@ describe("las dos rutas que llama Ágora", () => {
 });
 
 describe("NUNCA un error que bloquee la caja", () => {
-  test("la factura no devuelve ni un 4xx ni un 5xx", () => {
-    // Según la guía, un 4xx o un 5xx IMPIDEN CERRAR LA FACTURA. Lo único que sale de aquí es un
-    // 200 —`accepted` o `rejected`— o un 404 si el token no vale, que es antes de mirar nada.
+  test("los códigos que devuelve son EXACTAMENTE los tres previstos", () => {
+    // CORREGIDO. La primera versión exigía que aquí no saliera nunca un 5xx, y estaba mal: un
+    // fallo técnico se contestaba con `rejected`, que para Ágora significa «recibido, no lo
+    // quiero» — no lo reenvía. Si la base se cayó, eso es una pérdida silenciosa.
+    //
+    //   200 → decisión de negocio de la que estamos seguros (accepted o rejected)
+    //   404 → el token no vale, antes de mirar nada
+    //   500 → no sabemos si se guardó. Ágora conserva la posibilidad de reenviar.
     const estados = [...factura.matchAll(/res\.status\((\d+)\)/g)].map((m) => Number(m[1]));
-    assert.deepEqual([...new Set(estados)].sort(), [200, 404], `estados devueltos: ${estados}`);
+    assert.deepEqual([...new Set(estados)].sort(), [200, 404, 500], `estados devueltos: ${estados}`);
   });
 
   test("un JSON malformado se rechaza con 200, no con 400", () => {
@@ -55,9 +60,11 @@ describe("NUNCA un error que bloquee la caja", () => {
     assert.ok(!/res\.status\(400\)/.test(factura));
   });
 
-  test("un fallo interno tampoco devuelve 500", () => {
-    assert.match(factura, /catch \(e\) \{[\s\S]{0,300}Status: "rejected"/);
-    assert.ok(!/res\.status\(500\)/.test(factura), "un 500 dejaría al camarero sin poder cobrar");
+  test("un fallo interno devuelve 500, y NUNCA accepted ni rejected", () => {
+    // Es el arreglo. Un 500 impide cerrar la factura —el camarero desasocia al participante y
+    // cobra sin fidelización, que está documentado— pero Ágora puede reenviarla. Un `rejected`
+    // habría perdido la visita, y mañana los puntos.
+    assert.match(factura, /catch \(e\) \{[\s\S]{0,1400}return res\.status\(500\)\.json\(\{ Status: "error" \}\)/);
   });
 
   test("y no se le cuenta al TPV qué ha fallado por dentro", () => {
@@ -83,9 +90,13 @@ describe("`accepted` solo después de confirmar en PostgreSQL", () => {
   });
 
   test("la idempotencia la impone la BASE, no una comprobación previa", () => {
-    assert.match(modulo, /ON CONFLICT \(global_id\) DO NOTHING RETURNING id/);
+    // Por `clave_factura`, que lleva el local dentro: la guía no garantiza que el GlobalId sea
+    // único entre locales, y un índice global haría que una factura tapara la de otro local.
+    assert.match(modulo, /ON CONFLICT \(clave_factura\) DO NOTHING RETURNING id/);
     assert.match(modulo, /ON CONFLICT \(clave_idem\) DO NOTHING RETURNING id/);
-    assert.match(esquema, /CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_factura_global ON fid_facturas \(global_id\)/);
+    assert.match(esquema, /CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_factura_clave ON fid_facturas \(clave_factura\)/);
+    assert.match(esquema, /DROP INDEX IF EXISTS idx_fid_factura_global/, "el índice viejo debe retirarse");
+    assert.match(esquema, /global_id_tipo TEXT NOT NULL DEFAULT 'oficial'/, "hay que saber si la clave es oficial o débil");
     assert.match(esquema, /clave_idem TEXT NOT NULL UNIQUE/);
   });
 });

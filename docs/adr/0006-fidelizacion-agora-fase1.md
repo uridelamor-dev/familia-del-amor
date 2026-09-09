@@ -46,35 +46,76 @@ llegar la cuenta. `PrinterText` va vacío por lo mismo.
 Esta fase sirve para identificar clientes, contar visitas y consumo, y **ver por fin el JSON exacto
 que manda Ágora**. Los premios llegan cuando sepamos cómo es.
 
-### 3. Ninguna respuesta nuestra puede bloquear la caja
+### 3. `accepted` es una promesa, y solo se hace cuando se puede cumplir
 
-Del endpoint de facturas solo salen dos códigos: **200** y **404** (y el 404 es antes de mirar nada,
-cuando el token no vale). Hay test que lo comprueba enumerando los `res.status()` del manejador.
+**La primera versión de esto estaba mal.** Contestaba `200 {Status:"rejected"}` ante una caída de
+PostgreSQL. `rejected` significa «lo he recibido y no lo quiero»: Ágora lo da por entregado y **no
+lo reenvía**. Pero si la base se cayó no sabemos si la factura quedó guardada, y decir que sí
+convierte un fallo técnico en una pérdida silenciosa. Hoy, sin premios, se pierde una visita. Con
+puntos serán puntos que el cliente cree tener y no tiene, y eso se descubre en la barra.
 
-| Situación | Respuesta | Por qué |
+La regla correcta:
+
+| Código | Significa | Cuándo |
 |---|---|---|
-| Todo bien | 200 `accepted` | — |
-| JSON malformado | 200 `rejected` | El problema es del documento; un 4xx bloquearía |
-| Fallo interno | 200 `rejected` | Sin detalles: al TPV no se le cuenta qué falló |
-| Factura repetida | 200 `accepted` | Ya se aceptó una vez |
-| Mismo `GlobalId`, otro cuerpo | 200 `accepted` + conflicto auditado | Ver 5 |
-| Socio que ya no existe | 200 `accepted`, sin movimientos | Ver 6 |
+| **200 `accepted`** | Está guardada de forma duradera | COMMIT hecho, o ya estaba con el mismo contenido |
+| **200 `rejected`** | Decisión de negocio, y estamos SEGUROS | El documento no se puede procesar |
+| **500** | **No sabemos si se guardó** | Ágora conserva la posibilidad de reenviar |
+
+Un 500 impide cerrar la factura, sí. Es el precio correcto: el camarero **desasocia al participante
+y cobra sin fidelización** —un paso manual, documentado— y no se pierde nada.
+
+#### La matriz completa
+
+| Caso | HTTP | Cuerpo | Persistencia | ¿Ágora puede cerrar? |
+|---|---|---|---|---|
+| Factura válida nueva | 200 | `accepted` | Factura + movimientos, **tras COMMIT** | Sí |
+| Duplicado idéntico | 200 | `accepted` | Ya estaba; nada nuevo | Sí |
+| Mismo `GlobalId`, otro cuerpo | 200 | `rejected` | Solo se marca `conflicto` + auditoría | Sí, sin fidelización |
+| JSON malformado | 200 | `rejected` | Ninguna | Sí, sin fidelización |
+| Cuerpo demasiado grande | 200 | `rejected` | Ninguna | Sí, sin fidelización |
+| Token incorrecto | 404 | `{}` | Ninguna | **No** → desasociar |
+| Integración desactivada | 404 | `{}` | Ninguna | **No** → desasociar |
+| Socio inexistente | 200 | `accepted` | Factura sí, movimientos no; estado `sin_miembro` | Sí |
+| PostgreSQL caído | **500** | `{"Status":"error"}` | **Indeterminada** → ROLLBACK | **No** → reintento o desasociar |
+| Tiempo límite de PostgreSQL | **500** | `{"Status":"error"}` | **Indeterminada** → ROLLBACK | **No** → reintento o desasociar |
+| Excepción inesperada | **500** | `{"Status":"error"}` | **Indeterminada** → ROLLBACK | **No** → reintento o desasociar |
+| Devolución duplicada | 200 | `accepted` | Ya estaba; no se revierte dos veces | Sí |
+
+Los tres 500 no llevan ningún detalle: al TPV no se le cuenta qué ha fallado por dentro.
 
 ### 4. Idempotencia impuesta por la base, no por una comprobación previa
 
-`fid_facturas.global_id` es **UNIQUE** y el `INSERT` lleva `ON CONFLICT DO NOTHING RETURNING id`.
-Dos reenvíos simultáneos se cruzan **en el índice**, no en un `SELECT` previo que uno de los dos
-podría adelantar. Lo mismo en el libro con `clave_idem TEXT NOT NULL UNIQUE`.
+La clave única es **`clave_factura`**, no `global_id` a secas:
 
-Si no viene `GlobalId`, se compone una clave con `SerialNumber`, `Number`, `Date` y el hash del
-cuerpo, y **se marca `clave_debil = true`**. No se disfraza de `GlobalId`: una idempotencia que no
-se sabe fuerte hay que poder mirarla después.
+```
+clave_factura = <local-slug> | <tipo> | <global-id>
+```
+
+**Lleva el local dentro a propósito.** La Guía del Integrador no garantiza que el `GlobalId` sea
+único entre locales distintos, y no tenemos forma de confirmarlo hoy. Si no lo fuera y la clave
+fuese solo el `GlobalId`, el día que el piloto se amplíe la factura de un local taparía la de otro:
+la segunda se vería como un reenvío, no apuntaría ni una visita y **no daría ningún error**. Meter
+el local cuesta nada y cierra ese agujero antes de que exista.
+
+El `INSERT` lleva `ON CONFLICT (clave_factura) DO NOTHING RETURNING id`: dos reenvíos simultáneos se
+cruzan **en el índice**, no en un `SELECT` previo que uno de los dos podría adelantar. Lo mismo en
+el libro con `clave_idem TEXT NOT NULL UNIQUE`, cuya clave **también lleva el local**.
+
+`global_id_tipo` guarda si el identificador es **`oficial`** (el de Ágora) o **`debil`** (compuesto
+por nosotros). Nunca se mezclan sin saber cuál es cuál. Si no viene `GlobalId`, la clave de respaldo
+es `debil:<versión-del-algoritmo>:<local>:<hash>` — con el local **y** la versión dentro, porque una
+clave de respaldo que no diga de dónde sale ni cómo se calculó no se puede auditar el día que haya
+que hacerlo.
 
 ### 5. Política del conflicto: mismo `GlobalId`, cuerpo distinto
 
-**No se procesa.** Se marca la factura como `conflicto`, se audita con los dos hashes y **se
-responde `accepted`**. Devolver un error ahora bloquearía una caja por un problema que es nuestro,
-y esa factura ya se aceptó una vez. Queda visible en el panel para mirarlo con calma.
+**No se procesa y NO se confirma.** Un `accepted` diría que hemos aceptado *este* documento, y lo
+que tenemos guardado es otro. Se responde **`rejected`** con un motivo genérico —«Documento no
+coincide con el ya registrado», sin nada del cuerpo—, se marca la factura como `conflicto` y se
+audita. Es un 200, así que no bloquea la caja, y queda visible en el panel para mirarlo con calma.
+
+No se apunta ni un movimiento nuevo.
 
 ### 6. Política del socio desaparecido
 
@@ -118,6 +159,30 @@ la factura — que es un dato que **realmente necesita recuperación**: es el ob
 Rutas: `GET /api/fidelizacion/agora/:token/member/:memberId` ·
 `POST /api/fidelizacion/agora/:token/factura` · siete de gestión con `requireAuth(["direccion"])`.
 
+### 9. El JSON capturado
+
+- **Cifrado con `DATA_ENC_KEY` en formato v2**, con dominio propio (`DOMINIOS.FIDELIZACION`). Si no
+  hay clave se guarda `NULL`, nunca texto en claro.
+- **Nunca aparece en un log ni en la auditoría.** La auditoría guarda contadores y el `GlobalId`;
+  del cuerpo, nada.
+- **Límite de tamaño** en dos sitios: el middleware `express.raw({ limit })` y una comprobación en
+  el manejador.
+- **Solo Dirección** puede verlo, y solo pidiéndolo expresamente con `?cuerpo=1`. La vista normal
+  del panel enseña el **mapa de campos**, sin valores.
+- **Se puede borrar sin tocar el libro**: `POST /api/fidelizacion/facturas/purgar-cuerpos` vacía
+  `cuerpo_enc` y conserva la fila, su hash y su idempotencia. Son dos cosas distintas — el JSON es
+  una muestra para diseñar la Fase 2; las visitas y el consumo son contables y se quedan.
+
+### 10. Activar y desactivar no dejan nada a medias
+
+El interruptor solo decide si el token resuelve. Con la integración desactivada o revocada, las dos
+rutas devuelven **404** desde la primera línea, antes de tocar nada.
+
+**Si se desactiva con una factura ya asociada a un socio, Ágora no podrá cerrarla.** El camarero
+tiene que **desasociar al participante y cobrar sin fidelización**. No se pierde la venta, no queda
+ninguna fila a medias y el libro no se toca: lo único que ocurre es que esa factura no cuenta como
+visita. El panel lo avisa antes de desactivar, en la propia confirmación.
+
 ## Vuelta atrás
 
 **Sin migraciones destructivas.** En orden de menos a más:
@@ -134,7 +199,11 @@ solo **lee** de `pro_qr`; hay test de que no escribe.
 
 ## Riesgos abiertos
 
-- **El charset del MemberId** (ver 1). Es el que puede tumbar el piloto el primer día.
+- **El charset del MemberId** (ver 1). Comprobado que `-` y `_` **no son el problema del lado de
+  Express**: son «unreserved» en la RFC 3986, `encodeURIComponent` no los toca y un test con un
+  servidor Express real confirma que llegan intactos, tanto crudos como porcentaje-codificados. Lo
+  que no se puede comprobar desde aquí es si el TPV los acepta al escribirlos en su configuración.
+  **No se reemite ningún QR mientras el TPV real no demuestre que hay incompatibilidad.**
 - **No hemos visto una factura real.** `GlobalId`, el campo del importe y el marcador de devolución
   se buscan de forma defensiva entre varios nombres plausibles, y se registra cuál acertó. La
   primera factura de verdad convierte esas suposiciones en certezas.
