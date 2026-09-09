@@ -1,7 +1,3 @@
-// ⚠️ ESTE IMPORT VA EL PRIMERO Y NO SE PUEDE MOVER. Abre el puerto antes de que se cargue el
-// resto del árbol de módulos (118 imports, Baileys incluido), que es lo que tenía a Replit
-// recibiendo «connection refused» durante ~24 s en cada despliegue. Ver src/arranque-temprano.js.
-import { entregar, marcarEsquemaListo } from "./src/arranque-temprano.js";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -103,7 +99,6 @@ import { firmarPKCS7, hayOpenssl, datosDelCertificado, sha1 as walletSha1 } from
 import { enlaceGuardar as googleEnlaceGuardar, normalizarClave as googleNormalizarClave } from "./src/modules/wallet/google.js";
 import { cifrar as secCifrar, abrir as secAbrir, pista as secPista, DOMINIOS } from "./src/modules/seguridad/secretos.js";
 import { cargarLlavero, lineaArranque } from "./src/modules/seguridad/clave-datos.js";
-import { readinessDe } from "./src/modules/arranque/estado.js";
 // Captación por campaña: la ruta a la que apunta un anuncio de pago, con su cola de envíos.
 import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
 import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
@@ -319,36 +314,6 @@ app.use("/api", (req, res, next) => {
   res.set("Retry-After", "3");
   res.status(503).json({ ok: false, arrancando: true,
     error: "El sistema está arrancando. Vuelve a intentarlo en unos segundos." });
-});
-
-/**
- * VIDA. 200 siempre, sin mirar nada: ni la base, ni WhatsApp, ni Ágora.
- *
- * Si mirase algo de eso, una caída de PostgreSQL haría que el supervisor reiniciara el proceso
- * —y reiniciar el proceso no arregla una caída de PostgreSQL; solo añade un arranque más.
- *
- * Durante el arranque la contesta el manejador provisional (src/arranque-temprano.js); a partir
- * de la entrega, ésta. La respuesta es la misma en los dos casos, a propósito.
- */
-app.get("/healthz", (req, res) => {
-  res.set("Cache-Control", "no-store").type("text/plain").send("ok");
-});
-
-/**
- * DISPONIBILIDAD. 200 solo si este proceso puede hacer su trabajo de verdad.
- *
- * Dos condiciones y hacen falta las dos: que `initDB()` haya terminado —si no, las columnas
- * nuevas todavía no existen— y que la base CONTESTE ahora mismo. El `SELECT 1` es lo que hace
- * que esto sirva de algo: sin él, diría «listo» para siempre desde el primer arranque, aunque
- * PostgreSQL se cayera media hora después.
- */
-app.get("/readyz", async (req, res) => {
-  const { codigo, cuerpo } = await readinessDe({
-    esquemaListo: DB_LISTA,
-    ping: () => pool.query("SELECT 1"),
-  });
-  if (codigo !== 200) res.set("Retry-After", "3");
-  res.status(codigo).set("Cache-Control", "no-store").json(cuerpo);
 });
 
 app.use(comprimir());
@@ -17493,18 +17458,13 @@ async function procesarPendientesWA() {
 // y log seguro en servidor. Debe registrarse DESPUÉS de todas las rutas.
 app.use(errorHandler);
 
-// El puerto lleva abierto desde el primer instante (src/arranque-temprano.js). Esto no vuelve a
-// escuchar: cambia el manejador del MISMO socket, de la respuesta provisional a Express. Cerrar
-// y reabrir dejaría un hueco de milisegundos rechazando conexiones, que es el agujero que
-// estamos tapando.
-const server = entregar(app, async () => {
+const server = app.listen(PORT, async () => {
   console.log(`Servidor activo en http://localhost:${PORT}`);
 
   // Inicializar esquema PostgreSQL
   try {
     await initDB();
     DB_LISTA = true;   // a partir de aquí la API puede contestar de verdad
-    marcarEsquemaListo();
   } catch (e) {
     console.error("[DB] Error inicializando esquema:", e.message);
     process.exit(1);
@@ -18256,6 +18216,14 @@ const server = entregar(app, async () => {
   }, 60 * 60 * 1000);
 });
 
-// El manejador de `error` del socket —incluido el reintento por puerto ocupado— vive ahora en
-// src/modules/arranque/servidor.js, junto al `listen`. Aquí llegaba 24 segundos tarde: el puerto
-// se abre al evaluar el primer import, y un EADDRINUSE ocurre justo ahí, no al final del fichero.
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`Puerto ${PORT} ocupado. Esperando y reintentando...`);
+    setTimeout(() => {
+      server.close();
+      server.listen(PORT);
+    }, 2000);
+  } else {
+    console.error("Error del servidor:", err.message);
+  }
+});
