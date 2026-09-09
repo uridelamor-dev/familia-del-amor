@@ -46,6 +46,22 @@ Ya está configurado global `pull.rebase=true` + `rebase.autoStash=true`, así q
   Queda: contraseña seed `tapeta2024` y **sin helmet**.
 - No commitear credenciales reales; el `.env` no va al repo.
 
+## Cifrado de secretos en reposo (`DATA_ENC_KEY`)
+Las credenciales de los TPV de Ágora (`agora_locales.token`, `.pass_enc`) y los certificados de
+firma de la wallet (`wallet_config.datos_enc`) van cifrados en la base. Reglas:
+- La clave es el Secret **`DATA_ENC_KEY`** (32 bytes en Base64), **independiente del `JWT_SECRET`**.
+  Se carga en `src/modules/seguridad/clave-datos.js` y **no se convierte nada**: si no es una
+  cadena, se rechaza. Ahí entró R01 (`derivarClave(resolveJwtSecret() …)` → `"[object Object]"`).
+- **Sin la clave el servidor arranca igual**: lee todo lo guardado y solo se niega a *escribir* un
+  secreto nuevo (503 explicando qué falta). **Nunca** hay clave de reserva ni se guarda en claro.
+- Se escribe **siempre** en formato v2 (`enc:v2:<kid>:<iv>:<tag>:<ct>`, AES-256-GCM, dominio en el
+  AAD). El lector del formato roto vive aislado en `legado-inseguro.js` y **no tiene función de
+  cifrar**, a propósito.
+- Migración: `node scripts/migrar-cifrado.js` (en seco) · `--aplicar --si-estoy-seguro` (escribe,
+  en una transacción, con copia de los criptogramas en `cifrado_copia_v1`) · `--verificar` ·
+  `--restaurar`. Se lanza desde el `run` del deployment, nunca desde una ruta HTTP.
+- Ver **ADR 0005** para el porqué, el procedimiento de despliegue y la vuelta atrás.
+
 ## Imágenes
 - Compresión de galería: `~/.claude/scripts/gallery-import.sh <prefijo> <glob-origen>` (usa `sips`, no hay PIL).
 

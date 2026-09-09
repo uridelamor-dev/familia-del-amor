@@ -121,10 +121,20 @@ describe("los secretos no salen por la API", () => {
   });
 
   test("lo que se guarda va cifrado, no en claro", () => {
+    // Desde R01 la clave es `DATA_ENC_KEY` (un Secret propio) y no una derivada del JWT_SECRET,
+    // que resultó ser la cadena "[object Object]". El dominio separa esto de los secretos de
+    // Ágora: un certificado de la wallet no se abre con el contexto del TPV ni al revés.
     const escritura = server.slice(j, j + 3000);
-    assert.match(escritura, /secCifrar\(JSON\.stringify\(guardar\), WALLET_ENC_KEY\)/);
+    assert.match(escritura, /secCifrar\(JSON\.stringify\(guardar\), LLAVERO, DOMINIOS\.WALLET\)/);
     assert.ok(!/datos_enc.*JSON\.stringify\(guardar\)\s*,/.test(escritura.replace(/secCifrar\([^)]*\)/g, "X")),
       "parece que se guarda el JSON sin cifrar");
+  });
+
+  test("y no se guarda NADA si falta la clave", () => {
+    // Guardar un .p12 en claro porque faltaba un Secret sería peor que el error de no guardarlo.
+    const handlerGuardar = server.slice(server.indexOf('app.post("/api/wallet/config"'),
+                                        server.indexOf("INSERT INTO wallet_config"));
+    assert.match(handlerGuardar, /!LLAVERO\.puedeCifrar[\s\S]{0,220}res\.status\(503\)/);
   });
 });
 

@@ -97,7 +97,8 @@ import { urlTarjeta, urlAlta, puedeIrAWallet, pasePlanoApple, objetoGoogle,
 import { construirPkpass } from "./src/modules/wallet/pkpass.js";
 import { firmarPKCS7, hayOpenssl, datosDelCertificado, sha1 as walletSha1 } from "./src/modules/wallet/firma.js";
 import { enlaceGuardar as googleEnlaceGuardar, normalizarClave as googleNormalizarClave } from "./src/modules/wallet/google.js";
-import { derivarClave, cifrar as secCifrar, descifrar as secDescifrar, pista as secPista } from "./src/modules/seguridad/secretos.js";
+import { cifrar as secCifrar, abrir as secAbrir, pista as secPista, DOMINIOS } from "./src/modules/seguridad/secretos.js";
+import { cargarLlavero, lineaArranque } from "./src/modules/seguridad/clave-datos.js";
 // Captación por campaña: la ruta a la que apunta un anuncio de pago, con su cola de envíos.
 import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
 import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
@@ -223,6 +224,56 @@ const _envWarn = replitEnvWarning();
 if (_envWarn) console.warn("[env]", _envWarn);
 const { secret: JWT_SECRET, status: jwtStatus, source: jwtSource } = resolveJwtSecret({ prod: PROD });
 console.log(`[auth] JWT secret: ${jwtStatus} (fuente: ${jwtSource})`);
+
+/**
+ * LA CLAVE CON LA QUE SE CIFRAN LOS SECRETOS GUARDADOS (R01).
+ *
+ * Es un Secret aparte, `DATA_ENC_KEY`, y no tiene nada que ver con el JWT. Antes se derivaba del
+ * resultado de `resolveJwtSecret()` —un OBJETO— que el `String()` de dentro convertía en
+ * `"[object Object]"`: la clave AES real era una constante pública, la misma en cualquier copia
+ * de este repositorio. Ver src/modules/seguridad/clave-datos.js.
+ *
+ * SI FALTA, EL SERVIDOR ARRANCA IGUAL. Sigue leyendo todo lo guardado —el formato viejo no
+ * necesita esta clave— y lo único que no puede es escribir un secreto nuevo, que es una acción
+ * de dirección y ocurre una vez cada muchos meses. Negarse a arrancar por un Secret que solo
+ * afecta a eso dejaría el restaurante sin reservas y sin Sara.
+ */
+const LLAVERO = cargarLlavero({ env: process.env, entorno: PROD ? "produccion" : null });
+console.log(lineaArranque(LLAVERO));
+
+/**
+ * Un valor guardado que no se puede descifrar NO puede desaparecer sin más.
+ *
+ * Antes, `descifrar()` devolvía `null` tanto si no había contraseña como si la había y no se
+ * sabía abrir, y `configsFromRows` descartaba la fila. Resultado: el TPV dejaría de sincronizar
+ * en silencio, sin excepción y sin una línea en el log, y en el panel se vería «sin configurar».
+ * Se descubriría al cuadrar la caja del mes.
+ *
+ * Esto cuenta los fallos y los enseña en `/api/agora/estado`. El motivo nunca lleva datos.
+ */
+const CIFRADO_FALLOS = new Map();
+function leerSecreto(guardado, dominio, donde) {
+  const r = secAbrir(guardado, LLAVERO, dominio);
+  if (!r.ok) {
+    const clave = `${donde}:${r.motivo}`;
+    const n = (CIFRADO_FALLOS.get(clave) || 0) + 1;
+    CIFRADO_FALLOS.set(clave, n);
+    // Una sola línea por causa: `agoraDecToken` se llama en cada sincronización y un log
+    // repetido cada cinco minutos se convierte en ruido que nadie mira.
+    if (n === 1) console.error(`[cifrado] ${donde}: hay un valor guardado que no se puede leer (${r.motivo})`);
+  }
+  return r.valor;
+}
+
+/** Lo que se enseña en el panel: si la clave está, cuál es (por su kid) y qué no se ha podido leer. */
+function cifradoEstado() {
+  return {
+    clave: LLAVERO.estado,
+    kid: LLAVERO.actual ? LLAVERO.actual.kid : null,
+    puedeCifrar: LLAVERO.puedeCifrar,
+    fallos: Object.fromEntries(CIFRADO_FALLOS),
+  };
+}
 
 // Copia REVERSIBLE de la contraseña, cifrada AES-256-GCM, para que Dirección pueda "verla"
 // desde el panel (petición explícita). El login sigue usando el hash bcrypt (irreversible);
@@ -7250,12 +7301,11 @@ app.get("/api/dashboard", requireAuth(["direccion", "encargado", "contabilidad"]
 
 // ── Ágora TPV: ventas y estado de integración ────────────────────────────────────
 // ── Cifrado del apiToken de Ágora en reposo (AES-256-GCM). El token NUNCA sale por la API. ──
-// El cifrado en sí vive en src/modules/seguridad/secretos.js desde que hay un segundo sitio que
-// lo necesita (las claves de firma de la wallet). La clave sigue siendo la de siempre —misma
-// sal, `agora-token-v1`— así que lo que ya está guardado se sigue descifrando igual.
-const AGORA_ENC_KEY = derivarClave(resolveJwtSecret() || "tapeta", "agora-token-v1");
-const agoraEncToken = (plain) => secCifrar(plain, AGORA_ENC_KEY);
-const agoraDecToken = (stored) => secDescifrar(stored, AGORA_ENC_KEY);
+// El cifrado vive en src/modules/seguridad/secretos.js. Escribe SIEMPRE en formato v2 con
+// `DATA_ENC_KEY`; lo guardado con el cifrado viejo se sigue leyendo hasta que la migración
+// (scripts/migrar-cifrado.js) lo pase, y a partir de ahí el lector viejo se puede borrar.
+const agoraEncToken = (plain) => secCifrar(plain, LLAVERO, DOMINIOS.AGORA);
+const agoraDecToken = (stored) => leerSecreto(stored, DOMINIOS.AGORA, "agora_locales");
 // Configs activas: la BD manda; si está vacía, cae al Secret AGORA_LOCALES (compat).
 async function loadAgoraConfigsFromDB() {
   const rows = await dbAll(`SELECT local, host, token, usuario, pass_enc, local_id, activo FROM agora_locales`);
@@ -7719,7 +7769,7 @@ app.get("/api/agora/estado", requireAuth(["direccion", "contabilidad"]), async (
       out.push({ ...publicConfig(cfg), estado });
     }
     const lastSync = await getConfig("agora_last_sync");
-    res.json({ ok: true, configurados: configs.length, lastSync: lastSync || null, locales: out });
+    res.json({ ok: true, configurados: configs.length, lastSync: lastSync || null, locales: out, cifrado: cifradoEstado() });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error estado Ágora" });
   }
@@ -7753,8 +7803,14 @@ app.post("/api/agora/locales", requireAuth(["direccion"]), async (req, res) => {
     const now = new Date().toISOString();
     const existing = await dbGet(`SELECT token, pass_enc FROM agora_locales WHERE local = ?`, [local]);
     const tokTrim = token != null ? String(token).trim() : "";
-    let tokenStored = tokTrim ? agoraEncToken(tokTrim) : (existing && existing.token ? existing.token : null);
     const passTrim = password != null ? String(password).trim() : "";
+    // Sin DATA_ENC_KEY no se guarda una credencial. La alternativa —dejarla en claro en la
+    // base «por ahora»— es el fallo que nadie vuelve a mirar. El resto de la edición (host,
+    // local_id, activo) sí se puede seguir haciendo: solo se corta si hay secreto que cifrar.
+    if ((tokTrim || passTrim) && !LLAVERO.puedeCifrar) {
+      return res.status(503).json({ ok: false, error: "Falta el Secret DATA_ENC_KEY: no se puede guardar una credencial nueva sin cifrarla." });
+    }
+    let tokenStored = tokTrim ? agoraEncToken(tokTrim) : (existing && existing.token ? existing.token : null);
     let passStored = passTrim ? agoraEncToken(passTrim) : (existing && existing.pass_enc ? existing.pass_enc : null);
     const usuarioStored = usuario != null && String(usuario).trim() !== "" ? String(usuario).trim() : (existing ? undefined : null);
     // COALESCE de usuario: si no viene en edición, conservar el actual.
@@ -11266,16 +11322,13 @@ app.post("/api/tarjeta/activa", requireAuth(["direccion"]), async (req, res) => 
   }
 });
 
-/** La clave con la que se cifran los secretos de la wallet. Sal propia: un secreto de Ágora no
- *  se descifra con esta ni al revés. */
-const WALLET_ENC_KEY = derivarClave(resolveJwtSecret() || "tapeta", "wallet-v1");
 
 /** Lee la configuración de una plataforma. Devuelve null si no está o si no descifra. */
 async function walletCfg(plataforma) {
   try {
     const fila = await dbGet(`SELECT * FROM wallet_config WHERE plataforma = ?`, [plataforma]);
     if (!fila || !Number(fila.activo) || !fila.datos_enc) return null;
-    const plano = secDescifrar(fila.datos_enc, WALLET_ENC_KEY);
+    const plano = leerSecreto(fila.datos_enc, DOMINIOS.WALLET, "wallet_config");
     return plano ? JSON.parse(plano) : null;
   } catch (e) {
     console.error("[wallet] cfg:", plataforma, e.message);
@@ -11649,12 +11702,15 @@ app.post("/api/wallet/config", requireAuth(WALLET_ROLES), async (req, res) => {
       }
     }
 
+    if (!LLAVERO.puedeCifrar) {
+      return res.status(503).json({ ok: false, error: "Falta el Secret DATA_ENC_KEY: no se pueden guardar los certificados sin cifrarlos." });
+    }
     const activo = b.activo === undefined ? 1 : (b.activo ? 1 : 0);
     await dbRun(
       `INSERT INTO wallet_config (plataforma, activo, datos_enc, updated_at) VALUES (?,?,?,?)
        ON CONFLICT(plataforma) DO UPDATE SET activo = EXCLUDED.activo,
          datos_enc = EXCLUDED.datos_enc, updated_at = EXCLUDED.updated_at`,
-      [plataforma, activo, secCifrar(JSON.stringify(guardar), WALLET_ENC_KEY), new Date().toISOString()]);
+      [plataforma, activo, secCifrar(JSON.stringify(guardar), LLAVERO, DOMINIOS.WALLET), new Date().toISOString()]);
 
     res.json({ ok: true });
   } catch (e) {
