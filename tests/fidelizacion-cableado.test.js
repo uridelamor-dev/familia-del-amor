@@ -52,7 +52,7 @@ describe("NUNCA un error que bloquee la caja", () => {
     //   404 → el token no vale, antes de mirar nada
     //   500 → no sabemos si se guardó. Ágora conserva la posibilidad de reenviar.
     const estados = [...factura.matchAll(/res\.status\((\d+)\)/g)].map((m) => Number(m[1]));
-    assert.deepEqual([...new Set(estados)].sort(), [200, 404, 500], `estados devueltos: ${estados}`);
+    assert.deepEqual([...new Set(estados)].sort((a, b) => a - b), [200, 404, 500], `estados devueltos: ${estados}`);
   });
 
   test("un JSON malformado se rechaza con 200, no con 400", () => {
@@ -64,7 +64,7 @@ describe("NUNCA un error que bloquee la caja", () => {
     // Es el arreglo. Un 500 impide cerrar la factura —el camarero desasocia al participante y
     // cobra sin fidelización, que está documentado— pero Ágora puede reenviarla. Un `rejected`
     // habría perdido la visita, y mañana los puntos.
-    assert.match(factura, /catch \(e\) \{[\s\S]{0,1400}return res\.status\(500\)\.json\(\{ Status: "error" \}\)/);
+    assert.match(factura, /catch \(e\) \{[\s\S]*?return res\.status\(500\)\.json\(\{ Status: "error" \}\)/);
   });
 
   test("y no se le cuenta al TPV qué ha fallado por dentro", () => {

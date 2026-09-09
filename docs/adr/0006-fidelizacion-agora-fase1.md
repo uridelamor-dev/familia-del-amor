@@ -56,33 +56,48 @@ puntos serán puntos que el cliente cree tener y no tiene, y eso se descubre en 
 
 La regla correcta:
 
-| Código | Significa | Cuándo |
-|---|---|---|
-| **200 `accepted`** | Está guardada de forma duradera | COMMIT hecho, o ya estaba con el mismo contenido |
-| **200 `rejected`** | Decisión de negocio, y estamos SEGUROS | El documento no se puede procesar |
-| **500** | **No sabemos si se guardó** | Ágora conserva la posibilidad de reenviar |
+**SOLO HAY UNA RESPUESTA QUE PERMITE CERRAR LA FACTURA: `200 accepted`.** La guía es explícita —
+«en caso de que se rechace la factura, Ágora no realizará el cierre de factura»—, así que un
+`rejected` **tampoco cierra**. No es una salida suave: es un no.
 
-Un 500 impide cerrar la factura, sí. Es el precio correcto: el camarero **desasocia al participante
-y cobra sin fidelización** —un paso manual, documentado— y no se pierde nada.
+| Código | Significa | ¿Cierra? |
+|---|---|---|
+| **200 `accepted`** | Está guardada de forma duradera | **Sí** |
+| **200 `rejected`** | Decisión de negocio, y estamos SEGUROS de que no se puede procesar | No |
+| **4xx / 5xx** | No sabemos si se guardó, o el participante no vale | No |
+
+**Para cerrar sin fidelización solo hay un camino, y es manual:** el camarero **desasocia al
+participante** y vuelve a intentar el cierre. No hay ninguna respuesta nuestra que cierre la factura
+«sin fidelización» por su cuenta.
 
 #### La matriz completa
 
 | Caso | HTTP | Cuerpo | Persistencia | ¿Ágora puede cerrar? |
 |---|---|---|---|---|
-| Factura válida nueva | 200 | `accepted` | Factura + movimientos, **tras COMMIT** | Sí |
-| Duplicado idéntico | 200 | `accepted` | Ya estaba; nada nuevo | Sí |
-| Mismo `GlobalId`, otro cuerpo | 200 | `rejected` | Solo se marca `conflicto` + auditoría | Sí, sin fidelización |
-| JSON malformado | 200 | `rejected` | Ninguna | Sí, sin fidelización |
-| Cuerpo demasiado grande | 200 | `rejected` | Ninguna | Sí, sin fidelización |
-| Token incorrecto | 404 | `{}` | Ninguna | **No** → desasociar |
-| Integración desactivada | 404 | `{}` | Ninguna | **No** → desasociar |
-| Socio inexistente | 200 | `accepted` | Factura sí, movimientos no; estado `sin_miembro` | Sí |
-| PostgreSQL caído | **500** | `{"Status":"error"}` | **Indeterminada** → ROLLBACK | **No** → reintento o desasociar |
-| Tiempo límite de PostgreSQL | **500** | `{"Status":"error"}` | **Indeterminada** → ROLLBACK | **No** → reintento o desasociar |
-| Excepción inesperada | **500** | `{"Status":"error"}` | **Indeterminada** → ROLLBACK | **No** → reintento o desasociar |
-| Devolución duplicada | 200 | `accepted` | Ya estaba; no se revierte dos veces | Sí |
+| Factura válida nueva | 200 | `accepted` | Factura + movimientos, **tras COMMIT** | **Sí** |
+| Duplicado idéntico | 200 | `accepted` | Ya estaba; nada nuevo | **Sí** |
+| Devolución duplicada idéntica | 200 | `accepted` | Ya estaba; no se revierte dos veces | **Sí** |
+| Mismo `GlobalId`, otro cuerpo | 200 | `rejected` | Solo se marca `conflicto` + auditoría | No → desasociar o investigar |
+| JSON malformado | 200 | `rejected` | Ninguna | No → desasociar |
+| Cuerpo demasiado grande | 413 | `rejected` (JSON) | Ninguna | No → desasociar |
+| Token incorrecto | 404 | `{}` | Ninguna | No → desasociar |
+| Integración desactivada | 404 | `{}` | Ninguna | No → desasociar |
+| **Socio inexistente** | **404** | `{}` | **Ninguna** → ROLLBACK | No → desasociar |
+| PostgreSQL caído | 500 | `{"Status":"error"}` | **Indeterminada** → ROLLBACK | No → reintento |
+| Tiempo límite de PostgreSQL | 500 | `{"Status":"error"}` | **Indeterminada** → ROLLBACK | No → reintento |
+| Excepción inesperada | 500 | `{"Status":"error"}` | **Indeterminada** → ROLLBACK | No → reintento |
 
-Los tres 500 no llevan ningún detalle: al TPV no se le cuenta qué ha fallado por dentro.
+Ninguna respuesta de error lleva detalles: al TPV no se le cuenta qué ha fallado por dentro.
+
+**Decisión documentada sobre el JSON malformado:** se responde `200 rejected` y no `400`. Los dos
+impiden cerrar igual, y `rejected` es la forma que la guía prevé para «lo he recibido y no lo puedo
+procesar» — el documento llegó entero, el problema es su contenido. Un `400` diría que la petición
+estaba mal formada a nivel de transporte, que no es el caso.
+
+**Y sobre el cuerpo excesivo:** `413` con cuerpo JSON. Aquí sí es un problema de transporte, y el
+cuerpo nunca llegó completo. Lo importante es que **no se escapa el 413 en HTML** que produciría
+`express.raw` por defecto: hay un manejador de error propio que lo convierte en JSON controlado, sin
+trazas. Hay prueba HTTP real de ello.
 
 ### 4. Idempotencia impuesta por la base, no por una comprobación previa
 
@@ -113,16 +128,28 @@ que hacerlo.
 **No se procesa y NO se confirma.** Un `accepted` diría que hemos aceptado *este* documento, y lo
 que tenemos guardado es otro. Se responde **`rejected`** con un motivo genérico —«Documento no
 coincide con el ya registrado», sin nada del cuerpo—, se marca la factura como `conflicto` y se
-audita. Es un 200, así que no bloquea la caja, y queda visible en el panel para mirarlo con calma.
+audita. Es un 200, pero **no cierra la factura**: la guía dice que un rechazo impide el cierre. Queda
+visible en el panel para mirarlo con calma, y el camarero desasocia para poder cobrar.
 
 No se apunta ni un movimiento nuevo.
 
-### 6. Política del socio desaparecido
+### 6. Política del socio desaparecido: **404 y no se guarda nada**
 
-Si Ágora identificó a alguien cuyo carné ya no está —anulado entre la validación y el cierre—, la
-factura **se acepta**, **no se apunta ningún movimiento** y la factura queda en estado
-`sin_miembro`. No se crea un socio nuevo: sería un duplicado de una identidad que ya tuvo su carné,
-y es exactamente lo que el índice único de carnés existe para impedir.
+**La primera versión de esto estaba mal.** Guardaba la factura como aceptada con estado
+`sin_miembro`. Pero un `accepted` hace que Ágora **deje de reenviarla**, y el cliente perdería su
+visita en silencio. La guía es explícita: «en caso de que el identificador de participante no sea
+válido, el servidor deberá devolver un código de respuesta **404 Not Found**».
+
+Ahora: **404**, la transacción se deshace entera y no queda ni factura, ni visita, ni movimientos.
+Se registra el hecho —con **hashes, nunca el MemberId completo**— en `fid_validaciones` y en
+`fic_auditoria`.
+
+Basta con que **uno** de los socios de la factura no exista. Aceptar la mitad dejaría a unos
+contados y a ése perdido, que es la peor de las dos opciones.
+
+**El camarero desasocia al participante y vuelve a intentar el cierre.** No se crea un socio nuevo:
+sería un duplicado de una identidad que ya tuvo su carné, y es exactamente lo que el índice único de
+carnés existe para impedir.
 
 ### 7. El libro es append-only
 

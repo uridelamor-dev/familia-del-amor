@@ -291,22 +291,26 @@ describe("idempotencia contra la base", () => {
     assert.equal(t.fid_movimientos.length, 2, "un conflicto NO apunta movimientos nuevos");
   });
 
-  test("un socio que ya no existe: se acepta, no se apunta nada y no se crea a nadie", async () => {
+  test("un socio que ya no existe: LANZA, no se apunta nada y no se crea a nadie", async () => {
+    // CORREGIDO. Antes esto se aceptaba con estado `sin_miembro`, y así Ágora dejaba de reenviar
+    // la factura: el cliente perdía su visita en silencio. La guía pide 404, y para devolver un
+    // 404 hay que deshacer la transacción — de ahí que se lance.
     const { x, t } = bd({ carnes: [] });
-    const r = await guardar(x, extraerFactura(factura({ lineas: [["FANTASMA", 10]] }), sha, { local: LOCAL_PILOTO }));
-    assert.equal(r.repetida, false);
-    assert.equal(r.movimientos, 0);
-    assert.equal(r.sinMiembro.length, 1);
-    assert.equal(r.estado, ESTADOS.SIN_MIEMBRO);
-    assert.equal(t.fid_facturas.length, 1, "la factura se guarda igual");
+    await assert.rejects(() => guardar(x, extraerFactura(factura({ lineas: [["FANTASMA", 10]] }), sha, { local: LOCAL_PILOTO })),
+      (e) => e.code === "MIEMBRO_DESCONOCIDO");
     assert.equal(t.pro_qr.length, 0, "¡se ha creado un socio de la nada!");
+    assert.equal(t.fid_movimientos.length, 0, "se ha apuntado una visita de un socio que no existe");
   });
 
   test("un carné anulado tampoco resucita", async () => {
     const { x } = bd({ carnes: [carnet({ id: 11, token: "TOK-A", anulado_en: AHORA })] });
-    const r = await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 10]] }), sha, { local: LOCAL_PILOTO }));
-    assert.equal(r.movimientos, 0);
-    assert.equal(r.sinMiembro[0].motivo, "anulado");
+    try {
+      await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 10]] }), sha, { local: LOCAL_PILOTO }));
+      assert.fail("debería haber lanzado");
+    } catch (e) {
+      assert.equal(e.code, "MIEMBRO_DESCONOCIDO");
+      assert.equal(e.miembros[0].motivo, "anulado");
+    }
   });
 
   test("DEVOLUCIÓN y DOBLE DEVOLUCIÓN: la segunda no revierte otra vez", async () => {

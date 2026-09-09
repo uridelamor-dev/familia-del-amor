@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import http from "node:http";
 import express from "express";
 import crypto from "node:crypto";
-import { extraerFactura, procesarFactura, claveDeFactura, localSlug, ALGO_DEBIL, LOCAL_PILOTO }
+import { extraerFactura, procesarFactura, claveDeFactura, localSlug, ALGO_DEBIL, LOCAL_PILOTO, MiembroDesconocido }
   from "../src/modules/fidelizacion/agora.js";
 
 const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
@@ -204,6 +204,139 @@ describe("aislamiento del GlobalId entre locales", () => {
   });
 });
 
+describe("un socio inexistente NUNCA se acepta", () => {
+  // LA GUÍA: «en caso de que el identificador de participante no sea válido, el servidor deberá
+  // devolver un código de respuesta 404 Not Found». La primera versión guardaba la factura como
+  // aceptada con estado `sin_miembro`, y eso hacía que Ágora dejara de reenviarla: el cliente
+  // perdía su visita en silencio.
+  const sinCarnes = () => ({
+    get: async (q) => (/FROM pro_qr/.test(q) ? null : null),
+    all: async () => [], run: async (q) => (/RETURNING/.test(q) ? { id: 1 } : undefined),
+  });
+
+  test("procesarFactura LANZA para que la transacción se deshaga", async () => {
+    await assert.rejects(() => procesarFactura(sinCarnes(), {
+      extracto: extraerFactura(docFactura("G-404"), sha, { local: LOCAL_PILOTO }),
+      integracion, ahora: AHORA, cuerpoBytes: 10, hashMember }), MiembroDesconocido);
+  });
+
+  test("el error lleva hashes, NUNCA el MemberId completo", async () => {
+    try {
+      await procesarFactura(sinCarnes(), {
+        extracto: extraerFactura(docFactura("G-404b"), sha, { local: LOCAL_PILOTO }),
+        integracion, ahora: AHORA, cuerpoBytes: 10, hashMember });
+      assert.fail("debería haber lanzado");
+    } catch (e) {
+      assert.equal(e.code, "MIEMBRO_DESCONOCIDO");
+      const txt = JSON.stringify(e.miembros) + " " + e.message;
+      assert.ok(!txt.includes("TOK-A"), txt);
+      assert.match(JSON.stringify(e.miembros), /"hash"/);
+    }
+  });
+
+  test("basta con que UNO de varios socios no exista", async () => {
+    // Aceptar la mitad dejaría a unos contados y a ése perdido, que es peor que rechazar entero.
+    const doc = { GlobalId: "G-MIX", InvoiceItems: [
+      { Amount: 10, LoyaltyProgram: { MemberId: "EXISTE", Rewards: [] } },
+      { Amount: 5, LoyaltyProgram: { MemberId: "NO-EXISTE", Rewards: [] } }] };
+    const x = {
+      get: async (q, p) => (/FROM pro_qr/.test(q) && p[0] === "EXISTE"
+        ? { id: 11, clase: "carnet", anulado_en: null, caduca_en: null } : null),
+      all: async () => [], run: async (q) => (/RETURNING/.test(q) ? { id: 1 } : undefined),
+    };
+    await assert.rejects(() => procesarFactura(x, {
+      extracto: extraerFactura(doc, sha, { local: LOCAL_PILOTO }),
+      integracion, ahora: AHORA, cuerpoBytes: 10, hashMember }), MiembroDesconocido);
+  });
+
+  test("el manejador lo traduce a 404, no a 200", () => {
+    assert.match(factura, /if \(e instanceof FidMiembroDesconocido\) \{[\s\S]{0,900}return res\.status\(404\)\.json\(\{\}\)/);
+    const i = factura.indexOf("if (e instanceof FidMiembroDesconocido)");
+    const bloque = factura.slice(i, factura.indexOf("return res.status(404)", i))
+      .split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+    assert.ok(!/accepted/.test(bloque), "el 404 del participante contesta accepted");
+    assert.ok(!/status\(200\)/.test(bloque));
+  });
+
+  test("y ya no existe el estado `sin_miembro` en ninguna parte del flujo", () => {
+    const modulo = readFileSync(new URL("../src/modules/fidelizacion/agora.js", import.meta.url), "utf8");
+    const codigo = modulo.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+    assert.ok(!/SIN_MIEMBRO/.test(codigo), "sigue guardándose una factura con estado sin_miembro");
+  });
+});
+
+describe("NINGUNA respuesta de error confirma una visita", () => {
+  test("solo el camino que llega al final apunta movimientos", async () => {
+    // Se recorren los cuatro caminos de error y se comprueba que ninguno escribe en el libro.
+    const escrituras = [];
+    const espia = (getFn) => ({
+      get: getFn, all: async () => [],
+      run: async (q, p) => { escrituras.push(q.replace(/\s+/g, " ").slice(0, 40));
+                             return /RETURNING/.test(q) ? { id: 1 } : undefined; },
+    });
+    // 1) socio inexistente
+    escrituras.length = 0;
+    await assert.rejects(() => procesarFactura(espia(async () => null), {
+      extracto: extraerFactura(docFactura("E-1"), sha, { local: LOCAL_PILOTO }),
+      integracion, ahora: AHORA, cuerpoBytes: 10, hashMember }));
+    assert.ok(!escrituras.some((q) => /fid_movimientos/.test(q)), "el 404 ha apuntado una visita");
+
+    // 2) base caída
+    escrituras.length = 0;
+    await assert.rejects(() => procesarFactura({
+      get: async () => null, all: async () => [], run: async () => { throw new Error("ECONNREFUSED"); },
+    }, { extracto: extraerFactura(docFactura("E-2"), sha, { local: LOCAL_PILOTO }),
+         integracion, ahora: AHORA, cuerpoBytes: 10, hashMember }));
+    assert.ok(!escrituras.some((q) => /fid_movimientos/.test(q)));
+  });
+
+  test("un conflicto tampoco apunta nada", async () => {
+    const t = { f: [{ clave_factura: claveDeFactura(LOCAL_PILOTO, "oficial", "G-C"), cuerpo_hash: "otro", id: 9 }] };
+    const escrituras = [];
+    const x = {
+      get: async (q, p) => (/clave_factura/.test(q) ? t.f.find((z) => z.clave_factura === p[0]) || null : null),
+      all: async () => [],
+      run: async (q) => { escrituras.push(q.replace(/\s+/g, " ").slice(0, 40)); return undefined; },
+    };
+    const r = await procesarFactura(x, { extracto: extraerFactura(docFactura("G-C"), sha, { local: LOCAL_PILOTO }),
+      integracion, ahora: AHORA, cuerpoBytes: 10, hashMember });
+    assert.equal(r.conflicto, true);
+    assert.equal(r.movimientos, 0);
+    assert.ok(!escrituras.some((q) => /INSERT INTO fid_movimientos/.test(q)));
+  });
+});
+
+describe("`rejected` NO cierra la factura, y en ningún sitio se dice lo contrario", () => {
+  // LA GUÍA: «en caso de que se rechace la factura, Ágora no realizará el cierre de factura».
+  // La primera versión de la documentación decía «Sí, sin fidelización» y era falso: no hay
+  // ninguna respuesta nuestra que cierre sola. Ese camino es MANUAL.
+  const textos = ["../docs/adr/0006-fidelizacion-agora-fase1.md", "../public/panel/app.js",
+                  "../server.js", "../src/modules/fidelizacion/agora.js"];
+
+  test("ningún texto sugiere que un rechazo cierre por su cuenta", () => {
+    for (const f of textos) {
+      const src = readFileSync(new URL(f, import.meta.url), "utf8");
+      assert.ok(!/Sí, sin fidelización/.test(src), `${f} dice que rejected cierra`);
+      assert.ok(!/no bloquea la caja/.test(src), `${f} dice que rejected no bloquea`);
+    }
+  });
+
+  test("el ADR lo dice explícitamente y con la cita de la guía", () => {
+    const adr = readFileSync(new URL("../docs/adr/0006-fidelizacion-agora-fase1.md", import.meta.url), "utf8");
+    assert.match(adr, /SOLO HAY UNA RESPUESTA QUE PERMITE CERRAR LA FACTURA/);
+    assert.match(adr, /Ágora no realizará el cierre de factura/);
+    assert.match(adr, /desasocia al\s*\n?participante/);
+  });
+
+  test("el panel dice al usuario que desasociar es un paso MANUAL", () => {
+    const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
+    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function loadFidPiloto()"));
+    assert.match(f, /Solo una respuesta cierra la factura/);
+    assert.match(f, /desasocia al participante/);
+    assert.match(f, /manual/i);
+  });
+});
+
 describe("el member_id con - y _ llega intacto a través de Express", () => {
   // El token del carné es base64url: incluye `-` y `_`. Antes de proponer reemitir ningún QR hay
   // que comprobar que el problema existe, y aquí se comprueba que NO existe del lado de Express.
@@ -260,5 +393,64 @@ describe("el member_id con - y _ llega intacto a través de Express", () => {
     const r = await s.pedir(`/api/fidelizacion/agora/${tok}/factura`);
     assert.equal(r.params.token, tok);
     await s.cerrar();
+  });
+});
+
+describe("un cuerpo excesivo devuelve JSON controlado, nunca el 413 en HTML", () => {
+  // `express.raw({ limit })` rechaza el cuerpo ANTES de llegar a nuestro manejador, y por defecto
+  // eso acaba en el manejador de errores de Express: una página HTML con el nombre del error y, en
+  // desarrollo, la traza entera. Aquí se comprueba con un servidor de verdad que eso no pasa.
+  const montar = () => new Promise((resolve) => {
+    const app = express();
+    app.use("/api/fidelizacion/agora", express.raw({ type: "*/*", limit: 1024 }));
+    // Exactamente el mismo manejador de error que server.js.
+    app.use("/api/fidelizacion/agora", (err, req, res, next) => {
+      if (err && (err.type === "entity.too.large" || err.status === 413 || err.statusCode === 413)) {
+        return res.status(413).set("Cache-Control", "no-store")
+          .json({ Status: "rejected", RejectReason: "Documento demasiado grande" });
+      }
+      return next(err);
+    });
+    app.post("/api/fidelizacion/agora/:token/factura", (req, res) => res.json({ Status: "accepted" }));
+    const srv = http.createServer(app).listen(0, () => resolve({
+      enviar: (cuerpo) => new Promise((r) => {
+        const req = http.request({ host: "127.0.0.1", port: srv.address().port, method: "POST",
+          path: "/api/fidelizacion/agora/TOK/factura",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(cuerpo) } },
+          (res) => { let b = ""; res.on("data", (c) => (b += c)); res.on("end", () => r({ codigo: res.statusCode, tipo: res.headers["content-type"], cuerpo: b })); });
+        req.on("error", () => r({ codigo: 0, tipo: "", cuerpo: "" }));
+        req.end(cuerpo);
+      }),
+      cerrar: () => new Promise((r) => srv.close(r)),
+    }));
+  });
+
+  test("413 con cuerpo JSON, sin HTML y sin trazas", async () => {
+    const s = await montar();
+    const r = await s.enviar(JSON.stringify({ relleno: "x".repeat(5000) }));
+    assert.equal(r.codigo, 413);
+    assert.match(r.tipo || "", /application\/json/, `tipo devuelto: ${r.tipo}`);
+    assert.ok(!/<html|<!DOCTYPE|<pre>/i.test(r.cuerpo), `ha salido HTML: ${r.cuerpo.slice(0, 120)}`);
+    const j = JSON.parse(r.cuerpo);
+    assert.equal(j.Status, "rejected");
+    assert.equal(j.RejectReason, "Documento demasiado grande");
+    // Ni el nombre del error, ni la pila, ni el límite configurado.
+    assert.ok(!/PayloadTooLarge|entity\.too\.large|at Object|node_modules|Error:/.test(r.cuerpo), r.cuerpo);
+    assert.deepEqual(Object.keys(j).sort(), ["RejectReason", "Status"], "el cuerpo lleva campos de más");
+    await s.cerrar();
+  });
+
+  test("un cuerpo dentro del límite pasa como siempre", async () => {
+    const s = await montar();
+    const r = await s.enviar(JSON.stringify({ ok: true }));
+    assert.equal(r.codigo, 200);
+    await s.cerrar();
+  });
+
+  test("y server.js monta ese manejador justo detrás del express.raw", () => {
+    const iRaw = server.indexOf('app.use("/api/fidelizacion/agora", express.raw(');
+    const iErr = server.indexOf('entity.too.large');
+    assert.ok(iRaw > 0 && iErr > iRaw, "el manejador del 413 no va detrás del raw");
+    assert.match(server, /return res\.status\(413\)[\s\S]{0,200}RejectReason: "Documento demasiado grande"/);
   });
 });

@@ -107,6 +107,7 @@ import { LOCAL_PILOTO as FID_LOCAL, REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CU
          nuevoToken as fidNuevoToken, pistaToken as fidPistaToken, estadoIntegracion as fidEstadoIntegracion,
          caducidadDesde as fidCaducidad, respuestaMiembro as fidRespuestaMiembro, carnetUtilizable as fidCarnetUtilizable,
          extraerFactura as fidExtraerFactura, procesarFactura as fidProcesarFactura, respuestaFactura as fidRespuestaFactura,
+         MiembroDesconocido as FidMiembroDesconocido,
          esquemaDe as fidEsquemaDe, cabecerasSeguras as fidCabeceras, urlsDeIntegracion as fidUrls }
   from "./src/modules/fidelizacion/agora.js";
 import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
@@ -327,6 +328,17 @@ app.use("/api", (req, res, next) => {
 // La factura de Ágora se necesita TAL CUAL para calcular su hash y detectar reenvíos. Va antes
 // de `express.json()`, que se la comería. Solo afecta a `/api/fidelizacion/agora`.
 app.use("/api/fidelizacion/agora", express.raw({ type: "*/*", limit: FID_MAX_CUERPO }));
+
+// Un cuerpo que pasa del límite lo rechaza `express.raw` ANTES de llegar a nuestro manejador, y sin
+// esto acabaría en el manejador de errores general — que contesta un 500 genérico. Aquí se
+// convierte en un 413 con cuerpo JSON, controlado y sin una sola traza.
+app.use("/api/fidelizacion/agora", (err, req, res, next) => {
+  if (err && (err.type === "entity.too.large" || err.status === 413 || err.statusCode === 413)) {
+    return res.status(413).set("Cache-Control", "no-store")
+      .json({ Status: "rejected", RejectReason: "Documento demasiado grande" });
+  }
+  return next(err);
+});
 
 app.use(comprimir());
 app.use(express.json());
@@ -17430,12 +17442,16 @@ app.delete("/api/sara/regla/:id", requireAuth(["marketing", "direccion"]), async
 // FIDELIZACIÓN CON ÁGORA · FASE 1 · PILOTO LLORET
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// NUESTRA API ESTÁ EN EL CAMINO DE LA CAJA. Según la Guía del Integrador, un 4xx, un 5xx o no
-// contestar IMPIDEN CERRAR LA FACTURA. Por eso aquí no hay ni una ruta que devuelva un error por
-// algo que no sea culpa de la petición: si el socio ya no existe, si la factura ya estaba o si el
-// JSON trae algo que no esperábamos, se acepta y se anota. El camarero puede desasociar al
-// participante y cobrar sin fidelización, pero eso es un paso manual en hora punta que no debería
-// hacer falta nunca por un fallo nuestro.
+// NUESTRA API ESTÁ EN EL CAMINO DE LA CAJA. **Solo `200 accepted` permite cerrar la factura.** Un
+// 4xx, un 5xx, no contestar y TAMBIÉN un `rejected` la dejan sin cerrar — la guía lo dice: «en caso
+// de que se rechace la factura, Ágora no realizará el cierre de factura».
+//
+// No existe ninguna respuesta nuestra que cierre «sin fidelización». Ese camino es MANUAL y solo
+// hay uno: el camarero desasocia al participante y vuelve a intentar el cierre.
+//
+// De ahí la regla de todo lo que sigue: `accepted` únicamente cuando la factura está guardada de
+// forma duradera. Nunca por comodidad, nunca para no molestar, y nunca sobre un fallo del que no
+// sabemos si llegó a escribir algo.
 //
 // FASE 1: CERO PREMIOS. `Rewards` es siempre `[]`. Se identifica al cliente, se cuentan visitas y
 // consumo, y se guarda el primer JSON real. Nada más. Ver docs/adr/0006.
@@ -17589,6 +17605,24 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
       });
     });
   } catch (e) {
+    // El participante no es válido. La guía lo dice con todas las letras: «en caso de que el
+    // identificador de participante no sea válido, el servidor deberá devolver un código de
+    // respuesta 404 Not Found». La transacción ya se ha deshecho: ni factura, ni visita, ni
+    // movimientos. El camarero desasocia al participante y vuelve a intentarlo.
+    if (e instanceof FidMiembroDesconocido) {
+      try {
+        // Registro TÉCNICO, con hashes. El MemberId completo no se escribe en ningún sitio.
+        await dbRun(`INSERT INTO fid_validaciones (integracion_id, local, member_hash, resultado, agora_version, ms, creado_en)
+                     VALUES (?,?,?,?,?,?,?)`,
+          [integ.fila.id, integ.fila.local, (e.miembros[0] || {}).hash || null,
+           "404:factura_" + ((e.miembros[0] || {}).motivo || "sin_miembro"), version || null, null, ahora]);
+        await ficAuditar("fidelizacion", null, "factura_miembro_desconocido", "agora",
+          { local: integ.fila.local, detalle: { global_id: extracto.globalId, miembros: e.miembros.length,
+            motivos: e.miembros.map((m) => m.motivo) } });
+      } catch { /* el registro no puede cambiar la respuesta */ }
+      return res.status(404).json({});
+    }
+
     // AQUÍ NO SE PUEDE CONTESTAR 200. Ni `accepted` ni `rejected`.
     //
     // Un `rejected` significa «lo he recibido y no lo quiero»: Ágora lo da por entregado y NO lo
@@ -17617,9 +17651,12 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
   } catch { /* la auditoría no puede tumbar la respuesta */ }
 
   // Mismo identificador, cuerpo distinto: NO se confirma. Un `accepted` aquí diría que hemos
-  // aceptado ESTE documento, y lo que tenemos guardado es otro. Se contesta `rejected` —que es un
-  // 200 y no bloquea la caja— con un motivo genérico, sin nada del cuerpo. El conflicto ya está
-  // marcado en la factura y auditado; se mira desde el panel con calma.
+  // aceptado ESTE documento, y lo que tenemos guardado es otro. Se contesta `rejected` con un
+  // motivo genérico, sin nada del cuerpo.
+  //
+  // OJO: un `rejected` TAMPOCO cierra la factura — la guía dice que un rechazo impide el cierre.
+  // Para cobrar, el camarero desasocia al participante y vuelve a intentarlo. El conflicto queda
+  // marcado y auditado, y se mira desde el panel con calma.
   if (resultado.conflicto) {
     return res.status(200).set("Cache-Control", "no-store")
       .json({ Status: "rejected", RejectReason: "Documento no coincide con el ya registrado" });
@@ -17660,12 +17697,14 @@ app.get("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req,
     const c = await dbGet(`SELECT
         COUNT(*)::int AS facturas,
         COUNT(*) FILTER (WHERE estado = 'conflicto')::int AS conflictos,
-        COUNT(*) FILTER (WHERE estado = 'sin_miembro')::int AS sin_miembro,
+        0::int AS sin_miembro,
         COUNT(*) FILTER (WHERE devolucion)::int AS devoluciones,
         MAX(recibido_en) AS ultima
       FROM fid_facturas`);
+    // Los participantes no válidos ya no se guardan como facturas: se registran aquí.
     const v = await dbGet(`SELECT COUNT(*)::int AS n,
         COUNT(*) FILTER (WHERE resultado = 'ok')::int AS ok,
+        COUNT(*) FILTER (WHERE resultado LIKE '404:factura_%')::int AS facturas_404,
         MAX(creado_en) AS ultima,
         MAX(agora_version) AS version FROM fid_validaciones`);
     res.json({ ok: true, integracion: fila || null, facturas: c || {}, validaciones: v || {},

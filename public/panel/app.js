@@ -10684,7 +10684,7 @@ function renderFidPiloto() {
 
   return `<div class="card"><div class="ch"><h3>Fidelización Ágora · Piloto Lloret</h3>${estado}</div>
     <div class="mut" style="font-size:13px;padding:2px 2px 6px">Fase 1: se identifica al cliente y se cuentan visitas y consumo. <b>No se conceden premios ni descuentos</b> — <code>Rewards</code> siempre va vacío. Estas URLs se pegan en Ágora; aquí no se configura nada del TPV.</div>
-    <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px">Si desactivas o revocas con una factura ya asociada a un socio, Ágora <b>no podrá cerrarla</b>: el camarero tiene que <b>desasociar al participante</b> y cobrar sin fidelización. No se pierde la venta ni queda nada a medias.</div>
+    <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px"><b>Solo una respuesta cierra la factura: que la aceptemos.</b> Si algo falla —desactivas, revocas, el carné ya no existe o la base no responde— Ágora <b>no podrá cerrarla</b>. La salida es siempre la misma y es manual: el camarero <b>desasocia al participante</b> y vuelve a intentar el cierre. No se pierde la venta ni queda nada a medias.</div>
     ${datos}${urls}<div style="margin-top:12px">${botones}</div></div>`;
 }
 

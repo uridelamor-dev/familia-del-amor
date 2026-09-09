@@ -57,8 +57,25 @@ export const ESTADOS = Object.freeze({
   ACEPTADA: "aceptada",
   REPETIDA: "repetida",           // mismo GlobalId y mismo cuerpo: un reenvío
   CONFLICTO: "conflicto",         // mismo GlobalId, cuerpo distinto
-  SIN_MIEMBRO: "sin_miembro",     // venía identificada pero ese carné ya no existe
 });
+
+/**
+ * La factura venía con un socio que no existe.
+ *
+ * Se lanza para que la transacción se DESHAGA entera y el manejador conteste 404, que es lo que
+ * pide la guía: «en caso de que el identificador de participante no sea válido, el servidor deberá
+ * devolver un código de respuesta 404 Not Found».
+ *
+ * Lleva solo hashes, nunca el MemberId.
+ */
+export class MiembroDesconocido extends Error {
+  constructor(miembros) {
+    super("participante no válido");
+    this.name = "MiembroDesconocido";
+    this.code = "MIEMBRO_DESCONOCIDO";
+    this.miembros = miembros;   // [{ hash, motivo }]
+  }
+}
 
 // ── El token de integración ─────────────────────────────────────────────────────────────────
 
@@ -299,12 +316,21 @@ export async function procesarFactura(x, { extracto, integracion, ahora, cuerpoB
   for (const m of extracto.miembros) {
     const qr = await x.get(`SELECT id, clase, anulado_en, caduca_en FROM pro_qr WHERE token = ?`, [m.member]);
     const util = carnetUtilizable(qr, { ahora });
-    // POLÍTICA cuando el socio ya no existe: la factura se ACEPTA y no se apunta ningún movimiento.
-    // No se crea un socio nuevo —sería un duplicado de una identidad que ya tuvo su carné— ni se
-    // bloquea la caja, que sería mucho peor por algo que el camarero no puede arreglar en barra.
     if (!util.ok) { sinMiembro.push({ hash: hashMember(m.member), motivo: util.motivo }); continue; }
     conCarnet.push({ ...m, qrId: qr.id, hash: hashMember(m.member) });
   }
+
+  // POLÍTICA CUANDO EL SOCIO NO EXISTE: 404 y se deshace TODO.
+  //
+  // La primera versión guardaba la factura como aceptada con estado `sin_miembro`. Estaba mal: un
+  // `accepted` hace que Ágora deje de reenviarla, y el cliente pierde su visita en silencio. La
+  // guía es explícita — «en caso de que el identificador de participante no sea válido, el servidor
+  // deberá devolver un código de respuesta 404 Not Found».
+  //
+  // Basta con que UNO de los socios no exista: aceptar la mitad dejaría a los otros contados y a
+  // ése perdido, que es la peor de las dos opciones. El camarero desasocia al participante y vuelve
+  // a intentarlo; ahí se cierra sin fidelización y no se pierde nada.
+  if (sinMiembro.length) throw new MiembroDesconocido(sinMiembro);
 
   const movs = movimientosDe({ ...extracto, miembros: conCarnet }, {
     local: integracion.local, autor: "agora", ahora, facturaId, hashMember,
@@ -323,9 +349,7 @@ export async function procesarFactura(x, { extracto, integracion, ahora, cuerpoB
     if (r) escritos += 1;
   }
 
-  const estado = sinMiembro.length ? ESTADOS.SIN_MIEMBRO : ESTADOS.ACEPTADA;
-  if (sinMiembro.length) await x.run(`UPDATE fid_facturas SET estado = ? WHERE id = ?`, [estado, facturaId]);
-  return { repetida: false, conflicto: false, facturaId, movimientos: escritos, sinMiembro, estado };
+  return { repetida: false, conflicto: false, facturaId, movimientos: escritos, sinMiembro: [], estado: ESTADOS.ACEPTADA };
 }
 
 /** La respuesta de la guía cuando la factura entra bien. `PrinterText` vacío: en esta fase no hay
