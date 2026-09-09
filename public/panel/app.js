@@ -10659,7 +10659,7 @@ function renderFidPiloto() {
   // El token en claro solo existe en memoria y solo justo después de generarlo. Al recargar
   // desaparece: en la base únicamente hay su hash y cuatro caracteres de pista.
   const urls = FID.urls ? `<div class="card" style="background:var(--bg2);margin-top:10px">
-      <div class="mut" style="font-size:12px;margin-bottom:6px"><b>Cópialas ahora.</b> El token no se vuelve a mostrar; si lo pierdes, genera otro.</div>
+      <div class="mut" style="font-size:12px;margin-bottom:6px"><b>Cópialas ahora.</b> El token no se vuelve a mostrar; si lo pierdes, genera otro.<br>La integración nace <b>desactivada</b>: pega las dos URLs en Ágora y después pulsa <b>Activar</b>.</div>
       <div class="field"><label>URL de validación (GET)</label><input readonly value="${esc(FID.urls.validacion)}" onclick="this.select()"></div>
       <div class="field"><label>URL de facturas (POST)</label><input readonly value="${esc(FID.urls.facturas)}" onclick="this.select()"></div>
     </div>` : "";
@@ -10702,12 +10702,12 @@ async function loadFidPiloto() {
 }
 
 async function fidGenerar() {
-  if (!confirm("Se generará un token nuevo para Lloret y el anterior quedará revocado. ¿Seguir?")) return;
+  if (!confirm("Se generará un token nuevo para Lloret y el anterior quedará revocado. Nace desactivado: tendrás que pulsar Activar después de pegar las URLs en Ágora. ¿Seguir?")) return;
   try {
     const j = await apiSend("POST", "/api/fidelizacion/integracion", {});
     FID.urls = j.urls;                     // solo en memoria, solo hasta recargar
     await loadFidPiloto();
-    toast("Token generado. Copia las dos URLs ahora.");
+    toast("Token generado y DESACTIVADO. Copia las URLs, pégalas en Ágora y pulsa Activar.");
   } catch (e) { toast(e.message || "No se pudo generar"); }
 }
 

@@ -107,7 +107,7 @@ import { LOCAL_PILOTO as FID_LOCAL, REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CU
          nuevoToken as fidNuevoToken, pistaToken as fidPistaToken, estadoIntegracion as fidEstadoIntegracion,
          caducidadDesde as fidCaducidad, respuestaMiembro as fidRespuestaMiembro, carnetUtilizable as fidCarnetUtilizable,
          extraerFactura as fidExtraerFactura, procesarFactura as fidProcesarFactura, respuestaFactura as fidRespuestaFactura,
-         MiembroDesconocido as FidMiembroDesconocido,
+         MiembroDesconocido as FidMiembroDesconocido, basePublica as fidBasePublica,
          esquemaDe as fidEsquemaDe, cabecerasSeguras as fidCabeceras, urlsDeIntegracion as fidUrls }
   from "./src/modules/fidelizacion/agora.js";
 import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
@@ -17675,15 +17675,26 @@ app.post("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req
     const token = fidNuevoToken((n) => crypto.randomBytes(n));
     await dbRun(`UPDATE fid_integraciones SET revocado_en = ?, revocado_por = ?
                  WHERE local = ? AND revocado_en IS NULL`, [ahora, req.user.username, FID_LOCAL]);
+    // LA BASE DE LA URL NO SALE DE LA PETICIÓN EN PRODUCCIÓN, y por dos motivos: `trust proxy` no
+    // está configurado, así que `req.protocol` devuelve siempre «http» detrás del proxy TLS de
+    // Replit; y `req.get("host")` lo escribe quien llama. Esta URL se pega en un TPV.
+    const pub = fidBasePublica({ publicUrl: process.env.PUBLIC_URL, host: req.get("host"),
+                                 protocolo: req.protocol, prod: PROD });
+    if (!pub.ok) return res.status(500).json({ ok: false, error: `No se puede componer la URL: ${pub.motivo}` });
+
+    // NACE DESACTIVADA. Generar una credencial no es lo mismo que armarla: entre generarla y
+    // pegarla en Ágora no hay ningún motivo para que responda, y el orden queda claro —
+    // generar, copiar, pegar en Ágora, Activar.
     const fila = await dbRun(
       `INSERT INTO fid_integraciones (local, token_hash, token_pista, activo, creado_en, creado_por, caduca_en)
-       VALUES (?,?,?,TRUE,?,?,?) RETURNING id`,
+       VALUES (?,?,?,FALSE,?,?,?) RETURNING id`,
       [FID_LOCAL, fidHash(token), fidPistaToken(token), ahora, req.user.username, fidCaducidad(ahora, FID_VIDA_DIAS)]);
     await ficAuditar("fidelizacion", fila?.id, "integracion_generada", req.user.username,
-      { local: FID_LOCAL, detalle: { pista: fidPistaToken(token) } });
+      { local: FID_LOCAL, detalle: { pista: fidPistaToken(token), base: pub.base, fuente: pub.fuente } });
     // El token en claro sale UNA vez y solo aquí. En la base vive su hash y cuatro caracteres.
-    res.json({ ok: true, id: fila?.id, local: FID_LOCAL, caduca_en: fidCaducidad(ahora, FID_VIDA_DIAS),
-      urls: fidUrls(`${req.protocol}://${req.get("host")}`, token) });
+    res.json({ ok: true, id: fila?.id, local: FID_LOCAL, activo: false,
+      caduca_en: fidCaducidad(ahora, FID_VIDA_DIAS), base: pub.base,
+      urls: fidUrls(pub.base, token) });
   } catch (e) {
     console.error("[fidelizacion] generar:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo generar la integración" });

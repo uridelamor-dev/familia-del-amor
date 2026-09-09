@@ -393,6 +393,55 @@ export function cabecerasSeguras(headers = {}) {
   return out;
 }
 
+/** El dominio público del negocio. Es la última palabra en producción cuando no hay `PUBLIC_URL`,
+ *  y NUNCA sale de una cabecera: una cabecera `Host` la escribe quien llama. */
+export const DOMINIO_CANONICO = "https://familiadelamor.org";
+
+/** Fuerza `https` sobre una URL. Devuelve `null` si eso no es una URL. */
+export function aHttps(url) {
+  const s = String(url || "").trim();
+  if (!s) return null;
+  try {
+    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : "https://" + s);
+    u.protocol = "https:";
+    return u.origin + u.pathname.replace(/\/+$/, "");
+  } catch { return null; }
+}
+
+/**
+ * LA BASE DE LAS URL DE INTEGRACIÓN. En producción, SIEMPRE https y SIEMPRE un dominio nuestro.
+ *
+ * EL FALLO QUE ORIGINA ESTO: la primera versión componía la URL con
+ * `${req.protocol}://${req.get("host")}` y salía `http://familiadelamor.org/…`. Dos motivos, y
+ * los dos importan:
+ *
+ *  1. `app.set("trust proxy")` NO está configurado, así que detrás del proxy TLS de Replit
+ *     `req.protocol` devuelve siempre «http» — aunque llegue `X-Forwarded-Proto: https`, Express
+ *     lo ignora si no se le ha dicho que confíe en el proxy. Es decir: el protocolo de la petición
+ *     NO es una fuente fiable de verdad aquí.
+ *  2. `req.get("host")` lo escribe quien llama. Una petición con otra cabecera `Host` habría
+ *     generado una URL apuntando a otro dominio, y esa URL se pega en un TPV.
+ *
+ * Por eso en producción no se mira ni el protocolo ni el host de la petición: se usa `PUBLIC_URL`
+ * —normalizada a https si viniera con http— o, si no está, el dominio canónico. En desarrollo sí
+ * vale lo que traiga la petición, http incluido, que es lo que hace falta para probar en local.
+ */
+export function basePublica({ publicUrl = "", host = "", protocolo = "http", prod = false } = {}) {
+  if (prod) {
+    const cruda = String(publicUrl || "").trim();
+    if (cruda) {
+      const https = aHttps(cruda);
+      // Mal escrita se dice, no se adivina: usar el canónico en su lugar apuntaría el TPV a un
+      // sitio que nadie ha pedido, y sin que se note.
+      if (!https) return { ok: false, motivo: "PUBLIC_URL no es una URL válida" };
+      return { ok: true, base: https, fuente: "PUBLIC_URL", forzada: !/^https:/i.test(cruda) };
+    }
+    return { ok: true, base: DOMINIO_CANONICO, fuente: "canonico", forzada: false };
+  }
+  const base = String(publicUrl || `${protocolo}://${host}`).replace(/\/+$/, "");
+  return { ok: true, base, fuente: publicUrl ? "PUBLIC_URL" : "peticion", forzada: false };
+}
+
 /** Las dos URL que hay que pegar en Ágora. `{member_id}` es el hueco que sustituye el TPV. */
 export function urlsDeIntegracion(base, token) {
   const raiz = String(base || "").replace(/\/+$/, "");
