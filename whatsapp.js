@@ -6,6 +6,40 @@ import Anthropic from "@anthropic-ai/sdk";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import { lineaError, redactar } from "./src/modules/seguridad/redactar.js";
+
+/**
+ * EL LOGGER QUE SE LE DA A BAILEYS.
+ *
+ * Va en `silent` a propósito y no es negociable: Baileys registra a nivel de depuración el
+ * contenido de las sesiones de libsignal —claves privadas, raíces, pares efímeros y cadenas— y
+ * esos logs acaban en el panel de Replit, que ve cualquiera con acceso al proyecto.
+ *
+ * NO se pierde nada operativo: la conexión, la desconexión con su código, los reintentos y las
+ * pausas los escribe este fichero por su cuenta en `connection.update`.
+ *
+ * `redact` es el segundo cinturón. Con el nivel en `silent` no se usa nunca, pero el día que
+ * alguien lo suba a `debug` para investigar una desconexión —que pasará— tapa los campos por su
+ * nombre en vez de dejar salir las claves. No cubre anidamientos arbitrarios: la garantía de
+ * verdad sigue siendo el nivel.
+ */
+const logBaileys = () => pino({
+  level: "silent",
+  redact: {
+    censor: "[redactado]",
+    paths: [
+      "creds", "keys", "*.creds", "*.keys",
+      "privKey", "*.privKey", "*.*.privKey",
+      "pubKey", "*.pubKey", "*.*.pubKey",
+      "rootKey", "*.rootKey", "*.*.rootKey",
+      "baseKey", "*.baseKey", "*.*.baseKey",
+      "chainKey", "*.chainKey", "*.*.chainKey",
+      "ephemeralKeyPair", "*.ephemeralKeyPair", "*.*.ephemeralKeyPair",
+      "signedPreKey", "*.signedPreKey", "identityKey", "*.identityKey",
+      "noiseKey", "*.noiseKey", "advSecretKey", "*.advSecretKey",
+    ],
+  },
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -572,7 +606,9 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
     historial.push({ role: "assistant", content: respuestaCliente });
     return respuestaCliente;
   } catch (err) {
-    console.error("Error IA completo:", err.status, err.message, err.error);
+    // `err.error` es un objeto del SDK: se redacta antes de escribirlo. No lleva material
+    // criptográfico, pero un objeto de error de una librería no se imprime crudo y punto.
+    console.error(lineaError("[IA] Error", err), JSON.stringify(redactar(err.error, { profundidad: 2 })));
     // Nota: el SDK 0.97 no exporta OverloadedError como clase; el 529 se detecta por status
     if (err instanceof Anthropic.RateLimitError || err?.status === 529) {
       return "¡Uy! Ahora mismo estoy atendiendo muchas conversaciones a la vez 😅 Dame un minutito y vuelve a escribirme, porfa.";
@@ -783,7 +819,7 @@ async function connectToWhatsApp() {
     auth: state,
     version,
     printQRInTerminal: true,
-    logger: pino({ level: "silent" }),
+    logger: logBaileys(),
     keepAliveIntervalMs: 25000,   // ping cada 25s para mantener viva la conexión TCP
     connectTimeoutMs: 60000,
     browser: ["Mac OS", "Chrome", "124.0.0"],
@@ -1283,5 +1319,8 @@ export function forceReconnect() {
 }
 
 export function initWhatsApp() {
-  connectToWhatsApp().catch((err) => console.error("Error iniciando WhatsApp:", err));
+  // NUNCA el objeto de error entero. Aquí se volcaba el grafo completo del error de libsignal
+  // —`SessionEntry`, claves privadas, raíces, pares efímeros y cadenas— a los logs de producción.
+  // El resto de `catch` de este fichero ya usaban `.message`; ésta era la única que no.
+  connectToWhatsApp().catch((err) => console.error(lineaError("[WhatsApp] Error iniciando", err)));
 }
