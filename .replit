@@ -40,17 +40,4 @@ externalPort = 3000
 
 [deployment]
 deploymentTarget = "vm"
-# ── TEMPORAL · R01 · MIGRACIÓN REAL, UNA SOLA VEZ ───────────────────────────
-# El dry-run del 9/9 contó 7 valores en formato legado y 0 ilegibles. Esto los pasa a v2.
-#
-# Una transacción, con candado, copia previa de los criptogramas en `cifrado_copia_v1` y
-# relectura de cada valor nuevo antes de confirmar. Si algo falla, ROLLBACK completo y la
-# base se queda como está, que es un estado que funciona.
-#
-# Es IDEMPOTENTE: si el deployment se reinicia solo, la segunda pasada encuentra todo en v2,
-# no reescribe nada y no pisa la copia. El `;` en vez de `&&` mantiene el servidor arrancando
-# pase lo que pase con la migración; el `timeout` cubre que se quede colgada (si salta, la
-# conexión muere y PostgreSQL deshace la transacción).
-#
-# REVERTIR a `run = ["node", "server.js"]` en cuanto se verifiquen los conteos.
-run = ["sh", "-c", "timeout 120 node scripts/migrar-cifrado.js --aplicar --si-estoy-seguro; node server.js"]
+run = ["node", "server.js"]
