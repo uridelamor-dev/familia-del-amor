@@ -32,8 +32,9 @@
 import { descifrarLegado, pareceLegado } from "./legado-inseguro.js";
 import crypto from "crypto";
 
-/** Los contextos de uso. Coinciden con las sales del formato viejo, para poder pensar en uno solo. */
-export const DOMINIOS = { AGORA: "agora-token-v1", WALLET: "wallet-v1" };
+/** Los contextos de uso. Los dos primeros coinciden con las sales del formato viejo, para poder
+ *  pensar en uno solo. `FIDELIZACION` es nuevo y solo existe en v2: no hay nada legado que leer. */
+export const DOMINIOS = { AGORA: "agora-token-v1", WALLET: "wallet-v1", FIDELIZACION: "fidelizacion-v2" };
 
 export const V2_PREFIJO = "enc:v2:";
 const RE_V2 = /^enc:v2:([0-9a-f]{12}):([A-Za-z0-9_-]+):([A-Za-z0-9_-]+):([A-Za-z0-9_-]*)$/;

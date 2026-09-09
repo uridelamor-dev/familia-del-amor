@@ -10639,7 +10639,117 @@ function renderAgora() {
   const vivo = `<div id="agVivo" style="margin-top:6px"><div class="card"><div class="mut" style="font-size:13px">Cargando ventas en vivo…</div></div></div>`;
   // Un solo terminal de TPV para las dos barras de Blanes: una fila, no dos.
   const rows = visiblesFE(null, LOCALES).map((l, i) => renderAgoraRow(l, i)).join("");
-  return head + info + vivo + `<div class="grid" style="gap:14px;margin-top:6px">${rows}</div>`;
+  const piloto = `<div id="fidPiloto" style="margin-top:6px"><div class="card"><div class="mut" style="font-size:13px">Cargando el piloto de fidelización…</div></div></div>`;
+  return head + info + vivo + `<div class="grid" style="gap:14px;margin-top:6px">${rows}</div>` + piloto;
+}
+
+// ── Fidelización Ágora · Piloto Lloret ───────────────────────────────────────
+// FASE 1: identifica al cliente, cuenta visitas y guarda la factura. CERO premios y cero
+// descuentos. Aquí no hay ni un botón que toque la configuración del TPV: eso se hace en Ágora.
+let FID = { integracion: null, facturas: {}, validaciones: {}, local: "", urls: null };
+
+function renderFidPiloto() {
+  const i = FID.integracion;
+  const f = FID.facturas || {}, v = FID.validaciones || {};
+  const estado = !i ? '<span class="pill">Sin generar</span>'
+    : i.revocado_en ? '<span class="pill bad">Revocada</span>'
+    : !i.activo ? '<span class="pill">Desactivada</span>'
+    : '<span class="pill ok">Activa</span>';
+
+  // El token en claro solo existe en memoria y solo justo después de generarlo. Al recargar
+  // desaparece: en la base únicamente hay su hash y cuatro caracteres de pista.
+  const urls = FID.urls ? `<div class="card" style="background:var(--bg2);margin-top:10px">
+      <div class="mut" style="font-size:12px;margin-bottom:6px"><b>Cópialas ahora.</b> El token no se vuelve a mostrar; si lo pierdes, genera otro.</div>
+      <div class="field"><label>URL de validación (GET)</label><input readonly value="${esc(FID.urls.validacion)}" onclick="this.select()"></div>
+      <div class="field"><label>URL de facturas (POST)</label><input readonly value="${esc(FID.urls.facturas)}" onclick="this.select()"></div>
+    </div>` : "";
+
+  const datos = !i ? "" : `<div class="rows" style="margin-top:8px">
+      <div class="row"><div class="grow"><div class="t1">Local del piloto</div></div><b>${esc(FID.local)}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Token</div></div><b class="tnum">${esc(i.token_pista || "••••")}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Caduca</div></div><b>${esc(String(i.caduca_en || "—").slice(0, 10))}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Versión de Ágora</div></div><b>${esc(v.version || "—")}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Validaciones</div><div class="mut" style="font-size:12px">${Number(v.ok || 0)} con socio · última ${esc(String(v.ultima || "—").slice(0, 16).replace("T", " "))}</div></div><b class="tnum">${Number(v.n || 0)}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Facturas recibidas</div><div class="mut" style="font-size:12px">${Number(f.conflictos || 0)} conflicto(s) · ${Number(f.sin_miembro || 0)} sin socio · ${Number(f.devoluciones || 0)} devolución(es)</div></div><b class="tnum">${Number(f.facturas || 0)}</b></div>
+    </div>`;
+
+  const botones = `<span style="display:flex;gap:6px;flex-wrap:wrap">
+      ${!i || i.revocado_en ? '<button class="btn primary sm" data-act="fid-generar">Generar token</button>' : ""}
+      ${i && !i.revocado_en ? `<button class="btn sm" data-act="fid-activo" data-id="${i.id}" data-v="${i.activo ? 0 : 1}">${i.activo ? "Desactivar" : "Activar"}</button>` : ""}
+      ${i && !i.revocado_en ? `<button class="btn sm danger" data-act="fid-revocar" data-id="${i.id}">Revocar</button>` : ""}
+      <button class="btn sm" data-act="fid-facturas">Ver facturas</button>
+      <button class="btn sm" data-act="fid-miembro">Buscar socio</button>
+    </span>`;
+
+  return `<div class="card"><div class="ch"><h3>Fidelización Ágora · Piloto Lloret</h3>${estado}</div>
+    <div class="mut" style="font-size:13px;padding:2px 2px 6px">Fase 1: se identifica al cliente y se cuentan visitas y consumo. <b>No se conceden premios ni descuentos</b> — <code>Rewards</code> siempre va vacío. Estas URLs se pegan en Ágora; aquí no se configura nada del TPV.</div>
+    ${datos}${urls}<div style="margin-top:12px">${botones}</div></div>`;
+}
+
+async function loadFidPiloto() {
+  const c = document.getElementById("fidPiloto"); if (!c) return;
+  try {
+    const j = await apiRaw("/api/fidelizacion/integracion");
+    FID.integracion = j.integracion; FID.facturas = j.facturas || {}; FID.validaciones = j.validaciones || {}; FID.local = j.local;
+    if (document.getElementById("fidPiloto")) document.getElementById("fidPiloto").innerHTML = renderFidPiloto();
+  } catch (e) {
+    if (e.message !== "noauth" && document.getElementById("fidPiloto")) {
+      document.getElementById("fidPiloto").innerHTML = `<div class="card"><div class="mut" style="font-size:13px">No se pudo cargar el piloto de fidelización.</div></div>`;
+    }
+  }
+}
+
+async function fidGenerar() {
+  if (!confirm("Se generará un token nuevo para Lloret y el anterior quedará revocado. ¿Seguir?")) return;
+  try {
+    const j = await apiSend("POST", "/api/fidelizacion/integracion", {});
+    FID.urls = j.urls;                     // solo en memoria, solo hasta recargar
+    await loadFidPiloto();
+    toast("Token generado. Copia las dos URLs ahora.");
+  } catch (e) { toast(e.message || "No se pudo generar"); }
+}
+
+async function fidActivo(id, v) {
+  try { await apiSend("POST", `/api/fidelizacion/integracion/${id}/activo`, { activo: v === "1" }); await loadFidPiloto(); toast(v === "1" ? "Activada" : "Desactivada"); }
+  catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+async function fidRevocar(id) {
+  if (!confirm("Revocar el token deja el TPV sin poder validar ni enviar facturas. ¿Seguir?")) return;
+  try { await apiSend("POST", `/api/fidelizacion/integracion/${id}/revocar`, {}); FID.urls = null; await loadFidPiloto(); toast("Revocada"); }
+  catch (e) { toast(e.message || "No se pudo revocar"); }
+}
+
+async function fidFacturas() {
+  try {
+    const j = await apiRaw("/api/fidelizacion/facturas");
+    const filas = (j.data || []).map((f) => `<div class="row"><div class="grow"><div class="t1">${esc(String(f.global_id).slice(0, 40))}${f.clave_debil ? ' <span class="pill">clave débil</span>' : ""}</div><div class="mut" style="font-size:12px">${esc(String(f.recibido_en).slice(0, 16).replace("T", " "))} · ${f.items_n} línea(s) · ${f.miembros_n} socio(s) · ${esc(f.estado)}${f.devolucion ? " · devolución" : ""}</div></div><button class="btn sm" data-act="fid-factura" data-id="${f.id}">Ver</button></div>`).join("");
+    modal("Facturas recibidas", filas ? `<div class="rows">${filas}</div>` : '<div class="mut">Todavía no ha llegado ninguna.</div>');
+  } catch (e) { toast(e.message || "No se pudieron cargar"); }
+}
+
+async function fidFactura(id) {
+  try {
+    const j = await apiRaw(`/api/fidelizacion/facturas/${id}`);
+    const d = j.data || {};
+    // Se enseña el MAPA del JSON, no sus valores: es lo que hace falta para diseñar la Fase 2.
+    modal("Factura " + esc(String(d.global_id || id)), `<div class="mut" style="font-size:12px;margin-bottom:8px">Mapa de campos del JSON de Ágora. Los valores no se muestran.</div>
+      <pre style="max-height:50vh;overflow:auto;font-size:11.5px;white-space:pre-wrap">${esc(JSON.stringify(d.esquema, null, 2))}</pre>`);
+  } catch (e) { toast(e.message || "No se pudo leer"); }
+}
+
+async function fidMiembro() {
+  const t = prompt("Token del carné (el que lleva el QR):");
+  if (!t) return;
+  try {
+    const j = await apiRaw("/api/fidelizacion/miembro?token=" + encodeURIComponent(t.trim()));
+    const tot = j.total || {};
+    const porLocal = (j.porLocal || []).map((l) => `<div class="row"><div class="grow"><div class="t1">${esc(l.local)}</div></div><b class="tnum">${l.visitas} visita(s) · ${eur(l.consumo)}</b></div>`).join("");
+    modal("Socio", `<div class="rows"><div class="row"><div class="grow"><div class="t1">${esc(j.carnet.nombre || "Sin nombre")}</div><div class="mut" style="font-size:12px">${esc(j.carnet.clase)}${j.carnet.anulado ? " · anulado" : ""}</div></div><b class="tnum">${Number(tot.visitas || 0)} visita(s)</b></div>
+      <div class="row"><div class="grow"><div class="t1">Consumo registrado</div></div><b class="tnum">${eur(tot.consumo)}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Devuelto</div></div><b class="tnum">${eur(tot.devuelto)}</b></div></div>
+      ${porLocal ? `<div class="mut" style="font-size:12px;margin:10px 0 4px">Por local</div><div class="rows">${porLocal}</div>` : ""}`);
+  } catch (e) { toast(e.message || "No se encontró"); }
 }
 // Reflejo puro (src/modules/agora/ventas.js) del resumen en vivo por local.
 function resumenVivoLocal(dias, hoy) {
@@ -10682,6 +10792,7 @@ async function loadAgora() {
     AGORA.locales = j.data || []; AGORA.lastSync = j.lastSync || null;
     view.innerHTML = renderAgora();
     loadAgoraVivo(); // en segundo plano: consulta el TPV en vivo y rellena la tarjeta
+    loadFidPiloto(); // igual: el piloto de fidelización se rellena aparte
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 async function agoraSave(local, i) {
@@ -12942,6 +13053,12 @@ document.addEventListener("click", (e) => {
   else if (act === "ag-descubrir") agoraDescubrir(t.getAttribute("data-local"));
   else if (act === "ag-del") agoraDel(t.getAttribute("data-local"));
   else if (act === "ag-sync") agoraSyncNow();
+  else if (act === "fid-generar") fidGenerar();
+  else if (act === "fid-activo") fidActivo(t.getAttribute("data-id"), t.getAttribute("data-v"));
+  else if (act === "fid-revocar") fidRevocar(t.getAttribute("data-id"));
+  else if (act === "fid-facturas") fidFacturas();
+  else if (act === "fid-factura") fidFactura(t.getAttribute("data-id"));
+  else if (act === "fid-miembro") fidMiembro();
   else if (act === "anal-tab") analTab(t.getAttribute("data-tipo"));
   else if (act === "anal-area") analArea(t.getAttribute("data-area"));
   else if (act === "anal-period") analPeriod(t.getAttribute("data-p"));

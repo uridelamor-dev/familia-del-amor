@@ -101,6 +101,14 @@ import { cifrar as secCifrar, abrir as secAbrir, pista as secPista, DOMINIOS } f
 import { cargarLlavero, lineaArranque } from "./src/modules/seguridad/clave-datos.js";
 // Captación por campaña: la ruta a la que apunta un anuncio de pago, con su cola de envíos.
 import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
+import { ensureSchemaFidelizacion } from "./src/modules/fidelizacion/schema.js";
+import { LOCAL_PILOTO as FID_LOCAL, REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CUERPO as FID_MAX_CUERPO,
+         MAX_POR_MINUTO as FID_MAX_MIN, VIDA_DIAS as FID_VIDA_DIAS, ESTADOS as FID_ESTADOS,
+         nuevoToken as fidNuevoToken, pistaToken as fidPistaToken, estadoIntegracion as fidEstadoIntegracion,
+         caducidadDesde as fidCaducidad, respuestaMiembro as fidRespuestaMiembro, carnetUtilizable as fidCarnetUtilizable,
+         extraerFactura as fidExtraerFactura, procesarFactura as fidProcesarFactura, respuestaFactura as fidRespuestaFactura,
+         esquemaDe as fidEsquemaDe, cabecerasSeguras as fidCabeceras, urlsDeIntegracion as fidUrls }
+  from "./src/modules/fidelizacion/agora.js";
 import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
          sanearCampana } from "./src/modules/captacion/campana.js";
 import { trasIntento, cuantasSacar, estadoParaCliente, MAX_INTENTOS } from "./src/modules/captacion/cola.js";
@@ -315,6 +323,10 @@ app.use("/api", (req, res, next) => {
   res.status(503).json({ ok: false, arrancando: true,
     error: "El sistema está arrancando. Vuelve a intentarlo en unos segundos." });
 });
+
+// La factura de Ágora se necesita TAL CUAL para calcular su hash y detectar reenvíos. Va antes
+// de `express.json()`, que se la comería. Solo afecta a `/api/fidelizacion/agora`.
+app.use("/api/fidelizacion/agora", express.raw({ type: "*/*", limit: FID_MAX_CUERPO }));
 
 app.use(comprimir());
 app.use(express.json());
@@ -1807,6 +1819,15 @@ async function initDB() {
     // Captación. Después de promociones porque su campaña apunta a una promoción, y con su
     // propio try: si esto fallara, la web y la barra tienen que seguir funcionando — lo que se
     // pierde es poder lanzar una campaña nueva.
+    // Fidelización con Ágora. Después de promociones porque el socio ES una fila de `pro_qr`.
+    // Con su propio try: si esto fallara, la barra tiene que seguir cobrando igual.
+    try {
+      const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
+      await ensureSchemaFidelizacion(schemaX);
+    } catch (e) {
+      console.error("[DB] Aviso: esquema de fidelización no inicializado (no fatal):", e.message);
+    }
+
     try {
       const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
       await ensureSchemaCaptacion(schemaX);
@@ -17403,6 +17424,297 @@ app.delete("/api/sara/bloqueo/:id", requireAuth(["marketing", "direccion"]), asy
 app.delete("/api/sara/regla/:id", requireAuth(["marketing", "direccion"]), async (req, res) => {
   try { await dbRun(`DELETE FROM sara_respuestas WHERE id = ?`, [parseInt(req.params.id)]); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIDELIZACIÓN CON ÁGORA · FASE 1 · PILOTO LLORET
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// NUESTRA API ESTÁ EN EL CAMINO DE LA CAJA. Según la Guía del Integrador, un 4xx, un 5xx o no
+// contestar IMPIDEN CERRAR LA FACTURA. Por eso aquí no hay ni una ruta que devuelva un error por
+// algo que no sea culpa de la petición: si el socio ya no existe, si la factura ya estaba o si el
+// JSON trae algo que no esperábamos, se acepta y se anota. El camarero puede desasociar al
+// participante y cobrar sin fidelización, pero eso es un paso manual en hora punta que no debería
+// hacer falta nunca por un fallo nuestro.
+//
+// FASE 1: CERO PREMIOS. `Rewards` es siempre `[]`. Se identifica al cliente, se cuentan visitas y
+// consumo, y se guarda el primer JSON real. Nada más. Ver docs/adr/0006.
+
+const fidHash = (t) => crypto.createHash("sha256").update(String(t || "")).digest("hex");
+
+/** Comparación en tiempo constante de dos hashes. Con `===` la duración del fallo dice por dónde
+ *  se parecen, y este token va en una URL que puede probarse muchas veces. */
+function fidMismoHash(a, b) {
+  const A = Buffer.from(String(a || ""), "utf8"), B = Buffer.from(String(b || ""), "utf8");
+  if (A.length !== B.length) return false;
+  return crypto.timingSafeEqual(A, B);
+}
+
+const _fidHits = new Map();
+function fidRateLimit(req, res, clave) {
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim();
+  const k = clave + ":" + ip;
+  const ahora = Date.now();
+  const reg = _fidHits.get(k) || { n: 0, desde: ahora };
+  if (ahora - reg.desde > 60000) { reg.n = 0; reg.desde = ahora; }
+  reg.n += 1; _fidHits.set(k, reg);
+  if (_fidHits.size > 2000) _fidHits.clear();
+  if (reg.n > FID_MAX_MIN) { res.status(429).json({ ok: false }); return false; }
+  return true;
+}
+
+/** Resuelve la integración de un token. Nunca escribe el token en ningún sitio. */
+async function fidIntegracion(token) {
+  const h = fidHash(token);
+  let fila = null;
+  try { fila = await dbGet(`SELECT * FROM fid_integraciones WHERE token_hash = ?`, [h]); }
+  catch { return { ok: false, motivo: "sin_tabla", fila: null }; }
+  // El SELECT ya filtra por hash; la comparación en tiempo constante es el segundo cerrojo, por
+  // si algún día esta consulta cambia a algo menos estricto.
+  if (fila && !fidMismoHash(fila.token_hash, h)) return { ok: false, motivo: "token_desconocido", fila: null };
+  return { ...fidEstadoIntegracion(fila, { ahora: isoConOffset(Date.now()) }), fila };
+}
+
+/**
+ * Una transacción de verdad, con su propio cliente y con tiempo límite.
+ *
+ * `statement_timeout` importa aquí más que en ningún otro sitio del sistema: si una consulta se
+ * queda colgada, el que espera es el TPV con la factura abierta y el cliente delante.
+ */
+async function fidTransaccion(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL statement_timeout = 5000");
+    const x = {
+      get: async (q, p = []) => (await client.query(toPositional(q), p)).rows[0] || null,
+      all: async (q, p = []) => (await client.query(toPositional(q), p)).rows,
+      run: async (q, p = []) => (await client.query(toPositional(q), p)).rows[0] || undefined,
+    };
+    const r = await fn(x);
+    await client.query("COMMIT");
+    return r;
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch { /* ya cerrada */ }
+    throw e;
+  } finally { client.release(); }
+}
+
+/** Cuántas visitas lleva un carné. Es un SUM sobre el libro, nunca un contador guardado. */
+async function fidVisitasDe(qrId) {
+  try {
+    const r = await dbGet(`SELECT COALESCE(SUM(unidades), 0)::int AS n FROM fid_movimientos
+                           WHERE qr_id = ? AND concepto = 'visita'`, [qrId]);
+    return r ? Number(r.n) || 0 : 0;
+  } catch { return 0; }
+}
+
+// ── 1) VALIDACIÓN · GET, y solo GET ──────────────────────────────────────────
+// Ágora sustituye `{member_id}` en la URL que le configuremos. El identificador es el token opaco
+// del carné: no lleva URL, ni teléfono, ni nada de nadie.
+app.get("/api/fidelizacion/agora/:token/member/:memberId", async (req, res) => {
+  const t0 = Date.now();
+  if (!fidRateLimit(req, res, "val")) return;
+  const version = String(req.headers["agora-version"] || "").slice(0, 40);
+  const memberId = String(req.params.memberId || "");
+  const mHash = fidHash(memberId).slice(0, 16);
+
+  const apunta = async (integracionId, local, resultado) => {
+    try {
+      await dbRun(`INSERT INTO fid_validaciones (integracion_id, local, member_hash, resultado, agora_version, ms, creado_en)
+                   VALUES (?,?,?,?,?,?,?)`,
+        [integracionId, local, mHash, resultado, version || null, Date.now() - t0, isoConOffset(Date.now())]);
+    } catch { /* el registro no puede tumbar la respuesta al TPV */ }
+  };
+
+  const integ = await fidIntegracion(req.params.token);
+  if (!integ.ok) { await apunta(null, null, integ.motivo); return res.status(404).json({}); }
+
+  let qr = null;
+  try {
+    // SOLO por el token opaco. Ni por teléfono, ni por correo, ni por nombre: un identificador de
+    // fidelización que se pueda adivinar desde un dato personal no es opaco.
+    qr = await dbGet(`SELECT id, token, clase, nombre, anulado_en, caduca_en FROM pro_qr WHERE token = ?`, [memberId]);
+  } catch { qr = null; }
+
+  const util = fidCarnetUtilizable(qr, { ahora: isoConOffset(Date.now()) });
+  if (!util.ok) {
+    await apunta(integ.fila.id, integ.fila.local, "404:" + util.motivo);
+    return res.status(404).json({});
+  }
+
+  const visitas = await fidVisitasDe(qr.id);
+  await apunta(integ.fila.id, integ.fila.local, "ok");
+  res.status(200)
+     .set("Content-Type", "application/json; charset=utf-8")
+     .set("Cache-Control", "no-store")
+     .send(JSON.stringify(fidRespuestaMiembro(qr, { visitas })));
+});
+
+// ── 2) FACTURA · POST ────────────────────────────────────────────────────────
+app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
+  if (!fidRateLimit(req, res, "fac")) return;
+  const version = String(req.headers["agora-version"] || "").slice(0, 40);
+  const integ = await fidIntegracion(req.params.token);
+  if (!integ.ok) return res.status(404).json({});
+
+  const bruto = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (bruto.length > FID_MAX_CUERPO) {
+    return res.status(200).json({ Status: "rejected", RejectReason: "Documento demasiado grande" });
+  }
+
+  let json = null;
+  try { json = JSON.parse(bruto.toString("utf8")); } catch { json = null; }
+  if (!json || typeof json !== "object") {
+    // `rejected` y no un 4xx: un 4xx impediría cerrar la factura, y el problema es del documento.
+    return res.status(200).json({ Status: "rejected", RejectReason: "Formato no reconocido" });
+  }
+
+  let extracto;
+  try { extracto = fidExtraerFactura(json, fidHash); }
+  catch { return res.status(200).json({ Status: "rejected", RejectReason: "Formato no reconocido" }); }
+
+  const ahora = isoConOffset(Date.now());
+  let resultado;
+  try {
+    resultado = await fidTransaccion(async (x) => {
+      return fidProcesarFactura(x, {
+        extracto, integracion: integ.fila, ahora, cuerpoBytes: bruto.length,
+        // El primer JSON real hace falta ENTERO para diseñar la Fase 2, y por eso se cifra con
+        // DATA_ENC_KEY en lugar de guardarse en claro: dentro puede haber datos de un cliente.
+        cuerpoEnc: LLAVERO.puedeCifrar ? secCifrar(bruto.toString("utf8"), LLAVERO, DOMINIOS.FIDELIZACION) : null,
+        esquema: JSON.stringify(fidEsquemaDe(json)).slice(0, 40000),
+        version: version || null,
+        hashMember: (t) => fidHash(t).slice(0, 16),
+      });
+    });
+  } catch (e) {
+    // Rápido y sin detalles: al TPV no se le cuenta qué ha fallado por dentro.
+    console.error("[fidelizacion] factura:", e.message);
+    return res.status(200).json({ Status: "rejected", RejectReason: "No se pudo registrar" });
+  }
+
+  // La auditoría va DESPUÉS del COMMIT y fuera de la transacción: es un registro, no una condición.
+  try {
+    const accion = resultado.conflicto ? "factura_conflicto" : resultado.repetida ? "factura_duplicada" : "factura_recibida";
+    await ficAuditar("fidelizacion", resultado.facturaId, accion, "agora", {
+      local: integ.fila.local,
+      detalle: { global_id: extracto.globalId, clave_debil: extracto.claveDebil, miembros: extracto.miembros.length,
+                 movimientos: resultado.movimientos, sin_miembro: resultado.sinMiembro.length, agora_version: version || null },
+    });
+  } catch { /* la auditoría no puede tumbar la respuesta */ }
+
+  // `accepted` SOLO después del COMMIT: si se contestara antes y la transacción fallara, Ágora
+  // daría por buena una factura que no existe en ningún sitio.
+  res.status(200).set("Cache-Control", "no-store").json(fidRespuestaFactura({}));
+});
+
+// ── 3) Gestión, solo Dirección ───────────────────────────────────────────────
+
+app.post("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const ahora = isoConOffset(Date.now());
+    const token = fidNuevoToken((n) => crypto.randomBytes(n));
+    await dbRun(`UPDATE fid_integraciones SET revocado_en = ?, revocado_por = ?
+                 WHERE local = ? AND revocado_en IS NULL`, [ahora, req.user.username, FID_LOCAL]);
+    const fila = await dbRun(
+      `INSERT INTO fid_integraciones (local, token_hash, token_pista, activo, creado_en, creado_por, caduca_en)
+       VALUES (?,?,?,TRUE,?,?,?) RETURNING id`,
+      [FID_LOCAL, fidHash(token), fidPistaToken(token), ahora, req.user.username, fidCaducidad(ahora, FID_VIDA_DIAS)]);
+    await ficAuditar("fidelizacion", fila?.id, "integracion_generada", req.user.username,
+      { local: FID_LOCAL, detalle: { pista: fidPistaToken(token) } });
+    // El token en claro sale UNA vez y solo aquí. En la base vive su hash y cuatro caracteres.
+    res.json({ ok: true, id: fila?.id, local: FID_LOCAL, caduca_en: fidCaducidad(ahora, FID_VIDA_DIAS),
+      urls: fidUrls(`${req.protocol}://${req.get("host")}`, token) });
+  } catch (e) {
+    console.error("[fidelizacion] generar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo generar la integración" });
+  }
+});
+
+app.get("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const fila = await dbGet(`SELECT id, local, token_pista, activo, creado_en, creado_por, caduca_en, revocado_en
+                              FROM fid_integraciones WHERE local = ? ORDER BY id DESC LIMIT 1`, [FID_LOCAL]);
+    const c = await dbGet(`SELECT
+        COUNT(*)::int AS facturas,
+        COUNT(*) FILTER (WHERE estado = 'conflicto')::int AS conflictos,
+        COUNT(*) FILTER (WHERE estado = 'sin_miembro')::int AS sin_miembro,
+        COUNT(*) FILTER (WHERE devolucion)::int AS devoluciones,
+        MAX(recibido_en) AS ultima
+      FROM fid_facturas`);
+    const v = await dbGet(`SELECT COUNT(*)::int AS n,
+        COUNT(*) FILTER (WHERE resultado = 'ok')::int AS ok,
+        MAX(creado_en) AS ultima,
+        MAX(agora_version) AS version FROM fid_validaciones`);
+    res.json({ ok: true, integracion: fila || null, facturas: c || {}, validaciones: v || {},
+      local: FID_LOCAL, rewards_fase: REWARDS_FASE_1.length });
+  } catch { res.json({ ok: true, integracion: null, facturas: {}, validaciones: {}, local: FID_LOCAL, rewards_fase: 0 }); }
+});
+
+app.post("/api/fidelizacion/integracion/:id/activo", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const activo = req.body?.activo ? true : false;
+    await dbRun(`UPDATE fid_integraciones SET activo = ? WHERE id = ?`, [activo, parseInt(req.params.id)]);
+    await ficAuditar("fidelizacion", parseInt(req.params.id), activo ? "integracion_activada" : "integracion_desactivada",
+      req.user.username, { local: FID_LOCAL });
+    res.json({ ok: true, activo });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cambiar" }); }
+});
+
+app.post("/api/fidelizacion/integracion/:id/revocar", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    await dbRun(`UPDATE fid_integraciones SET revocado_en = ?, revocado_por = ? WHERE id = ? AND revocado_en IS NULL`,
+      [isoConOffset(Date.now()), req.user.username, parseInt(req.params.id)]);
+    await ficAuditar("fidelizacion", parseInt(req.params.id), "integracion_revocada", req.user.username, { local: FID_LOCAL });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo revocar" }); }
+});
+
+app.get("/api/fidelizacion/facturas", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const filas = await dbAll(`SELECT id, local, global_id, clave_debil, cuerpo_bytes, agora_version, items_n,
+        miembros_n, importe_total, devolucion, estado, recibido_en
+      FROM fid_facturas ORDER BY id DESC LIMIT 100`);
+    res.json({ ok: true, data: filas || [] });
+  } catch { res.json({ ok: true, data: [] }); }
+});
+
+/** El detalle. El cuerpo original solo se descifra si se pide expresamente con `?cuerpo=1`. */
+app.get("/api/fidelizacion/facturas/:id", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const f = await dbGet(`SELECT * FROM fid_facturas WHERE id = ?`, [parseInt(req.params.id)]);
+    if (!f) return res.status(404).json({ ok: false, error: "No existe" });
+    let esquema = null;
+    try { esquema = JSON.parse(f.esquema); } catch { esquema = null; }
+    const salida = { ...f, cuerpo_enc: undefined, esquema };
+    if (req.query.cuerpo === "1" && f.cuerpo_enc) {
+      const plano = leerSecreto(f.cuerpo_enc, DOMINIOS.FIDELIZACION, "fid_facturas");
+      try { salida.cuerpo = plano ? JSON.parse(plano) : null; } catch { salida.cuerpo = null; }
+    }
+    res.json({ ok: true, data: salida });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo leer" }); }
+});
+
+/** Un socio de prueba: visitas y consumo desde el libro. Se busca por su token, nunca por
+ *  teléfono ni por nombre. */
+app.get("/api/fidelizacion/miembro", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const token = String(req.query.token || "").trim();
+    if (!token) return res.status(400).json({ ok: false, error: "Falta el token del carné" });
+    const qr = await dbGet(`SELECT id, clase, nombre, anulado_en, caduca_en FROM pro_qr WHERE token = ?`, [token]);
+    if (!qr) return res.status(404).json({ ok: false, error: "No existe" });
+    const tot = await dbGet(`SELECT
+        COALESCE(SUM(unidades) FILTER (WHERE concepto = 'visita'), 0)::int AS visitas,
+        COALESCE(SUM(importe) FILTER (WHERE concepto = 'consumo'), 0) AS consumo,
+        COALESCE(SUM(importe) FILTER (WHERE concepto = 'devolucion'), 0) AS devuelto
+      FROM fid_movimientos WHERE qr_id = ?`, [qr.id]);
+    const porLocal = await dbAll(`SELECT local, COALESCE(SUM(unidades) FILTER (WHERE concepto = 'visita'), 0)::int AS visitas,
+        COALESCE(SUM(importe) FILTER (WHERE concepto = 'consumo'), 0) AS consumo
+      FROM fid_movimientos WHERE qr_id = ? GROUP BY local ORDER BY local`, [qr.id]);
+    res.json({ ok: true, carnet: { id: qr.id, clase: qr.clase, nombre: qr.nombre, anulado: !!qr.anulado_en },
+      total: tot || {}, porLocal: porLocal || [] });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo consultar" }); }
 });
 
 app.get("/", (req, res) => res.redirect("/login.html"));
