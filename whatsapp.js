@@ -1,12 +1,19 @@
-import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, downloadMediaMessage, fetchLatestWaWebVersion } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
 import pino from "pino";
-import Anthropic from "@anthropic-ai/sdk";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import { lineaError, redactar } from "./src/modules/seguridad/redactar.js";
+import { cargaDiferida } from "./src/modules/carga/diferida.js";
+
+// Baileys son 99 módulos y 14 MB. No hace falta para arrancar: solo lo usa
+// `connectToWhatsApp()`, que ya se llamaba después de que el servidor escuchara. Cargarlo aquí
+// arriba retrasaba el arranque entero. Ver src/modules/carga/diferida.js.
+const cargarBaileys = cargaDiferida(() => import("@whiskeysockets/baileys"), "[WhatsApp] Baileys");
+
+// El SDK de Anthropic, 91 módulos y 8,8 MB, por lo mismo: solo se usa al responder un mensaje.
+const cargarAnthropic = cargaDiferida(() => import("@anthropic-ai/sdk"), "[WhatsApp] SDK de IA");
 
 /**
  * EL LOGGER QUE SE LE DA A BAILEYS.
@@ -58,12 +65,15 @@ function resolveAuthDir() {
 const AUTH_DIR = resolveAuthDir();
 
 let anthropic = null;
-function getAnthropic() {
+// Ahora es `async` porque el SDK se carga al vuelo, pero por lo demás hace exactamente lo de
+// antes: sin API key devuelve `null` con el mismo aviso, y el cliente se crea UNA vez por proceso.
+async function getAnthropic() {
   if (!anthropic) {
     if (!process.env.ANTHROPIC_API_KEY) {
       console.warn("[WhatsApp] ANTHROPIC_API_KEY no configurada — respuestas IA desactivadas");
       return null;
     }
+    const { default: Anthropic } = await cargarAnthropic();
     anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   }
   return anthropic;
@@ -545,7 +555,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
   historial.push({ role: "user", content: contenidoUsuario });
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
 
-  const ai = getAnthropic();
+  const ai = await getAnthropic();
   if (!ai) return "Lo siento, el asistente no está disponible en este momento.";
 
   // Configuración editable por marketing (instrucciones + bloqueos + documentos).
@@ -808,6 +818,12 @@ async function connectToWhatsApp() {
     try { sock.ws?.close(); } catch (_) {}
     sock = null;
   }
+
+  // Se carga aquí, no arriba. Cacheado: dos reconexiones a la vez comparten el mismo `import()`
+  // en vuelo, y si falla no se cachea el fallo — el siguiente reintento vuelve a probar.
+  // `Browsers` estaba en el import estático y no lo usaba nadie; no se trae.
+  const { default: makeWASocket, DisconnectReason, useMultiFileAuthState,
+          downloadMediaMessage, fetchLatestWaWebVersion } = await cargarBaileys();
 
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   console.log(`[WhatsApp] Auth dir: ${AUTH_DIR} | Intento ${reconnectAttempts + 1}`);
