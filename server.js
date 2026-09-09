@@ -10,10 +10,10 @@ import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
+import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
-import { cargaDiferida } from "./src/modules/carga/diferida.js";
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
 import { permisosV2Enabled } from "./src/core/flags.js";
 import { ensureSchema as ensureEstablecimientosSchema, seedCatalogo } from "./src/db/establecimientos.migration.js";
@@ -224,26 +224,6 @@ const _envWarn = replitEnvWarning();
 if (_envWarn) console.warn("[env]", _envWarn);
 const { secret: JWT_SECRET, status: jwtStatus, source: jwtSource } = resolveJwtSecret({ prod: PROD });
 console.log(`[auth] JWT secret: ${jwtStatus} (fuente: ${jwtSource})`);
-
-/**
- * EL SDK DE ANTHROPIC SE CARGA CUANDO HACE FALTA, NO AL ARRANCAR.
- *
- * Son 91 módulos y 8,8 MB en 1.258 ficheros, y no hace falta ni uno para servir una reserva: solo
- * lo usan seis manejadores que responden a una petición. Cargándolo aquí arriba, el proceso no
- * llegaba a `app.listen` hasta haberlo leído entero del disco — en el disco frío de un Reserved VM
- * eso es una parte grande de los ~24 s que el despliegue pasaba sin nadie escuchando el puerto.
- *
- * El cliente se crea UNA vez por proceso, igual que ya hacía `whatsapp.js`.
- */
-const cargarAnthropic = cargaDiferida(() => import("@anthropic-ai/sdk"), "[IA] SDK de Anthropic");
-let _ia = null;
-async function iaCliente() {
-  if (!_ia) {
-    const { default: Anthropic } = await cargarAnthropic();
-    _ia = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  }
-  return _ia;
-}
 
 /**
  * LA CLAVE CON LA QUE SE CIFRAN LOS SECRETOS GUARDADOS (R01).
@@ -3781,7 +3761,7 @@ app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabili
 async function draftReplyForReview(review) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error("IA no configurada");
   const { system, messages } = draftRequest(review);
-  const ai = await iaCliente();
+  const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const response = await ai.messages.create({ model: "claude-haiku-4-5-20251001", max_tokens: 400, system, messages });
   return extractText(response);
 }
@@ -15133,7 +15113,7 @@ setSeguimientoResolver(async ({ ctx, texto }) => {
   // Solo se pregunta cuando las palabras no concluyen: es donde aporta y donde no hay riesgo.
   if (delTexto !== DESCONTENTO && process.env.ANTHROPIC_API_KEY) {
     try {
-      const ai = await iaCliente();
+      const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
       const r = await ai.messages.create({
         model: "claude-haiku-4-5-20251001", max_tokens: 12, temperature: 0,
         system: "Un cliente contesta a «¿qué tal fue tu visita al restaurante?». Responde SOLO una palabra: "
@@ -16139,7 +16119,7 @@ async function extraerHechosDeConversaciones({ tanda = 40 } = {}) {
     if (!filas.length) return resumen;
     const ultimoId = filas[filas.length - 1].id;
 
-    const ai = await iaCliente();
+    const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     for (const conv of conversacionesParaLeer(filas, { maxConversaciones: tanda })) {
       // A quien se ha dado de baja no se le lee nada: pidió que le dejaran en paz.
       const pref = await dbGet(`SELECT baja FROM marketing_prefs WHERE ${MATCH_TEL9("telefono")}`, [conv.telefono]);
@@ -16403,7 +16383,7 @@ async function traducirTexto(texto, idioma) {
   if (!process.env.ANTHROPIC_API_KEY) return texto;
   try {
     const { system, messages } = construirTraduccionRequest(texto, id);
-    const ai = await iaCliente();
+    const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const resp = await ai.messages.create({ model: "claude-haiku-4-5-20251001", max_tokens: 800, system, messages });
     const out = extractText(resp).trim();
     if (!out || !placeholdersIntactos(texto, out)) return texto; // variables rotas → fallback seguro
@@ -16973,7 +16953,7 @@ app.post("/api/campanas/redactar", requireAuth(["direccion", "marketing"]), asyn
     const texto = String(req.body?.texto || "").trim().slice(0, 1000);
     if (!texto) return res.status(400).json({ ok: false, error: "Cuéntame qué campaña quieres hacer" });
     if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ ok: false, error: "La IA no está configurada" });
-    const ai = await iaCliente();
+    const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const hoy = hoyISO();
     const sistema = `Eres quien prepara campañas de WhatsApp para Familia del Amor, un grupo de restauración de la Costa Brava.
@@ -17321,7 +17301,7 @@ REGLAS:
       if (last.role === "user") last.content += adjuntoTxt;
     }
 
-    const ai = await iaCliente();
+    const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await ai.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 800,
@@ -17477,11 +17457,6 @@ async function procesarPendientesWA() {
 // Manejador de errores global (Iteración 1A): respuesta 500 genérica sin filtrar internos,
 // y log seguro en servidor. Debe registrarse DESPUÉS de todas las rutas.
 app.use(errorHandler);
-
-// Cuánto ha tardado el proceso en llegar hasta aquí. Es la medida que faltaba: entre que Replit
-// lanza el deployment y esta línea no hay nadie escuchando el puerto, y hasta ahora ese tramo solo
-// se podía estimar restando marcas de tiempo del log.
-console.log(`[arranque] app.listen a los ${Math.round(process.uptime() * 1000)} ms`);
 
 const server = app.listen(PORT, async () => {
   console.log(`Servidor activo en http://localhost:${PORT}`);

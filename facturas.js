@@ -1,4 +1,4 @@
-import { cargaDiferida } from "./src/modules/carga/diferida.js";
+import Anthropic from "@anthropic-ai/sdk";
 import { normalizarLineas, validarSuma, mensajeValidacion, claveProducto } from "./src/modules/facturas/lineas.js";
 import { canonizarLocal, esLocalCanonico, LOCALES } from "./src/modules/facturas/local-canonico.js";
 import { canonico as localCentro } from "./src/modules/locales/centros.js";
@@ -359,21 +359,8 @@ export class FacturaDuplicadaError extends Error {
  */
 export const promptExtraccion = (hoy) => PROMPT_BASE.replace("{HOY}", String(hoy || "").slice(0, 10) || "desconocido");
 
-// El SDK de Anthropic son 91 módulos y 8,8 MB, y este fichero solo lo usa para leer un documento.
-// Cargarlo arriba retrasaba el arranque del servidor entero. Mismo motivo por el que `pdf-lib` ya
-// se carga al vuelo unas líneas más abajo. El cliente se crea UNA vez por proceso.
-const cargarAnthropic = cargaDiferida(() => import("@anthropic-ai/sdk"), "[facturas] SDK de IA");
-let anthropic = null;
-async function getAnthropic() {
-  if (!anthropic) {
-    const { default: Anthropic } = await cargarAnthropic();
-    anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  }
-  return anthropic;
-}
-
 export async function extraerDatosDocumento(buffer, mimeType, { hoy = null } = {}) {
-  const ai = await getAnthropic();
+  const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const base64 = buffer.toString("base64");
 
   const isPdf = mimeType === "application/pdf";
