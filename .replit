@@ -40,4 +40,11 @@ externalPort = 3000
 
 [deployment]
 deploymentTarget = "vm"
-run = ["node", "server.js"]
+# ── TEMPORAL · R01 · dry-run del cifrado ─────────────────────────────────────
+# Cuenta en qué formato está cada secreto guardado y ARRANCA EL SERVIDOR. En seco:
+# no escribe, no crea la tabla de copia y no toca ningún ciphertext (solo emite tres
+# SELECT). El `;` en vez de `&&` es deliberado: pase lo que pase con el recuento, el
+# servidor arranca. El `timeout` cubre el único caso que el `;` no cubre — que el
+# recuento se quede colgado esperando a la base y el servidor no llegue a arrancar nunca.
+# REVERTIR a `run = ["node", "server.js"]` en cuanto se lean los conteos.
+run = ["sh", "-c", "timeout 120 node scripts/migrar-cifrado.js --dry-run; node server.js"]
