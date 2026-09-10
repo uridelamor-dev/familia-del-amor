@@ -110,6 +110,7 @@ import { LOCAL_PILOTO as FID_LOCAL, REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CU
          extraerFactura as fidExtraerFactura, procesarFactura as fidProcesarFactura, respuestaFactura as fidRespuestaFactura,
          MiembroDesconocido as FidMiembroDesconocido, basePublica as fidBasePublica,
          resolverMiembro as fidResolverMiembro, crearTransaccion as fidCrearTransaccion,
+         leerSecuencias as fidLeerSecuencias,
          esquemaDe as fidEsquemaDe, cabecerasSeguras as fidCabeceras, urlsDeIntegracion as fidUrls }
   from "./src/modules/fidelizacion/agora.js";
 import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
@@ -17741,54 +17742,101 @@ app.get("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req,
   }
 });
 
+/** LAS CUATRO tablas del piloto. Lista CERRADA: ningún nombre sale de la petición, y todos se
+ *  validan antes de interpolarse en ningún SQL. */
+const FID_TABLAS = Object.freeze(["fid_integraciones", "fid_validaciones", "fid_facturas", "fid_movimientos"]);
+/** Sus secuencias. `SERIAL` las nombra así; también van en lista cerrada. */
+const FID_SECUENCIAS = Object.freeze(FID_TABLAS.map((t) => `${t}_id_seq`));
+/** Un identificador SQL o no se usa. Las listas de arriba son constantes, pero un nombre
+ *  interpolado sin comprobar es una costumbre que acaba copiándose a donde sí importa. */
+const fidIdent = (s) => { if (!/^[a-z][a-z0-9_]*$/.test(String(s))) throw new Error("identificador"); return s; };
+
 /**
- * DIAGNÓSTICO. Contesta a la pregunta que no se pudo contestar cuando la integración desapareció:
- * ¿hubo alguna vez algo aquí, y siguen estas tablas donde estaban?
+ * DIAGNÓSTICO. Lectura PASIVA para distinguir qué le pasó a las tablas del piloto.
  *
- * DEVUELVE LO MÍNIMO. Ni el nombre de la base, ni el usuario, ni el host, ni el puerto, ni la
- * DATABASE_URL, ni la ruta de búsqueda completa, ni el hash del token, ni el autor, ni el detalle
- * libre de la auditoría. Un endpoint de diagnóstico es donde más fácil es acabar exponiendo la
- * infraestructura entera «por si acaso hace falta».
+ * Contexto: tras un despliegue, `fid_integraciones`, `fid_validaciones` y `fid_facturas`
+ * aparecieron vacías mientras `fic_auditoria` conservaba las acciones escritas en el mismo
+ * instante. Eso descarta una restauración a un punto en el tiempo —no puede conservar una fila y
+ * borrar otra escrita milisegundos después— y apunta a algo que actuó sobre esas tablas por su
+ * identidad, no por su fecha.
  *
- * Lo que sí: una HUELLA estable de la conexión —doce caracteres de un SHA-256, que solo sirve para
- * comparar dos despliegues entre sí—, el esquema efectivo (que es lo que decide si las tablas se
- * han creado en otro sitio), los nombres de nuestras tablas encontradas, los recuentos, y la
- * auditoría proyectada a tres campos: acción, fecha y pista.
+ * NO ESCRIBE NADA. Ni una fila, ni un marcador, ni una secuencia. Solo `SELECT` sobre el catálogo.
  *
- * NO ESCRIBE NADA. Solo `dbGet`/`dbAll`.
+ * DEVUELVE LO MÍNIMO: ni base, ni usuario, ni host, ni puerto, ni credenciales, ni SQL, ni errores
+ * crudos, ni un solo valor de negocio.
  */
 app.get("/api/fidelizacion/diagnostico", requireAuth(["direccion"]), async (req, res) => {
   try {
-    // Solo el esquema efectivo. La ruta de búsqueda completa puede llevar nombres de esquema por
-    // usuario, y eso es un dato de infraestructura que no hace falta para contestar la pregunta.
     const con = await dbGet(`SELECT current_schema() AS esquema`);
 
-    // ¿Existen nuestras tablas en MÁS DE UN esquema? Si el esquema efectivo cambió entre
-    // despliegues, `CREATE TABLE IF NOT EXISTS` habría creado una copia vacía en otro sitio y el
-    // original seguiría ahí, intacto y sin que nadie lo lea.
-    //
-    // Los nombres se filtran contra una lista cerrada: se pregunta por LAS NUESTRAS, no se vuelca
-    // el catálogo de la base.
-    const NUESTRAS = ["fid_integraciones", "fid_validaciones", "fid_facturas"];
-    const enc = await dbAll(
-      `SELECT table_schema AS esquema, table_name AS tabla
-         FROM information_schema.tables
-        WHERE table_name = ANY(?) ORDER BY 1, 2`, [NUESTRAS]);
-    const tablas = (enc || []).filter((t) => NUESTRAS.includes(t.tabla))
-                              .map((t) => ({ esquema: String(t.esquema), tabla: String(t.tabla) }));
+    // ── Catálogo por tabla ────────────────────────────────────────────────────
+    // `oid` y `relfilenode` son los dos números que distinguen qué le pasó; `relpersistence` es
+    // el que confirmaría lo único que vacía tablas sueltas sin dejar rastro.
+    let cat = [];
+    try {
+      cat = await dbAll(
+        `SELECT c.relname AS tabla, c.oid::bigint AS oid, c.relfilenode::bigint AS relfilenode,
+                c.relpersistence::text AS persistencia, c.relrowsecurity AS rls
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind = 'r' AND n.nspname = current_schema() AND c.relname = ANY(?)
+          ORDER BY c.relname`, [FID_TABLAS]);
+    } catch { cat = []; }
 
-    const filas = await dbGet(
-      `SELECT (SELECT COUNT(*)::int FROM fid_integraciones) AS integraciones,
-              (SELECT COUNT(*)::int FROM fid_validaciones) AS validaciones,
-              (SELECT COUNT(*)::int FROM fid_facturas) AS facturas`);
+    // Triggers propios (los internos de PostgreSQL no cuentan) y claves ajenas en los dos
+    // sentidos: las que salen de la tabla y las que APUNTAN a ella, que son las que podrían
+    // borrar en cascada.
+    let trg = [], fks = [];
+    try {
+      trg = await dbAll(
+        `SELECT c.relname AS tabla, COUNT(t.oid)::int AS n
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           LEFT JOIN pg_trigger t ON t.tgrelid = c.oid AND NOT t.tgisinternal
+          WHERE n.nspname = current_schema() AND c.relname = ANY(?) GROUP BY 1`, [FID_TABLAS]);
+    } catch { trg = []; }
+    try {
+      fks = await dbAll(
+        `SELECT c.relname AS tabla,
+                COUNT(*) FILTER (WHERE k.conrelid = c.oid)::int AS salientes,
+                COUNT(*) FILTER (WHERE k.confrelid = c.oid)::int AS entrantes
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+           LEFT JOIN pg_constraint k ON k.contype = 'f' AND (k.conrelid = c.oid OR k.confrelid = c.oid)
+          WHERE n.nspname = current_schema() AND c.relname = ANY(?) GROUP BY 1`, [FID_TABLAS]);
+    } catch { fks = []; }
 
-    // El rastro. `fic_auditoria` es una tabla ANTERIOR a toda la fidelización: si aquí hay un
-    // «integracion_generada» y `fid_integraciones` está vacía, la base es la misma y lo que se
-    // perdió fueron solo las tablas nuevas.
-    //
-    // Se proyecta a TRES campos. El `autor` es un nombre de persona y no hace falta para saber qué
-    // pasó; el `detalle` es texto libre que hoy lleva una pista de cuatro caracteres, pero mañana
-    // podría llevar cualquier cosa que alguien añada sin pensar en este endpoint.
+    // ── Filas ─────────────────────────────────────────────────────────────────
+    // Una a una y cada una en su try: si falta una tabla, las demás siguen contándose. El nombre
+    // sale de la constante y pasa por `fidIdent` antes de tocar el SQL.
+    const filas = {};
+    for (const t of FID_TABLAS) {
+      try { const r = await dbGet(`SELECT COUNT(*)::int AS n FROM ${fidIdent(t)}`); filas[t] = r ? Number(r.n) : null; }
+      catch { filas[t] = null; }
+    }
+
+    // ── Secuencias ────────────────────────────────────────────────────────────
+    // Cada una se consulta directamente para tener `is_called` de verdad, no deducido. El bucle
+    // vive en el módulo para poder probarlo: ver `leerSecuencias`.
+    const sec = await fidLeerSecuencias(dbGet, FID_SECUENCIAS, fidIdent);
+
+    const porTabla = (arr, t) => (arr || []).find((x) => x.tabla === t) || null;
+    const tablas = FID_TABLAS.map((t) => {
+      const c = porTabla(cat, t), g = porTabla(trg, t), k = porTabla(fks, t);
+      return {
+        tabla: t,
+        presente: !!c,
+        oid: c ? Number(c.oid) : null,
+        relfilenode: c ? Number(c.relfilenode) : null,
+        persistencia: c ? String(c.persistencia) : null,   // 'p' permanente · 'u' unlogged · 't' temporal
+        rls: c ? !!c.rls : null,
+        triggers: g ? Number(g.n) : 0,
+        fk_salientes: k ? Number(k.salientes) : 0,
+        fk_entrantes: k ? Number(k.entrantes) : 0,
+        filas: filas[t],
+      };
+    });
+
+    // El rastro. `fic_auditoria` es ANTERIOR a toda la fidelización: si aquí hay acciones y las
+    // tablas están vacías, la base es la misma y lo que se perdió fueron solo esas tablas.
+    // Proyectado a tres campos; ni autor ni detalle libre.
     let auditoria = [];
     try {
       const a = await dbAll(
@@ -17804,10 +17852,21 @@ app.get("/api/fidelizacion/diagnostico", requireAuth(["direccion"]), async (req,
 
     res.set("Cache-Control", "no-store").json({
       ok: true,
-      // Doce caracteres de SHA-256. Sirve para comparar dos despliegues y para nada más.
       url_huella: fidHash(String(process.env.DATABASE_URL || "")).slice(0, 12),
       esquema: con?.esquema ? String(con.esquema) : null,
-      tablas, filas: filas || {}, auditoria,
+      tablas, secuencias: sec, auditoria,
+      // Para que quien lea esto no saque la conclusión de más. Cada línea es lo que el dato
+      // permite afirmar, y nada más.
+      leyenda: {
+        persistencia_u: "Confirma que la tabla es UNLOGGED y que PostgreSQL PUEDE vaciarla al recuperarse de una caída. Junto a los síntomas sería una explicación fuerte, pero para atribuirle el incidente harían falta pruebas de un reinicio sucio o una recuperación del servidor.",
+        persistencia_p: "Permanente. Descarta el vaciado automático por recuperación.",
+        secuencia_ausente: "presente:false significa que no existe o que no se puede leer. No implica que la tabla se haya recreado.",
+        oid_distinto: "Frente a una medición ANTERIOR: hubo DROP + CREATE.",
+        relfilenode_distinto_mismo_oid: "Hubo una reescritura: TRUNCATE, pero también VACUUM FULL o CLUSTER. No distingue entre ellos.",
+        secuencia_avanzada_sin_filas: "Compatible con DELETE y con TRUNCATE sin RESTART. No distingue entre los dos.",
+        secuencia_reiniciada: "Por sí sola NO distingue DROP + CREATE de TRUNCATE RESTART: hay que mirar el oid.",
+        sin_medicion_previa: "Esta lectura es la primera: oid y relfilenode solo sirven comparados con la siguiente.",
+      },
     });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] diagnostico", e));

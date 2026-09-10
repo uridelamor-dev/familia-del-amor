@@ -15,7 +15,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { crearTransaccion } from "../src/modules/fidelizacion/agora.js";
+import { crearTransaccion, leerSecuencias } from "../src/modules/fidelizacion/agora.js";
 
 const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
@@ -117,54 +117,196 @@ describe("«Regenerar» avisa de lo que rompe", () => {
   });
 });
 
-describe("el diagnóstico devuelve lo MÍNIMO", () => {
+describe("el diagnóstico: las CUATRO tablas, de una lista cerrada", () => {
+  test("la lista incluye fid_movimientos, que antes faltaba", () => {
+    // El libro de visitas quedaba fuera del diagnóstico: precisamente la tabla que llevará el
+    // saldo de los clientes.
+    assert.match(server, /const FID_TABLAS = Object\.freeze\(\["fid_integraciones", "fid_validaciones", "fid_facturas", "fid_movimientos"\]\)/);
+    for (const t of ["fid_integraciones", "fid_validaciones", "fid_facturas", "fid_movimientos"]) {
+      assert.ok(server.includes(`"${t}"`), `falta ${t}`);
+    }
+  });
+
+  test("está CONGELADA y ningún nombre viene de la petición", () => {
+    assert.match(server, /Object\.freeze\(\["fid_integraciones"/);
+    assert.match(server, /const FID_SECUENCIAS = Object\.freeze\(FID_TABLAS\.map/);
+    // Lo único que se interpola en SQL pasa por el validador de identificadores.
+    assert.match(diag, /FROM \$\{fidIdent\(t\)\}/);
+    assert.match(server, /const fidIdent = \(s\) => \{ if \(!\/\^\[a-z\]\[a-z0-9_\]\*\$\/\.test\(String\(s\)\)\) throw/);
+    // Y nada sale de req.
+    assert.ok(!/req\.(query|params|body)/.test(diag), "el diagnóstico lee algo de la petición");
+  });
+
+  test("las consultas del catálogo filtran por la lista, no por un patrón", () => {
+    // Con `LIKE 'fid_%'` mañana entraría cualquier tabla nueva que empiece igual.
+    assert.ok(!/LIKE 'fid/.test(diag), "vuelve a filtrar por patrón");
+    // Tres consultas de catálogo filtran por la lista; las secuencias van una a una (ver
+    // `leerSecuencias`) y los conteos también, cada uno con su nombre validado.
+    assert.equal((diag.match(/= ANY\(\?\)/g) || []).length, 3, "las consultas de catálogo deben filtrar por la lista");
+  });
+});
+
+describe("el diagnóstico devuelve lo que hace falta y nada más", () => {
+  test("por tabla: persistencia, oid, relfilenode, filas, triggers y claves ajenas", () => {
+    assert.match(diag, /c\.oid::bigint AS oid/);
+    assert.match(diag, /c\.relfilenode::bigint AS relfilenode/);
+    assert.match(diag, /c\.relpersistence::text AS persistencia/);
+    assert.match(diag, /c\.relrowsecurity AS rls/);
+    assert.match(diag, /NOT t\.tgisinternal/, "deben excluirse los triggers internos de PostgreSQL");
+    assert.match(diag, /AS salientes/);
+    assert.match(diag, /AS entrantes/, "las claves ajenas que APUNTAN a la tabla son las que cascadean");
+    assert.match(diag, /SELECT COUNT\(\*\)::int AS n FROM \$\{fidIdent\(t\)\}/);
+  });
+
+  test("las secuencias se consultan una a una, con nombre controlado", () => {
+    // `pg_sequences` da `last_value` pero NO `is_called`, y deducir uno del otro es contar una
+    // cosa por otra.
+    assert.match(diag, /const sec = await fidLeerSecuencias\(dbGet, FID_SECUENCIAS, fidIdent\)/);
+    assert.ok(!/pg_sequences/.test(diag), "vuelve a deducir is_called desde pg_sequences");
+    const modulo = readFileSync(new URL("../src/modules/fidelizacion/agora.js", import.meta.url), "utf8");
+    assert.match(modulo, /SELECT last_value, is_called FROM \$\{ident\(q\)\}/);
+  });
+
+  test("cada tabla se cuenta por separado: si falta una, las demás siguen", () => {
+    assert.match(diag, /for \(const t of FID_TABLAS\)/);
+    assert.match(diag, /catch \{ filas\[t\] = null; \}/);
+  });
+
   test("NO devuelve base, usuario, host, puerto, DATABASE_URL ni la ruta de búsqueda", () => {
-    // Un endpoint de diagnóstico es donde más fácil es acabar exponiendo la infraestructura
-    // entera «por si acaso hace falta».
     for (const prohibido of ["current_database", "current_user", "current_setting", "search_path",
-                             "usuario_huella", "inet_server_addr", "inet_server_port"]) {
+                             "usuario_huella", "inet_server_addr", "inet_server_port", "pg_shadow", "pg_authid"]) {
       assert.ok(!diag.includes(prohibido), `el diagnóstico usa ${prohibido}`);
     }
-    // La DATABASE_URL solo aparece dentro de la huella.
     const sinHuella = diag.replace(/fidHash\(String\(process\.env\.DATABASE_URL \|\| ""\)\)\.slice\(0, 12\)/, "X");
     assert.ok(!/DATABASE_URL/.test(sinHuella), "la URL de la base sale fuera de la huella");
   });
 
-  test("ni el token, ni su hash, ni el autor, ni el detalle libre", () => {
-    for (const prohibido of ["token_hash", "a.autor", "autor:", "detalle: (()"]) {
+  test("ni el token, ni su hash, ni el autor, ni el detalle libre, ni un valor de negocio", () => {
+    for (const prohibido of ["token_hash", "a.autor", "autor:", "member_id", "member_hash",
+                             "importe", "global_id", "cuerpo"]) {
       assert.ok(!diag.includes(prohibido), `el diagnóstico devuelve ${prohibido}`);
     }
-    // La auditoría se proyecta a TRES campos y ninguno es libre.
     assert.match(diag, /return \{ accion: String\(f\.accion\), fecha: String\(f\.creado_en \|\| ""\), pista \}/);
-    assert.match(diag, /d\.pista === "string"/, "la pista debe leerse con tipo, no confiar en el JSON");
   });
 
-  test("lo que SÍ devuelve: huella, esquema, tablas, recuentos y auditoría proyectada", () => {
-    assert.match(diag, /url_huella: fidHash\(String\(process\.env\.DATABASE_URL \|\| ""\)\)\.slice\(0, 12\)/);
-    assert.match(diag, /esquema: con\?\.esquema \? String\(con\.esquema\) : null/);
-    assert.match(diag, /tablas, filas: filas \|\| \{\}, auditoria,/);
+  test("la leyenda no saca conclusiones de más", () => {
+    // Es lo que evita que quien lea el JSON confunda «reescritura» con «TRUNCATE».
+    assert.match(diag, /relfilenode_distinto_mismo_oid: "Hubo una reescritura: TRUNCATE, pero también VACUUM FULL o CLUSTER\. No distingue entre ellos\."/);
+    assert.match(diag, /secuencia_avanzada_sin_filas: "Compatible con DELETE y con TRUNCATE sin RESTART\. No distingue entre los dos\."/);
+    assert.match(diag, /secuencia_reiniciada: "Por sí sola NO distingue DROP \+ CREATE de TRUNCATE RESTART/);
+    assert.match(diag, /oid_distinto: "Frente a una medición ANTERIOR: hubo DROP \+ CREATE\."/);
+    // Y NO atribuye el incidente: confirmar que una tabla es UNLOGGED no es demostrar que fue eso.
+    assert.match(diag, /persistencia_u: "Confirma que la tabla es UNLOGGED y que PostgreSQL PUEDE vaciarla/);
+    assert.match(diag, /harían falta pruebas de un reinicio sucio o una recuperación del servidor/);
+    assert.ok(!/Lo confirmaría/.test(diag), "la leyenda vuelve a atribuir la causa");
+    assert.match(diag, /persistencia_p: "Permanente\. Descarta el vaciado automático por recuperación\."/);
+    assert.match(diag, /secuencia_ausente:/);
+    assert.match(diag, /sin_medicion_previa:/, "hay que decir que la primera lectura no compara con nada");
   });
 
-  test("los nombres de tabla salen de una lista CERRADA, no del catálogo", () => {
-    // Sin la lista, esto volcaría los nombres de todas las tablas que empiecen por «fid_», que
-    // mañana pueden ser de otra cosa.
-    assert.match(diag, /const NUESTRAS = \["fid_integraciones", "fid_validaciones", "fid_facturas"\]/);
-    assert.match(diag, /WHERE table_name = ANY\(\?\)/);
-    assert.match(diag, /\.filter\(\(t\) => NUESTRAS\.includes\(t\.tabla\)\)/);
-  });
-
-  test("cuenta las filas de las tres tablas", () => {
-    for (const t of ["fid_integraciones", "fid_validaciones", "fid_facturas"]) {
-      assert.ok(diag.includes(`COUNT(*)::int FROM ${t}`), `no cuenta ${t}`);
+  test("es PASIVO: ni una escritura, ni un marcador, ni una secuencia tocada", () => {
+    // Se quita ANTES el bloque de la leyenda: ahí dentro se explican a propósito los mecanismos
+    // que buscamos —«DROP + CREATE», «TRUNCATE RESTART»— y una búsqueda a pelo confundiría la
+    // explicación con una sentencia. Es el mismo cuidado que ya hizo falta con los comentarios.
+    const codigoDiag = diag.slice(0, diag.indexOf("leyenda: {")) + diag.slice(diag.indexOf("} catch (e) {"));
+    for (const escritura of ["dbRun(", "INSERT", "UPDATE", "ficAuditar(", "setConfig(",
+                             "nextval", "setval", "CREATE ", "ALTER ", "DELETE"]) {
+      assert.ok(!codigoDiag.includes(escritura), `el diagnóstico escribe: ${escritura}`);
     }
+    // Solo lecturas, y solo de catálogo o de conteo.
+    assert.ok(codigoDiag.includes("dbGet(") && codigoDiag.includes("dbAll("));
+    const consultas = [...codigoDiag.matchAll(/`(SELECT[\s\S]*?)`/g)].map((m) => m[1]);
+    assert.ok(consultas.length >= 5, `solo ${consultas.length} consultas`);
+    for (const q of consultas) assert.match(q.trim(), /^SELECT/, `consulta que no es SELECT: ${q.slice(0, 40)}`);
   });
 
-  test("solo Dirección, sin caché y sin escribir NADA", () => {
+  test("solo Dirección y sin caché", () => {
     assert.match(diag, /app\.get\("\/api\/fidelizacion\/diagnostico", requireAuth\(\["direccion"\]\)/);
     assert.match(diag, /res\.set\("Cache-Control", "no-store"\)/);
-    for (const escritura of ["dbRun(", "INSERT", "UPDATE", "ficAuditar("]) {
-      assert.ok(!diag.includes(escritura), `el diagnóstico escribe: ${escritura}`);
-    }
+  });
+
+  test("un error se registra redactado y no sale nada crudo", () => {
+    assert.match(diag, /console\.error\(lineaErrorSql\("\[fidelizacion\] diagnostico", e\)\)/);
+    assert.match(diag, /res\.status\(500\)\.json\(\{ ok: false, error: "No se pudo diagnosticar" \}\)/);
+    assert.ok(!/e\.message/.test(diag), "el mensaje de pg sale al cliente o al log");
+    assert.ok(!/error: e\b/.test(diag));
+  });
+});
+
+describe("las secuencias: last_value e is_called REALES", () => {
+  const ident = (x) => { if (!/^[a-z][a-z0-9_]*$/.test(String(x))) throw new Error("identificador"); return x; };
+  const NOMBRES = ["fid_integraciones_id_seq", "fid_validaciones_id_seq", "fid_facturas_id_seq", "fid_movimientos_id_seq"];
+
+  /** Un `get` que responde como PostgreSQL: bigint como TEXTO y booleano de verdad. */
+  const fakeGet = (mapa) => async (sql) => {
+    const m = /FROM (\w+)$/.exec(String(sql).trim());
+    assert.ok(m, "la consulta no tiene la forma esperada: " + sql);
+    assert.match(String(sql), /^SELECT last_value, is_called FROM /);
+    if (!(m[1] in mapa)) { const e = new Error('relation "' + m[1] + '" does not exist'); e.code = "42P01"; throw e; }
+    return mapa[m[1]];
+  };
+
+  test("una secuencia NUNCA USADA da is_called=false", async () => {
+    // Es el caso que `pg_sequences` no sabe distinguir: una secuencia recién creada devuelve
+    // `last_value = 1`, NO NULL. Lo único que dice «sin estrenar» es `is_called`.
+    const r = await leerSecuencias(fakeGet({ fid_integraciones_id_seq: { last_value: "1", is_called: false } }),
+      ["fid_integraciones_id_seq"], ident);
+    assert.equal(r[0].presente, true);
+    assert.equal(r[0].last_value, 1);
+    assert.equal(r[0].is_called, false, "una secuencia sin estrenar no puede decir que sí");
+  });
+
+  test("una secuencia USADA da is_called=true y su último valor", async () => {
+    // `fid_validaciones` llegó a tener 2 filas: si su secuencia sigue en 2, las tablas son las
+    // mismas y hubo un borrado de filas, no una recreación.
+    const r = await leerSecuencias(fakeGet({ fid_validaciones_id_seq: { last_value: "2", is_called: true } }),
+      ["fid_validaciones_id_seq"], ident);
+    assert.equal(r[0].is_called, true);
+    assert.equal(r[0].last_value, 2);
+    assert.equal(typeof r[0].last_value, "number", "pg devuelve los bigint como texto: hay que normalizar");
+  });
+
+  test("una secuencia AUSENTE no rompe las demás", async () => {
+    // Un diagnóstico que se cae entero porque falta una pieza no diagnostica nada.
+    const r = await leerSecuencias(fakeGet({
+      fid_integraciones_id_seq: { last_value: "3", is_called: true },
+      // fid_validaciones_id_seq NO existe
+      fid_facturas_id_seq: { last_value: "1", is_called: false },
+      fid_movimientos_id_seq: { last_value: "7", is_called: true },
+    }), NOMBRES, ident);
+
+    assert.equal(r.length, 4, "deben salir las cuatro, exista o no cada una");
+    const porNombre = Object.fromEntries(r.map((x) => [x.secuencia, x]));
+    assert.equal(porNombre.fid_validaciones_id_seq.presente, false);
+    assert.equal(porNombre.fid_validaciones_id_seq.last_value, null);
+    assert.equal(porNombre.fid_validaciones_id_seq.is_called, null, "sin secuencia no se inventa un booleano");
+    // Las otras tres, intactas.
+    assert.equal(porNombre.fid_integraciones_id_seq.last_value, 3);
+    assert.equal(porNombre.fid_facturas_id_seq.is_called, false);
+    assert.equal(porNombre.fid_movimientos_id_seq.last_value, 7);
+  });
+
+  test("si NINGUNA existe, se informan las cuatro y no se lanza", async () => {
+    const r = await leerSecuencias(fakeGet({}), NOMBRES, ident);
+    assert.equal(r.length, 4);
+    assert.ok(r.every((x) => x.presente === false && x.last_value === null && x.is_called === null));
+  });
+
+  test("las cuatro tablas tienen su secuencia, incluida fid_movimientos", () => {
+    assert.match(server, /const FID_SECUENCIAS = Object\.freeze\(FID_TABLAS\.map\(\(t\) => `\$\{t\}_id_seq`\)\)/);
+    assert.ok(NOMBRES.includes("fid_movimientos_id_seq"));
+  });
+
+  test("NINGÚN nombre procede de la petición, y uno inválido no llega al SQL", async () => {
+    // La lista es una constante congelada derivada de otra constante congelada. Y aun así, el
+    // validador está: un identificador interpolado sin comprobar es una costumbre que acaba
+    // copiándose a donde sí importa.
+    assert.ok(!/req\.(query|params|body)/.test(diag), "el diagnóstico lee algo de la petición");
+    const vistas = [];
+    const espia = async (sql) => { vistas.push(sql); return { last_value: "1", is_called: false }; };
+    const r = await leerSecuencias(espia, ["fid_facturas_id_seq; DROP TABL" + "E x", "Fid_Malo", "1_malo", ""], ident);
+    assert.deepEqual(vistas, [], "un nombre inválido ha llegado a construir SQL");
+    assert.ok(r.every((x) => x.presente === false), "un nombre inválido debe quedar como ausente");
   });
 });
 

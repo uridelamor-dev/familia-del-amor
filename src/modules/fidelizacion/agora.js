@@ -309,6 +309,39 @@ export function movimientosDe(extracto, { local, autor = "agora", ahora, factura
 }
 
 /**
+ * Lee el estado real de unas secuencias, una a una.
+ *
+ * POR QUÉ NO `pg_sequences`: esa vista da `last_value` pero NO `is_called`, y deducir uno del otro
+ * es contar una cosa por otra. Una secuencia recién creada devuelve `last_value = 1` con
+ * `is_called = false` — no NULL —, así que el único dato que distingue «sin estrenar» de «ya
+ * sirvió el id 1» es `is_called`. Consultando la secuencia directamente salen los dos de verdad.
+ *
+ * `nombres` viene de una constante congelada e `ident` los valida antes de que toquen el SQL: ni
+ * un carácter procede de una petición.
+ *
+ * CADA UNA EN SU TRY. Una secuencia que no exista —o que no se pueda leer— se informa con
+ * `presente: false` y las demás se siguen leyendo. Un diagnóstico que se cae entero porque falta
+ * una pieza no diagnostica nada.
+ */
+export async function leerSecuencias(get, nombres, ident) {
+  const out = [];
+  for (const q of nombres) {
+    try {
+      const r = await get(`SELECT last_value, is_called FROM ${ident(q)}`);
+      out.push({
+        secuencia: q, presente: true,
+        // `pg` devuelve los bigint como texto: se normaliza a número aquí y no en la plantilla.
+        last_value: r && r.last_value !== null && r.last_value !== undefined ? Number(r.last_value) : null,
+        is_called: r ? !!r.is_called : null,
+      });
+    } catch {
+      out.push({ secuencia: q, presente: false, last_value: null, is_called: null });
+    }
+  }
+  return out;
+}
+
+/**
  * UNA transacción sobre UN cliente del pool.
  *
  * Es una fábrica y no una función suelta para que se pueda probar: aquí se le inyecta el pool y el
