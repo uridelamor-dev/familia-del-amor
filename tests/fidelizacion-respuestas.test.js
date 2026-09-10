@@ -83,8 +83,10 @@ describe("un fallo técnico NUNCA se contesta con 200", () => {
   });
 
   test("hay transacción con ROLLBACK detrás de esa propagación", () => {
-    assert.match(server, /catch \(e\) \{\s*try \{ await client\.query\("ROLLBACK"\); \}/);
-    assert.match(server, /SET LOCAL statement_timeout = 5000/);
+    const modulo = readFileSync(new URL("../src/modules/fidelizacion/agora.js", import.meta.url), "utf8");
+    assert.match(modulo, /catch \(e\) \{\s*try \{ await client\.query\("ROLLBACK"\); \}/);
+    assert.match(modulo, /SET LOCAL statement_timeout/);
+    assert.match(server, /const fidTransaccion = fidCrearTransaccion\(/);
   });
 });
 
@@ -153,13 +155,15 @@ describe("un duplicado idéntico SÍ se acepta, y no duplica nada", () => {
 describe("accepted solo después del COMMIT", () => {
   test("la respuesta va detrás de la transacción, en este orden", () => {
     const iTx = factura.indexOf("await fidTransaccion(");
-    const iCommit = server.indexOf('await client.query("COMMIT")');
     const iOk = factura.indexOf("fidRespuestaFactura({})");
     assert.ok(iTx > 0 && iOk > iTx, "se responde antes de abrir la transacción");
-    assert.ok(iCommit > 0, "no hay COMMIT");
-    // Y `fidTransaccion` solo devuelve después de confirmar.
-    const f = server.slice(server.indexOf("async function fidTransaccion("), server.indexOf("async function fidVisitasDe("));
+
+    // Y la transacción solo devuelve DESPUÉS de confirmar. Vive en el módulo desde que hizo falta
+    // poder probar su ROLLBACK con un pool de mentira.
+    const modulo = readFileSync(new URL("../src/modules/fidelizacion/agora.js", import.meta.url), "utf8");
+    const f = modulo.slice(modulo.indexOf("export function crearTransaccion("), modulo.indexOf("export async function procesarFactura("));
     const iR = f.indexOf("const r = await fn(x);");
+    assert.ok(iR > 0, "no está el cuerpo de la transacción");
     assert.ok(f.indexOf('await client.query("COMMIT")') > iR, "se confirma antes de ejecutar el trabajo");
     assert.ok(f.indexOf("return r;") > f.indexOf('await client.query("COMMIT")'), "se devuelve antes del COMMIT");
   });

@@ -10646,7 +10646,7 @@ function renderAgora() {
 // ── Fidelización Ágora · Piloto Lloret ───────────────────────────────────────
 // FASE 1: identifica al cliente, cuenta visitas y guarda la factura. CERO premios y cero
 // descuentos. Aquí no hay ni un botón que toque la configuración del TPV: eso se hace en Ágora.
-let FID = { integracion: null, facturas: {}, validaciones: {}, local: "", urls: null, censo: null };
+let FID = { integracion: null, historial: [], facturas: {}, validaciones: {}, local: "", urls: null, censo: null };
 
 function renderFidPiloto() {
   const i = FID.integracion;
@@ -10674,6 +10674,11 @@ function renderFidPiloto() {
       <div class="row"><div class="grow"><div class="t1">Cupones y vales</div><div class="mut" style="font-size:12px">No identifican a nadie: son al portador y devuelven 404 a propósito</div></div><b class="tnum">${Number(c.cupones || 0)}</b></div>
     </div>${utiles ? "" : `<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">No hay ningún carné utilizable: el TPV devolverá <b>404</b> a todo, y será correcto. El piloto necesita al menos un carné de cliente.</div>`}`;
 
+  // El historial: sin token y sin hash, solo la pista y los estados. Es lo que contesta «¿hubo
+  // alguna vez una integración aquí?» cuando el panel dice que no hay ninguna.
+  const hist = (FID.historial || []).length > 1 ? `<details style="margin-top:10px"><summary class="mut" style="font-size:12px;cursor:pointer">Historial de tokens (${FID.historial.length})</summary>
+      <div class="rows" style="margin-top:6px">${FID.historial.map((h) => `<div class="row"><div class="grow"><div class="t1 tnum">${esc(h.token_pista || "••••")}</div><div class="mut" style="font-size:12px">${esc(String(h.creado_en || "").slice(0, 16).replace("T", " "))} · ${esc(h.creado_por || "")}</div></div><span class="pill">${h.revocado_en ? "Revocado" : h.activo ? "Activo" : "Desactivado"}</span></div>`).join("")}</div></details>` : "";
+
   const datos = !i ? "" : `<div class="rows" style="margin-top:8px">
       <div class="row"><div class="grow"><div class="t1">Local del piloto</div></div><b>${esc(FID.local)}</b></div>
       <div class="row"><div class="grow"><div class="t1">Token</div></div><b class="tnum">${esc(i.token_pista || "••••")}</b></div>
@@ -10684,7 +10689,9 @@ function renderFidPiloto() {
     </div>`;
 
   const botones = `<span style="display:flex;gap:6px;flex-wrap:wrap">
-      ${!i || i.revocado_en ? '<button class="btn primary sm" data-act="fid-generar">Generar token</button>' : ""}
+      ${!i ? '<button class="btn primary sm" data-act="fid-generar">Generar token</button>'
+        : i.revocado_en ? '<button class="btn primary sm" data-act="fid-generar">Generar token nuevo</button>'
+        : '<button class="btn sm" data-act="fid-generar">Regenerar…</button>'}
       ${i && !i.revocado_en ? `<button class="btn sm" data-act="fid-activo" data-id="${i.id}" data-v="${i.activo ? 0 : 1}">${i.activo ? "Desactivar" : "Activar"}</button>` : ""}
       ${i && !i.revocado_en ? `<button class="btn sm danger" data-act="fid-revocar" data-id="${i.id}">Revocar</button>` : ""}
       <button class="btn sm" data-act="fid-facturas">Ver facturas</button>
@@ -10695,27 +10702,36 @@ function renderFidPiloto() {
   return `<div class="card"><div class="ch"><h3>Fidelización Ágora · Piloto Lloret</h3>${estado}</div>
     <div class="mut" style="font-size:13px;padding:2px 2px 6px">Fase 1: se identifica al cliente y se cuentan visitas y consumo. <b>No se conceden premios ni descuentos</b> — <code>Rewards</code> siempre va vacío. Estas URLs se pegan en Ágora; aquí no se configura nada del TPV.</div>
     <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px"><b>Solo una respuesta cierra la factura: que la aceptemos.</b> Si algo falla —desactivas, revocas, el carné ya no existe o la base no responde— Ágora <b>no podrá cerrarla</b>. La salida es siempre la misma y es manual: el camarero <b>desasocia al participante</b> y vuelve a intentar el cierre. No se pierde la venta ni queda nada a medias.</div>
-    ${censo}${datos}${urls}<div style="margin-top:12px">${botones}</div></div>`;
+    ${censo}${datos}${hist}${urls}<div style="margin-top:12px">${botones}</div></div>`;
 }
 
 async function loadFidPiloto() {
   const c = document.getElementById("fidPiloto"); if (!c) return;
   try {
     const j = await apiRaw("/api/fidelizacion/integracion");
-    FID.integracion = j.integracion; FID.facturas = j.facturas || {}; FID.validaciones = j.validaciones || {}; FID.local = j.local;
+    FID.integracion = j.integracion; FID.historial = j.historial || [];
+    FID.facturas = j.facturas || {}; FID.validaciones = j.validaciones || {}; FID.local = j.local;
     // El censo sale del resumen de la tarjeta, que ya existía. Si falla, la tarjeta se pinta igual:
     // saber cuántos carnés hay es útil, pero no es lo que se viene a mirar aquí.
     try { FID.censo = (await apiRaw("/api/tarjeta/resumen")).censo || null; } catch { FID.censo = null; }
     if (document.getElementById("fidPiloto")) document.getElementById("fidPiloto").innerHTML = renderFidPiloto();
   } catch (e) {
+    // «No se ha podido comprobar» NO es «no hay integración». Confundirlos fue lo que hizo que el
+    // panel ofreciera generar un token nuevo cuando el problema era otro.
     if (e.message !== "noauth" && document.getElementById("fidPiloto")) {
-      document.getElementById("fidPiloto").innerHTML = `<div class="card"><div class="mut" style="font-size:13px">No se pudo cargar el piloto de fidelización.</div></div>`;
+      document.getElementById("fidPiloto").innerHTML = `<div class="card"><div class="ch"><h3>Fidelización Ágora · Piloto Lloret</h3><span class="pill bad">Sin comprobar</span></div><div class="mut" style="font-size:13px">No se ha podido leer el estado de la integración. <b>Esto no significa que no la haya</b>: no generes un token nuevo hasta saber qué pasa, porque revocaría el que esté puesto en el TPV.</div></div>`;
     }
   }
 }
 
 async function fidGenerar() {
-  if (!confirm("Se generará un token nuevo para Lloret y el anterior quedará revocado. Nace desactivado: tendrás que pulsar Activar después de pegar las URLs en Ágora. ¿Seguir?")) return;
+  const viva = FID.integracion && !FID.integracion.revocado_en;
+  // Con una integración VIVA, regenerar rompe el TPV hasta que se peguen las URLs nuevas. Eso hay
+  // que decirlo antes, no después, y con todas las letras.
+  const aviso = viva
+    ? "⚠️ HAY UNA INTEGRACIÓN VIVA.\n\nAl generar un token nuevo, el actual queda REVOCADO al instante y el TPV de Lloret dejará de poder validar y de cerrar facturas con socio hasta que pegues las dos URLs nuevas en Ágora.\n\nSi solo quieres activarla, cierra esto y pulsa «Activar».\n\n¿Generar de todas formas?"
+    : "Se generará un token nuevo para Lloret. Nace desactivado: tendrás que pulsar Activar después de pegar las URLs en Ágora. ¿Seguir?";
+  if (!confirm(aviso)) return;
   try {
     const j = await apiSend("POST", "/api/fidelizacion/integracion", {});
     FID.urls = j.urls;                     // solo en memoria, solo hasta recargar

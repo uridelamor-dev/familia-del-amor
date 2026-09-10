@@ -69,16 +69,21 @@ describe("NUNCA un error que bloquee la caja", () => {
 
   test("y no se le cuenta al TPV qué ha fallado por dentro", () => {
     assert.ok(!/RejectReason: [^"]*e\.message/.test(factura));
-    assert.match(factura, /console\.error\("\[fidelizacion\] factura:", e\.message\)/);
+    // El mensaje de pg lleva dentro el hash del token, la IP o el usuario: se registra el `code`,
+    // que sirve para diagnosticar, y nada más.
+    assert.match(factura, /console\.error\(lineaErrorSql\("\[fidelizacion\] factura", e\)\)/);
   });
 });
 
 describe("`accepted` solo después de confirmar en PostgreSQL", () => {
   test("la escritura va en una transacción con COMMIT", () => {
-    assert.match(codigo, /await client\.query\("BEGIN"\)/);
-    assert.match(codigo, /await client\.query\("COMMIT"\)/);
-    assert.match(codigo, /await client\.query\("ROLLBACK"\)/);
-    assert.match(codigo, /SET LOCAL statement_timeout = 5000/);
+    // La transacción vive en el módulo desde que hizo falta poder probar su ROLLBACK: ver
+    // `crearTransaccion`. `server.js` solo la construye con el pool de verdad.
+    assert.match(codigo, /const fidTransaccion = fidCrearTransaccion\(\{ pool, toPositional \}\)/);
+    assert.match(modulo, /await client\.query\("BEGIN"\)/);
+    assert.match(modulo, /await client\.query\("COMMIT"\)/);
+    assert.match(modulo, /await client\.query\("ROLLBACK"\)/);
+    assert.match(modulo, /SET LOCAL statement_timeout = \$\{Number\(timeoutMs\) \|\| 5000\}/);
   });
 
   test("la respuesta va DESPUÉS de la transacción", () => {

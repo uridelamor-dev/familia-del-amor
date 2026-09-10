@@ -101,6 +101,7 @@ import { cifrar as secCifrar, abrir as secAbrir, pista as secPista, DOMINIOS } f
 import { cargarLlavero, lineaArranque } from "./src/modules/seguridad/clave-datos.js";
 // Captación por campaña: la ruta a la que apunta un anuncio de pago, con su cola de envíos.
 import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
+import { lineaErrorSql } from "./src/modules/seguridad/redactar.js";
 import { ensureSchemaFidelizacion } from "./src/modules/fidelizacion/schema.js";
 import { LOCAL_PILOTO as FID_LOCAL, REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CUERPO as FID_MAX_CUERPO,
          MAX_POR_MINUTO as FID_MAX_MIN, VIDA_DIAS as FID_VIDA_DIAS, ESTADOS as FID_ESTADOS,
@@ -108,7 +109,7 @@ import { LOCAL_PILOTO as FID_LOCAL, REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CU
          caducidadDesde as fidCaducidad, respuestaMiembro as fidRespuestaMiembro, carnetUtilizable as fidCarnetUtilizable,
          extraerFactura as fidExtraerFactura, procesarFactura as fidProcesarFactura, respuestaFactura as fidRespuestaFactura,
          MiembroDesconocido as FidMiembroDesconocido, basePublica as fidBasePublica,
-         resolverMiembro as fidResolverMiembro,
+         resolverMiembro as fidResolverMiembro, crearTransaccion as fidCrearTransaccion,
          esquemaDe as fidEsquemaDe, cabecerasSeguras as fidCabeceras, urlsDeIntegracion as fidUrls }
   from "./src/modules/fidelizacion/agora.js";
 import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
@@ -17504,30 +17505,9 @@ async function fidIntegracion(token) {
   return { ...fidEstadoIntegracion(fila, { ahora: isoConOffset(Date.now()) }), fila };
 }
 
-/**
- * Una transacción de verdad, con su propio cliente y con tiempo límite.
- *
- * `statement_timeout` importa aquí más que en ningún otro sitio del sistema: si una consulta se
- * queda colgada, el que espera es el TPV con la factura abierta y el cliente delante.
- */
-async function fidTransaccion(fn) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query("SET LOCAL statement_timeout = 5000");
-    const x = {
-      get: async (q, p = []) => (await client.query(toPositional(q), p)).rows[0] || null,
-      all: async (q, p = []) => (await client.query(toPositional(q), p)).rows,
-      run: async (q, p = []) => (await client.query(toPositional(q), p)).rows[0] || undefined,
-    };
-    const r = await fn(x);
-    await client.query("COMMIT");
-    return r;
-  } catch (e) {
-    try { await client.query("ROLLBACK"); } catch { /* ya cerrada */ }
-    throw e;
-  } finally { client.release(); }
-}
+/** La transacción, con el pool de verdad. La lógica vive en el módulo para poder probarla:
+ *  ver `crearTransaccion` en src/modules/fidelizacion/agora.js. */
+const fidTransaccion = fidCrearTransaccion({ pool, toPositional });
 
 /** Cuántas visitas lleva un carné. Es un SUM sobre el libro, nunca un contador guardado. */
 async function fidVisitasDe(qrId) {
@@ -17651,7 +17631,7 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
     // fidelización— que es un paso manual, pero no pierde nada.
     //
     // Sin detalles: al TPV no se le cuenta qué ha fallado por dentro.
-    console.error("[fidelizacion] factura:", e.message);
+    console.error(lineaErrorSql("[fidelizacion] factura", e));
     return res.status(500).json({ Status: "error" });
   }
 
@@ -17687,39 +17667,53 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
 app.post("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req, res) => {
   try {
     const ahora = isoConOffset(Date.now());
-    const token = fidNuevoToken((n) => crypto.randomBytes(n));
-    await dbRun(`UPDATE fid_integraciones SET revocado_en = ?, revocado_por = ?
-                 WHERE local = ? AND revocado_en IS NULL`, [ahora, req.user.username, FID_LOCAL]);
-    // LA BASE DE LA URL NO SALE DE LA PETICIÓN EN PRODUCCIÓN, y por dos motivos: `trust proxy` no
-    // está configurado, así que `req.protocol` devuelve siempre «http» detrás del proxy TLS de
-    // Replit; y `req.get("host")` lo escribe quien llama. Esta URL se pega en un TPV.
+
+    // PRIMERO se comprueba que se puede componer la URL. La versión anterior revocaba la
+    // integración vieja ANTES de esto, así que un fallo aquí te dejaba sin integración viva y con
+    // el TPV apuntando a una URL muerta, sin haber creado nada a cambio.
     const pub = fidBasePublica({ publicUrl: process.env.PUBLIC_URL, host: req.get("host"),
                                  protocolo: req.protocol, prod: PROD });
     if (!pub.ok) return res.status(500).json({ ok: false, error: `No se puede componer la URL: ${pub.motivo}` });
 
-    // NACE DESACTIVADA. Generar una credencial no es lo mismo que armarla: entre generarla y
-    // pegarla en Ágora no hay ningún motivo para que responda, y el orden queda claro —
-    // generar, copiar, pegar en Ágora, Activar.
-    const fila = await dbRun(
-      `INSERT INTO fid_integraciones (local, token_hash, token_pista, activo, creado_en, creado_por, caduca_en)
-       VALUES (?,?,?,FALSE,?,?,?) RETURNING id`,
-      [FID_LOCAL, fidHash(token), fidPistaToken(token), ahora, req.user.username, fidCaducidad(ahora, FID_VIDA_DIAS)]);
+    const token = fidNuevoToken((n) => crypto.randomBytes(n));
+    const caduca = fidCaducidad(ahora, FID_VIDA_DIAS);
+
+    // REVOCAR Y CREAR, EN UNA SOLA TRANSACCIÓN. Sueltas, un fallo entre las dos deja el sistema en
+    // el peor estado posible: sin integración viva y sin saber por qué.
+    const fila = await fidTransaccion(async (x) => {
+      await x.run(`UPDATE fid_integraciones SET revocado_en = ?, revocado_por = ?
+                   WHERE local = ? AND revocado_en IS NULL`, [ahora, req.user.username, FID_LOCAL]);
+      // NACE DESACTIVADA. Generar una credencial no es armarla: entre generarla y pegarla en Ágora
+      // no hay ningún motivo para que responda, y el orden queda claro — generar, copiar, pegar en
+      // Ágora, Activar.
+      return x.run(
+        `INSERT INTO fid_integraciones (local, token_hash, token_pista, activo, creado_en, creado_por, caduca_en)
+         VALUES (?,?,?,FALSE,?,?,?) RETURNING id`,
+        [FID_LOCAL, fidHash(token), fidPistaToken(token), ahora, req.user.username, caduca]);
+    });
+
     await ficAuditar("fidelizacion", fila?.id, "integracion_generada", req.user.username,
       { local: FID_LOCAL, detalle: { pista: fidPistaToken(token), base: pub.base, fuente: pub.fuente } });
     // El token en claro sale UNA vez y solo aquí. En la base vive su hash y cuatro caracteres.
     res.json({ ok: true, id: fila?.id, local: FID_LOCAL, activo: false,
-      caduca_en: fidCaducidad(ahora, FID_VIDA_DIAS), base: pub.base,
-      urls: fidUrls(pub.base, token) });
+      caduca_en: caduca, base: pub.base, urls: fidUrls(pub.base, token) });
   } catch (e) {
-    console.error("[fidelizacion] generar:", e.message);
+    console.error(lineaErrorSql("[fidelizacion] generar", e));
     res.status(500).json({ ok: false, error: "No se pudo generar la integración" });
   }
 });
 
 app.get("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req, res) => {
   try {
+    // PRIORIZA LA VIVA. Con `ORDER BY id DESC` a secas, una fila revocada más nueva taparía a una
+    // integración viva más antigua y el panel diría que no hay ninguna.
     const fila = await dbGet(`SELECT id, local, token_pista, activo, creado_en, creado_por, caduca_en, revocado_en
-                              FROM fid_integraciones WHERE local = ? ORDER BY id DESC LIMIT 1`, [FID_LOCAL]);
+                              FROM fid_integraciones WHERE local = ?
+                              ORDER BY (revocado_en IS NULL) DESC, id DESC LIMIT 1`, [FID_LOCAL]);
+    // El HISTORIAL, sin token y sin hash: solo la pista de cuatro caracteres y los estados. Es lo
+    // que permite contestar «¿hubo alguna vez una integración aquí?» sin abrir la base.
+    const historial = await dbAll(`SELECT id, token_pista, activo, creado_en, creado_por, caduca_en, revocado_en
+                                   FROM fid_integraciones WHERE local = ? ORDER BY id DESC LIMIT 20`, [FID_LOCAL]);
     const c = await dbGet(`SELECT
         COUNT(*)::int AS facturas,
         COUNT(*) FILTER (WHERE estado = 'conflicto')::int AS conflictos,
@@ -17733,9 +17727,92 @@ app.get("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req,
         COUNT(*) FILTER (WHERE resultado LIKE '404:factura_%')::int AS facturas_404,
         MAX(creado_en) AS ultima,
         MAX(agora_version) AS version FROM fid_validaciones`);
-    res.json({ ok: true, integracion: fila || null, facturas: c || {}, validaciones: v || {},
-      local: FID_LOCAL, rewards_fase: REWARDS_FASE_1.length });
-  } catch { res.json({ ok: true, integracion: null, facturas: {}, validaciones: {}, local: FID_LOCAL, rewards_fase: 0 }); }
+    res.json({ ok: true, integracion: fila || null, historial: historial || [],
+      facturas: c || {}, validaciones: v || {}, local: FID_LOCAL, rewards_fase: REWARDS_FASE_1.length });
+  } catch (e) {
+    // UN FALLO DE CONSULTA NO PUEDE PARECER «NO HAY INTEGRACIÓN».
+    //
+    // La versión anterior devolvía aquí `ok: true, integracion: null`, y el panel lo pintaba como
+    // «Sin generar» con su botón de generar. Un error de base y «no existe» eran indistinguibles
+    // desde fuera — y también desde dentro, cuando hubo que diagnosticar por qué había desaparecido
+    // una integración que estaba en producción.
+    console.error(lineaErrorSql("[fidelizacion] estado", e));
+    res.status(500).json({ ok: false, error: "No se pudo leer el estado de la integración" });
+  }
+});
+
+/**
+ * DIAGNÓSTICO. Contesta a la pregunta que no se pudo contestar cuando la integración desapareció:
+ * ¿hubo alguna vez algo aquí, y siguen estas tablas donde estaban?
+ *
+ * DEVUELVE LO MÍNIMO. Ni el nombre de la base, ni el usuario, ni el host, ni el puerto, ni la
+ * DATABASE_URL, ni la ruta de búsqueda completa, ni el hash del token, ni el autor, ni el detalle
+ * libre de la auditoría. Un endpoint de diagnóstico es donde más fácil es acabar exponiendo la
+ * infraestructura entera «por si acaso hace falta».
+ *
+ * Lo que sí: una HUELLA estable de la conexión —doce caracteres de un SHA-256, que solo sirve para
+ * comparar dos despliegues entre sí—, el esquema efectivo (que es lo que decide si las tablas se
+ * han creado en otro sitio), los nombres de nuestras tablas encontradas, los recuentos, y la
+ * auditoría proyectada a tres campos: acción, fecha y pista.
+ *
+ * NO ESCRIBE NADA. Solo `dbGet`/`dbAll`.
+ */
+app.get("/api/fidelizacion/diagnostico", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    // Solo el esquema efectivo. La ruta de búsqueda completa puede llevar nombres de esquema por
+    // usuario, y eso es un dato de infraestructura que no hace falta para contestar la pregunta.
+    const con = await dbGet(`SELECT current_schema() AS esquema`);
+
+    // ¿Existen nuestras tablas en MÁS DE UN esquema? Si el esquema efectivo cambió entre
+    // despliegues, `CREATE TABLE IF NOT EXISTS` habría creado una copia vacía en otro sitio y el
+    // original seguiría ahí, intacto y sin que nadie lo lea.
+    //
+    // Los nombres se filtran contra una lista cerrada: se pregunta por LAS NUESTRAS, no se vuelca
+    // el catálogo de la base.
+    const NUESTRAS = ["fid_integraciones", "fid_validaciones", "fid_facturas"];
+    const enc = await dbAll(
+      `SELECT table_schema AS esquema, table_name AS tabla
+         FROM information_schema.tables
+        WHERE table_name = ANY(?) ORDER BY 1, 2`, [NUESTRAS]);
+    const tablas = (enc || []).filter((t) => NUESTRAS.includes(t.tabla))
+                              .map((t) => ({ esquema: String(t.esquema), tabla: String(t.tabla) }));
+
+    const filas = await dbGet(
+      `SELECT (SELECT COUNT(*)::int FROM fid_integraciones) AS integraciones,
+              (SELECT COUNT(*)::int FROM fid_validaciones) AS validaciones,
+              (SELECT COUNT(*)::int FROM fid_facturas) AS facturas`);
+
+    // El rastro. `fic_auditoria` es una tabla ANTERIOR a toda la fidelización: si aquí hay un
+    // «integracion_generada» y `fid_integraciones` está vacía, la base es la misma y lo que se
+    // perdió fueron solo las tablas nuevas.
+    //
+    // Se proyecta a TRES campos. El `autor` es un nombre de persona y no hace falta para saber qué
+    // pasó; el `detalle` es texto libre que hoy lleva una pista de cuatro caracteres, pero mañana
+    // podría llevar cualquier cosa que alguien añada sin pensar en este endpoint.
+    let auditoria = [];
+    try {
+      const a = await dbAll(
+        `SELECT accion, creado_en, detalle FROM fic_auditoria
+          WHERE entidad = 'fidelizacion' ORDER BY id DESC LIMIT 50`);
+      auditoria = (a || []).map((f) => {
+        let pista = null;
+        try { const d = JSON.parse(f.detalle); if (d && typeof d.pista === "string") pista = d.pista.slice(0, 8); }
+        catch { pista = null; }
+        return { accion: String(f.accion), fecha: String(f.creado_en || ""), pista };
+      });
+    } catch { auditoria = []; }
+
+    res.set("Cache-Control", "no-store").json({
+      ok: true,
+      // Doce caracteres de SHA-256. Sirve para comparar dos despliegues y para nada más.
+      url_huella: fidHash(String(process.env.DATABASE_URL || "")).slice(0, 12),
+      esquema: con?.esquema ? String(con.esquema) : null,
+      tablas, filas: filas || {}, auditoria,
+    });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] diagnostico", e));
+    res.status(500).json({ ok: false, error: "No se pudo diagnosticar" });
+  }
 });
 
 app.post("/api/fidelizacion/integracion/:id/activo", requireAuth(["direccion"]), async (req, res) => {
@@ -17799,7 +17876,7 @@ app.post("/api/fidelizacion/facturas/purgar-cuerpos", requireAuth(["direccion"])
       { local: FID_LOCAL, detalle: { facturas: r ? r.n : 0 } });
     res.json({ ok: true, purgadas: r ? r.n : 0 });
   } catch (e) {
-    console.error("[fidelizacion] purgar cuerpos:", e.message);
+    console.error(lineaErrorSql("[fidelizacion] purgar cuerpos", e));
     res.status(500).json({ ok: false, error: "No se pudo purgar" });
   }
 });

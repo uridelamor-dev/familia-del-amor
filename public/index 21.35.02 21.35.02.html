@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Familia del Amor</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <button class="nav-toggle" id="navToggle" aria-label="Abrir menú" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="logo">
+        <img id="siteLogo" data-edit-key="site_logo_url" src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" />
+      </div>
+      <nav class="nav">
+        <a href="#sobre">Sobre nosotros</a>
+        <a href="#empresas">Locales</a>
+        <a href="#reservas">Reserva</a>
+        <a href="#trabaja">Trabaja con nosotros</a>
+        <a href="#contacto">Contacto</a>
+        <div class="lang">
+          <button data-lang="es" class="active">ES</button>
+          <button data-lang="ca">CA</button>
+          <button data-lang="en">EN</button>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero" data-edit-key="hero_image_url">
+        <div class="eyebrow" data-i18n="hero_eyebrow" data-content-key="hero_eyebrow">Grupo familiar de empresas</div>
+        <h1 data-i18n="hero_title" data-content-key="hero_title">Familia del Amor</h1>
+        <p data-i18n="hero_sub" data-content-key="hero_sub">Sabor, tradición y alegría compartida en cada local.</p>
+        <div class="hero-cta">
+          <a class="btn" href="#reservas" data-i18n="hero_cta">Reservar mesa</a>
+          <a class="btn ghost" href="#empresas" data-i18n="hero_cta_2">Ver locales</a>
+        </div>
+      </section>
+
+      <section id="sobre" class="block split">
+        <div>
+          <h2 data-i18n="about_title" data-content-key="about_title">Sobre nosotros</h2>
+          <p data-i18n="about_text" data-content-key="about_text">
+            Somos un grupo familiar de tercera generación, dedicados a la atención al cliente desde los años 70.
+            Llevamos décadas trabajando de cara al público y nuestra obsesión es que cada persona se sienta como en casa:
+            cercana, cuidada y bien atendida.
+          </p>
+        </div>
+        <div class="tile">
+          <p data-i18n="about_tile" data-content-key="about_tile">
+            Bares de tapas con mucho ambiente, cocina honesta y un equipo que cuida cada detalle.
+          </p>
+        </div>
+      </section>
+
+      <section id="historia" class="block">
+        <div class="section-head">
+          <h2 data-i18n="history_title" data-content-key="history_title">Historia y valores</h2>
+          <p data-i18n="history_sub" data-content-key="history_sub">Nuestra manera de hacer las cosas, desde dentro.</p>
+        </div>
+        <div class="cards">
+          <div class="card" data-content-key="history_block_1">Tradición familiar, trato cercano y pasión por el detalle.</div>
+          <div class="card" data-content-key="history_block_2">Equipo estable que conoce a los clientes por su nombre.</div>
+          <div class="card" data-content-key="history_block_3">Cocina honesta y ambientes con alma propia.</div>
+        </div>
+      </section>
+
+      <section id="equipo" class="block split">
+        <div>
+          <h2 data-i18n="team_title" data-content-key="team_title">Equipo y familia</h2>
+          <p data-i18n="team_text" data-content-key="team_text">
+            Somos una familia que crece con cada local y cada historia compartida.
+          </p>
+        </div>
+        <div class="tile" data-content-key="team_tile">Pronto: fotos del equipo y momentos del día a día.</div>
+      </section>
+
+      <section id="empresas" class="block">
+        <div class="section-head">
+          <h2 data-i18n="companies_title" data-content-key="companies_title">Nuestras empresas</h2>
+          <p data-i18n="companies_sub" data-content-key="companies_sub">Cada local con su carácter, historia y sabor.</p>
+        </div>
+        <div class="cards" id="companies"></div>
+      </section>
+
+      <section id="eventos" class="block">
+        <div class="section-head">
+          <h2 data-i18n="events_title" data-content-key="events_title">Eventos y experiencias</h2>
+          <p data-i18n="events_text" data-content-key="events_text">Viva la Pepa: fiestas al aire libre y celebraciones a medida.</p>
+        </div>
+        <a class="btn ghost" href="mailto:hola@familia-del-amor.com" data-i18n="events_cta">Pedir información</a>
+      </section>
+
+      <section id="novedades" class="block">
+        <div class="section-head">
+          <h2 data-i18n="news_title" data-content-key="news_title">Anuncios y novedades</h2>
+          <p data-i18n="news_sub" data-content-key="news_sub">Lo último del grupo y sus locales.</p>
+        </div>
+        <div class="cards" id="newsList"></div>
+      </section>
+
+      <section id="reservas" class="block">
+        <div class="section-head">
+          <h2 data-i18n="reservations_title" data-content-key="reservations_title">Reservas</h2>
+          <p data-i18n="reservations_sub" data-content-key="reservations_sub">Reserva confirmada al instante.</p>
+        </div>
+        <form id="reservaForm" class="form">
+          <label>
+            <span data-i18n="reservation_local">Local</span>
+            <select name="local" required>
+              <option value="La Tapeta - Blanes">La Tapeta - Blanes</option>
+              <option value="La Tapeta - Lloret">La Tapeta - Lloret</option>
+              <option value="La Tapeta - Girona">La Tapeta - Girona</option>
+              <option value="Cooperativa - Blanes">Cooperativa - Blanes</option>
+              <option value="Can Mateu - Tordera">Can Mateu - Tordera</option>
+              <option value="La Tapa Ibérica - Tordera">La Tapa Ibérica - Tordera</option>
+              <option value="Botiga d'en Mateu - Tordera">Botiga d'en Mateu - Tordera</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="reservation_people">Personas</span>
+            <select name="personas" id="personasSelect" required></select>
+          </label>
+          <div class="form-row">
+            <label>
+              <span data-i18n="reservation_day">Día</span>
+            <input type="text" id="diaDisplay" data-date-input="dia" data-date-mode="future" placeholder="dd/mm/aaaa" readonly required />
+              <input type="hidden" id="diaValue" name="dia" />
+            </label>
+            <label>
+              <span data-i18n="reservation_time">Hora</span>
+              <select name="hora" id="horaSelect" required></select>
+            </label>
+          </div>
+          <label>
+            <span data-i18n="reservation_phone">Teléfono</span>
+            <input type="tel" name="telefono" autocomplete="tel" required />
+          </label>
+          <label>
+            <span data-i18n="reservation_name">Nombre de la reserva</span>
+            <input type="text" name="nombre_reserva" autocomplete="name" required />
+          </label>
+          <button class="btn" type="submit" data-i18n="reservation_submit">Confirmar reserva</button>
+          <p class="form-note" id="reservaMsg" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section id="trabaja" class="block">
+        <div class="section-head">
+          <h2 data-i18n="jobs_title" data-content-key="jobs_title">Trabaja con nosotros</h2>
+          <p data-i18n="jobs_text" data-content-key="jobs_text">Envíanos tu CV y cuéntanos en qué área te gustaría aportar.</p>
+        </div>
+        <div class="cards" id="jobsList"></div>
+        <form id="hrForm" class="form">
+          <label>
+            <span>Nombre</span>
+            <input type="text" name="nombre" required />
+          </label>
+          <label>
+            <span>Email</span>
+            <input type="email" name="email" required />
+          </label>
+          <label>
+            <span>Teléfono</span>
+            <input type="tel" name="telefono" required />
+          </label>
+          <label>
+            <span>Puesto</span>
+            <input type="text" name="puesto" required />
+          </label>
+          <label>
+            <span>Mensaje</span>
+            <textarea name="mensaje" rows="3"></textarea>
+          </label>
+          <label>
+            <span>CV (PDF)</span>
+            <input type="file" name="cv" accept="application/pdf" />
+          </label>
+          <button class="btn" type="submit">Enviar candidatura</button>
+          <p class="form-note" id="hrMsg"></p>
+        </form>
+      </section>
+
+      <section id="faq" class="block">
+        <div class="section-head">
+          <h2 data-i18n="faq_title" data-content-key="faq_title">Preguntas frecuentes</h2>
+          <p data-i18n="faq_sub" data-content-key="faq_sub">Resolvemos las dudas más habituales.</p>
+        </div>
+        <div class="faq" id="faqList"></div>
+      </section>
+
+      <section id="contacto" class="block">
+        <div class="section-head">
+          <h2 data-i18n="contact_title" data-content-key="contact_title">Contacto</h2>
+          <p data-i18n="contact_text" data-content-key="contact_text">Para cualquier consulta, escríbenos.</p>
+        </div>
+        <a class="btn ghost" href="mailto:hola@familia-del-amor.com">hola@familia-del-amor.com</a>
+      </section>
+
+      <section id="legal" class="block">
+        <div class="section-head">
+          <h2 data-i18n="legal_title" data-content-key="legal_title">Legal y privacidad</h2>
+          <p data-i18n="legal_text" data-content-key="legal_text">Políticas de privacidad, cookies y condiciones.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        <span>Acceso interno</span>
+        <div class="footer-links">
+          <a class="btn" href="marketing.html">Marketing</a>
+          <a class="btn ghost" href="direccion.html">Dirección</a>
+          <a class="btn ghost" href="rrhh.html">RR.HH.</a>
+          <a class="btn ghost" href="mantenimiento.html">Mantenimiento</a>
+          <a class="btn ghost" href="contabilidad.html">Contabilidad</a>
+          <a class="btn ghost" href="encargados.html">Encargados</a>
+          <a class="btn ghost" href="trabajadores.html">Trabajadores</a>
+        </div>
+      </div>
+    </footer>
+
+    <div class="popup" id="leadPopup" role="dialog" aria-modal="true" aria-labelledby="leadTitle" aria-describedby="leadDesc">
+      <div class="popup-card">
+        <button class="close" id="closePopup" aria-label="Cerrar">×</button>
+        <h3 id="leadTitle" data-i18n="popup_title" data-content-key="popup_title">¡Bienvenidos a Familia del Amor!</h3>
+        <p id="leadDesc" data-i18n="popup_text" data-content-key="popup_text">Déjanos tus datos y recibe un 10% de descuento.</p>
+        <form id="leadForm" class="form">
+          <label>
+            <span data-i18n="lead_name">Nombre</span>
+            <input type="text" name="nombre" autocomplete="given-name" required />
+          </label>
+          <label>
+            <span data-i18n="lead_lastname">Apellidos</span>
+            <input type="text" name="apellidos" autocomplete="family-name" required />
+          </label>
+          <label>
+            <span data-i18n="lead_birth">Fecha de nacimiento</span>
+            <input type="text" id="nacimientoDisplay" data-date-input="nacimiento" data-date-mode="birth" placeholder="dd/mm/aaaa" readonly required />
+            <input type="hidden" id="nacimientoValue" name="nacimiento" />
+          </label>
+          <label>
+            <span data-i18n="lead_city">Población</span>
+            <input type="text" name="poblacion" autocomplete="address-level2" list="poblaciones" required />
+            <datalist id="poblaciones">
+              <option value="Blanes"></option>
+              <option value="Lloret de Mar"></option>
+              <option value="Girona"></option>
+              <option value="Tordera"></option>
+              <option value="Malgrat de Mar"></option>
+              <option value="Santa Susanna"></option>
+              <option value="Palafolls"></option>
+              <option value="Calella"></option>
+              <option value="Pineda de Mar"></option>
+              <option value="Hostalric"></option>
+              <option value="Sils"></option>
+            </datalist>
+          </label>
+          <label>
+            <span data-i18n="lead_phone">Teléfono</span>
+            <input type="tel" name="telefono" autocomplete="tel" required />
+          </label>
+          <label>
+            <span data-i18n="lead_email">Correo</span>
+            <input type="email" name="correo" autocomplete="email" required />
+          </label>
+          <label class="check">
+            <input type="checkbox" required />
+            <span data-i18n="lead_consent">Acepto recibir comunicaciones y la política de privacidad.</span>
+          </label>
+          <button class="btn" type="submit" data-i18n="lead_submit">Recibir premio</button>
+          <p class="form-note" id="leadMsg" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

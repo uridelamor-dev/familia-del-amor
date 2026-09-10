@@ -309,6 +309,41 @@ export function movimientosDe(extracto, { local, autor = "agora", ahora, factura
 }
 
 /**
+ * UNA transacción sobre UN cliente del pool.
+ *
+ * Es una fábrica y no una función suelta para que se pueda probar: aquí se le inyecta el pool y el
+ * traductor de marcadores, y en un test se le inyecta un pool de mentira que falla donde haga falta.
+ *
+ * LO QUE GARANTIZA, y es todo el motivo de que exista: `BEGIN`, las escrituras y el `COMMIT` van
+ * por el MISMO cliente. Con `pool.query()` cada consulta puede salir por una conexión distinta, y
+ * entonces el `BEGIN` abre una transacción en una conexión y el `INSERT` escribe en otra, fuera de
+ * ella. El `ROLLBACK` no desharía nada y nadie se enteraría.
+ *
+ * `statement_timeout` importa aquí más que en ningún otro sitio del sistema: si una consulta se
+ * queda colgada, el que espera es el TPV con la factura abierta y el cliente delante.
+ */
+export function crearTransaccion({ pool, toPositional, timeoutMs = 5000 }) {
+  return async function enTransaccion(fn) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL statement_timeout = ${Number(timeoutMs) || 5000}`);
+      const x = {
+        get: async (q, p = []) => (await client.query(toPositional(q), p)).rows[0] || null,
+        all: async (q, p = []) => (await client.query(toPositional(q), p)).rows,
+        run: async (q, p = []) => (await client.query(toPositional(q), p)).rows[0] || undefined,
+      };
+      const r = await fn(x);
+      await client.query("COMMIT");
+      return r;
+    } catch (e) {
+      try { await client.query("ROLLBACK"); } catch { /* la transacción ya estaba cerrada */ }
+      throw e;
+    } finally { client.release(); }
+  };
+}
+
+/**
  * Guarda una factura y su libro, DENTRO de una transacción que abre el llamante.
  *
  * Vive aquí y no en el manejador de la ruta porque es lo único de todo esto que puede salir mal de

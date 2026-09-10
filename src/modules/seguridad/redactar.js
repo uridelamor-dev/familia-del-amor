@@ -125,6 +125,30 @@ export function resumenError(err) {
   return r;
 }
 
+/**
+ * Un error de BASE DE DATOS, para un log. Como `lineaError`, pero SIN el mensaje.
+ *
+ * POR QUÉ HACE FALTA OTRA: `lineaError` sí imprime `.message`, y el de PostgreSQL no es un texto
+ * genérico — lleva dentro lo que ha fallado, literalmente:
+ *
+ *   duplicate key value violates unique constraint "fid_integraciones_token_hash_key"
+ *   connect ECONNREFUSED 10.20.30.40:5432
+ *   password authentication failed for user "neondb_owner"
+ *   Key (token_hash)=(9f2a1c…) already exists.
+ *
+ * Es decir: el hash de un token, la IP y el puerto del servidor, el usuario de la base. Nada de
+ * eso puede acabar en un log que se lee desde el panel de un proveedor.
+ *
+ * Lo que SÍ sale es el `code` de PostgreSQL —`23505`, `42P01`, `57014`—, que es exactamente lo que
+ * hace falta para saber qué pasó y no dice nada de nadie.
+ */
+export function lineaErrorSql(contexto, err) {
+  const nombre = String((err && err.name) || "Error").slice(0, 60);
+  const code = err && err.code !== undefined ? String(err.code).slice(0, 10) : null;
+  const rutina = err && err.routine !== undefined ? String(err.routine).slice(0, 40) : null;
+  return `${contexto}: ${nombre}${code ? ` · code=${code}` : ""}${rutina ? ` · ${rutina}` : ""}`;
+}
+
 /** La línea que se escribe. Devuelve texto, no un objeto: así no hay forma de que se expanda. */
 export function lineaError(contexto, err) {
   const r = resumenError(err);
