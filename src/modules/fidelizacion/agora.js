@@ -137,6 +137,40 @@ export function respuestaMiembro(qr, { visitas = 0 } = {}) {
   };
 }
 
+/**
+ * LA ÚNICA FUNCIÓN QUE RESUELVE UN PARTICIPANTE. La usan la ruta de Ágora y «Buscar socio».
+ *
+ * EL FALLO QUE ORIGINA ESTO: había dos caminos. La ruta de Ágora consultaba `WHERE token = ?` y
+ * nada más, así que el código de ocho dígitos —el que va impreso junto al QR, el que teclea el
+ * camarero cuando el papel viene arrugado— no encontraba a nadie y Ágora recibía un 404. El
+ * kiosco de la barra sí resolvía los dos desde el principio, con `normalizarEntrada`. Dos caminos
+ * para la misma pregunta es como se llega a que uno de los dos se quede atrás.
+ *
+ * `normalizar` se inyecta —es `normalizarEntrada` de promos— para no duplicar aquí la lógica de
+ * qué es un token y qué es un código. Es la misma que usa la tablet.
+ *
+ * EL IDENTIFICADOR SE TRATA SIEMPRE COMO TEXTO. `Number("00042318")` es `42318`: un carné con
+ * ceros delante dejaría de encontrarse, y el fallo aparecería en uno de cada diez.
+ *
+ * Devuelve `{ ok, qr }` o `{ ok: false, motivo }`. El motivo es para nuestro registro; a quien
+ * pregunta se le contesta 404 sin decir cuál de todos es.
+ */
+export async function resolverMiembro(x, entrada, { normalizar, ahora = new Date().toISOString() }) {
+  const e = normalizar(entrada);
+  if (!e) return { ok: false, motivo: "formato_no_reconocido", qr: null };
+
+  // La columna se elige por el TIPO que ha dicho `normalizarEntrada`, no por el contenido: así no
+  // hay forma de que un valor acabe comparándose contra la columna que no le toca.
+  const columna = e.tipo === "token" ? "token" : "codigo";
+  const qr = await x.get(
+    `SELECT id, clase, nombre, token, codigo, anulado_en, caduca_en FROM pro_qr WHERE ${columna} = ?`,
+    [String(e.valor)]);
+
+  const util = carnetUtilizable(qr, { ahora });
+  if (!util.ok) return { ok: false, motivo: util.motivo, qr: null, entradaTipo: e.tipo };
+  return { ok: true, motivo: null, qr, entradaTipo: e.tipo };
+}
+
 /** ¿Sirve este carné para identificar a alguien? Un cupón o un vale impreso NO: no son socios. */
 export function carnetUtilizable(qr, { ahora = new Date().toISOString() } = {}) {
   if (!qr) return { ok: false, motivo: "no_existe" };
@@ -285,7 +319,8 @@ export function movimientosDe(extracto, { local, autor = "agora", ahora, factura
  * `x` es el contrato de siempre: `{ get, all, run }`.
  */
 export async function procesarFactura(x, { extracto, integracion, ahora, cuerpoBytes,
-                                           cuerpoEnc = null, esquema = null, version = null, hashMember }) {
+                                           cuerpoEnc = null, esquema = null, version = null,
+                                           hashMember, normalizar = null }) {
   // `ON CONFLICT DO NOTHING` es la idempotencia de verdad: dos reenvíos simultáneos se cruzan en
   // el índice único de la base, no en una comprobación previa que uno de los dos podría adelantar.
   const nueva = await x.run(
@@ -314,10 +349,19 @@ export async function procesarFactura(x, { extracto, integracion, ahora, cuerpoB
   const sinMiembro = [];
   const conCarnet = [];
   for (const m of extracto.miembros) {
-    const qr = await x.get(`SELECT id, clase, anulado_en, caduca_en FROM pro_qr WHERE token = ?`, [m.member]);
-    const util = carnetUtilizable(qr, { ahora });
-    if (!util.ok) { sinMiembro.push({ hash: hashMember(m.member), motivo: util.motivo }); continue; }
-    conCarnet.push({ ...m, qrId: qr.id, hash: hashMember(m.member) });
+    // La MISMA resolución que la validación. Ágora debería devolvernos el `MemberId` que le dimos
+    // —que es siempre el token—, pero si alguna versión devolviera lo que tecleó el camarero (el
+    // código de ocho dígitos) esto daría 404 y la caja se quedaría bloqueada. Aceptar los dos
+    // cuesta una línea; averiguarlo en barra, una tarde.
+    const r = normalizar
+      ? await resolverMiembro(x, m.member, { normalizar, ahora })
+      : await (async () => {
+          const qr = await x.get(`SELECT id, clase, nombre, token, codigo, anulado_en, caduca_en FROM pro_qr WHERE token = ?`, [m.member]);
+          const u = carnetUtilizable(qr, { ahora });
+          return u.ok ? { ok: true, qr } : { ok: false, motivo: u.motivo };
+        })();
+    if (!r.ok) { sinMiembro.push({ hash: hashMember(m.member), motivo: r.motivo }); continue; }
+    conCarnet.push({ ...m, qrId: r.qr.id, hash: hashMember(m.member) });
   }
 
   // POLÍTICA CUANDO EL SOCIO NO EXISTE: 404 y se deshace TODO.

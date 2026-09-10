@@ -10646,7 +10646,7 @@ function renderAgora() {
 // ── Fidelización Ágora · Piloto Lloret ───────────────────────────────────────
 // FASE 1: identifica al cliente, cuenta visitas y guarda la factura. CERO premios y cero
 // descuentos. Aquí no hay ni un botón que toque la configuración del TPV: eso se hace en Ágora.
-let FID = { integracion: null, facturas: {}, validaciones: {}, local: "", urls: null };
+let FID = { integracion: null, facturas: {}, validaciones: {}, local: "", urls: null, censo: null };
 
 function renderFidPiloto() {
   const i = FID.integracion;
@@ -10663,6 +10663,16 @@ function renderFidPiloto() {
       <div class="field"><label>URL de validación (GET)</label><input readonly value="${esc(FID.urls.validacion)}" onclick="this.select()"></div>
       <div class="field"><label>URL de facturas (POST)</label><input readonly value="${esc(FID.urls.facturas)}" onclick="this.select()"></div>
     </div>` : "";
+
+  // EL CENSO. Sin esto, la primera prueba del piloto dio 404 en todo y no había forma de saber si
+  // era un fallo nuestro o que sencillamente no hay socios. (Había un carné, y los dos códigos
+  // probados eran de cupones.) Solo números: ni tokens, ni códigos, ni nombres.
+  const c = FID.censo || {};
+  const utiles = Number(c.carnets_utiles || 0);
+  const censo = `<div class="rows" style="margin-top:8px">
+      <div class="row"><div class="grow"><div class="t1">Carnés que puede identificar el piloto</div><div class="mut" style="font-size:12px">${Number(c.carnets_total || 0)} emitidos en total · un carné anulado o caducado no vale</div></div><b class="tnum" style="${utiles ? "" : "color:var(--danger)"}">${utiles}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Cupones y vales</div><div class="mut" style="font-size:12px">No identifican a nadie: son al portador y devuelven 404 a propósito</div></div><b class="tnum">${Number(c.cupones || 0)}</b></div>
+    </div>${utiles ? "" : `<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">No hay ningún carné utilizable: el TPV devolverá <b>404</b> a todo, y será correcto. El piloto necesita al menos un carné de cliente.</div>`}`;
 
   const datos = !i ? "" : `<div class="rows" style="margin-top:8px">
       <div class="row"><div class="grow"><div class="t1">Local del piloto</div></div><b>${esc(FID.local)}</b></div>
@@ -10685,7 +10695,7 @@ function renderFidPiloto() {
   return `<div class="card"><div class="ch"><h3>Fidelización Ágora · Piloto Lloret</h3>${estado}</div>
     <div class="mut" style="font-size:13px;padding:2px 2px 6px">Fase 1: se identifica al cliente y se cuentan visitas y consumo. <b>No se conceden premios ni descuentos</b> — <code>Rewards</code> siempre va vacío. Estas URLs se pegan en Ágora; aquí no se configura nada del TPV.</div>
     <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px"><b>Solo una respuesta cierra la factura: que la aceptemos.</b> Si algo falla —desactivas, revocas, el carné ya no existe o la base no responde— Ágora <b>no podrá cerrarla</b>. La salida es siempre la misma y es manual: el camarero <b>desasocia al participante</b> y vuelve a intentar el cierre. No se pierde la venta ni queda nada a medias.</div>
-    ${datos}${urls}<div style="margin-top:12px">${botones}</div></div>`;
+    ${censo}${datos}${urls}<div style="margin-top:12px">${botones}</div></div>`;
 }
 
 async function loadFidPiloto() {
@@ -10693,6 +10703,9 @@ async function loadFidPiloto() {
   try {
     const j = await apiRaw("/api/fidelizacion/integracion");
     FID.integracion = j.integracion; FID.facturas = j.facturas || {}; FID.validaciones = j.validaciones || {}; FID.local = j.local;
+    // El censo sale del resumen de la tarjeta, que ya existía. Si falla, la tarjeta se pinta igual:
+    // saber cuántos carnés hay es útil, pero no es lo que se viene a mirar aquí.
+    try { FID.censo = (await apiRaw("/api/tarjeta/resumen")).censo || null; } catch { FID.censo = null; }
     if (document.getElementById("fidPiloto")) document.getElementById("fidPiloto").innerHTML = renderFidPiloto();
   } catch (e) {
     if (e.message !== "noauth" && document.getElementById("fidPiloto")) {

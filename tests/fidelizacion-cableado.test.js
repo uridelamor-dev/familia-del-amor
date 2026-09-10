@@ -102,9 +102,18 @@ describe("`accepted` solo después de confirmar en PostgreSQL", () => {
 });
 
 describe("el socio se busca SOLO por su token opaco", () => {
-  test("la validación consulta pro_qr por token y por nada más", () => {
-    const consultas = [...validacion.matchAll(/FROM pro_qr WHERE (\w+)/g)].map((m) => m[1]);
-    assert.deepEqual([...new Set(consultas)], ["token"], `busca por: ${consultas}`);
+  test("la validación delega en la resolución común, que solo mira token o codigo", () => {
+    // CORREGIDO. Antes exigía `WHERE token` aquí mismo, y ese candado fijaba justo el fallo: el
+    // código de ocho dígitos —el respaldo impreso del QR— no encontraba a nadie y Ágora daba 404.
+    // Ahora la consulta vive en `resolverMiembro`, compartida con «Buscar socio».
+    assert.match(validacion, /fidResolverMiembro\(/);
+    assert.ok(!/FROM pro_qr/.test(validacion), "la ruta vuelve a consultar por su cuenta");
+
+    const modulo = readFileSync(new URL("../src/modules/fidelizacion/agora.js", import.meta.url), "utf8");
+    const f = modulo.slice(modulo.indexOf("export async function resolverMiembro"), modulo.indexOf("export function carnetUtilizable"));
+    const consultas = [...f.matchAll(/FROM pro_qr WHERE \$\{(\w+)\}/g)].map((m) => m[1]);
+    assert.deepEqual(consultas, ["columna"], "la columna debe salir del tipo de entrada, no del contenido");
+    assert.match(f, /const columna = e\.tipo === "token" \? "token" : "codigo"/);
   });
 
   test("no se busca por teléfono, correo, DNI ni nombre en ninguna ruta de fidelización", () => {

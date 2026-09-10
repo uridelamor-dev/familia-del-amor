@@ -108,6 +108,7 @@ import { LOCAL_PILOTO as FID_LOCAL, REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CU
          caducidadDesde as fidCaducidad, respuestaMiembro as fidRespuestaMiembro, carnetUtilizable as fidCarnetUtilizable,
          extraerFactura as fidExtraerFactura, procesarFactura as fidProcesarFactura, respuestaFactura as fidRespuestaFactura,
          MiembroDesconocido as FidMiembroDesconocido, basePublica as fidBasePublica,
+         resolverMiembro as fidResolverMiembro,
          esquemaDe as fidEsquemaDe, cabecerasSeguras as fidCabeceras, urlsDeIntegracion as fidUrls }
   from "./src/modules/fidelizacion/agora.js";
 import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
@@ -11492,7 +11493,19 @@ app.get("/api/tarjeta/resumen", requireAuth(PROMOS_ROLES), async (req, res) => {
               COUNT(*) FILTER (WHERE wallet_google_en IS NOT NULL)::int AS google,
               COUNT(*)::int AS total
          FROM pro_qr WHERE clase = 'carnet' AND anulado_en IS NULL`);
-    res.json({ ok: true, activa: TARJETA_ACTIVA, origenes: filas,
+    // El censo. SOLO NÚMEROS: ni un token, ni un código, ni un nombre, ni un teléfono.
+    //
+    // Existe porque la primera prueba del piloto de Ágora dio 404 en todo, y la pregunta que no se
+    // podía contestar sin abrir la base era la más básica: ¿cuántos carnés hay? (Había uno.) Los
+    // dos códigos probados eran de cupones, así que el 404 era correcto — pero para saberlo hacía
+    // falta poder distinguir una cosa de la otra desde el panel.
+    const censo = await dbGet(
+      `SELECT COUNT(*) FILTER (WHERE clase = 'carnet')::int AS carnets_total,
+              COUNT(*) FILTER (WHERE clase = 'carnet' AND anulado_en IS NULL
+                                 AND (caduca_en IS NULL OR caduca_en >= ?))::int AS carnets_utiles,
+              COUNT(*) FILTER (WHERE clase = 'cupon')::int AS cupones
+         FROM pro_qr`, [hoyISO()]);
+    res.json({ ok: true, activa: TARJETA_ACTIVA, origenes: filas, censo: censo || {},
       wallet: wallet || { apple: 0, google: 0, total: 0 },
       disponible: await walletDisponible(),
       encendida_por: (await getConfig("tarjeta_activa_por")) || "" });
@@ -17546,18 +17559,19 @@ app.get("/api/fidelizacion/agora/:token/member/:memberId", async (req, res) => {
   const integ = await fidIntegracion(req.params.token);
   if (!integ.ok) { await apunta(null, null, integ.motivo); return res.status(404).json({}); }
 
-  let qr = null;
-  try {
-    // SOLO por el token opaco. Ni por teléfono, ni por correo, ni por nombre: un identificador de
-    // fidelización que se pueda adivinar desde un dato personal no es opaco.
-    qr = await dbGet(`SELECT id, token, clase, nombre, anulado_en, caduca_en FROM pro_qr WHERE token = ?`, [memberId]);
-  } catch { qr = null; }
+  // LA MISMA función que usa «Buscar socio». Acepta el token, la URL entera de un QR y el código
+  // de ocho dígitos —el que va impreso al lado y teclea el camarero—, siempre como TEXTO. Nunca
+  // por teléfono, correo ni nombre: un identificador que se adivina desde un dato personal no es
+  // opaco.
+  let r = { ok: false, motivo: "error" };
+  try { r = await fidResolverMiembro({ get: dbGet }, memberId, { normalizar: proNormalizar, ahora: isoConOffset(Date.now()) }); }
+  catch { r = { ok: false, motivo: "error" }; }
 
-  const util = fidCarnetUtilizable(qr, { ahora: isoConOffset(Date.now()) });
-  if (!util.ok) {
-    await apunta(integ.fila.id, integ.fila.local, "404:" + util.motivo);
+  if (!r.ok) {
+    await apunta(integ.fila.id, integ.fila.local, "404:" + r.motivo);
     return res.status(404).json({});
   }
+  const qr = r.qr;
 
   const visitas = await fidVisitasDe(qr.id);
   await apunta(integ.fila.id, integ.fila.local, "ok");
@@ -17602,6 +17616,7 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
         esquema: JSON.stringify(fidEsquemaDe(json)).slice(0, 40000),
         version: version || null,
         hashMember: (t) => fidHash(t).slice(0, 16),
+        normalizar: proNormalizar,
       });
     });
   } catch (e) {
@@ -17791,10 +17806,13 @@ app.post("/api/fidelizacion/facturas/purgar-cuerpos", requireAuth(["direccion"])
 
 app.get("/api/fidelizacion/miembro", requireAuth(["direccion"]), async (req, res) => {
   try {
-    const token = String(req.query.token || "").trim();
-    if (!token) return res.status(400).json({ ok: false, error: "Falta el token del carné" });
-    const qr = await dbGet(`SELECT id, clase, nombre, anulado_en, caduca_en FROM pro_qr WHERE token = ?`, [token]);
-    if (!qr) return res.status(404).json({ ok: false, error: "No existe" });
+    const entrada = String(req.query.token || "").trim();
+    if (!entrada) return res.status(400).json({ ok: false, error: "Falta el carné: token, enlace del QR o los 8 dígitos" });
+    // La MISMA resolución que la ruta de Ágora. Dos caminos para la misma pregunta es como se
+    // llega a que uno de los dos deje de encontrar lo que el otro sí encuentra.
+    const r = await fidResolverMiembro({ get: dbGet }, entrada, { normalizar: proNormalizar, ahora: isoConOffset(Date.now()) });
+    if (!r.ok) return res.status(404).json({ ok: false, error: "No existe ningún carné utilizable con eso" });
+    const qr = r.qr;
     const tot = await dbGet(`SELECT
         COALESCE(SUM(unidades) FILTER (WHERE concepto = 'visita'), 0)::int AS visitas,
         COALESCE(SUM(importe) FILTER (WHERE concepto = 'consumo'), 0) AS consumo,
