@@ -57,10 +57,17 @@ export async function ensureSchemaFidelizacion(x) {
     importe_total NUMERIC,
     devolucion BOOLEAN NOT NULL DEFAULT FALSE,
     estado TEXT NOT NULL,
+    es_prueba BOOLEAN NOT NULL DEFAULT FALSE,
     recibido_en TEXT NOT NULL
   )`);
   // Aditivo, para una base que ya tuviera la tabla de una versión anterior de este esquema.
-  for (const col of ["global_id_tipo TEXT NOT NULL DEFAULT 'oficial'", "clave_factura TEXT"]) {
+  //
+  // `es_prueba` marca las facturas que hemos hecho nosotros para observar el formato de Ágora.
+  // Es lo ÚNICO que permite ver sus importes desde el panel: sin ella, esa herramienta sería una
+  // ventana abierta a cualquier factura de cualquier cliente. Se borra cuando la fase de puntos
+  // esté validada y la herramienta deje de hacer falta.
+  for (const col of ["global_id_tipo TEXT NOT NULL DEFAULT 'oficial'", "clave_factura TEXT",
+                     "es_prueba BOOLEAN NOT NULL DEFAULT FALSE"]) {
     try { await x.run(`ALTER TABLE fid_facturas ADD COLUMN IF NOT EXISTS ${col}`); }
     catch (e) { console.error("[fidelizacion] alter fid_facturas:", e.message); }
   }

@@ -10765,8 +10765,8 @@ async function fidRevocar(id) {
 async function fidFacturas() {
   try {
     const j = await apiRaw("/api/fidelizacion/facturas");
-    const filas = (j.data || []).map((f) => `<div class="row"><div class="grow"><div class="t1">${esc(String(f.global_id).slice(0, 40))}${f.clave_debil ? ' <span class="pill">clave débil</span>' : ""}</div><div class="mut" style="font-size:12px">${esc(String(f.recibido_en).slice(0, 16).replace("T", " "))} · ${f.items_n} línea(s) · ${f.miembros_n} socio(s) · ${esc(f.estado)}${f.devolucion ? " · devolución" : ""}</div></div><button class="btn sm" data-act="fid-factura" data-id="${f.id}">Ver</button></div>`).join("");
-    modal("Facturas recibidas", filas ? `<div class="rows">${filas}</div>` : '<div class="mut">Todavía no ha llegado ninguna.</div>');
+    const filas = (j.data || []).map((f) => `<div class="row"><div class="grow"><div class="t1">${esc(String(f.global_id).slice(0, 40))}${f.clave_debil ? ' <span class="pill">clave débil</span>' : ""}${f.es_prueba ? ' <span class="pill brand">prueba</span>' : ""}</div><div class="mut" style="font-size:12px">${esc(String(f.recibido_en).slice(0, 16).replace("T", " "))} · ${f.items_n} línea(s) · ${f.miembros_n} socio(s) · ${esc(f.estado)}${f.devolucion ? " · devolución" : ""}</div></div><span style="display:flex;gap:6px">${f.es_prueba ? `<button class="btn sm primary" data-act="fid-importes" data-id="${f.id}">Ver importes de prueba</button>` : ""}<button class="btn sm" data-act="fid-prueba" data-id="${f.id}" data-v="${f.es_prueba ? 0 : 1}">${f.es_prueba ? "Quitar marca" : "Marcar como prueba"}</button><button class="btn sm" data-act="fid-factura" data-id="${f.id}">Campos</button></span></div>`).join("");
+    modal("Facturas recibidas", filas ? `<div class="mut" style="font-size:12px;margin-bottom:8px">«Marcar como prueba» solo para facturas que hayamos hecho nosotros: es lo que permite mirar sus importes.</div><div class="rows">${filas}</div>` : '<div class="mut">Todavía no ha llegado ninguna.</div>');
   } catch (e) { toast(e.message || "No se pudieron cargar"); }
 }
 
@@ -10778,6 +10778,52 @@ async function fidFactura(id) {
     modal("Factura " + esc(String(d.global_id || id)), `<div class="mut" style="font-size:12px;margin-bottom:8px">Mapa de campos del JSON de Ágora. Los valores no se muestran.</div>
       <pre style="max-height:50vh;overflow:auto;font-size:11.5px;white-space:pre-wrap">${esc(JSON.stringify(d.esquema, null, 2))}</pre>`);
   } catch (e) { toast(e.message || "No se pudo leer"); }
+}
+
+async function fidPrueba(id, v) {
+  const marcar = v === "1";
+  // Marcar abre la herramienta de observación de importes sobre esa factura. Es deliberado y se
+  // audita, así que se pregunta antes.
+  const aviso = marcar
+    ? "Marcar esta factura como PRUEBA permite ver sus importes desde el panel.\n\nHazlo solo con facturas que hayáis hecho vosotros para probar, nunca con una de un cliente real.\n\n¿Seguir?"
+    : "Se quitará la marca de prueba y dejarán de poder verse sus importes. ¿Seguir?";
+  if (!confirm(aviso)) return;
+  try { await apiSend("POST", `/api/fidelizacion/facturas/${id}/prueba`, { es_prueba: marcar }); toast(marcar ? "Marcada como prueba" : "Marca quitada"); await fidFacturas(); }
+  catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+/** Los importes de una factura de prueba, tal como llegan. AQUÍ NO SE CALCULA NADA. */
+async function fidImportes(id) {
+  try {
+    const j = await apiRaw(`/api/fidelizacion/facturas/${id}/importes`);
+    const num = (x) => (x === null || x === undefined ? "—" : typeof x === "number" ? x.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : esc(String(x)));
+    const crudo = (x) => (x === null || x === undefined ? "—" : typeof x === "boolean" ? (x ? "sí" : "no") : esc(String(x)));
+
+    const tabla = (titulo, filas, cols) => !filas.length ? "" : `<div class="mut" style="font-size:12px;margin:12px 0 4px">${titulo}</div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr>${cols.map((c) => `<th style="text-align:left;padding:4px 8px 4px 0;font-weight:600">${esc(c)}</th>`).join("")}</tr>
+        ${filas.map((f) => `<tr>${cols.map((c) => `<td class="tnum" style="padding:3px 8px 3px 0;border-top:1px solid var(--border)">${typeof f[c] === "number" ? num(f[c]) : crudo(f[c])}</td>`).join("")}</tr>`).join("")}
+      </table></div>`;
+
+    const doc = Object.entries(j.documento || {}).map(([k, v]) => `<div class="row"><div class="grow"><div class="t1">${esc(k)}</div></div><b>${crudo(v)}</b></div>`).join("");
+
+    const comprobantes = (j.comprobantes || []).map((c, i) => `
+      <div class="card" style="margin-top:10px;background:var(--bg2)">
+        <div class="mut" style="font-size:12px">Comprobante ${i + 1} · ${esc(c.GlobalId_pista || "—")} · IVA incluido: ${crudo(c.VatIncluded)}</div>
+        ${c.Discounts ? `<div class="mut" style="font-size:12px;margin-top:4px">Descuentos del comprobante — DiscountRate: ${crudo(c.Discounts.DiscountRate)} · CashDiscount: ${crudo(c.Discounts.CashDiscount)}</div>` : ""}
+        ${tabla("Totales del comprobante", c.Totals || [], ["GrossAmount", "NetAmount", "VatAmount"])}
+        ${tabla("Líneas", c.Lines || [], ["Index", "ProductId", "ProductName", "Quantity", "ProductPrice", "UnitPrice", "DiscountRate", "CashDiscount", "TotalAmount", "OfferId", "OfferCode"])}
+      </div>`).join("");
+
+    const ausentes = (j.rutas?.ausentes || []);
+    modal(`Importes · factura ${j.factura_id}`, `
+      <div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px"><b>${esc(j.aviso || "")}</b> Esto solo enseña los campos tal como los manda Ágora, para poder compararlos con el importe que esperabais.</div>
+      <div class="rows">${doc}</div>
+      ${tabla("Totales del documento", j.totales || [], ["GrossAmount", "NetAmount", "VatAmount"])}
+      ${tabla("Pagos", j.pagos || [], ["MethodId", "Amount", "PaidAmount", "ChangeAmount", "Tip", "IsPrepayment"])}
+      ${comprobantes}
+      ${ausentes.length ? `<details style="margin-top:12px"><summary class="mut" style="font-size:12px;cursor:pointer">Campos que esta factura NO trae (${ausentes.length})</summary><div class="mut" style="font-size:11.5px;margin-top:6px;line-height:1.7">${ausentes.map(esc).join(" · ")}</div></details>` : ""}`);
+  } catch (e) { toast(e.message || "No se pudieron leer los importes"); }
 }
 
 async function fidMiembro() {
@@ -13100,6 +13146,8 @@ document.addEventListener("click", (e) => {
   else if (act === "fid-revocar") fidRevocar(t.getAttribute("data-id"));
   else if (act === "fid-facturas") fidFacturas();
   else if (act === "fid-factura") fidFactura(t.getAttribute("data-id"));
+  else if (act === "fid-prueba") fidPrueba(t.getAttribute("data-id"), t.getAttribute("data-v"));
+  else if (act === "fid-importes") fidImportes(t.getAttribute("data-id"));
   else if (act === "fid-miembro") fidMiembro();
   else if (act === "fid-purgar") fidPurgarCuerpos();
   else if (act === "anal-tab") analTab(t.getAttribute("data-tipo"));

@@ -103,6 +103,7 @@ import { cargarLlavero, lineaArranque } from "./src/modules/seguridad/clave-dato
 import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
 import { lineaErrorSql } from "./src/modules/seguridad/redactar.js";
 import { ensureSchemaFidelizacion } from "./src/modules/fidelizacion/schema.js";
+import { proyectarImportes as fidProyectarImportes } from "./src/modules/fidelizacion/importes.js";
 import { LOCAL_PILOTO as FID_LOCAL, REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CUERPO as FID_MAX_CUERPO,
          MAX_POR_MINUTO as FID_MAX_MIN, VIDA_DIAS as FID_VIDA_DIAS, ESTADOS as FID_ESTADOS,
          nuevoToken as fidNuevoToken, pistaToken as fidPistaToken, estadoIntegracion as fidEstadoIntegracion,
@@ -17896,7 +17897,7 @@ app.post("/api/fidelizacion/integracion/:id/revocar", requireAuth(["direccion"])
 app.get("/api/fidelizacion/facturas", requireAuth(["direccion"]), async (req, res) => {
   try {
     const filas = await dbAll(`SELECT id, local, global_id, clave_debil, cuerpo_bytes, agora_version, items_n,
-        miembros_n, importe_total, devolucion, estado, recibido_en
+        miembros_n, importe_total, devolucion, estado, es_prueba, recibido_en
       FROM fid_facturas ORDER BY id DESC LIMIT 100`);
     res.json({ ok: true, data: filas || [] });
   } catch { res.json({ ok: true, data: [] }); }
@@ -17920,6 +17921,98 @@ app.get("/api/fidelizacion/facturas/:id", requireAuth(["direccion"]), async (req
 
 /** Un socio de prueba: visitas y consumo desde el libro. Se busca por su token, nunca por
  *  teléfono ni por nombre. */
+/**
+ * Marca o desmarca una factura como PRUEBA NUESTRA.
+ *
+ * Es el interruptor que abre la herramienta de observación de importes, y por eso es una acción
+ * deliberada y solo de Dirección: marcar una factura de un cliente real permitiría mirar sus
+ * importes. Marketing no puede, aunque en el resto de fidelización sí participe.
+ *
+ * La auditoría guarda el id de la factura y los dos estados. Nada más: ni cuerpo, ni MemberId, ni
+ * el GlobalId entero, ni un solo dato personal.
+ */
+app.post("/api/fidelizacion/facturas/:id/prueba", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    // Booleano EXPLÍCITO, no lo que a JavaScript le parezca verdad. `"false"`, `"no"`, `0`, `[]`
+    // y `{}` se evalúan todos como ciertos, y aquí un valor ambiguo decide si se pueden mirar los
+    // importes de una factura. Si no es un booleano de verdad, no se adivina: se rechaza.
+    const pedido = req.body?.es_prueba;
+    if (pedido !== true && pedido !== false) {
+      return res.status(400).json({ ok: false, error: "es_prueba tiene que ser true o false" });
+    }
+    const quiere = pedido;
+    const antes = await dbGet(`SELECT id, es_prueba FROM fid_facturas WHERE id = ?`, [id]);
+    if (!antes) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!!antes.es_prueba === quiere) return res.json({ ok: true, es_prueba: quiere, sin_cambios: true });
+
+    await dbRun(`UPDATE fid_facturas SET es_prueba = ? WHERE id = ?`, [quiere, id]);
+    await ficAuditar("fidelizacion", id, quiere ? "factura_marcada_prueba" : "factura_desmarcada_prueba",
+      req.user.username, { detalle: { factura_id: id, antes: !!antes.es_prueba, despues: quiere } });
+    res.json({ ok: true, es_prueba: quiere });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] marcar prueba", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
+/**
+ * LOS IMPORTES DE UNA FACTURA DE PRUEBA. Herramienta temporal de observación.
+ *
+ * Existe para una sola cosa: mirar cinco facturas que hemos hecho nosotros y averiguar qué campo
+ * de Ágora contiene el importe que de verdad se paga. Hoy no lo sabemos —la guía separa
+ * `Payments[].Tip` pero no dice si está dentro de `Totals[].GrossAmount`— y sin saberlo no se
+ * puede calcular ni un punto.
+ *
+ * AQUÍ NO SE CALCULA NADA. Se enseñan los campos tal como llegan, para compararlos contra el
+ * importe que ya sabíamos que esperábamos. `Rewards` sigue siendo `[]` y el flujo de facturas no
+ * cambia ni una línea.
+ *
+ * SOLO SOBRE FACTURAS MARCADAS COMO PRUEBA. Sin ese candado esto sería una ventana abierta a los
+ * importes de cualquier cliente. Y solo Dirección.
+ *
+ * El cuerpo se descifra EN MEMORIA y no se escribe en ningún sitio: ni log, ni auditoría, ni
+ * respuesta completa. Lo único que sale es la proyección de la lista cerrada.
+ */
+app.get("/api/fidelizacion/facturas/:id/importes", requireAuth(["direccion"]), async (req, res) => {
+  // Lo primero, y para TODAS las salidas de aquí abajo —incluidos los errores—. Un 403 cacheado
+  // sigue siendo la respuesta del servidor a una factura concreta, y esta ruta no va a ningún
+  // sitio donde convenga que se guarde.
+  res.set("Cache-Control", "no-store");
+  try {
+    const f = await dbGet(`SELECT id, es_prueba, cuerpo_enc, recibido_en, local FROM fid_facturas WHERE id = ?`,
+      [parseInt(req.params.id)]);
+    if (!f) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!f.es_prueba) {
+      return res.status(403).json({ ok: false,
+        error: "Esta factura no está marcada como prueba. Los importes solo se pueden mirar en las facturas de prueba." });
+    }
+    // UNA SOLA RESPUESTA para los cuatro motivos: el cuerpo se purgó al acabar el piloto, falta
+    // `DATA_ENC_KEY`, el criptograma no abre o lo que había dentro no es JSON. Desde fuera son
+    // indistinguibles a propósito. Separarlos convertiría este endpoint en un detector del estado
+    // de la clave —y eso se puede preguntar factura a factura, sin tocar nada—. Quien necesite el
+    // motivo real lo tiene en `/api/agora/estado`, que ya cuenta los fallos de cifrado por causa.
+    //
+    // `leerSecreto` no lanza: devuelve `null` en los tres primeros casos, así que no hay ni un
+    // camino que se escape por el `catch` y conteste distinto.
+    const plano = f.cuerpo_enc ? leerSecreto(f.cuerpo_enc, DOMINIOS.FIDELIZACION, "fid_facturas") : null;
+    let json = null;
+    try { json = plano ? JSON.parse(plano) : null; } catch { json = null; }
+    if (!json || typeof json !== "object") {
+      return res.status(409).json({ ok: false, error: "No se pudo leer el contenido de esta factura." });
+    }
+
+    res.json({
+      ok: true, factura_id: f.id, recibido_en: f.recibido_en, local: f.local,
+      aviso: "Observación. No se está calculando ningún punto.",
+      ...fidProyectarImportes(json, { hash: fidHash }),
+    });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] importes", e));
+    res.status(500).json({ ok: false, error: "No se pudieron leer los importes" });
+  }
+});
+
 /**
  * Borra los cuerpos capturados cuando el piloto termine, SIN tocar el libro.
  *
