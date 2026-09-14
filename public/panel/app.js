@@ -10740,6 +10740,203 @@ function renderFidLocal(L) {
     ${aviso}${capacidades}${workplace}${datos}${hist}${urls}<div style="margin-top:12px">${botones}</div></div>`;
 }
 
+// ── El programa de puntos ────────────────────────────────────────────────────
+// Dirección Y MARKETING. Aquí se administra el programa comercial; los tokens y el Workplace
+// siguen siendo solo de Dirección y viven en las tarjetas de arriba.
+let FIDP = { reglas: [], vigentes: [], interruptores: null, preparacion: null, gracia: null, sombra: null };
+
+/** Lo que significa cada interruptor, en el orden en que se encienden. */
+const FID_SW_TXT = [
+  ["sombra", "Cálculo en sombra", "Calcula y guarda lo que HARÍA, sin tocar ningún saldo ni contestar descuentos. Es lo que permite comprobar los números antes de encender nada."],
+  ["conceder", "Conceder puntos", "Los puntos empiezan a escribirse de verdad en el libro."],
+  ["ofrecer", "Ofrecer descuentos", "Al identificar un carné con saldo suficiente, se le ofrece el descuento al camarero."],
+  ["consumir", "Consumir descuentos", "Una factura que llegue con el descuento aplicado gasta los puntos."],
+];
+
+function renderFidPrograma() {
+  const sw = FIDP.interruptores;
+  if (!sw) return "";
+
+  // El orden importa y se dice: `ofrecer` y `consumir` sin `conceder` darían descuentos sobre
+  // puntos que nadie está dando. El servidor los apaga; aquí se explica por qué salen apagados.
+  const interruptores = FID_SW_TXT.map(([k, titulo, ayuda]) => {
+    const sinPreparar = k !== "sombra" && !!(FIDP.preparacion && !FIDP.preparacion.listo);
+    const bloqueado = sinPreparar || (k !== "sombra" && k !== "conceder" && !sw.conceder);
+    return `<div class="row"><div class="grow"><div class="t1">${esc(titulo)}</div><div class="mut" style="font-size:12px">${esc(ayuda)}</div>${sinPreparar ? '<div class="mut" style="font-size:12px;color:var(--danger)">Bloqueado hasta validar una devolución total real.</div>' : bloqueado ? '<div class="mut" style="font-size:12px;color:var(--danger)">Necesita «Conceder puntos» encendido.</div>' : ""}</div><button class="btn sm ${sw[k] ? "primary" : ""}" data-act="fidp-sw" data-k="${k}" data-v="${sw[k] ? 0 : 1}"${bloqueado ? " disabled" : ""}>${sw[k] ? "Encendido" : "Apagado"}</button></div>`;
+  }).join("");
+
+  const eur = (v) => Number(v).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const vigentes = (FIDP.vigentes || []).map((v) => `<div class="row"><div class="grow"><div class="t1">${esc(v.local)}</div><div class="mut" style="font-size:12px">${v.regla
+    ? `${v.regla.ambito === "local" ? "Regla propia" : "Regla global"} · versión ${v.regla.version} · ${v.regla.puntos_por_euro} punto(s)/€ · ${v.regla.puntos_necesarios} puntos = ${eur(v.regla.descuento_euros)} € · mínimo ${eur(v.regla.consumo_minimo)} € · caducan a los ${v.regla.caducidad_meses} meses`
+    : "Sin programa vigente: no se conceden puntos aquí."}</div></div>${v.regla ? '<span class="pill ok">Vigente</span>' : '<span class="pill">Sin regla</span>'}</div>`).join("");
+
+  const historial = (FIDP.reglas || []).length ? `<details style="margin-top:10px"><summary class="mut" style="font-size:12px;cursor:pointer">Todas las versiones (${FIDP.reglas.length})</summary>
+    <div class="rows" style="margin-top:6px">${FIDP.reglas.map((r) => `<div class="row"><div class="grow"><div class="t1">${esc(r.ambito === "local" ? r.local : "Global")} · v${r.version}</div><div class="mut" style="font-size:12px">${r.puntos_por_euro} p/€ · ${r.puntos_necesarios} p = ${eur(r.descuento_euros)} € · mín. ${eur(r.consumo_minimo)} € · ${r.caducidad_meses} meses · ${esc(String(r.creado_en || "").slice(0, 10))} ${esc(r.creado_por || "")}</div></div><span class="pill ${r.activa ? "ok" : ""}">${r.activa ? "Activa" : "Inactiva"}</span></div>`).join("")}</div></details>` : "";
+
+  // EL AVISO DE BLOQUEO. Lo primero que se ve, porque es lo que explica por qué tres de los
+  // cuatro interruptores no se dejan encender. Sin esto, el botón que no responde parece un fallo.
+  const prep = FIDP.preparacion;
+  const bloqueo = prep && !prep.listo ? `<div class="pendingblock" style="margin:2px 2px 10px;padding:12px 14px;font-size:12.5px">
+      <b>El programa de puntos todavía no puede activarse.</b>
+      <div style="margin-top:6px">${(prep.pendientes || []).map((p) => `<div style="margin-top:4px">· <b>${esc(p.texto)}</b><div class="mut" style="font-size:12px;margin-left:10px">${esc(p.detalle || "")}</div></div>`).join("")}</div>
+      <div class="mut" style="font-size:12px;margin-top:8px">Mientras tanto solo se puede encender el <b>cálculo en sombra</b>, que mira y no toca ningún saldo. El bloqueo está en el servidor: intentar encenderlos desde aquí o llamando a la API devuelve un error.</div>
+    </div>` : "";
+
+  return `<div class="card" style="margin-top:10px"><div class="ch"><h3>Programa de puntos</h3>${prep && !prep.listo ? '<span class="pill bad">Bloqueado</span>' : sw.conceder ? '<span class="pill ok">Concediendo</span>' : '<span class="pill warn">Solo en sombra</span>'}</div>
+    ${bloqueo}
+    <div class="mut" style="font-size:12.5px;padding:2px 2px 6px">Las reglas <b>no se editan</b>: cada cambio crea una versión nueva, y cada punto guarda con cuál se calculó. Así una factura de hace meses se sigue pudiendo explicar.</div>
+    <div class="mut" style="font-size:12px;margin:10px 0 4px">Interruptores</div>
+    <div class="rows">${interruptores}</div>
+    <div class="mut" style="font-size:12px;margin:14px 0 4px">Qué regla manda en cada local</div>
+    <div class="rows">${vigentes}</div>
+    ${historial}
+    <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn primary sm" data-act="fidp-nueva">Nueva versión…</button>
+      <button class="btn sm" data-act="fidp-sombra">Ver cálculo en sombra</button>
+      <button class="btn sm" data-act="fidp-revisiones">Pendientes de revisar</button>
+      <button class="btn sm" data-act="fidp-socio">Ficha de un socio</button>
+    </div></div>`;
+}
+
+async function loadFidPrograma() {
+  try {
+    const j = await apiRaw("/api/fidelizacion/reglas");
+    FIDP.reglas = j.reglas || []; FIDP.vigentes = j.vigentes || []; FIDP.interruptores = j.interruptores || null;
+    FIDP.preparacion = j.preparacion || null; FIDP.gracia = j.gracia || null;
+  } catch { FIDP.interruptores = null; }
+}
+
+async function fidpSw(k, v) {
+  const t = FID_SW_TXT.find((x) => x[0] === k);
+  const encender = v === "1";
+  // Encender «conceder», «ofrecer» o «consumir» es empezar a mover dinero. Se pregunta.
+  if (encender && k !== "sombra" && !confirm(`Vas a ENCENDER «${t[1]}».\n\n${t[2]}\n\n¿Seguir?`)) return;
+  try { await apiSend("POST", "/api/fidelizacion/interruptores", { [k]: encender }); await loadFidPiloto(); toast(encender ? "Encendido" : "Apagado"); }
+  catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+/** Una versión nueva. Se enseñan los valores y se pide confirmación antes de guardarlos. */
+async function fidpNueva() {
+  const v = FIDP.vigentes?.[0]?.regla || {};
+  const campos = [
+    ["puntos_por_euro", "Puntos por cada euro pagado", v.puntos_por_euro ?? 1],
+    ["puntos_necesarios", "Puntos que cuesta el descuento", v.puntos_necesarios ?? 100],
+    ["descuento_euros", "Euros de descuento", v.descuento_euros ?? 5],
+    ["consumo_minimo", "Mínimo de la factura antes del descuento (€)", v.consumo_minimo ?? 30],
+    ["caducidad_meses", "Los puntos caducan a los (meses)", v.caducidad_meses ?? 6],
+    // NO está oculto ni fijo: entre publicar una versión y cerrar un ticket ya abierto pueden
+    // pasar horas, y quien publica tiene que poder decidir cuánto margen deja.
+    ["gracia_minutos", "Margen para tickets ya abiertos (minutos, 0 = sin margen)",
+     v.gracia_minutos ?? (FIDP.gracia?.propuesta ?? 180)],
+  ];
+  const cuerpo = `
+    <div class="mut" style="font-size:12.5px;margin-bottom:10px">Esto <b>no cambia el pasado</b>: las facturas ya calculadas conservan su versión. A partir de guardar, los puntos nuevos se calculan con estos valores.</div>
+    <div class="field"><label>Ámbito</label><select id="fidpAmbito"><option value="global">Todos los locales</option>${(FIDP.vigentes || []).map((x) => `<option value="${esc(x.local)}">Solo ${esc(x.local)}</option>`).join("")}</select></div>
+    ${campos.map(([k, etiqueta, val]) => `<div class="field"><label>${esc(etiqueta)}</label><input id="fidp_${k}" type="number" step="0.01" min="0" value="${esc(String(val))}"></div>`).join("")}
+    <div class="pendingblock" style="margin-top:10px;padding:10px 12px;font-size:12.5px" id="fidpResumen"></div>
+    <div style="margin-top:12px"><button class="btn primary" data-act="fidp-guardar">Revisar y guardar…</button></div>`;
+  const ov = modal("Nueva versión del programa", cuerpo);
+  const pinta = () => {
+    const g = (k) => Number(document.getElementById(`fidp_${k}`)?.value || 0);
+    const r = document.getElementById("fidpResumen");
+    if (r) r.innerHTML = `Con estos valores: una factura de <b>${(30).toFixed(2)} €</b> daría <b>${Math.floor(30 * g("puntos_por_euro"))} puntos</b>, y harían falta <b>${g("puntos_necesarios")}</b> para <b>${g("descuento_euros").toFixed(2)} €</b> de descuento en facturas de <b>${g("consumo_minimo").toFixed(2)} €</b> o más. Los puntos caducan a los <b>${g("caducidad_meses")}</b> meses.<br><br>${esc(textoGracia(g("gracia_minutos")))}`;
+  };
+  ov.addEventListener("input", pinta);
+  pinta();
+}
+
+/** La misma frase que compone el servidor. Se repite aquí porque el aviso se pinta en vivo
+ *  mientras se escriben los valores, antes de mandar nada. */
+function textoGracia(minutos) {
+  const m = Number(minutos);
+  if (!Number.isFinite(m) || m <= 0) return "Los descuentos ya mostrados en tickets abiertos dejarán de poder utilizarse al instante.";
+  const h = Math.floor(m / 60), r = m % 60;
+  const cuanto = h && r ? `${h} h ${r} min` : h ? `${h} ${h === 1 ? "hora" : "horas"}` : `${r} minutos`;
+  return `Los descuentos ya mostrados en tickets abiertos podrán utilizarse durante ${cuanto}.`;
+}
+
+async function fidpGuardar() {
+  const g = (k) => document.getElementById(`fidp_${k}`)?.value;
+  const ambito = document.getElementById("fidpAmbito")?.value || "global";
+  const cuerpo = {
+    ambito: ambito === "global" ? "global" : "local",
+    local: ambito === "global" ? null : ambito,
+    puntos_por_euro: g("puntos_por_euro"), puntos_necesarios: g("puntos_necesarios"),
+    descuento_euros: g("descuento_euros"), consumo_minimo: g("consumo_minimo"),
+    caducidad_meses: g("caducidad_meses"), gracia_minutos: g("gracia_minutos"), max_rewards_factura: 1,
+  };
+  const texto = `Se va a guardar una versión NUEVA del programa${ambito === "global" ? " para todos los locales" : ` solo para ${ambito}`}:\n\n`
+    + `· ${cuerpo.puntos_por_euro} punto(s) por cada euro pagado\n`
+    + `· ${cuerpo.puntos_necesarios} puntos = ${cuerpo.descuento_euros} € de descuento\n`
+    + `· Mínimo de factura antes del descuento: ${cuerpo.consumo_minimo} €\n`
+    + `· Los puntos caducan a los ${cuerpo.caducidad_meses} meses\n`
+    + `· Máximo 1 descuento por factura\n\n`
+    + textoGracia(cuerpo.gracia_minutos) + `\n\n`
+    + `Las facturas ya calculadas NO cambian. ¿Guardar?`;
+  if (!confirm(texto)) return;
+  try {
+    const j = await apiSend("POST", "/api/fidelizacion/reglas", cuerpo);
+    document.querySelectorAll(".modal-ov").forEach((x) => x.remove());
+    await loadFidPiloto();
+    toast(`Guardada la versión ${j.version}`);
+  } catch (e) { toast(e.message || "No se pudo guardar"); }
+}
+
+async function fidpSombra() {
+  const local = (FIDP.vigentes || [])[0]?.local;
+  const elegido = prompt("¿De qué local?\n\n" + (FIDP.vigentes || []).map((v) => v.local).join("\n"), local || "");
+  if (!elegido) return;
+  try {
+    const j = await apiRaw(`/api/fidelizacion/sombra?local=${encodeURIComponent(elegido)}`);
+    const r = j.resumen || {};
+    const filas = (j.data || []).map((f) => `<div class="row"><div class="grow"><div class="t1">${esc(String(f.global_id || "").slice(0, 32))}</div><div class="mut" style="font-size:12px">${esc(String(f.creado_en || "").slice(0, 16).replace("T", " "))}${f.motivo ? " · " + esc(f.motivo) : ""}</div></div><b class="tnum">${f.puntos_calculados == null ? "—" : f.puntos_calculados + " p"}</b></div>`).join("");
+    modal(`Cálculo en sombra · ${esc(j.local)}`, `
+      <div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px"><b>Esto no ha tocado ningún saldo.</b> Es lo que el programa HABRÍA hecho con estas facturas.</div>
+      <div class="rows">
+        <div class="row"><div class="grow"><div class="t1">Facturas miradas</div></div><b class="tnum">${Number(r.facturas || 0)}</b></div>
+        <div class="row"><div class="grow"><div class="t1">Puntos que se habrían dado</div></div><b class="tnum">${Number(r.puntos_totales || 0)}</b></div>
+        <div class="row"><div class="grow"><div class="t1">Importe pagado detectado</div></div><b class="tnum">${Number(r.importe_total || 0).toLocaleString("es-ES", { minimumFractionDigits: 2 })} €</b></div>
+        <div class="row"><div class="grow"><div class="t1">Propinas vistas</div><div class="mut" style="font-size:12px">No dan puntos. Está aquí para saber si van dentro del importe cobrado.</div></div><b class="tnum">${Number(r.propina_total || 0).toLocaleString("es-ES", { minimumFractionDigits: 2 })} €</b></div>
+        <div class="row"><div class="grow"><div class="t1">Facturas donde PaidAmount ≠ Amount</div><div class="mut" style="font-size:12px">Si esto es 0 en todas, es que nunca hay cambio que descontar.</div></div><b class="tnum">${Number(r.paid_distinto_amount || 0)}</b></div>
+      </div>
+      ${filas ? `<div class="mut" style="font-size:12px;margin:12px 0 4px">Últimas facturas</div><div class="rows">${filas}</div>` : ""}`);
+  } catch (e) { toast(e.message || "No se pudo leer"); }
+}
+
+async function fidpRevisiones() {
+  try {
+    const j = await apiRaw("/api/fidelizacion/revisiones");
+    const texto = { varios_socios: "Varios socios en la misma factura", devolucion_parcial: "Devolución parcial",
+                    devolucion_sin_original: "Devolución sin factura original" };
+    const filas = (j.data || []).map((f) => `<div class="row"><div class="grow"><div class="t1">${esc(texto[f.motivo] || f.motivo)}</div><div class="mut" style="font-size:12px">${esc(f.local)} · ${esc(String(f.recibido_en || f.creado_en).slice(0, 16).replace("T", " "))} · ${esc(String(f.global_id || "").slice(0, 28))}</div></div><b class="tnum">${f.importe_total == null ? "—" : Number(f.importe_total).toFixed(2) + " €"}</b></div>`).join("");
+    modal("Pendientes de revisar", filas
+      ? `<div class="mut" style="font-size:12.5px;margin-bottom:8px">Estas facturas se aceptaron para no bloquear la caja, pero <b>no se les han tocado los puntos</b>: son casos de los que todavía no tenemos una prueba real.</div><div class="rows">${filas}</div>`
+      : '<div class="mut">No hay nada pendiente.</div>');
+  } catch (e) { toast(e.message || "No se pudo leer"); }
+}
+
+/** La ficha de un socio: saldo, lotes y el historial explicable factura a factura. */
+async function fidpSocio() {
+  const t = prompt("Token del carné (el que lleva el QR):");
+  if (!t) return;
+  try {
+    const j = await apiRaw(`/api/fidelizacion/socio?token=${encodeURIComponent(t)}`);
+    const f = (x) => esc(String(x || "—").slice(0, 16).replace("T", " "));
+    const lotes = (j.saldo.lotes || []).map((l) => `<div class="row"><div class="grow"><div class="t1 tnum">${l.restante} puntos</div><div class="mut" style="font-size:12px">caducan el ${esc(String(l.caduca_en || "").slice(0, 10))} · ${esc(l.local || "")} · regla v${l.regla_version ?? "?"}</div></div></div>`).join("");
+    const locales = (j.porLocal || []).map((l) => `<div class="row"><div class="grow"><div class="t1">${esc(l.local)}</div><div class="mut" style="font-size:12px">${l.visitas} visita(s) · última ${f(l.ultima)} · ganados ${l.ganados} · consumidos ${l.consumidos} · caducados ${l.caducados}</div></div><b class="tnum">${Number(l.consumo || 0).toFixed(2)} €</b></div>`).join("");
+    const hist = (j.historial || []).slice(0, 60).map((m) => `<div class="row"><div class="grow"><div class="t1">${esc(m.punto_tipo || m.concepto)}${m.factura_id ? ` · factura ${m.factura_id}` : ""}</div><div class="mut" style="font-size:12px">${f(m.fecha)} · ${esc(m.local)}${m.regla_version ? ` · regla v${m.regla_version}` : ""}${m.caduca_en ? ` · caduca ${esc(String(m.caduca_en).slice(0, 10))}` : ""}</div></div><b class="tnum">${m.concepto === "puntos" ? `${m.unidades > 0 ? "+" : ""}${m.unidades} p` : Number(m.importe || 0).toFixed(2) + " €"}</b></div>`).join("");
+    modal(`Socio · ${esc(j.carnet.nombre || "sin nombre")}`, `
+      <div class="rows">
+        <div class="row"><div class="grow"><div class="t1">Saldo disponible</div><div class="mut" style="font-size:12px">${j.saldo.proxima_caducidad ? "Lo primero caduca el " + esc(String(j.saldo.proxima_caducidad).slice(0, 10)) : "Sin puntos con caducidad"}</div></div><b class="tnum">${j.saldo.disponible} puntos</b></div>
+        <div class="row"><div class="grow"><div class="t1">Visitas</div><div class="mut" style="font-size:12px">última ${f(j.total.ultima)}</div></div><b class="tnum">${j.total.visitas}</b></div>
+        <div class="row"><div class="grow"><div class="t1">Consumo</div><div class="mut" style="font-size:12px">ticket medio ${Number(j.total.ticket_medio || 0).toFixed(2)} €</div></div><b class="tnum">${Number(j.total.consumo || 0).toFixed(2)} €</b></div>
+      </div>
+      ${lotes ? `<div class="mut" style="font-size:12px;margin:12px 0 4px">Lotes vivos</div><div class="rows">${lotes}</div>` : ""}
+      ${locales ? `<div class="mut" style="font-size:12px;margin:12px 0 4px">Por local</div><div class="rows">${locales}</div>` : ""}
+      ${hist ? `<details style="margin-top:12px"><summary class="mut" style="font-size:12px;cursor:pointer">Historial explicable (${(j.historial || []).length})</summary><div class="rows" style="margin-top:6px">${hist}</div></details>` : ""}`);
+  } catch (e) { toast(e.message || "No se pudo consultar"); }
+}
+
 function renderFidPiloto() {
   // EL CENSO, que es global: un carné vale en cualquier barra. Sin ninguno, TODOS los locales
   // devolverán 404 y será correcto. Solo números: ni tokens, ni códigos, ni nombres.
@@ -10757,7 +10954,7 @@ function renderFidPiloto() {
     <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px"><b>Solo una respuesta cierra la factura: que la aceptemos.</b> Si algo falla —desactivas, revocas, el carné ya no existe o la base no responde— Ágora <b>no podrá cerrarla</b>. La salida es siempre la misma y es manual: el camarero <b>desasocia al participante</b> y vuelve a intentar el cierre. No se pierde la venta ni queda nada a medias.</div>
     ${censo}
     <div style="margin-top:6px"><button class="btn sm" data-act="fid-miembro">Buscar socio</button></div>
-    </div>${tarjetas}`;
+    </div>${tarjetas}${renderFidPrograma()}`;
 }
 
 async function loadFidPiloto() {
@@ -10768,6 +10965,7 @@ async function loadFidPiloto() {
     // El censo sale del resumen de la tarjeta, que ya existía. Si falla, las tarjetas se pintan
     // igual: saber cuántos carnés hay es útil, pero no es lo que se viene a mirar aquí.
     try { FID.censo = (await apiRaw("/api/tarjeta/resumen")).censo || null; } catch { FID.censo = null; }
+    await loadFidPrograma();
     if (document.getElementById("fidPiloto")) document.getElementById("fidPiloto").innerHTML = renderFidPiloto();
   } catch (e) {
     // «No se ha podido comprobar» NO es «no hay integración». Confundirlos fue lo que hizo que el
@@ -13231,6 +13429,12 @@ document.addEventListener("click", (e) => {
   else if (act === "fid-purgar") fidPurgarCuerpos(t.getAttribute("data-local"));
   else if (act === "fid-workplace") fidWorkplace(t.getAttribute("data-id"));
   else if (act === "fid-wp-ok") fidConfirmarWorkplace(t.getAttribute("data-id"), t.getAttribute("data-wid"), t.getAttribute("data-wname"));
+  else if (act === "fidp-sw") fidpSw(t.getAttribute("data-k"), t.getAttribute("data-v"));
+  else if (act === "fidp-nueva") fidpNueva();
+  else if (act === "fidp-guardar") fidpGuardar();
+  else if (act === "fidp-sombra") fidpSombra();
+  else if (act === "fidp-revisiones") fidpRevisiones();
+  else if (act === "fidp-socio") fidpSocio();
   else if (act === "anal-tab") analTab(t.getAttribute("data-tipo"));
   else if (act === "anal-area") analArea(t.getAttribute("data-area"));
   else if (act === "anal-period") analPeriod(t.getAttribute("data-p"));

@@ -43,13 +43,37 @@ describe("un fallo técnico NUNCA se contesta con 200", () => {
   test("el catch del manejador devuelve 500, y nada de 200", () => {
     // Sin las líneas de comentario: ahí dentro se explica a propósito por qué NO se contesta
     // `accepted` ni `rejected`, y una búsqueda a pelo confundiría la explicación con el fallo.
-    const i = factura.indexOf("} catch (e) {");
+    //
+    // EL CATCH TIENE TRES SALIDAS Y SOLO UNA ES «no sé qué ha pasado»:
+    //
+    //   FacturaRechazada    → 200 rejected. Es una decisión de negocio TOMADA: el descuento no se
+    //                         puede aplicar. La transacción ya se deshizo entera.
+    //   MiembroDesconocido  → 404, como manda la guía.
+    //   cualquier otra cosa → 500. Aquí NO sabemos si la factura quedó guardada, y decir
+    //                         `rejected` haría que Ágora dejara de reenviarla: una pérdida
+    //                         silenciosa. Eso es lo que blinda este test.
+    //
+    // Se mira el tramo FINAL del catch, el que se ejecuta cuando no era ninguna de las dos
+    // anteriores. Que las salidas tipadas contesten 200 o 404 es correcto y tiene sus tests.
+    const i = factura.indexOf("// Sin detalles: al TPV no se le cuenta qué ha fallado por dentro.");
     const bruto = factura.slice(i, factura.indexOf("return res.status(500)", i) + 60);
     const bloque = bruto.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
     assert.match(bloque, /return res\.status\(500\)/);
     assert.ok(!/status\(200\)/.test(bloque), "el catch vuelve a contestar 200");
     assert.ok(!/accepted/.test(bloque), "el catch contesta accepted");
     assert.ok(!/rejected/.test(bloque), "el catch contesta rejected, y Ágora no reenviaría");
+  });
+
+  test("y las dos salidas tipadas van ANTES, cada una con su código", () => {
+    // El orden importa: si el `500` genérico estuviera primero, un rechazo de negocio se
+    // convertiría en un error técnico y Ágora reenviaría una factura que ya decidimos no aceptar.
+    const iRechazo = factura.indexOf("e instanceof FidFacturaRechazada");
+    const i404 = factura.indexOf("e instanceof FidMiembroDesconocido");
+    const i500 = factura.indexOf("return res.status(500)");
+    assert.ok(iRechazo > 0 && i404 > 0 && i500 > 0);
+    assert.ok(iRechazo < i500 && i404 < i500, "el 500 genérico se come las salidas tipadas");
+    // Y el rechazo de negocio deshace la transacción entera: se lanza DENTRO de ella.
+    assert.match(factura, /Status: "rejected", RejectReason: e\.razon/);
   });
 
   test("PostgreSQL caído: procesarFactura propaga, no se traga el error", async () => {

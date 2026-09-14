@@ -161,11 +161,49 @@ describe("límites y auditoría", () => {
     assert.match(codigo, /ficAuditar\("fidelizacion"/);
   });
 
-  test("la gestión es solo de Dirección", () => {
-    const rutas = [...codigo.matchAll(/app\.(get|post)\("\/api\/fidelizacion\/(?!agora)[^"]*", ([^,]+),/g)];
-    assert.ok(rutas.length >= 6, `solo ${rutas.length} rutas de gestión`);
-    // r[1] es el método y r[2] el middleware de autenticación: la regex tiene DOS grupos.
-    for (const r of rutas) assert.equal(r[2].trim(), 'requireAuth(["direccion"])', r[0]);
+  test("la SEGURIDAD TÉCNICA sigue siendo solo de Dirección", () => {
+    // La línea que separa los dos roles: Marketing administra el PROGRAMA COMERCIAL —cuántos
+    // puntos, qué descuento, qué mínimo— y consulta la trazabilidad. Lo que nunca toca son los
+    // tokens, el Workplace, los cuerpos de prueba y el diagnóstico: eso es la credencial que hace
+    // funcionar una caja, y su alcance es otro.
+    const soloDireccion = [
+      "/api/fidelizacion/integracion",
+      "/api/fidelizacion/integracion/:id/activo",
+      "/api/fidelizacion/integracion/:id/revocar",
+      "/api/fidelizacion/integracion/:id/workplace-observado",
+      "/api/fidelizacion/integracion/:id/workplace",
+      "/api/fidelizacion/diagnostico",
+      "/api/fidelizacion/facturas",
+      "/api/fidelizacion/facturas/:id",
+      "/api/fidelizacion/facturas/:id/prueba",
+      "/api/fidelizacion/facturas/:id/importes",
+      "/api/fidelizacion/facturas/purgar-cuerpos",
+      "/api/fidelizacion/miembro",
+    ];
+    const rutas = [...codigo.matchAll(/app\.(get|post)\("(\/api\/fidelizacion\/(?!agora)[^"]*)", ([^,]+),/g)];
+    assert.ok(rutas.length >= 12, `solo ${rutas.length} rutas de gestión`);
+    for (const r of rutas) {
+      if (!soloDireccion.includes(r[2])) continue;
+      assert.equal(r[3].trim(), 'requireAuth(["direccion"])', `${r[2]} ha dejado de ser solo de Dirección`);
+    }
+    // Y las doce siguen estando: que una desaparezca de la lista no puede ser la forma de
+    // ablandarla sin que nadie se entere.
+    const presentes = rutas.map((r) => r[2]);
+    for (const d of soloDireccion) assert.ok(presentes.includes(d), `falta la ruta ${d}`);
+  });
+
+  test("el PROGRAMA COMERCIAL es de Dirección y Marketing", () => {
+    const compartidas = ["/api/fidelizacion/reglas", "/api/fidelizacion/interruptores",
+                         "/api/fidelizacion/revisiones", "/api/fidelizacion/sombra",
+                         "/api/fidelizacion/socio"];
+    const rutas = [...codigo.matchAll(/app\.(get|post)\("(\/api\/fidelizacion\/[^"]*)", ([^,]+),/g)];
+    const porRuta = new Map(rutas.map((r) => [r[2], r[3].trim()]));
+    for (const c of compartidas) {
+      assert.ok(porRuta.has(c), `falta la ruta ${c}`);
+      assert.equal(porRuta.get(c), "requireAuth(PROMOS_ROLES)", `${c} no es de Dirección y Marketing`);
+    }
+    // `PROMOS_ROLES` es exactamente esos dos, no una puerta que crezca sola.
+    assert.match(server, /const PROMOS_ROLES = \["direccion", "marketing"\]/);
   });
 });
 

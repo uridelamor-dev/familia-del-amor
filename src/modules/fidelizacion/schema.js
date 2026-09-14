@@ -120,6 +120,129 @@ export async function ensureSchemaFidelizacion(x) {
     creado_en TEXT NOT NULL,
     CHECK (concepto IN ('visita','consumo','devolucion','correccion','puntos'))
   )`);
+  // ── PUNTOS: columnas aditivas sobre el MISMO libro ─────────────────────────
+  //
+  // SE REUTILIZA `fid_movimientos` y no se crea una tabla de puntos aparte. El libro ya es
+  // append-only, ya tiene `clave_idem UNIQUE`, ya guarda local, factura y autor — y su `CHECK`
+  // sobre `concepto` YA CONTEMPLABA 'puntos'. Dos libros para el mismo cliente es como se acaba
+  // con dos saldos que no cuadran y nadie sabe cuál es el bueno.
+  //
+  // `punto_tipo` cualifica el movimiento SIN tocar el `CHECK`: el concepto sigue siendo 'puntos'.
+  // Añadir valores al CHECK obligaría a borrarlo y recrearlo sobre una tabla con datos, y eso no
+  // se hace por una columna que se puede añadir al lado.
+  //
+  // UN LOTE ES UN MOVIMIENTO DE 'ganados', con su propia caducidad. Lo que se le quita —consumos,
+  // caducidad— y lo que se le devuelve apuntan a él por `lote_id`. El restante es la suma, así que
+  // NO HAY NINGÚN SALDO QUE EDITAR: se calcula, como la bolsa de horas.
+  for (const col of ["punto_tipo TEXT", "lote_id INTEGER", "caduca_en TEXT",
+                     "regla_id INTEGER", "regla_version INTEGER", "importe_centimos INTEGER"]) {
+    try { await x.run(`ALTER TABLE fid_movimientos ADD COLUMN IF NOT EXISTS ${col}`); }
+    catch (e) { console.error("[fidelizacion] alter fid_movimientos:", e.message); }
+  }
+  // FIFO: se gasta antes lo que antes caduca. Este índice es el que lo hace barato.
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_mov_lotes
+    ON fid_movimientos (qr_id, caduca_en, id) WHERE punto_tipo = 'ganados'`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_mov_lote ON fid_movimientos (lote_id) WHERE lote_id IS NOT NULL`);
+
+  // ── LAS REGLAS DEL PROGRAMA, VERSIONADAS E INMUTABLES ──────────────────────
+  //
+  // Una fila NO SE EDITA NUNCA. Cambiar el programa es insertar una versión nueva, y por eso cada
+  // movimiento guarda `regla_id` y `regla_version`: una factura de hace tres meses se explica con
+  // la regla que había entonces, no con la de hoy. Editar en sitio haría imposible contestar
+  // «¿por qué este cliente ganó 56 puntos?» en cuanto alguien tocara el programa.
+  //
+  // Ningún importe ni porcentaje comercial vive en el código: todo sale de aquí.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_reglas (
+    id SERIAL PRIMARY KEY,
+    ambito TEXT NOT NULL,
+    local TEXT,
+    version INTEGER NOT NULL,
+    activa BOOLEAN NOT NULL DEFAULT TRUE,
+    -- EL IDENTIFICADOR DEL REWARD, generado al publicar y NUNCA recalculado.
+    --
+    -- Derivarlo de las condiciones —como se hacía antes— tenía un fallo que solo se ve en barra:
+    -- entre identificar al cliente y cerrar la factura, Dirección puede publicar otra versión, y
+    -- entonces rechazaríamos en caja un descuento que nosotros mismos acabábamos de ofrecer.
+    -- Guardándolo, la factura que vuelve encuentra SU versión, con SUS condiciones.
+    reward_id TEXT,
+    -- Minutos que un Reward ya emitido sigue valiendo después de que su versión sea sustituida.
+    -- NULL = solo mientras su versión esté vigente. Pendiente de decidir su valor.
+    gracia_minutos INTEGER,
+    puntos_por_euro NUMERIC NOT NULL,
+    redondeo TEXT NOT NULL DEFAULT 'floor',
+    puntos_necesarios INTEGER NOT NULL,
+    descuento_euros NUMERIC NOT NULL,
+    consumo_minimo NUMERIC NOT NULL,
+    caducidad_meses INTEGER NOT NULL,
+    max_rewards_factura INTEGER NOT NULL DEFAULT 1,
+    vigente_desde TEXT,
+    vigente_hasta TEXT,
+    creado_en TEXT NOT NULL,
+    creado_por TEXT NOT NULL,
+    CHECK (ambito IN ('global','local')),
+    CHECK (redondeo IN ('floor'))
+  )`);
+  // Una versión por ámbito y local. Reinsertar la misma no duplica: choca aquí.
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_regla_version
+    ON fid_reglas (ambito, COALESCE(local, ''), version)`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_regla_ambito ON fid_reglas (ambito, local, version DESC)`);
+  // Por él se busca la versión EXACTA cuando vuelve una factura con descuento.
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_regla_reward
+    ON fid_reglas (reward_id) WHERE reward_id IS NOT NULL`);
+  // Aditivo, por si la tabla ya existía de una versión anterior de este esquema.
+  for (const col of ["reward_id TEXT", "gracia_minutos INTEGER"]) {
+    try { await x.run(`ALTER TABLE fid_reglas ADD COLUMN IF NOT EXISTS ${col}`); }
+    catch (e) { console.error("[fidelizacion] alter fid_reglas:", e.message); }
+  }
+
+  // ── LO QUE HAY QUE MIRAR A MANO ────────────────────────────────────────────
+  //
+  // Varios socios en una factura, una devolución parcial, una devolución sin original. Son los
+  // casos de los que NO tenemos una prueba real, y adivinar en ellos es tocar el saldo de alguien.
+  // Se aceptan para no bloquear la caja, se anotan aquí y salen en el panel.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_revisiones (
+    id SERIAL PRIMARY KEY,
+    factura_id INTEGER NOT NULL,
+    local TEXT NOT NULL,
+    motivo TEXT NOT NULL,
+    detalle TEXT,
+    creado_en TEXT NOT NULL,
+    resuelto_en TEXT,
+    resuelto_por TEXT,
+    nota_resolucion TEXT
+  )`);
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_revision_factura
+    ON fid_revisiones (factura_id, motivo)`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_revision_abierta
+    ON fid_revisiones (creado_en DESC) WHERE resuelto_en IS NULL`);
+
+  // ── EL MODO SOMBRA ─────────────────────────────────────────────────────────
+  //
+  // Calcula lo que HABRÍA hecho, sin tocar ni un saldo ni contestar ni un Reward. Es lo que
+  // permite encender el programa sabiendo ya que los números salen, en vez de descubrirlo con
+  // clientes delante. NO guarda JSON ni nada del cliente: importes, puntos y motivo.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_sombra (
+    id SERIAL PRIMARY KEY,
+    factura_id INTEGER NOT NULL UNIQUE,
+    local TEXT NOT NULL,
+    importe_pagado_centimos INTEGER,
+    importe_antes_reward_centimos INTEGER,
+    suma_paid_centimos INTEGER,
+    suma_cambio_centimos INTEGER,
+    suma_propina_centimos INTEGER,
+    puntos_calculados INTEGER,
+    reward_aplicado BOOLEAN NOT NULL DEFAULT FALSE,
+    regla_id INTEGER,
+    regla_version INTEGER,
+    motivo TEXT,
+    creado_en TEXT NOT NULL
+  )`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_sombra_fecha ON fid_sombra (creado_en DESC)`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_sombra_local ON fid_sombra (local, creado_en DESC)`);
+  // Por motivo: es lo que contesta «¿cuántas facturas no se han podido calcular, y por qué?».
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_sombra_motivo ON fid_sombra (motivo, creado_en DESC)
+    WHERE motivo IS NOT NULL`);
+
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_mov_qr ON fid_movimientos (qr_id, creado_en DESC)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_mov_local ON fid_movimientos (local, creado_en DESC)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_mov_factura ON fid_movimientos (factura_id)`);

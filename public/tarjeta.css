@@ -62,6 +62,27 @@
 .tj-badge-apple { background: #000; color: #fff; }
 .tj-badge-google { background: #fff; color: #1c211f; border-color: #d5ded9; }
 
+/* ── Puntos ───────────────────────────────────────────────────────────────── */
+/* En su propia tarjeta, separada de los descuentos: los cupones son otro sistema y mezclarlos en
+   pantalla haría creer que un cupón se paga con puntos. */
+.tj-pts-n { margin: 0; font-size: 2.6rem; font-weight: 750; line-height: 1; letter-spacing: -.02em; }
+.tj-pts-eti { margin: .2rem 0 0; font-size: .95rem; color: #6d7a74; }
+
+/* La barra convierte un número suelto en una meta: se ve cuánto falta. */
+.tj-barra { margin: 1rem 0 .5rem; height: 10px; border-radius: 999px; background: #ecefed; overflow: hidden; }
+.tj-barra-in { height: 100%; width: 0; border-radius: 999px; background: #1c6b4b; transition: width .5s ease; }
+@media (prefers-reduced-motion: reduce) { .tj-barra-in { transition: none; } }
+
+.tj-pts-falta { margin: 0; font-size: .98rem; font-weight: 650; color: #1c6b4b; line-height: 1.45; }
+.tj-pts-regla { margin: .9rem 0 0; font-size: .92rem; color: #4c5854; line-height: 1.5; }
+.tj-pts-caduca { margin: .55rem 0 0; font-size: .9rem; color: #8a5a1c; line-height: 1.45; }
+.tj-pts-prep { margin: 0; font-size: .98rem; color: #4c5854; line-height: 1.55; }
+.tj-pts-mas { margin: 1rem 0 0; font-size: .92rem; }
+.tj-pts-mas summary { cursor: pointer; color: #4c5854; }
+.tj-pts-mas .tj-hist { margin-top: .6rem; }
+.tj-pts-resumen { margin: .7rem 0 0; font-size: .9rem; color: #6d7a74; line-height: 1.5; }
+.tj-mut { color: #6d7a74; }
+
 /* ── Visitas y descuentos ─────────────────────────────────────────────────── */
 .tj-h { margin: 0 0 .75rem; font-size: 1.05rem; font-weight: 700; }
 .tj-visitas { margin: 0; font-size: 1.15rem; font-weight: 650; line-height: 1.4; }

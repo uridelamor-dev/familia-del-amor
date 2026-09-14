@@ -344,13 +344,18 @@ describe("la Fase A no toca NADA del flujo actual", () => {
   test("Rewards sigue siendo []", () => {
     const agora = readFileSync(new URL("../src/modules/fidelizacion/agora.js", import.meta.url), "utf8");
     assert.match(agora, /export const REWARDS_FASE_1 = Object\.freeze\(\[\]\)/);
-    assert.match(agora, /Rewards: \[\.\.\.REWARDS_FASE_1\]/);
+    assert.match(agora, /Rewards: rewards && rewards\.length \? rewards : \[\.\.\.REWARDS_FASE_1\]/);
+    // El valor POR DEFECTO sigue siendo la lista vacía congelada: un Reward solo sale si alguien
+    // lo pasa a propósito, nunca porque nadie lo haya desactivado.
   });
 
   test("el manejador de facturas de Ágora no cambia", () => {
     const factura = server.slice(server.indexOf('app.post("/api/fidelizacion/agora/:token/factura"'),
                                  server.indexOf('app.post("/api/fidelizacion/integracion"'));
-    assert.ok(!/es_prueba|importes|proyectar/i.test(factura), "la recepción de facturas se ha tocado");
+    // La Fase B SÍ toca la recepción —ahí van los puntos—, pero la observación de la Fase A no
+    // puede haberse colado: la recepción no marca pruebas ni proyecta el cuerpo descifrado.
+    assert.ok(!/es_prueba/.test(factura), "la recepción marca facturas como prueba");
+    assert.ok(!/fidProyectarImportes/.test(factura), "la recepción proyecta el cuerpo");
     assert.match(factura, /fidRespuestaFactura\(\{\}\)/);
   });
 
@@ -363,10 +368,10 @@ describe("la Fase A no toca NADA del flujo actual", () => {
   });
 
   test("no se ha colado nada de las fases futuras", () => {
-    // `workplace_id` YA NO está en la lista: la vinculación del local entró con el multilocal, y
-    // es lo contrario de una fase futura colada de rondón — se confirma a mano y no da ni un punto.
+    // Van saliendo de la lista según se autorizan: `workplace_id` con el multilocal, `fid_reglas`
+    // y los puntos con la Fase B. Lo que queda es lo que sigue sin autorizarse.
     for (const futuro of ["puntos_pendientes", "motivo_pendiente", "fid_premios",
-                          "fid_reglas", "fid_productos", "export-master", "WorkplacesSummary"]) {
+                          "fid_productos", "export-master", "WorkplacesSummary"]) {
       assert.ok(!server.includes(futuro), `Fase A incluye algo de una fase futura: ${futuro}`);
     }
   });

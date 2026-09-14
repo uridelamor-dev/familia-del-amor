@@ -23,6 +23,18 @@
 // que se guarda. Ningún local viaja jamás en el cuerpo ni en la query de una ruta externa.
 
 import { esLocalCanonico } from "../facturas/local-canonico.js";
+import { evaluarFactura, planConsumo, planCaducidad, claveMov, caducaEn, rewardsAplicados,
+         rewardVigente } from "./puntos.js";
+
+/**
+ * La factura NO se puede cerrar y hay que decírselo a Ágora.
+ *
+ * Se reserva para lo que el camarero puede arreglar en la barra en un segundo: quitar el descuento
+ * o desasociar a un socio. Lanzarla deshace la transacción entera, así que ni un punto se consume.
+ */
+export class FacturaRechazada extends Error {
+  constructor(motivo, razon) { super(motivo); this.name = "FacturaRechazada"; this.motivo = motivo; this.razon = razon; }
+}
 
 /** Fase 1: nunca hay premios. Congelado para que no se pueda cambiar por accidente. */
 export const REWARDS_FASE_1 = Object.freeze([]);
@@ -229,11 +241,14 @@ export function textoParaCamarero(qr, { visitas = 0 } = {}) {
 }
 
 /** La respuesta exacta de la guía. `Rewards` es `[]` y en esta fase no puede ser otra cosa. */
-export function respuestaMiembro(qr, { visitas = 0 } = {}) {
+export function respuestaMiembro(qr, { visitas = 0, rewards = null } = {}) {
   return {
     MemberId: String(qr.token),
     DisplayText: textoParaCamarero(qr, { visitas }),
-    Rewards: [...REWARDS_FASE_1],
+    // Sin `rewards` explícitos, la lista VACÍA de siempre. Es el valor por defecto a propósito:
+    // ofrecer un descuento es una decisión que se toma en un sitio y se pasa aquí, nunca algo que
+    // aparezca porque nadie lo desactivó.
+    Rewards: rewards && rewards.length ? rewards : [...REWARDS_FASE_1],
   };
 }
 
@@ -499,7 +514,7 @@ export function crearTransaccion({ pool, toPositional, timeoutMs = 5000 }) {
  */
 export async function procesarFactura(x, { extracto, integracion, ahora, cuerpoBytes,
                                            cuerpoEnc = null, esquema = null, version = null,
-                                           hashMember, normalizar = null }) {
+                                           hashMember, normalizar = null, programa = null }) {
   // `ON CONFLICT DO NOTHING` es la idempotencia de verdad: dos reenvíos simultáneos se cruzan en
   // el índice único de la base, no en una comprobación previa que uno de los dos podría adelantar.
   const nueva = await x.run(
@@ -572,8 +587,132 @@ export async function procesarFactura(x, { extracto, integracion, ahora, cuerpoB
     if (r) escritos += 1;
   }
 
-  return { repetida: false, conflicto: false, facturaId, movimientos: escritos, sinMiembro: [], estado: ESTADOS.ACEPTADA };
+  // ── EL PROGRAMA DE PUNTOS ───────────────────────────────────────────────────────────────────
+  //
+  // Va DENTRO de esta misma transacción y DESPUÉS de las visitas, en el orden acordado: validar el
+  // reward, consumir lo viejo, y solo entonces conceder lo nuevo. Si algo falla aquí, el `throw`
+  // deshace también la factura y las visitas: o entra todo, o no entra nada. Un `accepted` con los
+  // puntos a medias sería peor que un rechazo, porque nadie se enteraría.
+  let puntos = null;
+  if (programa) puntos = await aplicarPrograma(x, { programa, extracto, conCarnet, integracion, ahora, facturaId });
+
+  return { repetida: false, conflicto: false, facturaId, movimientos: escritos, sinMiembro: [],
+           estado: ESTADOS.ACEPTADA, puntos };
 }
+
+/**
+ * Consume y concede puntos para UNA factura ya guardada.
+ *
+ * SE SERIALIZA LA CUENTA con un bloqueo de transacción antes de mirar el saldo. Sin él, dos cajas
+ * cerrando a la vez para el mismo socio leerían los mismos 100 puntos y los dos descuentos se
+ * darían con un solo canje. El bloqueo se suelta solo al terminar la transacción.
+ */
+async function aplicarPrograma(x, { programa, extracto, conCarnet, integracion, ahora, facturaId }) {
+  const { regla, interruptores, hash, json, idemV } = programa;
+  const local = integracion.local;
+
+  // Un solo socio es el caso con puntos. Con varios, `evaluarFactura` ya decide (rechazar si hay
+  // descuento, revisar si no lo hay) y aquí no se toca ni un saldo.
+  const socio = conCarnet.length === 1 ? conCarnet[0] : null;
+
+  let saldoDisponible = 0;
+  let movimientos = [];
+  if (socio) {
+    // EL CERROJO. `pg_advisory_xact_lock` sobre la cuenta, no sobre la tabla: dos socios distintos
+    // pueden cerrar a la vez sin esperarse.
+    await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [CERROJO_PUNTOS, socio.qrId]);
+    movimientos = await x.all(
+      `SELECT id, punto_tipo, unidades, lote_id, caduca_en, creado_en, factura_id, local, regla_id, regla_version
+         FROM fid_movimientos WHERE qr_id = ? AND concepto = 'puntos' ORDER BY id`, [socio.qrId]);
+    saldoDisponible = saldoDe(movimientos, ahora);
+  }
+
+  // LA VERSIÓN DEL REWARD SE BUSCA POR SU `reward_id`, no se deduce de la regla de hoy. Entre
+  // ofrecer el descuento y cerrar la factura pueden pasar veinte minutos y una versión nueva.
+  let reglaReward = null;
+  const aplicados = rewardsAplicados(json);
+  if (aplicados.length === 1 && aplicados[0] && aplicados[0].Id) {
+    reglaReward = await x.get(`SELECT * FROM fid_reglas WHERE reward_id = ?`, [String(aplicados[0].Id)]);
+    if (reglaReward) {
+      const v = rewardVigente(reglaReward, { ahora });
+      // Si su versión ya no vale —sustituida sin gracia, o desactivada a mano— se trata como si no
+      // se hubiera encontrado: el camarero quita el descuento y vuelve a intentarlo.
+      if (!v.ok) reglaReward = null;
+    }
+  }
+
+  const d = evaluarFactura({ json, extracto, regla, reglaReward, local, interruptores, saldoDisponible, ahora });
+  if (d.accion === "rechazar") throw new FacturaRechazada(d.motivo, d.razon);
+  if (!socio) return d;
+
+  const mete = async (tipo, unidades, extra = {}) => {
+    const r = await x.run(
+      `INSERT INTO fid_movimientos (qr_id, member_hash, local, concepto, punto_tipo, unidades, importe,
+         clave_idem, factura_id, lote_id, caduca_en, regla_id, regla_version, importe_centimos, nota, autor, creado_en)
+       VALUES (?,?,?,'puntos',?,?,0,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING RETURNING id`,
+      [socio.qrId, socio.hash, local, tipo, unidades, extra.clave, facturaId, extra.lote ?? null,
+       extra.caduca ?? null, extra.reglaId ?? regla?.id ?? null, extra.reglaVersion ?? regla?.version ?? null,
+       extra.centimos ?? null, extra.nota ?? null, "agora", ahora]);
+    return r ? r.id : null;
+  };
+
+  // 1. LO CADUCADO SE ANOTA ANTES DE NADA. Así el libro explica el saldo sin que haya que
+  //    recalcular nada por fuera, y el consumo de después no puede tocar un lote muerto.
+  for (const c of planCaducidad(movimientos, { ahora })) {
+    await mete("caducados", c.unidades, { lote: c.lote_id, caduca: c.caduca_en,
+      clave: claveMov(idemV, local, "caduca", String(c.lote_id), "l") });
+  }
+
+  // 2. CONSUMIR LO VIEJO, EN FIFO. Antes de conceder: los puntos nuevos de esta misma factura no
+  //    pueden pagar su propio descuento.
+  if (d.consumo) {
+    const plan = planConsumo(movimientos, d.consumo.puntos, { ahora });
+    // El saldo ya se comprobó con el cerrojo puesto, así que esto no debería fallar. Si falla, se
+    // rechaza: es preferible a consumir a medias.
+    if (!plan.ok) throw new FacturaRechazada("saldo_insuficiente", "El socio ya no tiene puntos suficientes. Quita el descuento.");
+    for (const [i, paso] of plan.pasos.entries()) {
+      await mete("consumidos", paso.unidades, { lote: paso.lote_id, caduca: paso.caduca_en,
+        centimos: d.consumo.valor_centimos,
+        nota: d.consumo.reward_id,
+        // La versión con la que se consumió es la DEL REWARD, que puede no ser la vigente hoy.
+        reglaId: d.consumo.regla_id, reglaVersion: d.consumo.regla_version,
+        clave: claveMov(idemV, local, "consume", extracto.globalId, `${i}:${paso.lote_id}`) });
+    }
+  }
+
+  // 3. CONCEDER LO NUEVO. Un lote con su propia caducidad.
+  if (d.puntos > 0) {
+    await mete("ganados", d.puntos, { caduca: d.caduca_en, centimos: d.importe_pagado,
+      clave: claveMov(idemV, local, "gana", extracto.globalId, "1") });
+  }
+
+  return d;
+}
+
+/** El saldo de una cuenta, a partir de sus movimientos de puntos. Sin saldo guardado en ningún sitio. */
+function saldoDe(movimientos, ahora) {
+  const lotes = new Map();
+  for (const m of movimientos) if (m.punto_tipo === "ganados") lotes.set(m.id, { u: Number(m.unidades) || 0, c: m.caduca_en });
+  for (const m of movimientos) {
+    if (m.punto_tipo === "ganados" || m.lote_id == null) continue;
+    const l = lotes.get(m.lote_id);
+    if (l) l.u += Number(m.unidades) || 0;
+  }
+  let total = 0;
+  for (const l of lotes.values()) {
+    if (l.u <= 0) continue;
+    if (l.c && String(l.c) <= String(ahora)) continue;
+    total += l.u;
+  }
+  return total;
+}
+
+/** El espacio de nombres del cerrojo de una CUENTA. El segundo argumento es el carné. */
+export const CERROJO_PUNTOS = 815301;
+
+/** El cerrojo de PUBLICAR UNA REGLA. Uno solo para todas: se publican muy de vez en cuando, y
+ *  serializarlas entre sí cuesta menos que razonar sobre versiones que se cruzan. */
+export const CERROJO_REGLAS = 815302;
 
 /** La respuesta de la guía cuando la factura entra bien. `PrinterText` vacío: en esta fase no hay
  *  nada que imprimir en el ticket, y escribir algo sería prometer un premio que no existe. */

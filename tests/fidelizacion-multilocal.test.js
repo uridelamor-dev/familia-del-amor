@@ -375,7 +375,7 @@ describe("mientras está en verificación, no hay nada de premios", () => {
   test("Rewards sigue vacío y congelado", () => {
     assert.deepEqual([...REWARDS_FASE_1], []);
     assert.throws(() => { REWARDS_FASE_1.push({}); }, TypeError);
-    assert.match(agora, /Rewards: \[\.\.\.REWARDS_FASE_1\]/);
+    assert.match(agora, /Rewards: rewards && rewards\.length \? rewards : \[\.\.\.REWARDS_FASE_1\]/);
   });
 
   test("el panel avisa con todas las letras", () => {
@@ -386,8 +386,8 @@ describe("mientras está en verificación, no hay nada de premios", () => {
   });
 
   test("no se han colado puntos, promociones ni catálogo", () => {
-    for (const futuro of ["puntos_pendientes", "fid_puntos", "fid_premios", "fid_reglas",
-                          "fid_productos", "export-master", "WorkplacesSummary"]) {
+    // `fid_reglas` salió de la lista con la Fase B. Lo que queda es lo que sigue sin autorizar.
+    for (const futuro of ["fid_premios", "fid_productos", "export-master", "WorkplacesSummary"]) {
       assert.ok(!server.includes(futuro), `se ha colado ${futuro}`);
     }
     // Y la fidelización sigue sin escribir en promociones ni canjes.
@@ -406,7 +406,9 @@ describe("CANDADOS: lo que esta fase NO puede haber tocado", () => {
     assert.deepEqual([...REWARDS_FASE_1], []);
     assert.throws(() => { REWARDS_FASE_1.push({}); }, TypeError);
     assert.match(agora, /export const REWARDS_FASE_1 = Object\.freeze\(\[\]\)/);
-    assert.match(agora, /Rewards: \[\.\.\.REWARDS_FASE_1\]/);
+    assert.match(agora, /Rewards: rewards && rewards\.length \? rewards : \[\.\.\.REWARDS_FASE_1\]/);
+    // El valor POR DEFECTO sigue siendo la lista vacía congelada: un Reward solo sale si alguien
+    // lo pasa a propósito, nunca porque nadie lo haya desactivado.
   });
 
   test("la lista cerrada de importes NO se ha ampliado: siguen siendo 33 rutas", () => {
@@ -418,12 +420,20 @@ describe("CANDADOS: lo que esta fase NO puede haber tocado", () => {
     assert.match(importes, /for \(const ruta of RUTAS\)/);
   });
 
-  test("ni puntos, ni promociones, ni export-master", () => {
-    for (const futuro of ["puntos_pendientes", "fid_puntos", "fid_premios", "fid_reglas",
-                          "fid_productos", "export-master", "WorkplacesSummary", "CashDiscount",
-                          "DiscountRate: ", "NamedDiscount"]) {
+  test("de los cuatro tipos de Reward, SOLO CashDiscount", () => {
+    // `CashDiscount` entró con la Fase B y es el único acordado. Los otros tres siguen sin
+    // implementarse, y que aparezca uno querría decir que alguien amplió el programa de rondón.
+    for (const futuro of ["fid_premios", "fid_productos", "export-master", "WorkplacesSummary",
+                          "NamedDiscount", "OfferId:", "Type: \"DiscountRate\"", "Type: \"Offer\""]) {
       assert.ok(!server.includes(futuro), `se ha colado ${futuro}`);
     }
+    // El tipo sale de UNA constante, no de un literal repetido: así el que se emite y el que se
+    // acepta al volver son el mismo por construcción.
+    const puntos = readFileSync(new URL("../src/modules/fidelizacion/puntos.js", import.meta.url), "utf8");
+    assert.match(puntos, /export const TIPO_REWARD = "CashDiscount";/);
+    assert.match(puntos, /Type: TIPO_REWARD,/);
+    const literales = [...puntos.matchAll(/Type: "([A-Za-z]+)"/g)].map((m) => m[1]);
+    assert.deepEqual(literales, [], "hay un tipo de Reward escrito a mano");
   });
 
   test("no se escribe en pro_promociones ni en pro_canjes", () => {
@@ -804,12 +814,23 @@ describe("permisos: la matriz completa, no «Marketing no entra»", () => {
     }
   });
 
-  test("no hay ninguna ruta de fidelización con otro rol", () => {
+  test("las rutas del PROGRAMA son de Dirección y Marketing, y solo esas", () => {
+    const compartidas = ["/api/fidelizacion/reglas", "/api/fidelizacion/interruptores",
+                         "/api/fidelizacion/revisiones", "/api/fidelizacion/sombra",
+                         "/api/fidelizacion/socio"];
+    for (const c of compartidas) {
+      const firmas = [...server.matchAll(new RegExp(`app\\.(get|post)\\("${c.replace(/\//g, "\\/")}", ([^,]+),`, "g"))];
+      assert.ok(firmas.length >= 1, `falta ${c}`);
+      for (const f of firmas) assert.equal(f[2].trim(), "requireAuth(PROMOS_ROLES)", c);
+    }
+  });
+
+  test("no hay ninguna ruta de fidelización con un rol inesperado", () => {
     const todas = [...server.matchAll(/app\.(get|post|put|delete)\("(\/api\/fidelizacion\/[^"]*)", ([^,]*),/g)]
       // Las dos externas las llama Ágora con su token y no tienen sesión: su candado es otro y
       // tiene su propio test justo encima.
       .filter((m) => !m[2].startsWith("/api/fidelizacion/agora/:token/"));
-    const raras = todas.filter((m) => !/requireAuth\(\["direccion"\]\)/.test(m[3]))
+    const raras = todas.filter((m) => !/requireAuth\(\["direccion"\]\)|requireAuth\(PROMOS_ROLES\)/.test(m[3]))
                        .map((m) => `${m[1].toUpperCase()} ${m[2]} → ${m[3]}`);
     assert.deepEqual(raras, [], "hay rutas de fidelización que no son solo de Dirección");
   });

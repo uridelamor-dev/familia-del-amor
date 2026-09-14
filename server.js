@@ -105,11 +105,22 @@ import { lineaErrorSql } from "./src/modules/seguridad/redactar.js";
 import { ensureSchemaFidelizacion } from "./src/modules/fidelizacion/schema.js";
 import { proyectarImportes as fidProyectarImportes } from "./src/modules/fidelizacion/importes.js";
 import { crearAcumulador as fidCrearAcumulador } from "./src/modules/fidelizacion/discrepancias.js";
+import { estadoPreparacion as fidEstadoPreparacion, puedeEncender as fidPuedeEncender,
+         aplicarBloqueo as fidAplicarBloqueo, NIVEL as FID_NIVEL,
+         permitidos as fidPermitidos } from "./src/modules/fidelizacion/preparacion.js";
+import { reglaVigente as fidReglaVigente, rewardDe as fidRewardDe, saldo as fidSaldo,
+         importePagado as fidImportePagado, puntosDe as fidPuntosDe, evaluarFactura as fidEvaluar,
+         caducaEn as fidCaducaEn, centimos as fidCentimos, aEuros as fidAEuros,
+         INTERRUPTORES as FID_INTERRUPTORES, MOTIVOS as FID_MOTIVOS,
+         clasificarDevolucion as fidClasificarDevolucion, textoGracia as fidTextoGracia,
+         GRACIA_DEFECTO as FID_GRACIA_DEFECTO, GRACIA_MAX as FID_GRACIA_MAX
+       } from "./src/modules/fidelizacion/puntos.js";
 import { REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CUERPO as FID_MAX_CUERPO,
          estadoVerificacion as fidEstadoVerificacion, ESTADOS_VERIFICACION as FID_ESTADOS_VER,
          botonesDe as fidBotonesDe, BOTONES_POR_ESTADO as FID_BOTONES,
          discrepanciaWorkplace as fidDiscrepanciaWorkplace,
          MAX_POR_MINUTO as FID_MAX_MIN, VIDA_DIAS as FID_VIDA_DIAS, ESTADOS as FID_ESTADOS,
+         FacturaRechazada as FidFacturaRechazada, CERROJO_REGLAS as FID_CERROJO_REGLAS,
          nuevoToken as fidNuevoToken, pistaToken as fidPistaToken, estadoIntegracion as fidEstadoIntegracion,
          caducidadDesde as fidCaducidad, respuestaMiembro as fidRespuestaMiembro, carnetUtilizable as fidCarnetUtilizable,
          extraerFactura as fidExtraerFactura, procesarFactura as fidProcesarFactura, respuestaFactura as fidRespuestaFactura,
@@ -10801,6 +10812,22 @@ app.get("/api/cupon/:token", async (req, res) => {
 // ── Panel (Marketing): promociones y emisión de QR ───────────────────────────
 const PROMOS_ROLES = ["direccion", "marketing"];
 
+/**
+ * Un carné por su id INTERNO, para los informes.
+ *
+ * No pasa por `resolverMiembro` porque no es la misma pregunta: aquélla resuelve lo que teclea o
+ * escanea alguien —un token, una URL, ocho dígitos— y por eso tiene que ser única. Esto recibe una
+ * clave primaria que ya salió de nuestra propia consulta. Vive aquí, fuera de la zona de
+ * fidelización, para que el candado que prohíbe consultar `pro_qr` por ahí siga teniendo sentido.
+ */
+async function fidCarnetPorId(id) {
+  try { return await dbGet(`SELECT id, nombre, clase, anulado_en, telefono FROM pro_qr WHERE id = ?`, [parseInt(id)]); }
+  catch { return null; }
+}
+
+/** Días de calendario entre dos fechas ISO. Sobre fechas, no sobre milisegundos. */
+const diasEntreISO = (a, b) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 86400000);
+
 /** La base pública de los enlaces que se mandan al cliente. */
 const proBase = (req) =>
   (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
@@ -11583,12 +11610,69 @@ app.get("/api/tarjeta/:token", async (req, res) => {
     const disponible = await walletDisponible();
     const cuenta = construirCuenta({ qr, metricas, cupones, visitas, hoy: hoyISO() });
 
+    // ── SUS PUNTOS ──────────────────────────────────────────────────────────────────────────
+    //
+    // Va AQUÍ y no en un endpoint nuevo: esta ruta ya está autenticada por el token del propio
+    // carné, que es exactamente el permiso que hace falta. Un endpoint aparte sería otro sitio
+    // donde equivocarse, y el interno `/api/fidelizacion/socio` pide sesión de Dirección.
+    //
+    // MIENTRAS SOLO ESTÉ LA SOMBRA NO SE ENSEÑA NINGÚN SALDO. Decirle a alguien que tiene 120
+    // puntos cuando el programa no está concediendo sería una promesa que luego hay que retirar,
+    // y el cliente tendría razón en enfadarse. Se dice que está en preparación, o no se dice nada.
+    let fidelizacion = null;
+    try {
+      const sw = await fidInterruptores();
+      const ahoraIso = isoConOffset(Date.now());
+      const reglaCli = fidReglaVigente(await fidReglasDe(null), { local: null, ahora: ahoraIso });
+      if (!sw.conceder) {
+        fidelizacion = { estado: "en_preparacion",
+          titulo: "Programa de puntos en preparación",
+          texto: "Todavía no estás acumulando puntos. Te avisaremos cuando esté en marcha." };
+      } else {
+        const sal = await fidSaldoDe(qr.id, ahoraIso);
+        const movs = await dbAll(
+          `SELECT punto_tipo, unidades, caduca_en, creado_en, local FROM fid_movimientos
+            WHERE qr_id = ? AND concepto = 'puntos' ORDER BY id DESC LIMIT 20`, [qr.id]) || [];
+        const suma = (t) => movs.filter((m) => m.punto_tipo === t).reduce((a, m) => a + Number(m.unidades || 0), 0);
+        const necesarios = reglaCli ? Number(reglaCli.puntos_necesarios) : null;
+        fidelizacion = {
+          estado: "activo",
+          disponible: sal.disponible,
+          // El progreso hasta el próximo descuento, para que se vea cuánto falta.
+          necesarios, faltan: necesarios ? Math.max(0, necesarios - sal.disponible) : null,
+          progreso: necesarios ? Math.min(100, Math.round((sal.disponible / necesarios) * 100)) : null,
+          equivalencia: reglaCli
+            ? { puntos: Number(reglaCli.puntos_necesarios), euros: Number(reglaCli.descuento_euros),
+                minimo: Number(reglaCli.consumo_minimo), caducidad_meses: Number(reglaCli.caducidad_meses) }
+            : null,
+          ganados: suma("ganados"),
+          consumidos: -suma("consumidos"),
+          caducados: -suma("caducados"),
+          proxima_caducidad: sal.proxima_caducidad,
+          caducan_pronto: sal.lotes.length ? sal.lotes[0].restante : 0,
+          // Movimientos SIN identificadores internos: ni id, ni factura, ni lote, ni regla.
+          movimientos: movs.map((m) => ({ tipo: m.punto_tipo, puntos: Number(m.unidades || 0),
+            fecha: String(m.creado_en || "").slice(0, 10), local: m.local })),
+          // Los descuentos que puede usar YA. Vacío mientras no se ofrezcan.
+          rewards: sw.ofrecer && reglaCli && sal.disponible >= Number(reglaCli.puntos_necesarios)
+            ? [{ nombre: `${Number(reglaCli.descuento_euros)} € de descuento`,
+                 minimo: Number(reglaCli.consumo_minimo) }]
+            : [],
+        };
+      }
+    } catch (e) {
+      // Que falle el bloque de puntos no puede dejar a nadie sin su tarjeta.
+      console.error(lineaErrorSql("[tarjeta] puntos", e));
+      fidelizacion = null;
+    }
+
     res.json({
       ok: true,
       vale: info.canjeable,
       estado: info.estado,
       texto: info.texto,
       qr: imagen,
+      fidelizacion,
       ...cuenta,
       // Los botones solo si la tarjeta vale: ofrecer guardar en el móvil una tarjeta anulada es
       // prometer algo que fallará en la barra dentro de dos semanas.
@@ -17501,6 +17585,59 @@ function fidRateLimit(req, res, clave) {
 
 /** Resuelve la integración de un token. Nunca escribe el token en ningún sitio. */
 /**
+ * LOS CUATRO INTERRUPTORES DEL PROGRAMA DE PUNTOS. Separados, y se encienden de uno en uno.
+ *
+ *   sombra    calcula y guarda una proyección. NO toca saldos ni contesta Rewards.
+ *   conceder  escribe los puntos ganados en el libro.
+ *   ofrecer   manda el Reward a Ágora al validar el carné.
+ *   frenar    (consumir) acepta que una factura traiga el descuento y gasta los puntos.
+ *
+ * NACEN TODOS APAGADOS MENOS LA SOMBRA. Es lo que permite encender esto sabiendo ya que los
+ * números salen, en vez de descubrirlo con clientes delante: primero se mira, después se concede,
+ * y solo al final se ofrece y se consume.
+ *
+ * Y el orden importa: `consumir` sin `conceder` dejaría gastar puntos que nadie ha dado.
+ */
+const FID_SW_DEFECTO = Object.freeze({ sombra: true, conceder: false, ofrecer: false, consumir: false });
+
+async function fidInterruptores() {
+  const out = { ...FID_SW_DEFECTO };
+  for (const k of FID_INTERRUPTORES) {
+    try {
+      const v = await getConfig(`fid_${k}`);
+      if (v !== null && v !== undefined) out[k] = String(v) === "1";
+    } catch { /* sin config, el valor por defecto; nunca se enciende nada por un fallo de lectura */ }
+  }
+  // Ofrecer o consumir sin conceder daría descuentos sobre puntos que no se están dando. Se apagan
+  // aquí y no en el panel: una comprobación en la pantalla se salta con una llamada a la API.
+  if (!out.conceder) { out.ofrecer = false; out.consumir = false; }
+
+  // Y ENCIMA DE TODO, el bloqueo de preparación. Aunque alguien consiguiera escribir
+  // `fid_conceder = 1` por cualquier vía —una migración, la consola de la base, un despiste—,
+  // aquí se vuelve a apagar. Lo guardado es una intención; esto es lo que pasa de verdad.
+  return fidAplicarBloqueo(out, FID_NIVEL);
+}
+
+/** Las reglas de un local: las suyas y las globales. La resolución la hace el módulo puro. */
+async function fidReglasDe(local) {
+  try {
+    return await dbAll(
+      `SELECT * FROM fid_reglas WHERE ambito = 'global' OR (ambito = 'local' AND local = ?)
+        ORDER BY version DESC`, [local]) || [];
+  } catch { return []; }
+}
+
+/** El saldo de un carné, calculado del libro. Nunca hay un saldo guardado que pueda desviarse. */
+async function fidSaldoDe(qrId, ahora) {
+  try {
+    const movs = await dbAll(
+      `SELECT id, punto_tipo, unidades, lote_id, caduca_en, creado_en, factura_id, local, regla_id, regla_version
+         FROM fid_movimientos WHERE qr_id = ? AND concepto = 'puntos' ORDER BY id`, [qrId]) || [];
+    return fidSaldo(movs, { ahora });
+  } catch { return { disponible: 0, lotes: [], lotes_caducados: [], proxima_caducidad: null, caducado_sin_anotar: 0 }; }
+}
+
+/**
  * UNA LÍNEA DE AUDITORÍA POR SERVICIO, NO POR FACTURA.
  *
  * La lógica vive en `src/modules/fidelizacion/discrepancias.js`, que es pura y está ACOTADA: el
@@ -17602,11 +17739,41 @@ app.get("/api/fidelizacion/agora/:token/member/:memberId", async (req, res) => {
   const qr = r.qr;
 
   const visitas = await fidVisitasDe(qr.id);
-  await apunta(integ.fila.id, integ.fila.local, "ok");
+
+  // ── ¿SE LE OFRECE EL DESCUENTO? ────────────────────────────────────────────────────────────
+  //
+  // Cinco condiciones, y todas tienen que cumplirse. Ofrecer un Reward que luego no se pueda
+  // consumir es lo peor que puede pasar aquí: el camarero lo aplica, la factura se rechaza al
+  // cerrar y hay que deshacerlo con el cliente delante.
+  //
+  // Por eso NO se ofrece con la integración «en verificación»: todavía no sabemos si ese token
+  // está en el TPV que creemos, y un descuento es dinero.
+  let rewards = null;
+  try {
+    const sw = await fidInterruptores();
+    const esperaConfirmacion = !integ.fila.workplace_confirmado_en;
+    if (sw.ofrecer && !esperaConfirmacion) {
+      const ahoraIso = isoConOffset(Date.now());
+      const regla = fidReglaVigente(await fidReglasDe(integ.fila.local), { local: integ.fila.local, ahora: ahoraIso });
+      if (regla) {
+        const s = await fidSaldoDe(qr.id, ahoraIso);
+        if (s.disponible >= regla.puntos_necesarios) {
+          rewards = [fidRewardDe(regla, integ.fila.local)].filter(Boolean);
+        }
+      }
+    }
+  } catch (e) {
+    // Un fallo calculando el descuento NO puede tumbar la validación: el camarero se queda sin
+    // ofrecerlo, que es molesto, pero identificar al socio sigue funcionando.
+    console.error(lineaErrorSql("[fidelizacion] rewards", e));
+    rewards = null;
+  }
+
+  await apunta(integ.fila.id, integ.fila.local, rewards ? "ok:reward" : "ok");
   res.status(200)
      .set("Content-Type", "application/json; charset=utf-8")
      .set("Cache-Control", "no-store")
-     .send(JSON.stringify(fidRespuestaMiembro(qr, { visitas })));
+     .send(JSON.stringify(fidRespuestaMiembro(qr, { visitas, rewards })));
 });
 
 // ── 2) FACTURA · POST ────────────────────────────────────────────────────────
@@ -17633,10 +17800,21 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
   catch { return res.status(200).json({ Status: "rejected", RejectReason: "Formato no reconocido" }); }
 
   const ahora = isoConOffset(Date.now());
+
+  // El programa de puntos que se le pasa a la transacción. La regla se resuelve AQUÍ y viaja
+  // entera: dentro de la transacción no se vuelve a elegir, así que el cálculo y lo que se guarda
+  // en el libro son con la misma versión sí o sí.
+  let sw = FID_SW_DEFECTO, reglaHoy = null;
+  try {
+    sw = await fidInterruptores();
+    reglaHoy = fidReglaVigente(await fidReglasDe(integ.fila.local), { local: integ.fila.local, ahora });
+  } catch (e) { console.error(lineaErrorSql("[fidelizacion] regla", e)); }
+
   let resultado;
   try {
     resultado = await fidTransaccion(async (x) => {
       return fidProcesarFactura(x, {
+        programa: { regla: reglaHoy, interruptores: sw, hash: fidHash, json, idemV: FID_IDEM_V },
         extracto, integracion: integ.fila, ahora, cuerpoBytes: bruto.length,
         // El primer JSON real hace falta ENTERO para diseñar la Fase 2, y por eso se cifra con
         // DATA_ENC_KEY en lugar de guardarse en claro: dentro puede haber datos de un cliente.
@@ -17648,6 +17826,21 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
       });
     });
   } catch (e) {
+    // LA FACTURA NO SE PUEDE CERRAR Y HAY QUE DECIRLO. La transacción ya se ha deshecho entera: ni
+    // factura, ni visita, ni un punto consumido. Se reserva para lo que el camarero arregla en un
+    // segundo —quitar el descuento, desasociar a un socio—, y el motivo se le dice con palabras.
+    //
+    // Un `rejected` NO cierra la factura, que es justo lo que se quiere aquí: si se cerrara, el
+    // descuento se habría aplicado sin consumir puntos.
+    if (e instanceof FidFacturaRechazada) {
+      try {
+        await ficAuditar("fidelizacion", null, "factura_rechazada", "agora",
+          { local: integ.fila.local, detalle: { global_id: extracto.globalId, motivo: e.motivo } });
+      } catch { /* el registro no puede cambiar la respuesta */ }
+      return res.status(200).set("Cache-Control", "no-store")
+        .json({ Status: "rejected", RejectReason: e.razon || "No se puede aplicar la fidelización" });
+    }
+
     // El participante no es válido. La guía lo dice con todas las letras: «en caso de que el
     // identificador de participante no sea válido, el servidor deberá devolver un código de
     // respuesta 404 Not Found». La transacción ya se ha deshecho: ni factura, ni visita, ni
@@ -17692,6 +17885,49 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
                  movimientos: resultado.movimientos, sin_miembro: resultado.sinMiembro.length, agora_version: version || null },
     });
   } catch { /* la auditoría no puede tumbar la respuesta */ }
+
+  // ── EL MODO SOMBRA ──────────────────────────────────────────────────────────────────────────
+  //
+  // Calcula lo que HABRÍA hecho y lo guarda para poder compararlo, sin tocar ni un saldo. Va
+  // después del COMMIT y en su propio try: es diagnóstico, y un fallo aquí no puede cambiar lo que
+  // se le contesta a la caja.
+  //
+  // NO GUARDA NI UN JSON NI UN DATO DEL CLIENTE: importes, puntos, la regla y el motivo.
+  try {
+    if (sw.sombra && resultado.facturaId && !resultado.repetida) {
+      const pago = fidImportePagado(json);
+      const p = resultado.puntos || null;
+      await dbRun(
+        `INSERT INTO fid_sombra (factura_id, local, importe_pagado_centimos, importe_antes_reward_centimos,
+           suma_paid_centimos, suma_cambio_centimos, suma_propina_centimos, puntos_calculados,
+           reward_aplicado, regla_id, regla_version, motivo, creado_en)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (factura_id) DO NOTHING`,
+        [resultado.facturaId, integ.fila.local, pago.amount,
+         p?.importe_antes_reward ?? pago.amount, pago.paid, pago.cambio, pago.propina,
+         reglaHoy ? fidPuntosDe(pago.amount, reglaHoy) : null,
+         !!(p && p.consumo), reglaHoy?.id ?? null, reglaHoy?.version ?? null,
+         p?.motivo ?? (reglaHoy ? null : FID_MOTIVOS.SIN_REGLA), ahora]);
+    }
+  } catch (e) { console.error(lineaErrorSql("[fidelizacion] sombra", e)); }
+
+  // ── LO QUE HAY QUE MIRAR A MANO ─────────────────────────────────────────────────────────────
+  //
+  // Varios socios sin descuento y devoluciones parciales: se aceptan para no bloquear la caja, no
+  // se toca ni un punto, y quedan anotadas para que salgan en el panel. De estos casos NO tenemos
+  // una prueba real, y adivinar ahí es tocar el saldo de alguien.
+  try {
+    const motivos = [];
+    if (resultado.puntos?.accion === "revisar") motivos.push(resultado.puntos.motivo);
+    if (extracto.devolucion) {
+      const dev = fidClasificarDevolucion(json, { original: null });
+      if (dev.es && dev.clase !== "total") motivos.push(dev.motivo || FID_MOTIVOS.DEVOLUCION_PARCIAL);
+    }
+    for (const m of motivos) {
+      await dbRun(`INSERT INTO fid_revisiones (factura_id, local, motivo, detalle, creado_en)
+                   VALUES (?,?,?,?,?) ON CONFLICT (factura_id, motivo) DO NOTHING`,
+        [resultado.facturaId, integ.fila.local, m, null, ahora]);
+    }
+  } catch (e) { console.error(lineaErrorSql("[fidelizacion] revision", e)); }
 
   // ¿VIENE DEL TPV QUE CREEMOS? Solo se comprueba si Dirección confirmó un Workplace para este
   // local. Se APUNTA, no se rechaza: la factura ya está guardada en el local de su token, que es
@@ -18403,6 +18639,386 @@ app.post("/api/fidelizacion/facturas/purgar-cuerpos", requireAuth(["direccion"])
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] purgar cuerpos", e));
     res.status(500).json({ ok: false, error: "No se pudo purgar" });
+  }
+});
+
+// ── El programa de puntos: reglas, interruptores y trazabilidad ──────────────
+//
+// DIRECCIÓN Y MARKETING. Aquí se administra el programa comercial —cuántos puntos, qué descuento,
+// qué mínimo—, que es trabajo de marketing. Lo que NO entra aquí son los tokens, el Workplace, los
+// cuerpos de prueba ni nada de seguridad técnica: eso sigue siendo solo de Dirección.
+
+/** Las reglas de todos los ámbitos, con cuál está vigente en cada local. */
+app.get("/api/fidelizacion/reglas", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const ahora = isoConOffset(Date.now());
+    const todas = await dbAll(`SELECT * FROM fid_reglas ORDER BY ambito, local NULLS FIRST, version DESC`) || [];
+    const vigentes = LOCALES_CANON.map((local) => {
+      const r = fidReglaVigente(todas.filter((x) => x.ambito === "global" || x.local === local), { local, ahora });
+      return { local, regla: r || null };
+    });
+    res.json({ ok: true, reglas: todas, vigentes, interruptores: await fidInterruptores(),
+      defecto: FID_SW_DEFECTO, preparacion: fidEstadoPreparacion(FID_NIVEL),
+      gracia: { propuesta: FID_GRACIA_DEFECTO, max: FID_GRACIA_MAX,
+                texto: fidTextoGracia(FID_GRACIA_DEFECTO) } });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] reglas", e));
+    res.status(500).json({ ok: false, error: "No se pudieron leer las reglas" });
+  }
+});
+
+/**
+ * UNA VERSIÓN NUEVA. Nunca se edita una existente.
+ *
+ * Es lo que permite explicar una factura de hace tres meses: sus movimientos guardan `regla_id` y
+ * `regla_version`, y esa fila sigue ahí tal cual se escribió. Editar en sitio haría imposible
+ * contestar «¿por qué ganó 56 puntos?» en cuanto alguien tocara el programa.
+ *
+ * La versión se calcula aquí, no la manda el cliente: dos pestañas abiertas a la vez mandarían la
+ * misma y una pisaría a la otra. El índice único es el segundo cerrojo.
+ */
+app.post("/api/fidelizacion/reglas", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ambito = b.ambito === "local" ? "local" : "global";
+    let local = null;
+    if (ambito === "local") {
+      const pedido = fidLocalDePeticion(req, b.local);
+      if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+      local = pedido.local;
+    }
+
+    // NINGÚN IMPORTE COMERCIAL VIVE EN EL CÓDIGO: todos vienen de aquí, y todos se comprueban.
+    const num = (v, { min = 0, max = 1e6, entero = false } = {}) => {
+      // UN CAMPO VACÍO NO ES UN CERO. `Number("")` da 0, y con eso un `consumo_minimo` en blanco
+      // se habría guardado como «sin mínimo» y una gracia en blanco como «sin margen», sin que
+      // nadie lo hubiera escrito. Se rechaza y el endpoint contesta 400 diciendo cuál falta.
+      if (v === null || v === undefined) return null;
+      const t = typeof v === "number" ? v : String(v).trim();
+      if (t === "") return null;
+      const n = typeof t === "number" ? t : Number(t.replace(",", "."));
+      if (!Number.isFinite(n) || n < min || n > max) return null;
+      return entero ? (Number.isInteger(n) ? n : null) : n;
+    };
+    const campos = {
+      puntos_por_euro: num(b.puntos_por_euro, { min: 0.01, max: 100 }),
+      puntos_necesarios: num(b.puntos_necesarios, { min: 1, max: 100000, entero: true }),
+      descuento_euros: num(b.descuento_euros, { min: 0.01, max: 1000 }),
+      consumo_minimo: num(b.consumo_minimo, { min: 0, max: 100000 }),
+      caducidad_meses: num(b.caducidad_meses, { min: 1, max: 120, entero: true }),
+      max_rewards_factura: num(b.max_rewards_factura, { min: 1, max: 1, entero: true }),
+      // 0 es estricto y es un valor válido, así que el mínimo es 0 y no 1. Fuera del rango se
+      // RECHAZA: recortar en silencio dejaría una gracia distinta de la que alguien escribió.
+      gracia_minutos: b.gracia_minutos === undefined || b.gracia_minutos === null
+        ? FID_GRACIA_DEFECTO
+        : num(b.gracia_minutos, { min: 0, max: FID_GRACIA_MAX, entero: true }),
+    };
+    const faltan = Object.entries(campos).filter(([, v]) => v === null).map(([k]) => k);
+    if (faltan.length) return res.status(400).json({ ok: false, error: `Valores no válidos: ${faltan.join(", ")}` });
+    if (b.redondeo && b.redondeo !== "floor") {
+      // Solo `floor` está acordado. Aceptar otros sin haberlos decidido dejaría puesto un
+      // comportamiento que nadie ha aprobado, y afecta a cuántos puntos gana cada cliente.
+      return res.status(400).json({ ok: false, error: "De momento el único redondeo admitido es «floor»" });
+    }
+
+    const ahora = isoConOffset(Date.now());
+
+    // ── PUBLICAR ES ATÓMICO ─────────────────────────────────────────────────────────────────
+    //
+    // `SELECT MAX(version)+1` seguido de `INSERT` NO basta: dos pestañas leen el mismo número y
+    // una de las dos falla contra el índice único. El índice evita la fila duplicada, sí — pero
+    // convierte una publicación legítima en un 500 que nadie entiende.
+    //
+    // Con el cerrojo, la segunda ESPERA, vuelve a leer el máximo y sale con la versión siguiente.
+    // Se serializan todas las publicaciones entre sí a propósito: se publica una regla cada varios
+    // meses, y razonar sobre versiones que se cruzan cuesta más que la espera.
+    //
+    // El cerrojo se pide por `x.run`, que es el MISMO cliente que hace el BEGIN: en otra conexión
+    // se soltaría al terminar esa otra transacción y no protegería nada.
+    //
+    // El `reward_id` se genera AQUÍ y no se vuelve a tocar: ver más abajo por qué es inmutable.
+    const rewardId = "fid:" + crypto.randomBytes(12).toString("base64url");
+    const fila = await fidTransaccion(async (x) => {
+      await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [FID_CERROJO_REGLAS, 0]);
+      const ult = await x.get(
+        `SELECT COALESCE(MAX(version), 0) AS v FROM fid_reglas WHERE ambito = ? AND COALESCE(local, '') = ?`,
+        [ambito, local || ""]);
+      // ── SE CIERRA LA VERSIÓN ANTERIOR ───────────────────────────────────────────────────────
+      //
+      // Sin esto, la anterior se queda con `vigente_hasta` a NULL para siempre y la gracia NUNCA
+      // empieza a contar: un Reward viejo valdría indefinidamente. Sellar cuándo dejó de estar
+      // vigente NO es editar la versión — sus condiciones económicas no se tocan; lo único que se
+      // escribe es el instante en que entró la siguiente, que es un hecho, no una decisión.
+      const desde = b.vigente_desde || ahora;
+      await x.run(
+        `UPDATE fid_reglas SET vigente_hasta = ?
+          WHERE ambito = ? AND COALESCE(local, '') = ? AND vigente_hasta IS NULL`,
+        [desde, ambito, local || ""]);
+
+      const creada = await x.run(
+        `INSERT INTO fid_reglas (ambito, local, version, activa, reward_id, gracia_minutos,
+           puntos_por_euro, redondeo, puntos_necesarios, descuento_euros, consumo_minimo,
+           caducidad_meses, max_rewards_factura, vigente_desde, vigente_hasta, creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,'floor',?,?,?,?,?,?,?,?,?) RETURNING id, version, reward_id`,
+        [ambito, local, Number(ult?.v || 0) + 1, b.activa !== false, rewardId, campos.gracia_minutos,
+         campos.puntos_por_euro, campos.puntos_necesarios, campos.descuento_euros,
+         campos.consumo_minimo, campos.caducidad_meses, campos.max_rewards_factura,
+         desde, b.vigente_hasta || null, ahora, req.user.username]);
+      // NUNCA SE DEVUELVE ÉXITO SIN `INSERT`. Si el `RETURNING` viene vacío, algo ha pasado que no
+      // entendemos; se lanza y la transacción hace ROLLBACK en vez de contestar «guardada».
+      if (!creada) throw new Error("la regla no se ha insertado");
+      return creada;
+    });
+
+    await ficAuditar("fidelizacion", fila.id, "regla_creada", req.user.username,
+      { local: local || null, detalle: { ambito, version: fila.version, ...campos } });
+    res.json({ ok: true, id: fila.id, version: fila.version });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] crear regla", e));
+    res.status(500).json({ ok: false, error: "No se pudo guardar la regla" });
+  }
+});
+
+/** Los cuatro interruptores. Encenderlos es una decisión, así que se audita cada uno. */
+app.post("/api/fidelizacion/interruptores", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const cambios = {};
+    for (const k of FID_INTERRUPTORES) {
+      if (b[k] === true || b[k] === false) cambios[k] = b[k];
+    }
+    if (!Object.keys(cambios).length) return res.status(400).json({ ok: false, error: "Nada que cambiar" });
+
+    // EL BLOQUEO, EN EL SERVIDOR. No vale con que el panel no pinte el botón: esta ruta se llama
+    // igual de bien con `curl`, y lo que hay al otro lado son puntos que el cliente se queda
+    // aunque devuelva la compra.
+    for (const [k, v] of Object.entries(cambios)) {
+      const p = fidPuedeEncender(k, v, FID_NIVEL);
+      if (!p.ok) return res.status(409).json({ ok: false, error: p.error, pendientes: p.pendientes });
+    }
+
+    const antes = await fidInterruptores();
+    for (const [k, v] of Object.entries(cambios)) await setConfig(`fid_${k}`, v ? "1" : "0");
+    const despues = await fidInterruptores();
+    await ficAuditar("fidelizacion", null, "interruptores", req.user.username, { detalle: { antes, despues } });
+    res.json({ ok: true, interruptores: despues });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] interruptores", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
+/** Lo que hay pendiente de mirar a mano: varios socios, devoluciones parciales. */
+app.get("/api/fidelizacion/revisiones", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const locales = localesPermitidos(req.user);
+    const filas = await dbAll(
+      `SELECT r.id, r.factura_id, r.local, r.motivo, r.creado_en, r.resuelto_en, r.resuelto_por,
+              f.global_id, f.importe_total, f.recibido_en
+         FROM fid_revisiones r LEFT JOIN fid_facturas f ON f.id = r.factura_id
+        WHERE r.resuelto_en IS NULL ORDER BY r.creado_en DESC LIMIT 200`) || [];
+    const mias = locales && locales.length ? filas.filter((f) => locales.includes(f.local)) : filas;
+    res.json({ ok: true, data: mias });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] revisiones", e));
+    res.status(500).json({ ok: false, error: "No se pudieron leer" });
+  }
+});
+
+/** La proyección del modo sombra: lo que HABRÍA hecho, para poder compararlo antes de encender. */
+app.get("/api/fidelizacion/sombra", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const pedido = fidLocalDePeticion(req, req.query.local);
+    if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+    const filas = await dbAll(
+      `SELECT s.*, f.global_id FROM fid_sombra s LEFT JOIN fid_facturas f ON f.id = s.factura_id
+        WHERE s.local = ? ORDER BY s.creado_en DESC LIMIT 100`, [pedido.local]) || [];
+    const con = filas.filter((f) => f.puntos_calculados != null);
+    res.json({ ok: true, local: pedido.local, data: filas,
+      resumen: {
+        facturas: filas.length,
+        con_calculo: con.length,
+        puntos_totales: con.reduce((a, f) => a + Number(f.puntos_calculados || 0), 0),
+        importe_total: fidAEuros(con.reduce((a, f) => a + Number(f.importe_pagado_centimos || 0), 0)),
+        // La comparación que hace falta para saber qué es `Tip`: si estas dos columnas nunca
+        // difieren, la propina está dentro de `Amount`. Se MIRA; no se decide nada con ella.
+        propina_total: fidAEuros(filas.reduce((a, f) => a + Number(f.suma_propina_centimos || 0), 0)),
+        paid_distinto_amount: filas.filter((f) => Number(f.suma_paid_centimos) !== Number(f.importe_pagado_centimos)).length,
+      } });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] sombra", e));
+    res.status(500).json({ ok: false, error: "No se pudo leer" });
+  }
+});
+
+/**
+ * PURGA DE LA SOMBRA. Solo `fid_sombra`, y solo lo más viejo que la retención.
+ *
+ * La sombra es diagnóstico: crece una fila por factura y deja de servir en cuanto se ha mirado.
+ * Sin purga sería la única tabla de fidelización que crece sin freno y sin aportar nada después.
+ *
+ * NO TOCA NADA MÁS. Ni facturas, ni movimientos, ni auditoría: esos son el libro y son contables.
+ * La consulta lleva el nombre de la tabla escrito a mano por eso mismo.
+ */
+const FID_SOMBRA_DIAS = 90;
+app.post("/api/fidelizacion/sombra/purgar", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const dias = Math.min(3650, Math.max(7, parseInt(req.body?.dias) || FID_SOMBRA_DIAS));
+    const corte = addDiasISO(hoyISO(), -dias) + "T00:00:00";
+    const antes = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_sombra WHERE creado_en < ?`, [corte]);
+    await dbRun(`DELETE FROM fid_sombra WHERE creado_en < ?`, [corte]);
+    await ficAuditar("fidelizacion", null, "sombra_purgada", req.user.username,
+      { detalle: { dias, borradas: antes ? antes.n : 0 } });
+    res.json({ ok: true, borradas: antes ? antes.n : 0, dias });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] purgar sombra", e));
+    res.status(500).json({ ok: false, error: "No se pudo purgar" });
+  }
+});
+
+/**
+ * TRAZABILIDAD CON FILTROS. Dirección y Marketing.
+ *
+ * DOS COSAS QUE NO SE HACEN AQUÍ, y a propósito:
+ *
+ *   · No se devuelve el teléfono. Para reconocer a alguien basta el nombre de pila, que es lo que
+ *     ya enseña la barra. Se puede BUSCAR por teléfono —se normaliza y se compara— pero no sale.
+ *   · No se carga el histórico entero. Los rankings exigen periodo y llevan un tope: una tabla de
+ *     mil clientes en el navegador no la mira nadie y sí lleva datos de todos a un portátil.
+ */
+app.get("/api/fidelizacion/clientes", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const q = req.query || {};
+    // El periodo es OBLIGATORIO y acotado: sin él, esto sería un volcado del histórico.
+    const dias = Math.min(730, Math.max(1, parseInt(q.dias) || 90));
+    const limite = Math.min(200, Math.max(1, parseInt(q.limite) || 50));
+    // Con los ayudantes de la casa: `hoyISO()` va en hora de Madrid y `addDiasISO` hace la resta
+    // sobre una fecha ya dada. Restar milisegundos a `Date.now()` da un día distinto durante las
+    // dos primeras horas de cada madrugada, y eso movería el periodo de un informe sin avisar.
+    const desde = q.desde ? String(q.desde).slice(0, 10) : addDiasISO(hoyISO(), -dias);
+    const hasta = q.hasta ? String(q.hasta).slice(0, 10) : "9999-12-31";
+
+    // El local, por `localScope`: nadie ve el de otro.
+    let locales = localesPermitidos(req.user);
+    if (q.local) {
+      const pedido = fidLocalDePeticion(req, q.local);
+      if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+      locales = [pedido.local];
+    }
+    const filtroLocal = locales && locales.length ? locales : null;
+
+    const ahora = isoConOffset(Date.now());
+    const orden = ["visitas", "consumo", "puntos", "ultima"].includes(String(q.orden)) ? String(q.orden) : "consumo";
+
+    // Se agrega en la base, no en el navegador. Y se limita ANTES de traer nada.
+    const filas = await dbAll(
+      `SELECT m.qr_id,
+              COALESCE(SUM(m.unidades) FILTER (WHERE m.concepto = 'visita'), 0)::int AS visitas,
+              COALESCE(SUM(m.importe) FILTER (WHERE m.concepto = 'consumo'), 0) AS consumo,
+              COALESCE(SUM(m.importe) FILTER (WHERE m.concepto = 'devolucion'), 0) AS devuelto,
+              COALESCE(SUM(m.unidades) FILTER (WHERE m.punto_tipo = 'ganados'), 0)::int AS ganados,
+              COALESCE(-SUM(m.unidades) FILTER (WHERE m.punto_tipo = 'consumidos'), 0)::int AS consumidos,
+              COALESCE(-SUM(m.unidades) FILTER (WHERE m.punto_tipo = 'caducados'), 0)::int AS caducados,
+              COALESCE(SUM(m.unidades) FILTER (WHERE m.punto_tipo = 'ajuste'), 0)::int AS ajustes,
+              MAX(m.creado_en) FILTER (WHERE m.concepto = 'visita') AS ultima,
+              COUNT(DISTINCT m.local)::int AS n_locales
+         FROM fid_movimientos m
+        WHERE m.creado_en >= ? AND m.creado_en <= ?
+          ${filtroLocal ? "AND m.local = ANY(?)" : ""}
+        GROUP BY m.qr_id
+        ORDER BY ${orden === "visitas" ? "visitas DESC" : orden === "puntos" ? "ganados DESC"
+                  : orden === "ultima" ? "ultima DESC" : "consumo DESC"}
+        LIMIT ?`,
+      filtroLocal ? [desde, hasta + "T23:59:59", filtroLocal, limite] : [desde, hasta + "T23:59:59", limite]) || [];
+
+    // Los nombres y el saldo, solo de los que han salido. Nunca el teléfono.
+    const salida = [];
+    for (const f of filas) {
+      const qr = await fidCarnetPorId(f.qr_id);
+      if (!qr || qr.clase !== "carnet") continue;
+      // Buscar POR teléfono sí; devolverlo no.
+      if (q.telefono && proTel9(qr.telefono) !== proTel9(String(q.telefono))) continue;
+      if (q.nombre && !String(qr.nombre || "").toLowerCase().includes(String(q.nombre).toLowerCase())) continue;
+      const s = await fidSaldoDe(qr.id, ahora);
+      if (q.saldo === "con" && s.disponible <= 0) continue;
+      if (q.saldo === "sin" && s.disponible > 0) continue;
+      // Días sin venir sobre FECHAS, no sobre milisegundos: la diferencia entre dos días de
+      // calendario no cambia porque hoy hayan cambiado la hora.
+      const diasSinVenir = f.ultima ? diasEntreISO(String(f.ultima).slice(0, 10), hoyISO()) : null;
+      if (q.sin_volver && diasSinVenir !== null && diasSinVenir < Math.max(1, parseInt(q.sin_volver) || 30)) continue;
+      salida.push({
+        qr_id: qr.id, nombre: qr.nombre || null, anulado: !!qr.anulado_en,
+        visitas: f.visitas, consumo: Number(f.consumo || 0), devuelto: Number(f.devuelto || 0),
+        ticket_medio: f.visitas ? Math.round((Number(f.consumo || 0) / f.visitas) * 100) / 100 : 0,
+        ganados: f.ganados, consumidos: f.consumidos, caducados: f.caducados, ajustes: f.ajustes,
+        saldo: s.disponible, proxima_caducidad: s.proxima_caducidad,
+        ultima: f.ultima, dias_sin_venir: diasSinVenir, n_locales: f.n_locales,
+      });
+    }
+
+    res.json({ ok: true, desde, hasta, orden, limite, locales: filtroLocal, data: salida });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] clientes", e));
+    res.status(500).json({ ok: false, error: "No se pudo consultar" });
+  }
+});
+
+/**
+ * LA FICHA DE UN SOCIO, para el panel. Trazabilidad factura a factura.
+ *
+ * Se busca por el TOKEN del carné, nunca por teléfono ni por nombre. Y no devuelve el teléfono:
+ * para saber quién es basta el nombre de pila, que es lo que ya enseña la barra.
+ */
+app.get("/api/fidelizacion/socio", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const entrada = String(req.query.token || "").trim();
+    if (!entrada) return res.status(400).json({ ok: false, error: "Falta el carné" });
+    const ahora = isoConOffset(Date.now());
+    const r = await fidResolverMiembro({ get: dbGet }, entrada, { normalizar: proNormalizar, ahora });
+    if (!r.ok) return res.status(404).json({ ok: false, error: "No existe ningún carné utilizable con eso" });
+    const qr = r.qr;
+
+    const movs = await dbAll(
+      `SELECT id, concepto, punto_tipo, unidades, importe, importe_centimos, local, factura_id, lote_id,
+              caduca_en, regla_id, regla_version, nota, autor, creado_en
+         FROM fid_movimientos WHERE qr_id = ? ORDER BY id DESC LIMIT 500`, [qr.id]) || [];
+    const puntos = movs.filter((m) => m.concepto === "puntos");
+    const s = fidSaldo(puntos.slice().reverse(), { ahora });
+
+    const porLocal = await dbAll(
+      `SELECT local,
+              COALESCE(SUM(unidades) FILTER (WHERE concepto = 'visita'), 0)::int AS visitas,
+              COALESCE(SUM(importe) FILTER (WHERE concepto = 'consumo'), 0) AS consumo,
+              COALESCE(SUM(unidades) FILTER (WHERE punto_tipo = 'ganados'), 0)::int AS ganados,
+              COALESCE(-SUM(unidades) FILTER (WHERE punto_tipo = 'consumidos'), 0)::int AS consumidos,
+              COALESCE(-SUM(unidades) FILTER (WHERE punto_tipo = 'caducados'), 0)::int AS caducados,
+              MAX(creado_en) FILTER (WHERE concepto = 'visita') AS ultima
+         FROM fid_movimientos WHERE qr_id = ? GROUP BY local ORDER BY local`, [qr.id]) || [];
+
+    const visitas = porLocal.reduce((a, l) => a + Number(l.visitas || 0), 0);
+    const consumo = porLocal.reduce((a, l) => a + Number(l.consumo || 0), 0);
+    res.json({ ok: true,
+      carnet: { id: qr.id, clase: qr.clase, nombre: qr.nombre, anulado: !!qr.anulado_en, caduca_en: qr.caduca_en },
+      saldo: { disponible: s.disponible, proxima_caducidad: s.proxima_caducidad,
+               lotes: s.lotes.map((l) => ({ restante: l.restante, caduca_en: l.caduca_en, local: l.local,
+                                            regla_version: l.regla_version })) },
+      total: { visitas, consumo, ticket_medio: visitas ? Math.round((consumo / visitas) * 100) / 100 : 0,
+               ultima: porLocal.reduce((a, l) => (String(l.ultima || "") > a ? String(l.ultima) : a), "") || null },
+      porLocal,
+      // El historial EXPLICABLE: qué pasó, en qué factura y con qué versión de la regla.
+      historial: movs.slice(0, 200).map((m) => ({
+        id: m.id, fecha: m.creado_en, local: m.local, concepto: m.concepto, punto_tipo: m.punto_tipo,
+        unidades: m.unidades, importe: m.importe, factura_id: m.factura_id, lote_id: m.lote_id,
+        caduca_en: m.caduca_en, regla_version: m.regla_version, autor: m.autor })),
+    });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] socio", e));
+    res.status(500).json({ ok: false, error: "No se pudo consultar" });
   }
 });
 

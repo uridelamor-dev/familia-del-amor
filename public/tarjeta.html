@@ -45,6 +45,41 @@
         <p class="tj-locales hidden" id="tjLocales"></p>
       </section>
 
+      <!-- TUS PUNTOS. Va en su PROPIA tarjeta, separado de «Tus descuentos»: los cupones y las
+           promociones son otro sistema, con otras reglas, y mezclarlos en pantalla haría creer que
+           un cupón se paga con puntos. -->
+      <section class="tj-card hidden" id="tjPuntos">
+        <h2 class="tj-h">Tus puntos</h2>
+
+        <!-- Mientras el programa no esté concediendo, aquí NO se enseña ningún número: decirle a
+             alguien que tiene 120 puntos y luego retirarlo es peor que no decir nada. -->
+        <div class="hidden" id="tjPtsPrep">
+          <p class="tj-pts-prep" id="tjPtsPrepTxt"></p>
+        </div>
+
+        <div class="hidden" id="tjPtsActivo">
+          <p class="tj-pts-n" id="tjPtsN">—</p>
+          <p class="tj-pts-eti" id="tjPtsEti">puntos disponibles</p>
+
+          <div class="tj-barra" id="tjPtsBarra" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+            <div class="tj-barra-in" id="tjPtsBarraIn"></div>
+          </div>
+          <p class="tj-pts-falta" id="tjPtsFalta"></p>
+
+          <p class="tj-pts-regla" id="tjPtsRegla"></p>
+
+          <p class="tj-pts-caduca hidden" id="tjPtsCaduca"></p>
+
+          <ul class="tj-lista hidden" id="tjPtsRewards"></ul>
+
+          <details class="tj-pts-mas hidden" id="tjPtsMas">
+            <summary>Tus últimos movimientos</summary>
+            <ul class="tj-hist" id="tjPtsMovs"></ul>
+            <p class="tj-pts-resumen" id="tjPtsResumen"></p>
+          </details>
+        </div>
+      </section>
+
       <section class="tj-card hidden" id="tjDtos">
         <h2 class="tj-h">Tus descuentos</h2>
         <ul class="tj-lista" id="tjDtosLista"></ul>

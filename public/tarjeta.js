@@ -127,8 +127,81 @@
       mostrar("tjLocales");
     }
 
+    pintarPuntos(d.fidelizacion);
     pintarDescuentos(d);
     pintarHistorial(d);
+  }
+
+  /**
+   * SUS PUNTOS. Nada de identificadores internos: ni facturas, ni lotes, ni versiones de regla.
+   *
+   * Y mientras el programa esté solo en sombra NO se enseña ningún saldo. Un número que luego hay
+   * que retirar es peor que no dar ninguno, y el cliente tendría razón en enfadarse.
+   */
+  function pintarPuntos(f) {
+    if (!f) return;                       // sin datos, la tarjeta ni aparece
+    mostrar("tjPuntos");
+
+    if (f.estado !== "activo") {
+      $("tjPtsPrepTxt").textContent = f.texto || "Programa de puntos en preparación.";
+      mostrar("tjPtsPrep");
+      return;
+    }
+    mostrar("tjPtsActivo");
+
+    $("tjPtsN").textContent = String(f.disponible);
+    $("tjPtsEti").textContent = f.disponible === 1 ? "punto disponible" : "puntos disponibles";
+
+    var eq = f.equivalencia;
+    if (eq) {
+      $("tjPtsRegla").textContent = eq.puntos + " puntos = " + eur(eq.euros)
+        + " de descuento, en compras de " + eur(eq.minimo) + " o más.";
+    }
+
+    // La barra: cuánto falta para el próximo descuento. Es lo que hace que un saldo sea una meta
+    // y no un número suelto.
+    if (f.necesarios) {
+      var pct = Math.max(0, Math.min(100, f.progreso || 0));
+      $("tjPtsBarraIn").style.width = pct + "%";
+      $("tjPtsBarra").setAttribute("aria-valuenow", String(pct));
+      $("tjPtsFalta").textContent = f.faltan > 0
+        ? "Te faltan " + f.faltan + (f.faltan === 1 ? " punto" : " puntos") + " para tu próximo descuento."
+        : "¡Ya puedes usar tu descuento!";
+    }
+
+    if (f.proxima_caducidad && f.caducan_pronto) {
+      $("tjPtsCaduca").textContent = f.caducan_pronto + (f.caducan_pronto === 1 ? " punto caduca" : " puntos caducan")
+        + " el " + fecha(f.proxima_caducidad) + ".";
+      mostrar("tjPtsCaduca");
+    }
+
+    if (f.rewards && f.rewards.length) {
+      $("tjPtsRewards").innerHTML = f.rewards.map(function (r) {
+        return "<li><b>" + esc(r.nombre) + "</b><br><span class=\"tj-mut\">En compras de "
+          + esc(eur(r.minimo)) + " o más.</span></li>";
+      }).join("");
+      mostrar("tjPtsRewards");
+    }
+
+    if (f.movimientos && f.movimientos.length) {
+      var texto = { ganados: "Ganados", consumidos: "Usados en un descuento",
+                    caducados: "Caducados", revertidos: "Devueltos", ajuste: "Ajuste" };
+      $("tjPtsMovs").innerHTML = f.movimientos.map(function (m) {
+        var signo = m.puntos > 0 ? "+" : "";
+        return "<li>" + fecha(m.fecha) + " · " + esc(texto[m.tipo] || m.tipo)
+          + " <b>" + signo + m.puntos + "</b></li>";
+      }).join("");
+      $("tjPtsResumen").textContent = "En total has ganado " + f.ganados + " puntos"
+        + (f.consumidos ? ", usado " + f.consumidos : "")
+        + (f.caducados ? " y se te han caducado " + f.caducados : "") + ".";
+      mostrar("tjPtsMas");
+    }
+  }
+
+  function eur(n) { return Number(n).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €"; }
+  function fecha(iso) {
+    var p = String(iso || "").slice(0, 10).split("-");
+    return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : String(iso || "");
   }
 
   if (!TOKEN) {
