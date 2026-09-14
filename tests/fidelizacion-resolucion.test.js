@@ -292,22 +292,22 @@ describe("el censo de carnés y cupones", () => {
     assert.ok(!/tarjetaApagada\(res\)/.test(resumen), "se ha metido detrás del interruptor");
   });
 
-  test("el panel lo enseña en la tarjeta del piloto, con aviso si no hay ninguno", () => {
+  test("el panel lo enseña arriba, con aviso si no hay ninguno", () => {
     const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function loadFidPiloto()"));
-    assert.match(f, /Carnés que puede identificar el piloto/);
+    assert.match(f, /Carnés que se pueden identificar/);
     assert.match(f, /Cupones y vales/);
     assert.match(f, /No identifican a nadie/);
     assert.match(f, /No hay ningún carné utilizable/);
   });
 
   test("y si el censo falla, la tarjeta se pinta igual", () => {
-    const f = panel.slice(panel.indexOf("async function loadFidPiloto()"), panel.indexOf("async function fidGenerar()"));
+    const f = panel.slice(panel.indexOf("async function loadFidPiloto()"), panel.indexOf("async function fidGenerar("));
     assert.match(f, /try \{ FID\.censo = \(await apiRaw\("\/api\/tarjeta\/resumen"\)\)\.censo \|\| null; \} catch \{ FID\.censo = null; \}/);
   });
 
   test("no se toca TARJETA_ACTIVA", () => {
     // El censo no enciende nada: solo cuenta.
-    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function fidGenerar()"));
+    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function fidGenerar("));
     assert.ok(!/tj-encender|tarjeta_activa/.test(f), "el piloto toca el interruptor de la tarjeta");
   });
 });

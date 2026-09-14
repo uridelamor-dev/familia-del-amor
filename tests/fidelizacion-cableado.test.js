@@ -220,7 +220,8 @@ describe("la pantalla de Dirección", () => {
   const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
 
   test("está dentro de la vista de Ágora, que ya es solo de Dirección", () => {
-    assert.match(panel, /Fidelización Ágora · Piloto Lloret/);
+    assert.match(panel, /<h3>Fidelización Ágora<\/h3>/);
+    assert.ok(!/Piloto Lloret|Local del piloto/.test(panel), "queda texto del piloto de un solo local");
     assert.match(panel, /function renderFidPiloto\(\)/);
     assert.match(panel, /loadFidPiloto\(\)/);
     assert.match(panel, /agora: \["direccion"\]/, "la vista de Ágora ha dejado de ser solo de Dirección");
@@ -228,18 +229,21 @@ describe("la pantalla de Dirección", () => {
 
   test("dice a la cara que en esta fase no hay premios", () => {
     const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function loadFidPiloto()"));
-    assert.match(f, /No se conceden premios ni descuentos/);
+    assert.match(f, /todavía no están activos/);
+    assert.match(f, /<code>Rewards<\/code> va siempre vacío/);
+    // Y lo que SÍ funciona, para que no parezca que no hay nada.
+    assert.match(f, /ya funciona/);
   });
 
   test("NO hay ningún botón que toque la configuración del TPV", () => {
-    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function fidMiembro()"));
+    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("async function fidMiembro()"));
     for (const a of ["ag-save", "ag-del", "ag-probe", "ag-descubrir", "ag-sync"]) {
       assert.ok(!f.includes(a), `el piloto tiene un botón que toca el TPV: ${a}`);
     }
   });
 
   test("el token en claro solo vive en memoria, nunca se guarda en el navegador", () => {
-    const f = panel.slice(panel.indexOf("async function fidGenerar()"), panel.indexOf("async function fidActivo("));
+    const f = panel.slice(panel.indexOf("async function fidGenerar("), panel.indexOf("async function fidActivo("));
     assert.ok(!/localStorage|sessionStorage/.test(f), "el token se guarda en el navegador");
     assert.match(f, /FID\.urls = j\.urls/);
   });

@@ -321,7 +321,7 @@ describe("marcar como prueba se audita, y solo con lo imprescindible", () => {
 
 describe("el panel", () => {
   test("el botón de importes solo aparece si la factura está marcada", () => {
-    const f = panel.slice(panel.indexOf("async function fidFacturas()"), panel.indexOf("async function fidFactura("));
+    const f = panel.slice(panel.indexOf("async function fidFacturas("), panel.indexOf("async function fidFactura("));
     assert.match(f, /f\.es_prueba \? `<button[^`]*fid-importes/);
     assert.match(f, /f\.es_prueba \? "Quitar marca" : "Marcar como prueba"/);
   });
@@ -363,8 +363,10 @@ describe("la Fase A no toca NADA del flujo actual", () => {
   });
 
   test("no se ha colado nada de las fases futuras", () => {
-    for (const futuro of ["puntos_pendientes", "motivo_pendiente", "workplace_id", "fid_premios",
-                          "fid_reglas", "fid_productos", "export-master"]) {
+    // `workplace_id` YA NO está en la lista: la vinculación del local entró con el multilocal, y
+    // es lo contrario de una fase futura colada de rondón — se confirma a mano y no da ni un punto.
+    for (const futuro of ["puntos_pendientes", "motivo_pendiente", "fid_premios",
+                          "fid_reglas", "fid_productos", "export-master", "WorkplacesSummary"]) {
       assert.ok(!server.includes(futuro), `Fase A incluye algo de una fase futura: ${futuro}`);
     }
   });

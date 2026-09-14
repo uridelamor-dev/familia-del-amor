@@ -22,8 +22,12 @@ import { readFileSync } from "node:fs";
 import http from "node:http";
 import express from "express";
 import crypto from "node:crypto";
-import { extraerFactura, procesarFactura, claveDeFactura, localSlug, ALGO_DEBIL, LOCAL_PILOTO, MiembroDesconocido }
+import { extraerFactura, procesarFactura, claveDeFactura, localSlug, ALGO_DEBIL, MiembroDesconocido }
   from "../src/modules/fidelizacion/agora.js";
+
+/** El local que usan estas pruebas como ejemplo. Ya no hay ningún local privilegiado en el
+ *  código: es solo un nombre canónico cualquiera de la casa. */
+const LOCAL_PILOTO = "La Tapeta - Lloret";
 
 const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
 const factura = server.slice(server.indexOf('app.post("/api/fidelizacion/agora/:token/factura"'),

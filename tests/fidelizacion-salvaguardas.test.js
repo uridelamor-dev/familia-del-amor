@@ -41,9 +41,9 @@ describe("un fallo de consulta NUNCA parece «no hay integración»", () => {
   });
 
   test("el panel lo pinta como «Sin comprobar», y avisa de que NO generen", () => {
-    const f = panel.slice(panel.indexOf("async function loadFidPiloto()"), panel.indexOf("async function fidGenerar()"));
+    const f = panel.slice(panel.indexOf("async function loadFidPiloto()"), panel.indexOf("async function fidGenerar("));
     assert.match(f, /Sin comprobar/);
-    assert.match(f, /Esto no significa que no la haya/);
+    assert.match(f, /Esto no significa que no las haya/);
     assert.match(f, /no generes un token nuevo/);
     assert.ok(!/data-act="fid-generar"/.test(f), "ofrece generar cuando no ha podido comprobar");
   });
@@ -81,18 +81,24 @@ describe("la integración VIVA no se puede esconder", () => {
   test("la consulta prioriza la no revocada, no la más nueva", () => {
     // Con `ORDER BY id DESC` a secas, una fila revocada más reciente taparía a una integración
     // viva más antigua y el panel diría que no hay ninguna.
-    assert.match(estado, /ORDER BY \(revocado_en IS NULL\) DESC, id DESC LIMIT 1/);
+    // `DISTINCT ON (local)` se queda con la PRIMERA fila de cada local según este orden, así que
+    // la no revocada gana igual que antes — pero ahora para cada local por separado.
+    assert.match(estado, /SELECT DISTINCT ON \(local\)/);
+    assert.match(estado, /ORDER BY local, \(revocado_en IS NULL\) DESC, id DESC/);
   });
 
-  test("hay historial, y sin token ni hash", () => {
-    assert.match(estado, /FROM fid_integraciones WHERE local = \? ORDER BY id DESC LIMIT 20/);
-    const sel = estado.slice(estado.indexOf("const historial"), estado.indexOf("const c ="));
+  test("hay historial POR LOCAL, y sin token ni hash", () => {
+    assert.match(estado, /FROM fid_integraciones ORDER BY local, id DESC/);
+    const sel = estado.slice(estado.indexOf("const hist = new Map()"), estado.indexOf("const cf ="));
     assert.ok(!/token_hash/.test(sel), "el historial expone el hash");
     assert.ok(!/\btoken\b(?!_pista)/.test(sel), "el historial expone el token");
+    // Y se agrupa por local: el historial de un local no puede aparecer en la tarjeta de otro.
+    assert.match(sel, /hist\.get\(h\.local\)/);
+    assert.match(sel, /\.length < 20/);
   });
 
   test("el panel lo enseña plegado, con la pista y el estado", () => {
-    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function loadFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("async function loadFidPiloto()"));
     assert.match(f, /Historial de tokens/);
     assert.match(f, /h\.token_pista/);
     assert.ok(!/h\.token_hash/.test(f));
@@ -101,18 +107,22 @@ describe("la integración VIVA no se puede esconder", () => {
 
 describe("«Regenerar» avisa de lo que rompe", () => {
   test("con integración viva, el botón cambia de nombre y el aviso es explícito", () => {
-    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function loadFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("async function loadFidPiloto()"));
     assert.match(f, /Regenerar…/);
-    const g = panel.slice(panel.indexOf("async function fidGenerar()"), panel.indexOf("async function fidActivo("));
-    assert.match(g, /HAY UNA INTEGRACIÓN VIVA/);
+    const g = panel.slice(panel.indexOf("async function fidGenerar("), panel.indexOf("async function fidActivo("));
+    assert.match(g, /YA TIENE UNA INTEGRACIÓN VIVA/);
     assert.match(g, /dejará de poder validar y de cerrar facturas/);
     assert.match(g, /pegues las dos URLs nuevas en Ágora/);
+    // Y que NO se lleva por delante a los demás locales, que es la duda inmediata.
+    assert.match(g, /NO afecta a ningún otro local/);
     assert.match(g, /Si solo quieres activarla/);
   });
 
   test("sin integración, el aviso es el corto", () => {
-    const g = panel.slice(panel.indexOf("async function fidGenerar()"), panel.indexOf("async function fidActivo("));
-    assert.match(g, /const viva = FID\.integracion && !FID\.integracion\.revocado_en/);
+    const g = panel.slice(panel.indexOf("async function fidGenerar("), panel.indexOf("async function fidActivo("));
+    // «Viva» ya no se deduce a ojo: lo dice la tabla de botones del servidor. Con un `vivo`
+    // calculado aquí, una integración APAGADA y una RECIÉN GENERADA salían iguales.
+    assert.match(g, /const viva = !!L && \(L\.botones \|\| \[\]\)\.includes\("regenerar"\)/);
     assert.match(g, /Nace desactivado/);
   });
 });
@@ -208,7 +218,11 @@ describe("el diagnóstico devuelve lo que hace falta y nada más", () => {
     // Se quita ANTES el bloque de la leyenda: ahí dentro se explican a propósito los mecanismos
     // que buscamos —«DROP + CREATE», «TRUNCATE RESTART»— y una búsqueda a pelo confundiría la
     // explicación con una sentencia. Es el mismo cuidado que ya hizo falta con los comentarios.
-    const codigoDiag = diag.slice(0, diag.indexOf("leyenda: {")) + diag.slice(diag.indexOf("} catch (e) {"));
+    // Y también los COMENTARIOS: el bloque que documenta la ruta siguiente cae dentro de este
+    // recorte, y ahí se explica por qué su UPDATE va por `id`. Buscar «UPDATE» a pelo confunde la
+    // explicación con una sentencia — es el mismo falso positivo que la leyenda.
+    const sinComentarios = (t) => t.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    const codigoDiag = sinComentarios(diag.slice(0, diag.indexOf("leyenda: {")) + diag.slice(diag.indexOf("} catch (e) {")));
     for (const escritura of ["dbRun(", "INSERT", "UPDATE", "ficAuditar(", "setConfig(",
                              "nextval", "setval", "CREATE ", "ALTER ", "DELETE"]) {
       assert.ok(!codigoDiag.includes(escritura), `el diagnóstico escribe: ${escritura}`);

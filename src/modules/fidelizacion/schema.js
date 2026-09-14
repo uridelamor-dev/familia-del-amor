@@ -27,6 +27,24 @@ export async function ensureSchemaFidelizacion(x) {
   await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_integracion_local
     ON fid_integraciones (local) WHERE revocado_en IS NULL`);
 
+  // ADITIVO. Verificación del local y vínculo con el Workplace de Ágora.
+  //
+  // `activada_en` se escribe la PRIMERA vez que se activa y ya no se borra. Es lo único que
+  // distingue «generada y nunca puesta en un TPV» de «puesta y apagada después», y de eso depende
+  // que nadie regenere un token que está pegado en una caja.
+  //
+  // Los cuatro campos de Workplace se escriben SOLO cuando Dirección lo confirma a mano mirando el
+  // Id y el Name observados. Nunca se copia el primer valor que llegue: un vínculo puesto solo se
+  // deshace revocando, y un vínculo equivocado es peor que ninguno.
+  //
+  // No hay columna `estado`: se deriva de estas fechas con `estadoVerificacion()`. Una columna de
+  // estado escrita a mano se desincroniza del hecho que representa.
+  for (const col of ["activada_en TEXT", "workplace_id TEXT", "workplace_nombre TEXT",
+                     "workplace_confirmado_en TEXT", "workplace_confirmado_por TEXT"]) {
+    try { await x.run(`ALTER TABLE fid_integraciones ADD COLUMN IF NOT EXISTS ${col}`); }
+    catch (e) { console.error("[fidelizacion] alter fid_integraciones:", e.message); }
+  }
+
   // ── Las facturas que manda Ágora ───────────────────────────────────────────
   // LA IDEMPOTENCIA ES `clave_factura`, NO `global_id` A SECAS. La guía no garantiza que el
   // GlobalId sea único entre locales distintos, y si no lo fuera, un índice global haría que la

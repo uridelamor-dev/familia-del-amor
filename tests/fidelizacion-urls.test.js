@@ -15,8 +15,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import express from "express";
 import http from "node:http";
-import { basePublica, aHttps, urlsDeIntegracion, DOMINIO_CANONICO, estadoIntegracion, LOCAL_PILOTO }
+import { basePublica, aHttps, urlsDeIntegracion, DOMINIO_CANONICO, estadoIntegracion }
   from "../src/modules/fidelizacion/agora.js";
+
+/** El local que usan estas pruebas como ejemplo. Ya no hay ningún local privilegiado en el
+ *  código: es solo un nombre canónico cualquiera de la casa. */
+const LOCAL_PILOTO = "La Tapeta - Lloret";
 
 const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
@@ -158,10 +162,12 @@ describe("la integración nace DESACTIVADA", () => {
   });
 
   test("el panel dice el orden: copiar, pegar en Ágora, Activar", () => {
-    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function fidActivo("));
+    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("async function fidActivo("));
     assert.match(f, /nace <b>desactivada<\/b>/);
-    assert.match(f, /pulsa <b>Activar<\/b>/);
-    assert.match(panel, /DESACTIVADO\. Copia las URLs, pégalas en Ágora y pulsa Activar/);
+    assert.match(f, /«Activar para verificar»/);
+    // Y dice en QUÉ TPV se pegan: con varios locales, «pégalas en Ágora» ya no basta.
+    assert.match(f, /pega las dos URLs en el TPV de <b>\$\{esc\(L\.local\)\}<\/b>/);
+    assert.match(panel, /DESACTIVADO\. Copia las URLs, pégalas en el TPV y pulsa Activar/);
   });
 });
 

@@ -104,7 +104,11 @@ import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
 import { lineaErrorSql } from "./src/modules/seguridad/redactar.js";
 import { ensureSchemaFidelizacion } from "./src/modules/fidelizacion/schema.js";
 import { proyectarImportes as fidProyectarImportes } from "./src/modules/fidelizacion/importes.js";
-import { LOCAL_PILOTO as FID_LOCAL, REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CUERPO as FID_MAX_CUERPO,
+import { crearAcumulador as fidCrearAcumulador } from "./src/modules/fidelizacion/discrepancias.js";
+import { REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CUERPO as FID_MAX_CUERPO,
+         estadoVerificacion as fidEstadoVerificacion, ESTADOS_VERIFICACION as FID_ESTADOS_VER,
+         botonesDe as fidBotonesDe, BOTONES_POR_ESTADO as FID_BOTONES,
+         discrepanciaWorkplace as fidDiscrepanciaWorkplace,
          MAX_POR_MINUTO as FID_MAX_MIN, VIDA_DIAS as FID_VIDA_DIAS, ESTADOS as FID_ESTADOS,
          nuevoToken as fidNuevoToken, pistaToken as fidPistaToken, estadoIntegracion as fidEstadoIntegracion,
          caducidadDesde as fidCaducidad, respuestaMiembro as fidRespuestaMiembro, carnetUtilizable as fidCarnetUtilizable,
@@ -17496,6 +17500,48 @@ function fidRateLimit(req, res, clave) {
 }
 
 /** Resuelve la integración de un token. Nunca escribe el token en ningún sitio. */
+/**
+ * UNA LÍNEA DE AUDITORÍA POR SERVICIO, NO POR FACTURA.
+ *
+ * La lógica vive en `src/modules/fidelizacion/discrepancias.js`, que es pura y está ACOTADA: el
+ * `Workplace.Id` y el `Name` los escribe el TPV y llegan por una petición externa, así que un Map
+ * sin techo con esa clave sería una fuga de memoria esperando. Allí se sanean a escalares cortos,
+ * la clave lleva una huella en vez del valor, lo vencido se tira y hay un máximo con expulsión.
+ */
+const FID_DISCREPANCIAS = fidCrearAcumulador();
+
+/**
+ * EL LOCAL DE UNA RUTA INTERNA. Sesión y permisos, nunca el token externo.
+ *
+ * Las dos preguntas son distintas y se responden en sitios distintos:
+ *
+ *   ruta EXTERNA  → el local sale del TOKEN (`fid_integraciones.local`). Ágora no elige.
+ *   ruta INTERNA  → el local sale de la SESIÓN y del selector del panel, y se comprueba que
+ *                   es de quien pregunta.
+ *
+ * Mezclarlas es exactamente el fallo que hay que evitar: si una ruta externa aceptara un local
+ * por el cuerpo, cualquiera con un token válido escribiría facturas en el local que quisiera.
+ */
+function fidLocalDePeticion(req, pedido) {
+  const crudo = pedido !== undefined && pedido !== null ? String(pedido).trim() : "";
+  if (!crudo) return { ok: false, codigo: 400, error: "Falta el local" };
+  // `localScope` comprueba que ese establecimiento es de este usuario. Para dirección no limita,
+  // pero la comprobación siguiente sí: tiene que ser un local de la casa, escrito igual.
+  const suyo = localScope(req, crudo);
+  if (!suyo || suyo !== crudo) return { ok: false, codigo: 403, error: "Ese local no es tuyo" };
+  if (!esLocalCanonico(suyo)) return { ok: false, codigo: 400, error: "Ese no es un local de la casa" };
+  return { ok: true, local: suyo };
+}
+
+/** El local de una fila de `fid_*` que ya existe, comprobando que quien pregunta puede verlo.
+ *  Se usa en las rutas que trabajan sobre un `:id`: el local no lo elige el que llama, lo dice
+ *  la fila, y lo único que se comprueba es si tiene derecho a tocarla. */
+function fidPuedeVer(req, local) {
+  const l = String(local || "").trim();
+  if (!l) return false;
+  return localScope(req, l) === l;
+}
+
 async function fidIntegracion(token) {
   const h = fidHash(token);
   let fila = null;
@@ -17647,6 +17693,33 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
     });
   } catch { /* la auditoría no puede tumbar la respuesta */ }
 
+  // ¿VIENE DEL TPV QUE CREEMOS? Solo se comprueba si Dirección confirmó un Workplace para este
+  // local. Se APUNTA, no se rechaza: la factura ya está guardada en el local de su token, que es
+  // lo que de verdad decide, y negarse a cerrarla por esto dejaría a un camarero sin poder cobrar
+  // por un error de configuración que él no puede arreglar.
+  //
+  // Y no prueba nada por sí solo: dos instalaciones de Ágora pueden repetir el mismo Id. Es una
+  // señal de que alguien pegó el token en la caja equivocada, no una identificación.
+  try {
+    if (integ.fila.workplace_id) {
+      const visto = extracto.workplaceId ?? null;
+      const d = fidDiscrepanciaWorkplace(integ.fila, visto);
+      if (d.hay) {
+        // Lo que entra en la auditoría sale SANEADO del acumulador: escalares cortos y sin
+        // caracteres de control. El TPV escribe esos campos, y de aquí van a un registro que
+        // después lee una persona.
+        const av = FID_DISCREPANCIAS.anota(integ.fila.id, visto, extracto.workplaceNombre);
+        if (av) {
+          await ficAuditar("fidelizacion", resultado.facturaId, "workplace_discrepante", "agora",
+            { local: integ.fila.local,
+              detalle: { esperado: String(integ.fila.workplace_id), observado: av.id,
+                         observado_nombre: av.nombre, motivo: d.motivo,
+                         facturas: av.n, desde: av.desde } });
+        }
+      }
+    }
+  } catch { /* una comprobación de más no puede tumbar la respuesta */ }
+
   // Mismo identificador, cuerpo distinto: NO se confirma. Un `accepted` aquí diría que hemos
   // aceptado ESTE documento, y lo que tenemos guardado es otro. Se contesta `rejected` con un
   // motivo genérico, sin nada del cuerpo.
@@ -17670,6 +17743,13 @@ app.post("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req
   try {
     const ahora = isoConOffset(Date.now());
 
+    // EL LOCAL LO ELIGE DIRECCIÓN, y tiene que ser uno de los establecimientos de la casa escrito
+    // exactamente igual. Se pasa por `localScope`, que además comprueba que ese local es de quien
+    // pregunta: generar el token de otro local sería generar una credencial para una caja ajena.
+    const pedido = fidLocalDePeticion(req, req.body?.local);
+    if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+    const local = pedido.local;
+
     // PRIMERO se comprueba que se puede componer la URL. La versión anterior revocaba la
     // integración vieja ANTES de esto, así que un fallo aquí te dejaba sin integración viva y con
     // el TPV apuntando a una URL muerta, sin haber creado nada a cambio.
@@ -17684,20 +17764,20 @@ app.post("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req
     // el peor estado posible: sin integración viva y sin saber por qué.
     const fila = await fidTransaccion(async (x) => {
       await x.run(`UPDATE fid_integraciones SET revocado_en = ?, revocado_por = ?
-                   WHERE local = ? AND revocado_en IS NULL`, [ahora, req.user.username, FID_LOCAL]);
+                   WHERE local = ? AND revocado_en IS NULL`, [ahora, req.user.username, local]);
       // NACE DESACTIVADA. Generar una credencial no es armarla: entre generarla y pegarla en Ágora
       // no hay ningún motivo para que responda, y el orden queda claro — generar, copiar, pegar en
       // Ágora, Activar.
       return x.run(
         `INSERT INTO fid_integraciones (local, token_hash, token_pista, activo, creado_en, creado_por, caduca_en)
          VALUES (?,?,?,FALSE,?,?,?) RETURNING id`,
-        [FID_LOCAL, fidHash(token), fidPistaToken(token), ahora, req.user.username, caduca]);
+        [local, fidHash(token), fidPistaToken(token), ahora, req.user.username, caduca]);
     });
 
     await ficAuditar("fidelizacion", fila?.id, "integracion_generada", req.user.username,
-      { local: FID_LOCAL, detalle: { pista: fidPistaToken(token), base: pub.base, fuente: pub.fuente } });
+      { local, detalle: { pista: fidPistaToken(token), base: pub.base, fuente: pub.fuente } });
     // El token en claro sale UNA vez y solo aquí. En la base vive su hash y cuatro caracteres.
-    res.json({ ok: true, id: fila?.id, local: FID_LOCAL, activo: false,
+    res.json({ ok: true, id: fila?.id, local, activo: false,
       caduca_en: caduca, base: pub.base, urls: fidUrls(pub.base, token) });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] generar", e));
@@ -17705,32 +17785,100 @@ app.post("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req
   }
 });
 
+/**
+ * EL ESTADO DE TODOS LOS LOCALES. Una tarjeta por establecimiento de la casa.
+ *
+ * DOS CAPACIDADES DISTINTAS, y se enseñan por separado porque no dependen la una de la otra:
+ *
+ *   1. FIDELIZACIÓN ENTRANTE — Ágora llama a NUESTRAS URLs. Solo hace falta el token.
+ *   2. CONEXIÓN SALIENTE — nosotros llamamos a Ágora (host + credenciales). Hace falta para el
+ *      catálogo de productos y para sincronizar, que todavía no está hecho.
+ *
+ * Un local puede tener fidelización funcionando sin conexión saliente ninguna. Juntarlas en un
+ * solo semáforo haría creer que falta algo para recibir facturas cuando no falta nada.
+ *
+ * De la conexión saliente sale SOLO un booleano. Ni host, ni usuario, ni el token, ni su pista.
+ */
 app.get("/api/fidelizacion/integracion", requireAuth(["direccion"]), async (req, res) => {
   try {
+    const ahora = isoConOffset(Date.now());
+
     // PRIORIZA LA VIVA. Con `ORDER BY id DESC` a secas, una fila revocada más nueva taparía a una
     // integración viva más antigua y el panel diría que no hay ninguna.
-    const fila = await dbGet(`SELECT id, local, token_pista, activo, creado_en, creado_por, caduca_en, revocado_en
-                              FROM fid_integraciones WHERE local = ?
-                              ORDER BY (revocado_en IS NULL) DESC, id DESC LIMIT 1`, [FID_LOCAL]);
-    // El HISTORIAL, sin token y sin hash: solo la pista de cuatro caracteres y los estados. Es lo
-    // que permite contestar «¿hubo alguna vez una integración aquí?» sin abrir la base.
-    const historial = await dbAll(`SELECT id, token_pista, activo, creado_en, creado_por, caduca_en, revocado_en
-                                   FROM fid_integraciones WHERE local = ? ORDER BY id DESC LIMIT 20`, [FID_LOCAL]);
-    const c = await dbGet(`SELECT
-        COUNT(*)::int AS facturas,
+    const filas = await dbAll(`SELECT DISTINCT ON (local)
+        id, local, token_pista, activo, creado_en, creado_por, caduca_en, revocado_en, activada_en,
+        workplace_id, workplace_nombre, workplace_confirmado_en, workplace_confirmado_por
+      FROM fid_integraciones ORDER BY local, (revocado_en IS NULL) DESC, id DESC`);
+    const porLocal = new Map((filas || []).map((f) => [f.local, f]));
+
+    // EL HISTORIAL, sin token y sin hash: solo la pista de cuatro caracteres y los estados. Es lo
+    // que permite contestar «¿hubo alguna vez una integración aquí?» sin abrir la base. Son pocas
+    // filas —una por cada vez que se ha generado un token— así que se traen de una vez.
+    const hist = new Map();
+    for (const h of (await dbAll(`SELECT id, local, token_pista, activo, creado_en, creado_por,
+                                         caduca_en, revocado_en, activada_en
+                                  FROM fid_integraciones ORDER BY local, id DESC`)) || []) {
+      if (!hist.has(h.local)) hist.set(h.local, []);
+      if (hist.get(h.local).length < 20) hist.get(h.local).push(h);
+    }
+
+    // Los contadores, agrupados de una vez en vez de una consulta por local.
+    const cf = await dbAll(`SELECT local, COUNT(*)::int AS facturas,
         COUNT(*) FILTER (WHERE estado = 'conflicto')::int AS conflictos,
-        0::int AS sin_miembro,
         COUNT(*) FILTER (WHERE devolucion)::int AS devoluciones,
+        COUNT(*) FILTER (WHERE es_prueba)::int AS pruebas,
         MAX(recibido_en) AS ultima
-      FROM fid_facturas`);
-    // Los participantes no válidos ya no se guardan como facturas: se registran aquí.
-    const v = await dbGet(`SELECT COUNT(*)::int AS n,
+      FROM fid_facturas GROUP BY local`);
+    const cv = await dbAll(`SELECT local, COUNT(*)::int AS n,
         COUNT(*) FILTER (WHERE resultado = 'ok')::int AS ok,
         COUNT(*) FILTER (WHERE resultado LIKE '404:factura_%')::int AS facturas_404,
-        MAX(creado_en) AS ultima,
-        MAX(agora_version) AS version FROM fid_validaciones`);
-    res.json({ ok: true, integracion: fila || null, historial: historial || [],
-      facturas: c || {}, validaciones: v || {}, local: FID_LOCAL, rewards_fase: REWARDS_FASE_1.length });
+        MAX(creado_en) AS ultima, MAX(agora_version) AS version
+      FROM fid_validaciones GROUP BY local`);
+    const cm = await dbAll(`SELECT local, COUNT(*)::int AS n,
+        COALESCE(SUM(unidades) FILTER (WHERE concepto = 'visita'), 0)::int AS visitas
+      FROM fid_movimientos GROUP BY local`);
+    const idx = (arr) => new Map((arr || []).map((r) => [r.local, r]));
+    const [fF, fV, fM] = [idx(cf), idx(cv), idx(cm)];
+
+    // La conexión SALIENTE, reducida a booleanos antes de salir de aquí.
+    let saliente = new Map();
+    try {
+      const rows = await dbAll(`SELECT local, host, token, usuario, pass_enc, local_id, activo FROM agora_locales`);
+      saliente = new Map((rows || []).map((r) => [r.local, {
+        hay_fila: true,
+        host: !!r.host,
+        credenciales: !!(r.usuario && r.pass_enc) || !!r.token,
+        activo: r.activo !== 0 && r.activo !== false,
+        local_id: !!r.local_id,
+      }]));
+    } catch { /* sin tabla de Ágora, la fidelización entrante sigue contestándose igual */ }
+
+    const locales = LOCALES_CANON.map((local) => {
+      const f = porLocal.get(local) || null;
+      const sal = saliente.get(local) || { hay_fila: false, host: false, credenciales: false, activo: false, local_id: false };
+      return {
+        local,
+        estado: fidEstadoVerificacion(f, { ahora }),
+        // Los botones los decide el SERVIDOR, con la tabla por estado. Que los calcule el panel es
+        // como se acaba ofreciendo «Generar token» sobre una integración apagada que sigue puesta
+        // en un TPV: `activo = false` la iguala con una recién generada, y no son lo mismo.
+        botones: fidBotonesDe(f, { ahora }),
+        integracion: f ? {
+          id: f.id, token_pista: f.token_pista, activo: !!f.activo, creado_en: f.creado_en,
+          creado_por: f.creado_por, caduca_en: f.caduca_en, revocado_en: f.revocado_en,
+          activada_en: f.activada_en,
+          workplace_id: f.workplace_id || null, workplace_nombre: f.workplace_nombre || null,
+          workplace_confirmado_en: f.workplace_confirmado_en || null,
+          workplace_confirmado_por: f.workplace_confirmado_por || null,
+        } : null,
+        saliente: sal,
+        historial: hist.get(local) || [],
+        facturas: fF.get(local) || {}, validaciones: fV.get(local) || {}, movimientos: fM.get(local) || {},
+      };
+    });
+
+    res.json({ ok: true, locales, estados: FID_ESTADOS_VER, botones_por_estado: FID_BOTONES,
+      rewards_fase: REWARDS_FASE_1.length });
   } catch (e) {
     // UN FALLO DE CONSULTA NO PUEDE PARECER «NO HAY INTEGRACIÓN».
     //
@@ -17813,6 +17961,18 @@ app.get("/api/fidelizacion/diagnostico", requireAuth(["direccion"]), async (req,
       catch { filas[t] = null; }
     }
 
+    // EL DESGLOSE POR LOCAL. El catálogo de arriba —oid, relfilenode, triggers— es de la TABLA y
+    // no se puede filtrar: preguntar «el oid de fid_facturas en Lloret» no significa nada. Lo que
+    // sí tiene sentido por local es cuántas filas hay de cada uno, y es lo que contesta «¿ha
+    // llegado algo del TPV nuevo?» sin mezclarlo con lo que ya había.
+    const porLocal = {};
+    for (const t of FID_TABLAS) {
+      try {
+        const r = await dbAll(`SELECT local, COUNT(*)::int AS n FROM ${fidIdent(t)} GROUP BY local ORDER BY local`);
+        porLocal[t] = Object.fromEntries((r || []).map((x) => [x.local || "(sin local)", Number(x.n)]));
+      } catch { porLocal[t] = null; }
+    }
+
     // ── Secuencias ────────────────────────────────────────────────────────────
     // Cada una se consulta directamente para tener `is_called` de verdad, no deducido. El bucle
     // vive en el módulo para poder probarlo: ver `leerSecuencias`.
@@ -17855,7 +18015,7 @@ app.get("/api/fidelizacion/diagnostico", requireAuth(["direccion"]), async (req,
       ok: true,
       url_huella: fidHash(String(process.env.DATABASE_URL || "")).slice(0, 12),
       esquema: con?.esquema ? String(con.esquema) : null,
-      tablas, secuencias: sec, auditoria,
+      tablas, secuencias: sec, auditoria, por_local: porLocal,
       // Para que quien lea esto no saque la conclusión de más. Cada línea es lo que el dato
       // permite afirmar, y nada más.
       leyenda: {
@@ -17875,32 +18035,237 @@ app.get("/api/fidelizacion/diagnostico", requireAuth(["direccion"]), async (req,
   }
 });
 
+/**
+ * Activar o desactivar UNA integración. El local sale de la fila, no de la petición.
+ *
+ * `activada_en` se escribe la primera vez y ya no se toca: es lo que distingue un token que nunca
+ * se ha puesto en un TPV de uno que sí está puesto y solo está apagado. Desactivar un local no
+ * puede tocar a ningún otro, y por eso el UPDATE va por `id` y se lee la fila antes.
+ */
 app.post("/api/fidelizacion/integracion/:id/activo", requireAuth(["direccion"]), async (req, res) => {
   try {
-    const activo = req.body?.activo ? true : false;
-    await dbRun(`UPDATE fid_integraciones SET activo = ? WHERE id = ?`, [activo, parseInt(req.params.id)]);
-    await ficAuditar("fidelizacion", parseInt(req.params.id), activo ? "integracion_activada" : "integracion_desactivada",
-      req.user.username, { local: FID_LOCAL });
-    res.json({ ok: true, activo });
-  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cambiar" }); }
+    const id = parseInt(req.params.id);
+    // Booleano explícito: `"false"` es cierto en JavaScript, y aquí decidiría si un TPV responde.
+    const quiere = req.body?.activo;
+    if (quiere !== true && quiere !== false) {
+      return res.status(400).json({ ok: false, error: "activo tiene que ser true o false" });
+    }
+    const fila = await dbGet(`SELECT id, local, activo, activada_en, revocado_en FROM fid_integraciones WHERE id = ?`, [id]);
+    if (!fila) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!fidPuedeVer(req, fila.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
+
+    const ahora = isoConOffset(Date.now());
+
+    // LA CONDICIÓN VIAJA DENTRO DEL `WHERE`, no en un `if` de arriba.
+    //
+    // Ese SELECT de antes sirve para dos cosas —saber si existe y de qué local es— y para nada
+    // más: entre leerlo y escribir, otra petición puede revocar la integración. Comprobándolo solo
+    // en JavaScript, esta ruta dejaría `activo = true` sobre una fila ya revocada. No se notaría
+    // en el panel, porque `estadoVerificacion` enseña «revocada» de todos modos — pero la fila
+    // quedaría mintiendo, y la ruta externa mira `activo`.
+    //
+    // `RETURNING id` es cómo se sabe si el UPDATE ha tocado algo: `dbRun` devuelve la fila o
+    // `undefined`, que es exactamente un `rowCount = 0`.
+    let tocada;
+    if (quiere) {
+      // Activar exige además que NO esté caducada. `caduca_en` es ISO en texto, así que se compara
+      // como texto igual que en `estadoIntegracion`; sin fecha significa que no caduca.
+      tocada = await dbRun(
+        `UPDATE fid_integraciones SET activo = TRUE, activada_en = COALESCE(activada_en, ?)
+          WHERE id = ? AND revocado_en IS NULL AND (caduca_en IS NULL OR caduca_en > ?)
+          RETURNING id`, [ahora, id, ahora]);
+    } else {
+      // `activada_en` QUEDA INFORMADA al apagar algo que estaba encendido.
+      //
+      // EL CASO QUE OBLIGA A ESTO es Lloret: lleva meses activa y la columna es nueva, así que
+      // vale NULL. Apagarla poniendo solo `activo = false` la dejaría con `activo=false` y
+      // `activada_en` a NULL, que es la huella de un token RECIÉN GENERADO Y NUNCA INSTALADO: el
+      // panel diría «Token generado» y ofrecería generar otro, con el que hay pegado en el TPV.
+      //
+      // El `CASE WHEN activo` lee el valor VIEJO de la fila —en PostgreSQL las expresiones del SET
+      // ven la fila antes de tocarla—, así que apagar algo que ya estaba apagado no inventa una
+      // activación que nunca ocurrió. Y `COALESCE` no pisa una fecha que ya estuviera puesta.
+      tocada = await dbRun(
+        `UPDATE fid_integraciones SET activo = FALSE,
+                activada_en = COALESCE(activada_en, CASE WHEN activo THEN ?::text ELSE NULL END)
+          WHERE id = ? AND revocado_en IS NULL
+          RETURNING id`, [ahora, id]);
+    }
+
+    // rowCount = 0: alguien la revocó o caducó por el camino. NI SE AUDITA NI SE DICE QUE SE HIZO.
+    // El motivo es genérico a propósito: al que llama le basta con saber que no está como creía.
+    if (!tocada) {
+      return res.status(409).json({ ok: false,
+        error: "La integración ha cambiado de estado. Vuelve a cargar la pantalla." });
+    }
+
+    await ficAuditar("fidelizacion", id, quiere ? "integracion_activada" : "integracion_desactivada",
+      req.user.username, { local: fila.local });
+    res.json({ ok: true, activo: quiere });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] activo", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
 });
 
 app.post("/api/fidelizacion/integracion/:id/revocar", requireAuth(["direccion"]), async (req, res) => {
   try {
-    await dbRun(`UPDATE fid_integraciones SET revocado_en = ?, revocado_por = ? WHERE id = ? AND revocado_en IS NULL`,
-      [isoConOffset(Date.now()), req.user.username, parseInt(req.params.id)]);
-    await ficAuditar("fidelizacion", parseInt(req.params.id), "integracion_revocada", req.user.username, { local: FID_LOCAL });
+    const id = parseInt(req.params.id);
+    const fila = await dbGet(`SELECT id, local FROM fid_integraciones WHERE id = ?`, [id]);
+    if (!fila) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!fidPuedeVer(req, fila.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
+    // Dos revocaciones a la vez: solo una toca la fila. La otra no puede auditar una revocación
+    // que no ha hecho —quedarían dos en el registro y una sería mentira—.
+    const tocada = await dbRun(
+      `UPDATE fid_integraciones SET revocado_en = ?, revocado_por = ?
+        WHERE id = ? AND revocado_en IS NULL RETURNING id`,
+      [isoConOffset(Date.now()), req.user.username, id]);
+    if (!tocada) return res.status(409).json({ ok: false, error: "Ya estaba revocada." });
+
+    await ficAuditar("fidelizacion", id, "integracion_revocada", req.user.username, { local: fila.local });
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo revocar" }); }
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] revocar", e));
+    res.status(500).json({ ok: false, error: "No se pudo revocar" });
+  }
+});
+
+/**
+ * LOS WORKPLACE QUE SE HAN VISTO en las facturas de PRUEBA de este local.
+ *
+ * De aquí sale lo que Dirección tiene delante antes de confirmar. Se lee de las facturas marcadas
+ * como prueba (Fase A), descifrando su cuerpo en memoria y sacando ÚNICAMENTE `Workplace.Id` y
+ * `Workplace.Name` con la misma proyección de lista cerrada. Nada más del documento sale de aquí.
+ *
+ * NO ESCRIBE NADA, y muy a propósito: mirar qué Workplace manda un TPV no puede ser lo mismo que
+ * vincularlo. La vinculación es un acto explícito de Dirección, en la ruta de al lado.
+ */
+app.get("/api/fidelizacion/integracion/:id/workplace-observado", requireAuth(["direccion"]), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const fila = await dbGet(`SELECT id, local, workplace_id FROM fid_integraciones WHERE id = ?`, [parseInt(req.params.id)]);
+    if (!fila) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!fidPuedeVer(req, fila.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
+
+    const facturas = await dbAll(`SELECT id, cuerpo_enc, recibido_en FROM fid_facturas
+      WHERE local = ? AND es_prueba AND cuerpo_enc IS NOT NULL ORDER BY id DESC LIMIT 20`, [fila.local]);
+
+    const vistos = new Map();
+    for (const f of facturas || []) {
+      let json = null;
+      try {
+        const plano = leerSecreto(f.cuerpo_enc, DOMINIOS.FIDELIZACION, "fid_facturas");
+        json = plano ? JSON.parse(plano) : null;
+      } catch { json = null; }
+      if (!json || typeof json !== "object") continue;
+      const doc = fidProyectarImportes(json, { hash: fidHash }).documento;
+      const wid = doc["Workplace.Id"];
+      if (wid === undefined || wid === null || wid === "") continue;
+      const k = String(wid);
+      if (!vistos.has(k)) vistos.set(k, { id: k, nombre: doc["Workplace.Name"] ?? null, n: 0, ultima: null, factura_id: f.id });
+      const v = vistos.get(k);
+      v.n += 1;
+      if (!v.ultima || String(f.recibido_en) > String(v.ultima)) v.ultima = f.recibido_en;
+    }
+    res.json({ ok: true, local: fila.local, confirmado: fila.workplace_id || null,
+      observados: [...vistos.values()].sort((a, b) => b.n - a.n),
+      aviso: "Marca como prueba una factura de este local para poder ver su Workplace." });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] workplace observado", e));
+    res.status(500).json({ ok: false, error: "No se pudo leer" });
+  }
+});
+
+/**
+ * CONFIRMAR el Workplace de un local. Solo Dirección, y solo a mano.
+ *
+ * Hay que mandar el Id Y el Name, y los dos tienen que coincidir con algo que se haya OBSERVADO de
+ * verdad en una factura de prueba de este local. No se puede confirmar a ciegas dándole a un botón:
+ * si el cliente no ha visto el Id y el Name, esto devuelve 409.
+ *
+ * ⚠️ ESTO NO IDENTIFICA LA INSTALACIÓN. Dos instalaciones distintas de Ágora pueden repetir el
+ * mismo `Workplace.Id`, y el `Name` lo escribe una persona y se cambia cuando quiera. Es una
+ * comprobación añadida para cazar un token pegado en el TPV equivocado, no una garantía.
+ */
+app.post("/api/fidelizacion/integracion/:id/workplace", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const wid = req.body?.workplace_id != null ? String(req.body.workplace_id).trim() : "";
+    const wnombre = req.body?.workplace_nombre != null ? String(req.body.workplace_nombre).trim() : "";
+    if (!wid) return res.status(400).json({ ok: false, error: "Falta el Workplace.Id" });
+
+    const fila = await dbGet(`SELECT id, local, activo, revocado_en, workplace_id FROM fid_integraciones WHERE id = ?`, [id]);
+    if (!fila) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!fidPuedeVer(req, fila.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
+    if (fila.revocado_en) return res.status(409).json({ ok: false, error: "Está revocada" });
+    if (fila.workplace_id) return res.status(409).json({ ok: false, error: "Ya tiene un Workplace confirmado. Para cambiarlo hay que revocar y volver a empezar." });
+
+    // TIENE QUE HABERSE VISTO, y el Id y el Name juntos, EN LA MISMA FACTURA y de ESTE local.
+    //
+    // Comprobar solo el Id dejaría confirmar un nombre inventado —o el de otro local— junto a un
+    // Id correcto, y ese nombre es lo que se leerá después en el panel para decidir si el TPV es
+    // el que creemos. Un rótulo que no salió nunca de una factura no sirve para comprobar nada.
+    //
+    // Y el filtro `local = ?` sale de la FILA de la integración, no de la petición: no hay forma
+    // de confirmar con una factura de otro local.
+    const facturas = await dbAll(`SELECT cuerpo_enc FROM fid_facturas
+      WHERE local = ? AND es_prueba AND cuerpo_enc IS NOT NULL ORDER BY id DESC LIMIT 20`, [fila.local]);
+    let coincide = false;
+    for (const f of facturas || []) {
+      let json = null;
+      try {
+        const plano = leerSecreto(f.cuerpo_enc, DOMINIOS.FIDELIZACION, "fid_facturas");
+        json = plano ? JSON.parse(plano) : null;
+      } catch { json = null; }
+      if (!json || typeof json !== "object") continue;
+      const doc = fidProyectarImportes(json, { hash: fidHash }).documento;
+      if (doc["Workplace.Id"] == null || String(doc["Workplace.Id"]) !== wid) continue;
+      const nombreVisto = doc["Workplace.Name"] == null ? "" : String(doc["Workplace.Name"]).trim();
+      if (nombreVisto === wnombre) { coincide = true; break; }
+    }
+    if (!coincide) {
+      return res.status(409).json({ ok: false,
+        error: "Ese Workplace no se ha visto en ninguna factura de prueba de este local. Cierra una factura de prueba y márcala antes de confirmar." });
+    }
+
+    // `workplace_confirmado_en IS NULL` DENTRO del WHERE. El SELECT de arriba no basta: dos
+    // confirmaciones a la vez lo pasarían las dos, y la segunda sobrescribiría la primera sin que
+    // nadie se enterase. Un vínculo puesto solo se deshace revocando, así que pisarlo es grave.
+    const ahora = isoConOffset(Date.now());
+    const tocada = await dbRun(
+      `UPDATE fid_integraciones SET workplace_id = ?, workplace_nombre = ?,
+              workplace_confirmado_en = ?, workplace_confirmado_por = ?
+        WHERE id = ? AND revocado_en IS NULL AND workplace_confirmado_en IS NULL
+        RETURNING id`,
+      [wid, wnombre || null, ahora, req.user.username, id]);
+    if (!tocada) {
+      return res.status(409).json({ ok: false,
+        error: "Ya tiene un Workplace confirmado. Para cambiarlo hay que revocar y volver a empezar." });
+    }
+
+    await ficAuditar("fidelizacion", id, "workplace_confirmado", req.user.username,
+      { local: fila.local, detalle: { workplace_id: wid, workplace_nombre: wnombre || null } });
+    res.json({ ok: true, workplace_id: wid, workplace_nombre: wnombre || null });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] confirmar workplace", e));
+    res.status(500).json({ ok: false, error: "No se pudo confirmar" });
+  }
 });
 
 app.get("/api/fidelizacion/facturas", requireAuth(["direccion"]), async (req, res) => {
   try {
+    // SIEMPRE filtrado. Sin local no se devuelve «todo»: se pide uno. Un listado global aquí
+    // enseñaría las facturas de un local a quien solo tiene permiso sobre otro.
+    const pedido = fidLocalDePeticion(req, req.query.local);
+    if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
     const filas = await dbAll(`SELECT id, local, global_id, clave_debil, cuerpo_bytes, agora_version, items_n,
         miembros_n, importe_total, devolucion, estado, es_prueba, recibido_en
-      FROM fid_facturas ORDER BY id DESC LIMIT 100`);
-    res.json({ ok: true, data: filas || [] });
-  } catch { res.json({ ok: true, data: [] }); }
+      FROM fid_facturas WHERE local = ? ORDER BY id DESC LIMIT 100`, [pedido.local]);
+    res.json({ ok: true, local: pedido.local, data: filas || [] });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] facturas", e));
+    res.status(500).json({ ok: false, error: "No se pudieron cargar" });
+  }
 });
 
 /** El detalle. El cuerpo original solo se descifra si se pide expresamente con `?cuerpo=1`. */
@@ -17908,6 +18273,7 @@ app.get("/api/fidelizacion/facturas/:id", requireAuth(["direccion"]), async (req
   try {
     const f = await dbGet(`SELECT * FROM fid_facturas WHERE id = ?`, [parseInt(req.params.id)]);
     if (!f) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!fidPuedeVer(req, f.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
     let esquema = null;
     try { esquema = JSON.parse(f.esquema); } catch { esquema = null; }
     const salida = { ...f, cuerpo_enc: undefined, esquema };
@@ -17942,13 +18308,14 @@ app.post("/api/fidelizacion/facturas/:id/prueba", requireAuth(["direccion"]), as
       return res.status(400).json({ ok: false, error: "es_prueba tiene que ser true o false" });
     }
     const quiere = pedido;
-    const antes = await dbGet(`SELECT id, es_prueba FROM fid_facturas WHERE id = ?`, [id]);
+    const antes = await dbGet(`SELECT id, local, es_prueba FROM fid_facturas WHERE id = ?`, [id]);
     if (!antes) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!fidPuedeVer(req, antes.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
     if (!!antes.es_prueba === quiere) return res.json({ ok: true, es_prueba: quiere, sin_cambios: true });
 
     await dbRun(`UPDATE fid_facturas SET es_prueba = ? WHERE id = ?`, [quiere, id]);
     await ficAuditar("fidelizacion", id, quiere ? "factura_marcada_prueba" : "factura_desmarcada_prueba",
-      req.user.username, { detalle: { factura_id: id, antes: !!antes.es_prueba, despues: quiere } });
+      req.user.username, { local: antes.local, detalle: { factura_id: id, antes: !!antes.es_prueba, despues: quiere } });
     res.json({ ok: true, es_prueba: quiere });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] marcar prueba", e));
@@ -17983,6 +18350,7 @@ app.get("/api/fidelizacion/facturas/:id/importes", requireAuth(["direccion"]), a
     const f = await dbGet(`SELECT id, es_prueba, cuerpo_enc, recibido_en, local FROM fid_facturas WHERE id = ?`,
       [parseInt(req.params.id)]);
     if (!f) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!fidPuedeVer(req, f.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
     if (!f.es_prueba) {
       return res.status(403).json({ ok: false,
         error: "Esta factura no está marcada como prueba. Los importes solo se pueden mirar en las facturas de prueba." });
@@ -18022,11 +18390,16 @@ app.get("/api/fidelizacion/facturas/:id/importes", requireAuth(["direccion"]), a
  */
 app.post("/api/fidelizacion/facturas/purgar-cuerpos", requireAuth(["direccion"]), async (req, res) => {
   try {
-    const r = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_facturas WHERE cuerpo_enc IS NOT NULL`);
-    await dbRun(`UPDATE fid_facturas SET cuerpo_enc = NULL WHERE cuerpo_enc IS NOT NULL`);
+    // POR LOCAL. Purgar «todo» borraría las muestras de un local que todavía está verificándose
+    // porque otro haya terminado. Cada uno acaba su piloto cuando le toca.
+    const pedido = fidLocalDePeticion(req, req.body?.local);
+    if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+    const r = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_facturas
+      WHERE local = ? AND cuerpo_enc IS NOT NULL`, [pedido.local]);
+    await dbRun(`UPDATE fid_facturas SET cuerpo_enc = NULL WHERE local = ? AND cuerpo_enc IS NOT NULL`, [pedido.local]);
     await ficAuditar("fidelizacion", null, "cuerpos_purgados", req.user.username,
-      { local: FID_LOCAL, detalle: { facturas: r ? r.n : 0 } });
-    res.json({ ok: true, purgadas: r ? r.n : 0 });
+      { local: pedido.local, detalle: { facturas: r ? r.n : 0 } });
+    res.json({ ok: true, local: pedido.local, purgadas: r ? r.n : 0 });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] purgar cuerpos", e));
     res.status(500).json({ ok: false, error: "No se pudo purgar" });

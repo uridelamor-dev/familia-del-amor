@@ -10643,130 +10643,209 @@ function renderAgora() {
   return head + info + vivo + `<div class="grid" style="gap:14px;margin-top:6px">${rows}</div>` + piloto;
 }
 
-// ── Fidelización Ágora · Piloto Lloret ───────────────────────────────────────
-// FASE 1: identifica al cliente, cuenta visitas y guarda la factura. CERO premios y cero
-// descuentos. Aquí no hay ni un botón que toque la configuración del TPV: eso se hace en Ágora.
-let FID = { integracion: null, historial: [], facturas: {}, validaciones: {}, local: "", urls: null, censo: null };
+// ── Fidelización Ágora ───────────────────────────────────────────────────────
+// Identifica al cliente, cuenta visitas y guarda la factura. TODAVÍA SIN PREMIOS: `Rewards` va
+// siempre vacío. Aquí no hay ni un botón que toque la configuración del TPV: eso se hace en Ágora.
+//
+// UNA TARJETA POR LOCAL. Cada establecimiento tiene su propia integración, su propio token y sus
+// propias facturas, y cada acción afecta solo al local de su tarjeta.
+let FID = { locales: [], censo: null, urls: null, urlsLocal: null, abierto: null };
 
-function renderFidPiloto() {
-  const i = FID.integracion;
-  const f = FID.facturas || {}, v = FID.validaciones || {};
-  const estado = !i ? '<span class="pill">Sin generar</span>'
-    : i.revocado_en ? '<span class="pill bad">Revocada</span>'
-    : !i.activo ? '<span class="pill">Desactivada</span>'
-    : '<span class="pill ok">Activa</span>';
+/** Los siete estados, con su pastilla y su explicación. El texto es lo que hay que hacer ahora. */
+const FID_ESTADOS = {
+  sin_configurar:        { pill: "",      txt: "Sin configurar",      ayuda: "Este local todavía no tiene integración. Genera su token para empezar." },
+  token_generado:        { pill: "",      txt: "Token generado",      ayuda: "El token existe pero nunca se ha activado. Pega las URLs en el TPV y pulsa «Activar para verificar»." },
+  activa_en_verificacion:{ pill: "warn",  txt: "En verificación",     ayuda: "Está recibiendo facturas, pero el Workplace todavía no se ha confirmado. No la uses con clientes reales." },
+  activa_confirmada:     { pill: "ok",    txt: "Activa y confirmada", ayuda: "Funcionando y con el Workplace confirmado por Dirección." },
+  desactivada:           { pill: "",      txt: "Desactivada",         ayuda: "El token sigue puesto en el TPV, pero no responde. Actívala para que vuelva a funcionar." },
+  revocada:              { pill: "bad",   txt: "Revocada",            ayuda: "Este token ya no vale. Hay que generar uno nuevo y volver a pegarlo en el TPV." },
+  caducada:              { pill: "bad",   txt: "Caducada",            ayuda: "El token ha caducado. Genera uno nuevo y pégalo en el TPV." },
+};
 
-  // El token en claro solo existe en memoria y solo justo después de generarlo. Al recargar
-  // desaparece: en la base únicamente hay su hash y cuatro caracteres de pista.
-  const urls = FID.urls ? `<div class="card" style="background:var(--bg2);margin-top:10px">
-      <div class="mut" style="font-size:12px;margin-bottom:6px"><b>Cópialas ahora.</b> El token no se vuelve a mostrar; si lo pierdes, genera otro.<br>La integración nace <b>desactivada</b>: pega las dos URLs en Ágora y después pulsa <b>Activar</b>.</div>
+function renderFidLocal(L) {
+  const e = FID_ESTADOS[L.estado] || FID_ESTADOS.sin_configurar;
+  const i = L.integracion, f = L.facturas || {}, v = L.validaciones || {}, m = L.movimientos || {};
+  const sal = L.saliente || {};
+  const fecha = (x) => esc(String(x || "—").slice(0, 16).replace("T", " "));
+  const puede = (b) => (L.botones || []).includes(b);
+  // «Configurada» sale del ESTADO, no de `!revocado_en`: una integración caducada tiene el campo
+  // vacío y no está configurada de nada — su token ya no resuelve.
+  const entrante = ["token_generado", "activa_en_verificacion", "activa_confirmada", "desactivada"].includes(L.estado)
+    ? '<span class="pill ok">Configurada</span>'
+    : L.estado === "caducada" ? '<span class="pill bad">Caducada</span>'
+    : L.estado === "revocada" ? '<span class="pill bad">Revocada</span>'
+    : '<span class="pill">Sin configurar</span>';
+
+  // LAS DOS CAPACIDADES, por separado. Una no depende de la otra: en fidelización es Ágora quien
+  // nos llama, así que para recibir facturas no hace falta ninguna conexión de salida. La
+  // saliente hará falta para el catálogo de productos, que todavía no está.
+  const capacidades = `<div class="rows" style="margin-top:8px">
+      <div class="row"><div class="grow"><div class="t1">Fidelización entrante</div><div class="mut" style="font-size:12px">Ágora llama a nuestras URLs. Solo necesita el token.</div></div>${entrante}</div>
+      <div class="row"><div class="grow"><div class="t1">Conexión saliente con Ágora</div><div class="mut" style="font-size:12px">Nosotros llamamos a Ágora. Hará falta para el catálogo de productos.</div></div>${sal.host && sal.credenciales ? '<span class="pill ok">Disponible</span>' : sal.hay_fila ? '<span class="pill warn">Incompleta</span>' : '<span class="pill">Sin configurar</span>'}</div>
+    </div>`;
+
+  // EL WORKPLACE. Se enseñan el Id y el Name OBSERVADOS y hay que confirmarlos a mano: no se puede
+  // vincular pulsando un botón sin haberlos visto.
+  let workplace = "";
+  if (i) {
+    if (i.workplace_id) {
+      workplace = `<div class="rows" style="margin-top:8px"><div class="row"><div class="grow"><div class="t1">Workplace confirmado</div><div class="mut" style="font-size:12px">${fecha(i.workplace_confirmado_en)} · ${esc(i.workplace_confirmado_por || "")}</div></div><b class="tnum">${esc(i.workplace_id)}${i.workplace_nombre ? " · " + esc(i.workplace_nombre) : ""}</b></div></div>`;
+    } else {
+      workplace = puede("workplace") ? `<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">
+        <b>Workplace sin confirmar.</b> Cierra una factura de prueba en este TPV, márcala como prueba y pulsa «Ver Workplace observado» para confirmar cuál es.
+        <div style="margin-top:8px"><button class="btn sm" data-act="fid-workplace" data-id="${i.id}">Ver Workplace observado</button></div></div>` : "";
+    }
+  }
+
+  const datos = !i ? "" : `<div class="rows" style="margin-top:8px">
+      <div class="row"><div class="grow"><div class="t1">Token</div><div class="mut" style="font-size:12px">Creado ${fecha(i.creado_en)} · ${esc(i.creado_por || "")}</div></div><b class="tnum">${esc(i.token_pista || "••••")}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Caduca</div></div><b>${esc(String(i.caduca_en || "—").slice(0, 10))}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Versión de Ágora</div></div><b>${esc(v.version || "—")}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Validaciones</div><div class="mut" style="font-size:12px">${Number(v.ok || 0)} con socio · última ${fecha(v.ultima)}</div></div><b class="tnum">${Number(v.n || 0)}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Facturas</div><div class="mut" style="font-size:12px">${Number(f.conflictos || 0)} conflicto(s) · ${Number(f.devoluciones || 0)} devolución(es) · ${Number(f.pruebas || 0)} de prueba</div></div><b class="tnum">${Number(f.facturas || 0)}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Movimientos</div><div class="mut" style="font-size:12px">${Number(m.visitas || 0)} visita(s) apuntada(s)</div></div><b class="tnum">${Number(m.n || 0)}</b></div>
+    </div>`;
+
+  const hist = (L.historial || []).length > 1 ? `<details style="margin-top:10px"><summary class="mut" style="font-size:12px;cursor:pointer">Historial de tokens (${L.historial.length})</summary>
+      <div class="rows" style="margin-top:6px">${L.historial.map((h) => `<div class="row"><div class="grow"><div class="t1 tnum">${esc(h.token_pista || "••••")}</div><div class="mut" style="font-size:12px">${fecha(h.creado_en)} · ${esc(h.creado_por || "")}</div></div><span class="pill">${h.revocado_en ? "Revocado" : h.activo ? "Activo" : "Desactivado"}</span></div>`).join("")}</div></details>` : "";
+
+  // Las URLs solo se enseñan justo después de generar, y solo en el local que se acaba de generar.
+  const urls = (FID.urls && FID.urlsLocal === L.local) ? `<div class="card" style="background:var(--bg2);margin-top:10px">
+      <div class="mut" style="font-size:12px;margin-bottom:6px"><b>Cópialas ahora.</b> El token no se vuelve a mostrar; si lo pierdes, genera otro.<br>La integración nace <b>desactivada</b>: pega las dos URLs en el TPV de <b>${esc(L.local)}</b> y después pulsa «Activar para verificar».</div>
       <div class="field"><label>URL de validación (GET)</label><input readonly value="${esc(FID.urls.validacion)}" onclick="this.select()"></div>
       <div class="field"><label>URL de facturas (POST)</label><input readonly value="${esc(FID.urls.facturas)}" onclick="this.select()"></div>
     </div>` : "";
 
-  // EL CENSO. Sin esto, la primera prueba del piloto dio 404 en todo y no había forma de saber si
-  // era un fallo nuestro o que sencillamente no hay socios. (Había un carné, y los dos códigos
-  // probados eran de cupones.) Solo números: ni tokens, ni códigos, ni nombres.
+  // LOS BOTONES SALEN DE LA TABLA del servidor, no de condiciones sueltas aquí. Con un `vivo` a
+  // ojo, una integración APAGADA y una RECIÉN GENERADA se pintan igual —las dos tienen
+  // `activo = false`— y «Generar token», que suena inofensivo, invalidaría el token que sigue
+  // pegado en el TPV. Por eso «Generar» solo existe donde no hay nada que romper.
+  const botones = `<span style="display:flex;gap:6px;flex-wrap:wrap">
+      ${puede("generar") ? `<button class="btn primary sm" data-act="fid-generar" data-local="${esc(L.local)}">Generar token</button>` : ""}
+      ${puede("regenerar") ? `<button class="btn sm" data-act="fid-generar" data-local="${esc(L.local)}">Regenerar…</button>` : ""}
+      ${puede("activar") ? `<button class="btn sm" data-act="fid-activo" data-id="${i.id}" data-v="1">Activar para verificar</button>` : ""}
+      ${puede("desactivar") ? `<button class="btn sm" data-act="fid-activo" data-id="${i.id}" data-v="0">Desactivar</button>` : ""}
+      ${puede("revocar") ? `<button class="btn sm danger" data-act="fid-revocar" data-id="${i.id}">Revocar</button>` : ""}
+      <button class="btn sm" data-act="fid-facturas" data-local="${esc(L.local)}">Ver facturas</button>
+      <button class="btn sm" data-act="fid-purgar" data-local="${esc(L.local)}">Borrar JSON guardados</button>
+    </span>`;
+
+  // EL AVISO DE VERIFICACIÓN. Mientras no esté confirmado el Workplace, esto no se usa con
+  // clientes de verdad: las facturas se registran, pero nadie ha comprobado todavía que el token
+  // esté en el TPV que creemos.
+  const aviso = L.estado === "activa_en_verificacion" ? `<div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px"><b>En verificación.</b> Las facturas se están registrando, pero el Workplace todavía no se ha confirmado. <b>No lo uses con clientes reales</b> hasta confirmarlo. Sin premios, sin puntos y sin promociones.</div>` : "";
+
+  return `<div class="card" style="margin-top:10px"><div class="ch"><h3>${esc(L.local)}</h3><span class="pill ${e.pill}">${esc(e.txt)}</span></div>
+    <div class="mut" style="font-size:12.5px;padding:2px 2px 4px">${esc(e.ayuda)}</div>
+    ${aviso}${capacidades}${workplace}${datos}${hist}${urls}<div style="margin-top:12px">${botones}</div></div>`;
+}
+
+function renderFidPiloto() {
+  // EL CENSO, que es global: un carné vale en cualquier barra. Sin ninguno, TODOS los locales
+  // devolverán 404 y será correcto. Solo números: ni tokens, ni códigos, ni nombres.
   const c = FID.censo || {};
   const utiles = Number(c.carnets_utiles || 0);
   const censo = `<div class="rows" style="margin-top:8px">
-      <div class="row"><div class="grow"><div class="t1">Carnés que puede identificar el piloto</div><div class="mut" style="font-size:12px">${Number(c.carnets_total || 0)} emitidos en total · un carné anulado o caducado no vale</div></div><b class="tnum" style="${utiles ? "" : "color:var(--danger)"}">${utiles}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Carnés que se pueden identificar</div><div class="mut" style="font-size:12px">${Number(c.carnets_total || 0)} emitidos en total · un carné anulado o caducado no vale · valen en cualquier local</div></div><b class="tnum" style="${utiles ? "" : "color:var(--danger)"}">${utiles}</b></div>
       <div class="row"><div class="grow"><div class="t1">Cupones y vales</div><div class="mut" style="font-size:12px">No identifican a nadie: son al portador y devuelven 404 a propósito</div></div><b class="tnum">${Number(c.cupones || 0)}</b></div>
-    </div>${utiles ? "" : `<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">No hay ningún carné utilizable: el TPV devolverá <b>404</b> a todo, y será correcto. El piloto necesita al menos un carné de cliente.</div>`}`;
+    </div>${utiles ? "" : `<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">No hay ningún carné utilizable: el TPV devolverá <b>404</b> a todo, y será correcto. Hace falta al menos un carné de cliente.</div>`}`;
 
-  // El historial: sin token y sin hash, solo la pista y los estados. Es lo que contesta «¿hubo
-  // alguna vez una integración aquí?» cuando el panel dice que no hay ninguna.
-  const hist = (FID.historial || []).length > 1 ? `<details style="margin-top:10px"><summary class="mut" style="font-size:12px;cursor:pointer">Historial de tokens (${FID.historial.length})</summary>
-      <div class="rows" style="margin-top:6px">${FID.historial.map((h) => `<div class="row"><div class="grow"><div class="t1 tnum">${esc(h.token_pista || "••••")}</div><div class="mut" style="font-size:12px">${esc(String(h.creado_en || "").slice(0, 16).replace("T", " "))} · ${esc(h.creado_por || "")}</div></div><span class="pill">${h.revocado_en ? "Revocado" : h.activo ? "Activo" : "Desactivado"}</span></div>`).join("")}</div></details>` : "";
+  const tarjetas = (FID.locales || []).map(renderFidLocal).join("");
 
-  const datos = !i ? "" : `<div class="rows" style="margin-top:8px">
-      <div class="row"><div class="grow"><div class="t1">Local del piloto</div></div><b>${esc(FID.local)}</b></div>
-      <div class="row"><div class="grow"><div class="t1">Token</div></div><b class="tnum">${esc(i.token_pista || "••••")}</b></div>
-      <div class="row"><div class="grow"><div class="t1">Caduca</div></div><b>${esc(String(i.caduca_en || "—").slice(0, 10))}</b></div>
-      <div class="row"><div class="grow"><div class="t1">Versión de Ágora</div></div><b>${esc(v.version || "—")}</b></div>
-      <div class="row"><div class="grow"><div class="t1">Validaciones</div><div class="mut" style="font-size:12px">${Number(v.ok || 0)} con socio · última ${esc(String(v.ultima || "—").slice(0, 16).replace("T", " "))}</div></div><b class="tnum">${Number(v.n || 0)}</b></div>
-      <div class="row"><div class="grow"><div class="t1">Facturas recibidas</div><div class="mut" style="font-size:12px">${Number(f.conflictos || 0)} conflicto(s) · ${Number(f.sin_miembro || 0)} sin socio · ${Number(f.devoluciones || 0)} devolución(es)</div></div><b class="tnum">${Number(f.facturas || 0)}</b></div>
-    </div>`;
-
-  const botones = `<span style="display:flex;gap:6px;flex-wrap:wrap">
-      ${!i ? '<button class="btn primary sm" data-act="fid-generar">Generar token</button>'
-        : i.revocado_en ? '<button class="btn primary sm" data-act="fid-generar">Generar token nuevo</button>'
-        : '<button class="btn sm" data-act="fid-generar">Regenerar…</button>'}
-      ${i && !i.revocado_en ? `<button class="btn sm" data-act="fid-activo" data-id="${i.id}" data-v="${i.activo ? 0 : 1}">${i.activo ? "Desactivar" : "Activar"}</button>` : ""}
-      ${i && !i.revocado_en ? `<button class="btn sm danger" data-act="fid-revocar" data-id="${i.id}">Revocar</button>` : ""}
-      <button class="btn sm" data-act="fid-facturas">Ver facturas</button>
-      <button class="btn sm" data-act="fid-miembro">Buscar socio</button>
-      <button class="btn sm" data-act="fid-purgar">Borrar JSON guardados</button>
-    </span>`;
-
-  return `<div class="card"><div class="ch"><h3>Fidelización Ágora · Piloto Lloret</h3>${estado}</div>
-    <div class="mut" style="font-size:13px;padding:2px 2px 6px">Fase 1: se identifica al cliente y se cuentan visitas y consumo. <b>No se conceden premios ni descuentos</b> — <code>Rewards</code> siempre va vacío. Estas URLs se pegan en Ágora; aquí no se configura nada del TPV.</div>
+  return `<div class="card"><div class="ch"><h3>Fidelización Ágora</h3><span class="pill">Sin premios activos</span></div>
+    <div class="mut" style="font-size:13px;padding:2px 2px 6px"><b>Integración por local.</b> Identificar al cliente y registrar sus visitas <b>ya funciona</b>. Los puntos y los premios <b>todavía no están activos</b>: <code>Rewards</code> va siempre vacío. Cada local necesita su propia configuración: su token, pegado en su TPV.</div>
     <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px"><b>Solo una respuesta cierra la factura: que la aceptemos.</b> Si algo falla —desactivas, revocas, el carné ya no existe o la base no responde— Ágora <b>no podrá cerrarla</b>. La salida es siempre la misma y es manual: el camarero <b>desasocia al participante</b> y vuelve a intentar el cierre. No se pierde la venta ni queda nada a medias.</div>
-    ${censo}${datos}${hist}${urls}<div style="margin-top:12px">${botones}</div></div>`;
+    ${censo}
+    <div style="margin-top:6px"><button class="btn sm" data-act="fid-miembro">Buscar socio</button></div>
+    </div>${tarjetas}`;
 }
 
 async function loadFidPiloto() {
   const c = document.getElementById("fidPiloto"); if (!c) return;
   try {
     const j = await apiRaw("/api/fidelizacion/integracion");
-    FID.integracion = j.integracion; FID.historial = j.historial || [];
-    FID.facturas = j.facturas || {}; FID.validaciones = j.validaciones || {}; FID.local = j.local;
-    // El censo sale del resumen de la tarjeta, que ya existía. Si falla, la tarjeta se pinta igual:
-    // saber cuántos carnés hay es útil, pero no es lo que se viene a mirar aquí.
+    FID.locales = j.locales || [];
+    // El censo sale del resumen de la tarjeta, que ya existía. Si falla, las tarjetas se pintan
+    // igual: saber cuántos carnés hay es útil, pero no es lo que se viene a mirar aquí.
     try { FID.censo = (await apiRaw("/api/tarjeta/resumen")).censo || null; } catch { FID.censo = null; }
     if (document.getElementById("fidPiloto")) document.getElementById("fidPiloto").innerHTML = renderFidPiloto();
   } catch (e) {
     // «No se ha podido comprobar» NO es «no hay integración». Confundirlos fue lo que hizo que el
     // panel ofreciera generar un token nuevo cuando el problema era otro.
     if (e.message !== "noauth" && document.getElementById("fidPiloto")) {
-      document.getElementById("fidPiloto").innerHTML = `<div class="card"><div class="ch"><h3>Fidelización Ágora · Piloto Lloret</h3><span class="pill bad">Sin comprobar</span></div><div class="mut" style="font-size:13px">No se ha podido leer el estado de la integración. <b>Esto no significa que no la haya</b>: no generes un token nuevo hasta saber qué pasa, porque revocaría el que esté puesto en el TPV.</div></div>`;
+      document.getElementById("fidPiloto").innerHTML = `<div class="card"><div class="ch"><h3>Fidelización Ágora</h3><span class="pill bad">Sin comprobar</span></div><div class="mut" style="font-size:13px">No se ha podido leer el estado de las integraciones. <b>Esto no significa que no las haya</b>: no generes un token nuevo hasta saber qué pasa, porque revocaría el que esté puesto en el TPV.</div></div>`;
     }
   }
 }
 
-async function fidGenerar() {
-  const viva = FID.integracion && !FID.integracion.revocado_en;
-  // Con una integración VIVA, regenerar rompe el TPV hasta que se peguen las URLs nuevas. Eso hay
-  // que decirlo antes, no después, y con todas las letras.
+async function fidGenerar(local) {
+  const L = (FID.locales || []).find((x) => x.local === local);
+  // Regenerar SOLO se ofrece donde ya hay un token que puede estar pegado en un TPV —lo dice la
+  // tabla de botones del servidor, no una condición de aquí—. Y entonces hay que avisar de lo que
+  // rompe antes, no después, y con todas las letras.
+  const viva = !!L && (L.botones || []).includes("regenerar");
   const aviso = viva
-    ? "⚠️ HAY UNA INTEGRACIÓN VIVA.\n\nAl generar un token nuevo, el actual queda REVOCADO al instante y el TPV de Lloret dejará de poder validar y de cerrar facturas con socio hasta que pegues las dos URLs nuevas en Ágora.\n\nSi solo quieres activarla, cierra esto y pulsa «Activar».\n\n¿Generar de todas formas?"
-    : "Se generará un token nuevo para Lloret. Nace desactivado: tendrás que pulsar Activar después de pegar las URLs en Ágora. ¿Seguir?";
+    ? `⚠️ ${local} YA TIENE UNA INTEGRACIÓN VIVA.\n\nAl generar un token nuevo, el actual queda REVOCADO al instante y el TPV de ${local} dejará de poder validar y de cerrar facturas con socio hasta que pegues las dos URLs nuevas en Ágora.\n\nEsto NO afecta a ningún otro local.\n\nSi solo quieres activarla, cierra esto y pulsa «Activar».\n\n¿Generar de todas formas?`
+    : `Se generará un token nuevo para ${local}. Nace desactivado: tendrás que pulsar «Activar para verificar» después de pegar las URLs en el TPV de ese local. ¿Seguir?`;
   if (!confirm(aviso)) return;
   try {
-    const j = await apiSend("POST", "/api/fidelizacion/integracion", {});
-    FID.urls = j.urls;                     // solo en memoria, solo hasta recargar
+    const j = await apiSend("POST", "/api/fidelizacion/integracion", { local });
+    FID.urls = j.urls; FID.urlsLocal = local;   // solo en memoria, solo hasta recargar
     await loadFidPiloto();
-    toast("Token generado y DESACTIVADO. Copia las URLs, pégalas en Ágora y pulsa Activar.");
+    toast("Token generado y DESACTIVADO. Copia las URLs, pégalas en el TPV y pulsa Activar.");
   } catch (e) { toast(e.message || "No se pudo generar"); }
 }
 
 async function fidActivo(id, v) {
   // Desactivar con una factura abierta y asociada deja al TPV sin poder cerrarla. No es un
   // problema —el camarero desasocia y cobra— pero hay que decirlo antes, no después.
-  if (v === "0" && !confirm("Al desactivar, una factura ya asociada a un socio NO podrá cerrarse: el camarero tendrá que desasociar al participante y cobrar sin fidelización. ¿Seguir?")) return;
+  if (v === "0" && !confirm("Al desactivar, una factura ya asociada a un socio NO podrá cerrarse: el camarero tendrá que desasociar al participante y cobrar sin fidelización.\n\nSolo afecta a este local. ¿Seguir?")) return;
   try { await apiSend("POST", `/api/fidelizacion/integracion/${id}/activo`, { activo: v === "1" }); await loadFidPiloto(); toast(v === "1" ? "Activada" : "Desactivada"); }
   catch (e) { toast(e.message || "No se pudo cambiar"); }
 }
 
-async function fidPurgarCuerpos() {
+async function fidPurgarCuerpos(local) {
   // Se borran los JSON capturados y NO el libro: son dos cosas distintas. El JSON es la muestra
-  // para diseñar la Fase 2; las visitas y el consumo son contables y se quedan.
-  if (!confirm("Se borrarán los JSON completos guardados de las facturas. Las visitas, el consumo y el resto del libro NO se tocan. ¿Seguir?")) return;
-  try { const j = await apiSend("POST", "/api/fidelizacion/facturas/purgar-cuerpos", {}); toast(`${j.purgadas} JSON borrados`); await loadFidPiloto(); }
+  // para diseñar los puntos; las visitas y el consumo son contables y se quedan.
+  if (!confirm(`Se borrarán los JSON completos guardados de las facturas de ${local}. Las visitas, el consumo y el resto del libro NO se tocan, y NO afecta a ningún otro local. ¿Seguir?`)) return;
+  try { const j = await apiSend("POST", "/api/fidelizacion/facturas/purgar-cuerpos", { local }); toast(`${j.purgadas} JSON borrados`); await loadFidPiloto(); }
   catch (e) { toast(e.message || "No se pudo purgar"); }
 }
 
 async function fidRevocar(id) {
-  if (!confirm("Revocar el token deja el TPV sin poder validar ni enviar facturas. ¿Seguir?")) return;
-  try { await apiSend("POST", `/api/fidelizacion/integracion/${id}/revocar`, {}); FID.urls = null; await loadFidPiloto(); toast("Revocada"); }
+  if (!confirm("Revocar el token deja el TPV de ESTE local sin poder validar ni enviar facturas. Los demás locales no se tocan. ¿Seguir?")) return;
+  try { await apiSend("POST", `/api/fidelizacion/integracion/${id}/revocar`, {}); FID.urls = null; FID.urlsLocal = null; await loadFidPiloto(); toast("Revocada"); }
   catch (e) { toast(e.message || "No se pudo revocar"); }
 }
 
-async function fidFacturas() {
+/** Los Workplace VISTOS en las facturas de prueba de este local, para confirmar uno a mano. */
+async function fidWorkplace(id) {
   try {
-    const j = await apiRaw("/api/fidelizacion/facturas");
-    const filas = (j.data || []).map((f) => `<div class="row"><div class="grow"><div class="t1">${esc(String(f.global_id).slice(0, 40))}${f.clave_debil ? ' <span class="pill">clave débil</span>' : ""}${f.es_prueba ? ' <span class="pill brand">prueba</span>' : ""}</div><div class="mut" style="font-size:12px">${esc(String(f.recibido_en).slice(0, 16).replace("T", " "))} · ${f.items_n} línea(s) · ${f.miembros_n} socio(s) · ${esc(f.estado)}${f.devolucion ? " · devolución" : ""}</div></div><span style="display:flex;gap:6px">${f.es_prueba ? `<button class="btn sm primary" data-act="fid-importes" data-id="${f.id}">Ver importes de prueba</button>` : ""}<button class="btn sm" data-act="fid-prueba" data-id="${f.id}" data-v="${f.es_prueba ? 0 : 1}">${f.es_prueba ? "Quitar marca" : "Marcar como prueba"}</button><button class="btn sm" data-act="fid-factura" data-id="${f.id}">Campos</button></span></div>`).join("");
-    modal("Facturas recibidas", filas ? `<div class="mut" style="font-size:12px;margin-bottom:8px">«Marcar como prueba» solo para facturas que hayamos hecho nosotros: es lo que permite mirar sus importes.</div><div class="rows">${filas}</div>` : '<div class="mut">Todavía no ha llegado ninguna.</div>');
+    const j = await apiRaw(`/api/fidelizacion/integracion/${id}/workplace-observado`);
+    const obs = j.observados || [];
+    const filas = obs.map((o) => `<div class="row"><div class="grow"><div class="t1 tnum">${esc(o.id)}</div><div class="mut" style="font-size:12px">${esc(o.nombre || "(sin nombre)")} · visto en ${o.n} factura(s) de prueba</div></div><button class="btn sm primary" data-act="fid-wp-ok" data-id="${id}" data-wid="${esc(o.id)}" data-wname="${esc(o.nombre || "")}">Confirmar este</button></div>`).join("");
+    modal(`Workplace observado · ${esc(j.local)}`, `
+      <div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px"><b>Esto no identifica la instalación.</b> Dos instalaciones distintas de Ágora pueden repetir el mismo <code>Workplace.Id</code>, y el nombre lo escribe una persona y se puede cambiar. Sirve para <b>detectar un token pegado en el TPV equivocado</b>, no como garantía.</div>
+      ${filas ? `<div class="mut" style="font-size:12px;margin-bottom:6px">Confirma el que corresponda a <b>${esc(j.local)}</b>. Se guardará quién y cuándo.</div><div class="rows">${filas}</div>`
+              : `<div class="mut">${esc(j.aviso || "Todavía no se ha visto ningún Workplace.")}</div>`}`);
+  } catch (e) { toast(e.message || "No se pudo leer"); }
+}
+
+async function fidConfirmarWorkplace(id, wid, wname) {
+  if (!confirm(`Vas a confirmar que el Workplace ${wid}${wname ? ` («${wname}»)` : ""} es el de este local.\n\nPara cambiarlo después habrá que revocar el token y volver a empezar. ¿Seguir?`)) return;
+  try {
+    await apiSend("POST", `/api/fidelizacion/integracion/${id}/workplace`, { workplace_id: wid, workplace_nombre: wname });
+    document.querySelectorAll(".modal-ov").forEach((x) => x.remove());
+    await loadFidPiloto(); toast("Workplace confirmado");
+  } catch (e) { toast(e.message || "No se pudo confirmar"); }
+}
+
+async function fidFacturas(local) {
+  FID.abierto = local;
+  try {
+    const j = await apiRaw(`/api/fidelizacion/facturas?local=${encodeURIComponent(local)}`);
+    const filas = (j.data || []).map((f) => `<div class="row"><div class="grow"><div class="t1" style="word-break:break-all">${esc(String(f.global_id).slice(0, 40))}${f.clave_debil ? ' <span class="pill">clave débil</span>' : ""}${f.es_prueba ? ' <span class="pill brand">prueba</span>' : ""}</div><div class="mut" style="font-size:12px">${esc(String(f.recibido_en).slice(0, 16).replace("T", " "))} · ${f.items_n} línea(s) · ${f.miembros_n} socio(s) · ${esc(f.estado)}${f.devolucion ? " · devolución" : ""}</div></div><span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${f.es_prueba ? `<button class="btn sm primary" data-act="fid-importes" data-id="${f.id}">Ver importes de prueba</button>` : ""}<button class="btn sm" data-act="fid-prueba" data-id="${f.id}" data-v="${f.es_prueba ? 0 : 1}">${f.es_prueba ? "Quitar marca" : "Marcar como prueba"}</button><button class="btn sm" data-act="fid-factura" data-id="${f.id}">Campos</button></span></div>`).join("");
+    modal(`Facturas · ${j.local || local}`, filas ? `<div class="mut" style="font-size:12px;margin-bottom:8px">«Marcar como prueba» solo para facturas que hayamos hecho nosotros: es lo que permite mirar sus importes.</div><div class="rows">${filas}</div>` : '<div class="mut">Todavía no ha llegado ninguna.</div>');
   } catch (e) { toast(e.message || "No se pudieron cargar"); }
 }
 
@@ -10788,7 +10867,7 @@ async function fidPrueba(id, v) {
     ? "Marcar esta factura como PRUEBA permite ver sus importes desde el panel.\n\nHazlo solo con facturas que hayáis hecho vosotros para probar, nunca con una de un cliente real.\n\n¿Seguir?"
     : "Se quitará la marca de prueba y dejarán de poder verse sus importes. ¿Seguir?";
   if (!confirm(aviso)) return;
-  try { await apiSend("POST", `/api/fidelizacion/facturas/${id}/prueba`, { es_prueba: marcar }); toast(marcar ? "Marcada como prueba" : "Marca quitada"); await fidFacturas(); }
+  try { await apiSend("POST", `/api/fidelizacion/facturas/${id}/prueba`, { es_prueba: marcar }); toast(marcar ? "Marcada como prueba" : "Marca quitada"); await fidFacturas(FID.abierto); }
   catch (e) { toast(e.message || "No se pudo cambiar"); }
 }
 
@@ -13141,15 +13220,17 @@ document.addEventListener("click", (e) => {
   else if (act === "ag-descubrir") agoraDescubrir(t.getAttribute("data-local"));
   else if (act === "ag-del") agoraDel(t.getAttribute("data-local"));
   else if (act === "ag-sync") agoraSyncNow();
-  else if (act === "fid-generar") fidGenerar();
+  else if (act === "fid-generar") fidGenerar(t.getAttribute("data-local"));
   else if (act === "fid-activo") fidActivo(t.getAttribute("data-id"), t.getAttribute("data-v"));
   else if (act === "fid-revocar") fidRevocar(t.getAttribute("data-id"));
-  else if (act === "fid-facturas") fidFacturas();
+  else if (act === "fid-facturas") fidFacturas(t.getAttribute("data-local"));
   else if (act === "fid-factura") fidFactura(t.getAttribute("data-id"));
   else if (act === "fid-prueba") fidPrueba(t.getAttribute("data-id"), t.getAttribute("data-v"));
   else if (act === "fid-importes") fidImportes(t.getAttribute("data-id"));
   else if (act === "fid-miembro") fidMiembro();
-  else if (act === "fid-purgar") fidPurgarCuerpos();
+  else if (act === "fid-purgar") fidPurgarCuerpos(t.getAttribute("data-local"));
+  else if (act === "fid-workplace") fidWorkplace(t.getAttribute("data-id"));
+  else if (act === "fid-wp-ok") fidConfirmarWorkplace(t.getAttribute("data-id"), t.getAttribute("data-wid"), t.getAttribute("data-wname"));
   else if (act === "anal-tab") analTab(t.getAttribute("data-tipo"));
   else if (act === "anal-area") analArea(t.getAttribute("data-area"));
   else if (act === "anal-period") analPeriod(t.getAttribute("data-p"));

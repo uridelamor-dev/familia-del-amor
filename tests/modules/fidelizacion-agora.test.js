@@ -10,12 +10,16 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import {
-  LOCAL_PILOTO, REWARDS_FASE_1, IDEM_V, ESTADOS,
+  REWARDS_FASE_1, IDEM_V, ESTADOS,
   nuevoToken, pistaToken, estadoIntegracion, caducidadDesde,
   textoParaCamarero, respuestaMiembro, carnetUtilizable,
   extraerFactura, movimientosDe, procesarFactura, respuestaFactura,
   esquemaDe, cabecerasSeguras, urlsDeIntegracion, buscaProfunda, claveDeFactura, localSlug, ALGO_DEBIL,
 } from "../../src/modules/fidelizacion/agora.js";
+
+/** El local que usan estas pruebas como ejemplo. Ya no hay ningún local privilegiado en el
+ *  código: es solo un nombre canónico cualquiera de la casa. */
+const LOCAL_PILOTO = "La Tapeta - Lloret";
 
 const sha = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
 const hashMember = (t) => sha(t).slice(0, 16);
@@ -143,13 +147,19 @@ describe("la integración: token, local y caducidad", () => {
     assert.equal(estadoIntegracion(integracion, { ahora: AHORA }).ok, true);
   });
 
-  test("AISLAMIENTO: cualquier local que no sea Lloret se rechaza", () => {
-    // El piloto es de un local. Si el token de Lloret valiera en Blanes, las visitas de dos barras
-    // se mezclarían y el piloto dejaría de medir lo que dice medir.
-    for (const l of ["La Tapeta - Blanes", "La Tapeta - Girona", "Cooperativa - Blanes", ""]) {
-      assert.equal(estadoIntegracion({ ...integracion, local: l }, { ahora: AHORA }).motivo, "local_no_permitido", l);
+  test("MULTILOCAL: cualquier local de la casa vale; uno que no lo sea, no", () => {
+    // Ya no hay local privilegiado. Lo que se comprueba es que la fila lleve un establecimiento
+    // canónico: una integración con un nombre que no agrupa con nada escribiría facturas en un
+    // local que no existe para el resto del sistema.
+    for (const l of ["La Tapeta - Blanes", "La Tapeta - Girona", "La Tapa Ibérica - Tordera",
+                     "Can Mateu - Tordera", "La Tapeta - Lloret"]) {
+      assert.equal(estadoIntegracion({ ...integracion, local: l }, { ahora: AHORA }).ok, true, l);
     }
-    assert.equal(LOCAL_PILOTO, "La Tapeta - Lloret");
+    // «Cooperativa - Blanes» es histórico: se LEE, pero no se escribe. Y un nombre inventado o
+    // vacío no puede tener integración.
+    for (const l of ["Cooperativa - Blanes", "Lloret", "", null, "Bar de la esquina"]) {
+      assert.equal(estadoIntegracion({ ...integracion, local: l }, { ahora: AHORA }).motivo, "local_no_canonico", String(l));
+    }
   });
 
   test("las URLs llevan el hueco que sustituye Ágora", () => {

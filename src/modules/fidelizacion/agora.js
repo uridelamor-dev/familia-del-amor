@@ -14,12 +14,15 @@
 // siempre puede desasociar al participante y cobrar sin fidelización, pero eso es un paso manual
 // en hora punta y no debería hacer falta nunca por un fallo nuestro.
 //
-// FASE 1: CERO PREMIOS. `Rewards` es SIEMPRE `[]`. Esta fase sirve para identificar clientes,
-// recibir facturas reales, contar visitas y —lo que más falta hace— ver por fin el JSON exacto
-// que manda Ágora. Los premios llegan cuando sepamos cómo es.
+// CERO PREMIOS TODAVÍA. `Rewards` es SIEMPRE `[]`. Esto sirve para identificar clientes, recibir
+// facturas reales y contar visitas. Los premios llegan cuando sepamos cómo es el JSON.
+//
+// MULTILOCAL. Cada establecimiento tiene su propia integración, su propio token y sus propias
+// facturas. La FUENTE DE VERDAD de a qué local pertenece una factura es EL TOKEN: la fila de
+// `fid_integraciones` que se encuentra por su hash lleva el local escrito, y de ahí sale todo lo
+// que se guarda. Ningún local viaja jamás en el cuerpo ni en la query de una ruta externa.
 
-/** El piloto es de un solo local. Cualquier otro se rechaza. */
-export const LOCAL_PILOTO = "La Tapeta - Lloret";
+import { esLocalCanonico } from "../facturas/local-canonico.js";
 
 /** Fase 1: nunca hay premios. Congelado para que no se pueda cambiar por accidente. */
 export const REWARDS_FASE_1 = Object.freeze([]);
@@ -101,8 +104,105 @@ export function estadoIntegracion(fila, { ahora = new Date().toISOString() } = {
   if (fila.revocado_en) return { ok: false, motivo: "revocada" };
   if (!fila.activo) return { ok: false, motivo: "desactivada" };
   if (fila.caduca_en && String(fila.caduca_en) <= String(ahora)) return { ok: false, motivo: "caducada" };
-  if (fila.local !== LOCAL_PILOTO) return { ok: false, motivo: "local_no_permitido" };
+  // El local tiene que ser uno de los establecimientos de la casa, escrito exactamente igual.
+  // Antes aquí había un único local permitido; ahora lo que se comprueba es que la fila no se
+  // haya quedado con un nombre que no agrupa con nada — una integración así escribiría facturas
+  // en un local que no existe para el resto del sistema.
+  if (!esLocalCanonico(fila.local)) return { ok: false, motivo: "local_no_canonico" };
   return { ok: true, motivo: null };
+}
+
+/**
+ * LOS SIETE ESTADOS DE UNA INTEGRACIÓN. Congelados.
+ *
+ * No hay ninguna columna `estado`: se DERIVAN de hechos con fecha (`activada_en`, `revocado_en`,
+ * `workplace_confirmado_en`…). Una columna de estado a mano se queda desincronizada del hecho que
+ * dice representar —revocas y se te olvida escribirla— y entonces el panel enseña una cosa y la
+ * ruta externa hace otra. Derivándola no puede haber desacuerdo: hay una sola verdad.
+ */
+export const ESTADOS_VERIFICACION = Object.freeze([
+  "sin_configurar", "token_generado", "activa_en_verificacion",
+  "activa_confirmada", "desactivada", "revocada", "caducada",
+]);
+
+/**
+ * En qué punto está una integración.
+ *
+ * El orden de las comprobaciones importa: revocada y caducada ganan a todo, porque son estados de
+ * los que no se sale. Después se separa «nunca se ha llegado a activar» (`token_generado`) de
+ * «se activó y se apagó» (`desactivada`), que es la diferencia entre un token que todavía no está
+ * puesto en ningún TPV y uno que sí lo está. Confundirlos hace que alguien regenere un token que
+ * estaba pegado en una caja.
+ */
+export function estadoVerificacion(fila, { ahora = new Date().toISOString() } = {}) {
+  if (!fila) return "sin_configurar";
+  if (fila.revocado_en) return "revocada";
+  if (fila.caduca_en && String(fila.caduca_en) <= String(ahora)) return "caducada";
+  if (!fila.activo) return fila.activada_en ? "desactivada" : "token_generado";
+  return fila.workplace_confirmado_en ? "activa_confirmada" : "activa_en_verificacion";
+}
+
+/**
+ * QUÉ BOTONES SE PUEDEN OFRECER EN CADA ESTADO. Tabla explícita, no condiciones sueltas.
+ *
+ * EL FALLO QUE EVITA: con `vivo = fila && !fila.revocado_en` esparcido por la plantilla, una
+ * integración APAGADA y una RECIÉN GENERADA se comportan igual, porque las dos tienen
+ * `activo = false`. Y no son lo mismo: la apagada tiene su token pegado en un TPV, y ofrecer
+ * «Generar token» —que suena inofensivo— lo invalidaría sin que nadie lo esperase.
+ *
+ * Por eso «Generar token» solo aparece donde NO hay ningún token que romper: `sin_configurar` y
+ * `revocada`. En todo lo demás el botón es «Regenerar…», que avisa de lo que rompe antes de nada.
+ *
+ * `facturas` y `purgar` van siempre: son datos del local, no de la integración. Un local al que
+ * le revocaron el token sigue teniendo sus facturas y hay que poder mirarlas.
+ */
+export const BOTONES_POR_ESTADO = Object.freeze({
+  sin_configurar:         Object.freeze(["generar", "facturas", "purgar"]),
+  token_generado:         Object.freeze(["regenerar", "activar", "revocar", "facturas", "purgar"]),
+  activa_en_verificacion: Object.freeze(["regenerar", "desactivar", "revocar", "workplace", "facturas", "purgar"]),
+  activa_confirmada:      Object.freeze(["regenerar", "desactivar", "revocar", "facturas", "purgar"]),
+  desactivada:            Object.freeze(["regenerar", "activar", "revocar", "workplace", "facturas", "purgar"]),
+  revocada:               Object.freeze(["generar", "facturas", "purgar"]),
+  caducada:               Object.freeze(["regenerar", "revocar", "facturas", "purgar"]),
+});
+
+/**
+ * Los botones de una fila concreta.
+ *
+ * `workplace` sale de la tabla si además NO hay ya un Workplace confirmado: una vez confirmado no
+ * se cambia sin revocar, así que ofrecer el botón sería ofrecer un 409.
+ */
+export function botonesDe(fila, { ahora = new Date().toISOString() } = {}) {
+  const estado = estadoVerificacion(fila, { ahora });
+  const base = BOTONES_POR_ESTADO[estado] || BOTONES_POR_ESTADO.sin_configurar;
+  return base.filter((b) => b !== "workplace" || !(fila && fila.workplace_id));
+}
+
+/** ¿Regenerar aquí rompe algo que ya está puesto en una caja? Decide el aviso, no el botón. */
+export const regenerarRompe = (fila, opciones) => BOTONES_POR_ESTADO[estadoVerificacion(fila, opciones)]?.includes("regenerar") === true;
+
+/**
+ * ¿Cuadra el Workplace de una factura con el que confirmó Dirección?
+ *
+ * ⚠️ ESTO NO IDENTIFICA UNA INSTALACIÓN, y es importante no venderlo como si lo hiciera. Dos
+ * instalaciones distintas de Ágora pueden repetir el mismo `Workplace.Id`, y el `Name` lo escribe
+ * una persona y se puede cambiar cualquier martes. El JSON entrante no trae nada que permita
+ * distinguir criptográficamente una caja de otra.
+ *
+ * Lo que SÍ sirve: avisar de una discrepancia CONOCIDA —el token de un local pegado en un TPV que
+ * manda otro Workplace—. Es un detector de errores de instalación, no una garantía.
+ *
+ * La identidad operativa de verdad es la cadena entera: el local canónico que eligió Dirección, el
+ * token único que se generó para él, la instalación manual en el TPV, y esto como comprobación
+ * añadida encima.
+ */
+export function discrepanciaWorkplace(fila, observado) {
+  const confirmado = fila && fila.workplace_id != null ? String(fila.workplace_id) : null;
+  const visto = observado != null && observado !== "" ? String(observado) : null;
+  if (!confirmado) return { hay: false, motivo: "sin_confirmar" };
+  if (!visto) return { hay: false, motivo: "la_factura_no_trae_workplace" };
+  if (confirmado !== visto) return { hay: true, motivo: "workplace_distinto" };
+  return { hay: false, motivo: null };
 }
 
 export function caducidadDesde(iso, dias = VIDA_DIAS) {
@@ -265,8 +365,19 @@ export function extraerFactura(json, sha256, { local = "" } = {}) {
   const miembros = [...porMiembro.values()];
   const importeTotal = miembros.reduce((s, m) => s + m.importe, 0);
 
+  // El Workplace, SOLO para comparar con el que Dirección confirmó. No se guarda en ninguna tabla
+  // y no decide nada: el local de esta factura ya lo ha fijado el token. Ver `discrepanciaWorkplace`.
+  //
+  // Se devuelven CRUDOS: el saneado vive en `discrepancias.js`, que es quien decide qué se puede
+  // guardar y escribir en un registro. Sanear en dos sitios acaba con dos criterios distintos.
+  const wp = clave(json, "Workplace");
+  const dentroWp = (n) => (wp && typeof wp === "object" ? clave(wp, n) : undefined);
+  const workplaceId = dentroWp("Id") != null ? String(dentroWp("Id")) : null;
+  const workplaceNombre = dentroWp("Name") ?? null;
+
   return {
     globalId, claveDebil, tipo, claveFactura: claveDeFactura(local, tipo, globalId), cuerpoHash,
+    workplaceId, workplaceNombre,
     lineas: lineas.length,
     miembros,
     importeTotal,
