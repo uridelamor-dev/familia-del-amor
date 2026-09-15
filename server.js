@@ -12943,7 +12943,17 @@ app.get("/api/wallet/apple/:token", async (req, res) => {
       [new Date().toISOString(), qr.id]).catch(() => {});
 
     res.setHeader("Content-Type", "application/vnd.apple.pkpass");
-    res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivoPase()}"`);
+    // `inline`, NO `attachment`, y esto es lo que arreglaba «Safari no puede descargar este
+    // archivo» en el iPhone.
+    //
+    // Con `attachment`, Safari en iOS manda la respuesta a su GESTOR DE DESCARGAS en vez de
+    // ofrecer el pase a Wallet — y ese gestor no sabe guardar un `.pkpass`. Por eso el error
+    // hablaba de descargar y no de un pase inválido: el pase estaba bien, y se comprobó entero
+    // contra producción (ZIP, manifest, firma y cadena hasta los certificados de Apple).
+    //
+    // Apple solo pide el tipo MIME para entregar un pase. El nombre se conserva porque en
+    // escritorio sí decide cómo se llama el fichero al guardarlo.
+    res.setHeader("Content-Disposition", `inline; filename="${nombreArchivoPase()}"`);
     // Dentro va el token de una persona: ni caché compartida ni intermediarios.
     res.setHeader("Cache-Control", "private, no-store");
     res.end(buffer);
