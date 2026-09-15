@@ -58,8 +58,12 @@ describe("pass.json de Apple", () => {
     assert.equal(pase.barcodes[0].format, "PKBarcodeFormatQR");
   });
 
-  test("debajo del QR está el número que se dicta en la barra", () => {
-    assert.equal(pase.barcodes[0].altText, "1234 5678");
+  test("el QR NO repite debajo el número que ya está en la cara", () => {
+    // Lo llevaba en `altText`, y decía exactamente lo mismo que «NÚMERO DE SOCIO», que está
+    // justo encima. Quitarlo deja el QR más grande y una cara menos repetida.
+    assert.equal(pase.barcodes[0].altText, undefined);
+    const socio = pase.storeCard.secondaryFields.find(f => f.key === "socio");
+    assert.equal(socio.value, "1234 5678", "el número tiene que seguir estando, pero una sola vez");
   });
 
   test("lleva los campos que iOS exige para no rechazarlo", () => {
@@ -78,10 +82,39 @@ describe("pass.json de Apple", () => {
     assert.equal(pase.authenticationToken, undefined);
   });
 
-  test("el campo principal va vacío: no hay nada que no envejezca", () => {
-    // Lo único que merecería ese sitio son las visitas, y un número congelado el día que se
-    // guardó el pase es peor que ningún número.
-    assert.deepEqual(pase.storeCard.primaryFields, []);
+  test("la cara dice, en este orden: de quién es, qué es y qué número tiene", () => {
+    assert.deepEqual(pase.storeCard.primaryFields,
+      [{ key: "titular", label: "CARNÉ DE CLIENTE", value: "Marta" }]);
+    assert.deepEqual(pase.storeCard.secondaryFields,
+      [{ key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" }]);
+    // Vacío a propósito: con tres datos ya está dicho todo.
+    assert.deepEqual(pase.storeCard.auxiliaryFields, []);
+  });
+
+  test("sin `logoText`: el logotipo YA dice «Familia Del Amor»", () => {
+    // Era el texto repetido: la firma manuscrita arriba y, al lado, lo mismo en tipografía del
+    // sistema.
+    assert.equal(pase.logoText, undefined);
+  });
+
+  test("un carné sin nombre no deja el sitio grande en blanco", () => {
+    const p = pasePlanoApple({ qr: { ...QR, nombre: "" }, cfg: CFG_APPLE, base: BASE });
+    assert.deepEqual(p.storeCard.primaryFields,
+      [{ key: "socio", label: "CARNÉ DE CLIENTE", value: "1234 5678" }]);
+    assert.deepEqual(p.storeCard.secondaryFields, []);
+    // Y el número sigue apareciendo una sola vez.
+    const veces = JSON.stringify(p).split("1234 5678").length - 1;
+    assert.equal(veces, 1);
+  });
+
+  test("ningún texto de la cara se repite", () => {
+    const sc = pase.storeCard;
+    const textos = [...sc.primaryFields, ...sc.secondaryFields, ...sc.auxiliaryFields]
+      .flatMap(f => [f.label, f.value])
+      .concat(pase.logoText, pase.barcodes[0].altText)
+      .filter(Boolean)
+      .map(t => String(t).toLowerCase());
+    assert.equal(new Set(textos).size, textos.length, `hay texto repetido: ${textos.join(" · ")}`);
   });
 
   test("los locales con coordenadas salen como `locations`, y como mucho diez", () => {

@@ -47,9 +47,13 @@ export function hayOpenssl() {
  * intermedio de Apple, que hay que incluir con `-certfile` o iOS no puede encadenar la firma
  * hasta la raíz y rechaza el pase sin decir por qué.
  *
- * `-binary` para que no se toquen los saltos de línea, `-noattr` para no meter atributos
- * firmados que Apple no espera, y `-outform DER` porque el fichero `signature` es DER crudo, no
- * PEM.
+ * `-binary` para que no se toquen los saltos de línea y `-outform DER` porque el fichero
+ * `signature` es DER crudo, no PEM.
+ *
+ * NO se usa `-noattr`: los atributos autenticados —en concreto `signingTime`— son obligatorios
+ * para PassKit. Este comentario decía antes que Apple «no los espera», y era justo al revés:
+ * sin ellos el pase no se puede añadir. Ver el porqué, con el mensaje exacto de Apple, junto a
+ * la llamada.
  */
 export function firmarPKCS7(manifest, { p12, password = "", wwdrPem } = {}) {
   if (!Buffer.isBuffer(manifest) || !manifest.length) throw new Error("Nada que firmar");
@@ -85,8 +89,23 @@ export function firmarPKCS7(manifest, { p12, password = "", wwdrPem } = {}) {
     fs.writeFileSync(rCert, conFallback(["-clcerts", "-nokeys"]), { mode: 0o600 });
     fs.writeFileSync(rClave, conFallback(["-nocerts", "-nodes"]), { mode: 0o600 });
 
+    // SIN `-noattr`, Y ESTO ES LO QUE HACE QUE EL PASE SE PUEDA AÑADIR.
+    //
+    // `-noattr` quita TODOS los atributos autenticados de la firma, incluido `signingTime`. Y
+    // PassKit lo exige: al abrir el pase, Apple contestaba literalmente
+    //
+    //     [com.apple.passkit:Validation] Signature validation: *** FAILED ***
+    //     [com.apple.passkit:General]    Invalid data error reading pass …
+    //                                    Signature must contain a signing date
+    //
+    // El pase era correcto en todo lo demás —ZIP, manifest, identificadores, y la firma incluso
+    // verificaba contra los certificados de Apple con `openssl smime -verify`—. Por eso costó
+    // encontrarlo: a openssl no le hace falta la fecha de firma, a PassKit sí.
+    //
+    // Quitar `-noattr` añade `contentType`, `signingTime` y `messageDigest` como atributos
+    // autenticados. La firma sigue siendo PKCS#7 *detached* en DER y sigue verificando.
     execFileSync("openssl", [
-      "smime", "-sign", "-binary", "-noattr",
+      "smime", "-sign", "-binary",
       "-in", rMan, "-out", rFirma, "-outform", "DER",
       "-signer", rCert, "-inkey", rClave, "-certfile", rWwdr,
     ], comun);

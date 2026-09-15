@@ -12604,7 +12604,11 @@ let _walletImgs = null;
 function walletImagenes() {
   if (_walletImgs) return _walletImgs;
   const dir = path.join(__dirname, "public", "assets", "wallet");
-  const nombres = ["icon.png", "icon@2x.png", "icon@3x.png", "logo.png", "logo@2x.png"];
+  // Las tres densidades de cada imagen. `logo@3x.png` faltaba: sin él, un iPhone Pro escala el
+  // @2x y la firma manuscrita sale con el borde sucio, que es justo lo que se nota en un
+  // logotipo de trazo fino.
+  const nombres = ["icon.png", "icon@2x.png", "icon@3x.png",
+                   "logo.png", "logo@2x.png", "logo@3x.png"];
   const out = [];
   for (const n of nombres) {
     try { out.push({ nombre: n, datos: fs.readFileSync(path.join(dir, n)) }); }

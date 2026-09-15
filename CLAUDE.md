@@ -154,8 +154,15 @@ no necesita ninguna llamada servidor-a-servidor. Cada botón sale solo si su pla
 configurada, en Promociones → Tarjeta de cliente (credenciales solo para dirección).
 Razones completas en `docs/adr/0002-tarjeta-de-cliente-y-wallet.md`.
 
-Las imágenes del pase se generan **una vez** con `node tools/wallet-imagenes.mjs` (usa `sips`, solo
-macOS) y se commitean en `public/assets/wallet/`.
+Las imágenes del pase se generan **una vez** con `node tools/wallet-imagenes.mjs` (Node puro, sin
+dependencias ni `sips`: decodifica y escribe el PNG con `zlib`) y se commitean en
+`public/assets/wallet/`. Recorta el logotipo **a su tinta** antes de escalar: el original es un
+cuadrado de 1000×1000 donde la firma ocupa el 9,5 %, y escalar el cuadrado entero la dejaba en
+39×6 px, ilegible. Las seis salidas (`logo` y `icon`, ×1 ×2 ×3) van las seis dentro del pase.
+
+⚠️ **La firma del `.pkpass` no puede usar `-noattr`.** PassKit exige el atributo autenticado
+`signingTime`; sin él iOS responde *«Signature must contain a signing date»* y Safari dice «no
+puede descargar este archivo». Candado: `tests/wallet-firma-signingtime.test.js`.
 
 ## Interfaz: ordenador Y móvil, siempre
 Todo cambio visual se entrega funcionando en las dos, sin que haya que pedirlo: el panel se usa

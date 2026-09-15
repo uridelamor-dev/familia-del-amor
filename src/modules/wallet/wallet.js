@@ -70,8 +70,20 @@ export function nombreArchivoPase() {
  * servicio exista; hasta entonces el pase es una foto del QR y el número de visitas vive en la
  * página, a un toque del propio código.
  *
- * `primaryFields` va VACÍO por lo mismo: lo único que merecería ese sitio son las visitas, y un
- * número congelado el día que se guardó el pase es peor que ningún número.
+ * ── CÓMO SE REPARTE LA CARA ──────────────────────────────────────────────────────────────────
+ *
+ * El logotipo de arriba ES la firma «Familia Del Amor», así que NO se pone `logoText`: decía lo
+ * mismo dos veces, una escrita a mano y otra en tipografía del sistema.
+ *
+ * Debajo, el sitio grande (`primaryFields`) lo ocupa EL NOMBRE del titular con «CARNÉ DE
+ * CLIENTE» como rótulo: así se dice qué es la tarjeta sin gastar una línea aparte. El número de
+ * socio va en `secondaryFields`, con su rótulo, que es donde se busca cuando hay que teclearlo.
+ *
+ * El código de barras NO lleva `altText`. Lo llevaba, y repetía exactamente el número que está
+ * justo encima; quitarlo deja el QR más grande y la cara más limpia.
+ *
+ * `auxiliaryFields` se queda vacío a propósito: con tres datos en la cara ya está dicho todo, y
+ * rellenarlo solo porque existe es lo que convierte una tarjeta en un formulario.
  */
 export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales = [] } = {}) {
   const pase = {
@@ -84,32 +96,34 @@ export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales 
     backgroundColor: COLOR_FONDO,
     foregroundColor: COLOR_TEXTO,
     labelColor: COLOR_ETIQUETA,
-    logoText: ORGANIZACION,
+    // Sin `logoText`: el logotipo de arriba ya dice «Familia Del Amor».
     sharingProhibited: true,   // la tarjeta es de una persona: compartirla duplicaría identidades
 
     barcodes: [{
       format: "PKBarcodeFormatQR",
+      // EL CONTENIDO NO SE TOCA: es el mismo enlace que compone `urlTarjeta` para la web y el
+      // que la tablet de la barra sabe leer. Cambiarlo aquí dejaría pases que no se validan.
       message: urlTarjeta(base, qr.token),
       // iso-8859-1 es lo que exige Apple; el mensaje es una URL, así que todo es ASCII.
       messageEncoding: "iso-8859-1",
-      // Si la cámara no lo lee, el camarero teclea esto. Es el mismo número que sale en la
-      // página, agrupado igual.
-      altText: codigoLegible(qr.codigo),
     }],
 
     storeCard: {
-      primaryFields: [],
+      // El nombre, grande, con el tipo de tarjeta de rótulo. Si no hay nombre —un carné emitido
+      // sin él— el sitio grande lo ocupa el número, que es lo único que identifica entonces.
+      primaryFields: qr.nombre
+        ? [{ key: "titular", label: "CARNÉ DE CLIENTE", value: String(qr.nombre) }]
+        : [{ key: "socio", label: "CARNÉ DE CLIENTE", value: codigoLegible(qr.codigo) }],
       secondaryFields: qr.nombre
-        ? [{ key: "titular", label: "TITULAR", value: String(qr.nombre) }]
+        ? [{ key: "socio", label: "NÚMERO DE SOCIO", value: codigoLegible(qr.codigo) }]
         : [],
-      auxiliaryFields: [
-        { key: "codigo", label: "CÓDIGO", value: codigoLegible(qr.codigo) },
-      ],
+      auxiliaryFields: [],
       backFields: [
         { key: "que-es", label: "Tu tarjeta",
-          value: "Enséñala cuando vengas y te reconocemos al momento. Tus visitas y tus descuentos están en el enlace de abajo." },
+          value: "Enséñala cuando vengas y te reconocemos al momento." },
         { key: "donde", label: "Dónde vale", value: promo ? dondeVale(promo.locales) : dondeVale("") },
-        { key: "cuenta", label: "Tus visitas y descuentos", value: urlTarjeta(base, qr.token) },
+        { key: "cuenta", label: "Tus visitas y tus descuentos",
+          value: urlTarjeta(base, qr.token) },
       ],
     },
   };
