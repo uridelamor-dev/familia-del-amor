@@ -362,7 +362,7 @@ describe("`rejected` NO cierra la factura, y en ningún sitio se dice lo contrar
 
   test("el panel dice al usuario que desasociar es un paso MANUAL", () => {
     const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
-    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function loadFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderAgvEntrada()"), panel.indexOf("// ── C · SALIDA"));
     assert.match(f, /Solo una respuesta cierra la factura/);
     assert.match(f, /desasocia al participante/);
     assert.match(f, /manual/i);

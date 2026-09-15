@@ -82,8 +82,9 @@ describe("las pantallas y quién entra en cada una", () => {
 describe("Ágora se queda con lo técnico, y solo con lo técnico", () => {
   // La pantalla de Ágora son tres funciones: la cabecera técnica, la tarjeta de cada local y el
   // bloque de integración con el TPV. Se miran juntas porque juntas se pintan.
-  const agora = fn("renderAgora") + fn("renderAgoraRow") + fn("renderFidLocal")
-    + fn("renderFidPiloto") + fn("loadAgora") + fn("loadFidPiloto");
+  const agora = fn("renderAgora") + fn("renderAgvVentas") + fn("renderAgvEntrada")
+    + fn("renderAgvSalida") + fn("renderAgoraSalidaLocal") + fn("renderAgoraRow")
+    + fn("renderFidLocal") + fn("loadAgora") + fn("loadFidPiloto");
 
   test("conserva recepción, conexiones, catálogo, tokens, Workplace, facturas y diagnóstico", () => {
     for (const pieza of ["integracion", "Workplace", "factura", "atálogo", "token", "iagnóstico"]) {
@@ -104,6 +105,109 @@ describe("Ágora se queda con lo técnico, y solo con lo técnico", () => {
   test("y desde Ágora se llega a Fidelización con un enlace, no con una copia", () => {
     assert.match(agora, /data-act="ir-fidelizacion"/);
     assert.match(app, /else if \(act === "ir-fidelizacion"\)/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe("ÁGORA, EN TRES APARTADOS", () => {
+  // Era una sola columna de casi cuatro mil píxeles con tres cosas que no se miran juntas nunca.
+  // Quien venía a ver por qué no llegaban ventas pasaba por encima de seis formularios de token.
+  const cuerpo = fn("renderAgvCuerpo") + fn("renderAgvVentas") + fn("renderAgvEntrada")
+    + fn("renderAgvSalida") + fn("renderAgoraSalidaLocal");
+
+  test("son los tres acordados, y en ese orden", () => {
+    const tabs = app.slice(app.indexOf("const AGV_TABS = ["), app.indexOf("function renderAgora()"));
+    assert.match(tabs, /\["ventas", "Ventas"\]/);
+    assert.match(tabs, /\["entrada", "Entrada desde Ágora"\]/);
+    assert.match(tabs, /\["salida", "Salida hacia Ágora"\]/);
+  });
+
+  test("UN SOLO ESTADO para los tres: la pestaña y el local", () => {
+    // Un estado por apartado habría hecho que cambiar de pestaña volviera al principio y que
+    // hubiera que volver a elegir el local en cada una.
+    assert.match(app, /let AGV = \{ tab: "ventas", local: null \};/);
+    assert.ok(!/let AGV_VENTAS|let AGV_ENTRADA|let AGV_SALIDA/.test(app), "hay estado por apartado");
+  });
+
+  test("CAMBIAR DE PESTAÑA NO VUELVE AL INICIO NI RECARGA", () => {
+    const tab = fn("agvTab");
+    // Se repinta SOLO el cuerpo, no la vista entera.
+    assert.match(tab, /const c = document\.getElementById\("agBody"\);/);
+    assert.ok(!/view\.innerHTML|loadAgora\(\)|skeleton\(\)/.test(tab), "recarga la pantalla entera");
+    // Y no vuelve a pedir lo que ya está en memoria.
+    assert.match(tab, /if \(k === "salida" && AGV\.local && !FIDG\.catalogo\)/);
+  });
+
+  test("EL LOCAL ELEGIDO ES EL MISMO EN LOS TRES", () => {
+    assert.match(fn("agvLocal"), /AGV\.local = AGV\.local === local \? null : local;/);
+    // Los tres apartados leen `AGV.local`, no una copia suya.
+    for (const f of ["renderAgvEntrada", "renderAgvSalida"]) {
+      assert.ok(fn(f).includes("agvFila("), `${f} no usa la fila compartida`);
+    }
+    assert.match(fn("agvFila"), /const abierto = AGV\.local === local;/);
+  });
+
+  test("SOLO UN LOCAL ABIERTO A LA VEZ", () => {
+    // Con un `<details>` por local se acababa con seis desplegados y la pantalla otra vez larga.
+    const fila = fn("agvFila");
+    assert.ok(!fila.includes("<details"), "vuelve a haber un details por local");
+    assert.match(fila, /\$\{abierto \? `<div style="padding:0 16px 16px">/);
+    assert.match(fila, /aria-expanded="\$\{abierto\}"/);
+  });
+
+  test("cada apartado lleva LO SUYO, y nada del vecino", () => {
+    const ventas = fn("renderAgvVentas");
+    assert.match(ventas, /Última lectura correcta/);
+    assert.match(ventas, /data-act="ag-sync"/);
+    assert.match(ventas, /id="agVivo"/);
+    for (const ajeno of ["agHost_", "agTok_", "fid-generar", "Workplace", "fidg-sync"]) {
+      assert.ok(!ventas.includes(ajeno), `Ventas lleva ${ajeno}`);
+    }
+
+    const entrada = fn("renderAgvEntrada");
+    assert.match(entrada, /Fidelización entrante/);
+    assert.match(entrada, /renderFidLocal\(L\)/);
+    for (const ajeno of ["agHost_", "agUser_", "agPass_", "fidg-sync"]) {
+      assert.ok(!entrada.includes(ajeno), `Entrada lleva ${ajeno}`);
+    }
+
+    const salida = fn("renderAgvSalida") + fn("renderAgoraSalidaLocal");
+    assert.match(salida, /renderAgoraRow\(local, i\)/);
+    assert.match(salida, /renderFidgCatalogo\(local\)/);
+    for (const ajeno of ["fid-generar", "fid-revocar", "Workplace confirmado"]) {
+      assert.ok(!salida.includes(ajeno), `Salida lleva ${ajeno}`);
+    }
+  });
+
+  test("EL CATÁLOGO VA CON SU LOCAL, no suelto al final", () => {
+    // Suelto detrás de todos los locales, había que acordarse de cuál estaba elegido en un
+    // desplegable que quedaba a mil píxeles.
+    assert.match(fn("renderAgoraSalidaLocal"), /renderFidgCatalogo\(local\)/);
+    // Y con un local fijado no se vuelve a preguntar cuál.
+    const cat = fn("renderFidgCatalogo");
+    assert.match(cat, /const fijo = !!local;/);
+    assert.match(cat, /fijo\s*\n?\s*\? `<input type="hidden" id="fidgLocal"/);
+  });
+
+  test("y no se pinta ni una regla, promoción o campaña aquí", () => {
+    for (const ajeno of ["fidgReglaNueva", "fidgPromoNueva", "fidgFormNuevo", "fidgComNueva",
+                         "renderFidPrograma", "FIDG_PROPUESTAS"]) {
+      assert.ok(!cuerpo.includes(ajeno), `Ágora monta ${ajeno}, que es de Marketing`);
+    }
+  });
+
+  test("Ágora ya NO pide los datos de Marketing", () => {
+    // Pedía reglas, promociones, formularios, tarjeta, comunicaciones y revisiones para no pintar
+    // ninguna: seis viajes de red en datos que nadie iba a mirar.
+    const carga = fn("loadFidPiloto");
+    assert.ok(!carga.includes("loadFidGestion"), "sigue pidiendo la configuración comercial");
+    assert.ok(!carga.includes("loadFidPrograma"), "sigue pidiendo las reglas");
+    assert.match(carga, /apiRaw\("\/api\/fidelizacion\/integracion"\)/);
+  });
+
+  test("las pestañas y las cabeceras son BOTONES, no divs con click", () => {
+    assert.match(app, /<button class="tab\$\{AGV\.tab === k \? " on" : ""\}" role="tab"/);
+    assert.match(fn("agvFila"), /<button class="agv-cab" data-act="agv-local"/);
   });
 });
 

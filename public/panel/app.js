@@ -42,7 +42,17 @@ async function apiSend(method, path, body) {
   if (body) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
   const r = await fetch(path, opt);
   if (await fueraDeSesion(r)) throw new Error("noauth");
-  const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error del servidor"); return j;
+  const j = await r.json();
+  if (!j.ok) {
+    // El mensaje sigue siendo el mismo para todo el panel; lo que se añade es lo que trae la
+    // respuesta para poder explicarlo: sin esto, un fallo por etapas llegaba a la pantalla como
+    // una frase suelta y se perdía justo el dato que dice dónde mirar.
+    const e = new Error(j.error || "Error del servidor");
+    if (j.etapa) e.etapa = j.etapa;
+    if (j.detalle) e.detalle = j.detalle;
+    throw e;
+  }
+  return j;
 }
 
 // El menú va por departamentos, que es como está repartido el trabajo de verdad: quien lleva
@@ -10675,13 +10685,11 @@ function agoraResumenFor(local) { return (AGORA._resumen || []).find((x) => x.lo
 function renderAgoraRow(local, i) {
   const c = agoraCfgFor(local);
   const est = c && c.estado;
-  const alive = est ? est.alive : null;
-  const pill = !c ? '<span class="pill">Sin configurar</span>' : (!c.activo ? '<span class="pill">Desactivado</span>' : (alive === true ? '<span class="pill ok">TPV vivo</span>' : alive === false ? '<span class="pill bad">Sin respuesta</span>' : '<span class="pill brand">Activo</span>'));
   const passPh = c && c.passSet ? "•••••• · guardada — escribe para cambiar" : "Contraseña de Ágora";
-  // PLEGADA. Ocho locales × una tarjeta con seis campos y seis botones eran casi tres mil
-  // píxeles para una pantalla que se toca una vez al mes. Cerrada dice lo único que se mira de
-  // pasada: cómo está ese TPV.
-  return `<details class="card fold" data-agrow="${i}"><summary style="padding:16px 18px"><h3>${esc(local)}</h3><span class="foldr">${pill}<span class="car">${ic("chev", 16)}</span></span></summary>
+  // SIN PLEGADO PROPIO. Lo pone `agvFila`, que es quien garantiza que haya UNO SOLO abierto: con
+  // un `<details>` por local se acababa con seis desplegados y la pantalla otra vez kilométrica.
+  // La pastilla se calcula igual porque la usa la cabecera de fuera.
+  return `<div data-agrow="${i}">
     <div class="toolbar">
       <div class="field grow"><label>Host (DynDNS + puerto)</label><input id="agHost_${i}" value="${esc(c ? c.host : "")}" placeholder="local.chickenkiller.com:8984"></div>
       <div class="field"><label>Local ID (opcional)</label><input id="agLid_${i}" value="${esc(c && c.local_id ? c.local_id : "")}" placeholder="—" style="max-width:120px"></div>
@@ -10702,16 +10710,168 @@ function renderAgoraRow(local, i) {
       <button class="btn primary" data-act="ag-save" data-local="${esc(local)}" data-i="${i}">Guardar</button>
       ${c ? `<button class="btn sm danger" data-act="ag-del" data-local="${esc(local)}">Eliminar</button>` : ""}
     </div>
-    <div class="mut" style="font-size:11.5px;margin-top:4px">Las ventas se leen con el <b>usuario+contraseña</b> (login web de Ágora). Recomendado: crea un usuario dedicado con permisos mínimos.</div>${est && est.ts ? `<div class="mut" style="font-size:12px;margin-top:4px">Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}</div>` : ""}</details>`;
+    <div class="mut" style="font-size:11.5px;margin-top:4px">Las ventas se leen con el <b>usuario+contraseña</b> (login web de Ágora). Recomendado: crea un usuario dedicado con permisos mínimos.</div>${est && est.ts ? `<div class="mut" style="font-size:12px;margin-top:4px">Última comprobación: ${esc(String(est.ts).slice(0, 16).replace("T", " "))}</div>` : ""}</div>`;
 }
+// ── LA PANTALLA DE ÁGORA, EN TRES APARTADOS ──────────────────────────────────
+//
+// ── POR QUÉ TRES Y NO UNO ────────────────────────────────────────────────────
+//
+// Era una sola columna de casi cuatro mil píxeles con tres cosas que no se miran juntas nunca:
+// cómo van las ventas, cómo entra Ágora a buscarnos, y cómo salimos nosotros hacia Ágora. Quien
+// venía a ver por qué no llegaban ventas tenía que pasar por encima de seis formularios de token.
+//
+//   Ventas              qué ha entrado y cuándo. Se mira a diario.
+//   Entrada desde Ágora el TPV nos llama a nosotros: token, URLs, Workplace, facturas.
+//   Salida hacia Ágora  nosotros llamamos al TPV: host, credenciales, catálogo.
+//
+// ── UN SOLO ESTADO Y UNA SOLA CARGA ──────────────────────────────────────────
+//
+// `AGV.tab` y `AGV.local` son de la PANTALLA, no de cada apartado. Cambiar de pestaña repinta solo
+// el cuerpo: no vuelve al principio, no pide nada al servidor y el local elegido SIGUE SIENDO EL
+// MISMO en los tres. Tener un estado por apartado habría hecho justo lo contrario.
+let AGV = { tab: "ventas", local: null };
+
+const AGV_TABS = [
+  ["ventas", "Ventas"],
+  ["entrada", "Entrada desde Ágora"],
+  ["salida", "Salida hacia Ágora"],
+];
+
 function renderAgora() {
-  const head = `<div class="ph"><div class="eyebrow">Sistema · Integraciones</div><h1>Ágora (TPV)</h1><div class="sub">Conecta el TPV de cada local para traer las ventas. El apiToken se guarda cifrado y nunca se muestra.</div><div class="acts"><button class="btn primary" data-act="ag-sync">Sincronizar ventas ahora</button></div></div>`;
-  const info = `<div class="card"><div class="mut" style="font-size:13px">El servidor del TPV solo responde con el <b>local abierto</b> (programa Ágora encendido). Requisitos: licencia de integración, v6.0.6, DynDNS y el puerto 8984 abierto.${AGORA.lastSync ? ` · Última sincronización: <b>${esc(String(AGORA.lastSync).slice(0, 16).replace("T", " "))}</b>` : " · Aún no se ha sincronizado."}</div></div>`;
-  const vivo = `<div id="agVivo" style="margin-top:6px"><div class="card"><div class="mut" style="font-size:13px">Cargando ventas en vivo…</div></div></div>`;
-  // Un solo terminal de TPV para las dos barras de Blanes: una fila, no dos.
-  const rows = visiblesFE(null, LOCALES).map((l, i) => renderAgoraRow(l, i)).join("");
-  const piloto = `<div id="fidPiloto" style="margin-top:6px"><div class="card"><div class="mut" style="font-size:13px">Cargando el piloto de fidelización…</div></div></div>`;
-  return head + info + vivo + `<div class="grid" style="gap:14px;margin-top:6px">${rows}</div>` + piloto;
+  const head = `<div class="ph"><div class="eyebrow">Sistema · Integraciones</div><h1>Ágora (TPV)</h1><div class="sub">Conecta el TPV de cada local para traer las ventas. El apiToken se guarda cifrado y nunca se muestra.</div></div>`;
+  const tabs = AGV_TABS.map(([k, t]) =>
+    `<button class="tab${AGV.tab === k ? " on" : ""}" role="tab" aria-selected="${AGV.tab === k}" data-act="agv-tab" data-k="${k}">${esc(t)}</button>`).join("");
+  return head
+    + `<div class="tabs" role="tablist" aria-label="Apartados de Ágora" style="margin-bottom:12px">${tabs}</div>`
+    + `<div id="agBody">${renderAgvCuerpo()}</div>`;
+}
+
+/** Cambia de apartado SIN recargar: el cuerpo es lo único que se repinta. */
+function agvTab(k) {
+  if (!AGV_TABS.some(([x]) => x === k)) return;
+  AGV.tab = k;
+  const c = document.getElementById("agBody");
+  if (c) c.innerHTML = renderAgvCuerpo();
+  document.querySelectorAll('[data-act="agv-tab"]').forEach((b) => {
+    const on = b.getAttribute("data-k") === k;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", String(on));
+  });
+  // Lo que se pide en segundo plano se vuelve a pintar en su hueco, si toca.
+  //
+  // El catálogo se pide también AL LLEGAR a «Salida» con un local ya abierto: el local se elige
+  // una vez y vale para las tres pestañas, así que se puede aterrizar aquí con uno abierto sin
+  // haber pasado por su cabecera. Sin esto se quedaba en «todavía no se ha leído» para siempre.
+  if (k === "ventas") loadAgoraVivo();
+  if (k === "salida" && AGV.local && !FIDG.catalogo) fidgCargarCatalogo(AGV.local);
+}
+
+/** El local elegido, COMPARTIDO por los tres apartados. */
+function agvLocal(local) {
+  AGV.local = AGV.local === local ? null : local;   // volver a pulsar cierra
+  const c = document.getElementById("agBody");
+  if (c) c.innerHTML = renderAgvCuerpo();
+  // El catálogo de ese local se pide AL ABRIRLO, no antes: pedir los ocho de golpe serían ocho
+  // consultas para mirar uno. Y solo una vez: si ya está en memoria, no se vuelve a pedir.
+  if (AGV.tab === "salida" && AGV.local && !FIDG.catalogo) fidgCargarCatalogo(AGV.local);
+}
+
+function renderAgvCuerpo() {
+  if (AGV.tab === "entrada") return renderAgvEntrada();
+  if (AGV.tab === "salida") return renderAgvSalida();
+  return renderAgvVentas();
+}
+
+/** El nombre del local de una tarjeta de entrada o de salida. */
+const agvNombre = (x) => (typeof x === "string" ? x : x.local);
+
+/**
+ * Una fila por local, plegable, Y SOLO UNA ABIERTA.
+ *
+ * No se usa `<details>` porque cada uno guarda su propio abierto/cerrado: con ocho locales se
+ * acababa con seis desplegados y la pantalla otra vez larga. Aquí manda `AGV.local`, que además
+ * es lo que hace que las tres pestañas enseñen el mismo local.
+ */
+function agvFila(local, pastilla, dentro) {
+  const abierto = AGV.local === local;
+  return `<div class="card" style="margin-bottom:10px;padding:0">
+    <button class="agv-cab" data-act="agv-local" data-local="${esc(local)}"
+            aria-expanded="${abierto}" style="width:100%;text-align:left;background:none;border:0;padding:14px 16px;font:inherit;cursor:pointer;display:flex;align-items:center;gap:10px">
+      <span class="grow" style="min-width:0"><b style="overflow-wrap:anywhere">${esc(local)}</b></span>
+      ${pastilla}
+      <span class="car" style="transform:rotate(${abierto ? 90 : 0}deg);transition:transform .15s">${ic("chev", 16)}</span>
+    </button>
+    ${abierto ? `<div style="padding:0 16px 16px">${dentro()}</div>` : ""}
+  </div>`;
+}
+
+// ── A · VENTAS ───────────────────────────────────────────────────────────────
+function renderAgvVentas() {
+  return `<div class="card"><div class="ch"><h3>Recepción de ventas</h3><button class="btn primary sm" data-act="ag-sync">Sincronizar ahora</button></div>
+      <div class="mut" style="font-size:13px">El servidor del TPV solo responde con el <b>local abierto</b> (programa Ágora encendido). Requisitos: licencia de integración, v6.0.6, DynDNS y el puerto 8984 abierto.</div>
+      <div class="rows" style="margin-top:8px">
+        <div class="row"><div class="grow"><div class="t1">Última lectura correcta</div><div class="mut" style="font-size:12px">La última vez que entraron ventas de verdad</div></div><b>${AGORA.lastSync ? esc(String(AGORA.lastSync).slice(0, 16).replace("T", " ")) : "—"}</b></div>
+      </div>
+      ${AGORA.lastSync ? "" : '<div class="pendingblock" style="margin-top:8px;padding:10px 12px;font-size:12.5px">Todavía no se ha sincronizado nunca. Configura usuario y contraseña de un local en <b>Salida hacia Ágora</b> y pulsa «Sincronizar ahora».</div>'}</div>
+    <div id="agVivo" style="margin-top:12px"><div class="card"><div class="mut" style="font-size:13px">Cargando ventas en vivo…</div></div></div>`;
+}
+
+// ── B · ENTRADA DESDE ÁGORA ──────────────────────────────────────────────────
+function renderAgvEntrada() {
+  const c = FID.censo || {};
+  const utiles = Number(c.carnets_utiles || 0);
+  if (!FID.locales) return '<div class="card"><div class="mut">Cargando…</div></div>';
+
+  const censo = `<div class="rows" style="margin-top:8px">
+      <div class="row"><div class="grow"><div class="t1">Carnés que se pueden identificar</div><div class="mut" style="font-size:12px">${Number(c.carnets_total || 0)} emitidos en total · un carné anulado o caducado no vale · valen en cualquier local</div></div><b class="tnum" style="${utiles ? "" : "color:var(--danger)"}">${utiles}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Cupones y vales</div><div class="mut" style="font-size:12px">No identifican a nadie: son al portador y devuelven 404 a propósito</div></div><b class="tnum">${Number(c.cupones || 0)}</b></div>
+    </div>${utiles ? "" : '<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">No hay ningún carné utilizable: el TPV devolverá <b>404</b> a todo, y será correcto. Hace falta al menos un carné de cliente.</div>'}`;
+
+  const filas = (FID.locales || []).map((L) => {
+    const e = FID_ESTADOS[L.estado] || FID_ESTADOS.sin_configurar;
+    return agvFila(L.local, `<span class="pill ${e.pill}">${esc(e.txt)}</span>`, () => renderFidLocal(L));
+  }).join("") || '<div class="card"><div class="mut" style="padding:14px">Ningún local tiene integración todavía.</div></div>';
+
+  return `<div class="card"><div class="ch"><h3>Fidelización entrante</h3><span class="pill">Sin premios activos</span></div>
+      <div class="mut" style="font-size:13px;padding:2px 2px 6px"><b>Es Ágora quien nos llama.</b> Identificar al cliente y registrar sus visitas <b>ya funciona</b>. Los puntos y los premios <b>todavía no están activos</b>: <code>Rewards</code> va siempre vacío. Cada local necesita su propia configuración: su token, pegado en su TPV.</div>
+      <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px"><b>Solo una respuesta cierra la factura: que la aceptemos.</b> Si algo falla, Ágora <b>no podrá cerrarla</b>. La salida es manual: el camarero <b>desasocia al participante</b> y vuelve a intentar el cierre. No se pierde la venta.</div>
+      ${censo}
+      <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn sm" data-act="fid-miembro">Buscar socio</button>
+        <button class="btn sm" data-act="ir-fidelizacion">Ir a Fidelización</button>
+      </div>
+      <div class="mut" style="font-size:12px;margin-top:6px">Las reglas, las promociones y la puesta en producción se configuran en <b>Marketing → Fidelización</b>. Aquí solo está la conexión con el TPV.</div></div>
+    <div class="mut" style="font-size:12px;margin:14px 0 6px">Un local cada vez. El que elijas aquí es el que verás en los otros dos apartados.</div>
+    ${filas}`;
+}
+
+// ── C · SALIDA HACIA ÁGORA ───────────────────────────────────────────────────
+function renderAgvSalida() {
+  const locales = visiblesFE(null, LOCALES);
+  const filas = locales.map((local, i) => {
+    const cfg = agoraCfgFor(local);
+    const est = cfg && cfg.estado;
+    const alive = est ? est.alive : null;
+    const pill = !cfg ? '<span class="pill">Sin configurar</span>'
+      : (!cfg.activo ? '<span class="pill">Desactivado</span>'
+      : alive === true ? '<span class="pill ok">TPV vivo</span>'
+      : alive === false ? '<span class="pill bad">Sin respuesta</span>' : '<span class="pill brand">Activo</span>');
+    // EL CATÁLOGO VA AQUÍ DENTRO, con la conexión de SU local. Suelto al final de todos, había
+    // que acordarse de qué local estaba elegido en un desplegable que quedaba a mil píxeles.
+    return agvFila(local, pill, () => renderAgoraSalidaLocal(local, i, cfg));
+  }).join("");
+  return `<div class="card"><div class="ch"><h3>Conexión saliente</h3></div>
+      <div class="mut" style="font-size:13px">Somos nosotros quienes llamamos al TPV: para traer las ventas y para leer el catálogo de productos. Las ventas se leen con el <b>usuario y la contraseña</b> del login web de Ágora; el apiToken solo se usa en diagnóstico.</div></div>
+    <div class="mut" style="font-size:12px;margin:14px 0 6px">Un local cada vez. El que elijas aquí es el que verás en los otros dos apartados.</div>
+    ${filas}`;
+}
+
+/** Lo de dentro de un local en «Salida»: credenciales, pruebas y SU catálogo. */
+function renderAgoraSalidaLocal(local, i, cfg) {
+  return renderAgoraRow(local, i)
+    + `<div class="card" style="margin-top:12px"><div class="ch"><h3>Catálogo de productos</h3></div>
+        <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Se lee de este TPV. Hace falta para elegir qué productos entran en una promoción. Las promociones se configuran en <b>Marketing → Promociones</b>.</div>
+        ${renderFidgCatalogo(local)}</div>`;
 }
 
 // ── Fidelización Ágora ───────────────────────────────────────────────────────
@@ -11020,11 +11180,16 @@ async function fidpSocio() {
 let FIDG = { puerta: null, catalogo: null, grupos: [], promos: [], formularios: [], tarjeta: [],
              comunicaciones: [], revisiones: [], tipos: {}, paletas: {}, variables: [],
              idiomas: {}, mensajesDefecto: {}, mensajesIdioma: {}, campos: {}, bajas: null,
+             estadosForm: [],
              local: null };
 
 /** Los cinco estados de la puerta, con lo que significan. */
 const FIDG_PUERTA_TXT = {
-  no_preparado: ["Sin preparar", "bad", "El código del programa todavía no está terminado."],
+  // «Sin preparar» es el estado de LA PUERTA, no del código. Decía «el código todavía no está
+  // terminado» y contradecía al requisito de justo debajo, que sale en verde: el código está
+  // terminado —NIVEL = "completo"— y lo que falta son las comprobaciones de negocio.
+  no_preparado: ["Sin preparar", "bad",
+    "El programa está completo, pero todavía faltan comprobaciones antes de activarlo."],
   sombra: ["Solo midiendo", "warn", "Se calcula lo que haría, sin tocar ningún saldo."],
   listo_para_activar: ["Listo para activar", "warn", "Todo comprobado. Falta la confirmación de Dirección."],
   activo: ["Activo", "ok", "Concediendo puntos y ofreciendo descuentos de verdad."],
@@ -11061,13 +11226,24 @@ function renderFidgPuerta() {
     <div class="rows">${req}</div>${firma}${pausa}${botones}`;
 }
 
-function renderFidgCatalogo() {
+/**
+ * El catálogo. Si se le da un local, es EL DE ESE LOCAL y no hay desplegable.
+ *
+ * El desplegable existía porque el catálogo vivía suelto al final de la pantalla, detrás de todos
+ * los locales: había que volver a decir de cuál. Dentro de la ficha de su local, preguntarlo otra
+ * vez es pedir dos veces lo mismo y arriesgarse a que no coincidan.
+ */
+function renderFidgCatalogo(local) {
+  const fijo = !!local;
+  if (fijo && FIDG.local !== local) { FIDG.local = local; FIDG.catalogo = null; }
   const c = FIDG.catalogo;
-  const sel = `<div class="field"><label>Local</label><select id="fidgLocal">${(FID.locales || []).map((l) => `<option value="${esc(l.local)}"${FIDG.local === l.local ? " selected" : ""}>${esc(l.local)}</option>`).join("")}</select></div>`;
-  if (!c) return sel + '<div class="mut">Elige un local y sincroniza.</div><div style="margin-top:10px"><button class="btn primary sm" data-act="fidg-sync">Sincronizar catálogo</button></div>';
+  const sel = fijo
+    ? `<input type="hidden" id="fidgLocal" value="${esc(local)}">`
+    : `<div class="field"><label>Local</label><select id="fidgLocal">${(FID.locales || []).map((l) => `<option value="${esc(l.local)}"${FIDG.local === l.local ? " selected" : ""}>${esc(l.local)}</option>`).join("")}</select></div>`;
+  if (!c) return sel + `<div class="mut">${fijo ? "Todavía no se ha leído el catálogo de este local." : "Elige un local y sincroniza."}</div><div style="margin-top:10px"><button class="btn primary sm" data-act="fidg-sync">Sincronizar catálogo</button></div>`;
 
   const u = c.ultima_sincronizacion;
-  const ultima = u ? `<div class="row"><div class="grow"><div class="t1">${u.ok ? "Última sincronización" : "Último intento (falló)"}</div><div class="mut" style="font-size:12px">${esc(String(u.creado_en || "").slice(0, 16).replace("T", " "))}${u.api_version ? ` · Ágora ${esc(u.api_version)}` : ""}${u.error ? ` · ${esc(u.error)}` : ` · +${u.anadidos} · ~${u.actualizados} · −${u.inactivados}`}</div></div><span class="pill ${u.ok ? "ok" : "bad"}">${u.ok ? "OK" : "Error"}</span></div>` : "";
+  const ultima = u ? `<div class="row"><div class="grow"><div class="t1">${u.ok ? "Última sincronización" : "Último intento (falló)"}</div><div class="mut" style="font-size:12px">${esc(String(u.creado_en || "").slice(0, 16).replace("T", " "))}${u.api_version ? ` · Ágora ${esc(u.api_version)}` : ""}${u.ok ? ` · +${u.anadidos} · ~${u.actualizados} · −${u.inactivados}` : ` · ${esc(u.etapa || u.error || "sin detalle")}${u.etapa && FIDG_ETAPAS[u.etapa] ? ` — ${esc(FIDG_ETAPAS[u.etapa][0])}` : ""}`}</div></div><span class="pill ${u.ok ? "ok" : "bad"}">${u.ok ? "OK" : "Error"}</span></div>` : "";
 
   const fam = (c.familias || []).map((f) => `<button class="btn sm" data-act="fidg-fam" data-f="${esc(f.id)}">${esc(f.nombre || f.id)}</button>`).join(" ");
   const filas = (c.data || []).slice(0, 200).map((p) => `<div class="row"><div class="grow"><div class="t1">${esc(p.nombre)}</div><div class="mut" style="font-size:12px">${esc(p.familia || "sin familia")}${p.iva != null ? ` · IVA ${p.iva} %` : " · sin IVA"}${p.precio != null ? ` · ${Number(p.precio).toFixed(2)} €` : ""}</div></div><span class="pill ${p.activo ? "ok" : ""}">${p.activo ? "activo" : "de baja"}</span></div>`).join("");
@@ -11103,6 +11279,102 @@ function renderFidgListaSimple(lista, que, accion, etiqueta) {
  * aparece, ni se puede pedir: quien pidió que le dejaran en paz no tiene que salir en una
  * pantalla, y los tokens no salen de la base ni siquiera en huella.
  */
+/**
+ * LAS PROPUESTAS, con el estado REAL de su campaña.
+ *
+ * ── LA PREGUNTA QUE ESTO CONTESTA ────────────────────────────────────────────
+ *
+ * «He pulsado la propuesta y la URL pública sigue enseñando el formulario de antes.» Y es
+ * correcto: la propuesta solo ABRE el formulario relleno. Mientras nadie guarde y publique, no
+ * existe ninguna versión, la ruta pública contesta 404 y la página cae al camino histórico.
+ *
+ * Eso no se veía por ningún lado. Ahora cada propuesta dice en qué punto está —propuesta,
+ * borrador o publicada— y, si producción sigue sirviendo el formulario viejo, lo dice con todas
+ * las letras y explica qué falta.
+ */
+function renderFidgPropuestas() {
+  const estadoDe = (clave) => (FIDG.estadosForm || []).find((e) => e.clave === clave) || null;
+
+  return Object.entries(FIDG_PROPUESTAS).map(([clave, p]) => {
+    // SIN ENTRADA = SIN NINGUNA VERSIÓN, que es justo el caso más común y el que hay que avisar.
+    // El servidor construye la lista a partir de las filas que existen, así que una campaña que
+    // todavía no se ha guardado nunca no aparece. Tratar eso como «no sé nada» habría callado
+    // precisamente cuando había algo que decir.
+    const e = estadoDe(clave) || { clave, borradores: 0, cerradas: 0, version_publicada: null,
+                                   sirve: "historico", motivo: "no_existe" };
+    const publicada = e.version_publicada;
+    const sirveConfigurable = e.sirve === "configurable";
+    const hayBorrador = e.borradores > 0;
+
+    // Tres puntos, y solo uno es el bueno.
+    const punto = publicada ? ["Publicada", "ok"] : hayBorrador ? ["Borrador sin publicar", "warn"]
+                                                                : ["Solo propuesta", ""];
+    const url = `/promo.html?c=${encodeURIComponent(clave)}`;
+
+    // EL AVISO QUE FALTABA. Solo sale cuando de verdad ocurre.
+    const aviso = !sirveConfigurable
+      ? `<div class="pendingblock" style="margin:8px 2px 0;padding:10px 12px;font-size:12.5px">
+           <b>Producción sigue sirviendo el formulario antiguo.</b>
+           ${publicada
+             ? `Hay una versión publicada (v${publicada}), pero ahora mismo no está abierta${e.motivo === "aun_no_abre" ? ": su fecha de apertura es posterior a hoy" : e.motivo === "ya_cerrado" ? ": ya pasó su fecha de cierre" : ""}. Mientras tanto, <code>${esc(url)}</code> cae al formulario de siempre.`
+             : hayBorrador
+               ? `Hay ${e.borradores} borrador(es), pero <b>ningún borrador se publica solo</b>. Hasta que Dirección publique uno, <code>${esc(url)}</code> seguirá enseñando el formulario de siempre.`
+               : `No existe ninguna versión de esta campaña. La propuesta <b>solo abre el formulario relleno</b>: no guarda ni publica nada. Hasta que se guarde y se publique, <code>${esc(url)}</code> enseña el formulario de siempre.`}
+         </div>`
+      : "";
+
+    const botones = [
+      `<button class="btn ${publicada || hayBorrador ? "sm" : "primary sm"}" data-act="fidg-form-propuesta" data-p="${esc(clave)}">${hayBorrador ? "Abrir borrador" : publicada ? "Copiar a versión nueva" : "Crear propuesta"}</button>`,
+      `<button class="btn sm" data-act="fidg-propuesta-prev" data-p="${esc(clave)}">Vista previa</button>`,
+      sirveConfigurable
+        ? `<a class="btn sm primary" href="${esc(url)}" target="_blank" rel="noopener">Abrir formulario público</a>`
+        : "",
+    ].filter(Boolean).join("");
+
+    return `<div class="card" style="margin:10px 0;padding:12px">
+      ${fgFila(
+        `<div class="t1">${esc(p.nombre_propuesta)} <span class="mut">${esc(clave)}</span></div>
+         <div class="mut" style="font-size:12px">${esc(url)} · ${e.borradores} borrador(es) · ${e.cerradas} cerrada(s)</div>`,
+        `<span class="pill ${punto[1]}">${esc(punto[0])}</span>`)}
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">${botones}</div>
+      ${aviso}
+      <div id="propPrev_${esc(clave)}" class="hidden" style="margin-top:10px"></div>
+    </div>`;
+  }).join("");
+}
+
+/** Las versiones guardadas, y debajo las que de verdad están en la calle con su URL. */
+function renderFidgFormularios() {
+  const vivas = (FIDG.formularios || []).filter((f) => f.estado === "publicado");
+  const urls = vivas.length
+    ? `<div class="mut" style="font-size:12px;margin:12px 0 4px">Publicadas ahora mismo</div>
+       <div class="rows">${vivas.map((f) => fgFila(
+        `<div class="t1">${esc(f.titulo || f.clave)} <span class="mut">v${f.version}</span></div><div class="mut" style="font-size:12px">/promo.html?c=${esc(f.clave)}${f.cierra_en ? ` · hasta ${esc(f.cierra_en)}` : ""}${f.idioma && f.idioma !== "es" ? ` · ${esc(f.idioma)}` : ""}</div>`,
+        `<a class="btn sm" href="/promo.html?c=${encodeURIComponent(f.clave)}" target="_blank" rel="noopener">Abrir</a>`)).join("")}</div>`
+    : "";
+  return renderFidgListaSimple(FIDG.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…") + urls;
+}
+
+/** Vista previa de la propuesta SIN abrir el formulario de edición y sin tocar nada. */
+function fidgPropuestaPrev(clave) {
+  const p = FIDG_PROPUESTAS[clave];
+  const caja = document.getElementById("propPrev_" + clave);
+  if (!p || !caja) return;
+  if (!caja.classList.contains("hidden")) { caja.classList.add("hidden"); caja.innerHTML = ""; return; }
+  const campos = (p.campos || []).filter((c) => c.visible).map((c) =>
+    `<div class="field"><label>${esc(c.etiqueta)}${c.obligatorio ? " *" : ""}</label><input disabled placeholder="${esc(c.etiqueta)}"></div>`).join("");
+  caja.classList.remove("hidden");
+  caja.innerHTML = `<div class="mut" style="font-size:12px;margin-bottom:6px">Vista previa · <b>no se ha guardado ni publicado nada</b></div>
+    <div style="border:1px solid var(--border);border-radius:12px;padding:16px;max-width:390px;background:var(--bg2)">
+      <h3 style="margin:0 0 8px">${esc(p.titulo)}</h3>
+      ${p.subtitulo ? `<div class="mut" style="font-size:13px">${esc(p.subtitulo)}</div>` : ""}
+      ${p.destacado ? `<div style="background:#eaf3ed;color:#1f4634;padding:10px;border-radius:10px;font-weight:600;text-align:center;margin-bottom:10px">${esc(p.destacado)}</div>` : ""}
+      ${campos}
+      <div class="mut" style="font-size:12px;margin:10px 0">${esc(p.consentimiento_texto)}</div>
+      <button class="btn primary sm" disabled style="width:100%">${esc(p.texto_boton)}</button>
+    </div>`;
+}
+
 function renderFidgBajas() {
   const b = FIDG.bajas;
   if (!b) return "";
@@ -11490,9 +11762,35 @@ async function fidgFormGuardar(publicar) {
   try {
     const j = await apiSend("POST", "/api/fidelizacion/formularios", cuerpo);
     document.querySelectorAll(".modal-ov").forEach((x) => x.remove());
+    // Se recarga ANTES de enseñar la confirmación: así lo que se lee ya es el estado de verdad,
+    // leído del servidor, y no lo que creemos que ha pasado.
     await loadFidPiloto();
-    toast(`Guardado (versión ${j.version}, ${j.estado})`);
+    if (j.estado === "publicado") fidgPublicada(j);
+    else toast(`Guardado como borrador (versión ${j.version}). No se ha publicado nada.`);
   } catch (e) { toast((e.falta ? e.falta.join(" · ") : e.message) || "No se pudo guardar"); }
+}
+
+/**
+ * Lo que se enseña justo después de publicar.
+ *
+ * Con LA CLAVE EXACTA Y LA URL EXACTA, y leídas de lo que ha contestado el servidor —no de lo que
+ * se escribió en la casilla—. La clave se normaliza al guardar (minúsculas, guiones), así que
+ * «Esmorzar Girona» se convierte en `esmorzar-girona`: enseñar lo tecleado habría hecho copiar
+ * una URL que no existe.
+ */
+function fidgPublicada(j) {
+  const clave = j.clave || "";
+  const url = `/promo.html?c=${encodeURIComponent(clave)}`;
+  modal("Formulario publicado", `
+    <div class="rows">
+      <div class="row"><div class="grow"><div class="t1">Clave</div><div class="mut" style="font-size:12px">Es la que va en la URL. Se normaliza al guardar.</div></div><b>${esc(clave)}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Versión</div></div><b>${esc(String(j.version))}</b></div>
+      <div class="row"><div class="grow"><div class="t1">URL pública</div><div class="mut" style="font-size:12px">Es la que se pega en el anuncio</div></div><b style="overflow-wrap:anywhere">${esc(url)}</b></div>
+    </div>
+    <div class="mut" style="font-size:12px;margin-top:10px">La versión anterior queda cerrada y lo que ya se ofreció con ella sigue valiendo.</div>
+    <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+      <a class="btn primary sm" href="${esc(url)}" target="_blank" rel="noopener">Abrir formulario público</a>
+    </div>`);
 }
 
 // ── TARJETA DEL CLIENTE ──────────────────────────────────────────────────────
@@ -11765,6 +12063,7 @@ async function loadFidGestion() {
   FIDG.tipos = pr?.tipos || {}; FIDG.paletas = ta?.paletas || {}; FIDG.variables = co?.variables || [];
   FIDG.idiomas = fo?.idiomas || {}; FIDG.mensajesDefecto = fo?.mensajes_defecto || {};
   FIDG.campos = fo?.campos_disponibles || {};
+  FIDG.estadosForm = fo?.estados || [];
   FIDG.mensajesIdioma = fo?.mensajes_por_idioma || {};
   if (!FIDG.local) FIDG.local = (FID.locales || [])[0]?.local || null;
 }
@@ -11801,7 +12100,42 @@ async function fidgSync() {
     const j = await apiSend("POST", "/api/fidelizacion/catalogo/sincronizar", { local });
     toast(`+${j.anadidos} · ~${j.actualizados} · −${j.inactivados}`);
     await fidgCargarCatalogo(local);
-  } catch (e) { toast(e.message || "No se pudo sincronizar"); }
+  } catch (e) {
+    if (e.message === "noauth") return;
+    // UN AVISO QUE SE LEE, no un mensaje que se va solo. Aquí es donde alguien está intentando
+    // averiguar por qué no entra el catálogo, y un toast de tres segundos no da para eso.
+    fidgFalloSync(local, e);
+  }
+}
+
+/** Los seis sitios donde puede fallar, y qué mirar en cada uno. */
+const FIDG_ETAPAS = {
+  conexion_fallida: ["No se ha llegado a hablar con el TPV",
+    "Comprueba que el TPV está encendido, que la dirección del local está bien escrita —con http:// delante— y que el puerto está abierto desde fuera."],
+  http_no_ok: ["El TPV ha contestado con un error",
+    "Casi siempre es que esa ruta no existe en esta versión de Ágora, o que el Api-Token no sirve para este servicio. El código de abajo lo distingue: 404 es ruta, 401 y 403 son permiso."],
+  respuesta_no_json: ["El TPV ha contestado algo que no son datos",
+    "Normalmente la página de administración. El puerto 8984 sirve la web, no la API: esa dirección devuelve HTML aunque el TPV esté perfecto."],
+  estructura_invalida: ["Han llegado datos, pero no son un catálogo",
+    "No se ha tocado nada. Pasa cuando se responde desde otro sitio, o cuando llegarían cero productos y eso dejaría el catálogo en blanco."],
+  normalizacion_fallida: ["El catálogo ha llegado y no se ha podido interpretar",
+    "No se ha tocado nada. Es un fallo nuestro: avisa para que lo miremos."],
+  persistencia_fallida: ["Se ha leído bien, pero no se ha podido guardar",
+    "El problema está en nuestra base, no en el TPV. Vuelve a intentarlo."],
+};
+
+function fidgFalloSync(local, e) {
+  const etapa = e.etapa || null;
+  const [titulo, ayuda] = FIDG_ETAPAS[etapa] || ["No se ha podido sincronizar", e.message || ""];
+  modal("Sincronización del catálogo", `
+    <div class="pendingblock" style="padding:10px 12px;font-size:12.5px;margin-bottom:10px">
+      <b>${esc(titulo)}</b><div style="margin-top:6px">${esc(ayuda)}</div></div>
+    <div class="rows">
+      <div class="row"><div class="grow"><div class="t1">Local</div></div><b>${esc(local)}</b></div>
+      ${etapa ? `<div class="row"><div class="grow"><div class="t1">Etapa</div><div class="mut" style="font-size:12px">Dónde se paró, de las seis posibles</div></div><b>${esc(etapa)}</b></div>` : ""}
+      ${e.detalle ? `<div class="row"><div class="grow"><div class="t1">Código</div><div class="mut" style="font-size:12px">Dato técnico. No lleva la dirección ni el token.</div></div><b>${esc(e.detalle)}</b></div>` : ""}
+    </div>
+    <div class="mut" style="font-size:12px;margin-top:10px">No se ha modificado ningún producto. El intento queda registrado con su etapa.</div>`);
 }
 
 /** Solo los grupos. Se usa desde Promociones, que no necesita el catálogo entero. */
@@ -11816,7 +12150,7 @@ async function fidgCargarCatalogo(local) {
     const g = await apiRaw(`/api/fidelizacion/grupos?local=${encodeURIComponent(local)}`);
     FIDG.grupos = g?.data || [];
   } catch { FIDG.catalogo = null; }
-  const c = document.getElementById("fidPiloto"); if (c) c.innerHTML = renderFidPiloto();
+  const c = document.getElementById("agBody"); if (c) c.innerHTML = renderAgvCuerpo();
 }
 
 async function fidgPromoEstado(id, estado) {
@@ -11875,48 +12209,26 @@ async function fidgResolver(id) {
   } catch (e) { toast(e.message || "No se pudo resolver"); }
 }
 
-function renderFidPiloto() {
-  // EL CENSO, que es global: un carné vale en cualquier barra. Sin ninguno, TODOS los locales
-  // devolverán 404 y será correcto. Solo números: ni tokens, ni códigos, ni nombres.
-  const c = FID.censo || {};
-  const utiles = Number(c.carnets_utiles || 0);
-  const censo = `<div class="rows" style="margin-top:8px">
-      <div class="row"><div class="grow"><div class="t1">Carnés que se pueden identificar</div><div class="mut" style="font-size:12px">${Number(c.carnets_total || 0)} emitidos en total · un carné anulado o caducado no vale · valen en cualquier local</div></div><b class="tnum" style="${utiles ? "" : "color:var(--danger)"}">${utiles}</b></div>
-      <div class="row"><div class="grow"><div class="t1">Cupones y vales</div><div class="mut" style="font-size:12px">No identifican a nadie: son al portador y devuelven 404 a propósito</div></div><b class="tnum">${Number(c.cupones || 0)}</b></div>
-    </div>${utiles ? "" : `<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">No hay ningún carné utilizable: el TPV devolverá <b>404</b> a todo, y será correcto. Hace falta al menos un carné de cliente.</div>`}`;
-
-  const tarjetas = (FID.locales || []).map(renderFidLocal).join("");
-
-  return `<div class="card"><div class="ch"><h3>Fidelización Ágora</h3><span class="pill">Sin premios activos</span></div>
-    <div class="mut" style="font-size:13px;padding:2px 2px 6px"><b>Integración por local.</b> Identificar al cliente y registrar sus visitas <b>ya funciona</b>. Los puntos y los premios <b>todavía no están activos</b>: <code>Rewards</code> va siempre vacío. Cada local necesita su propia configuración: su token, pegado en su TPV.</div>
-    <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px"><b>Solo una respuesta cierra la factura: que la aceptemos.</b> Si algo falla —desactivas, revocas, el carné ya no existe o la base no responde— Ágora <b>no podrá cerrarla</b>. La salida es siempre la misma y es manual: el camarero <b>desasocia al participante</b> y vuelve a intentar el cierre. No se pierde la venta ni queda nada a medias.</div>
-    ${censo}
-    <div style="margin-top:6px"><button class="btn sm" data-act="fid-miembro">Buscar socio</button></div>
-    </div>${tarjetas}
-    <div class="card" style="margin-top:10px"><div class="ch"><h3>Catálogo de productos</h3></div>
-      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Se lee del TPV de cada local. Hace falta para elegir qué productos entran en una promoción.</div>
-      ${renderFidgCatalogo()}</div>
-    <div class="card" style="margin-top:10px"><div class="ch"><h3>Programa de puntos</h3><span class="pill">Marketing</span></div>
-      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Las reglas, las promociones, las campañas y la puesta en producción se configuran en <b>Marketing → Fidelización</b>. Aquí solo está la conexión con el TPV.</div>
-      <button class="btn sm" data-act="ir-fidelizacion">Ir a Fidelización</button></div>`;
-}
-
 async function loadFidPiloto() {
-  const c = document.getElementById("fidPiloto"); if (!c) return;
+  const repintar = () => {
+    const c = document.getElementById("agBody");
+    if (c && AGV.tab === "entrada") c.innerHTML = renderAgvCuerpo();
+  };
   try {
     const j = await apiRaw("/api/fidelizacion/integracion");
     FID.locales = j.locales || [];
     // El censo sale del resumen de la tarjeta, que ya existía. Si falla, las tarjetas se pintan
     // igual: saber cuántos carnés hay es útil, pero no es lo que se viene a mirar aquí.
     try { FID.censo = (await apiRaw("/api/tarjeta/resumen")).censo || null; } catch { FID.censo = null; }
-    await loadFidPrograma();
-    await loadFidGestion();
-    if (document.getElementById("fidPiloto")) document.getElementById("fidPiloto").innerHTML = renderFidPiloto();
+    repintar();
   } catch (e) {
     // «No se ha podido comprobar» NO es «no hay integración». Confundirlos fue lo que hizo que el
     // panel ofreciera generar un token nuevo cuando el problema era otro.
-    if (e.message !== "noauth" && document.getElementById("fidPiloto")) {
-      document.getElementById("fidPiloto").innerHTML = `<div class="card"><div class="ch"><h3>Fidelización Ágora</h3><span class="pill bad">Sin comprobar</span></div><div class="mut" style="font-size:13px">No se ha podido leer el estado de las integraciones. <b>Esto no significa que no las haya</b>: no generes un token nuevo hasta saber qué pasa, porque revocaría el que esté puesto en el TPV.</div></div>`;
+    if (e.message === "noauth") return;
+    FID.locales = null;
+    const c = document.getElementById("agBody");
+    if (c && AGV.tab === "entrada") {
+      c.innerHTML = `<div class="card"><div class="ch"><h3>Fidelización entrante</h3><span class="pill bad">Sin comprobar</span></div><div class="mut" style="font-size:13px">No se ha podido leer el estado de las integraciones. <b>Esto no significa que no las haya</b>: no generes un token nuevo hasta saber qué pasa, porque revocaría el que esté puesto en el TPV.</div><div style="margin-top:10px"><button class="btn sm" data-act="agv-tab" data-k="entrada">Reintentar</button></div></div>`;
     }
   }
 }
@@ -12560,20 +12872,10 @@ function renderCampanas() {
  * ni un punto —solo da de alta a alguien—, así que no hay nada que repetir entre las dos.
  */
 function renderCampFidelizacion() {
-  const forms = (FIDG.formularios || []).filter((f) => f.estado === "publicado");
-  const urls = forms.length
-    ? `<div class="rows" style="margin-top:8px">${forms.map((f) => fgFila(
-        `<div class="t1">${esc(f.titulo || f.clave)} <span class="mut">v${f.version}</span></div><div class="mut" style="font-size:12px">/promo.html?c=${esc(f.clave)}${f.cierra_en ? ` · hasta ${esc(f.cierra_en)}` : ""}${f.idioma && f.idioma !== "es" ? ` · ${esc(f.idioma)}` : ""}</div>`,
-        `<a class="btn sm" href="/promo.html?c=${encodeURIComponent(f.clave)}" target="_blank" rel="noopener">Abrir</a>`)).join("")}</div>`
-    : "";
-
   return `<div class="card" style="margin-top:16px"><div class="ch"><h3>Formularios públicos</h3><span class="pill">Captación</span></div>
       <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">La página que abre quien pincha un anuncio. Cada versión guarda su texto de consentimiento: <b>lo que alguien aceptó en septiembre se puede leer en enero</b>. Una versión publicada no se edita, se copia.</div>
-      ${renderFidgListaSimple(FIDG.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…")}
-      <div style="margin:-4px 0 10px;display:flex;gap:6px;flex-wrap:wrap">${Object.entries(FIDG_PROPUESTAS).map(([k, p]) =>
-        `<button class="btn sm" data-act="fidg-form-propuesta" data-p="${esc(k)}">Crear propuesta · ${esc(p.nombre_propuesta)}</button>`).join("")}</div>
-      <div class="mut" style="font-size:12px;margin:-4px 0 6px">Una propuesta abre el formulario <b>relleno y en borrador</b>. No publica nada, y si la campaña ya existe no la pisa: abre el borrador o copia la última versión.</div>
-      ${urls}</div>
+      ${renderFidgPropuestas()}
+      ${renderFidgFormularios()}</div>
     <div class="card" style="margin-top:12px"><div class="ch"><h3>Comunicaciones</h3><span class="pill">Requiere aprobación</span></div>
       <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Solo se escribe a quien dio consentimiento y no se ha dado de baja. Cada mensaje lleva su propio enlace de baja. El recuento y las exclusiones se ven antes de aprobar.</div>
       ${renderFidgComunicaciones()}
@@ -14460,6 +14762,9 @@ document.addEventListener("click", (e) => {
   else if (act === "fidg-promo-guardar") fidgPromoGuardar(t.getAttribute("data-pub"));
   else if (act === "fidg-form-nuevo") fidgFormNuevo(t.getAttribute("data-id"));
   else if (act === "fidg-form-propuesta") fidgFormPropuesta(t.getAttribute("data-p"));
+  else if (act === "fidg-propuesta-prev") fidgPropuestaPrev(t.getAttribute("data-p"));
+  else if (act === "agv-tab") agvTab(t.getAttribute("data-k"));
+  else if (act === "agv-local") agvLocal(t.getAttribute("data-local"));
   else if (act === "fidg-form-prev") fidgFormPrev(t.getAttribute("data-v"));
   else if (act === "fidg-form-guardar") fidgFormGuardar(t.getAttribute("data-pub"));
   else if (act === "fidg-tarjeta-nueva") fidgTarjetaNueva(t.getAttribute("data-id"));

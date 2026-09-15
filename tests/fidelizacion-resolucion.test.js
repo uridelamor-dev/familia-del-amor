@@ -293,7 +293,7 @@ describe("el censo de carnés y cupones", () => {
   });
 
   test("el panel lo enseña arriba, con aviso si no hay ninguno", () => {
-    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function loadFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderAgvEntrada()"), panel.indexOf("// ── C · SALIDA"));
     assert.match(f, /Carnés que se pueden identificar/);
     assert.match(f, /Cupones y vales/);
     assert.match(f, /No identifican a nadie/);
@@ -307,7 +307,7 @@ describe("el censo de carnés y cupones", () => {
 
   test("no se toca TARJETA_ACTIVA", () => {
     // El censo no enciende nada: solo cuenta.
-    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function fidGenerar("));
+    const f = panel.slice(panel.indexOf("function renderAgvEntrada()"), panel.indexOf("async function fidGenerar("));
     assert.ok(!/tj-encender|tarjeta_activa/.test(f), "el piloto toca el interruptor de la tarjeta");
   });
 });

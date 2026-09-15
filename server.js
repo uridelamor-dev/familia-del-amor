@@ -26,7 +26,7 @@ import { rangoAnterior, variacion } from "./src/modules/dashboard/periodos.js";
 import { mapManageRow, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry, locationNamesDeLocal } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import QRCode from "qrcode";   // ya instalada (la usa el enlace de WhatsApp); emparejar la tablet escaneando
-import { loadAgoraConfigs, configsFromRows, publicConfig } from "./src/integrations/agora/registry.js";
+import { loadAgoraConfigs, configsFromRows, publicConfig, normHost as agoraNormHost } from "./src/integrations/agora/registry.js";
 import { candidatosDiagnostico, ordenarResultados } from "./src/integrations/agora/diagnostico.js";
 import { extraerScripts, extraerRutasApi, clasificarRutas, extraerClrTypes, clasificarInformes } from "./src/integrations/agora/descubrir.js";
 import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
@@ -113,7 +113,9 @@ import { evaluarPuerta as fidEvaluarPuerta, puedeTransitar as fidPuedeTransitar,
          CONFIRMACION_EXIGIDA as FID_CONFIRMACION } from "./src/modules/fidelizacion/puerta.js";
 import { revertirDevolucionTotal as fidRevertir } from "./src/modules/fidelizacion/agora.js";
 import { urlMaestro as fidUrlMaestro, normalizarMaestro as fidNormalizarMaestro,
-         compararCatalogo as fidCompararCatalogo, errorRedactado as fidErrorSync }
+         compararCatalogo as fidCompararCatalogo, errorRedactado as fidErrorSync,
+         ETAPAS as FID_ETAPAS, mensajeEtapa as fidMensajeEtapa, baseValida as fidBaseValida,
+         codigoConexion as fidCodigoConexion, validarMaestro as fidValidarMaestro }
   from "./src/modules/fidelizacion/catalogo.js";
 import { TIPOS as FID_PROMO_TIPOS, ESTADOS as FID_PROMO_ESTADOS, vigente as fidPromoVigente,
          elegible as fidPromoElegible, rewardDePromo as fidRewardDePromo,
@@ -19648,7 +19650,38 @@ app.get("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req, 
   res.set("Cache-Control", "no-store");
   try {
     const filas = await dbAll(`SELECT * FROM fid_formularios ORDER BY clave, version DESC LIMIT 200`) || [];
-    res.json({ ok: true, campos_disponibles: FID_CAMPOS, largos: FID_LARGOS,
+    // ── QUÉ SIRVE LA URL PÚBLICA DE CADA CLAVE ───────────────────────────────────────────────
+    //
+    // Es LA pregunta que no se podía contestar desde el panel: «¿por qué /promo.html?c=X sigue
+    // enseñando el formulario de antes?». La ruta pública solo mira versiones PUBLICADAS y, si no
+    // hay ninguna, contesta 404 y la página cae al camino histórico — que es lo correcto, pero
+    // desde fuera parece que la propuesta no se aplicó.
+    //
+    // Se calcula LEYENDO, sin escribir ni publicar nada.
+    const hoyMadrid = fidEnMadrid(isoConOffset(Date.now()))?.fecha || hoyISO();
+    const porClave = new Map();
+    for (const f of filas) {
+      const e = porClave.get(f.clave) || { clave: f.clave, borradores: 0, publicada: null, cerradas: 0 };
+      if (f.estado === "borrador") e.borradores += 1;
+      else if (f.estado === "publicado" && !e.publicada) e.publicada = f;
+      else if (f.estado === "cerrado") e.cerradas += 1;
+      porClave.set(f.clave, e);
+    }
+    const estados = [...porClave.values()].map((e) => {
+      const abierto = e.publicada ? fidFormAbierto(e.publicada, { fechaMadrid: hoyMadrid }) : { ok: false, motivo: "no_existe" };
+      return {
+        clave: e.clave,
+        borradores: e.borradores,
+        cerradas: e.cerradas,
+        version_publicada: e.publicada ? e.publicada.version : null,
+        // Lo que de verdad sirve la URL pública AHORA MISMO.
+        sirve: abierto.ok ? "configurable" : "historico",
+        motivo: abierto.ok ? null : abierto.motivo,
+        url_publica: `/promo.html?c=${encodeURIComponent(e.clave)}`,
+      };
+    });
+
+    res.json({ ok: true, campos_disponibles: FID_CAMPOS, largos: FID_LARGOS, estados,
       idiomas: FID_IDIOMAS, mensajes_defecto: FID_MENSAJES_DEF,
       // Uno por idioma: el panel cambia los respaldos al cambiar el desplegable, para que nadie
       // publique en catalán con los errores en castellano sin darse cuenta.
@@ -19728,7 +19761,10 @@ app.post("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req,
     });
     await ficAuditar("fidelizacion", fila.id, "formulario_" + cfg.estado, req.user.username,
       { local, detalle: { clave, version: fila.version, estado: cfg.estado } });
-    res.json({ ok: true, id: fila.id, version: fila.version, estado: cfg.estado, falta: check.falta });
+    // Se devuelve LA CLAVE NORMALIZADA, no la que se escribió: «Esmorzar Girona» se guarda como
+    // `esmorzar-girona`, y el panel tiene que enseñar la URL que de verdad existe.
+    res.json({ ok: true, id: fila.id, clave, version: fila.version, estado: cfg.estado,
+      url_publica: `/promo.html?c=${encodeURIComponent(clave)}`, falta: check.falta });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] crear formulario", e));
     res.status(500).json({ ok: false, error: "No se pudo guardar" });
@@ -20164,25 +20200,78 @@ app.post("/api/fidelizacion/catalogo/sincronizar", requireAuth(PROMOS_ROLES), as
         falta: { host: !cfg?.host, token: !token } });
     }
 
-    const url = fidUrlMaestro(cfg.host);
+    // ── EL HOST SE NORMALIZA CON LA FUNCIÓN DE LA CASA ───────────────────────────────────────
+    //
+    // En la base, `host` se guarda TAL COMO SE ESCRIBE en el panel: casi siempre
+    // `servidor.example.com:8984`, sin esquema. Leerlo en crudo y componer la URL producía algo
+    // que no es una dirección absoluta, y `fetch` lo rechazaba con un `TypeError` seco.
+    //
+    // Y NO SE VEÍA VENIR: un nombre de host con puntos es un ESQUEMA válido de URL, así que
+    // `new URL()` no protestaba y el fallo aparecía al llamar, como «unknown scheme». Es el
+    // motivo por el que Lloret y Girona daban el mismo error que un local mal configurado.
+    const base = agoraNormHost(cfg.host);
+    const mirada = fidBaseValida(base);
+    if (!mirada.ok) {
+      await fidRegistrarFalloSync(local, "conexion_fallida", null, t0, req.user.username);
+      return res.status(409).json({ ok: false, etapa: "conexion_fallida",
+        error: `${fidMensajeEtapa("conexion_fallida")} ${mirada.motivo}` });
+    }
+    const url = fidUrlMaestro(base);
+
+    // ── ETAPA 1-3: hablar con el TPV ─────────────────────────────────────────────────────────
     let json = null, apiVersion = null;
     try {
       const r = await agoraFetchMaestro(url, token);
       json = r.json; apiVersion = r.apiVersion;
     } catch (e) {
-      const linea = fidErrorSync(e, { host: cfg.host, token });
-      await dbRun(`INSERT INTO fid_sincronizaciones (local, ok, error, ms, lanzado_por, creado_en)
-                   VALUES (?,FALSE,?,?,?,?)`, [local, linea, Date.now() - t0, req.user.username, isoConOffset(Date.now())]);
-      return res.status(502).json({ ok: false, error: `No se ha podido leer el catálogo: ${linea}` });
+      // `e.etapa` la pone `agoraFetchMaestro`: distingue no haber llegado a hablar (1) de que
+      // haya contestado mal (2) o de que no sean datos (3).
+      const etapa = FID_ETAPAS.includes(e?.etapa) ? e.etapa : "conexion_fallida";
+      const codigo = fidErrorSync(e, { host: cfg.host, token });
+      await fidRegistrarFalloSync(local, etapa, codigo, t0, req.user.username);
+      // 502 cuando el problema está al otro lado; 409 cuando lo que llega no sirve.
+      const http = etapa === "conexion_fallida" || etapa === "http_no_ok" ? 502 : 409;
+      return res.status(http).json({ ok: false, etapa,
+        error: fidMensajeEtapa(etapa), detalle: codigo });
     }
 
-    const norm = fidNormalizarMaestro(json, { local });
+    // ── ETAPA 4: ¿tiene forma de maestro? ────────────────────────────────────────────────────
+    //
+    // Antes esto no se miraba, y `normalizarMaestro` es tolerante a propósito: con `{}` devuelve
+    // cero productos sin protestar. Como lo que desaparece se marca INACTIVO, una respuesta vacía
+    // pero válida habría desactivado el catálogo entero sin dejar ni un error registrado.
     const actuales = await dbAll(
       `SELECT producto_id, nombre, familia_id, vat_id, precio, activo, formato_base_id
          FROM fid_productos WHERE local = ?`, [local]) || [];
-    const dif = fidCompararCatalogo(actuales, norm.productos);
+    const activosAhora = actuales.filter((p) => p.activo).length;
+
+    const forma = fidValidarMaestro(json, { activosAhora });
+    if (!forma.ok) {
+      await fidRegistrarFalloSync(local, "estructura_invalida", forma.detalle, t0, req.user.username);
+      return res.status(409).json({ ok: false, etapa: "estructura_invalida",
+        error: fidMensajeEtapa("estructura_invalida"), detalle: forma.detalle });
+    }
+
+    // ── ETAPA 5: interpretarlo ───────────────────────────────────────────────────────────────
+    let norm = null, dif = null;
+    try {
+      norm = fidNormalizarMaestro(json, { local });
+      dif = fidCompararCatalogo(actuales, norm.productos);
+    } catch (e) {
+      await fidRegistrarFalloSync(local, "normalizacion_fallida",
+        fidErrorSync(e, { host: cfg.host, token }), t0, req.user.username);
+      return res.status(500).json({ ok: false, etapa: "normalizacion_fallida",
+        error: fidMensajeEtapa("normalizacion_fallida") });
+    }
 
     const ahora = isoConOffset(Date.now());
+
+    // ── ETAPA 6: guardarlo ───────────────────────────────────────────────────────────────────
+    //
+    // Va aparte porque un fallo AQUÍ no significa lo mismo que uno arriba: el catálogo se ha
+    // leído bien y lo que falla es la base. Confundirlos mandaba a mirar la red cuando el
+    // problema estaba en casa.
+    try {
     // UPSERT, sin borrar nada. Lo que desaparece se marca inactivo.
     for (const p of [...dif.anadidos, ...dif.actualizados]) {
       await dbRun(
@@ -20216,6 +20305,12 @@ app.post("/api/fidelizacion/catalogo/sincronizar", requireAuth(PROMOS_ROLES), as
       [local, apiVersion, dif.resumen.anadidos, dif.resumen.actualizados, dif.resumen.inactivados,
        norm.descartados.length, dif.resumen.total, Date.now() - t0,
        JSON.stringify(norm.avisos).slice(0, 2000), req.user.username, ahora]);
+    } catch (e) {
+      await fidRegistrarFalloSync(local, "persistencia_fallida",
+        fidErrorSync(e, { host: cfg.host, token }), t0, req.user.username);
+      return res.status(500).json({ ok: false, etapa: "persistencia_fallida",
+        error: fidMensajeEtapa("persistencia_fallida") });
+    }
     await ficAuditar("fidelizacion", null, "catalogo_sincronizado", req.user.username,
       { local, detalle: { ...dif.resumen, descartados: norm.descartados.length, api_version: apiVersion } });
 
@@ -20227,22 +20322,69 @@ app.post("/api/fidelizacion/catalogo/sincronizar", requireAuth(PROMOS_ROLES), as
   }
 });
 
-/** La llamada de verdad. Aparte para que el token no se pasee por el manejador. */
+/**
+ * Deja constancia de un fallo CON SU ETAPA. Un sitio y no seis, para que ninguno se olvide.
+ *
+ * `detalle` es SIEMPRE un código técnico corto —`ECONNREFUSED`, `HTTP 404`, «no viene Products»—:
+ * nunca la URL, ni el host, ni el token, ni el cuerpo de la respuesta.
+ */
+async function fidRegistrarFalloSync(local, etapa, detalle, t0, autor) {
+  const linea = `${etapa}${detalle ? ` · ${String(detalle).slice(0, 80)}` : ""}`.slice(0, 200);
+  try {
+    await dbRun(`INSERT INTO fid_sincronizaciones (local, ok, etapa, error, ms, lanzado_por, creado_en)
+                 VALUES (?,FALSE,?,?,?,?,?)`,
+      [local, etapa, linea, Date.now() - t0, autor, isoConOffset(Date.now())]);
+  } catch (e) { console.error(lineaErrorSql("[fidelizacion] registro de sync", e)); }
+}
+
+/**
+ * La llamada de verdad. Aparte para que el token no se pasee por el manejador.
+ *
+ * MARCA LA ETAPA EN EL ERROR. Las tres primeras ocurren aquí y significan cosas distintas:
+ * no haber llegado a hablar con el TPV, que conteste con un error, o que conteste algo que no son
+ * datos —que es lo que pasa cuando se apunta a la web de administración en vez de a la API—.
+ */
 async function agoraFetchMaestro(url, token) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20000);   // un maestro entero puede tardar
+  let r = null;
   try {
-    const r = await fetch(url, { headers: { "Api-Token": token, Accept: "application/json" }, signal: ctrl.signal });
-    const apiVersion = String(r.headers.get("Api-Version") || "").slice(0, 40) || null;
-    const texto = await r.text();
-    if (!r.ok) { const e = new Error(`HTTP ${r.status}`); e.status = r.status; throw e; }
-    let json = null;
-    try { json = JSON.parse(texto); } catch { const e = new Error("respuesta no es JSON"); e.code = "NO_JSON"; throw e; }
-    return { json, apiVersion };
+    r = await fetch(url, { headers: { "Api-Token": token, Accept: "application/json" }, signal: ctrl.signal });
   } catch (e) {
-    if (e && e.name === "AbortError") { const x = new Error("timeout"); x.code = "TIMEOUT"; throw x; }
-    throw e;
+    // ETAPA 1. Aquí caen el TPV apagado, el nombre que no resuelve, el puerto cerrado, el
+    // certificado caducado y el host mal escrito. `fetch` los da TODOS como `TypeError: fetch
+    // failed`; el motivo real vive en `e.cause`, y de ahí lo saca `codigoConexion`.
+    const x = new Error("conexion");
+    x.etapa = "conexion_fallida";
+    x.cause = e && e.name === "AbortError" ? { code: "TIMEOUT" } : e;
+    if (e && e.name === "AbortError") x.code = "TIMEOUT";
+    throw x;
   } finally { clearTimeout(timer); }
+
+  const apiVersion = String(r.headers.get("Api-Version") || "").slice(0, 40) || null;
+  const tipo = String(r.headers.get("content-type") || "").slice(0, 60);
+  let texto = "";
+  try { texto = await r.text(); } catch (e) {
+    const x = new Error("cuerpo"); x.etapa = "conexion_fallida"; x.cause = e; throw x;
+  }
+
+  // ETAPA 2: ha contestado, pero mal. Se conserva el código porque distingue «esa ruta no existe
+  // en esta versión» (404) de «el token no vale para este servicio» (401/403).
+  if (!r.ok) {
+    const e = new Error("http"); e.etapa = "http_no_ok"; e.status = r.status; throw e;
+  }
+
+  // ETAPA 3: ha contestado algo que no son datos. Es EL caso que había que separar: el :8984 es la
+  // web de administración y devuelve HTML con un 200, así que sin esto parecía que todo iba bien.
+  try {
+    return { json: JSON.parse(texto), apiVersion };
+  } catch {
+    const e = new Error("no json");
+    e.etapa = "respuesta_no_json";
+    // Solo el tipo declarado y si empieza por `<`: ni un byte del cuerpo.
+    e.code = /html/i.test(tipo) || String(texto).trimStart().startsWith("<") ? "HTML" : "NO_JSON";
+    throw e;
+  }
 }
 
 /** El catálogo guardado, con búsqueda por nombre y por familia. */

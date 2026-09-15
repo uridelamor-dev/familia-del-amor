@@ -291,6 +291,11 @@ export async function ensureSchemaFidelizacion(x) {
     lanzado_por TEXT NOT NULL,
     creado_en TEXT NOT NULL
   )`);
+  // EN QUÉ ETAPA FALLÓ. Aditivo. Sin esto, todo fallo se guardaba como una palabra suelta —casi
+  // siempre «TypeError»— y no se podía saber si el TPV estaba apagado, si la ruta no existía o si
+  // lo que contestó no eran datos. Es lo que convierte el registro en algo que sirve para arreglar.
+  try { await x.run(`ALTER TABLE fid_sincronizaciones ADD COLUMN IF NOT EXISTS etapa TEXT`); }
+  catch (e) { console.error("[fidelizacion] alter fid_sincronizaciones:", e.message); }
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_sync_local ON fid_sincronizaciones (local, creado_en DESC)`);
 
   // ── GRUPOS DE PRODUCTOS REUTILIZABLES ──────────────────────────────────────

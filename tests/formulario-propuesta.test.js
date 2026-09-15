@@ -43,6 +43,14 @@ const PROPUESTAS = (() => {
 })();
 const P = PROPUESTAS["esmorzar-girona"];
 
+/** El cuerpo de una función de `app.js`, hasta la siguiente declaración de primer nivel. */
+function fnApp(nombre) {
+  const i = app.indexOf(`function ${nombre}(`);
+  if (i < 0) throw new Error(`no existe ${nombre}()`);
+  const j = app.indexOf("\n}\n", i);
+  return app.slice(i, j > 0 ? j + 2 : app.length);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 describe("la propuesta existe y se llega a ella", () => {
   test("hay una propuesta para esmorzar-girona", () => {
@@ -52,13 +60,16 @@ describe("la propuesta existe y se llega a ella", () => {
   });
 
   test("el botón está en Campañas → Formularios públicos, y dice lo que hace", () => {
-    const camp = app.slice(app.indexOf("function renderCampFidelizacion()"),
-                           app.indexOf("function renderCampFidelizacion()") + 2500);
+    // El botón vive en `renderFidgPropuestas`, que es lo que pinta Campañas → Formularios
+    // públicos. Se miran las dos juntas porque juntas se pintan.
+    const camp = app.slice(app.indexOf("function renderFidgPropuestas()"),
+                           app.indexOf("function renderFidgFormularios()"));
     assert.match(camp, /data-act="fidg-form-propuesta"/);
-    assert.match(camp, /Crear propuesta · \$\{esc\(p\.nombre_propuesta\)\}/);
-    // Y avisa de las dos cosas que importan antes de pulsarlo.
-    assert.match(camp, /relleno y en borrador/);
-    assert.match(camp, /No publica nada/);
+    assert.match(camp, /Crear propuesta/);
+    // Y dice en qué punto está: propuesta, borrador o publicada.
+    for (const punto of ["Publicada", "Borrador sin publicar", "Solo propuesta"]) {
+      assert.ok(camp.includes(punto), `falta el estado «${punto}»`);
+    }
   });
 
   test("y está cableado", () => {
@@ -247,12 +258,144 @@ describe("DESPLEGAR NO PUBLICA NADA", () => {
   });
 
   test("y el servidor no lleva escrita ninguna propuesta: son del panel", () => {
-    assert.ok(!/esmorzar|convidem|Vull el meu codi/i.test(server),
+    // SIN LOS COMENTARIOS: un comentario que explica por qué la clave se normaliza nombra la
+    // campaña de ejemplo, y eso no es tener el texto escrito en el código.
+    assert.ok(!/esmorzar|convidem|Vull el meu codi/i.test(sinComentarios(server)),
       "el servidor lleva escritos textos de una campaña");
   });
 
   test("la puerta del programa de puntos sigue naciendo cerrada", () => {
     assert.match(esquema, /VALUES \(1, 'no_preparado', \?\)\s*\n?\s*ON CONFLICT \(id\) DO NOTHING/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe("POR QUÉ LA URL PÚBLICA SEGUÍA ENSEÑANDO EL FORMULARIO VIEJO", () => {
+  // ── EL DIAGNÓSTICO, DEMOSTRADO ─────────────────────────────────────────────────────────────
+  //
+  // `/promo.html?c=esmorzar-girona` servía el formulario histórico porque NO EXISTÍA NINGUNA
+  // VERSIÓN de esa clave: ni publicada ni borrador. Y es correcto que así fuera —la propuesta
+  // solo abre el formulario relleno—, pero desde el panel no se veía por ningún lado.
+  //
+  // Estos tests demuestran cada eslabón de esa cadena.
+
+  test("NADA crea un formulario solo: ni el arranque, ni una migración, ni abrir la pantalla", () => {
+    const esquema = readFileSync(new URL("../src/modules/fidelizacion/schema.js", import.meta.url), "utf8");
+    assert.ok(!/INSERT INTO fid_formularios/.test(esquema), "el arranque inserta un formulario");
+    // En TODO el servidor hay UN SOLO `INSERT`, y está detrás de una ruta con sesión.
+    const inserts = [...server.matchAll(/INSERT INTO fid_formularios/g)].length;
+    assert.equal(inserts, 1, `hay ${inserts} sitios que insertan formularios`);
+    const crear = server.slice(server.indexOf('app.post("/api/fidelizacion/formularios"'));
+    assert.ok(crear.indexOf("INSERT INTO fid_formularios") < crear.indexOf("\n});"),
+      "el INSERT no está dentro de la ruta de crear");
+    assert.match(server, /app\.post\("\/api\/fidelizacion\/formularios", requireAuth\(PROMOS_ROLES\)/);
+  });
+
+  test("y la propuesta NO llama al servidor: por eso no existía ninguna versión", () => {
+    const f = sinComentarios(app.slice(app.indexOf("function fidgFormPropuesta(clave)"),
+                                       app.indexOf("const FIDG_CAMPOS = [")));
+    for (const escritura of ["apiSend(", "apiRaw(", "fetch("]) {
+      assert.ok(!f.includes(escritura), `la propuesta hace ${escritura}`);
+    }
+  });
+
+  test("sin versión publicada, la ruta pública contesta 404 — y eso es lo correcto", () => {
+    const GET = server.slice(server.indexOf('app.get("/api/publico/formulario/:clave"'));
+    assert.match(GET, /WHERE clave = \? AND estado = 'publicado'/);
+    assert.match(GET, /if \(!f \|\| !abierto\.ok\)/);
+    assert.match(GET, /status\(404\)/);
+  });
+
+  test("y `promo.js` cae al formulario histórico justo ahí", () => {
+    const promoJs = readFileSync(new URL("../public/promo.js", import.meta.url), "utf8");
+    assert.match(promoJs, /fetch\("\/api\/publico\/formulario\/" \+ encodeURIComponent\(CLAVE\)\)/);
+    assert.match(promoJs, /r\.ok \? r\.json\(\) : null/);
+    assert.match(promoJs, /if \(j && j\.ok\) \{ pintarConfigurable\(j\); return null; \}/);
+    assert.match(promoJs, /return arrancarCampanaClasica\(\);/);
+  });
+
+  test("NO ES LA CACHÉ: la ruta pública se sirve con `no-store`", () => {
+    for (const firma of ['app.get("/api/publico/formulario/:clave"',
+                         'app.post("/api/publico/formulario/:clave"']) {
+      const r = server.slice(server.indexOf(firma), server.indexOf(firma) + 400);
+      assert.match(r, /res\.set\("Cache-Control", "no-store"\)/);
+    }
+  });
+
+  test("EL PANEL LO DICE AHORA, en vez de dejar que se adivine", () => {
+    const bloque = app.slice(app.indexOf("function renderFidgPropuestas()"),
+                             app.indexOf("function renderFidgFormularios()"));
+    assert.match(bloque, /Producción sigue sirviendo el formulario antiguo/);
+    // Y explica los tres motivos distintos por los que puede pasar.
+    assert.match(bloque, /No existe ninguna versión de esta campaña/);
+    assert.match(bloque, /ningún borrador se publica solo/);
+    assert.match(bloque, /no está abierta/);
+    // Solo sale cuando de verdad ocurre…
+    assert.match(bloque, /const aviso = !sirveConfigurable/);
+  });
+
+  test("Y SALE TAMBIÉN CUANDO NO HAY NINGUNA FILA, que es el caso de verdad", () => {
+    // El servidor construye la lista a partir de las filas que EXISTEN, así que una campaña que
+    // nunca se ha guardado no aparece. Tratar eso como «no sé nada» callaba precisamente en el
+    // único momento en que había algo que decir.
+    const bloque = app.slice(app.indexOf("function renderFidgPropuestas()"),
+                             app.indexOf("function renderFidgFormularios()"));
+    assert.match(bloque, /estadoDe\(clave\) \|\| \{ clave, borradores: 0, cerradas: 0, version_publicada: null,\s*\n?\s*sirve: "historico", motivo: "no_existe" \}/);
+    assert.ok(!/const publicada = e && /.test(bloque), "vuelve a depender de que exista la entrada");
+  });
+
+  test("el estado sale del SERVIDOR, no de lo que crea el panel", () => {
+    const lista = server.slice(server.indexOf('app.get("/api/fidelizacion/formularios"'));
+    assert.match(lista, /sirve: abierto\.ok \? "configurable" : "historico"/);
+    assert.match(lista, /url_publica: `\/promo\.html\?c=\$\{encodeURIComponent\(e\.clave\)\}`/);
+    // Y se calcula LEYENDO: la pantalla de estado no puede publicar nada.
+    const trozo = lista.slice(0, lista.indexOf("\n});"));
+    for (const escritura of ["INSERT INTO", "UPDATE ", "DELETE "]) {
+      assert.ok(!sinComentarios(trozo).includes(escritura), `la lista hace ${escritura}`);
+    }
+  });
+
+  test("los tres puntos se distinguen: propuesta, borrador y publicada", () => {
+    const bloque = app.slice(app.indexOf("function renderFidgPropuestas()"),
+                             app.indexOf("function renderFidgFormularios()"));
+    assert.match(bloque, /publicada \? \["Publicada", "ok"\] : hayBorrador \? \["Borrador sin publicar", "warn"\]/);
+    assert.match(bloque, /"Solo propuesta"/);
+  });
+
+  test("y están los tres botones que se pidieron", () => {
+    const bloque = app.slice(app.indexOf("function renderFidgPropuestas()"),
+                             app.indexOf("function renderFidgFormularios()"));
+    assert.match(bloque, /Abrir borrador/);
+    assert.match(bloque, /data-act="fidg-propuesta-prev"/);
+    assert.match(bloque, /Abrir formulario público/);
+    // El de abrir en público SOLO cuando de verdad sirve la configurable.
+    assert.match(bloque, /sirveConfigurable\s*\n?\s*\? `<a class="btn sm primary"/);
+  });
+
+  test("LA VISTA PREVIA NO GUARDA NI PUBLICA NADA", () => {
+    const prev = sinComentarios(fnApp("fidgPropuestaPrev"));
+    for (const escritura of ["apiSend(", "apiRaw(", "fetch("]) {
+      assert.ok(!prev.includes(escritura), `la vista previa hace ${escritura}`);
+    }
+    assert.match(prev, /no se ha guardado ni publicado nada/);
+  });
+
+  test("tras publicar se confirma LA CLAVE Y LA URL EXACTAS, leídas del servidor", () => {
+    // La clave se normaliza al guardar: «Esmorzar Girona» se convierte en `esmorzar-girona`.
+    // Enseñar lo tecleado habría hecho copiar una URL que no existe.
+    assert.match(server, /res\.json\(\{ ok: true, id: fila\.id, clave, version: fila\.version/);
+    assert.match(server, /url_publica: `\/promo\.html\?c=\$\{encodeURIComponent\(clave\)\}`/);
+    const conf = fnApp("fidgPublicada");
+    assert.match(conf, /const clave = j\.clave \|\| "";/);
+    assert.match(conf, /\/promo\.html\?c=\$\{encodeURIComponent\(clave\)\}/);
+    assert.ok(!conf.includes("fgVal("), "la confirmación usa lo tecleado, no lo guardado");
+  });
+
+  test("y publicar SIGUE exigiendo confirmación", () => {
+    assert.match(app, /if \(publicar === "1" && !confirm\(/);
+    assert.match(app, /Se PUBLICARÁ el formulario/);
+    // Guardar un borrador NO publica, y se dice.
+    assert.match(app, /Guardado como borrador \(versión \$\{j\.version\}\)\. No se ha publicado nada\./);
   });
 });
 

@@ -379,7 +379,7 @@ describe("mientras está en verificación, no hay nada de premios", () => {
   });
 
   test("el panel avisa con todas las letras", () => {
-    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("function renderFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("\nlet FIDP = {"));
     assert.match(f, /En verificación/);
     assert.match(f, /No lo uses con clientes reales/);
     assert.match(f, /Sin premios, sin puntos y sin promociones/);
@@ -694,7 +694,7 @@ describe("los botones de cada estado, de una tabla y no a ojo", () => {
 
   test("los decide el SERVIDOR, no el panel", () => {
     assert.match(estado, /botones: fidBotonesDe\(f, \{ ahora \}\)/);
-    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("function renderFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("\nlet FIDP = {"));
     assert.match(f, /const puede = \(b\) => \(L\.botones \|\| \[\]\)\.includes\(b\)/);
     // Y no queda ni una condición a ojo sobre el estado.
     assert.ok(!/const vivo =/.test(f), "el panel vuelve a decidir por su cuenta");
@@ -900,7 +900,7 @@ describe("la conexión saliente no bloquea nada", () => {
   });
 
   test("el aviso dice para qué hará falta, sin bloquear", () => {
-    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("function renderFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("\nlet FIDP = {"));
     assert.match(f, /Hará falta para el catálogo de productos/);
     assert.ok(!/no se puede generar|hace falta antes/i.test(f), "el panel bloquea por la saliente");
   });
@@ -909,7 +909,9 @@ describe("la conexión saliente no bloquea nada", () => {
 describe("el panel: una tarjeta por local, sin rastro del piloto", () => {
   test("se pinta una tarjeta por cada local de la casa", () => {
     assert.match(panel, /function renderFidLocal\(L\)/);
-    assert.match(panel, /\(FID\.locales \|\| \[\]\)\.map\(renderFidLocal\)/);
+    // Una fila por local, y la ficha de cada uno la sigue pintando `renderFidLocal`.
+    assert.match(panel, /\(FID\.locales \|\| \[\]\)\.map\(\(L\) => \{/);
+    assert.match(panel, /agvFila\(L\.local,[\s\S]{0,120}renderFidLocal\(L\)\)/);
     assert.match(estado, /LOCALES_CANON\.map\(\(local\) =>/);
   });
 
@@ -919,7 +921,7 @@ describe("el panel: una tarjeta por local, sin rastro del piloto", () => {
   });
 
   test("cada acción lleva SU local o SU id", () => {
-    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("function renderFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("\nlet FIDP = {"));
     for (const a of ["fid-generar", "fid-facturas", "fid-purgar"]) {
       assert.match(f, new RegExp(`data-act="${a}" data-local="\\$\\{esc\\(L\\.local\\)\\}"`), `${a} no lleva el local`);
     }
@@ -929,7 +931,7 @@ describe("el panel: una tarjeta por local, sin rastro del piloto", () => {
   });
 
   test("la tarjeta enseña todo lo que hace falta para operar", () => {
-    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("function renderFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("\nlet FIDP = {"));
     for (const campo of ["Token", "Caduca", "Versión de Ágora", "Validaciones", "Facturas",
                          "Movimientos", "Historial de tokens"]) {
       assert.ok(f.includes(campo), `falta «${campo}» en la tarjeta`);
@@ -939,7 +941,7 @@ describe("el panel: una tarjeta por local, sin rastro del piloto", () => {
   });
 
   test("las DOS capacidades se enseñan por separado", () => {
-    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("function renderFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderFidLocal("), panel.indexOf("\nlet FIDP = {"));
     assert.match(f, /Fidelización entrante/);
     assert.match(f, /Conexión saliente con Ágora/);
     assert.match(f, /Ágora llama a nuestras URLs/);
@@ -968,12 +970,14 @@ describe("el panel: una tarjeta por local, sin rastro del piloto", () => {
     for (const viejo of ["Piloto Lloret", "Local del piloto", "Fase 1 limitada"]) {
       assert.ok(!panel.includes(viejo), `queda el texto «${viejo}»`);
     }
-    assert.match(panel, /<h3>Fidelización Ágora<\/h3>/);
-    assert.match(panel, /Integración por local/);
+    // El apartado se llama ahora «Fidelización entrante»: dice QUIÉN LLAMA A QUIÉN, que es lo
+    // que lo separa de «Salida hacia Ágora».
+    assert.match(panel, /<h3>Fidelización entrante<\/h3>/);
+    assert.match(panel, /Es Ágora quien nos llama/);
   });
 
   test("dice qué funciona ya y qué no", () => {
-    const f = panel.slice(panel.indexOf("function renderFidPiloto()"), panel.indexOf("async function loadFidPiloto()"));
+    const f = panel.slice(panel.indexOf("function renderAgvEntrada()"), panel.indexOf("// ── C · SALIDA"));
     assert.match(f, /registrar sus visitas <b>ya funciona<\/b>/);
     assert.match(f, /todavía no están activos/);
     assert.match(f, /Cada local necesita su propia configuración/);

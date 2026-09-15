@@ -96,7 +96,13 @@ describe("los bloques que ocupaban sin aportar", () => {
   });
 
   test("y en Ágora cada local es un desplegable", () => {
-    assert.match(panel, /<details class="card fold" data-agrow="\$\{i\}">/);
+    // Ya no es un `<details>` por local: cada uno guardaba su propio abierto/cerrado y se
+    // acababa con seis desplegados. Ahora manda `AGV.local`, que además es lo que hace que las
+    // tres pestañas enseñen el mismo local.
+    assert.match(panel, /<div data-agrow="\$\{i\}">/);
+    assert.match(panel, /function agvFila\(local, pastilla, dentro\)/);
+    assert.match(panel, /const abierto = AGV\.local === local;/);
+    assert.match(panel, /aria-expanded="\$\{abierto\}"/);
   });
 });
 

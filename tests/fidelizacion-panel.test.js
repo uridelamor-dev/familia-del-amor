@@ -316,7 +316,7 @@ describe("los estados visuales", () => {
   });
 
   test("el catálogo distingue activo de dado de baja, y el error de sincronización", () => {
-    const f = bloque("function renderFidgCatalogo()", "function renderFidgPromos()");
+    const f = bloque("function renderFidgCatalogo(local)", "function renderFidgPromos()");
     assert.match(f, /p\.activo \? "activo" : "de baja"/);
     assert.match(f, /u\.ok \? "OK" : "Error"/);
     assert.match(f, /Último intento \(falló\)/);
@@ -340,7 +340,7 @@ describe("nada de lo que se ve expone lo que no debe", () => {
     // ajeno que sí trabaja con teléfonos legítimamente; y en los comentarios se explica a
     // propósito que los TOKENS no se configuran aquí, cosa que una búsqueda a pelo confundiría
     // con un token pintado en pantalla.
-    const f = bloque("// ── La puesta en producción y la configuración comercial", "function renderFidPiloto() {")
+    const f = bloque("// ── La puesta en producción y la configuración comercial", "// ── LA PANTALLA DE ÁGORA, EN TRES APARTADOS")
       .split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
     // Se buscan ACCESOS A DATO, no la palabra: «Los tokens y el Workplace no» es una frase que se
     // le enseña a quien configura, y es justo la que explica dónde está la línea.

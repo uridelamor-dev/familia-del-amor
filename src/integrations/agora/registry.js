@@ -15,7 +15,19 @@
 //
 // Añadir un establecimiento = añadir una entrada al JSON. Nada de código.
 
-function normHost(h) {
+/**
+ * `latapeta.example.com:8984` → `http://latapeta.example.com:8984`.
+ *
+ * SE EXPORTA A PROPÓSITO. En la base, `agora_locales.host` se guarda TAL COMO LO ESCRIBE alguien
+ * en el panel: casi siempre sin esquema. Quien lea esa columna y componga una URL sin pasar por
+ * aquí construye algo que no es una URL absoluta —y `fetch` lo rechaza con un `TypeError` seco que
+ * no dice nada—. Pasó exactamente eso con la sincronización del catálogo.
+ *
+ * Y NO ES UN ERROR EVIDENTE: un nombre de host con puntos ES un esquema válido para el parseador
+ * de URL, así que `new URL("latapeta.example.com:8984/api/…")` no protesta. El fallo aparece más
+ * tarde, en la llamada, como «unknown scheme».
+ */
+export function normHost(h) {
   h = String(h || "").trim();
   if (!h) return "";
   if (!/^https?:\/\//i.test(h)) h = "http://" + h;
