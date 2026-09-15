@@ -11019,7 +11019,7 @@ async function fidpSocio() {
 // diagnóstico: eso es seguridad técnica, vive en las tarjetas de arriba y es solo de Dirección.
 let FIDG = { puerta: null, catalogo: null, grupos: [], promos: [], formularios: [], tarjeta: [],
              comunicaciones: [], revisiones: [], tipos: {}, paletas: {}, variables: [],
-             idiomas: {}, mensajesDefecto: {}, mensajesIdioma: {}, campos: {},
+             idiomas: {}, mensajesDefecto: {}, mensajesIdioma: {}, campos: {}, bajas: null,
              local: null };
 
 /** Los cinco estados de la puerta, con lo que significan. */
@@ -11094,6 +11094,23 @@ function renderFidgListaSimple(lista, que, accion, etiqueta) {
     `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${(x.estado === "publicado" || x.estado === "publicada") ? "ok" : ""}">${esc(x.estado)}</span><button class="btn sm" data-act="${accion}" data-id="${x.id}">${(x.estado === "borrador") ? "Seguir editando" : "Copiar a versión nueva"}</button></span>`)).join("");
   return `<div style="margin-bottom:10px"><button class="btn primary sm" data-act="${accion}">${esc(etiqueta)}</button></div>
     <div class="rows">${filas || `<div class="mut">Todavía no hay ningún ${que}.</div>`}</div>`;
+}
+
+/**
+ * LAS BAJAS, EN NÚMEROS Y NADA MÁS.
+ *
+ * Cuánta gente se va es lo que dice si una campaña está quemando la lista. Quién se ha ido no
+ * aparece, ni se puede pedir: quien pidió que le dejaran en paz no tiene que salir en una
+ * pantalla, y los tokens no salen de la base ni siquiera en huella.
+ */
+function renderFidgBajas() {
+  const b = FIDG.bajas;
+  if (!b) return "";
+  return `<div class="rows" style="margin-top:12px">
+      <div class="row"><div class="grow"><div class="t1">Bajas</div><div class="mut" style="font-size:12px">Personas que han pedido dejar de recibir comunicaciones. No se guarda quiénes son en esta pantalla.</div></div><b class="tnum">${b.total}</b></div>
+      <div class="row"><div class="grow"><div class="t1">En los últimos 30 días</div><div class="mut" style="font-size:12px">Si sube de golpe después de un envío, el mensaje o la frecuencia están molestando.</div></div><b class="tnum ${b.ultimos_30 > 0 ? "" : "mut"}">${b.ultimos_30}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Enlaces emitidos sin usar</div><div class="mut" style="font-size:12px">Uno por mensaje enviado. Que haya muchos es lo normal.</div></div><b class="tnum mut">${b.enlaces_vivos}</b></div>
+    </div>`;
 }
 
 function renderFidgComunicaciones() {
@@ -11273,8 +11290,13 @@ const FIDG_PROPUESTAS = {
     texto_boton: "Vull el meu codi",
     mensaje_exito: "Perfecte! T'enviem el codi al WhatsApp en un moment.",
     texto_posterior: "Si no et arriba en uns minuts, revisa que el número sigui correcte.",
-    consentimiento_texto: "Omplint aquest formulari acceptes rebre descomptes del grup de la Família del Amor.",
-    privacidad_url: "https://familiadelamor.org/privacitat",
+    // La frase NOMBRA el enlace, y `promo.js` subraya justo esas tres palabras dentro de ella.
+    // Separado en otra línea, «Consulta la Política de privacitat» sería una instrucción sin
+    // destino: se lee, no se pulsa, y quien quiere leerla no encuentra dónde.
+    consentimiento_texto: "Omplint aquest formulari acceptes rebre descomptes del grup de la Família del Amor. Consulta la Política de privacitat.",
+    // La política de la casa, en catalán. Es una página estática de `public/`: una política
+    // tiene que poder leerse aunque la aplicación esté caída.
+    privacidad_url: "/privacitat.html",
     exige_whatsapp: true,
     sugerir_poblacion: true,
     campos: [
@@ -11363,7 +11385,7 @@ async function fidgFormNuevo(desdeId, propuesta) {
   }).join("");
 
   modal(guardada ? "Copiar formulario" : propuesta ? `Propuesta · ${esc(propuesta.nombre_propuesta || propuesta.clave)}` : "Nuevo formulario público", `
-    ${propuesta && !guardada ? '<div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px">Viene <b>relleno con la propuesta</b>, en borrador. Revísalo y cámbialo lo que haga falta: <b>no se publica hasta que pulses «Publicar»</b>.</div>' : ""}
+    ${propuesta && !guardada ? `<div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px">Viene <b>relleno con la propuesta</b>, en borrador. Revísalo y cámbialo lo que haga falta: <b>no se publica hasta que pulses «Publicar»</b>.${propuesta.privacidad_url ? "" : '<br><br><b>Falta la política de privacidad.</b> Todavía no hay ninguna página publicada, y sin ella no se puede publicar el formulario: no se pide un teléfono sin decir qué se hace con él. En cuanto exista, se pega su enlace aquí abajo.'}</div>` : ""}
     ${avisoCopia(guardada && guardada.estado === "publicado" ? guardada.version : null)}
     ${fgCampo("ffClave", "Clave (va en la URL)", base?.clave || "")}
     ${fgCampo("ffCampana", "Campaña asociada", base?.campana || "")}
@@ -11739,6 +11761,7 @@ async function loadFidGestion() {
   ]);
   FIDG.puerta = pu; FIDG.promos = pr?.data || []; FIDG.formularios = fo?.data || [];
   FIDG.tarjeta = ta?.data || []; FIDG.comunicaciones = co?.data || []; FIDG.revisiones = re?.data || [];
+  FIDG.bajas = co?.bajas || null;
   FIDG.tipos = pr?.tipos || {}; FIDG.paletas = ta?.paletas || {}; FIDG.variables = co?.variables || [];
   FIDG.idiomas = fo?.idiomas || {}; FIDG.mensajesDefecto = fo?.mensajes_defecto || {};
   FIDG.campos = fo?.campos_disponibles || {};
@@ -12552,8 +12575,9 @@ function renderCampFidelizacion() {
       <div class="mut" style="font-size:12px;margin:-4px 0 6px">Una propuesta abre el formulario <b>relleno y en borrador</b>. No publica nada, y si la campaña ya existe no la pisa: abre el borrador o copia la última versión.</div>
       ${urls}</div>
     <div class="card" style="margin-top:12px"><div class="ch"><h3>Comunicaciones</h3><span class="pill">Requiere aprobación</span></div>
-      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Solo se escribe a quien dio consentimiento y no se ha dado de baja. El recuento y las exclusiones se ven antes de aprobar.</div>
-      ${renderFidgComunicaciones()}</div>`;
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Solo se escribe a quien dio consentimiento y no se ha dado de baja. Cada mensaje lleva su propio enlace de baja. El recuento y las exclusiones se ven antes de aprobar.</div>
+      ${renderFidgComunicaciones()}
+      ${renderFidgBajas()}</div>`;
 }
 
 /**

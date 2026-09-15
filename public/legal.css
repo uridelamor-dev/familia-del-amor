@@ -1,0 +1,88 @@
+/* Las páginas legales. Va encima de `styles.css`, que ya trae el fondo, la cabecera y el pie.
+
+   Una política de privacidad se lee de arriba abajo, entera y a veces con prisa —normalmente
+   cuando alguien ya está molesto—. Así que aquí no hay tarjetas, ni columnas, ni nada que
+   distraiga: una sola columna estrecha, mucho aire entre apartados y títulos que se distinguen
+   de un vistazo para poder saltar al que interesa.
+
+   El contraste está medido sobre el fondo de la casa (#efe6d4): el texto sale por encima de
+   12:1 y el apagado por encima de 5:1, los dos por encima de lo que pide la AA. */
+
+.legal {
+  max-width: 44rem;                /* ~70 caracteres: lo que se lee sin perder la línea */
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+  color: var(--text);
+  line-height: 1.7;
+  font-size: 1.02rem;
+}
+
+.legal h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .35rem; text-wrap: balance; }
+
+.legal h2 {
+  font-size: 1.18rem;
+  margin: 2.6rem 0 .6rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--border);
+  text-wrap: balance;
+}
+
+.legal p { margin: 0 0 1rem; }
+.legal ul { margin: 0 0 1.15rem; padding-left: 1.3rem; }
+.legal li { margin-bottom: .45rem; }
+.legal b { font-weight: 650; }
+
+/* La fecha de entrada en vigor. Es lo que permite comprobar qué versión se aceptó. */
+.legal-vigor {
+  margin: 0 0 1.6rem;
+  font-size: .85rem;
+  color: #5f5a54;                  /* 6.2:1 sobre el fondo */
+  letter-spacing: .02em;
+}
+
+.legal-entrada { font-size: 1.1rem; line-height: 1.65; margin-bottom: 1.5rem; }
+
+/* Los datos del responsable, en dos columnas que se apilan en el móvil. */
+.legal-datos {
+  display: grid;
+  grid-template-columns: 9.5rem 1fr;
+  gap: .4rem 1rem;
+  margin: 0 0 1rem;
+  padding: 1rem 1.15rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.legal-datos dt { font-weight: 650; color: #4a453f; }
+.legal-datos dd { margin: 0; overflow-wrap: anywhere; }
+
+.legal-nota {
+  padding: .85rem 1.05rem;
+  background: var(--surface);
+  border-left: 3px solid var(--accent-2);
+  border-radius: 0 8px 8px 0;
+  font-size: .95rem;
+}
+
+.legal-idioma { margin-top: 3rem; font-size: .95rem; }
+
+/* Los enlaces van SUBRAYADOS, no solo en otro color: el color por sí solo deja fuera a quien no
+   lo distingue, y en una página de derechos el enlace de la AEPD es de los que hay que ver. */
+.legal a {
+  color: var(--accent-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.legal a:hover { text-decoration-thickness: 2px; }
+.legal a:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (max-width: 480px) {
+  .legal { padding: 1.75rem 1.1rem 3rem; font-size: 1rem; }
+  .legal h1 { font-size: 1.6rem; }
+  .legal-datos { grid-template-columns: 1fr; gap: .1rem .5rem; }
+  .legal-datos dd { margin-bottom: .6rem; }
+}

@@ -218,9 +218,18 @@ describe("el formulario público", () => {
   test("los textos configurados se pintan como TEXTO, nunca como HTML", () => {
     const f = promo.slice(promo.indexOf("function pintarConfigurable("), promo.indexOf("var urlCampana"));
     // `textContent` en todo lo que viene de la configuración.
-    for (const id of ["fxTitulo", "fxSub", "fxIntro", "fxConsentTxt", "fxBoton"]) {
+    for (const id of ["fxTitulo", "fxSub", "fxIntro", "fxBoton"]) {
       assert.ok(new RegExp(`\\$\\("${id}"\\)\\.textContent`).test(f), `${id} no usa textContent`);
     }
+    // El consentimiento es el único que se compone por partes, porque lleva un enlace DENTRO de
+    // la frase. Se monta con nodos —`createTextNode` y un `<a>`—, que es igual de seguro que
+    // `textContent` y, a diferencia de `innerHTML`, no interpreta nada de lo que venga escrito.
+    const consent = promo.slice(promo.indexOf("function pintarConsentimiento("),
+                                promo.indexOf("function montarFecha("));
+    assert.ok(!/innerHTML/.test(consent), "el consentimiento se pinta como HTML");
+    assert.match(consent, /caja\.textContent = "";/);
+    assert.match(consent, /document\.createTextNode\(frase\.slice\(/);
+    assert.match(consent, /a\.textContent = nombre;/);
     assert.match(f, /TEXTO, NUNCA HTML/);
     // Y las etiquetas de los campos tampoco.
     assert.match(f, /l\.textContent = x\.etiqueta/);

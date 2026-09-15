@@ -244,9 +244,12 @@ describe("lo que se guarda", () => {
   test("EL CONSENTIMIENTO SE GUARDA CON SU TEXTO, SU VERSIÓN Y SU CAMPAÑA", () => {
     // Guardar «aceptó» sin guardar QUÉ aceptó no sirve el día que alguien pregunte, que es
     // justo el día que hace falta.
-    assert.match(POST, /INSERT INTO fid_consentimientos \(telefono, formulario_clave, formulario_version, texto,\s*\n\s*acepta_comercial, origen, campana, creado_en\)/);
+    assert.match(POST, /INSERT INTO fid_consentimientos \(telefono, formulario_clave, formulario_version, texto,\s*\n\s*acepta_comercial, origen, campana, creado_en, politica_version, politica_url\)/);
     assert.match(POST, /String\(f\.consentimiento_texto \|\| ""\)/);
     assert.match(POST, /f\.version/);
+    // Y QUÉ POLÍTICA estaba publicada ese día: la frase dice «consulta la política de
+    // privacidad», y sin guardar cuál, la mitad de lo aceptado se pierde.
+    assert.match(POST, /POLITICA_VERSION, fidPoliticaUrl\(f\.idioma\)/);
   });
 
   test("sin aceptar no se guarda nada", () => {

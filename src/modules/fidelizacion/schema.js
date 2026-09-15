@@ -448,6 +448,37 @@ export async function ensureSchemaFidelizacion(x) {
     baja_origen TEXT
   )`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_cons_tel ON fid_consentimientos (telefono, creado_en DESC)`);
+  // QUÉ POLÍTICA ACEPTÓ. Aditivo. Guardar el texto del consentimiento sin guardar la política a la
+  // que remite deja la mitad de la respuesta: la frase dice «consulta la política», y sin saber
+  // CUÁL no se puede reconstruir qué se le enseñó a esa persona ese día.
+  for (const col of ["politica_version INTEGER", "politica_url TEXT"]) {
+    try { await x.run(`ALTER TABLE fid_consentimientos ADD COLUMN IF NOT EXISTS ${col}`); }
+    catch (e) { console.error("[fidelizacion] alter fid_consentimientos:", e.message); }
+  }
+
+  // ── LAS BAJAS ──────────────────────────────────────────────────────────────
+  //
+  // EL TOKEN NO SE GUARDA EN CLARO, se guarda su huella. El enlace viaja dentro de un WhatsApp,
+  // que se reenvía, se captura y se queda en el móvil de cualquiera: si la base guardara el token
+  // tal cual, quien leyera una fila podría darse de baja por otra persona —o volver a montar el
+  // enlace—. Con la huella, de lo guardado no se puede reconstruir el enlace.
+  //
+  // Y NO HAY TELÉFONO EN ESTA TABLA salvo el que hace falta para aplicar la baja: se guarda
+  // normalizado, porque es lo que hay que marcar en `marketing_prefs`, que es donde toda la casa
+  // mira antes de escribirle a nadie.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_bajas (
+    id SERIAL PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    telefono TEXT NOT NULL,
+    comunicacion_id INTEGER,
+    campana TEXT,
+    creado_en TEXT NOT NULL,
+    -- NULL mientras no se haya confirmado. Abrir el enlace NO lo rellena: solo el POST.
+    confirmado_en TEXT,
+    descartados INTEGER NOT NULL DEFAULT 0
+  )`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_bajas_tel ON fid_bajas (telefono)`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_bajas_hechas ON fid_bajas (confirmado_en) WHERE confirmado_en IS NOT NULL`);
 
   // ── LA TARJETA DEL CLIENTE, CONFIGURABLE ───────────────────────────────────
   //
@@ -503,6 +534,10 @@ export async function ensureSchemaFidelizacion(x) {
     creado_por TEXT NOT NULL,
     CHECK (estado IN ('borrador','aprobada','enviando','pausada','terminada'))
   )`);
+  // En qué idioma se le habla a la gente. Aditivo. Hace falta para el pie del enlace de baja: un
+  // mensaje en catalán que acaba en «Para dejar de recibir estos mensajes» está a medio traducir.
+  try { await x.run(`ALTER TABLE fid_comunicaciones ADD COLUMN IF NOT EXISTS idioma TEXT NOT NULL DEFAULT 'es'`); }
+  catch (e) { console.error("[fidelizacion] alter fid_comunicaciones:", e.message); }
   // Un destinatario por comunicación: el índice es lo que impide mandar dos veces el mismo mensaje.
   await x.run(`CREATE TABLE IF NOT EXISTS fid_comunicacion_envios (
     id SERIAL PRIMARY KEY,

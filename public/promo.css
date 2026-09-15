@@ -75,7 +75,23 @@
 /* El consentimiento: una frase encima del botón, no una casilla. Enviar es aceptar, y eso se
    dice con todas las letras justo donde se pulsa. */
 .pm-consent { margin: 1.1rem 0 .35rem; font-size: .88rem; color: #4c5854; line-height: 1.5; }
-.pm-legal { margin: 0 0 .9rem; font-size: .85rem; }
+/* El enlace a la política, DENTRO de la frase de consentimiento.
+
+   Subrayado y no solo en otro color: el color por sí solo deja fuera a quien no lo distingue, y
+   este es el enlace que la ley exige que se pueda encontrar. #2F6B4F sobre #fbfaf8 da 5.3:1, por
+   encima del 4.5:1 que pide el AA. */
+.pm-legal {
+  color: #2F6B4F;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 600;
+}
+.pm-legal:hover { text-decoration-thickness: 2px; }
+.pm-legal:focus-visible {
+  outline: 2px solid #2F6B4F;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 .pm-legal a { color: #2F6B4F; text-decoration: underline; }
 
 .pm-error { margin: .9rem 0 0; padding: .75rem .9rem; border-radius: 12px;

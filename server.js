@@ -129,6 +129,12 @@ import { textoSeguro as fidTexto, urlSegura as fidUrl, normalizarCampos as fidCa
          MENSAJES_POR_IDIOMA as FID_MENSAJES_IDIOMA,
          MENSAJES as FID_MENSAJES_DEF } from "./src/modules/fidelizacion/contenido.js";
 import { fechaNacimientoValida as fidFechaNac } from "./src/modules/captacion/municipios.js";
+import { POLITICA_VERSION, politicaUrl as fidPoliticaUrl, politicaEnlace as fidPoliticaEnlace }
+  from "./src/modules/legal/politica.js";
+import { nuevoToken as fidNuevoTokenBaja, huella as fidHuellaBaja, tokenPlausible as fidTokenBajaOk,
+         enlaceBaja as fidEnlaceBaja, conPieDeBaja as fidConPieBaja, pieBaja as fidPieBaja,
+         decidir as fidDecidirBaja, textosBaja as fidTextosBaja }
+  from "./src/modules/fidelizacion/baja.js";
 import { reglaVigente as fidReglaVigente, rewardDe as fidRewardDe, saldo as fidSaldo,
          importePagado as fidImportePagado, puntosDe as fidPuntosDe, evaluarFactura as fidEvaluar,
          caducaEn as fidCaducaEn, centimos as fidCentimos, aEuros as fidAEuros,
@@ -11466,7 +11472,24 @@ app.get("/api/fidelizacion/comunicaciones", requireAuth(PROMOS_ROLES), async (re
       // La plantilla se ve; los teléfonos NO salen nunca de aquí.
       out.push({ ...c, excluidos: fidLeerLista(c.excluidos) , progreso: e || {} });
     }
-    res.json({ ok: true, variables: FID_VARIABLES, data: out });
+    // LAS BAJAS: SOLO EL RECUENTO. Ni tokens, ni huellas, ni teléfonos.
+    //
+    // Cuánta gente se ha dado de baja es lo que hay que mirar para saber si una campaña está
+    // quemando la lista. QUIÉN se ha dado de baja no hace falta para eso —y no sirve para nada
+    // legítimo: quien pidió que le dejaran en paz no tiene que salir en una pantalla—.
+    let bajas = { total: 0, ultimos_30: 0, enlaces_vivos: 0 };
+    try {
+      const hace30 = addDiasISO(hoyISO(), -30);
+      const b = await dbGet(
+        `SELECT COUNT(*) FILTER (WHERE confirmado_en IS NOT NULL)::int AS total,
+                COUNT(*) FILTER (WHERE confirmado_en IS NOT NULL AND confirmado_en >= ?)::int AS ultimos_30,
+                COUNT(*) FILTER (WHERE confirmado_en IS NULL)::int AS enlaces_vivos
+           FROM fid_bajas`, [hace30]);
+      if (b) bajas = { total: Number(b.total || 0), ultimos_30: Number(b.ultimos_30 || 0),
+                       enlaces_vivos: Number(b.enlaces_vivos || 0) };
+    } catch (err) { console.error(lineaErrorSql("[fidelizacion] recuento de bajas", err)); }
+
+    res.json({ ok: true, variables: FID_VARIABLES, data: out, bajas });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] comunicaciones", e));
     res.status(500).json({ ok: false, error: "No se pudieron leer" });
@@ -11592,7 +11615,7 @@ app.post("/api/fidelizacion/comunicaciones/:id/encolar", requireAuth(["direccion
       `SELECT id, telefono FROM fid_comunicacion_envios
         WHERE comunicacion_id = ? AND estado = 'pendiente' ORDER BY id LIMIT 500`, [c.id]) || [];
     const ahora = isoConOffset(Date.now());
-    let encolados = 0;
+    let encolados = 0, sinBaja = 0;
 
     for (const e of pendientes) {
       // El carné, para poder meter su enlace en el mensaje. Si no tiene, se manda sin él.
@@ -11603,8 +11626,32 @@ app.post("/api/fidelizacion/comunicaciones/:id/encolar", requireAuth(["direccion
         if (qr) { qrId = qr.id; nombre = qr.nombre; enlace = proEnlace(req, { token: qr.token, clase: "carnet" }); }
       } catch { /* sin carné, el mensaje va igual */ }
 
-      const texto = fidRender(c.plantilla, { nombre: nombre || "", enlace: enlace || "",
+      let texto = fidRender(c.plantilla, { nombre: nombre || "", enlace: enlace || "",
         fecha: hoyISO(), local: c.local || "", premio: "" });
+
+      // ── EL ENLACE DE BAJA, EN TODOS LOS MENSAJES ─────────────────────────────────────────
+      //
+      // Uno por persona y por comunicación, con su token. Se guarda SU HUELLA, nunca el token:
+      // este mensaje se reenvía, se captura y se queda en el móvil de cualquiera, y de una fila
+      // de la base no se puede poder dar de baja a otro.
+      //
+      // Si por lo que sea no se puede preparar el enlace, EL MENSAJE NO SALE. Mandar una
+      // comunicación comercial sin forma de darse de baja no es una opción; quedarse un envío
+      // sin mandar, sí.
+      let bajaOk = false;
+      try {
+        const tokenBaja = fidNuevoTokenBaja();
+        const urlBaja = fidEnlaceBaja(await baseEnlaces(req), tokenBaja);
+        if (urlBaja) {
+          await dbRun(
+            `INSERT INTO fid_bajas (token_hash, telefono, comunicacion_id, campana, creado_en)
+             VALUES (?,?,?,?,?) ON CONFLICT (token_hash) DO NOTHING`,
+            [fidHuellaBaja(tokenBaja), e.telefono, c.id, c.campana || c.clave || null, ahora]);
+          texto = fidConPieBaja(texto, urlBaja, { pie: fidPieBaja(c.idioma) });
+          bajaOk = true;
+        }
+      } catch (err) { console.error(lineaErrorSql("[fidelizacion] enlace de baja", err)); }
+      if (!bajaOk) { sinBaja += 1; continue; }
       // DETERMINISTA: el mismo destinatario de la misma comunicación siempre da el mismo token.
       const token = `com:${c.id}:${e.telefono}`;
       const met = await dbRun(
@@ -11618,8 +11665,8 @@ app.post("/api/fidelizacion/comunicaciones/:id/encolar", requireAuth(["direccion
 
     await dbRun(`UPDATE fid_comunicaciones SET estado = 'enviando' WHERE id = ? AND estado = 'aprobada'`, [c.id]);
     await ficAuditar("fidelizacion", c.id, "comunicacion_encolada", req.user.username,
-      { local: c.local, detalle: { clave: c.clave, encolados, pendientes: pendientes.length } });
-    res.json({ ok: true, encolados, ya_estaban: pendientes.length - encolados });
+      { local: c.local, detalle: { clave: c.clave, encolados, pendientes: pendientes.length, sin_baja: sinBaja } });
+    res.json({ ok: true, encolados, ya_estaban: pendientes.length - encolados - sinBaja, sin_baja: sinBaja });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] encolar", e));
     res.status(500).json({ ok: false, error: "No se pudo encolar" });
@@ -11778,7 +11825,12 @@ app.get("/api/publico/formulario/:clave", async (req, res) => {
       destacado: f.destacado || null,
       texto_boton: f.texto_boton, imagen: f.imagen,
       campos: fidCampos(fidLeerLista(f.campos)).filter((c) => c.visible),
-      consentimiento_texto: f.consentimiento_texto, privacidad_url: f.privacidad_url,
+      consentimiento_texto: f.consentimiento_texto,
+      // Si la campaña no configura una, se usa LA DE LA CASA en su idioma: una campaña sin enlace
+      // a la política es una campaña que pide un teléfono sin decir qué se hace con él.
+      privacidad_url: f.privacidad_url || fidPoliticaUrl(f.idioma),
+      privacidad_texto: fidPoliticaEnlace(f.idioma),
+      politica_version: POLITICA_VERSION,
       sugerir_poblacion: !!f.sugerir_poblacion,
       mensajes: fidMensajes(f.mensajes, f.idioma),
       locales: LOCALES_CANON });
@@ -11890,12 +11942,16 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
 
       // 2. EL CONSENTIMIENTO, con el TEXTO que se aceptó y su versión. Guardar «aceptó» sin
       //    guardar qué aceptó no sirve el día que alguien pregunte, que es cuando hace falta.
+      // LOS CINCO DATOS JUNTOS: qué texto aceptó, de qué versión del formulario, QUÉ POLÍTICA
+      // estaba publicada ese día, cuándo, en qué campaña y por dónde entró. El texto dice
+      // «consulta la política de privacidad»; sin guardar CUÁL, la mitad de la frase se pierde.
       await x.run(
         `INSERT INTO fid_consentimientos (telefono, formulario_clave, formulario_version, texto,
-           acepta_comercial, origen, campana, creado_en)
-         VALUES (?,?,?,?,?,?,?,?)`,
+           acepta_comercial, origen, campana, creado_en, politica_version, politica_url)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [tel, clave, f.version, String(f.consentimiento_texto || "").slice(0, 4000),
-         comercial, "formulario", f.campana || null, ahora]);
+         comercial, "formulario", f.campana || null, ahora,
+         POLITICA_VERSION, fidPoliticaUrl(f.idioma)]);
     });
 
     // 3. EL CARNÉ. Se reutiliza el que ya tenga; solo se crea si no hay ninguno.
@@ -11925,6 +11981,203 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] alta formulario", e));
     res.status(500).json({ ok: false, error: FID_MENSAJES_DEF.error });
+  }
+});
+
+// ── DARSE DE BAJA ────────────────────────────────────────────────────────────
+//
+// ── EL GET NO DA DE BAJA A NADIE, Y ESA ES LA DECISIÓN QUE SOSTIENE TODO ─────────────────────
+//
+// Este enlace viaja dentro de un WhatsApp. WhatsApp —y Slack, y iMessage, y los antivirus de
+// empresa, y los previsualizadores de cualquier cliente de correo— ABREN LOS ENLACES SOLOS para
+// dibujar la tarjetita de la vista previa. Si el GET diera de baja, media lista quedaría de baja
+// sin haber tocado nada y nadie entendería por qué dejó de recibir los descuentos.
+//
+// Así que el GET solo PREGUNTA. La baja la hace el POST, que ningún previsualizador dispara.
+//
+// ── Y SIN SESIÓN ─────────────────────────────────────────────────────────────────────────────
+//
+// Quien quiere que le dejen en paz no puede tener que crearse una cuenta para conseguirlo. El
+// token ES la credencial, y por eso se guarda en huella y no en claro.
+//
+// La página no enseña NI UN DATO PERSONAL —ni el teléfono a medias—: quien abre el enlace puede
+// no ser el dueño del móvil, y «vas a dar de baja el 6·· ··· ·22» sería una forma de averiguar un
+// número a partir de un mensaje reenviado.
+
+/** La página de baja. Es HTML plano y se compone aquí: tiene que funcionar sin JavaScript. */
+function fidPaginaBaja({ idioma, estado, hecho, token }) {
+  const T = fidTextosBaja(idioma);
+  const lang = idioma === "ca" ? "ca" : "es";
+  const esc = (t) => String(t).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  let cuerpo;
+  if (estado === "no_existe") {
+    cuerpo = `<p class="bx-mal">${esc(T.caducado)}</p>`;
+  } else if (hecho || estado === "ya_estaba") {
+    cuerpo = `<p class="bx-ok">${esc(hecho ? T.hecha : T.ya)}</p>
+      <p class="bx-mut">${esc(T.vuelta)}</p>`;
+  } else {
+    // El formulario es un POST de verdad, sin JavaScript: así funciona también con el navegador
+    // de dentro de WhatsApp, que es donde se va a abrir casi siempre.
+    cuerpo = `<p>${esc(T.intro)}</p>
+      <p class="bx-mut">${esc(T.aviso)}</p>
+      <form method="POST" action="/baixa">
+        <input type="hidden" name="t" value="${esc(token)}">
+        <input type="hidden" name="idioma" value="${esc(lang)}">
+        <button type="submit" class="bx-btn">${esc(T.boton)}</button>
+      </form>`;
+  }
+
+  return `<!doctype html>
+<html lang="${lang}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>${esc(T.titulo)}</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; background: #efe6d4; color: #0f0e0d;
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 1.25rem; }
+  main { background: #fff; border: 1px solid #e4dfd8; border-radius: 16px;
+    padding: 2rem 1.5rem; max-width: 30rem; width: 100%; box-sizing: border-box; }
+  h1 { font-size: 1.35rem; margin: 0 0 1rem; line-height: 1.25; }
+  p { margin: 0 0 1rem; }
+  /* #5f5a54 sobre blanco da 6.9:1, muy por encima del AA. */
+  .bx-mut { color: #5f5a54; font-size: .95rem; }
+  .bx-ok { font-weight: 650; }
+  .bx-mal { color: #8a1c1c; }
+  .bx-btn { display: block; width: 100%; box-sizing: border-box; min-height: 52px;
+    margin-top: 1.25rem; padding: .85rem 1rem; font: inherit; font-weight: 650; color: #fff;
+    background: #2c4a3e; border: 0; border-radius: 12px; cursor: pointer; }
+  .bx-btn:hover { background: #243c33; }
+  .bx-btn:focus-visible { outline: 3px solid #0f0e0d; outline-offset: 2px; }
+  .bx-pie { margin: 1.5rem 0 0; font-size: .85rem; color: #5f5a54; }
+  .bx-pie a { color: #2c4a3e; text-decoration: underline; text-underline-offset: 2px; }
+</style></head>
+<body><main>
+  <h1>${esc(T.titulo)}</h1>
+  ${cuerpo}
+  <p class="bx-pie"><a href="${lang === "ca" ? "/privacitat.html" : "/privacidad.html"}">${
+    lang === "ca" ? "Política de privacitat" : "Política de privacidad"}</a></p>
+</main></body></html>`;
+}
+
+/** Lee el token de la petición y busca su huella. Devuelve lo decidido, sin tocar nada. */
+async function fidMirarBaja(token) {
+  if (!fidTokenBajaOk(token)) return { fila: null, decision: fidDecidirBaja(null, { confirmar: false }) };
+  const fila = await dbGet(
+    `SELECT id, telefono, confirmado_en FROM fid_bajas WHERE token_hash = ?`, [fidHuellaBaja(token)]);
+  return { fila: fila || null, decision: fidDecidirBaja(fila || null, { confirmar: false }) };
+}
+
+const fidIdiomaBaja = (req) =>
+  String(req.query?.l || req.body?.idioma || "").slice(0, 2) === "es" ? "es" : "ca";
+
+// EL GET SOLO MIRA. No escribe ni una fila, y hay un test que lo comprueba leyendo el código.
+app.get("/baixa", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Content-Type", "text/html; charset=utf-8");
+  // Que ningún buscador la indexe, y que ningún previsualizador crea que puede hacer algo útil.
+  res.set("X-Robots-Tag", "noindex, nofollow");
+  const idioma = fidIdiomaBaja(req);
+  try {
+    const token = String(req.query?.t || "");
+    const { decision } = await fidMirarBaja(token);
+    res.status(decision.estado === "no_existe" ? 404 : 200)
+       .send(fidPaginaBaja({ idioma, estado: decision.estado, hecho: false, token }));
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] baja GET", e));
+    res.status(500).send(fidPaginaBaja({ idioma, estado: "error", hecho: false, token: "" }));
+  }
+});
+
+/**
+ * LA BAJA DE VERDAD.
+ *
+ * Hace tres cosas, y las tres importan:
+ *
+ *   1. Marca `marketing_prefs.baja`, que es DONDE MIRA TODA LA CASA antes de escribirle a nadie
+ *      —cupones, tarjeta, campañas, Sara—. Poner la baja en una tabla nueva y propia habría
+ *      dejado dos verdades sobre lo mismo, y la gente habría seguido recibiendo mensajes por el
+ *      otro camino.
+ *   2. Cierra el consentimiento de fidelización (`baja_en`), que es el libro que dice qué aceptó
+ *      y cuándo dejó de aceptarlo.
+ *   3. DESCARTA LO QUE ESTÁ EN LA COLA Y NO HA SALIDO. Lo ya enviado no se toca: no se puede
+ *      retirar un WhatsApp entregado, y reescribir el registro de lo que sí salió sería mentir.
+ *
+ * Es IDEMPOTENTE: pulsar dos veces, o cien, da el mismo resultado y no mueve la fecha.
+ */
+app.post("/baixa", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.set("X-Robots-Tag", "noindex, nofollow");
+  const idioma = fidIdiomaBaja(req);
+  try {
+    if (!pulsoRateLimit(req, res, 20)) return;
+    const token = String(req.body?.t || req.query?.t || "");
+    const { fila, decision } = await fidMirarBaja(token);
+    if (decision.estado === "no_existe") {
+      return res.status(404).send(fidPaginaBaja({ idioma, estado: "no_existe", hecho: false, token: "" }));
+    }
+    if (decision.estado === "ya_estaba") {
+      // Ni se reaplica ni se mueve la fecha: la primera baja es la que vale si alguien pregunta.
+      return res.status(200).send(fidPaginaBaja({ idioma, estado: "ya_estaba", hecho: false, token: "" }));
+    }
+
+    const ahora = isoConOffset(Date.now());
+    const tel = fila.telefono;
+    let descartados = 0;
+
+    // SOLO GANA UNO. La condición va en el WHERE, así que dos peticiones a la vez no aplican la
+    // baja dos veces ni se pisan la fecha; la segunda no recibe fila y se trata como «ya estaba».
+    const tomada = await dbRun(
+      `UPDATE fid_bajas SET confirmado_en = ? WHERE id = ? AND confirmado_en IS NULL RETURNING id`,
+      [ahora, fila.id]);
+    if (!tomada) {
+      return res.status(200).send(fidPaginaBaja({ idioma, estado: "ya_estaba", hecho: false, token: "" }));
+    }
+
+    // 1. La baja global, donde mira toda la casa.
+    const puesta = await dbRun(
+      `UPDATE marketing_prefs SET baja = 1, updated_at = ? WHERE ${MATCH_TEL9("telefono")} RETURNING telefono`,
+      [ahora, tel]);
+    if (!puesta) {
+      await dbRun(
+        `INSERT INTO marketing_prefs (telefono, baja, updated_at) VALUES (?, 1, ?)
+         ON CONFLICT (telefono) DO UPDATE SET baja = 1, updated_at = EXCLUDED.updated_at`,
+        [tel, ahora]);
+    }
+
+    // 2. El libro de consentimientos: se cierra el que estuviera vivo.
+    await dbRun(
+      `UPDATE fid_consentimientos SET baja_en = ?, baja_origen = 'enlace'
+        WHERE telefono = ? AND baja_en IS NULL`, [ahora, tel]);
+
+    // 3. Lo pendiente en la cola, fuera. Lo ENVIADO no se toca: un WhatsApp entregado no se
+    //    puede retirar, y reescribir el registro de lo que salió sería mentir sobre lo ocurrido.
+    //
+    //    Se cuenta ANTES de tirarlo, con el mismo `WHERE`: después ya no queda nada que contar.
+    //    Que el número baile un poco si el worker está mandando justo en ese instante no importa
+    //    —es para el registro, no para decidir nada—; lo que importa es que el propio worker
+    //    vuelve a mirar `marketing_prefs.baja` antes de cada envío, así que lo que se le escape
+    //    aquí lo frena allí.
+    const tirados = await dbGet(
+      `SELECT COUNT(*)::int AS n FROM cap_cola WHERE telefono = ? AND estado = 'pendiente'`, [tel]);
+    descartados = tirados ? Number(tirados.n || 0) : 0;
+    await dbRun(
+      `UPDATE cap_cola SET estado = 'descartado', pausado = FALSE
+        WHERE telefono = ? AND estado = 'pendiente'`, [tel]);
+    await dbRun(`UPDATE fid_bajas SET descartados = ? WHERE id = ?`, [descartados, fila.id]);
+
+    // Se audita el HECHO, no la persona: ni teléfono, ni token, ni huella.
+    await ficAuditar("fidelizacion", null, "baja_comunicaciones", "publico",
+      { detalle: { origen: "enlace", descartados } });
+
+    res.status(200).send(fidPaginaBaja({ idioma, estado: "vale", hecho: true, token: "" }));
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] baja POST", e));
+    res.status(500).send(fidPaginaBaja({ idioma, estado: "error", hecho: false, token: "" }));
   }
 });
 

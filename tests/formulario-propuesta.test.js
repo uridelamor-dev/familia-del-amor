@@ -19,7 +19,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { MENSAJES, MENSAJES_POR_IDIOMA, CAMPOS, normalizarCampos, validarFormulario, textoSeguro }
   from "../src/modules/fidelizacion/contenido.js";
 
@@ -75,8 +75,45 @@ describe("NO HAY QUE ESCRIBIR NADA A MANO", () => {
     assert.equal(P.destacado, "Completa el formulari i rebràs el codi al teu telèfon.");
     assert.equal(P.texto_boton, "Vull el meu codi");
     assert.equal(P.consentimiento_texto,
-      "Omplint aquest formulari acceptes rebre descomptes del grup de la Família del Amor.");
-    assert.match(P.privacidad_url, /^https:\/\//);
+      "Omplint aquest formulari acceptes rebre descomptes del grup de la Família del Amor. "
+      + "Consulta la Política de privacitat.");
+    // La frase NOMBRA el enlace: es lo que permite subrayar esas tres palabras dentro de ella en
+    // vez de dejar «consulta la política» sin destino y el enlace suelto debajo.
+    assert.ok(P.consentimiento_texto.includes("Política de privacitat"));
+  });
+
+  test("NINGUNA PROPUESTA INVENTA UN ENLACE DE PRIVACIDAD", () => {
+    // El fallo que esto arregla: la propuesta llevaba escrito
+    // `https://familiadelamor.org/privacitat`, una URL que suena bien y que NO EXISTE. Habría
+    // dado un 404 al cliente justo cuando va a dar su teléfono, y habría dejado por escrito que
+    // aceptó una política inexistente. Un enlace falso es peor que ninguno.
+    //
+    // Así que una propuesta solo puede traer un enlace si apunta a una página que esta casa
+    // SIRVE DE VERDAD. Mientras no exista, se queda vacía y no se puede publicar.
+    const paginas = readdirSync(new URL("../public/", import.meta.url));
+    for (const [clave, p] of Object.entries(PROPUESTAS)) {
+      const url = String(p.privacidad_url || "");
+      if (!url) continue;                       // vacío es legítimo: bloquea la publicación
+      const fichero = url.replace(/^https?:\/\/[^/]+/, "").replace(/^\//, "").split(/[?#]/)[0];
+      const existe = paginas.includes(fichero) || paginas.includes(fichero + ".html")
+        || server.includes(`"/${fichero}"`);
+      assert.ok(existe, `«${clave}» enlaza a «${url}», que esta casa no sirve`);
+    }
+  });
+
+  test("y enlaza LA CATALANA, que es el idioma de la campaña", () => {
+    assert.equal(P.privacidad_url, "/privacitat.html");
+    assert.ok(existsSync(new URL("../public/privacitat.html", import.meta.url)),
+      "la propuesta enlaza una política que no existe");
+  });
+
+  test("si alguna vez faltara, el bloqueo seguiría siendo visible", () => {
+    // El aviso del panel sigue ahí para cualquier propuesta futura que nazca sin política: es
+    // condicional, no una nota que se quedó escrita.
+    assert.match(app, /\$\{propuesta\.privacidad_url \? "" : '<br><br><b>Falta la política de privacidad/);
+    const sinPolitica = validarFormulario({ ...P, privacidad_url: "" });
+    assert.equal(sinPolitica.ok, false);
+    assert.ok(sinPolitica.falta.some((x) => /pol[ií]tica de privacidad/i.test(x)));
   });
 
   test("EL SUBTÍTULO VA VACÍO A PROPÓSITO, no ausente", () => {
@@ -146,9 +183,9 @@ describe("NO HAY QUE ESCRIBIR NADA A MANO", () => {
     assert.equal(com.obligatorio, false);
   });
 
-  test("LA PROPUESTA ESTÁ COMPLETA: se podría publicar tal cual, sin que falte nada", () => {
-    // Es la prueba de que no hay que rellenar ningún hueco a mano. Se valida con el MISMO
-    // validador que usa el servidor al publicar.
+  test("LA PROPUESTA ESTÁ COMPLETA: se podría publicar tal cual, sin escribir nada", () => {
+    // Es la prueba de que no queda ni un hueco de redacción. Se valida con el MISMO validador que
+    // usa el servidor al publicar.
     const v = validarFormulario(P);
     assert.deepEqual(v.falta, [], `faltarían cosas por escribir: ${v.falta.join(" · ")}`);
     assert.equal(v.ok, true);

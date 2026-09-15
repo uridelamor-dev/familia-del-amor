@@ -284,6 +284,44 @@
    * `max` es hoy: el calendario no deja ir más allá. El servidor lo vuelve a comprobar, porque el
    * `max` no impide mandar otra cosa por debajo.
    */
+  /**
+   * LA FRASE DE CONSENTIMIENTO, CON EL ENLACE DENTRO.
+   *
+   * El enlace va EN LA FRASE y no debajo en su propia línea, porque «consulta la política de
+   * privacidad» separada del enlace que la abre es una instrucción sin destino: se lee, no se
+   * pulsa, y quien quiere leerla no encuentra dónde.
+   *
+   * Se compone con NODOS, nunca con `innerHTML`: el texto lo escribe una persona desde el panel y
+   * esto lo abre un cliente en su móvil. Si el nombre del enlace no aparece literalmente en la
+   * frase, se añade al final —así una campaña que se olvide de nombrarlo sigue teniendo enlace—.
+   */
+  function pintarConsentimiento(caja, c) {
+    var frase = c.consentimiento_texto || "";
+    var url = c.privacidad_url || "";
+    var nombre = c.privacidad_texto || (c.idioma === "ca" ? "Política de privacitat" : "Política de privacidad");
+    caja.textContent = "";
+    if (!url) { caja.textContent = frase; return; }
+
+    var a = document.createElement("a");
+    a.className = "pm-legal";
+    a.href = url;
+    a.target = "_blank";
+    // `noopener` por seguridad y `noreferrer` para no decirle a la política de dónde viene nadie.
+    a.rel = "noopener noreferrer";
+    a.textContent = nombre;
+
+    var i = frase.indexOf(nombre);
+    if (i < 0) {
+      // No lo nombra: la frase entera y el enlace detrás, separados por un espacio.
+      caja.appendChild(document.createTextNode(frase ? frase + " " : ""));
+      caja.appendChild(a);
+      return;
+    }
+    caja.appendChild(document.createTextNode(frase.slice(0, i)));
+    caja.appendChild(a);
+    caja.appendChild(document.createTextNode(frase.slice(i + nombre.length)));
+  }
+
   function montarFecha(input, eco, etiquetaEco) {
     input.setAttribute("max", new Date().toISOString().slice(0, 10));
     input.setAttribute("min", "1900-01-01");
@@ -334,7 +372,6 @@
       + '<p class="pm-intro" id="fxIntro" hidden></p>'
       + '<form id="fxF" novalidate>' + campos
       + '<p class="pm-consent" id="fxConsentTxt"></p>'
-      + '<p class="pm-legal"><a id="fxPriv" target="_blank" rel="noopener noreferrer"></a></p>'
       + '<button class="alta-btn" type="submit" id="fxBoton"></button></form>'
       + '<p class="pm-error" id="fxError" role="alert" hidden></p>';
 
@@ -344,12 +381,8 @@
     if (c.subtitulo) { $("fxSub").textContent = c.subtitulo; $("fxSub").hidden = false; }
     if (c.destacado) { $("fxDestacado").textContent = c.destacado; $("fxDestacado").hidden = false; }
     if (c.introduccion) { $("fxIntro").textContent = c.introduccion; $("fxIntro").hidden = false; }
-    $("fxConsentTxt").textContent = c.consentimiento_texto || "";
+    pintarConsentimiento($("fxConsentTxt"), c);
     $("fxBoton").textContent = c.texto_boton || "OK";
-    if (c.privacidad_url) {
-      $("fxPriv").href = c.privacidad_url;
-      $("fxPriv").textContent = c.idioma === "ca" ? "Política de privacitat" : "Política de privacidad";
-    } else { $("fxPriv").parentNode.hidden = true; }
 
     (c.campos || []).forEach(function (x) {
       var l = document.querySelector('label[for="fx_' + x.id + '"]');
