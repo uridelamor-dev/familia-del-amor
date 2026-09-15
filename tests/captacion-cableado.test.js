@@ -181,8 +181,11 @@ describe("la cola no pierde ni quema el número", () => {
 
   test("respeta el tope diario y el interruptor de pánico", () => {
     assert.match(cola, /captacion_cola_parada/);
-    assert.match(cola, /cupo\.agotado/);
-    assert.match(cola, /cuantasSacar\(/);
+    // El tope sigue siendo global; lo que cambió es que ahora se mira POR TIPO, para que una
+    // campaña comercial no deje sin código a quien acaba de apuntarse.
+    assert.match(cola, /const cupoTipo = capCupoPorPrioridad\(\{ max: cupo\.max, usados: cupo\.usados \}\)/);
+    assert.match(cola, /if \(!capHayCupo\(cupoTipo\)\) return;/);
+    assert.match(cola, /capCuantasSacar\(/);
   });
 
   test("espacia los envíos", () => {

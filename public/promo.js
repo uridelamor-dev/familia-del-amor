@@ -430,6 +430,15 @@
         caja.innerHTML = "";
         var h = document.createElement("h1"); h.className = "tj-titular"; h.textContent = j.mensaje || "";
         caja.appendChild(h);
+        // EL ESTADO DE SU MENSAJE, DICHO COMO ES. Recién encolado es «pendiente»: decir «te lo
+        // hemos enviado» en el mismo instante de meterlo en la cola sería afirmar algo que aún
+        // no ha pasado. «Enviado» solo aparece cuando consta la fecha de salida.
+        if (j.envio && j.envio.texto) {
+          var pe = document.createElement("p");
+          pe.className = "pm-envio" + (j.envio.estado === "fallo_envio" ? " pm-envio-mal" : "");
+          pe.textContent = j.envio.texto;
+          caja.appendChild(pe);
+        }
         if (j.texto_posterior) {
           var p2 = document.createElement("p"); p2.className = "tj-sub"; p2.textContent = j.texto_posterior;
           caja.appendChild(p2);

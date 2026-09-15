@@ -431,7 +431,11 @@ export async function ensureSchemaFidelizacion(x) {
   for (const col of ["idioma TEXT NOT NULL DEFAULT 'es'", "destacado TEXT",
                      "mensajes TEXT NOT NULL DEFAULT '{}'",
                      "exige_whatsapp BOOLEAN NOT NULL DEFAULT FALSE",
-                     "sugerir_poblacion BOOLEAN NOT NULL DEFAULT FALSE"]) {
+                     "sugerir_poblacion BOOLEAN NOT NULL DEFAULT FALSE",
+                     // EL WHATSAPP QUE SE MANDA AL APUNTARSE. Aditivo y sin valor por defecto:
+                     // vacío significa «no mandes nada». Encenderlo en una campaña que no lo
+                     // prometía enviaría un mensaje a gente que se apuntó sin esperarlo.
+                     "mensaje_wa TEXT"]) {
     try { await x.run(`ALTER TABLE fid_formularios ADD COLUMN IF NOT EXISTS ${col}`); }
     catch (e) { console.error("[fidelizacion] alter fid_formularios:", e.message); }
   }

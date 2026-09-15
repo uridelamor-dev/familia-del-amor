@@ -32,7 +32,7 @@ const ruta = (firma) => {
   return server.slice(i, server.indexOf("\n});", i) + 4);
 };
 const worker = server.slice(server.indexOf("async function capVaciarCola()"),
-                            server.indexOf("async function capVaciarCola()") + 4000);
+                            server.indexOf("async function capVaciarCola()") + 7000);
 
 /**
  * Una cola de mentira con un worker que hace LO MISMO que el de verdad: lee un lote, y antes de

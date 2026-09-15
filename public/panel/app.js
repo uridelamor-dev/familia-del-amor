@@ -2472,6 +2472,21 @@ function fechaNac(iso) {
   const base = `${d} ${DP_MESC[m - 1] || ""} ${y}`;
   return (edad >= 0 && edad < 120) ? `${base} (${edad})` : base;
 }
+/**
+ * DE DÓNDE VINO. La campaña por la que entró, no la palabra «lead».
+ *
+ * `origen` decía `lead` o `reserva`, que es de dónde salió la fila, no de dónde salió la persona.
+ * Lo que hace falta saber es por qué campaña llegó y si ha vuelto por alguna otra. Si se apuntó
+ * varias veces NO se duplica: es una sola persona con varias campañas detrás.
+ */
+function cliOrigen(c) {
+  const bonito = (v) => String(v || "").replace(/^form:/, "").replace(/^campana$/, "Campaña") || "—";
+  const ultima = c.ultima_campana ? bonito(c.ultima_campana) : (c.origen === "reserva" ? "Reserva" : "—");
+  const primera = (c.primera_captacion || "").slice(0, 10);
+  const mas = Number(c.campanas || 0) > 1 ? ` <span class="mut" style="font-size:11px">+${c.campanas - 1}</span>` : "";
+  return `<span title="${esc(primera ? `Primera captación: ${primera}` : "")}">${esc(ultima)}${mas}</span>`;
+}
+
 function cliTable(rows) {
   if (!rows.length) return `<div class="card"><div class="mut" style="padding:8px">Sin clientes con esos filtros.</div></div>`;
   return `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Cliente</th><th>Teléfono</th><th>Email</th><th>Población</th><th>Cumpleaños</th><th>Origen</th><th>Última visita</th><th></th></tr></thead><tbody>${rows.map((c) => {
@@ -2479,7 +2494,7 @@ function cliTable(rows) {
     const baja = c.baja === 1 || c.baja === true;
     const wa = c.es_contacto_wa ? '<span class="sdot" title="Tiene WhatsApp" style="display:inline-block;width:7px;height:7px;border-radius:999px;background:var(--success);margin-left:6px"></span>' : "";
     const acc = `<div style="display:flex;gap:4px;justify-content:flex-end">${tel ? `<button class="btn sm" data-act="cli-wa" data-tel="${esc(tel)}" data-nombre="${esc(nom)}" title="Escribir por WhatsApp">${ic("chat", 14)}</button><a class="btn sm" href="tel:${esc(tel)}" title="Llamar">${ic("bell", 14)}</a>` : ""}${c.correo ? `<a class="btn sm" href="mailto:${esc(c.correo)}" title="Enviar email">@</a>` : ""}<button class="btn sm" data-act="cli-ficha" data-tel="${esc(tel)}" title="Ver ficha">Ficha</button></div>`;
-    return `<tr><td>${esc(nom)}${wa}${baja ? ' <span class="pill bad" style="font-size:10px">Baja</span>' : ""}</td><td class="mut">${esc(tel)}</td><td class="mut">${esc(c.correo || "")}</td><td>${esc(c.poblacion || "")}</td><td class="mut tnum">${esc(fechaNac(c.nacimiento))}</td><td>${esc(c.origen || "")}</td><td class="mut">${esc((c.ultima_actividad || "").slice(0, 10))}</td><td>${acc}</td></tr>`;
+    return `<tr><td>${esc(nom)}${wa}${baja ? ' <span class="pill bad" style="font-size:10px">Baja</span>' : ""}</td><td class="mut">${esc(tel)}</td><td class="mut">${esc(c.correo || "")}</td><td>${esc(c.poblacion || "")}</td><td class="mut tnum">${esc(fechaNac(c.nacimiento))}</td><td>${cliOrigen(c)}</td><td class="mut">${esc((c.ultima_actividad || "").slice(0, 10))}</td><td>${acc}</td></tr>`;
   }).join("")}</tbody></table></div></div>`;
 }
 function cliSubTxt(rows, total) { return `${num(total)} contacto${total === 1 ? "" : "s"}${rows.length < total ? ` · mostrando ${rows.length}` : ""}`; }
@@ -2794,6 +2809,25 @@ function pedirFiltroQueFalta() {
 
 function filtrosClienteBody() { const b = {}; if (CLIF.q) b.q = CLIF.q; if (CLIF.poblacion) b.poblacion = CLIF.poblacion; if (CLIF.local) b.local = CLIF.local; if (CLIF.cumple) b.cumple_mes = mesActualMM(); if (CLIF.con_email) b.con_email = 1; if (CLIF.con_telefono) b.con_telefono = 1; CLI_EXTRA.forEach((k) => { if (CLIF[k]) b[k] = CLIF[k]; }); return b; }
 // Ficha de contacto: datos, visitas, reservas, WhatsApp y consentimiento.
+/**
+ * El bloque «Origen» de la ficha: por dónde entró y por dónde ha vuelto.
+ *
+ * SIN DUPLICAR A LA PERSONA. Aunque se haya apuntado a cinco campañas sigue siendo una ficha;
+ * lo que se enseña es su historial, no cinco clientes.
+ */
+function cliFichaOrigen(d) {
+  const bonito = (v) => String(v || "").replace(/^form:/, "").replace(/^campana$/, "Campaña");
+  const primera = (d.primera_captacion || "").slice(0, 10);
+  const ultima = d.ultima_campana ? bonito(d.ultima_campana) : null;
+  if (!primera && !ultima && !d.consentimientos) return "";
+  const fila = (t, v, sub) => `<div class="row"><div class="grow"><div class="t1">${esc(t)}</div>${sub ? `<div class="mut" style="font-size:12px">${esc(sub)}</div>` : ""}</div><b style="overflow-wrap:anywhere">${esc(v)}</b></div>`;
+  return `<div class="card p0"><div class="ch" style="padding:14px 14px 0"><h3>Origen</h3></div><div class="rows">
+    ${primera ? fila("Primera captación", primera, "La fecha en que entró por primera vez; ya no cambia") : ""}
+    ${ultima ? fila("Última campaña", ultima, Number(d.campanas || 0) > 1 ? `Ha entrado por ${d.campanas} campañas distintas` : "") : ""}
+    ${d.consentimientos ? fila("Consentimientos dados", String(d.consentimientos), d.ultimo_consentimiento ? `El último, el ${String(d.ultimo_consentimiento).slice(0, 10)}` : "") : ""}
+  </div></div>`;
+}
+
 async function cliFicha(tel) {
   let d; try { d = (await apiRaw("/api/contactos/" + encodeURIComponent(tel))).data; } catch (e) { toast("Error: " + e.message); return; }
   const p = d.prefs || {};
@@ -2801,6 +2835,7 @@ async function cliFicha(tel) {
   const chk = (campo, label) => `<label class="chip" style="cursor:pointer"><input type="checkbox" data-ficha-pref="${campo}" ${p[campo] ? "checked" : ""} style="margin-right:6px">${esc(label)}</label>`;
   const ov = modal(d.nombre || tel, `<div class="grid" style="gap:12px">
     <div class="card" style="padding:12px 14px"><div class="t2">${esc(tel)}${d.es_contacto_wa ? " · tiene WhatsApp" : ""}</div><div style="margin-top:4px">${esc(d.correo || "Sin email")} · ${esc(d.poblacion || "Sin población")} · ${d.visitas} visita(s)${d.ultimo_local ? " · último: " + esc(d.ultimo_local) : ""}</div><div class="t2" style="margin-top:4px">Cumpleaños: ${esc(fechaNac(d.nacimiento))}</div></div>
+    ${cliFichaOrigen(d)}
     <div class="card" style="padding:12px 14px"><div class="ch"><h3>Consentimiento</h3></div><div style="display:flex;gap:8px;flex-wrap:wrap" data-tel="${esc(tel)}">${chk("opt_in_wa", "Opt-in WhatsApp")}${chk("opt_in_email", "Opt-in Email")}${chk("baja", "Baja (no contactar)")}</div></div>
     <div id="fichaHechos"></div>
     <div class="card p0"><div class="ch" style="padding:14px 14px 0"><h3>Reservas</h3></div><div class="rows">${resv}</div></div>
@@ -11295,7 +11330,17 @@ function renderFidgListaSimple(lista, que, accion, etiqueta) {
 function renderFidgPropuestas() {
   const estadoDe = (clave) => (FIDG.estadosForm || []).find((e) => e.clave === clave) || null;
 
-  return Object.entries(FIDG_PROPUESTAS).map(([clave, p]) => {
+  // LAS CLAVES QUE SE ENSEÑAN: las propuestas de la casa MÁS cualquier campaña que tenga gente
+  // detrás aunque no sea una propuesta nuestra —una campaña vieja, una que montó Marketing a
+  // mano—. Si solo saliera lo que conocemos, las altas de las demás no se verían por ningún lado.
+  const claves = [...new Set([
+    ...Object.keys(FIDG_PROPUESTAS),
+    ...(FIDG.estadosForm || []).filter((x) => (x.inscritos?.total || 0) > 0 || x.version_publicada || x.borradores)
+      .map((x) => x.clave),
+  ])];
+
+  return claves.map((clave) => {
+    const p = FIDG_PROPUESTAS[clave] || { nombre_propuesta: clave };
     // SIN ENTRADA = SIN NINGUNA VERSIÓN, que es justo el caso más común y el que hay que avisar.
     // El servidor construye la lista a partir de las filas que existen, así que una campaña que
     // todavía no se ha guardado nunca no aparece. Tratar eso como «no sé nada» habría callado
@@ -11305,6 +11350,9 @@ function renderFidgPropuestas() {
     const publicada = e.version_publicada;
     const sirveConfigurable = e.sirve === "configurable";
     const hayBorrador = e.borradores > 0;
+    // Se declara AQUÍ porque el aviso de abajo lo consulta: declararla después la dejaba en la
+    // zona muerta temporal y la pantalla entera se caía con «Cannot access before initialization».
+    const esPropuesta = !!FIDG_PROPUESTAS[clave];
 
     // Tres puntos, y solo uno es el bueno.
     const punto = publicada ? ["Publicada", "ok"] : hayBorrador ? ["Borrador sin publicar", "warn"]
@@ -11312,7 +11360,7 @@ function renderFidgPropuestas() {
     const url = `/promo.html?c=${encodeURIComponent(clave)}`;
 
     // EL AVISO QUE FALTABA. Solo sale cuando de verdad ocurre.
-    const aviso = !sirveConfigurable
+    const aviso = esPropuesta && !sirveConfigurable
       ? `<div class="pendingblock" style="margin:8px 2px 0;padding:10px 12px;font-size:12.5px">
            <b>Producción sigue sirviendo el formulario antiguo.</b>
            ${publicada
@@ -11324,8 +11372,15 @@ function renderFidgPropuestas() {
       : "";
 
     const botones = [
-      `<button class="btn ${publicada || hayBorrador ? "sm" : "primary sm"}" data-act="fidg-form-propuesta" data-p="${esc(clave)}">${hayBorrador ? "Abrir borrador" : publicada ? "Copiar a versión nueva" : "Crear propuesta"}</button>`,
-      `<button class="btn sm" data-act="fidg-propuesta-prev" data-p="${esc(clave)}">Vista previa</button>`,
+      esPropuesta
+        ? `<button class="btn ${publicada || hayBorrador ? "sm" : "primary sm"}" data-act="fidg-form-propuesta" data-p="${esc(clave)}">${hayBorrador ? "Abrir borrador" : publicada ? "Copiar a versión nueva" : "Crear propuesta"}</button>`
+        : "",
+      esPropuesta
+        ? `<button class="btn sm" data-act="fidg-propuesta-prev" data-p="${esc(clave)}">Vista previa</button>`
+        : "",
+      (e.inscritos && e.inscritos.total > 0)
+        ? `<button class="btn sm" data-act="ins-ver" data-c="${esc(clave)}">Ver inscritos (${e.inscritos.total})</button>`
+        : "",
       sirveConfigurable
         ? `<a class="btn sm primary" href="${esc(url)}" target="_blank" rel="noopener">Abrir formulario público</a>`
         : "",
@@ -11336,6 +11391,7 @@ function renderFidgPropuestas() {
         `<div class="t1">${esc(p.nombre_propuesta)} <span class="mut">${esc(clave)}</span></div>
          <div class="mut" style="font-size:12px">${esc(url)} · ${e.borradores} borrador(es) · ${e.cerradas} cerrada(s)</div>`,
         `<span class="pill ${punto[1]}">${esc(punto[0])}</span>`)}
+      ${renderInsResumen(clave, e.inscritos)}
       <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">${botones}</div>
       ${aviso}
       <div id="propPrev_${esc(clave)}" class="hidden" style="margin-top:10px"></div>
@@ -11353,6 +11409,129 @@ function renderFidgFormularios() {
         `<a class="btn sm" href="/promo.html?c=${encodeURIComponent(f.clave)}" target="_blank" rel="noopener">Abrir</a>`)).join("")}</div>`
     : "";
   return renderFidgListaSimple(FIDG.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…") + urls;
+}
+
+/** Los tres números de una campaña. `null` = el recuento falló; no es lo mismo que cero. */
+function renderInsResumen(clave, ins) {
+  if (!ins) return '<div class="mut" style="font-size:12px;margin-top:8px">No se ha podido contar las inscripciones.</div>';
+  if (!ins.total) return '<div class="mut" style="font-size:12px;margin-top:8px">Todavía no se ha apuntado nadie.</div>';
+  const n = (v, t) => `<div style="min-width:0"><div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">${esc(t)}</div><div style="font-size:20px;font-weight:700;font-variant-numeric:tabular-nums">${v}</div></div>`;
+  return `<div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:10px">
+    ${n(ins.total, "Inscritos")}${n(ins.d7, "Últimos 7 días")}${n(ins.d30, "Últimos 30 días")}</div>`;
+}
+
+// ── LA LISTA DE INSCRITOS ────────────────────────────────────────────────────
+//
+// SIN TELÉFONO, y a propósito. Se enseña quién se apuntó, cuándo, de dónde y cómo acabó su
+// código; el teléfono se mira en la ficha del cliente, que tiene sus permisos y deja rastro.
+//
+// Los filtros y la paginación van EN SQL: traer el censo entero y cortarlo aquí es lo que hace
+// que una pantalla funcione en pruebas y se caiga con datos de verdad.
+let INS = { clave: null, data: [], total: 0, offset: 0, limite: 50, cargando: false,
+            etiquetas: {}, ayuda: {}, estados: { consentimiento: [], entrega: [] }, parcial: false };
+
+const insQS = () => {
+  const p = new URLSearchParams();
+  for (const [k, id] of [["buscar", "insBuscar"], ["poblacion", "insPob"], ["desde", "insDesde"],
+                         ["hasta", "insHasta"], ["consentimiento", "insCons"], ["entrega", "insEnt"]]) {
+    const v = (document.getElementById(id)?.value || "").trim();
+    if (v) p.set(k, v);
+  }
+  return p;
+};
+
+async function insVer(clave, offset) {
+  INS.clave = clave; INS.offset = Number(offset) || 0; INS.cargando = true;
+  insPintar();
+  try {
+    const p = insQS();
+    p.set("limite", String(INS.limite)); p.set("offset", String(INS.offset));
+    const j = await apiRaw(`/api/fidelizacion/formularios/${encodeURIComponent(clave)}/inscritos?${p}`);
+    INS = { ...INS, data: j.data || [], total: j.total || 0, cargando: false,
+            etiquetas: j.etiquetas || {}, ayuda: j.ayuda || {},
+            estados: j.estados || INS.estados, parcial: !!j.filtro_estado_parcial };
+  } catch (e) {
+    if (e.message === "noauth") return;
+    INS = { ...INS, data: null, cargando: false, error: e.message };
+  }
+  insPintar();
+}
+
+/** Repinta SOLO la caja de resultados si la ventana ya está abierta; si no, la abre. */
+function insPintar() {
+  const caja = document.getElementById("insOut");
+  if (caja) { caja.innerHTML = insCuerpo(); return; }
+  const pill = (k) => `<span class="pill ${k === "baja" || k === "fallido" || k === "sin_carne" ? "bad" : k === "enviado" || k === "activo" ? "ok" : "warn"}">${esc(INS.etiquetas[k] || k)}</span>`;
+  const opciones = (lista, vacio) => `<option value="">${esc(vacio)}</option>` +
+    (lista || []).map((k) => `<option value="${esc(k)}">${esc(INS.etiquetas[k] || k)}</option>`).join("");
+  modal(`Inscritos · ${esc(INS.clave)}`, `
+    <div class="toolbar" style="padding:0;flex-wrap:wrap;gap:8px">
+      <div class="field grow" style="min-width:160px"><label for="insBuscar">Buscar por nombre</label><input id="insBuscar" placeholder="Nombre o apellidos"></div>
+      <div class="field" style="min-width:140px"><label for="insPob">Población</label><input id="insPob" placeholder="Todas"></div>
+    </div>
+    <div class="toolbar" style="padding:0;flex-wrap:wrap;gap:8px">
+      <div class="field" style="min-width:140px"><label for="insDesde">Desde</label><input id="insDesde" type="date"></div>
+      <div class="field" style="min-width:140px"><label for="insHasta">Hasta</label><input id="insHasta" type="date"></div>
+      <div class="field" style="min-width:140px"><label for="insCons">Consentimiento</label><select id="insCons">${opciones(INS.estados.consentimiento, "Todos")}</select></div>
+      <div class="field" style="min-width:160px"><label for="insEnt">Estado del código</label><select id="insEnt">${opciones(INS.estados.entrega, "Todos")}</select></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 12px">
+      <button class="btn primary sm" data-act="ins-filtrar">Filtrar</button>
+      <button class="btn sm" data-act="ins-limpiar">Quitar filtros</button>
+      <span class="grow"></span>
+      <button class="btn sm" data-act="ins-csv">Exportar CSV</button>
+    </div>
+    <div class="mut" style="font-size:12px;margin-bottom:8px">El teléfono no se enseña aquí ni sale en el CSV: se consulta en la ficha del cliente. Mirar esta lista no modifica nada.</div>
+    <div id="insOut">${insCuerpo()}</div>`);
+  // Se enfoca la búsqueda: es lo primero que se hace al abrir esto.
+  setTimeout(() => document.getElementById("insBuscar")?.focus(), 60);
+}
+
+function insCuerpo() {
+  if (INS.cargando) return '<div class="mut">Cargando…</div>';
+  if (INS.data === null) return `<div class="pendingblock" style="padding:10px 12px;font-size:12.5px">No se ha podido leer la lista.${INS.error ? ` ${esc(INS.error)}` : ""} <button class="btn sm" data-act="ins-filtrar" style="margin-left:8px">Reintentar</button></div>`;
+  if (!INS.data.length) {
+    return `<div class="mut" style="padding:10px 2px">${INS.total ? "Ningún inscrito con esos filtros." : "Todavía no se ha apuntado nadie a esta campaña."}</div>`;
+  }
+  const pastilla = (k) => `<span class="pill ${["baja", "fallido", "sin_carne"].includes(k) ? "bad" : ["enviado", "activo"].includes(k) ? "ok" : "warn"}" title="${esc(INS.ayuda[k] || "")}">${esc(INS.etiquetas[k] || k)}</span>`;
+  const filas = INS.data.map((x) => fgFila(
+    `<div class="t1">${esc(`${x.nombre} ${x.apellidos}`.trim()) || "<i>sin nombre</i>"}</div>
+     <div class="mut" style="font-size:12px">${esc(x.fecha)}${x.poblacion ? ` · ${esc(x.poblacion)}` : ""} · ${esc(x.campana || INS.clave)} · formulario ${esc(x.formulario)}${x.consentimientos > 1 ? ` · ${x.consentimientos} consentimientos` : ""}</div>`,
+    `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${pastilla(x.consentimiento)}${pastilla(x.entrega)}<button class="btn sm" data-act="ins-ficha" data-id="${x.lead_id}">Ficha</button></span>`)).join("");
+
+  const desde = INS.offset + 1, hasta = INS.offset + INS.data.length;
+  const pag = `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:12px">
+      <button class="btn sm" data-act="ins-pag" data-o="${Math.max(0, INS.offset - INS.limite)}" ${INS.offset ? "" : "disabled"}>← Anteriores</button>
+      <span class="mut" style="font-size:12px">${desde}–${hasta} de ${INS.total}</span>
+      <button class="btn sm" data-act="ins-pag" data-o="${INS.offset + INS.limite}" ${hasta >= INS.total ? "disabled" : ""}>Siguientes →</button>
+    </div>`;
+  const aviso = INS.parcial
+    ? '<div class="mut" style="font-size:12px;margin-top:8px">Con filtro de estado, el total de arriba cuenta todos los inscritos del periodo, no solo los de este estado.</div>'
+    : "";
+  return `<div class="rows">${filas}</div>${pag}${aviso}`;
+}
+
+/**
+ * Ir a la ficha de esa persona SIN pasar por el teléfono.
+ *
+ * La lista no lo tiene —y no lo va a tener—, así que se lleva a Clientes con su nombre en el
+ * buscador que esa pantalla ya usa. Es la misma pantalla protegida de siempre, con sus permisos
+ * y su rastro: no se abre ninguna ruta nueva que exponga un número que hoy está guardado.
+ */
+function insFicha(leadId) {
+  const x = (INS.data || []).find((r) => String(r.lead_id) === String(leadId));
+  if (!x) return;
+  const nombre = `${x.nombre} ${x.apellidos}`.trim();
+  document.querySelectorAll(".modal-ov").forEach((m) => m.remove());
+  CLIF.q = nombre;
+  go("clientes");
+  toast(nombre ? `Buscando «${nombre}» en Clientes` : "Abriendo Clientes");
+}
+
+/** El CSV, con los MISMOS filtros que se están viendo. */
+function insCsvDescargar() {
+  const p = insQS();
+  window.open(`/api/fidelizacion/formularios/${encodeURIComponent(INS.clave)}/inscritos.csv?${p}`, "_blank");
 }
 
 /** Vista previa de la propuesta SIN abrir el formulario de edición y sin tocar nada. */
@@ -11571,6 +11750,9 @@ const FIDG_PROPUESTAS = {
     privacidad_url: "/privacitat.html",
     exige_whatsapp: true,
     sugerir_poblacion: true,
+    // LO QUE SE PROMETE, CUMPLIDO. La tarjeta verde dice «rebràs el codi al teu telèfon», así que
+    // se manda de verdad. `{enlace}` es su carné; el enlace de baja lo añade el servidor al final.
+    mensaje_wa: "Hola {nombre}! 👋\n\nAquí tens el teu codi per esmorzar a La Tapeta:\n{enlace}\n\nEnsenya'l quan vinguis i te l'apliquem.",
     campos: [
       { id: "nombre", visible: true, obligatorio: true, etiqueta: "Nom" },
       { id: "apellidos", visible: true, obligatorio: true, etiqueta: "Cognoms" },
@@ -11680,6 +11862,8 @@ async function fidgFormNuevo(desdeId, propuesta) {
     <label class="chk" style="display:block;margin-bottom:8px"><input type="checkbox" id="ffWA"${base?.exige_whatsapp ? " checked" : ""}> Exigir que el teléfono tenga WhatsApp</label>
     <div class="mut" style="font-size:12px;margin:-4px 0 10px">Se comprueba al enviar, nunca en una ruta aparte: un endpoint que conteste «este número tiene WhatsApp» es un comprobador de números.</div>
     <label class="chk" style="display:block;margin-bottom:12px"><input type="checkbox" id="ffPob"${base?.sugerir_poblacion ? " checked" : ""}> Sugerir poblaciones al escribir</label>
+    ${fgArea("ffWaMsg", "WhatsApp que se envía al apuntarse", base?.mensaje_wa || "", 3)}
+    <div class="mut" style="font-size:12px;margin:-4px 0 12px"><b>Vacío = no se manda nada.</b> Usa <code>{enlace}</code> para el carné y <code>{nombre}</code> para su nombre. El enlace de baja se añade solo al final. Si el formulario promete un código por WhatsApp, esto tiene que estar escrito.</div>
     <details style="margin-bottom:12px"><summary class="mut" style="font-size:12px;cursor:pointer">Mensajes que verá el cliente</summary>
       <div class="mut" style="font-size:12px;margin-top:8px">Vacío = el texto de la casa en el idioma elegido. Al cambiar el idioma se reescriben los que no hayas tocado.</div>
       <div id="ffMsgs" style="margin-top:8px">${fidgMensajesCampos(base, base?.idioma || "es")}</div></details>
@@ -11723,7 +11907,7 @@ function fidgFormCuerpo() {
     abre_en: fgVal("ffAbre"), cierra_en: fgVal("ffCierra"),
     consentimiento_texto: fgVal("ffConsent"), privacidad_url: fgVal("ffPriv"),
     idioma: fgVal("ffIdioma"), destacado: fgVal("ffDestacado"),
-    exige_whatsapp: fgChk("ffWA"), sugerir_poblacion: fgChk("ffPob"),
+    exige_whatsapp: fgChk("ffWA"), sugerir_poblacion: fgChk("ffPob"), mensaje_wa: fgVal("ffWaMsg"),
     mensajes: Object.fromEntries(Object.keys(FIDG.mensajesDefecto || {}).map((k) => [k, fgVal("ffM_" + k)])),
     campos: FIDG_CAMPOS.map(([id]) => ({ id, visible: fgChk(`fcV_${id}`), obligatorio: fgChk(`fcO_${id}`),
       etiqueta: fgVal(`fcT_${id}`) })) };
@@ -12064,6 +12248,21 @@ async function loadFidGestion() {
   FIDG.idiomas = fo?.idiomas || {}; FIDG.mensajesDefecto = fo?.mensajes_defecto || {};
   FIDG.campos = fo?.campos_disponibles || {};
   FIDG.estadosForm = fo?.estados || [];
+  // El recuento de altas vive en captación, no en fidelización: lee `leads`, y la zona de Ágora
+  // tiene prohibido tocar el censo. Se pide aparte y se cruza por clave.
+  try {
+    const r = await apiRaw("/api/captacion/inscritos/resumen");
+    const porClave = new Map((r?.data || []).map((x) => [x.clave, x]));
+    for (const e of FIDG.estadosForm) e.inscritos = porClave.get(e.clave) || { total: 0, d7: 0, d30: 0 };
+    // Las claves que tienen gente y ninguna versión guardada —el caso de una campaña histórica—
+    // se añaden a la lista: si no, esas altas no se verían por ningún lado.
+    for (const [clave, ins] of porClave) {
+      if (FIDG.estadosForm.some((e) => e.clave === clave)) continue;
+      FIDG.estadosForm.push({ clave, borradores: 0, cerradas: 0, version_publicada: null,
+        sirve: "historico", motivo: "no_existe",
+        url_publica: `/promo.html?c=${encodeURIComponent(clave)}`, inscritos: ins });
+    }
+  } catch { /* la pantalla se pinta igual: es un número al lado de un nombre */ }
   FIDG.mensajesIdioma = fo?.mensajes_por_idioma || {};
   if (!FIDG.local) FIDG.local = (FID.locales || [])[0]?.local || null;
 }
@@ -14763,6 +14962,12 @@ document.addEventListener("click", (e) => {
   else if (act === "fidg-form-nuevo") fidgFormNuevo(t.getAttribute("data-id"));
   else if (act === "fidg-form-propuesta") fidgFormPropuesta(t.getAttribute("data-p"));
   else if (act === "fidg-propuesta-prev") fidgPropuestaPrev(t.getAttribute("data-p"));
+  else if (act === "ins-ver") insVer(t.getAttribute("data-c"), 0);
+  else if (act === "ins-filtrar") insVer(INS.clave, 0);
+  else if (act === "ins-pag") insVer(INS.clave, t.getAttribute("data-o"));
+  else if (act === "ins-csv") insCsvDescargar();
+  else if (act === "ins-limpiar") { ["insBuscar", "insPob", "insDesde", "insHasta", "insCons", "insEnt"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ""; }); insVer(INS.clave, 0); }
+  else if (act === "ins-ficha") insFicha(t.getAttribute("data-id"));
   else if (act === "agv-tab") agvTab(t.getAttribute("data-k"));
   else if (act === "agv-local") agvLocal(t.getAttribute("data-local"));
   else if (act === "fidg-form-prev") fidgFormPrev(t.getAttribute("data-v"));

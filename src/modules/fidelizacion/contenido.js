@@ -145,6 +145,11 @@ export const MENSAJES = Object.freeze({
   no_vigente: "Esta promoción no está disponible ahora mismo.",
   ya_utilizado: "Este beneficio ya se ha utilizado.",
   error: "No se ha podido guardar. Inténtalo otra vez.",
+  // El estado de SU mensaje. Tres, y cada uno dice exactamente lo que consta: pendiente es
+  // «está en la cola» y enviado es «consta la fecha en que salió». Nunca al revés.
+  pendiente_envio: "Te lo estamos enviando por WhatsApp. Llega en unos minutos.",
+  enviado_wa: "Ya te lo hemos enviado por WhatsApp.",
+  fallo_envio: "No hemos podido enviártelo por WhatsApp. Escríbenos y te lo damos.",
 });
 
 /**
@@ -174,6 +179,9 @@ export const MENSAJES_POR_IDIOMA = Object.freeze({
     no_vigente: "Aquesta promoció no està disponible ara mateix.",
     ya_utilizado: "Aquest avantatge ja s'ha fet servir.",
     error: "No s'ha pogut desar. Torna-ho a provar.",
+    pendiente_envio: "T'ho estem enviant per WhatsApp. Arriba d'aquí a uns minuts.",
+    enviado_wa: "Ja te l'hem enviat per WhatsApp.",
+    fallo_envio: "No hem pogut enviar-t'ho per WhatsApp. Escriu-nos i te'l donem.",
   }),
   en: Object.freeze({
     cargando: "Loading…",
@@ -188,6 +196,9 @@ export const MENSAJES_POR_IDIOMA = Object.freeze({
     no_vigente: "This offer isn't available right now.",
     ya_utilizado: "This benefit has already been used.",
     error: "We couldn't save it. Please try again.",
+    pendiente_envio: "We are sending it to you on WhatsApp. It arrives in a few minutes.",
+    enviado_wa: "We have already sent it to you on WhatsApp.",
+    fallo_envio: "We could not send it on WhatsApp. Write to us and we will give it to you.",
   }),
 });
 

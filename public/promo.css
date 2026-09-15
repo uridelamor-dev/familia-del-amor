@@ -98,3 +98,16 @@
   background: #fdecec; color: #a32b2b; font-size: .92rem; line-height: 1.45; }
 
 @media (prefers-reduced-motion: reduce) { .pm-sug { box-shadow: none; } }
+
+/* El estado del WhatsApp en la pantalla de gracias. Se dice lo que consta y nada más: recién
+   encolado es «pendiente», y «enviado» solo cuando el worker ha dejado la fecha. */
+.pm-envio {
+  margin: .75rem 0 0;
+  padding: .7rem .9rem;
+  background: #eaf3ed;
+  color: #1f4634;              /* 8.1:1 sobre ese fondo */
+  border-radius: 10px;
+  font-size: .95rem;
+  font-weight: 600;
+}
+.pm-envio-mal { background: #fdf5f5; color: #8a1c1c; }

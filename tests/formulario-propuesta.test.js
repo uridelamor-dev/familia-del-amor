@@ -20,7 +20,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { MENSAJES, MENSAJES_POR_IDIOMA, CAMPOS, normalizarCampos, validarFormulario, textoSeguro }
+import { MENSAJES, MENSAJES_POR_IDIOMA, mensajesDe, CAMPOS, normalizarCampos, validarFormulario, textoSeguro }
   from "../src/modules/fidelizacion/contenido.js";
 
 const app = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
@@ -133,15 +133,25 @@ describe("NO HAY QUE ESCRIBIR NADA A MANO", () => {
     assert.equal(P.subtitulo, "");
   });
 
-  test("LOS DOCE MENSAJES VIENEN ESCRITOS, ninguno vacío", () => {
-    assert.deepEqual(Object.keys(P.mensajes).sort(), Object.keys(MENSAJES).sort());
-    for (const [k, v] of Object.entries(P.mensajes)) assert.ok(String(v).trim(), `${k} está vacío`);
+  test("LO QUE EL CLIENTE ACABA VIENDO ESTÁ COMPLETO Y EN CATALÁN", () => {
+    // Lo que importa no es cuántas casillas rellena la propuesta, sino el juego RESUELTO: lo
+    // escrito a mano más el respaldo del idioma. Exigir que la propuesta repita los quince
+    // habría obligado a copiar en ella cada mensaje nuevo que se añada a la casa, y el día que
+    // alguien se olvidara de copiarlo saldría en castellano sin que nada avisara.
+    const visto = mensajesDe(P.mensajes, P.idioma);
+    assert.deepEqual(Object.keys(visto).sort(), Object.keys(MENSAJES).sort());
+    for (const [k, v] of Object.entries(visto)) assert.ok(String(v).trim(), `${k} está vacío`);
+    // Y ninguno es el castellano.
+    for (const k of Object.keys(MENSAJES)) {
+      assert.notEqual(visto[k], MENSAJES[k], `el mensaje «${k}» sale en castellano`);
+    }
   });
 
-  test("y NINGUNO se ha quedado en castellano", () => {
-    // Es el fallo que se cuela: doce casillas, once traducidas.
-    for (const k of Object.keys(MENSAJES)) {
-      assert.notEqual(P.mensajes[k], MENSAJES[k], `el mensaje «${k}» sigue en castellano`);
+  test("lo que la propuesta sí personaliza, está escrito y en catalán", () => {
+    for (const [k, v] of Object.entries(P.mensajes)) {
+      assert.ok(Object.prototype.hasOwnProperty.call(MENSAJES, k), `«${k}» no es un mensaje conocido`);
+      assert.ok(String(v).trim(), `${k} está vacío`);
+      assert.notEqual(v, MENSAJES[k], `el mensaje «${k}» sigue en castellano`);
     }
     // Los dos de WhatsApp, exactamente los acordados.
     assert.equal(P.mensajes.sin_whatsapp,
@@ -212,10 +222,10 @@ describe("NO HAY QUE ESCRIBIR NADA A MANO", () => {
   });
 
   test("los mensajes coinciden con los respaldos catalanes donde no se han querido cambiar", () => {
-    // Los que la campaña no personaliza tienen que ser exactamente los de la casa: si divergieran
-    // sin motivo, habría dos verdades sobre la misma frase.
+    // Los que la campaña personaliza y NO deberían: si divergieran sin motivo, habría dos
+    // verdades sobre la misma frase. Los que no toca caen en el respaldo y no se comparan.
     const ca = MENSAJES_POR_IDIOMA.ca;
-    const distintos = Object.keys(ca).filter((k) => ca[k] !== P.mensajes[k]);
+    const distintos = Object.keys(P.mensajes).filter((k) => ca[k] !== P.mensajes[k]);
     // `ya_registrado` sí se personaliza a propósito: dice que se reenvía el mismo código.
     assert.deepEqual(distintos, ["ya_registrado"], `divergen sin motivo: ${distintos.join(", ")}`);
   });
@@ -331,7 +341,9 @@ describe("POR QUÉ LA URL PÚBLICA SEGUÍA ENSEÑANDO EL FORMULARIO VIEJO", () =
     assert.match(bloque, /ningún borrador se publica solo/);
     assert.match(bloque, /no está abierta/);
     // Solo sale cuando de verdad ocurre…
-    assert.match(bloque, /const aviso = !sirveConfigurable/);
+    // Solo para NUESTRAS propuestas: una campaña ajena que tenga gente detrás también sale en
+    // esta lista, y decirle «producción sirve el formulario antiguo» no significaría nada.
+    assert.match(bloque, /const aviso = esPropuesta && !sirveConfigurable/);
   });
 
   test("Y SALE TAMBIÉN CUANDO NO HAY NINGUNA FILA, que es el caso de verdad", () => {

@@ -131,6 +131,14 @@ import { textoSeguro as fidTexto, urlSegura as fidUrl, normalizarCampos as fidCa
          MENSAJES_POR_IDIOMA as FID_MENSAJES_IDIOMA,
          MENSAJES as FID_MENSAJES_DEF } from "./src/modules/fidelizacion/contenido.js";
 import { fechaNacimientoValida as fidFechaNac } from "./src/modules/captacion/municipios.js";
+/** Cuánto se reserva una fila mientras se manda. Si el proceso muere, vence sola. */
+const CAP_ARRIENDO_MS = 120000;
+import { estadoEntrega as insEntrega, estadoConsentimiento as insConsent,
+         filtrosSeguros as insFiltros, filtrosAplicados as insFiltrosAudit,
+         csvInscritos as insCsv, nombreCsv as insNombreCsv, CSV_MAX as INS_CSV_MAX,
+         ETIQUETA as INS_ETIQUETA, AYUDA as INS_AYUDA,
+         CONSENTIMIENTO as INS_CONSENT, ENTREGA as INS_ENTREGA }
+  from "./src/modules/captacion/inscritos.js";
 import { POLITICA_VERSION, politicaUrl as fidPoliticaUrl, politicaEnlace as fidPoliticaEnlace }
   from "./src/modules/legal/politica.js";
 import { nuevoToken as fidNuevoTokenBaja, huella as fidHuellaBaja, tokenPlausible as fidTokenBajaOk,
@@ -163,7 +171,9 @@ import { REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CUERPO as FID_MAX_CUERPO,
   from "./src/modules/fidelizacion/agora.js";
 import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
          sanearCampana } from "./src/modules/captacion/campana.js";
-import { trasIntento, cuantasSacar, estadoParaCliente, MAX_INTENTOS } from "./src/modules/captacion/cola.js";
+import { trasIntento, cuantasSacar as capCuantasSacar, estadoParaCliente, MAX_INTENTOS,
+         cupoPorPrioridad as capCupoPorPrioridad, hayCupoParaAlgo as capHayCupo }
+  from "./src/modules/captacion/cola.js";
 import { elegirIdioma, textosDe, textoWhatsApp as capTextoWA,
          telefonoBonito } from "./src/modules/captacion/mensaje.js";
 import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
@@ -4609,6 +4619,15 @@ function sqlContactosUnificados(filtros = {}, params = []) {
       c.nombre, c.apellidos, c.telefono, c.correo,
       c.nacimiento, c.poblacion, c.genero, c.origen,
       c.ultima_actividad,
+      -- ── DE DÓNDE VINO ESTA PERSONA ──────────────────────────────────────────────────────
+      --
+      -- AGREGADO POR TELÉFONO, como todo lo demás aquí: alguien que se apuntó a tres campañas
+      -- tiene tres filas en leads con el mismo móvil, y un join directo lo sacaría tres veces
+      -- en la lista de clientes. Se devuelve la PRIMERA captación —que ya no cambia— y la
+      -- ÚLTIMA campaña por la que volvió, más cuántas distintas.
+      og.primera_captacion, og.ultima_campana, og.campanas,
+      -- Su historial de consentimientos, sin duplicarle: el libro es de solo añadir.
+      COALESCE(cs.veces, 0) AS consentimientos, cs.ultimo AS ultimo_consentimiento,
       -- DÓNDE ESTUVO LA ÚLTIMA VEZ. Es lo que rellena la variable {local} de las plantillas, y
       -- hasta hoy no lo devolvía nadie: por eso los mensajes salían con un hueco donde tenía
       -- que ir el nombre del local. Va por el índice de expresión idx_reservas_tel9, así que
@@ -4683,6 +4702,18 @@ function sqlContactosUnificados(filtros = {}, params = []) {
       ON RIGHT(regexp_replace(mp.telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
     LEFT JOIN cliente_metricas cm
       ON cm.tel9 = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
+    LEFT JOIN (
+      SELECT RIGHT(regexp_replace(telefono, '[^0-9]', '', 'g'), 9) AS t9,
+             MIN(creado_en) AS primera_captacion,
+             (array_agg(COALESCE(NULLIF(campana, ''), fuente) ORDER BY creado_en DESC))[1] AS ultima_campana,
+             COUNT(DISTINCT COALESCE(NULLIF(campana, ''), fuente))::int AS campanas
+        FROM leads GROUP BY 1
+    ) og ON og.t9 = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
+    LEFT JOIN (
+      SELECT RIGHT(regexp_replace(telefono, '[^0-9]', '', 'g'), 9) AS t9,
+             COUNT(*)::int AS veces, MAX(creado_en) AS ultimo
+        FROM fid_consentimientos GROUP BY 1
+    ) cs ON cs.t9 = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
     WHERE 1=1
     ${localFilter}
   `;
@@ -11931,15 +11962,22 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
       const previo = await x.get(`SELECT id, nombre FROM leads WHERE telefono = ? ORDER BY id DESC LIMIT 1`, [tel]);
       if (previo) {
         avisoNombre = !!previo.nombre && previo.nombre.trim().toLowerCase() !== nombre.toLowerCase();
-        await x.run(`UPDATE leads SET actualizado_en = ? WHERE id = ?`, [ahora, previo.id]);
+        // Se anota POR DÓNDE VUELVE, sin tocar de dónde vino la primera vez: `creado_en` y la
+        // campaña original se quedan como estaban. Quien se apunta dos veces es una sola persona.
+        await x.run(`UPDATE leads SET actualizado_en = ?, campana = COALESCE(campana, ?) WHERE id = ?`,
+          [ahora, clave, previo.id]);
       } else {
         await x.run(
-          `INSERT INTO leads (nombre, apellidos, telefono, correo, nacimiento, poblacion, premio, fuente, creado_en, actualizado_en)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO leads (nombre, apellidos, telefono, correo, nacimiento, poblacion, premio, fuente, creado_en, actualizado_en, campana)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
           [nombre, fidTexto(b.apellidos, FID_LARGOS.nombre), tel, fidTexto(b.email, 160),
            String(b.nacimiento || "").slice(0, 10),
            // La población tal como la eligió o la escribió: el catálogo es curado, no el padrón.
-           fidTexto(b.poblacion, 120) || fidTexto(b.codigo_postal, 12), "", `form:${clave}`, ahora, ahora]);
+           fidTexto(b.poblacion, 120) || fidTexto(b.codigo_postal, 12), "", `form:${clave}`, ahora, ahora,
+           // LA CLAVE, EN SU COLUMNA. `campana` ya existía —la usa el formulario histórico— y ya
+           // tiene índice. Sin esto había que agrupar leyendo `fuente`, que es texto libre.
+           // Las altas anteriores no se tocan: se las recoge por `fuente = 'form:<clave>'`.
+           clave]);
       }
 
       // 2. EL CONSENTIMIENTO, con el TEXTO que se aceptó y su versión. Guardar «aceptó» sin
@@ -11954,30 +11992,131 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
         [tel, clave, f.version, String(f.consentimiento_texto || "").slice(0, 4000),
          comercial, "formulario", f.campana || null, ahora,
          POLITICA_VERSION, fidPoliticaUrl(f.idioma)]);
+
+      // ── 3. VOLVER A APUNTARSE DESPUÉS DE UNA BAJA ──────────────────────────────────────────
+      //
+      // Quien se dio de baja y VUELVE A RELLENAR EL FORMULARIO ha dado un consentimiento nuevo:
+      // ha leído la frase, ha escrito su teléfono y ha pulsado el botón. Dejar la baja puesta
+      // significaría que el worker descarta su mensaje y esa persona nunca recibe el código que
+      // acaba de pedir —y no entendería por qué—.
+      //
+      // ── Y SOLO AQUÍ ────────────────────────────────────────────────────────────────────────
+      //
+      // Esta es la ÚNICA línea de toda la casa que pone `baja = 0`, y está dentro del POST del
+      // alta, después de comprobar `consentimiento === true` y de que el número tenga WhatsApp.
+      // Ni una visita, ni un GET, ni una vista previa, ni abrir el enlace de baja pueden llegar
+      // hasta aquí: un enlace reenviado por un grupo no puede reactivar a nadie.
+      //
+      // LO ANTERIOR NO SE TOCA. El consentimiento viejo conserva su `baja_en` y la fila de
+      // `fid_bajas` conserva su fecha: son la prueba de que en su día pidió que le dejaran en
+      // paz, y borrarla sería borrar el rastro de una decisión suya.
+      await x.run(
+        `INSERT INTO marketing_prefs (telefono, opt_in_wa, baja, idioma, updated_at)
+         VALUES (?, 1, 0, ?, ?)
+         ON CONFLICT (telefono) DO UPDATE SET baja = 0, opt_in_wa = 1,
+           idioma = COALESCE(marketing_prefs.idioma, EXCLUDED.idioma),
+           updated_at = EXCLUDED.updated_at`,
+        [tel, f.idioma || null, ahora]);
     });
 
     // 3. EL CARNÉ. Se reutiliza el que ya tenga; solo se crea si no hay ninguno.
-    let token = null;
+    let token = null, qrId = null;
     try {
       const qr = await dbGet(`SELECT id, token FROM pro_qr WHERE clase = 'carnet' AND telefono = ?
                               AND anulado_en IS NULL ORDER BY id DESC LIMIT 1`, [tel]);
-      token = qr ? qr.token : null;
+      token = qr ? qr.token : null; qrId = qr ? qr.id : null;
       if (!token) {
         // La MISMA función que emite cualquier carné del panel: reintento del código de ocho
         // dígitos incluido. Un segundo camino para crear carnés sería un segundo sitio donde
         // equivocarse con la unicidad del token.
         const nuevo = await proEmitir({ clase: "carnet", telefono: tel, nombre,
           usosMax: 0, autor: "publico", origen: `form:${clave}` });
-        token = nuevo?.token || null;
+        token = nuevo?.token || null; qrId = nuevo?.id || null;
       }
     } catch (e) { console.error(lineaErrorSql("[fidelizacion] carnet alta", e)); }
 
+    // ── 4. EL WHATSAPP QUE SE PROMETIÓ ─────────────────────────────────────────────────────────
+    //
+    // El formulario dice «rebràs el codi al teu telèfon» y exige que el número tenga WhatsApp.
+    // Hasta ahora no se mandaba nada: solo se enseñaba el enlace en pantalla. Eso era prometer
+    // una cosa y hacer otra —y pedir un teléfono que no se iba a usar—.
+    //
+    // ES TRANSACCIONAL, NO COMERCIAL. Va a su propia fila de `cap_cola` con su propia clave; NO
+    // se reutiliza ninguna comunicación masiva. Mezclarlos habría hecho que pausar una campaña
+    // dejara sin su código a quien acababa de apuntarse.
+    //
+    // ── LA CLAVE IDEMPOTENTE ───────────────────────────────────────────────────────────────────
+    //
+    // `alta:<clave>:v<version>:<campaña>:<tel9>:<qr>`. Lleva las cinco cosas que identifican ESTA
+    // inscripción, y `cap_cola.token` es único, así que `ON CONFLICT DO NOTHING` hace el trabajo:
+    // pulsar dos veces, recargar o reenviar el POST da la misma fila. No hay contador que
+    // incrementar ni carrera que perder — lo resuelve la base, que es donde se resuelve bien.
+    let enCola = null;
+    if (token && qrId && f.mensaje_wa) {
+      try {
+        const urlCarnet = proEnlace(req, { token, clase: "carnet" });
+        const tokenBaja = fidNuevoTokenBaja();
+        const urlBaja = fidEnlaceBaja(await baseEnlaces(req), tokenBaja);
+        // Sin enlace de baja NO SALE. Un mensaje del que no se puede uno bajar no se manda,
+        // aunque sea transaccional: lleva un descuento dentro y eso lo hace comercial también.
+        if (urlBaja) {
+          await dbRun(
+            `INSERT INTO fid_bajas (token_hash, telefono, comunicacion_id, campana, creado_en)
+             VALUES (?,?,NULL,?,?) ON CONFLICT (token_hash) DO NOTHING`,
+            [fidHuellaBaja(tokenBaja), tel, f.campana || clave, ahora]);
+
+          const texto = fidConPieBaja(
+            fidRender(f.mensaje_wa, { nombre, enlace: urlCarnet, fecha: hoyISO(),
+                                      local: f.local || "", premio: "" }),
+            urlBaja, { pie: fidPieBaja(f.idioma) });
+
+          // ── EL CICLO, Y POR QUÉ HACE FALTA ──────────────────────────────────────────────
+          //
+          // Sin él, quien se da de baja y VUELVE a apuntarse no recibe nada: la clave llevaba
+          // formulario, versión, campaña, teléfono y carné, y después de una baja las cinco son
+          // LAS MISMAS —el carné se reutiliza a propósito—, así que `DO NOTHING` descartaba el
+          // mensaje en silencio y esa persona se quedaba esperando un código que nunca salía.
+          //
+          // `ciclo` = cuántas veces ha pedido la baja. Distingue «volver a apuntarse» de «pulsar
+          // dos veces», que es justo la diferencia que hay que hacer: recargar no cambia el ciclo,
+          // darse de baja sí.
+          const ciclo = Number((await dbGet(
+            `SELECT COUNT(*)::int AS n FROM fid_bajas
+              WHERE ${MATCH_TEL9("telefono")} AND confirmado_en IS NOT NULL`, [tel]))?.n || 0);
+          const claveIdem = `alta:${clave}:v${f.version}:${f.campana || clave}:${tel}:${qrId}:c${ciclo}`.slice(0, 180);
+          const met = await dbRun(
+            `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad)
+             VALUES (?,?,?,?,?,?,?,0) ON CONFLICT (token) DO NOTHING RETURNING id`,
+            [claveIdem, f.campana || clave, tel, texto, qrId, Date.now(), ahora]);
+          // `met` es null si ya estaba: entonces NO se vuelve a encolar y se mira cómo acabó.
+          const fila = met || await dbGet(
+            `SELECT id, estado, enviado_en FROM cap_cola WHERE token = ?`, [claveIdem]);
+          enCola = fila ? { estado: fila.estado || "pendiente", enviado_en: fila.enviado_en || null } : null;
+        }
+      } catch (e) {
+        // Que falle el encolado NO tumba el alta: la persona ya está dentro y tiene su carné en
+        // pantalla. Se queda sin mensaje, y eso se ve en la lista de inscritos como «sin cola».
+        console.error(lineaErrorSql("[fidelizacion] encolar alta", e));
+      }
+    }
+
     await ficAuditar("fidelizacion", null, "alta_formulario", "publico",
-      { detalle: { formulario: clave, version: f.version, comercial, nombre_distinto: avisoNombre } });
+      { detalle: { formulario: clave, version: f.version, comercial, nombre_distinto: avisoNombre,
+                   // El HECHO de que se encoló, nunca el teléfono ni el token de baja.
+                   encolado: !!enCola } });
 
     // MISMA RESPUESTA, exista o no. Ni «bienvenido de nuevo» ni un campo distinto.
+    //
+    // El estado del envío se dice como es: recién encolado es PENDIENTE, y «enviado» solo cuando
+    // `cap_cola` tiene fecha. Decir «te lo hemos enviado» en el mismo instante de encolarlo sería
+    // afirmar algo que todavía no ha pasado.
+    const estadoEnvio = !enCola ? null
+      : enCola.enviado_en ? "enviado_wa"
+      : enCola.estado === "fallido" ? "fallo_envio"
+      : "pendiente_envio";
     res.json({ ok: true, mensaje: f.mensaje_exito || M.ya_registrado,
       texto_posterior: f.texto_posterior || null,
+      envio: estadoEnvio ? { estado: estadoEnvio, texto: M[estadoEnvio] } : null,
       // El enlace al carné se devuelve SIEMPRE que haya carné: no dice si es nuevo o de antes.
       carnet: token ? proEnlace(req, { token }) : null });
   } catch (e) {
@@ -12180,6 +12319,235 @@ app.post("/baixa", async (req, res) => {
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] baja POST", e));
     res.status(500).send(fidPaginaBaja({ idioma, estado: "error", hecho: false, token: "" }));
+  }
+});
+
+// ── QUIÉN SE APUNTÓ POR UN FORMULARIO ────────────────────────────────────────
+//
+// ── SIN CENSO NUEVO, Y SIN MULTIPLICAR A NADIE ───────────────────────────────
+//
+// Todo sale de lo que ya se guardaba. La trampa de juntarlo es el `JOIN` directo: una persona con
+// tres consentimientos, dos carnés y cuatro mensajes en la cola saldría VEINTICUATRO VECES, y los
+// totales de la pantalla serían cualquier cosa menos personas.
+//
+// Por eso cada tabla auxiliar se AGREGA POR TELÉFONO antes de unirla: cada una aporta exactamente
+// una fila por persona, y el resultado es una fila por lead. Los `GROUP BY` de abajo no son un
+// adorno de rendimiento: son lo que hace que «312 inscritos» signifique 312 personas.
+//
+// ── DOS FORMULARIOS, UNA CLAVE, SIN `LIKE` ABIERTO ───────────────────────────
+//
+// El histórico escribe `campana = '<clave>'`; el configurable, además, `fuente = 'form:<clave>'`.
+// Se unen por IGUALDAD EXACTA con los dos valores. Un `LIKE 'form:%'` mezclaría campañas, y un
+// `LIKE '%girona%'` se llevaría cualquier clave que contenga esa palabra.
+
+/** El teléfono normalizado a nueve dígitos. Es la clave con la que se cruza todo en esta casa. */
+const INS_TEL9 = (col) => `RIGHT(regexp_replace(${col}, '[^0-9]', '', 'g'), 9)`;
+
+/**
+ * Los inscritos de una clave. Devuelve el SQL y empuja los parámetros.
+ *
+ * `soloContar` cambia la proyección por un `COUNT(*)`: el total se pide con la MISMA consulta y
+ * los MISMOS filtros, así que el número de arriba y las filas de abajo no pueden discrepar.
+ */
+function sqlInscritos(clave, f, params, { soloContar = false } = {}) {
+  const where = [];
+  // Los dos orígenes, por igualdad exacta.
+  where.push(`(l.campana = ? OR l.fuente = ?)`);
+  params.push(clave, `form:${clave}`);
+
+  if (f.buscar) {
+    where.push(`(LOWER(l.nombre || ' ' || COALESCE(l.apellidos, '')) LIKE LOWER(?))`);
+    params.push(`%${f.buscar}%`);
+  }
+  if (f.poblacion) { where.push(`LOWER(COALESCE(l.poblacion, '')) = LOWER(?)`); params.push(f.poblacion); }
+  if (f.desde) { where.push(`SUBSTRING(l.creado_en, 1, 10) >= ?`); params.push(f.desde); }
+  if (f.hasta) { where.push(`SUBSTRING(l.creado_en, 1, 10) <= ?`); params.push(f.hasta); }
+
+  // Cada auxiliar, AGREGADA: una fila por teléfono y ni una más.
+  const base = `
+    FROM leads l
+    LEFT JOIN (
+      SELECT ${INS_TEL9("telefono")} AS t9, MAX(COALESCE(baja, 0)) AS baja
+        FROM marketing_prefs GROUP BY 1
+    ) mp ON mp.t9 = ${INS_TEL9("l.telefono")}
+    LEFT JOIN (
+      SELECT ${INS_TEL9("telefono")} AS t9,
+             COUNT(*)::int AS veces,
+             MAX(creado_en) AS ultimo,
+             COUNT(*) FILTER (WHERE baja_en IS NOT NULL)::int AS de_baja
+        FROM fid_consentimientos GROUP BY 1
+    ) fc ON fc.t9 = ${INS_TEL9("l.telefono")}
+    LEFT JOIN (
+      SELECT ${INS_TEL9("telefono")} AS t9,
+             COUNT(*) FILTER (WHERE anulado_en IS NULL)::int AS vivos,
+             MAX(enviado_en) AS enviado_en
+        FROM pro_qr WHERE clase = 'carnet' GROUP BY 1
+    ) qr ON qr.t9 = ${INS_TEL9("l.telefono")}
+    LEFT JOIN (
+      SELECT ${INS_TEL9("telefono")} AS t9,
+             MAX(enviado_en) FILTER (WHERE estado = 'enviado') AS enviado_en,
+             COUNT(*) FILTER (WHERE estado = 'pendiente')::int AS pendientes,
+             COUNT(*) FILTER (WHERE estado = 'fallido')::int AS fallidos
+        FROM cap_cola GROUP BY 1
+    ) cc ON cc.t9 = ${INS_TEL9("l.telefono")}
+   WHERE ${where.join(" AND ")}`;
+
+  if (soloContar) return `SELECT COUNT(*)::int AS n ${base}`;
+  // NI UN TELÉFONO EN LA PROYECCIÓN. Se devuelve `lead_id` para poder enlazar con la ficha, que
+  // es donde el teléfono ya se puede ver con sus permisos y su rastro.
+  return `
+    SELECT l.id AS lead_id, l.nombre, l.apellidos, l.poblacion, l.creado_en, l.campana, l.fuente,
+           COALESCE(mp.baja, 0) AS pref_baja,
+           COALESCE(fc.veces, 0) AS consentimientos, fc.ultimo AS ultimo_consentimiento,
+           COALESCE(fc.de_baja, 0) AS consentimientos_de_baja,
+           COALESCE(qr.vivos, 0) AS carnet_vivos, qr.enviado_en AS carnet_enviado_en,
+           cc.enviado_en AS cola_enviado_en,
+           COALESCE(cc.pendientes, 0) AS cola_pendientes,
+           COALESCE(cc.fallidos, 0) AS cola_fallidos
+    ${base}
+    ORDER BY l.creado_en DESC, l.id DESC`;
+}
+
+/** Una fila de la base → una fila de la pantalla. Sin teléfono, sin tokens, sin JSON interno. */
+function insFila(r) {
+  const consentimiento = insConsent({ prefBaja: r.pref_baja, consentimientosDeBaja: r.consentimientos_de_baja });
+  const entrega = insEntrega({
+    carnetVivos: r.carnet_vivos, carnetEnviadoEn: r.carnet_enviado_en,
+    colaEnviadoEn: r.cola_enviado_en, colaPendientes: r.cola_pendientes, colaFallidos: r.cola_fallidos });
+  return {
+    lead_id: r.lead_id,
+    nombre: r.nombre || "",
+    apellidos: r.apellidos || "",
+    poblacion: r.poblacion || "",
+    fecha: String(r.creado_en || "").slice(0, 10),
+    campana: r.campana || "",
+    // De qué formulario vino. `fuente` empieza por `form:` solo en el configurable.
+    formulario: String(r.fuente || "").startsWith("form:") ? "configurable" : "histórico",
+    consentimiento,
+    entrega,
+    consentimientos: Number(r.consentimientos || 0),
+    ultimo_consentimiento: r.ultimo_consentimiento ? String(r.ultimo_consentimiento).slice(0, 10) : null,
+  };
+}
+
+/**
+ * LA LISTA. Solo lee: no escribe ni una fila.
+ *
+ * El filtro por estado se aplica DESPUÉS de derivarlo, sobre la página ya traída, y por eso el
+ * total se recalcula con los mismos filtros de base. Derivar el estado en SQL habría exigido
+ * repetir la escalera de `estadoEntrega` en la consulta, y entonces habría dos sitios donde
+ * decidir lo mismo —y el día que cambie uno, el otro miente—.
+ */
+app.get("/api/fidelizacion/formularios/:clave/inscritos", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const clave = String(req.params.clave || "").slice(0, 40);
+    const f = insFiltros(req.query);
+    const params = [];
+    const sql = sqlInscritos(clave, f, params);
+
+    // La paginación va en SQL. Traer el censo entero al navegador y cortarlo allí es exactamente
+    // lo que hace que una pantalla funcione en pruebas y se caiga con datos de verdad.
+    const filtraEstado = !!(f.consentimiento || f.entrega);
+    const limite = filtraEstado ? Math.min(f.limite * 8, 800) : f.limite;
+    const filas = await dbAll(`${sql} LIMIT ? OFFSET ?`, [...params, limite, f.offset]) || [];
+
+    let data = filas.map(insFila);
+    if (f.consentimiento) data = data.filter((x) => x.consentimiento === f.consentimiento);
+    if (f.entrega) data = data.filter((x) => x.entrega === f.entrega);
+    if (filtraEstado) data = data.slice(0, f.limite);
+
+    const cuenta = [];
+    const total = await dbGet(sqlInscritos(clave, f, cuenta, { soloContar: true }), cuenta);
+
+    res.json({ ok: true, clave, data,
+      total: Number(total?.n || 0),
+      offset: f.offset, limite: f.limite,
+      hay_mas: f.offset + filas.length < Number(total?.n || 0),
+      // Lo que significa cada estado, para que la pantalla no lo repita por su cuenta.
+      etiquetas: INS_ETIQUETA, ayuda: INS_AYUDA,
+      estados: { consentimiento: INS_CONSENT, entrega: INS_ENTREGA },
+      filtro_estado_parcial: filtraEstado });
+  } catch (e) {
+    console.error(lineaErrorSql("[captacion] inscritos", e));
+    res.status(500).json({ ok: false, error: "No se pudieron leer los inscritos" });
+  }
+});
+
+/**
+ * CUÁNTA GENTE HAY DETRÁS DE CADA CLAVE.
+ *
+ * ── POR QUÉ ESTÁ AQUÍ Y NO EN LA LISTA DE FORMULARIOS ────────────────────────
+ *
+ * Porque lee `leads`, y la zona de fidelización de Ágora tiene un invariante que se lo prohíbe:
+ * ahí se calculan puntos sobre facturas, y no se toca el censo de clientes. Contar altas es
+ * trabajo de captación. Meterlo allí habría obligado a ablandar el candado —que es justo lo que
+ * no se hace—; sacarlo aquí no cuesta nada y deja las dos cosas donde les toca.
+ *
+ * Devuelve TAMBIÉN las claves que tienen gente y ninguna versión guardada: `esmorzar-girona` es
+ * exactamente ese caso, y si la lista saliera solo de `fid_formularios` esas personas no
+ * aparecerían por ningún lado. Solo lee.
+ */
+app.get("/api/captacion/inscritos/resumen", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const d7 = addDiasISO(hoyISO(), -7), d30 = addDiasISO(hoyISO(), -30);
+    // Un solo recorrido: se agrupa por la clave efectiva —`campana` si la hay, y si no el
+    // `fuente` del configurable— en vez de una consulta por campaña.
+    const filas = await dbAll(
+      `SELECT COALESCE(NULLIF(campana, ''), fuente) AS clave,
+              COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE SUBSTRING(creado_en, 1, 10) >= ?)::int AS d7,
+              COUNT(*) FILTER (WHERE SUBSTRING(creado_en, 1, 10) >= ?)::int AS d30
+         FROM leads
+        WHERE (campana IS NOT NULL AND campana <> '') OR fuente LIKE 'form:%'
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 200`, [d7, d30]) || [];
+
+    // `form:<clave>` y `<clave>` son la MISMA campaña: se suman bajo la clave limpia.
+    const porClave = new Map();
+    for (const f of filas) {
+      const clave = String(f.clave || "").replace(/^form:/, "");
+      if (!clave) continue;
+      const e = porClave.get(clave) || { clave, total: 0, d7: 0, d30: 0 };
+      e.total += Number(f.total || 0); e.d7 += Number(f.d7 || 0); e.d30 += Number(f.d30 || 0);
+      porClave.set(clave, e);
+    }
+    res.json({ ok: true, data: [...porClave.values()] });
+  } catch (e) {
+    console.error(lineaErrorSql("[captacion] resumen de inscritos", e));
+    res.status(500).json({ ok: false, error: "No se pudo contar" });
+  }
+});
+
+/**
+ * EL CSV. Los MISMOS filtros que la lista, SIN TELÉFONO, y queda escrito quién lo descargó.
+ *
+ * Un fichero que sale del sistema se abre en un portátil, se manda por correo y se queda en una
+ * carpeta compartida durante años. El teléfono se consulta en la ficha del cliente, que tiene sus
+ * permisos y deja rastro; en un CSV suelto no hay ni lo uno ni lo otro.
+ */
+app.get("/api/fidelizacion/formularios/:clave/inscritos.csv", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const clave = String(req.params.clave || "").slice(0, 40);
+    const f = insFiltros(req.query);
+    const params = [];
+    const filas = await dbAll(`${sqlInscritos(clave, f, params)} LIMIT ?`, [...params, INS_CSV_MAX]) || [];
+
+    let data = filas.map(insFila);
+    if (f.consentimiento) data = data.filter((x) => x.consentimiento === f.consentimiento);
+    if (f.entrega) data = data.filter((x) => x.entrega === f.entrega);
+
+    // QUIÉN Y CON QUÉ FILTROS. El texto buscado no se guarda: puede ser el nombre de alguien.
+    await ficAuditar("captacion", null, "inscritos_exportados", req.user.username,
+      { detalle: { clave, filas: data.length, filtros: insFiltrosAudit(f), tope: INS_CSV_MAX } });
+
+    res.set("Content-Type", "text/csv; charset=utf-8");
+    res.set("Content-Disposition", `attachment; filename="${insNombreCsv(clave, hoyISO())}"`);
+    res.send(insCsv(data));
+  } catch (e) {
+    console.error(lineaErrorSql("[captacion] inscritos csv", e));
+    res.status(500).json({ ok: false, error: "No se pudo exportar" });
   }
 });
 
@@ -12889,9 +13257,12 @@ app.post("/api/captacion", async (req, res) => {
     });
 
     const token = generarToken((n) => crypto.randomBytes(n));
+    // PRIORIDAD 0: esto también es un alta. Quien acaba de rellenar el formulario histórico está
+    // esperando su código igual que quien rellena el configurable; que uno adelante al otro sería
+    // arbitrario. Lo comercial va detrás de los dos.
     await dbRun(
-      `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en)
-       VALUES (?,?,?,?,?,?,?)`,
+      `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad)
+       VALUES (?,?,?,?,?,?,?,0)`,
       [token, campana.clave, telefono, texto, qr.id, Date.now(), ahora]);
 
     // Se intenta ya, sin esperar a la pasada del reloj: casi siempre sale a la primera y así la
@@ -12949,18 +13320,40 @@ async function capVaciarCola() {
   capColaCorriendo = true;
   try {
     const cupo = await cupoWA();
-    if (cupo.agotado) return;
+    // ── EL CUPO, POR TIPO ────────────────────────────────────────────────────────────────────
+    //
+    // El tope diario es GLOBAL y sigue siéndolo: protege el número, y a WhatsApp le da igual de
+    // qué tipo sea cada mensaje. Lo que cambia es QUIÉN gasta los últimos huecos: se guarda una
+    // reserva para los transaccionales, porque quien acaba de apuntarse está esperando su código
+    // ahora mismo y una campaña de trescientos le dejaba sin él hasta el día siguiente.
+    //
+    // No se para si queda reserva: puede haber un alta esperando aunque lo comercial esté agotado.
+    const cupoTipo = capCupoPorPrioridad({ max: cupo.max, usados: cupo.usados });
+    if (!capHayCupo(cupoTipo)) return;
 
     // `NOT pausado` es lo que hace que «Pausar» pare de verdad. Sin esto, pausar solo cambiaba una
     // etiqueta en el panel y el worker seguía vaciando lo que ya estaba encolado — que es
     // exactamente lo que se quiere evitar cuando alguien pulsa el freno.
+    //
+    // Y `prioridad ASC` PRIMERO: las altas van delante de lo comercial, pase lo que pase con el
+    // orden de llegada. A igualdad, el más antiguo.
     const pendientes = await dbAll(
       `SELECT * FROM cap_cola WHERE estado = 'pendiente' AND NOT pausado AND proximo_ms <= ?
-        ORDER BY proximo_ms ASC LIMIT 50`, [Date.now()]);
-    const cuantas = cuantasSacar({ pendientes: pendientes.length, cupoQuedan: cupo.quedan });
+        ORDER BY prioridad ASC, proximo_ms ASC LIMIT 50`, [Date.now()]);
 
-    for (const fila of pendientes.slice(0, cuantas)) {
+    let gastados = 0;
+    for (const fila of pendientes) {
       if (!isReady()) break;
+      const esAlta = Number(fila.prioridad ?? 1) === 0;
+
+      // Cada tipo contra SU cupo. Un comercial se para antes; un alta puede usar la reserva.
+      const quedan = (esAlta ? cupoTipo.altas : cupoTipo.comercial) - gastados;
+      if (quedan <= 0) {
+        // Si lo comercial se ha acabado, se SIGUE mirando: puede venir un alta detrás.
+        if (!esAlta) continue;
+        break;
+      }
+      if (gastados >= capCuantasSacar({ pendientes: pendientes.length, cupoQuedan: cupoTipo.altas })) break;
 
       // SE VUELVE A MIRAR, fila a fila. El lote se leyó hace un momento y alguien puede haber
       // pulsado «Pausar» mientras se mandaban los primeros: con la comprobación solo en el SELECT,
@@ -12968,6 +13361,22 @@ async function capVaciarCola() {
       // enviado de más no se puede recuperar.
       const vivo = await dbGet(`SELECT estado, pausado FROM cap_cola WHERE id = ?`, [fila.id]);
       if (!vivo || vivo.estado !== "pendiente" || vivo.pausado) continue;
+
+      // ── Y SE RECLAMA LA FILA ANTES DE MANDAR ───────────────────────────────────────────────
+      //
+      // `capColaCorriendo` evita que el worker se pise a sí mismo DENTRO de un proceso. Con dos
+      // procesos —dos instancias, un despliegue solapado— los dos leerían la misma fila
+      // `pendiente` y los dos la mandarían. Aquí se coge en exclusiva moviendo `proximo_ms` con
+      // la condición puesta en el `WHERE`: solo gana uno, y el otro se la salta.
+      //
+      // Es un ARRENDAMIENTO, no un estado nuevo: si el proceso muere a media tanda, la fila se
+      // vuelve a intentar sola cuando venza. Añadir un estado `enviando` habría obligado a tocar
+      // el `CHECK` de la tabla, que es de las migraciones que bloquean un despliegue.
+      const cogida = await dbRun(
+        `UPDATE cap_cola SET proximo_ms = ? WHERE id = ? AND estado = 'pendiente' AND proximo_ms = ?
+         RETURNING id`, [Date.now() + CAP_ARRIENDO_MS, fila.id, fila.proximo_ms]);
+      if (!cogida) continue;
+      gastados += 1;
 
       // Quien pidió que no le escribiéramos no recibe, ni siquiera esto. `descartado` y no
       // `fallido`: no ha fallado nada, es que no había que mandarlo.
@@ -17276,6 +17685,16 @@ app.get("/api/contactos/:telefono", requireAuth(["direccion", "marketing"]), asy
     const reservas = await dbAll(`SELECT local, dia, hora, personas, creado_en FROM reservas WHERE ${MATCH_TEL9("telefono")} ORDER BY dia DESC, hora DESC LIMIT 50`, [tel]);
     const prefs = await dbGet(`SELECT correo, opt_in_wa, opt_in_email, baja, idioma FROM marketing_prefs WHERE ${MATCH_TEL9("telefono")} LIMIT 1`, [tel]);
     const wa = await dbGet(`SELECT nombre, ultima_interaccion FROM wa_clientes WHERE ${MATCH_TEL9("telefono")} ORDER BY ultima_interaccion DESC LIMIT 1`, [tel]);
+    // DE DÓNDE VINO. Dos agregados por teléfono: una fila cada uno, aunque se haya apuntado a
+    // cinco campañas y haya dado tres consentimientos. Es una ficha, no cinco.
+    const origen = await dbGet(
+      `SELECT MIN(creado_en) AS primera_captacion,
+              (array_agg(COALESCE(NULLIF(campana, ''), fuente) ORDER BY creado_en DESC))[1] AS ultima_campana,
+              COUNT(DISTINCT COALESCE(NULLIF(campana, ''), fuente))::int AS campanas
+         FROM leads WHERE ${MATCH_TEL9("telefono")}`, [tel]);
+    const cons = await dbGet(
+      `SELECT COUNT(*)::int AS veces, MAX(creado_en) AS ultimo
+         FROM fid_consentimientos WHERE ${MATCH_TEL9("telefono")}`, [tel]);
     const nombre = lead?.nombre || (reservas[0]?.local ? (reservas[0].nombre_reserva || "") : "") || wa?.nombre || "";
     res.json({
       ok: true,
@@ -17284,6 +17703,11 @@ app.get("/api/contactos/:telefono", requireAuth(["direccion", "marketing"]), asy
         nombre, apellidos: lead?.apellidos || "", correo: lead?.correo || prefs?.correo || "",
         poblacion: lead?.poblacion || "", nacimiento: lead?.nacimiento || "", genero: lead?.genero || null,
         origen: lead ? "lead" : "reserva",
+        primera_captacion: origen?.primera_captacion || null,
+        ultima_campana: origen?.ultima_campana || null,
+        campanas: Number(origen?.campanas || 0),
+        consentimientos: Number(cons?.veces || 0),
+        ultimo_consentimiento: cons?.ultimo || null,
         visitas: reservas.length,
         ultimo_local: reservas[0]?.local || "",
         reservas,
@@ -19732,6 +20156,9 @@ app.post("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req,
       mensajes: fidMensajes(b.mensajes, b.idioma),
       exige_whatsapp: b.exige_whatsapp === true,
       sugerir_poblacion: b.sugerir_poblacion === true,
+      // VACÍO = NO SE MANDA NADA. Encenderlo en una campaña que no lo prometía enviaría un
+      // WhatsApp a gente que se apuntó sin que se le dijera que lo recibiría.
+      mensaje_wa: fidTexto(b.mensaje_wa, FID_LARGOS.parrafo),
     };
     const check = fidValidarForm(cfg);
     if (cfg.estado === "publicado" && !check.ok) {
@@ -19749,13 +20176,13 @@ app.post("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req,
         `INSERT INTO fid_formularios (clave, version, campana, local, estado, titulo, subtitulo, introduccion,
            texto_boton, mensaje_exito, texto_posterior, imagen, campos, consentimiento_texto,
            privacidad_url, abre_en, cierra_en, idioma, destacado, mensajes, exige_whatsapp,
-           sugerir_poblacion, creado_en, creado_por)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
+           sugerir_poblacion, mensaje_wa, creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
         [clave, Number(ult?.v || 0) + 1, fidTexto(b.campana, 60) || null, local, cfg.estado, cfg.titulo,
          cfg.subtitulo, cfg.introduccion, cfg.texto_boton, cfg.mensaje_exito, cfg.texto_posterior,
          cfg.imagen, JSON.stringify(cfg.campos), cfg.consentimiento_texto, cfg.privacidad_url,
          cfg.abre_en, cfg.cierra_en, cfg.idioma, cfg.destacado, JSON.stringify(cfg.mensajes),
-         cfg.exige_whatsapp, cfg.sugerir_poblacion, ahora, req.user.username]);
+         cfg.exige_whatsapp, cfg.sugerir_poblacion, cfg.mensaje_wa, ahora, req.user.username]);
       if (!creado) throw new Error("el formulario no se ha insertado");
       return creado;
     });

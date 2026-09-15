@@ -84,8 +84,19 @@ export async function ensureSchemaCaptacion(x) {
   // coge, y al reanudar se desmarca sin tocar `estado` ni los intentos.
   try { await x.run(`ALTER TABLE cap_cola ADD COLUMN IF NOT EXISTS pausado BOOLEAN NOT NULL DEFAULT FALSE`); }
   catch (e) { console.error("[captacion] alter cap_cola pausado:", e.message); }
+  // ── QUÉ SALE ANTES ─────────────────────────────────────────────────────────
+  //
+  // 0 = TRANSACCIONAL (el carné de quien acaba de apuntarse, que lo está esperando en ese
+  // momento). 1 = comercial. Sin esto la cola era orden de llegada, y un alta encolada detrás de
+  // trescientos mensajes de campaña salía la última —o no salía ese día—.
+  //
+  // Es una COLUMNA y no un `LIKE 'alta:%'` sobre el token: el orden de la cola no puede depender
+  // de cómo se escriba un identificador, y así el índice sirve para ordenar.
+  try { await x.run(`ALTER TABLE cap_cola ADD COLUMN IF NOT EXISTS prioridad SMALLINT NOT NULL DEFAULT 1`); }
+  catch (e) { console.error("[captacion] alter cap_cola prioridad:", e.message); }
+
   await x.run(`CREATE INDEX IF NOT EXISTS idx_cap_cola_listos
-    ON cap_cola (proximo_ms) WHERE estado = 'pendiente' AND NOT pausado`);
+    ON cap_cola (prioridad, proximo_ms) WHERE estado = 'pendiente' AND NOT pausado`);
   // El índice de la consulta que corre cada treinta segundos.
   await x.run(`CREATE INDEX IF NOT EXISTS idx_cap_cola_pendientes
     ON cap_cola (proximo_ms) WHERE estado = 'pendiente'`);

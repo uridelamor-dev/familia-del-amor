@@ -228,7 +228,7 @@ describe("la baja de verdad", () => {
   test("y el worker vuelve a mirar la baja antes de CADA envío", () => {
     // Es lo que cierra la carrera de verdad: lo que se escape del descarte, se frena ahí.
     const worker = server.slice(server.indexOf("async function capVaciarCola()"),
-                                server.indexOf("async function capVaciarCola()") + 4000);
+                                server.indexOf("async function capVaciarCola()") + 7000);
     assert.match(worker, /SELECT baja FROM marketing_prefs WHERE/);
     const iMira = worker.indexOf("SELECT baja FROM marketing_prefs");
     const iManda = worker.indexOf("sendMensajeLibre");

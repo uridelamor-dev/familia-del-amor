@@ -66,6 +66,55 @@ export function cuantasSacar({ pendientes = 0, cupoQuedan = 0, porPasada = 12 } 
   return Math.max(0, Math.min(Number(pendientes || 0), Number(cupoQuedan || 0), Number(porPasada || 0)));
 }
 
+// ── LA RESERVA PARA ALTAS ────────────────────────────────────────────────────────────────────
+//
+// ── EL PROBLEMA ──────────────────────────────────────────────────────────────────────────────
+//
+// El tope diario (`wa_max_diario`) es GLOBAL: lo cuenta todo —pulso del equipo, campañas y
+// altas— porque lo que protege es el NÚMERO, y a WhatsApp le da igual de qué tipo sea cada
+// mensaje. Eso está bien y no se toca.
+//
+// Pero tiene una consecuencia mala: una campaña comercial de trescientos agota el cupo y el
+// carné de quien se apuntó a las ocho de la tarde NO SALE ESE DÍA. Esa persona ha dado su
+// teléfono hace un minuto, se le ha prometido un código «en uns minuts» y no llega.
+//
+// ── LA SOLUCIÓN, Y POR QUÉ NO ES UNA VÍA ILIMITADA ───────────────────────────────────────────
+//
+// Se guarda una RESERVA: los mensajes comerciales solo pueden gastar `max - reserva`. Las altas
+// pueden llegar hasta `max`, así que siempre les quedan al menos `reserva` huecos.
+//
+// Las altas SIGUEN DENTRO DEL TOPE GLOBAL. No hay ninguna vía que mande sin límite: lo único que
+// cambia es quién puede gastar los últimos huecos del día.
+
+/** Cuántos huecos se guardan para transaccionales. Acotado: ni cero ni el cupo entero. */
+export const RESERVA_ALTAS = 10;
+
+/**
+ * Qué cupo tiene cada tipo hoy.
+ *
+ * `prioridad 0` (altas) puede gastar todo lo que quede. `prioridad 1` (comercial) se para antes,
+ * dejando la reserva intacta.
+ */
+export function cupoPorPrioridad({ max = 0, usados = 0, reserva = RESERVA_ALTAS } = {}) {
+  const tope = Math.max(0, Number(max) || 0);
+  const gastados = Math.max(0, Number(usados) || 0);
+  // La reserva nunca puede comerse el cupo entero: si el tope es pequeño, se queda en la mitad.
+  const guardados = Math.max(0, Math.min(Number(reserva) || 0, Math.floor(tope / 2)));
+  return {
+    altas: Math.max(0, tope - gastados),
+    comercial: Math.max(0, tope - guardados - gastados),
+    reserva: guardados,
+  };
+}
+
+/**
+ * ¿Hay algo que se pueda mandar ahora? Se mira ANTES de leer la cola.
+ *
+ * Con el cupo comercial agotado pero reserva libre, el worker SIGUE trabajando: puede haber un
+ * alta esperando. Pararse ahí era lo que dejaba sin carné a quien acababa de apuntarse.
+ */
+export const hayCupoParaAlgo = (cupo) => (cupo.altas > 0);
+
 /** Lo que la pantalla de gracias necesita saber, y nada más. Ni el código, ni el teléfono. */
 export function estadoParaCliente(fila) {
   if (!fila) return "desconocido";
