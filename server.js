@@ -108,12 +108,32 @@ import { crearAcumulador as fidCrearAcumulador } from "./src/modules/fidelizacio
 import { estadoPreparacion as fidEstadoPreparacion, puedeEncender as fidPuedeEncender,
          aplicarBloqueo as fidAplicarBloqueo, NIVEL as FID_NIVEL,
          permitidos as fidPermitidos } from "./src/modules/fidelizacion/preparacion.js";
+import { evaluarPuerta as fidEvaluarPuerta, puedeTransitar as fidPuedeTransitar,
+         confirmacionValida as fidConfirmacionValida, ESTADOS as FID_PUERTA_ESTADOS,
+         CONFIRMACION_EXIGIDA as FID_CONFIRMACION } from "./src/modules/fidelizacion/puerta.js";
+import { revertirDevolucionTotal as fidRevertir } from "./src/modules/fidelizacion/agora.js";
+import { urlMaestro as fidUrlMaestro, normalizarMaestro as fidNormalizarMaestro,
+         compararCatalogo as fidCompararCatalogo, errorRedactado as fidErrorSync }
+  from "./src/modules/fidelizacion/catalogo.js";
+import { TIPOS as FID_PROMO_TIPOS, ESTADOS as FID_PROMO_ESTADOS, vigente as fidPromoVigente,
+         elegible as fidPromoElegible, rewardDePromo as fidRewardDePromo,
+         puedePublicar as fidPuedePublicar, simularPromo as fidSimularPromo,
+         enMadrid as fidEnMadrid, leerLista as fidLeerLista, EXPLICACION as FID_PROMO_EXPLICA }
+  from "./src/modules/fidelizacion/promos.js";
+import { textoSeguro as fidTexto, urlSegura as fidUrl, normalizarCampos as fidCampos,
+         validarFormulario as fidValidarForm, formularioAbierto as fidFormAbierto,
+         renderPlantilla as fidRender, variablesDesconocidas as fidVarsRaras,
+         puedeRecibir as fidPuedeRecibir, PALETAS as FID_PALETAS, paletaDe as fidPaleta,
+         CAMPOS as FID_CAMPOS, VARIABLES as FID_VARIABLES, LARGOS as FID_LARGOS,
+         MOTIVOS_EXCLUSION as FID_EXCLUSION } from "./src/modules/fidelizacion/contenido.js";
 import { reglaVigente as fidReglaVigente, rewardDe as fidRewardDe, saldo as fidSaldo,
          importePagado as fidImportePagado, puntosDe as fidPuntosDe, evaluarFactura as fidEvaluar,
          caducaEn as fidCaducaEn, centimos as fidCentimos, aEuros as fidAEuros,
          INTERRUPTORES as FID_INTERRUPTORES, MOTIVOS as FID_MOTIVOS,
          clasificarDevolucion as fidClasificarDevolucion, textoGracia as fidTextoGracia,
-         GRACIA_DEFECTO as FID_GRACIA_DEFECTO, GRACIA_MAX as FID_GRACIA_MAX
+         GRACIA_DEFECTO as FID_GRACIA_DEFECTO, GRACIA_MAX as FID_GRACIA_MAX,
+         simular as fidSimular, ESTADOS_REGLA as FID_ESTADOS_REGLA,
+         textoRewardPorDefecto as fidTextoReward
        } from "./src/modules/fidelizacion/puntos.js";
 import { REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CUERPO as FID_MAX_CUERPO,
          estadoVerificacion as fidEstadoVerificacion, ESTADOS_VERIFICACION as FID_ESTADOS_VER,
@@ -121,6 +141,7 @@ import { REWARDS_FASE_1, IDEM_V as FID_IDEM_V, MAX_CUERPO as FID_MAX_CUERPO,
          discrepanciaWorkplace as fidDiscrepanciaWorkplace,
          MAX_POR_MINUTO as FID_MAX_MIN, VIDA_DIAS as FID_VIDA_DIAS, ESTADOS as FID_ESTADOS,
          FacturaRechazada as FidFacturaRechazada, CERROJO_REGLAS as FID_CERROJO_REGLAS,
+         CERROJO_PUNTOS as FID_CERROJO_PUNTOS,
          nuevoToken as fidNuevoToken, pistaToken as fidPistaToken, estadoIntegracion as fidEstadoIntegracion,
          caducidadDesde as fidCaducidad, respuestaMiembro as fidRespuestaMiembro, carnetUtilizable as fidCarnetUtilizable,
          extraerFactura as fidExtraerFactura, procesarFactura as fidProcesarFactura, respuestaFactura as fidRespuestaFactura,
@@ -11373,6 +11394,467 @@ function tarjetaApagada(res) {
 // El GET es público y devuelve UN BOOLEANO Y NADA MÁS. Lo usa `alta.html` para mandar a la
 // portada a quien llegue con el enlace apagado, en vez de enseñarle un formulario que va a
 // fallar al enviarlo.
+// ── COMUNICACIONES ───────────────────────────────────────────────────────────
+
+/**
+ * PREPARAR una comunicación: a quién, con qué texto y qué se excluye.
+ *
+ * NO ENVÍA NADA. Devuelve el recuento y el desglose de exclusiones, que es lo que hay que mirar
+ * antes de aprobar: «500 personas, se enviarán 300» sin decir por qué es un número que nadie puede
+ * comprobar.
+ */
+app.post("/api/fidelizacion/comunicaciones/preparar", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const b = req.body || {};
+    const plantilla = fidTexto(b.plantilla, FID_LARGOS.parrafo);
+    if (!plantilla) return res.status(400).json({ ok: false, error: "Falta la plantilla del mensaje." });
+    const raras = fidVarsRaras(plantilla);
+
+    // Los destinatarios: quien tiene consentimiento comercial vigente y no se ha dado de baja.
+    const filtro = b.campana ? [String(b.campana).slice(0, 60)] : [];
+    const consentidos = await dbAll(
+      `SELECT DISTINCT ON (telefono) telefono, acepta_comercial, baja_en, campana, creado_en
+         FROM fid_consentimientos ${filtro.length ? "WHERE campana = ?" : ""}
+        ORDER BY telefono, creado_en DESC`, filtro) || [];
+
+    const ya = b.clave ? await dbAll(
+      `SELECT e.telefono FROM fid_comunicacion_envios e JOIN fid_comunicaciones c ON c.id = e.comunicacion_id
+        WHERE c.clave = ? AND e.estado IN ('encolado','entregado')`, [String(b.clave).slice(0, 60)]) : [];
+    const enviados = new Set((ya || []).map((r) => r.telefono));
+
+    const excluidos = {};
+    const destinatarios = [];
+    for (const c of consentidos) {
+      const r = fidPuedeRecibir({ telefono: c.telefono, baja: !!c.baja_en,
+        consiente: !!c.acepta_comercial, ya_enviado: enviados.has(c.telefono) });
+      if (r.ok) destinatarios.push(c.telefono);
+      else excluidos[r.motivo] = (excluidos[r.motivo] || 0) + 1;
+    }
+
+    // Una vista previa del mensaje, con datos de mentira: NO se usa el teléfono de nadie.
+    const ejemplo = fidRender(plantilla, { nombre: "Marta", enlace: "https://…/tarjeta",
+      fecha: "1 de octubre", local: "La Tapeta - Girona", premio: "un desayuno" });
+
+    res.json({ ok: true, destinatarios: destinatarios.length,
+      excluidos: Object.fromEntries(Object.entries(excluidos).map(([k, v]) => [FID_EXCLUSION[k] || k, v])),
+      variables: FID_VARIABLES, variables_desconocidas: raras, ejemplo,
+      aviso: "No se ha enviado nada. Esto es solo el recuento." });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] preparar comunicacion", e));
+    res.status(500).json({ ok: false, error: "No se pudo preparar" });
+  }
+});
+
+/** Las comunicaciones, con su estado y su progreso. */
+app.get("/api/fidelizacion/comunicaciones", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const filas = await dbAll(`SELECT * FROM fid_comunicaciones ORDER BY id DESC LIMIT 100`) || [];
+    const out = [];
+    for (const c of filas) {
+      const e = await dbGet(
+        `SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE estado = 'encolado')::int AS encolados,
+                COUNT(*) FILTER (WHERE estado = 'entregado')::int AS entregados,
+                COUNT(*) FILTER (WHERE estado = 'fallido')::int AS fallidos,
+                COUNT(*) FILTER (WHERE estado = 'pendiente')::int AS pendientes
+           FROM fid_comunicacion_envios WHERE comunicacion_id = ?`, [c.id]);
+      // La plantilla se ve; los teléfonos NO salen nunca de aquí.
+      out.push({ ...c, excluidos: fidLeerLista(c.excluidos) , progreso: e || {} });
+    }
+    res.json({ ok: true, variables: FID_VARIABLES, data: out });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] comunicaciones", e));
+    res.status(500).json({ ok: false, error: "No se pudieron leer" });
+  }
+});
+
+/**
+ * GUARDAR una comunicación como BORRADOR, con su lista de destinatarios ya resuelta.
+ *
+ * Se guarda a QUIÉN se va a escribir en el momento de prepararla, no al enviarla: si se resolviera
+ * al aprobar, la lista podría haber cambiado entre lo que se revisó y lo que sale. Lo que se
+ * aprueba es exactamente lo que se vio.
+ *
+ * NO ENCOLA NADA. Los envíos nacen en `pendiente`.
+ */
+app.post("/api/fidelizacion/comunicaciones", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const clave = String(b.clave || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 60);
+    const nombre = fidTexto(b.nombre, FID_LARGOS.nombre);
+    const plantilla = fidTexto(b.plantilla, FID_LARGOS.parrafo);
+    if (!clave || !nombre || !plantilla) {
+      return res.status(400).json({ ok: false, error: "Hacen falta clave, nombre y plantilla." });
+    }
+    const raras = fidVarsRaras(plantilla);
+    if (raras.length) {
+      return res.status(400).json({ ok: false,
+        error: `La plantilla usa variables que no existen: ${raras.join(", ")}. Quítalas o corrígelas.` });
+    }
+    let local = null;
+    if (b.local) {
+      const pedido = fidLocalDePeticion(req, b.local);
+      if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+      local = pedido.local;
+    }
+    const campana = fidTexto(b.campana, 60) || null;
+
+    // Los destinatarios, resueltos AHORA.
+    const consentidos = await dbAll(
+      `SELECT DISTINCT ON (telefono) telefono, acepta_comercial, baja_en
+         FROM fid_consentimientos ${campana ? "WHERE campana = ?" : ""}
+        ORDER BY telefono, creado_en DESC`, campana ? [campana] : []) || [];
+    const yaEnviado = new Set(((await dbAll(
+      `SELECT e.telefono FROM fid_comunicacion_envios e JOIN fid_comunicaciones c ON c.id = e.comunicacion_id
+        WHERE c.clave = ? AND e.estado IN ('encolado','entregado')`, [clave])) || []).map((r) => r.telefono));
+
+    const excluidos = {};
+    const destinatarios = [];
+    for (const c of consentidos) {
+      const r = fidPuedeRecibir({ telefono: c.telefono, baja: !!c.baja_en,
+        consiente: !!c.acepta_comercial, ya_enviado: yaEnviado.has(c.telefono) });
+      if (r.ok) destinatarios.push(c.telefono);
+      else excluidos[r.motivo] = (excluidos[r.motivo] || 0) + 1;
+    }
+
+    const ahora = isoConOffset(Date.now());
+    const fila = await fidTransaccion(async (x) => {
+      await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [FID_CERROJO_REGLAS, 5]);
+      const previa = await x.get(`SELECT id, estado FROM fid_comunicaciones WHERE clave = ?`, [clave]);
+      // Una ya aprobada NO se reescribe: lo que se aprobó es lo que sale.
+      if (previa && previa.estado !== "borrador") {
+        throw Object.assign(new Error("ya_aprobada"), { publico: "Esa comunicación ya está aprobada. Crea otra con clave distinta." });
+      }
+      let id = previa?.id;
+      if (id) {
+        await x.run(`UPDATE fid_comunicaciones SET nombre = ?, campana = ?, local = ?, plantilla = ?,
+                     destinatarios = ?, excluidos = ? WHERE id = ? AND estado = 'borrador'`,
+          [nombre, campana, local, plantilla, destinatarios.length, JSON.stringify(excluidos), id]);
+        await x.run(`DELETE FROM fid_comunicacion_envios WHERE comunicacion_id = ? AND estado = 'pendiente'`, [id]);
+      } else {
+        const creada = await x.run(
+          `INSERT INTO fid_comunicaciones (clave, nombre, campana, local, plantilla, estado, filtro,
+             destinatarios, excluidos, programada_para, creado_en, creado_por)
+           VALUES (?,?,?,?,?,'borrador','{}',?,?,?,?,?) RETURNING id`,
+          [clave, nombre, campana, local, plantilla, destinatarios.length, JSON.stringify(excluidos),
+           b.programada_para || null, ahora, req.user.username]);
+        if (!creada) throw new Error("la comunicación no se ha insertado");
+        id = creada.id;
+      }
+      for (const tel of destinatarios) {
+        await x.run(`INSERT INTO fid_comunicacion_envios (comunicacion_id, telefono, estado, creado_en)
+                     VALUES (?,?,'pendiente',?) ON CONFLICT (comunicacion_id, telefono) DO NOTHING`,
+          [id, tel, ahora]);
+      }
+      return { id };
+    });
+
+    await ficAuditar("fidelizacion", fila.id, "comunicacion_guardada", req.user.username,
+      { local, detalle: { clave, destinatarios: destinatarios.length, excluidos } });
+    res.json({ ok: true, id: fila.id, destinatarios: destinatarios.length,
+      excluidos: Object.fromEntries(Object.entries(excluidos).map(([k, v]) => [FID_EXCLUSION[k] || k, v])) });
+  } catch (e) {
+    if (e && e.publico) return res.status(409).json({ ok: false, error: e.publico });
+    console.error(lineaErrorSql("[fidelizacion] guardar comunicacion", e));
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+/**
+ * ENCOLAR. Mete los mensajes en `cap_cola`, que es la cola de siempre.
+ *
+ * ── DOS CERROJOS, Y NINGUNO ES OPCIONAL ─────────────────────────────────────────────────────
+ *
+ *   1. LA COMUNICACIÓN TIENE QUE ESTAR APROBADA. Aprobar es de Dirección y exige escribir ENVIAR.
+ *      Esta ruta NO aprueba: si llega sobre un borrador, devuelve 409.
+ *   2. EL TOKEN DE `cap_cola` ES DETERMINISTA: `com:<id>:<telefono>`. La columna es UNIQUE, así que
+ *      un doble clic, dos pestañas o un reintento no meten el mismo mensaje dos veces. El candado
+ *      es el índice, no una comprobación previa.
+ *
+ * La cola tiene su propio ritmo, su tope diario y sus reintentos. Encolar no es enviar: el worker
+ * va sacando, y `pausar` deja de alimentarla.
+ */
+app.post("/api/fidelizacion/comunicaciones/:id/encolar", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const c = await dbGet(`SELECT * FROM fid_comunicaciones WHERE id = ?`, [parseInt(req.params.id)]);
+    if (!c) return res.status(404).json({ ok: false, error: "No existe" });
+    if (c.estado !== "aprobada") {
+      return res.status(409).json({ ok: false,
+        error: "Esta comunicación no está aprobada. Solo Dirección puede aprobarla, escribiendo ENVIAR." });
+    }
+
+    const pendientes = await dbAll(
+      `SELECT id, telefono FROM fid_comunicacion_envios
+        WHERE comunicacion_id = ? AND estado = 'pendiente' ORDER BY id LIMIT 500`, [c.id]) || [];
+    const ahora = isoConOffset(Date.now());
+    let encolados = 0;
+
+    for (const e of pendientes) {
+      // El carné, para poder meter su enlace en el mensaje. Si no tiene, se manda sin él.
+      let enlace = null, nombre = null, qrId = null;
+      try {
+        const qr = await dbGet(`SELECT id, token, nombre FROM pro_qr WHERE clase = 'carnet' AND telefono = ?
+                                AND anulado_en IS NULL ORDER BY id DESC LIMIT 1`, [e.telefono]);
+        if (qr) { qrId = qr.id; nombre = qr.nombre; enlace = proEnlace(req, { token: qr.token, clase: "carnet" }); }
+      } catch { /* sin carné, el mensaje va igual */ }
+
+      const texto = fidRender(c.plantilla, { nombre: nombre || "", enlace: enlace || "",
+        fecha: hoyISO(), local: c.local || "", premio: "" });
+      // DETERMINISTA: el mismo destinatario de la misma comunicación siempre da el mismo token.
+      const token = `com:${c.id}:${e.telefono}`;
+      const met = await dbRun(
+        `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en)
+         VALUES (?,?,?,?,?,?,?) ON CONFLICT (token) DO NOTHING RETURNING id`,
+        [token, c.campana || `com:${c.clave}`, e.telefono, texto, qrId, Date.now(), ahora]);
+      await dbRun(`UPDATE fid_comunicacion_envios SET estado = 'encolado', cola_id = ?, actualizado_en = ?
+                   WHERE id = ? AND estado = 'pendiente'`, [met ? met.id : null, ahora, e.id]);
+      if (met) encolados += 1;
+    }
+
+    await dbRun(`UPDATE fid_comunicaciones SET estado = 'enviando' WHERE id = ? AND estado = 'aprobada'`, [c.id]);
+    await ficAuditar("fidelizacion", c.id, "comunicacion_encolada", req.user.username,
+      { local: c.local, detalle: { clave: c.clave, encolados, pendientes: pendientes.length } });
+    res.json({ ok: true, encolados, ya_estaban: pendientes.length - encolados });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] encolar", e));
+    res.status(500).json({ ok: false, error: "No se pudo encolar" });
+  }
+});
+
+/** CANCELAR antes de enviar. Borra lo pendiente de la cola; lo ya salido no se puede recuperar. */
+app.post("/api/fidelizacion/comunicaciones/:id/cancelar", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const c = await dbGet(`SELECT * FROM fid_comunicaciones WHERE id = ?`, [parseInt(req.params.id)]);
+    if (!c) return res.status(404).json({ ok: false, error: "No existe" });
+    if (c.estado === "terminada") return res.status(409).json({ ok: false, error: "Ya ha terminado." });
+
+    // Solo lo que sigue PENDIENTE en la cola. Un mensaje ya enviado no se desenvía.
+    const r = await dbGet(`SELECT COUNT(*)::int AS n FROM cap_cola
+      WHERE token LIKE ? AND estado = 'pendiente'`, [`com:${c.id}:%`]);
+    await dbRun(`UPDATE cap_cola SET estado = 'descartado', pausado = FALSE,
+                 ultimo_error = 'cancelada por Dirección'
+                 WHERE token LIKE ? AND estado = 'pendiente'`, [`com:${c.id}:%`]);
+    await dbRun(`UPDATE fid_comunicaciones SET estado = 'pausada', pausada_en = ? WHERE id = ?`,
+      [isoConOffset(Date.now()), c.id]);
+    await ficAuditar("fidelizacion", c.id, "comunicacion_cancelada", req.user.username,
+      { local: c.local, detalle: { clave: c.clave, descartados: r ? r.n : 0 } });
+    res.json({ ok: true, descartados: r ? r.n : 0 });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] cancelar comunicacion", e));
+    res.status(500).json({ ok: false, error: "No se pudo cancelar" });
+  }
+});
+
+/**
+ * APROBAR una comunicación. SOLO DIRECCIÓN, y con confirmación escrita.
+ *
+ * Aprobar no envía: deja la comunicación lista para que la cola la vaya sacando con su ritmo, su
+ * tope diario y sus reintentos, que es lo que ya existe y lo que evita que nos baneen el número.
+ */
+app.post("/api/fidelizacion/comunicaciones/:id/aprobar", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const c = await dbGet(`SELECT * FROM fid_comunicaciones WHERE id = ?`, [parseInt(req.params.id)]);
+    if (!c) return res.status(404).json({ ok: false, error: "No existe" });
+    if (c.estado !== "borrador") return res.status(409).json({ ok: false, error: "Solo se aprueba un borrador." });
+    if (String(req.body?.confirmacion || "").trim().toUpperCase() !== "ENVIAR") {
+      return res.status(400).json({ ok: false, error: "Para aprobar hay que escribir «ENVIAR»." });
+    }
+    const ahora = isoConOffset(Date.now());
+    const tocada = await dbRun(
+      `UPDATE fid_comunicaciones SET estado = 'aprobada', aprobada_por = ?, aprobada_en = ?
+        WHERE id = ? AND estado = 'borrador' RETURNING id`, [req.user.username, ahora, c.id]);
+    if (!tocada) return res.status(409).json({ ok: false, error: "Ha cambiado de estado." });
+    await ficAuditar("fidelizacion", c.id, "comunicacion_aprobada", req.user.username,
+      { local: c.local, detalle: { clave: c.clave, destinatarios: c.destinatarios } });
+    res.json({ ok: true, estado: "aprobada" });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] aprobar comunicacion", e));
+    res.status(500).json({ ok: false, error: "No se pudo aprobar" });
+  }
+});
+
+/** Pausar o reanudar. Pausar siempre se puede: es el freno. */
+app.post("/api/fidelizacion/comunicaciones/:id/pausa", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const pausar = req.body?.pausar !== false;
+    const c = await dbGet(`SELECT * FROM fid_comunicaciones WHERE id = ?`, [parseInt(req.params.id)]);
+    if (!c) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!pausar && c.estado !== "pausada") return res.status(409).json({ ok: false, error: "No está pausada." });
+    const ahora = isoConOffset(Date.now());
+
+    // ── LA PAUSA VA A LA COLA, NO SOLO A LA ETIQUETA ─────────────────────────────────────────
+    //
+    // Marcar la comunicación como «pausada» sin tocar `cap_cola` dejaría al worker vaciando todo
+    // lo ya encolado: el freno no frenaría nada, que es la peor forma de tener un freno.
+    //
+    // Se marca `pausado`, NO `descartado`: descartar es definitivo y es lo que hace «Cancelar».
+    // Así reanudar es quitar la marca, sin tocar el estado ni los intentos, y sin duplicar nada.
+    // Y SOLO lo que sigue `pendiente`: lo que ya salió no se altera.
+    const tocados = await dbGet(
+      `SELECT COUNT(*)::int AS n FROM cap_cola WHERE token LIKE ? AND estado = 'pendiente'`,
+      [`com:${c.id}:%`]);
+    await dbRun(`UPDATE cap_cola SET pausado = ? WHERE token LIKE ? AND estado = 'pendiente'`,
+      [pausar, `com:${c.id}:%`]);
+    // El estado de la comunicación vuelve a «enviando» al reanudar si ya se había encolado.
+    const vuelveA = pausar ? "pausada" : ((tocados?.n || 0) > 0 ? "enviando" : "aprobada");
+    await dbRun(`UPDATE fid_comunicaciones SET estado = ?, pausada_en = ? WHERE id = ?`,
+      [vuelveA, pausar ? ahora : null, c.id]);
+    await ficAuditar("fidelizacion", c.id, pausar ? "comunicacion_pausada" : "comunicacion_reanudada",
+      req.user.username, { local: c.local, detalle: { clave: c.clave, en_cola: tocados?.n || 0 } });
+    res.json({ ok: true, estado: vuelveA, en_cola: tocados?.n || 0 });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] pausar comunicacion", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
+// ── EL FORMULARIO PÚBLICO DE CAPTACIÓN ───────────────────────────────────────
+//
+// VIVE AQUÍ Y NO EN LA ZONA DE FIDELIZACIÓN DE ÁGORA, y es a propósito: allí hay un invariante que
+// prohíbe buscar a nadie por teléfono —un identificador de socio que se adivina desde un dato
+// personal no es opaco— y aquí el teléfono ES justo lo que se pide. Meterlo allí habría ablandado
+// el candado que protege la validación del TPV.
+//
+// Reutiliza el censo de siempre: `leads`, `pro_qr` y la cola de WhatsApp. No hay censo paralelo.
+
+/**
+ * LA CONFIGURACIÓN PÚBLICA DE UN FORMULARIO. Sin sesión: la pide la propia página.
+ *
+ * Solo devuelve lo PUBLICADO y dentro de sus fechas. Un borrador no existe para nadie, y un
+ * formulario cerrado dice que está cerrado — no se queda pidiendo datos que ya no sirven.
+ */
+app.get("/api/publico/formulario/:clave", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    if (!pulsoRateLimit(req, res, 60)) return;
+    const clave = String(req.params.clave || "").slice(0, 40);
+    const f = await dbGet(`SELECT * FROM fid_formularios WHERE clave = ? AND estado = 'publicado'
+                           ORDER BY version DESC LIMIT 1`, [clave]);
+    const hoy = fidEnMadrid(isoConOffset(Date.now()))?.fecha || hoyISO();
+    const abierto = fidFormAbierto(f, { fechaMadrid: hoy });
+    if (!f || !abierto.ok) {
+      // Un motivo genérico: no se cuenta si existe pero está cerrado o si no existe.
+      return res.status(404).json({ ok: false, error: "Este formulario no está disponible." });
+    }
+    res.json({ ok: true, clave: f.clave, version: f.version,
+      titulo: f.titulo, subtitulo: f.subtitulo, introduccion: f.introduccion,
+      texto_boton: f.texto_boton, imagen: f.imagen,
+      campos: fidCampos(fidLeerLista(f.campos)).filter((c) => c.visible),
+      consentimiento_texto: f.consentimiento_texto, privacidad_url: f.privacidad_url,
+      locales: LOCALES_CANON });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] formulario publico", e));
+    res.status(500).json({ ok: false, error: "No disponible" });
+  }
+});
+
+/**
+ * EL ALTA PÚBLICA. Reutiliza el censo de siempre: `leads` y `pro_qr`.
+ *
+ * ── UN TELÉFONO ES UNA CUENTA ────────────────────────────────────────────────────────────────
+ *
+ * Se normaliza con la MISMA función que el resto de la casa y se busca antes de crear nada. Dos
+ * identidades para el mismo teléfono es como se acaba con un cliente que tiene dos saldos, dos
+ * carnés y una campaña que se lleva dos veces.
+ *
+ * SI EL NOMBRE NO COINCIDE, se reutiliza la cuenta y se ANOTA la diferencia. No se sobrescribe: el
+ * nombre guardado puede ser el bueno y el nuevo un error de quien teclea, y no hay forma de saber
+ * cuál es cuál desde aquí.
+ *
+ * ── LA RESPUESTA ES LA MISMA SIEMPRE ─────────────────────────────────────────────────────────
+ *
+ * Alta nueva y reutilización contestan exactamente igual. Si se distinguieran, esta página sería
+ * un comprobador de qué teléfonos están en nuestra base: se prueban números y se mira la respuesta.
+ */
+app.post("/api/publico/formulario/:clave", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    if (!pulsoRateLimit(req, res, 20)) return;
+    const clave = String(req.params.clave || "").slice(0, 40);
+    const f = await dbGet(`SELECT * FROM fid_formularios WHERE clave = ? AND estado = 'publicado'
+                           ORDER BY version DESC LIMIT 1`, [clave]);
+    const hoy = fidEnMadrid(isoConOffset(Date.now()))?.fecha || hoyISO();
+    if (!f || !fidFormAbierto(f, { fechaMadrid: hoy }).ok) {
+      return res.status(404).json({ ok: false, error: "Este formulario no está disponible." });
+    }
+
+    const campos = fidCampos(fidLeerLista(f.campos)).filter((c) => c.visible);
+    const b = req.body || {};
+    const tel = proTel9(b.telefono);
+    if (!tel) return res.status(400).json({ ok: false, error: "Hace falta un teléfono válido." });
+    const nombre = fidTexto(b.nombre, FID_LARGOS.nombre);
+    if (!nombre) return res.status(400).json({ ok: false, error: "Hace falta tu nombre." });
+    for (const c of campos) {
+      if (!c.obligatorio || c.id === "telefono" || c.id === "nombre") continue;
+      if (!String(b[c.id] || "").trim()) {
+        return res.status(400).json({ ok: false, error: `Falta ${c.etiqueta.toLowerCase()}.` });
+      }
+    }
+    // El consentimiento del formulario es obligatorio siempre: es lo que permite guardar el dato.
+    if (b.consentimiento !== true) {
+      return res.status(400).json({ ok: false, error: "Hay que aceptar la política de privacidad." });
+    }
+
+    const ahora = isoConOffset(Date.now());
+    const comercial = b.comercial === true;
+    let avisoNombre = false;
+
+    await fidTransaccion(async (x) => {
+      // 1. EL LEAD. Se busca por teléfono normalizado y se completa lo que falte, sin pisar.
+      const previo = await x.get(`SELECT id, nombre FROM leads WHERE telefono = ? ORDER BY id DESC LIMIT 1`, [tel]);
+      if (previo) {
+        avisoNombre = !!previo.nombre && previo.nombre.trim().toLowerCase() !== nombre.toLowerCase();
+        await x.run(`UPDATE leads SET actualizado_en = ? WHERE id = ?`, [ahora, previo.id]);
+      } else {
+        await x.run(
+          `INSERT INTO leads (nombre, telefono, correo, nacimiento, poblacion, premio, fuente, creado_en, actualizado_en)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
+          [nombre, tel, fidTexto(b.email, 160), String(b.nacimiento || "").slice(0, 10),
+           fidTexto(b.codigo_postal, 12), "", `form:${clave}`, ahora, ahora]);
+      }
+
+      // 2. EL CONSENTIMIENTO, con el TEXTO que se aceptó y su versión. Guardar «aceptó» sin
+      //    guardar qué aceptó no sirve el día que alguien pregunte, que es cuando hace falta.
+      await x.run(
+        `INSERT INTO fid_consentimientos (telefono, formulario_clave, formulario_version, texto,
+           acepta_comercial, origen, campana, creado_en)
+         VALUES (?,?,?,?,?,?,?,?)`,
+        [tel, clave, f.version, String(f.consentimiento_texto || "").slice(0, 4000),
+         comercial, "formulario", f.campana || null, ahora]);
+    });
+
+    // 3. EL CARNÉ. Se reutiliza el que ya tenga; solo se crea si no hay ninguno.
+    let token = null;
+    try {
+      const qr = await dbGet(`SELECT id, token FROM pro_qr WHERE clase = 'carnet' AND telefono = ?
+                              AND anulado_en IS NULL ORDER BY id DESC LIMIT 1`, [tel]);
+      token = qr ? qr.token : null;
+      if (!token) {
+        // La MISMA función que emite cualquier carné del panel: reintento del código de ocho
+        // dígitos incluido. Un segundo camino para crear carnés sería un segundo sitio donde
+        // equivocarse con la unicidad del token.
+        const nuevo = await proEmitir({ clase: "carnet", telefono: tel, nombre,
+          usosMax: 0, autor: "publico", origen: `form:${clave}` });
+        token = nuevo?.token || null;
+      }
+    } catch (e) { console.error(lineaErrorSql("[fidelizacion] carnet alta", e)); }
+
+    await ficAuditar("fidelizacion", null, "alta_formulario", "publico",
+      { detalle: { formulario: clave, version: f.version, comercial, nombre_distinto: avisoNombre } });
+
+    // MISMA RESPUESTA, exista o no. Ni «bienvenido de nuevo» ni un campo distinto.
+    res.json({ ok: true, mensaje: f.mensaje_exito || "¡Listo! Ya estás dentro.",
+      texto_posterior: f.texto_posterior || null,
+      // El enlace al carné se devuelve SIEMPRE que haya carné: no dice si es nuevo o de antes.
+      carnet: token ? proEnlace(req, { token }) : null });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] alta formulario", e));
+    res.status(500).json({ ok: false, error: "No se ha podido guardar. Inténtalo otra vez." });
+  }
+});
+
 app.get("/api/tarjeta/activa", (req, res) => res.json({ ok: true, activa: TARJETA_ACTIVA }));
 
 app.post("/api/tarjeta/activa", requireAuth(["direccion"]), async (req, res) => {
@@ -11624,10 +12106,23 @@ app.get("/api/tarjeta/:token", async (req, res) => {
       const sw = await fidInterruptores();
       const ahoraIso = isoConOffset(Date.now());
       const reglaCli = fidReglaVigente(await fidReglasDe(null), { local: null, ahora: ahoraIso });
-      if (!sw.conceder) {
-        fidelizacion = { estado: "en_preparacion",
-          titulo: "Programa de puntos en preparación",
-          texto: "Todavía no estás acumulando puntos. Te avisaremos cuando esté en marcha." };
+      // La configuración PUBLICADA. Si no hay ninguna, se usan los textos de siempre: la tarjeta
+      // nunca puede quedarse en blanco porque nadie haya entrado a configurarla.
+      const cfg = await dbGet(`SELECT * FROM fid_tarjeta_config WHERE estado = 'publicada'
+                               ORDER BY version DESC LIMIT 1`) || {};
+      const paleta = fidPaleta(cfg.paleta);
+      const marca = { titulo: cfg.titulo || "Tus puntos", paleta: cfg.paleta || "verde",
+                      acento: paleta.acento, suave: paleta.suave, imagen: cfg.imagen || null,
+                      explicacion: cfg.explicacion || null, condiciones: cfg.condiciones || null,
+                      faq: fidLeerLista(cfg.faq), contacto: cfg.contacto || null,
+                      privacidad_url: cfg.privacidad_url || null,
+                      orden_bloques: fidLeerLista(cfg.orden_bloques) };
+
+      if (!sw.conceder || cfg.mostrar_puntos === false) {
+        fidelizacion = { estado: "en_preparacion", ...marca,
+          titulo: cfg.titulo || "Programa de puntos en preparación",
+          texto: cfg.texto_preparacion
+            || "Todavía no estás acumulando puntos. Te avisaremos cuando esté en marcha." };
       } else {
         const sal = await fidSaldoDe(qr.id, ahoraIso);
         const movs = await dbAll(
@@ -11636,7 +12131,10 @@ app.get("/api/tarjeta/:token", async (req, res) => {
         const suma = (t) => movs.filter((m) => m.punto_tipo === t).reduce((a, m) => a + Number(m.unidades || 0), 0);
         const necesarios = reglaCli ? Number(reglaCli.puntos_necesarios) : null;
         fidelizacion = {
-          estado: "activo",
+          estado: "activo", ...marca,
+          texto_progreso: cfg.texto_progreso || null,
+          texto_recompensa: cfg.texto_recompensa || null,
+          texto_sin_saldo: cfg.texto_sin_saldo || null,
           disponible: sal.disponible,
           // El progreso hasta el próximo descuento, para que se vea cuánto falta.
           necesarios, faltan: necesarios ? Math.max(0, necesarios - sal.disponible) : null,
@@ -12125,13 +12623,23 @@ async function capVaciarCola() {
     const cupo = await cupoWA();
     if (cupo.agotado) return;
 
+    // `NOT pausado` es lo que hace que «Pausar» pare de verdad. Sin esto, pausar solo cambiaba una
+    // etiqueta en el panel y el worker seguía vaciando lo que ya estaba encolado — que es
+    // exactamente lo que se quiere evitar cuando alguien pulsa el freno.
     const pendientes = await dbAll(
-      `SELECT * FROM cap_cola WHERE estado = 'pendiente' AND proximo_ms <= ?
+      `SELECT * FROM cap_cola WHERE estado = 'pendiente' AND NOT pausado AND proximo_ms <= ?
         ORDER BY proximo_ms ASC LIMIT 50`, [Date.now()]);
     const cuantas = cuantasSacar({ pendientes: pendientes.length, cupoQuedan: cupo.quedan });
 
     for (const fila of pendientes.slice(0, cuantas)) {
       if (!isReady()) break;
+
+      // SE VUELVE A MIRAR, fila a fila. El lote se leyó hace un momento y alguien puede haber
+      // pulsado «Pausar» mientras se mandaban los primeros: con la comprobación solo en el SELECT,
+      // los que ya estaban en memoria saldrían igual. Es una consulta por mensaje, y un mensaje
+      // enviado de más no se puede recuperar.
+      const vivo = await dbGet(`SELECT estado, pausado FROM cap_cola WHERE id = ?`, [fila.id]);
+      if (!vivo || vivo.estado !== "pendiente" || vivo.pausado) continue;
 
       // Quien pidió que no le escribiéramos no recibe, ni siquiera esto. `descartado` y no
       // `fallido`: no ha fallado nada, es que no había que mandarlo.
@@ -17612,10 +18120,23 @@ async function fidInterruptores() {
   // aquí y no en el panel: una comprobación en la pantalla se salta con una llamada a la API.
   if (!out.conceder) { out.ofrecer = false; out.consumir = false; }
 
-  // Y ENCIMA DE TODO, el bloqueo de preparación. Aunque alguien consiguiera escribir
-  // `fid_conceder = 1` por cualquier vía —una migración, la consola de la base, un despiste—,
-  // aquí se vuelve a apagar. Lo guardado es una intención; esto es lo que pasa de verdad.
-  return fidAplicarBloqueo(out, FID_NIVEL);
+  // Y ENCIMA DE TODO, DOS CERROJOS. Aunque alguien consiguiera escribir `fid_conceder = 1` por
+  // cualquier vía —una migración, la consola de la base, un despiste—, aquí se vuelve a apagar.
+  // Lo guardado es una intención; esto es lo que pasa de verdad.
+  //
+  //   1. EL NIVEL: ¿está el código terminado? Es una constante de un commit revisado.
+  //   2. LA PUERTA: ¿está ESTE negocio activado? Se guarda, la firma Dirección y se puede pausar.
+  //
+  // La puerta va la última porque es la que se mueve en caliente: pausar tiene que cortar al
+  // instante, sin esperar a un despliegue.
+  const porNivel = fidAplicarBloqueo(out, FID_NIVEL);
+  let estadoPuerta = "no_preparado";
+  try { estadoPuerta = (await dbGet(`SELECT estado FROM fid_puerta WHERE id = 1`))?.estado || "no_preparado"; }
+  catch { estadoPuerta = "no_preparado"; }
+  if (estadoPuerta !== "activo") {
+    return { ...porNivel, conceder: false, ofrecer: false, consumir: false };
+  }
+  return porNivel;
 }
 
 /** Las reglas de un local: las suyas y las globales. La resolución la hace el módulo puro. */
@@ -17755,10 +18276,29 @@ app.get("/api/fidelizacion/agora/:token/member/:memberId", async (req, res) => {
     if (sw.ofrecer && !esperaConfirmacion) {
       const ahoraIso = isoConOffset(Date.now());
       const regla = fidReglaVigente(await fidReglasDe(integ.fila.local), { local: integ.fila.local, ahora: ahoraIso });
-      if (regla) {
-        const s = await fidSaldoDe(qr.id, ahoraIso);
-        if (s.disponible >= regla.puntos_necesarios) {
-          rewards = [fidRewardDe(regla, integ.fila.local)].filter(Boolean);
+      const s = await fidSaldoDe(qr.id, ahoraIso);
+      if (regla && s.disponible >= regla.puntos_necesarios) {
+        rewards = [fidRewardDe(regla, integ.fila.local)].filter(Boolean);
+      }
+
+      // ── LAS PROMOCIONES VIVAS DE ESTE LOCAL ──────────────────────────────────────────────
+      //
+      // MÁXIMO UN REWARD POR FACTURA, así que si ya hay descuento de puntos no se añade nada más.
+      // Entre varias, gana la de mayor `prioridad`: acumular dos premios en la misma cuenta es lo
+      // que convierte una campaña en un agujero.
+      if (!rewards) {
+        const vivas = await dbAll(
+          `SELECT * FROM fid_promos WHERE estado = 'publicada' AND (local IS NULL OR local = ?)
+            ORDER BY prioridad DESC, id DESC LIMIT 50`, [integ.fila.local]) || [];
+        for (const p of vivas) {
+          const usos = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_usos
+            WHERE clave = ? AND qr_id = ? AND estado = 'usado'`, [p.clave, qr.id]);
+          const tot = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_usos
+            WHERE clave = ? AND estado = 'usado'`, [p.clave]);
+          // Sin importe todavía: la compra mínima se comprueba al CERRAR, no al identificar.
+          const el = fidPromoElegible(p, { ahora: ahoraIso, local: integ.fila.local,
+            usos: usos?.n || 0, usosTotales: tot?.n || 0, saldo: s.disponible, importeCentimos: null });
+          if (el.ok) { rewards = [fidRewardDePromo(p)].filter(Boolean); break; }
         }
       }
     }
@@ -17918,10 +18458,11 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
   try {
     const motivos = [];
     if (resultado.puntos?.accion === "revisar") motivos.push(resultado.puntos.motivo);
-    if (extracto.devolucion) {
-      const dev = fidClasificarDevolucion(json, { original: null });
-      if (dev.es && dev.clase !== "total") motivos.push(dev.motivo || FID_MOTIVOS.DEVOLUCION_PARCIAL);
-    }
+    // La clasificación la hizo la transacción, con la factura original delante. Aquí solo se anota
+    // lo que quedó sin resolver: una parcial, o una devolución cuyo original no se ha identificado.
+    const dev = resultado.puntos?.devolucion;
+    if (dev && dev.clase === "parcial") motivos.push(FID_MOTIVOS.DEVOLUCION_PARCIAL);
+    if (dev && dev.clase === "sin_original") motivos.push(FID_MOTIVOS.DEVOLUCION_SIN_ORIGEN);
     for (const m of motivos) {
       await dbRun(`INSERT INTO fid_revisiones (factura_id, local, motivo, detalle, creado_en)
                    VALUES (?,?,?,?,?) ON CONFLICT (factura_id, motivo) DO NOTHING`,
@@ -18642,6 +19183,761 @@ app.post("/api/fidelizacion/facturas/purgar-cuerpos", requireAuth(["direccion"])
   }
 });
 
+/**
+ * EL CONTEXTO DE LA PUERTA. Todo se comprueba EN EL SERVIDOR, leyendo la base.
+ *
+ * Ni una casilla que marque una persona: cada requisito es un hecho que se cuenta aquí. Lo único
+ * que aporta alguien es la confirmación final, y eso es una firma, no una comprobación.
+ */
+async function fidContextoPuerta() {
+  const ahora = isoConOffset(Date.now());
+  const c = {
+    nivel: FID_NIVEL,
+    // La reversión total existe de verdad: se comprueba que la función esté exportada Y que la
+    // ruta la use. Una de las dos cosas sola no sirve.
+    devolucionTotal: typeof fidRevertir === "function",
+    reglasVigentes: 0, localesConfirmados: 0, sombraFacturas: 0, sombraRevisadaEn: null,
+    revisionesBloqueantes: 0, conceder: false, ofrecer: false, consumir: false,
+    campanasPublicadas: 0, campanasSinCatalogo: 0, gruposVacios: 0, offersSinCodigo: 0,
+    formulariosSinLegal: 0,
+  };
+  try {
+    const sw = await fidInterruptores();
+    c.conceder = sw.conceder; c.ofrecer = sw.ofrecer; c.consumir = sw.consumir;
+  } catch { /* sin config, todo apagado */ }
+  try {
+    const reglas = await dbAll(`SELECT * FROM fid_reglas`) || [];
+    c.reglasVigentes = LOCALES_CANON.filter((l) =>
+      fidReglaVigente(reglas.filter((r) => r.ambito === "global" || r.local === l), { local: l, ahora })).length;
+  } catch { /* sin tabla, cero */ }
+  try {
+    const r = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_integraciones
+      WHERE activo AND revocado_en IS NULL AND workplace_confirmado_en IS NOT NULL
+        AND (caduca_en IS NULL OR caduca_en > ?)`, [ahora]);
+    c.localesConfirmados = r ? r.n : 0;
+  } catch { /* sin tabla, cero */ }
+  try {
+    const r = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_sombra`);
+    c.sombraFacturas = r ? r.n : 0;
+  } catch { /* sin tabla, cero */ }
+  try {
+    const r = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_revisiones WHERE resuelto_en IS NULL`);
+    c.revisionesBloqueantes = r ? r.n : 0;
+  } catch { /* sin tabla, cero */ }
+  try {
+    const p = await dbGet(`SELECT * FROM fid_puerta WHERE id = 1`);
+    c.sombraRevisadaEn = p?.sombra_revisada_en || null;
+  } catch { /* sin tabla, sin revisar */ }
+  return c;
+}
+
+const fidPuertaGuardada = async () => {
+  try { return await dbGet(`SELECT * FROM fid_puerta WHERE id = 1`); } catch { return null; }
+};
+
+/** El estado de la puerta, con sus comprobaciones. Dirección Y Marketing lo VEN. */
+app.get("/api/fidelizacion/puerta", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const ctx = await fidContextoPuerta();
+    res.json({ ok: true, ...fidEvaluarPuerta(await fidPuertaGuardada(), ctx),
+      estados: FID_PUERTA_ESTADOS, confirmacion_exigida: FID_CONFIRMACION,
+      // Marketing lo ve, pero solo Dirección puede moverla.
+      puede_cambiar: req.user.rol === "direccion" });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] puerta", e));
+    res.status(500).json({ ok: false, error: "No se pudo leer el estado" });
+  }
+});
+
+/** Marcar que el cálculo en sombra se ha revisado. Es un HECHO con firma, no una casilla. */
+app.post("/api/fidelizacion/puerta/sombra-revisada", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const ahora = isoConOffset(Date.now());
+    const quitar = req.body?.revisada === false;
+    await dbRun(`UPDATE fid_puerta SET sombra_revisada_en = ?, sombra_revisada_por = ?, actualizado_en = ?
+                 WHERE id = 1`, [quitar ? null : ahora, quitar ? null : req.user.username, ahora]);
+    await ficAuditar("fidelizacion", null, quitar ? "sombra_sin_revisar" : "sombra_revisada",
+      req.user.username, { detalle: { revisada: !quitar } });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] sombra revisada", e));
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+/**
+ * MOVER LA PUERTA. SOLO DIRECCIÓN.
+ *
+ * Marketing prepara reglas y campañas —eso es su trabajo— pero la activación final del sistema no
+ * es una decisión comercial: es empezar a mover dinero de clientes. Y activar exige, además de los
+ * requisitos, escribir la palabra a mano: un botón se pulsa sin leer.
+ */
+app.post("/api/fidelizacion/puerta", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const hacia = String(req.body?.estado || "");
+    const ctx = await fidContextoPuerta();
+    const guardada = await fidPuertaGuardada();
+    const ev = fidEvaluarPuerta(guardada, ctx);
+
+    const t = fidPuedeTransitar(ev.estado, hacia, { puedeActivar: ev.puede_activar });
+    if (!t.ok) return res.status(409).json({ ok: false, error: t.error, pendientes: ev.pendientes });
+
+    if (hacia === "activo" && !fidConfirmacionValida(req.body?.confirmacion)) {
+      return res.status(400).json({ ok: false,
+        error: `Para activar hay que escribir «${FID_CONFIRMACION}» en el campo de confirmación.` });
+    }
+    if (hacia === "pausado" && !String(req.body?.motivo || "").trim()) {
+      return res.status(400).json({ ok: false, error: "Hace falta un motivo para pausar." });
+    }
+
+    const ahora = isoConOffset(Date.now());
+    if (hacia === "activo") {
+      await dbRun(`UPDATE fid_puerta SET estado = ?, confirmado_por = ?, confirmado_en = ?,
+                   texto_confirmacion = ?, pausado_por = NULL, pausado_en = NULL, motivo_pausa = NULL,
+                   actualizado_en = ? WHERE id = 1`,
+        [hacia, req.user.username, ahora, String(req.body.confirmacion).slice(0, 40), ahora]);
+    } else if (hacia === "pausado") {
+      await dbRun(`UPDATE fid_puerta SET estado = ?, pausado_por = ?, pausado_en = ?, motivo_pausa = ?,
+                   actualizado_en = ? WHERE id = 1`,
+        [hacia, req.user.username, ahora, String(req.body.motivo).slice(0, 300), ahora]);
+    } else {
+      await dbRun(`UPDATE fid_puerta SET estado = ?, actualizado_en = ? WHERE id = 1`, [hacia, ahora]);
+    }
+
+    await ficAuditar("fidelizacion", null, "puerta_" + hacia, req.user.username,
+      { detalle: { desde: ev.estado, hacia, requisitos: ev.requisitos.map((r) => `${r.id}:${r.ok}`),
+                   motivo: hacia === "pausado" ? String(req.body.motivo).slice(0, 300) : null } });
+    res.json({ ok: true, estado: hacia });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] mover puerta", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
+// ── EL FORMULARIO PÚBLICO, LA TARJETA Y LAS COMUNICACIONES ───────────────────
+
+/** Los formularios y su configuración. Dirección y Marketing. */
+app.get("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const filas = await dbAll(`SELECT * FROM fid_formularios ORDER BY clave, version DESC LIMIT 200`) || [];
+    res.json({ ok: true, campos_disponibles: FID_CAMPOS, largos: FID_LARGOS,
+      data: filas.map((f) => ({ ...f, campos: fidCampos(fidLeerLista(f.campos)) })) });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] formularios", e));
+    res.status(500).json({ ok: false, error: "No se pudieron leer" });
+  }
+});
+
+/**
+ * Una VERSIÓN NUEVA del formulario. Nace en borrador.
+ *
+ * TODO EL TEXTO PASA POR `textoSeguro`: esto se pinta en una página pública y lo escribe una
+ * persona desde el panel. Aceptar HTML libre sería aceptar un `<script>` en la página que abren
+ * los clientes.
+ */
+app.post("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const clave = String(b.clave || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+    if (!clave) return res.status(400).json({ ok: false, error: "Falta la clave" });
+    let local = null;
+    if (b.local) {
+      const pedido = fidLocalDePeticion(req, b.local);
+      if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+      local = pedido.local;
+    }
+
+    const cfg = {
+      titulo: fidTexto(b.titulo, FID_LARGOS.titulo),
+      subtitulo: fidTexto(b.subtitulo, FID_LARGOS.subtitulo),
+      introduccion: fidTexto(b.introduccion, FID_LARGOS.parrafo),
+      texto_boton: fidTexto(b.texto_boton, FID_LARGOS.boton) || "Enviar",
+      mensaje_exito: fidTexto(b.mensaje_exito, FID_LARGOS.parrafo),
+      texto_posterior: fidTexto(b.texto_posterior, FID_LARGOS.parrafo),
+      imagen: fidUrl(b.imagen),
+      consentimiento_texto: fidTexto(b.consentimiento_texto, FID_LARGOS.legal),
+      privacidad_url: fidUrl(b.privacidad_url),
+      abre_en: String(b.abre_en || "").slice(0, 10) || null,
+      cierra_en: String(b.cierra_en || "").slice(0, 10) || null,
+      campos: fidCampos(fidLeerLista(b.campos)),
+      estado: b.estado === "publicado" ? "publicado" : "borrador",
+    };
+    const check = fidValidarForm(cfg);
+    if (cfg.estado === "publicado" && !check.ok) {
+      return res.status(409).json({ ok: false, error: "No se puede publicar todavía", falta: check.falta });
+    }
+
+    const ahora = isoConOffset(Date.now());
+    const fila = await fidTransaccion(async (x) => {
+      await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [FID_CERROJO_REGLAS, 3]);
+      const ult = await x.get(`SELECT COALESCE(MAX(version), 0) AS v FROM fid_formularios WHERE clave = ?`, [clave]);
+      if (cfg.estado === "publicado") {
+        await x.run(`UPDATE fid_formularios SET estado = 'cerrado' WHERE clave = ? AND estado = 'publicado'`, [clave]);
+      }
+      const creado = await x.run(
+        `INSERT INTO fid_formularios (clave, version, campana, local, estado, titulo, subtitulo, introduccion,
+           texto_boton, mensaje_exito, texto_posterior, imagen, campos, consentimiento_texto,
+           privacidad_url, abre_en, cierra_en, creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
+        [clave, Number(ult?.v || 0) + 1, fidTexto(b.campana, 60) || null, local, cfg.estado, cfg.titulo,
+         cfg.subtitulo, cfg.introduccion, cfg.texto_boton, cfg.mensaje_exito, cfg.texto_posterior,
+         cfg.imagen, JSON.stringify(cfg.campos), cfg.consentimiento_texto, cfg.privacidad_url,
+         cfg.abre_en, cfg.cierra_en, ahora, req.user.username]);
+      if (!creado) throw new Error("el formulario no se ha insertado");
+      return creado;
+    });
+    await ficAuditar("fidelizacion", fila.id, "formulario_" + cfg.estado, req.user.username,
+      { local, detalle: { clave, version: fila.version, estado: cfg.estado } });
+    res.json({ ok: true, id: fila.id, version: fila.version, estado: cfg.estado, falta: check.falta });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] crear formulario", e));
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+// ── GRUPOS DE PRODUCTOS Y PROMOCIONES ────────────────────────────────────────
+
+/** Los grupos de un local, con sus versiones. Dirección y Marketing. */
+app.get("/api/fidelizacion/grupos", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const pedido = fidLocalDePeticion(req, req.query.local);
+    if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+    const filas = await dbAll(`SELECT * FROM fid_grupos WHERE local = ? ORDER BY clave, version DESC`,
+      [pedido.local]) || [];
+    res.json({ ok: true, local: pedido.local, data: filas.map((g) => ({ ...g, productos: fidLeerLista(g.productos) })) });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] grupos", e));
+    res.status(500).json({ ok: false, error: "No se pudieron leer" });
+  }
+});
+
+/**
+ * Una VERSIÓN NUEVA de un grupo. Nunca se edita una publicada.
+ *
+ * Los productos se eligen A MANO desde el catálogo. Interpretar «cualquier café» por el nombre
+ * metería un café irlandés de 6 € en un desayuno gratuito, y eso se descubre pagándolo.
+ */
+app.post("/api/fidelizacion/grupos", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const pedido = fidLocalDePeticion(req, b.local);
+    if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+    const clave = String(b.clave || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+    const nombre = String(b.nombre || "").trim().slice(0, 120);
+    if (!clave || !nombre) return res.status(400).json({ ok: false, error: "Hacen falta clave y nombre" });
+
+    const ids = [...new Set(fidLeerLista(b.productos).map((x) => String(x).slice(0, 40)))].slice(0, 500);
+    // Todos tienen que existir EN ESTE LOCAL y estar activos: un grupo con productos de otro sitio
+    // o dados de baja es un premio que el TPV no sabrá aplicar.
+    const encontrados = ids.length ? await dbAll(
+      `SELECT producto_id FROM fid_productos WHERE local = ? AND activo AND producto_id = ANY(?)`,
+      [pedido.local, ids]) : [];
+    const validos = new Set((encontrados || []).map((p) => String(p.producto_id)));
+    const faltan = ids.filter((i) => !validos.has(i));
+    if (faltan.length) {
+      return res.status(409).json({ ok: false,
+        error: `${faltan.length} producto(s) no están en el catálogo activo de este local.`, faltan });
+    }
+
+    const ahora = isoConOffset(Date.now());
+    const fila = await fidTransaccion(async (x) => {
+      await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [FID_CERROJO_REGLAS, 1]);
+      const ult = await x.get(`SELECT COALESCE(MAX(version), 0) AS v FROM fid_grupos WHERE local = ? AND clave = ?`,
+        [pedido.local, clave]);
+      const creado = await x.run(
+        `INSERT INTO fid_grupos (local, clave, version, nombre, descripcion, productos, estado, creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,?,?) RETURNING id, version`,
+        [pedido.local, clave, Number(ult?.v || 0) + 1, nombre, String(b.descripcion || "").slice(0, 300),
+         JSON.stringify(ids), b.estado === "publicado" ? "publicado" : "borrador", ahora, req.user.username]);
+      if (!creado) throw new Error("el grupo no se ha insertado");
+      return creado;
+    });
+    await ficAuditar("fidelizacion", fila.id, "grupo_creado", req.user.username,
+      { local: pedido.local, detalle: { clave, version: fila.version, productos: ids.length } });
+    res.json({ ok: true, id: fila.id, version: fila.version, productos: ids.length });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] crear grupo", e));
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+/** Las promociones, con sus versiones y su estado. */
+app.get("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const locales = localesPermitidos(req.user);
+    const filas = await dbAll(`SELECT * FROM fid_promos ORDER BY clave, version DESC LIMIT 500`) || [];
+    const mias = locales && locales.length ? filas.filter((f) => !f.local || locales.includes(f.local)) : filas;
+    res.json({ ok: true, tipos: FID_PROMO_TIPOS, estados: FID_PROMO_ESTADOS,
+      data: mias.map((p) => ({ ...p, grupos: fidLeerLista(p.grupos), dias: fidLeerLista(p.dias),
+        // El código de Ágora se ve —hace falta para comprobarlo allí— pero nunca un token nuestro.
+        codigo_comprobado: !!p.codigo_comprobado_en })) });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] promos", e));
+    res.status(500).json({ ok: false, error: "No se pudieron leer" });
+  }
+});
+
+/** Guardar una versión de promoción. Nace en BORRADOR salvo que se pida publicarla y se pueda. */
+app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!FID_PROMO_TIPOS[String(b.tipo)]) return res.status(400).json({ ok: false, error: "Tipo no válido" });
+    let local = null;
+    if (b.local) {
+      const pedido = fidLocalDePeticion(req, b.local);
+      if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+      local = pedido.local;
+    }
+    const clave = String(b.clave || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+    if (!clave) return res.status(400).json({ ok: false, error: "Falta la clave" });
+
+    const quierePublicar = b.estado === "publicada";
+    const promo = {
+      clave, local, tipo: String(b.tipo),
+      nombre: String(b.nombre || "").trim().slice(0, 120),
+      texto_cliente: String(b.texto_cliente || "").trim().slice(0, 400),
+      texto_camarero: String(b.texto_camarero || "").trim().slice(0, 120),
+      codigo_agora: String(b.codigo_agora || "").trim().slice(0, 60) || null,
+      codigo_comprobado_en: b.codigo_comprobado ? isoConOffset(Date.now()) : null,
+      valor: b.valor === undefined || b.valor === null || b.valor === "" ? null : Number(b.valor),
+      coste_puntos: Math.max(0, parseInt(b.coste_puntos) || 0),
+      compra_minima: Math.max(0, Number(b.compra_minima) || 0),
+      grupos: JSON.stringify(fidLeerLista(b.grupos).slice(0, 20)),
+      dias: JSON.stringify(fidLeerLista(b.dias).map(Number).filter((d) => d >= 0 && d <= 6)),
+      hora_desde: String(b.hora_desde || "").slice(0, 5) || null,
+      hora_hasta: String(b.hora_hasta || "").slice(0, 5) || null,
+      desde: String(b.desde || "").slice(0, 10) || null,
+      hasta: String(b.hasta || "").slice(0, 10) || null,
+      limite_cuenta: Math.max(0, parseInt(b.limite_cuenta) ?? 1),
+      limite_total: Math.max(0, parseInt(b.limite_total) || 0),
+      acumulable: b.acumulable === true,
+      prioridad: parseInt(b.prioridad) || 0,
+      gracia_minutos: b.gracia_minutos === undefined || b.gracia_minutos === null
+        ? FID_GRACIA_DEFECTO : Math.min(FID_GRACIA_MAX, Math.max(0, parseInt(b.gracia_minutos) || 0)),
+      campana: String(b.campana || "").trim().slice(0, 60) || null,
+    };
+
+    // Los grupos que referencia, para poder comprobar que no están vacíos.
+    const grupos = {};
+    let catalogo = null;
+    if (local) {
+      const c = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_productos WHERE local = ? AND activo`, [local]);
+      catalogo = c ? c.n : 0;
+      for (const g of fidLeerLista(promo.grupos)) {
+        const fila = await dbGet(`SELECT productos FROM fid_grupos WHERE local = ? AND clave = ? AND version = ?`,
+          [local, String(g.clave), parseInt(g.version)]);
+        grupos[`${g.clave}:${g.version}`] = fila ? fidLeerLista(fila.productos) : null;
+      }
+    }
+
+    const check = fidPuedePublicar(promo, { grupos, catalogo });
+    if (quierePublicar && !check.ok) {
+      return res.status(409).json({ ok: false, error: "No se puede publicar todavía", falta: check.falta });
+    }
+    const estado = quierePublicar ? "publicada" : "borrador";
+    // El `reward_id` solo se genera al PUBLICAR: un borrador no tiene nada que ofrecer.
+    const rewardId = quierePublicar ? "fidp:" + crypto.randomBytes(12).toString("base64url") : null;
+    const ahora = isoConOffset(Date.now());
+
+    const fila = await fidTransaccion(async (x) => {
+      await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [FID_CERROJO_REGLAS, 2]);
+      const ult = await x.get(`SELECT COALESCE(MAX(version), 0) AS v FROM fid_promos WHERE clave = ?`, [clave]);
+      // Publicar una versión nueva FINALIZA la anterior publicada de la misma clave.
+      if (quierePublicar) {
+        await x.run(`UPDATE fid_promos SET estado = 'finalizada' WHERE clave = ? AND estado = 'publicada'`, [clave]);
+      }
+      const creada = await x.run(
+        `INSERT INTO fid_promos (clave, version, local, nombre, texto_cliente, texto_camarero, tipo,
+           codigo_agora, codigo_comprobado_en, codigo_comprobado_por, valor, coste_puntos, compra_minima,
+           grupos, dias, hora_desde, hora_hasta, desde, hasta, limite_cuenta, limite_total, acumulable,
+           prioridad, estado, gracia_minutos, reward_id, campana, creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
+        [clave, Number(ult?.v || 0) + 1, local, promo.nombre, promo.texto_cliente, promo.texto_camarero,
+         promo.tipo, promo.codigo_agora, promo.codigo_comprobado_en,
+         promo.codigo_comprobado_en ? req.user.username : null, promo.valor, promo.coste_puntos,
+         promo.compra_minima, promo.grupos, promo.dias, promo.hora_desde, promo.hora_hasta,
+         promo.desde, promo.hasta, promo.limite_cuenta, promo.limite_total, promo.acumulable,
+         promo.prioridad, estado, promo.gracia_minutos, rewardId, promo.campana, ahora, req.user.username]);
+      if (!creada) throw new Error("la promoción no se ha insertado");
+      return creada;
+    });
+
+    await ficAuditar("fidelizacion", fila.id, quierePublicar ? "promo_publicada" : "promo_borrador",
+      req.user.username, { local, detalle: { clave, version: fila.version, tipo: promo.tipo, estado } });
+    res.json({ ok: true, id: fila.id, version: fila.version, estado, falta: check.falta });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] crear promo", e));
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+/** Pausar o finalizar una promoción publicada. Pausar es el freno; finalizar es el punto final. */
+app.post("/api/fidelizacion/promos/:id/estado", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const hacia = String(req.body?.estado || "");
+    if (!["pausada", "publicada", "finalizada"].includes(hacia)) {
+      return res.status(400).json({ ok: false, error: "Estado no válido" });
+    }
+    const p = await dbGet(`SELECT * FROM fid_promos WHERE id = ?`, [parseInt(req.params.id)]);
+    if (!p) return res.status(404).json({ ok: false, error: "No existe" });
+    if (p.local && !fidPuedeVer(req, p.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
+    if (p.estado === "borrador") return res.status(409).json({ ok: false, error: "Un borrador se publica guardándolo." });
+    if (p.estado === "finalizada") return res.status(409).json({ ok: false, error: "Ya está finalizada." });
+
+    const tocada = await dbRun(`UPDATE fid_promos SET estado = ? WHERE id = ? AND estado <> 'finalizada' RETURNING id`,
+      [hacia, p.id]);
+    if (!tocada) return res.status(409).json({ ok: false, error: "Ha cambiado de estado. Vuelve a cargar." });
+    await ficAuditar("fidelizacion", p.id, "promo_" + hacia, req.user.username,
+      { local: p.local, detalle: { clave: p.clave, version: p.version, desde: p.estado, hacia } });
+    res.json({ ok: true, estado: hacia });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] estado promo", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
+/** El simulador de una promoción: los escenarios que se equivocan de verdad. */
+app.post("/api/fidelizacion/promos/simular", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const b = req.body || {};
+    const promo = { ...b, estado: "publicada", reward_id: b.reward_id || "fidp:simulacion",
+      grupos: fidLeerLista(b.grupos), dias: fidLeerLista(b.dias) };
+    const local = promo.local || (LOCALES_CANON[0] || null);
+    const cuando = b.ahora || isoConOffset(Date.now());
+    const m = fidEnMadrid(cuando);
+
+    const escenarios = [
+      { nombre: "Cuenta elegible", ahora: cuando, local, usos: 0, usosTotales: 0, saldo: 100000, importeCentimos: 999999 },
+      { nombre: "Premio ya utilizado", ahora: cuando, local, usos: 99, usosTotales: 0, saldo: 100000, importeCentimos: 999999 },
+      { nombre: "Unidades agotadas", ahora: cuando, local, usos: 0, usosTotales: 999999, saldo: 100000, importeCentimos: 999999 },
+      { nombre: "Sin puntos suficientes", ahora: cuando, local, usos: 0, usosTotales: 0, saldo: 0, importeCentimos: 999999 },
+      { nombre: "Cuenta por debajo del mínimo", ahora: cuando, local, usos: 0, usosTotales: 0, saldo: 100000, importeCentimos: 0 },
+      { nombre: "Local incorrecto", ahora: cuando, local: "Oficina", usos: 0, usosTotales: 0, saldo: 100000, importeCentimos: 999999 },
+      { nombre: "Fuera de fecha", ahora: "1999-01-01T10:00:00Z", local, usos: 0, usosTotales: 0, saldo: 100000, importeCentimos: 999999 },
+    ];
+
+    // Los productos elegibles, resueltos: es lo que contesta «¿qué café entra exactamente?».
+    const productos = [];
+    if (promo.local) {
+      for (const g of fidLeerLista(promo.grupos)) {
+        const fila = await dbGet(`SELECT nombre, productos FROM fid_grupos WHERE local = ? AND clave = ? AND version = ?`,
+          [promo.local, String(g.clave), parseInt(g.version)]);
+        const ids = fila ? fidLeerLista(fila.productos) : [];
+        const nombres = ids.length ? await dbAll(
+          `SELECT producto_id, nombre, activo FROM fid_productos WHERE local = ? AND producto_id = ANY(?)`,
+          [promo.local, ids.map(String)]) : [];
+        productos.push({ grupo: g.clave, version: g.version, nombre: fila?.nombre || null,
+          productos: (nombres || []).map((n) => ({ id: n.producto_id, nombre: n.nombre, activo: n.activo })) });
+      }
+    }
+
+    res.json({ ok: true, madrid: m, escenarios: fidSimularPromo(promo, escenarios),
+      reward: fidRewardDePromo(promo), productos,
+      publicar: fidPuedePublicar(promo, { grupos: Object.fromEntries(productos.map((p) =>
+        [`${p.grupo}:${p.version}`, p.productos.map((q) => q.id)])) }),
+      explicaciones: FID_PROMO_EXPLICA });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] simular promo", e));
+    res.status(500).json({ ok: false, error: "No se pudo simular" });
+  }
+});
+
+/**
+ * LA PROPUESTA DE UNA CAMPAÑA. Valores sugeridos, NO una campaña creada.
+ *
+ * Esto NO inserta nada. Devuelve un formulario relleno con lo acordado para que alguien lo mire,
+ * elija los productos y le dé a guardar. La diferencia importa: una campaña que aparece sola es
+ * una promesa a clientes que nadie ha revisado, y el día que se publique un despliegue la volvería
+ * a crear.
+ *
+ * Lo que NO se puede proponer es qué cafés y qué bocadillos entran: eso se elige del catálogo
+ * sincronizado, a mano. Interpretar «cualquier café» por el nombre metería un café irlandés de 6 €
+ * en un desayuno gratuito, y se descubriría pagándolo.
+ */
+app.get("/api/fidelizacion/campanas/propuesta/:clave", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const PROPUESTAS = {
+    "desayuno-girona": {
+      clave: "desayuno-girona",
+      nombre: "Desayuno gratuito Girona",
+      local: "La Tapeta - Girona",
+      tipo: "campana_unica",
+      texto_cliente: "Tu desayuno gratis: un café y un bocadillo a elegir.",
+      texto_camarero: "Desayuno gratis (campaña Girona)",
+      desde: "2026-10-01",
+      hasta: "2026-10-01",
+      hora_desde: "08:00",
+      hora_hasta: "12:00",
+      dias: [],
+      compra_minima: 0,
+      coste_puntos: 0,
+      limite_cuenta: 1,
+      limite_total: 0,
+      acumulable: false,
+      prioridad: 10,
+      campana: "desayuno-girona",
+      grupos_sugeridos: [
+        { clave: "cafes", nombre: "Cafés del desayuno" },
+        { clave: "bocadillos", nombre: "Bocadillos del desayuno" },
+      ],
+      notas: [
+        "Solo el 1 de octubre de 2026, en hora de Madrid.",
+        "Un desayuno por cuenta. Una cuenta es un teléfono normalizado.",
+        "No acumulable con ningún otro premio.",
+        "Sin consumo mínimo.",
+        "Los cafés y los bocadillos se eligen del catálogo sincronizado de Girona: no se pueden proponer.",
+        "El código de Offer tiene que existir en el Ágora de Girona como promoción de «Sólo clientes y tickets seleccionados». Si no existe, Ágora ignora el premio en silencio.",
+      ],
+    },
+  };
+  const p = PROPUESTAS[String(req.params.clave)];
+  if (!p) return res.status(404).json({ ok: false, error: "No hay ninguna propuesta con esa clave" });
+
+  // Qué falta HOY para poder publicarla. Se comprueba de verdad, no se promete.
+  const bloqueos = [];
+  try {
+    const integ = await dbGet(
+      `SELECT activo, revocado_en, workplace_confirmado_en FROM fid_integraciones
+        WHERE local = ? ORDER BY (revocado_en IS NULL) DESC, id DESC LIMIT 1`, [p.local]);
+    if (!integ || integ.revocado_en || !integ.activo) bloqueos.push(`${p.local} no tiene la integración activa.`);
+    else if (!integ.workplace_confirmado_en) bloqueos.push(`${p.local} tiene la integración sin el Workplace confirmado.`);
+
+    const cat = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_productos WHERE local = ? AND activo`, [p.local]);
+    if (!cat || !cat.n) bloqueos.push(`El catálogo de ${p.local} no está sincronizado.`);
+
+    const sal = await dbGet(`SELECT host, token FROM agora_locales WHERE local = ?`, [p.local]);
+    if (!sal || !sal.host || !agoraDecToken(sal.token)) {
+      bloqueos.push(`${p.local} no tiene conexión saliente con Ágora (hace falta para sincronizar el catálogo).`);
+    }
+    for (const g of p.grupos_sugeridos) {
+      const fila = await dbGet(`SELECT productos FROM fid_grupos WHERE local = ? AND clave = ?
+                                ORDER BY version DESC LIMIT 1`, [p.local, g.clave]);
+      const n = fila ? fidLeerLista(fila.productos).length : 0;
+      if (!n) bloqueos.push(`El grupo «${g.nombre}» todavía no tiene productos elegidos.`);
+    }
+  } catch (e) { console.error(lineaErrorSql("[fidelizacion] propuesta", e)); }
+
+  res.json({ ok: true, propuesta: p, bloqueos,
+    aviso: "Esto es una PROPUESTA. No se ha creado nada: revísala, elige los productos y guárdala como borrador." });
+});
+
+// ── LA TARJETA DEL CLIENTE, CONFIGURABLE ─────────────────────────────────────
+
+/** La configuración de la tarjeta, con sus versiones. */
+app.get("/api/fidelizacion/tarjeta-config", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const filas = await dbAll(`SELECT * FROM fid_tarjeta_config ORDER BY version DESC LIMIT 50`) || [];
+    res.json({ ok: true, paletas: FID_PALETAS, data: filas.map((c) => ({ ...c, faq: fidLeerLista(c.faq),
+      orden_bloques: fidLeerLista(c.orden_bloques) })) });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] tarjeta config", e));
+    res.status(500).json({ ok: false, error: "No se pudo leer" });
+  }
+});
+
+/**
+ * Una versión nueva de la tarjeta. Todo el texto pasa por `textoSeguro` y el color sale de la
+ * PALETA CERRADA: dejar escribir un color libre es dejar escribir lo que sea dentro de un estilo.
+ */
+app.post("/api/fidelizacion/tarjeta-config", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const publicar = b.estado === "publicada";
+    const cfg = {
+      mostrar_puntos: b.mostrar_puntos !== false,
+      titulo: fidTexto(b.titulo, FID_LARGOS.titulo),
+      explicacion: fidTexto(b.explicacion, FID_LARGOS.parrafo),
+      paleta: FID_PALETAS[String(b.paleta)] ? String(b.paleta) : "verde",
+      imagen: fidUrl(b.imagen),
+      texto_progreso: fidTexto(b.texto_progreso, FID_LARGOS.subtitulo),
+      texto_recompensa: fidTexto(b.texto_recompensa, FID_LARGOS.subtitulo),
+      texto_sin_saldo: fidTexto(b.texto_sin_saldo, FID_LARGOS.subtitulo),
+      texto_preparacion: fidTexto(b.texto_preparacion, FID_LARGOS.parrafo),
+      faq: fidLeerLista(b.faq).slice(0, 20).map((q) => ({
+        p: fidTexto(q?.p, FID_LARGOS.subtitulo), r: fidTexto(q?.r, FID_LARGOS.parrafo) }))
+        .filter((q) => q.p && q.r),
+      condiciones: fidTexto(b.condiciones, FID_LARGOS.legal),
+      orden_bloques: fidLeerLista(b.orden_bloques)
+        .map((x) => String(x)).filter((x) => ["puntos", "visitas", "promociones", "descuentos", "historial"].includes(x)),
+      contacto: fidTexto(b.contacto, FID_LARGOS.subtitulo),
+      privacidad_url: fidUrl(b.privacidad_url),
+    };
+    const ahora = isoConOffset(Date.now());
+    const fila = await fidTransaccion(async (x) => {
+      await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [FID_CERROJO_REGLAS, 4]);
+      const ult = await x.get(`SELECT COALESCE(MAX(version), 0) AS v FROM fid_tarjeta_config`);
+      if (publicar) await x.run(`UPDATE fid_tarjeta_config SET estado = 'retirada' WHERE estado = 'publicada'`);
+      const creada = await x.run(
+        `INSERT INTO fid_tarjeta_config (version, estado, mostrar_puntos, titulo, explicacion, paleta,
+           imagen, texto_progreso, texto_recompensa, texto_sin_saldo, texto_preparacion, faq,
+           condiciones, orden_bloques, contacto, privacidad_url, creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
+        [Number(ult?.v || 0) + 1, publicar ? "publicada" : "borrador", cfg.mostrar_puntos, cfg.titulo,
+         cfg.explicacion, cfg.paleta, cfg.imagen, cfg.texto_progreso, cfg.texto_recompensa,
+         cfg.texto_sin_saldo, cfg.texto_preparacion, JSON.stringify(cfg.faq), cfg.condiciones,
+         JSON.stringify(cfg.orden_bloques), cfg.contacto, cfg.privacidad_url, ahora, req.user.username]);
+      if (!creada) throw new Error("la configuración no se ha insertado");
+      return creada;
+    });
+    await ficAuditar("fidelizacion", fila.id, publicar ? "tarjeta_publicada" : "tarjeta_borrador",
+      req.user.username, { detalle: { version: fila.version, paleta: cfg.paleta } });
+    res.json({ ok: true, id: fila.id, version: fila.version, estado: publicar ? "publicada" : "borrador" });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] guardar tarjeta", e));
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+// ── EL CATÁLOGO DE PRODUCTOS DE ÁGORA ────────────────────────────────────────
+
+/**
+ * SINCRONIZA EL CATÁLOGO DE UN LOCAL. Manual, y de uno en uno.
+ *
+ * `GET /api/export-master/?filter=Vats,Families,PriceLists,Products` con `Api-Token`. Se piden los
+ * cuatro filtros juntos porque el producto solo trae identificadores: el porcentaje de IVA, la
+ * familia y la tarifa viven en sus propias colecciones. No se deducen por el nombre.
+ *
+ * UN LOCAL NO AFECTA A OTRO: cada llamada es independiente, y un TPV apagado —que pasa todos los
+ * días, porque solo responde con el local abierto— deja a los demás sincronizando igual.
+ *
+ * NUNCA sale el host ni el token: ni en la respuesta, ni en el registro, ni en la auditoría. Una
+ * pantalla de error es exactamente donde acaban apareciendo si no se piensa en ella.
+ */
+app.post("/api/fidelizacion/catalogo/sincronizar", requireAuth(PROMOS_ROLES), async (req, res) => {
+  const t0 = Date.now();
+  let local = null;
+  try {
+    const pedido = fidLocalDePeticion(req, req.body?.local);
+    if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+    local = pedido.local;
+
+    const cfg = await dbGet(`SELECT local, host, token FROM agora_locales WHERE local = ?`, [local]);
+    const token = cfg ? agoraDecToken(cfg.token) : null;
+    if (!cfg || !cfg.host || !token) {
+      // Se dice QUÉ falta, nunca qué hay puesto.
+      return res.status(409).json({ ok: false,
+        error: "Este local no tiene conexión saliente con Ágora configurada (hace falta el host y el Api-Token).",
+        falta: { host: !cfg?.host, token: !token } });
+    }
+
+    const url = fidUrlMaestro(cfg.host);
+    let json = null, apiVersion = null;
+    try {
+      const r = await agoraFetchMaestro(url, token);
+      json = r.json; apiVersion = r.apiVersion;
+    } catch (e) {
+      const linea = fidErrorSync(e, { host: cfg.host, token });
+      await dbRun(`INSERT INTO fid_sincronizaciones (local, ok, error, ms, lanzado_por, creado_en)
+                   VALUES (?,FALSE,?,?,?,?)`, [local, linea, Date.now() - t0, req.user.username, isoConOffset(Date.now())]);
+      return res.status(502).json({ ok: false, error: `No se ha podido leer el catálogo: ${linea}` });
+    }
+
+    const norm = fidNormalizarMaestro(json, { local });
+    const actuales = await dbAll(
+      `SELECT producto_id, nombre, familia_id, vat_id, precio, activo, formato_base_id
+         FROM fid_productos WHERE local = ?`, [local]) || [];
+    const dif = fidCompararCatalogo(actuales, norm.productos);
+
+    const ahora = isoConOffset(Date.now());
+    // UPSERT, sin borrar nada. Lo que desaparece se marca inactivo.
+    for (const p of [...dif.anadidos, ...dif.actualizados]) {
+      await dbRun(
+        `INSERT INTO fid_productos (local, producto_id, nombre, familia_id, familia, vat_id, iva, precio,
+           tarifa_id, tarifa, precio_campo, formato_base_id, formatos, boton, plu, codigo_barras,
+           por_peso, vendible_principal, vendible_complemento, baja_en, activo, sincronizado_en, creado_en)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT (local, producto_id) DO UPDATE SET
+           nombre = EXCLUDED.nombre, familia_id = EXCLUDED.familia_id, familia = EXCLUDED.familia,
+           vat_id = EXCLUDED.vat_id, iva = EXCLUDED.iva, precio = EXCLUDED.precio,
+           tarifa_id = EXCLUDED.tarifa_id, tarifa = EXCLUDED.tarifa, precio_campo = EXCLUDED.precio_campo,
+           formato_base_id = EXCLUDED.formato_base_id, formatos = EXCLUDED.formatos,
+           boton = EXCLUDED.boton, plu = EXCLUDED.plu, codigo_barras = EXCLUDED.codigo_barras,
+           por_peso = EXCLUDED.por_peso, vendible_principal = EXCLUDED.vendible_principal,
+           vendible_complemento = EXCLUDED.vendible_complemento, baja_en = EXCLUDED.baja_en,
+           activo = EXCLUDED.activo, sincronizado_en = EXCLUDED.sincronizado_en`,
+        [local, p.producto_id, p.nombre, p.familia_id, p.familia, p.vat_id, p.iva, p.precio,
+         p.tarifa_id, p.tarifa, p.precio_campo, p.formato_base_id, JSON.stringify(p.formatos || []),
+         p.boton, p.plu, p.codigo_barras, p.por_peso, p.vendible_principal, p.vendible_complemento,
+         p.baja_en, p.activo, ahora, ahora]);
+    }
+    for (const p of dif.inactivados) {
+      await dbRun(`UPDATE fid_productos SET activo = FALSE, sincronizado_en = ?
+                   WHERE local = ? AND producto_id = ?`, [ahora, local, p.producto_id]);
+    }
+
+    await dbRun(
+      `INSERT INTO fid_sincronizaciones (local, ok, api_version, anadidos, actualizados, inactivados,
+         descartados, total, ms, avisos, lanzado_por, creado_en)
+       VALUES (?,TRUE,?,?,?,?,?,?,?,?,?,?)`,
+      [local, apiVersion, dif.resumen.anadidos, dif.resumen.actualizados, dif.resumen.inactivados,
+       norm.descartados.length, dif.resumen.total, Date.now() - t0,
+       JSON.stringify(norm.avisos).slice(0, 2000), req.user.username, ahora]);
+    await ficAuditar("fidelizacion", null, "catalogo_sincronizado", req.user.username,
+      { local, detalle: { ...dif.resumen, descartados: norm.descartados.length, api_version: apiVersion } });
+
+    res.json({ ok: true, local, api_version: apiVersion, ...dif.resumen,
+      descartados: norm.descartados, avisos: norm.avisos, diccionarios: norm.diccionarios });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] catalogo", e));
+    res.status(500).json({ ok: false, error: "No se pudo sincronizar" });
+  }
+});
+
+/** La llamada de verdad. Aparte para que el token no se pasee por el manejador. */
+async function agoraFetchMaestro(url, token) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);   // un maestro entero puede tardar
+  try {
+    const r = await fetch(url, { headers: { "Api-Token": token, Accept: "application/json" }, signal: ctrl.signal });
+    const apiVersion = String(r.headers.get("Api-Version") || "").slice(0, 40) || null;
+    const texto = await r.text();
+    if (!r.ok) { const e = new Error(`HTTP ${r.status}`); e.status = r.status; throw e; }
+    let json = null;
+    try { json = JSON.parse(texto); } catch { const e = new Error("respuesta no es JSON"); e.code = "NO_JSON"; throw e; }
+    return { json, apiVersion };
+  } catch (e) {
+    if (e && e.name === "AbortError") { const x = new Error("timeout"); x.code = "TIMEOUT"; throw x; }
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+
+/** El catálogo guardado, con búsqueda por nombre y por familia. */
+app.get("/api/fidelizacion/catalogo", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const pedido = fidLocalDePeticion(req, req.query.local);
+    if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+    const q = String(req.query.q || "").trim().toLowerCase();
+    const familia = String(req.query.familia || "").trim();
+    const soloActivos = req.query.activos !== "0";
+
+    const filas = await dbAll(
+      `SELECT producto_id, nombre, familia_id, familia, iva, precio, tarifa, activo, baja_en, sincronizado_en
+         FROM fid_productos WHERE local = ? ${soloActivos ? "AND activo" : ""}
+         ${familia ? "AND familia_id = ?" : ""}
+         ORDER BY familia NULLS LAST, nombre LIMIT 1000`,
+      familia ? [pedido.local, familia] : [pedido.local]) || [];
+    const data = q ? filas.filter((f) => String(f.nombre).toLowerCase().includes(q)) : filas;
+
+    const familias = [...new Map(filas.filter((f) => f.familia_id)
+      .map((f) => [f.familia_id, { id: f.familia_id, nombre: f.familia }])).values()];
+    const ultima = await dbGet(
+      `SELECT ok, api_version, anadidos, actualizados, inactivados, descartados, total, error, creado_en
+         FROM fid_sincronizaciones WHERE local = ? ORDER BY id DESC LIMIT 1`, [pedido.local]);
+
+    res.json({ ok: true, local: pedido.local, data, familias, ultima_sincronizacion: ultima || null });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] leer catalogo", e));
+    res.status(500).json({ ok: false, error: "No se pudo leer" });
+  }
+});
+
 // ── El programa de puntos: reglas, interruptores y trazabilidad ──────────────
 //
 // DIRECCIÓN Y MARKETING. Aquí se administra el programa comercial —cuántos puntos, qué descuento,
@@ -18716,6 +20012,9 @@ app.post("/api/fidelizacion/reglas", requireAuth(PROMOS_ROLES), async (req, res)
     };
     const faltan = Object.entries(campos).filter(([, v]) => v === null).map(([k]) => k);
     if (faltan.length) return res.status(400).json({ ok: false, error: `Valores no válidos: ${faltan.join(", ")}` });
+    const estadoRegla = FID_ESTADOS_REGLA.includes(String(b.estado)) ? String(b.estado) : "borrador";
+    const nombreR = String(b.nombre || "").trim().slice(0, 120) || null;
+    const descR = String(b.descripcion || "").trim().slice(0, 400) || null;
     if (b.redondeo && b.redondeo !== "floor") {
       // Solo `floor` está acordado. Aceptar otros sin haberlos decidido dejaría puesto un
       // comportamiento que nadie ha aprobado, y afecta a cuántos puntos gana cada cliente.
@@ -18757,11 +20056,13 @@ app.post("/api/fidelizacion/reglas", requireAuth(PROMOS_ROLES), async (req, res)
         [desde, ambito, local || ""]);
 
       const creada = await x.run(
-        `INSERT INTO fid_reglas (ambito, local, version, activa, reward_id, gracia_minutos,
-           puntos_por_euro, redondeo, puntos_necesarios, descuento_euros, consumo_minimo,
-           caducidad_meses, max_rewards_factura, vigente_desde, vigente_hasta, creado_en, creado_por)
-         VALUES (?,?,?,?,?,?,?,'floor',?,?,?,?,?,?,?,?,?) RETURNING id, version, reward_id`,
-        [ambito, local, Number(ult?.v || 0) + 1, b.activa !== false, rewardId, campos.gracia_minutos,
+        `INSERT INTO fid_reglas (ambito, local, version, activa, estado, nombre, descripcion,
+           reward_id, gracia_minutos, puntos_por_euro, redondeo, puntos_necesarios, descuento_euros,
+           consumo_minimo, caducidad_meses, max_rewards_factura, vigente_desde, vigente_hasta,
+           creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,?,?,?,'floor',?,?,?,?,?,?,?,?,?) RETURNING id, version, reward_id`,
+        [ambito, local, Number(ult?.v || 0) + 1, estadoRegla === "publicada", estadoRegla, nombreR, descR,
+         rewardId, campos.gracia_minutos,
          campos.puntos_por_euro, campos.puntos_necesarios, campos.descuento_euros,
          campos.consumo_minimo, campos.caducidad_meses, campos.max_rewards_factura,
          desde, b.vigente_hasta || null, ahora, req.user.username]);
@@ -18772,11 +20073,55 @@ app.post("/api/fidelizacion/reglas", requireAuth(PROMOS_ROLES), async (req, res)
     });
 
     await ficAuditar("fidelizacion", fila.id, "regla_creada", req.user.username,
-      { local: local || null, detalle: { ambito, version: fila.version, ...campos } });
-    res.json({ ok: true, id: fila.id, version: fila.version });
+      { local: local || null, detalle: { ambito, version: fila.version, estado: estadoRegla, ...campos } });
+    res.json({ ok: true, id: fila.id, version: fila.version, estado: estadoRegla });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] crear regla", e));
     res.status(500).json({ ok: false, error: "No se pudo guardar la regla" });
+  }
+});
+
+/**
+ * EL SIMULADOR. Qué haría una regla, ANTES de publicarla.
+ *
+ * No guarda nada: recibe los valores que hay escritos en el formulario y devuelve frases. Los
+ * números de un programa de puntos no se ven hasta que alguien los pone en un caso concreto, y el
+ * caso del descuento es el que descubre los errores —si el mínimo se pone por debajo del descuento,
+ * la cuenta mínima no llegaría a cumplirlo y nadie lo vería en un formulario—.
+ */
+app.post("/api/fidelizacion/reglas/simular", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const b = req.body || {};
+    const regla = {
+      puntos_por_euro: Number(b.puntos_por_euro), redondeo: "floor",
+      puntos_necesarios: Number(b.puntos_necesarios), descuento_euros: Number(b.descuento_euros),
+      consumo_minimo: Number(b.consumo_minimo), caducidad_meses: Number(b.caducidad_meses),
+    };
+    for (const [k, v] of Object.entries(regla)) {
+      if (k !== "redondeo" && !Number.isFinite(v)) {
+        return res.status(400).json({ ok: false, error: `Falta un valor: ${k}` });
+      }
+    }
+    // El coste se estima sobre datos de sombra REALES del local. Sin ellos no se inventa una cifra.
+    let sombra = null;
+    if (b.local) {
+      const pedido = fidLocalDePeticion(req, b.local);
+      if (pedido.ok) {
+        const r = await dbGet(
+          `SELECT COUNT(*)::int AS facturas, COALESCE(SUM(puntos_calculados),0)::int AS puntos_totales,
+                  COALESCE(SUM(importe_pagado_centimos),0)::int AS centimos
+             FROM fid_sombra WHERE local = ? AND puntos_calculados IS NOT NULL`, [pedido.local]);
+        if (r && r.facturas > 0) {
+          sombra = { facturas: r.facturas, puntos_totales: r.puntos_totales, importe_total: fidAEuros(r.centimos) };
+        }
+      }
+    }
+    res.json({ ok: true, ...fidSimular(regla, { sombra }),
+      texto_camarero: fidTextoReward(regla) });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] simular", e));
+    res.status(500).json({ ok: false, error: "No se pudo simular" });
   }
 });
 
@@ -18824,6 +20169,144 @@ app.get("/api/fidelizacion/revisiones", requireAuth(PROMOS_ROLES), async (req, r
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] revisiones", e));
     res.status(500).json({ ok: false, error: "No se pudieron leer" });
+  }
+});
+
+/**
+ * EL DETALLE DE UNA REVISIÓN, con lo que hace falta para decidir.
+ *
+ * Incluye una PROPUESTA de ajuste, marcada como tal. La calcula el servidor a partir de lo que sí
+ * sabemos —los puntos que concedió la factura, el importe devuelto— pero NO se aplica sola: de
+ * estos casos no tenemos una prueba real, y adivinar aquí es tocar el saldo de alguien.
+ */
+app.get("/api/fidelizacion/revisiones/:id", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const r = await dbGet(`SELECT * FROM fid_revisiones WHERE id = ?`, [parseInt(req.params.id)]);
+    if (!r) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!fidPuedeVer(req, r.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
+
+    const f = await dbGet(`SELECT id, local, global_id, importe_total, importe_centimos, recibido_en,
+      devolucion, tipo_documento, devolucion_de FROM fid_facturas WHERE id = ?`, [r.factura_id]);
+
+    // Los movimientos de ESA factura, que es lo que explica qué pasó.
+    const movs = await dbAll(`SELECT id, qr_id, concepto, punto_tipo, unidades, importe, lote_id,
+      caduca_en, regla_version, creado_en FROM fid_movimientos WHERE factura_id = ? ORDER BY id`,
+      [r.factura_id]) || [];
+    const qrId = movs.length ? movs[0].qr_id : null;
+
+    let socio = null;
+    if (qrId) {
+      const qr = await fidCarnetPorId(qrId);
+      const s = await fidSaldoDe(qrId, isoConOffset(Date.now()));
+      // Ni teléfono ni token: el nombre de pila basta para saber de quién se habla.
+      socio = qr ? { qr_id: qr.id, nombre: qr.nombre || null, saldo: s.disponible } : null;
+    }
+
+    // La ORIGINAL, si esto es una devolución: es contra ella contra lo que se compara.
+    let original = null;
+    if (f?.devolucion_de) {
+      original = await dbGet(`SELECT id, global_id, importe_centimos, recibido_en FROM fid_facturas WHERE id = ?`,
+        [f.devolucion_de]) || null;
+    }
+    const ganados = movs.filter((m) => m.punto_tipo === "ganados").reduce((a, m) => a + Number(m.unidades || 0), 0);
+    const consumidos = -movs.filter((m) => m.punto_tipo === "consumidos").reduce((a, m) => a + Number(m.unidades || 0), 0);
+
+    // LA PROPUESTA. Solo se calcula donde hay una base clara; si no, se dice que no la hay.
+    let propuesta = null;
+    if (r.motivo === "devolucion_parcial" && original && Number(original.importe_centimos) > 0) {
+      const parte = Math.abs(Number(f.importe_centimos) || 0) / Number(original.importe_centimos);
+      propuesta = { tipo: "restar", puntos: Math.min(ganados, Math.floor(ganados * parte)),
+        explicacion: `Se ha devuelto el ${Math.round(parte * 100)} % del importe original. `
+          + `Proporcionalmente serían ${Math.floor(ganados * parte)} de los ${ganados} puntos concedidos.` };
+    } else if (r.motivo === "varios_socios") {
+      propuesta = { tipo: "ninguno", puntos: 0,
+        explicacion: "Con varios socios no sabemos a quién corresponde el consumo. No hay reparto que proponer." };
+    }
+
+    res.json({ ok: true, revision: { id: r.id, motivo: r.motivo, local: r.local, creado_en: r.creado_en,
+        resuelto_en: r.resuelto_en, resuelto_por: r.resuelto_por, nota: r.nota_resolucion },
+      factura: f ? { id: f.id, global_id: String(f.global_id || "").slice(0, 40), recibido_en: f.recibido_en,
+        importe: fidAEuros(f.importe_centimos), devolucion: !!f.devolucion, tipo: f.tipo_documento } : null,
+      original: original ? { id: original.id, importe: fidAEuros(original.importe_centimos),
+        recibido_en: original.recibido_en } : null,
+      socio, puntos: { ganados, consumidos },
+      movimientos: movs.map((m) => ({ concepto: m.concepto, tipo: m.punto_tipo, unidades: m.unidades,
+        importe: m.importe, fecha: m.creado_en, regla_version: m.regla_version })),
+      propuesta,
+      aviso: "Esto es una PROPUESTA. No se ha aplicado nada." });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] revision", e));
+    res.status(500).json({ ok: false, error: "No se pudo leer" });
+  }
+});
+
+/**
+ * RESOLVER UNA REVISIÓN. Con o sin ajuste, pero SIEMPRE con motivo.
+ *
+ * EL AJUSTE ES UN MOVIMIENTO COMPENSATORIO, nunca una edición del saldo. No hay saldo que editar:
+ * es la suma del libro. Escribir `punto_tipo = 'ajuste'` con su autor y su motivo deja el rastro de
+ * quién decidió qué, y permite deshacerlo mañana con otro movimiento si fue un error.
+ *
+ * Un ajuste que CONCEDE puntos crea su propio lote, con la caducidad de la regla vigente: si no
+ * caducara, sería un saldo eterno que nadie acordó.
+ */
+app.post("/api/fidelizacion/revisiones/:id/resolver", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const motivo = String(req.body?.motivo || "").trim();
+    if (motivo.length < 5) {
+      return res.status(400).json({ ok: false, error: "Hace falta un motivo escrito: es lo que explica la decisión." });
+    }
+    const puntos = req.body?.puntos === undefined || req.body?.puntos === null ? 0 : Number(req.body.puntos);
+    if (!Number.isInteger(puntos) || Math.abs(puntos) > 100000) {
+      return res.status(400).json({ ok: false, error: "Los puntos del ajuste tienen que ser un número entero." });
+    }
+
+    const r = await dbGet(`SELECT * FROM fid_revisiones WHERE id = ?`, [id]);
+    if (!r) return res.status(404).json({ ok: false, error: "No existe" });
+    if (!fidPuedeVer(req, r.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
+    if (r.resuelto_en) return res.status(409).json({ ok: false, error: "Esta revisión ya estaba resuelta." });
+
+    const ahora = isoConOffset(Date.now());
+    const hecho = await fidTransaccion(async (x) => {
+      // Se cierra la revisión con el WHERE: dos personas resolviéndola a la vez y solo una escribe.
+      const cerrada = await x.run(
+        `UPDATE fid_revisiones SET resuelto_en = ?, resuelto_por = ?, nota_resolucion = ?
+          WHERE id = ? AND resuelto_en IS NULL RETURNING id`,
+        [ahora, req.user.username, motivo.slice(0, 500), id]);
+      if (!cerrada) return { cerrada: false };
+      if (!puntos) return { cerrada: true, movimiento: null };
+
+      const mov = await x.get(`SELECT qr_id, member_hash FROM fid_movimientos WHERE factura_id = ? LIMIT 1`,
+        [r.factura_id]);
+      if (!mov) return { cerrada: true, movimiento: null, sin_socio: true };
+      await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [FID_CERROJO_PUNTOS, mov.qr_id]);
+
+      // Un ajuste POSITIVO es un lote nuevo y caduca como cualquier otro. Uno negativo no tiene
+      // lote: resta del total, y puede dejar el saldo en negativo igual que una devolución.
+      let caduca = null, reglaId = null, reglaVersion = null;
+      if (puntos > 0) {
+        const regla = fidReglaVigente(await fidReglasDe(r.local), { local: r.local, ahora });
+        if (regla) { caduca = fidCaducaEn(ahora, regla.caducidad_meses); reglaId = regla.id; reglaVersion = regla.version; }
+      }
+      const creado = await x.run(
+        `INSERT INTO fid_movimientos (qr_id, member_hash, local, concepto, punto_tipo, unidades, importe,
+           clave_idem, factura_id, referencia_id, lote_id, caduca_en, regla_id, regla_version, nota, autor, creado_en)
+         VALUES (?,?,?,'puntos','ajuste',?,0,?,?,?,NULL,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING RETURNING id`,
+        [mov.qr_id, mov.member_hash, r.local, puntos, `fid:ajuste:${id}`, r.factura_id, id,
+         caduca, reglaId, reglaVersion, motivo.slice(0, 300), req.user.username, ahora]);
+      return { cerrada: true, movimiento: creado ? creado.id : null };
+    });
+
+    if (!hecho.cerrada) return res.status(409).json({ ok: false, error: "Esta revisión ya estaba resuelta." });
+    await ficAuditar("fidelizacion", r.factura_id, "revision_resuelta", req.user.username,
+      { local: r.local, detalle: { revision_id: id, motivo_revision: r.motivo, puntos,
+                                   movimiento: hecho.movimiento, nota: motivo.slice(0, 300) } });
+    res.json({ ok: true, movimiento: hecho.movimiento, sin_socio: !!hecho.sin_socio });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] resolver revision", e));
+    res.status(500).json({ ok: false, error: "No se pudo resolver" });
   }
 });
 
@@ -18964,6 +20447,74 @@ app.get("/api/fidelizacion/clientes", requireAuth(PROMOS_ROLES), async (req, res
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] clientes", e));
     res.status(500).json({ ok: false, error: "No se pudo consultar" });
+  }
+});
+
+/**
+ * EXPORTACIÓN CSV. Dirección y Marketing, y solo de su ámbito.
+ *
+ * LO QUE NO SALE: ni tokens, ni hashes, ni `member_hash`, ni cuerpos JSON, ni el teléfono. El
+ * teléfono es la identidad de la cuenta y un CSV acaba en un portátil, en un correo y en una
+ * carpeta compartida; para reconocer a alguien basta el nombre de pila, que es lo que ya se ve en
+ * la barra. Si hiciera falta el teléfono para una acción concreta, esa acción tiene su propia ruta.
+ *
+ * BOM y `;`, como el resto de los CSV de la casa: es lo que Excel en español abre a la primera.
+ */
+app.get("/api/fidelizacion/clientes.csv", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const dias = Math.min(730, Math.max(1, parseInt(req.query.dias) || 90));
+    const limite = Math.min(2000, Math.max(1, parseInt(req.query.limite) || 500));
+    const desde = req.query.desde ? String(req.query.desde).slice(0, 10) : addDiasISO(hoyISO(), -dias);
+    const hasta = req.query.hasta ? String(req.query.hasta).slice(0, 10) : "9999-12-31";
+
+    let locales = localesPermitidos(req.user);
+    if (req.query.local) {
+      const pedido = fidLocalDePeticion(req, req.query.local);
+      if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+      locales = [pedido.local];
+    }
+    const filtroLocal = locales && locales.length ? locales : null;
+
+    const filas = await dbAll(
+      `SELECT m.qr_id,
+              COALESCE(SUM(m.unidades) FILTER (WHERE m.concepto = 'visita'), 0)::int AS visitas,
+              COALESCE(SUM(m.importe) FILTER (WHERE m.concepto = 'consumo'), 0) AS consumo,
+              COALESCE(SUM(m.importe) FILTER (WHERE m.concepto = 'devolucion'), 0) AS devuelto,
+              COALESCE(SUM(m.unidades) FILTER (WHERE m.punto_tipo = 'ganados'), 0)::int AS ganados,
+              COALESCE(-SUM(m.unidades) FILTER (WHERE m.punto_tipo = 'consumidos'), 0)::int AS consumidos,
+              COALESCE(-SUM(m.unidades) FILTER (WHERE m.punto_tipo = 'caducados'), 0)::int AS caducados,
+              MAX(m.creado_en) FILTER (WHERE m.concepto = 'visita') AS ultima
+         FROM fid_movimientos m
+        WHERE m.creado_en >= ? AND m.creado_en <= ?
+          ${filtroLocal ? "AND m.local = ANY(?)" : ""}
+        GROUP BY m.qr_id ORDER BY consumo DESC LIMIT ?`,
+      filtroLocal ? [desde, hasta + "T23:59:59", filtroLocal, limite] : [desde, hasta + "T23:59:59", limite]) || [];
+
+    const ahora = isoConOffset(Date.now());
+    const esc = (v) => {
+      const t = v === null || v === undefined ? "" : String(v);
+      return /[;"\n]/.test(t) ? `"${t.split('"').join('""')}"` : t;
+    };
+    const lineas = ["Nombre;Visitas;Consumo;Devuelto;Ticket medio;Puntos ganados;Puntos usados;Puntos caducados;Saldo;Ultima visita"];
+    for (const f of filas) {
+      const qr = await fidCarnetPorId(f.qr_id);
+      if (!qr || qr.clase !== "carnet") continue;
+      const s = await fidSaldoDe(qr.id, ahora);
+      const tm = f.visitas ? Math.round((Number(f.consumo || 0) / f.visitas) * 100) / 100 : 0;
+      lineas.push([qr.nombre || "", f.visitas, Number(f.consumo || 0).toFixed(2),
+        Number(f.devuelto || 0).toFixed(2), tm.toFixed(2), f.ganados, f.consumidos, f.caducados,
+        s.disponible, String(f.ultima || "").slice(0, 10)].map(esc).join(";"));
+    }
+
+    await ficAuditar("fidelizacion", null, "clientes_exportados", req.user.username,
+      { detalle: { filas: lineas.length - 1, desde, hasta, locales: filtroLocal } });
+    res.set("Content-Type", "text/csv; charset=utf-8")
+       .set("Content-Disposition", `attachment; filename="clientes-fidelizacion-${hoyISO()}.csv"`)
+       .set("Cache-Control", "no-store")
+       .send("\uFEFF" + lineas.join("\r\n"));
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] exportar", e));
+    res.status(500).json({ ok: false, error: "No se pudo exportar" });
   }
 });
 

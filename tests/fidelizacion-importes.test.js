@@ -370,8 +370,9 @@ describe("la Fase A no toca NADA del flujo actual", () => {
   test("no se ha colado nada de las fases futuras", () => {
     // Van saliendo de la lista según se autorizan: `workplace_id` con el multilocal, `fid_reglas`
     // y los puntos con la Fase B. Lo que queda es lo que sigue sin autorizarse.
-    for (const futuro of ["puntos_pendientes", "motivo_pendiente", "fid_premios",
-                          "fid_productos", "export-master", "WorkplacesSummary"]) {
+    // Van saliendo según se autorizan: `fid_productos` y `export-master` entraron con el
+    // catálogo. Lo que queda es lo que sigue sin autorizarse.
+    for (const futuro of ["puntos_pendientes", "motivo_pendiente", "fid_premios", "WorkplacesSummary"]) {
       assert.ok(!server.includes(futuro), `Fase A incluye algo de una fase futura: ${futuro}`);
     }
   });

@@ -179,9 +179,119 @@
       });
   });
 
+  // ── EL FORMULARIO CONFIGURABLE ──────────────────────────────────────────────────────────────
+  //
+  // Si esta clave tiene un formulario configurado y PUBLICADO desde el panel, manda ése: título,
+  // campos, textos legales y mensaje de éxito salen de la configuración. Si no lo tiene, sigue el
+  // camino de siempre —`cap_campanas`— sin tocar ni una línea.
+  //
+  // Se intenta el nuevo PRIMERO y se cae al viejo, no al revés: así una campaña que ya funciona no
+  // deja de funcionar porque alguien empiece a configurar otra cosa.
+  function pintarConfigurable(c) {
+    var caja = $("pmForm");
+    var campos = (c.campos || []).map(function (x) {
+      var et = x.etiqueta + (x.obligatorio ? " *" : "");
+      if (x.id === "comercial") {
+        return '<label class="pm-chk"><input type="checkbox" id="fx_comercial" name="comercial"> <span></span></label>';
+      }
+      if (x.id === "local") {
+        return '<div class="tj-field"><label for="fx_local"></label><select id="fx_local" name="local">'
+          + (c.locales || []).map(function (l) { return '<option></option>'; }).join("") + '</select></div>';
+      }
+      var tipo = x.id === "telefono" ? "tel" : x.id === "email" ? "email" : x.id === "nacimiento" ? "date" : "text";
+      return '<div class="tj-field"><label for="fx_' + x.id + '"></label>'
+        + '<input id="fx_' + x.id + '" name="' + x.id + '" type="' + tipo + '"'
+        + (x.obligatorio ? " required" : "") + ' /></div>';
+    }).join("");
+
+    caja.innerHTML = '<h1 class="tj-titular" id="fxTitulo"></h1><p class="tj-sub" id="fxSub"></p>'
+      + '<p class="promo-oferta" id="fxIntro"></p><form id="fxF" novalidate>' + campos
+      + '<label class="pm-chk"><input type="checkbox" id="fxConsent" required> <span id="fxConsentTxt"></span></label>'
+      + '<p class="pm-legal"><a id="fxPriv" target="_blank" rel="noopener"></a></p>'
+      + '<button class="tj-btn" type="submit" id="fxBoton"></button></form>'
+      + '<p class="pm-error hidden" id="fxError"></p>';
+
+    // TEXTO, NUNCA HTML: se asigna con `textContent`. Lo escribe una persona desde el panel y esto
+    // lo abre un cliente en su móvil; pintarlo como HTML sería aceptar un `<script>` de regalo.
+    $("fxTitulo").textContent = c.titulo || "";
+    $("fxSub").textContent = c.subtitulo || "";
+    $("fxIntro").textContent = c.introduccion || "";
+    $("fxConsentTxt").textContent = c.consentimiento_texto || "";
+    $("fxBoton").textContent = c.texto_boton || "Enviar";
+    if (c.privacidad_url) { $("fxPriv").href = c.privacidad_url; $("fxPriv").textContent = "Política de privacidad"; }
+    (c.campos || []).forEach(function (x) {
+      var l = document.querySelector('label[for="fx_' + x.id + '"]');
+      if (l) l.textContent = x.etiqueta + (x.obligatorio ? " *" : "");
+      if (x.id === "comercial") {
+        var sp = document.querySelector('#fx_comercial + span');
+        if (sp) sp.textContent = x.etiqueta;
+      }
+    });
+    var sel = $("fx_local");
+    if (sel) {
+      sel.innerHTML = "";
+      (c.locales || []).forEach(function (l) {
+        var o = document.createElement("option"); o.value = l; o.textContent = l; sel.appendChild(o);
+      });
+    }
+
+    caja.classList.remove("hidden");
+    $("pmCargando").classList.add("hidden");
+
+    $("fxF").addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var btn = $("fxBoton");
+      if (btn.disabled) return;                       // doble clic: el segundo no hace nada
+      btn.disabled = true;
+      var cuerpo = { consentimiento: $("fxConsent").checked };
+      (c.campos || []).forEach(function (x) {
+        var el = $("fx_" + x.id);
+        if (!el) return;
+        cuerpo[x.id] = x.id === "comercial" ? el.checked : el.value;
+      });
+      fetch("/api/publico/formulario/" + encodeURIComponent(CLAVE), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo),
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        if (!j || !j.ok) {
+          $("fxError").textContent = (j && j.error) || "No se ha podido guardar.";
+          $("fxError").classList.remove("hidden");
+          btn.disabled = false;
+          return;
+        }
+        // La MISMA pantalla exista o no el teléfono: si se distinguieran, esto sería un
+        // comprobador de qué números están en nuestra base.
+        caja.innerHTML = "";
+        var h = document.createElement("h1"); h.className = "tj-titular"; h.textContent = j.mensaje || "";
+        caja.appendChild(h);
+        if (j.texto_posterior) {
+          var p2 = document.createElement("p"); p2.className = "tj-sub"; p2.textContent = j.texto_posterior;
+          caja.appendChild(p2);
+        }
+        if (j.carnet) {
+          var a = document.createElement("a"); a.className = "tj-btn"; a.href = j.carnet;
+          a.textContent = "Ver mi tarjeta"; caja.appendChild(a);
+        }
+      }).catch(function () {
+        $("fxError").textContent = "No se ha podido guardar. Inténtalo otra vez.";
+        $("fxError").classList.remove("hidden");
+        btn.disabled = false;
+      });
+    });
+  }
+
   var urlCampana = "/api/captacion/campana/" + encodeURIComponent(CLAVE) +
                    "?lang=" + encodeURIComponent(navigator.language || "");
-  fetch(urlCampana)
+
+  fetch("/api/publico/formulario/" + encodeURIComponent(CLAVE))
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (j) {
+      if (j && j.ok) { pintarConfigurable(j); return null; }
+      return arrancarCampanaClasica();
+    })
+    .catch(function () { return arrancarCampanaClasica(); });
+
+  function arrancarCampanaClasica() {
+  return fetch(urlCampana)
     .then(function (r) { return r.json().then(function (j) { return { http: r.status, d: j }; }); })
     .then(function (r) {
       // Una clave que no existe y una campaña apagada contestan lo mismo: a la portada. Si se
@@ -194,4 +304,5 @@
       pintarFormulario(r.d);
     })
     .catch(function () { avisar("…"); });
+  }
 })();

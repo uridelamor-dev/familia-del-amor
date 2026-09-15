@@ -24,7 +24,8 @@
 
 import { esLocalCanonico } from "../facturas/local-canonico.js";
 import { evaluarFactura, planConsumo, planCaducidad, claveMov, caducaEn, rewardsAplicados,
-         rewardVigente } from "./puntos.js";
+         rewardVigente, importePagado } from "./puntos.js";
+import { elegible as promoElegible, rewardDePromo, EXPLICACION as PROMO_EXPLICA } from "./promos.js";
 
 /**
  * La factura NO se puede cerrar y hay que decírselo a Ágora.
@@ -390,9 +391,35 @@ export function extraerFactura(json, sha256, { local = "" } = {}) {
   const workplaceId = dentroWp("Id") != null ? String(dentroWp("Id")) : null;
   const workplaceNombre = dentroWp("Name") ?? null;
 
+  // ── LA IDENTIDAD DE DOCUMENTO, para poder casar una devolución con su original ─────────────
+  //
+  // Una devolución llega con `RelatedInvoice { Serie, Number }`, que NO es el `GlobalId`. Sin
+  // guardar la serie y el número de cada factura, esa relación no se puede resolver y todas las
+  // devoluciones acabarían en revisión manual.
+  //
+  // Se guardan como TEXTO y tal como vienen: no se normalizan ni se rellenan con ceros, porque no
+  // sabemos qué formato usa cada instalación y una normalización inventada casaría documentos que
+  // no son el mismo.
+  const esc = (v) => (v === null || v === undefined || typeof v === "object" ? null : String(v));
+  const serie = esc(clave(json, "Serie") ?? clave(json, "SerialNumber"));
+  const numero = esc(clave(json, "Number") ?? clave(json, "InvoiceNumber"));
+
+  const rel = clave(json, "RelatedInvoice");
+  const dentroRel = (n) => (rel && typeof rel === "object" ? clave(rel, n) : undefined);
+  const devolucionDe = {
+    tipoDocumento: esc(clave(json, "DocumentType")),
+    fuente: esc(clave(json, "RefundSource")),
+    serie: esc(dentroRel("Serie")),
+    numero: esc(dentroRel("Number")),
+    globalId: esc(dentroRel("GlobalId")),
+  };
+
   return {
     globalId, claveDebil, tipo, claveFactura: claveDeFactura(local, tipo, globalId), cuerpoHash,
-    workplaceId, workplaceNombre,
+    workplaceId, workplaceNombre, serie, numero, devolucionDe,
+    // Lo cobrado, en céntimos. Se guarda en la fila para poder comparar importes al recibir una
+    // devolución sin tener que descifrar el cuerpo —que puede haberse purgado—.
+    importeCentimos: importePagado(json).amount,
     lineas: lineas.length,
     miembros,
     importeTotal,
@@ -520,13 +547,15 @@ export async function procesarFactura(x, { extracto, integracion, ahora, cuerpoB
   const nueva = await x.run(
     `INSERT INTO fid_facturas (integracion_id, local, global_id, global_id_tipo, clave_factura, clave_debil,
        cuerpo_hash, cuerpo_bytes, cuerpo_enc, esquema, agora_version, items_n, miembros_n, importe_total,
-       devolucion, estado, recibido_en)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       devolucion, estado, serie, numero, tipo_documento, importe_centimos, recibido_en)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT (clave_factura) DO NOTHING RETURNING id`,
     [integracion.id, integracion.local, extracto.globalId, extracto.tipo, extracto.claveFactura,
      extracto.claveDebil, extracto.cuerpoHash,
      cuerpoBytes, cuerpoEnc, esquema, version, extracto.lineas, extracto.miembros.length,
-     extracto.importeTotal, extracto.devolucion, ESTADOS.ACEPTADA, ahora]);
+     extracto.importeTotal, extracto.devolucion, ESTADOS.ACEPTADA,
+     extracto.serie, extracto.numero, extracto.devolucionDe?.tipoDocumento ?? null,
+     extracto.importeCentimos ?? null, ahora]);
 
   if (!nueva) {
     const previa = await x.get(`SELECT id, cuerpo_hash FROM fid_facturas WHERE clave_factura = ?`, [extracto.claveFactura]);
@@ -615,12 +644,21 @@ async function aplicarPrograma(x, { programa, extracto, conCarnet, integracion, 
   // descuento, revisar si no lo hay) y aquí no se toca ni un saldo.
   const socio = conCarnet.length === 1 ? conCarnet[0] : null;
 
+  // UNA DEVOLUCIÓN PUEDE NO TRAER SOCIO en sus líneas, y aun así toca el saldo del socio de la
+  // factura original. El cerrojo se pone igual, sobre la cuenta que se va a mover.
+  let qrBloqueado = socio ? socio.qrId : null;
+  if (!qrBloqueado && esDevolucion(extracto)) {
+    const prev = await buscarOriginal(x, { extracto, local });
+    if (prev.ok) {
+      const m = await x.get(`SELECT qr_id FROM fid_movimientos WHERE factura_id = ? LIMIT 1`, [prev.original.id]);
+      qrBloqueado = m ? m.qr_id : null;
+    }
+  }
+  if (qrBloqueado) await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [CERROJO_PUNTOS, qrBloqueado]);
+
   let saldoDisponible = 0;
   let movimientos = [];
   if (socio) {
-    // EL CERROJO. `pg_advisory_xact_lock` sobre la cuenta, no sobre la tabla: dos socios distintos
-    // pueden cerrar a la vez sin esperarse.
-    await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [CERROJO_PUNTOS, socio.qrId]);
     movimientos = await x.all(
       `SELECT id, punto_tipo, unidades, lote_id, caduca_en, creado_en, factura_id, local, regla_id, regla_version
          FROM fid_movimientos WHERE qr_id = ? AND concepto = 'puntos' ORDER BY id`, [socio.qrId]);
@@ -629,20 +667,88 @@ async function aplicarPrograma(x, { programa, extracto, conCarnet, integracion, 
 
   // LA VERSIÓN DEL REWARD SE BUSCA POR SU `reward_id`, no se deduce de la regla de hoy. Entre
   // ofrecer el descuento y cerrar la factura pueden pasar veinte minutos y una versión nueva.
-  let reglaReward = null;
+  //
+  // DOS FAMILIAS DE PREMIO, y se distinguen por el prefijo del identificador:
+  //   `fid:`   descuento del programa de puntos, con su regla versionada.
+  //   `fidp:`  promoción o campaña, con su propia versión y su propio libro de usos.
+  let reglaReward = null, promoReward = null;
   const aplicados = rewardsAplicados(json);
   if (aplicados.length === 1 && aplicados[0] && aplicados[0].Id) {
-    reglaReward = await x.get(`SELECT * FROM fid_reglas WHERE reward_id = ?`, [String(aplicados[0].Id)]);
-    if (reglaReward) {
-      const v = rewardVigente(reglaReward, { ahora });
-      // Si su versión ya no vale —sustituida sin gracia, o desactivada a mano— se trata como si no
-      // se hubiera encontrado: el camarero quita el descuento y vuelve a intentarlo.
-      if (!v.ok) reglaReward = null;
+    const rid = String(aplicados[0].Id);
+    if (rid.startsWith("fidp:")) {
+      promoReward = await x.get(`SELECT * FROM fid_promos WHERE reward_id = ?`, [rid]);
+    } else {
+      reglaReward = await x.get(`SELECT * FROM fid_reglas WHERE reward_id = ?`, [rid]);
+      if (reglaReward) {
+        const v = rewardVigente(reglaReward, { ahora });
+        // Si su versión ya no vale —sustituida sin gracia, o desactivada a mano— se trata como si
+        // no se hubiera encontrado: el camarero quita el descuento y vuelve a intentarlo.
+        if (!v.ok) reglaReward = null;
+      }
     }
+  }
+
+  // ── UNA PROMOCIÓN APLICADA ──────────────────────────────────────────────────────────────────
+  //
+  // Se valida ENTERA aquí dentro, con el cerrojo puesto: entre que se le ofreció al camarero y se
+  // cierra la factura, otra caja puede haberse llevado el último premio o el cliente puede haberlo
+  // usado ya. Si ya no cuadra se RECHAZA: aceptar sin poder atribuir el consumo regala el premio.
+  if (promoReward) {
+    if (!interruptores.consumir) {
+      throw new FacturaRechazada("consumir_apagado", "Los premios de fidelización no están activos.");
+    }
+    if (!socio) {
+      throw new FacturaRechazada("promo_sin_socio",
+        "Ese premio necesita un socio identificado en la factura. Quítalo o asocia al cliente.");
+    }
+    if (promoReward.local && String(promoReward.local) !== String(local)) {
+      throw new FacturaRechazada("promo_de_otro_local", "Ese premio es de otro local. Quítalo y vuelve a intentarlo.");
+    }
+    const usos = await x.get(
+      `SELECT COUNT(*)::int AS n FROM fid_promo_usos
+        WHERE clave = ? AND qr_id = ? AND estado = 'usado'`, [promoReward.clave, socio.qrId]);
+    const totales = await x.get(
+      `SELECT COUNT(*)::int AS n FROM fid_promo_usos WHERE clave = ? AND estado = 'usado'`, [promoReward.clave]);
+    const el = promoElegible(promoReward, { ahora, local, usos: usos?.n || 0,
+      usosTotales: totales?.n || 0, saldo: saldoDisponible, importeCentimos: importePagado(json).amount });
+    if (!el.ok) {
+      throw new FacturaRechazada("promo_" + el.motivo,
+        `Ese premio no se puede aplicar: ${PROMO_EXPLICA[el.motivo] || el.motivo}. Quítalo y vuelve a intentarlo.`);
+    }
+    // El uso se escribe AQUÍ, dentro de la transacción. Si el COMMIT falla no queda consumido, y
+    // `clave_idem` impide que un reenvío de la misma factura lo cuente dos veces.
+    await x.run(
+      `INSERT INTO fid_promo_usos (promo_id, clave, qr_id, local, factura_id, clave_idem, reward_id, autor, creado_en)
+       VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING`,
+      [promoReward.id, promoReward.clave, socio.qrId, local, facturaId,
+       claveMov(idemV, local, "promo", extracto.globalId, promoReward.clave), String(promoReward.reward_id),
+       "agora", ahora]);
   }
 
   const d = evaluarFactura({ json, extracto, regla, reglaReward, local, interruptores, saldoDisponible, ahora });
   if (d.accion === "rechazar") throw new FacturaRechazada(d.motivo, d.razon);
+
+  // ── DEVOLUCIONES ────────────────────────────────────────────────────────────────────────────
+  //
+  // Solo se revierte sola la TOTAL con el original identificado sin ambigüedad. Todo lo demás se
+  // acepta —para no bloquear la caja— y queda en revisión: sin una devolución parcial real
+  // delante, cualquier reparto que inventemos aquí sería adivinar con el saldo de alguien.
+  if (esDevolucion(extracto)) {
+    const b = await buscarOriginal(x, { extracto, local });
+    if (!b.ok) return { ...d, devolucion: { clase: "sin_original", motivo: b.motivo } };
+
+    const devCent = Math.abs(d.importe_pagado);
+    const oriCent = Math.abs(Number(b.original.importe_centimos) || 0);
+    if (!oriCent || devCent !== oriCent) {
+      return { ...d, devolucion: { clase: "parcial", original_id: b.original.id,
+                                   centimos: devCent, original_centimos: oriCent } };
+    }
+    // Total. El cerrojo de la cuenta ya está puesto más arriba si hay socio; si no lo hay, no se
+    // toca ningún saldo y lo único que se escribe son los movimientos compensatorios.
+    const r = await revertirDevolucionTotal(x, { original: b.original, extracto, local, ahora, idemV, socio, facturaId });
+    return { ...d, devolucion: { clase: "total", por: b.por, ...r } };
+  }
+
   if (!socio) return d;
 
   const mete = async (tipo, unidades, extra = {}) => {
@@ -706,6 +812,136 @@ function saldoDe(movimientos, ahora) {
   }
   return total;
 }
+
+/**
+ * BUSCA LA FACTURA ORIGINAL DE UNA DEVOLUCIÓN. Solo devuelve algo si la relación es INEQUÍVOCA.
+ *
+ * NUNCA se deduce por importes negativos: una línea negativa puede ser un abono, una corrección o
+ * una invitación, y tratarla como devolución revertiría puntos que el cliente ganó de verdad.
+ *
+ * SIEMPRE DENTRO DEL MISMO LOCAL. Serie y número los asigna cada instalación por su cuenta, así
+ * que «A/1042» existe en Lloret y en Tordera y son documentos distintos. Sin el filtro por local,
+ * una devolución en un sitio revertiría los puntos de una compra hecha en otro.
+ *
+ * Dos caminos, en este orden:
+ *   1. `RelatedInvoice.GlobalId` o `RefundSource`, si traen el identificador oficial del original.
+ *   2. `RelatedInvoice { Serie, Number }` contra la serie y el número que guardamos de cada factura.
+ *
+ * Si hay más de una candidata, NO se elige: eso es ambiguo y va a revisión.
+ */
+export async function buscarOriginal(x, { extracto, local }) {
+  const d = extracto?.devolucionDe;
+  if (!d) return { ok: false, motivo: "sin_relacion" };
+
+  // 1. Por identificador oficial.
+  for (const candidato of [d.globalId, d.fuente]) {
+    if (!candidato) continue;
+    const filas = await x.all(
+      `SELECT id, local, global_id, importe_centimos, revertida_en FROM fid_facturas
+        WHERE local = ? AND global_id = ? AND id <> COALESCE(?, -1)`,
+      [local, candidato, null]);
+    if (filas && filas.length === 1) return { ok: true, original: filas[0], por: "global_id" };
+    if (filas && filas.length > 1) return { ok: false, motivo: "relacion_ambigua" };
+  }
+
+  // 2. Por serie y número. Hacen falta LOS DOS: solo con el número se casaría cualquier serie.
+  if (d.serie != null && d.numero != null) {
+    const filas = await x.all(
+      `SELECT id, local, global_id, importe_centimos, revertida_en FROM fid_facturas
+        WHERE local = ? AND serie = ? AND numero = ?`, [local, d.serie, d.numero]);
+    if (filas && filas.length === 1) return { ok: true, original: filas[0], por: "serie_numero" };
+    if (filas && filas.length > 1) return { ok: false, motivo: "relacion_ambigua" };
+  }
+  return { ok: false, motivo: "sin_original" };
+}
+
+/**
+ * REVIERTE UNA DEVOLUCIÓN TOTAL. Devuelve lo que se ha hecho, o por qué no se ha hecho nada.
+ *
+ * Va DENTRO de la transacción de la factura y DESPUÉS del cerrojo de la cuenta: si no, dos
+ * devoluciones simultáneas del mismo cliente leerían los mismos movimientos y revertirían dos veces.
+ *
+ * ── LO QUE SE ESCRIBE, Y POR QUÉ ASÍ ────────────────────────────────────────────────────────
+ *
+ * NADA SE BORRA NI SE EDITA. El libro es append-only: revertir es escribir lo contrario, con su
+ * propia clave de idempotencia y apuntando a la factura de devolución. Así se puede contestar
+ * «¿qué pasó con esta compra?» leyendo las dos mitades.
+ *
+ *   · Los puntos que aquella factura CONCEDIÓ se restan enteros, aunque ya se hayan gastado. Eso
+ *     puede dejar el saldo en negativo, y está aceptado: el cliente gastó unos puntos que venían
+ *     de una compra que después devolvió.
+ *   · Los que CONSUMIÓ vuelven A SUS LOTES, con la caducidad original. Si esa fecha ya pasó, el
+ *     movimiento queda en el histórico pero `saldo()` no lo cuenta: se le devuelve lo que era
+ *     suyo, no una prórroga.
+ *   · La visita y el consumo se compensan con movimientos contrarios.
+ */
+export async function revertirDevolucionTotal(x, { original, extracto, local, ahora, idemV, socio, facturaId }) {
+  // Idempotente por la fila, además de por cada `clave_idem`: si ya se revirtió, no se toca nada.
+  if (original.revertida_en) return { hecho: false, motivo: "ya_revertida" };
+
+  const movs = await x.all(
+    `SELECT id, qr_id, member_hash, concepto, punto_tipo, unidades, importe, lote_id, caduca_en,
+            regla_id, regla_version
+       FROM fid_movimientos WHERE factura_id = ? ORDER BY id`, [original.id]) || [];
+
+  const mete = async (m) => {
+    const r = await x.run(
+      `INSERT INTO fid_movimientos (qr_id, member_hash, local, concepto, punto_tipo, unidades, importe,
+         clave_idem, factura_id, referencia_id, lote_id, caduca_en, regla_id, regla_version, nota, autor, creado_en)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING RETURNING id`,
+      [m.qr_id, m.member_hash, local, m.concepto, m.punto_tipo ?? null, m.unidades, m.importe ?? 0,
+       m.clave, facturaId, original.id, m.lote_id ?? null, m.caduca_en ?? null,
+       m.regla_id ?? null, m.regla_version ?? null, m.nota ?? null, "agora", ahora]);
+    return !!r;
+  };
+
+  let puntosRevertidos = 0, puntosRestaurados = 0, visitas = 0, escritos = 0;
+  const g = extracto.globalId;
+
+  for (const m of movs) {
+    if (m.concepto === "puntos" && m.punto_tipo === "ganados") {
+      // Se resta lo CONCEDIDO, entero. El lote puede quedar en negativo.
+      if (await mete({ ...m, concepto: "puntos", punto_tipo: "revertidos", unidades: -Number(m.unidades || 0),
+        lote_id: m.id, caduca_en: m.caduca_en, nota: "devolucion_total",
+        clave: claveMov(idemV, local, "revgana", g, String(m.id)) })) {
+        puntosRevertidos += Number(m.unidades || 0); escritos += 1;
+      }
+    } else if (m.concepto === "puntos" && m.punto_tipo === "consumidos") {
+      // Vuelven A SU LOTE, con SU caducidad. Si ya pasó, quedan históricos y no disponibles.
+      if (await mete({ ...m, concepto: "puntos", punto_tipo: "revertidos", unidades: -Number(m.unidades || 0),
+        lote_id: m.lote_id, caduca_en: m.caduca_en, nota: "devolucion_total",
+        clave: claveMov(idemV, local, "revconsume", g, String(m.id)) })) {
+        puntosRestaurados += -Number(m.unidades || 0); escritos += 1;
+      }
+    } else if (m.concepto === "visita") {
+      if (await mete({ ...m, concepto: "visita", punto_tipo: null, unidades: -Number(m.unidades || 0),
+        importe: 0, nota: "devolucion_total", clave: claveMov(idemV, local, "revvisita", g, String(m.id)) })) {
+        visitas += 1; escritos += 1;
+      }
+    } else if (m.concepto === "consumo") {
+      if (await mete({ ...m, concepto: "consumo", punto_tipo: null, unidades: 0,
+        importe: -Number(m.importe || 0), nota: "devolucion_total",
+        clave: claveMov(idemV, local, "revconsumo", g, String(m.id)) })) escritos += 1;
+    }
+  }
+
+  // Se sella la original para que una segunda devolución no vuelva a entrar aquí, y para que el
+  // panel pueda enseñar qué facturas están revertidas sin recorrer el libro.
+  // La relación queda por los DOS lados: la original sabe quién la revirtió y cuándo, y la
+  // devolución sabe a qué factura corresponde. Cada movimiento compensatorio lleva además
+  // `referencia_id` apuntando al movimiento que revierte.
+  await x.run(`UPDATE fid_facturas SET revertida_en = ?, revertida_por = ? WHERE id = ? AND revertida_en IS NULL`,
+    [ahora, facturaId, original.id]);
+  await x.run(`UPDATE fid_facturas SET devolucion_de = ? WHERE id = ?`, [original.id, facturaId]);
+
+  return { hecho: escritos > 0, original_id: original.id, movimientos: escritos,
+           puntos_revertidos: puntosRevertidos, puntos_restaurados: puntosRestaurados, visitas };
+}
+
+/** Los tipos de documento que la guía define como devolución. NUNCA se deduce por el signo. */
+export const TIPOS_DEVOLUCION = Object.freeze(["BasicRefund", "StandardRefund"]);
+export const esDevolucion = (extracto) =>
+  TIPOS_DEVOLUCION.includes(String(extracto?.devolucionDe?.tipoDocumento || ""));
 
 /** El espacio de nombres del cerrojo de una CUENTA. El segundo argumento es el carné. */
 export const CERROJO_PUNTOS = 815301;

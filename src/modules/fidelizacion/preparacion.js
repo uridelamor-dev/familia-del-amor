@@ -11,14 +11,13 @@
 // que aparece en el diff, que hay que revisar y que estos tests protegen. Eso es exactamente lo
 // contrario de una condición que se cumple por accidente.
 //
-// ── POR QUÉ ESTÁ EN «sombra» ─────────────────────────────────────────────────────────────────
+// ── ESTO NO ES EL INTERRUPTOR ────────────────────────────────────────────────────────────────
 //
-// Una devolución total todavía NO revierte puntos. Con `conceder` encendido, un cliente compra por
-// 200 €, se lleva 200 puntos, lo devuelve todo al día siguiente y se los queda. Con `consumir`,
-// además se los gasta en descuentos reales.
+// El nivel dice hasta dónde llega EL CÓDIGO. Quien ENCIENDE es la puerta (`puerta.js`), que vive
+// en la base, la firma Dirección escribiendo ACTIVAR y exige siete requisitos verdes.
 //
-// PARA SUBIR DE NIVEL hay que: implementar la reversión de una devolución total, validarla contra
-// una devolución REAL, y solo entonces cambiar `NIVEL` en un commit revisado.
+// Con el nivel en `completo` y la puerta cerrada, no se concede, ni se ofrece, ni se consume
+// absolutamente nada. Son dos llaves distintas y hacen falta las dos.
 //
 // ── SIN IMPORTS, A PROPÓSITO ─────────────────────────────────────────────────────────────────
 //
@@ -30,12 +29,24 @@
 export const NIVELES = Object.freeze(["sombra", "completo"]);
 
 /**
- * ⚠️ EL NIVEL DE LANZAMIENTO. Cambiar esto ENCIENDE EL PROGRAMA DE PUNTOS EN PRODUCCIÓN.
+ * EL NIVEL DE LANZAMIENTO: hasta dónde llega EL CÓDIGO.
  *
- * No se sube hasta que la reversión de una devolución total esté implementada Y validada contra
- * una devolución real. Subirlo antes significa regalar puntos por compras devueltas.
+ * `completo` significa que está TODO ESCRITO —incluida la reversión de una devolución total, que
+ * era lo que faltaba—. NO significa que el programa esté encendido.
+ *
+ * ── ESTO POR SÍ SOLO NO CONCEDE, NI OFRECE, NI CONSUME NADA ──────────────────────────────────
+ *
+ * Quien enciende es LA PUERTA (`puerta.js`), que se guarda en la base, la firma Dirección
+ * escribiendo ACTIVAR y exige que los siete requisitos estén verdes. Mientras la puerta no esté en
+ * `activo`, `fidInterruptores()` devuelve `conceder`, `ofrecer` y `consumir` a `false` pase lo que
+ * pase aquí.
+ *
+ * Están separados a propósito: el nivel es una decisión de INGENIERÍA que viaja en un commit
+ * revisado; la puerta es una decisión de NEGOCIO que se toma desde el panel, después de desplegar
+ * y de mirar los números. Si fueran lo mismo, activar el programa exigiría un despliegue nuevo —y
+ * desplegar para encender algo es la forma más fácil de encenderlo sin haberlo comprobado.
  */
-export const NIVEL = "sombra";
+export const NIVEL = "completo";
 
 /** Qué interruptores se pueden tocar en cada nivel. Lo que no está aquí, no se enciende. */
 export const PERMITIDOS_POR_NIVEL = Object.freeze({
@@ -43,17 +54,14 @@ export const PERMITIDOS_POR_NIVEL = Object.freeze({
   completo: Object.freeze(["sombra", "conceder", "ofrecer", "consumir"]),
 });
 
-/** Lo que falta para poder subir de nivel. Es lo que se enseña en la pantalla. */
-export const PENDIENTES = Object.freeze([
-  Object.freeze({
-    id: "devolucion_total",
-    texto: "Los puntos no pueden activarse hasta validar una devolución total real",
-    detalle: "Hoy una devolución total no revierte los puntos ganados ni restaura los consumidos. "
-      + "Sin eso, un cliente puede comprar, llevarse los puntos, devolverlo todo y quedárselos. "
-      + "Cuando esté implementado y probado contra una devolución real, se sube el nivel de "
-      + "lanzamiento en un commit revisado.",
-  }),
-]);
+/**
+ * Lo que faltaría si el nivel NO estuviera completo. Hoy está vacío.
+ *
+ * Se conserva la lista —y no se borra el mecanismo— porque es lo que se enseñará la próxima vez
+ * que haya que retener una capacidad a medio escribir. Vaciarla ahora y reescribirla entonces
+ * significaría volver a discutir cómo se retiene algo.
+ */
+export const PENDIENTES = Object.freeze([]);
 
 /** Los interruptores que este nivel permite tocar. */
 export const permitidos = (nivel = NIVEL) => PERMITIDOS_POR_NIVEL[nivel] || PERMITIDOS_POR_NIVEL.sombra;

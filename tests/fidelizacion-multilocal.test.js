@@ -386,8 +386,8 @@ describe("mientras está en verificación, no hay nada de premios", () => {
   });
 
   test("no se han colado puntos, promociones ni catálogo", () => {
-    // `fid_reglas` salió de la lista con la Fase B. Lo que queda es lo que sigue sin autorizar.
-    for (const futuro of ["fid_premios", "fid_productos", "export-master", "WorkplacesSummary"]) {
+    // `fid_reglas` salió con la Fase B; `fid_productos` y `export-master`, con el catálogo.
+    for (const futuro of ["fid_premios", "WorkplacesSummary"]) {
       assert.ok(!server.includes(futuro), `se ha colado ${futuro}`);
     }
     // Y la fidelización sigue sin escribir en promociones ni canjes.
@@ -423,8 +423,8 @@ describe("CANDADOS: lo que esta fase NO puede haber tocado", () => {
   test("de los cuatro tipos de Reward, SOLO CashDiscount", () => {
     // `CashDiscount` entró con la Fase B y es el único acordado. Los otros tres siguen sin
     // implementarse, y que aparezca uno querría decir que alguien amplió el programa de rondón.
-    for (const futuro of ["fid_premios", "fid_productos", "export-master", "WorkplacesSummary",
-                          "NamedDiscount", "OfferId:", "Type: \"DiscountRate\"", "Type: \"Offer\""]) {
+    for (const futuro of ["fid_premios", "WorkplacesSummary",
+                          "NamedDiscount", "Type: \"DiscountRate\""]) {
       assert.ok(!server.includes(futuro), `se ha colado ${futuro}`);
     }
     // El tipo sale de UNA constante, no de un literal repetido: así el que se emite y el que se

@@ -10937,6 +10937,611 @@ async function fidpSocio() {
   } catch (e) { toast(e.message || "No se pudo consultar"); }
 }
 
+// ── La puesta en producción y la configuración comercial ─────────────────────
+//
+// Todo lo que se configura aquí es COMERCIAL: reglas, catálogo, promociones, campañas, el
+// formulario, la tarjeta y las comunicaciones. Dirección y Marketing.
+//
+// Lo que NO se configura aquí son los tokens, el Workplace, los cuerpos de prueba ni el
+// diagnóstico: eso es seguridad técnica, vive en las tarjetas de arriba y es solo de Dirección.
+let FIDG = { puerta: null, catalogo: null, grupos: [], promos: [], formularios: [], tarjeta: [],
+             comunicaciones: [], revisiones: [], tipos: {}, paletas: {}, variables: [],
+             seccion: "puerta", local: null };
+
+const FIDG_SECCIONES = [
+  ["puerta", "Puesta en producción"],
+  ["catalogo", "Catálogo"],
+  ["promos", "Promociones"],
+  ["formularios", "Formulario"],
+  ["tarjeta", "Tarjeta"],
+  ["comunicaciones", "Comunicaciones"],
+  ["revisiones", "Revisiones"],
+];
+
+/** Los cinco estados de la puerta, con lo que significan. */
+const FIDG_PUERTA_TXT = {
+  no_preparado: ["Sin preparar", "bad", "El código del programa todavía no está terminado."],
+  sombra: ["Solo midiendo", "warn", "Se calcula lo que haría, sin tocar ningún saldo."],
+  listo_para_activar: ["Listo para activar", "warn", "Todo comprobado. Falta la confirmación de Dirección."],
+  activo: ["Activo", "ok", "Concediendo puntos y ofreciendo descuentos de verdad."],
+  pausado: ["Pausado", "bad", "Cortado a propósito. Lo ya concedido se conserva."],
+};
+
+function renderFidGestion() {
+  const tabs = FIDG_SECCIONES.map(([k, t]) =>
+    `<button class="btn sm ${FIDG.seccion === k ? "primary" : ""}" data-act="fidg-tab" data-k="${k}">${esc(t)}</button>`).join("");
+  let cuerpo = "";
+  if (FIDG.seccion === "puerta") cuerpo = renderFidgPuerta();
+  else if (FIDG.seccion === "catalogo") cuerpo = renderFidgCatalogo();
+  else if (FIDG.seccion === "promos") cuerpo = renderFidgPromos();
+  else if (FIDG.seccion === "formularios") cuerpo = renderFidgListaSimple(FIDG.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…");
+  else if (FIDG.seccion === "tarjeta") cuerpo = renderFidgListaSimple(FIDG.tarjeta, "versión de tarjeta", "fidg-tarjeta-nueva", "Nueva versión…");
+  else if (FIDG.seccion === "comunicaciones") cuerpo = renderFidgComunicaciones();
+  else if (FIDG.seccion === "revisiones") cuerpo = renderFidgRevisiones();
+
+  return `<div class="card" style="margin-top:10px"><div class="ch"><h3>Configuración comercial</h3></div>
+    <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Todo lo de aquí se configura, se versiona y se audita. Los tokens y el Workplace no: eso es técnico y está arriba.</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
+    ${cuerpo}</div>`;
+}
+
+function renderFidgPuerta() {
+  const p = FIDG.puerta;
+  if (!p) return '<div class="mut">No se ha podido leer el estado.</div>';
+  const [txt, pill, ayuda] = FIDG_PUERTA_TXT[p.estado] || FIDG_PUERTA_TXT.no_preparado;
+
+  const req = (p.requisitos || []).map((r) => `<div class="row"><div class="grow"><div class="t1">${r.ok ? "✔" : "✖"} ${esc(r.texto)}</div>${r.motivo ? `<div class="mut" style="font-size:12px;color:var(--danger)">${esc(r.motivo)}</div>` : ""}</div></div>`).join("");
+
+  // El aviso más importante de la pantalla: activa pero con requisitos incumplidos.
+  const incoherente = p.incoherente ? `<div class="pendingblock" style="margin:2px 2px 10px;padding:12px 14px;font-size:12.5px;border-color:var(--danger)"><b>⚠ El programa está ACTIVO pero ya no cumple todos los requisitos.</b> No se ha cortado solo —hacerlo dejaría a un camarero sin poder cerrar una factura con el descuento ya aplicado— pero conviene mirarlo ahora.</div>` : "";
+
+  const firma = p.confirmado_en ? `<div class="mut" style="font-size:12px;margin-top:8px">Activado por <b>${esc(p.confirmado_por || "")}</b> el ${esc(String(p.confirmado_en).slice(0, 16).replace("T", " "))}.</div>` : "";
+  const pausa = p.pausado_en ? `<div class="mut" style="font-size:12px;margin-top:4px">Pausado por <b>${esc(p.pausado_por || "")}</b> el ${esc(String(p.pausado_en).slice(0, 16).replace("T", " "))}${p.motivo_pausa ? ` · ${esc(p.motivo_pausa)}` : ""}.</div>` : "";
+
+  const puede = p.puede_cambiar;
+  const botones = !puede
+    ? '<div class="mut" style="font-size:12px;margin-top:12px">Solo Dirección puede mover la puerta.</div>'
+    : `<div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+      ${p.estado !== "activo" && p.puede_activar && p.estado !== "listo_para_activar" ? '<button class="btn sm" data-act="fidg-puerta" data-e="listo_para_activar">Marcar listo para activar</button>' : ""}
+      ${(p.estado === "listo_para_activar" || p.estado === "pausado") && p.puede_activar ? '<button class="btn primary sm" data-act="fidg-puerta" data-e="activo">Activar…</button>' : ""}
+      ${p.estado === "activo" ? '<button class="btn sm danger" data-act="fidg-puerta" data-e="pausado">Pausar ahora</button>' : ""}
+      ${p.estado !== "activo" && p.estado !== "sombra" ? '<button class="btn sm" data-act="fidg-puerta" data-e="sombra">Volver a solo medir</button>' : ""}
+      <button class="btn sm" data-act="fidg-sombra-rev">${p.requisitos?.find((r) => r.id === "sombra_revisada")?.ok ? "Quitar «sombra revisada»" : "Marcar sombra como revisada"}</button>
+    </div>`;
+
+  return `${incoherente}
+    <div class="row"><div class="grow"><div class="t1">Estado</div><div class="mut" style="font-size:12px">${esc(ayuda)}</div></div><span class="pill ${pill}">${esc(txt)}</span></div>
+    <div class="mut" style="font-size:12px;margin:12px 0 4px">Lo que comprueba el servidor</div>
+    <div class="rows">${req}</div>${firma}${pausa}${botones}`;
+}
+
+function renderFidgCatalogo() {
+  const c = FIDG.catalogo;
+  const sel = `<div class="field"><label>Local</label><select id="fidgLocal">${(FID.locales || []).map((l) => `<option value="${esc(l.local)}"${FIDG.local === l.local ? " selected" : ""}>${esc(l.local)}</option>`).join("")}</select></div>`;
+  if (!c) return sel + '<div class="mut">Elige un local y sincroniza.</div><div style="margin-top:10px"><button class="btn primary sm" data-act="fidg-sync">Sincronizar catálogo</button></div>';
+
+  const u = c.ultima_sincronizacion;
+  const ultima = u ? `<div class="row"><div class="grow"><div class="t1">${u.ok ? "Última sincronización" : "Último intento (falló)"}</div><div class="mut" style="font-size:12px">${esc(String(u.creado_en || "").slice(0, 16).replace("T", " "))}${u.api_version ? ` · Ágora ${esc(u.api_version)}` : ""}${u.error ? ` · ${esc(u.error)}` : ` · +${u.anadidos} · ~${u.actualizados} · −${u.inactivados}`}</div></div><span class="pill ${u.ok ? "ok" : "bad"}">${u.ok ? "OK" : "Error"}</span></div>` : "";
+
+  const fam = (c.familias || []).map((f) => `<button class="btn sm" data-act="fidg-fam" data-f="${esc(f.id)}">${esc(f.nombre || f.id)}</button>`).join(" ");
+  const filas = (c.data || []).slice(0, 200).map((p) => `<div class="row"><div class="grow"><div class="t1">${esc(p.nombre)}</div><div class="mut" style="font-size:12px">${esc(p.familia || "sin familia")}${p.iva != null ? ` · IVA ${p.iva} %` : " · sin IVA"}${p.precio != null ? ` · ${Number(p.precio).toFixed(2)} €` : ""}</div></div><span class="pill ${p.activo ? "ok" : ""}">${p.activo ? "activo" : "de baja"}</span></div>`).join("");
+
+  return sel + `<div class="rows">${ultima}</div>
+    <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn primary sm" data-act="fidg-sync">Sincronizar ahora</button><button class="btn sm" data-act="fidg-grupo-nuevo">Nuevo grupo de productos…</button></div>
+    ${fam ? `<div class="mut" style="font-size:12px;margin:12px 0 4px">Familias</div><div style="display:flex;gap:6px;flex-wrap:wrap">${fam}</div>` : ""}
+    ${FIDG.grupos.length ? `<div class="mut" style="font-size:12px;margin:12px 0 4px">Grupos</div><div class="rows">${FIDG.grupos.map((g) => `<div class="row"><div class="grow"><div class="t1">${esc(g.nombre)} <span class="mut">v${g.version}</span></div><div class="mut" style="font-size:12px">${(g.productos || []).length} producto(s) · ${esc(g.estado)}</div></div></div>`).join("")}</div>` : ""}
+    <div class="mut" style="font-size:12px;margin:12px 0 4px">Productos (${(c.data || []).length})</div>
+    <div class="rows">${filas || '<div class="mut">Sin productos. Sincroniza el catálogo.</div>'}</div>`;
+}
+
+function renderFidgPromos() {
+  const filas = (FIDG.promos || []).map((p) => fgFila(`<div class="t1">${esc(p.nombre)} <span class="mut">v${p.version}</span></div><div class="mut" style="font-size:12px">${esc(p.local || "todos los locales")} · ${esc(p.tipo)}${p.desde ? ` · ${esc(p.desde)}${p.hasta && p.hasta !== p.desde ? ` a ${esc(p.hasta)}` : ""}` : ""}${p.codigo_agora ? ` · código ${esc(p.codigo_agora)}${p.codigo_comprobado ? " ✔" : " (sin comprobar)"}` : ""}</div>`, `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${p.estado === "publicada" ? "ok" : p.estado === "pausada" ? "warn" : ""}">${esc(p.estado)}</span><button class="btn sm" data-act="fidg-promo-nueva" data-id="${p.id}">${p.estado === "borrador" ? "Seguir editando" : "Copiar"}</button>${p.estado === "publicada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="pausada">Pausar</button>` : ""}${p.estado === "pausada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="publicada">Reanudar</button>` : ""}</span>`)).join("");
+  return `<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn primary sm" data-act="fidg-promo-nueva">Nueva promoción…</button><button class="btn sm" data-act="fidg-propuesta" data-c="desayuno-girona">Propuesta: desayuno de Girona</button></div>
+    <div class="rows">${filas || '<div class="mut">Todavía no hay ninguna.</div>'}</div>`;
+}
+
+function renderFidgListaSimple(lista, que, accion, etiqueta) {
+  // Una versión publicada NO se edita: se COPIA y se guarda una nueva. Por eso el botón dice
+  // «Copiar», no «Editar»: nombrar bien la acción evita la mitad de los sustos.
+  const filas = (lista || []).map((x) => fgFila(
+    `<div class="t1">${esc(x.titulo || x.clave || ("Versión " + x.version))} <span class="mut">v${x.version}</span></div><div class="mut" style="font-size:12px">${esc(String(x.creado_en || "").slice(0, 10))} · ${esc(x.creado_por || "")}</div>`,
+    `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${(x.estado === "publicado" || x.estado === "publicada") ? "ok" : ""}">${esc(x.estado)}</span><button class="btn sm" data-act="${accion}" data-id="${x.id}">${(x.estado === "borrador") ? "Seguir editando" : "Copiar a versión nueva"}</button></span>`)).join("");
+  return `<div style="margin-bottom:10px"><button class="btn primary sm" data-act="${accion}">${esc(etiqueta)}</button></div>
+    <div class="rows">${filas || `<div class="mut">Todavía no hay ningún ${que}.</div>`}</div>`;
+}
+
+function renderFidgComunicaciones() {
+  const ESTADO = { borrador: ["Borrador", ""], aprobada: ["Aprobada, sin encolar", "warn"],
+    enviando: ["En la cola", "ok"], pausada: ["Pausada", "bad"], terminada: ["Terminada", ""] };
+  const filas = (FIDG.comunicaciones || []).map((c) => {
+    const [txt, pill] = ESTADO[c.estado] || ["?", ""];
+    const p = c.progreso || {};
+    const acciones = [
+      c.estado === "borrador" ? ["aprobar", "Aprobar…", "primary"] : null,
+      c.estado === "aprobada" ? ["encolar", "Encolar ahora", "primary"] : null,
+      c.estado === "enviando" ? ["pausar", "Pausar", ""] : null,
+      c.estado === "pausada" ? ["reanudar", "Reanudar", ""] : null,
+      (c.estado === "enviando" || c.estado === "aprobada" || c.estado === "pausada") ? ["cancelar", "Cancelar lo pendiente", "danger"] : null,
+    ].filter(Boolean).map(([a, t, cl]) => `<button class="btn sm ${cl}" data-act="fidg-com" data-id="${c.id}" data-a="${a}">${esc(t)}</button>`).join("");
+    return fgFila(`<div class="t1">${esc(c.nombre)}</div><div class="mut" style="font-size:12px">${c.destinatarios} destinatario(s)${p.encolados ? ` · ${p.encolados} en cola` : ""}${p.entregados ? ` · ${p.entregados} entregados` : ""}${p.fallidos ? ` · ${p.fallidos} fallidos` : ""}${c.aprobada_por ? ` · aprobada por ${esc(c.aprobada_por)}` : ""}</div>`, `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${pill}">${esc(txt)}</span>${acciones}</span>`);
+  }).join("");
+  return `<div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px"><b>Nada sale sin aprobación de Dirección.</b> Guardar prepara la lista; aprobar exige escribir ENVIAR; encolar mete los mensajes en la cola de siempre, que tiene su ritmo y su tope diario.</div>
+    <div style="margin-bottom:10px"><button class="btn primary sm" data-act="fidg-com-nueva">Nueva comunicación…</button></div>
+    <div class="rows">${filas || '<div class="mut">Todavía no hay ninguna.</div>'}</div>`;
+}
+
+function renderFidgRevisiones() {
+  const texto = { varios_socios: "Varios socios en la misma factura", devolucion_parcial: "Devolución parcial",
+                  devolucion_sin_original: "Devolución sin factura original" };
+  const filas = (FIDG.revisiones || []).map((r) => `<div class="row"><div class="grow"><div class="t1">${esc(texto[r.motivo] || r.motivo)}</div><div class="mut" style="font-size:12px">${esc(r.local)} · ${esc(String(r.creado_en || "").slice(0, 16).replace("T", " "))}</div></div><button class="btn sm primary" data-act="fidg-revision" data-id="${r.id}">Resolver…</button></div>`).join("");
+  return `<div class="mut" style="font-size:12.5px;margin-bottom:8px">Estas facturas se aceptaron para no bloquear la caja, pero <b>no se les han tocado los puntos</b>. Resolverlas escribe un movimiento compensatorio: nunca se edita ni se borra nada.</div>
+    <div class="rows">${filas || '<div class="mut">No hay nada pendiente.</div>'}</div>`;
+}
+
+// ── Los formularios de configuración ─────────────────────────────────────────
+//
+// Todo se crea y se versiona DESDE AQUÍ. Ninguna de estas pantallas necesita que nadie llame a la
+// API a mano: si algo solo se pudiera hacer con `curl`, no estaría terminado.
+//
+// TRES REGLAS COMUNES A TODAS:
+//   · Una versión PUBLICADA no se edita: se abre como copia y se guarda una nueva.
+//   · Guardar como borrador y publicar son botones distintos, y publicar pregunta.
+//   · La vista previa NO escribe ni envía nada.
+
+/** Un campo de formulario, con su etiqueta. Evita repetir el mismo HTML veinte veces.
+ *  Con prefijo `fg` porque `area` y `campo` ya existen en otras pantallas del panel. */
+/** Una fila de lista que NO se sale en 390 px.
+ *
+ * El caso que lo destapó: en móvil, un nombre largo más dos botones en la misma línea empujaban la
+ * fila fuera de la tarjeta. `min-width:0` es lo que permite a un hijo de flex encogerse por debajo
+ * de su contenido —sin él, `flex:1` no basta— y `overflow-wrap` parte una palabra larga en vez de
+ * estirar la caja. */
+const fgFila = (izq, der) =>
+  `<div class="row" style="flex-wrap:wrap;gap:8px"><div class="grow" style="min-width:0;overflow-wrap:anywhere">${izq}</div>${der}</div>`;
+
+const fgCampo = (id, etiqueta, valor, extra = {}) => {
+  const attrs = Object.entries({ type: "text", ...extra }).map(([k, v]) => `${k}="${esc(String(v))}"`).join(" ");
+  return `<div class="field"><label for="${id}">${esc(etiqueta)}</label><input id="${id}" ${attrs} value="${esc(String(valor ?? ""))}"></div>`;
+};
+const fgArea = (id, etiqueta, valor, filas = 3) =>
+  `<div class="field"><label for="${id}">${esc(etiqueta)}</label><textarea id="${id}" rows="${filas}">${esc(String(valor ?? ""))}</textarea></div>`;
+const fgSelec = (id, etiqueta, valor, opciones) =>
+  `<div class="field"><label for="${id}">${esc(etiqueta)}</label><select id="${id}">${opciones.map(([v, t]) =>
+    `<option value="${esc(v)}"${String(valor) === String(v) ? " selected" : ""}>${esc(t)}</option>`).join("")}</select></div>`;
+const fgVal = (id) => document.getElementById(id)?.value ?? "";
+const fgChk = (id) => !!document.getElementById(id)?.checked;
+
+/** El aviso que abre cada formulario cuando se está copiando una versión publicada. */
+const avisoCopia = (v) => v
+  ? `<div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px">Estás copiando la <b>versión ${v}</b>, que está publicada. Guardar creará una <b>versión nueva</b>: la anterior no cambia, y lo que ya se ofreció con ella sigue valiendo.</div>`
+  : "";
+
+// ── PROMOCIONES ──────────────────────────────────────────────────────────────
+async function fidgPromoNueva(desdeId) {
+  const base = desdeId ? (FIDG.promos || []).find((p) => String(p.id) === String(desdeId)) : null;
+  const locales = [["", "Todos los locales"], ...(FID.locales || []).map((l) => [l.local, l.local])];
+  const tipos = Object.keys(FIDG.tipos || {}).map((t) => [t, FIDG_TIPO_TXT[t] || t]);
+  const ov = modal(base ? "Copiar promoción" : "Nueva promoción", `
+    ${avisoCopia(base && base.estado === "publicada" ? base.version : null)}
+    ${fgCampo("pmClave", "Clave (no se puede repetir)", base?.clave || "")}
+    ${fgCampo("pmNombre", "Nombre interno", base?.nombre || "")}
+    ${fgSelec("pmTipo", "Tipo de premio", base?.tipo || "descuento_euros", tipos)}
+    ${fgSelec("pmLocal", "Ámbito", base?.local || "", locales)}
+    ${fgCampo("pmCamarero", "Texto para el camarero", base?.texto_camarero || "")}
+    ${fgArea("pmCliente", "Texto para el cliente", base?.texto_cliente || "", 2)}
+    ${fgCampo("pmValor", "Valor (€ o %, según el tipo)", base?.valor ?? "", { type: "number", step: "0.01", min: "0" })}
+    ${fgCampo("pmCoste", "Cuesta (puntos; 0 = gratis)", base?.coste_puntos ?? 0, { type: "number", step: "1", min: "0" })}
+    ${fgCampo("pmMinimo", "Compra mínima (€)", base?.compra_minima ?? 0, { type: "number", step: "0.01", min: "0" })}
+    ${fgCampo("pmCodigo", "Código de la promoción en Ágora (solo para Offer)", base?.codigo_agora || "")}
+    <label class="chk"><input type="checkbox" id="pmComprobado"> He comprobado que ese código existe en Ágora</label>
+    <div class="mut" style="font-size:12px;margin:-4px 0 10px">Si no existe, Ágora <b>ignora el premio en silencio</b>: el cliente se queda sin él y nosotros sin enterarnos.</div>
+    ${fgCampo("pmDesde", "Desde", base?.desde || "", { type: "date" })}
+    ${fgCampo("pmHasta", "Hasta", base?.hasta || "", { type: "date" })}
+    ${fgCampo("pmHoraD", "Desde las", base?.hora_desde || "", { type: "time" })}
+    ${fgCampo("pmHoraH", "Hasta las", base?.hora_hasta || "", { type: "time" })}
+    ${fgCampo("pmLimC", "Límite por cuenta (0 = sin límite)", base?.limite_cuenta ?? 1, { type: "number", step: "1", min: "0" })}
+    ${fgCampo("pmLimT", "Límite total (0 = sin límite)", base?.limite_total ?? 0, { type: "number", step: "1", min: "0" })}
+    ${fgCampo("pmPrio", "Prioridad (gana la más alta)", base?.prioridad ?? 0, { type: "number", step: "1" })}
+    ${fgCampo("pmGracia", "Margen para tickets abiertos (minutos)", base?.gracia_minutos ?? 180, { type: "number", step: "1", min: "0", max: "720" })}
+    <div class="pendingblock hidden" id="pmSim" style="margin-top:10px;padding:10px 12px;font-size:12.5px"></div>
+    <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn sm" data-act="fidg-promo-sim">Simular</button>
+      <button class="btn sm" data-act="fidg-promo-guardar" data-pub="0">Guardar borrador</button>
+      <button class="btn primary sm" data-act="fidg-promo-guardar" data-pub="1">Publicar…</button>
+    </div>`);
+  ov.addEventListener("input", () => { const s = document.getElementById("pmSim"); if (s) s.classList.add("hidden"); });
+}
+
+const FIDG_TIPO_TXT = {
+  descuento_euros: "Descuento en euros (probado)", descuento_pct: "Descuento en porcentaje",
+  descuento_nombre: "Descuento con nombre", oferta_agora: "Oferta de Ágora (Offer)",
+  producto_gratis: "Producto gratis", campana_unica: "Campaña de un solo uso",
+  premio_puntos: "Premio por puntos (probado)", premio_campana: "Premio por pertenecer a una campaña",
+};
+
+function fidgPromoCuerpo() {
+  return { clave: fgVal("pmClave"), nombre: fgVal("pmNombre"), tipo: fgVal("pmTipo"),
+    local: fgVal("pmLocal") || null, texto_camarero: fgVal("pmCamarero"), texto_cliente: fgVal("pmCliente"),
+    valor: fgVal("pmValor"), coste_puntos: fgVal("pmCoste"), compra_minima: fgVal("pmMinimo"),
+    codigo_agora: fgVal("pmCodigo"), codigo_comprobado: fgChk("pmComprobado"),
+    desde: fgVal("pmDesde"), hasta: fgVal("pmHasta"), hora_desde: fgVal("pmHoraD"), hora_hasta: fgVal("pmHoraH"),
+    limite_cuenta: fgVal("pmLimC"), limite_total: fgVal("pmLimT"), prioridad: fgVal("pmPrio"),
+    gracia_minutos: fgVal("pmGracia") };
+}
+
+/** SIMULAR: no escribe nada. Enseña quién se la lleva y quién no, y qué falta para publicar. */
+async function fidgPromoSimular() {
+  try {
+    const j = await apiSend("POST", "/api/fidelizacion/promos/simular", fidgPromoCuerpo());
+    const c = document.getElementById("pmSim");
+    if (!c) return;
+    c.innerHTML = `<b>Simulación — no se ha guardado nada.</b>
+      <div style="margin-top:6px">${(j.escenarios || []).map((e) => `${e.ok ? "✔" : "✖"} ${esc(e.texto)}`).join("<br>")}</div>
+      ${j.publicar && !j.publicar.ok ? `<div style="margin-top:8px;color:var(--danger)"><b>Para publicar falta:</b><br>${j.publicar.falta.map(esc).join("<br>")}</div>` : '<div style="margin-top:8px">Se puede publicar.</div>'}`;
+    c.classList.remove("hidden");
+  } catch (e) { toast(e.message || "No se pudo simular"); }
+}
+
+async function fidgPromoGuardar(publicar) {
+  const cuerpo = { ...fidgPromoCuerpo(), estado: publicar === "1" ? "publicada" : "borrador" };
+  if (publicar === "1" && !confirm(`Se PUBLICARÁ «${cuerpo.nombre}».\n\nA partir de ese momento se puede ofrecer a clientes, si el programa está activo.\n\nLas versiones anteriores de esta clave se dan por finalizadas. ¿Seguir?`)) return;
+  try {
+    const j = await apiSend("POST", "/api/fidelizacion/promos", cuerpo);
+    document.querySelectorAll(".modal-ov").forEach((x) => x.remove());
+    await loadFidPiloto();
+    toast(`Guardada la versión ${j.version} (${j.estado})`);
+  } catch (e) {
+    // Lo que falta para publicar se enseña entero, no en un aviso de una línea.
+    const c = document.getElementById("pmSim");
+    if (c && e.falta) { c.innerHTML = `<b style="color:var(--danger)">No se puede publicar:</b><br>${e.falta.map(esc).join("<br>")}`; c.classList.remove("hidden"); }
+    toast(e.message || "No se pudo guardar");
+  }
+}
+
+// ── FORMULARIO PÚBLICO ───────────────────────────────────────────────────────
+const FIDG_CAMPOS = [["nombre", "Nombre"], ["telefono", "Teléfono"], ["email", "Correo"],
+  ["nacimiento", "Fecha de nacimiento"], ["codigo_postal", "Código postal"],
+  ["local", "Local preferido"], ["comercial", "Acepta ofertas por WhatsApp"]];
+
+async function fidgFormNuevo(desdeId) {
+  const base = desdeId ? (FIDG.formularios || []).find((f) => String(f.id) === String(desdeId)) : null;
+  const puestos = new Map((base?.campos || []).map((c) => [c.id, c]));
+  const filas = FIDG_CAMPOS.map(([id, t]) => {
+    const c = puestos.get(id) || {};
+    const forzoso = id === "nombre" || id === "telefono";
+    const nunca = id === "comercial";
+    return `<div class="row"><div class="grow"><div class="t1">${esc(t)}</div>${forzoso ? '<div class="mut" style="font-size:12px">Siempre visible y obligatorio: el teléfono es la cuenta.</div>' : nunca ? '<div class="mut" style="font-size:12px">Nunca obligatorio ni premarcado.</div>' : ""}</div>
+      <span style="display:flex;gap:10px;align-items:center">
+        <label class="chk"><input type="checkbox" id="fcV_${id}"${c.visible !== false || forzoso ? " checked" : ""}${forzoso ? " disabled" : ""}> visible</label>
+        <label class="chk"><input type="checkbox" id="fcO_${id}"${c.obligatorio || forzoso ? " checked" : ""}${forzoso || nunca ? " disabled" : ""}> obligatorio</label>
+      </span></div>`;
+  }).join("");
+
+  modal(base ? "Copiar formulario" : "Nuevo formulario público", `
+    ${avisoCopia(base && base.estado === "publicado" ? base.version : null)}
+    ${fgCampo("ffClave", "Clave (va en la URL)", base?.clave || "")}
+    ${fgCampo("ffCampana", "Campaña asociada", base?.campana || "")}
+    ${fgCampo("ffTitulo", "Título", base?.titulo || "")}
+    ${fgCampo("ffSub", "Subtítulo", base?.subtitulo || "")}
+    ${fgArea("ffIntro", "Texto introductorio", base?.introduccion || "", 3)}
+    ${fgCampo("ffBoton", "Texto del botón", base?.texto_boton || "Apuntarme")}
+    ${fgArea("ffExito", "Mensaje al enviar", base?.mensaje_exito || "", 2)}
+    ${fgArea("ffPost", "Texto posterior", base?.texto_posterior || "", 2)}
+    ${fgCampo("ffImagen", "Imagen (https)", base?.imagen || "")}
+    ${fgCampo("ffAbre", "Abre", base?.abre_en || "", { type: "date" })}
+    ${fgCampo("ffCierra", "Cierra", base?.cierra_en || "", { type: "date" })}
+    <div class="mut" style="font-size:12px;margin:12px 0 4px">Campos</div>
+    <div class="rows">${filas}</div>
+    ${fgArea("ffConsent", "Texto de consentimiento (obligatorio)", base?.consentimiento_texto || "", 3)}
+    ${fgCampo("ffPriv", "Enlace a la política de privacidad (https)", base?.privacidad_url || "")}
+    <div class="mut" style="font-size:12px;margin:-4px 0 10px">Sin consentimiento y sin política no se pide un teléfono a nadie: no se deja publicar.</div>
+    <div id="ffPrev" class="hidden" style="margin-top:12px"></div>
+    <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn sm" data-act="fidg-form-prev" data-v="movil">Vista previa móvil</button>
+      <button class="btn sm" data-act="fidg-form-prev" data-v="escritorio">Vista previa escritorio</button>
+      <button class="btn sm" data-act="fidg-form-guardar" data-pub="0">Guardar borrador</button>
+      <button class="btn primary sm" data-act="fidg-form-guardar" data-pub="1">Publicar…</button>
+    </div>`);
+}
+
+function fidgFormCuerpo() {
+  return { clave: fgVal("ffClave"), campana: fgVal("ffCampana"), titulo: fgVal("ffTitulo"),
+    subtitulo: fgVal("ffSub"), introduccion: fgVal("ffIntro"), texto_boton: fgVal("ffBoton"),
+    mensaje_exito: fgVal("ffExito"), texto_posterior: fgVal("ffPost"), imagen: fgVal("ffImagen"),
+    abre_en: fgVal("ffAbre"), cierra_en: fgVal("ffCierra"),
+    consentimiento_texto: fgVal("ffConsent"), privacidad_url: fgVal("ffPriv"),
+    campos: FIDG_CAMPOS.map(([id]) => ({ id, visible: fgChk(`fcV_${id}`), obligatorio: fgChk(`fcO_${id}`) })) };
+}
+
+/** VISTA PREVIA. Se pinta con lo que hay escrito; NO guarda ni manda nada. */
+function fidgFormPrev(vista) {
+  const c = fidgFormCuerpo();
+  const ancho = vista === "movil" ? 390 : 900;
+  const campos = c.campos.filter((x) => x.visible).map((x) => {
+    const t = (FIDG_CAMPOS.find(([id]) => id === x.id) || [])[1] || x.id;
+    if (x.id === "comercial") return `<label class="chk" style="display:block;margin:8px 0"><input type="checkbox" disabled> ${esc(t)}</label>`;
+    return `<div class="field"><label>${esc(t)}${x.obligatorio ? " *" : ""}</label><input disabled placeholder="${esc(t)}"></div>`;
+  }).join("");
+  const caja = document.getElementById("ffPrev");
+  if (!caja) return;
+  caja.innerHTML = `<div class="mut" style="font-size:12px;margin-bottom:6px">Vista previa · ${vista === "movil" ? "móvil 390 px" : "escritorio"} · <b>no se ha guardado nada</b></div>
+    <div style="border:1px solid var(--border);border-radius:12px;padding:16px;max-width:${ancho}px;background:var(--bg2)">
+      ${c.imagen ? `<div class="mut" style="font-size:12px">[imagen: ${esc(c.imagen)}]</div>` : ""}
+      <h3 style="margin:0 0 4px">${esc(c.titulo) || "<i>sin título</i>"}</h3>
+      ${c.subtitulo ? `<div class="mut" style="font-size:13px">${esc(c.subtitulo)}</div>` : ""}
+      ${c.introduccion ? `<p style="font-size:13px;white-space:pre-line">${esc(c.introduccion)}</p>` : ""}
+      ${campos}
+      <label class="chk" style="display:block;margin:10px 0"><input type="checkbox" disabled> ${esc(c.consentimiento_texto) || "<i>falta el texto de consentimiento</i>"}</label>
+      ${c.privacidad_url ? `<div class="mut" style="font-size:12px">Política de privacidad: ${esc(c.privacidad_url)}</div>` : '<div class="mut" style="font-size:12px;color:var(--danger)">Falta el enlace a la política de privacidad.</div>'}
+      <div style="margin-top:12px"><button class="btn primary" disabled>${esc(c.texto_boton) || "Enviar"}</button></div>
+      <div class="mut" style="font-size:12px;margin-top:10px">Al enviar: «${esc(c.mensaje_exito) || "<i>falta el mensaje</i>"}»</div>
+    </div>`;
+  caja.classList.remove("hidden");
+}
+
+async function fidgFormGuardar(publicar) {
+  const cuerpo = { ...fidgFormCuerpo(), estado: publicar === "1" ? "publicado" : "borrador" };
+  if (publicar === "1" && !confirm(`Se PUBLICARÁ el formulario «${cuerpo.clave}».\n\nQuedará accesible en /promo.html?c=${cuerpo.clave} y podrá recoger datos de clientes.\n\n¿Seguir?`)) return;
+  try {
+    const j = await apiSend("POST", "/api/fidelizacion/formularios", cuerpo);
+    document.querySelectorAll(".modal-ov").forEach((x) => x.remove());
+    await loadFidPiloto();
+    toast(`Guardado (versión ${j.version}, ${j.estado})`);
+  } catch (e) { toast((e.falta ? e.falta.join(" · ") : e.message) || "No se pudo guardar"); }
+}
+
+// ── TARJETA DEL CLIENTE ──────────────────────────────────────────────────────
+async function fidgTarjetaNueva(desdeId) {
+  const base = desdeId ? (FIDG.tarjeta || []).find((t) => String(t.id) === String(desdeId)) : null;
+  const paletas = Object.entries(FIDG.paletas || { verde: { nombre: "Verde de la casa" } })
+    .map(([k, v]) => [k, v.nombre || k]);
+  modal(base ? "Copiar configuración de la tarjeta" : "Nueva versión de la tarjeta", `
+    ${avisoCopia(base && base.estado === "publicada" ? base.version : null)}
+    <label class="chk" style="display:block;margin-bottom:10px"><input type="checkbox" id="tcMostrar"${base?.mostrar_puntos !== false ? " checked" : ""}> Mostrar el bloque de puntos</label>
+    ${fgCampo("tcTitulo", "Título del programa", base?.titulo || "Tus puntos")}
+    ${fgArea("tcExplica", "Explicación", base?.explicacion || "", 2)}
+    ${fgSelec("tcPaleta", "Colores", base?.paleta || "verde", paletas)}
+    ${fgCampo("tcImagen", "Imagen (https)", base?.imagen || "")}
+    ${fgCampo("tcProgreso", "Texto de progreso", base?.texto_progreso || "")}
+    ${fgCampo("tcRecompensa", "Texto cuando ya puede canjear", base?.texto_recompensa || "")}
+    ${fgCampo("tcSinSaldo", "Texto cuando no tiene puntos", base?.texto_sin_saldo || "")}
+    ${fgArea("tcPrep", "Texto mientras el programa está en preparación", base?.texto_preparacion || "", 2)}
+    ${fgArea("tcCondiciones", "Condiciones", base?.condiciones || "", 3)}
+    ${fgCampo("tcContacto", "Contacto", base?.contacto || "")}
+    ${fgCampo("tcPriv", "Enlace a la política de privacidad (https)", base?.privacidad_url || "")}
+    <div id="tcPrev" class="hidden" style="margin-top:12px"></div>
+    <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn sm" data-act="fidg-tarjeta-prev" data-v="movil">Vista previa móvil</button>
+      <button class="btn sm" data-act="fidg-tarjeta-prev" data-v="escritorio">Vista previa escritorio</button>
+      <button class="btn sm" data-act="fidg-tarjeta-guardar" data-pub="0">Guardar borrador</button>
+      <button class="btn primary sm" data-act="fidg-tarjeta-guardar" data-pub="1">Publicar…</button>
+    </div>`);
+}
+
+function fidgTarjetaCuerpo() {
+  return { mostrar_puntos: fgChk("tcMostrar"), titulo: fgVal("tcTitulo"), explicacion: fgVal("tcExplica"),
+    paleta: fgVal("tcPaleta"), imagen: fgVal("tcImagen"), texto_progreso: fgVal("tcProgreso"),
+    texto_recompensa: fgVal("tcRecompensa"), texto_sin_saldo: fgVal("tcSinSaldo"),
+    texto_preparacion: fgVal("tcPrep"), condiciones: fgVal("tcCondiciones"),
+    contacto: fgVal("tcContacto"), privacidad_url: fgVal("tcPriv") };
+}
+
+/** Vista previa de la tarjeta, en los CUATRO estados que va a ver un cliente. */
+function fidgTarjetaPrev(vista) {
+  const c = fidgTarjetaCuerpo();
+  const pal = (FIDG.paletas || {})[c.paleta] || { acento: "#1c6b4b", suave: "#e8f2ec" };
+  const ancho = vista === "movil" ? 390 : 900;
+  const caja = (titulo, dentro) => `<div style="border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;background:${pal.suave}">
+    <div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em">${esc(titulo)}</div>${dentro}</div>`;
+  const el = document.getElementById("tcPrev");
+  if (!el) return;
+  el.innerHTML = `<div class="mut" style="font-size:12px;margin-bottom:6px">Vista previa · ${vista === "movil" ? "móvil 390 px" : "escritorio"} · <b>no se ha guardado nada</b></div>
+    <div style="max-width:${ancho}px">
+      ${caja("En preparación", `<p style="margin:6px 0 0;font-size:13px">${esc(c.texto_preparacion) || "<i>falta el texto</i>"}</p>`)}
+      ${caja("Sin puntos todavía", `<h3 style="margin:4px 0;color:${pal.acento}">${esc(c.titulo)}</h3><div style="font-size:2rem;font-weight:700">0</div><p class="mut" style="font-size:13px;margin:4px 0 0">${esc(c.texto_sin_saldo) || "puntos disponibles"}</p>`)}
+      ${caja("Con saldo, a medio camino", `<h3 style="margin:4px 0;color:${pal.acento}">${esc(c.titulo)}</h3><div style="font-size:2rem;font-weight:700">72</div>
+        <div style="height:10px;border-radius:999px;background:#0001;margin:8px 0"><div style="height:100%;width:72%;border-radius:999px;background:${pal.acento}"></div></div>
+        <p style="font-size:13px;margin:0">${esc(c.texto_progreso) || "Te faltan 28 puntos."}</p>`)}
+      ${caja("Ya puede canjear", `<h3 style="margin:4px 0;color:${pal.acento}">${esc(c.titulo)}</h3><div style="font-size:2rem;font-weight:700">120</div>
+        <p style="font-size:13px;margin:4px 0 0;font-weight:650;color:${pal.acento}">${esc(c.texto_recompensa) || "¡Ya puedes usar tu descuento!"}</p>`)}
+      ${c.condiciones ? caja("Condiciones", `<p class="mut" style="font-size:12px;white-space:pre-line;margin:6px 0 0">${esc(c.condiciones)}</p>`) : ""}
+    </div>`;
+  el.classList.remove("hidden");
+}
+
+async function fidgTarjetaGuardar(publicar) {
+  const cuerpo = { ...fidgTarjetaCuerpo(), estado: publicar === "1" ? "publicada" : "borrador" };
+  if (publicar === "1" && !confirm("Se PUBLICARÁ esta configuración.\n\nEs lo que verán los clientes al abrir su tarjeta. ¿Seguir?")) return;
+  try {
+    const j = await apiSend("POST", "/api/fidelizacion/tarjeta-config", cuerpo);
+    document.querySelectorAll(".modal-ov").forEach((x) => x.remove());
+    await loadFidPiloto();
+    toast(`Guardada la versión ${j.version} (${j.estado})`);
+  } catch (e) { toast(e.message || "No se pudo guardar"); }
+}
+
+// ── COMUNICACIONES ───────────────────────────────────────────────────────────
+async function fidgComNueva() {
+  const locales = [["", "Todos los locales"], ...(FID.locales || []).map((l) => [l.local, l.local])];
+  modal("Nueva comunicación", `
+    <div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px"><b>Guardar no envía nada.</b> Después hay que aprobarla —solo Dirección, escribiendo ENVIAR— y encolarla.</div>
+    ${fgCampo("cmClave", "Clave", "")}
+    ${fgCampo("cmNombre", "Nombre", "")}
+    ${fgCampo("cmCampana", "Campaña (deja vacío para todos los que consientan)", "")}
+    ${fgSelec("cmLocal", "Ámbito", "", locales)}
+    ${fgArea("cmPlantilla", "Mensaje", "Hola {nombre}, tu tarjeta está aquí: {enlace}", 4)}
+    <div class="mut" style="font-size:12px;margin:-4px 0 10px">Variables: ${(FIDG.variables || []).map((v) => `<code>{${esc(v)}}</code>`).join(" ")}. Cualquier otra se queda escrita tal cual, a la vista.</div>
+    <div class="pendingblock hidden" id="cmPrev" style="margin-top:10px;padding:10px 12px;font-size:12.5px"></div>
+    <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn sm" data-act="fidg-com-prev">Ver a quién y cómo queda</button>
+      <button class="btn primary sm" data-act="fidg-com-guardar">Guardar borrador</button>
+    </div>`);
+}
+
+const fidgComCuerpo = () => ({ clave: fgVal("cmClave"), nombre: fgVal("cmNombre"),
+  campana: fgVal("cmCampana"), local: fgVal("cmLocal") || null, plantilla: fgVal("cmPlantilla") });
+
+/** PREVISUALIZAR: cuenta destinatarios y pinta el mensaje. No escribe ni encola nada. */
+async function fidgComPrev() {
+  try {
+    const j = await apiSend("POST", "/api/fidelizacion/comunicaciones/preparar", fidgComCuerpo());
+    const c = document.getElementById("cmPrev");
+    if (!c) return;
+    const ex = Object.entries(j.excluidos || {});
+    c.innerHTML = `<b>${j.destinatarios} destinatario(s).</b> ${j.aviso}
+      ${ex.length ? `<div style="margin-top:6px">Excluidos: ${ex.map(([k, v]) => `${v} ${esc(k)}`).join(" · ")}</div>` : ""}
+      ${j.variables_desconocidas?.length ? `<div style="margin-top:6px;color:var(--danger)">Variables que no existen: ${j.variables_desconocidas.map(esc).join(", ")}. Se quedarán escritas en el mensaje.</div>` : ""}
+      <div style="margin-top:10px;padding:10px;border-radius:10px;background:var(--bg2);white-space:pre-line">${esc(j.ejemplo)}</div>
+      <div class="mut" style="font-size:12px;margin-top:6px">Ejemplo con datos inventados. No se ha usado el teléfono de nadie.</div>`;
+    c.classList.remove("hidden");
+  } catch (e) { toast(e.message || "No se pudo preparar"); }
+}
+
+async function fidgComGuardar() {
+  try {
+    const j = await apiSend("POST", "/api/fidelizacion/comunicaciones", fidgComCuerpo());
+    document.querySelectorAll(".modal-ov").forEach((x) => x.remove());
+    await loadFidPiloto();
+    toast(`Guardada: ${j.destinatarios} destinatario(s). No se ha enviado nada.`);
+  } catch (e) { toast(e.message || "No se pudo guardar"); }
+}
+
+async function fidgComAccion(id, accion) {
+  if (accion === "aprobar") {
+    const c = prompt("Aprobar esta comunicación autoriza a enviarla a todos sus destinatarios.\n\nEscribe ENVIAR para confirmar:");
+    if (!c) return;
+    try { await apiSend("POST", `/api/fidelizacion/comunicaciones/${id}/aprobar`, { confirmacion: c }); toast("Aprobada. Todavía no se ha enviado nada."); }
+    catch (e) { toast(e.message || "No se pudo aprobar"); return; }
+  } else if (accion === "encolar") {
+    if (!confirm("Se meterán los mensajes en la cola de WhatsApp.\n\nLa cola los irá sacando con su ritmo y su tope diario. Se puede cancelar lo que quede pendiente. ¿Seguir?")) return;
+    try { const j = await apiSend("POST", `/api/fidelizacion/comunicaciones/${id}/encolar`, {}); toast(`${j.encolados} encolados`); }
+    catch (e) { toast(e.message || "No se pudo encolar"); return; }
+  } else if (accion === "cancelar") {
+    if (!confirm("Se descartará lo que siga PENDIENTE en la cola.\n\nLo que ya haya salido no se puede recuperar. ¿Seguir?")) return;
+    try { const j = await apiSend("POST", `/api/fidelizacion/comunicaciones/${id}/cancelar`, {}); toast(`${j.descartados} descartados`); }
+    catch (e) { toast(e.message || "No se pudo cancelar"); return; }
+  } else if (accion === "pausar" || accion === "reanudar") {
+    try { await apiSend("POST", `/api/fidelizacion/comunicaciones/${id}/pausa`, { pausar: accion === "pausar" }); }
+    catch (e) { toast(e.message || "No se pudo cambiar"); return; }
+  }
+  await loadFidPiloto();
+}
+
+async function loadFidGestion() {
+  const j = (u) => apiRaw(u).catch(() => null);
+  const [pu, pr, fo, ta, co, re] = await Promise.all([
+    j("/api/fidelizacion/puerta"), j("/api/fidelizacion/promos"),
+    j("/api/fidelizacion/formularios"), j("/api/fidelizacion/tarjeta-config"),
+    j("/api/fidelizacion/comunicaciones"), j("/api/fidelizacion/revisiones"),
+  ]);
+  FIDG.puerta = pu; FIDG.promos = pr?.data || []; FIDG.formularios = fo?.data || [];
+  FIDG.tarjeta = ta?.data || []; FIDG.comunicaciones = co?.data || []; FIDG.revisiones = re?.data || [];
+  FIDG.tipos = pr?.tipos || {}; FIDG.paletas = ta?.paletas || {}; FIDG.variables = co?.variables || [];
+  if (!FIDG.local) FIDG.local = (FID.locales || [])[0]?.local || null;
+}
+
+function fidgTab(k) { FIDG.seccion = k; const c = document.getElementById("fidPiloto"); if (c) c.innerHTML = renderFidPiloto(); }
+
+async function fidgPuerta(estado) {
+  const cuerpo = {};
+  if (estado === "activo") {
+    const c = prompt("Vas a ACTIVAR el programa de puntos en producción.\n\nA partir de ahora se conceden puntos y se ofrecen descuentos a clientes reales.\n\nEscribe ACTIVAR para confirmar:");
+    if (!c) return;
+    cuerpo.confirmacion = c;
+  }
+  if (estado === "pausado") {
+    const m = prompt("¿Por qué se pausa? (queda auditado)");
+    if (!m || !m.trim()) return;
+    cuerpo.motivo = m;
+  }
+  try { await apiSend("POST", "/api/fidelizacion/puerta", { estado, ...cuerpo }); await loadFidPiloto(); toast("Hecho"); }
+  catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+async function fidgSombraRevisada() {
+  const ya = FIDG.puerta?.requisitos?.find((r) => r.id === "sombra_revisada")?.ok;
+  if (!ya && !confirm("¿Confirmas que has revisado el cálculo en sombra y los números cuadran?")) return;
+  try { await apiSend("POST", "/api/fidelizacion/puerta/sombra-revisada", { revisada: !ya }); await loadFidPiloto(); }
+  catch (e) { toast(e.message || "No se pudo guardar"); }
+}
+
+async function fidgSync() {
+  const local = document.getElementById("fidgLocal")?.value || FIDG.local;
+  if (!local) return;
+  if (!confirm(`Se va a leer el catálogo de productos de ${local} desde su Ágora.\n\nNo se borra nada: lo que desaparezca se marca inactivo.\n\n¿Seguir?`)) return;
+  FIDG.local = local;
+  try {
+    const j = await apiSend("POST", "/api/fidelizacion/catalogo/sincronizar", { local });
+    toast(`+${j.anadidos} · ~${j.actualizados} · −${j.inactivados}`);
+    await fidgCargarCatalogo(local);
+  } catch (e) { toast(e.message || "No se pudo sincronizar"); }
+}
+
+async function fidgCargarCatalogo(local) {
+  try {
+    FIDG.catalogo = await apiRaw(`/api/fidelizacion/catalogo?local=${encodeURIComponent(local)}`);
+    const g = await apiRaw(`/api/fidelizacion/grupos?local=${encodeURIComponent(local)}`);
+    FIDG.grupos = g?.data || [];
+  } catch { FIDG.catalogo = null; }
+  const c = document.getElementById("fidPiloto"); if (c) c.innerHTML = renderFidPiloto();
+}
+
+async function fidgPromoEstado(id, estado) {
+  if (!confirm(estado === "pausada" ? "Se pausará esta promoción al instante. ¿Seguir?" : "Se reanudará. ¿Seguir?")) return;
+  try { await apiSend("POST", `/api/fidelizacion/promos/${id}/estado`, { estado }); await loadFidPiloto(); toast("Hecho"); }
+  catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+async function fidgPropuesta(clave) {
+  try {
+    const j = await apiRaw(`/api/fidelizacion/campanas/propuesta/${encodeURIComponent(clave)}`);
+    const p = j.propuesta;
+    modal("Propuesta · " + esc(p.nombre), `
+      <div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px"><b>${esc(j.aviso)}</b></div>
+      <div class="rows">
+        <div class="row"><div class="grow"><div class="t1">Local</div></div><b>${esc(p.local)}</b></div>
+        <div class="row"><div class="grow"><div class="t1">Fecha</div><div class="mut" style="font-size:12px">hora de Madrid</div></div><b>${esc(p.desde)} · ${esc(p.hora_desde)}–${esc(p.hora_hasta)}</b></div>
+        <div class="row"><div class="grow"><div class="t1">Límite</div></div><b>${p.limite_cuenta} por cuenta</b></div>
+      </div>
+      <div class="mut" style="font-size:12px;margin:12px 0 4px">Cómo funciona</div>
+      <ul class="mut" style="font-size:12.5px;line-height:1.7;padding-left:18px">${p.notas.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
+      ${j.bloqueos.length ? `<div class="pendingblock" style="margin-top:10px;padding:10px 12px;font-size:12.5px"><b>Todavía no se puede publicar:</b><div style="margin-top:6px">${j.bloqueos.map((b) => `· ${esc(b)}`).join("<br>")}</div></div>` : '<div class="mut" style="margin-top:10px;font-size:12.5px">Todo listo para crearla como borrador.</div>'}`);
+  } catch (e) { toast(e.message || "No se pudo leer"); }
+}
+
+async function fidgRevision(id) {
+  try {
+    const j = await apiRaw(`/api/fidelizacion/revisiones/${id}`);
+    const p = j.propuesta;
+    modal("Revisión", `
+      <div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px"><b>${esc(j.aviso)}</b></div>
+      <div class="rows">
+        <div class="row"><div class="grow"><div class="t1">Motivo</div></div><b>${esc(j.revision.motivo)}</b></div>
+        <div class="row"><div class="grow"><div class="t1">Local</div></div><b>${esc(j.revision.local)}</b></div>
+        ${j.socio ? `<div class="row"><div class="grow"><div class="t1">Socio</div><div class="mut" style="font-size:12px">saldo actual ${j.socio.saldo} puntos</div></div><b>${esc(j.socio.nombre || "sin nombre")}</b></div>` : ""}
+        ${j.factura ? `<div class="row"><div class="grow"><div class="t1">Factura</div><div class="mut" style="font-size:12px">${esc(String(j.factura.recibido_en || "").slice(0, 16).replace("T", " "))}</div></div><b>${Number(j.factura.importe || 0).toFixed(2)} €</b></div>` : ""}
+        ${j.original ? `<div class="row"><div class="grow"><div class="t1">Factura original</div></div><b>${Number(j.original.importe || 0).toFixed(2)} €</b></div>` : ""}
+        <div class="row"><div class="grow"><div class="t1">Puntos de esa factura</div></div><b>+${j.puntos.ganados} / −${j.puntos.consumidos}</b></div>
+      </div>
+      ${p ? `<div class="pendingblock" style="margin-top:10px;padding:10px 12px;font-size:12.5px"><b>Propuesta:</b> ${esc(p.explicacion)}</div>` : ""}
+      <div class="field" style="margin-top:12px"><label>Ajuste en puntos (0 = sin ajuste, negativo para restar)</label><input id="fidgAjuste" type="number" step="1" value="${p && p.tipo === "restar" ? -p.puntos : 0}"></div>
+      <div class="field"><label>Motivo (obligatorio, queda auditado)</label><input id="fidgMotivo" type="text" placeholder="Por qué se resuelve así"></div>
+      <div style="margin-top:12px"><button class="btn primary" data-act="fidg-resolver" data-id="${id}">Resolver</button></div>`);
+  } catch (e) { toast(e.message || "No se pudo leer"); }
+}
+
+async function fidgResolver(id) {
+  const puntos = parseInt(document.getElementById("fidgAjuste")?.value || "0") || 0;
+  const motivo = document.getElementById("fidgMotivo")?.value || "";
+  if (motivo.trim().length < 5) { toast("Hace falta un motivo escrito"); return; }
+  if (!confirm(`Se resolverá la revisión${puntos ? ` con un ajuste de ${puntos > 0 ? "+" : ""}${puntos} puntos` : " sin ajuste"}.\n\nSe escribirá un movimiento compensatorio: no se edita ni se borra nada. ¿Seguir?`)) return;
+  try {
+    await apiSend("POST", `/api/fidelizacion/revisiones/${id}/resolver`, { puntos, motivo });
+    document.querySelectorAll(".modal-ov").forEach((x) => x.remove());
+    await loadFidPiloto(); toast("Resuelta");
+  } catch (e) { toast(e.message || "No se pudo resolver"); }
+}
+
 function renderFidPiloto() {
   // EL CENSO, que es global: un carné vale en cualquier barra. Sin ninguno, TODOS los locales
   // devolverán 404 y será correcto. Solo números: ni tokens, ni códigos, ni nombres.
@@ -10954,7 +11559,7 @@ function renderFidPiloto() {
     <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px"><b>Solo una respuesta cierra la factura: que la aceptemos.</b> Si algo falla —desactivas, revocas, el carné ya no existe o la base no responde— Ágora <b>no podrá cerrarla</b>. La salida es siempre la misma y es manual: el camarero <b>desasocia al participante</b> y vuelve a intentar el cierre. No se pierde la venta ni queda nada a medias.</div>
     ${censo}
     <div style="margin-top:6px"><button class="btn sm" data-act="fid-miembro">Buscar socio</button></div>
-    </div>${tarjetas}${renderFidPrograma()}`;
+    </div>${tarjetas}${renderFidPrograma()}${renderFidGestion()}`;
 }
 
 async function loadFidPiloto() {
@@ -10966,6 +11571,7 @@ async function loadFidPiloto() {
     // igual: saber cuántos carnés hay es útil, pero no es lo que se viene a mirar aquí.
     try { FID.censo = (await apiRaw("/api/tarjeta/resumen")).censo || null; } catch { FID.censo = null; }
     await loadFidPrograma();
+    await loadFidGestion();
     if (document.getElementById("fidPiloto")) document.getElementById("fidPiloto").innerHTML = renderFidPiloto();
   } catch (e) {
     // «No se ha podido comprobar» NO es «no hay integración». Confundirlos fue lo que hizo que el
@@ -13435,6 +14041,27 @@ document.addEventListener("click", (e) => {
   else if (act === "fidp-sombra") fidpSombra();
   else if (act === "fidp-revisiones") fidpRevisiones();
   else if (act === "fidp-socio") fidpSocio();
+  else if (act === "fidg-tab") fidgTab(t.getAttribute("data-k"));
+  else if (act === "fidg-puerta") fidgPuerta(t.getAttribute("data-e"));
+  else if (act === "fidg-sombra-rev") fidgSombraRevisada();
+  else if (act === "fidg-sync") fidgSync();
+  else if (act === "fidg-promo-estado") fidgPromoEstado(t.getAttribute("data-id"), t.getAttribute("data-e"));
+  else if (act === "fidg-propuesta") fidgPropuesta(t.getAttribute("data-c"));
+  else if (act === "fidg-revision") fidgRevision(t.getAttribute("data-id"));
+  else if (act === "fidg-resolver") fidgResolver(t.getAttribute("data-id"));
+  else if (act === "fidg-promo-nueva") fidgPromoNueva(t.getAttribute("data-id"));
+  else if (act === "fidg-promo-sim") fidgPromoSimular();
+  else if (act === "fidg-promo-guardar") fidgPromoGuardar(t.getAttribute("data-pub"));
+  else if (act === "fidg-form-nuevo") fidgFormNuevo(t.getAttribute("data-id"));
+  else if (act === "fidg-form-prev") fidgFormPrev(t.getAttribute("data-v"));
+  else if (act === "fidg-form-guardar") fidgFormGuardar(t.getAttribute("data-pub"));
+  else if (act === "fidg-tarjeta-nueva") fidgTarjetaNueva(t.getAttribute("data-id"));
+  else if (act === "fidg-tarjeta-prev") fidgTarjetaPrev(t.getAttribute("data-v"));
+  else if (act === "fidg-tarjeta-guardar") fidgTarjetaGuardar(t.getAttribute("data-pub"));
+  else if (act === "fidg-com-nueva") fidgComNueva();
+  else if (act === "fidg-com-prev") fidgComPrev();
+  else if (act === "fidg-com-guardar") fidgComGuardar();
+  else if (act === "fidg-com") fidgComAccion(t.getAttribute("data-id"), t.getAttribute("data-a"));
   else if (act === "anal-tab") analTab(t.getAttribute("data-tipo"));
   else if (act === "anal-area") analArea(t.getAttribute("data-area"));
   else if (act === "anal-period") analPeriod(t.getAttribute("data-p"));

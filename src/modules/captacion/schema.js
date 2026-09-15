@@ -76,6 +76,16 @@ export async function ensureSchemaCaptacion(x) {
     enviado_en TEXT,
     CHECK (estado IN ('pendiente','enviado','fallido','descartado'))
   )`);
+  // PAUSA REVERSIBLE, y aparte del estado.
+  //
+  // Pausar no puede ser `descartado`: eso es definitivo y se confundiría con cancelar. Y no puede
+  // vivir solo en quien produjo el mensaje, porque el worker lee de aquí y no sabe de dónde vino
+  // cada fila. Una columna propia lo resuelve para CUALQUIER productor: se marca, el worker no la
+  // coge, y al reanudar se desmarca sin tocar `estado` ni los intentos.
+  try { await x.run(`ALTER TABLE cap_cola ADD COLUMN IF NOT EXISTS pausado BOOLEAN NOT NULL DEFAULT FALSE`); }
+  catch (e) { console.error("[captacion] alter cap_cola pausado:", e.message); }
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_cap_cola_listos
+    ON cap_cola (proximo_ms) WHERE estado = 'pendiente' AND NOT pausado`);
   // El índice de la consulta que corre cada treinta segundos.
   await x.run(`CREATE INDEX IF NOT EXISTS idx_cap_cola_pendientes
     ON cap_cola (proximo_ms) WHERE estado = 'pendiente'`);

@@ -124,7 +124,9 @@ export function puntosDe(centimosPagados, regla) {
  */
 export function reglaVigente(reglas, { local, ahora }) {
   const vale = (r) => {
-    if (!r || !r.activa) return false;
+    // UN BORRADOR NO SE APLICA A NADIE. Se guarda para poder prepararlo con calma y simularlo, y
+    // solo cuenta cuando alguien lo publica.
+    if (!reglaPublicada(r)) return false;
     if (r.vigente_desde && String(r.vigente_desde) > String(ahora)) return false;
     if (r.vigente_hasta && String(r.vigente_hasta) <= String(ahora)) return false;
     if (r.ambito === "local") return String(r.local || "") === String(local || "");
@@ -153,20 +155,94 @@ export function reglaVigente(reglas, { local, ahora }) {
  */
 export const idReward = (regla) => (regla && regla.reward_id ? String(regla.reward_id) : null);
 
-/** Lo que ve el camarero. Dice el mínimo, porque es lo que le van a preguntar en la barra. */
+/** Los estados de una regla. Un borrador no se aplica a nada. */
+export const ESTADOS_REGLA = Object.freeze(["borrador", "publicada", "desactivada"]);
+
+/** El texto por defecto, si nadie ha configurado uno. Dice el mínimo, porque es lo que le van a
+ *  preguntar al camarero en la barra. */
+export const textoRewardPorDefecto = (regla) => ({
+  nombre: `${Number(regla.descuento_euros)} € de descuento`,
+  descripcion: `Canjea ${regla.puntos_necesarios} puntos por ${Number(regla.descuento_euros)} € de descuento. `
+    + `La factura debe ser de ${Number(regla.consumo_minimo)} € o más antes del descuento.`,
+});
+
+/**
+ * Lo que ve el camarero.
+ *
+ * El texto sale de la REGLA, no del código: es lo que se lee en la pantalla de la barra, y cambiarlo
+ * no puede exigir un despliegue. Si no se configuró, se compone uno que dice lo importante.
+ */
 export function rewardDe(regla, local) {
   if (!regla || !regla.reward_id) return null;
-  const euros = Number(regla.descuento_euros);
-  const minimo = Number(regla.consumo_minimo);
+  const pordefecto = textoRewardPorDefecto(regla);
   return {
     Id: idReward(regla),
-    Name: `${euros} € de descuento`,
-    Description: `Canjea ${regla.puntos_necesarios} puntos por ${euros} € de descuento. `
-      + `La factura debe ser de ${minimo} € o más antes del descuento.`,
+    Name: String(regla.nombre || pordefecto.nombre).slice(0, 120),
+    Description: String(regla.descripcion || pordefecto.descripcion).slice(0, 400),
     Type: TIPO_REWARD,
-    Value: euros,
+    // SIEMPRE del servidor. Nunca de lo que devuelva Ágora.
+    Value: Number(regla.descuento_euros),
   };
 }
+
+/**
+ * EL SIMULADOR. Qué haría esta regla, en frases que se leen antes de publicarla.
+ *
+ * Existe porque los números de un programa de puntos no se ven hasta que alguien los pone en un
+ * caso concreto: «1 punto por euro» no dice nada, «con una cuenta de 32,30 € ganará 32 puntos» sí.
+ * Y el caso del descuento es el que descubre los errores: si el mínimo se pone en 25 €, una cuenta
+ * de 25 € con descuento pagaría 20 y NO cumpliría el mínimo, cosa que nadie ve en un formulario.
+ */
+export function simular(regla, { cuentas = [32.30, 56.20], sombra = null } = {}) {
+  if (!regla) return { ok: false, casos: [], aviso: "No hay regla que simular." };
+  const casos = [];
+
+  for (const euros of cuentas) {
+    const p = puntosDe(centimos(euros), regla);
+    casos.push({ tipo: "compra", cuenta: euros, puntos: p,
+      texto: `Con una cuenta de ${euros.toFixed(2)} €, ganará ${p} ${p === 1 ? "punto" : "puntos"}.` });
+  }
+
+  // El caso del descuento, calculado sobre el MÍNIMO configurado: es donde se ve si cuadra.
+  const minimo = Number(regla.consumo_minimo);
+  const desc = Number(regla.descuento_euros);
+  const paga = Math.max(0, minimo - desc);
+  const gana = puntosDe(centimos(paga), regla);
+  casos.push({ tipo: "descuento", cuenta: minimo, paga, puntos: gana, cuesta: regla.puntos_necesarios,
+    texto: `Con ${regla.puntos_necesarios} puntos y una cuenta de ${minimo.toFixed(2)} €, `
+      + `pagará ${paga.toFixed(2)} € y ganará ${gana} ${gana === 1 ? "punto" : "puntos"}.` });
+
+  // Cuántas compras hacen falta para llegar al descuento. Es la pregunta que hace todo el mundo.
+  const porCompra = puntosDe(centimos(cuentas[0] ?? 30), regla);
+  if (porCompra > 0) {
+    const n = Math.ceil(Number(regla.puntos_necesarios) / porCompra);
+    casos.push({ tipo: "recorrido", texto: `A ${(cuentas[0] ?? 30).toFixed(2)} € por visita, harían falta `
+      + `${n} visitas para llegar a los ${regla.puntos_necesarios} puntos.` });
+  }
+
+  // El coste estimado, sobre datos de sombra REALES. Sin ellos no se inventa una cifra.
+  let coste = null;
+  if (sombra && Number(sombra.facturas) > 0) {
+    const puntosTotales = Number(sombra.puntos_totales) || 0;
+    const descuentos = Math.floor(puntosTotales / Number(regla.puntos_necesarios));
+    coste = {
+      facturas: Number(sombra.facturas),
+      importe: Number(sombra.importe_total) || 0,
+      puntos: puntosTotales,
+      descuentos_equivalentes: descuentos,
+      euros: Math.round(descuentos * desc * 100) / 100,
+      texto: `Sobre las ${sombra.facturas} facturas medidas en sombra (${(Number(sombra.importe_total) || 0).toFixed(2)} €), `
+        + `se habrían dado ${puntosTotales} puntos: unos ${descuentos} descuentos, `
+        + `${(descuentos * desc).toFixed(2)} € de coste.`,
+    };
+  }
+
+  return { ok: true, casos, coste,
+    aviso: coste ? null : "Todavía no hay datos de sombra suficientes para estimar el coste." };
+}
+
+/** ¿Está publicada y se puede aplicar? Un borrador no da puntos a nadie. */
+export const reglaPublicada = (r) => !!r && (r.estado ? r.estado === "publicada" : !!r.activa);
 
 // ── El libro de puntos ───────────────────────────────────────────────────────────────────────
 

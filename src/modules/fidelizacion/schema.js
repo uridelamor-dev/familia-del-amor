@@ -84,8 +84,13 @@ export async function ensureSchemaFidelizacion(x) {
   // Es lo ÚNICO que permite ver sus importes desde el panel: sin ella, esa herramienta sería una
   // ventana abierta a cualquier factura de cualquier cliente. Se borra cuando la fase de puntos
   // esté validada y la herramienta deje de hacer falta.
+  // `serie` y `numero` son la identidad de DOCUMENTO, que no es el `GlobalId`: una devolución
+  // llega con `RelatedInvoice { Serie, Number }` y sin ellos no hay forma de casarla con su
+  // original. `importe_centimos` evita tener que descifrar el cuerpo para comparar importes.
   for (const col of ["global_id_tipo TEXT NOT NULL DEFAULT 'oficial'", "clave_factura TEXT",
-                     "es_prueba BOOLEAN NOT NULL DEFAULT FALSE"]) {
+                     "es_prueba BOOLEAN NOT NULL DEFAULT FALSE",
+                     "serie TEXT", "numero TEXT", "tipo_documento TEXT", "importe_centimos INTEGER",
+                     "devolucion_de INTEGER", "revertida_en TEXT", "revertida_por INTEGER"]) {
     try { await x.run(`ALTER TABLE fid_facturas ADD COLUMN IF NOT EXISTS ${col}`); }
     catch (e) { console.error("[fidelizacion] alter fid_facturas:", e.message); }
   }
@@ -96,6 +101,10 @@ export async function ensureSchemaFidelizacion(x) {
   await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_factura_clave ON fid_facturas (clave_factura)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_factura_fecha ON fid_facturas (recibido_en DESC)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_factura_local ON fid_facturas (local, recibido_en DESC)`);
+  // Por aquí se busca el original de una devolución. Lleva el local dentro: una devolución de un
+  // local NUNCA puede tocar la factura de otro, aunque coincidan serie y número.
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_factura_doc
+    ON fid_facturas (local, serie, numero) WHERE serie IS NOT NULL OR numero IS NOT NULL`);
 
   // ── El libro ───────────────────────────────────────────────────────────────
   // `clave_idem` UNIQUE es lo que hace que dos peticiones simultáneas con la misma factura no
@@ -190,7 +199,15 @@ export async function ensureSchemaFidelizacion(x) {
   await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_regla_reward
     ON fid_reglas (reward_id) WHERE reward_id IS NOT NULL`);
   // Aditivo, por si la tabla ya existía de una versión anterior de este esquema.
-  for (const col of ["reward_id TEXT", "gracia_minutos INTEGER"]) {
+  // `nombre` y `descripcion` son LO QUE LEE EL CAMARERO en su pantalla, así que se configuran:
+  // un texto escrito en el código no se puede cambiar sin un despliegue, y ahí es donde se explica
+  // el mínimo de la compra. `estado` separa el borrador de lo publicado.
+  for (const col of ["reward_id TEXT", "gracia_minutos INTEGER", "nombre TEXT", "descripcion TEXT",
+                     // BORRADOR por defecto. La tabla es nueva y no hay ninguna fila que
+                     // rellenar, así que un `DEFAULT 'publicada'` solo serviría para que un INSERT
+                     // descuidado dejara una regla viva sin que nadie lo decidiera. El endpoint
+                     // siempre manda el estado explícito.
+                     "estado TEXT NOT NULL DEFAULT 'borrador'"]) {
     try { await x.run(`ALTER TABLE fid_reglas ADD COLUMN IF NOT EXISTS ${col}`); }
     catch (e) { console.error("[fidelizacion] alter fid_reglas:", e.message); }
   }
@@ -215,6 +232,310 @@ export async function ensureSchemaFidelizacion(x) {
     ON fid_revisiones (factura_id, motivo)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_revision_abierta
     ON fid_revisiones (creado_en DESC) WHERE resuelto_en IS NULL`);
+
+  // ── EL CATÁLOGO DE PRODUCTOS DE ÁGORA ──────────────────────────────────────
+  //
+  // LA IDENTIDAD ES COMPUESTA: `(local, producto_id)`. Nunca el `Id` a secas. Ya demostramos con
+  // `Workplace.Id` que dos instalaciones de Ágora repiten identificadores, y el producto 14 de
+  // Girona no tiene nada que ver con el 14 de Lloret.
+  //
+  // LO QUE DESAPARECE NO SE BORRA: se marca inactivo. Un producto puede seguir dentro de una
+  // campaña vieja o de un movimiento ya escrito, y borrarlo dejaría esas filas apuntando al vacío.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_productos (
+    id SERIAL PRIMARY KEY,
+    local TEXT NOT NULL,
+    producto_id TEXT NOT NULL,
+    nombre TEXT NOT NULL,
+    familia_id TEXT,
+    familia TEXT,
+    vat_id TEXT,
+    iva NUMERIC,
+    precio NUMERIC,
+    tarifa_id TEXT,
+    tarifa TEXT,
+    precio_campo TEXT,
+    formato_base_id TEXT,
+    formatos TEXT,
+    boton TEXT,
+    plu TEXT,
+    codigo_barras TEXT,
+    por_peso BOOLEAN NOT NULL DEFAULT FALSE,
+    vendible_principal BOOLEAN NOT NULL DEFAULT TRUE,
+    vendible_complemento BOOLEAN NOT NULL DEFAULT FALSE,
+    baja_en TEXT,
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+    sincronizado_en TEXT NOT NULL,
+    creado_en TEXT NOT NULL
+  )`);
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_producto
+    ON fid_productos (local, producto_id)`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_producto_familia
+    ON fid_productos (local, familia_id) WHERE activo`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_producto_nombre ON fid_productos (local, nombre)`);
+
+  // El registro de CADA sincronización. Sin él, «el catálogo está sincronizado» es una afirmación
+  // que nadie puede comprobar. NUNCA guarda el host ni el token: solo qué pasó y cuándo.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_sincronizaciones (
+    id SERIAL PRIMARY KEY,
+    local TEXT NOT NULL,
+    ok BOOLEAN NOT NULL,
+    api_version TEXT,
+    anadidos INTEGER NOT NULL DEFAULT 0,
+    actualizados INTEGER NOT NULL DEFAULT 0,
+    inactivados INTEGER NOT NULL DEFAULT 0,
+    descartados INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0,
+    ms INTEGER,
+    error TEXT,
+    avisos TEXT,
+    lanzado_por TEXT NOT NULL,
+    creado_en TEXT NOT NULL
+  )`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_sync_local ON fid_sincronizaciones (local, creado_en DESC)`);
+
+  // ── GRUPOS DE PRODUCTOS REUTILIZABLES ──────────────────────────────────────
+  //
+  // «Cafés», «Bocadillos». Se eligen A MANO desde el catálogo: interpretar «cualquier café» por el
+  // nombre metería un café irlandés de 6 € en un desayuno gratuito, y nadie lo vería hasta pagarlo.
+  //
+  // VERSIONADOS: una campaña guarda la versión del grupo con la que se publicó, así que ampliar
+  // «Cafés» mañana no cambia lo que se prometió ayer.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_grupos (
+    id SERIAL PRIMARY KEY,
+    local TEXT NOT NULL,
+    clave TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    nombre TEXT NOT NULL,
+    descripcion TEXT,
+    productos TEXT NOT NULL DEFAULT '[]',
+    estado TEXT NOT NULL DEFAULT 'borrador',
+    creado_en TEXT NOT NULL,
+    creado_por TEXT NOT NULL,
+    CHECK (estado IN ('borrador','publicado','retirado'))
+  )`);
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_grupo_version
+    ON fid_grupos (local, clave, version)`);
+
+  // ── PROMOCIONES Y PREMIOS DE ÁGORA ─────────────────────────────────────────
+  //
+  // ESTO NO ES `pro_promociones`. Aquéllos son los cupones de la casa, que el camarero escanea en
+  // la tablet. Esto es un `Reward` que le mandamos a ÁGORA para que lo aplique dentro de la
+  // factura. Ni comparten tabla, ni límite, ni contador: juntarlos dejaría gastar dos veces el
+  // mismo beneficio —una en la tablet y otra en la caja— sin que nadie lo viera hasta cuadrar el mes.
+  //
+  // VERSIONES INMUTABLES, como las reglas: publicar es insertar. El `reward_id` se genera al
+  // publicar y no se recalcula, para que una factura que vuelve encuentre SUS condiciones.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_promos (
+    id SERIAL PRIMARY KEY,
+    clave TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    local TEXT,
+    nombre TEXT NOT NULL,
+    texto_cliente TEXT,
+    texto_camarero TEXT,
+    tipo TEXT NOT NULL,
+    codigo_agora TEXT,
+    codigo_comprobado_en TEXT,
+    codigo_comprobado_por TEXT,
+    valor NUMERIC,
+    coste_puntos INTEGER NOT NULL DEFAULT 0,
+    compra_minima NUMERIC NOT NULL DEFAULT 0,
+    grupos TEXT NOT NULL DEFAULT '[]',
+    dias TEXT NOT NULL DEFAULT '[]',
+    hora_desde TEXT,
+    hora_hasta TEXT,
+    desde TEXT,
+    hasta TEXT,
+    limite_cuenta INTEGER NOT NULL DEFAULT 1,
+    limite_total INTEGER NOT NULL DEFAULT 0,
+    acumulable BOOLEAN NOT NULL DEFAULT FALSE,
+    prioridad INTEGER NOT NULL DEFAULT 0,
+    estado TEXT NOT NULL DEFAULT 'borrador',
+    gracia_minutos INTEGER,
+    reward_id TEXT,
+    campana TEXT,
+    creado_en TEXT NOT NULL,
+    creado_por TEXT NOT NULL,
+    CHECK (estado IN ('borrador','publicada','pausada','finalizada'))
+  )`);
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_promo_version ON fid_promos (clave, version)`);
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_promo_reward
+    ON fid_promos (reward_id) WHERE reward_id IS NOT NULL`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_promo_viva
+    ON fid_promos (local, estado, desde, hasta) WHERE estado = 'publicada'`);
+
+  // EL LIBRO DE PREMIOS. Append-only y con `clave_idem`, igual que los puntos: es lo que impide
+  // que dos cajas den el último desayuno a la vez, y que un reenvío lo cuente dos veces.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_promo_usos (
+    id SERIAL PRIMARY KEY,
+    promo_id INTEGER NOT NULL,
+    clave TEXT NOT NULL,
+    qr_id INTEGER NOT NULL,
+    local TEXT NOT NULL,
+    factura_id INTEGER,
+    clave_idem TEXT NOT NULL UNIQUE,
+    reward_id TEXT,
+    estado TEXT NOT NULL DEFAULT 'usado',
+    nota TEXT,
+    autor TEXT NOT NULL,
+    creado_en TEXT NOT NULL,
+    CHECK (estado IN ('usado','revertido'))
+  )`);
+  // Un premio por cuenta y promoción: el índice es el candado de verdad, no una comprobación previa.
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_promo_uso_cuenta ON fid_promo_usos (promo_id, qr_id)`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_promo_uso_clave ON fid_promo_usos (clave, qr_id)`);
+
+  // ── EL FORMULARIO PÚBLICO, CONFIGURABLE Y VERSIONADO ───────────────────────
+  //
+  // NO ES UN CENSO NUEVO. El alta sigue yendo a `leads`, el carné a `pro_qr` y el WhatsApp a
+  // `cap_cola`, exactamente como hoy. Esto guarda SOLO cómo se ve y qué se pide: títulos, campos,
+  // textos legales y fechas. Un segundo censo sería la forma más rápida de acabar con dos listas
+  // de clientes que no cuadran.
+  //
+  // TEXTO SEGURO, NUNCA HTML. Lo escribe Marketing y lo lee un cliente en su móvil: aceptar HTML
+  // libre aquí es aceptar un `<script>` en una página pública.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_formularios (
+    id SERIAL PRIMARY KEY,
+    clave TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    campana TEXT,
+    local TEXT,
+    estado TEXT NOT NULL DEFAULT 'borrador',
+    titulo TEXT NOT NULL,
+    subtitulo TEXT,
+    introduccion TEXT,
+    texto_boton TEXT NOT NULL DEFAULT 'Enviar',
+    mensaje_exito TEXT,
+    texto_posterior TEXT,
+    imagen TEXT,
+    campos TEXT NOT NULL DEFAULT '[]',
+    consentimiento_texto TEXT,
+    privacidad_url TEXT,
+    abre_en TEXT,
+    cierra_en TEXT,
+    creado_en TEXT NOT NULL,
+    creado_por TEXT NOT NULL,
+    CHECK (estado IN ('borrador','publicado','cerrado'))
+  )`);
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_form_version ON fid_formularios (clave, version)`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_form_vivo ON fid_formularios (clave, estado)`);
+
+  // EL CONSENTIMIENTO, versionado con su texto. Guardar «aceptó» sin guardar QUÉ aceptó no sirve
+  // para nada el día que alguien pregunte, que es justo cuando hace falta.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_consentimientos (
+    id SERIAL PRIMARY KEY,
+    telefono TEXT NOT NULL,
+    formulario_clave TEXT,
+    formulario_version INTEGER,
+    texto TEXT NOT NULL,
+    acepta_comercial BOOLEAN NOT NULL DEFAULT FALSE,
+    origen TEXT,
+    campana TEXT,
+    creado_en TEXT NOT NULL,
+    baja_en TEXT,
+    baja_origen TEXT
+  )`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_cons_tel ON fid_consentimientos (telefono, creado_en DESC)`);
+
+  // ── LA TARJETA DEL CLIENTE, CONFIGURABLE ───────────────────────────────────
+  //
+  // Una sola fila viva por versión. Colores de una PALETA CERRADA: dejar escribir un color libre
+  // es dejar escribir `url(javascript:...)` en un estilo.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_tarjeta_config (
+    id SERIAL PRIMARY KEY,
+    version INTEGER NOT NULL DEFAULT 1,
+    estado TEXT NOT NULL DEFAULT 'borrador',
+    mostrar_puntos BOOLEAN NOT NULL DEFAULT TRUE,
+    titulo TEXT,
+    explicacion TEXT,
+    paleta TEXT NOT NULL DEFAULT 'verde',
+    imagen TEXT,
+    texto_progreso TEXT,
+    texto_recompensa TEXT,
+    texto_sin_saldo TEXT,
+    texto_preparacion TEXT,
+    faq TEXT NOT NULL DEFAULT '[]',
+    condiciones TEXT,
+    orden_bloques TEXT NOT NULL DEFAULT '[]',
+    contacto TEXT,
+    privacidad_url TEXT,
+    creado_en TEXT NOT NULL,
+    creado_por TEXT NOT NULL,
+    CHECK (estado IN ('borrador','publicada','retirada'))
+  )`);
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_tarjeta_version ON fid_tarjeta_config (version)`);
+
+  // ── COMUNICACIONES ─────────────────────────────────────────────────────────
+  //
+  // El ENVÍO lo hace `cap_cola`, que ya existe, con sus reintentos, su ritmo y su tope diario.
+  // Esto es la preparación: a quién, con qué texto, quién lo aprueba y cómo va. Sin aprobación de
+  // Dirección no sale ni un mensaje.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_comunicaciones (
+    id SERIAL PRIMARY KEY,
+    clave TEXT NOT NULL UNIQUE,
+    nombre TEXT NOT NULL,
+    campana TEXT,
+    local TEXT,
+    plantilla TEXT NOT NULL,
+    estado TEXT NOT NULL DEFAULT 'borrador',
+    filtro TEXT NOT NULL DEFAULT '{}',
+    destinatarios INTEGER NOT NULL DEFAULT 0,
+    excluidos TEXT NOT NULL DEFAULT '{}',
+    programada_para TEXT,
+    aprobada_por TEXT,
+    aprobada_en TEXT,
+    pausada_en TEXT,
+    enviados INTEGER NOT NULL DEFAULT 0,
+    fallidos INTEGER NOT NULL DEFAULT 0,
+    creado_en TEXT NOT NULL,
+    creado_por TEXT NOT NULL,
+    CHECK (estado IN ('borrador','aprobada','enviando','pausada','terminada'))
+  )`);
+  // Un destinatario por comunicación: el índice es lo que impide mandar dos veces el mismo mensaje.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_comunicacion_envios (
+    id SERIAL PRIMARY KEY,
+    comunicacion_id INTEGER NOT NULL,
+    telefono TEXT NOT NULL,
+    qr_id INTEGER,
+    estado TEXT NOT NULL DEFAULT 'pendiente',
+    motivo TEXT,
+    cola_id INTEGER,
+    creado_en TEXT NOT NULL,
+    actualizado_en TEXT,
+    CHECK (estado IN ('pendiente','encolado','entregado','fallido','excluido'))
+  )`);
+  await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_com_envio
+    ON fid_comunicacion_envios (comunicacion_id, telefono)`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_com_envio_estado
+    ON fid_comunicacion_envios (comunicacion_id, estado)`);
+
+  // ── LA PUERTA DE PUESTA EN PRODUCCIÓN ──────────────────────────────────────
+  //
+  // UNA SOLA FILA. Guarda en qué punto está el programa en ESTA casa, quién lo confirmó y cuándo.
+  // No es un interruptor más: encenderlo empieza a mover dinero de clientes reales, así que exige
+  // una confirmación escrita y queda firmado. `pausado` es el freno de emergencia.
+  //
+  // El historial va en `fic_auditoria`, que es el registro transversal de la casa: aquí solo vive
+  // el estado actual, para que no haya dos sitios donde mirar cuál es.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_puerta (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    estado TEXT NOT NULL DEFAULT 'no_preparado',
+    confirmado_por TEXT,
+    confirmado_en TEXT,
+    texto_confirmacion TEXT,
+    pausado_por TEXT,
+    pausado_en TEXT,
+    motivo_pausa TEXT,
+    sombra_revisada_en TEXT,
+    sombra_revisada_por TEXT,
+    actualizado_en TEXT,
+    CHECK (id = 1),
+    CHECK (estado IN ('no_preparado','sombra','listo_para_activar','activo','pausado'))
+  )`);
+  // Nace en `no_preparado` y NO se inserta nada más: un despliegue jamás deja el programa activo.
+  try { await x.run(`INSERT INTO fid_puerta (id, estado, actualizado_en) VALUES (1, 'no_preparado', ?)
+                     ON CONFLICT (id) DO NOTHING`, [new Date().toISOString()]); }
+  catch (e) { console.error("[fidelizacion] puerta:", e.message); }
 
   // ── EL MODO SOMBRA ─────────────────────────────────────────────────────────
   //

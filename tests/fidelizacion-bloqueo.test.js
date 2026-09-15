@@ -26,81 +26,79 @@ const AHORA = "2026-09-14T12:00:00.000Z";
 
 
 
-describe("el nivel de lanzamiento es una puerta EXPLÍCITA", () => {
-  test("hoy estamos en «sombra»", () => {
-    // Esta línea es la puerta. Subirla enciende el programa en producción, aparece en el diff y
-    // hay que revisarla. Es exactamente lo contrario de una condición que se cumple por accidente.
-    assert.equal(NIVEL, "sombra");
+describe("el NIVEL dice qué sabe hacer el código, no qué está encendido", () => {
+  test("el código está completo", () => {
+    // Todo escrito, incluida la reversión de una devolución total. Eso NO enciende nada.
+    assert.equal(NIVEL, "completo");
     assert.deepEqual([...NIVELES], ["sombra", "completo"]);
+    assert.deepEqual([...PENDIENTES], []);
   });
 
-  test("en este nivel solo se puede tocar «sombra»", () => {
-    assert.deepEqual([...permitidos("sombra")], ["sombra"]);
+  test("y por eso el nivel deja TOCAR los cuatro interruptores", () => {
     assert.deepEqual([...permitidos("completo")], ["sombra", "conceder", "ofrecer", "consumir"]);
-    // Un nivel inventado no abre nada: cae al más restrictivo.
-    assert.deepEqual([...permitidos("lo-que-sea")], ["sombra"]);
-    assert.deepEqual([...permitidos(undefined)], ["sombra"]);
+    for (const k of INTERRUPTORES) assert.equal(puedeEncender(k, true, NIVEL).ok, true, k);
   });
 
-  test("NO depende de que exista ninguna función", () => {
-    // La versión anterior deducía esto preguntando si `agora.js` exportaba
-    // `revertirDevolucionTotal`. Un esbozo, una función a medias o una exportación añadida durante
-    // el desarrollo habrían abierto los tres interruptores solos y sin salir en ningún diff.
-    // Sin las líneas de comentario: ahí arriba se explica a propósito el planteamiento que se
-    // retiró, y una búsqueda a pelo confundiría la explicación con el código.
-    const bruto = readFileSync(new URL("../src/modules/fidelizacion/preparacion.js", import.meta.url), "utf8");
-    const fuente = bruto.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
-    assert.ok(!/typeof .*=== "function"/.test(fuente), "vuelve a deducirse por la existencia de una función");
-    assert.ok(!/^import /m.test(fuente), "preparacion.js ha dejado de estar aislado");
-    assert.ok(!/revertirDevolucionTotal/.test(fuente), "vuelve a mirarse esa función");
+  test("PERO EL NIVEL POR SÍ SOLO NO CONCEDE, NI OFRECE, NI CONSUME NADA", () => {
+    // Es el punto entero: `aplicarBloqueo` deja pasar lo que el nivel permite, y DESPUÉS
+    // `fidInterruptores()` lo vuelve a apagar todo mientras la puerta no esté en `activo`.
+    const guardado = { sombra: true, conceder: true, ofrecer: true, consumir: true };
+    assert.deepEqual(aplicarBloqueo(guardado, NIVEL), guardado, "el nivel no es quien bloquea");
+
+    const lee = trozo("async function fidInterruptores() {", "/** Las reglas de un local");
+    // La puerta va DESPUÉS del nivel y es la última palabra.
+    const iNivel = lee.indexOf("fidAplicarBloqueo(out, FID_NIVEL)");
+    const iPuerta = lee.indexOf("SELECT estado FROM fid_puerta");
+    assert.ok(iNivel > 0 && iPuerta > iNivel, "la puerta no se comprueba después del nivel");
+    assert.match(lee, /if \(estadoPuerta !== "activo"\) \{[\s\S]{0,200}conceder: false, ofrecer: false, consumir: false/);
+    // Y si la puerta no se puede leer, se asume cerrada.
+    assert.match(lee, /catch \{ estadoPuerta = "no_preparado"; \}/);
   });
 
-  test("EXPORTAR UNA FUNCIÓN FALSA no abre nada", () => {
-    // Esto es lo que el planteamiento anterior no aguantaba.
-    const falso = { revertirDevolucionTotal: () => {}, devolucionTotalLista: true, listo: true };
-    for (const k of ["conceder", "ofrecer", "consumir"]) {
-      assert.equal(puedeEncender(k, true, NIVEL).ok, false, k);
-      // Y pasar el objeto falso como si fuera el nivel tampoco: no es un nivel conocido.
-      assert.equal(puedeEncender(k, true, falso).ok, false, k);
+  test("la puerta NACE cerrada, y el arranque no puede abrirla", () => {
+    const esquema = readFileSync(new URL("../src/modules/fidelizacion/schema.js", import.meta.url), "utf8");
+    assert.match(esquema, /VALUES \(1, 'no_preparado', \?\)\s*\n?\s*ON CONFLICT \(id\) DO NOTHING/);
+    const escrituras = [...esquema.matchAll(/(INSERT INTO|UPDATE) fid_puerta[^`]*/g)].map((m) => m[0]);
+    assert.equal(escrituras.length, 1);
+    for (const e of escrituras) {
+      for (const estado of ["'activo'", "'listo_para_activar'", "'pausado'"]) {
+        assert.ok(!e.includes(estado), `el arranque puede dejar la puerta en ${estado}`);
+      }
     }
   });
 
-  test("los tres bloqueados devuelven siempre que no", () => {
-    assert.equal(puedeEncender("sombra", true, NIVEL).ok, true);
-    for (const k of ["conceder", "ofrecer", "consumir"]) {
-      const r = puedeEncender(k, true, NIVEL);
-      assert.equal(r.ok, false, `${k} se puede encender`);
-      assert.match(r.error, /todavía no puede activarse/);
-      assert.deepEqual(r.pendientes.map((p) => p.id), ["devolucion_total"]);
-    }
+  test("y abrirla exige escribir ACTIVAR con los siete requisitos verdes", () => {
+    assert.match(server, /app\.post\("\/api\/fidelizacion\/puerta", requireAuth\(\["direccion"\]\)/);
+    assert.match(server, /!fidConfirmacionValida\(req\.body\?\.confirmacion\)/);
+    // Los requisitos se cuentan leyendo la base, no con casillas.
+    const ctx = trozo("async function fidContextoPuerta()", "const fidPuertaGuardada");
+    assert.ok(!/req\.body/.test(ctx), "el contexto se deja influir por la petición");
   });
 
   test("APAGAR siempre se puede", () => {
-    // Si algo está encendido y no debería, la respuesta nunca es «no te dejo apagarlo».
     for (const k of INTERRUPTORES) assert.equal(puedeEncender(k, false, NIVEL).ok, true, k);
   });
 
-  test("MODIFICAR LA CONFIGURACIÓN a mano no abre nada", () => {
-    // Una migración, la consola de la base o un despiste podrían dejar `fid_conceder = 1`. Lo
-    // guardado es una intención; `aplicarBloqueo` es lo que pasa de verdad.
-    const guardado = { sombra: true, conceder: true, ofrecer: true, consumir: true };
-    assert.deepEqual(aplicarBloqueo(guardado, NIVEL),
-      { sombra: true, conceder: false, ofrecer: false, consumir: false });
-  });
-
-  test("en el nivel completo dejaría de bloquear", () => {
-    const e = estadoPreparacion("completo");
-    assert.equal(e.listo, true);
-    assert.deepEqual(e.pendientes, []);
-    const todo = { sombra: true, conceder: true, ofrecer: true, consumir: true };
-    assert.deepEqual(aplicarBloqueo(todo, "completo"), todo);
+  test("un nivel desconocido cae al más restrictivo", () => {
+    // Pasar cualquier cosa donde va el nivel no abre nada. `undefined` es el caso aparte: usa el
+    // valor por defecto del parámetro, que es el NIVEL de verdad — y eso es lo que se quiere.
+    for (const raro of [null, "lo-que-sea", {}, { listo: true }, 0, ""]) {
+      assert.deepEqual([...permitidos(raro)], ["sombra"], String(raro));
+    }
+    assert.deepEqual([...permitidos(undefined)], [...permitidos(NIVEL)], "el valor por defecto no es el NIVEL");
   });
 
   test("todo está congelado", () => {
     assert.throws(() => { PENDIENTES.push({}); }, TypeError);
-    assert.throws(() => { PENDIENTES[0].id = "otro"; }, TypeError);
     assert.throws(() => { PERMITIDOS_POR_NIVEL.sombra.push("conceder"); }, TypeError);
     assert.throws(() => { PERMITIDOS_POR_NIVEL.otro = []; }, TypeError);
+  });
+
+  test("preparacion.js sigue SIN IMPORTS y sin deducir nada de otro módulo", () => {
+    const bruto = readFileSync(new URL("../src/modules/fidelizacion/preparacion.js", import.meta.url), "utf8");
+    const fuente = bruto.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    assert.ok(!/^import /m.test(fuente), "ha dejado de estar aislado");
+    assert.ok(!/typeof .*=== "function"/.test(fuente), "vuelve a deducirse por la existencia de una función");
   });
 });
 
@@ -127,19 +125,26 @@ describe("saltarse el bloqueo por la API", () => {
     assert.ok(!/FID_CAPACIDADES/.test(server), "vuelve la detección por capacidad");
   });
 
-  test("MANDAR LOS CUATRO JUNTOS solo deja pasar «sombra»", () => {
-    // El bucle comprueba cada uno por separado, así que `{sombra:1,conceder:1,ofrecer:1,consumir:1}`
-    // se corta en el primero que no está permitido.
-    const cuerpo = { sombra: true, conceder: true, ofrecer: true, consumir: true };
-    const rechazados = Object.entries(cuerpo).filter(([k, v]) => !puedeEncender(k, v, NIVEL).ok).map(([k]) => k);
-    assert.deepEqual(rechazados, ["conceder", "ofrecer", "consumir"]);
+  test("MANDAR LOS CUATRO JUNTOS se comprueba uno a uno", () => {
+    // Con el nivel completo el bucle los deja pasar todos, pero la PUERTA los vuelve a apagar al
+    // leerlos. El bucle sigue estando porque es lo que retendrá la próxima capacidad a medias.
     assert.match(sw, /for \(const \[k, v\] of Object\.entries\(cambios\)\) \{\s*\n\s*const p = fidPuedeEncender/);
+    const cuerpo = { sombra: true, conceder: true, ofrecer: true, consumir: true };
+    const rechazados = Object.entries(cuerpo).filter(([k, v]) => !puedeEncender(k, v, "sombra").ok).map(([k]) => k);
+    assert.deepEqual(rechazados, ["conceder", "ofrecer", "consumir"], "el mecanismo de retención ya no funciona");
   });
 
-  test("el bloqueo se aplica TAMBIÉN al leer los interruptores", () => {
+  test("LOS DOS CERROJOS se aplican al leer los interruptores", () => {
     // Si solo se comprobara al escribir, una fila ya guardada a 1 seguiría encendiendo el programa.
     const lee = trozo("async function fidInterruptores() {", "/** Las reglas de un local");
-    assert.match(lee, /return fidAplicarBloqueo\(out, FID_NIVEL\)/);
+    // 1. El nivel: ¿está el código terminado?
+    assert.match(lee, /const porNivel = fidAplicarBloqueo\(out, FID_NIVEL\)/);
+    // 2. La puerta: ¿está ESTE negocio activado? Va la última porque pausar corta en caliente.
+    assert.match(lee, /SELECT estado FROM fid_puerta WHERE id = 1/);
+    assert.match(lee, /if \(estadoPuerta !== "activo"\) \{/);
+    assert.match(lee, /return \{ \.\.\.porNivel, conceder: false, ofrecer: false, consumir: false \};/);
+    // Y si no se puede leer la puerta, se asume cerrada: nunca se enciende por un fallo de lectura.
+    assert.match(lee, /catch \{ estadoPuerta = "no_preparado"; \}/);
   });
 
   test("y `fidInterruptores` es lo ÚNICO que lee esos valores", () => {
@@ -148,7 +153,7 @@ describe("saltarse el bloqueo por la API", () => {
     assert.equal(lecturas.length, 1, "alguien lee los interruptores sin pasar por el bloqueo");
   });
 
-  test("Rewards sigue devolviendo [] mientras esté bloqueado", () => {
+  test("Rewards sigue devolviendo [] mientras la PUERTA esté cerrada", () => {
     // `ofrecer` bloqueado ⇒ `rewards` se queda a null ⇒ `respuestaMiembro` usa REWARDS_FASE_1.
     const val = trozo("¿SE LE OFRECE EL DESCUENTO?", 'await apunta(integ.fila.id, integ.fila.local, rewards ? "ok:reward" : "ok")');
     assert.match(val, /let rewards = null;/);
@@ -157,13 +162,13 @@ describe("saltarse el bloqueo por la API", () => {
     assert.match(ag, /Rewards: rewards && rewards\.length \? rewards : \[\.\.\.REWARDS_FASE_1\]/);
   });
 
-  test("y la pantalla lo dice con todas las letras", () => {
+  test("y la pantalla enseña la puerta, con sus requisitos uno a uno", () => {
     const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
-    assert.match(panel, /El programa de puntos todavía no puede activarse/);
-    assert.match(panel, /Bloqueado hasta validar una devolución total real/);
-    assert.match(panel, /El bloqueo está en el servidor/);
-    // Y los botones se pintan deshabilitados, no simplemente ausentes: esconderlos haría pensar
-    // que la función no existe en vez de que está esperando algo.
+    assert.match(panel, /Lo que comprueba el servidor/);
+    assert.match(panel, /Escribe ACTIVAR para confirmar/);
+    // Y el aviso más importante: activa pero con requisitos incumplidos.
+    assert.match(panel, /está ACTIVO pero ya no cumple todos los requisitos/);
+    // El mecanismo de retención por nivel sigue pintándose si algún día vuelve a hacer falta.
     assert.match(panel, /const sinPreparar = k !== "sombra" && !!\(FIDP\.preparacion && !FIDP\.preparacion\.listo\)/);
   });
 });
@@ -208,8 +213,9 @@ describe("publicar una regla es ATÓMICO", () => {
     const iCierra = crear.indexOf("});", crear.indexOf("await fidTransaccion("));
     assert.ok(iThrow > 0 && iThrow < iCierra, "el throw está fuera de la transacción");
     // Y la respuesta lee de la fila creada, no de un valor calculado antes.
-    assert.match(crear, /res\.json\(\{ ok: true, id: fila\.id, version: fila\.version \}\)/);
-    assert.ok(!/fila\?\.\w+/.test(crear.slice(crear.indexOf("res.json"))), "la respuesta tolera que no haya fila");
+    assert.match(crear, /res\.json\(\{ ok: true, id: fila\.id, version: fila\.version, estado: estadoRegla \}\)/);
+    const resp = crear.slice(crear.indexOf("res.json({ ok: true, id: fila.id"));
+    assert.ok(!/fila\?\./.test(resp), "la respuesta tolera que no haya fila");
   });
 
   test("dos publicaciones seguidas dan versiones CONSECUTIVAS", async () => {
@@ -415,7 +421,12 @@ describe("el cerrojo de la cuenta", () => {
     assert.match(tx, /run: async \(q, p = \[\]\) => \(await client\.query\(toPositional\(q\), p\)\)/);
     assert.match(tx, /await client\.query\("COMMIT"\)/);
     // Y el cerrojo se pide por `x.run`, no por el pool.
-    assert.match(ag, /await x\.run\(`SELECT pg_advisory_xact_lock\(\?, \?\)`, \[CERROJO_PUNTOS, socio\.qrId\]\)/);
+    // La cuenta que se bloquea es la que se va a mover: el socio de la factura, o el de la
+    // ORIGINAL cuando llega una devolución que no trae socio en sus líneas.
+    assert.match(ag, /await x\.run\(`SELECT pg_advisory_xact_lock\(\?, \?\)`, \[CERROJO_PUNTOS, qrBloqueado\]\)/);
+    // Y se pide UNA sola vez: dos `pg_advisory_xact_lock` sobre la misma cuenta no harían daño,
+    // pero tener dos sitios que bloquean es tener dos sitios donde olvidarse de hacerlo.
+    assert.equal((ag.match(/pg_advisory_xact_lock\(\?, \?\)`, \[CERROJO_PUNTOS/g) || []).length, 1);
   });
 
   test("la clave NO puede colisionar entre dos carnés", () => {
