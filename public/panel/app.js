@@ -99,6 +99,10 @@ const NAV = [
   ] },
   { g: "Marketing", items: [
     ["clientes", "Clientes", "users", ["direccion", "marketing"]],
+    // Fidelización va en MARKETING y no en Ágora: el programa de puntos es una decisión
+    // comercial. En Sistema → Ágora se queda lo técnico —conexión, tokens, Workplace, catálogo—,
+    // que es de Dirección y no se toca para cambiar cuántos puntos da un euro.
+    ["fidelizacion", "Fidelización", "star", ["direccion", "marketing"]],
     ["campanas", "Campañas", "mkt", ["direccion", "marketing"]],
     ["promos", "Promociones", "ticket", ["direccion", "marketing"]],
     ["reviews", "Reseñas", "star", ["direccion", "encargado", "contabilidad", "marketing"]],
@@ -118,8 +122,8 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { contratacion: "Contratación", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", promos: "Promociones", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], promos: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], contratacion: ["direccion", "rrhh"], pulso: ["direccion", "rrhh"], preguntas: ["direccion", "rrhh"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { contratacion: "Contratación", fidelizacion: "Fidelización", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", promos: "Promociones", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], fidelizacion: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], promos: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], contratacion: ["direccion", "rrhh"], pulso: ["direccion", "rrhh"], preguntas: ["direccion", "rrhh"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
 const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "contratacion", "pulso", "horarios", "fichajes", "usuarios"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
@@ -2433,6 +2437,8 @@ let CLIF = { q: "", poblacion: "", local: "", cumple: false, con_email: false, c
   // pasado», «mujeres de más de 35» y «los que cumplen esta semana».
   edad_min: "", edad_max: "", reservo_from: "", reservo_to: "", cumple_en_dias: "" };
 let CLI_TOTAL = 0;
+/** La última ficha consultada. `"no"` = no existe: se dice igual que cualquier otro fallo. */
+let CLI_FID = null;
 let CLI_POBLACIONES = [];
 let _cliTimer = null;
 async function apiRaw(path) { const r = await fetch(path, { headers: { Authorization: "Bearer " + token() } }); if (await fueraDeSesion(r)) throw new Error("noauth"); const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error"); return j; }
@@ -2494,8 +2500,73 @@ function renderClientes(j) {
     <button class="linkbtn mut" data-act="cli-falta-filtro" style="align-self:center;font-size:12px">¿Te falta un filtro?</button>
   </div>` : ""}`;
   const head = `<div class="ph"><div class="eyebrow">Base de clientes</div><h1>Clientes</h1><div class="sub" id="cliSub">${cliSubTxt(rows, total)}</div></div>`;
-  return `${head}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div>`;
+  return `${head}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div>${renderClientesFid()}`;
 }
+
+/**
+ * LA FICHA DE FIDELIZACIÓN DE UN SOCIO, y por qué está en Clientes y no en Fidelización.
+ *
+ * `Marketing → Fidelización` decide CÓMO funciona el programa; aquí se mira A QUIÉN le ha pasado
+ * qué. Son dos preguntas distintas y quien las hace no es la misma persona: el encargado que
+ * atiende a un cliente que reclama sus puntos entra por la lista de clientes, no por la pantalla
+ * de reglas. Por eso el saldo, las visitas y el historial se consultan aquí —y solo aquí—, y
+ * Fidelización se queda con los agregados y la exportación.
+ *
+ * SE BUSCA POR CARNÉ, NUNCA POR TELÉFONO. Un identificador de socio que se adivina desde un dato
+ * personal no es opaco, y esa es la puerta que protege la validación del TPV.
+ */
+function renderClientesFid() {
+  return `<div class="card" style="margin-top:16px"><div class="ch"><h3>Fidelización de un socio</h3><span class="pill">Marketing</span></div>
+    <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Saldo, visitas, consumo, caducidad e historial por local. Las reglas del programa se configuran en <b>Marketing → Fidelización</b>.</div>
+    <div class="field"><label for="cliFidTok">Carné, enlace del QR o los 8 dígitos</label><input id="cliFidTok" placeholder="12345678"></div>
+    <button class="btn primary sm" data-act="cli-fid">Ver ficha</button>
+    <div id="cliFidOut" style="margin-top:12px">${renderClientesFidCuerpo()}</div></div>`;
+}
+
+/** Solo la ficha. Se pinta suelta al consultar, sin repintar el buscador ni perder lo escrito. */
+function renderClientesFidCuerpo() {
+  const d = CLI_FID;
+  const eur = (n) => (Math.round(Number(n || 0) * 100) / 100).toFixed(2) + " €";
+  const dato = (t, v, sub) => `<div class="row"><div class="grow"><div class="t1">${esc(t)}</div>${sub ? `<div class="mut" style="font-size:12px">${esc(sub)}</div>` : ""}</div><b class="tnum">${esc(v)}</b></div>`;
+
+  let cuerpo = '<div class="mut">Pega el carné, el enlace del QR o los ocho dígitos para ver su ficha.</div>';
+  if (d === "no") cuerpo = '<div class="mut">No existe ningún carné utilizable con eso.</div>';
+  else if (d && d !== "no") {
+    const s = d.saldo || {}, t = d.total || {};
+    const locales = (d.porLocal || []).map((l) => fgFila(
+      `<div class="t1">${esc(l.local || "—")}</div><div class="mut" style="font-size:12px">${l.visitas} visita(s) · ${eur(l.consumo)}${l.ultima ? ` · última ${esc(String(l.ultima).slice(0, 10))}` : ""}</div>`,
+      `<span class="mut tnum" style="font-size:12px">+${l.ganados} / −${l.consumidos}${l.caducados ? ` / ✕${l.caducados}` : ""}</span>`)).join("");
+    const hist = (d.historial || []).slice(0, 40).map((m) => fgFila(
+      `<div class="t1">${esc(m.concepto)}${m.punto_tipo ? ` · ${esc(m.punto_tipo)}` : ""} ${m.unidades ? `<b class="tnum">${m.unidades > 0 ? "+" : ""}${m.unidades}</b>` : ""}</div><div class="mut" style="font-size:12px">${esc(String(m.fecha || "").slice(0, 16).replace("T", " "))} · ${esc(m.local || "—")}${m.importe ? ` · ${eur(m.importe)}` : ""}${m.regla_version ? ` · regla v${m.regla_version}` : ""}${m.caduca_en ? ` · caduca ${esc(m.caduca_en)}` : ""}</div>`,
+      "")).join("");
+
+    cuerpo = `<div class="rows">
+        ${dato("Puntos disponibles", String(s.disponible ?? 0), s.proxima_caducidad ? `El lote más antiguo caduca el ${s.proxima_caducidad}` : "Sin puntos con fecha de caducidad")}
+        ${dato("Visitas", String(t.visitas ?? 0), t.ultima ? `Última: ${String(t.ultima).slice(0, 10)}` : "Todavía ninguna")}
+        ${dato("Consumo", eur(t.consumo), t.ticket_medio ? `Ticket medio ${eur(t.ticket_medio)}` : "")}
+      </div>
+      ${d.carnet?.anulado ? '<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">Este carné está <b>anulado</b>: ya no identifica a nadie en la barra.</div>' : ""}
+      ${locales ? `<div class="mut" style="font-size:12px;margin:14px 0 4px">Por local</div><div class="rows">${locales}</div>` : ""}
+      ${hist ? `<div class="mut" style="font-size:12px;margin:14px 0 4px">Historial · lo que pasó, en qué factura y con qué versión de la regla</div><div class="rows">${hist}</div>` : ""}`;
+  }
+
+  return cuerpo;
+}
+
+/** Consulta la ficha y repinta SOLO su caja: la lista de clientes no se toca. */
+async function cliFidVer() {
+  const tok = (document.getElementById("cliFidTok")?.value || "").trim();
+  if (!tok) { toast("Pega el carné o los ocho dígitos"); return; }
+  try {
+    CLI_FID = await apiRaw("/api/fidelizacion/socio?token=" + encodeURIComponent(tok));
+  } catch (e) {
+    if (e.message === "noauth") return;
+    CLI_FID = "no";                       // 404 y cualquier otro fallo dicen lo mismo hacia fuera
+  }
+  const caja = document.getElementById("cliFidOut");
+  if (caja) caja.innerHTML = renderClientesFidCuerpo();
+}
+
 async function loadClientes() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
@@ -10753,7 +10824,7 @@ const FID_SW_TXT = [
   ["consumir", "Consumir descuentos", "Una factura que llegue con el descuento aplicado gasta los puntos."],
 ];
 
-function renderFidPrograma() {
+function renderFidPrograma(suelto) {
   const sw = FIDP.interruptores;
   if (!sw) return "";
 
@@ -10782,7 +10853,11 @@ function renderFidPrograma() {
       <div class="mut" style="font-size:12px;margin-top:8px">Mientras tanto solo se puede encender el <b>cálculo en sombra</b>, que mira y no toca ningún saldo. El bloqueo está en el servidor: intentar encenderlos desde aquí o llamando a la API devuelve un error.</div>
     </div>` : "";
 
-  return `<div class="card" style="margin-top:10px"><div class="ch"><h3>Programa de puntos</h3>${prep && !prep.listo ? '<span class="pill bad">Bloqueado</span>' : sw.conceder ? '<span class="pill ok">Concediendo</span>' : '<span class="pill warn">Solo en sombra</span>'}</div>
+  // `suelto` lo pinta SIN su propia tarjeta, para embeberlo dentro de otra pantalla. Es lo que
+  // evita una tarjeta dentro de otra tarjeta, que es como se acaba con dos bordes y ningún aire.
+  const abre = suelto ? "" : `<div class="card" style="margin-top:10px"><div class="ch"><h3>Programa de puntos</h3>${prep && !prep.listo ? '<span class="pill bad">Bloqueado</span>' : sw.conceder ? '<span class="pill ok">Concediendo</span>' : '<span class="pill warn">Solo en sombra</span>'}</div>`;
+  const cierra = suelto ? "" : "</div>";
+  return `${abre}
     ${bloqueo}
     <div class="mut" style="font-size:12.5px;padding:2px 2px 6px">Las reglas <b>no se editan</b>: cada cambio crea una versión nueva, y cada punto guarda con cuál se calculó. Así una factura de hace meses se sigue pudiendo explicar.</div>
     <div class="mut" style="font-size:12px;margin:10px 0 4px">Interruptores</div>
@@ -10793,9 +10868,7 @@ function renderFidPrograma() {
     <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn primary sm" data-act="fidp-nueva">Nueva versión…</button>
       <button class="btn sm" data-act="fidp-sombra">Ver cálculo en sombra</button>
-      <button class="btn sm" data-act="fidp-revisiones">Pendientes de revisar</button>
-      <button class="btn sm" data-act="fidp-socio">Ficha de un socio</button>
-    </div></div>`;
+    </div>${cierra}`;
 }
 
 async function loadFidPrograma() {
@@ -10946,17 +11019,8 @@ async function fidpSocio() {
 // diagnóstico: eso es seguridad técnica, vive en las tarjetas de arriba y es solo de Dirección.
 let FIDG = { puerta: null, catalogo: null, grupos: [], promos: [], formularios: [], tarjeta: [],
              comunicaciones: [], revisiones: [], tipos: {}, paletas: {}, variables: [],
-             seccion: "puerta", local: null };
-
-const FIDG_SECCIONES = [
-  ["puerta", "Puesta en producción"],
-  ["catalogo", "Catálogo"],
-  ["promos", "Promociones"],
-  ["formularios", "Formulario"],
-  ["tarjeta", "Tarjeta"],
-  ["comunicaciones", "Comunicaciones"],
-  ["revisiones", "Revisiones"],
-];
+             idiomas: {}, mensajesDefecto: {}, mensajesIdioma: {}, campos: {},
+             local: null };
 
 /** Los cinco estados de la puerta, con lo que significan. */
 const FIDG_PUERTA_TXT = {
@@ -10966,24 +11030,6 @@ const FIDG_PUERTA_TXT = {
   activo: ["Activo", "ok", "Concediendo puntos y ofreciendo descuentos de verdad."],
   pausado: ["Pausado", "bad", "Cortado a propósito. Lo ya concedido se conserva."],
 };
-
-function renderFidGestion() {
-  const tabs = FIDG_SECCIONES.map(([k, t]) =>
-    `<button class="btn sm ${FIDG.seccion === k ? "primary" : ""}" data-act="fidg-tab" data-k="${k}">${esc(t)}</button>`).join("");
-  let cuerpo = "";
-  if (FIDG.seccion === "puerta") cuerpo = renderFidgPuerta();
-  else if (FIDG.seccion === "catalogo") cuerpo = renderFidgCatalogo();
-  else if (FIDG.seccion === "promos") cuerpo = renderFidgPromos();
-  else if (FIDG.seccion === "formularios") cuerpo = renderFidgListaSimple(FIDG.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…");
-  else if (FIDG.seccion === "tarjeta") cuerpo = renderFidgListaSimple(FIDG.tarjeta, "versión de tarjeta", "fidg-tarjeta-nueva", "Nueva versión…");
-  else if (FIDG.seccion === "comunicaciones") cuerpo = renderFidgComunicaciones();
-  else if (FIDG.seccion === "revisiones") cuerpo = renderFidgRevisiones();
-
-  return `<div class="card" style="margin-top:10px"><div class="ch"><h3>Configuración comercial</h3></div>
-    <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Todo lo de aquí se configura, se versiona y se audita. Los tokens y el Workplace no: eso es técnico y está arriba.</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
-    ${cuerpo}</div>`;
-}
 
 function renderFidgPuerta() {
   const p = FIDG.puerta;
@@ -11199,30 +11245,132 @@ async function fidgPromoGuardar(publicar) {
 }
 
 // ── FORMULARIO PÚBLICO ───────────────────────────────────────────────────────
-const FIDG_CAMPOS = [["nombre", "Nombre"], ["telefono", "Teléfono"], ["email", "Correo"],
-  ["nacimiento", "Fecha de nacimiento"], ["codigo_postal", "Código postal"],
-  ["local", "Local preferido"], ["comercial", "Acepta ofertas por WhatsApp"]];
+//
+// ── LAS PROPUESTAS, Y POR QUÉ EXISTEN ────────────────────────────────────────
+//
+// Una campaña son veintitantos textos: el título, la tarjeta, seis rótulos, el consentimiento y
+// los doce mensajes de error. Pedirle a alguien que los teclee es pedirle que se deje uno —y el
+// que se deja siempre es un mensaje de error, porque son los que nadie prueba hasta que fallan.
+//
+// Una propuesta los trae escritos. NO es una publicación: abre el formulario relleno, en borrador,
+// y quien lo mire decide. El botón no manda nada al servidor.
+//
+// Y NO SOBRESCRIBE. Si la clave ya existe se abre lo que hay —el borrador si lo hay, o una copia
+// de la última versión—, porque machacar con una plantilla lo que alguien ya ajustó es exactamente
+// el susto que un botón de «crear propuesta» no puede dar nunca.
+const FIDG_PROPUESTAS = {
+  "esmorzar-girona": {
+    nombre_propuesta: "Esmorzar Girona",
+    clave: "esmorzar-girona",
+    campana: "esmorzar-girona",
+    idioma: "ca",
+    titulo: "A La Tapeta et convidem a esmorzar!",
+    // Sin subtítulo A PROPÓSITO: el título ya lo dice todo y una segunda línea solo aleja el
+    // formulario. Va vacío, no ausente, para que se vea que es una decisión.
+    subtitulo: "",
+    destacado: "Completa el formulari i rebràs el codi al teu telèfon.",
+    introduccion: "",
+    texto_boton: "Vull el meu codi",
+    mensaje_exito: "Perfecte! T'enviem el codi al WhatsApp en un moment.",
+    texto_posterior: "Si no et arriba en uns minuts, revisa que el número sigui correcte.",
+    consentimiento_texto: "Omplint aquest formulari acceptes rebre descomptes del grup de la Família del Amor.",
+    privacidad_url: "https://familiadelamor.org/privacitat",
+    exige_whatsapp: true,
+    sugerir_poblacion: true,
+    campos: [
+      { id: "nombre", visible: true, obligatorio: true, etiqueta: "Nom" },
+      { id: "apellidos", visible: true, obligatorio: true, etiqueta: "Cognoms" },
+      { id: "nacimiento", visible: true, obligatorio: false, etiqueta: "Data de naixement" },
+      { id: "poblacion", visible: true, obligatorio: false, etiqueta: "Població" },
+      { id: "telefono", visible: true, obligatorio: true, etiqueta: "Telèfon" },
+      { id: "email", visible: true, obligatorio: false, etiqueta: "Correu electrònic" },
+      { id: "codigo_postal", visible: false, obligatorio: false, etiqueta: "Codi postal" },
+      { id: "local", visible: false, obligatorio: false, etiqueta: "Local preferit" },
+      // Fuera la casilla de «acepto comunicaciones»: el consentimiento va en una frase encima del
+      // botón, que es lo que se acordó. Una casilla más es un motivo más para no enviar.
+      { id: "comercial", visible: false, obligatorio: false, etiqueta: "Vull rebre ofertes per WhatsApp" },
+    ],
+    mensajes: {
+      cargando: "Carregant…",
+      enviando: "Enviant…",
+      falta_campo: "Falta una dada obligatòria.",
+      telefono_no_valido: "El telèfon no sembla correcte.",
+      fecha_futura: "Aquesta data encara no ha arribat.",
+      consentimiento: "Cal acceptar-ho per continuar.",
+      sin_whatsapp: "Aquest número no està disponible a WhatsApp. Comprova'l i torna-ho a provar.",
+      whatsapp_caido: "Ara mateix no podem comprovar el número. Torna-ho a provar d'aquí a uns minuts.",
+      ya_registrado: "Ja està! Ja hi ets. Si ja hi eres, et tornem a enviar el mateix codi.",
+      no_vigente: "Aquesta promoció no està disponible ara mateix.",
+      ya_utilizado: "Aquest avantatge ja s'ha fet servir.",
+      error: "No s'ha pogut desar. Torna-ho a provar.",
+    },
+  },
+};
 
-async function fidgFormNuevo(desdeId) {
-  const base = desdeId ? (FIDG.formularios || []).find((f) => String(f.id) === String(desdeId)) : null;
+/**
+ * Abre una propuesta. NO ESCRIBE NADA: solo pinta el formulario relleno.
+ *
+ * Si la clave ya existe se abre lo que hay. Nunca se pisa: un borrador se sigue editando y una
+ * versión publicada se copia a una nueva, que es como se versiona todo lo demás en esta pantalla.
+ */
+function fidgFormPropuesta(clave) {
+  const p = FIDG_PROPUESTAS[clave];
+  if (!p) return;
+  const suyas = (FIDG.formularios || []).filter((f) => f.clave === clave);
+  const borrador = suyas.find((f) => f.estado === "borrador");
+  if (borrador) {
+    toast("Ya hay un borrador de esta campaña: se abre ese");
+    return fidgFormNuevo(borrador.id);
+  }
+  const ultima = suyas.sort((a, b) => Number(b.version || 0) - Number(a.version || 0))[0];
+  if (ultima) {
+    toast(`«${clave}» ya existe (v${ultima.version}): se copia a una versión nueva`);
+    return fidgFormNuevo(ultima.id);
+  }
+  fidgFormNuevo(null, p);
+}
+
+const FIDG_CAMPOS = [["nombre", "Nombre"], ["apellidos", "Apellidos"], ["telefono", "Teléfono"],
+  ["email", "Correo"], ["nacimiento", "Fecha de nacimiento"], ["poblacion", "Población"],
+  ["codigo_postal", "Código postal"], ["local", "Local preferido"],
+  ["comercial", "Acepta ofertas por WhatsApp"]];
+
+/**
+ * El formulario de un formulario público.
+ *
+ * `desdeId` copia una versión existente; `propuesta` lo abre relleno con una plantilla de la casa.
+ * Nunca se usan los dos: si hay una versión, MANDA LA VERSIÓN —sobrescribir con una plantilla lo
+ * que alguien ya escribió es justo lo que no puede hacer un botón de «crear propuesta»—.
+ */
+async function fidgFormNuevo(desdeId, propuesta) {
+  const guardada = desdeId ? (FIDG.formularios || []).find((f) => String(f.id) === String(desdeId)) : null;
+  const base = guardada || propuesta || null;
   const puestos = new Map((base?.campos || []).map((c) => [c.id, c]));
   const filas = FIDG_CAMPOS.map(([id, t]) => {
     const c = puestos.get(id) || {};
     const forzoso = id === "nombre" || id === "telefono";
     const nunca = id === "comercial";
-    return `<div class="row"><div class="grow"><div class="t1">${esc(t)}</div>${forzoso ? '<div class="mut" style="font-size:12px">Siempre visible y obligatorio: el teléfono es la cuenta.</div>' : nunca ? '<div class="mut" style="font-size:12px">Nunca obligatorio ni premarcado.</div>' : ""}</div>
+    // LA ETIQUETA ES DE LA CAMPAÑA, no del código: es lo que lee el cliente, y una campaña en
+    // catalán con «Apellidos» en castellano es una campaña a medio traducir. Sin esta casilla el
+    // rótulo se perdía en cada guardado y había que tocar el servidor para cambiar una palabra.
+    const rotulo = c.etiqueta || (FIDG.campos || {})[id]?.etiqueta || t;
+    return `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(t)}</div>${forzoso ? '<div class="mut" style="font-size:12px">Siempre visible y obligatorio: el teléfono es la cuenta.</div>' : nunca ? '<div class="mut" style="font-size:12px">Nunca obligatorio ni premarcado.</div>' : ""}
+        <input class="inp" id="fcT_${id}" value="${esc(rotulo)}" style="margin-top:6px;width:100%;box-sizing:border-box" placeholder="Cómo se llama en la página"></div>
       <span style="display:flex;gap:10px;align-items:center">
         <label class="chk"><input type="checkbox" id="fcV_${id}"${c.visible !== false || forzoso ? " checked" : ""}${forzoso ? " disabled" : ""}> visible</label>
         <label class="chk"><input type="checkbox" id="fcO_${id}"${c.obligatorio || forzoso ? " checked" : ""}${forzoso || nunca ? " disabled" : ""}> obligatorio</label>
       </span></div>`;
   }).join("");
 
-  modal(base ? "Copiar formulario" : "Nuevo formulario público", `
-    ${avisoCopia(base && base.estado === "publicado" ? base.version : null)}
+  modal(guardada ? "Copiar formulario" : propuesta ? `Propuesta · ${esc(propuesta.nombre_propuesta || propuesta.clave)}` : "Nuevo formulario público", `
+    ${propuesta && !guardada ? '<div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px">Viene <b>relleno con la propuesta</b>, en borrador. Revísalo y cámbialo lo que haga falta: <b>no se publica hasta que pulses «Publicar»</b>.</div>' : ""}
+    ${avisoCopia(guardada && guardada.estado === "publicado" ? guardada.version : null)}
     ${fgCampo("ffClave", "Clave (va en la URL)", base?.clave || "")}
     ${fgCampo("ffCampana", "Campaña asociada", base?.campana || "")}
+    ${fgSelec("ffIdioma", "Idioma", base?.idioma || "es", Object.entries(FIDG.idiomas || { es: "Castellano" }))}
     ${fgCampo("ffTitulo", "Título", base?.titulo || "")}
     ${fgCampo("ffSub", "Subtítulo", base?.subtitulo || "")}
+    ${fgArea("ffDestacado", "Tarjeta destacada (la verde)", base?.destacado || "", 2)}
     ${fgArea("ffIntro", "Texto introductorio", base?.introduccion || "", 3)}
     ${fgCampo("ffBoton", "Texto del botón", base?.texto_boton || "Apuntarme")}
     ${fgArea("ffExito", "Mensaje al enviar", base?.mensaje_exito || "", 2)}
@@ -11234,7 +11382,13 @@ async function fidgFormNuevo(desdeId) {
     <div class="rows">${filas}</div>
     ${fgArea("ffConsent", "Texto de consentimiento (obligatorio)", base?.consentimiento_texto || "", 3)}
     ${fgCampo("ffPriv", "Enlace a la política de privacidad (https)", base?.privacidad_url || "")}
-    <div class="mut" style="font-size:12px;margin:-4px 0 10px">Sin consentimiento y sin política no se pide un teléfono a nadie: no se deja publicar.</div>
+    <div class="mut" style="font-size:12px;margin:-4px 0 10px">Sin consentimiento y sin política no se pide un teléfono a nadie: no se deja publicar. El texto se guarda con la versión: lo que alguien aceptó en septiembre se puede leer en enero.</div>
+    <label class="chk" style="display:block;margin-bottom:8px"><input type="checkbox" id="ffWA"${base?.exige_whatsapp ? " checked" : ""}> Exigir que el teléfono tenga WhatsApp</label>
+    <div class="mut" style="font-size:12px;margin:-4px 0 10px">Se comprueba al enviar, nunca en una ruta aparte: un endpoint que conteste «este número tiene WhatsApp» es un comprobador de números.</div>
+    <label class="chk" style="display:block;margin-bottom:12px"><input type="checkbox" id="ffPob"${base?.sugerir_poblacion ? " checked" : ""}> Sugerir poblaciones al escribir</label>
+    <details style="margin-bottom:12px"><summary class="mut" style="font-size:12px;cursor:pointer">Mensajes que verá el cliente</summary>
+      <div class="mut" style="font-size:12px;margin-top:8px">Vacío = el texto de la casa en el idioma elegido. Al cambiar el idioma se reescriben los que no hayas tocado.</div>
+      <div id="ffMsgs" style="margin-top:8px">${fidgMensajesCampos(base, base?.idioma || "es")}</div></details>
     <div id="ffPrev" class="hidden" style="margin-top:12px"></div>
     <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn sm" data-act="fidg-form-prev" data-v="movil">Vista previa móvil</button>
@@ -11242,6 +11396,30 @@ async function fidgFormNuevo(desdeId) {
       <button class="btn sm" data-act="fidg-form-guardar" data-pub="0">Guardar borrador</button>
       <button class="btn primary sm" data-act="fidg-form-guardar" data-pub="1">Publicar…</button>
     </div>`);
+  // El desplegable de idioma no pasa por la delegación de `data-act`, que es de clics.
+  document.getElementById("ffIdioma")?.addEventListener("change", fidgFormIdioma);
+}
+
+/**
+ * Las casillas de mensajes, con el respaldo del idioma elegido de marcador de posición.
+ *
+ * Se enseña el respaldo como `placeholder` y NO como valor: así se ve qué saldrá sin convertirlo en
+ * texto escrito a mano que luego se queda congelado cuando cambie el de la casa.
+ */
+function fidgMensajesCampos(base, idioma) {
+  const def = (FIDG.mensajesIdioma || {})[idioma] || FIDG.mensajesDefecto || {};
+  return Object.keys(FIDG.mensajesDefecto || {}).map((k) =>
+    fgCampo("ffM_" + k, k.replace(/_/g, " "), (base?.mensajes || {})[k] ?? "",
+            { placeholder: def[k] || "" })).join("");
+}
+
+/** Cambiar el idioma reescribe los respaldos. Lo ya escrito a mano no se toca. */
+function fidgFormIdioma() {
+  const caja = document.getElementById("ffMsgs");
+  if (!caja) return;
+  const escrito = {};
+  for (const k of Object.keys(FIDG.mensajesDefecto || {})) escrito[k] = fgVal("ffM_" + k);
+  caja.innerHTML = fidgMensajesCampos({ mensajes: escrito }, fgVal("ffIdioma"));
 }
 
 function fidgFormCuerpo() {
@@ -11250,7 +11428,11 @@ function fidgFormCuerpo() {
     mensaje_exito: fgVal("ffExito"), texto_posterior: fgVal("ffPost"), imagen: fgVal("ffImagen"),
     abre_en: fgVal("ffAbre"), cierra_en: fgVal("ffCierra"),
     consentimiento_texto: fgVal("ffConsent"), privacidad_url: fgVal("ffPriv"),
-    campos: FIDG_CAMPOS.map(([id]) => ({ id, visible: fgChk(`fcV_${id}`), obligatorio: fgChk(`fcO_${id}`) })) };
+    idioma: fgVal("ffIdioma"), destacado: fgVal("ffDestacado"),
+    exige_whatsapp: fgChk("ffWA"), sugerir_poblacion: fgChk("ffPob"),
+    mensajes: Object.fromEntries(Object.keys(FIDG.mensajesDefecto || {}).map((k) => [k, fgVal("ffM_" + k)])),
+    campos: FIDG_CAMPOS.map(([id]) => ({ id, visible: fgChk(`fcV_${id}`), obligatorio: fgChk(`fcO_${id}`),
+      etiqueta: fgVal(`fcT_${id}`) })) };
 }
 
 /** VISTA PREVIA. Se pinta con lo que hay escrito; NO guarda ni manda nada. */
@@ -11258,7 +11440,7 @@ function fidgFormPrev(vista) {
   const c = fidgFormCuerpo();
   const ancho = vista === "movil" ? 390 : 900;
   const campos = c.campos.filter((x) => x.visible).map((x) => {
-    const t = (FIDG_CAMPOS.find(([id]) => id === x.id) || [])[1] || x.id;
+    const t = x.etiqueta || (FIDG_CAMPOS.find(([id]) => id === x.id) || [])[1] || x.id;
     if (x.id === "comercial") return `<label class="chk" style="display:block;margin:8px 0"><input type="checkbox" disabled> ${esc(t)}</label>`;
     return `<div class="field"><label>${esc(t)}${x.obligatorio ? " *" : ""}</label><input disabled placeholder="${esc(t)}"></div>`;
   }).join("");
@@ -11269,9 +11451,10 @@ function fidgFormPrev(vista) {
       ${c.imagen ? `<div class="mut" style="font-size:12px">[imagen: ${esc(c.imagen)}]</div>` : ""}
       <h3 style="margin:0 0 4px">${esc(c.titulo) || "<i>sin título</i>"}</h3>
       ${c.subtitulo ? `<div class="mut" style="font-size:13px">${esc(c.subtitulo)}</div>` : ""}
+      ${c.destacado ? `<div style="margin:10px 0;padding:10px 12px;border-radius:12px;background:#eef4f0;color:#2F6B4F;font-weight:700;text-align:center">${esc(c.destacado)}</div>` : ""}
       ${c.introduccion ? `<p style="font-size:13px;white-space:pre-line">${esc(c.introduccion)}</p>` : ""}
       ${campos}
-      <label class="chk" style="display:block;margin:10px 0"><input type="checkbox" disabled> ${esc(c.consentimiento_texto) || "<i>falta el texto de consentimiento</i>"}</label>
+      <p style="margin:14px 0 4px;font-size:13px;color:#4c5854">${esc(c.consentimiento_texto) || "<i>falta el texto de consentimiento</i>"}</p>
       ${c.privacidad_url ? `<div class="mut" style="font-size:12px">Política de privacidad: ${esc(c.privacidad_url)}</div>` : '<div class="mut" style="font-size:12px;color:var(--danger)">Falta el enlace a la política de privacidad.</div>'}
       <div style="margin-top:12px"><button class="btn primary" disabled>${esc(c.texto_boton) || "Enviar"}</button></div>
       <div class="mut" style="font-size:12px;margin-top:10px">Al enviar: «${esc(c.mensaje_exito) || "<i>falta el mensaje</i>"}»</div>
@@ -11427,6 +11610,126 @@ async function fidgComAccion(id, accion) {
   await loadFidPiloto();
 }
 
+// ── Marketing → Fidelización ─────────────────────────────────────────────────
+//
+// LA PANTALLA PROPIETARIA del programa de puntos. Cada función vive en un solo sitio; desde los
+// resúmenes se enlaza, pero no se duplica: dos pantallas que hacen lo mismo acaban divergiendo y
+// nadie sabe cuál es la buena.
+//
+//   Aquí            puesta en producción · sombra · reglas · revisiones · tarjeta · trazabilidad
+//   Promociones     promociones, grupos de productos y la campaña de Girona
+//   Campañas        formularios públicos, consentimientos y comunicaciones
+//   Clientes        saldo, movimientos, visitas y caducidad de cada socio
+//   Ágora (TPV)     conexión, tokens, Workplace, facturas, catálogo y diagnóstico
+const FID_SECC = [
+  ["resumen", "Resumen y activación"],
+  ["sombra", "Cálculo en sombra"],
+  ["reglas", "Reglas de puntos"],
+  ["revisiones", "Revisiones y ajustes"],
+  ["tarjeta", "Tarjeta del cliente"],
+  ["traza", "Trazabilidad"],
+];
+let FIDV = { seccion: "resumen" };
+
+function renderFidelizacion() {
+  const tabs = FID_SECC.map(([k, t]) =>
+    `<button class="btn sm ${FIDV.seccion === k ? "primary" : ""}" data-act="fidv-tab" data-k="${k}">${esc(t)}</button>`).join("");
+  let cuerpo = "";
+  if (FIDV.seccion === "resumen") cuerpo = renderFidgPuerta() + renderFidvAtajos();
+  else if (FIDV.seccion === "sombra") cuerpo = renderFidvSombra();
+  else if (FIDV.seccion === "reglas") cuerpo = renderFidPrograma(true);
+  else if (FIDV.seccion === "revisiones") cuerpo = renderFidgRevisiones();
+  else if (FIDV.seccion === "tarjeta") cuerpo = renderFidgListaSimple(FIDG.tarjeta, "versión de tarjeta", "fidg-tarjeta-nueva", "Nueva versión…");
+  else if (FIDV.seccion === "traza") cuerpo = renderFidvTraza();
+
+  return `<div class="hd"><h2>Fidelización</h2></div>
+    <div class="card"><div class="ch"><h3>Programa de puntos</h3></div>
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Aquí se decide cómo funciona el programa y cuándo se enciende. Los tokens, el Workplace y el catálogo están en <b>Sistema → Ágora (TPV)</b>.</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
+      ${cuerpo}</div>`;
+}
+
+/** Enlaces a las pantallas propietarias. Enlazar no es duplicar. */
+function renderFidvAtajos() {
+  const ir = (v, t, d) => `<div class="row"><div class="grow"><div class="t1">${esc(t)}</div><div class="mut" style="font-size:12px">${esc(d)}</div></div><button class="btn sm" data-act="ir-vista" data-v="${v}">Ir</button></div>`;
+  return `<div class="mut" style="font-size:12px;margin:14px 0 4px">Lo demás vive en su propia pantalla</div>
+    <div class="rows">
+      ${ir("promos", "Promociones", "Premios, descuentos por puntos, productos y la campaña de Girona")}
+      ${ir("campanas", "Campañas", "Formularios públicos, consentimientos y comunicaciones")}
+      ${ir("clientes", "Clientes", "Saldo, movimientos, visitas y caducidad de cada socio")}
+      ${ir("agora", "Ágora (TPV)", "Conexión, tokens, Workplace, facturas y catálogo")}
+    </div>`;
+}
+
+function renderFidvSombra() {
+  const locales = (FID.locales || []).map((l) => `<option value="${esc(l.local)}">${esc(l.local)}</option>`).join("");
+  return `<div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px"><b>La sombra no toca ningún saldo.</b> Calcula lo que el programa HARÍA con las facturas que van llegando, para poder comparar los números antes de encenderlo.</div>
+    <div class="field"><label>Local</label><select id="fidvLocal">${locales}</select></div>
+    <button class="btn primary sm" data-act="fidv-sombra">Ver cálculo</button>
+    <div id="fidvSombraOut" style="margin-top:12px"></div>`;
+}
+
+function renderFidvTraza() {
+  const locales = [["", "Todos los míos"], ...(FID.locales || []).map((l) => [l.local, l.local])];
+  return `<div class="mut" style="font-size:12.5px;margin-bottom:10px">El detalle de un socio está en <b>Clientes</b>. Aquí salen los agregados y la exportación.</div>
+    <div class="field"><label>Local</label><select id="fidtLocal">${locales.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("")}</select></div>
+    <div class="field"><label>Últimos (días)</label><input id="fidtDias" type="number" min="1" max="730" value="90"></div>
+    <div class="field"><label>Ordenar por</label><select id="fidtOrden"><option value="consumo">Consumo</option><option value="visitas">Visitas</option><option value="puntos">Puntos ganados</option><option value="ultima">Última visita</option></select></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn primary sm" data-act="fidv-traza">Ver</button><button class="btn sm" data-act="fidv-csv">Exportar CSV</button></div>
+    <div class="mut" style="font-size:12px;margin-top:6px">El CSV no lleva teléfonos, ni tokens, ni cuerpos de factura.</div>
+    <div id="fidtOut" style="margin-top:12px"></div>`;
+}
+
+async function loadFidelizacion() {
+  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  try {
+    // Reutiliza los mismos cargadores: no hay un segundo juego de datos.
+    const j = await apiRaw("/api/fidelizacion/integracion");
+    FID.locales = j.locales || [];
+    await loadFidPrograma();
+    await loadFidGestion();
+    view.innerHTML = renderFidelizacion();
+  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+}
+
+function fidvTab(k) { FIDV.seccion = k; const v = document.getElementById("view"); if (v) v.innerHTML = renderFidelizacion(); }
+
+async function fidvSombra() {
+  const local = document.getElementById("fidvLocal")?.value;
+  if (!local) return;
+  const out = document.getElementById("fidvSombraOut");
+  try {
+    const j = await apiRaw(`/api/fidelizacion/sombra?local=${encodeURIComponent(local)}`);
+    const r = j.resumen || {};
+    out.innerHTML = `<div class="rows">
+      <div class="row"><div class="grow"><div class="t1">Facturas miradas</div></div><b class="tnum">${Number(r.facturas || 0)}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Puntos que se habrían dado</div></div><b class="tnum">${Number(r.puntos_totales || 0)}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Importe pagado detectado</div></div><b class="tnum">${Number(r.importe_total || 0).toFixed(2)} €</b></div>
+      <div class="row"><div class="grow"><div class="t1">Propinas vistas</div><div class="mut" style="font-size:12px">No dan puntos. Está aquí para saber si van dentro del importe cobrado.</div></div><b class="tnum">${Number(r.propina_total || 0).toFixed(2)} €</b></div>
+      <div class="row"><div class="grow"><div class="t1">Facturas con PaidAmount ≠ Amount</div><div class="mut" style="font-size:12px">Si es 0 en todas, nunca hay cambio que descontar.</div></div><b class="tnum">${Number(r.paid_distinto_amount || 0)}</b></div>
+    </div>`;
+  } catch (e) { out.innerHTML = `<div class="mut">${esc(e.message || "No se pudo leer")}</div>`; }
+}
+
+async function fidvTraza() {
+  const local = document.getElementById("fidtLocal")?.value || "";
+  const dias = document.getElementById("fidtDias")?.value || 90;
+  const orden = document.getElementById("fidtOrden")?.value || "consumo";
+  const out = document.getElementById("fidtOut");
+  try {
+    const q = `?dias=${encodeURIComponent(dias)}&orden=${encodeURIComponent(orden)}${local ? `&local=${encodeURIComponent(local)}` : ""}`;
+    const j = await apiRaw("/api/fidelizacion/clientes" + q);
+    const filas = (j.data || []).map((c) => `<div class="row"><div class="grow" style="min-width:0;overflow-wrap:anywhere"><div class="t1">${esc(c.nombre || "sin nombre")}</div><div class="mut" style="font-size:12px">${c.visitas} visita(s) · ${c.ganados} ganados · ${c.consumidos} usados · ${c.caducados} caducados${c.dias_sin_venir != null ? ` · hace ${c.dias_sin_venir} días` : ""}</div></div><span style="display:flex;gap:8px;align-items:center"><b class="tnum">${Number(c.consumo || 0).toFixed(2)} €</b><span class="pill${c.saldo > 0 ? " ok" : ""}">${c.saldo} p</span></span></div>`).join("");
+    out.innerHTML = filas ? `<div class="rows">${filas}</div>` : '<div class="mut">Sin movimientos en ese periodo.</div>';
+  } catch (e) { out.innerHTML = `<div class="mut">${esc(e.message || "No se pudo leer")}</div>`; }
+}
+
+function fidvCsv() {
+  const local = document.getElementById("fidtLocal")?.value || "";
+  const dias = document.getElementById("fidtDias")?.value || 90;
+  window.open(`/api/fidelizacion/clientes.csv?dias=${encodeURIComponent(dias)}${local ? `&local=${encodeURIComponent(local)}` : ""}`, "_blank");
+}
+
 async function loadFidGestion() {
   const j = (u) => apiRaw(u).catch(() => null);
   const [pu, pr, fo, ta, co, re] = await Promise.all([
@@ -11437,10 +11740,11 @@ async function loadFidGestion() {
   FIDG.puerta = pu; FIDG.promos = pr?.data || []; FIDG.formularios = fo?.data || [];
   FIDG.tarjeta = ta?.data || []; FIDG.comunicaciones = co?.data || []; FIDG.revisiones = re?.data || [];
   FIDG.tipos = pr?.tipos || {}; FIDG.paletas = ta?.paletas || {}; FIDG.variables = co?.variables || [];
+  FIDG.idiomas = fo?.idiomas || {}; FIDG.mensajesDefecto = fo?.mensajes_defecto || {};
+  FIDG.campos = fo?.campos_disponibles || {};
+  FIDG.mensajesIdioma = fo?.mensajes_por_idioma || {};
   if (!FIDG.local) FIDG.local = (FID.locales || [])[0]?.local || null;
 }
-
-function fidgTab(k) { FIDG.seccion = k; const c = document.getElementById("fidPiloto"); if (c) c.innerHTML = renderFidPiloto(); }
 
 async function fidgPuerta(estado) {
   const cuerpo = {};
@@ -11475,6 +11779,12 @@ async function fidgSync() {
     toast(`+${j.anadidos} · ~${j.actualizados} · −${j.inactivados}`);
     await fidgCargarCatalogo(local);
   } catch (e) { toast(e.message || "No se pudo sincronizar"); }
+}
+
+/** Solo los grupos. Se usa desde Promociones, que no necesita el catálogo entero. */
+async function fidgCargarGrupos(local) {
+  try { FIDG.grupos = (await apiRaw(`/api/fidelizacion/grupos?local=${encodeURIComponent(local)}`))?.data || []; }
+  catch { FIDG.grupos = []; }
 }
 
 async function fidgCargarCatalogo(local) {
@@ -11559,7 +11869,13 @@ function renderFidPiloto() {
     <div class="pendingblock" style="margin:2px 2px 8px;padding:10px 12px;font-size:12.5px"><b>Solo una respuesta cierra la factura: que la aceptemos.</b> Si algo falla —desactivas, revocas, el carné ya no existe o la base no responde— Ágora <b>no podrá cerrarla</b>. La salida es siempre la misma y es manual: el camarero <b>desasocia al participante</b> y vuelve a intentar el cierre. No se pierde la venta ni queda nada a medias.</div>
     ${censo}
     <div style="margin-top:6px"><button class="btn sm" data-act="fid-miembro">Buscar socio</button></div>
-    </div>${tarjetas}${renderFidPrograma()}${renderFidGestion()}`;
+    </div>${tarjetas}
+    <div class="card" style="margin-top:10px"><div class="ch"><h3>Catálogo de productos</h3></div>
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Se lee del TPV de cada local. Hace falta para elegir qué productos entran en una promoción.</div>
+      ${renderFidgCatalogo()}</div>
+    <div class="card" style="margin-top:10px"><div class="ch"><h3>Programa de puntos</h3><span class="pill">Marketing</span></div>
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Las reglas, las promociones, las campañas y la puesta en producción se configuran en <b>Marketing → Fidelización</b>. Aquí solo está la conexión con el TPV.</div>
+      <button class="btn sm" data-act="ir-fidelizacion">Ir a Fidelización</button></div>`;
 }
 
 async function loadFidPiloto() {
@@ -12206,7 +12522,38 @@ function renderCampanas() {
       <span class="mut" style="font-size:12px;align-self:center">No se envía nada: sale una propuesta.</span>
     </div>
     <div id="campProp"></div></div>`;
-  return `${head}${redactar}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div><div id="campFaltan"></div>`;
+  return `${head}${redactar}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div>${renderCampFidelizacion()}<div id="campFaltan"></div>`;
+}
+
+/**
+ * LOS FORMULARIOS PÚBLICOS Y SUS COMUNICACIONES, que viven aquí y en ningún otro sitio.
+ *
+ * Estaban dentro de `Sistema → Ágora (TPV)`, que es la pantalla de los tokens y los diagnósticos:
+ * quien entraba a ver por qué no llegaban facturas se encontraba textos de campaña, y quien entraba
+ * a escribir un texto se encontraba a un dedo de un botón que revoca el token de un TPV en
+ * producción. Aquí es donde se buscan, porque aquí es donde está todo lo que se manda a clientes.
+ *
+ * Las reglas de puntos NO están aquí: son de `Marketing → Fidelización`. Un formulario no concede
+ * ni un punto —solo da de alta a alguien—, así que no hay nada que repetir entre las dos.
+ */
+function renderCampFidelizacion() {
+  const forms = (FIDG.formularios || []).filter((f) => f.estado === "publicado");
+  const urls = forms.length
+    ? `<div class="rows" style="margin-top:8px">${forms.map((f) => fgFila(
+        `<div class="t1">${esc(f.titulo || f.clave)} <span class="mut">v${f.version}</span></div><div class="mut" style="font-size:12px">/promo.html?c=${esc(f.clave)}${f.cierra_en ? ` · hasta ${esc(f.cierra_en)}` : ""}${f.idioma && f.idioma !== "es" ? ` · ${esc(f.idioma)}` : ""}</div>`,
+        `<a class="btn sm" href="/promo.html?c=${encodeURIComponent(f.clave)}" target="_blank" rel="noopener">Abrir</a>`)).join("")}</div>`
+    : "";
+
+  return `<div class="card" style="margin-top:16px"><div class="ch"><h3>Formularios públicos</h3><span class="pill">Captación</span></div>
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">La página que abre quien pincha un anuncio. Cada versión guarda su texto de consentimiento: <b>lo que alguien aceptó en septiembre se puede leer en enero</b>. Una versión publicada no se edita, se copia.</div>
+      ${renderFidgListaSimple(FIDG.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…")}
+      <div style="margin:-4px 0 10px;display:flex;gap:6px;flex-wrap:wrap">${Object.entries(FIDG_PROPUESTAS).map(([k, p]) =>
+        `<button class="btn sm" data-act="fidg-form-propuesta" data-p="${esc(k)}">Crear propuesta · ${esc(p.nombre_propuesta)}</button>`).join("")}</div>
+      <div class="mut" style="font-size:12px;margin:-4px 0 6px">Una propuesta abre el formulario <b>relleno y en borrador</b>. No publica nada, y si la campaña ya existe no la pisa: abre el borrador o copia la última versión.</div>
+      ${urls}</div>
+    <div class="card" style="margin-top:12px"><div class="ch"><h3>Comunicaciones</h3><span class="pill">Requiere aprobación</span></div>
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Solo se escribe a quien dio consentimiento y no se ha dado de baja. El recuento y las exclusiones se ven antes de aprobar.</div>
+      ${renderFidgComunicaciones()}</div>`;
 }
 
 /**
@@ -12310,6 +12657,9 @@ async function loadCampanas() {
     // Para el desplegable de cupón del editor. Si falla no se rompe nada: se queda «Sin cupón».
     if (!PROMO.list.length) apiOptional("/api/promos").then((p) => { PROMO.list = p || []; }).catch(() => {});
     CAMP.cfg = cfg ? { cumple_auto: cfg.cumple_auto, cumple_plantilla: cfg.cumple_plantilla } : { cumple_auto: false, cumple_plantilla: "" };
+    // Los formularios y las comunicaciones de fidelización, que ahora viven en esta pantalla. Si
+    // fallan, Campañas se pinta igual: son un bloque más, no el motivo de entrar aquí.
+    await loadFidGestion().catch(() => {});
     view.innerHTML = renderCampanas();
     campFaltan();                      // no se espera: es una libreta, no un dato de la pantalla
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
@@ -12921,17 +13271,42 @@ function renderPromos() {
   // La pestaña de la tarjeta solo la ve DIRECCIÓN. Está construida y probada, pero apagada por
   // decisión de negocio: enseñársela a Marketing sería ofrecerles una función que hoy no
   // existe de cara al cliente. Ahí dentro está el interruptor para encenderla.
+  // «Fidelización» son los premios que aplica ÁGORA dentro de la factura. No son los cupones de
+  // arriba —esos los valida la tablet de la barra— y por eso van en su propia pestaña: mezclarlos
+  // haría creer que un cupón se paga con puntos.
   const tabs = [["lista", "Promociones"], ["emitir", "Emitir QR"], ["qr", "QR emitidos"], ["canjes", "Canjes"],
-                ["captacion", "Captación"],
+                ["captacion", "Captación"], ["fidelizacion", "Fidelización"],
                 ...(USER.rol === "direccion" ? [["tarjeta", "Tarjeta de cliente"]] : [])]
     .map(([id, t]) => `<button class="tab${PROMO.tab === id ? " on" : ""}" data-act="promo-tab" data-tab="${id}">${t}</button>`).join("");
   const cuerpo = PROMO.tab === "emitir" ? promoTablaEmitir()
     : PROMO.tab === "qr" ? promoTablaQr()
     : PROMO.tab === "canjes" ? promoTablaCanjes()
     : PROMO.tab === "captacion" ? promoCaptacion()
+    : PROMO.tab === "fidelizacion" ? promoFidelizacion()
     : PROMO.tab === "tarjeta" ? promoTarjeta()
     : promoTablaLista();
   return `${head}<div class="tabs">${tabs}</div><div style="margin-top:16px">${cuerpo}</div>`;
+}
+
+/**
+ * Los premios de Ágora. La pantalla PROPIETARIA de las promociones de fidelización.
+ *
+ * Aquí y en ningún otro sitio se crean, se publican y se pausan. Desde Fidelización hay un enlace,
+ * no una copia.
+ */
+function promoFidelizacion() {
+  return `<div class="card"><div class="ch"><h3>Premios de fidelización</h3></div>
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Estos los aplica <b>Ágora dentro de la factura</b>, no la tablet de la barra. Cada uno se versiona: publicar crea una versión nueva y finaliza la anterior.</div>
+      ${renderFidgPromos()}</div>
+    <div class="card" style="margin-top:12px"><div class="ch"><h3>Productos y grupos</h3></div>
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Los grupos —«Cafés», «Entrepans»— se eligen a mano del catálogo sincronizado. El catálogo se sincroniza en <b>Sistema → Ágora (TPV)</b>.</div>
+      ${FIDG.grupos.length
+        ? `<div class="rows">${FIDG.grupos.map((g) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(g.nombre)} <span class="mut">v${g.version}</span></div><div class="mut" style="font-size:12px">${esc(g.local || "")} · ${(g.productos || []).length} producto(s) · ${esc(g.estado)}</div></div></div>`).join("")}</div>`
+        : '<div class="mut">Todavía no hay ningún grupo. Sincroniza el catálogo y crea uno.</div>'}
+      <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn sm" data-act="fidg-grupo-nuevo">Nuevo grupo…</button>
+        <button class="btn sm" data-act="ir-vista" data-v="agora">Ir al catálogo</button>
+      </div></div>`;
 }
 
 async function loadPromos() {
@@ -12945,6 +13320,13 @@ async function loadPromos() {
     if (PROMO.tab === "captacion") {
       PROMO.cap = await apiRaw("/api/captacion/campanas");
       PROMO.capCola = (await apiRaw("/api/captacion/cola")).data || [];
+    }
+    // Los MISMOS cargadores que Fidelización: no hay un segundo juego de datos ni una segunda
+    // forma de pedirlos. Si divergieran, una pantalla enseñaría una promoción que la otra no.
+    if (PROMO.tab === "fidelizacion") {
+      try { FID.locales = (await apiRaw("/api/fidelizacion/integracion")).locales || []; } catch { /* la pestaña se pinta igual */ }
+      await loadFidGestion();
+      if (FID.locales[0]) { FIDG.local = FIDG.local || FID.locales[0].local; await fidgCargarGrupos(FIDG.local); }
     }
     if (PROMO.tab === "tarjeta") {
       PROMO.tarjeta = await apiRaw("/api/tarjeta/resumen");
@@ -13669,7 +14051,7 @@ function promoCopiar(url) {
   else prompt("Copia el enlace:", url);
 }
 
-const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, promos: loadPromos, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, productos: loadProductos, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, promos: loadPromos, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, productos: loadProductos, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, fidelizacion: loadFidelizacion, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 /**
  * LA PANTALLA VA EN LA URL. Sin esto, recargar en cualquier sitio te devolvía al Dashboard —y
  * también hacía inútiles el botón de atrás y guardar un enlace a una pantalla concreta.
@@ -13888,6 +14270,7 @@ document.addEventListener("click", (e) => {
     apiSend("DELETE", "/api/marketing/faltan/" + t.getAttribute("data-id"))
       .then(() => campFaltan()).catch(() => toast("No se pudo quitar"));
   }
+  else if (act === "cli-fid") cliFidVer();
   else if (act === "cli-mas-filtros") { CLI_MAS = !CLI_MAS; loadClientes(); }
   else if (act === "cli-propuestas") cliPropuestas();
   else if (act === "cli-falta-filtro") pedirFiltroQueFalta();
@@ -14041,7 +14424,6 @@ document.addEventListener("click", (e) => {
   else if (act === "fidp-sombra") fidpSombra();
   else if (act === "fidp-revisiones") fidpRevisiones();
   else if (act === "fidp-socio") fidpSocio();
-  else if (act === "fidg-tab") fidgTab(t.getAttribute("data-k"));
   else if (act === "fidg-puerta") fidgPuerta(t.getAttribute("data-e"));
   else if (act === "fidg-sombra-rev") fidgSombraRevisada();
   else if (act === "fidg-sync") fidgSync();
@@ -14053,6 +14435,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fidg-promo-sim") fidgPromoSimular();
   else if (act === "fidg-promo-guardar") fidgPromoGuardar(t.getAttribute("data-pub"));
   else if (act === "fidg-form-nuevo") fidgFormNuevo(t.getAttribute("data-id"));
+  else if (act === "fidg-form-propuesta") fidgFormPropuesta(t.getAttribute("data-p"));
   else if (act === "fidg-form-prev") fidgFormPrev(t.getAttribute("data-v"));
   else if (act === "fidg-form-guardar") fidgFormGuardar(t.getAttribute("data-pub"));
   else if (act === "fidg-tarjeta-nueva") fidgTarjetaNueva(t.getAttribute("data-id"));
@@ -14062,6 +14445,12 @@ document.addEventListener("click", (e) => {
   else if (act === "fidg-com-prev") fidgComPrev();
   else if (act === "fidg-com-guardar") fidgComGuardar();
   else if (act === "fidg-com") fidgComAccion(t.getAttribute("data-id"), t.getAttribute("data-a"));
+  else if (act === "fidv-tab") fidvTab(t.getAttribute("data-k"));
+  else if (act === "fidv-sombra") fidvSombra();
+  else if (act === "fidv-traza") fidvTraza();
+  else if (act === "fidv-csv") fidvCsv();
+  else if (act === "ir-vista") go(t.getAttribute("data-v"));
+  else if (act === "ir-fidelizacion") go("fidelizacion");
   else if (act === "anal-tab") analTab(t.getAttribute("data-tipo"));
   else if (act === "anal-area") analArea(t.getAttribute("data-area"));
   else if (act === "anal-period") analPeriod(t.getAttribute("data-p"));

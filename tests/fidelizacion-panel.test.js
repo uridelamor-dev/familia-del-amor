@@ -231,7 +231,11 @@ describe("el formulario público", () => {
     assert.match(f, /if \(btn\.disabled\) return;/);
     assert.match(f, /btn\.disabled = true;/);
     // Y si falla, se vuelve a habilitar: si no, un error dejaría al cliente sin poder reintentar.
-    assert.ok((f.match(/btn\.disabled = false/g) || []).length >= 2, "no se rehabilita tras un error");
+    // La rehabilitación vive en `fallo()`, que es el único camino de error de todo el formulario.
+    assert.match(f, /function fallo\(txt\) \{[\s\S]{0,240}\$\("fxBoton"\)\.disabled = false;/);
+    // Y todos los errores pasan por ahí: ninguno deja el botón bloqueado.
+    const errores = (f.match(/fallo\(/g) || []).length;
+    assert.ok(errores >= 3, `solo ${errores} caminos de error pasan por fallo()`);
   });
 
   test("la respuesta es la MISMA exista o no el teléfono", () => {
@@ -339,10 +343,13 @@ describe("nada de lo que se ve expone lo que no debe", () => {
     for (const acceso of [".telefono", "telefono}", "telefono)"]) {
       assert.ok(!f.includes(acceso), `la pantalla pinta un teléfono: «${acceso}»`);
     }
-    // Y el único `telefono` que queda es el identificador del campo configurable.
-    const apariciones = (f.match(/telefono/g) || []).length;
-    const comoCampo = (f.match(/"telefono"/g) || []).length + (f.match(/fcV_telefono|fcO_telefono/g) || []).length;
-    assert.equal(apariciones, comoCampo, "hay un `telefono` que no es el nombre del campo");
+    // Y cada `telefono` que queda es un IDENTIFICADOR, no el dato de nadie: el id del campo
+    // configurable, la casilla que lo acompaña o la clave del mensaje de error. Se enseñan las
+    // líneas que sobran en vez de contarlas: un número no dice dónde mirar.
+    const PERMITIDO = /"telefono"|fc[VOT]_telefono|telefono_no_valido|id === "telefono"/;
+    const sobran = f.split("\n")
+      .filter((l) => l.replace(new RegExp(PERMITIDO.source, "g"), "").includes("telefono"));
+    assert.deepEqual(sobran, [], `hay un \`telefono\` que no es un identificador:\n${sobran.join("\n")}`);
   });
 
   test("ni el listado de comunicaciones, que es donde más fácil sería", () => {

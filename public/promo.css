@@ -27,3 +27,58 @@
 .promo-esperando .promo-tic { background: #d9e3dd; color: #2F6B4F; animation: promo-late 1.4s ease-in-out infinite; }
 @keyframes promo-late { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .promo-esperando .promo-tic { animation: none; } }
+
+/* ── El formulario configurable ──────────────────────────────────────────────
+   Lo que sigue solo lo usa la versión configurable desde el panel. El formulario
+   histórico de `cap_campanas` no toca ninguna de estas clases. */
+
+.pm-intro { margin: .9rem 0 0; font-size: .96rem; color: #4c5854; line-height: 1.55; white-space: pre-line; }
+
+/* La fecha: selector NATIVO. En iPhone y Android abre la rueda del sistema, que es la que la
+   gente sabe usar. `appearance:none` quita el marco gris de iOS, que rompía la altura de los
+   demás campos y hacía que la fila pareciera de otro formulario. */
+.pm-fecha {
+  appearance: none; -webkit-appearance: none;
+  /* Los mismos 52 px y 16 px que el resto: menos de 16 px hace que Safari en iPhone dé zoom al
+     enfocar, y la página se queda torcida el resto del rato. */
+  width: 100%; box-sizing: border-box; min-height: 52px; padding: .7rem .9rem;
+  font-size: 16px; font-family: inherit; color: #1c211f;
+  background: #fbfaf8; border: 1px solid #d5ded9; border-radius: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.pm-fecha:focus { outline: 2px solid #2F6B4F; outline-offset: 1px; border-color: #2F6B4F; }
+/* El `select` del local, igual que los inputs: si no, parece de otro formulario. */
+.alta-campo select {
+  width: 100%; box-sizing: border-box; min-height: 52px; padding: .7rem .9rem;
+  font-size: 16px; font-family: inherit; color: #1c211f;
+  background: #fbfaf8; border: 1px solid #d5ded9; border-radius: 12px;
+}
+.pm-fecha::-webkit-date-and-time-value { text-align: left; }
+.pm-fecha::-webkit-calendar-picker-indicator { opacity: .55; cursor: pointer; }
+/* El eco en dd/mm/aaaa: `2026-09-15` no lo lee nadie de un vistazo. */
+.pm-eco { display: block; margin: .3rem 0 0; font-size: .85rem; color: #6d7a74; font-variant-numeric: tabular-nums; }
+
+/* Las sugerencias de población. El campo hace de ancla, así que la lista se coloca justo debajo
+   y no al final de la página. */
+.alta-campo { position: relative; }
+.pm-sug {
+  list-style: none; margin: 0; padding: .25rem;
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 20;
+  background: #fff; border: 1px solid #dfe6e2; border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(20,40,30,.12);
+  max-height: 232px; overflow-y: auto;
+}
+.pm-sug-i { padding: .6rem .7rem; border-radius: 9px; font-size: .95rem; cursor: pointer; line-height: 1.3; }
+/* El resaltado va por CLASE, no solo por `:hover`: con el teclado no hay ratón encima. */
+.pm-sug-i.on, .pm-sug-i:hover { background: #eef4f0; color: #2F6B4F; }
+
+/* El consentimiento: una frase encima del botón, no una casilla. Enviar es aceptar, y eso se
+   dice con todas las letras justo donde se pulsa. */
+.pm-consent { margin: 1.1rem 0 .35rem; font-size: .88rem; color: #4c5854; line-height: 1.5; }
+.pm-legal { margin: 0 0 .9rem; font-size: .85rem; }
+.pm-legal a { color: #2F6B4F; text-decoration: underline; }
+
+.pm-error { margin: .9rem 0 0; padding: .75rem .9rem; border-radius: 12px;
+  background: #fdecec; color: #a32b2b; font-size: .92rem; line-height: 1.45; }
+
+@media (prefers-reduced-motion: reduce) { .pm-sug { box-shadow: none; } }

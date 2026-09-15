@@ -76,7 +76,9 @@ export const paletaDe = (clave) => PALETAS[String(clave)] || PALETAS.verde;
  */
 export const CAMPOS = Object.freeze({
   nombre:      { etiqueta: "Nombre", tipo: "text", siempre: true, autocomplete: "given-name" },
+  apellidos:   { etiqueta: "Apellidos", tipo: "text", autocomplete: "family-name" },
   telefono:    { etiqueta: "Teléfono", tipo: "tel", siempre: true, autocomplete: "tel" },
+  poblacion:   { etiqueta: "Población", tipo: "text", autocomplete: "address-level2" },
   email:       { etiqueta: "Correo electrónico", tipo: "email", autocomplete: "email" },
   nacimiento:  { etiqueta: "Fecha de nacimiento", tipo: "date", autocomplete: "bday" },
   codigo_postal: { etiqueta: "Código postal", tipo: "text", autocomplete: "postal-code" },
@@ -122,6 +124,96 @@ export function normalizarCampos(lista) {
   const orden = [...CAMPOS_FORZOSOS, ...[...dentro.keys()].filter((k) => !CAMPOS_FORZOSOS.includes(k))];
   return orden.map((k) => dentro.get(k));
 }
+
+/**
+ * Los mensajes que puede ver un cliente. CERRADO, y con un valor por defecto para cada uno.
+ *
+ * Están aquí y no en `promo.js` porque un formulario en catalán que falla en castellano es un
+ * formulario a medio traducir — y los errores son justo lo que más se lee cuando algo va mal.
+ * Cada campaña guarda los suyos en su versión, así que cambiar una frase no toca el código.
+ */
+export const MENSAJES = Object.freeze({
+  cargando: "Cargando…",
+  enviando: "Enviando…",
+  falta_campo: "Falta un dato obligatorio.",
+  telefono_no_valido: "El teléfono no parece correcto.",
+  fecha_futura: "Esa fecha todavía no ha llegado.",
+  consentimiento: "Hay que aceptar para continuar.",
+  sin_whatsapp: "Este número no está disponible en WhatsApp. Compruébalo e inténtalo otra vez.",
+  whatsapp_caido: "Ahora mismo no podemos comprobar el número. Inténtalo dentro de unos minutos.",
+  ya_registrado: "¡Listo! Ya estás dentro.",
+  no_vigente: "Esta promoción no está disponible ahora mismo.",
+  ya_utilizado: "Este beneficio ya se ha utilizado.",
+  error: "No se ha podido guardar. Inténtalo otra vez.",
+});
+
+/**
+ * LOS MISMOS MENSAJES EN CADA IDIOMA, y por qué existen.
+ *
+ * Un formulario publicado en catalán con los errores en castellano no está en catalán: el cliente
+ * lee «A La Tapeta et convidem a esmorzar!» y, en cuanto se equivoca de tecla, «El teléfono no
+ * parece correcto». Dejar eso en manos de que Marketing rellene doce casillas a mano es dejar que
+ * se olvide una —y la que se olvide será justo la que vea el cliente, porque los mensajes de error
+ * son los que nadie prueba.
+ *
+ * Por eso el respaldo va POR IDIOMA. Lo escrito en el panel manda siempre; esto es lo que sale
+ * cuando esa casilla está vacía.
+ */
+export const MENSAJES_POR_IDIOMA = Object.freeze({
+  es: MENSAJES,
+  ca: Object.freeze({
+    cargando: "Carregant…",
+    enviando: "Enviant…",
+    falta_campo: "Falta una dada obligatòria.",
+    telefono_no_valido: "El telèfon no sembla correcte.",
+    fecha_futura: "Aquesta data encara no ha arribat.",
+    consentimiento: "Cal acceptar-ho per continuar.",
+    sin_whatsapp: "Aquest número no està disponible a WhatsApp. Comprova'l i torna-ho a provar.",
+    whatsapp_caido: "Ara mateix no podem comprovar el número. Torna-ho a provar d'aquí a uns minuts.",
+    ya_registrado: "Ja està! Ja hi ets.",
+    no_vigente: "Aquesta promoció no està disponible ara mateix.",
+    ya_utilizado: "Aquest avantatge ja s'ha fet servir.",
+    error: "No s'ha pogut desar. Torna-ho a provar.",
+  }),
+  en: Object.freeze({
+    cargando: "Loading…",
+    enviando: "Sending…",
+    falta_campo: "A required field is missing.",
+    telefono_no_valido: "That phone number doesn't look right.",
+    fecha_futura: "That date hasn't happened yet.",
+    consentimiento: "You need to accept to continue.",
+    sin_whatsapp: "This number isn't available on WhatsApp. Check it and try again.",
+    whatsapp_caido: "We can't check the number right now. Please try again in a few minutes.",
+    ya_registrado: "All set! You're in.",
+    no_vigente: "This offer isn't available right now.",
+    ya_utilizado: "This benefit has already been used.",
+    error: "We couldn't save it. Please try again.",
+  }),
+});
+
+/** El juego por defecto de un idioma. Uno desconocido cae en castellano, que es el de la casa. */
+export const mensajesDefecto = (idioma) => MENSAJES_POR_IDIOMA[String(idioma || "es")] || MENSAJES;
+
+/**
+ * Los de una versión, con los que falten rellenados por defecto EN SU IDIOMA.
+ *
+ * El idioma se pasa aparte —y no se lee de `guardados`— porque quien llama lo tiene en la fila del
+ * formulario (`f.idioma`), que es donde vive de verdad; los mensajes son solo un JSON de textos.
+ */
+export function mensajesDe(guardados, idioma) {
+  let m = {};
+  if (guardados && typeof guardados === "object") m = guardados;
+  else if (typeof guardados === "string" && guardados.trim()) {
+    try { const j = JSON.parse(guardados); if (j && typeof j === "object") m = j; } catch { m = {}; }
+  }
+  const def = mensajesDefecto(idioma);
+  const out = {};
+  for (const k of Object.keys(MENSAJES)) out[k] = textoSeguro(m[k], LARGOS.subtitulo) || def[k];
+  return out;
+}
+
+/** Los idiomas en los que se puede publicar. Cerrado: lo que no esté aquí no se ofrece. */
+export const IDIOMAS = Object.freeze({ es: "Castellano", ca: "Català", en: "English" });
 
 /** ¿Se puede publicar este formulario? Lo que falta, en frases que dicen qué hacer. */
 export function validarFormulario(cfg) {

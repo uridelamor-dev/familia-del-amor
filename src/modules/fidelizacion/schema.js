@@ -418,6 +418,18 @@ export async function ensureSchemaFidelizacion(x) {
     CHECK (estado IN ('borrador','publicado','cerrado'))
   )`);
   await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_form_version ON fid_formularios (clave, version)`);
+  // Aditivo. `idioma` decide en qué se le habla al cliente; `destacado` es la tarjeta verde;
+  // `mensajes` guarda los textos de error TRADUCIDOS, porque un formulario en catalán que falla en
+  // castellano es un formulario a medio traducir. `exige_whatsapp` y `sugerir_poblacion` son
+  // comportamiento, no texto, y por eso se configuran también: una campaña que no regale nada por
+  // WhatsApp no tiene por qué exigirlo.
+  for (const col of ["idioma TEXT NOT NULL DEFAULT 'es'", "destacado TEXT",
+                     "mensajes TEXT NOT NULL DEFAULT '{}'",
+                     "exige_whatsapp BOOLEAN NOT NULL DEFAULT FALSE",
+                     "sugerir_poblacion BOOLEAN NOT NULL DEFAULT FALSE"]) {
+    try { await x.run(`ALTER TABLE fid_formularios ADD COLUMN IF NOT EXISTS ${col}`); }
+    catch (e) { console.error("[fidelizacion] alter fid_formularios:", e.message); }
+  }
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_form_vivo ON fid_formularios (clave, estado)`);
 
   // EL CONSENTIMIENTO, versionado con su texto. Guardar «aceptó» sin guardar QUÉ aceptó no sirve

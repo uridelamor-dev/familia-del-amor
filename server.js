@@ -125,7 +125,10 @@ import { textoSeguro as fidTexto, urlSegura as fidUrl, normalizarCampos as fidCa
          renderPlantilla as fidRender, variablesDesconocidas as fidVarsRaras,
          puedeRecibir as fidPuedeRecibir, PALETAS as FID_PALETAS, paletaDe as fidPaleta,
          CAMPOS as FID_CAMPOS, VARIABLES as FID_VARIABLES, LARGOS as FID_LARGOS,
-         MOTIVOS_EXCLUSION as FID_EXCLUSION } from "./src/modules/fidelizacion/contenido.js";
+         MOTIVOS_EXCLUSION as FID_EXCLUSION, mensajesDe as fidMensajes, IDIOMAS as FID_IDIOMAS,
+         MENSAJES_POR_IDIOMA as FID_MENSAJES_IDIOMA,
+         MENSAJES as FID_MENSAJES_DEF } from "./src/modules/fidelizacion/contenido.js";
+import { fechaNacimientoValida as fidFechaNac } from "./src/modules/captacion/municipios.js";
 import { reglaVigente as fidReglaVigente, rewardDe as fidRewardDe, saldo as fidSaldo,
          importePagado as fidImportePagado, puntosDe as fidPuntosDe, evaluarFactura as fidEvaluar,
          caducaEn as fidCaducaEn, centimos as fidCentimos, aEuros as fidAEuros,
@@ -11710,6 +11713,38 @@ app.post("/api/fidelizacion/comunicaciones/:id/pausa", requireAuth(PROMOS_ROLES)
   }
 });
 
+/**
+ * LÍMITE DE COMPROBACIONES DE WHATSAPP, contra la enumeración.
+ *
+ * Aunque la comprobación viva dentro del envío, alguien con paciencia podría ir probando números
+ * uno a uno. Dos topes a la vez: por IP —para el que va rápido— y por número —para el que rota
+ * proxies pero insiste con los mismos teléfonos—.
+ *
+ * Vive en memoria: no merece una tabla, y un reinicio que suelte el contador no es un problema
+ * porque el coste de volver a empezar sigue siendo alto.
+ */
+const FID_WA_INTENTOS = new Map();
+const FID_WA_VENTANA_MS = 10 * 60 * 1000;
+const FID_WA_MAX_IP = 12;
+const FID_WA_MAX_TEL = 3;
+function fidLimiteWA(req, telefono) {
+  const ahora = Date.now();
+  for (const [k, v] of FID_WA_INTENTOS) if (ahora - v.t0 >= FID_WA_VENTANA_MS) FID_WA_INTENTOS.delete(k);
+  if (FID_WA_INTENTOS.size > 5000) FID_WA_INTENTOS.clear();   // techo duro, por si acaso
+
+  const claves = [["ip:" + (req.ip || "?"), FID_WA_MAX_IP], ["tel:" + telefono, FID_WA_MAX_TEL]];
+  for (const [k, max] of claves) {
+    const v = FID_WA_INTENTOS.get(k);
+    if (v && ahora - v.t0 < FID_WA_VENTANA_MS && v.n >= max) return false;
+  }
+  for (const [k] of claves) {
+    const v = FID_WA_INTENTOS.get(k);
+    if (!v || ahora - v.t0 >= FID_WA_VENTANA_MS) FID_WA_INTENTOS.set(k, { t0: ahora, n: 1 });
+    else v.n += 1;
+  }
+  return true;
+}
+
 // ── EL FORMULARIO PÚBLICO DE CAPTACIÓN ───────────────────────────────────────
 //
 // VIVE AQUÍ Y NO EN LA ZONA DE FIDELIZACIÓN DE ÁGORA, y es a propósito: allí hay un invariante que
@@ -11738,11 +11773,14 @@ app.get("/api/publico/formulario/:clave", async (req, res) => {
       // Un motivo genérico: no se cuenta si existe pero está cerrado o si no existe.
       return res.status(404).json({ ok: false, error: "Este formulario no está disponible." });
     }
-    res.json({ ok: true, clave: f.clave, version: f.version,
+    res.json({ ok: true, clave: f.clave, version: f.version, idioma: f.idioma || "es",
       titulo: f.titulo, subtitulo: f.subtitulo, introduccion: f.introduccion,
+      destacado: f.destacado || null,
       texto_boton: f.texto_boton, imagen: f.imagen,
       campos: fidCampos(fidLeerLista(f.campos)).filter((c) => c.visible),
       consentimiento_texto: f.consentimiento_texto, privacidad_url: f.privacidad_url,
+      sugerir_poblacion: !!f.sugerir_poblacion,
+      mensajes: fidMensajes(f.mensajes, f.idioma),
       locales: LOCALES_CANON });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] formulario publico", e));
@@ -11783,18 +11821,51 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
     const campos = fidCampos(fidLeerLista(f.campos)).filter((c) => c.visible);
     const b = req.body || {};
     const tel = proTel9(b.telefono);
-    if (!tel) return res.status(400).json({ ok: false, error: "Hace falta un teléfono válido." });
+    const M = fidMensajes(f.mensajes, f.idioma);
+    if (!tel) return res.status(400).json({ ok: false, error: M.telefono_no_valido });
     const nombre = fidTexto(b.nombre, FID_LARGOS.nombre);
-    if (!nombre) return res.status(400).json({ ok: false, error: "Hace falta tu nombre." });
+    if (!nombre) return res.status(400).json({ ok: false, error: M.falta_campo });
     for (const c of campos) {
       if (!c.obligatorio || c.id === "telefono" || c.id === "nombre") continue;
       if (!String(b[c.id] || "").trim()) {
-        return res.status(400).json({ ok: false, error: `Falta ${c.etiqueta.toLowerCase()}.` });
+        return res.status(400).json({ ok: false, error: `${M.falta_campo} (${c.etiqueta})` });
+      }
+    }
+
+    // LA FECHA DE NACIMIENTO SE COMPRUEBA AQUÍ TAMBIÉN. El `max` de un `<input type="date">` lo
+    // respeta el calendario, pero no impide mandar otra cosa por debajo. Y una fecha futura no es
+    // un error de dedo: es un dato imposible que ensucia para siempre cualquier segmentación.
+    if (String(b.nacimiento || "").trim()) {
+      const fn = fidFechaNac(b.nacimiento, { hoy: hoyISO() });
+      if (!fn.ok) {
+        return res.status(400).json({ ok: false,
+          error: fn.motivo === "futura" ? M.fecha_futura : M.telefono_no_valido.replace(/tel[eé]fono/i, "dato") });
       }
     }
     // El consentimiento del formulario es obligatorio siempre: es lo que permite guardar el dato.
     if (b.consentimiento !== true) {
-      return res.status(400).json({ ok: false, error: "Hay que aceptar la política de privacidad." });
+      return res.status(400).json({ ok: false, error: M.consentimiento });
+    }
+
+    // ── ¿ESTE NÚMERO TIENE WHATSAPP? ───────────────────────────────────────────────────────────
+    //
+    // Se comprueba DENTRO DEL ENVÍO, nunca en una ruta aparte. Un endpoint público que conteste
+    // «este número tiene WhatsApp» es un comprobador de números: se le pasan mil y se sabe cuáles
+    // existen. Aquí hay que rellenar el formulario entero y aceptar, y además está limitado.
+    //
+    // TRES RESPUESTAS Y TRES MENSAJES DISTINTOS. Que WhatsApp esté caído NO es que el número esté
+    // mal: decírselo así al cliente le haría corregir un teléfono que era correcto.
+    if (f.exige_whatsapp) {
+      if (!fidLimiteWA(req, tel)) {
+        return res.status(429).json({ ok: false, error: M.whatsapp_caido });
+      }
+      let tiene = null;
+      try { tiene = await numeroTieneWhatsApp(tel); } catch { tiene = null; }
+      if (tiene === false) return res.status(400).json({ ok: false, error: M.sin_whatsapp });
+      if (tiene === null) {
+        // Ni se guarda el alta ni se genera el beneficio: no sabemos si el número vale.
+        return res.status(503).json({ ok: false, error: M.whatsapp_caido });
+      }
     }
 
     const ahora = isoConOffset(Date.now());
@@ -11809,10 +11880,12 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
         await x.run(`UPDATE leads SET actualizado_en = ? WHERE id = ?`, [ahora, previo.id]);
       } else {
         await x.run(
-          `INSERT INTO leads (nombre, telefono, correo, nacimiento, poblacion, premio, fuente, creado_en, actualizado_en)
-           VALUES (?,?,?,?,?,?,?,?,?)`,
-          [nombre, tel, fidTexto(b.email, 160), String(b.nacimiento || "").slice(0, 10),
-           fidTexto(b.codigo_postal, 12), "", `form:${clave}`, ahora, ahora]);
+          `INSERT INTO leads (nombre, apellidos, telefono, correo, nacimiento, poblacion, premio, fuente, creado_en, actualizado_en)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          [nombre, fidTexto(b.apellidos, FID_LARGOS.nombre), tel, fidTexto(b.email, 160),
+           String(b.nacimiento || "").slice(0, 10),
+           // La población tal como la eligió o la escribió: el catálogo es curado, no el padrón.
+           fidTexto(b.poblacion, 120) || fidTexto(b.codigo_postal, 12), "", `form:${clave}`, ahora, ahora]);
       }
 
       // 2. EL CONSENTIMIENTO, con el TEXTO que se aceptó y su versión. Guardar «aceptó» sin
@@ -11845,13 +11918,13 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
       { detalle: { formulario: clave, version: f.version, comercial, nombre_distinto: avisoNombre } });
 
     // MISMA RESPUESTA, exista o no. Ni «bienvenido de nuevo» ni un campo distinto.
-    res.json({ ok: true, mensaje: f.mensaje_exito || "¡Listo! Ya estás dentro.",
+    res.json({ ok: true, mensaje: f.mensaje_exito || M.ya_registrado,
       texto_posterior: f.texto_posterior || null,
       // El enlace al carné se devuelve SIEMPRE que haya carné: no dice si es nuevo o de antes.
       carnet: token ? proEnlace(req, { token }) : null });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] alta formulario", e));
-    res.status(500).json({ ok: false, error: "No se ha podido guardar. Inténtalo otra vez." });
+    res.status(500).json({ ok: false, error: FID_MENSAJES_DEF.error });
   }
 });
 
@@ -19323,7 +19396,12 @@ app.get("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req, 
   try {
     const filas = await dbAll(`SELECT * FROM fid_formularios ORDER BY clave, version DESC LIMIT 200`) || [];
     res.json({ ok: true, campos_disponibles: FID_CAMPOS, largos: FID_LARGOS,
-      data: filas.map((f) => ({ ...f, campos: fidCampos(fidLeerLista(f.campos)) })) });
+      idiomas: FID_IDIOMAS, mensajes_defecto: FID_MENSAJES_DEF,
+      // Uno por idioma: el panel cambia los respaldos al cambiar el desplegable, para que nadie
+      // publique en catalán con los errores en castellano sin darse cuenta.
+      mensajes_por_idioma: FID_MENSAJES_IDIOMA,
+      data: filas.map((f) => ({ ...f, campos: fidCampos(fidLeerLista(f.campos)),
+        mensajes: fidMensajes(f.mensajes, f.idioma) })) });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] formularios", e));
     res.status(500).json({ ok: false, error: "No se pudieron leer" });
@@ -19363,6 +19441,11 @@ app.post("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req,
       cierra_en: String(b.cierra_en || "").slice(0, 10) || null,
       campos: fidCampos(fidLeerLista(b.campos)),
       estado: b.estado === "publicado" ? "publicado" : "borrador",
+      idioma: FID_IDIOMAS[String(b.idioma)] ? String(b.idioma) : "es",
+      destacado: fidTexto(b.destacado, FID_LARGOS.subtitulo),
+      mensajes: fidMensajes(b.mensajes, b.idioma),
+      exige_whatsapp: b.exige_whatsapp === true,
+      sugerir_poblacion: b.sugerir_poblacion === true,
     };
     const check = fidValidarForm(cfg);
     if (cfg.estado === "publicado" && !check.ok) {
@@ -19379,12 +19462,14 @@ app.post("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req,
       const creado = await x.run(
         `INSERT INTO fid_formularios (clave, version, campana, local, estado, titulo, subtitulo, introduccion,
            texto_boton, mensaje_exito, texto_posterior, imagen, campos, consentimiento_texto,
-           privacidad_url, abre_en, cierra_en, creado_en, creado_por)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
+           privacidad_url, abre_en, cierra_en, idioma, destacado, mensajes, exige_whatsapp,
+           sugerir_poblacion, creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
         [clave, Number(ult?.v || 0) + 1, fidTexto(b.campana, 60) || null, local, cfg.estado, cfg.titulo,
          cfg.subtitulo, cfg.introduccion, cfg.texto_boton, cfg.mensaje_exito, cfg.texto_posterior,
          cfg.imagen, JSON.stringify(cfg.campos), cfg.consentimiento_texto, cfg.privacidad_url,
-         cfg.abre_en, cfg.cierra_en, ahora, req.user.username]);
+         cfg.abre_en, cfg.cierra_en, cfg.idioma, cfg.destacado, JSON.stringify(cfg.mensajes),
+         cfg.exige_whatsapp, cfg.sugerir_poblacion, ahora, req.user.username]);
       if (!creado) throw new Error("el formulario no se ha insertado");
       return creado;
     });

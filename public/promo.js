@@ -187,77 +187,211 @@
   //
   // Se intenta el nuevo PRIMERO y se cae al viejo, no al revés: así una campaña que ya funciona no
   // deja de funcionar porque alguien empiece a configurar otra cosa.
+  // ── El catálogo de municipios, una sola vez ─────────────────────────────────────────────────
+  //
+  // Viaja con la página (5 KB) y la búsqueda ocurre AQUÍ, en el móvil de quien escribe. Ni una
+  // petición por tecla, ni un servicio de fuera enterándose de lo que está tecleando alguien que
+  // solo quiere un desayuno.
+  var MUNI = null;
+  function cargarMunicipios() {
+    if (MUNI) return Promise.resolve(MUNI);
+    return fetch("/data/municipios.json")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { MUNI = (j && j.m) || []; return MUNI; })
+      .catch(function () { MUNI = []; return MUNI; });
+  }
+
+  function normMuni(t) {
+    return String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .toLowerCase().replace(/[^a-z0-9\s'-]/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  /** Los que empiezan por lo escrito primero; entre iguales, Cataluña; luego el nombre más corto. */
+  function buscarMuni(q) {
+    var n = normMuni(q);
+    if (n.length < 2 || !MUNI) return [];
+    var out = [];
+    for (var i = 0; i < MUNI.length; i++) {
+      var nom = MUNI[i][0], cat = MUNI[i][2], k = normMuni(nom), r = null;
+      if (k.indexOf(n) === 0) r = 0;
+      else if (k.split(" ").some(function (p) { return p.indexOf(n) === 0; })) r = 1;
+      else if (k.indexOf(n) >= 0) r = 2;
+      if (r === null) continue;
+      out.push({ nombre: nom, cat: cat, r: r });
+    }
+    out.sort(function (a, b) { return a.r - b.r || (b.cat - a.cat) || a.nombre.length - b.nombre.length; });
+    return out.slice(0, 6);
+  }
+
+  /**
+   * El autocompletado. Teclado y táctil, y SIEMPRE se puede escribir libre.
+   *
+   * El catálogo es curado, no el padrón entero: si alguien vive en un pueblo que no sale, escribe
+   * su nombre y se guarda igual. Un desplegable cerrado dejaría gente fuera por vivir donde vive.
+   */
+  function montarPoblacion(input) {
+    var lista = document.createElement("ul");
+    lista.className = "pm-sug";
+    lista.setAttribute("role", "listbox");
+    lista.hidden = true;
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-expanded", "false");
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("autocomplete", "off");
+    input.parentNode.appendChild(lista);
+    var sel = -1, items = [];
+
+    function cerrar() { lista.hidden = true; lista.innerHTML = ""; sel = -1; items = []; input.setAttribute("aria-expanded", "false"); }
+    function elegir(i) { if (items[i]) { input.value = items[i].nombre; cerrar(); input.focus(); } }
+    function pintar() {
+      lista.innerHTML = "";
+      items.forEach(function (m, i) {
+        var li = document.createElement("li");
+        li.className = "pm-sug-i" + (i === sel ? " on" : "");
+        li.id = "pmSug" + i;
+        li.setAttribute("role", "option");
+        li.setAttribute("aria-selected", i === sel ? "true" : "false");
+        li.textContent = m.nombre;                       // TEXTO: nunca innerHTML con datos
+        li.addEventListener("mousedown", function (ev) { ev.preventDefault(); elegir(i); });
+        lista.appendChild(li);
+      });
+      lista.hidden = !items.length;
+      input.setAttribute("aria-expanded", items.length ? "true" : "false");
+      input.setAttribute("aria-activedescendant", sel >= 0 ? "pmSug" + sel : "");
+    }
+
+    input.addEventListener("input", function () {
+      cargarMunicipios().then(function () { items = buscarMuni(input.value); sel = -1; pintar(); });
+    });
+    input.addEventListener("keydown", function (ev) {
+      if (lista.hidden) return;
+      if (ev.key === "ArrowDown") { ev.preventDefault(); sel = Math.min(sel + 1, items.length - 1); pintar(); }
+      else if (ev.key === "ArrowUp") { ev.preventDefault(); sel = Math.max(sel - 1, -1); pintar(); }
+      else if (ev.key === "Enter" && sel >= 0) { ev.preventDefault(); elegir(sel); }
+      else if (ev.key === "Escape") { cerrar(); }
+    });
+    input.addEventListener("blur", function () { setTimeout(cerrar, 120); });
+    cargarMunicipios();                                   // se precarga al montar, no al teclear
+  }
+
+  /**
+   * La fecha de nacimiento.
+   *
+   * Selector NATIVO (`type="date"`): en iPhone y en Android abre la rueda del sistema, que es la
+   * que la gente sabe usar, y no hace falta ninguna librería. Se enseña en dd/mm/aaaa debajo para
+   * que se lea sin ambigüedad —un `2026-09-15` no lo lee nadie de un vistazo—.
+   *
+   * `max` es hoy: el calendario no deja ir más allá. El servidor lo vuelve a comprobar, porque el
+   * `max` no impide mandar otra cosa por debajo.
+   */
+  function montarFecha(input, eco, etiquetaEco) {
+    input.setAttribute("max", new Date().toISOString().slice(0, 10));
+    input.setAttribute("min", "1900-01-01");
+    // El eco no es un adorno: el calendario nativo se pinta en el idioma del NAVEGADOR, no en el
+    // de la página, así que alguien con el móvil en inglés vería `05/12/1990` y entendería el 5 de
+    // diciembre. Repetirlo debajo en dd/mm/aaaa quita la duda, y vacío hace de pista de formato.
+    function pinta() {
+      var p = String(input.value || "").split("-");
+      eco.textContent = p.length === 3 && p[0].length === 4
+        ? (etiquetaEco + ": " + p[2] + "/" + p[1] + "/" + p[0])
+        : etiquetaEco;
+    }
+    input.addEventListener("input", pinta);
+    input.addEventListener("change", pinta);
+    pinta();
+  }
+
   function pintarConfigurable(c) {
     var caja = $("pmForm");
+    var M = c.mensajes || {};
+    document.documentElement.lang = c.idioma || "es";
+
     var campos = (c.campos || []).map(function (x) {
-      var et = x.etiqueta + (x.obligatorio ? " *" : "");
-      if (x.id === "comercial") {
-        return '<label class="pm-chk"><input type="checkbox" id="fx_comercial" name="comercial"> <span></span></label>';
-      }
+      // El consentimiento comercial ya no es una casilla: es una frase encima del botón.
+      if (x.id === "comercial") return "";
       if (x.id === "local") {
-        return '<div class="tj-field"><label for="fx_local"></label><select id="fx_local" name="local">'
-          + (c.locales || []).map(function (l) { return '<option></option>'; }).join("") + '</select></div>';
+        return '<div class="alta-campo"><label for="fx_local"></label><select id="fx_local" name="local"></select></div>';
       }
-      var tipo = x.id === "telefono" ? "tel" : x.id === "email" ? "email" : x.id === "nacimiento" ? "date" : "text";
-      return '<div class="tj-field"><label for="fx_' + x.id + '"></label>'
-        + '<input id="fx_' + x.id + '" name="' + x.id + '" type="' + tipo + '"'
+      if (x.id === "nacimiento") {
+        return '<div class="alta-campo"><label for="fx_nacimiento"></label>'
+          + '<input id="fx_nacimiento" name="nacimiento" type="date" class="pm-fecha"'
+          + (x.obligatorio ? " required" : "") + ' aria-describedby="fxNacEco" />'
+          + '<span class="pm-eco" id="fxNacEco" aria-live="polite"></span></div>';
+      }
+      var tipo = x.id === "telefono" ? "tel" : x.id === "email" ? "email" : "text";
+      var extra = x.id === "telefono" ? ' inputmode="tel" autocomplete="tel"'
+        : x.id === "email" ? ' inputmode="email" autocomplete="email"'
+        : x.id === "nombre" ? ' autocomplete="given-name"'
+        : x.id === "poblacion" ? ' autocomplete="off"' : "";
+      return '<div class="alta-campo"><label for="fx_' + x.id + '"></label>'
+        + '<input id="fx_' + x.id + '" name="' + x.id + '" type="' + tipo + '"' + extra
         + (x.obligatorio ? " required" : "") + ' /></div>';
     }).join("");
 
-    caja.innerHTML = '<h1 class="tj-titular" id="fxTitulo"></h1><p class="tj-sub" id="fxSub"></p>'
-      + '<p class="promo-oferta" id="fxIntro"></p><form id="fxF" novalidate>' + campos
-      + '<label class="pm-chk"><input type="checkbox" id="fxConsent" required> <span id="fxConsentTxt"></span></label>'
-      + '<p class="pm-legal"><a id="fxPriv" target="_blank" rel="noopener"></a></p>'
-      + '<button class="tj-btn" type="submit" id="fxBoton"></button></form>'
-      + '<p class="pm-error hidden" id="fxError"></p>';
+    caja.innerHTML = '<h1 class="tj-titular" id="fxTitulo"></h1>'
+      + '<p class="tj-sub" id="fxSub" hidden></p>'
+      + '<p class="promo-oferta" id="fxDestacado" hidden></p>'
+      + '<p class="pm-intro" id="fxIntro" hidden></p>'
+      + '<form id="fxF" novalidate>' + campos
+      + '<p class="pm-consent" id="fxConsentTxt"></p>'
+      + '<p class="pm-legal"><a id="fxPriv" target="_blank" rel="noopener noreferrer"></a></p>'
+      + '<button class="alta-btn" type="submit" id="fxBoton"></button></form>'
+      + '<p class="pm-error" id="fxError" role="alert" hidden></p>';
 
     // TEXTO, NUNCA HTML: se asigna con `textContent`. Lo escribe una persona desde el panel y esto
     // lo abre un cliente en su móvil; pintarlo como HTML sería aceptar un `<script>` de regalo.
     $("fxTitulo").textContent = c.titulo || "";
-    $("fxSub").textContent = c.subtitulo || "";
-    $("fxIntro").textContent = c.introduccion || "";
+    if (c.subtitulo) { $("fxSub").textContent = c.subtitulo; $("fxSub").hidden = false; }
+    if (c.destacado) { $("fxDestacado").textContent = c.destacado; $("fxDestacado").hidden = false; }
+    if (c.introduccion) { $("fxIntro").textContent = c.introduccion; $("fxIntro").hidden = false; }
     $("fxConsentTxt").textContent = c.consentimiento_texto || "";
-    $("fxBoton").textContent = c.texto_boton || "Enviar";
-    if (c.privacidad_url) { $("fxPriv").href = c.privacidad_url; $("fxPriv").textContent = "Política de privacidad"; }
+    $("fxBoton").textContent = c.texto_boton || "OK";
+    if (c.privacidad_url) {
+      $("fxPriv").href = c.privacidad_url;
+      $("fxPriv").textContent = c.idioma === "ca" ? "Política de privacitat" : "Política de privacidad";
+    } else { $("fxPriv").parentNode.hidden = true; }
+
     (c.campos || []).forEach(function (x) {
       var l = document.querySelector('label[for="fx_' + x.id + '"]');
       if (l) l.textContent = x.etiqueta + (x.obligatorio ? " *" : "");
-      if (x.id === "comercial") {
-        var sp = document.querySelector('#fx_comercial + span');
-        if (sp) sp.textContent = x.etiqueta;
-      }
     });
     var sel = $("fx_local");
     if (sel) {
-      sel.innerHTML = "";
       (c.locales || []).forEach(function (l) {
         var o = document.createElement("option"); o.value = l; o.textContent = l; sel.appendChild(o);
       });
     }
+    if ($("fx_nacimiento")) montarFecha($("fx_nacimiento"), $("fxNacEco"), "dd/mm/aaaa");
+    if (c.sugerir_poblacion && $("fx_poblacion")) montarPoblacion($("fx_poblacion"));
 
     caja.classList.remove("hidden");
     $("pmCargando").classList.add("hidden");
+
+    function fallo(txt) {
+      $("fxError").textContent = txt;
+      $("fxError").hidden = false;
+      $("fxBoton").disabled = false;
+      $("fxBoton").textContent = c.texto_boton || "OK";
+    }
 
     $("fxF").addEventListener("submit", function (ev) {
       ev.preventDefault();
       var btn = $("fxBoton");
       if (btn.disabled) return;                       // doble clic: el segundo no hace nada
+      $("fxError").hidden = true;
       btn.disabled = true;
-      var cuerpo = { consentimiento: $("fxConsent").checked };
+      btn.textContent = M.enviando || "…";
+
+      var cuerpo = { consentimiento: true };          // la frase está encima del botón: enviar es aceptar
       (c.campos || []).forEach(function (x) {
         var el = $("fx_" + x.id);
-        if (!el) return;
-        cuerpo[x.id] = x.id === "comercial" ? el.checked : el.value;
+        if (el) cuerpo[x.id] = el.value;
       });
+
       fetch("/api/publico/formulario/" + encodeURIComponent(CLAVE), {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo),
-      }).then(function (r) { return r.json(); }).then(function (j) {
-        if (!j || !j.ok) {
-          $("fxError").textContent = (j && j.error) || "No se ha podido guardar.";
-          $("fxError").classList.remove("hidden");
-          btn.disabled = false;
-          return;
-        }
+      }).then(function (r) { return r.json().catch(function () { return null; }); }).then(function (j) {
+        if (!j || !j.ok) { fallo((j && j.error) || M.error || "…"); return; }
         // La MISMA pantalla exista o no el teléfono: si se distinguieran, esto sería un
         // comprobador de qué números están en nuestra base.
         caja.innerHTML = "";
@@ -268,14 +402,11 @@
           caja.appendChild(p2);
         }
         if (j.carnet) {
-          var a = document.createElement("a"); a.className = "tj-btn"; a.href = j.carnet;
-          a.textContent = "Ver mi tarjeta"; caja.appendChild(a);
+          var a = document.createElement("a"); a.className = "alta-btn"; a.href = j.carnet;
+          a.textContent = c.idioma === "ca" ? "Veure la meva targeta" : "Ver mi tarjeta";
+          caja.appendChild(a);
         }
-      }).catch(function () {
-        $("fxError").textContent = "No se ha podido guardar. Inténtalo otra vez.";
-        $("fxError").classList.remove("hidden");
-        btn.disabled = false;
-      });
+      }).catch(function () { fallo(M.error || "…"); });
     });
   }
 
