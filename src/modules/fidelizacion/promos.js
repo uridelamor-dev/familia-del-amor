@@ -34,6 +34,101 @@ export const TIPOS = Object.freeze({
   premio_campana:    { reward: "Offer",         valor: "ninguno",  codigo: true,  probado: false },
 });
 
+/** ¿Este tipo necesita un `Code` de Ágora? */
+export const exigeCodigo = (tipo) => !!TIPOS[tipo]?.codigo;
+
+// ── EL CÓDIGO DE LA PROMOCIÓN EN ÁGORA ───────────────────────────────────────────────────────
+//
+// LA REGLA, ESCRITA UNA VEZ PARA QUE NADIE LA CAMBIE POR DESCUIDO:
+//
+//   1. Se recortan los espacios de los EXTREMOS. Nada más.
+//   2. NO se cambia nada de dentro. Ni a mayúsculas, ni quitando acentos, ni sustituyendo
+//      guiones. Un código válido se guarda EXACTAMENTE como se escribió.
+//   3. Lo que no encaje en el alfabeto se RECHAZA con un motivo, no se arregla en silencio.
+//
+// El punto 2 es el importante y va contra el instinto. Lo natural sería «normalizar» a mayúsculas,
+// y sería un error: Ágora compara el `Code` tal cual, así que convertir `esmorzar_girona` en
+// `ESMORZAR_GIRONA` puede dejar de coincidir con lo que hay creado allí. Y cuando no coincide,
+// ÁGORA IGNORA EL PREMIO EN SILENCIO: el cliente se queda sin su desayuno y nadie se entera. Un
+// código mal escrito tiene que dar un error en la cara de quien lo escribe, no una promoción que
+// parece publicada y no hace nada.
+//
+// El alfabeto son letras ASCII, dígitos y `_ - .`, que es lo que admite un identificador de
+// promoción de Ágora. Un espacio INTERIOR se rechaza aparte porque es el error de dedo más común
+// —pegar el código con un espacio de más en medio— y merece decirlo con esas palabras.
+
+export const CODIGO_AGORA_MAX = 60;
+const CODIGO_AGORA_RE = /^[A-Za-z0-9_.-]+$/;
+
+/** Los espacios de los extremos, incluidos los raros que se pegan desde una hoja de cálculo. */
+const ESPACIOS = /^[\s\u00a0\u200b\ufeff]+|[\s\u00a0\u200b\ufeff]+$/g;
+
+/**
+ * Recorta y comprueba. NUNCA transforma un código válido.
+ *
+ * @returns {{ok: boolean, codigo: string, motivo: string|null}}
+ */
+export function normalizarCodigoAgora(crudo) {
+  const codigo = String(crudo ?? "").replace(ESPACIOS, "");
+  if (!codigo) return { ok: false, codigo: "", motivo: "vacio" };
+  if (codigo.length > CODIGO_AGORA_MAX) return { ok: false, codigo, motivo: "demasiado_largo" };
+  if (/[\s\u00a0]/.test(codigo)) return { ok: false, codigo, motivo: "espacios_interiores" };
+  if (!CODIGO_AGORA_RE.test(codigo)) return { ok: false, codigo, motivo: "caracter_no_valido" };
+  return { ok: true, codigo, motivo: null };
+}
+
+/** Por qué no vale, en la frase que se le enseña a quien lo está escribiendo. */
+export const CODIGO_AGORA_ERROR = Object.freeze({
+  vacio: "Escribe el código de la promoción tal y como está creada en Ágora.",
+  demasiado_largo: `El código no puede pasar de ${CODIGO_AGORA_MAX} caracteres.`,
+  espacios_interiores: "El código no puede llevar espacios. Comprueba que no se ha colado uno al pegarlo.",
+  caracter_no_valido: "El código solo puede llevar letras sin acentos, números, guiones, guiones bajos y puntos.",
+});
+
+// ── UNA PROMOCIÓN DE ÁGORA SIN DERECHO SE LA LLEVA TODO EL LOCAL ─────────────────────────────
+//
+// Es el descuido caro de esta pantalla, y no avisa de nada: se publica `ESMORZAR_GIRONA` sin
+// marcar la casilla, y a partir de ese momento CUALQUIER socio que enseñe su carné en Girona se
+// lleva el desayuno gratis. No hay error, no hay aviso, y se descubre cuadrando el mes.
+//
+// Por eso el valor SEGURO por defecto de un `Offer` es EXIGIR DERECHO, y ofrecerlo a todos es lo
+// que hay que pedir a propósito, por escrito y con el local y el código delante.
+//
+// ⚠️ Esto SOLO afecta a lo que se publica de ahora en adelante. Lo ya publicado conserva su valor
+// tal cual: ninguna migración toca una fila existente.
+
+/** Lo que hay que teclear para publicar una promoción de Ágora abierta a todo el local. */
+export const CONFIRMACION_GENERAL = "OFRECER A TODOS";
+
+export function confirmacionGeneralValida(texto) {
+  return String(texto || "").trim().toUpperCase().replace(/\s+/g, " ") === CONFIRMACION_GENERAL;
+}
+
+/**
+ * ¿Hay que escribir la confirmación para publicar ESTA promoción?
+ *
+ * Solo al PUBLICAR, solo si el premio es un `Offer` —los descuentos en euros no se «regalan a
+ * todos»: se pagan con puntos— y solo si no exige derecho individual.
+ *
+ * Un borrador no la pide: guardar un borrador no ofrece nada a nadie, y pedirla ahí convertiría la
+ * confirmación en un trámite que se teclea sin leer.
+ */
+export function exigeConfirmacionGeneral(promo, { publicar = false } = {}) {
+  return !!publicar && exigeCodigo(promo?.tipo) && !promo?.requiere_derecho;
+}
+
+/**
+ * El valor con el que nace la casilla en el panel.
+ *
+ * SIN base —una promoción nueva— manda el tipo: un `Offer` nace exigiendo derecho.
+ * CON base —editando o copiando una versión— manda LO GUARDADO, siempre. Cambiarlo por detrás al
+ * abrir la ventana sería exactamente el «cambio silencioso» que no puede pasar.
+ */
+export function derechoPorDefecto(tipo, base = null) {
+  if (base && typeof base === "object" && "requiere_derecho" in base) return !!base.requiere_derecho;
+  return exigeCodigo(tipo);
+}
+
 export const ESTADOS = Object.freeze(["borrador", "publicada", "pausada", "finalizada"]);
 
 /** Solo una publicada y dentro de su ventana se ofrece. Un borrador no existe para nadie. */
@@ -102,9 +197,22 @@ export function leerLista(v) {
  * límites se comprueban aquí y OTRA VEZ dentro de la transacción al cerrar: entre que se ofrece y
  * se cierra pueden pasar veinte minutos y otra caja puede haberse llevado el último.
  */
-export function elegible(promo, { ahora, local, usos = 0, usosTotales = 0, saldo = 0, importeCentimos = null }) {
+export function elegible(promo, { ahora, local, usos = 0, usosTotales = 0, saldo = 0,
+                                  importeCentimos = null, derechos = 0 }) {
   const v = vigente(promo, { ahora, local });
   if (!v.ok) return v;
+
+  // ── ¿ESTA PROMOCIÓN ES PARA TODOS O SOLO PARA QUIEN SE LA GANÓ? ────────────────────────────
+  //
+  // Por defecto, NO: una promoción publicada se le ofrece a cualquier socio del local que cumpla
+  // el resto. Es lo que había y lo que sigue valiendo para las promociones de siempre.
+  //
+  // Con `requiere_derecho`, en cambio, hay que habérsela concedido a ESA cuenta —apuntándose a un
+  // formulario, hoy—. Sin eso, el desayuno de una campaña de captación se lo llevaría también
+  // quien nunca se apuntó, que es justo lo contrario de para qué se hizo la campaña.
+  if (promo.requiere_derecho && !(Number(derechos) > 0)) {
+    return { ok: false, motivo: "sin_derecho" };
+  }
 
   const porCuenta = Number(promo.limite_cuenta);
   if (Number.isFinite(porCuenta) && porCuenta > 0 && usos >= porCuenta) {
@@ -144,7 +252,15 @@ export function rewardDePromo(promo) {
   };
   if (t.valor === "euros") r.Value = Number(promo.valor);
   if (t.valor === "porciento") r.Value = Number(promo.valor);
-  if (t.codigo) r.Code = String(promo.codigo_agora || "");
+  if (t.codigo) {
+    // ÚLTIMO CANDADO. El `Code` sale de la FILA GUARDADA, nunca de la petición, y si lo que hay
+    // guardado no es un código válido NO se manda un `Offer` a medias: Ágora lo ignoraría en
+    // silencio y el camarero creería haber aplicado un premio que no existe. Preferimos no
+    // ofrecer nada, que es visible, a ofrecer algo que no se puede cobrar.
+    const c = normalizarCodigoAgora(promo.codigo_agora);
+    if (!c.ok) return null;
+    r.Code = c.codigo;
+  }
   return r;
 }
 
@@ -171,11 +287,18 @@ export function puedePublicar(promo, { grupos = {}, catalogo = null } = {}) {
     if (t.valor === "porciento" && v > 100) falta.push("Un descuento porcentual no puede pasar del 100 %.");
   }
   if (t && t.codigo) {
-    if (!String(promo?.codigo_agora || "").trim()) {
-      falta.push("Falta el código de la promoción en Ágora. No se puede inventar: tiene que existir allí.");
+    const c = normalizarCodigoAgora(promo?.codigo_agora);
+    if (!c.ok) {
+      falta.push(c.motivo === "vacio"
+        ? "Falta el código de la promoción en Ágora. No se puede inventar: tiene que existir allí."
+        : CODIGO_AGORA_ERROR[c.motivo]);
     } else if (!promo?.codigo_comprobado_en) {
       falta.push("El código de Ágora no se ha comprobado. Ágora ignora en silencio un Offer cuyo código no exista.");
     }
+  } else if (String(promo?.codigo_agora || "").trim()) {
+    // Un código guardado en un tipo que no lo usa no se manda a ninguna parte, y verlo en la ficha
+    // hace creer que sí. Se dice, en vez de borrarlo por detrás.
+    falta.push("Este tipo de premio no lleva código de Ágora. Bórralo o cambia el tipo a «Oferta de Ágora».");
   }
   if (!promo?.local) falta.push("Falta el local, o marcarla como global.");
   if (promo?.desde && promo?.hasta && String(promo.desde) > String(promo.hasta)) {
@@ -219,6 +342,12 @@ export function simularPromo(promo, escenarios) {
   });
 }
 
+/** El aviso de una promoción abierta a todo el local. Una frase, un sitio. */
+export const AVISO_GENERAL = "Se ofrece a cualquier socio elegible del local";
+
+/** ¿Es una promoción de Ágora abierta a todos? Es lo que enseña el aviso en el listado. */
+export const esGeneral = (promo) => exigeCodigo(promo?.tipo) && !promo?.requiere_derecho;
+
 /** Por qué no, en castellano. Lo lee quien configura, no un programador. */
 export const EXPLICACION = Object.freeze({
   no_existe: "esa promoción no existe",
@@ -232,8 +361,87 @@ export const EXPLICACION = Object.freeze({
   aun_no_es_la_hora: "todavía no es la hora",
   fuera_de_horario: "ya ha pasado su horario",
   ya_utilizada: "esta cuenta ya se la ha llevado",
+  sin_derecho: "esta promoción es solo para quien se apuntó, y esta cuenta no lo hizo",
   agotada: "se han agotado las unidades",
   puntos_insuficientes: "no tiene puntos suficientes",
   compra_minima: "la cuenta no llega a la compra mínima",
   fecha_no_valida: "la fecha no es válida",
 });
+
+// ── CUÁL DE TODOS, CUANDO HAY VARIOS ─────────────────────────────────────────────────────────
+//
+// ── ¿POR QUÉ UNO SOLO? ───────────────────────────────────────────────────────────────────────
+//
+// Porque no hay evidencia de que Ágora sepa enseñarle varios al camarero para que elija. Lo único
+// que el proyecto tiene documentado de la guía es la forma de la respuesta —`Rewards` es una
+// lista— y en Fase 1 iba siempre VACÍA. Ninguna factura real capturada trae un premio aplicado.
+//
+// Y hay un hecho que sí conocemos: nuestro propio cierre RECHAZA una factura con más de un premio
+// aplicado (`varios_rewards`). Mandar dos y que el camarero aplicara los dos sería una factura que
+// no se puede cerrar, en hora punta.
+//
+// Así que se manda UNO, y entonces cuál se manda importa mucho.
+//
+// ── EL ORDEN, Y POR QUÉ ESTE ─────────────────────────────────────────────────────────────────
+//
+//   1. PROMOCIÓN CON DERECHO INDIVIDUAL. Alguien se apuntó a una campaña y se le prometió un
+//      desayuno. Es lo más concreto que hay y es una promesa hecha a una persona.
+//   2. PROMOCIÓN GENERAL DE ÁGORA. La casa la ofrece a todo el que pase.
+//   3. DESCUENTO POR PUNTOS. Es lo más sustituible: los puntos no caducan hoy y siguen ahí mañana.
+//
+// ESTO INVIERTE LO QUE HABÍA. Antes ganaba el descuento por puntos, y eso impedía a alguien usar
+// el desayuno que se había ganado: venía a por su esmorzar, tenía saldo suficiente, y la barra le
+// ofrecía otra cosa. El derecho concedido es el que se pierde si no se usa; los puntos, no.
+//
+// Dentro del mismo nivel manda `prioridad` y, empatados, LA QUE ANTES CADUCA — que es la que se
+// pierde si no se usa hoy. Y si todo empata, la clave y la versión, para que la elección no
+// dependa NUNCA del orden en que la base devolvió las filas.
+
+/** Los tres niveles. Cuanto más bajo, antes se ofrece. */
+export const NIVEL = Object.freeze({ CON_DERECHO: 0, GENERAL: 1, PUNTOS: 2 });
+
+/** En qué nivel juega una promoción. Los puntos no pasan por aquí: son el nivel 2 por definición. */
+export const nivelDe = (promo) => (promo && promo.requiere_derecho ? NIVEL.CON_DERECHO : NIVEL.GENERAL);
+
+/** `hasta` como número comparable. Sin fecha de final = no caduca = la última en desempatar. */
+const caduca = (p) => {
+  const h = String(p?.hasta || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(h) ? h : "9999-12-31";
+};
+
+/**
+ * El orden entre dos promociones candidatas. TOTAL y DETERMINISTA: nunca devuelve 0 para dos
+ * filas distintas, así que dos promociones idénticas en todo lo demás se ordenan igual siempre.
+ */
+export function compararPromos(a, b) {
+  const n = nivelDe(a) - nivelDe(b);
+  if (n) return n;
+  const p = (Number(b?.prioridad) || 0) - (Number(a?.prioridad) || 0);   // mayor prioridad, antes
+  if (p) return p;
+  const c = caduca(a).localeCompare(caduca(b));                          // la que antes caduca
+  if (c) return c;
+  const k = String(a?.clave || "").localeCompare(String(b?.clave || ""));
+  if (k) return k;
+  return (Number(b?.version) || 0) - (Number(a?.version) || 0);          // la versión más nueva
+}
+
+/**
+ * La que se ofrece, de entre las que YA se ha comprobado que son elegibles.
+ *
+ * No filtra nada: filtrar es de `elegible()`, que necesita la base para contar usos y derechos.
+ * Aquí solo se elige, y se elige siempre igual.
+ */
+export function elegirPromo(candidatas) {
+  const lista = (candidatas || []).filter(Boolean);
+  if (!lista.length) return null;
+  return [...lista].sort(compararPromos)[0];
+}
+
+/**
+ * ¿Gana la promoción al descuento por puntos?
+ *
+ * Sí siempre que haya una promoción elegible: los dos niveles de promoción van por delante del 2.
+ * Está escrito como función para que el servidor no tenga que recordar la regla, y para que el
+ * test que la blinda apunte a un sitio.
+ */
+export const ganaLaPromo = (promo) => !!promo && nivelDe(promo) < NIVEL.PUNTOS;

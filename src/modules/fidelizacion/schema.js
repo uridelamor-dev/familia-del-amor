@@ -390,6 +390,58 @@ export async function ensureSchemaFidelizacion(x) {
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_promo_uso_cuenta ON fid_promo_usos (promo_id, qr_id)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_promo_uso_clave ON fid_promo_usos (clave, qr_id)`);
 
+  // ── PROMOCIONES QUE HAY QUE GANARSE ────────────────────────────────────────
+  //
+  // ADITIVO Y EN FALSO. `requiere_derecho` nace en FALSE a propósito: una promoción de las de
+  // antes se sigue ofreciendo a todo el que cumpla, exactamente igual que ayer. Poner TRUE por
+  // defecto habría apagado en silencio todo lo publicado.
+  await x.run(`ALTER TABLE fid_promos ADD COLUMN IF NOT EXISTS requiere_derecho BOOLEAN NOT NULL DEFAULT FALSE`);
+
+  // EL LIBRO DE DERECHOS. Quién se ha ganado qué promoción, y por dónde.
+  //
+  // El derecho es a la CLAVE de la promoción, no a una versión: si Marketing publica la versión 2
+  // arreglando una errata del texto, quien se apuntó ayer no pierde su desayuno.
+  //
+  // `clave_idem` es lo que hace que recargar el formulario, enviarlo dos veces o reintentar un
+  // envío no conceda dos desayunos. Y no hay `DELETE`: una baja comercial NO borra un derecho ya
+  // concedido —son cosas distintas: una es «no me escribáis», el otro es «esto ya te lo ganaste»—.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_promo_derechos (
+    id SERIAL PRIMARY KEY,
+    clave TEXT NOT NULL,
+    qr_id INTEGER NOT NULL,
+    origen TEXT NOT NULL,
+    clave_idem TEXT NOT NULL UNIQUE,
+    nota TEXT,
+    concedido_en TEXT NOT NULL,
+    concedido_por TEXT NOT NULL
+  )`);
+  await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_derecho_cuenta ON fid_promo_derechos (clave, qr_id)`);
+
+  // ── LA PUERTA DE LAS PROMOCIONES, APARTE DE LA DE PUNTOS ───────────────────
+  //
+  // Su propia fila y su propia tabla. NO se toca `fid_puerta`, que es del programa de puntos:
+  // encender promociones no puede encender puntos ni al revés, y compartir fila habría sido la
+  // forma más rápida de que un día pasara.
+  //
+  // Nace en 'apagado' y NUNCA se mueve desde una migración: la abre Dirección desde el panel,
+  // escribiendo una confirmación a mano, con los requisitos comprobados delante.
+  await x.run(`CREATE TABLE IF NOT EXISTS fid_puerta_promos (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    estado TEXT NOT NULL DEFAULT 'apagado',
+    confirmado_por TEXT,
+    confirmado_en TEXT,
+    texto_confirmacion TEXT,
+    pausado_por TEXT,
+    pausado_en TEXT,
+    motivo_pausa TEXT,
+    actualizado_en TEXT,
+    CHECK (id = 1),
+    CHECK (estado IN ('apagado','listo_para_activar','activo','pausado'))
+  )`);
+  try { await x.run(`INSERT INTO fid_puerta_promos (id, estado, actualizado_en) VALUES (1, 'apagado', ?)
+                     ON CONFLICT (id) DO NOTHING`, [new Date().toISOString()]); }
+  catch (e) { console.error("[fidelizacion] puerta promos:", e.message); }
+
   // ── EL FORMULARIO PÚBLICO, CONFIGURABLE Y VERSIONADO ───────────────────────
   //
   // NO ES UN CENSO NUEVO. El alta sigue yendo a `leads`, el carné a `pro_qr` y el WhatsApp a
@@ -435,7 +487,14 @@ export async function ensureSchemaFidelizacion(x) {
                      // EL WHATSAPP QUE SE MANDA AL APUNTARSE. Aditivo y sin valor por defecto:
                      // vacío significa «no mandes nada». Encenderlo en una campaña que no lo
                      // prometía enviaría un mensaje a gente que se apuntó sin esperarlo.
-                     "mensaje_wa TEXT"]) {
+                     "mensaje_wa TEXT",
+                     // LA PROMOCIÓN QUE SE OTORGA AL APUNTARSE. Aditiva y SIN valor por defecto:
+                     // vacío significa «apuntarse no da derecho a nada», que es como se comporta
+                     // todo lo que hay hoy. Guarda la CLAVE de la promoción, elegida a mano en el
+                     // panel, y NUNCA se deduce del parecido entre la clave de un formulario y el
+                     // código de una promoción del TPV: dos cosas que se llaman igual no son la
+                     // misma cosa, y adivinarlo aquí es regalar premios por una coincidencia.
+                     "promo_clave TEXT"]) {
     try { await x.run(`ALTER TABLE fid_formularios ADD COLUMN IF NOT EXISTS ${col}`); }
     catch (e) { console.error("[fidelizacion] alter fid_formularios:", e.message); }
   }

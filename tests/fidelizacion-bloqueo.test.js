@@ -58,8 +58,10 @@ describe("el NIVEL dice qué sabe hacer el código, no qué está encendido", ()
   test("la puerta NACE cerrada, y el arranque no puede abrirla", () => {
     const esquema = readFileSync(new URL("../src/modules/fidelizacion/schema.js", import.meta.url), "utf8");
     assert.match(esquema, /VALUES \(1, 'no_preparado', \?\)\s*\n?\s*ON CONFLICT \(id\) DO NOTHING/);
-    const escrituras = [...esquema.matchAll(/(INSERT INTO|UPDATE) fid_puerta[^`]*/g)].map((m) => m[0]);
-    assert.equal(escrituras.length, 1);
+    // `\b` para no cazar `fid_puerta_promos`, que es OTRA tabla —la de las promociones de Ágora—
+    // y tiene su propio candado en `promociones-puerta.test.js`. Este test es el de PUNTOS.
+    const escrituras = [...esquema.matchAll(/(INSERT INTO|UPDATE) fid_puerta\b[^`]*/g)].map((m) => m[0]);
+    assert.equal(escrituras.length, 1, "el arranque escribe en la puerta de puntos más de una vez");
     for (const e of escrituras) {
       for (const estado of ["'activo'", "'listo_para_activar'", "'pausado'"]) {
         assert.ok(!e.includes(estado), `el arranque puede dejar la puerta en ${estado}`);
@@ -147,17 +149,38 @@ describe("saltarse el bloqueo por la API", () => {
     assert.match(lee, /catch \{ estadoPuerta = "no_preparado"; \}/);
   });
 
-  test("y `fidInterruptores` es lo ÚNICO que lee esos valores", () => {
+  test("y `fidInterruptores` es lo ÚNICO que lee los interruptores DE PUNTOS", () => {
     // Nadie puede saltarse el bloqueo leyendo la configuración por su cuenta.
+    //
+    // Hay TRES lecturas de `getConfig("fid_…")` en el servidor, y cada una tiene su sitio:
+    //   1. `fidInterruptores`          — los cuatro del programa de puntos. Bloqueo por nivel + puerta.
+    //   2. `fidPromoInterruptores`     — los dos de promociones de Ágora. Bloqueo por su puerta.
+    //   3. la ruta de interruptores de promociones, que necesita LA INTENCIÓN GUARDADA —sin pasar
+    //      por la puerta— para decidir si «consumir» puede encenderse sobre «ofrecer».
+    //
+    // Lo que este test impide es que aparezca una CUARTA que lea y actúe sin bloqueo.
     const lecturas = [...server.matchAll(/getConfig\(`?fid_/g)];
-    assert.equal(lecturas.length, 1, "alguien lee los interruptores sin pasar por el bloqueo");
+    assert.equal(lecturas.length, 3, "alguien lee los interruptores sin pasar por el bloqueo");
+
+    // Y la de puntos sigue estando dentro de `fidInterruptores` y en ningún otro sitio.
+    const i = server.indexOf("async function fidInterruptores()");
+    const fn = server.slice(i, server.indexOf("async function", i + 40));
+    assert.match(fn, /getConfig\(`fid_\$\{k\}`\)/);
+    // Las otras dos no pueden nombrar una clave del programa de puntos.
+    const fuera = server.slice(0, i) + server.slice(i + fn.length);
+    assert.ok(!/getConfig\(`?fid_(conceder|ofrecer|consumir|sombra)/.test(fuera),
+      "alguien lee un interruptor de puntos fuera de `fidInterruptores`");
   });
 
   test("Rewards sigue devolviendo [] mientras la PUERTA esté cerrada", () => {
     // `ofrecer` bloqueado ⇒ `rewards` se queda a null ⇒ `respuestaMiembro` usa REWARDS_FASE_1.
     const val = trozo("¿SE LE OFRECE EL DESCUENTO?", 'await apunta(integ.fila.id, integ.fila.local, rewards ? "ok:reward" : "ok")');
     assert.match(val, /let rewards = null;/);
-    assert.match(val, /if \(sw\.ofrecer && !esperaConfirmacion\)/);
+    // Ahora son DOS sistemas: se entra si alguno de los dos está ofreciendo. Lo que este test
+    // blinda es que el de PUNTOS sigue colgando de `sw.ofrecer`, que es lo que la puerta apaga.
+    assert.match(val, /if \(\(sw\.ofrecer \|\| swPromo\.promociones_ofrecer\) && !esperaConfirmacion\)/);
+    assert.match(val, /if \(!rewards && sw\.ofrecer\) \{/,
+      "el descuento por puntos tiene que seguir exigiendo `sw.ofrecer`");
     const ag = readFileSync(new URL("../src/modules/fidelizacion/agora.js", import.meta.url), "utf8");
     assert.match(ag, /Rewards: rewards && rewards\.length \? rewards : \[\.\.\.REWARDS_FASE_1\]/);
   });

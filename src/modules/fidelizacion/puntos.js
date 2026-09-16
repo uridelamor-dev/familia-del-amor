@@ -358,8 +358,8 @@ export function caducaEn(iso, meses) {
  * que solo se hace cuando aceptar REGALARÍA dinero. Si no hay dinero de por medio, se acepta y se
  * revisa con calma.
  */
-export function evaluarFactura({ json, extracto, regla, reglaReward = null, local,
-                                 interruptores, saldoDisponible, ahora }) {
+export function evaluarFactura({ json, extracto, regla, reglaReward = null, promoReward = null,
+                                 local, interruptores, saldoDisponible, ahora }) {
   const pago = importePagado(json);
   const sw = interruptores || {};
   const miembros = extracto?.miembros || [];
@@ -397,9 +397,29 @@ export function evaluarFactura({ json, extracto, regla, reglaReward = null, loca
       visitas: miembros.length };
   }
 
+  // ── ¿EL PREMIO ES DE UNA PROMOCIÓN? ENTONCES AQUÍ NO SE TOCA ────────────────────────────────
+  //
+  // Son DOS FAMILIAS de premio y solo una pasa por los puntos:
+  //
+  //   `fid:`   descuento del programa de puntos. Se paga con saldo, y todo lo de abajo es eso.
+  //   `fidp:`  promoción o campaña. Tiene su propio libro de usos, su propio límite por cuenta y
+  //            su propia versión, y ya se ha validado ENTERA antes de llegar aquí, dentro de la
+  //            misma transacción y con el cerrojo de la cuenta puesto.
+  //
+  // Sin esta salida, una promoción aplicada en caja llegaba abajo, no encontraba `reglaReward`
+  // —porque no es una regla de puntos, es una promoción— y la factura se RECHAZABA con «ese
+  // descuento ya no es válido». Es decir: el premio se ofrecía, el camarero lo aplicaba, y al
+  // cobrar no se podía cerrar la factura.
+  //
+  // Un premio de promoción NO consume puntos ni exige regla vigente: la casa regala un producto,
+  // no canjea saldo. Pero la VISITA y el consumo se siguen apuntando, así que se cae al camino
+  // normal de «sin reward» en vez de devolver aquí mismo.
+  const esDePromo = aplicados.length === 1 && !!promoReward
+    && String(aplicados[0]?.Id || "") === String(promoReward.reward_id || "");
+
   // ── El reward, si viene ─────────────────────────────────────────────────────────────────────
   let consumo = null;
-  if (aplicados.length === 1) {
+  if (aplicados.length === 1 && !esDePromo) {
     const r = aplicados[0];
     if (!sw.consumir) {
       return { ...base, accion: "rechazar", motivo: "consumir_apagado",

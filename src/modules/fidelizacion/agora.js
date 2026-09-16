@@ -694,8 +694,11 @@ async function aplicarPrograma(x, { programa, extracto, conCarnet, integracion, 
   // cierra la factura, otra caja puede haberse llevado el último premio o el cliente puede haberlo
   // usado ya. Si ya no cuadra se RECHAZA: aceptar sin poder atribuir el consumo regala el premio.
   if (promoReward) {
-    if (!interruptores.consumir) {
-      throw new FacturaRechazada("consumir_apagado", "Los premios de fidelización no están activos.");
+    // SU PROPIO INTERRUPTOR, no el del programa de puntos. `programa.promociones` llega desde el
+    // servidor ya pasado por la puerta de promociones; si no llega, se supone apagado.
+    if (!programa?.promociones?.promociones_consumir) {
+      throw new FacturaRechazada("promo_consumir_apagado",
+        "Las promociones de Ágora no están activas. Quita el premio y vuelve a intentarlo.");
     }
     if (!socio) {
       throw new FacturaRechazada("promo_sin_socio",
@@ -709,8 +712,17 @@ async function aplicarPrograma(x, { programa, extracto, conCarnet, integracion, 
         WHERE clave = ? AND qr_id = ? AND estado = 'usado'`, [promoReward.clave, socio.qrId]);
     const totales = await x.get(
       `SELECT COUNT(*)::int AS n FROM fid_promo_usos WHERE clave = ? AND estado = 'usado'`, [promoReward.clave]);
+    // OTRA VEZ el derecho, aquí dentro y con el cerrojo puesto. Se comprobó al ofrecerlo, pero
+    // entre ofrecer y cobrar pasan minutos, y lo que decide es lo que hay en la base al cerrar.
+    let derechos = 0;
+    if (promoReward.requiere_derecho) {
+      const d = await x.get(`SELECT COUNT(*)::int AS n FROM fid_promo_derechos WHERE clave = ? AND qr_id = ?`,
+        [promoReward.clave, socio.qrId]);
+      derechos = d?.n || 0;
+    }
     const el = promoElegible(promoReward, { ahora, local, usos: usos?.n || 0,
-      usosTotales: totales?.n || 0, saldo: saldoDisponible, importeCentimos: importePagado(json).amount });
+      usosTotales: totales?.n || 0, saldo: saldoDisponible,
+      importeCentimos: importePagado(json).amount, derechos });
     if (!el.ok) {
       throw new FacturaRechazada("promo_" + el.motivo,
         `Ese premio no se puede aplicar: ${PROMO_EXPLICA[el.motivo] || el.motivo}. Quítalo y vuelve a intentarlo.`);
@@ -725,7 +737,11 @@ async function aplicarPrograma(x, { programa, extracto, conCarnet, integracion, 
        "agora", ahora]);
   }
 
-  const d = evaluarFactura({ json, extracto, regla, reglaReward, local, interruptores, saldoDisponible, ahora });
+  // `promoReward` viaja para que el camino de los puntos SEPA que ese premio no es suyo: ya se ha
+  // validado y apuntado arriba, con su propio libro. Sin esto lo trataba como un descuento de
+  // puntos desconocido y rechazaba la factura entera.
+  const d = evaluarFactura({ json, extracto, regla, reglaReward, promoReward, local,
+                             interruptores, saldoDisponible, ahora });
   if (d.accion === "rechazar") throw new FacturaRechazada(d.motivo, d.razon);
 
   // ── DEVOLUCIONES ────────────────────────────────────────────────────────────────────────────
@@ -925,6 +941,22 @@ export async function revertirDevolucionTotal(x, { original, extracto, local, ah
     }
   }
 
+  // ── EL PREMIO TAMBIÉN VUELVE ────────────────────────────────────────────────────────────────
+  //
+  // Si en la factura original se gastó una promoción y la compra se devuelve ENTERA, el cliente
+  // no se ha llevado nada: su derecho tiene que quedar otra vez disponible. Sin esto, devolver el
+  // desayuno le costaba el desayuno.
+  //
+  // No se BORRA la fila —el libro de premios es append-only, igual que el de puntos—: se marca
+  // `revertido`, que es lo que ya contemplaba el CHECK de la tabla y lo que deja el rastro. Y los
+  // contadores de elegibilidad cuentan solo los `usado`, así que con esto vuelve a estar libre.
+  //
+  // El `WHERE estado = 'usado'` lo hace idempotente: una segunda pasada no encuentra nada.
+  const promosVueltas = await x.all(
+    `UPDATE fid_promo_usos SET estado = 'revertido',
+            nota = COALESCE(nota, 'devolucion_total')
+      WHERE factura_id = ? AND estado = 'usado' RETURNING id, clave`, [original.id]) || [];
+
   // Se sella la original para que una segunda devolución no vuelva a entrar aquí, y para que el
   // panel pueda enseñar qué facturas están revertidas sin recorrer el libro.
   // La relación queda por los DOS lados: la original sabe quién la revirtió y cuándo, y la
@@ -934,8 +966,10 @@ export async function revertirDevolucionTotal(x, { original, extracto, local, ah
     [ahora, facturaId, original.id]);
   await x.run(`UPDATE fid_facturas SET devolucion_de = ? WHERE id = ?`, [original.id, facturaId]);
 
-  return { hecho: escritos > 0, original_id: original.id, movimientos: escritos,
-           puntos_revertidos: puntosRevertidos, puntos_restaurados: puntosRestaurados, visitas };
+  return { hecho: escritos > 0 || promosVueltas.length > 0, original_id: original.id,
+           movimientos: escritos, puntos_revertidos: puntosRevertidos,
+           puntos_restaurados: puntosRestaurados, visitas,
+           promos_revertidas: promosVueltas.map((p) => p.clave) };
 }
 
 /** Los tipos de documento que la guía define como devolución. NUNCA se deduce por el signo. */

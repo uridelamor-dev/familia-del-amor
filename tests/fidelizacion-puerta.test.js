@@ -196,7 +196,9 @@ describe("el cableado en el servidor", () => {
     assert.match(esquema, /CHECK \(id = 1\)/);
     // Un despliegue jamás deja el programa activo. Se miran las ESCRITURAS, no el `CHECK`: ahí
     // `'activo'` aparece legítimamente, porque es uno de los cinco estados posibles.
-    const escrituras = [...esquema.matchAll(/(INSERT INTO|UPDATE) fid_puerta[^`]*/g)].map((m) => m[0]);
+    // `\b` para no cazar `fid_puerta_promos`: es la puerta de las promociones de Ágora, otra
+    // tabla y otro sistema, con su propio candado en `promociones-puerta.test.js`.
+    const escrituras = [...esquema.matchAll(/(INSERT INTO|UPDATE) fid_puerta\b[^`]*/g)].map((m) => m[0]);
     assert.equal(escrituras.length, 1, "el arranque escribe en la puerta más de una vez");
     for (const e of escrituras) {
       for (const estado of ["'activo'", "'listo_para_activar'", "'pausado'"]) {

@@ -439,7 +439,9 @@ describe("el cableado en server.js", () => {
   test("no se ofrece Reward con la integración sin confirmar", () => {
     const val = server.slice(server.indexOf("¿SE LE OFRECE EL DESCUENTO?"), server.indexOf('await apunta(integ.fila.id, integ.fila.local, rewards ? "ok:reward" : "ok")'));
     assert.match(val, /const esperaConfirmacion = !integ\.fila\.workplace_confirmado_en/);
-    assert.match(val, /if \(sw\.ofrecer && !esperaConfirmacion\)/);
+    // La confirmación del Workplace tapa a LOS DOS sistemas: ni puntos ni promociones se ofrecen
+    // mientras no sepamos en qué caja está ese token. Un descuento es dinero.
+    assert.match(val, /if \(\(sw\.ofrecer \|\| swPromo\.promociones_ofrecer\) && !esperaConfirmacion\)/);
   });
 
   test("el rechazo se contesta 200 rejected y se audita", () => {
@@ -458,6 +460,8 @@ describe("el cableado en server.js", () => {
 
   test("la regla se resuelve FUERA y viaja entera a la transacción", () => {
     // Resolverla dentro dejaría abierta la puerta a calcular con una versión y guardar con otra.
-    assert.match(server, /programa: \{ regla: reglaHoy, interruptores: sw, hash: fidHash, json, idemV: FID_IDEM_V \}/);
+    assert.match(server, /programa: \{ regla: reglaHoy, interruptores: sw, promociones: swPromo,\s*\n?\s*hash: fidHash, json, idemV: FID_IDEM_V \}/);
+    // Los interruptores de promociones viajan igual, y también resueltos FUERA.
+    assert.match(server, /swPromo = await fidPromoInterruptores\(\)/);
   });
 });

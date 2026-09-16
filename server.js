@@ -120,8 +120,20 @@ import { urlMaestro as fidUrlMaestro, normalizarMaestro as fidNormalizarMaestro,
 import { TIPOS as FID_PROMO_TIPOS, ESTADOS as FID_PROMO_ESTADOS, vigente as fidPromoVigente,
          elegible as fidPromoElegible, rewardDePromo as fidRewardDePromo,
          puedePublicar as fidPuedePublicar, simularPromo as fidSimularPromo,
-         enMadrid as fidEnMadrid, leerLista as fidLeerLista, EXPLICACION as FID_PROMO_EXPLICA }
+         enMadrid as fidEnMadrid, leerLista as fidLeerLista, EXPLICACION as FID_PROMO_EXPLICA,
+         normalizarCodigoAgora as fidCodigoAgora, exigeCodigo as fidExigeCodigo,
+         CODIGO_AGORA_ERROR as FID_CODIGO_ERROR, elegirPromo as fidElegirPromo,
+         CONFIRMACION_GENERAL as FID_CONFIRMACION_GENERAL,
+         confirmacionGeneralValida as fidConfirmacionGeneralValida,
+         exigeConfirmacionGeneral as fidExigeConfirmacionGeneral }
   from "./src/modules/fidelizacion/promos.js";
+import { ESTADOS as FID_PROMO_PUERTA_ESTADOS, INTERRUPTORES as FID_PROMO_INTERRUPTORES,
+         APAGADOS as FID_PROMO_APAGADOS, REQUISITOS as FID_PROMO_REQUISITOS,
+         evaluarPuerta as fidPromoEvaluarPuerta, puedeTransitar as fidPromoPuedeTransitar,
+         CONFIRMACION_EXIGIDA as FID_PROMO_CONFIRMACION,
+         confirmacionValida as fidPromoConfirmacionValida,
+         puedeEncender as fidPromoPuedeEncender, aplicarPuerta as fidPromoAplicarPuerta }
+  from "./src/modules/fidelizacion/puerta-promos.js";
 import { textoSeguro as fidTexto, urlSegura as fidUrl, normalizarCampos as fidCampos,
          validarFormulario as fidValidarForm, formularioAbierto as fidFormAbierto,
          renderPlantilla as fidRender, variablesDesconocidas as fidVarsRaras,
@@ -12035,6 +12047,36 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
       }
     } catch (e) { console.error(lineaErrorSql("[fidelizacion] carnet alta", e)); }
 
+    // ── 3 bis. EL DERECHO A LA PROMOCIÓN VINCULADA ─────────────────────────────────────────────
+    //
+    // SOLO si ESTE formulario tiene una promoción vinculada a mano desde el panel. Sin vínculo no
+    // se otorga nada, y NUNCA se busca una promoción «que se llame parecido»: la clave de un
+    // formulario y el código de una promoción del TPV pueden parecerse, y parecerse no es ser.
+    //
+    // Esto NO mueve ningún saldo ni enciende ningún interruptor: escribe una fila que dice «esta
+    // persona tiene derecho a esta promoción». Quien decide si se la lleva es la elegibilidad, y
+    // quien la gasta es el cierre de factura.
+    //
+    // ── POR QUÉ NO DUPLICA ────────────────────────────────────────────────────────────────────
+    //
+    // `clave_idem` lleva la promoción y el carné, y es UNIQUE. Recargar la página, enviar dos
+    // veces, o volver a apuntarse después de una baja dan la misma clave y el `ON CONFLICT DO
+    // NOTHING` no escribe nada. Es a propósito: el derecho es «una vez por persona», no «una vez
+    // por envío». Quien ya se lo ganó y no lo ha gastado, lo conserva; quien ya lo gastó no
+    // consigue otro volviéndose a apuntar.
+    //
+    // Y si falla, el alta NO se cae: la persona queda apuntada y con su carné, que es lo que se le
+    // prometió. El derecho se puede añadir después desde el panel; al revés no tiene arreglo.
+    if (f.promo_clave && qrId) {
+      try {
+        await dbRun(
+          `INSERT INTO fid_promo_derechos (clave, qr_id, origen, clave_idem, concedido_en, concedido_por)
+           VALUES (?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING`,
+          [f.promo_clave, qrId, `form:${clave}`,
+           `derecho:${f.promo_clave}:${qrId}`, ahora, "publico"]);
+      } catch (e) { console.error(lineaErrorSql("[fidelizacion] derecho alta", e)); }
+    }
+
     // ── 4. EL WHATSAPP QUE SE PROMETIÓ ─────────────────────────────────────────────────────────
     //
     // El formulario dice «rebràs el codi al teu telèfon» y exige que el número tenga WhatsApp.
@@ -18905,6 +18947,79 @@ async function fidInterruptores() {
   return porNivel;
 }
 
+// ── LOS INTERRUPTORES DE LAS PROMOCIONES DE ÁGORA ────────────────────────────
+//
+// APARTE de los de puntos, a propósito y con test. Una promoción no se paga con saldo: la casa
+// regala un producto porque alguien se apuntó a una campaña. Colgarla de `fid_conceder` obligaba a
+// encender el programa de puntos entero —con su modo sombra revisado y su regla publicada— para
+// poder regalar un café.
+//
+// SI LA LECTURA FALLA, APAGADOS. No sabemos si podemos regalar algo ⇒ no.
+async function fidPromoInterruptores() {
+  const out = { ...FID_PROMO_APAGADOS };
+  let ok = true;
+  for (const k of FID_PROMO_INTERRUPTORES) {
+    try {
+      const v = await getConfig(`fid_${k}`);
+      if (v !== null && v !== undefined) out[k] = String(v) === "1";
+    } catch { ok = false; }
+  }
+  // Un fallo leyendo CUALQUIERA de los dos cierra los dos: quedarse con el que sí se leyó daría
+  // un estado a medias, y el estado a medias que importa aquí es «ofreciendo».
+  if (!ok) return { ...FID_PROMO_APAGADOS };
+
+  let estado = "apagado";
+  try { estado = (await dbGet(`SELECT estado FROM fid_puerta_promos WHERE id = 1`))?.estado || "apagado"; }
+  catch { estado = "apagado"; }
+  return fidPromoAplicarPuerta(out, estado);
+}
+
+/** El estado guardado de la puerta de promociones. Si no se puede leer, apagado. */
+async function fidPromoPuertaGuardada() {
+  try { return await dbGet(`SELECT * FROM fid_puerta_promos WHERE id = 1`) || { estado: "apagado" }; }
+  catch { return { estado: "apagado" }; }
+}
+
+/**
+ * EL CONTEXTO QUE MIRAN LOS REQUISITOS. Todo sale de la base, ningún dato del navegador.
+ *
+ * Se mira solo lo VIGENTE: una promoción caducada con el código mal escrito no debería impedir
+ * activar nada, porque ya no se le ofrece a nadie.
+ */
+async function fidPromoContexto() {
+  const ahora = isoConOffset(Date.now());
+  const ctx = { promosVigentes: 0, promosSinLocal: 0, promosCodigoInvalido: 0, promosSinComprobar: 0,
+                promosDerechoSinVia: 0, localesSinIntegracion: 0, revisionesPromo: 0 };
+  const publicadas = await dbAll(`SELECT * FROM fid_promos WHERE estado = 'publicada' LIMIT 200`) || [];
+  // Los formularios PUBLICADOS que conceden algún derecho. Es «el mecanismo explícito»: sin uno,
+  // una promoción que exige derecho no se la puede llevar nadie.
+  const vias = new Set((await dbAll(
+    `SELECT DISTINCT promo_clave FROM fid_formularios
+      WHERE estado = 'publicado' AND promo_clave IS NOT NULL`) || []).map((f) => f.promo_clave));
+
+  const locales = new Set();
+  for (const p of publicadas) {
+    if (!fidPromoVigente(p, { ahora, local: p.local }).ok) continue;
+    ctx.promosVigentes += 1;
+    if (!p.local) ctx.promosSinLocal += 1; else locales.add(p.local);
+    if (fidExigeCodigo(p.tipo)) {
+      if (!fidCodigoAgora(p.codigo_agora).ok) ctx.promosCodigoInvalido += 1;
+      else if (!p.codigo_comprobado_en) ctx.promosSinComprobar += 1;
+    }
+    if (p.requiere_derecho && !vias.has(p.clave)) ctx.promosDerechoSinVia += 1;
+  }
+  for (const l of locales) {
+    const i = await dbGet(`SELECT 1 AS hay FROM fid_integraciones
+                            WHERE local = ? AND activo AND workplace_confirmado_en IS NOT NULL
+                              AND revocado_en IS NULL LIMIT 1`, [l]);
+    if (!i) ctx.localesSinIntegracion += 1;
+  }
+  const rev = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_revisiones
+                            WHERE resuelto_en IS NULL AND motivo LIKE 'promo%'`);
+  ctx.revisionesPromo = rev ? Number(rev.n) || 0 : 0;
+  return ctx;
+}
+
 /** Las reglas de un local: las suyas y las globales. La resolución la hace el módulo puro. */
 async function fidReglasDe(local) {
   try {
@@ -19037,34 +19152,65 @@ app.get("/api/fidelizacion/agora/:token/member/:memberId", async (req, res) => {
   // está en el TPV que creemos, y un descuento es dinero.
   let rewards = null;
   try {
+    // DOS SISTEMAS, DOS JUEGOS DE INTERRUPTORES, y ninguno enciende al otro. Las promociones de
+    // Ágora se pueden ofrecer con el programa de puntos entero apagado, y al revés.
     const sw = await fidInterruptores();
+    const swPromo = await fidPromoInterruptores();
     const esperaConfirmacion = !integ.fila.workplace_confirmado_en;
-    if (sw.ofrecer && !esperaConfirmacion) {
-      const ahoraIso = isoConOffset(Date.now());
-      const regla = fidReglaVigente(await fidReglasDe(integ.fila.local), { local: integ.fila.local, ahora: ahoraIso });
-      const s = await fidSaldoDe(qr.id, ahoraIso);
-      if (regla && s.disponible >= regla.puntos_necesarios) {
-        rewards = [fidRewardDe(regla, integ.fila.local)].filter(Boolean);
-      }
 
-      // ── LAS PROMOCIONES VIVAS DE ESTE LOCAL ──────────────────────────────────────────────
+    if ((sw.ofrecer || swPromo.promociones_ofrecer) && !esperaConfirmacion) {
+      const ahoraIso = isoConOffset(Date.now());
+      const s = await fidSaldoDe(qr.id, ahoraIso);
+
+      // ── 1 y 2 · LAS PROMOCIONES VIVAS DE ESTE LOCAL ──────────────────────────────────────
       //
-      // MÁXIMO UN REWARD POR FACTURA, así que si ya hay descuento de puntos no se añade nada más.
-      // Entre varias, gana la de mayor `prioridad`: acumular dos premios en la misma cuenta es lo
-      // que convierte una campaña en un agujero.
-      if (!rewards) {
+      // MÁXIMO UN REWARD, porque no hay evidencia de que Ágora sepa enseñarle varios al camarero
+      // y porque nuestro propio cierre rechaza una factura con dos premios aplicados.
+      //
+      // Se reúnen TODAS las elegibles y elige `fidElegirPromo`, que ordena por nivel (primero la
+      // que alguien se ganó, después la general), luego prioridad, luego la que antes caduca y por
+      // último la clave. NO se coge la primera que salga de la consulta: el orden de la base no es
+      // un criterio, y con dos promociones empatadas cambiaría de un día para otro.
+      let promoElegida = null;
+      if (swPromo.promociones_ofrecer) {
         const vivas = await dbAll(
           `SELECT * FROM fid_promos WHERE estado = 'publicada' AND (local IS NULL OR local = ?)
-            ORDER BY prioridad DESC, id DESC LIMIT 50`, [integ.fila.local]) || [];
+            LIMIT 50`, [integ.fila.local]) || [];
+        const elegibles = [];
         for (const p of vivas) {
           const usos = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_usos
             WHERE clave = ? AND qr_id = ? AND estado = 'usado'`, [p.clave, qr.id]);
           const tot = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_usos
             WHERE clave = ? AND estado = 'usado'`, [p.clave]);
+          // El derecho solo se consulta si la promoción lo pide: una consulta por promoción y por
+          // escaneo, en la barra y con el cliente delante, se paga en tiempo.
+          let derechos = 0;
+          if (p.requiere_derecho) {
+            const d = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_derechos
+              WHERE clave = ? AND qr_id = ?`, [p.clave, qr.id]);
+            derechos = d?.n || 0;
+          }
           // Sin importe todavía: la compra mínima se comprueba al CERRAR, no al identificar.
           const el = fidPromoElegible(p, { ahora: ahoraIso, local: integ.fila.local,
-            usos: usos?.n || 0, usosTotales: tot?.n || 0, saldo: s.disponible, importeCentimos: null });
-          if (el.ok) { rewards = [fidRewardDePromo(p)].filter(Boolean); break; }
+            usos: usos?.n || 0, usosTotales: tot?.n || 0, saldo: s.disponible,
+            importeCentimos: null, derechos });
+          if (el.ok) elegibles.push(p);
+        }
+        promoElegida = fidElegirPromo(elegibles);
+        if (promoElegida) rewards = [fidRewardDePromo(promoElegida)].filter(Boolean);
+      }
+
+      // ── 3 · EL DESCUENTO POR PUNTOS, SOLO SI NO HAY PROMOCIÓN ────────────────────────────
+      //
+      // ANTES ERA AL REVÉS Y ESTABA MAL. Ganaba el descuento por puntos, así que alguien que se
+      // había apuntado a una campaña, venía a por su desayuno y además tenía saldo, recibía en la
+      // barra otra cosa distinta de la que se le prometió. El derecho concedido es lo que se
+      // pierde si no se usa hoy; los puntos siguen ahí mañana.
+      if (!rewards && sw.ofrecer) {
+        const regla = fidReglaVigente(await fidReglasDe(integ.fila.local),
+          { local: integ.fila.local, ahora: ahoraIso });
+        if (regla && s.disponible >= regla.puntos_necesarios) {
+          rewards = [fidRewardDe(regla, integ.fila.local)].filter(Boolean);
         }
       }
     }
@@ -19110,17 +19256,23 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
   // El programa de puntos que se le pasa a la transacción. La regla se resuelve AQUÍ y viaja
   // entera: dentro de la transacción no se vuelve a elegir, así que el cálculo y lo que se guarda
   // en el libro son con la misma versión sí o sí.
-  let sw = FID_SW_DEFECTO, reglaHoy = null;
+  let sw = FID_SW_DEFECTO, swPromo = { ...FID_PROMO_APAGADOS }, reglaHoy = null;
   try {
     sw = await fidInterruptores();
     reglaHoy = fidReglaVigente(await fidReglasDe(integ.fila.local), { local: integ.fila.local, ahora });
   } catch (e) { console.error(lineaErrorSql("[fidelizacion] regla", e)); }
+  // En su propio `try`: si falla la lectura de los interruptores de promociones, quedan APAGADOS y
+  // el programa de puntos sigue funcionando con los suyos. Un fallo en un sistema no puede abrir
+  // el otro ni cerrarlo.
+  try { swPromo = await fidPromoInterruptores(); }
+  catch (e) { console.error(lineaErrorSql("[fidelizacion] interruptores promo", e)); }
 
   let resultado;
   try {
     resultado = await fidTransaccion(async (x) => {
       return fidProcesarFactura(x, {
-        programa: { regla: reglaHoy, interruptores: sw, hash: fidHash, json, idemV: FID_IDEM_V },
+        programa: { regla: reglaHoy, interruptores: sw, promociones: swPromo,
+                    hash: fidHash, json, idemV: FID_IDEM_V },
         extracto, integracion: integ.fila, ahora, cuerpoBytes: bruto.length,
         // El primer JSON real hace falta ENTERO para diseñar la Fase 2, y por eso se cifra con
         // DATA_ENC_KEY en lugar de guardarse en claro: dentro puede haber datos de un cliente.
@@ -20001,6 +20153,114 @@ const fidPuertaGuardada = async () => {
   try { return await dbGet(`SELECT * FROM fid_puerta WHERE id = 1`); } catch { return null; }
 };
 
+// ── LA PUERTA DE LAS PROMOCIONES DE ÁGORA ────────────────────────────────────
+//
+// APARTE de la de puntos, con su propia tabla, sus propios requisitos y su propia confirmación
+// escrita. Se ve con PROMOS_ROLES —Marketing tiene que poder mirar qué le falta— pero solo
+// DIRECCIÓN la mueve y solo Dirección toca los interruptores: configurar una promoción y ponerla
+// a repartir desayunos de verdad son dos decisiones distintas.
+
+/** Estado, requisitos e interruptores de las promociones. Dirección Y Marketing lo VEN. */
+app.get("/api/fidelizacion/promociones/puerta", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const ctx = await fidPromoContexto();
+    res.json({ ok: true, ...fidPromoEvaluarPuerta(await fidPromoPuertaGuardada(), ctx),
+      estados: FID_PROMO_PUERTA_ESTADOS, confirmacion_exigida: FID_PROMO_CONFIRMACION,
+      interruptores: await fidPromoInterruptores(),
+      // Marketing lo ve, pero solo Dirección puede moverla.
+      puede_cambiar: req.user.rol === "direccion" });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] puerta promos", e));
+    res.status(500).json({ ok: false, error: "No se pudo leer el estado" });
+  }
+});
+
+/** Mover la puerta de promociones. SOLO DIRECCIÓN. */
+app.post("/api/fidelizacion/promociones/puerta", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const hacia = String(req.body?.estado || "");
+    const guardada = await fidPromoPuertaGuardada();
+    const ev = fidPromoEvaluarPuerta(guardada, await fidPromoContexto());
+    const t = fidPromoPuedeTransitar(ev.estado, hacia, { puedeActivar: ev.puede_activar });
+    if (!t.ok) return res.status(409).json({ ok: false, error: t.error, pendientes: ev.pendientes });
+
+    if (hacia === "activo" && !fidPromoConfirmacionValida(req.body?.confirmacion)) {
+      return res.status(400).json({ ok: false,
+        error: `Para activar hay que escribir «${FID_PROMO_CONFIRMACION}» en el campo de confirmación.` });
+    }
+    if (hacia === "pausado" && !String(req.body?.motivo || "").trim()) {
+      return res.status(400).json({ ok: false, error: "Hace falta un motivo para pausar." });
+    }
+
+    const ahora = isoConOffset(Date.now());
+    if (hacia === "activo") {
+      await dbRun(`UPDATE fid_puerta_promos SET estado = ?, confirmado_por = ?, confirmado_en = ?,
+                   texto_confirmacion = ?, pausado_por = NULL, pausado_en = NULL, motivo_pausa = NULL,
+                   actualizado_en = ? WHERE id = 1`,
+        [hacia, req.user.username, ahora, String(req.body.confirmacion).slice(0, 40), ahora]);
+    } else if (hacia === "pausado") {
+      // PAUSAR NO APAGA LOS INTERRUPTORES: los tapa. `aplicarPuerta` devuelve todo apagado
+      // mientras la puerta no esté en «activo», así que reanudar deja las cosas como estaban sin
+      // que nadie tenga que acordarse de volver a encenderlas.
+      await dbRun(`UPDATE fid_puerta_promos SET estado = ?, pausado_por = ?, pausado_en = ?,
+                   motivo_pausa = ?, actualizado_en = ? WHERE id = 1`,
+        [hacia, req.user.username, ahora, String(req.body.motivo).slice(0, 300), ahora]);
+    } else {
+      await dbRun(`UPDATE fid_puerta_promos SET estado = ?, actualizado_en = ? WHERE id = 1`, [hacia, ahora]);
+    }
+
+    await ficAuditar("fidelizacion", null, "puerta_promos_" + hacia, req.user.username,
+      { detalle: { desde: ev.estado, hacia, requisitos: ev.requisitos.map((r) => `${r.id}:${r.ok}`),
+                   motivo: hacia === "pausado" ? String(req.body.motivo).slice(0, 300) : null } });
+    res.json({ ok: true, estado: hacia, interruptores: await fidPromoInterruptores() });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] mover puerta promos", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
+/** Los dos interruptores de promociones. SOLO DIRECCIÓN. Apagar siempre se puede. */
+app.post("/api/fidelizacion/promociones/interruptores", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const cambios = {};
+    for (const k of FID_PROMO_INTERRUPTORES) if (b[k] === true || b[k] === false) cambios[k] = b[k];
+    if (!Object.keys(cambios).length) return res.status(400).json({ ok: false, error: "Nada que cambiar" });
+
+    // EL BLOQUEO, EN EL SERVIDOR. Que el panel no pinte el botón no vale: esta ruta se llama igual
+    // de bien con `curl`, y al otro lado hay desayunos que se regalan de verdad.
+    const estadoPuerta = (await fidPromoPuertaGuardada())?.estado || "apagado";
+    // Lo que hay GUARDADO, sin pasar por la puerta: encender «consumir» se decide contra la
+    // intención de «ofrecer», no contra lo que la puerta esté tapando ahora mismo.
+    const guardados = { ...FID_PROMO_APAGADOS };
+    for (const k of FID_PROMO_INTERRUPTORES) {
+      try {
+        const v = await getConfig(`fid_${k}`);
+        if (v !== null && v !== undefined) guardados[k] = String(v) === "1";
+      } catch { /* lo que no se lee se queda apagado */ }
+    }
+    const intencion = { ...guardados, ...cambios };
+    for (const [k, v] of Object.entries(cambios)) {
+      const p = fidPromoPuedeEncender(k, v, { estadoPuerta, guardados: intencion });
+      if (!p.ok) return res.status(409).json({ ok: false, error: p.error });
+    }
+
+    const antes = await fidPromoInterruptores();
+    for (const [k, v] of Object.entries(cambios)) await setConfig(`fid_${k}`, v ? "1" : "0");
+    // Apagar «ofrecer» apaga «consumir» a la vez: dejar consumir encendido sin ofrecer significaría
+    // marcar como gastado un premio que ya no enseñamos.
+    if (cambios.promociones_ofrecer === false) await setConfig("fid_promociones_consumir", "0");
+    const despues = await fidPromoInterruptores();
+    await ficAuditar("fidelizacion", null, "interruptores_promos", req.user.username,
+      { detalle: { antes, despues } });
+    res.json({ ok: true, interruptores: despues });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] interruptores promos", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
 /** El estado de la puerta, con sus comprobaciones. Dirección Y Marketing lo VEN. */
 app.get("/api/fidelizacion/puerta", requireAuth(PROMOS_ROLES), async (req, res) => {
   res.set("Cache-Control", "no-store");
@@ -20174,6 +20434,24 @@ app.post("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req,
       // WhatsApp a gente que se apuntó sin que se le dijera que lo recibiría.
       mensaje_wa: fidTexto(b.mensaje_wa, FID_LARGOS.parrafo),
     };
+
+    // ── EL VÍNCULO CON UNA PROMOCIÓN, EXPLÍCITO ───────────────────────────────────────────────
+    //
+    // Vacío = el alta no concede NADA, que es como se comporta todo lo que hay hoy. Si se escribe
+    // una clave, tiene que ser la de una promoción que EXISTA: guardar una clave con una errata
+    // dejaría un formulario que parece vinculado y no concede nada a nadie.
+    //
+    // Se guarda la CLAVE, no el id ni la versión: el derecho es a la promoción, y sobrevive a que
+    // Marketing publique una versión nueva.
+    let promoClave = String(b.promo_clave || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40) || null;
+    if (promoClave) {
+      const existe = await dbGet(`SELECT 1 AS hay FROM fid_promos WHERE clave = ? LIMIT 1`, [promoClave]);
+      if (!existe) {
+        return res.status(400).json({ ok: false,
+          error: `No hay ninguna promoción con la clave «${promoClave}». Créala primero en Promociones → Fidelización.` });
+      }
+    }
+
     const check = fidValidarForm(cfg);
     if (cfg.estado === "publicado" && !check.ok) {
       return res.status(409).json({ ok: false, error: "No se puede publicar todavía", falta: check.falta });
@@ -20190,18 +20468,18 @@ app.post("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req,
         `INSERT INTO fid_formularios (clave, version, campana, local, estado, titulo, subtitulo, introduccion,
            texto_boton, mensaje_exito, texto_posterior, imagen, campos, consentimiento_texto,
            privacidad_url, abre_en, cierra_en, idioma, destacado, mensajes, exige_whatsapp,
-           sugerir_poblacion, mensaje_wa, creado_en, creado_por)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
+           sugerir_poblacion, mensaje_wa, promo_clave, creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
         [clave, Number(ult?.v || 0) + 1, fidTexto(b.campana, 60) || null, local, cfg.estado, cfg.titulo,
          cfg.subtitulo, cfg.introduccion, cfg.texto_boton, cfg.mensaje_exito, cfg.texto_posterior,
          cfg.imagen, JSON.stringify(cfg.campos), cfg.consentimiento_texto, cfg.privacidad_url,
          cfg.abre_en, cfg.cierra_en, cfg.idioma, cfg.destacado, JSON.stringify(cfg.mensajes),
-         cfg.exige_whatsapp, cfg.sugerir_poblacion, cfg.mensaje_wa, ahora, req.user.username]);
+         cfg.exige_whatsapp, cfg.sugerir_poblacion, cfg.mensaje_wa, promoClave, ahora, req.user.username]);
       if (!creado) throw new Error("el formulario no se ha insertado");
       return creado;
     });
     await ficAuditar("fidelizacion", fila.id, "formulario_" + cfg.estado, req.user.username,
-      { local, detalle: { clave, version: fila.version, estado: cfg.estado } });
+      { local, detalle: { clave, version: fila.version, estado: cfg.estado, promo_clave: promoClave } });
     // Se devuelve LA CLAVE NORMALIZADA, no la que se escribió: «Esmorzar Girona» se guarda como
     // `esmorzar-girona`, y el panel tiene que enseñar la URL que de verdad existe.
     res.json({ ok: true, id: fila.id, clave, version: fila.version, estado: cfg.estado,
@@ -20311,12 +20589,30 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
     if (!clave) return res.status(400).json({ ok: false, error: "Falta la clave" });
 
     const quierePublicar = b.estado === "publicada";
+
+    // ── EL CÓDIGO DE ÁGORA, COMPROBADO AQUÍ ───────────────────────────────────────────────────
+    //
+    // La comprobación del navegador es comodidad; ESTA es la que vale, porque esta ruta se llama
+    // igual de bien con `curl`. Se recorta y se valida, y NUNCA se transforma: ver el módulo.
+    //
+    // Se rechaza con 400 en vez de guardar un borrador con el código roto. Un borrador que no se
+    // puede publicar es una trampa: parece guardado y no lo está.
+    let codigoAgora = null;
+    if (fidExigeCodigo(String(b.tipo))) {
+      const c = fidCodigoAgora(b.codigo_agora);
+      if (!c.ok) return res.status(400).json({ ok: false, error: FID_CODIGO_ERROR[c.motivo] });
+      codigoAgora = c.codigo;
+    } else if (String(b.codigo_agora || "").trim()) {
+      return res.status(400).json({ ok: false,
+        error: "Este tipo de premio no lleva código de Ágora. Bórralo o cambia el tipo." });
+    }
+
     const promo = {
       clave, local, tipo: String(b.tipo),
       nombre: String(b.nombre || "").trim().slice(0, 120),
       texto_cliente: String(b.texto_cliente || "").trim().slice(0, 400),
       texto_camarero: String(b.texto_camarero || "").trim().slice(0, 120),
-      codigo_agora: String(b.codigo_agora || "").trim().slice(0, 60) || null,
+      codigo_agora: codigoAgora,
       codigo_comprobado_en: b.codigo_comprobado ? isoConOffset(Date.now()) : null,
       valor: b.valor === undefined || b.valor === null || b.valor === "" ? null : Number(b.valor),
       coste_puntos: Math.max(0, parseInt(b.coste_puntos) || 0),
@@ -20334,6 +20630,9 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
       gracia_minutos: b.gracia_minutos === undefined || b.gracia_minutos === null
         ? FID_GRACIA_DEFECTO : Math.min(FID_GRACIA_MAX, Math.max(0, parseInt(b.gracia_minutos) || 0)),
       campana: String(b.campana || "").trim().slice(0, 60) || null,
+      // Solo TRUE si se pide explícitamente. Cualquier otra cosa —ausente, "0", null— es FALSE:
+      // el que se equivoca aquí regala una promoción a toda la clientela del local.
+      requiere_derecho: b.requiere_derecho === true,
     };
 
     // Los grupos que referencia, para poder comprobar que no están vacíos.
@@ -20353,6 +20652,22 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
     if (quierePublicar && !check.ok) {
       return res.status(409).json({ ok: false, error: "No se puede publicar todavía", falta: check.falta });
     }
+
+    // ── PUBLICAR UN `Offer` ABIERTO A TODO EL LOCAL SE PIDE POR ESCRITO ───────────────────────
+    //
+    // Sin esto, olvidar una casilla regala el desayuno a cualquier socio que enseñe el carné en
+    // ese local, sin error y sin aviso. La confirmación se comprueba AQUÍ y no solo en el panel:
+    // esta ruta se llama igual de bien con `curl`.
+    //
+    // Se devuelve el local y el código para que la ventana del panel pueda enseñar QUÉ se va a
+    // abrir: confirmar la promoción equivocada es el otro error caro.
+    if (fidExigeConfirmacionGeneral(promo, { publicar: quierePublicar })
+        && !fidConfirmacionGeneralValida(b.confirmacion_general)) {
+      return res.status(409).json({ ok: false, requiere_confirmacion_general: true,
+        local: local || null, codigo_agora: promo.codigo_agora,
+        confirmacion_exigida: FID_CONFIRMACION_GENERAL,
+        error: `Esta promoción se ofrecerá a CUALQUIER socio de ${local || "todos los locales"}. Para publicarla así hay que escribir «${FID_CONFIRMACION_GENERAL}».` });
+    }
     const estado = quierePublicar ? "publicada" : "borrador";
     // El `reward_id` solo se genera al PUBLICAR: un borrador no tiene nada que ofrecer.
     const rewardId = quierePublicar ? "fidp:" + crypto.randomBytes(12).toString("base64url") : null;
@@ -20369,20 +20684,24 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
         `INSERT INTO fid_promos (clave, version, local, nombre, texto_cliente, texto_camarero, tipo,
            codigo_agora, codigo_comprobado_en, codigo_comprobado_por, valor, coste_puntos, compra_minima,
            grupos, dias, hora_desde, hora_hasta, desde, hasta, limite_cuenta, limite_total, acumulable,
-           prioridad, estado, gracia_minutos, reward_id, campana, creado_en, creado_por)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
+           prioridad, estado, gracia_minutos, reward_id, campana, requiere_derecho, creado_en, creado_por)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
         [clave, Number(ult?.v || 0) + 1, local, promo.nombre, promo.texto_cliente, promo.texto_camarero,
          promo.tipo, promo.codigo_agora, promo.codigo_comprobado_en,
          promo.codigo_comprobado_en ? req.user.username : null, promo.valor, promo.coste_puntos,
          promo.compra_minima, promo.grupos, promo.dias, promo.hora_desde, promo.hora_hasta,
          promo.desde, promo.hasta, promo.limite_cuenta, promo.limite_total, promo.acumulable,
-         promo.prioridad, estado, promo.gracia_minutos, rewardId, promo.campana, ahora, req.user.username]);
+         promo.prioridad, estado, promo.gracia_minutos, rewardId, promo.campana,
+         promo.requiere_derecho, ahora, req.user.username]);
       if (!creada) throw new Error("la promoción no se ha insertado");
       return creada;
     });
 
     await ficAuditar("fidelizacion", fila.id, quierePublicar ? "promo_publicada" : "promo_borrador",
-      req.user.username, { local, detalle: { clave, version: fila.version, tipo: promo.tipo, estado } });
+      req.user.username, { local, detalle: { clave, version: fila.version, tipo: promo.tipo, estado,
+        requiere_derecho: promo.requiere_derecho,
+        // Publicar una promoción abierta a todo el local es una decisión con coste: queda firmada.
+        abierta_a_todos: estado === "publicada" && fidExigeConfirmacionGeneral(promo, { publicar: true }) } });
     res.json({ ok: true, id: fila.id, version: fila.version, estado, falta: check.falta });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] crear promo", e));

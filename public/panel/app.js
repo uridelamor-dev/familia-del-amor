@@ -11291,8 +11291,32 @@ function renderFidgCatalogo(local) {
     <div class="rows">${filas || '<div class="mut">Sin productos. Sincroniza el catálogo.</div>'}</div>`;
 }
 
+/** Lo que identifica una promoción de un vistazo: mecanismo, dónde, cuándo, cuántas veces. */
+function fidgPromoResumen(p) {
+  const trozos = [];
+  // El mecanismo primero, porque es lo que decide todo lo demás.
+  if (p.codigo_agora) {
+    trozos.push(`<b>Ágora · ${esc(p.codigo_agora)}</b>${p.codigo_comprobado ? " ✔" : ' <span style="color:var(--danger)">(sin comprobar)</span>'}`);
+  } else {
+    trozos.push(esc(FIDG_TIPO_TXT[p.tipo] || p.tipo));
+  }
+  trozos.push(esc(p.local || "todos los locales"));
+  trozos.push(p.desde || p.hasta
+    ? `${esc(p.desde || "sin inicio")} → ${esc(p.hasta || "sin final")}`
+    : "sin fechas");
+  const lim = Number(p.limite_cuenta);
+  trozos.push(lim > 0 ? `${lim} uso${lim === 1 ? "" : "s"} por cliente` : "usos por cliente sin límite");
+  if (p.requiere_derecho) trozos.push("<b>solo quien se la ganó</b>");
+  const linea = trozos.join(" · ");
+  // El aviso que evita descubrirlo cuadrando el mes: una promoción de Ágora sin derecho se la
+  // lleva cualquiera que enseñe el carné en ese local.
+  return p.codigo_agora && !p.requiere_derecho
+    ? `${linea}<br><span style="color:var(--danger)"><b>⚠ Se ofrece a cualquier socio elegible del local</b></span>`
+    : linea;
+}
+
 function renderFidgPromos() {
-  const filas = (FIDG.promos || []).map((p) => fgFila(`<div class="t1">${esc(p.nombre)} <span class="mut">v${p.version}</span></div><div class="mut" style="font-size:12px">${esc(p.local || "todos los locales")} · ${esc(p.tipo)}${p.desde ? ` · ${esc(p.desde)}${p.hasta && p.hasta !== p.desde ? ` a ${esc(p.hasta)}` : ""}` : ""}${p.codigo_agora ? ` · código ${esc(p.codigo_agora)}${p.codigo_comprobado ? " ✔" : " (sin comprobar)"}` : ""}</div>`, `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${p.estado === "publicada" ? "ok" : p.estado === "pausada" ? "warn" : ""}">${esc(p.estado)}</span><button class="btn sm" data-act="fidg-promo-nueva" data-id="${p.id}">${p.estado === "borrador" ? "Seguir editando" : "Copiar"}</button>${p.estado === "publicada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="pausada">Pausar</button>` : ""}${p.estado === "pausada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="publicada">Reanudar</button>` : ""}</span>`)).join("");
+  const filas = (FIDG.promos || []).map((p) => fgFila(`<div class="t1">${esc(p.nombre)} <span class="mut">v${p.version}</span></div><div class="mut" style="font-size:12px">${fidgPromoResumen(p)}</div>`, `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${p.estado === "publicada" ? "ok" : p.estado === "pausada" ? "warn" : ""}">${esc(p.estado)}</span><button class="btn sm" data-act="fidg-promo-nueva" data-id="${p.id}">${p.estado === "borrador" ? "Seguir editando" : "Copiar"}</button>${p.estado === "publicada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="pausada">Pausar</button>` : ""}${p.estado === "pausada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="publicada">Reanudar</button>` : ""}</span>`)).join("");
   return `<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn primary sm" data-act="fidg-promo-nueva">Nueva promoción…</button><button class="btn sm" data-act="fidg-propuesta" data-c="desayuno-girona">Propuesta: desayuno de Girona</button></div>
     <div class="rows">${filas || '<div class="mut">Todavía no hay ninguna.</div>'}</div>`;
 }
@@ -11646,9 +11670,17 @@ async function fidgPromoNueva(desdeId) {
     ${fgCampo("pmValor", "Valor (€ o %, según el tipo)", base?.valor ?? "", { type: "number", step: "0.01", min: "0" })}
     ${fgCampo("pmCoste", "Cuesta (puntos; 0 = gratis)", base?.coste_puntos ?? 0, { type: "number", step: "1", min: "0" })}
     ${fgCampo("pmMinimo", "Compra mínima (€)", base?.compra_minima ?? 0, { type: "number", step: "0.01", min: "0" })}
-    ${fgCampo("pmCodigo", "Código de la promoción en Ágora (solo para Offer)", base?.codigo_agora || "")}
-    <label class="chk"><input type="checkbox" id="pmComprobado"> He comprobado que ese código existe en Ágora</label>
-    <div class="mut" style="font-size:12px;margin:-4px 0 10px">Si no existe, Ágora <b>ignora el premio en silencio</b>: el cliente se queda sin él y nosotros sin enterarnos.</div>
+    <div id="pmAgora" class="${FIDG_TIPO_CODIGO.includes(base?.tipo || "descuento_euros") ? "" : "hidden"}">
+      ${fgCampo("pmCodigo", "Código de la promoción en Ágora", base?.codigo_agora || "",
+                { placeholder: "ESMORZAR_GIRONA", autocapitalize: "off", autocorrect: "off", spellcheck: "false" })}
+      <div class="mut" style="font-size:12px;margin:-4px 0 10px">Debe coincidir <b>exactamente</b> con el código creado en Ágora. Ejemplo: <code>ESMORZAR_GIRONA</code>.<br>Se guarda tal cual: solo se quitan los espacios de los extremos, y <b>no se cambian mayúsculas ni acentos</b>, porque Ágora compara el código letra a letra.</div>
+      <div id="pmCodigoErr" class="hidden" style="color:var(--danger);font-size:12px;margin:-6px 0 10px"></div>
+      <label class="chk"><input type="checkbox" id="pmComprobado"> He comprobado que ese código existe en Ágora</label>
+      <div class="mut" style="font-size:12px;margin:-4px 0 10px">Guardar el código <b>no crea la promoción dentro de Ágora</b>: tiene que existir allí antes. Si no existe, Ágora <b>ignora el premio en silencio</b> — el cliente se queda sin él y nosotros sin enterarnos.</div>
+    </div>
+    <label class="chk" style="display:block;margin-bottom:4px"><input type="checkbox" id="pmDerecho"${fidgDerechoDefecto(base?.tipo || "descuento_euros", base) ? " checked" : ""}> Solo para quien se la haya ganado</label>
+    <div class="mut" style="font-size:12px;margin:-4px 0 6px">Marcado, solo se le ofrece a quien tenga el derecho concedido: hoy, haberse apuntado a un formulario publicado y vinculado a esta misma clave.</div>
+    <div id="pmGeneralAviso" class="pendingblock ${fidgDerechoDefecto(base?.tipo || "descuento_euros", base) ? "hidden" : ""}" style="margin:0 0 10px;padding:10px 12px;font-size:12.5px;border-color:var(--danger)"><b>⚠ Sin marcar, esto se le ofrece a CUALQUIER socio del local.</b> No hace falta apuntarse a nada: basta con enseñar el carné. Para publicarla así habrá que escribir una confirmación.</div>
     ${fgCampo("pmDesde", "Desde", base?.desde || "", { type: "date" })}
     ${fgCampo("pmHasta", "Hasta", base?.hasta || "", { type: "date" })}
     ${fgCampo("pmHoraD", "Desde las", base?.hora_desde || "", { type: "time" })}
@@ -11664,6 +11696,70 @@ async function fidgPromoNueva(desdeId) {
       <button class="btn primary sm" data-act="fidg-promo-guardar" data-pub="1">Publicar…</button>
     </div>`);
   ov.addEventListener("input", () => { const s = document.getElementById("pmSim"); if (s) s.classList.add("hidden"); });
+
+  // El bloque de Ágora solo se enseña cuando el tipo lleva código. Pedirlo en un descuento en
+  // euros es pedir un dato que no se manda a ninguna parte.
+  // ── LA DECISIÓN DEL USUARIO MANDA SOBRE EL VALOR SEGURO ───────────────────────────────────
+  //
+  // `tocado` se pone en cuanto alguien pulsa la casilla. A partir de ahí, cambiar el tipo NO la
+  // vuelve a mover: si acaba de desmarcarla a propósito y cambia el tipo, volver a marcársela por
+  // detrás sería pelearse con quien está configurando.
+  //
+  // Mientras NADIE la haya tocado, pasar el tipo a `Offer` la marca. Es el valor seguro, y el que
+  // evita el descuido de publicar un desayuno para todo el local.
+  const avisoGeneral = () => {
+    const general = FIDG_TIPO_CODIGO.includes(fgVal("pmTipo")) && !fgChk("pmDerecho");
+    document.getElementById("pmGeneralAviso")?.classList.toggle("hidden", !general);
+  };
+  let tocado = false;
+  const casilla = ov.querySelector("#pmDerecho");
+  casilla?.addEventListener("change", () => { tocado = true; avisoGeneral(); });
+  const pinta = () => {
+    const lleva = FIDG_TIPO_CODIGO.includes(fgVal("pmTipo"));
+    document.getElementById("pmAgora")?.classList.toggle("hidden", !lleva);
+    if (lleva && !tocado && casilla) casilla.checked = true;
+    fidgCodigoPinta();
+    avisoGeneral();
+  };
+  ov.querySelector("#pmTipo")?.addEventListener("change", pinta);
+  ov.querySelector("#pmCodigo")?.addEventListener("input", fidgCodigoPinta);
+}
+
+/**
+ * Con qué valor nace la casilla. LA MISMA REGLA que `derechoPorDefecto` en el servidor.
+ *
+ * Con `base` —editar o copiar— manda SIEMPRE lo guardado: abrir la ventana no puede cambiar el
+ * valor de una versión que ya existe. Sin `base` manda el tipo: un `Offer` nuevo nace exigiendo
+ * derecho, que es el comportamiento seguro.
+ */
+function fidgDerechoDefecto(tipo, base) {
+  if (base && typeof base === "object" && "requiere_derecho" in base) return !!base.requiere_derecho;
+  return FIDG_TIPO_CODIGO.includes(tipo);
+}
+
+/** Los tipos que llevan `Code`. Es el mismo reparto que `TIPOS` en el servidor, que es quien manda. */
+const FIDG_TIPO_CODIGO = ["oferta_agora", "producto_gratis", "campana_unica", "premio_campana"];
+
+// LA MISMA REGLA QUE EL SERVIDOR, escrita aquí para avisar mientras se escribe. El servidor la
+// vuelve a aplicar y es el que decide: esto es comodidad, no seguridad.
+const FIDG_CODIGO_RE = /^[A-Za-z0-9_.-]+$/;
+function fidgCodigoError(crudo) {
+  const c = String(crudo ?? "").replace(/^[\s\u00a0\u200b\ufeff]+|[\s\u00a0\u200b\ufeff]+$/g, "");
+  if (!c) return "Escribe el código de la promoción tal y como está creada en Ágora.";
+  if (c.length > 60) return "El código no puede pasar de 60 caracteres.";
+  if (/[\s\u00a0]/.test(c)) return "El código no puede llevar espacios. Comprueba que no se ha colado uno al pegarlo.";
+  if (!FIDG_CODIGO_RE.test(c)) return "El código solo puede llevar letras sin acentos, números, guiones, guiones bajos y puntos.";
+  return null;
+}
+function fidgCodigoPinta() {
+  const caja = document.getElementById("pmCodigoErr");
+  if (!caja) return;
+  const crudo = fgVal("pmCodigo");
+  // Con el campo vacío no se regaña todavía: se dirá al guardar. Regañar antes de escribir nada
+  // es ruido.
+  const err = crudo.trim() ? fidgCodigoError(crudo) : null;
+  caja.textContent = err || "";
+  caja.classList.toggle("hidden", !err);
 }
 
 const FIDG_TIPO_TXT = {
@@ -11677,7 +11773,9 @@ function fidgPromoCuerpo() {
   return { clave: fgVal("pmClave"), nombre: fgVal("pmNombre"), tipo: fgVal("pmTipo"),
     local: fgVal("pmLocal") || null, texto_camarero: fgVal("pmCamarero"), texto_cliente: fgVal("pmCliente"),
     valor: fgVal("pmValor"), coste_puntos: fgVal("pmCoste"), compra_minima: fgVal("pmMinimo"),
-    codigo_agora: fgVal("pmCodigo"), codigo_comprobado: fgChk("pmComprobado"),
+    // El código solo viaja si el tipo lo usa: mandarlo en los demás es lo que el servidor rechaza.
+    codigo_agora: FIDG_TIPO_CODIGO.includes(fgVal("pmTipo")) ? fgVal("pmCodigo") : "",
+    codigo_comprobado: fgChk("pmComprobado"), requiere_derecho: fgChk("pmDerecho"),
     desde: fgVal("pmDesde"), hasta: fgVal("pmHasta"), hora_desde: fgVal("pmHoraD"), hora_hasta: fgVal("pmHoraH"),
     limite_cuenta: fgVal("pmLimC"), limite_total: fgVal("pmLimT"), prioridad: fgVal("pmPrio"),
     gracia_minutos: fgVal("pmGracia") };
@@ -11696,9 +11794,65 @@ async function fidgPromoSimular() {
   } catch (e) { toast(e.message || "No se pudo simular"); }
 }
 
+/**
+ * LA VENTANA DE PUBLICAR UNA PROMOCIÓN ABIERTA A TODO EL LOCAL.
+ *
+ * Enseña EL LOCAL Y EL CÓDIGO. Confirmar la promoción equivocada es tan caro como olvidar la
+ * casilla, y una ventana que solo dice «¿seguro?» no distingue una de otra.
+ *
+ * Devuelve el texto tecleado, o `null` si se cierra. El servidor lo vuelve a comprobar.
+ */
+function fidgConfirmarGeneral({ nombre, local, codigo }) {
+  return new Promise((resolver) => {
+    let hecho = false;
+    const ov = modal("⚠ Se ofrecerá a TODOS", `
+      <div class="pendingblock" style="padding:12px 14px;font-size:13px;border-color:var(--danger);margin-bottom:12px">
+        <b>Esta promoción NO exige haberse ganado nada.</b><br><br>
+        Cualquier socio que enseñe su carné en ese local se la lleva, sin haberse apuntado a nada.
+        Si lo que querías era el premio de una campaña, <b>cierra esto y marca «Solo para quien se la haya ganado»</b>.
+      </div>
+      <div class="rows" style="margin-bottom:12px">
+        <div class="row"><div class="grow"><div class="t1">Promoción</div></div><b>${esc(nombre || "—")}</b></div>
+        <div class="row"><div class="grow"><div class="t1">Local</div></div><b>${esc(local || "TODOS LOS LOCALES")}</b></div>
+        <div class="row"><div class="grow"><div class="t1">Código en Ágora</div></div><b>${esc(codigo || "—")}</b></div>
+      </div>
+      <div class="field"><label for="pmConfGen">Escribe <b>OFRECER A TODOS</b> para publicarla así</label>
+        <input id="pmConfGen" type="text" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="OFRECER A TODOS"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+        <button class="btn" data-close>Cancelar</button>
+        <button class="btn danger" id="pmConfGenOk">Publicar para todos</button></div>`);
+    const cerrar = (v) => { if (hecho) return; hecho = true; ov.remove(); resolver(v); };
+    ov.querySelector("#pmConfGenOk").addEventListener("click", () => cerrar(fgVal("pmConfGen")));
+    // `modal()` YA cierra al pulsar el fondo o la ✕, y lo hace sin avisarnos. Si solo
+    // escucháramos los botones, cerrar por el fondo dejaría esta promesa colgada para siempre:
+    // el guardado se quedaría esperando, sin ventana, sin aviso y sin publicar nada. Se escucha
+    // la MISMA condición que usa `modal()`.
+    ov.addEventListener("click", (e) => {
+      if (e.target === ov || e.target.closest("[data-close]")) cerrar(null);
+    });
+    setTimeout(() => document.getElementById("pmConfGen")?.focus(), 30);
+  });
+}
+
 async function fidgPromoGuardar(publicar) {
   const cuerpo = { ...fidgPromoCuerpo(), estado: publicar === "1" ? "publicada" : "borrador" };
+  // El servidor lo vuelve a comprobar; esto es para no perder lo escrito en un viaje de ida y
+  // vuelta por una errata que se ve desde aquí.
+  if (FIDG_TIPO_CODIGO.includes(cuerpo.tipo)) {
+    const err = fidgCodigoError(cuerpo.codigo_agora);
+    if (err) { fidgCodigoPinta(); toast(err); return; }
+  }
   if (publicar === "1" && !confirm(`Se PUBLICARÁ «${cuerpo.nombre}».\n\nA partir de ese momento se puede ofrecer a clientes, si el programa está activo.\n\nLas versiones anteriores de esta clave se dan por finalizadas. ¿Seguir?`)) return;
+
+  // Publicar un `Offer` sin derecho individual: confirmación escrita, con el local y el código
+  // delante. El servidor la exige igual; esto solo evita el viaje perdido.
+  if (publicar === "1" && FIDG_TIPO_CODIGO.includes(cuerpo.tipo) && !cuerpo.requiere_derecho) {
+    const txt = await fidgConfirmarGeneral({ nombre: cuerpo.nombre, local: cuerpo.local,
+      codigo: cuerpo.codigo_agora });
+    if (txt === null) return;
+    cuerpo.confirmacion_general = txt;
+  }
+
   try {
     const j = await apiSend("POST", "/api/fidelizacion/promos", cuerpo);
     document.querySelectorAll(".modal-ov").forEach((x) => x.remove());
@@ -11708,6 +11862,10 @@ async function fidgPromoGuardar(publicar) {
     // Lo que falta para publicar se enseña entero, no en un aviso de una línea.
     const c = document.getElementById("pmSim");
     if (c && e.falta) { c.innerHTML = `<b style="color:var(--danger)">No se puede publicar:</b><br>${e.falta.map(esc).join("<br>")}`; c.classList.remove("hidden"); }
+    if (c && e.requiere_confirmacion_general) {
+      c.innerHTML = `<b style="color:var(--danger)">No se ha publicado.</b><br>${esc(e.message || "")}`;
+      c.classList.remove("hidden");
+    }
     toast(e.message || "No se pudo guardar");
   }
 }
@@ -11843,6 +12001,10 @@ async function fidgFormNuevo(desdeId, propuesta) {
     ${avisoCopia(guardada && guardada.estado === "publicado" ? guardada.version : null)}
     ${fgCampo("ffClave", "Clave (va en la URL)", base?.clave || "")}
     ${fgCampo("ffCampana", "Campaña asociada", base?.campana || "")}
+    ${fgSelec("ffPromo", "Promoción que concede al apuntarse", base?.promo_clave || "",
+      [["", "Ninguna — apuntarse no da derecho a nada"],
+       ...[...new Set((FIDG.promos || []).map((p) => p.clave))].map((c) => [c, c])])}
+    <div class="mut" style="font-size:12px;margin:-4px 0 10px">Se elige <b>a mano</b>: no se deduce del nombre ni del parecido con la clave del formulario. Quien se apunte bien recibe <b>una vez</b> el derecho a esa promoción; recargar o enviar dos veces no lo duplica. Para que sirva de algo, la promoción tiene que estar marcada como <b>«solo para quien se la haya ganado»</b>.</div>
     ${fgSelec("ffIdioma", "Idioma", base?.idioma || "es", Object.entries(FIDG.idiomas || { es: "Castellano" }))}
     ${fgCampo("ffTitulo", "Título", base?.titulo || "")}
     ${fgCampo("ffSub", "Subtítulo", base?.subtitulo || "")}
@@ -11901,7 +12063,8 @@ function fidgFormIdioma() {
 }
 
 function fidgFormCuerpo() {
-  return { clave: fgVal("ffClave"), campana: fgVal("ffCampana"), titulo: fgVal("ffTitulo"),
+  return { clave: fgVal("ffClave"), campana: fgVal("ffCampana"), promo_clave: fgVal("ffPromo"),
+    titulo: fgVal("ffTitulo"),
     subtitulo: fgVal("ffSub"), introduccion: fgVal("ffIntro"), texto_boton: fgVal("ffBoton"),
     mensaje_exito: fgVal("ffExito"), texto_posterior: fgVal("ffPost"), imagen: fgVal("ffImagen"),
     abre_en: fgVal("ffAbre"), cierra_en: fgVal("ffCierra"),
@@ -12236,12 +12399,14 @@ function fidvCsv() {
 
 async function loadFidGestion() {
   const j = (u) => apiRaw(u).catch(() => null);
-  const [pu, pr, fo, ta, co, re] = await Promise.all([
-    j("/api/fidelizacion/puerta"), j("/api/fidelizacion/promos"),
+  const [pu, pp, pr, fo, ta, co, re] = await Promise.all([
+    j("/api/fidelizacion/puerta"), j("/api/fidelizacion/promociones/puerta"),
+    j("/api/fidelizacion/promos"),
     j("/api/fidelizacion/formularios"), j("/api/fidelizacion/tarjeta-config"),
     j("/api/fidelizacion/comunicaciones"), j("/api/fidelizacion/revisiones"),
   ]);
-  FIDG.puerta = pu; FIDG.promos = pr?.data || []; FIDG.formularios = fo?.data || [];
+  FIDG.puerta = pu; FIDG.puertaPromos = pp;
+  FIDG.promos = pr?.data || []; FIDG.formularios = fo?.data || [];
   FIDG.tarjeta = ta?.data || []; FIDG.comunicaciones = co?.data || []; FIDG.revisiones = re?.data || [];
   FIDG.bajas = co?.bajas || null;
   FIDG.tipos = pr?.tipos || {}; FIDG.paletas = ta?.paletas || {}; FIDG.variables = co?.variables || [];
@@ -12281,6 +12446,37 @@ async function fidgPuerta(estado) {
   }
   try { await apiSend("POST", "/api/fidelizacion/puerta", { estado, ...cuerpo }); await loadFidPiloto(); toast("Hecho"); }
   catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+/** La puerta de PROMOCIONES. Su propia confirmación, para que no se copie la de puntos. */
+async function fidgPuertaPromos(estado) {
+  const cuerpo = {};
+  if (estado === "activo") {
+    const c = prompt("Vas a ACTIVAR las promociones de Ágora en producción.\n\nA partir de ahora la barra ofrecerá los Offer configurados a clientes reales.\n\nESTO NO ENCIENDE EL PROGRAMA DE PUNTOS.\n\nEscribe ACTIVAR PROMOCIONES para confirmar:");
+    if (!c) return;
+    cuerpo.confirmacion = c;
+  }
+  if (estado === "pausado") {
+    const m = prompt("¿Por qué se pausan? (queda auditado)");
+    if (!m || !m.trim()) return;
+    cuerpo.motivo = m;
+  }
+  try {
+    await apiSend("POST", "/api/fidelizacion/promociones/puerta", { estado, ...cuerpo });
+    await loadFidGestion(); loadPromos(); toast("Hecho");
+  } catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+/** Los dos interruptores de promociones. Encender avisa; apagar es inmediato. */
+async function fidgPuertaPromosSw(clave, valor) {
+  const encender = valor === "1";
+  if (encender && clave === "promociones_consumir"
+      && !confirm("Al encender «consumir», una factura cerrada con el premio aplicado marcará la promoción como usada para ese cliente.\n\n¿Seguir?")) return;
+  try {
+    await apiSend("POST", "/api/fidelizacion/promociones/interruptores", { [clave]: encender });
+    await loadFidGestion(); loadPromos();
+    toast(encender ? "Encendido" : "Apagado");
+  } catch (e) { toast(e.message || "No se pudo cambiar"); }
 }
 
 async function fidgSombraRevisada() {
@@ -13668,11 +13864,18 @@ const promoVigencia = (p) => {
 
 function promoTablaLista() {
   const rows = PROMO.list || [];
+  // ── EL CARTEL QUE FALTABA ───────────────────────────────────────────────────────────────────
+  //
+  // Hay DOS motores de promociones y se llaman igual. Estos son los cupones de la casa: un QR que
+  // valida la tablet de la barra, y que no tiene —ni puede tener— código de Ágora. Quien viene
+  // buscando dónde pegar un `Offer Code` aterriza aquí, no encuentra el campo y da por hecho que
+  // no existe. Existe: está en la pestaña de al lado.
+  const puente = `<div class="pendingblock" style="margin-bottom:12px;padding:10px 12px;font-size:12.5px">¿Buscas el <b>código de una promoción creada en Ágora</b>? No es aquí. Estos son los <b>cupones de la casa</b>, los que valida la tablet de la barra. Las promociones que aplica Ágora dentro de la factura están en <button class="btn sm" data-act="promo-tab" data-tab="fidelizacion">Fidelización</button>, y ahí está el campo «Código de la promoción en Ágora».</div>`;
   if (!rows.length) {
-    return `<div class="card"><div class="mut" style="padding:8px">Aún no hay promociones.
+    return `${puente}<div class="card"><div class="mut" style="padding:8px">Aún no hay promociones.
       Crea una y ya podrás darle un QR a un cliente.</div></div>`;
   }
-  return `<div class="card p0"><div class="tw"><table class="tbl">
+  return `${puente}<div class="card p0"><div class="tw"><table class="tbl">
     <thead><tr><th>Promoción</th><th>Vigencia</th><th>Dónde</th><th class="r">Emitidos</th><th class="r">Enviados</th><th class="r">Canjeados</th><th></th></tr></thead>
     <tbody>${rows.map((p) => `<tr>
       <td><div class="t1">${esc(p.nombre)}${p.activa ? "" : ' <span class="pill bad" style="font-size:10px">Parada</span>'}</div>
@@ -13813,6 +14016,62 @@ function renderPromos() {
   return `${head}<div class="tabs">${tabs}</div><div style="margin-top:16px">${cuerpo}</div>`;
 }
 
+const FIDG_PP_TXT = {
+  apagado:            ["Apagado", "", "Las promociones de Ágora no se ofrecen a nadie. Se pueden configurar y publicar, pero la barra no las enseña."],
+  listo_para_activar: ["Listo para activar", "warn", "Se cumplen todos los requisitos. Falta que Dirección lo confirme por escrito."],
+  activo:             ["Activo", "ok", "Se están ofreciendo promociones a clientes reales."],
+  pausado:            ["Pausado", "warn", "Cortado a propósito. Lo ya concedido se conserva; reanudar deja los interruptores como estaban."],
+};
+
+/**
+ * LA PUESTA EN PRODUCCIÓN DE LAS PROMOCIONES DE ÁGORA.
+ *
+ * Deliberadamente parecida a la del programa de puntos y deliberadamente APARTE. Son dos sistemas
+ * distintos: uno regala un producto porque alguien se apuntó a una campaña, el otro canjea saldo.
+ * Encender uno no enciende el otro, y el cartel de arriba lo dice con esas palabras porque es la
+ * confusión que se paga cara.
+ */
+function renderFidgPuertaPromos() {
+  const p = FIDG.puertaPromos;
+  if (!p) return '<div class="mut">No se ha podido leer el estado.</div>';
+  const [txt, pill, ayuda] = FIDG_PP_TXT[p.estado] || FIDG_PP_TXT.apagado;
+  const sw = p.interruptores || {};
+
+  const req = (p.requisitos || []).map((r) => `<div class="row"><div class="grow"><div class="t1">${r.ok ? "✔" : "✖"} ${esc(r.texto)}</div>${r.motivo ? `<div class="mut" style="font-size:12px;color:var(--danger)">${esc(r.motivo)}</div>` : ""}</div></div>`).join("");
+
+  const incoherente = p.incoherente ? `<div class="pendingblock" style="margin:2px 2px 10px;padding:12px 14px;font-size:12.5px;border-color:var(--danger)"><b>⚠ Las promociones están ACTIVAS pero ya no cumplen todos los requisitos.</b> No se ha cortado solo —hacerlo dejaría a un camarero sin poder cerrar una factura con el premio ya aplicado— pero conviene mirarlo ahora.</div>` : "";
+
+  const firma = p.confirmado_en ? `<div class="mut" style="font-size:12px;margin-top:8px">Activadas por <b>${esc(p.confirmado_por || "")}</b> el ${esc(String(p.confirmado_en).slice(0, 16).replace("T", " "))}.</div>` : "";
+  const pausa = p.pausado_en ? `<div class="mut" style="font-size:12px;margin-top:4px">Pausadas por <b>${esc(p.pausado_por || "")}</b> el ${esc(String(p.pausado_en).slice(0, 16).replace("T", " "))}${p.motivo_pausa ? ` · ${esc(p.motivo_pausa)}` : ""}.</div>` : "";
+
+  const puede = p.puede_cambiar;
+  const botones = !puede
+    ? '<div class="mut" style="font-size:12px;margin-top:12px">Marketing configura y publica las promociones; <b>solo Dirección</b> las pone a funcionar de verdad.</div>'
+    : `<div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+      ${p.estado !== "activo" && p.estado !== "listo_para_activar" && p.puede_activar ? '<button class="btn sm" data-act="fidg-pp-puerta" data-e="listo_para_activar">Marcar listo para activar</button>' : ""}
+      ${(p.estado === "listo_para_activar" || p.estado === "pausado") && p.puede_activar ? '<button class="btn primary sm" data-act="fidg-pp-puerta" data-e="activo">Activar promociones…</button>' : ""}
+      ${p.estado === "activo" ? '<button class="btn sm danger" data-act="fidg-pp-puerta" data-e="pausado">Pausar ahora</button>' : ""}
+      ${p.estado !== "activo" && p.estado !== "apagado" ? '<button class="btn sm" data-act="fidg-pp-puerta" data-e="apagado">Volver a apagado</button>' : ""}
+    </div>`;
+
+  // Los interruptores solo se enseñan con la puerta abierta: fuera de ahí no hacen nada, y un
+  // interruptor que no hace nada confunde más que ayuda.
+  const interruptores = p.estado === "activo" && puede
+    ? `<div class="mut" style="font-size:12px;margin:16px 0 4px">Interruptores</div>
+       <div class="rows">
+         <div class="row"><div class="grow"><div class="t1">Ofrecer promociones en la barra</div><div class="mut" style="font-size:12px">Al escanear un carné, mandarle a Ágora el <code>Offer</code> que corresponda.</div></div>
+           <button class="btn sm ${sw.promociones_ofrecer ? "danger" : "primary"}" data-act="fidg-pp-sw" data-k="promociones_ofrecer" data-v="${sw.promociones_ofrecer ? "0" : "1"}">${sw.promociones_ofrecer ? "Apagar" : "Encender"}</button></div>
+         <div class="row"><div class="grow"><div class="t1">Consumir al cerrar la factura</div><div class="mut" style="font-size:12px">Apuntar el uso cuando Ágora confirme una factura con el premio aplicado. ${sw.promociones_ofrecer ? "" : "<b>Hace falta ofrecer primero.</b>"}</div></div>
+           ${sw.promociones_ofrecer ? `<button class="btn sm ${sw.promociones_consumir ? "danger" : "primary"}" data-act="fidg-pp-sw" data-k="promociones_consumir" data-v="${sw.promociones_consumir ? "0" : "1"}">${sw.promociones_consumir ? "Apagar" : "Encender"}</button>` : '<span class="pill">bloqueado</span>'}</div>
+       </div>`
+    : `<div class="mut" style="font-size:12px;margin-top:12px">Ofrecer: <b>${sw.promociones_ofrecer ? "sí" : "no"}</b> · Consumir: <b>${sw.promociones_consumir ? "sí" : "no"}</b></div>`;
+
+  return `${incoherente}
+    <div class="row"><div class="grow"><div class="t1">Estado</div><div class="mut" style="font-size:12px">${esc(ayuda)}</div></div><span class="pill ${pill}">${esc(txt)}</span></div>
+    <div class="mut" style="font-size:12px;margin:12px 0 4px">Lo que comprueba el servidor</div>
+    <div class="rows">${req}</div>${firma}${pausa}${botones}${interruptores}`;
+}
+
 /**
  * Los premios de Ágora. La pantalla PROPIETARIA de las promociones de fidelización.
  *
@@ -13820,8 +14079,12 @@ function renderPromos() {
  * no una copia.
  */
 function promoFidelizacion() {
-  return `<div class="card"><div class="ch"><h3>Premios de fidelización</h3></div>
+  return `<div class="card"><div class="ch"><h3>Promociones de Ágora · puesta en producción</h3></div>
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 10px">Esto es <b>solo de las promociones</b>: regalar un producto porque alguien se apuntó a una campaña. <b>No es el programa de puntos</b>, que tiene su propia puerta en <b>Fidelización → Resumen</b> y sigue apagado. Encender esto <b>no enciende los puntos</b>, y al revés tampoco.</div>
+      ${renderFidgPuertaPromos()}</div>
+    <div class="card" style="margin-top:12px"><div class="ch"><h3>Premios de fidelización</h3></div>
       <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Estos los aplica <b>Ágora dentro de la factura</b>, no la tablet de la barra. Cada uno se versiona: publicar crea una versión nueva y finaliza la anterior.</div>
+      <div class="pendingblock" style="margin:0 2px 10px;padding:10px 12px;font-size:12.5px">Una promoción con <b>código de Ágora</b> hay que crearla <b>primero en Ágora</b>. Guardar el código aquí <b>no la crea allí</b>: solo le dice a nuestro sistema qué <code>Offer</code> devolver cuando se escanee un carné con derecho.</div>
       ${renderFidgPromos()}</div>
     <div class="card" style="margin-top:12px"><div class="ch"><h3>Productos y grupos</h3></div>
       <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Los grupos —«Cafés», «Entrepans»— se eligen a mano del catálogo sincronizado. El catálogo se sincroniza en <b>Sistema → Ágora (TPV)</b>.</div>
@@ -14421,6 +14684,7 @@ function promoForm(p) {
   const chks = (PROMO.locales || []).map((l) => `<label class="chip" style="cursor:pointer;margin:0 6px 6px 0">
     <input type="checkbox" class="promo-loc" value="${esc(l)}" ${String(p.locales || "").split(",").includes(l) ? "checked" : ""} style="margin-right:6px">${esc(l)}</label>`).join("");
   const ov = modal(esNueva ? "Nueva promoción" : "Editar promoción", `
+    <div class="mut" style="font-size:12px;margin:-2px 0 10px">Cupón de la casa: lo valida <b>la tablet de la barra</b>. Si lo que quieres es una promoción que aplique <b>Ágora</b> dentro de la factura, ciérralo y ve a la pestaña <b>Fidelización</b>.</div>
     <div class="field" style="width:100%"><label>Nombre</label>
       <input id="pmNombre" value="${esc(p.nombre)}" placeholder="2x1 en tapas"></div>
     <div class="field" style="width:100%"><label>Lo que ve el cliente</label>
@@ -14950,6 +15214,8 @@ document.addEventListener("click", (e) => {
   else if (act === "fidp-revisiones") fidpRevisiones();
   else if (act === "fidp-socio") fidpSocio();
   else if (act === "fidg-puerta") fidgPuerta(t.getAttribute("data-e"));
+  else if (act === "fidg-pp-puerta") fidgPuertaPromos(t.getAttribute("data-e"));
+  else if (act === "fidg-pp-sw") fidgPuertaPromosSw(t.getAttribute("data-k"), t.getAttribute("data-v"));
   else if (act === "fidg-sombra-rev") fidgSombraRevisada();
   else if (act === "fidg-sync") fidgSync();
   else if (act === "fidg-promo-estado") fidgPromoEstado(t.getAttribute("data-id"), t.getAttribute("data-e"));
