@@ -15,11 +15,18 @@
 // Quien aceptó la v1 aceptó la v1, y así queda escrito. Subir a v2 no borra ni reescribe nada: el
 // libro de consentimientos es de solo añadir.
 
-/** La versión vigente. SE SUBE A MANO cuando cambia el texto de la política. */
-export const POLITICA_VERSION = 1;
+/**
+ * La versión vigente. SE SUBE A MANO cuando cambia el texto de la política.
+ *
+ * v2 (17/09/2026) — añade la sección del carné en la cartera del móvil: qué se guarda cuando se
+ * añade a Apple Wallet (un identificador del dispositivo y un testigo de notificaciones), para
+ * qué sirve, cuánto dura y qué papel tiene Apple. Antes no se decía, y el servicio de
+ * actualización sí guarda esos dos datos.
+ */
+export const POLITICA_VERSION = 2;
 
 /** Cuándo entró en vigor esta versión. Va impresa en la página, para que se pueda comprobar. */
-export const POLITICA_FECHA = "2026-09-15";
+export const POLITICA_FECHA = "2026-09-17";
 
 /**
  * Dónde vive cada idioma.

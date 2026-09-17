@@ -5,6 +5,7 @@ import pg from "pg";
 import dotenv from "dotenv";
 import multer from "multer";
 import fs from "fs";
+import os from "node:os";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
@@ -134,6 +135,23 @@ import { ESTADOS as FID_PROMO_PUERTA_ESTADOS, INTERRUPTORES as FID_PROMO_INTERRU
          confirmacionValida as fidPromoConfirmacionValida,
          puedeEncender as fidPromoPuedeEncender, aplicarPuerta as fidPromoAplicarPuerta }
   from "./src/modules/fidelizacion/puerta-promos.js";
+import { proyectarCarne, huellaVisible, fechaCorta as tjFechaCorta }
+  from "./src/modules/tarjeta/proyeccion.js";
+import { tokenDeCabecera as pkToken, igualSeguro as pkIgual, dispositivoValido as pkDispositivo,
+         serialValido as pkSerial, passTypeValido as pkPassType, leerAlta as pkLeerAlta,
+         etiquetaNumero as pkEtiqueta, respuestaSeriales as pkSeriales, leerLogs as pkLogs,
+         MAX as PK_MAX }
+  from "./src/modules/wallet/passkit.js";
+import { avisar as apnsAvisar, proximoIntento as apnsProximo, MAX_INTENTOS as APNS_MAX_INTENTOS,
+         ENTORNOS as APNS_ENTORNOS }
+  from "./src/modules/wallet/apns.js";
+import { aplicarCambio as walAplicarCambio } from "./src/modules/wallet/aviso.js";
+import { ESTADOS as WAL_ESTADOS, INTERRUPTORES as WAL_INTERRUPTORES, APAGADOS as WAL_APAGADOS,
+         evaluarPuerta as walEvaluarPuerta, puedeTransitar as walPuedeTransitar,
+         CONFIRMACION_EXIGIDA as WAL_CONFIRMACION, confirmacionValida as walConfirmacionValida,
+         puedeEncender as walPuedeEncender, aplicarPuerta as walAplicarPuerta,
+         paseLlevaServicio as walLlevaServicio }
+  from "./src/modules/wallet/puerta-wallet.js";
 import { textoSeguro as fidTexto, urlSegura as fidUrl, normalizarCampos as fidCampos,
          validarFormulario as fidValidarForm, formularioAbierto as fidFormAbierto,
          renderPlantilla as fidRender, variablesDesconocidas as fidVarsRaras,
@@ -409,6 +427,27 @@ app.use("/api/fidelizacion/agora", (err, req, res, next) => {
   if (err && (err.type === "entity.too.large" || err.status === 413 || err.statusCode === 413)) {
     return res.status(413).set("Cache-Control", "no-store")
       .json({ Status: "rejected", RejectReason: "Documento demasiado grande" });
+  }
+  return next(err);
+});
+
+// ── EL CUERPO DE PASSKIT, CON SU PROPIO TOPE ────────────────────────────────
+//
+// Va ANTES del `express.json()` general, que admite 100 kB. Lo que llega aquí lo escribe el
+// iPhone de un desconocido: el alta son 80 bytes y el registro de errores, unas líneas. 16 kB es
+// holgado para lo real y cerrado para lo absurdo.
+//
+// Un cuerpo que se pasa lo rechaza el parser antes de llegar a nuestro manejador; el manejador de
+// errores de debajo lo convierte en un 413 seco, sin cuerpo y sin una sola traza: al dispositivo
+// no se le cuenta nada.
+app.use("/api/wallet/apple/v1", express.json({ limit: "16kb" }));
+app.use("/api/wallet/apple/v1", (err, req, res, next) => {
+  if (err && (err.type === "entity.too.large" || err.status === 413 || err.statusCode === 413)) {
+    return res.status(413).set("Cache-Control", "no-store").end();
+  }
+  // Un JSON mal formado tampoco puede acabar en el manejador general.
+  if (err && (err.type === "entity.parse.failed" || err.status === 400)) {
+    return res.status(400).set("Cache-Control", "no-store").end();
   }
   return next(err);
 });
@@ -12074,6 +12113,9 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
            VALUES (?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING`,
           [f.promo_clave, qrId, `form:${clave}`,
            `derecho:${f.promo_clave}:${qrId}`, ahora, "publico"]);
+        // Si acaba de ganarse un regalo y tiene el pase en el móvil, que se le note. Va aquí,
+        // después de la escritura y sin `await`: el alta no puede depender de esto.
+        marcarPaseActualizado(qrId, "derecho").catch(() => {});
       } catch (e) { console.error(lineaErrorSql("[fidelizacion] derecho alta", e)); }
     }
 
@@ -12640,6 +12682,192 @@ async function walletDisponible() {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//  WALLET DINÁMICO
+//
+//  El pase del móvil deja de ser una foto y pasa a actualizarse solo. TODO nace apagado: con la
+//  puerta cerrada, lo de hoy sigue exactamente igual —el `.pkpass` se genera, se firma y se
+//  añade— y lo único que no ocurre es que ningún dispositivo se registre ni reciba nada.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/** La fila de la puerta. Si no se puede leer, apagada: nunca se abre por un fallo de lectura. */
+async function walPuertaGuardada() {
+  try { return await dbGet(`SELECT * FROM wallet_puerta WHERE id = 1`) || { estado: "apagado" }; }
+  catch { return { estado: "apagado" }; }
+}
+
+/**
+ * LOS INTERRUPTORES EFECTIVOS. Lo guardado pasado por la puerta.
+ *
+ * Si falla CUALQUIER lectura, los tres quedan apagados. Un estado a medias aquí significa un
+ * pase que declara servicio web y unas rutas que no aceptan a nadie.
+ */
+async function walInterruptores() {
+  // EL INTERRUPTOR GENERAL MANDA. `config.tarjeta_activa` ya decide si la tarjeta existe de cara
+  // al cliente; con ella apagada, `/api/wallet/*` contesta 404 y no hay pase que actualizar.
+  //
+  // Se comprueba AQUÍ y no solo en cada ruta: una puerta nueva que abriera algo por detrás
+  // mientras la tarjeta está apagada sería exactamente la puerta trasera que no puede existir.
+  if (!TARJETA_ACTIVA) return { ...WAL_APAGADOS };
+
+  const guardados = { ...WAL_APAGADOS };
+  let ok = true;
+  for (const k of WAL_INTERRUPTORES) {
+    try {
+      const v = await getConfig(`wal_${k}`);
+      if (v !== null && v !== undefined) guardados[k] = String(v) === "1";
+    } catch { ok = false; }
+  }
+  if (!ok) return { ...WAL_APAGADOS };
+  const puerta = await walPuertaGuardada();
+  return walAplicarPuerta(guardados, puerta?.estado);
+}
+
+/** La dirección pública, para `webServiceURL`. HTTPS y nuestra, o nada. */
+function walBase(req) {
+  const base = proBase(req);
+  return /^https:\/\//i.test(base) ? base : null;
+}
+
+/** Lo que miran los requisitos de la puerta. Todo de la base y del entorno, nada del navegador. */
+async function walContexto(req) {
+  const ctx = { tarjetaActiva: !!TARJETA_ACTIVA, certificado: false, openssl: false,
+                urlPublica: false, puedeCifrar: !!LLAVERO.puedeCifrar, entornoApns: null };
+  try { ctx.certificado = !!(await walletCfg("apple")); } catch { /* queda en false */ }
+  try { ctx.openssl = hayOpenssl(); } catch { /* queda en false */ }
+  try {
+    // Sin `req` —el arranque, un worker— vale la dirección configurada, que es la que de verdad
+    // acaba dentro del pase en producción.
+    const base = req ? walBase(req) : (process.env.PUBLIC_URL || "");
+    ctx.urlPublica = /^https:\/\//i.test(String(base || ""));
+  } catch { /* queda en false */ }
+  try { ctx.entornoApns = (await walPuertaGuardada())?.entorno_apns || null; } catch { /* null */ }
+  return ctx;
+}
+
+// ── EL PASE DE UN CARNÉ ─────────────────────────────────────────────────────
+//
+// `authenticationToken` es un secreto DISTINTO del token del carné, y esa distinción es el punto
+// entero: el del carné va dentro del QR, a la vista de cualquier cámara. Si fueran el mismo,
+// fotografiar un pase daría permiso para hablar con el servicio web de ese pase.
+//
+// Se crea UNA VEZ y no se vuelve a tocar. Regenerar el `.pkpass` —cosa que pasa en cada
+// actualización— tiene que devolver el mismo token, o el pase que ya está en el móvil dejaría de
+// poder autenticarse contra nosotros.
+async function walPaseDe(qrId, { crear = false } = {}) {
+  const fila = await dbGet(`SELECT * FROM wallet_pases WHERE qr_id = ?`, [parseInt(qrId)]);
+  if (fila || !crear) return fila || null;
+  if (!LLAVERO.puedeCifrar) return null;   // en claro no se guarda
+  const token = crypto.randomBytes(32).toString("base64url");
+  const ahora = isoConOffset(Date.now());
+  await dbRun(
+    `INSERT INTO wallet_pases (qr_id, auth_token_enc, auth_huella, etiqueta, generado_en, creado_en)
+     VALUES (?,?,?,1,?,?) ON CONFLICT (qr_id) DO NOTHING`,
+    [parseInt(qrId), secCifrar(token, LLAVERO, DOMINIOS.WALLET),
+     crypto.createHash("sha256").update(token).digest("hex").slice(0, 32), ahora, ahora]);
+  return await dbGet(`SELECT * FROM wallet_pases WHERE qr_id = ?`, [parseInt(qrId)]);
+}
+
+/** El token en claro de un pase. Solo para meterlo DENTRO del `.pkpass` firmado. */
+function walTokenClaro(fila) {
+  if (!fila?.auth_token_enc) return null;
+  try { return leerSecreto(fila.auth_token_enc, DOMINIOS.WALLET, "wallet_pases"); }
+  catch { return null; }
+}
+
+// ── LA PROYECCIÓN COMPARTIDA ────────────────────────────────────────────────
+//
+// LA MISMA para la tarjeta web, para el pase que se baja y para el que Wallet vuelve a pedir. Si
+// se calcularan por separado, un día Wallet diría «1 regalo» y la barra que no, y el cliente
+// tendría razón.
+//
+// Las promociones se evalúan con `fidPromoElegible` —la MISMA función que usa el endpoint de
+// Ágora— y se ordenan con `elegirPromo` dentro del módulo puro. Aquí no se decide nada.
+async function walProyeccion(qr, { local = null } = {}) {
+  const ahora = isoConOffset(Date.now());
+  const [sw, swPromo] = await Promise.all([fidInterruptores(), fidPromoInterruptores()]);
+  const cfg = await dbGet(`SELECT * FROM fid_tarjeta_config WHERE estado = 'publicada'
+                           ORDER BY version DESC LIMIT 1`) || {};
+  const regla = fidReglaVigente(await fidReglasDe(local), { local, ahora });
+  const saldo = await fidSaldoDe(qr.id, ahora);
+
+  // Las promociones vivas que ESTE cliente se llevaría ahora mismo. Si no se están ofreciendo, no
+  // se consulta nada: el pase no puede prometer lo que la barra no daría.
+  const elegibles = [];
+  if (swPromo.promociones_ofrecer) {
+    const vivas = await dbAll(
+      `SELECT * FROM fid_promos WHERE estado = 'publicada'
+        AND (local IS NULL OR local = ? OR ? IS NULL) LIMIT 50`, [local, local]) || [];
+    for (const p of vivas) {
+      const usos = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_usos
+        WHERE clave = ? AND qr_id = ? AND estado = 'usado'`, [p.clave, qr.id]);
+      const tot = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_usos
+        WHERE clave = ? AND estado = 'usado'`, [p.clave]);
+      let derechos = 0;
+      if (p.requiere_derecho) {
+        const d = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_derechos
+          WHERE clave = ? AND qr_id = ?`, [p.clave, qr.id]);
+        derechos = d?.n || 0;
+      }
+      const el = fidPromoElegible(p, { ahora, local: p.local || local, usos: usos?.n || 0,
+        usosTotales: tot?.n || 0, saldo: saldo.disponible, importeCentimos: null, derechos });
+      if (el.ok) elegibles.push(p);
+    }
+  }
+
+  return { proyeccion: proyectarCarne({ qr, saldo, regla, promosElegibles: elegibles,
+             interruptores: sw, promoSw: swPromo, cfg, ahora }), cfg };
+}
+
+/**
+ * MARCAR UN PASE COMO ACTUALIZADO. Se llama SIEMPRE DESPUÉS DEL COMMIT.
+ *
+ * ── LAS DOS REGLAS QUE NO SE NEGOCIAN ──────────────────────────────────────────────────────
+ *
+ *   1. APNs NO DECIDE SI UNA OPERACIÓN DE FIDELIZACIÓN SALIÓ BIEN. Si esto falla entero, la
+ *      factura sigue cerrada y los puntos concedidos. Por eso no lanza nunca: se traga el error.
+ *   2. SIN CAMBIO VISIBLE, NO HAY AVISO. Se compara la huella de lo que se VE. Despertar el móvil
+ *      de alguien para no cambiarle nada es la forma más rápida de que borre el carné.
+ *
+ * Y agrupa: si ya hay un aviso pendiente para ese carné, no se crea otro. La propia guía de Apple
+ * avisa de que varias notificaciones se funden en una.
+ */
+async function marcarPaseActualizado(qrId, motivo) {
+  try {
+    const id = parseInt(qrId);
+    if (!Number.isFinite(id)) return { ok: false, motivo: "sin_id" };
+
+    // Si este carné no tiene pase, no hay nada que actualizar. NO se crea aquí: un pase se crea
+    // cuando alguien se lo baja, no cuando gana un punto.
+    const pase = await walPaseDe(id);
+    if (!pase) return { ok: false, motivo: "sin_pase" };
+
+    const qr = await dbGet(`SELECT * FROM pro_qr WHERE id = ?`, [id]);
+    if (!qr) return { ok: false, motivo: "sin_carne" };
+
+    // La proyección se calcula FUERA de la transacción: son una docena de consultas de lectura y
+    // tenerlas dentro dejaría la fila del pase bloqueada todo ese rato. Si sale ligeramente
+    // desfasada no pasa nada — el reconciliador la vuelve a mirar.
+    const { proyeccion } = await walProyeccion(qr, { local: null });
+    const huella = huellaVisible(proyeccion);
+
+    // ── LAS DOS ESCRITURAS, EN UNA SOLA TRANSACCIÓN ─────────────────────────────────────────
+    //
+    // Subir la huella y encolar el aviso TIENEN que ser atómicas. Sueltas, si el proceso moría
+    // entre las dos quedaba la huella nueva sin aviso: el reconciliador pasaba, comparaba, no veía
+    // diferencia y ese pase se quedaba viejo hasta el siguiente cambio de ese cliente.
+    //
+    // Con la transacción: si muere antes del COMMIT no queda ninguna de las dos y el reconciliador
+    // lo vuelve a ver; si muere después, quedan las dos.
+    return await walTransaccion((x) =>
+      walAplicarCambio(x, { qrId: id, huella, motivo, ahora: isoConOffset(Date.now()) }));
+  } catch (e) {
+    // NUNCA lanza. Que no se pueda avisar a un móvil no puede deshacer una factura.
+    console.error(lineaErrorSql("[wallet] marcar", e));
+    return { ok: false, motivo: "error" };
+  }
+}
+
 /** Las imágenes del pase, leídas del disco una vez y guardadas en memoria: son cuatro PNG que
  *  no cambian, y leerlas del disco en cada descarga es tocar el disco por gusto. */
 let _walletImgs = null;
@@ -12906,6 +13134,28 @@ app.get("/api/tarjeta/:token", async (req, res) => {
       fidelizacion = null;
     }
 
+    // ── EL RESUMEN COMPARTIDO Y EL ESTADO DEL PASE ──────────────────────────────────────────
+    let proyeccion = null, walAviso = null;
+    try {
+      const r = await walProyeccion(qr, { local: null });
+      proyeccion = r.proyeccion;
+      const sw = await walInterruptores();
+      const registrado = await dbGet(`SELECT 1 AS hay FROM wallet_registros
+                                       WHERE qr_id = ? AND activo LIMIT 1`, [qr.id]);
+      walAviso = {
+        // Lo que se bajó alguna vez. NO significa que se actualice solo.
+        descargado: !!qr.wallet_apple_en,
+        // Lo que de verdad importa: hay un dispositivo escuchando.
+        registrado: !!registrado,
+        dinamico: !!sw.wallet_registros,
+        // El aviso discreto: se bajó el pase, el servicio ya está abierto, y ese pase no está
+        // registrado. Es exactamente el caso de quien lo añadió antes de todo esto.
+        volver_a_anadir: !!qr.wallet_apple_en && !registrado && !!sw.wallet_registros,
+      };
+    } catch (e) {
+      console.error(lineaErrorSql("[tarjeta] estado", e));
+    }
+
     res.json({
       ok: true,
       vale: info.canjeable,
@@ -12913,6 +13163,27 @@ app.get("/api/tarjeta/:token", async (req, res) => {
       texto: info.texto,
       qr: imagen,
       fidelizacion,
+      // LA MISMA PROYECCIÓN que lleva el pase del móvil. El bloque `fidelizacion` de arriba es el
+      // detalle completo —historial, movimientos, equivalencias— que la web sí enseña y Wallet no.
+      // Esto es el RESUMEN, y tiene que decir exactamente lo mismo en los dos sitios: si la web
+      // dijera «1 regalo» y el pase que no, el cliente tendría razón.
+      //
+      // SE LLAMA `resumen` Y NO `estado`: `estado` ya es el de la tarjeta («valido», «caducado»),
+      // y en un objeto literal la segunda clave gana en silencio. Habría dejado la tarjeta pública
+      // sin saber si vale.
+      resumen: proyeccion,
+      // ── EL AVISO DE VOLVER A AÑADIR EL CARNÉ ──────────────────────────────────────────────
+      //
+      // Un pase bajado ANTES de que existiera el servicio web no lleva `webServiceURL`, así que no
+      // se registra solo y NUNCA se actualizará. No hay forma de arreglarlo a distancia: hay que
+      // volver a añadirlo una vez.
+      //
+      // `wallet_apple_en` dice que se bajó; la tabla de registros dice si ESE pase es de los que
+      // se actualizan. Son dos cosas distintas y aquí se distinguen.
+      //
+      // SE LLAMA `pase` Y NO `wallet`: `wallet` es lo que dice qué BOTONES se pintan, y repetir la
+      // clave habría hecho desaparecer este aviso sin que nada fallara.
+      pase: walAviso,
       ...cuenta,
       // Los botones solo si la tarjeta vale: ofrecer guardar en el móvil una tarjeta anulada es
       // prometer algo que fallará en la barra dentro de dos semanas.
@@ -12956,6 +13227,756 @@ app.get("/api/wallet/google/:token", async (req, res) => {
   }
 });
 
+/**
+ * REFRESCAR LOS PASES QUE PODRÍA AFECTAR UN CAMBIO DE CONFIGURACIÓN.
+ *
+ * ── LO QUE ESTO NO HACE: RECORRER A TODA LA CLIENTELA ───────────────────────────────────────
+ *
+ * Solo mira los carnés que tienen un pase REGISTRADO EN UN DISPOSITIVO. Si nadie se ha registrado
+ * —que es como nace esto— la primera consulta devuelve cero filas y no se hace nada más.
+ *
+ * Y tiene TECHO. Un barrido sin límite en una casa con miles de carnés es lo que convierte un
+ * cambio de configuración en cinco minutos de base de datos al rojo.
+ */
+const WAL_TECHO_BARRIDO = 500;
+async function walRefrescarPorPromo(clave, motivo) {
+  try {
+    const sw = await walInterruptores();
+    if (!sw.wallet_registros) return 0;
+    // Los carnés con pase registrado. Se acota por ahí y no por la promoción: quien no tiene el
+    // pase en el móvil no tiene nada que refrescar, y son la inmensa mayoría.
+    const filas = await dbAll(
+      `SELECT DISTINCT r.qr_id FROM wallet_registros r WHERE r.activo LIMIT ?`,
+      [WAL_TECHO_BARRIDO]) || [];
+    let n = 0;
+    for (const f of filas) {
+      const r = await marcarPaseActualizado(f.qr_id, String(motivo || "config").slice(0, 60));
+      if (r?.cambio) n += 1;
+    }
+    if (filas.length === WAL_TECHO_BARRIDO) {
+      console.warn("[wallet] barrido al techo:", WAL_TECHO_BARRIDO, "— quedan pases por refrescar");
+    }
+    return n;
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] refrescar", e));
+    return 0;
+  }
+}
+
+// ── EL RECONCILIADOR ────────────────────────────────────────────────────────
+//
+// ── POR QUÉ HACE FALTA ──────────────────────────────────────────────────────────────────────
+//
+// `marcarPaseActualizado` corre DESPUÉS del COMMIT y sin `await`, que es lo correcto: una factura
+// no puede deshacerse porque Apple esté caída. El precio es que si el proceso muere entre el
+// COMMIT y esa escritura, ese aviso se pierde.
+//
+// Y NO SE RECUPERA SOLO. No está demostrado que Wallet pregunte por su cuenta sin haber recibido
+// antes un aviso, así que confiar en `passesUpdatedSince` sería confiar en algo que no sabemos.
+// Esto es lo que convierte esa pérdida en un RETRASO: un barrido periódico que compara lo que se
+// ve ahora con lo último que se notificó, y encola lo que falte.
+//
+// ── ACOTADO, Y DE VERDAD ────────────────────────────────────────────────────────────────────
+//
+//   · Solo pases CON REGISTRO ACTIVO. Quien no tiene el pase en un móvil no tiene nada que
+//     reconciliar, y son la inmensa mayoría de los carnés.
+//   · POR LOTES Y CON CURSOR. El cursor se guarda en `config` y da la vuelta al llegar al final,
+//     así que no se queda atascado para siempre en los primeros de la lista — que es justo el
+//     fallo del barrido por configuración, y por eso este es otro.
+//   · IDEMPOTENTE. Reusa `marcarPaseActualizado`, que compara la huella y encola con
+//     `clave_idem` UNIQUE. Una segunda pasada sobre lo mismo no escribe nada.
+//   · Con el Wallet dinámico o los avisos apagados, sale por la primera línea.
+//
+// NO TOCA NADA MÁS. Ni puntos, ni promociones, ni Google Wallet, ni la identidad del carné: lee y,
+// como mucho, escribe en `wallet_pases` y `wallet_avisos`.
+
+const WAL_LOTE = 100;
+const WAL_CURSOR = "wal_recon_cursor";
+
+let _walReconciliando = false;
+async function walReconciliar() {
+  if (_walReconciliando) return { mirados: 0, encolados: 0 };
+  _walReconciliando = true;
+  try {
+    const sw = await walInterruptores();
+    // Sin avisos no hay nada que reconciliar: encolar lo que nadie va a mandar solo llena la cola.
+    if (!sw.wallet_registros || !sw.wallet_avisos) return { mirados: 0, encolados: 0 };
+
+    let desde = 0;
+    try { desde = parseInt(await getConfig(WAL_CURSOR)) || 0; } catch { desde = 0; }
+
+    // El lote: pases con registro vivo, por `qr_id`, a partir del cursor.
+    let filas = await dbAll(
+      `SELECT DISTINCT r.qr_id FROM wallet_registros r
+        WHERE r.activo AND r.qr_id > ? ORDER BY r.qr_id LIMIT ?`, [desde, WAL_LOTE]) || [];
+
+    // Se acabó la vuelta: se empieza otra desde el principio. Sin esto, el cursor se quedaría
+    // clavado en el último y los primeros no se volverían a mirar nunca.
+    if (!filas.length && desde > 0) {
+      filas = await dbAll(
+        `SELECT DISTINCT r.qr_id FROM wallet_registros r
+          WHERE r.activo ORDER BY r.qr_id LIMIT ?`, [WAL_LOTE]) || [];
+      desde = 0;
+    }
+    if (!filas.length) return { mirados: 0, encolados: 0 };
+
+    let encolados = 0;
+    for (const f of filas) {
+      // Si ya hay un aviso pendiente para ese carné, `marcarPaseActualizado` no crea otro: su
+      // `clave_idem` es UNIQUE y va con `ON CONFLICT DO NOTHING`.
+      const r = await marcarPaseActualizado(f.qr_id, "reconciliacion");
+      if (r?.encolado) encolados += 1;
+    }
+
+    const ultimo = filas[filas.length - 1].qr_id;
+    try { await setConfig(WAL_CURSOR, String(ultimo)); } catch { /* se repetirá el lote */ }
+    return { mirados: filas.length, encolados, desde, hasta: ultimo };
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] reconciliar", e));
+    return { mirados: 0, encolados: 0 };
+  } finally { _walReconciliando = false; }
+}
+
+// ── EL WORKER DE AVISOS ─────────────────────────────────────────────────────
+//
+// ── LO QUE APNs NO PUEDE HACER ──────────────────────────────────────────────────────────────
+//
+// Decidir si una operación de fidelización salió bien. Esto corre SOLO, cada 30 segundos, fuera
+// de cualquier transacción y después de cualquier COMMIT. Si Apple está caída, la factura sigue
+// cerrada, los puntos concedidos y el derecho otorgado: lo único que pasa es que el móvil se
+// entera más tarde.
+//
+// ── EL CERTIFICADO ──────────────────────────────────────────────────────────────────────────
+//
+// El MISMO `.p12` del Pass Type ID que firma el pase, según la guía de Apple. Se extrae a PEM en
+// temporales 0600 que se borran en un `finally`.
+//
+// ── `PKPASS_PW` NO ES UN SECRETO NUEVO, Y ESTO SE CONFUNDE ───────────────────────────────────
+//
+// La contraseña sale de `wallet_config.datos_enc`, descifrada con `DATA_ENC_KEY`. Una sola fuente
+// de verdad, la misma que para firmar. `PKPASS_PW` es solo el NOMBRE de la variable por la que se
+// le entrega al proceso hijo de `openssl`, y es una variable que ESCRIBIMOS, nunca que leemos: no
+// está en `.env`, ni en los Secrets de Replit, ni en el repositorio.
+//
+// La alternativa de `openssl` es `-passin pass:<contraseña>`, que la deja en la lista de
+// argumentos del proceso — a la vista de cualquiera que pueda ejecutar `ps` en la máquina. Por eso
+// se usa `-passin env:PKPASS_PW`: el valor viaja por el entorno de ESE hijo y desaparece con él.
+let _walCert = null;   // { cert, clave, hasta } en memoria, un rato
+async function walCertificado(cfg) {
+  if (_walCert && _walCert.hasta > Date.now()) return _walCert;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wal-"));
+  const rP12 = path.join(dir, "c.p12"), rCert = path.join(dir, "c.pem"), rKey = path.join(dir, "k.pem");
+  try {
+    fs.writeFileSync(rP12, Buffer.from(cfg.p12_b64, "base64"), { mode: 0o600 });
+    const comun = { stdio: ["ignore", "pipe", "pipe"],
+                    env: { ...process.env, PKPASS_PW: cfg.p12_pass || "" } };
+    execFileSync("openssl", ["pkcs12", "-in", rP12, "-clcerts", "-nokeys", "-out", rCert,
+      "-passin", "env:PKPASS_PW"], comun);
+    execFileSync("openssl", ["pkcs12", "-in", rP12, "-nocerts", "-nodes", "-out", rKey,
+      "-passin", "env:PKPASS_PW"], comun);
+    const cert = fs.readFileSync(rCert, "utf8");
+    const clave = fs.readFileSync(rKey, "utf8");
+    // Un rato en memoria: extraerlo en cada aviso son dos procesos por mensaje.
+    _walCert = { cert, clave, hasta: Date.now() + 10 * 60 * 1000 };
+    return _walCert;
+  } finally {
+    // SIEMPRE. Aquí dentro hay una clave privada de firma.
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ya no está */ }
+  }
+}
+
+/** Lo que se apunta de un fallo: sin token, sin serial, sin nada de nadie. */
+const walErrorCorto = (t) => String(t || "").replace(/[^A-Za-z0-9_ .:-]/g, "").slice(0, 80);
+
+let _walVaciando = false;
+async function walVaciarCola() {
+  if (_walVaciando) return;
+  _walVaciando = true;
+  try {
+    const sw = await walInterruptores();
+    // Con los avisos apagados NO se manda nada y NO se descarta nada: la cola espera. Encenderlos
+    // después reparte lo pendiente, que es lo que se quiere.
+    if (!sw.wallet_avisos) return;
+
+    const cfg = await walletCfg("apple");
+    if (!cfg) return;
+    const puerta = await walPuertaGuardada();
+    const entorno = APNS_ENTORNOS.includes(puerta?.entorno_apns) ? puerta.entorno_apns : null;
+    if (!entorno) return;
+
+    const pendientes = await dbAll(
+      `SELECT * FROM wallet_avisos WHERE estado = 'pendiente' AND proximo_ms <= ?
+        ORDER BY proximo_ms LIMIT 20`, [Date.now()]) || [];
+    if (!pendientes.length) return;
+
+    const { cert, clave } = await walCertificado(cfg);
+    const ahora = isoConOffset(Date.now());
+
+    for (const aviso of pendientes) {
+      // Los dispositivos vivos de ese carné. Un token invalidado no se reintenta nunca.
+      const filas = await dbAll(
+        `SELECT d.dispositivo, d.push_token_enc FROM wallet_registros r
+           JOIN wallet_dispositivos d ON d.dispositivo = r.dispositivo
+          WHERE r.qr_id = ? AND r.activo AND d.invalidado_en IS NULL AND d.push_token_enc IS NOT NULL`,
+        [aviso.qr_id]) || [];
+
+      const porToken = new Map();
+      for (const f of filas) {
+        const t = leerSecreto(f.push_token_enc, DOMINIOS.WALLET, "wallet_dispositivos");
+        if (t) porToken.set(t, f.dispositivo);
+      }
+      if (!porToken.size) {
+        // Nadie a quien avisar. Se cierra: no es un fallo.
+        // No se reescribe ninguna clave: al dejar de ser `pendiente`, el índice único parcial
+        // deja de cubrir la fila y el hueco de ese pase queda libre solo.
+        await dbRun(`UPDATE wallet_avisos SET estado = 'descartado', enviado_en = ? WHERE id = ?`,
+          [ahora, aviso.id]);
+        continue;
+      }
+
+      let resultados = [];
+      try {
+        resultados = await apnsAvisar({ tokens: [...porToken.keys()], passTypeId: cfg.pass_type_id,
+          entorno, cert, clave });
+      } catch (e) {
+        resultados = [...porToken.keys()].map((token) =>
+          ({ token, ok: false, accion: "reintentar", razon: walErrorCorto(e.code || e.message) }));
+      }
+
+      // TRES DESENLACES DISTINTOS, y confundirlos sale caro. Ver `clasificar()` en `apns.js`.
+      let entregados = 0, reintentar = false, bloqueo = null, ultimo = null;
+      for (const r of resultados) {
+        if (r.ok) { entregados += 1; continue; }
+        ultimo = walErrorCorto(r.razon);
+
+        if (r.accion === "invalidar") {
+          // EL TOKEN ESTÁ MUERTO. Solo dos motivos llegan aquí: `Unregistered` (quitaron el pase
+          // del móvil) y `BadDeviceToken` (no es un token válido). Se borra el token y se dan de
+          // baja sus registros: insistir a un token muerto no lo resucita.
+          const disp = porToken.get(r.token);
+          await dbRun(`UPDATE wallet_dispositivos SET invalidado_en = ?, invalidado_motivo = ?,
+                       push_token_enc = NULL WHERE dispositivo = ?`, [ahora, ultimo, disp]);
+          await dbRun(`UPDATE wallet_registros SET activo = FALSE, baja_en = ?, baja_motivo = 'apns'
+                       WHERE dispositivo = ? AND activo`, [ahora, disp]);
+
+        } else if (r.accion === "config") {
+          // ALGO NUESTRO ESTÁ MAL Y EL DISPOSITIVO NO TIENE LA CULPA.
+          //
+          // `DeviceTokenNotForTopic` es el caso que hay que tener claro: casi siempre significa
+          // que estamos hablando con el APNs equivocado —pruebas contra producción— o con el
+          // certificado de otro Pass Type ID. Invalidar aquí borraría los tokens BUENOS de toda
+          // la clientela por una casilla mal puesta, y habría que pedirle a cada uno que se
+          // volviera a bajar el carné.
+          //
+          // Así que NO se toca ni `push_token_enc` ni el registro. Se marca el aviso como
+          // bloqueado, no se reintenta, y se enseña en el panel para que alguien lo arregle.
+          bloqueo = ultimo;
+
+        } else if (r.accion === "reintentar") {
+          reintentar = true;
+        }
+      }
+
+      if (bloqueo) {
+        // Bloqueado gana sobre reintentar: si la configuración está mal, el reintento sobra.
+        await dbRun(`UPDATE wallet_avisos SET estado = 'bloqueado', ultimo_error = ? WHERE id = ?`,
+          [bloqueo, aviso.id]);
+      } else if (reintentar && aviso.intentos + 1 < APNS_MAX_INTENTOS) {
+        await dbRun(`UPDATE wallet_avisos SET intentos = intentos + 1, ultimo_error = ?,
+                     proximo_ms = ? WHERE id = ?`,
+          [ultimo, apnsProximo(aviso.intentos, Date.now()), aviso.id]);
+      } else {
+        // La fila se queda como historia, con su `clave_idem` original diciendo para qué versión
+        // se levantó. Nada se borra.
+        await dbRun(`UPDATE wallet_avisos SET estado = ?, enviado_en = ?, ultimo_error = ? WHERE id = ?`,
+          [entregados ? "enviado" : "fallido", ahora, ultimo, aviso.id]);
+      }
+
+      if (entregados) {
+        await dbRun(`UPDATE wallet_puerta SET ultimo_envio_en = ? WHERE id = 1`, [ahora]);
+      }
+      if (bloqueo || (!entregados && ultimo)) {
+        await dbRun(`UPDATE wallet_puerta SET ultimo_error = ?, ultimo_error_en = ? WHERE id = 1`,
+          [bloqueo ? `configuración: ${bloqueo}` : ultimo, ahora]);
+      }
+    }
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] cola", e));
+  } finally { _walVaciando = false; }
+}
+
+// ── DIAGNÓSTICO Y PUERTA, SOLO DIRECCIÓN ────────────────────────────────────
+//
+// Marketing configura los textos y el diseño de la tarjeta —eso ya lo puede hacer— pero NO ve
+// esta pantalla: aquí se decide si los móviles de clientes reales empiezan a recibir avisos.
+//
+// NADA DE LO QUE SALE DE AQUÍ IDENTIFICA A NADIE. Ni un serial, ni un token, ni un dispositivo, ni
+// un teléfono. Números y estados.
+app.get("/api/wallet/dinamico", requireAuth(["direccion"]), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const guardada = await walPuertaGuardada();
+    const ev = walEvaluarPuerta(guardada, await walContexto(req));
+    const c = async (sql, p = []) => { try { return Number((await dbGet(sql, p))?.n) || 0; } catch { return 0; } };
+
+    // ── LA CADUCIDAD DEL CERTIFICADO ────────────────────────────────────────────────────────
+    //
+    // Es el MISMO certificado que firma el pase y que habla con APNs, así que el día que caduque
+    // se paran las dos cosas a la vez y sin aviso previo. Aquí sale la fecha y los días que
+    // quedan; NUNCA el certificado, ni la clave, ni la contraseña.
+    let cert = null;
+    try {
+      const cfg = await walletCfg("apple");
+      if (cfg?.p12_b64) {
+        const info = datosDelCertificado(Buffer.from(cfg.p12_b64, "base64"), cfg.p12_pass || "");
+        const dias = info.caduca_en
+          ? Math.floor((Date.parse(info.caduca_en) - Date.now()) / 86400000) : null;
+        cert = { caduca_en: info.caduca_en || null, caducado: !!info.caducado, dias,
+          // Dos meses de margen: renovar un certificado de Apple y volver a subirlo no se hace
+          // en una tarde, y si caduca dejan de funcionar los pases nuevos Y los avisos.
+          avisar: Number.isFinite(dias) && dias <= 60 };
+      }
+    } catch { /* si no se puede leer, no se enseña: nunca se filtra el motivo */ }
+
+    res.json({ ok: true, ...ev, certificado: cert,
+      estados: WAL_ESTADOS, confirmacion_exigida: WAL_CONFIRMACION,
+      entorno_apns: guardada?.entorno_apns || null, entornos: APNS_ENTORNOS,
+      interruptores: await walInterruptores(),
+      contadores: {
+        pases: await c(`SELECT COUNT(*)::int AS n FROM wallet_pases`),
+        dispositivos: await c(`SELECT COUNT(*)::int AS n FROM wallet_dispositivos WHERE invalidado_en IS NULL`),
+        registros: await c(`SELECT COUNT(*)::int AS n FROM wallet_registros WHERE activo`),
+        pendientes: await c(`SELECT COUNT(*)::int AS n FROM wallet_avisos WHERE estado = 'pendiente'`),
+        // LOS TRES DESENLACES, SEPARADOS. Confundirlos es lo que hace que alguien reintente
+        // cuatro veces un certificado caducado, o dé por perdido un corte de red.
+        fallidos: await c(`SELECT COUNT(*)::int AS n FROM wallet_avisos WHERE estado = 'fallido'`),
+        bloqueados: await c(`SELECT COUNT(*)::int AS n FROM wallet_avisos WHERE estado = 'bloqueado'`),
+        invalidados: await c(`SELECT COUNT(*)::int AS n FROM wallet_dispositivos
+                               WHERE invalidado_en IS NOT NULL`),
+        // Bajado NO es registrado, y la diferencia es justo lo que hay que mirar al desplegar:
+        // los pases de antes se bajaron sin servicio web y no se registrarán solos.
+        bajados: await c(`SELECT COUNT(*)::int AS n FROM pro_qr
+                           WHERE clase = 'carnet' AND wallet_apple_en IS NOT NULL`),
+      },
+      ultimo_envio_en: guardada?.ultimo_envio_en || null,
+      ultimo_error: guardada?.ultimo_error || null,
+      ultimo_error_en: guardada?.ultimo_error_en || null,
+      puede_cambiar: true });
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] diagnostico", e));
+    res.status(500).json({ ok: false, error: "No se pudo leer el estado" });
+  }
+});
+
+/** Mover la puerta del Wallet dinámico. SOLO DIRECCIÓN. */
+app.post("/api/wallet/dinamico/puerta", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const hacia = String(req.body?.estado || "");
+    const guardada = await walPuertaGuardada();
+    const ev = walEvaluarPuerta(guardada, await walContexto(req));
+    const t = walPuedeTransitar(ev.estado, hacia, { puedeActivar: ev.puede_activar });
+    if (!t.ok) return res.status(409).json({ ok: false, error: t.error, pendientes: ev.pendientes });
+    if (hacia === "activo" && !walConfirmacionValida(req.body?.confirmacion)) {
+      return res.status(400).json({ ok: false,
+        error: `Para activar hay que escribir «${WAL_CONFIRMACION}» en el campo de confirmación.` });
+    }
+    if (hacia === "pausado" && !String(req.body?.motivo || "").trim()) {
+      return res.status(400).json({ ok: false, error: "Hace falta un motivo para pausar." });
+    }
+    const ahora = isoConOffset(Date.now());
+    if (hacia === "activo") {
+      await dbRun(`UPDATE wallet_puerta SET estado = ?, confirmado_por = ?, confirmado_en = ?,
+                   texto_confirmacion = ?, pausado_por = NULL, pausado_en = NULL, motivo_pausa = NULL,
+                   actualizado_en = ? WHERE id = 1`,
+        [hacia, req.user.username, ahora, String(req.body.confirmacion).slice(0, 40), ahora]);
+    } else if (hacia === "pausado") {
+      await dbRun(`UPDATE wallet_puerta SET estado = ?, pausado_por = ?, pausado_en = ?,
+                   motivo_pausa = ?, actualizado_en = ? WHERE id = 1`,
+        [hacia, req.user.username, ahora, String(req.body.motivo).slice(0, 300), ahora]);
+    } else {
+      await dbRun(`UPDATE wallet_puerta SET estado = ?, actualizado_en = ? WHERE id = 1`, [hacia, ahora]);
+    }
+    await ficAuditar("wallet", null, "puerta_" + hacia, req.user.username,
+      { detalle: { desde: ev.estado, hacia } });
+    res.json({ ok: true, estado: hacia, interruptores: await walInterruptores() });
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] puerta", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
+/** Los interruptores y el entorno de APNs. SOLO DIRECCIÓN. Apagar siempre se puede. */
+app.post("/api/wallet/dinamico/interruptores", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ahora = isoConOffset(Date.now());
+
+    // El entorno es una ELECCIÓN ENTRE DOS, nunca una URL escrita a mano: un campo de texto que
+    // decide adónde se manda el certificado de cliente es un sitio donde alguien pega una
+    // dirección ajena y nosotros le tendemos el certificado.
+    if (b.entorno_apns !== undefined) {
+      if (!APNS_ENTORNOS.includes(String(b.entorno_apns))) {
+        return res.status(400).json({ ok: false, error: "Entorno de APNs no válido" });
+      }
+      await dbRun(`UPDATE wallet_puerta SET entorno_apns = ?, actualizado_en = ? WHERE id = 1`,
+        [String(b.entorno_apns), ahora]);
+    }
+
+    const cambios = {};
+    for (const k of WAL_INTERRUPTORES) if (b[k] === true || b[k] === false) cambios[k] = b[k];
+    if (Object.keys(cambios).length) {
+      const estadoPuerta = (await walPuertaGuardada())?.estado || "apagado";
+      const guardados = { ...WAL_APAGADOS };
+      for (const k of WAL_INTERRUPTORES) {
+        try {
+          const v = await getConfig(`wal_${k}`);
+          if (v !== null && v !== undefined) guardados[k] = String(v) === "1";
+        } catch { /* lo que no se lee se queda apagado */ }
+      }
+      const intencion = { ...guardados, ...cambios };
+      for (const [k, v] of Object.entries(cambios)) {
+        const p = walPuedeEncender(k, v, { estadoPuerta, guardados: intencion });
+        if (!p.ok) return res.status(409).json({ ok: false, error: p.error });
+      }
+      for (const [k, v] of Object.entries(cambios)) await setConfig(`wal_${k}`, v ? "1" : "0");
+      // Apagar los registros apaga los avisos: avisar a un dispositivo que ya no puede pedir el
+      // pase es despertarlo para nada.
+      if (cambios.wallet_registros === false) await setConfig("wal_wallet_avisos", "0");
+      await ficAuditar("wallet", null, "interruptores", req.user.username,
+        { detalle: { cambios } });
+    }
+    res.json({ ok: true, interruptores: await walInterruptores() });
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] interruptores", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
+/**
+ * REINTENTAR LO PENDIENTE. SOLO DIRECCIÓN.
+ *
+ * Reencola lo FALLIDO y adelanta lo pendiente. NO manda nada por su cuenta y NO recorre clientes:
+ * el worker lo recogerá en su próximo paso, si los avisos están encendidos.
+ */
+app.post("/api/wallet/dinamico/reintentar", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    // LO BLOQUEADO TAMBIÉN SE REENCOLA, pero solo porque el botón lo pulsa una persona DESPUÉS
+    // de haber arreglado la configuración. El worker nunca lo reintenta solo: reintentar un
+    // certificado caducado es gastar llamadas para recibir el mismo 403.
+    const soloConfig = req.body?.solo === "bloqueados";
+    const estados = soloConfig ? ["bloqueado"] : ["fallido", "bloqueado"];
+    // ── NO SE PUEDE CREAR UN SEGUNDO PENDIENTE PARA EL MISMO PASE ────────────────────────────
+    //
+    // El índice único parcial lo impediría con un error, y un botón que revienta no es un botón.
+    // Si ese carné ya tiene un aviso pendiente —porque cambió algo después de quedar bloqueado—,
+    // ese pendiente ya lleva la versión más reciente: reponer el viejo no aporta nada.
+    // `DISTINCT ON (qr_id) … ORDER BY etiqueta DESC` revive UNO SOLO por pase, y el más reciente.
+    // Un carné puede acumular VARIOS bloqueados —uno se bloquea, cambia algo, el nuevo también se
+    // bloquea— y revivirlos todos violaría el índice a la vez que repondría versiones viejas.
+    await dbRun(`UPDATE wallet_avisos SET estado = 'pendiente', intentos = 0, proximo_ms = ?
+                  WHERE id IN (
+                    SELECT DISTINCT ON (a.qr_id) a.id FROM wallet_avisos a
+                     WHERE a.estado = ANY(?)
+                       AND NOT EXISTS (SELECT 1 FROM wallet_avisos p
+                                        WHERE p.qr_id = a.qr_id AND p.estado = 'pendiente')
+                     ORDER BY a.qr_id, a.etiqueta DESC, a.id DESC)`,
+      [Date.now(), estados]);
+    await dbRun(`UPDATE wallet_avisos SET proximo_ms = ? WHERE estado = 'pendiente'`, [Date.now()]);
+    await ficAuditar("wallet", null, "reintentar", req.user.username, { detalle: { estados } });
+    const n = await dbGet(`SELECT COUNT(*)::int AS n FROM wallet_avisos WHERE estado = 'pendiente'`);
+    res.json({ ok: true, pendientes: Number(n?.n) || 0 });
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] reintentar", e));
+    res.status(500).json({ ok: false, error: "No se pudo reintentar" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//  EL SERVICIO WEB DE PASSKIT
+//
+//  Las cinco operaciones que define Apple, con sus rutas, sus cabeceras y sus códigos.
+//
+//    POST   /api/wallet/apple/v1/devices/:dispositivo/registrations/:passTypeId/:serial
+//    GET    /api/wallet/apple/v1/devices/:dispositivo/registrations/:passTypeId
+//    DELETE /api/wallet/apple/v1/devices/:dispositivo/registrations/:passTypeId/:serial
+//    GET    /api/wallet/apple/v1/passes/:passTypeId/:serial
+//    POST   /api/wallet/apple/v1/log
+//
+//  ── QUIÉN LLAMA AQUÍ ──────────────────────────────────────────────────────────────────────
+//
+//  El iPhone de alguien. NO un navegador con sesión: estas rutas no ven ninguna cookie del panel
+//  y no pueden verla. La autorización es `Authorization: ApplePass <token>`, un secreto POR PASE
+//  que viaja dentro del propio `.pkpass` firmado.
+//
+//  ── LO QUE NO SE REGISTRA ─────────────────────────────────────────────────────────────────
+//
+//  La URL completa NO se escribe en ningún log: dentro va el serial, que es la credencial del
+//  carné. Ni el token de autorización, ni el token push. Lo que se apunta son hechos —«alta»,
+//  «baja», «401»— y como mucho una huella corta.
+//
+//  ── RESPUESTAS UNIFORMES ──────────────────────────────────────────────────────────────────
+//
+//  Un serial que no existe y un token equivocado contestan LO MISMO: 401 con el cuerpo vacío.
+//  Distinguirlos convertiría esto en un comprobador de qué carnés existen.
+
+/** Todo lo de PassKit pasa por aquí: freno propio y nada de caché. */
+function walEntrada(req, res, clave) {
+  res.set("Cache-Control", "no-store");
+  return pulsoRateLimit(req, res, 60, `pk:${clave}`);
+}
+
+/** El 401 de siempre: vacío, igual para «no existe» que para «token equivocado». */
+const wal401 = (res) => res.status(401).end();
+
+/**
+ * Resuelve un serial a su pase y comprueba el token, en tiempo constante.
+ *
+ * SIEMPRE se hace el mismo trabajo: aunque el pase no exista se compara contra un token de
+ * relleno, para que el tiempo de respuesta no diga si ese serial está o no en la base.
+ */
+async function walAutorizar(req, passTypeId, serial, cfg) {
+  const enviado = pkToken(req.get("authorization"));
+  const señuelo = "0".repeat(43);
+  if (!pkPassType(passTypeId, cfg?.pass_type_id) || !pkSerial(serial) || !enviado) {
+    pkIgual(señuelo, enviado || señuelo);
+    return null;
+  }
+  const qr = await dbGet(`SELECT * FROM pro_qr WHERE token = ? AND clase = 'carnet'`, [serial]);
+  const pase = qr ? await walPaseDe(qr.id) : null;
+  const esperado = pase ? walTokenClaro(pase) : null;
+  if (!pkIgual(esperado || señuelo, enviado)) return null;
+  // Sin token guardado no se autoriza nunca, aunque el de relleno coincidiera por imposible.
+  return esperado ? { qr, pase } : null;
+}
+
+// ── 1 · ALTA ────────────────────────────────────────────────────────────────
+//
+// 201 si es nueva, 200 si ya estaba. Apple lo distingue, y el alta repetida TIENE que ser
+// idempotente: el mismo iPhone vuelve a registrarse cada vez que restaura una copia de seguridad.
+app.post("/api/wallet/apple/v1/devices/:dispositivo/registrations/:passTypeId/:serial",
+  async (req, res) => {
+  if (tarjetaApagada(res)) return;
+  if (!walEntrada(req, res, "alta")) return;
+  try {
+    const sw = await walInterruptores();
+    // Con los registros apagados no se acepta a nadie. 401 —no 503— para no decir por qué.
+    if (!sw.wallet_registros) return wal401(res);
+
+    const { dispositivo, passTypeId, serial } = req.params;
+    if (!pkDispositivo(dispositivo)) return wal401(res);
+
+    const cfg = await walletCfg("apple");
+    const auth = await walAutorizar(req, passTypeId, serial, cfg);
+    if (!auth) return wal401(res);
+
+    const pushToken = pkLeerAlta(req.body);
+    if (!pushToken) return res.status(400).end();
+    if (!LLAVERO.puedeCifrar) return res.status(503).end();   // en claro no se guarda
+
+    const ahora = isoConOffset(Date.now());
+    const huella = crypto.createHash("sha256").update(pushToken).digest("hex").slice(0, 16);
+
+    // EL TOKEN PUSH VA CIFRADO. Es un identificador de dispositivo y lo único que hace falta para
+    // mandarle algo a ese móvil.
+    await dbRun(
+      `INSERT INTO wallet_dispositivos (dispositivo, push_token_enc, push_huella, visto_en, creado_en)
+       VALUES (?,?,?,?,?)
+       ON CONFLICT (dispositivo) DO UPDATE SET push_token_enc = EXCLUDED.push_token_enc,
+         push_huella = EXCLUDED.push_huella, visto_en = EXCLUDED.visto_en,
+         invalidado_en = NULL, invalidado_motivo = NULL`,
+      [dispositivo, secCifrar(pushToken, LLAVERO, DOMINIOS.WALLET), huella, ahora, ahora]);
+
+    const ya = await dbGet(`SELECT id, activo FROM wallet_registros
+                             WHERE dispositivo = ? AND qr_id = ?`, [dispositivo, auth.qr.id]);
+    if (ya && ya.activo) return res.status(200).end();
+
+    await dbRun(
+      `INSERT INTO wallet_registros (dispositivo, qr_id, pass_type_id, activo, creado_en, actualizado_en)
+       VALUES (?,?,?,TRUE,?,?)
+       ON CONFLICT (dispositivo, qr_id) DO UPDATE SET activo = TRUE, baja_en = NULL,
+         baja_motivo = NULL, actualizado_en = EXCLUDED.actualizado_en`,
+      [dispositivo, auth.qr.id, passTypeId, ahora, ahora]);
+
+    // Auditoría SIN datos personales: ni serial, ni token, ni dispositivo entero.
+    await ficAuditar("wallet", auth.qr.id, "pase_registrado", "wallet",
+      { detalle: { dispositivo_huella: crypto.createHash("sha256").update(dispositivo)
+        .digest("hex").slice(0, 12) } }).catch(() => {});
+    res.status(201).end();
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] alta", e));
+    res.status(500).end();
+  }
+});
+
+// ── 2 · QUÉ HA CAMBIADO ─────────────────────────────────────────────────────
+//
+// SIN TOKEN, y no es un olvido. La guía de Apple: «Authorization tokens are specified by each
+// pass, so there is no appropriate token in this case. The device identifier is sufficient to
+// prove that the request is valid.» Esta llamada pregunta por TODOS los pases de un dispositivo,
+// y cada uno tiene un token distinto.
+//
+// 204 cuando no hay ninguno, no un 200 con la lista vacía: Apple lo distingue.
+app.get("/api/wallet/apple/v1/devices/:dispositivo/registrations/:passTypeId", async (req, res) => {
+  if (tarjetaApagada(res)) return;
+  if (!walEntrada(req, res, "seriales")) return;
+  try {
+    const sw = await walInterruptores();
+    if (!sw.wallet_registros) return res.status(204).end();
+
+    const { dispositivo, passTypeId } = req.params;
+    const cfg = await walletCfg("apple");
+    if (!pkDispositivo(dispositivo) || !pkPassType(passTypeId, cfg?.pass_type_id)) {
+      return res.status(204).end();   // uniforme: no se dice si existe
+    }
+    const desde = pkEtiqueta(req.query.passesUpdatedSince);
+    const filas = await dbAll(
+      `SELECT q.token AS serial, p.etiqueta
+         FROM wallet_registros r
+         JOIN pro_qr q ON q.id = r.qr_id
+         JOIN wallet_pases p ON p.qr_id = r.qr_id
+        WHERE r.dispositivo = ? AND r.activo AND p.etiqueta > ?
+        ORDER BY p.etiqueta LIMIT 500`, [dispositivo, desde]) || [];
+
+    const r = pkSeriales(filas);
+    if (r.codigo === 204) return res.status(204).end();
+    res.status(200).json(r.cuerpo);
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] seriales", e));
+    res.status(500).end();
+  }
+});
+
+// ── 3 · BAJA ────────────────────────────────────────────────────────────────
+//
+// Borra LA RELACIÓN, nunca el carné ni el cliente. Que alguien quite el pase del móvil no es que
+// deje de ser cliente: sus puntos y sus regalos siguen donde estaban.
+app.delete("/api/wallet/apple/v1/devices/:dispositivo/registrations/:passTypeId/:serial",
+  async (req, res) => {
+  if (tarjetaApagada(res)) return;
+  if (!walEntrada(req, res, "baja")) return;
+  try {
+    const { dispositivo, passTypeId, serial } = req.params;
+    if (!pkDispositivo(dispositivo)) return wal401(res);
+    const cfg = await walletCfg("apple");
+    const auth = await walAutorizar(req, passTypeId, serial, cfg);
+    if (!auth) return wal401(res);
+
+    await dbRun(`UPDATE wallet_registros SET activo = FALSE, baja_en = ?, baja_motivo = 'dispositivo',
+                 actualizado_en = ? WHERE dispositivo = ? AND qr_id = ? AND activo`,
+      [isoConOffset(Date.now()), isoConOffset(Date.now()), dispositivo, auth.qr.id]);
+    res.status(200).end();
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] baja", e));
+    res.status(500).end();
+  }
+});
+
+// ── 4 · EL PASE AL DÍA ──────────────────────────────────────────────────────
+//
+// 304 si no ha cambiado, con `If-Modified-Since`. Ahorra reconstruir y firmar un ZIP entero cada
+// vez que el iPhone comprueba, que es a menudo.
+app.get("/api/wallet/apple/v1/passes/:passTypeId/:serial", async (req, res) => {
+  if (tarjetaApagada(res)) return;
+  if (!walEntrada(req, res, "pase")) return;
+  try {
+    const { passTypeId, serial } = req.params;
+    const cfg = await walletCfg("apple");
+    if (!cfg || !hayOpenssl()) return res.status(503).end();
+    const auth = await walAutorizar(req, passTypeId, serial, cfg);
+    if (!auth) return wal401(res);
+
+    const modificado = auth.pase?.actualizado_en || auth.pase?.generado_en || auth.pase?.creado_en;
+    const desde = req.get("if-modified-since");
+    if (desde && modificado) {
+      const d = Date.parse(desde), m = Date.parse(modificado);
+      // Se comparan en segundos: `Last-Modified` no lleva milisegundos, así que un `>` crudo
+      // devolvería el pase entero cada vez por una diferencia que el protocolo no transmite.
+      if (Number.isFinite(d) && Number.isFinite(m) && Math.floor(m / 1000) <= Math.floor(d / 1000)) {
+        return res.status(304).end();
+      }
+    }
+
+    const buffer = await walConstruirPase(auth.qr, cfg, proBase(req), { req });
+    res.setHeader("Content-Type", "application/vnd.apple.pkpass");
+    res.setHeader("Content-Disposition", `inline; filename="${nombreArchivoPase()}"`);
+    if (modificado) res.setHeader("Last-Modified", new Date(modificado).toUTCString());
+    res.end(buffer);
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] pase", e));
+    res.status(500).end();
+  }
+});
+
+// ── 5 · LOS ERRORES QUE MANDA WALLET ────────────────────────────────────────
+//
+// Es lo ÚNICO que explica por qué un pase no se actualiza en un móvil concreto. Pero lo escribe
+// un dispositivo ajeno: cuerpo limitado, líneas limitadas, y REDACTADO —los mensajes de Wallet
+// llevan la URL completa, y dentro va el serial—.
+app.post("/api/wallet/apple/v1/log", (req, res) => {
+  if (tarjetaApagada(res)) return;
+  if (!walEntrada(req, res, "log")) return;
+  try {
+    for (const linea of pkLogs(req.body)) console.warn("[wallet:dispositivo]", linea);
+  } catch { /* un registro no puede tumbar nada */ }
+  res.status(200).end();
+});
+
+/**
+ * CONSTRUIR Y FIRMAR EL `.pkpass` DE UN CARNÉ. UN SOLO SITIO.
+ *
+ * Lo usan la descarga del cliente y la que pide Wallet al actualizarse. Tenerlo dos veces
+ * significaría que un día el pase que se baja y el que se actualiza dejan de ser el mismo.
+ *
+ * EL QR NO SE TOCA NUNCA: sale de `urlTarjeta(base, qr.token)` dentro de `pasePlanoApple`, que es
+ * el único sitio que compone esa URL en todo el proyecto.
+ */
+async function walConstruirPase(qr, cfg, base, { req = null } = {}) {
+  const sw = await walInterruptores();
+  const { proyeccion, cfg: tarjetaCfg } = await walProyeccion(qr, { local: null });
+
+  // El servicio web SOLO si los registros están permitidos. Ver `puerta-wallet.js`: declararlo
+  // con los registros apagados deja al iPhone reintentando contra un 401 para siempre.
+  let servicio = null;
+  if (walLlevaServicio(sw)) {
+    const url = walBase(req);
+    const pase = url ? await walPaseDe(qr.id, { crear: true }) : null;
+    const token = pase ? walTokenClaro(pase) : null;
+    if (url && token) servicio = { url: `${url}/api/wallet/apple`, token };
+  }
+
+  const pase = pasePlanoApple({
+    qr, cfg, base, promo: null, locales: cfg.locales || [],
+    // Con la puerta cerrada el pase se genera EXACTAMENTE como hoy: sin estado y sin servicio.
+    estado: servicio ? proyeccion : null,
+    servicio,
+    textos: {
+      preparacion: tarjetaCfg.texto_preparacion || null,
+      privacidad_url: tarjetaCfg.privacidad_url || null,
+      contacto: tarjetaCfg.contacto || null,
+    },
+  });
+
+  const buffer = construirPkpass({
+    pase,
+    imagenes: walletImagenes(),
+    sha1: walletSha1,
+    firmar: (manifest) => firmarPKCS7(manifest, {
+      p12: Buffer.from(cfg.p12_b64, "base64"),
+      password: cfg.p12_pass || "",
+      wwdrPem: Buffer.from(cfg.wwdr_pem, "utf8"),
+    }),
+  });
+
+  // La huella de lo que acaba de salir, para que el primer cambio real sea el primero que avise.
+  if (servicio) {
+    try {
+      await dbRun(`UPDATE wallet_pases SET huella = ?, generado_en = ? WHERE qr_id = ?`,
+        [huellaVisible(proyeccion), isoConOffset(Date.now()), qr.id]);
+    } catch { /* la huella se recalcula sola en el siguiente cambio */ }
+  }
+  return buffer;
+}
+
 // ── Guardar en Apple Wallet ──────────────────────────────────────────────────
 app.get("/api/wallet/apple/:token", async (req, res) => {
   if (tarjetaApagada(res)) return;
@@ -12971,19 +13992,7 @@ app.get("/api/wallet/apple/:token", async (req, res) => {
     const info = await proEvaluar(qr, null, {});
     if (!puedeIrAWallet(qr, info.estado)) return res.status(409).json({ ok: false, error: info.texto });
 
-    const pase = pasePlanoApple({
-      qr, cfg, base: proBase(req), promo: null, locales: cfg.locales || [] });
-
-    const buffer = construirPkpass({
-      pase,
-      imagenes: walletImagenes(),
-      sha1: walletSha1,
-      firmar: (manifest) => firmarPKCS7(manifest, {
-        p12: Buffer.from(cfg.p12_b64, "base64"),
-        password: cfg.p12_pass || "",
-        wwdrPem: Buffer.from(cfg.wwdr_pem, "utf8"),
-      }),
-    });
+    const buffer = await walConstruirPase(qr, cfg, proBase(req), { req });
 
     dbRun(`UPDATE pro_qr SET wallet_apple_en = ? WHERE id = ? AND wallet_apple_en IS NULL`,
       [new Date().toISOString(), qr.id]).catch(() => {});
@@ -15246,9 +16255,12 @@ const pulsoToken = () => generarToken((n) => crypto.randomBytes(n));
 
 // Antiabuso sencillo, sin dependencias nuevas (mismo patrón que el debounce de WhatsApp).
 const _pulsoHits = new Map();
-function pulsoRateLimit(req, res, max) {
+function pulsoRateLimit(req, res, max, ambito = "") {
   const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?";
-  const clave = String(ip).split(",")[0].trim() + ":" + req.method;
+  // `ambito` es opcional y aditivo: sin él, la clave es la de siempre. Con él, cada familia de
+  // rutas tiene su propio cupo — las de PassKit las llama un iPhone muchas veces seguidas, y
+  // gastarle el cupo a la tarjeta web por eso sería dejar sin ver su carné a quien lo mire.
+  const clave = String(ip).split(",")[0].trim() + ":" + req.method + (ambito ? ":" + ambito : "");
   const ahora = Date.now();
   const reg = _pulsoHits.get(clave) || { n: 0, desde: ahora };
   if (ahora - reg.desde > 60000) { reg.n = 0; reg.desde = ahora; }
@@ -19095,6 +20107,9 @@ async function fidIntegracion(token) {
 /** La transacción, con el pool de verdad. La lógica vive en el módulo para poder probarla:
  *  ver `crearTransaccion` en src/modules/fidelizacion/agora.js. */
 const fidTransaccion = fidCrearTransaccion({ pool, toPositional });
+// EL MISMO MECANISMO para el wallet, con su propia instancia: `marcarPaseActualizado` y el
+// reconciliador —que lo llama— usan este y ningún otro.
+const walTransaccion = fidCrearTransaccion({ pool, toPositional });
 
 /** Cuántas visitas lleva un carné. Es un SUM sobre el libro, nunca un contador guardado. */
 async function fidVisitasDe(qrId) {
@@ -19333,6 +20348,26 @@ app.post("/api/fidelizacion/agora/:token/factura", async (req, res) => {
     console.error(lineaErrorSql("[fidelizacion] factura", e));
     return res.status(500).json({ Status: "error" });
   }
+
+  // ── EL PASE DEL MÓVIL ───────────────────────────────────────────────────────────────────────
+  //
+  // DESPUÉS DEL COMMIT y sin `await` que pueda tumbar la respuesta: la factura ya está cerrada y
+  // contestada. Una factura NO se deshace porque Apple esté caída.
+  //
+  // Aquí caben casi todos los eventos de la Fase 7 a la vez —puntos ganados, consumidos, una
+  // promoción usada, una devolución que revierte cualquiera de las tres—, porque todos pasan por
+  // esta misma transacción. `marcarPaseActualizado` compara la huella de lo VISIBLE, así que una
+  // factura que no cambie nada de lo que se ve no encola ningún aviso.
+  try {
+    const tocados = new Set();
+    for (const m of extracto.miembros || []) if (m.qrId) tocados.add(m.qrId);
+    if (resultado.devolucion?.original_id) {
+      const prev = await dbGet(`SELECT qr_id FROM fid_movimientos WHERE factura_id = ? LIMIT 1`,
+        [resultado.devolucion.original_id]);
+      if (prev?.qr_id) tocados.add(prev.qr_id);
+    }
+    for (const id of tocados) marcarPaseActualizado(id, "factura").catch(() => {});
+  } catch { /* el pase se actualizará en el siguiente cambio */ }
 
   // La auditoría va DESPUÉS del COMMIT y fuera de la transacción: es un registro, no una condición.
   try {
@@ -20727,6 +21762,10 @@ app.post("/api/fidelizacion/promos/:id/estado", requireAuth(PROMOS_ROLES), async
     if (!tocada) return res.status(409).json({ ok: false, error: "Ha cambiado de estado. Vuelve a cargar." });
     await ficAuditar("fidelizacion", p.id, "promo_" + hacia, req.user.username,
       { local: p.local, detalle: { clave: p.clave, version: p.version, desde: p.estado, hacia } });
+
+    // PAUSAR UNA PROMOCIÓN CAMBIA LO QUE VEN LOS PASES DE QUIEN LA TENÍA. Se recorren SOLO los
+    // carnés con pase REGISTRADO —no toda la clientela— y solo los que podrían tener esa promo.
+    walRefrescarPorPromo(p.clave, "promo_" + hacia).catch(() => {});
     res.json({ ok: true, estado: hacia });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] estado promo", e));
@@ -21982,6 +23021,19 @@ const server = app.listen(PORT, async () => {
   // llegaría: media hora de retraso ya es una promesa rota. La pasada no hace nada si WhatsApp
   // está caído, así que un despliegue no pierde nada — se recupera solo al reconectar.
   setInterval(() => { capVaciarCola().catch(() => {}); }, 30 * 1000);
+
+  // La cola de avisos a Wallet. Mismo ritmo que la de captación y el MISMO patrón: una tabla con
+  // estado, intentos y próximo intento, y un timer que la vacía. Con los avisos apagados —que es
+  // como nace— la función sale a la primera línea y no hace ni una consulta.
+  setInterval(() => { walVaciarCola().catch(() => {}); }, 30 * 1000);
+
+  // EL RECONCILIADOR. Cada cinco minutos, un lote. Es lo que convierte «se perdió el aviso» en
+  // «llega más tarde»: sin esto, un proceso que muera justo después de un COMMIT dejaría ese pase
+  // desactualizado hasta el siguiente cambio de ese cliente, que puede ser dentro de un mes.
+  //
+  // Va más espaciado que la cola a propósito: la cola despacha lo que ya se sabe que hay que
+  // mandar; esto busca lo que se perdió, que es raro.
+  setInterval(() => { walReconciliar().catch(() => {}); }, 5 * 60 * 1000);
 
   setOnReserva(async (reserva, jid) => {
     const { local, personas, dia, hora, telefono, nombre_reserva, pendiente } = reserva;

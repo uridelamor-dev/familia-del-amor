@@ -24,7 +24,15 @@ import { isoConOffset } from "../src/modules/horarios/tiempo.js";
 
 const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
-const sinComentarios = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+// EL `/*` TIENE QUE EMPEZAR LA LÍNEA.
+//
+// Con `/\/\*[\s\S]*?\*\//g` a secas, el `"*/*"` de `express.raw({ type: "*/*" })` abría un bloque
+// que no cerraba hasta 371 000 caracteres después: se comía el 28 % de `server.js` y cualquier
+// `assert.ok(!...)` sobre esa zona pasaba sin comprobar nada.
+//
+// Todos los bloques de verdad de esta casa son JSDoc al principio de línea, así que basta con
+// exigirlo — y así un `*/*` dentro de una cadena sobrevive, que es lo que tiene que pasar.
+const sinComentarios = (t) => t.replace(/^\s*\/\*[\s\S]*?\*\//gm, "").replace(/^\s*\/\/.*$/gm, "");
 
 /** La promoción del informe: empieza HOY, de 07:00 a 23:59, y se simula a las 21:01. */
 const CUANDO = "2026-09-16T21:01:00+02:00";

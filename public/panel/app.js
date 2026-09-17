@@ -14134,6 +14134,10 @@ async function loadPromos() {
       // Con la tarjeta apagada no se piden los certificados: no hay nada que configurar
       // todavía, y una petición menos es una pantalla que no se queda a medias si falla.
       PROMO.wcfg = PROMO.tarjeta.activa ? await apiRaw("/api/wallet/config") : null;
+      // El diagnóstico del Wallet dinámico es de DIRECCIÓN. Si falla —o no se tiene permiso— la
+      // pestaña se pinta igual: es un diagnóstico, no el contenido de la pantalla.
+      PROMO.walletDin = (PROMO.tarjeta.activa && USER.rol === "direccion")
+        ? await apiRaw("/api/wallet/dinamico").catch(() => null) : null;
     }
     view.innerHTML = renderPromos();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
@@ -14478,6 +14482,97 @@ async function capParada(parada) {
 // Aquí NO se emiten tarjetas: se las hacen los clientes, desde la web o escaneando el cartel de
 // una mesa. Lo que hay en esta pestaña es lo que hace falta para eso: el cartel que se imprime,
 // cuántas tarjetas hay y de dónde salieron, y las credenciales de Apple y Google.
+const FIDG_WAL_TXT = {
+  apagado:            ["Apagado", "", "El pase se genera y se añade al móvil como hasta ahora, pero no se actualiza solo."],
+  listo_para_activar: ["Listo para activar", "warn", "Se cumplen todos los requisitos. Falta que Dirección lo confirme por escrito."],
+  activo:             ["Activo", "ok", "El servicio está abierto. Lo que haga cada cosa depende de los interruptores de abajo."],
+  pausado:            ["Pausado", "warn", "Cortado a propósito. Los pases siguen en los móviles; solo dejan de actualizarse."],
+};
+
+/**
+ * DIAGNÓSTICO DEL WALLET DINÁMICO. Solo Dirección, y sin un solo secreto.
+ *
+ * No sale ningún serial, ningún token, ningún identificador de dispositivo ni ningún teléfono:
+ * números y estados. Lo que hay que poder responder desde aquí es «¿se ha registrado mi iPhone?»
+ * y «¿ha salido el aviso?», y para eso bastan contadores.
+ */
+function renderWalletDinamico() {
+  const w = PROMO.walletDin;
+  if (!w) return '<div class="mut">No se ha podido leer el estado.</div>';
+  const [txt, pill, ayuda] = FIDG_WAL_TXT[w.estado] || FIDG_WAL_TXT.apagado;
+  const sw = w.interruptores || {};
+  const c = w.contadores || {};
+
+  const req = (w.requisitos || []).map((r) => `<div class="row"><div class="grow"><div class="t1">${r.ok ? "✔" : "✖"} ${esc(r.texto)}</div>${r.motivo ? `<div class="mut" style="font-size:12px;color:var(--danger)">${esc(r.motivo)}</div>` : ""}</div></div>`).join("");
+
+  const incoherente = w.incoherente ? `<div class="pendingblock" style="margin:2px 2px 10px;padding:12px 14px;font-size:12.5px;border-color:var(--danger)"><b>⚠ Está ACTIVO pero ya no cumple todos los requisitos.</b> Míralo antes de que un pase deje de actualizarse sin que nadie se entere.</div>` : "";
+
+  // «Descargado» y «registrado» son DOS COSAS DISTINTAS, y la diferencia es justo lo que hay que
+  // mirar al desplegar: los pases de antes se bajaron sin servicio web y no se registran solos.
+  const cifras = [
+    ["Pases descargados alguna vez", c.bajados, "Se bajaron el `.pkpass`. NO significa que se actualicen."],
+    ["Pases con servicio dinámico", c.pases, "Tienen su secreto de servicio web creado."],
+    ["Dispositivos registrados", c.dispositivos, "Móviles vivos, sin contar los invalidados."],
+    ["Registros activos", c.registros, "Pares dispositivo ↔ pase escuchando."],
+    ["Avisos pendientes", c.pendientes, "En cola, esperando al worker."],
+    // LOS TRES DESENLACES, SEPARADOS. Un 403 y un corte de red no se arreglan igual.
+    ["Avisos fallidos", c.fallidos, "Fallo transitorio que agotó los reintentos. Se puede reintentar."],
+    ["Avisos bloqueados", c.bloqueados, "Error de CONFIGURACIÓN: certificado, topic o entorno de APNs. Reintentar no lo arregla."],
+    ["Dispositivos invalidados", c.invalidados, "Quitaron el pase del móvil, o su token dejó de valer. No se les vuelve a escribir."],
+  ].map(([t, n, a]) => `<div class="row"><div class="grow"><div class="t1">${esc(t)}</div><div class="mut" style="font-size:12px">${esc(a)}</div></div><b style="font-variant-numeric:tabular-nums">${Number(n) || 0}</b></div>`).join("");
+
+  const botones = `<div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+      ${w.estado !== "activo" && w.estado !== "listo_para_activar" && w.puede_activar ? '<button class="btn sm" data-act="wal-puerta" data-e="listo_para_activar">Marcar listo para activar</button>' : ""}
+      ${(w.estado === "listo_para_activar" || w.estado === "pausado") && w.puede_activar ? '<button class="btn primary sm" data-act="wal-puerta" data-e="activo">Activar Wallet dinámico…</button>' : ""}
+      ${w.estado === "activo" ? '<button class="btn sm danger" data-act="wal-puerta" data-e="pausado">Pausar ahora</button>' : ""}
+      ${w.estado !== "activo" && w.estado !== "apagado" ? '<button class="btn sm" data-act="wal-puerta" data-e="apagado">Volver a apagado</button>' : ""}
+      <button class="btn sm" data-act="wal-reintentar">Reintentar pendientes</button>
+      ${Number(c.bloqueados) > 0 ? '<button class="btn sm danger" data-act="wal-reintentar" data-solo="bloqueados">Reintentar bloqueados…</button>' : ""}
+      <button class="btn sm" data-act="wal-prueba">Descargar pase de prueba</button>
+    </div>`;
+
+  const interruptores = w.estado === "activo"
+    ? `<div class="mut" style="font-size:12px;margin:16px 0 4px">Interruptores</div>
+       <div class="rows">
+         <div class="row"><div class="grow"><div class="t1">Permitir registros</div><div class="mut" style="font-size:12px">El pase nuevo lleva la dirección del servicio y los móviles pueden darse de alta. <b>Los pases ya bajados no la llevan</b>: hay que volver a añadirlos una vez.</div></div>
+           <button class="btn sm ${sw.wallet_registros ? "danger" : "primary"}" data-act="wal-sw" data-k="wallet_registros" data-v="${sw.wallet_registros ? "0" : "1"}">${sw.wallet_registros ? "Apagar" : "Encender"}</button></div>
+         <div class="row"><div class="grow"><div class="t1">Avisos automáticos</div><div class="mut" style="font-size:12px">Cuando cambian los puntos o los regalos, se avisa al móvil para que pida el pase nuevo. ${sw.wallet_registros ? "" : "<b>Hace falta permitir registros primero.</b>"}</div></div>
+           ${sw.wallet_registros ? `<button class="btn sm ${sw.wallet_avisos ? "danger" : "primary"}" data-act="wal-sw" data-k="wallet_avisos" data-v="${sw.wallet_avisos ? "0" : "1"}">${sw.wallet_avisos ? "Apagar" : "Encender"}</button>` : '<span class="pill">bloqueado</span>'}</div>
+         <div class="row"><div class="grow"><div class="t1">Mensajes visibles</div><div class="mut" style="font-size:12px">Todavía <b>no implementados</b>: primero hay que comprobar que la actualización silenciosa funciona.</div></div><span class="pill">pendiente</span></div>
+       </div>`
+    : `<div class="mut" style="font-size:12px;margin-top:12px">Registros: <b>${sw.wallet_registros ? "sí" : "no"}</b> · Avisos: <b>${sw.wallet_avisos ? "sí" : "no"}</b></div>`;
+
+  const entorno = `<div class="field" style="margin-top:14px"><label for="walEntorno">Servidor de notificaciones de Apple</label>
+      <select id="walEntorno" data-act="wal-entorno">${(w.entornos || []).map((e) =>
+        `<option value="${esc(e)}"${w.entorno_apns === e ? " selected" : ""}>${e === "produccion" ? "Producción" : "Pruebas (sandbox)"}</option>`).join("")}</select>
+      <div class="mut" style="font-size:12px">Mezclarlos <b>no da error</b>: simplemente no llega nada.</div></div>`;
+
+  // El certificado caduca, y es el MISMO que firma el pase y que habla con APNs: el día que
+  // venza se paran las dos cosas a la vez. Sale la fecha y los días; nunca el certificado.
+  const ce = w.certificado;
+  const certAviso = ce && ce.caduca_en
+    ? `<div class="${ce.caducado || ce.avisar ? "pendingblock" : "mut"}" style="margin-top:10px;padding:${ce.caducado || ce.avisar ? "10px 12px" : "0"};font-size:12.5px${ce.caducado ? ";border-color:var(--danger)" : ""}">
+         ${ce.caducado
+           ? "<b>⚠ El certificado de Apple ha CADUCADO.</b> No se pueden firmar pases nuevos ni mandar avisos."
+           : ce.avisar
+             ? `<b>⚠ El certificado de Apple caduca en ${Number(ce.dias)} día(s)</b> (${esc(String(ce.caduca_en).slice(0, 10))}). Renovarlo y volver a subirlo no se hace en una tarde.`
+             : `Certificado de Apple válido hasta <b>${esc(String(ce.caduca_en).slice(0, 10))}</b> (${Number(ce.dias)} días).`}
+       </div>`
+    : "";
+
+  const ultimo = `<div class="mut" style="font-size:12px;margin-top:10px">
+      Último envío correcto: <b>${w.ultimo_envio_en ? esc(String(w.ultimo_envio_en).slice(0, 16).replace("T", " ")) : "nunca"}</b>
+      ${w.ultimo_error ? `<br>Último error: <span style="color:var(--danger)">${esc(w.ultimo_error)}</span> ${w.ultimo_error_en ? `(${esc(String(w.ultimo_error_en).slice(0, 16).replace("T", " "))})` : ""}` : ""}
+    </div>`;
+
+  return `${incoherente}
+    <div class="row"><div class="grow"><div class="t1">Estado</div><div class="mut" style="font-size:12px">${esc(ayuda)}</div></div><span class="pill ${pill}">${esc(txt)}</span></div>
+    <div class="mut" style="font-size:12px;margin:12px 0 4px">Lo que comprueba el servidor</div>
+    <div class="rows">${req}</div>
+    <div class="mut" style="font-size:12px;margin:16px 0 4px">Cuántos hay</div>
+    <div class="rows">${cifras}</div>${certAviso}${entorno}${ultimo}${botones}${interruptores}`;
+}
+
 function promoTarjeta() {
   const d = PROMO.tarjeta || {};
   const w = d.wallet || { apple: 0, google: 0, total: 0 };
@@ -14558,7 +14653,67 @@ function promoTarjeta() {
     </div>
     <div id="tjProbar" style="margin-top:10px"></div></div>`;
 
-  return `<div class="grid g2">${resumen}${cartel}</div><div style="margin-top:16px">${wallet}</div>`;
+  // El diagnóstico del pase dinámico, SOLO para Dirección. Marketing configura los textos y el
+  // diseño de la tarjeta en su sitio; esto decide si los móviles de clientes reales reciben
+  // avisos, y no es lo mismo.
+  const dinamico = PROMO.walletDin
+    ? `<div class="card" style="margin-top:16px"><div class="ch"><h3>Wallet dinámico</h3></div>
+        <div class="mut" style="font-size:12.5px;padding:2px 2px 10px">Que el carné del móvil se <b>actualice solo</b> cuando cambian los puntos o los regalos. <b>No es el programa de puntos ni las promociones</b>: esos tienen sus propias puertas y siguen donde estaban. Con esto apagado, el pase se sigue generando y añadiendo exactamente igual que hoy.</div>
+        ${renderWalletDinamico()}</div>`
+    : "";
+
+  return `<div class="grid g2">${resumen}${cartel}</div><div style="margin-top:16px">${wallet}</div>${dinamico}`;
+}
+
+// ── Las acciones del Wallet dinámico ────────────────────────────────────────
+async function walPuerta(estado) {
+  const cuerpo = {};
+  if (estado === "activo") {
+    const c = prompt("Vas a ACTIVAR el Wallet dinámico.\n\nEsto abre el servicio; lo que haga cada cosa depende de los interruptores.\n\nNO enciende los puntos ni las promociones.\n\nEscribe ACTIVAR WALLET para confirmar:");
+    if (!c) return;
+    cuerpo.confirmacion = c;
+  }
+  if (estado === "pausado") {
+    const m = prompt("¿Por qué se pausa? (queda auditado)");
+    if (!m || !m.trim()) return;
+    cuerpo.motivo = m;
+  }
+  try { await apiSend("POST", "/api/wallet/dinamico/puerta", { estado, ...cuerpo }); loadPromos(); toast("Hecho"); }
+  catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+async function walSw(clave, valor) {
+  const encender = valor === "1";
+  if (encender && clave === "wallet_avisos"
+      && !confirm("A partir de ahora, cuando cambien los puntos o los regalos de un cliente se avisará a su móvil.\n\n¿Seguir?")) return;
+  try {
+    await apiSend("POST", "/api/wallet/dinamico/interruptores", { [clave]: encender });
+    loadPromos(); toast(encender ? "Encendido" : "Apagado");
+  } catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+async function walEntorno(valor) {
+  try { await apiSend("POST", "/api/wallet/dinamico/interruptores", { entorno_apns: valor }); loadPromos(); }
+  catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+async function walReintentar(solo) {
+  // Lo bloqueado es un error de configuración: reintentarlo sin haberlo arreglado da el mismo
+  // error otra vez. Se avisa antes de gastar llamadas contra Apple.
+  if (solo === "bloqueados"
+      && !confirm("Los avisos bloqueados fallaron por CONFIGURACIÓN —certificado, topic o entorno de APNs—.\n\n¿Ya lo has corregido? Si no, volverán a fallar igual.")) return;
+  try {
+    await apiSend("POST", "/api/wallet/dinamico/reintentar", solo ? { solo } : {});
+    loadPromos(); toast("Reencolado");
+  } catch (e) { toast(e.message || "No se pudo reintentar"); }
+}
+
+/** El pase de prueba es EL DEL PROPIO CARNÉ que se elija: no se inventa uno falso. */
+function walPrueba() {
+  const t = prompt("Pega el enlace o el token de un carné de prueba para bajarte su pase:");
+  if (!t || !t.trim()) return;
+  const token = (t.match(/[?&]t=([^&\s]+)/) || [null, t.trim()])[1];
+  window.open("/api/wallet/apple/" + encodeURIComponent(token), "_blank");
 }
 
 /**
@@ -14948,9 +15103,19 @@ document.addEventListener("change", (e) => {
   else if (c.id === "facSelAll") facSelTodas(c.checked);
   else if (c.hasAttribute("data-compsel")) compSelToggle(c.getAttribute("data-compsel"), c.getAttribute("data-desc"), c.checked);
 });
+// Un `<select>` no dispara la delegación de CLICS: elegir con el teclado no genera ninguno. Se
+// escucha `change` aparte, y en el documento porque la pantalla se repinta entera cada vez.
+document.addEventListener("change", (e) => {
+  const sel = e.target.closest("select[data-act]");
+  if (!sel) return;
+  if (sel.getAttribute("data-act") === "wal-entorno") walEntorno(sel.value);
+});
+
 document.addEventListener("click", (e) => {
   const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); go(v.getAttribute("data-view")); return; }
   const t = e.target.closest("[data-act]"); if (!t) return;
+  // Un `<select>` con `data-act` se maneja por `change`, no por clic: abrirlo no es elegir.
+  if (t.tagName === "SELECT") return;
   // La fila entera de una factura abre su ficha, pero la casilla de seleccionar y los botones
   // que lleva dentro son suyos: sin esto, marcar una factura te abría su ficha.
   if (t.classList.contains("facrow") && e.target.closest("input,button,a,label")) return;
@@ -15227,6 +15392,10 @@ document.addEventListener("click", (e) => {
   else if (act === "fidp-revisiones") fidpRevisiones();
   else if (act === "fidp-socio") fidpSocio();
   else if (act === "fidg-puerta") fidgPuerta(t.getAttribute("data-e"));
+  else if (act === "wal-puerta") walPuerta(t.getAttribute("data-e"));
+  else if (act === "wal-sw") walSw(t.getAttribute("data-k"), t.getAttribute("data-v"));
+  else if (act === "wal-reintentar") walReintentar(t.getAttribute("data-solo"));
+  else if (act === "wal-prueba") walPrueba();
   else if (act === "fidg-pp-puerta") fidgPuertaPromos(t.getAttribute("data-e"));
   else if (act === "fidg-pp-sw") fidgPuertaPromosSw(t.getAttribute("data-k"), t.getAttribute("data-v"));
   else if (act === "fidg-sombra-rev") fidgSombraRevisada();

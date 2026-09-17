@@ -58,6 +58,24 @@
     caja.classList.remove("hidden");
   }
 
+  /* EL AVISO DE VOLVER A AÑADIR EL CARNÉ.
+   *
+   * Un pase que se guardó ANTES de que existiera el servicio de actualización no lleva dentro la
+   * dirección a la que llamar, así que nunca se enterará de nada. No hay forma de arreglarlo a
+   * distancia: hay que volver a añadirlo una vez, y entonces el móvil sí se registra.
+   *
+   * Discreto y en su sitio, debajo de los botones que ya están. Ni un mensaje, ni un WhatsApp, ni
+   * una campaña: quien entre a mirar su tarjeta lo ve, y quien no, no se entera de nada. */
+  function pintarAvisoPase(pase) {
+    if (!pase || !pase.volver_a_anadir) return;
+    var caja = $("tjWallet");
+    if (!caja) return;
+    caja.insertAdjacentHTML("beforeend",
+      '<p class="tj-wallet-nota">Si ya la tenías guardada en el móvil, <b>vuelve a añadirla</b> ' +
+      'una vez: así se actualizará sola con tus puntos y tus regalos.</p>');
+    caja.classList.remove("hidden");
+  }
+
   function pintarDescuentos(d) {
     var disp = (d.descuentos && d.descuentos.disponibles) || [];
     var usados = (d.descuentos && d.descuentos.usados) || [];
@@ -115,6 +133,7 @@
     }
 
     pintarWallet(d.wallet, TOKEN);
+    pintarAvisoPase(d.pase);
 
     mostrar("tjVisitas");
     $("tjVisitasN").textContent = (d.resumen && d.resumen.texto) || "";

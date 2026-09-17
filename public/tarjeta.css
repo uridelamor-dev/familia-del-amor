@@ -55,6 +55,10 @@
    Alto de sobra (56px) porque se pulsa de pie y con una mano. */
 .tj-wallet { margin: 1.25rem 0 0; display: grid; gap: .6rem; }
 .tj-wallet-eti { margin: 0 0 .1rem; font-size: .85rem; color: #6d7a74; }
+/* El aviso de volver a añadir el carné. Discreto a propósito: es útil para quien ya lo tenía
+   guardado y ruido para todos los demás. `.tj-wallet` es una rejilla, así que esto cae solo en su
+   propia fila debajo de los botones — sin `flex-basis`, que aquí no haría nada. */
+.tj-wallet-nota { margin: .2rem 0 0; font-size: .82rem; line-height: 1.45; color: #6d7a74; }
 .tj-badge { display: flex; align-items: center; justify-content: center; gap: .6rem;
   min-height: 56px; padding: 0 1.1rem; border-radius: 14px; text-decoration: none;
   font-size: 1rem; font-weight: 650; border: 1px solid transparent; }

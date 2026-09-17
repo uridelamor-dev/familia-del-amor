@@ -90,10 +90,58 @@ describe("dice todo lo que tiene que decir", () => {
   }
 
   test("lleva su versión y su fecha impresas, para poder comprobarlas", () => {
-    assert.match(CA, /Versió 1 · en vigor des del 15 de setembre de 2026/);
-    assert.match(ES, /Versión 1 · en vigor desde el 15 de septiembre de 2026/);
-    assert.equal(POLITICA_VERSION, 1);
-    assert.equal(POLITICA_FECHA, "2026-09-15");
+    // NO se fija un número a mano: se comprueba que LO IMPRESO Y LA CONSTANTE COINCIDEN. Subir la
+    // versión en `politica.js` y olvidarse de la página —o al revés— es el fallo que importa, y
+    // fijar el número aquí solo obligaba a tocar tres sitios en vez de dos.
+    const MESES = ["gener/enero", "febrer/febrero", "març/marzo", "abril/abril", "maig/mayo",
+      "juny/junio", "juliol/julio", "agost/agosto", "setembre/septiembre", "octubre/octubre",
+      "novembre/noviembre", "desembre/diciembre"];
+    const [y, m, d] = POLITICA_FECHA.split("-").map(Number);
+    const [mesCa, mesEs] = MESES[m - 1].split("/");
+    assert.match(CA, new RegExp(`Versió ${POLITICA_VERSION} · en vigor des del ${d} de ${mesCa} de ${y}`));
+    assert.match(ES, new RegExp(`Versión ${POLITICA_VERSION} · en vigor desde el ${d} de ${mesEs} de ${y}`));
+    // Y la versión solo sube: bajarla dejaría consentimientos guardados apuntando a un texto que
+    // ya no es el vigente.
+    assert.ok(POLITICA_VERSION >= 2, "la versión no puede bajar");
+    assert.match(POLITICA_FECHA, /^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  test("v2 · explica qué se guarda al añadir el carné a la cartera del móvil", () => {
+    // El servicio de actualización guarda un identificador del dispositivo y un testigo de
+    // notificaciones. Son datos personales y antes no se decía en ningún sitio.
+    const plano = (t) => t.replace(/\s+/g, " ");
+    for (const [idioma, txt, frases] of [
+      ["catalán", plano(CA), [
+        /identificador tècnic del dispositiu/i,
+        /testimoni de notificacions/i,
+        /només serveixen per mantenir el carnet actualitzat/i,
+        /No contenen el teu telèfon, ni el teu nom, ni els teus punts/i,
+        /mentre el carnet estigui registrat/i,
+        /s'elimina o s'invalida/i,
+        /Apple.{0,80}proveïdor de la plataforma/i,
+      ]],
+      ["castellano", plano(ES), [
+        /identificador técnico del dispositivo/i,
+        /testigo de notificaciones/i,
+        /solo sirven para mantener el carné actualizado/i,
+        /No contienen tu teléfono, ni tu nombre, ni tus puntos/i,
+        /mientras el carné siga registrado/i,
+        /se elimina o se invalida/i,
+        /Apple.{0,80}proveedor de la plataforma/i,
+      ]],
+    ]) {
+      for (const re of frases) assert.match(txt, re, `falta en ${idioma}: ${re}`);
+    }
+  });
+
+  test("y no cuenta nada de las tripas", () => {
+    // Una política no nombra tablas, variables, servidores ni claves.
+    for (const [idioma, txt] of [["catalán", CA], ["castellano", ES]]) {
+      for (const malo of ["wallet_", "pro_qr", "APNs", "api.push.apple.com", "pkpass",
+                          "DATA_ENC_KEY", "passTypeIdentifier", "serialNumber", "PostgreSQL"]) {
+        assert.ok(!txt.includes(malo), `la política en ${idioma} nombra «${malo}»`);
+      }
+    }
   });
 
   test("explica que se guarda qué versión aceptó cada persona", () => {

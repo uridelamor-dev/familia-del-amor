@@ -85,7 +85,123 @@ export function nombreArchivoPase() {
  * `auxiliaryFields` se queda vacío a propósito: con tres datos en la cara ya está dicho todo, y
  * rellenarlo solo porque existe es lo que convierte una tarjeta en un formulario.
  */
-export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales = [] } = {}) {
+// ── CÓMO SE REPARTE LA CARA CUANDO EL PASE YA SABE COSAS ─────────────────────────────────────
+//
+// EL DISEÑO APROBADO NO SE TOCA. La primera versión de esto subía los puntos al sitio grande y
+// bajaba el nombre al reverso — y eso es rehacer el pase, no ampliarlo. Lo aprobado es:
+//
+//   primaryFields     el titular, con «CARNÉ DE CLIENTE» de rótulo
+//   secondaryFields   «NÚMERO DE SOCIO»
+//   auxiliaryFields   vacío hasta ahora
+//   sin `logoText`, sin `altText` bajo el QR, crema + tinta + verde, seis imágenes
+//
+// Los puntos y los regalos entran POR `auxiliaryFields` —la fila que estaba libre— y por el
+// reverso. Si no cupieran, lo que se recorta es lo nuevo, nunca el titular ni el número.
+//
+// SIN ESTADO se devuelve exactamente lo de antes, byte a byte. Es lo que se genera mientras la
+// puerta esté cerrada, y lo que garantiza que este trabajo no cambia el pase de nadie hasta que
+// alguien lo encienda.
+
+/** Recorta sin partir palabras a lo bruto: un campo del pase que desborda se ve peor que uno corto. */
+function recortar(txt, max) {
+  const s = String(txt ?? "").trim();
+  if (s.length <= max) return s;
+  const corte = s.slice(0, max - 1);
+  const esp = corte.lastIndexOf(" ");
+  return (esp > max * 0.6 ? corte.slice(0, esp) : corte) + "…";
+}
+
+function camposDe({ qr, base, promo, estado, textos }) {
+  const codigo = codigoLegible(qr.codigo);
+  const enlace = urlTarjeta(base, qr.token);
+  const ayuda = textos.ayuda || "Enséñala cuando vengas y te reconocemos al momento.";
+
+  // ── LO QUE NO CAMBIA NUNCA ────────────────────────────────────────────────────────────────
+  //
+  // Un nombre muy largo se recorta aquí y no en el diseño: `storeCard` reduce el cuerpo de letra
+  // hasta cierto punto y después parte la línea, y un titular partido en dos deja la tarjeta
+  // descuadrada. 26 caracteres es lo que entra holgado a tamaño legible.
+  const primaryFields = qr.nombre
+    ? [{ key: "titular", label: "CARNÉ DE CLIENTE", value: recortar(qr.nombre, 26) }]
+    : [{ key: "socio", label: "CARNÉ DE CLIENTE", value: codigo }];
+  const secondaryFields = qr.nombre
+    ? [{ key: "socio", label: "NÚMERO DE SOCIO", value: codigo }]
+    : [];
+
+  const backFields = [
+    { key: "que-es", label: "Tu tarjeta", value: ayuda },
+    { key: "donde", label: "Dónde vale", value: promo ? dondeVale(promo.locales) : dondeVale("") },
+  ];
+
+  // ── EL PASE DE SIEMPRE ────────────────────────────────────────────────────────────────────
+  if (!estado) {
+    backFields.push({ key: "cuenta", label: "Tus visitas y tus descuentos", value: enlace });
+    return { primaryFields, secondaryFields, auxiliaryFields: [], backFields };
+  }
+
+  // ── LO NUEVO, EN LA FILA QUE ESTABA LIBRE ─────────────────────────────────────────────────
+  const pt = estado.puntos || {};
+  const pr = estado.premios || {};
+  const aux = [];
+
+  if (pt.activo) {
+    aux.push({ key: "puntos", label: "PUNTOS", value: String(pt.saldo ?? 0) });
+    if (Number.isFinite(pt.faltan) && pt.faltan > 0) {
+      aux.push({ key: "faltan", label: "PRÓXIMO PREMIO", value: `Te faltan ${pt.faltan}` });
+    } else if (pt.canjeable) {
+      aux.push({ key: "faltan", label: "PRÓXIMO PREMIO", value: "¡Ya lo tienes!" });
+    }
+  } else if (pt.texto) {
+    // NO se pone «0 puntos»: un marcador a cero que no existe hace que el día que se encienda
+    // parezca que ha perdido lo que tenía. El texto es configurable desde el panel.
+    aux.push({ key: "puntos", label: "PUNTOS", value: recortar(pt.texto, 22) });
+  }
+
+  if (pr.cantidad > 0) {
+    aux.push({ key: "regalos", label: "REGALOS",
+      value: `${pr.cantidad} disponible${pr.cantidad === 1 ? "" : "s"}` });
+  }
+
+  // El nombre del regalo solo si queda sitio. Tres campos auxiliares es lo que entra sin que se
+  // encojan entre sí; el cuarto los aprieta y deja de leerse.
+  if (pr.principal && aux.length < 3) {
+    aux.push({ key: "premio", label: "REGALO", value: recortar(pr.principal.nombre, 20) });
+  }
+
+  // ── EL REVERSO: TODO LO QUE NO CABE DELANTE ───────────────────────────────────────────────
+  if (pt.activo) {
+    backFields.push({ key: "puntos-detalle", label: "Tus puntos",
+      value: pt.objetivo
+        ? `Tienes ${pt.saldo} punto${pt.saldo === 1 ? "" : "s"}. El siguiente premio son ${pt.objetivo}.`
+        : `Tienes ${pt.saldo} punto${pt.saldo === 1 ? "" : "s"}.` });
+    if (pt.proxima_caducidad) {
+      backFields.push({ key: "caducan", label: "Próxima caducidad de puntos",
+        value: String(pt.proxima_caducidad).slice(0, 10) });
+    }
+  } else if (pt.texto) {
+    backFields.push({ key: "puntos-detalle", label: "Tus puntos", value: String(pt.texto) });
+  }
+
+  for (const [i, p] of (pr.disponibles || []).slice(0, 4).entries()) {
+    const partes = [p.local || "En cualquiera de nuestros locales"];
+    if (p.horario) partes.push(`de ${p.horario}`);
+    if (p.hasta_texto) partes.push(`hasta el ${p.hasta_texto}`);
+    backFields.push({ key: `regalo-${i}`, label: recortar(p.nombre, 60), value: partes.join(" · ") });
+  }
+
+  backFields.push({ key: "cuenta", label: "Tus visitas y tus descuentos", value: enlace });
+  if (textos.privacidad_url) {
+    backFields.push({ key: "privacidad", label: "Privacidad", value: String(textos.privacidad_url) });
+  }
+  if (textos.contacto) {
+    backFields.push({ key: "contacto", label: "Contacto", value: String(textos.contacto) });
+  }
+
+  return { primaryFields, secondaryFields, auxiliaryFields: aux.slice(0, 3), backFields };
+}
+
+export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales = [],
+                                 estado = null, servicio = null, textos = {} } = {}) {
   const pase = {
     formatVersion: 1,
     passTypeIdentifier: cfg.pass_type_id,
@@ -108,25 +224,20 @@ export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales 
       messageEncoding: "iso-8859-1",
     }],
 
-    storeCard: {
-      // El nombre, grande, con el tipo de tarjeta de rótulo. Si no hay nombre —un carné emitido
-      // sin él— el sitio grande lo ocupa el número, que es lo único que identifica entonces.
-      primaryFields: qr.nombre
-        ? [{ key: "titular", label: "CARNÉ DE CLIENTE", value: String(qr.nombre) }]
-        : [{ key: "socio", label: "CARNÉ DE CLIENTE", value: codigoLegible(qr.codigo) }],
-      secondaryFields: qr.nombre
-        ? [{ key: "socio", label: "NÚMERO DE SOCIO", value: codigoLegible(qr.codigo) }]
-        : [],
-      auxiliaryFields: [],
-      backFields: [
-        { key: "que-es", label: "Tu tarjeta",
-          value: "Enséñala cuando vengas y te reconocemos al momento." },
-        { key: "donde", label: "Dónde vale", value: promo ? dondeVale(promo.locales) : dondeVale("") },
-        { key: "cuenta", label: "Tus visitas y tus descuentos",
-          value: urlTarjeta(base, qr.token) },
-      ],
-    },
+    storeCard: camposDe({ qr, base, promo, estado, textos }),
   };
+
+  // ── EL SERVICIO WEB, SOLO SI SE PIDE EXPRESAMENTE ─────────────────────────────────────────
+  //
+  // Estos dos campos son lo que hace que iOS empiece a llamarnos. Declararlos sin el servicio
+  // abierto deja al iPhone reintentando contra un 401 cada vez que el pase aparece en pantalla, y
+  // un pase ya bajado los conserva para siempre: no se arregla apagando nada después.
+  //
+  // Por eso no se ponen «por si acaso». Quien llama decide, mirando la puerta.
+  if (servicio && servicio.url && servicio.token) {
+    pase.webServiceURL = String(servicio.url);
+    pase.authenticationToken = String(servicio.token);
+  }
 
   // Que la tarjeta salga sola en la pantalla de bloqueo al llegar al local. Son diez sitios como
   // mucho (límite de Apple) y es lo que hace que no haya que buscarla.

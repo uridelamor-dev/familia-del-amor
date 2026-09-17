@@ -31,7 +31,15 @@ const agora = readFileSync(new URL("../src/modules/fidelizacion/agora.js", impor
 const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
 const puertaPuntos = readFileSync(new URL("../src/modules/fidelizacion/puerta.js", import.meta.url), "utf8");
 
-const sinComentarios = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+// EL `/*` TIENE QUE EMPEZAR LA LÍNEA.
+//
+// Con `/\/\*[\s\S]*?\*\//g` a secas, el `"*/*"` de `express.raw({ type: "*/*" })` abría un bloque
+// que no cerraba hasta 371 000 caracteres después: se comía el 28 % de `server.js` y cualquier
+// `assert.ok(!...)` sobre esa zona pasaba sin comprobar nada.
+//
+// Todos los bloques de verdad de esta casa son JSDoc al principio de línea, así que basta con
+// exigirlo — y así un `*/*` dentro de una cadena sobrevive, que es lo que tiene que pasar.
+const sinComentarios = (t) => t.replace(/^\s*\/\*[\s\S]*?\*\//gm, "").replace(/^\s*\/\/.*$/gm, "");
 
 /** El contexto con todo cumplido. Cada test rompe lo que quiere mirar. */
 const TODO_OK = Object.freeze({
