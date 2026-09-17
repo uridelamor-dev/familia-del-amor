@@ -322,22 +322,114 @@ export function puedePublicar(promo, { grupos = {}, catalogo = null } = {}) {
   return { ok: falta.length === 0, falta };
 }
 
+// ── EL DIAGNÓSTICO, REQUISITO A REQUISITO ────────────────────────────────────────────────────
+//
+// `elegible()` contesta SÍ o NO y se para en el primer motivo. Es lo correcto en la barra —con el
+// cliente delante solo importa si se lo lleva— y es exactamente lo que NO sirve para configurar.
+//
+// EL FALLO QUE ESTO ARREGLA: una promoción con `requiere_derecho` devolvía `sin_derecho` en el
+// primer `return`, y el simulador pintaba esa misma frase en las cinco líneas —saldo, mínimo,
+// unidades, cuenta y la cuenta elegible—. Parecía que todo fallaba por lo mismo y no se podía ver
+// si el resto estaba bien configurado.
+//
+// Aquí se comprueba CADA requisito por su cuenta y se devuelven todos, con su respuesta real. Son
+// independientes entre sí: que falte el derecho no impide saber si el saldo llega o si quedan
+// unidades. Lo único que de verdad NO se puede evaluar es la compra mínima cuando todavía no hay
+// importe —al ofrecer el premio la cuenta está abierta—, y eso se dice con esas palabras en vez de
+// inventar un resultado.
+
+/** Los tres estados de una línea del diagnóstico. */
+export const CUMPLE = Object.freeze({ OK: "ok", FALLA: "falla", NO_EVALUADO: "no_evaluado" });
+
 /**
- * EL SIMULADOR. Qué le pasaría a una cuenta concreta, en frases.
+ * Todos los requisitos, cada uno con SU resultado.
  *
- * Los escenarios son los que se equivocan de verdad: una cuenta que no cumple, un premio ya usado,
- * un día que no toca, el local equivocado y un producto que no entra.
+ * @returns {{ok: boolean, motivo: string|null, requisitos: Array}}
+ */
+export function diagnosticar(promo, ctx = {}) {
+  const { ahora, local, usos = 0, usosTotales = 0, saldo = 0,
+          importeCentimos = null, derechos = 0 } = ctx;
+  const linea = (id, texto, estado, detalle) => ({ id, texto, estado, detalle,
+    ok: estado === CUMPLE.OK });
+  const req = [];
+
+  // 1 · Vigencia: estado, local, fechas, días y horas. Van juntas porque `vigente()` es una sola
+  //     pregunta —«¿está viva aquí y ahora?»— y su motivo ya dice cuál de las cinco ha fallado.
+  const v = vigente(promo, { ahora, local });
+  req.push(linea("vigencia", "Está viva en este local y en este momento",
+    v.ok ? CUMPLE.OK : CUMPLE.FALLA,
+    v.ok ? `${v.madrid.fecha} a las ${v.madrid.hora} (hora de Madrid)` : EXPLICACION[v.motivo] || v.motivo));
+
+  // 2 · El derecho individual. Solo se enseña si la promoción lo exige: en una general, una línea
+  //     que siempre sale en verde es ruido.
+  if (promo?.requiere_derecho) {
+    const tiene = Number(derechos) > 0;
+    req.push(linea("derecho", "La cuenta se ha ganado esta promoción",
+      tiene ? CUMPLE.OK : CUMPLE.FALLA,
+      tiene ? `${derechos} derecho(s) concedido(s)` : "no se apuntó a ningún formulario vinculado"));
+  }
+
+  // 3 · Usos de ESTA cuenta.
+  const porCuenta = Number(promo?.limite_cuenta);
+  const hayTope = Number.isFinite(porCuenta) && porCuenta > 0;
+  req.push(linea("usos_cuenta", "A la cuenta le quedan usos",
+    !hayTope || usos < porCuenta ? CUMPLE.OK : CUMPLE.FALLA,
+    hayTope ? `${usos} de ${porCuenta} usada(s)` : `${usos} usada(s), sin límite por cuenta`));
+
+  // 4 · Unidades de la promoción entera.
+  const total = Number(promo?.limite_total);
+  const hayTotal = Number.isFinite(total) && total > 0;
+  req.push(linea("unidades", "Quedan unidades de la promoción",
+    !hayTotal || usosTotales < total ? CUMPLE.OK : CUMPLE.FALLA,
+    hayTotal ? `${usosTotales} de ${total} repartida(s)` : `${usosTotales} repartida(s), sin tope total`));
+
+  // 5 · Puntos, solo si cuesta puntos.
+  const coste = Number(promo?.coste_puntos) || 0;
+  if (coste > 0) {
+    req.push(linea("puntos", "La cuenta tiene puntos suficientes",
+      Number(saldo) >= coste ? CUMPLE.OK : CUMPLE.FALLA,
+      `${Number(saldo) || 0} de ${coste} punto(s)`));
+  }
+
+  // 6 · Compra mínima. LA ÚNICA que puede quedar sin evaluar: al ofrecer el premio la cuenta está
+  //     abierta y todavía no hay importe. Se comprueba de verdad al cerrar la factura.
+  const minimo = Number(promo?.compra_minima) || 0;
+  if (minimo > 0) {
+    const cent = Math.round(minimo * 100);
+    req.push(importeCentimos === null || importeCentimos === undefined
+      ? linea("compra_minima", "La cuenta llega a la compra mínima", CUMPLE.NO_EVALUADO,
+          `no evaluado: al ofrecer el premio todavía no hay importe. Se comprueba al cerrar la factura (mínimo ${minimo} €)`)
+      : linea("compra_minima", "La cuenta llega a la compra mínima",
+          Number(importeCentimos) >= cent ? CUMPLE.OK : CUMPLE.FALLA,
+          `${(Number(importeCentimos) / 100).toFixed(2)} € de ${minimo.toFixed(2)} €`));
+  }
+
+  // El veredicto lo sigue dando `elegible`: es el que usa la barra, y el simulador no puede
+  // contestar una cosa distinta de la que pasará de verdad.
+  const r = elegible(promo, ctx);
+  return { ok: r.ok, motivo: r.motivo, requisitos: req };
+}
+
+/**
+ * EL SIMULADOR. Qué le pasaría a una cuenta concreta, requisito a requisito.
+ *
+ * Cada escenario dice QUÉ CAMBIA respecto de la cuenta que sí se lo lleva. Sin eso, un escenario
+ * que mueve el reloj a propósito —«así se vería fuera de fechas»— se lee como un veredicto sobre
+ * hoy: alguien simula el 16 de septiembre, ve «todavía no ha empezado» y da por hecho que su
+ * promoción no ha arrancado, cuando lo que estaba mirando era la prueba de otra fecha.
  */
 export function simularPromo(promo, escenarios) {
   return (escenarios || []).map((e) => {
-    const r = elegible(promo, e);
+    const d = diagnosticar(promo, e);
     return {
       nombre: e.nombre,
-      ok: r.ok,
-      motivo: r.motivo,
-      texto: r.ok
+      cambia: e.cambia || null,
+      ok: d.ok,
+      motivo: d.motivo,
+      requisitos: d.requisitos,
+      texto: d.ok
         ? `${e.nombre}: SÍ se lo lleva.`
-        : `${e.nombre}: no — ${EXPLICACION[r.motivo] || r.motivo}.`,
+        : `${e.nombre}: no — ${EXPLICACION[d.motivo] || d.motivo}.`,
     };
   });
 }

@@ -11787,9 +11787,22 @@ async function fidgPromoSimular() {
     const j = await apiSend("POST", "/api/fidelizacion/promos/simular", fidgPromoCuerpo());
     const c = document.getElementById("pmSim");
     if (!c) return;
+    // CADA ESCENARIO, CON SUS REQUISITOS UNO A UNO. Antes era una línea por escenario con el
+    // primer motivo que fallara, y una promoción que exige derecho pintaba «no se apuntó» cinco
+    // veces seguidas: parecía que todo fallaba por lo mismo.
+    const marca = { ok: "✔", falla: "✖", no_evaluado: "·" };
+    const escenarios = (j.escenarios || []).map((e) => `
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
+        <div><b>${e.ok ? "✔" : "✖"} ${esc(e.nombre)}</b>${e.cambia ? ` <span class="mut">— ${esc(e.cambia)}</span>` : ""}</div>
+        <div style="margin-top:4px">${(e.requisitos || []).map((q) =>
+          `<div style="display:flex;gap:6px;align-items:baseline;${q.estado === "falla" ? "color:var(--danger)" : q.estado === "no_evaluado" ? "opacity:.75" : ""}">
+             <span>${marca[q.estado] || "·"}</span>
+             <span>${esc(q.texto)} <span class="mut">— ${esc(q.detalle || "")}</span></span></div>`).join("")}</div>
+      </div>`).join("");
     c.innerHTML = `<b>Simulación — no se ha guardado nada.</b>
-      <div style="margin-top:6px">${(j.escenarios || []).map((e) => `${e.ok ? "✔" : "✖"} ${esc(e.texto)}`).join("<br>")}</div>
-      ${j.publicar && !j.publicar.ok ? `<div style="margin-top:8px;color:var(--danger)"><b>Para publicar falta:</b><br>${j.publicar.falta.map(esc).join("<br>")}</div>` : '<div style="margin-top:8px">Se puede publicar.</div>'}`;
+      ${j.madrid ? `<div class="mut" style="font-size:12px;margin-top:2px">Hora de Madrid: ${esc(j.madrid.fecha)} a las ${esc(j.madrid.hora)}. Cada escenario dice qué cambia respecto de la cuenta que sí se lo lleva.</div>` : ""}
+      ${escenarios}
+      ${j.publicar && !j.publicar.ok ? `<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);color:var(--danger)"><b>Para publicar falta:</b><br>${j.publicar.falta.map(esc).join("<br>")}</div>` : '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">Se puede publicar.</div>'}`;
     c.classList.remove("hidden");
   } catch (e) { toast(e.message || "No se pudo simular"); }
 }

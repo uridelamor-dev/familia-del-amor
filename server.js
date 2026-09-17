@@ -20739,20 +20739,87 @@ app.post("/api/fidelizacion/promos/simular", requireAuth(PROMOS_ROLES), async (r
   res.set("Cache-Control", "no-store");
   try {
     const b = req.body || {};
+    // ── EL CAMPO QUE SE PERDÍA ────────────────────────────────────────────────────────────────
+    //
+    // El panel manda `codigo_comprobado` (una casilla, booleana) y el validador lee
+    // `codigo_comprobado_en` (la FECHA en que se comprobó). Son dos nombres para la misma
+    // decisión, y aquí no se traducía: con la casilla marcada, Simular seguía contestando «el
+    // código de Ágora no se ha comprobado». La ruta de guardar sí lo traducía; ésta no.
+    //
+    // Se traduce igual que allí, y `...b` va DELANTE para que este valor no se sobrescriba con el
+    // booleano crudo del cuerpo.
     const promo = { ...b, estado: "publicada", reward_id: b.reward_id || "fidp:simulacion",
+      codigo_comprobado_en: b.codigo_comprobado ? isoConOffset(Date.now()) : (b.codigo_comprobado_en || null),
       grupos: fidLeerLista(b.grupos), dias: fidLeerLista(b.dias) };
     const local = promo.local || (LOCALES_CANON[0] || null);
     const cuando = b.ahora || isoConOffset(Date.now());
     const m = fidEnMadrid(cuando);
 
+    // ── UNA FECHA FUERA DE PLAZO QUE SE ENTIENDA ──────────────────────────────────────────────
+    //
+    // Antes se usaba `1999-01-01` fijo. Con una promoción que empieza mañana, ese escenario
+    // contestaba «todavía no ha empezado» —cierto para 1999, inútil como diagnóstico— y se leía
+    // como un veredicto sobre hoy.
+    //
+    // Ahora la fecha se saca de la propia promoción: el día ANTES de que empiece, o el día DESPUÉS
+    // de que termine. Y el escenario dice qué fecha ha usado.
+    const diaAntes = (iso) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - 1);
+      return d.toISOString().slice(0, 10); };
+    const diaDespues = (iso) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().slice(0, 10); };
+    const hhmm = (promo.hora_desde ? String(promo.hora_desde).slice(0, 5) : "12:00");
+    let fueraFecha = null;
+    if (promo.desde && /^\d{4}-\d{2}-\d{2}$/.test(String(promo.desde).slice(0, 10))) {
+      fueraFecha = { fecha: diaAntes(String(promo.desde).slice(0, 10)), que: "el día antes de empezar" };
+    } else if (promo.hasta && /^\d{4}-\d{2}-\d{2}$/.test(String(promo.hasta).slice(0, 10))) {
+      fueraFecha = { fecha: diaDespues(String(promo.hasta).slice(0, 10)), que: "el día después de terminar" };
+    }
+
+    const exigeDerecho = !!promo.requiere_derecho;
+    // La cuenta que SÍ se lo lleva. Si la promoción exige derecho, esta cuenta lo tiene: si no,
+    // el escenario de referencia fallaría siempre y no habría con qué comparar el resto.
+    const base = { ahora: cuando, local, usos: 0, usosTotales: 0, saldo: 100000,
+                   importeCentimos: 999999, derechos: exigeDerecho ? 1 : 0 };
+
+    // ── SOLO LOS ESCENARIOS QUE ESTA PROMOCIÓN PUEDE FALLAR ───────────────────────────────────
+    //
+    // Antes salían los siete siempre. En una promoción sin tope total, sin coste en puntos y sin
+    // compra mínima, tres de ellos contestaban «SÍ se lo lleva» debajo de un título que dice
+    // «Unidades agotadas» o «Sin puntos suficientes». Un escenario que no puede fallar no es una
+    // prueba: es ruido que hace dudar de las líneas que sí importan.
+    const topeCuenta = Number(promo.limite_cuenta);
+    const topeTotal = Number(promo.limite_total);
+    const cuestaPuntos = Number(promo.coste_puntos) || 0;
+    const minimo = Number(promo.compra_minima) || 0;
+
     const escenarios = [
-      { nombre: "Cuenta elegible", ahora: cuando, local, usos: 0, usosTotales: 0, saldo: 100000, importeCentimos: 999999 },
-      { nombre: "Premio ya utilizado", ahora: cuando, local, usos: 99, usosTotales: 0, saldo: 100000, importeCentimos: 999999 },
-      { nombre: "Unidades agotadas", ahora: cuando, local, usos: 0, usosTotales: 999999, saldo: 100000, importeCentimos: 999999 },
-      { nombre: "Sin puntos suficientes", ahora: cuando, local, usos: 0, usosTotales: 0, saldo: 0, importeCentimos: 999999 },
-      { nombre: "Cuenta por debajo del mínimo", ahora: cuando, local, usos: 0, usosTotales: 0, saldo: 100000, importeCentimos: 0 },
-      { nombre: "Local incorrecto", ahora: cuando, local: "Oficina", usos: 0, usosTotales: 0, saldo: 100000, importeCentimos: 999999 },
-      { nombre: "Fuera de fecha", ahora: "1999-01-01T10:00:00Z", local, usos: 0, usosTotales: 0, saldo: 100000, importeCentimos: 999999 },
+      { ...base, nombre: "Cuenta elegible", cambia: "nada: es la cuenta que sí se lo lleva" },
+      ...(Number.isFinite(topeCuenta) && topeCuenta > 0
+        ? [{ ...base, nombre: "Premio ya utilizado", usos: topeCuenta,
+             cambia: `la cuenta ya lo ha usado ${topeCuenta} vez/veces, que es su tope` }]
+        : []),
+      ...(Number.isFinite(topeTotal) && topeTotal > 0
+        ? [{ ...base, nombre: "Unidades agotadas", usosTotales: topeTotal,
+             cambia: `se han repartido las ${topeTotal} unidades` }]
+        : []),
+      ...(cuestaPuntos > 0
+        ? [{ ...base, nombre: "Sin puntos suficientes", saldo: 0, cambia: "la cuenta tiene 0 puntos" }]
+        : []),
+      ...(minimo > 0
+        ? [{ ...base, nombre: "Cuenta por debajo del mínimo", importeCentimos: 0,
+             cambia: `la cuenta es de 0 €, y el mínimo son ${minimo} €` }]
+        : []),
+      ...(promo.local
+        ? [{ ...base, nombre: "Local incorrecto", local: "Oficina", cambia: "se escanea en «Oficina»" }]
+        : []),
+      ...(exigeDerecho
+        ? [{ ...base, nombre: "Alguien que no se apuntó", derechos: 0,
+             cambia: "la cuenta no tiene el derecho concedido" }]
+        : []),
+      ...(fueraFecha
+        ? [{ ...base, nombre: "Fuera de fecha", ahora: `${fueraFecha.fecha}T${hhmm}:00+02:00`,
+             cambia: `se escanea el ${fueraFecha.fecha} — ${fueraFecha.que}` }]
+        : []),
     ];
 
     // Los productos elegibles, resueltos: es lo que contesta «¿qué café entra exactamente?».
