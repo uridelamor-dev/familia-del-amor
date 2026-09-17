@@ -1773,3 +1773,156 @@ describe("el panel distingue los tres", () => {
     assert.match(panel, /¿Ya lo has corregido\?/);
   });
 });
+
+// ── BAJARSE EL CARNÉ NUNCA PUEDE ROMPERSE ────────────────────────────────────────────────────
+//
+// Lo dinámico es un añadido. Si falla —una tabla nueva que no se creó en el despliegue, la base
+// con un mal momento— tiene que salir el pase de siempre, no un 500 en el móvil de alguien que
+// está en la puerta del local.
+
+describe("la descarga del pase aguanta que lo dinámico falle", () => {
+  const s = sinComentarios(server);
+  const i = s.indexOf("async function walConstruirPase(");
+  const fn = s.slice(i, s.indexOf("\n}", i));
+
+  test("la proyección va dentro de un `try`, y si falla se cae al pase ESTÁTICO", () => {
+    assert.match(fn, /try \{\s*\n\s*sw = await walInterruptores\(\);/);
+    assert.match(fn, /proyeccion = null;/);
+    assert.match(fn, /console\.error\(lineaErrorSql\("\[wallet\] proyeccion del pase", e\)\)/);
+  });
+
+  test("y sin proyección NO se declara servicio web", () => {
+    // Un pase que declarara servicio sin llevar estado haría que el iPhone se registrara para
+    // recibir actualizaciones de nada.
+    assert.match(fn, /if \(proyeccion && walLlevaServicio\(sw\)\)/);
+  });
+
+  test("crear el secreto del servicio tampoco puede tumbar la descarga", () => {
+    const iServ = fn.indexOf("walLlevaServicio(sw)");
+    const rama = fn.slice(iServ);
+    assert.match(rama, /try \{/);
+    assert.match(rama, /servicio = null;/);
+    assert.match(rama, /console\.error\(lineaErrorSql\("\[wallet\] servicio del pase", e\)\)/);
+  });
+
+  test("y los interruptores parten de APAGADOS, no de `undefined`", () => {
+    assert.match(fn, /let sw = \{ \.\.\.WAL_APAGADOS \}, proyeccion = null, tarjetaCfg = \{\};/);
+  });
+
+  test("el pase estático se sigue construyendo y firmando igual", () => {
+    // Es lo que se entrega hoy, y es lo que tiene que salir cuando lo demás falle.
+    const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE });
+    assert.equal(p.barcodes[0].message, urlTarjeta(BASE, TOKEN));
+    assert.equal(p.serialNumber, TOKEN);
+    assert.equal(p.webServiceURL, undefined);
+    assert.deepEqual(p.storeCard.primaryFields,
+      [{ key: "titular", label: "CARNÉ DE CLIENTE", value: "Marta" }]);
+  });
+});
+
+// ── ENSEÑAR Y ACTUALIZARSE SON DOS COSAS DISTINTAS ───────────────────────────────────────────
+//
+// Estaban atadas —`estado: servicio ? proyeccion : null`— y era un error de diseño: el pase no
+// enseñaba ni los puntos ni los regalos hasta que además se abría el servicio web. Son preguntas
+// separadas: QUÉ pone en la tarjeta, y SI puede refrescarse sola.
+
+describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
+  const conEstado = (extra = {}) => pasePlanoApple({
+    qr: QR, cfg: CFG, base: BASE, congelado: true,
+    estado: proy({ promosElegibles: [PROMO] }), ...extra });
+
+  test("SIN servicio web, los campos dinámicos SALEN igual", () => {
+    const p = conEstado();
+    assert.equal(p.webServiceURL, undefined, "no debe declarar servicio");
+    const aux = p.storeCard.auxiliaryFields.map((f) => f.key);
+    assert.ok(aux.includes("puntos"), `auxiliares: ${aux.join(", ")}`);
+    assert.ok(aux.includes("regalos"), `auxiliares: ${aux.join(", ")}`);
+  });
+
+  test("y el servidor ya no los ata", () => {
+    const s = sinComentarios(server);
+    assert.match(s, /estado: proyeccion,/);
+    assert.ok(!/estado: servicio \? proyeccion : null/.test(s), "siguen atados");
+    assert.match(s, /congelado: !servicio,/);
+  });
+
+  test("el diseño aprobado sigue intacto con los campos nuevos", () => {
+    const p = conEstado();
+    assert.deepEqual(p.storeCard.primaryFields,
+      [{ key: "titular", label: "CARNÉ DE CLIENTE", value: "Marta" }]);
+    assert.deepEqual(p.storeCard.secondaryFields,
+      [{ key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" }]);
+    assert.equal(p.logoText, undefined);
+    assert.equal(p.barcodes[0].altText, undefined);
+    assert.equal(p.backgroundColor, "rgb(244, 242, 237)");
+    assert.equal(p.barcodes[0].message, urlTarjeta(BASE, TOKEN));
+    assert.equal(p.serialNumber, TOKEN);
+  });
+
+  test("NUNCA más de tres campos auxiliares", () => {
+    assert.ok(conEstado().storeCard.auxiliaryFields.length <= 3);
+  });
+
+  test("y los tres son PUNTOS, PRÓXIMO PREMIO y REGALOS", () => {
+    assert.deepEqual(conEstado().storeCard.auxiliaryFields.map((f) => f.label),
+      ["PUNTOS", "PRÓXIMO PREMIO", "REGALOS"]);
+  });
+});
+
+describe("con los puntos apagados la cara se queda LIMPIA", () => {
+  const apagados = () => pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, congelado: true,
+    estado: proy({ interruptores: { conceder: false }, promoSw: { promociones_ofrecer: false } }) });
+
+  test("NO sale ningún campo auxiliar: ni un cero, ni un texto recortado", () => {
+    // «Programa de puntos en…» en un campo de 22 caracteres ensucia una tarjeta que está bien.
+    assert.deepEqual(apagados().storeCard.auxiliaryFields, []);
+  });
+
+  test("y la explicación va ENTERA en el reverso", () => {
+    const back = apagados().storeCard.backFields;
+    const d = back.find((f) => f.key === "puntos-detalle");
+    assert.ok(d, `reverso: ${back.map((f) => f.key).join(", ")}`);
+    assert.match(d.value, /preparaci/i);
+    assert.ok(!d.value.includes("…"), "el reverso no recorta");
+  });
+
+  test("la cara queda EXACTAMENTE como el pase de siempre", () => {
+    const a = apagados().storeCard;
+    const b = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE }).storeCard;
+    assert.deepEqual(a.primaryFields, b.primaryFields);
+    assert.deepEqual(a.secondaryFields, b.secondaryFields);
+    assert.deepEqual(a.auxiliaryFields, b.auxiliaryFields);
+  });
+});
+
+describe("un pase congelado dice de cuándo son sus datos", () => {
+  test("sin servicio web, el reverso lleva la fecha de la foto", () => {
+    const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, congelado: true,
+      estado: proy({ ahora: "2026-09-18T10:00:00+02:00" }) });
+    const f = p.storeCard.backFields.find((x) => x.key === "al-dia");
+    assert.ok(f, "falta el aviso de que los datos están congelados");
+    assert.match(f.value, /Son del 18\/09\/2026/);
+    assert.match(f.value, /enlace de abajo/);
+  });
+
+  test("CON servicio web NO sale: el pase se refresca solo", () => {
+    const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, congelado: false,
+      servicio: { url: BASE, token: "s" }, estado: proy() });
+    assert.equal(p.storeCard.backFields.find((x) => x.key === "al-dia"), undefined);
+  });
+
+  test("y sin nada que enseñar tampoco: no hay foto que fechar", () => {
+    const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, congelado: true,
+      estado: proy({ interruptores: { conceder: false }, promoSw: { promociones_ofrecer: false } }) });
+    assert.equal(p.storeCard.backFields.find((x) => x.key === "al-dia"), undefined);
+  });
+
+  test("una fecha ilegible no pone «Invalid Date» en el carné de nadie", () => {
+    for (const malo of [null, "", "mañana", "2026-13-99x"]) {
+      const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, congelado: true,
+        estado: { ...proy(), actualizado_en: malo } });
+      const f = p.storeCard.backFields.find((x) => x.key === "al-dia");
+      assert.ok(f && !/Invalid|null|undefined|NaN/.test(f.value), `con «${malo}»: ${f?.value}`);
+    }
+  });
+});

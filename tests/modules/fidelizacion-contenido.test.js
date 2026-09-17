@@ -6,6 +6,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   textoSeguro, urlSegura, normalizarCampos, validarFormulario, formularioAbierto,
   renderPlantilla, variablesDesconocidas, puedeRecibir, paletaDe,
@@ -114,9 +115,15 @@ describe("los campos del formulario", () => {
     assert.deepEqual(r.map((c) => c.id), ["nombre", "telefono"]);
   });
 
-  test("los forzosos van primero, y el resto en su orden", () => {
+  test("se respeta el orden configurado; lo que falte se añade al principio", () => {
+    // ANTES este test decía «los forzosos van primero», y ese era el fallo: `nombre` y `telefono`
+    // no se pueden quitar ni hacer opcionales, pero SÍ se pueden mover. Atar las dos reglas hacía
+    // que reordenar desde el panel no sirviera de nada.
+    //
+    // Aquí `nombre` viene el tercero y ahí se queda. `telefono` no viene, así que se añade
+    // delante, que es el sitio seguro.
     const r = normalizarCampos([{ id: "email" }, { id: "comercial" }, { id: "nombre" }]);
-    assert.deepEqual(r.map((c) => c.id), ["nombre", "telefono", "email", "comercial"]);
+    assert.deepEqual(r.map((c) => c.id), ["telefono", "email", "comercial", "nombre"]);
   });
 
   test("la etiqueta configurada pasa por el saneado", () => {
@@ -219,5 +226,100 @@ describe("a quién NO se le escribe", () => {
   test("sin consentimiento NO se escribe, aunque todo lo demás esté bien", () => {
     // Es el caso que importa: el resto son fallos técnicos, éste es una decisión de la persona.
     assert.equal(puedeRecibir({ telefono: "600111222", consiente: false, baja: false }).ok, false);
+  });
+});
+
+// ── EL ORDEN DE LAS PREGUNTAS LO ELIGE MARKETING ─────────────────────────────────────────────
+//
+// Antes `normalizarCampos` recolocaba `nombre` y `telefono` al principio y TIRABA el orden
+// configurado, así que mover una pregunta en el panel no servía de nada: se guardaba un orden y
+// salía el de siempre. Eran dos reglas distintas metidas en una:
+//
+//   · `nombre` y `telefono` no se pueden quitar ni hacer opcionales  ← esto sigue igual
+//   · …y además iban primeros                                        ← esto no tenía por qué
+
+describe("el orden de los campos", () => {
+  const ids = (lista) => normalizarCampos(lista).map((c) => c.id);
+
+  test("SE RESPETA el orden configurado, forzosos incluidos", () => {
+    assert.deepEqual(
+      ids([{ id: "poblacion" }, { id: "nombre" }, { id: "email" }, { id: "telefono" }]),
+      ["poblacion", "nombre", "email", "telefono"]);
+  });
+
+  test("y el teléfono puede ir el último si así se configura", () => {
+    const l = ids([{ id: "nombre" }, { id: "email" }, { id: "poblacion" }, { id: "telefono" }]);
+    assert.equal(l[l.length - 1], "telefono");
+  });
+
+  test("pero SIGUE siendo obligatorio y visible, lo pongan donde lo pongan", () => {
+    const campos = normalizarCampos([
+      { id: "poblacion" },
+      { id: "telefono", obligatorio: false, visible: false },
+      { id: "nombre", obligatorio: false, visible: false },
+    ]);
+    for (const id of ["telefono", "nombre"]) {
+      const c = campos.find((x) => x.id === id);
+      assert.equal(c.obligatorio, true, `${id} se ha podido hacer opcional`);
+      assert.equal(c.visible, true, `${id} se ha podido esconder`);
+    }
+  });
+
+  test("si no vienen en la lista, se añaden AL PRINCIPIO", () => {
+    // Es el sitio seguro y es lo que había: un formulario que empieza pidiendo el teléfono.
+    assert.deepEqual(ids([{ id: "email" }, { id: "poblacion" }]),
+      ["nombre", "telefono", "email", "poblacion"]);
+  });
+
+  test("`comercial` sigue sin poder ser obligatorio, vaya donde vaya", () => {
+    const c = normalizarCampos([{ id: "comercial", obligatorio: true }, { id: "nombre" }])
+      .find((x) => x.id === "comercial");
+    assert.equal(c.obligatorio, false);
+    assert.equal(c.marcado, false);
+  });
+
+  test("ni se repiten campos ni se cuelan los que no existen", () => {
+    assert.deepEqual(ids([{ id: "email" }, { id: "email" }, { id: "inventado" }, { id: "nombre" }]),
+      ["telefono", "email", "nombre"]);
+  });
+
+  test("una lista vacía da el formulario mínimo de siempre", () => {
+    assert.deepEqual(ids([]), ["nombre", "telefono"]);
+    assert.deepEqual(ids(null), ["nombre", "telefono"]);
+  });
+});
+
+describe("el panel deja mover las preguntas", () => {
+  // `tests/modules/`, así que hacen falta DOS niveles para salir a la raíz.
+  const panel = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
+
+  test("cada fila lleva sus flechas", () => {
+    assert.match(panel, /data-act="ff-subir" data-campo="\$\{esc\(id\)\}"/);
+    assert.match(panel, /data-act="ff-bajar" data-campo="\$\{esc\(id\)\}"/);
+    assert.match(panel, /else if \(act === "ff-subir"\) fidgMoverCampo\(t\.getAttribute\("data-campo"\), true\);/);
+  });
+
+  test("mover NO repinta la lista: se movería el nodo y se perdería lo escrito", () => {
+    assert.match(panel, /function fidgMoverCampo\(id, haciaArriba\)/);
+    assert.match(panel, /caja\.insertBefore\(fila, vecino\)/);
+    assert.ok(!/fidgMoverCampo[\s\S]{0,600}innerHTML/.test(panel), "repinta y pierde lo escrito");
+  });
+
+  test("y en el borde no hace nada, en vez de reventar", () => {
+    assert.match(panel, /if \(!vecino\) return;/);
+  });
+
+  test("el orden que se guarda SALE DEL DOM, no del catálogo", () => {
+    assert.match(panel, /document\.getElementById\("ffCampos"\)\?\.querySelectorAll\("\[data-campo\]"\)/);
+    assert.match(panel, /\.map\(\(fila\) => fila\.getAttribute\("data-campo"\)\)/);
+  });
+
+  test("y al abrir el formulario se pinta EL ORDEN GUARDADO, no el del catálogo", () => {
+    assert.match(panel, /const guardadosEnOrden = \(base\?\.campos \|\| \[\]\)\.map\(\(c\) => c\.id\)/);
+    assert.match(panel, /const orden = \[\.\.\.guardadosEnOrden, \.\.\.FIDG_CAMPOS\.map/);
+  });
+
+  test("el aviso explica que el orden es el que verá el cliente", () => {
+    assert.match(panel, /cambias en qué orden se le preguntan al cliente/);
   });
 });

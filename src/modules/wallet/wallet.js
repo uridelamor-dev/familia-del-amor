@@ -102,6 +102,15 @@ export function nombreArchivoPase() {
 // puerta esté cerrada, y lo que garantiza que este trabajo no cambia el pase de nadie hasta que
 // alguien lo encienda.
 
+/** `2026-10-01T09:00:00+02:00` → `01/10/2026`. Sin fecha válida, nada: un «Invalid Date» en el
+ *  reverso de un carné es peor que no decir cuándo se hizo la foto. */
+function fechaDeIso(iso) {
+  const s = String(iso || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split("-");
+  return `${d}/${m}/${y}`;
+}
+
 /** Recorta sin partir palabras a lo bruto: un campo del pase que desborda se ve peor que uno corto. */
 function recortar(txt, max) {
   const s = String(txt ?? "").trim();
@@ -111,7 +120,7 @@ function recortar(txt, max) {
   return (esp > max * 0.6 ? corte.slice(0, esp) : corte) + "…";
 }
 
-function camposDe({ qr, base, promo, estado, textos }) {
+function camposDe({ qr, base, promo, estado, textos, congelado = false }) {
   const codigo = codigoLegible(qr.codigo);
   const enlace = urlTarjeta(base, qr.token);
   const ayuda = textos.ayuda || "Enséñala cuando vengas y te reconocemos al momento.";
@@ -151,11 +160,11 @@ function camposDe({ qr, base, promo, estado, textos }) {
     } else if (pt.canjeable) {
       aux.push({ key: "faltan", label: "PRÓXIMO PREMIO", value: "¡Ya lo tienes!" });
     }
-  } else if (pt.texto) {
-    // NO se pone «0 puntos»: un marcador a cero que no existe hace que el día que se encienda
-    // parezca que ha perdido lo que tenía. El texto es configurable desde el panel.
-    aux.push({ key: "puntos", label: "PUNTOS", value: recortar(pt.texto, 22) });
   }
+  // CON LOS PUNTOS APAGADOS NO SE PONE NADA EN LA CARA. Ni un «0» —un marcador a cero que no
+  // existe hace que el día que se encienda parezca que ha perdido lo que tenía— ni el texto de
+  // preparación recortado, que en un campo de 22 caracteres queda en «Programa de puntos en…» y
+  // ensucia una tarjeta que está bien como está. La explicación va entera en el reverso.
 
   if (pr.cantidad > 0) {
     aux.push({ key: "regalos", label: "REGALOS",
@@ -189,6 +198,17 @@ function camposDe({ qr, base, promo, estado, textos }) {
     backFields.push({ key: `regalo-${i}`, label: recortar(p.nombre, 60), value: partes.join(" · ") });
   }
 
+  // Un pase SIN servicio web no se refresca solo: lo que ponga se queda congelado desde el día que
+  // se bajó. Decirlo con su fecha convierte un número que engaña en una foto que se entiende — y
+  // no toca la cara de la tarjeta.
+  if (congelado && (pt.activo || pr.cantidad > 0)) {
+    const dia = fechaDeIso(estado?.actualizado_en);
+    backFields.push({ key: "al-dia", label: "Estos datos",
+      value: dia
+        ? `Son del ${dia}. Abre el enlace de abajo para verlos al día.`
+        : "Abre el enlace de abajo para verlos al día." });
+  }
+
   backFields.push({ key: "cuenta", label: "Tus visitas y tus descuentos", value: enlace });
   if (textos.privacidad_url) {
     backFields.push({ key: "privacidad", label: "Privacidad", value: String(textos.privacidad_url) });
@@ -201,7 +221,8 @@ function camposDe({ qr, base, promo, estado, textos }) {
 }
 
 export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales = [],
-                                 estado = null, servicio = null, textos = {} } = {}) {
+                                 estado = null, servicio = null, textos = {},
+                                 congelado = false } = {}) {
   const pase = {
     formatVersion: 1,
     passTypeIdentifier: cfg.pass_type_id,
@@ -224,7 +245,7 @@ export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales 
       messageEncoding: "iso-8859-1",
     }],
 
-    storeCard: camposDe({ qr, base, promo, estado, textos }),
+    storeCard: camposDe({ qr, base, promo, estado, textos, congelado }),
   };
 
   // ── EL SERVICIO WEB, SOLO SI SE PIDE EXPRESAMENTE ─────────────────────────────────────────

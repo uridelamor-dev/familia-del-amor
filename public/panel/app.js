@@ -11993,7 +11993,16 @@ async function fidgFormNuevo(desdeId, propuesta) {
   const guardada = desdeId ? (FIDG.formularios || []).find((f) => String(f.id) === String(desdeId)) : null;
   const base = guardada || propuesta || null;
   const puestos = new Map((base?.campos || []).map((c) => [c.id, c]));
-  const filas = FIDG_CAMPOS.map(([id, t]) => {
+  // ── EL ORDEN ES EL GUARDADO, NO EL DEL CATÁLOGO ───────────────────────────────────────────
+  //
+  // `FIDG_CAMPOS` es la lista de lo que EXISTE, no de cómo va. Pintar siempre en ese orden hacía
+  // que mover una pregunta en el panel no sirviera de nada: se guardaba un orden y se volvía a
+  // enseñar el de la casa. Primero los que ya tienen sitio, después los que no se han usado.
+  const guardadosEnOrden = (base?.campos || []).map((c) => c.id).filter((id) => FIDG_CAMPOS.some(([k]) => k === id));
+  const orden = [...guardadosEnOrden, ...FIDG_CAMPOS.map(([k]) => k).filter((k) => !guardadosEnOrden.includes(k))];
+
+  const filas = orden.map((id) => {
+    const t = (FIDG_CAMPOS.find(([k]) => k === id) || [id, id])[1];
     const c = puestos.get(id) || {};
     const forzoso = id === "nombre" || id === "telefono";
     const nunca = id === "comercial";
@@ -12001,11 +12010,16 @@ async function fidgFormNuevo(desdeId, propuesta) {
     // catalán con «Apellidos» en castellano es una campaña a medio traducir. Sin esta casilla el
     // rótulo se perdía en cada guardado y había que tocar el servidor para cambiar una palabra.
     const rotulo = c.etiqueta || (FIDG.campos || {})[id]?.etiqueta || t;
-    return `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(t)}</div>${forzoso ? '<div class="mut" style="font-size:12px">Siempre visible y obligatorio: el teléfono es la cuenta.</div>' : nunca ? '<div class="mut" style="font-size:12px">Nunca obligatorio ni premarcado.</div>' : ""}
+    // `data-campo` es lo que permite leer el orden del DOM al guardar, en vez de suponerlo.
+    return `<div class="row" data-campo="${esc(id)}"><div class="grow" style="min-width:0"><div class="t1">${esc(t)}</div>${forzoso ? '<div class="mut" style="font-size:12px">Siempre visible y obligatorio: el teléfono es la cuenta. <b>El sitio sí lo eliges tú.</b></div>' : nunca ? '<div class="mut" style="font-size:12px">Nunca obligatorio ni premarcado.</div>' : ""}
         <input class="inp" id="fcT_${id}" value="${esc(rotulo)}" style="margin-top:6px;width:100%;box-sizing:border-box" placeholder="Cómo se llama en la página"></div>
       <span style="display:flex;gap:10px;align-items:center">
         <label class="chk"><input type="checkbox" id="fcV_${id}"${c.visible !== false || forzoso ? " checked" : ""}${forzoso ? " disabled" : ""}> visible</label>
         <label class="chk"><input type="checkbox" id="fcO_${id}"${c.obligatorio || forzoso ? " checked" : ""}${forzoso || nunca ? " disabled" : ""}> obligatorio</label>
+        <span style="display:flex;flex-direction:column;gap:2px">
+          <button class="iconbtn" data-act="ff-subir" data-campo="${esc(id)}" title="Subir" aria-label="Subir ${esc(t)}">▲</button>
+          <button class="iconbtn" data-act="ff-bajar" data-campo="${esc(id)}" title="Bajar" aria-label="Bajar ${esc(t)}">▼</button>
+        </span>
       </span></div>`;
   }).join("");
 
@@ -12030,7 +12044,8 @@ async function fidgFormNuevo(desdeId, propuesta) {
     ${fgCampo("ffAbre", "Abre", base?.abre_en || "", { type: "date" })}
     ${fgCampo("ffCierra", "Cierra", base?.cierra_en || "", { type: "date" })}
     <div class="mut" style="font-size:12px;margin:12px 0 4px">Campos</div>
-    <div class="rows">${filas}</div>
+    <div class="mut" style="font-size:12px;margin:-2px 0 6px">Con <b>▲</b> y <b>▼</b> cambias en qué orden se le preguntan al cliente. El orden que dejes aquí es el que verá en la página.</div>
+    <div class="rows" id="ffCampos">${filas}</div>
     ${fgArea("ffConsent", "Texto de consentimiento (obligatorio)", base?.consentimiento_texto || "", 3)}
     ${fgCampo("ffPriv", "Enlace a la política de privacidad (https)", base?.privacidad_url || "")}
     <div class="mut" style="font-size:12px;margin:-4px 0 10px">Sin consentimiento y sin política no se pide un teléfono a nadie: no se deja publicar. El texto se guarda con la versión: lo que alguien aceptó en septiembre se puede leer en enero.</div>
@@ -12085,8 +12100,33 @@ function fidgFormCuerpo() {
     idioma: fgVal("ffIdioma"), destacado: fgVal("ffDestacado"),
     exige_whatsapp: fgChk("ffWA"), sugerir_poblacion: fgChk("ffPob"), mensaje_wa: fgVal("ffWaMsg"),
     mensajes: Object.fromEntries(Object.keys(FIDG.mensajesDefecto || {}).map((k) => [k, fgVal("ffM_" + k)])),
-    campos: FIDG_CAMPOS.map(([id]) => ({ id, visible: fgChk(`fcV_${id}`), obligatorio: fgChk(`fcO_${id}`),
-      etiqueta: fgVal(`fcT_${id}`) })) };
+    // EL ORDEN SALE DEL DOM, no del catálogo: es donde está lo que acaba de mover el usuario.
+    campos: [...(document.getElementById("ffCampos")?.querySelectorAll("[data-campo]") || [])]
+      .map((fila) => fila.getAttribute("data-campo"))
+      .map((id) => ({ id, visible: fgChk(`fcV_${id}`), obligatorio: fgChk(`fcO_${id}`),
+        etiqueta: fgVal(`fcT_${id}`) })) };
+}
+
+/**
+ * MOVER UNA PREGUNTA ARRIBA O ABAJO.
+ *
+ * Se mueve el NODO, no se repinta la lista: repintarla perdería lo que el usuario acabara de
+ * escribir en los rótulos y le desmarcaría las casillas. Y como el orden se lee del DOM al
+ * guardar, mover el nodo ES cambiar el orden.
+ */
+function fidgMoverCampo(id, haciaArriba) {
+  const caja = document.getElementById("ffCampos");
+  const fila = caja?.querySelector(`[data-campo="${CSS.escape(id)}"]`);
+  if (!caja || !fila) return;
+  const vecino = haciaArriba ? fila.previousElementSibling : fila.nextElementSibling;
+  if (!vecino) return;   // ya está arriba del todo, o abajo del todo
+  if (haciaArriba) caja.insertBefore(fila, vecino);
+  else caja.insertBefore(vecino, fila);
+  // Un parpadeo corto para que se vea QUÉ se ha movido: en una lista de nueve filas iguales, sin
+  // esto no se sabe si el clic ha hecho algo.
+  fila.style.transition = "background-color .35s";
+  fila.style.backgroundColor = "var(--brand-soft, rgba(47,107,79,.12))";
+  setTimeout(() => { fila.style.backgroundColor = ""; }, 350);
 }
 
 /** VISTA PREVIA. Se pinta con lo que hay escrito; NO guarda ni manda nada. */
@@ -15418,6 +15458,8 @@ document.addEventListener("click", (e) => {
   else if (act === "ins-ficha") insFicha(t.getAttribute("data-id"));
   else if (act === "agv-tab") agvTab(t.getAttribute("data-k"));
   else if (act === "agv-local") agvLocal(t.getAttribute("data-local"));
+  else if (act === "ff-subir") fidgMoverCampo(t.getAttribute("data-campo"), true);
+  else if (act === "ff-bajar") fidgMoverCampo(t.getAttribute("data-campo"), false);
   else if (act === "fidg-form-prev") fidgFormPrev(t.getAttribute("data-v"));
   else if (act === "fidg-form-guardar") fidgFormGuardar(t.getAttribute("data-pub"));
   else if (act === "fidg-tarjeta-nueva") fidgTarjetaNueva(t.getAttribute("data-id"));

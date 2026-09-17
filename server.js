@@ -13931,24 +13931,57 @@ app.post("/api/wallet/apple/v1/log", (req, res) => {
  * el único sitio que compone esa URL en todo el proyecto.
  */
 async function walConstruirPase(qr, cfg, base, { req = null } = {}) {
-  const sw = await walInterruptores();
-  const { proyeccion, cfg: tarjetaCfg } = await walProyeccion(qr, { local: null });
+  // ── BAJARSE EL CARNÉ NO PUEDE DEPENDER DE NADA DE ESTO ────────────────────────────────────
+  //
+  // Lo dinámico es un añadido; el pase de siempre es lo que tiene que salir pase lo que pase. Si
+  // falla una consulta de la proyección —una tabla nueva que no llegó a crearse en el despliegue,
+  // la base con un mal momento— se cae al pase ESTÁTICO, que es exactamente lo que se entrega
+  // hoy. Un carné sin puntos se arregla solo en la siguiente descarga; un 500 en el móvil de un
+  // cliente en la puerta del local, no.
+  let sw = { ...WAL_APAGADOS }, proyeccion = null, tarjetaCfg = {};
+  try {
+    sw = await walInterruptores();
+    const r = await walProyeccion(qr, { local: null });
+    proyeccion = r.proyeccion;
+    tarjetaCfg = r.cfg || {};
+  } catch (e) {
+    console.error(lineaErrorSql("[wallet] proyeccion del pase", e));
+    proyeccion = null;   // sin estado: el pase de siempre
+  }
 
   // El servicio web SOLO si los registros están permitidos. Ver `puerta-wallet.js`: declararlo
   // con los registros apagados deja al iPhone reintentando contra un 401 para siempre.
+  //
+  // Y solo si además hay proyección: un pase que declara servicio pero no lleva estado haría que
+  // el iPhone se registrara para recibir actualizaciones de nada.
   let servicio = null;
-  if (walLlevaServicio(sw)) {
-    const url = walBase(req);
-    const pase = url ? await walPaseDe(qr.id, { crear: true }) : null;
-    const token = pase ? walTokenClaro(pase) : null;
-    if (url && token) servicio = { url: `${url}/api/wallet/apple`, token };
+  if (proyeccion && walLlevaServicio(sw)) {
+    try {
+      const url = walBase(req);
+      const pase = url ? await walPaseDe(qr.id, { crear: true }) : null;
+      const token = pase ? walTokenClaro(pase) : null;
+      if (url && token) servicio = { url: `${url}/api/wallet/apple`, token };
+    } catch (e) {
+      // Sin secreto de servicio no se declara servicio, y ya está: sale el pase de siempre.
+      console.error(lineaErrorSql("[wallet] servicio del pase", e));
+      servicio = null;
+    }
   }
 
   const pase = pasePlanoApple({
     qr, cfg, base, promo: null, locales: cfg.locales || [],
-    // Con la puerta cerrada el pase se genera EXACTAMENTE como hoy: sin estado y sin servicio.
-    estado: servicio ? proyeccion : null,
+    // ── LO QUE ENSEÑA Y LO QUE SE ACTUALIZA SON DOS COSAS DISTINTAS ─────────────────────────
+    //
+    // Estaban atadas —`estado: servicio ? proyeccion : null`— y era un error: el pase no enseñaba
+    // ni los puntos ni los regalos hasta que además se abría el servicio web. Son preguntas
+    // separadas: QUÉ pone en la tarjeta, y SI puede refrescarse sola.
+    //
+    // Ahora el estado va siempre. El servicio sigue colgando de su puerta.
+    estado: proyeccion,
     servicio,
+    // Un pase que no puede refrescarse solo lleva la fecha del día que se bajó, en el reverso. Un
+    // número congelado sin fecha es una promesa; con fecha es una foto, y se entiende.
+    congelado: !servicio,
     textos: {
       preparacion: tarjetaCfg.texto_preparacion || null,
       privacidad_url: tarjetaCfg.privacidad_url || null,

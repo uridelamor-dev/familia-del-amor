@@ -116,13 +116,28 @@ export function normalizarCampos(lista) {
       ...(id === "comercial" ? { marcado: false } : {}),
     });
   }
+  // ── LOS FORZOSOS SON OBLIGATORIOS, NO PRIMEROS ────────────────────────────────────────────
+  //
+  // `nombre` y `telefono` no se pueden quitar ni hacer opcionales —el teléfono ES la cuenta— pero
+  // SÍ se pueden mover. Antes esta función los recolocaba al principio y tiraba el orden
+  // configurado, así que daba igual lo que se eligiera en el panel: el formulario salía siempre
+  // igual. Eran dos reglas distintas metidas en una.
+  //
+  // Si NO vienen en la lista se añaden al principio, que es el sitio seguro: un formulario que
+  // empieza pidiendo el teléfono es lo normal, y es lo que había.
+  const faltan = CAMPOS_FORZOSOS.filter((id) => !dentro.has(id));
   for (const id of CAMPOS_FORZOSOS) {
-    if (!dentro.has(id)) dentro.set(id, { id, visible: true, obligatorio: true, etiqueta: CAMPOS[id].etiqueta });
-    else dentro.set(id, { ...dentro.get(id), visible: true, obligatorio: true });
+    if (dentro.has(id)) dentro.set(id, { ...dentro.get(id), visible: true, obligatorio: true });
   }
-  // El orden de configuración se respeta, pero los forzosos van primero.
-  const orden = [...CAMPOS_FORZOSOS, ...[...dentro.keys()].filter((k) => !CAMPOS_FORZOSOS.includes(k))];
-  return orden.map((k) => dentro.get(k));
+  const orden = [
+    ...faltan,
+    ...[...dentro.keys()],
+  ];
+  const fichas = new Map(dentro);
+  for (const id of faltan) {
+    fichas.set(id, { id, visible: true, obligatorio: true, etiqueta: CAMPOS[id].etiqueta });
+  }
+  return orden.map((k) => fichas.get(k));
 }
 
 /**
