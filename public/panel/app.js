@@ -11321,12 +11321,22 @@ function renderFidgPromos() {
     <div class="rows">${filas || '<div class="mut">Todavía no hay ninguna.</div>'}</div>`;
 }
 
-function renderFidgListaSimple(lista, que, accion, etiqueta) {
+/**
+ * @param {boolean} ordenable  si además se puede cambiar el orden de los campos SIN versionar.
+ *   Solo los formularios lo son: son los únicos que tienen una lista de campos que el cliente ve
+ *   en un orden. Una versión de tarjeta no tiene nada que ordenar.
+ */
+function renderFidgListaSimple(lista, que, accion, etiqueta, ordenable = false) {
   // Una versión publicada NO se edita: se COPIA y se guarda una nueva. Por eso el botón dice
   // «Copiar», no «Editar»: nombrar bien la acción evita la mitad de los sustos.
+  //
+  // LA EXCEPCIÓN ES EL ORDEN, y tiene su propio botón. Mover un campo no cambia nada de lo que el
+  // versionado protege —qué se ofreció, qué texto legal se aceptó—, y hacerlo por el camino de
+  // copiar y publicar sube la versión, que es lo que entra en la clave del WhatsApp del alta: un
+  // cliente que ya se apuntó podría recibirlo otra vez por haber movido los apellidos.
   const filas = (lista || []).map((x) => fgFila(
     `<div class="t1">${esc(x.titulo || x.clave || ("Versión " + x.version))} <span class="mut">v${x.version}</span></div><div class="mut" style="font-size:12px">${esc(String(x.creado_en || "").slice(0, 10))} · ${esc(x.creado_por || "")}</div>`,
-    `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${(x.estado === "publicado" || x.estado === "publicada") ? "ok" : ""}">${esc(x.estado)}</span><button class="btn sm" data-act="${accion}" data-id="${x.id}">${(x.estado === "borrador") ? "Seguir editando" : "Copiar a versión nueva"}</button></span>`)).join("");
+    `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${(x.estado === "publicado" || x.estado === "publicada") ? "ok" : ""}">${esc(x.estado)}</span>${ordenable && x.estado !== "cerrado" ? `<button class="btn sm" data-act="fidg-orden" data-id="${x.id}">Cambiar el orden</button>` : ""}<button class="btn sm" data-act="${accion}" data-id="${x.id}">${(x.estado === "borrador") ? "Seguir editando" : "Copiar a versión nueva"}</button></span>`)).join("");
   return `<div style="margin-bottom:10px"><button class="btn primary sm" data-act="${accion}">${esc(etiqueta)}</button></div>
     <div class="rows">${filas || `<div class="mut">Todavía no hay ningún ${que}.</div>`}</div>`;
 }
@@ -11432,7 +11442,7 @@ function renderFidgFormularios() {
         `<div class="t1">${esc(f.titulo || f.clave)} <span class="mut">v${f.version}</span></div><div class="mut" style="font-size:12px">/promo.html?c=${esc(f.clave)}${f.cierra_en ? ` · hasta ${esc(f.cierra_en)}` : ""}${f.idioma && f.idioma !== "es" ? ` · ${esc(f.idioma)}` : ""}</div>`,
         `<a class="btn sm" href="/promo.html?c=${encodeURIComponent(f.clave)}" target="_blank" rel="noopener">Abrir</a>`)).join("")}</div>`
     : "";
-  return renderFidgListaSimple(FIDG.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…") + urls;
+  return renderFidgListaSimple(FIDG.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…", true) + urls;
 }
 
 /** Los tres números de una campaña. `null` = el recuento falló; no es lo mismo que cero. */
@@ -11924,13 +11934,23 @@ const FIDG_PROPUESTAS = {
     // LO QUE SE PROMETE, CUMPLIDO. La tarjeta verde dice «rebràs el codi al teu telèfon», así que
     // se manda de verdad. `{enlace}` es su carné; el enlace de baja lo añade el servidor al final.
     mensaje_wa: "Hola {nombre}! 👋\n\nAquí tens el teu codi per esmorzar a La Tapeta:\n{enlace}\n\nEnsenya'l quan vinguis i te l'apliquem.",
+    // ── EL ORDEN DE ESTA LISTA ES EL ORDEN DE LA PÁGINA ───────────────────────────────────────
+    //
+    // No hay ningún orden escrito en `promo.js`: pinta lo que le llega, en el orden en que le
+    // llega. Así que esto es el PUNTO DE PARTIDA, no una regla — se mueve con las ▲▼ del editor
+    // y lo que se guarde ahí manda a partir de entonces.
+    //
+    // Se empieza por lo que la persona ya sabe de memoria —nombre, apellidos, teléfono, correo— y
+    // se deja para el final lo que hay que pararse a elegir: la población se teclea y la fecha de
+    // nacimiento son tres ruedas. Quien abandona un formulario abandona en el primer campo que le
+    // hace pensar, y cuanto más abajo esté, más datos se han guardado ya.
     campos: [
       { id: "nombre", visible: true, obligatorio: true, etiqueta: "Nom" },
       { id: "apellidos", visible: true, obligatorio: true, etiqueta: "Cognoms" },
-      { id: "nacimiento", visible: true, obligatorio: false, etiqueta: "Data de naixement" },
-      { id: "poblacion", visible: true, obligatorio: false, etiqueta: "Població" },
       { id: "telefono", visible: true, obligatorio: true, etiqueta: "Telèfon" },
       { id: "email", visible: true, obligatorio: false, etiqueta: "Correu electrònic" },
+      { id: "poblacion", visible: true, obligatorio: false, etiqueta: "Població" },
+      { id: "nacimiento", visible: true, obligatorio: false, etiqueta: "Data de naixement" },
       { id: "codigo_postal", visible: false, obligatorio: false, etiqueta: "Codi postal" },
       { id: "local", visible: false, obligatorio: false, etiqueta: "Local preferit" },
       // Fuera la casilla de «acepto comunicaciones»: el consentimiento va en una frase encima del
@@ -12101,7 +12121,10 @@ function fidgFormCuerpo() {
     exige_whatsapp: fgChk("ffWA"), sugerir_poblacion: fgChk("ffPob"), mensaje_wa: fgVal("ffWaMsg"),
     mensajes: Object.fromEntries(Object.keys(FIDG.mensajesDefecto || {}).map((k) => [k, fgVal("ffM_" + k)])),
     // EL ORDEN SALE DEL DOM, no del catálogo: es donde está lo que acaba de mover el usuario.
-    campos: [...(document.getElementById("ffCampos")?.querySelectorAll("[data-campo]") || [])]
+    // `:scope >` — SOLO LAS FILAS. `data-campo` está también en las dos flechas de cada fila, así
+    // que sin acotar salía cada campo TRES veces. Aquí colaba porque `normalizarCampos` quita los
+    // repetidos al guardar; aun así la lista que se manda es la de verdad y no una con ruido.
+    campos: [...(document.getElementById("ffCampos")?.querySelectorAll(":scope > [data-campo]") || [])]
       .map((fila) => fila.getAttribute("data-campo"))
       .map((id) => ({ id, visible: fgChk(`fcV_${id}`), obligatorio: fgChk(`fcO_${id}`),
         etiqueta: fgVal(`fcT_${id}`) })) };
@@ -12114,8 +12137,11 @@ function fidgFormCuerpo() {
  * escribir en los rótulos y le desmarcaría las casillas. Y como el orden se lee del DOM al
  * guardar, mover el nodo ES cambiar el orden.
  */
-function fidgMoverCampo(id, haciaArriba) {
-  const caja = document.getElementById("ffCampos");
+function fidgMoverCampo(id, haciaArriba, boton) {
+  // LA LISTA SE BUSCA DESDE EL BOTÓN, no por un identificador fijo. Las mismas flechas se usan en
+  // dos sitios —el formulario entero y el diálogo de solo ordenar— y anclarlas a un `id` concreto
+  // hacía que uno de los dos moviera las filas del otro si los dos llegaran a estar abiertos.
+  const caja = boton?.closest(".rows") || document.getElementById("ffCampos");
   const fila = caja?.querySelector(`[data-campo="${CSS.escape(id)}"]`);
   if (!caja || !fila) return;
   const vecino = haciaArriba ? fila.previousElementSibling : fila.nextElementSibling;
@@ -12127,6 +12153,64 @@ function fidgMoverCampo(id, haciaArriba) {
   fila.style.transition = "background-color .35s";
   fila.style.backgroundColor = "var(--brand-soft, rgba(47,107,79,.12))";
   setTimeout(() => { fila.style.backgroundColor = ""; }, 350);
+}
+
+/**
+ * SOLO EL ORDEN, sobre un formulario que ya existe.
+ *
+ * ── POR QUÉ NO ES EL FORMULARIO ENTERO ───────────────────────────────────────────────────────
+ *
+ * Porque guardar el formulario entero PUBLICA UNA VERSIÓN NUEVA, y la versión entra en la clave
+ * con la que se decide si a alguien ya se le mandó su WhatsApp. Subirla para mover los apellidos
+ * haría que quien ya se apuntó pudiera recibirlo otra vez.
+ *
+ * Aquí no hay casillas ni rótulos A PROPÓSITO: lo único que se puede tocar es dónde va cada cosa.
+ * Si hiciera falta cambiar una etiqueta o quitar un campo, eso sí es una versión nueva.
+ */
+function fidgOrdenAbrir(id) {
+  const f = (FIDG.formularios || []).find((x) => String(x.id) === String(id));
+  if (!f) return;
+  if (f.estado === "cerrado") { toast("Una versión cerrada no se modifica"); return; }
+
+  const filas = (f.campos || []).map((c) => {
+    const rotulo = c.etiqueta || (FIDG.campos || {})[c.id]?.etiqueta || c.id;
+    // Se dice qué NO se ve, porque si no la lista parece no corresponderse con la página: un campo
+    // oculto sigue teniendo su sitio en el orden, pero el cliente no lo ve.
+    const notas = [c.visible === false ? "no se muestra" : null,
+                   c.obligatorio ? "obligatorio" : null].filter(Boolean).join(" · ");
+    return `<div class="row" data-campo="${esc(c.id)}">
+      <div class="grow" style="min-width:0"><div class="t1">${esc(rotulo)}</div>
+        ${notas ? `<div class="mut" style="font-size:12px">${esc(notas)}</div>` : ""}</div>
+      <span style="display:flex;flex-direction:column;gap:2px">
+        <button class="iconbtn" data-act="ff-subir" data-campo="${esc(c.id)}" title="Subir" aria-label="Subir ${esc(rotulo)}">▲</button>
+        <button class="iconbtn" data-act="ff-bajar" data-campo="${esc(c.id)}" title="Bajar" aria-label="Bajar ${esc(rotulo)}">▼</button>
+      </span></div>`;
+  }).join("");
+
+  modal(`Orden de los campos · ${esc(f.clave || "")} v${esc(String(f.version))}`, `
+    <div class="mut" style="font-size:12px;margin-bottom:10px">Con <b>▲</b> y <b>▼</b> cambias en qué orden se le preguntan al cliente. Se guarda <b>sobre esta misma versión</b>: no se publica ninguna nueva, no cambia ningún texto y no se le manda nada a nadie.</div>
+    <div class="rows" id="foCampos">${filas}</div>
+    <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn primary sm" data-act="fidg-orden-guardar" data-id="${esc(String(f.id))}">Guardar el orden</button>
+    </div>`);
+}
+
+async function fidgOrdenGuardar(id) {
+  // `:scope >` para quedarse con LAS FILAS: las flechas de cada fila llevan el mismo `data-campo`
+  // y sin acotar se mandaría cada campo tres veces. El servidor lo rechazaría —exige una
+  // permutación— y el botón no funcionaría nunca.
+  const orden = [...(document.getElementById("foCampos")?.querySelectorAll(":scope > [data-campo]") || [])]
+    .map((fila) => fila.getAttribute("data-campo"));
+  if (!orden.length) return;
+  try {
+    const j = await apiSend("PATCH", `/api/fidelizacion/formularios/${encodeURIComponent(id)}/orden`, { orden });
+    document.querySelectorAll(".modal-ov").forEach((x) => x.remove());
+    // Se recarga del servidor ANTES de confirmar: lo que se lee después es lo guardado de verdad.
+    await loadFidPiloto();
+    toast(j.estado === "publicado"
+      ? `Orden guardado. Ya está así en la página pública (sigue en la versión ${j.version}).`
+      : `Orden guardado en el borrador (versión ${j.version}).`);
+  } catch (e) { toast(e.message || "No se pudo guardar el orden"); }
 }
 
 /** VISTA PREVIA. Se pinta con lo que hay escrito; NO guarda ni manda nada. */
@@ -15458,8 +15542,10 @@ document.addEventListener("click", (e) => {
   else if (act === "ins-ficha") insFicha(t.getAttribute("data-id"));
   else if (act === "agv-tab") agvTab(t.getAttribute("data-k"));
   else if (act === "agv-local") agvLocal(t.getAttribute("data-local"));
-  else if (act === "ff-subir") fidgMoverCampo(t.getAttribute("data-campo"), true);
-  else if (act === "ff-bajar") fidgMoverCampo(t.getAttribute("data-campo"), false);
+  else if (act === "ff-subir") fidgMoverCampo(t.getAttribute("data-campo"), true, t);
+  else if (act === "ff-bajar") fidgMoverCampo(t.getAttribute("data-campo"), false, t);
+  else if (act === "fidg-orden") fidgOrdenAbrir(t.getAttribute("data-id"));
+  else if (act === "fidg-orden-guardar") fidgOrdenGuardar(t.getAttribute("data-id"));
   else if (act === "fidg-form-prev") fidgFormPrev(t.getAttribute("data-v"));
   else if (act === "fidg-form-guardar") fidgFormGuardar(t.getAttribute("data-pub"));
   else if (act === "fidg-tarjeta-nueva") fidgTarjetaNueva(t.getAttribute("data-id"));

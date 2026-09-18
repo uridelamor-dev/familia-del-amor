@@ -81,14 +81,32 @@ describe("todo se crea y se versiona DESDE EL PANEL", () => {
 
   test("el servidor NO tiene ninguna ruta para editar una versión publicada", () => {
     // El candado de verdad no está en la pantalla: no existe el endpoint.
+    //
+    // ── LA ÚNICA EXCEPCIÓN, Y POR QUÉ SE LE HACE SITIO ──────────────────────────────────────
+    //
+    // Cambiar EL ORDEN de los campos. No toca ninguna condición ni ningún texto legal —que es lo
+    // que el versionado protege—, y hacerlo por el camino de copiar y publicar sube la versión,
+    // que es lo que entra en la clave del WhatsApp del alta: mover los apellidos podía acabar
+    // mandándole el mensaje otra vez a quien ya se había apuntado.
+    //
+    // Se recorta esa ruta y se escanea el resto. Que ELLA solo escriba `campos` se comprueba
+    // aparte, en `formulario-orden.test.js`.
+    const i = server.indexOf('app.patch("/api/fidelizacion/formularios/:id/orden"');
+    assert.ok(i >= 0, "ya no existe la ruta de orden: revisa este candado");
+    const f = server.indexOf("\n});", i);
+    const resto = server.slice(0, i) + server.slice(f);
+
     for (const tabla of ["fid_reglas", "fid_promos", "fid_formularios", "fid_tarjeta_config"]) {
-      const ups = [...server.matchAll(new RegExp(`UPDATE ${tabla} SET ([^\`]*)`, "g"))].map((m) => m[1]);
+      const ups = [...resto.matchAll(new RegExp(`UPDATE ${tabla} SET ([^\`]*)`, "g"))].map((m) => m[1]);
       for (const u of ups) {
         // Lo único que se actualiza son estados y cierres de vigencia, nunca condiciones.
         assert.ok(!/puntos_necesarios|descuento_euros|consumo_minimo|valor =|titulo =|campos =/.test(u),
           `${tabla}: se edita una versión publicada — ${u}`);
       }
     }
+    // Y que la excepción sea UNA: `campos = ?` no puede aparecer en ningún otro sitio.
+    assert.equal((server.match(/campos = \?/g) || []).length, 1,
+      "hay más de un sitio que reescribe los campos de un formulario");
   });
 });
 
@@ -224,8 +242,12 @@ describe("el formulario público", () => {
     // El consentimiento es el único que se compone por partes, porque lleva un enlace DENTRO de
     // la frase. Se monta con nodos —`createTextNode` y un `<a>`—, que es igual de seguro que
     // `textContent` y, a diferencia de `innerHTML`, no interpreta nada de lo que venga escrito.
-    const consent = promo.slice(promo.indexOf("function pintarConsentimiento("),
-                                promo.indexOf("function montarFecha("));
+    // El recorte SE COMPRUEBA. Un ancla que desaparece deja `indexOf` en -1, el recorte sale
+    // vacío y una comprobación de «esto no aparece» pasa sin mirar nada.
+    const desde = promo.indexOf("function pintarConsentimiento(");
+    const hasta = promo.indexOf("var NAC_ANIOS", desde);
+    assert.ok(desde >= 0 && hasta > desde, "el recorte del consentimiento ya no encuentra sus anclas");
+    const consent = promo.slice(desde, hasta);
     assert.ok(!/innerHTML/.test(consent), "el consentimiento se pinta como HTML");
     assert.match(consent, /caja\.textContent = "";/);
     assert.match(consent, /document\.createTextNode\(frase\.slice\(/);

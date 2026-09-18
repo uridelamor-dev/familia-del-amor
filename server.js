@@ -153,6 +153,7 @@ import { ESTADOS as WAL_ESTADOS, INTERRUPTORES as WAL_INTERRUPTORES, APAGADOS as
          paseLlevaServicio as walLlevaServicio }
   from "./src/modules/wallet/puerta-wallet.js";
 import { textoSeguro as fidTexto, urlSegura as fidUrl, normalizarCampos as fidCampos,
+         reordenarCampos as fidReordenar,
          validarFormulario as fidValidarForm, formularioAbierto as fidFormAbierto,
          renderPlantilla as fidRender, variablesDesconocidas as fidVarsRaras,
          puedeRecibir as fidPuedeRecibir, PALETAS as FID_PALETAS, paletaDe as fidPaleta,
@@ -21564,6 +21565,75 @@ app.post("/api/fidelizacion/formularios", requireAuth(PROMOS_ROLES), async (req,
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] crear formulario", e));
     res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+/**
+ * CAMBIAR EL ORDEN DE LOS CAMPOS. La única escritura que NO publica una versión nueva.
+ *
+ * ── POR QUÉ MERECE UNA RUTA PROPIA ───────────────────────────────────────────────────────────
+ *
+ * Porque el camino normal —copiar a versión nueva y publicar— tiene un coste escondido para algo
+ * tan pequeño como mover un campo:
+ *
+ *   · La versión entra en la clave de idempotencia del WhatsApp del alta
+ *     (`alta:<clave>:v<version>:…`). Subirla hace que quien ya se apuntó pueda recibir el mensaje
+ *     otra vez. Eso NO puede ser el precio de poner los apellidos antes del teléfono.
+ *   · Se cierra la versión vigente y se abre otra, y el histórico se llena de versiones que solo
+ *     se distinguen en el orden de una lista.
+ *
+ * ── LO QUE SE ESCRIBE: UNA COLUMNA ───────────────────────────────────────────────────────────
+ *
+ * `campos`. Nada más. Ni `version`, ni `estado`, ni `consentimiento_texto`, ni `privacidad_url`,
+ * ni `mensajes`, ni `mensaje_wa`, ni `campana`, ni `promo_clave`, ni las fechas. Hay un test que
+ * lee esta ruta y falla si aparece cualquier otra columna en un `UPDATE`.
+ *
+ * ── Y NO SE FÍA DE LO QUE LLEGA ──────────────────────────────────────────────────────────────
+ *
+ * El cuerpo solo aporta NOMBRES en un orden. Las fichas —etiqueta, visible, obligatorio— salen de
+ * lo que ya está guardado, así que desde aquí no hay forma de hacer opcional el teléfono, ocultar
+ * un campo ni reescribir un rótulo aunque se mande. Lo garantiza `reordenarCampos`, que además
+ * exige una permutación exacta.
+ *
+ * Una versión CERRADA no se toca: es lo que se ofreció, y así se queda.
+ */
+app.patch("/api/fidelizacion/formularios/:id/orden", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: "Formulario no válido" });
+    if (!Array.isArray(req.body?.orden)) {
+      return res.status(400).json({ ok: false, error: "Falta el orden de los campos" });
+    }
+
+    const r = await fidTransaccion(async (x) => {
+      // `FOR UPDATE` porque se lee la lista, se recoloca y se vuelve a escribir: sin él, dos
+      // pestañas ordenando a la vez se pisarían y ganaría la última en escribir, no la última en
+      // decidir.
+      const f = await x.get(
+        `SELECT id, clave, version, estado, local, campos FROM fid_formularios WHERE id = ? FOR UPDATE`, [id]);
+      if (!f) return { codigo: 404, error: "Ese formulario no existe" };
+      if (f.estado === "cerrado") {
+        return { codigo: 409,
+          error: "Esta versión está cerrada: es lo que se ofreció y no se reescribe. Ordena la que esté publicada o en borrador." };
+      }
+      const orden = fidReordenar(fidLeerLista(f.campos), req.body.orden);
+      if (!orden.ok) return { codigo: 400, error: orden.error };
+
+      await x.run(`UPDATE fid_formularios SET campos = ? WHERE id = ?`,
+                  [JSON.stringify(orden.campos), id]);
+      return { ok: true, fila: f, campos: orden.campos };
+    });
+    if (!r.ok) return res.status(r.codigo).json({ ok: false, error: r.error });
+
+    await ficAuditar("fidelizacion", id, "formulario_orden", req.user.username,
+      { local: r.fila.local || null,
+        detalle: { clave: r.fila.clave, version: r.fila.version, estado: r.fila.estado,
+                   orden: r.campos.map((c) => c.id) } });
+    res.json({ ok: true, id, clave: r.fila.clave, version: r.fila.version, estado: r.fila.estado,
+               campos: r.campos });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] ordenar formulario", e));
+    res.status(500).json({ ok: false, error: "No se pudo guardar el orden" });
   }
 });
 

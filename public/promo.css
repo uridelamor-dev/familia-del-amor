@@ -34,29 +34,26 @@
 
 .pm-intro { margin: .9rem 0 0; font-size: .96rem; color: #4c5854; line-height: 1.55; white-space: pre-line; }
 
-/* La fecha: selector NATIVO. En iPhone y Android abre la rueda del sistema, que es la que la
-   gente sabe usar. `appearance:none` quita el marco gris de iOS, que rompía la altura de los
-   demás campos y hacía que la fila pareciera de otro formulario. */
-.pm-fecha {
-  appearance: none; -webkit-appearance: none;
+/* El `select` del local, igual que los inputs: si no, parece de otro formulario.
+
+   SIN `appearance:none`: se deja el aspecto nativo a propósito. Es lo que hace que en el iPhone
+   se vea —y se comporte— como un selector del sistema, con su punta, y lo que abre la rueda de
+   verdad. Lo único que se ajusta es que encaje con los campos de al lado. */
+.alta-campo select {
   /* Los mismos 52 px y 16 px que el resto: menos de 16 px hace que Safari en iPhone dé zoom al
      enfocar, y la página se queda torcida el resto del rato. */
   width: 100%; box-sizing: border-box; min-height: 52px; padding: .7rem .9rem;
   font-size: 16px; font-family: inherit; color: #1c211f;
   background: #fbfaf8; border: 1px solid #d5ded9; border-radius: 12px;
-  font-variant-numeric: tabular-nums;
 }
-.pm-fecha:focus { outline: 2px solid #2F6B4F; outline-offset: 1px; border-color: #2F6B4F; }
-/* El `select` del local, igual que los inputs: si no, parece de otro formulario. */
-.alta-campo select {
-  width: 100%; box-sizing: border-box; min-height: 52px; padding: .7rem .9rem;
-  font-size: 16px; font-family: inherit; color: #1c211f;
-  background: #fbfaf8; border: 1px solid #d5ded9; border-radius: 12px;
-}
-.pm-fecha::-webkit-date-and-time-value { text-align: left; }
-.pm-fecha::-webkit-calendar-picker-indicator { opacity: .55; cursor: pointer; }
-/* El eco en dd/mm/aaaa: `2026-09-15` no lo lee nadie de un vistazo. */
-.pm-eco { display: block; margin: .3rem 0 0; font-size: .85rem; color: #6d7a74; font-variant-numeric: tabular-nums; }
+.alta-campo select:focus { outline: 2px solid #2F6B4F; outline-offset: 1px; border-color: #2F6B4F; }
+
+/* La fecha de nacimiento: TRES selectores en una fila, en el orden de aquí —día, mes, año—.
+   El del mes es el ancho porque lleva la palabra entera («septiembre»), no un número. */
+.pm-nac { display: grid; grid-template-columns: 1fr 1.7fr 1.1fr; gap: .45rem; }
+/* Menos aire a los lados que en un campo suelto: son tres en el ancho de uno, y con el relleno
+   de 0.9 rem «septiembre» se corta en un iPhone estrecho. */
+.pm-nac-s { padding-left: .55rem; padding-right: .4rem; font-variant-numeric: tabular-nums; }
 
 /* Las sugerencias de población. El campo hace de ancla, así que la lista se coloca justo debajo
    y no al final de la página. */

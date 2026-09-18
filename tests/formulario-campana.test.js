@@ -357,19 +357,34 @@ describe("las sugerencias de población no salen de la página", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 describe("la fecha de nacimiento en la página", () => {
-  test("es el calendario nativo: en un móvil no hay nada mejor que el del sistema", () => {
-    assert.match(promoJs, /type="date"/);
+  // Ya no es un calendario. Un `type="date"` se abre en el mes de hoy, que es lo correcto para una
+  // reserva y lo peor posible para una fecha de nacimiento: hasta 1985 hay cuatrocientos ochenta
+  // meses. Son TRES `<select>`, que en el iPhone abren la rueda del sistema —la de verdad— y
+  // dejan el año en una lista plana. El detalle se blinda en `formulario-nacimiento.test.js`.
+
+  test("son tres selectores del sistema, no un calendario", () => {
+    for (const id of ["fx_nac_d", "fx_nac_m", "fx_nac_a"]) {
+      assert.ok(promoJs.includes(`<select id="${id}"`), `falta el selector ${id}`);
+    }
   });
 
-  test("no deja elegir el futuro, y tampoco un año imposible", () => {
-    assert.match(promoJs, /setAttribute\("max", new Date\(\)\.toISOString\(\)\.slice\(0, 10\)\)/);
-    assert.match(promoJs, /setAttribute\("min", "19\d\d-01-01"\)/);
+  test("lo que se manda sigue siendo el mismo campo y el mismo formato", () => {
+    // El selector ha cambiado entero; el dato que llega al servidor no se ha movido.
+    assert.match(promoJs, /id="fx_nacimiento" name="nacimiento" type="hidden"/);
+    assert.match(promoJs, /return String\(anio\) \+ "-" \+/);
   });
 
-  test("se ve en dd/mm/aaaa pase lo que pase con el idioma del navegador", () => {
-    // El calendario nativo se pinta en el idioma del NAVEGADOR, no en el de la página: alguien con
-    // el móvil en inglés vería `05/12/1990` y entendería el 5 de diciembre.
-    assert.match(promoJs, /p\[2\] \+ "\/" \+ p\[1\] \+ "\/" \+ p\[0\]/);
+  test("no deja elegir el futuro, ni en el mes ni en el día", () => {
+    assert.match(promoJs, /anio === hoy\.getFullYear\(\) \? hoy\.getMonth\(\) \+ 1 : 12/);
+    assert.match(promoJs, /tope = Math\.min\(tope, hoy\.getDate\(\)\)/);
+  });
+
+  test("el mes va en letra, que es lo que quita la ambigüedad del idioma", () => {
+    // El calendario nativo se pintaba en el idioma del NAVEGADOR, no en el de la página: alguien
+    // con el móvil en inglés veía `05/12/1990` y entendía el 5 de diciembre. Con «diciembre»
+    // escrito no hay nada que interpretar, y por eso sobra el eco en dd/mm/aaaa que hacía de parche.
+    assert.match(promoJs, /NAC_MESES\[idioma\] \|\| NAC_MESES\.es/);
+    assert.match(promoJs, /"septiembre"/);
   });
 
   test("la etiqueta está siempre visible, no es un marcador de posición", () => {

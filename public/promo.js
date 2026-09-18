@@ -275,16 +275,6 @@
   }
 
   /**
-   * La fecha de nacimiento.
-   *
-   * Selector NATIVO (`type="date"`): en iPhone y en Android abre la rueda del sistema, que es la
-   * que la gente sabe usar, y no hace falta ninguna librería. Se enseña en dd/mm/aaaa debajo para
-   * que se lea sin ambigüedad —un `2026-09-15` no lo lee nadie de un vistazo—.
-   *
-   * `max` es hoy: el calendario no deja ir más allá. El servidor lo vuelve a comprobar, porque el
-   * `max` no impide mandar otra cosa por debajo.
-   */
-  /**
    * LA FRASE DE CONSENTIMIENTO, CON EL ENLACE DENTRO.
    *
    * El enlace va EN LA FRASE y no debajo en su propia línea, porque «consulta la política de
@@ -322,21 +312,161 @@
     caja.appendChild(document.createTextNode(frase.slice(i + nombre.length)));
   }
 
-  function montarFecha(input, eco, etiquetaEco) {
-    input.setAttribute("max", new Date().toISOString().slice(0, 10));
-    input.setAttribute("min", "1900-01-01");
-    // El eco no es un adorno: el calendario nativo se pinta en el idioma del NAVEGADOR, no en el
-    // de la página, así que alguien con el móvil en inglés vería `05/12/1990` y entendería el 5 de
-    // diciembre. Repetirlo debajo en dd/mm/aaaa quita la duda, y vacío hace de pista de formato.
-    function pinta() {
-      var p = String(input.value || "").split("-");
-      eco.textContent = p.length === 3 && p[0].length === 4
-        ? (etiquetaEco + ": " + p[2] + "/" + p[1] + "/" + p[0])
-        : etiquetaEco;
+  // ── LA FECHA DE NACIMIENTO ──────────────────────────────────────────────────────────────────
+  //
+  // ── POR QUÉ YA NO ES UN `<input type="date">` ───────────────────────────────────────────────
+  //
+  // Era un selector nativo, y eso estaba bien. El problema es para qué se usa: un `type="date"`
+  // está pensado para fechas CERCA DE HOY —una reserva, una cita— y por eso se abre en el mes
+  // actual. Una fecha de nacimiento está cuarenta años atrás.
+  //
+  // En el iPhone eso significa que el calendario se abre en el mes de hoy y, para llegar a 1985,
+  // o se pulsa la cabecera del mes —que casi nadie descubre que se puede pulsar— o se retrocede
+  // mes a mes. Son cuatrocientos ochenta meses. Y esto lo abre alguien que viene de un anuncio.
+  //
+  // ── LO QUE SÍ ES NATIVO: TRES `<select>` ────────────────────────────────────────────────────
+  //
+  // Un `<select>` en el iPhone ABRE LA RUEDA DEL SISTEMA, la de verdad, la misma que sale al
+  // elegir en cualquier app. Tres selectores son tres ruedas nativas, y el año es una lista
+  // plana: 1985 está a un gesto. No hay ninguna rueda de Apple recreada con JavaScript aquí,
+  // porque una imitación se comporta distinta justo cuando importa —con el teclado, con
+  // VoiceOver, con el zoom— y la de verdad no hay que mantenerla.
+  //
+  // De paso desaparecen dos problemas que arrastraba el calendario:
+  //
+  //   · El MES VA EN LETRA. `05/12` es el 5 de diciembre aquí y el 12 de mayo en otros sitios, y
+  //     el nativo se pinta en el idioma DEL MÓVIL, no en el de la página. Con «diciembre» escrito
+  //     no hay nada que interpretar, y sobra el eco en dd/mm/aaaa que hacía de parche.
+  //   · Tres controles con su rótulo los lee un lector de pantalla uno a uno. El soporte de
+  //     `type="date"` en lectores de pantalla es desigual según el navegador.
+
+  /** Cuántos años atrás se ofrecen. Nadie que rellene esto nació antes, y el servidor corta en 1900. */
+  var NAC_ANIOS = 120;
+
+  // El mes EN LETRA, en los tres idiomas en los que se publica. Es lo que quita la ambigüedad.
+  var NAC_MESES = {
+    es: ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+         "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"],
+    ca: ["gener", "febrer", "març", "abril", "maig", "juny",
+         "juliol", "agost", "setembre", "octubre", "novembre", "desembre"],
+    en: ["January", "February", "March", "April", "May", "June",
+         "July", "August", "September", "October", "November", "December"],
+  };
+  var NAC_ROTULOS = {
+    es: { dia: "Día", mes: "Mes", anio: "Año" },
+    ca: { dia: "Dia", mes: "Mes", anio: "Any" },
+    en: { dia: "Day", mes: "Month", anio: "Year" },
+  };
+
+  // ── NÚCLEO PURO ── sin DOM, para poder probarlo tal cual ────────────────────────────────────
+
+  /**
+   * Hasta qué mes se ofrece en un año. En el año en curso se corta en el mes de hoy: si no se
+   * corta, se puede elegir una fecha que todavía no ha llegado.
+   */
+  function nacTopeMeses(anio, hoy) {
+    return anio === hoy.getFullYear() ? hoy.getMonth() + 1 : 12;
+  }
+
+  /**
+   * Cuántos días se ofrecen. Dos recortes, y los dos hacen falta:
+   *
+   *   · LOS DEL MES. `Date.UTC(a, m, 0)` es el último día del mes `m`, así que febrero de 2000
+   *     da 29 y el de 1900 da 28 sin escribir ninguna regla de bisiestos.
+   *   · EL FUTURO. En el mes en curso se corta en el día de hoy.
+   *
+   * Sin mes o sin año todavía no se sabe, y se ofrecen 31: cortar antes de tiempo escondería
+   * días que sí existen en cuanto se elija el resto.
+   */
+  function nacTopeDias(anio, mes, hoy) {
+    if (!anio || !mes) return 31;
+    var tope = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+    if (anio === hoy.getFullYear() && mes === hoy.getMonth() + 1) {
+      tope = Math.min(tope, hoy.getDate());
     }
-    input.addEventListener("input", pinta);
-    input.addEventListener("change", pinta);
-    pinta();
+    return tope;
+  }
+
+  /**
+   * Las tres piezas a `AAAA-MM-DD`, que es EXACTAMENTE lo que ya recibía el servidor de un
+   * `<input type="date">`. Incompleto vale cadena vacía, nunca una fecha a medias.
+   */
+  function nacComponer(anio, mes, dia) {
+    if (!anio || !mes || !dia) return "";
+    var m = String(mes), d = String(dia);
+    return String(anio) + "-" + (m.length < 2 ? "0" + m : m) + "-" + (d.length < 2 ? "0" + d : d);
+  }
+
+  // ── FIN DEL NÚCLEO PURO ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * Monta los tres selectores sobre el campo oculto.
+   *
+   * EL CAMPO OCULTO ES EL DATO. Conserva su `id` (`fx_nacimiento`) y su `name` (`nacimiento`), así
+   * que ni la recogida del formulario ni el servidor se enteran de que esto ha cambiado.
+   */
+  function montarNacimiento(idioma) {
+    var oculto = $("fx_nacimiento"), sD = $("fx_nac_d"), sM = $("fx_nac_m"), sA = $("fx_nac_a");
+    if (!oculto || !sD || !sM || !sA) return;
+    var meses = NAC_MESES[idioma] || NAC_MESES.es;
+    var rot = NAC_ROTULOS[idioma] || NAC_ROTULOS.es;
+    var hoy = new Date();
+
+    sD.setAttribute("aria-label", rot.dia);
+    sM.setAttribute("aria-label", rot.mes);
+    sA.setAttribute("aria-label", rot.anio);
+
+    function opcion(sel, valor, texto) {
+      var o = document.createElement("option");
+      o.value = valor;
+      o.textContent = texto;
+      sel.appendChild(o);
+    }
+    function vaciar(sel) { while (sel.firstChild) sel.removeChild(sel.firstChild); }
+
+    // EL AÑO, DEL ACTUAL HACIA ATRÁS. Es el orden que hace que esto funcione: la rueda del iPhone
+    // se abre por el principio de la lista, así que llegar a los años de nacimiento habituales es
+    // un gesto corto y en la dirección natural.
+    opcion(sA, "", rot.anio);
+    for (var a = hoy.getFullYear(); a >= hoy.getFullYear() - NAC_ANIOS; a--) {
+      opcion(sA, String(a), String(a));
+    }
+
+    function pintarMeses() {
+      var anio = Number(sA.value) || 0;
+      var tope = anio ? nacTopeMeses(anio, hoy) : 12;
+      var elegido = sM.value;
+      vaciar(sM);
+      opcion(sM, "", rot.mes);
+      for (var m = 1; m <= tope; m++) opcion(sM, String(m), meses[m - 1]);
+      sM.value = elegido && Number(elegido) <= tope ? elegido : "";
+    }
+
+    function pintarDias() {
+      var anio = Number(sA.value) || 0, mes = Number(sM.value) || 0;
+      var tope = nacTopeDias(anio, mes, hoy);
+      var elegido = Number(sD.value) || 0;
+      vaciar(sD);
+      opcion(sD, "", rot.dia);
+      for (var d = 1; d <= tope; d++) opcion(sD, String(d), String(d));
+      // SE CONSERVA LO ELEGIDO, pegado al último día si el mes se ha quedado corto. Quien había
+      // dicho 31 y cambia a febrero quiere el 28, no volver a empezar con el desplegable vacío.
+      sD.value = elegido ? String(Math.min(elegido, tope)) : "";
+    }
+
+    function componer() {
+      oculto.value = nacComponer(sA.value, sM.value, sD.value);
+    }
+
+    // Cambiar el año puede dejar sin sitio al mes elegido, y cambiar el mes al día. Se repinta en
+    // cascada y SIEMPRE en el mismo orden: año → mes → día.
+    sA.addEventListener("change", function () { pintarMeses(); pintarDias(); componer(); });
+    sM.addEventListener("change", function () { pintarDias(); componer(); });
+    sD.addEventListener("change", componer);
+
+    pintarMeses();
+    pintarDias();
+    componer();
   }
 
   function pintarConfigurable(c) {
@@ -351,10 +481,19 @@
         return '<div class="alta-campo"><label for="fx_local"></label><select id="fx_local" name="local"></select></div>';
       }
       if (x.id === "nacimiento") {
-        return '<div class="alta-campo"><label for="fx_nacimiento"></label>'
-          + '<input id="fx_nacimiento" name="nacimiento" type="date" class="pm-fecha"'
-          + (x.obligatorio ? " required" : "") + ' aria-describedby="fxNacEco" />'
-          + '<span class="pm-eco" id="fxNacEco" aria-live="polite"></span></div>';
+        // El rótulo apunta al DÍA: pulsarlo abre el primero de los tres, que es por donde se
+        // empieza. El grupo entero se nombra con `aria-labelledby`, así que un lector de pantalla
+        // dice «Fecha de nacimiento, grupo» y después cada rueda por su nombre.
+        return '<div class="alta-campo">'
+          + '<label id="fxL_nacimiento" for="fx_nac_d"></label>'
+          + '<div class="pm-nac" role="group" aria-labelledby="fxL_nacimiento">'
+          + '<select id="fx_nac_d" class="pm-nac-s"></select>'
+          + '<select id="fx_nac_m" class="pm-nac-s"></select>'
+          + '<select id="fx_nac_a" class="pm-nac-s"></select>'
+          + '</div>'
+          // EL DATO VIVE AQUÍ, con el mismo `id` y el mismo `name` de siempre.
+          + '<input id="fx_nacimiento" name="nacimiento" type="hidden" />'
+          + '</div>';
       }
       var tipo = x.id === "telefono" ? "tel" : x.id === "email" ? "email" : "text";
       var extra = x.id === "telefono" ? ' inputmode="tel" autocomplete="tel"'
@@ -385,7 +524,10 @@
     $("fxBoton").textContent = c.texto_boton || "OK";
 
     (c.campos || []).forEach(function (x) {
-      var l = document.querySelector('label[for="fx_' + x.id + '"]');
+      // Por `id` primero: un campo hecho de varios controles —la fecha— tiene su rótulo apuntando
+      // al primero de ellos, no al campo, así que buscarlo solo por `for` no lo encontraría.
+      var l = document.getElementById("fxL_" + x.id)
+           || document.querySelector('label[for="fx_' + x.id + '"]');
       if (l) l.textContent = x.etiqueta + (x.obligatorio ? " *" : "");
     });
     var sel = $("fx_local");
@@ -394,7 +536,7 @@
         var o = document.createElement("option"); o.value = l; o.textContent = l; sel.appendChild(o);
       });
     }
-    if ($("fx_nacimiento")) montarFecha($("fx_nacimiento"), $("fxNacEco"), "dd/mm/aaaa");
+    if ($("fx_nacimiento")) montarNacimiento(c.idioma || "es");
     if (c.sugerir_poblacion && $("fx_poblacion")) montarPoblacion($("fx_poblacion"));
 
     caja.classList.remove("hidden");

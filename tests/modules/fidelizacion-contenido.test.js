@@ -296,11 +296,13 @@ describe("el panel deja mover las preguntas", () => {
   test("cada fila lleva sus flechas", () => {
     assert.match(panel, /data-act="ff-subir" data-campo="\$\{esc\(id\)\}"/);
     assert.match(panel, /data-act="ff-bajar" data-campo="\$\{esc\(id\)\}"/);
-    assert.match(panel, /else if \(act === "ff-subir"\) fidgMoverCampo\(t\.getAttribute\("data-campo"\), true\);/);
+    // Se le pasa además el BOTÓN: las mismas flechas sirven en el formulario entero y en el
+    // diálogo de solo ordenar, y desde el botón se encuentra a cuál de las dos listas pertenece.
+    assert.match(panel, /else if \(act === "ff-subir"\) fidgMoverCampo\(t\.getAttribute\("data-campo"\), true, t\);/);
   });
 
   test("mover NO repinta la lista: se movería el nodo y se perdería lo escrito", () => {
-    assert.match(panel, /function fidgMoverCampo\(id, haciaArriba\)/);
+    assert.match(panel, /function fidgMoverCampo\(id, haciaArriba, boton\)/);
     assert.match(panel, /caja\.insertBefore\(fila, vecino\)/);
     assert.ok(!/fidgMoverCampo[\s\S]{0,600}innerHTML/.test(panel), "repinta y pierde lo escrito");
   });
@@ -310,7 +312,9 @@ describe("el panel deja mover las preguntas", () => {
   });
 
   test("el orden que se guarda SALE DEL DOM, no del catálogo", () => {
-    assert.match(panel, /document\.getElementById\("ffCampos"\)\?\.querySelectorAll\("\[data-campo\]"\)/);
+    // `:scope >` es obligatorio: `data-campo` está también en las flechas, y sin acotar la lista
+    // sale con cada campo repetido tres veces.
+    assert.match(panel, /document\.getElementById\("ffCampos"\)\?\.querySelectorAll\(":scope > \[data-campo\]"\)/);
     assert.match(panel, /\.map\(\(fila\) => fila\.getAttribute\("data-campo"\)\)/);
   });
 

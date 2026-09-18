@@ -141,6 +141,57 @@ export function normalizarCampos(lista) {
 }
 
 /**
+ * CAMBIAR DE SITIO LOS CAMPOS DE UN FORMULARIO QUE YA EXISTE. Nada más.
+ *
+ * ── POR QUÉ ESTO NO ES «GUARDAR OTRA VEZ EL FORMULARIO» ──────────────────────────────────────
+ *
+ * Cambiar el orden es lo ÚNICO que se puede hacer sobre una versión publicada sin romper lo que el
+ * versionado protege. Guardar el formulario entero publica una versión nueva, y eso tiene un
+ * precio que no se ve: la versión entra en la clave de idempotencia del WhatsApp del alta, así que
+ * subirla hace que quien ya se apuntó pueda volver a recibir el mensaje. Mover tres campos no
+ * puede costar eso.
+ *
+ * Lo que el versionado sí protege —qué texto legal aceptó alguien y cuándo— no lo toca el orden.
+ *
+ * ── LA REGLA: SOLO UNA PERMUTACIÓN ───────────────────────────────────────────────────────────
+ *
+ * Se acepta únicamente una lista con LOS MISMOS IDENTIFICADORES que ya hay guardados: ni uno más,
+ * ni uno menos, ni repetidos. Y de esa lista se usan SOLO LOS NOMBRES: las fichas —etiqueta,
+ * visible, obligatorio— salen de lo guardado y no de lo que llegue.
+ *
+ * Esas dos decisiones juntas son lo que hace que esto sea seguro de verdad y no por promesa: por
+ * construcción no hay forma de colar un campo nuevo, de borrar uno, de hacer opcional el teléfono
+ * ni de reescribir una etiqueta desde aquí. No hace falta comprobarlo campo a campo.
+ *
+ * @param {Array} guardados         los campos ya guardados, ya leídos con `leerLista`
+ * @param {Array} orden             los identificadores en su nuevo orden (o fichas con `id`)
+ * @returns {{ok: true, campos: Array}|{ok: false, error: string}}
+ */
+export function reordenarCampos(guardados, orden) {
+  const actuales = normalizarCampos(guardados);
+  if (!actuales.length) return { ok: false, error: "Este formulario no tiene campos que ordenar." };
+  if (!Array.isArray(orden)) return { ok: false, error: "No se ha recibido ningún orden." };
+
+  const pedido = orden.map((c) => String(c?.id || c || ""));
+  if (pedido.length !== actuales.length) {
+    return { ok: false,
+      error: `El orden trae ${pedido.length} campos y el formulario tiene ${actuales.length}.` };
+  }
+  if (new Set(pedido).size !== pedido.length) {
+    return { ok: false, error: "El orden repite algún campo." };
+  }
+  const fichas = new Map(actuales.map((c) => [c.id, c]));
+  for (const id of pedido) {
+    if (!fichas.has(id)) {
+      return { ok: false, error: `«${id}» no es un campo de este formulario.` };
+    }
+  }
+  // Mismo número, sin repetidos y todos existen ⇒ es exactamente el mismo conjunto. No hace falta
+  // comprobar que no falta ninguno: no caben.
+  return { ok: true, campos: pedido.map((id) => fichas.get(id)) };
+}
+
+/**
  * Los mensajes que puede ver un cliente. CERRADO, y con un valor por defecto para cada uno.
  *
  * Están aquí y no en `promo.js` porque un formulario en catalán que falla en castellano es un

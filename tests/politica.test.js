@@ -304,8 +304,12 @@ describe("se enlaza desde donde hace falta", () => {
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 describe("EL ENLACE VA DENTRO DE LA FRASE, no suelto debajo", () => {
   const promoJs = readFileSync(new URL("../public/promo.js", import.meta.url), "utf8");
-  const bloque = promoJs.slice(promoJs.indexOf("function pintarConsentimiento("),
-                               promoJs.indexOf("function montarFecha("));
+  // Con las anclas comprobadas: si una desaparece, `indexOf` da -1, el recorte sale vacío y las
+  // comprobaciones de «esto no aparece» pasarían sin leer nada.
+  const desdeC = promoJs.indexOf("function pintarConsentimiento(");
+  const hastaC = promoJs.indexOf("var NAC_ANIOS", desdeC);
+  assert.ok(desdeC >= 0 && hastaC > desdeC, "el recorte del consentimiento ya no encuentra sus anclas");
+  const bloque = promoJs.slice(desdeC, hastaC);
 
   test("la frase de Girona nombra la política, para poder subrayarla dentro", () => {
     assert.match(app, /Omplint aquest formulari acceptes rebre descomptes del grup de la Família del Amor\. Consulta la Política de privacitat\./);
