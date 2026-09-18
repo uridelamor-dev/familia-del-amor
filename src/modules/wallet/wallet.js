@@ -94,32 +94,45 @@ export function nombreArchivoPase() {
  * El logotipo de arriba ES la firma «Familia Del Amor», así que NO se pone `logoText`: decía lo
  * mismo dos veces, una escrita a mano y otra en tipografía del sistema.
  *
- * Debajo, el sitio grande (`primaryFields`) lo ocupa EL NOMBRE del titular con «CARNÉ DE
- * CLIENTE» como rótulo: así se dice qué es la tarjeta sin gastar una línea aparte. El número de
- * socio va en `secondaryFields`, con su rótulo, que es donde se busca cuando hay que teclearlo.
+ * A su derecha, en `headerFields`, EL NÚMERO DE SOCIO. Esa esquina estaba vacía y la firma
+ * quedaba sola en media cabecera; además es donde cualquier tarjeta de fidelización lo pone. Va
+ * discreto —«SOCIO» y el número— porque el protagonista es el nombre, no la referencia.
  *
- * El código de barras NO lleva `altText`. Lo llevaba, y repetía exactamente el número que está
- * justo encima; quitarlo deja el QR más grande y la cara más limpia.
+ * Debajo, el sitio grande (`primaryFields`) lo ocupa EL NOMBRE del titular con «TARJETA DE
+ * CLIENTE» como rótulo: así se dice qué es la tarjeta sin gastar una línea aparte.
  *
- * `auxiliaryFields` se queda vacío a propósito: con tres datos en la cara ya está dicho todo, y
- * rellenarlo solo porque existe es lo que convierte una tarjeta en un formulario.
+ * El lema va SOLO en su fila y CENTRADO. Compartía línea con el número de socio y se leía como
+ * un dato más de la ficha; centrado y sin nada al lado se lee como lo que es, una firma de marca.
+ *
+ * El código de barras SÍ lleva `altText`, con el número de socio. Es la lectura alternativa que
+ * define Apple —lo que se teclea cuando la cámara no lee— y de paso le da suelo al código.
+ *
+ * ── LO QUE NO SE HACE: RELLENAR EL HUECO ─────────────────────────────────────────────────────
+ *
+ * Apple ancla el código abajo, así que con los puntos y las promociones apagados queda una franja
+ * de crema vacía. NO se llena con datos de adorno —«socio desde», «dónde vale»— solo porque el
+ * hueco exista. Esos ya están en el reverso, y una tarjeta que respira se lee mejor que una ficha
+ * llena. El hueco es aire, y es una decisión.
  */
 // ── CÓMO SE REPARTE LA CARA CUANDO EL PASE YA SABE COSAS ─────────────────────────────────────
 //
 // EL DISEÑO APROBADO NO SE TOCA. La primera versión de esto subía los puntos al sitio grande y
 // bajaba el nombre al reverso — y eso es rehacer el pase, no ampliarlo. Lo aprobado es:
 //
-//   primaryFields     el titular, con «CARNÉ DE CLIENTE» de rótulo
-//   secondaryFields   «NÚMERO DE SOCIO»
-//   auxiliaryFields   vacío hasta ahora
-//   sin `logoText`, sin `altText` bajo el QR, crema + tinta + verde, seis imágenes
+//   headerFields      «SOCIO» y el número, arriba a la derecha
+//   primaryFields     el titular, con «TARJETA DE CLIENTE» de rótulo
+//   secondaryFields   lo que cambia: puntos y próximo premio
+//   auxiliaryFields   vales, o el lema centrado si esa fila se queda vacía
+//   sin `logoText`, con `altText` bajo el QR, crema + tinta + verde, nueve imágenes
 //
-// Los puntos y los regalos entran POR `auxiliaryFields` —la fila que estaba libre— y por el
-// reverso. Si no cupieran, lo que se recorta es lo nuevo, nunca el titular ni el número.
+// Los puntos y los regalos entran POR `secondaryFields` y `auxiliaryFields`. Si no cupieran, lo
+// que se recorta es lo nuevo, nunca el titular ni el número.
 //
-// SIN ESTADO se devuelve exactamente lo de antes, byte a byte. Es lo que se genera mientras la
-// puerta esté cerrada, y lo que garantiza que este trabajo no cambia el pase de nadie hasta que
-// alguien lo encienda.
+// LOS DOS CAMINOS —con estado y sin él— COMPONEN LA CARA IGUAL: misma cabecera, mismo campo
+// principal y el mismo lema centrado. Antes el camino sin estado devolvía la cara antigua byte a
+// byte, y eso era correcto mientras el rediseño estaba a medias; ahora sería un segundo diseño
+// escondido detrás de una puerta, y el día que alguien la abriera la tarjeta cambiaría de aspecto
+// sin que nadie hubiera tocado el diseño. Lo que cambia entre los dos caminos son LOS DATOS.
 
 /** `2026-10-01T09:00:00+02:00` → `01/10/2026`. Sin fecha válida, nada: un «Invalid Date» en el
  *  reverso de un carné es peor que no decir cuándo se hizo la foto. */
@@ -170,12 +183,32 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false, locales 
     ? [{ key: "titular", label: "TARJETA DE CLIENTE", value: recortar(qr.nombre, 26) }]
     : [{ key: "socio", label: "TARJETA DE CLIENTE", value: codigo }];
 
+  // ── EL NÚMERO DE SOCIO, ARRIBA A LA DERECHA ───────────────────────────────────────────────
+  //
+  // `headerFields` es la fila del logotipo, y estaba VACÍA: la firma quedaba sola a la izquierda
+  // y media cabecera en blanco. Es además donde cualquier tarjeta de fidelización pone el número.
+  //
+  // Va DISCRETO a propósito —rótulo corto y el número y nada más—: el protagonista de la cara es
+  // el nombre del cliente, en cuerpo grande sobre el verde. El número es una referencia.
+  //
+  // SOLO SI HAY NOMBRE. Sin nombre, el campo principal YA enseña el código, y repetirlo dos veces
+  // en la misma pantalla es justo lo que se está quitando de en medio.
+  const headerFields = qr.nombre ? [{ key: "socio", label: "SOCIO", value: codigo }] : [];
+
+  /** El lema, solo en su fila y CENTRADO. Es marca, no un dato del cliente: si se alinea como los
+   *  demás campos, se lee como si fuera otro valor más de la ficha. */
+  const lemaCentrado = () => ({
+    key: "lema", label: "", value: String(textos.lema || LEMA),
+    textAlignment: "PKTextAlignmentCenter",
+  });
+
   // ── EL PASE DE SIEMPRE ────────────────────────────────────────────────────────────────────
   if (!estado) {
     return {
+      headerFields,
       primaryFields,
-      secondaryFields: qr.nombre ? [{ key: "socio", label: "NÚMERO DE SOCIO", value: codigo }] : [],
-      auxiliaryFields: [],
+      secondaryFields: [],
+      auxiliaryFields: [lemaCentrado()],
       backFields: [
         { key: "que-es", label: "Cómo usar tu tarjeta", value: ayuda },
         { key: "donde", label: "Dónde vale", value: dondeValeLaTarjeta(locales) },
@@ -190,13 +223,19 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false, locales 
 
   // ══ LA CARA ═══════════════════════════════════════════════════════════════════════════════
   //
-  // CUATRO HUECOS, en este orden: número de socio, puntos, próximo premio y vales. Se meten los
-  // que existan y se reparten de dos en dos: los dos primeros arriba, los dos siguientes abajo.
+  // CUATRO HUECOS para lo que CAMBIA: puntos, próximo premio y vales. Se meten los que existan y
+  // se reparten de dos en dos: los dos primeros arriba, los dos siguientes abajo.
   //
   // Así el sitio de cada cosa NO DEPENDE de lo que haya encendido. Antes el lema saltaba de la
   // fila de abajo a la cabecera al encender los puntos, y el cliente veía mudarse un texto.
+  //
+  // EL NÚMERO DE SOCIO YA NO ESTÁ AQUÍ: se ha ido a la cabecera. No es un dato que cambie, y
+  // ocupando la primera fila empujaba el lema a compartir línea con él.
+  //
+  // Y NO SE RELLENA POR RELLENAR. Con todo apagado esta zona se queda casi vacía, y está bien: el
+  // hueco que deja Apple encima del código se llena con aire, no con datos de adorno. Una tarjeta
+  // que respira se lee mejor que una ficha.
   const huecos = [];
-  if (qr.nombre) huecos.push({ key: "socio", label: "NÚMERO DE SOCIO", value: codigo });
   if (pt.activo) {
     huecos.push({ key: "puntos", label: "PUNTOS", value: String(pt.saldo ?? 0) });
     if (Number.isFinite(pt.faltan) && pt.faltan > 0) {
@@ -215,10 +254,8 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false, locales 
   const secondaryFields = huecos.slice(0, 2);
   const auxiliaryFields = huecos.slice(2, 4);
   // El lema SOLO cuando la fila de abajo se queda vacía, y siempre en ese mismo sitio. Es lo
-  // único estático que se pone para ocupar hueco, y es verdad siempre.
-  if (!auxiliaryFields.length) {
-    auxiliaryFields.push({ key: "lema", label: "", value: String(textos.lema || LEMA) });
-  }
+  // único estático que se pone, y es verdad siempre.
+  if (!auxiliaryFields.length) auxiliaryFields.push(lemaCentrado());
 
   // ══ LOS DETALLES ══════════════════════════════════════════════════════════════════════════
   //
@@ -299,12 +336,13 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false, locales 
       value: dia ? `Estos datos son del ${dia}.` : "Abre el enlace de arriba para verlos al día." });
   }
 
-  return { primaryFields, secondaryFields, auxiliaryFields, backFields };
+  return { headerFields, primaryFields, secondaryFields, auxiliaryFields, backFields };
 }
 
 export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales = [],
                                  estado = null, servicio = null, textos = {},
                                  congelado = false } = {}) {
+  const codigo = codigoLegible(qr.codigo);
   const pase = {
     formatVersion: 1,
     passTypeIdentifier: cfg.pass_type_id,
@@ -325,6 +363,22 @@ export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales 
       message: urlTarjeta(base, qr.token),
       // iso-8859-1 es lo que exige Apple; el mensaje es una URL, así que todo es ASCII.
       messageEncoding: "iso-8859-1",
+      // ── LA LECTURA ALTERNATIVA ──────────────────────────────────────────────────────────────
+      //
+      // Apple la define como «la versión legible del código, por si el código no se escanea», y
+      // eso es EXACTAMENTE lo que hace falta aquí: cuando la cámara de la tablet no lee, el
+      // camarero teclea los ocho dígitos. El número de socio es esa lectura alternativa.
+      //
+      // NO se pone la URL: el contenido literal del código es un enlace con el token dentro, y
+      // eso ni se teclea ni se enseña.
+      //
+      // Estuvo puesto, se quitó porque repetía el número que tenía justo encima, y ahora vuelve:
+      // el número se ha ido a la cabecera, así que ya no hay nada duplicado al lado. Además le da
+      // suelo al código, que sin nada debajo flota en medio del crema.
+      //
+      // SOLO SI HAY NOMBRE, y es el mismo motivo por el que se quitó. Sin nombre, el número ES el
+      // campo principal —en cuerpo grande, en mitad de la tarjeta— y volvería a estar repetido.
+      ...(qr.nombre && codigo ? { altText: codigo } : {}),
     }],
 
     storeCard: camposDe({ qr, base, promo, estado, textos, congelado, locales }),

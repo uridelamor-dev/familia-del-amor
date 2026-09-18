@@ -58,12 +58,21 @@ describe("pass.json de Apple", () => {
     assert.equal(pase.barcodes[0].format, "PKBarcodeFormatQR");
   });
 
-  test("el QR NO repite debajo el número que ya está en la cara", () => {
-    // Lo llevaba en `altText`, y decía exactamente lo mismo que «NÚMERO DE SOCIO», que está
-    // justo encima. Quitarlo deja el QR más grande y una cara menos repetida.
-    assert.equal(pase.barcodes[0].altText, undefined);
-    const socio = pase.storeCard.secondaryFields.find(f => f.key === "socio");
-    assert.equal(socio.value, "1234 5678", "el número tiene que seguir estando, pero una sola vez");
+  test("el QR lleva debajo SU LECTURA ALTERNATIVA, no la URL", () => {
+    // ── QUÉ ES `altText` ──────────────────────────────────────────────────────────────────
+    //
+    // Apple lo define como «la versión legible del código, por si el código no se escanea». Aquí
+    // eso es EXACTAMENTE el número de socio: cuando la cámara de la tablet no lee, el camarero
+    // teclea los ocho dígitos.
+    //
+    // Nunca la URL: el contenido literal del código lleva el token dentro, y eso ni se teclea ni
+    // se enseña.
+    //
+    // Estuvo, se quitó porque repetía el número que tenía justo encima, y vuelve ahora que ese
+    // número se ha ido a la cabecera. De paso le da suelo al código.
+    assert.equal(pase.barcodes[0].altText, "1234 5678");
+    assert.ok(!pase.barcodes[0].altText.includes("http"), "el altText enseña la URL");
+    assert.ok(!pase.barcodes[0].altText.includes(QR.token), "el altText enseña el token");
   });
 
   test("lleva los campos que iOS exige para no rechazarlo", () => {
@@ -82,13 +91,19 @@ describe("pass.json de Apple", () => {
     assert.equal(pase.authenticationToken, undefined);
   });
 
-  test("la cara dice, en este orden: de quién es, qué es y qué número tiene", () => {
+  test("la cara dice, en este orden: qué número tiene, de quién es y de qué casa", () => {
+    // El número arriba a la derecha —discreto, como una referencia—, el nombre grande sobre el
+    // verde, y el lema solo y centrado cerrando la composición.
+    assert.deepEqual(pase.storeCard.headerFields,
+      [{ key: "socio", label: "SOCIO", value: "1234 5678" }]);
     assert.deepEqual(pase.storeCard.primaryFields,
       [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
-    assert.deepEqual(pase.storeCard.secondaryFields,
-      [{ key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" }]);
-    // Vacío a propósito: con tres datos ya está dicho todo.
-    assert.deepEqual(pase.storeCard.auxiliaryFields, []);
+    // Vacía a propósito: la fila de datos es para lo que CAMBIA, y con todo apagado no cambia
+    // nada. No se rellena solo porque Apple deje el hueco.
+    assert.deepEqual(pase.storeCard.secondaryFields, []);
+    assert.deepEqual(pase.storeCard.auxiliaryFields,
+      [{ key: "lema", label: "", value: "MENJAR · BEURE · COMPARTIR",
+         textAlignment: "PKTextAlignmentCenter" }]);
   });
 
   test("sin `logoText`: el logotipo YA dice «Familia Del Amor»", () => {
@@ -97,14 +112,18 @@ describe("pass.json de Apple", () => {
     assert.equal(pase.logoText, undefined);
   });
 
-  test("un carné sin nombre no deja el sitio grande en blanco", () => {
+  test("un carné sin nombre no deja el sitio grande en blanco, ni repite el número", () => {
+    // Sin nombre, el número OCUPA el sitio grande. Entonces ni la cabecera ni el `altText` lo
+    // vuelven a decir: es el mismo motivo por el que el `altText` se había quitado —el número
+    // estaría repetido a un centímetro de sí mismo—.
     const p = pasePlanoApple({ qr: { ...QR, nombre: "" }, cfg: CFG_APPLE, base: BASE });
     assert.deepEqual(p.storeCard.primaryFields,
       [{ key: "socio", label: "TARJETA DE CLIENTE", value: "1234 5678" }]);
+    assert.deepEqual(p.storeCard.headerFields, []);
     assert.deepEqual(p.storeCard.secondaryFields, []);
-    // Y el número sigue apareciendo una sola vez.
+    assert.equal(p.barcodes[0].altText, undefined);
     const veces = JSON.stringify(p).split("1234 5678").length - 1;
-    assert.equal(veces, 1);
+    assert.equal(veces, 1, "el número sale más de una vez");
   });
 
   test("ningún texto de la cara se repite", () => {

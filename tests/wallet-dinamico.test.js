@@ -107,15 +107,23 @@ describe("el carné es el mismo", () => {
     }
   });
 
-  test("sin servicio, el pase es EXACTAMENTE el de antes", () => {
+  test("sin servicio NO se declara el servicio web, y la cara se compone IGUAL", () => {
     assert.equal(estatico.webServiceURL, undefined);
     assert.equal(estatico.authenticationToken, undefined);
-    // Y la cara no cambia ni un campo.
+
+    // ── LOS DOS CAMINOS COMPONEN LA CARA IGUAL ────────────────────────────────────────────
+    //
+    // Lo que cambia entre llevar servicio y no llevarlo son LOS DATOS, nunca el diseño. Si el
+    // camino sin estado conservara la cara antigua, habría un segundo diseño escondido detrás
+    // de una puerta y la tarjeta cambiaría de aspecto el día que alguien la abriera.
+    assert.deepEqual(estatico.storeCard.headerFields,
+      [{ key: "socio", label: "SOCIO", value: "1234 5678" }]);
     assert.deepEqual(estatico.storeCard.primaryFields,
       [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
-    assert.deepEqual(estatico.storeCard.secondaryFields,
-      [{ key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" }]);
-    assert.deepEqual(estatico.storeCard.auxiliaryFields, []);
+    assert.deepEqual(estatico.storeCard.secondaryFields, []);
+    assert.deepEqual(estatico.storeCard.auxiliaryFields,
+      [{ key: "lema", label: "", value: "MENJAR · BEURE · COMPARTIR",
+         textAlignment: "PKTextAlignmentCenter" }]);
   });
 });
 
@@ -130,16 +138,22 @@ describe("el diseño aprobado se conserva", () => {
       [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
   });
 
-  test("el número de socio ABRE la fila secundaria", () => {
-    assert.deepEqual(p.storeCard.secondaryFields[0],
-      { key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" });
+  test("el número de socio vive en LA CABECERA, y discreto", () => {
+    // Arriba a la derecha, que es donde lo pone cualquier tarjeta de fidelización y donde antes
+    // no había nada: la firma quedaba sola en media cabecera.
+    assert.deepEqual(p.storeCard.headerFields,
+      [{ key: "socio", label: "SOCIO", value: "1234 5678" }]);
+    // Y NO se queda además abajo: repetirlo en la misma pantalla es lo que se ha quitado.
+    const abajo = [...p.storeCard.secondaryFields, ...p.storeCard.auxiliaryFields];
+    assert.ok(!abajo.some((f) => f.key === "socio"), "el número sigue también abajo");
   });
 
-  test("DOS FILAS DE DOS: socio+puntos arriba, próximo premio+vales abajo", () => {
-    // Con todo en una sola fila quedaba un hueco enorme hasta el QR. Se vio en el iPhone.
-    assert.deepEqual(p.storeCard.secondaryFields.map((f) => f.key), ["socio", "puntos"]);
+  test("las filas de abajo son SOLO para lo que cambia", () => {
+    // Puntos y próximo premio arriba, vales abajo. El número de socio ya no ocupa el primer
+    // hueco, así que lo que se ve es lo que se mueve.
+    assert.deepEqual(p.storeCard.secondaryFields.map((f) => f.key), ["puntos", "faltan"]);
     assert.equal(p.storeCard.secondaryFields.find((f) => f.key === "puntos").value, "72");
-    assert.deepEqual(p.storeCard.auxiliaryFields.map((f) => f.key), ["faltan", "vales"]);
+    assert.deepEqual(p.storeCard.auxiliaryFields.map((f) => f.key), ["vales"]);
   });
 
   test("colores, logo y ausencias siguen igual", () => {
@@ -147,7 +161,10 @@ describe("el diseño aprobado se conserva", () => {
     assert.equal(p.foregroundColor, "rgb(28, 33, 31)");
     assert.equal(p.labelColor, "rgb(30, 64, 52)", "el verde oscuro es el nuevo protagonista");
     assert.equal(p.logoText, undefined, "el logotipo ya dice el nombre");
-    assert.equal(p.barcodes[0].altText, undefined, "el número ya está en la cara");
+    // El `altText` es la LECTURA ALTERNATIVA del código: lo que se teclea en la barra cuando la
+    // cámara no lee. Nunca la URL, que lleva el token dentro.
+    assert.equal(p.barcodes[0].altText, "1234 5678");
+    assert.ok(!String(p.barcodes[0].altText).includes("http"), "el altText enseña la URL");
     assert.ok(p.storeCard, "sigue siendo storeCard");
     assert.equal(p.sharingProhibited, true);
   });
@@ -1870,10 +1887,10 @@ describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
     const p = conEstado();
     assert.deepEqual(p.storeCard.primaryFields,
       [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
-    assert.deepEqual(p.storeCard.secondaryFields[0],
-      { key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" });
+    assert.deepEqual(p.storeCard.headerFields,
+      [{ key: "socio", label: "SOCIO", value: "1234 5678" }]);
     assert.equal(p.logoText, undefined);
-    assert.equal(p.barcodes[0].altText, undefined);
+    assert.equal(p.barcodes[0].altText, "1234 5678");
     assert.equal(p.backgroundColor, "rgb(244, 242, 237)");
     assert.equal(p.barcodes[0].message, urlTarjeta(BASE, TOKEN));
     assert.equal(p.serialNumber, TOKEN);
@@ -1884,10 +1901,11 @@ describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
     assert.ok(conEstado().storeCard.secondaryFields.length <= 2);
   });
 
-  test("los cuatro rótulos, en su sitio", () => {
+  test("los rótulos, en su sitio", () => {
     const c = conEstado().storeCard;
-    assert.deepEqual(c.secondaryFields.map((f) => f.label), ["NÚMERO DE SOCIO", "PUNTOS"]);
-    assert.deepEqual(c.auxiliaryFields.map((f) => f.label), ["PRÓXIMO PREMIO", "VALES"]);
+    assert.deepEqual(c.headerFields.map((f) => f.label), ["SOCIO"]);
+    assert.deepEqual(c.secondaryFields.map((f) => f.label), ["PUNTOS", "PRÓXIMO PREMIO"]);
+    assert.deepEqual(c.auxiliaryFields.map((f) => f.label), ["VALES"]);
   });
 });
 
@@ -1895,23 +1913,35 @@ describe("con los puntos apagados la cara se queda LIMPIA", () => {
   const apagados = () => pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, congelado: true,
     estado: proy({ interruptores: { conceder: false }, promoSw: { promociones_ofrecer: false } }) });
 
-  test("NI UN CERO, ni un texto recortado: solo el lema de la casa", () => {
-    // Con el programa apagado la fila quedaba vacía y dejaba un hueco hasta el QR. Se rellena con
-    // algo que es VERDAD siempre, nunca con «0 puntos» o «0 vales».
+  test("NI UN CERO, y NADA DE RELLENO: la cara se queda con aire", () => {
+    // ── EL HUECO ES UNA DECISIÓN ──────────────────────────────────────────────────────────
+    //
+    // Apple ancla el código abajo, así que con el programa apagado queda una franja de crema
+    // vacía. NO se llena con «socio desde» ni «dónde vale» solo porque el hueco exista: eso ya
+    // está en el reverso y convertiría la tarjeta en una ficha. Y desde luego nunca con «0
+    // puntos» o «0 vales», que serían un marcador que no existe.
     const c = apagados().storeCard;
-    assert.deepEqual(c.secondaryFields.map((f) => f.key), ["socio"]);
-    assert.deepEqual(c.auxiliaryFields, [{ key: "lema", label: "", value: LEMA }]);
+    assert.deepEqual(c.secondaryFields, [], "se ha colado relleno en la fila secundaria");
+    assert.deepEqual(c.auxiliaryFields,
+      [{ key: "lema", label: "", value: LEMA, textAlignment: "PKTextAlignmentCenter" }]);
     const json = JSON.stringify(c);
     assert.ok(!/"value":"0"/.test(json), "se ha colado un cero que no existe");
+    for (const relleno of ["SOCIO DESDE", "DÓNDE VALE", "Válido en"]) {
+      assert.ok(!json.includes(relleno), `se rellena la cara con «${relleno}»`);
+    }
   });
 
-  test("y NO hay cabecera: el lema vive en UN solo sitio y no se muda", () => {
-    // Antes saltaba de la fila de abajo a la cabecera al encender los puntos, y el cliente veía
-    // mudarse un texto. Ahora sale abajo, o no sale.
-    assert.equal(apagados().storeCard.headerFields, undefined);
+  test("el lema va SOLO en su fila y CENTRADO: es marca, no un dato del cliente", () => {
+    // Compartía línea con el número de socio y se leía como un valor más de la ficha. Ahora el
+    // número está en la cabecera y el lema se queda solo, centrado.
+    const aux = apagados().storeCard.auxiliaryFields;
+    assert.equal(aux.length, 1, "el lema comparte fila con algo");
+    assert.equal(aux[0].textAlignment, "PKTextAlignmentCenter");
+    assert.deepEqual(apagados().storeCard.secondaryFields, []);
+
+    // Y sigue sin mudarse: cuando ya hay contenido de verdad, no sale.
     const conTodo = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE,
       servicio: { url: BASE, token: "s" }, estado: proy({ promosElegibles: [PROMO] }) });
-    assert.equal(conTodo.storeCard.headerFields, undefined);
     assert.ok(!conTodo.storeCard.auxiliaryFields.some((f) => f.key === "lema"),
       "el lema sale cuando ya hay contenido");
   });
@@ -2077,13 +2107,31 @@ describe("la banda del pase", () => {
     return { w: b.readUInt32BE(16), h: b.readUInt32BE(20), bytes: b.length };
   };
 
-  test("existe en las tres densidades y con la medida de Apple", () => {
-    // 375 × 123 pt es lo que define Apple para la banda de un `storeCard`.
-    assert.deepEqual(medida("strip.png"), { ...medida("strip.png"), w: 375, h: 123 });
+  test("existe en las tres densidades y con LA MEDIDA REAL de Apple", () => {
+    // ── 375 × 144, Y NO 375 × 123 ─────────────────────────────────────────────────────────
+    //
+    // La ranura de un `storeCard` es 375 × 144 pt. El equivalente antiguo, para los dispositivos
+    // de 320 pt de ancho, era 320 × 123 — y las dos proporciones son LA MISMA:
+    //
+    //     375 / 144 = 2,604        320 / 123 = 2,602
+    //
+    // Esta banda se dibujaba a 375 × 123: el ancho del moderno con el alto del antiguo, que es
+    // 3,049 : 1 y no es ninguna de las dos. iOS la escalaba para llenar la ranura, así que salía
+    // ESTIRADA UN 17 % A LO ALTO. Se vio midiendo una captura real de iPhone: la banda medía
+    // 2,63 : 1, o sea unos 143 pt de alto.
+    assert.deepEqual(medida("strip.png"), { ...medida("strip.png"), w: 375, h: 144 });
     assert.equal(medida("strip@2x.png").w, 750);
-    assert.equal(medida("strip@2x.png").h, 246);
+    assert.equal(medida("strip@2x.png").h, 288);
     assert.equal(medida("strip@3x.png").w, 1125);
-    assert.equal(medida("strip@3x.png").h, 369);
+    assert.equal(medida("strip@3x.png").h, 432);
+  });
+
+  test("y la proporción es la de Apple, no otra parecida", () => {
+    // El candado de verdad: si alguien vuelve a mezclar medidas de dos épocas, la proporción se
+    // va y la banda se estira sin que nadie lo note hasta verla en un teléfono.
+    const a = medida("strip.png");
+    assert.ok(Math.abs(a.w / a.h - 375 / 144) < 0.01,
+      `la banda es ${(a.w / a.h).toFixed(3)} : 1 y tiene que ser ${(375 / 144).toFixed(3)} : 1`);
   });
 
   test("son múltiplos exactos ×1 ×2 ×3", () => {
@@ -2145,20 +2193,53 @@ describe("el verde oscuro manda", () => {
     // Salió blanco sobre crema: ilegible. Con el verde entero, ese blanco es el diseño.
     const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
     assert.ok(!/PROPORCION_VERDE/.test(t), "la banda vuelve a tener una parte clara");
-    assert.match(t, /let c = VERDE;/, "la banda tiene que nacer verde en cada píxel");
+    // Cada píxel nace verde. La hondura solo lo oscurece hacia una esquina; nunca lo aclara.
+    assert.match(t, /let c = mezclar\(VERDE, VERDE_HONDO, hondura\(/,
+      "la banda tiene que nacer verde en cada píxel");
+    const [hr, hg, hb] = t.match(/const VERDE_HONDO = \[(\d+), (\d+), (\d+)\]/).slice(1).map(Number);
+    const [vr, vg, vb] = t.match(/const VERDE = \[(\d+), (\d+), (\d+)\]/).slice(1).map(Number);
+    assert.ok(hr <= vr && hg <= vg && hb <= vb, "la sombra ACLARA la banda en vez de hundirla");
+    // Y es sombra, no un segundo color: un salto grande se lee como un degradado, y sobra.
+    assert.ok((vr - hr) + (vg - hg) + (vb - hb) < 60, "la hondura se ve como un degradado");
     // Y el verde es oscuro de verdad: con un verde claro, el blanco tampoco se leería.
     const [r, g, b] = t.match(/const VERDE = \[(\d+), (\d+), (\d+)\]/).slice(1).map(Number);
     const luz = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
     assert.ok(luz < 0.25, `el verde tiene una luminancia de ${luz.toFixed(2)}: el blanco no se leería`);
   });
 
-  test("y la ramita NO puede tocar los bordes: iOS recorta la banda por los lados", () => {
-    // En la captura del iPhone salía cortada por la izquierda, al 7,5 % del ancho.
+  test("la ramita SE CORTA por la derecha, y deja limpio el sitio del nombre", () => {
+    // ── UN CORTE A PROPÓSITO NO ES UN RECORTE POR DESCUIDO ────────────────────────────────
+    //
+    // La primera versión salía cortada por la IZQUIERDA, al 7,5 % del ancho, que es justo donde
+    // empieza el nombre: parecía un fallo. Ahora sale por la derecha y de forma deliberada —una
+    // ramita pequeña y entera metida en una esquina se lee como un icono pegado—.
+    //
+    // Lo que sí es innegociable son los dos tercios de la izquierda: ahí cae «Uriel» en cuerpo
+    // grande, y tiene que estar limpio.
     const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
     const cx = Number(t.match(/cx: w \* ([\d.]+)/)[1]);
-    const ancho = Number(t.match(/ancho: w \* ([\d.]+)/)[1]);
-    assert.ok(cx - ancho * 2 > 0.10 && cx + ancho * 2 < 0.92,
-      `la ramita va de ${(cx - ancho * 2).toFixed(2)} a ${(cx + ancho * 2).toFixed(2)}: toca un borde`);
+    const largo = Number(t.match(/largo: w \* ([\d.]+)/)[1]);
+    assert.ok(cx + largo > 1.0, `la ramita acaba en ${(cx + largo).toFixed(2)}: no se corta`);
+    assert.ok(cx - largo > 0.66,
+      `la ramita llega hasta ${(cx - largo).toFixed(2)}: invade el sitio del nombre`);
+  });
+
+  test("y pesa menos que el nombre: es una marca de agua, no un dibujo", () => {
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    const alfa = Number(t.match(/const RAMA_ALFA = ([\d.]+)/)[1]);
+    assert.ok(alfa > 0 && alfa <= 0.35, `la ramita va al ${alfa}: compite con el nombre`);
+  });
+
+  test("los filos dorados son SUTILES: enmarcan, no subrayan", () => {
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    // Uno arriba y otro abajo. Con uno solo la banda parece pegada encima del crema.
+    const arriba = Number(t.match(/const FILO_ARRIBA_ALFA = ([\d.]+)/)[1]);
+    const abajo = Number(t.match(/const FILO_ABAJO_ALFA = ([\d.]+)/)[1]);
+    assert.ok(arriba > 0 && arriba <= 0.45, "el filo de arriba se ve demasiado");
+    assert.ok(abajo > 0 && abajo <= 0.65, "el filo de abajo se ve demasiado");
+    // Y son líneas de un punto o punto y medio, no franjas.
+    assert.ok(Number(t.match(/const FILO_ARRIBA_PT = ([\d.]+)/)[1]) <= 2);
+    assert.ok(Number(t.match(/const FILO_ABAJO_PT = ([\d.]+)/)[1]) <= 2);
   });
 });
 
