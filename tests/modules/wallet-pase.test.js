@@ -94,16 +94,16 @@ describe("pass.json de Apple", () => {
   test("la cara dice, en este orden: qué número tiene, de quién es y de qué casa", () => {
     // El número arriba a la derecha —discreto, como una referencia—, el nombre grande sobre el
     // verde, y el lema solo y centrado cerrando la composición.
+    // El número arriba a la derecha y SIN RÓTULO: con «SOCIO» encima eran dos masas que
+    // aplastaban la firma manuscrita de al lado.
     assert.deepEqual(pase.storeCard.headerFields,
-      [{ key: "socio", label: "SOCIO", value: "1234 5678" }]);
+      [{ key: "socio", label: "", value: "1234 5678" }]);
     assert.deepEqual(pase.storeCard.primaryFields,
       [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
-    // Vacía a propósito: la fila de datos es para lo que CAMBIA, y con todo apagado no cambia
-    // nada. No se rellena solo porque Apple deje el hueco.
+    // Las dos filas de datos, VACÍAS a propósito: son para lo que CAMBIA, y con todo apagado no
+    // cambia nada. El lema se fue al dibujo de la banda y nada lo sustituye — el hueco es aire.
     assert.deepEqual(pase.storeCard.secondaryFields, []);
-    assert.deepEqual(pase.storeCard.auxiliaryFields,
-      [{ key: "lema", label: "", value: "MENJAR · BEURE · COMPARTIR",
-         textAlignment: "PKTextAlignmentCenter" }]);
+    assert.deepEqual(pase.storeCard.auxiliaryFields, []);
   });
 
   test("sin `logoText`: el logotipo YA dice «Familia Del Amor»", () => {

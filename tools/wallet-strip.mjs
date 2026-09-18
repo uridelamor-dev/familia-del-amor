@@ -5,51 +5,44 @@
 // En un `storeCard`, la banda se pinta DETRÁS del campo principal —el nombre del titular— y ocupa
 // el ancho entero. Es LA ÚNICA superficie libre del pase: todo lo demás lo compone iOS.
 //
-// ── LA MEDIDA, QUE ESTABA MAL ────────────────────────────────────────────────────────────────
-//
-// La ranura de un `storeCard` es 375 × 144 pt. El equivalente antiguo, para los dispositivos de
-// 320 pt de ancho, era 320 × 123. Las dos proporciones son la misma:
-//
-//     375 / 144 = 2,604        320 / 123 = 2,602
-//
-// Esta banda se dibujaba a 375 × 123 — el ANCHO del moderno con el ALTO del antiguo—, que es
-// 3,049 : 1 y no es ninguna de las dos. iOS la escalaba para llenar la ranura, así que salía
-// ESTIRADA UN 17 % A LO ALTO: por eso la ramita parecía un óvalo por mucho que se corrigiera su
-// giro, y por eso el filo dorado salía más grueso de lo dibujado.
-//
-// Se comprobó midiendo una captura real de iPhone: la banda medía 2,63 : 1, que corresponde a un
-// alto de ~143 pt. No a 123.
-//
 //   375 × 144   ×1        750 × 288   ×2        1125 × 432   ×3
 //
-// ── POR QUÉ LA BANDA ES VERDE ENTERA ─────────────────────────────────────────────────────────
+// La medida es la de Apple para un `storeCard`, y está comprobada sobre una captura real: la banda
+// mide 2,60 : 1 en el iPhone, que es exactamente 375/144. (Durante un tiempo se dibujó a 375 × 123
+// —el ancho del formato moderno con el alto del antiguo de 320 pt—, y iOS la estiraba un 17 %.)
+//
+// ── POR QUÉ LA BANDA ES OSCURA ENTERA ────────────────────────────────────────────────────────
 //
 // Porque iOS PINTA EN BLANCO el texto que cae sobre la banda, y no hay forma de evitarlo:
-// `foregroundColor` se respeta en todo el pase MENOS ahí. Se comprobó en un iPhone de verdad —el
-// número de socio salía oscuro y correcto sobre el crema, y el nombre salía blanco sobre la misma
-// tinta declarada—.
+// `foregroundColor` se respeta en todo el pase MENOS ahí. Se comprobó en un iPhone de verdad.
 //
-// Con el verde entero, el blanco que impone iOS pasa de ser un problema a ser el diseño: nombre
-// grande y claro sobre un bloque verde.
+// Eso descarta cualquier banda clara: el nombre desaparecería. Y decide el tono de la terracota —
+// tiene que ser lo bastante profunda para que el blanco se lea. La elegida da 6,9 : 1 de contraste
+// con el blanco; un naranja vivo se queda en 2,8 y es ilegible.
 //
-// ── Y POR QUÉ NO ES UN BLOQUE DE COLOR ───────────────────────────────────────────────────────
+// ── QUÉ HAY DENTRO, Y POR QUÉ TAN POCO ───────────────────────────────────────────────────────
 //
-// Su ALTO lo fija Apple y no se puede reducir, así que la banda va a ocupar ese sitio pase lo que
-// pase. Lo único que se puede decidir es si pesa como una losa o como una composición. Tres cosas,
-// y ninguna se ve por separado:
+// Tres cosas, y la de en medio casi no se ve:
 //
-//   · PROFUNDIDAD. El verde no es plano: se hunde hacia la esquina inferior derecha. Es un cambio
-//     de una decena de niveles, por debajo del umbral de «esto es un degradado», pero hace que la
-//     masa tenga un volumen en vez de ser un recorte.
-//   · DOS FILOS DORADOS, arriba y abajo. La ENMARCAN en vez de cerrarla por un lado. Un punto de
-//     grosor y media opacidad: a un palmo de distancia casi no se ven, y sin ellos la banda parece
-//     pegada encima del crema.
-//   · LA RAMITA, GRANDE Y CORTADA. Sale por el borde derecho y se sale también por arriba y por
-//     abajo. Una ramita pequeña y entera flotando en una esquina es un icono; una cortada con
-//     intención es un fondo. Va en dorado al 25 % — es una marca de agua, no un dibujo, y tiene
-//     que perder contra el nombre del cliente, que es el protagonista.
+//   1. EL LEMA, arriba a la izquierda, pequeño. Estaba en un campo del pase y iOS le daba una fila
+//      entera para él solo: ocupaba más ancho que el nombre del cliente. Aquí vuelve a ser lo que
+//      es —una firma de marca— y devuelve esa franja a la tarjeta.
+//   2. LA MARCA DE AGUA: la propia firma, ampliada y cortada por el borde derecho, al 7 %. Es lo
+//      que convierte un rectángulo de color en un objeto. A un palmo no se ve.
+//   3. NADA MÁS. Antes había una ramita vegetal; vista a tamaño real en el teléfono se leía como
+//      una ilustración pegada en la esquina, no como textura de marca. Fuera.
 //
-// La mitad izquierda se deja LIMPIA a propósito: ahí cae el nombre, en cuerpo grande.
+// La mitad izquierda y baja se deja LIMPIA: ahí cae el nombre, en cuerpo grande.
+//
+// ── LOS DOS PLANES B, Y ESTÁN A UNA LÍNEA ────────────────────────────────────────────────────
+//
+// Las dos decisiones estéticas de arriba hay que verlas en un teléfono, no discutirlas:
+//
+//   · `MARCA_AGUA = false`  →  la banda se queda plana. Si la firma ampliada ensucia, fuera.
+//   · `LEMA = ""`           →  el lema sale del frontal. Si un nombre largo lo toca, fuera.
+//
+// EL NOMBRE MANDA SIEMPRE. El lema se coloca por encima de donde iOS pinta el nombre y con el
+// ancho limitado; si no cupiera, no se pinta a medias: no se pinta.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -59,22 +52,24 @@ import { fileURLToPath } from "node:url";
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const SALIDA = path.join(AQUI, "..", "public", "assets", "wallet");
 
-// ── La paleta, la misma de la casa ───────────────────────────────────────────────────────────
-const VERDE = [30, 64, 52];        // más oscuro que el de los rótulos: es una masa, no una letra
-const VERDE_HONDO = [21, 50, 40];  // el mismo verde, con sombra. NO es un segundo color de marca
-const DORADO = [201, 184, 150];
+// ── La paleta ────────────────────────────────────────────────────────────────────────────────
+const MARFIL = [244, 242, 237];
+const TERRACOTA = [143, 68, 48];   // #8F4430 · 6,9 : 1 con el blanco que iOS impone encima
 
-/** Los filos dorados, en puntos. Uno arriba y otro abajo: enmarcan, no separan. */
-const FILO_ARRIBA_PT = 1.0;
-const FILO_ABAJO_PT = 1.5;
-const FILO_ARRIBA_ALFA = 0.30;
-const FILO_ABAJO_ALFA = 0.52;
+/** El lema. Cadena vacía = no se pinta (plan B). */
+const LEMA = "MENJAR · BEURE · COMPARTIR";
+const LEMA_ALFA = 0.45;
+const LEMA_ALTO = 0.052;     // del alto de la banda
+const LEMA_ARRIBA = 0.075;   // dónde empieza, del alto de la banda
+const LEMA_ANCHO_MAX = 0.55; // nunca más de esto: el resto es del nombre
 
-/** La ramita: cuánto pesa. Es una marca de agua y tiene que perder contra el nombre. */
-const RAMA_ALFA = 0.25;
-const HOJAS = 6;
+/** La marca de agua. `false` = banda plana (plan B). */
+const MARCA_AGUA = true;
+const AGUA_ALFA = 0.07;
+const AGUA_ALTO = 0.82;      // veces el alto de la banda: se sale por arriba y por abajo
+const AGUA_IZQUIERDA = 0.44; // dónde empieza: de ahí a la derecha, y se corta
 
-// ── PNG a mano, igual que en `wallet-imagenes.mjs` ───────────────────────────────────────────
+// ── PNG: escribir. Igual que en `wallet-imagenes.mjs` ────────────────────────────────────────
 const crc32 = (() => {
   const t = new Int32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -119,6 +114,62 @@ function escribirPng({ w, h, px }) {
   ]);
 }
 
+// ── PNG: leer ────────────────────────────────────────────────────────────────────────────────
+//
+// COPIADO de `wallet-imagenes.mjs` a propósito, y no importado: ese fichero ES UN GUION —escribe
+// las seis imágenes del logotipo al cargarse y no exporta nada—, así que importarlo aquí
+// regeneraría media carpeta como efecto secundario de dibujar una banda.
+function leerPng(buf) {
+  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error("no es un PNG");
+  let i = 8, w = 0, h = 0, tipo = 0, prof = 0;
+  const trozos = [];
+  while (i < buf.length) {
+    const largo = buf.readUInt32BE(i);
+    const nombre = buf.toString("ascii", i + 4, i + 8);
+    const datos = buf.subarray(i + 8, i + 8 + largo);
+    if (nombre === "IHDR") {
+      w = datos.readUInt32BE(0); h = datos.readUInt32BE(4);
+      prof = datos[8]; tipo = datos[9];
+      if (datos[12] !== 0) throw new Error("PNG entrelazado: no se admite");
+    } else if (nombre === "IDAT") trozos.push(datos);
+    else if (nombre === "IEND") break;
+    i += 12 + largo;
+  }
+  if (prof !== 8 || (tipo !== 6 && tipo !== 2)) {
+    throw new Error(`PNG con profundidad ${prof} y tipo ${tipo}: solo RGB/RGBA de 8 bits`);
+  }
+  const canales = tipo === 6 ? 4 : 3;
+  const crudo = zlib.inflateSync(Buffer.concat(trozos));
+  const px = Buffer.alloc(w * h * 4, 255);
+  const anchoLinea = w * canales;
+  let prev = Buffer.alloc(anchoLinea, 0);
+  for (let y = 0; y < h; y++) {
+    const filtro = crudo[y * (anchoLinea + 1)];
+    const linea = Buffer.from(crudo.subarray(y * (anchoLinea + 1) + 1, (y + 1) * (anchoLinea + 1)));
+    for (let x = 0; x < anchoLinea; x++) {
+      const a = x >= canales ? linea[x - canales] : 0;
+      const b = prev[x];
+      const c = x >= canales ? prev[x - canales] : 0;
+      let v = linea[x];
+      if (filtro === 1) v += a;
+      else if (filtro === 2) v += b;
+      else if (filtro === 3) v += (a + b) >> 1;
+      else if (filtro === 4) {
+        const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        v += (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c);
+      }
+      linea[x] = v & 0xff;
+    }
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4, s = x * canales;
+      px[o] = linea[s]; px[o + 1] = linea[s + 1]; px[o + 2] = linea[s + 2];
+      px[o + 3] = canales === 4 ? linea[s + 3] : 255;
+    }
+    prev = linea;
+  }
+  return { w, h, px };
+}
+
 // ── Pintar ───────────────────────────────────────────────────────────────────────────────────
 
 const mezclar = (fondo, tinta, a) => [
@@ -127,133 +178,204 @@ const mezclar = (fondo, tinta, a) => [
   Math.round(fondo[2] * (1 - a) + tinta[2] * a),
 ];
 
-/**
- * LA RAMITA. Devuelve la opacidad (0–1) en ese punto, con el borde suavizado.
- *
- * ── SE TRABAJA EN PÍXELES, NO EN COORDENADAS NORMALIZADAS ────────────────────────────────────
- *
- * Una versión anterior normalizaba `x` por el ancho y `y` por el alto, y esos dos ejes tienen
- * escalas MUY distintas. Girar una elipse en ese espacio no la gira en pantalla: la deforma. Aquí
- * todo se mide en píxeles y el giro es un giro de verdad.
- *
- * ── LA HOJA TIENE PUNTA ──────────────────────────────────────────────────────────────────────
- *
- * Antes era una elipse, y una elipse no parece una hoja: parece un guisante. La anchura se cierra
- * a CERO en los dos extremos —`(1 - t²)^0,95`—, que es lo que le da las dos puntas.
- *
- * EL EXPONENTE ES LO QUE DECIDE SI PARECE UNA HOJA. Con 0,5 sale EXACTAMENTE una elipse; con 0,62
- * —el primer intento— sale casi una elipse, y a tamaño pequeño se lee como un guisante inclinado.
- * Cerca de 1 la curva es parabólica y las dos puntas aparecen de verdad.
- *
- * ── Y SE SALE DEL LIENZO A PROPÓSITO ─────────────────────────────────────────────────────────
- *
- * El tallo abarca más que el alto de la banda y las hojas del lado derecho pasan del borde. Lo que
- * se corta no es un descuido: una ramita entera y pequeña metida en una esquina se lee como un
- * icono pegado, y una cortada se lee como un fondo que sigue más allá.
- */
-function ramita(x, y, { cx, cy, alto, largo, ancho }) {
-  const dy = (y - cy) / alto;
-  if (dy < -1.3 || dy > 1.3) return 0;
+/** Pone un color sobre el píxel (x, y) con la opacidad dada. Fuera del lienzo, no hace nada. */
+function tocar(img, x, y, color, alfa) {
+  if (alfa <= 0 || x < 0 || y < 0 || x >= img.w || y >= img.h) return;
+  const i = (y * img.w + x) * 4;
+  const c = mezclar([img.px[i], img.px[i + 1], img.px[i + 2]], color, Math.min(1, alfa));
+  img.px[i] = c[0]; img.px[i + 1] = c[1]; img.px[i + 2] = c[2];
+}
 
-  // EL TALLO. Una curva suave, no una recta: una recta parece un palo clavado. Y se afina hacia
-  // arriba, que es por donde crece.
-  const curva = dy * dy * 0.16;
-  const xTallo = cx + curva * largo;
-  const grosor = Math.max(0.8, largo * 0.055) * (0.45 + 0.55 * Math.min(1, (dy + 1.3) / 1.7));
-  const dTallo = Math.abs(x - xTallo);
-  let a = dTallo < grosor ? Math.min(1, (1 - dTallo / grosor) * 2.2) : 0;
+// ── LA TIPOGRAFÍA DEL LEMA ───────────────────────────────────────────────────────────────────
+//
+// ── POR QUÉ HAY UN ALFABETO AQUÍ DENTRO ──────────────────────────────────────────────────────
+//
+// Porque hay que escribir texto en un PNG y no se pueden añadir dependencias. Las dos salidas
+// habituales —una fuente de mapa de bits o rasterizar con un navegador— no valen: la primera sale
+// dentada al triplicarla, y la segunda ataría la generación de un asset firmado a que en la
+// máquina haya un Chrome instalado.
+//
+// Así que las letras son TRAZOS: polilíneas en una caja unidad, dibujadas con una pluma redonda de
+// grosor constante y el borde suavizado por distancia. Sale nítido a cualquier densidad porque no
+// hay píxeles que escalar, y de paso el resultado —un monolineal geométrico en versalitas— es
+// exactamente el registro que pide una marca de restauración.
+//
+// Solo están las letras de LA FRASE. No es una fuente: es este lema.
 
-  // LAS HOJAS, alternando lado y menguando hacia las puntas del tallo.
-  for (let i = 0; i < HOJAS; i++) {
-    const t = -0.95 + i * (1.9 / (HOJAS - 1));
-    const lado = i % 2 === 0 ? 1 : -1;
-    const escala = 0.60 + 0.40 * (1 - Math.abs(t) * 0.55);
-    const L = largo * escala, W = ancho * escala;
-
-    const ox = cx + (t * t * 0.16) * largo + lado * L * 0.55;
-    const oy = cy + t * alto;
-
-    // Giro en PÍXELES: hacia arriba y hacia fuera, que es el gesto que hace que parezca una hoja.
-    const ang = lado * -0.62;
-    const px0 = x - ox, py0 = y - oy;
-    const u = px0 * Math.cos(ang) - py0 * Math.sin(ang);
-    const v = px0 * Math.sin(ang) + py0 * Math.cos(ang);
-
-    const tt = u / L;
-    if (tt <= -1 || tt >= 1) continue;
-    const env = W * Math.pow(1 - tt * tt, 0.95);   // ← las dos puntas
-    const d = Math.abs(v);
-    if (d < env) a = Math.max(a, Math.min(1, (1 - d / env) * 2.6));
+/** Una curva, muestreada. Los ángulos van en radianes y la `y` crece hacia abajo. */
+const arco = (cx, cy, rx, ry, a0, a1, n = 16) => {
+  const p = [];
+  for (let i = 0; i <= n; i++) {
+    const a = a0 + (a1 - a0) * (i / n);
+    p.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]);
   }
-  return Math.min(1, a);
+  return p;
+};
+
+const PI = Math.PI;
+/** Ancho de casi todas las letras, en unidades de alto. Condensado a propósito. */
+const AN = 0.62;
+
+/** Cada letra: una lista de polilíneas en la caja [0..AN] × [0..1]. */
+const LETRAS = {
+  M: [[[0, 1], [0, 0], [AN / 2, 0.52], [AN, 0], [AN, 1]]],
+  E: [[[0, 0], [0, 1]], [[0, 0], [0.56, 0]], [[0, 0.5], [0.46, 0.5]], [[0, 1], [0.56, 1]]],
+  N: [[[0, 1], [0, 0], [AN, 1], [AN, 0]]],
+  J: [[[0.56, 0], [0.56, 0.70], ...arco(0.28, 0.70, 0.28, 0.30, 0, PI)]],
+  A: [[[0, 1], [AN / 2, 0], [AN, 1]], [[0.12, 0.68], [0.50, 0.68]]],
+  R: [[[0, 1], [0, 0], [0.34, 0], ...arco(0.34, 0.26, 0.24, 0.26, -PI / 2, PI / 2), [0, 0.52]],
+      [[0.28, 0.52], [AN, 1]]],
+  B: [[[0, 1], [0, 0], [0.32, 0], ...arco(0.32, 0.25, 0.22, 0.25, -PI / 2, PI / 2), [0, 0.50]],
+      [[0, 0.50], [0.34, 0.50], ...arco(0.34, 0.75, 0.24, 0.25, -PI / 2, PI / 2), [0, 1]]],
+  U: [[[0, 0], [0, 0.70], ...arco(AN / 2, 0.70, AN / 2, 0.30, PI, 0)], [[AN, 0.70], [AN, 0]]],
+  C: [arco(AN / 2, 0.5, AN / 2, 0.5, 0.35 * PI, 1.65 * PI, 20)],
+  O: [arco(AN / 2, 0.5, AN / 2, 0.5, 0, 2 * PI, 26)],
+  P: [[[0, 1], [0, 0], [0.34, 0], ...arco(0.34, 0.26, 0.24, 0.26, -PI / 2, PI / 2), [0, 0.52]]],
+  T: [[[0, 0], [AN, 0]], [[AN / 2, 0], [AN / 2, 1]]],
+  I: [[[AN / 2, 0], [AN / 2, 1]]],
+  // El punto medio: un segmento degenerado. La pluma redonda lo convierte en un punto.
+  "·": [[[0.15, 0.55], [0.15, 0.55]]],
+  " ": [],
+};
+
+/** Lo que avanza el cursor después de cada letra, en unidades de alto. */
+const AVANCE = { "·": 0.30, " ": 0.30 };
+const avanceDe = (ch) => AVANCE[ch] ?? AN;
+
+/** La distancia de un punto a un segmento. Con el segmento degenerado, la distancia al punto. */
+function distanciaASegmento(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const l2 = dx * dx + dy * dy;
+  let t = l2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/** El ancho que ocuparía una frase, en píxeles. Para comprobar que cabe ANTES de pintarla. */
+function anchoDeTexto(cadena, alto, separacion) {
+  let ancho = 0;
+  for (const ch of cadena.toUpperCase()) ancho += avanceDe(ch) * alto + separacion;
+  return ancho - separacion;
 }
 
 /**
- * LA PROFUNDIDAD. 0 arriba a la izquierda, 1 abajo a la derecha.
- *
- * ES DIAGONAL Y NO RADIAL. La primera versión medía la distancia a una esquina, y eso no se lee
- * como volumen: se lee como un foco encendido en la esquina, con su círculo y todo. Una rampa
- * recta en diagonal no tiene borde que delate de dónde viene la luz.
- *
- * El recorrido entero son unos quince niveles de gris. Tiene que estar POR DEBAJO del umbral de
- * «esto es un degradado»: si se nota, sobra.
+ * Escribe una frase. Solo se recorre la caja de cada letra, no el lienzo entero: a ×3 son unos
+ * miles de píxeles en vez de medio millón.
  */
-function hondura(nx, ny) {
-  return Math.min(1, Math.max(0, nx * 0.52 + ny * 0.48)) ** 1.15;
+function escribirTexto(img, { cadena, x, y, alto, separacion, color, alfa, grosor }) {
+  let cursor = x;
+  for (const ch of cadena.toUpperCase()) {
+    const trazos = LETRAS[ch];
+    if (trazos === undefined) throw new Error(`el alfabeto del lema no tiene «${ch}»`);
+    if (trazos.length) {
+      const x0 = Math.floor(cursor - grosor), x1 = Math.ceil(cursor + AN * alto + grosor);
+      const y0 = Math.floor(y - grosor), y1 = Math.ceil(y + alto + grosor);
+      for (let py = y0; py <= y1; py++) {
+        for (let px = x0; px <= x1; px++) {
+          let d = Infinity;
+          for (const linea of trazos) {
+            for (let i = 0; i < Math.max(1, linea.length - 1); i++) {
+              const a = linea[i], b = linea[i + 1] || linea[i];
+              d = Math.min(d, distanciaASegmento(
+                px + 0.5, py + 0.5,
+                cursor + a[0] * alto, y + a[1] * alto,
+                cursor + b[0] * alto, y + b[1] * alto));
+            }
+          }
+          // El borde se suaviza en un píxel: sin esto, a ×1 el texto sale dentado.
+          const cobertura = Math.min(1, Math.max(0, grosor / 2 + 0.5 - d));
+          tocar(img, px, py, color, cobertura * alfa);
+        }
+      }
+    }
+    cursor += avanceDe(ch) * alto + separacion;
+  }
 }
 
-function pintarBanda(w, h) {
-  const px = Buffer.alloc(w * h * 4);
-  const k = w / 375;                 // la densidad: lo fino se mide con ella, o a ×3 desaparece
-  const filoArriba = Math.max(1, Math.round(FILO_ARRIBA_PT * k));
-  const filoAbajo = Math.max(1, Math.round(FILO_ABAJO_PT * k));
+/**
+ * LA MARCA DE AGUA: la firma de la casa, ampliada y cortada por el borde derecho.
+ *
+ * Se lee del `logo@3x.png` que ya está generado —viene recortado a su tinta— y se usa SU CANAL
+ * ALFA como plantilla: la firma es tinta oscura sobre transparente, así que el alfa es exactamente
+ * el trazo. Encima se pinta marfil, no la tinta original.
+ *
+ * A este tamaño solo cabe el principio de la firma. Eso es lo que se busca: una forma grande
+ * cortada por el encuadre se lee como textura; la palabra entera y pequeña, como un sello pegado.
+ */
+function marcaDeAgua(img, logo) {
+  const alto = img.h * AGUA_ALTO;
+  const ancho = alto * (logo.w / logo.h);
+  const x0 = Math.round(img.w * AGUA_IZQUIERDA);
+  const y0 = Math.round((img.h - alto) / 2);
 
-  // LA RAMITA, CORTADA POR EL BORDE DERECHO. El tallo va al 92 % y las hojas de la derecha se
-  // salen; por la izquierda llega al 81 %, así que los dos tercios donde cae el nombre quedan
-  // limpios. Abarca más alto que la banda, así que también se corta arriba y abajo.
-  const rama = {
-    cx: w * 0.92,
-    cy: h * 0.50,
-    alto: h * 0.60,
-    largo: w * 0.108,
-    ancho: w * 0.024,
+  // MUESTREO BILINEAL, y no por vecino más cercano. Aquí la firma se amplía muchas veces, así que
+  // el vecino más cercano deja la escalera de píxeles del original a la vista — y un borde
+  // dentado se nota incluso al 7 %, que es justo lo que delata que esto es una imagen escalada.
+  const alfaEn = (fx, fy) => {
+    const x = Math.min(logo.w - 1, Math.max(0, fx)), y = Math.min(logo.h - 1, Math.max(0, fy));
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    const x1 = Math.min(logo.w - 1, x0 + 1), y1 = Math.min(logo.h - 1, y0 + 1);
+    const tx = x - x0, ty = y - y0;
+    const a = (cx, cy) => logo.px[(cy * logo.w + cx) * 4 + 3] / 255;
+    return (a(x0, y0) * (1 - tx) + a(x1, y0) * tx) * (1 - ty)
+         + (a(x0, y1) * (1 - tx) + a(x1, y1) * tx) * ty;
   };
 
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-
-      // 1 · El verde, con su volumen.
-      let c = mezclar(VERDE, VERDE_HONDO, hondura(x / (w - 1), y / (h - 1)));
-
-      // 2 · La ramita, en dorado y muy callada: compite con un nombre en cuerpo grande.
-      const a = ramita(x, y, rama);
-      if (a > 0) c = mezclar(c, DORADO, a * RAMA_ALFA);
-
-      // 3 · Los dos filos. El de abajo es el que separa del crema, así que pesa algo más.
-      if (y < filoArriba) c = mezclar(c, DORADO, FILO_ARRIBA_ALFA);
-      else if (y >= h - filoAbajo) c = mezclar(c, DORADO, FILO_ABAJO_ALFA);
-
-      px[i] = c[0]; px[i + 1] = c[1]; px[i + 2] = c[2]; px[i + 3] = 255;
+  for (let y = 0; y < img.h; y++) {
+    for (let x = x0; x < img.w; x++) {
+      const sx = ((x - x0) / ancho) * logo.w;
+      const sy = ((y - y0) / alto) * logo.h;
+      if (sx < 0 || sy < 0 || sx >= logo.w || sy >= logo.h) continue;
+      const alfa = alfaEn(sx, sy);
+      if (alfa > 0) tocar(img, x, y, MARFIL, alfa * AGUA_ALFA);
     }
   }
-  return { w, h, px };
+}
+
+function pintarBanda(w, h, logo) {
+  const px = Buffer.alloc(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    px[i * 4] = TERRACOTA[0]; px[i * 4 + 1] = TERRACOTA[1];
+    px[i * 4 + 2] = TERRACOTA[2]; px[i * 4 + 3] = 255;
+  }
+  const img = { w, h, px };
+
+  if (MARCA_AGUA && logo) marcaDeAgua(img, logo);
+
+  if (LEMA) {
+    const alto = h * LEMA_ALTO;
+    const separacion = alto * 0.42;     // versalitas espaciadas: es lo que las hace de marca
+    const ancho = anchoDeTexto(LEMA, alto, separacion);
+    // EL NOMBRE MANDA. Si la frase se pasara del ancho reservado, no se recorta a medias: no se
+    // pinta. Media frase en la banda de la tarjeta de alguien es peor que ninguna.
+    if (ancho <= w * LEMA_ANCHO_MAX) {
+      escribirTexto(img, {
+        cadena: LEMA, x: Math.round(w * 0.055), y: Math.round(h * LEMA_ARRIBA),
+        alto, separacion, color: MARFIL, alfa: LEMA_ALFA,
+        grosor: Math.max(1, alto * 0.115),
+      });
+    } else {
+      console.warn(`  ⚠ el lema ocupa ${Math.round(100 * ancho / w)} % del ancho: no se pinta`);
+    }
+  }
+  return img;
 }
 
 // ── Las tres densidades ──────────────────────────────────────────────────────────────────────
 //
-// Cada una se PINTA a su tamaño, no se escala desde la pequeña: los filos tienen uno o dos
-// píxeles y escalarlos los convierte en una mancha.
+// Cada una se PINTA a su tamaño, no se escala desde la pequeña: el lema tiene un punto de grosor
+// y escalarlo lo convierte en una mancha.
 const BASE = { w: 375, h: 144 };
-const salidas = [
-  ["strip.png", 1],
-  ["strip@2x.png", 2],
-  ["strip@3x.png", 3],
-];
+const salidas = [["strip.png", 1], ["strip@2x.png", 2], ["strip@3x.png", 3]];
 
-console.log(`banda ${BASE.w}×${BASE.h} pt · verde con hondura · ramita cortada por la derecha`);
+const logo = MARCA_AGUA
+  ? leerPng(fs.readFileSync(path.join(SALIDA, "logo@3x.png")))
+  : null;
+
+console.log(`banda ${BASE.w}×${BASE.h} pt · terracota #8F4430`
+  + ` · lema ${LEMA ? "sí" : "no"} · marca de agua ${MARCA_AGUA ? "sí" : "no"}`);
 for (const [nombre, k] of salidas) {
-  const img = pintarBanda(BASE.w * k, BASE.h * k);
+  const img = pintarBanda(BASE.w * k, BASE.h * k, logo);
   const png = escribirPng(img);
   fs.writeFileSync(path.join(SALIDA, nombre), png);
   console.log(`  ${nombre.padEnd(14)} ${img.w}×${img.h}  ${String(png.length).padStart(6)} bytes`);

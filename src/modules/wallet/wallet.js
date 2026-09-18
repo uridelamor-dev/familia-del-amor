@@ -14,37 +14,44 @@
 import { dondeVale } from "../promos/promos.js";
 import { codigoLegible, nombreCorto } from "../tarjeta/cuenta.js";
 
-// El pase va sobre el CREMA de la página del cliente, no sobre el verde de la marca.
+// El pase va sobre MARFIL, no sobre el color de la marca.
 //
-// No es una preferencia: el logo de Familia del Amor es un texto en tinta oscura sobre
-// transparente, y sobre el verde del panel no se lee. Apple compone `logo.png` encima del
-// fondo del pase tal cual, sin recuadro y sin invertir nada, así que el fondo lo decide la
-// imagen que tenemos. El día que exista una versión del logo en blanco, esto puede volver al
-// verde cambiando estas dos líneas.
+// No es una preferencia: el logo de Familia del Amor es un texto en TINTA OSCURA sobre
+// transparente, y sobre un fondo oscuro no se lee. Apple compone `logo.png` encima del fondo del
+// pase tal cual, sin recuadro y sin invertir nada, así que el fondo lo decide la imagen que
+// tenemos. El día que exista una versión del logo en marfil, el pase entero podría ir en
+// terracota cambiando estas dos líneas.
 //
 // Apple quiere `rgb(r, g, b)`; Google, hexadecimal.
 export const COLOR_FONDO = "rgb(244, 242, 237)";
 export const COLOR_FONDO_HEX = "#F4F2ED";
-export const COLOR_TEXTO = "rgb(28, 33, 31)";
-// EL VERDE OSCURO ES EL PROTAGONISTA. `labelColor` pinta TODOS los rótulos —«TARJETA DE CLIENTE»,
-// «PUNTOS», «VALES»— y es el único color que Apple deja meter además del fondo y el texto. Con el
-// verde de marca (47,107,79) los rótulos quedaban grisáceos sobre el crema; este otro es el mismo
-// tono de la banda, y así el pase entero tiene UN verde, no dos parecidos.
-export const COLOR_ETIQUETA = "rgb(30, 64, 52)";
-export const COLOR_ETIQUETA_HEX = "#1E4034";
+export const COLOR_TEXTO = "rgb(21, 19, 17)";
+// ── LA TERRACOTA ES LA IDENTIDAD ─────────────────────────────────────────────────────────────
+//
+// `labelColor` pinta TODOS los rótulos —«PUNTOS», «VALES», «TARJETA DE CLIENTE»— y es el único
+// color que Apple deja meter además del fondo y el texto. Es EL MISMO tono de la banda, para que
+// el pase entero tenga UNA terracota y no dos parecidas.
+//
+// Da 6,9 : 1 de contraste con el blanco que iOS impone sobre la banda y 6,2 : 1 sobre el marfil.
+// Un naranja vivo se queda en 2,8 sobre blanco y el nombre del cliente dejaría de leerse.
+//
+// OJO: el REVERSO no lo respeta. Comprobado en un iPhone — iOS pinta la lista de detalles con su
+// propio estilo (rótulo negro, valor gris) e ignora `labelColor` y `foregroundColor`. La identidad
+// de color vive en la CARA.
+export const COLOR_ETIQUETA = "rgb(143, 68, 48)";
+export const COLOR_ETIQUETA_HEX = "#8F4430";
 export const ORGANIZACION = "Familia del Amor";
 
 /**
- * EL LEMA DE LA CASA. Es lo ÚNICO estático que se pone para ocupar sitio.
+ * EL LEMA DE LA CASA. YA NO ES UN CAMPO DEL PASE: vive DENTRO del dibujo de la banda.
  *
- * Apple reserva la fila secundaria y la auxiliar aunque estén vacías, así que con el programa de
- * puntos apagado quedaba un hueco grande entre el número de socio y el QR.
+ * Estuvo en `auxiliaryFields`, y iOS le daba una fila entera para él solo. Visto en un iPhone,
+ * ocupaba más ancho que el nombre del cliente y dejaba un desierto hasta el código: un lema no
+ * puede tener más jerarquía que la persona a la que pertenece la tarjeta.
  *
- * Lo que NO se hace es rellenarlo con «0 puntos» o «0 vales»: sería un marcador que no existe, y
- * el día que se encienda el programa parecería que el cliente ha perdido algo. Se rellena con algo
- * que es VERDAD siempre y que además es de la marca.
- *
- * Sale de `textos.lema` si algún día se configura desde el panel; mientras, este.
+ * Ahora lo pinta `tools/wallet-strip.mjs` arriba a la izquierda de la banda, pequeño y al 45 %, y
+ * esa franja del pase vuelve a estar libre. La constante se queda aquí porque es LA frase de la
+ * casa y hay un test que comprueba que el generador de la banda usa exactamente esta.
  */
 export const LEMA = "MENJAR · BEURE · COMPARTIR";
 
@@ -94,15 +101,14 @@ export function nombreArchivoPase() {
  * El logotipo de arriba ES la firma «Familia Del Amor», así que NO se pone `logoText`: decía lo
  * mismo dos veces, una escrita a mano y otra en tipografía del sistema.
  *
- * A su derecha, en `headerFields`, EL NÚMERO DE SOCIO. Esa esquina estaba vacía y la firma
- * quedaba sola en media cabecera; además es donde cualquier tarjeta de fidelización lo pone. Va
- * discreto —«SOCIO» y el número— porque el protagonista es el nombre, no la referencia.
+ * A su derecha, en `headerFields`, EL NÚMERO DE SOCIO Y SOLO EL NÚMERO. Sin rótulo: llevaba
+ * «SOCIO» encima y en el teléfono esas dos masas aplastaban la firma manuscrita de al lado. Apple
+ * fija la tipografía de esa fila, así que quitar peso es la única palanca que queda.
  *
  * Debajo, el sitio grande (`primaryFields`) lo ocupa EL NOMBRE del titular con «TARJETA DE
  * CLIENTE» como rótulo: así se dice qué es la tarjeta sin gastar una línea aparte.
  *
- * El lema va SOLO en su fila y CENTRADO. Compartía línea con el número de socio y se leía como
- * un dato más de la ficha; centrado y sin nada al lado se lee como lo que es, una firma de marca.
+ * EL LEMA NO ES UN CAMPO. Está dibujado dentro de la banda. Ver el comentario de `LEMA`.
  *
  * El código de barras SÍ lleva `altText`, con el número de socio. Es la lectura alternativa que
  * define Apple —lo que se teclea cuando la cámara no lee— y de paso le da suelo al código.
@@ -110,26 +116,26 @@ export function nombreArchivoPase() {
  * ── LO QUE NO SE HACE: RELLENAR EL HUECO ─────────────────────────────────────────────────────
  *
  * Apple ancla el código abajo, así que con los puntos y las promociones apagados queda una franja
- * de crema vacía. NO se llena con datos de adorno —«socio desde», «dónde vale»— solo porque el
- * hueco exista. Esos ya están en el reverso, y una tarjeta que respira se lee mejor que una ficha
- * llena. El hueco es aire, y es una decisión.
+ * de marfil vacía. NO se llena con datos de adorno —«socio desde», «dónde vale»— ni con el lema
+ * solo porque el hueco exista. Eso ya está en el reverso y en la banda, y una tarjeta que respira
+ * se lee mejor que una ficha llena. El hueco es aire, y es una decisión.
  */
 // ── CÓMO SE REPARTE LA CARA CUANDO EL PASE YA SABE COSAS ─────────────────────────────────────
 //
 // EL DISEÑO APROBADO NO SE TOCA. La primera versión de esto subía los puntos al sitio grande y
 // bajaba el nombre al reverso — y eso es rehacer el pase, no ampliarlo. Lo aprobado es:
 //
-//   headerFields      «SOCIO» y el número, arriba a la derecha
+//   headerFields      el número de socio, sin rótulo, arriba a la derecha
 //   primaryFields     el titular, con «TARJETA DE CLIENTE» de rótulo
 //   secondaryFields   lo que cambia: puntos y próximo premio
-//   auxiliaryFields   vales, o el lema centrado si esa fila se queda vacía
-//   sin `logoText`, con `altText` bajo el QR, crema + tinta + verde, nueve imágenes
+//   auxiliaryFields   vales — y vacío si no hay
+//   sin `logoText`, con `altText` bajo el QR, marfil + negro + terracota, nueve imágenes
 //
 // Los puntos y los regalos entran POR `secondaryFields` y `auxiliaryFields`. Si no cupieran, lo
 // que se recorta es lo nuevo, nunca el titular ni el número.
 //
-// LOS DOS CAMINOS —con estado y sin él— COMPONEN LA CARA IGUAL: misma cabecera, mismo campo
-// principal y el mismo lema centrado. Antes el camino sin estado devolvía la cara antigua byte a
+// LOS DOS CAMINOS —con estado y sin él— COMPONEN LA CARA IGUAL: misma cabecera y mismo campo
+// principal. Antes el camino sin estado devolvía la cara antigua byte a
 // byte, y eso era correcto mientras el rediseño estaba a medias; ahora sería un segundo diseño
 // escondido detrás de una puerta, y el día que alguien la abriera la tarjeta cambiaría de aspecto
 // sin que nadie hubiera tocado el diseño. Lo que cambia entre los dos caminos son LOS DATOS.
@@ -189,18 +195,15 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false, locales 
   // y media cabecera en blanco. Es además donde cualquier tarjeta de fidelización pone el número.
   //
   // Va DISCRETO a propósito —rótulo corto y el número y nada más—: el protagonista de la cara es
-  // el nombre del cliente, en cuerpo grande sobre el verde. El número es una referencia.
+  // el nombre del cliente, en cuerpo grande sobre la terracota. El número es una referencia.
   //
   // SOLO SI HAY NOMBRE. Sin nombre, el campo principal YA enseña el código, y repetirlo dos veces
   // en la misma pantalla es justo lo que se está quitando de en medio.
-  const headerFields = qr.nombre ? [{ key: "socio", label: "SOCIO", value: codigo }] : [];
-
-  /** El lema, solo en su fila y CENTRADO. Es marca, no un dato del cliente: si se alinea como los
-   *  demás campos, se lee como si fuera otro valor más de la ficha. */
-  const lemaCentrado = () => ({
-    key: "lema", label: "", value: String(textos.lema || LEMA),
-    textAlignment: "PKTextAlignmentCenter",
-  });
+  // SIN RÓTULO. Llevaba «SOCIO» encima y, visto en el iPhone, el rótulo de color más el número en
+  // negro formaban dos masas que aplastaban la firma manuscrita de al lado. Apple fija la
+  // tipografía de esta fila, así que la única palanca real es quitar peso: el número solo se lee
+  // como una referencia discreta, que es lo que es.
+  const headerFields = qr.nombre ? [{ key: "socio", label: "", value: codigo }] : [];
 
   // ── EL PASE DE SIEMPRE ────────────────────────────────────────────────────────────────────
   if (!estado) {
@@ -208,7 +211,7 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false, locales 
       headerFields,
       primaryFields,
       secondaryFields: [],
-      auxiliaryFields: [lemaCentrado()],
+      auxiliaryFields: [],
       backFields: [
         { key: "que-es", label: "Cómo usar tu tarjeta", value: ayuda },
         { key: "donde", label: "Dónde vale", value: dondeValeLaTarjeta(locales) },
@@ -253,9 +256,9 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false, locales 
 
   const secondaryFields = huecos.slice(0, 2);
   const auxiliaryFields = huecos.slice(2, 4);
-  // El lema SOLO cuando la fila de abajo se queda vacía, y siempre en ese mismo sitio. Es lo
-  // único estático que se pone, y es verdad siempre.
-  if (!auxiliaryFields.length) auxiliaryFields.push(lemaCentrado());
+  // Y SI NO HAY NADA, NO HAY NADA. Antes se metía aquí el lema para que la franja no quedara
+  // vacía; ahora el lema está en la banda y esta zona se queda en blanco a propósito. El hueco
+  // que deja Apple encima del código se llena con aire, no con contenido de relleno.
 
   // ══ LOS DETALLES ══════════════════════════════════════════════════════════════════════════
   //
@@ -374,7 +377,7 @@ export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales 
       //
       // Estuvo puesto, se quitó porque repetía el número que tenía justo encima, y ahora vuelve:
       // el número se ha ido a la cabecera, así que ya no hay nada duplicado al lado. Además le da
-      // suelo al código, que sin nada debajo flota en medio del crema.
+      // suelo al código, que sin nada debajo flota en medio del marfil.
       //
       // SOLO SI HAY NOMBRE, y es el mismo motivo por el que se quitó. Sin nombre, el número ES el
       // campo principal —en cuerpo grande, en mitad de la tarjeta— y volvería a estar repetido.

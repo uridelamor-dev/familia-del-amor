@@ -117,13 +117,12 @@ describe("el carné es el mismo", () => {
     // camino sin estado conservara la cara antigua, habría un segundo diseño escondido detrás
     // de una puerta y la tarjeta cambiaría de aspecto el día que alguien la abriera.
     assert.deepEqual(estatico.storeCard.headerFields,
-      [{ key: "socio", label: "SOCIO", value: "1234 5678" }]);
+      [{ key: "socio", label: "", value: "1234 5678" }]);
     assert.deepEqual(estatico.storeCard.primaryFields,
       [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
     assert.deepEqual(estatico.storeCard.secondaryFields, []);
-    assert.deepEqual(estatico.storeCard.auxiliaryFields,
-      [{ key: "lema", label: "", value: "MENJAR · BEURE · COMPARTIR",
-         textAlignment: "PKTextAlignmentCenter" }]);
+    // VACÍA. El lema se fue al dibujo de la banda y nada lo sustituye: el hueco es aire.
+    assert.deepEqual(estatico.storeCard.auxiliaryFields, []);
   });
 });
 
@@ -141,8 +140,9 @@ describe("el diseño aprobado se conserva", () => {
   test("el número de socio vive en LA CABECERA, y discreto", () => {
     // Arriba a la derecha, que es donde lo pone cualquier tarjeta de fidelización y donde antes
     // no había nada: la firma quedaba sola en media cabecera.
+    // SIN RÓTULO: «SOCIO» encima del número hacía dos masas que aplastaban la firma de al lado.
     assert.deepEqual(p.storeCard.headerFields,
-      [{ key: "socio", label: "SOCIO", value: "1234 5678" }]);
+      [{ key: "socio", label: "", value: "1234 5678" }]);
     // Y NO se queda además abajo: repetirlo en la misma pantalla es lo que se ha quitado.
     const abajo = [...p.storeCard.secondaryFields, ...p.storeCard.auxiliaryFields];
     assert.ok(!abajo.some((f) => f.key === "socio"), "el número sigue también abajo");
@@ -158,8 +158,8 @@ describe("el diseño aprobado se conserva", () => {
 
   test("colores, logo y ausencias siguen igual", () => {
     assert.equal(p.backgroundColor, "rgb(244, 242, 237)");
-    assert.equal(p.foregroundColor, "rgb(28, 33, 31)");
-    assert.equal(p.labelColor, "rgb(30, 64, 52)", "el verde oscuro es el nuevo protagonista");
+    assert.equal(p.foregroundColor, "rgb(21, 19, 17)");
+    assert.equal(p.labelColor, "rgb(143, 68, 48)", "la terracota es la identidad");
     assert.equal(p.logoText, undefined, "el logotipo ya dice el nombre");
     // El `altText` es la LECTURA ALTERNATIVA del código: lo que se teclea en la barra cuando la
     // cámara no lee. Nunca la URL, que lleva el token dentro.
@@ -1888,7 +1888,7 @@ describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
     assert.deepEqual(p.storeCard.primaryFields,
       [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
     assert.deepEqual(p.storeCard.headerFields,
-      [{ key: "socio", label: "SOCIO", value: "1234 5678" }]);
+      [{ key: "socio", label: "", value: "1234 5678" }]);
     assert.equal(p.logoText, undefined);
     assert.equal(p.barcodes[0].altText, "1234 5678");
     assert.equal(p.backgroundColor, "rgb(244, 242, 237)");
@@ -1903,7 +1903,7 @@ describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
 
   test("los rótulos, en su sitio", () => {
     const c = conEstado().storeCard;
-    assert.deepEqual(c.headerFields.map((f) => f.label), ["SOCIO"]);
+    assert.deepEqual(c.headerFields.map((f) => f.label), [""]);
     assert.deepEqual(c.secondaryFields.map((f) => f.label), ["PUNTOS", "PRÓXIMO PREMIO"]);
     assert.deepEqual(c.auxiliaryFields.map((f) => f.label), ["VALES"]);
   });
@@ -1922,8 +1922,7 @@ describe("con los puntos apagados la cara se queda LIMPIA", () => {
     // puntos» o «0 vales», que serían un marcador que no existe.
     const c = apagados().storeCard;
     assert.deepEqual(c.secondaryFields, [], "se ha colado relleno en la fila secundaria");
-    assert.deepEqual(c.auxiliaryFields,
-      [{ key: "lema", label: "", value: LEMA, textAlignment: "PKTextAlignmentCenter" }]);
+    assert.deepEqual(c.auxiliaryFields, [], "se ha colado relleno en la fila auxiliar");
     const json = JSON.stringify(c);
     assert.ok(!/"value":"0"/.test(json), "se ha colado un cero que no existe");
     for (const relleno of ["SOCIO DESDE", "DÓNDE VALE", "Válido en"]) {
@@ -1931,19 +1930,21 @@ describe("con los puntos apagados la cara se queda LIMPIA", () => {
     }
   });
 
-  test("el lema va SOLO en su fila y CENTRADO: es marca, no un dato del cliente", () => {
-    // Compartía línea con el número de socio y se leía como un valor más de la ficha. Ahora el
-    // número está en la cabecera y el lema se queda solo, centrado.
-    const aux = apagados().storeCard.auxiliaryFields;
-    assert.equal(aux.length, 1, "el lema comparte fila con algo");
-    assert.equal(aux[0].textAlignment, "PKTextAlignmentCenter");
-    assert.deepEqual(apagados().storeCard.secondaryFields, []);
-
-    // Y sigue sin mudarse: cuando ya hay contenido de verdad, no sale.
-    const conTodo = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE,
-      servicio: { url: BASE, token: "s" }, estado: proy({ promosElegibles: [PROMO] }) });
-    assert.ok(!conTodo.storeCard.auxiliaryFields.some((f) => f.key === "lema"),
-      "el lema sale cuando ya hay contenido");
+  test("EL LEMA YA NO ES UN CAMPO: vive dentro del dibujo de la banda", () => {
+    // Visto en el iPhone ocupaba una fila entera para él solo, más ancho que el nombre del
+    // cliente. Un lema no puede tener más jerarquía que la persona de la tarjeta.
+    for (const p of [apagados(),
+                     pasePlanoApple({ qr: QR, cfg: CFG, base: BASE,
+                       servicio: { url: BASE, token: "s" },
+                       estado: proy({ promosElegibles: [PROMO] }) })]) {
+      const json = JSON.stringify(p.storeCard);
+      assert.ok(!json.includes(LEMA), "el lema ha vuelto a ser un campo del pase");
+      assert.ok(!json.includes("lema"), "queda un campo de lema");
+    }
+    // Y está en el generador de la banda, con EXACTAMENTE la misma frase: si las dos se separan,
+    // la tarjeta diría una cosa y la marca otra.
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    assert.ok(t.includes(`const LEMA = "${LEMA}"`), "la banda no dibuja el lema de la casa");
   });
 
   test("y EL PROGRAMA NO SE NOMBRA SIQUIERA en el reverso", () => {
@@ -2144,7 +2145,7 @@ describe("la banda del pase", () => {
     // Escalar el filo dorado —de punto y medio— lo convierte en una mancha. El generador pinta
     // las tres por separado, y se nota en que la ×3 no pesa nueve veces la ×1.
     const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
-    assert.match(t, /pintarBanda\(BASE\.w \* k, BASE\.h \* k\)/);
+    assert.match(t, /pintarBanda\(BASE\.w \* k, BASE\.h \* k, logo\)/);
     // «escalarlo» aparece en el comentario que EXPLICA por qué no se escala; lo que no puede
     // haber es una llamada a una función de escalado.
     assert.ok(!/\bescalar\(|\bresize\(/i.test(t), "la banda se escala en vez de pintarse");
@@ -2172,74 +2173,106 @@ describe("la banda del pase", () => {
 describe("el verde oscuro manda", () => {
   const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE });
 
-  test("los rótulos van en el MISMO verde que la banda", () => {
-    // Dos verdes parecidos en el mismo pase se ven como un error de color, no como una gama.
-    assert.equal(p.labelColor, "rgb(30, 64, 52)");
+  test("los rótulos van en LA MISMA terracota que la banda", () => {
+    // Dos terracotas parecidas en el mismo pase se ven como un error de color, no como una gama.
+    assert.equal(p.labelColor, "rgb(143, 68, 48)");
     const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
-    assert.match(t, /const VERDE = \[30, 64, 52\]/);
+    assert.match(t, /const TERRACOTA = \[143, 68, 48\]/);
   });
 
-  test("el crema y la tinta no se tocan", () => {
+  test("el marfil y la tinta no se tocan", () => {
     assert.equal(p.backgroundColor, "rgb(244, 242, 237)");
-    assert.equal(p.foregroundColor, "rgb(28, 33, 31)");
+    assert.equal(p.foregroundColor, "rgb(21, 19, 17)");
+  });
+
+  test("NO QUEDA NI RASTRO DEL VERDE", () => {
+    // El verde deja de ser el color de la marca en el pase. Si vuelve a aparecer en cualquiera de
+    // los dos sitios, es que alguien ha revertido medio rediseño y no el otro medio.
+    const m = readFileSync(new URL("../src/modules/wallet/wallet.js", import.meta.url), "utf8");
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    for (const verde of ["30, 64, 52", "#1E4034", "47, 107, 79", "#2F6B4F"]) {
+      assert.ok(!m.includes(verde), `wallet.js sigue usando el verde ${verde}`);
+      assert.ok(!t.includes(verde), `la banda sigue usando el verde ${verde}`);
+    }
   });
 
   test("LA BANDA ES OSCURA ENTERA, porque iOS fuerza el texto a blanco encima", () => {
     // Comprobado en un iPhone de verdad: el número de socio salía oscuro y correcto sobre el
-    // crema, y el nombre salía BLANCO sobre la misma tinta declarada. `foregroundColor` se
+    // marfil, y el nombre salía BLANCO sobre la misma tinta declarada. `foregroundColor` se
     // respeta en todo el pase menos sobre la banda.
     //
-    // La primera versión era crema arriba y verde solo abajo, para que el texto oscuro se leyera.
-    // Salió blanco sobre crema: ilegible. Con el verde entero, ese blanco es el diseño.
+    // Una versión antigua era clara arriba y oscura solo abajo, para que el texto oscuro se
+    // leyera. Salió blanco sobre claro: ilegible. Con la banda oscura entera, ese blanco ES el
+    // diseño — y por eso la terracota tiene que ser PROFUNDA.
     const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
-    assert.ok(!/PROPORCION_VERDE/.test(t), "la banda vuelve a tener una parte clara");
-    // Cada píxel nace verde. La hondura solo lo oscurece hacia una esquina; nunca lo aclara.
-    assert.match(t, /let c = mezclar\(VERDE, VERDE_HONDO, hondura\(/,
-      "la banda tiene que nacer verde en cada píxel");
-    const [hr, hg, hb] = t.match(/const VERDE_HONDO = \[(\d+), (\d+), (\d+)\]/).slice(1).map(Number);
-    const [vr, vg, vb] = t.match(/const VERDE = \[(\d+), (\d+), (\d+)\]/).slice(1).map(Number);
-    assert.ok(hr <= vr && hg <= vg && hb <= vb, "la sombra ACLARA la banda en vez de hundirla");
-    // Y es sombra, no un segundo color: un salto grande se lee como un degradado, y sobra.
-    assert.ok((vr - hr) + (vg - hg) + (vb - hb) < 60, "la hondura se ve como un degradado");
-    // Y el verde es oscuro de verdad: con un verde claro, el blanco tampoco se leería.
-    const [r, g, b] = t.match(/const VERDE = \[(\d+), (\d+), (\d+)\]/).slice(1).map(Number);
-    const luz = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-    assert.ok(luz < 0.25, `el verde tiene una luminancia de ${luz.toFixed(2)}: el blanco no se leería`);
+    assert.match(t, /px\[i \* 4\] = TERRACOTA\[0\]/, "la banda no nace terracota en cada píxel");
+
+    const [r, g, b] = t.match(/const TERRACOTA = \[(\d+), (\d+), (\d+)\]/).slice(1).map(Number);
+    // EL CONTRASTE, CALCULADO. Es la comprobación que decide si el nombre del cliente se lee.
+    const lin = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    const contraste = 1.05 / (L + 0.05);
+    assert.ok(contraste >= 4.5,
+      `el blanco sobre la banda da ${contraste.toFixed(1)} : 1 — el nombre no se leería`);
   });
 
-  test("la ramita SE CORTA por la derecha, y deja limpio el sitio del nombre", () => {
-    // ── UN CORTE A PROPÓSITO NO ES UN RECORTE POR DESCUIDO ────────────────────────────────
-    //
-    // La primera versión salía cortada por la IZQUIERDA, al 7,5 % del ancho, que es justo donde
-    // empieza el nombre: parecía un fallo. Ahora sale por la derecha y de forma deliberada —una
-    // ramita pequeña y entera metida en una esquina se lee como un icono pegado—.
-    //
-    // Lo que sí es innegociable son los dos tercios de la izquierda: ahí cae «Uriel» en cuerpo
-    // grande, y tiene que estar limpio.
+  test("LA MARCA DE AGUA es una marca de agua: casi no se ve, y se puede quitar", () => {
+    // Sustituyó a una ramita vegetal que, a tamaño real en el teléfono, se leía como un icono
+    // pegado en la esquina. Esta es la propia firma de la casa, ampliada y cortada por el borde:
+    // grande y casi invisible, que es lo que da textura sin competir con el nombre.
     const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
-    const cx = Number(t.match(/cx: w \* ([\d.]+)/)[1]);
-    const largo = Number(t.match(/largo: w \* ([\d.]+)/)[1]);
-    assert.ok(cx + largo > 1.0, `la ramita acaba en ${(cx + largo).toFixed(2)}: no se corta`);
-    assert.ok(cx - largo > 0.66,
-      `la ramita llega hasta ${(cx - largo).toFixed(2)}: invade el sitio del nombre`);
+    const alfa = Number(t.match(/const AGUA_ALFA = ([\d.]+)/)[1]);
+    assert.ok(alfa > 0 && alfa <= 0.12, `la marca de agua va al ${alfa}: compite con el nombre`);
+
+    // SE CORTA por el borde derecho: empieza pasada la mitad y no termina dentro del lienzo.
+    const desde = Number(t.match(/const AGUA_IZQUIERDA = ([\d.]+)/)[1]);
+    const alto = Number(t.match(/const AGUA_ALTO = ([\d.]+)/)[1]);
+    assert.ok(desde >= 0.40, `la marca de agua empieza en ${desde}: invade el sitio del nombre`);
+    // La firma es apaisada (6,4 : 1) sobre una banda de 2,6 : 1, así que a este alto se sale por
+    // la derecha con muchísimo margen. Se comprueba la cuenta, no la intención.
+    assert.ok(desde + alto * 6.4 / 2.604 > 1.0, "la marca de agua cabe entera: no se corta");
+
+    // PLAN B: tiene que poder apagarse desde una sola línea si en el teléfono ensucia.
+    assert.match(t, /const MARCA_AGUA = (true|false);/);
+    assert.match(t, /if \(MARCA_AGUA && logo\) marcaDeAgua\(/);
   });
 
-  test("y pesa menos que el nombre: es una marca de agua, no un dibujo", () => {
+  test("y la ramita vegetal NO ha vuelto", () => {
     const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
-    const alfa = Number(t.match(/const RAMA_ALFA = ([\d.]+)/)[1]);
-    assert.ok(alfa > 0 && alfa <= 0.35, `la ramita va al ${alfa}: compite con el nombre`);
+    for (const resto of ["RAMA_ALFA", "function ramita", "FILO_ARRIBA", "FILO_ABAJO", "hondura("]) {
+      assert.ok(!t.includes(resto), `queda «${resto}» del diseño anterior`);
+    }
   });
 
-  test("los filos dorados son SUTILES: enmarcan, no subrayan", () => {
+  test("EL LEMA EN LA BANDA: pequeño, y el nombre manda siempre", () => {
     const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
-    // Uno arriba y otro abajo. Con uno solo la banda parece pegada encima del crema.
-    const arriba = Number(t.match(/const FILO_ARRIBA_ALFA = ([\d.]+)/)[1]);
-    const abajo = Number(t.match(/const FILO_ABAJO_ALFA = ([\d.]+)/)[1]);
-    assert.ok(arriba > 0 && arriba <= 0.45, "el filo de arriba se ve demasiado");
-    assert.ok(abajo > 0 && abajo <= 0.65, "el filo de abajo se ve demasiado");
-    // Y son líneas de un punto o punto y medio, no franjas.
-    assert.ok(Number(t.match(/const FILO_ARRIBA_PT = ([\d.]+)/)[1]) <= 2);
-    assert.ok(Number(t.match(/const FILO_ABAJO_PT = ([\d.]+)/)[1]) <= 2);
+    // Va ARRIBA, por encima de donde iOS pinta el nombre —que ocupa del 18 % al 70 % del alto—.
+    const arriba = Number(t.match(/const LEMA_ARRIBA = ([\d.]+)/)[1]);
+    const alto = Number(t.match(/const LEMA_ALTO = ([\d.]+)/)[1]);
+    assert.ok(arriba + alto < 0.18, `el lema llega al ${(arriba + alto).toFixed(2)}: pisa el nombre`);
+    // Y con el ancho limitado: el resto de la banda es del nombre.
+    assert.ok(Number(t.match(/const LEMA_ANCHO_MAX = ([\d.]+)/)[1]) <= 0.60);
+    // Discreto: si se pintara opaco, competiría con el nombre.
+    assert.ok(Number(t.match(/const LEMA_ALFA = ([\d.]+)/)[1]) <= 0.55);
+
+    // SI NO CABE, NO SE PINTA A MEDIAS. Media frase en la tarjeta de alguien es peor que ninguna.
+    assert.match(t, /if \(ancho <= w \* LEMA_ANCHO_MAX\)/);
+    assert.match(t, /no se pinta/);
+  });
+
+  test("el alfabeto del lema se dibuja, no se escala desde un mapa de bits", () => {
+    // Un mapa de bits sale dentado al triplicarlo, y rasterizar con un navegador ataría la
+    // generación de un asset firmado a que haya un Chrome en la máquina.
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    assert.match(t, /const LETRAS = \{/);
+    assert.match(t, /distanciaASegmento/);
+    // Y tiene TODAS las letras de la frase: si falta una, el generador revienta en vez de
+    // escribir la frase a medias.
+    const letras = t.slice(t.indexOf("const LETRAS = {"), t.indexOf("const AVANCE"));
+    for (const ch of new Set("MENJAR · BEURE · COMPARTIR".split(""))) {
+      assert.ok(letras.includes(`  ${ch}: [`) || letras.includes(`"${ch}": [`),
+        `al alfabeto le falta «${ch}»`);
+    }
   });
 });
 
@@ -2424,6 +2457,9 @@ describe("el pase, revisado como producto", () => {
     for (const cat of ["Enséñala la teva", "Els teus", "punts", "vals", "Gràcies"]) {
       assert.ok(!json.includes(cat), `sale «${cat}» fuera del lema`);
     }
-    assert.match(json, /MENJAR · BEURE · COMPARTIR/, "el lema de marca sí se queda");
+    // El lema de marca —lo único en catalán— ya no está en los campos: lo dibuja la banda. Se
+    // comprueba allí, que es donde vive.
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    assert.ok(t.includes('const LEMA = "MENJAR · BEURE · COMPARTIR"'), "el lema de marca sí se queda");
   });
 });
