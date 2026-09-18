@@ -156,9 +156,29 @@ export function huellaVisible(p) {
     `o=${pt.objetivo ?? "x"}`,
     `c=${pt.canjeable ? 1 : 0}`,
     `e=${String(pt.proxima_caducidad || "").slice(0, 10) || "x"}`,
+    // CUÁNTOS caducan, no solo cuándo. El reverso dice «28 puntos caducan el 31/03/2027»: si
+    // cambia el número y no la fecha, sin esto la huella no se movía y el pase seguía diciendo 28.
+    `x=${pt.activo ? (pt.caducan ?? 0) : "x"}`,
     `n=${pr.cantidad || 0}`,
-    // Del premio principal, lo que se pinta: nombre, local y caducidad.
-    `p=${pr.principal ? `${pr.principal.nombre}|${pr.principal.local || ""}|${pr.principal.hasta || ""}` : "x"}`,
+    // ── LOS VALES QUE SE PINTAN, NO EL «PRINCIPAL» ──────────────────────────────────────────
+    //
+    // Aquí había un `p=` con el vale principal. Era doblemente incorrecto:
+    //
+    //   · `premios.principal` NO SE PINTA EN EL PASE. Ni en la cara —que enseña el número de
+    //     vales— ni en el reverso, que enumera los cuatro primeros de `disponibles`. Se estaba
+    //     vigilando un dato invisible.
+    //   · Y NO SE VIGILABA LO VISIBLE. El reverso pinta de cada vale su nombre, si es de un solo
+    //     local, su HORARIO y su caducidad. El horario no entraba en la huella de ninguna forma:
+    //     editar «de 8:00 a 12:00» a «de 8:00 a 11:00» en el panel cambiaba el reverso y no
+    //     generaba ninguna actualización. Y cambiar un vale por otro manteniendo el número
+    //     tampoco, si el principal seguía siendo el mismo.
+    //
+    // Se codifica EXACTAMENTE lo que enseña `camposDe`: los cuatro primeros, con sus cuatro
+    // campos. Un quinto vale no se pinta, así que cambiarlo no es un cambio visible — pero el
+    // total sí sale («Tienes 5 vales sin usar») y por eso `n=` cuenta todos.
+    `v=${(pr.disponibles || []).slice(0, 4).map((v) =>
+      [v.nombre, v.solo_aqui ? (v.local || "") : "", v.horario || "", v.hasta || ""].join("|")
+    ).join("~") || "x"}`,
     `t=${p.socio?.nombre || ""}`,
   ];
   return trozos.join(";");

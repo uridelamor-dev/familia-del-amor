@@ -347,6 +347,70 @@ describe("la huella detecta lo VISIBLE y solo lo visible", () => {
     assert.equal(huellaVisible(proy({ ahora: "2026-10-01T09:00:00+02:00" })),
                  huellaVisible(proy({ ahora: "2026-12-25T23:59:00+01:00" })));
   });
+
+  // ── LOS TRES AGUJEROS QUE TENÍA, Y POR LOS QUE EL PASE SE QUEDABA VIEJO EN SILENCIO ────────
+  //
+  // La huella vigilaba `premios.principal`, que NO SE PINTA EN NINGUNA PARTE del pase, y no
+  // vigilaba lo que el reverso sí enseña de cada vale. Un cambio visible no generaba ninguna
+  // actualización: ni error, ni aviso, ni nada — el pase del cliente decía algo que ya no era
+  // cierto hasta que otra cosa distinta moviera la huella.
+
+  test("CAMBIAR EL HORARIO DE UN VALE la mueve", () => {
+    // El reverso pinta «de 7:00 a 11:30». Editarlo en el panel cambia lo que lee el cliente, y
+    // el horario no entraba en la huella de ninguna forma.
+    const antes = huellaVisible(proy({ promosElegibles: [PROMO] }));
+    const despues = huellaVisible(proy({
+      promosElegibles: [{ ...PROMO, hora_hasta: "10:30" }] }));
+    assert.notEqual(antes, despues, "cambiar el horario de un vale no refresca el pase");
+  });
+
+  test("CAMBIAR UN VALE POR OTRO manteniendo el número la mueve", () => {
+    // Dos vales: uno caduca y ese mismo día se concede otro distinto. La cuenta sigue en dos y el
+    // principal puede seguir siendo el mismo, pero el reverso enseña un vale que ya no existe.
+    const dos = (segundo) => proy({ promosElegibles: [PROMO, segundo] });
+    const a = huellaVisible(dos({ ...PROMO, clave: "b", texto_cliente: "Cafè gratis" }));
+    const b = huellaVisible(dos({ ...PROMO, clave: "b", texto_cliente: "Copa de vi" }));
+    assert.notEqual(a, b, "sustituir un vale por otro no refresca el pase");
+  });
+
+  test("CAMBIAR EL LOCAL de un vale la mueve", () => {
+    // «Solo en Girona» es lo que evita que el detalle contradiga al «Dónde vale» general.
+    assert.notEqual(
+      huellaVisible(proy({ promosElegibles: [PROMO] })),
+      huellaVisible(proy({ promosElegibles: [{ ...PROMO, local: "La Tapeta Salt" }] })));
+  });
+
+  test("CAMBIAR CUÁNTOS PUNTOS CADUCAN la mueve, aunque la fecha no cambie", () => {
+    // El reverso dice «28 puntos caducan el 31/03/2027». Con la misma fecha y otro número, la
+    // huella no se movía y el pase seguía diciendo 28.
+    const con = (restante) => huellaVisible(proy({
+      saldo: { disponible: 72, proxima_caducidad: "2027-03-31", lotes: [{ restante }] } }));
+    assert.notEqual(con(28), con(12), "cambiar cuántos puntos caducan no refresca el pase");
+  });
+
+  test("y lo que NO se pinta sigue sin moverla", () => {
+    // El quinto vale no cabe en el reverso —se enseñan cuatro—, así que cambiarlo no es un cambio
+    // visible. Lo que sí se ve es el TOTAL, y ése lo cuenta `n=`.
+    const cinco = (quinto) => proy({ promosElegibles: [
+      { ...PROMO, clave: "a" }, { ...PROMO, clave: "b" }, { ...PROMO, clave: "c" },
+      { ...PROMO, clave: "d" }, { ...PROMO, clave: "e", texto_cliente: quinto },
+    ] });
+    assert.equal(huellaVisible(cinco("Uno")), huellaVisible(cinco("Otro")),
+      "se despierta el móvil por algo que no se ve");
+    // Pero si desaparece, el total cambia y eso SÍ se lee.
+    assert.notEqual(huellaVisible(cinco("Uno")),
+      huellaVisible(proy({ promosElegibles: [{ ...PROMO, clave: "a" }] })));
+  });
+
+  test("la huella NO vigila el «principal», que no se pinta en el pase", () => {
+    const m = readFileSync(new URL("../src/modules/tarjeta/proyeccion.js", import.meta.url), "utf8");
+    const fn = m.slice(m.indexOf("export function huellaVisible"));
+    assert.ok(!/pr\.principal/.test(fn), "la huella vuelve a vigilar un dato invisible");
+    // Y el pase tampoco lo usa: si algún día se pinta, esto habrá que revisarlo.
+    const pase = readFileSync(new URL("../src/modules/wallet/wallet.js", import.meta.url), "utf8");
+    assert.ok(!/premios\.principal|pr\.principal/.test(pase),
+      "el pase pinta el principal: la huella tiene que vigilarlo");
+  });
 });
 
 // ── EL PROTOCOLO ─────────────────────────────────────────────────────────────────────────────
