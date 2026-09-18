@@ -21,7 +21,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { pasePlanoApple, urlTarjeta } from "../src/modules/wallet/wallet.js";
+import { pasePlanoApple, urlTarjeta, LEMA } from "../src/modules/wallet/wallet.js";
 import { proyectarCarne, huellaVisible, fechaCorta } from "../src/modules/tarjeta/proyeccion.js";
 import {
   tokenDeCabecera, igualSeguro, dispositivoValido, serialValido, passTypeValido,
@@ -122,23 +122,24 @@ describe("el carné es el mismo", () => {
 // ── EL DISEÑO APROBADO ───────────────────────────────────────────────────────────────────────
 
 describe("el diseño aprobado se conserva", () => {
-  const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, estado: proy(),
-    servicio: { url: BASE, token: "s" } });
+  const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE,
+    estado: proy({ promosElegibles: [PROMO] }), servicio: { url: BASE, token: "s" } });
 
   test("el titular sigue mandando en el sitio grande", () => {
     assert.deepEqual(p.storeCard.primaryFields,
       [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
   });
 
-  test("el número de socio sigue en el segundo", () => {
-    assert.deepEqual(p.storeCard.secondaryFields,
-      [{ key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" }]);
+  test("el número de socio ABRE la fila secundaria", () => {
+    assert.deepEqual(p.storeCard.secondaryFields[0],
+      { key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" });
   });
 
-  test("LOS PUNTOS Y LOS REGALOS ENTRAN POR LA FILA AUXILIAR", () => {
-    const ids = p.storeCard.auxiliaryFields.map((f) => f.key);
-    assert.ok(ids.includes("puntos"), `auxiliares: ${ids.join(", ")}`);
-    assert.equal(p.storeCard.auxiliaryFields.find((f) => f.key === "puntos").value, "72");
+  test("DOS FILAS DE DOS: socio+puntos arriba, próximo premio+vales abajo", () => {
+    // Con todo en una sola fila quedaba un hueco enorme hasta el QR. Se vio en el iPhone.
+    assert.deepEqual(p.storeCard.secondaryFields.map((f) => f.key), ["socio", "puntos"]);
+    assert.equal(p.storeCard.secondaryFields.find((f) => f.key === "puntos").value, "72");
+    assert.deepEqual(p.storeCard.auxiliaryFields.map((f) => f.key), ["faltan", "vales"]);
   });
 
   test("colores, logo y ausencias siguen igual", () => {
@@ -185,16 +186,32 @@ describe("el diseño aprobado se conserva", () => {
       servicio: { url: BASE, token: "s" } });
     assert.deepEqual(q.storeCard.primaryFields,
       [{ key: "socio", label: "TARJETA DE CLIENTE", value: "1234 5678" }]);
-    assert.deepEqual(q.storeCard.secondaryFields, []);
+    // Sin nombre, el número sube al sitio grande y NO se repite en la fila de abajo; ahí solo
+    // quedan los puntos, si los hay.
+    assert.ok(!q.storeCard.secondaryFields.some((f) => f.key === "socio"));
   });
 
-  test("el reverso lleva el enlace a la tarjeta web y la privacidad", () => {
+  test("los enlaces del reverso llevan TEXTO, nunca la dirección cruda", () => {
+    // Dentro de la URL del carné viaja el token. Un cliente enseñándole el reverso a alguien no
+    // tiene por qué enseñarle eso.
     const q = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, servicio: { url: BASE, token: "s" },
-      estado: proy(), textos: { privacidad_url: "/privacitat.html", contacto: "info@ejemplo" } });
+      estado: proy(), textos: { privacidad_url: "/privacidad.html", contacto: "info@ejemplo" } });
     const back = q.storeCard.backFields;
-    assert.equal(back.find((f) => f.key === "cuenta").value, urlTarjeta(BASE, TOKEN));
-    assert.ok(back.some((f) => f.key === "privacidad"));
+    const cuenta = back.find((f) => f.key === "cuenta");
+    assert.equal(cuenta.value, "Ver mis puntos y mis vales");
+    assert.ok(!cuenta.value.includes(TOKEN), "el token se ve en el reverso");
+    assert.equal(cuenta.attributedValue, `<a href="${urlTarjeta(BASE, TOKEN)}">Ver mis puntos y mis vales</a>`);
+    assert.equal(back.find((f) => f.key === "privacidad").value, "Política de privacidad");
     assert.ok(back.some((f) => f.key === "contacto"));
+  });
+
+  test("NINGÚN texto visible del reverso enseña el token", () => {
+    const q = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, servicio: { url: BASE, token: "s" },
+      estado: proy(), textos: { privacidad_url: "/privacidad.html" } });
+    for (const f of q.storeCard.backFields) {
+      assert.ok(!String(f.value).includes(TOKEN), `«${f.label}» enseña el token`);
+      assert.ok(!String(f.label).includes(TOKEN));
+    }
   });
 });
 
@@ -255,7 +272,8 @@ describe("la proyección dice lo mismo en los dos sitios", () => {
     assert.equal(p.premios.principal.nombre, "Esmorzar gratis");
     assert.equal(p.premios.principal.local, "La Tapeta Girona");
     assert.equal(p.premios.principal.hasta_texto, "31/10/2026");
-    assert.equal(p.premios.principal.horario, "07:00–11:30");
+    assert.equal(p.premios.principal.horario, "de 07:00 a 11:30");
+    assert.equal(p.premios.principal.solo_aqui, true, "es un vale de un local concreto");
     assert.equal(p.premios.principal.personal, true, "es de las que hay que ganarse");
   });
 
@@ -1836,9 +1854,9 @@ describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
   test("SIN servicio web, los campos dinámicos SALEN igual", () => {
     const p = conEstado();
     assert.equal(p.webServiceURL, undefined, "no debe declarar servicio");
-    const aux = p.storeCard.auxiliaryFields.map((f) => f.key);
-    assert.ok(aux.includes("puntos"), `auxiliares: ${aux.join(", ")}`);
-    assert.ok(aux.includes("vales"), `auxiliares: ${aux.join(", ")}`);
+    const c = p.storeCard;
+    assert.ok(c.secondaryFields.some((f) => f.key === "puntos"), "faltan los puntos");
+    assert.ok(c.auxiliaryFields.some((f) => f.key === "vales"), "faltan los vales");
   });
 
   test("y el servidor ya no los ata", () => {
@@ -1852,8 +1870,8 @@ describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
     const p = conEstado();
     assert.deepEqual(p.storeCard.primaryFields,
       [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
-    assert.deepEqual(p.storeCard.secondaryFields,
-      [{ key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" }]);
+    assert.deepEqual(p.storeCard.secondaryFields[0],
+      { key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" });
     assert.equal(p.logoText, undefined);
     assert.equal(p.barcodes[0].altText, undefined);
     assert.equal(p.backgroundColor, "rgb(244, 242, 237)");
@@ -1861,13 +1879,15 @@ describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
     assert.equal(p.serialNumber, TOKEN);
   });
 
-  test("NUNCA más de tres campos auxiliares", () => {
-    assert.ok(conEstado().storeCard.auxiliaryFields.length <= 3);
+  test("NUNCA más de dos por fila: el tercero las aprieta y dejan de leerse", () => {
+    assert.ok(conEstado().storeCard.auxiliaryFields.length <= 2);
+    assert.ok(conEstado().storeCard.secondaryFields.length <= 2);
   });
 
-  test("y los tres son PUNTOS, PRÓXIMO PREMIO y VALES", () => {
-    assert.deepEqual(conEstado().storeCard.auxiliaryFields.map((f) => f.label),
-      ["PUNTOS", "PRÓXIMO PREMIO", "VALES"]);
+  test("los cuatro rótulos, en su sitio", () => {
+    const c = conEstado().storeCard;
+    assert.deepEqual(c.secondaryFields.map((f) => f.label), ["NÚMERO DE SOCIO", "PUNTOS"]);
+    assert.deepEqual(c.auxiliaryFields.map((f) => f.label), ["PRÓXIMO PREMIO", "VALES"]);
   });
 });
 
@@ -1875,25 +1895,57 @@ describe("con los puntos apagados la cara se queda LIMPIA", () => {
   const apagados = () => pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, congelado: true,
     estado: proy({ interruptores: { conceder: false }, promoSw: { promociones_ofrecer: false } }) });
 
-  test("NO sale ningún campo auxiliar: ni un cero, ni un texto recortado", () => {
-    // «Programa de puntos en…» en un campo de 22 caracteres ensucia una tarjeta que está bien.
-    assert.deepEqual(apagados().storeCard.auxiliaryFields, []);
+  test("NI UN CERO, ni un texto recortado: solo el lema de la casa", () => {
+    // Con el programa apagado la fila quedaba vacía y dejaba un hueco hasta el QR. Se rellena con
+    // algo que es VERDAD siempre, nunca con «0 puntos» o «0 vales».
+    const c = apagados().storeCard;
+    assert.deepEqual(c.secondaryFields.map((f) => f.key), ["socio"]);
+    assert.deepEqual(c.auxiliaryFields, [{ key: "lema", label: "", value: LEMA }]);
+    const json = JSON.stringify(c);
+    assert.ok(!/"value":"0"/.test(json), "se ha colado un cero que no existe");
   });
 
-  test("y la explicación va ENTERA en el reverso", () => {
-    const back = apagados().storeCard.backFields;
-    const d = back.find((f) => f.key === "puntos-detalle");
-    assert.ok(d, `reverso: ${back.map((f) => f.key).join(", ")}`);
-    assert.match(d.value, /preparaci/i);
-    assert.ok(!d.value.includes("…"), "el reverso no recorta");
+  test("y NO hay cabecera: el lema vive en UN solo sitio y no se muda", () => {
+    // Antes saltaba de la fila de abajo a la cabecera al encender los puntos, y el cliente veía
+    // mudarse un texto. Ahora sale abajo, o no sale.
+    assert.equal(apagados().storeCard.headerFields, undefined);
+    const conTodo = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE,
+      servicio: { url: BASE, token: "s" }, estado: proy({ promosElegibles: [PROMO] }) });
+    assert.equal(conTodo.storeCard.headerFields, undefined);
+    assert.ok(!conTodo.storeCard.auxiliaryFields.some((f) => f.key === "lema"),
+      "el lema sale cuando ya hay contenido");
   });
 
-  test("la cara queda EXACTAMENTE como el pase de siempre", () => {
+  test("y EL PROGRAMA NO SE NOMBRA SIQUIERA en el reverso", () => {
+    // Para el cliente esa funcionalidad todavía NO EXISTE. Anunciar «programa de puntos: en
+    // preparación» es prometer una fecha que no tenemos. Cuando se encienda aparecerá todo a la
+    // vez y ya funcionando.
+    const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, congelado: true,
+      estado: proy({ interruptores: { conceder: false }, promoSw: { promociones_ofrecer: false },
+        cfg: { texto_preparacion: "Programa de puntos en preparación" } }) });
+    const back = p.storeCard.backFields;
+    assert.equal(back.find((f) => f.key === "puntos-detalle"), undefined,
+      `reverso: ${back.map((f) => f.key).join(", ")}`);
+    const json = JSON.stringify(p.storeCard);
+    for (const m of ["preparaci", "Puntos", "PUNTOS", "premio", "Premio"]) {
+      assert.ok(!json.includes(m), `con el programa apagado sale «${m}»`);
+    }
+  });
+
+  test("el texto de preparación SIGUE existiendo, para la tarjeta web", () => {
+    // Se configura en el panel y sale donde tiene sentido: cuando el cliente entra a mirar su
+    // cuenta. En el pase, no.
+    const pr = proy({ interruptores: { conceder: false },
+      cfg: { texto_preparacion: "Programa de puntos en preparación" } });
+    assert.equal(pr.puntos.activo, false);
+    assert.equal(pr.puntos.texto, "Programa de puntos en preparación");
+  });
+
+  test("el titular y el número de socio no se mueven de su sitio", () => {
     const a = apagados().storeCard;
     const b = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE }).storeCard;
     assert.deepEqual(a.primaryFields, b.primaryFields);
     assert.deepEqual(a.secondaryFields, b.secondaryFields);
-    assert.deepEqual(a.auxiliaryFields, b.auxiliaryFields);
   });
 });
 
@@ -1903,8 +1955,10 @@ describe("un pase congelado dice de cuándo son sus datos", () => {
       estado: proy({ ahora: "2026-09-18T10:00:00+02:00" }) });
     const f = p.storeCard.backFields.find((x) => x.key === "al-dia");
     assert.ok(f, "falta el aviso de que los datos están congelados");
-    assert.match(f.value, /Son del 18\/09\/2026/);
-    assert.match(f.value, /enlace de abajo/);
+    assert.equal(f.label, "Actualizado");
+    assert.match(f.value, /Estos datos son del 18\/09\/2026\./);
+    // Y va EL ÚLTIMO: es administrativo, no es a lo que se le da la vuelta a la tarjeta.
+    assert.equal(p.storeCard.backFields[p.storeCard.backFields.length - 1].key, "al-dia");
   });
 
   test("CON servicio web NO sale: el pase se refresca solo", () => {
@@ -2082,15 +2136,29 @@ describe("el verde oscuro manda", () => {
     assert.equal(p.foregroundColor, "rgb(28, 33, 31)");
   });
 
-  test("el texto se lee en TODO el pase, no solo sobre la banda", () => {
-    // `foregroundColor` es UNO para todo. Con la banda verde entera habría que poner el texto
-    // claro para el nombre, y el número de socio —que va debajo, sobre el crema— desaparecería.
-    // Por eso la banda es crema donde cae el texto y verde solo en el borde de abajo.
+  test("LA BANDA ES OSCURA ENTERA, porque iOS fuerza el texto a blanco encima", () => {
+    // Comprobado en un iPhone de verdad: el número de socio salía oscuro y correcto sobre el
+    // crema, y el nombre salía BLANCO sobre la misma tinta declarada. `foregroundColor` se
+    // respeta en todo el pase menos sobre la banda.
+    //
+    // La primera versión era crema arriba y verde solo abajo, para que el texto oscuro se leyera.
+    // Salió blanco sobre crema: ilegible. Con el verde entero, ese blanco es el diseño.
     const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
-    assert.match(t, /const PROPORCION_VERDE = 0\.\d+/);
-    const prop = Number(t.match(/PROPORCION_VERDE = ([\d.]+)/)[1]);
-    assert.ok(prop > 0 && prop < 0.5,
-      `la banda verde ocupa ${prop}: si pasa de la mitad, el nombre cae encima y no se lee`);
+    assert.ok(!/PROPORCION_VERDE/.test(t), "la banda vuelve a tener una parte clara");
+    assert.match(t, /let c = VERDE;/, "la banda tiene que nacer verde en cada píxel");
+    // Y el verde es oscuro de verdad: con un verde claro, el blanco tampoco se leería.
+    const [r, g, b] = t.match(/const VERDE = \[(\d+), (\d+), (\d+)\]/).slice(1).map(Number);
+    const luz = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    assert.ok(luz < 0.25, `el verde tiene una luminancia de ${luz.toFixed(2)}: el blanco no se leería`);
+  });
+
+  test("y la ramita NO puede tocar los bordes: iOS recorta la banda por los lados", () => {
+    // En la captura del iPhone salía cortada por la izquierda, al 7,5 % del ancho.
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    const cx = Number(t.match(/cx: w \* ([\d.]+)/)[1]);
+    const ancho = Number(t.match(/ancho: w \* ([\d.]+)/)[1]);
+    assert.ok(cx - ancho * 2 > 0.10 && cx + ancho * 2 < 0.92,
+      `la ramita va de ${(cx - ancho * 2).toFixed(2)} a ${(cx + ancho * 2).toFixed(2)}: toca un borde`);
   });
 });
 
@@ -2107,9 +2175,10 @@ describe("se dice VALES, nunca «regalos»", () => {
     assert.equal(f.value, "1");
   });
 
-  test("y el del reverso, «Vales disponibles»", () => {
+  test("y el del reverso, «Tus vales»", () => {
     const f = conVale().storeCard.backFields.find((x) => x.key === "vales");
-    assert.equal(f.label, "Vales disponibles");
+    assert.equal(f.label, "Tus vales");
+    assert.equal(f.value, "Tienes 1 vale sin usar.");
   });
 
   test("NINGÚN texto del pase dice «regalo»", () => {
@@ -2121,5 +2190,159 @@ describe("se dice VALES, nunca «regalos»", () => {
     const m = readFileSync(new URL("../src/modules/wallet/wallet.js", import.meta.url), "utf8");
     assert.ok(!/REGALOS?"/.test(m), "queda un rótulo con «REGALO»");
     assert.ok(!/`regalo-/.test(m), "queda una clave `regalo-`");
+  });
+});
+
+// ── LA AUDITORÍA DEL PASE, CONVERTIDA EN CANDADOS ────────────────────────────────────────────
+
+describe("el pase, revisado como producto", () => {
+  const LOCALES = [{ local: "La Tapeta Blanes" }, { local: "La Tapeta Girona" }];
+  const TEXTOS = { privacidad_url: "https://x/privacidad.html", contacto: "info@ejemplo",
+    condiciones: "No acumulable.", como_ganar: "1 punto por euro." };
+  const hacer = (estado, extra = {}) => pasePlanoApple({ qr: QR, cfg: CFG, base: BASE,
+    estado, textos: TEXTOS, locales: LOCALES, congelado: true, ...extra });
+
+  const CON_TODO = () => hacer(proy({ promosElegibles: [PROMO],
+    saldo: { disponible: 72, proxima_caducidad: "2027-03-31", lotes: [{ restante: 28 }] } }));
+  const APAGADO = () => hacer(proy({ interruptores: { conceder: false },
+    promoSw: { promociones_ofrecer: false } }));
+
+  test("NINGUNA fecha en formato técnico", () => {
+    const json = JSON.stringify([CON_TODO(), APAGADO()]);
+    const iso = json.match(/"(?:value|label)":"[^"]*\d{4}-\d{2}-\d{2}[^"]*"/g) || [];
+    assert.deepEqual(iso, [], `fechas ISO a la vista: ${iso.join(" · ")}`);
+  });
+
+  test("«caducan» dice CUÁNTOS, no solo cuándo", () => {
+    const f = CON_TODO().storeCard.backFields.find((x) => x.key === "caducan");
+    assert.ok(f, "falta el aviso de caducidad");
+    assert.equal(f.label, "Caducan pronto");
+    assert.match(f.value, /^28 puntos caducan el 31\/03\/2027\.$/);
+  });
+
+  test("y no sale si no hay nada que caduque", () => {
+    const p = hacer(proy({ saldo: { disponible: 72, proxima_caducidad: null, lotes: [] } }));
+    assert.equal(p.storeCard.backFields.find((x) => x.key === "caducan"), undefined);
+  });
+
+  test("EL ORDEN: lo tuyo · cómo se usa · administrativo", () => {
+    const k = CON_TODO().storeCard.backFields.map((f) => f.key);
+    const pos = (x) => k.indexOf(x);
+    assert.ok(pos("puntos-detalle") < pos("que-es"), `orden: ${k.join(" · ")}`);
+    assert.ok(pos("vales") < pos("que-es"), `orden: ${k.join(" · ")}`);
+    assert.ok(pos("que-es") < pos("condiciones"));
+    assert.ok(pos("condiciones") < pos("cuenta"));
+    assert.ok(pos("cuenta") < pos("privacidad"));
+    assert.equal(k[k.length - 1], "al-dia", "lo administrativo va al final");
+  });
+
+  test("CON TODO APAGADO el reverso es exactamente estos seis", () => {
+    // Ni una palabra sobre puntos, premios ni programas: esa funcionalidad todavía no existe
+    // para el cliente.
+    assert.deepEqual(APAGADO().storeCard.backFields.map((f) => f.key),
+      ["que-es", "donde", "condiciones", "cuenta", "privacidad", "contacto"]);
+  });
+
+  test("y sin condiciones configuradas, cinco", () => {
+    const sin = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, locales: LOCALES, congelado: true,
+      estado: proy({ interruptores: { conceder: false }, promoSw: { promociones_ofrecer: false } }),
+      textos: { privacidad_url: "https://x/privacidad.html", contacto: "info@ejemplo" } });
+    assert.deepEqual(sin.storeCard.backFields.map((f) => f.key),
+      ["que-es", "donde", "cuenta", "privacidad", "contacto"]);
+  });
+
+  test("tampoco sale «Actualizado»: no hay ningún dato que se congele", () => {
+    assert.equal(APAGADO().storeCard.backFields.find((f) => f.key === "al-dia"), undefined);
+  });
+
+  test("«Dónde vale» sale de los locales CONFIGURADOS, sin listas a mano", () => {
+    const f = CON_TODO().storeCard.backFields.find((x) => x.key === "donde");
+    assert.equal(f.value, "En La Tapeta Blanes y La Tapeta Girona.");
+    // Sin configuración, lo genérico. Nunca una lista inventada.
+    const sin = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, estado: proy(), locales: [] });
+    assert.equal(sin.storeCard.backFields.find((x) => x.key === "donde").value,
+      "En cualquiera de nuestros locales.");
+    // Y no hay ninguna lista escrita en el módulo.
+    const m = readFileSync(new URL("../src/modules/wallet/wallet.js", import.meta.url), "utf8");
+    for (const n of ["Blanes", "Lloret", "Tordera", "Girona"]) {
+      assert.ok(!m.includes(n), `«${n}» está escrito en el código`);
+    }
+  });
+
+  test("el detalle de un vale de UN local NO contradice al «Dónde vale» general", () => {
+    const back = CON_TODO().storeCard.backFields;
+    const vale = back.find((x) => x.key === "vale-0");
+    assert.match(vale.value, /^Solo en /, `el vale dice: ${vale.value}`);
+    // Y el general sigue diciendo que la tarjeta vale en todos.
+    assert.match(back.find((x) => x.key === "donde").value, /^En /);
+  });
+
+  test("un vale SIN local dice que vale en todos, no «Solo en undefined»", () => {
+    const p = hacer(proy({ promosElegibles: [{ ...PROMO, local: null, hasta: null,
+      hora_desde: null, hora_hasta: null }] }));
+    assert.equal(p.storeCard.backFields.find((x) => x.key === "vale-0").value,
+      "Válido en cualquiera de nuestros locales.");
+  });
+
+  test("las opcionales SOLO salen si tienen contenido", () => {
+    const sin = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, locales: LOCALES,
+      estado: proy({ promosElegibles: [PROMO] }), textos: {}, congelado: true });
+    for (const k of ["condiciones", "como-ganar", "privacidad", "contacto"]) {
+      assert.equal(sin.storeCard.backFields.find((f) => f.key === k), undefined,
+        `«${k}» sale sin tener contenido`);
+    }
+    // Y con contenido, salen.
+    for (const k of ["condiciones", "como-ganar", "privacidad", "contacto"]) {
+      assert.ok(CON_TODO().storeCard.backFields.some((f) => f.key === k), `falta «${k}»`);
+    }
+  });
+
+  test("NI UN CAMPO VACÍO en ningún estado", () => {
+    for (const [n, p] of [["con todo", CON_TODO()], ["apagado", APAGADO()]]) {
+      for (const zona of ["primaryFields", "secondaryFields", "auxiliaryFields", "backFields"]) {
+        for (const f of p.storeCard[zona] || []) {
+          assert.ok(String(f.value ?? "").trim().length > 0,
+            `${n}: «${f.key}» en ${zona} va vacío`);
+        }
+      }
+    }
+  });
+
+  test("ningún texto interno ni clave técnica a la vista", () => {
+    const visible = JSON.stringify([CON_TODO(), APAGADO()])
+      .replace(/"key":"[^"]*"/g, "");   // las claves las ve Wallet, no el cliente
+    for (const malo of ["fidp:", "qr_id", "pro_qr", "reward_id", "clave_idem", "undefined",
+                        "null,", "NaN", "[object", "_enc"]) {
+      assert.ok(!visible.includes(malo), `sale «${malo}» en un texto del pase`);
+    }
+  });
+
+  test("«Puedes canjearlo», que dice QUÉ HACER", () => {
+    const p = hacer(proy({ saldo: { disponible: 100, proxima_caducidad: null },
+      regla: { puntos_necesarios: 100 } }));
+    const f = p.storeCard.auxiliaryFields.concat(p.storeCard.secondaryFields)
+      .find((x) => x.key === "faltan");
+    assert.equal(f.value, "Puedes canjearlo");
+    assert.match(p.storeCard.backFields.find((x) => x.key === "puntos-detalle").value,
+      /Ya puedes canjear tu próximo premio\./);
+  });
+
+  test("singular y plural correctos en puntos y vales", () => {
+    const uno = hacer(proy({ saldo: { disponible: 1, proxima_caducidad: null },
+      regla: { puntos_necesarios: 100 } }));
+    assert.match(uno.storeCard.backFields.find((x) => x.key === "puntos-detalle").value,
+      /^Tienes 1 punto\./);
+    const varios = hacer(proy({ promosElegibles: [PROMO, { ...PROMO, clave: "b" }] }));
+    assert.equal(varios.storeCard.backFields.find((x) => x.key === "vales").value,
+      "Tienes 2 vales sin usar.");
+  });
+
+  test("EL IDIOMA: todo en castellano menos el lema de marca", () => {
+    const json = JSON.stringify(APAGADO().storeCard);
+    // Palabras catalanas que no deberían aparecer en el contenido funcional.
+    for (const cat of ["Enséñala la teva", "Els teus", "punts", "vals", "Gràcies"]) {
+      assert.ok(!json.includes(cat), `sale «${cat}» fuera del lema`);
+    }
+    assert.match(json, /MENJAR · BEURE · COMPARTIR/, "el lema de marca sí se queda");
   });
 });

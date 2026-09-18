@@ -34,6 +34,20 @@ export const COLOR_ETIQUETA = "rgb(30, 64, 52)";
 export const COLOR_ETIQUETA_HEX = "#1E4034";
 export const ORGANIZACION = "Familia del Amor";
 
+/**
+ * EL LEMA DE LA CASA. Es lo ÚNICO estático que se pone para ocupar sitio.
+ *
+ * Apple reserva la fila secundaria y la auxiliar aunque estén vacías, así que con el programa de
+ * puntos apagado quedaba un hueco grande entre el número de socio y el QR.
+ *
+ * Lo que NO se hace es rellenarlo con «0 puntos» o «0 vales»: sería un marcador que no existe, y
+ * el día que se encienda el programa parecería que el cliente ha perdido algo. Se rellena con algo
+ * que es VERDAD siempre y que además es de la marca.
+ *
+ * Sale de `textos.lema` si algún día se configura desde el panel; mientras, este.
+ */
+export const LEMA = "MENJAR · BEURE · COMPARTIR";
+
 /** El enlace que lleva el QR de la tarjeta. LA función. */
 export function urlTarjeta(base, token) {
   return `${String(base || "").replace(/\/$/, "")}/tarjeta.html?t=${encodeURIComponent(String(token || ""))}`;
@@ -116,6 +130,9 @@ function fechaDeIso(iso) {
   return `${d}/${m}/${y}`;
 }
 
+/** «1 punto» / «28 puntos». Un «1 puntos» en el carné de alguien se nota. */
+const punt = (n) => `${Number(n) || 0} ${Number(n) === 1 ? "punto" : "puntos"}`;
+
 /** Recorta sin partir palabras a lo bruto: un campo del pase que desborda se ve peor que uno corto. */
 function recortar(txt, max) {
   const s = String(txt ?? "").trim();
@@ -125,128 +142,164 @@ function recortar(txt, max) {
   return (esp > max * 0.6 ? corte.slice(0, esp) : corte) + "…";
 }
 
-function camposDe({ qr, base, promo, estado, textos, congelado = false }) {
+/**
+ * Los locales donde vale la tarjeta, sacados de la configuración REAL del panel.
+ *
+ * NO se escribe ninguna lista fija: los locales cambian y una lista a mano en el código se queda
+ * vieja sin que nadie se entere. Si no hay ninguno configurado, se dice lo genérico.
+ */
+function dondeValeLaTarjeta(locales) {
+  const nombres = [...new Set((locales || [])
+    .map((l) => nombreCorto(String(l?.local || l || "")).trim())
+    .filter(Boolean))];
+  if (!nombres.length) return "En cualquiera de nuestros locales.";
+  if (nombres.length === 1) return `En ${nombres[0]}.`;
+  return `En ${nombres.slice(0, -1).join(", ")} y ${nombres[nombres.length - 1]}.`;
+}
+
+/** Un enlace con TEXTO, no la dirección cruda. Dentro va el token del carné. */
+const enlaceCon = (texto, url) =>
+  ({ attributedValue: `<a href="${url}">${texto}</a>`, value: texto });
+
+function camposDe({ qr, base, promo, estado, textos, congelado = false, locales = [] }) {
   const codigo = codigoLegible(qr.codigo);
   const enlace = urlTarjeta(base, qr.token);
   const ayuda = textos.ayuda || "Enséñala cuando vengas y te reconocemos al momento.";
 
-  // ── LO QUE NO CAMBIA NUNCA ────────────────────────────────────────────────────────────────
-  //
-  // Un nombre muy largo se recorta aquí y no en el diseño: `storeCard` reduce el cuerpo de letra
-  // hasta cierto punto y después parte la línea, y un titular partido en dos deja la tarjeta
-  // descuadrada. 26 caracteres es lo que entra holgado a tamaño legible.
   const primaryFields = qr.nombre
     ? [{ key: "titular", label: "TARJETA DE CLIENTE", value: recortar(qr.nombre, 26) }]
     : [{ key: "socio", label: "TARJETA DE CLIENTE", value: codigo }];
-  const secondaryFields = qr.nombre
-    ? [{ key: "socio", label: "NÚMERO DE SOCIO", value: codigo }]
-    : [];
 
   // ── EL PASE DE SIEMPRE ────────────────────────────────────────────────────────────────────
   if (!estado) {
-    return { primaryFields, secondaryFields, auxiliaryFields: [],
+    return {
+      primaryFields,
+      secondaryFields: qr.nombre ? [{ key: "socio", label: "NÚMERO DE SOCIO", value: codigo }] : [],
+      auxiliaryFields: [],
       backFields: [
-        { key: "que-es", label: "Tu tarjeta", value: ayuda },
-        { key: "donde", label: "Dónde vale", value: promo ? dondeVale(promo.locales) : dondeVale("") },
-        { key: "cuenta", label: "Tus visitas y tus descuentos", value: enlace },
-      ] };
+        { key: "que-es", label: "Cómo usar tu tarjeta", value: ayuda },
+        { key: "donde", label: "Dónde vale", value: dondeValeLaTarjeta(locales) },
+        { key: "cuenta", label: "Tu tarjeta",
+          ...enlaceCon("Ver mi tarjeta", enlace) },
+      ],
+    };
   }
 
-  // ── EL REVERSO, CON LO ÚTIL DELANTE ───────────────────────────────────────────────────────
-  //
-  // El reverso de Wallet es una LISTA que pinta el sistema: no hay imágenes, ni separadores, ni
-  // columnas, ni tamaños. Lo ÚNICO que se puede diseñar ahí es QUÉ se dice, EN QUÉ ORDEN y con
-  // qué palabras. Así que el orden ES el diseño.
-  //
-  // Antes empezaba por «Tu tarjeta» y «Dónde vale» —dos textos que no cambian nunca— y los puntos
-  // quedaban los terceros. Quien le da la vuelta a la tarjeta quiere ver cuánto tiene, no que se
-  // la enseñe al camarero. Lo que cambia va primero; las instrucciones, al final.
-  const backFields = [];
-
-  // ── LO NUEVO, EN LA FILA QUE ESTABA LIBRE ─────────────────────────────────────────────────
   const pt = estado.puntos || {};
   const pr = estado.premios || {};
-  const aux = [];
 
+  // ══ LA CARA ═══════════════════════════════════════════════════════════════════════════════
+  //
+  // CUATRO HUECOS, en este orden: número de socio, puntos, próximo premio y vales. Se meten los
+  // que existan y se reparten de dos en dos: los dos primeros arriba, los dos siguientes abajo.
+  //
+  // Así el sitio de cada cosa NO DEPENDE de lo que haya encendido. Antes el lema saltaba de la
+  // fila de abajo a la cabecera al encender los puntos, y el cliente veía mudarse un texto.
+  const huecos = [];
+  if (qr.nombre) huecos.push({ key: "socio", label: "NÚMERO DE SOCIO", value: codigo });
   if (pt.activo) {
-    aux.push({ key: "puntos", label: "PUNTOS", value: String(pt.saldo ?? 0) });
+    huecos.push({ key: "puntos", label: "PUNTOS", value: String(pt.saldo ?? 0) });
     if (Number.isFinite(pt.faltan) && pt.faltan > 0) {
-      aux.push({ key: "faltan", label: "PRÓXIMO PREMIO", value: `Te faltan ${pt.faltan}` });
+      huecos.push({ key: "faltan", label: "PRÓXIMO PREMIO", value: `Te faltan ${pt.faltan}` });
     } else if (pt.canjeable) {
-      aux.push({ key: "faltan", label: "PRÓXIMO PREMIO", value: "¡Ya lo tienes!" });
+      // «¡Ya lo tienes!» era ambiguo: ¿tiene el premio o los puntos? Esto dice qué hacer.
+      huecos.push({ key: "faltan", label: "PRÓXIMO PREMIO", value: "Puedes canjearlo" });
     }
   }
-  // CON LOS PUNTOS APAGADOS NO SE PONE NADA EN LA CARA. Ni un «0» —un marcador a cero que no
-  // existe hace que el día que se encienda parezca que ha perdido lo que tenía— ni el texto de
-  // preparación recortado, que en un campo de 22 caracteres queda en «Programa de puntos en…» y
-  // ensucia una tarjeta que está bien como está. La explicación va entera en el reverso.
-
-  // VALES, no «regalos»: es la palabra que usa la casa en la barra y en el panel, y el pase no
-  // puede llamarlo de otra manera que la tarjeta web.
+  // CON LOS PUNTOS APAGADOS NO SE PONE NADA. Ni un «0» —un marcador que no existe hace que el día
+  // que se encienda parezca que el cliente ha perdido algo— ni el texto de preparación recortado.
   if (pr.cantidad > 0) {
-    aux.push({ key: "vales", label: "VALES", value: String(pr.cantidad) });
+    huecos.push({ key: "vales", label: "VALES", value: String(pr.cantidad) });
   }
 
-  // El nombre del vale solo si queda sitio. Tres campos auxiliares es lo que entra sin que se
-  // encojan entre sí; el cuarto los aprieta y deja de leerse.
-  if (pr.principal && aux.length < 3) {
-    aux.push({ key: "vale", label: "TU VALE", value: recortar(pr.principal.nombre, 20) });
+  const secondaryFields = huecos.slice(0, 2);
+  const auxiliaryFields = huecos.slice(2, 4);
+  // El lema SOLO cuando la fila de abajo se queda vacía, y siempre en ese mismo sitio. Es lo
+  // único estático que se pone para ocupar hueco, y es verdad siempre.
+  if (!auxiliaryFields.length) {
+    auxiliaryFields.push({ key: "lema", label: "", value: String(textos.lema || LEMA) });
   }
 
-  // ── EL REVERSO: TODO LO QUE NO CABE DELANTE ───────────────────────────────────────────────
+  // ══ LOS DETALLES ══════════════════════════════════════════════════════════════════════════
+  //
+  // El reverso de Wallet es una lista que pinta el sistema: sin imágenes, sin columnas y sin
+  // separadores. Lo único que se puede diseñar es QUÉ se dice y EN QUÉ ORDEN. Tres bloques:
+  //
+  //   1. LO TUYO         lo personal y lo que cambia. Es a lo que se le da la vuelta a la tarjeta.
+  //   2. CÓMO SE USA     instrucciones y condiciones. No cambian.
+  //   3. ADMINISTRATIVO  enlaces, privacidad, contacto y la fecha del dato.
+  const backFields = [];
+
+  // ── 1 · LO TUYO ───────────────────────────────────────────────────────────────────────────
   if (pt.activo) {
-    backFields.push({ key: "puntos-detalle", label: "Puntos",
-      value: pt.objetivo
-        ? `Tienes ${pt.saldo} punto${pt.saldo === 1 ? "" : "s"}. El siguiente premio son ${pt.objetivo}.`
-        : `Tienes ${pt.saldo} punto${pt.saldo === 1 ? "" : "s"}.` });
-    if (pt.proxima_caducidad) {
-      backFields.push({ key: "caducan", label: "Tus puntos caducan",
-        value: String(pt.proxima_caducidad).slice(0, 10) });
+    backFields.push({ key: "puntos-detalle", label: "Tus puntos",
+      value: Number.isFinite(pt.faltan) && pt.faltan > 0
+        ? `Tienes ${punt(pt.saldo)}. Te faltan ${pt.faltan} para tu próximo premio.`
+        : pt.canjeable
+          ? `Tienes ${punt(pt.saldo)}. Ya puedes canjear tu próximo premio.`
+          : `Tienes ${punt(pt.saldo)}.` });
+
+    if (pt.proxima_caducidad && pt.caducan > 0) {
+      backFields.push({ key: "caducan", label: "Caducan pronto",
+        value: `${punt(pt.caducan)} caducan el ${fechaDeIso(pt.proxima_caducidad)}.` });
     }
-  } else if (pt.texto) {
-    backFields.push({ key: "puntos-detalle", label: "Puntos", value: String(pt.texto) });
   }
 
-  // VALES DISPONIBLES: primero cuántos, después cada uno con su detalle. El recuento arriba es lo
-  // que contesta la pregunta de un vistazo; el detalle, lo que hace falta al llegar a la barra.
   if (pr.cantidad > 0) {
-    backFields.push({ key: "vales", label: "Vales disponibles",
+    backFields.push({ key: "vales", label: "Tus vales",
       value: pr.cantidad === 1 ? "Tienes 1 vale sin usar." : `Tienes ${pr.cantidad} vales sin usar.` });
-  }
-  for (const [i, p] of (pr.disponibles || []).slice(0, 4).entries()) {
-    const partes = [p.local || "En cualquiera de nuestros locales"];
-    if (p.horario) partes.push(`de ${p.horario}`);
-    if (p.hasta_texto) partes.push(`hasta el ${p.hasta_texto}`);
-    // `vale-0`, `vale-1`… La clave la ve Wallet, no el cliente, pero si un día alguien lee el
-    // `pass.json` buscando por qué algo no sale, que encuentre la misma palabra que en el panel.
-    backFields.push({ key: `vale-${i}`, label: recortar(p.nombre, 60), value: partes.join(" · ") });
-  }
-
-  // Y AHORA LAS INSTRUCCIONES, al final. No cambian nunca y no es lo que se viene a mirar.
-  backFields.push({ key: "que-es", label: "Tu tarjeta", value: ayuda });
-  backFields.push({ key: "donde", label: "Dónde vale",
-    value: promo ? dondeVale(promo.locales) : dondeVale("") });
-
-  // Un pase SIN servicio web no se refresca solo: lo que ponga se queda congelado desde el día que
-  // se bajó. Decirlo con su fecha convierte un número que engaña en una foto que se entiende — y
-  // no toca la cara de la tarjeta.
-  if (congelado && (pt.activo || pr.cantidad > 0)) {
-    const dia = fechaDeIso(estado?.actualizado_en);
-    backFields.push({ key: "al-dia", label: "Estos datos",
-      value: dia
-        ? `Son del ${dia}. Abre el enlace de abajo para verlos al día.`
-        : "Abre el enlace de abajo para verlos al día." });
+    for (const [i, v] of (pr.disponibles || []).slice(0, 4).entries()) {
+      // EL DETALLE DE CADA VALE NO PUEDE CONTRADECIR AL «DÓNDE VALE» DE ABAJO. La tarjeta vale en
+      // todos los locales; este vale concreto puede que solo en uno, y hay que decirlo así.
+      const partes = [];
+      if (v.solo_aqui && v.local) partes.push(`Solo en ${nombreCorto(v.local)}`);
+      if (v.horario) partes.push(v.horario);
+      if (v.hasta_texto) partes.push(`hasta el ${v.hasta_texto}`);
+      backFields.push({ key: `vale-${i}`, label: recortar(v.nombre, 60),
+        value: partes.length ? partes.join(" · ") : "Válido en cualquiera de nuestros locales." });
+    }
   }
 
-  backFields.push({ key: "cuenta", label: "Tus visitas y tus descuentos", value: enlace });
+  // ── 2 · CÓMO SE USA ───────────────────────────────────────────────────────────────────────
+  backFields.push({ key: "que-es", label: "Cómo usar tu tarjeta", value: ayuda });
+  if (pt.activo && textos.como_ganar) {
+    backFields.push({ key: "como-ganar", label: "Cómo ganar puntos", value: String(textos.como_ganar) });
+  }
+  // ── CON EL PROGRAMA APAGADO NO SE NOMBRA SIQUIERA ─────────────────────────────────────────
+  //
+  // Nada de «Programa de puntos: en preparación». Para el cliente esa funcionalidad TODAVÍA NO
+  // EXISTE, y anunciar algo que no puede usar es prometer una fecha que no tenemos. Cuando se
+  // encienda aparecerán los puntos, el próximo premio, cómo ganarlos y la caducidad — todo a la
+  // vez y ya funcionando.
+  //
+  // El texto de preparación sigue configurándose en el panel y sigue saliendo en la TARJETA WEB,
+  // que es donde tiene sentido: allí el cliente ha entrado a mirar su cuenta.
+  backFields.push({ key: "donde", label: "Dónde vale", value: dondeValeLaTarjeta(locales) });
+  if (textos.condiciones) {
+    backFields.push({ key: "condiciones", label: "Condiciones", value: String(textos.condiciones) });
+  }
+
+  // ── 3 · ADMINISTRATIVO ────────────────────────────────────────────────────────────────────
+  //
+  // Los enlaces van con TEXTO, no con la dirección: dentro de la del carné viaja el token, y un
+  // cliente enseñándole el reverso a alguien no tiene por qué enseñarle eso.
+  backFields.push({ key: "cuenta", label: "Tu tarjeta",
+    ...enlaceCon("Ver mis puntos y mis vales", enlace) });
   if (textos.privacidad_url) {
-    backFields.push({ key: "privacidad", label: "Privacidad", value: String(textos.privacidad_url) });
+    backFields.push({ key: "privacidad", label: "Privacidad",
+      ...enlaceCon("Política de privacidad", String(textos.privacidad_url)) });
   }
   if (textos.contacto) {
     backFields.push({ key: "contacto", label: "Contacto", value: String(textos.contacto) });
   }
+  // Y LO ÚLTIMO: de cuándo son estos datos. Solo si el pase no se refresca solo.
+  if (congelado && (pt.activo || pr.cantidad > 0)) {
+    const dia = fechaDeIso(estado?.actualizado_en);
+    backFields.push({ key: "al-dia", label: "Actualizado",
+      value: dia ? `Estos datos son del ${dia}.` : "Abre el enlace de arriba para verlos al día." });
+  }
 
-  return { primaryFields, secondaryFields, auxiliaryFields: aux.slice(0, 3), backFields };
+  return { primaryFields, secondaryFields, auxiliaryFields, backFields };
 }
 
 export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales = [],
@@ -274,7 +327,7 @@ export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales 
       messageEncoding: "iso-8859-1",
     }],
 
-    storeCard: camposDe({ qr, base, promo, estado, textos, congelado }),
+    storeCard: camposDe({ qr, base, promo, estado, textos, congelado, locales }),
   };
 
   // ── EL SERVICIO WEB, SOLO SI SE PIDE EXPRESAMENTE ─────────────────────────────────────────

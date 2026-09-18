@@ -7,19 +7,25 @@
 //
 //   375 × 123 pt   ×1     750 × 246   ×2     1125 × 369   ×3
 //
-// ── POR QUÉ EL VERDE VA ABAJO Y NO DETRÁS DEL NOMBRE ─────────────────────────────────────────
+// ── POR QUÉ LA BANDA ES VERDE ENTERA ─────────────────────────────────────────────────────────
 //
-// Porque `foregroundColor` es UNO para todo el pase. El nombre se pinta sobre la banda, pero el
-// número de socio y los puntos se pintan sobre el fondo crema, justo debajo. Si la banda fuera
-// verde entera habría que poner el texto claro para que el nombre se leyera — y entonces el
-// número de socio y los puntos quedarían en crema sobre crema, invisibles.
+// Porque iOS PINTA EN BLANCO el texto que cae sobre la banda, y no hay forma de evitarlo:
+// `foregroundColor` se respeta en todo el pase MENOS ahí. Se comprobó en un iPhone de verdad —el
+// número de socio salía oscuro y correcto sobre el crema, y el nombre salía blanco sobre la misma
+// tinta declarada—.
 //
-// Así que la banda es CREMA donde cae el texto y VERDE OSCURO en el borde de abajo. El verde sigue
-// siendo el elemento que manda visualmente —cruza el pase de lado a lado, justo bajo el nombre— y
-// no hay ni un punto del pase donde el texto no se lea.
+// La primera versión de esta banda era crema arriba y verde solo en el borde de abajo, para que el
+// texto oscuro se leyera sobre el crema. Salió blanco sobre crema: ilegible.
 //
-// La hoja va en el verde, en dorado suave y a media opacidad: es un detalle, no un dibujo. A 375
-// puntos de ancho, cualquier cosa más grande compite con el nombre.
+// Con el verde entero, el blanco que impone iOS pasa de ser un problema a ser el diseño: nombre
+// grande y claro sobre un bloque verde, que es exactamente lo que se buscaba.
+//
+// ── LA RAMITA, A LA DERECHA Y CON MARGEN ─────────────────────────────────────────────────────
+//
+// En la captura del iPhone salía CORTADA por el borde izquierdo: estaba al 7,5 % del ancho y iOS
+// ajusta la banda al ancho del dispositivo recortando por los lados. Ahora va centrada al 80 % y
+// ocupa del 72 % al 88 %, con sitio de sobra por los dos lados, y lejos de donde empieza el
+// nombre —que entra por la izquierda—.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -34,8 +40,8 @@ const CREMA = [244, 242, 237];
 const VERDE = [30, 64, 52];     // más oscuro que el de los rótulos: es una masa, no una letra
 const DORADO = [201, 184, 150];
 
-/** Qué parte de la altura ocupa el verde. Un quinto: se ve de lejos y no se come el nombre. */
-const PROPORCION_VERDE = 0.22;
+/** El filo dorado de abajo, en puntos. Separa la banda del crema sin meter una línea dura. */
+const FILO_PT = 1.5;
 
 // ── PNG a mano, igual que en `wallet-imagenes.mjs` ───────────────────────────────────────────
 const crc32 = (() => {
@@ -91,71 +97,73 @@ const mezclar = (fondo, tinta, a) => [
 ];
 
 /**
- * Una hoja: un tallo y varias hojitas a los lados. Se dibuja con matemáticas y no con una imagen
- * porque tiene que salir nítida en las tres densidades, y escalar un dibujo pequeño lo ensucia.
+ * Una ramita: un tallo curvo y cuatro hojas alternas.
  *
- * Devuelve la opacidad (0–1) de la hoja en ese punto, con el borde suavizado.
+ * ── SE TRABAJA EN PÍXELES, NO EN COORDENADAS NORMALIZADAS ────────────────────────────────────
+ *
+ * La primera versión normalizaba `x` por el ancho y `y` por el alto, y esos dos ejes tienen
+ * escalas MUY distintas —el alto es casi tres veces el ancho—. Girar una elipse en ese espacio no
+ * la gira en pantalla: la deforma. Las hojas salían como óvalos horizontales por mucho ángulo que
+ * se les pusiera.
+ *
+ * Aquí todo se mide en píxeles y el giro es un giro de verdad.
+ *
+ * Devuelve la opacidad (0–1) en ese punto, con el borde suavizado.
  */
 function hoja(x, y, { cx, cy, alto, ancho }) {
-  // Coordenadas relativas al tallo, con el tallo en vertical y las hojitas a los lados.
   const dy = (y - cy) / alto;            // −1 (punta) … +1 (base)
-  if (dy < -1 || dy > 1) return 0;
-  const dx = (x - cx) / ancho;
+  if (dy < -1.05 || dy > 1.05) return 0;
 
   // EL TALLO. Una curva suave, no una recta: una recta parece un palo clavado.
-  const tallo = dy * dy * 0.22;
-  const distTallo = Math.abs(dx - tallo);
-  let a = distTallo < 0.06 ? 1 - distTallo / 0.06 : 0;
+  const curva = dy * dy * 0.22;
+  const xTallo = cx + curva * ancho;
+  const grosor = Math.max(1, ancho * 0.055);
+  let a = Math.abs(x - xTallo) < grosor ? 1 - Math.abs(x - xTallo) / grosor : 0;
 
-  // LAS HOJITAS. CUATRO, alternando lado. Con seis se solapaban y quedaba un borrón: a 11 puntos
-  // de alto en pantalla, menos hojas y más separadas se leen mejor que más hojas apretadas.
+  // LAS HOJAS. Cuatro, alternando lado. Cada una es una elipse alargada GIRADA 40° hacia la
+  // punta del tallo — el gesto que hace que parezca una hoja y no un guisante.
+  const largo = ancho * 0.95;            // semieje mayor, en píxeles
+  const ancho2 = ancho * 0.30;           // semieje menor
   for (let i = 0; i < 4; i++) {
-    const t = -0.62 + i * 0.44;                  // dónde nace, a lo largo del tallo
+    const t = -0.58 + i * 0.42;          // dónde nace, a lo largo del tallo
     const lado = i % 2 === 0 ? 1 : -1;
-    const tam = 0.42 * (1 - Math.abs(t) * 0.22); // se encogen hacia los extremos
-    const ox = tallo + lado * tam * 0.55;
-    const oy = t - 0.10;
-    const ux = (dx - ox) / (tam * 1.05);
-    const uy = (dy - oy) / (tam * 0.30);         // muy plana: una hoja, no un círculo
-    // Girada ~35° hacia la punta del tallo.
-    const cos = 0.82, sen = 0.57 * lado;
-    const gx = ux * cos - uy * sen;
-    const gy = ux * sen + uy * cos;
-    const d = gx * gx + gy * gy;
-    if (d < 1) a = Math.max(a, Math.min(1, (1 - d) * 2.6));
+    const escala = 1 - Math.abs(t) * 0.25;
+    const ox = cx + (t * t * 0.22) * ancho + lado * largo * escala * 0.62;
+    const oy = cy + t * alto;
+
+    // Giro en PÍXELES: 40°, hacia arriba y hacia fuera.
+    const ang = lado * -0.70;
+    const px0 = x - ox, py0 = y - oy;
+    const rx = px0 * Math.cos(ang) - py0 * Math.sin(ang);
+    const ry = px0 * Math.sin(ang) + py0 * Math.cos(ang);
+
+    const u = rx / (largo * escala), v = ry / (ancho2 * escala);
+    const d = u * u + v * v;
+    if (d < 1) a = Math.max(a, Math.min(1, (1 - d) * 3.2));
   }
   return Math.min(1, a);
 }
 
 function pintarBanda(w, h) {
   const px = Buffer.alloc(w * h * 4);
-  const altoVerde = Math.round(h * PROPORCION_VERDE);
-  const y0Verde = h - altoVerde;
-  const k = w / 375;   // la densidad: todo lo fino se mide con ella, o a ×3 desaparece
+  const k = w / 375;                 // la densidad: lo fino se mide con ella, o a ×3 desaparece
+  const filo = Math.max(1, Math.round(FILO_PT * k));
 
-  // La hoja, CENTRADA en la banda verde. `alto` es el semieje, así que con 0.40 de la banda la
-  // ramita entera cabe dentro y no se corta por abajo — que era lo que pasaba.
-  const hojaCfg = { cx: w * 0.075, cy: y0Verde + altoVerde / 2,
-                    alto: altoVerde * 0.34, ancho: w * 0.028 };
+  // LA RAMITA. Al 80 % del ancho y bien dentro: en el iPhone, la del 7,5 % salía cortada.
+  const hojaCfg = { cx: w * 0.80, cy: h * 0.50, alto: h * 0.30, ancho: w * 0.030 };
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = (y * w + x) * 4;
-      let c;
+      let c = VERDE;
 
-      if (y >= y0Verde) {
-        c = VERDE;
-        // La hoja, en dorado y a media opacidad: un detalle, no un dibujo.
-        const a = hoja(x, y, hojaCfg);
-        if (a > 0) c = mezclar(c, DORADO, a * 0.42);
-      } else {
-        c = CREMA;
-        // Un filo dorado justo encima del verde. Es lo que separa las dos masas sin meter una
-        // línea dura. SE MIDE EN PUNTOS, no en píxeles: a ×3, dos píxeles no se ven.
-        const grosor = Math.max(1, Math.round(1.5 * k));
-        const d = y0Verde - y;
-        if (d <= grosor) c = mezclar(c, DORADO, 0.75);
-      }
+      // La ramita, en dorado y a media opacidad: un detalle, no un dibujo. Compite con un nombre
+      // en cuerpo grande, así que cuanto más callada, mejor.
+      const a = hoja(x, y, hojaCfg);
+      if (a > 0) c = mezclar(c, DORADO, a * 0.30);
+
+      // El filo dorado, en el borde de ABAJO: es lo que separa el verde del crema del pase.
+      if (y >= h - filo) c = mezclar(VERDE, DORADO, 0.65);
 
       px[i] = c[0]; px[i + 1] = c[1]; px[i + 2] = c[2]; px[i + 3] = 255;
     }
@@ -174,7 +182,7 @@ const salidas = [
   ["strip@3x.png", 3],
 ];
 
-console.log(`banda ${BASE.w}×${BASE.h} · verde ${Math.round(PROPORCION_VERDE * 100)} % de la altura`);
+console.log(`banda ${BASE.w}×${BASE.h} · verde entero · ramita al 80 % del ancho`);
 for (const [nombre, k] of salidas) {
   const img = pintarBanda(BASE.w * k, BASE.h * k);
   const png = escribirPng(img);

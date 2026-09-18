@@ -79,6 +79,9 @@ export function proyectarCarne({
         faltan: Number.isFinite(necesarios) && necesarios > 0
           ? Math.max(0, necesarios - disponible) : null,
         proxima_caducidad: saldo?.proxima_caducidad || null,
+        // CUÁNTOS caducan, no solo cuándo. «Tus puntos caducan el 31/03/2027» no dice nada
+        // accionable; «28 puntos caducan el 31/03/2027» sí.
+        caducan: Number(saldo?.lotes?.[0]?.restante) || 0,
         // El descuento por puntos solo se puede usar si además se está OFRECIENDO. Tener saldo y
         // que la barra no lo ofrezca son dos cosas distintas y el cliente nota la diferencia.
         canjeable: !!interruptores.ofrecer && !!necesarios && disponible >= necesarios,
@@ -107,7 +110,10 @@ export function proyectarCarne({
     hasta: p.hasta || null,
     hasta_texto: fechaCorta(p.hasta),
     horario: p.hora_desde && p.hora_hasta
-      ? `${String(p.hora_desde).slice(0, 5)}–${String(p.hora_hasta).slice(0, 5)}` : null,
+      ? `de ${String(p.hora_desde).slice(0, 5)} a ${String(p.hora_hasta).slice(0, 5)}` : null,
+    // ¿Este vale es SOLO de un local? Es lo que evita que el detalle contradiga al «Dónde vale»
+    // general: la tarjeta vale en todos, pero este vale concreto puede que no.
+    solo_aqui: !!p.local,
     // `personal` distingue «te lo has ganado» de «lo tiene todo el mundo». No sale ningún dato
     // del derecho: solo si lo es o no.
     personal: nivelDe(p) === NIVEL.CON_DERECHO,

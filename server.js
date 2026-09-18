@@ -13986,8 +13986,13 @@ async function walConstruirPase(qr, cfg, base, { req = null } = {}) {
     // Un pase que no puede refrescarse solo lleva la fecha del día que se bajó, en el reverso. Un
     // número congelado sin fecha es una promesa; con fecha es una foto, y se entiende.
     congelado: !servicio,
+    // TODO LO QUE MARKETING YA CONFIGURA. `condiciones` y `explicacion` existían en
+    // `fid_tarjeta_config` y no llegaban al pase: se configuraban para la tarjeta web y el pase
+    // no se enteraba. Los campos opcionales solo salen si tienen contenido.
     textos: {
       preparacion: tarjetaCfg.texto_preparacion || null,
+      condiciones: tarjetaCfg.condiciones || null,
+      como_ganar: tarjetaCfg.explicacion || null,
       privacidad_url: tarjetaCfg.privacidad_url || null,
       contacto: tarjetaCfg.contacto || null,
     },
