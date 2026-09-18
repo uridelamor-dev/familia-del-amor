@@ -26,7 +26,12 @@ import { codigoLegible, nombreCorto } from "../tarjeta/cuenta.js";
 export const COLOR_FONDO = "rgb(244, 242, 237)";
 export const COLOR_FONDO_HEX = "#F4F2ED";
 export const COLOR_TEXTO = "rgb(28, 33, 31)";
-export const COLOR_ETIQUETA = "rgb(47, 107, 79)";   // --brand, para los rótulos pequeños
+// EL VERDE OSCURO ES EL PROTAGONISTA. `labelColor` pinta TODOS los rótulos —«TARJETA DE CLIENTE»,
+// «PUNTOS», «VALES»— y es el único color que Apple deja meter además del fondo y el texto. Con el
+// verde de marca (47,107,79) los rótulos quedaban grisáceos sobre el crema; este otro es el mismo
+// tono de la banda, y así el pase entero tiene UN verde, no dos parecidos.
+export const COLOR_ETIQUETA = "rgb(30, 64, 52)";
+export const COLOR_ETIQUETA_HEX = "#1E4034";
 export const ORGANIZACION = "Familia del Amor";
 
 /** El enlace que lleva el QR de la tarjeta. LA función. */
@@ -131,22 +136,32 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false }) {
   // hasta cierto punto y después parte la línea, y un titular partido en dos deja la tarjeta
   // descuadrada. 26 caracteres es lo que entra holgado a tamaño legible.
   const primaryFields = qr.nombre
-    ? [{ key: "titular", label: "CARNÉ DE CLIENTE", value: recortar(qr.nombre, 26) }]
-    : [{ key: "socio", label: "CARNÉ DE CLIENTE", value: codigo }];
+    ? [{ key: "titular", label: "TARJETA DE CLIENTE", value: recortar(qr.nombre, 26) }]
+    : [{ key: "socio", label: "TARJETA DE CLIENTE", value: codigo }];
   const secondaryFields = qr.nombre
     ? [{ key: "socio", label: "NÚMERO DE SOCIO", value: codigo }]
     : [];
 
-  const backFields = [
-    { key: "que-es", label: "Tu tarjeta", value: ayuda },
-    { key: "donde", label: "Dónde vale", value: promo ? dondeVale(promo.locales) : dondeVale("") },
-  ];
-
   // ── EL PASE DE SIEMPRE ────────────────────────────────────────────────────────────────────
   if (!estado) {
-    backFields.push({ key: "cuenta", label: "Tus visitas y tus descuentos", value: enlace });
-    return { primaryFields, secondaryFields, auxiliaryFields: [], backFields };
+    return { primaryFields, secondaryFields, auxiliaryFields: [],
+      backFields: [
+        { key: "que-es", label: "Tu tarjeta", value: ayuda },
+        { key: "donde", label: "Dónde vale", value: promo ? dondeVale(promo.locales) : dondeVale("") },
+        { key: "cuenta", label: "Tus visitas y tus descuentos", value: enlace },
+      ] };
   }
+
+  // ── EL REVERSO, CON LO ÚTIL DELANTE ───────────────────────────────────────────────────────
+  //
+  // El reverso de Wallet es una LISTA que pinta el sistema: no hay imágenes, ni separadores, ni
+  // columnas, ni tamaños. Lo ÚNICO que se puede diseñar ahí es QUÉ se dice, EN QUÉ ORDEN y con
+  // qué palabras. Así que el orden ES el diseño.
+  //
+  // Antes empezaba por «Tu tarjeta» y «Dónde vale» —dos textos que no cambian nunca— y los puntos
+  // quedaban los terceros. Quien le da la vuelta a la tarjeta quiere ver cuánto tiene, no que se
+  // la enseñe al camarero. Lo que cambia va primero; las instrucciones, al final.
+  const backFields = [];
 
   // ── LO NUEVO, EN LA FILA QUE ESTABA LIBRE ─────────────────────────────────────────────────
   const pt = estado.puntos || {};
@@ -166,37 +181,51 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false }) {
   // preparación recortado, que en un campo de 22 caracteres queda en «Programa de puntos en…» y
   // ensucia una tarjeta que está bien como está. La explicación va entera en el reverso.
 
+  // VALES, no «regalos»: es la palabra que usa la casa en la barra y en el panel, y el pase no
+  // puede llamarlo de otra manera que la tarjeta web.
   if (pr.cantidad > 0) {
-    aux.push({ key: "regalos", label: "REGALOS",
-      value: `${pr.cantidad} disponible${pr.cantidad === 1 ? "" : "s"}` });
+    aux.push({ key: "vales", label: "VALES", value: String(pr.cantidad) });
   }
 
-  // El nombre del regalo solo si queda sitio. Tres campos auxiliares es lo que entra sin que se
+  // El nombre del vale solo si queda sitio. Tres campos auxiliares es lo que entra sin que se
   // encojan entre sí; el cuarto los aprieta y deja de leerse.
   if (pr.principal && aux.length < 3) {
-    aux.push({ key: "premio", label: "REGALO", value: recortar(pr.principal.nombre, 20) });
+    aux.push({ key: "vale", label: "TU VALE", value: recortar(pr.principal.nombre, 20) });
   }
 
   // ── EL REVERSO: TODO LO QUE NO CABE DELANTE ───────────────────────────────────────────────
   if (pt.activo) {
-    backFields.push({ key: "puntos-detalle", label: "Tus puntos",
+    backFields.push({ key: "puntos-detalle", label: "Puntos",
       value: pt.objetivo
         ? `Tienes ${pt.saldo} punto${pt.saldo === 1 ? "" : "s"}. El siguiente premio son ${pt.objetivo}.`
         : `Tienes ${pt.saldo} punto${pt.saldo === 1 ? "" : "s"}.` });
     if (pt.proxima_caducidad) {
-      backFields.push({ key: "caducan", label: "Próxima caducidad de puntos",
+      backFields.push({ key: "caducan", label: "Tus puntos caducan",
         value: String(pt.proxima_caducidad).slice(0, 10) });
     }
   } else if (pt.texto) {
-    backFields.push({ key: "puntos-detalle", label: "Tus puntos", value: String(pt.texto) });
+    backFields.push({ key: "puntos-detalle", label: "Puntos", value: String(pt.texto) });
   }
 
+  // VALES DISPONIBLES: primero cuántos, después cada uno con su detalle. El recuento arriba es lo
+  // que contesta la pregunta de un vistazo; el detalle, lo que hace falta al llegar a la barra.
+  if (pr.cantidad > 0) {
+    backFields.push({ key: "vales", label: "Vales disponibles",
+      value: pr.cantidad === 1 ? "Tienes 1 vale sin usar." : `Tienes ${pr.cantidad} vales sin usar.` });
+  }
   for (const [i, p] of (pr.disponibles || []).slice(0, 4).entries()) {
     const partes = [p.local || "En cualquiera de nuestros locales"];
     if (p.horario) partes.push(`de ${p.horario}`);
     if (p.hasta_texto) partes.push(`hasta el ${p.hasta_texto}`);
-    backFields.push({ key: `regalo-${i}`, label: recortar(p.nombre, 60), value: partes.join(" · ") });
+    // `vale-0`, `vale-1`… La clave la ve Wallet, no el cliente, pero si un día alguien lee el
+    // `pass.json` buscando por qué algo no sale, que encuentre la misma palabra que en el panel.
+    backFields.push({ key: `vale-${i}`, label: recortar(p.nombre, 60), value: partes.join(" · ") });
   }
+
+  // Y AHORA LAS INSTRUCCIONES, al final. No cambian nunca y no es lo que se viene a mirar.
+  backFields.push({ key: "que-es", label: "Tu tarjeta", value: ayuda });
+  backFields.push({ key: "donde", label: "Dónde vale",
+    value: promo ? dondeVale(promo.locales) : dondeVale("") });
 
   // Un pase SIN servicio web no se refresca solo: lo que ponga se queda congelado desde el día que
   // se bajó. Decirlo con su fecha convierte un número que engaña en una foto que se entiende — y

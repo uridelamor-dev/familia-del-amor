@@ -112,7 +112,7 @@ describe("el carné es el mismo", () => {
     assert.equal(estatico.authenticationToken, undefined);
     // Y la cara no cambia ni un campo.
     assert.deepEqual(estatico.storeCard.primaryFields,
-      [{ key: "titular", label: "CARNÉ DE CLIENTE", value: "Marta" }]);
+      [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
     assert.deepEqual(estatico.storeCard.secondaryFields,
       [{ key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" }]);
     assert.deepEqual(estatico.storeCard.auxiliaryFields, []);
@@ -127,7 +127,7 @@ describe("el diseño aprobado se conserva", () => {
 
   test("el titular sigue mandando en el sitio grande", () => {
     assert.deepEqual(p.storeCard.primaryFields,
-      [{ key: "titular", label: "CARNÉ DE CLIENTE", value: "Marta" }]);
+      [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
   });
 
   test("el número de socio sigue en el segundo", () => {
@@ -144,7 +144,7 @@ describe("el diseño aprobado se conserva", () => {
   test("colores, logo y ausencias siguen igual", () => {
     assert.equal(p.backgroundColor, "rgb(244, 242, 237)");
     assert.equal(p.foregroundColor, "rgb(28, 33, 31)");
-    assert.equal(p.labelColor, "rgb(47, 107, 79)");
+    assert.equal(p.labelColor, "rgb(30, 64, 52)", "el verde oscuro es el nuevo protagonista");
     assert.equal(p.logoText, undefined, "el logotipo ya dice el nombre");
     assert.equal(p.barcodes[0].altText, undefined, "el número ya está en la cara");
     assert.ok(p.storeCard, "sigue siendo storeCard");
@@ -167,7 +167,7 @@ describe("el diseño aprobado se conserva", () => {
     assert.ok(v.length <= 27, `titular de ${v.length} caracteres: ${v}`);
     assert.ok(v.endsWith("…"), "un nombre recortado tiene que decir que lo está");
     // Y sigue siendo el titular, no otra cosa.
-    assert.equal(q.storeCard.primaryFields[0].label, "CARNÉ DE CLIENTE");
+    assert.equal(q.storeCard.primaryFields[0].label, "TARJETA DE CLIENTE");
   });
 
   test("un saldo de muchos dígitos y un regalo kilométrico tampoco", () => {
@@ -184,7 +184,7 @@ describe("el diseño aprobado se conserva", () => {
     const q = pasePlanoApple({ qr: { ...QR, nombre: "" }, cfg: CFG, base: BASE, estado: proy(),
       servicio: { url: BASE, token: "s" } });
     assert.deepEqual(q.storeCard.primaryFields,
-      [{ key: "socio", label: "CARNÉ DE CLIENTE", value: "1234 5678" }]);
+      [{ key: "socio", label: "TARJETA DE CLIENTE", value: "1234 5678" }]);
     assert.deepEqual(q.storeCard.secondaryFields, []);
   });
 
@@ -1491,8 +1491,10 @@ describe("inventario de lo intocable", () => {
     assert.match(w, /serialNumber: String\(qr\.token\)/);
   });
 
-  test("las seis imágenes siguen siendo seis", () => {
-    assert.match(s, /\["icon\.png", "icon@2x\.png", "icon@3x\.png",\s*\n?\s*"logo\.png", "logo@2x\.png", "logo@3x\.png"\]/);
+  test("las imágenes del logo y el icono siguen siendo las mismas", () => {
+    // Nueve ahora: las seis de siempre + las tres densidades de la banda. Logo e icono no se
+    // tocan; la banda es lo único que se añade.
+    assert.match(s, /"icon\.png", "icon@2x\.png", "icon@3x\.png",\s*\n?\s*"logo\.png", "logo@2x\.png", "logo@3x\.png",\s*\n?\s*"strip\.png", "strip@2x\.png", "strip@3x\.png"/);
   });
 
   test("`tarjeta_activa` es el interruptor de arriba", () => {
@@ -1816,7 +1818,7 @@ describe("la descarga del pase aguanta que lo dinámico falle", () => {
     assert.equal(p.serialNumber, TOKEN);
     assert.equal(p.webServiceURL, undefined);
     assert.deepEqual(p.storeCard.primaryFields,
-      [{ key: "titular", label: "CARNÉ DE CLIENTE", value: "Marta" }]);
+      [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
   });
 });
 
@@ -1836,7 +1838,7 @@ describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
     assert.equal(p.webServiceURL, undefined, "no debe declarar servicio");
     const aux = p.storeCard.auxiliaryFields.map((f) => f.key);
     assert.ok(aux.includes("puntos"), `auxiliares: ${aux.join(", ")}`);
-    assert.ok(aux.includes("regalos"), `auxiliares: ${aux.join(", ")}`);
+    assert.ok(aux.includes("vales"), `auxiliares: ${aux.join(", ")}`);
   });
 
   test("y el servidor ya no los ata", () => {
@@ -1849,7 +1851,7 @@ describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
   test("el diseño aprobado sigue intacto con los campos nuevos", () => {
     const p = conEstado();
     assert.deepEqual(p.storeCard.primaryFields,
-      [{ key: "titular", label: "CARNÉ DE CLIENTE", value: "Marta" }]);
+      [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
     assert.deepEqual(p.storeCard.secondaryFields,
       [{ key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" }]);
     assert.equal(p.logoText, undefined);
@@ -1863,9 +1865,9 @@ describe("el estado se enseña aunque el pase no pueda refrescarse", () => {
     assert.ok(conEstado().storeCard.auxiliaryFields.length <= 3);
   });
 
-  test("y los tres son PUNTOS, PRÓXIMO PREMIO y REGALOS", () => {
+  test("y los tres son PUNTOS, PRÓXIMO PREMIO y VALES", () => {
     assert.deepEqual(conEstado().storeCard.auxiliaryFields.map((f) => f.label),
-      ["PUNTOS", "PRÓXIMO PREMIO", "REGALOS"]);
+      ["PUNTOS", "PRÓXIMO PREMIO", "VALES"]);
   });
 });
 
@@ -1924,5 +1926,200 @@ describe("un pase congelado dice de cuándo son sus datos", () => {
       const f = p.storeCard.backFields.find((x) => x.key === "al-dia");
       assert.ok(f && !/Invalid|null|undefined|NaN/.test(f.value), `con «${malo}»: ${f?.value}`);
     }
+  });
+});
+
+// ── EL REVERSO: LO ÚTIL DELANTE ──────────────────────────────────────────────────────────────
+//
+// El reverso de Wallet es una LISTA que pinta el sistema: sin imágenes, sin separadores, sin
+// columnas y sin tamaños. Lo único que se puede diseñar ahí es QUÉ se dice, EN QUÉ ORDEN y con
+// qué palabras. Así que el orden ES el diseño.
+
+describe("el reverso pone lo que cambia delante", () => {
+  const conTodo = () => pasePlanoApple({
+    qr: QR, cfg: CFG, base: BASE, servicio: { url: BASE, token: "s" },
+    textos: { privacidad_url: "/privacitat.html", contacto: "info@ejemplo" },
+    estado: proy({ promosElegibles: [PROMO] }) });
+
+  const claves = () => conTodo().storeCard.backFields.map((f) => f.key);
+
+  test("PUNTOS es lo primero, no las instrucciones", () => {
+    // Antes empezaba por «Tu tarjeta» y «Dónde vale» —dos textos que no cambian nunca— y los
+    // puntos quedaban los terceros. Quien le da la vuelta quiere ver cuánto tiene.
+    assert.equal(claves()[0], "puntos-detalle");
+  });
+
+  test("y las instrucciones van DESPUÉS de puntos y vales", () => {
+    const k = claves();
+    assert.ok(k.indexOf("que-es") > k.indexOf("puntos-detalle"), k.join(" · "));
+    assert.ok(k.indexOf("que-es") > k.indexOf("vales"), k.join(" · "));
+    assert.ok(k.indexOf("donde") > k.indexOf("que-es"), k.join(" · "));
+  });
+
+  test("los vales salen con su recuento y después cada uno", () => {
+    const back = conTodo().storeCard.backFields;
+    const i = back.findIndex((f) => f.key === "vales");
+    assert.ok(i >= 0, "falta el recuento de vales");
+    assert.match(back[i].value, /Tienes 1 vale sin usar\./);
+    assert.equal(back[i + 1].key, "vale-0", "el detalle va justo detrás del recuento");
+  });
+
+  test("y en plural cuando hay más de uno", () => {
+    const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, servicio: { url: BASE, token: "s" },
+      estado: proy({ promosElegibles: [PROMO, { ...PROMO, clave: "otra", texto_cliente: "Café gratis" }] }) });
+    const v = p.storeCard.backFields.find((f) => f.key === "vales");
+    assert.match(v.value, /Tienes 2 vales sin usar\./);
+  });
+
+  test("sin vales no sale el recuento: una línea que dice «0» es ruido", () => {
+    const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, servicio: { url: BASE, token: "s" },
+      estado: proy({ promoSw: { promociones_ofrecer: false } }) });
+    assert.equal(p.storeCard.backFields.find((f) => f.key === "vales"), undefined);
+  });
+
+  test("el enlace a la tarjeta web y lo legal, al final", () => {
+    const k = claves();
+    assert.ok(k.indexOf("cuenta") > k.indexOf("donde"), k.join(" · "));
+    assert.equal(k[k.length - 1], "contacto");
+    assert.equal(k[k.length - 2], "privacidad");
+  });
+
+  test("EL PASE ESTÁTICO conserva su reverso de siempre", () => {
+    // Sin estado no hay puntos ni vales que adelantar: se queda como estaba.
+    const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE });
+    assert.deepEqual(p.storeCard.backFields.map((f) => f.key), ["que-es", "donde", "cuenta"]);
+  });
+});
+
+describe("el rótulo de la cara", () => {
+  test("dice TARJETA DE CLIENTE", () => {
+    const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE });
+    assert.equal(p.storeCard.primaryFields[0].label, "TARJETA DE CLIENTE");
+  });
+
+  test("también cuando no hay nombre", () => {
+    const p = pasePlanoApple({ qr: { ...QR, nombre: "" }, cfg: CFG, base: BASE });
+    assert.equal(p.storeCard.primaryFields[0].label, "TARJETA DE CLIENTE");
+    assert.equal(p.storeCard.primaryFields[0].value, "1234 5678");
+  });
+
+  test("y no queda ningún «CARNÉ DE CLIENTE» suelto", () => {
+    const m = readFileSync(new URL("../src/modules/wallet/wallet.js", import.meta.url), "utf8");
+    assert.ok(!m.includes('"CARNÉ DE CLIENTE"'), "queda el rótulo antiguo");
+  });
+});
+
+// ── LA BANDA Y EL VERDE OSCURO ───────────────────────────────────────────────────────────────
+//
+// `strip.png` es la ÚNICA superficie libre de un `storeCard`: todo lo demás lo compone iOS. Se
+// pinta detrás del campo principal, así que es lo que puede dar el verde de la marca sin pelearse
+// con la legibilidad.
+
+describe("la banda del pase", () => {
+  const dir = new URL("../public/assets/wallet/", import.meta.url);
+  const medida = (n) => {
+    const b = readFileSync(new URL(n, dir));
+    // La cabecera IHDR de un PNG: ancho y alto en los bytes 16–23.
+    return { w: b.readUInt32BE(16), h: b.readUInt32BE(20), bytes: b.length };
+  };
+
+  test("existe en las tres densidades y con la medida de Apple", () => {
+    // 375 × 123 pt es lo que define Apple para la banda de un `storeCard`.
+    assert.deepEqual(medida("strip.png"), { ...medida("strip.png"), w: 375, h: 123 });
+    assert.equal(medida("strip@2x.png").w, 750);
+    assert.equal(medida("strip@2x.png").h, 246);
+    assert.equal(medida("strip@3x.png").w, 1125);
+    assert.equal(medida("strip@3x.png").h, 369);
+  });
+
+  test("son múltiplos exactos ×1 ×2 ×3", () => {
+    const a = medida("strip.png"), b = medida("strip@2x.png"), c = medida("strip@3x.png");
+    assert.equal(b.w, a.w * 2); assert.equal(b.h, a.h * 2);
+    assert.equal(c.w, a.w * 3); assert.equal(c.h, a.h * 3);
+  });
+
+  test("cada densidad se PINTA a su tamaño, no se escala", () => {
+    // Escalar el filo dorado —de punto y medio— lo convierte en una mancha. El generador pinta
+    // las tres por separado, y se nota en que la ×3 no pesa nueve veces la ×1.
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    assert.match(t, /pintarBanda\(BASE\.w \* k, BASE\.h \* k\)/);
+    // «escalarlo» aparece en el comentario que EXPLICA por qué no se escala; lo que no puede
+    // haber es una llamada a una función de escalado.
+    assert.ok(!/\bescalar\(|\bresize\(/i.test(t), "la banda se escala en vez de pintarse");
+  });
+
+  test("y viaja DENTRO del pase", () => {
+    const s = sinComentarios(server);
+    assert.match(s, /"strip\.png", "strip@2x\.png", "strip@3x\.png"/);
+  });
+
+  test("si falta, el pase sale igual: es decoración, no estructura", () => {
+    // `walletImagenes` se traga el fallo de las opcionales; solo `icon` es obligatorio.
+    const pk = readFileSync(new URL("../src/modules/wallet/pkpass.js", import.meta.url), "utf8");
+    assert.match(pk, /IMAGENES_OBLIGATORIAS = \["icon\.png", "icon@2x\.png"\]/);
+  });
+
+  test("el generador no usa NI UNA dependencia", () => {
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    for (const linea of t.match(/^import .*$/gm) || []) {
+      assert.match(linea, /from "node:/, `dependencia externa: ${linea}`);
+    }
+  });
+});
+
+describe("el verde oscuro manda", () => {
+  const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE });
+
+  test("los rótulos van en el MISMO verde que la banda", () => {
+    // Dos verdes parecidos en el mismo pase se ven como un error de color, no como una gama.
+    assert.equal(p.labelColor, "rgb(30, 64, 52)");
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    assert.match(t, /const VERDE = \[30, 64, 52\]/);
+  });
+
+  test("el crema y la tinta no se tocan", () => {
+    assert.equal(p.backgroundColor, "rgb(244, 242, 237)");
+    assert.equal(p.foregroundColor, "rgb(28, 33, 31)");
+  });
+
+  test("el texto se lee en TODO el pase, no solo sobre la banda", () => {
+    // `foregroundColor` es UNO para todo. Con la banda verde entera habría que poner el texto
+    // claro para el nombre, y el número de socio —que va debajo, sobre el crema— desaparecería.
+    // Por eso la banda es crema donde cae el texto y verde solo en el borde de abajo.
+    const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
+    assert.match(t, /const PROPORCION_VERDE = 0\.\d+/);
+    const prop = Number(t.match(/PROPORCION_VERDE = ([\d.]+)/)[1]);
+    assert.ok(prop > 0 && prop < 0.5,
+      `la banda verde ocupa ${prop}: si pasa de la mitad, el nombre cae encima y no se lee`);
+  });
+});
+
+describe("se dice VALES, nunca «regalos»", () => {
+  const conVale = (n = 1) => pasePlanoApple({ qr: QR, cfg: CFG, base: BASE,
+    servicio: { url: BASE, token: "s" },
+    estado: proy({ promosElegibles: Array.from({ length: n },
+      (_, i) => ({ ...PROMO, clave: `p${i}`, texto_cliente: `Vale ${i}` })) }) });
+
+  test("el rótulo de la cara es VALES", () => {
+    const f = conVale().storeCard.auxiliaryFields.find((x) => x.key === "vales");
+    assert.ok(f, "falta el campo de vales");
+    assert.equal(f.label, "VALES");
+    assert.equal(f.value, "1");
+  });
+
+  test("y el del reverso, «Vales disponibles»", () => {
+    const f = conVale().storeCard.backFields.find((x) => x.key === "vales");
+    assert.equal(f.label, "Vales disponibles");
+  });
+
+  test("NINGÚN texto del pase dice «regalo»", () => {
+    const json = JSON.stringify(conVale(2));
+    assert.ok(!/regalo/i.test(json), `sale «regalo»: ${json.match(/.{0,40}regalo.{0,40}/i)}`);
+  });
+
+  test("ni el módulo que los compone", () => {
+    const m = readFileSync(new URL("../src/modules/wallet/wallet.js", import.meta.url), "utf8");
+    assert.ok(!/REGALOS?"/.test(m), "queda un rótulo con «REGALO»");
+    assert.ok(!/`regalo-/.test(m), "queda una clave `regalo-`");
   });
 });

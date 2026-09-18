@@ -12877,8 +12877,12 @@ function walletImagenes() {
   // Las tres densidades de cada imagen. `logo@3x.png` faltaba: sin él, un iPhone Pro escala el
   // @2x y la firma manuscrita sale con el borde sucio, que es justo lo que se nota en un
   // logotipo de trazo fino.
+  // `strip.png` es la BANDA que se pinta detrás del nombre del titular. Es la única superficie
+  // libre del pase —todo lo demás lo compone iOS— y es lo que le da el verde oscuro de la marca.
+  // Si falta, el pase sale igual con el fondo crema liso: es decoración, no estructura.
   const nombres = ["icon.png", "icon@2x.png", "icon@3x.png",
-                   "logo.png", "logo@2x.png", "logo@3x.png"];
+                   "logo.png", "logo@2x.png", "logo@3x.png",
+                   "strip.png", "strip@2x.png", "strip@3x.png"];
   const out = [];
   for (const n of nombres) {
     try { out.push({ nombre: n, datos: fs.readFileSync(path.join(dir, n)) }); }

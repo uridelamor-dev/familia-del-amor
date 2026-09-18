@@ -84,7 +84,7 @@ describe("pass.json de Apple", () => {
 
   test("la cara dice, en este orden: de quién es, qué es y qué número tiene", () => {
     assert.deepEqual(pase.storeCard.primaryFields,
-      [{ key: "titular", label: "CARNÉ DE CLIENTE", value: "Marta" }]);
+      [{ key: "titular", label: "TARJETA DE CLIENTE", value: "Marta" }]);
     assert.deepEqual(pase.storeCard.secondaryFields,
       [{ key: "socio", label: "NÚMERO DE SOCIO", value: "1234 5678" }]);
     // Vacío a propósito: con tres datos ya está dicho todo.
@@ -100,7 +100,7 @@ describe("pass.json de Apple", () => {
   test("un carné sin nombre no deja el sitio grande en blanco", () => {
     const p = pasePlanoApple({ qr: { ...QR, nombre: "" }, cfg: CFG_APPLE, base: BASE });
     assert.deepEqual(p.storeCard.primaryFields,
-      [{ key: "socio", label: "CARNÉ DE CLIENTE", value: "1234 5678" }]);
+      [{ key: "socio", label: "TARJETA DE CLIENTE", value: "1234 5678" }]);
     assert.deepEqual(p.storeCard.secondaryFields, []);
     // Y el número sigue apareciendo una sola vez.
     const veces = JSON.stringify(p).split("1234 5678").length - 1;
