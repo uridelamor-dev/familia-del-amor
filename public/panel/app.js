@@ -13803,6 +13803,8 @@ async function campCumpleSave() {
 
 // ════════════════════════ VISTA: WEB (editor de la web pública + preview en vivo) ════════════════════════
 let WEB = { reg: null, content: {}, lang: "es", scope: "global", q: "", blocks: {} };
+/** El píxel de Meta: `pixel` es el que se usa, `configurado` lo que hay escrito en el panel. */
+let META = { pixel: "", configurado: "" };
 const WEB_LANGS = ["es", "ca", "en"], WEB_LANG_LABEL = { es: "ES", ca: "CA", en: "EN" };
 const WEB_PAGES = [["home_extra", "Portada · extra"], ["nosotros", "Nosotros"], ["eventos", "Eventos"], ["trabaja", "Trabaja"]];
 const WEB_BLK_TYPES = [["heading", "Título"], ["paragraph", "Párrafo"], ["image", "Imagen"], ["gallery", "Galería"], ["cta", "Botón"], ["pdf", "PDF"]];
@@ -13845,6 +13847,12 @@ async function loadWeb() {
     const [reg, cont] = await Promise.all([apiSend("GET", "/api/content/registry"), apiSend("GET", "/api/content")]);
     WEB.reg = { locales: reg.locales || [], campos: reg.campos || {} };
     WEB.content = cont.data || {};
+    // El píxel, con los DOS datos: el que se usa y si alguien lo puso. Va aparte y con su propio
+    // `try`: que falle no puede dejar sin editor de contenidos a quien viene a cambiar un texto.
+    try {
+      const m = await apiSend("GET", "/api/marketing/meta");
+      META = { pixel: m.pixel || "", configurado: m.configurado || "" };
+    } catch { META = { pixel: "", configurado: "" }; }
     view.innerHTML = renderWeb();
     webMountPreview();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
@@ -13918,7 +13926,45 @@ function renderWeb() {
   const editor = `<div class="webedit"><div class="webbar">${langSeg}${search}<span id="webInd" class="mut" style="font-size:12px;margin-left:auto"></span></div><div class="webfields">${renderWebFields()}</div></div>`;
   const src = webPreviewSrc();
   const preview = `<div class="webprev"><div class="webprev-bar"><span class="mut" style="font-size:12px">Vista previa</span><a class="btn sm" href="${src}" target="_blank" rel="noopener">Abrir ↗</a></div><iframe id="webframe" src="${src}" title="Vista previa"></iframe></div>`;
-  return `<div class="ph"><div><div class="eyebrow">Web pública</div><h1>Editor de la web</h1><div class="sub">Cambia textos, imágenes, cartas y galerías de la web del cliente. Se guarda solo.</div></div></div>${scopeChips}${pageChips}<div class="webwrap">${editor}${preview}</div>`;
+  return `<div class="ph"><div><div class="eyebrow">Web pública</div><h1>Editor de la web</h1><div class="sub">Cambia textos, imágenes, cartas y galerías de la web del cliente. Se guarda solo.</div></div></div>${renderMetaPixel()}${scopeChips}${pageChips}<div class="webwrap">${editor}${preview}</div>`;
+}
+
+/**
+ * EL PÍXEL DE META. Vive aquí porque es de LA WEB, no de una campaña.
+ *
+ * Estaba en Captación, colgando de la pantalla de una campaña, y desde ahí parecía una opción de
+ * esa campaña — cuando siempre fue global: se guarda en `config`, no en `cap_campanas`. Ahí solo
+ * queda ahora un aviso que apunta aquí. UN solo campo editable para un solo valor.
+ */
+function renderMetaPixel() {
+  if (USER.rol !== "direccion") return "";
+  const m = META || {};
+  const puesto = !!m.configurado;
+  return `<div class="card" style="margin-bottom:12px"><div class="ch"><h3>Meta Pixel</h3>
+      <span class="pill ${m.pixel ? "ok" : ""}">${m.pixel ? "Activo" : "Sin píxel"}</span></div>
+    <div class="mut" style="font-size:12.5px;padding:2px 2px 10px">Mide qué anuncios de Meta traen visitas de verdad, para no gastar en los que no funcionan. Es el <b>mismo píxel para toda la web pública</b>: portada, locales, campañas y alta de la tarjeta. Las páginas privadas del cliente y las legales no lo llevan.</div>
+    <div class="rows">
+      <div class="row"><div class="grow"><div class="t1">Pixel ID</div>
+        <div class="mut" style="font-size:12px">${puesto ? "Configurado desde el panel" : "El de la casa, mientras no se ponga otro"}</div></div>
+        <span style="display:flex;gap:8px;align-items:center">
+          <b style="font-variant-numeric:tabular-nums">${esc(m.pixel || "—")}</b>
+          <button class="btn sm" data-act="meta-pixel">Cambiar</button></span></div>
+    </div>
+    <div class="mut" style="font-size:12px;margin-top:10px"><b>No se carga sin consentimiento.</b> Quien visita la web ve un aviso con «Aceptar» y «Rechazar»; hasta que acepta no se descarga nada de Meta. Puede cambiar de opinión desde el enlace «Cookies» del pie.</div>`;
+}
+
+async function metaPixelEditar() {
+  const actual = (META && META.configurado) || "";
+  const v = prompt("Pixel ID de Meta (solo números).\n\nDéjalo vacío para volver al de la casa.", actual);
+  if (v === null) return;
+  try {
+    const j = await apiSend("POST", "/api/marketing/meta", { pixel: v });
+    META = { pixel: j.pixel, configurado: j.configurado };
+    toast(j.configurado ? "Pixel guardado ✅" : "Se usa el pixel de la casa");
+    const view = document.getElementById("view");
+    if (view) view.innerHTML = renderWeb();
+    webMountPreview();
+  } catch (e) { toast("Error: " + e.message); }
 }
 
 function webPost(msg) { const f = document.getElementById("webframe"); if (f && f.contentWindow) try { f.contentWindow.postMessage(msg, "*"); } catch { /* */ } }
@@ -14411,9 +14457,9 @@ function promoCaptacion() {
       ${d.parada ? `<div class="row" style="padding:6px 0"><span class="pill bad">Envíos parados a mano</span></div>` : ""}
       ${USER.rol === "direccion" ? `<div class="row" style="justify-content:space-between;padding:6px 0">
         <span><span class="t1">Píxel de Meta</span>
-          <span class="t2">Sin él, Meta optimiza a ciegas y cada formulario sale más caro</span></span>
-        <span>${d.pixel ? `<span class="pill ok">${esc(d.pixel)}</span>` : `<span class="pill">Sin poner</span>`}
-          <button class="linkbtn" style="color:var(--brand)" data-act="cap-pixel">Cambiar</button></span></div>` : ""}
+          <span class="t2">Es <b>global</b>: el mismo para toda la web, no de esta campaña. Se configura en <b>Marketing → Web</b></span></span>
+        <span>${d.pixel ? `<span class="pill ok">${esc(d.pixel)}</span>` : `<span class="pill">Por defecto</span>`}
+          <button class="linkbtn" style="color:var(--brand)" data-act="ir-web">Ir a Web</button></span></div>` : ""}
     </div></div>`;
 
   const lista = filas.length
@@ -14575,19 +14621,6 @@ async function capReenviar(id) {
   try {
     await apiSend("POST", `/api/captacion/cola/${Number(id)}/reenviar`);
     toast("Vuelve a la cola");
-    loadPromos();
-  } catch (e) { toast("Error: " + e.message); }
-}
-
-async function capPixel() {
-  const actual = (PROMO.cap && PROMO.cap.pixel) || "";
-  // Carga un script de Meta en una página pública: antes de ponerlo hay que tener claro el
-  // aviso de cookies. Por eso se dice aquí y no en una nota que nadie lee.
-  const v = prompt("Id del píxel de Meta (solo números). Déjalo vacío para quitarlo.\n\nOJO: carga un script de Meta en la página de campaña; revisa vuestro aviso de cookies antes de activarlo.", actual);
-  if (v === null) return;
-  try {
-    await apiSend("POST", "/api/captacion/pixel", { pixel: v });
-    toast(v.trim() ? "Píxel guardado ✅" : "Píxel quitado");
     loadPromos();
   } catch (e) { toast("Error: " + e.message); }
 }
@@ -15586,7 +15619,8 @@ document.addEventListener("click", (e) => {
   else if (act === "cap-editar") capEditar(t.getAttribute("data-clave"));
   else if (act === "cap-reenviar") capReenviar(t.getAttribute("data-id"));
   else if (act === "cap-parada") capParada(t.getAttribute("data-parada"));
-  else if (act === "cap-pixel") capPixel();
+  else if (act === "ir-web") go("web");
+  else if (act === "meta-pixel") metaPixelEditar();
   else if (act === "tj-encender") tjInterruptor(true);
   else if (act === "tj-apagar") tjInterruptor(false);
   else if (act === "tj-cartel") tjCartel();

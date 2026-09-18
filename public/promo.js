@@ -43,22 +43,21 @@
     return out;
   }
 
-  /**
-   * El píxel de Meta, solo si hay uno configurado y solo en ESTA página.
-   *
-   * Es lo que permite que Meta aprenda a quién enseñar el anuncio: sin él optimiza a ciegas y
-   * cada formulario sale mucho más caro. Se carga aquí y no en toda la web a propósito — un
-   * script de terceros en la portada es otra conversación (y otro consentimiento).
-   */
-  function cargarPixel(id) {
-    if (!id || window.fbq) return;
-    var n = window.fbq = function () { n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments); };
-    n.push = n; n.loaded = true; n.version = "2.0"; n.queue = [];
-    var t = document.createElement("script");
-    t.async = true; t.src = "https://connect.facebook.net/en_US/fbevents.js";
-    document.head.appendChild(t);
-    window.fbq("init", String(id));
-    window.fbq("track", "PageView");
+  // ── EL PÍXEL DE META YA NO SE INSTALA AQUÍ ──────────────────────────────────────────────────
+  //
+  // Estaba, y era el problema: el fragmento de Meta escrito a mano dentro del JavaScript de una
+  // campaña, cargado SOLO desde el camino de la campaña clásica. Consecuencias, las dos vividas:
+  //
+  //   · Toda la web pública sin medir — Meta optimizaba los anuncios a ciegas.
+  //   · Al migrar a los formularios configurables, `cargarPixel()` dejó de llamarse y esos
+  //     formularios no mandaron ni una visita ni un alta. En silencio, sin ningún error.
+  //
+  // Ahora lo lleva `/js/meta.js`, que es el único sitio del proyecto que llama a `fbq`, y que no
+  // carga nada sin consentimiento. Desde aquí solo se avisa de los eventos de negocio.
+
+  /** Un evento de negocio. Si no hay consentimiento, no sale de aquí. */
+  function meta(nombre) {
+    if (window.fdaMeta) window.fdaMeta.evento(nombre);
   }
 
   function pintarFormulario(d) {
@@ -163,9 +162,9 @@
         if (d.ok) {
           TOKEN = d.token || "";
           gracias(d.titulo, d.texto, true);
-          // El evento que Meta necesita para aprender a quién enseñar el anuncio. Si no hay
-          // píxel puesto, esto no hace nada.
-          if (typeof window.fbq === "function") window.fbq("track", "Lead");
+          // El evento que Meta necesita para aprender a quién enseñar el anuncio. Sin píxel
+          // configurado o sin consentimiento, esto no hace nada.
+          meta("Lead");
           setTimeout(sondear, 2500);
           return;
         }
@@ -567,6 +566,9 @@
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo),
       }).then(function (r) { return r.json().catch(function () { return null; }); }).then(function (j) {
         if (!j || !j.ok) { fallo((j && j.error) || M.error || "…"); return; }
+        // EL ALTA, A META. Esto faltaba: al migrar del formulario clásico al configurable se
+        // perdió el evento y estos formularios no reportaban ni una conversión.
+        meta("Lead");
         // La MISMA pantalla exista o no el teléfono: si se distinguieran, esto sería un
         // comprobador de qué números están en nuestra base.
         caja.innerHTML = "";
@@ -615,7 +617,6 @@
       if (!r.d || !r.d.ok) { location.replace("/"); return; }
       T = r.d.etiquetas || {};
       if (!r.d.abierta) { avisar(r.d.texto || ""); return; }
-      cargarPixel(r.d.pixel);
       pintarFormulario(r.d);
     })
     .catch(function () { avisar("…"); });

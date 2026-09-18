@@ -152,8 +152,19 @@ describe("dice todo lo que tiene que decir", () => {
   });
 
   test("y las dos tienen los mismos apartados, en el mismo orden", () => {
+    // ── UNA SOLA ANCLA TRADUCIDA, Y ES DELIBERADA ──────────────────────────────────────────
+    //
+    // El resto de anclas son las mismas en los dos idiomas —`finalitat`, `dades`, `drets`…—, que
+    // es lo cómodo para enlazar desde fuera. La de cookies es la excepción: el aviso enlaza a
+    // `#cookies` en castellano y a `#galetes` en catalán, porque es la única que se le enseña a
+    // un cliente en la barra de direcciones.
+    //
+    // La equivalencia se declara AQUÍ, en una tabla. Traducir otra ancla sin añadirla a esta
+    // tabla sigue rompiendo el test, que es lo que este candado protege: que las dos políticas
+    // tengan los mismos apartados y en el mismo orden.
+    const IGUALES = { galetes: "cookies" };
     const ids = (t) => [...t.matchAll(/<h2 id="([a-z]+)">/g)].map((m) => m[1]);
-    assert.deepEqual(ids(CA), ids(ES));
+    assert.deepEqual(ids(CA).map((i) => IGUALES[i] || i), ids(ES));
     assert.ok(ids(CA).length >= 9, `solo hay ${ids(CA).length} apartados`);
   });
 });

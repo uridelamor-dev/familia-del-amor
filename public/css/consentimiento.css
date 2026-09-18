@@ -1,0 +1,114 @@
+/* EL AVISO DE COOKIES.
+
+   Sigue la identidad ACTUAL de la casa —el crema y el verde de `styles.css`—, no el rediseño que
+   todavía no existe. Se declara con sus propios valores de reserva porque este aviso también sale
+   en páginas que no cargan `styles.css`.
+
+   ── LA REGLA QUE MANDA EN ESTE FICHERO ─────────────────────────────────────────────────────
+   Los dos botones son EL MISMO BOTÓN. Mismo alto, mismo relleno, misma tipografía, misma fila.
+   Lo único que cambia es que «Aceptar» va relleno y «Rechazar» perfilado, porque uno de los dos
+   tiene que ser el de color y no puede ser ninguno de los dos a la vez. Si «Rechazar» fuera un
+   enlace pequeño y gris, el consentimiento no sería libre — y eso no es una opinión de diseño. */
+
+.ck {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 9000;
+  padding: .9rem;
+  /* El teclado y la barra de gestos del iPhone. Sin esto, en un iPhone sin botón físico los
+     botones quedan justo debajo de la franja y se pulsa la barra del sistema. */
+  padding-bottom: calc(.9rem + env(safe-area-inset-bottom, 0px));
+  background: var(--card, #fff);
+  border-top: 1px solid var(--border, #e4dfd8);
+  box-shadow: 0 -6px 24px rgba(20, 20, 18, .10);
+}
+
+.ck-in {
+  max-width: 980px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.ck-txt {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: .9rem;
+  line-height: 1.5;
+  color: var(--text, #0f0e0d);
+}
+
+.ck-link { color: var(--accent-2, #2c4a3e); text-decoration: underline; text-underline-offset: 2px; }
+
+.ck-acc { display: flex; gap: .55rem; flex: 0 0 auto; }
+
+/* Los 44 px son el mínimo táctil cómodo; los 15 px, lo que evita que Safari amplíe la página. */
+.ck-btn {
+  min-height: 44px;
+  padding: .6rem 1.15rem;
+  font-size: .95rem;
+  font-family: inherit;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid var(--accent-2, #2c4a3e);
+  background: transparent;
+  color: var(--accent-2, #2c4a3e);
+}
+
+.ck-btn-si {
+  background: var(--accent-2, #2c4a3e);
+  color: #fff;
+}
+
+.ck-btn:focus-visible {
+  outline: 2px solid var(--accent-2, #2c4a3e);
+  outline-offset: 2px;
+}
+
+/* En un móvil la fila no cabe: el texto arriba y los dos botones debajo, MEDIO Y MEDIO. Repartidos
+   iguales, que es la misma regla de antes dicha en otro ancho. */
+@media (max-width: 640px) {
+  .ck-in { flex-direction: column; align-items: stretch; gap: .75rem; }
+  .ck-acc { width: 100%; }
+  .ck-btn { flex: 1 1 0; padding: .7rem .5rem; }
+}
+
+/* ── EL BOTÓN FLOTANTE DE WHATSAPP ────────────────────────────────────────────────────────────
+   El aviso es una barra fija abajo y tapaba parcialmente el botón de WhatsApp de la portada, que
+   también está fijo abajo a la derecha.
+
+   Se sube exactamente el alto del aviso, que `consentimiento.js` anuncia en `--ck-alto`. Se mide
+   en vez de calcularse porque el texto ocupa dos líneas en un móvil y una en un escritorio, y
+   además cambia con el idioma: cualquier número escrito aquí estaría mal en la mitad de los casos.
+
+   Solo mientras el aviso está abierto. Al decidir, el botón vuelve a su sitio. */
+body.ck-abierto .wa-float {
+  bottom: calc(var(--ck-alto, 0px) + 1rem);
+}
+.wa-float { transition: bottom .18s ease; }
+@media (prefers-reduced-motion: reduce) { .wa-float { transition: none; } }
+
+/* ── EL CONTROL DE PREFERENCIAS QUE SE CREA SOLO ──────────────────────────────────────────────
+   Para las páginas que pueden cargar Meta y no traen enlace en un pie —la landing de una campaña,
+   el alta de la tarjeta, la ficha de un local—. Discreto y al final del contenido: es un enlace
+   de servicio, no una llamada a la acción. */
+.ck-pref {
+  display: block;
+  margin: 1.5rem auto calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  padding: .5rem .75rem;
+  min-height: 32px;
+  background: none;
+  border: 0;
+  font-family: inherit;
+  font-size: .8rem;
+  color: var(--muted, #6b6560);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ck-pref:focus-visible { outline: 2px solid var(--accent-2, #2c4a3e); outline-offset: 2px; }

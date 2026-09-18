@@ -246,6 +246,8 @@ import { indiceDescartes, descartadosDe } from "./src/modules/facturas/descartes
 import { debeSincronizar, siguebloqueado, edadMinutos } from "./src/modules/agora/programacion.js";
 import { claveFalta, ordenarFaltas } from "./src/modules/marketing/faltan.js";
 import { sanearSegmento, describirSegmento } from "./src/modules/marketing/segmento.js";
+import { pixelValido as metaPixelValido, pixelEfectivo as metaPixelEfectivo,
+         VERSION_CONSENTIMIENTO as META_VERSION_CONSENT } from "./src/modules/marketing/meta.js";
 import { sanearHecho, agruparHechos, resumenHechos, ETIQUETAS, conversacionesParaLeer, hechosNuevos } from "./src/modules/clientes/hechos.js";
 import { comprimir } from "./src/http/comprimir.js";
 import { passwordInicial, validarPassword, estadoFreno, trasFalloLogin, trasLoginCorrecto } from "./src/modules/usuarios/acceso.js";
@@ -14619,11 +14621,87 @@ app.post("/api/captacion/cola/:id/reenviar", requireAuth(PROMOS_ROLES), async (r
   }
 });
 
-/** El id del píxel de Meta. Solo dirección: es lo que carga un script de terceros en una página
- *  pública, y esa decisión no es de Marketing. */
+/**
+ * EL PÍXEL DE META, PARA LA WEB PÚBLICA.
+ *
+ * ── PÚBLICA Y SIN SESIÓN, Y NO PASA NADA ──────────────────────────────────────────────────────
+ *
+ * Un identificador de píxel NO ES UN SECRETO: va dentro del JavaScript de cualquier web que lo
+ * use, así que se lee con ver el código fuente de media internet. Lo que sí importa es que haya un
+ * único sitio de donde salga, y este es ese sitio.
+ *
+ * ── LO QUE ESTA RUTA NO HACE ──────────────────────────────────────────────────────────────────
+ *
+ * No sabe nada del consentimiento y no tiene por qué: quien decide si se carga Meta es el
+ * navegador, con la decisión que guardó la persona. Aquí solo se contesta QUÉ píxel usaríamos.
+ * Pedir esto no toca ningún servidor de Meta.
+ */
+app.get("/api/publico/meta", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    if (!pulsoRateLimit(req, res, 120)) return;
+    const pixel = metaPixelEfectivo(await getConfig("meta_pixel_id"));
+    res.json({ ok: true, pixel, activo: !!pixel, version_consentimiento: META_VERSION_CONSENT });
+  } catch (e) {
+    console.error("[meta] publico:", e.message);
+    // Sin respuesta no se mide, y ya está. Nunca se devuelve un 500 que rompa una página pública.
+    res.json({ ok: true, pixel: "", activo: false, version_consentimiento: META_VERSION_CONSENT });
+  }
+});
+
+/**
+ * LO QUE VE EL PANEL: el píxel en uso Y si está configurado o es el de la casa.
+ *
+ * Son dos datos distintos y los dos importan: enseñar solo el número no dice si alguien lo puso o
+ * si es el de reserva, y de ahí salen las sorpresas.
+ */
+app.get("/api/marketing/meta", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const configurado = metaPixelValido(await getConfig("meta_pixel_id")) || "";
+    res.json({ ok: true, pixel: metaPixelEfectivo(configurado), configurado });
+  } catch (e) {
+    console.error("[meta] panel:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo leer" });
+  }
+});
+
+/**
+ * GUARDAR EL PÍXEL. Solo dirección: es lo que carga un script de terceros en una página pública, y
+ * esa decisión no es de Marketing.
+ *
+ * VIVE EN `/api/marketing/meta` porque el píxel es de LA WEB, no de una campaña. Estaba colgando
+ * de Captación, y desde ahí parecía una opción de campaña cuando siempre fue global — se guardaba
+ * en `config`, no en `cap_campanas`.
+ *
+ * Vacío BORRA la configuración y se vuelve al píxel de la casa; no deja la web sin medir.
+ */
+app.post("/api/marketing/meta", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const crudo = String(req.body?.pixel ?? "").trim();
+    const id = crudo ? metaPixelValido(crudo) : "";
+    if (crudo && !id) {
+      return res.status(400).json({ ok: false, error: "Un píxel de Meta son entre 6 y 20 dígitos." });
+    }
+    await setConfig("meta_pixel_id", id || "");
+    await ficAuditar("marketing", null, "meta_pixel", req.user.username,
+      { detalle: { pixel: id || "(por defecto)" } });
+    res.json({ ok: true, pixel: metaPixelEfectivo(id), configurado: id || "" });
+  } catch (e) {
+    console.error("[meta] guardar:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
+});
+
+/**
+ * LA RUTA ANTIGUA. Se conserva a propósito y hace EXACTAMENTE lo mismo que la nueva.
+ *
+ * El panel ya no la llama, pero si quedara una pestaña abierta con la versión anterior cargada,
+ * guardar desde ahí tiene que seguir funcionando y escribir en el MISMO sitio. Escriben los dos en
+ * `config.meta_pixel_id`: no hay dos configuraciones, hay dos puertas a la misma.
+ */
 app.post("/api/captacion/pixel", requireAuth(["direccion"]), async (req, res) => {
   try {
-    const id = String(req.body?.pixel || "").replace(/\D/g, "").slice(0, 20);
+    const id = metaPixelValido(req.body?.pixel) || "";
     await setConfig("meta_pixel_id", id);
     res.json({ ok: true, pixel: id });
   } catch (e) {
