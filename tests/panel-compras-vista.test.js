@@ -8,7 +8,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
-const css = readFileSync(new URL("../public/panel/index.html", import.meta.url), "utf8");
+// El CSS del panel vive en `public/css/base.css` (tokens) y `public/css/panel.css`
+// (componentes). Estuvo incrustado en `panel/index.html` hasta que se extrajo: el
+// fichero es el mismo CSS, movido. Se leen los dos porque una regla puede estar en
+// cualquiera de ellos.
+const cssPanel = (f) => readFileSync(new URL("../public/css/" + f, import.meta.url), "utf8");
+const CSS_PANEL = cssPanel("base.css") + "\n" + cssPanel("panel.css");
+const css = CSS_PANEL;
 const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
 
 describe("Compras: las cifras de arriba contestan la pregunta del día", () => {

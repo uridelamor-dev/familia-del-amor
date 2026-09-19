@@ -6,7 +6,14 @@ import { readFileSync } from "node:fs";
 // color de al lado. Por eso llevaban meses ahí sin que nadie las viera —las barras de Ágora
 // nunca usaron el verde de marca, tiraban de un fallback gris-verdoso escrito a mano— y por eso
 // hace falta que las cace la batería: es un fallo que no se nota mirando.
-const html = readFileSync(new URL("../public/panel/index.html", import.meta.url), "utf8");
+// El CSS del panel vive en `public/css/base.css` (tokens) y `public/css/panel.css`
+// (componentes). Estuvo incrustado en `panel/index.html` hasta que se extrajo: el
+// fichero es el mismo CSS, movido. Se leen los dos porque una regla puede estar en
+// cualquiera de ellos.
+const cssPanel = (f) => readFileSync(new URL("../public/css/" + f, import.meta.url), "utf8");
+const CSS_PANEL = cssPanel("base.css") + "\n" + cssPanel("panel.css");
+const html = readFileSync(new URL("../public/panel/index.html", import.meta.url), "utf8")
+  + "\n" + CSS_PANEL;
 const app = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
 
 /** Los tokens declarados en el `:root` claro. Son los únicos que se pueden usar. */

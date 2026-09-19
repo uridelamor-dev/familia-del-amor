@@ -8,7 +8,13 @@ import { readFileSync } from "node:fs";
 
 const server = readFileSync("server.js", "utf8");
 const app = readFileSync("public/panel/app.js", "utf8");
-const css = readFileSync("public/panel/index.html", "utf8");
+// El CSS del panel vive en `public/css/base.css` (tokens) y `public/css/panel.css`
+// (componentes). Estuvo incrustado en `panel/index.html` hasta que se extrajo: el
+// fichero es el mismo CSS, movido. Se leen los dos porque una regla puede estar en
+// cualquiera de ellos.
+const cssPanel = (f) => readFileSync(new URL("../public/css/" + f, import.meta.url), "utf8");
+const CSS_PANEL = cssPanel("base.css") + "\n" + cssPanel("panel.css");
+const css = CSS_PANEL;
 const bolsa = readFileSync("src/modules/fichajes/bolsa.js", "utf8");
 const esquema = readFileSync("src/modules/fichajes/schema.js", "utf8");
 

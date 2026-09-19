@@ -10,7 +10,13 @@ import { readFileSync } from "node:fs";
 // Se me escapó porque al verificarlo comprobé que el panel existía y tenía contenido, no que
 // estuviera DENTRO de la pantalla. Un elemento a 1300px del borde izquierdo en una ventana de
 // 1300px tiene ancho, tiene texto y no se ve.
-const css = readFileSync(new URL("../public/panel/index.html", import.meta.url), "utf8");
+// El CSS del panel vive en `public/css/base.css` (tokens) y `public/css/panel.css`
+// (componentes). Estuvo incrustado en `panel/index.html` hasta que se extrajo: el
+// fichero es el mismo CSS, movido. Se leen los dos porque una regla puede estar en
+// cualquiera de ellos.
+const cssPanel = (f) => readFileSync(new URL("../public/css/" + f, import.meta.url), "utf8");
+const CSS_PANEL = cssPanel("base.css") + "\n" + cssPanel("panel.css");
+const css = CSS_PANEL;
 const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
 
 describe("el panel lateral entra en la pantalla al abrirse", () => {
