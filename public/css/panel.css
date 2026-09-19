@@ -1265,3 +1265,92 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 
 /* 3 · Nada de la cabecera hereda un ancho mínimo que no pueda ceder. */
 .topbar > * { min-width: 0; }
+
+/* ═══ LA CABECERA DE PÁGINA, EN LAS 25 PANTALLAS ══════════════════════════════════════════════
+   `.ph` es `space-between`, pensado para DOS bloques: el título a la izquierda y las acciones a
+   la derecha. Dos pantallas envuelven su cabecera en un `<div>` y salen bien. Las otras 23
+   cuelgan el rótulo, el `<h1>` y el subtítulo sueltos, así que el reparto los separa y EL TÍTULO
+   ACABA EN MEDIO DE LA PANTALLA — con el rótulo a un lado y el subtítulo al otro.
+
+   Se ve en Clientes, Reservas, Compras, Fichajes, Horarios, Reseñas, WhatsApp, Usuarios… en casi
+   todas. Nadie lo escribió así: es lo que hace `space-between` cuando le llegan tres hijos en vez
+   de dos.
+
+   Se arregla aquí y no en 23 plantillas: el rótulo y el subtítulo ocupan su propia línea, y el
+   título ancla a la izquierda empujando a la derecha lo que venga después. Las dos cabeceras que
+   ya estaban bien no se enteran — estos selectores son de hijo directo y allí no hay ninguno. */
+.ph { flex-wrap: wrap; }
+.ph > .eyebrow { flex: 0 0 100%; }
+.ph > h1 { margin-right: auto; }
+
+/* El subtítulo, en su propia fila. Con `flex-basis:100%` NO BASTABA: `.ph .sub` tiene
+   `max-width:64ch`, y el reparto de filas de flex mide el tamaño YA RECORTADO por ese tope —
+   así que cabía junto al título y `space-between` lo empujaba a la derecha. Por eso «0
+   contactos» aparecía flotando en mitad de la cabecera de Clientes.
+
+   `min-width:100%` manda sobre `max-width` y fuerza la fila. Y para no perder el ancho de
+   lectura, el tope de 64 caracteres se aplica como relleno a la derecha en vez de como ancho:
+   la caja ocupa la fila entera, el texto se queda corto. */
+.ph > .sub {
+  flex: 0 0 100%;
+  min-width: 100%;
+  padding-right: max(0px, calc(100% - 64ch));
+  margin-top: 6px;
+}
+
+/* Las cinco cabeceras con acciones a la derecha —Reservas, Fichajes, Analítica, Campañas y
+   Promociones— quedan con el título y sus botones en la misma fila, y el subtítulo debajo. Que
+   es como debía ser. */
+
+/* ═══ TARJETA DENTRO DE TARJETA ═══════════════════════════════════════════════════════════════
+   En Campañas, la sección «Formularios públicos» es una tarjeta que contiene una lista de
+   tarjetas. Dos bordes, dos sombras y dos fondos para decir lo mismo: la de fuera agrupa, las de
+   dentro son elementos de una lista.
+
+   No se toca el marcado —está generado en sitios distintos y cambiarlo es tocar plantillas por
+   estética—. Se aplana la de dentro: sin sombra, sin borde propio y sobre la superficie de la
+   sección. Sigue siendo un bloque, deja de ser una tarjeta flotando sobre otra. */
+.card .card {
+  box-shadow: none;
+  background: var(--surface2);
+  border-color: var(--border);
+}
+
+/* ═══ LA CASILLA CON SU ETIQUETA ══════════════════════════════════════════════════════════════
+   `.chk` se usaba en ocho sitios del panel y NO TENÍA NINGÚN ESTILO: se escribió la clase y
+   nunca la regla, así que esas casillas salían como texto suelto. Y los filtros de Clientes
+   hacían lo mismo con estilos en línea repetidos cinco veces.
+
+   Una sola definición: la etiqueta ES el área de toque, y la casilla no hereda el `width:100%`
+   que llevan los campos del panel. */
+.chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chk input[type="checkbox"],
+.chk input[type="radio"] { width: auto; height: auto; margin: 0; flex: none; accent-color: var(--brand); }
+
+/* ═══ ÁREAS TÁCTILES EN EL PANEL, EN EL MÓVIL ═════════════════════════════════════════════════
+   Medido a 390 px en las 21 pantallas: las pestañas daban 34 px, los enlaces-botón del Inicio
+   21 y las casillas de los filtros de Clientes 20. El panel se usa dentro de los locales con el
+   teléfono en la mano, así que esto no es un detalle.
+
+   Solo en móvil: con ratón, 34 px es una altura correcta y agrandarlo todo dejaría el panel con
+   aspecto de aplicación de tableta. */
+@media (max-width: 640px) {
+  .tab,
+  .chip,
+  .btn.link,
+  button.link,
+  .linkbtn { min-height: 40px; }
+  /* La casilla se toca por su etiqueta, así que es la etiqueta la que tiene que tener sitio. */
+  label.chk,
+  .chk { min-height: 40px; display: inline-flex; align-items: center; gap: 8px; }
+  /* Y la casilla en sí, algo mayor: 20 px es difícil de acertar incluso con la etiqueta al lado. */
+  .chk input[type="checkbox"],
+  .chk input[type="radio"] { width: 18px; height: 18px; }
+}

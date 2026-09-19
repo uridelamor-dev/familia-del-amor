@@ -2458,7 +2458,10 @@ async function apiRaw(path) { const r = await fetch(path, { headers: { Authoriza
 const mesActualMM = () => String(new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" })).slice(5, 7);
 const CLI_EXTRA = ["edad_min", "edad_max", "reservo_from", "reservo_to", "cumple_en_dias"];
 function cliQS() { const qs = new URLSearchParams(); if (CLIF.q) qs.set("q", CLIF.q); if (CLIF.poblacion) qs.set("poblacion", CLIF.poblacion); if (CLIF.local) qs.set("local", CLIF.local); if (CLIF.cumple) qs.set("cumple_mes", mesActualMM()); if (CLIF.con_email) qs.set("con_email", "1"); if (CLIF.con_telefono) qs.set("con_telefono", "1"); if (CLIF.excluir_baja) qs.set("excluir_baja", "1"); CLI_EXTRA.forEach((k) => { if (CLIF[k]) qs.set(k, CLIF[k]); }); return qs.toString(); }
-function cliChk(id, campo, label) { return `<label style="display:inline-flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="${id}" ${CLIF[campo] ? "checked" : ""} style="width:auto;height:auto;margin:0"> ${esc(label)}</label>`; }
+// `class="chk"` en vez de los mismos estilos en línea cinco veces: la clase ya existía en otros
+// ocho sitios del panel y ahora tiene regla. En el móvil le da además los 40 px de toque, que
+// con los estilos en línea no había forma de darle — ganan a cualquier hoja.
+function cliChk(id, campo, label) { return `<label class="chk"><input type="checkbox" id="${id}" ${CLIF[campo] ? "checked" : ""}> ${esc(label)}</label>`; }
 function cliActionsBar(total) {
   return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Escribir a los ${num(total)} filtrados (WhatsApp)</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div>${USER.rol === "direccion" ? `<button class="btn" data-act="cli-dup" title="Buscar fichas repetidas de la misma persona">Fichas repetidas</button>` : ""}<button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
 }
