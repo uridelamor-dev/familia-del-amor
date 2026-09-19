@@ -64,7 +64,7 @@
   font-size: 1rem; font-weight: 650; border: 1px solid transparent; }
 .tj-badge img { height: 26px; width: auto; display: block; }
 .tj-badge-apple { background: #000; color: #fff; }
-.tj-badge-google { background: #fff; color: #1c211f; border-color: #d5ded9; }
+.tj-badge-google { background: #fff; color: #1c211f; border-color: var(--border, #E4DFD1); }
 
 /* ── Puntos ───────────────────────────────────────────────────────────────── */
 /* En su propia tarjeta, separada de los descuentos: los cupones son otro sistema y mezclarlos en
@@ -74,10 +74,10 @@
 
 /* La barra convierte un número suelto en una meta: se ve cuánto falta. */
 .tj-barra { margin: 1rem 0 .5rem; height: 10px; border-radius: 999px; background: #ecefed; overflow: hidden; }
-.tj-barra-in { height: 100%; width: 0; border-radius: 999px; background: #1c6b4b; transition: width .5s ease; }
+.tj-barra-in { height: 100%; width: 0; border-radius: 999px; background: var(--accent-2, #2C4A3E); transition: width .5s ease; }
 @media (prefers-reduced-motion: reduce) { .tj-barra-in { transition: none; } }
 
-.tj-pts-falta { margin: 0; font-size: .98rem; font-weight: 650; color: #1c6b4b; line-height: 1.45; }
+.tj-pts-falta { margin: 0; font-size: .98rem; font-weight: 650; color: var(--accent-2, #2C4A3E); line-height: 1.45; }
 .tj-pts-regla { margin: .9rem 0 0; font-size: .92rem; color: #4c5854; line-height: 1.5; }
 .tj-pts-caduca { margin: .55rem 0 0; font-size: .9rem; color: #8a5a1c; line-height: 1.45; }
 .tj-pts-prep { margin: 0; font-size: .98rem; color: #4c5854; line-height: 1.55; }

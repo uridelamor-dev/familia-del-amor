@@ -9,7 +9,7 @@
 .alta-campo input {
   width: 100%; box-sizing: border-box; min-height: 52px; padding: .7rem .9rem;
   font-size: 16px; font-family: inherit; color: #1c211f;
-  background: #fbfaf8; border: 1px solid #d5ded9; border-radius: 12px;
+  background: var(--card, #FBFAF6); border: 1px solid var(--border, #E4DFD1); border-radius: 12px;
 }
 .alta-campo input:focus { outline: 2px solid var(--accent-2, #2C4A3E); outline-offset: 1px; border-color: var(--accent-2, #2C4A3E); }
 .alta-campo input[aria-invalid="true"] { border-color: #9b1c1c; background: #fdf5f5; }

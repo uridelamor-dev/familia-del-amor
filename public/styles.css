@@ -24,8 +24,8 @@
   --tile-c: #ede9f1;
   --tile-d: #e8eff4;
   /* Paneles internos: relleno interactivo y labels legibles sobre crema */
-  --panel-fill: #2c4a3e;
-  --panel-eyebrow: #2c4a3e;
+  --panel-fill: var(--accent-2);
+  --panel-eyebrow: var(--accent-2);
 
   /* ── Sistema de diseño (escalas). No cambian el look: dan nombre a valores ya usados. ── */
   /* Espaciado */
@@ -59,7 +59,7 @@
   --font-lg: 1.15rem;
 
   /* Colores de estado (antes sueltos e inline) */
-  --color-success: #2c4a3e;
+  --color-success: var(--accent-2);
   --color-error: #b13a2e;
   --color-info: #2f3a44;
   --color-danger: #c0392b;
@@ -3323,7 +3323,7 @@ h1, h2, h3 {
   transition: opacity 0.22s ease, transform 0.22s ease;
 }
 .toast.show { opacity: 1; transform: translateY(0); }
-.toast-success { background: #2c4a3e; }
+.toast-success { background: var(--accent-2); }
 .toast-error { background: #b13a2e; }
 .toast-info { background: #2f3a44; }
 

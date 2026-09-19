@@ -54,11 +54,11 @@
   width: 100%; box-sizing: border-box; min-height: 52px;
   padding: .7rem 2.2rem .7rem .9rem;
   font-size: 16px; font-family: inherit; color: var(--text, #1c211f);
-  background-color: var(--card, #fbfaf8);
+  background-color: var(--card, var(--card, #FBFAF6));
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'%3E%3Cpath d='M1 1l4.5 4.5L10 1' fill='none' stroke='%235C6A63' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right .85rem center;
-  border: 1px solid var(--border, #d5ded9); border-radius: 12px;
+  border: 1px solid var(--border, var(--border, #E4DFD1)); border-radius: 12px;
 }
 .alta-campo select:focus-visible {
   outline: 2px solid var(--accent-2, #2C4A3E); outline-offset: 1px;
@@ -83,8 +83,8 @@
   display: grid;
   grid-template-columns: 1fr 1.7fr 1.1fr;
   align-items: stretch;
-  background: var(--card, #fbfaf8);
-  border: 1px solid var(--border, #d5ded9);
+  background: var(--card, var(--card, #FBFAF6));
+  border: 1px solid var(--border, var(--border, #E4DFD1));
   border-radius: 12px;
   overflow: hidden;
 }
@@ -108,7 +108,7 @@
 }
 /* El filete que separa los segmentos. Va como borde izquierdo de los dos últimos para que no
    aparezca ninguno pegado al borde exterior. */
-.pm-nac .pm-nac-s + .pm-nac-s { border-left: 1px solid var(--border, #d5ded9); }
+.pm-nac .pm-nac-s + .pm-nac-s { border-left: 1px solid var(--border, var(--border, #E4DFD1)); }
 /* Dentro del grupo el aro sobra: ya lo pone el contenedor, y dos aros anidados se ven mal. */
 .pm-nac .pm-nac-s:focus,
 .pm-nac .pm-nac-s:focus-visible { outline: none; }
@@ -138,7 +138,7 @@
 /* El enlace a la política, DENTRO de la frase de consentimiento.
 
    Subrayado y no solo en otro color: el color por sí solo deja fuera a quien no lo distingue, y
-   este es el enlace que la ley exige que se pueda encontrar. var(--accent-2, #2C4A3E) sobre #fbfaf8 da 5.3:1, por
+   este es el enlace que la ley exige que se pueda encontrar. var(--accent-2, #2C4A3E) sobre var(--card, #FBFAF6) da 5.3:1, por
    encima del 4.5:1 que pide el AA. */
 .pm-legal {
   color: var(--accent-2, #2C4A3E);
