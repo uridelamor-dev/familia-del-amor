@@ -86,3 +86,9 @@
   .legal-datos { grid-template-columns: 1fr; gap: .1rem .5rem; }
   .legal-datos dd { margin-bottom: .6rem; }
 }
+
+/* Los enlaces del índice y del pie median 20 px de alto en el móvil: el texto y nada más. Con
+   sitio para el dedo se aciertan; sin él se falla y se pulsa el de al lado. */
+@media (max-width: 640px) {
+  .legal a { display: inline-flex; align-items: center; min-height: 44px; }
+}

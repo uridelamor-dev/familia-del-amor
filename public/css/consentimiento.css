@@ -100,8 +100,9 @@ body.ck-abierto .wa-float {
 .ck-pref {
   display: block;
   margin: 1.5rem auto calc(1.25rem + env(safe-area-inset-bottom, 0px));
-  padding: .5rem .75rem;
-  min-height: 32px;
+  padding: .7rem .75rem;
+  /* 44 px es el mínimo táctil cómodo. Medía 32 y en un móvil eso se falla. */
+  min-height: 44px;
   background: none;
   border: 0;
   font-family: inherit;
@@ -112,3 +113,22 @@ body.ck-abierto .wa-float {
   cursor: pointer;
 }
 .ck-pref:focus-visible { outline: 2px solid var(--accent-2, #2c4a3e); outline-offset: 2px; }
+
+/* ── EL ENLACE DE PREFERENCIAS EN EL PIE ──────────────────────────────────────────────────────
+   Estaba con estilos en línea repetidos en siete HTML, con `padding:0`: 15 px de alto, imposible
+   de acertar con el pulgar. Ahora es una clase, y el color lo pone el pie —que es una superficie
+   oscura y redefine `--muted` para que se lea. */
+.pie-enlace {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 .1rem;
+  background: none;
+  border: 0;
+  font-family: inherit;
+  font-size: .8rem;
+  color: var(--muted, #8A867C);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

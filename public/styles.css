@@ -1,15 +1,24 @@
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Lora:ital,wght@0,400;0,600;1,400;1,600&family=Inter:wght@300;400;500;600&display=swap');
 
 :root {
-  --bg: #efe6d4;
-  --text: #0f0e0d;
-  --muted: #6b6560;
-  --accent: #b8945a;
-  --accent-2: #2c4a3e;
-  --card: #ffffff;
-  --border: #e4dfd8;
-  --surface: #f5f3f0;
-  --primary: #0f0e0d;
+  /* ── LA PALETA DE LA CASA, UNA SOLA ────────────────────────────────────────────────────────
+     Estos nombres son los de siempre —los usan 399 sitios de este fichero— pero sus valores
+     pasan a ser los del sistema (`/css/base.css`). Había dos paletas distintas conviviendo: un
+     verde aquí (#2C4A3E) y otro en el panel (#2F6B4F), y dos cremas parecidos. Dos verdes casi
+     iguales no se leen como una gama: se leen como un error de color.
+
+     EL DORADO SE VA. #B8945A sobre blanco daba 2,83 : 1 — por debajo del mínimo legible, y el
+     botón «Reservar mesa» es blanco sobre dorado. El cobre da 5,6 : 1 sobre blanco y 4,8 : 1
+     sobre el marfil, así que vale para relleno Y para texto. */
+  --bg: #F1EEE4;          /* marfil cálido, el mismo del panel */
+  --text: #1B1F19;        /* negro cálido */
+  --muted: #565B4E;
+  --accent: #9E5334;      /* cobre — antes dorado #B8945A */
+  --accent-2: #2C4A3E;    /* el verde institucional. No cambia: ya era éste */
+  --card: #FBFAF6;        /* blanco cálido, no blanco puro */
+  --border: #E4DFD1;
+  --surface: #F3F0E8;
+  --primary: #1B1F19;
   --tile-a: #f3efe8;
   --tile-b: #e9edea;
   --tile-c: #ede9f1;
@@ -1781,7 +1790,11 @@ h1, h2, h3 {
 
 @media (max-width: 640px) {
   .form-row {
-    grid-template-columns: 1fr;
+    /* `minmax(0, …)` Y NO `1fr` A SECAS. `1fr` es `minmax(auto, 1fr)`, y `auto` no baja del
+       contenido mínimo de la columna: en `trabaja.html` eran 428 px dentro de un formulario de
+       352, y la página entera se movía de lado en el móvil. La regla de dos columnas de arriba
+       ya lo hacía bien; su media query lo perdía. */
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -3708,3 +3721,111 @@ h1, h2, h3 {
 .cmb-comp small { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: #8a8474; }
 .cmb-comp span, .cmb-comp b { font-size: 0.98rem; }
 @media (max-width: 420px) { .cmb-comp { grid-template-columns: 1fr; gap: 0.25rem; } }
+
+
+/* ═══ AJUSTES DEL SISTEMA VISUAL ══════════════════════════════════════════════════════════════
+   Añadidos al final a propósito: no reescriben nada de arriba, solo corrigen lo que el barrido
+   visual encontró midiendo las páginas de verdad en Chrome. Cada bloque dice qué medía y cuánto.
+
+   ── EL PIE ES UNA SUPERFICIE OSCURA ────────────────────────────────────────────────────────
+   Fondo #0F0E0D y textos en `--muted`, que es el gris de un fondo CLARO. Daba 2,76 : 1 — por
+   debajo del mínimo legible— en «© Familia del Amor», «Privacidad» y «Cookies», y en TODAS las
+   páginas. Al unificar la paleta empeoró, porque el nuevo `--muted` es más oscuro.
+
+   Se redefine el token DENTRO del pie en vez de tocar los estilos en línea de siete HTML: ahí el
+   `var(--muted)` que ya escribían resuelve solo, y sube a 5,3 : 1. Es para lo que sirven los
+   tokens: cambiar el significado de «tenue» según dónde esté. */
+.footer {
+  --muted: #8A867C;
+  --text: #EDEAE2;
+  --border: rgba(255, 255, 255, .10);
+}
+
+/* Enlaces y botones del pie: con sitio para el dedo. Medían 15–20 px de alto. */
+.footer-inner a,
+.footer-inner [data-cookies] {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 .1rem;
+}
+
+/* ── LA NAVEGACIÓN, EN EL MÓVIL ──────────────────────────────────────────────────────────────
+   Los enlaces medían 18 px de alto: el texto y nada más. En un menú que se usa con el pulgar eso
+   es un blanco imposible. El ancho no cambia —siguen en su fila— solo el sitio vertical. */
+.nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+}
+
+/* ── EL FOCO, VISIBLE EN TODA LA WEB ─────────────────────────────────────────────────────────
+   Quien navega con teclado tiene que ver dónde está. El aro va por fuera para no mover nada. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm, 6px);
+}
+
+/* ── ÁREAS TÁCTILES EN EL MÓVIL ──────────────────────────────────────────────────────────────
+   Medido en Chrome a 390 px: el selector de idioma daba 36 px, los controles de la reserva 37,
+   los pasos de comensales 32 y los botones 38. El mínimo cómodo son 44: por debajo se falla el
+   toque y se acaba pulsando lo de al lado.
+
+   Solo en móvil. En un escritorio con ratón, 36 px es una altura correcta y agrandarlo todo
+   dejaría la interfaz con aspecto de aplicación de tableta. */
+@media (max-width: 640px) {
+  .lang button,
+  .btn,
+  .reserva-select,
+  .reserva-date-input,
+  .stepper-btn,
+  .time-pill,
+  .form input,
+  .form select,
+  .form button {
+    min-height: 44px;
+  }
+  /* Los pasos de comensales son cuadrados: el ancho sube con el alto o se deforman. */
+  .stepper-btn { min-width: 44px; }
+  /* 16 px es lo que impide que Safari amplíe la página al enfocar un campo. Por debajo, la
+     página se queda torcida el resto de la visita. */
+  .form input,
+  .form select,
+  .form textarea,
+  .reserva-select,
+  .reserva-date-input { font-size: 16px; }
+}
+
+/* ── QUE LOS CAMPOS PUEDAN ENCOGER ───────────────────────────────────────────────────────────
+   `.form label` es una rejilla y sus hijos nacen con `min-width:auto`, que NO baja del contenido
+   mínimo. Un `<input size="20">` reclama ~410 px, así que a 390 la página se movía de lado
+   aunque la columna ya fuera `minmax(0, 1fr)`: la columna cabía, el campo no.
+
+   Se arregla en la pieza, no en el contenedor: un campo de formulario tiene que poder encoger. */
+.form label { min-width: 0; }
+.form input,
+.form select,
+.form textarea { min-width: 0; max-width: 100%; }
+
+/* El enlace de vuelta del acceso interno. Llevaba los estilos en línea y 21 px de alto. */
+.login-volver {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-bottom: .5rem;
+  font-size: .85rem;
+  color: var(--muted);
+}
+
+/* Los campos de la reserva viven fuera de `.form`, así que no les llegaba la altura táctil.
+   Medían 37 px; 44 es el mínimo cómodo y 16 px lo que impide el zoom de Safari. */
+@media (max-width: 640px) {
+  .reserva input,
+  .reserva-form input,
+  .reserva input[type="text"],
+  .reserva input[type="tel"] { min-height: 44px; font-size: 16px; }
+}
