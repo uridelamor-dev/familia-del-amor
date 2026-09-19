@@ -65,9 +65,18 @@ const navegador = await puppeteer.launch({ headless: "new", args: ["--no-sandbox
  * una factura, y en el ordenador no se notaba nada.
  */
 const PANTALLAS = [
-  { mote: "ordenador", ancho: 1280, alto: 1000, movil: false },
+  { mote: "ordenador", ancho: 1440, alto: 900, movil: false },
+  // LA TABLETA NO ES UN ESCRITORIO PEQUEÑO. A 834 la barra lateral ya no cabe con comodidad
+  // pero la pantalla sigue siendo ancha: es su propio caso, y si no se mira nunca se arregla.
+  { mote: "tableta", ancho: 834, alto: 1112, movil: false },
   { mote: "móvil", ancho: 390, alto: 844, movil: true },
 ];
+
+/** `--capturas` guarda un PNG por pantalla y ancho, para poder mirarlas sin abrir el panel. */
+const CAPTURAS = process.argv.includes("--capturas");
+const DESTINO = process.argv.includes("--destino")
+  ? process.argv[process.argv.indexOf("--destino") + 1] : "/tmp/barrido-panel";
+if (CAPTURAS) (await import("node:fs")).mkdirSync(DESTINO, { recursive: true });
 
 let fallos = 0;
 for (const p of PANTALLAS) {
@@ -98,13 +107,34 @@ for (const p of PANTALLAS) {
         // Que la PÁGINA se desplace en horizontal es siempre un fallo: las tablas anchas se
         // desplazan dentro de su caja, no arrastrando la pantalla entera.
         desborda: document.documentElement.scrollWidth > window.innerWidth + 2,
+        // Quién se sale. «Se sale de ancho» sin decir por dónde obliga a buscar a mano.
+        culpable: (() => {
+          if (document.documentElement.scrollWidth <= window.innerWidth + 2) return "";
+          for (const el of document.querySelectorAll("body *")) {
+            const b = el.getBoundingClientRect();
+            if (b.width && b.right > window.innerWidth + 2
+                && getComputedStyle(el).position !== "fixed") {
+              return el.tagName.toLowerCase()
+                + (typeof el.className === "string" && el.className
+                   ? "." + el.className.trim().split(/\s+/)[0] : "")
+                + " →" + Math.round(b.right);
+            }
+          }
+          return "";
+        })(),
       };
     });
+    if (CAPTURAS) {
+      await pagina.screenshot({
+        path: `${DESTINO}/${r}-${p.ancho}.png`,
+        clip: { x: 0, y: 0, width: p.ancho, height: Math.min(p.alto, 1400) },
+      });
+    }
     const problemas = [];
     if (errores.length) problemas.push(`error: ${errores[0].slice(0, 70)}`);
     if (info.abiertos) problemas.push(`${info.abiertos} desplegable(s) abiertos de casa`);
     if (info.vacia) problemas.push("la pantalla se queda en blanco");
-    if (info.desborda) problemas.push("se sale de ancho");
+    if (info.desborda) problemas.push(`se sale de ancho${info.culpable ? " · " + info.culpable : ""}`);
     if (problemas.length) fallos++;
     console.log(`${problemas.length ? "✖" : "✔"} ${r.padEnd(15)} ${problemas.join(" · ")}`);
   }
@@ -113,5 +143,7 @@ for (const p of PANTALLAS) {
 
 await navegador.close();
 servidor.close();
-console.log(fallos ? `\n${fallos} pantalla(s) con problemas\n` : "\nTodas las pantallas abren limpias, en ordenador y en móvil\n");
+console.log(fallos ? `\n${fallos} pantalla(s) con problemas\n`
+  : "\nTodas las pantallas abren limpias en ordenador, tableta y móvil\n");
+if (CAPTURAS) console.log(`Capturas en ${DESTINO}\n`);
 process.exit(fallos ? 1 : 0);

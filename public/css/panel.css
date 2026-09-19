@@ -1241,3 +1241,27 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .rngq{flex-direction:row;flex-wrap:wrap;width:auto;padding:0 0 12px;border-right:0;border-bottom:1px solid var(--border)}
   .rngcals .rngmes:last-child{display:none}
 }
+
+/* ═══ LA TABLETA NO ES UN ESCRITORIO PEQUEÑO ══════════════════════════════════════════════════
+   Medido a 834 px —un iPad en vertical—: Inicio, Compras y Productos sacaban la página de lado
+   por 8 y 14 px. El culpable no estaba en el contenido sino en la cabecera: el buscador tiene
+   `min-width:210px` y NO PUEDE ENCOGER, así que empujaba el avatar y los botones fuera.
+
+   La barra lateral se plegaba a 820, o sea justo por debajo. Entre 821 y 1080 quedaba un hueco
+   donde la barra ocupaba sus 248 px enteros sobre una pantalla que ya no los tiene. */
+
+/* 1 · El buscador puede encoger. `flex: 0 1 210px` mantiene su ancho cuando cabe y cede cuando
+      no, que es lo que debió ser desde el principio: un ancho mínimo rígido en una barra
+      flexible es un desborde esperando a que alguien abra la pantalla estrecha. */
+.sbtn { min-width: 0; flex: 0 1 210px; }
+
+/* 2 · En la franja de tableta, la barra lateral se estrecha en vez de comerse el contenido.
+      Se estrecha y no se pliega a propósito: en un panel de gestión ver dónde estás vale más
+      que 48 px, y con el cajón habría que abrirlo para cada salto. */
+@media (min-width: 821px) and (max-width: 1080px) {
+  .app { --sb: 200px; }
+  .topbar { padding: 0 14px; }
+}
+
+/* 3 · Nada de la cabecera hereda un ancho mínimo que no pueda ceder. */
+.topbar > * { min-width: 0; }
