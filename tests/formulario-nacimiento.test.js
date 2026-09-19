@@ -217,11 +217,43 @@ describe("el aspecto encaja con el resto del formulario", () => {
     assert.match(css, /\.alta-campo select \{[^}]*font-size: 16px/s);
   });
 
-  test("no se le quita el aspecto nativo al selector", () => {
-    // `appearance:none` le quita la punta y deja de parecer —y de comportarse— como un control
-    // del sistema. Es justo lo contrario de lo que se busca aquí.
+  test("se le quita el marco del sistema, que en cada navegador es distinto", () => {
+    // ── UNA CREENCIA EQUIVOCADA, CORREGIDA ────────────────────────────────────────────────
+    //
+    // Aquí se exigía LO CONTRARIO: que NO hubiera `appearance:none`, por creer que quitarlo
+    // se llevaba por delante la rueda nativa del iPhone. No es así. `appearance` cambia cómo
+    // se ve el control CERRADO; lo que pasa al tocarlo lo decide iOS, y en iOS un `<select>`
+    // abre siempre la rueda del sistema tenga el CSS que tenga.
+    //
+    // Por creer eso, el formulario se quedó con el desplegable gris del navegador.
     const sel = css.slice(css.indexOf(".alta-campo select {"), css.indexOf(".pm-nac {"));
-    assert.ok(!/appearance/.test(sel), "se le quita el aspecto nativo al selector");
+    assert.match(sel, /appearance: none/, "vuelve el marco gris del navegador");
+    assert.match(sel, /-webkit-appearance: none/);
+    // Y la punta se dibuja aquí, en un SVG dentro del CSS: sin pedir un archivo más.
+    assert.match(sel, /background-image: url\("data:image\/svg\+xml/);
+  });
+
+  test("LOS TRES SEGMENTOS SON UN SOLO CAMPO", () => {
+    // Eran tres cajas sueltas y se leían como tres preguntas. Son una fecha: comparten borde,
+    // fondo y radio, y por dentro se separan con un filete.
+    const nac = css.slice(css.indexOf(".pm-nac {"), css.indexOf("@media (max-width: 380px)"));
+    assert.match(nac, /\.pm-nac \{[^}]*border: 1px solid/s, "el grupo no tiene un borde propio");
+    assert.match(nac, /\.pm-nac \{[^}]*border-radius/s);
+    assert.match(nac, /\.pm-nac-s \{[^}]*border: 0/s, "los segmentos conservan su borde");
+    assert.match(nac, /\.pm-nac-s \+ \.pm-nac-s \{ border-left: 1px solid/,
+      "faltan los filetes entre segmentos");
+    // ── Y LA ESPECIFICIDAD, QUE ES LO QUE LO ROMPIÓ ─────────────────────────────────────
+    //
+    // `.alta-campo select` tiene dos partes —una clase y un elemento— y gana a `.pm-nac-s`,
+    // que es una clase sola. Con el selector corto, cada segmento seguía dibujando su borde y
+    // su radio: tres cajas en vez de un campo. Se vio en la captura, no en el CSS.
+    assert.ok(!/\n\.pm-nac-s \{/.test(css),
+      "el segmento se estiliza con un selector que pierde contra `.alta-campo select`");
+    assert.match(css, /\.pm-nac \.pm-nac-s \{/);
+
+    // El aro de foco rodea el GRUPO: lo que se rellena es una fecha, no tres cosas.
+    assert.match(nac, /\.pm-nac:focus-within \{/, "el foco no rodea el grupo");
+    assert.match(nac, /\.pm-nac-s:focus-visible \{ outline: none/, "hay dos aros anidados");
   });
 });
 

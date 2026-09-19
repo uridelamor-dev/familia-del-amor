@@ -6,7 +6,7 @@
 /* La oferta, en grande y antes que nada: es por lo que ha pulsado el anuncio. */
 .promo-oferta {
   margin: 1rem 0 0; padding: .9rem 1rem; border-radius: 14px;
-  background: #eef4f0; color: #2F6B4F;
+  background: #eef4f0; color: var(--accent-2, #2C4A3E);
   font-size: 1.05rem; font-weight: 700; line-height: 1.4; text-align: center;
 }
 
@@ -19,12 +19,12 @@
 
 .promo-tic {
   width: 56px; height: 56px; margin: 0 auto 1rem; border-radius: 50%;
-  background: #2F6B4F; color: #fff;
+  background: var(--accent-2, #2C4A3E); color: #fff;
   display: grid; place-items: center; font-size: 1.8rem; font-weight: 700;
 }
 
 /* El punto que late mientras se está mandando: dice que algo está pasando sin prometer cuándo. */
-.promo-esperando .promo-tic { background: #d9e3dd; color: #2F6B4F; animation: promo-late 1.4s ease-in-out infinite; }
+.promo-esperando .promo-tic { background: #d9e3dd; color: var(--accent-2, #2C4A3E); animation: promo-late 1.4s ease-in-out infinite; }
 @keyframes promo-late { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .promo-esperando .promo-tic { animation: none; } }
 
@@ -39,21 +39,84 @@
    SIN `appearance:none`: se deja el aspecto nativo a propósito. Es lo que hace que en el iPhone
    se vea —y se comporte— como un selector del sistema, con su punta, y lo que abre la rueda de
    verdad. Lo único que se ajusta es que encaje con los campos de al lado. */
+/* ── LOS SELECTORES ──────────────────────────────────────────────────────────────────────────
+   `appearance:none` quita el marco del sistema —que en cada navegador es distinto y en ninguno
+   se parece a nuestros campos— y pone una punta dibujada a mano, en SVG dentro del propio CSS
+   para no pedir un archivo más.
+
+   LO QUE NO QUITA ES EL COMPORTAMIENTO. En el iPhone un `<select>` sigue abriendo la rueda del
+   sistema tenga el CSS que tenga: `appearance` cambia cómo se ve el control cerrado, no lo que
+   pasa al tocarlo. Estuvo sin poner por creer lo contrario. */
 .alta-campo select {
+  appearance: none; -webkit-appearance: none;
   /* Los mismos 52 px y 16 px que el resto: menos de 16 px hace que Safari en iPhone dé zoom al
      enfocar, y la página se queda torcida el resto del rato. */
-  width: 100%; box-sizing: border-box; min-height: 52px; padding: .7rem .9rem;
-  font-size: 16px; font-family: inherit; color: #1c211f;
-  background: #fbfaf8; border: 1px solid #d5ded9; border-radius: 12px;
+  width: 100%; box-sizing: border-box; min-height: 52px;
+  padding: .7rem 2.2rem .7rem .9rem;
+  font-size: 16px; font-family: inherit; color: var(--text, #1c211f);
+  background-color: var(--card, #fbfaf8);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'%3E%3Cpath d='M1 1l4.5 4.5L10 1' fill='none' stroke='%235C6A63' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right .85rem center;
+  border: 1px solid var(--border, #d5ded9); border-radius: 12px;
 }
-.alta-campo select:focus { outline: 2px solid #2F6B4F; outline-offset: 1px; border-color: #2F6B4F; }
+.alta-campo select:focus-visible {
+  outline: 2px solid var(--accent-2, #2C4A3E); outline-offset: 1px;
+  border-color: var(--accent-2, #2C4A3E);
+}
 
-/* La fecha de nacimiento: TRES selectores en una fila, en el orden de aquí —día, mes, año—.
-   El del mes es el ancho porque lleva la palabra entera («septiembre»), no un número. */
-.pm-nac { display: grid; grid-template-columns: 1fr 1.7fr 1.1fr; gap: .45rem; }
-/* Menos aire a los lados que en un campo suelto: son tres en el ancho de uno, y con el relleno
-   de 0.9 rem «septiembre» se corta en un iPhone estrecho. */
-.pm-nac-s { padding-left: .55rem; padding-right: .4rem; font-variant-numeric: tabular-nums; }
+/* ── LA FECHA DE NACIMIENTO: UN SOLO CAMPO, TRES SEGMENTOS ───────────────────────────────────
+
+   Eran tres cajas sueltas, y se leían como tres preguntas. Son UNA: el día, el mes y el año de
+   una misma fecha. Así que ahora comparten un borde, un fondo y un radio, y por dentro se
+   separan con un filete de un píxel.
+
+   ── LO QUE NO CAMBIA, Y ES LO IMPORTANTE ──────────────────────────────────────────────────
+
+   Siguen siendo TRES `<select>` de verdad. En el iPhone cada uno abre la rueda del sistema —la
+   de verdad, no una imitación—, el año es una lista plana donde 1985 está a un gesto, y el valor
+   sigue viajando en un campo oculto como `AAAA-MM-DD`. Esto es piel: ni una línea de la lógica
+   ni de las validaciones se toca.
+
+   El mes se lleva más ancho porque lleva la palabra entera («septiembre»), no un número. */
+.pm-nac {
+  display: grid;
+  grid-template-columns: 1fr 1.7fr 1.1fr;
+  align-items: stretch;
+  background: var(--card, #fbfaf8);
+  border: 1px solid var(--border, #d5ded9);
+  border-radius: 12px;
+  overflow: hidden;
+}
+/* El aro rodea el GRUPO, no el segmento: lo que se está rellenando es una fecha. */
+.pm-nac:focus-within {
+  outline: 2px solid var(--accent-2, #2C4A3E);
+  outline-offset: 1px;
+  border-color: var(--accent-2, #2C4A3E);
+}
+/* `.pm-nac .pm-nac-s` y no `.pm-nac-s` a secas: `.alta-campo select` tiene dos partes de
+   especificidad (una clase y un elemento) y ganaba a una clase sola, así que cada segmento
+   seguía dibujando su propio borde y su propio radio — tres cajas en vez de un campo. */
+.pm-nac .pm-nac-s {
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  padding-left: .7rem;
+  padding-right: 1.5rem;
+  background-position: right .5rem center;
+  font-variant-numeric: tabular-nums;
+}
+/* El filete que separa los segmentos. Va como borde izquierdo de los dos últimos para que no
+   aparezca ninguno pegado al borde exterior. */
+.pm-nac .pm-nac-s + .pm-nac-s { border-left: 1px solid var(--border, #d5ded9); }
+/* Dentro del grupo el aro sobra: ya lo pone el contenedor, y dos aros anidados se ven mal. */
+.pm-nac .pm-nac-s:focus,
+.pm-nac .pm-nac-s:focus-visible { outline: none; }
+
+/* En un iPhone estrecho, «septiembre» necesita cada milímetro. */
+@media (max-width: 380px) {
+  .pm-nac .pm-nac-s { padding-left: .5rem; padding-right: 1.15rem; background-position: right .3rem center; }
+}
 
 /* Las sugerencias de población. El campo hace de ancla, así que la lista se coloca justo debajo
    y no al final de la página. */
@@ -67,7 +130,7 @@
 }
 .pm-sug-i { padding: .6rem .7rem; border-radius: 9px; font-size: .95rem; cursor: pointer; line-height: 1.3; }
 /* El resaltado va por CLASE, no solo por `:hover`: con el teclado no hay ratón encima. */
-.pm-sug-i.on, .pm-sug-i:hover { background: #eef4f0; color: #2F6B4F; }
+.pm-sug-i.on, .pm-sug-i:hover { background: #eef4f0; color: var(--accent-2, #2C4A3E); }
 
 /* El consentimiento: una frase encima del botón, no una casilla. Enviar es aceptar, y eso se
    dice con todas las letras justo donde se pulsa. */
@@ -75,21 +138,21 @@
 /* El enlace a la política, DENTRO de la frase de consentimiento.
 
    Subrayado y no solo en otro color: el color por sí solo deja fuera a quien no lo distingue, y
-   este es el enlace que la ley exige que se pueda encontrar. #2F6B4F sobre #fbfaf8 da 5.3:1, por
+   este es el enlace que la ley exige que se pueda encontrar. var(--accent-2, #2C4A3E) sobre #fbfaf8 da 5.3:1, por
    encima del 4.5:1 que pide el AA. */
 .pm-legal {
-  color: #2F6B4F;
+  color: var(--accent-2, #2C4A3E);
   text-decoration: underline;
   text-underline-offset: 2px;
   font-weight: 600;
 }
 .pm-legal:hover { text-decoration-thickness: 2px; }
 .pm-legal:focus-visible {
-  outline: 2px solid #2F6B4F;
+  outline: 2px solid var(--accent-2, #2C4A3E);
   outline-offset: 2px;
   border-radius: 2px;
 }
-.pm-legal a { color: #2F6B4F; text-decoration: underline; }
+.pm-legal a { color: var(--accent-2, #2C4A3E); text-decoration: underline; }
 
 .pm-error { margin: .9rem 0 0; padding: .75rem .9rem; border-radius: 12px;
   background: #fdecec; color: #a32b2b; font-size: .92rem; line-height: 1.45; }
