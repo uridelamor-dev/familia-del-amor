@@ -3759,7 +3759,10 @@ h1, h2, h3 {
   min-height: 44px;
 }
 
-}
+/* (Aquí sobraba una llave de cierre. No cerraba nada: era el resto de una edición. Chrome
+   la trata como error y se come LA REGLA SIGUIENTE, que resultaba ser el aro de foco de
+   toda la web. Medido: con la llave, `outline: 1px auto` —el del navegador—; sin ella,
+   `2px solid #2C4A3E`, que es el que dice la regla de abajo.) */
 
 /* ── EL FOCO, VISIBLE EN TODA LA WEB ─────────────────────────────────────────────────────────
    Quien navega con teclado tiene que ver dónde está. El aro va por fuera para no mover nada. */

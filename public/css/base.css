@@ -38,37 +38,30 @@
   --cat-limpieza:#3E8F84;--cat-envase:#6B7A8F;--cat-menaje:#7A6A55;--cat-marketing:#9B5178;
   --cat-gris:#8B8F80;
   --font:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;color-scheme:light
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;
+  /* PALETA CLARA, SIEMPRE. `color-scheme` le dice al navegador con qué luz pintar lo que pinta
+     ÉL —barras de desplazamiento, desplegables, campos, el fondo antes de que llegue el CSS—.
+     Sin esto, un móvil en modo oscuro pone controles oscuros sobre nuestra crema.
+
+     Aquí faltaba el punto y coma: `color-scheme:light` y `--h:212` se leían como UNA sola
+     declaración, inválida, y el navegador las descartaba las dos. Ni había esquema de color
+     declarado ni existía `--h`. */
+  color-scheme:light;
   /* Tono del área (sala, barra, cocina…). Cada etiqueta lo sobreescribe en su `style`;
      esto es el valor de reserva. Ver src/modules/horarios/colores.js. */
   --h:212;}
-:root[data-theme="dark"]{
-  --bg:#0F110C;--bg2:#0B0D09;--surface:#171A13;--surface2:#1E2219;--surface3:#242A1E;
-  --border:#2A2F23;--border2:#3B4230;--ink:#ECEADF;--ink2:#AEB2A2;--ink3:#787C6D;
-  --brand:#6BBE92;--brand2:#57A87D;--brand-ink:#0E1610;--brand-soft:#17281E;
-  /* El cobre, aclarado para fondo oscuro: 7,1 : 1 sobre #0F110C. El de la luz da 2,2. */
-  --accent:#D98A63;--accent2:#C4744D;--accent-ink:#1A1008;--accent-soft:#2C1A11;
-  --success:#4FBE88;--success-soft:#132A1E;--warning:#D8A64A;--warning-soft:#2C2413;
-  --danger:#E0685A;--danger-soft:#2E1613;--info:#79A4CB;--info-soft:#12212E;--focus:#6BBE92;
-  --cat-uva:#B98ECB;--cat-carne:#E58B82;--cat-curado:#DC9A66;--cat-mar:#6FB9D8;
-  --cat-huerta:#8CC97C;--cat-pan:#E0BB6A;--cat-hielo:#93C2DD;--cat-despensa:#C6B662;
-  --cat-limpieza:#71C7BB;--cat-envase:#A3B2C6;--cat-menaje:#B6A48A;--cat-marketing:#D68CB0;
-  --cat-gris:#9AA08D;
-  --sh-sm:0 1px 2px rgba(0,0,0,.4);--sh-md:0 2px 8px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
-  --sh-lg:0 14px 44px rgba(0,0,0,.6);color-scheme:dark}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0F110C;--bg2:#0B0D09;--surface:#171A13;--surface2:#1E2219;--surface3:#242A1E;
-  --border:#2A2F23;--border2:#3B4230;--ink:#ECEADF;--ink2:#AEB2A2;--ink3:#787C6D;
-  --brand:#6BBE92;--brand2:#57A87D;--brand-ink:#0E1610;--brand-soft:#17281E;
-  /* El cobre, aclarado para fondo oscuro: 7,1 : 1 sobre #0F110C. El de la luz da 2,2. */
-  --accent:#D98A63;--accent2:#C4744D;--accent-ink:#1A1008;--accent-soft:#2C1A11;
-  --success:#4FBE88;--success-soft:#132A1E;--warning:#D8A64A;--warning-soft:#2C2413;
-  --danger:#E0685A;--danger-soft:#2E1613;--info:#79A4CB;--info-soft:#12212E;--focus:#6BBE92;
-  --cat-uva:#B98ECB;--cat-carne:#E58B82;--cat-curado:#DC9A66;--cat-mar:#6FB9D8;
-  --cat-huerta:#8CC97C;--cat-pan:#E0BB6A;--cat-hielo:#93C2DD;--cat-despensa:#C6B662;
-  --cat-limpieza:#71C7BB;--cat-envase:#A3B2C6;--cat-menaje:#B6A48A;--cat-marketing:#D68CB0;
-  --cat-gris:#9AA08D;
-  --sh-sm:0 1px 2px rgba(0,0,0,.4);--sh-md:0 2px 8px rgba(0,0,0,.4);--sh-lg:0 14px 44px rgba(0,0,0,.6);color-scheme:dark}}
+/* ── ¿Y EL TEMA OSCURO? ESTÁ EN `panel.css`, A PROPÓSITO ──────────────────────────────────────
+   Esta hoja la cargan las 18 páginas: las 16 públicas, el panel y la vista previa del ERP. Pero
+   el tema oscuro solo lo quiere el panel, que tiene su conmutador.
+
+   Estaba aquí, y eso rompía la web pública: el bloque redefinía `--bg` a casi negro pero NO
+   `--text`, que es de `styles.css` y se quedaba en su negro claro. Resultado medido en Chrome:
+   1,14 : 1 en trece páginas —texto invisible— para cualquier visitante con el móvil en oscuro.
+   Y ganaba aunque `styles.css` cargue después, porque `:root:not([data-theme="light"])` pesa
+   más que un `:root` pelado: una media query no añade especificidad, pero el `:not()` sí.
+
+   La identidad de la casa es crema y verde. La web se queda clara, diga lo que diga el sistema
+   operativo, y el panel sigue teniendo sus tres modos. */
 
 /* ── LO QUE FALTABA PARA QUE ESTO SEA UN SISTEMA ─────────────────────────────────────────────
    Arriba está lo que ya existía —color, sombra, radio— porque el panel ya tenía una base seria.

@@ -16,11 +16,71 @@ const html = readFileSync(new URL("../public/panel/index.html", import.meta.url)
   + "\n" + CSS_PANEL;
 const app = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
 
-/** Los tokens declarados en el `:root` claro. Son los únicos que se pueden usar. */
-function tokensDeclarados() {
-  const bloque = html.slice(html.indexOf(":root{"), html.indexOf(':root[data-theme="dark"]'));
-  return new Set([...bloque.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+/**
+ * Los tokens del tema CLARO, con su valor.
+ *
+ * Antes esto era `html.slice(indexOf(":root{"), indexOf(':root[data-theme="dark"]'))`, y ese
+ * recorte dejaba fuera el SEGUNDO `:root{` de `base.css` —donde viven la escala de texto, la
+ * rejilla de espacio y las alturas de control—: el test creía que había 51 tokens cuando hay 95,
+ * y los 44 restantes no los vigilaba nadie. Ahora se recorren TODOS los bloques `:root`, se
+ * saltan los temáticos, y se guarda el valor además del nombre porque de él depende si el token
+ * necesita versión oscura.
+ */
+function declaradosClaro() {
+  const mapa = new Map();
+  for (const b of bloquesDe(CSS_PANEL)) {
+    if (!/^:root$/.test(b.selector)) continue;   // ni [data-theme] ni nada dentro de @media
+    for (const [, nombre, valor] of b.cuerpo.matchAll(/(--[\w-]+)\s*:\s*([^;]+)/g)) {
+      mapa.set(nombre, valor.trim());
+    }
+  }
+  return mapa;
 }
+
+/**
+ * Los tokens de un bloque de tema oscuro. `cual` elige cuál de los dos:
+ * el que se pide a mano (`[data-theme="dark"]`) o el que sigue al sistema (la media query).
+ */
+function declaradosOscuro(cual) {
+  const mapa = new Map();
+  for (const b of bloquesDe(CSS_PANEL)) {
+    const esMedia = /prefers-color-scheme/.test(b.dentro);
+    if (cual === "media" ? !esMedia : esMedia) continue;
+    if (!/\[data-theme/.test(b.selector)) continue;
+    for (const [, nombre, valor] of b.cuerpo.matchAll(/(--[\w-]+)\s*:\s*([^;]+)/g)) {
+      mapa.set(nombre, valor.trim());
+    }
+  }
+  return mapa;
+}
+
+/** Bloques `selector { … }` a cualquier profundidad, anotando la regla-at que los envuelve. */
+function bloquesDe(css, dentro = "") {
+  const limpio = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const salida = [];
+  let i = 0;
+  while (i < limpio.length) {
+    const abre = limpio.indexOf("{", i);
+    if (abre === -1) break;
+    const selector = limpio.slice(i, abre).trim().replace(/\s+/g, " ");
+    let prof = 1, j = abre + 1;
+    while (j < limpio.length && prof > 0) {
+      if (limpio[j] === "{") prof++;
+      else if (limpio[j] === "}") prof--;
+      j++;
+    }
+    const cuerpo = limpio.slice(abre + 1, j - 1);
+    if (/^@/.test(selector)) salida.push(...bloquesDe(cuerpo, dentro ? `${dentro} ${selector}` : selector));
+    else salida.push({ selector, dentro, cuerpo });
+    i = j;
+  }
+  return salida;
+}
+
+/** ¿El valor de este token ES un color? Es lo que decide si necesita versión oscura. */
+const esColor = (v) => /^(#[0-9a-f]{3,8}|rgba?\(|hsla?\(|color-mix\(|transparent$|currentcolor$)/i.test(v.trim());
+
+function tokensDeclarados() { return new Set(declaradosClaro().keys()); }
 
 /**
  * Cada `var(--algo)` que aparece. Solo cuenta los que se escriben ENTEROS: los que el JS
@@ -62,20 +122,51 @@ describe("los colores del panel salen de tokens que existen", () => {
     }
   });
 
-  test("el tema oscuro redefine TODOS los tokens de color del claro", () => {
-    // Si uno se queda sin redefinir, en oscuro se queda el color del tema claro y el contraste
-    // se rompe justo en esa pieza. Los que no son de color (radios, sombras, fuentes) se
-    // quedan fuera a propósito.
-    const oscuro = html.slice(html.indexOf(':root[data-theme="dark"]'), html.indexOf("@media (prefers-color-scheme:dark)"));
-    const enOscuro = new Set([...oscuro.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
-    // `--cat` se fija por elemento y su valor por defecto ya es un token temado (`--brand`),
-    // así que no necesita —ni debe tener— una versión oscura propia. `--h` es el mismo caso y
-    // además NO es un color: es el TONO de un área, y de él se calcula la luminosidad de cada
-    // tema en la propia regla. Redefinirlo en oscuro cambiaría el color del área, que tiene
-    // que ser el mismo en los dos temas para poder reconocerla.
-    const noColor = new Set(["--sh-sm", "--sh-md", "--sh-lg", "--r-sm", "--r-md", "--r-lg", "--sb", "--font", "--mono", "--cat", "--h"]);
-    const faltan = [...declarados].filter((t) => !noColor.has(t) && !enOscuro.has(t));
-    assert.deepEqual(faltan, [], "tokens de color sin versión oscura");
+  // ── EL TEMA OSCURO ES DEL PANEL, Y SON DOS BLOQUES ─────────────────────────────────────────
+  //
+  // Vivía en `base.css`, que cargan también las 16 páginas públicas, y allí redefinía el fondo
+  // sin redefinir el texto de `styles.css`: trece páginas a 1,14 : 1 en cualquier móvil con el
+  // modo oscuro puesto. Ahora vive en `panel.css`, que solo carga el panel.
+  //
+  // Son dos porque el conmutador tiene tres posiciones: elegido a mano y «auto». Son copias
+  // manuales, así que lo primero que hay que vigilar es que no diverjan — ya lo habían hecho.
+  const claro = declaradosClaro();
+  const oscuroFijo = declaradosOscuro("atributo");
+  const oscuroAuto = declaradosOscuro("media");
+
+  test("los dos bloques oscuros existen y declaran lo mismo, token por token", () => {
+    assert.ok(oscuroFijo.size > 20, "no se encuentra el tema oscuro elegido a mano");
+    assert.ok(oscuroAuto.size > 20, "no se encuentra el tema oscuro automático (media query)");
+    const difieren = [];
+    for (const [t, v] of oscuroFijo) {
+      if (!oscuroAuto.has(t)) difieren.push(`${t}: falta en el automático`);
+      else if (oscuroAuto.get(t) !== v) difieren.push(`${t}: «${v}» a mano vs «${oscuroAuto.get(t)}» en auto`);
+    }
+    for (const t of oscuroAuto.keys()) if (!oscuroFijo.has(t)) difieren.push(`${t}: falta en el de a mano`);
+    assert.deepEqual(difieren, [],
+      "los dos bloques del tema oscuro han divergido: el panel se vería distinto según se haya " +
+      "elegido oscuro a mano o se esté siguiendo al sistema");
+  });
+
+  test("el tema oscuro redefine TODOS los tokens que son un color", () => {
+    // El criterio ya no es una lista escrita a mano —que se queda corta en cuanto alguien añade
+    // un token— sino el VALOR: si en claro es un color, en oscuro tiene que haber otro. Una
+    // medida, un radio o una familia tipográfica no cambian con el tema.
+    //
+    // Las dos excepciones son de verdad excepciones y llevan su razón:
+    //   `--cat` vale `var(--brand)`, que ya está temado: redefinirlo sería temarlo dos veces.
+    //   `--h`  no es un color sino el TONO de un área; de él se calcula la luminosidad de cada
+    //          tema en la propia regla, y cambiarlo haría que la sala fuese de otro color según
+    //          el tema, que es justo lo que no debe pasar.
+    const exentos = new Set(["--cat", "--h"]);
+    const faltan = [];
+    for (const [t, v] of claro) {
+      if (exentos.has(t) || !esColor(v)) continue;
+      if (!oscuroFijo.has(t)) faltan.push(`${t} (claro: ${v})`);
+    }
+    assert.deepEqual(faltan, [],
+      "tokens de color sin versión oscura: en el panel en oscuro se quedarían con el color del " +
+      "tema claro y el contraste se rompe justo en esa pieza");
   });
 });
 

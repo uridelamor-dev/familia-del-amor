@@ -2,6 +2,46 @@
    Extraído literalmente del `<style>` de `panel/index.html`. Los tokens que usa viven en
    `base.css`, que se carga antes. */
 
+/* ── EL TEMA OSCURO DEL PANEL ─────────────────────────────────────────────────────────────────
+   Vivía en `base.css`, que cargan también las 16 páginas públicas, y allí hacía daño: redefinía
+   el fondo a casi negro sin redefinir el texto de `styles.css`, y trece páginas quedaban a
+   1,14 : 1 en cualquier móvil con el modo oscuro puesto. La web es crema y verde y no tiene
+   tema oscuro; el panel sí, y es el único que carga esta hoja.
+
+   Dos bloques y no uno, porque el conmutador tiene tres posiciones (`app.js:setTheme`):
+     · `[data-theme="dark"]`        — el usuario ha elegido oscuro. Manda siempre.
+     · `@media prefers-color-scheme` — modo «auto»: sin atributo, decide el sistema.
+   El `:not([data-theme="light"])` del segundo es lo que deja que «claro» gane a un sistema
+   oscuro. Van al principio del fichero para que las reglas de componente de abajo sigan
+   pudiendo pisarlos, que es como estaban antes. */
+:root[data-theme="dark"]{
+  --bg:#0F110C;--bg2:#0B0D09;--surface:#171A13;--surface2:#1E2219;--surface3:#242A1E;
+  --border:#2A2F23;--border2:#3B4230;--ink:#ECEADF;--ink2:#AEB2A2;--ink3:#787C6D;
+  --brand:#6BBE92;--brand2:#57A87D;--brand-ink:#0E1610;--brand-soft:#17281E;
+  /* El cobre, aclarado para fondo oscuro: 7,1 : 1 sobre #0F110C. El de la luz da 2,2. */
+  --accent:#D98A63;--accent2:#C4744D;--accent-ink:#1A1008;--accent-soft:#2C1A11;
+  --success:#4FBE88;--success-soft:#132A1E;--warning:#D8A64A;--warning-soft:#2C2413;
+  --danger:#E0685A;--danger-soft:#2E1613;--info:#79A4CB;--info-soft:#12212E;--focus:#6BBE92;
+  --cat-uva:#B98ECB;--cat-carne:#E58B82;--cat-curado:#DC9A66;--cat-mar:#6FB9D8;
+  --cat-huerta:#8CC97C;--cat-pan:#E0BB6A;--cat-hielo:#93C2DD;--cat-despensa:#C6B662;
+  --cat-limpieza:#71C7BB;--cat-envase:#A3B2C6;--cat-menaje:#B6A48A;--cat-marketing:#D68CB0;
+  --cat-gris:#9AA08D;
+  --sh-sm:0 1px 2px rgba(0,0,0,.4);--sh-md:0 2px 8px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  --sh-lg:0 14px 44px rgba(0,0,0,.6);color-scheme:dark}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0F110C;--bg2:#0B0D09;--surface:#171A13;--surface2:#1E2219;--surface3:#242A1E;
+  --border:#2A2F23;--border2:#3B4230;--ink:#ECEADF;--ink2:#AEB2A2;--ink3:#787C6D;
+  --brand:#6BBE92;--brand2:#57A87D;--brand-ink:#0E1610;--brand-soft:#17281E;
+  /* El cobre, aclarado para fondo oscuro: 7,1 : 1 sobre #0F110C. El de la luz da 2,2. */
+  --accent:#D98A63;--accent2:#C4744D;--accent-ink:#1A1008;--accent-soft:#2C1A11;
+  --success:#4FBE88;--success-soft:#132A1E;--warning:#D8A64A;--warning-soft:#2C2413;
+  --danger:#E0685A;--danger-soft:#2E1613;--info:#79A4CB;--info-soft:#12212E;--focus:#6BBE92;
+  --cat-uva:#B98ECB;--cat-carne:#E58B82;--cat-curado:#DC9A66;--cat-mar:#6FB9D8;
+  --cat-huerta:#8CC97C;--cat-pan:#E0BB6A;--cat-hielo:#93C2DD;--cat-despensa:#C6B662;
+  --cat-limpieza:#71C7BB;--cat-envase:#A3B2C6;--cat-menaje:#B6A48A;--cat-marketing:#D68CB0;
+  --cat-gris:#9AA08D;
+  --sh-sm:0 1px 2px rgba(0,0,0,.4);--sh-md:0 2px 8px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);--sh-lg:0 14px 44px rgba(0,0,0,.6);color-scheme:dark}}
+
 body{font-family:var(--font);font-size:14px;color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;line-height:1.5;overflow:hidden}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{color:inherit;text-decoration:none}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:6px}
@@ -1263,8 +1303,20 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .topbar { padding: 0 14px; }
 }
 
-/* 3 · Nada de la cabecera hereda un ancho mínimo que no pueda ceder. */
+/* 3 · Nada de la cabecera hereda un ancho mínimo que no pueda ceder... */
 .topbar > * { min-width: 0; }
+
+/* 3b · ...SALVO el nombre del establecimiento, que es lo único de la barra que hay que poder
+        LEER. Con el `min-width:0` de arriba aplicado a todo, entre el estado de Sara, los
+        iconos y el avatar al rótulo le quedaban 25 px a 834 y 33 a 900: ilegible justo en la
+        franja de tableta que el bloque 2 venía a arreglar.
+
+        El suelo es una `ch`: se mide en anchos de cifra de la propia fuente, así que sigue
+        siendo 14 caracteres aunque cambie el cuerpo. «La Tapeta - B…» identifica el local;
+        25 px no identifican nada. Y no puede desbordar, porque `.pick` conserva su `max-width`
+        (150 en móvil, 230 en tableta, 380 por encima de 901) y el `.lbl` ya recorta con
+        puntos suspensivos. */
+.topbar > .pick { min-width: min(14ch, 100%); }
 
 /* ═══ LA CABECERA DE PÁGINA, EN LAS 25 PANTALLAS ══════════════════════════════════════════════
    `.ph` es `space-between`, pensado para DOS bloques: el título a la izquierda y las acciones a
@@ -1329,8 +1381,13 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   gap: 7px;
   font-size: 13px;
   cursor: pointer;
-  white-space: nowrap;
 }
+/* SIN `white-space: nowrap`. Lo llevaba, y estaba pensado para los filtros de Clientes, que son
+   de dos palabras («Con email», «Cumple este mes»). Pero `.chk` la usan ocho sitios más con
+   frases enteras —«He comprobado que ese código existe en Ágora» mide 318 px indivisibles— y en
+   un móvil de 390 eso se sale de su caja. Una etiqueta corta se pinta igual sin la regla; una
+   larga, ahora, se parte. */
+.chk > input { flex: none; }
 .chk input[type="checkbox"],
 .chk input[type="radio"] { width: auto; height: auto; margin: 0; flex: none; accent-color: var(--brand); }
 
