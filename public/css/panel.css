@@ -1354,3 +1354,55 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
   .chk input[type="checkbox"],
   .chk input[type="radio"] { width: 18px; height: 18px; }
 }
+
+/* ── EL NOMBRE DEL LOCAL EN «GRUPOS POR LOCAL» ────────────────────────────────────────────────
+   A 834 px la rejilla parte en dos columnas, la tarjeta se queda en 283 px y la fila no cabe:
+   el desplegable de grupo pide 150 px y el botón 72, así que a `.grow` —que tiene `min-width:0`
+   para no ensanchar la fila— le quedaba UN píxel. «La Tapeta - Blanes» salía escrito por encima
+   del desplegable. No movía la página, así que ningún test de desborde lo veía.
+
+   Se le da suelo al nombre y permiso a la fila para partirse: cuando hay sitio, esto no cambia
+   absolutamente nada —una fila que cabe se pinta igual con `wrap` que sin él—; cuando no lo hay,
+   el control baja a la línea siguiente en vez de comerse el nombre.
+
+   Acotado con `:has()` al único sitio con el problema. Donde `:has()` no exista, la regla se cae
+   entera y queda exactamente como hoy. */
+.row:has(.waSel) { flex-wrap: wrap; }
+.row:has(.waSel) .grow { flex: 1 1 180px; }
+
+/* ── LAS FILAS PLEGABLES CON VARIAS ACCIONES ──────────────────────────────────────────────────
+   Mismo defecto que arriba, en otro sitio: `<details class="row"><summary>` con un nombre a la
+   izquierda y los controles a la derecha. A 390 px, en el diccionario de productos, los tres
+   botones —«Cambiar nombre», «Fusionar…», «Borrar»— se llevaban 280 de los 332 px del summary y
+   al nombre le quedaban VEINTIDÓS. Medido, no supuesto.
+
+   Hay tres filas con este esqueleto (diccionario, recibos y proveedores); solo se midió la
+   primera, pero el marcado es el mismo y la regla no distingue, así que se escribe sobre la
+   forma y no sobre una pantalla.
+
+   El `summary` trae `display:flex` en el atributo `style`, que gana a cualquier hoja; `flex-wrap`
+   NO va en línea, y por ahí se entra. Con sitio de sobra no cambia nada: una fila que cabe se
+   pinta igual con `wrap` que sin él. Sin sitio, los controles bajan a la línea de abajo. */
+.rows > details.row > summary { flex-wrap: wrap; }
+.rows > details.row > summary > .grow { flex: 1 1 180px; }
+
+/* ── EL RÓTULO DE LA BARRA LATERAL ────────────────────────────────────────────────────────────
+   «Sistema operativo interno» mide 134 px y en la banda de 821-1080, donde la barra se estrecha a
+   200, la caja del rótulo se queda en 122. Con `white-space:nowrap` dentro de un `overflow:hidden`
+   y sin `text-overflow`, el corte caía a media palabra: «Sistema operativo inter». Eso no se lee
+   como un texto recortado, se lee como algo roto.
+
+   Con puntos suspensivos el recorte se explica solo. No se ensancha la barra —esa anchura se
+   eligió a propósito para dejarle sitio al contenido— ni se esconde el rótulo.
+
+   Los puntos van en el propio rótulo: `text-overflow` solo actúa donde está el `overflow:hidden`,
+   y ese estaba en `.bt`, el contenedor —por eso ponerlo suelto en el hijo no hacía nada—. */
+.brand .bt b, .brand .bt span { overflow: hidden; text-overflow: ellipsis; }
+
+/* ── LA CABECERA DE UNA TARJETA ESTRECHA ──────────────────────────────────────────────────────
+   `.ch` reparte título y píldora con `space-between` y sin permiso para partirse. En una tarjeta
+   de 280 px —la mitad de la rejilla a 834— una píldora como «Conecta Sara para elegir grupos» se
+   lleva 190 y al título le quedan 60: «Grupos / por / local», en tres líneas.
+
+   Misma medicina y mismo razonamiento: con sitio, `wrap` y `nowrap` pintan exactamente igual. */
+.ch { flex-wrap: wrap; }

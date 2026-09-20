@@ -165,7 +165,23 @@ for (const p of PANTALLAS) {
           }
         }
 
-        // 6 · TOQUES EN MÓVIL. Lo mismo que en la web pública: 44 px.
+        // 6 · TEXTO QUE SE SALE DE SU CAJA. Un nombre largo puede desbordar su celda SIN mover
+        // la página: se monta encima de lo de al lado y no lo ve ningún test de desborde. Y un
+        // contenedor flex sin `min-width:0` se colapsa a un píxel llevándose el texto por
+        // delante — eso tampoco mueve la página.
+        for (const el of vista.querySelectorAll("td, th, .t1, .t2, .pill, .kpi-v, .card h3")) {
+          if (el.children.length || !el.textContent.trim()) continue;
+          const cs = getComputedStyle(el);
+          if (cs.overflow === "hidden" || cs.textOverflow === "ellipsis") continue;
+          if (el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 2) {
+            dis.cortes = dis.cortes || [];
+            dis.cortes.push(`${el.tagName.toLowerCase()}.${String(el.className).trim().split(/\s+/)[0] || "-"}`
+              + ` ${el.scrollWidth}>${el.clientWidth} "${el.textContent.trim().slice(0, 20)}"`);
+            if (dis.cortes.length >= 3) break;
+          }
+        }
+
+        // 7 · TOQUES EN MÓVIL. Lo mismo que en la web pública: 44 px.
         if (window.innerWidth <= 640) {
           for (const el of vista.querySelectorAll("button, a[href], input, select")) {
             const r = el.getBoundingClientRect();
@@ -178,7 +194,7 @@ for (const p of PANTALLAS) {
             }
           }
         }
-        // 7 · APROVECHAMIENTO DEL ANCHO: hasta dónde llega el contenido de verdad.
+        // 8 · APROVECHAMIENTO DEL ANCHO: hasta dónde llega el contenido de verdad.
         let derecha = lienzo.left;
         for (const el of vista.querySelectorAll(".card, .tbl, .ph, .rows")) {
           const b = el.getBoundingClientRect();
@@ -232,6 +248,7 @@ for (const p of PANTALLAS) {
     if (d.alturas?.length > 2) notas.push("alturas de botón: " + d.alturas.join("/"));
     if (d.radios?.length > 2) notas.push(`${d.radios.length} radios distintos`);
     if (d.tablas?.length) notas.push(d.tablas.join(", "));
+    if (d.cortes?.length) notas.push("texto desbordado: " + d.cortes.join(" · "));
     if (d.toques?.length) notas.push("toque: " + d.toques.join(", "));
     if (notas.length) disenio.push(`${r} @${p.ancho}: ${notas.join(" · ")}`);
     console.log(`${problemas.length ? "✖" : "✔"} ${r.padEnd(15)} ${problemas.join(" · ")}`
