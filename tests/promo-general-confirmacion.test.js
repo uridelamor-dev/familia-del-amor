@@ -293,7 +293,7 @@ describe("solo hay un camino para conceder un derecho", () => {
   test("y SIN VÍNCULO EXPLÍCITO tampoco, aunque el formulario esté publicado", () => {
     const i = s.indexOf('app.post("/api/publico/formulario/:clave"');
     const ruta = s.slice(i, s.indexOf("\napp.", i + 10));
-    assert.match(ruta, /if \(f\.promo_clave && qrId\) \{/);
+    assert.match(ruta, /if \(f\.promo_clave\) \{/);
   });
 
   test("la vista previa del panel no manda nada a ninguna parte", () => {
@@ -336,7 +336,7 @@ describe("el recorrido entero, de la campaña al segundo escaneo", () => {
 
   test("3-4 · el alta concede UN derecho, y repetirla no concede otro", () => {
     const s = sinComentarios(server);
-    assert.match(s, /`derecho:\$\{f\.promo_clave\}:\$\{qrId\}`/,
+    assert.match(s, /`derecho:\$\{f\.promo_clave\}:\$\{qr\.id\}`/,
       "la clave idempotente es promoción + carné: ni el envío ni el formulario entran");
     assert.match(s, /ON CONFLICT \(clave_idem\) DO NOTHING/);
     assert.match(sinComentarios(esquema), /clave_idem TEXT NOT NULL UNIQUE/);

@@ -318,11 +318,14 @@ describe("cableado del servidor", () => {
   });
 
   test("el alta concede el derecho una sola vez, y solo si hay vínculo", () => {
-    assert.match(s, /if \(f\.promo_clave && qrId\)/,
+    // `qrId` ya no hace falta en la condición: dentro de la transacción el carné está
+    // garantizado —si no se pudo emitir, se ha salido antes—, así que el único requisito que
+    // queda es el que importa: que el formulario tenga una promoción vinculada a mano.
+    assert.match(s, /if \(f\.promo_clave\) \{/,
       "sin promoción vinculada, el alta no concede nada");
     assert.match(s, /INSERT INTO fid_promo_derechos[\s\S]{0,260}ON CONFLICT \(clave_idem\) DO NOTHING/,
       "recargar o reenviar el formulario no puede dar dos desayunos");
-    assert.match(s, /`derecho:\$\{f\.promo_clave\}:\$\{qrId\}`/,
+    assert.match(s, /`derecho:\$\{f\.promo_clave\}:\$\{qr\.id\}`/,
       "la clave idempotente es la promoción + el carné, así que reutilizar carné no duplica");
   });
 

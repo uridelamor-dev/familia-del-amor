@@ -112,6 +112,40 @@ export function textosDe(campana, idioma) {
 }
 
 /**
+ * ¿ESTA CAMPAÑA MANDA WHATSAPP, Y CON QUÉ TEXTO?
+ *
+ * ── POR QUÉ HACÍA FALTA SEPARAR «VACÍO» DE «APAGADO» ────────────────────────────────────────
+ *
+ * `textosDe()` rellena los huecos con la plantilla de la casa, así que dejar el texto en blanco
+ * NO apagaba el envío: mandaba el genérico. Una campaña que no quiere mandar nada no tenía forma
+ * de decirlo, y el formulario configurable sí la tiene (`mensaje_wa` vacío = no se manda).
+ *
+ * ── Y POR QUÉ UN INTERRUPTOR Y NO «SI ESTÁ VACÍO, NO MANDES» ────────────────────────────────
+ *
+ * Porque el editor dice desde siempre «se deja vacío para usar el de por defecto», y hay
+ * campañas vivas que están vacías CONTANDO con eso. Cambiar el significado del vacío las dejaría
+ * mudas de un despliegue a otro, sin que nadie hubiera tocado nada.
+ *
+ * Así que la decisión es explícita y va en el propio JSON de textos —sin columna nueva ni
+ * migración—: `wa_activo: false` apaga. Ausente significa encendido, que es como se comporta
+ * todo lo que hay hoy.
+ */
+export function plantillaWhatsApp(campana, idioma) {
+  let textos = {};
+  try {
+    textos = typeof campana?.textos === "string" ? JSON.parse(campana.textos) : (campana?.textos || {});
+  } catch { textos = {}; }
+
+  if (textos.wa_activo === false) {
+    return { activo: false, plantilla: "", motivo: "apagado" };
+  }
+  const i = IDIOMAS.includes(idioma) ? idioma : "es";
+  const propia = String(textos?.[i]?.wa || "").trim();
+  if (propia) return { activo: true, plantilla: propia, motivo: "propia" };
+  return { activo: true, plantilla: POR_DEFECTO[i].wa, motivo: "por_defecto" };
+}
+
+/**
  * El mensaje de WhatsApp, ya compuesto.
  *
  * `{donde}` sale de `dondeVale()` sobre los locales de la promoción, igual que en el resto del

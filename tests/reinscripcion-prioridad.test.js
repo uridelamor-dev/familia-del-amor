@@ -212,7 +212,15 @@ describe("LA REACTIVACIÓN SOLO OCURRE AL COMPLETAR EL FORMULARIO", () => {
   test("dentro de la MISMA transacción que el consentimiento", () => {
     // Si el consentimiento no se guarda, la reactivación tampoco: no puede quedar alguien
     // reactivado sin la fila que lo justifica.
-    const tx = ALTA.slice(ALTA.indexOf("await fidTransaccion("), ALTA.indexOf("// 3. EL CARNÉ"));
+    // El recorte LANZA si el ancla no está. Cuando el comentario que la marcaba se reescribió,
+    // `indexOf` devolvió -1, el recorte se tragó la SEGUNDA transacción del alta —la del carné y
+    // su mensaje, que sí escribe en `fid_bajas` y debe hacerlo— y el candado dio un falso
+    // positivo. Lo que vigila es la transacción del LEAD, y solo esa.
+    const tx = (() => {
+      const fin = ALTA.indexOf("// ── 3 y 4. EL CARNÉ Y SU MENSAJE");
+      if (fin < 0) throw new Error("no se encuentra el final de la transacción del lead");
+      return ALTA.slice(ALTA.indexOf("await fidTransaccion("), fin);
+    })();
     assert.match(tx, /INSERT INTO fid_consentimientos/);
     assert.match(tx, /INSERT INTO marketing_prefs \(telefono, opt_in_wa, baja, idioma, updated_at\)/);
   });
@@ -236,7 +244,15 @@ describe("LA REACTIVACIÓN SOLO OCURRE AL COMPLETAR EL FORMULARIO", () => {
   });
 
   test("lo anterior no se borra: el libro es de solo añadir", () => {
-    const tx = ALTA.slice(ALTA.indexOf("await fidTransaccion("), ALTA.indexOf("// 3. EL CARNÉ"));
+    // El recorte LANZA si el ancla no está. Cuando el comentario que la marcaba se reescribió,
+    // `indexOf` devolvió -1, el recorte se tragó la SEGUNDA transacción del alta —la del carné y
+    // su mensaje, que sí escribe en `fid_bajas` y debe hacerlo— y el candado dio un falso
+    // positivo. Lo que vigila es la transacción del LEAD, y solo esa.
+    const tx = (() => {
+      const fin = ALTA.indexOf("// ── 3 y 4. EL CARNÉ Y SU MENSAJE");
+      if (fin < 0) throw new Error("no se encuentra el final de la transacción del lead");
+      return ALTA.slice(ALTA.indexOf("await fidTransaccion("), fin);
+    })();
     assert.ok(!/UPDATE fid_consentimientos|DELETE FROM fid_consentimientos/.test(tx),
       "el alta reescribe consentimientos anteriores");
     // SIN COMENTARIOS: el de la reactivación explica que la fila de `fid_bajas` NO se toca, y esa
@@ -285,7 +301,13 @@ describe("EL ALTA VA DELANTE DE LO COMERCIAL", () => {
     const conPrioridad = inserts.filter((i) => /prioridad\)/.test(i));
     assert.ok(conPrioridad.length >= 3,
       `solo ${conPrioridad.length} encolados declaran prioridad; deberían hacerlo los tres tipos de alta`);
-    for (const i of conPrioridad) assert.match(i, /,0\)/, "un alta encola con una prioridad que no es 0");
+    // Dos formas de escribir lo mismo: `VALUES (…,0)` y `SELECT ?,…,0 WHERE NOT EXISTS`. La
+    // segunda existe porque el camino clásico no puede usar `ON CONFLICT` —su `token` es público
+    // y por tanto aleatorio— y resuelve la idempotencia por identidad en el propio INSERT.
+    for (const i of conPrioridad) {
+      assert.ok(/,0\)/.test(i) || /,\s*0\s*\n/.test(i),
+        "un alta encola con una prioridad que no es 0:\n" + i.slice(0, 200));
+    }
 
     // Y el de comunicaciones NO la lleva: se queda en el 1 por defecto.
     const sinPrioridad = inserts.filter((i) => !/prioridad\)/.test(i));
@@ -431,6 +453,6 @@ describe("nada de esto enciende nada", () => {
 
   test("y el mensaje sigue llevando su enlace de baja", () => {
     assert.match(ALTA, /fidConPieBaja\(/);
-    assert.match(ALTA, /if \(urlBaja\) \{/);
+    assert.match(ALTA, /if \(!urlBaja\) return \{ qr, cola: null, derecho \};/);
   });
 });

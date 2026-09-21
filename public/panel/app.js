@@ -14537,6 +14537,10 @@ function capForm(c) {
   const idiomas = [["es", "Castellano"], ["ca", "Català"], ["en", "English"]].map(([v, t]) =>
     `<option value="${v}" ${c.idioma === v ? "selected" : ""}>${t}</option>`).join("");
 
+  // Ausente = encendido. Solo está apagado si alguien lo apagó a propósito, y por eso las
+  // campañas que ya existen siguen mandando exactamente lo que mandaban.
+  const waOn = textos.wa_activo !== false;
+
   const campoIdioma = (v, nombre) => {
     const t = textos[v] || {};
     return `<div class="field" style="width:100%"><label>${nombre} · titular</label>
@@ -14571,6 +14575,11 @@ function capForm(c) {
     </div>
     <label class="chip" style="cursor:pointer;margin:4px 0 10px">
       <input type="checkbox" id="capActiva" ${c.activa ? "checked" : ""} style="margin-right:6px">Campaña abierta</label>
+    <label class="chip" style="cursor:pointer;margin:4px 0 10px">
+      <input type="checkbox" id="capWaOn" ${waOn ? "checked" : ""} style="margin-right:6px">Enviar el código por WhatsApp</label>
+    <div class="mut" style="font-size:12px;margin:-2px 0 10px">
+      Apagado, la campaña entrega su código en pantalla y no escribe a nadie. Dejar el texto en
+      blanco NO la apaga: usa el mensaje de la casa.</div>
 
     <details style="margin-bottom:10px"><summary class="mut" style="cursor:pointer">Textos por idioma (opcional)</summary>
       <div style="padding-top:10px">${campoIdioma("ca", "Català")}${campoIdioma("es", "Castellano")}${campoIdioma("en", "English")}</div>
@@ -14582,6 +14591,14 @@ function capForm(c) {
 
   ov.querySelector("#capSave").addEventListener("click", async () => {
     const textosOut = {};
+    // EL INTERRUPTOR DEL WHATSAPP. Va dentro del propio JSON de textos —sin columna nueva ni
+    // migración— y SOLO se escribe cuando está apagado: ausente significa encendido, que es como
+    // se comporta todo lo que hay hoy. Así ninguna campaña viva cambia por este despliegue.
+    //
+    // Hacía falta porque dejar el texto en blanco NO apagaba nada: el sistema rellenaba el hueco
+    // con la plantilla de la casa y mandaba el genérico. Una campaña que no quiere escribir a
+    // nadie no tenía forma de decirlo.
+    if (!ov.querySelector("#capWaOn").checked) textosOut.wa_activo = false;
     for (const v of ["ca", "es", "en"]) {
       const t = {};
       const tit = ov.querySelector(`#capT_${v}_tit`).value.trim();

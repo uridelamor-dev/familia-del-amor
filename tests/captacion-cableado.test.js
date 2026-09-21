@@ -59,13 +59,19 @@ describe("la pantalla de gracias no entrega el código", () => {
     for (const campo of ["codigo", "enlace", "qr:", "url:", "qr.token"]) {
       assert.ok(!respuesta.includes(campo), `la respuesta del alta lleva «${campo}»`);
     }
-    assert.match(respuesta, /token,/, "sí devuelve el token de SEGUIMIENTO");
+    assert.match(respuesta, /token: salida\.seguimiento/,
+      "sí devuelve el token de SEGUIMIENTO, que es con el que la pantalla consulta su estado");
   });
 
   test("el token de seguimiento es distinto del token del cupón", () => {
     // Si fuera el mismo, con él se podría abrir la página del cupón y ver el código.
-    assert.match(alta, /const token = generarToken\(/);
-    assert.ok(!/token: qr\.token/.test(alta), "se está devolviendo el token del cupón");
+    // Se comprueba QUÉ se devuelve y DE DÓNDE sale, no cómo se llama la variable: el nombre
+    // puede cambiar sin que cambie nada, y lo que no puede cambiar es que sea aleatorio.
+    assert.match(alta, /const seguimiento = generarToken\(/,
+      "el token de seguimiento tiene que generarse al azar: es público y se sondea sin sesión");
+    assert.ok(!/token: (qr|salida\.qr)\.token/.test(alta), "se está devolviendo el token del cupón");
+    assert.ok(!/token: `alta:|token: `rec:/.test(alta),
+      "el token de seguimiento no puede ser determinista: se podría componer el de otra persona");
   });
 
   test("la consulta de estado devuelve un estado y nada más", () => {
@@ -96,8 +102,25 @@ describe("un cliente, un solo código", () => {
     const abre = alta.indexOf("if (previo) {", i);
     const rama = alta.slice(abre, alta.indexOf("\n    }", abre));
     assert.match(rama, /ya_registrado: true/, "tiene que salir diciendo que ya está registrado");
-    assert.ok(!/sendMensajeLibre|cap_cola|proEnviarWA|proEmitir/.test(rama),
-      "esa rama no puede emitir ni mandar nada");
+    // ── QUÉ PUEDE Y QUÉ NO PUEDE HACER ESTA RAMA ──────────────────────────────────────────
+    //
+    // NO puede emitir otro código ni mandar nada por su cuenta: un formulario público que
+    // reenvía a quien ya tiene cupón es una forma de hacer que le lleguen mensajes repetidos a
+    // un tercero, escribiendo su número.
+    //
+    // SÍ puede REPARAR: si esa persona tiene su cupón y nunca se le encoló el mensaje, aquí se
+    // encola. No es lo mismo. `capEncolarAlta` es idempotente por identidad (campaña + cupón),
+    // así que insistir no produce un segundo mensaje, y arriba se ha comprobado antes que no
+    // constara ya enviado. El resultado es, como máximo, UN mensaje por persona y campaña — que
+    // es exactamente lo que se le prometió.
+    assert.ok(!/proEmitir|sendMensajeLibre|proEnviarWA/.test(rama),
+      "esa rama no puede emitir un código ni mandar nada directamente");
+    assert.ok(!/INSERT INTO cap_cola/.test(rama),
+      "esa rama no puede escribir en la cola a mano: tiene que pasar por capEncolarAlta, que es " +
+      "el único sitio con la guarda de idempotencia");
+    assert.match(rama, /capEncolarAlta\(/,
+      "si existe el cupón y no consta envío, hay que repararlo aquí: dejarlo pasar es lo que " +
+      "hacía que esa persona no pudiera recuperarse por ningún camino");
     assert.ok(!/codigo|token/.test(rama), "y no puede revelar el código del que ya lo tenía");
   });
 

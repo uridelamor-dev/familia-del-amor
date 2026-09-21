@@ -322,15 +322,33 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
   // WhatsApp — pero no se mandaba nada: solo se enseñaba el enlace en pantalla. Era prometer una
   // cosa y hacer otra, y pedir un teléfono que no se iba a usar.
   const ALTA = ruta('app.post("/api/publico/formulario/:clave"');
-  const cola = ALTA.slice(ALTA.indexOf("// ── 4. EL WHATSAPP QUE SE PROMETIÓ"),
-                          ALTA.indexOf("await ficAuditar"));
+  // El recorte LANZA si el ancla no está. Antes era `slice(indexOf(...), ...)` a secas y, cuando
+  // el comentario que le servía de ancla se reescribió, `indexOf` devolvió -1 y el bloque quedó
+  // casi vacío: ocho aserciones sobre nada. Es el fallo que una auditoría encontró en nueve tests
+  // de esta casa.
+  const desde = (texto, ancla, hasta) => {
+    const i = texto.indexOf(ancla);
+    if (i < 0) throw new Error(`ancla no encontrada: «${ancla}»`);
+    const j = texto.indexOf(hasta, i);
+    if (j < 0) throw new Error(`cierre no encontrado: «${hasta}»`);
+    return texto.slice(i, j);
+  };
+  const cola = desde(ALTA, "// ── 3 y 4. EL CARNÉ Y SU MENSAJE", "await ficAuditar");
 
   test("se encola de verdad, con el enlace del carné", () => {
     assert.match(cola, /INSERT INTO cap_cola \(token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad\)/);
     // PRIORIDAD 0: quien acaba de apuntarse está esperando su código ahora mismo.
     assert.match(cola, /VALUES \(\?,\?,\?,\?,\?,\?,\?,0\)/);
-    assert.match(cola, /const urlCarnet = proEnlace\(req, \{ token, clase: "carnet" \}\)/);
-    assert.match(cola, /fidRender\(f\.mensaje_wa, \{ nombre, enlace: urlCarnet/);
+    // EL ENLACE, POR `proEnlace` Y CON LA FILA DEL QR. Antes se le pasaba un objeto compuesto a
+    // mano (`{ token, clase: "carnet" }`); ahora va la fila entera, que es la que sabe su clase
+    // de verdad. Lo que no cambia —y es lo que hay que blindar— es que la URL salga de ahí y no
+    // se escriba a mano en ningún sitio.
+    assert.match(cola, /enlace: proEnlace\(req, qr\)/,
+      "el enlace del mensaje ya no sale de proEnlace: ahí es donde se decide si va a /cupon.html " +
+      "o a la tarjeta, y escribirlo a mano da un enlace que la tablet de la barra no sabe leer");
+    assert.ok(!/tarjeta\.html\?t=|cupon\.html\?t=/.test(cola),
+      "hay una URL de QR escrita a mano en el alta");
+    assert.match(cola, /fidRender\(f\.mensaje_wa, \{ nombre, enlace: proEnlace/);
   });
 
   test("ES TRANSACCIONAL: no reutiliza ninguna comunicación masiva", () => {
@@ -344,7 +362,7 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
 
   test("LA CLAVE IDEMPOTENTE lleva las cinco cosas que identifican la inscripción", () => {
     // formulario, versión, campaña, teléfono normalizado y carné… más el CICLO.
-    assert.match(cola, /`alta:\$\{clave\}:v\$\{f\.version\}:\$\{f\.campana \|\| clave\}:\$\{tel\}:\$\{qrId\}:c\$\{ciclo\}`/);
+    assert.match(cola, /`alta:\$\{clave\}:v\$\{f\.version\}:\$\{f\.campana \|\| clave\}:\$\{tel\}:\$\{qr\.id\}:c\$\{ciclo\}`/);
     // `tel` ya viene normalizado por `proTel9`, que es el de la casa.
     assert.match(ALTA, /const tel = proTel9\(b\.telefono\);/);
   });
@@ -366,12 +384,12 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
   });
 
   test("si ya había un envío, NO se vuelve a encolar: se mira cómo acabó", () => {
-    assert.match(cola, /const fila = met \|\| await dbGet\(\s*\n?\s*`SELECT id, estado, enviado_en FROM cap_cola WHERE token = \?`/);
+    assert.match(cola, /const fila = met \|\| await x\.get\(\s*\n?\s*`SELECT id, estado, enviado_en FROM cap_cola WHERE token = \?`/);
   });
 
   test("SIN ENLACE DE BAJA NO SALE, aunque sea transaccional", () => {
     // Lleva un descuento dentro: eso lo hace comercial también.
-    assert.match(cola, /if \(urlBaja\) \{/);
+    assert.match(cola, /if \(!urlBaja\) return \{ qr, cola: null, derecho \};/);
     assert.match(cola, /fidConPieBaja\(/);
     assert.match(cola, /INSERT INTO fid_bajas \(token_hash/);
     assert.match(cola, /fidHuellaBaja\(tokenBaja\)/);
@@ -383,7 +401,7 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
   test("VACÍO = NO SE MANDA NADA", () => {
     // Encenderlo en una campaña que no lo prometía enviaría un WhatsApp a quien se apuntó sin
     // que se le dijera que lo recibiría.
-    assert.match(cola, /if \(token && qrId && f\.mensaje_wa\) \{/);
+    assert.match(cola, /if \(!f\.mensaje_wa\) return \{ qr, cola: null, derecho \};/);
     const esquema = readFileSync(new URL("../src/modules/fidelizacion/schema.js", import.meta.url), "utf8");
     assert.ok(esquema.includes('"mensaje_wa TEXT"'), "la columna no es aditiva ni opcional");
     assert.ok(!/mensaje_wa TEXT NOT NULL/.test(esquema), "la columna es obligatoria");
@@ -410,7 +428,7 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
 
   test("un fallo al encolar NO tumba el alta ni pierde el carné", () => {
     assert.match(cola, /catch \(e\) \{/);
-    assert.match(ALTA, /console\.error\(lineaErrorSql\("\[fidelizacion\] encolar alta", e\)\)/);
+    assert.match(ALTA, /console\.error\(lineaErrorSql\("\[fidelizacion\] carné y mensaje del alta", e\)\)/);
   });
 
   test("RECIÉN ENCOLADO ES «PENDIENTE», nunca «enviado»", () => {

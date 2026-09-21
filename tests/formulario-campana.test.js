@@ -278,8 +278,14 @@ describe("lo que se guarda", () => {
 
   test("un envío repetido no crea una segunda cuenta ni un segundo carné", () => {
     assert.match(POST, /SELECT id, nombre FROM leads WHERE telefono = \?/);
-    assert.match(POST, /if \(!token\) \{/);
-    assert.match(POST, /SELECT id, token FROM pro_qr WHERE clase = 'carnet' AND telefono = \?/);
+    // El carné se REUTILIZA si ya existe y solo se emite si no hay ninguno. Antes era
+    // `if (!token) { … proEmitir }`; ahora la misma decisión, en una línea y dentro de la
+    // transacción: `previoQr || await proEmitir(...)`.
+    assert.match(POST, /previoQr \|\| await proEmitir\(/,
+      "el alta tiene que reutilizar el carné existente y emitir solo si no hay ninguno");
+    // La consulta trae ahora también `clase` y `nombre`: `proEnlace` necesita la clase para
+    // decidir a dónde apunta el enlace, y el nombre va en el saludo del mensaje.
+    assert.match(POST, /SELECT id, token, clase, nombre FROM pro_qr\s+WHERE clase = 'carnet' AND telefono = \?/);
   });
 
   test("y el carné se emite con la función de siempre, no con un camino nuevo", () => {

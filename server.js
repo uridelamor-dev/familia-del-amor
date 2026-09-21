@@ -209,7 +209,7 @@ import { estadoCampana, admiteAltas, textoEstadoCampana, urlCampana,
 import { trasIntento, cuantasSacar as capCuantasSacar, estadoParaCliente, MAX_INTENTOS,
          cupoPorPrioridad as capCupoPorPrioridad, hayCupoParaAlgo as capHayCupo }
   from "./src/modules/captacion/cola.js";
-import { elegirIdioma, textosDe, textoWhatsApp as capTextoWA,
+import { elegirIdioma, textosDe, textoWhatsApp as capTextoWA, plantillaWhatsApp as capPlantillaWA,
          telefonoBonito } from "./src/modules/captacion/mensaje.js";
 import { estadoDe, accionesPermitidas, evaluar as evaluarFichaje, calcularJornada, faltaLaSalida } from "./src/modules/fichajes/maquina.js";
 import { validarFormatoPin, estadoBloqueo, trasFallo as pinTrasFallo, trasAcierto as pinTrasAcierto } from "./src/modules/fichajes/pin.js";
@@ -10950,8 +10950,18 @@ async function fidCarnetPorId(id) {
 const diasEntreISO = (a, b) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 86400000);
 
 /** La base pública de los enlaces que se mandan al cliente. */
+/**
+ * La base de las URL públicas.
+ *
+ * `req` puede ser NULO: el reconciliador de la cola compone enlaces desde un temporizador, donde
+ * no hay ninguna petición de la que sacar el host. Antes esto reventaba con `req.protocol` de
+ * `null`, así que cualquier camino sin petición no podía componer un enlace — y componerlo a mano
+ * en ese caso habría sido un segundo sitio donde escribir la URL del QR.
+ */
 const proBase = (req) =>
-  (process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+  (process.env.PUBLIC_URL
+    || (req ? `${req.protocol}://${req.get("host")}` : "")
+    || "https://familiadelamor.org").replace(/\/$/, "");
 
 const proUrl = (req, token) => `${proBase(req)}/cupon.html?t=${token}`;
 
@@ -11000,13 +11010,19 @@ const proEnlace = (req, qr) =>
  * combinaciones la colisión es rarísima, pero «rarísima» y «no puede pasar» son cosas
  * distintas, y dos cupones con el mismo código se canjearían el uno al otro.
  */
-async function proEmitir({ clase, promocionId = null, telefono = "", nombre = "", caducaEn = null, usosMax = 1, autor = "", origen = "panel", localAlta = null, tirada = null }) {
+async function proEmitir({ clase, promocionId = null, telefono = "", nombre = "", caducaEn = null, usosMax = 1, autor = "", origen = "panel", localAlta = null, tirada = null, cliente = null }) {
+  // `cliente` es el de una transacción abierta, y por defecto no hay ninguno: los ocho sitios que
+  // ya llamaban a esto siguen emitiendo exactamente igual. Lo necesita el alta, donde emitir el
+  // código y encolar su mensaje tienen que ser la MISMA escritura: si se separan, un fallo entre
+  // las dos deja a alguien con su código emitido y sin nada que enviarle, que es el estado que no
+  // se detecta solo.
+  const correr = cliente ? (q, p) => cliente.run(q, p) : dbRun;
   const ahora = new Date().toISOString();
   for (let intento = 0; intento < 5; intento++) {
     const token = generarToken((n) => crypto.randomBytes(n));
     const codigo = proGenerarCodigo((n) => crypto.randomBytes(n));
     try {
-      return await dbRun(
+      return await correr(
         `INSERT INTO pro_qr (clase, token, codigo, promocion_id, telefono, nombre, usos_max, caduca_en, creado_en, creado_por, origen, local_alta, tirada)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *`,
         [clase, token, codigo, promocionId, proTel9(telefono), String(nombre || "").slice(0, 80),
@@ -12077,119 +12093,115 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
         [tel, f.idioma || null, ahora]);
     });
 
-    // 3. EL CARNÉ. Se reutiliza el que ya tenga; solo se crea si no hay ninguno.
-    let token = null, qrId = null;
+    // ── 3 y 4. EL CARNÉ Y SU MENSAJE, EN UNA SOLA ESCRITURA ────────────────────────────────────
+    //
+    // Antes eran tres escrituras sueltas —carné, derecho y cola— cada una con su `try` que se
+    // tragaba el error. Si la de la cola reventaba, la respuesta seguía siendo 200: el cliente
+    // veía su pantalla de gracias, el alta quedaba guardada, el carné emitido, y el mensaje no
+    // existía. No era un fallo que nadie pudiera ver, porque no quedaba fila que mirar.
+    //
+    // Ahora van juntas. Dentro de la transacción SOLO hay PostgreSQL: el enlace de baja, la base
+    // pública y el recuento de ciclos se resuelven ANTES, y el envío de verdad sigue siendo del
+    // worker. Una transacción abierta esperando a un socket de WhatsApp es una transacción que se
+    // queda abierta cuando el socket no contesta.
+    //
+    // Y si toda la escritura se cae, esta persona se queda sin carné —visible en su pantalla, que
+    // no le ofrece enlace— y puede volver a rellenar el formulario, que reutiliza lo que haya.
+    // Es un estado que se arregla solo; el anterior no.
+    const base = await baseEnlaces(req);
+    const previoQr = await dbGet(`SELECT id, token, clase, nombre FROM pro_qr
+                                   WHERE clase = 'carnet' AND telefono = ? AND anulado_en IS NULL
+                                   ORDER BY id DESC LIMIT 1`, [tel]);
+    // `ciclo` = cuántas veces ha pedido la baja. Distingue «volver a apuntarse» de «pulsar dos
+    // veces», que es justo la diferencia que hay que hacer: recargar no cambia el ciclo, darse de
+    // baja sí. Es una LECTURA, así que va fuera.
+    const ciclo = Number((await dbGet(
+      `SELECT COUNT(*)::int AS n FROM fid_bajas
+        WHERE ${MATCH_TEL9("telefono")} AND confirmado_en IS NOT NULL`, [tel]))?.n || 0);
+
+    let token = null, qrId = null, enCola = null, derechoNuevo = false;
     try {
-      const qr = await dbGet(`SELECT id, token FROM pro_qr WHERE clase = 'carnet' AND telefono = ?
-                              AND anulado_en IS NULL ORDER BY id DESC LIMIT 1`, [tel]);
-      token = qr ? qr.token : null; qrId = qr ? qr.id : null;
-      if (!token) {
-        // La MISMA función que emite cualquier carné del panel: reintento del código de ocho
-        // dígitos incluido. Un segundo camino para crear carnés sería un segundo sitio donde
-        // equivocarse con la unicidad del token.
-        const nuevo = await proEmitir({ clase: "carnet", telefono: tel, nombre,
-          usosMax: 0, autor: "publico", origen: `form:${clave}` });
-        token = nuevo?.token || null; qrId = nuevo?.id || null;
-      }
-    } catch (e) { console.error(lineaErrorSql("[fidelizacion] carnet alta", e)); }
+      const r = await fidTransaccion(async (x) => {
+        // EL CARNÉ. Se reutiliza el que ya tenga; solo se crea si no hay ninguno. La MISMA
+        // función que emite cualquier carné del panel, ahora dentro de esta escritura: un segundo
+        // camino para crear carnés sería un segundo sitio donde equivocarse con la unicidad.
+        const qr = previoQr || await proEmitir({ clase: "carnet", telefono: tel, nombre,
+          usosMax: 0, autor: "publico", origen: `form:${clave}`, cliente: x });
+        if (!qr) return { qr: null, cola: null, derecho: false };
 
-    // ── 3 bis. EL DERECHO A LA PROMOCIÓN VINCULADA ─────────────────────────────────────────────
-    //
-    // SOLO si ESTE formulario tiene una promoción vinculada a mano desde el panel. Sin vínculo no
-    // se otorga nada, y NUNCA se busca una promoción «que se llame parecido»: la clave de un
-    // formulario y el código de una promoción del TPV pueden parecerse, y parecerse no es ser.
-    //
-    // Esto NO mueve ningún saldo ni enciende ningún interruptor: escribe una fila que dice «esta
-    // persona tiene derecho a esta promoción». Quien decide si se la lleva es la elegibilidad, y
-    // quien la gasta es el cierre de factura.
-    //
-    // ── POR QUÉ NO DUPLICA ────────────────────────────────────────────────────────────────────
-    //
-    // `clave_idem` lleva la promoción y el carné, y es UNIQUE. Recargar la página, enviar dos
-    // veces, o volver a apuntarse después de una baja dan la misma clave y el `ON CONFLICT DO
-    // NOTHING` no escribe nada. Es a propósito: el derecho es «una vez por persona», no «una vez
-    // por envío». Quien ya se lo ganó y no lo ha gastado, lo conserva; quien ya lo gastó no
-    // consigue otro volviéndose a apuntar.
-    //
-    // Y si falla, el alta NO se cae: la persona queda apuntada y con su carné, que es lo que se le
-    // prometió. El derecho se puede añadir después desde el panel; al revés no tiene arreglo.
-    if (f.promo_clave && qrId) {
-      try {
-        await dbRun(
-          `INSERT INTO fid_promo_derechos (clave, qr_id, origen, clave_idem, concedido_en, concedido_por)
-           VALUES (?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING`,
-          [f.promo_clave, qrId, `form:${clave}`,
-           `derecho:${f.promo_clave}:${qrId}`, ahora, "publico"]);
-        // Si acaba de ganarse un regalo y tiene el pase en el móvil, que se le note. Va aquí,
-        // después de la escritura y sin `await`: el alta no puede depender de esto.
-        marcarPaseActualizado(qrId, "derecho").catch(() => {});
-      } catch (e) { console.error(lineaErrorSql("[fidelizacion] derecho alta", e)); }
-    }
+        // EL DERECHO A LA PROMOCIÓN VINCULADA, solo si este formulario tiene una a mano. Sin
+        // vínculo no se otorga nada, y NUNCA se busca una que «se llame parecido»: la clave de un
+        // formulario y el código de una promoción del TPV pueden parecerse, y parecerse no es ser.
+        //
+        // No mueve ningún saldo ni enciende ningún interruptor: escribe una fila que dice «esta
+        // persona tiene derecho a esta promoción». `clave_idem` es UNIQUE, así que recargar,
+        // enviar dos veces o volver tras una baja dan la misma clave y no escriben nada: el
+        // derecho es «una vez por persona», no «una vez por envío».
+        let derecho = false;
+        if (f.promo_clave) {
+          const d = await x.run(
+            `INSERT INTO fid_promo_derechos (clave, qr_id, origen, clave_idem, concedido_en, concedido_por)
+             VALUES (?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING RETURNING id`,
+            [f.promo_clave, qr.id, `form:${clave}`,
+             `derecho:${f.promo_clave}:${qr.id}`, ahora, "publico"]);
+          derecho = !!d;
+        }
 
-    // ── 4. EL WHATSAPP QUE SE PROMETIÓ ─────────────────────────────────────────────────────────
-    //
-    // El formulario dice «rebràs el codi al teu telèfon» y exige que el número tenga WhatsApp.
-    // Hasta ahora no se mandaba nada: solo se enseñaba el enlace en pantalla. Eso era prometer
-    // una cosa y hacer otra —y pedir un teléfono que no se iba a usar—.
-    //
-    // ES TRANSACCIONAL, NO COMERCIAL. Va a su propia fila de `cap_cola` con su propia clave; NO
-    // se reutiliza ninguna comunicación masiva. Mezclarlos habría hecho que pausar una campaña
-    // dejara sin su código a quien acababa de apuntarse.
-    //
-    // ── LA CLAVE IDEMPOTENTE ───────────────────────────────────────────────────────────────────
-    //
-    // `alta:<clave>:v<version>:<campaña>:<tel9>:<qr>`. Lleva las cinco cosas que identifican ESTA
-    // inscripción, y `cap_cola.token` es único, así que `ON CONFLICT DO NOTHING` hace el trabajo:
-    // pulsar dos veces, recargar o reenviar el POST da la misma fila. No hay contador que
-    // incrementar ni carrera que perder — lo resuelve la base, que es donde se resuelve bien.
-    let enCola = null;
-    if (token && qrId && f.mensaje_wa) {
-      try {
-        const urlCarnet = proEnlace(req, { token, clase: "carnet" });
+        // VACÍO = NO SE MANDA NADA. Un formulario que no prometió mensaje no lo manda, y esto es
+        // lo que lo respeta.
+        if (!f.mensaje_wa) return { qr, cola: null, derecho };
+
         const tokenBaja = fidNuevoTokenBaja();
-        const urlBaja = fidEnlaceBaja(await baseEnlaces(req), tokenBaja);
+        const urlBaja = fidEnlaceBaja(base, tokenBaja);
         // Sin enlace de baja NO SALE. Un mensaje del que no se puede uno bajar no se manda,
         // aunque sea transaccional: lleva un descuento dentro y eso lo hace comercial también.
-        if (urlBaja) {
-          await dbRun(
-            `INSERT INTO fid_bajas (token_hash, telefono, comunicacion_id, campana, creado_en)
-             VALUES (?,?,NULL,?,?) ON CONFLICT (token_hash) DO NOTHING`,
-            [fidHuellaBaja(tokenBaja), tel, f.campana || clave, ahora]);
+        if (!urlBaja) return { qr, cola: null, derecho };
 
-          const texto = fidConPieBaja(
-            fidRender(f.mensaje_wa, { nombre, enlace: urlCarnet, fecha: hoyISO(),
-                                      local: f.local || "", premio: "" }),
-            urlBaja, { pie: fidPieBaja(f.idioma) });
+        await x.run(
+          `INSERT INTO fid_bajas (token_hash, telefono, comunicacion_id, campana, creado_en)
+           VALUES (?,?,NULL,?,?) ON CONFLICT (token_hash) DO NOTHING`,
+          [fidHuellaBaja(tokenBaja), tel, f.campana || clave, ahora]);
 
-          // ── EL CICLO, Y POR QUÉ HACE FALTA ──────────────────────────────────────────────
-          //
-          // Sin él, quien se da de baja y VUELVE a apuntarse no recibe nada: la clave llevaba
-          // formulario, versión, campaña, teléfono y carné, y después de una baja las cinco son
-          // LAS MISMAS —el carné se reutiliza a propósito—, así que `DO NOTHING` descartaba el
-          // mensaje en silencio y esa persona se quedaba esperando un código que nunca salía.
-          //
-          // `ciclo` = cuántas veces ha pedido la baja. Distingue «volver a apuntarse» de «pulsar
-          // dos veces», que es justo la diferencia que hay que hacer: recargar no cambia el ciclo,
-          // darse de baja sí.
-          const ciclo = Number((await dbGet(
-            `SELECT COUNT(*)::int AS n FROM fid_bajas
-              WHERE ${MATCH_TEL9("telefono")} AND confirmado_en IS NOT NULL`, [tel]))?.n || 0);
-          const claveIdem = `alta:${clave}:v${f.version}:${f.campana || clave}:${tel}:${qrId}:c${ciclo}`.slice(0, 180);
-          const met = await dbRun(
-            `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad)
-             VALUES (?,?,?,?,?,?,?,0) ON CONFLICT (token) DO NOTHING RETURNING id`,
-            [claveIdem, f.campana || clave, tel, texto, qrId, Date.now(), ahora]);
-          // `met` es null si ya estaba: entonces NO se vuelve a encolar y se mira cómo acabó.
-          const fila = met || await dbGet(
-            `SELECT id, estado, enviado_en FROM cap_cola WHERE token = ?`, [claveIdem]);
-          enCola = fila ? { estado: fila.estado || "pendiente", enviado_en: fila.enviado_en || null } : null;
-        }
-      } catch (e) {
-        // Que falle el encolado NO tumba el alta: la persona ya está dentro y tiene su carné en
-        // pantalla. Se queda sin mensaje, y eso se ve en la lista de inscritos como «sin cola».
-        console.error(lineaErrorSql("[fidelizacion] encolar alta", e));
-      }
+        // EL ENLACE, POR `proEnlace` Y CON LA CLASE DEL QR. Es el único sitio de la casa que
+        // compone la URL de un QR y el que decide entre `/cupon.html` y la tarjeta según el
+        // interruptor. Aquí NO se enciende nada: se respeta lo que haya.
+        const texto = fidConPieBaja(
+          fidRender(f.mensaje_wa, { nombre, enlace: proEnlace(req, qr), fecha: hoyISO(),
+                                    local: f.local || "", premio: "" }),
+          urlBaja, { pie: fidPieBaja(f.idioma) });
+
+        // La clave lleva las seis cosas que identifican ESTA inscripción. Sin el ciclo, quien se
+        // da de baja y VUELVE a apuntarse no recibiría nada: las otras cinco son las mismas —el
+        // carné se reutiliza a propósito— y el `DO NOTHING` descartaría su mensaje en silencio.
+        const claveIdem = `alta:${clave}:v${f.version}:${f.campana || clave}:${tel}:${qr.id}:c${ciclo}`.slice(0, 180);
+        const met = await x.run(
+          `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad)
+           VALUES (?,?,?,?,?,?,?,0) ON CONFLICT (token) DO NOTHING RETURNING id`,
+          [claveIdem, f.campana || clave, tel, texto, qr.id, Date.now(), ahora]);
+        // `met` es null si ya estaba: entonces NO se vuelve a encolar y se mira cómo acabó.
+        const fila = met || await x.get(
+          `SELECT id, estado, enviado_en FROM cap_cola WHERE token = ?`, [claveIdem]);
+        return { qr, cola: fila, derecho };
+      });
+
+      token = r.qr?.token || null;
+      qrId = r.qr?.id || null;
+      derechoNuevo = r.derecho;
+      enCola = r.cola ? { estado: r.cola.estado || "pendiente", enviado_en: r.cola.enviado_en || null } : null;
+    } catch (e) {
+      // Que falle NO tumba el alta: la persona ya está apuntada y con su consentimiento guardado.
+      // Se queda sin carné y sin mensaje, lo ve en su pantalla, y volver a enviar el formulario
+      // lo arregla. El reconciliador de la cola es la segunda red.
+      console.error(lineaErrorSql("[fidelizacion] carné y mensaje del alta", e));
     }
+
+    // Si acaba de ganarse un regalo y tiene el pase en el móvil, que se le note. Va FUERA de la
+    // transacción y sin `await`: toca Wallet, que es otra cosa, y el alta no puede depender de
+    // ello. Si falla, el pase se pondrá al día en la siguiente pasada del reconciliador de Wallet.
+    if (derechoNuevo && qrId) marcarPaseActualizado(qrId, "derecho").catch(() => {});
+
+    // Se despierta al worker sin esperar a la pasada del reloj: casi siempre sale a la primera.
+    if (enCola) capVaciarCola().catch(() => {});
 
     await ficAuditar("fidelizacion", null, "alta_formulario", "publico",
       { detalle: { formulario: clave, version: f.version, comercial, nombre_distinto: avisoNombre,
@@ -14309,10 +14321,30 @@ app.post("/api/captacion", async (req, res) => {
     // el camino equivalente REENVIABA el cupón, lo que convertía un formulario público en una
     // forma de hacer que le llegaran mensajes repetidos a un tercero.
     const previo = await dbGet(
-      `SELECT id FROM pro_qr WHERE promocion_id = ? AND telefono = ? AND anulado_en IS NULL LIMIT 1`,
+      `SELECT id, token, clase, nombre FROM pro_qr WHERE promocion_id = ? AND telefono = ? AND anulado_en IS NULL LIMIT 1`,
       [campana.promo.id, tel]);
     if (previo) {
-      return res.json({ ok: true, ya_registrado: true, titulo: T.ya_registrado_titulo, texto: T.ya_registrado });
+      // ── Y SI YA LO TIENE, ¿LLEGÓ A SALIR? ──────────────────────────────────────────────────
+      //
+      // Antes esto contestaba SIEMPRE «te mandamos tu código en su día, búscalo en tu WhatsApp».
+      // Cuando el encolado se había caído, esa frase era falsa: no había fila que buscar, y el
+      // propio mensaje cerraba la única puerta por la que esa persona podía recuperarse — volver
+      // a rellenar el formulario. Quedaba fuera para siempre sin que nadie se enterara.
+      //
+      // Ahora se mira si consta salida. Si consta, se le dice lo de siempre. Si no, se le repara
+      // el envío aquí mismo, con la clave determinista de siempre: volver a rellenar el
+      // formulario no puede costarle un segundo mensaje a quien ya lo recibió.
+      const fila = await dbGet(
+        `SELECT estado, enviado_en FROM cap_cola WHERE campana = ? AND qr_id = ? ORDER BY id DESC LIMIT 1`,
+        [campana.clave, previo.id]);
+      if (fila && (fila.enviado_en || fila.estado === "enviado")) {
+        return res.json({ ok: true, ya_registrado: true, titulo: T.ya_registrado_titulo, texto: T.ya_registrado });
+      }
+      const rep = await capEncolarAlta({ campana, idioma, qr: previo, telefono, req });
+      return res.json({ ok: true, ya_registrado: true, titulo: T.ya_registrado_titulo,
+        // Si no hay plantilla, la campaña no manda WhatsApp y decir que se está enviando sería
+        // otra mentira, de las mismas: se dice lo de siempre y punto.
+        texto: rep.encolado ? T.gracias_enviando.replace("{telefono}", telefonoBonito(telefono)) : T.ya_registrado });
     }
 
     // ── ¿Ese número tiene WhatsApp? ──────────────────────────────────────────
@@ -14358,35 +14390,57 @@ app.post("/api/captacion", async (req, res) => {
       });
     } catch (e) { console.error("[captacion] consent:", e.message); }
 
-    // ── El cupón y la cola ───────────────────────────────────────────────────
-    const qr = await proEmitir({
-      clase: "cupon", promocionId: campana.promo.id, telefono: tel, nombre,
-      usosMax: 1, autor: `campaña:${campana.clave}`, origen: "campana", localAlta: null });
-
-    const enlace = proUrl(req, qr.token);
-    const texto = capTextoWA({
-      plantilla: textosDe(campana, idioma).wa,
-      nombre, promocion: campana.promo.nombre, enlace,
-      donde: proDondeVale(campana.promo.locales),
+    // ── EL CUPÓN Y SU MENSAJE, EN UNA SOLA ESCRITURA ────────────────────────────────────────
+    //
+    // Emitir y encolar van en la MISMA transacción. Antes eran dos escrituras sueltas y el
+    // `INSERT` de la cola ni siquiera estaba protegido: si reventaba, el cliente recibía un 500
+    // con su lead y su cupón YA creados, y al reintentar la guarda de arriba lo reconocía y le
+    // decía que su código estaba enviado. Ese estado no lo detectaba nada.
+    //
+    // Dentro de la transacción solo hay PostgreSQL. La composición del texto y del enlace se hace
+    // ANTES, y el envío de verdad sigue siendo del worker: una transacción abierta esperando a un
+    // socket de WhatsApp es una transacción que se queda abierta cuando el socket no contesta.
+    const salida = await fidTransaccion(async (x) => {
+      const qr = await proEmitir({
+        clase: "cupon", promocionId: campana.promo.id, telefono: tel, nombre,
+        usosMax: 1, autor: `campaña:${campana.clave}`, origen: "campana", localAlta: null,
+        cliente: x });
+      const enc = capComponerAlta({ campana, idioma, qr, telefono, req });
+      if (!enc) return { qr, encolado: false, seguimiento: null };
+      // EL TOKEN DE SEGUIMIENTO, DISTINTO DEL DEL CUPÓN. Es lo que la pantalla de gracias usa
+      // para preguntar si ya ha salido, y viaja al navegador: por eso es aleatorio y no lleva
+      // dentro nada de la persona ni de su código.
+      const seguimiento = generarToken((n) => crypto.randomBytes(n));
+      // PRIORIDAD 0: esto también es un alta. Quien acaba de rellenar el formulario histórico
+      // está esperando su código igual que quien rellena el configurable; que uno adelante al
+      // otro sería arbitrario. Lo comercial va detrás de los dos.
+      //
+      // Y LA IDEMPOTENCIA, POR IDENTIDAD. No puede ir en el `token` —es público— así que va en el
+      // `WHERE NOT EXISTS`: si esta campaña ya tiene fila para este cupón, no se escribe otra.
+      // Dos peticiones a la vez las resuelve la base, no una comprobación previa.
+      const met = await x.run(
+        `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad)
+         SELECT ?,?,?,?,?,?,?,0
+          WHERE NOT EXISTS (SELECT 1 FROM cap_cola WHERE campana = ? AND qr_id = ?)
+         RETURNING id`,
+        [seguimiento, campana.clave, telefono, enc.texto, qr.id, Date.now(), ahora,
+         campana.clave, qr.id]);
+      return { qr, encolado: true, seguimiento: met ? seguimiento : null };
     });
-
-    const token = generarToken((n) => crypto.randomBytes(n));
-    // PRIORIDAD 0: esto también es un alta. Quien acaba de rellenar el formulario histórico está
-    // esperando su código igual que quien rellena el configurable; que uno adelante al otro sería
-    // arbitrario. Lo comercial va detrás de los dos.
-    await dbRun(
-      `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad)
-       VALUES (?,?,?,?,?,?,?,0)`,
-      [token, campana.clave, telefono, texto, qr.id, Date.now(), ahora]);
 
     // Se intenta ya, sin esperar a la pasada del reloj: casi siempre sale a la primera y así la
     // pantalla de gracias puede decir «ya te ha llegado» en vez de «en unos minutos».
     capVaciarCola().catch(() => {});
 
     res.json({
-      ok: true, token,
+      // El de SEGUIMIENTO. Nunca el del cupón: el código viaja solo por WhatsApp, y eso ES la
+      // validación del teléfono. Hay tests que fallan si esto vuelve a cambiar.
+      ok: true, token: salida.seguimiento,
       titulo: T.gracias_titulo,
-      texto: T.gracias_enviando.replace("{telefono}", telefonoBonito(telefono)),
+      // ENCOLADO NO ES ENVIADO. Si la campaña no manda WhatsApp, no se promete ninguno.
+      texto: salida.encolado
+        ? T.gracias_enviando.replace("{telefono}", telefonoBonito(telefono))
+        : T.gracias_titulo,
     });
   } catch (e) {
     console.error("[captacion] alta:", e.message);
@@ -14418,6 +14472,147 @@ app.get("/api/captacion/estado/:token", async (req, res) => {
     res.status(500).json({ ok: false, error: "No se pudo consultar" });
   }
 });
+
+/**
+ * EL MENSAJE DE UN ALTA, COMPUESTO. Sin base de datos y sin red.
+ *
+ * Se llama ANTES de abrir la transacción, a propósito: componer un texto no es persistir nada, y
+ * meterlo dentro alargaría la transacción sin ganar ni una garantía.
+ *
+ * Devuelve `null` cuando la campaña NO manda WhatsApp. Eso no es un fallo: es una campaña que
+ * entrega su cupón en pantalla y ya está, y forzarle un mensaje genérico sería escribirle a gente
+ * a la que no se le prometió nada.
+ */
+function capComponerAlta({ campana, idioma, qr, telefono, req }) {
+  const p = capPlantillaWA(campana, idioma);
+  if (!p.activo || !String(p.plantilla || "").trim()) return null;
+
+  // EL ENLACE, POR `proEnlace` Y NO A MANO. Es el único sitio de la casa que compone la URL de un
+  // QR y el que decide entre `/cupon.html` y la tarjeta según su CLASE y el interruptor. Antes
+  // aquí se llamaba a `proUrl` directamente, que es la mitad de abajo de esa decisión: funcionaba
+  // porque un cupón va a `/cupon.html` de todas formas, pero se saltaba el invariante y habría
+  // mentido el día que este camino emitiera otra cosa.
+  const texto = capTextoWA({
+    plantilla: p.plantilla,
+    nombre: qr.nombre || "",
+    promocion: campana.promo ? campana.promo.nombre : "",
+    enlace: proEnlace(req, qr),
+    donde: campana.promo ? proDondeVale(campana.promo.locales) : "",
+  });
+
+  // AQUÍ NO SE FABRICA NINGUNA CLAVE, Y ESE ES EL PUNTO.
+  //
+  // `cap_cola.token` del camino clásico es el identificador PÚBLICO con el que la pantalla de
+  // gracias consulta su estado (`GET /api/captacion/estado/:token`). Tiene que ser aleatorio e
+  // inadivinable: una clave determinista como `alta:<campaña>:<cupón>` la puede componer
+  // cualquiera con un número de cupón, y entonces se puede sondear el estado de otros.
+  //
+  // La idempotencia se resuelve por IDENTIDAD —campaña + cupón— en el propio `INSERT`, que es
+  // donde se resuelve bien y sin exponer nada.
+  return { texto };
+}
+
+/**
+ * Encola el mensaje de un alta que YA tiene su cupón. Idempotente, y no manda nada.
+ *
+ * Lo usan los dos caminos que llegan tarde: quien vuelve a rellenar el formulario teniendo ya su
+ * cupón, y el reconciliador. El alta normal NO pasa por aquí —escribe dentro de su transacción—
+ * porque esto es la red de seguridad, no el mecanismo.
+ */
+async function capEncolarAlta({ campana, idioma, qr, telefono, req = null }) {
+  const enc = capComponerAlta({ campana, idioma, qr, telefono, req });
+  if (!enc) return { encolado: false, motivo: "sin_plantilla" };
+  try {
+    const met = await dbRun(
+      `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad)
+       SELECT ?,?,?,?,?,?,?,0
+        WHERE NOT EXISTS (SELECT 1 FROM cap_cola WHERE campana = ? AND qr_id = ?)
+       RETURNING id`,
+      [generarToken((n) => crypto.randomBytes(n)), campana.clave, telefono, enc.texto, qr.id,
+       Date.now(), new Date().toISOString(), campana.clave, qr.id]);
+    capVaciarCola().catch(() => {});
+    return { encolado: true, nueva: !!met };
+  } catch (e) {
+    console.error(lineaErrorSql("[captacion] encolar alta", e));
+    return { encolado: false, motivo: "error" };
+  }
+}
+
+/**
+ * LA SEGUNDA RED: el reconciliador de la cola.
+ *
+ * ── POR QUÉ, SI EL ALTA YA ES ATÓMICA ────────────────────────────────────────────────────────
+ *
+ * Porque lo atómico protege de HOY en adelante, y hay dos cosas que no cubre:
+ *
+ *   1. Lo ya ocurrido. Quien se quedó sin mensaje antes de este arreglo sigue sin él, y no se va
+ *      a arreglar solo por que el código nuevo sea correcto.
+ *   2. Lo excepcional. Una fila borrada a mano, una restauración parcial, un camino futuro que
+ *      emita un cupón sin pasar por aquí.
+ *
+ * Wallet ya tiene el suyo (`walReconciliar`) por el mismo motivo. Captación no lo tenía, y por eso
+ * recuperar dependía de que una persona abriera el panel y pulsara un botón — es decir, de que
+ * alguien se diera cuenta.
+ *
+ * ── LO QUE NO ES ─────────────────────────────────────────────────────────────────────────────
+ *
+ * No es el mecanismo normal. El alta deja su fila en `cap_cola` ANTES de contestar al formulario;
+ * si esto tuviera que encolar algo del día de hoy, es que algo ha ido mal y hay que mirarlo.
+ *
+ * Solo mira los cupones de campaña de los últimos días, en lotes, y solo escribe la fila que
+ * falta. No emite códigos, no toca la identidad de nadie y no manda ningún mensaje: deja la fila
+ * pendiente y el worker de siempre la saca con su ritmo y su tope.
+ */
+const CAP_RECON_DIAS = 30;
+const CAP_RECON_LOTE = 100;
+let capReconciliando = false;
+
+async function capReconciliar() {
+  if (capReconciliando) return { mirados: 0, encolados: 0 };
+  capReconciliando = true;
+  try {
+    const desde = new Date(Date.now() - CAP_RECON_DIAS * 24 * 3600 * 1000).toISOString();
+    // Cupones de campaña, vivos, sin salida registrada y SIN NINGUNA FILA en la cola. El
+    // `NOT EXISTS` es el que define «huérfano»: no es que fallara, es que no hay nada.
+    const huerfanos = await dbAll(
+      `SELECT r.id, r.token, r.clase, r.nombre, r.telefono, r.promocion_id
+         FROM pro_qr r
+        WHERE r.origen = 'campana' AND r.clase = 'cupon'
+          AND r.anulado_en IS NULL AND r.enviado_en IS NULL
+          AND r.creado_en >= ?
+          AND NOT EXISTS (SELECT 1 FROM cap_cola q WHERE q.qr_id = r.id)
+        ORDER BY r.id DESC LIMIT ?`, [desde, CAP_RECON_LOTE]) || [];
+    if (!huerfanos.length) return { mirados: 0, encolados: 0 };
+
+    let encolados = 0;
+    // Las campañas se resuelven una vez por promoción, no una por cupón.
+    const porPromo = new Map();
+    for (const qr of huerfanos) {
+      if (!porPromo.has(qr.promocion_id)) {
+        porPromo.set(qr.promocion_id, await dbGet(
+          `SELECT * FROM cap_campanas WHERE promocion_id = ? ORDER BY creado_en DESC LIMIT 1`,
+          [qr.promocion_id]));
+      }
+      const c = porPromo.get(qr.promocion_id);
+      if (!c) continue;                                  // cupón sin campaña: no hay qué componer
+      const campana = { ...c, promo: await dbGet(`SELECT * FROM pro_promociones WHERE id = ?`, [c.promocion_id]) };
+      if (!campana.promo) continue;
+      const r = await capEncolarAlta({ campana, idioma: campana.idioma || "es", qr,
+                                       telefono: qr.telefono, req: null });
+      if (r.encolado && r.nueva) encolados += 1;
+    }
+    if (encolados) {
+      console.warn(`[captacion] reconciliador: ${encolados} altas sin mensaje, encoladas. ` +
+                   `El flujo normal debería haberlas dejado ya en la cola: conviene mirar por qué no.`);
+    }
+    return { mirados: huerfanos.length, encolados };
+  } catch (e) {
+    console.error(lineaErrorSql("[captacion] reconciliador", e));
+    return { mirados: 0, encolados: 0, error: true };
+  } finally {
+    capReconciliando = false;
+  }
+}
 
 // ── La cola ──────────────────────────────────────────────────────────────────
 /**
@@ -23400,6 +23595,9 @@ const server = app.listen(PORT, async () => {
   // llegaría: media hora de retraso ya es una promesa rota. La pasada no hace nada si WhatsApp
   // está caído, así que un despliegue no pierde nada — se recupera solo al reconectar.
   setInterval(() => { capVaciarCola().catch(() => {}); }, 30 * 1000);
+  // La segunda red, cada cinco minutos y con el mismo ritmo que la de Wallet. No es el mecanismo
+  // normal: si encuentra algo del día de hoy, es que el alta no dejó su fila y hay que mirarlo.
+  setInterval(() => { capReconciliar().catch(() => {}); }, 5 * 60 * 1000);
 
   // La cola de avisos a Wallet. Mismo ritmo que la de captación y el MISMO patrón: una tabla con
   // estado, intentos y próximo intento, y un timer que la vacía. Con los avisos apagados —que es

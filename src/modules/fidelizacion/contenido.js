@@ -330,12 +330,22 @@ export function formularioAbierto(cfg, { fechaMadrid }) {
  */
 export const VARIABLES = Object.freeze(["nombre", "enlace", "fecha", "local", "premio"]);
 
+/**
+ * Cuánto puede medir CADA variable.
+ *
+ * `enlace` tiene su propio largo porque no es un nombre: es una URL, y recortarla no la acorta
+ * —la ROMPE—. Medido: el enlace de producción son 85 caracteres y el del entorno de Replit 111,
+ * así que con los 120 de un nombre quedaban NUEVE de margen. El día que el dominio creciera, el
+ * cliente habría recibido un enlace muerto y nadie lo habría notado hasta que alguien se quejara.
+ */
+const LARGO_VARIABLE = Object.freeze({ enlace: LARGOS.url });
+
 export function renderPlantilla(plantilla, ctx) {
   const base = textoSeguro(plantilla, LARGOS.parrafo);
   return base.replace(/\{([a-z_]+)\}/g, (entera, clave) => {
     if (!VARIABLES.includes(clave)) return entera;        // se queda a la vista, sin sustituir
     const v = ctx ? ctx[clave] : null;
-    return v === null || v === undefined ? "" : textoSeguro(v, LARGOS.nombre);
+    return v === null || v === undefined ? "" : textoSeguro(v, LARGO_VARIABLE[clave] || LARGOS.nombre);
   });
 }
 
