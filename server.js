@@ -165,7 +165,8 @@ import { fechaNacimientoValida as fidFechaNac } from "./src/modules/captacion/mu
 import { ESTADOS as REC_ESTADOS, ETIQUETAS as REC_ETIQUETAS, claveRecuperacion,
          clasificar as recClasificar, censar as recCensar, motivoParada as recMotivoParada,
          aQuienAlcanza as recAQuienAlcanza, accionValida as recAccionValida,
-         telefonoValido as recTelValido } from "./src/modules/captacion/recuperacion.js";
+         telefonoValido as recTelValido, GATE_HISTORICO as CAP_GATE_HISTORICO,
+         historicoAbierto as recHistoricoAbierto } from "./src/modules/captacion/recuperacion.js";
 /** Cuánto se reserva una fila mientras se manda. Si el proceso muere, vence sola. */
 const CAP_ARRIENDO_MS = 120000;
 import { estadoEntrega as insEntrega, estadoConsentimiento as insConsent,
@@ -14567,10 +14568,34 @@ const CAP_RECON_DIAS = 30;
 const CAP_RECON_LOTE = 100;
 let capReconciliando = false;
 
+/**
+ * ── LA PUERTA DE LA RECUPERACIÓN HISTÓRICA, Y POR QUÉ NACE CERRADA ──────────────────────────
+ *
+ * El reconciliador arregla dos cosas distintas y solo una de ellas es urgente:
+ *
+ *   A) que las altas NUEVAS lleguen. Eso NO pasa por aquí: el alta escribe su fila dentro de su
+ *      propia transacción, antes de contestar al formulario. Esta puerta no la toca.
+ *   B) recuperar altas VIEJAS. Eso sí pasa por aquí, y significa escribirle hoy a gente que se
+ *      apuntó hace semanas, a una campaña que puede haber terminado.
+ *
+ * Si naciera abierta, el primer Publish mezclaría las dos: a los cinco minutos empezarían a salir
+ * mensajes de campañas antiguas sin que nadie hubiera decidido mandarlos. Un despliegue no puede
+ * escribirle a nadie por su cuenta.
+ *
+ * Cerrada, el reconciliador SIGUE MIRANDO y sigue contando —el censo sale gratis— pero no escribe
+ * ni una fila. Se abre a mano, después de mirar a cuánta gente afecta:
+ *
+ *     POST /api/captacion/reconciliar/historico  { activo: true }   (solo dirección)
+ */
+let capAvisoHistorico = false;
+
 async function capReconciliar() {
-  if (capReconciliando) return { mirados: 0, encolados: 0 };
+  if (capReconciliando) return { mirados: 0, encolados: 0, gate: false };
   capReconciliando = true;
   try {
+    // FALLA CERRADO. Si la lectura de la configuración revienta, `null !== "1"` y no se escribe
+    // nada: una base que no contesta no puede ser motivo para mandar mensajes.
+    const abierto = recHistoricoAbierto(await getConfig(CAP_GATE_HISTORICO).catch(() => null));
     const desde = new Date(Date.now() - CAP_RECON_DIAS * 24 * 3600 * 1000).toISOString();
     // Cupones de campaña, vivos, sin salida registrada y SIN NINGUNA FILA en la cola. El
     // `NOT EXISTS` es el que define «huérfano»: no es que fallara, es que no hay nada.
@@ -14582,7 +14607,22 @@ async function capReconciliar() {
           AND r.creado_en >= ?
           AND NOT EXISTS (SELECT 1 FROM cap_cola q WHERE q.qr_id = r.id)
         ORDER BY r.id DESC LIMIT ?`, [desde, CAP_RECON_LOTE]) || [];
-    if (!huerfanos.length) return { mirados: 0, encolados: 0 };
+    if (!huerfanos.length) return { mirados: 0, encolados: 0, gate: abierto };
+
+    // ── CON LA PUERTA CERRADA: SE MIRA, SE CUENTA, NO SE ESCRIBE ──────────────────────────────
+    //
+    // Se avisa UNA vez por arranque y no cada cinco minutos: un aviso que sale 288 veces al día
+    // deja de leerse, y este dice algo que hay que decidir, no vigilar.
+    if (!abierto) {
+      if (!capAvisoHistorico) {
+        capAvisoHistorico = true;
+        console.warn(
+          `[captacion] hay ${huerfanos.length} altas de los últimos ${CAP_RECON_DIAS} días con ` +
+          `código y sin mensaje en la cola. La recuperación histórica está APAGADA: no se ha ` +
+          `encolado nada. Para verlas: node tools/censo-campana.mjs --descubrir`);
+      }
+      return { mirados: huerfanos.length, encolados: 0, gate: false };
+    }
 
     let encolados = 0;
     // Las campañas se resuelven una vez por promoción, no una por cupón.
@@ -14605,10 +14645,10 @@ async function capReconciliar() {
       console.warn(`[captacion] reconciliador: ${encolados} altas sin mensaje, encoladas. ` +
                    `El flujo normal debería haberlas dejado ya en la cola: conviene mirar por qué no.`);
     }
-    return { mirados: huerfanos.length, encolados };
+    return { mirados: huerfanos.length, encolados, gate: true };
   } catch (e) {
     console.error(lineaErrorSql("[captacion] reconciliador", e));
-    return { mirados: 0, encolados: 0, error: true };
+    return { mirados: 0, encolados: 0, gate: false, error: true };
   } finally {
     capReconciliando = false;
   }
@@ -15095,6 +15135,31 @@ app.post("/api/captacion/pixel", requireAuth(["direccion"]), async (req, res) =>
 });
 
 /** El interruptor de pánico de la cola. Para de mandar sin tocar nada más. */
+/**
+ * ABRIR O CERRAR LA RECUPERACIÓN HISTÓRICA.
+ *
+ * Solo dirección, y queda escrito quién lo hizo: abrirla significa que en los cinco minutos
+ * siguientes saldrán mensajes a gente que se apuntó hace semanas. No es una preferencia, es una
+ * decisión sobre a quién se le escribe.
+ *
+ * Devuelve SIEMPRE cuántos hay esperando, abierta o cerrada, para poder mirarlo antes de decidir.
+ */
+app.post("/api/captacion/reconciliar/historico", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const activo = req.body?.activo === true;
+    await setConfig(CAP_GATE_HISTORICO, activo ? "1" : "0");
+    capAvisoHistorico = false;                 // que vuelva a avisar si se cierra y se reabre
+    await ficAuditar("captacion", null, "reconciliar_historico", req.user.username,
+      { detalle: { activo } });
+    // Una pasada inmediata: si se acaba de abrir, empieza ya; si se acaba de cerrar, solo cuenta.
+    const r = await capReconciliar();
+    res.json({ ok: true, activo, esperando: r.mirados, encolados: r.encolados });
+  } catch (e) {
+    console.error(lineaErrorSql("[captacion] gate histórico", e));
+    res.status(500).json({ ok: false, error: "No se pudo cambiar" });
+  }
+});
+
 app.post("/api/captacion/cola/parada", requireAuth(["direccion"]), async (req, res) => {
   try {
     const parada = !!req.body?.parada;

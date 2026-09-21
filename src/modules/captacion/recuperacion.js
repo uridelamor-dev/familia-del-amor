@@ -191,6 +191,24 @@ export function aQuienAlcanza(accion, destinatarios = []) {
   return destinatarios.filter((d) => clasificar(d) === quiero);
 }
 
+/**
+ * LA PUERTA DE LA RECUPERACIÓN HISTÓRICA.
+ *
+ * Arreglar las altas NUEVAS y recuperar las VIEJAS son dos cosas distintas, y solo la primera
+ * puede ocurrir sola. La segunda significa escribirle hoy a gente que se apuntó hace semanas, y
+ * eso no lo puede decidir un despliegue: lo decide una persona, después de mirar a cuántos
+ * afecta.
+ *
+ * ── FALLA CERRADO, POR CONSTRUCCIÓN ─────────────────────────────────────────────────────────
+ *
+ * Solo la cadena exacta `"1"` abre. Ausente, vacía, `"0"`, `"true"`, `"si"`, un objeto o un error
+ * de lectura dan todos lo mismo: cerrado. No hay ninguna entrada rara que pueda abrirla por
+ * accidente, y esa es la propiedad que hace que el valor por defecto —que es no tener valor— sea
+ * el seguro.
+ */
+export const GATE_HISTORICO = "captacion_reconciliar_historico";
+export const historicoAbierto = (valor) => valor === "1";
+
 /** Las dos acciones que existen. Cualquier otra cosa no se ejecuta. */
 export const ACCIONES = Object.freeze(["pendientes", "reintentar"]);
 export const accionValida = (a) => ACCIONES.includes(String(a || ""));

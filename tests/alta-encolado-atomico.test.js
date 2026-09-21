@@ -24,32 +24,45 @@ import { plantillaWhatsApp, textoWhatsApp } from "../src/modules/captacion/mensa
 const SERVER = readFileSync(new URL("../server.js", import.meta.url), "utf8");
 
 /**
- * Extrae un bloque contando llaves. LANZA si el ancla no está, en vez de aprobar el vacío.
+ * El cuerpo de un bloque, contando llaves desde su ancla. LANZA si el ancla no está.
  *
- * La llave del CUERPO no es siempre la primera: `function f({ a, b }) {` abre una antes, la del
- * destructuring de los parámetros. Si se cuenta esa, el bloque se cierra en la lista de
- * argumentos y las aserciones caen sobre nada — que es la clase de falso negativo que este
- * fichero existe para no tener. Se busca la primera llave que esté FUERA de paréntesis.
+ * ── DÓNDE EMPIEZA EL CUERPO, QUE NO ES OBVIO ────────────────────────────────────────────────
+ *
+ * Hay dos formas y las dos aparecen en `server.js`:
+ *   · `function f({ a, b }) { … }` — la primera llave es el destructuring, no el cuerpo.
+ *   · `app.post("/x", auth, async (q, r) => { … })` — la del cuerpo va DENTRO de los paréntesis
+ *     de `app.post(`, así que nunca está a profundidad cero de paréntesis.
+ *
+ * Una versión anterior buscaba «la primera llave a profundidad cero» y en el segundo caso no la
+ * encontraba: devolvía entonces el RESTO DEL FICHERO. Las aserciones seguían pasando, porque
+ * encontraban lo que buscaban en cualquier otro sitio, y dos mutaciones deliberadas se colaron
+ * sin que nadie se enterara. Por eso se busca primero la flecha.
  */
 function bloque(texto, ancla) {
   const i = texto.indexOf(ancla);
   if (i === -1) throw new Error(`ancla no encontrada: «${ancla}»`);
-  let par = 0, abre = -1;
-  for (let k = i; k < texto.length; k++) {
-    const c = texto[k];
-    if (c === "(") par++;
-    else if (c === ")") par--;
-    else if (c === "{" && par === 0) { abre = k; break; }
+  const flecha = texto.slice(i, i + 400).search(/=>\s*\{/);
+  let abre = -1;
+  if (flecha >= 0) {
+    abre = texto.indexOf("{", i + flecha);
+  } else {
+    let par = 0;
+    for (let k = i; k < texto.length; k++) {
+      const c = texto[k];
+      if (c === "(") par += 1;
+      else if (c === ")") par -= 1;
+      else if (c === "{" && par === 0) { abre = k; break; }
+    }
   }
-  if (abre === -1) throw new Error(`no hay cuerpo tras «${ancla}»`);
+  if (abre === -1) throw new Error(`no se encuentra el cuerpo de «${ancla}»`);
   let prof = 0, j = abre;
-  for (; j < texto.length; j++) {
-    if (texto[j] === "{") prof++;
-    else if (texto[j] === "}") { prof--; if (prof === 0) { j++; break; } }
+  for (; j < texto.length; j += 1) {
+    if (texto[j] === "{") prof += 1;
+    else if (texto[j] === "}") { prof -= 1; if (prof === 0) { j += 1; break; } }
   }
+  if (prof !== 0) throw new Error(`bloque sin cerrar en «${ancla}»`);
   return texto.slice(i, j);
 }
-
 const ALTA_CLASICA = bloque(SERVER, 'app.post("/api/captacion", async');
 const ALTA_FORM = bloque(SERVER, 'app.post("/api/publico/formulario/:clave"');
 const RECONCILIADOR = bloque(SERVER, "async function capReconciliar()");
