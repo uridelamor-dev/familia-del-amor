@@ -11347,7 +11347,7 @@ function renderFidgListaSimple(lista, que, accion, etiqueta, ordenable = false, 
   // cliente que ya se apuntó podría recibirlo otra vez por haber movido los apellidos.
   const filas = (lista || []).map((x) => fgFila(
     `<div class="t1">${esc(x.titulo || x.clave || ("Versión " + x.version))} <span class="mut">v${x.version}</span></div><div class="mut" style="font-size:12px">${esc(String(x.creado_en || "").slice(0, 10))} · ${esc(x.creado_por || "")}</div>`,
-    `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${(x.estado === "publicado" || x.estado === "publicada") ? "ok" : ""}">${esc(x.estado)}</span>${ordenable && x.estado !== "cerrado" ? `<button class="btn sm" data-act="fidg-orden" data-id="${x.id}">Cambiar el orden</button>` : ""}<button class="btn sm" data-act="${accion}" data-id="${x.id}">${(x.estado === "borrador") ? "Seguir editando" : verbo}</button></span>`)).join("");
+    `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${(x.estado === "publicado" || x.estado === "publicada") ? "ok" : ""}">${esc(x.estado)}</span>${ordenable && x.estado !== "cerrado" ? `<button class="btn sm" data-act="fidg-orden" data-id="${x.id}">Cambiar el orden</button>` : ""}${x.estado === "publicado" && x.clave ? `<button class="btn sm" data-act="fidg-recup" data-clave="${esc(x.clave)}">Ver recuperación</button>` : ""}<button class="btn sm" data-act="${accion}" data-id="${x.id}">${(x.estado === "borrador") ? "Seguir editando" : verbo}</button></span>`)).join("");
   return `<div style="margin-bottom:10px"><button class="btn primary sm" data-act="${accion}">${esc(etiqueta)}</button></div>
     <div class="rows">${filas || `<div class="mut">Todavía no hay ningún ${que}.</div>`}</div>`;
 }
@@ -12031,6 +12031,96 @@ const FIDG_CAMPOS = [["nombre", "Nombre"], ["apellidos", "Apellidos"], ["telefon
  * Nunca se usan los dos: si hay una versión, MANDA LA VERSIÓN —sobrescribir con una plantilla lo
  * que alguien ya escribió es justo lo que no puede hacer un botón de «crear propuesta»—.
  */
+/**
+ * VER A CUÁNTA GENTE ALCANZARÍA LA RECUPERACIÓN. Solo lee.
+ *
+ * Existe porque el número hay que mirarlo ANTES, y hay que mirarlo desde aquí: la Shell de Replit
+ * puede estar apuntando a otra base, y ya pasó. El panel habla con la misma base que la
+ * aplicación, así que estos números son los de producción o no son nada.
+ */
+async function fidgRecuperacion(clave) {
+  if (!clave) return;
+  let d;
+  try { d = await apiRaw(`/api/fidelizacion/formularios/${encodeURIComponent(clave)}/recuperacion`); }
+  catch (e) { return toast("Error: " + e.message); }
+  const ov = modal(`Recuperar la entrega de «${clave}»`, fidgRecupCuerpo(clave, d));
+  ov.setAttribute("data-recup", clave);
+}
+
+function fidgRecupCuerpo(clave, d) {
+  const c = d.censo || {}, f = d.frenos || {}, form = d.formulario;
+  const n = (k) => num(Number(c[k] || 0));
+  const fila = (etiqueta, valor, color) =>
+    `<tr><td>${esc(etiqueta)}</td><td class="r tnum"${color ? ` style="color:var(--${color})"` : ""}>${valor}</td></tr>`;
+
+  // Si el formulario no tiene mensaje, no hay nada que mandar y el botón no debe existir.
+  const sinMensaje = !form || !form.tiene_mensaje;
+  const aviso = sinMensaje
+    ? `<div class="pendingblock" style="margin-bottom:12px;padding:10px 12px;font-size:12.5px">
+         Este formulario <b>no tiene mensaje configurado</b>, así que no hay nada que recuperar.
+         Edítalo, escribe el mensaje y publica; después vuelve aquí.</div>`
+    : f.parado
+      ? `<div class="card" style="background:var(--warning-soft);border-color:transparent;margin-bottom:12px">
+           <div style="padding:10px 12px;font-size:13px">${esc(f.texto || "")}</div></div>`
+      : "";
+
+  return `${aviso}
+    <div class="tw"><table class="tbl"><tbody>
+      ${fila("Se apuntaron", n("total"))}
+      ${fila("Antes de que hubiera mensaje", n("antes_del_mensaje"))}
+      ${fila("Ya lo recibieron", n("enviado"))}
+      ${fila("En cola, esperando salir", n("pendiente"))}
+      ${fila("Con error", n("error"), Number(c.error) ? "danger" : null)}
+      ${fila("Sin fila de cola (nunca se les encoló)", n("sin_cola"), Number(c.sin_cola) ? "danger" : null)}
+      ${fila("Pidieron no recibir", n("baja"))}
+      ${fila("Teléfono no válido", n("sin_telefono"))}
+      ${fila("Con carné", n("con_carnet"))}
+      ${fila("Sin carné (no se les puede mandar)", n("sin_carnet"), Number(c.sin_carnet) ? "warning" : null)}
+    </tbody></table></div>
+    <div class="card" style="margin-top:12px;background:var(--brand-soft);border-color:transparent">
+      <div style="padding:12px 14px">
+        <div class="t1" style="font-size:15px">Se mandaría a ${num(Number(d.se_enviaria_a || 0))} personas</div>
+        <div class="mut" style="font-size:12px;margin-top:4px">
+          Las que tienen carné y teléfono válido, no están de baja y nunca llegaron a tener fila.
+          ${d.estreno_mensaje ? `El mensaje se configuró el ${esc(d.estreno_mensaje)}.` : ""}
+        </div>
+      </div>
+    </div>
+    <div class="mut" style="font-size:12px;margin:10px 0 4px">
+      Reciben el mensaje del formulario publicado${form ? ` (v${form.version})` : ""}, cada uno con
+      SU enlace individual y reutilizando el carné que ya tiene. Es la entrega que pidieron al
+      apuntarse, así que <b>no lleva pie de baja</b>. Van a la cola de siempre: salen con su ritmo
+      y su tope diario, no de golpe. Pulsarlo dos veces no manda nada dos veces.
+    </div>
+    <div class="toolbar" style="margin-top:10px">
+      <button class="btn primary" data-act="fidg-recup-encolar" data-clave="${esc(clave)}"
+        ${sinMensaje || !Number(d.se_enviaria_a) ? "disabled" : ""}>Encolar pendientes${Number(d.se_enviaria_a) ? ` (${num(Number(d.se_enviaria_a))})` : ""}</button>
+    </div>`;
+}
+
+/**
+ * ENCOLAR. Pide escribir una palabra, y no por ceremonia: son mensajes a gente real que se apuntó
+ * hace semanas, y una vez en la cola no hay forma de recogerlos.
+ */
+async function fidgRecupEncolar(clave) {
+  const c = prompt(
+    "Vas a ENCOLAR los WhatsApp de recuperación de este formulario.\n\n" +
+    "Son mensajes a personas reales que se apuntaron y no recibieron su código. Saldrán con el " +
+    "ritmo y el tope diario de siempre, pero una vez en la cola no se pueden recoger.\n\n" +
+    "Escribe ENVIAR para confirmar:");
+  if (!c) return;
+  try {
+    const r = await apiSend("POST", `/api/fidelizacion/formularios/${encodeURIComponent(clave)}/recuperacion`,
+      { confirmacion: c });
+    toast(r.hechos ? `${r.hechos} en cola` : "No había nada que encolar");
+    // Se vuelve a pedir el censo: los números que quedan en pantalla tienen que ser los de ahora.
+    const d = await apiRaw(`/api/fidelizacion/formularios/${encodeURIComponent(clave)}/recuperacion`);
+    const ov = document.querySelector(`[data-recup="${CSS.escape(clave)}"]`);
+    const cuerpo = ov && ov.querySelector(".modal-b");
+    if (cuerpo) cuerpo.innerHTML = fidgRecupCuerpo(clave, d);
+  } catch (e) { toast("Error: " + e.message); }
+}
+
 async function fidgFormNuevo(desdeId, propuesta) {
   const guardada = desdeId ? (FIDG.formularios || []).find((f) => String(f.id) === String(desdeId)) : null;
   const base = guardada || propuesta || null;
@@ -15780,6 +15870,8 @@ document.addEventListener("click", (e) => {
   else if (act === "fidg-orden-guardar") fidgOrdenGuardar(t.getAttribute("data-id"));
   else if (act === "fidg-form-prev") fidgFormPrev(t.getAttribute("data-v"));
   else if (act === "fidg-form-prev-wa") fidgFormPrevWa();
+  else if (act === "fidg-recup") fidgRecuperacion(t.getAttribute("data-clave"));
+  else if (act === "fidg-recup-encolar") fidgRecupEncolar(t.getAttribute("data-clave"));
   else if (act === "fidg-form-guardar") fidgFormGuardar(t.getAttribute("data-pub"));
   else if (act === "fidg-tarjeta-nueva") fidgTarjetaNueva(t.getAttribute("data-id"));
   else if (act === "fidg-tarjeta-prev") fidgTarjetaPrev(t.getAttribute("data-v"));

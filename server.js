@@ -12586,6 +12586,190 @@ app.get("/api/fidelizacion/formularios/:clave/inscritos", requireAuth(PROMOS_ROL
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  RECUPERAR LA ENTREGA DE UN FORMULARIO
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Quien se apuntó ANTES de que su formulario tuviera mensaje configurado no recibió nada. No es
+// un fallo que se pueda reintentar: no hay fila que reintentar, porque no había nada que mandar.
+//
+// ── POR QUÉ NO SE REUTILIZA EL RECUPERADOR DEL CAMINO CLÁSICO ────────────────────────────────
+//
+// Porque componen cosas distintas. El clásico saca la plantilla de `cap_campanas.textos`, emite
+// cupones (`clase='cupon'`) y los busca por `origen='campana'`. Un formulario configurable saca
+// su plantilla de `fid_formularios.mensaje_wa` y su identidad es el CARNÉ. Reutilizar aquel
+// mandaría el texto de otra campaña con el código equivocado.
+//
+// ── Y POR QUÉ ES DE TIPO ENTREGA ────────────────────────────────────────────────────────────
+//
+// Porque es exactamente el mensaje que esa persona pidió al rellenar el formulario, solo que con
+// semanas de retraso. No es una campaña nueva: es lo que se le prometió y no llegó.
+
+/**
+ * A quién alcanzaría la recuperación de un formulario, y en qué estado está cada uno.
+ *
+ * SOLO LEE. Devuelve una fila por inscrito con lo justo para clasificarlo; los teléfonos se usan
+ * para cruzar y no salen de aquí.
+ */
+async function fidDestinatariosEntrega(clave) {
+  const T9 = (col) => `RIGHT(regexp_replace(${col}, '[^0-9]', '', 'g'), 9)`;
+
+  // La primera versión de ESTE formulario que llegó a tener mensaje. Todo lo anterior se apuntó
+  // cuando no había nada que mandar, y es el grupo que la recuperación existe para alcanzar.
+  const estreno = await dbGet(
+    `SELECT MIN(creado_en) AS desde FROM fid_formularios
+      WHERE clave = ? AND COALESCE(NULLIF(mensaje_wa, ''), '') <> ''`, [clave]);
+
+  const filas = await dbAll(
+    `SELECT l.id AS lead_id, l.telefono, l.nombre, l.creado_en,
+            (SELECT r.id FROM pro_qr r
+              WHERE r.clase = 'carnet' AND ${T9("r.telefono")} = ${T9("l.telefono")}
+                AND r.anulado_en IS NULL
+              ORDER BY r.id DESC LIMIT 1) AS qr_id,
+            (SELECT p.baja FROM marketing_prefs p
+              WHERE ${T9("p.telefono")} = ${T9("l.telefono")} LIMIT 1) AS baja
+       FROM leads l
+      WHERE COALESCE(NULLIF(l.campana, ''), '') = ? OR l.fuente = ?
+      ORDER BY l.id ASC`, [clave, `form:${clave}`]) || [];
+
+  const cola = await dbAll(
+    `SELECT telefono, qr_id, estado, enviado_en FROM cap_cola WHERE campana = ? ORDER BY id ASC`,
+    [clave]) || [];
+  // Una fila ENVIADA gana a cualquier otra de la misma persona: si salió, salió.
+  const mejor = (a, b) => (a && (a.enviado_en || String(a.estado) === "enviado")) ? a : b;
+  const porQr = new Map(), porTel = new Map();
+  for (const c of cola) {
+    if (c.qr_id) porQr.set(c.qr_id, mejor(porQr.get(c.qr_id), c));
+    const t9 = String(c.telefono || "").replace(/\D/g, "").slice(-9);
+    if (t9) porTel.set(t9, mejor(porTel.get(t9), c));
+  }
+
+  const destinatarios = filas.map((f) => {
+    const t9 = String(f.telefono || "").replace(/\D/g, "").slice(-9);
+    return { leadId: f.lead_id, telefono: f.telefono, nombre: f.nombre || "",
+             creadoEn: f.creado_en, qrId: f.qr_id || null, baja: Number(f.baja) === 1,
+             cola: (f.qr_id && porQr.get(f.qr_id)) || porTel.get(t9) || null };
+  });
+  return { destinatarios, estrenoMensaje: estreno?.desde || null };
+}
+
+/**
+ * EL DRY-RUN. Cuenta y no escribe: ni un INSERT, ni un UPDATE, ni un mensaje.
+ *
+ * Se pide desde el panel, así que corre contra la MISMA base que la aplicación —no contra la de
+ * una Shell, que puede ser otra—. Eso es medio motivo de que exista: los números tienen que ser
+ * los de producción o no sirven para decidir.
+ *
+ * No devuelve ni un teléfono, ni un nombre, ni un token: solo recuentos.
+ */
+app.get("/api/fidelizacion/formularios/:clave/recuperacion", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const clave = String(req.params.clave || "").slice(0, 40);
+    if (!clave) return res.status(400).json({ ok: false, error: "Falta el formulario" });
+
+    const f = await dbGet(`SELECT clave, version, estado, idioma, local, mensaje_wa
+                             FROM fid_formularios WHERE clave = ? AND estado = 'publicado'
+                            ORDER BY version DESC LIMIT 1`, [clave]);
+    const { destinatarios, estrenoMensaje } = await fidDestinatariosEntrega(clave);
+    const censo = recCensar(destinatarios);
+
+    // Los que se apuntaron ANTES de que hubiera mensaje. Es el grupo que importa: los de después
+    // ya lo recibieron por el camino normal.
+    const antes = estrenoMensaje
+      ? destinatarios.filter((d) => String(d.creadoEn || "") < String(estrenoMensaje)).length
+      : destinatarios.length;
+
+    // A CUÁNTOS SE LES MANDARÍA DE VERDAD. Es el único número que hay que mirar antes de
+    // autorizar nada: los que tienen carné, teléfono válido, no están de baja y NO tienen fila.
+    const alcanzados = recAQuienAlcanza("pendientes", destinatarios);
+
+    res.json({ ok: true, clave,
+      formulario: f ? { version: f.version, idioma: f.idioma,
+                        tiene_mensaje: !!String(f.mensaje_wa || "").trim() } : null,
+      estreno_mensaje: estrenoMensaje ? String(estrenoMensaje).slice(0, 10) : null,
+      censo: { ...censo, antes_del_mensaje: antes,
+               con_carnet: destinatarios.filter((d) => d.qrId).length,
+               sin_carnet: destinatarios.filter((d) => !d.qrId).length },
+      se_enviaria_a: alcanzados.length,
+      frenos: await capFrenos(),
+      etiquetas: REC_ETIQUETAS });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] dry-run recuperación", e));
+    res.status(500).json({ ok: false, error: "No se pudo contar" });
+  }
+});
+
+/** La frase que hay que escribir para encolar. No es un adorno: son mensajes a gente real. */
+const FID_CONFIRMA_ENTREGA = "ENVIAR";
+
+/**
+ * ENCOLAR LA ENTREGA PENDIENTE. Escribe en la cola; NO manda nada por su cuenta.
+ *
+ * Solo dirección, con una frase escrita a mano, y queda auditado. Deja las filas pendientes y el
+ * worker de siempre las saca con su ritmo, su cupo y su tope diario: noventa y cinco mensajes de
+ * golpe es lo que hace que baneen un número.
+ *
+ * Idempotente por IDENTIDAD —campaña + carné— igual que el resto: ejecutarlo dos veces no escribe
+ * dos filas, y quien ya conste enviado no entra siquiera en la lista.
+ */
+app.post("/api/fidelizacion/formularios/:clave/recuperacion", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const clave = String(req.params.clave || "").slice(0, 40);
+    if (String(req.body?.confirmacion || "").trim().toUpperCase() !== FID_CONFIRMA_ENTREGA) {
+      return res.status(400).json({ ok: false,
+        error: `Para encolar hay que escribir «${FID_CONFIRMA_ENTREGA}».` });
+    }
+    const f = await dbGet(`SELECT * FROM fid_formularios WHERE clave = ? AND estado = 'publicado'
+                            ORDER BY version DESC LIMIT 1`, [clave]);
+    if (!f) return res.status(404).json({ ok: false, error: "Ese formulario no está publicado" });
+    if (!String(f.mensaje_wa || "").trim()) {
+      return res.status(409).json({ ok: false,
+        error: "Este formulario no tiene mensaje configurado: no hay nada que mandar." });
+    }
+
+    const { destinatarios } = await fidDestinatariosEntrega(clave);
+    const alcanzados = recAQuienAlcanza("pendientes", destinatarios);
+    const ahora = isoConOffset(Date.now());
+    let hechos = 0, omitidos = 0;
+
+    for (const d of alcanzados) {
+      const qr = await dbGet(
+        `SELECT id, token, clase, nombre FROM pro_qr
+          WHERE id = ? AND clase = 'carnet' AND anulado_en IS NULL`, [d.qrId]);
+      // SIN CARNÉ NO SE INVENTA NINGUNO. Emitir aquí crearía una segunda identidad para alguien
+      // que quizá ya tiene la suya bajo otro teléfono. Se cuenta y se deja.
+      if (!qr) { omitidos += 1; continue; }
+
+      // EL MISMO TEXTO QUE RECIBE QUIEN SE APUNTA HOY: la plantilla del formulario publicado, su
+      // enlace individual por `proEnlace`, y de tipo ENTREGA — esto es la entrega que se le
+      // prometió, con retraso, no una campaña nueva. Sin pie de baja.
+      const texto = fidComponerMensaje(
+        fidRender(f.mensaje_wa, { nombre: d.nombre || qr.nombre || "", enlace: proEnlace(req, qr),
+                                  fecha: hoyISO(), local: f.local || "", premio: "" }),
+        { tipo: FID_TIPO_MENSAJE.ENTREGA });
+
+      const met = await dbRun(
+        `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad)
+         SELECT ?,?,?,?,?,?,?,0
+          WHERE NOT EXISTS (SELECT 1 FROM cap_cola WHERE campana = ? AND qr_id = ?)
+         RETURNING id`,
+        [`rec:${clave}:${qr.id}`.slice(0, 180), clave, d.telefono, texto, qr.id,
+         Date.now(), ahora, clave, qr.id]);
+      if (met) hechos += 1; else omitidos += 1;
+    }
+
+    capVaciarCola().catch(() => {});
+    await ficAuditar("fidelizacion", null, "recuperar_entrega", req.user.username,
+      { detalle: { clave, version: f.version, alcanzados: alcanzados.length, hechos, omitidos } });
+
+    res.json({ ok: true, hechos, omitidos, frenos: await capFrenos() });
+  } catch (e) {
+    console.error(lineaErrorSql("[fidelizacion] recuperar entrega", e));
+    res.status(500).json({ ok: false, error: "No se pudo encolar" });
+  }
+});
+
 /**
  * CUÁNTA GENTE HAY DETRÁS DE CADA CLAVE.
  *

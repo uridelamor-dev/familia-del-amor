@@ -127,9 +127,22 @@ describe("la decisión vive en un solo sitio", () => {
       "el servidor ya no importa el compositor por tipo");
   });
 
-  test("los DOS caminos que mandan WhatsApp declaran su tipo", () => {
+  test("TODOS los que componen un mensaje declaran su tipo", () => {
+    // Antes esto exigía que fueran EXACTAMENTE dos. Ese número escrito a mano no protegía nada:
+    // un tercer camino correcto lo hacía fallar, y uno que se olvidara del tipo habría pasado si
+    // el recuento cuadraba. Lo que importa no es cuántos son, sino que NINGUNO se olvide.
     const usos = [...SERVER.matchAll(/fidComponerMensaje\(/g)];
-    assert.equal(usos.length, 2, `hay ${usos.length} composiciones de mensaje; deberían ser dos`);
+    assert.ok(usos.length >= 2, `solo ${usos.length} composiciones de mensaje`);
+    const sinTipo = [];
+    for (const m of usos) {
+      const ventana = SERVER.slice(m.index, m.index + 500);
+      if (!/tipo: FID_TIPO_MENSAJE\.(ENTREGA|COMERCIAL)/.test(ventana)) {
+        sinTipo.push(ventana.split("\n")[0].trim().slice(0, 70));
+      }
+    }
+    assert.deepEqual(sinTipo, [],
+      "hay un mensaje que no declara su tipo: caería en el defecto comercial y llevaría pie de " +
+      "baja, o peor, alguien cambiaría el defecto y se lo quitaría a una campaña");
     assert.match(SERVER, /tipo: FID_TIPO_MENSAJE\.COMERCIAL/, "falta el camino comercial");
     assert.match(SERVER, /tipo: FID_TIPO_MENSAJE\.ENTREGA/, "falta el camino de entrega");
   });
