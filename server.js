@@ -162,6 +162,10 @@ import { textoSeguro as fidTexto, urlSegura as fidUrl, normalizarCampos as fidCa
          MENSAJES_POR_IDIOMA as FID_MENSAJES_IDIOMA,
          MENSAJES as FID_MENSAJES_DEF } from "./src/modules/fidelizacion/contenido.js";
 import { fechaNacimientoValida as fidFechaNac } from "./src/modules/captacion/municipios.js";
+import { ESTADOS as REC_ESTADOS, ETIQUETAS as REC_ETIQUETAS, claveRecuperacion,
+         clasificar as recClasificar, censar as recCensar, motivoParada as recMotivoParada,
+         aQuienAlcanza as recAQuienAlcanza, accionValida as recAccionValida,
+         telefonoValido as recTelValido } from "./src/modules/captacion/recuperacion.js";
 /** Cuánto se reserva una fila mientras se manda. Si el proceso muere, vence sola. */
 const CAP_ARRIENDO_MS = 120000;
 import { estadoEntrega as insEntrega, estadoConsentimiento as insConsent,
@@ -14618,6 +14622,191 @@ app.post("/api/captacion/cola/:id/reenviar", requireAuth(PROMOS_ROLES), async (r
   } catch (e) {
     console.error("[captacion] reenviar:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo reenviar" });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  RECUPERAR LO QUE NUNCA SALIÓ
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//
+// La cola sabe reintentar lo que FALLÓ. Lo que no tenía arreglo era lo que nunca llegó a
+// encolarse: si el `INSERT` en `cap_cola` se cae después de haber creado el lead y el cupón, esa
+// persona se queda con su código emitido y sin fila que reintentar. No sale como fallo —no hay
+// fallo, no hay fila— y al volver a intentarlo el alta la reconoce por su cupón y le contesta
+// «ya te lo mandamos en su día», que en ese estado no es verdad.
+//
+// El primero de los tres endpoints SOLO LEE; los otros dos escriben en la cola. Ninguno manda un
+// WhatsApp por su cuenta: dejan la fila pendiente y el worker de siempre hace el resto, con su
+// ritmo, su cupo y su tope diario. Un camino de envío paralelo sería un segundo sitio donde
+// saltarse el freno que protege el número.
+
+/**
+ * Los destinatarios de una campaña con el estado de CADA UNO, sin traer datos personales fuera.
+ *
+ * Vale para las dos formas de apuntarse —el formulario clásico (`leads.campana`) y el
+ * configurable (`leads.fuente = 'form:<clave>'`)— porque para esto son la misma campaña. El
+ * resumen de inscritos ya las junta así; aquí se hace igual para que los dos números cuadren.
+ */
+async function capDestinatarios(clave) {
+  // `MATCH_TEL9` compara una columna contra un PARÁMETRO; aquí hacen falta dos COLUMNAS —el
+  // teléfono del lead contra el del cupón y el de las preferencias—, que es el mismo patrón que
+  // ya se usa en la ficha de cliente. Escrito así y no con `MATCH_TEL9` porque pasarle el nombre
+  // de la columna como parámetro compararía contra la cadena literal «l.telefono» y devolvería
+  // cero cupones para todo el mundo, en silencio.
+  const T9 = (col) => `RIGHT(regexp_replace(${col}, '[^0-9]', '', 'g'), 9)`;
+  const filas = await dbAll(
+    `SELECT l.id AS lead_id, l.telefono,
+            (SELECT r.id FROM pro_qr r
+              WHERE ${T9("r.telefono")} = ${T9("l.telefono")} AND r.anulado_en IS NULL
+              ORDER BY r.id DESC LIMIT 1) AS qr_id,
+            (SELECT p.baja FROM marketing_prefs p
+              WHERE ${T9("p.telefono")} = ${T9("l.telefono")} LIMIT 1) AS baja
+       FROM leads l
+      WHERE COALESCE(NULLIF(l.campana, ''), '') = ? OR l.fuente = ?`,
+    [clave, `form:${clave}`]) || [];
+
+  // La fila de cola de cada uno, en UNA consulta y cruzada en memoria: una consulta por
+  // destinatario convierte doscientas altas en doscientas idas y vueltas a la base.
+  const cola = await dbAll(
+    `SELECT telefono, qr_id, estado, enviado_en FROM cap_cola WHERE campana = ? ORDER BY id ASC`,
+    [clave]) || [];
+  // Una fila ENVIADA gana a cualquier otra: si alguien tiene dos y una salió, esa persona ya
+  // recibió su mensaje y no se le vuelve a mandar pase lo que pase con la otra.
+  const mejor = (a, b) => (a && (a.enviado_en || String(a.estado) === "enviado")) ? a : b;
+  const porQr = new Map(), porTel = new Map();
+  for (const c of cola) {
+    if (c.qr_id) porQr.set(c.qr_id, mejor(porQr.get(c.qr_id), c));
+    const t9 = String(c.telefono || "").replace(/\D/g, "").slice(-9);
+    if (t9) porTel.set(t9, mejor(porTel.get(t9), c));
+  }
+
+  return filas.map((f) => {
+    const t9 = String(f.telefono || "").replace(/\D/g, "").slice(-9);
+    return { leadId: f.lead_id, telefono: f.telefono, qrId: f.qr_id || null,
+             baja: Number(f.baja) === 1,
+             // Se busca por cupón y, si no, por teléfono: las filas del camino clásico llevan
+             // `qr_id`, pero una sin él sigue siendo un mensaje de esa persona y darla por
+             // inexistente significaría mandarle otro.
+             cola: (f.qr_id && porQr.get(f.qr_id)) || porTel.get(t9) || null };
+  });
+}
+
+/** Por qué no sale nada, si es que no sale. Tres frenos, y ninguno deja error en la fila. */
+async function capFrenos() {
+  let cupoLibre = 1;
+  try {
+    const c = await cupoWA();
+    cupoLibre = Math.max(0, Number(c?.max || 0) - Number(c?.usados || 0));
+  } catch { cupoLibre = 1; }
+  return recMotivoParada({
+    whatsappListo: isReady(),
+    colaParada: (await getConfig("captacion_cola_parada")) === "1",
+    cupoLibre,
+  });
+}
+
+/** EL CENSO. Solo lee y solo devuelve números: ni un teléfono, ni un nombre, ni un token. */
+app.get("/api/captacion/campanas/:clave/censo", requireAuth(PROMOS_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const clave = String(req.params.clave || "").slice(0, 60);
+    if (!clave) return res.status(400).json({ ok: false, error: "Falta la campaña" });
+    res.json({ ok: true, clave, censo: recCensar(await capDestinatarios(clave)),
+               frenos: await capFrenos(), etiquetas: REC_ETIQUETAS });
+  } catch (e) {
+    console.error(lineaErrorSql("[captacion] censo", e));
+    res.status(500).json({ ok: false, error: "No se pudo contar" });
+  }
+});
+
+/**
+ * LAS DOS ACCIONES DE RECUPERACIÓN.
+ *
+ * ── CÓMO NO DUPLICA, Y CÓMO SIGUE DEJANDO REINTENTAR ─────────────────────────────────────────
+ *
+ * Son dos candados distintos y hacen falta los dos:
+ *
+ *   1. POR IDENTIDAD. Antes de escribir se mira si esa persona ya tiene fila en esta campaña.
+ *      Hace falta porque el camino clásico guarda un `token` ALEATORIO: es único, pero no dice
+ *      quién es, así que la base no puede saber sola que dos filas son la misma persona.
+ *   2. POR CLAVE DETERMINISTA. La fila que se escribe lleva `rec:<campaña>:<cupón>` y la columna
+ *      es UNIQUE, así que el doble clic y las dos pestañas los resuelve la base.
+ *
+ * Y lo que no se toca NUNCA es lo que consta como enviado: `aQuienAlcanza` filtra por estado
+ * antes de llegar aquí, así que «Enviar pendientes» no ve a quien ya tiene fila y «Reintentar
+ * errores» solo ve `fallido` y `descartado`. Un reintento legítimo de un fallo real sigue
+ * funcionando —es el caso que DEBE funcionar— precisamente porque esos dos estados sí entran.
+ */
+app.post("/api/captacion/campanas/:clave/recuperar", requireAuth(PROMOS_ROLES), async (req, res) => {
+  try {
+    const clave = String(req.params.clave || "").slice(0, 60);
+    const accion = String(req.body?.accion || "");
+    if (!clave) return res.status(400).json({ ok: false, error: "Falta la campaña" });
+    if (!recAccionValida(accion)) return res.status(400).json({ ok: false, error: "Acción no válida" });
+    const soloLead = req.body?.lead_id ? Number(req.body.lead_id) : null;
+
+    const campana = await capCampana(clave);
+    let destinatarios = await capDestinatarios(clave);
+    if (soloLead) destinatarios = destinatarios.filter((d) => d.leadId === soloLead);
+    const alcanzados = recAQuienAlcanza(accion, destinatarios);
+
+    let hechos = 0, omitidos = 0;
+
+    if (accion === "reintentar") {
+      for (const d of alcanzados) {
+        // El MISMO `UPDATE` que el reintento de una fila suelta, con su mismo `WHERE`: solo toca
+        // lo que SIGUE estando en un estado reintentable. Si entre la lectura y aquí alguien lo
+        // mandó, no encuentra nada y no pisa el envío.
+        const r = await dbRun(
+          `UPDATE cap_cola SET estado = 'pendiente', intentos = 0, ultimo_error = NULL, proximo_ms = ?
+            WHERE campana = ? AND ${MATCH_TEL9("telefono")}
+              AND estado IN ('fallido','descartado') RETURNING id`,
+          [Date.now(), clave, d.telefono]);
+        if (r) hechos += 1; else omitidos += 1;
+      }
+    } else {
+      if (!campana || !campana.promo) {
+        return res.status(409).json({ ok: false,
+          error: "Esta campaña no tiene promoción vinculada: no hay código que mandar." });
+      }
+      const plantilla = textosDe(campana, campana.idioma || "es").wa;
+      const donde = proDondeVale(campana.promo.locales);
+      const ahora = new Date().toISOString();
+
+      for (const d of alcanzados) {
+        const idem = claveRecuperacion({ campana: clave, qrId: d.qrId });
+        if (!idem) { omitidos += 1; continue; }
+        const qr = await dbGet(
+          `SELECT id, token, clase, nombre FROM pro_qr WHERE id = ? AND anulado_en IS NULL`, [d.qrId]);
+        if (!qr) { omitidos += 1; continue; }
+
+        // El enlace SIEMPRE por `proEnlace`: es el único sitio de la casa que compone la URL del
+        // QR y el que decide si va a `/cupon.html` o a la tarjeta. Escribirla aquí a mano daría
+        // un enlace que la tablet de la barra no sabría leer.
+        const texto = capTextoWA({ plantilla, nombre: qr.nombre || "",
+          promocion: campana.promo.nombre, enlace: proEnlace(req, qr), donde });
+
+        const met = await dbRun(
+          `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad)
+           VALUES (?,?,?,?,?,?,?,0) ON CONFLICT (token) DO NOTHING RETURNING id`,
+          [idem, clave, d.telefono, texto, qr.id, Date.now(), ahora]);
+        if (met) hechos += 1; else omitidos += 1;
+      }
+    }
+
+    // Se despierta al worker, que es quien manda. Si WhatsApp está caído no pasa nada: las filas
+    // se quedan esperando, que es exactamente lo que tienen que hacer.
+    capVaciarCola().catch(() => {});
+
+    await ficAuditar("captacion", null, `recuperar_${accion}`, req.user.username,
+      { detalle: { campana: clave, alcanzados: alcanzados.length, hechos, omitidos,
+                   individual: !!soloLead } });
+
+    res.json({ ok: true, accion, hechos, omitidos,
+               censo: recCensar(await capDestinatarios(clave)), frenos: await capFrenos() });
+  } catch (e) {
+    console.error(lineaErrorSql("[captacion] recuperar", e));
+    res.status(500).json({ ok: false, error: "No se pudo recuperar" });
   }
 });
 

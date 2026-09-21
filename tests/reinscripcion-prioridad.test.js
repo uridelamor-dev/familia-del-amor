@@ -272,16 +272,39 @@ describe("EL ALTA VA DELANTE DE LO COMERCIAL", () => {
     assert.ok(!/prioridad[^\n]*LIKE/.test(WORKER), "la prioridad se deduce de un LIKE");
   });
 
-  test("los DOS formularios encolan con prioridad 0", () => {
-    // El histórico y el configurable: quien rellena uno espera igual que quien rellena el otro.
+  test("TODO lo que es un alta encola con prioridad 0, y solo lo comercial se queda sin ella", () => {
+    // Tres sitios encolan altas: el formulario histórico, el configurable y la recuperación de
+    // lo que nunca salió. Quien rellena uno espera igual que quien rellena el otro, y quien
+    // lleva semanas esperando su código no puede ir detrás de una campaña de trescientos.
+    //
+    // Antes esto exigía que fueran EXACTAMENTE dos. Ese número escrito a mano no protegía nada:
+    // un cuarto encolado nuevo con prioridad 1 —lo comercial— habría hecho fallar el test por el
+    // recuento sin que nadie mirara la prioridad, y un tercero correcto lo hacía fallar también.
+    // Lo que importa no es cuántos son, sino que NINGUNO que sea un alta use otra prioridad.
     const inserts = [...server.matchAll(/INSERT INTO cap_cola \(token[^`]*`,?\s*\n?\s*\[[^\]]*\]/g)].map((m) => m[0]);
     const conPrioridad = inserts.filter((i) => /prioridad\)/.test(i));
-    assert.equal(conPrioridad.length, 2, `${conPrioridad.length} encolados con prioridad, esperaba 2`);
-    for (const i of conPrioridad) assert.match(i, /,0\)/, "no encola con prioridad 0");
+    assert.ok(conPrioridad.length >= 3,
+      `solo ${conPrioridad.length} encolados declaran prioridad; deberían hacerlo los tres tipos de alta`);
+    for (const i of conPrioridad) assert.match(i, /,0\)/, "un alta encola con una prioridad que no es 0");
+
     // Y el de comunicaciones NO la lleva: se queda en el 1 por defecto.
-    const comercial = inserts.find((i) => !/prioridad\)/.test(i));
-    assert.ok(comercial && /com:/.test(server.slice(server.indexOf(comercial) - 400, server.indexOf(comercial))),
+    const sinPrioridad = inserts.filter((i) => !/prioridad\)/.test(i));
+    assert.equal(sinPrioridad.length, 1,
+      "hay más de un encolado sin prioridad: solo el comercial puede quedarse sin ella");
+    assert.ok(/com:/.test(server.slice(server.indexOf(sinPrioridad[0]) - 400, server.indexOf(sinPrioridad[0]))),
       "el encolado sin prioridad no es el comercial");
+  });
+
+  test("la recuperación encola como un alta, no como una comunicación", () => {
+    // Si la recuperación encolara con prioridad 1 iría detrás de cualquier campaña, y son
+    // precisamente las personas que llevan más tiempo esperando.
+    const i = server.indexOf('app.post("/api/captacion/campanas/:clave/recuperar"');
+    assert.ok(i > 0, "no se encuentra el endpoint de recuperación");
+    const bloque = server.slice(i, i + 6000);
+    const insert = bloque.match(/INSERT INTO cap_cola \(token[^`]*`/);
+    assert.ok(insert, "la recuperación ya no encola en cap_cola");
+    assert.match(insert[0], /prioridad\)/, "la recuperación no declara prioridad");
+    assert.match(bloque, /VALUES \(\?,\?,\?,\?,\?,\?,\?,0\)/, "la recuperación no encola con prioridad 0");
   });
 });
 

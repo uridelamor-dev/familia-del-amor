@@ -14482,7 +14482,8 @@ function promoCaptacion() {
             <td class="r tnum">${num(c.canjeados)}${c.altas ? ` <span class="mut">(${promoPct(c.canjeados, c.altas)}%)</span>` : ""}</td>
             <td class="r" style="white-space:nowrap">
               <button class="linkbtn" style="color:var(--brand)" data-act="tj-copiar" data-url="${esc(c.url)}">Copiar enlace</button> ·
-              <button class="linkbtn" style="color:var(--brand)" data-act="cap-editar" data-clave="${esc(c.clave)}">Editar</button></td>
+              <button class="linkbtn" style="color:var(--brand)" data-act="cap-editar" data-clave="${esc(c.clave)}">Editar</button> ·
+                <button class="linkbtn" style="color:var(--brand)" data-act="cap-recuperar" data-clave="${esc(c.clave)}">Envíos</button></td>
           </tr>`;
         }).join("")}</tbody></table></div></div>`
     : `<div class="card"><div class="mut" style="padding:8px">Todavía no hay campañas.
@@ -14618,6 +14619,86 @@ function capForm(c) {
 function capEditar(clave) {
   const c = ((PROMO.cap && PROMO.cap.data) || []).find((x) => x.clave === clave);
   if (c) capForm(c);
+}
+
+/**
+ * LOS ENVÍOS DE UNA CAMPAÑA: CUÁNTOS SON, EN QUÉ ESTADO Y QUÉ SE PUEDE HACER.
+ *
+ * Existe porque la tabla de campañas cuenta filas de la COLA, y lo que hacía falta saber era otra
+ * cosa: cuánta gente se apuntó y NO tiene ni fila. Esos no aparecían en ningún sitio —no hay
+ * fallo que enseñar— y son justo los que se quedaron sin su código.
+ *
+ * No manda nada por sí mismo: deja las filas pendientes y el worker de siempre las saca con su
+ * ritmo y su tope. Aquí no hay un segundo camino de envío.
+ */
+async function capRecuperar(clave) {
+  if (!clave) return;
+  let d;
+  try { d = await apiRaw(`/api/captacion/campanas/${encodeURIComponent(clave)}/censo`); }
+  catch (e) { return toast("Error: " + e.message); }
+  const ov = modal(`Envíos de «${clave}»`, capRecCuerpo(clave, d));
+  ov.setAttribute("data-rec-clave", clave);
+}
+
+/** El cuerpo del panel de envíos. Se vuelve a pintar entero tras cada acción. */
+function capRecCuerpo(clave, d) {
+  const c = d.censo || {}, f = d.frenos || {};
+  const fila = (k, etiqueta, color) => {
+    const n = Number(c[k] || 0);
+    return `<tr><td>${esc(etiqueta)}</td><td class="r tnum"${color && n ? ` style="color:var(--${color})"` : ""}>${num(n)}</td></tr>`;
+  };
+  // El aviso va ARRIBA y antes que los botones: pulsar «Enviar» con WhatsApp caído encola bien y
+  // no sale nada, y sin decirlo parece que el botón no funciona.
+  const aviso = f.parado
+    ? `<div class="card" style="background:var(--warning-soft);border-color:transparent;margin-bottom:12px">
+         <div style="padding:10px 12px;font-size:13px">${esc(f.texto || "")}</div></div>`
+    : "";
+  return `${aviso}
+    <div class="tw"><table class="tbl"><tbody>
+      ${fila("total", "Se apuntaron")}
+      ${fila("enviado", "Recibieron el mensaje")}
+      ${fila("pendiente", "En cola, esperando salir")}
+      ${fila("error", "Con error", "danger")}
+      ${fila("sin_cola", "Con código y SIN encolar", "danger")}
+      ${fila("sin_qr", "Sin código emitido", "warning")}
+      ${fila("sin_telefono", "Teléfono no válido")}
+      ${fila("baja", "Pidieron no recibir")}
+    </tbody></table></div>
+    <div class="mut" style="font-size:12px;margin:10px 0 4px">
+      «Enviar pendientes» solo escribe la fila que falta a quien tiene código y ninguna;
+      «Reintentar errores» solo toca lo que falló. Ninguno de los dos alcanza a quien ya lo recibió,
+      así que pulsarlos dos veces no manda nada dos veces.</div>
+    <div class="toolbar" style="margin-top:10px">
+      <button class="btn primary" data-act="cap-rec-accion" data-clave="${esc(clave)}" data-accion="pendientes"
+        ${Number(c.recuperables) ? "" : "disabled"}>Enviar pendientes${Number(c.recuperables) ? ` (${num(c.recuperables)})` : ""}</button>
+      <button class="btn" data-act="cap-rec-accion" data-clave="${esc(clave)}" data-accion="reintentar"
+        ${Number(c.reintentables) ? "" : "disabled"}>Reintentar errores${Number(c.reintentables) ? ` (${num(c.reintentables)})` : ""}</button>
+    </div>`;
+}
+
+/**
+ * Ejecuta una de las dos acciones.
+ *
+ * El botón se deshabilita ANTES de la llamada y no se vuelve a habilitar: el cuerpo se repinta
+ * con los números nuevos, así que el botón que vuelve es otro. Es lo que evita que el doble clic
+ * llegue siquiera a salir del navegador — aunque saliera, el servidor tampoco duplicaría.
+ */
+async function capRecAccion(clave, accion, boton) {
+  if (!clave || !accion || (boton && boton.disabled)) return;
+  if (boton) boton.disabled = true;
+  try {
+    const r = await apiSend("POST", `/api/captacion/campanas/${encodeURIComponent(clave)}/recuperar`, { accion });
+    const ov = document.querySelector(`[data-rec-clave="${CSS.escape(clave)}"]`);
+    const cuerpo = ov && ov.querySelector(".modal-b");
+    if (cuerpo) cuerpo.innerHTML = capRecCuerpo(clave, r);
+    toast(r.hechos
+      ? (accion === "pendientes" ? `${r.hechos} en cola` : `${r.hechos} vuelven a la cola`)
+      : "No había nada que hacer");
+    loadPromos();
+  } catch (e) {
+    if (boton) boton.disabled = false;
+    toast("Error: " + e.message);
+  }
 }
 
 async function capReenviar(id) {
@@ -15621,6 +15702,8 @@ document.addEventListener("click", (e) => {
   else if (act === "cap-nueva") capForm(null);
   else if (act === "cap-editar") capEditar(t.getAttribute("data-clave"));
   else if (act === "cap-reenviar") capReenviar(t.getAttribute("data-id"));
+  else if (act === "cap-recuperar") capRecuperar(t.getAttribute("data-clave"));
+  else if (act === "cap-rec-accion") capRecAccion(t.getAttribute("data-clave"), t.getAttribute("data-accion"), t);
   else if (act === "cap-parada") capParada(t.getAttribute("data-parada"));
   else if (act === "ir-web") go("web");
   else if (act === "meta-pixel") metaPixelEditar();
