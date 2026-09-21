@@ -357,7 +357,14 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
     assert.match(cola, /`alta:\$\{clave\}:v\$\{f\.version\}/);
     assert.ok(!/com:/.test(cola), "reutiliza la clave de una comunicación");
     assert.ok(!/fid_comunicaciones|fid_comunicacion_envios/.test(cola), "toca las comunicaciones");
-    assert.match(cola, /comunicacion_id, campana, creado_en\)\s*\n\s*VALUES \(\?,\?,NULL,\?,\?\)/);
+    // Antes esto se comprobaba mirando que el `INSERT` en `fid_bajas` llevara `comunicacion_id`
+    // a NULL. Esa fila ya no existe —la entrega no lleva enlace de baja— así que se comprueba
+    // sobre la que sí queda: la de la cola, que va con la campaña del FORMULARIO y con prioridad
+    // de alta, no con la de ninguna comunicación.
+    assert.match(cola, /INSERT INTO cap_cola[\s\S]{0,200}prioridad\)/,
+      "el alta ya no encola con prioridad propia");
+    assert.match(cola, /\[claveIdem, f\.campana \|\| clave, tel, texto, qr\.id/,
+      "la fila de la cola ya no lleva la campaña del formulario ni el código de esa persona");
   });
 
   test("LA CLAVE IDEMPOTENTE lleva las cinco cosas que identifican la inscripción", () => {
@@ -387,12 +394,24 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
     assert.match(cola, /const fila = met \|\| await x\.get\(\s*\n?\s*`SELECT id, estado, enviado_en FROM cap_cola WHERE token = \?`/);
   });
 
-  test("SIN ENLACE DE BAJA NO SALE, aunque sea transaccional", () => {
-    // Lleva un descuento dentro: eso lo hace comercial también.
-    assert.match(cola, /if \(!urlBaja\) return \{ qr, cola: null, derecho \};/);
-    assert.match(cola, /fidConPieBaja\(/);
-    assert.match(cola, /INSERT INTO fid_bajas \(token_hash/);
-    assert.match(cola, /fidHuellaBaja\(tokenBaja\)/);
+  test("ES UNA ENTREGA, NO UNA COMUNICACIÓN: sin enlace de baja", () => {
+    // ── ESTA REGLA SE INVIRTIÓ, Y CONVIENE QUE CONSTE POR QUÉ ───────────────────────────────
+    //
+    // Antes este mensaje llevaba pie de baja, con este razonamiento: «lleva un descuento dentro,
+    // eso lo hace comercial también». La decisión se revisó mirando qué es este mensaje: la
+    // persona rellenó el formulario hace diez segundos PARA recibir su código, y esto solo se lo
+    // trae. No se la ha metido en ninguna lista, así que «para dejar de recibir estos mensajes»
+    // debajo sugiere que sí.
+    //
+    // Lo que NO cambió: las comunicaciones comerciales posteriores —campañas, cumpleaños, envíos
+    // masivos— siguen llevando el suyo. La diferencia es de TIPO y se decide en un solo sitio.
+    assert.match(cola, /tipo: FID_TIPO_MENSAJE\.ENTREGA/,
+      "el mensaje del alta ha dejado de declararse como entrega");
+    const codigo = cola.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+    assert.ok(!/fidConPieBaja|INSERT INTO fid_bajas|fidEnlaceBaja/.test(codigo),
+      "la entrega vuelve a componer un enlace de baja que no usa");
+    assert.ok(!/if \(!urlBaja\) return/.test(codigo),
+      "vuelve la guarda que dejaba sin su código a quien acababa de pedirlo");
     // El token de baja NUNCA se guarda en claro.
     assert.ok(!/VALUES \(\?,\?,NULL,\?,\?\)[^;]*tokenBaja[^H)]/.test(cola.replace(/fidHuellaBaja\(tokenBaja\)/g, "H")),
       "el token de baja se guarda en claro");

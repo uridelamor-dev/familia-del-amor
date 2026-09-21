@@ -178,7 +178,8 @@ import { estadoEntrega as insEntrega, estadoConsentimiento as insConsent,
 import { POLITICA_VERSION, politicaUrl as fidPoliticaUrl, politicaEnlace as fidPoliticaEnlace }
   from "./src/modules/legal/politica.js";
 import { nuevoToken as fidNuevoTokenBaja, huella as fidHuellaBaja, tokenPlausible as fidTokenBajaOk,
-         enlaceBaja as fidEnlaceBaja, conPieDeBaja as fidConPieBaja, pieBaja as fidPieBaja,
+         enlaceBaja as fidEnlaceBaja, componerMensaje as fidComponerMensaje,
+         TIPO_MENSAJE as FID_TIPO_MENSAJE, pieBaja as fidPieBaja,
          decidir as fidDecidirBaja, textosBaja as fidTextosBaja }
   from "./src/modules/fidelizacion/baja.js";
 import { reglaVigente as fidReglaVigente, rewardDe as fidRewardDe, saldo as fidSaldo,
@@ -11755,7 +11756,10 @@ app.post("/api/fidelizacion/comunicaciones/:id/encolar", requireAuth(["direccion
             `INSERT INTO fid_bajas (token_hash, telefono, comunicacion_id, campana, creado_en)
              VALUES (?,?,?,?,?) ON CONFLICT (token_hash) DO NOTHING`,
             [fidHuellaBaja(tokenBaja), e.telefono, c.id, c.campana || c.clave || null, ahora]);
-          texto = fidConPieBaja(texto, urlBaja, { pie: fidPieBaja(c.idioma) });
+          // COMERCIAL: esta persona está en una lista y no ha pedido ESTE mensaje. Lleva su
+          // enlace de baja, como siempre. No cambia nada.
+          texto = fidComponerMensaje(texto, { tipo: FID_TIPO_MENSAJE.COMERCIAL,
+            enlaceBaja: urlBaja, pie: fidPieBaja(c.idioma) });
           bajaOk = true;
         }
       } catch (err) { console.error(lineaErrorSql("[fidelizacion] enlace de baja", err)); }
@@ -12101,15 +12105,14 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
     // veía su pantalla de gracias, el alta quedaba guardada, el carné emitido, y el mensaje no
     // existía. No era un fallo que nadie pudiera ver, porque no quedaba fila que mirar.
     //
-    // Ahora van juntas. Dentro de la transacción SOLO hay PostgreSQL: el enlace de baja, la base
-    // pública y el recuento de ciclos se resuelven ANTES, y el envío de verdad sigue siendo del
-    // worker. Una transacción abierta esperando a un socket de WhatsApp es una transacción que se
-    // queda abierta cuando el socket no contesta.
+    // Ahora van juntas. Dentro de la transacción SOLO hay PostgreSQL: el recuento de ciclos se
+    // resuelve ANTES, y el envío de verdad sigue siendo del worker. Una transacción abierta
+    // esperando a un socket de WhatsApp es una transacción que se queda abierta cuando el socket
+    // no contesta.
     //
     // Y si toda la escritura se cae, esta persona se queda sin carné —visible en su pantalla, que
     // no le ofrece enlace— y puede volver a rellenar el formulario, que reutiliza lo que haya.
     // Es un estado que se arregla solo; el anterior no.
-    const base = await baseEnlaces(req);
     const previoQr = await dbGet(`SELECT id, token, clase, nombre FROM pro_qr
                                    WHERE clase = 'carnet' AND telefono = ? AND anulado_en IS NULL
                                    ORDER BY id DESC LIMIT 1`, [tel]);
@@ -12152,24 +12155,29 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
         // lo que lo respeta.
         if (!f.mensaje_wa) return { qr, cola: null, derecho };
 
-        const tokenBaja = fidNuevoTokenBaja();
-        const urlBaja = fidEnlaceBaja(base, tokenBaja);
-        // Sin enlace de baja NO SALE. Un mensaje del que no se puede uno bajar no se manda,
-        // aunque sea transaccional: lleva un descuento dentro y eso lo hace comercial también.
-        if (!urlBaja) return { qr, cola: null, derecho };
-
-        await x.run(
-          `INSERT INTO fid_bajas (token_hash, telefono, comunicacion_id, campana, creado_en)
-           VALUES (?,?,NULL,?,?) ON CONFLICT (token_hash) DO NOTHING`,
-          [fidHuellaBaja(tokenBaja), tel, f.campana || clave, ahora]);
-
-        // EL ENLACE, POR `proEnlace` Y CON LA CLASE DEL QR. Es el único sitio de la casa que
-        // compone la URL de un QR y el que decide entre `/cupon.html` y la tarjeta según el
-        // interruptor. Aquí NO se enciende nada: se respeta lo que haya.
-        const texto = fidConPieBaja(
+        // ── ESTE MENSAJE ES UNA ENTREGA, NO UNA COMUNICACIÓN ────────────────────────────────
+        //
+        // Lo ha pedido esta persona hace diez segundos rellenando el formulario, y lo único que
+        // hace es traerle lo que pidió: su código. No se la ha metido en ninguna lista, así que
+        // «para dejar de recibir estos mensajes» debajo sugeriría que sí.
+        //
+        // Antes llevaba pie, y con él un token de baja en `fid_bajas` y una guarda que impedía
+        // mandar nada si el enlace no se podía componer. Las tres cosas se van juntas: un token
+        // que no viaja en ningún mensaje no sirve para darse de baja de nada, y bloquear la
+        // entrega del código por no poder componer un enlace que ya no se usa dejaría sin su
+        // código a quien acaba de pedirlo.
+        //
+        // Lo que NO cambia: el consentimiento se guarda igual, `marketing_prefs.baja` sigue
+        // mandando sobre el envío —quien pidió que no le escribieran no recibe ni esto— y las
+        // comunicaciones comerciales posteriores siguen llevando su enlace de baja.
+        //
+        // EL ENLACE DEL CÓDIGO, POR `proEnlace` Y CON LA CLASE DEL QR. Es el único sitio de la
+        // casa que compone la URL de un QR y el que decide entre `/cupon.html` y la tarjeta según
+        // el interruptor. Aquí NO se enciende nada: se respeta lo que haya.
+        const texto = fidComponerMensaje(
           fidRender(f.mensaje_wa, { nombre, enlace: proEnlace(req, qr), fecha: hoyISO(),
                                     local: f.local || "", premio: "" }),
-          urlBaja, { pie: fidPieBaja(f.idioma) });
+          { tipo: FID_TIPO_MENSAJE.ENTREGA });
 
         // La clave lleva las seis cosas que identifican ESTA inscripción. Sin el ciclo, quien se
         // da de baja y VUELVE a apuntarse no recibiría nada: las otras cinco son las mismas —el

@@ -258,9 +258,13 @@ describe("LA REACTIVACIÓN SOLO OCURRE AL COMPLETAR EL FORMULARIO", () => {
     // SIN COMENTARIOS: el de la reactivación explica que la fila de `fid_bajas` NO se toca, y esa
     // palabra no puede hacer fallar al candado que comprueba justo eso.
     assert.ok(!/fid_bajas/.test(sinComentarios(tx)), "la transacción del alta toca el registro de bajas");
+    // El alta ya NO escribe en `fid_bajas`: su mensaje es una entrega y no lleva enlace de baja,
+    // así que un token ahí no serviría para darse de baja de nada. Lo único que sigue tocando esa
+    // tabla es la LECTURA del ciclo, que distingue «volvió tras una baja» de «pulsó dos veces».
     const usos = [...ALTA.matchAll(/(INSERT INTO|UPDATE|DELETE FROM) fid_bajas[^`]*/g)].map((m) => m[0]);
-    assert.equal(usos.length, 1, `el alta escribe en fid_bajas ${usos.length} veces`);
-    assert.match(usos[0], /INSERT INTO fid_bajas \(token_hash/, "no es la emisión del enlace de baja");
+    assert.deepEqual(usos, [], "el alta escribe en el registro de bajas");
+    assert.match(ALTA, /SELECT COUNT\(\*\)::int AS n FROM fid_bajas/,
+      "se ha perdido el recuento de ciclos: quien vuelve tras una baja se quedaría sin su código");
   });
 });
 
@@ -451,8 +455,15 @@ describe("nada de esto enciende nada", () => {
     }
   });
 
-  test("y el mensaje sigue llevando su enlace de baja", () => {
-    assert.match(ALTA, /fidConPieBaja\(/);
-    assert.match(ALTA, /if \(!urlBaja\) return \{ qr, cola: null, derecho \};/);
+  test("y el mensaje del alta es una ENTREGA: ya no lleva enlace de baja", () => {
+    // La regla se invirtió a propósito. Antes llevaba pie porque «lleva un descuento dentro»;
+    // ahora no, porque la persona rellenó el formulario hace diez segundos PARA recibir ese
+    // código y no se la ha metido en ninguna lista. Las comunicaciones comerciales posteriores
+    // sí lo llevan, y eso tiene su propio test en `mensaje-entrega-sin-baja`.
+    assert.match(ALTA, /tipo: FID_TIPO_MENSAJE\.ENTREGA/,
+      "el mensaje del alta ha dejado de declararse como entrega");
+    const codigo = ALTA.split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
+    assert.ok(!/fidConPieBaja|if \(!urlBaja\) return/.test(codigo),
+      "la entrega vuelve a componer un enlace de baja, o a bloquearse si no puede componerlo");
   });
 });

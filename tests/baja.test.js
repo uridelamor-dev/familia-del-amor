@@ -346,6 +346,11 @@ describe("TODA comunicación lleva su enlace", () => {
   });
 
   test("el enlace se añade al texto, no lo sustituye", () => {
-    assert.match(encolar, /texto = fidConPieBaja\(texto, urlBaja, \{ pie: fidPieBaja\(c\.idioma\) \}\)/);
+    // El compositor pasa a decidir POR TIPO, y las comunicaciones son COMERCIAL: siguen
+    // llevando su enlace de baja exactamente igual. Lo que cambió es el camino de ENTREGA —el
+    // WhatsApp inmediato de un formulario—, que es otro sitio y tiene su propio test.
+    assert.match(encolar,
+      /texto = fidComponerMensaje\(texto, \{ tipo: FID_TIPO_MENSAJE\.COMERCIAL,[\s\S]{0,120}pie: fidPieBaja\(c\.idioma\)/,
+      "una comunicación comercial ha dejado de llevar su enlace de baja");
   });
 });

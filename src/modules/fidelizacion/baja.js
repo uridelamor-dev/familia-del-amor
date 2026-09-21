@@ -91,11 +91,55 @@ export function enlaceBaja(base, token) {
 }
 
 /**
+ * ── LOS DOS TIPOS DE MENSAJE, Y POR QUÉ SOLO UNO LLEVA PIE ──────────────────────────────────
+ *
+ * `ENTREGA` — lo ha pedido la persona AHORA MISMO, rellenando un formulario, y lo único que hace
+ *   es traerle lo que acaba de pedir: su código. No es una lista de la que uno esté dentro: es la
+ *   respuesta a una acción suya de hace diez segundos. Ponerle «para dejar de recibir estos
+ *   mensajes» debajo sugiere que se le ha apuntado a algo, y no se le ha apuntado a nada.
+ *
+ * `COMERCIAL` — todo lo demás: campañas, cumpleaños, envíos masivos, lo programado. Ahí la
+ *   persona SÍ está en una lista, no ha pedido ese mensaje concreto, y tiene que poder salirse.
+ *   Estos NO cambian.
+ *
+ * ── POR QUÉ ES UN TIPO Y NO UN `.replace()` ────────────────────────────────────────────────
+ *
+ * Porque quitar la coletilla del texto final sería quitar la CONSECUENCIA sin tocar la CAUSA: el
+ * día que alguien cambie el pie, o lo traduzca, o lo escriba distinto en un idioma, el recorte
+ * dejaría de encontrarlo y volvería a salir. Aquí la decisión se toma una vez, por tipo, y el
+ * mensaje de entrega nunca llega a llevarlo.
+ *
+ * ── LO QUE ESTO NO TOCA ────────────────────────────────────────────────────────────────────
+ *
+ * El consentimiento sigue guardándose igual, `marketing_prefs.baja` sigue mandando sobre el envío
+ * —quien pidió que no le escribieran no recibe ni la entrega— y quien quiera darse de baja lo
+ * puede hacer desde cualquier comunicación comercial posterior, que siguen llevando su enlace.
+ */
+export const TIPO_MENSAJE = Object.freeze({ ENTREGA: "entrega", COMERCIAL: "comercial" });
+
+/** ¿Este tipo de mensaje lleva enlace de baja? Solo el comercial. */
+export const llevaPieDeBaja = (tipo) => tipo !== TIPO_MENSAJE.ENTREGA;
+
+/**
+ * El texto final de un mensaje, según su tipo.
+ *
+ * Es el ÚNICO sitio donde se decide si lleva pie. Los dos caminos que mandan WhatsApp pasan por
+ * aquí, así que la diferencia entre entregar un código y hacer una campaña está escrita una vez.
+ */
+export function componerMensaje(texto, { tipo = TIPO_MENSAJE.COMERCIAL, enlaceBaja = "", pie } = {}) {
+  const cuerpo = String(texto || "").trimEnd();
+  if (!llevaPieDeBaja(tipo)) return cuerpo;
+  return conPieDeBaja(cuerpo, enlaceBaja, pie === undefined ? {} : { pie });
+}
+
+/**
  * Añade el enlace de baja al final del mensaje.
  *
- * Va SIEMPRE, en todas las comunicaciones, y va al final en su propia línea: dentro del texto se
- * pierde, y en medio parece parte de la oferta. Si alguien ya lo escribió a mano en la plantilla,
- * no se repite.
+ * Va al final y en su propia línea: dentro del texto se pierde, y en medio parece parte de la
+ * oferta. Si alguien ya lo escribió a mano en la plantilla, no se repite.
+ *
+ * NO se llama directamente desde el servidor: se llama a `componerMensaje`, que es quien sabe si
+ * este mensaje es una entrega o una comunicación comercial.
  */
 export function conPieDeBaja(texto, enlace, { pie = "Per deixar de rebre aquests missatges:" } = {}) {
   const cuerpo = String(texto || "").trimEnd();
