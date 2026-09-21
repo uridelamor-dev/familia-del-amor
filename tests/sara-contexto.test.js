@@ -328,18 +328,20 @@ describe("el esquema es aditivo: nada de lo que ya está cambia", () => {
   });
 });
 
-describe("esta fase NO cambia cómo razona Sara", () => {
-  test("el prompt fijo no se ha tocado", () => {
-    // El objetivo era darle mejor información, no cambiar sus decisiones. Herramientas, horarios,
-    // derivación a humano e idioma se quedan para la fase siguiente.
+describe("el contexto no cambia lo que Sara SABE HACER", () => {
+  test("las herramientas y los horarios de siempre siguen ahí", () => {
+    // Este fichero blinda de dónde sale la INFORMACIÓN que recibe Sara. Lo que puede hacer con
+    // ella —sus herramientas y las franjas de reserva— es de otro sitio, y tiene que sobrevivir
+    // a cualquier cambio de aquí.
+    //
+    // La lista incluye `pasar_a_persona`, que llegó después: derivar a una persona es ya una
+    // capacidad suya, y quitarla sería tan grave como quitar las reservas.
     for (const intacto of ["registrar_reserva", "cancelar_reserva", "modificar_reserva",
                            "notificar_nerea", "notificar_silvia", "enviar_documento",
-                           "guardar_dato_cliente"]) {
+                           "guardar_dato_cliente", "pasar_a_persona"]) {
       assert.ok(WA.includes(`name: "${intacto}"`), `ha desaparecido la herramienta «${intacto}»`);
     }
     assert.match(WA, /12:30–15:30/, "se han tocado los horarios de reserva, que no tocaban");
-    assert.ok(!/pasar_a_persona|derivar_humano/.test(WA),
-      "se ha implementado la derivación a humano, que es de la fase siguiente");
   });
 
   test("la FORMA de los turnos es la de siempre: user con la marca, assistant con el texto", () => {

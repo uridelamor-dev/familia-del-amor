@@ -5,6 +5,8 @@ import pino from "pino";
 import Anthropic from "@anthropic-ai/sdk";
 import { anteponerCitado as ctxAnteponerCitado, ORIGEN as CTX_ORIGEN }
   from "./src/modules/messaging/contexto.js";
+import { estaPausada, MOTIVO_PAUSA, pidePersona, idiomaSugerido, lineaIdioma, pistaIdioma }
+  from "./src/modules/messaging/sara.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -151,6 +153,31 @@ La actitud es siempre: "Estoy aquí para ayudarte, dime qué necesitas."
 - Tratas siempre de tú, con simpatía y naturalidad.
 - Nunca hagas más de dos preguntas en un mensaje.
 - No inventes información que no tengas.
+
+## El idioma del cliente
+Responde SIEMPRE en el idioma en que te escribe el cliente, conversando con naturalidad. No traduzcas literalmente: habla ese idioma.
+Catalán → catalán. Castellano → castellano. Inglés → inglés. Y si te escribe en otro que manejes, también en ese.
+El idioma del cliente GANA al de cualquier mensaje anterior nuestro: si le mandamos algo en catalán y te contesta en inglés, le contestas en inglés.
+Si su mensaje es demasiado corto para saberlo ("Hola", "Sí", "Ok"), usa el idioma de sus mensajes anteriores. En el contexto encontrarás una pista.
+
+## Mensajes nuestros anteriores
+En el contexto verás mensajes marcados como enviados por nosotros —por ti, por una persona del equipo, por el sistema o por una campaña—, a veces con su campaña y su fecha.
+Si el cliente parece estar respondiendo a uno de ellos, interpreta lo que dice DENTRO de ese contexto. Si te dice "ese día trabajo" y el mensaje anterior hablaba de un día concreto, se refiere a ese día: no le preguntes de qué día habla, que ya está escrito ahí arriba.
+Cuando el cliente usa "Responder" de WhatsApp verás el mensaje citado marcado como tal: ese manda sobre el resto del historial.
+
+## Promociones y códigos: lo que sabes y lo que no
+Entender de qué promoción habla NO es saber sus condiciones.
+Si la condición que te preguntan está en el mensaje anterior, en el citado o en la configuración del equipo, respóndela.
+Si NO la tienes —si vale otro día, si se puede cambiar la fecha, si hay excepciones, hasta cuándo dura—, NO la supongas y NO improvises una respuesta amable: no te la inventes ni para decir que sí ni para decir que no.
+Dile con naturalidad, en su idioma, que con la información que tienes no se lo puedes confirmar y que lo consultas con el equipo, y usa \`pasar_a_persona\`.
+
+## Reservas: sus horarios son SOLO suyos
+Las franjas de mediodía y cena son para RESERVAS de mesa. Úsalas solo cuando estés haciendo, cambiando o consultando una reserva.
+Una pregunta sobre una promoción, un código, un cupón o un descuento NO es una reserva: no le ofrezcas esas franjas ni conviertas la conversación en una reserva si no te la ha pedido.
+
+## Si quiere hablar con una persona
+Si el cliente pide hablar con una persona, con alguien, con un trabajador, con el encargado o dice que no quiere un bot, eso MANDA sobre todo lo demás.
+No intentes convencerle ni resolverlo tú. Usa \`pasar_a_persona\`, díselo en UNA frase en su idioma, y ya está: a partir de ahí se ocupa el equipo.
 - Las herramientas son internas: nunca le menciones al cliente que usas herramientas o sistemas.
 - Si no sabes algo, dilo con naturalidad y ofrece alternativas.
 - Nunca dejes a un cliente sin respuesta.`;
@@ -168,6 +195,28 @@ const LOCALES = [
 // Herramientas nativas con strict: la API valida el input contra el esquema,
 // así que nunca llega una reserva malformada ni se filtran marcadores al cliente
 const TOOLS = [
+  {
+    name: "pasar_a_persona",
+    description:
+      "Pasa la conversación a una persona del equipo y DEJA DE responder automáticamente. "
+      + "Úsala en dos casos: (1) el cliente pide hablar con una persona, con alguien, con un "
+      + "trabajador o con el encargado — esa petición manda sobre cualquier otra cosa y no hay "
+      + "que intentar convencerle de seguir contigo; (2) te preguntan algo que no puedes "
+      + "responder con lo que tienes —condiciones de una promoción, excepciones, si algo vale "
+      + "otro día— y no te lo dice ni el mensaje anterior, ni el citado, ni la configuración. "
+      + "Antes de usarla por el segundo motivo, mira bien el contexto: si la respuesta está ahí, "
+      + "respóndela tú.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        motivo: { type: "string", description: "Qué necesita, en una frase, para que el equipo lo vea sin abrir el chat" },
+        pidio_persona: { type: "boolean", description: "true si el cliente pidió expresamente hablar con una persona" },
+      },
+      required: ["motivo", "pidio_persona"],
+      additionalProperties: false,
+    },
+  },
   {
     name: "registrar_reserva",
     description: "Registra una reserva en el sistema. Llámala SOLO cuando tengas los 6 datos: local, día, hora, personas, nombre y teléfono. Tras el resultado, confirma la reserva al cliente.",
@@ -302,6 +351,20 @@ export function addSaraToHistorial(jid, texto) {
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
 }
 
+/**
+ * OLVIDAR LA SESIÓN EN MEMORIA DE UN CLIENTE.
+ *
+ * Lo llama el panel al devolverle la conversación a Sara. Mientras estuvo parada, lo que escribió
+ * el cliente y lo que le contestó el equipo se guardó en la base, pero NO en este `Map`: si Sara
+ * siguiera con lo que tenía en memoria, retomaría la conversación donde la dejó y se saltaría
+ * justo lo que pasó sin ella.
+ *
+ * Borrarla no pierde nada: el siguiente mensaje la reconstruye desde la base, con todo.
+ */
+export function olvidarSesion(jid) {
+  return conversaciones.delete(jid);
+}
+
 // Hook para rehidratar el historial desde la BD tras un reinicio del proceso
 let historialLoader = null;
 export function setHistorialLoader(fn) { historialLoader = fn; }
@@ -392,6 +455,15 @@ export function setOnMensajeSaliente(fn) { onMensajeSaliente = fn; }
 
 let onActualizarPerfil = null;
 export function setOnActualizarPerfil(fn) { onActualizarPerfil = fn; }
+
+/**
+ * Quien sabe escribir la pausa en la base. Lo pone `server.js`; aquí solo se llama.
+ *
+ * Va por gancho y no con una consulta directa porque este fichero no habla con PostgreSQL, y esa
+ * separación es la que permite probar el resto sin levantar una base.
+ */
+let onPausarIA = null;
+export function setOnPausarIA(fn) { onPausarIA = fn; }
 
 let onGroupAttachment = null;
 export function setOnGroupAttachment(fn) { onGroupAttachment = fn; }
@@ -541,8 +613,37 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
     : "";
   const parteAdjunto = adjuntoUrl ? ` [Ha adjuntado un archivo: ${adjuntoUrl}]` : "";
 
+  // ── EN QUÉ IDIOMA HABLARLE ─────────────────────────────────────────────────────────────────
+  //
+  // La decisión la toma el MODELO leyendo el mensaje, que es lo que hace bien: conversar con
+  // naturalidad en un idioma no es traducir. Esto solo es la PISTA para cuando el mensaje de
+  // ahora es «Hola» y no da para decidir nada.
+  //
+  // Los mensajes del cliente salen del historial ya construido: los turnos `user` que no son
+  // contexto interno nuestro. El del cliente gana siempre al de cualquier campaña anterior.
+  const suyos = [...historial, { role: "user", content: mensajeUsuario }]
+    .filter((t) => t.role === "user" && typeof t.content === "string"
+                   && !t.content.startsWith("[CONTEXTO INTERNO:"))
+    .map((t) => t.content);
+  const pista = idiomaSugerido({
+    mensajesCliente: suyos,
+    idiomaContacto: perfil?.idioma_ultimo || null,
+    idiomaCampana: null,
+  });
+  const parteIdioma = ` ${lineaIdioma(pista)}`;
+
   const contenidoUsuario =
-    `${partesFecha}${partesRetraso}${reservaCtx}${partesPrimer} ${mensajeUsuario}${parteAdjunto}`;
+    `${partesFecha}${partesRetraso}${reservaCtx}${partesPrimer}${parteIdioma} ${mensajeUsuario}${parteAdjunto}`;
+
+  // Se recuerda el idioma que se le ha detectado, para poder desempatar un «Hola» a secas
+  // dentro de tres días. Solo cuando el mensaje daba para decidirlo: guardar una suposición
+  // sería convertirla en un dato.
+  if (onActualizarPerfil && pista.fuente === "mensaje") {
+    const suyo = pistaIdioma(mensajeUsuario);
+    if (suyo && suyo !== perfil?.idioma_ultimo) {
+      onActualizarPerfil(jid, { campo: "idioma_ultimo", valor: suyo }).catch(() => {});
+    }
+  }
 
   historial.push({ role: "user", content: contenidoUsuario });
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
@@ -647,6 +748,23 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
         is_error: false
       };
     }
+    // ── PASAR LA CONVERSACIÓN A UNA PERSONA ──────────────────────────────────────────────
+    //
+    // No manda ningún mensaje: solo MARCA. El texto se lo dice Sara al cliente en su propio
+    // idioma, en esta misma respuesta, y a partir de la siguiente ya no contesta.
+    if (name === "pasar_a_persona") {
+      if (!onPausarIA) throw new Error("derivación no disponible");
+      await onPausarIA(jid, {
+        motivo: input?.pidio_persona ? MOTIVO_PAUSA.PIDIO_PERSONA : MOTIVO_PAUSA.CONSULTA,
+        detalle: String(input?.motivo || "").slice(0, 300),
+        por: "sara",
+      });
+      return {
+        content: "Conversación marcada para atención humana. Confírmaselo al cliente en SU idioma, "
+          + "en una sola frase, y no le pidas más datos ni intentes resolverlo tú.",
+        is_error: false,
+      };
+    }
     if (name === "cancelar_reserva") {
       if (!onCancelarReserva) throw new Error("sistema de cancelaciones no disponible");
       const telefono = await resolverTelefono(jid);
@@ -742,6 +860,31 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
 
 async function procesarBatch(jid, items) {
   const textoCombinado = items.map(i => i.textoFinal).join("\n");
+
+  // ── ¿ESTÁ ESTA CONVERSACIÓN EN MANOS DE UNA PERSONA? ──────────────────────────────────────
+  //
+  // Se pregunta AQUÍ, lo primero, y por una razón que no es de coste: mientras alguien del equipo
+  // está hablando con un cliente, Sara no puede meterse en medio. Que además no se gasten tokens
+  // es una consecuencia, no el motivo.
+  //
+  // El mensaje SÍ se guarda y SÍ entra en el historial —eso pasa en `onMessage`, más abajo— para
+  // que el trabajador lea lo que el cliente escriba mientras tanto y para que, al reactivar,
+  // Sara sepa qué ocurrió. Lo único que no ocurre es la llamada al modelo.
+  if (perfilLoader) {
+    try {
+      const ficha = await perfilLoader(jid);
+      if (estaPausada(ficha)) {
+        console.log(`[Sara] PAUSADA para ${jid} (${ficha.pausa_motivo || "sin motivo"}): no se responde`);
+        // Se registra igual: es lo que verá quien atienda, y el contexto de cuando vuelva.
+        if (onMessage) onMessage({ jid, texto: textoCombinado, respuesta: null, pausada: true });
+        return;
+      }
+    } catch (e) {
+      // Si no se puede saber, se sigue como siempre. Callar por un error de lectura dejaría sin
+      // respuesta a clientes que no han pedido nada.
+      console.error("[Sara] no se pudo leer el estado de la conversación:", e.message);
+    }
+  }
   const adjuntoInfo = items.find(i => i.tieneAdjunto) ? `[adjunto recibido de ${jid}]` : null;
   const contextoRetraso = items.find(i => i.contextoRetraso)?.contextoRetraso || null;
 
@@ -781,6 +924,20 @@ async function procesarBatch(jid, items) {
     await sock.sendPresenceUpdate("composing", jid);
     // De varios mensajes seguidos manda la cita del ÚLTIMO: es a lo que se refiere ahora.
     const citado = [...items].reverse().map((x) => x.citado).find(Boolean) || null;
+
+    // ── LA RED DE LA DERIVACIÓN ────────────────────────────────────────────────────────────
+    //
+    // El prompt le dice a Sara que esta petición manda y tiene una herramienta para hacerlo. Pero
+    // un modelo puede no llamarla, y entonces seguiría intentando resolver a alguien que ya ha
+    // dicho que quiere una persona. Así que si la petición es INEQUÍVOCA se marca aquí, antes de
+    // preguntarle: Sara contesta esta vez —en su idioma, con el contexto de siempre— y a partir
+    // de la siguiente ya no.
+    if (onPausarIA && pidePersona(textoCombinado)) {
+      try {
+        await onPausarIA(jid, { motivo: MOTIVO_PAUSA.PIDIO_PERSONA,
+                                detalle: textoCombinado.slice(0, 300), por: "sara" });
+      } catch (e) { console.error("[Sara] no se pudo marcar la derivación:", e.message); }
+    }
     const respuesta = await encolarPorJid(jid, () => responderConIA(jid, textoCombinado, adjuntoInfo, contextoRetraso, citado));
     await sock.sendMessage(jid, { text: respuesta });
     console.log(`📤 Respuesta enviada a ${jid}`);

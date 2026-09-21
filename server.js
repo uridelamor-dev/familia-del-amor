@@ -10,7 +10,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -106,6 +106,9 @@ import { lineaErrorSql } from "./src/modules/seguridad/redactar.js";
 import { construirContexto as waConstruirContexto, LIMITES as WA_CTX_LIMITES,
          ORIGEN as WA_ORIGEN, tipoPorToken as waTipoPorToken }
   from "./src/modules/messaging/contexto.js";
+import { marcarPausa as saraMarcarPausa, marcarActiva as saraMarcarActiva,
+         ESTADO_IA as SARA_ESTADO, ETIQUETA_MOTIVO as SARA_MOTIVO_TXT }
+  from "./src/modules/messaging/sara.js";
 import { ensureSchemaFidelizacion } from "./src/modules/fidelizacion/schema.js";
 import { proyectarImportes as fidProyectarImportes } from "./src/modules/fidelizacion/importes.js";
 import { crearAcumulador as fidCrearAcumulador } from "./src/modules/fidelizacion/discrepancias.js";
@@ -1463,6 +1466,33 @@ async function initDB() {
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // ── CUANDO UNA CONVERSACIÓN PASA A MANOS DE UNA PERSONA ─────────────────────────────────
+    //
+    // Un cliente pidió hablar con alguien y Sara siguió intentando resolverlo: no existía forma
+    // de pararla. Ahora sí, y el estado vive AQUÍ y no en memoria, porque tiene que sobrevivir a
+    // un reinicio, a un redespliegue y a que Baileys se reconecte. En un `Map`, el primer
+    // redespliegue devolvería a Sara en medio de una conversación que ya atendía una persona.
+    //
+    // Se reutiliza `wa_clientes` —que ya es la ficha de ese jid— en vez de inventar una tabla:
+    // no hace falta un CRM para guardar cuatro campos sobre una fila que ya existe.
+    //
+    //   estado_ia      'activa' | 'pausada'. Ausente = activa, que es como se comporta todo hoy
+    //   pausa_motivo   por qué se paró, para que el equipo lo sepa antes de abrir el chat
+    //   pausado_en     cuándo
+    //   pausado_por    'sara' si lo decidió ella, o el usuario del panel que la paró
+    //   idioma_ultimo  el último idioma que se le detectó, para desempatar un «Hola» a secas
+    for (const col of ["estado_ia TEXT", "pausa_motivo TEXT", "pausado_en TEXT",
+                       "pausado_por TEXT", "idioma_ultimo TEXT"]) {
+      try { await client.query(`ALTER TABLE wa_clientes ADD COLUMN IF NOT EXISTS ${col}`); }
+      catch (e) { console.error("[wa] alter wa_clientes:", e.message); }
+    }
+    // Las pausadas son pocas y se piden enteras cada vez que se abre el panel.
+    try {
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_wa_clientes_pausa ON wa_clientes (estado_ia)
+          WHERE estado_ia IS NOT NULL`);
+    } catch (e) { console.error("[wa] índice wa_clientes:", e.message); }
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS facturas_email_reglas (
@@ -20397,6 +20427,61 @@ app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), async (req, res) =
   }
 });
 
+/**
+ * LAS CONVERSACIONES QUE ESPERAN A UNA PERSONA.
+ *
+ * El estado vive en `wa_clientes`, no en memoria: si el proceso se reinicia —y aquí se reinicia
+ * en cada despliegue—, una conversación que se pasó a una persona TIENE que seguir pasada. Que
+ * Sara volviera a contestar sola a alguien que pidió hablar con alguien es el fallo caro.
+ *
+ * Devuelve teléfonos porque el panel ya trabaja con teléfonos; ni nombres ni textos del cliente.
+ */
+app.get("/api/whatsapp/atencion", requireAuth(["direccion"]), async (req, res) => {
+  try {
+    const rows = await dbAll(
+      `SELECT jid, telefono, pausa_motivo, pausado_en, pausado_por
+         FROM wa_clientes
+        WHERE estado_ia = ?
+        ORDER BY pausado_en DESC NULLS LAST`, [SARA_ESTADO.PAUSADA]);
+    res.json({ ok: true, data: (rows || []).map((r) => ({
+      telefono: r.telefono,
+      motivo: r.pausa_motivo || null,
+      motivo_texto: SARA_MOTIVO_TXT[r.pausa_motivo] || "Requiere atención humana",
+      desde: r.pausado_en || null,
+      por: r.pausado_por || null,
+    })) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/**
+ * DEVOLVERLE LA CONVERSACIÓN A SARA.
+ *
+ * Solo desde el panel y solo a mano: no hay ningún camino automático que reactive a Sara, porque
+ * quien decide que la consulta está resuelta es la persona que la ha atendido.
+ *
+ * Además de soltar la pausa se OLVIDA la sesión en memoria. Mientras estuvo parada, lo que se
+ * dijeron cliente y equipo fue a la base pero no al `Map`; sin esto Sara retomaría el hilo donde
+ * lo dejó, ignorando justo la conversación que hubo sin ella.
+ */
+app.post("/api/whatsapp/reactivar", requireAuth(["direccion"]), async (req, res) => {
+  const telefono = String(req.body?.telefono || "").replace(/\D/g, "");
+  if (!telefono) return res.status(400).json({ ok: false, error: "Falta el teléfono" });
+  try {
+    const fila = await dbGet(
+      `SELECT jid FROM wa_clientes WHERE ${MATCH_TEL9("telefono")} ORDER BY ultima_interaccion DESC LIMIT 1`,
+      [telefono]);
+    if (!fila) return res.status(404).json({ ok: false, error: "Esa conversación no existe" });
+    const a = saraMarcarActiva();
+    await dbRun(
+      `UPDATE wa_clientes SET estado_ia = ?, pausa_motivo = ?, pausado_en = ?, pausado_por = ?
+        WHERE jid = ?`,
+      [a.estado_ia, a.pausa_motivo, a.pausado_en, a.pausado_por, fila.jid]);
+    olvidarSesionWA(fila.jid);
+    await ficAuditar("whatsapp", null, "sara_reactivada", req.user.username, {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // ── Configurador conversacional de Sara ─────────────────────────────────────
 const SARA_LOCALES = [
   "La Tapeta - Blanes", "La Tapeta - Lloret",
@@ -24265,7 +24350,11 @@ const server = app.listen(PORT, async () => {
               origen, clave_campana, tipo_mensaje, idioma, creado_en
          FROM whatsapp_messages
         WHERE jid = ?
-          AND respuesta != '(sin respuesta registrada)'
+          -- COALESCE y no una comparación a secas: en SQL, NULL != 'algo' vale NULL, y una fila
+          -- con NULL se caería del historial en silencio. Y con NULL se guarda EXACTAMENTE lo que
+          -- el cliente escribió mientras Sara estaba parada, que es lo que hay que recuperar al
+          -- reactivarla.
+          AND COALESCE(respuesta, '') != '(sin respuesta registrada)'
         ORDER BY id DESC LIMIT ?`,
       [jid, WA_CTX_LIMITES.FILAS * 2]
     );
@@ -24275,7 +24364,10 @@ const server = app.listen(PORT, async () => {
   });
 
   setPerfilLoader(async (jid) => {
-    const row = await dbGet(`SELECT nombre, telefono, notas, ultima_interaccion FROM wa_clientes WHERE jid = ?`, [jid]);
+    const row = await dbGet(
+      `SELECT nombre, telefono, notas, ultima_interaccion,
+              estado_ia, pausa_motivo, pausado_en, pausado_por, idioma_ultimo
+         FROM wa_clientes WHERE jid = ?`, [jid]);
     return row || null;
   });
 
@@ -24491,6 +24583,15 @@ const server = app.listen(PORT, async () => {
            ON CONFLICT(jid) DO UPDATE SET nombre = ?, ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`,
           [jid, telefono, valor, valor]
         );
+      } else if (campo === "idioma_ultimo") {
+        // El último idioma que se le detectó al cliente. Solo se guarda cuando su mensaje daba
+        // para decidirlo: guardar una suposición la convertiría en un dato.
+        await dbRun(
+          `INSERT INTO wa_clientes (jid, telefono, idioma_ultimo, ultima_interaccion)
+           VALUES (?, ?, ?, EXTRACT(EPOCH FROM NOW())::BIGINT)
+           ON CONFLICT(jid) DO UPDATE SET idioma_ultimo = ?, ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`,
+          [jid, telefono, valor, valor]
+        );
       } else if (campo === "nota") {
         const row = await dbGet(`SELECT notas FROM wa_clientes WHERE jid = ?`, [jid]);
         let notas = {};
@@ -24505,6 +24606,36 @@ const server = app.listen(PORT, async () => {
         );
       }
     } catch (e) { console.error("Error actualizando perfil WA:", e.message); }
+  });
+
+  /**
+   * PARAR A SARA EN UNA CONVERSACIÓN.
+   *
+   * Lo llama la herramienta `pasar_a_persona` y también la red que mira la petición antes de
+   * consultar al modelo. Escribe en `wa_clientes`, que es la ficha de ese jid: el estado tiene
+   * que sobrevivir a un reinicio, a un redespliegue y a que Baileys se reconecte.
+   *
+   * Es idempotente, y el motivo NO se pisa: lo que le importa a quien atienda es por qué se paró
+   * la primera vez, no la última.
+   */
+  setOnPausarIA(async (jid, { motivo, detalle = "", por = "sara" } = {}) => {
+    const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+    const p = saraMarcarPausa({ motivo, por, ahora: isoConOffset(Date.now()) });
+    try {
+      await dbRun(
+        `INSERT INTO wa_clientes (jid, telefono, estado_ia, pausa_motivo, pausado_en, pausado_por, ultima_interaccion)
+         VALUES (?,?,?,?,?,?, EXTRACT(EPOCH FROM NOW())::BIGINT)
+         ON CONFLICT(jid) DO UPDATE SET
+           estado_ia = EXCLUDED.estado_ia,
+           pausa_motivo = COALESCE(wa_clientes.pausa_motivo, EXCLUDED.pausa_motivo),
+           pausado_en   = COALESCE(wa_clientes.pausado_en, EXCLUDED.pausado_en),
+           pausado_por  = COALESCE(wa_clientes.pausado_por, EXCLUDED.pausado_por),
+           ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`,
+        [jid, telefono, p.estado_ia, p.pausa_motivo, p.pausado_en, p.pausado_por]);
+      await ficAuditar("whatsapp", null, "sara_pausada", por,
+        { detalle: { motivo: p.pausa_motivo, nota: String(detalle).slice(0, 200) } });
+      console.warn(`[Sara] pausada en una conversación · motivo: ${p.pausa_motivo}`);
+    } catch (e) { console.error(lineaErrorSql("[wa] pausar IA", e)); }
   });
 
   setOnGroupAttachment(async ({ groupJid, senderJid, buffer, mimeType, filename, caption }) => {

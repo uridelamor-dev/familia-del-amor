@@ -47,11 +47,25 @@ function initSidebar() {
 
 let waAllMessages = [];
 let waSelectedPhone = null;
+// Las conversaciones que Sara ha dejado en manos de una persona, por los 9 últimos dígitos del
+// teléfono: es como se cruzan aquí los números, que llegan escritos de varias formas.
+let waAtencion = new Map();
+
+const waTel9 = (t) => String(t || "").replace(/\D/g, "").slice(-9);
+
+async function loadWaAtencion() {
+  try {
+    const res = await authFetch("/api/whatsapp/atencion");
+    const data = await res.json();
+    waAtencion = new Map((data.ok ? data.data : []).map((x) => [waTel9(x.telefono), x]));
+  } catch { waAtencion = new Map(); }
+}
 
 async function loadWaMensajes() {
   const contactList = document.getElementById("waContactList");
   if (!contactList) return;
   try {
+    await loadWaAtencion();
     const res = await authFetch("/api/whatsapp/mensajes");
     const data = await res.json();
     if (!data.ok || !data.data.length) {
@@ -77,9 +91,10 @@ async function loadWaMensajes() {
       const last = c.msgs[c.msgs.length - 1];
       const fecha = new Date(last.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
       const preview = (last.mensaje || "").slice(0, 40);
+      const espera = waAtencion.get(waTel9(c.telefono));
       return `
-        <div class="card wa-contact-card" data-phone="${c.telefono}">
-          <div class="wa-contact-name">${c.nombre || c.telefono}</div>
+        <div class="card wa-contact-card${espera ? " wa-espera" : ""}" data-phone="${c.telefono}">
+          <div class="wa-contact-name">${c.nombre || c.telefono}${espera ? ` <span class="badge badge-warning">Atención humana</span>` : ""}</div>
           <div class="wa-contact-meta">${c.telefono}</div>
           <div class="wa-contact-preview">${preview}…</div>
           <div class="wa-contact-date">${fecha}</div>
@@ -111,6 +126,7 @@ function renderWaChat(telefono, contactData) {
 
   const msgs = contactData.msgs;
   const nombre = contactData.nombre || telefono;
+  const espera = waAtencion.get(waTel9(telefono));
 
   const bubbles = msgs.map((m) => {
     const fecha = new Date(m.creado_en).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
@@ -138,6 +154,15 @@ function renderWaChat(telefono, contactData) {
         <div class="wa-chat-title">${escHtml(nombre)}</div>
         <div class="wa-chat-sub">${telefono} · ${msgs.length} mensaje${msgs.length !== 1 ? "s" : ""}</div>
       </div>
+      ${espera ? `
+      <div class="wa-aviso-espera">
+        <div>
+          <strong>Sara está parada en esta conversación.</strong>
+          ${escHtml(espera.motivo_texto || "")}${espera.desde ? ` · desde ${escHtml(String(espera.desde).slice(0, 16).replace("T", " "))}` : ""}.
+          Sus mensajes se siguen guardando, pero no se le contesta solo.
+        </div>
+        <button id="waReactivar" class="btn">Reactivar Sara</button>
+      </div>` : ""}
       <div class="wa-thread" id="waChatScroll">
         ${bubbles}
       </div>
@@ -149,6 +174,29 @@ function renderWaChat(telefono, contactData) {
 
   const scroll = panel.querySelector("#waChatScroll");
   if (scroll) scroll.scrollTop = scroll.scrollHeight;
+
+  // Devolverle la conversación a Sara. Con confirmación: quien la atiende es quien decide que
+  // la consulta está resuelta, y volver a activarla sin querer es dejar sola a una persona que
+  // había pedido hablar con alguien.
+  const btnReactivar = panel.querySelector("#waReactivar");
+  if (btnReactivar) btnReactivar.addEventListener("click", async () => {
+    if (!confirm(`¿Devolverle esta conversación a Sara?\n\nVolverá a contestar sola a ${nombre}.`)) return;
+    btnReactivar.disabled = true;
+    btnReactivar.textContent = "…";
+    try {
+      const res = await authFetch("/api/whatsapp/reactivar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ telefono })
+      });
+      const data = await res.json();
+      if (data.ok) { toast("Sara vuelve a atender esta conversación."); await loadWaMensajes(); }
+      else { toast("Error: " + (data.error || "No se pudo reactivar"), "error"); btnReactivar.disabled = false; btnReactivar.textContent = "Reactivar Sara"; }
+    } catch {
+      toast("Error de conexión.", "error");
+      btnReactivar.disabled = false; btnReactivar.textContent = "Reactivar Sara";
+    }
+  });
 
   const input = panel.querySelector("#waMsgInput");
   const sendBtn = panel.querySelector("#waMsgSend");

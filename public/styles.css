@@ -3543,6 +3543,18 @@ h1, h2, h3 {
 .panel .wa-contact-meta { font-size: var(--font-xs); color: var(--muted); }
 .panel .wa-contact-preview { font-size: 0.78rem; color: var(--muted); margin-top: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .panel .wa-contact-date { font-size: 0.7rem; color: var(--muted); margin-top: 0.2rem; }
+/* Una conversación que espera a una persona: se distingue en la lista de un vistazo, con una
+   franja lateral y no solo con la etiqueta, para que se vea también al desplazar deprisa. */
+.panel .wa-contact-card.wa-espera { border-left: 3px solid var(--badge-warning-bd, #d99a2b); }
+.panel .wa-aviso-espera {
+  display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  background: rgba(240, 160, 48, 0.14); color: var(--text);
+  font-size: 0.85rem; line-height: 1.45;
+  border-bottom: 1px solid var(--border);
+}
+.panel .wa-aviso-espera .btn { flex: 0 0 auto; }
 .panel .wa-chat-card { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .panel .wa-chat-header { padding: var(--space-md) var(--space-lg); background: var(--primary); color: #fff; }
 .panel .wa-chat-title { font-weight: 700; }

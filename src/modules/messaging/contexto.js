@@ -163,6 +163,15 @@ export function anteponerCitado(turnos = [], citado = null) {
  * solo en su sitio. Duplicarlo haría que el modelo lo leyera dos veces y creyera que se lo hemos
  * mandado dos veces.
  */
+/**
+ * Lo que ocupa el turno de Sara cuando NO hubo respuesta.
+ *
+ * Es información, no relleno: si el cliente escribió tres veces mientras la conversación estaba
+ * en manos de una persona, Sara tiene que saber que aquello se quedó sin contestar por ella, para
+ * no dar por hecho que ya lo resolvió.
+ */
+export const SIN_RESPUESTA = "[CONTEXTO INTERNO: no le respondiste a este mensaje]";
+
 export function construirContexto(filas = [], { citado = null } = {}) {
   // 1 · Acotar. Se recorre de lo más nuevo a lo más viejo y se para al llegar a cualquiera de los
   //     dos topes: así lo que se tira es siempre lo más antiguo.
@@ -188,7 +197,10 @@ export function construirContexto(filas = [], { citado = null } = {}) {
       turnos.push({ role: "assistant", content: fila._salida });
     } else {
       turnos.push({ role: "user", content: fila._entrada });
-      turnos.push({ role: "assistant", content: fila._salida });
+      // Puede no haber respuesta: el cliente escribió mientras Sara estaba parada, o la fila
+      // viene de una importación antigua. Un turno VACÍO no vale —el modelo rechaza el contenido
+      // en blanco y la conversación entera se cae—, así que se dice lo que pasó.
+      turnos.push({ role: "assistant", content: fila._salida || SIN_RESPUESTA });
     }
   }
 
