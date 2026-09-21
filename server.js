@@ -103,6 +103,9 @@ import { cargarLlavero, lineaArranque } from "./src/modules/seguridad/clave-dato
 // Captación por campaña: la ruta a la que apunta un anuncio de pago, con su cola de envíos.
 import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
 import { lineaErrorSql } from "./src/modules/seguridad/redactar.js";
+import { construirContexto as waConstruirContexto, LIMITES as WA_CTX_LIMITES,
+         ORIGEN as WA_ORIGEN, tipoPorToken as waTipoPorToken }
+  from "./src/modules/messaging/contexto.js";
 import { ensureSchemaFidelizacion } from "./src/modules/fidelizacion/schema.js";
 import { proyectarImportes as fidProyectarImportes } from "./src/modules/fidelizacion/importes.js";
 import { crearAcumulador as fidCrearAcumulador } from "./src/modules/fidelizacion/discrepancias.js";
@@ -764,6 +767,35 @@ async function initDB() {
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // ── POR QUÉ SALIÓ MAL UNA CONVERSACIÓN, Y QUÉ COLUMNAS LO ARREGLAN ───────────────────────
+    //
+    // Un cliente recibió el código de una promoción y al día siguiente contestó «el dia 1
+    // treballo al matí». Sara no entendió a qué se refería, porque el historial que se le da solo
+    // llegaba cuatro horas atrás: vio una frase suelta, sin nada delante.
+    //
+    // Y reconstruirlo desde el TEXTO del mensaje no basta. Ya sabemos POR QUÉ se mandó —de qué
+    // campaña, de qué tipo, en qué idioma—: eso es un dato que tenemos, no algo que haya que
+    // adivinar leyendo. Estas cuatro columnas lo guardan.
+    //
+    // Todas ADITIVAS y NULLABLE: lo ya escrito no cambia y `tipo` sigue mandando en las filas
+    // viejas, que no tienen ninguna de estas.
+    //
+    //   origen        quién lo escribió: 'sara' | 'operador' | 'sistema' | 'campana'
+    //   clave_campana la clave de la campaña o del formulario, cuando se sepa. NUNCA escrita a
+    //                 mano en el código: viene de la fila que originó el envío.
+    //   tipo_mensaje  'entrega' | 'comercial' — el mismo par que decide el pie de baja
+    //   idioma        en el que se mandó, para poder desempatar un «Hola» a secas
+    for (const col of ["origen TEXT", "clave_campana TEXT", "tipo_mensaje TEXT", "idioma TEXT"]) {
+      try { await client.query(`ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS ${col}`); }
+      catch (e) { console.error("[wa] alter whatsapp_messages:", e.message); }
+    }
+    // El historial se lee SIEMPRE por `jid` y por `id` descendente. Sin índice, cada mensaje
+    // entrante recorre una tabla que solo crece.
+    try {
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_wa_msg_jid_id ON whatsapp_messages (jid, id DESC)`);
+    } catch (e) { console.error("[wa] índice whatsapp_messages:", e.message); }
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS facturas_grupos (
@@ -14930,7 +14962,15 @@ async function capVaciarCola() {
 
       let cambio;
       try {
-        await sendMensajeLibre(fila.telefono, fila.texto);
+        // LO QUE SABEMOS DE POR QUÉ SE MANDA, guardado con el mensaje. Sin esto, mañana Sara ve
+        // «el cliente recibió un mensaje» y no puede distinguir el código de una promoción de
+        // una confirmación de reserva. Ninguna campaña concreta aparece aquí: la clave sale de
+        // la propia fila de la cola.
+        await sendMensajeLibre(fila.telefono, fila.texto, {
+          origen: WA_ORIGEN.CAMPANA,
+          claveCampana: fila.campana || null,
+          tipoMensaje: waTipoPorToken(fila.token),
+        });
         await contarEnvioWA();
         if (fila.qr_id) {
           await dbRun(`UPDATE pro_qr SET enviado_en = ?, enviado_error = NULL WHERE id = ?`,
@@ -24203,27 +24243,35 @@ const server = app.listen(PORT, async () => {
     upsertLead({ nombre: nombre || "", telefono, fuente: "whatsapp" });
   });
 
+  /**
+   * EL HISTORIAL QUE RECIBE SARA.
+   *
+   * ── LO QUE SE QUITA Y POR QUÉ ────────────────────────────────────────────────────────────
+   *
+   * El filtro era `creado_en > NOW() - INTERVAL '4 hours'`. Con eso, a un cliente que recibía el
+   * código de una promoción y contestaba al día siguiente, Sara le veía una frase suelta sin nada
+   * delante. Pasó de verdad, y preguntó de qué mes hablaba.
+   *
+   * Ampliar la ventana a 72 horas solo mueve el problema al cuarto día. Así que no hay ventana de
+   * TIEMPO: se traen los últimos mensajes de ESA conversación y el tamaño se acota por número y
+   * por caracteres en `construirContexto`, que es donde se puede probar.
+   *
+   * El `LIMIT` de la consulta va holgado a propósito: el recorte fino —el que sabe de tamaños— lo
+   * hace el módulo, no el SQL.
+   */
   setHistorialLoader(async (jid) => {
     const rows = await dbAll(
-      `SELECT mensaje, respuesta, COALESCE(tipo, 'intercambio') AS tipo
-       FROM whatsapp_messages
-       WHERE jid = ?
-         AND respuesta != '(sin respuesta registrada)'
-         AND creado_en::timestamptz > NOW() - INTERVAL '4 hours'
-       ORDER BY id DESC LIMIT 20`,
-      [jid]
+      `SELECT mensaje, respuesta, COALESCE(tipo, 'intercambio') AS tipo,
+              origen, clave_campana, tipo_mensaje, idioma, creado_en
+         FROM whatsapp_messages
+        WHERE jid = ?
+          AND respuesta != '(sin respuesta registrada)'
+        ORDER BY id DESC LIMIT ?`,
+      [jid, WA_CTX_LIMITES.FILAS * 2]
     );
-    const historial = [];
-    for (const r of rows.reverse()) {
-      if (r.tipo === "saliente" || r.tipo === "manual") {
-        historial.push({ role: "user", content: "[El cliente recibió un mensaje del equipo de Familia del Amor]" });
-        historial.push({ role: "assistant", content: r.respuesta });
-      } else {
-        historial.push({ role: "user", content: r.mensaje });
-        historial.push({ role: "assistant", content: r.respuesta });
-      }
-    }
-    return historial;
+    // La CITA no entra aquí: la antepone `whatsapp.js` sobre el historial final, venga de la
+    // base o del `Map` en memoria. Resolverla en los dos sitios sería resolverla dos veces mal.
+    return waConstruirContexto(rows || []);
   });
 
   setPerfilLoader(async (jid) => {
@@ -24403,14 +24451,26 @@ const server = app.listen(PORT, async () => {
     }
   });
 
-  setOnMensajeSaliente(async ({ jid, mensaje, esManual = false }) => {
+  setOnMensajeSaliente(async ({ jid, mensaje, esManual = false,
+                               origen = null, claveCampana = null,
+                               tipoMensaje = null, idioma = null }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
     const tipo     = esManual ? "manual" : "saliente";
-    const origen   = esManual ? "[Operador]" : "[Sistema]";
+    const marca    = esManual ? "[Operador]" : "[Sistema]";
     try {
+      // Las cuatro columnas nuevas son NULLABLE y solo se rellenan cuando quien manda el mensaje
+      // sabe por qué lo manda. Con ellas, Sara puede ver «campaña «X» · entrega · 20/09» en vez
+      // de «el cliente recibió un mensaje», que era lo mismo para todo.
+      //
+      // `origen` cae en el de siempre si nadie lo dice: quien no pasa metadatos se comporta
+      // exactamente como antes.
       await dbRun(
-        `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, tipo) VALUES (?, ?, ?, ?, ?)`,
-        [jid, telefono, origen, mensaje, tipo]
+        `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, tipo,
+                                        origen, clave_campana, tipo_mensaje, idioma)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [jid, telefono, marca, mensaje, tipo,
+         origen || (esManual ? WA_ORIGEN.OPERADOR : WA_ORIGEN.SISTEMA),
+         claveCampana, tipoMensaje, idioma]
       );
       await dbRun(
         `INSERT INTO wa_clientes (jid, telefono, ultima_interaccion)

@@ -3,6 +3,8 @@ import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
 import pino from "pino";
 import Anthropic from "@anthropic-ai/sdk";
+import { anteponerCitado as ctxAnteponerCitado, ORIGEN as CTX_ORIGEN }
+  from "./src/modules/messaging/contexto.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -487,7 +489,7 @@ function buildPerfilContext(perfil) {
     : "";
 }
 
-async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) {
+async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, citado = null) {
   // 1. Cargar perfil permanente del cliente
   let perfil = null;
   if (perfilLoader) {
@@ -562,9 +564,13 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso) 
   try {
     // Perfil del cliente al inicio del contexto (no se persiste en historial duradero)
     const perfilCtx = buildPerfilContext(perfil);
+    // LA CITA VA DELANTE DEL HISTORIAL Y DETRÁS DEL PERFIL. Delante porque desempata: si en la
+    // conversación hay tres mensajes nuestros, este es el que el cliente ha señalado. Y en UN solo
+    // sitio, para que entre tanto si el historial viene del `Map` como si viene de la base.
+    const conCita = ctxAnteponerCitado([...historial], citado);
     const mensajesLoop = perfilCtx
-      ? [{ role: "user", content: perfilCtx }, { role: "assistant", content: "Entendido." }, ...historial]
-      : [...historial];
+      ? [{ role: "user", content: perfilCtx }, { role: "assistant", content: "Entendido." }, ...conCita]
+      : conCita;
     const textos = [];
     let huboErrorHerramienta = false;
 
@@ -773,13 +779,49 @@ async function procesarBatch(jid, items) {
 
   try {
     await sock.sendPresenceUpdate("composing", jid);
-    const respuesta = await encolarPorJid(jid, () => responderConIA(jid, textoCombinado, adjuntoInfo, contextoRetraso));
+    // De varios mensajes seguidos manda la cita del ÚLTIMO: es a lo que se refiere ahora.
+    const citado = [...items].reverse().map((x) => x.citado).find(Boolean) || null;
+    const respuesta = await encolarPorJid(jid, () => responderConIA(jid, textoCombinado, adjuntoInfo, contextoRetraso, citado));
     await sock.sendMessage(jid, { text: respuesta });
     console.log(`📤 Respuesta enviada a ${jid}`);
     if (onMessage) onMessage({ jid, texto: textoCombinado, respuesta });
   } catch (err) {
     console.error("Error respondiendo:", err.message);
   }
+}
+
+/**
+ * El mensaje al que el cliente está respondiendo, si usó «Responder».
+ *
+ * Se cubren los mismos tipos que ya manejamos en un mensaje normal: texto suelto, texto extendido
+ * y los pies de foto o de documento. Cualquier otra cosa —un audio, una ubicación— da `null`, que
+ * es lo que tiene que dar: no hay texto que enseñarle al modelo.
+ *
+ * `deNosotros` sale del participante del contexto: cuando el citado lo mandamos nosotros,
+ * WhatsApp pone ahí nuestro jid. Cambia por completo cómo se lee la frase que viene detrás, y si
+ * no se puede saber se dice que no se sabe, en vez de suponer.
+ */
+function leerCitado(msg) {
+  try {
+    const ctx = msg?.message?.extendedTextMessage?.contextInfo
+             || msg?.message?.imageMessage?.contextInfo
+             || msg?.message?.documentMessage?.contextInfo;
+    const q = ctx?.quotedMessage;
+    if (!q) return null;
+    const texto = q.conversation
+      || q.extendedTextMessage?.text
+      || q.imageMessage?.caption
+      || q.documentMessage?.caption
+      || "";
+    if (!String(texto).trim()) return null;
+    const participante = String(ctx.participant || "");
+    const mio = String(sock?.user?.id || "").split(":")[0];
+    return {
+      texto: String(texto).trim(),
+      deNosotros: !!(participante && mio && participante.startsWith(mio)),
+      id: ctx.stanzaId || null,
+    };
+  } catch { return null; }
 }
 
 function procesarConDebounce(jid, item) {
@@ -1002,6 +1044,15 @@ async function connectToWhatsApp() {
       const textoFinal = texto.trim() || (tieneAdjunto ? "[Archivo adjunto sin texto]" : "");
       if (!textoFinal) continue;
 
+      // ── CUANDO EL CLIENTE USA «RESPONDER» ──────────────────────────────────────────────────
+      //
+      // WhatsApp nos dice a QUÉ mensaje está contestando, señalado por la propia persona. Es la
+      // señal más fuerte que existe para entender una frase suelta como «el dia 1 treballo al
+      // matí», y hasta ahora se tiraba: se leía `.text` y nada más.
+      //
+      // Degrada solo: sin cita, o con un citado sin texto, sale `null` y no pasa nada.
+      const citado = leerCitado(msg);
+
       const msgTimestamp = (msg.messageTimestamp || 0) * 1000;
       const minutosRetraso = Math.round((Date.now() - msgTimestamp) / 60000);
       let contextoRetraso = null;
@@ -1033,7 +1084,7 @@ async function connectToWhatsApp() {
           .catch(() => {});
       }
 
-      procesarConDebounce(jid, { textoFinal, tieneAdjunto, msgTimestamp, contextoRetraso });
+      procesarConDebounce(jid, { textoFinal, tieneAdjunto, msgTimestamp, contextoRetraso, citado });
     }
   });
 }
@@ -1088,10 +1139,41 @@ export async function numeroTieneWhatsApp(telefono) {
   }
 }
 
-export async function sendMensajeLibre(telefono, texto) {
+/**
+ * Manda un WhatsApp suelto y DEJA CONSTANCIA de él.
+ *
+ * ── POR QUÉ NO BASTA CON EL ECO DE BAILEYS ─────────────────────────────────────────────────
+ *
+ * Antes esto solo llamaba a `sock.sendMessage`. El mensaje quedaba en el historial porque Baileys
+ * nos devuelve un evento `fromMe` con nuestro propio envío, y esa rama lo guardaba. Funcionaba,
+ * pero con dos defectos:
+ *
+ *   1. Si el socket se cae entre el envío y el eco, no queda rastro. El cliente tiene el mensaje
+ *      y nosotros no sabemos que se lo mandamos.
+ *   2. El eco lo guardaba como `manual`, con origen `[Operador]`: un mensaje de campaña quedaba
+ *      registrado como si lo hubiera escrito una persona.
+ *
+ * Ahora se registra aquí, con lo que SABEMOS de por qué se manda, y el eco se deduplica.
+ *
+ * `meta` es opcional: quien no lo pase se comporta como antes, solo que registrando.
+ */
+export async function sendMensajeLibre(telefono, texto, meta = {}) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
   const jid = formatPhone(telefono);
   await sock.sendMessage(jid, { text: texto });
+  // Se marca ANTES de avisar para que el eco, que llega enseguida, ya lo encuentre marcado.
+  _marcarMensajeSistema(jid, texto);
+  if (onMensajeSaliente) {
+    try {
+      onMensajeSaliente({
+        jid, mensaje: texto, esManual: false,
+        origen: meta.origen || CTX_ORIGEN.SISTEMA,
+        claveCampana: meta.claveCampana || null,
+        tipoMensaje: meta.tipoMensaje || null,
+        idioma: meta.idioma || null,
+      });
+    } catch (e) { console.error("[WA] registrar saliente:", e.message); }
+  }
 }
 
 export async function sendDocumentoLibre(telefono, buffer, filename, mimetype) {
