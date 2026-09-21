@@ -212,7 +212,7 @@ describe("se hace desde el panel, no con curl", () => {
   });
 
   test("solo para formularios: una versión de tarjeta no tiene campos que ordenar", () => {
-    assert.match(panel, /renderFidgListaSimple\(FIDG\.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…", true\)/);
+    assert.match(panel, /renderFidgListaSimple\(FIDG\.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…", true, "Editar"\)/);
     assert.match(panel, /renderFidgListaSimple\(FIDG\.tarjeta, "versión de tarjeta", "fidg-tarjeta-nueva", "Nueva versión…"\)/);
   });
 

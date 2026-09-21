@@ -71,12 +71,37 @@ describe("todo se crea y se versiona DESDE EL PANEL", () => {
     }
   });
 
-  test("una versión publicada se COPIA, no se edita", () => {
-    // Nombrar bien la acción evita la mitad de los sustos: el botón no dice «Editar».
-    assert.match(panel, /x\.estado === "borrador"\) \? "Seguir editando" : "Copiar a versión nueva"/);
-    assert.match(panel, /p\.estado === "borrador" \? "Seguir editando" : "Copiar"/);
-    assert.match(panel, /const avisoCopia = \(v\) => v/);
-    assert.match(panel, /Guardar creará una <b>versión nueva<\/b>/);
+  test("una versión publicada se COPIA por dentro, aunque el botón diga «Editar»", () => {
+    // ── LO QUE PROTEGE ESTE CANDADO CAMBIÓ DE SITIO, NO DE FONDO ────────────────────────────
+    //
+    // Antes exigía que el botón dijera «Copiar a versión nueva». Eso describía la MECÁNICA, y la
+    // mecánica es lo que no puede cambiar: una versión publicada nunca se reescribe. El rótulo sí
+    // podía, y ahora dice «Editar», que es lo que la persona está haciendo.
+    //
+    // Así que se vigila lo de verdad importante: que el botón de una versión publicada dispare la
+    // MISMA acción que crear —la que escribe una fila nueva— y que el rótulo venga de fuera.
+    assert.match(panel, /x\.estado === "borrador"\) \? "Seguir editando" : verbo/,
+      "el rótulo del botón ha dejado de ser configurable");
+    assert.match(panel, /verbo = "Copiar a versión nueva"/,
+      "el rótulo por defecto ya no describe la mecánica para las listas que no son de formularios");
+    assert.match(panel, /data-act="\$\{accion\}" data-id="\$\{x\.id\}"/,
+      "el botón de una versión publicada tiene que disparar la misma acción que crear una nueva");
+    // Y que no haya aparecido ningún camino de edición en sitio.
+    assert.ok(!/fidg-form-editar|fidg-form-guardar-en-sitio/.test(panel),
+      "ha aparecido una acción de editar en sitio: una versión publicada no se reescribe");
+
+    // Las PROMOCIONES conservan su rótulo: el cambio de verbo es solo de formularios.
+    assert.match(panel, /p\.estado === "borrador" \? "Seguir editando" : "Copiar"/,
+      "la lista de promociones ha cambiado de rótulo sin haberlo pedido");
+
+    // Y el aviso sigue existiendo y sigue diciendo que se crea una versión nueva, en las dos
+    // redacciones: la de copiar y la de editar.
+    assert.match(panel, /const avisoCopia = \(v, \{ editar = false \} = \{\}\) =>/,
+      "el aviso ha perdido su parámetro: las dos redacciones eran lo que permitía cambiar el " +
+      "rótulo sin esconder que por debajo se versiona");
+    assert.match(panel, /versión nueva<\/b>/, "el aviso ya no dice que se crea una versión nueva");
+    assert.match(panel, /se cierra intacta/,
+      "el aviso de edición ya no dice qué pasa con la versión anterior");
   });
 
   test("el servidor NO tiene ninguna ruta para editar una versión publicada", () => {

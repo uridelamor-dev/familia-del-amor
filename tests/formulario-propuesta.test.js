@@ -439,7 +439,7 @@ describe("SI LA CAMPAÑA YA EXISTE, EL BOTÓN NO LA PISA", () => {
   });
 
   test("solo se abre el aviso de copia cuando de verdad se copia algo publicado", () => {
-    assert.match(app, /avisoCopia\(guardada && guardada\.estado === "publicado" \? guardada\.version : null\)/);
+    assert.match(app, /avisoCopia\(editando \? guardada\.version : null, \{ editar: true \}\)/);
   });
 
   test("y una propuesta que no existe no hace nada", () => {

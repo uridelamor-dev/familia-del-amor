@@ -408,8 +408,18 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
   });
 
   test("y es configurable desde el panel, no está en el código", () => {
-    assert.match(app, /fgArea\("ffWaMsg", "WhatsApp que se envía al apuntarse"/);
-    assert.match(app, /mensaje_wa: fgVal\("ffWaMsg"\)/);
+    // El campo se movió a un apartado con su propio título —«WhatsApp al completar el
+    // formulario»— y su rótulo pasó a ser «El mensaje», que dentro de ese apartado dice lo mismo
+    // sin repetirlo. Lo que se vigila es que siga siendo configurable desde el panel.
+    assert.match(app, /WhatsApp al completar el formulario/,
+      "ha desaparecido el apartado de WhatsApp del editor de formularios");
+    assert.match(app, /fgArea\("ffWaMsg", "El mensaje"/,
+      "ha desaparecido el campo del mensaje");
+    assert.match(app, /mensaje_wa: fgChk\("ffWaOn"\) \? fgVal\("ffWaMsg"\) : ""/,
+      "el mensaje ya no se guarda desde el panel, o el interruptor no manda sobre el texto");
+    // La aserción de arriba ya cubre el guardado desde el panel, y además exige que el
+    // interruptor mande sobre el texto. Aquí se deja solo lo del servidor: que guarde lo que le
+    // llega, sin imponer ningún texto suyo.
     assert.match(server, /mensaje_wa: fidTexto\(b\.mensaje_wa, FID_LARGOS\.parrafo\)/);
   });
 

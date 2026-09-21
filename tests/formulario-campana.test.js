@@ -497,7 +497,7 @@ describe("todo se configura desde el panel", () => {
   test("PUBLICAR ES OTRO BOTÓN, y una versión publicada no se edita: se copia", () => {
     assert.match(app, /data-act="fidg-form-guardar" data-pub="0">Guardar borrador/);
     assert.match(app, /data-act="fidg-form-guardar" data-pub="1">Publicar…/);
-    assert.match(app, /avisoCopia\(guardada && guardada\.estado === "publicado" \? guardada\.version : null\)/);
+    assert.match(app, /avisoCopia\(editando \? guardada\.version : null, \{ editar: true \}\)/);
     // Y en el servidor cada guardado es una versión nueva, con cerrojo para que no se repita.
     const crear = ruta('app.post("/api/fidelizacion/formularios"');
     assert.match(crear, /pg_advisory_xact_lock/);

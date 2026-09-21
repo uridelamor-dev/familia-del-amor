@@ -11329,9 +11329,17 @@ function renderFidgPromos() {
  *   Solo los formularios lo son: son los únicos que tienen una lista de campos que el cliente ve
  *   en un orden. Una versión de tarjeta no tiene nada que ordenar.
  */
-function renderFidgListaSimple(lista, que, accion, etiqueta, ordenable = false) {
-  // Una versión publicada NO se edita: se COPIA y se guarda una nueva. Por eso el botón dice
-  // «Copiar», no «Editar»: nombrar bien la acción evita la mitad de los sustos.
+function renderFidgListaSimple(lista, que, accion, etiqueta, ordenable = false, verbo = "Copiar a versión nueva") {
+  // ── POR QUÉ EL BOTÓN DE LOS FORMULARIOS DICE «EDITAR» Y EL DE LOS DEMÁS NO ─────────────────
+  //
+  // Por debajo hacen lo mismo: una versión publicada NUNCA se reescribe, se cierra y se guarda
+  // otra. Eso no se toca — es lo que permite saber qué se ofreció y qué texto legal aceptó cada
+  // persona, y no es negociable.
+  //
+  // Lo que sí cambia es el nombre. «Copiar a versión nueva» describe la mecánica interna, no lo
+  // que la persona quiere hacer, que es EDITAR SU FORMULARIO. El versionado no desaparece: se
+  // cuenta en el aviso de dentro, donde importa y donde se lee. Y sigue siendo verdad que la
+  // clave, la URL y los inscritos no se mueven.
   //
   // LA EXCEPCIÓN ES EL ORDEN, y tiene su propio botón. Mover un campo no cambia nada de lo que el
   // versionado protege —qué se ofreció, qué texto legal se aceptó—, y hacerlo por el camino de
@@ -11339,7 +11347,7 @@ function renderFidgListaSimple(lista, que, accion, etiqueta, ordenable = false) 
   // cliente que ya se apuntó podría recibirlo otra vez por haber movido los apellidos.
   const filas = (lista || []).map((x) => fgFila(
     `<div class="t1">${esc(x.titulo || x.clave || ("Versión " + x.version))} <span class="mut">v${x.version}</span></div><div class="mut" style="font-size:12px">${esc(String(x.creado_en || "").slice(0, 10))} · ${esc(x.creado_por || "")}</div>`,
-    `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${(x.estado === "publicado" || x.estado === "publicada") ? "ok" : ""}">${esc(x.estado)}</span>${ordenable && x.estado !== "cerrado" ? `<button class="btn sm" data-act="fidg-orden" data-id="${x.id}">Cambiar el orden</button>` : ""}<button class="btn sm" data-act="${accion}" data-id="${x.id}">${(x.estado === "borrador") ? "Seguir editando" : "Copiar a versión nueva"}</button></span>`)).join("");
+    `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${(x.estado === "publicado" || x.estado === "publicada") ? "ok" : ""}">${esc(x.estado)}</span>${ordenable && x.estado !== "cerrado" ? `<button class="btn sm" data-act="fidg-orden" data-id="${x.id}">Cambiar el orden</button>` : ""}<button class="btn sm" data-act="${accion}" data-id="${x.id}">${(x.estado === "borrador") ? "Seguir editando" : verbo}</button></span>`)).join("");
   return `<div style="margin-bottom:10px"><button class="btn primary sm" data-act="${accion}">${esc(etiqueta)}</button></div>
     <div class="rows">${filas || `<div class="mut">Todavía no hay ningún ${que}.</div>`}</div>`;
 }
@@ -11445,7 +11453,7 @@ function renderFidgFormularios() {
         `<div class="t1">${esc(f.titulo || f.clave)} <span class="mut">v${f.version}</span></div><div class="mut" style="font-size:12px">/promo.html?c=${esc(f.clave)}${f.cierra_en ? ` · hasta ${esc(f.cierra_en)}` : ""}${f.idioma && f.idioma !== "es" ? ` · ${esc(f.idioma)}` : ""}</div>`,
         `<a class="btn sm" href="/promo.html?c=${encodeURIComponent(f.clave)}" target="_blank" rel="noopener">Abrir</a>`)).join("")}</div>`
     : "";
-  return renderFidgListaSimple(FIDG.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…", true) + urls;
+  return renderFidgListaSimple(FIDG.formularios, "formulario", "fidg-form-nuevo", "Nuevo formulario…", true, "Editar") + urls;
 }
 
 /** Los tres números de una campaña. `null` = el recuento falló; no es lo mismo que cero. */
@@ -11663,9 +11671,20 @@ const fgVal = (id) => document.getElementById(id)?.value ?? "";
 const fgChk = (id) => !!document.getElementById(id)?.checked;
 
 /** El aviso que abre cada formulario cuando se está copiando una versión publicada. */
-const avisoCopia = (v) => v
-  ? `<div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px">Estás copiando la <b>versión ${v}</b>, que está publicada. Guardar creará una <b>versión nueva</b>: la anterior no cambia, y lo que ya se ofreció con ella sigue valiendo.</div>`
-  : "";
+const avisoCopia = (v, { editar = false } = {}) => {
+  if (!v) return "";
+  // Dos redacciones para el mismo hecho. La de «editar» empieza por lo que la persona necesita
+  // saber —que no se rompe nada de lo que ya está funcionando— y deja la mecánica del versionado
+  // para el final, que es donde interesa. La otra se queda como estaba.
+  const texto = editar
+    ? `Estás editando la <b>versión ${v}</b>, que es la que está publicada.
+       <b>La URL no cambia</b> y los inscritos que ya hay <b>siguen donde están</b>: el enlace del
+       anuncio sirve igual. Al publicar se guarda una versión nueva y la ${v} se cierra intacta,
+       que es lo que permite saber qué se ofreció y qué aceptó cada persona.`
+    : `Estás copiando la <b>versión ${v}</b>, que está publicada. Guardar creará una
+       <b>versión nueva</b>: la anterior no cambia, y lo que ya se ofreció con ella sigue valiendo.`;
+  return `<div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px">${texto}</div>`;
+};
 
 // ── PROMOCIONES ──────────────────────────────────────────────────────────────
 async function fidgPromoNueva(desdeId) {
@@ -12046,9 +12065,11 @@ async function fidgFormNuevo(desdeId, propuesta) {
       </span></div>`;
   }).join("");
 
-  modal(guardada ? "Copiar formulario" : propuesta ? `Propuesta · ${esc(propuesta.nombre_propuesta || propuesta.clave)}` : "Nuevo formulario público", `
+  const editando = !!guardada && guardada.estado === "publicado";
+  modal(guardada ? (editando ? `Editar «${guardada.titulo || guardada.clave}»` : "Seguir editando el borrador")
+        : propuesta ? `Propuesta · ${esc(propuesta.nombre_propuesta || propuesta.clave)}` : "Nuevo formulario público", `
     ${propuesta && !guardada ? `<div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px">Viene <b>relleno con la propuesta</b>, en borrador. Revísalo y cámbialo lo que haga falta: <b>no se publica hasta que pulses «Publicar»</b>.${propuesta.privacidad_url ? "" : '<br><br><b>Falta la política de privacidad.</b> Todavía no hay ninguna página publicada, y sin ella no se puede publicar el formulario: no se pide un teléfono sin decir qué se hace con él. En cuanto exista, se pega su enlace aquí abajo.'}</div>` : ""}
-    ${avisoCopia(guardada && guardada.estado === "publicado" ? guardada.version : null)}
+    ${avisoCopia(editando ? guardada.version : null, { editar: true })}
     ${fgCampo("ffClave", "Clave (va en la URL)", base?.clave || "")}
     ${fgCampo("ffCampana", "Campaña asociada", base?.campana || "")}
     ${fgSelec("ffPromo", "Promoción que concede al apuntarse", base?.promo_clave || "",
@@ -12075,8 +12096,23 @@ async function fidgFormNuevo(desdeId, propuesta) {
     <label class="chk" style="display:block;margin-bottom:8px"><input type="checkbox" id="ffWA"${base?.exige_whatsapp ? " checked" : ""}> Exigir que el teléfono tenga WhatsApp</label>
     <div class="mut" style="font-size:12px;margin:-4px 0 10px">Se comprueba al enviar, nunca en una ruta aparte: un endpoint que conteste «este número tiene WhatsApp» es un comprobador de números.</div>
     <label class="chk" style="display:block;margin-bottom:12px"><input type="checkbox" id="ffPob"${base?.sugerir_poblacion ? " checked" : ""}> Sugerir poblaciones al escribir</label>
-    ${fgArea("ffWaMsg", "WhatsApp que se envía al apuntarse", base?.mensaje_wa || "", 3)}
-    <div class="mut" style="font-size:12px;margin:-4px 0 12px"><b>Vacío = no se manda nada.</b> Usa <code>{enlace}</code> para el carné y <code>{nombre}</code> para su nombre. El enlace de baja se añade solo al final. Si el formulario promete un código por WhatsApp, esto tiene que estar escrito.</div>
+    <fieldset style="border:1px solid var(--border);border-radius:12px;padding:12px;margin:14px 0">
+      <legend class="mut" style="font-size:12px;padding:0 6px">WhatsApp al completar el formulario</legend>
+      <label class="chk" style="display:block;margin-bottom:8px"><input type="checkbox" id="ffWaOn"${(base?.mensaje_wa || "").trim() ? " checked" : ""}> Enviar WhatsApp al inscribirse</label>
+      ${fgArea("ffWaMsg", "El mensaje", base?.mensaje_wa || "", 6)}
+      <div class="mut" style="font-size:12px;margin:-4px 0 8px">
+        Apagado o vacío, <b>no se manda nada</b>: el formulario guarda el alta y enseña el código
+        en pantalla. Cada formulario tiene el suyo.
+      </div>
+      <div class="mut" style="font-size:12px;margin-bottom:8px">
+        Variables: ${fidgVarsWa().map((v) => `<code>{${esc(v)}}</code>`).join(" ")}<br>
+        <b>{enlace}</b> es el enlace INDIVIDUAL de esa persona —su código, único— y lo compone el
+        servidor al enviar. Lo que no esté en esta lista se queda escrito tal cual, a la vista:
+        así <code>{telefono}</code> no puede mandarle su propio número dentro del mensaje.
+      </div>
+      <button class="btn sm" data-act="fidg-form-prev-wa">Vista previa del WhatsApp</button>
+      <div id="ffPrevWa" class="hidden" style="margin-top:10px"></div>
+    </fieldset>
     <details style="margin-bottom:12px"><summary class="mut" style="font-size:12px;cursor:pointer">Mensajes que verá el cliente</summary>
       <div class="mut" style="font-size:12px;margin-top:8px">Vacío = el texto de la casa en el idioma elegido. Al cambiar el idioma se reescriben los que no hayas tocado.</div>
       <div id="ffMsgs" style="margin-top:8px">${fidgMensajesCampos(base, base?.idioma || "es")}</div></details>
@@ -12121,7 +12157,11 @@ function fidgFormCuerpo() {
     abre_en: fgVal("ffAbre"), cierra_en: fgVal("ffCierra"),
     consentimiento_texto: fgVal("ffConsent"), privacidad_url: fgVal("ffPriv"),
     idioma: fgVal("ffIdioma"), destacado: fgVal("ffDestacado"),
-    exige_whatsapp: fgChk("ffWA"), sugerir_poblacion: fgChk("ffPob"), mensaje_wa: fgVal("ffWaMsg"),
+    exige_whatsapp: fgChk("ffWA"), sugerir_poblacion: fgChk("ffPob"),
+    // APAGADO MANDA SOBRE EL TEXTO. Se guarda vacío, que es lo que el servidor ya entiende como
+    // «no mandes nada», en vez de inventar una columna nueva. Así el texto no se pierde por
+    // accidente al apagar: se pierde porque se ha apagado a propósito.
+    mensaje_wa: fgChk("ffWaOn") ? fgVal("ffWaMsg") : "",
     mensajes: Object.fromEntries(Object.keys(FIDG.mensajesDefecto || {}).map((k) => [k, fgVal("ffM_" + k)])),
     // EL ORDEN SALE DEL DOM, no del catálogo: es donde está lo que acaba de mover el usuario.
     // `:scope >` — SOLO LAS FILAS. `data-campo` está también en las dos flechas de cada fila, así
@@ -12217,6 +12257,64 @@ async function fidgOrdenGuardar(id) {
 }
 
 /** VISTA PREVIA. Se pinta con lo que hay escrito; NO guarda ni manda nada. */
+/**
+ * Las variables que el servidor sustituye, pedidas a él.
+ *
+ * `FIDG.variables` viene de `/api/fidelizacion/comunicaciones`, que devuelve la MISMA lista que
+ * usa `renderPlantilla`. Escribirla aquí a mano habría creado dos listas destinadas a divergir, y
+ * el panel prometería una variable que el servidor deja escrita a la vista. El respaldo es para
+ * el primer pintado, antes de que llegue la respuesta.
+ */
+const fidgVarsWa = () =>
+  (FIDG.variables || []).length ? FIDG.variables : ["nombre", "enlace", "fecha", "local", "premio"];
+
+/**
+ * LA VISTA PREVIA DEL WHATSAPP.
+ *
+ * Sustituye igual que `renderPlantilla` en el servidor: solo las variables de la lista, y lo que
+ * no esté se queda TAL CUAL a la vista. Es a propósito —así se ve la errata— y por eso aquí se
+ * imita en vez de sustituir todo lo que parezca una llave.
+ *
+ * El enlace del ejemplo es falso y se dice que lo es: enseñar uno real aquí sería enseñar el
+ * código de alguien en una pantalla de configuración.
+ */
+function fidgFormPrevWa() {
+  const caja = document.getElementById("ffPrevWa");
+  if (!caja) return;
+  const encendido = fgChk("ffWaOn");
+  const plantilla = fgVal("ffWaMsg").trim();
+  caja.classList.remove("hidden");
+
+  if (!encendido || !plantilla) {
+    caja.innerHTML = `<div class="mut" style="font-size:12.5px">Con esto, al inscribirse
+      <b>no se manda ningún WhatsApp</b>. El alta se guarda igual y el código se enseña en pantalla.</div>`;
+    return;
+  }
+
+  const ejemplo = { nombre: "Marta", enlace: "https://familiadelamor.org/cupon.html?t=EJEMPLO",
+                    fecha: new Date().toISOString().slice(0, 10),
+                    local: fgVal("ffClave") || "", premio: "" };
+  const vars = fidgVarsWa();
+  const texto = plantilla.replace(/\{([a-z_]+)\}/g, (entera, clave) =>
+    vars.includes(clave) ? (ejemplo[clave] ?? "") : entera);
+
+  // Las que quedan sin sustituir se señalan: son erratas, y verlas aquí es más barato que verlas
+  // en el móvil de un cliente.
+  const raras = [...new Set([...plantilla.matchAll(/\{([a-z_]+)\}/g)]
+    .map((m) => m[1]).filter((v) => !vars.includes(v)))];
+
+  caja.innerHTML = `
+    <div class="mut" style="font-size:12px;margin-bottom:6px">Así lo recibiría <b>Marta</b>
+      (el enlace es de ejemplo; cada persona recibe el SUYO):</div>
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;
+                padding:12px;max-width:420px;white-space:pre-wrap;font-size:13.5px">${esc(texto)}</div>
+    <div class="mut" style="font-size:12px;margin-top:6px">
+      El servidor añade debajo el enlace para darse de baja. Sin él no sale: un mensaje con un
+      descuento dentro es comercial aunque sea transaccional.</div>
+    ${raras.length ? `<div class="pendingblock" style="margin-top:8px;padding:8px 10px;font-size:12.5px">
+      Esto no se sustituye y saldrá escrito tal cual: ${raras.map((v) => `<code>{${esc(v)}}</code>`).join(" ")}</div>` : ""}`;
+}
+
 function fidgFormPrev(vista) {
   const c = fidgFormCuerpo();
   const ancho = vista === "movil" ? 390 : 900;
@@ -15681,6 +15779,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fidg-orden") fidgOrdenAbrir(t.getAttribute("data-id"));
   else if (act === "fidg-orden-guardar") fidgOrdenGuardar(t.getAttribute("data-id"));
   else if (act === "fidg-form-prev") fidgFormPrev(t.getAttribute("data-v"));
+  else if (act === "fidg-form-prev-wa") fidgFormPrevWa();
   else if (act === "fidg-form-guardar") fidgFormGuardar(t.getAttribute("data-pub"));
   else if (act === "fidg-tarjeta-nueva") fidgTarjetaNueva(t.getAttribute("data-id"));
   else if (act === "fidg-tarjeta-prev") fidgTarjetaPrev(t.getAttribute("data-v"));
