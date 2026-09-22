@@ -459,7 +459,7 @@ function repintarBarra() {
 function shell(active, bodyHtml) {
   const uname = USER.nombre || USER.username || "Usuario";
   const initials = uname.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
-  const navActive = active === "fidelizacion" && puedeVer("promos") ? "promos" : active === "promos" && PROMO.tab === "captacion" ? "campanas" : active;
+  const navActive = active === "fidelizacion" && puedeVer("promos") ? "promos" : active === "promos" && PROMO.tab === "captacion" && puedeVer("campanas") ? "campanas" : active;
   const nav = NAV.map((grp) => {
     const items = grp.items.filter(([id]) => puedeVer(id) && !(id === "fidelizacion" && puedeVer("promos")));
     if (!items.length) return "";
@@ -12770,7 +12770,7 @@ function fidvCsv() {
   window.open(`/api/fidelizacion/clientes.csv?dias=${encodeURIComponent(dias)}${local ? `&local=${encodeURIComponent(local)}` : ""}`, "_blank");
 }
 
-async function loadFidGestion() {
+async function loadFidGestion({ requireForms = false } = {}) {
   const j = (u) => apiRaw(u).catch(() => null);
   const [pu, pp, pr, fo, ta, co, re] = await Promise.all([
     j("/api/fidelizacion/puerta"), j("/api/fidelizacion/promociones/puerta"),
@@ -12778,6 +12778,7 @@ async function loadFidGestion() {
     j("/api/fidelizacion/formularios"), j("/api/fidelizacion/tarjeta-config"),
     j("/api/fidelizacion/comunicaciones"), j("/api/fidelizacion/revisiones"),
   ]);
+  if (requireForms && (!fo || !co)) throw new Error("No se pudieron cargar los formularios y permisos. Reintenta antes de hacer cambios.");
   FIDG.puerta = pu; FIDG.puertaPromos = pp;
   FIDG.promos = pr?.data || []; FIDG.formularios = fo?.data || [];
   FIDG.tarjeta = ta?.data || []; FIDG.comunicaciones = co?.data || []; FIDG.revisiones = re?.data || [];
@@ -13631,8 +13632,8 @@ function marketingCrearCampana() {
     ov.remove();
     if (!puedeVer(objetivo === "captar" ? "promos" : "campanas")) return;
     if (objetivo === "auto") return marketingCampTab("auto");
-    if (objetivo === "mensaje") { await marketingCampTab("envios"); return openNuevaCampana(); }
-    try { const j=await apiRaw("/api/promos"); PROMO.list=j.data||[]; PROMO.locales=j.locales||[]; await marketingCampTab("captacion"); capForm(null); }
+    if (objetivo === "mensaje") { if (await marketingCampTab("envios")) openNuevaCampana(); return; }
+    try { if (await marketingCampTab("captacion")) capForm(null); }
     catch(e) { toast(e.message || "No se pudieron cargar las promociones"); }
   });
 }
@@ -13647,7 +13648,7 @@ function renderCampanas() {
     const est = c.estado || "enviada";
     const editable = est === "borrador" || est === "programada";
     const acc = `<button class="linkbtn" style="color:var(--brand)" data-act="camp-detalle" data-id="${c.id}">Detalle</button>${editable ? ` · <button class="linkbtn" style="color:var(--brand)" data-act="camp-editar" data-id="${c.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="camp-enviar" data-id="${c.id}">Enviar</button>` : ""} · <button class="linkbtn" style="color:var(--brand)" data-act="camp-dup" data-id="${c.id}">Duplicar</button> · <button class="linkbtn" style="color:var(--danger)" data-act="camp-del" data-id="${c.id}">Eliminar</button>`;
-    return `<tr><td>${esc(c.nombre)}${c.canal === "email" ? " 📧" : ""}${c.adjunto_url ? " 📎" : ""}</td><td class="mut">${esc(seg || "—")}</td><td><span class="pill ${CAMP_EST[est] || ""}">${cap(est)}</span>${(est === "programada" && c.programada_para) ? `<div class="t2">${esc(String(c.programada_para).slice(0, 16).replace("T", " "))}</div>` : ""}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td class="r" style="white-space:nowrap">${acc}</td></tr>`;
+    return `<tr><td><button class="linkbtn" data-act="camp-detalle" data-id="${c.id}">${esc(c.nombre)}</button>${c.canal === "email" ? " 📧" : ""}${c.adjunto_url ? " 📎" : ""}</td><td class="mut">${esc(seg || "—")}</td><td><span class="pill ${CAMP_EST[est] || ""}">${cap(est)}</span>${(est === "programada" && c.programada_para) ? `<div class="t2">${esc(String(c.programada_para).slice(0, 16).replace("T", " "))}</div>` : ""}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td class="r" style="white-space:nowrap">${acc}</td></tr>`;
   }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay campañas.</div></div>`;
   // La caja de escribir va ARRIBA DEL TODO: es por donde se empieza. Debajo queda lo de
   // siempre, que sigue estando para quien prefiera montarla a mano.
@@ -13662,7 +13663,7 @@ function renderCampanas() {
     <div id="campProp"></div></div>`;
   const editor = `<details class="card fold"><summary><h3>Preparar un mensaje con ayuda</h3></summary>${redactar}</details>`;
   const recursos = `<details class="card fold"><summary><h3>Plantillas y herramientas</h3></summary>${plantillas}<button class="btn" data-act="camp-detectar-idiomas">Detectar idiomas de los contactos</button><div id="campFaltan"></div></details>`;
-  const cuerpo = CAMP_SECCION === "auto" ? cumple : CAMP_SECCION === "formularios" ? renderCampFidelizacion() : `${table}${editor}${recursos}`;
+  const cuerpo = CAMP_SECCION === "auto" ? cumple : CAMP_SECCION === "formularios" ? renderCampFidelizacion() : `${rows.length >= 50 ? '<p class="mut">Se muestran las 50 campañas más recientes. El historial anterior no está incluido en este listado.</p>' : ""}${table}${editor}${recursos}`;
   return `${head}${marketingCampNav(CAMP_SECCION)}<div style="margin-top:16px">${cuerpo}</div>`;
 }
 
@@ -13776,25 +13777,37 @@ function campUsarPropuesta() {
   openNuevaCampana({ nombre: CAMP_PROP.nombre, mensaje: msg, seg: CAMP_PROP.segmento });
 }
 
+let CAMP_LOAD_ID = 0;
 async function loadCampanas() {
-  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  const view = document.getElementById("view"), seccion = CAMP_SECCION, carga = ++CAMP_LOAD_ID;
+  const vigente = () => carga === CAMP_LOAD_ID && CAMP_SECCION === seccion && document.getElementById("view") === view;
+  view.innerHTML = skeleton();
   try {
-    // Las cuatro en el mismo viaje: la config no depende de las otras tres y esperaba a que
-    // terminaran, así que la pantalla tardaba el doble en aparecer.
-    const [list, plantillas, audiencias, cfg] = await Promise.all([
-      api("/api/campanas"), apiOptional("/api/plantillas"), apiOptional("/api/audiencias"),
-      apiRaw("/api/campanas-config").catch(() => null),
-    ]);
-    CAMP.list = list || []; CAMP.plantillas = plantillas || []; CAMP.audiencias = audiencias || [];
-    // Para el desplegable de cupón del editor. Si falla no se rompe nada: se queda «Sin cupón».
-    if (!PROMO.list.length) apiOptional("/api/promos").then((p) => { PROMO.list = p || []; }).catch(() => {});
-    CAMP.cfg = cfg ? { cumple_auto: cfg.cumple_auto, cumple_plantilla: cfg.cumple_plantilla } : { cumple_auto: false, cumple_plantilla: "" };
-    // Los formularios y las comunicaciones de fidelización, que ahora viven en esta pantalla. Si
-    // fallan, Campañas se pinta igual: son un bloque más, no el motivo de entrar aquí.
-    await loadFidGestion().catch(() => {});
+    if (seccion === "auto") {
+      CAMP.cfg = null;
+      const cfg = await apiRaw("/api/campanas-config");
+      if (!vigente()) return false;
+      CAMP.cfg = { cumple_auto: cfg.cumple_auto, cumple_plantilla: cfg.cumple_plantilla };
+    } else if (seccion === "formularios") {
+      await loadFidGestion({ requireForms: true });
+    } else {
+      // Los datos del editor llegan antes de ofrecerlo. No se cargan reglas ni tarjetas ocultas.
+      const [list, plantillas, audiencias, promos] = await Promise.all([
+        api("/api/campanas"), apiOptional("/api/plantillas"), apiOptional("/api/audiencias"),
+        puedeVer("promos") ? apiOptional("/api/promos") : Promise.resolve(null),
+      ]);
+      if (!vigente()) return false;
+      CAMP.list = list || []; CAMP.plantillas = plantillas || []; CAMP.audiencias = audiencias || [];
+      PROMO.list = promos || [];
+    }
+    if (!vigente()) return false;
     view.innerHTML = renderCampanas();
-    campFaltan();                      // no se espera: es una libreta, no un dato de la pantalla
-  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+    if (seccion === "envios") campFaltan();
+    return true;
+  } catch (e) {
+    if (vigente() && e.message !== "noauth") view.innerHTML = errorCard(e.message);
+    return false;
+  }
 }
 function openNuevaCampana(pre = {}) { openCampana("nueva", pre); }
 
@@ -14069,6 +14082,7 @@ async function campPlantDel(id) {
   try { await apiSend("DELETE", "/api/plantillas/" + id); toast("Plantilla eliminada ✅"); loadCampanas(); } catch (e) { toast("Error: " + e.message); }
 }
 async function campCumpleSave() {
+  if (!CAMP.cfg || !document.getElementById("cumpleAuto") || !document.getElementById("cumpleMsg")) return toast("Carga la configuración antes de guardar.");
   const auto = !!(document.getElementById("cumpleAuto") || {}).checked;
   const plantilla = (document.getElementById("cumpleMsg") || {}).value || "";
   try { await apiSend("POST", "/api/campanas-config", { cumple_auto: auto, cumple_plantilla: plantilla }); toast("Guardado ✅"); }
@@ -14664,26 +14678,34 @@ function promoFidelizacion() {
       </div></div>`;
 }
 
+let PROMO_LOAD_ID = 0;
 async function loadPromos() {
-  const view = document.getElementById("view"); view.innerHTML = skeleton();
+  const view = document.getElementById("view"), tab = PROMO.tab, carga = ++PROMO_LOAD_ID;
+  const vigente = () => carga === PROMO_LOAD_ID && PROMO.tab === tab && document.getElementById("view") === view;
+  view.innerHTML = skeleton();
   try {
-    const j = await apiRaw("/api/promos");
+    const [j, captacion, cola] = await Promise.all([
+      apiRaw("/api/promos"),
+      tab === "captacion" ? apiRaw("/api/captacion/campanas") : null,
+      tab === "captacion" ? apiRaw("/api/captacion/cola") : null,
+    ]);
+    if (!vigente()) return false;
     PROMO.list = j.data || []; PROMO.locales = j.locales || [];
-    if (PROMO.tab === "emitir") PROMO.tiradas = (await apiRaw("/api/promos/vales")).data || [];
-    if (PROMO.tab === "qr") PROMO.qrs = (await apiRaw("/api/promos/qr")).data || [];
-    if (PROMO.tab === "canjes") PROMO.canjes = (await apiRaw("/api/promos/canjes")).data || [];
-    if (PROMO.tab === "captacion") {
-      PROMO.cap = await apiRaw("/api/captacion/campanas");
-      PROMO.capCola = (await apiRaw("/api/captacion/cola")).data || [];
+    if (tab === "emitir") { const r = await apiRaw("/api/promos/vales"); if (!vigente()) return false; PROMO.tiradas = r.data || []; }
+    if (tab === "qr") { const r = await apiRaw("/api/promos/qr"); if (!vigente()) return false; PROMO.qrs = r.data || []; }
+    if (tab === "canjes") { const r = await apiRaw("/api/promos/canjes"); if (!vigente()) return false; PROMO.canjes = r.data || []; }
+    if (tab === "captacion") {
+      PROMO.cap = captacion;
+      PROMO.capCola = cola.data || [];
     }
     // Los MISMOS cargadores que Fidelización: no hay un segundo juego de datos ni una segunda
     // forma de pedirlos. Si divergieran, una pantalla enseñaría una promoción que la otra no.
-    if (PROMO.tab === "fidelizacion") {
+    if (tab === "fidelizacion") {
       try { FID.locales = (await apiRaw("/api/fidelizacion/integracion")).locales || []; } catch { /* la pestaña se pinta igual */ }
       await loadFidGestion();
       if (FID.locales[0]) { FIDG.local = FIDG.local || FID.locales[0].local; await fidgCargarGrupos(FIDG.local); }
     }
-    if (PROMO.tab === "tarjeta") {
+    if (tab === "tarjeta") {
       PROMO.tarjeta = await apiRaw("/api/tarjeta/resumen");
       // Con la tarjeta apagada no se piden los certificados: no hay nada que configurar
       // todavía, y una petición menos es una pantalla que no se queda a medias si falla.
@@ -14693,8 +14715,10 @@ async function loadPromos() {
       PROMO.walletDin = (PROMO.tarjeta.activa && USER.rol === "direccion")
         ? await apiRaw("/api/wallet/dinamico").catch(() => null) : null;
     }
+    if (!vigente()) return false;
     view.innerHTML = renderPromos();
-  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+    return true;
+  } catch (e) { if (vigente() && e.message !== "noauth") view.innerHTML = errorCard(e.message); return false; }
 }
 
 // ── Vales impresos ───────────────────────────────────────────────────────────
@@ -14849,7 +14873,7 @@ function promoCaptacion() {
   const lista = filas.length
     ? `<div class="card p0"><div class="tw"><table class="tbl">
         <thead><tr><th>Campaña</th><th>Promoción</th><th class="r">Altas</th><th class="r">Enviados</th>
-          <th class="r">En cola</th><th class="r">No salieron</th><th class="r">Canjeados</th><th></th></tr></thead>
+          <th class="r">En cola</th><th class="r">No salieron</th><th class="r">Canjes de la promoción</th><th></th></tr></thead>
         <tbody>${filas.map((c) => {
           const [cls, txt] = CAP_EST[c.estado] || CAP_EST.no_existe;
           return `<tr>
@@ -14860,7 +14884,7 @@ function promoCaptacion() {
             <td class="r tnum">${num(c.enviados)}</td>
             <td class="r tnum">${num(c.pendientes)}</td>
             <td class="r tnum">${c.fallidos ? `<span style="color:var(--danger)">${num(c.fallidos)}</span>` : "0"}</td>
-            <td class="r tnum">${num(c.canjeados)}${c.altas ? ` <span class="mut">(${promoPct(c.canjeados, c.altas)}%)</span>` : ""}</td>
+            <td class="r tnum">${num(c.canjeados)}</td>
             <td class="r" style="white-space:nowrap">
               <button class="linkbtn" style="color:var(--brand)" data-act="tj-copiar" data-url="${esc(c.url)}">Copiar enlace</button> ·
               <button class="linkbtn" style="color:var(--brand)" data-act="cap-editar" data-clave="${esc(c.clave)}">Editar</button> ·
@@ -14894,7 +14918,7 @@ function promoCaptacion() {
 
   const cabecera = "";
 
-  return cabecera + salud + `<div style="margin-top:16px">${lista}</div>` +
+  return cabecera + salud + `<p class="mut">Los canjes corresponden a la promoción completa y pueden incluir otras campañas. No representan una tasa de conversión de este anuncio.</p><div style="margin-top:16px">${lista}</div>` +
          (tablaCola ? `<div style="margin-top:16px">${tablaCola}</div>` : "");
 }
 
