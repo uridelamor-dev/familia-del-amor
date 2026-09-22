@@ -12675,7 +12675,7 @@ function renderFidelizacion() {
   const tabs = FID_SECC.map(([k, t]) =>
     `<button class="btn sm ${FIDV.seccion === k ? "primary" : ""}" data-act="fidv-tab" data-k="${k}">${esc(t)}</button>`).join("");
   let cuerpo = "";
-  if (FIDV.seccion === "resumen") cuerpo = renderFidgPuerta() + renderFidvAtajos();
+  if (FIDV.seccion === "resumen") cuerpo = renderFidgPuerta() + `<details class="card fold"><summary><h3>Accesos relacionados</h3></summary>${renderFidvAtajos()}</details>`;
   else if (FIDV.seccion === "sombra") cuerpo = renderFidvSombra();
   else if (FIDV.seccion === "reglas") cuerpo = renderFidPrograma(true);
   else if (FIDV.seccion === "revisiones") cuerpo = renderFidgRevisiones();
@@ -12683,7 +12683,7 @@ function renderFidelizacion() {
   else if (FIDV.seccion === "traza") cuerpo = renderFidvTraza();
 
   return `${marketingBeneficiosNav("puntos")}<div class="hd"><h2>Programa de puntos</h2></div>
-    <div class="card"><div class="ch"><h3>Programa de puntos</h3></div>
+    <div class="card">
       <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Aquí se revisan las reglas, se comprueban los resultados de prueba y se decide cuándo activar el programa. La conexión con las cajas se configura en <b>Sistema → Ágora (TPV)</b>.</div>
       <div class="marketing-tabs" style="display:flex;gap:6px;overflow-x:auto;margin-bottom:12px">${tabs}</div>
       ${cuerpo}</div>`;
