@@ -30,6 +30,19 @@ No se ha cambiado `whatsapp.js`, los grupos actuales, Sara ni los workers de cam
 La bandeja del piloto muestra SOLO mensajes Cloud posteriores a su configuración. No presenta
 historial de la app, conversaciones de Baileys ni historial fabricado como si estuviera importado.
 
+## Cuenta de prueba localizada en Meta
+
+En la app existente «Respuestas automáticas» (671839232558458), «Paso 1. Pruébalo»:
+- Emisor de prueba: +1 (555) 131-0780.
+- Phone Number ID: 169923672868154.
+- WABA de prueba: 164103890119737.
+- Versión mostrada en el ejemplo oficial del panel: v25.0.
+- Token: «Not generated yet». Destinatario: sin seleccionar.
+
+No se generó el token, no se concedieron nuevos permisos y no se enviaron mensajes.
+La próxima intervención del propietario es generar/autorizar el token en esa pantalla y
+verificar el móvil receptor elegido para las pruebas. No pegar secretos en la conversación.
+
 ## Configuración pendiente (secretos solo en servidor)
 
 La aplicación ya depende de `pg` y `express`; no se añadieron dependencias al proyecto.
@@ -94,7 +107,7 @@ Esta lista es una condición de salida, no funcionalidades ya terminadas:
 
 ## Validación realizada
 
-- Pruebas de protocolo, HTTP y PostgreSQL real en una base local separada.
+- 16 pruebas de protocolo, HTTP y PostgreSQL real aprobadas en una base local separada.
 - Verificación manual en navegador del panel con API simulada, a 1440×800 y 390×844:
   acceso a la bandeja, selección, toma y envío ficticio; sin desbordamiento horizontal móvil.
 - La prueba general tuvo 5793 casos aprobados, 7 cancelados por no poder lanzar Chrome en el
