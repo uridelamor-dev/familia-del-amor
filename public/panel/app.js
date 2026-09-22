@@ -9,7 +9,7 @@ const nf = new Intl.NumberFormat("es-ES", { useGrouping: "always" });
 const num = (n) => nf.format(Number(n) || 0);
 const dec1 = (n) => (Number(n) || 0).toFixed(1).replace(".", ",");
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
 function addDaysStr(s, n) { const d = new Date(s + "T00:00:00.000Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 // Si no llega una fecha se devuelve cadena vacía, NO el valor tal cual: con `return iso`
 // una fecha ausente acababa pintando literalmente «undefined» en la cabecera del panel.
@@ -874,6 +874,8 @@ function fijarPendientes(d) {
 }
 let DASH_RANGE = { from: null, to: null, label: "Esta semana" };
 let DASH_PERIODO = null;
+let DASH_PERIODO_ESTADO = "cargando";
+let DASH_CARGA = 0;
 // El parte del día de Sara, guardado para poder abrirlo desde el botón de la cabecera.
 let DASH_PARTE = null;
 // Reflejo puro de src/modules/dashboard/periodos.js
@@ -1173,17 +1175,18 @@ function renderDashboard(d) {
   // Ahora se compara hoy con un día normal de la misma semana, y se dice con todas las letras.
   const cmpHoy = deltaMismoDiaSemana(d.serieReservas, d.fecha, "n");
   const cmpCom = deltaMismoDiaSemana(d.serieReservas, d.fecha, "personas");
-  const kpis = `<div class="grid g4">${kpi({ lab: "Reservas hoy", icon: "cal", val: num(hoyN.n || 0), delta: cmpHoy && cmpHoy.pct, contra: cmpHoy && cmpHoy.contra })}${kpi({ lab: "Comensales hoy", icon: "users", val: num(hoyN.personas || 0), delta: cmpCom && cmpCom.pct, contra: cmpCom && cmpCom.contra })}${kpi({ lab: "Mantenim. abierto", icon: "wrench", val: num((d.mantenimiento && d.mantenimiento.abiertas) || 0), unit: nCrit ? `· ${nCrit} crítica${nCrit === 1 ? "" : "s"}` : "" })}${kpi({ lab: "Por pagar", icon: "euro", val: eur((d.dinero && d.dinero.porPagar && d.dinero.porPagar.total) || 0) })}</div>`;
+  const kpis = `<div class="grid g4 dash-kpis">${kpi({ lab: "Reservas hoy", icon: "cal", val: num(hoyN.n || 0), delta: cmpHoy && cmpHoy.pct, contra: cmpHoy && cmpHoy.contra })}${kpi({ lab: "Comensales hoy", icon: "users", val: num(hoyN.personas || 0), delta: cmpCom && cmpCom.pct, contra: cmpCom && cmpCom.contra })}${kpi({ lab: "Mantenim. abierto", icon: "wrench", val: num((d.mantenimiento && d.mantenimiento.abiertas) || 0), unit: nCrit ? `· ${nCrit} crítica${nCrit === 1 ? "" : "s"}` : "" })}${kpi({ lab: "Por pagar", icon: "euro", val: eur((d.dinero && d.dinero.porPagar && d.dinero.porPagar.total) || 0) })}</div>`;
 
   // ── Actividad (reservas + ventas del PERIODO seleccionado) ──
   const per = DASH_PERIODO || null;
   const winLbl = DASH_RANGE.label || "Esta semana";
   const rSerie = (per && per.reservas && per.reservas.serie) || [];
   const serieVals = rSerie.map((x) => x.personas || x.n || 0);
-  const totalPeriodo = (per && per.reservas && per.reservas.total) || 0;
+  const totalPeriodo = per && per.reservas ? per.reservas.total : null;
+  const periodoMensaje = DASH_PERIODO_ESTADO === "error" ? "No se han podido cargar los datos del periodo. Vuelve a elegir el periodo para reintentar." : "Cargando datos del periodo…";
   const vOk = per && per.ventas && per.ventas.disponible;
   const gOk = per && per.gastos && per.gastos.disponible;
-  const res = per ? per.resultado : null;
+  const res = vOk && gOk && per ? per.resultado : null;
   const resCol = res == null ? "var(--ink)" : (res >= 0 ? "var(--brand)" : "var(--danger)");
   // La comparación con el periodo anterior la calcula el servidor (sabe que un mes se compara
   // con el mes anterior, no con «los 31 días de antes»). Si no la manda, no se pinta nada.
@@ -1199,8 +1202,8 @@ function renderDashboard(d) {
   const gEmp = gOk ? Number(per.gastos.empresa) || 0 : 0;
   const notaGasto = gEmp ? `incl. ${eur(gEmp)} de empresa` : "";
   const ventasBox = (vOk || gOk)
-    ? `<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && cmp ? cmp.ventas : null)}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && cmp ? cmp.gastos : null, notaGasto)}${stat3("Resultado", res != null ? eur(res) : "—", resCol, res != null && cmp ? cmp.resultado : null)}</div>`
-    : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y resultado<br><span class="hl">${DASH_RANGE.to === todayStr() && DASH_RANGE.from === todayStr() ? "aún sin cierre de hoy" : "al conectar Ágora"}</span></div>`;
+    ? `<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Datos parciales: faltan locales" : "")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Datos parciales: faltan locales" : notaGasto)}${stat3("Resultado", res != null ? eur(res) : "—", resCol, res != null && cmp ? cmp.resultado : null)}</div>`
+    : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y resultado<br><span class="hl">${per ? "Sin datos de ventas y gastos en este periodo" : esc(periodoMensaje)}</span></div>`;
   // Al pasar el ratón se ve el día, cuántas reservas y —si Ágora está conectado— lo que
   // se facturó ESE día. Es la pregunta que uno se hace mirando el pico del sábado.
   const ventasPorDia = new Map(((per && per.ventas && per.ventas.serie) || []).map((v) => [String(v.dia), Number(v.ventas) || 0]));
@@ -1210,21 +1213,20 @@ function renderDashboard(d) {
         etiquetas: rSerie.map((x) => fechaCorta(x.dia)),
         extra: vOk ? rSerie.map((x) => ventasPorDia.get(String(x.dia)) ?? null) : null,
       }, { h: 120, fmt: (v) => num(v) + (v === 1 ? " comensal" : " comensales"), fmtExtra: (v) => eur(v) + " facturado" })
-    : `<div class="mut" style="font-size:12.5px;padding:14px 0">${totalPeriodo ? "Rango de un día — sin serie para graficar." : "Sin reservas en este periodo."}</div>`;
+    : `<div class="mut" style="font-size:12.5px;padding:14px 0">${!per ? esc(periodoMensaje) : totalPeriodo ? "Solo hay un día con reservas en este periodo." : "Sin reservas en este periodo."}</div>`;
   const notaRes = (vOk || gOk) ? `<div class="mut" style="font-size:11px;margin-top:8px">Resultado = ventas${per.hoyEnVivo ? " (incluye hoy)" : ""} − gastos en facturas del periodo (no incluye personal).</div>` : "";
-  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${grafico}${notaRes}</div>`;
+  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${totalPeriodo == null ? "—" : num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${grafico}${notaRes}<div class="mut" style="font-size:12px;margin-top:8px">${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}${per && !vOk ? " · Ventas no disponibles; resultado pendiente." : per && !gOk ? " · Sin facturas registradas; resultado pendiente." : ""}</div></div>`;
 
   // ── Gasto del mes (barra apilada real) ──
   const gl = (d.dinero && d.dinero.gastoLocal) || []; const gtot = gl.reduce((s, g) => s + (g.actual || 0), 0);
   const PAL = ["var(--info)", "var(--warning)", "#8A5A9B", "var(--brand)", "var(--success)", "#B5713A", "#5B8A72"];
-  const gasto = `<div class="card c4"><div class="ch"><h3>Gasto del mes</h3></div><div class="big tnum">${eur(gtot)}</div><div class="mut" style="font-size:12px;margin:2px 0 12px">${gl.length} establecimiento${gl.length === 1 ? "" : "s"}</div>${gl.length ? `<div class="mbar">${gl.map((g, i) => `<span style="width:${gtot ? Math.round(g.actual / gtot * 100) : 0}%;background:${PAL[i % PAL.length]}"></span>`).join("")}</div><div class="rows" style="margin-top:10px">${gl.slice(0, 4).map((g, i) => `<div class="row" style="padding:8px 0;border-top:0"><span class="sdot" style="background:${PAL[i % PAL.length]}"></span><div class="grow"><div class="t1" style="font-size:12.5px">${esc(nombreCortoLocal(g.local))}</div></div><b class="tnum" style="font-size:12.5px">${eur(g.actual)}</b></div>`).join("")}</div>` : `<div class="mut">Sin gasto registrado este mes.</div>`}<div class="pendingblock" style="margin-top:14px;padding:12px 14px">Margen y coste de personal: <b>al conectar Ágora/Skello</b>.</div></div>`;
+  const gasto = `<div class="card c4"><div class="ch"><h3>Gasto del mes</h3></div><div class="big tnum">${eur(gtot)}</div><div class="mut" style="font-size:12px;margin:2px 0 12px">${gl.length} establecimiento${gl.length === 1 ? "" : "s"}</div>${gl.length ? `<div class="mbar">${gl.map((g, i) => `<span style="width:${gtot ? Math.round(g.actual / gtot * 100) : 0}%;background:${PAL[i % PAL.length]}"></span>`).join("")}</div><div class="rows" style="margin-top:10px">${gl.slice(0, 4).map((g, i) => `<div class="row" style="padding:8px 0;border-top:0"><span class="sdot" style="background:${PAL[i % PAL.length]}"></span><div class="grow"><div class="t1" style="font-size:12.5px">${esc(nombreCortoLocal(g.local))}</div></div><b class="tnum" style="font-size:12.5px">${eur(g.actual)}</b></div>`).join("")}</div>` : `<div class="mut">Sin gasto registrado este mes.</div>`}<div class="pendingblock" style="margin-top:14px;padding:12px 14px">Este bloque muestra las facturas del mes actual, aunque el periodo de actividad sea otro. No incluye coste de personal.</div></div>`;
 
   // ── Necesita tu atención (preocupaciones reales) ──
   const concerns = d.preocupaciones || [];
-  // Plegados: lo que hay dentro se mira cuando hay algo, y el resumen del título ya dice si lo
-  // hay. Cerrados ocupan una línea en vez de una tarjeta.
+  // Las críticas se muestran al entrar; el detalle por establecimiento queda plegado.
   const nCritC = concerns.filter((c) => c.sev === "crit").length;
-  const atencion = `<details class="card fold c7 p0"><summary style="padding:18px 18px 14px"><h3>Necesita tu atención</h3><span class="foldr">${concerns.length ? `<span class="pill ${nCrit || nCritC ? "bad" : "warn"}">${nCritC ? `${nCritC} crítica${nCritC === 1 ? "" : "s"}` : `${concerns.length}`}</span>` : '<span class="pill ok">Todo en orden</span>'}<span class="car">${ic("chev", 16)}</span></span></summary>${concerns.length ? `<div class="rows">${concerns.slice(0, 5).map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</details>`;
+  const atencion = `<details class="card fold c7 p0"${nCritC ? " open" : ""}><summary style="padding:18px 18px 14px"><h3>Necesita tu atención</h3><span class="foldr">${concerns.length ? `<span class="pill ${nCrit || nCritC ? "bad" : "warn"}">${nCritC ? `${nCritC} crítica${nCritC === 1 ? "" : "s"}` : `${concerns.length}`}</span>` : '<span class="pill ok">Todo en orden</span>'}<span class="car">${ic("chev", 16)}</span></span></summary>${concerns.length ? `<div class="rows">${concerns.slice(0, 5).map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</details>`;
 
   // ── Estado por establecimiento (radar real) ──
   const radar = d.radarLocales || [];
@@ -1240,48 +1242,42 @@ function renderDashboard(d) {
   const cl = d.clientes || {}; const enfr = (cl.enfriando || []).slice(0, 4);
   const clientesCard = enfr.length ? `<div class="card c6 p0"><div class="ch" style="padding:18px 18px 0"><h3>Clientes a los que llamar</h3><button class="link" data-view="clientes">Ver →</button></div><div class="rows">${enfr.map((c) => `<div class="row"><div class="ava">${esc((c.nombre || "?").slice(0, 1).toUpperCase())}</div><div class="grow"><div class="t1">${esc(c.nombre || "—")}</div><div class="t2">${c.visitas} reservas · última ${esc(c.ultima)}</div></div>${c.telefono ? `<a class="btn sm" href="tel:${esc(c.telefono)}">Llamar</a>` : ""}</div>`).join("")}</div></div>` : "";
   const eq = d.equipo || {}; const einc = (eq.incidencias || []).slice(0, 3); const eck = eq.checkins;
-  const equipoCard = (einc.length || (eck && eck.plantilla)) ? `<div class="card c6"><div class="ch"><h3>Equipo</h3><button class="link" data-view="rrhh">RR. HH. →</button></div>${eck && eck.plantilla ? `<div class="between" style="margin-bottom:8px"><span class="mut" style="font-size:12.5px">Conversaciones del mes</span><b class="tnum">${eck.hechos}/${eck.plantilla}</b></div><div class="prog ${eck.hechos / eck.plantilla < 0.5 ? "warn" : ""}"><i style="width:${Math.round((eck.hechos / Math.max(1, eck.plantilla)) * 100)}%"></i></div>` : ""}${einc.length ? `<div class="rows" style="margin-top:10px">${einc.map((w) => `<div class="row" style="padding:8px 0;border-top:0"><div class="grow"><div class="t1" style="font-size:12.5px">${esc(w.nombre || "—")}</div><div class="t2">${esc(w.local || "")}</div></div><span class="badge ${w.c >= 2 ? "bad" : "warn"}">${w.c} incid.</span></div>`).join("")}</div>` : ""}<div class="pendingblock" style="margin-top:12px;padding:11px 13px">Coste de personal y horas: <b>al conectar Skello</b>.</div></div>` : "";
+  const equipoCard = (einc.length || (eck && eck.plantilla)) ? `<div class="card c6"><div class="ch"><h3>Equipo</h3><button class="link" data-view="rrhh">RR. HH. →</button></div>${eck && eck.plantilla ? `<div class="between" style="margin-bottom:8px"><span class="mut" style="font-size:12.5px">Conversaciones del mes</span><b class="tnum">${eck.hechos}/${eck.plantilla}</b></div><div class="prog ${eck.hechos / eck.plantilla < 0.5 ? "warn" : ""}"><i style="width:${Math.round((eck.hechos / Math.max(1, eck.plantilla)) * 100)}%"></i></div>` : ""}${einc.length ? `<div class="rows" style="margin-top:10px">${einc.map((w) => `<div class="row" style="padding:8px 0;border-top:0"><div class="grow"><div class="t1" style="font-size:12.5px">${esc(w.nombre || "—")}</div><div class="t2">${esc(w.local || "")}</div></div><span class="badge ${w.c >= 2 ? "bad" : "warn"}">${w.c} incid.</span></div>`).join("")}</div>` : ""}<div class="pendingblock" style="margin-top:12px;padding:11px 13px">Consulta turnos y horas registradas en Horarios y Fichajes. El coste de personal no está incluido aquí.</div></div>` : "";
 
   const row1 = `<div class="grid g12" style="margin-top:16px">${actividad}${gasto}</div>`;
   const row2 = `<div class="grid g12" style="margin-top:16px">${atencion}${estado}</div>`;
   const row3 = `<div class="grid g12" style="margin-top:16px">${resenasCard}${saraCard}</div>`;
   const row4 = (clientesCard || equipoCard) ? `<div class="grid g12" style="margin-top:16px">${clientesCard}${equipoCard}</div>` : "";
-  return header + sara + kpis + row1 + row2 + row3 + row4;
+  return header + sara + kpis + row2 + row1 + row3 + row4;
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   if (!DASH_RANGE.from) { const r = rangoPreset(PERIOD || "semana", todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; }
-  // El dashboard es un AGREGADO, así que no vale con juntar filas como en reservas: se le
-  // dice al servidor qué establecimientos son y él pide el de cada uno y los suma campo a
-  // campo (src/modules/dashboard/fusion.js). `DASH_LOCAL` vale «*mios*» cuando se están
-  // mirando todos los suyos, y eso no es el nombre de ningún local: mandarlo tal cual hacía
-  // que el servidor cayera al principal y se viera UN local creyendo que se veían los dos.
-  const q = viendoVarios() ? "locales=" + encodeURIComponent(localesDelAmbito().join(","))
+  const carga = ++DASH_CARGA;
+  const from = DASH_RANGE.from, to = DASH_RANGE.to;
+  const alcance = () => viendoVarios() ? "locales=" + encodeURIComponent(localesDelAmbito().join(","))
     : localActualFE() ? "local=" + encodeURIComponent(localActualFE()) : "";
+  const q = alcance();
+  const vigente = () => carga === DASH_CARGA && CURRENT === "dashboard"
+    && from === DASH_RANGE.from && to === DASH_RANGE.to && q === alcance();
+  // Nunca reutilizar cifras del filtro anterior ni convertir una carga/error en cero.
+  DASH_PERIODO = null;
+  DASH_PERIODO_ESTADO = "cargando";
+  let d = null;
+  const pintar = () => { if (d && vigente()) view.innerHTML = renderDashboard(d); };
+  const pedirPeriodo = apiOptional(`/api/dashboard/periodo?from=${from}&to=${to}&comparar=1&preset=${encodeURIComponent(PERIOD || "")}${q ? "&" + q : ""}`);
+  pedirPeriodo.then((per) => {
+    if (!vigente()) return;
+    DASH_PERIODO = per && per.reservas ? per : null;
+    DASH_PERIODO_ESTADO = DASH_PERIODO ? "listo" : "error";
+    pintar();
+  });
   try {
-    // `comparar=1`: el servidor trae también el periodo anterior y la variación ya calculada.
-    // El «contra qué» lo decide él (`rangoAnterior`), que sabe que un mes se compara con el mes
-    // anterior y no con «los 31 días de antes».
-    // LAS DOS PETICIONES NO SE ESPERAN LA UNA A LA OTRA. Antes iban en un `Promise.all` y la
-    // pantalla no aparecía hasta que llegaba la MÁS LENTA de las dos: el dashboard hace unas
-    // treinta consultas y la comparación con el periodo anterior hace el doble de trabajo que
-    // el periodo solo. Se pinta con lo primero que llega y las variaciones entran después,
-    // que es como se nota rápido de verdad.
-    const pedirPeriodo = apiOptional(`/api/dashboard/periodo?from=${DASH_RANGE.from}&to=${DASH_RANGE.to}&comparar=1&preset=${encodeURIComponent(PERIOD || "")}${q ? "&" + q : ""}`);
-    const d = await api("/api/dashboard" + (q ? "?" + q : ""));
-    view.innerHTML = renderDashboard(d);
-    pedirPeriodo.then((per) => {
-      // Puede haber cambiado de pantalla o de periodo mientras llegaba: entonces no se pinta.
-      if (CURRENT !== "dashboard") return;
-      DASH_PERIODO = per || null;
-      const nuevo = document.getElementById("view");
-      if (nuevo && per) nuevo.innerHTML = renderDashboard(d);
-    }).catch(() => { /* sin comparación: el dashboard ya está en pantalla */ });
-    // El menú se pinta ANTES de que lleguen estos datos, así que los números de pendientes hay
-    // que repintarlos cuando se saben. Sin esto solo aparecían al cambiar de pantalla: es decir,
-    // nunca en la primera, que es donde se mira.
+    d = await api("/api/dashboard" + (q ? "?" + q : ""));
+    if (!vigente()) return;
+    pintar();
     repintarBarra();
-  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+  } catch (e) { if (vigente() && e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 // Rango personalizado (días o meses, incluso del año pasado).
 /**
@@ -1943,7 +1939,10 @@ function renderInvProveedores(list) {
   const toolbar = `<div class="toolbar"><div style="flex:1"></div><button class="btn primary" data-act="inv-nuevo-prov">+ Proveedor</button></div>`;
   const cards = list.length ? `<div class="grid g2">${list.map((p) => {
     const ultimo = p.ultimo_inventario ? fechaCorta(String(p.ultimo_inventario).slice(0, 10)) : "—";
-    const estado = Number(p.en_curso) > 0 ? '<span class="pill warn">Inventario en curso</span>' : '<span class="pill ok">Al día</span>';
+    const estado = Number(p.en_curso) > 0 ? '<span class="pill warn">Inventario en curso</span>'
+      : !Number(p.n_productos) ? '<span class="pill warn">Sin productos configurados</span>'
+      : !p.ultimo_inventario ? '<span class="pill warn">Sin conteos cerrados</span>'
+      : '<span class="pill">Último conteo cerrado</span>';
     return `<div class="card" style="padding:16px"><div style="display:flex;justify-content:space-between;align-items:start;gap:8px"><div><div style="font-weight:600;font-size:16px">${esc(p.nombre)}</div><div class="mut" style="font-size:13px;margin-top:3px">${num(p.n_productos)} producto(s) · último: ${esc(ultimo)}</div><div style="margin-top:8px">${estado}</div></div></div><div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" data-act="inv-contar" data-id="${p.id}" data-nombre="${esc(p.nombre)}" style="flex:1">Contar</button><button class="btn" data-act="inv-config" data-id="${p.id}" data-nombre="${esc(p.nombre)}">Configurar</button></div></div>`;
   }).join("")}</div>` : `<div class="card"><div class="mut" style="padding:8px">No hay proveedores en este local. Crea el primero con «+ Proveedor».</div></div>`;
   return `${invHeader("Proveedores", `Elige un proveedor para inventariar · <b>${esc(nombreCortoLocal(INV.local))}</b>`, back)}${toolbar}${cards}`;
@@ -2463,7 +2462,7 @@ function cliQS() { const qs = new URLSearchParams(); if (CLIF.q) qs.set("q", CLI
 // con los estilos en línea no había forma de darle — ganan a cualquier hoja.
 function cliChk(id, campo, label) { return `<label class="chk"><input type="checkbox" id="${id}" ${CLIF[campo] ? "checked" : ""}> ${esc(label)}</label>`; }
 function cliActionsBar(total) {
-  return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Escribir a los ${num(total)} filtrados (WhatsApp)</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div>${USER.rol === "direccion" ? `<button class="btn" data-act="cli-dup" title="Buscar fichas repetidas de la misma persona">Fichas repetidas</button>` : ""}<button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
+  return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Preparar comunicación · ${num(total)} contactos filtrados</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div>${USER.rol === "direccion" ? `<button class="btn" data-act="cli-dup" title="Buscar fichas repetidas de la misma persona">Fichas repetidas</button>` : ""}<button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
 }
 // Cumpleaños: "12 abr 1988 (38)". Sin fecha → "—". La edad solo si el año es plausible.
 function fechaNac(iso) {
@@ -2500,7 +2499,7 @@ function cliTable(rows) {
     return `<tr><td>${esc(nom)}${wa}${baja ? ' <span class="pill bad" style="font-size:10px">Baja</span>' : ""}</td><td class="mut">${esc(tel)}</td><td class="mut">${esc(c.correo || "")}</td><td>${esc(c.poblacion || "")}</td><td class="mut tnum">${esc(fechaNac(c.nacimiento))}</td><td>${cliOrigen(c)}</td><td class="mut">${esc((c.ultima_actividad || "").slice(0, 10))}</td><td>${acc}</td></tr>`;
   }).join("")}</tbody></table></div></div>`;
 }
-function cliSubTxt(rows, total) { return `${num(total)} contacto${total === 1 ? "" : "s"}${rows.length < total ? ` · mostrando ${rows.length}` : ""}`; }
+function cliSubTxt(rows, total) { return `${num(total)} contacto${total === 1 ? "" : "s"}${rows.length < total ? ` · mostrando ${rows.length}` : ""} · ${CLIF.local ? esc(CLIF.local) : "Todos los locales"}. Esta lista usa sus propios filtros de clientes.`; }
 function renderClientes(j) {
   const rows = j.data || []; const total = j.total != null ? j.total : rows.length; CLI_TOTAL = total;
   const localOpts = ['<option value="">Cualquier local</option>'].concat(visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${CLIF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
@@ -2940,15 +2939,15 @@ function renderReviews() {
   const st = REV_STATUS;
   const fuenteTxt = (s) => s === "places" ? "Places" : s === "business_profile" ? "Business Profile" : (!s || s === "none") ? "Ninguna" : esc(s);
   const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "OAuth conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">Fuente: ${fuenteTxt(st.source)} · ${num(st.reviews_count || 0)} reseñas${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}${st.last_attempt ? ` · último intento ${esc(String(st.last_attempt).slice(0, 16).replace("T", " "))}` : ""}${st.last_error ? ` · último error: ${esc(String(st.last_error).slice(0, 80))}` : ""}</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">${USER.rol === "direccion" && revPuedeResponder() ? `<button class="btn" data-act="rev-vincular">Vincular fichas de Google</button>` : ""}${puedeActualizar && revPuedeResponder() ? `<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>` : ""}</div></div>` : "";
-  const cont = `<div class="grid g3" style="margin-bottom:14px">${stat("Total reseñas", "star", num(REV_CONT.total))}${stat("Pendientes", "bell", num(REV_CONT.pendientes))}${stat("Respondidas", "chat", num(REV_CONT.respondidas))}</div>`;
+  const cont = `<div class="grid g3" style="margin-bottom:14px">${stat("Total reseñas", "star", num(REV_CONT.total))}${stat("Pendientes", "bell", num(REV_CONT.pendientes))}${stat("Con respuesta guardada", "chat", num(REV_CONT.respondidas))}</div>`;
   // Cero reseñas por falta de ficha vinculada NO es lo mismo que cero reseñas. Sin este aviso,
   // la pantalla vacía parece un local sin opiniones y nadie va a mirar el vínculo con Google.
   const avisoFicha = REV_SIN_FICHA ? `<div class="pendingblock" style="margin-bottom:14px"><b>Este establecimiento no tiene ninguna ficha de Google vinculada</b>, así que no hay reseñas que enseñar. ${USER.rol === "direccion" ? "Se vincula en «Vincular fichas de Google», aquí arriba." : "Díselo a dirección: se arregla desde «Vincular fichas de Google»."}</div>` : "";
-  const estadoOpts = [["", "Todas"], ["pendientes", "Sin responder"], ["respondidas", "Respondidas"]].map(([v, t]) => `<option value="${v}" ${REVF.estado === v ? "selected" : ""}>${t}</option>`).join("");
+  const estadoOpts = [["", "Todas"], ["pendientes", "Sin respuesta guardada"], ["respondidas", "Con respuesta guardada"]].map(([v, t]) => `<option value="${v}" ${REVF.estado === v ? "selected" : ""}>${t}</option>`).join("");
   const ratingOpts = ['<option value="">Todas</option>'].concat([5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${REVF.rating === String(n) ? "selected" : ""}>${n}★</option>`)).join("");
   const sortOpts = [["recientes", "Más recientes"], ["antiguas", "Más antiguas"], ["mejor", "Mejor valoración"], ["peor", "Peor valoración"]].map(([v, t]) => `<option value="${v}" ${REVF.sort === v ? "selected" : ""}>${t}</option>`).join("");
   const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estadoOpts}</select></div><div class="field"><label>Estrellas</label><select id="rRating">${ratingOpts}</select></div><div class="field"><label>Ordenar</label><select id="rSort">${sortOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(REVF.q)}" placeholder="Texto o autor…"></div><div class="field"><label>Autor</label><input id="rAutor" value="${esc(REVF.autor)}"></div><div class="field"><label>Desde</label><input type="date" id="rFrom" value="${esc(REVF.from)}"></div><div class="field"><label>Hasta</label><input type="date" id="rTo" value="${esc(REVF.to)}"></div><button class="btn" data-act="rev-filtrar">Filtrar</button></div>`;
-  const nota = !revPuedeResponder() ? "" : `<div class="pendingblock" style="margin-bottom:16px"><b>Responder en Google, muy pronto.</b> La publicación directa está pendiente de que Google apruebe la cuota de su API. Mientras tanto: redacta la respuesta (con IA si quieres), <b>guárdala</b> aquí y usa <b>Copiar</b> para pegarla en Google.</div>`;
+  const nota = !revPuedeResponder() ? "" : `<div class="pendingblock" style="margin-bottom:16px"><b>Guardar aquí no publica en Google.</b> La publicación directa está pendiente de que Google apruebe la cuota de su API. Mientras tanto: redacta la respuesta (con IA si quieres), <b>guárdala</b> aquí y usa <b>Copiar</b> para pegarla en Google.</div>`;
   const bulk = (REV_SEL.size && revPuedeResponder()) ? `<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><b>${REV_SEL.size} seleccionada${REV_SEL.size === 1 ? "" : "s"}</b><div style="flex:1"></div><button class="btn" data-act="rev-sel-none">Quitar selección</button><button class="btn primary" data-act="rev-bulk">✨ Generar borradores IA</button></div>` : "";
   const vacio = REV_SIN_FICHA ? "No hay reseñas de este establecimiento porque su ficha de Google no está vinculada."
     : REV_CONT.total ? "Sin reseñas con este filtro." : "Aún no hay reseñas importadas. Pulsa «Actualizar desde Google».";
@@ -2972,14 +2971,14 @@ function renderReviews() {
 const revPuedeResponder = () => ["direccion", "marketing"].includes(USER.rol);
 
 function reviewCard(r) {
-  const badge = r.respondida ? '<span class="badge">Respondida</span>' : '<span class="badge warn">Pendiente</span>';
+  const badge = r.respondida ? '<span class="badge">Respuesta guardada</span>' : '<span class="badge warn">Pendiente</span>';
   const origen = r.origen ? `<span class="pill" style="font-size:10px" title="Origen">${r.origen === "places" ? "Places" : "Business"}</span>` : "";
   const check = (r.respondida || !revPuedeResponder()) ? "" : `<input type="checkbox" class="revsel" data-act="rev-sel" data-id="${esc(r.id)}" ${REV_SEL.has(String(r.id)) ? "checked" : ""} aria-label="Seleccionar reseña">`;
   const stars = `<span class="stars">${"★".repeat(r.rating)}<span class="mut">${"★".repeat(5 - r.rating)}</span></span>`;
   return `<div class="card revcard ${r.negativa ? "neg" : ""}" style="margin-bottom:12px"><div style="display:flex;gap:12px;align-items:flex-start">${check}<div class="grow" style="min-width:0;flex:1">
     <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">${stars}<b>${esc(r.author)}</b><span class="mut" style="font-size:12px">· ${esc(r.local)} · ${esc(r.fecha)}</span>${origen}<span style="flex:1"></span>${badge}</div>
     ${r.text ? `<p style="margin:8px 0 0;font-size:13.5px;line-height:1.5">${esc(r.text)}</p>` : '<p class="mut" style="margin:8px 0 0;font-size:13px">(sin texto, solo puntuación)</p>'}
-    ${r.reply ? `<div class="revreply"><span class="k">Tu respuesta</span><span>${esc(r.reply)}</span></div>` : ""}
+    ${r.reply ? `<div class="revreply"><span class="k">Respuesta guardada · publicación en Google no verificada</span><span>${esc(r.reply)}</span></div>` : ""}
     ${revPuedeResponder() ? `<div style="margin-top:10px;display:flex;gap:8px"><button class="btn sm" data-act="rev-responder" data-id="${esc(r.id)}">${r.respondida ? "Editar respuesta" : "Responder"}</button></div>` : ""}
   </div></div></div>`;
 }
@@ -4321,7 +4320,8 @@ function renderUsuarios(list) {
   const loc = localActualFE();
   const toolbar = `<div class="toolbar"><div class="mut" style="flex:1;font-size:13px">Los usuarios con <b>local</b> asignado (y rol distinto de Dirección) solo ven los datos de su local en los módulos marcados «por local».</div><button class="btn primary" data-act="user-nuevo">+ Nuevo usuario</button></div>`;
   const table = rows.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Local</th><th>Módulos con acceso</th><th></th></tr></thead><tbody>${rows.map((u) => {
-    const localCell = u.local ? `${esc(u.local)}${u.rol !== "direccion" ? ` <span class="mut" title="Solo ve datos de este local">🔒</span>` : ""}` : `<span class="mut">— todos —</span>`;
+    const extras = (u.locales || []).filter((l) => l && l !== u.local);
+    const localCell = u.local ? `${esc(u.local)}${extras.length ? `<div class="mut" style="font-size:12px">También: ${extras.map(esc).join(", ")}</div>` : ""}${u.rol !== "direccion" ? ` <span class="mut" title="Acceso a los locales asignados">🔒</span>` : ""}` : `<span class="mut">— todos —</span>`;
     return `<tr><td><b>${esc(u.username)}</b></td><td>${esc(u.nombre || "")}</td><td>${esc(u.rol)}</td><td>${localCell}</td><td style="max-width:340px;line-height:1.9">${chipsModulos(u)}</td><td class="r" style="white-space:nowrap"><button class="linkbtn" style="color:var(--brand)" data-act="user-edit" data-id="${u.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="user-pass" data-id="${u.id}" data-nombre="${esc(u.username)}">Contraseña</button> · <button class="linkbtn" data-act="user-del" data-id="${u.id}" data-nombre="${esc(u.username)}">Eliminar</button></td></tr>`;
   }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">${loc
     ? `Ningún usuario asignado a <b>${esc(nombreCortoLocal(loc))}</b>. Cambia de establecimiento en la barra para verlos todos.`
@@ -9644,6 +9644,7 @@ function compUnificar() {
  * y porque una librería de gráficos para esto sería mover una montaña para poner un clavo.
  */
 function sparkPrecio(g) {
+  if (Number(g.dudosas) > 0 || !g.unidad) return "";
   const ps = (g.precios || []).filter((x) => x && Number.isFinite(Number(x.precio)));
   if (ps.length < 3) return "";                       // con dos puntos no hay tendencia que ver
   // Vienen de más nuevo a más viejo: se dibuja al revés, que es como se lee el tiempo.
@@ -9663,6 +9664,7 @@ function sparkPrecio(g) {
 }
 
 function compChipPrecio(g) {
+  if (Number(g.dudosas) > 0 || !g.unidad) return ' <span class="pill warn" style="font-size:10px">Revisar unidad y lectura</span>';
   if (g.precioNormal == null || g.ultimoPrecio == null || g.precioNormal <= 0) return "";
   const pct = Math.round(((g.ultimoPrecio - g.precioNormal) / g.precioNormal) * 1000) / 10;
   if (Math.abs(pct) < 5) return "";

@@ -46,9 +46,9 @@ describe("Reseñas obedece al selector de la barra", () => {
   });
 });
 
-describe("«Sin responder» sigue estando, y solo una vez", () => {
+describe("«Sin respuesta guardada» sigue estando, y solo una vez", () => {
   test("está en el desplegable de Estado", () => {
-    assert.match(bloqueReviews, /\["pendientes", "Sin responder"\]/);
+    assert.match(bloqueReviews, /\["pendientes", "Sin respuesta guardada"\]/);
   });
 
   test("y viaja al servidor, que lo traduce a «sin respuesta»", () => {
@@ -58,8 +58,8 @@ describe("«Sin responder» sigue estando, y solo una vez", () => {
   });
 
   test("no se ha duplicado en un botón aparte: un solo sitio para el mismo filtro", () => {
-    const veces = (bloqueReviews.match(/Sin responder/g) || []).length;
-    assert.equal(veces, 1, "hay más de un «Sin responder» en la pantalla");
+    const veces = (bloqueReviews.match(/Sin respuesta guardada/g) || []).length;
+    assert.equal(veces, 1, "hay más de un «Sin respuesta guardada» en la pantalla");
   });
 });
 

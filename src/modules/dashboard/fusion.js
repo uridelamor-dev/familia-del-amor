@@ -20,6 +20,7 @@
 // todos los establecimientos). De esas se coge solo la fila del local de cada parte, que además
 // deja de enseñarle a un encargado el gasto de locales que no lleva.
 
+import { resultadoRegistrado } from "./resultado.js";
 import { buildAgenda, buildTitular } from "./dashboard.service.js";
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -71,13 +72,13 @@ export function fusionarPeriodo(partes = []) {
       serie: serie((p) => p.reservas?.serie || [], ["n", "personas"]),
     },
     ventas: {
-      disponible: hayVentas, total: red(ventasTotal), tickets,
+      disponible: hayVentas, parcial: !buenas.every((p) => p.ventas?.disponible), total: red(ventasTotal), tickets,
       ticket_medio: tickets ? red(ventasTotal / tickets) : 0,
       serie: serie((p) => p.ventas?.serie || [], ["ventas", "tickets"]),
       fuente: buenas.some((p) => p.ventas?.fuente === "live") ? "live" : primera.ventas?.fuente,
     },
     gastos: {
-      disponible: hayGastos, total: red(gastos),
+      disponible: hayGastos, parcial: !buenas.every((p) => p.gastos?.disponible), total: red(gastos),
       base: red(suma(buenas, (p) => p.gastos?.base)),
       n: suma(buenas, (p) => p.gastos?.n),
       // La parte de gasto de empresa imputada a estos locales. Se suma como todo lo demás: cada
@@ -85,7 +86,9 @@ export function fusionarPeriodo(partes = []) {
       empresa: red(suma(buenas, (p) => p.gastos?.empresa)),
       notaEmpresa: (buenas.find((p) => p.gastos?.notaEmpresa) || {}).gastos?.notaEmpresa || "",
     },
-    resultado: (hayVentas || hayGastos) ? red(ventasTotal - gastos) : null,
+    resultado: resultadoRegistrado(
+      { disponible: buenas.every((p) => p.ventas?.disponible), total: ventasTotal },
+      { disponible: buenas.every((p) => p.gastos?.disponible), total: gastos }),
   };
 }
 

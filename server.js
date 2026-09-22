@@ -23,6 +23,7 @@ import { validarPlan, planesQueTocan, alCompletar } from "./src/modules/mantenim
 import { normalizarEstado, ABIERTOS as MANT_ABIERTOS } from "./src/modules/mantenimiento/estados.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fusion.js";
+import { resultadoRegistrado } from "./src/modules/dashboard/resultado.js";
 import { rangoAnterior, variacion } from "./src/modules/dashboard/periodos.js";
 import { mapManageRow, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry, locationNamesDeLocal } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
@@ -7888,8 +7889,8 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
           desde: prev.from, hasta: prev.to, etiqueta: prev.etiqueta,
           reservas: variacion(data?.reservas?.total, ant?.reservas?.total),
           personas: variacion(data?.reservas?.personas, ant?.reservas?.personas),
-          ventas: variacion(data?.ventas?.total, ant?.ventas?.total),
-          gastos: variacion(data?.gastos?.total, ant?.gastos?.total),
+          ventas: data?.ventas?.disponible && ant?.ventas?.disponible && !data.ventas.parcial && !ant.ventas.parcial ? variacion(data.ventas.total, ant.ventas.total) : null,
+          gastos: data?.gastos?.disponible && ant?.gastos?.disponible && !data.gastos.parcial && !ant.gastos.parcial ? variacion(data.gastos.total, ant.gastos.total) : null,
           resultado: variacion(data?.resultado, ant?.resultado),
           // Los totales de antes, para poder enseñarlos al pasar el ratón sin pedirlos otra vez.
           totales: { reservas: ant?.reservas?.total ?? null, ventas: ant?.ventas?.total ?? null,
@@ -7990,7 +7991,9 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
         empresa: Math.round(parteEmpresa * 100) / 100,
         notaEmpresa: parteEmpresa ? (empresaPartes.texto || "") : "",
       },
-      resultado: (ventasSerie.length || (gasRow && gasRow.n)) ? Math.round((ventasTotal - gastosTotal) * 100) / 100 : null,
+      resultado: resultadoRegistrado(
+        { disponible: ventasSerie.length > 0, total: ventasTotal },
+        { disponible: !!((gasRow && gasRow.n > 0) || parteEmpresa), total: gastosTotal }),
     };
   }
 }

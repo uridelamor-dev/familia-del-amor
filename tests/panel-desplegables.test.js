@@ -7,12 +7,13 @@ import { readFileSync } from "node:fs";
 const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
 
 describe("los desplegables empiezan cerrados", () => {
-  test("ninguno se pinta con `open` de casa", () => {
+  test("solo se abren alertas críticas o se conserva la elección del usuario", () => {
     // Ojo con las formas condicionales: `${x ? "open" : ""}` es exactamente lo mismo, y era
     // lo que tenían la mitad de ellos.
     const abiertos = [...panel.matchAll(/<details[^>]*\bopen\b[^>]*>/g)].map((m) => m[0]);
     // La única excepción legítima: conservar lo que el usuario YA había abierto al repintar.
-    const salvo = abiertos.filter((d) => !/\$\{estaba \? "open" : ""\}/.test(d));
+    const salvo = abiertos.filter((d) => !/\$\{estaba \? "open" : ""\}/.test(d)
+      && !d.includes('class="card fold c7 p0"${nCritC ? " open" : ""}'));
     assert.deepEqual(salvo, [], "hay desplegables que se abren solos");
   });
 
@@ -76,8 +77,8 @@ describe("los bloques que ocupaban sin aportar", () => {
     assert.doesNotMatch(panel.slice(i, i + 4000), /class="card hero"/);
   });
 
-  test("«Necesita tu atención» y «Estado por establecimiento» van plegados", () => {
-    assert.match(panel, /<details class="card fold c7 p0">/);
+  test("atención se abre solo con críticas; el detalle por establecimiento queda plegado", () => {
+    assert.ok(panel.includes('<details class="card fold c7 p0"${nCritC ? " open" : ""}>'));
     assert.match(panel, /<details class="card fold c5 p0">/);
   });
 

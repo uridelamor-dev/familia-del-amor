@@ -299,7 +299,7 @@ export function buildConcerns(s, { localName, whatsappConnected } = {}) {
     const dias = diasEntre(s.hoy, s.masAntigua.fecha);
     if (dias >= 45) {
       const tot = s.porPagar && s.porPagar.total ? ` En total hay ${eur(s.porPagar.total)} sin pagar (${s.porPagar.n} facturas).` : "";
-      out.push({ sev: dias >= 75 ? "crit" : "imp", tipo: "facturas", titulo: `Factura de ${esc(s.masAntigua.proveedor || "un proveedor")} sin pagar desde hace ${dias} días`, narrativa: `La factura más antigua pendiente (${eur(s.masAntigua.total || 0)}) lleva <b>${dias} días</b> sin pagarse.${tot} Los proveedores que se cansan de esperar suben precios o dejan de servir.`, decision: `Pagaría hoy las vencidas o hablaría con el proveedor para pactar plazo. No dejaría que una deuda vieja se enquiste.`, impacto: "Mantienes la relación con proveedores y evitas recargos o cortes de suministro.", go: "facturas" });
+      out.push({ sev: dias >= 75 ? "crit" : "imp", tipo: "facturas", titulo: `Factura de ${esc(s.masAntigua.proveedor || "un proveedor")} sin pagar desde hace ${dias} días`, narrativa: `La factura más antigua pendiente (${eur(s.masAntigua.total || 0)}) lleva <b>${dias} días</b> sin pagarse.${tot} Los proveedores que se cansan de esperar suben precios o dejan de servir.`, decision: `Comprueba la fecha, el documento original y si el pago ya está registrado. Después revisa el vencimiento y acuerda el siguiente paso con el proveedor.`, impacto: "Mantienes la relación con proveedores y evitas recargos o cortes de suministro.", go: "facturas" });
     }
   }
 

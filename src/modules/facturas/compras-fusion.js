@@ -32,6 +32,8 @@ export function fusionarGrupos(listas = []) {
     const a = mapa.get(k);
     a.veces = n(a.veces) + n(g.veces);
     a.dudosas = n(a.dudosas) + n(g.dudosas);
+    // No etiquetar una mezcla de kg y unidades como una sola unidad comparable.
+    if (!a.unidad || !g.unidad || a.unidad !== g.unidad) a.unidad = null;
     a.conCantidad = n(a.conCantidad) + n(g.conCantidad);
     a.conImporte = n(a.conImporte) + n(g.conImporte);
     // null significa «no se pudo leer», no «cero». Se conserva: si ninguno de los dos locales
