@@ -1499,3 +1499,11 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
  .web-scopes,.web-pages{flex-wrap:nowrap;overflow-x:auto;max-width:100%;padding-bottom:6px}
  .web-scopes .chip,.web-pages .chip{flex:none}
 }
+
+/* Marketing: opciones secundarias y navegación en móvil. */
+.marketing-tabs { margin-bottom:14px; }
+.marketing-tabs > * { flex-shrink:0; }
+#view > .fold { margin-top:14px; }
+
+.marketing-objetivos { display:grid; gap:10px; }
+.marketing-objetivos .btn { white-space:normal; height:auto; min-height:52px; text-align:left; justify-content:flex-start; line-height:1.5; padding:12px 14px; }

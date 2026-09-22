@@ -88,7 +88,7 @@ describe("el módulo de Promociones está enteramente cableado", () => {
 
   test("el panel conoce la vista y su icono", () => {
     assert.match(panel, /promos: loadPromos/);
-    assert.match(panel, /\["promos", "Promociones", "ticket"/);
+    assert.match(panel, /\["promos", "Promociones y puntos", "ticket"/);
     assert.match(panel, /ticket: '</, "el icono del menú tiene que existir");
   });
 

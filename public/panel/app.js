@@ -112,12 +112,11 @@ const NAV = [
     // Fidelización va en MARKETING y no en Ágora: el programa de puntos es una decisión
     // comercial. En Sistema → Ágora se queda lo técnico —conexión, tokens, Workplace, catálogo—,
     // que es de Dirección y no se toca para cambiar cuántos puntos da un euro.
-    ["fidelizacion", "Fidelización", "star", ["direccion", "marketing"]],
     ["campanas", "Campañas", "mkt", ["direccion", "marketing"]],
-    ["promos", "Promociones", "ticket", ["direccion", "marketing"]],
+    ["promos", "Promociones y puntos", "ticket", ["direccion", "marketing"]],
+    ["fidelizacion", "Programa de puntos", "star", ["direccion", "marketing"]],
     ["reviews", "Reseñas", "star", ["direccion", "encargado", "contabilidad", "marketing"]],
     ["web", "Web", "globe", ["direccion", "marketing"]],
-    ["sara", "Sara (IA)", "bot", ["direccion", "marketing"]],
   ] },
   // Inventarios va aquí y no en Contabilidad porque lo llevan los mismos que las averías —
   // el encargado del local— y no quien cuadra las cuentas. Es lo que hace falta para que el
@@ -126,13 +125,16 @@ const NAV = [
     ["mantenimiento", "Incidencias", "wrench", ["direccion", "encargado"]],
     ["inventarios", "Inventarios", "box", ["direccion", "encargado"]],
   ] },
-  { g: "Sistema", items: [
+  { g: "Atención al cliente", items: [
+    ["sara", "Sara · asistente", "bot", ["direccion", "marketing"]],
     ["whatsapp", "WhatsApp", "chat", ["direccion", "encargado"]],
+  ] },
+  { g: "Sistema", items: [
     ["agora", "Ágora (TPV)", "plug", ["direccion"]],
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { contratacion: "Contratación", fidelizacion: "Fidelización", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", promos: "Promociones", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const TITLES = { contratacion: "Contratación", fidelizacion: "Programa de puntos", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", promos: "Promociones y puntos", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
 const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], fidelizacion: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], promos: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], contratacion: ["direccion", "rrhh"], pulso: ["direccion", "rrhh"], preguntas: ["direccion", "rrhh"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
 const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "contratacion", "pulso", "horarios", "fichajes", "usuarios"]);
@@ -427,7 +429,7 @@ function navToggleGrupo(nombre) {
   const el = document.querySelector(`.ngrp .ngt[data-g="${CSS.escape(nombre)}"]`)?.closest(".ngrp");
   const grp = NAV.find((g) => g.g === nombre);
   if (!el || !grp) return;
-  const items = grp.items.filter(([id]) => puedeVer(id));
+  const items = grp.items.filter(([id]) => puedeVer(id) && !(id === "fidelizacion" && puedeVer("promos")));
   const abierto = navGrupoAbierto(nombre, items, CURRENT);
   el.classList.toggle("on", abierto);
   el.querySelector(".ngt").setAttribute("aria-expanded", String(abierto));
@@ -457,15 +459,16 @@ function repintarBarra() {
 function shell(active, bodyHtml) {
   const uname = USER.nombre || USER.username || "Usuario";
   const initials = uname.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
+  const navActive = active === "fidelizacion" && puedeVer("promos") ? "promos" : active === "promos" && PROMO.tab === "captacion" ? "campanas" : active;
   const nav = NAV.map((grp) => {
-    const items = grp.items.filter(([id]) => puedeVer(id));
+    const items = grp.items.filter(([id]) => puedeVer(id) && !(id === "fidelizacion" && puedeVer("promos")));
     if (!items.length) return "";
-    const abierto = navGrupoAbierto(grp.g, items, active);
+    const abierto = navGrupoAbierto(grp.g, items, navActive);
     const avisos = items.reduce((n, [id]) => n + (PENDIENTES[id] || 0), 0);
     const botones = items.map(([id, label, icon]) => {
       const n = PENDIENTES[id] || 0;
       const badge = n > 0 ? `<span class="badge" title="${esc(PENDIENTES_TXT[id] || "")}">${num(n)}</span>` : "";
-      return `<button class="navi ${id === active ? "active" : ""}" data-view="${id}"><span class="ico">${ic(icon)}</span><span>${label}</span>${badge}</button>`;
+      return `<button class="navi ${id === navActive ? "active" : ""}" data-view="${id}"><span class="ico">${ic(icon)}</span><span>${label}</span>${badge}</button>`;
     }).join("");
     return `<div class="ngrp ${abierto ? "on" : ""}">
       <button class="ngt" data-act="nav-grupo" data-g="${esc(grp.g)}" aria-expanded="${abierto}">
@@ -2554,7 +2557,7 @@ function renderClientes(j) {
     <button class="linkbtn mut" data-act="cli-falta-filtro" style="align-self:center;font-size:12px">¿Te falta un filtro?</button>
   </div>` : ""}`;
   const head = `<div class="ph"><div class="eyebrow">Base de clientes</div><h1>Clientes</h1><div class="sub" id="cliSub">${cliSubTxt(rows, total)}</div></div>`;
-  return `${head}${marketingRuta("clientes")}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div>${renderClientesFid()}`;
+  return `${head}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div><details class="card fold"><summary><h3>Consultar carné de un socio</h3></summary>${renderClientesFid()}</details>`;
 }
 
 /**
@@ -2571,7 +2574,7 @@ function renderClientes(j) {
  */
 function renderClientesFid() {
   return `<div class="card" style="margin-top:16px"><div class="ch"><h3>Fidelización de un socio</h3><span class="pill">Marketing</span></div>
-    <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Saldo, visitas, consumo, caducidad e historial por local. Las reglas del programa se configuran en <b>Marketing → Fidelización</b>.</div>
+    <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Saldo, visitas, consumo, caducidad e historial por local. Las reglas del programa se configuran en <b>Marketing → Promociones y puntos</b>.</div>
     <div class="field"><label for="cliFidTok">Carné, enlace del QR o los 8 dígitos</label><input id="cliFidTok" placeholder="12345678"></div>
     <button class="btn primary sm" data-act="cli-fid">Ver ficha</button>
     <div id="cliFidOut" style="margin-top:12px">${renderClientesFidCuerpo()}</div></div>`;
@@ -10645,7 +10648,7 @@ function renderSaraEstado() {
 }
 function renderSara() {
   const chatCard = `<div class="card p0 schat-card"><div class="ch" style="padding:18px 18px 0"><h3>Configura a Sara hablando</h3></div>${renderSaraBubbles()}${renderSaraProposal()}${renderSaraInput()}</div>`;
-  return `<div class="ph"><div class="eyebrow">Inteligencia</div><h1>Sara (IA)</h1><div class="sub">Instruye al chatbot de WhatsApp sin tocar código: propone → confirmas → se aplica</div></div><div class="grid g2 sara-grid">${chatCard}<div class="scol">${renderSaraEstado()}</div></div>`;
+  return `<div class="ph"><div class="eyebrow">Atención al cliente</div><h1>Sara · asistente de WhatsApp</h1><div class="sub">Instruye al chatbot de WhatsApp sin tocar código: propone → confirmas → se aplica</div></div><div class="grid g2 sara-grid">${chatCard}<div class="scol">${renderSaraEstado()}</div></div>`;
 }
 function saraRepaint(focus) {
   const v = document.getElementById("view"); if (!v || CURRENT !== "sara") return;
@@ -10920,7 +10923,7 @@ function renderAgvEntrada() {
         <button class="btn sm" data-act="fid-miembro">Buscar socio</button>
         <button class="btn sm" data-act="ir-fidelizacion">Ir a Fidelización</button>
       </div>
-      <div class="mut" style="font-size:12px;margin-top:6px">Las reglas, las promociones y la puesta en producción se configuran en <b>Marketing → Fidelización</b>. Aquí solo está la conexión con el TPV.</div></div>
+      <div class="mut" style="font-size:12px;margin-top:6px">Las reglas, las promociones y la puesta en producción se configuran en <b>Marketing → Promociones y puntos</b>. Aquí solo está la conexión con el TPV.</div></div>
     <div class="mut" style="font-size:12px;margin:14px 0 6px">Un local cada vez. El que elijas aquí es el que verás en los otros dos apartados.</div>
     ${filas}`;
 }
@@ -12660,11 +12663,11 @@ async function fidgComAccion(id, accion) {
 //   Ágora (TPV)     conexión, tokens, Workplace, facturas, catálogo y diagnóstico
 const FID_SECC = [
   ["resumen", "Resumen y activación"],
-  ["sombra", "Cálculo en sombra"],
+  ["sombra", "Probar sin aplicar puntos"],
   ["reglas", "Reglas de puntos"],
   ["revisiones", "Revisiones y ajustes"],
   ["tarjeta", "Tarjeta del cliente"],
-  ["traza", "Trazabilidad"],
+  ["traza", "Historial y resultados"],
 ];
 let FIDV = { seccion: "resumen" };
 
@@ -12679,10 +12682,10 @@ function renderFidelizacion() {
   else if (FIDV.seccion === "tarjeta") cuerpo = renderFidgListaSimple(FIDG.tarjeta, "versión de tarjeta", "fidg-tarjeta-nueva", "Nueva versión…");
   else if (FIDV.seccion === "traza") cuerpo = renderFidvTraza();
 
-  return `<div class="hd"><h2>Fidelización</h2></div>
+  return `${marketingBeneficiosNav("puntos")}<div class="hd"><h2>Programa de puntos</h2></div>
     <div class="card"><div class="ch"><h3>Programa de puntos</h3></div>
       <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Aquí se revisan las reglas, se comprueban los resultados de prueba y se decide cuándo activar el programa. La conexión con las cajas se configura en <b>Sistema → Ágora (TPV)</b>.</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
+      <div class="marketing-tabs" style="display:flex;gap:6px;overflow-x:auto;margin-bottom:12px">${tabs}</div>
       ${cuerpo}</div>`;
 }
 
@@ -12729,7 +12732,7 @@ async function loadFidelizacion() {
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 
-function fidvTab(k) { FIDV.seccion = k; const v = document.getElementById("view"); if (v) v.innerHTML = renderFidelizacion(); }
+function fidvTab(k) { FIDV.seccion = k; escribirUrl("fidelizacion", k); const v = document.getElementById("view"); if (v) v.innerHTML = renderFidelizacion(); }
 
 async function fidvSombra() {
   const local = document.getElementById("fidvLocal")?.value;
@@ -13598,19 +13601,44 @@ function describirAudiencia(f = {}) {
   if (n) p.push(`Excluye ${n}`);
   return p.length ? p.join(" · ") : "Todos los contactos";
 }
-function marketingRuta(actual) {
-  const pasos = [
-    ["promos", "captacion", "Captar", "Crear el enlace de entrada para nuevos clientes."],
-    ["clientes", "", "Elegir audiencia", "Filtrar contactos y preparar una comunicación."],
-    ["promos", "lista", "Definir beneficio", "Revisar promoción, condiciones y caducidad."],
-    ["campanas", "", "Preparar y enviar", "Comprobar destinatarios, consentimiento y mensaje."],
-    ["promos", "canjes", "Medir canjes", "Distinguir mensajes enviados de visitas y canjes."]
-  ].filter(([v]) => puedeVer(v));
-  return `<details class="card fold marketing-ruta" style="margin-bottom:14px"><summary><h3>Recorrido de una campaña</h3><span class="car">${ic("chev",16)}</span></summary><p class="mut">Elige el paso que necesitas. Los filtros de Clientes se conservan al usar «Preparar comunicación»; los envíos y los canjes se consultan por separado.</p><div class="marketing-pasos">${pasos.map(([v,tab,t,d],i)=>`<button class="card marketing-paso ${actual===v ? "actual" : ""}" data-act="marketing-paso" data-view-dest="${v}" data-tab-dest="${tab}"><span class="eyebrow">Paso ${i+1}</span><b>${t}</b><span class="mut">${d}</span></button>`).join("")}</div></details>`;
+// La navegación agrupa pantallas; cada proceso conserva su cargador y sus permisos.
+let CAMP_SECCION = "envios";
+function marketingRestaurarRuta(view, sub) {
+  if (view === "campanas") CAMP_SECCION = ["envios","auto","formularios"].includes(sub) ? sub : "envios";
+  if (view === "promos") PROMO.tab = ["lista","emitir","qr","canjes","captacion","fidelizacion","tarjeta"].includes(sub) && (sub !== "tarjeta" || USER.rol === "direccion") ? sub : "lista";
+  if (view === "fidelizacion") FIDV.seccion = FID_SECC.some(([k]) => k === sub) ? sub : "resumen";
+}
+function marketingCampNav(actual) {
+  return `<div class="tabs marketing-tabs" aria-label="Secciones de campañas">${[["envios","Mensajes"],["captacion","Captación"],["auto","Automatizaciones"],["formularios","Formularios y permisos"]].filter(([k]) => puedeVer(k === "captacion" ? "promos" : "campanas")).map(([k,t])=>`<button class="tab${actual===k?" on":""}" data-act="marketing-camp-tab" data-tab="${k}">${t}</button>`).join("")}</div>`;
+}
+function marketingBeneficiosNav(actual) {
+  return `<div class="tabs marketing-tabs" aria-label="Tipos de beneficio">${[["lista","Cupones"],["fidelizacion","Promociones en caja"],["puntos","Programa de puntos"],...(!puedeVer("campanas") ? [["captacion","Captación"]] : []),...(USER.rol === "direccion" ? [["tarjeta", "Tarjeta de cliente"]] : [])].filter(([k]) => puedeVer(k === "puntos" ? "fidelizacion" : "promos")).map(([k,t])=>`<button class="tab${actual===k?" on":""}" data-act="marketing-beneficio" data-tab="${k}">${t}</button>`).join("")}</div>`;
+}
+function marketingCampTab(tab) {
+  if (!puedeVer(tab === "captacion" ? "promos" : "campanas")) return;
+  CAMP_SECCION = tab;
+  if (tab === "captacion") { if (!puedeVer("promos")) return; PROMO.tab = "captacion"; return go("promos"); }
+  else return go("campanas");
+}
+function marketingCrearCampana() {
+  const ov = modal("¿Qué quieres conseguir?", `<div class="rows marketing-objetivos">
+    ${puedeVer("promos") ? '<button class="btn" data-objetivo="captar">Captar nuevos clientes · enlace de inscripción y promoción</button>' : ""}
+    ${puedeVer("campanas") ? '<button class="btn" data-objetivo="mensaje">Escribir a clientes existentes · elegir destinatarios y mensaje</button><button class="btn" data-objetivo="auto">Automatizar cumpleaños · configurar la felicitación</button>' : ""}
+  </div>`);
+  ov.addEventListener("click", async (e) => {
+    const objetivo=e.target.closest("[data-objetivo]")?.dataset.objetivo;
+    if (!objetivo) return;
+    ov.remove();
+    if (!puedeVer(objetivo === "captar" ? "promos" : "campanas")) return;
+    if (objetivo === "auto") return marketingCampTab("auto");
+    if (objetivo === "mensaje") { await marketingCampTab("envios"); return openNuevaCampana(); }
+    try { const j=await apiRaw("/api/promos"); PROMO.list=j.data||[]; PROMO.locales=j.locales||[]; await marketingCampTab("captacion"); capForm(null); }
+    catch(e) { toast(e.message || "No se pudieron cargar las promociones"); }
+  });
 }
 function renderCampanas() {
   const rows = CAMP.list || []; const cfg = CAMP.cfg || {};
-  const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas</h1><div class="sub">Segmentar y enviar por WhatsApp · plantillas · programación · cumpleaños · traducción</div><div class="acts"><button class="btn" data-act="camp-detectar-idiomas">🌐 Detectar idiomas</button><button class="btn primary" data-act="camp-nueva">+ Nueva campaña</button></div></div>`;
+  const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas</h1><div class="sub">Prepara mensajes, capta clientes y revisa lo que está en marcha.</div><div class="acts"><button class="btn primary" data-act="marketing-crear">Crear campaña</button></div></div>`;
   const cumple = `<div class="card"><div class="ch"><h3>🎂 Cumpleaños automático</h3><label class="chip" style="cursor:pointer"><input type="checkbox" id="cumpleAuto" ${cfg.cumple_auto ? "checked" : ""} style="margin-right:6px">Activado</label></div><div class="field" style="width:100%"><label>Mensaje (usa {nombre})</label><textarea id="cumpleMsg" rows="2" placeholder="¡Feliz cumpleaños, {nombre}! 🎉">${esc(cfg.cumple_plantilla || "")}</textarea></div><div class="toolbar" style="padding:0"><button class="btn" data-act="camp-cumple-save">Guardar</button><span class="mut" style="font-size:12px;align-self:center">Cada mañana felicita a quien cumple ese día (excluye bajas).</span></div></div>`;
   const plist = (CAMP.plantillas || []).map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div><div class="t2">${esc((p.cuerpo || "").slice(0, 80))}</div></div><button class="btn sm danger" data-act="camp-plant-del" data-id="${p.id}">✕</button></div>`).join("") || `<div class="mut" style="padding:10px 14px">Sin plantillas guardadas.</div>`;
   const plantillas = `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Plantillas</h3><button class="btn sm" data-act="camp-plant-add">+ Nueva</button></div><div class="rows">${plist}</div></div>`;
@@ -13632,7 +13660,10 @@ function renderCampanas() {
       <span class="mut" style="font-size:12px;align-self:center">No se envía nada: sale una propuesta.</span>
     </div>
     <div id="campProp"></div></div>`;
-  return `${head}${marketingRuta("campanas")}${redactar}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div>${renderCampFidelizacion()}<div id="campFaltan"></div>`;
+  const editor = `<details class="card fold"><summary><h3>Preparar un mensaje con ayuda</h3></summary>${redactar}</details>`;
+  const recursos = `<details class="card fold"><summary><h3>Plantillas y herramientas</h3></summary>${plantillas}<button class="btn" data-act="camp-detectar-idiomas">Detectar idiomas de los contactos</button><div id="campFaltan"></div></details>`;
+  const cuerpo = CAMP_SECCION === "auto" ? cumple : CAMP_SECCION === "formularios" ? renderCampFidelizacion() : `${table}${editor}${recursos}`;
+  return `${head}${marketingCampNav(CAMP_SECCION)}<div style="margin-top:16px">${cuerpo}</div>`;
 }
 
 /**
@@ -14406,7 +14437,7 @@ function promoTablaLista() {
   // valida la tablet de la barra, y que no tiene —ni puede tener— código de Ágora. Quien viene
   // buscando dónde pegar un `Offer Code` aterriza aquí, no encuentra el campo y da por hecho que
   // no existe. Existe: está en la pestaña de al lado.
-  const puente = `<div class="pendingblock" style="margin-bottom:12px;padding:10px 12px;font-size:12.5px">¿Buscas el <b>código de una promoción creada en Ágora</b>? No es aquí. Estos son los <b>cupones de la casa</b>, los que valida la tablet de la barra. Las promociones que aplica Ágora dentro de la factura están en <button class="btn sm" data-act="promo-tab" data-tab="fidelizacion">Fidelización</button>, y ahí está el campo «Código de la promoción en Ágora».</div>`;
+  const puente = `<details class="card fold"><summary><h3>Cómo se valida un cupón</h3></summary><div class="mut" style="margin-bottom:12px;padding:10px 12px;font-size:12.5px">¿Buscas el <b>código de una promoción creada en Ágora</b>? No es aquí. Estos son los <b>cupones de la casa</b>, los que valida la tablet de la barra. Las promociones que aplica Ágora dentro de la factura están en <button class="btn sm" data-act="promo-tab" data-tab="fidelizacion">Promociones en caja</button>, y ahí está el campo «Código de la promoción en Ágora».</div></details>`;
   if (!rows.length) {
     return `${puente}<div class="card"><div class="mut" style="padding:8px">Aún no hay promociones.
       Crea una y ya podrás darle un QR a un cliente.</div></div>`;
@@ -14529,19 +14560,19 @@ function promoTablaQr() {
 }
 
 function renderPromos() {
-  const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Promociones</h1>
-    <div class="sub">Cupones y carnés con QR · se validan en la tablet de la barra</div>
-    <div class="acts"><button class="btn primary" data-act="promo-nueva">+ Nueva promoción</button></div></div>`;
+  if (PROMO.tab === "captacion") return `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas</h1><div class="sub">Captación · enlaces de inscripción, entregas y canjes</div><div class="acts"><button class="btn primary" data-act="marketing-crear">Crear campaña</button></div></div>${marketingCampNav("captacion")}${promoCaptacion()}`;
+  const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Promociones y puntos</h1>
+    <div class="sub">Cupones, beneficios en caja y puntos: cada uno conserva sus condiciones.</div>
+    ${PROMO.tab === "lista" ? '<div class="acts"><button class="btn primary" data-act="promo-nueva">+ Nueva promoción</button></div>' : ["qr","canjes","emitir"].includes(PROMO.tab) ? '<div class="acts"><button class="btn primary" data-act="promo-tab" data-tab="emitir">Emitir cupones / vales</button></div>' : ""}</div>`;
   // La pestaña de la tarjeta solo la ve DIRECCIÓN. Está construida y probada, pero apagada por
   // decisión de negocio: enseñársela a Marketing sería ofrecerles una función que hoy no
   // existe de cara al cliente. Ahí dentro está el interruptor para encenderla.
   // «Fidelización» son los premios que aplica ÁGORA dentro de la factura. No son los cupones de
   // arriba —esos los valida la tablet de la barra— y por eso van en su propia pestaña: mezclarlos
   // haría creer que un cupón se paga con puntos.
-  const tabs = [["lista", "Promociones"], ["emitir", "Emitir QR"], ["qr", "QR emitidos"], ["canjes", "Canjes"],
-                ["captacion", "Captación"], ["fidelizacion", "Fidelización"],
-                ...(USER.rol === "direccion" ? [["tarjeta", "Tarjeta de cliente"]] : [])]
-    .map(([id, t]) => `<button class="tab${PROMO.tab === id ? " on" : ""}" data-act="promo-tab" data-tab="${id}">${t}</button>`).join("");
+  const esCupon = ["lista","emitir","qr","canjes"].includes(PROMO.tab);
+  const tabs = esCupon ? `<div class="tabs marketing-tabs">${[["lista","Promociones"],["qr","Cupones y canjes"]].map(([id,t])=>`<button class="tab${(id==="lista"?PROMO.tab===id:PROMO.tab!=="lista")?" on":""}" data-act="promo-tab" data-tab="${id}">${t}</button>`).join("")}</div>` : "";
+  const actividad = ["qr","canjes"].includes(PROMO.tab) ? `<div class="toolbar"><button class="btn sm ${PROMO.tab==="qr"?"primary":""}" data-act="promo-tab" data-tab="qr">Emitidos</button><button class="btn sm ${PROMO.tab==="canjes"?"primary":""}" data-act="promo-tab" data-tab="canjes">Canjeados</button></div>` : "";
   const cuerpo = PROMO.tab === "emitir" ? promoTablaEmitir()
     : PROMO.tab === "qr" ? promoTablaQr()
     : PROMO.tab === "canjes" ? promoTablaCanjes()
@@ -14549,7 +14580,7 @@ function renderPromos() {
     : PROMO.tab === "fidelizacion" ? promoFidelizacion()
     : PROMO.tab === "tarjeta" ? promoTarjeta()
     : promoTablaLista();
-  return `${head}${marketingRuta("promos")}<div class="tabs">${tabs}</div><div style="margin-top:16px">${cuerpo}</div>`;
+  return `${head}${marketingBeneficiosNav(esCupon ? "lista" : PROMO.tab)}${tabs}${actividad}<div style="margin-top:16px">${cuerpo}</div>`;
 }
 
 const FIDG_PP_TXT = {
@@ -14616,7 +14647,7 @@ function renderFidgPuertaPromos() {
  */
 function promoFidelizacion() {
   return `<div class="card"><div class="ch"><h3>Promociones de Ágora · puesta en producción</h3></div>
-      <div class="mut" style="font-size:12.5px;padding:2px 2px 10px">Esto es <b>solo de las promociones</b>: regalar un producto porque alguien se apuntó a una campaña. <b>No es el programa de puntos</b>, que tiene su propia puerta en <b>Fidelización → Resumen</b> y sigue apagado. Encender esto <b>no enciende los puntos</b>, y al revés tampoco.</div>
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 10px">Esto es <b>solo de las promociones</b>: regalar un producto porque alguien se apuntó a una campaña. <b>No es el programa de puntos</b>, que tiene su propia puerta en <b>Programa de puntos → Resumen y activación</b>. Encender esto <b>no enciende los puntos</b>, y al revés tampoco.</div>
       ${renderFidgPuertaPromos()}</div>
     <div class="card" style="margin-top:12px"><div class="ch"><h3>Premios de fidelización</h3></div>
       <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Estos los aplica <b>Ágora dentro de la factura</b>, no la tablet de la barra. Cada uno se versiona: publicar crea una versión nueva y finaliza la anterior.</div>
@@ -14861,8 +14892,7 @@ function promoCaptacion() {
         }).join("")}</tbody></table></div></div>`
     : "";
 
-  const cabecera = `<div class="row" style="justify-content:flex-end;margin-bottom:10px">
-    <button class="btn primary" data-act="cap-nueva">+ Nueva campaña</button></div>`;
+  const cabecera = "";
 
   return cabecera + salud + `<div style="margin-top:16px">${lista}</div>` +
          (tablaCola ? `<div style="margin-top:16px">${tablaCola}</div>` : "");
@@ -15450,7 +15480,7 @@ function leerBase64(file) {
   });
 }
 
-function promoTab(tab) { PROMO.tab = tab; loadPromos(); }
+function promoTab(tab) { PROMO.tab = tab; go("promos"); }
 
 // Formulario de promoción. Sirve para crear y para editar: es el mismo, y tenerlo dos veces
 // significaba que un campo nuevo se añadía en uno y se olvidaba en el otro.
@@ -15648,14 +15678,14 @@ function go(view, { desdeUrl = false } = {}) {
   // si no lo cerramos aquí, se queda flotando encima de la pantalla nueva.
   dpClose();
   CURRENT = view;
-  if (!desdeUrl) escribirUrl(view, view === "facturas" ? FACTAB : null);
+  if (!desdeUrl) escribirUrl(view, view === "facturas" ? FACTAB : view === "campanas" ? CAMP_SECCION : view === "promos" ? PROMO.tab : view === "fidelizacion" ? FIDV.seccion : null);
   if (!puedeVer(view)) {
     document.getElementById("root").innerHTML = shell(view, `<div class="card"><div class="ch"><h3>Sin acceso</h3></div><p class="mut">No tienes acceso a este módulo.</p></div>`);
     refreshWaPill(); return;
   }
   document.getElementById("root").innerHTML = shell(view, skeleton());
   refreshWaPill(view === "whatsapp"); // en la pantalla de Sara sí interesa el estado del momento
-  VIEWS[view]();
+  return VIEWS[view]();
 }
 
 document.addEventListener("change", (e) => {
@@ -15720,7 +15750,7 @@ document.addEventListener("change", (e) => {
 });
 
 document.addEventListener("click", (e) => {
-  const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); go(v.getAttribute("data-view")); return; }
+  const v = e.target.closest("[data-view]"); if (v) { e.preventDefault(); const a = document.getElementById("appEl"); if (a) a.classList.remove("mopen"); const dest=v.getAttribute("data-view"); if (v.classList.contains("navi")) { if(dest==="promos") PROMO.tab="lista"; if(dest==="campanas") CAMP_SECCION="envios"; } go(dest); return; }
   const t = e.target.closest("[data-act]"); if (!t) return;
   // Un `<select>` con `data-act` se maneja por `change`, no por clic: abrirlo no es elegir.
   if (t.tagName === "SELECT") return;
@@ -16084,6 +16114,9 @@ document.addEventListener("click", (e) => {
   else if (act === "tj-cartel") tjCartel();
   else if (act === "tj-probar") tjProbar();
   else if (act === "tj-cfg") tjConfig(t.getAttribute("data-plat"));
+  else if (act === "marketing-crear") marketingCrearCampana();
+  else if (act === "marketing-camp-tab") marketingCampTab(t.getAttribute("data-tab"));
+  else if (act === "marketing-beneficio") { const tab=t.getAttribute("data-tab"); if(tab==="puntos") go("fidelizacion"); else promoTab(tab); }
   else if (act === "marketing-paso") { const dest=t.getAttribute("data-view-dest"); if (dest === "promos") PROMO.tab=t.getAttribute("data-tab-dest") || "lista"; if (puedeVer(dest)) go(dest); }
   else if (act === "camp-nueva") openNuevaCampana();
   else if (act === "camp-redactar") campRedactar();
@@ -16179,6 +16212,7 @@ requireRole(["direccion", "encargado", "contabilidad", "marketing", "rrhh"]).the
   const inicio = (deUrl.vista && puedeVer(deUrl.vista) && deUrl.vista)
     || ["dashboard", "reservas", "rrhh", "facturas", "web", "clientes"].find((v) => puedeVer(v))
     || Object.keys(VIEWS).find((v) => puedeVer(v)) || "dashboard";
+  marketingRestaurarRuta(inicio, deUrl.sub);
   if (inicio === "facturas" && deUrl.sub) FACTAB = deUrl.sub;
   go(inicio, { desdeUrl: !!deUrl.vista });
 
@@ -16192,8 +16226,9 @@ requireRole(["direccion", "encargado", "contabilidad", "marketing", "rrhh"]).the
   window.addEventListener("hashchange", () => {
     const d = vistaDeUrl();
     if (!d.vista || !puedeVer(d.vista)) return;
+    marketingRestaurarRuta(d.vista, d.sub);
     if (d.vista === "facturas" && d.sub) FACTAB = d.sub;
-    if (d.vista !== CURRENT || d.vista === "facturas") go(d.vista, { desdeUrl: true });
+    if (d.vista !== CURRENT || ["facturas","campanas","promos","fidelizacion"].includes(d.vista)) go(d.vista, { desdeUrl: true });
   });
 }).catch(() => { /* requireRole ya redirige a /login.html */ });
 

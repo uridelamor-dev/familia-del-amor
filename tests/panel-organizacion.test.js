@@ -36,8 +36,8 @@ function fn(nombre) {
 describe("las pantallas y quién entra en cada una", () => {
   const NAV = app.slice(app.indexOf("const NAV = "), app.indexOf("\nconst TITLES = "));
 
-  test("Fidelización es una pantalla propia de Marketing, no un rincón de Ágora", () => {
-    assert.match(NAV, /\["fidelizacion", "Fidelización", "[a-z-]+", \["direccion", ?"marketing"\]\]/);
+  test("El programa de puntos conserva su ruta y acceso de Marketing", () => {
+    assert.match(NAV, /\["fidelizacion", "Programa de puntos", "[a-z-]+", \["direccion", ?"marketing"\]\]/);
     assert.match(app, /fidelizacion: loadFidelizacion/);
   });
 

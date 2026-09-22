@@ -117,9 +117,9 @@ describe("el interruptor", () => {
 
 describe("en el panel casi no ocupa sitio", () => {
   test("la pestaña solo la ve dirección", () => {
-    const i = panel.indexOf('["canjes", "Canjes"]');
+    const i = panel.indexOf("function marketingBeneficiosNav(");
     assert.ok(i > 0);
-    assert.match(panel.slice(i, i + 260), /USER\.rol === "direccion" \? \[\["tarjeta", "Tarjeta de cliente"\]\] : \[\]/);
+    assert.match(panel.slice(i, i + 900), /USER\.rol === "direccion" \? \[\["tarjeta", "Tarjeta de cliente"\]\] : \[\]/);
   });
 
   test("apagada no enseña contadores ni carteles ni certificados: solo el interruptor", () => {
