@@ -1223,10 +1223,10 @@ function renderDashboard(d) {
   const gasto = `<div class="card c4"><div class="ch"><h3>Gasto del mes</h3></div><div class="big tnum">${eur(gtot)}</div><div class="mut" style="font-size:12px;margin:2px 0 12px">${gl.length} establecimiento${gl.length === 1 ? "" : "s"}</div>${gl.length ? `<div class="mbar">${gl.map((g, i) => `<span style="width:${gtot ? Math.round(g.actual / gtot * 100) : 0}%;background:${PAL[i % PAL.length]}"></span>`).join("")}</div><div class="rows" style="margin-top:10px">${gl.slice(0, 4).map((g, i) => `<div class="row" style="padding:8px 0;border-top:0"><span class="sdot" style="background:${PAL[i % PAL.length]}"></span><div class="grow"><div class="t1" style="font-size:12.5px">${esc(nombreCortoLocal(g.local))}</div></div><b class="tnum" style="font-size:12.5px">${eur(g.actual)}</b></div>`).join("")}</div>` : `<div class="mut">Sin gasto registrado este mes.</div>`}<div class="pendingblock" style="margin-top:14px;padding:12px 14px">Este bloque muestra las facturas del mes actual, aunque el periodo de actividad sea otro. No incluye coste de personal.</div></div>`;
 
   // ── Necesita tu atención (preocupaciones reales) ──
-  const concerns = d.preocupaciones || [];
+  const concerns = (d.preocupaciones || []).filter(c => !GO_VIEW[c.go] || puedeVer(GO_VIEW[c.go])).slice().sort((a,b) => ({crit:0,imp:1,info:2}[a.sev] ?? 3) - ({crit:0,imp:1,info:2}[b.sev] ?? 3));
   // Las críticas se muestran al entrar; el detalle por establecimiento queda plegado.
   const nCritC = concerns.filter((c) => c.sev === "crit").length;
-  const atencion = `<details class="card fold c7 p0"${nCritC ? " open" : ""}><summary style="padding:18px 18px 14px"><h3>Necesita tu atención</h3><span class="foldr">${concerns.length ? `<span class="pill ${nCrit || nCritC ? "bad" : "warn"}">${nCritC ? `${nCritC} crítica${nCritC === 1 ? "" : "s"}` : `${concerns.length}`}</span>` : '<span class="pill ok">Todo en orden</span>'}<span class="car">${ic("chev", 16)}</span></span></summary>${concerns.length ? `<div class="rows">${concerns.slice(0, 5).map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</details>`;
+  const atencion = `<details class="card fold c7 p0"${nCritC ? " open" : ""}><summary style="padding:18px 18px 14px"><h3>Necesita tu atención</h3><span class="foldr">${concerns.length ? `<span class="pill ${nCrit || nCritC ? "bad" : "warn"}">${nCritC ? `${nCritC} crítica${nCritC === 1 ? "" : "s"}` : `${concerns.length}`}</span>` : '<span class="pill ok">Todo en orden</span>'}<span class="car">${ic("chev", 16)}</span></span></summary>${concerns.length ? `<div class="rows">${concerns.map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</details>`;
 
   // ── Estado por establecimiento (radar real) ──
   const radar = d.radarLocales || [];
@@ -1414,6 +1414,8 @@ function openPeriodoCustom() {
 }
 
 // ════════════════════════ VISTA: RESERVAS ════════════════════════
+let RES_DATOS = [];
+const RES_ESTADOS = { prevista: "Prevista", llegada: "Ha llegado", sentada: "En mesa", finalizada: "Finalizada", no_presentada: "No se ha presentado" };
 let RESF = { local: "", from: "", to: "", vista: "dia", foco: "" };
 // Historial: lo que YA PASÓ, de más reciente a más antigua. Es la pregunta que se hace de
 // verdad —«¿cuándo vino esta gente?», «¿cuánto llenamos el sábado pasado?»— y hasta ahora la
@@ -1460,7 +1462,7 @@ function resNav(label) {
 function resCargaDot(carga) { return `<span class="dot" style="background:${CARGA_COL[carga]}" title="Carga ${carga}"></span>`; }
 function resResRow(r) {
   const tel = String(r.telefono || "").replace(/[^0-9+]/g, "");
-  return `<div class="agres"><span class="hh">${esc(r.hora || "")}</span><div class="who"><div class="t1">${esc(r.nombre_reserva || "(sin nombre)")}</div><div class="t2">${esBarraSecundariaFE(r.local) ? `<span class="pill barra">${esc(nombreCortoLocal(r.local))}</span> ` : ""}${esc(nombreCortoLocal(r.local || ""))} · ${esc(r.telefono || "")}</div></div><span class="pill">${esc(r.personas)} pax</span>${tel ? `<a class="btn sm" href="tel:${esc(tel)}" title="Llamar">Llamar</a>` : ""}<button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></div>`;
+  return `<div class="agres"><span class="hh">${esc(r.hora || "")}</span><div class="who"><div class="t1">${esc(r.nombre_reserva || "(sin nombre)")}</div><div class="t2">${esBarraSecundariaFE(r.local) ? `<span class="pill barra">${esc(nombreCortoLocal(r.local))}</span> ` : ""}${esc(nombreCortoLocal(r.local || ""))} · ${esc(r.telefono || "")}</div></div><span class="pill">${esc(r.personas)} pax</span><span class="pill">${esc(RES_ESTADOS[r.estado_sala] || "Prevista")}${r.mesa ? " · " + esc(r.mesa) : ""}</span><button class="btn sm" data-act="res-sala" data-id="${r.id}">Gestionar</button>${tel ? `<a class="btn sm" href="tel:${esc(tel)}" title="Llamar">Llamar</a>` : ""}<button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></div>`;
 }
 function renderResDia(list) {
   const a = resAgendaDia(list, RESF.foco);
@@ -1483,7 +1485,7 @@ function renderResSemana(list) {
 function renderResLista(list) {
   const rows = (list || []).slice().sort((a, b) => (a.dia + a.hora).localeCompare(b.dia + b.hora));
   return rows.length
-    ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Día</th><th>Hora</th><th>Local</th><th class="r">Pers.</th><th>Nombre</th><th>Teléfono</th><th></th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(fechaCorta(r.dia))}</td><td class="tnum">${esc(r.hora)}</td><td>${esc(r.local)}</td><td class="r tnum">${esc(r.personas)}</td><td>${esc(r.nombre_reserva)}</td><td class="mut">${esc(r.telefono)}</td><td class="r"><button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></td></tr>`).join("")}</tbody></table></div></div>`
+    ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Día</th><th>Hora</th><th>Local</th><th class="r">Pers.</th><th>Nombre</th><th>Teléfono</th><th></th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(fechaCorta(r.dia))}</td><td class="tnum">${esc(r.hora)}</td><td>${esc(r.local)}</td><td class="r tnum">${esc(r.personas)}</td><td>${esc(r.nombre_reserva)}</td><td class="mut">${esc(r.telefono)}</td><td class="r"><span class="pill">${esc(RES_ESTADOS[r.estado_sala] || "Prevista")}</span><button class="btn sm" data-act="res-sala" data-id="${r.id}">Gestionar</button><button class="linkbtn" data-act="cancel" data-id="${r.id}" data-nombre="${esc(r.nombre_reserva)}">Cancelar</button></td></tr>`).join("")}</tbody></table></div></div>`
     : `<div class="card"><div class="mut" style="padding:8px">No hay reservas en ese rango. Prueba a ampliar las fechas o crea una nueva.</div></div>`;
 }
 // El historial: de más reciente a más antigua, con buscador y total. NO lleva el botón de
@@ -1637,6 +1639,7 @@ async function loadReservas() {
     const j = await pidePorLocales(montaUrl, { raw: true });
     RESH.hayMas = !!j.hayMas;
     const datos = j.data || [];
+    RES_DATOS = datos;
     if (RESF.vista === "historial") RESH.datos = datos;
     view.innerHTML = renderReservas(datos) + '<div id="resSeg"></div>';
     resSeguimiento();   // no se espera: la lista ya está en pantalla
@@ -1671,6 +1674,20 @@ function openNuevaReserva() {
     const btn = e.target.querySelector('button[type="submit"]'); btn.disabled = true; btn.textContent = "Creando…";
     try { const j = await apiSend("POST", "/api/reservas", data); ov.remove(); toast(j.pendiente ? "Reserva creada · pendiente de confirmar (grupo grande)" : "Reserva creada ✅"); loadReservas(); }
     catch (err) { btn.disabled = false; btn.textContent = "Crear reserva"; toast("Error: " + err.message); }
+  });
+}
+function resGestionar(id) {
+  const r = RES_DATOS.find((x) => String(x.id) === String(id));
+  if (!r) return;
+  const ov = modal("Gestionar · " + r.nombre_reserva, `<form id="resSala"><p class="mut">${esc(fechaCorta(r.dia))} · ${esc(r.hora)} · ${esc(r.personas)} personas · ${esc(r.local)}</p><div class="form-grid"><div class="field full"><label>Nombre</label><input name="nombre_reserva" maxlength="160" required value="${esc(r.nombre_reserva)}"></div><div class="field"><label>Día</label><input name="dia" type="date" required value="${esc(r.dia)}"></div><div class="field"><label>Hora</label><input name="hora" type="time" required value="${esc(r.hora)}"></div><div class="field"><label>Personas</label><input name="personas" type="number" min="1" max="100" required value="${esc(r.personas)}"></div><div class="field"><label>Estado de sala</label><select name="estado_sala">${Object.entries(RES_ESTADOS).map(([v,l]) => `<option value="${v}" ${v === (r.estado_sala || "prevista") ? "selected" : ""}>${l}</option>`).join("")}</select></div><div class="field"><label>Mesa o zona</label><input name="mesa" maxlength="80" value="${esc(r.mesa || "")}" placeholder="Ej. terraza, mesa 4"></div><div class="field full"><label>Notas para el equipo</label><textarea name="notas_sala" maxlength="2000" rows="4">${esc(r.notas_sala || "")}</textarea></div></div><p class="mut">Guardar actualiza la agenda y no envía mensajes. Si cambias día, hora o personas, acuerda el cambio con el cliente. Los grupos de 9 o más requieren aceptación del local.</p><div role="alert" id="resSalaError"></div><div class="toolbar"><button type="button" class="btn" data-close>Cerrar</button><button class="btn primary" type="submit">Guardar</button></div></form>`);
+  ov.querySelector("form").addEventListener("submit", async (e) => {
+    e.preventDefault(); const btn = e.target.querySelector('[type="submit"]'); btn.disabled = true;
+    try {
+      const data = Object.fromEntries(new FormData(e.target));
+      await apiSend("PATCH", "/api/reservas/" + r.id + "/sala", { estado_sala:data.estado_sala, mesa:data.mesa, notas_sala:data.notas_sala, version_sala: r.version_sala || 0,
+        reserva: { nombre_reserva:data.nombre_reserva, personas:Number(data.personas), dia:data.dia, hora:data.hora, original: {nombre_reserva:r.nombre_reserva,personas:r.personas,dia:r.dia,hora:r.hora} } });
+      ov.remove(); toast("Gestión de sala guardada"); loadReservas();
+    } catch (err) { ov.querySelector("#resSalaError").textContent = err.message; btn.disabled = false; }
   });
 }
 async function cancelReserva(id, nombre) {
@@ -1713,11 +1730,12 @@ function renderMant(list) {
     const foto = r.foto_url ? `<a href="${esc(r.foto_url)}" target="_blank" rel="noopener" title="Ver foto" style="margin-right:10px;flex-shrink:0"><img src="${esc(r.foto_url)}" alt="Foto de la incidencia" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:block"></a>` : "";
     // Marca de dónde sale y para cuándo. Una preventiva pasada de fecha se ve en rojo: es la
     // diferencia entre «hay un plan» y «el plan se cumple».
-    const tarde = r.vence_en && est !== "resuelta" && r.vence_en < todayStr();
+    const objetivo = r.fecha_objetivo || r.vence_en;
+    const tarde = objetivo && est !== "resuelta" && objetivo < todayStr();
     const marca = r.plan_id
       ? `<span class="pill" title="Sale de un plan periódico">Preventivo</span>${r.vence_en ? `<span class="pill ${tarde ? "bad" : ""}">${tarde ? "venció" : "vence"} ${esc(fechaCorta(r.vence_en))}</span>` : ""}`
       : "";
-    return `<div class="row">${foto}<div class="grow"><div class="t1">${esc(r.titulo)}</div><div class="t2">${esc(r.local)} · ${esc(fechaCorta((r.creado_en || "").slice(0, 10)))}${r.descripcion ? " · " + esc((r.descripcion || "").slice(0, 80)) : ""}</div></div>${marca}<span class="pill ${EST_PILL[est] || ""}">${esc(cap(est))}</span>${next ? `<button class="btn" data-act="mant-estado" data-id="${r.id}" data-estado="${next[0]}">${next[1]}</button>` : ""}</div>`;
+    return `<div class="row">${foto}<div class="grow"><div class="t1">${esc(r.titulo)}</div><div class="t2">${esc(r.local)} · ${esc(fechaCorta((r.creado_en || "").slice(0, 10)))}${r.descripcion ? " · " + esc((r.descripcion || "").slice(0, 80)) : ""}</div></div>${marca}<span class="pill ${tarde ? "bad" : ""}">${esc(r.responsable || "Sin responsable")}${objetivo ? " · " + esc(fechaCorta(objetivo)) : " · sin fecha"}</span><button class="btn sm" data-act="mant-gestionar" data-id="${r.id}">Organizar</button><span class="pill ${EST_PILL[est] || ""}">${esc(cap(est))}</span>${next ? `<button class="btn" data-act="mant-estado" data-id="${r.id}" data-estado="${next[0]}">${next[1]}</button>` : ""}</div>`;
   }).join("")}</div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin incidencias con esos filtros.</div></div>`;
   const ocultas = (list || []).length - rows.length;
   return `<div class="ph"><div class="eyebrow">Operación</div><h1>Mantenimiento</h1><div class="sub">${rows.length} incidencia${rows.length === 1 ? "" : "s"}${ocultas > 0 ? ` · ${ocultas} más con otro estado` : ""}${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>${toolbar}${body}`;
@@ -1848,6 +1866,15 @@ function openPlan(existente) {
 function applyMantFilter() {
   const es = document.getElementById("mEstado"); if (es) MANF.estado = es.value;
   const view = document.getElementById("view"); if (view) view.innerHTML = renderMant(MAN_LIST);
+}
+function mantGestionar(id) {
+  const r=MAN_LIST.find(x=>String(x.id)===String(id)); if(!r) return;
+  const ov=modal("Organizar · "+r.titulo, `<form id="mantGestion"><div class="form-grid"><div class="field full"><label>Responsable o proveedor</label><input name="responsable" maxlength="120" value="${esc(r.responsable || "")}" placeholder="Persona que se ocupa de resolverla"></div><div class="field"><label>Fecha objetivo</label><input type="date" name="fecha_objetivo" value="${esc(r.fecha_objetivo || "")}"></div></div><p class="mut">Esta asignación organiza el trabajo. No envía un aviso al responsable.</p><p role="alert" id="mantGestionError"></p><div class="toolbar"><button type="button" class="btn" data-close>Cerrar</button><button type="submit" class="btn primary">Guardar</button></div></form>`);
+  ov.querySelector('form').onsubmit=async e=> {
+    e.preventDefault(); const btn=e.target.querySelector('[type="submit"]');btn.disabled=true;
+    try { await apiSend("PUT","/api/maintenance/"+r.id,{estado:r.estado,gestion:{...Object.fromEntries(new FormData(e.target)),version:r.gestion_version || 0}});ov.remove();loadMant(); }
+    catch(err) {ov.querySelector('#mantGestionError').textContent=err.message;btn.disabled=false;}
+  };
 }
 async function mantEstado(id, estado) { try { await apiSend("PUT", "/api/maintenance/" + encodeURIComponent(id), { estado }); toast("Incidencia actualizada ✅"); loadMant(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 function openNuevaIncidencia() {
@@ -2527,7 +2554,7 @@ function renderClientes(j) {
     <button class="linkbtn mut" data-act="cli-falta-filtro" style="align-self:center;font-size:12px">¿Te falta un filtro?</button>
   </div>` : ""}`;
   const head = `<div class="ph"><div class="eyebrow">Base de clientes</div><h1>Clientes</h1><div class="sub" id="cliSub">${cliSubTxt(rows, total)}</div></div>`;
-  return `${head}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div>${renderClientesFid()}`;
+  return `${head}${marketingRuta("clientes")}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div>${renderClientesFid()}`;
 }
 
 /**
@@ -3785,7 +3812,7 @@ function renderRRSinTelefono() {
   const c = RRSEG.contacto;
   if (!c || !c.sinTelefono) return "";
   const nombres = (c.quienes || []).map((w) => esc(w.nombre || "—")).join(", ");
-  return `<details class="card fold" style="margin-bottom:12px">
+  return `<details class="card fold" style="margin-bottom:12px" data-priority-review open>
     <summary><h3>${num(c.sinTelefono)} de ${num(c.activos)} sin teléfono</h3><span class="foldr"><span>no podemos escribirles</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <div style="padding:14px 18px">
       <p class="mut" style="margin:0 0 8px;line-height:1.6">Cada uno lo rellena desde <b>su espacio</b> (entra con su usuario → «Mis datos»). Mientras falte, no recibirá el pulso mensual ni los avisos, y Sara le contestaría como si fuera un cliente.</p>
@@ -8003,6 +8030,11 @@ function bandasDeMes(list, fila, columnas, minimo = 30) {
   }).join("");
 }
 
+function facCalidadHtml(list) {
+  const dudosas = list.filter(f => f.calidad?.length);
+  if (!dudosas.length) return "";
+  return `<details class="card fold" style="margin-bottom:12px" data-priority-review open><summary><h3>Datos por revisar · ${dudosas.length}</h3><span class="car">${ic("chev",16)}</span></summary><p class="mut">Señales en los documentos de esta lista. No confirman errores ni duplicados. Los importes siguen incluidos en los totales; comprueba el original antes de decidir.</p><div class="rows">${dudosas.slice(0,20).map(f => `<div class="row"><div class="grow"><b>${esc(f.proveedor || "Sin proveedor")} · ${esc(f.numero_factura || "Sin número")}</b><div class="t2">${esc(f.calidad.join(" · "))}</div></div><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Revisar original</button></div>`).join("")}</div>${dudosas.length>20 ? '<p class="mut">Se muestran las primeras 20 incidencias; acota los filtros para revisar las demás.</p>' : ''}</details>`;
+}
 function facTablaHtml(list) {
   if (!list.length) return `<div class="card"><div class="mut" style="padding:8px">Sin facturas con esos filtros.</div></div>`;
   const visibles = list.map((f) => f.id);
@@ -8036,7 +8068,7 @@ function facTablaHtml(list) {
     <td class="r tnum" style="white-space:nowrap"><b>${eur(f.total)}</b></td>
     <td>${facPillPago(f)}</td>
     <td class="r mut" aria-hidden="true">${ic("chev", 15)}</td></tr>`;
-  return `<div class="card p0"><div class="tw${list.length > 25 ? " alta" : ""}"><table class="tbl">
+  return `${facCalidadHtml(list)}<div class="card p0"><div class="tw${list.length > 25 ? " alta" : ""}"><table class="tbl">
     <thead><tr><th class="facsel"><input type="checkbox" id="facSelAll" ${todasMarcadas ? "checked" : ""} aria-label="Seleccionar todas"></th>
     <th class="facthumb"></th>
     <th>Fecha</th><th>Documento</th>${conLocal ? "<th>Local</th>" : ""}<th class="r">Total</th><th>Estado</th><th></th></tr></thead>
@@ -10684,16 +10716,17 @@ async function saraRegDel(id) {
 }
 
 // ── Comunicados (avisos al equipo) ────────────────────────────────────────────
+let COM_DRAFT = { local:"", mensaje:"", hasta:"" };
 function renderComunicados(list) {
   list = list || [];
-  const locOpts = visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}">${esc(l)}</option>`).join("");
-  const form = `<div class="card"><div class="ch"><h3>Publicar comunicado</h3></div><div class="toolbar"><div class="field"><label>Local</label><select id="comLocal">${locOpts}</select></div></div><div class="field" style="width:100%"><label>Mensaje para el equipo</label><textarea id="comMsg" rows="3" placeholder="Escribe el aviso que verán los trabajadores…"></textarea></div><button class="btn primary" data-act="com-add">Publicar comunicado</button></div>`;
-  const items = list.length ? list.map((a) => `<div class="card" style="padding:14px 16px"><div class="t2">${esc(a.local || "")} · ${esc(String(a.creado_en || "").slice(0, 10))}</div><div style="white-space:pre-wrap;margin-top:4px">${esc(a.mensaje || "")}</div></div>`).join("") : `<div class="card"><div class="mut" style="padding:6px">Sin comunicados publicados.</div></div>`;
+  const locOpts = visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${l === (COM_DRAFT.local || localActualFE()) ? "selected" : ""}>${esc(l)}</option>`).join("");
+  const form = `<div class="card"><div class="ch"><h3>Publicar comunicado</h3></div><div class="toolbar"><div class="field"><label>Local</label><select id="comLocal">${locOpts}</select></div></div><div class="field"><label>Visible hasta (opcional)</label><input type="date" id="comHasta" value="${esc(COM_DRAFT.hasta)}"></div><div class="field" style="width:100%"><label>Mensaje para el equipo</label><textarea id="comMsg" rows="3" placeholder="Escribe el aviso que verán los trabajadores…">${esc(COM_DRAFT.mensaje)}</textarea></div><button class="btn primary" data-act="com-add">Revisar comunicado</button><p class="mut">Los cambios quedan como borrador mientras sigas en el panel. Revisa destinatarios y texto antes de publicar.</p></div>`;
+  const items = list.length ? list.map((a) => `<div class="card" style="padding:14px 16px"><div class="t2">${esc(a.local || "")} · ${esc(String(a.creado_en || "").slice(0, 10))} · ${a.hasta && a.hasta < todayStr() ? "Caducado" : "Publicado"}${a.hasta ? " · hasta " + esc(a.hasta) : ""} · ${num(a.lecturas || 0)} lecturas confirmadas</div><div style="white-space:pre-wrap;margin-top:4px">${esc(a.mensaje || "")}</div></div>`).join("") : `<div class="card"><div class="mut" style="padding:6px">Sin comunicados publicados.</div></div>`;
   return `<div class="ph"><div class="eyebrow">Operación</div><h1>Comunicados</h1><div class="sub">Avisos que verán los trabajadores en su panel</div></div>${form}<div class="grid" style="gap:10px;margin-top:16px">${items}</div>`;
 }
 async function loadComunicados() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
-  try { view.innerHTML = renderComunicados(await api("/api/announcements?rol=trabajadores")); }
+  try { view.innerHTML = renderComunicados(await api("/api/announcements?rol=trabajadores" + (localActualFE() ? "&local=" + encodeURIComponent(localActualFE()) : ""))); }
   catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 async function comAdd() {
@@ -10701,8 +10734,15 @@ async function comAdd() {
   const mensaje = (document.getElementById("comMsg") || {}).value || "";
   if (!mensaje.trim()) { toast("Escribe el mensaje del comunicado"); return; }
   if (!local) { toast("Elige un local"); return; }
-  try { await apiSend("POST", "/api/announcements", { local, rol: "trabajadores", mensaje: mensaje.trim() }); toast("Comunicado publicado ✅"); loadComunicados(); }
-  catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
+  const hasta = document.getElementById("comHasta").value;
+  COM_DRAFT = {local,mensaje,hasta};
+  const ov=modal("Revisar comunicado", `<p><b>Destinatarios:</b> equipo de ${esc(local)}</p><p><b>Vigencia:</b> ${hasta ? "hasta " + esc(hasta) : "sin fecha de fin"}</p><div class="card" style="white-space:pre-wrap">${esc(mensaje.trim())}</div><p class="mut">Aparecerá en el espacio del equipo. Publicado y lectura confirmada se muestran por separado.</p><p role="alert" id="comError"></p><div class="toolbar"><button class="btn" data-close>Volver a editar</button><button class="btn primary" id="comConfirm">Publicar comunicado</button></div>`);
+  ov.querySelector('#comConfirm').onclick=async e=> {
+    e.target.disabled=true;
+    try { await apiSend("POST", "/api/announcements", { local, rol: "trabajadores", mensaje: mensaje.trim(), hasta }); COM_DRAFT={local:"",mensaje:"",hasta:""};ov.remove();toast("Comunicado publicado");loadComunicados(); }
+    catch(err) {ov.querySelector('#comError').textContent=err.message;e.target.disabled=false;}
+  };
+
 }
 
 // ── Ágora (TPV): configurar la integración de ventas por local, desde el panel ────────────────
@@ -12641,7 +12681,7 @@ function renderFidelizacion() {
 
   return `<div class="hd"><h2>Fidelización</h2></div>
     <div class="card"><div class="ch"><h3>Programa de puntos</h3></div>
-      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Aquí se decide cómo funciona el programa y cuándo se enciende. Los tokens, el Workplace y el catálogo están en <b>Sistema → Ágora (TPV)</b>.</div>
+      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Aquí se revisan las reglas, se comprueban los resultados de prueba y se decide cuándo activar el programa. La conexión con las cajas se configura en <b>Sistema → Ágora (TPV)</b>.</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
       ${cuerpo}</div>`;
 }
@@ -13558,6 +13598,16 @@ function describirAudiencia(f = {}) {
   if (n) p.push(`Excluye ${n}`);
   return p.length ? p.join(" · ") : "Todos los contactos";
 }
+function marketingRuta(actual) {
+  const pasos = [
+    ["promos", "captacion", "Captar", "Crear el enlace de entrada para nuevos clientes."],
+    ["clientes", "", "Elegir audiencia", "Filtrar contactos y preparar una comunicación."],
+    ["promos", "lista", "Definir beneficio", "Revisar promoción, condiciones y caducidad."],
+    ["campanas", "", "Preparar y enviar", "Comprobar destinatarios, consentimiento y mensaje."],
+    ["promos", "canjes", "Medir canjes", "Distinguir mensajes enviados de visitas y canjes."]
+  ].filter(([v]) => puedeVer(v));
+  return `<details class="card fold marketing-ruta" style="margin-bottom:14px"><summary><h3>Recorrido de una campaña</h3><span class="car">${ic("chev",16)}</span></summary><p class="mut">Elige el paso que necesitas. Los filtros de Clientes se conservan al usar «Preparar comunicación»; los envíos y los canjes se consultan por separado.</p><div class="marketing-pasos">${pasos.map(([v,tab,t,d],i)=>`<button class="card marketing-paso ${actual===v ? "actual" : ""}" data-act="marketing-paso" data-view-dest="${v}" data-tab-dest="${tab}"><span class="eyebrow">Paso ${i+1}</span><b>${t}</b><span class="mut">${d}</span></button>`).join("")}</div></details>`;
+}
 function renderCampanas() {
   const rows = CAMP.list || []; const cfg = CAMP.cfg || {};
   const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas</h1><div class="sub">Segmentar y enviar por WhatsApp · plantillas · programación · cumpleaños · traducción</div><div class="acts"><button class="btn" data-act="camp-detectar-idiomas">🌐 Detectar idiomas</button><button class="btn primary" data-act="camp-nueva">+ Nueva campaña</button></div></div>`;
@@ -13582,7 +13632,7 @@ function renderCampanas() {
       <span class="mut" style="font-size:12px;align-self:center">No se envía nada: sale una propuesta.</span>
     </div>
     <div id="campProp"></div></div>`;
-  return `${head}${redactar}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div>${renderCampFidelizacion()}<div id="campFaltan"></div>`;
+  return `${head}${marketingRuta("campanas")}${redactar}<div class="grid g2">${cumple}${plantillas}</div><div style="margin-top:16px">${table}</div>${renderCampFidelizacion()}<div id="campFaltan"></div>`;
 }
 
 /**
@@ -14002,13 +14052,16 @@ const WEB_LANGS = ["es", "ca", "en"], WEB_LANG_LABEL = { es: "ES", ca: "CA", en:
 const WEB_PAGES = [["home_extra", "Portada · extra"], ["nosotros", "Nosotros"], ["eventos", "Eventos"], ["trabaja", "Trabaja"]];
 const WEB_BLK_TYPES = [["heading", "Título"], ["paragraph", "Párrafo"], ["image", "Imagen"], ["gallery", "Galería"], ["cta", "Botón"], ["pdf", "PDF"]];
 let WEB_TIMERS = {}, WEB_DRAG = null, WEB_BID = 0;
+let WEB_DRAFT = { cambios: {}, base: "", revision: 0, dirty: false, saving: null, seq: 0, busy: false, versiones: [] };
 const webIsPage = () => typeof WEB.scope === "string" && WEB.scope.startsWith("page:");
 const webPageScope = () => WEB.scope.slice(5);
-function webPreviewSrc() {
+function webPublicSrc() {
   if (WEB.scope === "global") return "/index.html";
   if (webIsPage()) { const p = webPageScope(); return p === "home_extra" ? "/index.html" : "/" + p + ".html"; }
   return "/local.html?slug=" + encodeURIComponent(WEB.scope);
 }
+function webPreviewSrc() { const src = webPublicSrc(); return src + (src.includes("?") ? "&" : "?") + "vista_previa=1"; }
+function webPreviewStore() { try { sessionStorage.setItem("web-preview-changes", JSON.stringify(WEB_DRAFT.cambios)); } catch { webInd("No se pudo actualizar la vista previa"); } }
 function webBlkText(b, field) { const v = b && b[field]; if (v && typeof v === "object") return v[WEB.lang] || v.es || ""; return v == null ? "" : String(v); }
 function webParseBlocks(raw) { if (!raw) return []; try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch { return []; } }
 function webBlocks(scope) { if (!WEB.blocks[scope]) WEB.blocks[scope] = webParseBlocks(WEB.content["blocks_" + scope]); return WEB.blocks[scope]; }
@@ -14037,9 +14090,16 @@ function webGroup() {
 async function loadWeb() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
-    const [reg, cont] = await Promise.all([apiSend("GET", "/api/content/registry"), apiSend("GET", "/api/content")]);
+    const [reg, cont] = await Promise.all([apiSend("GET", "/api/content/registry"), apiSend("GET", "/api/content/editor")]);
     WEB.reg = { locales: reg.locales || [], campos: reg.campos || {} };
-    WEB.content = cont.data || {};
+    // Si una navegación vuelve mientras hay cambios locales, no se pierden.
+    if (!WEB_DRAFT.dirty && !WEB_DRAFT.saving) {
+      const d = cont.borrador;
+      WEB_DRAFT = { cambios: d?.cambios || {}, base: d?.base_version || cont.version, revision: d?.revision || 0, dirty: false, saving: null, seq: 0, busy: false, versiones: cont.versiones || [] };
+    }
+    WEB.content = { ...(cont.data || {}) }; WEB.blocks = {};
+    for (const [k,v] of Object.entries(WEB_DRAFT.cambios)) { if (v === null) delete WEB.content[k]; else WEB.content[k] = v; }
+    webPreviewStore();
     // El píxel, con los DOS datos: el que se usa y si alguien lo puso. Va aparte y con su propio
     // `try`: que falle no puede dejar sin editor de contenidos a quien viene a cambiar un texto.
     try {
@@ -14066,7 +14126,7 @@ function webFieldHtml(campo) {
     control = `<div class="webgal" data-galkey="${esc(skey)}" data-webbase="${esc(base)}">${urls.map((u, i) => `<div class="webgi" draggable="true" data-galitem data-galkey="${esc(skey)}" data-idx="${i}"><img src="${esc(u)}" alt=""><button class="webgx" data-act="web-gal-del" data-galkey="${esc(skey)}" data-idx="${i}" title="Quitar">✕</button></div>`).join("")}<label class="webgadd">+<input type="file" accept="image/*" multiple data-webgalup="${esc(skey)}" data-webbase="${esc(base)}" hidden></label></div>`;
   } else {
     const multiline = /_sub$|_text$|history|hours/.test(base);
-    const badges = campo.type === "text_i18n" ? webMissing(base).filter((l) => l !== WEB.lang).map((l) => `<span class="webmiss">falta ${WEB_LANG_LABEL[l]}</span>`).join("") : "";
+    const badges = campo.type === "text_i18n" ? webMissing(base).filter((l) => l !== WEB.lang).map((l) => `<span class="webmiss">${WEB_LANG_LABEL[l]}: original</span>`).join("") : "";
     control = multiline
       ? `<textarea data-webkey="${esc(skey)}" data-webbase="${esc(base)}" rows="2">${esc(val)}</textarea>${badges}`
       : `<input type="text" data-webkey="${esc(skey)}" data-webbase="${esc(base)}" value="${esc(val)}">${badges}`;
@@ -14112,14 +14172,14 @@ function renderWebFields() {
 }
 function renderWeb() {
   const grp = webGroup();
-  const scopeChips = `<div class="chips">${['<button class="chip ' + (WEB.scope === "global" ? "on" : "") + '" data-act="web-scope" data-scope="global">Portada</button>'].concat(grp.locales.map((l) => `<button class="chip ${WEB.scope === l.slug ? "on" : ""}" data-act="web-scope" data-scope="${esc(l.slug)}">${esc(l.name)}</button>`)).join("")}</div>`;
-  const pageChips = `<div class="chips" style="margin-top:-8px"><span class="mut" style="font-size:11px;align-self:center;margin-right:2px">Secciones:</span>${WEB_PAGES.map(([s, lbl]) => `<button class="chip ${WEB.scope === "page:" + s ? "on" : ""}" data-act="web-scope" data-scope="page:${s}">${esc(lbl)}</button>`).join("")}</div>`;
+  const scopeChips = `<div class="chips web-scopes">${['<button class="chip ' + (WEB.scope === "global" ? "on" : "") + '" data-act="web-scope" data-scope="global">Portada</button>'].concat(grp.locales.map((l) => `<button class="chip ${WEB.scope === l.slug ? "on" : ""}" data-act="web-scope" data-scope="${esc(l.slug)}">${esc(l.name)}</button>`)).join("")}</div>`;
+  const pageChips = `<div class="chips web-pages" style="margin-top:-8px"><span class="mut" style="font-size:11px;align-self:center;margin-right:2px">Secciones:</span>${WEB_PAGES.map(([s, lbl]) => `<button class="chip ${WEB.scope === "page:" + s ? "on" : ""}" data-act="web-scope" data-scope="page:${s}">${esc(lbl)}</button>`).join("")}</div>`;
   const langSeg = `<div class="seg">${WEB_LANGS.map((l) => `<button class="${WEB.lang === l ? "on" : ""}" data-act="web-lang" data-lang="${l}">${WEB_LANG_LABEL[l]}</button>`).join("")}</div>`;
   const search = `<input id="webQ" placeholder="Buscar campo…" value="${esc(WEB.q)}" data-websearch style="height:36px;max-width:200px">`;
   const editor = `<div class="webedit"><div class="webbar">${langSeg}${search}<span id="webInd" class="mut" style="font-size:12px;margin-left:auto"></span></div><div class="webfields">${renderWebFields()}</div></div>`;
   const src = webPreviewSrc();
   const preview = `<div class="webprev"><div class="webprev-bar"><span class="mut" style="font-size:12px">Vista previa</span><a class="btn sm" href="${src}" target="_blank" rel="noopener">Abrir ↗</a></div><iframe id="webframe" src="${src}" title="Vista previa"></iframe></div>`;
-  return `<div class="ph"><div><div class="eyebrow">Web pública</div><h1>Editor de la web</h1><div class="sub">Cambia textos, imágenes, cartas y galerías de la web del cliente. Se guarda solo.</div></div></div>${renderMetaPixel()}${scopeChips}${pageChips}<div class="webwrap">${editor}${preview}</div>`;
+  return `<div class="ph"><div><div class="eyebrow">Web pública</div><h1>Editor de la web</h1><div class="sub">Guarda tus cambios como borrador, revísalos y publica cuando estén listos.</div></div></div>${scopeChips}<div class="card web-draft-bar"><div><b>Borrador de la web</b><p class="mut">La web pública cambia únicamente al pulsar Publicar. Tus borradores son privados.</p></div><div class="toolbar"><button class="btn" data-act="web-save-draft">Guardar borrador</button><button class="btn" data-act="web-compare">Comparar con publicada</button><button class="btn" data-act="web-versions">Versiones anteriores</button><button class="btn" data-act="web-discard">Descartar borrador</button><button class="btn primary" data-act="web-publish">Revisar y publicar</button></div></div>${pageChips}<div class="webwrap">${editor}${preview}</div>${USER.rol === "direccion" ? `<details class="card fold" style="margin-top:16px"><summary><h3>Configuración de medición</h3><span class="car">${ic("chev",16)}</span></summary>${renderMetaPixel()}</details>` : ""}`;
 }
 
 /**
@@ -14143,7 +14203,7 @@ function renderMetaPixel() {
           <b style="font-variant-numeric:tabular-nums">${esc(m.pixel || "—")}</b>
           <button class="btn sm" data-act="meta-pixel">Cambiar</button></span></div>
     </div>
-    <div class="mut" style="font-size:12px;margin-top:10px"><b>No se carga sin consentimiento.</b> Quien visita la web ve un aviso con «Aceptar» y «Rechazar»; hasta que acepta no se descarga nada de Meta. Puede cambiar de opinión desde el enlace «Cookies» del pie.</div>`;
+    <div class="mut" style="font-size:12px;margin-top:10px"><b>No se carga sin consentimiento.</b> Quien visita la web ve un aviso con «Aceptar» y «Rechazar»; hasta que acepta no se descarga nada de Meta. Puede cambiar de opinión desde el enlace «Cookies» del pie.</div></div>`;
 }
 
 async function metaPixelEditar() {
@@ -14160,16 +14220,116 @@ async function metaPixelEditar() {
   } catch (e) { toast("Error: " + e.message); }
 }
 
-function webPost(msg) { const f = document.getElementById("webframe"); if (f && f.contentWindow) try { f.contentWindow.postMessage(msg, "*"); } catch { /* */ } }
-function webMountPreview() { const f = document.getElementById("webframe"); if (!f) return; f.addEventListener("load", () => { webPost({ type: "edit-mode", enabled: true }); webPost({ type: "set-lang", lang: WEB.lang }); }); }
-function webReload() { const f = document.getElementById("webframe"); if (f) f.src = f.src; }
-function webInd(t) { const el = document.getElementById("webInd"); if (el) { el.textContent = t; if (/Guardado/.test(t)) setTimeout(() => { if (el.textContent === t) el.textContent = ""; }, 1500); } }
-function webQueueSave(key, value, immediate) {
-  WEB.content[key] = value;
-  clearTimeout(WEB_TIMERS[key]); webInd("Guardando…");
-  const doSave = async () => { try { await apiSend("PUT", "/api/content", { key, value }); webInd("✓ Guardado"); } catch (e) { webInd("⚠ Error"); } };
-  if (immediate) doSave(); else WEB_TIMERS[key] = setTimeout(doSave, 600);
+function webPost(msg) { const f = document.getElementById("webframe"); if (f && f.contentWindow) try { f.contentWindow.postMessage(msg, location.origin); } catch { /* */ } }
+function webMountPreview() {
+  const f = document.getElementById("webframe"); if (!f) return;
+  webInd(WEB_DRAFT.dirty ? "Cambios pendientes de guardar" : Object.keys(WEB_DRAFT.cambios).length ? "Borrador guardado · sin publicar" : "Sin cambios pendientes");
+  f.addEventListener("load", () => {
+    webPost({ type: "edit-mode", enabled: true }); webPost({ type: "set-lang", lang: WEB.lang });
+    try {
+      for (const input of document.querySelectorAll('[data-webkey]')) {
+        if (input.value) continue;
+        const base = input.getAttribute('data-webbase');
+        const node = [...f.contentDocument.querySelectorAll('[data-content-key], [data-edit-key]')].find(n => n.getAttribute('data-content-key') === base || n.getAttribute('data-edit-key') === base);
+        input.placeholder = node?.textContent?.trim() || "Contenido original de la web";
+      }
+    } catch { /* La previsualización puede estar navegando. */ }
+  });
 }
+function webReload() { webPreviewStore(); const f = document.getElementById("webframe"); if (f) f.src = webPreviewSrc(); }
+function webInd(t) { const el = document.getElementById("webInd"); if (el) { el.textContent = t; el.setAttribute("role", "status"); } }
+async function webSaveDraft() {
+  clearTimeout(WEB_TIMERS._draft);
+  if (WEB_DRAFT.saving) { await WEB_DRAFT.saving; if (WEB_DRAFT.dirty) return webSaveDraft(); return; }
+  if (!WEB_DRAFT.dirty) return;
+  const seq = WEB_DRAFT.seq;
+  const payload = { cambios: { ...WEB_DRAFT.cambios }, base_version: WEB_DRAFT.base, revision: WEB_DRAFT.revision };
+  webInd("Guardando borrador…");
+  WEB_DRAFT.saving = (async () => {
+    const j = await apiSend("PUT", "/api/content/draft", payload);
+    WEB_DRAFT.revision = j.borrador.revision;
+    if (seq === WEB_DRAFT.seq) WEB_DRAFT.dirty = false;
+    webInd(WEB_DRAFT.dirty ? "Cambios pendientes de guardar" : "Borrador guardado · sin publicar");
+  })();
+  try { await WEB_DRAFT.saving; } catch(e) { webInd("No guardado: " + e.message); throw e; }
+  finally { WEB_DRAFT.saving = null; }
+  if (WEB_DRAFT.dirty) return webSaveDraft();
+}
+function webQueueSave(key, value, immediate) {
+  if (WEB_DRAFT.busy) return;
+  WEB.content[key] = value; WEB_DRAFT.cambios[key] = value;
+  WEB_DRAFT.dirty = true; WEB_DRAFT.seq++; webPreviewStore();
+  clearTimeout(WEB_TIMERS._draft); webInd("Cambios pendientes de guardar");
+  WEB_TIMERS._draft = setTimeout(() => webSaveDraft().catch(() => {}), immediate ? 0 : 600);
+}
+async function webPublish() {
+  if (WEB_DRAFT.busy) return;
+  try {
+    await webSaveDraft();
+    const keys = Object.keys(WEB_DRAFT.cambios); if (!keys.length) return toast("No hay cambios para publicar");
+    const ov = modal("Revisar publicación", `<p>Se actualizarán ${keys.length} campos de la web pública.</p><div class="rows">${keys.map(k => `<div class="row"><div class="grow"><b>${esc(WEB.reg.campos[k]?.label || WEB.reg.campos[k.replace(/_(es|ca|en)$/, "")]?.label || k)}</b><div class="mut" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(String(WEB_DRAFT.cambios[k] ?? "Volver al contenido original").slice(0,500))}</div></div></div>`).join("")}</div><p role="alert" id="webPublishError"></p><div class="toolbar"><button class="btn" data-close>Seguir revisando</button><button class="btn primary" id="webPublishConfirm">Publicar estos cambios</button></div>`);
+    const revision = WEB_DRAFT.revision;
+    ov.querySelector('#webPublishConfirm').onclick = async (e) => {
+      if (WEB_DRAFT.dirty || WEB_DRAFT.revision !== revision) { ov.remove(); return toast("El borrador ha cambiado. Vuelve a revisarlo."); }
+      WEB_DRAFT.busy = true; e.target.disabled = true;
+      try { await apiSend("POST", "/api/content/publish", { revision }); ov.remove(); WEB_DRAFT.cambios = {}; toast("Web publicada"); await loadWeb(); }
+      catch(err) { ov.querySelector('#webPublishError').textContent = err.message; e.target.disabled = false; }
+      finally { WEB_DRAFT.busy = false; }
+    };
+  } catch(e) { toast(e.message); }
+}
+async function webDiscard() {
+  if (WEB_DRAFT.busy) return;
+  if (!(await confirmModal("¿Descartar tu borrador? La web publicada se conserva.", { ok:"Descartar", danger:true }))) return;
+  WEB_DRAFT.busy = true; clearTimeout(WEB_TIMERS._draft);
+  try {
+    if (WEB_DRAFT.saving) await WEB_DRAFT.saving;
+    await apiSend("DELETE", "/api/content/draft", { revision: WEB_DRAFT.revision });
+    WEB_DRAFT.dirty = false; WEB_DRAFT.cambios = {}; await loadWeb();
+  } catch(e) { toast(e.message); } finally { WEB_DRAFT.busy = false; }
+}
+async function webCompare() {
+  if (WEB_DRAFT.busy) return;
+  try {
+    await webSaveDraft();
+    const j = await apiSend("GET", "/api/content/editor"), cambios = { ...WEB_DRAFT.cambios }, revision = WEB_DRAFT.revision;
+    const keys = Object.keys(cambios);
+    if (!keys.length) return toast("No hay cambios para comparar");
+    const ov = modal("Comparar borrador y web publicada", `<p>Elige qué conservar en cada campo. Se guardará un borrador revisado; después podrás publicarlo.</p>${keys.map((k,i)=>`<div class="card" style="margin-bottom:10px;overflow-wrap:anywhere"><b>${esc(WEB.reg.campos[k]?.label || WEB.reg.campos[k.replace(/_(es|ca|en)$/, "")]?.label || k)}</b><p><strong>Publicada:</strong> ${esc(String(j.data[k] ?? "Contenido original").slice(0,1000))}</p><p><strong>Borrador:</strong> ${esc(String(cambios[k] ?? "Contenido original").slice(0,1000))}</p><label>Conservar <select data-compare="${i}"><option value="draft">Mi borrador</option><option value="live">La publicada</option></select></label></div>`).join("")}<p role="alert" id="webCompareError"></p><div class="toolbar"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="webCompareSave">Guardar comparación</button></div>`);
+    ov.querySelector('#webCompareSave').onclick = async e => {
+      if (WEB_DRAFT.dirty || WEB_DRAFT.revision !== revision) return toast("El borrador ha cambiado. Cierra y vuelve a comparar.");
+      const selected = {}; keys.forEach((k,i) => { if (ov.querySelector(`[data-compare="${i}"]`).value === "draft") selected[k] = cambios[k]; });
+      WEB_DRAFT.busy = true; e.target.disabled = true;
+      try {
+        await apiSend("PUT","/api/content/draft", { cambios:selected, base_version:j.version, revision, rebase:true });
+        ov.remove(); await loadWeb(); toast("Comparación guardada como borrador");
+      } catch(err) { ov.querySelector('#webCompareError').textContent=err.message; e.target.disabled=false; }
+      finally { WEB_DRAFT.busy=false; }
+    };
+  } catch(e) { toast(e.message); }
+}
+async function webVersions() {
+  if (WEB_DRAFT.busy) return;
+  try {
+    const j = await apiSend("GET", "/api/content/editor");
+    const ov=modal("Versiones anteriores", `<p>Recuperar crea un borrador para revisar. La web publicada no cambia hasta que lo publiques.</p>${(j.versiones || []).map(v=>`<div class="row"><div class="grow">${esc(new Date(v.creado_en).toLocaleString("es-ES"))} · ${esc(v.autor)}</div><button class="btn sm" data-restore="${v.id}">Recuperar</button></div>`).join("") || '<p class="mut">Aún no hay publicaciones anteriores.</p>'}`);
+    ov.querySelectorAll('[data-restore]').forEach(btn=>btn.onclick=async()=> {
+      if (!(await confirmModal("¿Sustituir tu borrador por esta versión anterior?",{ok:"Recuperar como borrador"}))) return;
+      WEB_DRAFT.busy=true; clearTimeout(WEB_TIMERS._draft);
+      try { if(WEB_DRAFT.saving) await WEB_DRAFT.saving; await apiSend("POST","/api/content/restore",{id:Number(btn.dataset.restore),revision:WEB_DRAFT.revision}); WEB_DRAFT.dirty=false; ov.remove(); await loadWeb(); }
+      catch(e) { toast(e.message); } finally { WEB_DRAFT.busy=false; }
+    });
+  } catch(e) { toast(e.message); }
+}
+window.addEventListener("beforeunload", e => { if (WEB_DRAFT.dirty || WEB_DRAFT.saving) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("message", e => {
+  const f = document.getElementById("webframe"), m = e.data;
+  if (!f || e.source !== f.contentWindow || e.origin !== location.origin || m?.type !== "edit-update") return;
+  const campo = WEB.reg?.campos?.[m.key];
+  if (!campo || typeof m.value !== "string") return;
+  const key = webSaveKey({ key:m.key, ...campo }, WEB_LANGS.includes(m.lang) ? m.lang : WEB.lang);
+  webQueueSave(key,m.value);
+});
 function webFieldInput(t) { const key = t.getAttribute("data-webkey"), base = t.getAttribute("data-webbase"); webQueueSave(key, t.value); if (base) webPost({ type: "canvas-update", key: base, value: t.value }); }
 async function webUpload(input, { gallery = false } = {}) {
   const files = input.files; if (!files || !files.length) return;
@@ -14181,7 +14341,7 @@ async function webUpload(input, { gallery = false } = {}) {
     const j = await r.json(); if (!j.ok || !j.urls || !j.urls.length) throw new Error("subida");
     if (gallery) { const cur = webParseGal(WEB.content[key]); webQueueSave(key, webSerGal(cur.concat(j.urls)), true); }
     else { webQueueSave(key, j.urls[0], true); }
-    webInd("✓ Guardado"); const v = document.getElementById("view"); if (v) { v.innerHTML = renderWeb(); webMountPreview(); } webReload();
+    webInd("Imagen subida · guardando borrador"); const v = document.getElementById("view"); if (v) { v.innerHTML = renderWeb(); webMountPreview(); } webReload();
   } catch (e) { webInd("⚠ Error al subir"); }
 }
 function webGalDel(key, idx) { const cur = webParseGal(WEB.content[key]); cur.splice(idx, 1); webQueueSave(key, webSerGal(cur), true); const v = document.getElementById("view"); if (v) { v.innerHTML = renderWeb(); webMountPreview(); } webReload(); }
@@ -14389,7 +14549,7 @@ function renderPromos() {
     : PROMO.tab === "fidelizacion" ? promoFidelizacion()
     : PROMO.tab === "tarjeta" ? promoTarjeta()
     : promoTablaLista();
-  return `${head}<div class="tabs">${tabs}</div><div style="margin-top:16px">${cuerpo}</div>`;
+  return `${head}${marketingRuta("promos")}<div class="tabs">${tabs}</div><div style="margin-top:16px">${cuerpo}</div>`;
 }
 
 const FIDG_PP_TXT = {
@@ -15649,8 +15809,10 @@ document.addEventListener("click", (e) => {
   else if (act === "res-dia") resDiaFoco(t.getAttribute("data-dia"));
   else if (act === "nueva") openNuevaReserva();
   else if (act === "csv") downloadCsv();
+  else if (act === "res-sala") resGestionar(t.getAttribute("data-id"));
   else if (act === "cancel") cancelReserva(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "mant-nueva") openNuevaIncidencia();
+  else if (act === "mant-gestionar") mantGestionar(t.getAttribute("data-id"));
   else if (act === "mant-estado") mantEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
   else if (act === "mant-tab") mantTab(t.getAttribute("data-tab"));
   else if (act === "plan-nuevo") openPlan(null);
@@ -15922,6 +16084,7 @@ document.addEventListener("click", (e) => {
   else if (act === "tj-cartel") tjCartel();
   else if (act === "tj-probar") tjProbar();
   else if (act === "tj-cfg") tjConfig(t.getAttribute("data-plat"));
+  else if (act === "marketing-paso") { const dest=t.getAttribute("data-view-dest"); if (dest === "promos") PROMO.tab=t.getAttribute("data-tab-dest") || "lista"; if (puedeVer(dest)) go(dest); }
   else if (act === "camp-nueva") openNuevaCampana();
   else if (act === "camp-redactar") campRedactar();
   else if (act === "camp-usar-propuesta") campUsarPropuesta();
@@ -15941,6 +16104,11 @@ document.addEventListener("click", (e) => {
   else if (act === "sara-adj-del") saraAdjDel(+t.getAttribute("data-idx"));
   else if (act === "sara-blo-del") saraBloDel(t.getAttribute("data-id"));
   else if (act === "sara-reg-del") saraRegDel(t.getAttribute("data-id"));
+  else if (act === "web-save-draft") webSaveDraft().catch(e => toast(e.message));
+  else if (act === "web-publish") webPublish();
+  else if (act === "web-discard") webDiscard();
+  else if (act === "web-compare") webCompare();
+  else if (act === "web-versions") webVersions();
   else if (act === "web-scope") { WEB.scope = t.getAttribute("data-scope"); WEB.q = ""; const v = document.getElementById("view"); if (v) { v.innerHTML = renderWeb(); webMountPreview(); } }
   else if (act === "web-lang") { WEB.lang = t.getAttribute("data-lang"); const v = document.getElementById("view"); if (v) { v.innerHTML = renderWeb(); webMountPreview(); } webPost({ type: "set-lang", lang: WEB.lang }); }
   else if (act === "web-gal-del") { webGalDel(t.getAttribute("data-galkey"), +t.getAttribute("data-idx")); }
@@ -16028,3 +16196,7 @@ requireRole(["direccion", "encargado", "contabilidad", "marketing", "rrhh"]).the
     if (d.vista !== CURRENT || d.vista === "facturas") go(d.vista, { desdeUrl: true });
   });
 }).catch(() => { /* requireRole ya redirige a /login.html */ });
+
+document.addEventListener("input", e => {
+  if (["comMsg","comHasta","comLocal"].includes(e.target.id)) COM_DRAFT={local:document.getElementById("comLocal")?.value || "",mensaje:document.getElementById("comMsg")?.value || "",hasta:document.getElementById("comHasta")?.value || ""};
+});

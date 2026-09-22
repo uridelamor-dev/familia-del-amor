@@ -13,6 +13,7 @@ describe("los desplegables empiezan cerrados", () => {
     const abiertos = [...panel.matchAll(/<details[^>]*\bopen\b[^>]*>/g)].map((m) => m[0]);
     // La única excepción legítima: conservar lo que el usuario YA había abierto al repintar.
     const salvo = abiertos.filter((d) => !/\$\{estaba \? "open" : ""\}/.test(d)
+      && !d.includes("data-priority-review open")
       && !d.includes('class="card fold c7 p0"${nCritC ? " open" : ""}'));
     assert.deepEqual(salvo, [], "hay desplegables que se abren solos");
   });

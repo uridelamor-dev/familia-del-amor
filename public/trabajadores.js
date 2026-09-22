@@ -265,7 +265,7 @@ async function loadAnnouncements() {
       return;
     }
     list.innerHTML = data.data
-      .map((a) => `<div class="card"><small>${escapeHtml(a.local)} · ${escapeHtml((a.creado_en || "").slice(0, 10))}</small><p>${escapeHtml(a.mensaje)}</p></div>`)
+      .map((a) => `<div class="card"><small>${escapeHtml(a.local)} · ${escapeHtml((a.creado_en || "").slice(0, 10))}</small><p>${escapeHtml(a.mensaje)}</p>${a.leido ? "<small>Lectura confirmada</small>" : `<button type="button" class="btn" data-ann-read="${a.id}">He leído este comunicado</button>`}</div>`)
       .join("");
   } catch (err) {
     list.innerHTML = `<div class="card">Error de conexión al cargar comunicados.</div>`;
@@ -559,4 +559,10 @@ document.getElementById("cambiosOk")?.addEventListener("click", async () => {
   if (msg) msg.textContent = fallos ? "Alguno no se pudo registrar. Vuelve a intentarlo." : "";
   loadCambios();
   loadCuadrante();
+});
+
+document.addEventListener("click", async e => {
+  const btn=e.target.closest('[data-ann-read]');if(!btn)return;btn.disabled=true;
+  try {const r=await authFetch('/api/announcements/'+btn.dataset.annRead+'/leido',{method:'POST'});const j=await r.json();if(!j.ok)throw new Error(j.error);loadAnnouncements();}
+  catch {btn.disabled=false;btn.textContent='No se guardó. Reintentar confirmación';}
 });

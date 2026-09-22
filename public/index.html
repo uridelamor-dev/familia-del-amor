@@ -111,15 +111,15 @@
       <section id="reservas" class="block reservas-highlight">
         <div class="section-head">
           <h2 data-i18n="reservations_title" data-content-key="reservations_title">Reserva tu mesa</h2>
-          <p data-i18n="reservations_sub" data-content-key="reservations_sub">Reserva confirmada al instante.</p>
+          <p data-i18n="reservations_sub" data-content-key="reservations_sub">Elige local y horario. Los grupos de 9 o más personas requieren confirmación del local.</p>
         </div>
         <form id="reservaForm" class="reserva-form">
           <div class="reserva-step">
             <div class="reserva-step-label" data-i18n="reservation_local_q">¿En qué local?</div>
-            <select id="localSelect" class="reserva-select" aria-label="Local">
+            <select name="local" id="localSelect" class="reserva-select" aria-label="Local">
               <option value="">Elige local…</option>
             </select>
-            <input type="hidden" name="local" id="localValue" />
+            <input type="hidden" id="localValue" />
           </div>
           <div class="reserva-row reserva-row--datetime">
             <div class="reserva-col">
@@ -241,6 +241,7 @@
     </a>
 
     <script src="datepicker.js"></script>
+    <script src="/js/content-preview.js"></script>
     <script src="app.js"></script>
       <script src="/js/consentimiento.js"></script>
     <script src="/js/meta.js"></script>

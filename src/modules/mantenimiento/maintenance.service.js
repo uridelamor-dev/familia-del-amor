@@ -1,3 +1,4 @@
+import { validarGestion, guardarGestion } from "./gestion.js";
 // Servicio de Mantenimiento (Iteración 4). Contiene TODA la lógica de autorización y acceso
 // a datos de los 3 endpoints. NO importa Express. Recibe explícitamente: conexión/adaptador
 // PostgreSQL (con get/all/run; run devuelve la fila de `RETURNING` o undefined, igual que el
@@ -104,17 +105,19 @@ export async function createMaintenanceIssue(x, user, { local, titulo, descripci
 }
 
 // ── PUT /api/maintenance/:id ─────────────────────────────────────────────────
-export async function updateMaintenanceIssueStatus(x, user, id, { estado } = {}, { enabled = false, now } = {}) {
+export async function updateMaintenanceIssueStatus(x, user, id, { estado, gestion } = {}, { enabled = false, now } = {}) {
   // El estado se valida ANTES de mirar el flag y en las dos ramas: es higiene del dato, no
   // permisos. Antes se guardaba en crudo lo que llegara, y por ahí entraban «en_proceso» y
   // «cerrada» de la página vieja — valores que no salen en ningún filtro del panel.
   const estadoOk = normalizarEstado(estado);
   if (!estado) return { code: "VALIDATION_ERROR", reason: "missing_estado" };
   if (!estadoOk) return { code: "VALIDATION_ERROR", reason: "invalid_estado" };
+  if (gestion !== undefined) { const message=validarGestion(gestion); if(message) return {code:"VALIDATION_ERROR",reason:"invalid_gestion",message}; }
 
   if (!enabled) {
     // `RETURNING id` para poder contestar 404: antes un id inexistente devolvía OK y quien
     // llamaba se quedaba tan tranquilo creyendo que había cambiado algo.
+    if (gestion !== undefined) return { code: await guardarGestion(x,id,estadoOk,gestion) ? "OK" : "CONFLICT" };
     const r0 = await x.run(`UPDATE maintenance_issues SET estado = ? WHERE id = ? RETURNING id`, [estadoOk, id]);
     if (!r0) return { code: "NOT_FOUND" };
     return { code: "OK" };
@@ -145,6 +148,7 @@ export async function updateMaintenanceIssueStatus(x, user, id, { estado } = {},
   }
   if (!permitido) return { code: "FORBIDDEN" };
 
+  if (gestion !== undefined) return { code: await guardarGestion(x,idNum,estadoOk,gestion) ? "OK" : "CONFLICT" };
   const r = await x.run(`UPDATE maintenance_issues SET estado = ? WHERE id = ? RETURNING id`, [estadoOk, idNum]);
   if (!r) return { code: "NOT_FOUND" }; // RETURNING vacío ⇒ la fila desapareció (carrera)
   return { code: "OK" };

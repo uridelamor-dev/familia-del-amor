@@ -86,6 +86,9 @@ async function gatherSignals(x, { hoy, local }) {
   const finProx = addDays(hoy, 7);
   const lf = local ? " AND local = ?" : "";
   const lp = local ? [local] : [];
+  // El denominador y las conversaciones deben referirse al mismo equipo ACTIVO y ámbito.
+  const activos = "u.rol IN ('trabajador','encargado') AND COALESCE(u.activo,1)=1 AND (NULLIF(u.fecha_alta,'') IS NULL OR u.fecha_alta <= ?) AND (NULLIF(u.fecha_baja,'') IS NULL OR u.fecha_baja >= ?)";
+  const equipoLocal = local ? " AND u.local = ?" : "";
 
   const [
     ayerTot, ayerLocal, base,                                   // cómo fue ayer
@@ -129,8 +132,8 @@ async function gatherSignals(x, { hoy, local }) {
     () => safe(() => x.all(`SELECT proveedor, COALESCE(SUM(total),0)::float t FROM facturas WHERE COALESCE(tipo,'factura') <> 'albaran' AND proveedor IS NOT NULL AND proveedor <> '' AND fecha::date >= ?::date AND fecha::date < ?::date${lf} GROUP BY proveedor`, [addDays(hoy, -60), addDays(hoy, -30), ...lp]), []),
     // — equipo —
     () => safe(() => x.all(`SELECT n.worker_id, MAX(u.nombre) AS nombre, MAX(u.local) AS local, COUNT(*)::int c, MAX(n.creado_en) AS ult FROM hr_worker_notes n JOIN users u ON u.id = n.worker_id WHERE n.tipo = 'incidencia' AND n.creado_en::date >= ?::date${local ? " AND u.local = ?" : ""} GROUP BY n.worker_id ORDER BY c DESC LIMIT 5`, [addDays(hoy, -45), ...lp]), []),
-    () => safe(() => x.get(`SELECT COUNT(*)::int n FROM users WHERE rol IN ('trabajador','encargado')${local ? " AND local = ?" : ""}`, [...lp]), null),
-    () => safe(() => x.get(`SELECT COUNT(DISTINCT worker_id)::int n FROM hr_llamadas_mes WHERE mes = ? AND COALESCE(realizada,0) = 1`, [mesActual]), null),
+    () => safe(() => x.get(`SELECT COUNT(*)::int n, COUNT(*) FILTER (WHERE NULLIF(TRIM(COALESCE(u.telefono,'')),'') IS NULL)::int sin_telefono FROM users u WHERE ${activos}${equipoLocal}`, [hoy,hoy,...lp]), null),
+    () => safe(() => x.get(`SELECT COUNT(DISTINCT c.worker_id)::int n FROM hr_llamadas_mes c JOIN users u ON u.id=c.worker_id WHERE c.mes = ? AND COALESCE(c.realizada,0) = 1 AND ${activos}${equipoLocal}`, [mesActual,hoy,hoy,...lp]), null),
     // — clientes —
     () => safe(() => x.all(`SELECT telefono, MAX(nombre_reserva) AS nombre, COUNT(*)::int visitas, MAX(dia) AS ultima, MAX(local) AS local FROM reservas WHERE telefono IS NOT NULL AND telefono <> ''${lf} GROUP BY telefono HAVING COUNT(*) >= 3 AND MAX(dia)::date < ?::date ORDER BY visitas DESC LIMIT 8`, [...lp, addDays(hoy, -42)]), []),
     () => safe(() => x.all(`SELECT telefono, MAX(nombre_reserva) AS nombre, COUNT(*)::int visitas, MAX(dia) AS ultima, MAX(local) AS local FROM reservas WHERE telefono IS NOT NULL AND telefono <> ''${lf} GROUP BY telefono HAVING COUNT(*) >= 4 AND MAX(dia)::date >= ?::date ORDER BY visitas DESC LIMIT 6`, [...lp, addDays(hoy, -60)]), []),
@@ -345,11 +348,11 @@ export function buildConcerns(s, { localName, whatsappConnected } = {}) {
   }
 
   // Equipo: check-ins del mes sin hacer (solo si vamos avanzados de mes).
-  if (s.plantilla && s.plantilla.n > 0) {
+  if (s.plantilla && s.checkinsMes && s.plantilla.n > 0) {
     const hechos = s.checkinsMes ? s.checkinsMes.n : 0;
-    const faltan = s.plantilla.n - hechos;
+    const faltan = Math.max(0, s.plantilla.n - hechos);
     const diaMes = Number(s.hoy.slice(8, 10));
-    if (faltan >= 3 && diaMes >= 18) out.push({ sev: "info", tipo: "rrhh", titulo: `Te faltan ${faltan} conversaciones con el equipo este mes`, narrativa: `Este mes has hablado con ${hechos} de ${s.plantilla.n} personas del equipo. A quien no escuchas, no sabes cómo está.`, decision: `Cerraría los ${faltan} pendientes antes de fin de mes; son 10 minutos por persona y previenen marchas.`, impacto: "El equipo que se siente escuchado rota menos.", go: "rrhh" });
+    if (faltan >= 3 && diaMes >= 18) out.push({ sev: "info", tipo: "rrhh", titulo: `${faltan} conversaciones pendientes con el equipo activo`, narrativa: `Este mes has hablado con ${hechos} de ${s.plantilla.n} personas del equipo. A quien no escuchas, no sabes cómo está.`, decision: `${s.plantilla.sin_telefono ? `Primero completa el contacto de ${s.plantilla.sin_telefono} personas sin teléfono. Después, organiza las conversaciones pendientes.` : `Organiza las ${faltan} conversaciones pendientes con las personas activas de este ámbito.`}`, impacto: "El equipo que se siente escuchado rota menos.", go: "rrhh" });
   }
 
   if (s.cand && s.cand.n > 0) {
@@ -402,8 +405,8 @@ export async function getDashboard(x, { now, whatsappConnected = null, local = n
     },
     equipo: {
       incidencias: (s.incWorkers || []).map((w) => ({ nombre: w.nombre, local: w.local, c: w.c })),
-      checkins: s.plantilla ? { plantilla: s.plantilla.n, hechos: s.checkinsMes ? s.checkinsMes.n : 0, mes: s.mesActual } : null,
-      sinFuente: { disponible: false, fuente: "Skello (fichajes/turnos)", nota: "Con los fichajes, Sara relacionará coste de personal, horas extra y ausencias con cada local. Hoy solo vemos incidencias y check-ins registrados a mano." },
+      checkins: s.plantilla ? { plantilla: s.plantilla.n, hechos: s.checkinsMes ? s.checkinsMes.n : null, mes: s.mesActual } : null,
+      sinFuente: { disponible: false, fuente: "Horarios y fichajes", nota: "Este resumen todavía no incorpora turnos ni fichajes. Consulta esos módulos para comprobar la presencia; aquí solo se muestran incidencias y conversaciones registradas." },
     },
     clientes: {
       enfriando: (s.churn || []).slice(0, 8).map((c) => ({ nombre: c.nombre, telefono: c.telefono, visitas: c.visitas, ultima: String(c.ultima || "").slice(0, 10), local: c.local })),

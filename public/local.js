@@ -167,6 +167,7 @@ const i18nLocal = {
   }
 };
 
+let localContent = {};
 let localLang = localStorage.getItem("familia_lang") || "es";
 
 function applyLocalLang() {
@@ -183,10 +184,10 @@ function applyLocalLang() {
 
 async function loadLocalOverrides() {
   try {
-    const res = await fetch("/api/content");
+    const res = await (window.webContentFetch ? window.webContentFetch() : fetch("/api/content"));
     const data = await res.json();
     if (!data.ok) return;
-    const content = data.data || {};
+    const content = data.data || {}; localContent = content;
 
     Object.values(locals).forEach((loc) => {
       const slug = loc.slug || slugify(loc.name);
@@ -253,29 +254,46 @@ function renderLocal() {
     return `<li>${l.dir}${telLink}</li>`;
   }).join("");
   const curiosity = document.getElementById("localCuriosity");
-  curiosity.textContent = t.coming_curiosity;
+  curiosity.hidden = true;
+  curiosity.parentElement.classList.remove("split");
 
   const hoursEl = document.getElementById("localHours");
-  hoursEl.textContent = data.hours || "08:00 – 00:00";
+  const textFor = field => localContent[`local_${data.slug}_${field}_${localLang}`] ?? localContent[`local_${data.slug}_${field}`] ?? data[field];
+  hoursEl.textContent = textFor("hours") || ({ es:"Consulta el horario con el local antes de venir.", ca:"Consulta l’horari amb el local abans de venir.", en:"Contact the venue to check opening hours before your visit." }[localLang] || "Consulta el horario con el local antes de venir.");
   hoursEl.setAttribute("data-edit-key", `local_${data.slug}_hours`);
 
   const mapEl = document.getElementById("localMap");
-  if (data.map) {
-    const isEmbed = data.map.includes("google.com/maps") && data.map.includes("embed");
-    mapEl.innerHTML = isEmbed
-      ? `<iframe src="${data.map}" width="100%" height="220" style="border:0;border-radius:12px;" allowfullscreen="" loading="lazy"></iframe>`
-      : `<a class="btn ghost" href="${data.map}" target="_blank" rel="noreferrer">${t.cta_map}</a>`;
-  } else {
-    mapEl.textContent = t.coming_map;
+  const safeUrl = value => { try { const u=new URL(value, location.href); return ["https:","http:"].includes(u.protocol) ? u : null; } catch { return null; } };
+  const cover = data.gallery[0] && safeUrl(data.gallery[0]);
+  if (cover) document.getElementById("localHero").style.setProperty("--hero-image", `url(${JSON.stringify(cover.href)})`);
+  const configuredMap = data.map && safeUrl(data.map);
+  const address = data.locations.find(l => typeof l === "object" && l.tel)?.dir;
+  const mapUrl = configuredMap || (address ? new URL("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(address)) : null);
+  mapEl.replaceChildren();
+  if (mapUrl) {
+    const isEmbed = configuredMap && /(^|\.)google\.com$/.test(mapUrl.hostname) && mapUrl.pathname.startsWith("/maps/embed");
+    const el = document.createElement(isEmbed ? "iframe" : "a");
+    if (isEmbed) { el.src=mapUrl.href; el.title=t.cta_map + " · " + data.name; el.width="100%"; el.height="220"; el.loading="lazy"; el.style.border="0"; }
+    else { el.className="btn ghost"; el.href=mapUrl.href; el.target="_blank"; el.rel="noopener noreferrer"; el.textContent=t.cta_map; }
+    mapEl.appendChild(el);
   }
+  mapEl.parentElement.hidden = !mapUrl;
   mapEl.setAttribute("data-edit-key", `local_${data.slug}_map`);
 
   const historyEl = document.getElementById("localHistory");
-  historyEl.textContent = data.history || t.coming_history;
+  historyEl.textContent = textFor("history") || "";
+  historyEl.closest("section").hidden = !historyEl.textContent.trim();
   historyEl.setAttribute("data-edit-key", `local_${data.slug}_history`);
 
   const ctas = document.getElementById("localCtas");
   ctas.innerHTML = "";
+  const reservationNames = { "la-tapeta-blanes":"La Tapeta - Blanes", "la-tapeta-lloret":"La Tapeta - Lloret", "la-tapeta-girona":"La Tapeta - Girona", cooperativa:"Cooperativa - Blanes", "can-mateu":"Can Mateu - Tordera", "la-tapa-iberica":"La Tapa Ibérica - Tordera" };
+  if (reservationNames[slug]) {
+    const a=document.createElement("a"); a.className="btn";
+    a.href="/index.html?local=" + encodeURIComponent(reservationNames[slug]) + "#reservas";
+    a.textContent=({es:"Reservar aquí",ca:"Reserva aquí",en:"Book a table"})[localLang] || "Reservar aquí";
+    ctas.appendChild(a);
+  }
   if (data.instagram) {
     const a = document.createElement("a");
     a.className = "btn ghost";
@@ -297,15 +315,13 @@ function renderLocal() {
 
   const gallery = document.getElementById("localGallery");
   gallery.setAttribute("data-edit-key", `local_${data.slug}_gallery`);
-  if (data.gallery.length === 0) {
-    gallery.innerHTML = `<div class="card">${t.empty_gallery}</div>`;
-    return;
-  }
+  gallery.closest("section").hidden = data.gallery.length === 0;
+  if (data.gallery.length === 0) { gallery.replaceChildren(); return; }
   gallery.innerHTML = data.gallery
     .map(
       (src) => `
       <div class=\"card\">
-        <img src=\"${src}\" alt=\"${data.name}\" style=\"width:100%;border-radius:10px;display:block;\" />
+        <img src=\"${src}\" alt=\"${data.name}\" loading=\"lazy\" style=\"width:100%;border-radius:10px;display:block;\" />
       </div>
     `
     )
@@ -347,6 +363,7 @@ window.addEventListener("load", () => {
 
 if (window.top !== window) {
   window.addEventListener("message", (event) => {
+    if (event.origin !== location.origin || event.source !== window.parent) return;
     const msg = event.data;
     if (msg && msg.type === "edit-mode") {
       const enabled = !!msg.enabled;

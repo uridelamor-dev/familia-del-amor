@@ -90,7 +90,7 @@ const i18n = {
     news_sub: "Lo último del grupo y sus locales.",
     news_empty: "Pronto: anuncios y novedades.",
     reservations_title: "Reservas",
-    reservations_sub: "Reserva confirmada al instante.",
+    reservations_sub: "Elige local y horario. Los grupos de 9 o más personas requieren confirmación del local.",
     reservation_local: "Local",
     reservation_people: "Personas",
     reservation_day: "Día",
@@ -212,7 +212,7 @@ const i18n = {
     news_sub: "L'últim del grup i els seus locals.",
     news_empty: "Ben aviat: anuncis i novetats.",
     reservations_title: "Reserves",
-    reservations_sub: "Reserva confirmada a l'instant.",
+    reservations_sub: "Tria local i horari. Els grups de 9 o més persones requereixen confirmació del local.",
     reservation_local: "Local",
     reservation_people: "Persones",
     reservation_day: "Dia",
@@ -334,7 +334,7 @@ const i18n = {
     news_sub: "The latest from the group and its venues.",
     news_empty: "Coming soon: news and updates.",
     reservations_title: "Reservations",
-    reservations_sub: "Instant reservation confirmation.",
+    reservations_sub: "Choose your venue and time. Groups of 9 or more need confirmation from the venue.",
     reservation_local: "Venue",
     reservation_people: "Guests",
     reservation_day: "Date",
@@ -503,7 +503,7 @@ function setLang(lang) {
 
 async function loadContent() {
   try {
-    const res = await fetch("/api/content");
+    const res = await (window.webContentFetch ? window.webContentFetch() : fetch("/api/content"));
     const data = await res.json();
     if (data.ok) {
       contentCache = data.data || {};
@@ -737,6 +737,11 @@ function renderLocalPicker() {
     opt.textContent = `${l.name} — ${l.sub}`;
     sel.appendChild(opt);
   });
+  const requestedLocal = new URLSearchParams(location.search).get("local");
+  if (RESERVA_LOCALS.some(l => l.value === requestedLocal)) {
+    sel.value = requestedLocal;
+    document.getElementById("localValue").value = requestedLocal;
+  }
   sel.addEventListener("change", () => {
     document.getElementById("localValue").value = sel.value;
   });
@@ -1111,6 +1116,7 @@ window.addEventListener("load", () => {
 
 if (window.top !== window) {
   window.addEventListener("message", (event) => {
+    if (event.origin !== location.origin || event.source !== window.parent) return;
     const msg = event.data;
     if (!msg) return;
 

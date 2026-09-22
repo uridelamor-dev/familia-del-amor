@@ -468,7 +468,7 @@ describe("LA CAMPAÑA CLÁSICA SIGUE FUNCIONANDO, Y LA CONFIGURABLE YA TAMBIÉN"
 describe("EL PANEL: un solo campo para un solo valor", () => {
   test("se configura en Marketing → Web", () => {
     assert.match(panel, /function renderMetaPixel\(\)/);
-    assert.match(panel, /\$\{renderMetaPixel\(\)\}\$\{scopeChips\}/);
+    assert.match(panel.slice(panel.indexOf("function renderWeb()"), panel.indexOf("function renderMetaPixel()")), /\$\{renderMetaPixel\(\)\}/);
     assert.match(panel, /apiSend\("POST", "\/api\/marketing\/meta"/);
   });
 

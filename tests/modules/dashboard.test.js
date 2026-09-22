@@ -79,7 +79,7 @@ describe("buildConcerns — Sara razona y termina en decisión", () => {
   });
   test("conversaciones con el equipo pendientes avanzado el mes ⇒ info", () => {
     const c = buildConcerns({ hoy: "2026-08-22", plantilla: { n: 20 }, checkinsMes: { n: 5 } }, { whatsappConnected: true });
-    const ck = c.find((x) => /conversaciones con el equipo/.test(x.titulo));
+    const ck = c.find((x) => /conversaciones pendientes con el equipo activo/.test(x.titulo));
     assert.ok(ck); assert.equal(ck.sev, "info");
   });
   test("fuga de clientes ⇒ lista de a quién llamar", () => {
@@ -148,8 +148,8 @@ function fakeX(hoy) {
     if (/COUNT\(\*\)::int n, COALESCE\(SUM\(total\),0\)::float total FROM facturas/.test(sql)
         && /COALESCE\(pagado,0\) = 0/.test(sql)) return { n: 9, total: 5400 };
     if (/pagado,0\) = 0 AND fecha IS NOT NULL.*ORDER BY fecha::date ASC/.test(sql)) return { proveedor: "Maresme Fruites", total: 1200, fecha: "2026-05-10" };
-    if (/FROM users WHERE rol IN/.test(sql)) return { n: 18 };
-    if (/hr_llamadas_mes WHERE mes = \?/.test(sql)) return { n: 6 };
+    if (/FROM users u WHERE u.rol IN/.test(sql)) return { n: 18 };
+    if (/hr_llamadas_mes c JOIN users/.test(sql)) return { n: 6 };
     if (/hr_applications WHERE estado = 'nuevo'/.test(sql)) return { n: 3, oldest: "2026-08-01" };
     if (/facturas_pendientes/.test(sql)) return { n: 2 };
     if (/FROM reservas WHERE dia = \?/.test(sql)) return { n: 20 }; // lowCorr reservasDia

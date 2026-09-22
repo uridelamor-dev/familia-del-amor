@@ -18,7 +18,7 @@ function entornoDashboard() {
     document: { getElementById: () => view }, CURRENT: 'dashboard', PERIOD: 'semana',
     DASH_RANGE: { from: '2026-09-21', to: '2026-09-22', label: 'Esta semana' },
     DASH_PERIODO: null, DASH_PERIODO_ESTADO: 'cargando', DASH_CARGA: 0,
-    USER: { nombre: 'Dirección' }, local: '',
+    USER: { nombre: 'Dirección' }, local: '', GO_VIEW: {}, puedeVer: () => true,
     viendoVarios: () => false, localActualFE: () => ctx.local,
     skeleton: () => 'cargando', repintarBarra: () => {}, errorCard: (s) => `ERROR ${s}`,
     fijarPendientes: () => {}, nombreCorto: String, nombreCortoLocal: String,

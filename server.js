@@ -1,3 +1,11 @@
+import { COM_SCHEMA } from "./src/modules/comunicados/comunicados.js";
+import { registrarComunicados } from "./src/routes/comunicados.js";
+import { GESTION_SCHEMA } from "./src/modules/mantenimiento/gestion.js";
+import { revisarFacturas } from "./src/modules/facturas/calidad.js";
+import { WEB_SCHEMA } from "./src/modules/web/borradores.js";
+import { registrarBorradoresWeb } from "./src/routes/web-borradores.js";
+import { SALA_SCHEMA, visitaCompatibleConSeguimiento } from "./src/modules/reservas/sala.js";
+import { registrarSala } from "./src/routes/reservas-sala.js";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -570,6 +578,8 @@ async function initDB() {
       )
     `);
 
+    await client.query(SALA_SCHEMA);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS bloqueos_reservas (
         id SERIAL PRIMARY KEY,
@@ -602,6 +612,8 @@ async function initDB() {
         updated_at TEXT NOT NULL
       )
     `);
+
+    await client.query(WEB_SCHEMA);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS wa_links (
@@ -651,6 +663,8 @@ async function initDB() {
       )
     `);
 
+    await client.query(GESTION_SCHEMA);
+
     // Mantenimiento PREVENTIVO: lo que hay que hacer cada tanto («los filtros de aire de
     // Blanes, cada 3 meses»). Un plan NO es una incidencia: es la regla que, cuando toca,
     // fabrica una incidencia normal en `maintenance_issues` con su `plan_id`. Por eso el
@@ -683,6 +697,8 @@ async function initDB() {
         creado_en TEXT NOT NULL
       )
     `);
+
+    await client.query(COM_SCHEMA);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS config (
@@ -2927,7 +2943,7 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
               COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND vencimiento >= ? AND vencimiento <= ?),0)::float AS semana_importe
          FROM facturas ${where}`, // OJO con el orden: los «?» se numeran por su sitio en el SQL, y estos van ANTES del WHERE.
       [hoyISO(), hoyISO(), hoyISO(), hoyMas(7), hoyISO(), hoyMas(7), ...params]);
-    res.json({ ok: true, data: rows, totales: t || null, hayMas: (t?.docs || 0) > rows.length });
+    res.json({ ok: true, data: revisarFacturas(rows, hoyMad), totales: t || null, hayMas: (t?.docs || 0) > rows.length });
   } catch (e) { res.status(500).json({ ok: false, error: e.message, data: [] }); }
 });
 
@@ -7221,10 +7237,14 @@ function getContentRegistry() {
 }
 
 function keyEnRegistro(key, campos) {
-  if (campos[key]) return true;
+  if (typeof key !== "string") return false;
+  if (["home_extra", "nosotros", "eventos", "trabaja", ...WEB_LOCALES.map(l => l.slug)].some(scope => key === "blocks_" + scope)) return true;
+  if (Object.hasOwn(campos, key)) return true;
   const m = key.match(/^(.*)_(es|ca|en)$/);
   return !!(m && campos[m[1]] && campos[m[1]].type === "text_i18n");
 }
+
+registrarBorradoresWeb(app, { pool, requireAuth, permitido: key => keyEnRegistro(key, getContentRegistry().campos) });
 
 app.get("/api/content/registry", requireAuth(["marketing", "direccion"]), (req, res) => {
   res.json({ ok: true, ...getContentRegistry() });
@@ -7409,6 +7429,11 @@ app.post("/api/reservas", async (req, res) => {
     res.status(500).json({ ok: false, error: "Error guardando reserva" });
   }
 });
+
+registrarSala(app, { pool, requireAuth, ahora: () => instanteMadrid(new Date()), localesPermitidos: (req, local) => {
+  const scope = localScope(req, local);
+  return scope ? barrasDelCentro(scope, "reservas") : (req.user.rol === "direccion" ? null : []);
+} });
 
 app.get("/api/reservas", requireAuth(["direccion", "encargado"]), async (req, res) => {
   try {
@@ -18717,8 +18742,10 @@ app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (
   try {
     const scope = localScope(req);
     if (scope) { const row = await dbGet("SELECT local FROM maintenance_issues WHERE id = ?", [req.params.id]); if (row && row.local !== scope) return res.status(403).json({ ok: false, error: "Sin permiso sobre esta incidencia" }); }
-    const r = await updateMaintenanceIssueStatus(maintDb, req.user, req.params.id, { estado: req.body.estado }, { enabled: permisosV2Enabled() });
-    if (r.code === "OK") { await recalcularPlanSiPreventiva(req.params.id, req.body.estado); return res.json({ ok: true }); }
+    const r = await updateMaintenanceIssueStatus(maintDb, req.user, req.params.id, { estado: req.body.estado, gestion: req.body.gestion }, { enabled: permisosV2Enabled() });
+    if (r.code === "CONFLICT") return res.status(409).json({ ok:false, error:"Otra persona ha cambiado la incidencia. Cierra y vuelve a abrirla." });
+    if (r.code === "VALIDATION_ERROR" && r.reason === "invalid_gestion") return res.status(400).json({ok:false,error:r.message});
+    if (r.code === "OK") { if (!req.body.gestion) await recalcularPlanSiPreventiva(req.params.id, req.body.estado); return res.json({ ok: true }); }
     if (r.code === "VALIDATION_ERROR") return res.status(400).json({ ok: false, error: r.reason === "invalid_id" ? "ID no válido" : r.reason === "invalid_estado" ? "Estado no válido" : "Estado requerido" });
     if (r.code === "FORBIDDEN") return res.status(403).json({ ok: false, error: "Sin permiso para este recurso" });
     if (r.code === "NOT_FOUND") return res.status(404).json({ ok: false, error: "Incidencia no encontrada" });
@@ -19228,37 +19255,7 @@ app.get("/api/inventario/historial", requireAuth(INV_ROLES), async (req, res) =>
 });
 
 // Comunicados
-app.get("/api/announcements", requireAuth(), async (req, res) => {
-  try {
-    const { local, rol } = req.query;
-    const where = [];
-    const params = [];
-    if (local) { where.push(`local = ?`); params.push(local); }
-    if (rol) { where.push(`rol = ?`); params.push(rol); }
-    const sql = `SELECT * FROM announcements ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY creado_en DESC`;
-    const rows = await dbAll(sql, params);
-    res.json({ ok: true, data: rows });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: "Error anuncios" });
-  }
-});
-
-app.post("/api/announcements", requireAuth(["encargado", "direccion"]), async (req, res) => {
-  const { local, rol, mensaje } = req.body;
-  if (!local || !rol || !mensaje) {
-    return res.status(400).json({ ok: false, error: "Faltan campos" });
-  }
-  try {
-    const creado_en = new Date().toISOString();
-    const row = await dbRun(
-      `INSERT INTO announcements (local, rol, mensaje, creado_en) VALUES (?, ?, ?, ?) RETURNING id`,
-      [local, rol, mensaje, creado_en]
-    );
-    res.json({ ok: true, id: row.id });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: "Error guardando anuncio" });
-  }
-});
+registrarComunicados(app, { requireAuth, dbAll, dbGet, dbRun, localScope, hoyISO, canonizarLocal });
 
 // WhatsApp
 app.get("/api/whatsapp/status", requireAuth(["direccion", "encargado", "marketing"]), (req, res) => {
@@ -24147,6 +24144,11 @@ const server = app.listen(PORT, async () => {
           if (!siguesATiempo({ enviarA: row.send_at, ahora })) {
             await dbRun(`UPDATE followup_scheduled SET sent = 1, resultado = 'caducado' WHERE id = ?`, [row.id]).catch(() => {});
             console.log(`⏭️  Follow-up caducado (${row.send_at}), no se manda a ${row.jid}`);
+            continue;
+          }
+          const visitas = await dbAll(`SELECT estado_sala FROM reservas WHERE local = ? AND dia = ? AND RIGHT(REGEXP_REPLACE(telefono, '[^0-9]', '', 'g'), 9) = ?`, [row.local, row.dia, String(row.jid).split("@")[0].replace(/\D/g, "").slice(-9)]);
+          if (!visitaCompatibleConSeguimiento(visitas)) {
+            await dbRun(`UPDATE followup_scheduled SET sent = 1, resultado = 'sin_visita' WHERE id = ?`, [row.id]);
             continue;
           }
           const nombre = row.nombre.split(" ")[0];
