@@ -1,4 +1,5 @@
 import express from "express";
+import { mountCloud } from "./src/modules/messaging/cloud/routes.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import pg from "pg";
@@ -466,6 +467,8 @@ app.use("/api/wallet/apple/v1", (err, req, res, next) => {
   }
   return next(err);
 });
+
+const whatsappCloud = mountCloud({ app, express, pool, requireAuth });
 
 app.use(comprimir());
 app.use(express.json());
@@ -23956,6 +23959,7 @@ const server = app.listen(PORT, async () => {
   // Inicializar esquema PostgreSQL
   try {
     await initDB();
+    await whatsappCloud.ensureSchema();
     DB_LISTA = true;   // a partir de aquí la API puede contestar de verdad
   } catch (e) {
     console.error("[DB] Error inicializando esquema:", e.message);

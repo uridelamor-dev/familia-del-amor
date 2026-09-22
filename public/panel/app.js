@@ -132,8 +132,8 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { contratacion: "Contratación", fidelizacion: "Fidelización", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", promos: "Promociones", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], fidelizacion: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], promos: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], contratacion: ["direccion", "rrhh"], pulso: ["direccion", "rrhh"], preguntas: ["direccion", "rrhh"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { "whatsapp-cloud": "Bandeja WhatsApp", contratacion: "Contratación", fidelizacion: "Fidelización", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", promos: "Promociones", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { "whatsapp-cloud": ["direccion"], subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], fidelizacion: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], promos: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], contratacion: ["direccion", "rrhh"], pulso: ["direccion", "rrhh"], preguntas: ["direccion", "rrhh"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
 const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "contratacion", "pulso", "horarios", "fichajes", "usuarios"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
@@ -10550,7 +10550,7 @@ async function loadWhatsApp() {
     let qr = null; if (!status.connected) { try { qr = await apiRaw("/api/whatsapp/qr"); } catch { /* opcional */ } }
     const links = await apiOptional("/api/whatsapp/links");
     const groups = status.connected ? (await apiOptional("/api/whatsapp/groups")) : [];
-    view.innerHTML = renderWhatsApp(status, qr, links, groups);
+    view.innerHTML = renderWhatsApp(status, qr, links, groups) + (USER.rol === "direccion" ? '<div class="card" style="margin-top:16px"><h3>Conexión oficial · pruebas</h3><p class="mut">Bandeja de atención humana para preparar la migración.</p><a class="btn" href="#whatsapp-cloud">Abrir bandeja de prueba</a></div>' : "");
     clearInterval(WA_POLL); WA_POLL = null;
     if (!status.connected) WA_POLL = setInterval(pollWa, 6000);
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
@@ -15454,7 +15454,7 @@ function promoCopiar(url) {
   else prompt("Copia el enlace:", url);
 }
 
-const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, promos: loadPromos, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, productos: loadProductos, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, fidelizacion: loadFidelizacion, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { "whatsapp-cloud": () => CloudInbox.mount(document.getElementById("view"), { get: apiRaw, post: (path,body) => apiSend("POST",path,body), token, user: USER }), subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, promos: loadPromos, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, productos: loadProductos, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, fidelizacion: loadFidelizacion, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 /**
  * LA PANTALLA VA EN LA URL. Sin esto, recargar en cualquier sitio te devolvía al Dashboard —y
  * también hacía inútiles el botón de atrás y guardar un enlace a una pantalla concreta.
@@ -15492,6 +15492,7 @@ function go(view, { desdeUrl = false } = {}) {
     refreshWaPill(); return;
   }
   document.getElementById("root").innerHTML = shell(view, skeleton());
+  if (view !== "whatsapp-cloud") CloudInbox.unmount();
   refreshWaPill(view === "whatsapp"); // en la pantalla de Sara sí interesa el estado del momento
   VIEWS[view]();
 }
