@@ -419,7 +419,7 @@ describe("LA DOBLE EJECUCIÓN NO DUPLICA", () => {
   test("la fila se RECLAMA antes de mandar, con la condición en el WHERE", () => {
     // `capColaCorriendo` solo protege DENTRO de un proceso. Con dos instancias —un despliegue
     // solapado— los dos leerían la misma fila `pendiente` y los dos la mandarían.
-    assert.match(WORKER, /UPDATE cap_cola SET proximo_ms = \? WHERE id = \? AND estado = 'pendiente' AND proximo_ms = \?\s*\n?\s*RETURNING id/);
+    assert.match(WORKER, /UPDATE cap_cola SET proximo_ms = \? WHERE id = \? AND estado = 'pendiente' AND NOT pausado AND proximo_ms = \?\s*\n?\s*RETURNING id/);
     assert.match(WORKER, /if \(!cogida\) continue;/);
   });
 
