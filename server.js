@@ -1,3 +1,5 @@
+import { CAMPOS_PRIVADOS, puedeVerPrivado, sanearDatosAlta, estadoAlta, sanearConversacion } from './src/modules/rrhh/alta-administrativa.js';
+import { CUMPLE_CONFIG, avisarCumpleanos } from './src/modules/rrhh/cumpleanos.js';
 import { COM_SCHEMA } from "./src/modules/comunicados/comunicados.js";
 import { registrarComunicados } from "./src/routes/comunicados.js";
 import { GESTION_SCHEMA } from "./src/modules/mantenimiento/gestion.js";
@@ -1767,6 +1769,17 @@ async function initDB() {
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    await client.query(`CREATE TABLE IF NOT EXISTS rrhh_datos_alta (
+      worker_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      direccion TEXT, iban TEXT, tipo_jornada TEXT, tipo_contrato TEXT, talla_ropa TEXT
+    )`);
+    for (const col of ['fecha_conversacion TEXT', 'asunto TEXT', 'interlocutor TEXT', 'canal TEXT', 'acuerdos TEXT']) {
+      await client.query(`ALTER TABLE hr_worker_notes ADD COLUMN IF NOT EXISTS ${col}`);
+    }
+    await client.query(`CREATE TABLE IF NOT EXISTS rrhh_cumple_avisos (
+      dia TEXT PRIMARY KEY, estado TEXT NOT NULL, actualizado_en TEXT NOT NULL
+    )`);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS hr_preguntas_mes (
@@ -8523,6 +8536,29 @@ app.post("/api/hr/applications/:id/contratar", requireAuth(["rrhh", "direccion"]
   }
 });
 
+// Cumpleaños: configuración privada; activación explícita cuando el equipo esté listo.
+async function rrhhCumpleConfig() {
+  let saved = {}; try { saved = JSON.parse(await getConfig('rrhh_cumple_config') || '{}'); } catch {}
+  return { ...CUMPLE_CONFIG, ...saved };
+}
+app.get('/api/rrhh/cumpleanos/config', requireAuth(['direccion', 'rrhh']), async (req, res) => {
+  try { res.json({ ok: true, config: await rrhhCumpleConfig(), avisos: await dbAll('SELECT * FROM rrhh_cumple_avisos ORDER BY dia DESC LIMIT 10') }); }
+  catch { res.status(500).json({ ok: false, error: 'No se pudo consultar los avisos.' }); }
+});
+app.put('/api/rrhh/cumpleanos/config', requireAuth(['direccion', 'rrhh']), async (req, res) => {
+  const config = { ...CUMPLE_CONFIG, activo: req.body.activo === true };
+  try { await setConfig('rrhh_cumple_config', JSON.stringify(config)); res.json({ ok: true, config }); }
+  catch { res.status(500).json({ ok: false, error: 'No se pudo guardar.' }); }
+});
+async function rrhhCumpleSiToca() {
+  await avisarCumpleanos({ ahora: Date.now(), config: await rrhhCumpleConfig(), conectado: isReady,
+    personas: () => dbAll(`SELECT id, nombre, local, rol, activo, fecha_alta, fecha_baja, fecha_nac FROM users WHERE rol IN ('trabajador','encargado') AND fecha_nac IS NOT NULL`),
+    reservar: async dia => !!(await dbGet(`INSERT INTO rrhh_cumple_avisos(dia, estado, actualizado_en) VALUES (?, 'enviando', ?) ON CONFLICT DO NOTHING RETURNING dia`, [dia, isoConOffset(Date.now())])),
+    enviar: async (tel, texto) => { await sendMensajeLibre(tel, texto); },
+    terminar: (dia, estado) => dbRun('UPDATE rrhh_cumple_avisos SET estado = ?, actualizado_en = ? WHERE dia = ?', [estado, isoConOffset(Date.now()), dia]),
+  });
+}
+
 // ── RRHH: Seguimiento de trabajadores ─────────────────────────────────────
 // Acceso: dirección y rol `rrhh` ven TODOS los locales; `encargado` solo el suyo (validado aquí,
 // no en el front). RRHH_ROLES abre los endpoints de seguimiento también al encargado.
@@ -8631,6 +8667,10 @@ async function rrhhCrearTrabajador({ req, datos, client, extras = {}, auditar = 
   const v = validarAlta(datos, { locales: INV_LOCALES, hoy: hoyISO() });
   if (!v.ok) return { ok: false, status: 400, error: v.errores.join(" ") };
   const d = v.datos;
+  const admin = sanearDatosAlta({ ...datos, telefono: datos.telefono ?? extras.telefono, email: datos.email ?? extras.email }, hoyISO());
+  if (!admin.ok) return { ok: false, status: 400, error: admin.errores.join(' ') };
+  const pin = String(datos.pin || '');
+  if (pin && (!/^\d{4}$/.test(pin) || !validarFormatoPin(pin).ok)) return { ok: false, status: 400, error: 'El PIN elegido por el trabajador debe tener 4 dígitos y no ser una secuencia fácil.' };
   if (!rrhhPuedeLocal(req, d.local)) return { ok: false, status: 403, error: "Sin acceso a este establecimiento" };
 
   const q = (sql, p = []) => client.query(toPositional(sql), p);
@@ -8655,6 +8695,13 @@ async function rrhhCrearTrabajador({ req, datos, client, extras = {}, auditar = 
     if (/duplicate|unique/i.test(e.message || "")) return { ok: false, status: 409, error: `Ya hay alguien con el usuario «${d.username}»` };
     throw e;
   }
+
+  const personales = ['dni', 'telefono', 'email', 'fecha_nac'];
+  const permitidos = puedeVerPrivado(req.user.rol) ? personales : personales.filter(k => k !== 'dni');
+  const presentes = permitidos.filter(k => admin.datos[k] !== undefined);
+  if (presentes.length) await q(`UPDATE users SET ${presentes.map(k => `${k} = ?`).join(', ')} WHERE id = ?`, [...presentes.map(k => admin.datos[k]), id]);
+  if (puedeVerPrivado(req.user.rol)) await q(`INSERT INTO rrhh_datos_alta (worker_id, direccion, iban, tipo_jornada, tipo_contrato, talla_ropa) VALUES (?,?,?,?,?,?)`, [id, ...CAMPOS_PRIVADOS.map(k => admin.datos[k] ?? null)]);
+  if (pin) await q(`UPDATE users SET pin_hash = ?, pin_len = 4, pin_temporal = FALSE, pin_actualizado_en = ? WHERE id = ?`, [await bcrypt.hash(pin, 10), ahora, id]);
 
   // El PRIMER periodo laboral. Se abre aquí, con el alta, porque un trabajador sin periodo
   // es alguien de quien no consta cuándo empezó: la ficha no sabría desde cuándo contar y el
@@ -8716,7 +8763,7 @@ async function rrhhAltaTransaccion(req, datos, extras = {}) {
 // Lo que se le cuenta a quien acaba de dar el alta. Se dice lo que FALTA, porque es lo que
 // se olvida: sin contrato no entra en el generador y sin áreas se le puede poner en cocina.
 function rrhhMensajeAlta(r) {
-  const partes = [`${r.nombre} ya está de alta en ${r.local}.`];
+  const partes = [`Ficha de ${r.nombre} guardada en ${r.local}. El alta en gestoría todavía no se ha solicitado.`];
   if (r.passwordInicial) partes.push(`Entra con «${r.username}» y contraseña «${r.passwordInicial}»; al entrar le pedirá cambiarla.`);
   const falta = [];
   if (!r.contrato) falta.push("el contrato (sin horas no entra en el generador)");
@@ -15607,15 +15654,16 @@ app.put("/api/fichajes/pin/:workerId", requireAuth(FICHAJES_ROLES), async (req, 
     if (!w || !rrhhPuedeLocal(req, w.local || "")) return res.status(404).json({ ok: false, error: "No encontrado" });
 
     const pin = String(req.body?.pin || "");
-    const v = validarFormatoPin(pin);
+    const elegido = req.body?.elegido_trabajador === true && puedeVerPrivado(req.user.rol);
+    const v = elegido && !/^\d{4}$/.test(pin) ? { ok: false, error: 'El PIN elegido debe tener 4 dígitos.' } : validarFormatoPin(pin);
     if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
 
     await dbRun(
-      `UPDATE users SET pin_hash = ?, pin_len = ?, pin_temporal = TRUE, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
-      [await bcrypt.hash(pin, 10), pin.length, isoConOffset(Date.now()), w.id]);
+      `UPDATE users SET pin_hash = ?, pin_len = ?, pin_temporal = ?, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
+      [await bcrypt.hash(pin, 10), pin.length, !elegido, isoConOffset(Date.now()), w.id]);
     // En auditoría queda QUIÉN lo cambió y CUÁNDO. El PIN, evidentemente, no.
     await ficAuditar("pin", w.id, "asignar", req.user.username, { local: w.local, workerId: w.id });
-    res.json({ ok: true, mensaje: `PIN asignado a ${w.nombre}. Dile que lo cambie desde su perfil.` });
+    res.json({ ok: true, mensaje: elegido ? `PIN elegido por ${w.nombre} guardado.` : `PIN asignado a ${w.nombre}. Dile que lo cambie desde su perfil.` });
   } catch (e) {
     console.error("[fichajes] pin:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo asignar el PIN" });
@@ -17511,7 +17559,7 @@ async function enviarPulsoLote(invitaciones, mes) {
   }
 }
 
-app.get("/api/rrhh/trabajador/:id/notas", requireAuth(RRHH_ROLES), async (req, res) => {
+app.get("/api/rrhh/trabajador/:id/notas", requireAuth(["direccion", "rrhh"]), async (req, res) => {
   try {
     const wl = await rrhhWorkerLocal(req.params.id);
     if (wl === null) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
@@ -17526,16 +17574,19 @@ app.get("/api/rrhh/trabajador/:id/notas", requireAuth(RRHH_ROLES), async (req, r
   }
 });
 
-app.post("/api/rrhh/trabajador/:id/nota", requireAuth(RRHH_ROLES), async (req, res) => {
-  const { tipo = "nota", contenido, autor } = req.body;
-  if (!contenido) return res.status(400).json({ ok: false, error: "Falta contenido" });
+app.post("/api/rrhh/trabajador/:id/nota", requireAuth(["direccion", "rrhh"]), async (req, res) => {
+  const { tipo = "nota" } = req.body;
+  const v = sanearConversacion(req.body, hoyISO());
+  if (v.error) return res.status(400).json({ ok: false, error: v.error });
+  const { contenido, fecha_conversacion, asunto, interlocutor, canal, acuerdos } = v.datos;
+  const autor = req.user.nombre || req.user.username;
   try {
     const wl = await rrhhWorkerLocal(req.params.id);
     if (wl === null) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
     if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
     const row = await dbRun(
-      `INSERT INTO hr_worker_notes (worker_id, tipo, contenido, autor, creado_en) VALUES (?, ?, ?, ?, ?) RETURNING id`,
-      [req.params.id, tipo, contenido, autor || null, new Date().toISOString()]
+      `INSERT INTO hr_worker_notes (worker_id, tipo, contenido, autor, creado_en, fecha_conversacion, asunto, interlocutor, canal, acuerdos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [req.params.id, tipo, contenido, autor, isoConOffset(Date.now()), fecha_conversacion, asunto, interlocutor, canal, acuerdos]
     );
     res.json({ ok: true, id: row.id });
   } catch (e) {
@@ -17543,7 +17594,7 @@ app.post("/api/rrhh/trabajador/:id/nota", requireAuth(RRHH_ROLES), async (req, r
   }
 });
 
-app.delete("/api/rrhh/nota/:id", requireAuth(RRHH_ROLES), async (req, res) => {
+app.delete("/api/rrhh/nota/:id", requireAuth(["direccion", "rrhh"]), async (req, res) => {
   try {
     const nota = await dbGet(`SELECT worker_id FROM hr_worker_notes WHERE id = ?`, [req.params.id]);
     if (!nota) return res.json({ ok: true });
@@ -17687,7 +17738,11 @@ app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, r
     const w = await dbGet("SELECT id, username, nombre, rol, local, telefono, email, dni, puesto, fecha_nac, fecha_alta, fecha_baja, foto_url, agora_username, activo, pass_temporal, pass_cambiada_en, creado_en FROM users WHERE id = ?", [req.params.id]);
     if (!w) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
     if (!rrhhPuedeLocal(req, w.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
-    const notas = await dbAll("SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC", [w.id]);
+    const privado = puedeVerPrivado(req.user.rol);
+    if (privado) Object.assign(w, await dbGet(`SELECT direccion, iban, tipo_jornada, tipo_contrato, talla_ropa FROM rrhh_datos_alta WHERE worker_id = ?`, [w.id]) || {});
+    const contratoAlta = await dbGet(`SELECT horas_semana FROM hor_contratos WHERE worker_id = ? AND (hasta IS NULL OR hasta >= ?) ORDER BY desde DESC LIMIT 1`, [w.id, hoyISO()]);
+    const pinAlta = await dbGet(`SELECT pin_hash IS NOT NULL AS tiene FROM users WHERE id = ?`, [w.id]);
+    const notas = puedeVerPrivado(req.user.rol) ? await dbAll("SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC", [w.id]) : [];
     const checkins = await dbAll("SELECT * FROM hr_llamadas_mes WHERE worker_id = ? ORDER BY mes DESC", [w.id]);
     let documentos = (await dbAll("SELECT * FROM hr_documentos WHERE worker_id = ? ORDER BY creado_en DESC", [w.id])).map(docParaPanel);
     // El encargado NO ve DNI ni documentos sensibles (RGPD).
@@ -17696,6 +17751,7 @@ app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, r
     res.json({
       ok: true,
       trabajador: w,
+      alta: privado ? estadoAlta(w, contratoAlta, pinAlta?.tiene) : null,
       antiguedad: rrhhAntiguedad(w.fecha_alta, hoy),
       timeline: construyeTimeline(notas, checkins, documentos),
       documentos,
@@ -17842,7 +17898,7 @@ app.get("/api/rrhh/trabajador/:id/ficha-laboral", requireAuth(RRHH_ROLES), async
       dbGet(`SELECT COALESCE(SUM(minutos),0)::int AS saldo, COUNT(*)::int AS n
                FROM fic_bolsa_movimientos WHERE worker_id = ?`, [w.id]),
       dbAll(`SELECT * FROM hr_documentos WHERE worker_id = ? ORDER BY creado_en DESC`, [w.id]),
-      dbAll(`SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC LIMIT 30`, [w.id]),
+      puedeVerPrivado(req.user.rol) ? dbAll(`SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC LIMIT 30`, [w.id]) : Promise.resolve([]),
       dbAll(`SELECT * FROM hr_llamadas_mes WHERE worker_id = ? ORDER BY mes DESC LIMIT 12`, [w.id]),
       dbAll(`SELECT id, worker_id, local, fecha_alta, fecha_baja, motivo_baja FROM rrhh_periodos WHERE worker_id = ? ORDER BY fecha_alta`, [w.id]),
       dbGet(`SELECT COUNT(*)::int AS n FROM fic_jornadas
@@ -18204,13 +18260,26 @@ app.put("/api/rrhh/trabajador/:id", requireAuth(RRHH_ROLES), async (req, res) =>
     const w = await dbGet("SELECT id, local FROM users WHERE id = ?", [req.params.id]);
     if (!w) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
     if (!rrhhPuedeLocal(req, w.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
+    if (req.body.nombre !== undefined && String(req.body.nombre).trim().length < 2) return res.status(400).json({ ok: false, error: 'Falta el nombre completo.' });
+    const validado = sanearDatosAlta(req.body, hoyISO());
+    if (!validado.ok) return res.status(400).json({ ok: false, error: validado.errores.join(' ') });
+    req.body = { ...req.body, ...validado.datos };
     const campos = esEncargado(req) ? HR_CAMPOS_ENC : HR_CAMPOS_DIR;
     const sets = [], vals = [];
     for (const c of campos) if (req.body[c] !== undefined) { sets.push(`${c} = ?`); vals.push(req.body[c] === "" ? null : req.body[c]); }
     if (req.body.nombre !== undefined) { sets.push("nombre = ?"); vals.push(String(req.body.nombre).trim()); }
-    if (!sets.length) return res.json({ ok: true });
-    vals.push(w.id);
-    await dbRun(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`, vals);
+    const privados = puedeVerPrivado(req.user.rol) ? CAMPOS_PRIVADOS.filter(k => req.body[k] !== undefined) : [];
+    if (!sets.length && !privados.length) return res.json({ ok: true });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (sets.length) await client.query(toPositional(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`), [...vals, w.id]);
+      if (privados.length) {
+        await client.query('INSERT INTO rrhh_datos_alta(worker_id) VALUES ($1) ON CONFLICT DO NOTHING', [w.id]);
+        await client.query(toPositional(`UPDATE rrhh_datos_alta SET ${privados.map(k => `${k} = ?`).join(', ')} WHERE worker_id = ?`), [...privados.map(k => req.body[k]), w.id]);
+      }
+      await client.query('COMMIT');
+    } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
     invalidarInternos(); // el teléfono puede haber cambiado
 
     // ── Si se le ha dado de baja por aquí, ¿le quedan turnos por delante? ───────────────
@@ -23994,6 +24063,8 @@ const server = app.listen(PORT, async () => {
   // lado seguro: como mucho no sale una función que hoy nadie usa; al revés, saldrían páginas
   // públicas que se decidió no publicar.
   await cargarTarjetaActiva();
+
+  setInterval(() => { rrhhCumpleSiToca().catch(() => console.error('[rrhh] No se pudo procesar el aviso de cumpleaños')); }, 60 * 1000);
 
   // La cola de captación. Cada 30 s porque a alguien se le prometió en pantalla que le
   // llegaría: media hora de retraso ya es una promesa rota. La pasada no hace nada si WhatsApp
