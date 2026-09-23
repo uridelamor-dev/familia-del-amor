@@ -553,7 +553,7 @@ describe("permisos y efectos", () => {
     const alta = ruta('app.post("/api/publico/formulario/:clave"');
     // Una sola salida buena, y sin decir si el teléfono ya existía.
     assert.equal([...sinComentarios(alta).matchAll(/res\.json\(\{ ok: true/g)].length, 1);
-    assert.match(alta, /MISMA RESPUESTA, exista o no/);
+    assert.match(alta, /evento_lead: altaNueva/);
   });
 });
 

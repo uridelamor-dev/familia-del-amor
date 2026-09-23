@@ -137,8 +137,8 @@ export function idiomaSugerido({ mensajesCliente = [], idiomaContacto = null, id
   // 1 · El último que dé para decidir. Los ambiguos —«Ok», «Sí»— se saltan: no dicen nada, y
   //     pararse en ellos es justo lo que hace que Sara cambie de idioma por un «vale».
   for (let i = 0; i < suyos.length; i += 1) {
-    if (esAmbiguo(suyos[i])) continue;
     const p = pistaIdioma(suyos[i]);
+    if (esAmbiguo(suyos[i]) && !p) continue;
     // La FUENTE distingue si lo decidió el mensaje de ahora o uno anterior, y no es cosmética:
     // solo lo que dice el mensaje de ahora se guarda en la ficha como dato del cliente.
     if (p) return { idioma: p, fuente: i === 0 ? "mensaje" : "historial" };
@@ -219,4 +219,25 @@ export function pidePersona(texto) {
   const t = String(texto || "");
   if (!t.trim()) return false;
   return PIDE_PERSONA.some((re) => re.test(t));
+}
+
+/** Un agradecimiento no abre otra venta ni necesita consultar al modelo. */
+export function respuestaCortesia(texto, idioma, conInvitacion) {
+  if (!conInvitacion) return null;
+  const t = String(texto || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (!/^(moltes gracies|gracies|muchas gracias|gracias|thanks|thank you|merci)( (a tu|a ti))?$/.test(t)) return null;
+  return idioma === 'ca' ? 'De res! T’hi esperem 😊'
+    : idioma === 'en' ? 'You’re welcome! We look forward to seeing you 😊'
+    : '¡De nada! Te esperamos 😊';
+}
+
+/** Correcciones inequívocas de interferencias detectadas; nunca modifica datos ni condiciones. */
+export function pulirCatalan(texto, idioma) {
+  if (idioma !== 'ca') return texto;
+  return String(texto).replace(/[¿¡]/g, '')
+    .replace(/\bDime\b/g, 'Digues-me').replace(/\bdime\b/g, 'digues-me')
+    .replace(/\balgo\b/g, 'alguna cosa').replace(/\bsi necesites\b/g, 'si necessites')
+    .replace(/\bnecesites\b/g, 'necessitis')
+    .replace(/\bpuga\b/g, 'pugui');
 }

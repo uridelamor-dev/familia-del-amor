@@ -18,7 +18,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -113,7 +113,7 @@ import { cargarLlavero, lineaArranque } from "./src/modules/seguridad/clave-dato
 import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
 import { lineaErrorSql } from "./src/modules/seguridad/redactar.js";
 import { construirContexto as waConstruirContexto, LIMITES as WA_CTX_LIMITES,
-         ORIGEN as WA_ORIGEN, tipoPorToken as waTipoPorToken }
+         ORIGEN as WA_ORIGEN, tipoPorToken as waTipoPorToken, identidadConversacion, contextoCampanas }
   from "./src/modules/messaging/contexto.js";
 import { marcarPausa as saraMarcarPausa, marcarActiva as saraMarcarActiva,
          ESTADO_IA as SARA_ESTADO, ETIQUETA_MOTIVO as SARA_MOTIVO_TXT }
@@ -12057,8 +12057,8 @@ app.get("/api/publico/formulario/:clave", async (req, res) => {
  *
  * ── LA RESPUESTA ES LA MISMA SIEMPRE ─────────────────────────────────────────────────────────
  *
- * Alta nueva y reutilización contestan exactamente igual. Si se distinguieran, esta página sería
- * un comprobador de qué teléfonos están en nuestra base: se prueban números y se mira la respuesta.
+ * La pantalla de éxito es la misma. La medición distingue la primera inscripción a esta
+ * campaña, sin devolver datos del contacto ni emitir otro mensaje al repetir.
  */
 app.post("/api/publico/formulario/:clave", async (req, res) => {
   res.set("Cache-Control", "no-store");
@@ -12107,8 +12107,8 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
     // «este número tiene WhatsApp» es un comprobador de números: se le pasan mil y se sabe cuáles
     // existen. Aquí hay que rellenar el formulario entero y aceptar, y además está limitado.
     //
-    // TRES RESPUESTAS Y TRES MENSAJES DISTINTOS. Que WhatsApp esté caído NO es que el número esté
-    // mal: decírselo así al cliente le haría corregir un teléfono que era correcto.
+    // Un false confirmado rechaza. Una caída o un timeout no pierde la inscripción:
+    // la validación queda para el worker antes de enviar el código.
     if (f.exige_whatsapp) {
       if (!fidLimiteWA(req, tel)) {
         return res.status(429).json({ ok: false, error: M.whatsapp_caido });
@@ -12116,17 +12116,25 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
       let tiene = null;
       try { tiene = await numeroTieneWhatsApp(tel); } catch { tiene = null; }
       if (tiene === false) return res.status(400).json({ ok: false, error: M.sin_whatsapp });
-      if (tiene === null) {
-        // Ni se guarda el alta ni se genera el beneficio: no sabemos si el número vale.
-        return res.status(503).json({ ok: false, error: M.whatsapp_caido });
-      }
+      // null significa canal no disponible, no teléfono inválido. Se guarda el alta
+      // y la cola duradera espera a la reconexión; solo un false confirmado rechaza.
     }
 
     const ahora = isoConOffset(Date.now());
     const comercial = b.comercial === true;
     let avisoNombre = false;
+    let altaNueva = false;
 
     await fidTransaccion(async (x) => {
+      // Serializar reenvíos concurrentes del mismo teléfono, incluso entre instancias.
+      await x.get(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, [`alta-form:${tel}`]);
+      const inscrito = await x.get(
+        `SELECT id FROM fid_consentimientos WHERE telefono = ? AND formulario_clave = ? LIMIT 1`,
+        [tel, clave]);
+      const anterior = await x.get(
+        `SELECT id FROM leads WHERE telefono = ? AND (campana = ? OR fuente = ?) LIMIT 1`,
+        [tel, clave, `form:${clave}`]);
+      altaNueva = !inscrito && !anterior;
       // 1. EL LEAD. Se busca por teléfono normalizado y se completa lo que falte, sin pisar.
       const previo = await x.get(`SELECT id, nombre FROM leads WHERE telefono = ? ORDER BY id DESC LIMIT 1`, [tel]);
       if (previo) {
@@ -12216,10 +12224,13 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
     let token = null, qrId = null, enCola = null, derechoNuevo = false;
     try {
       const r = await fidTransaccion(async (x) => {
+        await x.get(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, [`alta-form:${tel}`]);
+        const qrActual = await x.get(`SELECT id, token, clase, nombre FROM pro_qr
+          WHERE clase = 'carnet' AND telefono = ? AND anulado_en IS NULL ORDER BY id DESC LIMIT 1`, [tel]);
         // EL CARNÉ. Se reutiliza el que ya tenga; solo se crea si no hay ninguno. La MISMA
         // función que emite cualquier carné del panel, ahora dentro de esta escritura: un segundo
         // camino para crear carnés sería un segundo sitio donde equivocarse con la unicidad.
-        const qr = previoQr || await proEmitir({ clase: "carnet", telefono: tel, nombre,
+        const qr = qrActual || previoQr || await proEmitir({ clase: "carnet", telefono: tel, nombre,
           usosMax: 0, autor: "publico", origen: `form:${clave}`, cliente: x });
         if (!qr) return { qr: null, cola: null, derecho: false };
 
@@ -12307,7 +12318,7 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
                    // El HECHO de que se encoló, nunca el teléfono ni el token de baja.
                    encolado: !!enCola } });
 
-    // MISMA RESPUESTA, exista o no. Ni «bienvenido de nuevo» ni un campo distinto.
+    // La pantalla es la misma; evento_lead solo autoriza medir la primera inscripción.
     //
     // El estado del envío se dice como es: recién encolado es PENDIENTE, y «enviado» solo cuando
     // `cap_cola` tiene fecha. Decir «te lo hemos enviado» en el mismo instante de encolarlo sería
@@ -12316,7 +12327,7 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
       : enCola.enviado_en ? "enviado_wa"
       : enCola.estado === "fallido" ? "fallo_envio"
       : "pendiente_envio";
-    res.json({ ok: true, mensaje: f.mensaje_exito || M.ya_registrado,
+    res.json({ ok: true, evento_lead: altaNueva, mensaje: f.mensaje_exito || M.ya_registrado,
       texto_posterior: f.texto_posterior || null,
       envio: estadoEnvio ? { estado: estadoEnvio, texto: M[estadoEnvio] } : null,
       // El enlace al carné se devuelve SIEMPRE que haya carné: no dice si es nuevo o de antes.
@@ -15024,6 +15035,17 @@ async function capVaciarCola() {
         // «el cliente recibió un mensaje» y no puede distinguir el código de una promoción de
         // una confirmación de reserva. Ninguna campaña concreta aparece aquí: la clave sale de
         // la propia fila de la cola.
+        // Las altas admitidas durante una caída se validan al recuperar el canal.
+        // Una consulta indisponible conserva el pendiente sin agotar reintentos de envío.
+        if (waTipoPorToken(fila.token) === "entrega") {
+          const tiene = await numeroTieneWhatsApp(fila.telefono);
+          if (tiene === null) {
+            await dbRun(`UPDATE cap_cola SET proximo_ms = ?, ultimo_error = ? WHERE id = ?`,
+              [Date.now() + 60000, "Comprobación de WhatsApp pendiente", fila.id]);
+            continue;
+          }
+          if (tiene === false) throw new Error("El teléfono no tiene WhatsApp");
+        }
         await sendMensajeLibre(fila.telefono, fila.texto, {
           origen: WA_ORIGEN.CAMPANA,
           claveCampana: fila.campana || null,
@@ -24349,23 +24371,42 @@ const server = app.listen(PORT, async () => {
    * El `LIMIT` de la consulta va holgado a propósito: el recorte fino —el que sabe de tamaños— lo
    * hace el módulo, no el SQL.
    */
-  setHistorialLoader(async (jid) => {
+  setHistorialLoader(async (jid, telefono = null) => {
+    const identidad = identidadConversacion(jid, telefono);
     const rows = await dbAll(
       `SELECT mensaje, respuesta, COALESCE(tipo, 'intercambio') AS tipo,
               origen, clave_campana, tipo_mensaje, idioma, creado_en
          FROM whatsapp_messages
-        WHERE jid = ?
+        WHERE (jid = ? OR jid = ? OR telefono = ? OR telefono = ?)
           -- COALESCE y no una comparación a secas: en SQL, NULL != 'algo' vale NULL, y una fila
           -- con NULL se caería del historial en silencio. Y con NULL se guarda EXACTAMENTE lo que
           -- el cliente escribió mientras Sara estaba parada, que es lo que hay que recuperar al
           -- reactivarla.
           AND COALESCE(respuesta, '') != '(sin respuesta registrada)'
         ORDER BY id DESC LIMIT ?`,
-      [jid, WA_CTX_LIMITES.FILAS * 2]
+      [jid, identidad.jidTelefono, identidad.telefono, identidad.nacional, WA_CTX_LIMITES.FILAS * 2]
     );
     // La CITA no entra aquí: la antepone `whatsapp.js` sobre el historial final, venga de la
     // base o del `Map` en memoria. Resolverla en los dos sitios sería resolverla dos veces mal.
     return waConstruirContexto(rows || []);
+  });
+
+  // La entrega enviada es la evidencia, aunque el historial use otro JID o esté en memoria.
+  setCampanaLoader(async (telefono) => {
+    const identidad = identidadConversacion(null, telefono);
+    if (!identidad.telefono) return null;
+    const entregas = await dbAll(
+      `SELECT campana, texto, enviado_en FROM cap_cola
+       WHERE telefono IN (?, ?) AND estado = 'enviado' AND enviado_en IS NOT NULL
+       ORDER BY enviado_en DESC, id DESC LIMIT 3`, [identidad.telefono, identidad.nacional]);
+    const datos = [];
+    for (const entrega of entregas) {
+      const c = entrega.campana ? await capCampana(entrega.campana) : null;
+      datos.push({ ...entrega, nombre: c?.nombre, idioma: c?.idioma,
+        donde: c?.promo ? proDondeVale(c.promo.locales) : null,
+        descripcion: c?.promo?.descripcion });
+    }
+    return contextoCampanas(datos);
   });
 
   setPerfilLoader(async (jid) => {

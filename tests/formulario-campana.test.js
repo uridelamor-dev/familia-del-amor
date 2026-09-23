@@ -159,23 +159,19 @@ describe("el teléfono y WhatsApp", () => {
     assert.match(server, /if \(FID_WA_INTENTOS\.size > \d+\) FID_WA_INTENTOS\.clear\(\);/);
   });
 
-  test("TRES RESULTADOS Y TRES MENSAJES DISTINTOS", () => {
+  test("solo un teléfono sin WhatsApp confirmado se rechaza", () => {
     // Que WhatsApp esté caído NO es que el número esté mal: decírselo así al cliente le haría
     // corregir un teléfono que era correcto.
     assert.match(POST, /if \(tiene === false\) return res\.status\(400\)[\s\S]{0,80}M\.sin_whatsapp/);
-    assert.match(POST, /if \(tiene === null\) \{[\s\S]{0,300}M\.whatsapp_caido/);
+    assert.doesNotMatch(POST, /if \(tiene === null\) \{[\s\S]{0,300}return res/);
     // Una excepción se trata como «no lo sé», nunca como «no lo tiene».
     assert.match(POST, /catch \{ tiene = null; \}/);
   });
 
-  test("SI NO SE PUEDE COMPROBAR, NO SE GUARDA NADA NI SE GENERA EL BENEFICIO", () => {
-    // El 503 tiene que salir ANTES de la transacción y antes de emitir el carné. Si saliera
-    // después, habría altas a medias con un carné emitido y sin teléfono comprobado.
-    const i503 = POST.indexOf("M.whatsapp_caido }");
-    const iTx = POST.indexOf("await fidTransaccion(");
-    const iCarnet = POST.indexOf("proEmitir(");
-    assert.ok(i503 > 0 && iTx > i503, "el alta se guarda antes de comprobar el número");
-    assert.ok(iCarnet > i503, "el beneficio se genera antes de comprobar el número");
+  test("la caída de WhatsApp no devuelve 503 antes de guardar", () => {
+    assert.ok(!POST.includes("status(503)"));
+    assert.match(POST, /await fidTransaccion/);
+    assert.match(POST, /INSERT INTO cap_cola/);
   });
 
   test("y solo se comprueba si la campaña lo exige", () => {
