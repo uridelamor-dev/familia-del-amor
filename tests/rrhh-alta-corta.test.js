@@ -10,12 +10,12 @@ const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
 const modal = app.slice(app.indexOf("function rrWorkerAdd("), app.indexOf("// ── Dar de baja"));
 
 describe("el alta pregunta solo lo que hace falta", () => {
-  test("ya no pide el puesto: el rol y las áreas dicen lo mismo mejor", () => {
-    assert.ok(!/name="puesto"/.test(modal));
+  test("pide el puesto para preparar el alta en gestoría", () => {
+    assert.match(modal, /name="puesto"/);
   });
 
-  test("ni el primer día de trabajo", () => {
-    assert.ok(!/name="fecha_alta"/.test(modal));
+  test("pide la fecha de incorporación para gestoría", () => {
+    assert.match(modal, /name="fecha_alta"/);
   });
 
   test("ni el «desde» del contrato", () => {

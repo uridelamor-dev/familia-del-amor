@@ -3395,12 +3395,45 @@ function renderRRCheckin() {
   return `<div class="card"><div class="ch"><h3>📞 Registrar check-in de ${esc(RRSEG.mes)}</h3></div>${campos}<div class="field" style="width:100%"><label>Comentario libre (lo que el trabajador quiera expresar)</label><textarea id="rrComentario" rows="2"></textarea></div><button class="btn primary" data-act="rr-checkin-save">Registrar llamada</button></div>`;
 }
 function renderRRNotas() {
-  const w = RRSEG.sel; if (!w) return "";
-  const tipoOpts = Object.keys(RR_TIPOS).map((k) => `<option value="${k}">${RR_TIPOS[k].ic} ${RR_TIPOS[k].lab}</option>`).join("");
-  const form = `<div class="card"><div class="ch"><h3>Añadir nota</h3></div><div class="toolbar"><div class="field"><label>Tipo</label><select id="rrNotaTipo">${tipoOpts}</select></div><div class="field grow"><label>Contenido</label><input id="rrNotaCont" placeholder="Escribe la nota…"></div><button class="btn primary" data-act="rr-nota-add">Guardar</button></div></div>`;
-  const notas = RRSEG.notas || [];
-  const list = notas.length ? notas.map((n) => { const t = RR_TIPOS[n.tipo] || RR_TIPOS.nota; return `<div class="card" style="border-left:3px solid ${RR_TIPO_COL[n.tipo] || "var(--border2)"};padding:12px 14px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:start"><div style="min-width:0"><div class="t2">${t.ic} ${t.lab}${n.autor ? " · " + esc(n.autor) : ""} · ${esc(String(n.creado_en || "").slice(0, 16).replace("T", " "))}</div><div style="white-space:pre-wrap;margin-top:3px">${esc(n.contenido || "")}</div></div><button class="btn sm danger" data-act="rr-nota-del" data-id="${n.id}">✕</button></div></div>`; }).join("") : `<div class="card"><div class="mut" style="padding:6px">Sin notas todavía.</div></div>`;
-  return `${form}<div class="grid" style="gap:10px">${list}</div>`;
+  if (!['direccion', 'rrhh'].includes(USER.rol) || !RRSEG.sel) return '';
+  const campo = (id, label, type = 'text') => `<div class="field"><label for="${id}">${label}</label><input id="${id}" type="${type}" ${type === 'date' ? `value="${rrHoy()}"` : ''}></div>`;
+  const form = `<div class="card"><div class="ch"><h3>Historial privado de conversaciones</h3></div>
+    <p class="mut">Solo RR. HH. y dirección. Registra qué se habló y qué se acordó.</p>
+    <div class="form-grid">${campo('rrNotaFecha','Fecha de la conversación','date')}${campo('rrNotaAsunto','Asunto')}${campo('rrNotaPersona','Quién habló con el trabajador')}${campo('rrNotaCanal','Cómo (en persona, teléfono…)')}</div>
+    <div class="field"><label>Qué se habló</label><textarea id="rrNotaCont" rows="3" maxlength="6000"></textarea></div>
+    <div class="field"><label>Acuerdos y próximos pasos</label><textarea id="rrNotaAcuerdos" rows="3" maxlength="4000"></textarea></div>
+    <button class="btn primary" data-act="rr-nota-add">Guardar conversación</button></div>`;
+  const notas = [...(RRSEG.notas || [])].sort((a,b) => String(b.fecha_conversacion || b.creado_en).localeCompare(String(a.fecha_conversacion || a.creado_en)));
+  const list = notas.map(n => `<div class="card"><div class="t2">${esc(n.fecha_conversacion || String(n.creado_en || '').slice(0,10))} · Registrado por ${esc(n.autor || '—')}</div>
+    <h3>${esc(n.asunto || 'Nota')}</h3><p class="mut">${esc([n.interlocutor, n.canal].filter(Boolean).join(' · '))}</p>
+    <div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(n.contenido)}</div>
+    ${n.acuerdos ? `<h4>Acuerdos y próximos pasos</h4><div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(n.acuerdos)}</div>` : ''}</div>`).join('');
+  return form + (list || '<div class="card mut">Sin conversaciones registradas.</div>');
+}
+function rrHoy() { return new Date().toLocaleDateString('sv-SE', {timeZone:'Europe/Madrid'}); }
+function rrCamposAdministrativos(t = {}) {
+  const input = (k, lab) => `<div class="field"><label>${lab}</label><input name="${k}" value="${esc(t[k] || '')}" ${k === 'iban' ? 'autocomplete="off" maxlength="42"' : ''}></div>`;
+  const select = (k, lab, options) => `<div class="field"><label>${lab}</label><select name="${k}"><option value="">Pendiente de completar</option>${options.map(([v,l]) => `<option value="${v}" ${t[k] === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`;
+  return input('dni','DNI/NIE') + input('direccion','Dirección completa') + input('iban','IBAN') + input('talla_ropa','Talla de ropa')
+    + select('tipo_jornada','Tipo de jornada',[['completa','Completa'],['parcial','Parcial']])
+    + select('tipo_contrato','Tipo de contrato',[['indefinido','Indefinido'],['temporal','Temporal'],['fijo_discontinuo','Fijo discontinuo']]);
+}
+function renderRRAlta() {
+  const a = RRSEG.ficha?.alta; if (!a) return '';
+  return `<div class="card"><div class="ch"><h3>Ficha y alta en gestoría</h3><span class="pill ${a.completa ? 'ok' : 'warn'}">${a.completa ? 'Ficha completa' : 'Pendiente de completar'}</span></div>
+    <p><b>${a.listaGestoria ? 'Datos básicos listos para gestoría' : 'Faltan datos para gestoría'}</b></p>
+    ${a.faltanGestoria.length ? `<p>${esc(a.faltanGestoria.join(' · '))}</p>` : ''}
+    ${a.faltanFicha.length ? `<p class="mut">Para completar la ficha: ${esc(a.faltanFicha.join(' · '))}.</p>` : ''}
+    <p class="mut">Correo de gestoría pendiente de conectar. Guardar esta ficha no solicita ni confirma el alta laboral.</p>
+    <button class="btn" disabled>Enviar alta a gestoría · próximamente</button></div>`;
+}
+async function rrCumpleConfig() {
+  try {
+    const r = await apiRaw('/api/rrhh/cumpleanos/config');
+    const estados = { enviado: 'Enviado', enviando: 'Entrega en curso o pendiente de comprobar', revisar: 'Revisar entrega: no se repite automáticamente' };
+    const ov = modal('Avisos de cumpleaños', `<form id="rrCumpleForm"><p>Nerea recibirá un resumen a las <b>09:00 (Europe/Madrid)</b> en <b>+34 622 065 974</b>, solo cuando cumpla años alguien en activo.</p><p class="mut">Si WhatsApp está desconectado, se esperará a que vuelva durante ese mismo día. No se envían cumpleaños atrasados.</p><label><input type="checkbox" name="activo" ${r.config.activo ? 'checked' : ''}> Activar avisos automáticos</label><p class="mut">Dejar apagado hasta que las fichas estén listas.</p>${(r.avisos || []).map(a => `<p>${esc(a.dia)} · ${esc(estados[a.estado] || a.estado)}</p>`).join('')}<button class="btn primary" type="submit">Guardar</button></form>`);
+    ov.querySelector('form').onsubmit = async e => { e.preventDefault(); try { await apiSend('PUT','/api/rrhh/cumpleanos/config',{activo:e.target.elements.activo.checked}); ov.remove(); toast('Configuración guardada'); } catch(e) { toast(e.message); } };
+  } catch(e) { toast(e.message); }
 }
 const RR_DOC_TIPOS = { contrato: "Contrato", dni: "DNI/NIE", manipulador: "Carnet manipulador", nomina: "Nómina", otro: "Otro" };
 function renderRRDocs() {
@@ -3432,14 +3465,14 @@ function renderRRFicha() {
   const ini = (t.nombre || t.username || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   const foto = t.foto_url ? `<img src="${esc(t.foto_url)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : `<span class="avatar" style="width:56px;height:56px;font-size:20px;flex:none">${esc(ini)}</span>`;
   const dato = (lab, val) => val ? `<div><div class="t2">${lab}</div><div class="t1">${esc(val)}</div></div>` : "";
-  const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Puesto", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
+  const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Puesto", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) + dato("Dirección", t.direccion) + dato("IBAN", t.iban) + dato("Jornada", t.tipo_jornada) + dato("Tipo de contrato", t.tipo_contrato?.replaceAll("_", " ")) + dato("Talla de ropa", t.talla_ropa) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
   const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(t.rol || "")}${t.local ? " · " + esc(t.local) : ""}${t.username ? " · @" + esc(t.username) : ""}${antig}</div></div></div>${esDir ? `<details class="rr-mas"><summary class="btn sm" title="Más acciones">···</summary>
       <div class="rr-mas-menu">
         <button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(t.nombre || t.username || "")}">Eliminar del sistema</button>
         <p class="mut" style="margin:8px 0 0;font-size:11.5px;max-width:230px;line-height:1.5">Borra su acceso y su ficha.
           Para alguien que se va, lo que toca es <b>Dar de baja</b>: conserva su histórico.</p>
       </div></details>` : ""}</div></div>`;
-  return `<div class="grid" style="gap:16px">${hero}${renderRRLaboral()}${datos}${renderRRPin()}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
+  return `<div class="grid" style="gap:16px">${hero}${renderRRAlta()}${datos}${renderRRLaboral()}${renderRRPin()}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
 }
 
 // ── Necesita tu atención ────────────────────────────────────────────────────
@@ -3666,18 +3699,19 @@ async function rrResetPassword(id, nombre) {
 }
 
 async function rrAsignarPin(id) {
+  const elegido = ["direccion", "rrhh"].includes(USER.rol);
   const ov = modal("PIN de fichaje", `
-    <p style="margin:0 0 14px;line-height:1.55">Entre 4 y 6 números. Díselo en persona y pídele que lo cambie desde su perfil: mientras siga siendo el que le has dado tú, cualquiera que te haya oído puede fichar en su nombre.</p>
-    <input class="inp" id="rrPinVal" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="4917" style="width:100%;font-size:20px;letter-spacing:.3em;text-align:center">
+    <p style="margin:0 0 14px;line-height:1.55">${elegido ? "Introduce los 4 dígitos que ha elegido el propio trabajador. Se guardan como su PIN definitivo." : "PIN provisional de 4 a 6 dígitos. El trabajador podrá cambiarlo desde su perfil."}</p>
+    <input class="inp" id="rrPinVal" inputmode="numeric" type="password" maxlength="${elegido ? 4 : 6}" autocomplete="off" placeholder="4917" style="width:100%;font-size:20px;letter-spacing:.3em;text-align:center">
     <p id="rrPinMsg" style="margin:10px 0 0;min-height:18px;color:var(--danger);font-weight:550"></p>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
       <button class="btn" data-close>Cancelar</button><button class="btn primary" id="rrPinOk">Guardar</button></div>`);
   const inp = ov.querySelector("#rrPinVal"), msg = ov.querySelector("#rrPinMsg");
   inp.focus();
-  inp.addEventListener("input", () => { inp.value = inp.value.replace(/\D/g, "").slice(0, 6); msg.textContent = ""; });
+  inp.addEventListener("input", () => { inp.value = inp.value.replace(/\D/g, "").slice(0, elegido ? 4 : 6); msg.textContent = ""; });
   ov.querySelector("#rrPinOk").addEventListener("click", async () => {
     try {
-      const r = await apiSend("PUT", "/api/fichajes/pin/" + encodeURIComponent(id), { pin: inp.value });
+      const r = await apiSend("PUT", "/api/fichajes/pin/" + encodeURIComponent(id), { pin: inp.value, elegido_trabajador: elegido });
       ov.remove(); toast(r.mensaje || "PIN asignado ✅"); rrSelWorker(id);
     } catch (e) { msg.textContent = e.message; }
   });
@@ -3753,13 +3787,13 @@ function rrEditarDatos(id) {
   const t = (RRSEG.ficha && RRSEG.ficha.trabajador) || RRSEG.sel; if (!t) return;
   const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
   const F = (name, lab, val, type) => `<div class="field"><label>${lab}</label><input name="${name}" ${type ? `type="${type}"` : ""} value="${esc(val || "")}"></div>`;
-  const sensibles = esDir ? `${F("dni", "DNI/NIE", t.dni)}${F("fecha_alta", "Fecha de alta", (t.fecha_alta || "").slice(0, 10), "date")}${F("fecha_baja", "Fecha de baja", (t.fecha_baja || "").slice(0, 10), "date")}<label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="activo" ${(t.activo === 0 || t.fecha_baja) ? "" : "checked"} style="width:auto"> Activo</label>` : "";
+  const sensibles = esDir ? rrCamposAdministrativos(t) : '';
   const body = `<form id="fRRD"><div class="form-grid">${F("nombre", "Nombre", t.nombre)}${F("puesto", "Puesto", t.puesto)}${F("telefono", "Teléfono", t.telefono)}${F("email", "Email", t.email)}${F("fecha_nac", "Nacimiento", (t.fecha_nac || "").slice(0, 10), "date")}${sensibles}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar</button></div></form>`;
   const ov = modal("Editar datos", body);
   ov.querySelector("#fRRD").addEventListener("submit", async (e) => {
     e.preventDefault(); const fm = e.target;
     const data = { nombre: fm.nombre.value.trim(), puesto: fm.puesto.value.trim(), telefono: fm.telefono.value.trim(), email: fm.email.value.trim(), fecha_nac: fm.fecha_nac.value };
-    if (esDir) { data.dni = fm.dni.value.trim(); data.fecha_alta = fm.fecha_alta.value; data.fecha_baja = fm.fecha_baja.value; data.activo = fm.activo.checked ? 1 : 0; }
+    if (esDir) for (const k of ['dni','direccion','iban','talla_ropa','tipo_jornada','tipo_contrato']) data[k] = fm.elements[k].value.trim();
     try {
       const r = await apiSend("PUT", "/api/rrhh/trabajador/" + encodeURIComponent(id), data);
       ov.remove(); toast("Datos guardados ✅"); rrSelWorker(id);
@@ -3827,6 +3861,7 @@ function renderRRSeg() {
   // El hueco de la bandeja va ARRIBA y se rellena aparte: es lo primero que tiene que ver un
   // responsable al entrar, y no debe retrasar el resto de la pantalla si tarda.
   return rrPh("El equipo, uno a uno · seguimiento de " + RRSEG.mes) + rrTabs()
+    + (['direccion','rrhh'].includes(USER.rol) ? '<div class="toolbar"><button class="btn" data-act="rr-cumple-config">Avisos de cumpleaños</button></div>' : '')
     + `<div id="rrAtencion"></div>` + renderRRResumen()
     + `<div class="rrgrid">${renderRRSegSidebar()}<div id="rrFicha">${renderRRFicha()}</div></div>`;
 }
@@ -3915,7 +3950,7 @@ async function candEstado(id, estado) { try { await apiSend("PUT", "/api/hr/appl
 async function rrSelWorker(id) {
   const w = RRSEG.workers.find((x) => String(x.id) === String(id)); if (!w) return;
   RRSEG.sel = w; RRSEG.ficha = null;
-  try { RRSEG.notas = (await apiOptional("/api/rrhh/trabajador/" + id + "/notas")) || []; } catch { RRSEG.notas = []; }
+  try { RRSEG.notas = !["direccion", "rrhh"].includes(USER.rol) ? [] : (await apiOptional("/api/rrhh/trabajador/" + id + "/notas")) || []; } catch { RRSEG.notas = []; }
   // Las dos a la vez. La de siempre trae datos, PIN y documentos; la laboral agrega
   // contrato, áreas, disponibilidad, ausencias, horas y bolsa desde sus tablas.
   const [fi, lab] = await Promise.all([
@@ -3943,7 +3978,12 @@ async function rrNotaAdd() {
   const tipo = tEl ? tEl.value : "nota"; const contenido = cEl ? cEl.value.trim() : "";
   if (!contenido) { toast("Escribe el contenido de la nota"); return; }
   try {
-    await apiSend("POST", "/api/rrhh/trabajador/" + w.id + "/nota", { tipo, contenido, autor: rrAutor() });
+    await apiSend("POST", "/api/rrhh/trabajador/" + w.id + "/nota", { tipo, contenido,
+      fecha_conversacion: document.getElementById('rrNotaFecha')?.value,
+      asunto: document.getElementById('rrNotaAsunto')?.value,
+      interlocutor: document.getElementById('rrNotaPersona')?.value,
+      canal: document.getElementById('rrNotaCanal')?.value,
+      acuerdos: document.getElementById('rrNotaAcuerdos')?.value });
     RRSEG.notas = (await apiOptional("/api/rrhh/trabajador/" + w.id + "/notas")) || RRSEG.notas;
     toast("Nota guardada ✅"); rrRepaintFicha();
   } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
@@ -3980,17 +4020,23 @@ function rrWorkerAdd(pre = {}) {
   // Ya no se pide contraseña: la inicial es el propio usuario y el sistema obliga a
   // cambiarla al entrar. Antes venía «tapeta2024» rellenada y nadie la cambiaba nunca,
   // porque además el trabajador no podía.
-  // El alta corta se acabó dejando a la gente a medio montar: sin contrato no entraban en el
-  // generador y sin áreas se les podía poner en cocina. Se piden aquí, y solo esto: el DNI,
-  // el teléfono y los documentos se completan después en la ficha, cuando se tengan.
+  // La ficha puede guardarse incompleta. Los básicos para gestoría se comprueban
+  // aparte de los datos que solo necesitamos internamente.
   const ov = modal("Nuevo trabajador", `<form id="fWorker" class="grid" style="gap:14px">
     <div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Datos básicos</h3>
       ${localBarra ? `<span class="mut" style="font-size:12px">en <b>${esc(nombreCortoLocal(localBarra))}</b></span>` : ""}</div>
       <div class="form-grid">
-        <div class="field"><label>Nombre</label><input name="nombre" required value="${esc(pre.nombre || "")}"></div>
+        <div class="field"><label>Nombre completo</label><input name="nombre" required value="${esc(pre.nombre || "")}"></div>
         <div class="field"><label>Usuario</label><input name="username" required placeholder="se propone solo"></div>
         ${localField}${rolField}
-      </div></div>
+        <div class="field"><label>Puesto</label><input name="puesto"></div>
+        <div class="field"><label>Fecha de incorporación</label><input name="fecha_alta" type="date" value="${rrHoy()}"></div>
+        <div class="field"><label>Nacimiento</label><input name="fecha_nac" type="date"></div>
+        <div class="field"><label>Teléfono</label><input name="telefono" type="tel"></div>
+        <div class="field"><label>Correo electrónico</label><input name="email" type="email"></div>
+        <div class="field"><label>PIN elegido por el trabajador (4 dígitos)</label><input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password"></div>
+        ${enc ? '' : rrCamposAdministrativos()}
+      </div><p class="mut">Puedes guardar la ficha incompleta y continuar después. El PIN no se muestra ni se envía a gestoría.</p></div>
     ${enc ? "" : `<div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Contrato</h3></div>
       <div class="form-grid">
         <div class="field"><label>Horas por semana</label>
@@ -4003,7 +4049,7 @@ function rrWorkerAdd(pre = {}) {
       <p class="mut" style="margin:6px 0 0;font-size:11.5px">Si no marcas ninguna, el generador podrá ponerle en cualquiera hasta que se configuren.</p></div>
     ${pre.agora ? `<p class="fic-nota" style="margin:0">Al crearla se enlazará con el operador <b>${esc(pre.agora)}</b> de Ágora, así sus ventas empezarán a contar en su ficha.</p>` : ""}
     <p class="mut" style="margin:0;line-height:1.55">Entrará con <b>su usuario como contraseña</b> y lo primero que
-      le pedirá el sistema es cambiarla. Hasta que lo haga no puede ver nada del panel.</p>
+      le sugerirá el sistema es cambiarla. El PIN de fichaje es independiente.</p>
     <button class="btn primary" type="submit">Crear trabajador</button></form>`);
 
   // Las áreas son las del local elegido, y se recargan si se cambia: ofrecer las de Blanes
@@ -15953,6 +15999,7 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-worker-del") rrWorkerDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-checkin-save") rrCheckinSave();
   else if (act === "rr-checkin-edit") rrCheckinEdit();
+  else if (act === "rr-cumple-config") rrCumpleConfig();
   else if (act === "rr-nota-add") rrNotaAdd();
   else if (act === "rr-nota-del") rrNotaDel(t.getAttribute("data-id"));
   else if (act === "rr-vac-add") rrVacAdd();
