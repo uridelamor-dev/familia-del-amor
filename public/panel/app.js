@@ -629,10 +629,38 @@ function pintarConservandoPliegues(caja, html) {
 }
 
 function modal(title, bodyHtml) {
+  const anterior = document.activeElement;
   const ov = document.createElement("div"); ov.className = "modal-ov";
-  ov.innerHTML = `<div class="modal"><div class="modal-h"><b>${esc(title)}</b><button class="iconbtn" data-close aria-label="Cerrar">✕</button></div><div class="modal-b">${bodyHtml}</div></div>`;
+  ov.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}" tabindex="-1"><div class="modal-h"><b>${esc(title)}</b><button class="iconbtn" data-close aria-label="Cerrar">✕</button></div><div class="modal-b">${bodyHtml}</div></div>`;
   document.body.appendChild(ov);
+  const dialogo = ov.querySelector('.modal');
+  dialogo.focus({preventScroll:true});
   ov.addEventListener("click", (e) => { if (e.target === ov || e.target.closest("[data-close]")) ov.remove(); });
+  ov.addEventListener('keydown', e => {
+    if ([...document.querySelectorAll('.modal-ov')].at(-1) !== ov) return;
+    if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      // El clic también resuelve los confirmModal pendientes como cancelación.
+      ov.querySelector('.modal-h [data-close]').click();
+    } else if (e.key === 'Tab') {
+      const campos = [...ov.querySelectorAll('a[href],button,input:not([type="hidden"]),textarea,select,[tabindex]')]
+        .filter(el => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length);
+      if (!campos.length) { e.preventDefault(); dialogo.focus(); return; }
+      const primero = campos[0], ultimo = campos.at(-1);
+      if (e.shiftKey && (document.activeElement === primero || document.activeElement === dialogo)) {
+        e.preventDefault(); ultimo.focus();
+      } else if (!e.shiftKey && (document.activeElement === ultimo || document.activeElement === dialogo)) {
+        e.preventDefault(); primero.focus();
+      }
+    }
+  });
+  // Los consumidores cierran con ov.remove(); observarlo mantiene el foco también en ese caso.
+  const observer = new MutationObserver(() => {
+    if (ov.isConnected) return;
+    observer.disconnect();
+    if (anterior?.isConnected && (document.activeElement === document.body || ov.contains(document.activeElement))) anterior.focus({preventScroll:true});
+  });
+  observer.observe(document.body, {childList:true});
   return ov;
 }
 // Panel lateral. Entra desde la derecha y deja ver la lista de fondo: es lo que permite
@@ -3443,7 +3471,7 @@ function renderRRDocs() {
   const list = docs.length ? docs.map((d) => {
     const al = alertaKey[d.id];
     const cad = d.fecha_caducidad ? (al ? `<span class="pill ${al.estado === "vencido" ? "bad" : "warn"}">${al.estado === "vencido" ? "Vencido" : "Caduca en " + al.diasRestantes + "d"}</span>` : `<span class="mut">caduca ${esc(d.fecha_caducidad)}</span>`) : "";
-    return `<div class="row"><div class="grow"><div class="t1"><button class="linkbtn" data-act="rr-doc-ver" data-id="${d.id}" style="color:var(--brand)">${esc(d.nombre || d.tipo)}</button> ${d.sensible ? '<span class="pill" title="Sensible">🔒</span>' : ""}</div><div class="t2">${esc(RR_DOC_TIPOS[d.tipo] || d.tipo)} ${cad}</div></div><button class="btn sm danger" data-act="rr-doc-del" data-id="${d.id}">✕</button></div>`;
+    return `<div class="row"><div class="grow"><div class="t1"><button class="linkbtn" data-act="rr-doc-ver" data-id="${d.id}" style="color:var(--brand)">${esc(d.nombre || d.tipo)}</button> ${d.sensible ? '<span class="pill" title="Sensible">🔒</span>' : ""}</div><div class="t2">${esc(RR_DOC_TIPOS[d.tipo] || d.tipo)} ${cad}</div></div>${["direccion","rrhh"].includes(USER.rol)?`<button class="btn sm" data-act="rr-doc-firma" data-id="${d.id}">Firma</button>`:""}<button class="btn sm danger" data-act="rr-doc-del" data-id="${d.id}">✕</button></div>`;
   }).join("") : `<div class="mut" style="padding:8px 14px">Sin documentos.</div>`;
   return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Documentos</h3><button class="btn sm" data-act="rr-doc-subir" data-id="${RRSEG.sel.id}">+ Subir</button></div><div class="rows">${list}</div></div>`;
 }
@@ -3824,6 +3852,21 @@ function rrDocSubir(id) {
     } catch (err) { if (btn) { btn.disabled = false; btn.textContent = "Subir"; } toast("Error: " + err.message); }
   });
 }
+async function rrFirmaDocumento(id) {
+  try {
+    const j=await apiRaw(`/api/rrhh/documento/${id}/firmas`), activa=j.solicitudes.find(s=>s.estado==='borrador');
+    const ov=modal('Preparar firma · '+(j.documento.nombre||'Documento'),`<p class="fic-nota">Preparación interna. El servicio de firma todavía no está conectado: guardar aquí no envía correos ni firma el documento.</p><p><b>Trabajador:</b> ${esc(j.trabajador.nombre)}<br>${esc(j.trabajador.email||'Falta el correo en su ficha')}</p>${activa?`<div class="card" style="padding:14px"><b>Borrador guardado · pendiente de envío</b>${activa.firmantes.map(f=>`<p>${esc(f.papel==='empresa'?'Empresa':'Trabajador')}: ${esc(f.nombre)} · ${esc(f.email)}</p>`).join('')}<p class="mut">Creado por ${esc(activa.creado_por)}. El original se conserva junto al historial.</p><button class="btn" id="firmaCancelar">Cancelar borrador</button></div>`:`<label>Firma de empresa<select class="inp" id="firmaEmpresa"><option value="">Solo firma el trabajador</option>${j.empresa.map(p=>`<option value="${p.id}" ${Number(p.id)===Number(USER.id)?'selected':''}>${esc(p.nombre)} · ${esc(p.email||'falta correo')}</option>`).join('')}</select></label><p class="mut">Para firmar por empresa se puede seleccionar a una persona de Dirección. El documento debe estar en PDF.</p><button class="btn primary" id="firmaPreparar">Guardar borrador de firma</button>`}${j.solicitudes.filter(s=>s.estado==='cancelado').length?`<details style="margin-top:16px"><summary>Borradores anteriores</summary>${j.solicitudes.filter(s=>s.estado==='cancelado').map(s=>`<p>Cancelado por ${esc(s.cancelado_por)} · ${esc(String(s.cancelado_en).slice(0,10))}</p>`).join('')}</details>`:''}`);
+    ov.querySelector('#firmaPreparar')?.addEventListener('click',async e=>{
+      e.target.disabled=true;
+      try {await apiSend('POST',`/api/rrhh/documento/${id}/firmas`,{empresa_id:ov.querySelector('#firmaEmpresa').value||null});ov.remove();rrFirmaDocumento(id);}
+      catch(err){toast(err.message);e.target.disabled=false;}
+    });
+    ov.querySelector('#firmaCancelar')?.addEventListener('click',async()=>{
+      try {await apiSend('POST',`/api/rrhh/documento/${id}/firmas/${activa.id}/cancelar`,{});ov.remove();rrFirmaDocumento(id);}catch(err){toast(err.message);}
+    });
+  }catch(e){toast(e.message);}
+}
+
 async function rrDocDel(id) {
   if (!(await confirmModal("¿Borrar este documento?", { ok: "Borrar", danger: true }))) return;
   try { await apiSend("DELETE", "/api/rrhh/documento/" + encodeURIComponent(id)); toast("Documento borrado ✅"); if (RRSEG.sel) rrSelWorker(RRSEG.sel.id); }
@@ -3949,16 +3992,20 @@ async function candEstado(id, estado) { try { await apiSend("PUT", "/api/hr/appl
 // Seguimiento: selección de trabajador (carga notas y repinta solo la ficha)
 async function rrSelWorker(id) {
   const w = RRSEG.workers.find((x) => String(x.id) === String(id)); if (!w) return;
-  RRSEG.sel = w; RRSEG.ficha = null;
-  try { RRSEG.notas = !["direccion", "rrhh"].includes(USER.rol) ? [] : (await apiOptional("/api/rrhh/trabajador/" + id + "/notas")) || []; } catch { RRSEG.notas = []; }
-  // Las dos a la vez. La de siempre trae datos, PIN y documentos; la laboral agrega
-  // contrato, áreas, disponibilidad, ausencias, horas y bolsa desde sus tablas.
-  const [fi, lab] = await Promise.all([
+  const carga = (RRSEG.seleccionCarga || 0) + 1, local = localActualFE();
+  RRSEG.seleccionCarga = carga;
+  RRSEG.sel = w; RRSEG.ficha = null; RRSEG.lab = null; RRSEG.notas = [];
+  // Una respuesta lenta de la ficha anterior nunca debe sobrescribir la persona actual.
+  const [notas, fi, lab] = await Promise.all([
+    ["direccion", "rrhh"].includes(USER.rol)
+      ? apiOptional("/api/rrhh/trabajador/" + id + "/notas").catch(() => []) : Promise.resolve([]),
     apiRaw("/api/rrhh/trabajador/" + id + "/ficha").catch(() => null),
     apiRaw("/api/rrhh/trabajador/" + id + "/ficha-laboral").catch(() => null),
   ]);
-  RRSEG.ficha = fi; RRSEG.lab = lab;
-  const v = document.getElementById("view"); if (v && CURRENT === "rrhh" && RRTAB === "seguimiento") v.innerHTML = renderRRSeg();
+  if (carga !== RRSEG.seleccionCarga || String(RRSEG.sel?.id) !== String(id)
+      || local !== localActualFE() || CURRENT !== "rrhh" || RRTAB !== "seguimiento") return;
+  RRSEG.notas = notas || []; RRSEG.ficha = fi; RRSEG.lab = lab;
+  const v = document.getElementById("view"); if (v) v.innerHTML = renderRRSeg();
 }
 function rrRepaintFicha() { const f = document.getElementById("rrFicha"); if (f) f.innerHTML = renderRRFicha(); else if (CURRENT === "rrhh") loadRRHH(); }
 async function rrCheckinSave() {
@@ -7218,7 +7265,7 @@ function productosHeader() {
   const cuando = (COMP.from || COMP.to)
     ? `${COMP.from ? fechaCorta(COMP.from) : "el principio"} → ${COMP.to ? fechaCorta(COMP.to) : "hoy"}`
     : "desde siempre";
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Productos</h1><div class="sub">Qué compramos y a cómo nos lo cobran${donde ? ` · <b>${esc(donde)}</b>` : ""} · <b>${esc(cuando)}</b></div></div>`;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Productos</h1><div class="sub">Qué compramos y a cómo nos lo cobran${donde ? ` · <b>${esc(donde)}</b>` : ""} · <b>${esc(cuando)}</b></div><button class="btn" id="escAbrir">Escandallos · coste de platos</button></div>`;
 }
 const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
 // Con céntimos. Para precios unitarios, donde redondear a euros enteros se carga justo el
@@ -9510,6 +9557,42 @@ function dicElegir(clave, descripcion, fila) {
   });
 }
 
+// Recetas y coste por ración: mismo ámbito y permisos que Productos.
+async function escListado(local = localActualFE(), archivadas = false) {
+  if (!local) return toast('Elige un establecimiento para ver sus recetas.');
+  try {
+    const j = await apiRaw(`/api/escandallos?local=${encodeURIComponent(local)}&archivadas=${archivadas?'1':'0'}`);
+    const rows = j.data || [];
+    const ov = modal('Escandallos · '+nombreCortoLocal(local), `<p class="mut">Coste de ingredientes sin IVA, actualizado con la última compra válida del proveedor y formato elegidos. El margen no incluye personal, energía ni otros gastos.</p><div class="toolbar"><button class="btn primary" id="escNueva">Nueva receta</button><button class="btn" id="escArch">${archivadas?'Ver activas':'Ver archivadas'}</button></div><div class="rows">${rows.map((r,n)=>`<div class="row"><div class="grow"><b>${esc(r.nombre)}</b><div class="t2">${r.calculo.faltan?`Faltan precios de ${r.calculo.faltan} ingredientes`:`${eur2(r.calculo.coste_racion)} por ración · margen ${r.calculo.margen_pct==null?'sin PVP':num(Math.round(r.calculo.margen_pct*10)/10)+' %'}`}</div></div><button class="btn sm" data-receta="${n}">Abrir</button></div>`).join('')||'<p class="mut">No hay recetas en esta lista.</p>'}</div>`);
+    ov.querySelector('#escNueva').onclick=()=>{ov.remove();escEditar(local);};
+    ov.querySelector('#escArch').onclick=()=>{ov.remove();escListado(local,!archivadas);};
+    ov.querySelectorAll('[data-receta]').forEach(b=>b.onclick=()=>{ov.remove();escDetalle(local,rows[Number(b.dataset.receta)]);});
+  } catch(e) {toast(e.message);}
+}
+function escDetalle(local,r) {
+  const c=r.calculo;
+  const ov=modal(r.nombre,`<p>${num(r.raciones)} raciones por elaboración · PVP ${eur2(r.pvp)} por ración (IVA ${num(r.iva)} %)</p><div class="rows">${c.ingredientes.map(i=>`<div class="row"><div class="grow"><b>${esc(i.nombre)}</b><div class="t2">${num(i.cantidad)} ${esc(i.unidad_uso)} · merma ${num(i.merma)} %<br>${esc(i.proveedor)} · ${i.precio_compra==null?'Sin precio válido':`${eur2(i.precio_compra)}/${esc(i.unidad_compra)} · ${esc(i.fecha_precio)} · documento #${i.factura_id}`}</div></div><b>${i.coste==null?'Pendiente':eur2(i.coste)}</b></div>`).join('')}</div><p><b>${c.faltan?'Coste incompleto: revisa los ingredientes sin precio.':`Coste por ración: ${eur2(c.coste_racion)} · margen de ingredientes: ${c.margen==null?'sin PVP':eur2(c.margen)}`}</b></p><p class="mut">Las cantidades corresponden al producto aprovechable. La merma aumenta la cantidad de compra necesaria. Los formatos se mantienen según la conversión que hayas confirmado en la receta.</p><div class="toolbar"><button class="btn primary" id="escEdit">Editar receta</button><button class="btn" id="escHist">Versiones</button><button class="btn" id="escEstado">${r.activo?'Archivar':'Recuperar'}</button><button class="btn" id="escVolver">Volver</button></div>`);
+  ov.querySelector('#escEdit').onclick=()=>{ov.remove();escEditar(local,r);};
+  ov.querySelector('#escVolver').onclick=()=>{ov.remove();escListado(local,!r.activo);};
+  ov.querySelector('#escHist').onclick=async()=>{try{const j=await apiRaw(`/api/escandallos/${r.id}/versiones?local=${encodeURIComponent(local)}`);modal('Versiones · '+r.nombre,j.data.map(v=>`<div class="row"><div class="grow"><b>v${v.version} · ${esc(v.datos.nombre)}</b><div class="t2">${esc(v.autor)} · ${esc(String(v.creado_en).slice(0,16).replace('T',' '))}<br>${num(v.datos.raciones)} raciones · PVP ${eur2(v.datos.pvp)} · ${v.datos.ingredientes.length} ingredientes · ${v.datos.activo?'activa':'archivada'}</div></div></div>`).join(''));}catch(e){toast(e.message);}};
+  ov.querySelector('#escEstado').onclick=async()=>{try{await apiSend('POST',`/api/escandallos/${r.id}/estado`,{local,version:r.version,activo:!r.activo});ov.remove();escListado(local);}catch(e){toast(e.message);}};
+}
+async function escEditar(local,receta=null) {
+  const ingredientes=(receta?.ingredientes||[]).map(i=>({...i}));
+  let fuentes=[];
+  const ov=modal(receta?'Editar '+receta.nombre:'Nueva receta',`<form id="escForm"><label>Nombre<input class="inp" name="nombre" required maxlength="160" value="${esc(receta?.nombre||'')}"></label><div class="esc-campos"><label>Raciones por elaboración<input class="inp" type="number" name="raciones" min="0.001" step="any" required value="${receta?.raciones||1}"></label><label>PVP por ración, con IVA<input class="inp" type="number" name="pvp" min="0" step="any" required value="${receta?.pvp??0}"></label><label>IVA de venta (%)<input class="inp" type="number" name="iva" min="0" max="100" step="any" required value="${receta?.iva??''}" placeholder="Indica el IVA"></label></div><div id="escIngredientes"></div><hr><label>Buscar ingrediente en compras<input class="inp" id="escBusca" placeholder="Nombre del producto"></label><button type="button" class="btn" id="escBuscar">Buscar</button><p class="mut" id="escFuenteEstado"></p><label>Producto, proveedor y formato<select class="inp" id="escFuente"></select></label><button type="button" class="btn" id="escAnadir">Añadir ingrediente</button><p class="mut">Confirma la conversión: si compras una caja de 6 litros y usas mililitros, una caja contiene 6000 ml. Una nueva presentación requiere revisar esta equivalencia.</p><div class="toolbar"><button type="submit" class="btn primary">Guardar receta</button><button type="button" class="btn" id="escCancelar">Cancelar</button></div></form>`);
+  const leer=()=>ov.querySelectorAll('[data-ing]').forEach(el=>{const i=ingredientes[Number(el.dataset.ing)]; for(const key of ['cantidad','factor','merma','unidad_uso'])i[key]=el.querySelector(`[name="${key}"]`).value;});
+  const pintar=()=>{ov.querySelector('#escIngredientes').innerHTML=ingredientes.map((i,n)=>`<div class="card esc-ingrediente" data-ing="${n}"><b>${esc(i.nombre)}</b><p class="mut">${esc(i.proveedor)} · compra en ${esc(i.unidad_compra)}</p><div class="esc-campos"><label>Cantidad aprovechable<input class="inp" name="cantidad" type="number" min="0.000001" step="any" required value="${esc(String(i.cantidad))}"></label><label>Unidad de uso<input class="inp" name="unidad_uso" required maxlength="50" placeholder="g, ml, ud…" value="${esc(i.unidad_uso)}"></label><label>Unidades de uso en 1 ${esc(i.unidad_compra)}<input class="inp" name="factor" type="number" min="0.000001" step="any" required value="${esc(String(i.factor))}"></label><label>Merma (%)<input class="inp" name="merma" type="number" min="0" max="99.999" step="any" required value="${esc(String(i.merma))}"></label></div><button class="btn sm" type="button" data-quitar="${n}">Quitar ingrediente</button></div>`).join('');ov.querySelectorAll('[data-quitar]').forEach(b=>b.onclick=()=>{leer();ingredientes.splice(Number(b.dataset.quitar),1);pintar();});};
+  pintar();
+  let busqueda=0;
+  const buscar=async()=>{const turno=++busqueda;try{const j=await apiRaw(`/api/escandallos/fuentes?local=${encodeURIComponent(local)}&q=${encodeURIComponent(ov.querySelector('#escBusca').value)}`);if(turno!==busqueda||!ov.isConnected)return;fuentes=j.data;ov.querySelector('#escFuente').innerHTML=fuentes.map((f,n)=>`<option value="${n}">${esc(f.nombre)} · ${esc(f.proveedor)} · ${eur2(f.precio)}/${esc(f.unidad_compra)}</option>`).join('');ov.querySelector('#escFuenteEstado').textContent=j.limitado?'Se muestran 500 resultados; concreta la búsqueda.':fuentes.length?`${fuentes.length} formatos con compras válidas.`:'Sin compras válidas con cantidad, importe y unidad. Revisa primero las líneas de las facturas.';}catch(e){toast(e.message);}};
+  ov.querySelector('#escBuscar').onclick=buscar;
+  ov.querySelector('#escAnadir').onclick=()=>{leer();const f=fuentes[Number(ov.querySelector('#escFuente').value)];if(!f)return toast('Busca y selecciona un producto.');ingredientes.push({clave:f.clave,proveedor:f.proveedor,unidad_compra:f.unidad_compra,nombre:f.nombre,cantidad:1,factor:'',unidad_uso:'',merma:0});pintar();};
+  ov.querySelector('#escCancelar').onclick=()=>{ov.remove();escListado(local);};
+  ov.querySelector('form').onsubmit=async e=>{e.preventDefault();leer();const boton=e.submitter;boton.disabled=true;try{const f=e.target.elements;await apiSend(receta?'PUT':'POST','/api/escandallos'+(receta?'/'+receta.id:''),{local,version:receta?.version,nombre:f.nombre.value,raciones:f.raciones.value,pvp:f.pvp.value,iva:f.iva.value,ingredientes});ov.remove();toast('Receta guardada');escListado(local);}catch(err){toast(err.message);boton.disabled=false;}};
+  await buscar();
+}
+
 async function loadProductos() {
   const view = document.getElementById("view");
   facScope();   // el establecimiento lo fija el selector de la barra, como en el resto
@@ -9517,6 +9600,7 @@ async function loadProductos() {
   // Antes se metían seis meses por su cuenta y la pantalla abría con un filtro puesto que nadie
   // había pedido — y con unas cifras que parecían el total y no lo eran.
   view.innerHTML = productosHeader() + `<div id="dicRes"></div><div id="compRes"><p class="mut">Cargando…</p></div>`;
+  document.getElementById("escAbrir")?.addEventListener("click", () => escListado());
   await refrescarCompras();
   comprasPaquetes();                 // tampoco se espera: es un aviso, no un dato de la tabla
   dicPedir();                        // no se espera: la cola llega cuando llegue
@@ -16081,6 +16165,7 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-pin") rrAsignarPin(t.getAttribute("data-id"));
   else if (act === "rr-reset-pass") rrResetPassword(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-doc-subir") rrDocSubir(t.getAttribute("data-id"));
+  else if (act === "rr-doc-firma") rrFirmaDocumento(t.getAttribute("data-id"));
   else if (act === "rr-doc-ver") rrVerDocumento(t.getAttribute("data-id"));
   else if (act === "rr-doc-del") rrDocDel(t.getAttribute("data-id"));
   else if (act === "cand-contratar") rrContratar(t.getAttribute("data-id"), t.getAttribute("data-nombre"));

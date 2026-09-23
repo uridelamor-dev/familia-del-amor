@@ -137,6 +137,7 @@ export function sanearModulos(rol, modulosGuardados, catalogo = CATALOGO_MODULOS
  */
 export const MODULO_POR_RUTA = [
   ["/api/reservas", "reservas"],
+  ["/api/escandallos", "productos"],
   ["/api/dashboard", "dashboard"],
   ["/api/comunicados", "comunicados"],
   ["/api/mantenimiento", "mantenimiento"],

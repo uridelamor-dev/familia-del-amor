@@ -83,6 +83,9 @@ import { planRepetir, resumenPlan } from "./src/modules/horarios/repetir.js";
 import { configLegible, motivoNoGuardar, AVISO_NO_RETROACTIVO, PARAMETROS } from "./src/modules/horarios/config.js";
 import { validarPublicacion, construirSnapshot, cambiosPorTrabajador } from "./src/modules/horarios/versiones.js";
 import { serializarCanonico } from "./src/core/canonico.js";
+import { ensureSchemaFirmas, registrarBorradoresFirma } from "./src/modules/rrhh/firmas/borradores.js";
+import { ensureSchemaEscandallos } from "./src/modules/escandallos/schema.js";
+import { registrarEscandallos } from "./src/modules/escandallos/rutas.js";
 import { validarTurno, resumenOperativo } from "./src/modules/horarios/operativa.js";
 import { construirCuadrante } from "./src/modules/horarios/cuadrante.js";
 import { generarSemana, ORIGEN as ORIGEN_SOLVER } from "./src/modules/horarios/solver.js";
@@ -1214,6 +1217,7 @@ async function initDB() {
           creado_en TEXT NOT NULL
         )`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_hrdocs_worker ON hr_documentos(worker_id)`);
+      await ensureSchemaFirmas((sql,p=[]) => client.query(sql,p));
     } catch (e) { console.error("[DB] hr_documentos:", e.message); }
     // Cuánta plantilla queda por configurar en cuanto a áreas. Se dice en el arranque porque
     // mientras alguien esté sin configurar el generador lo sigue aceptando para CUALQUIER
@@ -2012,6 +2016,9 @@ async function initDB() {
     } catch (e) {
       console.error("[DB] Aviso: esquema de establecimientos no inicializado (no fatal):", e.message);
     }
+
+    try { await ensureSchemaEscandallos((sql,p=[]) => client.query(sql,p)); }
+    catch(e) { console.error("[DB] escandallos:",e.message); }
 
     // Horarios y fichajes. Aditivo e idempotente, y NO fatal por la misma razón: si algo
     // fallara aquí, reservas y facturas deben seguir arrancando.
@@ -5033,6 +5040,16 @@ app.get("/api/leads", requireAuth(["direccion", "marketing"]), async (req, res) 
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error leyendo leads" });
   }
+});
+
+registrarEscandallos(app, {
+  auth: requireAuth(["direccion", "contabilidad"]), dbAll, dbGet, pool,
+  albaranContado: ALBARAN_YA_CONTADO, hoy: hoyISO,
+  scope: req => {
+    const local=String(req.query.local || req.body?.local || "");
+    if(!INV_LOCALES.includes(local) || !puedeAccederLocal(req,local)) return null;
+    return {local:localCentro(local,"compras"),locales:comprasDe(local)};
+  },
 });
 
 // ── Compras por producto (detalle de las facturas) ───────────────────────────
@@ -18362,6 +18379,19 @@ app.put("/api/rrhh/trabajador/:id", requireAuth(RRHH_ROLES), async (req, res) =>
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+registrarBorradoresFirma(app, {
+  auth: requireAuth(["rrhh", "direccion"]), dbAll, dbGet, pool, puedeLocal: rrhhPuedeLocal,
+  leerPdf: async doc => {
+    const guardada=String(doc.url||"");
+    if(!guardada.startsWith("rrhh:")) throw new Error("Documento fuera del archivo privado");
+    const contenido=await fs.promises.readFile(path.join(rrhhDocsDir,path.basename(guardada.slice(5))));
+    const {PDFDocument}=await import("pdf-lib");
+    const pdf=await PDFDocument.load(contenido);
+    if(!pdf.getPageCount()) throw new Error("PDF sin páginas");
+    return contenido;
+  },
+});
+
 app.get("/api/rrhh/trabajador/:id/documentos", requireAuth(RRHH_ROLES), async (req, res) => {
   try {
     const wl = await rrhhWorkerLocal(req.params.id);
@@ -18455,6 +18485,8 @@ app.delete("/api/rrhh/documento/:id", requireAuth(RRHH_ROLES), async (req, res) 
     const wl = await rrhhWorkerLocal(doc.worker_id);
     if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso" });
     if (esEncargado(req) && (doc.sensible === 1 || doc.sensible === true)) return res.status(403).json({ ok: false, error: "Documento sensible" });
+    const firma=await dbGet("SELECT id FROM rrhh_firma_borradores WHERE documento_id=? LIMIT 1",[req.params.id]);
+    if(firma) return res.status(409).json({ok:false,error:"Este documento tiene un historial de preparación de firma y se conserva como evidencia. Puedes cancelar su borrador de firma."});
     await dbRun("DELETE FROM hr_documentos WHERE id = ?", [req.params.id]);
     // El fichero también, y solo el del directorio privado: en `public/uploads` puede haber
     // quedado el original de antes de la migración y borrarlo a ciegas es tocar el disco de

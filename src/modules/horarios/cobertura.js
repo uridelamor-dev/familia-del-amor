@@ -15,4 +15,3 @@ export function coberturaFranja({ asignaciones = [], dia, area_id, inicio_min, f
       sin_asignar: presentes.filter(a => a.worker_id == null).length };
   });
 }
-

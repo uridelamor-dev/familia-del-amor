@@ -318,7 +318,7 @@ describe("la pantalla", () => {
   });
   test("las dos fichas se piden a la vez", () => {
     assert.match(app, /apiRaw\("\/api\/rrhh\/trabajador\/" \+ id \+ "\/ficha-laboral"\)/);
-    assert.match(app, /const \[fi, lab\] = await Promise\.all/);
+    assert.match(app, /const \[notas, fi, lab\] = await Promise\.all/);
   });
   test("«sin configurar» y «ninguna área» se dicen distinto", () => {
     assert.match(app, /!f\.areas\.configurado/);

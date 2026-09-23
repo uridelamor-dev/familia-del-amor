@@ -97,7 +97,7 @@ test('editar datos guarda campos nuevos sin sobrescribir otros y revierte si fal
   async function ejecutar(fallo=false,rol='rrhh'){
     let handler;const writes=[];
     const start=server.indexOf('app.put("/api/rrhh/trabajador/:id",');
-    const end=server.indexOf('app.get("/api/rrhh/trabajador/:id/documentos"',start);
+    const end=server.indexOf('\nregistrarBorradoresFirma(',start); // La siguiente pieza registrada ya no pertenece a editar datos.
     const client={query:async(sql,args)=>{writes.push({sql,args});if(fallo&&sql.startsWith('UPDATE rrhh_datos_alta'))throw Error('Fallo simulado')},release:()=>{}};
     const env={app:{put:(_u,_m,fn)=>handler=fn},requireAuth:()=>null,RRHH_ROLES:[],dbGet:async()=>({id:7,local:base.local}),rrhhPuedeLocal:()=>true,sanearDatosAlta,hoyISO:()=>hoy,esEncargado:()=>rol==='encargado',HR_CAMPOS_ENC:['email'],HR_CAMPOS_DIR:['email','dni'],CAMPOS_PRIVADOS,puedeVerPrivado,toPositional:x=>x,pool:{connect:async()=>client},invalidarInternos:()=>{}};
     vm.runInNewContext(server.slice(start,end),env);

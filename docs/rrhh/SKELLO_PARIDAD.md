@@ -25,7 +25,8 @@ Estado: desarrollo, pendiente de revisión y despliegue. No se ha importado info
 | Publicación parcial por trabajador | Pendiente; actualmente la publicación es semanal completa |
 | Tablet, correcciones, aprobación, bolsa y cierres | Existente; planificación, reloj y validación siguen separados |
 | Comparativo descargable | Añadido CSV: planificado, fichado, pausas, efectivo y validado; aprobaciones caducadas identificadas |
-| Firma electrónica y seguimiento 0/2, 1/2, 2/2 | Pendiente de implementación e integración de firma |
+| Preparación de firma | Añadida: borrador privado, trabajador y empresa, correos, PDF y huella SHA-256; cancelación con historial |
+| Envío y firma electrónica, seguimiento 0/2, 1/2, 2/2 | Pendiente de integración de proveedor; los borradores no envían ni firman |
 | Intercambios solicitados por trabajadores | Pendiente de confirmar uso y diseñar aprobación |
 | Nóminas: reparto individual masivo | Pendiente; hoy se guardan documentos por ficha |
 | Importación Skello | Aplazada hasta aceptación funcional; sin migración ejecutada |
@@ -36,7 +37,9 @@ No existe todavía equivalencia total con Skello. Que una pieza figure como exis
 
 Skello utiliza Yousign con autenticación SMS y expediente de prueba. Para reproducir ese proceso se preparará una integración de proveedor, no se equiparará un dibujo o un botón de «leído» a ese servicio.
 
-Flujo requerido: PDF privado original → trabajador y, opcionalmente, firmante de empresa → vista previa y posiciones → solicitud → seguimiento por firmante → documento firmado y expediente descargables. Estados pendientes, parcialmente firmado, finalizado, rechazado, caducado y cancelado. Las notificaciones del proveedor deben ser autenticadas e idempotentes. Original, hash y trazabilidad se conservan; ningún estado «firmado» se acepta desde el navegador.
+La preparación guarda una instantánea de los firmantes y la huella del original, impide borrarlo si tiene historial y no admite estados de firma desde el cliente. Antes de activar envíos hay que volver a verificar huella, contactos y permisos.
+
+Flujo completo requerido: PDF privado original → trabajador y, opcionalmente, firmante de empresa → vista previa y posiciones → solicitud → seguimiento por firmante → documento firmado y expediente descargables. Estados pendientes, parcialmente firmado, finalizado, rechazado, caducado y cancelado. Las notificaciones del proveedor deben ser autenticadas e idempotentes. Original, hash y trazabilidad se conservan; ningún estado «firmado» se acepta desde el navegador.
 
 Antes de activarlo faltará cuenta/API del proveedor elegido, condiciones económicas, remitente y prueba completa en sandbox. No se enviarán documentos reales durante el desarrollo. La cuenta de firma de Skello no supone disponer de API propia de Yousign.
 

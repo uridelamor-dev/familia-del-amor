@@ -69,6 +69,12 @@ const companies = [
 
 const i18n = {
   es: {
+    reservation_choose_local: "Elige local…",
+    cta_about: "Conocernos →",
+    cta_more: "Ver más →",
+    footer_privacy: "Privacidad",
+    footer_staff: "Acceso interno",
+
     hero_eyebrow: "Grupo familiar de empresas",
     hero_title: "Familia del Amor",
     hero_sub: "Sabor, tradición y alegría compartida en cada local.",
@@ -114,6 +120,8 @@ const i18n = {
     reservation_time_q: "¿A qué hora?",
     reservation_people_q: "¿Cuántos?",
     reservation_people_unit: "personas",
+    reservation_people_less: "Menos personas",
+    reservation_people_more: "Más personas",
     reservation_phone_q: "Teléfono",
     reservation_name_q: "Nombre de la reserva",
     time_slot_lunch: "Mediodía",
@@ -191,6 +199,12 @@ const i18n = {
     history_p6: "Más allá de los locales o los negocios, lo que realmente nos mueve sigue siendo lo mismo que movía a nuestros abuelos hace tantos años: crear buenos momentos alrededor de una mesa, cuidar cada detalle y conseguir que quien venga una vez, siempre quiera volver."
   },
   ca: {
+    reservation_choose_local: "Tria un local…",
+    cta_about: "Coneix-nos →",
+    cta_more: "Veure'n més →",
+    footer_privacy: "Privacitat",
+    footer_staff: "Accés intern",
+
     hero_eyebrow: "Grup familiar d'empreses",
     hero_title: "Familia del Amor",
     hero_sub: "Sabor, tradició i alegria compartida a cada local.",
@@ -231,11 +245,13 @@ const i18n = {
     legal_text: "Polítiques de privacitat, cookies i condicions.",
     lead_name: "Nom",
     lead_phone: "Telèfon",
-    reservation_local_q: "¿En quin local?",
-    reservation_day_q: "¿Quin dia?",
-    reservation_time_q: "¿A quina hora?",
-    reservation_people_q: "¿Quants?",
+    reservation_local_q: "En quin local?",
+    reservation_day_q: "Quin dia?",
+    reservation_time_q: "A quina hora?",
+    reservation_people_q: "Quants?",
     reservation_people_unit: "persones",
+    reservation_people_less: "Menys persones",
+    reservation_people_more: "Més persones",
     reservation_phone_q: "Telèfon",
     reservation_name_q: "Nom de la reserva",
     time_slot_lunch: "Migdia",
@@ -253,7 +269,7 @@ const i18n = {
     contact_link: "hola@familia-del-amor.com",
     ph_choose_date: "Tria la data",
     ph_birth_date: "dd/mm/aaaa",
-    ph_booking_name: "¿A nom de qui?",
+    ph_booking_name: "A nom de qui?",
     err_select_local: "Selecciona un local.",
     err_select_date: "Selecciona una data.",
     err_select_time: "Selecciona una hora.",
@@ -313,6 +329,12 @@ const i18n = {
     history_p6: "Més enllà dels locals o els negocis, el que realment ens mou continua sent el mateix que movia els nostres avis fa tants anys: crear bons moments al voltant d'una taula, cuidar cada detall i aconseguir que qui vingui un cop, sempre vulgui tornar."
   },
   en: {
+    reservation_choose_local: "Choose a venue…",
+    cta_about: "About us →",
+    cta_more: "See more →",
+    footer_privacy: "Privacy",
+    footer_staff: "Staff access",
+
     hero_eyebrow: "Family business group",
     hero_title: "Familia del Amor",
     hero_sub: "Flavor, tradition, and shared joy at every venue.",
@@ -358,6 +380,8 @@ const i18n = {
     reservation_time_q: "What time?",
     reservation_people_q: "How many?",
     reservation_people_unit: "guests",
+    reservation_people_less: "Fewer guests",
+    reservation_people_more: "More guests",
     reservation_phone_q: "Phone",
     reservation_name_q: "Booking name",
     time_slot_lunch: "Lunch",
@@ -480,6 +504,13 @@ function setLang(lang) {
     if (i18n[lang] && i18n[lang][key]) {
       el.textContent = i18n[lang][key];
     }
+  });
+  document.querySelectorAll('a[data-i18n="footer_privacy"]').forEach(el => {
+    el.setAttribute('href', lang === 'ca' ? 'privacitat.html' : 'privacidad.html');
+  });
+  document.querySelectorAll("[data-i18n-aria]").forEach(el => {
+    const key = el.getAttribute("data-i18n-aria");
+    if (i18n[lang]?.[key]) el.setAttribute("aria-label", i18n[lang][key]);
   });
   document.querySelectorAll("[data-i18n-ph]").forEach((el) => {
     const key = el.getAttribute("data-i18n-ph");

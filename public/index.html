@@ -117,24 +117,24 @@
           <div class="reserva-step">
             <div class="reserva-step-label" data-i18n="reservation_local_q">¿En qué local?</div>
             <select name="local" id="localSelect" class="reserva-select" aria-label="Local">
-              <option value="">Elige local…</option>
+              <option value="" data-i18n="reservation_choose_local">Elige local…</option>
             </select>
             <input type="hidden" id="localValue" />
           </div>
           <div class="reserva-row reserva-row--datetime">
             <div class="reserva-col">
               <div class="reserva-step">
-                <div class="reserva-step-label" data-i18n="reservation_day_q">¿Qué día?</div>
-                <input type="text" id="diaDisplay" class="reserva-date-input" data-date-input="dia" data-date-mode="future" placeholder="Elige fecha" data-i18n-ph="ph_choose_date" readonly required />
+                <div class="reserva-step-label" id="reservaDiaLabel" data-i18n="reservation_day_q">¿Qué día?</div>
+                <input type="text" id="diaDisplay" aria-labelledby="reservaDiaLabel" class="reserva-date-input" data-date-input="dia" data-date-mode="future" placeholder="Elige fecha" data-i18n-ph="ph_choose_date" readonly required />
                 <input type="hidden" id="diaValue" name="dia" />
               </div>
               <div class="reserva-step">
                 <div class="reserva-step-label" data-i18n="reservation_people_q">¿Cuántos?</div>
                 <div class="stepper">
-                  <button type="button" class="stepper-btn" id="personasMinus">−</button>
-                  <span id="personasDisplay">2</span>
+                  <button type="button" class="stepper-btn" id="personasMinus" aria-label="Menos personas" data-i18n-aria="reservation_people_less">−</button>
+                  <span id="personasDisplay" aria-live="polite">2</span>
                   <span class="stepper-unit" data-i18n="reservation_people_unit">personas</span>
-                  <button type="button" class="stepper-btn" id="personasPlus">+</button>
+                  <button type="button" class="stepper-btn" id="personasPlus" aria-label="Más personas" data-i18n-aria="reservation_people_more">+</button>
                 </div>
                 <input type="hidden" name="personas" id="personasValue" value="2" />
               </div>
@@ -147,12 +147,12 @@
           </div>
           <div class="reserva-row">
             <div class="reserva-step">
-              <div class="reserva-step-label" data-i18n="reservation_phone_q">Teléfono</div>
-              <input type="tel" name="telefono" autocomplete="tel" required placeholder="+34 600 000 000" />
+              <div class="reserva-step-label" id="reservaTelLabel" data-i18n="reservation_phone_q">Teléfono</div>
+              <input type="tel" name="telefono" aria-labelledby="reservaTelLabel" autocomplete="tel" required placeholder="+34 600 000 000" />
             </div>
             <div class="reserva-step" style="flex:2">
-              <div class="reserva-step-label" data-i18n="reservation_name_q">Nombre de la reserva</div>
-              <input type="text" name="nombre_reserva" autocomplete="name" required placeholder="¿A nombre de quién?" data-i18n-ph="ph_booking_name" />
+              <div class="reserva-step-label" id="reservaNombreLabel" data-i18n="reservation_name_q">Nombre de la reserva</div>
+              <input type="text" name="nombre_reserva" aria-labelledby="reservaNombreLabel" autocomplete="name" required placeholder="¿A nombre de quién?" data-i18n-ph="ph_booking_name" />
             </div>
           </div>
           <button class="btn" type="submit" data-i18n="reservation_submit">Confirmar reserva</button>
@@ -197,19 +197,19 @@
             <div style="font-size:2rem">👨‍👩‍👧‍👦</div>
             <strong data-i18n="nav_about" style="font-size:1.1rem">Nuestra historia</strong>
             <p class="muted" style="margin:0;font-size:0.88rem" data-i18n="history_sub">Nuestra manera de hacer las cosas, desde dentro.</p>
-            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto">Conocernos →</span>
+            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto" data-i18n="cta_about">Conocernos →</span>
           </a>
           <a href="eventos.html" class="card card-link" style="display:flex;flex-direction:column;gap:0.5rem;padding:1.4rem">
             <div style="font-size:2rem">🎉</div>
             <strong data-i18n="events_title" style="font-size:1.1rem">Celebraciones y eventos</strong>
             <p class="muted" style="margin:0;font-size:0.88rem" data-i18n="events_text">Cumpleaños, comuniones, eventos de empresa… lo organizamos todo.</p>
-            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto">Ver más →</span>
+            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto" data-i18n="cta_more">Ver más →</span>
           </a>
           <a href="trabaja.html" class="card card-link" style="display:flex;flex-direction:column;gap:0.5rem;padding:1.4rem">
             <div style="font-size:2rem">👷</div>
             <strong data-i18n="jobs_title" style="font-size:1.1rem">Trabaja con nosotros</strong>
             <p class="muted" style="margin:0;font-size:0.88rem" data-i18n="jobs_text">Envíanos tu CV y cuéntanos en qué área te gustaría aportar.</p>
-            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto">Ver más →</span>
+            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto" data-i18n="cta_more">Ver más →</span>
           </a>
         </div>
       </section>
@@ -229,9 +229,9 @@
     <footer class="footer">
       <div class="footer-inner">
         <span style="font-size:0.8rem;color:var(--muted)">© Familia del Amor</span>
-        <a href="privacidad.html" style="font-size:0.8rem;color:var(--muted);text-decoration:underline;text-underline-offset:2px">Privacidad</a>
+        <a href="privacidad.html" style="font-size:0.8rem;color:var(--muted);text-decoration:underline;text-underline-offset:2px" data-i18n="footer_privacy">Privacidad</a>
         <button type="button" class="pie-enlace" data-cookies>Cookies</button>
-        <a class="btn ghost" href="login.html" style="font-size:0.75rem;opacity:0.5">Acceso interno</a>
+        <a class="btn ghost" href="login.html" style="font-size:0.75rem;opacity:0.5" data-i18n="footer_staff">Acceso interno</a>
       </div>
     </footer>
 
