@@ -568,7 +568,7 @@
         if (!j || !j.ok) { fallo((j && j.error) || M.error || "…"); return; }
         // EL ALTA, A META. Esto faltaba: al migrar del formulario clásico al configurable se
         // perdió el evento y estos formularios no reportaban ni una conversión.
-        meta("Lead");
+        if (j.evento_lead === true) meta("Lead");
         // La MISMA pantalla exista o no el teléfono: si se distinguieran, esto sería un
         // comprobador de qué números están en nuestra base.
         caja.innerHTML = "";

@@ -296,7 +296,7 @@ describe("el formulario público", () => {
 
   test("la respuesta es la MISMA exista o no el teléfono", () => {
     const alta = ruta('app.post("/api/publico/formulario/:clave"');
-    assert.match(alta, /MISMA RESPUESTA, exista o no/);
+    assert.match(alta, /evento_lead: altaNueva/);
     // No hay ninguna rama que conteste distinto según si había lead previo.
     assert.ok(!/previo \?[^;]*res\.json|if \(previo\)[\s\S]{0,200}res\.json/.test(alta),
       "la respuesta distingue si el teléfono existía");

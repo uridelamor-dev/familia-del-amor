@@ -5,7 +5,7 @@ import pino from "pino";
 import Anthropic from "@anthropic-ai/sdk";
 import { anteponerCitado as ctxAnteponerCitado, ORIGEN as CTX_ORIGEN }
   from "./src/modules/messaging/contexto.js";
-import { estaPausada, MOTIVO_PAUSA, pidePersona, idiomaSugerido, lineaIdioma, pistaIdioma }
+import { estaPausada, MOTIVO_PAUSA, pidePersona, idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia, pulirCatalan }
   from "./src/modules/messaging/sara.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -158,11 +158,14 @@ La actitud es siempre: "Estoy aquí para ayudarte, dime qué necesitas."
 Responde SIEMPRE en el idioma en que te escribe el cliente, conversando con naturalidad. No traduzcas literalmente: habla ese idioma.
 Catalán → catalán. Castellano → castellano. Inglés → inglés. Y si te escribe en otro que manejes, también en ese.
 El idioma del cliente GANA al de cualquier mensaje anterior nuestro: si le mandamos algo en catalán y te contesta en inglés, le contestas en inglés.
+En catalán usa catalán estándar natural de Cataluña. No mezcles «dime», «algo», «necesites», «puga» ni signos de apertura ¿/¡ con frases catalanas. Escribe «digues-me», «alguna cosa», «necessitis», «pugui». Por ejemplo: «De res! T’hi esperem 😊». Revisa concordancia, apóstrofos, acentos y pronombres antes de contestar. No uses negritas anidadas ni dobles asteriscos en WhatsApp.
 Si su mensaje es demasiado corto para saberlo ("Hola", "Sí", "Ok"), usa el idioma de sus mensajes anteriores. En el contexto encontrarás una pista.
 
 ## Mensajes nuestros anteriores
 En el contexto verás mensajes marcados como enviados por nosotros —por ti, por una persona del equipo, por el sistema o por una campaña—, a veces con su campaña y su fecha.
 Si el cliente parece estar respondiendo a uno de ellos, interpreta lo que dice DENTRO de ese contexto. Si te dice "ese día trabajo" y el mensaje anterior hablaba de un día concreto, se refiere a ese día: no le preguntes de qué día habla, que ya está escrito ahí arriba.
+Un agradecimiento a nuestra invitación solo necesita una respuesta breve: «De res! T’hi esperem 😊» / «¡De nada! Te esperamos 😊». No vuelvas a presentarte, no preguntes en qué puedes ayudar y no ofrezcas reservas o la carta sin que lo pidan.
+Si pregunta dónde estamos después de recibir una promoción, contesta la ubicación DEL LOCAL DE ESA PROMOCIÓN cuando conste en el contexto; nunca enumeres todos los locales ni sugieras que el regalo sirve en cualquiera. Si no consta el local o hay varias promociones posibles, pregunta a cuál se refiere. Si falta una condición, consulta al equipo antes de afirmarla.
 Cuando el cliente usa "Responder" de WhatsApp verás el mensaje citado marcado como tal: ese manda sobre el resto del historial.
 
 ## Promociones y códigos: lo que sabes y lo que no
@@ -368,6 +371,8 @@ export function olvidarSesion(jid) {
 // Hook para rehidratar el historial desde la BD tras un reinicio del proceso
 let historialLoader = null;
 export function setHistorialLoader(fn) { historialLoader = fn; }
+let campanaLoader = null;
+export function setCampanaLoader(fn) { campanaLoader = fn; }
 
 // Cola por cliente: si llegan dos mensajes del mismo jid durante un bucle
 // agéntico largo, se procesan en serie para no corromper el historial
@@ -568,6 +573,14 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
     try { perfil = await perfilLoader(jid); } catch (e) { console.error("Error cargando perfil WA:", e.message); }
   }
 
+  const telefonoContexto = await resolverTelefono(jid);
+  let campana = null;
+  let falloContexto = false;
+  if (campanaLoader && telefonoContexto) {
+    try { campana = await campanaLoader(telefonoContexto); }
+    catch (e) { falloContexto = true; console.error("Error cargando campaña WA:", e.message); }
+  }
+
   // 1b. Reserva reciente del cliente (por teléfono). Da contexto aunque el jid no
   // coincida con el de la confirmación (p. ej. reservas web o jids @lid).
   let reservaCtx = "";
@@ -591,12 +604,13 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
     }
   }
 
-  // 3. Rehidratar memoria desde la BD si el proceso se reinició a mitad de conversación
-  if (!conversaciones.has(jid) && historialLoader) {
+  // 3. Refrescar en cada turno: las campañas y las respuestas del equipo llegan fuera del Map.
+  if (historialLoader) {
     try {
-      const previo = await historialLoader(jid);
+      const previo = await historialLoader(jid, telefonoContexto);
       if (previo?.length) conversaciones.set(jid, previo);
     } catch (err) {
+      falloContexto = true;
       console.error("Error cargando historial WA:", err.message);
     }
   }
@@ -608,7 +622,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
   const partesFecha = `[CONTEXTO INTERNO: Fecha y hora actual en España: ${getContextoFechaHora()}.]`;
   const partesRetraso = contextoRetraso ? ` ${contextoRetraso}` : "";
   // Si es primer contacto y no conocemos al cliente NI tiene reserva reciente, Sara se presenta
-  const partesPrimer = (esPrimerMensaje && !perfil?.nombre && !reservaCtx)
+  const partesPrimer = (esPrimerMensaje && !perfil?.nombre && !reservaCtx && !campana?.texto && !citado)
     ? " Es el primer mensaje de este cliente: preséntate como Sara, asistente de IA de Familia del Amor, y responde a su consulta."
     : "";
   const parteAdjunto = adjuntoUrl ? ` [Ha adjuntado un archivo: ${adjuntoUrl}]` : "";
@@ -628,12 +642,15 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
   const pista = idiomaSugerido({
     mensajesCliente: suyos,
     idiomaContacto: perfil?.idioma_ultimo || null,
-    idiomaCampana: null,
+    idiomaCampana: campana?.idioma || null,
   });
   const parteIdioma = ` ${lineaIdioma(pista)}`;
 
+  const parteCampana = campana?.texto ? ` ${campana.texto}` : "";
+  const parteFallo = falloContexto
+    ? " [CONTEXTO INTERNO: no se ha podido recuperar todo el contexto. Si se refiere a una invitación o a una promoción y falta el dato, no adivines: consulta al equipo con pasar_a_persona.]" : "";
   const contenidoUsuario =
-    `${partesFecha}${partesRetraso}${reservaCtx}${partesPrimer}${parteIdioma} ${mensajeUsuario}${parteAdjunto}`;
+    `${partesFecha}${partesRetraso}${reservaCtx}${parteCampana}${parteFallo}${partesPrimer}${parteIdioma} ${mensajeUsuario}${parteAdjunto}`;
 
   // Se recuerda el idioma que se le ha detectado, para poder desempatar un «Hola» a secas
   // dentro de tres días. Solo cuando el mensaje daba para decidirlo: guardar una suposición
@@ -648,6 +665,11 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
   historial.push({ role: "user", content: contenidoUsuario });
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
 
+  const cortesia = respuestaCortesia(mensajeUsuario, pista.idioma, !!campana?.texto);
+  if (cortesia) {
+    historial.push({ role: "assistant", content: cortesia });
+    return cortesia;
+  }
   const ai = getAnthropic();
   if (!ai) return "Lo siento, el asistente no está disponible en este momento.";
 
@@ -710,8 +732,9 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
         : "¡Listo! ¿Puedo ayudarte en algo más? 😊");
 
 
-    historial.push({ role: "assistant", content: respuestaCliente });
-    return respuestaCliente;
+    const respuestaFinal = pulirCatalan(respuestaCliente, pista.idioma);
+    historial.push({ role: "assistant", content: respuestaFinal });
+    return respuestaFinal;
   } catch (err) {
     // `err.error` es un objeto del SDK: se redacta antes de escribirlo. No lleva material
     // criptográfico, pero un objeto de error de una librería no se imprime crudo y punto.
@@ -1288,7 +1311,12 @@ export async function numeroTieneWhatsApp(telefono) {
   if (!clientReady || !sock) return null;
   try {
     const jid = formatPhone(telefono);
-    const r = await sock.onWhatsApp(jid);
+    let reloj;
+    const r = await Promise.race([
+      sock.onWhatsApp(jid),
+      new Promise((resolve) => { reloj = setTimeout(() => resolve(null), 2500); }),
+    ]).finally(() => clearTimeout(reloj));
+    if (r === null) return null;
     if (!Array.isArray(r) || !r.length) return false;
     return !!r[0]?.exists;
   } catch {
