@@ -83,6 +83,7 @@ import { planRepetir, resumenPlan } from "./src/modules/horarios/repetir.js";
 import { configLegible, motivoNoGuardar, AVISO_NO_RETROACTIVO, PARAMETROS } from "./src/modules/horarios/config.js";
 import { validarPublicacion, construirSnapshot, cambiosPorTrabajador } from "./src/modules/horarios/versiones.js";
 import { serializarCanonico } from "./src/core/canonico.js";
+import { validarTurno, resumenOperativo } from "./src/modules/horarios/operativa.js";
 import { construirCuadrante } from "./src/modules/horarios/cuadrante.js";
 import { generarSemana, ORIGEN as ORIGEN_SOLVER } from "./src/modules/horarios/solver.js";
 import { construirPdfSemana, nombreFichero } from "./src/modules/horarios/pdf/schedule-pdf.service.js";
@@ -238,6 +239,7 @@ import { clasificarJornada, resumirRevision, mereceSalir, candidatasDeLote, cuen
 import { periodoDe, saldoDe, movimientosParaJornada, estaCerrado, motivoBloqueo,
          TOLERANCIA_BOLSA_MIN, movimientoBolsa, revertidos, motivoNoLiquidar, motivoNoRevertir,
          CONCEPTOS_LIQUIDACION, enHoras, conSigno, navegarRevision, rangoPorDefecto } from "./src/modules/fichajes/bolsa.js";
+import { csvComparativo, rangoComparativoValido } from "./src/modules/fichajes/comparativo.js";
 import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/export.js";
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { colaDeTrabajo, cobertura } from "./src/modules/facturas/diccionario.js";
@@ -8940,8 +8942,8 @@ app.get("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) =>
     ]);
     // Se trabaja siempre sobre el borrador; si no hay, se ve la publicada en solo lectura.
     const semana = await dbGet(
-      `SELECT * FROM hor_semanas WHERE local = ? AND lunes = ? AND estado IN ('borrador','publicado')
-       ORDER BY CASE estado WHEN 'borrador' THEN 0 ELSE 1 END LIMIT 1`, [local, lunes]
+      `SELECT * FROM hor_semanas WHERE local = ? AND lunes = ? AND estado IN ('borrador','publicado','cerrado')
+       ORDER BY CASE estado WHEN 'borrador' THEN 0 WHEN 'publicado' THEN 1 ELSE 2 END, version DESC LIMIT 1`, [local, lunes]
     );
     const dias = diasSemana(lunes);
     const [asignaciones, ausencias] = await Promise.all([
@@ -8957,7 +8959,9 @@ app.get("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) =>
     // La fila de fiesta se manda ya calculada: la pantalla no la deduce por su cuenta, para
     // que no pueda decir una cosa distinta de la que dice el PDF.
     const descansos = descansosPorDia({ dias, trabajadores: equipo, asignaciones, ausencias, areas });
-    res.json({ ok: true, local, lunes, dias, semana: semana || null, areas, tramos, equipo, asignaciones, ausencias, descansos });
+    const contexto = await horContexto(local, lunes, dias);
+    const operativa = resumenOperativo({ dias, equipo, asignaciones, areas, tramos, ...contexto });
+    res.json({ ok: true, local, lunes, dias, semana: semana || null, areas, tramos, equipo, asignaciones, ausencias, descansos, operativa });
   } catch (e) {
     console.error("[horarios] semana:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar la semana" });
@@ -9046,9 +9050,13 @@ app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, re
     // la semana del 24, no creando una entidad.
     const chk = await horSemanaParaEscribir(req, { semana_id, local: req.body?.local, lunes: req.body?.lunes });
     if (chk.error) return res.status(chk.error).json({ ok: false, error: chk.mensaje });
-    if (!worker_id || !dia) return res.status(400).json({ ok: false, error: "Faltan la persona y el día" });
-    const quien = await horTrabajadorDelLocal(worker_id, chk.semana.local);
+    if (!dia || worker_id === undefined) return res.status(400).json({ ok: false, error: "Indica la persona o elige Sin asignar y el día" });
+    const errorTurno = validarTurno(req.body);
+    if (errorTurno) return res.status(400).json({ ok: false, error: errorTurno });
+    const quien = worker_id == null || worker_id === '' ? { worker: null } : await horTrabajadorDelLocal(worker_id, chk.semana.local);
     if (quien.error) return res.status(quien.error).json({ ok: false, error: quien.mensaje });
+    const errorReferencias = await horValidarReferencias(chk.semana.local, area_id, tramo_id);
+    if (errorReferencias) return res.status(400).json({ ok: false, error: errorReferencias });
     const ini = Number(inicio_min), fin = Number(fin_min);
     if (!Number.isInteger(ini) || !Number.isInteger(fin) || fin < ini || fin > 2160) {
       return res.status(400).json({ ok: false, error: "El horario no es válido" });
@@ -9062,7 +9070,7 @@ app.post("/api/horarios/asignacion", requireAuth(HORARIOS_ROLES), async (req, re
     const fila = await dbRun(
       `INSERT INTO hor_asignaciones (semana_id, local, worker_id, dia, area_id, tramo_id, inicio_min, fin_min, fin_abierto, tipo, nota, creado_en)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
-      [chk.semana.id, chk.semana.local, worker_id, dia, area_id || null, tramo_id || null, ini, fin,
+      [chk.semana.id, chk.semana.local, worker_id || null, dia, area_id || null, tramo_id || null, ini, fin,
        !!req.body.fin_abierto, req.body.tipo || "turno", req.body.nota || null, isoConOffset(Date.now())]
     );
     res.json({ ok: true, asignacion: fila, semana: chk.semana, semanaCreada: !!chk.creada,
@@ -9091,7 +9099,7 @@ async function horTrabajadorDelLocal(workerId, local) {
   if (!["trabajador", "encargado"].includes(w.rol)) {
     return { error: 400, mensaje: `${w.nombre || "Esa cuenta"} no es personal de sala o cocina: no se le puede poner turno.` };
   }
-  if (String(w.local || "") !== String(local)) {
+  if (!personasDe(local).includes(String(w.local || ""))) {
     return { error: 403, mensaje: `${w.nombre || "Esa persona"} no es de ${local}. Solo se puede planificar a la gente de este establecimiento.` };
   }
   return { worker: w };
@@ -9106,7 +9114,7 @@ async function horTrabajadorDelLocal(workerId, local) {
  * pero una persona sí puede decidirlo, y al publicar tiene que aceptar el aviso a propósito.
  */
 async function horAvisoArea(worker, areaId, local) {
-  if (!areaId || !estaConfigurado(worker)) return null;
+  if (!worker || !areaId || !estaConfigurado(worker)) return null;
   const { indice } = await horCapacidades(local);
   if (puedeEnArea(worker, areaId, indice)) return null;
   const area = await dbGet(`SELECT nombre FROM hor_areas WHERE id = ?`, [Number(areaId)]).catch(() => null);
@@ -9126,6 +9134,13 @@ async function horEsBloqueDescanso(tramoId) {
   return esTramoDescanso(t);
 }
 
+// Las referencias deben pertenecer al mismo local, también cuando se arrastra un turno.
+async function horValidarReferencias(local, areaId, tramoId) {
+  if (areaId && !await dbGet(`SELECT id FROM hor_areas WHERE id = ? AND local = ?`, [areaId, local])) return 'Área de otro establecimiento o inexistente';
+  if (tramoId && !await dbGet(`SELECT id FROM hor_tramos WHERE id = ? AND local = ?`, [tramoId, local])) return 'Tramo de otro establecimiento o inexistente';
+  return null;
+}
+
 // Mover o editar un turno. Se usa también al arrastrar en la rejilla.
 app.patch("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (req, res) => {
   try {
@@ -9134,6 +9149,11 @@ app.patch("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (re
     const chk = await horSemanaEditable(req, a.semana_id);
     if (chk.error) return res.status(chk.error).json({ ok: false, error: chk.mensaje });
 
+    const propuesta = { ...a, ...req.body };
+    const errorTurno = validarTurno(propuesta);
+    if (errorTurno) return res.status(400).json({ ok: false, error: errorTurno });
+    const errorReferencias = await horValidarReferencias(chk.semana.local, propuesta.area_id, propuesta.tramo_id);
+    if (errorReferencias) return res.status(400).json({ ok: false, error: errorReferencias });
     const campos = ["worker_id", "dia", "area_id", "tramo_id", "inicio_min", "fin_min", "fin_abierto", "tipo", "nota"];
     const sets = [], vals = [];
     for (const k of campos) {
@@ -9144,7 +9164,7 @@ app.patch("/api/horarios/asignacion/:id", requireAuth(HORARIOS_ROLES), async (re
     if (!sets.length) return res.json({ ok: true, asignacion: a });
     // Reasignar el turno a otra persona pasa por la misma puerta que crearlo.
     let quien = null;
-    if (req.body.worker_id !== undefined) {
+    if (req.body.worker_id != null && req.body.worker_id !== "") {
       quien = await horTrabajadorDelLocal(req.body.worker_id, chk.semana.local);
       if (quien.error) return res.status(quien.error).json({ ok: false, error: quien.mensaje });
     }
@@ -9197,14 +9217,14 @@ app.post("/api/horarios/asignacion/:id/repetir", requireAuth(HORARIOS_ROLES), as
     ]);
     // El turno es de esta semana y la semana es de este local, pero se comprueba igual: es
     // la misma guarda que impide colgar a alguien de Lloret en el cuadrante de Blanes.
-    if (!persona || String(persona.local || "") !== String(chk.semana.local)) {
+    if (t.worker_id != null && (!persona || !personasDe(chk.semana.local).includes(String(persona.local || "")))) {
       return res.status(403).json({ ok: false, error: "Esa persona no es de este establecimiento" });
     }
 
     const plan = planRepetir({ turno: t, dias, asignaciones, ausencias, disponibilidad, persona });
     if (!plan.ok) return res.status(400).json({ ok: false, error: plan.error });
     if (req.query.plan === "1") {
-      return res.json({ ok: true, plan, resumen: resumenPlan(plan, persona.nombre), persona: { id: persona.id, nombre: persona.nombre } });
+      return res.json({ ok: true, plan, resumen: resumenPlan(plan, persona?.nombre || "Sin asignar"), persona: persona ? { id: persona.id, nombre: persona.nombre } : null });
     }
 
     const ahora = isoConOffset(Date.now());
@@ -9222,7 +9242,7 @@ app.post("/api/horarios/asignacion/:id/repetir", requireAuth(HORARIOS_ROLES), as
       detalle: { origen: t.id, dias: plan.aCrear, omitidos: plan.omitidos, bloqueados: plan.bloqueados, semana: chk.semana.lunes },
     }).catch(() => {});
 
-    res.json({ ok: true, creados, plan, mensaje: resumenPlan({ ...plan, aCrear: plan.aCrear }, persona.nombre) });
+    res.json({ ok: true, creados, plan, mensaje: resumenPlan({ ...plan, aCrear: plan.aCrear }, persona?.nombre || "Sin asignar") });
   } catch (e) {
     console.error("[horarios] repetir turno:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo repetir el turno" });
@@ -9345,7 +9365,7 @@ app.get("/api/horarios/semana/:id/conflictos", requireAuth(HORARIOS_ROLES), asyn
       dbAll(`SELECT * FROM hor_asignaciones WHERE semana_id = ?`, [s.id]),
       dbAll(`SELECT id, nombre, username, areas_configuradas_en FROM users WHERE local = ANY(?) AND rol IN ('trabajador','encargado')`, [personasDe(s.local)]),
       dbAll(`SELECT id, nombre FROM hor_areas WHERE local = ?`, [s.local]),
-      dbAll(`SELECT id, nombre FROM hor_tramos WHERE local = ?`, [s.local]),
+      dbAll(`SELECT id, nombre, inicio_min, fin_min, tipo FROM hor_tramos WHERE local = ?`, [s.local]),
       horContexto(s.local, s.lunes, dias),
     ]);
     const [vecinas, caps] = await Promise.all([horVecinas(s.local, dias), horCapacidades(s.local)]);
@@ -9371,7 +9391,7 @@ app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (
       const pl = await dbGet(`SELECT * FROM hor_plantillas WHERE id = ? AND local = ?`, [req.body.plantilla_id, destino.local]);
       if (!pl) return res.status(404).json({ ok: false, error: "Plantilla no encontrada" });
       const filas = await dbAll(`SELECT * FROM hor_plantilla_lineas WHERE plantilla_id = ? ORDER BY dow, inicio_min`, [pl.id]);
-      lineas = filas.filter((f) => f.worker_id).map((f) => ({ ...f, dia: diasDestino[Number(f.dow)] }));
+      lineas = filas.map((f) => ({ ...f, dia: diasDestino[Number(f.dow)] }));
     } else {
       const lunesOrigen = lunesDe(String(req.body?.lunes || "")) || addDiasISO(destino.lunes, -7);
       const origen = await dbGet(
@@ -9393,7 +9413,7 @@ app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (
     // entonces se le copiarían también los días de después de irse.
     const equipo = await dbAll(
       `SELECT id, nombre, fecha_alta, fecha_baja, activo, areas_configuradas_en FROM users WHERE local = ANY(?) AND ${SQL_PLANTILLA}`,
-      [destino.local]);
+      [personasDe(destino.local)]);
     const porWorker = new Map(equipo.map((w) => [String(w.id), w]));
     const { ausencias } = await horContexto(destino.local, destino.lunes, diasDestino);
     const ausente = (wid, dia) => (ausencias || []).some((a) =>
@@ -9407,8 +9427,8 @@ app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (
     if (req.body?.reemplazar) await dbRun(`DELETE FROM hor_asignaciones WHERE semana_id = ?`, [destino.id]);
     for (const l of lineas) {
       const w = porWorker.get(String(l.worker_id));
-      if (!w) { omitidos.push({ worker_id: l.worker_id, dia: l.dia, motivo: "ya no está en el equipo" }); continue; }
-      if (!activoAhora(w, l.dia)) {
+      if (l.worker_id != null && !w) { omitidos.push({ worker_id: l.worker_id, dia: l.dia, motivo: "ya no está en el equipo" }); continue; }
+      if (w && !activoAhora(w, l.dia)) {
         omitidos.push({ worker_id: l.worker_id, nombre: w.nombre, dia: l.dia,
           motivo: w.fecha_baja ? `causó baja el ${w.fecha_baja}` : "la cuenta está desactivada" });
         continue;
@@ -9416,7 +9436,7 @@ app.post("/api/horarios/semana/:id/copiar", requireAuth(HORARIOS_ROLES), async (
       // Una semana vieja —o una plantilla— puede traer a alguien a un área para la que ya no
       // está habilitado. La línea SE COPIA IGUAL: borrarla en silencio sería quitar trabajo
       // planificado sin decirlo, y el encargado puede tener sus motivos. Se avisa aparte.
-      if (l.area_id != null && !puedeEnArea(w, l.area_id, capsCopiar)) {
+      if (w && l.area_id != null && !puedeEnArea(w, l.area_id, capsCopiar)) {
         avisosArea.push({ worker_id: l.worker_id, nombre: w.nombre, dia: l.dia,
           area: nombreArea.get(String(l.area_id)) || null });
       }
@@ -9558,6 +9578,7 @@ app.post("/api/horarios/semana/:id/nueva-version", requireAuth(HORARIOS_ROLES), 
     const s = await dbGet(`SELECT * FROM hor_semanas WHERE id = ?`, [req.params.id]);
     if (!s) return res.status(404).json({ ok: false, error: "Semana no encontrada" });
     if (!rrhhPuedeLocal(req, s.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    if (s.estado === "cerrado") return res.status(409).json({ ok: false, error: "Esta semana está cerrada y no se puede modificar." });
     const ya = await dbGet(`SELECT * FROM hor_semanas WHERE local = ? AND lunes = ? AND estado = 'borrador'`, [s.local, s.lunes]);
     if (ya) return res.json({ ok: true, semana: ya, creada: false });
 
@@ -15793,7 +15814,7 @@ async function ficCalcularPeriodo(local, desde, hasta, { cfg = null, soloWorker 
       soloWorker ? [ficLocales(local), desde, hasta, soloWorker] : [ficLocales(local), desde, hasta]),
     dbAll(`SELECT DISTINCT a.worker_id, a.dia FROM hor_asignaciones a
              JOIN hor_semanas s ON s.id = a.semana_id
-            WHERE a.local = ? AND s.estado = 'publicado' AND a.tipo = 'turno' AND a.dia BETWEEN ? AND ?
+            WHERE a.local = ? AND s.estado = 'publicado' AND a.tipo = 'turno' AND a.worker_id IS NOT NULL AND a.dia BETWEEN ? AND ?
               ${soloWorker ? "AND a.worker_id = ?" : ""}`,
       soloWorker ? [local, desde, hasta, soloWorker] : [local, desde, hasta]),
   ]);
@@ -16842,6 +16863,26 @@ app.get("/api/fichajes/export", requireAuth(FICHAJES_ROLES), async (req, res) =>
   } catch (e) {
     console.error("[fichajes] export:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo generar el export" });
+  }
+});
+
+// Comparativo del periodo: no valida ni escribe proyecciones al descargar.
+app.get('/api/fichajes/comparativo', requireAuth(FICHAJES_ROLES), async (req, res) => {
+  try {
+    const local = horLocal(req, req.query.local);
+    if (!local) return res.status(403).json({ ok:false, error:'Sin acceso a este establecimiento' });
+    const desde = String(req.query.desde || ''), hasta = String(req.query.hasta || '');
+    if (!rangoComparativoValido(desde,hasta)) return res.status(400).json({ ok:false, error:'Elige fechas válidas y un máximo de 62 días' });
+    const { filas } = await ficCalcularPeriodo(local,desde,hasta);
+    const norm = x => String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+    const filtro = norm(req.query.q);
+    const visibles = filas.filter(f => !filtro || norm(f.nombre).includes(filtro));
+    res.setHeader('Content-Type','text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition',`attachment; filename="comparativo_${desde}_${hasta}.csv"`);
+    res.send(csvComparativo(visibles));
+  } catch (e) {
+    console.error('[fichajes] comparativo:',e.message);
+    res.status(500).json({ok:false,error:'No se pudo generar el comparativo'});
   }
 });
 

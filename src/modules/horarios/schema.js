@@ -138,6 +138,8 @@ export async function ensureSchemaHorarios(x) {
     CHECK (tipo IN ('turno','libranza','vacaciones','baja','formacion','festivo')),
     CHECK (fin_min >= inicio_min AND fin_min <= 2160)
   )`);
+  // Un hueco pendiente conserva día, área y horario, sin inventar una persona.
+  await x.run(`ALTER TABLE hor_asignaciones ALTER COLUMN worker_id DROP NOT NULL`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_asig_sem ON hor_asignaciones (semana_id, dia)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_hor_asig_wk ON hor_asignaciones (worker_id, dia)`);
 

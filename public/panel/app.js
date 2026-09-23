@@ -4531,7 +4531,7 @@ async function userDel(id, nombre) { if (!(await confirmModal(`¿Eliminar la cue
 // El estado vive aquí y se repinta entero, como el resto del panel. La agrupación NO se
 // hace en el navegador a ojo: se replica la misma lógica que el módulo puro del servidor
 // (src/modules/horarios/cuadrante.js), porque el panel no puede importar ESM.
-let HOR = { local: "", lunes: "", dias: [], areas: [], tramos: [], equipo: [], asignaciones: [], semana: null, vista: "areas", drag: null, conflictos: null };
+let HOR = { local: "", lunes: "", dias: [], areas: [], tramos: [], equipo: [], asignaciones: [], semana: null, vista: "areas", periodo: "semana", fecha: "", mes: null, carga: 0, drag: null, conflictos: null };
 function horScope() { HOR.local = localActualFE(); return HOR.local; }
 /** El tono del área de un turno, para pintarlo. Sin área, sin color: no se inventa. */
 function horTono(areaId) {
@@ -4554,15 +4554,19 @@ async function loadHorarios() {
   if (!HOR.local) { view.innerHTML = horPh() + pideEstablecimiento("Elige un establecimiento", "El cuadrante es de un local concreto: no existe una semana de dos sitios a la vez."); return; }
   try {
     if (!HOR.lunes) HOR.lunes = resLunes(todayStr());
+    if (!HOR.fecha) HOR.fecha = todayStr();
+    if (HOR.periodo === "mes") return await horCargarMes();
+    const carga = ++HOR.carga, localCarga = HOR.local;
     const j = await apiRaw(`/api/horarios/semana?local=${encodeURIComponent(HOR.local)}&lunes=${HOR.lunes}`);
-    HOR = { ...HOR, ...j };
+    if (carga !== HOR.carga || localCarga !== HOR.local || CURRENT !== "horarios") return;
+    HOR = { ...HOR, ...j, conflictos: null };
     view.innerHTML = renderHorarios();
     if (HOR.semana) horConflictos(true);   // los avisos llegan después: la rejilla no espera
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function horPh() {
   const amb = HOR.local ? ` · <b>${esc(nombreCortoLocal(HOR.local))}</b>` : "";
-  return `<div class="ph"><div class="eyebrow">Personas</div><h1>Horarios</h1><div class="sub">Cuadrante semanal del equipo${amb}</div></div>`;
+  return `<div class="ph"><div class="eyebrow">Personas</div><h1>Horarios</h1><div class="sub">Horarios del equipo${amb}</div></div>`;
 }
 // Espejo de franjaCorta() de tiempo.js. Medianoche como FINAL se escribe 24, no 0: un
 // turno de 16:00 a 00:00 salía «16-0», que parece una errata.
@@ -4581,11 +4585,12 @@ function horFranjaSiDifiere(a, tramo) {
   if (!tramo) return horFranja(a.inicio_min, a.fin_min);
   return (+a.inicio_min === +tramo.inicio_min && +a.fin_min === +tramo.fin_min) ? null : horFranja(a.inicio_min, a.fin_min);
 }
-const horNombre = (id) => { const w = (HOR.equipo || []).find((x) => String(x.id) === String(id)); return w ? (w.nombre || w.username) : "—"; };
+const horNombre = (id) => { if (id == null) return "Sin asignar"; const w = (HOR.equipo || []).find((x) => String(x.id) === String(id)); return w ? (w.nombre || w.username) : "—"; };
 
 function renderHorarios() {
+  if (HOR.periodo === "mes") return horRenderMes();
   const d = HOR.dias || [];
-  const etiqueta = d.length ? `${fechaCorta(d[0])} – ${fechaCorta(d[6])}` : "";
+  const etiqueta = HOR.periodo === "dia" ? fechaCorta(HOR.fecha) : d.length ? `${fechaCorta(d[0])} – ${fechaCorta(d[6])}` : "";
   // Tres estados, y se distinguen a la vista: sin nada, borrador con turnos, publicado.
   // «Sin horario» y «borrador a medias» no son lo mismo, y confundirlos hace que nadie sepa
   // si la semana está por hacer o por terminar.
@@ -4594,17 +4599,19 @@ function renderHorarios() {
     ? `<span class="pill warn">Sin horario</span>`
     : (HOR.semana.estado === "borrador"
         ? `<span class="pill warn">Borrador · v${HOR.semana.version}</span>`
+        : HOR.semana.estado === 'cerrado' ? `<span class="pill">Cerrado · v${HOR.semana.version}</span>`
         : `<span class="pill ok">Publicado · v${HOR.semana.version}</span>`);
   const nav = `<div class="agnav">
     <button class="btn sm" data-act="hor-prev">‹</button>
-    <button class="btn sm" data-act="hor-hoy">Esta semana</button>
+    <button class="btn sm" data-act="hor-hoy">${HOR.periodo === "dia" ? "Hoy" : "Esta semana"}</button>
     <button class="btn sm" data-act="hor-next">›</button>
     <b style="margin-left:6px">${esc(etiqueta)}</b> ${est}
     <div style="flex:1"></div>
-    <div class="seg">
+    ${horSelectorPeriodo()}
+    ${HOR.periodo === 'semana' ? `<div class="seg">
       <button class="${HOR.vista === "areas" ? "on" : ""}" data-act="hor-vista" data-v="areas">Por área</button>
       <button class="${HOR.vista === "personas" ? "on" : ""}" data-act="hor-vista" data-v="personas">Por persona</button>
-    </div>
+    </div>` : ''}
     <button class="btn" data-act="hor-config" title="Cuánta gente hace falta, contratos, ausencias y disponibilidad">Configuración</button>
     ${horAcciones()}
   </div>`;
@@ -4623,7 +4630,62 @@ function renderHorarios() {
         <div style="margin-top:2px">Empieza poniendo turnos en la rejilla, o pide una propuesta al generador. Nada se publica hasta que tú lo digas.</div></div>`
     : horEditable() ? ""
     : `<div class="pendingblock" style="margin-bottom:12px">Estás viendo el horario <b>publicado</b>. Para cambiarlo hay que crear una versión nueva — así queda constancia de lo que vio el equipo.</div>`;
-  return horPh() + nav + aviso + `<div id="horAvisos">${horAvisosHtml(HOR.conflictos)}</div>` + (HOR.vista === "personas" ? horPorPersona() : horRejilla()) + horResumen();
+  return horPh() + nav + (HOR.periodo === 'dia' ? '<p class="mut">Copiar, vaciar, generar, PDF y publicar se aplican a la semana completa.</p>' : '') + aviso + `<div id="horAvisos">${horAvisosHtml(HOR.conflictos)}</div>` +
+    (HOR.periodo === "dia" ? horRenderDia() : HOR.vista === "personas" ? horPorPersona() : horRejilla()) +
+    horCobertura() + horResumen();
+}
+
+// Vistas adicionales; la rejilla semanal y sus colores se conservan.
+function horSelectorPeriodo() {
+  return `<input type="date" class="inp hor-fecha" aria-label="Ir a una fecha" data-hor-fecha value="${HOR.fecha || HOR.lunes}"><div class="seg" aria-label="Periodo del horario">${[['dia','Día'],['semana','Semana'],['mes','Mes']].map(([v,n])=>`<button data-act="hor-periodo" data-periodo="${v}" class="${HOR.periodo===v?'on':''}">${n}</button>`).join('')}</div>`;
+}
+document.addEventListener('change', e => {
+  if (!e.target.matches('[data-hor-fecha]') || !e.target.value || CURRENT !== 'horarios') return;
+  HOR.fecha=e.target.value; HOR.lunes=resLunes(HOR.fecha); loadHorarios();
+});
+async function horCargarMes() {
+  const carga = ++HOR.carga, local = HOR.local, inicio = HOR.fecha.slice(0,7)+'-01';
+  const fin = new Date(inicio+'T12:00:00Z'); fin.setUTCMonth(fin.getUTCMonth()+1); fin.setUTCDate(0);
+  const ultimo = fin.toISOString().slice(0,10), lunes = [];
+  for (let d=resLunes(inicio);d<=ultimo;d=addDaysStr(d,7)) lunes.push(d);
+  const semanas = await Promise.all(lunes.map(d=>apiRaw(`/api/horarios/semana?local=${encodeURIComponent(local)}&lunes=${d}`)));
+  if (carga !== HOR.carga || local !== HOR.local || CURRENT !== "horarios") return;
+  HOR.mes = { inicio, ultimo, semanas };
+  document.getElementById('view').innerHTML = renderHorarios();
+}
+function horRenderMes() {
+  const m = HOR.mes;
+  if (!m) return horPh()+skeleton();
+  const dias = [];
+  for(let d=resLunes(m.inicio);d<=addDaysStr(resLunes(m.ultimo),6);d=addDaysStr(d,1)) dias.push(d);
+  const etiqueta = new Date(m.inicio+'T12:00:00Z').toLocaleDateString('es-ES',{month:'long',year:'numeric',timeZone:'UTC'});
+  return horPh()+`<div class="agnav"><button class="btn sm" data-act="hor-prev" aria-label="Mes anterior">‹</button><button class="btn sm" data-act="hor-hoy">Este mes</button><button class="btn sm" data-act="hor-next" aria-label="Mes siguiente">›</button><b>${esc(etiqueta)}</b>${horSelectorPeriodo()}</div>
+    <p class="mut">Abre un día para consultar o preparar sus turnos. Cada semana conserva su estado de publicación.</p>
+    <div class="hor-mes">${dias.map(d=>{
+      const sem=m.semanas.find(s=>s.dias.includes(d));
+      const turnos=(sem?.asignaciones||[]).filter(a=>a.dia===d&&(a.tipo||'turno')==='turno');
+      const personas=new Set(turnos.filter(a=>a.worker_id!=null).map(a=>String(a.worker_id))).size;
+      const libres=turnos.filter(a=>a.worker_id==null).length;
+      const minutos=turnos.reduce((n,a)=>n+Number(a.fin_min)-Number(a.inicio_min),0);
+      return `<button class="hor-mes-dia ${d===todayStr()?'hoy':''} ${d<m.inicio||d>m.ultimo?'otro-mes':''}" data-act="hor-dia" data-dia="${d}"><b>${WD[(new Date(d+'T12:00:00Z').getUTCDay()+6)%7]} ${Number(d.slice(-2))}</b><span>${personas} ${personas===1?'persona':'personas'} · ${ficHoras(minutos)}</span>${libres?`<span class="warn">${libres} sin asignar</span>`:''}<small>${!sem?.semana?'Sin horario':sem.semana.estado==='borrador'?'Borrador':sem.semana.estado==='cerrado'?'Cerrado':'Publicado'}${sem?.semana?' · v'+sem.semana.version:''}</small></button>`;
+    }).join('')}</div>`;
+}
+function horRenderDia() {
+  const turnos=(HOR.asignaciones||[]).filter(a=>a.dia===HOR.fecha).sort((a,b)=>a.inicio_min-b.inicio_min);
+  return `<div class="card"><div class="ch"><h3>${esc(fechaCorta(HOR.fecha))}</h3>${horEditable()?`<button class="btn sm" data-act="hor-nuevo" data-dia="${HOR.fecha}">Añadir turno</button>`:''}</div><div class="rows">${turnos.map(a=>`<div class="row"><div class="grow"><div class="t1">${esc(horNombre(a.worker_id))}</div><div class="t2">${esc(horFranja(a.inicio_min,a.fin_min,a.fin_abierto))} · ${esc(HOR.areas.find(x=>String(x.id)===String(a.area_id))?.nombre||cap(a.tipo||'turno'))}${a.nota?' · '+esc(a.nota):''}</div></div><button class="btn sm" data-act="hor-editar" data-id="${a.id}">${horEditable()?'Editar':'Ver'}</button></div>`).join('')||'<div class="mut">Sin turnos para este día.</div>'}</div></div>`;
+}
+function horCobertura() {
+  const filas=(HOR.operativa?.cobertura||[]).filter(f=>HOR.periodo!=='dia'||f.dia===HOR.fecha);
+  const pendientes=(HOR.asignaciones||[]).filter(a=>a.worker_id==null&&(a.tipo||'turno')==='turno'&&(HOR.periodo!=='dia'||a.dia===HOR.fecha)).length;
+  if(!filas.length&&!pendientes)return '';
+  return `<details class="card fold hor-cobertura"><summary><h3>Cobertura${pendientes?' · '+pendientes+(pendientes===1?' turno sin asignar':' turnos sin asignar'):''}</h3><span class="foldr">${filas.filter(f=>f.minutos_descubiertos>0).length} ${filas.filter(f=>f.minutos_descubiertos>0).length===1?'franja':'franjas'} por cubrir</span></summary><div class="rows">${filas.map(f=>`<div class="row"><div class="grow"><div class="t1">${esc(fechaCorta(f.dia))} · ${esc(f.area)} · ${esc(f.tramo)}</div><div class="t2">Mínimo ${f.minimo} · objetivo ${f.objetivo} · ${f.cubierto} personas durante toda la franja${f.minutos_descubiertos?' · '+ficHoras(f.minutos_descubiertos)+' por debajo del mínimo':''}</div></div><span class="pill ${f.minutos_descubiertos?'warn':'ok'}">${f.minutos_descubiertos?'Revisar':'Cubierto'}</span></div>`).join('')||'<p class="mut">Configura necesidades por área y tramo para comparar la cobertura.</p>'}</div></details>`;
+}
+function horPersonasMovil(personas) {
+  return `<div class="hor-personas-movil">${personas.map(w=>{
+    const balance=(HOR.operativa?.personas||[]).find(p=>String(p.worker_id)===String(w.id));
+    const turnos=(HOR.asignaciones||[]).filter(a=>String(a.worker_id)===String(w.id));
+    return `<div class="card"><div class="ch"><h3>${esc(w.nombre||w.username)}</h3></div><p>${balance?ficHoras(balance.minutos)+' planificadas · '+(balance.objetivo_min==null?'Sin contrato':ficHoras(balance.objetivo_min)+' de referencia contractual'):turnos.length+' sin asignar'}</p><div class="rows">${turnos.map(a=>`<div class="row"><div class="grow">${esc(fechaCorta(a.dia))} · ${esc(horFranja(a.inicio_min,a.fin_min,a.fin_abierto))}</div><button class="btn sm" data-act="hor-editar" data-id="${a.id}">Ver</button></div>`).join('')||'<p class="mut">Sin turnos</p>'}</div></div>`;
+  }).join('')}</div>`;
 }
 
 // ── La fila de fiesta: no se rellena, se calcula ──
@@ -4674,7 +4736,7 @@ function horRejilla() {
           .filter((a) => String(a.dia) === dia && String(a.tramo_id) === String(tramo.id) && String(a.area_id) === String(area.id) && (a.tipo || "turno") === "turno")
           .map((a) => ({ ...a, franja: horFranjaSiDifiere(a, tramo) }))
           .sort((a, b) => (!a.franja && b.franja ? -1 : a.franja && !b.franja ? 1 : a.inicio_min - b.inicio_min));
-        const items = gente.map((a) => `<div class="horchip"${horTono(a.area_id)} draggable="${horEditable()}" data-horasig="${a.id}" data-act="hor-editar" data-id="${a.id}" title="${esc(horFranja(a.inicio_min, a.fin_min, a.fin_abierto))}">${a.franja ? `<span class="hf">${esc(a.franja)}</span>` : ""}${esc(horNombre(a.worker_id))}</div>`).join("");
+        const items = gente.map((a) => `<div class="horchip ${a.worker_id == null ? "vacante" : ""}"${horTono(a.area_id)} draggable="${horEditable()}" data-horasig="${a.id}" data-act="hor-editar" data-id="${a.id}" title="${esc(horFranja(a.inicio_min, a.fin_min, a.fin_abierto))}">${a.franja ? `<span class="hf">${esc(a.franja)}</span>` : ""}${esc(horNombre(a.worker_id))}</div>`).join("");
         const mas = horEditable() ? `<button class="hormas" data-act="hor-nuevo" data-dia="${dia}" data-tramo="${tramo.id}" data-area="${area.id}" title="Añadir">+</button>` : "";
         return `<div class="horcell horslot" data-horcell data-dia="${dia}" data-tramo="${tramo.id}" data-area="${area.id}">${items}${mas}</div>`;
       }).join("");
@@ -4722,7 +4784,7 @@ function horListaDias() {
           .sort((a, b) => a.inicio_min - b.inicio_min);
         if (!gente.length) return "";
         return `<div class="hord-area"><span class="hord-et">${esc(area.nombre)}</span>
-          <span class="hord-gente">${gente.map((a) => `<button class="horchip"${horTono(a.area_id)} data-act="hor-editar" data-id="${a.id}">${a.franja ? `<span class="hf">${esc(a.franja)}</span>` : ""}${esc(horNombre(a.worker_id))}</button>`).join("")}</span></div>`;
+          <span class="hord-gente">${gente.map((a) => `<button class="horchip ${a.worker_id == null ? "vacante" : ""}"${horTono(a.area_id)} data-act="hor-editar" data-id="${a.id}">${a.franja ? `<span class="hf">${esc(a.franja)}</span>` : ""}${esc(horNombre(a.worker_id))}</button>`).join("")}</span></div>`;
       }).join("");
       if (!areas) return "";
       return `<div class="hord-tramo"><div class="hord-th">${esc(tramo.nombre)} <span class="mut">${esc(horFranja(tramo.inicio_min, tramo.fin_min))}</span></div>${areas}</div>`;
@@ -4744,7 +4806,8 @@ function horPorPersona() {
     `<div class="horcell horhead ${dia === hoy ? "hoy" : ""}"><div class="dwd">${WD[i]}</div><div class="dnum">${Number(dia.slice(-2))}</div></div>`
   ).join("") + `<div class="horcell horhead">Horas</div>`;
 
-  const filas = (HOR.equipo || []).map((w) => {
+  const personas = [...(HOR.equipo || []), ...((HOR.asignaciones || []).some(a => a.worker_id == null) ? [{id:null,nombre:"Sin asignar"}] : [])];
+  const filas = personas.map((w) => {
     let min = 0;
     const celdas = dias.map((dia) => {
       const suyos = (HOR.asignaciones || []).filter((a) => String(a.worker_id) === String(w.id) && String(a.dia) === dia)
@@ -4754,19 +4817,21 @@ function horPorPersona() {
         min += (a.fin_min - a.inicio_min);
         return `<div class="horchip" draggable="${horEditable()}" data-horasig="${a.id}" data-act="hor-editar" data-id="${a.id}">${esc(horFranja(a.inicio_min, a.fin_min, a.fin_abierto))}</div>`;
       }).join("");
-      return `<div class="horcell horslot" data-horcell data-dia="${dia}" data-worker="${w.id}">${chips}</div>`;
+      return `<div class="horcell horslot" data-horcell data-dia="${dia}" data-worker="${w.id ?? ""}">${chips}</div>`;
     }).join("");
-    const h = Math.round((min / 60) * 10) / 10;
-    return `<div class="horcell horarea" title="${esc(w.puesto || "")}">${esc(w.nombre || w.username)}</div>${celdas}<div class="horcell hortot ${h > 40 ? "alto" : ""}"><b class="tnum">${dec1(h)}</b></div>`;
+    const balance = (HOR.operativa?.personas || []).find(p => String(p.worker_id) === String(w.id));
+    const objetivo = balance?.objetivo_min;
+    const detalle = w.id == null ? 'Pendiente' : objetivo == null ? 'Sin contrato' : `${ficHoras(objetivo)} ${balance.proporcional ? 'proporcionales' : 'contrato'}`;
+    return `<div class="horcell horarea" title="${esc(w.puesto || "")}">${esc(w.nombre || w.username)}</div>${celdas}<div class="horcell hortot ${objetivo != null && min > objetivo ? "alto" : ""}"><b class="tnum">${ficHoras(min)}</b><small>${esc(detalle)}</small></div>`;
   }).join("");
-  return `<div class="hortramo"><div class="horgrid porpersona">${cab}${filas}</div></div>`;
+  return `<div class="hortramo hor-personas"><div class="horgrid porpersona">${cab}${filas}</div></div>` + horPersonasMovil(personas);
 }
 
 function horResumen() {
-  const turnos = (HOR.asignaciones || []).filter((a) => (a.tipo || "turno") === "turno");
+  const turnos = (HOR.asignaciones || []).filter((a) => (a.tipo || "turno") === "turno" && (HOR.periodo !== "dia" || a.dia === HOR.fecha));
   const min = turnos.reduce((s, a) => s + (a.fin_min - a.inicio_min), 0);
-  const gente = new Set(turnos.map((a) => String(a.worker_id))).size;
-  const solapes = horSolapes().length;
+  const gente = new Set(turnos.filter(a => a.worker_id != null).map((a) => String(a.worker_id))).size;
+  const solapes = horSolapes().filter(([a]) => HOR.periodo !== "dia" || a.dia === HOR.fecha).length;
   return `<div class="grid g4" style="margin-top:16px">
     ${stat("Turnos", ic("cal", 15), num(turnos.length))}
     ${stat("Horas planificadas", ic("clock", 15), dec1(min / 60))}
@@ -4778,7 +4843,7 @@ function horResumen() {
 function horSolapes() {
   const porClave = {};
   for (const a of (HOR.asignaciones || [])) {
-    if ((a.tipo || "turno") !== "turno") continue;
+    if ((a.tipo || "turno") !== "turno" || a.worker_id == null) continue;
     (porClave[`${a.worker_id}|${a.dia}`] ||= []).push(a);
   }
   const out = [];
@@ -4817,6 +4882,7 @@ function horAcciones() {
       ${pdf}
       <button class="btn primary" data-act="hor-publicar" ${n ? "" : "disabled"}>Publicar</button>`;
   }
+  if (HOR.semana.estado === "cerrado") return `<button class="btn" data-act="hor-historico">Versiones</button>${pdf}`;
   // Mandar al grupo es un botón APARTE de publicar, no un efecto de publicar: se publica
   // varias veces mientras se cuadra la semana, y un mensaje al grupo por cada una sería
   // ruido que la gente acabaría silenciando.
@@ -4830,7 +4896,9 @@ function horAcciones() {
 async function horConflictos(silencioso) {
   if (!HOR.semana) return null;
   try {
-    const j = await apiRaw(`/api/horarios/semana/${HOR.semana.id}/conflictos`);
+    const semanaId = HOR.semana.id, local = HOR.local;
+    const j = await apiRaw(`/api/horarios/semana/${semanaId}/conflictos`);
+    if (HOR.semana?.id !== semanaId || HOR.local !== local || CURRENT !== 'horarios') return null;
     HOR.conflictos = j;
     const caja = document.getElementById("horAvisos");
     if (caja) caja.innerHTML = horAvisosHtml(j);
@@ -5781,7 +5849,13 @@ async function horHistorico() {
 
 // ── Acciones ──
 function horNavega(dir) {
-  HOR.lunes = dir === "hoy" ? resLunes(todayStr()) : addDaysStr(HOR.lunes, dir === "next" ? 7 : -7);
+  const paso = dir === "next" ? 1 : -1;
+  if (dir === "hoy") HOR.fecha = todayStr();
+  else if (HOR.periodo === "mes") {
+    const d = new Date((HOR.fecha || todayStr()).slice(0,7) + "-01T12:00:00Z");
+    d.setUTCMonth(d.getUTCMonth()+paso); HOR.fecha = d.toISOString().slice(0,10);
+  } else HOR.fecha = addDaysStr(HOR.periodo === "dia" ? HOR.fecha : HOR.lunes, paso*(HOR.periodo === "dia" ? 1 : 7));
+  HOR.lunes = resLunes(HOR.fecha);
   loadHorarios();
 }
 async function horCrear() {
@@ -5807,7 +5881,7 @@ function horModal(asig, ctx) {
     <select id="hmTipo" hidden>${TIPOS.map(([v, l]) => `<option value="${v}" ${v === tipoAhora ? "selected" : ""}>${l}</option>`).join("")}</select>
 
     <div class="form-grid" style="margin-top:14px">
-      <div class="field"><label>Persona</label><select id="hmW">${opt(HOR.equipo, asig?.worker_id ?? ctx?.worker, "Elegir…")}</select></div>
+      <div class="field"><label>Persona</label><select id="hmW">${opt(HOR.equipo, asig?.worker_id ?? ctx?.worker, "Sin asignar — pendiente de cubrir")}</select></div>
       <div class="field"><label>Día</label><select id="hmD">${HOR.dias.map((d, i) => `<option value="${d}" ${String(asig?.dia ?? ctx?.dia) === d ? "selected" : ""}>${WD[i]} ${Number(d.slice(-2))}</option>`).join("")}</select></div>
     </div>
 
@@ -5891,7 +5965,7 @@ function horModal(asig, ctx) {
     // Cuando no hay semana se manda el lunes y el servidor la abre al escribir el turno.
     const cuerpo = {
       ...(HOR.semana ? { semana_id: HOR.semana.id } : { local: HOR.local, lunes: HOR.dias[0] }),
-      worker_id: ov.querySelector("#hmW").value,
+      worker_id: ov.querySelector("#hmW").value || null,
       dia: ov.querySelector("#hmD").value,
       tramo_id: ov.querySelector("#hmT").value || null,
       area_id: ov.querySelector("#hmA").value || null,
@@ -5902,7 +5976,7 @@ function horModal(asig, ctx) {
       tipo: ov.querySelector("#hmTipo").value,
       nota: ov.querySelector("#hmN").value.trim() || null,
     };
-    if (!cuerpo.worker_id) { toast("Elige a la persona"); return; }
+    if (!cuerpo.worker_id && cuerpo.tipo !== "turno") { toast("Elige a la persona para este tipo de registro"); return; }
     if (!abierto && cuerpo.fin_min === cuerpo.inicio_min) { toast("El turno tiene que durar algo: entra y sale a la misma hora"); return; }
     try {
       if (editando) await apiSend("PATCH", "/api/horarios/asignacion/" + asig.id, cuerpo);
@@ -6035,7 +6109,10 @@ const horFinMin = (entrada, salida) => {
 function horEditar(id) {
   const a = (HOR.asignaciones || []).find((x) => String(x.id) === String(id));
   if (!a) return;
-  if (!horEditable()) { toast("Este horario está publicado: crea una versión nueva para cambiarlo"); return; }
+  if (!horEditable()) {
+    modal(horNombre(a.worker_id), `<p>${esc(fechaCorta(a.dia))} · ${esc(horFranja(a.inicio_min,a.fin_min,a.fin_abierto))}</p><p>${esc(a.nota||'Sin notas')}</p><p class="mut">${HOR.semana?.estado === "cerrado" ? "Horario cerrado. Consulta sus versiones para revisar el histórico." : "Horario publicado. Para editarlo, utiliza Cambiar horario."}</p><button class="btn" data-close>Cerrar</button>`);
+    return;
+  }
   horModal(a, null);
 }
 // Arrastrar y soltar. El HTML se repinta al soltar, así que dragend puede no llegar nunca:
@@ -6052,10 +6129,10 @@ async function horSoltar(celda) {
   if (!a) return;
   const cuerpo = { dia: celda.getAttribute("data-dia") };
   if (celda.hasAttribute("data-tramo")) { cuerpo.tramo_id = celda.getAttribute("data-tramo"); cuerpo.area_id = celda.getAttribute("data-area"); }
-  if (celda.hasAttribute("data-worker")) cuerpo.worker_id = celda.getAttribute("data-worker");
+  if (celda.hasAttribute("data-worker")) cuerpo.worker_id = celda.getAttribute("data-worker") || null;
   // Si no cambia nada, no molestamos al servidor.
   if (String(cuerpo.dia) === String(a.dia) && String(cuerpo.tramo_id ?? a.tramo_id) === String(a.tramo_id)
-      && String(cuerpo.area_id ?? a.area_id) === String(a.area_id) && String(cuerpo.worker_id ?? a.worker_id) === String(a.worker_id)) return;
+      && String(cuerpo.area_id ?? a.area_id) === String(a.area_id) && String(Object.hasOwn(cuerpo, "worker_id") ? cuerpo.worker_id : a.worker_id) === String(a.worker_id)) return;
   try { await apiSend("PATCH", "/api/horarios/asignacion/" + id, cuerpo); loadHorarios(); }
   catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
@@ -6280,6 +6357,7 @@ function ficPintarRevisionDatos(cont, j) {
   const dato = (n, txt, col) => `<div style="min-width:0"><div class="big tnum" style="font-size:26px${col ? ";color:" + col : ""}">${num(n)}</div><div class="mut" style="font-size:12px">${txt}</div></div>`;
   const cabecera = `<div class="card">
     ${barra}
+    <button class="btn sm" id="ficComparativo">Descargar comparativo${q ? ' filtrado' : ''} (Excel/CSV)</button>
     ${q ? `<p class="mut" style="margin:0 0 12px;font-size:12.5px">Filtrando por «<b>${esc(FIC.q)}</b>» · ${num(visibles.length)} de ${num((j.data || []).length)} ${((j.data || []).length === 1) ? "jornada" : "jornadas"}. Todo lo de abajo, botón incluido, es solo de estas.</p>` : ""}
     <div class="fic-datos">
       ${dato(r.listas_para_validar || 0, "sin nada que decidir", "var(--brand)")}
@@ -6387,6 +6465,7 @@ function ficPintarRevisionDatos(cont, j) {
   // revisión —solo su contenido—, así que un listener por llamada se iría acumulando y al
   // tercer repintado cada clic abriría tres modales.
   cont.onclick = (e) => {
+    if (e.target.closest("#ficComparativo")) return ficDescargarComparativo(j.desde,j.hasta,FIC.q);
     if (e.target.closest("#ficLote")) return ficValidarLote(j, paraLote);
     if (e.target.closest("#ficQx")) { FIC.q = ""; return ficPintarRevisionDatos(cont, j); }
     const ir = e.target.closest("[data-ficrango]");
@@ -6830,6 +6909,16 @@ async function rrVerDocumento(id) {
     // Se suelta al rato: revocarlo al instante deja la pestaña nueva en blanco.
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch { toast("No se pudo abrir el documento"); }
+}
+
+async function ficDescargarComparativo(desde,hasta,q) {
+  try {
+    const params = new URLSearchParams({local:FIC.local,desde,hasta,q:q||''});
+    const r=await fetch('/api/fichajes/comparativo?'+params,{headers:{Authorization:'Bearer '+token()}});
+    if(!r.ok) { const err=await r.json(); throw new Error(err.error||'No se pudo descargar'); }
+    const url=URL.createObjectURL(await r.blob()), a=document.createElement('a');
+    a.href=url; a.download=`comparativo_${desde}_${hasta}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  } catch(e) { toast(e.message); }
 }
 
 async function ficDescargarRegistro(dia) {
@@ -15874,6 +15963,8 @@ document.addEventListener("click", (e) => {
   else if (act === "hor-prev") horNavega("prev");
   else if (act === "hor-next") horNavega("next");
   else if (act === "hor-hoy") horNavega("hoy");
+  else if (act === "hor-periodo") { HOR.periodo = t.dataset.periodo; loadHorarios(); }
+  else if (act === "hor-dia") { HOR.fecha = t.dataset.dia; HOR.lunes = resLunes(HOR.fecha); HOR.periodo = "dia"; loadHorarios(); }
   else if (act === "hor-vista") horVista(t.getAttribute("data-v"));
   else if (act === "hor-crear") horCrear();
   else if (act === "hor-editar") horEditar(t.getAttribute("data-id"));

@@ -27,7 +27,7 @@ describe("Horarios · un turno solo se le puede poner a alguien de ese local", (
     // `locales_extra` es un permiso de ACCESO al panel. Tomarlo por autorización laboral
     // metería por la puerta de atrás el multi-local que hemos decidido no construir.
     const g = bloque("async function horTrabajadorDelLocal(", "// La fila de fiesta no admite turnos");
-    assert.match(g, /String\(w\.local \|\| ""\) !== String\(local\)/);
+    assert.match(g, /!personasDe\(local\)\.includes\(String\(w\.local \|\| ""\)\)/);
     assert.ok(!/locales_extra|puedeLocal\(/.test(g), "no puede consultar los locales de permisos");
     assert.match(g, /rol\)/, "y una cuenta que no es de sala ni cocina tampoco lleva turnos");
   });
@@ -40,7 +40,7 @@ describe("Horarios · un turno solo se le puede poner a alguien de ese local", (
   test("reasignar un turno a otra persona TAMBIÉN pasa por la guarda", () => {
     // Era la mitad del agujero: se validaba al crear y no al mover.
     const b = bloque('app.patch("/api/horarios/asignacion/:id"', 'app.delete("/api/horarios/asignacion/:id"');
-    assert.match(b, /if \(req\.body\.worker_id !== undefined\)/);
+    assert.match(b, /if \(req\.body\.worker_id != null && req\.body\.worker_id !== ""\)/);
     assert.match(b, /await horTrabajadorDelLocal\(req\.body\.worker_id, chk\.semana\.local\)/);
   });
 

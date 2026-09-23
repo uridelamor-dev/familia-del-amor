@@ -127,9 +127,8 @@ describe("cierre de periodo: carga y atomicidad (Postgres real)", { skip: HAY_BD
   });
 
   test("ATOMICIDAD: un fallo a mitad no deja nada apuntado", async () => {
-    // El puente de estos tests lanza un `psql` por consulta, así que BEGIN y ROLLBACK no
-    // comparten sesión: la transacción hay que mandarla ENTERA en una sola llamada. El
-    // servidor real usa una conexión del pool, donde eso no hace falta.
+    // La conexión de prueba es persistente, como la del servidor. Tras provocar
+    // un fallo se revierte explícitamente antes de comprobar que no se guardó nada.
     await db.run(`DELETE FROM fic_bolsa_movimientos`);
     const antes = await db.get(`SELECT COUNT(*)::int AS n FROM fic_bolsa_movimientos`);
     assert.equal(Number(antes.n), 0);
@@ -141,6 +140,7 @@ describe("cierre de periodo: carga y atomicidad (Postgres real)", { skip: HAY_BD
         SELECT g, 'Blanes', '2026-06-01', '2026-06', 'jornada', 15, 'carga-'||g, 'direccion', 'x' FROM generate_series(1, 500) g;
       DO $$ BEGIN RAISE EXCEPTION 'fallo simulado en la jornada 847'; END $$;
       COMMIT;`), /fallo simulado/);
+    await db.run("ROLLBACK");
 
     const fuera = await db.get(`SELECT COUNT(*)::int AS n FROM fic_bolsa_movimientos`);
     assert.equal(Number(fuera.n), 0, "han quedado 500 movimientos de un cierre que nunca se selló");

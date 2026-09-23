@@ -32,18 +32,15 @@ export async function conEsquema() {
   if (!pg) throw new Error("pg no disponible");
   const nombre = "test_" + Math.random().toString(36).slice(2, 10);
   const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 2 });
-  await pool.query(`CREATE SCHEMA ${nombre}`);
-  await pool.query(`SET search_path TO ${nombre}`);
+  const conexion = await pool.connect();
+  await conexion.query(`CREATE SCHEMA ${nombre}`);
+  await conexion.query(`SET search_path TO ${nombre}`);
 
   // Mismo truco que server.js: `?` → $1, $2… respetando el orden.
   const aPosicional = (sql) => { let i = 0; return sql.replace(/\?/g, () => `$${++i}`); };
-  const query = async (sql, params = []) => {
-    const c = await pool.connect();
-    try {
-      await c.query(`SET search_path TO ${nombre}`);
-      return await c.query(aPosicional(sql), params);
-    } finally { c.release(); }
-  };
+  // Las transacciones de prueba deben conservar su conexión. SET search_path antes
+  // de ROLLBACK falla precisamente cuando una transacción ha quedado abortada.
+  const query = (sql, params = []) => conexion.query(aPosicional(sql), params);
 
   return {
     esquema: nombre,
@@ -52,7 +49,7 @@ export async function conEsquema() {
     all: async (sql, params) => (await query(sql, params)).rows,
     raw: query,
     fin: async () => {
-      try { await pool.query(`DROP SCHEMA ${nombre} CASCADE`); } finally { await pool.end(); }
+      try { await conexion.query("ROLLBACK"); await conexion.query(`DROP SCHEMA ${nombre} CASCADE`); } finally { conexion.release(); await pool.end(); }
     },
   };
 }

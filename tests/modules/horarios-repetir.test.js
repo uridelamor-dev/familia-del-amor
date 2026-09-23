@@ -256,7 +256,7 @@ describe("repetir no se salta el aislamiento por local", () => {
     assert.match(rep, /horSemanaEditable\(req, t\.semana_id\)/);
   });
   test("y la persona, del local de la semana", () => {
-    assert.match(rep, /String\(persona\.local \|\| ""\) !== String\(chk\.semana\.local\)/);
+    assert.match(rep, /personasDe\(chk\.semana\.local\)\.includes\(String\(persona\.local/);
   });
   test("los días tienen que ser de ESA semana", () => {
     assert.match(rep, /diasSemana\(chk\.semana\.lunes\)/);

@@ -108,12 +108,12 @@ describe("y las guardas hacen lo que dicen", () => {
   });
   test("y un turno no se le cuelga a alguien de otro establecimiento", () => {
     // Doble guarda: el local de la semana Y el de la persona.
-    assert.match(server, /String\(w\.local \|\| ""\) !== String\(local\)[\s\S]{0,200}Solo se puede planificar a la gente de este establecimiento/);
+    assert.match(server, /!personasDe\(local\)\.includes\(String\(w\.local \|\| ""\)\)[\s\S]{0,200}Solo se puede planificar a la gente de este establecimiento/);
   });
   test("repetir tampoco", () => {
     const i = server.indexOf('app.post("/api/horarios/asignacion/:id/repetir"');
     const c = server.slice(i, i + 3000);
-    assert.match(c, /String\(persona\.local \|\| ""\) !== String\(chk\.semana\.local\)/);
+    assert.match(c, /!personasDe\(chk\.semana\.local\)\.includes\(String\(persona\.local \|\| ""\)\)/);
   });
 });
 

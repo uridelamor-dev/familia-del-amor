@@ -74,7 +74,7 @@ export function construirSnapshot({ semana, areas = [], tramos = [], asignacione
       .map((a) => ({
         dia: a.dia,
         worker_id: a.worker_id,
-        nombre: (porId.get(String(a.worker_id)) || {}).nombre || (porId.get(String(a.worker_id)) || {}).username || "—",
+        nombre: a.worker_id == null ? "Sin asignar" : (porId.get(String(a.worker_id)) || {}).nombre || (porId.get(String(a.worker_id)) || {}).username || "—",
         area_id: a.area_id, tramo_id: a.tramo_id,
         inicio_min: a.inicio_min, fin_min: a.fin_min,
         fin_abierto: !!a.fin_abierto,
@@ -152,7 +152,7 @@ export function cambiosPorTrabajador(antes, despues) {
   const A = porPersonaDia(antes), B = porPersonaDia(despues);
 
   // Solo las parejas (persona, día) que aparecen en la diferencia: las demás no han cambiado.
-  const tocadas = new Set([...d.anadidos, ...d.quitados].map((a) => `${a.worker_id}|${a.dia}`));
+  const tocadas = new Set([...d.anadidos, ...d.quitados].filter(a => a.worker_id != null).map((a) => `${a.worker_id}|${a.dia}`));
 
   const nombres = new Map();
   for (const a of [...((antes && antes.asignaciones) || []), ...((despues && despues.asignaciones) || [])]) {

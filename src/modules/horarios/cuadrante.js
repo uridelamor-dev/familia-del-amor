@@ -78,7 +78,7 @@ export function construirCuadrante({ lunes, tramos = [], areas = [], asignacione
     const item = {
       id: a.id,
       worker_id: a.worker_id,
-      nombre: (w && (w.nombre || w.username)) || a.nombre || "—",
+      nombre: a.worker_id == null ? "Sin asignar" : (w && (w.nombre || w.username)) || a.nombre || "—",
       inicio_min: Number(a.inicio_min),
       fin_min: Number(a.fin_min),
       fin_abierto: !!a.fin_abierto,
@@ -137,7 +137,7 @@ export function construirCuadrante({ lunes, tramos = [], areas = [], asignacione
 export function personasPorDia(cuadrante) {
   return cuadrante.dias.map((_, i) => {
     const set = new Set();
-    for (const b of cuadrante.bloques) for (const ar of b.areas) for (const p of ar.dias[i]) set.add(String(p.worker_id));
+    for (const b of cuadrante.bloques) for (const ar of b.areas) for (const p of ar.dias[i]) if (p.worker_id != null) set.add(String(p.worker_id));
     return set.size;
   });
 }
@@ -186,7 +186,7 @@ export function porPersona({ lunes, asignaciones = [], trabajadores = [], tramos
 export function solapesDe(asignaciones = []) {
   const porClave = new Map();
   for (const a of asignaciones) {
-    if ((a.tipo || "turno") !== "turno") continue;
+    if ((a.tipo || "turno") !== "turno" || a.worker_id == null) continue;
     const k = `${a.worker_id}|${a.dia}`;
     if (!porClave.has(k)) porClave.set(k, []);
     porClave.get(k).push(a);

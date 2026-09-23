@@ -14,6 +14,7 @@
 // y entonces el sistema no sirve para nada. El encargado manda; el sistema deja constancia.
 
 import { diasSemana, solapan, duracionMin, descansoHoras, franjaCorta } from "./tiempo.js";
+import { coberturaFranja } from "./cobertura.js";
 import { puedeEnArea, estaConfigurado } from "./capacidades.js";
 
 export const BLOQUEA = "bloquea";
@@ -102,9 +103,13 @@ export function detectarConflictos({
   const L = { ...LIMITES, ...limites };
   const dias = diasSemana(lunes);
   const porId = new Map((trabajadores || []).map((w) => [String(w.id), w]));
-  const turnos = (asignaciones || []).filter((a) => (a.tipo || "turno") === "turno");
+  const turnos = (asignaciones || []).filter((a) => (a.tipo || "turno") === "turno" && a.worker_id != null);
   const out = [];
   const add = (o) => out.push(o);
+  for (const a of asignaciones.filter(a => a.worker_id == null && (a.tipo || 'turno') === 'turno')) {
+    add({ tipo: 'sin_asignar', severidad: AVISA, dia:a.dia, ids:[a.id],
+      mensaje: `Hay un turno sin asignar el ${a.dia}, ${franjaCorta(a.inicio_min,a.fin_min)}. No cuenta como cobertura.` });
+  }
 
   // ── Una persona no puede estar en dos sitios a la vez ──
   const porPersonaDia = new Map();
@@ -255,7 +260,7 @@ export function detectarConflictos({
     // Para un refuerzo lo que define la cobertura es la DURACIÓN dentro de su ventana, no el
     // bloque: cuenta el turno cuya duración es la pedida y que cae dentro de la horquilla.
     const esRefuerzo = Number(n.duracion_min) > 0;
-    const hay = turnos.filter((a) => {
+    let hay = turnos.filter((a) => {
       if (String(a.dia) !== dia || String(a.area_id) !== String(n.area_id)) return false;
       if (!esRefuerzo) return String(a.tramo_id) === String(n.tramo_id);
       const dur = duracionMin(a.inicio_min, a.fin_min);
@@ -263,6 +268,11 @@ export function detectarConflictos({
         && Number(a.inicio_min) >= Number(n.ventana_inicio_min)
         && Number(a.fin_min) <= Number(n.ventana_fin_min);
     }).length;
+    const franja = idxTramo.get(String(n.tramo_id));
+    if (!esRefuerzo && Number.isFinite(Number(franja?.inicio_min)) && Number(franja?.fin_min) > Number(franja?.inicio_min)) {
+      const segmentos = coberturaFranja({ asignaciones: turnos, dia, area_id:n.area_id, inicio_min:franja.inicio_min, fin_min:franja.fin_min });
+      hay = segmentos.length ? Math.min(...segmentos.map(s => s.personas)) : 0;
+    }
     if (hay < Number(n.minimo || 0)) {
       const area = idxArea.get(String(n.area_id));
       const tramo = esRefuerzo ? { nombre: n.etiqueta || "refuerzo" } : idxTramo.get(String(n.tramo_id));

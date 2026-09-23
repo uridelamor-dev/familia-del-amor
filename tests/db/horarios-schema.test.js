@@ -37,7 +37,7 @@ describe("esquema de horarios (Postgres real)", { skip: HAY_BD ? false : motivoS
     await sembrarLocal(db, LOCAL, AHORA);
     await sembrarLocal(db, LOCAL, AHORA);
     const areas = await db.all(`SELECT nombre FROM hor_areas WHERE local = ? ORDER BY orden`, [LOCAL]);
-    assert.deepEqual(areas.map((a) => a.nombre), ["SALA", "COCINA"]);
+    assert.deepEqual(areas.map((a) => a.nombre), ["SALA", "BARRA", "COCINA"]);
     const tramos = await db.all(`SELECT nombre, inicio_min, fin_min, tipo FROM hor_tramos WHERE local = ? ORDER BY orden`, [LOCAL]);
     assert.deepEqual(tramos.map((t) => t.nombre), ["MAÑANA", "TARDE", "FIESTA"]);
 

@@ -50,6 +50,9 @@ export function planRepetir({
       return { dia, accion: "bloqueado", motivo: `No estaba en plantilla el ${dia}.` };
     }
 
+    // Las vacantes no son una misma persona: no tienen ausencias ni solapes personales.
+    if (turno.worker_id == null) return { dia, accion: "crear", avisos: [], motivo: null };
+
     const avisos = [];
     const aus = ausencias.find((x) => String(x.worker_id) === String(turno.worker_id)
       && String(x.desde) <= dia && dia <= String(x.hasta) && String(x.estado) === "aprobada");
