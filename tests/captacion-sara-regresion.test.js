@@ -114,7 +114,7 @@ test('la cola espera si sigue sin poder validar y solo envía al reconectar', as
   const guardia=server.slice(inicio,fin);
   for(const tiene of [null,false,true]) {
     let enviados=0, pendientes=0;
-    const env={waTipoPorToken:()=> 'entrega',numeroTieneWhatsApp:async()=>tiene,
+    const env={getConfig:async()=> '0',waTipoPorToken:()=> 'entrega',numeroTieneWhatsApp:async()=>tiene,
       dbRun:async()=>{pendientes++;},enviar:()=>{enviados++;}};
     vm.runInNewContext(`async function ejecutar(){for(const fila of [{token:'alta:prueba',telefono:'600000001',id:1}]){${guardia} enviar();}}`,env);
     if(tiene===false) await assert.rejects(env.ejecutar(),/no tiene WhatsApp/);

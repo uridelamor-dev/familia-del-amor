@@ -110,6 +110,7 @@ export function validarAlta(datos = {}, { locales = null, hoy = null } = {}) {
     else contrato = { horas_semana: horas, desde: fecha(datos.contrato_desde) || alta,
                       dias_semana: datos.dias_semana ? Number(datos.dias_semana) : null };
   }
+  if (datos.tipo_jornada === 'parcial' && !contrato) errores.push('Indica las horas semanales de la jornada parcial.');
   // `> 0` y no solo `Number.isFinite`: un `null` de la lista se convierte en 0, que es
   // finito, y se colaría como «área 0». Un id de área siempre es un entero positivo.
   const areas = Array.isArray(datos.areas)

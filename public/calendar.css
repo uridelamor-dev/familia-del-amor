@@ -1,0 +1,29 @@
+/* Calendario compacto, compartido por el panel y la web pública. */
+.fa-calendar{position:fixed;inset:auto;margin:0;width:336px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 30px);overflow:auto;box-sizing:border-box;padding:18px;border:1px solid rgba(128,128,128,.18);border-radius:24px;background:var(--surface,#fff);color:var(--ink,#1d2925);box-shadow:0 20px 70px #0003;font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.fa-calendar::backdrop{background:rgba(20,30,25,.12)}
+.fa-calendar *{box-sizing:border-box}
+.fa-calendar button,.fa-calendar select,.fa-calendar input{font:inherit;color:inherit;box-shadow:none;margin:0}
+.fa-calendar button{cursor:pointer;border:0;background:transparent;padding:0;min-height:36px;border-radius:50%;display:inline-grid;place-items:center}
+.fc-head{display:flex;align-items:center;gap:3px;margin-bottom:18px}
+.fc-controls{display:flex;align-items:center;gap:4px;flex:1;min-width:0}
+.fc-controls select{width:112px;max-width:45vw;text-transform:capitalize;border:0;background:transparent;padding:5px 2px;font-weight:650}
+.fc-controls .fc-year{width:66px;min-width:0;border:0;background:var(--surface2,#f3f4f4);border-radius:8px;padding:6px;font-weight:650}
+.fc-head>button{width:28px;font-size:24px;flex-shrink:0}
+.fa-calendar .fc-dismiss{font-size:20px;color:var(--ink3,#707975)}
+.fc-weekdays,.fc-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;text-align:center}
+.fc-weekdays{color:var(--ink3,#77817b);font-size:11px;margin-bottom:7px}
+.fc-days button{aspect-ratio:1;min-height:34px;width:100%;font-size:14px;font-weight:500}
+.fc-days .fc-out{color:var(--ink3,#88908c);opacity:.55}
+.fc-days .fc-today{color:var(--brand,#275448);font-weight:750;box-shadow:inset 0 0 0 1px var(--brand,#275448)}
+.fa-calendar button:hover:not(:disabled){background:var(--surface2,#edf2ef)}
+.fc-days .fc-selected,.fc-days .fc-selected:hover{background:var(--brand,#275448);color:#fff;box-shadow:none;opacity:1}
+.fa-calendar button:disabled{opacity:.22;cursor:default}
+.fa-calendar :focus-visible{outline:3px solid var(--brand,#275448);outline-offset:2px}
+.fc-footer{display:flex;justify-content:space-between;gap:8px;border-top:1px solid rgba(128,128,128,.18);margin-top:14px;padding-top:10px}
+.fc-footer button{border-radius:10px;padding:5px 10px;color:var(--brand,#275448);font-weight:600}
+.fa-calendar .fc-apply{background:var(--brand,#275448);color:white}
+.fc-time{display:flex;align-items:center;justify-content:space-between;margin:0 0 12px}
+.fc-time input{width:125px}
+.fa-calendar [hidden]{display:none!important}
+input[type="date"],input[type="month"],input[type="datetime-local"],[data-date-input],.dpt{border-radius:12px;cursor:pointer;font-variant-numeric:tabular-nums}
+@media(max-width:520px){.fa-calendar{width:calc(100vw - 24px);padding:20px;border-radius:26px}.fc-days button{min-height:40px}.fc-head>button{width:32px}.fc-controls select{width:130px}.fc-controls .fc-year{width:76px}}

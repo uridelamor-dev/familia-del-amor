@@ -48,7 +48,10 @@ describe("las pantallas de un solo local preguntan cuál antes de pedir nada", (
 
   test("Fichajes no llama con el local vacío", () => guarda("async function loadFichajes(", "apiRaw"));
   test("Horarios no llama con el local vacío", () => guarda("async function loadHorarios(", "apiRaw"));
-  test("La bandeja de Equipo no llama con el local vacío", () => guarda("async function rrPintarAtencion(", "/api/rrhh/atencion"));
+  test("La bandeja de Equipo se oculta sin local antes de consultar", () => {
+    const fn=panel.slice(panel.indexOf('async function rrPintarAtencion('));
+    assert.ok(fn.indexOf('if (!local) { cont.innerHTML = ""; return; }') < fn.indexOf('/api/rrhh/atencion'));
+  });
 
   test("el selector trae los botones, no un «búscalo arriba en la barra»", () => {
     const i = panel.indexOf("function pideEstablecimiento(");

@@ -22,7 +22,7 @@ function entornoDashboard() {
     viendoVarios: () => false, localActualFE: () => ctx.local,
     skeleton: () => 'cargando', repintarBarra: () => {}, errorCard: (s) => `ERROR ${s}`,
     fijarPendientes: () => {}, nombreCorto: String, nombreCortoLocal: String,
-    saludoHora: () => 'Hola', fechaLarga: String, fechaCorta: String,
+    saludoHora: () => 'Hola', fechaLarga: String, fechaCorta: String, fechaMini: String,
     esc: (s) => String(s ?? '').replaceAll('<', '&lt;'), num: String, eur: (n) => `${n} €`,
     dec1: String, ic: () => '', deltaMismoDiaSemana: () => null,
     deltaEl: () => '', kpi: () => '', area: () => '', attRow: (c) => c.titulo,
@@ -55,7 +55,7 @@ test('inicio: una respuesta del local anterior no sobrescribe el filtro nuevo', 
   const { ctx, view } = entornoDashboard();
   const p1 = diferido(), p2 = diferido(), d1 = diferido(), d2 = diferido();
   const ps = [p1, p2], ds = [d1, d2];
-  ctx.apiOptional = () => ps.shift().promise;
+  ctx.apiOptional = (path) => path.startsWith('/api/dashboard/hoy') ? Promise.resolve(null) : ps.shift().promise;
   ctx.api = () => ds.shift().promise;
   ctx.local = 'Blanes'; const l1 = ctx.loadDashboard();
   ctx.local = 'Girona'; const l2 = ctx.loadDashboard();
@@ -119,7 +119,7 @@ test('mezclar kg y unidades impide una comparación de precios engañosa', () =>
 });
 
 test('inventario: sin productos o sin conteos no significa al día', () => {
-  const ctx = vm.createContext({ INV: { local: 'Blanes' }, esc: String, num: String, nombreCortoLocal: String, fechaCorta: String, invHeader: () => '' });
+  const ctx = vm.createContext({ INV: { local: 'Blanes' }, esc: String, num: String, nombreCortoLocal: String, fechaCorta: String, fechaMini: String, invHeader: () => '' });
   vm.runInContext(bloque('function renderInvProveedores(list) {', '/**\n * Los inventarios ya cerrados'), ctx);
   assert.match(ctx.renderInvProveedores([{ n_productos: 0 }]), /Sin productos configurados/);
   assert.match(ctx.renderInvProveedores([{ n_productos: 4 }]), /Sin conteos cerrados/);
@@ -133,4 +133,19 @@ test('el día del panel coincide con Madrid al cruzar medianoche en verano e inv
     const ctx = vm.createContext({ Date: FechaPrueba });
     assert.equal(vm.runInContext(linea + '\ntodayStr()', ctx), esperado);
   }
+});
+
+test('inicio: sin comensales solo se oculta esa tarjeta, incluido cero de ventas válido', () => {
+  const {ctx}=entornoDashboard(); ctx.kpi=({lab,val})=>`<div>${lab}: ${val}</div>`;
+  const html=ctx.renderDashboard({...datos,diario:{hoy:datos.fecha,anterior:'2026-09-15',actual:{ventas:0,tickets:2,ticketMedio:0,comensales:null},variacion:-100}});
+  assert.match(html,/Facturación hoy: 0 €/); assert.match(html,/Ticket medio: 0 €/);
+  assert.match(html,/Vs. semana pasada/); assert.doesNotMatch(html,/Comensales hoy/);
+});
+test('inicio: un fallo del resumen no elimina las ventas que sí llegan', async () => {
+  const {ctx,view}=entornoDashboard(); ctx.kpi=({lab,val})=>`<div>${lab}: ${val}</div>`;
+  ctx.api=async()=>{throw new Error('Failed to fetch')};
+  ctx.apiOptional=async(path)=>path.startsWith('/api/dashboard/hoy')?{hoy:datos.fecha,actual:{ventas:123,tickets:3,ticketMedio:41}}:null;
+  await ctx.loadDashboard();await turno();
+  assert.match(view.innerHTML,/Facturación hoy: 123 €/);
+  assert.match(view.innerHTML,/No se ha podido cargar el resto/);
 });

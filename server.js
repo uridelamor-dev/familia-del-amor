@@ -32,6 +32,8 @@ import { listMaintenanceIssues, createMaintenanceIssue, updateMaintenanceIssueSt
 import { validarPlan, planesQueTocan, alCompletar } from "./src/modules/mantenimiento/planes.js";
 import { normalizarEstado, ABIERTOS as MANT_ABIERTOS } from "./src/modules/mantenimiento/estados.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
+import { guardarHorasFicha } from "./src/modules/rrhh/horas-ficha.js";
+import { resumenHoy } from "./src/modules/dashboard/hoy.js";
 import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fusion.js";
 import { resultadoRegistrado } from "./src/modules/dashboard/resultado.js";
 import { rangoAnterior, variacion } from "./src/modules/dashboard/periodos.js";
@@ -116,6 +118,7 @@ import { enlaceGuardar as googleEnlaceGuardar, normalizarClave as googleNormaliz
 import { cifrar as secCifrar, abrir as secAbrir, pista as secPista, DOMINIOS } from "./src/modules/seguridad/secretos.js";
 import { cargarLlavero, lineaArranque } from "./src/modules/seguridad/clave-datos.js";
 // Captación por campaña: la ruta a la que apunta un anuncio de pago, con su cola de envíos.
+import { validarRitmo, reservarSalida } from "./src/modules/captacion/ritmo.js";
 import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
 import { lineaErrorSql } from "./src/modules/seguridad/redactar.js";
 import { construirContexto as waConstruirContexto, LIMITES as WA_CTX_LIMITES,
@@ -7779,6 +7782,17 @@ app.get("/api/agora/ventas-vivo", requireAuth(["direccion", "contabilidad"]), as
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// Resumen diario independiente del periodo elegido en los gráficos.
+app.get("/api/dashboard/hoy", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res, next) => {
+  try {
+    const scope = localesScope(req);
+    const centros = scope.length ? scope : INV_LOCALES.filter(l => !LOCALES_SIN_PUBLICO.has(l));
+    const locales = [...new Set(centros.flatMap(l => barrasDelCentro(l, "ventas")))];
+    const vivo = await ventasVivoData(false);
+    res.json({ ok: true, data: resumenHoy(vivo, { hoy: hoyISO(), locales }) });
+  } catch (e) { next(e); }
+});
+
 // ── Analítica: informes de Ágora en vivo (producto, empleado, cancelaciones…) ──────────────
 // Lista de informes disponibles (para las pestañas del panel).
 app.get("/api/agora/informes", requireAuth(["direccion", "contabilidad"]), (req, res) => {
@@ -15070,7 +15084,7 @@ async function capVaciarCola() {
 
     let gastados = 0;
     for (const fila of pendientes) {
-      if (!isReady()) break;
+      if (!isReady() || (await getConfig("captacion_cola_parada")) === "1") break;
       const esAlta = Number(fila.prioridad ?? 1) === 0;
 
       // Cada tipo contra SU cupo. Un comercial se para antes; un alta puede usar la reserva.
@@ -15099,8 +15113,9 @@ async function capVaciarCola() {
       // Es un ARRENDAMIENTO, no un estado nuevo: si el proceso muere a media tanda, la fila se
       // vuelve a intentar sola cuando venza. Añadir un estado `enviando` habría obligado a tocar
       // el `CHECK` de la tabla, que es de las migraciones que bloquean un despliegue.
+      if (!(await reservarSalida(dbGet))) break;
       const cogida = await dbRun(
-        `UPDATE cap_cola SET proximo_ms = ? WHERE id = ? AND estado = 'pendiente' AND proximo_ms = ?
+        `UPDATE cap_cola SET proximo_ms = ? WHERE id = ? AND estado = 'pendiente' AND NOT pausado AND proximo_ms = ?
          RETURNING id`, [Date.now() + CAP_ARRIENDO_MS, fila.id, fila.proximo_ms]);
       if (!cogida) continue;
       gastados += 1;
@@ -15130,6 +15145,11 @@ async function capVaciarCola() {
             continue;
           }
           if (tiene === false) throw new Error("El teléfono no tiene WhatsApp");
+        }
+        // Una pausa posterior a la reserva también frena el mensaje todavía no entregado al canal.
+        if ((await getConfig("captacion_cola_parada")) === "1") {
+          await dbRun(`UPDATE cap_cola SET proximo_ms = ? WHERE id = ?`, [Date.now(), fila.id]);
+          break;
         }
         await sendMensajeLibre(fila.telefono, fila.texto, {
           origen: WA_ORIGEN.CAMPANA,
@@ -15191,6 +15211,7 @@ app.get("/api/captacion/campanas", requireAuth(PROMOS_ROLES), async (req, res) =
       cupo: await cupoWA(),
       wa: isReady(),
       parada: (await getConfig("captacion_cola_parada")) === "1",
+      ritmo: await dbGet("SELECT desde, hasta, minutos, cantidad, proximo_ms FROM cap_envio_control WHERE id = 1"),
       pixel: (await getConfig("meta_pixel_id")) || "",
     });
   } catch (e) {
@@ -15555,6 +15576,18 @@ app.post("/api/captacion/reconciliar/historico", requireAuth(["direccion"]), asy
     console.error(lineaErrorSql("[captacion] gate histórico", e));
     res.status(500).json({ ok: false, error: "No se pudo cambiar" });
   }
+});
+
+app.put("/api/captacion/cola/ritmo", requireAuth(["direccion"]), async (req, res) => {
+  let ritmo;
+  try { ritmo = validarRitmo(req.body); }
+  catch (e) { return res.status(400).json({ ok: false, error: e.message }); }
+  try {
+    await dbRun(`UPDATE cap_envio_control SET desde = ?, hasta = ?, minutos = ?, cantidad = ?,
+      proximo_ms = GREATEST(proximo_ms, ?) WHERE id = 1`,
+      [ritmo.desde, ritmo.hasta, ritmo.minutos, ritmo.cantidad, Date.now() + ritmo.minutos * 60000 / ritmo.cantidad]);
+    res.json({ ok: true, ritmo });
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo guardar el ritmo" }); }
 });
 
 app.post("/api/captacion/cola/parada", requireAuth(["direccion"]), async (req, res) => {
@@ -17798,7 +17831,8 @@ app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, r
     if (!rrhhPuedeLocal(req, w.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
     const privado = puedeVerPrivado(req.user.rol);
     if (privado) Object.assign(w, await dbGet(`SELECT direccion, iban, tipo_jornada, tipo_contrato, talla_ropa FROM rrhh_datos_alta WHERE worker_id = ?`, [w.id]) || {});
-    const contratoAlta = await dbGet(`SELECT horas_semana FROM hor_contratos WHERE worker_id = ? AND (hasta IS NULL OR hasta >= ?) ORDER BY desde DESC LIMIT 1`, [w.id, hoyISO()]);
+    const contratoAlta = await dbGet(`SELECT id, desde, horas_semana FROM hor_contratos WHERE worker_id = ? AND desde <= ? AND (hasta IS NULL OR hasta >= ?) ORDER BY desde DESC LIMIT 1`, [w.id, hoyISO(), hoyISO()]);
+    if (privado) w.horas_semana = contratoAlta?.horas_semana ?? null;
     const pinAlta = await dbGet(`SELECT pin_hash IS NOT NULL AS tiene FROM users WHERE id = ?`, [w.id]);
     const notas = puedeVerPrivado(req.user.rol) ? await dbAll("SELECT * FROM hr_worker_notes WHERE worker_id = ? ORDER BY creado_en DESC", [w.id]) : [];
     const checkins = await dbAll("SELECT * FROM hr_llamadas_mes WHERE worker_id = ? ORDER BY mes DESC", [w.id]);
@@ -18327,7 +18361,7 @@ app.put("/api/rrhh/trabajador/:id", requireAuth(RRHH_ROLES), async (req, res) =>
     for (const c of campos) if (req.body[c] !== undefined) { sets.push(`${c} = ?`); vals.push(req.body[c] === "" ? null : req.body[c]); }
     if (req.body.nombre !== undefined) { sets.push("nombre = ?"); vals.push(String(req.body.nombre).trim()); }
     const privados = puedeVerPrivado(req.user.rol) ? CAMPOS_PRIVADOS.filter(k => req.body[k] !== undefined) : [];
-    if (!sets.length && !privados.length) return res.json({ ok: true });
+    if (!sets.length && !privados.length && req.body.horas_semana === undefined) return res.json({ ok: true });
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -18336,6 +18370,10 @@ app.put("/api/rrhh/trabajador/:id", requireAuth(RRHH_ROLES), async (req, res) =>
         await client.query('INSERT INTO rrhh_datos_alta(worker_id) VALUES ($1) ON CONFLICT DO NOTHING', [w.id]);
         await client.query(toPositional(`UPDATE rrhh_datos_alta SET ${privados.map(k => `${k} = ?`).join(', ')} WHERE worker_id = ?`), [...privados.map(k => req.body[k]), w.id]);
       }
+      if (puedeVerPrivado(req.user.rol)) await guardarHorasFicha(client, {
+        workerId: w.id, horas: req.body.horas_semana, desde: req.body.contrato_desde,
+        hoy: hoyISO(), autor: req.user.username, tipoJornada: req.body.tipo_jornada,
+      });
       await client.query('COMMIT');
     } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
     invalidarInternos(); // el teléfono puede haber cambiado
@@ -18376,7 +18414,7 @@ app.put("/api/rrhh/trabajador/:id", requireAuth(RRHH_ROLES), async (req, res) =>
       }
     }
     res.json({ ok: true, avisoTurnos });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ ok: false, error: e.message }); }
 });
 
 registrarBorradoresFirma(app, {

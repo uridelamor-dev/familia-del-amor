@@ -1197,16 +1197,21 @@ function renderDashboard(d) {
   const hayParte = !!(d.titular || contexto);
   const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${ambito}${fechaLarga(d.fecha) ? " · " + fechaLarga(d.fecha) : ""}</div></div><div class="acts">${hayParte ? `<button class="btn" data-act="dash-parte">${ic("chat", 15)} El parte de Sara</button>` : ""}<button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
   const sara = "";
-  // ── 4 KPIs reales ──
-  const hoyN = (d.hoy && d.hoy.hoy) || {};
-  const nCrit = (d.preocupaciones || []).filter((c) => c.tipo === "mantenimiento" && c.sev === "crit").length;
-  // OJO con lo que se compara: esta tarjeta dice «Reservas HOY» y antes le pintaba el delta de
-  // AYER (`d.ayer.delta`, que es ayer contra un día normal de esa semana). El número y su
-  // comparación hablaban de días distintos y nadie lo notaba, porque no ponía contra qué.
-  // Ahora se compara hoy con un día normal de la misma semana, y se dice con todas las letras.
-  const cmpHoy = deltaMismoDiaSemana(d.serieReservas, d.fecha, "n");
-  const cmpCom = deltaMismoDiaSemana(d.serieReservas, d.fecha, "personas");
-  const kpis = `<div class="grid g4 dash-kpis">${kpi({ lab: "Reservas hoy", icon: "cal", val: num(hoyN.n || 0), delta: cmpHoy && cmpHoy.pct, contra: cmpHoy && cmpHoy.contra })}${kpi({ lab: "Comensales hoy", icon: "users", val: num(hoyN.personas || 0), delta: cmpCom && cmpCom.pct, contra: cmpCom && cmpCom.contra })}${kpi({ lab: "Mantenim. abierto", icon: "wrench", val: num((d.mantenimiento && d.mantenimiento.abiertas) || 0), unit: nCrit ? `· ${nCrit} crítica${nCrit === 1 ? "" : "s"}` : "" })}${kpi({ lab: "Por pagar", icon: "euro", val: eur((d.dinero && d.dinero.porPagar && d.dinero.porPagar.total) || 0) })}</div>`;
+  // Ventas del día: sin sustituir datos ausentes por cero ni por reservas.
+  const diario = d.diario, actual = diario?.actual;
+  const pendiente = diario === undefined ? "Consultando TPV…" : "No disponible";
+  const hora = diario?.actualizado ? new Date(diario.actualizado).toLocaleTimeString("es-ES", { timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit" }) : "";
+  const marca = hora ? `Última lectura: ${esc(hora)}${diario.sinRespuesta ? " · sin conexión actual" : ""}` : pendiente;
+  const variacion = diario?.variacion;
+  const tarjetasHoy = [
+    actual?.ventas != null ? kpi({ lab: "Facturación hoy", icon: "euro", val: eur(actual.ventas), sub: marca }) : "",
+    actual?.comensales != null ? kpi({ lab: "Comensales hoy", icon: "users", val: num(actual.comensales), sub: "Registrados en TPV" }) : "",
+    actual?.ticketMedio != null ? kpi({ lab: "Ticket medio", icon: "receipt", val: eur(actual.ticketMedio), sub: "Por ticket · " + num(actual.tickets) + " tickets" }) : "",
+    variacion != null ? kpi({ lab: "Vs. semana pasada", icon: "cal", val: (variacion > 0 ? "+" : "") + dec1(variacion) + " %", sub: `Mismo día · ${esc(fechaMini(diario.anterior))}<br>Día completo` }) : "",
+  ].filter(Boolean);
+  const kpis = tarjetasHoy.length ? `<div class="grid g${tarjetasHoy.length} dash-kpis">${tarjetasHoy.join("")}</div>` : "";
+  if (d.errorResumen) return header + kpis + errorCard("No se ha podido cargar el resto del resumen. Puedes reintentarlo.");
+
 
   // ── Actividad (reservas + ventas del PERIODO seleccionado) ──
   const per = DASH_PERIODO || null;
@@ -1257,7 +1262,7 @@ function renderDashboard(d) {
   const concerns = (d.preocupaciones || []).filter(c => !GO_VIEW[c.go] || puedeVer(GO_VIEW[c.go])).slice().sort((a,b) => ({crit:0,imp:1,info:2}[a.sev] ?? 3) - ({crit:0,imp:1,info:2}[b.sev] ?? 3));
   // Las críticas se muestran al entrar; el detalle por establecimiento queda plegado.
   const nCritC = concerns.filter((c) => c.sev === "crit").length;
-  const atencion = `<details class="card fold c7 p0"${nCritC ? " open" : ""}><summary style="padding:18px 18px 14px"><h3>Necesita tu atención</h3><span class="foldr">${concerns.length ? `<span class="pill ${nCrit || nCritC ? "bad" : "warn"}">${nCritC ? `${nCritC} crítica${nCritC === 1 ? "" : "s"}` : `${concerns.length}`}</span>` : '<span class="pill ok">Todo en orden</span>'}<span class="car">${ic("chev", 16)}</span></span></summary>${concerns.length ? `<div class="rows">${concerns.map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</details>`;
+  const atencion = `<details class="card fold c7 p0"${nCritC ? " open" : ""}><summary style="padding:18px 18px 14px"><h3>Necesita tu atención</h3><span class="foldr">${concerns.length ? `<span class="pill ${nCritC ? "bad" : "warn"}">${nCritC ? `${nCritC} crítica${nCritC === 1 ? "" : "s"}` : `${concerns.length}`}</span>` : '<span class="pill ok">Todo en orden</span>'}<span class="car">${ic("chev", 16)}</span></span></summary>${concerns.length ? `<div class="rows">${concerns.map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</details>`;
 
   // ── Estado por establecimiento (radar real) ──
   const radar = d.radarLocales || [];
@@ -1295,7 +1300,13 @@ async function loadDashboard() {
   DASH_PERIODO = null;
   DASH_PERIODO_ESTADO = "cargando";
   let d = null;
+  let diario;
   const pintar = () => { if (d && vigente()) view.innerHTML = renderDashboard(d); };
+  apiOptional("/api/dashboard/hoy" + (q ? "?" + q : "")).then((valor) => {
+    if (!vigente()) return;
+    diario = valor?.hoy ? valor : null;
+    if (d) { d.diario = diario; pintar(); }
+  });
   const pedirPeriodo = apiOptional(`/api/dashboard/periodo?from=${from}&to=${to}&comparar=1&preset=${encodeURIComponent(PERIOD || "")}${q ? "&" + q : ""}`);
   pedirPeriodo.then((per) => {
     if (!vigente()) return;
@@ -1306,9 +1317,15 @@ async function loadDashboard() {
   try {
     d = await api("/api/dashboard" + (q ? "?" + q : ""));
     if (!vigente()) return;
+    d.diario = diario;
     pintar();
     repintarBarra();
-  } catch (e) { if (vigente() && e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+  } catch (e) {
+    if (vigente() && e.message !== "noauth") {
+      d = { fecha: todayStr(), diario, errorResumen: true };
+      pintar();
+    }
+  }
 }
 // Rango personalizado (días o meses, incluso del año pasado).
 /**
@@ -3221,7 +3238,7 @@ function rrTabsPermitidas() {
   // comprueban lo mismo (ver `moduloDeRuta` y los roles de /api/rrhh/pulso y /api/hr).
   const T = [["seguimiento", "Equipo", "rrhh"], ["contratacion", "Contratación", "contratacion"],
              ["pulso", "Pulso del equipo", "pulso"], ["preguntas", "Preguntas del mes", "preguntas"]];
-  return T.filter(([, , mod]) => puedeVer(mod)).map(([id, lab]) => [id, lab]);
+  return T.filter(([id, , mod]) => !["pulso", "preguntas"].includes(id) && puedeVer(mod)).map(([id, lab]) => [id, lab]);
 }
 function rrTabs() {
   const T = rrTabsPermitidas();
@@ -3477,7 +3494,7 @@ function renderRRDocs() {
 }
 function renderRRFicha() {
   const w = RRSEG.sel;
-  if (!w) return `<div class="card" style="min-height:200px;display:grid;place-items:center"><div class="mut">Selecciona un trabajador para ver su ficha, datos, documentos y check-in.</div></div>`;
+  if (!w) return `<div class="card" style="min-height:200px;display:grid;place-items:center"><div class="mut">Selecciona un trabajador para ver su ficha, datos y documentos.</div></div>`;
   const f = RRSEG.ficha; const t = (f && f.trabajador) || w;
   const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
   // El estado lo decide el SERVIDOR con las funciones de vigencia. Antes se calculaba aquí
@@ -3500,7 +3517,7 @@ function renderRRFicha() {
         <p class="mut" style="margin:8px 0 0;font-size:11.5px;max-width:230px;line-height:1.5">Borra su acceso y su ficha.
           Para alguien que se va, lo que toca es <b>Dar de baja</b>: conserva su histórico.</p>
       </div></details>` : ""}</div></div>`;
-  return `<div class="grid" style="gap:16px">${hero}${renderRRAlta()}${datos}${renderRRLaboral()}${renderRRPin()}${renderRRRendimiento()}${renderRRDocs()}${renderRRCheckin()}${renderRRNotas()}</div>`;
+  return `<div class="grid" style="gap:16px">${hero}${renderRRAlta()}${datos}${renderRRLaboral()}${renderRRPin()}${renderRRDocs()}${renderRRNotas()}</div>`;
 }
 
 // ── Necesita tu atención ────────────────────────────────────────────────────
@@ -3514,23 +3531,14 @@ async function rrPintarAtencion(cont) {
   // avisos de un sitio. Sin local no se pide (daba 403 y con la regla vieja echaba al login);
   // el resto de la pantalla de Equipo sí funciona sin él, así que solo se sustituye la caja.
   const local = localActualFE() || USER.local || "";
-  if (!local) {
-    cont.innerHTML = pideEstablecimiento("¿De qué establecimiento?",
-      "Lo que necesita tu atención —jornadas por revisar, ausencias sin responder— es de un local concreto. El resto de esta pantalla ya funciona.");
-    return;
-  }
+  if (!local) { cont.innerHTML = ""; return; }
   let j;
   try { j = await apiRaw("/api/rrhh/atencion?local=" + encodeURIComponent(local)); }
   catch { cont.innerHTML = ""; return; }   // si falla, la pantalla sigue sirviendo
 
-  if (!j.total) {
-    // Un vacío que DICE algo: no es «sin datos», es que no hay nada que hacer.
-    cont.innerHTML = `<div class="card at-vacio"><div class="at-ok">✓</div>
-      <div><b>No hay nada esperándote.</b>
-      <div class="mut" style="font-size:12.5px;margin-top:2px">Ni jornadas por revisar, ni solicitudes sin responder, ni avisos del equipo.</div></div></div>`;
-    return;
-  }
-  cont.innerHTML = `<div class="card at-caja">
+  if (!cont.isConnected || local !== (localActualFE() || USER.local || "")) return;
+  if (!j.total) { cont.innerHTML = ""; return; }
+  cont.innerHTML = `<details class="rr-pendientes"><summary aria-label="${num(j.total)} asuntos pendientes" title="Ver ${num(j.total)} asuntos pendientes">${num(j.total)}</summary><div class="card at-caja">
     <div class="ch"><h3>Necesita tu atención</h3>
       <span class="pill ${j.bloqueos ? "bad" : "warn"}">${num(j.total)}</span></div>
     ${j.grupos.map((g) => `<div class="at-grupo">
@@ -3541,7 +3549,7 @@ async function rrPintarAtencion(cont) {
         <button class="btn sm" data-at='${esc(JSON.stringify(a.accion))}'>${esc(a.accion.etiqueta)}</button>
       </div>`).join("")}
       ${g.asuntos.length > 4 ? `<div class="row mut" style="font-size:12px">y ${g.asuntos.length - 4} más</div>` : ""}</div>
-    </div>`).join("")}</div>`;
+    </div>`).join("")}</div></details>`;
 
   cont.onclick = (e) => {
     const b = e.target.closest("[data-at]");
@@ -3815,13 +3823,20 @@ function rrEditarDatos(id) {
   const t = (RRSEG.ficha && RRSEG.ficha.trabajador) || RRSEG.sel; if (!t) return;
   const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
   const F = (name, lab, val, type) => `<div class="field"><label>${lab}</label><input name="${name}" ${type ? `type="${type}"` : ""} value="${esc(val || "")}"></div>`;
-  const sensibles = esDir ? rrCamposAdministrativos(t) : '';
+  const horasActuales = t.horas_semana ?? RRSEG.lab?.contrato?.vigente?.horas_semana ?? '';
+  const sensibles = esDir ? rrCamposAdministrativos(t) + `<div class="field"><label>Horas semanales contratadas<input name="horas_semana" type="number" min="1" max="60" step="0.5" value="${esc(horasActuales)}" placeholder="Ej. 20"></label></div><div class="field" id="rrHorasDesde" hidden><label>Aplicar estas horas desde<input name="contrato_desde" type="date" min="${todayStr()}" value="${todayStr()}"></label><small class="mut">Se usarán en Horarios. Conservamos el contrato anterior.</small></div>` : '';
   const body = `<form id="fRRD"><div class="form-grid">${F("nombre", "Nombre", t.nombre)}${F("puesto", "Puesto", t.puesto)}${F("telefono", "Teléfono", t.telefono)}${F("email", "Email", t.email)}${F("fecha_nac", "Nacimiento", (t.fecha_nac || "").slice(0, 10), "date")}${sensibles}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar</button></div></form>`;
   const ov = modal("Editar datos", body);
+  if (esDir) {
+    const form=ov.querySelector('#fRRD'), h=form.elements.horas_semana, j=form.elements.tipo_jornada;
+    const sync=()=>{h.required=j.value==='parcial';const cambia=h.value!=='' && Number(h.value)!==Number(horasActuales);ov.querySelector('#rrHorasDesde').hidden=!cambia;form.elements.contrato_desde.required=cambia;};
+    h.addEventListener('input',sync);j.addEventListener('change',sync);sync();
+  }
   ov.querySelector("#fRRD").addEventListener("submit", async (e) => {
     e.preventDefault(); const fm = e.target;
     const data = { nombre: fm.nombre.value.trim(), puesto: fm.puesto.value.trim(), telefono: fm.telefono.value.trim(), email: fm.email.value.trim(), fecha_nac: fm.fecha_nac.value };
     if (esDir) for (const k of ['dni','direccion','iban','talla_ropa','tipo_jornada','tipo_contrato']) data[k] = fm.elements[k].value.trim();
+    if (esDir) { data.horas_semana = fm.elements.horas_semana.value; data.contrato_desde = fm.elements.contrato_desde.value; }
     try {
       const r = await apiSend("PUT", "/api/rrhh/trabajador/" + encodeURIComponent(id), data);
       ov.remove(); toast("Datos guardados ✅"); rrSelWorker(id);
@@ -4099,6 +4114,8 @@ function rrWorkerAdd(pre = {}) {
       le sugerirá el sistema es cambiarla. El PIN de fichaje es independiente.</p>
     <button class="btn primary" type="submit">Crear trabajador</button></form>`);
 
+  const jornadaAlta = ov.querySelector('[name=tipo_jornada]');
+  jornadaAlta?.addEventListener('change',()=>{ov.querySelector('[name=horas_semana]').required=jornadaAlta.value==='parcial';});
   // Las áreas son las del local elegido, y se recargan si se cambia: ofrecer las de Blanes
   // para alguien de Lloret sería regalar un id que el servidor va a rechazar.
   async function cargarAreas() {
@@ -4655,11 +4672,6 @@ function renderHorarios() {
     <b style="margin-left:6px">${esc(etiqueta)}</b> ${est}
     <div style="flex:1"></div>
     ${horSelectorPeriodo()}
-    ${HOR.periodo === 'semana' ? `<div class="seg">
-      <button class="${HOR.vista === "areas" ? "on" : ""}" data-act="hor-vista" data-v="areas">Por área</button>
-      <button class="${HOR.vista === "personas" ? "on" : ""}" data-act="hor-vista" data-v="personas">Por persona</button>
-    </div>` : ''}
-    <button class="btn" data-act="hor-config" title="Cuánta gente hace falta, contratos, ausencias y disponibilidad">Configuración</button>
     ${horAcciones()}
   </div>`;
 
@@ -4684,7 +4696,11 @@ function renderHorarios() {
 
 // Vistas adicionales; la rejilla semanal y sus colores se conservan.
 function horSelectorPeriodo() {
-  return `<input type="date" class="inp hor-fecha" aria-label="Ir a una fecha" data-hor-fecha value="${HOR.fecha || HOR.lunes}"><div class="seg" aria-label="Periodo del horario">${[['dia','Día'],['semana','Semana'],['mes','Mes']].map(([v,n])=>`<button data-act="hor-periodo" data-periodo="${v}" class="${HOR.periodo===v?'on':''}">${n}</button>`).join('')}</div>`;
+  return `<details class="hor-menu"><summary class="btn sm">Ver · ${HOR.periodo === 'dia' ? 'Día' : HOR.periodo === 'mes' ? 'Mes' : 'Semana'} ▾</summary><div class="hor-menu-panel">
+    <div class="seg" aria-label="Periodo del horario">${[['dia','Día'],['semana','Semana'],['mes','Mes']].map(([v,n])=>`<button data-act="hor-periodo" data-periodo="${v}" class="${HOR.periodo===v?'on':''}">${n}</button>`).join('')}</div>
+    ${HOR.periodo === 'semana' ? `<div class="seg"><button class="${HOR.vista === 'areas' ? 'on' : ''}" data-act="hor-vista" data-v="areas">Por área</button><button class="${HOR.vista === 'personas' ? 'on' : ''}" data-act="hor-vista" data-v="personas">Por persona</button></div>` : ''}
+    <label>Ir a una fecha<input type="date" class="inp hor-fecha" aria-label="Ir a una fecha" data-hor-fecha value="${HOR.fecha || HOR.lunes}"></label>
+  </div></details>`;
 }
 document.addEventListener('change', e => {
   if (!e.target.matches('[data-hor-fecha]') || !e.target.value || CURRENT !== 'horarios') return;
@@ -4913,31 +4929,29 @@ async function horAsegurarSemana() {
 }
 
 function horAcciones() {
-  // Ya no hay «Empezar esta semana»: la semana se abre sola al guardar el primer turno. Lo
-  // que se ofrece sin nada planificado es lo único útil ahí — pedir una propuesta o copiar
-  // otra semana— y lo demás se activa cuando hay algo que publicar.
   const n = (HOR.asignaciones || []).length;
   const turnos = (HOR.asignaciones || []).filter((a) => (a.tipo || "turno") === "turno").length;
-  const pdf = `<button class="btn" data-act="hor-pdf" ${n && HOR.semana ? "" : "disabled"} title="Descargar el cuadrante en PDF">${ic("receipt", 15)} PDF</button>`;
+  const pdf = `<button class="btn" data-act="hor-pdf" ${n && HOR.semana ? "" : "disabled"}>${ic("receipt", 15)} PDF</button>`;
+  const config = '<button class="btn" data-act="hor-config">Configuración</button>';
+  const menu = contenido => `<details class="hor-menu"><summary class="btn sm">Más ···</summary><div class="hor-menu-panel">${contenido}</div></details>`;
   if (horEditable()) {
-    return `<button class="btn" data-act="hor-generar" title="Proponer un cuadrante a partir de las necesidades, los contratos y las ausencias">Proponer horario</button>
+    return menu(`<button class="btn" data-act="hor-generar">Proponer horario</button>
       <button class="btn" data-act="hor-copiar">Copiar semana</button>
-      <button class="btn" data-act="hor-plantillas">Plantillas</button>
-      ${/* Solo si hay turnos que quitar: un botón de vaciar sobre una semana vacía es un
-            botón que no hace nada y encima da miedo pulsarlo. */""}
-      ${turnos ? '<button class="btn danger" data-act="hor-vaciar" title="Quitar todos los turnos de esta semana y empezar de cero">Vaciar semana</button>' : ""}
-      ${pdf}
-      <button class="btn primary" data-act="hor-publicar" ${n ? "" : "disabled"}>Publicar</button>`;
+      <button class="btn" data-act="hor-plantillas">Plantillas</button>${pdf}${config}
+      ${turnos ? '<button class="btn danger" data-act="hor-vaciar">Vaciar semana</button>' : ''}`)
+      + `<button class="btn primary" data-act="hor-publicar" ${n ? "" : "disabled"}>Publicar</button>`;
   }
-  if (HOR.semana.estado === "cerrado") return `<button class="btn" data-act="hor-historico">Versiones</button>${pdf}`;
-  // Mandar al grupo es un botón APARTE de publicar, no un efecto de publicar: se publica
-  // varias veces mientras se cuadra la semana, y un mensaje al grupo por cada una sería
-  // ruido que la gente acabaría silenciando.
-  return `<button class="btn" data-act="hor-historico">Versiones</button>
-    ${pdf}
-    <button class="btn" data-act="hor-wa" title="Mandar el PDF al grupo de WhatsApp del local">Mandar al grupo</button>
-    <button class="btn primary" data-act="hor-nueva-version">Cambiar horario</button>`;
+  if (HOR.semana.estado === "cerrado") return menu(`<button class="btn" data-act="hor-historico">Versiones</button>${pdf}${config}`);
+  return menu(`<button class="btn" data-act="hor-historico">Versiones</button>${pdf}${config}
+    <button class="btn" data-act="hor-wa">Mandar al grupo</button>`)
+    + `<button class="btn primary" data-act="hor-nueva-version">Cambiar horario</button>`;
 }
+document.addEventListener('click', e => {
+  document.querySelectorAll('.hor-menu[open]').forEach(menu => {
+    if (!menu.contains(e.target) || e.target.closest('button[data-act]')) menu.open=false;
+  });
+});
+document.addEventListener('keydown', e => { if(e.key==='Escape')document.querySelectorAll('.hor-menu[open]').forEach(menu=>{menu.open=false;menu.querySelector('summary').focus();}); });
 
 // Los conflictos se piden aparte: la rejilla se ve al instante y los avisos llegan después.
 async function horConflictos(silencioso) {
@@ -15071,15 +15085,19 @@ function promoCaptacion() {
 
   // Lo primero, el estado del canal. Si WhatsApp está caído o el cupo agotado, todo lo demás da
   // igual: los códigos no salen, y quien lo mire tiene que enterarse antes de nada.
-  const salud = `<div class="card"><div class="ch"><h3>El canal</h3>
+  const ritmo = d.ritmo || { desde: "09:00", hasta: "21:00", minutos: 5, cantidad: 1 };
+  const salud = `<div class="card"><div class="ch"><h3>Envíos de campañas</h3>
       ${USER.rol === "direccion" ? `<button class="btn" data-act="cap-parada" data-parada="${d.parada ? "0" : "1"}">${d.parada ? "Reanudar envíos" : "Parar envíos"}</button>` : ""}</div>
+    <p class="mut">De ${esc(ritmo.desde)} a ${esc(ritmo.hasta)} · ${num(ritmo.cantidad)} mensaje${Number(ritmo.cantidad) === 1 ? "" : "s"} cada ${num(ritmo.minutos)} min · hora peninsular.
+      ${USER.rol === "direccion" ? `<button class="linkbtn" data-act="cap-ritmo">Cambiar horario y ritmo</button>` : ""}</p>
+    <p class="mut">Fuera de horario o con la cola pausada, las altas se guardan y sus mensajes esperan. Reanudar respeta el horario y el ritmo.</p>
     <div class="rows">
       <div class="row" style="justify-content:space-between;padding:6px 0">
         <span class="t1">WhatsApp</span>
         <span class="pill ${d.wa ? "ok" : "bad"}">${d.wa ? "Conectado" : "Caído: no sale nada"}</span></div>
       <div class="row" style="justify-content:space-between;padding:6px 0">
         <span><span class="t1">Mensajes de hoy</span>
-          <span class="t2">El tope protege el número, que es el mismo de las reservas y de Sara</span></span>
+          <span class="t2">El tope se comparte con las reservas y Sara</span></span>
         <span class="pill ${cupo.agotado ? "bad" : cupo.cerca ? "" : "ok"}">${num(cupo.usados)} / ${num(cupo.max)}</span></div>
       ${d.parada ? `<div class="row" style="padding:6px 0"><span class="pill bad">Envíos parados a mano</span></div>` : ""}
       ${USER.rol === "direccion" ? `<div class="row" style="justify-content:space-between;padding:6px 0">
@@ -15349,9 +15367,34 @@ async function capReenviar(id) {
   } catch (e) { toast("Error: " + e.message); }
 }
 
+function capEditarRitmo() {
+  const r = PROMO.cap?.ritmo || { desde: "09:00", hasta: "21:00", minutos: 5, cantidad: 1 };
+  const ov = modal("Horario y ritmo de envíos", `<form id="capRitmoForm">
+    <p class="mut">Para toda la cola de campañas, incluidos los códigos de nuevas altas. Hora de España peninsular.</p>
+    <div class="form-grid">
+      <label class="field">Enviar desde<input type="time" name="desde" required value="${esc(r.desde)}"></label>
+      <label class="field">Hasta<input type="time" name="hasta" required value="${esc(r.hasta)}"></label>
+      <label class="field">Mensajes<select name="cantidad"><option value="1">1 mensaje</option><option value="2" ${Number(r.cantidad) === 2 ? "selected" : ""}>2 mensajes</option></select></label>
+      <label class="field">Cada cuántos minutos<input type="number" name="minutos" min="5" max="120" step="1" required value="${Number(r.minutos)}"></label>
+    </div><p class="mut">Los mensajes se reparten durante el intervalo: dos cada cinco minutos salen separados por dos minutos y medio. No se acumulan tandas durante una pausa.</p>
+    <p class="mut">Espaciar los envíos no garantiza que WhatsApp no aplique restricciones.</p>
+    <p role="alert" id="capRitmoError"></p>
+    <div class="toolbar"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar</button></div>
+  </form>`);
+  ov.querySelector('form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const button = e.currentTarget.querySelector('[type="submit"]');
+    button.disabled = true;
+    try {
+      await apiSend('PUT', '/api/captacion/cola/ritmo', Object.fromEntries(new FormData(e.currentTarget)));
+      ov.remove(); toast('Horario y ritmo guardados'); loadPromos();
+    } catch (error) { ov.querySelector('#capRitmoError').textContent = error.message; button.disabled = false; }
+  });
+}
+
 async function capParada(parada) {
   const parar = parada === "1";
-  if (parar && !confirm("Deja de salir cualquier código de captación hasta que lo reanudes.\n\n¿Parar los envíos?")) return;
+  if (parar && !confirm("Se pausarán los mensajes pendientes de todas las campañas. Un envío ya iniciado puede terminar.\n\n¿Parar los envíos?")) return;
   try {
     await apiSend("POST", "/api/captacion/cola/parada", { parada: parar });
     toast(parar ? "Envíos parados" : "Envíos reanudados");
@@ -16353,6 +16396,7 @@ document.addEventListener("click", (e) => {
   else if (act === "cap-reenviar") capReenviar(t.getAttribute("data-id"));
   else if (act === "cap-recuperar") capRecuperar(t.getAttribute("data-clave"));
   else if (act === "cap-rec-accion") capRecAccion(t.getAttribute("data-clave"), t.getAttribute("data-accion"), t);
+  else if (act === "cap-ritmo") capEditarRitmo();
   else if (act === "cap-parada") capParada(t.getAttribute("data-parada"));
   else if (act === "ir-web") go("web");
   else if (act === "meta-pixel") metaPixelEditar();

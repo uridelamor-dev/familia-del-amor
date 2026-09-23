@@ -1530,3 +1530,18 @@ input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit,
 #escForm>label{display:grid;gap:5px;min-width:0;margin:12px 0}
 #escForm select{width:100%;min-width:0}
 @media(max-width:500px){.esc-campos{grid-template-columns:1fr}}
+
+/* Ficha: avisos compactos y controles de jornada. */
+#rrAtencion:empty{display:none}
+.rr-pendientes>summary{display:inline-flex;align-items:center;justify-content:center;min-width:40px;height:40px;border-radius:50%;background:var(--danger,#bf3830);color:#fff;font-weight:700;cursor:pointer;list-style:none;padding:0 8px;margin-bottom:10px}
+.rr-pendientes>summary::-webkit-details-marker{display:none}
+.rr-pendientes>summary:focus-visible{outline:3px solid var(--brand);outline-offset:3px}
+#rrHorasDesde[hidden]{display:none}
+#fRRD label input{display:block;width:100%;margin-top:6px}
+
+.hor-menu{position:relative;flex:none}.hor-menu>summary{list-style:none;cursor:pointer}.hor-menu>summary::-webkit-details-marker{display:none}
+.hor-menu-panel{position:absolute;right:0;top:calc(100% + 6px);z-index:40;min-width:230px;max-width:calc(100vw - 30px);padding:12px;display:grid;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--sh-lg)}
+.hor-menu-panel>.btn{text-align:left;justify-content:flex-start}.hor-menu-panel label{font-size:12px;color:var(--ink3)}.hor-menu-panel input{display:block;width:100%;margin-top:6px}
+.hor-menu:not([open])>.hor-menu-panel{display:none}
+@media(max-width:600px){.hor-menu{position:static}.hor-menu-panel{position:absolute;top:calc(100% + 6px);bottom:auto;left:0;right:0;max-width:none;max-height:55dvh;overflow:auto}}
+.agnav:has(.hor-menu){position:relative;z-index:50}

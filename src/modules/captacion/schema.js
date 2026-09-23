@@ -5,6 +5,15 @@
 // se añade de dónde vino la gente y cómo se le hizo llegar el código.
 
 export async function ensureSchemaCaptacion(x) {
+  await x.run(`CREATE TABLE IF NOT EXISTS cap_envio_control (
+    id SMALLINT PRIMARY KEY CHECK (id = 1),
+    desde TEXT NOT NULL DEFAULT '09:00', hasta TEXT NOT NULL DEFAULT '21:00',
+    minutos INTEGER NOT NULL DEFAULT 5 CHECK (minutos BETWEEN 5 AND 120),
+    cantidad INTEGER NOT NULL DEFAULT 1 CHECK (cantidad IN (1,2)),
+    proximo_ms BIGINT NOT NULL DEFAULT 0
+  )`);
+  await x.run(`INSERT INTO cap_envio_control (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+
   // ── De dónde vino cada lead ────────────────────────────────────────────────
   // `leads.fuente` existía pero es texto libre, lo escribe cualquiera desde una ruta pública y
   // desde la web siempre valía 'web'. Con eso no se puede contestar la única pregunta que
