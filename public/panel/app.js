@@ -1204,15 +1204,16 @@ function renderDashboard(d) {
   const diario = d.diario, actual = diario?.actual;
   const pendiente = diario === undefined ? "Consultando TPV…" : "No disponible";
   const hora = diario?.actualizado ? new Date(diario.actualizado).toLocaleTimeString("es-ES", { timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit" }) : "";
+  const cobertura = actual?.parcial ? ` · Parcial: ${actual.localesDisponibles.length} de ${actual.totalLocales} locales` : "";
   const marca = hora ? `Última lectura: ${esc(hora)}${diario.sinRespuesta ? " · sin conexión actual" : ""}` : pendiente;
   const variacion = diario?.variacion;
   const tarjetasHoy = [
-    actual?.ventas != null ? kpi({ lab: "Facturación hoy", icon: "euro", val: eur(actual.ventas), sub: marca }) : "",
-    actual?.comensales != null ? kpi({ lab: "Comensales hoy", icon: "users", val: num(actual.comensales), sub: "Registrados en TPV" }) : "",
-    actual?.ticketMedio != null ? kpi({ lab: "Ticket medio", icon: "receipt", val: eur(actual.ticketMedio), sub: "Por ticket · " + num(actual.tickets) + " tickets" }) : "",
-    variacion != null ? kpi({ lab: "Vs. semana pasada", icon: "cal", val: (variacion > 0 ? "+" : "") + dec1(variacion) + " %", sub: `Mismo día · ${esc(fechaMini(diario.anterior))}<br>Día completo` }) : "",
+    actual?.ventas != null ? kpi({ lab: "Facturación hoy", icon: "euro", val: eur(actual.ventas), sub: marca + cobertura }) : "",
+    actual?.comensales != null ? kpi({ lab: "Comensales hoy", icon: "users", val: num(actual.comensales), sub: "Registrados en TPV" + cobertura }) : "",
+    actual?.ticketMedio != null ? kpi({ lab: "Ticket medio", icon: "receipt", val: eur(actual.ticketMedio), sub: "Por ticket · " + num(actual.tickets) + " tickets" + cobertura }) : "",
+    variacion != null ? kpi({ lab: "Vs. semana pasada", icon: "cal", val: (variacion > 0 ? "+" : "") + dec1(variacion) + " %", sub: `Mismo día · ${esc(fechaMini(diario.anterior))}<br>Día completo${cobertura}` }) : "",
   ].filter(Boolean);
-  const kpis = tarjetasHoy.length ? `<div class="grid g${tarjetasHoy.length} dash-kpis">${tarjetasHoy.join("")}</div>` : "";
+  const kpis = tarjetasHoy.length ? `<div class="grid g${tarjetasHoy.length} dash-kpis">${tarjetasHoy.join("")}</div>` : `<p class="mut" role="status">${diario === undefined ? "Consultando las cifras de hoy…" : "Las cifras de hoy no están disponibles en este momento."}</p>`;
   if (d.errorResumen) return header + kpis + errorCard("No se ha podido cargar el resto del resumen. Puedes reintentarlo.");
 
 

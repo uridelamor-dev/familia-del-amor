@@ -14,8 +14,13 @@ test('suma únicamente el ámbito y recalcula el ticket ponderado y el día exac
   assert.equal(r.variacion, 100); assert.equal(r.anterior, anterior);
   assert.equal(r.actual.comensales, null);
 });
-test('un local sin datos o fallido no presenta una cifra parcial como total', () => {
-  assert.equal(resumenHoy(vivo, { hoy, locales: ['A','Desconocido'] }).actual, null);
+test('un local sin datos no oculta los disponibles y se indica la cobertura parcial', () => {
+  const r = resumenHoy(vivo, { hoy, locales: ['A','Desconocido'] });
+  assert.equal(r.actual.ventas, 100);
+  assert.equal(r.actual.parcial, true);
+  assert.equal(r.actual.totalLocales, 2);
+  assert.deepEqual(r.actual.localesDisponibles, ['A']);
+  assert.equal(r.variacion, 25);
   assert.equal(resumenHoy({hoy,locales:[{...vivo.locales[0],error:'offline'}]}, {hoy,locales:['A']}).actual,null);
 });
 test('cero comprobado se conserva, denominador cero y día sin datos no inventan porcentaje', () => {
@@ -27,4 +32,13 @@ test('caché de ayer nunca se muestra como hoy y admite comparación negativa', 
   assert.equal(resumenHoy({...vivo,hoy:anterior},{hoy,locales:['A']}).actual,null);
   const r = resumenHoy({hoy,locales:[{local:'A',dias:[fila(hoy,50,1),fila(anterior,100,2)]}]},{hoy,locales:['A']});
   assert.equal(r.variacion,-50);
+});
+
+test('la comparación no mezcla locales distintos entre hoy y la semana pasada', () => {
+  const datos = {hoy, locales: [vivo.locales[0], {local:'B', dias:[fila(hoy,300,3)]}]};
+  const r = resumenHoy(datos, {hoy,locales:['A','B']});
+  assert.equal(r.actual.ventas,400);
+  assert.equal(r.actual.parcial,false);
+  assert.equal(r.previo,null);
+  assert.equal(r.variacion,null);
 });
