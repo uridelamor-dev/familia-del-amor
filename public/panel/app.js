@@ -1264,9 +1264,10 @@ function renderDashboard(d) {
 
   // ── Necesita tu atención (preocupaciones reales) ──
   const concerns = (d.preocupaciones || []).filter(c => !GO_VIEW[c.go] || puedeVer(GO_VIEW[c.go])).slice().sort((a,b) => ({crit:0,imp:1,info:2}[a.sev] ?? 3) - ({crit:0,imp:1,info:2}[b.sev] ?? 3));
-  // Las críticas se muestran al entrar; el detalle por establecimiento queda plegado.
+  // Los detalles empiezan cerrados; la importancia se indica en la cabecera.
   const nCritC = concerns.filter((c) => c.sev === "crit").length;
-  const atencion = `<details class="card fold c7 p0"${nCritC ? " open" : ""}><summary style="padding:18px 18px 14px"><h3>Necesita tu atención</h3><span class="foldr">${concerns.length ? `<span class="pill ${nCritC ? "bad" : "warn"}">${nCritC ? `${nCritC} crítica${nCritC === 1 ? "" : "s"}` : `${concerns.length}`}</span>` : '<span class="pill ok">Todo en orden</span>'}<span class="car">${ic("chev", 16)}</span></span></summary>${concerns.length ? `<div class="rows">${concerns.map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</details>`;
+  const nImportantes = concerns.filter((c) => c.sev === "crit" || c.sev === "imp").length;
+  const atencion = `<details class="card fold c7 p0"><summary style="padding:18px 18px 14px"><h3>Necesita tu atención</h3><span class="foldr">${concerns.length ? `<span class="pill ${nImportantes ? "bad" : "warn"}">${nCritC ? `${nCritC} crítica${nCritC === 1 ? "" : "s"}` : `${concerns.length}`}</span>` : '<span class="pill ok">Todo en orden</span>'}<span class="car">${ic("chev", 16)}</span></span></summary>${concerns.length ? `<div class="rows">${concerns.map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</details>`;
 
   // ── Estado por establecimiento (radar real) ──
   const radar = d.radarLocales || [];
