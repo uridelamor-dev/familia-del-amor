@@ -1,3 +1,4 @@
+import { respuestaTrasHerramientas } from "../src/modules/messaging/respuesta-herramientas.js";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -91,7 +92,7 @@ test('Sara recarga el historial con teléfono resuelto aunque la sesión ya est�
   let consultado;let peticion;
   const entrega=contextoCampanas([{campana:'prueba',texto:'Invitació a esmorzar',donde:'Local de Girona',idioma:'ca'}]);
   const historial=construirContexto([{tipo:'saliente',origen:'campana',respuesta:'Invitació a esmorzar'}]);
-  const env={console,perfilLoader:async()=>null,resolverTelefono:async()=> '34600000001',
+  const env={console,respuestaTrasHerramientas,perfilLoader:async()=>null,resolverTelefono:async()=> '34600000001',
     campanaLoader:async()=>entrega,reservaLoader:null, conversaciones:new Map([['123@lid',[]]]),
     historialLoader:async(...args)=>{consultado=args;return historial;},SESION_TTL_SEG:14400,MAX_HISTORIAL:10,
     getContextoFechaHora:()=> '2026-09-23',idiomaSugerido,lineaIdioma,pistaIdioma,respuestaCortesia,pulirCatalan,

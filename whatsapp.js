@@ -7,6 +7,7 @@ import { anteponerCitado as ctxAnteponerCitado, ORIGEN as CTX_ORIGEN }
   from "./src/modules/messaging/contexto.js";
 import { estaPausada, MOTIVO_PAUSA, pidePersona, idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia, pulirCatalan }
   from "./src/modules/messaging/sara.js";
+import { respuestaTrasHerramientas } from "./src/modules/messaging/respuesta-herramientas.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -154,11 +155,17 @@ La actitud es siempre: "Estoy aquí para ayudarte, dime qué necesitas."
 - Nunca hagas más de dos preguntas en un mensaje.
 - No inventes información que no tengas.
 
+## Confirmaciones y acciones
+Comprueba la disponibilidad y ejecuta la herramienta ANTES de confirmar que has enviado una carta, registrado una reserva o avisado a alguien. La respuesta final debe reflejar únicamente los resultados reales: un rechazo o una solicitud pendiente no son un éxito aunque la herramienta no indique error técnico.
+No prometas «te la envío ahora» si no has comprobado que existe el documento adecuado. Si no está disponible, dilo una sola vez sin inventar el motivo ni ofrecer enviarlo. Si el envío falla, explica que no has podido enviarlo; no afirmes que la carta no existe.
+Mantén el local, la promoción y la fecha que constan en el contexto. No inventes un mes, una carta o unas condiciones para justificar la falta de información. Si no sabes qué incluye el desayuno promocional, no lo sustituyas por la carta general. Pregunta solo lo imprescindible o usa pasar_a_persona cuando deba resolverlo el equipo.
+Antes de terminar, revisa que tu mensaje no prometa y niegue la misma acción. Si una acción tuvo éxito y otra falló, distingue ambas con claridad.
+
 ## El idioma del cliente
 Responde SIEMPRE en el idioma en que te escribe el cliente, conversando con naturalidad. No traduzcas literalmente: habla ese idioma.
 Catalán → catalán. Castellano → castellano. Inglés → inglés. Y si te escribe en otro que manejes, también en ese.
 El idioma del cliente GANA al de cualquier mensaje anterior nuestro: si le mandamos algo en catalán y te contesta en inglés, le contestas en inglés.
-En catalán usa catalán estándar natural de Cataluña. No mezcles «dime», «algo», «necesites», «puga» ni signos de apertura ¿/¡ con frases catalanas. Escribe «digues-me», «alguna cosa», «necessitis», «pugui». Por ejemplo: «De res! T’hi esperem 😊». Revisa concordancia, apóstrofos, acentos y pronombres antes de contestar. No uses negritas anidadas ni dobles asteriscos en WhatsApp.
+En catalán usa catalán estándar natural de Cataluña. No mezcles «dime», «algo», «necesites», «puga» ni signos de apertura ¿/¡ con frases catalanas. Escribe «digues-me», «alguna cosa», «necessitis», «pugui». Usa las formas habituales en Cataluña: «sembla», «prefereixo», «pugui» y «millor que ho consultis», evitando mezclar «pareix», «preferisc» o «millor que ho consultes». Para reservar, di «Vols que et reservi una taula?». No modifiques nombres propios, títulos de documentos ni citas del cliente. Por ejemplo: «De res! T’hi esperem 😊». Revisa concordancia, apóstrofos, acentos y pronombres antes de contestar. No uses negritas anidadas ni dobles asteriscos en WhatsApp.
 Si su mensaje es demasiado corto para saberlo ("Hola", "Sí", "Ok"), usa el idioma de sus mensajes anteriores. En el contexto encontrarás una pista.
 
 ## Mensajes nuestros anteriores
@@ -694,43 +701,18 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
     const mensajesLoop = perfilCtx
       ? [{ role: "user", content: perfilCtx }, { role: "assistant", content: "Entendido." }, ...conCita]
       : conCita;
-    const textos = [];
-    let huboErrorHerramienta = false;
-
-    for (let i = 0; i < 5; i++) {
-      const response = await ai.messages.create({
+    const respuestaCliente = await respuestaTrasHerramientas({
+      mensajes: mensajesLoop,
+      idioma: pista.idioma,
+      crear: messages => ai.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
-        // Bloque 1 = prompt fijo (cacheable). Bloque 2 (opcional) = config de marketing.
         system: systemBlocks,
         tools: TOOLS,
-        messages: mensajesLoop
-      });
-
-      for (const block of response.content) {
-        if (block.type === "text" && block.text.trim()) textos.push(block.text.trim());
-      }
-
-      if (response.stop_reason !== "tool_use") break;
-
-      mensajesLoop.push({ role: "assistant", content: response.content });
-
-      const resultados = [];
-      for (const block of response.content) {
-        if (block.type !== "tool_use") continue;
-        const { content, is_error } = await ejecutarHerramienta(block, adjuntoUrl, jid);
-        if (is_error) huboErrorHerramienta = true;
-        resultados.push({ type: "tool_result", tool_use_id: block.id, content, is_error });
-      }
-      mensajesLoop.push({ role: "user", content: resultados });
-    }
-
-    // Si el modelo no emitió texto, no confirmar en falso: depende de si hubo error
-    const respuestaCliente = textos.join("\n\n") ||
-      (huboErrorHerramienta
-        ? "Perdona, ha habido un problema técnico al registrarlo 😔 Llámanos al local y te lo gestionamos al momento."
-        : "¡Listo! ¿Puedo ayudarte en algo más? 😊");
-
+        messages
+      }),
+      ejecutar: block => ejecutarHerramienta(block, adjuntoUrl, jid)
+    });
 
     const respuestaFinal = pulirCatalan(respuestaCliente, pista.idioma);
     historial.push({ role: "assistant", content: respuestaFinal });
