@@ -149,10 +149,10 @@ describe("el cumpleaños felicita en el idioma de cada uno", () => {
   test("usa el mismo traductor que las campañas", () => {
     // Se busca el ENVÍO, no el nombre de la campaña: el emoji aparece en los dos y el primero
     // es el nombre, 700 caracteres antes de donde está la traducción.
-    const i = server.indexOf("Cumpleaños: enviando felicitación");
+    const i = server.indexOf("await encolarCumples(");
     assert.notEqual(i, -1);
     assert.match(server.slice(Math.max(0, i - 700), i), /construirResolverIdioma\(plantilla, dest\)/);
-    assert.match(server.slice(Math.max(0, i - 700), i), /resolverMensaje: resolverCumple/);
+    assert.match(server.slice(i, i + 160), /resolverMensaje: resolverCumple/);
   });
 });
 

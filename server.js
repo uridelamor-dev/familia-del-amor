@@ -1,3 +1,4 @@
+import { encolarCumples, estadoCumple } from "./src/modules/campaigns/cumple-cola.js";
 import { CAMPOS_PRIVADOS, puedeVerPrivado, sanearDatosAlta, estadoAlta, sanearConversacion } from './src/modules/rrhh/alta-administrativa.js';
 import { CUMPLE_CONFIG, avisarCumpleanos } from './src/modules/rrhh/cumpleanos.js';
 import { COM_SCHEMA } from "./src/modules/comunicados/comunicados.js";
@@ -15078,13 +15079,23 @@ async function capVaciarCola() {
     //
     // Y `prioridad ASC` PRIMERO: las altas van delante de lo comercial, pase lo que pase con el
     // orden de llegada. A igualdad, el más antiguo.
+    await dbRun(`UPDATE cap_cola SET estado = 'descartado', ultimo_error = 'Cumpleaños finalizado'
+      WHERE estado = 'pendiente' AND token LIKE 'cumple:%' AND split_part(token, ':', 2) <> ?`, [hoyMadrid().iso]);
     const pendientes = await dbAll(
       `SELECT * FROM cap_cola WHERE estado = 'pendiente' AND NOT pausado AND proximo_ms <= ?
+        AND (token NOT LIKE 'cumple:%' OR EXISTS (SELECT 1 FROM config WHERE key = 'cumple_auto' AND value = '1'))
         ORDER BY prioridad ASC, proximo_ms ASC LIMIT 50`, [Date.now()]);
 
     let gastados = 0;
     for (const fila of pendientes) {
       if (!isReady() || (await getConfig("captacion_cola_parada")) === "1") break;
+      const cumpleEstado = estadoCumple(fila.token, (await getConfig("cumple_auto")) === "1");
+      if (cumpleEstado === "caducado") {
+        await dbRun(`UPDATE cap_cola SET estado = 'descartado', ultimo_error = ? WHERE id = ?`,
+          ["Cumpleaños finalizado; no se envía fuera de fecha", fila.id]);
+        continue;
+      }
+      if (cumpleEstado === "pausado") continue;
       const esAlta = Number(fila.prioridad ?? 1) === 0;
 
       // Cada tipo contra SU cupo. Un comercial se para antes; un alta puede usar la reserva.
@@ -15151,6 +15162,8 @@ async function capVaciarCola() {
           await dbRun(`UPDATE cap_cola SET proximo_ms = ? WHERE id = ?`, [Date.now(), fila.id]);
           break;
         }
+        if (String(fila.token).startsWith("cumple:") &&
+            estadoCumple(fila.token, (await getConfig("cumple_auto")) === "1") !== "enviar") continue;
         await sendMensajeLibre(fila.telefono, fila.texto, {
           origen: WA_ORIGEN.CAMPANA,
           claveCampana: fila.campana || null,
@@ -20585,6 +20598,7 @@ app.get("/api/campanas-config", requireAuth(["direccion", "marketing"]), async (
 });
 app.post("/api/campanas-config", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
+    if (/\{cupon\}/i.test(String(req.body.cumple_plantilla || ""))) return res.status(400).json({ ok: false, error: "La felicitación de cumpleaños no admite cupones automáticos." });
     if (req.body.cumple_auto !== undefined) await setConfig("cumple_auto", req.body.cumple_auto ? "1" : "0");
     if (req.body.cumple_plantilla !== undefined) await setConfig("cumple_plantilla", String(req.body.cumple_plantilla || ""));
     res.json({ ok: true });
@@ -24374,11 +24388,11 @@ const server = app.listen(PORT, async () => {
     }
   }, 5 * 60 * 1000);
 
-  // Campañas programadas (despacho a su hora) + automatización de cumpleaños (cada 5 min).
+  // Campañas programadas y generación durable de cumpleaños (cada 5 min).
   setInterval(async () => {
-    if (!isReady()) return;
     // 1) Campañas con estado 'programada' cuya hora ya llegó.
     try {
+      if (isReady()) {
       const ahora = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Madrid" }).replace(" ", "T");
       const prog = await dbAll(`SELECT id FROM campanas_wa WHERE estado = 'programada' AND programada_para IS NOT NULL AND programada_para <= ?`, [ahora]);
       for (const c of prog) { try { await dispatchCampana(c.id); } catch (e) { console.error("[campaña programada]", e.message); } }
@@ -24402,21 +24416,22 @@ const server = app.listen(PORT, async () => {
           if (r?.enviables) console.log(`[campaña ${c.id}] retomada: quedaban ${r.enviables}`);
         } catch (e) { console.error("[campaña a medias]", e.message); }
       }
+      }
     } catch (e) { console.error("[scheduler campañas]", e.message); }
 
-    // 2) Cumpleaños: una sola vez al día, en la franja 10:xx (Madrid), si está activado.
+    // 2) Cumpleaños: encolar desde las 10:00 aunque WhatsApp esté desconectado.
     try {
       if ((await getConfig("cumple_auto")) !== "1") return;
       const hora = new Date().toLocaleTimeString("sv-SE", { timeZone: "Europe/Madrid" });
-      if (!hora.startsWith("10:")) return;
+      if (hora < "10:00:00") return;
       const hm = hoyMadrid();
       if ((await getConfig("cumple_last")) === hm.iso) return;
-      await setConfig("cumple_last", hm.iso); // marca ANTES de enviar (evita duplicados si reintenta)
+      // Respetar la marca antigua el día de la migración; la cola nueva deduplica por contacto.
       const plantilla = (await getConfig("cumple_plantilla")) || "¡Feliz cumpleaños, {nombre}! 🎉 Te esperamos en Familia del Amor.";
       const leads = await dbAll(
         // `ultimo_local` también aquí: esta consulta no pasa por sqlContactosUnificados y la
         // plantilla de cumpleaños es justo una de las que usa {local}.
-        `SELECT l.nombre, l.apellidos, l.telefono, l.nacimiento, COALESCE(mp.baja, 0) AS baja,
+        `SELECT l.nombre, l.apellidos, l.telefono, l.nacimiento, mp.idioma, COALESCE(mp.baja, 0) AS baja,
                 (SELECT rl.local FROM reservas rl
                   WHERE RIGHT(regexp_replace(rl.telefono, '[^0-9]', '', 'g'), 9)
                       = RIGHT(regexp_replace(l.telefono, '[^0-9]', '', 'g'), 9)
@@ -24427,13 +24442,8 @@ const server = app.listen(PORT, async () => {
       );
       const dest = leads.filter((l) => !(l.baja === 1 || l.baja === true) && esCumpleHoy(l.nacimiento, hm));
       if (!dest.length) return;
-      const row = await dbRun(`INSERT INTO campanas_wa (nombre, segmento_json, mensaje, canal, estado, total_enviados) VALUES (?, ?, ?, 'whatsapp', 'enviando', 0) RETURNING id`,
-        [`🎂 Cumpleaños ${hm.iso}`, JSON.stringify({ auto: "cumple" }), plantilla]);
-      // En su idioma, como cualquier otra campaña: felicitar a alguien en un idioma que no es
-      // el suyo es justo lo contrario de lo que se busca con una felicitación.
-      const resolverCumple = await construirResolverIdioma(plantilla, dest).catch(() => null);
-      enviarLoteWA({ contactos: dest, mensaje: plantilla, campanaId: row.id, resolverMensaje: resolverCumple });
-      console.log(`🎂 Cumpleaños: enviando felicitación a ${dest.length} contacto(s)`);
+      const resolverCumple = await construirResolverIdioma(plantilla, dest);
+      await encolarCumples({ contactos: dest, plantilla, resolverMensaje: resolverCumple, dbRun });
     } catch (e) { console.error("[cumpleaños]", e.message); }
   }, 5 * 60 * 1000);
 

@@ -69,7 +69,7 @@ const COMO_SE_LLAMA = Object.freeze({
  * que aquí no hay prefijo que mirar y la regla se define por exclusión.
  */
 export function tipoPorToken(token) {
-  return /^com:/.test(String(token || "")) ? "comercial" : "entrega";
+  return /^(?:com|cumple):/.test(String(token || "")) ? "comercial" : "entrega";
 }
 
 /** Un texto acotado, sin cortar a media palabra si se puede evitar. */

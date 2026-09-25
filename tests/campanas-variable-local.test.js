@@ -60,7 +60,7 @@ describe("el servidor devuelve el dato que la función necesita", () => {
 
   test("y la del cumpleaños automático también", () => {
     // Esta no pasa por sqlContactosUnificados y es justo la que más usa {local}.
-    const job = server.slice(server.indexOf('getConfig("cumple_auto")'), server.indexOf("🎂 Cumpleaños: enviando"));
+    const job = server.slice(server.indexOf("// 2) Cumpleaños:"), server.indexOf("await encolarCumples("));
     assert.match(job, /AS ultimo_local/);
   });
 

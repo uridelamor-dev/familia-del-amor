@@ -525,7 +525,8 @@ function shell(active, bodyHtml) {
         <span class="avatar" title="${esc(uname)}">${esc(initials)}</span>
         <button class="iconbtn" data-act="logout" title="Cerrar sesión" aria-label="Cerrar sesión">${ic("exit")}</button>
       </header>
-      <main class="content"><div class="wrap enter" id="view">${bodyHtml}</div></main>
+      ${grupo ? `<div class="mobile-period"><span>Periodo${active === "dashboard" ? " de actividad" : ""}</span><button class="btn" data-act="period-custom" aria-label="Elegir periodo">${ic("cal")}<span data-mobile-period-label>${esc(grupo === "dashboard" ? DASH_RANGE.label || "Hoy" : per.p === "todo" ? "Todo" : per.from ? fechaCorta(per.from) + " – " + fechaCorta(per.to) : "Elegir fechas")}</span><span aria-hidden="true">▾</span></button></div>` : ""}
+      <main class="content"><div class="wrap enter${active === "dashboard" ? " dashboard-view" : ""}" id="view">${bodyHtml}</div></main>
     </div>
     <div class="mscrim" data-act="mclose"></div></div>`;
 }
@@ -822,7 +823,7 @@ window.addEventListener("resize", dpClose);
 window.addEventListener("scroll", dpClose, true);
 
 // ════════════════════════ ESTADO GLOBAL + COMPONENTES (lenguaje del prototipo) ════════════════════════
-let DASH_LOCAL = "", SELECCION = [], COLLAPSED = false, PERIOD = "semana", DASH_CONCERNS = 0;
+let DASH_LOCAL = "", SELECCION = [], COLLAPSED = false, PERIOD = "hoy", DASH_CONCERNS = 0;
 
 /**
  * EL PERIODO ES DE CADA PANTALLA, y solo lo tienen las que miran fechas.
@@ -864,6 +865,8 @@ function repintarSeg() {
   const cont = document.querySelector(".topbar .seg");
   if (!cont) return;
   const per = periodoVista();
+  const mobileLabel = document.querySelector("[data-mobile-period-label]");
+  if (mobileLabel) mobileLabel.textContent = grupoPeriodo() === "dashboard" ? DASH_RANGE.label || "Hoy" : per.p === "todo" ? "Todo" : per.from ? fechaCorta(per.from) + " – " + fechaCorta(per.to) : "Elegir fechas";
   const presets = grupoPeriodo() === "compras"
     ? [["todo", "Todo"], ["semana", "Semana"], ["mes", "Mes"]]
     : [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]];
@@ -903,7 +906,7 @@ function fijarPendientes(d) {
   };
   DASH_CONCERNS = PENDIENTES.dashboard;
 }
-let DASH_RANGE = { from: null, to: null, label: "Esta semana" };
+let DASH_RANGE = { from: null, to: null, label: "Hoy" };
 let DASH_PERIODO = null;
 let DASH_PERIODO_ESTADO = "cargando";
 let DASH_CARGA = 0;
@@ -1215,7 +1218,7 @@ function renderDashboard(d) {
 
   // ── Actividad (reservas + ventas del PERIODO seleccionado) ──
   const per = DASH_PERIODO || null;
-  const winLbl = DASH_RANGE.label || "Esta semana";
+  const winLbl = DASH_RANGE.label || "Hoy";
   const rSerie = (per && per.reservas && per.reservas.serie) || [];
   const serieVals = rSerie.map((x) => x.personas || x.n || 0);
   const totalPeriodo = per && per.reservas ? per.reservas.total : null;
@@ -1238,7 +1241,7 @@ function renderDashboard(d) {
   const gEmp = gOk ? Number(per.gastos.empresa) || 0 : 0;
   const notaGasto = gEmp ? `incl. ${eur(gEmp)} de empresa` : "";
   const ventasBox = (vOk || gOk)
-    ? `<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Datos parciales: faltan locales" : "")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Datos parciales: faltan locales" : notaGasto)}${stat3("Resultado", res != null ? eur(res) : "—", resCol, res != null && cmp ? cmp.resultado : null)}</div>`
+    ? `<div class="dash-period-stats" style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Datos parciales: faltan locales" : "")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Datos parciales: faltan locales" : notaGasto)}${stat3("Resultado", res != null ? eur(res) : "—", resCol, res != null && cmp ? cmp.resultado : null)}</div>`
     : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y resultado<br><span class="hl">${per ? "Sin datos de ventas y gastos en este periodo" : esc(periodoMensaje)}</span></div>`;
   // Al pasar el ratón se ve el día, cuántas reservas y —si Ágora está conectado— lo que
   // se facturó ESE día. Es la pregunta que uno se hace mirando el pico del sábado.
@@ -1251,7 +1254,7 @@ function renderDashboard(d) {
       }, { h: 120, fmt: (v) => num(v) + (v === 1 ? " comensal" : " comensales"), fmtExtra: (v) => eur(v) + " facturado" })
     : `<div class="mut" style="font-size:12.5px;padding:14px 0">${!per ? esc(periodoMensaje) : totalPeriodo ? "Solo hay un día con reservas en este periodo." : "Sin reservas en este periodo."}</div>`;
   const notaRes = (vOk || gOk) ? `<div class="mut" style="font-size:11px;margin-top:8px">Resultado = ventas${per.hoyEnVivo ? " (incluye hoy)" : ""} − gastos en facturas del periodo (no incluye personal).</div>` : "";
-  const actividad = `<div class="card c8"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${totalPeriodo == null ? "—" : num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${grafico}${notaRes}<div class="mut" style="font-size:12px;margin-top:8px">${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}${per && !vOk ? " · Ventas no disponibles; resultado pendiente." : per && !gOk ? " · Sin facturas registradas; resultado pendiente." : ""}</div></div>`;
+  const actividad = `<div class="card c8 dash-activity"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${totalPeriodo == null ? "—" : num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${grafico}${notaRes}<div class="mut" style="font-size:12px;margin-top:8px">${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}${per && !vOk ? " · Ventas no disponibles; resultado pendiente." : per && !gOk ? " · Sin facturas registradas; resultado pendiente." : ""}</div></div>`;
 
   // ── Gasto del mes (barra apilada real) ──
   const gl = (d.dinero && d.dinero.gastoLocal) || []; const gtot = gl.reduce((s, g) => s + (g.actual || 0), 0);
@@ -1288,7 +1291,7 @@ function renderDashboard(d) {
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
-  if (!DASH_RANGE.from) { const r = rangoPreset(PERIOD || "semana", todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; }
+  if (!DASH_RANGE.from) { const r = rangoPreset(PERIOD || "hoy", todayStr()); DASH_RANGE = { from: r.from, to: r.to, label: r.label }; }
   const carga = ++DASH_CARGA;
   const from = DASH_RANGE.from, to = DASH_RANGE.to;
   const alcance = () => viendoVarios() ? "locales=" + encodeURIComponent(localesDelAmbito().join(","))
@@ -1349,7 +1352,7 @@ function openPeriodoCustom() {
   // así que «sin fechas» no es una respuesta que pueda dar.
   const rapidos = [
     ...(grupo === "compras" ? [["todo", "Todo"]] : []),
-    ["hoy", "Hoy"], ["semana", "Esta semana"], ["mes", "Este mes"], ["mes-pasado", "Mes pasado"],
+    ["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Esta semana"], ["mes", "Este mes"], ["mes-pasado", "Mes pasado"],
     ["este-ano", "Este año"], ["ano-pasado", "Año pasado"], ["12m", "Últimos 12 meses"],
   ];
 
@@ -1495,18 +1498,24 @@ function resDiasSemana(lunes) { return Array.from({ length: 7 }, (_, i) => addDa
 
 function renderReservas(list) {
   if (!RESF.foco) RESF.foco = todayStr();
-  const amb = resScope();
-  const seg = ["dia:Día", "semana:Semana", "lista:Próximas", "historial:Ya pasadas"].map((p) => { const [v, t] = p.split(":"); return `<button class="btn ${RESF.vista === v ? "primary" : ""}" data-act="res-vista" data-vista="${v}">${t}</button>`; }).join("");
-  // Sin filtro de local: el ámbito lo marca el selector de establecimiento de la barra superior.
-  const toolbar = `<div class="toolbar"><div class="toolbar" style="margin:0;gap:6px">${seg}</div><div style="display:flex;gap:10px;margin-left:auto"><button class="btn" data-act="csv">Exportar CSV</button><button class="btn primary" data-act="nueva">+ Nueva reserva</button></div></div>`;
+  const agenda = RESF.vista === "dia" || RESF.vista === "semana";
+  const seg = ["dia:Día", "semana:Semana"].map((p) => { const [v, t] = p.split(":"); return `<button class="${RESF.vista === v ? "on" : ""}" data-act="res-vista" data-vista="${v}" aria-pressed="${RESF.vista === v}">${t}</button>`; }).join("");
+  const mas = `<details class="res-more"><summary class="btn">Más ▾</summary><div class="res-more-panel"><button class="btn" data-act="res-vista" data-vista="lista">Próximas reservas</button><button class="btn" data-act="res-vista" data-vista="historial">Reservas pasadas</button><button class="btn" data-act="csv">Exportar CSV</button></div></details>`;
+  const toolbar = `<div class="res-controls">${agenda ? resNav() : `<b>${RESF.vista === "lista" ? "Próximas reservas" : "Reservas pasadas"}</b>`}<div class="res-view-controls"><div class="seg" aria-label="Vista de reservas">${seg}</div>${mas}</div></div>`;
   const cuerpo = RESF.vista === "historial" ? renderResHistorial(list)
     : RESF.vista === "lista" ? renderResLista(list)
     : RESF.vista === "semana" ? renderResSemana(list) : renderResDia(list);
-  return `<div class="ph"><div class="eyebrow">Operación</div><h1>Reservas</h1><div class="sub">Agenda por turnos, ocupación y gestión rápida${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>${toolbar}${cuerpo}`;
+  return `<div class="res-header"><h1>Reservas</h1><button class="btn primary" data-act="nueva">+ Nueva reserva</button></div>${toolbar}${cuerpo}`;
 }
-function resNav(label) {
-  return `<div class="agnav"><button class="btn sm" data-act="res-prev">‹</button><button class="btn sm" data-act="res-hoy">Hoy</button><button class="btn sm" data-act="res-next">›</button><b style="margin-left:6px;text-transform:capitalize">${esc(label)}</b></div>`;
+function resNav() {
+  return `<div class="res-date-nav"><button class="btn sm" data-act="res-prev" aria-label="Periodo anterior">‹</button><button class="btn sm" data-act="res-hoy">${RESF.foco === todayStr() ? "Hoy" : "Volver a hoy"}</button><button class="btn sm" data-act="res-next" aria-label="Periodo siguiente">›</button><input id="resAgendaFecha" type="date" aria-label="Fecha de la agenda" value="${esc(RESF.foco)}"></div>`;
 }
+document.addEventListener("change", (e) => {
+  if (e.target.id === "resAgendaFecha" && /^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) {
+    RESF.foco = e.target.value;
+    loadReservas();
+  }
+});
 function resCargaDot(carga) { return `<span class="dot" style="background:${CARGA_COL[carga]}" title="Carga ${carga}"></span>`; }
 function resResRow(r) {
   const tel = String(r.telefono || "").replace(/[^0-9+]/g, "");
@@ -1514,21 +1523,19 @@ function resResRow(r) {
 }
 function renderResDia(list) {
   const a = resAgendaDia(list, RESF.foco);
-  const label = `${WD[resDiaSemana(RESF.foco)]} · ${fechaCorta(RESF.foco)}`;
   const resumen = `<div class="sub" style="margin:-4px 0 12px">${a.totalReservas} reserva${a.totalReservas === 1 ? "" : "s"} · ${a.totalPersonas} personas${RESF.foco === todayStr() ? " · hoy" : ""}</div>`;
   const cols = a.turnos.map((t) => `<div class="agturno"><div class="th"><span>${esc(t.label)} ${resCargaDot(t.carga)}</span><span class="mut" style="font-weight:500">${t.total} · ${t.personas} pax</span></div>${t.reservas.length ? t.reservas.map(resResRow).join("") : '<div class="mut" style="padding:14px">Sin reservas.</div>'}</div>`).join("");
-  return `${resNav(label)}${resumen}<div class="agturnos">${cols || '<div class="card"><div class="mut" style="padding:8px">Sin reservas este día.</div></div>'}</div>`;
+  return `${resumen}<div class="agturnos">${cols || '<div class="card"><div class="mut" style="padding:8px">Sin reservas este día.</div></div>'}</div>`;
 }
 function renderResSemana(list) {
   const lunes = resLunes(RESF.foco);
   const dias = resDiasSemana(lunes);
-  const label = `Semana del ${fechaCorta(lunes)}`;
   const cells = dias.map((dia, i) => {
     const a = resAgendaDia(list, dia);
     const tl = a.turnos.filter((t) => t.key !== "otros").map((t) => `<span class="tl">${resCargaDot(t.carga)} ${esc(t.label[0])}: ${t.total}/${t.personas}p</span>`).join("");
     return `<div class="agday ${dia === todayStr() ? "hoy" : ""}" data-act="res-dia" data-dia="${dia}"><div class="dwd">${WD[i]}</div><div class="dnum">${Number(dia.slice(-2))}</div>${a.totalReservas ? tl : '<div class="mut" style="font-size:12px;margin-top:8px">—</div>'}</div>`;
   }).join("");
-  return `${resNav(label)}<div class="agweek">${cells}</div><div class="mut" style="font-size:12px;margin-top:10px">Toca un día para ver el detalle por turnos. C = comida, C = cena (nº reservas / personas). El punto indica la carga.</div>`;
+  return `<div class="agweek">${cells}</div><div class="mut" style="font-size:12px;margin-top:10px">Toca un día para ver el detalle por turnos. C = comida, C = cena (nº reservas / personas). El punto indica la carga.</div>`;
 }
 function renderResLista(list) {
   const rows = (list || []).slice().sort((a, b) => (a.dia + a.hora).localeCompare(b.dia + b.hora));
@@ -13843,7 +13850,7 @@ function marketingRestaurarRuta(view, sub) {
   if (view === "fidelizacion") FIDV.seccion = FID_SECC.some(([k]) => k === sub) ? sub : "resumen";
 }
 function marketingCampNav(actual) {
-  return `<div class="tabs marketing-tabs" aria-label="Secciones de campañas">${[["envios","Mensajes"],["captacion","Captación"],["auto","Automatizaciones"],["formularios","Formularios y permisos"]].filter(([k]) => puedeVer(k === "captacion" ? "promos" : "campanas")).map(([k,t])=>`<button class="tab${actual===k?" on":""}" data-act="marketing-camp-tab" data-tab="${k}">${t}</button>`).join("")}</div>`;
+  return `<div class="tabs marketing-tabs" aria-label="Secciones de campañas">${[["envios","Mensajes"],["captacion","Captación"],["auto","Cumpleaños"],["formularios","Formularios y permisos"]].filter(([k]) => puedeVer(k === "captacion" ? "promos" : "campanas")).map(([k,t])=>`<button class="tab${actual===k?" on":""}" data-act="marketing-camp-tab" data-tab="${k}">${t}</button>`).join("")}</div>`;
 }
 function marketingBeneficiosNav(actual) {
   return `<div class="tabs marketing-tabs" aria-label="Tipos de beneficio">${[["lista","Cupones"],["fidelizacion","Promociones en caja"],["puntos","Programa de puntos"],...(!puedeVer("campanas") ? [["captacion","Captación"]] : []),...(USER.rol === "direccion" ? [["tarjeta", "Tarjeta de cliente"]] : [])].filter(([k]) => puedeVer(k === "puntos" ? "fidelizacion" : "promos")).map(([k,t])=>`<button class="tab${actual===k?" on":""}" data-act="marketing-beneficio" data-tab="${k}">${t}</button>`).join("")}</div>`;
@@ -13873,7 +13880,7 @@ function marketingCrearCampana() {
 function renderCampanas() {
   const rows = CAMP.list || []; const cfg = CAMP.cfg || {};
   const head = `<div class="ph"><div class="eyebrow">Marketing</div><h1>Campañas</h1><div class="sub">Prepara mensajes, capta clientes y revisa lo que está en marcha.</div><div class="acts"><button class="btn primary" data-act="marketing-crear">Crear campaña</button></div></div>`;
-  const cumple = `<div class="card"><div class="ch"><h3>🎂 Cumpleaños automático</h3><label class="chip" style="cursor:pointer"><input type="checkbox" id="cumpleAuto" ${cfg.cumple_auto ? "checked" : ""} style="margin-right:6px">Activado</label></div><div class="field" style="width:100%"><label>Mensaje (usa {nombre})</label><textarea id="cumpleMsg" rows="2" placeholder="¡Feliz cumpleaños, {nombre}! 🎉">${esc(cfg.cumple_plantilla || "")}</textarea></div><div class="toolbar" style="padding:0"><button class="btn" data-act="camp-cumple-save">Guardar</button><span class="mut" style="font-size:12px;align-self:center">Cada mañana felicita a quien cumple ese día (excluye bajas).</span></div></div>`;
+  const cumple = `<div class="card"><div class="ch"><h3>🎂 Cumpleaños automático</h3><label class="chip" style="cursor:pointer"><input type="checkbox" id="cumpleAuto" ${cfg.cumple_auto ? "checked" : ""} style="margin-right:6px">Activado</label></div><div class="field" style="width:100%"><label>Mensaje (usa {nombre})</label><textarea id="cumpleMsg" rows="2" placeholder="¡Feliz cumpleaños, {nombre}! 🎉">${esc(cfg.cumple_plantilla || "")}</textarea></div><div class="toolbar" style="padding:0"><button class="btn" data-act="camp-cumple-save">Guardar</button><span class="mut" style="font-size:12px;align-self:center">Al activar y guardar, prepara las felicitaciones desde las 10:00 (hora peninsular). Respeta el horario, ritmo y pausa de la cola. Si WhatsApp se desconecta, quedan pendientes durante ese día. Desactivar y guardar frena las pendientes. Excluye bajas.</span></div></div>`;
   const plist = (CAMP.plantillas || []).map((p) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(p.nombre)}</div><div class="t2">${esc((p.cuerpo || "").slice(0, 80))}</div></div><button class="btn sm danger" data-act="camp-plant-del" data-id="${p.id}">✕</button></div>`).join("") || `<div class="mut" style="padding:10px 14px">Sin plantillas guardadas.</div>`;
   const plantillas = `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Plantillas</h3><button class="btn sm" data-act="camp-plant-add">+ Nueva</button></div><div class="rows">${plist}</div></div>`;
   const table = rows.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Campaña</th><th>Segmento</th><th>Estado</th><th class="r">Env.</th><th class="r">Err.</th><th>Fecha</th><th></th></tr></thead><tbody>${rows.map((c) => {
