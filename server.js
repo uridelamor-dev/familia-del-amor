@@ -143,7 +143,7 @@ import { urlMaestro as fidUrlMaestro, normalizarMaestro as fidNormalizarMaestro,
          ETAPAS as FID_ETAPAS, mensajeEtapa as fidMensajeEtapa, baseValida as fidBaseValida,
          codigoConexion as fidCodigoConexion, validarMaestro as fidValidarMaestro }
   from "./src/modules/fidelizacion/catalogo.js";
-import { TIPOS as FID_PROMO_TIPOS, ESTADOS as FID_PROMO_ESTADOS, vigente as fidPromoVigente,
+import { TIPOS as FID_PROMO_TIPOS, ESTADOS as FID_PROMO_ESTADOS, pendienteDeActivacion as fidPromoPreparada,
          elegible as fidPromoElegible, rewardDePromo as fidRewardDePromo,
          puedePublicar as fidPuedePublicar, simularPromo as fidSimularPromo,
          enMadrid as fidEnMadrid, leerLista as fidLeerLista, EXPLICACION as FID_PROMO_EXPLICA,
@@ -21114,7 +21114,7 @@ async function fidPromoContexto() {
 
   const locales = new Set();
   for (const p of publicadas) {
-    if (!fidPromoVigente(p, { ahora, local: p.local }).ok) continue;
+    if (!fidPromoPreparada(p, ahora)) continue;
     ctx.promosVigentes += 1;
     if (!p.local) ctx.promosSinLocal += 1; else locales.add(p.local);
     if (fidExigeCodigo(p.tipo)) {

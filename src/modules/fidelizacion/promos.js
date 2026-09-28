@@ -183,6 +183,18 @@ export function vigente(promo, { ahora, local }) {
   return { ok: true, motivo: null, madrid: m };
 }
 
+/** Preparar la conexión no concede premios: las fechas se siguen comprobando en vigente(). */
+export function pendienteDeActivacion(promo, ahora) {
+  if (!estaPublicada(promo)) return false;
+  const m = enMadrid(ahora);
+  if (!m) return false;
+  const valida = (v) => !v || (/^\d{4}-\d{2}-\d{2}$/.test(v) &&
+    Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v);
+  if (!valida(promo.desde) || !valida(promo.hasta)) return false;
+  if (promo.desde && promo.hasta && promo.desde > promo.hasta) return false;
+  return !promo.hasta || promo.hasta >= m.fecha;
+}
+
 /** Una lista guardada como JSON, o ya como array. Nunca revienta por un texto mal guardado. */
 export function leerLista(v) {
   if (Array.isArray(v)) return v;

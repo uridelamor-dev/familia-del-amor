@@ -48,15 +48,15 @@ export const APAGADOS = Object.freeze({ promociones_ofrecer: false, promociones_
 export const REQUISITOS = Object.freeze([
   Object.freeze({
     id: "promo_publicada",
-    texto: "Hay al menos una promoción de Ágora publicada y vigente",
+    texto: "Hay al menos una promoción de Ágora publicada, vigente o programada",
     comprueba: (c) => (c.promosVigentes > 0)
-      || "Ninguna promoción de Ágora está publicada y dentro de sus fechas. Publica una desde «Premios de fidelización».",
+      || "No hay promociones publicadas vigentes o programadas. Publica una desde «Premios de fidelización».",
   }),
   Object.freeze({
     id: "promo_con_local",
     texto: "Esas promociones tienen local configurado",
     comprueba: (c) => (c.promosSinLocal === 0)
-      || `${c.promosSinLocal} promoción(es) vigente(s) sin local. Una oferta de un local concreto no puede valer en todos.`,
+      || `${c.promosSinLocal} promoción(es) vigente(s) o programada(s) sin local. Una oferta de un local concreto no puede valer en todos.`,
   }),
   Object.freeze({
     id: "codigo_valido",
@@ -80,7 +80,7 @@ export const REQUISITOS = Object.freeze([
     id: "integracion_confirmada",
     texto: "La integración de esos locales está activa y con su Workplace confirmado",
     comprueba: (c) => (c.localesSinIntegracion === 0)
-      || `${c.localesSinIntegracion} local(es) con promoción vigente y la integración sin confirmar. Un descuento es dinero: no se ofrece sin saber en qué caja está el token.`,
+      || `${c.localesSinIntegracion} local(es) con promoción vigente o programada y la integración sin confirmar. Un descuento es dinero: no se ofrece sin saber en qué caja está el token.`,
   }),
   Object.freeze({
     id: "sin_revisiones_promo",
