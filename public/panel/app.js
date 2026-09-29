@@ -394,52 +394,19 @@ function isDark() { const r = document.documentElement; return r.getAttribute("d
 function toggleTheme() { setTheme(isDark() ? "light" : "dark"); const b = document.getElementById("themeBtn"); if (b) b.innerHTML = ic(isDark() ? "moon" : "sun"); }
 (function initTheme() { const t = localStorage.getItem("panelTheme"); if (t) document.documentElement.setAttribute("data-theme", t); })();
 
-// ── Menú lateral plegable ───────────────────────────────────────────────────
-// Dirección ve los 18 módulos y los seis bloques: la lista entera no cabe de un vistazo y
-// obliga a leerla para encontrar nada. Plegada, se ve la estructura —qué departamentos hay— y
-// se abre el que toca. Los demás roles ven tres o cuatro entradas en total, así que plegarles
-// nada les ahorraría y sí les añadiría un clic: a ellos se les abre todo.
-//
-// El grupo de la pantalla en la que estás se abre SIEMPRE, esté como esté guardado: un menú
-// que no enseña dónde estás no es un menú.
-let NAV_ABIERTOS = null;
+// ── Menú lateral: un único departamento abierto ─────────────────────────────
+let NAV_ABIERTO = null;
+let NAV_VISTA = null;
 
-function navEstado() {
-  if (NAV_ABIERTOS) return NAV_ABIERTOS;
-  try {
-    const g = JSON.parse(localStorage.getItem("navGrupos") || "null");
-    if (Array.isArray(g)) return (NAV_ABIERTOS = new Set(g));
-  } catch { /* si está corrupto se empieza de cero */ }
-  // Por defecto: dirección con todo plegado, el resto con todo abierto.
-  NAV_ABIERTOS = new Set(USER && USER.rol === "direccion" ? [] : NAV.map((x) => x.g));
-  return NAV_ABIERTOS;
-}
-
-function navGrupoAbierto(nombre, items, active) {
-  if (COLLAPSED) return true;                       // en modo icono no hay rótulos que plegar
-  if (items.some(([id]) => id === active)) return true;
-  return navEstado().has(nombre);
+function navGrupoAbierto(nombre) {
+  return COLLAPSED || NAV_ABIERTO === nombre;
 }
 
 function navToggleGrupo(nombre) {
-  const st = navEstado();
-  if (st.has(nombre)) st.delete(nombre); else st.add(nombre);
-  try { localStorage.setItem("navGrupos", JSON.stringify([...st])); } catch { /* sin persistencia, pero funciona */ }
-  // Se repinta solo la barra: repintar la vista entera perdería lo que haya en pantalla.
-  const el = document.querySelector(`.ngrp .ngt[data-g="${CSS.escape(nombre)}"]`)?.closest(".ngrp");
-  const grp = NAV.find((g) => g.g === nombre);
-  if (!el || !grp) return;
-  const items = grp.items.filter(([id]) => puedeVer(id) && !(id === "fidelizacion" && puedeVer("promos")));
-  const abierto = navGrupoAbierto(nombre, items, CURRENT);
-  el.classList.toggle("on", abierto);
-  el.querySelector(".ngt").setAttribute("aria-expanded", String(abierto));
-  const n = el.querySelector(".gn");
-  if (abierto) { if (n) n.remove(); el.querySelector(".gdot")?.remove(); }
-  else if (!n) {
-    const avisos = items.some(([id]) => id === "dashboard") && DASH_CONCERNS > 0;
-    el.querySelector(".ngt").insertAdjacentHTML("beforeend",
-      `<span class="gn">${items.length}${avisos ? " ·" : ""}</span>${avisos ? '<span class="gdot"></span>' : ""}`);
-  }
+  NAV_ABIERTO = NAV_ABIERTO === nombre ? null : nombre;
+  // Actualizar solo la barra conserva los formularios y el contenido de la vista.
+  repintarBarra();
+  document.querySelector(`.ngt[data-g="${CSS.escape(nombre)}"]`)?.focus();
 }
 
 /**
@@ -460,10 +427,14 @@ function shell(active, bodyHtml) {
   const uname = USER.nombre || USER.username || "Usuario";
   const initials = uname.split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   const navActive = active === "fidelizacion" && puedeVer("promos") ? "promos" : active === "promos" && PROMO.tab === "captacion" && puedeVer("campanas") ? "campanas" : active;
+  if (NAV_VISTA !== navActive) {
+    NAV_VISTA = navActive;
+    NAV_ABIERTO = NAV.find((grp) => grp.items.some(([id]) => id === navActive))?.g || null;
+  }
   const nav = NAV.map((grp) => {
     const items = grp.items.filter(([id]) => puedeVer(id) && !(id === "fidelizacion" && puedeVer("promos")));
     if (!items.length) return "";
-    const abierto = navGrupoAbierto(grp.g, items, navActive);
+    const abierto = navGrupoAbierto(grp.g);
     const avisos = items.reduce((n, [id]) => n + (PENDIENTES[id] || 0), 0);
     const botones = items.map(([id, label, icon]) => {
       const n = PENDIENTES[id] || 0;
@@ -2524,8 +2495,8 @@ async function invUsarProveedorFacturas(prov, ov) {
 // ════════════════════════ VISTA: CLIENTES ════════════════════════
 // «Más filtros» empieza plegado: cinco casillas más a la vista para algo que se usa de vez en
 // cuando taparían la lista, que es lo que se viene a ver.
-let CLI_MAS = false;
-let CLIF = { q: "", poblacion: "", local: "", cumple: false, con_email: false, con_telefono: false, excluir_baja: false,
+
+let CLIF = { cerca_de: "", radio_km: "", q: "", local: "", cumple: false, con_email: false, con_telefono: false, excluir_baja: false, estado_comunicaciones: "",
   // Los tres que faltaban para poder pedir de verdad lo que se pide: «los que vinieron el mes
   // pasado», «mujeres de más de 35» y «los que cumplen esta semana».
   edad_min: "", edad_max: "", reservo_from: "", reservo_to: "", cumple_en_dias: "" };
@@ -2539,14 +2510,19 @@ async function apiRaw(path) { const r = await fetch(path, { headers: { Authoriza
 // de «casilla activada»— y el servidor lo leía como el mes 01: en agosto no salía nadie y en
 // enero salía media lista. El mes tiene que viajar, no un booleano.
 const mesActualMM = () => String(new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" })).slice(5, 7);
-const CLI_EXTRA = ["edad_min", "edad_max", "reservo_from", "reservo_to", "cumple_en_dias"];
-function cliQS() { const qs = new URLSearchParams(); if (CLIF.q) qs.set("q", CLIF.q); if (CLIF.poblacion) qs.set("poblacion", CLIF.poblacion); if (CLIF.local) qs.set("local", CLIF.local); if (CLIF.cumple) qs.set("cumple_mes", mesActualMM()); if (CLIF.con_email) qs.set("con_email", "1"); if (CLIF.con_telefono) qs.set("con_telefono", "1"); if (CLIF.excluir_baja) qs.set("excluir_baja", "1"); CLI_EXTRA.forEach((k) => { if (CLIF[k]) qs.set(k, CLIF[k]); }); return qs.toString(); }
+const CLI_EXTRA = ["edad_min", "edad_max", "reservo_from", "reservo_to", "cumple_en_dias", "estado_comunicaciones"];
+function cliGeografia() {
+  const poblacion = CLIF.cerca_de.trim();
+  if (!poblacion) return {};
+  return CLIF.radio_km === "" ? { poblacion } : { cerca_de: poblacion, radio_km: CLIF.radio_km };
+}
+function cliQS() { const qs = new URLSearchParams(cliGeografia()); if (CLIF.q) qs.set("q", CLIF.q); if (CLIF.local) qs.set("local", CLIF.local); if (CLIF.cumple) qs.set("cumple_mes", mesActualMM()); if (CLIF.con_email) qs.set("con_email", "1"); if (CLIF.con_telefono) qs.set("con_telefono", "1"); if (CLIF.excluir_baja) qs.set("excluir_baja", "1"); CLI_EXTRA.forEach((k) => { if (CLIF[k]) qs.set(k, CLIF[k]); }); return qs.toString(); }
 // `class="chk"` en vez de los mismos estilos en línea cinco veces: la clase ya existía en otros
 // ocho sitios del panel y ahora tiene regla. En el móvil le da además los 40 px de toque, que
 // con los estilos en línea no había forma de darle — ganan a cualquier hoja.
 function cliChk(id, campo, label) { return `<label class="chk"><input type="checkbox" id="${id}" ${CLIF[campo] ? "checked" : ""}> ${esc(label)}</label>`; }
 function cliActionsBar(total) {
-  return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Preparar comunicación · ${num(total)} contactos filtrados</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button><div style="flex:1"></div>${USER.rol === "direccion" ? `<button class="btn" data-act="cli-dup" title="Buscar fichas repetidas de la misma persona">Fichas repetidas</button>` : ""}<button class="btn" data-act="cli-csv">Exportar CSV</button></div>`;
+  return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Preparar comunicación · ${num(total)} contactos filtrados</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button></div>`;
 }
 // Cumpleaños: "12 abr 1988 (38)". Sin fecha → "—". La edad solo si el año es plausible.
 function fechaNac(iso) {
@@ -2580,38 +2556,59 @@ function cliTable(rows) {
     const baja = c.baja === 1 || c.baja === true;
     const wa = c.es_contacto_wa ? '<span class="sdot" title="Tiene WhatsApp" style="display:inline-block;width:7px;height:7px;border-radius:999px;background:var(--success);margin-left:6px"></span>' : "";
     const acc = `<div style="display:flex;gap:4px;justify-content:flex-end">${tel ? `<button class="btn sm" data-act="cli-wa" data-tel="${esc(tel)}" data-nombre="${esc(nom)}" title="Escribir por WhatsApp">${ic("chat", 14)}</button><a class="btn sm" href="tel:${esc(tel)}" title="Llamar">${ic("bell", 14)}</a>` : ""}${c.correo ? `<a class="btn sm" href="mailto:${esc(c.correo)}" title="Enviar email">@</a>` : ""}<button class="btn sm" data-act="cli-ficha" data-tel="${esc(tel)}" title="Ver ficha">Ficha</button></div>`;
-    return `<tr><td>${esc(nom)}${wa}${baja ? ' <span class="pill bad" style="font-size:10px">Baja</span>' : ""}</td><td class="mut">${esc(tel)}</td><td class="mut">${esc(c.correo || "")}</td><td>${esc(c.poblacion || "")}</td><td class="mut tnum">${esc(fechaNac(c.nacimiento))}</td><td>${cliOrigen(c)}</td><td class="mut">${esc((c.ultima_actividad || "").slice(0, 10))}</td><td>${acc}</td></tr>`;
+    return `<tr><td>${esc(nom)}${wa}${baja ? ' <span class="pill bad" style="font-size:10px">Baja</span>' : ""}</td><td class="mut">${esc(tel)}</td><td class="mut">${esc(c.correo || "")}</td><td title="${esc(c.poblacion_original || c.poblacion || "")}">${esc(c.poblacion || "—")}${c.distancia_km != null ? `<div class="t2">≈ ${num(c.distancia_km)} km</div>` : c.poblacion && c.poblacion_identificada === false ? `<div class="t2">Sin identificar</div>` : ""}</td><td class="mut tnum">${esc(fechaNac(c.nacimiento))}</td><td>${cliOrigen(c)}</td><td class="mut">${esc((c.ultima_actividad || "").slice(0, 10))}</td><td>${acc}</td></tr>`;
   }).join("")}</tbody></table></div></div>`;
 }
-function cliSubTxt(rows, total) { return `${num(total)} contacto${total === 1 ? "" : "s"}${rows.length < total ? ` · mostrando ${rows.length}` : ""} · ${CLIF.local ? esc(CLIF.local) : "Todos los locales"}. Esta lista usa sus propios filtros de clientes.`; }
+function cliFiltrosResumen() {
+  const n = [CLIF.cumple || CLIF.cumple_en_dias !== "", CLIF.con_email || CLIF.con_telefono,
+    CLIF.estado_comunicaciones, CLIF.edad_min !== "" || CLIF.edad_max !== "", CLIF.reservo_from || CLIF.reservo_to].filter(Boolean).length;
+  return n ? `${n} activo${n === 1 ? "" : "s"}` : "Sin filtros activos";
+}
+function cliSelect(id, label, value, opciones) {
+  return `<div class="field"><label for="${id}">${label}</label><select id="${id}">${opciones.map(([v,t])=>`<option value="${v}" ${String(value)===v?"selected":""}>${t}</option>`).join("")}</select></div>`;
+}
+function cliFiltrosCuerpo() {
+  return `    <div class="cli-extra-body">
+      <div class="cli-extra-grid">
+        ${cliSelect("cCumpleFiltro", "Cumpleaños", CLIF.cumple ? "mes" : CLIF.cumple_en_dias, [["","Cualquiera"],["0","Hoy"],["7","Próximos 7 días"],["mes","Este mes"]])}
+        ${cliSelect("cContactoFiltro", "Datos de contacto", CLIF.con_email && CLIF.con_telefono ? "ambos" : CLIF.con_email ? "email" : CLIF.con_telefono ? "telefono" : "", [["","Cualquiera"],["email","Con email"],["telefono","Con teléfono"],["ambos","Con ambos"]])}
+        ${cliSelect("cComunicaciones", "Estado de comunicaciones", CLIF.estado_comunicaciones, [["","Todos"],["aceptan","Aceptan comunicaciones"],["baja","Dados de baja"]])}
+      </div>
+      <p class="t2">El permiso depende del canal. Las bajas siempre se excluyen al enviar.</p>
+      <div class="cli-extra-grid cli-extra-secondary">
+        <fieldset><legend>Edad</legend><div class="cli-extra-range">
+          <div class="field"><label for="cEdadMin">Desde</label><input id="cEdadMin" type="number" min="0" max="120" value="${esc(CLIF.edad_min)}" placeholder="Sin mínimo"></div>
+          <div class="field"><label for="cEdadMax">Hasta</label><input id="cEdadMax" type="number" min="0" max="120" value="${esc(CLIF.edad_max)}" placeholder="Sin máximo"></div>
+        </div></fieldset>
+        <fieldset><legend>Fecha de reserva</legend><div class="cli-extra-range">
+          <div class="field"><label>Desde</label>${dpField("cResDesde", CLIF.reservo_from, "Cualquiera")}</div>
+          <div class="field"><label>Hasta</label>${dpField("cResHasta", CLIF.reservo_to, "Cualquiera")}</div>
+        </div></fieldset>
+      </div>
+      <div class="cli-extra-footer"><button class="btn sm" data-act="cli-limpiar-filtros">Limpiar filtros</button><button class="btn primary" data-close>Ver resultados</button></div>
+    </div>
+`;
+}
+function cliAbrirFiltros() {
+  const ov = modal("Filtros de clientes", cliFiltrosCuerpo());
+  ov.classList.add("cli-filtros-modal");
+}
 function renderClientes(j) {
   const rows = j.data || []; const total = j.total != null ? j.total : rows.length; CLI_TOTAL = total;
   const localOpts = ['<option value="">Cualquier local</option>'].concat(visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${CLIF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
-  const pobOpts = ['<option value="">Todas las poblaciones</option>'].concat((CLI_POBLACIONES || []).map((p) => `<option value="${esc(p)}" ${CLIF.poblacion === p ? "selected" : ""}>${esc(p)}</option>`)).join("");
   // Barra 1: búsqueda + selectores. Barra 2: casillas de filtro agrupadas. Sin botón «Buscar»:
   // el listado se auto-actualiza al escribir, seleccionar o marcar (ver listeners globales).
   const toolbar = `<div class="toolbar">
     <div class="field" style="flex:2;min-width:220px"><label>Buscar</label><input id="cQ" placeholder="Nombre, teléfono, email…" value="${esc(CLIF.q)}" autocomplete="off"></div>
-    <div class="field"><label>Población</label><select id="cPob">${pobOpts}</select></div>
-    <div class="field"><label>Local</label><select id="cLocal">${localOpts}</select></div>
+    <div class="field"><label>Local de los clientes</label><select id="cLocal">${localOpts}</select></div>
+    <div class="field"><label for="cCerca">Población</label><input id="cCerca" list="cGeoOpciones" placeholder="Población o código postal" value="${esc(CLIF.cerca_de)}" autocomplete="off"><datalist id="cGeoOpciones">${CLI_POBLACIONES.map(p => `<option value="${esc(p)}"></option>`).join("")}</datalist></div>
+    <div class="field"><label for="cRadio">Radio</label><select id="cRadio"><option value="" ${CLIF.radio_km === "" ? "selected" : ""}>0 km</option>${[1, 5, 10, 25, 50, 100].map(km => `<option value="${km}" ${String(CLIF.radio_km) === String(km) ? "selected" : ""}>${km} km</option>`).join("")}</select></div>
+    <button class="btn" style="align-self:flex-end;margin-bottom:0" data-act="cli-filtros" aria-haspopup="dialog">${ic("filtro", 16)} Filtros <span id="cliFiltrosResumen" class="mut">${cliFiltrosResumen() === "Sin filtros activos" ? "" : esc(cliFiltrosResumen())}</span></button>
   </div>
-  <div class="toolbar" style="margin-top:-4px;align-items:center;gap:18px;flex-wrap:wrap"><span class="mut" style="font-size:12px;font-weight:600;letter-spacing:.02em">FILTROS</span>${cliChk("cCumple", "cumple", "Cumple este mes")}${cliChk("cEmail", "con_email", "Con email")}${cliChk("cTel", "con_telefono", "Con teléfono")}${cliChk("cBaja", "excluir_baja", "Excluir bajas")}
-    <div style="flex:1"></div>
-    <button class="linkbtn" data-act="cli-mas-filtros">Más filtros…</button>
-    <button class="linkbtn" data-act="cli-propuestas" id="cliPropBtn" style="display:none"></button></div>
-  ${CLI_MAS ? `<div class="toolbar" style="margin-top:-4px;flex-wrap:wrap;align-items:flex-end">
-    <div class="field" style="max-width:120px"><label>Edad desde</label><input id="cEdadMin" type="number" min="0" max="120" value="${esc(CLIF.edad_min)}" placeholder="—"></div>
-    <div class="field" style="max-width:120px"><label>hasta</label><input id="cEdadMax" type="number" min="0" max="120" value="${esc(CLIF.edad_max)}" placeholder="—"></div>
-    <div class="field" style="max-width:150px"><label>Cumple en</label>
-      <select id="cCumpleDias"><option value="">—</option>${[["0", "hoy"], ["7", "7 días"], ["15", "15 días"], ["30", "30 días"]]
-        .map(([v, l]) => `<option value="${v}" ${String(CLIF.cumple_en_dias) === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
-    <div class="field" style="max-width:170px"><label>Reservó desde</label>${dpField("cResDesde", CLIF.reservo_from, "Cualquiera")}</div>
-    <div class="field" style="max-width:170px"><label>hasta</label>${dpField("cResHasta", CLIF.reservo_to, "Cualquiera")}</div>
-    ${/* La lista de lo que NO se puede pedir. Va aquí porque es aquí donde te das cuenta. */""}
-    <button class="linkbtn mut" data-act="cli-falta-filtro" style="align-self:center;font-size:12px">¿Te falta un filtro?</button>
-  </div>` : ""}`;
-  const head = `<div class="ph"><div class="eyebrow">Base de clientes</div><h1>Clientes</h1><div class="sub" id="cliSub">${cliSubTxt(rows, total)}</div></div>`;
-  return `${head}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div><details class="card fold"><summary><h3>Consultar carné de un socio</h3></summary>${renderClientesFid()}</details>`;
+
+  `;
+  const head = `<div class="ph"><div class="eyebrow">Base de clientes</div><div class="cli-heading"><h1>Clientes</h1><details class="cli-settings"><summary class="btn cli-settings-toggle" aria-label="Opciones de clientes" title="Opciones de clientes"><span aria-hidden="true">⚙</span></summary><div class="cli-settings-menu">${USER.rol === "direccion" ? `<button class="cli-settings-item" data-act="cli-dup">Fichas repetidas</button>` : ""}<button class="cli-settings-item" data-act="cli-csv">Exportar CSV</button><a class="cli-settings-credit t2" href="https://www.geonames.org/" target="_blank" rel="noopener">Datos geográficos: GeoNames</a></div></details></div></div>`;
+  return `${head}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div>`;
 }
 
 /**
@@ -2635,8 +2632,7 @@ function renderClientesFid() {
 }
 
 /** Solo la ficha. Se pinta suelta al consultar, sin repintar el buscador ni perder lo escrito. */
-function renderClientesFidCuerpo() {
-  const d = CLI_FID;
+function renderClientesFidCuerpo(d = CLI_FID) {
   const eur = (n) => (Math.round(Number(n || 0) * 100) / 100).toFixed(2) + " €";
   const dato = (t, v, sub) => `<div class="row"><div class="grow"><div class="t1">${esc(t)}</div>${sub ? `<div class="mut" style="font-size:12px">${esc(sub)}</div>` : ""}</div><b class="tnum">${esc(v)}</b></div>`;
 
@@ -2653,7 +2649,7 @@ function renderClientesFidCuerpo() {
 
     cuerpo = `<div class="rows">
         ${dato("Puntos disponibles", String(s.disponible ?? 0), s.proxima_caducidad ? `El lote más antiguo caduca el ${s.proxima_caducidad}` : "Sin puntos con fecha de caducidad")}
-        ${dato("Visitas", String(t.visitas ?? 0), t.ultima ? `Última: ${String(t.ultima).slice(0, 10)}` : "Todavía ninguna")}
+        ${dato("Visitas", String(t.visitas ?? 0), t.ultima ? `Última: ${String(t.ultima).slice(0, 10)}` : t.visitas === 0 ? "Todavía ninguna" : "Sin fecha registrada")}
         ${dato("Consumo", eur(t.consumo), t.ticket_medio ? `Ticket medio ${eur(t.ticket_medio)}` : "")}
       </div>
       ${d.carnet?.anulado ? '<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">Este carné está <b>anulado</b>: ya no identifica a nadie en la barra.</div>' : ""}
@@ -2695,13 +2691,28 @@ async function loadClientes() {
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 // Refresca SOLO los resultados (no la barra) para no perder el foco/cursor mientras se escribe.
+let cliResultsVersion = 0;
 async function refreshCliResults() {
+  const version = ++cliResultsVersion;
   try {
     const j = await apiRaw("/api/contactos" + (cliQS() ? "?" + cliQS() : ""));
+    if (version !== cliResultsVersion) return;
     const rows = j.data || []; const total = j.total != null ? j.total : rows.length; CLI_TOTAL = total;
     const body = document.getElementById("cliBody"); if (body) body.innerHTML = cliActionsBar(total) + cliTable(rows);
-    const sub = document.getElementById("cliSub"); if (sub) sub.innerHTML = cliSubTxt(rows, total);
+    const filtros = document.getElementById("cliFiltrosResumen"); if (filtros) filtros.textContent = cliFiltrosResumen() === "Sin filtros activos" ? "" : cliFiltrosResumen();
   } catch (e) { if (e.message !== "noauth") { const body = document.getElementById("cliBody"); if (body) body.innerHTML = errorCard(e.message); } }
+}
+let cliGeoTimer;
+function cliGeoSugerencias(texto) {
+  clearTimeout(cliGeoTimer);
+  cliGeoTimer=setTimeout(async()=>{
+    try {
+      const j=await apiRaw("/api/geografia/poblaciones?q="+encodeURIComponent(texto));
+      if(document.getElementById("cCerca")?.value!==texto)return;
+      const lista=document.getElementById("cGeoOpciones");
+      if(lista)lista.innerHTML=(j.data||[]).map(p=>`<option value="${esc(p.nombre)}">${esc(p.provincia)}</option>`).join("");
+    } catch { /* Free text still validated by the server when filtering. */ }
+  },200);
 }
 function cliRefreshDebounced() { if (_cliTimer) clearTimeout(_cliTimer); _cliTimer = setTimeout(refreshCliResults, 250); }
 async function downloadClientesCsv() { try { const r = await fetch("/api/leads/export.csv" + (cliQS() ? "?" + cliQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "clientes.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
@@ -2893,7 +2904,7 @@ function pedirFiltroQueFalta() {
   });
 }
 
-function filtrosClienteBody() { const b = {}; if (CLIF.q) b.q = CLIF.q; if (CLIF.poblacion) b.poblacion = CLIF.poblacion; if (CLIF.local) b.local = CLIF.local; if (CLIF.cumple) b.cumple_mes = mesActualMM(); if (CLIF.con_email) b.con_email = 1; if (CLIF.con_telefono) b.con_telefono = 1; CLI_EXTRA.forEach((k) => { if (CLIF[k]) b[k] = CLIF[k]; }); return b; }
+function filtrosClienteBody() { const b = { ...cliGeografia() }; if (CLIF.q) b.q = CLIF.q; if (CLIF.local) b.local = CLIF.local; if (CLIF.cumple) b.cumple_mes = mesActualMM(); if (CLIF.con_email) b.con_email = 1; if (CLIF.con_telefono) b.con_telefono = 1; CLI_EXTRA.forEach((k) => { if (CLIF[k]) b[k] = CLIF[k]; }); return b; }
 // Ficha de contacto: datos, visitas, reservas, WhatsApp y consentimiento.
 /**
  * El bloque «Origen» de la ficha: por dónde entró y por dónde ha vuelto.
@@ -2915,26 +2926,75 @@ function cliFichaOrigen(d) {
 }
 
 async function cliFicha(tel) {
-  let d; try { d = (await apiRaw("/api/contactos/" + encodeURIComponent(tel))).data; } catch (e) { toast("Error: " + e.message); return; }
+  if (!tel) { toast("Este contacto no tiene teléfono para vincular su ficha."); return; }
+  let d;
+  try {
+    d = (await apiRaw("/api/contactos/" + encodeURIComponent(tel))).data;
+    if (!d || Array.isArray(d)) throw new Error("No se ha podido cargar la ficha");
+  } catch (e) { toast(e.message); return; }
   const p = d.prefs || {};
-  const resv = (d.reservas || []).slice(0, 8).map((r) => `<div class="row"><div class="grow"><div class="t1">${esc(r.local || "—")}</div><div class="t2">${esc(r.dia || "")} ${esc(r.hora || "")} · ${esc(String(r.personas || ""))} pax</div></div></div>`).join("") || `<div class="mut" style="padding:10px 14px">Sin reservas registradas.</div>`;
-  const chk = (campo, label) => `<label class="chip" style="cursor:pointer"><input type="checkbox" data-ficha-pref="${campo}" ${p[campo] ? "checked" : ""} style="margin-right:6px">${esc(label)}</label>`;
-  const ov = modal(d.nombre || tel, `<div class="grid" style="gap:12px">
-    <div class="card" style="padding:12px 14px"><div class="t2">${esc(tel)}${d.es_contacto_wa ? " · tiene WhatsApp" : ""}</div><div style="margin-top:4px">${esc(d.correo || "Sin email")} · ${esc(d.poblacion || "Sin población")} · ${d.visitas} visita(s)${d.ultimo_local ? " · último: " + esc(d.ultimo_local) : ""}</div><div class="t2" style="margin-top:4px">Cumpleaños: ${esc(fechaNac(d.nacimiento))}</div></div>
-    ${cliFichaOrigen(d)}
-    <div class="card" style="padding:12px 14px"><div class="ch"><h3>Consentimiento</h3></div><div style="display:flex;gap:8px;flex-wrap:wrap" data-tel="${esc(tel)}">${chk("opt_in_wa", "Opt-in WhatsApp")}${chk("opt_in_email", "Opt-in Email")}${chk("baja", "Baja (no contactar)")}</div></div>
+  const nombre = [d.nombre, d.apellidos].filter(Boolean).join(" ") || tel;
+  const estado = !d.carnet ? "Sin carné" : d.carnet.anulado_en ? "Carné anulado"
+    : d.carnet.caduca_en && new Date(d.carnet.caduca_en).getTime() < Date.now() ? "Carné caducado" : "Tiene carné";
+  const reservas = d.reservas || [];
+  const hoyFicha = new Intl.DateTimeFormat("sv-SE", {timeZone:"Europe/Madrid"}).format(new Date());
+  const proxima = reservas.filter(r => String(r.dia || "").slice(0,10) >= hoyFicha)
+    .sort((a,b) => (String(a.dia)+String(a.hora || "")).localeCompare(String(b.dia)+String(b.hora || "")))[0];
+  const fecha = (v) => v ? esc(String(v).slice(0, 10)) : "Sin datos";
+  const fold = (titulo, resumen, cuerpo) => `<details class="card fold"><summary><h3>${titulo}</h3><span class="foldr">${resumen}<span class="car">${ic("chev",16)}</span></span></summary><div class="cli-ficha-detail">${cuerpo}</div></details>`;
+  const permisos = () => p.baja ? "Baja · no contactar" : [p.opt_in_wa ? "WhatsApp autorizado" : "WhatsApp sin autorización", p.opt_in_email ? "Email autorizado" : "Email sin autorización"].join(" · ");
+  const chk = (campo,label) => `<label class="cli-pref"><input type="checkbox" data-ficha-pref="${campo}" ${p[campo] ? "checked" : ""}>${label}</label>`;
+  const resv = reservas.map(r => `<div class="row"><div><b>${esc(r.local || "Local sin indicar")}</b><div class="t2">${fecha(r.dia)} · ${esc(r.hora || "Hora sin indicar")} · ${esc(String(r.personas ?? "—"))} personas</div></div></div>`).join("") || '<p class="mut">Sin reservas registradas.</p>';
+  const ov = modal(nombre, `<div class="cli-ficha">
+    <div class="cli-ficha-identity"><span class="pill">${estado}</span><span class="mut">${esc(d.poblacion || "Población sin indicar")}</span>
+    <div class="cli-ficha-contact"><a href="tel:${esc(tel)}">${esc(tel)}</a>${d.correo ? `<a href="mailto:${esc(d.correo)}">${esc(d.correo)}</a>` : '<span class="mut">Email sin indicar</span>'}</div>
+    ${d.nacimiento ? `<div class="t2">Cumpleaños: ${esc(fechaNac(d.nacimiento))}</div>` : ""}
+    <button class="btn sm" id="fichaWa">Escribir por WhatsApp</button></div>
+    <div id="fichaResumen" class="cli-ficha-metrics">${d.carnet ? 'Consultando actividad del carné…' : '<span class="mut">Sin carné vinculado: no hay actividad de fidelización disponible.</span>'}</div>
+    ${d.carnet ? fold("Actividad del carné", "Puntos y consumo", '<div id="fichaCarnetActividad">Cargando…</div><button class="btn sm" id="fichaReintentar" hidden>Reintentar</button>') : ""}
+    ${proxima ? `<div class="card cli-next-reserva"><span class="t2">Próxima reserva registrada</span><b>${fecha(proxima.dia)} · ${esc(proxima.hora || "Hora sin indicar")}</b><span>${esc(proxima.local || "Local sin indicar")} · ${esc(String(proxima.personas ?? "—"))} personas</span></div>` : ""}
+    ${fold("Reservas", String(reservas.length) + " registradas", '<p class="t2">Son reservas, no visitas confirmadas.</p>' + resv)}
     <div id="fichaHechos"></div>
-    <div class="card p0"><div class="ch" style="padding:14px 14px 0"><h3>Reservas</h3></div><div class="rows">${resv}</div></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">${d.telefono || tel ? `<button class="btn primary" id="fichaWa">Escribir por WhatsApp</button>` : ""}<button class="btn" data-close>Cerrar</button></div>
+    ${fold("Comunicaciones", p.baja ? '<span class="pill bad">Baja</span>' : "Permisos", `<p id="fichaPermisosEstado">${permisos()}</p><button class="btn sm" id="fichaEditarPermisos">Editar permisos</button><div id="fichaPermisosEditor" hidden><p class="t2">Modifica estos permisos solo si el cliente lo ha solicitado.</p>${chk("opt_in_wa","Permite promociones por WhatsApp")}${chk("opt_in_email","Permite promociones por email")}${chk("baja","Baja: no contactar")}<button class="btn primary sm" id="fichaGuardarPermisos">Guardar permisos</button><button class="btn sm" id="fichaCancelarPermisos">Cancelar</button></div>`)}
+    ${cliFichaOrigen(d) ? fold("Origen del cliente", "Captación", cliFichaOrigen(d)) : ""}
   </div>`);
-  ov.addEventListener("change", async (e) => {
-    const cb = e.target.closest("[data-ficha-pref]"); if (!cb) return;
-    const campo = cb.getAttribute("data-ficha-pref");
-    try { await apiSend("PATCH", "/api/contactos/prefs", { telefono: tel, [campo]: cb.checked ? 1 : 0 }); toast("Preferencia guardada ✅"); }
-    catch (err) { toast("Error: " + err.message); cb.checked = !cb.checked; }
-  });
-  const waBtn = ov.querySelector("#fichaWa"); if (waBtn) waBtn.addEventListener("click", () => { ov.remove(); cliWa(tel, d.nombre || tel); });
-  cliHechos(ov, tel);
+  ov.classList.add("cli-ficha-modal");
+  ov.querySelector("#fichaWa").onclick = () => { ov.remove(); cliWa(tel,nombre); };
+  const editor = ov.querySelector("#fichaPermisosEditor"), editar = ov.querySelector("#fichaEditarPermisos");
+  editar.onclick = () => { editor.hidden = false; editar.hidden = true; };
+  ov.querySelector("#fichaCancelarPermisos").onclick = () => {
+    editor.querySelectorAll("[data-ficha-pref]").forEach(cb => cb.checked = !!p[cb.dataset.fichaPref]);
+    editor.hidden = true; editar.hidden = false;
+  };
+  ov.querySelector("#fichaGuardarPermisos").onclick = async (e) => {
+    const cambios = Object.fromEntries([...editor.querySelectorAll("[data-ficha-pref]")].map(cb => [cb.dataset.fichaPref,cb.checked ? 1 : 0]));
+    e.target.disabled = true;
+    try {
+      await apiSend("PATCH","/api/contactos/prefs",{telefono:tel,...cambios});
+      Object.assign(p,cambios);
+      ov.querySelector("#fichaPermisosEstado").textContent = permisos();
+      const resumen = editor.closest("details").querySelector(".foldr");
+      resumen.innerHTML = (p.baja ? '<span class="pill bad">Baja</span>' : "Permisos") + `<span class="car">${ic("chev",16)}</span>`;
+      editor.hidden = true; editar.hidden = false; toast("Permisos guardados");
+    } catch { toast("No se han podido guardar los permisos. Vuelve a intentarlo."); }
+    finally { e.target.disabled = false; }
+  };
+  const cargar = async () => {
+    const caja = ov.querySelector("#fichaCarnetActividad"), resumen = ov.querySelector("#fichaResumen"), retry = ov.querySelector("#fichaReintentar");
+    retry.hidden = true;
+    try {
+      const actividad = await apiRaw("/api/fidelizacion/socio?carnet_id=" + encodeURIComponent(d.carnet.id));
+      if (!actividad.total || !actividad.saldo) throw new Error("Respuesta incompleta");
+      caja.innerHTML = renderClientesFidCuerpo(actividad);
+      resumen.innerHTML = `<div><span>Última visita TPV</span><b>${actividad.total.ultima ? fecha(actividad.total.ultima) : actividad.total.visitas === 0 ? "Sin visitas" : "Sin fecha registrada"}</b></div><div><span>Visitas TPV</span><b>${esc(String(actividad.total.visitas ?? "Sin datos"))}</b></div><div><span>Puntos disponibles</span><b>${esc(String(actividad.saldo.disponible ?? "Sin datos"))}</b></div>`;
+    } catch {
+      resumen.textContent = "Actividad no disponible";
+      caja.textContent = "No se ha podido cargar la actividad. Esto no significa que no tenga visitas o puntos.";
+      retry.hidden = false;
+    }
+  };
+  if (d.carnet) { ov.querySelector("#fichaReintentar").onclick = cargar; cargar(); }
+  cliHechos(ov,tel);
 }
 
 /**
@@ -13775,6 +13835,9 @@ const CAMP_PLANTILLAS = [
 ];
 /** Un filtro heredado, en palabras. Un chip que ponga «reservo_from: 2026-08-20» no es un aviso. */
 function etiquetaFiltro(k, v) {
+  if (k === "estado_comunicaciones") return v === "baja" ? "Dados de baja" : "Aceptan comunicaciones";
+  if (k === "cerca_de") return `Cerca de ${v}`;
+  if (k === "radio_km") return `Radio: ${v} km`;
   const f = (d) => fechaCorta(String(d)) || d;
   switch (k) {
     case "reservo_from": return `reservaron desde el ${f(v)}`;
@@ -13796,7 +13859,7 @@ function etiquetaFiltro(k, v) {
 // filtros que el formulario no conocía —las fechas de reserva, la edad— se PERDÍAN al pasar por
 // aquí, y la campaña salía a mucha más gente de la que se había visto en la propuesta.
 const CLAVES_SEGMENTO = [
-  "q", "genero", "poblacion", "local", "idioma", "origen", "from", "to",
+  "q", "genero", "poblacion", "cerca_de", "radio_km", "estado_comunicaciones", "local", "idioma", "origen", "from", "to",
   "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
   "hecho_etiqueta", "hecho_valor",
   // Los de comportamiento: visitas, hace cuánto que no viene, valor. Salen de cliente_metricas.
@@ -13818,6 +13881,7 @@ function construirSegmento(input = {}, mesActual) {
 function describirAudiencia(f = {}) {
   const p = [];
   if (f.local) p.push(`Local: ${f.local}`);
+  if (f.cerca_de) p.push(`Cerca de ${f.cerca_de} · ${f.radio_km} km`);
   if (f.poblacion) p.push(`Pobl.: ${f.poblacion}`);
   // «M»/«F» son de las campañas viejas, cuando el formulario mandaba una cosa y la base
   // guardaba otra: siguen apareciendo en los segmentos ya guardados.
@@ -14140,7 +14204,7 @@ function openCampana(mode = "nueva", pre = {}) {
   // reservaron entre el 20 y el 25» se convertía en «todos los del local» al pulsar continuar:
   // el contador subía —lo que parece que por fin funciona— y el mensaje salía a gente que no
   // tocaba. Sin error, sin aviso y sin vuelta atrás.
-  const HEREDABLES = ["reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
+  const HEREDABLES = ["cerca_de", "radio_km", "estado_comunicaciones", "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
                       "hecho_etiqueta", "hecho_valor", "sin_nacimiento", "sin_email", "sin_poblacion"];
   const heredados = {};
   for (const k of HEREDABLES) if (s[k] != null && s[k] !== "" && s[k] !== false) heredados[k] = s[k];
@@ -15994,10 +16058,13 @@ document.addEventListener("change", (e) => {
   }
   if (id === "cEdadMin") { CLIF.edad_min = e.target.value; refreshCliResults(); }
   else if (id === "cEdadMax") { CLIF.edad_max = e.target.value; refreshCliResults(); }
-  else if (id === "cCumpleDias") { CLIF.cumple_en_dias = e.target.value; refreshCliResults(); }
+  else if (id === "cCumpleFiltro") { CLIF.cumple = e.target.value === "mes"; CLIF.cumple_en_dias = CLIF.cumple ? "" : e.target.value; refreshCliResults(); }
+  else if (id === "cContactoFiltro") { CLIF.con_email = ["email","ambos"].includes(e.target.value); CLIF.con_telefono = ["telefono","ambos"].includes(e.target.value); refreshCliResults(); }
+  else if (id === "cComunicaciones") { CLIF.estado_comunicaciones = e.target.value; refreshCliResults(); }
   else if (id === "cResDesde") { CLIF.reservo_from = e.target.value; refreshCliResults(); }
   else if (id === "cResHasta") { CLIF.reservo_to = e.target.value; refreshCliResults(); }
-  else if (id === "cPob") { CLIF.poblacion = e.target.value; refreshCliResults(); }
+  else if (id === "cCerca") { CLIF.cerca_de=e.target.value.trim(); refreshCliResults(); }
+  else if (id === "cRadio") { CLIF.radio_km=e.target.value; if(CLIF.cerca_de) refreshCliResults(); }
   else if (id === "cLocal") { CLIF.local = e.target.value; refreshCliResults(); }
   else if (id === "cCumple") { CLIF.cumple = e.target.checked; refreshCliResults(); }
   else if (id === "cEmail") { CLIF.con_email = e.target.checked; refreshCliResults(); }
@@ -16015,6 +16082,7 @@ document.addEventListener("input", (e) => {
   if (e.target && e.target.id === "analQ") { clearTimeout(_analTimer); const v = e.target.value; _analTimer = setTimeout(() => analBuscar(v), 180); return; }
   if (e.target && e.target.id === "reshQ") { const v = e.target.value; clearTimeout(_reshT); _reshT = setTimeout(() => resHistBuscar(v), 200); return; }
   if (e.target && e.target.id === "promoQ") { clearTimeout(_promoTimer); _promoTimer = setTimeout(promoBuscar, 250); return; }
+  if (e.target?.id === "cCerca") cliGeoSugerencias(e.target.value);
   if (e.target && e.target.id === "cQ") { CLIF.q = e.target.value.trim(); cliRefreshDebounced(); }
   else if (e.target && e.target.id === "facQ") { facFilterDebounced(); }
   else if (e.target && e.target.id === "invSearch") { INV.filtro = e.target.value; invRefreshList(); }
@@ -16067,6 +16135,7 @@ document.addEventListener("click", (e) => {
       ${p.titular && p.contexto ? `<p class="mut" style="margin:12px 0 0;line-height:1.6">${p.contexto}</p>` : ""}
       <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Cerrar</button></div>`);
   }
+  else if (act === "dash-reintentar") loadDashboard();
   else if (act === "cmdk") openCmd();
   else if (act === "estabmenu") openEstabMenu();
   // Cambiar de establecimiento reaplica el ámbito sin sacarte de donde estabas.
@@ -16175,11 +16244,17 @@ document.addEventListener("click", (e) => {
       .then(() => campFaltan()).catch(() => toast("No se pudo quitar"));
   }
   else if (act === "cli-fid") cliFidVer();
-  else if (act === "cli-mas-filtros") { CLI_MAS = !CLI_MAS; loadClientes(); }
+  else if (act === "cli-filtros") cliAbrirFiltros();
+  else if (act === "cli-limpiar-filtros") {
+    Object.assign(CLIF, { cumple:false, cumple_en_dias:"", con_email:false, con_telefono:false, excluir_baja:false, estado_comunicaciones:"", edad_min:"", edad_max:"", reservo_from:"", reservo_to:"" });
+    const body = t.closest(".modal-ov")?.querySelector(".modal-b");
+    if (body) body.innerHTML = cliFiltrosCuerpo();
+    refreshCliResults();
+  }
   else if (act === "cli-propuestas") cliPropuestas();
   else if (act === "cli-falta-filtro") pedirFiltroQueFalta();
-  else if (act === "cli-csv") downloadClientesCsv();
-  else if (act === "cli-dup") cliDuplicados();
+  else if (act === "cli-csv") { t.closest(".cli-settings")?.removeAttribute("open"); downloadClientesCsv(); }
+  else if (act === "cli-dup") { t.closest(".cli-settings")?.removeAttribute("open"); cliDuplicados(); }
   else if (act === "cli-wa") cliWa(t.getAttribute("data-tel"), t.getAttribute("data-nombre"));
   else if (act === "cli-ficha") cliFicha(t.getAttribute("data-tel"));
   else if (act === "cli-masivo") cliMasivo();
@@ -16488,7 +16563,13 @@ document.addEventListener("drop", (e) => { const it = e.target.closest("[data-ga
   document.addEventListener("keydown", (e) => {
     const open = document.getElementById("cmdk") && document.getElementById("cmdk").classList.contains("open");
     if (!open) return;
-    if (e.key === "Escape") closeCmd();
+    if (e.key === "Escape") { e.preventDefault(); closeCmd(); }
+    else if (e.key === "Tab") {
+      const controls = [...document.querySelectorAll("#cmdk input, #cmdk button")].filter(el => !el.disabled);
+      const first = controls[0], last = controls.at(-1);
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    }
     else if (e.key === "ArrowDown") { e.preventDefault(); cmdMove(1); }
     else if (e.key === "ArrowUp") { e.preventDefault(); cmdMove(-1); }
     else if (e.key === "Enter") { e.preventDefault(); runCmd(CMD_SEL); }
@@ -16535,3 +16616,7 @@ requireRole(["direccion", "encargado", "contabilidad", "marketing", "rrhh"]).the
 document.addEventListener("input", e => {
   if (["comMsg","comHasta","comLocal"].includes(e.target.id)) COM_DRAFT={local:document.getElementById("comLocal")?.value || "",mensaje:document.getElementById("comMsg")?.value || "",hasta:document.getElementById("comHasta")?.value || ""};
 });
+
+// Close the compact tools menu on outside click or Escape.
+document.addEventListener("click",e=>{document.querySelectorAll(".cli-settings[open]").forEach(menu=>{if(!menu.contains(e.target))menu.removeAttribute("open");});});
+document.addEventListener("keydown",e=>{if(e.key==="Escape")document.querySelectorAll(".cli-settings[open]").forEach(menu=>{menu.removeAttribute("open");menu.querySelector("summary").focus();});});

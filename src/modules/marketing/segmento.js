@@ -16,6 +16,9 @@
 export const CAMPOS = {
   genero: { tipo: "enum", valores: ["hombre", "mujer"] },
   poblacion: { tipo: "texto" },
+  estado_comunicaciones: { tipo: "enum", valores: ["aceptan", "baja"] },
+  cerca_de: { tipo: "texto" },
+  radio_km: { tipo: "entero", min: 0, max: 500 },
   local: { tipo: "catalogo" },                    // se valida contra los locales de verdad
   origen: { tipo: "enum", valores: ["lead", "reserva"] },
   idioma: { tipo: "enum", valores: ["es", "ca", "en"] },
@@ -140,6 +143,7 @@ export function describirSegmento(seg = {}) {
   const p = [];
   if (seg.genero) p.push(seg.genero === "mujer" ? "mujeres" : "hombres");
   if (seg.origen) p.push(seg.origen === "lead" ? "con ficha completa (leads)" : "que solo han reservado");
+  if (seg.cerca_de) p.push(`a ${seg.radio_km} km de ${seg.cerca_de}`);
   if (seg.poblacion) p.push(`de ${seg.poblacion}`);
   if (seg.local) p.push(`que han reservado en ${seg.local}`);
   if (Array.isArray(seg.locales) && seg.locales.length) {

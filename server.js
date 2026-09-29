@@ -1,3 +1,4 @@
+import { filtrarGeografia, resolverPoblacion, sugerirPoblaciones } from './src/modules/captacion/geografia.js';
 import { encolarCumples, estadoCumple } from "./src/modules/campaigns/cumple-cola.js";
 import { CAMPOS_PRIVADOS, puedeVerPrivado, sanearDatosAlta, estadoAlta, sanearConversacion } from './src/modules/rrhh/alta-administrativa.js';
 import { CUMPLE_CONFIG, avisarCumpleanos } from './src/modules/rrhh/cumpleanos.js';
@@ -4756,6 +4757,14 @@ const sqlEdad = (hoy) => {
            - (CASE WHEN (${SQL_MES_NAC}, ${SQL_DIA_NAC}) > (${m}, ${d}) THEN 1 ELSE 0 END))`;
 };
 
+async function contactosGeograficos(filtros = {}) {
+  // All sources are normalized on reading; original stored values remain intact.
+  filtrarGeografia([], filtros); // Validate before fetching; never broaden an invalid radius.
+  const params = [];
+  const sql = sqlContactosUnificados({ ...filtros, poblacion: "" }, params);
+  return filtrarGeografia(await dbAll(sql, params), filtros);
+}
+
 function sqlContactosUnificados(filtros = {}, params = []) {
   const { q, poblacion, genero, cumple_mes, local, con_email, con_telefono, idioma, origen, excluir_baja } = filtros;
 
@@ -5001,6 +5010,8 @@ function sqlContactosUnificados(filtros = {}, params = []) {
     else sql += ` AND mp.idioma = ?`;
     params.push(idioma);
   }
+  if (filtros.estado_comunicaciones === "aceptan") sql += ` AND COALESCE(mp.baja, 0) = 0 AND (COALESCE(mp.opt_in_wa, 0) = 1 OR COALESCE(mp.opt_in_email, 0) = 1)`;
+  else if (filtros.estado_comunicaciones === "baja") sql += ` AND COALESCE(mp.baja, 0) = 1`;
   if (excluir_baja) sql += ` AND COALESCE(mp.baja, 0) = 0`;
   // Exclusión manual de destinatarios concretos (editar la lista a mano en el panel).
   if (Array.isArray(filtros.excluir_telefonos) && filtros.excluir_telefonos.length) {
@@ -5038,8 +5049,7 @@ async function setMarketingPref(telefono, campos = {}) {
 app.get("/api/leads", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const params = [];
-    const sql = sqlContactosUnificados(req.query, params);
-    const rows = await dbAll(sql, params);
+    const rows = await contactosGeograficos(req.query);
     res.json({ ok: true, data: rows });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error leyendo leads" });
@@ -7166,8 +7176,7 @@ app.get("/api/debug/estado", requireAuth(["direccion"]), async (req, res) => {
 app.get("/api/leads/export.csv", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const params = [];
-    const sql = sqlContactosUnificados(req.query, params);
-    const rows = await dbAll(sql, params);
+    const rows = await contactosGeograficos(req.query);
     const header = "nombre,apellidos,telefono,correo,nacimiento,poblacion,genero,origen,ultima_actividad";
     const lines = rows.map((r) =>
       [r.nombre, r.apellidos, r.telefono, r.correo, r.nacimiento, r.poblacion, r.genero, r.origen, r.ultima_actividad]
@@ -19541,12 +19550,15 @@ app.post("/api/whatsapp/test", requireAuth(["direccion"]), async (req, res) => {
 app.get("/api/contactos", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const params = [];
-    const sql = sqlContactosUnificados(req.query, params);
-    const rows = await dbAll(sql, params);
+    const rows = await contactosGeograficos(req.query);
     res.json({ ok: true, data: rows, total: rows.length });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+app.get("/api/geografia/poblaciones", requireAuth(["direccion", "marketing"]), (req,res) => {
+  res.json({ok:true,data:sugerirPoblaciones(String(req.query.q || "").slice(0,100))});
 });
 
 // Poblaciones distintas (para el selector del filtro de Clientes). Vienen de los leads.
@@ -19554,7 +19566,7 @@ app.get("/api/contactos", requireAuth(["direccion", "marketing"]), async (req, r
 app.get("/api/contactos/poblaciones", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
     const rows = await dbAll("SELECT DISTINCT TRIM(poblacion) AS poblacion FROM leads WHERE poblacion IS NOT NULL AND TRIM(poblacion) <> '' ORDER BY poblacion");
-    res.json({ ok: true, data: (rows || []).map((r) => r.poblacion) });
+    res.json({ ok: true, data: [...new Set((rows || []).map(r => resolverPoblacion(r.poblacion)?.nombre || r.poblacion))].sort((a,b)=>a.localeCompare(b,"es")) });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -19810,11 +19822,15 @@ app.get("/api/contactos/:telefono", requireAuth(["direccion", "marketing"]), asy
     const cons = await dbGet(
       `SELECT COUNT(*)::int AS veces, MAX(creado_en) AS ultimo
          FROM fid_consentimientos WHERE ${MATCH_TEL9("telefono")}`, [tel]);
+    const carnet = await dbGet(`SELECT id, anulado_en, caduca_en FROM pro_qr
+      WHERE clase = 'carnet' AND ${MATCH_TEL9("telefono")}
+      ORDER BY (anulado_en IS NULL) DESC, id DESC LIMIT 1`, [tel]);
     const nombre = lead?.nombre || (reservas[0]?.local ? (reservas[0].nombre_reserva || "") : "") || wa?.nombre || "";
     res.json({
       ok: true,
       data: {
         telefono: tel,
+        carnet: carnet || null,
         nombre, apellidos: lead?.apellidos || "", correo: lead?.correo || prefs?.correo || "",
         poblacion: lead?.poblacion || "", nacimiento: lead?.nacimiento || "", genero: lead?.genero || null,
         origen: lead ? "lead" : "reserva",
@@ -20059,6 +20075,7 @@ async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = nu
  * → { segmento, descartados }
  */
 function segmentoDelBody(body = {}, { mesActual } = {}) {
+  filtrarGeografia([], body);
   const crudo = construirSegmento(body, { mesActual });
   const { segmento, descartados } = sanearSegmento(crudo, { locales: INV_LOCALES });
   // Estos tres no son filtros de gente, son cómo se envía, así que `sanearSegmento` no los
@@ -20112,8 +20129,7 @@ async function dispatchCampana(campanaId) {
   if (!camp) return { ok: false };
   if (!isReady()) return { ok: false, motivo: "wa_off" };
   let seg = {}; try { seg = JSON.parse(camp.segmento_json || "{}"); } catch { /* noop */ }
-  const params = []; const sql = sqlContactosUnificados(seg, params);
-  const contactos = await dbAll(sql, params);
+  const params = []; const contactos = await contactosGeograficos(seg);
   const { aptos } = filtrarEnviablesWA(contactos, { soloOptIn: !!seg.soloOptIn });
 
   // QUIEN YA LO RECIBIÓ, NO LO RECIBE OTRA VEZ. Sin esto, una campaña cortada a medias —por un
@@ -20150,8 +20166,7 @@ app.post("/api/contactos/mensaje-masivo", requireAuth(["direccion", "marketing"]
   try {
     const params = [];
     const { segmento } = segmentoDelBody({ ...req.body, soloOptIn });
-    const sql = sqlContactosUnificados(segmento, params);
-    const contactos = await dbAll(sql, params);
+    const contactos = await contactosGeograficos(segmento);
     const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: !!soloOptIn });
     if (!aptos.length) return res.json({ ok: true, total: contactos.length, enviables: 0, omitidos, aviso: "No hay destinatarios enviables (revisa bajas/consentimiento)." });
     // El MISMO segmento con el que se acaba de filtrar. Antes se guardaba una versión recortada
@@ -20177,8 +20192,7 @@ app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), async
     // Ahora las dos parten de `segmentoDelBody`, así que lo que se cuenta aquí es exactamente
     // lo que se va a enviar.
     const { segmento: segPrev, descartados: descPrev } = segmentoDelBody(req.body);
-    const sql = sqlContactosUnificados(segPrev, params);
-    const rows = await dbAll(sql, params);
+    const rows = await contactosGeograficos(segPrev);
     const { aptos, omitidos } = filtrarEnviablesWA(rows, { soloOptIn: !!segPrev.soloOptIn });
     const aptosSet = new Set(aptos.map((c) => c.telefono));
     // Lista editable (nombre/teléfono + si es enviable) para "ver/editar destinatarios". Cap 500.
@@ -20237,7 +20251,7 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
     // Todas las claves de CAMPOS, sin lista escrita a mano. Ver `segmentoDelBody`.
     const { segmento: seg, descartados } = segmentoDelBody({ ...req.body, soloOptIn });
     // Recuento de enviables para informar
-    const params = []; const contactos = await dbAll(sqlContactosUnificados(seg, params), params);
+    const params = []; const contactos = await contactosGeograficos(seg);
     const { aptos, omitidos } = filtrarEnviablesWA(contactos, { soloOptIn: !!soloOptIn });
     // La promoción se valida ANTES de guardar: una campaña que dice {cupon} y apunta a una
     // promoción que no existe saldría con el hueco vacío, y eso no se puede retirar.
@@ -24039,16 +24053,20 @@ app.get("/api/fidelizacion/clientes.csv", requireAuth(PROMOS_ROLES), async (req,
 /**
  * LA FICHA DE UN SOCIO, para el panel. Trazabilidad factura a factura.
  *
- * Se busca por el TOKEN del carné, nunca por teléfono ni por nombre. Y no devuelve el teléfono:
+ * Consulta autenticada por token o id interno del carné. No devuelve el teléfono:
  * para saber quién es basta el nombre de pila, que es lo que ya enseña la barra.
  */
 app.get("/api/fidelizacion/socio", requireAuth(PROMOS_ROLES), async (req, res) => {
   res.set("Cache-Control", "no-store");
   try {
-    const entrada = String(req.query.token || "").trim();
+    // Consulta interna autenticada por id: no expone el token de canje al panel.
+    const carnetId = String(req.query.carnet_id || "");
+    const interno = /^[1-9]\d*$/.test(carnetId)
+      ? await dbGet("SELECT * FROM pro_qr WHERE id = ? AND clase = 'carnet'", [carnetId]) : null;
+    const entrada = String(interno?.token || req.query.token || "").trim();
     if (!entrada) return res.status(400).json({ ok: false, error: "Falta el carné" });
     const ahora = isoConOffset(Date.now());
-    const r = await fidResolverMiembro({ get: dbGet }, entrada, { normalizar: proNormalizar, ahora });
+    const r = interno ? { ok: true, qr: interno } : await fidResolverMiembro({ get: dbGet }, entrada, { normalizar: proNormalizar, ahora });
     if (!r.ok) return res.status(404).json({ ok: false, error: "No existe ningún carné utilizable con eso" });
     const qr = r.qr;
 

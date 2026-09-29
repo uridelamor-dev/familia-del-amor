@@ -51,7 +51,7 @@ export function normalizarEstado(e) {
  * Ahora se derivan de CAMPOS y hay un test que falla si las dos dejan de coincidir.
  */
 export const CLAVES_SEGMENTO = [
-  "q", "genero", "poblacion", "local", "idioma", "origen", "from", "to",
+  "q", "genero", "poblacion", "cerca_de", "radio_km", "estado_comunicaciones", "local", "idioma", "origen", "from", "to",
   // Los que se perdían. Ninguno tiene campo propio en el formulario: llegan de la propuesta de
   // la IA o de una audiencia guardada, y lo único que hay que hacer con ellos es NO TIRARLOS.
   "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
@@ -92,6 +92,8 @@ export function construirSegmento(input = {}, { mesActual } = {}) {
 export function describirAudiencia(filtros = {}) {
   const p = [];
   if (filtros.local) p.push(`Local: ${filtros.local}`);
+  if (filtros.estado_comunicaciones) p.push(filtros.estado_comunicaciones === "baja" ? "Dados de baja" : "Aceptan comunicaciones");
+  if (filtros.cerca_de) p.push(`Cerca de ${filtros.cerca_de} · ${filtros.radio_km} km`);
   if (filtros.poblacion) p.push(`Pobl.: ${filtros.poblacion}`);
   if (filtros.genero) p.push(filtros.genero === "M" ? "Hombres" : filtros.genero === "F" ? "Mujeres" : `Género ${filtros.genero}`);
   if (filtros.idioma) p.push(`Idioma: ${filtros.idioma}`);
