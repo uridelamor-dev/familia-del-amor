@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { normalizar } from './municipios.js';
 const datos = JSON.parse(readFileSync(new URL('../../data/poblaciones-es.json', import.meta.url), 'utf8'));
+const municipios = new Map();
 const nombres = new Map(), postales = new Map(), porId = new Map(datos.map(p => [p.id,p]));
 const norm = s => normalizar(s).replace(/[’']/g, '').replace(/[-]/g,' ').replace(/\s+/g,' ').trim();
 function add(map,k,id) { if (!map.has(k)) map.set(k,new Set()); map.get(k).add(id); }
 for (const p of datos) {
+  add(municipios,norm(p.nombre),p.id);
   for (const n of [p.nombre,...p.alias]) add(nombres,norm(n),p.id);
   for (const cp of p.cp) add(postales,cp,p.id);
 }
@@ -24,13 +26,13 @@ export function resolverPoblacion(texto) {
   let ids; let metodo='exacto';
   if(/^\d{5}$/.test(raw)) {ids=postales.get(raw);metodo='postal';}
   else {
-    ids=nombres.get(key);
+    ids=municipios.get(key) || nombres.get(key);
     if(!ids) {
       const cp=raw.match(/\b\d{5}\b/); const nombre=norm(raw.replace(/\b\d{5}\b/g,'').replace(/[,()]/g,' '));
       if(cp) { const n=nombres.get(nombre), p=postales.get(cp[0]); ids=new Set([...(n||[])].filter(id=>p?.has(id)));metodo='postal'; }
       else {
         const sinCentro=key.replace(/\s+(centro|centre)$/,'');
-        ids=nombres.get(sinCentro);
+        ids=municipios.get(sinCentro) || nombres.get(sinCentro);
         if(!ids && key.length>=5 && key.length<=60) {
           ids=new Set();metodo='aproximado';
           for(const [n, candidatos] of nombres) if(unError(key,n)) for(const id of candidatos) ids.add(id);

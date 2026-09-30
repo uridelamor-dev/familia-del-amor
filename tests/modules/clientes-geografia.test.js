@@ -46,3 +46,10 @@ test('lista, exportación y envíos pasan por la misma selección',()=>{
  const panel=readFileSync(new URL('../../public/panel/app.js',import.meta.url),'utf8');
  assert.match(panel,/const HEREDABLES = \["cerca_de", "radio_km"/);
 });
+
+test('Tordera municipio prima sobre el alias de Cervera e incluye Blanes a 10 km', () => {
+  assert.equal(resolverPoblacion('Tordera').id, '08284');
+  const rows = filtrarGeografia([{poblacion:'Blanes'},{poblacion:'Girona'},{poblacion:'Cervera'}], {cerca_de:'Tordera',radio_km:10});
+  assert.deepEqual(rows.map(r=>r.poblacion), ['Blanes']);
+  assert.ok(rows[0].distancia_km < 10);
+});

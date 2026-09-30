@@ -2702,16 +2702,31 @@ async function refreshCliResults() {
     const filtros = document.getElementById("cliFiltrosResumen"); if (filtros) filtros.textContent = cliFiltrosResumen() === "Sin filtros activos" ? "" : cliFiltrosResumen();
   } catch (e) { if (e.message !== "noauth") { const body = document.getElementById("cliBody"); if (body) body.innerHTML = errorCard(e.message); } }
 }
-let cliGeoTimer;
+let cliGeoTimer, cliGeoRevision = 0;
+function cliGeoListaCompleta() {
+  clearTimeout(cliGeoTimer); cliGeoRevision++;
+  const lista = document.getElementById("cGeoOpciones");
+  if (lista) lista.innerHTML = [...new Set(CLI_POBLACIONES)].sort((a,b)=>a.localeCompare(b,"es"))
+    .map(p=>`<option value="${esc(p)}"></option>`).join("");
+}
+document.addEventListener("picker-open", e => { if(e.target.id === "cCerca") cliGeoListaCompleta(); });
 function cliGeoSugerencias(texto) {
   clearTimeout(cliGeoTimer);
+  if (!texto.trim()) { cliGeoListaCompleta(); return; }
+  const revision = ++cliGeoRevision;
+  const lista = document.getElementById("cGeoOpciones");
+  const normal = v => v.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+  const propias = CLI_POBLACIONES.filter(p=>normal(p).includes(normal(texto)));
+  if(lista) lista.innerHTML=propias.map(p=>`<option value="${esc(p)}"></option>`).join("");
   cliGeoTimer=setTimeout(async()=>{
     try {
       const j=await apiRaw("/api/geografia/poblaciones?q="+encodeURIComponent(texto));
-      if(document.getElementById("cCerca")?.value!==texto)return;
+      if(revision !== cliGeoRevision || document.getElementById("cCerca")?.value!==texto)return;
       const lista=document.getElementById("cGeoOpciones");
-      if(lista)lista.innerHTML=(j.data||[]).map(p=>`<option value="${esc(p.nombre)}">${esc(p.provincia)}</option>`).join("");
-    } catch { /* Free text still validated by the server when filtering. */ }
+      const opciones = new Map(propias.map(nombre=>[nombre,{nombre,provincia:""}]));
+      for(const p of j.data||[]) opciones.set(p.nombre,p);
+      if(lista)lista.innerHTML=[...opciones.values()].map(p=>`<option value="${esc(p.nombre)}">${esc(p.provincia)}</option>`).join("");
+    } catch { /* Las poblaciones de clientes siguen disponibles sin conexión. */ }
   },200);
 }
 function cliRefreshDebounced() { if (_cliTimer) clearTimeout(_cliTimer); _cliTimer = setTimeout(refreshCliResults, 250); }
@@ -16082,7 +16097,7 @@ document.addEventListener("input", (e) => {
   if (e.target && e.target.id === "analQ") { clearTimeout(_analTimer); const v = e.target.value; _analTimer = setTimeout(() => analBuscar(v), 180); return; }
   if (e.target && e.target.id === "reshQ") { const v = e.target.value; clearTimeout(_reshT); _reshT = setTimeout(() => resHistBuscar(v), 200); return; }
   if (e.target && e.target.id === "promoQ") { clearTimeout(_promoTimer); _promoTimer = setTimeout(promoBuscar, 250); return; }
-  if (e.target?.id === "cCerca") cliGeoSugerencias(e.target.value);
+  if (e.target?.id === "cCerca") { CLIF.cerca_de = e.target.value.trim(); cliGeoSugerencias(e.target.value); }
   if (e.target && e.target.id === "cQ") { CLIF.q = e.target.value.trim(); cliRefreshDebounced(); }
   else if (e.target && e.target.id === "facQ") { facFilterDebounced(); }
   else if (e.target && e.target.id === "invSearch") { INV.filtro = e.target.value; invRefreshList(); }

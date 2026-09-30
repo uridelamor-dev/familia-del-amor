@@ -78,7 +78,7 @@
     const label=target.labels?.[0]?.textContent || target.getAttribute('aria-label') || 'Opciones';menu.setAttribute('aria-label',label);
     (target.closest('dialog[open]')||document.body).append(menu);
     target.setAttribute('aria-expanded','true');target.setAttribute('aria-controls',menu.id);
-    target.focus({preventScroll:true});paint();
+    target.focus({preventScroll:true});target.dispatchEvent(new Event("picker-open",{bubbles:true}));paint();
   }
   document.addEventListener('pointerdown',e=>{
     const target=e.target.closest(selector);
