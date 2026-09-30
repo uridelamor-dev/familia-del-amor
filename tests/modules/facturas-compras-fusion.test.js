@@ -249,7 +249,7 @@ describe("el albarán y su factura cuentan UNA vez", () => {
 });
 
 describe("el precio normal sobrevive a la fusión de locales", () => {
-  const linea = (d, p, f, prov) => ({ descripcion: d, cantidad: 1, precio_unitario: p, importe: p, fecha: f, proveedor: prov || "Grau" });
+  const linea = (d, p, f, prov) => ({ descripcion: d, unidad: "ud", cantidad: 1, precio_unitario: p, importe: p, fecha: f, proveedor: prov || "Grau" });
 
   test("fusionar dos locales da la MISMA mediana que contarlos juntos", () => {
     // De dos medianas no sale una mediana. Por eso cada local manda sus últimas compras y no
@@ -320,4 +320,15 @@ describe("cuando no cabe todo, se dice", () => {
     const b = { grupos: [], categorias: { categorias: [] }, cobertura: {}, totales: {}, topeProductos: 300, local: "B" };
     assert.equal(fusionarCompras([a, b], { locales: ["A", "B"] }).topeProductos, 300);
   });
+});
+
+ test("no sumar cantidades ni comparar precios de kilos y unidades", () => {
+  const grupos = ["kg", "ud"].map((unidad, i) => agrupaComoLaBase([{ ...linea({d: "PRODUCTO", c: 2, p: 5 + i, i: 10 + i * 2}), unidad }]));
+  const resultado = fusionarGrupos(grupos)[0];
+  assert.equal(resultado.importe, 22);
+  for (const campo of ["cantidad", "precioMin", "precioMax", "ultimoPrecio", "precioNormal", "variacionPct"]) assert.equal(resultado[campo], null, campo);
+  assert.deepEqual(resultado.precios, []);
+  const conjunto = agrupaComoLaBase(["kg", "ud"].map(unidad => ({...linea({d:"PRODUCTO",c:2,p:5,i:10}),unidad})))[0];
+  assert.equal(conjunto.cantidad, null);
+  assert.equal(conjunto.precioNormal, null);
 });

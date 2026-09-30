@@ -106,7 +106,7 @@ describe("líneas — la suma tiene que cuadrar con la base", () => {
 });
 
 describe("líneas — agrupar por producto", () => {
-  const lin = (descripcion, o = {}) => ({ descripcion, cantidad: 1, importe: 10, ...o });
+  const lin = (descripcion, o = {}) => ({ descripcion, unidad: "ud", cantidad: 1, importe: 10, ...o });
 
   test("la clave ignora mayúsculas, acentos y ruido de puntuación", () => {
     assert.equal(claveProducto("COCA-COLA 33CL"), claveProducto("coca cola 33cl"));
@@ -163,7 +163,7 @@ describe("líneas — agrupar por producto", () => {
       { descripcion: "Gambas", importe: null, cantidad: null, dudosa: true },
     ]);
     assert.equal(g[0].importe, 40);
-    assert.equal(g[0].cantidad, 2);
+    assert.equal(g[0].cantidad, null, "una lectura incompleta no acredita la cantidad total");
     assert.equal(g[0].dudosas, 1, "y se dice que una no se leyó");
   });
 
@@ -253,7 +253,7 @@ describe("el descuento: lo que se paga, no lo que pone la tarifa", () => {
   });
   test("y el precio unitario también: 0,27 €, no 0,52 €", () => {
     // Es lo que rompía el seguimiento de subidas: comparaba precios que nadie paga.
-    assert.equal(normalizarLinea(CAPSULAS).precio_unitario, 0.27);
+    assert.equal(normalizarLinea(CAPSULAS).precio_unitario, 0.269978);
   });
   test("el bruto y el descuento se guardan: si un mes deja de aplicarse, se ve", () => {
     const l = normalizarLinea(CAPSULAS);
@@ -272,18 +272,18 @@ describe("el descuento: lo que se paga, no lo que pone la tarifa", () => {
     assert.equal(l.importe_bruto, null, "no se guarda un bruto que es igual al neto");
     assert.equal(l.descuento_pct, null);
   });
-  test("un descuento de 0 % o de 100 % no se guarda: o no hay, o el dato está mal", () => {
+  test("descuento cero no se guarda y bonificación 100% sí", () => {
     assert.equal(normalizarLinea({ descripcion: "X", importe: 10, descuento_pct: 0 }).descuento_pct, null);
-    assert.equal(normalizarLinea({ descripcion: "X", importe: 10, descuento_pct: 100 }).descuento_pct, null);
+    assert.equal(normalizarLinea({ descripcion: "X", importe: 10, descuento_pct: 100 }).descuento_pct, 100);
   });
   test("si el neto sale MAYOR que el bruto, la línea es dudosa: no cuadra", () => {
     const l = normalizarLinea({ descripcion: "X", cantidad: 1, importe: 10, importe_neto: 40 });
     assert.equal(l.dudosa, true);
   });
-  test("sin cantidad no se reparte el neto: se deja el precio de tarifa antes que inventar uno", () => {
+  test("sin cantidad el precio neto queda pendiente", () => {
     const l = normalizarLinea({ descripcion: "X", precio_unitario: 5, importe: 100, descuento_pct: 50 });
     assert.equal(l.importe, 50);
-    assert.equal(l.precio_unitario, 5);
+    assert.equal(l.precio_unitario, null);
   });
   test("la suma de las líneas cuadra con la base usando los NETOS", () => {
     // Antes sumaba los brutos y descuadraba con la base imponible en cada factura con dto.
@@ -301,7 +301,7 @@ describe("el descuento: lo que se paga, no lo que pone la tarifa", () => {
 describe("una fila ya agrupada por la base", () => {
   const SQL = (extra = {}) => ({
     clave: "coca cola 33cl", descripcion: "COCA COLA 33CL", unificado: false,
-    proveedores: ["Grau"], veces: 4, dudosas: 0, concantidad: 4, conimporte: 4,
+    unidades: ["ud"], proveedores: ["Grau"], veces: 4, dudosas: 0, concantidad: 4, conimporte: 4,
     cantidad: 70, importe: 42.92, preciomin: 0.58, preciomax: 0.7,
     primera: "2026-06-01", ultima: "2026-08-01",
     precios: [0.62, 0.58, 0.7, 0.6],
@@ -353,7 +353,7 @@ describe("una fila ya agrupada por la base", () => {
     assert.equal(grupoDeSQL(SQL({ unidades: ["kg"] })).unidad, "kg");
     assert.equal(grupoDeSQL(SQL({ unidades: ["kg", "ud"] })).unidad, null);
     assert.equal(grupoDeSQL(SQL({ unidades: [] })).unidad, null);
-    assert.equal(grupoDeSQL(SQL()).unidad, null);
+    assert.equal(grupoDeSQL(SQL()).unidad, "ud");
   });
 
   test("una fila vacía no revienta ni se inventa nada", () => {
@@ -409,7 +409,7 @@ describe("cuando la cantidad viene en paquetes y el precio por unidad", () => {
   test("se deshace el paquete y el precio pasa a ser el de verdad", () => {
     const l = normalizarLinea(CAPSULAS);
     assert.equal(l.cantidad, 450, "3 packs de 150 son 450 cápsulas");
-    assert.equal(l.precio_unitario, 0.27, "121,49 € entre 450 cápsulas");
+    assert.equal(l.precio_unitario, 0.269978, "121,49 € entre 450 cápsulas");
     assert.equal(l.factor_unidad, 150);
     assert.equal(l.unidad, "ud", "«450 PACK» sería peor que no decir nada");
   });
@@ -462,7 +462,7 @@ describe("corregir a mano la lectura de una compra", () => {
     // Ese es el caso del paquete: se pagaron 121,49 € y lo que se corrige es entre cuántas
     // unidades se reparten. Si el importe se moviera, la factura dejaría de cuadrar.
     assert.ok(i > 0, "falta el endpoint de corregir línea");
-    assert.match(fn, /\} else if \(importe != null && cantidad\) \{\s*\n\s*precio = Math\.round\(\(importe \/ cantidad\) \* 100\) \/ 100;/);
+    assert.match(fn, /\} else if \(importe != null && cantidad\) \{\s*\n\s*precio = Math\.round\(\(importe \/ cantidad\) \* 1e6\) \/ 1e6;/);
   });
 
   test("pero el IMPORTE sí se puede corregir cuando está mal leído", () => {
@@ -475,7 +475,7 @@ describe("corregir a mano la lectura de una compra", () => {
   test("manda el número que se ha escrito, y el otro se recalcula", () => {
     // Ver cambiar por detrás lo que acabas de teclear es la forma más rápida de dejar de
     // fiarte de una pantalla.
-    assert.match(fn, /precio = cantidad \? Math\.round\(\(importe \/ cantidad\) \* 100\) \/ 100 : precio;/);
+    assert.match(fn, /precio = cantidad \? Math\.round\(\(importe \/ cantidad\) \* 1e6\) \/ 1e6 : precio;/);
     assert.match(fn, /importe = cantidad != null \? Math\.round\(precio \* cantidad \* 100\) \/ 100 : importe;/);
   });
 
@@ -524,7 +524,7 @@ describe("recuadrar hacia atrás lo ya guardado", () => {
   test("solo toca las líneas donde el factor es un número entero de al menos 2", () => {
     // Un factor con decimales es otra cosa (precio por kilo con cantidad en piezas) y ahí
     // corregir a ciegas es peor que no corregir.
-    assert.match(server, /WHERE l\.id = c\.id AND c\.f >= 2 AND abs\(c\.f - round\(c\.f\)\) < 0\.01/);
+    assert.match(server, /WHERE l\.id = c\.id AND c\.f >= 2 AND c\.contenido = round\(c\.f\) AND abs\(c\.f - round\(c\.f\)\) < 0\.01/);
   });
 
   test("y el importe se queda como estaba", () => {

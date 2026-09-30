@@ -65,7 +65,7 @@ describe("el correo deja rastro, como ya hacía Reseñas", () => {
   test("anota SIEMPRE: salga bien, no haya nada o falle Google", () => {
     // Un intento que no deja rastro es indistinguible de un intento que no ocurrió.
     assert.match(poll, /const anotar = async \(error\)/);
-    assert.ok((poll.match(/await anotar\(/g) || []).length >= 4, "hay salidas sin anotar");
+    assert.ok((poll.match(/await anotar\(/g) || []).length >= 3, "debe anotar vacío, resultado y fallo (Google ahora lanza al catch)");
     assert.match(poll, /if \(procesadosTotal > 0\) await setConfig\(GM\.ok, marca\)/);
   });
 

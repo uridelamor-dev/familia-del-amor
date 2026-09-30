@@ -1,3 +1,4 @@
+import { unidadComparable } from "./precio-referencia.js";
 // Facturas — las líneas del detalle. PURO.
 //
 // Fase A de docs/lineas-de-factura.md: leer y guardar las líneas, sin enlazarlas todavía
@@ -60,41 +61,36 @@ export function normalizarLinea(cruda = {}, orden = 0) {
   if (bruto == null && cantidad != null && precioBruto != null) bruto = red(cantidad * precioBruto);
 
   // El neto: el que venga en la factura manda; si no, se calcula del descuento.
-  if (neto == null && bruto != null && dto != null && dto > 0 && dto < 100) neto = red(bruto * (1 - dto / 100));
+  if (neto == null && bruto != null && dto != null && dto > 0 && dto <= 100) neto = red(bruto * (1 - dto / 100));
   if (neto == null) neto = bruto;
 
-  // ── LA CANTIDAD Y EL PRECIO TIENEN QUE HABLAR DE LA MISMA UNIDAD ──────────
-  //
-  // EL FALLO QUE ARREGLA. Tupinamba factura así:
-  //     UDS. PACK 3 · UDS. TOTALES 450 · P. UNIDAD 0,52 · IMPORTE 234,00 · DTO 48,08 · TOTAL 121,49
-  // La lectura cogía la cantidad de una columna (3 packs) y el precio de otra (0,52 € por
-  // cápsula). Mezcladas no hablan de lo mismo —3 × 0,52 = 1,56 €, no 234 €— y el precio que
-  // salía era 40,50 € «por unidad» cuando lo que se paga son 0,27 € por cápsula.
-  //
-  // No hace falta adivinar: la propia línea lo dice dos veces. Si `importe / precio` no da la
-  // cantidad, es que la cantidad está en paquetes, y `importe / precio / cantidad` es cuántas
-  // unidades trae cada paquete —450 / 0,52 / 3 = 150, que es justo lo que pone el concepto—.
-  //
-  // Se corrige SOLO cuando el factor sale entero y de al menos 2: eso es un tamaño de paquete.
-  // Un factor con decimales sería otra cosa (un precio por kilo con la cantidad en piezas, por
-  // ejemplo) y ahí no se toca nada, porque corregir a ciegas es peor que no corregir.
+  // Un cociente entero NO demuestra un envase. Solo se convierte si la descripción
+  // indica explícitamente su contenido y la unidad facturada es un envase.
   let cantidadFinal = cantidad;
   let factor = null;
   if (cantidad && precioBruto && bruto != null && Math.abs(cantidad * precioBruto - bruto) > 0.02) {
     const f = bruto / precioBruto / cantidad;
-    if (f >= 2 && Math.abs(f - Math.round(f)) < 0.01) {
+    const contenido = /\b(\d+)\s*(?:uds?\.?|unidades|units)\b/i.exec(descripcion);
+    const envase = /^(?:packs?|cajas?|bultos?|paquetes?)$/i.test(String(cruda.unidad || "").trim());
+    if (envase && contenido && Number(contenido[1]) === Math.round(f) && f >= 2 && Math.abs(f - Math.round(f)) < 0.01) {
       factor = Math.round(f);
       cantidadFinal = red(cantidad * factor);
     }
   }
 
   // Y el precio que se guarda es el que se paga: el neto entre las unidades. Si no hay
-  // cantidad no se puede repartir, y se deja el de tarifa antes que inventarse uno.
-  const precioNeto = (neto != null && cantidadFinal) ? red(neto / cantidadFinal) : precioBruto;
+  // cantidad no se puede repartir: no se presenta el de tarifa como si fuera neto.
+  const precioNeto = (neto != null && cantidadFinal) ? Math.round(neto / cantidadFinal * 1e6) / 1e6 : null;
 
   // Un descuento deducido de dos números que no cuadran es sospechoso: se marca para que la
   // línea salga como dudosa en vez de dar por bueno un precio que nadie ha comprobado.
-  const incoherente = bruto != null && neto != null && neto > bruto + 0.01;
+  const descuadreCantidad = cantidadFinal != null && precioBruto != null && bruto != null
+    && Math.abs(cantidadFinal * precioBruto - bruto) > 0.02;
+  const descuadreDescuento = dto != null && bruto != null && neto != null
+    && Math.abs(red(bruto * (1 - dto / 100)) - neto) > 0.02;
+  const incoherente = (bruto != null && neto != null && Math.abs(neto) > Math.abs(bruto) + 0.01)
+    || (bruto != null && neto != null && bruto * neto < 0)
+    || descuadreCantidad || descuadreDescuento || (dto != null && (dto < 0 || dto > 100));
 
   return {
     orden,
@@ -106,14 +102,14 @@ export function normalizarLinea(cruda = {}, orden = 0) {
     // Cuántas unidades traía cada paquete. Se guarda para poder explicar de dónde sale la
     // cantidad —«3 PACK × 150»— y para que se vea que aquí ha pasado algo.
     factor_unidad: factor,
-    precio_unitario: precioNeto,
+    precio_unitario: descuadreCantidad ? null : precioNeto,
     importe: neto,
     // Lo de tarifa, para poder ver el descuento y notar si un mes deja de aplicarse.
     precio_bruto: precioBruto,
     importe_bruto: bruto != null && neto != null && Math.abs(bruto - neto) > 0.01 ? bruto : null,
-    descuento_pct: dto != null && dto > 0 && dto < 100 ? dto : null,
+    descuento_pct: dto != null && dto > 0 && dto <= 100 ? dto : null,
     // Una línea es dudosa si le falta lo mínimo para servir de algo.
-    dudosa: !descripcion || neto == null || incoherente,
+    dudosa: !descripcion || neto == null || cantidadFinal == null || cantidadFinal === 0 || incoherente,
   };
 }
 
@@ -199,15 +195,17 @@ export function medianaPrecios(precios = [], { minimo = 3, ventana = 12 } = {}) 
  * aquí se casan, porque juntas son lo que permite calcular la mediana y fusionar locales.
  */
 export function grupoDeSQL(fila = {}) {
-  const precios = (fila.precios || []).map((precio, i) => ({
+  const unidades = (fila.unidades || []).map(unidadComparable);
+  const comparable = unidades.length > 0 && unidades.every(u => u && u === unidades[0]) && !Number(fila.dudosas);
+  const precios = (comparable ? fila.precios || [] : []).map((precio, i) => ({
     precio: Number(precio),
     fecha: String((fila.precios_fechas || [])[i] || "").slice(0, 10),
   })).filter((x) => Number.isFinite(x.precio));
 
   const conCantidad = Number(fila.concantidad ?? fila.conCantidad) || 0;
   const conImporte = Number(fila.conimporte ?? fila.conImporte) || 0;
-  const precioMin = fila.preciomin ?? fila.precioMin ?? null;
-  const precioMax = fila.preciomax ?? fila.precioMax ?? null;
+  const precioMin = comparable ? fila.preciomin ?? fila.precioMin ?? null : null;
+  const precioMax = comparable ? fila.preciomax ?? fila.precioMax ?? null : null;
   const proveedores = (fila.proveedores || []).filter(Boolean);
 
   return {
@@ -216,14 +214,14 @@ export function grupoDeSQL(fila = {}) {
     unificado: !!fila.unificado,
     // La unidad solo si es UNA. Con dos («kg» en unas facturas y «ud» en otras) la suma de
     // cantidades no significa nada y decir cualquiera de las dos sería inventarse el dato.
-    unidad: (fila.unidades || []).length === 1 ? String(fila.unidades[0]) : null,
+    unidad: comparable ? unidades[0] : null,
     proveedores,
     veces: Number(fila.veces) || 0,
     dudosas: Number(fila.dudosas) || 0,
     conCantidad, conImporte,
     // null significa «no se pudo leer», no «cero». Si ninguna línea traía la cantidad, la
     // cantidad sigue sin existir en vez de convertirse en un 0 que se lee como «no compramos».
-    cantidad: conCantidad ? Number(fila.cantidad) : null,
+    cantidad: comparable && conCantidad ? Number(fila.cantidad) : null,
     importe: conImporte ? Number(fila.importe) : null,
     precioMin: precioMin == null ? null : Number(precioMin),
     precioMax: precioMax == null ? null : Number(precioMax),

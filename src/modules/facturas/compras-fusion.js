@@ -38,7 +38,7 @@ export function fusionarGrupos(listas = []) {
     a.conImporte = n(a.conImporte) + n(g.conImporte);
     // null significa «no se pudo leer», no «cero». Se conserva: si ninguno de los dos locales
     // traía la cantidad, el resultado sigue sin traerla en vez de convertirse en un 0 falso.
-    a.cantidad = a.conCantidad ? red3(n(a.cantidad) + n(g.cantidad)) : null;
+    a.cantidad = a.unidad && !a.dudosas && a.conCantidad ? red3(n(a.cantidad) + n(g.cantidad)) : null;
     a.importe = a.conImporte ? red2(n(a.importe) + n(g.importe)) : null;
     a.precioMin = menor(a.precioMin, g.precioMin);
     a.precioMax = mayor(a.precioMax, g.precioMax);
@@ -53,6 +53,10 @@ export function fusionarGrupos(listas = []) {
     // sale una mediana; de dos listas sí. Por eso cada local manda sus últimas compras y no
     // solo su resultado — el mismo motivo por el que la suma de todo lo demás es exacta.
     a.precios = recortarPrecios([...(a.precios || []), ...(g.precios || [])]);
+    if (!a.unidad || a.dudosas) {
+      a.precioMin = a.precioMax = a.ultimoPrecio = null;
+      a.precios = [];
+    }
     a.precioNormal = a.proveedores.length === 1 ? medianaPrecios(a.precios) : null;
     // Se recalcula con los mínimos y máximos ya juntos: el porcentaje de subida de dos locales
     // no es la media de sus porcentajes.

@@ -31,6 +31,7 @@ export function agrupaComoLaBase(lineas = [], { alias = null } = {}) {
       clave,
       descripcion: canon ? canon.nombre : porFecha[0].descripcion,
       unificado: !!canon,
+      unidades: [...new Set(filas.map(l => l.unidad ?? null))],
       proveedores: [...new Set(filas.map((l) => l.proveedor).filter(Boolean))],
       veces: filas.length,
       dudosas: filas.filter((l) => l.dudosa).length,

@@ -105,6 +105,7 @@ const NAV = [
     // Productos va justo debajo de Compras y no dentro: sale de los mismos papeles, pero
     // contesta otra pregunta —qué entra y a cómo nos lo cobran— y se mira en otro momento.
     ["productos", "Productos", "box", ["direccion", "contabilidad"]],
+    ["inventarios", "Inventarios", "box", ["direccion", "encargado"]],
     ["analitica", "Analítica de ventas", "chart", ["direccion", "contabilidad"]],
   ] },
   { g: "Marketing", items: [
@@ -118,12 +119,9 @@ const NAV = [
     ["reviews", "Reseñas", "star", ["direccion", "encargado", "contabilidad", "marketing"]],
     ["web", "Web", "globe", ["direccion", "marketing"]],
   ] },
-  // Inventarios va aquí y no en Contabilidad porque lo llevan los mismos que las averías —
-  // el encargado del local— y no quien cuadra las cuentas. Es lo que hace falta para que el
-  // local funcione: que no falte producto y que no haya nada roto.
+  // Las incidencias permanecen en Mantenimiento; las existencias se gestionan en Contabilidad.
   { g: "Mantenimiento", items: [
     ["mantenimiento", "Incidencias", "wrench", ["direccion", "encargado"]],
-    ["inventarios", "Inventarios", "box", ["direccion", "encargado"]],
   ] },
   { g: "Atención al cliente", items: [
     ["sara", "Sara · asistente", "bot", ["direccion", "marketing"]],
@@ -2155,11 +2153,24 @@ function renderInvList() {
 }
 function invProd(id) { return INV.productos.find((p) => String(p.id) === String(id)); }
 function invRefreshList() { const el = document.getElementById("invList"); if (el) el.innerHTML = renderInvList(); }
-async function invSaveLinea(id) {
-  const p = invProd(id); if (!p) return;
-  const cantidad = (p.cantidad === "" || p.cantidad == null) ? 0 : Math.max(0, Number(p.cantidad) || 0);
-  try { await apiSend("POST", `/api/inventario/sesion/${encodeURIComponent(INV.sesionId)}/linea`, { producto_id: id, cantidad, observacion: p.observacion || "" }); }
-  catch (e) { if (e.message !== "noauth") toast("No se pudo guardar: " + e.message); }
+const INV_GUARDADOS = new Map();
+const INV_ERRORES = new Set();
+function invSaveLinea(id) {
+  const p = invProd(id); if (!p) return Promise.resolve();
+  clearTimeout(_invTimers[id]); delete _invTimers[id];
+  const sesion = INV.sesionId;
+  const clave = `${sesion}:${id}`;
+  const cantidad = (p.cantidad === "" || p.cantidad == null) ? null : Number(p.cantidad);
+  const datos = {producto_id:id,cantidad,observacion:p.observacion || ""};
+  const tarea = (INV_GUARDADOS.get(clave) || Promise.resolve()).then(async()=>{
+    try {
+      await apiSend("POST", `/api/inventario/sesion/${encodeURIComponent(sesion)}/linea`, datos);
+      INV_ERRORES.delete(clave);
+    } catch(e) { INV_ERRORES.add(clave); if(e.message !== "noauth") toast("No se pudo guardar: " + e.message); }
+  });
+  INV_GUARDADOS.set(clave,tarea);
+  tarea.finally(()=>{if(INV_GUARDADOS.get(clave) === tarea) INV_GUARDADOS.delete(clave);});
+  return tarea;
 }
 function invStep(id, delta) {
   const p = invProd(id); if (!p) return;
@@ -2186,12 +2197,17 @@ async function invObs(id) {
 // ── Revisión ──
 async function loadInvRevision() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
-  try { const j = await apiRaw("/api/inventario/sesion/" + encodeURIComponent(INV.sesionId) + "/revision"); view.innerHTML = renderInvRevision(j); }
+  try {
+    for (const id of Object.keys(_invTimers)) await invSaveLinea(id);
+    await Promise.all([...INV_GUARDADOS.entries()].filter(([k])=>k.startsWith(`${INV.sesionId}:`)).map(([,v])=>v));
+    if ([...INV_ERRORES].some(k=>k.startsWith(`${INV.sesionId}:`))) throw new Error("Hay cantidades sin guardar. Vuelve al conteo y comprueba la conexión antes de continuar.");
+    const j = await apiRaw("/api/inventario/sesion/" + encodeURIComponent(INV.sesionId) + "/revision"); view.innerHTML = renderInvRevision(j); }
   catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function renderInvRevision(j) {
   const rev = j.revision || [];
   const aPedir = rev.filter((r) => r.sugerido > 0);
+  const pendientes = rev.filter(r=>r.pendiente || r.contado == null).length;
   const back = { act: "inv-volver-conteo", label: "Seguir contando" };
   const head = invHeader("Revisar inventario", `${esc(INV.proveedorNombre)} · ${esc(INV.local)}`, back);
   const filas = rev.map((r) => {
@@ -2199,11 +2215,12 @@ function renderInvRevision(j) {
     // El mínimo no cambia cuánto se pide: avisa de que se está a punto de quedar sin, que es
     // otra cosa y hasta ahora no se decía en ningún sitio.
     const aviso = r.bajoMinimo ? ` <span class="pill bad" style="font-size:10px" title="Por debajo del mínimo (${num(r.minimo)} ${esc(r.unidad || "")})">bajo mínimo</span>` : "";
-    return `<tr${r.bajoMinimo ? ' class="sincat"' : ""}><td>${esc(r.nombre)}${aviso}</td><td class="r tnum">${num(r.contado)}</td><td class="r tnum">${num(r.necesario)}</td><td class="r tnum">${num(r.diferencia)}</td><td class="r tnum" style="${col}">${r.sugerido > 0 ? num(r.sugerido) + " " + esc(r.unidad || "") : "—"}</td></tr>`;
+    return `<tr${r.bajoMinimo ? ' class="sincat"' : ""}><td>${esc(r.nombre)}${aviso}</td><td class="r tnum">${r.contado == null ? '<span class="pill warn">Sin contar</span>' : num(r.contado)}</td><td class="r tnum">${num(r.necesario)}</td><td class="r tnum">${r.diferencia == null ? "—" : num(r.diferencia)}</td><td class="r tnum" style="${col}">${r.sugerido > 0 ? num(r.sugerido) + " " + esc(r.unidad || "") : "—"}</td></tr>`;
   }).join("");
   const tabla = rev.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Contado</th><th class="r">Necesario</th><th class="r">Dif.</th><th class="r">A pedir</th></tr></thead><tbody>${filas}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin productos.</div></div>`;
   let accion;
   if (j.pedido_existente) accion = `<div class="toolbar"><div class="mut" style="flex:1">Ya existe un pedido para este inventario.</div><button class="btn primary" data-act="inv-ver-pedido" data-id="${j.pedido_existente.id}">Ver pedido ›</button></div>`;
+  else if (pendientes) accion = `<div class="card"><span class="pill warn">${pendientes} sin contar</span><p>Completa las cantidades pendientes. Escribe 0 solo si has comprobado que no queda producto.</p><button class="btn" data-act="inv-volver-conteo">Seguir contando</button></div>`;
   else if (aPedir.length) accion = `<div class="toolbar"><div class="mut" style="flex:1"><b>${aPedir.length}</b> producto(s) por debajo del stock necesario.</div><button class="btn primary" data-act="inv-generar-pedido">Generar pedido ›</button></div>`;
   else accion = `<div class="card"><div class="mut" style="padding:8px">Todo cubierto: no hace falta pedir nada. El inventario queda guardado.</div></div>`;
   return `${head}${accion}${tabla}`;
@@ -7425,7 +7442,7 @@ function renderFacturas(list, pend, stats, empresas) {
       ${pend.length > 1 && USER.rol === "direccion" ? `<div class="toolbar" style="padding:10px 16px 14px;margin:0"><button class="btn sm" data-act="fac-fusionar">Fusionar marcadas (misma factura)</button><span class="mut" style="font-size:12px">Marca 2+ documentos que sean páginas de la misma factura: se unirán en un solo PDF y se volverán a leer.</span></div>` : ""}
     </details>` : "";
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
-  return `${facHeader()}${resumen}${toolbar}<div id="facDups"></div><div id="facLocalesRaros"></div><div id="facSinCats"></div>${pendCard}<div id="facRes">${facTablaHtml(list)}</div>${vizGrid}`;
+  return `${facHeader()}<div id="facRecepciones"></div>${resumen}${toolbar}<div id="facDups"></div><div id="facLocalesRaros"></div><div id="facSinCats"></div>${pendCard}<div id="facRes">${facTablaHtml(list)}</div>${vizGrid}`;
 }
 // ── Fusionar pendientes que son páginas de la misma factura ─────────────────
 async function facFusionarPendientes() {
@@ -8623,7 +8640,7 @@ function facFicha(id) {
       </div>
     </div>
     <details class="card fold" style="margin:14px 0 0" id="ficLineas">
-      <summary><h3>Detalle leído</h3><span class="foldr"><span class="mut" id="ficNLin">ver</span><span class="car">${ic("chev", 16)}</span></span></summary>
+      <summary><h3>Productos y costes leídos</h3><span class="foldr"><span class="pill ${["dudas","descuadre"].includes(f.lineas_estado) ? "bad" : ""}" id="ficNLin">${["dudas","descuadre"].includes(f.lineas_estado) ? "Por revisar" : "Ver detalle"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
       <div id="ficLinCuerpo"><p class="mut" style="margin:0">Cargando…</p></div>
     </details>
     <div class="fic-pie">
@@ -8640,16 +8657,16 @@ function facFicha(id) {
   facPintarPapel(ov.querySelector("[data-ficthumb]"), f.id);
 
   // ── La suma, comprobada en vivo ───────────────────────────────────────────
-  const val = (k) => Number(String(ov.querySelector(`[data-fic="${k}"]`)?.value || "").replace(",", ".")) || 0;
+  const val = (k) => { const raw = ov.querySelector(`[data-fic="${k}"]`)?.value?.trim(); const n = Number(raw?.replace(",", ".")); return raw && Number.isFinite(n) ? n : null; };
   function pintarSuma() {
     const base = val("base_imponible"), cuota = val("cuota_iva"), total = val("total");
     const caja = ov.querySelector("#ficSuma");
-    if (!total) { caja.innerHTML = ""; return; }
+    if ([base,cuota,total].some(v=>v==null)) { caja.innerHTML = '<span class="mut">Faltan importes para comprobar el total.</span>'; return; }
     const dif = Math.round((base + cuota - total) * 100) / 100;
     caja.innerHTML = Math.abs(dif) <= 0.02
       ? `<span class="ok">✓ Base + IVA da el total (${esc(eur2(total))})</span>`
       : `<span class="mal">Base + IVA da ${esc(eur2(base + cuota))}, y el total dice ${esc(eur2(total))} — se lleva ${esc(eur2(Math.abs(dif)))}.</span>
-         <button class="linkbtn" id="ficCuadrar">Recalcular la cuota</button>`;
+         <button class="linkbtn" id="ficCuadrar">Calcular cuota con este IVA</button>`;
   }
   ov.querySelectorAll('[data-fic="base_imponible"],[data-fic="cuota_iva"],[data-fic="total"],[data-fic="porcentaje_iva"]')
     .forEach((el) => el.addEventListener("input", pintarSuma));
@@ -8657,8 +8674,8 @@ function facFicha(id) {
     if (!e.target.closest("#ficCuadrar")) return;
     // La cuota es la única de las cuatro que se puede deducir sin dudar: base × IVA %.
     const base = val("base_imponible"), iva = val("porcentaje_iva");
+    if (base == null || iva == null) return toast("Indica la base y el IVA. Si hay varios tipos, utiliza la cuota del documento.");
     ov.querySelector('[data-fic="cuota_iva"]').value = Math.round(base * iva) / 100;
-    ov.querySelector('[data-fic="total"]').value = Math.round((base + base * iva / 100) * 100) / 100;
     pintarSuma();
   });
   pintarSuma();
@@ -8831,15 +8848,15 @@ function sfPintarLista() {
   const fila = (r) => `<div class="row">
       <span class="grow" style="min-width:0">
         <div class="t1">${r.ok ? esc(r.proveedor || r.filename) : esc(r.filename)}</div>
-        <div class="t2">${r.ok
+        <div class="t2">${r.recibido ? "Original guardado · lectura pendiente" : r.ok
           ? (r.total != null ? esc(eur2(r.total)) : "sin total") + (r.pendiente ? " · falta asignarle local" : "")
           : `<span class="${r.duplicate ? "" : "fg-danger"}">${esc(r.error || "no se pudo")}</span>`}</div>
       </span>
-      <span class="pill ${r.ok ? "ok" : r.duplicate ? "warn" : "bad"}" style="flex:none">${r.ok ? "Guardada" : r.duplicate ? "Ya estaba" : "Error"}</span>
+      <span class="pill ${r.recibido ? "warn" : r.ok ? "ok" : r.duplicate ? "warn" : "bad"}" style="flex:none">${r.recibido ? "En curso" : r.ok ? "Guardada" : r.duplicate ? "Ya estaba" : "Error"}</span>
     </div>`;
   caja.innerHTML = `<div class="card p0" style="margin-top:16px">
     <div class="ch" style="padding:16px 16px 0"><h3>Subidas en esta sesión</h3>
-      <span class="mut" style="font-size:12px">${SUBF.enviando ? `enviando ${num(SUBF.enviando)}…` : `${num(SUBF.hechas.filter((x) => x.ok).length)} guardadas`}</span></div>
+      <span class="mut" style="font-size:12px">${SUBF.enviando ? `enviando ${num(SUBF.enviando)}…` : `${num(SUBF.hechas.filter((x) => x.ok && !x.recibido).length)} guardadas`}</span></div>
     <div class="rows">${SUBF.enviando ? `<div class="row"><span class="grow"><div class="t1">Leyendo la factura…</div><div class="t2">tarda unos segundos</div></span></div>` : ""}
       ${SUBF.hechas.map(fila).join("")}</div></div>`;
 }
@@ -8864,15 +8881,16 @@ async function sfEnviar(files) {
     if (!j.ok) { toast("No se pudo subir: " + (j.error || "error desconocido")); return; }
     // Las últimas arriba: es donde mira quien acaba de pulsar.
     SUBF.hechas = [...(j.resultados || []), ...SUBF.hechas].slice(0, 40);
-    const okc = (j.resultados || []).filter((x) => x.ok).length;
-    toast(okc === (j.resultados || []).length ? (okc === 1 ? "Factura guardada ✅" : `${okc} facturas guardadas ✅`)
+    const okc = (j.resultados || []).filter((x) => x.ok && !x.recibido).length;
+    const recibidas = (j.resultados || []).filter(x=>x.recibido).length;
+    toast(recibidas ? `${okc} registradas · ${recibidas} recibidas, pendientes de lectura` : okc === (j.resultados || []).length ? (okc === 1 ? "Factura guardada ✅" : `${okc} facturas guardadas ✅`)
       : `${okc} de ${(j.resultados || []).length} guardadas`);
   } catch (e) { toast("No se pudo subir: " + e.message); }
   finally { SUBF.enviando = 0; sfPintarLista(); }
 }
 
 function facSubir() {
-  const localOpts = ['<option value="">Detectar automáticamente (por NIF, empresa o proveedor)</option>'].concat(visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
+  const localOpts = ['<option value="">Detectar por empresa y establecimiento</option>'].concat(visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}">${esc(l)}</option>`)).join("");
   const ov = modal("Subir facturas", `<div class="field" style="width:100%"><label>Archivos (PDF o imágenes, puedes elegir varios)</label><input type="file" id="fsFile" accept="application/pdf,image/*" multiple></div><div class="field" style="width:100%"><label>Local</label><select id="fsLocal">${localOpts}</select></div><label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:10px"><input type="checkbox" id="fsCombinar" style="width:auto"> Son páginas de la <b>misma factura</b> (se unirán en un solo documento)</label><div class="mut" style="font-size:12px">Se procesan en segundo plano con la misma IA, orden en Drive y control de duplicados que WhatsApp/correo. Requiere Google conectado. Puedes cerrar y seguir trabajando; te aviso al terminar.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fsSend">Subir y procesar</button></div>`);
   ov.querySelector("#fsSend").addEventListener("click", () => {
     const inp = ov.querySelector("#fsFile"); const files = inp && inp.files ? Array.from(inp.files) : [];
@@ -8892,11 +8910,13 @@ function facSubir() {
         const j = await r.json();
         if (!j.ok) { toast("⚠ Error al subir: " + (j.error || "desconocido")); return; }
         const rs = j.resultados || [];
-        const okc = rs.filter((x) => x.ok).length;
+        const okc = rs.filter((x) => x.ok && !x.recibido).length;
+        const recibidas = rs.filter(x=>x.recibido).length;
         const dup = rs.filter((x) => x.duplicate).length;
         const err = rs.filter((x) => !x.ok && !x.duplicate).length;
         const pend = rs.filter((x) => x.ok && x.pendiente).length;
         let msg = `✅ ${okc}/${rs.length} procesadas`;
+        if (recibidas) msg += ` · ${recibidas} recibidas, pendientes de lectura`;
         if (pend) msg += ` · ${pend} pendiente(s) de asignar`;
         if (dup) msg += ` · ${dup} duplicada(s)`;
         if (err) msg += ` · ${err} con error`;
@@ -8974,6 +8994,43 @@ function renderFacturasConfig() {
   return `${facHeader()}<div id="facDrive"></div><div id="facProvDup"></div><div id="facCats"></div><div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${repaso}</div><div style="margin-top:16px">${integ}</div>`;
 }
 
+let FAC_RECEPCIONES_ANTES = null;
+let FAC_RECEPCIONES_HIST = [];
+let FAC_RECEPCIONES_CARGA = 0;
+async function facCargarRecepciones(antes = null, navegacion = "primera") {
+  const caja = document.getElementById("facRecepciones");
+  if (!caja || !["direccion", "contabilidad"].includes(USER.rol)) return;
+  const estaba = Boolean(caja.querySelector("details")?.open);
+  const carga = ++FAC_RECEPCIONES_CARGA;
+  let pagina;
+  try { pagina = await apiRaw("/api/facturas/recepciones" + (antes ? "?antes=" + encodeURIComponent(antes) : "")); }
+  catch { pagina = null; }
+  const filas = pagina?.data;
+  if (!caja.isConnected || carga !== FAC_RECEPCIONES_CARGA) return;
+  if (!Array.isArray(filas)) { caja.innerHTML = '<p class="mut">No se ha podido consultar la recepción de documentos.</p>'; return; }
+  if (navegacion === "next" && antes !== FAC_RECEPCIONES_ANTES) FAC_RECEPCIONES_HIST.push(FAC_RECEPCIONES_ANTES);
+  if (navegacion === "prev") FAC_RECEPCIONES_HIST.pop();
+  if (navegacion === "primera") FAC_RECEPCIONES_HIST = [];
+  FAC_RECEPCIONES_ANTES = antes;
+  if (!filas.length && !antes) { caja.innerHTML = ""; return; }
+  const errores = Number(pagina.errores) || 0;
+  const estados = {pendiente:'Pendiente de lectura',leyendo:'Leyendo',error:'Necesita revisión'};
+  caja.innerHTML = `<details class="card fold p0" ${estaba ? "open" : ""} style="margin-bottom:12px"><summary style="padding:16px"><h3>Documentos recibidos</h3><span class="foldr"><span class="pill ${errores ? 'bad' : ''}">${errores ? `${errores} por revisar` : `${pagina.total} en curso`}</span><span class="car">${ic('chev',16)}</span></span></summary><p class="mut" style="padding:0 16px">Recepción de tus establecimientos · ${pagina.total} documentos en curso. Los fallos de lectura se reintentan hasta cinco veces.</p><div class="rows">${filas.map(f => `<div class="row"><div class="grow" style="min-width:0;overflow-wrap:anywhere"><div class="t1">${esc(f.nombre)}</div><div class="t2">${esc(f.canal)} · ${esc(f.local || 'Por asignar')} · ${esc(estados[f.estado] || f.estado)}</div>${f.error ? `<div class="t2">${esc(f.error)}</div>` : ''}</div><div style="display:flex;flex-wrap:wrap;gap:6px;max-width:120px">${f.tiene_original === false ? '<span class="mut">Sube un archivo válido para continuar.</span>' : `<button class="btn sm" data-act="fac-recepcion-original" data-id="${esc(f.id)}" data-nombre="${esc(f.nombre)}">Original</button>`}${f.tiene_original !== false && f.estado==='error' ? `<button class="btn sm" data-act="fac-recepcion-reintentar" data-id="${esc(f.id)}">Reintentar</button>` : ''}</div></div>`).join('')}</div><div class="toolbar" style="padding:16px"><button class="btn sm" data-act="fac-recepcion-primera">Actualizar · primera página</button>${antes ? '<button class="btn sm" data-act="fac-recepcion-anterior">Anterior</button>' : ''}${pagina.siguiente ? `<button class="btn sm" data-act="fac-recepcion-siguiente" data-cursor="${esc(pagina.siguiente)}">Siguiente</button>` : ''}</div></details>`;
+}
+async function facOriginalRecepcion(id,nombre) {
+  try {
+    const r = await fetch(`/api/facturas/recepciones/${encodeURIComponent(id)}/original`, {headers:{Authorization:'Bearer '+token()}});
+    if (!r.ok) throw new Error('No se pudo descargar el original; puede haberse archivado ya con la factura.');
+    const url = URL.createObjectURL(await r.blob()), a = document.createElement('a');
+    a.href=url; a.download=nombre || 'documento'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  } catch(e) { toast(e.message); }
+}
+async function facReintentarRecepcion(id) {
+  try { await apiSend('POST', `/api/facturas/recepciones/${encodeURIComponent(id)}/reintentar`, {}); toast('Documento pendiente de nueva lectura'); await facCargarRecepciones(); }
+  catch(e) { toast(e.message); }
+}
+
 async function loadFacturas() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   facScope(); // el ámbito lo fija el selector de establecimiento de la barra superior
@@ -9011,6 +9068,7 @@ async function loadFacturas() {
     FAC_HAY_MAS = !!(lst && lst.hayMas);
     FAC_PEND = pend || [];
     view.innerHTML = renderFacturas(FAC_LIST, FAC_PEND, stats, empresas || []);
+    facCargarRecepciones();
     facCargarMiniaturas(view);
     facAvisoLocales(); facAvisoCategorias(); facDuplicados(); // no se esperan: la tabla ya está
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
@@ -16334,6 +16392,11 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-pago") facPago(t.getAttribute("data-id"));
   else if (act === "fac-revisar") facRevisar(t.getAttribute("data-id"));
   else if (act === "fac-fusionar") facFusionarPendientes();
+  else if (act === "fac-recepcion-primera") facCargarRecepciones();
+  else if (act === "fac-recepcion-anterior") facCargarRecepciones(FAC_RECEPCIONES_HIST.at(-1) || null, "prev");
+  else if (act === "fac-recepcion-siguiente") facCargarRecepciones(t.dataset.cursor, "next");
+  else if (act === "fac-recepcion-original") facOriginalRecepcion(t.getAttribute("data-id"),t.getAttribute("data-nombre"));
+  else if (act === "fac-recepcion-reintentar") facReintentarRecepcion(t.getAttribute("data-id"));
   else if (act === "fac-tab") facTab(t.getAttribute("data-tab"));
   else if (act === "fac-loc-add") facLocAdd();
   else if (act === "fac-loc-del") facLocDel(t.getAttribute("data-local"));

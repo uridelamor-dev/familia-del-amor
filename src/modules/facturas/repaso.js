@@ -29,7 +29,7 @@ import { buscarParecida, resumenMotivos } from "./duplicados.js";
  *   1 → lectura original (descripción, cantidad, precio, importe).
  *   2 → descuentos por línea: se guarda el precio NETO, y el bruto y el % aparte.
  */
-export const VERSION_LINEAS = 2;
+export const VERSION_LINEAS = 3;
 
 const normNombre = (s) => String(s || "").trim().toLowerCase()
   .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ");

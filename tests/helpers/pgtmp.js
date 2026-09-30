@@ -17,7 +17,7 @@ async function cargarPg() {
 }
 
 export async function disponible() {
-  return !!process.env.TEST_DATABASE_URL && !!(await cargarPg());
+  return !!process.env.TEST_PGLITE_MODULE || (!!process.env.TEST_DATABASE_URL && !!(await cargarPg()));
 }
 
 export function motivoSalto() {
@@ -28,6 +28,20 @@ export function motivoSalto() {
 // Crea un esquema aislado, devuelve { run, get, all, fin } con el mismo contrato que
 // dbRun/dbGet/dbAll de server.js (placeholders `?`), y lo borra entero al terminar.
 export async function conEsquema() {
+  // PostgreSQL embebido para comprobar SQL sin servicio de producción. Las pruebas de
+  // concurrencia entre conexiones siguen requiriendo TEST_DATABASE_URL.
+  if (process.env.TEST_PGLITE_MODULE && !process.env.TEST_DATABASE_URL) {
+    const {PGlite} = await import(process.env.TEST_PGLITE_MODULE);
+    const pg = new PGlite();
+    const raw = async (sql,params=[]) => {
+      const r = await pg.query(sql,params);
+      r.rows = r.rows.map(row=>Object.fromEntries(Object.entries(row).map(([k,v])=>[k,v instanceof Uint8Array ? Buffer.from(v) : v])));
+      return r;
+    };
+    const query = (sql,params=[]) => {let i=0;return raw(sql.replace(/\?/g,()=>`$${++i}`),params);};
+    return {esquema:'public',run:async(s,p)=>(await query(s,p)).rows[0],get:async(s,p)=>(await query(s,p)).rows[0],all:async(s,p)=>(await query(s,p)).rows,raw,fin:()=>pg.close()};
+  }
+
   const pg = await cargarPg();
   if (!pg) throw new Error("pg no disponible");
   const nombre = "test_" + Math.random().toString(36).slice(2, 10);

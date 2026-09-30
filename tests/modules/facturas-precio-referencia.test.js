@@ -80,14 +80,14 @@ describe("revisar una factura entera", () => {
     ["gamba", { precio: 20, compras: 5 }],
     ["sal", { precio: 1, compras: 9 }],
     ["pan", { precio: 2, compras: 4 }],
-  ]);
+  ].map(([k,v])=>[JSON.stringify([k,"ud"]),v]));
   const lineas = [
     { clave: "aceite oliva 5l", descripcion: "ACEITE OLIVA 5L", precio_unitario: 45 },   // +50 %
     { clave: "gamba", descripcion: "GAMBA", precio_unitario: 23 },                        // +15 %
     { clave: "sal", descripcion: "SAL", precio_unitario: 1.02 },                          // +2 %: nada
     { clave: "pan", descripcion: "PAN", precio_unitario: 2.6 },                           // +30 %
     { clave: "desconocido", descripcion: "NUEVO", precio_unitario: 100 },                 // sin referencia
-  ];
+  ].map(l=>({...l,unidad:"ud"}));
 
   test("avisa de las que se salen y calla las que no", () => {
     const r = revisarPrecios(lineas, refs, { proveedor: "Grau", tope: 10 });

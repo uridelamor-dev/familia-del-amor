@@ -77,7 +77,7 @@ describe("Productos: la tabla se lee de un vistazo", () => {
 
   test("la cantidad lleva su unidad, y solo si es una", () => {
     assert.match(panel, /g\.unidad \? ` <span class="mut" style="font-size:11px">\$\{esc\(g\.unidad\)\}<\/span>` : ""/);
-    assert.match(server, /array_agg\(DISTINCT l\.unidad\) FILTER \(WHERE COALESCE\(l\.unidad,''\) <> ''\)/);
+    assert.match(server, /array_agg\(DISTINCT l\.unidad\) AS unidades/);
   });
 
   test("el gasto lleva su proporción, medida contra el que más gasta", () => {

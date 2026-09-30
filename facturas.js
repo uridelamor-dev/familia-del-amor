@@ -1,3 +1,5 @@
+import { fetchFactura as fetch } from "./src/modules/facturas/red.js";
+import { canalFactura } from "./src/modules/facturas/recepcion.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { normalizarLineas, validarSuma, mensajeValidacion, claveProducto } from "./src/modules/facturas/lineas.js";
 import { canonizarLocal, esLocalCanonico, LOCALES } from "./src/modules/facturas/local-canonico.js";
@@ -10,7 +12,7 @@ import { extraerTextoPdf, bloqueTextoParaClaude } from "./src/modules/facturas/p
 import { pistasDeFecha, revisarFecha } from "./src/modules/facturas/fecha-documento.js";
 import { VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { calcularVencimiento } from "./src/modules/facturas/vencimiento.js";
-import { precioReferencia, revisarPrecios } from "./src/modules/facturas/precio-referencia.js";
+import { precioReferencia, revisarPrecios, clavePrecio } from "./src/modules/facturas/precio-referencia.js";
 import { extraerJson } from "./src/modules/facturas/json-cortado.js";
 import { createHash } from "crypto";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -191,15 +193,18 @@ export async function referenciasDeProveedor(dbAll, proveedor, claves) {
   if (!dbAll || !proveedor || !lista.length) return new Map();
   try {
     const filas = await dbAll(
-      `SELECT l.clave, l.precio_unitario::float AS precio, f.fecha
+      `SELECT l.clave, l.unidad, l.precio_unitario::float AS precio, f.fecha
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
         WHERE LOWER(f.proveedor) = LOWER(?) AND COALESCE(f.dup_estado,'') <> 'duda'
           AND l.clave = ANY(?) AND l.precio_unitario IS NOT NULL AND l.dudosa = FALSE
+          AND COALESCE(f.lineas_version,1) >= ${VERSION_LINEAS}
         ORDER BY f.fecha DESC LIMIT 2000`, [proveedor, lista]);
     const porClave = new Map();
     for (const f of filas) {
-      if (!porClave.has(f.clave)) porClave.set(f.clave, []);
-      porClave.get(f.clave).push(f.precio);
+      const clave = clavePrecio(f.clave, f.unidad);
+      if (!clave) continue;
+      if (!porClave.has(clave)) porClave.set(clave, []);
+      porClave.get(clave).push(f.precio);
     }
     const out = new Map();
     for (const [clave, precios] of porClave) {
@@ -360,7 +365,7 @@ export class FacturaDuplicadaError extends Error {
 export const promptExtraccion = (hoy) => PROMPT_BASE.replace("{HOY}", String(hoy || "").slice(0, 10) || "desconocido");
 
 export async function extraerDatosDocumento(buffer, mimeType, { hoy = null } = {}) {
-  const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout:120000, maxRetries:1 });
   const base64 = buffer.toString("base64");
 
   const isPdf = mimeType === "application/pdf";
@@ -1289,7 +1294,7 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
 
   // 4. Si detectamos el local únicamente → procesar normalmente
   if (localAutodetectado) {
-    return procesarFactura({ buffer, mimeType, filename, local: localAutodetectado, caption: "Email auto-detectado", canal: "Email", getToken, dbGet, dbAll: dbAll, dbRun });
+    return procesarFactura({ buffer, mimeType, filename, local: localAutodetectado, caption: "Local detectado por receptor", canal: canalFactura(origen), getToken, dbGet, dbAll: dbAll, dbRun });
   }
 
   // 5. No se pudo determinar el local → subir a _Por asignar y guardar como pendiente

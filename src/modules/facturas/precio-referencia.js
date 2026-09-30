@@ -1,3 +1,14 @@
+// No convierte unidades: solo normaliza alias inequívocos de la misma medida.
+export function unidadComparable(valor) {
+  const u = String(valor || "").trim().toLowerCase().replace(/\.$/, "");
+  const aliases = {ud:"ud", uds:"ud", unidad:"ud", unidades:"ud", kg:"kg", kgs:"kg", kilo:"kg", kilos:"kg", g:"g", gr:"g", gramos:"g", l:"l", lt:"l", litros:"l", ml:"ml"};
+  return aliases[u] || null; // envases sin tamaño comprobado y unidades desconocidas no se comparan
+}
+export function clavePrecio(clave, unidad) {
+  const u = unidadComparable(unidad);
+  return clave && u ? JSON.stringify([clave,u]) : null;
+}
+
 // Facturas — el precio al que se compra normalmente, y el aviso cuando deja de serlo. PURO.
 //
 // EL PROBLEMA: hoy «Qué compramos» enseña la horquilla del periodo (del más barato al más
@@ -14,7 +25,8 @@
 // accionar, y un aviso que no se puede accionar se aprende a ignorar.
 
 const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : null; };
-const red = (x) => Math.round(x * 100) / 100;
+const red = (x) => Math.round(x * 1e6) / 1e6;
+const mostrar = x => Number.isInteger(red(x) * 100) ? red(x).toFixed(2) : String(red(x));
 
 /** Cuántas compras hacen falta para poder decir «lo normal es esto». */
 export const MINIMO_COMPRAS = 3;
@@ -25,7 +37,7 @@ export function mediana(valores = []) {
   const v = valores.map(n).filter((x) => x != null && x > 0).sort((a, b) => a - b);
   if (!v.length) return null;
   const m = Math.floor(v.length / 2);
-  return v.length % 2 ? v[m] : red((v[m - 1] + v[m]) / 2);
+  return v.length % 2 ? v[m] : Math.round((v[m - 1] + v[m]) / 2 * 1e6) / 1e6;
 }
 
 /**
@@ -60,7 +72,7 @@ export function avisoPrecio({ descripcion, proveedor, precio, referencia, compra
     pct,
     referencia: red(r),
     precio: red(p),
-    texto: `«${descripcion}» de ${proveedor}: ${red(p).toFixed(2)} € cuando lo normal son ${red(r).toFixed(2)} €`
+    texto: `«${descripcion}» de ${proveedor}: ${mostrar(p)} € cuando lo normal son ${mostrar(r)} €`
       + ` (un ${pct > 0 ? "+" : ""}${pct} %${veces ? `, sobre ${veces} compras anteriores` : ""}). Compruébalo antes de pagarla.`,
   };
 }
@@ -76,7 +88,9 @@ export function avisoPrecio({ descripcion, proveedor, precio, referencia, compra
 export function revisarPrecios(lineas = [], referencias = new Map(), { proveedor = "", tope = 3, margen = MARGEN_PCT } = {}) {
   const avisos = [];
   for (const l of lineas) {
-    const ref = referencias.get(l.clave);
+    if (l.dudosa) continue;
+    const clave = clavePrecio(l.clave, l.unidad);
+    const ref = clave ? referencias.get(clave) : null;
     if (!ref) continue;
     const a = avisoPrecio({
       descripcion: l.descripcion, proveedor, precio: l.precio_unitario,

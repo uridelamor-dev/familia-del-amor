@@ -73,15 +73,15 @@ describe("sugerirLocalPendiente", () => {
     assert.equal(s.local, "Can Mateu - Tordera");
     assert.equal(s.motivo, "Empresa receptora");
   });
-  test("proveedor habitual (>=2 veces mismo local) → alta; devuelve nombre ERP", () => {
+  test("proveedor habitual requiere confirmación aunque tenga historial", () => {
     const historial = indexarHistorialProveedor([
       { proveedor: "Aguas Font", local: "La Tapeta Blanes" },
       { proveedor: "Aguas Font", local: "La Tapeta Blanes" },
     ]);
     const s = sugerirLocalPendiente({ pendiente: { proveedor: "aguas font" }, locales: LOCALES, historial });
     assert.equal(s.local, "La Tapeta - Blanes");
-    assert.equal(s.confianza, "alta");
-    assert.equal(s.motivo, "Proveedor habitual");
+    assert.equal(s.confianza, "media");
+    assert.equal(s.motivo, "Proveedor habitual: confirmar establecimiento");
   });
   test("proveedor habitual visto 1 sola vez → media (sugerir, no autoasignar)", () => {
     const historial = indexarHistorialProveedor([{ proveedor: "Nuevo Prov", local: "Can Mateu" }]);

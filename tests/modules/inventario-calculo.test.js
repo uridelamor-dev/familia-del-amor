@@ -73,15 +73,16 @@ describe("construirRevision + lineasPropuestaPedido", () => {
     const rev = construirRevision(productos, { 1: 3, 2: 10, 3: 2 }, "07-01");
     // La fila lleva además el mínimo y si está por debajo: es un aviso, no entra en el cálculo.
     assert.deepEqual(rev[0], { producto_id: 1, nombre: "Estrella Damm 33cl", unidad: "cajas",
-      contado: 3, necesario: 5, diferencia: 2, sugerido: 2, minimo: 0, bajoMinimo: false });
+      contado: 3, necesario: 5, pendiente: false, diferencia: 2, sugerido: 2, minimo: 0, bajoMinimo: false });
     assert.equal(rev[1].sugerido, 0);            // 10 contado ≥ 10 necesario
     assert.equal(rev[2].necesario, 12);          // temporada activa
     assert.equal(rev[2].sugerido, 10);           // 12 − 2
   });
-  test("cantidad ausente cuenta como 0", () => {
+  test("cantidad ausente sigue pendiente, no propone compras", () => {
     const rev = construirRevision(productos, {}, "03-01");
-    assert.equal(rev[0].contado, 0);
-    assert.equal(rev[0].sugerido, 5);
+    assert.equal(rev[0].contado, null);
+    assert.equal(rev[0].sugerido, null);
+    assert.equal(rev[0].pendiente, true);
   });
   test("la propuesta solo incluye lo que hay que pedir (>0) y cantidad_final = sugerida", () => {
     const rev = construirRevision(productos, { 1: 3, 2: 10, 3: 2 }, "07-01");

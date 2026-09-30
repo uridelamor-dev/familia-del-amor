@@ -1,3 +1,7 @@
+import { puedePropagarUnidad } from "./src/modules/facturas/correccion-unidades.js";
+import { RECEPCION_SCHEMA, crearRecepcion, listarPaginas } from "./src/modules/facturas/recepcion.js";
+import { MAX_DOCUMENTO, descargarLimitado } from "./src/modules/facturas/red.js";
+import { registrarRechazo, claveRechazo } from "./src/modules/facturas/rechazos.js";
 import { filtrarGeografia, resolverPoblacion, sugerirPoblaciones } from './src/modules/captacion/geografia.js';
 import { encolarCumples, estadoCumple } from "./src/modules/campaigns/cumple-cola.js";
 import { CAMPOS_PRIVADOS, puedeVerPrivado, sanearDatosAlta, estadoAlta, sanearConversacion } from './src/modules/rrhh/alta-administrativa.js';
@@ -24,7 +28,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura, procesarFacturaSinLocal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
+import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -335,6 +339,31 @@ async function dbRun(sql, params = []) {
   const result = await pool.query(toPositional(sql), params);
   return result.rows[0] || undefined;
 }
+// Una sola lectura externa a la vez; el original ya está guardado si el trabajador está ocupado.
+const recepcionFacturas = crearRecepcion({
+  db: {get:dbGet,run:dbRun,all:dbAll},
+  lock: async (_hash, fn) => {
+    const c = await pool.connect();
+    let adquirido = false;
+    try {
+      adquirido = (await c.query('SELECT pg_try_advisory_lock(70799135, 2509) AS ok')).rows[0].ok;
+      if (!adquirido) {
+        const e = new Error('Documento recibido. Se leerá en cuanto termine la lectura en curso; puedes seguirlo en Compras → Documentos recibidos.');
+        e.recibido = true; throw e;
+      }
+      return await fn();
+    } finally {
+      try { if (adquirido) await c.query('SELECT pg_advisory_unlock(70799135, 2509)'); } finally { c.release(); }
+    }
+  },
+  existeDestino: async hash => !!(await dbGet("SELECT id FROM facturas WHERE file_hash=? UNION ALL SELECT id FROM facturas_pendientes WHERE file_hash=? LIMIT 1", [hash,hash])),
+  procesar: o => (o.local ? procesarFacturaOriginal : procesarFacturaSinLocalOriginal)({
+    ...o,getToken:getDriveAccessToken,dbGet,dbAll,dbRun,backupFn:null,
+  }),
+});
+const procesarFactura = o => recepcionFacturas.recibir({...o,canal:o.canal || "WhatsApp"});
+const procesarFacturaSinLocal = o => recepcionFacturas.recibir(o);
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2022,6 +2051,7 @@ async function initDB() {
       console.error("[DB] Aviso: esquema de establecimientos no inicializado (no fatal):", e.message);
     }
 
+    await client.query(RECEPCION_SCHEMA);
     try { await ensureSchemaEscandallos((sql,p=[]) => client.query(sql,p)); }
     catch(e) { console.error("[DB] escandallos:",e.message); }
 
@@ -2430,26 +2460,18 @@ function flattenParts(payload, result = []) {
   return result;
 }
 
-async function markGmailRead(token, msgId) {
-  await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/modify`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ removeLabelIds: ["UNREAD"] })
-  });
-}
+// Gmail conserva el estado leído/sin leer: lo utiliza contabilidad para imprimir.
+// La recepción se controla en nuestras tablas, sin modificar etiquetas del buzón.
 
 // ── Ingesta de facturas por Drive (carpeta vigilada por local) ──────────────
 async function driveListarCarpeta(token, folderId) {
   const q = encodeURIComponent(`'${folderId}' in parents and trashed=false and (mimeType='application/pdf' or mimeType contains 'image/')`);
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType)&pageSize=100`, { headers: { Authorization: `Bearer ${token}` } });
-  const d = await r.json();
-  if (d.error) throw new Error(JSON.stringify(d.error));
-  return d.files || [];
+  return listarPaginas(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,mimeType,size,modifiedTime)&pageSize=100`, token, 'files');
 }
 async function driveDescargarArchivo(token, fileId) {
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(120000) });
   if (!r.ok) throw new Error("descarga Drive " + r.status);
-  return Buffer.from(await r.arrayBuffer());
+  return descargarLimitado(r);
 }
 async function pollDriveFacturas() {
   try {
@@ -2463,14 +2485,24 @@ async function pollDriveFacturas() {
       for (const f of files) {
         const done = await dbGet("SELECT 1 FROM facturas_drive_procesados WHERE drive_file_id = ?", [f.id]);
         if (done) continue;
+        const rechazoOrigen = `drive:${f.id}:${f.modifiedTime || ''}:${f.size || ''}`;
+        if(await dbGet('SELECT id FROM facturas_recepciones WHERE clave=?',[claveRechazo(rechazoOrigen)])) continue;
         try {
+          if(Number(f.size)>MAX_DOCUMENTO) throw Object.assign(new Error('Supera 20 MB. Divide o sustituye el archivo.'),{permanente:true});
           const buffer = await driveDescargarArchivo(token, f.id);
           await procesarFactura({ buffer, mimeType: f.mimeType, filename: f.name, local: c.local, canal: "Drive", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
           console.log(`[Drive ingest] Procesada ${f.name} (${c.local})`);
         } catch (e) {
-          if (!(e && e.isDuplicate)) console.error(`[Drive ingest] ${f.name}:`, e.message);
+          if(e.permanente) {
+            await registrarRechazo(dbRun,{origen:rechazoOrigen,canal:'Drive',local:c.local,nombre:f.name,mime:f.mimeType,motivo:e.message});
+            continue; // El mismo origen no se descarga; una revisión distinta sí.
+          }
+          if (!e.isDuplicate && !e.recibido) {
+            console.error(`[Drive ingest] ${f.name}:`, e.message);
+            continue; // No hay copia durable: volver a descargar en el próximo ciclo.
+          }
         }
-        // Marca como procesado SIEMPRE (evita reintentos infinitos, también en duplicado/error).
+        // El origen se ha recibido duraderamente o es un duplicado confirmado; la lectura pendiente sigue en la cola.
         try { await dbRun("INSERT INTO facturas_drive_procesados (drive_file_id, local, procesado_en) VALUES (?, ?, ?) ON CONFLICT(drive_file_id) DO NOTHING", [f.id, c.local, new Date().toISOString()]); } catch { /* noop */ }
       }
     }
@@ -2490,7 +2522,7 @@ async function pollDriveFacturas() {
  */
 async function pollGmail({ dias = GM_DIAS } = {}) {
   const marca = new Date().toISOString();
-  let vistos = 0, nuevos = 0, procesadosTotal = 0;
+  let vistos = 0, nuevos = 0, procesadosTotal = 0, erroresRecepcion = 0;
   const anotar = async (error) => {
     await setConfig(GM.intento, marca).catch(() => {});
     await setConfig(GM.error, error || "").catch(() => {});
@@ -2503,14 +2535,7 @@ async function pollGmail({ dias = GM_DIAS } = {}) {
     const token = await getDriveAccessToken();
 
     const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(consultaGmail(dias))}&maxResults=60`;
-    const listRes = await fetch(listUrl, { headers: { Authorization: `Bearer ${token}` } });
-    const listData = await listRes.json();
-    if (listData.error) {
-      const txt = explicarError(listData.error);
-      console.error("[Gmail] Error listando:", JSON.stringify(listData.error));
-      await anotar(txt);
-      return { ok: false, error: txt };
-    }
+    const listData = {messages: await listarPaginas(listUrl, token, 'messages')};
     vistos = (listData.messages || []).length;
     if (!vistos) { await anotar(null); return { ok: true, vistos: 0, nuevos: 0, procesados: 0 }; }
 
@@ -2523,6 +2548,7 @@ async function pollGmail({ dias = GM_DIAS } = {}) {
         headers: { Authorization: `Bearer ${token}` }
       });
       const msg = await msgRes.json();
+      if (!msgRes.ok || msg.error) { erroresRecepcion++; continue; }
 
       const headers = msg.payload?.headers || [];
       const from = headers.find(h => h.name.toLowerCase() === "from")?.value || "";
@@ -2535,12 +2561,11 @@ async function pollGmail({ dias = GM_DIAS } = {}) {
 
       const parts = flattenParts(msg.payload);
       const adjuntos = parts.filter(p =>
-        p.filename && p.body?.attachmentId &&
+        p.filename && (p.body?.attachmentId || p.body?.data) &&
         (p.mimeType === "application/pdf" || p.mimeType?.startsWith("image/"))
       );
 
       if (adjuntos.length === 0) {
-        await markGmailRead(token, msgId);
         await dbRun(
           "INSERT INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, 0) ON CONFLICT(gmail_id) DO NOTHING",
           [msgId, senderEmail, subject, localConocido || "auto"]
@@ -2548,20 +2573,29 @@ async function pollGmail({ dias = GM_DIAS } = {}) {
         continue;
       }
 
-      let procesados = 0;
+      let procesados = 0, fallosRecepcion = 0;
       for (const parte of adjuntos) {
+        const rechazoOrigen = `gmail:${msgId}:${parte.partId || parte.body.attachmentId || parte.filename}`;
+        if(await dbGet('SELECT id FROM facturas_recepciones WHERE clave=?',[claveRechazo(rechazoOrigen)])) continue;
         try {
-          const attRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/attachments/${parte.body.attachmentId}`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          const attData = await attRes.json();
+          if(Number(parte.body?.size)>MAX_DOCUMENTO) throw Object.assign(new Error('Supera 20 MB. Divide el adjunto y envíalo en un nuevo correo.'),{permanente:true});
+          let attData = {data:parte.body.data};
+          if (parte.body.attachmentId) {
+            const attRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/attachments/${parte.body.attachmentId}`, {
+              headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(120000)
+            });
+            const adjuntoJson = await descargarLimitado(attRes, Math.ceil(MAX_DOCUMENTO * 4 / 3) + 65536);
+            attData = JSON.parse(adjuntoJson.toString('utf8'));
+          }
+          if (typeof attData.data !== 'string') throw new Error('No se pudo descargar el adjunto');
+          if(attData.data.length > Math.ceil(MAX_DOCUMENTO * 4 / 3) + 4) throw Object.assign(new Error('Supera 20 MB. Divide el adjunto y envíalo en un nuevo correo.'),{permanente:true});
           const buffer = Buffer.from(attData.data.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
           if (localConocido) {
             await procesarFactura({
               buffer, mimeType: parte.mimeType,
               filename: parte.filename || `adjunto_${msgId}`,
-              local: localConocido,
+              local: localConocido, canal: "Email",
               caption: `Email · ${from} · ${subject}`,
               getToken: getDriveAccessToken, dbGet, dbAll, dbRun,
               backupFn: null
@@ -2576,15 +2610,18 @@ async function pollGmail({ dias = GM_DIAS } = {}) {
           }
           procesados++;
         } catch (err) {
-          if (err instanceof FacturaDuplicadaError) {
+          if(err.permanente) {
+            await registrarRechazo(dbRun,{origen:rechazoOrigen,canal:'Email',local:localConocido,nombre:parte.filename,mime:parte.mimeType,motivo:err.message});
+          } else if (err.isDuplicate) {
             console.warn(`[Gmail] Duplicado de ${senderEmail}: ${err.message}`);
-          } else {
+          } else if (!err.recibido) {
+            fallosRecepcion++;
             console.error(`[Gmail] Error procesando adjunto de ${msgId}:`, err.message);
           }
         }
       }
 
-      await markGmailRead(token, msgId);
+      if (fallosRecepcion) { erroresRecepcion += fallosRecepcion; continue; }
       await dbRun(
         "INSERT INTO facturas_emails_procesados (gmail_id, de_email, asunto, local, adjuntos_procesados) VALUES (?, ?, ?, ?, ?) ON CONFLICT(gmail_id) DO NOTHING",
         [msgId, senderEmail, subject, localConocido || "auto", procesados]
@@ -2592,8 +2629,9 @@ async function pollGmail({ dias = GM_DIAS } = {}) {
       procesadosTotal += procesados;
       console.log(`[Gmail] ${senderEmail} → ${localConocido || "auto-detect"} (${procesados} adjunto/s)`);
     }
-    await anotar(null);
-    return { ok: true, vistos, nuevos, procesados: procesadosTotal };
+    const errorRecepcion = erroresRecepcion ? 'Hay adjuntos o correos que no se pudieron recibir; se reintentará en el siguiente ciclo.' : null;
+    await anotar(errorRecepcion);
+    return { ok: !errorRecepcion, error:errorRecepcion, vistos, nuevos, procesados: procesadosTotal };
   } catch (err) {
     const txt = explicarError(err && err.message);
     console.error("[Gmail] Error en poll:", err.message);
@@ -3149,6 +3187,7 @@ app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad", "encar
     } catch (e) {
       const r = e && e.isDuplicate
         ? { filename: nombre, ok: false, duplicate: true, error: e.message || "Esta factura ya está registrada" }
+        : e.recibido ? {filename:nombre,ok:true,recibido:true,recepcionId:e.recepcionId}
         : { filename: nombre, ok: false, error: e.message };
       return res.json({ ok: true, total: 1, correctas: 0, resultados: [r] });
     }
@@ -3168,6 +3207,7 @@ app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad", "encar
       resultados.push({ filename: originalname, ok: true, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl });
     } catch (e) {
       if (e && e.isDuplicate) resultados.push({ filename: originalname, ok: false, duplicate: true, error: e.message || "Esta factura ya está registrada" });
+      else if (e.recibido) resultados.push({ filename:originalname, ok:true, recibido:true, recepcionId:e.recepcionId });
       else resultados.push({ filename: originalname, ok: false, error: e.message });
     }
   }
@@ -3302,6 +3342,39 @@ app.post("/api/facturas/locales", requireAuth(["direccion"]), async (req, res) =
 app.delete("/api/facturas/locales/:local", requireAuth(["direccion"]), async (req, res) => {
   await dbRun("DELETE FROM facturas_locales WHERE local = ?", [decodeURIComponent(req.params.local)]);
   res.json({ ok: true });
+});
+
+app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+  try {
+    const antes = /^\d+$/.test(String(req.query.antes || '')) ? String(req.query.antes) : null;
+    const ambitos = localesScope(req);
+    const filtro = ambitos.length ? "AND local = ANY(?::text[])" : "";
+    const params = ambitos.length ? [ambitos] : [];
+    const filas = await dbAll(`SELECT id,canal,local,nombre,estado,intentos,error,creado,original IS NOT NULL AS tiene_original FROM facturas_recepciones
+      WHERE estado NOT IN ('registrado','duplicado') ${filtro} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
+    const conteo = await dbGet(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE estado='error') AS errores FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado') ${filtro}`,params);
+    res.json({ok:true,data:filas.slice(0,50),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
+  } catch(e) { next(e); }
+});
+app.get("/api/facturas/recepciones/:id/original", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+  try {
+    const f = await dbGet('SELECT original,local FROM facturas_recepciones WHERE id=?',[req.params.id]);
+    if (f && !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
+    if (!f?.original) return res.status(404).json({ok:false,error:'El original ya está archivado con la factura o no existe.'});
+    res.setHeader('Cache-Control','no-store');
+    res.setHeader('X-Content-Type-Options','nosniff');
+    res.type('application/octet-stream').attachment('documento').send(f.original);
+  } catch(e) { next(e); }
+});
+app.post("/api/facturas/recepciones/:id/reintentar", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+  try {
+    const actual = await dbGet('SELECT local FROM facturas_recepciones WHERE id=?',[req.params.id]);
+    if (!actual || !puedeAccederLocal(req,actual.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
+    const f = await dbRun(`UPDATE facturas_recepciones SET estado='pendiente',intentos=0,proximo=NOW(),error=NULL
+      WHERE id=? AND estado='error' AND original IS NOT NULL RETURNING id`,[req.params.id]);
+    if (!f) return res.status(409).json({ok:false,error:'El documento ya está en curso o terminado.'});
+    res.json({ok:true});
+  } catch(e) { next(e); }
 });
 
 app.get("/api/facturas/pendientes", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
@@ -5201,7 +5274,7 @@ async function comprasDeLocal(query, local) {
          -- La unidad, solo si TODAS las compras coinciden: «441» sin unidad no dice nada, y
          -- «441 kg» junto a «441 ud» sumados diría algo falso. Con dos unidades distintas se
          -- calla, que es la respuesta honesta.
-         (array_agg(DISTINCT l.unidad) FILTER (WHERE COALESCE(l.unidad,'') <> '')) AS unidades
+         array_agg(DISTINCT l.unidad) AS unidades
        FROM factura_lineas l
        JOIN facturas f ON f.id = l.factura_id
        LEFT JOIN producto_alias a ON a.clave = l.clave AND a.producto_id IS NOT NULL
@@ -6569,15 +6642,18 @@ app.get("/api/facturas/lineas/pendientes", requireAuth(["direccion", "contabilid
 const SQL_RECUADRE = `
   WITH cand AS (
     SELECT id, cantidad, precio_bruto, importe,
+           substring(descripcion from '(?i)([0-9]+)[[:space:]]*(?:uds?[.]?|unidades|units)(?:[^[:alpha:]]|$)')::numeric AS contenido,
            (COALESCE(importe_bruto, importe) / precio_bruto / cantidad) AS f
       FROM factura_lineas
      WHERE cantidad > 0 AND precio_bruto > 0 AND COALESCE(importe_bruto, importe) IS NOT NULL
+       AND lower(trim(unidad)) IN ('pack','packs','caja','cajas','bulto','bultos','paquete','paquetes')
+       AND factor_unidad IS NULL
        AND abs(cantidad * precio_bruto - COALESCE(importe_bruto, importe)) > 0.02)`;
 
 app.get("/api/facturas/lineas/paquetes", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const r = await dbGet(`${SQL_RECUADRE}
-      SELECT count(*)::int AS n FROM cand WHERE f >= 2 AND abs(f - round(f)) < 0.01`);
+      SELECT count(*)::int AS n FROM cand WHERE f >= 2 AND contenido = round(f) AND abs(f - round(f)) < 0.01`);
     res.json({ ok: true, n: r?.n || 0 });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo comprobar", n: 0 }); }
 });
@@ -6585,7 +6661,7 @@ app.get("/api/facturas/lineas/paquetes", requireAuth(["direccion", "contabilidad
 app.post("/api/facturas/lineas/recuadrar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const antes = await dbGet(`${SQL_RECUADRE}
-      SELECT count(*)::int AS n FROM cand WHERE f >= 2 AND abs(f - round(f)) < 0.01`);
+      SELECT count(*)::int AS n FROM cand WHERE f >= 2 AND contenido = round(f) AND abs(f - round(f)) < 0.01`);
     await dbRun(`${SQL_RECUADRE}
       UPDATE factura_lineas l
          SET cantidad = c.cantidad * round(c.f),
@@ -6593,9 +6669,9 @@ app.post("/api/facturas/lineas/recuadrar", requireAuth(["direccion", "contabilid
              -- La unidad de la factura («PACK») deja de valer: eran 3 packs, ahora son 450
              -- unidades, y «450 PACK» sería peor que no decir nada.
              unidad = 'ud',
-             precio_unitario = round(l.importe / (c.cantidad * round(c.f)), 2)
+             precio_unitario = round(l.importe / (c.cantidad * round(c.f)), 6)
         FROM cand c
-       WHERE l.id = c.id AND c.f >= 2 AND abs(c.f - round(c.f)) < 0.01`);
+       WHERE l.id = c.id AND c.f >= 2 AND c.contenido = round(c.f) AND abs(c.f - round(c.f)) < 0.01`);
     res.json({ ok: true, arregladas: antes?.n || 0 });
   } catch (e) {
     console.error("[facturas] recuadrar:", e.message);
@@ -6669,7 +6745,7 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ ok: false, error: "Falta la línea" });
     const l = await dbGet(
-      `SELECT l.id, l.cantidad::float AS cantidad, l.precio_unitario::float AS precio_unitario,
+      `SELECT l.id, l.unidad, l.descripcion, l.factor_unidad, l.cantidad::float AS cantidad, l.precio_unitario::float AS precio_unitario,
               l.importe::float AS importe, l.clave, f.id AS factura_id, f.proveedor, f.local,
               f.base_imponible::float AS base_imponible
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id WHERE l.id = ?`, [id]);
@@ -6677,6 +6753,9 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
     if (!puedeAccederLocal(req, l.local)) return res.status(403).json({ ok: false, error: "No puedes tocar ese establecimiento" });
 
     const num = (v) => { if (v === undefined || v === null || v === "") return null; const n = Number(String(v).replace(",", ".")); return Number.isFinite(n) ? n : null; };
+    for (const campo of ['cantidad','importe','precio_unitario']) {
+      if (req.body?.[campo] !== undefined && (typeof req.body[campo] === 'boolean' || num(req.body[campo]) == null)) return res.status(400).json({ok:false,error:'Introduce un número válido; un dato vacío no confirma una corrección.'});
+    }
     const cantidad = num(req.body?.cantidad) ?? l.cantidad;
     const unidad = req.body?.unidad !== undefined ? (String(req.body.unidad || "").trim().slice(0, 20) || null) : undefined;
     const importePedido = num(req.body?.importe);
@@ -6697,22 +6776,23 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
     let importe = l.importe, precio = l.precio_unitario;
     if (importePedido != null) {
       importe = importePedido;
-      precio = cantidad ? Math.round((importe / cantidad) * 100) / 100 : precio;
+      precio = cantidad ? Math.round((importe / cantidad) * 1e6) / 1e6 : precio;
     } else if (precioPedido != null) {
       precio = precioPedido;
       importe = cantidad != null ? Math.round(precio * cantidad * 100) / 100 : importe;
     } else if (importe != null && cantidad) {
-      precio = Math.round((importe / cantidad) * 100) / 100;
+      precio = Math.round((importe / cantidad) * 1e6) / 1e6;
     }
 
     const factor = l.cantidad ? cantidad / l.cantidad : null;
+    const dudosa = cantidad == null || precio == null || importe == null || !(unidad ?? l.unidad);
     await dbRun(
       `UPDATE factura_lineas SET cantidad = ?, precio_unitario = ?, importe = ?,
               ${unidad !== undefined ? "unidad = ?," : ""}
-              factor_unidad = ?, dudosa = FALSE WHERE id = ?`,
+              factor_unidad = ?, dudosa = ? WHERE id = ?`,
       unidad !== undefined
-        ? [cantidad, precio, importe, unidad, factor && factor > 1 && Number.isInteger(factor) ? factor : null, id]
-        : [cantidad, precio, importe, factor && factor > 1 && Number.isInteger(factor) ? factor : null, id]);
+        ? [cantidad, precio, importe, unidad, factor && factor > 1 && Number.isInteger(factor) ? factor : null, dudosa, id]
+        : [cantidad, precio, importe, factor && factor > 1 && Number.isInteger(factor) ? factor : null, dudosa, id]);
 
     // Las demás compras del MISMO producto al MISMO proveedor, con el mismo factor. Se guarda
     // el factor y no la cantidad: si un mes pidieron 5 packs y otro 8, la cantidad buena es
@@ -6720,22 +6800,24 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
     let tambien = 0;
     if (req.body?.aplicar_a_todas && factor && factor !== 1 && l.clave) {
       const otras = await dbAll(
-        `SELECT l.id FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
+        `SELECT l.id,l.descripcion,l.unidad,l.factor_unidad,f.local FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
           WHERE l.clave = ? AND f.proveedor = ? AND l.id <> ? AND l.cantidad > 0 AND l.importe IS NOT NULL`,
         [l.clave, l.proveedor, id]);
       for (const o of otras) {
+        if (!puedeAccederLocal(req,o.local) || !puedePropagarUnidad(l,o,factor)) continue;
         await dbRun(
           `UPDATE factura_lineas
               SET cantidad = round(cantidad * ?, 3),
                   ${unidad !== undefined ? "unidad = ?," : ""}
-                  precio_unitario = round(importe / (cantidad * ?), 2),
+                  precio_unitario = round(importe / (cantidad * ?), 6),
                   factor_unidad = ?
             WHERE id = ?`,
           unidad !== undefined
             ? [factor, unidad, factor, Number.isInteger(factor) && factor > 1 ? factor : null, o.id]
             : [factor, factor, Number.isInteger(factor) && factor > 1 ? factor : null, o.id]);
+        tambien++;
       }
-      tambien = otras.length;
+
     }
 
     const v = await recalcularCuadre(l.factura_id, l.base_imponible);
@@ -19349,20 +19431,34 @@ app.get("/api/inventario/sesion", requireAuth(INV_ROLES), async (req, res) => {
 
 // 5) Guardado automático de una cantidad contada (nunca negativa).
 app.post("/api/inventario/sesion/:id/linea", requireAuth(INV_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  const dbGet = async (sql, params=[]) => (await client.query(toPositional(sql),params)).rows[0];
+  const dbRun = dbGet;
+  let committed = false;
   try {
-    const sesion = await invSesionRow(req.params.id);
+    await client.query("BEGIN");
+    const sesion = await dbGet("SELECT * FROM inv_sesiones WHERE id=? FOR UPDATE", [req.params.id]);
     if (!sesion) return res.status(404).json({ ok: false, error: "Inventario no encontrado" });
     if (!puedeAccederLocal(req, sesion.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
     if (sesion.estado !== "en_curso") return res.status(409).json({ ok: false, error: "El inventario ya está finalizado" });
     const prod = await dbGet("SELECT id, proveedor_id FROM inv_productos WHERE id = ?", [req.body.producto_id]);
     if (!prod || prod.proveedor_id !== sesion.proveedor_id) return res.status(400).json({ ok: false, error: "Producto no válido para este inventario" });
-    const cantidad = invSanitizarCantidad(req.body.cantidad);
+    const raw = req.body.cantidad;
+    if (raw == null || String(raw).trim() === "") {
+      await dbRun("DELETE FROM inv_lineas WHERE sesion_id=? AND producto_id=?", [sesion.id, prod.id]);
+      await client.query("COMMIT"); committed = true;
+      return res.json({ok:true,cantidad:null});
+    }
+    if (typeof raw === "boolean" || !Number.isFinite(Number(raw)) || Number(raw)<0) return res.status(400).json({ok:false,error:"Introduce una cantidad válida, o deja vacío si todavía no has contado."});
+    const cantidad = Number(raw);
     await dbRun(
       `INSERT INTO inv_lineas (sesion_id, producto_id, cantidad, observacion, actualizado_en) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (sesion_id, producto_id) DO UPDATE SET cantidad = EXCLUDED.cantidad, observacion = EXCLUDED.observacion, actualizado_en = EXCLUDED.actualizado_en`,
       [sesion.id, prod.id, cantidad, req.body.observacion || null, new Date().toISOString()]);
+    await client.query("COMMIT"); committed = true;
     res.json({ ok: true, cantidad });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  finally { try { if(!committed) await client.query("ROLLBACK"); } finally { client.release(); } }
 });
 
 // 6) Revisión: contado vs. necesario, diferencia y cantidad a pedir. No modifica la sesión.
@@ -19384,16 +19480,23 @@ app.get("/api/inventario/sesion/:id/revision", requireAuth(INV_ROLES), async (re
 // 7) Generar propuesta de pedido (DRAFT) desde el inventario. Idempotente: si ya existe un
 // pedido no cancelado para esta sesión, lo devuelve (evita duplicados). Finaliza la sesión.
 app.post("/api/inventario/pedido", requireAuth(INV_ROLES), async (req, res) => {
+  const client = await pool.connect();
+  const dbGet = async (sql, params=[]) => (await client.query(toPositional(sql),params)).rows[0];
+  const dbRun = dbGet;
+  const dbAll = async (sql, params=[]) => (await client.query(toPositional(sql),params)).rows;
+  let committed = false;
   try {
-    const sesion = await invSesionRow(req.body.sesion_id);
+    await client.query("BEGIN");
+    const sesion = await dbGet("SELECT * FROM inv_sesiones WHERE id=? FOR UPDATE", [req.body.sesion_id]);
     if (!sesion) return res.status(404).json({ ok: false, error: "Inventario no encontrado" });
     if (!puedeAccederLocal(req, sesion.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este local" });
     const existente = await dbGet("SELECT id FROM inv_pedidos WHERE sesion_id = ? AND estado <> 'CANCELLED' ORDER BY id DESC LIMIT 1", [sesion.id]);
     if (existente) return res.json({ ok: true, id: existente.id, existente: true });
-    const productos = await invProductosDe(sesion.proveedor_id, true);
+    const productos = await dbAll("SELECT * FROM inv_productos WHERE proveedor_id=? AND activo=TRUE ORDER BY orden,id",[sesion.proveedor_id]);
     const lineasCont = await dbAll("SELECT producto_id, cantidad FROM inv_lineas WHERE sesion_id = ?", [sesion.id]);
     const cant = {}; for (const l of (lineasCont || [])) cant[l.producto_id] = Number(l.cantidad);
     const revision = invConstruirRevision(productos, cant, hoyMMDD());
+    if (revision.some(r=>r.pendiente)) return res.status(409).json({ok:false,error:"Quedan productos sin contar. Completa el inventario antes de generar el pedido."});
     const lineas = invLineasPedido(revision);
     if (!lineas.length) return res.status(400).json({ ok: false, error: "No hay nada que pedir (todo cubierto)" });
     const now = new Date().toISOString();
@@ -19404,8 +19507,10 @@ app.post("/api/inventario/pedido", requireAuth(INV_ROLES), async (req, res) => {
         [ped.id, l.producto_id, l.nombre, l.unidad, l.stock_contado, l.stock_necesario, l.cantidad_sugerida, l.cantidad_final, l.observacion]);
     }
     if (sesion.estado === "en_curso") await dbRun("UPDATE inv_sesiones SET estado = 'finalizado', finalizado_en = ? WHERE id = ?", [now, sesion.id]);
+    await client.query("COMMIT"); committed = true;
     res.json({ ok: true, id: ped.id });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  } catch (e) { res.status(500).json({ ok: false, error: "No se pudo guardar el pedido completo. Vuelve a intentarlo." }); }
+  finally { try { if(!committed) await client.query("ROLLBACK"); } finally { client.release(); } }
 });
 
 // 8) Pedidos (historial) del local + detalle + edición de borrador y cambio de estado.
@@ -24947,6 +25052,8 @@ const server = app.listen(PORT, async () => {
   setTimeout(pollGmail, 30 * 1000);
   setInterval(pollGmail, 5 * 60 * 1000);
   // Ingesta por Drive (carpeta vigilada por local). Dormido si no hay carpetas configuradas.
+  setTimeout(() => recepcionFacturas.reintentar().catch(console.error), 20000);
+  setInterval(() => recepcionFacturas.reintentar().catch(console.error), 60000);
   setTimeout(pollDriveFacturas, 45 * 1000);
   setInterval(pollDriveFacturas, 5 * 60 * 1000);
   // Cola de reintentos de volcado a Sheets: reproyecta desde la BD lo que quedó sin sincronizar.

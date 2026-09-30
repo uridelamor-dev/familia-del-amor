@@ -96,27 +96,22 @@ export function localPorPistaTexto(texto, locales) {
 export function sugerirLocalPendiente({ pendiente = {}, locales = [], historial = {} } = {}) {
   const nula = { local: null, confianza: null, motivo: "" };
 
-  // 1) CIF del receptor → un único local del ERP. Señal más fuerte.
-  const porCif = localesPorCif(pendiente.nif_receptor, locales);
-  if (porCif.length === 1) return { local: porCif[0].local, confianza: "alta", motivo: "CIF del receptor" };
-
-  // 2) Empresa receptora (por nombre del receptor o empresa ya detectada) con un único local.
+  // El receptor fiscal restringe candidatos antes de usar pistas o historial.
+  const nif = normalizarNif(pendiente.nif_receptor);
+  let candidatos = nif ? localesPorCif(nif, locales) : locales;
+  if (nif && !candidatos.length) return {...nula, motivo: "CIF receptor no configurado: revisar empresa"};
+  if (nif && candidatos.length === 1) return {local:candidatos[0].local, confianza:"alta", motivo:"CIF del receptor"};
   for (const nombre of [pendiente.nombre_receptor, pendiente.empresa_detectada]) {
-    const porEmp = localesPorEmpresa(nombre, locales);
-    if (porEmp.length === 1) return { local: porEmp[0].local, confianza: "alta", motivo: "Empresa receptora" };
+    const encontrados = localesPorEmpresa(nombre, candidatos);
+    if (encontrados.length) { candidatos = encontrados; break; }
   }
-
-  // 3) Local indicado en la factura: el nombre del establecimiento aparece en el texto del cliente
-  //    (p. ej. "(TAPETA LLORET)") o en la dirección. Desambigua cuando la empresa/CIF es compartida.
-  const pista = localPorPistaTexto([pendiente.local_receptor, pendiente.nombre_receptor].filter(Boolean).join(" "), locales);
-  if (pista) return { local: pista, confianza: "alta", motivo: "Local indicado en la factura" };
-
-  // 3) Proveedor habitual: si SIEMPRE se ha asignado al mismo local, proponerlo.
+  if (candidatos.length === 1 && candidatos !== locales) return {local:candidatos[0].local, confianza:"alta", motivo:"Empresa receptora"};
+  const pista = localPorPistaTexto([pendiente.local_receptor, pendiente.nombre_receptor].filter(Boolean).join(" "), candidatos);
+  if (pista) return {local:pista, confianza:"alta", motivo:"Local indicado en la factura"};
   const h = historial[normalizarTexto(pendiente.proveedor)];
-  if (h && h.unico && h.top) {
-    const local = resolverLocalERP(h.top, locales);
-    if (local) return { local, confianza: h.total >= 2 ? "alta" : "media", motivo: "Proveedor habitual" };
+  if (h?.unico && h.top) {
+    const local = resolverLocalERP(h.top, candidatos);
+    if (candidatos.some(c=>c.local === local)) return {local, confianza:"media", motivo:"Proveedor habitual: confirmar establecimiento"};
   }
-
   return nula;
 }

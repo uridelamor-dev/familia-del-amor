@@ -57,13 +57,15 @@ export function cantidadAPedir(necesario, contado) {
 export function construirRevision(productos, cantidades, hoy = null) {
   const map = (cantidades && typeof cantidades === "object") ? cantidades : {};
   return (Array.isArray(productos) ? productos : []).map((p) => {
-    const contado = sanitizarCantidad(map[p.id]);
+    const valor = map[p.id];
+    const pendiente = valor == null || String(valor).trim() === "" || !Number.isFinite(Number(valor)) || Number(valor) < 0;
+    const contado = pendiente ? null : Number(valor);
     const necesario = stockNecesario(p, hoy);
-    const sugerido = cantidadAPedir(necesario, contado);
+    const sugerido = pendiente ? null : cantidadAPedir(necesario, contado);
     return {
       producto_id: p.id, nombre: p.nombre, unidad: p.unidad,
-      contado, necesario, diferencia: necesario - contado, sugerido,
-      minimo: num(p.stock_minimo), bajoMinimo: bajoMinimo(p, contado),
+      contado, necesario, pendiente, diferencia: pendiente ? null : necesario - contado, sugerido,
+      minimo: num(p.stock_minimo), bajoMinimo: !pendiente && bajoMinimo(p, contado),
     };
   });
 }
