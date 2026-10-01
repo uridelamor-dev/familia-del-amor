@@ -1,5 +1,6 @@
 import { SQL_CANJES, filtrarCanjes, resumenCanjes, destinatariosCanjes } from "./src/modules/fidelizacion/actividad-canjes.js";
 import { EMAIL_SCHEMA, validarCorreo, enviarPruebaCorreo, configuracionCorreo, consultarDominioResend } from "./src/modules/campaigns/email.js";
+import { ENVIOS_SCHEMA, destinatariosCorreo, validarSeleccionCorreo, prepararCorreoResend, confirmarCorreoResend } from "./src/modules/campaigns/email-envios.js";
 import { FICHA_COMERCIAL_SCHEMA, validarFichaComercial } from "./src/modules/facturas/ficha-comercial.js";
 import { puedePropagarUnidad } from "./src/modules/facturas/correccion-unidades.js";
 import { RECEPCION_SCHEMA, crearRecepcion, listarPaginas } from "./src/modules/facturas/recepcion.js";
@@ -1736,6 +1737,7 @@ async function initDB() {
       )
     `);
     await client.query(EMAIL_SCHEMA);
+    await client.query(ENVIOS_SCHEMA);
     // Ampliación de campañas (multicanal + estados + programación). Aditivo.
     for (const col of [
       "canal TEXT DEFAULT 'whatsapp'", "estado TEXT DEFAULT 'enviada'", "programada_para TEXT",
@@ -11832,6 +11834,105 @@ app.get("/api/promos/actividad/destinatarios", requireAuth(["direccion","marketi
   } catch(e) {res.status(500).json({ok:false,error:"No se pudieron preparar los destinatarios"});}
 });
 
+// Correo individual y por filtros: audiencia calculada en servidor, nunca recibida del navegador.
+async function audienciaCorreo(req, seleccion) {
+  const s=validarSeleccionCorreo(seleccion);
+  const todos=await contactosGeograficos({});
+  let elegidos;
+  if(s.tipo==='cliente') elegidos=todos.filter(c=>String(c.telefono||'').replace(/\D/g,'').slice(-9)===s.telefono);
+  else if(s.tipo==='clientes') elegidos=await contactosGeograficos(s.filtros);
+  else {
+    const {rows,limitado}=await leerActividadCanjes(req);
+    if(limitado) throw Error('El historial está incompleto; reduce el ámbito antes de preparar un correo');
+    const tels=new Set(filtrarCanjes(rows,s.filtros).map(c=>String(c.telefono||'').replace(/\D/g,'').slice(-9)).filter(Boolean));
+    elegidos=todos.filter(c=>tels.has(String(c.telefono||'').replace(/\D/g,'').slice(-9)));
+  }
+  return {...destinatariosCorreo(elegidos,todos),seleccion:s};
+}
+async function correosPermitidos() {
+  return new Set(destinatariosCorreo(await contactosGeograficos({})).data.map(c=>c.correo));
+}
+const CORREO_ID=/^[a-f0-9-]{36}$/i;
+app.post('/api/correo/destinatarios',requireAuth(['direccion','marketing']),async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  try {res.json({ok:true,...await audienciaCorreo(req,req.body.seleccion)});}
+  catch(e){res.status(400).json({ok:false,error:e.message});}
+});
+app.post('/api/correo/preparar',requireAuth(['direccion','marketing']),async(req,res)=>{
+  try {
+    const {asunto,mensaje}=validarCorreo(req.body);
+    if(!CORREO_ID.test(req.body.id||'')) return res.status(400).json({ok:false,error:'Identificador no válido'});
+    const previo=await dbGet('SELECT id,autor FROM correo_envios WHERE id=?',[req.body.id]);
+    if(previo) return previo.autor===req.user.id ? res.json({ok:true,id:previo.id}) : res.status(409).json({ok:false,error:'Identificador en uso'});
+    const a=await audienciaCorreo(req,req.body.seleccion);
+    if(!a.data.length) throw Error('No hay destinatarios con email autorizado');
+    if(a.data.length>1000) throw Error('Prepara grupos de hasta 1.000 direcciones. El plan gratuito de Resend puede imponer un límite inferior.');
+    const c=await consultarDominioResend();
+    if(!c.dominio_verificado) throw Error('Resend todavía no está disponible');
+    await dbRun(`INSERT INTO correo_envios(id,autor,asunto,mensaje,seleccion,destinatarios) VALUES(?,?,?,?,?::jsonb,?::jsonb) ON CONFLICT(id) DO NOTHING`,
+      [req.body.id,req.user.id,asunto,mensaje,JSON.stringify(a.seleccion),JSON.stringify(a.data)]);
+    res.json({ok:true,id:req.body.id});
+    procesarCorreosPendientes().catch(()=>{});
+  }catch(e){res.status(400).json({ok:false,error:e.message});}
+});
+app.get('/api/correo/envios',requireAuth(['direccion','marketing']),async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  try {res.json({ok:true,data:await dbAll(`SELECT id,asunto,estado,creado_en,error,procesados,excluidos,jsonb_array_length(destinatarios) AS destinatarios FROM correo_envios WHERE autor=? ORDER BY creado_en DESC LIMIT 30`,[req.user.id])});}
+  catch {res.status(500).json({ok:false,error:'No se pudo leer el historial de correo'});}
+});
+app.get('/api/correo/envios/:id',requireAuth(['direccion','marketing']),async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  if(!CORREO_ID.test(req.params.id)) return res.sendStatus(404);
+  try {
+    const row=await dbGet('SELECT * FROM correo_envios WHERE id=? AND autor=?',[req.params.id,req.user.id]);
+    if(!row) return res.sendStatus(404);
+    res.json({ok:true,data:row});
+  }catch{res.status(500).json({ok:false,error:'No se pudo consultar el correo'});}
+});
+app.post('/api/correo/envios/:id/enviar',requireAuth(['direccion','marketing']),async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  if(!CORREO_ID.test(req.params.id)) return res.sendStatus(404);
+  if(req.body.confirmar!==true) return res.status(400).json({ok:false,error:'Revisa y confirma el envío'});
+  let row;
+  try {
+    // Atomic transition: double-clicks and concurrent processes cannot send twice.
+    row=await dbRun(`UPDATE correo_envios SET estado='enviando',actualizado_en=NOW() WHERE id=? AND autor=? AND estado='preparado' AND actualizado_en>NOW()-INTERVAL '1 hour' RETURNING *`,[req.params.id,req.user.id]);
+    if(!row) return res.status(409).json({ok:false,error:'El correo ya se está enviando, ya se envió o la revisión ha caducado. Consulta el historial.'});
+    await confirmarCorreoResend(row,{permitidos:correosPermitidos});
+    await dbRun("UPDATE correo_envios SET estado='aceptado',actualizado_en=NOW() WHERE id=?",[row.id]);
+    res.json({ok:true,estado:'aceptado'});
+  } catch(e) {
+    if(row) await dbRun("UPDATE correo_envios SET estado='revisar',error=?,actualizado_en=NOW() WHERE id=?",[e.message,row.id]).catch(()=>{});
+    res.status(502).json({ok:false,error:(row ? 'No repitas el envío hasta revisar Resend. ' : '')+e.message});
+  }
+});
+let correoPreparando=false;
+async function procesarCorreosPendientes() {
+  if(correoPreparando || !process.env.RESEND_API_KEY) return;
+  correoPreparando=true;
+  let client,locked=false;
+  try {
+    client=await pool.connect();
+    locked=(await client.query('SELECT pg_try_advisory_lock(810021) AS locked')).rows[0].locked;
+    if(!locked) return;
+    // An interrupted preparation never sends. It can be recreated after review.
+    await client.query("UPDATE correo_envios SET estado='revisar',error='La preparación se interrumpió. No se envió este borrador.' WHERE estado='preparando'");
+    await client.query("UPDATE correo_envios SET estado='revisar',error='Envío sin confirmación. Comprueba Resend antes de repetir.' WHERE estado='enviando' AND actualizado_en<NOW()-INTERVAL '10 minutes'");
+    const job=(await client.query("UPDATE correo_envios SET estado='preparando',actualizado_en=NOW() WHERE id=(SELECT id FROM correo_envios WHERE estado='pendiente' ORDER BY creado_en LIMIT 1) RETURNING *")).rows[0];
+    if(!job) return;
+    const guardar=async cambios=>{
+      const keys=Object.keys(cambios);
+      const vals=keys.map(k=>k==='destinatarios'?JSON.stringify(cambios[k]):cambios[k]);
+      await client.query(`UPDATE correo_envios SET ${keys.map((k,i)=>k+'=$'+(i+1)+(k==='destinatarios'?'::jsonb':'')).join(',')},actualizado_en=NOW() WHERE id=$${keys.length+1}`,[...vals,job.id]);
+    };
+    try {await prepararCorreoResend(job,{guardar,permitidos:correosPermitidos});}
+    catch(e){await guardar({estado:'revisar',error:e.message});}
+  } finally {
+    if(client){if(locked) await client.query('SELECT pg_advisory_unlock(810021)').catch(()=>{});client.release();}
+    correoPreparando=false;
+  }
+}
+
 app.get("/api/correo/estado", requireAuth(["direccion","marketing"]), async(req,res) => {
   res.set("Cache-Control","no-store");
   try { res.json({ok:true,data:await consultarDominioResend()}); }
@@ -11856,14 +11957,11 @@ app.post("/api/correo/borradores", requireAuth(["direccion","marketing"]), async
   try { contenido=validarCorreo(req.body); }
   catch(e) { return res.status(400).json({ok:false,error:e.message}); }
   try {
-    const {rows,limitado}=await leerActividadCanjes(req);
-    if(limitado) return res.status(409).json({ok:false,error:"No se puede preparar una audiencia incompleta"});
-    const elegidos=filtrarCanjes(rows,contenido.filtros);
-    const contactos=await contactosGeograficos({});
-    const destinatarios=destinatariosCanjes(elegidos,contactos);
+    const audiencia=await audienciaCorreo(req,req.body.seleccion||{tipo:'canjes',filtros:contenido.filtros});
+    const destinatarios=audiencia.data;
     if(!destinatarios.length) return res.status(400).json({ok:false,error:"No hay destinatarios con email autorizado"});
     const row=await dbRun(`INSERT INTO campanas_email (autor,asunto,mensaje,filtros_json,destinatarios) VALUES (?,?,?,?,?) RETURNING id`,
-      [req.user.id,contenido.asunto,contenido.mensaje,JSON.stringify(contenido.filtros),destinatarios.length]);
+      [req.user.id,contenido.asunto,contenido.mensaje,JSON.stringify(audiencia.seleccion),destinatarios.length]);
     res.json({ok:true,id:row.id,estado:'borrador',destinatarios:destinatarios.length});
   } catch { res.status(500).json({ok:false,error:"No se pudo guardar el borrador"}); }
 });
@@ -13282,6 +13380,7 @@ app.post("/api/tarjeta/activa", requireAuth(["direccion"]), async (req, res) => 
     const activa = !!req.body?.activa;
     await setConfig("tarjeta_activa", activa ? "1" : "0");
     await cargarTarjetaActiva();
+  setInterval(() => { procesarCorreosPendientes().catch(() => {}); }, 20000);
     // Se deja constancia de quién y cuándo: encenderla saca páginas nuevas a la web pública,
     // y eso es de las cosas que luego nadie recuerda haber hecho.
     await setConfig("tarjeta_activa_por", `${req.user.username} · ${new Date().toISOString()}`);

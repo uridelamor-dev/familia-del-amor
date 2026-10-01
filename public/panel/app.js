@@ -2543,7 +2543,7 @@ function cliQS() { const qs = new URLSearchParams(cliGeografia()); if (CLIF.q) q
 // con los estilos en línea no había forma de darle — ganan a cualquier hoja.
 function cliChk(id, campo, label) { return `<label class="chk"><input type="checkbox" id="${id}" ${CLIF[campo] ? "checked" : ""}> ${esc(label)}</label>`; }
 function cliActionsBar(total) {
-  return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Preparar comunicación · ${num(total)} contactos filtrados</button><button class="btn" data-act="cli-masivo-email" disabled title="Se activa al configurar el email">Enviar email a los filtrados</button></div>`;
+  return `<div class="toolbar" style="margin-top:2px"><button class="btn primary" data-act="cli-masivo" ${total ? "" : "disabled"}>${ic("chat", 15)} Preparar comunicación · ${num(total)} contactos filtrados</button><button class="btn" data-act="cli-masivo-email" ${total ? "" : "disabled"}>Enviar email a los filtrados</button></div>`;
 }
 // Cumpleaños: "12 abr 1988 (38)". Sin fecha → "—". La edad solo si el año es plausible.
 function fechaNac(iso) {
@@ -2985,7 +2985,7 @@ async function cliFicha(tel) {
     <div class="cli-ficha-identity"><span class="pill">${estado}</span><span class="mut">${esc(d.poblacion || "Población sin indicar")}</span>
     <div class="cli-ficha-contact"><a href="tel:${esc(tel)}">${esc(tel)}</a>${d.correo ? `<a href="mailto:${esc(d.correo)}">${esc(d.correo)}</a>` : '<span class="mut">Email sin indicar</span>'}</div>
     ${d.nacimiento ? `<div class="t2">Cumpleaños: ${esc(fechaNac(d.nacimiento))}</div>` : ""}
-    <button class="btn sm" id="fichaWa">Escribir por WhatsApp</button></div>
+    <div class="toolbar"><button class="btn sm" id="fichaWa">Escribir por WhatsApp</button><button class="btn sm" id="fichaEmail">Enviar correo</button></div></div>
     ${d.carnet && USER.rol === "direccion" ? '<button class="btn" id="fichaConsumo">Ver tickets y consumo</button>' : ""}<div id="fichaResumen" class="cli-ficha-metrics">${d.carnet ? 'Consultando actividad del carné…' : '<span class="mut">Sin carné vinculado: no hay actividad de fidelización disponible.</span>'}</div>
     ${d.carnet ? fold("Actividad del carné", "Puntos y consumo", '<div id="fichaCarnetActividad">Cargando…</div><button class="btn sm" id="fichaReintentar" hidden>Reintentar</button>') : ""}
     ${proxima ? `<div class="card cli-next-reserva"><span class="t2">Próxima reserva registrada</span><b>${fecha(proxima.dia)} · ${esc(proxima.hora || "Hora sin indicar")}</b><span>${esc(proxima.local || "Local sin indicar")} · ${esc(String(proxima.personas ?? "—"))} personas</span></div>` : ""}
@@ -2997,6 +2997,7 @@ async function cliFicha(tel) {
   ov.classList.add("cli-ficha-modal");
   if (ov.querySelector("#fichaConsumo")) ov.querySelector("#fichaConsumo").onclick = () => { ov.remove(); fidFacturas(null,d.carnet.id); };
   ov.querySelector("#fichaWa").onclick = () => { ov.remove(); cliWa(tel,nombre); };
+  ov.querySelector("#fichaEmail").onclick = () => correoEditor({tipo:"cliente",telefono:tel});
   const editor = ov.querySelector("#fichaPermisosEditor"), editar = ov.querySelector("#fichaEditarPermisos");
   editar.onclick = () => { editor.hidden = false; editar.hidden = true; };
   ov.querySelector("#fichaCancelarPermisos").onclick = () => {
@@ -15063,22 +15064,72 @@ function promoTablaCanjes() {
     <button class="btn" data-act="canjes-correo" ${!rows.length || info.limitado ? 'disabled':''}>Preparar correo para estos clientes</button>
     <div class="card p0" style="margin-top:16px"><div class="tw"><table class="tbl"><thead><tr><th>Cuándo</th><th>Promoción</th><th>Cliente</th><th>Local</th><th>Origen</th><th></th></tr></thead><tbody>${rows.map(c=>`<tr><td>${esc(c.epoch_ms ? new Date(Number(c.epoch_ms)).toLocaleString('es-ES',{timeZone:'Europe/Madrid'}) : c.canjeado_en||'')}</td><td>${esc(c.promocion||'Sin nombre')}</td><td>${c.telefono?`<button class="linkbtn" data-act="canje-cliente" data-tel="${esc(c.telefono)}">${esc(c.titular||'Ver cliente')}</button>`:esc(c.titular||'Sin cliente identificado')}</td><td>${esc(c.local||'')}</td><td>${esc(c.origen||'Cupón')}</td><td>${c.factura_id && USER.rol==='direccion'?`<button class="btn sm" data-act="canje-ticket" data-local="${esc(c.local)}">Tickets del local</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6">No hay canjes con estos filtros.</td></tr>'}</tbody></table></div></div>`;
 }
-async function canjesCorreo() {
+async function canjesCorreo() { return correoEditor({tipo:'canjes',filtros:{...CANJES_FILTRO}}); }
+async function correoEditor(seleccion) {
   try {
-    const j=await apiRaw('/api/promos/actividad/destinatarios?'+canjesQS());
-    const estado=await apiRaw('/api/correo/estado').catch(()=>({data:{}}));
-    const historial=await apiRaw('/api/correo/borradores').catch(()=>({data:[]}));
-    const filtroCorreo={...CANJES_FILTRO};
-    const ov=modal('Preparar correo',`<p><b>${j.data.length} direcciones únicas autorizadas</b> de ${j.clientes} clientes identificados. Se excluyen bajas y contactos sin email autorizado.</p><p class="t2">Guarda una campaña para revisarla antes de enviar. Resend: ${estado.data?.dominio_verificado?'dominio verificado':'configuración pendiente'}. El envío a clientes todavía no está habilitado.</p><p class="t2">La prueba se enviará únicamente a marketing@la-tapeta.com.</p><label style="display:block">Recuperar borrador<select id="canjeRecuperar" style="display:block;width:100%;margin-top:6px"><option value="">Nuevo mensaje</option>${(historial.data||[]).map(b=>`<option value="${b.id}">${esc(b.asunto)} · ${b.destinatarios} destinatarios al guardar</option>`).join('')}</select></label><label style="display:block;margin:16px 0">Asunto<input style="display:block;width:100%;margin-top:6px" id="canjeAsunto" value="Gracias por venir a desayunar con nosotros"></label><label style="display:block;margin:16px 0">Mensaje<textarea style="display:block;width:100%;margin-top:6px" id="canjeMensaje" rows="6">Gracias por acompañarnos. Esperamos que hayas disfrutado del desayuno y nos encantará volver a verte.</textarea></label><div class="toolbar"><button class="btn" id="canjeDesc">Descargar destinatarios CSV</button><button class="btn" id="canjeBorrador">Descargar texto</button><button class="btn" id="canjePrueba" ${estado.data?.prueba_habilitada && estado.data?.dominio_verificado?'':'disabled'}>Enviar prueba a Marketing</button><button class="btn primary" id="canjeGuardar">Guardar campaña</button></div>`);
-    ov.querySelector('#canjeRecuperar').onchange=e=>{const b=(historial.data||[]).find(x=>String(x.id)===e.target.value);if(b){ov.querySelector('#canjeAsunto').value=b.asunto;ov.querySelector('#canjeMensaje').value=b.mensaje;toast('Texto recuperado. Se mantienen los destinatarios de los filtros actuales.');}};
-    ov.querySelector('#canjePrueba').onclick=async()=>{const btn=ov.querySelector('#canjePrueba');btn.disabled=true;try{await apiRaw('/api/correo/prueba',{method:'POST',body:JSON.stringify({asunto:ov.querySelector('#canjeAsunto').value,mensaje:ov.querySelector('#canjeMensaje').value})});toast('Resend ha aceptado la prueba para marketing@la-tapeta.com. Revisa la bandeja de entrada.');}catch(e){toast(e.message);}finally{btn.disabled=false;}};
-    ov.querySelector('#canjeGuardar').disabled=!j.data.length;
-    ov.querySelector('#canjeGuardar').onclick=async()=>{const btn=ov.querySelector('#canjeGuardar');btn.disabled=true;try{const r=await apiRaw('/api/correo/borradores',{method:'POST',body:JSON.stringify({asunto:ov.querySelector('#canjeAsunto').value,mensaje:ov.querySelector('#canjeMensaje').value,filtros:filtroCorreo})});toast('Campaña guardada con '+r.destinatarios+' destinatarios. No se ha enviado.');}catch(e){toast(e.message);}finally{btn.disabled=false;}};
-    const descargar=(nombre,texto,tipo)=>{const url=URL.createObjectURL(new Blob([texto],{type:tipo})),a=document.createElement('a');a.href=url;a.download=nombre;a.click();URL.revokeObjectURL(url);};
-    ov.querySelector('#canjeDesc').disabled=!j.data.length;
-    ov.querySelector('#canjeDesc').onclick=()=>{const csv=v=>'"'+String(v||'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';descargar('destinatarios-canjes.csv','\ufeffNombre,Email\r\n'+j.data.map(c=>[csv(c.nombre),csv(c.correo)].join(',')).join('\r\n'),'text/csv;charset=utf-8');};
-    ov.querySelector('#canjeBorrador').onclick=()=>descargar('correo-canjes.txt',ov.querySelector('#canjeAsunto').value+'\n\n'+ov.querySelector('#canjeMensaje').value,'text/plain;charset=utf-8');
-  } catch(e){toast(e.message);}
+    const j=await apiSend('POST','/api/correo/destinatarios',{seleccion});
+    const estado=await apiRaw('/api/correo/estado');
+    const historial=await apiRaw('/api/correo/envios');
+    const borradores=await apiRaw('/api/correo/borradores');
+    const r=j.resumen, config=estado.data||{};
+    const ov=modal(seleccion.tipo==='cliente'?'Enviar correo al cliente':'Correo a los clientes filtrados',`
+      <div id="correoComponer"><p><b>${j.data.length} ${j.data.length===1?'dirección autorizada':'direcciones autorizadas'}</b> · ${r.seleccionados} contactos seleccionados</p>
+      <p class="t2">Excluidos: ${r.baja} bajas · ${r.sin_permiso} sin permiso de email · ${r.sin_email} sin email válido · ${r.duplicados} duplicados.</p>
+      <p class="t2">De: ${esc(config.remitente||'Pendiente de configurar')}<br>Respuestas: marketing@la-tapeta.com</p>
+      <details class="card fold"><summary>Ver destinatarios</summary><div style="max-height:150px;overflow:auto;padding:12px">${j.data.map(c=>`<div>${esc(c.nombre)} · ${esc(c.correo)}</div>`).join('')||'No hay destinatarios autorizados.'}</div></details>
+      <label style="display:block;margin:14px 0">Recuperar borrador<select id="correoRecuperar"><option value="">Nuevo mensaje</option>${(borradores.data||[]).map(b=>`<option value="${b.id}">${esc(b.asunto)}</option>`).join('')}</select></label>
+      <label style="display:block;margin:14px 0">Asunto<input id="correoAsunto" maxlength="200" style="display:block;width:100%;margin-top:6px"></label>
+      <label style="display:block;margin:14px 0">Mensaje<textarea id="correoMensaje" rows="6" maxlength="20000" style="display:block;width:100%;margin-top:6px"></textarea></label>
+      <p class="t2">Cada persona recibe su propio correo, con enlace de baja. La prueba solo se envía a Marketing. Al revisar se comprobarán también las bajas de Resend; no se envía todavía.</p>
+      <div class="toolbar"><button class="btn" id="correoGuardar">Guardar borrador</button><button class="btn" id="correoPrueba" ${config.prueba_habilitada&&config.dominio_verificado?'':'disabled'}>Enviar prueba a Marketing</button><button class="btn primary" id="correoPreparar" ${j.data.length&&config.dominio_verificado?'':'disabled'}>Revisar antes de enviar</button></div>
+      </div><div id="correoProceso" role="status" aria-live="polite" style="margin-top:16px"></div>
+      <details class="card fold" style="margin-top:16px"><summary>Correos recientes</summary><div style="padding:12px">${(historial.data||[]).map(c=>`<div class="row"><span>${esc(c.asunto)}<span class="t2" style="display:block">${esc(c.estado)} · ${c.destinatarios} direcciones</span></span><button class="btn sm" data-correo-ver="${esc(c.id)}">Ver</button></div>`).join('')||'Todavía no hay correos preparados.'}</div></details>`);
+    ov.querySelector('.modal').style.width='min(720px, calc(100vw - 32px))';
+    const contenido=()=>({asunto:ov.querySelector('#correoAsunto').value,mensaje:ov.querySelector('#correoMensaje').value});
+    ov.querySelector('#correoRecuperar').onchange=e=>{const b=(borradores.data||[]).find(b=>String(b.id)===e.target.value);if(b){ov.querySelector('#correoAsunto').value=b.asunto;ov.querySelector('#correoMensaje').value=b.mensaje;toast('Texto recuperado. Se mantienen los destinatarios actuales.');}};
+    ov.querySelector('#correoGuardar').onclick=async e=>{
+      e.target.disabled=true;
+      try {await apiSend('POST','/api/correo/borradores',{...contenido(),seleccion});toast('Borrador guardado. No se ha enviado.');}
+      catch(err){toast(err.message);}finally{e.target.disabled=false;}
+    };
+    ov.querySelector('#correoPrueba').onclick=async e=>{
+      e.target.disabled=true;
+      try {await apiSend('POST','/api/correo/prueba',contenido());toast('Resend ha aceptado la prueba para marketing@la-tapeta.com. Revisa su bandeja de entrada.');}
+      catch(err){toast(err.message);}finally{e.target.disabled=false;}
+    };
+    let requestId=null, requestContent=null;
+    ov.querySelector('#correoPreparar').onclick=async e=>{
+      e.target.disabled=true;
+      const body={...contenido(),seleccion};
+      const serial=JSON.stringify(body);
+      if(requestContent!==serial){requestId=crypto.randomUUID();requestContent=serial;}
+      try {const p=await apiSend('POST','/api/correo/preparar',{...body,id:requestId});await verCorreo(p.id);}
+      catch(err){toast(err.message);}finally{e.target.disabled=false;}
+    };
+    let viendo=null;
+    ov.querySelectorAll('[data-correo-ver]').forEach(btn=>btn.onclick=()=>verCorreo(btn.dataset.correoVer).catch(e=>toast(e.message)));
+    async function verCorreo(id) {
+      viendo=id;
+      const target=ov.querySelector('#correoProceso');
+      const p=await apiRaw('/api/correo/envios/'+encodeURIComponent(id));
+      if(!ov.isConnected || viendo!==id) return;
+      const c=p.data;
+      if(['pendiente','preparando'].includes(c.estado)) {
+        target.textContent=`Comprobando destinatarios: ${c.procesados} de ${c.destinatarios.length}. Puedes cerrar esta ventana y volver desde Correos recientes. Todavía no se ha enviado.`;
+        setTimeout(()=>{if(ov.isConnected&&viendo===id) verCorreo(id).catch(err=>{target.textContent=err.message;});},3000);
+        return;
+      }
+      ov.querySelector('#correoComponer').hidden=true;
+      target.innerHTML=`<button class="btn sm" id="correoVolver">Volver al editor</button><div class="card" style="margin-top:12px"><b>${esc(c.asunto)}</b><p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(c.mensaje)}</p><p><b>${c.destinatarios.length} ${c.destinatarios.length===1?'destinatario':'destinatarios'}</b>${c.excluidos?' · '+c.excluidos+' excluidos al comprobar las bajas':''}</p><details><summary>Ver lista definitiva</summary><div style="max-height:140px;overflow:auto">${c.destinatarios.map(d=>`<div>${esc(d.nombre)} · ${esc(d.correo)}</div>`).join('')}</div></details><p>${c.estado==='preparado'?'Listo para confirmar. Esta revisión caduca en una hora.':c.estado==='aceptado'?'Aceptado por Resend. No significa que todos lo hayan recibido; la entrega se consulta en Resend.':c.estado==='enviando'?'Envío en curso. No lo repitas.':esc(c.error||c.estado)}</p>${c.estado==='preparado'?'<button class="btn primary" id="correoConfirmar">Confirmar y enviar a '+c.destinatarios.length+(c.destinatarios.length===1?' destinatario':' destinatarios')+'</button>':''}</div>`;
+      target.querySelector('#correoVolver').onclick=()=>{viendo=null;ov.querySelector('#correoComponer').hidden=false;target.innerHTML='';};
+      const confirmar=target.querySelector('#correoConfirmar');
+      if(confirmar) confirmar.onclick=async()=>{
+        confirmar.disabled=true;
+        try {await apiSend('POST','/api/correo/envios/'+encodeURIComponent(id)+'/enviar',{confirmar:true});await verCorreo(id);}
+        catch(err){target.append(document.createTextNode(err.message));}
+      };
+    }
+  }catch(e){toast(e.message);}
 }
 
 function promoTablaQr() {
@@ -16498,6 +16549,7 @@ document.addEventListener("click", (e) => {
   else if (act === "cli-wa") cliWa(t.getAttribute("data-tel"), t.getAttribute("data-nombre"));
   else if (act === "cli-ficha") cliFicha(t.getAttribute("data-tel"));
   else if (act === "cli-masivo") cliMasivo();
+  else if (act === "cli-masivo-email") correoEditor({tipo:"clientes",filtros:filtrosClienteBody()});
   else if (act === "rev-filtrar") applyRevFilter();
   else if (act === "rev-more") loadMoreReviews();
   else if (act === "rev-vincular") revVincular();

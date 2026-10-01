@@ -47,7 +47,8 @@ export async function consultarDominioResend({env=process.env, fetcher=fetch}={}
  if (!r.ok) throw new Error('No se pudo comprobar el dominio en Resend');
  const d = await r.json();
  const domain = (config.remitente.match(/<([^<>]+)>$/)?.[1] || config.remitente).split('@')[1].toLowerCase();
- return {...config,dominio_verificado:d.status==='verified' && String(d.name).toLowerCase()===domain};
+ const verificado=d.status==='verified' && String(d.name).toLowerCase()===domain;
+ return {...config,dominio_verificado:verificado,envio_habilitado:verificado};
 }
 
 // El destino de prueba es fijo: ningún dato de clientes se transmite a Resend.
