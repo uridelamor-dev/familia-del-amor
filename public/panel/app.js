@@ -104,6 +104,7 @@ const NAV = [
     ["facturas", "Compras", "receipt", ["direccion", "contabilidad"]],
     // Productos va justo debajo de Compras y no dentro: sale de los mismos papeles, pero
     // contesta otra pregunta —qué entra y a cómo nos lo cobran— y se mira en otro momento.
+    ["proveedores", "Proveedores", "users", ["direccion", "contabilidad"]],
     ["productos", "Productos", "box", ["direccion", "contabilidad"]],
     ["inventarios", "Inventarios", "box", ["direccion", "encargado"]],
     ["analitica", "Analítica de ventas", "chart", ["direccion", "contabilidad"]],
@@ -132,8 +133,8 @@ const NAV = [
     ["usuarios", "Usuarios", "cog", ["direccion"]],
   ] },
 ];
-const TITLES = { contratacion: "Contratación", fidelizacion: "Programa de puntos", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", promos: "Promociones y puntos", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
-const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], fidelizacion: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], promos: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], contratacion: ["direccion", "rrhh"], pulso: ["direccion", "rrhh"], preguntas: ["direccion", "rrhh"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
+const TITLES = { contratacion: "Contratación", fidelizacion: "Programa de puntos", pulso: "Pulso del equipo", preguntas: "Preguntas del mes", subirfactura: "Subir factura", dashboard: "Dashboard", reservas: "Reservas", comunicados: "Comunicados", mantenimiento: "Incidencias", inventarios: "Inventarios", clientes: "Clientes", reviews: "Reseñas", campanas: "Campañas", promos: "Promociones y puntos", rrhh: "Equipo", horarios: "Horarios", fichajes: "Fichajes", facturas: "Compras", proveedores: "Proveedores", productos: "Productos", analitica: "Analítica de ventas", sara: "Sara", agora: "Ágora (TPV)", whatsapp: "WhatsApp", usuarios: "Usuarios", web: "Web" };
+const VIEW_ROLES = { subirfactura: ["encargado"], dashboard: ["direccion", "encargado", "contabilidad"], reservas: ["direccion", "encargado"], comunicados: ["direccion", "encargado"], mantenimiento: ["direccion", "encargado"], inventarios: ["direccion", "encargado"], clientes: ["direccion", "marketing"], fidelizacion: ["direccion", "marketing"], reviews: ["direccion", "encargado", "contabilidad", "marketing"], campanas: ["direccion", "marketing"], promos: ["direccion", "marketing"], rrhh: ["direccion", "rrhh", "encargado"], contratacion: ["direccion", "rrhh"], pulso: ["direccion", "rrhh"], preguntas: ["direccion", "rrhh"], horarios: ["direccion", "rrhh", "encargado"], fichajes: ["direccion", "rrhh", "encargado", "contabilidad"], facturas: ["direccion", "contabilidad"], proveedores: ["direccion", "contabilidad"], productos: ["direccion", "contabilidad"], analitica: ["direccion", "contabilidad"], sara: ["direccion", "marketing"], agora: ["direccion"], whatsapp: ["direccion", "encargado"], usuarios: ["direccion"], web: ["direccion", "marketing"] };
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
 const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "contratacion", "pulso", "horarios", "fichajes", "usuarios"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
@@ -143,7 +144,7 @@ function puedeVer(view) {
   if (!VIEW_ROLES[view]) return true;
   if (!VIEW_ROLES[view].includes(USER.rol)) return false;
   if (USER.rol === "direccion") return true;
-  if (Array.isArray(USER.modulos) && USER.modulos.length) return USER.modulos.includes(view);
+  if (Array.isArray(USER.modulos) && USER.modulos.length) return USER.modulos.includes(view === "proveedores" ? "facturas" : view);
   return true;
 }
 // Local al que queda fijado el usuario en la interfaz (encargado con local). null = sin restricción.
@@ -175,7 +176,7 @@ const CENTROS_FE = [{
 // —incluido el Dashboard, que mezcla gasto con reservas y juntarlo juntaría también las mesas.
 const AMBITO_POR_VISTA = {
   analitica: "ventas", agora: "ventas",
-  facturas: "compras", productos: "compras", subirfactura: "compras",
+  proveedores: "compras", facturas: "compras", productos: "compras", subirfactura: "compras",
   rrhh: "personal", horarios: "personal", fichajes: "personal",
   inventarios: "inventarios",
   // Estas dos se VEN juntas pero no se mezclan: cada reserva y cada reseña conserva su barra.
@@ -805,17 +806,18 @@ let DASH_LOCAL = "", SELECCION = [], COLLAPSED = false, PERIOD = "hoy", DASH_CON
  * semana» y en Productos es «qué compramos», que de entrada es TODO y se acota si hace falta.
  * Compartirlo obligaba a que una de las dos mintiera.
  */
-const GRUPO_PERIODO = { dashboard: "dashboard", facturas: "compras", productos: "compras" };
+const GRUPO_PERIODO = { dashboard: "dashboard", facturas: "compras", productos: "compras", proveedores: "compras" };
 const grupoPeriodo = (v) => GRUPO_PERIODO[v || CURRENT] || null;
 // «todo» = sin filtro de fechas. Es lo que se quiere al entrar en Compras y en Productos.
-let PERIODO_VISTA = { facturas: "todo", productos: "todo" };
+let PERIODO_VISTA = { facturas: "todo", productos: "todo", proveedores: "todo" };
+const PROV_RANGE = { from: "", to: "" };
 
 // Dónde vive el rango de cada pantalla: Compras filtra con FACF y Productos con COMP, que son
 // los mismos campos que usan sus filtros. Así la barra y el panel de filtros no se contradicen.
 function periodoVista(v) {
   const vista = v || CURRENT;
   if (grupoPeriodo(vista) !== "compras") return { p: PERIOD, from: DASH_RANGE.from || "", to: DASH_RANGE.to || "" };
-  const f = vista === "productos" ? COMP : FACF;
+  const f = vista === "proveedores" ? PROV_RANGE : vista === "productos" ? COMP : FACF;
   // El botón encendido se deduce del rango DE VERDAD, no de lo último que se pulsó: las fechas
   // también se pueden poner desde el panel de «Filtros», y la barra tiene que decir lo mismo.
   const guardado = PERIODO_VISTA[vista] || "todo";
@@ -825,7 +827,7 @@ function periodoVista(v) {
 function fijarPeriodoVista(p, from, to, label) {
   if (grupoPeriodo() !== "compras") { PERIOD = p; DASH_RANGE = { from, to, label }; return; }
   PERIODO_VISTA[CURRENT] = p;
-  const f = CURRENT === "productos" ? COMP : FACF;
+  const f = CURRENT === "proveedores" ? PROV_RANGE : CURRENT === "productos" ? COMP : FACF;
   f.from = from || ""; f.to = to || "";
 }
 // El selector de la barra, repintado solo. Cambiar las fechas desde el panel de «Filtros»
@@ -849,6 +851,7 @@ function recargarPorPeriodo() {
   if (CURRENT === "dashboard") return loadDashboard();
   if (CURRENT === "productos") return loadProductos();
   if (CURRENT === "facturas") return loadFacturas();
+  if (CURRENT === "proveedores") return loadProveedores();
 }
 
 /**
@@ -1125,6 +1128,7 @@ function openEstabMenu() {
         <span class="sdot ${activo ? "st-ok" : "st-off"}"></span>
         <span class="t1">${esc(nombreCortoLocal(l))}</span>
       </button>
+      ${USER.rol === "direccion" ? `<button class="iconbtn" data-act="estab-config" data-local="${esc(l)}" aria-label="Configuración de ${esc(nombreCortoLocal(l))}" style="background:none;border:0">⚙︎</button>` : ""}
       ${DASH_LOCAL === l && !viendoVarios() ? '<span class="pill brand">Actual</span>' : ""}
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink3);cursor:pointer" title="Juntar con otros establecimientos">
         <input type="checkbox" data-act="estab-marca" data-local="${esc(l)}" ${activo ? "checked" : ""}> juntar
@@ -2982,7 +2986,7 @@ async function cliFicha(tel) {
     <div class="cli-ficha-contact"><a href="tel:${esc(tel)}">${esc(tel)}</a>${d.correo ? `<a href="mailto:${esc(d.correo)}">${esc(d.correo)}</a>` : '<span class="mut">Email sin indicar</span>'}</div>
     ${d.nacimiento ? `<div class="t2">Cumpleaños: ${esc(fechaNac(d.nacimiento))}</div>` : ""}
     <button class="btn sm" id="fichaWa">Escribir por WhatsApp</button></div>
-    <div id="fichaResumen" class="cli-ficha-metrics">${d.carnet ? 'Consultando actividad del carné…' : '<span class="mut">Sin carné vinculado: no hay actividad de fidelización disponible.</span>'}</div>
+    ${d.carnet && USER.rol === "direccion" ? '<button class="btn" id="fichaConsumo">Ver tickets y consumo</button>' : ""}<div id="fichaResumen" class="cli-ficha-metrics">${d.carnet ? 'Consultando actividad del carné…' : '<span class="mut">Sin carné vinculado: no hay actividad de fidelización disponible.</span>'}</div>
     ${d.carnet ? fold("Actividad del carné", "Puntos y consumo", '<div id="fichaCarnetActividad">Cargando…</div><button class="btn sm" id="fichaReintentar" hidden>Reintentar</button>') : ""}
     ${proxima ? `<div class="card cli-next-reserva"><span class="t2">Próxima reserva registrada</span><b>${fecha(proxima.dia)} · ${esc(proxima.hora || "Hora sin indicar")}</b><span>${esc(proxima.local || "Local sin indicar")} · ${esc(String(proxima.personas ?? "—"))} personas</span></div>` : ""}
     ${fold("Reservas", String(reservas.length) + " registradas", '<p class="t2">Son reservas, no visitas confirmadas.</p>' + resv)}
@@ -2991,6 +2995,7 @@ async function cliFicha(tel) {
     ${cliFichaOrigen(d) ? fold("Origen del cliente", "Captación", cliFichaOrigen(d)) : ""}
   </div>`);
   ov.classList.add("cli-ficha-modal");
+  if (ov.querySelector("#fichaConsumo")) ov.querySelector("#fichaConsumo").onclick = () => { ov.remove(); fidFacturas(null,d.carnet.id); };
   ov.querySelector("#fichaWa").onclick = () => { ov.remove(); cliWa(tel,nombre); };
   const editor = ov.querySelector("#fichaPermisosEditor"), editar = ov.querySelector("#fichaEditarPermisos");
   editar.onclick = () => { editor.hidden = false; editar.hidden = true; };
@@ -7605,11 +7610,26 @@ const colorCategoriaFE = (c) => COLOR_CAT_FE[String(c || "").trim()] || "gris";
 // categorías sueltas: así el gasto va entero a un sitio y no hay que repartir nada.
 const parTxt = (p) => (p.subcategoria ? `${p.categoria} · ${p.subcategoria}` : p.categoria);
 
+async function loadProveedores() {
+  view.innerHTML = `<h1>Proveedores</h1><p class="mut">Datos, contactos y condiciones de suministro</p><div id="facCats">Cargando proveedores…</div><div id="facProvDup"></div>`;
+  await facCargarCategorias();
+  facProvDuplicados();
+}
+
 async function facCargarCategorias() {
   const caja = document.getElementById("facCats");
   if (!caja) return;
-  try { FCATS = await apiRaw("/api/facturas/categorias"); } catch { return; }
+  try { FCATS = await apiRaw("/api/facturas/categorias" + (CURRENT === "proveedores" ? "?" + new URLSearchParams(PROV_RANGE) : "")); } catch (e) { caja.innerHTML=errorCard(e.message); return; }
   pintarConservandoPliegues(caja, facCategoriasHtml());
+  if(CURRENT === "proveedores") {
+    const original=caja.querySelector('details');
+    const fold=document.createElement('div');fold.className='card';fold.innerHTML=original.innerHTML;original.replaceWith(fold);
+    const summary=fold.querySelector('summary');const heading=document.createElement('h3');heading.textContent=(!PROV_RANGE.from && !PROV_RANGE.to) ? 'Facturas y gasto · Todo el histórico' : 'Facturas y gasto · ' + (PROV_RANGE.from ? fechaCorta(PROV_RANGE.from) : 'Inicio') + ' – ' + (PROV_RANGE.to ? fechaCorta(PROV_RANGE.to) : 'Hoy');heading.style.padding='16px';summary.replaceWith(heading);
+    const intro=fold.querySelector("p"); if(intro)intro.remove();
+    const search=document.createElement("input"); search.type="search";search.placeholder="Buscar proveedor…";search.setAttribute("aria-label","Buscar proveedor");search.style.marginBottom="16px";
+    search.addEventListener("input",()=>caja.querySelectorAll("tbody tr").forEach(r=>r.hidden=!r.textContent.toLocaleLowerCase().includes(search.value.toLocaleLowerCase())));
+    caja.prepend(search);
+  }
 }
 
 // ── Proveedores repetidos ───────────────────────────────────────────────────
@@ -7681,11 +7701,11 @@ function facCategoriasHtml() {
     <td class="mut r tnum">${num(p.facturas)}</td>
     <td class="r tnum">${eur(p.gasto)}</td>
     <td>${p.categorias.length
-      ? p.categorias.map((c) => `<span class="pill cat" style="--cat:var(--cat-${esc(colorCategoriaFE(c.categoria))})">${esc(parTxt(c))}</span>`).join(" ")
-      : '<span class="pill bad">sin categoría</span>'}
+      ? p.categorias.map((c) => `<button type="button" class="pill cat prov-category" data-act="fac-cat-editar" data-prov="${esc(p.proveedor)}" aria-label="Cambiar categoría de ${esc(p.proveedor)}: ${esc(parTxt(c))}" style="--cat:var(--cat-${esc(colorCategoriaFE(c.categoria))})">${esc(parTxt(c))}</button>`).join(" ")
+      : `<button type="button" class="pill bad prov-category" data-act="fac-cat-editar" data-prov="${esc(p.proveedor)}">Asignar categoría</button>`}
       ${p.categorias.length && !p.categorias.some((c) => !CATS_SIN_LINEAS.has(c.categoria))
         ? '<div class="t2">gasto estructural · no se lee el detalle</div>' : ""}</td>
-    <td class="r"><button class="btn sm" data-act="fac-cat-editar" data-prov="${esc(p.proveedor)}">Cambiar</button>
+    <td class="r">
       <button class="btn sm" data-act="fac-somos" data-prov="${esc(p.proveedor)}" title="Esto no es un proveedor: somos nosotros">No es proveedor</button></td></tr>`;
 
   const sin = j.sinEtiquetar || 0;
@@ -7730,11 +7750,38 @@ function fpReglasHtml(j) {
     </div>`;
 }
 
-async function facProveedorFicha(nombre) {
+async function proveedorDetalle(nombre) {
+ let j;
+ try { j=await apiRaw("/api/facturas/proveedor-ficha?nombre="+encodeURIComponent(nombre)); }catch(e){return toast(e.message);}
+ const d=j.datos||{};
+ const field=(label,key,type="text")=>`<div class="field"><label>${label}<input type="${type}" data-pcampo="${key}" value="${esc(d[key]||"")}"></label></div>`;
+ const condicion=(c={})=>`<div class="card" data-condicion style="padding:14px;margin-bottom:12px"><div class="form-grid"><div class="field"><label>Local<select data-ck="local"><option value="">Elegir local</option>${visiblesFE(null,LOCALES).map(l=>`<option ${c.local===l?'selected':''} value="${esc(l)}">${esc(l)}</option>`).join('')}</select></label></div>${[['Días para pedir','dias_pedido'],['Hora límite','hora_limite'],['Días de entrega','dias_entrega'],['Plazo de entrega','plazo'],['Pedido mínimo (€)','pedido_minimo']].map(([lab,k])=>`<div class="field"><label>${lab}<input data-ck="${k}" type="${k==='hora_limite'?'time':'text'}" value="${esc(c[k]||'')}"></label></div>`).join('')}</div><button class="btn sm" data-quitar-cond>Quitar local</button></div>`;
+ const ov=modal(esc(nombre),`<div class="toolbar"><button class="btn" id="prDocs">Ver facturas</button><button class="btn" id="prProductos">Ver productos y precios</button></div><h3>Datos fiscales</h3><div class="form-grid">${field('Razón social','razon_social')}${field('Dirección fiscal','direccion')}</div><div id="prFiscalInline">Cargando NIF y condiciones de pago…</div><details class="prov-secondary"><summary>Contactos, entregas y notas <span>Ver detalles</span></summary><div class="prov-secondary-body"><h3>Contactos</h3>${[['Comercial','comercial'],['Administración','administracion'],['Reparto','reparto']].map(([lab,k])=>`<details class="card fold"><summary><h3>${lab}</h3><span>${esc(d['contacto_'+k]||'Sin contacto')}</span></summary><div class="form-grid" style="padding:16px">${field('Nombre','contacto_'+k)}${field('Teléfono','telefono_'+k,'tel')}${field('Correo','email_'+k,'email')}</div></details>`).join('')}<h3>Pedidos y entregas por local</h3><div id="prCond">${(d.condiciones||[]).map(condicion).join('')}</div><button class="btn" id="prAdd">Añadir local</button><div class="field" style="margin-top:16px"><label>Notas<textarea data-pcampo="notas">${esc(d.notas||'')}</textarea></label></div></div></details><div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="prSave">Guardar ficha</button></div>`);
+ ov.querySelector('.modal').classList.add('proveedor-modal');
+ ov.querySelector('.modal').style.width='min(760px,96vw)';
+ ov.querySelector('#prAdd').onclick=()=>ov.querySelector('#prCond').insertAdjacentHTML('beforeend',condicion());
+ ov.addEventListener('click',e=>{if(e.target.closest('[data-quitar-cond]'))e.target.closest('[data-condicion]').remove();});
+ await facProveedorFicha(nombre, ov.querySelector('#prFiscalInline'));
+ ov.querySelector('#prDocs').onclick=()=>{ov.remove();FACF.q=nombre;facTab('facturas',true);};
+ ov.querySelector('#prProductos').onclick=()=>{ov.remove();COMP.proveedor=nombre;go('productos');};
+ ov.querySelector('#prSave').onclick=async()=>{
+  const datos={}; ov.querySelectorAll('[data-pcampo]').forEach(el=>datos[el.dataset.pcampo]=el.value.trim());
+  datos.condiciones=[...ov.querySelectorAll('[data-condicion]')].map(el=>Object.fromEntries([...el.querySelectorAll('[data-ck]')].map(i=>[i.dataset.ck,i.value.trim()])));
+  const btn=ov.querySelector('#prSave');btn.disabled=true;
+  try {await apiSend('PUT','/api/facturas/proveedor-ficha',{nombre,version:j.version,datos});ov.remove();toast('Ficha del proveedor guardada');}catch(e){toast(e.message);btn.disabled=false;}
+ };
+}
+
+async function facProveedorFicha(nombre, inlineTarget = null) {
   let j;
   try { j = await apiRaw("/api/facturas/proveedor?nombre=" + encodeURIComponent(nombre)); } catch (e) { return toast(e.message); }
   const nifPrincipal = (j.nifs || [])[0];
-  const ov = modal("Proveedor", `
+  const renderFiscal = (title, html) => {
+    if (!inlineTarget) return modal(title, html);
+    inlineTarget.innerHTML = html;
+    return inlineTarget;
+  };
+  let ov = renderFiscal("Proveedor", `
     <div class="kpis4" style="margin:0 0 16px">
       <div class="kpi"><span>Facturas</span><b>${num(j.facturas || 0)}</b></div>
       <div class="kpi"><span>Gasto</span><b>${esc(eur(j.gasto || 0))}</b></div>
@@ -7798,7 +7845,29 @@ async function facProveedorFicha(nombre) {
     ${j.alias ? `<p class="mut" style="margin:8px 0 0;font-size:12.5px">Ya se corrigió antes: ${esc(j.alias.autor || "alguien")} lo dejó como «${esc(j.alias.proveedor)}».</p>` : ""}
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
       <button class="btn" data-close>Cerrar</button><button class="btn primary" id="fpOk">Guardar y aprender</button></div>`);
-  ov.querySelector(".modal").style.width = "min(560px, 96vw)";
+  if (!inlineTarget) ov.querySelector(".modal").style.width = "min(560px, 96vw)";
+  if (inlineTarget) {
+    ov.querySelector('.kpis4')?.remove();
+    ov.querySelector('#fpNombre').closest('.field').hidden = true;
+    ov.querySelectorAll('.field.full').forEach(el => { if (!el.textContent.trim() && !el.querySelector('input,select')) el.remove(); });
+    const nifField = ov.querySelector('#fpNif').closest('.field');
+    nifField.classList.remove('full');
+    nifField.querySelector('label').textContent = 'NIF';
+    for (const [id, label] of [['fpEmpresa','Condiciones para'],['fpModo','Forma de pago']]) {
+      const field = ov.querySelector('#'+id).closest('.field');
+      field.classList.remove('full');
+      field.querySelector('label').textContent = label;
+    }
+
+    ov.querySelectorAll(':scope > p').forEach(el => el.remove());
+    ov.querySelectorAll('[data-close]').forEach(el => el.remove());
+    ov.querySelector('#fpOk').textContent = 'Guardar NIF y pago';
+    const fiscalActions = ov.querySelector('#fpOk').parentElement;
+    fiscalActions.classList.add('prov-fiscal-actions');
+    ov.querySelector('.form-grid').appendChild(fiscalActions);
+  }
+  const cerrarFiscal = () => { if (!inlineTarget) ov.remove(); };
+
   // Aviso en vivo si lo escrito no puede ser un NIF. No bloquea: hay proveedores extranjeros
   // con VAT que no sigue el formato español, y bloquearlos sería peor que avisar.
   const nifIn = ov.querySelector("#fpNif");
@@ -7835,7 +7904,7 @@ async function facProveedorFicha(nombre) {
     try {
       const r = await apiSend("PUT", "/api/facturas/proveedor-pago",
         { proveedor: nombre, empresa: emp, modo: "dias", dias: null, dia_pago: null });
-      ov.remove(); toast(r.mensaje || "Quitada"); facProveedorFicha(nombre);
+      cerrarFiscal(); toast(r.mensaje || "Quitada"); facProveedorFicha(nombre, inlineTarget);
     } catch (err) { toast("Error: " + err.message); }
   });
 
@@ -7867,7 +7936,7 @@ async function facProveedorFicha(nombre) {
       meses_despues: Number(pago.meses_despues ?? 1), domiciliado: !!pago.domiciliado };
     const cambiaPago = JSON.stringify(antes) !== JSON.stringify(modo ? ahora : null);
 
-    if ((!nuevo || nuevo === nombre) && !cambiaNif && !cambiaPago) { ov.remove(); return; }
+    if ((!nuevo || nuevo === nombre) && !cambiaNif && !cambiaPago) { cerrarFiscal(); return; }
     if (!nuevo) return toast("El nombre no puede quedar vacío");
 
     if (nuevo !== nombre || cambiaNif) {
@@ -7892,7 +7961,8 @@ async function facProveedorFicha(nombre) {
         const r = await apiSend("PUT", "/api/facturas/proveedor", { antiguo: nombre, nuevo, nif: nif || undefined });
         msg = r.mensaje || msg;
       }
-      ov.remove(); toast(msg || "Hecho ✅"); facCargarCategorias();
+      cerrarFiscal(); toast(msg || "Hecho ✅"); facCargarCategorias();
+      if (inlineTarget) facProveedorFicha(nombre, inlineTarget);
       if (FACTAB === "pagos") loadPagos();
     }
     catch (e) { toast(e.message); }
@@ -8937,7 +9007,7 @@ function facLocalCelda(v) {
 }
 function renderFacturasConfig() {
   // Empresas / CIF por local
-  const emp = `<details class="card fold p0"><summary style="padding:18px 18px 14px"><h3>Empresa y CIF por local</h3><span class="foldr"><span>${num((FCFG.locales || []).length)}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="tw"><table class="tbl"><thead><tr><th>Local</th><th>Empresa</th><th>CIF</th><th>Local contable</th><th></th></tr></thead><tbody>${(FCFG.locales || []).map((l) => `<tr><td>${esc(l.local)}</td><td>${esc(l.empresa || "")}</td><td class="mut">${esc(l.cif || "")}</td><td class="mut">${esc(l.local_contable || "")}</td><td class="r"><button class="linkbtn" data-act="fac-loc-del" data-local="${esc(l.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="5" class="mut">Sin empresas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("flLocal")}<input id="flEmp" placeholder="Empresa"><input id="flCif" placeholder="CIF" style="max-width:120px"><input id="flCont" placeholder="Local contable" style="max-width:150px"><button class="btn primary" data-act="fac-loc-add">Guardar</button></div></details>`;
+
   // Reglas de email → local
   const reg = `<details class="card fold p0"><summary style="padding:18px 18px 14px"><h3>Reglas de email → local</h3><span class="foldr"><span>${num((FCFG.reglas || []).length)}</span><span class="car">${ic("chev", 16)}</span></span></summary><div class="tw"><table class="tbl"><thead><tr><th>Email remitente</th><th>Local</th><th></th></tr></thead><tbody>${(FCFG.reglas || []).map((r) => `<tr><td>${esc(r.email)}</td><td>${facLocalCelda(r.local)}</td><td class="r"><button class="linkbtn" data-act="fac-mail-del" data-id="${r.id}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin reglas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0"><input id="frEmail" placeholder="proveedor@email.com" type="email">${facLocalSelect("frLocal")}<button class="btn primary" data-act="fac-mail-add">Añadir</button></div></details>`;
   // Grupos de WhatsApp de facturas
@@ -8991,7 +9061,7 @@ function renderFacturasConfig() {
     </ul>
     <p class="mut" style="margin:8px 0 0;line-height:1.6">Primero enseña lo que encontraría. No cambia nada hasta que lo confirmes.</p>
     <div class="toolbar" style="padding:12px 0 0"><button class="btn primary" data-act="fac-repaso">Repasar</button></div></div>`;
-  return `${facHeader()}<div id="facDrive"></div><div id="facProvDup"></div><div id="facCats"></div><div class="grid g2">${emp}${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${repaso}</div><div style="margin-top:16px">${integ}</div>`;
+  return `${facHeader()}<div id="facDrive"></div><div class="grid g2">${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${repaso}</div><div style="margin-top:16px">${integ}</div>`;
 }
 
 let FAC_RECEPCIONES_ANTES = null;
@@ -10073,13 +10143,20 @@ function sparkPrecio(g) {
     <circle cx="${x(v.length - 1).toFixed(1)}" cy="${y(v[v.length - 1]).toFixed(1)}" r="2" fill="${color}"/></svg>`;
 }
 
+function compPrecioUnidad(precio, unidad) {
+  if (precio == null) return "—";
+  const u = String(unidad || "").trim().toLowerCase();
+  const aliases = { u:"ud", uds:"ud", unidad:"ud", unidades:"ud", kilo:"kg", kilos:"kg", kgs:"kg", litro:"l", litros:"l", lt:"l", cajas:"caja" };
+  return eur2(precio) + (u ? "/" + (aliases[u] || u) : " · unidad pendiente");
+}
+
 function compChipPrecio(g) {
   if (Number(g.dudosas) > 0 || !g.unidad) return ' <span class="pill warn" style="font-size:10px">Revisar unidad y lectura</span>';
   if (g.precioNormal == null || g.ultimoPrecio == null || g.precioNormal <= 0) return "";
   const pct = Math.round(((g.ultimoPrecio - g.precioNormal) / g.precioNormal) * 1000) / 10;
   if (Math.abs(pct) < 5) return "";
   const sube = pct > 0;
-  return ` <span class="pill ${sube ? "bad" : "ok"}" style="font-size:10px" title="Respecto a lo que se paga normalmente (${esc(eur2(g.precioNormal))})">${sube ? "↗" : "↘"} ${signed2(pct)}</span>`;
+  return ` <span class="pill ${sube ? "bad" : "ok"}" style="font-size:10px" title="Respecto a lo que se paga normalmente (${esc(compPrecioUnidad(g.precioNormal, g.unidad))})">${sube ? "↗" : "↘"} ${signed2(pct)}</span>`;
 }
 
 function compCategoriasHtml(g) {
@@ -10127,8 +10204,12 @@ async function comprasHistorial(clave, nombre) {
   let j;
   try { j = await apiRaw("/api/facturas/compras/producto?" + qs); } catch (e) { return toast(e.message); }
   const r = j.resumen;
+  const comprasConPrecio = j.compras.filter(c => c.precio_unitario != null);
+  const ultimaUnidad = comprasConPrecio[0]?.unidad || r.unidad;
+  const unidadesPrecio = [...new Set(comprasConPrecio.map(c => String(c.unidad || "").trim().toLowerCase()))];
+  const unidadComun = unidadesPrecio.length === 1 ? unidadesPrecio[0] : null;
 
-  const subio = r.precioMin != null && r.precioMax != null && r.precioMin > 0
+  const subio = unidadComun && r.precioMin != null && r.precioMax != null && r.precioMin > 0
     ? Math.round(((r.precioMax - r.precioMin) / r.precioMin) * 100) : null;
 
   const fila = (c) => `<tr>
@@ -10138,8 +10219,8 @@ async function comprasHistorial(clave, nombre) {
       ${c.factor_unidad ? `<div class="t2" title="La factura daba la cantidad en paquetes y el precio por unidad: se deshizo el paquete para poder comparar precios">× ${esc(num(c.factor_unidad))} por paquete</div>` : ""}</td>
     ${/* El precio que se enseña es el que se PAGA. Si hay descuento se dice, con el de tarifa
           al lado: así se ve de un vistazo si un mes deja de aplicarse. */""}
-    <td class="r tnum">${c.precio_unitario != null ? esc(eur2(c.precio_unitario)) : "—"}
-      ${c.descuento_pct ? `<div class="t2" style="white-space:nowrap">${esc(eur2(c.precio_bruto))} −${esc(String(c.descuento_pct))} %</div>` : ""}</td>
+    <td class="r tnum">${c.precio_unitario != null ? esc(compPrecioUnidad(c.precio_unitario, c.unidad)) : "—"}
+      ${c.descuento_pct ? `<div class="t2" style="white-space:nowrap">${esc(compPrecioUnidad(c.precio_bruto, c.unidad))} −${esc(String(c.descuento_pct))} %</div>` : ""}</td>
     <td class="r tnum"><b>${c.importe != null ? esc(eur2(c.importe)) : "—"}</b></td>
     <td class="r" style="white-space:nowrap">
       <button class="btn sm" data-corregir="${c.linea_id}" data-cant="${esc(String(c.cantidad ?? ""))}" data-unidad="${esc(c.unidad || "")}"
@@ -10152,10 +10233,10 @@ async function comprasHistorial(clave, nombre) {
       <div class="kpi"><span>Veces</span><b>${num(r.veces)}</b></div>
       <div class="kpi"><span>Cantidad</span><b>${num(Math.round(r.cantidad * 100) / 100)}</b></div>
       <div class="kpi"><span>Gastado</span><b>${esc(eur(r.importe))}</b></div>
-      <div class="kpi"><span>Último precio</span><b>${r.precioUltimo != null ? esc(eur2(r.precioUltimo)) : "—"}</b></div>
+      <div class="kpi"><span>Último precio</span><b>${r.precioUltimo != null ? esc(compPrecioUnidad(r.precioUltimo, ultimaUnidad)) : "—"}</b></div>
     </div>
     ${subio != null && subio > 0 ? `<p class="fic-nota" style="margin-top:0">Entre el precio más bajo y el más alto de este periodo hay un
-      <b>${subio} %</b> (de ${esc(eur2(r.precioMin))} a ${esc(eur2(r.precioMax))}).${r.proveedores.length > 1 ? " Ojo: son varios proveedores, así que puede ser diferencia de proveedor y no subida." : ""}</p>` : ""}
+      <b>${subio} %</b> (de ${esc(compPrecioUnidad(r.precioMin, unidadComun))} a ${esc(compPrecioUnidad(r.precioMax, unidadComun))}).${r.proveedores.length > 1 ? " Ojo: son varios proveedores, así que puede ser diferencia de proveedor y no subida." : ""}</p>` : ""}
     ${j.nombres.length > 1 ? `<p class="mut" style="margin:0 0 10px;font-size:12.5px">Los proveedores lo escriben de ${j.nombres.length} formas
       (${esc(j.nombres.slice(0, 3).join(" · "))}${j.nombres.length > 3 ? "…" : ""}); se agrupan como el mismo producto.</p>` : ""}
     ${r.dudosas ? `<p class="mut" style="margin:0 0 10px;font-size:12.5px">${num(r.dudosas)} ${r.dudosas === 1 ? "línea no se leyó" : "líneas no se leyeron"} del todo: sus cantidades pueden no ser exactas.</p>` : ""}
@@ -10430,7 +10511,7 @@ async function refrescarCompras() {
       ${/* UNA SOLA COLUMNA DE PRECIO. «Precio normal» y «Último precio» traían casi siempre el
             mismo número, y cuando no, ya lo decía la píldora. Se queda el que se paga ahora, con
             su variación al lado y el normal en el rótulo al pasar por encima. */""}
-      <td style="text-align:right;white-space:nowrap"${g.precioNormal != null ? ` title="Lo normal es ${esc(eur2(g.precioNormal))}"` : ""}>${g.ultimoPrecio != null ? `${esc(eur2(g.ultimoPrecio))}${compChipPrecio(g)}` : "—"}</td>
+      <td style="text-align:right;white-space:nowrap"${g.precioNormal != null ? ` title="Lo normal es ${esc(compPrecioUnidad(g.precioNormal, g.unidad))}"` : ""}>${g.ultimoPrecio != null ? `${esc(compPrecioUnidad(g.ultimoPrecio, g.unidad))}${compChipPrecio(g)}` : "—"}</td>
       <td class="sparkcel">${sparkPrecio(g)}</td>
       <td class="ultcel mut" style="white-space:nowrap;font-size:11.5px">${esc(g.veces)} ${g.veces === 1 ? "vez" : "veces"}<br>${esc(fechaCorta(g.ultima) || "")}</td>
     </tr>`;
@@ -10816,6 +10897,38 @@ async function facEmpezarCero() {
   catch (e) { toast("Error: " + e.message); }
 }
 const facVal = (id) => { const e = document.getElementById(id); return e ? e.value.trim() : ""; };
+async function configurarLocal(local) {
+  if (USER.rol !== 'direccion') return;
+  let rows;
+  try { rows=(await apiRaw('/api/facturas/locales')).data||[]; } catch(e){return toast(e.message);}
+  const actual=rows.find(r=>r.local===local)||{};
+  const clave=r=>String(r.cif||'').replace(/\s/g,'').toUpperCase()||String(r.empresa||'').trim().toLowerCase();
+  const empresas=[...new Map(rows.filter(r=>r.empresa).map(r=>[clave(r),r])).values()];
+  const ov=modal('Configuración · '+nombreCortoLocal(local),`<h3>Empresa fiscal</h3><p><b>${esc(actual.empresa||'Sin configurar')}</b><br>${esc(actual.cif||'NIF / CIF sin configurar')}</p><p class="mut">Contabiliza en: ${esc(actual.local_contable||local)}</p>
+    <div id="lsEditor" hidden><div class="form-grid">
+      <div class="field full"><label>Empresa titular<select id="lsEmpresa">${empresas.map((r,i)=>`<option value="${i}" ${clave(r)===clave(actual)?'selected':''}>${esc(r.empresa)}</option>`).join('')}<option value="new" ${!actual.empresa?'selected':''}>Añadir empresa</option></select></label></div>
+      <div class="field"><label>Razón social<input id="lsNombre"></label></div><div class="field"><label>NIF / CIF<input id="lsCif"></label></div>
+      <div class="field full"><label>Local contable<select id="lsCont"><option value="">Este mismo local</option>${LOCALES.map(l=>`<option value="${esc(l)}" ${actual.local_contable===l?'selected':''}>${esc(l)}</option>`).join('')}</select></label></div>
+    </div><p id="lsShared" class="mut"></p></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px"><button class="btn" data-close>Cerrar</button><button class="btn primary" id="lsEdit">Editar</button><button class="btn primary" id="lsSave" hidden>Guardar cambios</button></div>`);
+  ov.querySelector('.modal').classList.add('proveedor-modal');
+  const q=id=>ov.querySelector('#'+id), seleccionado=()=>empresas[Number(q('lsEmpresa').value)]||null;
+  const mostrar=()=>{const r=seleccionado();q('lsNombre').value=r?.empresa||'';q('lsCif').value=r?.cif||'';
+    q('lsShared').textContent=r?'Empresa utilizada por: '+rows.filter(x=>clave(x)===clave(r)).map(x=>nombreCortoLocal(x.local)).join(', '):'Nueva empresa fiscal';};
+  q('lsEmpresa').onchange=mostrar;mostrar();
+  q('lsEdit').onclick=()=>{q('lsEditor').hidden=false;q('lsEdit').hidden=true;q('lsSave').hidden=false;};
+  q('lsSave').onclick=async()=>{
+    const origen=seleccionado(),empresa=q('lsNombre').value.trim(),cif=q('lsCif').value.trim().toUpperCase();
+    if(!empresa)return toast('Indica la razón social');
+    const changed=origen&&(empresa!==origen.empresa||cif!==(origen.cif||''));
+    const afectados=origen?rows.filter(r=>clave(r)===clave(origen)).map(r=>nombreCortoLocal(r.local)):[];
+    if(changed&&afectados.length&&!await confirmModal('Se actualizarán los datos fiscales de la empresa en: '+afectados.join(', ')+'.',{ok:'Guardar'}))return;
+    q('lsSave').disabled=true;
+    try {await apiSend('PUT','/api/facturas/locales-fiscal',{local,empresa,cif,local_contable:q('lsCont').value,compartir:!!changed,origenEmpresa:origen?.empresa||'',origenCif:origen?.cif||''});ov.remove();toast('Configuración guardada');configurarLocal(local);}
+    catch(e){toast(e.message);q('lsSave').disabled=false;}
+  };
+}
+
 async function facLocAdd() { const local = facVal("flLocal"), empresa = facVal("flEmp"); if (!local || !empresa) { toast("Local y empresa obligatorios"); return; } try { await apiSend("POST", "/api/facturas/locales", { local, empresa, cif: facVal("flCif"), local_contable: facVal("flCont") }); toast("Guardado ✅"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facLocDel(local) { if (!(await confirmModal(`¿Quitar la empresa de ${local}?`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/facturas/locales/" + encodeURIComponent(local)); toast("Eliminado"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facMailAdd() { const email = facVal("frEmail"), local = facVal("frLocal"); if (!email || !local) { toast("Email y local obligatorios"); return; } try { await apiSend("POST", "/api/facturas/email-reglas", { email, local }); toast("Regla añadida ✅"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
@@ -11415,7 +11528,7 @@ function renderFidLocal(L) {
       ${puede("activar") ? `<button class="btn sm" data-act="fid-activo" data-id="${i.id}" data-v="1">Activar para verificar</button>` : ""}
       ${puede("desactivar") ? `<button class="btn sm" data-act="fid-activo" data-id="${i.id}" data-v="0">Desactivar</button>` : ""}
       ${puede("revocar") ? `<button class="btn sm danger" data-act="fid-revocar" data-id="${i.id}">Revocar</button>` : ""}
-      <button class="btn sm" data-act="fid-facturas" data-local="${esc(L.local)}">Ver facturas</button>
+      <button class="btn sm" data-act="fid-facturas" data-local="${esc(L.local)}">Tickets y canjes</button>
       <button class="btn sm" data-act="fid-purgar" data-local="${esc(L.local)}">Borrar JSON guardados</button>
     </span>`;
 
@@ -13439,13 +13552,48 @@ async function fidConfirmarWorkplace(id, wid, wname) {
   } catch (e) { toast(e.message || "No se pudo confirmar"); }
 }
 
-async function fidFacturas(local) {
-  FID.abierto = local;
-  try {
-    const j = await apiRaw(`/api/fidelizacion/facturas?local=${encodeURIComponent(local)}`);
-    const filas = (j.data || []).map((f) => `<div class="row"><div class="grow"><div class="t1" style="word-break:break-all">${esc(String(f.global_id).slice(0, 40))}${f.clave_debil ? ' <span class="pill">clave débil</span>' : ""}${f.es_prueba ? ' <span class="pill brand">prueba</span>' : ""}</div><div class="mut" style="font-size:12px">${esc(String(f.recibido_en).slice(0, 16).replace("T", " "))} · ${f.items_n} línea(s) · ${f.miembros_n} socio(s) · ${esc(f.estado)}${f.devolucion ? " · devolución" : ""}</div></div><span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${f.es_prueba ? `<button class="btn sm primary" data-act="fid-importes" data-id="${f.id}">Ver importes de prueba</button>` : ""}<button class="btn sm" data-act="fid-prueba" data-id="${f.id}" data-v="${f.es_prueba ? 0 : 1}">${f.es_prueba ? "Quitar marca" : "Marcar como prueba"}</button><button class="btn sm" data-act="fid-factura" data-id="${f.id}">Campos</button></span></div>`).join("");
-    modal(`Facturas · ${j.local || local}`, filas ? `<div class="mut" style="font-size:12px;margin-bottom:8px">«Marcar como prueba» solo para facturas que hayamos hecho nosotros: es lo que permite mirar sus importes.</div><div class="rows">${filas}</div>` : '<div class="mut">Todavía no ha llegado ninguna.</div>');
-  } catch (e) { toast(e.message || "No se pudieron cargar"); }
+async function fidFacturas(local, qr = null) {
+  const hoy = new Intl.DateTimeFormat("sv-SE",{timeZone:"Europe/Madrid"}).format(new Date());
+  const ov = modal(qr ? "Consumo del cliente" : `Tickets y canjes · ${local}`, `<div class="ticket-filters"><label>Fecha<input type="date" id="tkFecha" value="${qr ? "" : hoy}"></label><label><input type="checkbox" id="tkPruebas"> Ver pruebas antiguas</label><button class="btn sm" id="tkHoy">Hoy</button><label>Promoción<select id="tkPromo"><option value="">Todas</option></select></label></div><div id="tkLista">Cargando…</div><div id="tkDetalle" hidden></div>`);
+  ov.querySelector(".modal").classList.add("tickets-modal");
+  const lista=ov.querySelector("#tkLista"), detalle=ov.querySelector("#tkDetalle");
+  const dinero=v=>v==null ? "No disponible" : eur2(Number(v));
+  const fecha=v=>new Date(v).toLocaleString("es-ES",{timeZone:"Europe/Madrid",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+  let versionCarga=0;
+  async function cargar() {
+    const version=++versionCarga;
+    lista.innerHTML="Cargando…"; detalle.hidden=true; lista.hidden=false;
+    try {
+      const params=new URLSearchParams(qr ? {qr:String(qr)} : {local});
+      if(ov.querySelector("#tkFecha").value) params.set("fecha",ov.querySelector("#tkFecha").value);
+      if(ov.querySelector("#tkPruebas").checked) params.set("pruebas","1");
+      const j=await apiRaw("/api/fidelizacion/tickets?"+params);
+      if(version!==versionCarga || !ov.isConnected) return;
+      const selector=ov.querySelector("#tkPromo"), seleccion=selector.value, todos=j.data||[];
+      const nombres=[...new Set(todos.flatMap(f=>f.premios.map(p=>p.nombre)))];
+      selector.innerHTML='<option value="">Todas</option>'+nombres.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join("");
+      selector.value=nombres.includes(seleccion)?seleccion:"";
+      const rows=selector.value?todos.filter(f=>f.premios.some(p=>p.nombre===selector.value)):todos;
+      const usados=rows.flatMap(f=>f.premios||[]).filter(p=>p.estado==="usado").length;
+      lista.innerHTML=`<p><b>${usados} canjes confirmados</b> · ${rows.length} tickets · ${new Set(rows.flatMap(f=>f.clientes.map(c=>c.id))).size} carnés${j.limitado ? " · Mostrando los últimos 500: acota la fecha" : ""}</p><p class="t2">Tickets recibidos con carné. La fecha corresponde a su recepción en el panel.</p>`+rows.map(f=>{
+        const estado=f.devolucion||f.revertida_en ? "Devuelto" : f.estado!=="aceptada" ? "Revisar" : f.premios.some(p=>p.estado==="usado") ? "Canje confirmado" : "Sin promoción";
+        return `<article class="ticket-row"><div><b>${esc(f.serie||"")} ${esc(f.numero||"Ticket #"+f.id)}</b><div class="t2">${esc(fecha(f.recibido_en))} · ${esc(f.local)}</div><div>${f.clientes.map(c=>`<button class="linkbtn" data-tk-client="${esc(c.telefono||"")}">${esc(c.nombre||"Carné "+(c.codigo||c.id))}</button>`).join(" · ")||"Cliente sin identificar"}</div><div class="t2">${f.premios.map(p=>esc(p.nombre)+(p.estado==="revertido"?" · revertido":"")).join(" · ")}</div></div><div class="ticket-result"><span class="pill">${estado}</span><b>${dinero(f.importe_centimos==null?null:f.importe_centimos/100)}</b><button class="btn sm" data-tk-id="${f.id}">Ver consumo</button></div></article>`;
+      }).join("")+(rows.length?"":"<p class='mut'>No hay tickets en esta selección.</p>");
+      lista.querySelectorAll("[data-tk-client]").forEach(b=>b.onclick=()=>{ov.remove();cliFicha(b.dataset.tkClient);});
+      lista.querySelectorAll("[data-tk-id]").forEach(b=>b.onclick=async()=>{
+        ov.querySelector(".ticket-filters").hidden=true;detalle.hidden=false;lista.hidden=true;detalle.innerHTML="Cargando consumo…";
+        try {
+          const d=await apiRaw("/api/fidelizacion/tickets/"+b.dataset.tkId);
+          detalle.innerHTML=`<button class="btn sm" id="tkVolver">← Volver a tickets</button><h3>Productos del ticket</h3><p class="t2">${d.compartido?"Ticket compartido: no se atribuye cada producto a un cliente concreto.":"Consumo registrado en el ticket asociado al carné."}</p>`+d.comprobantes.map(c=>`<div class="ticket-products">${c.lineas.map(l=>`<div class="ticket-row"><div><b>${esc(l.producto||"Producto sin nombre")}</b><div class="t2">Cantidad: ${esc(String(l.cantidad??"—"))} · Precio: ${dinero(l.precio)}${l.oferta?" · Oferta: "+esc(l.oferta):""}</div>${l.porcentaje ? `<div class="t2">Descuento: ${esc(String(l.porcentaje))} %</div>` : ""}${l.descuento!=null?`<div class="t2">Descuento en importe: ${dinero(l.descuento)}</div>`:""}</div><b>${dinero(l.total)}</b></div>`).join("")||"Sin productos detallados"}${c.porcentaje ? `<p>Descuento del comprobante: ${esc(String(c.porcentaje))} %</p>` : ""}${c.descuento ? `<p>Descuento del comprobante: ${dinero(c.descuento)}</p>`:""}</div>`).join("");
+        } catch(e) { detalle.innerHTML=`<button class="btn sm" id="tkVolver">← Volver a tickets</button><p>${esc(e.message)}</p>`; }
+        detalle.querySelector("#tkVolver").onclick=()=>{ov.querySelector(".ticket-filters").hidden=false;detalle.hidden=true;lista.hidden=false;};
+      });
+    } catch(e) { lista.innerHTML=`<p>${esc(e.message)}</p><button class="btn sm" id="tkRetry">Reintentar</button>`;lista.querySelector("#tkRetry").onclick=cargar; }
+  }
+  ov.querySelector("#tkPromo").onchange=cargar;
+  ov.querySelector("#tkFecha").onchange=cargar;ov.querySelector("#tkPruebas").onchange=cargar;
+  ov.querySelector("#tkHoy").onclick=()=>{ov.querySelector("#tkFecha").value=hoy;cargar();};
+  await cargar();
 }
 
 async function fidFactura(id) {
@@ -16078,7 +16226,7 @@ function promoCopiar(url) {
   else prompt("Copia el enlace:", url);
 }
 
-const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, promos: loadPromos, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, productos: loadProductos, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, fidelizacion: loadFidelizacion, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
+const VIEWS = { subirfactura: loadSubirFactura, dashboard: loadDashboard, reservas: loadReservas, comunicados: loadComunicados, mantenimiento: loadMant, inventarios: loadInventario, clientes: loadClientes, reviews: loadReviews, campanas: loadCampanas, promos: loadPromos, rrhh: loadRRHH, horarios: loadHorarios, fichajes: loadFichajes, facturas: loadFacturas, proveedores: loadProveedores, productos: loadProductos, analitica: loadAnalitica, sara: loadSara, agora: loadAgora, fidelizacion: loadFidelizacion, whatsapp: loadWhatsApp, usuarios: loadUsuarios, web: loadWeb };
 /**
  * LA PANTALLA VA EN LA URL. Sin esto, recargar en cualquier sitio te devolvía al Dashboard —y
  * también hacía inútiles el botón de atrás y guardar un enlace a una pantalla concreta.
@@ -16216,6 +16364,7 @@ document.addEventListener("click", (e) => {
   // miran el local —clientes, campañas, usuarios…— te sacaba al Dashboard: se elegía Lloret y
   // aparecías en otro sitio sin haberlo pedido. Si la pantalla no usa el local, no pasa nada
   // visible, que es exactamente lo correcto.
+  else if (act === "estab-config") { closeDrawer(); configurarLocal(t.getAttribute("data-local")); }
   else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; SELECCION = []; guardarAmbito(); closeDrawer(); go(CURRENT, { desdeUrl: true }); }
   // Marcar y desmarcar no cambia de pantalla: se van eligiendo y se aplica al final. Cambiar de
   // ámbito en cada clic haría tres recargas para juntar tres locales.
@@ -16430,7 +16579,8 @@ document.addEventListener("click", (e) => {
       facProvUnir(g, b.getAttribute("data-quedarse"));
     });
   }
-  else if (act === "fac-prov-ficha") facProveedorFicha(t.getAttribute("data-prov"));
+  else if (act === "prov-nav") go("proveedores");
+  else if (act === "fac-prov-ficha") proveedorDetalle(t.getAttribute("data-prov"));
   else if (act === "fac-dup") facDupResolver(t.getAttribute("data-id"), t.getAttribute("data-accion"));
   else if (act === "fac-ir-cats") facTab("config", true);
   else if (act === "comp-producto") comprasHistorial(t.getAttribute("data-clave"), t.getAttribute("data-nombre"));

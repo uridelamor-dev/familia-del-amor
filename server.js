@@ -1,3 +1,4 @@
+import { FICHA_COMERCIAL_SCHEMA, validarFichaComercial } from "./src/modules/facturas/ficha-comercial.js";
 import { puedePropagarUnidad } from "./src/modules/facturas/correccion-unidades.js";
 import { RECEPCION_SCHEMA, crearRecepcion, listarPaginas } from "./src/modules/facturas/recepcion.js";
 import { MAX_DOCUMENTO, descargarLimitado } from "./src/modules/facturas/red.js";
@@ -2052,6 +2053,7 @@ async function initDB() {
     }
 
     await client.query(RECEPCION_SCHEMA);
+    await client.query(FICHA_COMERCIAL_SCHEMA);
     try { await ensureSchemaEscandallos((sql,p=[]) => client.query(sql,p)); }
     catch(e) { console.error("[DB] escandallos:",e.message); }
 
@@ -3337,6 +3339,29 @@ app.post("/api/facturas/locales", requireAuth(["direccion"]), async (req, res) =
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
+});
+
+// Edición fiscal compartida: todas las sedes del mismo titular se actualizan juntas.
+app.put("/api/facturas/locales-fiscal", requireAuth(["direccion"]), async (req, res) => {
+  const {local, empresa, cif, local_contable, origenEmpresa, origenCif, compartir} = req.body || {};
+  if (typeof local !== "string" || !esLocalCanonico(local) || typeof empresa !== "string" || !empresa.trim() || empresa.length > 200 || typeof cif !== "string" || cif.length > 30)
+    return res.status(400).json({ok:false,error:"Revisa el local y los datos fiscales"});
+  if (local_contable && !esLocalCanonico(local_contable)) return res.status(400).json({ok:false,error:"Local contable no válido"});
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("LOCK TABLE facturas_locales IN SHARE ROW EXCLUSIVE MODE");
+    if (compartir && origenEmpresa) {
+      await client.query(`UPDATE facturas_locales SET empresa=$1,cif=$2 WHERE
+        ($3 <> '' AND upper(replace(coalesce(cif,''),' ',''))=$3) OR ($3='' AND empresa=$4)`,
+        [empresa.trim(),cif.trim().toUpperCase()||null,String(origenCif||'').replace(/\s/g,'').toUpperCase(),origenEmpresa]);
+    }
+    await client.query(`INSERT INTO facturas_locales(local,empresa,cif,local_contable) VALUES($1,$2,$3,$4)
+      ON CONFLICT(local) DO UPDATE SET empresa=EXCLUDED.empresa,cif=EXCLUDED.cif,local_contable=EXCLUDED.local_contable`,
+      [local,empresa.trim(),cif.trim().toUpperCase()||null,local_contable||null]);
+    await client.query("COMMIT");res.json({ok:true});
+  } catch(e) { await client.query("ROLLBACK");res.status(500).json({ok:false,error:"No se pudo guardar la configuración fiscal"}); }
+  finally {client.release();}
 });
 
 app.delete("/api/facturas/locales/:local", requireAuth(["direccion"]), async (req, res) => {
@@ -5946,6 +5971,31 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
   }
 });
 
+// La versión evita sobrescribir una ficha que otra persona acaba de editar.
+app.get("/api/facturas/proveedor-ficha", requireAuth(["direccion","contabilidad"]), async(req,res)=>{
+ try {
+  const clave=claveProveedor(String(req.query.nombre||""));
+  if(!clave)return res.status(400).json({error:"Falta el proveedor"});
+  const row=await dbGet("SELECT datos,version FROM facturas_proveedor_fichas WHERE clave=?",[clave]);
+  res.json({ok:true,datos:row?.datos||{},version:row?.version||0});
+ }catch(e){res.status(500).json({error:"No se pudo cargar la ficha comercial"});}
+});
+app.put("/api/facturas/proveedor-ficha", requireAuth(["direccion","contabilidad"]), async(req,res)=>{
+ try {
+  const clave=claveProveedor(String(req.body.nombre||""));
+  if(!clave)return res.status(400).json({error:"Falta el proveedor"});
+  const datos=validarFichaComercial(req.body.datos||{});
+  for(const c of datos.condiciones) if(!puedeAccederLocal(req,c.local))return res.status(403).json({error:"Sin acceso a ese local"});
+  const version=Number(req.body.version);
+  if(!Number.isInteger(version)||version<0)return res.status(400).json({error:"Versión no válida"});
+  const row=await dbGet(`INSERT INTO facturas_proveedor_fichas(clave,datos) SELECT ?,?::jsonb WHERE ?=0
+    ON CONFLICT(clave) DO NOTHING RETURNING version`,[clave,JSON.stringify(datos),version]);
+  const saved=row||await dbGet(`UPDATE facturas_proveedor_fichas SET datos=?::jsonb,version=version+1,actualizado=NOW() WHERE clave=? AND version=? RETURNING version`,[JSON.stringify(datos),clave,version]);
+  if(!saved)return res.status(409).json({error:"Otra persona ha actualizado esta ficha. Ciérrala y vuelve a abrirla antes de guardar."});
+  res.json({ok:true,version:saved.version});
+ }catch(e){res.status(400).json({error:e.message});}
+});
+
 // Ficha de un proveedor: sus datos, su gasto y cómo se le ha corregido el nombre.
 app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
@@ -6465,11 +6515,20 @@ async function proveedoresDeCategorias(cats, subs = []) {
 // «Bebidas» y «BEBIDA», el agrupar —que es para lo único que sirve esto— deja de funcionar.
 app.get("/api/facturas/categorias", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    const from = String(req.query.from || ""), to = String(req.query.to || "");
+    const validDate = d => !d || (/^\d{4}-\d{2}-\d{2}$/.test(d) && Number.isFinite(Date.parse(d)) && new Date(d).toISOString().slice(0,10) === d);
+    if (!validDate(from) || !validDate(to) || (from && to && from > to)) return res.status(400).json({ok:false,error:"El periodo no es válido"});
+    const periodo = [], params = [];
+    if (from) { periodo.push("fecha >= ?"); params.push(from); }
+    if (to) { periodo.push("fecha <= ?"); params.push(to); }
+    const dentro = periodo.join(" AND ") || "TRUE";
     const [etiquetas, provs] = await Promise.all([
       dbAll(`SELECT prov_clave, proveedor, categoria, subcategoria FROM facturas_proveedor_cats ORDER BY proveedor, categoria, subcategoria`),
-      dbAll(`SELECT proveedor, count(*)::int AS facturas, COALESCE(SUM(total),0)::float AS gasto
-               FROM facturas WHERE ${SIN_ALBARANES} AND proveedor IS NOT NULL AND proveedor <> ''
-              GROUP BY proveedor ORDER BY COALESCE(SUM(total),0) DESC`),
+      dbAll(`SELECT proveedor, count(*) FILTER (WHERE en_periodo)::int AS facturas,
+                     COALESCE(SUM(total) FILTER (WHERE en_periodo),0)::float AS gasto
+               FROM (SELECT proveedor,total,(${dentro}) AS en_periodo FROM facturas
+                     WHERE ${SIN_ALBARANES} AND proveedor IS NOT NULL AND proveedor <> '') f
+              GROUP BY proveedor ORDER BY gasto DESC`, params),
     ]);
     const idx = indiceCategorias(etiquetas);
     // Los proveedores se agrupan por su clave: «GRAU, S.L.» y «Grau Distribucions» son uno.
@@ -22202,6 +22261,54 @@ app.post("/api/fidelizacion/integracion/:id/workplace", requireAuth(["direccion"
     console.error(lineaErrorSql("[fidelizacion] confirmar workplace", e));
     res.status(500).json({ ok: false, error: "No se pudo confirmar" });
   }
+});
+
+// Operational reading: explicit direction permission, scoped records, no raw payload.
+app.get("/api/fidelizacion/tickets", requireAuth(["direccion"]), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const cond = [], args = [];
+    if (req.query.local) {
+      const scope = fidLocalDePeticion(req, req.query.local);
+      if (!scope.ok) return res.status(scope.codigo).json({ok:false,error:scope.error});
+      cond.push("f.local = ?"); args.push(scope.local);
+    }
+    if (req.query.qr) {
+      const qr = Number(req.query.qr);
+      if (!Number.isSafeInteger(qr) || qr < 1) return res.status(400).json({ok:false,error:"Carné no válido"});
+      cond.push("EXISTS (SELECT 1 FROM fid_movimientos m WHERE m.factura_id=f.id AND m.qr_id=?)"); args.push(qr);
+    }
+    if (!cond.length) return res.status(400).json({ok:false,error:"Selecciona local o cliente"});
+    if (req.query.fecha) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(req.query.fecha)) return res.status(400).json({ok:false,error:"Fecha no válida"});
+      cond.push("(f.recibido_en::timestamptz AT TIME ZONE 'Europe/Madrid')::date = ?::date"); args.push(req.query.fecha);
+    }
+    cond.push(req.query.pruebas === "1" ? "f.es_prueba = TRUE" : "f.es_prueba = FALSE");
+    const rows = await dbAll(`SELECT f.id,f.local,f.serie,f.numero,f.recibido_en,f.estado,f.devolucion,
+      f.revertida_en,f.importe_centimos,f.miembros_n,
+      COALESCE((SELECT json_agg(x) FROM (SELECT DISTINCT q.id,q.nombre,q.codigo,q.telefono
+        FROM fid_movimientos m JOIN pro_qr q ON q.id=m.qr_id WHERE m.factura_id=f.id) x),'[]'::json) AS clientes,
+      COALESCE((SELECT json_agg(x) FROM (SELECT u.estado,p.nombre FROM fid_promo_usos u
+        JOIN fid_promos p ON p.id=u.promo_id WHERE u.factura_id=f.id) x),'[]'::json) AS premios
+      FROM fid_facturas f WHERE ${cond.join(" AND ")} ORDER BY f.id DESC LIMIT 501`,args);
+    const visible = rows.filter(f => fidPuedeVer(req,f.local));
+    res.json({ok:true,data:visible.slice(0,500),limitado:visible.length>500});
+  } catch(e) { res.status(500).json({ok:false,error:"No se pudieron cargar los tickets"}); }
+});
+app.get("/api/fidelizacion/tickets/:id", requireAuth(["direccion"]), async (req,res) => {
+  res.set("Cache-Control","no-store");
+  try {
+    const f = await dbGet("SELECT id,local,cuerpo_enc,miembros_n FROM fid_facturas WHERE id=?",[Number(req.params.id)]);
+    if (!f) return res.status(404).json({ok:false,error:"Ticket no encontrado"});
+    if (!fidPuedeVer(req,f.local)) return res.status(403).json({ok:false,error:"Sin acceso a este local"});
+    const raw = f.cuerpo_enc ? leerSecreto(f.cuerpo_enc,DOMINIOS.FIDELIZACION,"fid_facturas") : null;
+    if (!raw) return res.status(409).json({ok:false,error:"El detalle de productos de este ticket no está disponible"});
+    const view = fidProyectarImportes(JSON.parse(raw),{hash:fidHash});
+    res.json({ok:true,compartido:f.miembros_n>1,comprobantes:view.comprobantes.map(c=>({
+      lineas:c.Lines.map(l=>({producto:l.ProductName,cantidad:l.Quantity,precio:l.UnitPrice,total:l.TotalAmount,
+        descuento:l.CashDiscount,porcentaje:l.DiscountRate == null ? null : Number(l.DiscountRate)*100,oferta:l.OfferCode})),descuento:c.Discounts?.CashDiscount,porcentaje:c.Discounts?.DiscountRate == null ? null : Number(c.Discounts.DiscountRate)*100
+    }))});
+  } catch(e) { res.status(500).json({ok:false,error:"No se pudo leer el ticket"}); }
 });
 
 app.get("/api/fidelizacion/facturas", requireAuth(["direccion"]), async (req, res) => {

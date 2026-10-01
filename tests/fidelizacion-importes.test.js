@@ -320,10 +320,10 @@ describe("marcar como prueba se audita, y solo con lo imprescindible", () => {
 });
 
 describe("el panel", () => {
-  test("el botón de importes solo aparece si la factura está marcada", () => {
+  test("la consulta operativa no obliga a marcar facturas reales como prueba", () => {
     const f = panel.slice(panel.indexOf("async function fidFacturas("), panel.indexOf("async function fidFactura("));
-    assert.match(f, /f\.es_prueba \? `<button[^`]*fid-importes/);
-    assert.match(f, /f\.es_prueba \? "Quitar marca" : "Marcar como prueba"/);
+    assert.match(f, /\/api\/fidelizacion\/tickets/);
+    assert.ok(!f.includes("Marcar como prueba"));
   });
 
   test("dice claramente que NO se están calculando puntos", () => {

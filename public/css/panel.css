@@ -1708,3 +1708,57 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 .cli-next-reserva{display:flex;flex-direction:column;gap:6px;padding:14px}
 
 .cli-ficha [hidden]{display:none!important}
+
+/* Ficha de proveedor: campos legibles y secciones compactas. */
+.proveedor-modal .modal-b{padding:22px 24px;font-size:14px;line-height:1.5}
+.proveedor-modal .modal-b>h3{font-size:15px;margin:26px 0 14px}
+.proveedor-modal .toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
+.proveedor-modal .btn{font-size:13px;padding:9px 12px;min-height:38px;border-radius:11px}
+.proveedor-modal .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 20px}
+.proveedor-modal .field{min-width:0;margin:0}
+.proveedor-modal .field label{display:flex;flex-direction:column;align-items:stretch;gap:7px;font-size:12px;font-weight:500}
+.proveedor-modal .field input,.proveedor-modal .field select,.proveedor-modal .field textarea{width:100%;box-sizing:border-box;font-size:14px;font-weight:400;padding:10px 12px;border-radius:11px}
+.proveedor-modal textarea{min-height:80px}
+.proveedor-modal .card.fold{margin-bottom:10px;box-shadow:none;border-radius:13px}
+.proveedor-modal summary{padding:13px 16px;gap:16px}
+.proveedor-modal summary h3{font-size:14px}
+.proveedor-modal summary span{font-size:12px;text-align:right}
+.proveedor-modal [data-condicion]{box-shadow:none;border-radius:13px;padding:18px!important}
+.proveedor-modal [data-quitar-cond]{margin-top:16px}
+.prov-category{cursor:pointer;border:0}
+.prov-category:hover{filter:brightness(.95)}
+.prov-category:focus-visible{outline:2px solid var(--brand);outline-offset:3px}
+@media(max-width:540px){.proveedor-modal .modal-b{padding:18px}.proveedor-modal .form-grid{grid-template-columns:1fr;gap:14px}}
+.proveedor-modal #prFiscalInline{margin-top:18px}
+.proveedor-modal .field.full{grid-column:1/-1}
+.proveedor-modal .field[hidden]{display:none}
+.proveedor-modal #prFiscalInline .field:has(#fpDomi) label{flex-direction:row;align-items:center}
+.proveedor-modal #prFiscalInline input[type=checkbox]{width:auto;padding:0}
+/* Información secundaria recogida para priorizar datos fiscales y pago. */
+.proveedor-modal .modal-h{padding:16px 24px}
+.proveedor-modal .modal-b{padding:16px 24px}
+.proveedor-modal .toolbar{margin-bottom:14px}
+.proveedor-modal .modal-b>h3{margin:16px 0 12px}
+.proveedor-modal .form-grid{gap:12px 20px}
+.proveedor-modal .prov-secondary{margin-top:18px;border:1px solid var(--line,rgba(128,128,110,.22));border-radius:14px;background:transparent}
+.proveedor-modal .prov-secondary>summary{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;cursor:pointer;font-size:13px;font-weight:500;list-style:none;color:var(--ink2)}
+.proveedor-modal .prov-secondary>summary::-webkit-details-marker{display:none}
+.proveedor-modal .prov-secondary>summary span{font-size:12px;color:var(--ink3)}
+.proveedor-modal .prov-secondary>summary span:after{content:' ⌄'}
+.proveedor-modal .prov-secondary[open]>summary span:after{content:' ⌃'}
+.proveedor-modal .prov-secondary-body{padding:0 14px 14px}
+.proveedor-modal .prov-secondary-body>h3{font-size:14px;margin:16px 0 12px}
+.proveedor-modal #prFiscalInline .prov-fiscal-actions{margin-top:0!important;align-self:end;justify-self:end;grid-column:2}
+@media(max-width:540px){.proveedor-modal #prFiscalInline .prov-fiscal-actions{grid-column:1}}
+.proveedor-modal [hidden]{display:none!important}
+
+/* Operational ticket history */
+.tickets-modal{width:min(900px,calc(100vw - 32px));max-width:900px}
+.ticket-filters{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:20px}
+.ticket-filters label{display:flex;align-items:center;gap:8px;font-size:13px}
+.ticket-row{display:flex;justify-content:space-between;gap:20px;padding:16px 0;border-bottom:1px solid var(--border);font-size:14px}
+.ticket-row .t2{margin-top:5px}.ticket-result{display:flex;align-items:flex-end;flex-direction:column;gap:8px;flex-shrink:0}
+.ticket-products{border:1px solid var(--border);border-radius:16px;padding:0 16px;margin:12px 0}
+@media(max-width:560px){.ticket-row{gap:12px}.ticket-result{max-width:45%;}.ticket-row .pill{white-space:normal}}
+
+.tickets-modal [hidden]{display:none!important}
