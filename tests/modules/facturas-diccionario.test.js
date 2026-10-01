@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { esqueleto, medidas, parecido, proponer, colaDeTrabajo, nombreLimpio, cobertura, MINIMO_PROPUESTA }
+import { esqueleto, medidas, parecido, proponer, colaDeTrabajo, nombreLimpio, cobertura, MINIMO_PROPUESTA, ordenarCandidatos }
   from "../../src/modules/facturas/diccionario.js";
 import { agrupaComoLaBase } from "../helpers/agrupa-como-la-base.js";
 
@@ -254,5 +254,32 @@ describe("deshacer UNA forma sin cargarse el producto", () => {
     // cerraba la ficha entera.
     const fn = panel.slice(panel.indexOf('const b = e.target.closest("[data-dicp]")'), panel.indexOf('const b = e.target.closest("[data-dicp]")') + 300);
     assert.match(fn, /e\.preventDefault\(\)/);
+  });
+});
+
+
+describe("orden contextual al elegir otro producto", () => {
+  const productos = [
+    {id:1,nombre:"Agua mineral",proveedores:["Panadería Norte"]},
+    {id:2,nombre:"Barra Cantabrica",proveedores:["Otro"]},
+    {id:3,nombre:"Pan especial",formas:[{descripcion:"Barra Cantábrica (21u)"}],proveedores:[]},
+    {id:4,nombre:"Aceite oliva",proveedores:["Otro"]},
+  ];
+  test("el nombre y los alias prevalecen sobre el proveedor", () => {
+    const ids=ordenarCandidatos("BARRA CANTÁBRICA (21u)","Panadería Norte",productos).map(p=>p.id);
+    assert.deepEqual(ids,[2,3,1,4]);
+    assert.equal(proponer("Barra Cantábrica (21u)",[productos[2]]).producto.id,3);
+  });
+  test("sin parecido primero el proveedor y después el resto alfabético", () => {
+    assert.deepEqual(ordenarCandidatos("Salmón fresco","PANADERIA NORTE",productos).map(p=>p.id),[1,4,2,3]);
+  });
+  test("sin proveedores ni nombres útiles mantiene orden estable y no modifica entrada", () => {
+    const original=JSON.stringify(productos);
+    assert.deepEqual(ordenarCandidatos("",null,productos).map(p=>p.id),[4,1,2,3]);
+    assert.equal(JSON.stringify(productos),original);
+  });
+  test("formatos distintos no equivalen a identificación segura", () => {
+    const r=ordenarCandidatos("Aceite oliva 5l",[],[{id:1,nombre:"Aceite oliva 1l"}]);
+    assert.ok(r[0].score<100);
   });
 });

@@ -5439,6 +5439,13 @@ app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]),
          FROM productos_canonicos p LEFT JOIN producto_alias a ON a.producto_id = p.id
         GROUP BY p.id, p.nombre ORDER BY p.nombre`, []);
 
+    const proveedoresProductos = await dbAll(`SELECT a.producto_id,
+      array_agg(DISTINCT f.proveedor) FILTER (WHERE f.proveedor IS NOT NULL) AS proveedores
+      FROM producto_alias a JOIN factura_lineas l ON l.clave=a.clave
+      JOIN facturas f ON f.id=l.factura_id GROUP BY a.producto_id`, []);
+    const porProducto = new Map(proveedoresProductos.map(p => [String(p.producto_id), p.proveedores || []]));
+    for (const p of productos) p.proveedores = porProducto.get(String(p.id)) || [];
+
     // Cuánto gasto está ya revisado. Es el número que dice si merece la pena seguir: no
     // «cuántas faltan» —siempre faltarán— sino cuánto dinero cubre lo decidido.
     // La cobertura se mide sobre lo mismo que la cola: si la cola es de Blanes y el «ya

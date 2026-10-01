@@ -9758,7 +9758,10 @@ function dicNoEsProducto(clave, descripcion, fila) {
 
 /** Elegir a mano entre los productos que ya existen, con buscador. */
 function dicElegir(clave, descripcion, fila) {
-  const productos = (DICC?.productos || []);
+  const normal = v => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+  const candidatos = (DICC?.cola || []).find(p => p.clave === clave)?.candidatos || [];
+  const orden = new Map(candidatos.map((c,i) => [String(c.id), {pos:i,motivo:c.motivo}]));
+  const productos = [...(DICC?.productos || [])].sort((a,b) => (orden.get(String(a.id))?.pos ?? Infinity)-(orden.get(String(b.id))?.pos ?? Infinity) || a.nombre.localeCompare(b.nombre,"es"));
   const ov = modal("¿Qué producto es?", `
     <p class="mut" style="margin:0 0 10px">Se está clasificando <b>${esc(descripcion)}</b>.</p>
     <input class="inp" id="dicQ" placeholder="Buscar producto…" autocomplete="off">
@@ -9766,10 +9769,10 @@ function dicElegir(clave, descripcion, fila) {
     ${productos.length ? "" : '<p class="mut">Todavía no hay ningún producto creado. Usa «Es nuevo».</p>'}`);
 
   const pintar = (q) => {
-    const t = (q || "").toLowerCase();
-    const l = productos.filter((p) => !t || p.nombre.toLowerCase().includes(t)).slice(0, 60);
+    const t = normal(q);
+    const l = productos.filter(p => !t || [p.nombre,...(p.formas || []).map(f=>f.descripcion)].some(n => t.split(" ").every(palabra => normal(n).includes(palabra)))).slice(0, 60);
     ov.querySelector("#dicLista").innerHTML = l.map((p) => `<div class="row">
-        <div class="grow"><b>${esc(p.nombre)}</b>${p.alias ? ` <span class="mut">· ${num(p.alias)} forma${p.alias === 1 ? "" : "s"} de escribirlo</span>` : ""}</div>
+        <div class="grow"><b>${esc(p.nombre)}</b>${orden.get(String(p.id))?.motivo ? `<div class="t2">${esc(orden.get(String(p.id)).motivo)}</div>` : ""}${p.alias ? ` <span class="mut">· ${num(p.alias)} forma${p.alias === 1 ? "" : "s"} de escribirlo</span>` : ""}</div>
         <button class="btn sm primary" data-elegir="${p.id}">Es este</button></div>`).join("")
       || '<p class="mut">Ninguno con ese nombre.</p>';
   };

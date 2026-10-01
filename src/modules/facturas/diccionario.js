@@ -122,11 +122,25 @@ export const MINIMO_PROPUESTA = 45;
 export function proponer(descripcion, productos = [], { minimo = MINIMO_PROPUESTA } = {}) {
   let mejor = null;
   for (const p of productos) {
-    const score = parecido(descripcion, p.nombre);
+    const score = puntuacionProducto(descripcion, p);
     if (score < minimo) continue;
     if (!mejor || score > mejor.score) mejor = { producto: p, score };
   }
   return mejor;
+}
+
+/** Names and confirmed aliases improve suggestions, never merge automatically. */
+export function puntuacionProducto(descripcion, producto) {
+  return Math.max(parecido(descripcion, producto.nombre), ...(producto.formas || []).map(f => parecido(descripcion, f.descripcion)));
+}
+export function ordenarCandidatos(descripcion, proveedores, productos = []) {
+  const normal = v => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  const origen = new Set((Array.isArray(proveedores) ? proveedores : String(proveedores || "").split(" · ")).map(normal).filter(Boolean));
+  return productos.map(p => {
+    const score = puntuacionProducto(descripcion, p);
+    const mismo = (p.proveedores || []).some(v => origen.has(normal(v)));
+    return {id:p.id, nombre:p.nombre, score, grupo:score >= MINIMO_PROPUESTA ? 0 : mismo ? 1 : 2};
+  }).sort((a,b) => a.grupo-b.grupo || (a.grupo===0 ? b.score-a.score : 0) || a.nombre.localeCompare(b.nombre,"es") || Number(a.id)-Number(b.id));
 }
 
 /**
@@ -143,6 +157,7 @@ export function colaDeTrabajo(pendientes = [], productos = [], { tope = 50, mini
       const prop = proponer(p.descripcion, productos, { minimo });
       return {
         ...p,
+        candidatos: ordenarCandidatos(p.descripcion, p.proveedores, productos).map(c => ({id:c.id, motivo:c.grupo===0 ? "Nombre parecido" : c.grupo===1 ? "Mismo proveedor" : ""})),
         sugerido: prop ? { id: prop.producto.id, nombre: prop.producto.nombre, score: prop.score } : null,
         // Un nombre limpio para crear el producto si no existe ninguno parecido: la descripción
         // del proveedor con el formato, pero sin el «CAJA 24U» ni el «GRANEL».
