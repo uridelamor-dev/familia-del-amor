@@ -1,3 +1,5 @@
+import { SQL_CANJES, filtrarCanjes, resumenCanjes, destinatariosCanjes } from "./src/modules/fidelizacion/actividad-canjes.js";
+import { EMAIL_SCHEMA, validarCorreo, enviarPruebaCorreo, configuracionCorreo, consultarDominioResend } from "./src/modules/campaigns/email.js";
 import { FICHA_COMERCIAL_SCHEMA, validarFichaComercial } from "./src/modules/facturas/ficha-comercial.js";
 import { puedePropagarUnidad } from "./src/modules/facturas/correccion-unidades.js";
 import { RECEPCION_SCHEMA, crearRecepcion, listarPaginas } from "./src/modules/facturas/recepcion.js";
@@ -1733,6 +1735,7 @@ async function initDB() {
         quien TEXT
       )
     `);
+    await client.query(EMAIL_SCHEMA);
     // Ampliación de campañas (multicanal + estados + programación). Aditivo.
     for (const col of [
       "canal TEXT DEFAULT 'whatsapp'", "estado TEXT DEFAULT 'enviada'", "programada_para TEXT",
@@ -11801,6 +11804,73 @@ app.post("/api/promos/:id/anular-sin-usar", requireAuth(PROMOS_ROLES), async (re
     console.error("[promos] anular en masa:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron anular" });
   }
+});
+
+async function leerActividadCanjes(req) {
+  const rows = await dbAll(`SELECT * FROM (${SQL_CANJES}) actividad ORDER BY epoch_ms DESC LIMIT 5001`, []);
+  const permitidas = rows.filter(c => c.local && localScope(req,c.local) === c.local);
+  return {rows:permitidas.slice(0,5000), limitado:rows.length>5000};
+}
+app.get("/api/promos/actividad", requireAuth(["direccion","marketing"]), async(req,res) => {
+  res.set("Cache-Control","no-store");
+  try {
+    const {rows,limitado}=await leerActividadCanjes(req);
+    const data=filtrarCanjes(rows,req.query);
+    const promociones=[...new Map(rows.map(c=>[c.promocion_clave,{clave:c.promocion_clave,nombre:c.promocion,origen:c.origen}])).values()];
+    res.json({ok:true,data,resumen:resumenCanjes(data),limitado,promociones,locales:[...new Set(rows.map(c=>c.local))].sort()});
+  } catch(e) {res.status(e.message==='Fecha no válida'?400:500).json({ok:false,error:e.message==='Fecha no válida'?e.message:'No se pudieron consultar los canjes'});}
+});
+app.get("/api/promos/actividad/destinatarios", requireAuth(["direccion","marketing"]), async(req,res) => {
+  res.set("Cache-Control","no-store");
+  try {
+    const {rows,limitado}=await leerActividadCanjes(req);
+    if(limitado) return res.status(409).json({ok:false,error:"El historial supera el límite de consulta; no se preparará una lista incompleta"});
+    const elegidos=filtrarCanjes(rows,req.query);
+    const contactos=await contactosGeograficos({});
+    const data=destinatariosCanjes(elegidos,contactos);
+    res.json({ok:true,data,clientes:resumenCanjes(elegidos).clientes});
+  } catch(e) {res.status(500).json({ok:false,error:"No se pudieron preparar los destinatarios"});}
+});
+
+app.get("/api/correo/estado", requireAuth(["direccion","marketing"]), async(req,res) => {
+  res.set("Cache-Control","no-store");
+  try { res.json({ok:true,data:await consultarDominioResend()}); }
+  catch { res.json({ok:true,data:{...configuracionCorreo(),dominio_verificado:false,aviso:"No se pudo verificar la conexión con Resend"}}); }
+});
+// Límite por usuario y clave estable por contenido/día para reintentos seguros.
+const correoPruebasRecientes = new Map();
+app.post("/api/correo/prueba", requireAuth(["direccion","marketing"]), async(req,res) => {
+  res.set("Cache-Control","no-store");
+  let contenido;
+  try {contenido=validarCorreo(req.body);} catch(e) {return res.status(400).json({ok:false,error:e.message});}
+  const ahora=Date.now(), usuario=String(req.user.id);
+  for (const [k,v] of correoPruebasRecientes) if(ahora-v>=60000) correoPruebasRecientes.delete(k);
+  if(correoPruebasRecientes.has(usuario)) return res.status(429).json({ok:false,error:"Espera un minuto antes de otra prueba"});
+  correoPruebasRecientes.set(usuario,ahora);
+  const clave='prueba-'+crypto.createHash('sha256').update(JSON.stringify([usuario,new Date().toISOString().slice(0,10),contenido.asunto,contenido.mensaje])).digest('hex');
+  try {res.json({ok:true,...await enviarPruebaCorreo(contenido,{idempotencyKey:clave})});}
+  catch(e) {res.status(502).json({ok:false,error:e.message});}
+});
+app.post("/api/correo/borradores", requireAuth(["direccion","marketing"]), async(req,res) => {
+  let contenido;
+  try { contenido=validarCorreo(req.body); }
+  catch(e) { return res.status(400).json({ok:false,error:e.message}); }
+  try {
+    const {rows,limitado}=await leerActividadCanjes(req);
+    if(limitado) return res.status(409).json({ok:false,error:"No se puede preparar una audiencia incompleta"});
+    const elegidos=filtrarCanjes(rows,contenido.filtros);
+    const contactos=await contactosGeograficos({});
+    const destinatarios=destinatariosCanjes(elegidos,contactos);
+    if(!destinatarios.length) return res.status(400).json({ok:false,error:"No hay destinatarios con email autorizado"});
+    const row=await dbRun(`INSERT INTO campanas_email (autor,asunto,mensaje,filtros_json,destinatarios) VALUES (?,?,?,?,?) RETURNING id`,
+      [req.user.id,contenido.asunto,contenido.mensaje,JSON.stringify(contenido.filtros),destinatarios.length]);
+    res.json({ok:true,id:row.id,estado:'borrador',destinatarios:destinatarios.length});
+  } catch { res.status(500).json({ok:false,error:"No se pudo guardar el borrador"}); }
+});
+app.get("/api/correo/borradores", requireAuth(["direccion","marketing"]), async(req,res) => {
+  res.set("Cache-Control","no-store");
+  try { res.json({ok:true,data:await dbAll(`SELECT id,asunto,mensaje,filtros_json,destinatarios,estado,creado_en FROM campanas_email WHERE autor=? ORDER BY id DESC LIMIT 50`,[req.user.id])}); }
+  catch {res.status(500).json({ok:false,error:"No se pudieron consultar los borradores"});}
 });
 
 app.get("/api/promos/canjes", requireAuth(PROMOS_ROLES), async (req, res) => {

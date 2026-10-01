@@ -15052,19 +15052,33 @@ function promoTablaEmitir() {
   <div id="promoResultado"></div>`;
 }
 
+let CANJES_FILTRO = {fecha:"",local:"",promocion:""};
+function canjesQS() { return new URLSearchParams(CANJES_FILTRO).toString(); }
 function promoTablaCanjes() {
-  const rows = PROMO.canjes || [];
-  if (!rows.length) return `<div class="card"><div class="mut" style="padding:8px">Todavía no se ha canjeado ningún QR.</div></div>`;
-  return `<div class="card p0"><div class="tw"><table class="tbl">
-    <thead><tr><th>Cuándo</th><th>Promoción</th><th>Cliente</th><th>Código</th><th>Barra</th><th>Lo validó</th></tr></thead>
-    <tbody>${rows.map((c) => `<tr>
-      <td class="mut">${esc(String(c.canjeado_en || "").slice(0, 16).replace("T", " "))}</td>
-      <td>${esc(c.promocion || "Cliente identificado")}</td>
-      <td>${esc(c.titular || "—")}</td>
-      <td class="mut tnum">${esc(c.codigo || "")}</td>
-      <td class="mut">${esc(c.local || "")}</td>
-      <td class="mut">${esc(c.worker_nombre || "")}</td>
-    </tr>`).join("")}</tbody></table></div></div>`;
+  const rows=PROMO.canjes||[], info=PROMO.actividad||{};
+  const opciones=(lista,value,key,label)=>lista.map(c=>`<option value="${esc(c[key])}" ${c[key]===value?'selected':''}>${esc(c[label])}</option>`).join("");
+  return `<div class="toolbar"><label>Fecha<input type="date" data-canje-filtro="fecha" value="${esc(CANJES_FILTRO.fecha)}"></label><button class="btn sm" data-act="canjes-hoy">Hoy</button><label>Local<select data-canje-filtro="local"><option value="">Todos</option>${opciones((info.locales||[]).map(x=>({id:x,nombre:x})),CANJES_FILTRO.local,'id','nombre')}</select></label><label>Promoción<select data-canje-filtro="promocion"><option value="">Todas</option>${opciones((info.promociones||[]).map(c=>({...c,etiqueta:c.nombre+' · '+c.origen})),CANJES_FILTRO.promocion,'clave','etiqueta')}</select></label><button class="btn" data-act="canjes-limpiar">Limpiar filtros</button></div>
+    <p><b>${num(info.resumen?.canjes ?? rows.length)} canjes confirmados</b> · ${num(info.resumen?.clientes ?? 0)} clientes identificados</p>
+    <p class="t2">Cupones y premios aplicados en Ágora. No incluye pruebas ni premios revertidos.${info.limitado?' Solo se muestran los últimos 5.000 registros.':''}</p>
+    <button class="btn" data-act="canjes-correo" ${!rows.length || info.limitado ? 'disabled':''}>Preparar correo para estos clientes</button>
+    <div class="card p0" style="margin-top:16px"><div class="tw"><table class="tbl"><thead><tr><th>Cuándo</th><th>Promoción</th><th>Cliente</th><th>Local</th><th>Origen</th><th></th></tr></thead><tbody>${rows.map(c=>`<tr><td>${esc(c.epoch_ms ? new Date(Number(c.epoch_ms)).toLocaleString('es-ES',{timeZone:'Europe/Madrid'}) : c.canjeado_en||'')}</td><td>${esc(c.promocion||'Sin nombre')}</td><td>${c.telefono?`<button class="linkbtn" data-act="canje-cliente" data-tel="${esc(c.telefono)}">${esc(c.titular||'Ver cliente')}</button>`:esc(c.titular||'Sin cliente identificado')}</td><td>${esc(c.local||'')}</td><td>${esc(c.origen||'Cupón')}</td><td>${c.factura_id && USER.rol==='direccion'?`<button class="btn sm" data-act="canje-ticket" data-local="${esc(c.local)}">Tickets del local</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6">No hay canjes con estos filtros.</td></tr>'}</tbody></table></div></div>`;
+}
+async function canjesCorreo() {
+  try {
+    const j=await apiRaw('/api/promos/actividad/destinatarios?'+canjesQS());
+    const estado=await apiRaw('/api/correo/estado').catch(()=>({data:{}}));
+    const historial=await apiRaw('/api/correo/borradores').catch(()=>({data:[]}));
+    const filtroCorreo={...CANJES_FILTRO};
+    const ov=modal('Preparar correo',`<p><b>${j.data.length} direcciones únicas autorizadas</b> de ${j.clientes} clientes identificados. Se excluyen bajas y contactos sin email autorizado.</p><p class="t2">Guarda una campaña para revisarla antes de enviar. Resend: ${estado.data?.dominio_verificado?'dominio verificado':'configuración pendiente'}. El envío a clientes todavía no está habilitado.</p><p class="t2">La prueba se enviará únicamente a marketing@la-tapeta.com.</p><label style="display:block">Recuperar borrador<select id="canjeRecuperar" style="display:block;width:100%;margin-top:6px"><option value="">Nuevo mensaje</option>${(historial.data||[]).map(b=>`<option value="${b.id}">${esc(b.asunto)} · ${b.destinatarios} destinatarios al guardar</option>`).join('')}</select></label><label style="display:block;margin:16px 0">Asunto<input style="display:block;width:100%;margin-top:6px" id="canjeAsunto" value="Gracias por venir a desayunar con nosotros"></label><label style="display:block;margin:16px 0">Mensaje<textarea style="display:block;width:100%;margin-top:6px" id="canjeMensaje" rows="6">Gracias por acompañarnos. Esperamos que hayas disfrutado del desayuno y nos encantará volver a verte.</textarea></label><div class="toolbar"><button class="btn" id="canjeDesc">Descargar destinatarios CSV</button><button class="btn" id="canjeBorrador">Descargar texto</button><button class="btn" id="canjePrueba" ${estado.data?.prueba_habilitada && estado.data?.dominio_verificado?'':'disabled'}>Enviar prueba a Marketing</button><button class="btn primary" id="canjeGuardar">Guardar campaña</button></div>`);
+    ov.querySelector('#canjeRecuperar').onchange=e=>{const b=(historial.data||[]).find(x=>String(x.id)===e.target.value);if(b){ov.querySelector('#canjeAsunto').value=b.asunto;ov.querySelector('#canjeMensaje').value=b.mensaje;toast('Texto recuperado. Se mantienen los destinatarios de los filtros actuales.');}};
+    ov.querySelector('#canjePrueba').onclick=async()=>{const btn=ov.querySelector('#canjePrueba');btn.disabled=true;try{await apiRaw('/api/correo/prueba',{method:'POST',body:JSON.stringify({asunto:ov.querySelector('#canjeAsunto').value,mensaje:ov.querySelector('#canjeMensaje').value})});toast('Resend ha aceptado la prueba para marketing@la-tapeta.com. Revisa la bandeja de entrada.');}catch(e){toast(e.message);}finally{btn.disabled=false;}};
+    ov.querySelector('#canjeGuardar').disabled=!j.data.length;
+    ov.querySelector('#canjeGuardar').onclick=async()=>{const btn=ov.querySelector('#canjeGuardar');btn.disabled=true;try{const r=await apiRaw('/api/correo/borradores',{method:'POST',body:JSON.stringify({asunto:ov.querySelector('#canjeAsunto').value,mensaje:ov.querySelector('#canjeMensaje').value,filtros:filtroCorreo})});toast('Campaña guardada con '+r.destinatarios+' destinatarios. No se ha enviado.');}catch(e){toast(e.message);}finally{btn.disabled=false;}};
+    const descargar=(nombre,texto,tipo)=>{const url=URL.createObjectURL(new Blob([texto],{type:tipo})),a=document.createElement('a');a.href=url;a.download=nombre;a.click();URL.revokeObjectURL(url);};
+    ov.querySelector('#canjeDesc').disabled=!j.data.length;
+    ov.querySelector('#canjeDesc').onclick=()=>{const csv=v=>'"'+String(v||'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';descargar('destinatarios-canjes.csv','\ufeffNombre,Email\r\n'+j.data.map(c=>[csv(c.nombre),csv(c.correo)].join(',')).join('\r\n'),'text/csv;charset=utf-8');};
+    ov.querySelector('#canjeBorrador').onclick=()=>descargar('correo-canjes.txt',ov.querySelector('#canjeAsunto').value+'\n\n'+ov.querySelector('#canjeMensaje').value,'text/plain;charset=utf-8');
+  } catch(e){toast(e.message);}
 }
 
 function promoTablaQr() {
@@ -15223,7 +15237,7 @@ async function loadPromos() {
     PROMO.list = j.data || []; PROMO.locales = j.locales || [];
     if (tab === "emitir") { const r = await apiRaw("/api/promos/vales"); if (!vigente()) return false; PROMO.tiradas = r.data || []; }
     if (tab === "qr") { const r = await apiRaw("/api/promos/qr"); if (!vigente()) return false; PROMO.qrs = r.data || []; }
-    if (tab === "canjes") { const r = await apiRaw("/api/promos/canjes"); if (!vigente()) return false; PROMO.canjes = r.data || []; }
+    if (tab === "canjes") { const r = await apiRaw("/api/promos/actividad?"+canjesQS()); if (!vigente()) return false; PROMO.canjes = r.data || []; PROMO.actividad=r; }
     if (tab === "captacion") {
       PROMO.cap = captacion;
       PROMO.capCola = cola.data || [];
@@ -15247,6 +15261,7 @@ async function loadPromos() {
     }
     if (!vigente()) return false;
     view.innerHTML = renderPromos();
+    view.querySelectorAll("[data-canje-filtro]").forEach(el=>el.onchange=()=>{CANJES_FILTRO[el.dataset.canjeFiltro]=el.value;loadPromos();});
     return true;
   } catch (e) { if (vigente() && e.message !== "noauth") view.innerHTML = errorCard(e.message); return false; }
 }
@@ -16700,6 +16715,11 @@ document.addEventListener("click", (e) => {
   else if (act === "promo-anular") promoAnular(t.getAttribute("data-id"));
   else if (act === "promo-anular-lote") promoAnularLote(t.getAttribute("data-id"), t.getAttribute("data-n"), t.getAttribute("data-nombre"));
   else if (act === "promo-reenviar") promoReenviar(t.getAttribute("data-id"));
+  else if (act === "canjes-hoy") { CANJES_FILTRO.fecha=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Madrid'}).format(new Date()); loadPromos(); }
+  else if (act === "canjes-limpiar") { CANJES_FILTRO={fecha:"",local:"",promocion:""};loadPromos(); }
+  else if (act === "canjes-correo") canjesCorreo();
+  else if (act === "canje-cliente") cliFicha(t.getAttribute('data-tel'));
+  else if (act === "canje-ticket") fidFacturas(t.getAttribute('data-local'));
   else if (act === "promo-copiar" || act === "tj-copiar") promoCopiar(t.getAttribute("data-url"));
   else if (act === "vale-emitir") valeEmitir();
   else if (act === "vale-bajar") valeBajar(t.getAttribute("data-tirada"), t.getAttribute("data-n"));
