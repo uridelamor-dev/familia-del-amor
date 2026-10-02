@@ -1,3 +1,4 @@
+import { PERMISOS_CONFIRMADOS_SCHEMA, registrarPermisosConfirmados } from "./src/modules/clientes/permisos-confirmados.js";
 import { SQL_CANJES, filtrarCanjes, resumenCanjes, destinatariosCanjes } from "./src/modules/fidelizacion/actividad-canjes.js";
 import { EMAIL_SCHEMA, validarCorreo, enviarPruebaCorreo, configuracionCorreo, consultarDominioResend } from "./src/modules/campaigns/email.js";
 import { ENVIOS_SCHEMA, destinatariosCorreo, validarSeleccionCorreo, prepararCorreoResend, confirmarCorreoResend } from "./src/modules/campaigns/email-envios.js";
@@ -1738,6 +1739,7 @@ async function initDB() {
     `);
     await client.query(EMAIL_SCHEMA);
     await client.query(ENVIOS_SCHEMA);
+    await client.query(PERMISOS_CONFIRMADOS_SCHEMA);
     // Ampliación de campañas (multicanal + estados + programación). Aditivo.
     for (const col of [
       "canal TEXT DEFAULT 'whatsapp'", "estado TEXT DEFAULT 'enviada'", "programada_para TEXT",
@@ -4915,8 +4917,8 @@ function sqlContactosUnificados(filtros = {}, params = []) {
             = RIGHT(regexp_replace(c.telefono, '[^0-9]', '', 'g'), 9)
         ORDER BY rl2.dia DESC, rl2.id DESC LIMIT 1) AS ultimo_local,
       COALESCE(mp.baja, 0) AS baja,
-      COALESCE(mp.opt_in_wa, 0) AS opt_in_wa,
-      COALESCE(mp.opt_in_email, 0) AS opt_in_email,
+      COALESCE(mp.opt_in_wa, 1) AS opt_in_wa,
+      COALESCE(mp.opt_in_email, 1) AS opt_in_email,
       mp.idioma AS idioma,
       -- LO QUE HACE, no solo quién es. Hasta ahora solo se podía segmentar por datos de ficha
       -- —edad, género, población— y nunca por comportamiento. Estas columnas son lo que permite
@@ -5113,7 +5115,7 @@ function sqlContactosUnificados(filtros = {}, params = []) {
     else sql += ` AND mp.idioma = ?`;
     params.push(idioma);
   }
-  if (filtros.estado_comunicaciones === "aceptan") sql += ` AND COALESCE(mp.baja, 0) = 0 AND (COALESCE(mp.opt_in_wa, 0) = 1 OR COALESCE(mp.opt_in_email, 0) = 1)`;
+  if (filtros.estado_comunicaciones === "aceptan") sql += ` AND COALESCE(mp.baja, 0) = 0 AND (COALESCE(mp.opt_in_wa, 1) = 1 OR COALESCE(mp.opt_in_email, 1) = 1)`;
   else if (filtros.estado_comunicaciones === "baja") sql += ` AND COALESCE(mp.baja, 0) = 1`;
   if (excluir_baja) sql += ` AND COALESCE(mp.baja, 0) = 0`;
   // Exclusión manual de destinatarios concretos (editar la lista a mano en el panel).
@@ -5144,7 +5146,7 @@ async function setMarketingPref(telefono, campos = {}) {
   } else {
     await dbRun(
       `INSERT INTO marketing_prefs (telefono, correo, opt_in_wa, opt_in_email, baja, idioma, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [tel, campos.correo ?? null, campos.opt_in_wa ?? 0, campos.opt_in_email ?? 0, campos.baja ?? 0, campos.idioma ?? null, now]
+      [tel, campos.correo ?? null, campos.opt_in_wa ?? 1, campos.opt_in_email ?? 1, campos.baja ?? 0, campos.idioma ?? null, now]
     );
   }
 }
@@ -20184,7 +20186,7 @@ app.get("/api/contactos/:telefono", requireAuth(["direccion", "marketing"]), asy
         reservas,
         es_contacto_wa: !!wa,
         wa_ultima: wa?.ultima_interaccion || null,
-        prefs: prefs || { opt_in_wa: 0, opt_in_email: 0, baja: 0, idioma: null },
+        prefs: prefs || { opt_in_wa: lead || reservas.length || wa ? 1 : 0, opt_in_email: lead || reservas.length || wa ? 1 : 0, baja: 0, idioma: null },
       },
     });
   } catch (e) {
@@ -24578,6 +24580,7 @@ const server = app.listen(PORT, async () => {
   // Inicializar esquema PostgreSQL
   try {
     await initDB();
+    await registrarPermisosConfirmados(pool);
     DB_LISTA = true;   // a partir de aquí la API puede contestar de verdad
   } catch (e) {
     console.error("[DB] Error inicializando esquema:", e.message);
