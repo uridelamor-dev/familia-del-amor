@@ -112,8 +112,26 @@ export function veredictoFinal({ deLaIA = null, delTexto = DUDOSO } = {}) {
  *
  * → { texto, pideResena, avisar }
  */
-export function respuestaASeguimiento({ veredicto, nombre = "", local = "", enlace = null } = {}) {
+export function respuestaASeguimiento({ veredicto, nombre = "", local = "", enlace = null, idioma = "es" } = {}) {
   const quien = String(nombre || "").trim().split(/\s+/)[0] || "";
+  if (idioma === 'ca' || idioma === 'en') {
+    const base = respuestaASeguimiento({ veredicto, nombre, local, enlace });
+    const saludo = quien ? `, ${quien}` : '';
+    const ca = idioma === 'ca';
+    if (veredicto === CONTENTO) base.texto = ca
+      ? `Ens n’alegrem molt${saludo}! 😊 Gràcies per explicar-nos-ho.`
+      : `We’re glad to hear that${saludo}! 😊 Thank you for telling us.`;
+    else if (veredicto === DESCONTENTO) base.texto = ca
+      ? `Gràcies per dir-nos-ho${saludo}. Em sap greu que no hagi anat com esperaves. Ho traslladem a l’equip perquè ho revisi.`
+      : `Thank you for telling us${saludo}. I’m sorry it did not go as you expected. We’re passing this to the team to look into it.`;
+    else base.texto = ca ? `Gràcies per explicar-nos-ho${saludo}. Ho traslladem a l’equip.`
+      : `Thank you for telling us${saludo}. We’re passing this to the team.`;
+    if (base.pideResena) base.texto += ca
+      ? `\n\nSi et ve de gust, compartir-ho a Google ens ajuda molt:\n${enlace}\n\nEsperem tornar-te a veure aviat!`
+      : `\n\nIf you’d like to, sharing your experience on Google really helps us:\n${enlace}\n\nWe hope to see you again soon!`;
+    return base;
+  }
+
   if (veredicto === CONTENTO && enlace) {
     return {
       pideResena: true, avisar: false,

@@ -259,8 +259,8 @@ describe("La pausa: Sara calla", () => {
   });
 
   test("EL MENSAJE SE GUARDA IGUAL: lo que no ocurre es la respuesta", () => {
-    const corte = PROCESAR.slice(PROCESAR.indexOf("estaPausada("));
-    const fin = corte.indexOf("adjuntoInfo");
+    const corte = PROCESAR.slice(PROCESAR.indexOf("if (pausada)"));
+    const fin = corte.indexOf("if (adjuntos.some");
     const cuerpo = corte.slice(0, fin > 0 ? fin : 1500);
     assert.match(cuerpo, /onMessage\(\{[^}]*respuesta: null/,
       "sin esto el trabajador no ve lo que el cliente escribe mientras tanto");

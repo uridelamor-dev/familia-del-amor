@@ -24,6 +24,11 @@
     <link rel="stylesheet" href="styles.css" />
       <link rel="stylesheet" href="/css/consentimiento.css" />
   <link rel="stylesheet" href="/calendar.css">
+    <link rel="stylesheet" href="/alta.css">
+    <link rel="stylesheet" href="/club.css">
+    <link rel="stylesheet" href="/club-profile.css">
+    <link rel="stylesheet" href="/club-birthday-picker.css">
+    <link rel="stylesheet" href="/reservas.css">
 </head>
   <body>
 
@@ -116,7 +121,7 @@
         </div>
         <form id="reservaForm" class="reserva-form">
           <div class="reserva-step">
-            <div class="reserva-step-label" data-i18n="reservation_local_q">¿En qué local?</div>
+            <div class="reserva-step-label" data-i18n="reservation_local_q">Local</div>
             <select name="local" id="localSelect" class="reserva-select" aria-label="Local">
               <option value="" data-i18n="reservation_choose_local">Elige local…</option>
             </select>
@@ -125,12 +130,12 @@
           <div class="reserva-row reserva-row--datetime">
             <div class="reserva-col">
               <div class="reserva-step">
-                <div class="reserva-step-label" id="reservaDiaLabel" data-i18n="reservation_day_q">¿Qué día?</div>
+                <div class="reserva-step-label" id="reservaDiaLabel" data-i18n="reservation_day_q">Día</div>
                 <input type="text" id="diaDisplay" aria-labelledby="reservaDiaLabel" class="reserva-date-input" data-date-input="dia" data-date-mode="future" placeholder="Elige fecha" data-i18n-ph="ph_choose_date" readonly required />
                 <input type="hidden" id="diaValue" name="dia" />
               </div>
               <div class="reserva-step">
-                <div class="reserva-step-label" data-i18n="reservation_people_q">¿Cuántos?</div>
+                <div class="reserva-step-label" data-i18n="reservation_people_q">Personas</div>
                 <div class="stepper">
                   <button type="button" class="stepper-btn" id="personasMinus" aria-label="Menos personas" data-i18n-aria="reservation_people_less">−</button>
                   <span id="personasDisplay" aria-live="polite">2</span>
@@ -141,7 +146,7 @@
               </div>
             </div>
             <div class="reserva-step">
-              <div class="reserva-step-label" data-i18n="reservation_time_q">¿A qué hora?</div>
+              <div class="reserva-step-label" data-i18n="reservation_time_q">Hora</div>
               <div id="timePicker"></div>
               <input type="hidden" name="hora" id="horaValue" />
             </div>
@@ -247,5 +252,7 @@
       <script src="/js/consentimiento.js"></script>
     <script src="/js/meta.js"></script>
   <script src="/calendar.js"></script>
+    <script src="/club-profile.js"></script>
+    <script src="/club.js"></script>
 </body>
 </html>

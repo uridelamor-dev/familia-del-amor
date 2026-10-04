@@ -74,6 +74,7 @@ export const IDIOMA_POR_DEFECTO = "es";
 export function esAmbiguo(texto) {
   const t = String(texto || "").trim();
   if (!t) return true;
+  if (/^(?:bon dia|bona tarda|bona nit|moltes gràcies|gràcies|d[’']acord)[!.?\s]*$/i.test(t)) return false;
   const palabras = t.replace(/[^\p{L}\p{N}\s'’·]/gu, " ").split(/\s+/).filter(Boolean);
   return palabras.length < 3;
 }
@@ -97,7 +98,7 @@ export function pistaIdioma(texto) {
 
   const marcas = {
     // Catalán: geminada, apóstrofos característicos y palabras que el castellano no tiene.
-    ca: [/l·l/, /\bamb\b/, /\baixò\b/, /\baixí\b/, /\bperò\b/, /\bmolt\b/, /\bvull\b/, /\bpuc\b/,
+    ca: [/bon dia|bona tarda|bona nit|d[’']acord/, /l·l/, /\bamb\b/, /\baixò\b/, /\baixí\b/, /\bperò\b/, /\bmolt\b/, /\bvull\b/, /\bpuc\b/,
          /\btreballo\b/, /\bdia\b.*\bmatí\b/, /\bsi us plau\b/, /\bgràcies\b/, /\bendavant\b/,
          /\bnosaltres\b/, /\bqualsevol\b/, /\bd'un\b|\bd'una\b|\bl'altre\b|\bm'agrada\b/, /\bquè\b/,
          /\bpersona\b.*\bparlar\b|\bparlar\b/],

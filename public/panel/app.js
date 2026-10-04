@@ -637,32 +637,154 @@ function modal(title, bodyHtml) {
 // Panel lateral. Entra desde la derecha y deja ver la lista de fondo: es lo que permite
 // entender qué se está filtrando mientras se toca, cosa que un modal centrado impide.
 // Devuelve el nodo; quien lo abre decide qué hacer con «Aplicar» y «Quitar filtros».
-function drawer(titulo, cuerpoHtml, { aplicar = "Aplicar", limpiar = "Quitar filtros", onAplicar, onLimpiar } = {}) {
+function drawer(titulo, cuerpoHtml, { aplicar = "Aplicar filtros", limpiar = "Restablecer", onAplicar, onLimpiar } = {}) {
+  const anterior = document.activeElement;
   const ov = document.createElement("div");
   ov.className = "drw-ov";
-  ov.innerHTML = `<aside class="drw" role="dialog" aria-label="${esc(titulo)}">
-    <div class="drw-h"><h3>${esc(titulo)}</h3><button class="iconbtn" data-close aria-label="Cerrar">✕</button></div>
-    <div class="drw-b">${cuerpoHtml}</div>
+  ov.innerHTML = `<aside class="drw" role="dialog" aria-modal="true" aria-label="${esc(titulo)}" tabindex="-1">
+    <div class="drw-h"><h3>${esc(titulo)}</h3><button class="iconbtn" data-close aria-label="Cerrar sin aplicar">✕</button></div>
+    <div class="drw-b">${cuerpoHtml}</div><p class="filter-error" role="alert" hidden></p>
     <div class="drw-f"><button class="btn" data-limpiar>${esc(limpiar)}</button><button class="btn primary" data-aplicar>${esc(aplicar)}</button></div>
   </aside>`;
   document.body.appendChild(ov);
-  // Un fotograma antes de la clase, para que la transición de entrada se vea.
-  requestAnimationFrame(() => ov.classList.add("on"));
-  const cerrar = () => { ov.classList.remove("on"); setTimeout(() => ov.remove(), 200); };
+  requestAnimationFrame(() => { ov.classList.add("on"); ov.querySelector("[data-close]").focus(); });
+  let cerrado = false;
+  const cerrar = () => {
+    if (cerrado) return;
+    cerrado = true; document.removeEventListener("keydown", teclado);
+    ov.classList.remove("on"); setTimeout(() => ov.remove(), 200);
+    if (anterior?.isConnected) anterior.focus({preventScroll:true});
+  };
+  const teclado = e => {
+    if (e.key === "Escape") { e.preventDefault(); cerrar(); }
+    if (e.key === "Tab") {
+      const items = [...ov.querySelectorAll('button,input,select,textarea,[tabindex="0"]')].filter(x=>!x.disabled && x.getClientRects().length);
+      const first=items[0], last=items.at(-1);
+      if(e.shiftKey && document.activeElement===first){e.preventDefault();last?.focus();}
+      else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first?.focus();}
+    }
+  };
   ov.cerrar = cerrar;
-  ov.addEventListener("click", (e) => {
-    if (e.target === ov || e.target.closest("[data-close]")) return cerrar();
-    if (e.target.closest("[data-limpiar]")) return onLimpiar && onLimpiar(ov);
-    if (e.target.closest("[data-aplicar]")) return onAplicar && onAplicar(ov);
+  ov.addEventListener("click", e => {
+    if(e.target===ov || e.target.closest("[data-close]")) return cerrar();
+    if(e.target.closest("[data-limpiar]")) return onLimpiar?.(ov);
+    if(e.target.closest("[data-aplicar]")) return onAplicar?.(ov);
+    const pill=e.target.closest(".drw-pill");
+    if(pill){pill.classList.toggle("on");pill.setAttribute("aria-pressed",String(pill.classList.contains("on")));}
   });
-  // Las píldoras de selección múltiple se encienden y apagan solas.
-  ov.addEventListener("click", (e) => {
-    const p = e.target.closest(".drw-pill");
-    if (p) p.classList.toggle("on");
-  });
-  const esc0 = (e) => { if (e.key === "Escape") { cerrar(); document.removeEventListener("keydown", esc0); } };
-  document.addEventListener("keydown", esc0);
+  ov.querySelectorAll(".drw-pill").forEach(p=>p.setAttribute("aria-pressed",String(p.classList.contains("on"))));
+  document.addEventListener("keydown", teclado);
   return ov;
+}
+
+// Un único contrato para filtros de listas: borrador en el lateral, aplicar, chips y búsqueda.
+const LIST_FILTERS = new Map();
+const filterValues = value => String(value || "").split(",").filter(Boolean);
+function filterButton(attrs, count=0) {
+  return `<button type="button" class="btn filter-trigger" ${attrs} aria-haspopup="dialog">${ic("filtro",16)} Filtros${count ? `<span class="filter-count">${count}</span>` : ""}</button>`;
+}
+function filterActive(config) {
+  return config.fields.filter(f=>config.state[f.key]!=="" && config.state[f.key]!=null && config.state[f.key]!==false);
+}
+function filterChips(name) {
+  const c=LIST_FILTERS.get(name), fields=filterActive(c);
+  return `<div class="fchips" data-filter-summary="${name}">${fields.map(f=>{
+    const value=c.state[f.key], option=(f.options||[]).find(x=>String(x[0])===String(value));
+    return `<button class="fchip" data-filter-remove="${name}" data-key="${f.key}" aria-label="Quitar filtro ${esc(f.label)}">${esc(f.label)}: ${esc(option?.[1] || (f.type==="date" ? dpFmt(value) : value))} <span aria-hidden="true">×</span></button>`;
+  }).join("")}${fields.length || c.state.q ? `<button class="linkbtn" data-filter-clear="${name}">Limpiar filtros</button>` : ""}</div>`;
+}
+function listFilterBar(name, config) {
+  LIST_FILTERS.set(name, config);
+  const c=config;
+  return `<div class="toolbar filter-toolbar" data-filter-bar="${name}">${c.search===false ? "" : `<div class="field filter-search"><label for="filter-search-${name}">Buscar</label><input type="search" id="filter-search-${name}" data-filter-search="${name}" value="${esc(c.state.q||"")}" placeholder="${esc(c.placeholder||"Buscar…")}"></div>`}
+    ${c.sort ? `<div class="field filter-sort"><label for="filter-sort-${name}">Ordenar por</label><select id="filter-sort-${name}" data-filter-sort="${name}">${c.sort.options.map(([v,t])=>`<option value="${esc(v)}" ${c.state[c.sort.key]===v?"selected":""}>${esc(t)}</option>`).join("")}</select></div>` : ""}
+    ${filterButton(`data-filter-open="${name}"`,filterActive(c).length)}</div>${filterChips(name)}`;
+}
+function filterRangeError(state, pairs) {
+  for(const [from,to,label,numeric] of pairs||[]){
+    const a=state[from], b=state[to];
+    if(a!=="" && b!=="" && a!=null && b!=null && (numeric ? Number(a)>Number(b) : a>b)) return `${label}: el inicio no puede ser posterior al final.`;
+  }
+  return "";
+}
+function listFilterOpen(name) {
+  const c=LIST_FILTERS.get(name); if(!c)return;
+  const body=()=>c.fields.map(f=>`<div class="drw-g"><label for="uf-${f.key}">${esc(f.label)}</label>${f.options ? `<select id="uf-${f.key}" data-filter-key="${f.key}">${f.options.map(([v,t])=>`<option value="${esc(v)}" ${String(c.state[f.key]??"")===String(v)?"selected":""}>${esc(t)}</option>`).join("")}</select>` : `<input id="uf-${f.key}" data-filter-key="${f.key}" type="${f.type||"text"}" value="${esc(c.state[f.key]??"")}" ${f.type==="number"?'min="0"':''} ${f.list ? `list="uf-options-${f.key}"` : ""}>${f.list?`<datalist id="uf-options-${f.key}">${f.list.map(v=>`<option value="${esc(v)}"></option>`).join("")}</datalist>`:""}`}${f.help?`<p class="t2">${esc(f.help)}</p>`:""}</div>`).join("");
+  const ov=drawer(`Filtros · ${c.title}`,body(),{
+    onLimpiar:d=>{d.querySelectorAll("[data-filter-key]").forEach(el=>{const f=c.fields.find(f=>f.key===el.dataset.filterKey);el.value=f?.default??"";});d.querySelector(".filter-error").hidden=true;},
+    onAplicar:d=>{
+      const next={...c.state};d.querySelectorAll("[data-filter-key]").forEach(el=>next[el.dataset.filterKey]=el.value.trim());
+      const invalid=[...d.querySelectorAll("input")].find(el=>!el.checkValidity());
+      if(invalid){invalid.reportValidity();return;}
+      const error=filterRangeError(next,c.ranges) || c.validate?.(next);
+      if(error){const box=d.querySelector(".filter-error");box.textContent=error;box.hidden=false;return;}
+      Object.assign(c.state,next);d.cerrar();c.apply();
+    }
+  });
+  if(name==="clientes") ov.addEventListener("input",e=>{if(e.target.id==="uf-cerca_de") cliGeoSugerencias(e.target.value,"uf-cerca_de","uf-options-cerca_de");});
+  return ov;
+}
+let listFilterTimer;
+document.addEventListener("click",e=>{
+  const open=e.target.closest("[data-filter-open]");if(open)return listFilterOpen(open.dataset.filterOpen);
+  const clear=e.target.closest("[data-filter-clear]"), remove=e.target.closest("[data-filter-remove]");
+  if(!clear && !remove)return;
+  const c=LIST_FILTERS.get(clear?.dataset.filterClear || remove.dataset.filterRemove);if(!c)return;
+  clearTimeout(listFilterTimer);
+  if(clear){c.fields.forEach(f=>c.state[f.key]=f.default??"");if(c.search!==false)c.state.q="";}
+  else { c.state[remove.dataset.key]=c.fields.find(f=>f.key===remove.dataset.key)?.default??""; (c.fields.find(f=>f.key===remove.dataset.key)?.dependents||[]).forEach(k=>c.state[k]=""); }
+  c.apply();
+});
+document.addEventListener("input",e=>{
+  const name=e.target.dataset.filterSearch;if(!name)return;
+  const c=LIST_FILTERS.get(name);c.state.q=e.target.value;
+  clearTimeout(listFilterTimer);listFilterTimer=setTimeout(async()=>{
+    if(!document.querySelector(`[data-filter-bar="${name}"]`))return;
+    const focused=document.activeElement===e.target, pos=e.target.selectionStart;
+    await c.apply();
+    const input=document.querySelector(`[data-filter-search="${name}"]`);
+    if(focused && input){input.focus({preventScroll:true});input.setSelectionRange(pos,pos);}
+  },300);
+});
+document.addEventListener("change",e=>{
+  const name=e.target.dataset.filterSort;if(!name)return;
+  const c=LIST_FILTERS.get(name);c.state[c.sort.key]=e.target.value;c.apply();
+});
+
+function categoryFilterHtml(catalogue, state) {
+  const cats=filterValues(state.categoria), subs=filterValues(state.subcategoria);
+  return `<div class="drw-g"><span class="drw-gt">Categoría del proveedor</span><input type="search" data-category-search aria-label="Buscar categoría" placeholder="Buscar categoría…"><div class="filter-options" data-category-options>${catalogue.map(c=>`<label class="filter-option"><input type="checkbox" data-category value="${esc(c.nombre)}" ${cats.includes(c.nombre)?"checked":""}>${esc(c.nombre)}</label>`).join("")}</div></div>
+    <div class="drw-g"><span class="drw-gt">Subcategoría</span><div class="filter-options" data-subcategory-options>${catalogue.flatMap(c=>c.subs.map(sub=>`<label class="filter-option" data-parent-category="${esc(c.nombre)}"><input type="checkbox" data-subcategory value="${esc(sub)}" ${subs.includes(sub)?"checked":""}>${esc(sub)}</label>`)).join("")}</div><p class="t2" data-category-help>Elige una categoría para ver sus subcategorías.</p></div>`;
+}
+function bindCategoryFilters(ov) {
+  const norm=value=>String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+  const update=()=>{
+    const search=norm(ov.querySelector("[data-category-search]")?.value || "");
+    ov.querySelectorAll("[data-category]").forEach(input=>{input.closest("label").hidden=!!search&&!norm(input.value).includes(search);});
+    const cats=[...ov.querySelectorAll("[data-category]:checked")].map(x=>x.value);
+    let count=0;
+    ov.querySelectorAll("[data-parent-category]").forEach(row=>{row.hidden=!cats.includes(row.dataset.parentCategory);if(row.hidden)row.querySelector("input").checked=false;else count++;});
+    const help=ov.querySelector("[data-category-help]");if(help){help.hidden=count>0;help.textContent=cats.length?"Estas categorías no tienen subcategorías.":"Elige una categoría para ver sus subcategorías.";}
+  };
+  ov.addEventListener("input",e=>{if(e.target.matches("[data-category-search]"))update();});
+  ov.addEventListener("change",e=>{if(e.target.matches("[data-category]"))update();});update();
+}
+function readCategoryFilters(ov) {
+  return {categoria:[...ov.querySelectorAll("[data-category]:checked")].map(x=>x.value).join(","),subcategoria:[...ov.querySelectorAll("[data-subcategory]:checked")].map(x=>x.value).join(",")};
+}
+
+function resetFilterDraft(ov) {
+  ov.querySelectorAll("input,select").forEach(el=>{if(el.type==="checkbox")el.checked=false;else el.value="";});
+  ov.querySelectorAll(".drw-pill").forEach(el=>{el.classList.remove("on");el.setAttribute("aria-pressed","false");});
+  ov.querySelectorAll(".dp input").forEach(el=>dpSet(el.id,""));
+  ov.querySelector("[data-category]")?.dispatchEvent(new Event("change",{bubbles:true}));
+  ov.querySelector(".filter-error").hidden=true;
+}
+function validateFilterDates(ov,from,to) {
+  const a=ov.querySelector("#"+from)?.value, b=ov.querySelector("#"+to)?.value;
+  const error=a && b && a>b;
+  const box=ov.querySelector(".filter-error");box.hidden=!error;box.textContent=error?"La fecha inicial no puede ser posterior a la final.":"";
+  return !error;
 }
 
 // Confirmación in-app (sustituye confirm() nativo). Devuelve Promise<boolean>.
@@ -811,6 +933,7 @@ const grupoPeriodo = (v) => GRUPO_PERIODO[v || CURRENT] || null;
 // «todo» = sin filtro de fechas. Es lo que se quiere al entrar en Compras y en Productos.
 let PERIODO_VISTA = { facturas: "todo", productos: "todo", proveedores: "todo" };
 const PROV_RANGE = { from: "", to: "" };
+const PROVF = {q:"",categoria:"",subcategoria:"",actividad:"",orden:"nombre"};
 
 // Dónde vive el rango de cada pantalla: Compras filtra con FACF y Productos con COMP, que son
 // los mismos campos que usan sus filtros. Así la barra y el panel de filtros no se contradicen.
@@ -1530,13 +1653,7 @@ function renderResHistorial(list) {
   const rows = todas.slice().sort((a, b) => (b.dia + b.hora).localeCompare(a.dia + a.hora));
   const personas = rows.reduce((s2, r) => s2 + (Number(r.personas) || 0), 0);
 
-  const pills = RESH_PERIODOS.map(([v, t]) =>
-    `<button class="btn sm ${RESH.periodo === v ? "primary" : ""}" data-act="resh-periodo" data-p="${v}">${t}</button>`).join("");
-  const barra = `<div class="toolbar" style="margin-bottom:10px">
-      <div class="toolbar" style="margin:0;gap:6px">${pills}</div>
-      <div class="field" style="flex:1;min-width:180px;margin-left:auto"><label>Buscar</label>
-        <input class="inp" id="reshQ" value="${esc(RESH.q)}" placeholder="nombre o teléfono"></div>
-    </div>`;
+  const barra=listFilterBar("reservas-historial",{title:"Historial de reservas",state:RESH,placeholder:"Nombre o teléfono",fields:[{key:"periodo",label:"Periodo anterior a hoy",options:RESH_PERIODOS,default:"30"}],apply:()=>{if(!RESH.periodo)RESH.periodo="30";return loadReservas();}});
 
   const resumen = `<div class="sub" style="margin:-2px 0 12px">${num(rows.length)} ${rows.length === 1 ? "reserva" : "reservas"}
     · ${num(personas)} personas${q ? ` con «${esc(RESH.q)}»` : ""}${RESH.hayMas ? " · se enseñan las más recientes; acota el periodo para verlas todas" : ""}</div>`;
@@ -1754,7 +1871,7 @@ function renderMant(list) {
   const amb = mantScope();
   const estOpts = ['<option value="">Todos los estados</option>'].concat(MANT_ESTADOS.map((e) => `<option value="${e}" ${MANF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
   // Sin filtro de local ni botón «Buscar»: el estado se aplica solo (el filtrado es en cliente).
-  const toolbar = `${mantTabs("inc")}<div class="toolbar"><div class="field"><label>Estado</label><select id="mEstado">${estOpts}</select></div><div style="display:flex;gap:10px;margin-left:auto"><button class="btn primary" data-act="mant-nueva">+ Nueva incidencia</button></div></div>`;
+  const toolbar = `${mantTabs("inc")}<div class="toolbar"><button class="btn primary" data-act="mant-nueva">+ Nueva incidencia</button></div>`+listFilterBar("mantenimiento",{title:"Incidencias",state:MANF,search:false,fields:[{key:"estado",label:"Estado",options:[["","Todos los estados"],...MANT_ESTADOS.map(v=>[v,cap(v)])]}],apply:()=>{document.getElementById("view").innerHTML=renderMant(MAN_LIST);}});
   const body = rows.length ? `<div class="card p0"><div class="rows">${rows.map((r) => {
     const est = r.estado || "abierta"; const next = MANT_SIGUIENTE[est] || null;
     const foto = r.foto_url ? `<a href="${esc(r.foto_url)}" target="_blank" rel="noopener" title="Ver foto" style="margin-right:10px;flex-shrink:0"><img src="${esc(r.foto_url)}" alt="Foto de la incidencia" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:block"></a>` : "";
@@ -2610,24 +2727,29 @@ function cliFiltrosCuerpo() {
     </div>
 `;
 }
-function cliAbrirFiltros() {
-  const ov = modal("Filtros de clientes", cliFiltrosCuerpo());
-  ov.classList.add("cli-filtros-modal");
+function cliFilterConfig() {
+  const state={...CLIF,birthday:CLIF.cumple?"mes":CLIF.cumple_en_dias,contact:CLIF.con_email&&CLIF.con_telefono?"ambos":CLIF.con_email?"email":CLIF.con_telefono?"telefono":""};
+  return {title:"Clientes",state,placeholder:"Nombre, teléfono, email…",fields:[
+    {key:"local",label:"Local de los clientes",options:[["","Cualquier local"],...visiblesFE(null,LOCALES).map(l=>[l,l])]},
+    {key:"cerca_de",label:"Población o código postal",list:CLI_POBLACIONES,dependents:["radio_km"]},
+    {key:"radio_km",label:"Radio desde la población",options:[["","Solo esa población"],...[1,5,10,25,50,100].map(n=>[String(n),n+" km"])],help:"Distancia aproximada en línea recta."},
+    {key:"birthday",label:"Cumpleaños",options:[["","Cualquiera"],["0","Hoy"],["7","Próximos 7 días"],["mes","Este mes"]]},
+    {key:"contact",label:"Datos de contacto",options:[["","Cualquiera"],["email","Con email"],["telefono","Con teléfono"],["ambos","Con ambos"]]},
+    {key:"estado_comunicaciones",label:"Estado de comunicaciones",options:[["","Todos"],["aceptan","Aceptan comunicaciones"],["baja","Dados de baja"]]},
+    {key:"edad_min",label:"Edad mínima",type:"number"},{key:"edad_max",label:"Edad máxima",type:"number"},
+    {key:"reservo_from",label:"Fecha de reserva · desde",type:"date"},{key:"reservo_to",label:"Fecha de reserva · hasta",type:"date"}
+  ],ranges:[["edad_min","edad_max","Edad",true],["reservo_from","reservo_to","Fecha de reserva"]],
+    validate:n=>n.radio_km && !n.cerca_de?"Selecciona una población para aplicar el radio.":Number(n.edad_max)>120 || Number(n.edad_min)>120?"La edad debe estar entre 0 y 120 años.":"",
+    apply:async()=>{
+      const {birthday,contact,...values}=state;Object.assign(CLIF,values,{cumple:birthday==="mes",cumple_en_dias:birthday==="mes"?"":birthday,con_email:["email","ambos"].includes(contact),con_telefono:["telefono","ambos"].includes(contact)});
+      const bar=document.getElementById("cliFilterBar");if(bar)bar.innerHTML=listFilterBar("clientes",cliFilterConfig());
+      await refreshCliResults();
+    }};
 }
+function cliAbrirFiltros() { return listFilterOpen("clientes"); }
 function renderClientes(j) {
   const rows = j.data || []; const total = j.total != null ? j.total : rows.length; CLI_TOTAL = total;
-  const localOpts = ['<option value="">Cualquier local</option>'].concat(visiblesFE(null, LOCALES).map((l) => `<option value="${esc(l)}" ${CLIF.local === l ? "selected" : ""}>${esc(l)}</option>`)).join("");
-  // Barra 1: búsqueda + selectores. Barra 2: casillas de filtro agrupadas. Sin botón «Buscar»:
-  // el listado se auto-actualiza al escribir, seleccionar o marcar (ver listeners globales).
-  const toolbar = `<div class="toolbar">
-    <div class="field" style="flex:2;min-width:220px"><label>Buscar</label><input id="cQ" placeholder="Nombre, teléfono, email…" value="${esc(CLIF.q)}" autocomplete="off"></div>
-    <div class="field"><label>Local de los clientes</label><select id="cLocal">${localOpts}</select></div>
-    <div class="field"><label for="cCerca">Población</label><input id="cCerca" list="cGeoOpciones" placeholder="Población o código postal" value="${esc(CLIF.cerca_de)}" autocomplete="off"><datalist id="cGeoOpciones">${CLI_POBLACIONES.map(p => `<option value="${esc(p)}"></option>`).join("")}</datalist></div>
-    <div class="field"><label for="cRadio">Radio</label><select id="cRadio"><option value="" ${CLIF.radio_km === "" ? "selected" : ""}>0 km</option>${[1, 5, 10, 25, 50, 100].map(km => `<option value="${km}" ${String(CLIF.radio_km) === String(km) ? "selected" : ""}>${km} km</option>`).join("")}</select></div>
-    <button class="btn" style="align-self:flex-end;margin-bottom:0" data-act="cli-filtros" aria-haspopup="dialog">${ic("filtro", 16)} Filtros <span id="cliFiltrosResumen" class="mut">${cliFiltrosResumen() === "Sin filtros activos" ? "" : esc(cliFiltrosResumen())}</span></button>
-  </div>
-
-  `;
+  const toolbar = `<div id="cliFilterBar">${listFilterBar("clientes",cliFilterConfig())}</div>`;
   const head = `<div class="ph"><div class="eyebrow">Base de clientes</div><div class="cli-heading"><h1>Clientes</h1><details class="cli-settings"><summary class="btn cli-settings-toggle" aria-label="Opciones de clientes" title="Opciones de clientes"><span aria-hidden="true">⚙</span></summary><div class="cli-settings-menu">${USER.rol === "direccion" ? `<button class="cli-settings-item" data-act="cli-dup">Fichas repetidas</button>` : ""}<button class="cli-settings-item" data-act="cli-csv">Exportar CSV</button><a class="cli-settings-credit t2" href="https://www.geonames.org/" target="_blank" rel="noopener">Datos geográficos: GeoNames</a></div></details></div></div>`;
   return `${head}${toolbar}<div id="cliBody">${cliActionsBar(total)}${cliTable(rows)}</div>`;
 }
@@ -2731,19 +2853,19 @@ function cliGeoListaCompleta() {
     .map(p=>`<option value="${esc(p)}"></option>`).join("");
 }
 document.addEventListener("picker-open", e => { if(e.target.id === "cCerca") cliGeoListaCompleta(); });
-function cliGeoSugerencias(texto) {
+function cliGeoSugerencias(texto, inputId="cCerca", listId="cGeoOpciones") {
   clearTimeout(cliGeoTimer);
-  if (!texto.trim()) { cliGeoListaCompleta(); return; }
+  if (!texto.trim()) { ++cliGeoRevision; const list=document.getElementById(listId); if(list) list.innerHTML=CLI_POBLACIONES.map(p=>`<option value="${esc(p)}"></option>`).join(""); return; }
   const revision = ++cliGeoRevision;
-  const lista = document.getElementById("cGeoOpciones");
+  const lista = document.getElementById(listId);
   const normal = v => v.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
   const propias = CLI_POBLACIONES.filter(p=>normal(p).includes(normal(texto)));
   if(lista) lista.innerHTML=propias.map(p=>`<option value="${esc(p)}"></option>`).join("");
   cliGeoTimer=setTimeout(async()=>{
     try {
       const j=await apiRaw("/api/geografia/poblaciones?q="+encodeURIComponent(texto));
-      if(revision !== cliGeoRevision || document.getElementById("cCerca")?.value!==texto)return;
-      const lista=document.getElementById("cGeoOpciones");
+      if(revision !== cliGeoRevision || document.getElementById(inputId)?.value!==texto)return;
+      const lista=document.getElementById(listId);
       const opciones = new Map(propias.map(nombre=>[nombre,{nombre,provincia:""}]));
       for(const p of j.data||[]) opciones.set(p.nombre,p);
       if(lista)lista.innerHTML=[...opciones.values()].map(p=>`<option value="${esc(p.nombre)}">${esc(p.provincia)}</option>`).join("");
@@ -3125,10 +3247,14 @@ function renderReviews() {
   // Cero reseñas por falta de ficha vinculada NO es lo mismo que cero reseñas. Sin este aviso,
   // la pantalla vacía parece un local sin opiniones y nadie va a mirar el vínculo con Google.
   const avisoFicha = REV_SIN_FICHA ? `<div class="pendingblock" style="margin-bottom:14px"><b>Este establecimiento no tiene ninguna ficha de Google vinculada</b>, así que no hay reseñas que enseñar. ${USER.rol === "direccion" ? "Se vincula en «Vincular fichas de Google», aquí arriba." : "Díselo a dirección: se arregla desde «Vincular fichas de Google»."}</div>` : "";
-  const estadoOpts = [["", "Todas"], ["pendientes", "Sin respuesta guardada"], ["respondidas", "Con respuesta guardada"]].map(([v, t]) => `<option value="${v}" ${REVF.estado === v ? "selected" : ""}>${t}</option>`).join("");
   const ratingOpts = ['<option value="">Todas</option>'].concat([5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${REVF.rating === String(n) ? "selected" : ""}>${n}★</option>`)).join("");
   const sortOpts = [["recientes", "Más recientes"], ["antiguas", "Más antiguas"], ["mejor", "Mejor valoración"], ["peor", "Peor valoración"]].map(([v, t]) => `<option value="${v}" ${REVF.sort === v ? "selected" : ""}>${t}</option>`).join("");
-  const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estadoOpts}</select></div><div class="field"><label>Estrellas</label><select id="rRating">${ratingOpts}</select></div><div class="field"><label>Ordenar</label><select id="rSort">${sortOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(REVF.q)}" placeholder="Texto o autor…"></div><div class="field"><label>Autor</label><input id="rAutor" value="${esc(REVF.autor)}"></div><div class="field"><label>Desde</label><input type="date" id="rFrom" value="${esc(REVF.from)}"></div><div class="field"><label>Hasta</label><input type="date" id="rTo" value="${esc(REVF.to)}"></div><button class="btn" data-act="rev-filtrar">Filtrar</button></div>`;
+  const toolbar = listFilterBar("reviews",{title:"Reseñas",state:REVF,placeholder:"Texto o autor…",sort:{key:"sort",options:[["recientes","Más recientes"],["antiguas","Más antiguas"],["mejor","Mejor valoración"],["peor","Peor valoración"]]},fields:[
+    {key:"estado",label:"Estado",options:[["","Todas"],["pendientes", "Sin respuesta guardada"],["respondidas","Con respuesta guardada"]]},
+    {key:"rating",label:"Estrellas",options:[["","Todas"],...[5,4,3,2,1].map(n=>[String(n),n+" estrellas"])]},
+    {key:"autor",label:"Autor"},{key:"from",label:"Fecha de reseña · desde",type:"date"},{key:"to",label:"Fecha de reseña · hasta",type:"date"}
+  ],ranges:[["from","to","Fecha de reseña"]],apply:()=>loadReviews(false)});
+
   const nota = !revPuedeResponder() ? "" : `<div class="pendingblock" style="margin-bottom:16px"><b>Guardar aquí no publica en Google.</b> La publicación directa está pendiente de que Google apruebe la cuota de su API. Mientras tanto: redacta la respuesta (con IA si quieres), <b>guárdala</b> aquí y usa <b>Copiar</b> para pegarla en Google.</div>`;
   const bulk = (REV_SEL.size && revPuedeResponder()) ? `<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><b>${REV_SEL.size} seleccionada${REV_SEL.size === 1 ? "" : "s"}</b><div style="flex:1"></div><button class="btn" data-act="rev-sel-none">Quitar selección</button><button class="btn primary" data-act="rev-bulk">✨ Generar borradores IA</button></div>` : "";
   const vacio = REV_SIN_FICHA ? "No hay reseñas de este establecimiento porque su ficha de Google no está vinculada."
@@ -3198,7 +3324,9 @@ async function revPedir(montaUrl) {
   };
 }
 
+let reviewsFilterRequest = 0;
 async function loadReviews(append = false) {
+  const request = ++reviewsFilterRequest;
   const view = document.getElementById("view"); if (!append) view.innerHTML = skeleton();
   try {
     REV_PAGINA = append ? REV_PAGINA + 1 : 0;
@@ -3214,12 +3342,13 @@ async function loadReviews(append = false) {
     };
     const promStatus = append ? Promise.resolve(REV_STATUS) : fetch("/api/google/status", { headers: { Authorization: "Bearer " + token() } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
     const [j, status] = await Promise.all([revPedir(montaUrl), promStatus]);
+    if(request!==reviewsFilterRequest || current!=="reviews") return;
     const data = j.data || [];
     if (append) REV_DATA = REV_DATA.concat(data);
     else { REV_DATA = data; REV_SEL.clear(); }
     REV_CONT = j.contadores || REV_CONT; REV_HASMORE = !!j.hasMore; REV_SIN_FICHA = !!j.sinFicha; REV_STATUS = status || REV_STATUS;
     view.innerHTML = renderReviews();
-  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+  } catch (e) { if (request===reviewsFilterRequest && current==="reviews" && e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function loadMoreReviews() { loadReviews(true); }
 let RVX = [];
@@ -3489,7 +3618,7 @@ async function pulsoEnviar() {
 function renderRRCand(rows) {
   rows = rows || [];
   const estOpts = ['<option value="">Todos los estados</option>'].concat(["nuevo", "revisando", "contratada", "descartada"].map((e) => `<option value="${e}" ${RRF.estado === e ? "selected" : ""}>${cap(e)}</option>`)).join("");
-  const toolbar = `<div class="toolbar"><div class="field"><label>Estado</label><select id="rEstado">${estOpts}</select></div><div class="field"><label>Buscar</label><input id="rQ" value="${esc(RRF.q)}" placeholder="Nombre, puesto…"></div><button class="btn" data-act="rr-filtrar">Buscar</button></div>`;
+  const toolbar = listFilterBar("candidaturas",{title:"Candidaturas",state:RRF,placeholder:"Nombre, puesto…",fields:[{key:"estado",label:"Estado",options:[["","Todos"],...Object.keys(CAND_EST).map(v=>[v,cap(v)])]}],apply:()=>loadRRHH()});
   const table = rows.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Candidato</th><th>Puesto</th><th>Población</th><th>Estado</th><th>Fecha</th><th>CV</th><th>Mover a</th></tr></thead><tbody>${rows.map((c) => `<tr><td>${esc(c.nombre)}<div class="t2">${esc(c.telefono || "")}</div></td><td>${esc(c.puesto || "")}</td><td>${esc(c.poblacion || "")}</td><td><span class="pill ${CAND_EST[c.estado] || ""}">${esc(cap(c.estado || "nuevo"))}</span></td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td>${c.cv_url ? `<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver ↗</a>` : '<span class="mut">—</span>'}</td><td class="r" style="white-space:nowrap">${["revisando", "contratada", "descartada"].filter((e) => e !== c.estado).map((e) => e === "contratada" ? `<button class="linkbtn" style="color:var(--brand)" data-act="cand-contratar" data-id="${c.id}" data-nombre="${esc(c.nombre)}">Contratar</button>` : `<button class="linkbtn" style="color:var(--brand)" data-act="cand-estado" data-id="${c.id}" data-estado="${e}">${cap(e)}</button>`).join(" · ")}</td></tr>`).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Sin candidaturas con esos filtros.</div></div>`;
   return toolbar + table;
 }
@@ -7338,7 +7467,7 @@ function ficMostrarEnlace(r) {
 }
 
 // ════════════════════════ VISTA: FACTURAS ════════════════════════
-let FACF = { local: "", empresa: "", estado: "", tipo: "", q: "", from: "", to: "" };
+let FACF = { categoria:"", subcategoria:"", local: "", empresa: "", estado: "", tipo: "", q: "", from: "", to: "" };
 let FAC_LIST = [];
 let FAC_PEND = [];
 let FACTAB = "facturas";
@@ -7347,7 +7476,7 @@ let FAC303 = { empresa: "", trimestre: "", data: null, error: "" };
 // OJO al tocar esto: aquí va TODO lo que el panel de filtros deja elegir. Si una clave se
 // queda fuera, el chip aparece en pantalla y la lista vuelve sin filtrar — o sea, el filtro
 // miente. Le pasó a `proveedor`. Hay un test que compara esta lista con FAC_FILTROS.
-const FAC_FILTROS = ["local", "empresa", "proveedor", "estado", "tipo", "q", "from", "to"];
+const FAC_FILTROS = ["categoria", "subcategoria", "local", "empresa", "proveedor", "estado", "tipo", "q", "from", "to"];
 function facQS(localForzado) {
   const qs = new URLSearchParams();
   FAC_FILTROS.forEach((k) => { if (FACF[k]) qs.set(k, FACF[k]); });
@@ -7368,11 +7497,10 @@ function facHeader() {
     .map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("");
   // En la pestaña de Facturas, la misma fila lleva las pestañas, el buscador y las acciones.
   const acciones = FACTAB !== "facturas" ? "" : `
-    <div class="field" style="flex:1 1 200px;min-width:150px"><input id="facQ" placeholder="Buscar proveedor, concepto, nº…" value="${esc(FACF.q)}"></div>
-    <button class="btn" data-act="fac-filtros">${ic("filtro", 15)} Filtrar${facFiltrosActivos().length ? '<span class="fdot"></span>' : ""}</button>
-    <button class="btn primary" data-act="fac-subir">+ Subir</button>
-    <button class="btn" data-act="fac-export">CSV</button>`;
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar tabstrip" style="margin-bottom:12px">${pestanas}${acciones}</div>`;
+    <div class="field filter-search"><label for="facQ">Buscar</label><input type="search" id="facQ" placeholder="Buscar proveedor, concepto, nº…" value="${esc(FACF.q)}"></div>
+    <button class="btn" data-act="fac-filtros">${ic("filtro", 16)} Filtros${facFiltrosActivos().length ? `<span class="filter-count">${facFiltrosActivos().length}</span>` : ""}</button>
+    `;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar tabstrip" style="margin-bottom:12px">${pestanas}</div>${FACTAB==="facturas"?'<div class="toolbar"><button class="btn primary" data-act="fac-subir">+ Subir</button><button class="btn" data-act="fac-export">Exportar</button></div>':""}${acciones?`<div class="toolbar filter-toolbar">${acciones}</div>`:""}`;
 }
 
 // La cabecera de Productos. Es su propia pantalla, no una pestaña de Compras: sale de los
@@ -7620,17 +7748,46 @@ async function loadProveedores() {
 async function facCargarCategorias() {
   const caja = document.getElementById("facCats");
   if (!caja) return;
-  try { FCATS = await apiRaw("/api/facturas/categorias" + (CURRENT === "proveedores" ? "?" + new URLSearchParams(PROV_RANGE) : "")); } catch (e) { caja.innerHTML=errorCard(e.message); return; }
+  try {
+    if(CURRENT!=="proveedores") FCATS=await apiRaw("/api/facturas/categorias");
+    else {
+      const locales=viendoVarios()?localesDelAmbito():[localActualFE()];
+      const parts=await Promise.all(locales.map(local=>apiRaw("/api/facturas/categorias?"+new URLSearchParams({...PROV_RANGE,...(local?{local}:{})}))));
+      const merged=new Map();
+      for(const part of parts)for(const p of part.proveedores||[]){const key=p.clave||p.proveedor;if(!merged.has(key))merged.set(key,{...p,facturas:0,gasto:0});const out=merged.get(key);out.facturas+=Number(p.facturas)||0;out.gasto+=Number(p.gasto)||0;}
+      FCATS={...parts[0],proveedores:[...merged.values()]};
+    }
+  } catch (e) { caja.innerHTML=errorCard(e.message); return; }
+  pintarProveedores();
+}
+function proveedoresFiltrados() {
+  const cats=filterValues(PROVF.categoria),subs=filterValues(PROVF.subcategoria);
+  const norm=v=>String(v||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+  return (FCATS?.proveedores||[]).filter(p=>{
+    const pares=p.categorias||[];
+    return (!PROVF.q || norm(p.proveedor+" "+pares.map(parTxt).join(" ")).includes(norm(PROVF.q)))
+      && (!cats.length && !subs.length || pares.some(c=>(!cats.length||cats.includes(c.categoria))&&(!subs.length||subs.includes(c.subcategoria))))
+      && (PROVF.actividad!=="con" || p.facturas>0) && (PROVF.actividad!=="sin" || !p.facturas)
+      && (PROVF.actividad!=="sin_categoria" || !pares.length);
+  }).sort((a,b)=>PROVF.orden==="gasto"?b.gasto-a.gasto||a.proveedor.localeCompare(b.proveedor,"es"):a.proveedor.localeCompare(b.proveedor,"es"));
+}
+function pintarProveedores() {
+  const caja=document.getElementById("facCats");if(!caja)return;
   pintarConservandoPliegues(caja, facCategoriasHtml());
-  if(CURRENT === "proveedores") {
-    const original=caja.querySelector('details');
-    const fold=document.createElement('div');fold.className='card';fold.innerHTML=original.innerHTML;original.replaceWith(fold);
-    const summary=fold.querySelector('summary');const heading=document.createElement('h3');heading.textContent=(!PROV_RANGE.from && !PROV_RANGE.to) ? 'Facturas y gasto · Todo el histórico' : 'Facturas y gasto · ' + (PROV_RANGE.from ? fechaCorta(PROV_RANGE.from) : 'Inicio') + ' – ' + (PROV_RANGE.to ? fechaCorta(PROV_RANGE.to) : 'Hoy');heading.style.padding='16px';summary.replaceWith(heading);
-    const intro=fold.querySelector("p"); if(intro)intro.remove();
-    const search=document.createElement("input"); search.type="search";search.placeholder="Buscar proveedor…";search.setAttribute("aria-label","Buscar proveedor");search.style.marginBottom="16px";
-    search.addEventListener("input",()=>caja.querySelectorAll("tbody tr").forEach(r=>r.hidden=!r.textContent.toLocaleLowerCase().includes(search.value.toLocaleLowerCase())));
-    caja.prepend(search);
-  }
+  if(CURRENT!=="proveedores")return;
+  const original=caja.querySelector("details");const fold=document.createElement("div");fold.className="card";fold.innerHTML=original.innerHTML;original.replaceWith(fold);
+  const heading=document.createElement("h3");heading.className="supplier-result-heading";
+  heading.textContent=`${proveedoresFiltrados().length} proveedores · Facturas y gasto · ${!PROV_RANGE.from&&!PROV_RANGE.to?"Todo el histórico":(PROV_RANGE.from||"Inicio")+" – "+(PROV_RANGE.to||"Hoy")}`;
+  fold.querySelector("summary").replaceWith(heading);fold.querySelector("p")?.remove();
+  const toolbar=document.createElement("div");toolbar.innerHTML=`<div class="toolbar filter-toolbar"><div class="field filter-search"><label for="provQ">Buscar</label><input type="search" id="provQ" placeholder="Buscar proveedor…" value="${esc(PROVF.q)}"></div><div class="field filter-sort"><label for="provOrden">Ordenar por</label><select id="provOrden"><option value="nombre" ${PROVF.orden==="nombre"?"selected":""}>Nombre</option><option value="gasto" ${PROVF.orden==="gasto"?"selected":""}>Mayor gasto</option></select></div>${filterButton('id="provFiltros"',filterValues(PROVF.categoria).length+filterValues(PROVF.subcategoria).length+(PROVF.actividad?1:0))}</div><div class="fchips">${["categoria","subcategoria","actividad"].filter(k=>PROVF[k]).map(k=>`<button class="fchip" data-prov-quitar="${k}">${esc(k==="actividad"?({con:"Con compras",sin:"Sin compras",sin_categoria:"Sin categoría"}[PROVF[k]]):PROVF[k])} ×</button>`).join("")}${PROVF.q||PROVF.categoria||PROVF.subcategoria||PROVF.actividad?'<button class="linkbtn" id="provLimpiar">Limpiar filtros</button>':""}</div>`;
+  caja.prepend(toolbar);
+  toolbar.querySelector("#provQ").oninput=e=>{PROVF.q=e.target.value;const pos=e.target.selectionStart;pintarProveedores();const input=document.getElementById("provQ");input.focus();input.setSelectionRange(pos,pos);};
+  toolbar.querySelector("#provOrden").onchange=e=>{PROVF.orden=e.target.value;pintarProveedores();};
+  toolbar.querySelector("#provFiltros").onclick=()=>{
+    const ov=drawer("Filtros · Proveedores",categoryFilterHtml(FCATS.catalogo||[],PROVF)+`<div class="drw-g"><label for="provActividad">Actividad en el periodo</label><select id="provActividad">${[["","Todos"],["con","Con compras"],["sin","Sin compras"],["sin_categoria","Sin categoría"]].map(([v,t])=>`<option value="${v}" ${PROVF.actividad===v?"selected":""}>${t}</option>`).join("")}</select></div>`,{onLimpiar:resetFilterDraft,onAplicar:d=>{Object.assign(PROVF,readCategoryFilters(d),{actividad:d.querySelector("#provActividad").value});d.cerrar();pintarProveedores();}});bindCategoryFilters(ov);
+  };
+  toolbar.querySelector("#provLimpiar")?.addEventListener("click",()=>{Object.assign(PROVF,{q:"",categoria:"",subcategoria:"",actividad:""});pintarProveedores();});
+  toolbar.querySelectorAll("[data-prov-quitar]").forEach(el=>el.onclick=()=>{PROVF[el.dataset.provQuitar]="";if(el.dataset.provQuitar==="categoria")PROVF.subcategoria="";pintarProveedores();});
 }
 
 // ── Proveedores repetidos ───────────────────────────────────────────────────
@@ -7695,8 +7852,7 @@ function facCategoriasHtml() {
   // Los SIN CATEGORÍA primero, y dentro de cada bloque los que más gastan. Antes iban mezclados
   // por gasto y el trabajo pendiente quedaba repartido por toda la tabla: la lista tiene que
   // empezar por lo que hay que arreglar, que además se arregla desde ahí mismo.
-  const provs = [...(j.proveedores || [])].sort((a, b) =>
-    (a.categorias.length ? 1 : 0) - (b.categorias.length ? 1 : 0) || (b.gasto || 0) - (a.gasto || 0));
+  const provs = CURRENT === "proveedores" ? proveedoresFiltrados() : (FCATS.proveedores||[]).slice().sort((a,b)=>(a.categorias.length?1:0)-(b.categorias.length?1:0)||(b.gasto||0)-(a.gasto||0));
   const fila = (p) => `<tr class="${p.categorias.length ? "" : "sincat"}">
     <td><button class="linkbtn" data-act="fac-prov-ficha" data-prov="${esc(p.proveedor)}" style="font-weight:600" title="Abrir su ficha">${esc(p.proveedor)}</button>${p.nombres.length > 1 ? `<div class="t2" title="${esc(p.nombres.join(" · "))}">y ${p.nombres.length - 1} forma${p.nombres.length > 2 ? "s" : ""} más de escribirlo</div>` : ""}</td>
     <td class="mut r tnum">${num(p.facturas)}</td>
@@ -7717,7 +7873,7 @@ function facCategoriasHtml() {
       <b>De las categorías de gasto estructural</b> —alquiler, suministros, gestoría, seguros, marketing— <b>no se lee
       el detalle de la factura</b>: esa línea no es un producto y ensucia «Qué compramos». El gasto sí cuenta.</p>
     <div class="tw"><table class="tbl"><thead><tr><th>Proveedor</th><th class="r">Facturas</th><th class="r">Gasto</th><th>Categorías</th><th></th></tr></thead>
-      <tbody>${provs.map(fila).join("") || '<tr><td colspan="5" class="mut">Todavía no hay proveedores.</td></tr>'}</tbody></table></div>
+      <tbody>${provs.map(fila).join("") || '<tr><td colspan="5" class="mut">No hay proveedores con estos filtros.</td></tr>'}</tbody></table></div>
   </details>`;
 }
 
@@ -8133,6 +8289,8 @@ function facFiltrosActivos() {
     et("fecha", FACF.from && FACF.to ? `${dpFmt(FACF.from)} → ${dpFmt(FACF.to)}`
       : FACF.from ? `Desde ${dpFmt(FACF.from)}` : `Hasta ${dpFmt(FACF.to)}`);
   }
+  if (FACF.categoria) et("categoria", "Categoría: " + FACF.categoria);
+  if (FACF.subcategoria) et("subcategoria", "Subcategoría: " + FACF.subcategoria);
   if (FACF.proveedor) et("proveedor", FACF.proveedor);
   if (FACF.empresa) et("empresa", FACF.empresa);
   if (FACF.tipo) et("tipo", FACF.tipo.split(",").map((t) => (FAC_TIPOS.find((x) => x[0] === t) || [, t])[1]).join(", "));
@@ -8145,16 +8303,16 @@ function facChipsHtml() {
   if (!act.length) return "";
   return `<div class="fchips">${act.map((f) => `<span class="fchip"><b>${esc(f.txt)}</b>
     <button data-act="fac-quitar-filtro" data-k="${f.k}" title="Quitar" aria-label="Quitar filtro">✕</button></span>`).join("")}
-    <button class="linkbtn" data-act="fac-limpiar-filtros" style="align-self:center">Quitar todos</button></div>`;
+    <button class="linkbtn" data-act="fac-limpiar-filtros" style="align-self:center">Limpiar filtros</button></div>`;
 }
 
 function facQuitarFiltro(k) {
   if (k === "fecha") { FACF.from = ""; FACF.to = ""; PERIODO_VISTA.facturas = "todo"; }
-  else FACF[k] = "";
+  else { FACF[k] = ""; if(k==="categoria") FACF.subcategoria=""; }
   loadFacturas();
 }
 function facLimpiarFiltros() {
-  FACF = { ...FACF, empresa: "", estado: "", tipo: "", proveedor: "", from: "", to: "" };
+  FACF = { ...FACF, categoria:"", subcategoria:"", empresa: "", estado: "", tipo: "", proveedor: "", from: "", to: "" };
   loadFacturas();
 }
 
@@ -8166,17 +8324,10 @@ async function facAbrirFiltros() {
   let empresas = [];
   try { empresas = (await apiOptional("/api/facturas/empresas")) || []; } catch { /* idem */ }
 
+  let catalogue;
+  try { catalogue=(await apiRaw("/api/facturas/categorias")).catalogo || []; } catch(e) { toast("No se pudieron cargar las categorías. Inténtalo de nuevo."); return; }
   const tipos = String(FACF.tipo || "").split(",").filter(Boolean);
-  const cuerpo = `
-    <div class="drw-g"><span class="drw-gt">${ic("cal", 15)} Fecha del documento</span>
-      <div class="drw-row">${dpField("fFrom", FACF.from, "Desde")}${dpField("fTo", FACF.to, "Hasta")}</div>
-      <div class="drw-pills" style="margin-top:9px">
-        <button class="drw-pill" data-rango="mes">Este mes</button>
-        <button class="drw-pill" data-rango="mespasado">Mes pasado</button>
-        <button class="drw-pill" data-rango="ano">Este año</button>
-      </div>
-    </div>
-
+  const cuerpo = `${categoryFilterHtml(catalogue,FACF)}
     <div class="drw-g"><span class="drw-gt">${ic("box", 15)} Proveedor</span>
       <select class="inp" id="fProv">
         <option value="">Todos los proveedores</option>
@@ -8201,12 +8352,10 @@ async function facAbrirFiltros() {
       </div>
     </div>`;
 
-  const ov = drawer("Filtrar por", cuerpo, {
-    onLimpiar: (d) => { d.cerrar(); facLimpiarFiltros(); },
+  const ov = drawer("Filtros · Compras", cuerpo, {
+    onLimpiar: d => { resetFilterDraft(d); },
     onAplicar: (d) => {
-      PERIODO_VISTA.facturas = (d.querySelector("#fFrom").value || d.querySelector("#fTo").value) ? "custom" : "todo";
-      FACF.from = d.querySelector("#fFrom").value || "";
-      FACF.to = d.querySelector("#fTo").value || "";
+      Object.assign(FACF,readCategoryFilters(d));
       FACF.proveedor = d.querySelector("#fProv").value || "";
       FACF.empresa = d.querySelector("#fEmp")?.value || "";
       FACF.tipo = [...d.querySelectorAll("#fTipos .drw-pill.on")].map((b) => b.dataset.tipo).join(",");
@@ -8217,22 +8366,11 @@ async function facAbrirFiltros() {
     },
   });
 
+  bindCategoryFilters(ov);
   // Pagada y pendiente se excluyen: encender una apaga la otra.
   ov.querySelector("#fEstados").addEventListener("click", (e) => {
     const b = e.target.closest(".drw-pill"); if (!b) return;
     ov.querySelectorAll("#fEstados .drw-pill").forEach((x) => { if (x !== b) x.classList.remove("on"); });
-  });
-  // Atajos de rango. Rellenan los dos campos de fecha de una vez.
-  ov.addEventListener("click", (e) => {
-    const r = e.target.closest("[data-rango]"); if (!r) return;
-    r.classList.remove("on");   // es un atajo, no un estado que se quede encendido
-    const hoy = new Date(), y = hoy.getFullYear(), m = hoy.getMonth();
-    const iso = (d) => new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10);
-    let desde, hasta;
-    if (r.dataset.rango === "mes") { desde = new Date(y, m, 1); hasta = new Date(y, m + 1, 0); }
-    else if (r.dataset.rango === "mespasado") { desde = new Date(y, m - 1, 1); hasta = new Date(y, m, 0); }
-    else { desde = new Date(y, 0, 1); hasta = new Date(y, 11, 31); }
-    dpSet("fFrom", iso(desde)); dpSet("fTo", iso(hasta));
   });
 }
 
@@ -9924,7 +10062,7 @@ async function loadProductos() {
       if (w === "limpiar") return compLimpiarFiltros();
       // Pulsar una categoría filtra por ella: es el gesto natural al ver «Bebidas 4.200 €».
       if (w === "cat") { COMP.categoria = c.getAttribute("data-cat"); COMP.subcategoria = ""; return refrescarCompras(); }
-      if (w === "sub") { COMP.subcategoria = c.getAttribute("data-sub"); COMP.categoria = ""; return refrescarCompras(); }
+      if (w === "sub") { COMP.subcategoria = c.getAttribute("data-sub"); COMP.categoria = (COMP.catalogo||[]).find(x=>x.subs.includes(COMP.subcategoria))?.nombre || ""; return refrescarCompras(); }
     }
     const f = e.target.closest("[data-compfac]");
     if (f) return comprasVerFactura(f.getAttribute("data-compfac"));
@@ -9957,7 +10095,7 @@ function compChipsHtml() {
   const f = compFiltrosActivos();
   if (!f.length) return "";
   return `<div class="fchips">${f.map((x) => `<button class="fchip" data-comp="quitar" data-k="${esc(x.k)}">${esc(x.txt)}<span>✕</span></button>`).join("")}
-    <button class="linkbtn" data-comp="limpiar">Quitar todos</button></div>`;
+    <button class="linkbtn" data-comp="limpiar">Limpiar filtros</button></div>`;
 }
 function compQuitarFiltro(k) {
   if (k === "fechas") { COMP.from = ""; COMP.to = ""; PERIODO_VISTA.productos = "todo"; }
@@ -9967,67 +10105,42 @@ function compQuitarFiltro(k) {
   } else if (k.startsWith("categoria:")) {
     const fuera = k.slice(10);
     COMP.categoria = String(COMP.categoria).split(",").filter((c) => c && c !== fuera).join(",");
+    const allowed=new Set((COMP.catalogo||[]).filter(c=>filterValues(COMP.categoria).includes(c.nombre)).flatMap(c=>c.subs));
+    COMP.subcategoria=filterValues(COMP.subcategoria).filter(x=>allowed.has(x)).join(",");
   } else COMP[k] = "";
   refrescarCompras();
 }
-function compLimpiarFiltros() { COMP_FILTROS.forEach((k) => { COMP[k] = ""; }); PERIODO_VISTA.productos = "todo"; const i = document.getElementById("compQ"); if (i) i.value = ""; refrescarCompras(); }
+function compLimpiarFiltros() { COMP_FILTROS.filter(k=>k!=="orden").forEach((k) => { COMP[k] = ""; }); PERIODO_VISTA.productos = "todo"; const i = document.getElementById("compQ"); if (i) i.value = ""; refrescarCompras(); }
 
 async function compAbrirFiltros() {
+  let catalogo=COMP.catalogo||[];
+  if(!catalogo.length){
+    try{catalogo=(await apiRaw("/api/facturas/categorias")).catalogo||[];}
+    catch(e){toast("No se pudieron cargar las categorías: "+e.message);return;}
+  }
   let provs = [];
   try { provs = (await apiRaw("/api/facturas/proveedores" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : ""))).data || []; } catch { /* sin lista */ }
   const cats = String(COMP.categoria || "").split(",").filter(Boolean);
   const subsSel = String(COMP.subcategoria || "").split(",").filter(Boolean);
   const cuerpo = `
-    <div class="drw-g"><span class="drw-gt">${ic("cal", 15)} Fecha de la factura</span>
-      <div class="drw-row">${dpField("cFrom", COMP.from, "Desde")}${dpField("cTo", COMP.to, "Hasta")}</div>
-      <div class="drw-pills" style="margin-top:9px">
-        <button class="drw-pill" data-rango="mes">Este mes</button>
-        <button class="drw-pill" data-rango="ano">Este año</button>
-        <button class="drw-pill" data-rango="anopasado">Año pasado</button>
-      </div>
-    </div>
     <div class="drw-g"><span class="drw-gt">${ic("box", 15)} Proveedor</span>
       <select class="inp" id="cProv"><option value="">Todos los proveedores</option>
         ${provs.map((p) => `<option value="${esc(p.proveedor)}" ${COMP.proveedor === p.proveedor ? "selected" : ""}>${esc(p.proveedor)} (${p.n})</option>`).join("")}
       </select>
       <p class="mut" style="margin:8px 0 0;font-size:12px">Para ver todo lo que te vende uno concreto.</p>
     </div>
-    <div class="drw-g"><span class="drw-gt">${ic("receipt", 15)} Categoría</span>
-      <div class="drw-pills" id="cCats">${(COMP.catalogo || []).map((c) =>
-        `<button class="drw-pill ${cats.includes(c.nombre) ? "on" : ""}" data-cat="${esc(c.nombre)}">${esc(c.nombre)}</button>`).join("")}</div>
-      <p class="mut" style="margin:8px 0 0;font-size:12px">Sale de la categoría del proveedor, que se pone en Configuración.</p>
-    </div>
+    ${categoryFilterHtml(catalogo, COMP)}`;
 
-    <div class="drw-g"><span class="drw-gt">${ic("box", 15)} Subcategoría</span>
-      <div class="drw-pills" id="cSubs">${(COMP.catalogo || []).flatMap((c) => c.subs.map((x) =>
-        `<button class="drw-pill ${subsSel.includes(x) ? "on" : ""}" data-sub="${esc(x)}" title="${esc(c.nombre)}">${esc(x)}</button>`)).join("")}</div>
-      <p class="mut" style="margin:8px 0 0;font-size:12px">Para afinar: «Vinos y cavas» en vez de «Bebidas» entera.</p>
-    </div>`;
-
-  const ov = drawer("Filtrar compras", cuerpo, {
-    onLimpiar: (d) => { d.cerrar(); compLimpiarFiltros(); },
+  const ov = drawer("Filtros · Productos", cuerpo, {
+    onLimpiar: d => { resetFilterDraft(d); },
     onAplicar: (d) => {
-      COMP.from = d.querySelector("#cFrom").value || "";
-      COMP.to = d.querySelector("#cTo").value || "";
-      PERIODO_VISTA.productos = (COMP.from || COMP.to) ? "custom" : "todo";
       COMP.proveedor = d.querySelector("#cProv").value || "";
-      COMP.categoria = [...d.querySelectorAll("#cCats .drw-pill.on")].map((b) => b.dataset.cat).join(",");
-      COMP.subcategoria = [...d.querySelectorAll("#cSubs .drw-pill.on")].map((b) => b.dataset.sub).join(",");
+      Object.assign(COMP,readCategoryFilters(d));
       d.cerrar();
       refrescarCompras();
     },
   });
-  ov.addEventListener("click", (e) => {
-    const r = e.target.closest("[data-rango]"); if (!r) return;
-    r.classList.remove("on");
-    const y = new Date().getFullYear(), m = new Date().getMonth();
-    const iso = (d) => new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10);
-    let desde, hasta;
-    if (r.dataset.rango === "mes") { desde = new Date(y, m, 1); hasta = new Date(y, m + 1, 0); }
-    else if (r.dataset.rango === "ano") { desde = new Date(y, 0, 1); hasta = new Date(y, 11, 31); }
-    else { desde = new Date(y - 1, 0, 1); hasta = new Date(y - 1, 11, 31); }
-    dpSet("cFrom", iso(desde)); dpSet("cTo", iso(hasta));
-  });
+  bindCategoryFilters(ov);
 }
 
 // Reparto del gasto por categoría. Va sobre el total de las facturas, no sobre las líneas:
@@ -10394,10 +10507,12 @@ async function comprasRecuadrar() {
   } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
 }
 
+let comprasFilterRequest = 0;
 async function refrescarCompras() {
   const cont = document.getElementById("compRes");
   if (!cont) return;
-  repintarSeg();   // las fechas se pueden cambiar desde «Filtros»: la barra tiene que decir lo mismo
+  const request = ++comprasFilterRequest;
+  repintarSeg();   // Mantener visible el periodo aplicado.
   const qs = new URLSearchParams();
   // «Qué compramos» también es un agregado: con varios establecimientos se le pasan todos y el
   // servidor suma producto a producto (src/modules/facturas/compras-fusion.js). Juntar aquí
@@ -10407,7 +10522,8 @@ async function refrescarCompras() {
   COMP_FILTROS.forEach((k) => { if (COMP[k]) qs.set(k, COMP[k]); });
   let j;
   try { j = await apiRaw("/api/facturas/compras?" + qs.toString()); }
-  catch (e) { cont.innerHTML = errorCard(e.message); return; }
+  catch (e) { if(request===comprasFilterRequest && cont.isConnected) cont.innerHTML = errorCard(e.message); return; }
+  if(request!==comprasFilterRequest || !cont.isConnected) return;
 
   // Una respuesta a medias tumbaba la pantalla entera con un error de JavaScript, y lo que se
   // veía era «Cargando…» para siempre: ni el dato ni el motivo. Pasa cuando se piden varios
@@ -10427,13 +10543,12 @@ async function refrescarCompras() {
   // en línea, al envolverse en móvil el «Hasta» quedaba cortado a media palabra.
   COMP.catalogo = j.catalogoCategorias || [];
   COMP.proveedores = (j.categorias?.categorias || []).flatMap((c) => c.proveedores);
-  const barra = `<div class="toolbar" style="margin-bottom:10px">
-      <div class="field" style="flex:1;min-width:160px">
-        <input class="inp" id="compQ" value="${esc(COMP.q)}" placeholder="Buscar producto: coca, aceite, gamba…"></div>
-      <div class="field" style="max-width:190px"><select id="compOrden" title="Por dónde se ordena la lista">${COMP_ORDENES
+  const barra = `<div class="toolbar"><button class="btn" data-comp="csv" title="Lo mismo que estás viendo, en hoja de cálculo">Exportar</button></div><div class="toolbar filter-toolbar">
+      <div class="field filter-search"><label for="compQ">Buscar</label>
+        <input type="search" class="inp" id="compQ" value="${esc(COMP.q)}" placeholder="Buscar producto: coca, aceite, gamba…"></div>
+      <div class="field filter-sort"><label for="compOrden">Ordenar por</label><select id="compOrden" title="Por dónde se ordena la lista">${COMP_ORDENES
         .map(([v, l]) => `<option value="${v}" ${COMP.orden === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></div>
-      <button class="btn" data-comp="filtros">${ic("cog", 15)} Filtros${compFiltrosActivos().length ? '<span class="fdot"></span>' : ""}</button>
-      <button class="btn" data-comp="csv" title="Lo mismo que estás viendo, en hoja de cálculo">Exportar</button>
+      <button class="btn" data-comp="filtros">${ic("filtro", 16)} Filtros${compFiltrosActivos().length ? `<span class="filter-count">${compFiltrosActivos().length}</span>` : ""}</button>
     </div>${compChipsHtml()}`;
 
   // La cobertura va arriba y siempre: un total calculado sobre la mitad de las facturas
@@ -12012,17 +12127,21 @@ function renderInsResumen(clave, ins) {
 let INS = { clave: null, data: [], total: 0, offset: 0, limite: 50, cargando: false,
             etiquetas: {}, ayuda: {}, estados: { consentimiento: [], entrega: [] }, parcial: false };
 
+const INS_FILTER = {q:"",poblacion:"",desde:"",hasta:"",consentimiento:"",entrega:""};
 const insQS = () => {
-  const p = new URLSearchParams();
-  for (const [k, id] of [["buscar", "insBuscar"], ["poblacion", "insPob"], ["desde", "insDesde"],
-                         ["hasta", "insHasta"], ["consentimiento", "insCons"], ["entrega", "insEnt"]]) {
-    const v = (document.getElementById(id)?.value || "").trim();
-    if (v) p.set(k, v);
-  }
-  return p;
+  const p=new URLSearchParams();for(const [k,v] of Object.entries(INS_FILTER))if(v)p.set(k==="q"?"buscar":k,v);return p;
 };
+function insFilterBar() {
+  return listFilterBar("inscritos",{title:"Inscritos",state:INS_FILTER,placeholder:"Nombre o apellidos",fields:[
+    {key:"poblacion",label:"Población"},
+    {key:"consentimiento",label:"Consentimiento",options:[["","Todos"],...(INS.estados.consentimiento||[]).map(k=>[k,INS.etiquetas[k]||k])]},
+    {key:"entrega",label:"Estado del código",options:[["","Todos"],...(INS.estados.entrega||[]).map(k=>[k,INS.etiquetas[k]||k])]},
+    {key:"desde",label:"Fecha de inscripción · desde",type:"date"},{key:"hasta",label:"Fecha de inscripción · hasta",type:"date"}
+  ],ranges:[["desde","hasta","Fecha de inscripción"]],apply:()=>insVer(INS.clave,0)});
+}
 
 async function insVer(clave, offset) {
+  if(INS.clave!==clave)Object.keys(INS_FILTER).forEach(k=>INS_FILTER[k]="");
   INS.clave = clave; INS.offset = Number(offset) || 0; INS.cargando = true;
   insPintar();
   try {
@@ -12042,27 +12161,13 @@ async function insVer(clave, offset) {
 /** Repinta SOLO la caja de resultados si la ventana ya está abierta; si no, la abre. */
 function insPintar() {
   const caja = document.getElementById("insOut");
-  if (caja) { caja.innerHTML = insCuerpo(); return; }
+  if (caja) { caja.innerHTML = insCuerpo(); const bar=document.getElementById("insFilterBar");if(bar)bar.innerHTML=insFilterBar(); return; }
   const pill = (k) => `<span class="pill ${k === "baja" || k === "fallido" || k === "sin_carne" ? "bad" : k === "enviado" || k === "activo" ? "ok" : "warn"}">${esc(INS.etiquetas[k] || k)}</span>`;
   const opciones = (lista, vacio) => `<option value="">${esc(vacio)}</option>` +
     (lista || []).map((k) => `<option value="${esc(k)}">${esc(INS.etiquetas[k] || k)}</option>`).join("");
   modal(`Inscritos · ${esc(INS.clave)}`, `
-    <div class="toolbar" style="padding:0;flex-wrap:wrap;gap:8px">
-      <div class="field grow" style="min-width:160px"><label for="insBuscar">Buscar por nombre</label><input id="insBuscar" placeholder="Nombre o apellidos"></div>
-      <div class="field" style="min-width:140px"><label for="insPob">Población</label><input id="insPob" placeholder="Todas"></div>
-    </div>
-    <div class="toolbar" style="padding:0;flex-wrap:wrap;gap:8px">
-      <div class="field" style="min-width:140px"><label for="insDesde">Desde</label><input id="insDesde" type="date"></div>
-      <div class="field" style="min-width:140px"><label for="insHasta">Hasta</label><input id="insHasta" type="date"></div>
-      <div class="field" style="min-width:140px"><label for="insCons">Consentimiento</label><select id="insCons">${opciones(INS.estados.consentimiento, "Todos")}</select></div>
-      <div class="field" style="min-width:160px"><label for="insEnt">Estado del código</label><select id="insEnt">${opciones(INS.estados.entrega, "Todos")}</select></div>
-    </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 12px">
-      <button class="btn primary sm" data-act="ins-filtrar">Filtrar</button>
-      <button class="btn sm" data-act="ins-limpiar">Quitar filtros</button>
-      <span class="grow"></span>
-      <button class="btn sm" data-act="ins-csv">Exportar CSV</button>
-    </div>
+    <div class="toolbar"><button class="btn" data-act="ins-csv">Exportar CSV</button></div>
+    <div id="insFilterBar">${insFilterBar()}</div>
     <div class="mut" style="font-size:12px;margin-bottom:8px">El teléfono no se enseña aquí ni sale en el CSV: se consulta en la ficha del cliente. Mirar esta lista no modifica nada.</div>
     <div id="insOut">${insCuerpo()}</div>`);
   // Se enfoca la búsqueda: es lo primero que se hace al abrir esto.
@@ -13558,7 +13663,13 @@ async function fidConfirmarWorkplace(id, wid, wname) {
 
 async function fidFacturas(local, qr = null) {
   const hoy = new Intl.DateTimeFormat("sv-SE",{timeZone:"Europe/Madrid"}).format(new Date());
-  const ov = modal(qr ? "Consumo del cliente" : `Tickets y canjes · ${local}`, `<div class="ticket-filters"><label>Fecha<input type="date" id="tkFecha" value="${qr ? "" : hoy}"></label><label><input type="checkbox" id="tkPruebas"> Ver pruebas antiguas</label><button class="btn sm" id="tkHoy">Hoy</button><label>Promoción<select id="tkPromo"><option value="">Todas</option></select></label></div><div id="tkLista">Cargando…</div><div id="tkDetalle" hidden></div>`);
+  const ticketFilter={fecha:qr?"":hoy,pruebas:"",promocion:""};let ticketPromos=[];
+  const bar=()=>listFilterBar("tickets",{title:"Tickets y canjes",state:ticketFilter,search:false,fields:[
+    {key:"promocion",label:"Promoción",options:[["","Todas"],...ticketPromos.map(n=>[n,n])]},
+    {key:"fecha",label:"Fecha de recepción",type:"date"},
+    {key:"pruebas",label:"Tipo de registros",options:[["","Reales"],["1","Pruebas antiguas"]]}
+  ],apply:cargar});
+  const ov = modal(qr ? "Consumo del cliente" : `Tickets y canjes · ${local}`, `<div class="ticket-filters">${bar()}</div><div id="tkLista">Cargando…</div><div id="tkDetalle" hidden></div>`);
   ov.querySelector(".modal").classList.add("tickets-modal");
   const lista=ov.querySelector("#tkLista"), detalle=ov.querySelector("#tkDetalle");
   const dinero=v=>v==null ? "No disponible" : eur2(Number(v));
@@ -13569,15 +13680,14 @@ async function fidFacturas(local, qr = null) {
     lista.innerHTML="Cargando…"; detalle.hidden=true; lista.hidden=false;
     try {
       const params=new URLSearchParams(qr ? {qr:String(qr)} : {local});
-      if(ov.querySelector("#tkFecha").value) params.set("fecha",ov.querySelector("#tkFecha").value);
-      if(ov.querySelector("#tkPruebas").checked) params.set("pruebas","1");
+      if(ticketFilter.fecha) params.set("fecha",ticketFilter.fecha);
+      if(ticketFilter.pruebas==="1") params.set("pruebas","1");
       const j=await apiRaw("/api/fidelizacion/tickets?"+params);
       if(version!==versionCarga || !ov.isConnected) return;
-      const selector=ov.querySelector("#tkPromo"), seleccion=selector.value, todos=j.data||[];
-      const nombres=[...new Set(todos.flatMap(f=>f.premios.map(p=>p.nombre)))];
-      selector.innerHTML='<option value="">Todas</option>'+nombres.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join("");
-      selector.value=nombres.includes(seleccion)?seleccion:"";
-      const rows=selector.value?todos.filter(f=>f.premios.some(p=>p.nombre===selector.value)):todos;
+      const todos=j.data||[];
+      ticketPromos=[...new Set([...ticketPromos,...todos.flatMap(f=>(f.premios||[]).map(p=>p.nombre))])];
+      ov.querySelector(".ticket-filters").innerHTML=bar();
+      const rows=ticketFilter.promocion?todos.filter(f=>(f.premios||[]).some(p=>p.nombre===ticketFilter.promocion)):todos;
       const usados=rows.flatMap(f=>f.premios||[]).filter(p=>p.estado==="usado").length;
       lista.innerHTML=`<p><b>${usados} canjes confirmados</b> · ${rows.length} tickets · ${new Set(rows.flatMap(f=>f.clientes.map(c=>c.id))).size} carnés${j.limitado ? " · Mostrando los últimos 500: acota la fecha" : ""}</p><p class="t2">Tickets recibidos con carné. La fecha corresponde a su recepción en el panel.</p>`+rows.map(f=>{
         const estado=f.devolucion||f.revertida_en ? "Devuelto" : f.estado!=="aceptada" ? "Revisar" : f.premios.some(p=>p.estado==="usado") ? "Canje confirmado" : "Sin promoción";
@@ -13594,9 +13704,6 @@ async function fidFacturas(local, qr = null) {
       });
     } catch(e) { lista.innerHTML=`<p>${esc(e.message)}</p><button class="btn sm" id="tkRetry">Reintentar</button>`;lista.querySelector("#tkRetry").onclick=cargar; }
   }
-  ov.querySelector("#tkPromo").onchange=cargar;
-  ov.querySelector("#tkFecha").onchange=cargar;ov.querySelector("#tkPruebas").onchange=cargar;
-  ov.querySelector("#tkHoy").onclick=()=>{ov.querySelector("#tkFecha").value=hoy;cargar();};
   await cargar();
 }
 
@@ -15058,7 +15165,12 @@ function canjesQS() { return new URLSearchParams(CANJES_FILTRO).toString(); }
 function promoTablaCanjes() {
   const rows=PROMO.canjes||[], info=PROMO.actividad||{};
   const opciones=(lista,value,key,label)=>lista.map(c=>`<option value="${esc(c[key])}" ${c[key]===value?'selected':''}>${esc(c[label])}</option>`).join("");
-  return `<div class="toolbar"><label>Fecha<input type="date" data-canje-filtro="fecha" value="${esc(CANJES_FILTRO.fecha)}"></label><button class="btn sm" data-act="canjes-hoy">Hoy</button><label>Local<select data-canje-filtro="local"><option value="">Todos</option>${opciones((info.locales||[]).map(x=>({id:x,nombre:x})),CANJES_FILTRO.local,'id','nombre')}</select></label><label>Promoción<select data-canje-filtro="promocion"><option value="">Todas</option>${opciones((info.promociones||[]).map(c=>({...c,etiqueta:c.nombre+' · '+c.origen})),CANJES_FILTRO.promocion,'clave','etiqueta')}</select></label><button class="btn" data-act="canjes-limpiar">Limpiar filtros</button></div>
+  const filters=listFilterBar("canjes",{title:"Canjes",state:CANJES_FILTRO,search:false,fields:[
+    {key:"promocion",label:"Promoción",options:[["","Todas"],...(info.promociones||[]).map(c=>[c.clave,c.nombre+" · "+c.origen])]},
+    {key:"local",label:"Local del canje",options:[["","Todos"],...(info.locales||[]).map(l=>[l,l])]},
+    {key:"fecha",label:"Fecha del canje",type:"date"}
+  ],apply:()=>loadPromos()});
+  return `${filters}
     <p><b>${num(info.resumen?.canjes ?? rows.length)} canjes confirmados</b> · ${num(info.resumen?.clientes ?? 0)} clientes identificados</p>
     <p class="t2">Cupones y premios aplicados en Ágora. No incluye pruebas ni premios revertidos.${info.limitado?' Solo se muestran los últimos 5.000 registros.':''}</p>
     <button class="btn" data-act="canjes-correo" ${!rows.length || info.limitado ? 'disabled':''}>Preparar correo para estos clientes</button>

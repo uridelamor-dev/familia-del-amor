@@ -4,7 +4,7 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["sqlite", "ghostscript", "openssl"]
+packages = ["sqlite", "ghostscript", "openssl", "ffmpeg"]
 
 [workflows]
 runButton = "Project"

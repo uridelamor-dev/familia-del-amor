@@ -14,13 +14,19 @@
   var $ = function (id) { return document.getElementById(id); };
   var LOCAL = new URLSearchParams(location.search).get("l") || "";
 
-  /* La tarjeta viene APAGADA y de momento se queda así: no hay ni un enlace a esta página en
-     toda la web. Quien llegue aquí probando rutas se va a la portada, en vez de rellenar un
-     formulario que iba a fallar al enviarlo. Lo decide el servidor, no esta página. */
+  // El modal y la página de alta comparten formulario y validación del servidor.
+  var embedded = !!document.getElementById("clubDialog");
+  var submitLabel = $("altaBtn").textContent;
   fetch("/api/tarjeta/activa")
-    .then(function (r) { return r.json(); })
-    .then(function (d) { if (!d || !d.activa) location.replace("/"); })
-    .catch(function () { /* si no se puede preguntar, se deja el formulario: el envío avisará */ });
+    .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+    .then(function (d) {
+      if (!d || !d.activa) {
+        if (!embedded) { location.replace("/"); return; }
+        $("altaBtn").disabled = true;
+        error("El registro no está disponible ahora. Vuelve a intentarlo más tarde.");
+      }
+    })
+    .catch(function () { /* El envío valida también la disponibilidad. */ });
 
   // El cartel de la mesa lleva el local dentro. Decirlo en pantalla es lo que hace que el
   // cliente entienda que esto es de aquí y no un formulario cualquiera.
@@ -51,6 +57,9 @@
     if (!nombre) return error("Dinos cómo te llamas.", $("altaNombre"));
     if (telefono.replace(/\D/g, "").length < 9) return error("El teléfono no está completo.", $("altaTel"));
 
+    if (!$("altaCorreo").value.trim()) return error("Dinos tu correo electrónico.", $("altaCorreo"));
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test($("altaCorreo").value.trim()) || !$("altaCorreo").checkValidity()) return error("Revisa tu dirección de correo.", $("altaCorreo"));
+
     var btn = $("altaBtn");
     btn.disabled = true;
     btn.textContent = "Un momento…";
@@ -62,7 +71,7 @@
         nombre: nombre,
         telefono: telefono,
         correo: $("altaCorreo").value.trim(),
-        consent: $("altaConsent").checked,
+        consent: embedded ? true : $("altaConsent").checked,
         local: LOCAL,
       }),
     })
@@ -70,7 +79,7 @@
       .then(function (d) {
         if (!d || !d.ok) {
           btn.disabled = false;
-          btn.textContent = "Hazme la tarjeta";
+          btn.textContent = submitLabel;
           return error((d && d.error) || "No hemos podido hacerte la tarjeta. Prueba otra vez.");
         }
         $("altaForm").classList.add("hidden");
@@ -84,11 +93,20 @@
           ver.href = "/tarjeta.html?t=" + encodeURIComponent(d.token);
           ver.classList.remove("hidden");
         }
-        window.scrollTo(0, 0);
+        if (embedded && d.revelar && d.token && window.showClubProfile) {
+          var successNode = $("altaHecho");
+          window.showClubProfile(d.token, $("clubFormHost")).catch(function () {
+            // Mantener una salida al carné si no carga el segundo paso.
+            $("clubFormHost").replaceChildren(successNode);
+          });
+          return;
+        }
+        if (embedded) { $("altaHechoT").setAttribute("tabindex", "-1"); $("altaHechoT").focus(); }
+        else window.scrollTo(0, 0);
       })
       .catch(function () {
         btn.disabled = false;
-        btn.textContent = "Hazme la tarjeta";
+        btn.textContent = submitLabel;
         error("No hemos podido conectar. Prueba otra vez en un momento.");
       });
   });

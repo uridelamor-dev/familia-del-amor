@@ -1,3 +1,5 @@
+import { condicionesPromociones, ADJUNTOS_SCHEMA } from "./src/modules/messaging/sara-promociones.js";
+import { sanearPerfil, guardarPerfil } from "./src/modules/tarjeta/perfil.js";
 import { PERMISOS_CONFIRMADOS_SCHEMA, registrarPermisosConfirmados } from "./src/modules/clientes/permisos-confirmados.js";
 import { SQL_CANJES, filtrarCanjes, resumenCanjes, destinatariosCanjes } from "./src/modules/fidelizacion/actividad-canjes.js";
 import { EMAIL_SCHEMA, validarCorreo, enviarPruebaCorreo, configuracionCorreo, consultarDominioResend } from "./src/modules/campaigns/email.js";
@@ -31,7 +33,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -833,6 +835,8 @@ async function initDB() {
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    await client.query(ADJUNTOS_SCHEMA);
 
     // ── POR QUÉ SALIÓ MAL UNA CONVERSACIÓN, Y QUÉ COLUMNAS LO ARREGLAN ───────────────────────
     //
@@ -2963,6 +2967,10 @@ function facturasWhere(query = {}) {
   if (local) { cond.push("local = ?"); params.push(local); }
   if (empresa) { cond.push("empresa = ?"); params.push(empresa); }
   if (proveedor) { cond.push("proveedor = ?"); params.push(proveedor); }
+  // Categoría y subcategoría resueltas con la misma normalización que Productos.
+  if (query.categoria || query.subcategoria) {
+    cond.push("proveedor = ANY(?)"); params.push(query.proveedores_categoria || []);
+  }
   // Varios tipos a la vez ("factura,albaran"): el filtro es de casillas, no de una sola
   // opción, y pedir albaranes Y tickets a la vez es lo normal.
   if (tipo) {
@@ -2978,11 +2986,18 @@ function facturasWhere(query = {}) {
   return { where: cond.length ? "WHERE " + cond.join(" AND ") : "", params };
 }
 
+async function facturasQueryCategorias(query) {
+  if(!query.categoria && !query.subcategoria)return query;
+  const cats=String(query.categoria||"").split(",").filter(Boolean);
+  const subs=String(query.subcategoria||"").split(",").filter(Boolean);
+  return {...query,proveedores_categoria:await proveedoresDeCategorias(cats,subs)};
+}
+
 app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const scope = localScope(req);
     const query = scope ? { ...req.query, local: scope } : req.query;
-    const { where, params } = facturasWhere(query);
+    const { where, params } = facturasWhere(await facturasQueryCategorias(query));
     const LIMITE = 500;
     const rows = await dbAll(`SELECT * FROM facturas ${where} ORDER BY fecha DESC NULLS LAST, creado_en DESC LIMIT ${LIMITE}`, params);
     // `drive_thumb` es la miniatura en base64 y NO puede viajar en la lista: son ~8 KB por
@@ -3137,7 +3152,7 @@ async function facturasCsv(req, res) {
        FROM facturas WHERE id = ANY(?::int[]) ${scope ? "AND local = ?" : ""} ORDER BY fecha DESC NULLS LAST`,
       scope ? [ids, scope] : [ids]);
   } else {
-    const { where, params } = facturasWhere(scope ? { ...req.query, local: scope } : req.query);
+    const { where, params } = facturasWhere(await facturasQueryCategorias(scope ? { ...req.query, local: scope } : req.query));
     rows = await dbAll(`SELECT fecha, numero_factura, tipo, proveedor, nif, concepto, base_imponible, porcentaje_iva, cuota_iva, total, local, empresa, pagado FROM facturas ${where} ORDER BY fecha DESC NULLS LAST LIMIT 5000`, params);
   }
   // Punto y coma y BOM, como el registro de jornada: es lo que Excel en español abre a la
@@ -5233,7 +5248,7 @@ async function comprasDeLocal(query, local) {
       // Si nadie está etiquetado con esas categorías, la respuesta correcta es «nada», no
       // «todo»: una condición que no filtra habría devuelto la lista entera como si sí.
       condFac.push("f.proveedor = ANY(?)");
-      parFac.push(provsCat.length ? provsCat : ["\u0000sin-proveedores"]);
+      parFac.push(provsCat.length ? provsCat : []);
     }
 
     const q = String(req.query.q || "").trim();
@@ -6516,9 +6531,9 @@ app.post("/api/facturas/duplicados/:id/resolver", requireAuth(["direccion", "con
 async function proveedoresDeCategorias(cats, subs = []) {
   if (!cats.length && !subs.length) return [];
   const [etiquetas, nombres] = await Promise.all([
-    subs.length
-      ? dbAll(`SELECT prov_clave FROM facturas_proveedor_cats WHERE subcategoria = ANY(?)`, [subs])
-      : dbAll(`SELECT prov_clave FROM facturas_proveedor_cats WHERE categoria = ANY(?)`, [cats]),
+    dbAll(`SELECT prov_clave FROM facturas_proveedor_cats WHERE ${[
+      cats.length ? "categoria = ANY(?)" : "", subs.length ? "subcategoria = ANY(?)" : ""
+    ].filter(Boolean).join(" AND ")}`, [...(cats.length?[cats]:[]),...(subs.length?[subs]:[])]),
     dbAll(`SELECT DISTINCT proveedor FROM facturas WHERE proveedor IS NOT NULL AND proveedor <> ''`),
   ]);
   const claves = new Set(etiquetas.map((e) => e.prov_clave));
@@ -6535,6 +6550,8 @@ app.get("/api/facturas/categorias", requireAuth(["direccion", "contabilidad"]), 
     const periodo = [], params = [];
     if (from) { periodo.push("fecha >= ?"); params.push(from); }
     if (to) { periodo.push("fecha <= ?"); params.push(to); }
+    const local = localScope(req);
+    if(local){periodo.push("local = ANY(?)");params.push(comprasDe(local));}
     const dentro = periodo.join(" AND ") || "TRUE";
     const [etiquetas, provs] = await Promise.all([
       dbAll(`SELECT prov_clave, proveedor, categoria, subcategoria FROM facturas_proveedor_cats ORDER BY proveedor, categoria, subcategoria`),
@@ -13641,7 +13658,7 @@ app.post("/api/tarjeta/alta", async (req, res) => {
   if (!pulsoRateLimit(req, res, TJ_ALTA_MAX)) return;
   try {
     const { alta, descartados } = sanearAlta(req.body, { locales: INV_LOCALES });
-    if (!alta.nombre || !alta.telefono) {
+    if (!alta.nombre || !alta.telefono || !alta.correo) {
       return res.status(400).json({ ok: false, error: descartados[0]?.motivo || "Faltan datos", descartados });
     }
 
@@ -13749,6 +13766,20 @@ app.get("/api/tarjeta/resumen", requireAuth(PROMOS_ROLES), async (req, res) => {
 // ── La cuenta del cliente ────────────────────────────────────────────────────
 // Pública, sin sesión. Enseña SUS visitas y SUS descuentos, que es lo que el RGPD llama derecho
 // de acceso y aquí es sencillamente lo que hace que la tarjeta sirva para algo.
+app.post("/api/tarjeta/perfil", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if(tarjetaApagada(res)) return;
+  if(!pulsoRateLimit(req,res,TJ_ALTA_MAX)) return;
+  let perfil;
+  try { perfil=sanearPerfil(req.body, hoyISO()); }
+  catch(e){return res.status(400).json({ok:false,error:e.message});}
+  try {
+    const ok=await guardarPerfil(pool,req.body?.token,perfil);
+    if(!ok)return res.status(404).json({ok:false,error:"Este carné no está disponible. Abre el enlace de tu carné para continuar."});
+    res.json({ok:true});
+  }catch(e){console.error("[tarjeta/perfil] No se pudo guardar el perfil");res.status(500).json({ok:false,error:"No hemos podido guardar los datos. Puedes intentarlo otra vez o continuar a tu carné."});}
+});
+
 app.get("/api/tarjeta/:token", async (req, res) => {
   if (tarjetaApagada(res)) return;
   if (!pulsoRateLimit(req, res, TJ_VER_MAX)) return;
@@ -18960,7 +18991,7 @@ app.get("/api/reservas/seguimiento", requireAuth(["direccion", "marketing", "enc
   }
 });
 
-setSeguimientoResolver(async ({ ctx, texto }) => {
+setSeguimientoResolver(async ({ ctx, texto, idioma = "es" }) => {
   const delTexto = clasificarRespuesta(texto);
   let deLaIA = null;
   // Solo se pregunta cuando las palabras no concluyen: es donde aporta y donde no hay riesgo.
@@ -18993,7 +19024,7 @@ setSeguimientoResolver(async ({ ctx, texto }) => {
     enlace = enlaceResena(ficha?.placeId);
   } catch { /* sin enlace se agradece igual */ }
 
-  const plan = respuestaASeguimiento({ veredicto, nombre: ctx.nombre, local: ctx.local, enlace });
+  const plan = respuestaASeguimiento({ veredicto, nombre: ctx.nombre, local: ctx.local, enlace, idioma });
   // Y queda anotado, que era lo que faltaba: sin esto no había forma de saber ni qué se mandó
   // ni qué contestaron.
   try {
@@ -20983,6 +21014,17 @@ app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
+});
+
+app.get("/api/whatsapp/adjuntos/:id", requireAuth(["direccion"]), async (req, res) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.sendStatus(404);
+  try {
+    const a = await dbGet(`SELECT nombre, mime, datos FROM wa_adjuntos WHERE id = ? AND creado_en >= NOW() - INTERVAL '30 days'`, [req.params.id]);
+    if (!a) return res.status(404).json({ ok: false, error: 'El archivo ya no está disponible.' });
+    res.set({ 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Type': a.mime,
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(a.nombre)}` });
+    res.send(a.datos);
+  } catch { res.status(500).json({ ok: false, error: 'No se pudo recuperar el archivo.' }); }
 });
 
 app.get("/api/whatsapp/mensajes", requireAuth(["direccion"]), async (req, res) => {
@@ -24623,21 +24665,23 @@ const server = app.listen(PORT, async () => {
 
   setOnReserva(async (reserva, jid) => {
     const { local, personas, dia, hora, telefono, nombre_reserva, pendiente } = reserva;
-    if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) return;
+    if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) return { ok: false, motivo: "Faltan datos de la reserva" };
     try {
       const bloqueo = await estaBloqueado(local, dia);
       if (bloqueo) {
         console.log(`[Reserva WA] Bloqueada por config: ${local} ${dia}`);
         return { ok: false, motivo: bloqueo.motivo || "fechas no disponibles" };
       }
-    } catch (e) { console.error("Error comprobando bloqueo (WA):", e.message); }
+    } catch (e) { console.error("Error comprobando bloqueo (WA):", e.message); throw e; }
     const creado_en = new Date().toISOString();
+    let guardada = false;
     try {
       const rowRes = await dbRun(
         `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [local, personas, dia, hora, telefono, nombre_reserva, creado_en]
       );
       const reservaId = rowRes.id;
+      guardada = true;
       if (jid) {
         await dbRun(
           `INSERT INTO wa_clientes (jid, nombre, telefono, ultima_interaccion)
@@ -24667,7 +24711,9 @@ const server = app.listen(PORT, async () => {
       await programarSeguimiento({ telefono, nombre: nombre_reserva, local, dia, pendiente });
     } catch (e) {
       console.error("Error guardando reserva WhatsApp:", e.message);
+      if (!guardada) throw e;
     }
+    return { ok: true, pendiente: !!pendiente };
   });
 
   // Grupos de WhatsApp por defecto (autorreparable, no pisa re-enlaces manuales)
@@ -24919,12 +24965,23 @@ const server = app.listen(PORT, async () => {
   invalidarInternos = () => { _internosTs = 0; };
   setTelefonoInterno(async (telefono) => esTelefonoInterno(telefono, await telefonosInternos()));
 
-  setOnMessage(async ({ jid, texto, respuesta, historico = false, interno = false }) => {
+  setGuardarAdjunto(async ({ jid, mensajeId, nombre, mime, buffer }) => {
+    if (!mensajeId) throw new Error('Adjunto sin identificador');
+    const id = crypto.randomUUID();
+    const row = await dbGet(`INSERT INTO wa_adjuntos (id, jid, mensaje_id, nombre, mime, datos)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (jid, mensaje_id) DO UPDATE SET mensaje_id = EXCLUDED.mensaje_id RETURNING id`,
+      [id, jid, mensajeId, nombre, mime, buffer]);
+    // Los originales son privados y caducan a los 30 días; la lectura queda en el historial.
+    await dbRun(`DELETE FROM wa_adjuntos WHERE creado_en < NOW() - INTERVAL '30 days'`);
+    return row.id;
+  });
+
+  setOnMessage(async ({ jid, texto, respuesta, historico = false, interno = false, adjuntos = [] }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
     try {
       await dbRun(
-        `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico, tipo) VALUES (?, ?, ?, ?, ?, ?)`,
-        [jid, telefono, texto, respuesta, historico ? 1 : 0, interno ? "interno" : "intercambio"]
+        `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico, tipo, adjuntos) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb)`,
+        [jid, telefono, texto, respuesta, historico ? 1 : 0, interno ? "interno" : "intercambio", JSON.stringify(adjuntos)]
       );
       // Los de la casa NO entran en wa_clientes (que es la agenda de clientes de WhatsApp)
       // ni pasan por la lógica de marketing: el mensaje queda guardado y nada más.
@@ -25137,6 +25194,10 @@ const server = app.listen(PORT, async () => {
       if (instr && instr.trim()) {
         partes.push(`INSTRUCCIONES DEL EQUIPO (síguelas siempre que apliquen):\n${instr.trim()}`);
       }
+      const cupones = await dbAll(`SELECT id,nombre,descripcion,activa,locales,desde,hasta,usos_por_cliente FROM pro_promociones ORDER BY id DESC LIMIT 60`);
+      const caja = await dbAll(`SELECT id,nombre,campana,estado,local,texto_cliente,desde,hasta,dias,hora_desde,hora_hasta,compra_minima,coste_puntos,acumulable,limite_cuenta,tipo,valor
+        FROM fid_promos WHERE estado <> 'borrador' ORDER BY id DESC LIMIT 60`);
+      partes.push('CONDICIONES REGISTRADAS DE PROMOCIONES (últimas 60 de cada tipo; si falta una, no inferir sus condiciones):\n' + condicionesPromociones(cupones, caja));
       const hoy = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
       const bloqueos = await dbAll(
         `SELECT local, desde, hasta, motivo FROM bloqueos_reservas WHERE hasta::date >= ?::date ORDER BY desde`, [hoy]
@@ -25162,7 +25223,7 @@ const server = app.listen(PORT, async () => {
       return partes.length ? `--- CONFIGURACIÓN DEL EQUIPO ---\n${partes.join("\n\n")}` : "";
     } catch (e) {
       console.error("Error construyendo config de Sara:", e.message);
-      return "";
+      return "CONFIGURACIÓN NO DISPONIBLE. No confirmar condiciones comerciales, horarios ni disponibilidad. Derivar las consultas que necesiten esos datos.";
     }
   });
 
@@ -25252,7 +25313,7 @@ const server = app.listen(PORT, async () => {
           [jid, telefono, notasJson, notasJson]
         );
       }
-    } catch (e) { console.error("Error actualizando perfil WA:", e.message); }
+    } catch (e) { console.error("Error actualizando perfil WA:", e.message); throw e; }
   });
 
   /**
@@ -25282,7 +25343,7 @@ const server = app.listen(PORT, async () => {
       await ficAuditar("whatsapp", null, "sara_pausada", por,
         { detalle: { motivo: p.pausa_motivo, nota: String(detalle).slice(0, 200) } });
       console.warn(`[Sara] pausada en una conversación · motivo: ${p.pausa_motivo}`);
-    } catch (e) { console.error(lineaErrorSql("[wa] pausar IA", e)); }
+    } catch (e) { console.error(lineaErrorSql("[wa] pausar IA", e)); throw e; }
   });
 
   setOnGroupAttachment(async ({ groupJid, senderJid, buffer, mimeType, filename, caption }) => {

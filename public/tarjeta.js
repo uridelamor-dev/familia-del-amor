@@ -236,6 +236,11 @@
       if (r.datos && r.datos.cupon) { location.replace("/cupon.html?t=" + encodeURIComponent(TOKEN)); return; }
       if (!r.datos.ok) return avisar(r.datos.error || "Este enlace no es válido.");
       pintar(r.datos);
+      var profileLink = document.createElement("a");
+      profileLink.href = "/?club=perfil#t=" + encodeURIComponent(TOKEN);
+      profileLink.textContent = "Completar mi perfil";
+      profileLink.style.cssText = "display:block;text-align:center;margin:20px 0;color:#2c4a3e;text-decoration:underline";
+      document.querySelector("main").append(profileLink);
     })
     .catch(function () {
       avisar("No hemos podido cargarla. Prueba otra vez en un momento.");

@@ -1,0 +1,68 @@
+/* Acabado del formulario público; conserva sus controles y reglas. */
+#reservas {
+  padding: clamp(24px, 5vw, 48px);
+  background: linear-gradient(145deg, #fffdf8, #f5f2e9);
+  border: 1px solid #e1dfd2;
+  border-radius: 28px;
+  box-shadow: 0 12px 40px #233c3208;
+  scroll-margin-top: 90px;
+}
+#reservas .section-head { margin-bottom: 28px; }
+#reservas .section-head h2 {
+  position: static;
+  writing-mode: horizontal-tb;
+  transform: none;
+  font-size: clamp(28px, 4vw, 38px);
+  line-height: 1.2;
+  letter-spacing: -.025em;
+  color: #233c32;
+  margin: 0 0 12px;
+}
+#reservas .section-head p { font-size: 15px; line-height: 1.6; max-width: 580px; margin: 0; color: #62695d; }
+#reservas .reserva-form { max-width: none; gap: 22px; }
+#reservas .reserva-step { min-width: 0; gap: 8px; }
+#reservas .reserva-step-label { font-size: 14px; letter-spacing: 0; text-transform: none; color: #354c40; font-weight: 600; }
+#reservas .reserva-row { gap: 20px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+#reservas .reserva-row--datetime { grid-template-columns: minmax(0, 1fr) minmax(0, 1.65fr); gap: 28px; }
+#reservas .reserva-col { gap: 20px; }
+#reservas .reserva-select,
+#reservas .reserva-form input:not([type="hidden"]) {
+  min-height: 52px;
+  padding: 12px 15px;
+  border: 1px solid #d9dbce;
+  border-radius: 14px;
+  background-color: #fffefa;
+  box-shadow: 0 2px 4px #233c3203;
+  font-size: 16px;
+  color: #233c32;
+}
+#reservas .reserva-select { padding-right: 40px; }
+#reservas :is(input, select, button):focus-visible { outline: 3px solid #9aaa91; outline-offset: 3px; }
+#reservas .stepper { width: fit-content; max-width: 100%; gap: 10px; padding: 5px; background: #eeeee4; border: 1px solid #dedfd2; border-radius: 30px; }
+#reservas .stepper-btn { width: 44px; height: 44px; border: 0; background: #fffefa; color: #294d3e; box-shadow: 0 2px 5px #233c3208; font-size: 22px; }
+#reservas #personasDisplay { font-size: 22px; min-width: 26px; }
+#reservas .stepper-unit { font-size: 13px; margin-right: 3px; }
+#reservas #timePicker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+#reservas .time-section { min-width: 0; }
+#reservas .time-section-label { font-size: 12px; text-transform: none; letter-spacing: 0; margin: 0 0 8px; }
+#reservas .time-pills { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+#reservas .time-pill { min-width: 0; min-height: 44px; padding: 9px 4px; border: 1px solid #d9dbce; border-radius: 11px; background: #fffefa; font-size: 14px; color: #354c40; }
+#reservas .time-pill:hover { border-color: #617e6e; background: #edf1e7; }
+#reservas .time-pill.selected { background: #294d3e; color: #fff; border-color: #294d3e; box-shadow: 0 3px 8px #294d3e20; font-weight: 700; }
+#reservas button[type="submit"] { min-height: 54px; border-radius: 15px; background: #294d3e; color: white; text-transform: none; letter-spacing: 0; font-size: 16px; font-weight: 600; }
+#reservas button[type="submit"]:hover { background: #203e32; }
+#reservas #reservaMsg:empty { display: none; }
+@media (max-width: 640px) {
+  #reservas { padding: 26px 20px 32px; border-radius: 24px; }
+  #reservas .section-head { margin-bottom: 24px; }
+  #reservas .section-head p { font-size: 14px; }
+  #reservas .reserva-row, #reservas .reserva-row--datetime { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  #reservas .reserva-col { display: grid; grid-template-columns: minmax(0, 1fr); }
+  #reservas #timePicker { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  #reservas .time-pills { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  body:has(#reservaForm:focus-within) .club-launch { padding: 7px; border-radius: 18px; }
+  body:has(#reservaForm:focus-within) .club-launch > span:not(.club-launch-icon) { display: none; }
+  body:has(#reservaForm:focus-within) .wa-float { width: 46px; height: 46px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); }
+  body:has(#reservaForm:focus-within) .wa-float svg { width: 25px; height: 25px; }
+  #reservas :is(input, select, button) { scroll-margin-block: 110px; }
+}

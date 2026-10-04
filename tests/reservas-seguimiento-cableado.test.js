@@ -65,7 +65,7 @@ describe("la respuesta decide, y la reseña solo va a quien salió contento", ()
     assert.ok(!/Tu opinión nos ayuda a seguir mejorando\. En caso de haber algo/.test(wa),
       "vuelve la respuesta única, dijera lo que dijera el cliente");
     assert.match(wa, /export function setSeguimientoResolver\(fn\)/);
-    assert.match(wa, /plan = await seguimientoResolver\(\{ jid, ctx, texto: textoCombinado \}\)/);
+    assert.match(wa, /plan = await seguimientoResolver\(\{ jid, ctx, texto: textoCombinado, idioma: idiomaSugerido\(/);
   });
 
   test("LO NEGATIVO MANDA: la IA no puede ablandar una queja", () => {

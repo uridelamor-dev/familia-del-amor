@@ -135,7 +135,8 @@ function renderWaChat(telefono, contactData) {
       <!-- Mensaje del cliente -->
       <div class="wa-row in">
         <div class="wa-bubble in">
-          <div>${escHtml(m.mensaje)}</div>
+          <div style="white-space:pre-wrap">${escHtml(m.mensaje)}</div>
+          ${(Array.isArray(m.adjuntos) ? m.adjuntos : []).filter(id => /^[0-9a-f-]{36}$/i.test(id)).map(id => `<button type="button" class="btn btn-sm" data-wa-adjunto="${id}">Descargar adjunto</button>`).join('')}
           <div class="wa-bubble-time">${histBadge}${fecha}</div>
         </div>
       </div>
@@ -198,6 +199,18 @@ function renderWaChat(telefono, contactData) {
     }
   });
 
+  panel.querySelectorAll('[data-wa-adjunto]').forEach(btn => btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const res = await authFetch('/api/whatsapp/adjuntos/' + btn.dataset.waAdjunto);
+      if (!res.ok) throw new Error('El archivo no está disponible o ha caducado.');
+      const blob = await res.blob(), url = URL.createObjectURL(blob), a = document.createElement('a');
+      const encoded = res.headers.get('Content-Disposition')?.match(/filename\*=UTF-8''(.+)/)?.[1];
+      a.href = url; a.download = encoded ? decodeURIComponent(encoded) : 'adjunto';
+      a.click(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { toast(e.message || 'No se pudo descargar el archivo.', 'error'); }
+    finally { btn.disabled = false; }
+  }));
   const input = panel.querySelector("#waMsgInput");
   const sendBtn = panel.querySelector("#waMsgSend");
 

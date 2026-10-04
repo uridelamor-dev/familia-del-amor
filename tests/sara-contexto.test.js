@@ -244,7 +244,7 @@ describe("leer la cita de Baileys", () => {
 
   test("y la cita viaja hasta el modelo", () => {
     assert.match(WA, /const citado = leerCitado\(msg\);/, "no se lee la cita del entrante");
-    assert.match(WA, /contextoRetraso, citado \}\);/, "la cita no entra en el debounce");
+    assert.match(WA, /contextoRetraso, citado, msg \}\);/, "la cita no entra en el debounce");
     assert.match(WA, /\[\.\.\.items\]\.reverse\(\)\.map\(\(x\) => x\.citado\)\.find\(Boolean\)/,
       "de varios mensajes seguidos hay que coger la cita del ÚLTIMO");
     assert.match(WA, /async function responderConIA\(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, citado = null\)/,

@@ -43,11 +43,11 @@ describe("saneado del formulario de alta", () => {
     assert.equal(alta.opt_in, false);
   });
 
-  test("un correo mal escrito se descarta pero el alta sigue", () => {
+  test("un correo mal escrito se rechaza con un motivo", () => {
     const { alta, descartados } = sanearAlta(
       { nombre: "Marta", telefono: "600112233", correo: "esto no es un correo" }, { locales: LOCALES });
     assert.equal(alta.correo, "");
-    assert.equal(alta.nombre, "Marta");   // el alta NO se cae por el correo, que es opcional
+    assert.equal(alta.nombre, "Marta");   // El endpoint exige también alta.correo antes de emitir el carné
     assert.ok(descartados.some((d) => d.campo === "correo"));
   });
 
@@ -120,3 +120,8 @@ describe("el mensaje de WhatsApp", () => {
     assert.ok(t.startsWith("Hola"));
   });
 });
+
+ test("el correo vacío devuelve un motivo para bloquear el alta", () => {
+ const {alta,descartados}=sanearAlta({nombre:"Marta",telefono:"600112233"});
+ assert.equal(alta.correo,"");assert.ok(descartados.some(d=>d.campo==="correo"&&d.motivo==="Dinos tu correo electrónico"));
+ });
