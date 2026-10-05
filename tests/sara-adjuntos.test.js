@@ -3,7 +3,20 @@ import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { describirAdjunto, mensajeNormalizado, leerLimitado, prepararAdjunto, interpretarAdjunto, convertirAudio, validarContenido, MAX_ADJUNTO } from '../src/modules/messaging/sara-adjuntos.js';
+import { describirAdjunto, mensajeNormalizado, leerLimitado, prepararAdjunto, interpretarAdjunto, convertirAudio, validarContenido, MAX_ADJUNTO, duracionOggOpus } from '../src/modules/messaging/sara-adjuntos.js';
+
+
+function oggPage(payload, sequence, granule, flags = 0) {
+  const head = Buffer.alloc(28);
+  head.write('OggS'); head[5] = flags; head.writeBigInt64LE(BigInt(granule), 6);
+  head.writeUInt32LE(7, 14); head.writeUInt32LE(sequence, 18); head[26] = 1; head[27] = payload.length;
+  return Buffer.concat([head, payload]);
+}
+function opusFixture(seconds = 14) {
+  const head = Buffer.alloc(19); head.write('OpusHead'); head[8] = 1; head[9] = 1; head.writeUInt16LE(312, 10);
+  return Buffer.concat([oggPage(head, 0, 0, 2), oggPage(Buffer.from('OpusTags'), 1, 0), oggPage(Buffer.from([0xf8, 0xff, 0xfe]), 2, seconds * 48000 + 312, 4)]);
+}
+const legacyOgg = oggPage(Buffer.from('vorbis'), 0, 0, 2);
 
 const pdf = Buffer.from('%PDF-1.7\nDocumento de prueba');
 const msg = { key: { remoteJid: 'cliente@s.whatsapp.net', id: 'a1' }, message: { documentMessage: { mimetype: 'application/pdf', fileName: 'ejemplo.pdf', fileLength: pdf.length } } };
@@ -44,7 +57,7 @@ test('envoltorios compatibles y visualización única', () => {
 test('audio Ogg se convierte y transcribe conservando el idioma original', async () => {
   const meta = describirAdjunto({ audioMessage: { mimetype: 'audio/ogg; codecs=opus', seconds: 5 } });
   let conversion = 0;
-  const a = await interpretarAdjunto(Buffer.from('OggSfixture'), meta, { apiKey: 'clave-ficticia', convertir: async () => { conversion++; return Buffer.from('wav'); }, fetcher: async (url, args) => {
+  const a = await interpretarAdjunto(legacyOgg, meta, { apiKey: 'clave-ficticia', convertir: async () => { conversion++; return Buffer.from('wav'); }, fetcher: async (url, args) => {
     assert.match(url, /audio\/transcriptions$/); assert.equal(args.body.get('file').name, 'audio.wav');
     assert.match(args.body.get('prompt'), /idioma original/);
     return { ok: true, json: async () => ({ text: 'Vull reservar una taula per demà.' }) };
@@ -83,7 +96,7 @@ test('fallo temporal de conexión se reintenta una vez sin duplicar archivo ni c
   const meta = { audioMessage: { mimetype: 'audio/ogg', seconds: 14 } };
   let llamadas = 0, guardados = 0, conversiones = 0;
   const a = await prepararAdjunto({ msg: { ...msg, message: meta },
-    descargar: async () => Readable.from([Buffer.from('OggSfixture')]),
+    descargar: async () => Readable.from([legacyOgg]),
     guardar: async () => { guardados++; return 'audio-id'; },
     interpretar: (b, m) => interpretarAdjunto(b, m, { apiKey: 'ficticia',
       convertir: async () => { conversiones++; return Buffer.from('wav'); },
@@ -115,4 +128,33 @@ test('diagnóstico distingue conexión y conversión sin revelar contenido del e
   assert.equal(diagnosticoAdjunto({ killed: true, message: 'private command' }), 'conversion_tiempo_agotado');
   assert.equal(diagnosticoAdjunto(new Error('secret')), 'error_procesando');
   assert.equal(diagnosticoAdjunto(new Error('lectura_proveedor_401')), 'lectura_proveedor_401');
+});
+
+
+test('nota de voz Opus va directamente al proveedor incluso sin conversor instalado', async () => {
+  const original = opusFixture();
+  const meta = describirAdjunto({ audioMessage: { mimetype: 'audio/ogg; codecs=opus', seconds: 14 } });
+  const result = await interpretarAdjunto(original, meta, { apiKey: 'ficticia',
+    convertir: async () => assert.fail('No arrancar ffprobe ni ffmpeg'),
+    fetcher: async (_url, args) => {
+      const file = args.body.get('file');
+      assert.equal(file.name, 'audio.ogg'); assert.equal(file.type, 'audio/ogg');
+      assert.deepEqual(Buffer.from(await file.arrayBuffer()), original);
+      return { ok: true, json: async () => ({ text: 'Voldria reservar per demà.' }) };
+    },
+  });
+  assert.match(result.texto, /Voldria/);
+  assert.equal(duracionOggOpus(original), 14);
+});
+
+test('Opus mantiene límite real de cinco minutos y rechaza archivos truncados o encadenados', async () => {
+  assert.equal(duracionOggOpus(opusFixture(300)), 300);
+  const original = opusFixture();
+  const reordered = Buffer.from(original); reordered.writeUInt32LE(8, 18);
+  const missingEnd = Buffer.from(original); missingEnd[missingEnd.length - 31 + 5] = 0;
+  for (const invalid of [opusFixture(301), original.subarray(0, -1), Buffer.concat([original, original]), reordered, missingEnd]) {
+    await assert.rejects(interpretarAdjunto(invalid, { tipo: 'audio', extension: 'ogg', mime: 'audio/ogg', compatible: true, segundos: 1 }, {
+      apiKey: 'ficticia', fetcher: () => assert.fail('No enviar audio fuera de límites'), convertir: () => assert.fail('No convertir audio inválido'),
+    }), /audio_(ogg_invalido|fuera_limites)/);
+  }
 });

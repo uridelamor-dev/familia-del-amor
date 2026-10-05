@@ -1,3 +1,4 @@
+import { configurarBloqueoSheets, planAnuales, avisoAnualesUnaVez } from "./src/modules/facturas/sheets-anuales.js";
 import { conocimientoCartas } from "./src/modules/messaging/sara-cartas-conocimiento.js";
 import { condicionesPromociones, ADJUNTOS_SCHEMA } from "./src/modules/messaging/sara-promociones.js";
 import { CARTAS_LOCALES_SQL } from "./src/modules/messaging/sara-cartas-locales.js";
@@ -349,6 +350,18 @@ async function dbRun(sql, params = []) {
   const result = await pool.query(toPositional(sql), params);
   return result.rows[0] || undefined;
 }
+configurarBloqueoSheets(async (fn) => {
+  const c = await pool.connect();
+  let ok = false;
+  try {
+    ok = (await c.query('SELECT pg_try_advisory_lock(70799135, 2510) AS ok')).rows[0].ok;
+    if (!ok) throw new Error('Hay otra sincronización de libros anuales en curso. Se reintentará automáticamente.');
+    return await fn();
+  } finally {
+    if (ok) await c.query('SELECT pg_advisory_unlock(70799135, 2510)').catch(()=>{});
+    c.release();
+  }
+});
 // Una sola lectura externa a la vez; el original ya está guardado si el trabajador está ocupado.
 const recepcionFacturas = crearRecepcion({
   db: {get:dbGet,run:dbRun,all:dbAll},
@@ -2842,15 +2855,16 @@ app.get("/api/facturas/drive-diagnostico", requireAuth(["direccion", "contabilid
         const { partes, error } = await rutaDe(fid);
         f.ruta = error ? null : partes.slice(0, -1).join(" / ");   // sin el nombre del archivo
         f.rutaError = error || null;
-        // Ordenada = cuelga de al menos Empresa/Local/Mes por debajo de la raíz.
-        f.ordenada = !!(f.ruta && partes.length >= 5);
+        // Ordenada = cuelga de al menos Empresa/Año/Mes/Local por debajo de la raíz.
+        f.ordenada = !!(f.ruta && partes.length >= 6);
         if (f.ruta && !f.ordenada) sueltas++;
       } catch (e) { f.rutaError = e.message; }
     }
     if (sueltas) {
-      out.avisos.push(`${sueltas} de las ${out.ultimas.length} últimas facturas NO están en su carpeta Empresa/Local/Mes. El botón «Reordenar Drive» las coloca sin volver a subirlas.`);
+      out.avisos.push(`${sueltas} de las ${out.ultimas.length} últimas facturas NO están en su carpeta Empresa/Año/Mes/Local. El botón «Reordenar Drive» las coloca sin volver a subirlas.`);
     }
-    out.sheets = await dbAll(`SELECT local, sheet_url FROM facturas_grupos WHERE sheet_url IS NOT NULL ORDER BY local`);
+    const anuales = await dbAll('SELECT value FROM config WHERE key LIKE ?', ['facturas_anual_v1:%']);
+    out.sheets = anuales.map(r => { const l=JSON.parse(r.value); return {local:`${l.empresa} · ${l.year}`,sheet_url:`https://docs.google.com/spreadsheets/d/${l.id}`,verificado_en:l.verificado_en}; });
 
     // Un local sin empresa manda sus facturas a una carpeta llamada «Sin empresa asignada».
     const sinEmpresa = await dbAll(`SELECT DISTINCT f.local FROM facturas f
@@ -3045,7 +3059,7 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
 // Editar los campos de una factura (corregir lo que extrajo la IA). Re-proyecta a los Sheets.
 app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const antes = await dbGet("SELECT local, fecha FROM facturas WHERE id = ?", [req.params.id]);
+    const antes = await dbGet("SELECT * FROM facturas WHERE id = ?", [req.params.id]);
     const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "local", "empresa", "pagado"];
     // Corregir a mano tampoco puede colar un local que no existe: es la otra puerta por la
     // que entraron los «Lloret» y «BLANES» sueltos.
@@ -3058,13 +3072,15 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     for (const k of allowed) if (req.body[k] !== undefined) { sets.push(`${k} = ?`); vals.push(req.body[k] === "" ? null : req.body[k]); }
     if (!sets.length) return res.json({ ok: true });
     vals.push(req.params.id);
-    await dbRun(`UPDATE facturas SET ${sets.join(", ")} WHERE id = ?`, vals);
+    await dbRun(`UPDATE facturas SET ${sets.join(", ")}, sheet_synced = 0 WHERE id = ?`, vals);
+    await ficAuditar('facturas',req.params.id,'correccion',req.user.nombre||req.user.username,{local:antes?.local,detalle:{antes,campos:allowed.filter(k=>req.body[k]!==undefined),despues:await dbGet('SELECT * FROM facturas WHERE id = ?',[req.params.id])}});
     res.json({ ok: true });
     // Re-proyectar (fondo, no fatal): la pestaña vieja y la nueva si cambió local/fecha, + maestro.
-    const despues = await dbGet("SELECT local, fecha FROM facturas WHERE id = ?", [req.params.id]);
+    const despues = await dbGet("SELECT * FROM facturas WHERE id = ?", [req.params.id]);
     (async () => {
       try {
         const deps = { getToken: getDriveAccessToken, dbGet, dbAll, dbRun };
+        if(despues)await reubicarEnDrive({factura:despues,getToken:getDriveAccessToken,dbGet});
         if (antes && antes.local && antes.fecha) await resincronizarSheetsFactura(deps, antes.local, antes.fecha);
         if (despues && despues.local && despues.fecha && (despues.local !== antes?.local || despues.fecha !== antes?.fecha)) await resincronizarSheetsFactura(deps, despues.local, despues.fecha);
       } catch (e) { console.error("[PATCH factura] resync:", e.message); }
@@ -3102,6 +3118,7 @@ app.post("/api/facturas/:id/fecha", requireAuth(["direccion", "contabilidad"]), 
     }
     await dbRun(`UPDATE facturas SET fecha = ?, vencimiento = ?, vencimiento_origen = ? WHERE id = ?`,
       [fecha, venc.vencimiento, venc.origen, f.id]);
+    await ficAuditar('facturas',f.id,'fecha_corregida',req.user.nombre||req.user.username,{local:f.local,detalle:{antes:f.fecha,despues:fecha}});
     // El aviso de la fecha deja de tener sentido en cuanto alguien la decide a mano.
     await dbRun(`UPDATE facturas SET revisar = NULL WHERE id = ? AND revisar LIKE '%mal leído%'`, [f.id]).catch(() => {});
 
@@ -3138,7 +3155,20 @@ app.delete("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), asyn
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// Verificar y reparar: reescribe todas las pestañas y el maestro desde la BD (fuente de verdad).
+// Vista previa sin escrituras: agrupación por empresa fiscal y ejercicio.
+app.get("/api/facturas/libros-anuales", requireAuth(["direccion", "contabilidad"]), async (req,res) => {
+  try { res.json({ok:true,data:await planAnuales({dbAll})}); }
+  catch(e) { res.status(500).json({ok:false,error:e.message}); }
+});
+
+// Aviso de esta migración, una sola vez para la organización, también entre dispositivos.
+app.post('/api/facturas/libros-anuales/aviso', requireAuth(['direccion']), async (req,res) => {
+  try {
+    res.json({ok:true,...await avisoAnualesUnaVez({dbGet,dbAll,dbRun})});
+  } catch(e) { res.status(500).json({ok:false,error:e.message}); }
+});
+
+// Actualiza exclusivamente los nuevos libros anuales. Los Sheets históricos se conservan.
 app.post("/api/facturas/reparar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try { const r = await repararTodosLosSheets({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun }); res.json({ ok: true, ...r }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -3708,7 +3738,7 @@ app.post("/api/facturas/reset-test", requireAuth(["direccion"]), async (req, res
 
 app.post("/api/facturas/migrar-estructura", requireAuth(["direccion"]), async (req, res) => {
   try {
-    const resultado = await migrarEstructuraDrive({ getToken: getDriveAccessToken, dbAll, dbGet });
+    const resultado = await migrarEstructuraDrive({ getToken: getDriveAccessToken, dbAll, dbGet, dbRun });
     res.json({ ok: true, ...resultado });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -6434,6 +6464,7 @@ app.post("/api/facturas/:id/conciliar", requireAuth(["direccion", "contabilidad"
       await dbRun(`UPDATE facturas SET conciliado_con = NULL, conciliado_por = NULL, conciliado_en = NULL WHERE id = ?`, [f.id]);
       await dbRun(`UPDATE facturas SET conciliado_con = NULL WHERE conciliado_con = ?`, [String(f.id)]).catch(() => {});
       await ficAuditar("facturas", f.id, "conciliacion_deshecha", quien, { local: f.local });
+      await dbRun("INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",['facturas_anuales_reintentar',String(Date.now())]);
       return res.json({ ok: true, mensaje: "Conciliación deshecha." });
     }
     // Un albarán solo puede pertenecer a UNA factura: si no, se pagaría dos veces lo mismo.
@@ -6452,6 +6483,7 @@ app.post("/api/facturas/:id/conciliar", requireAuth(["direccion", "contabilidad"
       [JSON.stringify(ids), quien, isoConOffset(Date.now()), f.id]);
     await dbRun(`UPDATE facturas SET conciliado_con = ? WHERE id = ANY(?)`, [String(f.id), ids]);
     await ficAuditar("facturas", f.id, "conciliada", quien, { local: f.local, detalle: { albaranes: ids, total: f.total } });
+    await dbRun("INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",['facturas_anuales_reintentar',String(Date.now())]);
     res.json({ ok: true, mensaje: `Conciliada con ${ids.length} albarán(es).` });
   } catch (e) {
     console.error("[facturas] conciliar:", e.message);

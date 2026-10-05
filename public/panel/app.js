@@ -7709,7 +7709,7 @@ async function facDiagnosticoDrive() {
       <button class="btn sm" data-act="fac-colocar-raiz" style="margin-top:8px">Colocarla en Mi unidad</button></p>` : ""}
 
     ${desordenadas ? `<p class="fic-nota" style="margin:12px 0 0">Las que salen como <b>sueltas</b> están en Drive pero fuera de su carpeta.
-      <b>Reordenar Drive</b> las mueve a Empresa/Local/Mes sin volver a subirlas ni tocar la base de datos.
+      <b>Reordenar Drive</b> las mueve a Empresa/Año/Mes/Local sin volver a subirlas ni tocar la base de datos.
       <button class="btn sm" data-act="fac-migrar" style="margin-top:8px">Reordenar Drive</button></p>` : ""}
 
     ${(j.sheets || []).length ? `<div style="margin-top:12px"><div class="t1" style="margin-bottom:6px">Hojas de cálculo por local</div>
@@ -9174,7 +9174,7 @@ function renderFacturasConfig() {
     ? `<div class="mut" style="font-size:11.5px;color:var(--danger);margin-top:3px">${o.avisos.map(esc).join("<br>")}</div>` : "";
   const master = FCFG.master || {};
   const integ = `<div class="card"><div class="ch"><h3>Integraciones (Google)</h3></div><div class="rows" style="padding:0">
-    <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Drive / Sheets</div><div class="t2">Guarda y ordena las facturas por empresa/local/mes</div>${avisosDe(drv)}</div>${estadoPill(drv, "Conectado")}</div>
+    <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Drive / Sheets</div><div class="t2">Guarda y ordena las facturas por empresa/año/mes/local</div>${avisosDe(drv)}</div>${estadoPill(drv, "Conectado")}</div>
     <div class="row" style="padding-left:0;padding-right:0"><div class="grow" style="min-width:0"><div class="t1">Correo (Gmail)</div>
       <div class="t2">${gm && gm.estado ? esc(gm.estado.detalle) : "Lee las facturas que llegan por email"}</div>
       ${gm && gm.estado ? `<div class="mut" style="font-size:11.5px;margin-top:3px">${gm.estado.intento ? "Última mirada al buzón: " + esc(String(gm.estado.intento).slice(0, 16).replace("T", " ")) : "Todavía no se ha mirado"}${gm.estado.ok ? " · última factura que entró: " + esc(String(gm.estado.ok).slice(0, 16).replace("T", " ")) : ""} · se mira solo cada 5 minutos</div>` : ""}
@@ -9183,9 +9183,9 @@ function renderFacturasConfig() {
       <div class="t2">${drv && drv.relectura ? esc(drv.relectura.texto) : "Se relee solo lo que se quedó sin leer"}</div>
       ${drv && drv.relectura ? `<div class="mut" style="font-size:11.5px;margin-top:3px">${drv.relectura.ultimo ? "Último repaso: " + esc(String(drv.relectura.ultimo).slice(0, 16).replace("T", " ")) : "Sin estrenar"} · se repasa solo cada ${num(drv.relectura.cadaHoras || 6)} horas, sin que nadie lo pulse</div>` : ""}
       </div>${drv && drv.relectura ? `<span class="pill ${drv.relectura.nivel}">${drv.relectura.nivel === "ok" ? "Al día" : "Pendiente"}</span>` : estadoPill(drv, "Activo")}</div>
-    <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Sheet maestro consolidado</div><div class="t2">${master.url ? "Todas las facturas de todos los locales en una hoja" : "Se crea al procesar la primera factura o al reconstruir"}</div></div>${master.url ? `<a class="link" href="${esc(master.url)}" target="_blank" rel="noopener">Abrir ↗</a>` : '<span class="pill">Sin crear</span>'}</div>
+    <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Libros por empresa y año</div><div class="t2">Doce meses y resumen anual. Cada factura conserva su local y PDF.</div><div class="toolbar">${(drv?.sheets||[]).map(l=>`<a class="btn" href="${esc(l.sheet_url)}" target="_blank" rel="noopener">${esc(l.local)} ↗</a>`).join('') || '<span class="mut">Pendiente de organizar los históricos.</span>'}</div>${master.url ? `<details style="margin-top:8px"><summary>Archivo anterior</summary><a class="link" href="${esc(master.url)}" target="_blank" rel="noopener">Abrir consolidado histórico (ya no se actualiza) ↗</a></details>` : ''}</div></div>
     <div class="row" style="padding-left:0;padding-right:0"><div class="grow"><div class="t1">Volcado a Sheets</div><div class="t2">${((drv && drv.pendientes_sheet) || 0) > 0 ? `${num(drv && drv.pendientes_sheet)} factura(s) pendientes de volcar (se reintenta solo cada 10 min)` : "Todo volcado. La BD es la fuente de verdad; los Sheets son su reflejo."}${drv && drv.ultimo_reintento ? ` · último reintento ${esc(String(drv.ultimo_reintento).slice(0, 16).replace("T", " "))}` : ""}</div></div>${drv === null ? '<span class="pill warn">No se ha podido comprobar</span>' : `<span class="pill ${(drv.pendientes_sheet || 0) > 0 ? "warn" : "ok"}">${(drv.pendientes_sheet || 0) > 0 ? "Pendiente" : "Al día"}</span>`}</div>
-  </div><div class="toolbar" style="padding:12px 0 0"><a class="btn" href="/auth/google-facturas">${drv && drv.conectado ? "Reconectar Google" : "Conectar Google"}</a><button class="btn" data-act="fac-gmail-ahora">Revisar el correo ahora</button><button class="btn" data-act="fac-migrar">Reordenar Drive</button>${((drv && drv.pendientes_sheet) || 0) > 0 ? '<button class="btn primary" data-act="fac-reproyectar">Reintentar volcado</button>' : ""}<button class="btn" data-act="fac-reparar">Verificar y reparar Sheets</button><button class="btn danger" data-act="fac-empezar-cero">Empezar de cero</button></div><div class="mut" style="font-size:12px;margin-top:6px">"Reparar" reescribe todas las hojas y el maestro desde la base de datos (la fuente de verdad). "Empezar de cero" limpia todas las facturas de la base de datos (no borra Drive; eso se hace a mano).</div></div>`;
+  </div><div class="toolbar" style="padding:12px 0 0"><a class="btn" href="/auth/google-facturas">${drv && drv.conectado ? "Reconectar Google" : "Conectar Google"}</a><button class="btn" data-act="fac-gmail-ahora">Revisar el correo ahora</button>${((drv && drv.pendientes_sheet) || 0) > 0 ? '<button class="btn primary" data-act="fac-reproyectar">Reintentar volcado</button>' : ""}<button class="btn danger" data-act="fac-empezar-cero">Empezar de cero</button></div><div class="mut" style="font-size:12px;margin-top:6px">Los libros se agrupan por empresa y año, con meses y resumen anual. Los documentos antiguos se conservan. "Empezar de cero" limpia todas las facturas de la base de datos (no borra Drive; eso se hace a mano).</div></div>`;
   // Carpetas de Drive vigiladas (tercer canal de ingesta)
   const carp = FCFG.carpetas || [];
   const drive = `<div class="card p0"><div class="ch" style="padding:18px 18px 0"><h3>Carpetas de Drive vigiladas</h3></div><div class="mut" style="padding:0 18px;font-size:12.5px">Deja una factura (PDF/imagen) en la carpeta de Drive de un local y entrará sola cada pocos minutos.</div><div class="tw"><table class="tbl"><thead><tr><th>Local</th><th>Carpeta</th><th></th></tr></thead><tbody>${carp.map((c) => `<tr><td>${facLocalCelda(c.local)}</td><td class="mut">${c.folder_url ? `<a class="link" href="${esc(c.folder_url)}" target="_blank" rel="noopener">${esc(c.folder_id)}</a>` : esc(c.folder_id)}</td><td class="r"><button class="linkbtn" data-act="fac-drive-del" data-local="${esc(c.local)}">Eliminar</button></td></tr>`).join("") || '<tr><td colspan="3" class="mut">Sin carpetas configuradas.</td></tr>'}</tbody></table></div><div class="toolbar" style="padding:12px 18px;margin:0">${facLocalSelect("fdLocal")}<input id="fdFolder" placeholder="Enlace o ID de la carpeta de Drive" style="flex:1;min-width:0"><button class="btn primary" data-act="fac-drive-add">Vincular</button></div></div>`;
@@ -10871,7 +10871,7 @@ async function facGmailAhora(btn) {
   }
 }
 
-async function facMigrar() { if (!(await confirmModal("¿Reordenar en Drive todas las facturas a su carpeta Empresa/Local/Mes?", { ok: "Reordenar" }))) return; try { const j = await apiSend("POST", "/api/facturas/migrar-estructura"); toast(`Reordenadas: ${j.resultado ? j.resultado.movidos : "OK"} ✅`); facDiagnosticoDrive(); } catch (e) { toast("Error: " + e.message); } }
+async function facMigrar() { if (!(await confirmModal("¿Reordenar en Drive todas las facturas a su carpeta Empresa/Año/Mes/Local?", { ok: "Reordenar" }))) return; try { const j = await apiSend("POST", "/api/facturas/migrar-estructura"); toast(j.errores?.length ? `Quedan ${num(j.errores.length)} archivos por revisar: ${j.errores[0]}` : `Reordenadas: ${num(j.movidos || 0)} · ya ordenadas: ${num(j.omitidos || 0)} ✅`); facDiagnosticoDrive(); } catch (e) { toast("Error: " + e.message); } }
 async function facDriveAdd() { const local = facVal("fdLocal"), folder = facVal("fdFolder"); if (!local || !folder) { toast("Local y carpeta obligatorios"); return; } try { await apiSend("POST", "/api/facturas/drive-carpetas", { local, folder }); toast("Carpeta vinculada ✅"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facDriveDel(local) { if (!(await confirmModal(`¿Dejar de vigilar la carpeta de ${local}?`, { ok: "Eliminar", danger: true }))) return; try { await apiSend("DELETE", "/api/facturas/drive-carpetas/" + encodeURIComponent(local)); toast("Eliminada"); loadFacturas(); } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); } }
 async function facReconstruir() { if (!(await confirmModal("¿Reconstruir el Sheet maestro con todas las facturas registradas?", { ok: "Reconstruir" }))) return; try { const j = await apiSend("POST", "/api/facturas/reconstruir-maestro"); toast(`Maestro actualizado: ${num(j.total || 0)} facturas ✅`); loadFacturas(); } catch (e) { toast("Error: " + e.message); } }
@@ -11007,7 +11007,28 @@ async function facRepasoLineas(total, alcance = "faltan") {
   loadFacturas();
 }
 
-async function facReparar() { if (!(await confirmModal("¿Verificar y reparar todos los Sheets desde la base de datos? Reescribe las hojas por local y el maestro.", { ok: "Reparar" }))) return; toast("Reparando Sheets… (puede tardar)"); try { const j = await apiSend("POST", "/api/facturas/reparar"); toast(`Sheets reparados: ${num(j.tabs || 0)} hojas · maestro ${num(j.maestro || 0)} facturas ✅`); loadFacturas(); } catch (e) { toast("Error: " + e.message); } }
+async function facAvisoLibrosAnuales() {
+  if(USER?.rol!=='direccion') return;
+  const j=await apiSend('POST','/api/facturas/libros-anuales/aviso');
+  if(!j.mostrar || !j.plan) return;
+  const p=j.plan;
+  const ov=modal('Tus facturas, ordenadas por empresa y año',`
+    <p style="line-height:1.6">Vamos a agrupar los documentos existentes y mantener esta organización para las próximas facturas.</p>
+    <div class="card" style="padding:16px;margin:16px 0"><b>${num(p.total)} facturas · ${num(p.libros.length)} libros anuales</b><p class="mut" style="margin-bottom:0">Un documento por empresa y año, pestañas por mes y resumen anual al final. Cada factura conserva el local y el enlace a su PDF.</p></div>
+    <details><summary>Ver agrupación</summary>${p.libros.map(l=>`<p>${esc(l.empresa)} · ${esc(l.year)}: ${num(l.facturas)} documentos</p>`).join('')}</details>
+    <p class="mut">Antes de escribir, contrastamos los importes. Los PDF quedarán en empresa → año → mes → local, con nombres identificables. Las hojas antiguas se conservarán en Histórico tras verificar los nuevos libros. Guardamos una copia de los datos y la ubicación anterior de cada archivo. Este aviso solo aparece una vez.</p>
+    <p data-anual-estado role="status" aria-live="polite"></p>
+    <div class="toolbar" style="justify-content:flex-end"><button class="btn" data-close>Cerrar</button><button class="btn primary" data-anual-organizar>Organizar libros y archivos</button></div>`);
+  ov.querySelector('[data-anual-organizar]').addEventListener('click',async e=>{
+    const btn=e.currentTarget,estado=ov.querySelector('[data-anual-estado]');btn.disabled=true;
+    estado.textContent='Comprobando y organizando… Puede tardar varios minutos. Puedes cerrar esta ventana: el proceso continuará.';
+    try {
+      const r=await apiSend('POST','/api/facturas/reparar');
+      estado.innerHTML=`<b>Organización completada y verificada.</b><p>${num(r.total)} facturas. Los próximos documentos seguirán esta misma estructura.</p><div class="stack">${r.libros.map(l=>`<a class="btn" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.empresa)} · ${esc(l.year)} ↗</a>`).join('')}</div>`;
+      btn.remove();if(!ov.isConnected)toast('Libros anuales organizados y verificados.');
+    }catch(error){estado.textContent='No se ha completado: '+error.message+'. Los originales se conservan.';btn.disabled=false;btn.textContent='Reintentar';}
+  });
+}
 async function facReproyectar() { toast("Reintentando volcado a Sheets…"); try { const j = await apiSend("POST", "/api/facturas/reproyectar"); toast(`Volcado: ${num(j.sincronizados || 0)} factura(s) sincronizadas${j.fallidos ? ` · ${num(j.fallidos)} grupo(s) con error` : ""} ✅`); loadFacturas(); } catch (e) { toast("Error: " + e.message); } }
 async function facEmpezarCero() {
   if (!(await confirmModal("¿EMPEZAR DE CERO? Se borrarán TODAS las facturas de la base de datos (no los archivos de Drive). Úsalo solo para reiniciar el sistema.", { ok: "Sí, borrar todo", danger: true }))) return;
@@ -16786,7 +16807,6 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-drive-add") facDriveAdd();
   else if (act === "fac-drive-del") facDriveDel(t.getAttribute("data-local"));
   else if (act === "fac-reconstruir") facReconstruir();
-  else if (act === "fac-reparar") facReparar();
   else if (act === "fac-repaso") facRepaso();
   else if (act === "fac-reproyectar") facReproyectar();
   else if (act === "fac-empezar-cero") facEmpezarCero();
@@ -17011,6 +17031,7 @@ requireRole(["direccion", "encargado", "contabilidad", "marketing", "rrhh"]).the
   marketingRestaurarRuta(inicio, deUrl.sub);
   if (inicio === "facturas" && deUrl.sub) FACTAB = deUrl.sub;
   go(inicio, { desdeUrl: !!deUrl.vista });
+  facAvisoLibrosAnuales().catch(() => { /* El panel sigue disponible si el aviso no se puede cargar. */ });
 
   // AVISO DE QUE ALGUIEN HA ENTRADO: el servidor mira si las ventas del TPV llevan más de 15
   // minutos sin actualizarse y, si es así, las sincroniza por detrás. Va con `fetch` pelado a

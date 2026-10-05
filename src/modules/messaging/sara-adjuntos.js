@@ -100,6 +100,42 @@ export async function convertirAudio(buffer, ejecutar = promisify(execFile)) {
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
+// Las notas de voz de WhatsApp son Ogg/Opus y OpenAI acepta el original.
+// RFC 7845: la posición de gránulo usa 48 kHz, descontando pre-skip.
+// Leemos páginas acotadas en memoria; no arrancamos ffprobe/ffmpeg para ellas.
+export function duracionOggOpus(buffer) {
+  let offset = 0, serial, sequence = 0, preSkip, last = 0n, ended = false;
+  while (offset < buffer.length) {
+    if (ended || offset + 27 > buffer.length || buffer.toString('ascii', offset, offset + 4) !== 'OggS'
+      || buffer[offset + 4] !== 0) throw new Error('audio_ogg_invalido');
+    const flags = buffer[offset + 5], count = buffer[offset + 26];
+    const start = offset + 27 + count;
+    if (start > buffer.length) throw new Error('audio_ogg_invalido');
+    let size = 0;
+    for (let i = offset + 27; i < start; i++) size += buffer[i];
+    const end = start + size;
+    if (end > buffer.length) throw new Error('audio_ogg_invalido');
+    const pageSerial = buffer.readUInt32LE(offset + 14);
+    if (offset === 0) {
+      if (buffer.toString('ascii', start, start + 8) !== 'OpusHead') return null;
+      if (size < 19 || count !== 1 || flags !== 2 || buffer[start + 8] !== 1) throw new Error('audio_ogg_invalido');
+      serial = pageSerial;
+      preSkip = BigInt(buffer.readUInt16LE(start + 10));
+    } else if (pageSerial !== serial || (flags & 2)) throw new Error('audio_ogg_invalido');
+    if (buffer.readUInt32LE(offset + 18) !== sequence++) throw new Error('audio_ogg_invalido');
+    const granule = buffer.readBigInt64LE(offset + 6);
+    if (granule !== -1n) {
+      if (granule < last) throw new Error('audio_ogg_invalido');
+      last = granule;
+      if (last - preSkip > 300n * 48000n) throw new Error('audio_fuera_limites');
+    }
+    ended = !!(flags & 4);
+    offset = end;
+  }
+  if (!ended || preSkip === undefined || last <= preSkip) throw new Error('audio_ogg_invalido');
+  return Number(last - preSkip) / 48000;
+}
+
 async function peticionOpenAI(ruta, opciones, fetcher, apiKey) {
   // Una única repetición de lectura: no envía mensajes ni ejecuta acciones del cliente.
   for (let intento = 0; intento < 2; intento++) {
@@ -129,10 +165,11 @@ export async function interpretarAdjunto(buffer, meta, { apiKey = process.env.OP
   validarContenido(buffer, meta);
   if (meta.tipo === 'audio') {
     const ogg = meta.extension === 'ogg';
-    const datos = ogg ? await convertir(buffer) : buffer;
+    const convertirOgg = ogg && duracionOggOpus(buffer) === null;
+    const datos = convertirOgg ? await convertir(buffer) : buffer;
     const form = new FormData();
     form.append('model', process.env.SARA_AUDIO_MODEL || 'gpt-transcribe');
-    form.append('file', new Blob([datos], { type: ogg ? 'audio/wav' : meta.mime }), `audio.${ogg ? 'wav' : meta.extension}`);
+    form.append('file', new Blob([datos], { type: convertirOgg ? 'audio/wav' : ogg ? 'audio/ogg' : meta.mime }), `audio.${convertirOgg ? 'wav' : meta.extension}`);
     form.append('prompt', 'Conversación con un restaurante. Nombres propios: Familia del Amor, La Tapeta, Cooperativa, Can Mateu, Blanes, Lloret, Girona, Tordera. Transcribe en el idioma original; no completes palabras que no se entiendan.');
     const r = await peticionOpenAI('audio/transcriptions', { method: 'POST', body: form }, fetcher, apiKey);
     if (typeof r.text !== 'string' || !r.text.trim()) throw new Error('audio_ininteligible');
