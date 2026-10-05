@@ -73,3 +73,16 @@ node server.js
 ```
 
 The server starts on port 5000 (configurable via `PORT` env var).
+
+
+### Revisiones puntuales del histórico (preferencia de producto, 2026-10-05)
+
+Las tareas de una sola ejecución no deben ocupar tarjetas permanentes en Configuración.
+Se ha retirado «Repasar las facturas ya guardadas» de esa pantalla; las validaciones de
+entrada y las herramientas de revisión de incidencias siguen disponibles.
+Cuando una nueva versión necesite revisar datos antiguos, presentar un modal específico
+para esa actualización, con alcance y resultado comprensibles. Registrar su aparición
+una sola vez por organización en el servidor (incluso si se cierra), siguiendo el patrón
+de `avisoAnualesUnaVez`. No volver a ejecutar revisiones anteriores ni mostrar un nuevo
+modal sin una migración concreta. Separar el registro del aviso del estado de ejecución:
+una operación iniciada debe conservar su progreso y poder reintentarse sin duplicar datos.
