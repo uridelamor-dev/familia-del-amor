@@ -18,7 +18,7 @@
   /* EL COBRE, acento secundario. Sustituye al dorado #B8945A de la web, que sobre blanco daba
      2,8 : 1 — por debajo del mínimo legible para un botón. Éste da 5,6 : 1 sobre blanco y
      4,8 : 1 sobre el marfil, así que vale también como texto y no solo como relleno. Es de la misma
-     familia que la terracota del carné de Wallet sin ser el mismo tono: allí es una masa de
+     familia que la terracota del carnet de Wallet sin ser el mismo tono: allí es una masa de
      144 pt, aquí es un acento. */
   --accent:#9E5334;--accent2:#83432A;--accent-ink:#FFF8F4;--accent-soft:#F4E7E0;
   --success:#2E9E6B;--success-soft:#E1F1E8;--warning:#B9822B;--warning-soft:#F5EBD8;

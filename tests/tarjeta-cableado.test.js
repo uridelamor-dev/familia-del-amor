@@ -161,7 +161,7 @@ describe("un solo sitio compone el enlace que lee la barra", () => {
 
 describe("esquema y módulos", () => {
   test("initDB prepara el esquema de la tarjeta, y en su propio try", () => {
-    // Si esto fallara, validar carnés en la barra tiene que seguir funcionando: lo que se pierde
+    // Si esto fallara, validar carnets en la barra tiene que seguir funcionando: lo que se pierde
     // es poder guardar la tarjeta en el móvil.
     const i2 = server.indexOf("await ensureSchemaTarjeta(schemaX)");
     assert.ok(i2 > 0, "initDB no llama a ensureSchemaTarjeta");

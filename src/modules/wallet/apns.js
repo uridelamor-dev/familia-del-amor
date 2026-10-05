@@ -71,7 +71,7 @@ export function endpointDe(entorno) {
  *                        o con el certificado de otro Pass Type ID. INVALIDAR AQUÍ SERÍA EL
  *                        ERROR CARO: borraría los tokens buenos de toda la clientela por una
  *                        casilla mal puesta, y habría que pedirles a todos que se volvieran a
- *                        bajar el carné.
+ *                        bajar el carnet.
  *                  · 403 cualquier motivo          el certificado no sirve o ha caducado.
  *                  · 400 `BadTopic`, `PayloadEmpty` y demás 400 deterministas: el mismo mensaje
  *                        volvería a fallar igual. No se reintenta y no se culpa al dispositivo.

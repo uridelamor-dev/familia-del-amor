@@ -39,7 +39,7 @@ export function fraseVisitas(n) {
  * La cuenta entera, lista para pintar.
  *
  * Todo llega ya resuelto desde el servidor:
- *  · `qr`         la fila del carné.
+ *  · `qr`         la fila del carnet.
  *  · `metricas`   la fila de `cliente_metricas` (o null: solo hay fila para quien tiene visitas).
  *  · `cupones`    sus cupones, CADA UNO CON SU `estado` y su `texto` ya calculados.
  *  · `visitas`    sus últimos canjes (`pro_canjes`), que es el libro inmutable de la barra.

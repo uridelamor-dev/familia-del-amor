@@ -25,20 +25,20 @@ body{margin:0;background:#eaeedf;font-family:Arial,sans-serif;color:#233c32;min-
 <section class="club-story">
 <span class="club-eyebrow">EL CLUB · FAMILIA DEL AMOR</span>
 <h2>Ya eres parte<br> de la familia.</h2>
-<p>Tu carné está listo. Este paso es solo para conocerte mejor: puedes completarlo ahora o dejarlo para otro momento.</p>
+<p>Tu carnet está listo. Este paso es solo para conocerte mejor: puedes completarlo ahora o dejarlo para otro momento.</p>
 <div class="club-card" aria-hidden="true"><span>FAMILIA DEL AMOR</span><b>Un sitio para ti.</b><div>MIEMBRO DEL CLUB <span>♡</span></div></div>
 <ul class="club-benefits"><li><span aria-hidden="true">↗</span><div><strong>Planes cerca de ti</strong><small>Tu población nos ayuda a compartir propuestas que te queden cerca.</small></div></li><li><span aria-hidden="true">✦</span><div><strong>Una fecha para celebrar</strong><small>Tu cumpleaños, para tenerte en cuenta cuando preparemos algún detalle especial.</small></div></li></ul>
 </section>
 <section class="club-registration">
 <span class="profile-step">UN POQUITO MÁS · OPCIONAL</span>
 <h2 id="profileTitle">Cuéntanos un poco más</h2>
-<p class="profile-intro">Dos detalles para conocerte mejor.<br>Tu carné funciona aunque no los rellenes.</p>
+<p class="profile-intro">Dos detalles para conocerte mejor.<br>Tu carnet funciona aunque no los rellenes.</p>
 <form id="profileForm">
 <div class="profile-field"><label for="profileTown">¿En qué población vives?</label><input id="profileTown" name="poblacion" autocomplete="address-level2" placeholder="Por ejemplo, Blanes" list="profileTowns"><datalist id="profileTowns"><option>Blanes</option><option>Girona</option><option>Lloret de Mar</option><option>Tordera</option></datalist><p class="profile-help">Solo la población, no necesitamos tu dirección.</p></div>
 <div class="profile-field"><label id="birthdayLabel">¿Cuándo es tu cumpleaños?</label><div class="birthday-row" role="group" aria-labelledby="birthdayLabel"><select id="profileDay" aria-label="Día de cumpleaños"><option value="">Día</option></select><select id="profileMonth" aria-label="Mes de cumpleaños"><option value="">Mes</option></select><select id="profileYear" aria-label="Año de nacimiento"><option value="">Año</option></select></div><p class="profile-help">Tu fecha de nacimiento es opcional.</p></div>
 <p class="profile-status" id="profileStatus" role="status" hidden></p>
-<button class="alta-btn" type="submit">Guardar y ver mi carné</button>
-<button class="profile-skip" type="button" id="profileSkip">Ahora no, ir a mi carné</button>
+<button class="alta-btn" type="submit">Guardar y ver mi carnet</button>
+<button class="profile-skip" type="button" id="profileSkip">Ahora no, ir a mi carnet</button>
 <p class="preview-tag">VISTA PREVIA DEL DISEÑO · NO GUARDA DATOS</p>
 </form>
 </section>
@@ -59,9 +59,9 @@ document.getElementById('profileForm').addEventListener('submit',event=>{
  const date=new Date(Number(year.value),Number(month.value)-1,Number(day.value));
  if(date.getMonth()!==Number(month.value)-1||date.getDate()!==Number(day.value)||date>new Date()){status('Revisa la fecha de nacimiento.');return;}
  }
- status('Así terminaría el paso: guardaríamos los datos y abriríamos tu carné. Esta vista previa no guarda información.');
+ status('Así terminaría el paso: guardaríamos los datos y abriríamos tu carnet. Esta vista previa no guarda información.');
 });
-document.getElementById('profileSkip').onclick=()=>status('Irías directamente a tu carné, sin añadir estos datos. En esta vista previa no hay ningún carné real.');
+document.getElementById('profileSkip').onclick=()=>status('Irías directamente a tu carnet, sin añadir estos datos. En esta vista previa no hay ningún carnet real.');
 document.querySelector('.club-close').onclick=()=>dialog.close();
 dialog.addEventListener('click',e=>{if(e.target===dialog){const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close();}});
 dialog.showModal();document.querySelector('.club-close').focus();

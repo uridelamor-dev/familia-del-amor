@@ -10,7 +10,7 @@
 //   · token   — 32 bytes en base64url (43 caracteres). Es lo que va DENTRO del QR.
 //   · codigo  — 8 dígitos como TEXTO. Es el respaldo impreso.
 //
-// Y el identificador se trata SIEMPRE como texto: `Number("00042318")` es `42318`, y un carné con
+// Y el identificador se trata SIEMPRE como texto: `Number("00042318")` es `42318`, y un carnet con
 // ceros delante dejaría de encontrarse. Pasaría en uno de cada diez.
 
 import { test, describe } from "node:test";
@@ -50,7 +50,7 @@ const bd = (filas = FILAS) => ({
 const resolver = (entrada, filas) =>
   resolverMiembro(bd(filas), entrada, { normalizar: normalizarEntrada, ahora: AHORA });
 
-describe("las tres formas de entrada encuentran el MISMO carné", () => {
+describe("las tres formas de entrada encuentran el MISMO carnet", () => {
   test("por el token desnudo", async () => {
     const r = await resolver(TOKEN_CARNET);
     assert.equal(r.ok, true);
@@ -84,7 +84,7 @@ describe("las tres formas de entrada encuentran el MISMO carné", () => {
 
 describe("los CEROS INICIALES se conservan", () => {
   test("«00042318» no se convierte en 42318", async () => {
-    // `Number("00042318")` es `42318`. Si el identificador se tratara como número, este carné
+    // `Number("00042318")` es `42318`. Si el identificador se tratara como número, este carnet
     // dejaría de encontrarse — y le pasaría a uno de cada diez.
     assert.equal(Number("00042318"), 42318);
     const r = await resolver("00042318");
@@ -92,7 +92,7 @@ describe("los CEROS INICIALES se conservan", () => {
     assert.equal(r.qr.codigo, "00042318");
   });
 
-  test("«42318» (sin los ceros) NO encuentra ese carné", async () => {
+  test("«42318» (sin los ceros) NO encuentra ese carnet", async () => {
     // Es la otra cara: si alguien teclea el número sin los ceros, no es ese código. Y como no
     // llega a ocho dígitos, `normalizarEntrada` ni lo acepta.
     const r = await resolver("42318");
@@ -115,7 +115,7 @@ describe("los CEROS INICIALES se conservan", () => {
   });
 });
 
-describe("solo un carné vivo identifica a alguien", () => {
+describe("solo un carnet vivo identifica a alguien", () => {
   test("un CUPÓN no, ni por token ni por código", async () => {
     // Un cupón o un vale impreso es un papel al portador. Si identificara, cualquiera con un
     // flyer sería socio.
@@ -127,13 +127,13 @@ describe("solo un carné vivo identifica a alguien", () => {
     }
   });
 
-  test("un carné ANULADO no", async () => {
+  test("un carnet ANULADO no", async () => {
     for (const e of [TOKEN_ANUL, "00000001"]) {
       assert.equal((await resolver(e)).motivo, "anulado", e);
     }
   });
 
-  test("un carné CADUCADO no", async () => {
+  test("un carnet CADUCADO no", async () => {
     for (const e of [TOKEN_CAD, "90000009"]) {
       assert.equal((await resolver(e)).motivo, "caducado", e);
     }
@@ -258,12 +258,12 @@ describe("no se modifica ni un QR existente", () => {
   });
 });
 
-describe("el censo de carnés y cupones", () => {
+describe("el censo de carnets y cupones", () => {
   const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
   const resumen = server.slice(server.indexOf('app.get("/api/tarjeta/resumen"'),
                                server.indexOf('app.get("/api/tarjeta/:token"'));
 
-  test("cuenta carnés totales, utilizables y cupones", () => {
+  test("cuenta carnets totales, utilizables y cupones", () => {
     // Sin esto, la primera prueba del piloto dio 404 en todo y no había forma de saber si era un
     // fallo nuestro o que sencillamente no había socios.
     assert.match(resumen, /COUNT\(\*\) FILTER \(WHERE clase = 'carnet'\)::int AS carnets_total/);
@@ -294,10 +294,10 @@ describe("el censo de carnés y cupones", () => {
 
   test("el panel lo enseña arriba, con aviso si no hay ninguno", () => {
     const f = panel.slice(panel.indexOf("function renderAgvEntrada()"), panel.indexOf("// ── C · SALIDA"));
-    assert.match(f, /Carnés que se pueden identificar/);
+    assert.match(f, /Carnets que se pueden identificar/);
     assert.match(f, /Cupones y vales/);
     assert.match(f, /No identifican a nadie/);
-    assert.match(f, /No hay ningún carné utilizable/);
+    assert.match(f, /No hay ningún carnet utilizable/);
   });
 
   test("y si el censo falla, la tarjeta se pinta igual", () => {

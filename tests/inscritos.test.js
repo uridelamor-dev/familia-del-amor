@@ -2,11 +2,11 @@
 //
 // ── LOS DOS FALLOS QUE ESTO EVITA ────────────────────────────────────────────────────────────
 //
-// 1. EL JOIN QUE MULTIPLICA PERSONAS. Una persona con tres consentimientos, dos carnés y cuatro
+// 1. EL JOIN QUE MULTIPLICA PERSONAS. Una persona con tres consentimientos, dos carnets y cuatro
 //    mensajes en la cola saldría veinticuatro veces con joins directos, y «312 inscritos» dejaría
 //    de significar 312 personas. Cada tabla auxiliar se agrega por teléfono ANTES de unirla.
 //
-// 2. LLAMAR «ENTREGADO» A LO QUE NO CONSTA. El formulario configurable enseña el enlace del carné
+// 2. LLAMAR «ENTREGADO» A LO QUE NO CONSTA. El formulario configurable enseña el enlace del carnet
 //    en pantalla y no manda nada; nadie sabe si esa persona llegó a verlo. Decir «código enviado»
 //    sería afirmar algo que no está escrito en ningún sitio.
 
@@ -110,7 +110,7 @@ describe("DOS FORMULARIOS, UNA CLAVE, SIN `LIKE` ABIERTO", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-describe("«CARNÉ DISPONIBLE» NO ES «CÓDIGO ENVIADO»", () => {
+describe("«CARNET DISPONIBLE» NO ES «CÓDIGO ENVIADO»", () => {
   test("los estados son los acordados y están congelados", () => {
     assert.deepEqual([...CONSENTIMIENTO], ["activo", "baja"]);
     assert.deepEqual([...ENTREGA],
@@ -124,7 +124,7 @@ describe("«CARNÉ DISPONIBLE» NO ES «CÓDIGO ENVIADO»", () => {
     assert.equal(estadoEntrega({ carnetEnviadoEn: "2026-09-15T10:00:00+02:00" }), "enviado");
   });
 
-  test("un carné sin envío es «carné disponible», nunca «entregado»", () => {
+  test("un carnet sin envío es «carnet disponible», nunca «entregado»", () => {
     // El configurable enseña el enlace en pantalla y no queda rastro de que se viera.
     const e = estadoEntrega({ carnetVivos: 1 });
     assert.equal(e, "carne_disponible");
@@ -281,7 +281,7 @@ describe("el CSV", () => {
   test("los estados salen en palabras, no en códigos", () => {
     const csv = csvInscritos([{ consentimiento: "baja", entrega: "carne_disponible" }]);
     assert.ok(csv.includes("Baja"));
-    assert.ok(csv.includes("Carné disponible"));
+    assert.ok(csv.includes("Carnet disponible"));
     assert.ok(!csv.includes("carne_disponible"));
   });
 
@@ -333,9 +333,9 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
     if (j < 0) throw new Error(`cierre no encontrado: «${hasta}»`);
     return texto.slice(i, j);
   };
-  const cola = desde(ALTA, "// ── 3 y 4. EL CARNÉ Y SU MENSAJE", "await ficAuditar");
+  const cola = desde(ALTA, "// ── 3 y 4. EL CARNET Y SU MENSAJE", "await ficAuditar");
 
-  test("se encola de verdad, con el enlace del carné", () => {
+  test("se encola de verdad, con el enlace del carnet", () => {
     assert.match(cola, /INSERT INTO cap_cola \(token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad\)/);
     // PRIORIDAD 0: quien acaba de apuntarse está esperando su código ahora mismo.
     assert.match(cola, /VALUES \(\?,\?,\?,\?,\?,\?,\?,0\)/);
@@ -368,14 +368,14 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
   });
 
   test("LA CLAVE IDEMPOTENTE lleva las cinco cosas que identifican la inscripción", () => {
-    // formulario, versión, campaña, teléfono normalizado y carné… más el CICLO.
+    // formulario, versión, campaña, teléfono normalizado y carnet… más el CICLO.
     assert.match(cola, /`alta:\$\{clave\}:v\$\{f\.version\}:\$\{f\.campana \|\| clave\}:\$\{tel\}:\$\{qr\.id\}:c\$\{ciclo\}`/);
     // `tel` ya viene normalizado por `proTel9`, que es el de la casa.
     assert.match(ALTA, /const tel = proTel9\(b\.telefono\);/);
   });
 
   test("y el CICLO, sin el cual quien vuelve tras una baja no recibía nada", () => {
-    // Después de una baja las otras cinco son LAS MISMAS —el carné se reutiliza a propósito—, así
+    // Después de una baja las otras cinco son LAS MISMAS —el carnet se reutiliza a propósito—, así
     // que `DO NOTHING` descartaba el mensaje en silencio. El ciclo distingue «volver a apuntarse»
     // de «pulsar dos veces»: recargar no lo cambia, darse de baja sí.
     assert.match(cola, /SELECT COUNT\(\*\)::int AS n FROM fid_bajas/);
@@ -443,7 +443,7 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
   });
 
   test("NO SE ENCOLA NADA SI EL ALTA NO LLEGÓ A GUARDARSE", () => {
-    // El encolado va DESPUÉS de la transacción y después del carné: si la transacción lanza, no
+    // El encolado va DESPUÉS de la transacción y después del carnet: si la transacción lanza, no
     // se llega aquí y no queda mensaje en cola.
     const iTx = ALTA.indexOf("await fidTransaccion(");
     const iCola = ALTA.indexOf("INSERT INTO cap_cola");
@@ -455,9 +455,9 @@ describe("EL WHATSAPP QUE SE PROMETIÓ", () => {
     assert.ok(ALTA.indexOf("M.whatsapp_caido") < iTx, "se guarda sin poder comprobar el número");
   });
 
-  test("un fallo al encolar NO tumba el alta ni pierde el carné", () => {
+  test("un fallo al encolar NO tumba el alta ni pierde el carnet", () => {
     assert.match(cola, /catch \(e\) \{/);
-    assert.match(ALTA, /console\.error\(lineaErrorSql\("\[fidelizacion\] carné y mensaje del alta", e\)\)/);
+    assert.match(ALTA, /console\.error\(lineaErrorSql\("\[fidelizacion\] carnet y mensaje del alta", e\)\)/);
   });
 
   test("RECIÉN ENCOLADO ES «PENDIENTE», nunca «enviado»", () => {

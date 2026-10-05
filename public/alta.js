@@ -96,7 +96,7 @@
         if (embedded && d.revelar && d.token && window.showClubProfile) {
           var successNode = $("altaHecho");
           window.showClubProfile(d.token, $("clubFormHost")).catch(function () {
-            // Mantener una salida al carné si no carga el segundo paso.
+            // Mantener una salida al carnet si no carga el segundo paso.
             $("clubFormHost").replaceChildren(successNode);
           });
           return;

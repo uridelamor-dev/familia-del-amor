@@ -277,8 +277,8 @@ describe("el enlace que llega al cliente es el suyo, y entero", () => {
 
   test("y la clase del QR no se toca: un cupón sigue siendo un cupón", () => {
     assert.match(ALTA_CLASICA, /clase: "cupon"/,
-      "el camino clásico ha cambiado de cupón a carné: eso es un cambio de negocio, no una reparación");
-    assert.match(ALTA_FORM, /clase: "carnet"/, "el formulario configurable ha dejado de emitir carné");
+      "el camino clásico ha cambiado de cupón a carnet: eso es un cambio de negocio, no una reparación");
+    assert.match(ALTA_FORM, /clase: "carnet"/, "el formulario configurable ha dejado de emitir carnet");
   });
 });
 

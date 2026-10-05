@@ -58,7 +58,7 @@
     caja.classList.remove("hidden");
   }
 
-  /* EL AVISO DE VOLVER A AÑADIR EL CARNÉ.
+  /* EL AVISO DE VOLVER A AÑADIR EL CARNET.
    *
    * Un pase que se guardó ANTES de que existiera el servicio de actualización no lleva dentro la
    * dirección a la que llamar, así que nunca se enterará de nada. No hay forma de arreglarlo a

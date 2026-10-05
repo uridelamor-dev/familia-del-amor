@@ -1,4 +1,7 @@
+import { conocimientoCartas } from "./src/modules/messaging/sara-cartas-conocimiento.js";
 import { condicionesPromociones, ADJUNTOS_SCHEMA } from "./src/modules/messaging/sara-promociones.js";
+import { CARTAS_LOCALES_SQL } from "./src/modules/messaging/sara-cartas-locales.js";
+import { CARTA_TAPETA_SQL } from "./src/modules/messaging/sara-carta-tapeta.js";
 import { sanearPerfil, guardarPerfil } from "./src/modules/tarjeta/perfil.js";
 import { PERMISOS_CONFIRMADOS_SCHEMA, registrarPermisosConfirmados } from "./src/modules/clientes/permisos-confirmados.js";
 import { SQL_CANJES, filtrarCanjes, resumenCanjes, destinatariosCanjes } from "./src/modules/fidelizacion/actividad-canjes.js";
@@ -118,7 +121,7 @@ import { generarCodigo as proGenerarCodigo, tel9 as proTel9, normalizarEntrada a
          sanearPromocion as proSanear, dondeVale as proDondeVale, SQL_CANJEAR as PRO_SQL_CANJEAR,
          SQL_CANJES_CLIENTE as PRO_SQL_CANJES_CLIENTE,
          SQL_ULTIMO_CANJE as PRO_SQL_ULTIMO_CANJE } from "./src/modules/promos/promos.js";
-// La tarjeta de cliente: el carné de `pro_qr` visto como la cuenta del cliente (sus visitas y
+// La tarjeta de cliente: el carnet de `pro_qr` visto como la cuenta del cliente (sus visitas y
 // sus descuentos) y guardable en Apple/Google Wallet.
 import { ensureSchemaTarjeta } from "./src/modules/tarjeta/schema.js";
 import { sanearAlta, respuestaAlta, textoWhatsApp as tjTextoWA } from "./src/modules/tarjeta/alta.js";
@@ -755,6 +758,9 @@ async function initDB() {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    await client.query(CARTA_TAPETA_SQL);
+    await client.query(CARTAS_LOCALES_SQL);
 
     // Config de Ágora POR LOCAL, editable desde el panel (fuente de verdad; sustituye al Secret
     // AGORA_LOCALES). El token va CIFRADO (AES-256-GCM) y NUNCA se expone por la API.
@@ -2089,7 +2095,7 @@ async function initDB() {
     }
 
     // La tarjeta de cliente. Va DESPUÉS de promociones porque le añade columnas a `pro_qr`, que
-    // se crea allí. Su propio try por lo de siempre: si esto fallara, validar carnés en la barra
+    // se crea allí. Su propio try por lo de siempre: si esto fallara, validar carnets en la barra
     // tiene que seguir funcionando — lo que se pierde es poder guardarla en el móvil.
     try {
       const schemaX = { run: (sql, p = []) => client.query(toPositional(sql), p) };
@@ -11138,7 +11144,7 @@ app.post("/api/fichar/:token/cupon/ver", async (req, res) => {
     }
     const { qr, promo } = hallazgo;
 
-    // Un carné no lleva promoción dentro: identifica a la persona, y lo que se le puede
+    // Un carnet no lleva promoción dentro: identifica a la persona, y lo que se le puede
     // aplicar son las promociones vigentes de esta barra. Se le ofrecen para elegir.
     if (qr.clase === "carnet") {
       const base = await proEvaluar(qr, null, { local: disp.local });
@@ -11203,7 +11209,7 @@ app.post("/api/fichar/:token/cupon/canjear", async (req, res) => {
     if (!hallazgo) return res.status(404).json({ ok: false, estado: "no_existe", error: proTexto("no_existe") });
     const { qr } = hallazgo;
 
-    // En un carné, la promoción la elige el camarero de la lista que le salió al escanear.
+    // En un carnet, la promoción la elige el camarero de la lista que le salió al escanear.
     let promo = hallazgo.promo;
     if (qr.clase === "carnet") {
       const pedida = Number(req.body?.promocion_id);
@@ -11271,7 +11277,7 @@ app.get("/api/cupon/:token", async (req, res) => {
 
     // El enlace lo compone `proEnlace`, que es lo mismo que va en el QR de la tarjeta y en el
     // código de barras del pase de la wallet. Escribirlo aquí a mano fue lo que hubo hasta que
-    // el carné pasó a tener su propia página: dos sitios componiendo la misma URL es como se
+    // el carnet pasó a tener su propia página: dos sitios componiendo la misma URL es como se
     // llega a que el escáner de la barra deje de leer una de las dos.
     let imagen = null;
     try {
@@ -11292,8 +11298,8 @@ app.get("/api/cupon/:token", async (req, res) => {
       codigo: qr.codigo,
       caduca_en: qr.caduca_en,
       qr: imagen,
-      // Si la tarjeta está encendida, un carné tiene su propia página y esta redirige. Lo
-      // decide el servidor y no el front: así, con la tarjeta apagada, un carné se sigue
+      // Si la tarjeta está encendida, un carnet tiene su propia página y esta redirige. Lo
+      // decide el servidor y no el front: así, con la tarjeta apagada, un carnet se sigue
       // enseñando aquí exactamente como se enseñaba antes de que existiera.
       tarjeta: TARJETA_ACTIVA,
     });
@@ -11307,7 +11313,7 @@ app.get("/api/cupon/:token", async (req, res) => {
 const PROMOS_ROLES = ["direccion", "marketing"];
 
 /**
- * Un carné por su id INTERNO, para los informes.
+ * Un carnet por su id INTERNO, para los informes.
  *
  * No pasa por `resolverMiembro` porque no es la misma pregunta: aquélla resuelve lo que teclea o
  * escanea alguien —un token, una URL, ocho dígitos— y por eso tiene que ser única. Esto recibe una
@@ -11349,7 +11355,7 @@ const proUrl = (req, token) => `${proBase(req)}/cupon.html?t=${token}`;
  * apagado por defecto, que enciende dirección desde Promociones → Tarjeta de cliente.
  *
  * SE LEE EN MEMORIA Y NO DE LA BASE en cada petición porque `proEnlace` la necesita para
- * decidir a qué página apunta el QR de un carné, y eso pasa en mitad de un escaneo en barra.
+ * decidir a qué página apunta el QR de un carnet, y eso pasa en mitad de un escaneo en barra.
  * `cargarTarjetaActiva()` la refresca al arrancar y al cambiarla.
  */
 let TARJETA_ACTIVA = false;
@@ -11362,14 +11368,14 @@ async function cargarTarjetaActiva() {
 /**
  * El enlace de una fila de `pro_qr`, según lo que sea.
  *
- * Un cupón va siempre a `/cupon.html` (una pantalla, un descuento, se acabó). Un carné va a
+ * Un cupón va siempre a `/cupon.html` (una pantalla, un descuento, se acabó). Un carnet va a
  * `/tarjeta.html` —su cuenta: visitas, descuentos y los botones de la wallet— SOLO si la
  * tarjeta está encendida; si no, se queda en `/cupon.html`, exactamente como antes de que
  * existiera todo esto.
  *
  * Las dos URL llevan el token en `?t=`, que es lo único que mira `normalizarEntrada()` cuando
  * la tablet de la barra escanea. Por eso encender o apagar la tarjeta NO afecta a la barra: un
- * carné emitido con el interruptor apagado se sigue escaneando igual el día que se encienda.
+ * carnet emitido con el interruptor apagado se sigue escaneando igual el día que se encienda.
  */
 const proEnlace = (req, qr) =>
   qr && qr.clase === "carnet" && TARJETA_ACTIVA
@@ -11447,7 +11453,7 @@ async function proEnviarWA(qr, url, { promo = null } = {}) {
       ? [promo.nombre, promo.descripcion || null, proDondeVale(promo.locales)].filter(Boolean)
       : ["Tienes un descuento"];
     const texto = qr.clase === "carnet"
-      ? `Hola ${nombre} 👋\n\nEste es tu carné de Familia del Amor. Enséñalo cuando vengas y te reconocemos al momento.\n\n${url}`
+      ? `Hola ${nombre} 👋\n\nEste es tu carnet de Familia del Amor. Enséñalo cuando vengas y te reconocemos al momento.\n\n${url}`
       : `Hola ${nombre} 👋\n\n${lineas.join("\n")}\n\nEnséñanos este código cuando vengas:\n${url}`;
 
     await sendMensajeLibre(qr.telefono, texto);
@@ -11542,8 +11548,8 @@ app.post("/api/promos/emitir", requireAuth(PROMOS_ROLES), async (req, res) => {
       const tel = proTel9(d?.telefono);
       if (!tel) { resultados.push({ nombre: d?.nombre || "", error: "Sin teléfono" }); continue; }
       try {
-        // Un carné por persona: si ya tiene uno vivo se le devuelve ese, no se le crea otro.
-        // Dos carnés serían dos identidades y sus visitas se contarían por separado.
+        // Un carnet por persona: si ya tiene uno vivo se le devuelve ese, no se le crea otro.
+        // Dos carnets serían dos identidades y sus visitas se contarían por separado.
         let qr = clase === "carnet"
           ? await dbGet(`SELECT * FROM pro_qr WHERE clase = 'carnet' AND telefono = ? AND anulado_en IS NULL`, [tel])
           : null;
@@ -11767,7 +11773,7 @@ app.post("/api/promos/vales/:tirada/anular", requireAuth(PROMOS_ROLES), async (r
 });
 
 /**
- * El QR de CUALQUIER cupón o carné ya emitido, suelto.
+ * El QR de CUALQUIER cupón o carnet ya emitido, suelto.
  *
  * Para el vale de uno, y para imprimirle el suyo a alguien concreto sin volver a emitir nada.
  * SVG para quien maqueta de verdad; PNG para pegarlo en un documento sin pelearse con el formato.
@@ -12012,7 +12018,7 @@ app.get("/api/promos/canjes", requireAuth(PROMOS_ROLES), async (req, res) => {
 //  LA TARJETA DE CLIENTE
 // ═══════════════════════════════════════════════════════════════════════════════
 //
-// La tarjeta ES el carné que ya existía (`pro_qr` con `clase = 'carnet'`), con dos cosas nuevas
+// La tarjeta ES el carnet que ya existía (`pro_qr` con `clase = 'carnet'`), con dos cosas nuevas
 // alrededor: el cliente se la hace él solo, y a partir de ahí esa página es su cuenta.
 //
 // NO HAY ALTA AUTOMÁTICA NI EMISIÓN EN MASA. El formulario de la web no la crea, ni las
@@ -12261,13 +12267,13 @@ app.post("/api/fidelizacion/comunicaciones/:id/encolar", requireAuth(["direccion
     let encolados = 0, sinBaja = 0;
 
     for (const e of pendientes) {
-      // El carné, para poder meter su enlace en el mensaje. Si no tiene, se manda sin él.
+      // El carnet, para poder meter su enlace en el mensaje. Si no tiene, se manda sin él.
       let enlace = null, nombre = null, qrId = null;
       try {
         const qr = await dbGet(`SELECT id, token, nombre FROM pro_qr WHERE clase = 'carnet' AND telefono = ?
                                 AND anulado_en IS NULL ORDER BY id DESC LIMIT 1`, [e.telefono]);
         if (qr) { qrId = qr.id; nombre = qr.nombre; enlace = proEnlace(req, { token: qr.token, clase: "carnet" }); }
-      } catch { /* sin carné, el mensaje va igual */ }
+      } catch { /* sin carnet, el mensaje va igual */ }
 
       let texto = fidRender(c.plantilla, { nombre: nombre || "", enlace: enlace || "",
         fecha: hoyISO(), local: c.local || "", premio: "" });
@@ -12493,7 +12499,7 @@ app.get("/api/publico/formulario/:clave", async (req, res) => {
  *
  * Se normaliza con la MISMA función que el resto de la casa y se busca antes de crear nada. Dos
  * identidades para el mismo teléfono es como se acaba con un cliente que tiene dos saldos, dos
- * carnés y una campaña que se lleva dos veces.
+ * carnets y una campaña que se lleva dos veces.
  *
  * SI EL NOMBRE NO COINCIDE, se reutiliza la cuenta y se ANOTA la diferencia. No se sobrescribe: el
  * nombre guardado puede ser el bueno y el nuevo un error de quien teclea, y no hay forma de saber
@@ -12640,11 +12646,11 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
         [tel, f.idioma || null, ahora]);
     });
 
-    // ── 3 y 4. EL CARNÉ Y SU MENSAJE, EN UNA SOLA ESCRITURA ────────────────────────────────────
+    // ── 3 y 4. EL CARNET Y SU MENSAJE, EN UNA SOLA ESCRITURA ────────────────────────────────────
     //
-    // Antes eran tres escrituras sueltas —carné, derecho y cola— cada una con su `try` que se
+    // Antes eran tres escrituras sueltas —carnet, derecho y cola— cada una con su `try` que se
     // tragaba el error. Si la de la cola reventaba, la respuesta seguía siendo 200: el cliente
-    // veía su pantalla de gracias, el alta quedaba guardada, el carné emitido, y el mensaje no
+    // veía su pantalla de gracias, el alta quedaba guardada, el carnet emitido, y el mensaje no
     // existía. No era un fallo que nadie pudiera ver, porque no quedaba fila que mirar.
     //
     // Ahora van juntas. Dentro de la transacción SOLO hay PostgreSQL: el recuento de ciclos se
@@ -12652,7 +12658,7 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
     // esperando a un socket de WhatsApp es una transacción que se queda abierta cuando el socket
     // no contesta.
     //
-    // Y si toda la escritura se cae, esta persona se queda sin carné —visible en su pantalla, que
+    // Y si toda la escritura se cae, esta persona se queda sin carnet —visible en su pantalla, que
     // no le ofrece enlace— y puede volver a rellenar el formulario, que reutiliza lo que haya.
     // Es un estado que se arregla solo; el anterior no.
     const previoQr = await dbGet(`SELECT id, token, clase, nombre FROM pro_qr
@@ -12671,9 +12677,9 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
         await x.get(`SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, [`alta-form:${tel}`]);
         const qrActual = await x.get(`SELECT id, token, clase, nombre FROM pro_qr
           WHERE clase = 'carnet' AND telefono = ? AND anulado_en IS NULL ORDER BY id DESC LIMIT 1`, [tel]);
-        // EL CARNÉ. Se reutiliza el que ya tenga; solo se crea si no hay ninguno. La MISMA
-        // función que emite cualquier carné del panel, ahora dentro de esta escritura: un segundo
-        // camino para crear carnés sería un segundo sitio donde equivocarse con la unicidad.
+        // EL CARNET. Se reutiliza el que ya tenga; solo se crea si no hay ninguno. La MISMA
+        // función que emite cualquier carnet del panel, ahora dentro de esta escritura: un segundo
+        // camino para crear carnets sería un segundo sitio donde equivocarse con la unicidad.
         const qr = qrActual || previoQr || await proEmitir({ clase: "carnet", telefono: tel, nombre,
           usosMax: 0, autor: "publico", origen: `form:${clave}`, cliente: x });
         if (!qr) return { qr: null, cola: null, derecho: false };
@@ -12726,7 +12732,7 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
 
         // La clave lleva las seis cosas que identifican ESTA inscripción. Sin el ciclo, quien se
         // da de baja y VUELVE a apuntarse no recibiría nada: las otras cinco son las mismas —el
-        // carné se reutiliza a propósito— y el `DO NOTHING` descartaría su mensaje en silencio.
+        // carnet se reutiliza a propósito— y el `DO NOTHING` descartaría su mensaje en silencio.
         const claveIdem = `alta:${clave}:v${f.version}:${f.campana || clave}:${tel}:${qr.id}:c${ciclo}`.slice(0, 180);
         const met = await x.run(
           `INSERT INTO cap_cola (token, campana, telefono, texto, qr_id, proximo_ms, creado_en, prioridad)
@@ -12744,9 +12750,9 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
       enCola = r.cola ? { estado: r.cola.estado || "pendiente", enviado_en: r.cola.enviado_en || null } : null;
     } catch (e) {
       // Que falle NO tumba el alta: la persona ya está apuntada y con su consentimiento guardado.
-      // Se queda sin carné y sin mensaje, lo ve en su pantalla, y volver a enviar el formulario
+      // Se queda sin carnet y sin mensaje, lo ve en su pantalla, y volver a enviar el formulario
       // lo arregla. El reconciliador de la cola es la segunda red.
-      console.error(lineaErrorSql("[fidelizacion] carné y mensaje del alta", e));
+      console.error(lineaErrorSql("[fidelizacion] carnet y mensaje del alta", e));
     }
 
     // Si acaba de ganarse un regalo y tiene el pase en el móvil, que se le note. Va FUERA de la
@@ -12774,7 +12780,7 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
     res.json({ ok: true, evento_lead: altaNueva, mensaje: f.mensaje_exito || M.ya_registrado,
       texto_posterior: f.texto_posterior || null,
       envio: estadoEnvio ? { estado: estadoEnvio, texto: M[estadoEnvio] } : null,
-      // El enlace al carné se devuelve SIEMPRE que haya carné: no dice si es nuevo o de antes.
+      // El enlace al carnet se devuelve SIEMPRE que haya carnet: no dice si es nuevo o de antes.
       carnet: token ? proEnlace(req, { token }) : null });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] alta formulario", e));
@@ -12984,7 +12990,7 @@ app.post("/baixa", async (req, res) => {
 // ── SIN CENSO NUEVO, Y SIN MULTIPLICAR A NADIE ───────────────────────────────
 //
 // Todo sale de lo que ya se guardaba. La trampa de juntarlo es el `JOIN` directo: una persona con
-// tres consentimientos, dos carnés y cuatro mensajes en la cola saldría VEINTICUATRO VECES, y los
+// tres consentimientos, dos carnets y cuatro mensajes en la cola saldría VEINTICUATRO VECES, y los
 // totales de la pantalla serían cualquier cosa menos personas.
 //
 // Por eso cada tabla auxiliar se AGREGA POR TELÉFONO antes de unirla: cada una aporta exactamente
@@ -13142,7 +13148,7 @@ app.get("/api/fidelizacion/formularios/:clave/inscritos", requireAuth(PROMOS_ROL
 //
 // Porque componen cosas distintas. El clásico saca la plantilla de `cap_campanas.textos`, emite
 // cupones (`clase='cupon'`) y los busca por `origen='campana'`. Un formulario configurable saca
-// su plantilla de `fid_formularios.mensaje_wa` y su identidad es el CARNÉ. Reutilizar aquel
+// su plantilla de `fid_formularios.mensaje_wa` y su identidad es el CARNET. Reutilizar aquel
 // mandaría el texto de otra campaña con el código equivocado.
 //
 // ── Y POR QUÉ ES DE TIPO ENTREGA ────────────────────────────────────────────────────────────
@@ -13226,7 +13232,7 @@ app.get("/api/fidelizacion/formularios/:clave/recuperacion", requireAuth(PROMOS_
       : destinatarios.length;
 
     // A CUÁNTOS SE LES MANDARÍA DE VERDAD. Es el único número que hay que mirar antes de
-    // autorizar nada: los que tienen carné, teléfono válido, no están de baja y NO tienen fila.
+    // autorizar nada: los que tienen carnet, teléfono válido, no están de baja y NO tienen fila.
     const alcanzados = recAQuienAlcanza("pendientes", destinatarios);
 
     res.json({ ok: true, clave,
@@ -13255,7 +13261,7 @@ const FID_CONFIRMA_ENTREGA = "ENVIAR";
  * worker de siempre las saca con su ritmo, su cupo y su tope diario: noventa y cinco mensajes de
  * golpe es lo que hace que baneen un número.
  *
- * Idempotente por IDENTIDAD —campaña + carné— igual que el resto: ejecutarlo dos veces no escribe
+ * Idempotente por IDENTIDAD —campaña + carnet— igual que el resto: ejecutarlo dos veces no escribe
  * dos filas, y quien ya conste enviado no entra siquiera en la lista.
  */
 app.post("/api/fidelizacion/formularios/:clave/recuperacion", requireAuth(["direccion"]), async (req, res) => {
@@ -13282,7 +13288,7 @@ app.post("/api/fidelizacion/formularios/:clave/recuperacion", requireAuth(["dire
       const qr = await dbGet(
         `SELECT id, token, clase, nombre FROM pro_qr
           WHERE id = ? AND clase = 'carnet' AND anulado_en IS NULL`, [d.qrId]);
-      // SIN CARNÉ NO SE INVENTA NINGUNO. Emitir aquí crearía una segunda identidad para alguien
+      // SIN CARNET NO SE INVENTA NINGUNO. Emitir aquí crearía una segunda identidad para alguien
       // que quizá ya tiene la suya bajo otro teléfono. Se cuenta y se deja.
       if (!qr) { omitidos += 1; continue; }
 
@@ -13503,10 +13509,10 @@ async function walContexto(req) {
   return ctx;
 }
 
-// ── EL PASE DE UN CARNÉ ─────────────────────────────────────────────────────
+// ── EL PASE DE UN CARNET ─────────────────────────────────────────────────────
 //
-// `authenticationToken` es un secreto DISTINTO del token del carné, y esa distinción es el punto
-// entero: el del carné va dentro del QR, a la vista de cualquier cámara. Si fueran el mismo,
+// `authenticationToken` es un secreto DISTINTO del token del carnet, y esa distinción es el punto
+// entero: el del carnet va dentro del QR, a la vista de cualquier cámara. Si fueran el mismo,
 // fotografiar un pase daría permiso para hablar con el servicio web de ese pase.
 //
 // Se crea UNA VEZ y no se vuelve a tocar. Regenerar el `.pkpass` —cosa que pasa en cada
@@ -13585,9 +13591,9 @@ async function walProyeccion(qr, { local = null } = {}) {
  *   1. APNs NO DECIDE SI UNA OPERACIÓN DE FIDELIZACIÓN SALIÓ BIEN. Si esto falla entero, la
  *      factura sigue cerrada y los puntos concedidos. Por eso no lanza nunca: se traga el error.
  *   2. SIN CAMBIO VISIBLE, NO HAY AVISO. Se compara la huella de lo que se VE. Despertar el móvil
- *      de alguien para no cambiarle nada es la forma más rápida de que borre el carné.
+ *      de alguien para no cambiarle nada es la forma más rápida de que borre el carnet.
  *
- * Y agrupa: si ya hay un aviso pendiente para ese carné, no se crea otro. La propia guía de Apple
+ * Y agrupa: si ya hay un aviso pendiente para ese carnet, no se crea otro. La propia guía de Apple
  * avisa de que varias notificaciones se funden en una.
  */
 async function marcarPaseActualizado(qrId, motivo) {
@@ -13595,7 +13601,7 @@ async function marcarPaseActualizado(qrId, motivo) {
     const id = parseInt(qrId);
     if (!Number.isFinite(id)) return { ok: false, motivo: "sin_id" };
 
-    // Si este carné no tiene pase, no hay nada que actualizar. NO se crea aquí: un pase se crea
+    // Si este carnet no tiene pase, no hay nada que actualizar. NO se crea aquí: un pase se crea
     // cuando alguien se lo baja, no cuando gana un punto.
     const pase = await walPaseDe(id);
     if (!pase) return { ok: false, motivo: "sin_pase" };
@@ -13664,7 +13670,7 @@ app.post("/api/tarjeta/alta", async (req, res) => {
 
     const tel = proTel9(alta.telefono);
 
-    // Un solo carné vivo por persona. Si ya lo tiene, NO se le crea otro: dos carnés son dos
+    // Un solo carnet vivo por persona. Si ya lo tiene, NO se le crea otro: dos carnets son dos
     // identidades y sus visitas se contarían por separado (el índice único de la base lo
     // impediría igual, pero aquí se puede contestar bien en vez de con un error).
     let qr = await dbGet(
@@ -13744,7 +13750,7 @@ app.get("/api/tarjeta/resumen", requireAuth(PROMOS_ROLES), async (req, res) => {
     // El censo. SOLO NÚMEROS: ni un token, ni un código, ni un nombre, ni un teléfono.
     //
     // Existe porque la primera prueba del piloto de Ágora dio 404 en todo, y la pregunta que no se
-    // podía contestar sin abrir la base era la más básica: ¿cuántos carnés hay? (Había uno.) Los
+    // podía contestar sin abrir la base era la más básica: ¿cuántos carnets hay? (Había uno.) Los
     // dos códigos probados eran de cupones, así que el 404 era correcto — pero para saberlo hacía
     // falta poder distinguir una cosa de la otra desde el panel.
     const censo = await dbGet(
@@ -13775,9 +13781,9 @@ app.post("/api/tarjeta/perfil", async (req, res) => {
   catch(e){return res.status(400).json({ok:false,error:e.message});}
   try {
     const ok=await guardarPerfil(pool,req.body?.token,perfil);
-    if(!ok)return res.status(404).json({ok:false,error:"Este carné no está disponible. Abre el enlace de tu carné para continuar."});
+    if(!ok)return res.status(404).json({ok:false,error:"Este carnet no está disponible. Abre el enlace de tu carnet para continuar."});
     res.json({ok:true});
-  }catch(e){console.error("[tarjeta/perfil] No se pudo guardar el perfil");res.status(500).json({ok:false,error:"No hemos podido guardar los datos. Puedes intentarlo otra vez o continuar a tu carné."});}
+  }catch(e){console.error("[tarjeta/perfil] No se pudo guardar el perfil");res.status(500).json({ok:false,error:"No hemos podido guardar los datos. Puedes intentarlo otra vez o continuar a tu carnet."});}
 });
 
 app.get("/api/tarjeta/:token", async (req, res) => {
@@ -13841,7 +13847,7 @@ app.get("/api/tarjeta/:token", async (req, res) => {
     // ── SUS PUNTOS ──────────────────────────────────────────────────────────────────────────
     //
     // Va AQUÍ y no en un endpoint nuevo: esta ruta ya está autenticada por el token del propio
-    // carné, que es exactamente el permiso que hace falta. Un endpoint aparte sería otro sitio
+    // carnet, que es exactamente el permiso que hace falta. Un endpoint aparte sería otro sitio
     // donde equivocarse, y el interno `/api/fidelizacion/socio` pide sesión de Dirección.
     //
     // MIENTRAS SOLO ESTÉ LA SOMBRA NO SE ENSEÑA NINGÚN SALDO. Decirle a alguien que tiene 120
@@ -13948,7 +13954,7 @@ app.get("/api/tarjeta/:token", async (req, res) => {
       // y en un objeto literal la segunda clave gana en silencio. Habría dejado la tarjeta pública
       // sin saber si vale.
       resumen: proyeccion,
-      // ── EL AVISO DE VOLVER A AÑADIR EL CARNÉ ──────────────────────────────────────────────
+      // ── EL AVISO DE VOLVER A AÑADIR EL CARNET ──────────────────────────────────────────────
       //
       // Un pase bajado ANTES de que existiera el servicio web no lleva `webServiceURL`, así que no
       // se registra solo y NUNCA se actualizará. No hay forma de arreglarlo a distancia: hay que
@@ -14008,10 +14014,10 @@ app.get("/api/wallet/google/:token", async (req, res) => {
  *
  * ── LO QUE ESTO NO HACE: RECORRER A TODA LA CLIENTELA ───────────────────────────────────────
  *
- * Solo mira los carnés que tienen un pase REGISTRADO EN UN DISPOSITIVO. Si nadie se ha registrado
+ * Solo mira los carnets que tienen un pase REGISTRADO EN UN DISPOSITIVO. Si nadie se ha registrado
  * —que es como nace esto— la primera consulta devuelve cero filas y no se hace nada más.
  *
- * Y tiene TECHO. Un barrido sin límite en una casa con miles de carnés es lo que convierte un
+ * Y tiene TECHO. Un barrido sin límite en una casa con miles de carnets es lo que convierte un
  * cambio de configuración en cinco minutos de base de datos al rojo.
  */
 const WAL_TECHO_BARRIDO = 500;
@@ -14019,7 +14025,7 @@ async function walRefrescarPorPromo(clave, motivo) {
   try {
     const sw = await walInterruptores();
     if (!sw.wallet_registros) return 0;
-    // Los carnés con pase registrado. Se acota por ahí y no por la promoción: quien no tiene el
+    // Los carnets con pase registrado. Se acota por ahí y no por la promoción: quien no tiene el
     // pase en el móvil no tiene nada que refrescar, y son la inmensa mayoría.
     const filas = await dbAll(
       `SELECT DISTINCT r.qr_id FROM wallet_registros r WHERE r.activo LIMIT ?`,
@@ -14055,7 +14061,7 @@ async function walRefrescarPorPromo(clave, motivo) {
 // ── ACOTADO, Y DE VERDAD ────────────────────────────────────────────────────────────────────
 //
 //   · Solo pases CON REGISTRO ACTIVO. Quien no tiene el pase en un móvil no tiene nada que
-//     reconciliar, y son la inmensa mayoría de los carnés.
+//     reconciliar, y son la inmensa mayoría de los carnets.
 //   · POR LOTES Y CON CURSOR. El cursor se guarda en `config` y da la vuelta al llegar al final,
 //     así que no se queda atascado para siempre en los primeros de la lista — que es justo el
 //     fallo del barrido por configuración, y por eso este es otro.
@@ -14063,7 +14069,7 @@ async function walRefrescarPorPromo(clave, motivo) {
 //     `clave_idem` UNIQUE. Una segunda pasada sobre lo mismo no escribe nada.
 //   · Con el Wallet dinámico o los avisos apagados, sale por la primera línea.
 //
-// NO TOCA NADA MÁS. Ni puntos, ni promociones, ni Google Wallet, ni la identidad del carné: lee y,
+// NO TOCA NADA MÁS. Ni puntos, ni promociones, ni Google Wallet, ni la identidad del carnet: lee y,
 // como mucho, escribe en `wallet_pases` y `wallet_avisos`.
 
 const WAL_LOTE = 100;
@@ -14098,7 +14104,7 @@ async function walReconciliar() {
 
     let encolados = 0;
     for (const f of filas) {
-      // Si ya hay un aviso pendiente para ese carné, `marcarPaseActualizado` no crea otro: su
+      // Si ya hay un aviso pendiente para ese carnet, `marcarPaseActualizado` no crea otro: su
       // `clave_idem` es UNIQUE y va con `ON CONFLICT DO NOTHING`.
       const r = await marcarPaseActualizado(f.qr_id, "reconciliacion");
       if (r?.encolado) encolados += 1;
@@ -14189,7 +14195,7 @@ async function walVaciarCola() {
     const ahora = isoConOffset(Date.now());
 
     for (const aviso of pendientes) {
-      // Los dispositivos vivos de ese carné. Un token invalidado no se reintenta nunca.
+      // Los dispositivos vivos de ese carnet. Un token invalidado no se reintenta nunca.
       const filas = await dbAll(
         `SELECT d.dispositivo, d.push_token_enc FROM wallet_registros r
            JOIN wallet_dispositivos d ON d.dispositivo = r.dispositivo
@@ -14242,7 +14248,7 @@ async function walVaciarCola() {
           // que estamos hablando con el APNs equivocado —pruebas contra producción— o con el
           // certificado de otro Pass Type ID. Invalidar aquí borraría los tokens BUENOS de toda
           // la clientela por una casilla mal puesta, y habría que pedirle a cada uno que se
-          // volviera a bajar el carné.
+          // volviera a bajar el carnet.
           //
           // Así que NO se toca ni `push_token_enc` ni el registro. Se marca el aviso como
           // bloqueado, no se reintenta, y se enseña en el panel para que alguien lo arregle.
@@ -14444,10 +14450,10 @@ app.post("/api/wallet/dinamico/reintentar", requireAuth(["direccion"]), async (r
     // ── NO SE PUEDE CREAR UN SEGUNDO PENDIENTE PARA EL MISMO PASE ────────────────────────────
     //
     // El índice único parcial lo impediría con un error, y un botón que revienta no es un botón.
-    // Si ese carné ya tiene un aviso pendiente —porque cambió algo después de quedar bloqueado—,
+    // Si ese carnet ya tiene un aviso pendiente —porque cambió algo después de quedar bloqueado—,
     // ese pendiente ya lleva la versión más reciente: reponer el viejo no aporta nada.
     // `DISTINCT ON (qr_id) … ORDER BY etiqueta DESC` revive UNO SOLO por pase, y el más reciente.
-    // Un carné puede acumular VARIOS bloqueados —uno se bloquea, cambia algo, el nuevo también se
+    // Un carnet puede acumular VARIOS bloqueados —uno se bloquea, cambia algo, el nuevo también se
     // bloquea— y revivirlos todos violaría el índice a la vez que repondría versiones viejas.
     await dbRun(`UPDATE wallet_avisos SET estado = 'pendiente', intentos = 0, proximo_ms = ?
                   WHERE id IN (
@@ -14487,13 +14493,13 @@ app.post("/api/wallet/dinamico/reintentar", requireAuth(["direccion"]), async (r
 //  ── LO QUE NO SE REGISTRA ─────────────────────────────────────────────────────────────────
 //
 //  La URL completa NO se escribe en ningún log: dentro va el serial, que es la credencial del
-//  carné. Ni el token de autorización, ni el token push. Lo que se apunta son hechos —«alta»,
+//  carnet. Ni el token de autorización, ni el token push. Lo que se apunta son hechos —«alta»,
 //  «baja», «401»— y como mucho una huella corta.
 //
 //  ── RESPUESTAS UNIFORMES ──────────────────────────────────────────────────────────────────
 //
 //  Un serial que no existe y un token equivocado contestan LO MISMO: 401 con el cuerpo vacío.
-//  Distinguirlos convertiría esto en un comprobador de qué carnés existen.
+//  Distinguirlos convertiría esto en un comprobador de qué carnets existen.
 
 /** Todo lo de PassKit pasa por aquí: freno propio y nada de caché. */
 function walEntrada(req, res, clave) {
@@ -14624,7 +14630,7 @@ app.get("/api/wallet/apple/v1/devices/:dispositivo/registrations/:passTypeId", a
 
 // ── 3 · BAJA ────────────────────────────────────────────────────────────────
 //
-// Borra LA RELACIÓN, nunca el carné ni el cliente. Que alguien quite el pase del móvil no es que
+// Borra LA RELACIÓN, nunca el carnet ni el cliente. Que alguien quite el pase del móvil no es que
 // deje de ser cliente: sus puntos y sus regalos siguen donde estaban.
 app.delete("/api/wallet/apple/v1/devices/:dispositivo/registrations/:passTypeId/:serial",
   async (req, res) => {
@@ -14698,7 +14704,7 @@ app.post("/api/wallet/apple/v1/log", (req, res) => {
 });
 
 /**
- * CONSTRUIR Y FIRMAR EL `.pkpass` DE UN CARNÉ. UN SOLO SITIO.
+ * CONSTRUIR Y FIRMAR EL `.pkpass` DE UN CARNET. UN SOLO SITIO.
  *
  * Lo usan la descarga del cliente y la que pide Wallet al actualizarse. Tenerlo dos veces
  * significaría que un día el pase que se baja y el que se actualiza dejan de ser el mismo.
@@ -14707,12 +14713,12 @@ app.post("/api/wallet/apple/v1/log", (req, res) => {
  * el único sitio que compone esa URL en todo el proyecto.
  */
 async function walConstruirPase(qr, cfg, base, { req = null } = {}) {
-  // ── BAJARSE EL CARNÉ NO PUEDE DEPENDER DE NADA DE ESTO ────────────────────────────────────
+  // ── BAJARSE EL CARNET NO PUEDE DEPENDER DE NADA DE ESTO ────────────────────────────────────
   //
   // Lo dinámico es un añadido; el pase de siempre es lo que tiene que salir pase lo que pase. Si
   // falla una consulta de la proyección —una tabla nueva que no llegó a crearse en el despliegue,
   // la base con un mal momento— se cae al pase ESTÁTICO, que es exactamente lo que se entrega
-  // hoy. Un carné sin puntos se arregla solo en la siguiente descarga; un 500 en el móvil de un
+  // hoy. Un carnet sin puntos se arregla solo en la siguiente descarga; un 500 en el móvil de un
   // cliente en la puerta del local, no.
   let sw = { ...WAL_APAGADOS }, proyeccion = null, tarjetaCfg = {};
   try {
@@ -14932,7 +14938,7 @@ app.post("/api/wallet/config", requireAuth(WALLET_ROLES), async (req, res) => {
 /**
  * Probar la configuración sin molestar a ningún cliente.
  *
- * Emite un pase de mentira con un carné inventado y dice qué ha fallado EN CONCRETO. Existe
+ * Emite un pase de mentira con un carnet inventado y dice qué ha fallado EN CONCRETO. Existe
  * porque el error de esto nunca es «no funciona»: es la contraseña del .p12, o el intermedio de
  * Apple que no encadena, o la clave de Google pegada con los `\n` literales. Sin esta pantalla,
  * averiguar cuál de los tres es se hace a base de guardar la tarjeta en un móvil de verdad.
@@ -17652,7 +17658,7 @@ function pulsoRateLimit(req, res, max, ambito = "") {
   const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?";
   // `ambito` es opcional y aditivo: sin él, la clave es la de siempre. Con él, cada familia de
   // rutas tiene su propio cupo — las de PassKit las llama un iPhone muchas veces seguidas, y
-  // gastarle el cupo a la tarjeta web por eso sería dejar sin ver su carné a quien lo mire.
+  // gastarle el cupo a la tarjeta web por eso sería dejar sin ver su carnet a quien lo mire.
   const clave = String(ip).split(",")[0].trim() + ":" + req.method + (ambito ? ":" + ambito : "");
   const ahora = Date.now();
   const reg = _pulsoHits.get(clave) || { n: 0, desde: ahora };
@@ -20324,7 +20330,7 @@ async function contarEnvioWA(n = 1) {
  * Cuánto queda del cupo de hoy.
  *
  * `contarEnvioWA` lleva la cuenta desde hace tiempo, pero solo las campañas y el pulso MIRABAN
- * el tope. Los cupones y los carnés lo incrementaban sin consultarlo nunca, así que una tarde de
+ * el tope. Los cupones y los carnets lo incrementaban sin consultarlo nunca, así que una tarde de
  * campaña de captación podía sacar trescientos mensajes desde el mismo número que lleva las
  * reservas, Sara y los grupos internos — que es exactamente como se gana un baneo.
  *
@@ -21418,7 +21424,7 @@ function fidRateLimit(req, res, clave) {
  *
  *   sombra    calcula y guarda una proyección. NO toca saldos ni contesta Rewards.
  *   conceder  escribe los puntos ganados en el libro.
- *   ofrecer   manda el Reward a Ágora al validar el carné.
+ *   ofrecer   manda el Reward a Ágora al validar el carnet.
  *   frenar    (consumir) acepta que una factura traiga el descuento y gasta los puntos.
  *
  * NACEN TODOS APAGADOS MENOS LA SOMBRA. Es lo que permite encender esto sabiendo ya que los
@@ -21542,7 +21548,7 @@ async function fidReglasDe(local) {
   } catch { return []; }
 }
 
-/** El saldo de un carné, calculado del libro. Nunca hay un saldo guardado que pueda desviarse. */
+/** El saldo de un carnet, calculado del libro. Nunca hay un saldo guardado que pueda desviarse. */
 async function fidSaldoDe(qrId, ahora) {
   try {
     const movs = await dbAll(
@@ -21612,7 +21618,7 @@ const fidTransaccion = fidCrearTransaccion({ pool, toPositional });
 // reconciliador —que lo llama— usan este y ningún otro.
 const walTransaccion = fidCrearTransaccion({ pool, toPositional });
 
-/** Cuántas visitas lleva un carné. Es un SUM sobre el libro, nunca un contador guardado. */
+/** Cuántas visitas lleva un carnet. Es un SUM sobre el libro, nunca un contador guardado. */
 async function fidVisitasDe(qrId) {
   try {
     const r = await dbGet(`SELECT COALESCE(SUM(unidades), 0)::int AS n FROM fid_movimientos
@@ -21623,7 +21629,7 @@ async function fidVisitasDe(qrId) {
 
 // ── 1) VALIDACIÓN · GET, y solo GET ──────────────────────────────────────────
 // Ágora sustituye `{member_id}` en la URL que le configuremos. El identificador es el token opaco
-// del carné: no lleva URL, ni teléfono, ni nada de nadie.
+// del carnet: no lleva URL, ni teléfono, ni nada de nadie.
 app.get("/api/fidelizacion/agora/:token/member/:memberId", async (req, res) => {
   const t0 = Date.now();
   if (!fidRateLimit(req, res, "val")) return;
@@ -22495,7 +22501,7 @@ app.get("/api/fidelizacion/tickets", requireAuth(["direccion"]), async (req, res
     }
     if (req.query.qr) {
       const qr = Number(req.query.qr);
-      if (!Number.isSafeInteger(qr) || qr < 1) return res.status(400).json({ok:false,error:"Carné no válido"});
+      if (!Number.isSafeInteger(qr) || qr < 1) return res.status(400).json({ok:false,error:"Carnet no válido"});
       cond.push("EXISTS (SELECT 1 FROM fid_movimientos m WHERE m.factura_id=f.id AND m.qr_id=?)"); args.push(qr);
     }
     if (!cond.length) return res.status(400).json({ok:false,error:"Selecciona local o cliente"});
@@ -23308,7 +23314,7 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
 
     // ── PUBLICAR UN `Offer` ABIERTO A TODO EL LOCAL SE PIDE POR ESCRITO ───────────────────────
     //
-    // Sin esto, olvidar una casilla regala el desayuno a cualquier socio que enseñe el carné en
+    // Sin esto, olvidar una casilla regala el desayuno a cualquier socio que enseñe el carnet en
     // ese local, sin error y sin aviso. La confirmación se comprueba AQUÍ y no solo en el panel:
     // esta ruta se llama igual de bien con `curl`.
     //
@@ -23382,7 +23388,7 @@ app.post("/api/fidelizacion/promos/:id/estado", requireAuth(PROMOS_ROLES), async
       { local: p.local, detalle: { clave: p.clave, version: p.version, desde: p.estado, hacia } });
 
     // PAUSAR UNA PROMOCIÓN CAMBIA LO QUE VEN LOS PASES DE QUIEN LA TENÍA. Se recorren SOLO los
-    // carnés con pase REGISTRADO —no toda la clientela— y solo los que podrían tener esa promo.
+    // carnets con pase REGISTRADO —no toda la clientela— y solo los que podrían tener esa promo.
     walRefrescarPorPromo(p.clave, "promo_" + hacia).catch(() => {});
     res.json({ ok: true, estado: hacia });
   } catch (e) {
@@ -24485,7 +24491,7 @@ app.get("/api/fidelizacion/clientes.csv", requireAuth(PROMOS_ROLES), async (req,
 /**
  * LA FICHA DE UN SOCIO, para el panel. Trazabilidad factura a factura.
  *
- * Consulta autenticada por token o id interno del carné. No devuelve el teléfono:
+ * Consulta autenticada por token o id interno del carnet. No devuelve el teléfono:
  * para saber quién es basta el nombre de pila, que es lo que ya enseña la barra.
  */
 app.get("/api/fidelizacion/socio", requireAuth(PROMOS_ROLES), async (req, res) => {
@@ -24496,10 +24502,10 @@ app.get("/api/fidelizacion/socio", requireAuth(PROMOS_ROLES), async (req, res) =
     const interno = /^[1-9]\d*$/.test(carnetId)
       ? await dbGet("SELECT * FROM pro_qr WHERE id = ? AND clase = 'carnet'", [carnetId]) : null;
     const entrada = String(interno?.token || req.query.token || "").trim();
-    if (!entrada) return res.status(400).json({ ok: false, error: "Falta el carné" });
+    if (!entrada) return res.status(400).json({ ok: false, error: "Falta el carnet" });
     const ahora = isoConOffset(Date.now());
     const r = interno ? { ok: true, qr: interno } : await fidResolverMiembro({ get: dbGet }, entrada, { normalizar: proNormalizar, ahora });
-    if (!r.ok) return res.status(404).json({ ok: false, error: "No existe ningún carné utilizable con eso" });
+    if (!r.ok) return res.status(404).json({ ok: false, error: "No existe ningún carnet utilizable con eso" });
     const qr = r.qr;
 
     const movs = await dbAll(
@@ -24544,11 +24550,11 @@ app.get("/api/fidelizacion/socio", requireAuth(PROMOS_ROLES), async (req, res) =
 app.get("/api/fidelizacion/miembro", requireAuth(["direccion"]), async (req, res) => {
   try {
     const entrada = String(req.query.token || "").trim();
-    if (!entrada) return res.status(400).json({ ok: false, error: "Falta el carné: token, enlace del QR o los 8 dígitos" });
+    if (!entrada) return res.status(400).json({ ok: false, error: "Falta el carnet: token, enlace del QR o los 8 dígitos" });
     // La MISMA resolución que la ruta de Ágora. Dos caminos para la misma pregunta es como se
     // llega a que uno de los dos deje de encontrar lo que el otro sí encuentra.
     const r = await fidResolverMiembro({ get: dbGet }, entrada, { normalizar: proNormalizar, ahora: isoConOffset(Date.now()) });
-    if (!r.ok) return res.status(404).json({ ok: false, error: "No existe ningún carné utilizable con eso" });
+    if (!r.ok) return res.status(404).json({ ok: false, error: "No existe ningún carnet utilizable con eso" });
     const qr = r.qr;
     const tot = await dbGet(`SELECT
         COALESCE(SUM(unidades) FILTER (WHERE concepto = 'visita'), 0)::int AS visitas,
@@ -25207,12 +25213,14 @@ const server = app.listen(PORT, async () => {
         partes.push(`RESERVAS NO DISPONIBLES en estos locales y fechas. NUNCA ofrezcas, sugieras ni registres una reserva que caiga en estos rangos. Si el cliente pregunta por reservar en estas fechas o locales, tu PRIMERA frase debe decir directamente que ese día no hay reservas (NO empieces diciendo que sí y luego te corrijas). Recuérdaselo con amabilidad y ofrécele otra fecha u otro local que sí acepte:\n${lineas}`);
       }
       const docs = await dbAll(
-        `SELECT id, tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND documento_url IS NOT NULL AND documento_url != '' ORDER BY id`
+        `SELECT id, tema, local, disparadores, respuesta, documento_url FROM sara_respuestas WHERE activo = 1 AND documento_url IS NOT NULL AND documento_url != '' ORDER BY id`
       );
       if (docs.length) {
-        const lineas = docs.map(d => `- id ${d.id}: ${d.tema}${d.disparadores ? ` — cuándo enviarlo: ${d.disparadores}` : ""}${d.respuesta ? ` — di también: ${d.respuesta}` : ""}`).join("\n");
-        partes.push(`DOCUMENTOS DISPONIBLES para enviar con la herramienta enviar_documento (usa el id exacto; envíalo A LA PRIMERA en cuanto el cliente pida algo que encaje, sin derivar al teléfono ni esperar a que insista):\n${lineas}`);
+        const lineas = docs.map(d => `- id ${d.id}: ${d.tema}${d.local ? ` — solo para: ${d.local}` : ""}${d.disparadores ? ` — cuándo enviarlo: ${d.disparadores}` : ""}${d.respuesta ? ` — di también: ${d.respuesta}` : ""}`).join("\n");
+        partes.push(`DOCUMENTOS DISPONIBLES para enviar con la herramienta enviar_documento (usa el id exacto; si pide el documento, envíalo sin esperar a que insista. Si pregunta por un plato, precio o combo, responde primero con el contenido revisado y ofrece el PDF como complemento):\n${lineas}`);
       }
+      const contenidoCartas = conocimientoCartas(docs);
+      if (contenidoCartas) partes.push(contenidoCartas);
       const respTexto = await dbAll(
         `SELECT tema, disparadores, respuesta FROM sara_respuestas WHERE activo = 1 AND (documento_url IS NULL OR documento_url = '') AND respuesta IS NOT NULL AND respuesta != '' ORDER BY id`
       );

@@ -268,24 +268,24 @@ describe("lo que se guarda", () => {
   });
 
   test("el teléfono se normaliza con la MISMA función que el resto de la casa", () => {
-    // Dos formas de normalizar es como se acaba con un cliente que tiene dos saldos y dos carnés.
+    // Dos formas de normalizar es como se acaba con un cliente que tiene dos saldos y dos carnets.
     assert.match(POST, /const tel = proTel9\(b\.telefono\);/);
   });
 
-  test("un envío repetido no crea una segunda cuenta ni un segundo carné", () => {
+  test("un envío repetido no crea una segunda cuenta ni un segundo carnet", () => {
     assert.match(POST, /SELECT id, nombre FROM leads WHERE telefono = \?/);
-    // El carné se REUTILIZA si ya existe y solo se emite si no hay ninguno. Antes era
+    // El carnet se REUTILIZA si ya existe y solo se emite si no hay ninguno. Antes era
     // `if (!token) { … proEmitir }`; ahora la misma decisión, en una línea y dentro de la
     // transacción: `previoQr || await proEmitir(...)`.
     assert.match(POST, /previoQr \|\| await proEmitir\(/,
-      "el alta tiene que reutilizar el carné existente y emitir solo si no hay ninguno");
+      "el alta tiene que reutilizar el carnet existente y emitir solo si no hay ninguno");
     // La consulta trae ahora también `clase` y `nombre`: `proEnlace` necesita la clase para
     // decidir a dónde apunta el enlace, y el nombre va en el saludo del mensaje.
     assert.match(POST, /SELECT id, token, clase, nombre FROM pro_qr\s+WHERE clase = 'carnet' AND telefono = \?/);
   });
 
-  test("y el carné se emite con la función de siempre, no con un camino nuevo", () => {
-    // Un segundo sitio donde crear carnés es un segundo sitio donde equivocarse con la unicidad.
+  test("y el carnet se emite con la función de siempre, no con un camino nuevo", () => {
+    // Un segundo sitio donde crear carnets es un segundo sitio donde equivocarse con la unicidad.
     assert.match(POST, /await proEmitir\(\{ clase: "carnet"/);
   });
 });

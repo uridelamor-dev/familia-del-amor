@@ -2,7 +2,7 @@
 //
 // QUÉ HACE ÁGORA Y QUÉ HACEMOS NOSOTROS, según la Guía del Integrador 8.7.2:
 //
-//   1. El camarero escanea el carné. Ágora hace un GET a nuestra URL con el `member_id` dentro.
+//   1. El camarero escanea el carnet. Ágora hace un GET a nuestra URL con el `member_id` dentro.
 //      Contestamos 200 con { MemberId, DisplayText, Rewards } — o 404 si no es nadie.
 //   2. Al cerrar la factura, Ágora nos la manda entera por POST. Contestamos 200 con
 //      { Status: "accepted", PrinterText }.
@@ -265,7 +265,7 @@ export function respuestaMiembro(qr, { visitas = 0, rewards = null } = {}) {
  * `normalizar` se inyecta —es `normalizarEntrada` de promos— para no duplicar aquí la lógica de
  * qué es un token y qué es un código. Es la misma que usa la tablet.
  *
- * EL IDENTIFICADOR SE TRATA SIEMPRE COMO TEXTO. `Number("00042318")` es `42318`: un carné con
+ * EL IDENTIFICADOR SE TRATA SIEMPRE COMO TEXTO. `Number("00042318")` es `42318`: un carnet con
  * ceros delante dejaría de encontrarse, y el fallo aparecería en uno de cada diez.
  *
  * Devuelve `{ ok, qr }` o `{ ok: false, motivo }`. El motivo es para nuestro registro; a quien
@@ -287,7 +287,7 @@ export async function resolverMiembro(x, entrada, { normalizar, ahora = new Date
   return { ok: true, motivo: null, qr, entradaTipo: e.tipo };
 }
 
-/** ¿Sirve este carné para identificar a alguien? Un cupón o un vale impreso NO: no son socios. */
+/** ¿Sirve este carnet para identificar a alguien? Un cupón o un vale impreso NO: no son socios. */
 export function carnetUtilizable(qr, { ahora = new Date().toISOString() } = {}) {
   if (!qr) return { ok: false, motivo: "no_existe" };
   if (qr.clase !== "carnet") return { ok: false, motivo: "no_es_carnet" };
@@ -434,7 +434,7 @@ export function extraerFactura(json, sha256, { local = "" } = {}) {
  * Los movimientos que genera una factura. Uno por socio y concepto, con su clave de idempotencia.
  *
  * UNA FACTURA ACEPTADA = UNA VISITA POR SOCIO. Si la misma factura trae cinco líneas del mismo
- * carné, la clave `visita:<globalId>:<hash>` es la misma las cinco veces y el índice único de
+ * carnet, la clave `visita:<globalId>:<hash>` es la misma las cinco veces y el índice único de
  * `fid_movimientos` deja pasar solo la primera. No hace falta contarlas aquí: lo garantiza la base,
  * que es donde se cruzan dos reenvíos simultáneos.
  */
@@ -977,7 +977,7 @@ export const TIPOS_DEVOLUCION = Object.freeze(["BasicRefund", "StandardRefund"])
 export const esDevolucion = (extracto) =>
   TIPOS_DEVOLUCION.includes(String(extracto?.devolucionDe?.tipoDocumento || ""));
 
-/** El espacio de nombres del cerrojo de una CUENTA. El segundo argumento es el carné. */
+/** El espacio de nombres del cerrojo de una CUENTA. El segundo argumento es el carnet. */
 export const CERROJO_PUNTOS = 815301;
 
 /** El cerrojo de PUBLICAR UNA REGLA. Uno solo para todas: se publican muy de vez en cuando, y

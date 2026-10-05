@@ -3,7 +3,7 @@
 // ── NO HAY CENSO NUEVO ───────────────────────────────────────────────────────────────────────
 //
 // Todo esto sale de lo que ya se guardaba: `leads` (quién), `marketing_prefs` (si pidió que le
-// dejaran en paz), `fid_consentimientos` (qué aceptó y cuándo), `pro_qr` (su carné) y `cap_cola`
+// dejaran en paz), `fid_consentimientos` (qué aceptó y cuándo), `pro_qr` (su carnet) y `cap_cola`
 // (si le salió el mensaje). Una tabla paralela habría sido una segunda verdad sobre las mismas
 // personas, y la que se quedara sin mantener sería la que alguien mirara.
 //
@@ -33,20 +33,20 @@ export const CONSENTIMIENTO = Object.freeze(["activo", "baja"]);
 /**
  * Qué pasó con su código. Cerrado, y ordenado de peor a mejor noticia.
  *
- * ── «CARNÉ DISPONIBLE» NO ES «CÓDIGO ENVIADO» ───────────────────────────────────────────────
+ * ── «CARNET DISPONIBLE» NO ES «CÓDIGO ENVIADO» ───────────────────────────────────────────────
  *
- * El formulario configurable NO manda nada: enseña el enlace del carné en la pantalla y ahí
+ * El formulario configurable NO manda nada: enseña el enlace del carnet en la pantalla y ahí
  * acaba. No queda ninguna evidencia de que esa persona lo viera —pudo cerrar la pestaña antes de
  * que cargara—, así que llamarlo «entregado» sería afirmar algo que no consta.
  *
- * `carne_disponible` dice exactamente lo que se sabe: existe un carné suyo y está a su nombre.
+ * `carne_disponible` dice exactamente lo que se sabe: existe un carnet suyo y está a su nombre.
  * Ni más.
  */
 export const ENTREGA = Object.freeze([
-  "sin_carne",        // no hay carné: el alta se quedó a medias
+  "sin_carne",        // no hay carnet: el alta se quedó a medias
   "fallido",          // se intentó mandar y no salió
   "pendiente",        // está en la cola, todavía no ha salido
-  "carne_disponible", // hay carné, pero NO consta que se le haya mandado ni que lo viera
+  "carne_disponible", // hay carnet, pero NO consta que se le haya mandado ni que lo viera
   "enviado",          // consta la fecha en que salió el WhatsApp
 ]);
 
@@ -54,10 +54,10 @@ export const ENTREGA = Object.freeze([
 export const ETIQUETA = Object.freeze({
   activo: "Activo",
   baja: "Baja",
-  sin_carne: "Sin carné",
+  sin_carne: "Sin carnet",
   fallido: "Falló el envío",
   pendiente: "En la cola",
-  carne_disponible: "Carné disponible",
+  carne_disponible: "Carnet disponible",
   enviado: "Enviado por WhatsApp",
 });
 
@@ -65,10 +65,10 @@ export const ETIQUETA = Object.freeze({
 export const AYUDA = Object.freeze({
   activo: "Se le puede escribir.",
   baja: "Pidió dejar de recibir comunicaciones. Sigue aquí como histórico, pero se excluye de todos los envíos.",
-  sin_carne: "No llegó a generarse su carné. El alta se quedó a medias.",
+  sin_carne: "No llegó a generarse su carnet. El alta se quedó a medias.",
   fallido: "Se intentó mandar el mensaje y no salió. Se puede reintentar desde la cola.",
   pendiente: "Está en la cola de WhatsApp, todavía no ha salido.",
-  carne_disponible: "Tiene carné a su nombre. No consta que se le haya enviado: en este formulario el código se enseña en pantalla, y de eso no queda registro.",
+  carne_disponible: "Tiene carnet a su nombre. No consta que se le haya enviado: en este formulario el código se enseña en pantalla, y de eso no queda registro.",
   enviado: "Consta la fecha en que salió su WhatsApp.",
 });
 

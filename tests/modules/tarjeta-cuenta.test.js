@@ -43,7 +43,7 @@ describe("piezas sueltas", () => {
 
 describe("la cuenta entera", () => {
   test("las visitas se cuentan del libro de canjes, no de pro_qr.usos", () => {
-    // `usos` vale 99 en el carné de prueba a propósito: si alguien lo usara para contar, aquí
+    // `usos` vale 99 en el carnet de prueba a propósito: si alguien lo usara para contar, aquí
     // saldría 99 en vez de 2.
     const c = construirCuenta({ qr: QR, visitas: VISITAS, metricas: { visitas: 40 } });
     assert.equal(c.resumen.visitas, 2);
@@ -108,7 +108,7 @@ describe("la cuenta entera", () => {
     assert.match(c.descuentos.disponibles[0].donde, /Válido en La Tapeta - Blanes/);
   });
 
-  test("sin carné no hay cuenta", () => {
+  test("sin carnet no hay cuenta", () => {
     assert.equal(construirCuenta({ qr: null }), null);
   });
 });

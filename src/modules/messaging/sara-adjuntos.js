@@ -3,6 +3,20 @@ import { promisify } from 'node:util';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as esperar } from 'node:timers/promises';
+
+const RED_TRANSITORIA = new Set(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET']);
+
+export function diagnosticoAdjunto(error) {
+  const code = error?.cause?.code || error?.code;
+  if (RED_TRANSITORIA.has(code)) return `conexion_${code.toLowerCase()}`;
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'lectura_tiempo_agotado';
+  if (code === 'ENOENT') return 'herramienta_no_disponible';
+  if (error?.killed) return 'conversion_tiempo_agotado';
+  // Nunca registrar cuerpos del proveedor, rutas, nombres o contenido privado.
+  if (/^(lectura_|audio_|archivo_|adjunto_|descarga_|formato_)[a-z_0-9]+$/.test(error?.message || '')) return error.message;
+  return 'error_procesando';
+}
 
 export const MAX_ADJUNTO = 10 * 1024 * 1024;
 const MIME = new Map([
@@ -68,24 +82,45 @@ export async function leerLimitado(stream, max = MAX_ADJUNTO) {
 
 export async function convertirAudio(buffer, ejecutar = promisify(execFile)) {
   const dir = await mkdtemp(join(tmpdir(), 'sara-audio-'));
+  let etapa = 'preparacion';
   try {
     const origen = join(dir, 'audio.ogg'), destino = join(dir, 'audio.wav');
     await writeFile(origen, buffer, { mode: 0o600 });
+    etapa = 'ffprobe';
     const prueba = await ejecutar(process.env.FFPROBE_PATH || 'ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', origen], { timeout: 10000, maxBuffer: 4096 });
     const duracion = Number(String(prueba.stdout).trim());
     if (!Number.isFinite(duracion) || duracion <= 0 || duracion > 300) throw new Error('audio_fuera_limites');
+    etapa = 'ffmpeg';
     await ejecutar(process.env.FFMPEG_PATH || 'ffmpeg', ['-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe', '-i', origen,
       '-t', '300', '-ac', '1', '-ar', '16000', '-f', 'wav', destino], { timeout: 20000, maxBuffer: 256 * 1024 });
     return await readFile(destino);
+  } catch (e) {
+    console.warn('[Sara adjuntos] Conversión no completada:', etapa, diagnosticoAdjunto(e));
+    throw e;
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
 async function peticionOpenAI(ruta, opciones, fetcher, apiKey) {
-  const r = await fetcher(`https://api.openai.com/v1/${ruta}`, {
-    ...opciones, headers: { ...opciones.headers, Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(45000),
-  });
-  if (!r.ok) throw new Error(`lectura_proveedor_${r.status}`);
-  return r.json();
+  // Una única repetición de lectura: no envía mensajes ni ejecuta acciones del cliente.
+  for (let intento = 0; intento < 2; intento++) {
+    try {
+      const r = await fetcher(`https://api.openai.com/v1/${ruta}`, {
+        ...opciones, headers: { ...opciones.headers, Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(45000),
+      });
+      if (!r.ok) {
+        await r.body?.cancel();
+        throw new Error(`lectura_proveedor_${r.status}`);
+      }
+      return await r.json();
+    } catch (e) {
+      const temporal = RED_TRANSITORIA.has(e?.cause?.code || e?.code)
+        || e?.name === 'TimeoutError' || e?.name === 'AbortError'
+        || /^lectura_proveedor_(500|502|503|504)$/.test(e?.message || '');
+      if (intento || !temporal) throw e;
+      console.warn('[Sara adjuntos] Reintentando lectura:', diagnosticoAdjunto(e));
+      await esperar(500);
+    }
+  }
 }
 
 export async function interpretarAdjunto(buffer, meta, { apiKey = process.env.OPENAI_API_KEY, fetcher = fetch, convertir = convertirAudio } = {}) {
@@ -125,7 +160,7 @@ export async function prepararAdjunto({ msg, descargar, guardar, analizar = true
   if (!meta.compatible || meta.bytes > MAX_ADJUNTO || meta.segundos > 300) {
     return { error: true, texto: `[Adjunto no procesado: ${meta.nombre}. Formato o tamaño fuera de los límites.]` };
   }
-  let id;
+  let id, etapa = 'descarga';
   try {
     let agotado = false, reloj;
     const descarga = Promise.resolve().then(() => descargar(msg)).then(stream => {
@@ -140,12 +175,14 @@ export async function prepararAdjunto({ msg, descargar, guardar, analizar = true
     } finally { clearTimeout(reloj); }
     const buffer = await leerLimitado(stream);
     validarContenido(buffer, meta);
+    etapa = 'archivo';
     if (guardar) id = await guardar({ ...meta, buffer, jid: msg.key.remoteJid, mensajeId: msg.key.id });
     if (!analizar) return { id, texto: `[Adjunto recibido: ${meta.nombre}. Pendiente de lectura por el equipo.]` };
+    etapa = 'lectura';
     const lectura = await interpretar(buffer, meta);
     return { id, texto: `[${lectura.etiqueta} · ${meta.nombre}]\n${lectura.texto}\n[Fin del contenido aportado por el cliente]` };
   } catch (e) {
-    console.warn('[Sara adjuntos] Lectura no completada:', /^[a-z_0-9]+$/.test(e.message || '') ? e.message : 'error_procesando');
+    console.warn('[Sara adjuntos] Lectura no completada:', etapa, diagnosticoAdjunto(e));
     return { id, error: true, texto: `[Adjunto recibido: ${meta.nombre}. No se ha podido interpretar; no asumir su contenido.]` };
   }
 }

@@ -452,10 +452,10 @@ describe("el cerrojo de la cuenta", () => {
     assert.equal((ag.match(/pg_advisory_xact_lock\(\?, \?\)`, \[CERROJO_PUNTOS/g) || []).length, 1);
   });
 
-  test("la clave NO puede colisionar entre dos carnés", () => {
-    // Se usa la forma de DOS enteros: un espacio de nombres fijo y el id del carné tal cual. No hay
+  test("la clave NO puede colisionar entre dos carnets", () => {
+    // Se usa la forma de DOS enteros: un espacio de nombres fijo y el id del carnet tal cual. No hay
     // ninguna conversión —ni un hash, ni un truncado a 32 bits de una cadena— que pueda hacer que
-    // dos carnés distintos compartan cerrojo y uno espere al otro, o peor, que no se esperen.
+    // dos carnets distintos compartan cerrojo y uno espere al otro, o peor, que no se esperen.
     const ag = readFileSync(new URL("../src/modules/fidelizacion/agora.js", import.meta.url), "utf8");
     assert.match(ag, /pg_advisory_xact_lock\(\?, \?\)/, "se usa la forma de una sola clave");
     assert.ok(!/hashtext\(/.test(ag), "la clave pasa por un hash que puede colisionar");

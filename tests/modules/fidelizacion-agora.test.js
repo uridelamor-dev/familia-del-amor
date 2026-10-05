@@ -25,7 +25,7 @@ const sha = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
 const hashMember = (t) => sha(t).slice(0, 16);
 const AHORA = "2026-09-10T12:00:00+02:00";
 
-/** Un carné de mentira. El token tiene la forma real: base64url de 32 bytes. */
+/** Un carnet de mentira. El token tiene la forma real: base64url de 32 bytes. */
 const carnet = (over = {}) => ({ id: 1, token: "Aa1_-".padEnd(43, "x"), clase: "carnet",
   nombre: "Marta Puig", anulado_en: null, caduca_en: null, ...over });
 
@@ -109,7 +109,7 @@ describe("la validación del socio", () => {
     assert.equal(textoParaCamarero({ nombre: "Ana" }, { visitas: 1 }), "Ana · 1 visita");
   });
 
-  test("404 para lo que no es un carné vivo", () => {
+  test("404 para lo que no es un carnet vivo", () => {
     assert.equal(carnetUtilizable(null).ok, false);
     assert.equal(carnetUtilizable(carnet({ clase: "cupon" })).motivo, "no_es_carnet");
     assert.equal(carnetUtilizable(carnet({ anulado_en: AHORA })).motivo, "anulado");
@@ -118,7 +118,7 @@ describe("la validación del socio", () => {
   });
 
   test("un VALE IMPRESO no identifica a nadie", () => {
-    // `pro_qr` guarda carnés y vales anónimos en la misma tabla. Un vale es un papel al portador:
+    // `pro_qr` guarda carnets y vales anónimos en la misma tabla. Un vale es un papel al portador:
     // si sirviera de MemberId, cualquiera con un flyer sería socio.
     assert.equal(carnetUtilizable(carnet({ clase: "cupon", telefono: "" })).ok, false);
   });
@@ -312,7 +312,7 @@ describe("idempotencia contra la base", () => {
     assert.equal(t.fid_movimientos.length, 0, "se ha apuntado una visita de un socio que no existe");
   });
 
-  test("un carné anulado tampoco resucita", async () => {
+  test("un carnet anulado tampoco resucita", async () => {
     const { x } = bd({ carnes: [carnet({ id: 11, token: "TOK-A", anulado_en: AHORA })] });
     try {
       await guardar(x, extraerFactura(factura({ lineas: [["TOK-A", 10]] }), sha, { local: LOCAL_PILOTO }));

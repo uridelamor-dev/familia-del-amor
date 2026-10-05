@@ -6,9 +6,10 @@
     <title>Local · Familia del Amor</title>
     <link rel="stylesheet" href="/css/base.css" />
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="/css/local-carta.css" />
       <link rel="stylesheet" href="/css/consentimiento.css" />
   </head>
-  <body>
+  <body class="venue-page">
     <header class="top">
       <button class="nav-toggle" id="navToggle" aria-label="Abrir menú" aria-expanded="false">
         <span></span>
@@ -41,23 +42,25 @@
         <div class="hero-cta" id="localCtas"></div>
       </section>
 
-      <section class="block split">
-        <div>
+      <section class="block local-info" aria-label="Información del local">
+        <div class="local-info-card">
+          <span class="local-info-icon" aria-hidden="true">⌖</span>
           <h2 data-i18n="section_location">Ubicación</h2>
           <ul id="localLocations"></ul>
+          <div id="localMap"></div>
         </div>
-        <div class="tile" id="localCuriosity"></div>
-      </section>
-
-      <section class="block split">
-        <div>
+        <div class="local-info-card">
+          <span class="local-info-icon" aria-hidden="true">◷</span>
           <h2 data-i18n="section_hours">Horarios</h2>
           <div id="localHours"></div>
         </div>
-        <div>
-          <h2 data-i18n="section_map">Mapa</h2>
-          <div id="localMap"></div>
-        </div>
+        <div id="localCuriosity" hidden></div>
+      </section>
+
+      <section class="block local-menu" id="localMenu" hidden aria-labelledby="menuTitle">
+        <div class="menu-heading"><div><h2 id="menuTitle">Nuestra carta</h2><p id="menuHint"></p></div><a id="menuDownload" class="btn ghost" target="_blank" rel="noopener">Abrir PDF completo</a></div>
+        <div id="menuLanguages" class="menu-languages" aria-label="Idioma de la carta"></div>
+        <div id="menuPages" class="menu-pages"></div>
       </section>
 
       <section class="block">
@@ -78,6 +81,7 @@
     </main>
 
     <script src="/js/content-preview.js"></script>
+    <script src="/documentos/menu-catalog.js"></script>
     <script src="local.js"></script>
       <script src="/js/consentimiento.js"></script>
     <script src="/js/meta.js"></script>

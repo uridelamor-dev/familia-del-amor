@@ -451,7 +451,7 @@ describe("la decisión sobre una factura", () => {
     assert.equal(d.motivo, "sin_regla_vigente");
   });
 
-  test("una factura de 0 € con carné SIGUE siendo una visita", () => {
+  test("una factura de 0 € con carnet SIGUE siendo una visita", () => {
     const d = ev(factura(0));
     assert.equal(d.accion, "aceptar");
     assert.equal(d.puntos, 0);

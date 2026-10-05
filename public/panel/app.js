@@ -2763,13 +2763,13 @@ function renderClientes(j) {
  * de reglas. Por eso el saldo, las visitas y el historial se consultan aquí —y solo aquí—, y
  * Fidelización se queda con los agregados y la exportación.
  *
- * SE BUSCA POR CARNÉ, NUNCA POR TELÉFONO. Un identificador de socio que se adivina desde un dato
+ * SE BUSCA POR CARNET, NUNCA POR TELÉFONO. Un identificador de socio que se adivina desde un dato
  * personal no es opaco, y esa es la puerta que protege la validación del TPV.
  */
 function renderClientesFid() {
   return `<div class="card" style="margin-top:16px"><div class="ch"><h3>Fidelización de un socio</h3><span class="pill">Marketing</span></div>
     <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Saldo, visitas, consumo, caducidad e historial por local. Las reglas del programa se configuran en <b>Marketing → Promociones y puntos</b>.</div>
-    <div class="field"><label for="cliFidTok">Carné, enlace del QR o los 8 dígitos</label><input id="cliFidTok" placeholder="12345678"></div>
+    <div class="field"><label for="cliFidTok">Carnet, enlace del QR o los 8 dígitos</label><input id="cliFidTok" placeholder="12345678"></div>
     <button class="btn primary sm" data-act="cli-fid">Ver ficha</button>
     <div id="cliFidOut" style="margin-top:12px">${renderClientesFidCuerpo()}</div></div>`;
 }
@@ -2779,8 +2779,8 @@ function renderClientesFidCuerpo(d = CLI_FID) {
   const eur = (n) => (Math.round(Number(n || 0) * 100) / 100).toFixed(2) + " €";
   const dato = (t, v, sub) => `<div class="row"><div class="grow"><div class="t1">${esc(t)}</div>${sub ? `<div class="mut" style="font-size:12px">${esc(sub)}</div>` : ""}</div><b class="tnum">${esc(v)}</b></div>`;
 
-  let cuerpo = '<div class="mut">Pega el carné, el enlace del QR o los ocho dígitos para ver su ficha.</div>';
-  if (d === "no") cuerpo = '<div class="mut">No existe ningún carné utilizable con eso.</div>';
+  let cuerpo = '<div class="mut">Pega el carnet, el enlace del QR o los ocho dígitos para ver su ficha.</div>';
+  if (d === "no") cuerpo = '<div class="mut">No existe ningún carnet utilizable con eso.</div>';
   else if (d && d !== "no") {
     const s = d.saldo || {}, t = d.total || {};
     const locales = (d.porLocal || []).map((l) => fgFila(
@@ -2795,7 +2795,7 @@ function renderClientesFidCuerpo(d = CLI_FID) {
         ${dato("Visitas", String(t.visitas ?? 0), t.ultima ? `Última: ${String(t.ultima).slice(0, 10)}` : t.visitas === 0 ? "Todavía ninguna" : "Sin fecha registrada")}
         ${dato("Consumo", eur(t.consumo), t.ticket_medio ? `Ticket medio ${eur(t.ticket_medio)}` : "")}
       </div>
-      ${d.carnet?.anulado ? '<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">Este carné está <b>anulado</b>: ya no identifica a nadie en la barra.</div>' : ""}
+      ${d.carnet?.anulado ? '<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">Este carnet está <b>anulado</b>: ya no identifica a nadie en la barra.</div>' : ""}
       ${locales ? `<div class="mut" style="font-size:12px;margin:14px 0 4px">Por local</div><div class="rows">${locales}</div>` : ""}
       ${hist ? `<div class="mut" style="font-size:12px;margin:14px 0 4px">Historial · lo que pasó, en qué factura y con qué versión de la regla</div><div class="rows">${hist}</div>` : ""}`;
   }
@@ -2806,7 +2806,7 @@ function renderClientesFidCuerpo(d = CLI_FID) {
 /** Consulta la ficha y repinta SOLO su caja: la lista de clientes no se toca. */
 async function cliFidVer() {
   const tok = (document.getElementById("cliFidTok")?.value || "").trim();
-  if (!tok) { toast("Pega el carné o los ocho dígitos"); return; }
+  if (!tok) { toast("Pega el carnet o los ocho dígitos"); return; }
   try {
     CLI_FID = await apiRaw("/api/fidelizacion/socio?token=" + encodeURIComponent(tok));
   } catch (e) {
@@ -3092,8 +3092,8 @@ async function cliFicha(tel) {
   } catch (e) { toast(e.message); return; }
   const p = d.prefs || {};
   const nombre = [d.nombre, d.apellidos].filter(Boolean).join(" ") || tel;
-  const estado = !d.carnet ? "Sin carné" : d.carnet.anulado_en ? "Carné anulado"
-    : d.carnet.caduca_en && new Date(d.carnet.caduca_en).getTime() < Date.now() ? "Carné caducado" : "Tiene carné";
+  const estado = !d.carnet ? "Sin carnet" : d.carnet.anulado_en ? "Carnet anulado"
+    : d.carnet.caduca_en && new Date(d.carnet.caduca_en).getTime() < Date.now() ? "Carnet caducado" : "Tiene carnet";
   const reservas = d.reservas || [];
   const hoyFicha = new Intl.DateTimeFormat("sv-SE", {timeZone:"Europe/Madrid"}).format(new Date());
   const proxima = reservas.filter(r => String(r.dia || "").slice(0,10) >= hoyFicha)
@@ -3108,8 +3108,8 @@ async function cliFicha(tel) {
     <div class="cli-ficha-contact"><a href="tel:${esc(tel)}">${esc(tel)}</a>${d.correo ? `<a href="mailto:${esc(d.correo)}">${esc(d.correo)}</a>` : '<span class="mut">Email sin indicar</span>'}</div>
     ${d.nacimiento ? `<div class="t2">Cumpleaños: ${esc(fechaNac(d.nacimiento))}</div>` : ""}
     <div class="toolbar"><button class="btn sm" id="fichaWa">Escribir por WhatsApp</button><button class="btn sm" id="fichaEmail">Enviar correo</button></div></div>
-    ${d.carnet && USER.rol === "direccion" ? '<button class="btn" id="fichaConsumo">Ver tickets y consumo</button>' : ""}<div id="fichaResumen" class="cli-ficha-metrics">${d.carnet ? 'Consultando actividad del carné…' : '<span class="mut">Sin carné vinculado: no hay actividad de fidelización disponible.</span>'}</div>
-    ${d.carnet ? fold("Actividad del carné", "Puntos y consumo", '<div id="fichaCarnetActividad">Cargando…</div><button class="btn sm" id="fichaReintentar" hidden>Reintentar</button>') : ""}
+    ${d.carnet && USER.rol === "direccion" ? '<button class="btn" id="fichaConsumo">Ver tickets y consumo</button>' : ""}<div id="fichaResumen" class="cli-ficha-metrics">${d.carnet ? 'Consultando actividad del carnet…' : '<span class="mut">Sin carnet vinculado: no hay actividad de fidelización disponible.</span>'}</div>
+    ${d.carnet ? fold("Actividad del carnet", "Puntos y consumo", '<div id="fichaCarnetActividad">Cargando…</div><button class="btn sm" id="fichaReintentar" hidden>Reintentar</button>') : ""}
     ${proxima ? `<div class="card cli-next-reserva"><span class="t2">Próxima reserva registrada</span><b>${fecha(proxima.dia)} · ${esc(proxima.hora || "Hora sin indicar")}</b><span>${esc(proxima.local || "Local sin indicar")} · ${esc(String(proxima.personas ?? "—"))} personas</span></div>` : ""}
     ${fold("Reservas", String(reservas.length) + " registradas", '<p class="t2">Son reservas, no visitas confirmadas.</p>' + resv)}
     <div id="fichaHechos"></div>
@@ -11513,9 +11513,9 @@ function renderAgvEntrada() {
   if (!FID.locales) return '<div class="card"><div class="mut">Cargando…</div></div>';
 
   const censo = `<div class="rows" style="margin-top:8px">
-      <div class="row"><div class="grow"><div class="t1">Carnés que se pueden identificar</div><div class="mut" style="font-size:12px">${Number(c.carnets_total || 0)} emitidos en total · un carné anulado o caducado no vale · valen en cualquier local</div></div><b class="tnum" style="${utiles ? "" : "color:var(--danger)"}">${utiles}</b></div>
+      <div class="row"><div class="grow"><div class="t1">Carnets que se pueden identificar</div><div class="mut" style="font-size:12px">${Number(c.carnets_total || 0)} emitidos en total · un carnet anulado o caducado no vale · valen en cualquier local</div></div><b class="tnum" style="${utiles ? "" : "color:var(--danger)"}">${utiles}</b></div>
       <div class="row"><div class="grow"><div class="t1">Cupones y vales</div><div class="mut" style="font-size:12px">No identifican a nadie: son al portador y devuelven 404 a propósito</div></div><b class="tnum">${Number(c.cupones || 0)}</b></div>
-    </div>${utiles ? "" : '<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">No hay ningún carné utilizable: el TPV devolverá <b>404</b> a todo, y será correcto. Hace falta al menos un carné de cliente.</div>'}`;
+    </div>${utiles ? "" : '<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">No hay ningún carnet utilizable: el TPV devolverá <b>404</b> a todo, y será correcto. Hace falta al menos un carnet de cliente.</div>'}`;
 
   const filas = (FID.locales || []).map((L) => {
     const e = FID_ESTADOS[L.estado] || FID_ESTADOS.sin_configurar;
@@ -11670,7 +11670,7 @@ let FIDP = { reglas: [], vigentes: [], interruptores: null, preparacion: null, g
 const FID_SW_TXT = [
   ["sombra", "Cálculo en sombra", "Calcula y guarda lo que HARÍA, sin tocar ningún saldo ni contestar descuentos. Es lo que permite comprobar los números antes de encender nada."],
   ["conceder", "Conceder puntos", "Los puntos empiezan a escribirse de verdad en el libro."],
-  ["ofrecer", "Ofrecer descuentos", "Al identificar un carné con saldo suficiente, se le ofrece el descuento al camarero."],
+  ["ofrecer", "Ofrecer descuentos", "Al identificar un carnet con saldo suficiente, se le ofrece el descuento al camarero."],
   ["consumir", "Consumir descuentos", "Una factura que llegue con el descuento aplicado gasta los puntos."],
 ];
 
@@ -11840,7 +11840,7 @@ async function fidpRevisiones() {
 
 /** La ficha de un socio: saldo, lotes y el historial explicable factura a factura. */
 async function fidpSocio() {
-  const t = prompt("Token del carné (el que lleva el QR):");
+  const t = prompt("Token del carnet (el que lleva el QR):");
   if (!t) return;
   try {
     const j = await apiRaw(`/api/fidelizacion/socio?token=${encodeURIComponent(t)}`);
@@ -11964,7 +11964,7 @@ function fidgPromoResumen(p) {
   if (p.requiere_derecho) trozos.push("<b>solo quien se la ganó</b>");
   const linea = trozos.join(" · ");
   // El aviso que evita descubrirlo cuadrando el mes: una promoción de Ágora sin derecho se la
-  // lleva cualquiera que enseñe el carné en ese local.
+  // lleva cualquiera que enseñe el carnet en ese local.
   return p.codigo_agora && !p.requiere_derecho
     ? `${linea}<br><span style="color:var(--danger)"><b>⚠ Se ofrece a cualquier socio elegible del local</b></span>`
     : linea;
@@ -12354,7 +12354,7 @@ async function fidgPromoNueva(desdeId) {
     </div>
     <label class="chk" style="display:block;margin-bottom:4px"><input type="checkbox" id="pmDerecho"${fidgDerechoDefecto(base?.tipo || "descuento_euros", base) ? " checked" : ""}> Solo para quien se la haya ganado</label>
     <div class="mut" style="font-size:12px;margin:-4px 0 6px">Marcado, solo se le ofrece a quien tenga el derecho concedido: hoy, haberse apuntado a un formulario publicado y vinculado a esta misma clave.</div>
-    <div id="pmGeneralAviso" class="pendingblock ${fidgDerechoDefecto(base?.tipo || "descuento_euros", base) ? "hidden" : ""}" style="margin:0 0 10px;padding:10px 12px;font-size:12.5px;border-color:var(--danger)"><b>⚠ Sin marcar, esto se le ofrece a CUALQUIER socio del local.</b> No hace falta apuntarse a nada: basta con enseñar el carné. Para publicarla así habrá que escribir una confirmación.</div>
+    <div id="pmGeneralAviso" class="pendingblock ${fidgDerechoDefecto(base?.tipo || "descuento_euros", base) ? "hidden" : ""}" style="margin:0 0 10px;padding:10px 12px;font-size:12.5px;border-color:var(--danger)"><b>⚠ Sin marcar, esto se le ofrece a CUALQUIER socio del local.</b> No hace falta apuntarse a nada: basta con enseñar el carnet. Para publicarla así habrá que escribir una confirmación.</div>
     ${fgCampo("pmDesde", "Desde", base?.desde || "", { type: "date" })}
     ${fgCampo("pmHasta", "Hasta", base?.hasta || "", { type: "date" })}
     ${fgCampo("pmHoraD", "Desde las", base?.hora_desde || "", { type: "time" })}
@@ -12495,7 +12495,7 @@ function fidgConfirmarGeneral({ nombre, local, codigo }) {
     const ov = modal("⚠ Se ofrecerá a TODOS", `
       <div class="pendingblock" style="padding:12px 14px;font-size:13px;border-color:var(--danger);margin-bottom:12px">
         <b>Esta promoción NO exige haberse ganado nada.</b><br><br>
-        Cualquier socio que enseñe su carné en ese local se la lleva, sin haberse apuntado a nada.
+        Cualquier socio que enseñe su carnet en ese local se la lleva, sin haberse apuntado a nada.
         Si lo que querías era el premio de una campaña, <b>cierra esto y marca «Solo para quien se la haya ganado»</b>.
       </div>
       <div class="rows" style="margin-bottom:12px">
@@ -12596,7 +12596,7 @@ const FIDG_PROPUESTAS = {
     exige_whatsapp: true,
     sugerir_poblacion: true,
     // LO QUE SE PROMETE, CUMPLIDO. La tarjeta verde dice «rebràs el codi al teu telèfon», así que
-    // se manda de verdad. `{enlace}` es su carné; el enlace de baja lo añade el servidor al final.
+    // se manda de verdad. `{enlace}` es su carnet; el enlace de baja lo añade el servidor al final.
     mensaje_wa: "Hola {nombre}! 👋\n\nAquí tens el teu codi per esmorzar a La Tapeta:\n{enlace}\n\nEnsenya'l quan vinguis i te l'apliquem.",
     // ── EL ORDEN DE ESTA LISTA ES EL ORDEN DE LA PÁGINA ───────────────────────────────────────
     //
@@ -12716,21 +12716,21 @@ function fidgRecupCuerpo(clave, d) {
       ${fila("Sin fila de cola (nunca se les encoló)", n("sin_cola"), Number(c.sin_cola) ? "danger" : null)}
       ${fila("Pidieron no recibir", n("baja"))}
       ${fila("Teléfono no válido", n("sin_telefono"))}
-      ${fila("Con carné", n("con_carnet"))}
-      ${fila("Sin carné (no se les puede mandar)", n("sin_carnet"), Number(c.sin_carnet) ? "warning" : null)}
+      ${fila("Con carnet", n("con_carnet"))}
+      ${fila("Sin carnet (no se les puede mandar)", n("sin_carnet"), Number(c.sin_carnet) ? "warning" : null)}
     </tbody></table></div>
     <div class="card" style="margin-top:12px;background:var(--brand-soft);border-color:transparent">
       <div style="padding:12px 14px">
         <div class="t1" style="font-size:15px">Se mandaría a ${num(Number(d.se_enviaria_a || 0))} personas</div>
         <div class="mut" style="font-size:12px;margin-top:4px">
-          Las que tienen carné y teléfono válido, no están de baja y nunca llegaron a tener fila.
+          Las que tienen carnet y teléfono válido, no están de baja y nunca llegaron a tener fila.
           ${d.estreno_mensaje ? `El mensaje se configuró el ${esc(d.estreno_mensaje)}.` : ""}
         </div>
       </div>
     </div>
     <div class="mut" style="font-size:12px;margin:10px 0 4px">
       Reciben el mensaje del formulario publicado${form ? ` (v${form.version})` : ""}, cada uno con
-      SU enlace individual y reutilizando el carné que ya tiene. Es la entrega que pidieron al
+      SU enlace individual y reutilizando el carnet que ya tiene. Es la entrega que pidieron al
       apuntarse, así que <b>no lleva pie de baja</b>. Van a la cola de siempre: salen con su ritmo
       y su tope diario, no de golpe. Pulsarlo dos veces no manda nada dos veces.
     </div>
@@ -13584,7 +13584,7 @@ async function loadFidPiloto() {
     const j = await apiRaw("/api/fidelizacion/integracion");
     FID.locales = j.locales || [];
     // El censo sale del resumen de la tarjeta, que ya existía. Si falla, las tarjetas se pintan
-    // igual: saber cuántos carnés hay es útil, pero no es lo que se viene a mirar aquí.
+    // igual: saber cuántos carnets hay es útil, pero no es lo que se viene a mirar aquí.
     try { FID.censo = (await apiRaw("/api/tarjeta/resumen")).censo || null; } catch { FID.censo = null; }
     repintar();
   } catch (e) {
@@ -13689,16 +13689,16 @@ async function fidFacturas(local, qr = null) {
       ov.querySelector(".ticket-filters").innerHTML=bar();
       const rows=ticketFilter.promocion?todos.filter(f=>(f.premios||[]).some(p=>p.nombre===ticketFilter.promocion)):todos;
       const usados=rows.flatMap(f=>f.premios||[]).filter(p=>p.estado==="usado").length;
-      lista.innerHTML=`<p><b>${usados} canjes confirmados</b> · ${rows.length} tickets · ${new Set(rows.flatMap(f=>f.clientes.map(c=>c.id))).size} carnés${j.limitado ? " · Mostrando los últimos 500: acota la fecha" : ""}</p><p class="t2">Tickets recibidos con carné. La fecha corresponde a su recepción en el panel.</p>`+rows.map(f=>{
+      lista.innerHTML=`<p><b>${usados} canjes confirmados</b> · ${rows.length} tickets · ${new Set(rows.flatMap(f=>f.clientes.map(c=>c.id))).size} carnets${j.limitado ? " · Mostrando los últimos 500: acota la fecha" : ""}</p><p class="t2">Tickets recibidos con carnet. La fecha corresponde a su recepción en el panel.</p>`+rows.map(f=>{
         const estado=f.devolucion||f.revertida_en ? "Devuelto" : f.estado!=="aceptada" ? "Revisar" : f.premios.some(p=>p.estado==="usado") ? "Canje confirmado" : "Sin promoción";
-        return `<article class="ticket-row"><div><b>${esc(f.serie||"")} ${esc(f.numero||"Ticket #"+f.id)}</b><div class="t2">${esc(fecha(f.recibido_en))} · ${esc(f.local)}</div><div>${f.clientes.map(c=>`<button class="linkbtn" data-tk-client="${esc(c.telefono||"")}">${esc(c.nombre||"Carné "+(c.codigo||c.id))}</button>`).join(" · ")||"Cliente sin identificar"}</div><div class="t2">${f.premios.map(p=>esc(p.nombre)+(p.estado==="revertido"?" · revertido":"")).join(" · ")}</div></div><div class="ticket-result"><span class="pill">${estado}</span><b>${dinero(f.importe_centimos==null?null:f.importe_centimos/100)}</b><button class="btn sm" data-tk-id="${f.id}">Ver consumo</button></div></article>`;
+        return `<article class="ticket-row"><div><b>${esc(f.serie||"")} ${esc(f.numero||"Ticket #"+f.id)}</b><div class="t2">${esc(fecha(f.recibido_en))} · ${esc(f.local)}</div><div>${f.clientes.map(c=>`<button class="linkbtn" data-tk-client="${esc(c.telefono||"")}">${esc(c.nombre||"Carnet "+(c.codigo||c.id))}</button>`).join(" · ")||"Cliente sin identificar"}</div><div class="t2">${f.premios.map(p=>esc(p.nombre)+(p.estado==="revertido"?" · revertido":"")).join(" · ")}</div></div><div class="ticket-result"><span class="pill">${estado}</span><b>${dinero(f.importe_centimos==null?null:f.importe_centimos/100)}</b><button class="btn sm" data-tk-id="${f.id}">Ver consumo</button></div></article>`;
       }).join("")+(rows.length?"":"<p class='mut'>No hay tickets en esta selección.</p>");
       lista.querySelectorAll("[data-tk-client]").forEach(b=>b.onclick=()=>{ov.remove();cliFicha(b.dataset.tkClient);});
       lista.querySelectorAll("[data-tk-id]").forEach(b=>b.onclick=async()=>{
         ov.querySelector(".ticket-filters").hidden=true;detalle.hidden=false;lista.hidden=true;detalle.innerHTML="Cargando consumo…";
         try {
           const d=await apiRaw("/api/fidelizacion/tickets/"+b.dataset.tkId);
-          detalle.innerHTML=`<button class="btn sm" id="tkVolver">← Volver a tickets</button><h3>Productos del ticket</h3><p class="t2">${d.compartido?"Ticket compartido: no se atribuye cada producto a un cliente concreto.":"Consumo registrado en el ticket asociado al carné."}</p>`+d.comprobantes.map(c=>`<div class="ticket-products">${c.lineas.map(l=>`<div class="ticket-row"><div><b>${esc(l.producto||"Producto sin nombre")}</b><div class="t2">Cantidad: ${esc(String(l.cantidad??"—"))} · Precio: ${dinero(l.precio)}${l.oferta?" · Oferta: "+esc(l.oferta):""}</div>${l.porcentaje ? `<div class="t2">Descuento: ${esc(String(l.porcentaje))} %</div>` : ""}${l.descuento!=null?`<div class="t2">Descuento en importe: ${dinero(l.descuento)}</div>`:""}</div><b>${dinero(l.total)}</b></div>`).join("")||"Sin productos detallados"}${c.porcentaje ? `<p>Descuento del comprobante: ${esc(String(c.porcentaje))} %</p>` : ""}${c.descuento ? `<p>Descuento del comprobante: ${dinero(c.descuento)}</p>`:""}</div>`).join("");
+          detalle.innerHTML=`<button class="btn sm" id="tkVolver">← Volver a tickets</button><h3>Productos del ticket</h3><p class="t2">${d.compartido?"Ticket compartido: no se atribuye cada producto a un cliente concreto.":"Consumo registrado en el ticket asociado al carnet."}</p>`+d.comprobantes.map(c=>`<div class="ticket-products">${c.lineas.map(l=>`<div class="ticket-row"><div><b>${esc(l.producto||"Producto sin nombre")}</b><div class="t2">Cantidad: ${esc(String(l.cantidad??"—"))} · Precio: ${dinero(l.precio)}${l.oferta?" · Oferta: "+esc(l.oferta):""}</div>${l.porcentaje ? `<div class="t2">Descuento: ${esc(String(l.porcentaje))} %</div>` : ""}${l.descuento!=null?`<div class="t2">Descuento en importe: ${dinero(l.descuento)}</div>`:""}</div><b>${dinero(l.total)}</b></div>`).join("")||"Sin productos detallados"}${c.porcentaje ? `<p>Descuento del comprobante: ${esc(String(c.porcentaje))} %</p>` : ""}${c.descuento ? `<p>Descuento del comprobante: ${dinero(c.descuento)}</p>`:""}</div>`).join("");
         } catch(e) { detalle.innerHTML=`<button class="btn sm" id="tkVolver">← Volver a tickets</button><p>${esc(e.message)}</p>`; }
         detalle.querySelector("#tkVolver").onclick=()=>{ov.querySelector(".ticket-filters").hidden=false;detalle.hidden=true;lista.hidden=false;};
       });
@@ -13764,7 +13764,7 @@ async function fidImportes(id) {
 }
 
 async function fidMiembro() {
-  const t = prompt("Token del carné (el que lleva el QR):");
+  const t = prompt("Token del carnet (el que lleva el QR):");
   if (!t) return;
   try {
     const j = await apiRaw("/api/fidelizacion/miembro?token=" + encodeURIComponent(t.trim()));
@@ -15065,7 +15065,7 @@ async function webBlkUpload(input, gallery) {
 // Dos cosas que se parecen y no son lo mismo:
 //
 //   · CUPÓN  — para una promoción concreta. Se gasta, caduca y se cuenta.
-//   · CARNÉ  — permanente y sin promoción dentro: identifica a la persona. Lo que se le puede
+//   · CARNET  — permanente y sin promoción dentro: identifica a la persona. Lo que se le puede
 //              aplicar son las promociones vigentes, y eso lo elige el camarero al escanear.
 //
 // Se emite a gente CONCRETA, elegida a mano en la pestaña «Emitir». No hay envío por segmento
@@ -15143,7 +15143,7 @@ function promoTablaEmitir() {
       <div class="field" style="width:100%"><label>Tipo</label>
         <select id="promoClase">
           <option value="cupon">Cupón de una promoción</option>
-          <option value="carnet">Carné de cliente (permanente)</option>
+          <option value="carnet">Carnet de cliente (permanente)</option>
         </select></div>
       <div class="field" style="width:100%" id="promoCampoPromo"><label>Promoción</label>
         <select id="promoSelPromo">${opts || '<option value="">Crea una promoción primero</option>'}</select></div>
@@ -15263,7 +15263,7 @@ function promoTablaQr() {
         : `${esc(q.nombre || "—")}<div class="t2">${esc(q.telefono || "")}</div>`;
       return `<tr>
         <td>${quien}</td>
-        <td>${q.clase === "carnet" ? "Carné de cliente" : esc(q.promocion || "Cupón")}</td>
+        <td>${q.clase === "carnet" ? "Carnet de cliente" : esc(q.promocion || "Cupón")}</td>
         <td class="mut tnum">${esc(q.codigo)}</td>
         <td>${estado}</td>
         <td class="mut">${envio}</td>
@@ -15347,7 +15347,7 @@ function renderFidgPuertaPromos() {
   const interruptores = p.estado === "activo" && puede
     ? `<div class="mut" style="font-size:12px;margin:16px 0 4px">Interruptores</div>
        <div class="rows">
-         <div class="row"><div class="grow"><div class="t1">Ofrecer promociones en la barra</div><div class="mut" style="font-size:12px">Al escanear un carné, mandarle a Ágora el <code>Offer</code> que corresponda.</div></div>
+         <div class="row"><div class="grow"><div class="t1">Ofrecer promociones en la barra</div><div class="mut" style="font-size:12px">Al escanear un carnet, mandarle a Ágora el <code>Offer</code> que corresponda.</div></div>
            <button class="btn sm ${sw.promociones_ofrecer ? "danger" : "primary"}" data-act="fidg-pp-sw" data-k="promociones_ofrecer" data-v="${sw.promociones_ofrecer ? "0" : "1"}">${sw.promociones_ofrecer ? "Apagar" : "Encender"}</button></div>
          <div class="row"><div class="grow"><div class="t1">Consumir al cerrar la factura</div><div class="mut" style="font-size:12px">Apuntar el uso cuando Ágora confirme una factura con el premio aplicado. ${sw.promociones_ofrecer ? "" : "<b>Hace falta ofrecer primero.</b>"}</div></div>
            ${sw.promociones_ofrecer ? `<button class="btn sm ${sw.promociones_consumir ? "danger" : "primary"}" data-act="fidg-pp-sw" data-k="promociones_consumir" data-v="${sw.promociones_consumir ? "0" : "1"}">${sw.promociones_consumir ? "Apagar" : "Encender"}</button>` : '<span class="pill">bloqueado</span>'}</div>
@@ -15372,7 +15372,7 @@ function promoFidelizacion() {
       ${renderFidgPuertaPromos()}</div>
     <div class="card" style="margin-top:12px"><div class="ch"><h3>Premios de fidelización</h3></div>
       <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Estos los aplica <b>Ágora dentro de la factura</b>, no la tablet de la barra. Cada uno se versiona: publicar crea una versión nueva y finaliza la anterior.</div>
-      <div class="pendingblock" style="margin:0 2px 10px;padding:10px 12px;font-size:12.5px">Una promoción con <b>código de Ágora</b> hay que crearla <b>primero en Ágora</b>. Guardar el código aquí <b>no la crea allí</b>: solo le dice a nuestro sistema qué <code>Offer</code> devolver cuando se escanee un carné con derecho.</div>
+      <div class="pendingblock" style="margin:0 2px 10px;padding:10px 12px;font-size:12.5px">Una promoción con <b>código de Ágora</b> hay que crearla <b>primero en Ágora</b>. Guardar el código aquí <b>no la crea allí</b>: solo le dice a nuestro sistema qué <code>Offer</code> devolver cuando se escanee un carnet con derecho.</div>
       ${renderFidgPromos()}</div>
     <div class="card" style="margin-top:12px"><div class="ch"><h3>Productos y grupos</h3></div>
       <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Los grupos —«Cafés», «Entrepans»— se eligen a mano del catálogo sincronizado. El catálogo se sincroniza en <b>Sistema → Ágora (TPV)</b>.</div>
@@ -15986,7 +15986,7 @@ function promoTarjeta() {
       <div class="ch"><h3>La tarjeta de cliente está apagada</h3><span class="pill">Sin publicar</span></div>
       <div class="mut" style="line-height:1.6">
         Está construida y probada, pero <b>no aparece en ningún sitio</b>: ni en la web, ni en los
-        enlaces que se mandan por WhatsApp, ni en las tablets de la barra. Los carnés que se
+        enlaces que se mandan por WhatsApp, ni en las tablets de la barra. Los carnets que se
         emiten desde «Emitir QR» siguen funcionando exactamente igual que siempre.
         <div style="margin-top:10px">Cuando se encienda, el cliente podrá hacérsela él solo
           —desde la web o escaneando un cartel de una mesa— y esa página pasará a ser su cuenta:
@@ -16057,7 +16057,7 @@ function promoTarjeta() {
   // avisos, y no es lo mismo.
   const dinamico = PROMO.walletDin
     ? `<div class="card" style="margin-top:16px"><div class="ch"><h3>Wallet dinámico</h3></div>
-        <div class="mut" style="font-size:12.5px;padding:2px 2px 10px">Que el carné del móvil se <b>actualice solo</b> cuando cambian los puntos o los regalos. <b>No es el programa de puntos ni las promociones</b>: esos tienen sus propias puertas y siguen donde estaban. Con esto apagado, el pase se sigue generando y añadiendo exactamente igual que hoy.</div>
+        <div class="mut" style="font-size:12.5px;padding:2px 2px 10px">Que el carnet del móvil se <b>actualice solo</b> cuando cambian los puntos o los regalos. <b>No es el programa de puntos ni las promociones</b>: esos tienen sus propias puertas y siguen donde estaban. Con esto apagado, el pase se sigue generando y añadiendo exactamente igual que hoy.</div>
         ${renderWalletDinamico()}</div>`
     : "";
 
@@ -16107,9 +16107,9 @@ async function walReintentar(solo) {
   } catch (e) { toast(e.message || "No se pudo reintentar"); }
 }
 
-/** El pase de prueba es EL DEL PROPIO CARNÉ que se elija: no se inventa uno falso. */
+/** El pase de prueba es EL DEL PROPIO CARNET que se elija: no se inventa uno falso. */
 function walPrueba() {
-  const t = prompt("Pega el enlace o el token de un carné de prueba para bajarte su pase:");
+  const t = prompt("Pega el enlace o el token de un carnet de prueba para bajarte su pase:");
   if (!t || !t.trim()) return;
   const token = (t.match(/[?&]t=([^&\s]+)/) || [null, t.trim()])[1];
   window.open("/api/wallet/apple/" + encodeURIComponent(token), "_blank");
@@ -16119,13 +16119,13 @@ function walPrueba() {
  * Encender o apagar la tarjeta de cliente.
  *
  * Encenderla se confirma porque saca páginas nuevas a la web pública, que es de las cosas que
- * luego nadie recuerda haber hecho. Apagarla NO borra nada: los carnés emitidos se quedan, y
+ * luego nadie recuerda haber hecho. Apagarla NO borra nada: los carnets emitidos se quedan, y
  * los que ya tuvieran la tarjeta guardada en el móvil siguen pudiendo enseñar el QR — lo que
  * deja de existir es la página de la cuenta y el alta.
  */
 async function tjInterruptor(activa) {
   if (activa && !confirm("Se van a publicar en la web las páginas de la tarjeta de cliente y el alta.\n\n¿Encenderla?")) return;
-  if (!activa && !confirm("Deja de aparecer el alta y la página de la cuenta.\n\nLos carnés ya emitidos NO se borran y se siguen validando en la barra.\n\n¿Apagarla?")) return;
+  if (!activa && !confirm("Deja de aparecer el alta y la página de la cuenta.\n\nLos carnets ya emitidos NO se borran y se siguen validando en la barra.\n\n¿Apagarla?")) return;
   try {
     await apiSend("POST", "/api/tarjeta/activa", { activa });
     toast(activa ? "Tarjeta de cliente encendida" : "Tarjeta de cliente apagada");
@@ -16330,7 +16330,7 @@ function promoPintarEmitir() {
   if (document.getElementById("promoEnviar")) document.getElementById("promoEnviar").checked = enviar;
   promoSincronizarCampos();
 }
-// Un carné no tiene promoción ni caducidad: es permanente. Dejar los campos a la vista
+// Un carnet no tiene promoción ni caducidad: es permanente. Dejar los campos a la vista
 // hacía pensar que sí.
 function promoSincronizarCampos() {
   const carnet = ((document.getElementById("promoClase") || {}).value || "cupon") === "carnet";
@@ -16355,7 +16355,7 @@ async function promoEmitir() {
   try {
     const r = await apiSend("POST", "/api/promos/emitir", cuerpo);
     const filas = (r.resultados || []).map((x) => `<div class="row" style="padding:8px 0">
-      <div class="grow" style="min-width:0"><div class="t1">${esc(x.nombre || x.telefono || "—")}${x.yaTenia ? ' <span class="pill" style="font-size:10px">Ya tenía carné</span>' : ""}</div>
+      <div class="grow" style="min-width:0"><div class="t1">${esc(x.nombre || x.telefono || "—")}${x.yaTenia ? ' <span class="pill" style="font-size:10px">Ya tenía carnet</span>' : ""}</div>
         <div class="t2">${x.url ? esc(x.url) : ""}${x.codigo ? " · código " + esc(x.codigo) : ""}</div>
         ${x.error ? `<div class="t2" style="color:var(--danger)">No se le pudo enviar: ${esc(x.error)}</div>` : ""}</div>
       ${x.url ? `<button class="linkbtn" style="color:var(--brand)" data-act="promo-copiar" data-url="${esc(x.url)}">Copiar</button>` : ""}</div>`).join("");

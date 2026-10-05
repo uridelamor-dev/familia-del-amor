@@ -470,7 +470,7 @@ export function evaluarFactura({ json, extracto, regla, reglaReward = null, prom
   }
 
   // ── Puntos ──────────────────────────────────────────────────────────────────────────────────
-  // Una factura con carné SIEMPRE cuenta como visita, aunque sea de 0 €.
+  // Una factura con carnet SIEMPRE cuenta como visita, aunque sea de 0 €.
   const visitas = miembros.length;
 
   if (!regla) return { ...base, accion: "aceptar", motivo: MOTIVOS.SIN_REGLA, puntos: 0, consumo, visitas };

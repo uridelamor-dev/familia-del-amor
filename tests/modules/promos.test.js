@@ -126,7 +126,7 @@ test("estadoDe: el límite es por PERSONA, no por QR", () => {
   assert.equal(estadoDe(segundoCupon, promo({ usos_por_cliente: 0 }), { hoy: HOY, canjesCliente: 9 }), "valido"); // 0 = sin límite
 });
 
-test("estadoDe: el carné no caduca, no se agota y no necesita promoción", () => {
+test("estadoDe: el carnet no caduca, no se agota y no necesita promoción", () => {
   const carnet = { clase: "carnet", usos: 47, usos_max: 0, anulado_en: null, caduca_en: null };
   assert.equal(estadoDe(carnet, null, { hoy: HOY, local: "Blanes" }), "valido");
   assert.equal(estadoDe({ ...carnet, anulado_en: "2026-08-01" }, null, { hoy: HOY }), "anulado");

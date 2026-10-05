@@ -84,7 +84,7 @@ export async function ensureSchemaPromos(x) {
   await x.run(`ALTER TABLE pro_qr ADD COLUMN IF NOT EXISTS tirada TEXT`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_pro_qr_tirada ON pro_qr (tirada) WHERE tirada IS NOT NULL`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_pro_qr_tel ON pro_qr (telefono)`);
-  // Un solo carné vivo por persona: si se emite otro sin anular el anterior, la misma
+  // Un solo carnet vivo por persona: si se emite otro sin anular el anterior, la misma
   // persona tendría dos identidades y sus visitas se contarían por separado.
   await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pro_qr_carnet
     ON pro_qr (telefono) WHERE clase = 'carnet' AND anulado_en IS NULL AND telefono <> ''`);
@@ -94,7 +94,7 @@ export async function ensureSchemaPromos(x) {
   // decorativo, es el candado del límite por cliente.
   //
   // El límite «una vez por persona» no se puede garantizar contando antes de insertar: dos
-  // tablets escaneando el mismo carné a la vez leen las dos «lleva 0» y las dos canjean. Con
+  // tablets escaneando el mismo carnet a la vez leen las dos «lleva 0» y las dos canjean. Con
   // el ordinal dentro de un índice único, las dos calculan `uso_n = 1`, la base acepta una y
   // rechaza la otra. El código solo tiene que saber leer esa colisión como «ya se usó».
   //

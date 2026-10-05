@@ -99,7 +99,7 @@ describe("un fallo técnico NUNCA se contesta con 200", () => {
     // tiene que contestar 500. Lo que no puede pasar es que devuelva `accepted` a medias.
     let n = 0;
     const x = {
-      // El carné existe: así se llega de verdad al INSERT del libro, que es donde revienta.
+      // El carnet existe: así se llega de verdad al INSERT del libro, que es donde revienta.
       get: async (q) => (/FROM pro_qr/.test(q) ? { id: 11, clase: "carnet", anulado_en: null, caduca_en: null } : null),
       all: async () => [],
       run: async (q) => { if (/INSERT INTO fid_movimientos/.test(q)) throw new TypeError("algo raro");
@@ -370,7 +370,7 @@ describe("`rejected` NO cierra la factura, y en ningún sitio se dice lo contrar
 });
 
 describe("el member_id con - y _ llega intacto a través de Express", () => {
-  // El token del carné es base64url: incluye `-` y `_`. Antes de proponer reemitir ningún QR hay
+  // El token del carnet es base64url: incluye `-` y `_`. Antes de proponer reemitir ningún QR hay
   // que comprobar que el problema existe, y aquí se comprueba que NO existe del lado de Express.
   const TOKENS = [
     "Aa1-Bb2_Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2Mm3N",

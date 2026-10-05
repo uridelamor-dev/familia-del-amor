@@ -47,7 +47,7 @@ describe("saneado del formulario de alta", () => {
     const { alta, descartados } = sanearAlta(
       { nombre: "Marta", telefono: "600112233", correo: "esto no es un correo" }, { locales: LOCALES });
     assert.equal(alta.correo, "");
-    assert.equal(alta.nombre, "Marta");   // El endpoint exige también alta.correo antes de emitir el carné
+    assert.equal(alta.nombre, "Marta");   // El endpoint exige también alta.correo antes de emitir el carnet
     assert.ok(descartados.some((d) => d.campo === "correo"));
   });
 

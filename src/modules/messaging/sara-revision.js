@@ -42,9 +42,9 @@ export function textoSeguro(tipo, idioma = 'es') {
       en: 'I cannot confirm that with the information available. I have passed your question to the team for clarification.',
     },
     adjunto: {
-      ca: 'No he pogut llegir bé l’arxiu o l’àudio. Em pots escriure què necessites o tornar-lo a enviar més clar?',
-      es: 'No he podido leer bien el archivo o el audio. ¿Puedes escribir qué necesitas o volver a enviarlo más claro?',
-      en: 'I could not read the file or understand the audio clearly. Could you write what you need or send a clearer version?',
+      ca: 'Ho sento, ara mateix no he pogut processar l’arxiu o l’àudio. Em pots escriure què necessites o tornar-ho a provar d’aquí a una estona?',
+      es: 'Lo siento, ahora mismo no he podido procesar el archivo o el audio. ¿Puedes escribir qué necesitas o volver a intentarlo dentro de un rato?',
+      en: 'Sorry, I could not process the file or audio right now. Could you write what you need or try again in a little while?',
     },
   };
   return textos[tipo]?.[idioma] || textos[tipo]?.es || textos.error.es;

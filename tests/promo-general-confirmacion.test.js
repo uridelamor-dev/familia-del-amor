@@ -3,7 +3,7 @@
 // ── EL DESCUIDO QUE ESTO IMPIDE ──────────────────────────────────────────────────────────────
 //
 // Se publica `ESMORZAR_GIRONA` sin marcar «solo para quien se la haya ganado». A partir de ese
-// momento CUALQUIER socio que enseñe su carné en Girona se lleva el desayuno gratis. No hay error,
+// momento CUALQUIER socio que enseñe su carnet en Girona se lleva el desayuno gratis. No hay error,
 // no hay aviso, y se descubre cuadrando el mes.
 //
 // El valor seguro de un `Offer` es EXIGIR DERECHO. Ofrecerlo a todos se pide a propósito, por
@@ -337,7 +337,7 @@ describe("el recorrido entero, de la campaña al segundo escaneo", () => {
   test("3-4 · el alta concede UN derecho, y repetirla no concede otro", () => {
     const s = sinComentarios(server);
     assert.match(s, /`derecho:\$\{f\.promo_clave\}:\$\{qr\.id\}`/,
-      "la clave idempotente es promoción + carné: ni el envío ni el formulario entran");
+      "la clave idempotente es promoción + carnet: ni el envío ni el formulario entran");
     assert.match(s, /ON CONFLICT \(clave_idem\) DO NOTHING/);
     assert.match(sinComentarios(esquema), /clave_idem TEXT NOT NULL UNIQUE/);
   });

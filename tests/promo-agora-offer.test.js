@@ -11,7 +11,7 @@
 //     se lo lleva también quien nunca se apuntó, que es lo contrario de para qué se hizo.
 //
 //   · ENSEÑAR NO ES CONSUMIR. El uso se escribe al CERRAR la factura, dentro de la transacción y
-//     con `clave_idem`. Consumirlo al ofrecerlo dejaría sin premio a quien mira el carné y no pide.
+//     con `clave_idem`. Consumirlo al ofrecerlo dejaría sin premio a quien mira el carnet y no pide.
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -293,19 +293,19 @@ describe("cableado del servidor", () => {
 
   test("al escanear se cuenta el derecho de ESA cuenta", () => {
     assert.match(s, /FROM fid_promo_derechos\s*\n?\s*WHERE clave = \? AND qr_id = \?/,
-      "el derecho se consulta por promoción y por carné");
+      "el derecho se consulta por promoción y por carnet");
     assert.match(s, /importeCentimos: null, derechos/,
       "y viaja a la elegibilidad");
   });
 
-  test("ENSEÑAR NO CONSUME: la ruta del carné no escribe en el libro de usos", () => {
+  test("ENSEÑAR NO CONSUME: la ruta del carnet no escribe en el libro de usos", () => {
     // La ruta del escaneo va de `member/:memberId` hasta el `res.status(200)` que contesta.
     const i = s.indexOf('app.get("/api/fidelizacion/agora/:token/member/:memberId"');
     const j = s.indexOf('app.post("/api/fidelizacion/agora/:token/factura"');
     assert.ok(i > 0 && j > i);
     const ruta = s.slice(i, j);
     assert.doesNotMatch(ruta, /INSERT INTO fid_promo_usos/,
-      "ofrecer un premio no puede gastarlo: el camarero mira el carné y el cliente no pide nada");
+      "ofrecer un premio no puede gastarlo: el camarero mira el carnet y el cliente no pide nada");
     assert.match(ruta, /SELECT COUNT\(\*\)::int AS n FROM fid_promo_usos/,
       "solo se LEE, para saber si ya la gastó");
   });
@@ -318,7 +318,7 @@ describe("cableado del servidor", () => {
   });
 
   test("el alta concede el derecho una sola vez, y solo si hay vínculo", () => {
-    // `qrId` ya no hace falta en la condición: dentro de la transacción el carné está
+    // `qrId` ya no hace falta en la condición: dentro de la transacción el carnet está
     // garantizado —si no se pudo emitir, se ha salido antes—, así que el único requisito que
     // queda es el que importa: que el formulario tenga una promoción vinculada a mano.
     assert.match(s, /if \(f\.promo_clave\) \{/,
@@ -326,7 +326,7 @@ describe("cableado del servidor", () => {
     assert.match(s, /INSERT INTO fid_promo_derechos[\s\S]{0,260}ON CONFLICT \(clave_idem\) DO NOTHING/,
       "recargar o reenviar el formulario no puede dar dos desayunos");
     assert.match(s, /`derecho:\$\{f\.promo_clave\}:\$\{qr\.id\}`/,
-      "la clave idempotente es la promoción + el carné, así que reutilizar carné no duplica");
+      "la clave idempotente es la promoción + el carnet, así que reutilizar carnet no duplica");
   });
 
   test("una baja comercial NO borra un derecho concedido", () => {
@@ -446,7 +446,7 @@ describe("permisos y puerta", () => {
       "y si la lectura falla, tampoco se abre");
   });
 
-  test("la respuesta del carné no filtra teléfono, token ni MemberId", () => {
+  test("la respuesta del carnet no filtra teléfono, token ni MemberId", () => {
     const i = s.indexOf('app.get("/api/fidelizacion/agora/:token/member/:memberId"');
     const j = s.indexOf('app.post("/api/fidelizacion/agora/:token/factura"');
     const ruta = s.slice(i, j);

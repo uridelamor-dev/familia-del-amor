@@ -18,7 +18,7 @@
 /**
  * La versión vigente. SE SUBE A MANO cuando cambia el texto de la política.
  *
- * v2 (17/09/2026) — añade la sección del carné en la cartera del móvil: qué se guarda cuando se
+ * v2 (17/09/2026) — añade la sección del carnet en la cartera del móvil: qué se guarda cuando se
  * añade a Apple Wallet (un identificador del dispositivo y un testigo de notificaciones), para
  * qué sirve, cuánto dura y qué papel tiene Apple. Antes no se decía, y el servicio de
  * actualización sí guarda esos dos datos.

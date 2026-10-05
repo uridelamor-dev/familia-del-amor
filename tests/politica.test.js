@@ -106,7 +106,7 @@ describe("dice todo lo que tiene que decir", () => {
     assert.match(POLITICA_FECHA, /^\d{4}-\d{2}-\d{2}$/);
   });
 
-  test("v2 · explica qué se guarda al añadir el carné a la cartera del móvil", () => {
+  test("v2 · explica qué se guarda al añadir el carnet a la cartera del móvil", () => {
     // El servicio de actualización guarda un identificador del dispositivo y un testigo de
     // notificaciones. Son datos personales y antes no se decía en ningún sitio.
     const plano = (t) => t.replace(/\s+/g, " ");
@@ -123,9 +123,9 @@ describe("dice todo lo que tiene que decir", () => {
       ["castellano", plano(ES), [
         /identificador técnico del dispositivo/i,
         /testigo de notificaciones/i,
-        /solo sirven para mantener el carné actualizado/i,
+        /solo sirven para mantener el carnet actualizado/i,
         /No contienen tu teléfono, ni tu nombre, ni tus puntos/i,
-        /mientras el carné siga registrado/i,
+        /mientras el carnet siga registrado/i,
         /se elimina o se invalida/i,
         /Apple.{0,80}proveedor de la plataforma/i,
       ]],

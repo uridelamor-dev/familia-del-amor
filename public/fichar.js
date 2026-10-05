@@ -787,7 +787,7 @@
     promos.innerHTML = ""; acciones.innerHTML = "";
 
     if (d.clase === "carnet" && d.canjeable) {
-      // Un carné no lleva promoción dentro: identifica a la persona. Lo que se le puede
+      // Un carnet no lleva promoción dentro: identifica a la persona. Lo que se le puede
       // aplicar se elige aquí, y las que ya ha gastado salen en gris, no desaparecen: si no,
       // el camarero no entiende por qué falta la que el cliente le está enseñando.
       var lista = d.promociones || [];

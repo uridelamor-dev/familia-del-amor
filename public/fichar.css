@@ -255,7 +255,7 @@
 .fic-cupon-quien { margin-top: .3rem; font-size: 1.2rem; color: #cfded7 }
 .fic-cupon-txt { margin-top: .7rem; font-size: 1.05rem; color: #9db3a9; line-height: 1.5 }
 
-/* Las promociones que se le pueden dar a un carné. Botones grandes: se pulsan con el cliente
+/* Las promociones que se le pueden dar a un carnet. Botones grandes: se pulsan con el cliente
    delante, y equivocarse aquí es regalarle lo que no era. */
 .fic-cupon-promos { display: flex; flex-direction: column; gap: .7rem; margin-top: 1.25rem }
 .fic-cupon-promo {

@@ -170,7 +170,7 @@ export function respuestaSeriales(filas) {
 // lo que quiera en nuestros registros.
 //
 // Se recorta, se limita el número de líneas y SE REDACTA: los mensajes de Wallet llevan la URL
-// completa, y en nuestra URL va el serial — que es la credencial del carné.
+// completa, y en nuestra URL va el serial — que es la credencial del carnet.
 
 /** Lo que nunca puede acabar en un registro. El serial va en la ruta, así que se tapa entero. */
 export function redactarLog(linea) {

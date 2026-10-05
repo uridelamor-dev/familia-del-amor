@@ -3,7 +3,7 @@
 // ── LAS CUATRO COSAS QUE NO PUEDEN ROMPERSE ──────────────────────────────────────────────────
 //
 //   · LA IDENTIDAD. El QR y el `serialNumber` son los de siempre. Wallet es otra ventana al mismo
-//     carné, no un carné nuevo: ni otro cliente, ni otro saldo, ni otra identidad para Ágora.
+//     carnet, no un carnet nuevo: ni otro cliente, ni otro saldo, ni otra identidad para Ágora.
 //
 //   · EL DISEÑO APROBADO. El titular manda en `primaryFields` y el número de socio en
 //     `secondaryFields`. Los puntos y los regalos entran por la fila auxiliar, que estaba libre.
@@ -67,7 +67,7 @@ const proy = (extra = {}) => proyectarCarne({
 
 // ── IDENTIDAD ────────────────────────────────────────────────────────────────────────────────
 
-describe("el carné es el mismo", () => {
+describe("el carnet es el mismo", () => {
   const estatico = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE });
   const dinamico = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, estado: proy(),
     servicio: { url: `${BASE}/api/wallet/apple`, token: "otro-secreto" } });
@@ -80,18 +80,18 @@ describe("el carné es el mismo", () => {
     assert.equal(dinamico.barcodes[0].messageEncoding, estatico.barcodes[0].messageEncoding);
   });
 
-  test("EL SERIAL ES EL TOKEN DEL CARNÉ, y no cambia", () => {
+  test("EL SERIAL ES EL TOKEN DEL CARNET, y no cambia", () => {
     assert.equal(estatico.serialNumber, TOKEN);
     assert.equal(dinamico.serialNumber, TOKEN);
   });
 
-  test("el mismo carné da siempre el mismo pase", () => {
+  test("el mismo carnet da siempre el mismo pase", () => {
     const otra = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, estado: proy(),
       servicio: { url: `${BASE}/api/wallet/apple`, token: "otro-secreto" } });
     assert.deepEqual(otra, dinamico);
   });
 
-  test("el `authenticationToken` NO es el token del carné", () => {
+  test("el `authenticationToken` NO es el token del carnet", () => {
     // Si fueran el mismo, fotografiar el QR daría permiso para hablar con el servicio del pase.
     assert.notEqual(dinamico.authenticationToken, TOKEN);
     assert.equal(dinamico.authenticationToken, "otro-secreto");
@@ -209,7 +209,7 @@ describe("el diseño aprobado se conserva", () => {
   });
 
   test("los enlaces del reverso llevan TEXTO, nunca la dirección cruda", () => {
-    // Dentro de la URL del carné viaja el token. Un cliente enseñándole el reverso a alguien no
+    // Dentro de la URL del carnet viaja el token. Un cliente enseñándole el reverso a alguien no
     // tiene por qué enseñarle eso.
     const q = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, servicio: { url: BASE, token: "s" },
       estado: proy(), textos: { privacidad_url: "/privacidad.html", contacto: "info@ejemplo" } });
@@ -829,7 +829,7 @@ describe("cableado del servidor", () => {
     assert.match(bloque, /Last-Modified/);
   });
 
-  test("la baja NO borra el carné ni el cliente", () => {
+  test("la baja NO borra el carnet ni el cliente", () => {
     const i = s.indexOf('app.delete("/api/wallet/apple/v1/devices');
     const bloque = s.slice(i, i + 1200);
     assert.match(bloque, /UPDATE wallet_registros SET activo = FALSE/);
@@ -947,7 +947,7 @@ describe("seguridad", () => {
     assert.ok(!/push_token TEXT(?!_enc)/.test(esquema), "hay una columna de token en claro");
   });
 
-  test("el `authenticationToken` también, y es distinto del token del carné", () => {
+  test("el `authenticationToken` también, y es distinto del token del carnet", () => {
     assert.match(s, /secCifrar\(token, LLAVERO, DOMINIOS\.WALLET\)/);
     assert.match(s, /crypto\.randomBytes\(32\)\.toString\("base64url"\)/);
     assert.match(esquema, /auth_token_enc TEXT NOT NULL/);
@@ -1305,11 +1305,11 @@ describe("seguridad, repaso final", () => {
     assert.ok(!/push_token[^_]/.test(sinComentarios(esquema)), "hay una columna sin cifrar");
   });
 
-  test("el authenticationToken sigue separado de la identidad del carné", () => {
+  test("el authenticationToken sigue separado de la identidad del carnet", () => {
     const i = s.indexOf("async function walPaseDe(");
     const fn = s.slice(i, s.indexOf("\n}", i));
     assert.match(fn, /crypto\.randomBytes\(32\)/);
-    assert.ok(!/qr\.token|qr\.codigo/.test(fn), "se deriva de la identidad del carné");
+    assert.ok(!/qr\.token|qr\.codigo/.test(fn), "se deriva de la identidad del carnet");
   });
 });
 
@@ -1466,7 +1466,7 @@ describe("el trabajo posterior al COMMIT", () => {
     assert.match(fn, /return \{ ok: false, motivo: "error" \};/);
   });
 
-  test("el error que registra va SANEADO, y sin nada del carné", () => {
+  test("el error que registra va SANEADO, y sin nada del carnet", () => {
     assert.match(fn, /console\.error\(lineaErrorSql\("\[wallet\] marcar", e\)\)/);
     for (const linea of fn.match(/console\.\w+\([^\n]*/g) || []) {
       for (const malo of ["qr.token", "serial", "proyeccion"]) {
@@ -1529,9 +1529,9 @@ describe("la política v2, ni más ni menos", () => {
     assert.match(seccion(ES, "wallet"), /testigo de notificaciones/i);
   });
 
-  test("dice que solo sirven para mantener el carné al día", () => {
+  test("dice que solo sirven para mantener el carnet al día", () => {
     assert.match(seccion(CA, "wallet"), /només serveixen per mantenir el carnet actualitzat/i);
-    assert.match(seccion(ES, "wallet"), /solo sirven para mantener el carné actualizado/i);
+    assert.match(seccion(ES, "wallet"), /solo sirven para mantener el carnet actualizado/i);
   });
 
   test("NO menciona ubicación, seguimiento ni usos que no existen", () => {
@@ -1548,13 +1548,13 @@ describe("la política v2, ni más ni menos", () => {
   test("dice hasta cuándo se conserva y cuándo se borra", () => {
     assert.match(seccion(CA, "wallet"), /mentre el carnet estigui registrat/i);
     assert.match(seccion(CA, "wallet"), /s'elimina o s'invalida/i);
-    assert.match(seccion(ES, "wallet"), /mientras el carné siga registrado/i);
+    assert.match(seccion(ES, "wallet"), /mientras el carnet siga registrado/i);
     assert.match(seccion(ES, "wallet"), /se elimina o se invalida/i);
   });
 
-  test("y que quitar el pase NO da de baja el carné", () => {
+  test("y que quitar el pase NO da de baja el carnet", () => {
     assert.match(seccion(CA, "wallet"), /no dona de baixa el teu carnet/i);
-    assert.match(seccion(ES, "wallet"), /no da de baja tu carné/i);
+    assert.match(seccion(ES, "wallet"), /no da de baja tu carnet/i);
   });
 
   test("las dos versiones dicen LO MISMO: mismos párrafos y mismas negritas", () => {
@@ -1635,7 +1635,7 @@ describe("el reconciliador", () => {
   test("SOLO mira pases con REGISTRO ACTIVO", () => {
     assert.match(fn, /FROM wallet_registros r\s*\n?\s*WHERE r\.activo/);
     // Nunca recorre `pro_qr` ni la clientela entera.
-    assert.ok(!/FROM pro_qr/.test(fn), "recorre carnés que no tienen pase");
+    assert.ok(!/FROM pro_qr/.test(fn), "recorre carnets que no tienen pase");
     assert.ok(!/FROM cliente_metricas|FROM leads/.test(fn));
   });
 
@@ -1676,7 +1676,7 @@ describe("el reconciliador", () => {
     assert.match(m, /ON CONFLICT \(qr_id\) WHERE estado = 'pendiente'/);
   });
 
-  test("NO toca puntos, promociones, Google Wallet ni la identidad del carné", () => {
+  test("NO toca puntos, promociones, Google Wallet ni la identidad del carnet", () => {
     for (const malo of ["fid_movimientos", "fid_promo_usos", "fid_promo_derechos", "fid_promos",
                         "wallet_google_en", "pro_qr", "UPDATE pro_"]) {
       assert.ok(!fn.includes(malo), `el reconciliador toca «${malo}»`);
@@ -1875,7 +1875,7 @@ describe("el panel distingue los tres", () => {
   });
 });
 
-// ── BAJARSE EL CARNÉ NUNCA PUEDE ROMPERSE ────────────────────────────────────────────────────
+// ── BAJARSE EL CARNET NUNCA PUEDE ROMPERSE ────────────────────────────────────────────────────
 //
 // Lo dinámico es un añadido. Si falla —una tabla nueva que no se creó en el despliegue, la base
 // con un mal momento— tiene que salir el pase de siempre, no un 500 en el móvil de alguien que
@@ -2068,7 +2068,7 @@ describe("un pase congelado dice de cuándo son sus datos", () => {
     assert.equal(p.storeCard.backFields.find((x) => x.key === "al-dia"), undefined);
   });
 
-  test("una fecha ilegible no pone «Invalid Date» en el carné de nadie", () => {
+  test("una fecha ilegible no pone «Invalid Date» en el carnet de nadie", () => {
     for (const malo of [null, "", "mañana", "2026-13-99x"]) {
       const p = pasePlanoApple({ qr: QR, cfg: CFG, base: BASE, congelado: true,
         estado: { ...proy(), actualizado_en: malo } });
@@ -2152,9 +2152,9 @@ describe("el rótulo de la cara", () => {
     assert.equal(p.storeCard.primaryFields[0].value, "1234 5678");
   });
 
-  test("y no queda ningún «CARNÉ DE CLIENTE» suelto", () => {
+  test("y no queda ningún «CARNET DE CLIENTE» suelto", () => {
     const m = readFileSync(new URL("../src/modules/wallet/wallet.js", import.meta.url), "utf8");
-    assert.ok(!m.includes('"CARNÉ DE CLIENTE"'), "queda el rótulo antiguo");
+    assert.ok(!m.includes('"CARNET DE CLIENTE"'), "queda el rótulo antiguo");
   });
 });
 

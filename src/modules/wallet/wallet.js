@@ -69,7 +69,7 @@ export function urlAlta(base, local = "") {
 /**
  * ¿Esta fila de `pro_qr` puede ir a la wallet?
  *
- * Solo el CARNÉ, y solo si vale. Un cupón no: caduca y se gasta, y un pase gastado que sigue en
+ * Solo el CARNET, y solo si vale. Un cupón no: caduca y se gasta, y un pase gastado que sigue en
  * el móvil con la misma cara que uno nuevo es una discusión en barra garantizada. Mientras no
  * exista el servicio de actualización (que es lo único que permite tachar un pase a distancia),
  * a la wallet solo va lo que no cambia nunca.
@@ -141,7 +141,7 @@ export function nombreArchivoPase() {
 // sin que nadie hubiera tocado el diseño. Lo que cambia entre los dos caminos son LOS DATOS.
 
 /** `2026-10-01T09:00:00+02:00` → `01/10/2026`. Sin fecha válida, nada: un «Invalid Date» en el
- *  reverso de un carné es peor que no decir cuándo se hizo la foto. */
+ *  reverso de un carnet es peor que no decir cuándo se hizo la foto. */
 function fechaDeIso(iso) {
   const s = String(iso || "").slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
@@ -149,7 +149,7 @@ function fechaDeIso(iso) {
   return `${d}/${m}/${y}`;
 }
 
-/** «1 punto» / «28 puntos». Un «1 puntos» en el carné de alguien se nota. */
+/** «1 punto» / «28 puntos». Un «1 puntos» en el carnet de alguien se nota. */
 const punt = (n) => `${Number(n) || 0} ${Number(n) === 1 ? "punto" : "puntos"}`;
 
 /** Recorta sin partir palabras a lo bruto: un campo del pase que desborda se ve peor que uno corto. */
@@ -176,7 +176,7 @@ function dondeValeLaTarjeta(locales) {
   return `En ${nombres.slice(0, -1).join(", ")} y ${nombres[nombres.length - 1]}.`;
 }
 
-/** Un enlace con TEXTO, no la dirección cruda. Dentro va el token del carné. */
+/** Un enlace con TEXTO, no la dirección cruda. Dentro va el token del carnet. */
 const enlaceCon = (texto, url) =>
   ({ attributedValue: `<a href="${url}">${texto}</a>`, value: texto });
 
@@ -321,7 +321,7 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false, locales 
 
   // ── 3 · ADMINISTRATIVO ────────────────────────────────────────────────────────────────────
   //
-  // Los enlaces van con TEXTO, no con la dirección: dentro de la del carné viaja el token, y un
+  // Los enlaces van con TEXTO, no con la dirección: dentro de la del carnet viaja el token, y un
   // cliente enseñándole el reverso a alguien no tiene por qué enseñarle eso.
   backFields.push({ key: "cuenta", label: "Tu tarjeta",
     ...enlaceCon("Ver mis puntos y mis vales", enlace) });

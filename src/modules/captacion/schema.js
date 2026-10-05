@@ -95,7 +95,7 @@ export async function ensureSchemaCaptacion(x) {
   catch (e) { console.error("[captacion] alter cap_cola pausado:", e.message); }
   // ── QUÉ SALE ANTES ─────────────────────────────────────────────────────────
   //
-  // 0 = TRANSACCIONAL (el carné de quien acaba de apuntarse, que lo está esperando en ese
+  // 0 = TRANSACCIONAL (el carnet de quien acaba de apuntarse, que lo está esperando en ese
   // momento). 1 = comercial. Sin esto la cola era orden de llegada, y un alta encolada detrás de
   // trescientos mensajes de campaña salía la última —o no salía ese día—.
   //

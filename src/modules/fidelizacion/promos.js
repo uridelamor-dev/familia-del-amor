@@ -88,7 +88,7 @@ export const CODIGO_AGORA_ERROR = Object.freeze({
 // ── UNA PROMOCIÓN DE ÁGORA SIN DERECHO SE LA LLEVA TODO EL LOCAL ─────────────────────────────
 //
 // Es el descuido caro de esta pantalla, y no avisa de nada: se publica `ESMORZAR_GIRONA` sin
-// marcar la casilla, y a partir de ese momento CUALQUIER socio que enseñe su carné en Girona se
+// marcar la casilla, y a partir de ese momento CUALQUIER socio que enseñe su carnet en Girona se
 // lleva el desayuno gratis. No hay error, no hay aviso, y se descubre cuadrando el mes.
 //
 // Por eso el valor SEGURO por defecto de un `Offer` es EXIGIR DERECHO, y ofrecerlo a todos es lo

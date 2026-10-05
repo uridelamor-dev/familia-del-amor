@@ -75,7 +75,7 @@ export function cuantasSacar({ pendientes = 0, cupoQuedan = 0, porPasada = 12 } 
 // mensaje. Eso está bien y no se toca.
 //
 // Pero tiene una consecuencia mala: una campaña comercial de trescientos agota el cupo y el
-// carné de quien se apuntó a las ocho de la tarde NO SALE ESE DÍA. Esa persona ha dado su
+// carnet de quien se apuntó a las ocho de la tarde NO SALE ESE DÍA. Esa persona ha dado su
 // teléfono hace un minuto, se le ha prometido un código «en uns minuts» y no llega.
 //
 // ── LA SOLUCIÓN, Y POR QUÉ NO ES UNA VÍA ILIMITADA ───────────────────────────────────────────
@@ -111,7 +111,7 @@ export function cupoPorPrioridad({ max = 0, usados = 0, reserva = RESERVA_ALTAS 
  * ¿Hay algo que se pueda mandar ahora? Se mira ANTES de leer la cola.
  *
  * Con el cupo comercial agotado pero reserva libre, el worker SIGUE trabajando: puede haber un
- * alta esperando. Pararse ahí era lo que dejaba sin carné a quien acababa de apuntarse.
+ * alta esperando. Pararse ahí era lo que dejaba sin carnet a quien acababa de apuntarse.
  */
 export const hayCupoParaAlgo = (cupo) => (cupo.altas > 0);
 

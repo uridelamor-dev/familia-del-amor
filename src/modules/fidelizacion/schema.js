@@ -1,6 +1,6 @@
 // Fidelización con Ágora — esquema. Aditivo e idempotente, invocado desde initDB().
 //
-// NO CREA UNA IDENTIDAD NUEVA. El socio es el carné que ya existe: `pro_qr` con
+// NO CREA UNA IDENTIDAD NUEVA. El socio es el carnet que ya existe: `pro_qr` con
 // `clase = 'carnet'`, uno vivo por teléfono. Lo que se añade aquí son las tablas del piloto:
 // el token de integración, las facturas recibidas y el libro de movimientos.
 //
@@ -111,7 +111,7 @@ export async function ensureSchemaFidelizacion(x) {
   // puedan escribir dos veces: la segunda choca en la base, no en una comprobación previa que
   // podría adelantarse por medio.
   //
-  // `qr_id` apunta al carné, no al teléfono: la identidad del socio es su carné y así el libro no
+  // `qr_id` apunta al carnet, no al teléfono: la identidad del socio es su carnet y así el libro no
   // guarda ni un dato personal.
   await x.run(`CREATE TABLE IF NOT EXISTS fid_movimientos (
     id SERIAL PRIMARY KEY,
@@ -444,7 +444,7 @@ export async function ensureSchemaFidelizacion(x) {
 
   // ── EL FORMULARIO PÚBLICO, CONFIGURABLE Y VERSIONADO ───────────────────────
   //
-  // NO ES UN CENSO NUEVO. El alta sigue yendo a `leads`, el carné a `pro_qr` y el WhatsApp a
+  // NO ES UN CENSO NUEVO. El alta sigue yendo a `leads`, el carnet a `pro_qr` y el WhatsApp a
   // `cap_cola`, exactamente como hoy. Esto guarda SOLO cómo se ve y qué se pide: títulos, campos,
   // textos legales y fechas. Un segundo censo sería la forma más rápida de acabar con dos listas
   // de clientes que no cuadran.

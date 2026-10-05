@@ -3,11 +3,11 @@
 // ── LOS DOS AGUJEROS QUE ESTO TAPA ───────────────────────────────────────────────────────────
 //
 // 1. Quien se dio de baja y VOLVÍA a rellenar el formulario se quedaba sin su código: el alta se
-//    guardaba, el carné se creaba, el mensaje se encolaba… y el worker lo descartaba porque
+//    guardaba, el carnet se creaba, el mensaje se encolaba… y el worker lo descartaba porque
 //    `marketing_prefs.baja` seguía a 1. Esa persona acababa de pedir el código y no le llegaba.
 //
 // 2. El tope diario es GLOBAL —y debe serlo, porque protege el número—, pero la cola iba por
-//    orden de llegada. Una campaña comercial de trescientos agotaba el cupo y el carné de quien
+//    orden de llegada. Una campaña comercial de trescientos agotaba el cupo y el carnet de quien
 //    se apuntó a las ocho de la tarde no salía hasta el día siguiente.
 
 import { test, describe } from "node:test";
@@ -60,7 +60,7 @@ function casa() {
         texto: "Omplint aquest formulari…", creado_en: cuando, baja_en: null, baja_origen: null });
       // 3. reactivar: es la única vía que pone baja = 0
       prefs.set(t9(tel), { baja: 0, opt_in_wa: 1, updated_at: cuando });
-      // 4. carné: se REUTILIZA el que ya tenga
+      // 4. carnet: se REUTILIZA el que ya tenga
       let qr = carnes.find((x) => t9(x.telefono) === t9(tel) && !x.anulado_en);
       if (!qr) { qr = { id: carnes.length + 1, telefono: tel, anulado_en: null, enviado_en: null }; carnes.push(qr); }
       // 5. cola, con clave idempotente y prioridad 0. `ciclo` = cuántas bajas confirmadas lleva:
@@ -147,9 +147,9 @@ describe("ALTA → BAJA → NUEVA ALTA", () => {
     // ── 3. Vuelve a apuntarse ──
     const segunda = c.apuntar(TEL);
 
-    // UN SOLO CLIENTE Y UN SOLO CARNÉ: el de siempre, reutilizado.
-    assert.equal(c.carnes.length, 1, "se ha creado un segundo carné");
-    assert.equal(segunda.qr.id, primera.qr.id, "el carné no es el mismo");
+    // UN SOLO CLIENTE Y UN SOLO CARNET: el de siempre, reutilizado.
+    assert.equal(c.carnes.length, 1, "se ha creado un segundo carnet");
+    assert.equal(segunda.qr.id, primera.qr.id, "el carnet no es el mismo");
 
     // DOS CONSENTIMIENTOS HISTÓRICOS, y el viejo intacto.
     assert.equal(c.consent.length, 2);
@@ -175,7 +175,7 @@ describe("ALTA → BAJA → NUEVA ALTA", () => {
     c.apuntar(TEL); await c.vaciar();
     c.darDeBaja(TEL);
     c.apuntar(TEL); c.apuntar(TEL); c.apuntar(TEL);   // tres veces: recarga, doble clic…
-    assert.equal(c.carnes.length, 1, "se han creado carnés de más");
+    assert.equal(c.carnes.length, 1, "se han creado carnets de más");
     assert.equal(c.cola.filter((m) => m.prioridad === 0).length, 2, "se ha encolado de más");
     await c.vaciar();
     assert.equal(c.enviados.length, 2);
@@ -213,11 +213,11 @@ describe("LA REACTIVACIÓN SOLO OCURRE AL COMPLETAR EL FORMULARIO", () => {
     // Si el consentimiento no se guarda, la reactivación tampoco: no puede quedar alguien
     // reactivado sin la fila que lo justifica.
     // El recorte LANZA si el ancla no está. Cuando el comentario que la marcaba se reescribió,
-    // `indexOf` devolvió -1, el recorte se tragó la SEGUNDA transacción del alta —la del carné y
+    // `indexOf` devolvió -1, el recorte se tragó la SEGUNDA transacción del alta —la del carnet y
     // su mensaje, que sí escribe en `fid_bajas` y debe hacerlo— y el candado dio un falso
     // positivo. Lo que vigila es la transacción del LEAD, y solo esa.
     const tx = (() => {
-      const fin = ALTA.indexOf("// ── 3 y 4. EL CARNÉ Y SU MENSAJE");
+      const fin = ALTA.indexOf("// ── 3 y 4. EL CARNET Y SU MENSAJE");
       if (fin < 0) throw new Error("no se encuentra el final de la transacción del lead");
       return ALTA.slice(ALTA.indexOf("await fidTransaccion("), fin);
     })();
@@ -245,11 +245,11 @@ describe("LA REACTIVACIÓN SOLO OCURRE AL COMPLETAR EL FORMULARIO", () => {
 
   test("lo anterior no se borra: el libro es de solo añadir", () => {
     // El recorte LANZA si el ancla no está. Cuando el comentario que la marcaba se reescribió,
-    // `indexOf` devolvió -1, el recorte se tragó la SEGUNDA transacción del alta —la del carné y
+    // `indexOf` devolvió -1, el recorte se tragó la SEGUNDA transacción del alta —la del carnet y
     // su mensaje, que sí escribe en `fid_bajas` y debe hacerlo— y el candado dio un falso
     // positivo. Lo que vigila es la transacción del LEAD, y solo esa.
     const tx = (() => {
-      const fin = ALTA.indexOf("// ── 3 y 4. EL CARNÉ Y SU MENSAJE");
+      const fin = ALTA.indexOf("// ── 3 y 4. EL CARNET Y SU MENSAJE");
       if (fin < 0) throw new Error("no se encuentra el final de la transacción del lead");
       return ALTA.slice(ALTA.indexOf("await fidTransaccion("), fin);
     })();
@@ -352,7 +352,7 @@ describe("EL TOPE ES GLOBAL, PERO CON RESERVA PARA ALTAS", () => {
   });
 
   test("y el worker NO se para cuando lo comercial se agota", () => {
-    // Pararse ahí era lo que dejaba sin carné a quien acababa de apuntarse.
+    // Pararse ahí era lo que dejaba sin carnet a quien acababa de apuntarse.
     assert.match(WORKER, /if \(!capHayCupo\(cupoTipo\)\) return;/);
     assert.match(WORKER, /if \(!esAlta\) continue;/);
     assert.equal(hayCupoParaAlgo({ altas: 5, comercial: 0 }), true);

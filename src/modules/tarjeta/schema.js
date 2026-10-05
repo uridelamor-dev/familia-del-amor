@@ -1,14 +1,14 @@
 // La tarjeta de cliente — esquema. Aditivo e idempotente, invocado desde initDB().
 //
-// NO CREA UNA TABLA DE CLIENTES. La tarjeta es el carné que ya existe: `pro_qr` con
+// NO CREA UNA TABLA DE CLIENTES. La tarjeta es el carnet que ya existe: `pro_qr` con
 // `clase = 'carnet'`, uno vivo por teléfono (`idx_pro_qr_carnet` en promos/schema.js). Todo lo
 // que se añade aquí son columnas al margen de esa fila y una tabla para las credenciales de
 // Apple y Google.
 //
-// Por qué no una entidad nueva: el carné YA es la identidad del cliente en la barra, ya lo lee
+// Por qué no una entidad nueva: el carnet YA es la identidad del cliente en la barra, ya lo lee
 // el escáner de la tablet y ya tiene detrás un libro inmutable de canjes. Crear un `clientes`
 // paralelo dejaría dos identidades para la misma persona —el problema exacto que el índice
-// único de carnés existe para impedir— y habría que decidir cuál manda cada vez que no
+// único de carnets existe para impedir— y habría que decidir cuál manda cada vez que no
 // coincidieran.
 
 export async function ensureSchemaTarjeta(x) {
@@ -58,10 +58,10 @@ export async function ensureSchemaTarjeta(x) {
   // muchos a muchos, y meterla en una sola tabla obliga a repetir el token del dispositivo en
   // cada fila — que es justo el dato que no conviene repetir.
 
-  // 1 · EL PASE. Una fila por carné que tenga pase, con su secreto y su etiqueta.
+  // 1 · EL PASE. Una fila por carnet que tenga pase, con su secreto y su etiqueta.
   //
-  // `auth_token_enc` es un secreto DISTINTO del token del carné. Reutilizar aquel habría hecho
-  // que comprometer uno comprometiera el otro, y el del carné va dentro del QR, a la vista de
+  // `auth_token_enc` es un secreto DISTINTO del token del carnet. Reutilizar aquel habría hecho
+  // que comprometer uno comprometiera el otro, y el del carnet va dentro del QR, a la vista de
   // cualquier cámara. Se guarda cifrado; `auth_huella` permite comparar sin descifrar cuando hace
   // falta mirar rápido, y nunca es suficiente para reconstruir el token.
   //
@@ -98,7 +98,7 @@ export async function ensureSchemaTarjeta(x) {
 
   // 3 · LA RELACIÓN. Un alta repetida no crea una fila nueva: el índice único es el candado.
   //
-  // Borrar un registro NO borra el carné ni el cliente: solo dice que ese móvil ya no quiere ese
+  // Borrar un registro NO borra el carnet ni el cliente: solo dice que ese móvil ya no quiere ese
   // pase. Se marca con fecha en vez de borrar la fila, para poder mirar después qué pasó.
   await x.run(`CREATE TABLE IF NOT EXISTS wallet_registros (
     id SERIAL PRIMARY KEY,

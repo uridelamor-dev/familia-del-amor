@@ -56,7 +56,7 @@ export async function aplicarCambio(x, { qrId, huella, motivo = "", ahora = "" }
   if (!pase) return { ok: false, motivo: "sin_pase" };
 
   // SIN CAMBIO VISIBLE NO SE HACE NADA. Despertar el móvil de alguien para no cambiarle nada es
-  // la forma más rápida de que borre el carné.
+  // la forma más rápida de que borre el carnet.
   if (String(pase.huella ?? "") === String(huella ?? "")) {
     return { ok: true, cambio: false, encolado: false, etiqueta: Number(pase.etiqueta) };
   }
@@ -67,7 +67,7 @@ export async function aplicarCambio(x, { qrId, huella, motivo = "", ahora = "" }
       WHERE qr_id = ?`,
     [etiqueta, huella, ahora, String(motivo || "").slice(0, 60), id]);
 
-  // ¿Hay alguien a quien avisar? Un carné que se bajó el pase pero no registró ningún dispositivo
+  // ¿Hay alguien a quien avisar? Un carnet que se bajó el pase pero no registró ningún dispositivo
   // no genera cola: bajarlo y registrarlo son dos cosas distintas.
   const hay = await x.get(
     `SELECT 1 AS hay FROM wallet_registros WHERE qr_id = ? AND activo LIMIT 1`, [id]);

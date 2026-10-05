@@ -274,7 +274,7 @@ describe("cada sección lleva lo que se pidió", () => {
     for (const s of ["saldo", "visitas", "consumo", "caduc", "historial", "por local"]) {
       assert.match(cli.toLowerCase(), new RegExp(s), `a Clientes le falta ${s}`);
     }
-    // Y se busca por carné, NUNCA por teléfono: un identificador de socio que se adivina desde un
+    // Y se busca por carnet, NUNCA por teléfono: un identificador de socio que se adivina desde un
     // dato personal deja de ser opaco.
     assert.match(cli, /\/api\/fidelizacion\/socio\?token=/);
     assert.ok(!/telefono/.test(cli), "la ficha se busca por teléfono");

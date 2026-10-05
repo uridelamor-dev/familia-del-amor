@@ -76,7 +76,7 @@ describe("de cara al cliente no existe", () => {
   });
 });
 
-describe("apagada, un carné se comporta como antes de que esto existiera", () => {
+describe("apagada, un carnet se comporta como antes de que esto existiera", () => {
   test("su enlace se queda en /cupon.html", () => {
     // Es lo que hace que encender y apagar sea reversible de verdad: con el interruptor
     // apagado, `proEnlace` devuelve exactamente lo que devolvía `proUrl` toda la vida.

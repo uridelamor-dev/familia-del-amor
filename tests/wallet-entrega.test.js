@@ -53,7 +53,7 @@ describe("las cabeceras con las que sale el pase", () => {
 });
 
 describe("lo que NO cambia", () => {
-  test("un carné anulado o un cupón siguen sin poder ir a la wallet", () => {
+  test("un carnet anulado o un cupón siguen sin poder ir a la wallet", () => {
     assert.match(APPLE, /if \(!puedeIrAWallet\(qr, info\.estado\)\) return res\.status\(409\)/);
   });
 

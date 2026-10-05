@@ -8,7 +8,7 @@
 //
 // 1. Que la CONSULTA no pueda escribir. Es lo que se ejecuta primero, contra producción, y su
 //    único trabajo es dar un número para poder decidir.
-// 2. Que el envío use el mensaje del FORMULARIO, el carné que esa persona YA tiene, su enlace
+// 2. Que el envío use el mensaje del FORMULARIO, el carnet que esa persona YA tiene, su enlace
 //    individual, y el tipo ENTREGA —sin pie de baja—.
 // 3. Que no pueda mandar dos veces, ni a quien ya lo recibió, ni a quien pidió que no.
 // 4. Que vaya por la cola de siempre: noventa y cinco mensajes de golpe es lo que hace que
@@ -111,7 +111,7 @@ describe("2 · a quién alcanza, calculado con el módulo puro", () => {
     { telefono: "600000002", qrId: 2, cola: { estado: "enviado", enviado_en: "2026-09-01" } },
     { telefono: "600000003", qrId: 3, cola: { estado: "fallido" } },                  // error
     { telefono: "600000004", qrId: 4, cola: { estado: "pendiente" } },
-    { telefono: "600000005", qrId: null, cola: null },                                // sin carné
+    { telefono: "600000005", qrId: null, cola: null },                                // sin carnet
     { telefono: "", qrId: 6, cola: null },                                            // sin teléfono
     { telefono: "600000007", qrId: 7, baja: true, cola: null },                       // de baja
   ];
@@ -128,7 +128,7 @@ describe("2 · a quién alcanza, calculado con el módulo puro", () => {
     assert.equal(c.baja, 1);
   });
 
-  test("solo se manda a quien tiene carné, teléfono y NINGUNA fila", () => {
+  test("solo se manda a quien tiene carnet, teléfono y NINGUNA fila", () => {
     assert.deepEqual(aQuienAlcanza("pendientes", gente).map((d) => d.telefono), ["600000001"]);
   });
 
@@ -159,15 +159,15 @@ describe("3 · el envío usa lo de ESTA persona y de ESTE formulario", () => {
       "se puede encolar un formulario sin mensaje: saldrían mensajes vacíos");
   });
 
-  test("reutiliza el CARNÉ que ya tiene, y no emite ninguno nuevo", () => {
+  test("reutiliza el CARNET que ya tiene, y no emite ninguno nuevo", () => {
     assert.match(DESTINATARIOS, /r\.clase = 'carnet'/,
-      "busca cualquier código en vez del carné: podría coger un cupón de otra campaña");
+      "busca cualquier código en vez del carnet: podría coger un cupón de otra campaña");
     assert.match(ENCOLAR, /WHERE id = \? AND clase = 'carnet' AND anulado_en IS NULL/,
-      "el encolado no comprueba que el código siga siendo un carné vivo");
+      "el encolado no comprueba que el código siga siendo un carnet vivo");
     assert.ok(!/proEmitir\(/.test(ENCOLAR),
-      "emite un carné nuevo: sería una segunda identidad para la misma persona");
+      "emite un carnet nuevo: sería una segunda identidad para la misma persona");
     assert.match(ENCOLAR, /if \(!qr\) \{ omitidos \+= 1; continue; \}/,
-      "sin carné hay que contar y seguir, no inventar uno");
+      "sin carnet hay que contar y seguir, no inventar uno");
   });
 
   test("cada uno recibe SU enlace, compuesto por `proEnlace`", () => {
@@ -185,7 +185,7 @@ describe("3 · el envío usa lo de ESTA persona y de ESTE formulario", () => {
 });
 
 describe("4 · no puede mandar dos veces ni saltarse el ritmo", () => {
-  test("idempotente por identidad: campaña + carné", () => {
+  test("idempotente por identidad: campaña + carnet", () => {
     assert.match(ENCOLAR, /WHERE NOT EXISTS \(SELECT 1 FROM cap_cola WHERE campana = \? AND qr_id = \?\)/,
       "sin la guarda por identidad, ejecutarlo dos veces escribe dos filas");
     assert.match(ENCOLAR, /`rec:\$\{clave\}:\$\{qr\.id\}`/,
@@ -266,7 +266,7 @@ describe("6 · no se ha tocado nada de lo demás", () => {
   test("el reconciliador automático sigue sin alcanzar a estos", () => {
     const recon = bloque(SERVER, "async function capReconciliar()");
     assert.match(recon, /r\.origen = 'campana' AND r\.clase = 'cupon'/,
-      "el reconciliador ha ampliado su alcance a los carnés de formulario: estos solo se " +
+      "el reconciliador ha ampliado su alcance a los carnets de formulario: estos solo se " +
       "recuperan a mano, mirando el número primero");
   });
 

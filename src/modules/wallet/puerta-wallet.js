@@ -8,7 +8,7 @@
 //
 // Son tres decisiones distintas y se toman por separado. Encender Wallet no concede un punto ni
 // regala un desayuno: solo hace que lo que YA decidieron las otras dos se vea en el móvil sin
-// tener que volver a bajarse el carné.
+// tener que volver a bajarse el carnet.
 //
 // ── QUÉ PASA CON LA PUERTA CERRADA ───────────────────────────────────────────────────────────
 //

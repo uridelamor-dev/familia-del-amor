@@ -10,7 +10,7 @@ export function sanearPerfil(body = {}, hoy = new Date().toISOString().slice(0,1
   return {poblacion,nacimiento};
 }
 
-// El token completo del carné acredita el acceso; un teléfono o código corto no basta.
+// El token completo del carnet acredita el acceso; un teléfono o código corto no basta.
 export async function guardarPerfil(pool, token, perfil) {
   if(typeof token!=='string'||token.length<24||token.length>256) return false;
   const c=await pool.connect();

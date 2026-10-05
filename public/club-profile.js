@@ -5,7 +5,7 @@ window.showClubProfile = async function(token, target) {
   target.innerHTML=await response.text();
   dialog.classList.add('profile-preview');
   dialog.querySelector('#clubTitle').innerHTML='Ya eres parte<br> de la familia.';
-  dialog.querySelector('.club-story>p').textContent='Tu carné está listo. Este paso es opcional: puedes completarlo ahora o dejarlo para otro momento.';
+  dialog.querySelector('.club-story>p').textContent='Tu carnet está listo. Este paso es opcional: puedes completarlo ahora o dejarlo para otro momento.';
   const title=target.querySelector('#profileTitle');title.tabIndex=-1;title.focus();
   dialog.querySelector('.club-layout').scrollTop=0;
   const day=target.querySelector('#profileDay'),month=target.querySelector('#profileMonth'),year=target.querySelector('#profileYear');
@@ -29,6 +29,6 @@ window.showClubProfile = async function(token, target) {
       const r=await fetch('/api/tarjeta/perfil',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,poblacion,nacimiento})});
       const data=await r.json();if(!r.ok||!data.ok)throw new Error(data.error||'No se pudieron guardar los datos.');
       go();
-    }catch(e){status(e.message||'No hemos podido conectar. Inténtalo de nuevo.');button.disabled=false;button.textContent='Guardar y ver mi carné';}
+    }catch(e){status(e.message||'No hemos podido conectar. Inténtalo de nuevo.');button.disabled=false;button.textContent='Guardar y ver mi carnet';}
   };
 };

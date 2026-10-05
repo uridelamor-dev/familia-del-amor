@@ -431,7 +431,7 @@ describe("cuál de todos se ofrece", () => {
 
 // ── EL CABLEADO DEL ESCANEO ──────────────────────────────────────────────────────────────────
 
-describe("qué hace la barra al escanear un carné", () => {
+describe("qué hace la barra al escanear un carnet", () => {
   const s = sinComentarios(server);
   const ruta = s.slice(s.indexOf('app.get("/api/fidelizacion/agora/:token/member/:memberId"'),
                        s.indexOf('app.post("/api/fidelizacion/agora/:token/factura"'));

@@ -308,7 +308,7 @@ describe("el formulario público", () => {
     assert.match(alta, /const tel = proTel9\(b\.telefono\)/);
     assert.match(alta, /FROM leads WHERE telefono = \?/);
     assert.match(alta, /FROM pro_qr\s+WHERE clase = 'carnet' AND telefono = \?/,
-      "el alta ya no busca el carné que la persona ya tenga: crearía uno nuevo cada vez");
+      "el alta ya no busca el carnet que la persona ya tenga: crearía uno nuevo cada vez");
     // Y si el nombre no coincide, se REUTILIZA y se anota; no se pisa.
     assert.match(alta, /avisoNombre = /);
     assert.ok(!/UPDATE leads SET nombre/.test(alta), "se sobrescribe el nombre guardado");

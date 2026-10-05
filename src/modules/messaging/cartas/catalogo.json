@@ -1,0 +1,47 @@
+[
+  {
+    "url": "/documentos/carta-can-mateu.pdf",
+    "file": "can-mateu.txt",
+    "locales": [
+      "Can Mateu - Tordera"
+    ],
+    "sha256": "b90e32ecbec7842c04f21f8ce9cd196e34cdf91322acd7ea62169f521642f33f"
+  },
+  {
+    "url": "/documentos/carta-cooperativa-tapeta-blanes.pdf",
+    "file": "cooperativa-blanes.txt",
+    "locales": [
+      "Cooperativa - Blanes",
+      "La Tapeta - Blanes"
+    ],
+    "sha256": "f4a8c2f6bd46cc5c700c7b238c28657687b67a60ac9087ad23d5602c7e7d1bb4"
+  },
+  {
+    "url": "/documentos/carta-tapa-iberica.pdf",
+    "file": "tapa-iberica.txt",
+    "locales": [
+      "La Tapa Ibérica - Tordera"
+    ],
+    "sha256": "19e7903035338e0accefc672aff39060adbc945875498572dbdea6bf6296df5b"
+  },
+  {
+    "url": "/documentos/carta-la-tapeta-lloret-girona.pdf",
+    "file": "tapeta-lloret-girona.txt",
+    "locales": [
+      "La Tapeta - Lloret",
+      "La Tapeta - Girona"
+    ],
+    "sha256": "bf533ea4cf6790de8ecec38566dfd3c90e33608761c50b4e038a065512d634db"
+  },
+  {
+    "url": "/documentos/menu-semanal-tapeta-cooperativa.pdf",
+    "file": "menu-semanal.txt",
+    "locales": [
+      "La Tapeta - Blanes",
+      "La Tapeta - Lloret",
+      "La Tapeta - Girona",
+      "Cooperativa - Blanes"
+    ],
+    "sha256": "d695c5c5db33cf5a9005ceca6822b05e88f81dd0c423b46c89a7f52685ffe3d2"
+  }
+]

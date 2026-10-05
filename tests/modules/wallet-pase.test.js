@@ -35,7 +35,7 @@ describe("el enlace de la tarjeta", () => {
 });
 
 describe("qué puede ir a la wallet", () => {
-  test("solo el carné, y solo si vale", () => {
+  test("solo el carnet, y solo si vale", () => {
     assert.equal(puedeIrAWallet(QR, "valido"), true);
     assert.equal(puedeIrAWallet(QR, "anulado"), false);
     // Un cupón caduca y se gasta, y un pase gastado que sigue en el móvil con la misma cara que
@@ -112,7 +112,7 @@ describe("pass.json de Apple", () => {
     assert.equal(pase.logoText, undefined);
   });
 
-  test("un carné sin nombre no deja el sitio grande en blanco, ni repite el número", () => {
+  test("un carnet sin nombre no deja el sitio grande en blanco, ni repite el número", () => {
     // Sin nombre, el número OCUPA el sitio grande. Entonces ni la cabecera ni el `altText` lo
     // vuelven a decir: es el mismo motivo por el que el `altText` se había quitado —el número
     // estaría repetido a un centímetro de sí mismo—.

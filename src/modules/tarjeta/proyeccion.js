@@ -1,4 +1,4 @@
-// EL ESTADO VISIBLE DE UN CARNÉ. PURO: sin BD, sin Express, sin red.
+// EL ESTADO VISIBLE DE UN CARNET. PURO: sin BD, sin Express, sin red.
 //
 // ── UNA SOLA PROYECCIÓN, TRES CONSUMIDORES ───────────────────────────────────────────────────
 //
@@ -23,7 +23,7 @@
 //
 // Ni teléfono, ni MemberId, ni tokens, ni identificadores de lote, ni claves de idempotencia, ni
 // versiones internas, ni una sola factura. Hay un test que recorre la proyección entera buscando
-// esas claves. El carné es de un cliente y esta foto se la enseña a quien tenga el móvil delante.
+// esas claves. El carnet es de un cliente y esta foto se la enseña a quien tenga el móvil delante.
 
 import { elegirPromo, nivelDe, NIVEL } from "../fidelizacion/promos.js";
 
@@ -44,7 +44,7 @@ export function fechaCorta(iso) {
 /**
  * EL ESTADO VISIBLE, en una sola pieza.
  *
- * @param {object}   qr             la fila de `pro_qr` (carné)
+ * @param {object}   qr             la fila de `pro_qr` (carnet)
  * @param {object}   saldo          lo que devuelve `saldoDe`: { disponible, proxima_caducidad, … }
  * @param {object}   regla          la regla de puntos vigente, o null
  * @param {Array}    promosElegibles promociones que YA han pasado por `elegible()` y valen
@@ -142,7 +142,7 @@ export function proyectarCarne({
  *
  * Solo entra lo que se VE en el pase. Si cambia un identificador interno, una fecha de creación o
  * el orden de una consulta, la huella no se mueve y no se manda ningún aviso: despertar el móvil
- * de alguien para no cambiarle nada es la forma más rápida de que borre el carné.
+ * de alguien para no cambiarle nada es la forma más rápida de que borre el carnet.
  *
  * Es una cadena, no un hash: se guarda tal cual y se compara entera. Cabe de sobra, y cuando algo
  * no cuadra se puede leer con los ojos en vez de adivinar qué había dentro de un sha.

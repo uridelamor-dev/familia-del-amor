@@ -233,7 +233,7 @@ describe("los logs y las respuestas no llevan nada", () => {
 
 describe("compatibilidad de los QR — la transición", () => {
   test("el kiosco sigue leyendo el QR ANTIGUO, con su URL", () => {
-    // Los carnés ya repartidos llevan `…/tarjeta.html?t=<token>`. Si dejaran de leerse, el cliente
+    // Los carnets ya repartidos llevan `…/tarjeta.html?t=<token>`. Si dejaran de leerse, el cliente
     // se entera en la barra con el camarero delante.
     const r = normalizarEntrada("https://familia.example/tarjeta.html?t=AbC-123_xyzAbC123xyz");
     assert.deepEqual(r, { tipo: "token", valor: "AbC-123_xyzAbC123xyz" });

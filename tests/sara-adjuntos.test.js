@@ -78,3 +78,41 @@ test('conversión sin shell, duración real acotada y limpieza de temporales', a
   await assert.rejects(convertirAudio(Buffer.from('OggSfixture'), async (_bin, args) => { dir = args.at(-1).replace('/audio.ogg', ''); return { stdout: '301' }; }), /audio_fuera_limites/);
   assert.equal(existsSync(dir), false);
 });
+
+test('fallo temporal de conexión se reintenta una vez sin duplicar archivo ni conversión', async () => {
+  const meta = { audioMessage: { mimetype: 'audio/ogg', seconds: 14 } };
+  let llamadas = 0, guardados = 0, conversiones = 0;
+  const a = await prepararAdjunto({ msg: { ...msg, message: meta },
+    descargar: async () => Readable.from([Buffer.from('OggSfixture')]),
+    guardar: async () => { guardados++; return 'audio-id'; },
+    interpretar: (b, m) => interpretarAdjunto(b, m, { apiKey: 'ficticia',
+      convertir: async () => { conversiones++; return Buffer.from('wav'); },
+      fetcher: async (_url, args) => {
+        assert.equal(args.body.get('file').name, 'audio.wav');
+        if (++llamadas === 1) throw new TypeError('fetch failed', { cause: Object.assign(new Error('private details'), { code: 'UND_ERR_CONNECT_TIMEOUT' }) });
+        return { ok: true, json: async () => ({ text: 'Bon dia, voldria reservar.' }) };
+      },
+    }),
+  });
+  assert.equal(a.error, undefined); assert.match(a.texto, /Bon dia/);
+  assert.equal(llamadas, 2); assert.equal(guardados, 1); assert.equal(conversiones, 1);
+});
+
+test('reintentos acotados y sin repetir errores de credenciales o cuota', async () => {
+  for (const [status, esperadas] of [[503, 2], [401, 1], [429, 1]]) {
+    let llamadas = 0;
+    await assert.rejects(interpretarAdjunto(pdf, describirAdjunto(msg.message), { apiKey: 'ficticia',
+      fetcher: async () => { llamadas++; return { ok: false, status }; },
+    }), new RegExp(`lectura_proveedor_${status}`));
+    assert.equal(llamadas, esperadas);
+  }
+});
+
+test('diagnóstico distingue conexión y conversión sin revelar contenido del error', async () => {
+  const { diagnosticoAdjunto } = await import('../src/modules/messaging/sara-adjuntos.js');
+  assert.equal(diagnosticoAdjunto(new TypeError('secret', { cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } })), 'conexion_und_err_connect_timeout');
+  assert.equal(diagnosticoAdjunto({ code: 'ENOENT', message: 'private path' }), 'herramienta_no_disponible');
+  assert.equal(diagnosticoAdjunto({ killed: true, message: 'private command' }), 'conversion_tiempo_agotado');
+  assert.equal(diagnosticoAdjunto(new Error('secret')), 'error_procesando');
+  assert.equal(diagnosticoAdjunto(new Error('lectura_proveedor_401')), 'lectura_proveedor_401');
+});
