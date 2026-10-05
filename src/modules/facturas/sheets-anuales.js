@@ -199,7 +199,7 @@ export async function sincronizarAnuales(deps, filtro=null) {
     const archivos=deps.trasVerificar ? await deps.trasVerificar() : {};
     if(!filtro) await deps.dbRun('DELETE FROM config WHERE key = ? AND value = ?',['facturas_anuales_reintentar',revision]);
     return {libros,total:libros.reduce((n,l)=>n+l.facturas,0),...archivos};
-  }, 8*60*1000));
+  }, (deps.trasVerificar ? 30 : 8)*60*1000));
 }
 
 export async function planAnuales(deps) {
