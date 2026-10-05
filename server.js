@@ -25447,8 +25447,8 @@ const server = app.listen(PORT, async () => {
   const reintentarSheets = async () => {
     try {
       if (!(await getConfig("google_drive_refresh_token"))) return; // sin Google, nada que hacer aún
-      const pend = await dbGet("SELECT COUNT(*) AS n FROM facturas WHERE COALESCE(sheet_synced,0)=0", []);
-      if (!pend || Number(pend.n) === 0) return;
+      // reproyectarPendientes comprueba también reorganizaciones y revisiones
+      // pendientes, aunque todas las facturas estén ya sincronizadas.
       const r = await reproyectarPendientes({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
       await setConfig("facturas_ultimo_reintento", new Date().toISOString());
       console.log(`[Facturas] Reintento de volcado: ${r.sincronizados} sincronizadas, ${r.fallidos} grupos con error`);
