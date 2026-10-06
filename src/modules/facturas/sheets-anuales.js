@@ -209,12 +209,13 @@ export async function planAnuales(deps) {
 }
 
 export async function avisoAnualesUnaVez(deps) {
-  const key='facturas_anuales_aviso_v1';
-  if(await deps.dbGet('SELECT value FROM config WHERE key = ?',[key])) return {mostrar:false};
+  // Haber visto el aviso no significa haber completado la migración.
+  const terminado=await deps.dbGet('SELECT value FROM config WHERE key = ?',['facturas_drive_organizacion_completada_v1']);
+  const pendiente=await deps.dbGet('SELECT value FROM config WHERE key = ?',['facturas_drive_organizacion_pendiente']);
+  if(terminado?.value && !pendiente?.value) return {mostrar:false};
   const plan=await planAnuales(deps);
-  if(!plan.total) return {mostrar:false};
-  const visto=await deps.dbRun('INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO NOTHING RETURNING value',[key,new Date().toISOString()]);
-  return visto ? {mostrar:true,plan} : {mostrar:false};
+  const error=await deps.dbGet('SELECT value FROM config WHERE key = ?',['facturas_drive_organizacion_error']);
+  return plan.total ? {mostrar:true,plan,error:error?.value||null} : {mostrar:false};
 }
 
 // Sólo se invoca tras verificar todos los libros y los PDF. Nunca borra archivos.

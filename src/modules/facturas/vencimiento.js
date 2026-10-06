@@ -109,8 +109,9 @@ function diaLegible(iso) {
   return `${d} ${MES_CORTO[m - 1] || ""}`.trim();
 }
 
-export function estadoPago({ vencimiento, pagado, fecha } = {}, hoy) {
-  if (pagado) return { estado: "pagada", orden: 5, dias: null, texto: "Pagada" };
+export function estadoPago({ vencimiento, pagado, fecha, pago_automatico } = {}, hoy) {
+  if (pagado) return { estado: "pagada", orden: 5, dias: null, texto: Number(pago_automatico) ? "Pagada · automática" : "Pagada" };
+  if (Number(pago_automatico) && esISO(vencimiento)) return {estado:"automatico", orden:3, dias:diasHasta(hoy,vencimiento), texto:`Pago automático · ${diaLegible(vencimiento)}`, pista:"Se registra como pagada al llegar la fecha, según la regla de la empresa; no requiere confirmación."};
   if (!esISO(vencimiento)) {
     return { estado: "sin_fecha", orden: 4, dias: null,
       texto: "Sin fecha de pago", pista: "No sabemos cuándo vence: ponle condiciones al proveedor o míralo en el papel." };

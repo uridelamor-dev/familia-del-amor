@@ -144,8 +144,11 @@ async function peticionOpenAI(ruta, opciones, fetcher, apiKey) {
         ...opciones, headers: { ...opciones.headers, Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(45000),
       });
       if (!r.ok) {
-        await r.body?.cancel();
-        throw new Error(`lectura_proveedor_${r.status}`);
+        // Conservar solo códigos conocidos: nunca el mensaje libre ni el contenido del audio.
+        let codigo;
+        try { codigo=(await r.json()).error?.code; } catch { await r.body?.cancel(); }
+        const conocidos=new Set(['insufficient_quota','invalid_api_key','model_not_found','rate_limit_exceeded','unsupported_format','invalid_value']);
+        throw new Error(`lectura_proveedor_${r.status}${conocidos.has(codigo)?'_'+codigo:''}`);
       }
       return await r.json();
     } catch (e) {
@@ -165,7 +168,16 @@ export async function interpretarAdjunto(buffer, meta, { apiKey = process.env.OP
   validarContenido(buffer, meta);
   if (meta.tipo === 'audio') {
     const ogg = meta.extension === 'ogg';
-    const convertirOgg = ogg && duracionOggOpus(buffer) === null;
+    let convertirOgg = false;
+    if (ogg) {
+      try { convertirOgg = duracionOggOpus(buffer) === null; }
+      catch (e) {
+        // Algunas grabaciones válidas no cumplen el recorrido rápido de páginas.
+        // El decodificador comprueba duración real antes de convertir a WAV.
+        if (e.message !== 'audio_ogg_invalido') throw e;
+        convertirOgg = true;
+      }
+    }
     const datos = convertirOgg ? await convertir(buffer) : buffer;
     const form = new FormData();
     form.append('model', process.env.SARA_AUDIO_MODEL || 'gpt-transcribe');

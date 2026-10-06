@@ -1676,6 +1676,8 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 .cli-filtros-modal .cli-extra-footer{position:sticky;bottom:0;background:var(--surface);padding:12px 0 0;z-index:1}
 @media(max-width:480px){.cli-filtros-modal .cli-extra-grid{grid-template-columns:1fr}}
 
+/* Eleva también la cabecera: la animación de entrada crea su propio contexto. */
+.ph:has(.cli-settings[open]){position:relative;z-index:10}
 .cli-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .cli-heading h1{margin-bottom:0}
 .cli-settings{position:relative;flex-shrink:0}
@@ -1794,3 +1796,24 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 .ticket-filters{display:block}
 .ticket-filters .filter-toolbar label{display:block}
 .filter-count{color:#fff}
+
+/* Mismo acceso secundario junto al título en toda Contabilidad. */
+.cont-heading{display:flex;align-items:center;gap:10px;min-width:0}
+.cont-heading h1{margin:0;min-width:0}
+.cont-heading>.cli-settings-toggle{flex-shrink:0}
+
+.conc-docs{margin:12px 0;border-top:1px solid var(--line);padding-top:12px}
+.conc-docs>summary{cursor:pointer;font-weight:600;color:var(--brand);padding:6px 0}
+.conc-docs[open]>summary{margin-bottom:10px}
+#concRes .dupcard>.row{flex-wrap:wrap;gap:8px}
+#concRes .dupacts{flex-wrap:wrap}
+#concRes .btn:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:600px){#concRes .conc-docs .row{flex-wrap:wrap;gap:8px}#concRes .conc-docs .grow{min-width:140px}}
+
+.cont-options{display:grid;gap:10px}.cont-option{display:flex;flex-direction:column;align-items:flex-start;text-align:left;white-space:normal;gap:5px;padding:14px}.cont-option .mut{font-weight:400;line-height:1.5}
+/* Resumen compacto: los documentos siguen cerca incluso en móvil. */
+@media(max-width:900px){#concRes>.grid.g4{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}#concRes>.grid.g4>.card{padding:14px}}
+
+.fac-nav-actions{display:flex;align-items:center;flex-wrap:wrap;gap:14px 36px;margin-bottom:16px}.fac-nav-actions>.toolbar{margin:0}.fac-file-actions{display:flex;gap:10px;margin-left:auto;flex-shrink:0}#pagosRes>.grid{margin:16px 0}@media(max-width:600px){#pagosRes>.grid.g3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.prev-dia{margin-bottom:12px}.prev-dia>summary{gap:18px}.prev-dia-total{display:flex;align-items:center;gap:12px;margin-left:auto}.prev-dia-total>b{font-size:22px;white-space:nowrap}.prev-proveedores{padding-top:12px}.prev-proveedores>.card{box-shadow:none;background:var(--surface2)}.prev-resumen{margin:12px 0 18px}@media(max-width:600px){.prev-dia-total{flex-wrap:wrap;justify-content:flex-end;gap:5px 10px}.prev-dia-total>.t2{flex-basis:100%;text-align:right}.prev-dia-total>b{font-size:19px}}

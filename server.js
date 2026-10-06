@@ -1,3 +1,4 @@
+import {periodoPago, aplicarPagosEmpresa, pagoPorEmpresa} from './src/modules/facturas/pago-empresa.js';
 import { configurarBloqueoSheets, planAnuales, avisoAnualesUnaVez } from "./src/modules/facturas/sheets-anuales.js";
 import { conocimientoCartas } from "./src/modules/messaging/sara-cartas-conocimiento.js";
 import { condicionesPromociones, ADJUNTOS_SCHEMA } from "./src/modules/messaging/sara-promociones.js";
@@ -276,7 +277,7 @@ import { TANDA as REL_TANDA, CADA_HORAS as REL_HORAS, tocaRepasar, estadoTrasFal
 // Aquí arriba y no junto a su función: las usa `/api/facturas/status`, que está mucho antes.
 const REL = { ultimo: "lineas_ultimo_repaso", leidas: "lineas_ultimo_leidas",
   quedan: "lineas_ultimo_quedan", rendidas: "lineas_ultimo_rendidas" };
-import { proponerConciliacion, resumenConciliacion, estadoConciliada } from "./src/modules/facturas/conciliacion.js";
+import { albaranCompatible, proponerConciliacion, resumenConciliacion, estadoConciliada } from "./src/modules/facturas/conciliacion.js";
 import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados.js";
 import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
@@ -966,6 +967,10 @@ async function initDB() {
         actualizado_en TEXT
       )
     `);
+    await client.query("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS pago_automatico INTEGER NOT NULL DEFAULT 0");
+    await client.query("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS pago_origen TEXT");
+    await client.query("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS periodo_facturado TEXT");
+    await client.query("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS periodo_origen TEXT");
     // El RECIBO MENSUAL, que es como paga la mayoría: «todo lo que me facture en julio me lo
     // pasa en un recibo el 15 de agosto». No se puede simular con «a X días»: una factura del
     // 3 y otra del 31 del mismo mes vencen el MISMO día, y con días saldrían dos fechas que no
@@ -1635,6 +1640,8 @@ async function initDB() {
         creado_en TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    await client.query("ALTER TABLE facturas_pendientes ADD COLUMN IF NOT EXISTS periodo_facturado TEXT");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS campanas_wa (
@@ -2999,7 +3006,8 @@ function facturasWhere(query = {}) {
     else if (tipos.length > 1) { cond.push(`tipo IN (${tipos.map(() => "?").join(",")})`); params.push(...tipos); }
   }
   if (estado === "pagada") cond.push("pagado = 1");
-  else if (estado === "pendiente") cond.push("COALESCE(pagado, 0) = 0");
+  else if (estado === "automatico") cond.push("COALESCE(pagado,0)=0 AND pago_automatico=1");
+  else if (estado === "pendiente") cond.push("COALESCE(pagado, 0) = 0 AND COALESCE(pago_automatico,0)=0");
   if (from) { cond.push("fecha >= ?"); params.push(from); }
   if (to) { cond.push("fecha <= ?"); params.push(to); }
   if (q) { cond.push("(LOWER(proveedor) LIKE ? OR LOWER(concepto) LIKE ? OR numero_factura LIKE ?)"); const like = "%" + String(q).toLowerCase() + "%"; params.push(like, like, "%" + q + "%"); }
@@ -3013,8 +3021,14 @@ async function facturasQueryCategorias(query) {
   return {...query,proveedores_categoria:await proveedoresDeCategorias(cats,subs)};
 }
 
+let actualizacionPagosEmpresa = null;
+function actualizarPagosEmpresa() {
+  if(!actualizacionPagosEmpresa) actualizacionPagosEmpresa=aplicarPagosEmpresa({dbAll,dbRun},instanteMadrid(new Date()).fecha).finally(()=>{actualizacionPagosEmpresa=null;});
+  return actualizacionPagosEmpresa;
+}
 app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    await actualizarPagosEmpresa();
     const scope = localScope(req);
     const query = scope ? { ...req.query, local: scope } : req.query;
     const { where, params } = facturasWhere(await facturasQueryCategorias(query));
@@ -3039,17 +3053,19 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
               COALESCE(SUM(base_imponible) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS base,
               COALESCE(SUM(cuota_iva) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS iva,
               COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS total,
-              count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0)::int AS pendientes,
-              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0),0)::float AS por_pagar,
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0)::int AS pendientes,
+              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0),0)::float AS por_pagar,
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0)=0 AND pago_automatico=1)::int AS automaticas,
+              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0)=0 AND pago_automatico=1),0)::float AS automaticas_importe,
               count(*) FILTER (WHERE NOT (${SIN_ALBARANES}))::int AS albaranes,
               COALESCE(SUM(total) FILTER (WHERE NOT (${SIN_ALBARANES})),0)::float AS albaranes_importe,
               -- Lo que de verdad se mira al abrir Compras no es cuánto se ha gastado —eso ya
               -- pasó— sino qué hay que pagar y cuándo. Sin esto había que ir a la pestaña de
               -- Pagos para saber si algo estaba vencido.
-              count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(vencimiento,'') <> '' AND vencimiento < ?)::int AS vencidas,
-              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(vencimiento,'') <> '' AND vencimiento < ?),0)::float AS vencido_importe,
-              count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND vencimiento >= ? AND vencimiento <= ?)::int AS semana,
-              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND vencimiento >= ? AND vencimiento <= ?),0)::float AS semana_importe
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0 AND COALESCE(vencimiento,'') <> '' AND vencimiento < ?)::int AS vencidas,
+              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0 AND COALESCE(vencimiento,'') <> '' AND vencimiento < ?),0)::float AS vencido_importe,
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0 AND vencimiento >= ? AND vencimiento <= ?)::int AS semana,
+              COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0 AND vencimiento >= ? AND vencimiento <= ?),0)::float AS semana_importe
          FROM facturas ${where}`, // OJO con el orden: los «?» se numeran por su sitio en el SQL, y estos van ANTES del WHERE.
       [hoyISO(), hoyISO(), hoyISO(), hoyMas(7), hoyISO(), hoyMas(7), ...params]);
     res.json({ ok: true, data: revisarFacturas(rows, hoyMad), totales: t || null, hayMas: (t?.docs || 0) > rows.length });
@@ -3060,7 +3076,7 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
 app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const antes = await dbGet("SELECT * FROM facturas WHERE id = ?", [req.params.id]);
-    const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "local", "empresa", "pagado"];
+    const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "local", "empresa", "pagado", "periodo_facturado"];
     // Corregir a mano tampoco puede colar un local que no existe: es la otra puerta por la
     // que entraron los «Lloret» y «BLANES» sueltos.
     if (req.body.local !== undefined && String(req.body.local || "").trim()) {
@@ -3068,9 +3084,12 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
       if (!canon) return res.status(400).json({ ok: false, error: `«${req.body.local}» no es ningún establecimiento.` });
       req.body.local = canon;
     }
+    if(req.body.periodo_facturado && !/^\d{4}-(0[1-9]|1[0-2])$/.test(req.body.periodo_facturado)) return res.status(400).json({error:"Periodo no válido"});
     const sets = [], vals = [];
     for (const k of allowed) if (req.body[k] !== undefined) { sets.push(`${k} = ?`); vals.push(req.body[k] === "" ? null : req.body[k]); }
     if (!sets.length) return res.json({ ok: true });
+    if(req.body.pagado !== undefined) sets.push("pago_origen='manual'", "pago_automatico=0");
+    if(req.body.periodo_facturado !== undefined) sets.push("periodo_origen='manual'");
     vals.push(req.params.id);
     await dbRun(`UPDATE facturas SET ${sets.join(", ")}, sheet_synced = 0 WHERE id = ?`, vals);
     await ficAuditar('facturas',req.params.id,'correccion',req.user.nombre||req.user.username,{local:antes?.local,detalle:{antes,campos:allowed.filter(k=>req.body[k]!==undefined),despues:await dbGet('SELECT * FROM facturas WHERE id = ?',[req.params.id])}});
@@ -3202,7 +3221,8 @@ async function facturasCsv(req, res) {
 }
 
 app.get("/api/facturas/export.csv", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
-  try { await facturasCsv(req, res); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  try {
+    await actualizarPagosEmpresa(); await facturasCsv(req, res); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 app.post("/api/facturas/export.csv", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try { await facturasCsv(req, res); } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -3319,7 +3339,7 @@ app.patch("/api/facturas/:id/pago", requireAuth(["direccion", "contabilidad"]), 
     if (!row) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
     const nuevoPagado = row.pagado ? 0 : 1;
     const fechaPago   = nuevoPagado ? hoyISO() : null;
-    await dbRun("UPDATE facturas SET pagado = ?, fecha_pago = ? WHERE id = ?", [nuevoPagado, fechaPago, id]);
+    await dbRun("UPDATE facturas SET pagado = ?, fecha_pago = ?, pago_origen='manual', pago_automatico=0 WHERE id = ?", [nuevoPagado, fechaPago, id]);
     res.json({ ok: true, pagado: nuevoPagado, fecha_pago: fechaPago });
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
@@ -3345,7 +3365,7 @@ app.post("/api/facturas/pago-lote", requireAuth(["direccion", "contabilidad"]), 
     const suyas = await dbAll(`SELECT id, local FROM facturas WHERE id = ANY(?)`, [ids]);
     const permitidas = suyas.filter((f) => puedeAccederLocal(req, f.local)).map((f) => f.id);
     if (!permitidas.length) return res.status(403).json({ ok: false, error: "No puedes tocar esos documentos" });
-    await dbRun(`UPDATE facturas SET pagado = ?, fecha_pago = ? WHERE id = ANY(?)`, [pagado, fechaPago, permitidas]);
+    await dbRun(`UPDATE facturas SET pagado = ?, fecha_pago = ?, pago_origen='manual', pago_automatico=0 WHERE id = ANY(?)`, [pagado, fechaPago, permitidas]);
     res.json({ ok: true, tocadas: permitidas.length, pagado });
   } catch (e) {
     console.error("[facturas] pago en lote:", e.message);
@@ -3799,6 +3819,7 @@ app.get("/api/facturas/empresas", requireAuth(["direccion", "contabilidad"]), as
 
 app.get("/api/facturas/stats", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    await actualizarPagosEmpresa();
     const año = req.query.año || new Date().getFullYear();
     // Ámbito de establecimiento: el del selector del panel (?local=), salvo que el usuario
     // tenga uno fijado (encargado), que manda siempre. Sin ámbito = todo el grupo.
@@ -5902,8 +5923,14 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
 // se decida si están repetidas, ni cuentan en los totales ni se pagan.
 app.get("/api/facturas/pagos", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    await actualizarPagosEmpresa();
     const locales = localesScope(req);
-    const cond = [SIN_DUDAS, SIN_ALBARANES, "COALESCE(pagado,0) = 0"];
+    const prevision = await dbAll(`SELECT id, local, empresa, proveedor, fecha, creado_en, periodo_facturado, periodo_origen,
+      numero_factura, total::float AS total, vencimiento, pagado, pago_automatico, pago_origen, fecha_pago
+      FROM facturas WHERE ${SIN_DUDAS} AND ${SIN_ALBARANES} ${locales.length ? "AND local = ANY(?)" : ""}
+      ORDER BY vencimiento DESC NULLS LAST, id DESC`, locales.length ? [locales] : []);
+    for (const f of prevision) f.periodo = periodoPago(f);
+    const cond = [SIN_DUDAS, SIN_ALBARANES, "COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0"];
     const par = [];
     if (locales.length) { cond.push(`local = ANY(?)`); par.push(locales); }
     const filas = await dbAll(
@@ -5939,7 +5966,7 @@ app.get("/api/facturas/pagos", requireAuth(["direccion", "contabilidad"]), async
     // arreglar para que esta pantalla deje de tener un grupo de «no se sabe».
     const sinFecha = grupos.find((g) => g.clave === "sin_fecha");
     const provsSinCondiciones = [...new Set((sinFecha?.facturas || []).map((f) => f.proveedor).filter(Boolean))].slice(0, 12);
-    res.json({ ok: true, hoy, grupos, resumen: resumenPagos(grupos), provsSinCondiciones });
+    res.json({ ok: true, hoy, prevision, grupos, resumen: resumenPagos(grupos), provsSinCondiciones });
   } catch (e) {
     console.error("[facturas] pagos:", e.message);
     res.status(500).json({ ok: false, error: "No se pudieron cargar los pagos" });
@@ -6020,7 +6047,7 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
     for (const f of candidatas) {
       if (claveProveedor(f.proveedor) !== clave) continue;
       const v = calcularVencimiento({ fecha: f.fecha, condiciones: await condDe(f.empresa) });
-      await dbRun(`UPDATE facturas SET vencimiento = ?, vencimiento_origen = ? WHERE id = ?`,
+      await dbRun(`UPDATE facturas SET vencimiento = ?, vencimiento_origen = ?, pago_automatico=0, pago_origen=NULL WHERE id = ?`,
         [v.vencimiento, v.origen, f.id]);
       tocadas++;
     }
@@ -6095,9 +6122,14 @@ app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
     const empresas = (await dbAll(
       `SELECT DISTINCT empresa FROM facturas_locales WHERE empresa IS NOT NULL AND empresa <> '' ORDER BY empresa`, [])
       .catch(() => [])).map((r) => r.empresa);
+    const pagosEmpresa=empresas.map(empresa=>{
+      const regla=reglas.find(r=>r.empresa===empresa)||reglas.find(r=>!r.empresa);
+      const defecto=regla?null:pagoPorEmpresa(empresa);
+      return defecto ? {...defecto,texto:textoCondiciones(defecto)} : null;
+    }).filter(Boolean);
     res.json({ ok: true, proveedor: nombre, clave, nombres: suyos, ...datos,
       nifs, categorias: cats, alias: alias || null,
-      pago: pago || null, pagoTexto: pago ? textoCondiciones(pago) : null, reglasPago: reglas, empresas });
+      pago: pago || null, pagoTexto: pago ? textoCondiciones(pago) : null, reglasPago: reglas, pagosEmpresa, empresas });
   } catch (e) {
     console.error("[facturas] ficha proveedor:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar la ficha" });
@@ -6297,16 +6329,16 @@ app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"])
     const where = "WHERE " + cond.join(" AND ");
 
     const docs = await dbAll(
-      `SELECT id, local, tipo, fecha, numero_factura, proveedor, nif, concepto,
+      `SELECT id, local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
               base_imponible::float AS base_imponible, total::float AS total, drive_url,
-              conciliado_con, conciliado_por, conciliado_en
+              conciliado_con, conciliado_por, conciliado_en, sin_albaran_por, sin_albaran_en
          FROM facturas ${where} ORDER BY fecha DESC NULLS LAST LIMIT 1500`, par);
 
     // Los albaranes se comparan contra un margen MÁS ANCHO que el periodo pedido: la factura
     // de agosto recoge entregas de julio, y si solo se miraran las de agosto no cuadraría nunca.
     const albDesde = desde ? new Date(Date.parse(desde) - 60 * 86400000).toISOString().slice(0, 10) : null;
     const albaranes = await dbAll(
-      `SELECT id, local, tipo, fecha, numero_factura, proveedor, nif, total::float AS total, drive_url, conciliado_con
+      `SELECT id, local, empresa, tipo, fecha, numero_factura, proveedor, nif, total::float AS total, drive_url, conciliado_con
          FROM facturas WHERE ${SIN_DUDAS} AND tipo = 'albaran' ${scope ? "AND local = ?" : ""}
          ${albDesde ? "AND fecha >= ?" : ""} ${hasta ? "AND fecha <= ?" : ""}
          ORDER BY fecha LIMIT 3000`,
@@ -6335,7 +6367,7 @@ app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"])
         // También en las de a medias: si no, un descartado seguiría ofreciéndose ahí.
         const desc = descartadosDe(descartesIdx, f.id);
         const candidatos = est.estado === "conciliada-parcial"
-          ? sueltos.filter((a) => MISMO_PROV(f, a) && !ids.includes(a.id) && !desc.has(String(a.id))) : [];
+          ? sueltos.filter((a) => albaranCompatible(f, a) && !ids.includes(a.id) && !desc.has(String(a.id))) : [];
         return { factura: f, estado: est.estado, albaranes: ligados, candidatos,
           ligado: est.ligado, falta: est.falta,
           motivos: est.estado === "conciliada"
@@ -25454,6 +25486,8 @@ const server = app.listen(PORT, async () => {
       console.log(`[Facturas] Reintento de volcado: ${r.sincronizados} sincronizadas, ${r.fallidos} grupos con error`);
     } catch (e) { console.error("[Facturas] reintento volcado:", e.message); }
   };
+  setTimeout(()=>actualizarPagosEmpresa().catch(e=>console.error('[Facturas] pagos por empresa:',e.message)),5000);
+  setInterval(()=>actualizarPagosEmpresa().catch(e=>console.error('[Facturas] pagos por empresa:',e.message)),60*1000);
   setTimeout(reintentarSheets, 90 * 1000);
   setInterval(reintentarSheets, 10 * 60 * 1000);
 

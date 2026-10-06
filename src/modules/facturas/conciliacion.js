@@ -90,14 +90,20 @@ export function buscarCombinacion(albaranes, objetivoCent, { maxCombinacion = 6,
  *   "sin-albaranes" — no hay ninguno con el que comparar. No es un error: hay proveedores que
  *                 no dejan albarán.
  */
-export function proponerConciliacion(factura, albaranes, { ventanaDias = 45, tolerancia = 2, descartados = null } = {}) {
-  const candidatos = (albaranes || []).filter((a) => {
+export function albaranCompatible(factura, a, ventanaDias = 45) {
     if (!MISMO_PROVEEDOR(factura, a)) return false;
+    // Un proveedor compartido no convierte entregas de otro local en candidatas.
+    const normalizar=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    if(factura.local && a.local && normalizar(factura.local)!==normalizar(a.local)) return false;
+    if(factura.empresa && a.empresa && normalizar(factura.empresa)!==normalizar(a.empresa)) return false;
     const d = dias(factura.fecha, a.fecha);
     // El albarán es ANTERIOR a la factura (se entrega y luego se factura). Se admite algún
     // día después por si la factura se fecha antes de la última entrega del mes.
     return d == null || (d >= -3 && d <= ventanaDias);
-  });
+}
+
+export function proponerConciliacion(factura, albaranes, { ventanaDias = 45, tolerancia = 2, descartados = null } = {}) {
+  const candidatos = (albaranes || []).filter(a => albaranCompatible(factura, a, ventanaDias));
   // Los que alguien ya dijo que NO son de esta factura. Se quitan aquí y no antes para poder
   // contar cuántos eran: sin el número, una factura se quedaría sin candidatos y parecería que
   // nunca hubo ninguno.

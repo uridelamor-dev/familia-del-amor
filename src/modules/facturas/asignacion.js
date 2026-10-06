@@ -82,15 +82,16 @@ function tokensLocal(nombre) {
 export function localPorPistaTexto(texto, locales) {
   const hint = normalizarTexto(texto);
   if (!hint) return null;
-  let mejor = null, mejorScore = 0, empate = false;
+  const palabras = new Set(hint.split(/[^a-z0-9]+/).filter(Boolean));
+  const completos = [];
   for (const l of (Array.isArray(locales) ? locales : [])) {
     const toks = tokensLocal(l.local);
-    let score = 0;
-    for (const t of toks) if (hint.includes(t)) score += 1;
-    if (score > mejorScore) { mejor = l; mejorScore = score; empate = false; }
-    else if (score === mejorScore && score > 0 && mejor && mejor.local !== l.local) empate = true;
+    // Exige nombre y localidad completos: una ciudad en la dirección fiscal
+    // o un fragmento de otra palabra no identifica un establecimiento.
+    if(toks.length >= 2 && toks.every(t=>palabras.has(t))) completos.push(l.local);
   }
-  return (mejor && mejorScore >= 1 && !empate) ? mejor.local : null;
+  const unicos=[...new Set(completos)];
+  return unicos.length===1 ? unicos[0] : null;
 }
 
 export function sugerirLocalPendiente({ pendiente = {}, locales = [], historial = {} } = {}) {

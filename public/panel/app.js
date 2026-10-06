@@ -2080,7 +2080,7 @@ function invHeader(titulo, sub, back, seccion = "prov") {
   const b = back ? `<button class="btn" data-act="${back.act}" ${back.data || ""} style="margin-bottom:12px">‹ ${esc(back.label)}</button>` : "";
   // `seccion: null` = sin pestañas. Es el caso de «elige un establecimiento»: sin local, las
   // tres secciones llevarían a un 403.
-  return `${b}<div class="ph"><div class="eyebrow">Inventarios</div><h1>${esc(titulo)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}</div>${seccion ? invTabs(seccion) : ""}`;
+  return `${b}<div class="ph"><div class="eyebrow">Inventarios</div>${contabilidadTitulo(titulo,"Inventarios")}${sub ? `<div class="sub">${sub}</div>` : ""}</div>${seccion ? invTabs(seccion) : ""}`;
 }
 // El local sale del selector de la barra de arriba, como en el resto del panel. Antes
 // Inventarios tenía su propia pantalla de «elige local», que era un paso de más y encima
@@ -7487,20 +7487,55 @@ function facQS(localForzado) {
 // El ámbito de local lo manda el selector de establecimiento de la barra superior (no hay filtro
 // «Local» duplicado dentro de la vista). Para el encargado, su local fijado gana siempre.
 function facScope() { FACF.local = localActualFE(); return FACF.local; }
+// Acceso uniforme a ajustes secundarios de Contabilidad.
+function contabilidadTitulo(titulo, apartado) {
+  return `<div class="cont-heading"><h1>${esc(titulo)}</h1><button class="btn cli-settings-toggle" data-act="cont-opciones" data-apartado="${esc(apartado)}" aria-label="Opciones de ${esc(apartado)}" title="Opciones de ${esc(apartado)}"><span aria-hidden="true">⚙</span></button></div>`;
+}
+function contabilidadOpciones(apartado) {
+  if (apartado === "Compras") return facTab("config", true);
+  const irBloque = (selector, vacio) => {
+    const el = document.querySelector(selector);
+    if (!el || !el.textContent.trim()) return toast(vacio);
+    if (el.tagName === "DETAILS") el.open = true;
+    el.querySelectorAll("details.card").forEach(d => d.open = true);
+    el.scrollIntoView({behavior:"smooth", block:"start"});
+  };
+  const opciones = {
+    Proveedores: [
+      ["Proveedores sin categoría", "Revisar los proveedores que faltan por clasificar.", () => {Object.assign(PROVF,{q:"",categoria:"",subcategoria:"",actividad:"sin_categoria"});pintarProveedores();}],
+      ["Revisar proveedores repetidos", "Comprobar coincidencias antes de unir fichas.", () => irBloque("#facProvDup", "No hay coincidencias de proveedores pendientes de revisar.")]
+    ],
+    Productos: [
+      ["Diccionario de productos", "Corregir nombres y unir productos que son el mismo.", () => irBloque("#dicProductos", "Todavía no hay productos en el diccionario.")]
+    ],
+    Inventarios: [
+      ["Productos y existencias por proveedor", "Entra en Configurar para ajustar unidades y cantidades necesarias del local seleccionado.", () => loadInvProveedores()],
+      ["Añadir proveedor de inventario", "Preparar un proveedor para los próximos recuentos.", () => invNuevoProveedor()]
+    ],
+    "Analítica de ventas": [
+      ["Exportar el informe", "Descargar el informe con el periodo y establecimiento seleccionados.", () => analCsv()],
+      ...(USER.rol === "direccion" ? [["Conexión con Ágora", "Revisar la conexión de los TPV que alimentan estos informes.", () => {location.hash="#agora";}]] : [])
+    ]
+  }[apartado];
+  if (!opciones) return;
+  const ov = modal(`Opciones de ${apartado}`, `<div class="cont-options">${opciones.map(([titulo,ayuda],i)=>`<button class="btn cont-option" data-opcion="${i}"><b>${esc(titulo)}</b><span class="mut">${esc(ayuda)}</span></button>`).join("")}</div>${apartado==="Proveedores"?'<p class="mut">Los datos fiscales y las condiciones de pago se editan en la ficha de cada proveedor.</p>':""}`);
+  ov.querySelectorAll("[data-opcion]").forEach(btn => btn.addEventListener("click", () => {ov.remove();opciones[Number(btn.dataset.opcion)][2]();}));
+}
+
 function facHeader() {
   const amb = facScope();
   // Con varios establecimientos, `facScope()` devuelve "" (las consultas van una por local),
   // así que el rótulo lo dice aparte: una pantalla que suma dos locales sin decirlo se lee
   // como si fuera la de uno.
   const donde = amb ? nombreCortoLocal(amb) : viendoVarios() ? etiquetaAmbito() : "";
-  const pestanas = [["facturas", "Facturas"], ["pagos", "Pagos"], ["conciliar", "Conciliaciones"], ["config", "Configuración"]]
+  const pestanas = [["facturas", "Facturas"], ["pagos", "Previsión de pagos"], ["conciliar", "Conciliaciones"]]
     .map(([v, t]) => `<button class="btn ${FACTAB === v ? "primary" : ""}" data-act="fac-tab" data-tab="${v}">${t}</button>`).join("");
   // En la pestaña de Facturas, la misma fila lleva las pestañas, el buscador y las acciones.
   const acciones = FACTAB !== "facturas" ? "" : `
     <div class="field filter-search"><label for="facQ">Buscar</label><input type="search" id="facQ" placeholder="Buscar proveedor, concepto, nº…" value="${esc(FACF.q)}"></div>
     <button class="btn" data-act="fac-filtros">${ic("filtro", 16)} Filtros${facFiltrosActivos().length ? `<span class="filter-count">${facFiltrosActivos().length}</span>` : ""}</button>
     `;
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Compras</h1><div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="toolbar tabstrip" style="margin-bottom:12px">${pestanas}</div>${FACTAB==="facturas"?'<div class="toolbar"><button class="btn primary" data-act="fac-subir">+ Subir</button><button class="btn" data-act="fac-export">Exportar</button></div>':""}${acciones?`<div class="toolbar filter-toolbar">${acciones}</div>`:""}`;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div>${contabilidadTitulo("Compras","Compras")}<div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="fac-nav-actions"><div class="toolbar tabstrip">${pestanas}</div>${FACTAB==="facturas"?'<div class="fac-file-actions"><button class="btn primary" data-act="fac-subir">+ Subir</button><button class="btn" data-act="fac-export">Exportar</button></div>':""}</div>${acciones?`<div class="toolbar filter-toolbar">${acciones}</div>`:""}`;
 }
 
 // La cabecera de Productos. Es su propia pantalla, no una pestaña de Compras: sale de los
@@ -7514,7 +7549,7 @@ function productosHeader() {
   const cuando = (COMP.from || COMP.to)
     ? `${COMP.from ? fechaCorta(COMP.from) : "el principio"} → ${COMP.to ? fechaCorta(COMP.to) : "hoy"}`
     : "desde siempre";
-  return `<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Productos</h1><div class="sub">Qué compramos y a cómo nos lo cobran${donde ? ` · <b>${esc(donde)}</b>` : ""} · <b>${esc(cuando)}</b></div><button class="btn" id="escAbrir">Escandallos · coste de platos</button></div>`;
+  return `<div class="ph"><div class="eyebrow">Contabilidad</div>${contabilidadTitulo("Productos","Productos")}<div class="sub">Qué compramos y a cómo nos lo cobran${donde ? ` · <b>${esc(donde)}</b>` : ""} · <b>${esc(cuando)}</b></div><button class="btn" id="escAbrir">Escandallos · coste de platos</button></div>`;
 }
 const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
 // Con céntimos. Para precios unitarios, donde redondear a euros enteros se carga justo el
@@ -7524,7 +7559,7 @@ function renderFacturas(list, pend, stats, empresas) {
   facScope();
   const empOpts =['<option value="">Todas las empresas</option>'].concat((empresas || []).map((e) => `<option value="${esc(e)}" ${FACF.empresa === e ? "selected" : ""}>${esc(e)}</option>`)).join("");
   const tipoOpts = ['<option value="">Todos los tipos</option>'].concat(["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${FACF.tipo === t ? "selected" : ""}>${cap(t)}</option>`)).join("");
-  const estOpts = [["", "Todos los estados"], ["pagada", "Pagadas"], ["pendiente", "Pendientes"]].map(([v, l]) => `<option value="${v}" ${FACF.estado === v ? "selected" : ""}>${l}</option>`).join("");
+  const estOpts = [["", "Todos los estados"], ["pagada", "Pagadas"], ["pendiente", "Pendientes"], ["automatico", "Pago automático"]].map(([v, l]) => `<option value="${v}" ${FACF.estado === v ? "selected" : ""}>${l}</option>`).join("");
   // Las cifras salen de `totales`, que el servidor calcula con el MISMO filtro: así cambian
   // al filtrar, que es lo que se espera al poner un filtro.
   const resumen = facKpisHtml();
@@ -7576,7 +7611,7 @@ function renderFacturas(list, pend, stats, empresas) {
       ${pend.length > 1 && USER.rol === "direccion" ? `<div class="toolbar" style="padding:10px 16px 14px;margin:0"><button class="btn sm" data-act="fac-fusionar">Fusionar marcadas (misma factura)</button><span class="mut" style="font-size:12px">Marca 2+ documentos que sean páginas de la misma factura: se unirán en un solo PDF y se volverán a leer.</span></div>` : ""}
     </details>` : "";
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
-  return `${facHeader()}<div id="facRecepciones"></div>${resumen}${toolbar}<div id="facDups"></div><div id="facLocalesRaros"></div><div id="facSinCats"></div>${pendCard}<div id="facRes">${facTablaHtml(list)}</div>${vizGrid}`;
+  return `${facHeader()}<div id="facRecepciones"></div>${resumen}${toolbar}<div id="facDups"></div><div id="facLocalesRaros"></div>${pendCard}<div id="facRes">${facTablaHtml(list)}</div>${vizGrid}`;
 }
 // ── Fusionar pendientes que son páginas de la misma factura ─────────────────
 async function facFusionarPendientes() {
@@ -7740,7 +7775,7 @@ const colorCategoriaFE = (c) => COLOR_CAT_FE[String(c || "").trim()] || "gris";
 const parTxt = (p) => (p.subcategoria ? `${p.categoria} · ${p.subcategoria}` : p.categoria);
 
 async function loadProveedores() {
-  view.innerHTML = `<h1>Proveedores</h1><p class="mut">Datos, contactos y condiciones de suministro</p><div id="facCats">Cargando proveedores…</div><div id="facProvDup"></div>`;
+  view.innerHTML = `<div class="ph"><div class="eyebrow">Contabilidad</div>${contabilidadTitulo("Proveedores","Proveedores")}<p class="mut">Datos, contactos y condiciones de suministro</p></div><div id="facCats">Cargando proveedores…</div><div id="facProvDup"></div>`;
   await facCargarCategorias();
   facProvDuplicados();
 }
@@ -7780,6 +7815,16 @@ function pintarProveedores() {
   heading.textContent=`${proveedoresFiltrados().length} proveedores · Facturas y gasto · ${!PROV_RANGE.from&&!PROV_RANGE.to?"Todo el histórico":(PROV_RANGE.from||"Inicio")+" – "+(PROV_RANGE.to||"Hoy")}`;
   fold.querySelector("summary").replaceWith(heading);fold.querySelector("p")?.remove();
   const toolbar=document.createElement("div");toolbar.innerHTML=`<div class="toolbar filter-toolbar"><div class="field filter-search"><label for="provQ">Buscar</label><input type="search" id="provQ" placeholder="Buscar proveedor…" value="${esc(PROVF.q)}"></div><div class="field filter-sort"><label for="provOrden">Ordenar por</label><select id="provOrden"><option value="nombre" ${PROVF.orden==="nombre"?"selected":""}>Nombre</option><option value="gasto" ${PROVF.orden==="gasto"?"selected":""}>Mayor gasto</option></select></div>${filterButton('id="provFiltros"',filterValues(PROVF.categoria).length+filterValues(PROVF.subcategoria).length+(PROVF.actividad?1:0))}</div><div class="fchips">${["categoria","subcategoria","actividad"].filter(k=>PROVF[k]).map(k=>`<button class="fchip" data-prov-quitar="${k}">${esc(k==="actividad"?({con:"Con compras",sin:"Sin compras",sin_categoria:"Sin categoría"}[PROVF[k]]):PROVF[k])} ×</button>`).join("")}${PROVF.q||PROVF.categoria||PROVF.subcategoria||PROVF.actividad?'<button class="linkbtn" id="provLimpiar">Limpiar filtros</button>':""}</div>`;
+  const sinCategoria=(FCATS?.proveedores||[]).filter(p=>!(p.categorias||[]).length).length;
+  if(sinCategoria) {
+    const acceso=document.createElement("button");
+    acceso.className="linkbtn mut";
+    acceso.style.cssText="font-size:12px;margin:0 0 12px";
+    acceso.textContent=`${num(sinCategoria)} ${sinCategoria===1?"proveedor sin categoría":"proveedores sin categoría"} · Revisar`;
+    acceso.title="Ver los proveedores pendientes de clasificar en este ámbito";
+    acceso.onclick=()=>{Object.assign(PROVF,{q:"",categoria:"",subcategoria:"",actividad:"sin_categoria"});pintarProveedores();};
+    toolbar.append(acceso);
+  }
   caja.prepend(toolbar);
   toolbar.querySelector("#provQ").oninput=e=>{PROVF.q=e.target.value;const pos=e.target.selectionStart;pintarProveedores();const input=document.getElementById("provQ");input.focus();input.setSelectionRange(pos,pos);};
   toolbar.querySelector("#provOrden").onchange=e=>{PROVF.orden=e.target.value;pintarProveedores();};
@@ -7950,7 +7995,7 @@ async function facProveedorFicha(nombre, inlineTarget = null) {
         <input class="inp" id="fpNombre" value="${esc(nombre)}"></div>
       <div class="field full"><label>NIF ${nifPrincipal ? "" : "<span class=\"mut\">(no se ha leído ninguno)</span>"}</label>
         <input class="inp" id="fpNif" value="${esc(nifPrincipal ? nifPrincipal.nif : "")}" placeholder="B12345678"></div>
-      <div class="field full">${fpReglasHtml(j)}</div>
+      <div class="field full">${fpReglasHtml(j)}${(j.pagosEmpresa||[]).map(r=>`<p class="mut" style="font-size:12px;margin:6px 0"><b>${esc(r.empresa)}</b>: ${esc(r.texto)} · automático por defecto</p>`).join("")}</div>
       <div class="field full"><label>${(j.reglasPago || []).length ? "Añadir o cambiar una regla" : "¿Cómo se le paga?"}</label>
         <select class="inp" id="fpEmpresa">
           <option value="">Para todas las empresas (regla general)</option>
@@ -8056,8 +8101,8 @@ async function facProveedorFicha(nombre, inlineTarget = null) {
     if (!b) return;
     const emp = b.getAttribute("data-empresa") || "";
     if (!await confirmModal(emp
-      ? `Se quita la regla de ${emp}. Sus facturas pasarán a usar la regla general, o se quedarán sin fecha si no la hay.`
-      : "Se quita la regla general. Las empresas sin regla propia se quedarán sin fecha de pago.", { ok: "Quitar" })) return;
+      ? `Se quita la regla de ${emp}. Sus facturas pasarán a usar la regla general, o la predeterminada de la empresa.`
+      : "Se quita la regla general. Se aplicará la condición predeterminada de cada empresa cuando exista.", { ok: "Quitar" })) return;
     try {
       const r = await apiSend("PUT", "/api/facturas/proveedor-pago",
         { proveedor: nombre, empresa: emp, modo: "dias", dias: null, dia_pago: null });
@@ -8203,25 +8248,6 @@ function facCatEditar(proveedor) {
 // Tapeta - Lloret». Filtrando por el nombre bueno faltaban facturas y el gasto por local
 // salía repartido entre nombres que son el mismo sitio. Las puertas ya están cerradas;
 // esto avisa de lo que quedó y lo arregla.
-// Proveedores sin categoría. Va en la pantalla principal y no escondido en Configuración,
-// porque mientras haya gasto sin etiquetar el reparto por categorías está incompleto y eso no
-// se ve mirando el reparto: un «Bebidas 4.200 €» parece un dato cerrado aunque falte la mitad.
-async function facAvisoCategorias() {
-  const caja = document.getElementById("facSinCats");
-  if (!caja) return;
-  let j;
-  try { j = await apiRaw("/api/facturas/categorias"); } catch { return; }
-  if (!j.sinEtiquetar) return;
-  const n = j.sinEtiquetar;
-  const quienes = (j.proveedores || []).filter((p) => !p.categorias.length).slice(0, 4).map((p) => p.proveedor);
-  caja.innerHTML = `<p class="fic-nota"><b>${num(n)}</b> ${n === 1 ? "proveedor no tiene categoría" : "proveedores no tienen categoría"}
-    ${j.gastoSinEtiquetar ? `y entre ${n === 1 ? "él" : "ellos"} suman <b>${esc(eur(j.gastoSinEtiquetar))}</b>` : ""}:
-    ${quienes.map((x) => esc(x)).join(", ")}${n > 4 ? "…" : ""}.
-    Hasta que ${n === 1 ? "la tenga" : "la tengan"}, ese gasto no entra en el reparto por categorías.
-    ${USER.rol === "direccion" || USER.rol === "contabilidad"
-      ? `<button class="btn sm" data-act="fac-ir-cats" style="margin-top:8px">Ponerles categoría</button>` : ""}</p>`;
-}
-
 async function facAvisoLocales() {
   const caja = document.getElementById("facLocalesRaros");
   if (!caja) return;
@@ -8294,7 +8320,7 @@ function facFiltrosActivos() {
   if (FACF.proveedor) et("proveedor", FACF.proveedor);
   if (FACF.empresa) et("empresa", FACF.empresa);
   if (FACF.tipo) et("tipo", FACF.tipo.split(",").map((t) => (FAC_TIPOS.find((x) => x[0] === t) || [, t])[1]).join(", "));
-  if (FACF.estado) et("estado", FACF.estado === "pagada" ? "Pagadas" : "Pendientes");
+  if (FACF.estado) et("estado", FACF.estado === "pagada" ? "Pagadas" : FACF.estado === "automatico" ? "Pago automático" : "Pendientes");
   return fuera;
 }
 
@@ -8349,6 +8375,7 @@ async function facAbrirFiltros() {
       <div class="drw-pills" id="fEstados">
         <button class="drw-pill ${FACF.estado === "pagada" ? "on" : ""}" data-estado="pagada">Pagadas</button>
         <button class="drw-pill ${FACF.estado === "pendiente" ? "on" : ""}" data-estado="pendiente">Pendientes</button>
+        <button class="drw-pill ${FACF.estado === "automatico" ? "on" : ""}" data-estado="automatico">Pago automático</button>
       </div>
     </div>`;
 
@@ -8388,6 +8415,7 @@ function facSumaTotales(resp) {
   if (!ts.length) return null;
   const suma = (k) => ts.reduce((s2, t) => s2 + (Number(t[k]) || 0), 0);
   return { docs: suma("docs"), base: suma("base"), iva: suma("iva"), total: suma("total"),
+    automaticas: suma("automaticas"), automaticasImporte: suma("automaticas_importe"),
     pendientes: suma("pendientes"), porPagar: suma("por_pagar"),
     vencidas: suma("vencidas"), vencidoImporte: suma("vencido_importe"),
     semana: suma("semana"), semanaImporte: suma("semana_importe"),
@@ -8417,24 +8445,11 @@ function facKpisHtml() {
     "No suman: son la entrega, no el pago — su importe ya va en la factura que los agrupa. Se cruzan en Conciliaciones."]);
   const aviso = avisos.length
     ? `<div class="fchips" style="margin:0 0 12px">${avisos.map(([txt, cls, tit]) => `<span class="fchip ${cls}" title="${esc(tit)}">${txt}</span>`).join("")}</div>` : "";
-  // LO QUE SE MIRA AL ABRIR ESTA PANTALLA no es cuánto se ha gastado —eso ya pasó— sino qué
-  // hay que pagar y cuándo. Antes había cuatro tarjetas (facturas, base, IVA, total) que son
-  // cuatro vistas del mismo número y ninguna contestaba eso: para saber si algo estaba
-  // vencido había que irse a la pestaña de Pagos.
-  //
-  // La base y el IVA no desaparecen: se miran una vez al trimestre y ese sitio es el 303 y la
-  // ficha, no la portada. Van en la línea de debajo.
-  const kpi3 = `<div class="grid g3 statsm" style="margin-bottom:10px">
-      ${stat("Por pagar", ic("receipt", 15), eur(t.porPagar), "", `${num(t.pendientes)} ${t.pendientes === 1 ? "documento" : "documentos"}`)}
-      ${stat("Vence en 7 días", ic("cal", 15), eur(t.semanaImporte), "", `${num(t.semana)} ${t.semana === 1 ? "documento" : "documentos"}`)}
-      <div class="card stat${t.vencidas ? " alerta" : ""}"><div class="lab"><span class="ci">${ic("alert", 15)}</span>Vencido</div>
-        <div class="val tnum">${esc(eur(t.vencidoImporte))}</div>
-        <div class="sub">${t.vencidas ? `${num(t.vencidas)} sin pagar` : "nada vencido"}</div></div>
-    </div>`;
+  // Los vencimientos se consultan en Previsión de pagos.
   const linea = `<p class="mut" style="margin:0 0 14px;font-size:12.5px">
     <b>${num(t.docs)}</b> ${t.docs === 1 ? "factura" : "facturas"}${f.length ? " con estos filtros" : ""} · total <b class="tnum">${esc(eur(t.total))}</b>
     <span style="opacity:.75">(base ${esc(eur(t.base))} · IVA ${esc(eur(t.iva))})</span></p>`;
-  return `<div id="facKpis">${kpi3}${linea}${aviso}</div>`;
+  return `<div id="facKpis">${linea}${aviso}</div>`;
 }
 
 /** Los avisos de coherencia guardados con la factura (base+IVA≠total, NIF raro, importe fuera de escala). */
@@ -9276,7 +9291,7 @@ async function loadFacturas() {
     view.innerHTML = renderFacturas(FAC_LIST, FAC_PEND, stats, empresas || []);
     facCargarRecepciones();
     facCargarMiniaturas(view);
-    facAvisoLocales(); facAvisoCategorias(); facDuplicados(); // no se esperan: la tabla ya está
+    facAvisoLocales(); facDuplicados(); // no se esperan: la tabla ya está
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 // `ir` = true cuando se llama desde OTRA pantalla (Productos): hay que cambiar de vista, no
@@ -9294,6 +9309,37 @@ function facTab(tab, ir = false) {
 //
 // Lo primero de la pantalla es lo que ya se debía, y lo último las que no tienen fecha — que no
 // es «no urgente», es «no se sabe», y por eso van con su aviso y no escondidas.
+let PREVP = {empresa:"",modo:"proximos"};
+function pintarPrevisionPagos(j) {
+ const caja=document.getElementById("pagosRes");
+ const todas=j.prevision||[];
+ const hoy=j.hoy||todayStr();
+
+ const empresas=[...new Set(todas.map(f=>f.empresa).filter(Boolean))].sort();
+ const base=todas.filter(f=>!PREVP.empresa||f.empresa===PREVP.empresa);
+ const filas=base.filter(f=>PREVP.modo==="historico"?Number(f.pagado):PREVP.modo==="sinfecha"?!Number(f.pagado)&&!f.vencimiento:PREVP.modo==="anteriores"?!Number(f.pagado)&&f.vencimiento&&f.vencimiento<hoy:f.vencimiento>=hoy&&(!Number(f.pagado)||(f.pago_origen==='empresa'&&f.vencimiento===hoy)));
+ const grupos=new Map();
+ filas.forEach(f=>{const k=JSON.stringify([f.empresa,f.proveedor,f.vencimiento]);if(!grupos.has(k))grupos.set(k,{proveedor:f.proveedor,empresa:f.empresa,fecha:f.vencimiento,fs:[],centimos:0});const g=grupos.get(k);g.fs.push(f);g.centimos+=Math.round(Number(f.total||0)*100);});
+ const total=filas.reduce((n,f)=>n+Math.round(Number(f.total||0)*100),0)/100;
+ const origen={estimado:"Estimado por regla de inicio de mes",documento:"Indicado en la factura",manual:"Corregido manualmente",fecha_factura:"Según fecha de factura"};
+ const proveedorHtml = g=>`<details class="card fold" style="margin-bottom:12px"><summary><div><b>${esc(g.proveedor||'Sin proveedor')}</b><div class="t2">${esc(g.empresa||'Sin empresa')} · ${g.fs.length} ${g.fs.length===1?"factura":"facturas"} · ${esc(g.fecha||'Sin fecha prevista')}</div></div><b>${eur2(g.centimos/100)}</b></summary>${g.fs.map(f=>`<div class="row" style="flex-wrap:wrap;gap:10px"><div class="grow"><b>${esc(f.numero_factura||'Sin número')} · ${esc(nombreCortoLocal(f.local))}</b><div class="t2">Periodo: ${esc(f.periodo?.mes||'Sin determinar')} · ${esc(origen[f.periodo?.origen]||'')}</div><div class="t2">Factura: ${esc(f.fecha||'—')} · Recibida: ${esc(String(f.creado_en||'').slice(0,10)||'—')}</div><div class="t2">${Number(f.pagado)?f.pago_origen==='empresa'?'Pagado según condición automática':'Pago registrado':Number(f.pago_automatico)?'Pago automático previsto':'Condición particular del proveedor'}</div></div><b>${eur2(f.total)}</b><button class="btn sm" data-act="fac-ficha" data-id="${f.id}">Ficha</button><button class="btn sm" data-periodo-id="${f.id}">Corregir periodo</button></div>`).join('')}</details>`;
+ const dias=new Map();
+ for(const g of grupos.values()){const fecha=g.fecha||'sin_fecha';if(!dias.has(fecha))dias.set(fecha,[]);dias.get(fecha).push(g);}
+ const fechaPagoTitulo=fecha=>{const d=new Date(fecha+'T12:00:00');return Number.isNaN(d.getTime())?fecha:new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'long',year:'numeric'}).format(d);};
+ caja.innerHTML=`<h2>Previsión de pagos</h2><p class="mut">Tus próximos cargos, ordenados por día. Abre una fecha para ver los proveedores y las facturas.</p>
+ <div class="toolbar filter-toolbar"><div class="field"><label for="prevModo">Ver</label><select id="prevModo">${[["proximos","Próximos cargos"],["historico","Histórico de pagos"],["anteriores","Fechas pasadas sin pago registrado"],["sinfecha","Sin fecha prevista"]].map(([v,t])=>`<option value="${v}" ${PREVP.modo===v?'selected':''}>${t}</option>`).join('')}</select></div><div class="field"><label for="prevEmpresa">Empresa</label><select id="prevEmpresa"><option value="">Todas las empresas</option>${empresas.map(e=>`<option ${e===PREVP.empresa?'selected':''}>${esc(e)}</option>`).join('')}</select></div></div>
+ <p class="mut prev-resumen">${filas.length} facturas · <b>${eur2(total)}</b> ${PREVP.modo==='historico'?'registrados':'previstos'} · Según las facturas recibidas</p>
+
+ ${[...dias.entries()].sort(([a],[b])=>PREVP.modo==='historico'?b.localeCompare(a):a.localeCompare(b)).map(([fecha,gs])=>`<details class="card fold prev-dia"><summary><div><b>${esc(fecha==='sin_fecha'?'Sin fecha prevista':fechaPagoTitulo(fecha))}</b><div class="t2">${gs.length} ${gs.length===1?'proveedor':'proveedores'} · ${gs.reduce((n,g)=>n+g.fs.length,0)} ${gs.reduce((n,g)=>n+g.fs.length,0)===1?"factura":"facturas"}</div></div><div class="prev-dia-total"><span class="t2">${PREVP.modo==='historico'?'Registrado':'Cargo previsto'}</span><b>${eur2(gs.reduce((n,g)=>n+g.centimos,0)/100)}</b><span aria-hidden="true">⌄</span></div></summary><div class="prev-proveedores">${gs.map(proveedorHtml).join('')}</div></details>`).join('')||'<div class="card">No hay cargos para esta selección.</div>'}`;
+ caja.querySelector('#prevModo').onchange=e=>{PREVP.modo=e.target.value;pintarPrevisionPagos(j);};
+ caja.querySelector('#prevEmpresa').onchange=e=>{PREVP.empresa=e.target.value;pintarPrevisionPagos(j);};
+ caja.querySelectorAll('[data-periodo-id]').forEach(b=>b.onclick=()=>{
+  const f=todas.find(f=>String(f.id)===b.dataset.periodoId);
+  const ov=modal('Periodo facturado',`<p>Indica el mes al que corresponde esta factura. Las condiciones particulares del proveedor se mantienen.</p><div class="field"><label for="periodoCorregir">Mes facturado</label><input type="month" id="periodoCorregir" value="${esc(f.periodo?.mes||'')}"></div><button class="btn primary" id="periodoGuardar">Guardar</button><p class="mut" id="periodoError"></p>`);
+  ov.querySelector('#periodoGuardar').onclick=async()=>{const periodo=ov.querySelector('#periodoCorregir').value;if(!periodo)return;try{await apiSend('PATCH',`/api/facturas/${f.id}`,{periodo_facturado:periodo});ov.remove();loadPagos();}catch(e){ov.querySelector('#periodoError').textContent=e.message;}};
+ });
+}
+
 async function loadPagos() {
   const view = document.getElementById("view");
   view.innerHTML = facHeader() + `<div id="pagosRes"><p class="mut">Mirando vencimientos…</p></div>`;
@@ -9301,6 +9347,7 @@ async function loadPagos() {
   try { j = await apiRaw("/api/facturas/pagos"); }
   catch (e) { document.getElementById("pagosRes").innerHTML = errorCard(e.message); return; }
 
+  if (Array.isArray(j.prevision)) return pintarPrevisionPagos(j);
   const r = j.resumen || {};
   const kpis = `<div class="grid g3" style="margin-bottom:16px">
       ${stat("Ya vencidas", "⏰", eur(r.vencidas?.total || 0), null, `${num(r.vencidas?.n || 0)} ${r.vencidas?.n === 1 ? "factura" : "facturas"}`)}
@@ -9449,7 +9496,7 @@ async function loadPagos() {
 // Antes esta pestaña se abría con «los dos últimos meses» puesto por su cuenta, así que lo de
 // antes no existía y nadie sabía por qué.
 let CONC = { filtro: "parcial" };
-const CONC_FILTROS = [["parcial", "Por revisar"], ["conciliada-parcial", "A medias"], ["cuadra", "Cuadran"], ["sin-albaranes", "Sin albarán"], ["conciliada", "Ya conciliadas"], ["cerrada", "Cerradas"], ["", "Todas"]];
+const CONC_FILTROS = [["parcial", "Por revisar"], ["conciliada-parcial", "Vinculación parcial"], ["cuadra", "Importes coincidentes"], ["sin-albaranes", "Sin coincidencias"], ["conciliada", "Ya conciliadas"], ["cerrada", "Cerradas"], ["", "Todas"]];
 
 async function loadConciliacion() {
   const view = document.getElementById("view");
@@ -9494,10 +9541,10 @@ async function refrescarConciliacion() {
   const barra = `<div class="toolbar" style="margin-bottom:12px">${pills}</div>`;
 
   const kpis = `<div class="grid g4" style="margin-bottom:16px">
-      ${stat("Cuadran", "✅", num(r.cuadran))}
+      ${stat("Ya conciliadas", "✅", num((j.propuestas || []).filter(p=>p.estado==="conciliada").length))}
       ${stat("Por revisar", "⚠️", num(r.parciales))}
-      ${stat("En juego", "€", eur(r.importeParcial))}
-      ${r.aMedias ? stat("A medias · falta", "⏳", esc(eur(r.importeAMedias))) : stat("Albaranes sueltos", "📦", num(j.albaranesSueltos))}
+      ${stat("Facturas por revisar", "€", eur(r.importeParcial))}
+      ${r.aMedias ? stat("Diferencia por comprobar", "⏳", esc(eur(r.importeAMedias))) : stat("Albaranes sueltos", "📦", num(j.albaranesSueltos))}
     </div>`;
 
   // Cada albarán con su casilla: se pueden aceptar unos y descartar otros. Y no hace falta que
@@ -9506,7 +9553,7 @@ async function refrescarConciliacion() {
   // hace que no se marque nunca, y el trabajo hecho se pierde.
   const albRow = (a, fid, marcado, esCandidato) => `<label class="row" style="padding:7px 0;cursor:pointer">
       <input type="checkbox" class="concChk" data-f="${fid}" data-id="${a.id}" data-total="${a.total}" ${marcado ? "checked" : ""} style="width:auto;margin:0 8px 0 0">
-      <span class="grow"><div class="t1" style="font-weight:500">${esc(fechaCorta(a.fecha) || a.fecha || "—")} · ${esc(a.numero_factura || "s/n")}</div></span>
+      <span class="grow"><div class="t1" style="font-weight:500">${esc(fechaCorta(a.fecha) || a.fecha || "—")} · ${esc(a.numero_factura || "s/n")}</div><div class="t2">${esc(nombreCortoLocal(a.local) || "Local sin asignar")}</div></span>
       <b class="tnum">${esc(eur2(a.total))}</b>
       ${a.drive_url ? `<a class="btn sm" href="${esc(a.drive_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Ver ↗</a>` : ""}
       ${/* Descartar: «este albarán NO es de esta factura». Solo en los PROPUESTOS —lo que ya
@@ -9520,10 +9567,10 @@ async function refrescarConciliacion() {
 
   const ficha = (p) => {
     const f = p.factura;
-    const est = p.estado === "cuadra" ? ["ok", "Cuadra"] : p.estado === "conciliada" ? ["brand", "Conciliada"]
-      : p.estado === "conciliada-parcial" ? ["warn", `A medias · faltan ${eur2(p.falta || 0)}`]
+    const est = p.estado === "cuadra" ? ["", "Importe coincidente · sin confirmar"] : p.estado === "conciliada" ? ["brand", "Conciliada"]
+      : p.estado === "conciliada-parcial" ? ["warn", `Vinculación parcial · diferencia ${eur2(Math.abs(p.falta || 0))}`]
       : p.estado === "cerrada" ? ["", "Cerrada · sin albarán"]
-      : p.estado === "parcial" ? ["warn", "Por revisar"] : ["", "Sin albarán"];
+      : p.estado === "parcial" ? ["warn", "Por revisar"] : ["", "Sin coincidencias"];
     // «LIGADO» SOLO SI YA ESTÁ CONCILIADA. En una factura sin conciliar, `p.albaranes` no son
     // vínculos: son LA PROPUESTA, y una propuesta es justo lo que se quiere poder descartar.
     // Tratándolos como ligados, el botón de descartar no salía nunca donde más falta hace.
@@ -9539,11 +9586,13 @@ async function refrescarConciliacion() {
         <b class="tnum" style="font-size:16px">${esc(eur2(f.total))}</b>
         <span class="pill ${est[0]}" style="flex:none">${est[1]}</span>
       </div>
-      <p class="dupmot">${esc(p.motivos.join(". "))}.</p>
-      ${todos.length ? `<div class="rows" style="background:var(--surface2);border-radius:10px;padding:4px 12px">${todos.map((a) => albRow(a, f.id, ligados.includes(a.id) || p.estado === "cuadra" || p.estado === "parcial", !ligados.includes(a.id))).join("")}</div>
+      <p class="dupmot">${yaConciliada ? "Albaranes vinculados a esta factura." : todos.length ? "Posibles albaranes por proveedor y fecha. Comprueba los documentos antes de vincularlos." : "No hay albaranes coincidentes disponibles. Puedes subirlos o indicar que esta factura no lleva albarán."}</p>
+      ${todos.length ? `<details class="conc-docs" ><summary>Revisar ${todos.length} albarán(es)${yaConciliada ? " · incluye los ya vinculados" : " propuestos"}</summary>` : ""}
+      ${todos.length ? `<div class="rows" style="background:var(--surface2);border-radius:10px;padding:4px 12px">${todos.map((a) => albRow(a, f.id, ligados.includes(a.id), !ligados.includes(a.id))).join("")}</div>
         <div class="mut" data-concsuma="${f.id}" style="font-size:12.5px;margin-top:6px"></div>` : ""}
       ${(p.descartadosIds || []).length ? `<div class="mut" style="font-size:12px;margin-top:6px">
         ${num(p.descartadosIds.length)} descartado(s) a mano · ${p.descartadosIds.map((d) => `<button class="linkbtn" data-conc="recuperar" data-f="${f.id}" data-id="${d.id}" style="font-size:12px">recuperar ${esc(d.numero_factura || "s/n")}</button>`).join(" · ")}</div>` : ""}
+      ${todos.length ? "</details>" : ""}
       <div class="dupacts">
         ${f.drive_url ? `<a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver factura ↗</a>` : ""}
         ${p.estado === "conciliada" || p.estado === "conciliada-parcial"
@@ -9555,12 +9604,12 @@ async function refrescarConciliacion() {
           ? `<button class="btn sm" data-conc="reabrir" data-id="${f.id}">Reabrir</button>`
           : (p.estado === "sin-albaranes" || p.estado === "parcial")
             ? `<button class="btn sm" data-conc="sinalbaran" data-id="${f.id}">No tiene albarán</button>` : ""}
-        ${todos.length ? `<button class="btn sm ${p.estado === "cuadra" ? "primary" : ""}" data-conc="marcados" data-id="${f.id}" data-total="${f.total}">Conciliar los marcados</button>` : ""}
+        ${todos.length ? `<button class="btn sm primary" data-conc="marcados" data-id="${f.id}" data-total="${f.total}">Vincular seleccionados</button>` : ""}
       </div></div>`;
   };
 
   cont.innerHTML = `${kpis}${barra}
-    ${r.parciales ? `<p class="fic-nota">Las de <b>por revisar</b> son las que importan: o falta un albarán por subir, o la factura cobra algo que no se entregó. <b>${esc(eur(r.importeParcial))}</b> en juego.</p>` : ""}
+    <p class="fic-nota"><b>Comprobar facturas con sus albaranes.</b> Abre una factura, revisa las entregas y selecciona las que le corresponden. Una diferencia de importe no demuestra un error ni un cobro indebido. No se vincula nada automáticamente.</p>
     ${lista.length ? lista.map(ficha).join("") : `<div class="card"><div class="mut" style="padding:8px">No hay facturas en este estado dentro del periodo.</div></div>`}`;
   lista.forEach((p) => concPintarSuma(p.factura.id));
 }
@@ -9574,11 +9623,13 @@ function concPintarSuma(fid) {
   const marcados = [...card.querySelectorAll(".concChk:checked")];
   const suma = marcados.reduce((s2, c) => s2 + (Number(c.getAttribute("data-total")) || 0), 0);
   const falta = Math.round((total - suma) * 100) / 100;
-  if (!marcados.length) { caja.innerHTML = "Sin marcar nada, se deshace la conciliación."; return; }
+  const boton=card.querySelector('[data-conc="marcados"]');
+  if(boton)boton.disabled=!marcados.length;
+  if (!marcados.length) { caja.innerHTML = "Selecciona los albaranes que corresponden a esta factura."; return; }
   caja.innerHTML = Math.abs(falta) < 0.02
     ? `<b>${marcados.length}</b> marcados · ${esc(eur2(suma))} — cuadra con la factura.`
     : falta > 0
-      ? `<b>${marcados.length}</b> marcados · ${esc(eur2(suma))} de ${esc(eur2(total))} — quedarían <b>${esc(eur2(falta))}</b> esperando albarán.`
+      ? `<b>${marcados.length}</b> marcados · ${esc(eur2(suma))} de ${esc(eur2(total))} — quedarían <b>${esc(eur2(falta))}</b> de diferencia por comprobar.`
       : `<b>${marcados.length}</b> marcados · ${esc(eur2(suma))}, que es <b>${esc(eur2(Math.abs(falta)))}</b> MÁS que la factura. Revísalo.`;
 }
 
@@ -9592,11 +9643,11 @@ async function concMarcados(fid) {
   const suma = marcados.reduce((s2, c) => s2 + (Number(c.getAttribute("data-total")) || 0), 0);
   const falta = Math.round((total - suma) * 100) / 100;
   const aviso = Math.abs(falta) < 0.02
-    ? `¿Dar por buena esta factura con ${ids.length} albarán(es)?`
+    ? `¿Vincular estos ${ids.length} albarán(es) a la factura? Sus importes coinciden.`
     : falta > 0
-      ? `Se conciliará con ${ids.length} albarán(es) por ${eur2(suma)}. Quedan ${eur2(falta)} esperando albarán: seguirá saliendo como «a medias» hasta que llegue.`
+      ? `Se vincularán ${ids.length} albarán(es) por ${eur2(suma)}. Quedará una diferencia de ${eur2(falta)} por comprobar y figurará como «Vinculación parcial».`
       : `Los albaranes marcados suman ${eur2(Math.abs(falta))} MÁS que la factura. ¿Seguro?`;
-  if (!(await confirmModal(`${aviso} Quedará registrado quién y cuándo, y esos albaranes no podrán usarse en otra factura.`, { ok: "Conciliar" }))) return;
+  if (!(await confirmModal(`${aviso} Quedará registrado quién y cuándo, y esos albaranes no podrán usarse en otra factura.`, { ok: "Vincular albaranes" }))) return;
   try { const r = await apiSend("POST", `/api/facturas/${fid}/conciliar`, { albaranes: ids }); toast(r.mensaje || "Hecho ✅"); refrescarConciliacion(); }
   catch (e) { toast(e.message); }
 }
@@ -9649,7 +9700,7 @@ async function concConfirmar(id, albs) {
   const deshacer = !ids.length;
   if (!(await confirmModal(deshacer
     ? "¿Deshacer la conciliación? Los albaranes vuelven a quedar sueltos."
-    : `¿Dar por buena esta factura con ${ids.length} albarán(es)? Quedará registrado quién y cuándo, y esos albaranes no podrán usarse en otra factura.`,
+    : `¿Vincular estos ${ids.length} albarán(es) a la factura? Sus importes coinciden. Quedará registrado quién y cuándo, y esos albaranes no podrán usarse en otra factura.`,
     { ok: deshacer ? "Deshacer" : "Confirmar", danger: deshacer }))) return;
   try { const r = await apiSend("POST", `/api/facturas/${id}/conciliar`, { albaranes: ids }); toast(r.mensaje || "Hecho ✅"); refrescarConciliacion(); }
   catch (e) { toast(e.message); }
@@ -9794,7 +9845,7 @@ function dicApartadosHtml() {
 function dicProductosHtml() {
   const ps = DICC?.productos || [];
   if (!ps.length) return "";
-  return `<details class="card fold" style="margin-bottom:14px">
+  return `<details id="dicProductos" class="card fold" style="margin-bottom:14px">
     <summary><h3>Productos del diccionario</h3><span class="foldr">
       <span>${num(ps.length)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <p class="mut" style="margin:0 0 12px;line-height:1.55">Los que se han ido creando. Si uno tiene una errata se
@@ -10301,7 +10352,7 @@ function compCategoriasHtml(g) {
       <span class="mut">${num(g.categorias.length)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
     <div class="rows">${g.categorias.map(fila).join("")}</div>
     ${g.repartido ? `<p class="mut" style="margin:10px 0 0;font-size:12px">De ${eur(g.repartido)} hay proveedores que están en más de una categoría; su gasto se reparte a partes iguales, así que esas cifras son aproximadas. El total sí cuadra.</p>` : ""}
-    ${g.sinCategoria ? `<p class="fic-nota" style="margin:10px 0 0"><b>${eur(g.sinCategoria)}</b> de ${g.sinCatProveedores.length} ${g.sinCatProveedores.length === 1 ? "proveedor" : "proveedores"} sin categoría, así que no está repartido: ${esc(g.sinCatProveedores.slice(0, 4).join(", "))}${g.sinCatProveedores.length > 4 ? "…" : ""}. Se ponen en <b>Configuración</b>.</p>` : ""}
+    ${g.sinCategoria ? `<p class="fic-nota" style="margin:10px 0 0"><b>${eur(g.sinCategoria)}</b> de ${g.sinCatProveedores.length} ${g.sinCatProveedores.length === 1 ? "proveedor" : "proveedores"} sin categoría, así que no está repartido: ${esc(g.sinCatProveedores.slice(0, 4).join(", "))}${g.sinCatProveedores.length > 4 ? "…" : ""}. Se asignan en <b>Proveedores</b>.</p>` : ""}
   </details>`;
 }
 
@@ -10620,7 +10671,7 @@ async function refrescarCompras() {
       <td class="provcol"><button class="linkbtn provlink" data-comp="prov" data-prov="${esc(g.proveedores[0] || "")}" title="Ver solo lo que nos vende">${esc(g.proveedores[0] || "—")}</button>${g.proveedores.length > 1 ? `<span class="mut" style="font-size:11px" title="${esc(g.proveedores.join(" · "))}"> +${g.proveedores.length - 1}</span>` : ""}</td>
       <td class="catcol">${catDe(g)
         ? `<span class="pill cat" style="--cat:var(--cat-${esc(colorCategoriaFE(catDe(g)))})">${esc(catDe(g))}</span>`
-        : '<span class="mut" style="font-size:11.5px" title="Sale de la categoría del proveedor, que se pone en Configuración">sin categoría</span>'}</td>
+        : '<span class="mut" style="font-size:11.5px" title="Sale de la categoría del proveedor, que se pone en Proveedores">sin categoría</span>'}</td>
       <td class="cantcel" style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) + (g.unidad ? ` <span class="mut" style="font-size:11px">${esc(g.unidad)}</span>` : "") : "—"}</td>
       <td style="text-align:right;white-space:nowrap"><div class="gastocel"><b>${g.importe != null ? esc(eur(g.importe)) : "—"}</b>
         <i class="gastobar" style="width:${Math.round(((Number(g.importe) || 0) / topeGasto) * 100)}%"></i></div></td>
@@ -11013,8 +11064,8 @@ async function facAvisoLibrosAnuales() {
     <p style="line-height:1.6">Vamos a agrupar los documentos existentes y mantener esta organización para las próximas facturas.</p>
     <div class="card" style="padding:16px;margin:16px 0"><b>${num(p.total)} facturas · ${num(p.libros.length)} libros anuales</b><p class="mut" style="margin-bottom:0">Un documento por empresa y año, pestañas por mes y resumen anual al final. Cada factura conserva el local y el enlace a su PDF.</p></div>
     <details><summary>Ver agrupación</summary>${p.libros.map(l=>`<p>${esc(l.empresa)} · ${esc(l.year)}: ${num(l.facturas)} documentos</p>`).join('')}</details>
-    <p class="mut">Antes de escribir, contrastamos los importes. Los PDF quedarán en empresa → año → mes → local, con nombres identificables. Las hojas antiguas se conservarán en Histórico tras verificar los nuevos libros. Guardamos una copia de los datos y la ubicación anterior de cada archivo. Este aviso solo aparece una vez.</p>
-    <p data-anual-estado role="status" aria-live="polite"></p>
+    <p class="mut">Antes de escribir, contrastamos los importes. Los PDF quedarán en empresa → año → mes → local, con nombres identificables. Las hojas antiguas se conservarán en Histórico tras verificar los nuevos libros. Guardamos una copia de los datos y la ubicación anterior de cada archivo. Este aviso volverá a aparecer al abrir el panel mientras la organización no se haya completado y verificado.</p>
+    <p data-anual-estado role="status" aria-live="polite">${j.error?esc("Último intento: "+j.error+". La organización sigue pendiente."):""}</p>
     <div class="toolbar" style="justify-content:flex-end"><button class="btn" data-close>Cerrar</button><button class="btn primary" data-anual-organizar>Organizar libros y archivos</button></div>`);
   ov.querySelector('[data-anual-organizar]').addEventListener('click',async e=>{
     const btn=e.currentTarget,estado=ov.querySelector('[data-anual-estado]');btn.disabled=true;
@@ -14055,7 +14106,7 @@ function renderAnalitica() {
   const areas = ANAL_AREAS.filter((a) => analDeArea(a.key).length).map((a) =>
     `<button class="anarea ${ANAL.area === a.key ? "on" : ""}" data-act="anal-area" data-area="${a.key}">
        <b>${esc(a.label)}</b><span>${esc(a.sub)}</span></button>`).join("");
-  const head = `<div class="ph"><div class="eyebrow">Inteligencia</div><h1>Analítica de ventas</h1><div class="sub">Informes en vivo del TPV · ${esc(cur.label)}${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div><div class="acts"><button class="btn" data-act="anal-refresh">Actualizar</button><button class="btn" data-act="anal-csv">Exportar CSV</button></div></div>`;
+  const head = `<div class="ph"><div class="eyebrow">Inteligencia</div>${contabilidadTitulo("Analítica de ventas","Analítica de ventas")}<div class="sub">Informes en vivo del TPV · ${esc(cur.label)}${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div><div class="acts"><button class="btn" data-act="anal-refresh">Actualizar</button><button class="btn" data-act="anal-csv">Exportar CSV</button></div></div>`;
   // Sin selector de local: el ámbito lo marca el selector de establecimiento de la barra superior.
   const toolbar = `<div class="toolbar"><div class="field"><label>Periodo</label><div class="seg">${seg}</div></div><div style="flex:1"></div>
       <div class="field" style="min-width:200px"><label>Buscar en el informe</label>
@@ -16674,6 +16725,7 @@ document.addEventListener("click", (e) => {
   }
   else if (act === "cli-propuestas") cliPropuestas();
   else if (act === "cli-falta-filtro") pedirFiltroQueFalta();
+  else if (act === "cont-opciones") contabilidadOpciones(t.getAttribute("data-apartado"));
   else if (act === "cli-csv") { t.closest(".cli-settings")?.removeAttribute("open"); downloadClientesCsv(); }
   else if (act === "cli-dup") { t.closest(".cli-settings")?.removeAttribute("open"); cliDuplicados(); }
   else if (act === "cli-wa") cliWa(t.getAttribute("data-tel"), t.getAttribute("data-nombre"));

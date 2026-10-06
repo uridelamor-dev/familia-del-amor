@@ -142,3 +142,20 @@ describe("sugerirLocalPendiente con local indicado (CIF compartido)", () => {
     assert.equal(s.motivo, "CIF del receptor");
   });
 });
+
+describe('nombre comercial frente a domicilio fiscal',()=>{
+ test('Tapeta Blanes con domicilio fiscal Tordera identifica Blanes',()=>{
+  assert.equal(localPorPistaTexto('LA TAPETA (BLANES) · PERE QUART 13 · 08490 TORDERA',LOCALES),'La Tapeta - Blanes');
+ });
+ test('una ciudad o una parte de palabra no basta',()=>{
+  assert.equal(localPorPistaTexto('Domicilio fiscal en Blanes',LOCALES),null);
+  assert.equal(localPorPistaTexto('Tapeta BlanesExtra',LOCALES),null);
+ });
+ test('dos establecimientos completos requieren revisión',()=>{
+  assert.equal(localPorPistaTexto('La Tapeta Blanes y Can Mateu Tordera',LOCALES),null);
+ });
+ test('un CIF compartido no impide utilizar el nombre comercial',()=>{
+  const s=sugerirLocalPendiente({pendiente:{nif_receptor:'B1111',nombre_receptor:'DEL AMOR URIEL SLU',local_receptor:'LA TAPETA (BLANES)'},locales:LOCALES});
+  assert.equal(s.local,'La Tapeta - Blanes');assert.equal(s.confianza,'alta');
+ });
+});

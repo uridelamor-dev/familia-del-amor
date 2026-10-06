@@ -6,12 +6,15 @@ afterEach(()=>{globalThis.fetch=original; configurarBloqueoSheets(null);});
 const rows=[{id:1,local:'Blanes',empresa:'Empresa SL',fecha:'2026-01-03',total:121,base_imponible:100,cuota_iva:21,drive_url:'https://drive.google.com/file/d/pdf1/view'},
  {id:2,local:'Girona',empresa:'Empresa SL',fecha:'2026-02-03',total:55,base_imponible:50,cuota_iva:5,drive_url:'https://drive.google.com/file/d/pdf2/view'}];
 const locales=[{local:'Blanes',empresa:'Empresa SL',cif:'B12345678'},{local:'Girona',empresa:'Empresa SL',cif:'B12345678'}];
-test('el aviso aparece una sola vez, incluso entre dos pestañas y sin ejecutar la organización',async()=>{
- let visto=null;
- const deps={dbGet:async()=>visto,dbAll:async sql=>sql.includes('facturas_locales')?locales:rows,dbRun:async()=>{if(visto)return null;visto={value:'visto'};return visto;}};
- const respuestas=await Promise.all([avisoAnualesUnaVez(deps),avisoAnualesUnaVez(deps)]);
- assert.equal(respuestas.filter(r=>r.mostrar).length,1);
- assert.deepEqual(await avisoAnualesUnaVez(deps),{mostrar:false});
+test('el aviso se repite hasta completar, aunque ya se hubiera mostrado',async()=>{
+ const config=new Map([['facturas_anuales_aviso_v1','visto']]);
+ const deps={dbGet:async(sql,[key])=>config.has(key)?{value:config.get(key)}:null,dbAll:async sql=>sql.includes('facturas_locales')?locales:rows};
+ assert.equal((await avisoAnualesUnaVez(deps)).mostrar,true);
+ assert.equal((await avisoAnualesUnaVez(deps)).mostrar,true);
+ config.set('facturas_drive_organizacion_completada_v1','ok');
+ assert.equal((await avisoAnualesUnaVez(deps)).mostrar,false);
+ config.set('facturas_drive_organizacion_pendiente','1');
+ assert.equal((await avisoAnualesUnaVez(deps)).mostrar,true);
 });
 test('empresa compartida, ejercicio separado, fecha desconocida conservada',()=>{
  const g=agruparAnuales([...rows,{...rows[0],id:3,fecha:'2025-12-31'},{...rows[0],id:4,fecha:null}],locales);

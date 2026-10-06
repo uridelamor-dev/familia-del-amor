@@ -147,14 +147,26 @@ test('nota de voz Opus va directamente al proveedor incluso sin conversor instal
   assert.equal(duracionOggOpus(original), 14);
 });
 
-test('Opus mantiene límite real de cinco minutos y rechaza archivos truncados o encadenados', async () => {
+test('Opus mantiene el límite real y valida variantes mediante el conversor', async () => {
+  const meta = { tipo: 'audio', extension: 'ogg', mime: 'audio/ogg', compatible: true, segundos: 1 };
   assert.equal(duracionOggOpus(opusFixture(300)), 300);
+  await assert.rejects(interpretarAdjunto(opusFixture(301), meta, {
+    apiKey: 'ficticia', fetcher: () => assert.fail('No enviar'), convertir: () => assert.fail('No convertir fuera de límites'),
+  }), /audio_fuera_limites/);
   const original = opusFixture();
-  const reordered = Buffer.from(original); reordered.writeUInt32LE(8, 18);
   const missingEnd = Buffer.from(original); missingEnd[missingEnd.length - 31 + 5] = 0;
-  for (const invalid of [opusFixture(301), original.subarray(0, -1), Buffer.concat([original, original]), reordered, missingEnd]) {
-    await assert.rejects(interpretarAdjunto(invalid, { tipo: 'audio', extension: 'ogg', mime: 'audio/ogg', compatible: true, segundos: 1 }, {
-      apiKey: 'ficticia', fetcher: () => assert.fail('No enviar audio fuera de límites'), convertir: () => assert.fail('No convertir audio inválido'),
-    }), /audio_(ogg_invalido|fuera_limites)/);
-  }
+  let converted = 0;
+  const result = await interpretarAdjunto(missingEnd, meta, {
+    apiKey: 'ficticia', convertir: async b => { assert.deepEqual(b, missingEnd); converted++; return Buffer.from('WAV comprobado'); },
+    fetcher: async (_url, args) => {
+      assert.equal(args.body.get('file').name, 'audio.wav');
+      assert.equal(await args.body.get('file').text(), 'WAV comprobado');
+      return {ok:true, json:async()=>({text:'Una taula per a dos.'})};
+    },
+  });
+  assert.equal(converted, 1); assert.match(result.texto, /taula/);
+  await assert.rejects(interpretarAdjunto(original.subarray(0, -1), meta, {
+    apiKey:'ficticia', convertir:async()=>{throw new Error('audio_fuera_limites');},
+    fetcher:()=>assert.fail('No enviar si el decodificador rechaza'),
+  }), /audio_fuera_limites/);
 });

@@ -1,3 +1,4 @@
+import {pagoPorEmpresa} from './src/modules/facturas/pago-empresa.js';
 import { carpetaDocumento, nombreArchivo, moverVerificado } from "./src/modules/facturas/archivo-drive.js";
 import { sincronizarAnuales as sincronizarAnualesBase, archivarHistoricos } from "./src/modules/facturas/sheets-anuales.js";
 import { fetchFactura as fetch } from "./src/modules/facturas/red.js";
@@ -50,6 +51,7 @@ markdown, con esta estructura exacta
 {
   "tipo": "factura" | "albaran" | "ticket" | "otro",
   "fecha": "YYYY-MM-DD",
+  "periodo_facturado": "YYYY-MM o null",
   "vencimiento": "YYYY-MM-DD",
   "numero_factura": "string",
   "proveedor": "string",
@@ -109,6 +111,8 @@ En "vencimiento" pon la fecha en que hay que pagar, SOLO si aparece escrita: sue
 calculamos nosotros. Nunca la deduzcas.
 
 En "local_receptor" pon el LOCAL o establecimiento CONCRETO del cliente si aparece: normalmente entre paréntesis tras el nombre del cliente (p. ej. "(TAPETA LLORET)"), o en la dirección de entrega, la referencia o el pie. Copia el texto tal cual (p. ej. "TAPETA LLORET", "Can Mateu Tordera"). Si no aparece ningún local concreto, pon null.
+En "periodo_facturado" recoge el mes del periodo facturado SOLO cuando aparece expresamente en el documento. No uses la fecha de llegada ni supongas el mes anterior. Si abarca varios meses o es ambiguo, devuelve null.
+IMPORTANTE: distingue el NOMBRE COMERCIAL DEL ESTABLECIMIENTO de la RAZÓN SOCIAL y de la DIRECCIÓN FISCAL. Busca también las etiquetas "Nombre Cliente", "Cliente", "Centro", "Punto de venta" y "Dirección entrega" en todas las páginas. "Nombre Fiscal: DEL AMOR URIEL S.L.U.; Nombre Cliente: LA TAPETA (BLANES); Dir. Facturación: PERE QUART 13, TORDERA" significa nombre_receptor="DEL AMOR URIEL S.L.U." y local_receptor="LA TAPETA (BLANES)". Tordera es aquí el domicilio fiscal: NO lo añadas a local_receptor ni lo conviertas en el local. Aunque esa dirección fiscal se repita bajo Dirección entrega, conserva el nombre explícito LA TAPETA (BLANES). Copia el establecimiento literalmente; no deduzcas un local a partir del domicilio fiscal, del proveedor, ni de un CIF compartido. Si aparecen DOS establecimientos concretos diferentes como destinatarios de esta factura, recoge ambos en local_receptor para revisión; no elijas uno.
 
 En "lineas" pon UNA ENTRADA POR CADA LÍNEA DE PRODUCTO del detalle, en el orden en que aparecen.
 - "descripcion": el texto del producto tal cual está escrito en la factura, sin traducir ni abreviar.
@@ -240,7 +244,7 @@ export async function condicionesDePago(dbGet, proveedor, empresa = "") {
         ORDER BY (empresa <> '') DESC LIMIT 1`, [clave, String(empresa || "")]);
     return r ? { dias: r.dias, dia_pago: r.dia_pago, modo: r.modo || "dias",
       meses_despues: r.meses_despues, domiciliado: !!Number(r.domiciliado),
-      empresa: r.empresa || "", general: !r.empresa } : null;
+      empresa: r.empresa || "", general: !r.empresa } : pagoPorEmpresa(empresa);
   } catch { return null; }
 }
 
@@ -546,12 +550,19 @@ export async function resincronizarSheetsFactura(deps, local, fecha) {
 
 export async function repararTodosLosSheets(deps) {
   await deps.dbRun('INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',['facturas_drive_organizacion_pendiente','1']);
-  const r = await sincronizarAnuales({...deps,trasVerificar:async()=>{
+  let r;
+  try { r = await sincronizarAnuales({...deps,trasVerificar:async()=>{
     const documentos = await migrarEstructuraDrive(deps);
     if(documentos.errores.length)throw new Error('Los libros se han verificado, pero faltan archivos por ordenar: '+documentos.errores.slice(0,5).join('; '));
     const historicos = await archivarHistoricos(deps);
     return {documentos,historicos};
   }});
+  } catch(e) {
+    await deps.dbRun('INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',['facturas_drive_organizacion_error',String(e.message).slice(0,2000)]);
+    throw e;
+  }
+  await deps.dbRun('DELETE FROM config WHERE key = ?',['facturas_drive_organizacion_error']);
+  await deps.dbRun('INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',['facturas_drive_organizacion_completada_v1',new Date().toISOString()]);
   await deps.dbRun('DELETE FROM config WHERE key = ?',['facturas_drive_organizacion_pendiente']);
   return {...r, tabs:r.libros.length, maestro:r.total};
 }
@@ -648,8 +659,8 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   const ins = await dbRun(
     `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
       base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal,
-      dup_estado, dup_de, dup_motivos, revisar, vencimiento, vencimiento_origen, fecha_pistas, sheet_synced)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
+      dup_estado, dup_de, dup_motivos, revisar, vencimiento, vencimiento_origen, fecha_pistas, periodo_facturado, periodo_origen, sheet_synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
     [local, empresa, datos.tipo, datos.fecha, datos.numero_factura, datos.proveedor,
      datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
      datos.cuota_iva, datos.total, driveFile.url, sheetId, fileHash, canal,
@@ -657,7 +668,8 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
      enDuda ? JSON.stringify(enDuda.motivos) : null,
      coher.avisos.length ? JSON.stringify(textosDe(coher.avisos)) : null,
      venc.vencimiento, venc.origen,
-     datos._pistasFecha ? JSON.stringify(datos._pistasFecha) : null]
+     datos._pistasFecha ? JSON.stringify(datos._pistasFecha) : null,
+     /^\d{4}-(0[1-9]|1[0-2])$/.test(datos.periodo_facturado||"") ? datos.periodo_facturado : null, "documento"]
   );
   if (enDuda) console.warn(`[Facturas] posible duplicado de #${enDuda.contra.id}: ${resumenMotivos(enDuda.motivos)}`);
   const facturaId = ins?.id;
@@ -770,7 +782,7 @@ export async function migrarEstructuraDrive({getToken,dbAll,dbGet,dbRun}) {
       const meta=await (await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=name`,{headers:{Authorization:`Bearer ${token}`}})).json();
       const ext=meta.name?.match(/\.[a-zA-Z0-9]+$/)?.[0]||'.pdf';
       if(await moverVerificado(token,{dbRun},id,parent,nombreArchivo(datos,ext)))res.movidos++;else res.omitidos++;
-    }catch(e){res.errores.push(`#${f.id}: ${e.message}`);}
+    }catch(e){res.errores.push(`#${f.id}: ${/HTTP 404/.test(e.message)?'No se puede acceder al archivo en Drive: puede faltar o no estar compartido con la cuenta conectada. Hay que recuperar el archivo o revisar su acceso':e.message}`);}
   }
   return res;
 }
@@ -978,14 +990,15 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
   await dbRun(
     `INSERT INTO facturas_pendientes
       (empresa_detectada, nif_receptor, nombre_receptor, local_receptor, tipo, fecha, numero_factura, proveedor, nif,
-       concepto, base_imponible, porcentaje_iva, cuota_iva, total, drive_url, drive_file_id, file_hash, origen, lineas_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       concepto, base_imponible, porcentaje_iva, cuota_iva, total, drive_url, drive_file_id, file_hash, origen, lineas_json, periodo_facturado)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [empresa, datos.nif_receptor, datos.nombre_receptor, datos.local_receptor || null, datos.tipo, datos.fecha, datos.numero_factura,
      datos.proveedor, datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
      datos.cuota_iva, datos.total, driveFile.url, driveFile.id, fileHash, origen || "email",
      // El detalle se guarda aquí mientras la factura espera a que alguien le asigne local:
      // si no, al confirmarla habría que volver a leer el PDF y pagar la lectura dos veces.
-     Array.isArray(datos.lineas) && datos.lineas.length ? JSON.stringify(datos.lineas) : null]
+     Array.isArray(datos.lineas) && datos.lineas.length ? JSON.stringify(datos.lineas) : null,
+     /^\d{4}-(0[1-9]|1[0-2])$/.test(datos.periodo_facturado||"") ? datos.periodo_facturado : null]
   );
 
   console.log(`[Facturas] Guardada como pendiente: ${datos.proveedor} → ${empresa}/_Por asignar`);
@@ -1041,11 +1054,11 @@ export async function asignarFacturaPendiente({ pendiente, local, reparto = null
   // BD PRIMERO (fuente de verdad) y quitar de pendientes: la asignación no se pierde aunque falle el Sheet.
   const ins = await dbRun(
     `INSERT INTO facturas (local, empresa, tipo, fecha, numero_factura, proveedor, nif, concepto,
-       base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal, sheet_synced)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
+       base_imponible, porcentaje_iva, cuota_iva, total, drive_url, sheet_id, file_hash, canal, periodo_facturado, periodo_origen, creado_en, sheet_synced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) RETURNING id`,
     [localContable, empresa, pendiente.tipo, pendiente.fecha, pendiente.numero_factura,
      pendiente.proveedor, pendiente.nif, pendiente.concepto, pendiente.base_imponible,
-     pendiente.porcentaje_iva, pendiente.cuota_iva, pendiente.total, driveUrl, sheetId, pendiente.file_hash, canal]
+     pendiente.porcentaje_iva, pendiente.cuota_iva, pendiente.total, driveUrl, sheetId, pendiente.file_hash, canal, pendiente.periodo_facturado || null, "documento", pendiente.creado_en || new Date().toISOString()]
   );
   const facturaId = ins?.id;
 

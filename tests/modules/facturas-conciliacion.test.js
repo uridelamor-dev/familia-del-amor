@@ -181,3 +181,11 @@ describe("conciliar a medias: lo que ya ha llegado cuenta", () => {
     assert.equal(r.parciales, 1);
   });
 });
+
+test("no propone entregas de otro local o empresa aunque cuadren", () => {
+  const f = {...FAC, local:"Lloret", empresa:"Empresa A"};
+  for (const scope of [{local:"Girona",empresa:"Empresa A"},{local:"Lloret",empresa:"Empresa B"}]) {
+    assert.equal(proponerConciliacion(f,[{...alb(1240,"2026-07-20",4),...scope}]).estado,"sin-albaranes");
+  }
+  assert.equal(proponerConciliacion(f,[{...alb(1240,"2026-07-20",4),local:"LLORET",empresa:"Empresa A"}]).estado,"cuadra");
+});
