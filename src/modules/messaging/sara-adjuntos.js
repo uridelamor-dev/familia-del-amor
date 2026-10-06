@@ -162,26 +162,24 @@ async function peticionOpenAI(ruta, opciones, fetcher, apiKey) {
   }
 }
 
-export async function interpretarAdjunto(buffer, meta, { apiKey = process.env.OPENAI_API_KEY, fetcher = fetch, convertir = convertirAudio } = {}) {
+export async function interpretarAdjunto(buffer, meta, { apiKey = process.env.OPENAI_API_KEY, fetcher = fetch } = {}) {
   if (!apiKey) throw new Error('lectura_sin_configurar');
   if (!meta.compatible || buffer.length > MAX_ADJUNTO || meta.segundos > 300) throw new Error('adjunto_fuera_limites');
   validarContenido(buffer, meta);
   if (meta.tipo === 'audio') {
     const ogg = meta.extension === 'ogg';
-    let convertirOgg = false;
     if (ogg) {
-      try { convertirOgg = duracionOggOpus(buffer) === null; }
+      try { duracionOggOpus(buffer); }
       catch (e) {
-        // Algunas grabaciones válidas no cumplen el recorrido rápido de páginas.
-        // El decodificador comprueba duración real antes de convertir a WAV.
+        // La lectura rápida mide las notas Opus habituales, no todos los OGG.
+        // OpenAI decodifica el original: no bloquear variantes por ffprobe/ffmpeg.
+        // En las variantes siguen vigentes el límite de bytes y la duración declarada.
         if (e.message !== 'audio_ogg_invalido') throw e;
-        convertirOgg = true;
       }
     }
-    const datos = convertirOgg ? await convertir(buffer) : buffer;
     const form = new FormData();
     form.append('model', process.env.SARA_AUDIO_MODEL || 'gpt-transcribe');
-    form.append('file', new Blob([datos], { type: convertirOgg ? 'audio/wav' : ogg ? 'audio/ogg' : meta.mime }), `audio.${convertirOgg ? 'wav' : meta.extension}`);
+    form.append('file', new Blob([buffer], { type: ogg ? 'audio/ogg' : meta.mime }), `audio.${meta.extension}`);
     form.append('prompt', 'Conversación con un restaurante. Nombres propios: Familia del Amor, La Tapeta, Cooperativa, Can Mateu, Blanes, Lloret, Girona, Tordera. Transcribe en el idioma original; no completes palabras que no se entiendan.');
     const r = await peticionOpenAI('audio/transcriptions', { method: 'POST', body: form }, fetcher, apiKey);
     if (typeof r.text !== 'string' || !r.text.trim()) throw new Error('audio_ininteligible');

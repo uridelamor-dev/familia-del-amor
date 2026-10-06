@@ -54,15 +54,15 @@ test('envoltorios compatibles y visualización única', () => {
   assert.equal(describirAdjunto({ imageMessage: { mimetype: 'image/jpeg', viewOnce: true } }), null);
   assert.equal(describirAdjunto({ documentMessage: { mimetype: 'audio/ogg; codecs=opus' } }).tipo, 'audio');
 });
-test('audio Ogg se convierte y transcribe conservando el idioma original', async () => {
+test('audio Ogg no Opus se envía original y conserva el idioma', async () => {
   const meta = describirAdjunto({ audioMessage: { mimetype: 'audio/ogg; codecs=opus', seconds: 5 } });
   let conversion = 0;
   const a = await interpretarAdjunto(legacyOgg, meta, { apiKey: 'clave-ficticia', convertir: async () => { conversion++; return Buffer.from('wav'); }, fetcher: async (url, args) => {
-    assert.match(url, /audio\/transcriptions$/); assert.equal(args.body.get('file').name, 'audio.wav');
+    assert.match(url, /audio\/transcriptions$/); assert.equal(args.body.get('file').name, 'audio.ogg');
     assert.match(args.body.get('prompt'), /idioma original/);
     return { ok: true, json: async () => ({ text: 'Vull reservar una taula per demà.' }) };
   } });
-  assert.equal(conversion, 1); assert.equal(a.texto, 'Vull reservar una taula per demà.');
+  assert.equal(conversion, 0); assert.equal(a.texto, 'Vull reservar una taula per demà.');
 });
 test('PDF usa lectura estructurada, sin almacenamiento del proveedor; ilegible no se acepta', async () => {
   for (const legible of [true, false]) {
@@ -101,14 +101,14 @@ test('fallo temporal de conexión se reintenta una vez sin duplicar archivo ni c
     interpretar: (b, m) => interpretarAdjunto(b, m, { apiKey: 'ficticia',
       convertir: async () => { conversiones++; return Buffer.from('wav'); },
       fetcher: async (_url, args) => {
-        assert.equal(args.body.get('file').name, 'audio.wav');
+        assert.equal(args.body.get('file').name, 'audio.ogg');
         if (++llamadas === 1) throw new TypeError('fetch failed', { cause: Object.assign(new Error('private details'), { code: 'UND_ERR_CONNECT_TIMEOUT' }) });
         return { ok: true, json: async () => ({ text: 'Bon dia, voldria reservar.' }) };
       },
     }),
   });
   assert.equal(a.error, undefined); assert.match(a.texto, /Bon dia/);
-  assert.equal(llamadas, 2); assert.equal(guardados, 1); assert.equal(conversiones, 1);
+  assert.equal(llamadas, 2); assert.equal(guardados, 1); assert.equal(conversiones, 0);
 });
 
 test('reintentos acotados y sin repetir errores de credenciales o cuota', async () => {
@@ -147,7 +147,7 @@ test('nota de voz Opus va directamente al proveedor incluso sin conversor instal
   assert.equal(duracionOggOpus(original), 14);
 });
 
-test('Opus mantiene el límite real y valida variantes mediante el conversor', async () => {
+test('Opus mantiene el límite medible y envía variantes originales sin conversor', async () => {
   const meta = { tipo: 'audio', extension: 'ogg', mime: 'audio/ogg', compatible: true, segundos: 1 };
   assert.equal(duracionOggOpus(opusFixture(300)), 300);
   await assert.rejects(interpretarAdjunto(opusFixture(301), meta, {
@@ -159,14 +159,14 @@ test('Opus mantiene el límite real y valida variantes mediante el conversor', a
   const result = await interpretarAdjunto(missingEnd, meta, {
     apiKey: 'ficticia', convertir: async b => { assert.deepEqual(b, missingEnd); converted++; return Buffer.from('WAV comprobado'); },
     fetcher: async (_url, args) => {
-      assert.equal(args.body.get('file').name, 'audio.wav');
-      assert.equal(await args.body.get('file').text(), 'WAV comprobado');
+      assert.equal(args.body.get('file').name, 'audio.ogg');
+      assert.deepEqual(Buffer.from(await args.body.get('file').arrayBuffer()), missingEnd);
       return {ok:true, json:async()=>({text:'Una taula per a dos.'})};
     },
   });
-  assert.equal(converted, 1); assert.match(result.texto, /taula/);
+  assert.equal(converted, 0); assert.match(result.texto, /taula/);
   await assert.rejects(interpretarAdjunto(original.subarray(0, -1), meta, {
     apiKey:'ficticia', convertir:async()=>{throw new Error('audio_fuera_limites');},
-    fetcher:()=>assert.fail('No enviar si el decodificador rechaza'),
-  }), /audio_fuera_limites/);
+    fetcher:async()=>({ok:false,status:400}),
+  }), /lectura_proveedor_400/);
 });

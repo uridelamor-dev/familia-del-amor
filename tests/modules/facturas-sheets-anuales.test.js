@@ -114,3 +114,18 @@ test('el histórico no se migra si falta una factura o difiere un importe',async
  await assert.rejects(verificarHistoricos('t',[]),/sin correspondencia/);
  total=122;await assert.rejects(verificarHistoricos('t',rows),/importe/);
 });
+test('un original recuperado reconoce su histórico sin saltarse importes ni ambigüedades',async()=>{
+ let total=121;
+ globalThis.fetch=async url=>({ok:true,json:async()=>String(url).includes('drive/v3')?{files:[{id:'old',name:'Facturas · TODAS (consolidado)'}]}:String(url).includes('/values/')?{values:[['Fecha','','','','','','','','','','','Archivo Drive'],['2026-01-03','','','','','',100,'',21,total,'',rows[0].drive_url]]}:{sheets:[{properties:{title:'TODAS',gridProperties:{rowCount:1000}}}]}});
+ const actual=[{...rows[0],drive_url:'https://drive.google.com/file/d/nuevo/view'}];
+ const audit={entidad:'facturas',entidad_id:1,accion:'original_recuperado',detalle:JSON.stringify({antes:rows[0],nuevo_drive_id:'nuevo'})};
+ await assert.rejects(verificarHistoricos('t',actual),/sin correspondencia/);
+ assert.equal((await verificarHistoricos('t',actual,[audit])).registros,1);
+ await assert.rejects(verificarHistoricos('t',actual,[{...audit,detalle:'{}'}]),/sin correspondencia/);
+ await assert.rejects(verificarHistoricos('t',actual,[{...audit,detalle:JSON.stringify({antes:rows[0],nuevo_drive_id:'otro'})}]),/sin correspondencia/);
+ await assert.rejects(verificarHistoricos('t',[...actual,{...rows[0],id:3}],[audit]),/sin correspondencia/);
+ const intermedio={...rows[0],drive_url:'https://drive.google.com/file/d/intermedio/view'};
+ const cadena=[{...audit,detalle:JSON.stringify({antes:rows[0],nuevo_drive_id:'intermedio'})},{...audit,detalle:JSON.stringify({antes:intermedio,nuevo_drive_id:'nuevo'})}];
+ assert.equal((await verificarHistoricos('t',actual,cadena)).registros,1);
+ total=122;await assert.rejects(verificarHistoricos('t',actual,[audit]),/importe/);
+});

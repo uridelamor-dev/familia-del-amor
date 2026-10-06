@@ -52,9 +52,31 @@ const api = async (token,url,method='GET',body) => {
 };
 const sheets = id => `https://sheets.googleapis.com/v4/spreadsheets/${id}`;
 const drive = 'https://www.googleapis.com/drive/v3/files';
-export async function verificarHistoricos(token, rows) {
+export async function verificarHistoricos(token, rows, recuperaciones = []) {
   const porPdf=new Map();
   for(const f of rows) if(f.drive_url) { const key=idPdf(f.drive_url); const list=porPdf.get(key)||[]; list.push(f); porPdf.set(key,list); }
+  // Sólo un reemplazo documentado permite relacionar un PDF antiguo con el actual.
+  // Conservamos todas las coincidencias para seguir rechazando enlaces ambiguos.
+  for (const f of rows) {
+    const conocidos = new Set(f.drive_url ? [idPdf(f.drive_url)] : []);
+    const cambios = recuperaciones.filter(a => a.entidad === 'facturas' && a.accion === 'original_recuperado' && String(a.entidad_id) === String(f.id)).flatMap(a => {
+      try {
+        const d = typeof a.detalle === 'string' ? JSON.parse(a.detalle) : a.detalle;
+        return String(d?.antes?.id) === String(f.id) && d.antes.drive_url && d.nuevo_drive_id
+          ? [{antes:idPdf(d.antes.drive_url), despues:idPdf(d.nuevo_drive_id)}] : [];
+      } catch { return []; }
+    });
+    let crece = true;
+    while (crece) {
+      crece = false;
+      for (const c of cambios) if (conocidos.has(c.despues) && !conocidos.has(c.antes)) {
+        conocidos.add(c.antes); crece = true;
+        const list = porPdf.get(c.antes) || [];
+        if (!list.some(r => String(r.id) === String(f.id))) list.push(f);
+        porPdf.set(c.antes, list);
+      }
+    }
+  }
   let page, documentos=0, registros=0; const diferencias=[],archivos=[];
   do {
     const q="trashed = false and mimeType = 'application/vnd.google-apps.spreadsheet' and name contains 'Facturas'";
@@ -178,7 +200,7 @@ export async function sincronizarAnuales(deps, filtro=null) {
     }
     const control=await deps.dbGet('SELECT value FROM config WHERE key = ?',['facturas_anuales_historico_verificado']);
     if(!control?.value) {
-      const informe=await verificarHistoricos(token,rows);
+      const informe=await verificarHistoricos(token,rows,await deps.dbAll("SELECT entidad, entidad_id, accion, detalle FROM fic_auditoria WHERE entidad = 'facturas' AND accion = 'original_recuperado'"));
       await deps.dbRun('INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',['facturas_anuales_historico_verificado',JSON.stringify(informe)]);
     }
     const regs=await deps.dbAll('SELECT key,value FROM config WHERE key LIKE ?',[PREFIX+'%']);
@@ -223,7 +245,7 @@ export async function archivarHistoricos(deps) {
  const token=await deps.getToken(),rows=await deps.dbAll('SELECT * FROM facturas ORDER BY id');
  const root=await deps.dbGet('SELECT value FROM config WHERE key = ?',['drive_facturas_root_id']);
  if(!root?.value)throw new Error('Falta la carpeta raíz de contabilidad');
- const informe=await verificarHistoricos(token,rows);
+ const informe=await verificarHistoricos(token,rows,await deps.dbAll("SELECT entidad, entidad_id, accion, detalle FROM fic_auditoria WHERE entidad = 'facturas' AND accion = 'original_recuperado'"));
  const backup=await respaldoDatos(token,deps,root.value,rows);
  const parent=await carpetaDrive(token,'Histórico anterior a la reorganización',root.value);
  let archivados=0;
