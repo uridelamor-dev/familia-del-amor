@@ -602,8 +602,8 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
     const canon = canonizarLocal(local);
     if (!canon) throw new Error(`«${local}» no es ningún establecimiento. Revisa a qué local está vinculado este canal de entrada.`);
     // Y si ese establecimiento es una barra de un centro, la factura es del CENTRO. La
-    // Cooperativa tiene su propio grupo de WhatsApp —y lo conserva—, pero lo que entra por
-    // él es gasto de Blanes: misma sociedad, mismo CIF, mismo libro de facturas recibidas.
+    // Cooperativa comparte el grupo de facturas con La Tapeta; lo que entra por
+    // él es gasto del centro Blanes: misma sociedad, mismo CIF, mismo libro de facturas recibidas.
     local = localCentro(canon, "compras");
   }
   // 1. Hash para detección de duplicados

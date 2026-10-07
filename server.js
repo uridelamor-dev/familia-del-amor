@@ -1,3 +1,4 @@
+import {normalizarCentroBlanes} from "./src/modules/facturas/centro-blanes.js";
 import {IVA_SCHEMA,validarIva,repasarIva} from './src/modules/facturas/iva.js';
 import {DRIVE_SYNC_SCHEMA,configurarBloqueoDrive} from './src/modules/facturas/drive-sync.js';
 import {periodoPago, aplicarPagosEmpresa, pagoPorEmpresa} from './src/modules/facturas/pago-empresa.js';
@@ -24777,6 +24778,18 @@ const server = app.listen(PORT, async () => {
 
   // Restaurar datos desde KV (idempotente, solo importa los que falten)
   try { await restoreFromKV(); } catch (e) { console.error("[KV] Error en restore:", e.message); }
+  // Después de restaurar: las copias antiguas también pueden traer el nombre de la barra.
+  {
+    const client=await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const cambio=await normalizarCentroBlanes((sql,params)=>client.query(sql,params));
+      await client.query('COMMIT');
+      if(cambio.facturas||cambio.grupos)console.log('[Facturas] Centro compartido Blanes:',cambio);
+    }catch(e){await client.query('ROLLBACK');console.error('[Facturas] Normalizar Blanes:',e.message);}
+    finally{client.release();}
+  }
+
 
   // Volcar una sola vez el Secret AGORA_LOCALES a la BD (fuente de verdad ahora editable desde el panel)
   try { await seedAgoraFromEnv(); } catch (e) { console.error("[Agora] Error en seed env→BD:", e.message); }
@@ -25498,7 +25511,7 @@ const server = app.listen(PORT, async () => {
     const grupo = await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid]);
     if (!grupo) return;
 
-    const local = grupo.local;
+    const local = canonizarLocal(grupo.local) || grupo.local;
     console.log(`[Facturas] Documento recibido en grupo ${local} de ${senderJid}`);
 
     try {

@@ -7,7 +7,7 @@ import { anteponerCitado as ctxAnteponerCitado, ORIGEN as CTX_ORIGEN }
   from "./src/modules/messaging/contexto.js";
 import { estaPausada, MOTIVO_PAUSA, pidePersona, idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia, pulirCatalan }
   from "./src/modules/messaging/sara.js";
-import { revisarRespuesta, textoSeguro, pideExcepcionPromocion } from "./src/modules/messaging/sara-revision.js";
+import { revisarRespuesta, textoSeguro, pideExcepcionPromocion, crearControlAvisos } from "./src/modules/messaging/sara-revision.js";
 import { mensajeNormalizado, prepararAdjunto } from "./src/modules/messaging/sara-adjuntos.js";
 import { respuestaTrasHerramientas } from "./src/modules/messaging/respuesta-herramientas.js";
 import path from "path";
@@ -344,6 +344,7 @@ const TOOLS = [
 ];
 
 const conversaciones = new Map();
+const controlAvisosSara = crearControlAvisos();
 const MAX_HISTORIAL = 10;
 const DEBOUNCE_MS = 2500;
 const SESION_TTL_SEG = 4 * 60 * 60; // nueva sesión tras 4h sin actividad
@@ -749,6 +750,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
     const revision = await revisarRespuesta({
       crear: args => ai.messages.create(args, { timeout: 20000, maxRetries: 1 }), borrador: respuestaCliente, mensaje: mensajeUsuario,
       historial: conCita.slice(-8), idioma: pista.idioma, resultadosAcciones,
+      diagnostico: dato => console.warn("[Sara] revisión rechazada", JSON.stringify(dato)),
       fuentes: SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf('## Nuestros locales'), SYSTEM_PROMPT.indexOf('## Carta, platos')) + '\n' + partesFecha + '\n' + saraConfigTexto + '\n' + (campana?.texto || ''),
     });
     let respuestaFinal = revision.respuesta.trim();
@@ -1026,7 +1028,12 @@ async function procesarBatch(jid, items) {
         return;
       }
     }
+    if (controlAvisosSara.omitir(jid, respuesta)) {
+      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, adjuntos: idsAdjuntos });
+      return;
+    }
     await sock.sendMessage(jid, { text: respuesta });
+    controlAvisosSara.enviado(jid, respuesta);
     console.log(`📤 Respuesta enviada a ${jid}`);
     if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta, adjuntos: idsAdjuntos });
   } catch (err) {

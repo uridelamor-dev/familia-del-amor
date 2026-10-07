@@ -92,3 +92,56 @@ test('migración SQL conserva originales privados, admite pausa y no duplica adj
     await assert.rejects(db.query("INSERT INTO wa_adjuntos(id,jid,mensaje_id,nombre,mime,datos) SELECT '00000000-0000-4000-8000-000000000002',jid,mensaje_id,nombre,mime,datos FROM wa_adjuntos"));
   } finally { await db.close(); }
 });
+
+test('recupera una revisión inválida de Girona y cinco personas sin ejecutar acciones', async () => {
+  let llamadas = 0; const diagnosticos = [];
+  const r = await revisarRespuesta({
+    fuentes: 'Local: La Tapeta Girona', mensaje: 'La tapeta girona\nAl final serem 5', idioma: 'ca',
+    borrador: 'A quin nom fem la reserva?', resultadosAcciones: [], diagnostico: d => diagnosticos.push(d),
+    crear: async args => {
+      llamadas++;
+      assert.deepEqual(args.tools.map(t => t.name), ['revisar_respuesta']);
+      assert.equal(JSON.parse(args.messages[0].content).mensaje, 'La tapeta girona\nAl final serem 5');
+      if (llamadas === 1) return bloque({ ...valido, evidencias: ['Cinco personas'] });
+      assert.match(args.system, /evidencia_no_literal/);
+      return bloque({ ...valido, respuesta: 'A quin nom fem la reserva?', evidencias: [] });
+    },
+  });
+  assert.equal(r.respuesta, 'A quin nom fem la reserva?'); assert.equal(llamadas, 2);
+  assert.deepEqual(diagnosticos, [{ intento: 1, motivo: 'evidencia_no_literal' }]);
+});
+test('una revisión repetidamente inválida nunca envía el borrador ni inventa evidencias', async () => {
+  let llamadas = 0;
+  await assert.rejects(revisarRespuesta({ fuentes: 'Promoción: día 1', borrador: 'Puedes desayunar gratis cualquier día',
+    crear: async () => { llamadas++; return bloque({ ...valido, evidencias: ['Gratis cualquier día'] }); },
+  }), /revision_no_valida:evidencia_no_literal/);
+  assert.equal(llamadas, 2);
+});
+test('fallo de transporte no inicia otra revisión adicional', async () => {
+  let llamadas = 0;
+  await assert.rejects(revisarRespuesta({ crear: async () => { llamadas++; throw new Error('timeout'); } }), /timeout/);
+  assert.equal(llamadas, 1);
+});
+test('revisión inválida tras una reserva reintenta solo la revisión', async () => {
+  let revisiones = 0;
+  const revision = { ...valido, respuesta: 'Reserva registrada.', evidencias: [] };
+  Object.defineProperty(revision, 'idioma', { get: () => ++revisiones === 1 ? 'cat' : 'ca' });
+  const c = conversacion({ accion: true, revision });
+  assert.equal(await c.run('Vull reservar una taula'), 'Reserva registrada.');
+  assert.deepEqual(c.acciones, ['registrar_reserva']);
+});
+test('avisos consecutivos se suprimen por cliente, conservando respuestas válidas y reintentos posteriores', async () => {
+  const { crearControlAvisos } = await import('../src/modules/messaging/sara-revision.js');
+  let tiempo = 0; const control = crearControlAvisos({ ahora: () => tiempo });
+  const aviso = textoSeguro('error', 'ca');
+  assert.equal(control.omitir('a', aviso), false);
+  control.enviado('a', aviso);
+  tiempo = 13000;
+  assert.equal(control.omitir('a', aviso), true);
+  assert.equal(control.omitir('b', aviso), false);
+  assert.equal(control.omitir('a', 'A quin nom?'), false);
+  control.enviado('a', 'A quin nom?');
+  assert.equal(control.omitir('a', aviso), false);
+  control.enviado('a', aviso); tiempo += 60000;
+  assert.equal(control.omitir('a', aviso), false);
+});

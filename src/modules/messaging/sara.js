@@ -100,7 +100,7 @@ export function pistaIdioma(texto) {
     // Catalán: geminada, apóstrofos característicos y palabras que el castellano no tiene.
     ca: [/bon dia|bona tarda|bona nit|d[’']acord/, /l·l/, /\bamb\b/, /\baixò\b/, /\baixí\b/, /\bperò\b/, /\bmolt\b/, /\bvull\b/, /\bpuc\b/,
          /\btreballo\b/, /\bdia\b.*\bmatí\b/, /\bsi us plau\b/, /\bgràcies\b/, /\bendavant\b/,
-         /\bnosaltres\b/, /\bqualsevol\b/, /\bd'un\b|\bd'una\b|\bl'altre\b|\bm'agrada\b/, /\bquè\b/,
+         /\bnosaltres\b/, /\bserem\b/, /\bqualsevol\b/, /\bd'un\b|\bd'una\b|\bl'altre\b|\bm'agrada\b/, /\bquè\b/,
          /\bpersona\b.*\bparlar\b|\bparlar\b/],
     en: [/\bthe\b/, /\bi'm\b/, /\bcan i\b/, /\bcould\b/, /\bwould\b/, /\banother\b/, /\bplease\b/,
          /\bthanks\b/, /\bspeak\b/, /\bsomeone\b/, /\bwhat\b/, /\bwhen\b/, /\bdoes\b/, /\byour\b/],
