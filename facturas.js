@@ -1,3 +1,6 @@
+import {guardarIvaLeido} from './src/modules/facturas/iva.js';
+import {sincronizarArchivo,reintentarArchivos} from './src/modules/facturas/drive-sync.js';
+import {esAdjuntoDecorativo} from './src/modules/facturas/clasificacion.js';
 import {pagoPorEmpresa} from './src/modules/facturas/pago-empresa.js';
 import { carpetaDocumento, nombreArchivo, moverVerificado } from "./src/modules/facturas/archivo-drive.js";
 import { sincronizarAnuales as sincronizarAnualesBase, archivarHistoricos } from "./src/modules/facturas/sheets-anuales.js";
@@ -45,10 +48,14 @@ const CABECERAS = [
 ];
 
 const PROMPT_BASE = `Analiza este documento (factura, albarán o ticket) y extrae los datos.
+Clasifica como es_documento_compra=false SOLO un logo aislado, firma de correo o imagen corporativa claramente decorativa sin información de compra. Una factura con logotipo SÍ es documento de compra. Conserva albaranes, tickets, proformas y presupuestos. Un documento ilegible, recortado, sin importes o dudoso NO es un logo: usa null y confianza baja. No inventes datos para imágenes decorativas.
 Devuelve ÚNICAMENTE un JSON válido, sin texto adicional y SIN envolverlo en un bloque de código
 markdown, con esta estructura exacta
 (usa null para los campos que no aparezcan):
 {
+  "es_documento_compra": true | false | null,
+  "confianza_clasificacion": "alta" | "baja",
+  "clase_adjunto": "documento" | "logo" | "firma" | "imagen_corporativa" | "dudoso",
   "tipo": "factura" | "albaran" | "ticket" | "otro",
   "fecha": "YYYY-MM-DD",
   "periodo_facturado": "YYYY-MM o null",
@@ -63,11 +70,13 @@ markdown, con esta estructura exacta
   "base_imponible": number,
   "porcentaje_iva": number,
   "cuota_iva": number,
+  "iva_desglose": [{ "base": number, "tipo": number, "cuota": number }],
   "total": number,
   "lineas": [
     { "descripcion": "string", "cantidad": number, "unidad": "string", "precio_unitario": number, "importe": number, "descuento_pct": number, "importe_neto": number }
   ]
 }
+DESGLOSE FISCAL: copia en iva_desglose cada base, tipo porcentual y cuota del resumen fiscal del documento, incluidos tipos cero. Si hay varios tipos, porcentaje_iva es null; base_imponible y cuota_iva son las sumas. Nunca uses un tipo medio ni deduzcas el reparto a partir del total. No mezcles recargo de equivalencia, retenciones ni otros impuestos con IVA. Si no puedes identificar todas las bases con seguridad, devuelve iva_desglose: [].
 QUIÉN EMITE Y QUIÉN RECIBE. Es el error más fácil de cometer y el más caro:
 - "proveedor" y "nif_proveedor" son de QUIEN EMITE la factura y cobra: normalmente arriba del
   todo, con el logotipo y el membrete (dirección, teléfono, web, registro mercantil).
@@ -148,6 +157,13 @@ export async function driveDescargar(token, fileId) {
     { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error("Drive: no se pudo descargar (" + res.status + ")");
   return { buffer: Buffer.from(await res.arrayBuffer()), mimeType: meta.mimeType, nombre: meta.name };
+}
+
+export async function leerIvaOriginal(factura,getToken) {
+  const id=idDeDriveUrl(factura.drive_url);
+  if(!id)throw new Error('Sin PDF accesible');
+  const {buffer,mimeType}=await driveDescargar(await getToken(),id);
+  return (await extraerDatosDocumento(buffer,mimeType)).iva_desglose;
 }
 
 // Releer el detalle de UNA factura que ya estaba guardada. Idempotente: borra las líneas
@@ -597,6 +613,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
 
   // 2. Extraer datos con Claude
   const datos = await leerDocumento(buffer, mimeType);
+  if (esAdjuntoDecorativo(datos)) return {descartado:true,motivo:"Adjunto corporativo sin información de compra"};
   await revisarEmisorReceptor(datos, dbAll);   // ver por qué en revisarEmisorReceptor
   await aplicarNombreProveedor(datos, dbAll);   // lo que ya se corrigió a mano, aprendido
   const coher = await revisarCoherenciaFactura(datos, dbAll, { hoy: hoyISOFactura(), recibida: hoyISOFactura() });
@@ -673,6 +690,12 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   );
   if (enDuda) console.warn(`[Facturas] posible duplicado de #${enDuda.contra.id}: ${resumenMotivos(enDuda.motivos)}`);
   const facturaId = ins?.id;
+  if(facturaId) {
+    try {
+      const f=await dbGet('SELECT * FROM facturas WHERE id = ?',[facturaId]);
+      if(f)await guardarIvaLeido({dbRun},f,datos.iva_desglose);
+    }catch(e){console.warn('[IVA] Pendiente de relectura:',e.message);}
+  }
 
   // 8b. El detalle línea a línea. NO fatal: si falla, la factura ya está guardada y lo que
   // se pierde es el desglose, no el gasto.
@@ -699,7 +722,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
     }
   } catch (e) { console.error("[Facturas] no se pudo guardar el detalle:", e.message); }
 
-  await reubicarEnDrive({factura:{...datos,id:facturaId,empresa,local,drive_url:driveFile.url},getToken,dbGet});
+  await reubicarEnDrive({factura:{...datos,id:facturaId,empresa,local,drive_url:driveFile.url},getToken,dbGet,dbRun});
 
   // 9. Proyectar al Sheet (NO fatal). Si algo falla, queda sheet_synced=0 y lo recoge el reintento.
   try {
@@ -731,7 +754,10 @@ function extractDriveFileId(url) {
  *
  * Devuelve `{ movido, motivo }`. NUNCA lanza: mover un archivo no puede costar la corrección.
  */
-export async function reubicarEnDrive({ factura, getToken, dbGet }) {
+export async function reubicarEnDrive({ factura, getToken, dbGet, dbRun }) {
+  return sincronizarArchivo({dbGet,dbRun},factura.id,actual=>moverArchivoActual({factura:actual,getToken,dbGet,dbRun}));
+}
+async function moverArchivoActual({ factura, getToken, dbGet, dbRun }) {
   try {
     const fileId = extractDriveFileId(factura?.drive_url);
     if (!fileId) return { movido: false, motivo: "sin archivo en Drive" };
@@ -754,11 +780,7 @@ export async function reubicarEnDrive({ factura, getToken, dbGet }) {
     const nombre = nombreArchivo({...factura,local:localContable},meta.name?.match(/\.[a-zA-Z0-9]+$/)?.[0] || '.pdf');
     if (oldParentId === mesId && meta.name === nombre) return { movido: false, motivo: "ya estaba en su sitio" };
 
-    const moveRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${mesId}${oldParentId ? "&removeParents=" + oldParentId : ""}&fields=id`,
-      { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({name:nombre}) });
-    const moveData = await moveRes.json();
-    if (moveData.error) return { movido: false, motivo: moveData.error.message };
+    await moverVerificado(token,{dbRun},fileId,mesId,nombre);
     console.log(`[Facturas] #${factura.id} movido a ${empresa}/${localContable}/${mesLabel}`);
     return { movido: true, carpeta: `${empresa}/${localContable}/${mesLabel}` };
   } catch (e) {
@@ -768,21 +790,17 @@ export async function reubicarEnDrive({ factura, getToken, dbGet }) {
 const rootIdDe = (cfg) => cfg.value;
 
 export async function migrarEstructuraDrive({getToken,dbAll,dbGet,dbRun}) {
-  const token=await getToken();
   const root=await dbGet("SELECT value FROM config WHERE key = 'drive_facturas_root_id'");
   if(!root?.value)throw new Error('Falta la carpeta raíz de contabilidad');
-  const rows=await dbAll('SELECT * FROM facturas ORDER BY id');
+  const rows=await dbAll('SELECT id FROM facturas ORDER BY id');
   const res={movidos:0,omitidos:0,errores:[]};
   for(const f of rows){
-    try{
-      const id=extractDriveFileId(f.drive_url);if(!id)throw new Error('Sin PDF identificado');
-      const localRow=await dbGet('SELECT empresa,local_contable FROM facturas_locales WHERE local = ?',[f.local]);
-      const datos={...f,empresa:f.empresa||localRow?.empresa,local:localRow?.local_contable||f.local};
-      const parent=await carpetaDocumento(token,root.value,datos,findOrCreateFolder);
-      const meta=await (await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=name`,{headers:{Authorization:`Bearer ${token}`}})).json();
-      const ext=meta.name?.match(/\.[a-zA-Z0-9]+$/)?.[0]||'.pdf';
-      if(await moverVerificado(token,{dbRun},id,parent,nombreArchivo(datos,ext)))res.movidos++;else res.omitidos++;
-    }catch(e){res.errores.push(`#${f.id}: ${/HTTP 404/.test(e.message)?'No se puede acceder al archivo en Drive: puede faltar o no estar compartido con la cuenta conectada. Hay que recuperar el archivo o revisar su acceso':e.message}`);}
+    // El mismo bloqueo y lectura actual que una corrección manual: la migración no puede
+    // devolver el PDF a una carpeta antigua mientras alguien cambia el local.
+    const r=await reubicarEnDrive({factura:f,getToken,dbGet,dbRun});
+    if(r.movido)res.movidos++;
+    else if(r.motivo==='ya estaba en su sitio'||r.motivo==='Factura eliminada')res.omitidos++;
+    else res.errores.push(`#${f.id}: ${r.motivo||'Movimiento pendiente de verificar'}`);
   }
   return res;
 }
@@ -926,6 +944,7 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
 
   // 2. Extraer datos con Claude (incluye nif_receptor)
   const datos = await extraerDatosDocumento(buffer, mimeType);
+  if (esAdjuntoDecorativo(datos)) return {descartado:true,motivo:"Adjunto corporativo sin información de compra"};
   await revisarEmisorReceptor(datos, dbAll);   // ver por qué en revisarEmisorReceptor
   console.log(`[Facturas] Email sin local — datos extraídos:`, JSON.stringify(datos));
 
@@ -990,15 +1009,15 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
   await dbRun(
     `INSERT INTO facturas_pendientes
       (empresa_detectada, nif_receptor, nombre_receptor, local_receptor, tipo, fecha, numero_factura, proveedor, nif,
-       concepto, base_imponible, porcentaje_iva, cuota_iva, total, drive_url, drive_file_id, file_hash, origen, lineas_json, periodo_facturado)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       concepto, base_imponible, porcentaje_iva, cuota_iva, total, drive_url, drive_file_id, file_hash, origen, lineas_json, periodo_facturado, iva_desglose)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [empresa, datos.nif_receptor, datos.nombre_receptor, datos.local_receptor || null, datos.tipo, datos.fecha, datos.numero_factura,
      datos.proveedor, datos.nif_proveedor, datos.concepto, datos.base_imponible, datos.porcentaje_iva,
      datos.cuota_iva, datos.total, driveFile.url, driveFile.id, fileHash, origen || "email",
      // El detalle se guarda aquí mientras la factura espera a que alguien le asigne local:
      // si no, al confirmarla habría que volver a leer el PDF y pagar la lectura dos veces.
      Array.isArray(datos.lineas) && datos.lineas.length ? JSON.stringify(datos.lineas) : null,
-     /^\d{4}-(0[1-9]|1[0-2])$/.test(datos.periodo_facturado||"") ? datos.periodo_facturado : null]
+     /^\d{4}-(0[1-9]|1[0-2])$/.test(datos.periodo_facturado||"") ? datos.periodo_facturado : null, JSON.stringify(datos.iva_desglose??null)]
   );
 
   console.log(`[Facturas] Guardada como pendiente: ${datos.proveedor} → ${empresa}/_Por asignar`);
@@ -1061,6 +1080,12 @@ export async function asignarFacturaPendiente({ pendiente, local, reparto = null
      pendiente.porcentaje_iva, pendiente.cuota_iva, pendiente.total, driveUrl, sheetId, pendiente.file_hash, canal, pendiente.periodo_facturado || null, "documento", pendiente.creado_en || new Date().toISOString()]
   );
   const facturaId = ins?.id;
+  if(facturaId && pendiente.iva_desglose) {
+    try {
+      const f=await dbGet('SELECT * FROM facturas WHERE id = ?',[facturaId]);
+      if(f)await guardarIvaLeido({dbRun},f,pendiente.iva_desglose);
+    }catch(e){console.warn('[IVA] Pendiente de relectura:',e.message);}
+  }
 
   // La marca de «esto es de toda la empresa» va justo después del alta: el documento queda
   // archivado como cualquier otro y lo único que cambia es cómo se reparte al sumar por local.
@@ -1088,7 +1113,7 @@ export async function asignarFacturaPendiente({ pendiente, local, reparto = null
 
   await dbRun("DELETE FROM facturas_pendientes WHERE id = ?", [pendiente.id]);
 
-  await reubicarEnDrive({factura:{...pendiente,id:facturaId,empresa,local:localContable,drive_url:driveUrl},getToken,dbGet});
+  await reubicarEnDrive({factura:{...pendiente,id:facturaId,empresa,local:localContable,drive_url:driveUrl},getToken,dbGet,dbRun});
 
   // Proyectar al Sheet (NO fatal): si falla, sheet_synced=0 y lo recoge el reintento.
   try {
@@ -1107,6 +1132,8 @@ export async function asignarFacturaPendiente({ pendiente, local, reparto = null
 // La BD es la verdad; esto reconstruye la pestaña (local, mes) desde la BD y marca como sincronizadas.
 // Idempotente y seguro: si Google sigue caído, no pasa nada y se reintenta al siguiente ciclo.
 export async function reproyectarPendientes(deps) {
+  // Drive tiene su propia marca: que Sheets esté al día no borra un movimiento fallido.
+  await reintentarArchivos(deps,factura=>reubicarEnDrive({...deps,factura}));
   const organizacion=await deps.dbGet('SELECT value FROM config WHERE key = ?',['facturas_drive_organizacion_pendiente']);
   if(organizacion?.value) {
     const r=await repararTodosLosSheets(deps);

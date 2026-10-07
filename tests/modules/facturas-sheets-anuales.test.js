@@ -1,6 +1,6 @@
 import {test,afterEach} from 'node:test';
 import assert from 'node:assert/strict';
-import {agruparAnuales,filaAnual,sincronizarAnuales,configurarBloqueoSheets,verificarHistoricos,HEADERS,avisoAnualesUnaVez} from '../../src/modules/facturas/sheets-anuales.js';
+import {filasAnuales,categoriaSheets,agruparAnuales,filaAnual,sincronizarAnuales,configurarBloqueoSheets,verificarHistoricos,HEADERS,avisoAnualesUnaVez} from '../../src/modules/facturas/sheets-anuales.js';
 const original=globalThis.fetch;
 afterEach(()=>{globalThis.fetch=original; configurarBloqueoSheets(null);});
 const rows=[{id:1,local:'Blanes',empresa:'Empresa SL',fecha:'2026-01-03',total:121,base_imponible:100,cuota_iva:21,drive_url:'https://drive.google.com/file/d/pdf1/view'},
@@ -42,10 +42,10 @@ test('sólo excluye albaranes con factura registrada; conserva el albarán y su 
  g=agruparAnuales([albaran],locales)[0];assert.equal(filaAnual(g.rows[0],g.empresa)[18],'Sí');
 });
 
-function entorno(){
+function entorno(categorias=[]){
  const config=new Map([['facturas_anuales_historico_verificado','{}']]), books=new Map(), marks=[], requests=[]; let seq=0, corrupt=false, fail=false;
  configurarBloqueoSheets(async fn=>fn());
- const deps={getToken:async()=> 'token', dbAll:async sql=>sql.includes('FROM facturas_locales')?locales:sql.includes('FROM config')?[...config].filter(([k])=>k.startsWith('facturas_anual_v1:')).map(([key,value])=>({key,value})):rows,
+ const deps={getToken:async()=> 'token', dbAll:async sql=>sql.includes('FROM facturas_proveedor_cats')?categorias:sql.includes('FROM facturas_locales')?locales:sql.includes('FROM config')?[...config].filter(([k])=>k.startsWith('facturas_anual_v1:')).map(([key,value])=>({key,value})):rows,
  dbGet:async (sql,p)=>config.has(p[0])?{value:config.get(p[0])}:null,
  dbRun:async (sql,p)=>{if(sql.startsWith('INSERT INTO config'))config.set(p[0],p[1]);else if(sql.startsWith('DELETE FROM config')){if(config.get(p[0])===p[1])config.delete(p[0]);}else marks.push(p);}};
  const ok=d=>({ok:true,status:200,json:async()=>d});
@@ -60,10 +60,10 @@ function entorno(){
    if(fail)throw new Error('Google caído');
    for(const r of JSON.parse(opt.body).requests){
     if(r.addSheet)b.tabs.push({properties:r.addSheet.properties,values:[]});
-    if(r.updateCells){const t=b.tabs.find(t=>t.properties.sheetId===r.updateCells.range.sheetId);t.values=r.updateCells.rows.map(row=>row.values.map(c=>c.userEnteredValue?.stringValue??c.userEnteredValue?.numberValue??c.userEnteredValue?.formulaValue));}
+    if(r.updateCells?.fields==='userEnteredValue'){const t=b.tabs.find(t=>t.properties.sheetId===r.updateCells.range.sheetId);t.values=r.updateCells.rows.map(row=>row.values.map(c=>c.userEnteredValue?.stringValue??c.userEnteredValue?.numberValue??c.userEnteredValue?.formulaValue));}
    }return ok({});
   }
-  if(u.pathname.endsWith('/values:batchGet'))return ok({valueRanges:u.searchParams.getAll('ranges').map(range=>{const title=range.split("'")[1];let values=b.tabs.find(t=>t.properties.title===title).values.map(r=>[...r]);if(title==='Resumen anual'){const all=b.tabs.filter(t=>t.properties.title!==title).flatMap(t=>t.values.slice(1)),valid=all.filter(r=>r[18]==='Sí');values=[[all.length,...[6,8,9].map(i=>valid.reduce((n,r)=>n+Number(r[i]||0),0)),all.length-valid.length]];}if(corrupt&&values[1])values[1][9]=999;return {values};})});
+  if(u.pathname.endsWith('/values:batchGet'))return ok({valueRanges:u.searchParams.getAll('ranges').map(range=>{const title=range.split("'")[1];let values=b.tabs.find(t=>t.properties.title===title).values.map(r=>[...r]);if(title==='Resumen anual'){const all=b.tabs.filter(t=>t.properties.title!==title).flatMap(t=>t.values.slice(1)),valid=all.filter(r=>r[18]==='Sí');values=[[all.filter(r=>r[15]!=='').length,...[6,8,9].map(i=>valid.reduce((n,r)=>n+Number(r[i]||0),0)),all.filter(r=>r[15]!==''&&r[18]!=='Sí').length]];}if(corrupt&&values[1])values[1][9]=999;return {values};})});
   return ok({sheets:b.tabs});
  };
  return {deps,config,books,marks,requests,setCorrupt:()=>{corrupt=true;},setFail:()=>{fail=true;}};
@@ -128,4 +128,51 @@ test('un original recuperado reconoce su histórico sin saltarse importes ni amb
  const cadena=[{...audit,detalle:JSON.stringify({antes:rows[0],nuevo_drive_id:'intermedio'})},{...audit,detalle:JSON.stringify({antes:intermedio,nuevo_drive_id:'nuevo'})}];
  assert.equal((await verificarHistoricos('t',actual,cadena)).registros,1);
  total=122;await assert.rejects(verificarHistoricos('t',actual,[audit]),/importe/);
+});
+
+test('categorías actuales se aplican a nuevas y antiguas, y se limpian al quitarlas',async()=>{
+ const cats=[{proveedor:'Proveedor prueba',categoria:'Bebidas'}];
+ const antes=rows[0].proveedor; rows[0].proveedor='Proveedor prueba';
+ try {
+  const e=entorno(cats);
+  await sincronizarAnuales(e.deps);
+  const enero=[...e.books.values()][0].tabs[0];
+  assert.equal(enero.values[0][5],'Categoría');
+  assert.equal(enero.values[1][5],'Bebidas');
+  cats[0].categoria='Carne y aves';
+  await sincronizarAnuales(e.deps);
+  assert.equal(enero.values[1][5],'Carne y aves');
+  const batch=JSON.parse(e.requests.filter(r=>r.url.endsWith(':batchUpdate')).at(-1).opt.body);
+  const formato=batch.requests.find(r=>r.updateCells?.fields==='userEnteredFormat.backgroundColor');
+  assert.deepEqual(formato.updateCells.rows[0].values[0].userEnteredFormat.backgroundColor,categoriaSheets(cats).fondo);
+  assert.equal(formato.updateCells.range.startColumnIndex,5);
+  cats.length=0;
+  await sincronizarAnuales(e.deps);
+  assert.equal(enero.values[1][5],'Sin categoría');
+  assert.equal(e.books.size,1);
+ }finally{rows[0].proveedor=antes;}
+});
+test('tonos suaves, categorías múltiples sin duplicarlas y concepto original intacto',()=>{
+ const c=categoriaSheets([{categoria:'Bebidas'},{categoria:'Bebidas',subcategoria:'Cafés'}]);
+ assert.equal(c.texto,'Bebidas');
+ assert.ok(Object.values(c.fondo).every(v=>v>.9&&v<=1));
+ assert.equal(categoriaSheets([{categoria:'Bebidas'},{categoria:'Carne y aves'}]).texto,'Bebidas · Carne y aves');
+ const f={...rows[0],concepto:'Concepto original',_categorias:[{categoria:'Bebidas'}]};
+ assert.equal(filaAnual(f,'Empresa')[5],'Bebidas');assert.equal(f.concepto,'Concepto original');
+});
+
+test('IVA múltiple conserva total una vez y cuenta una factura en resumen',async()=>{
+ const antes={...rows[0]};
+ try {
+  Object.assign(rows[0],{base_imponible:300,cuota_iva:35,total:335,iva_estado:'ok',iva_desglose:JSON.stringify([{base:100,tipo:4,cuota:4},{base:100,tipo:10,cuota:10},{base:100,tipo:21,cuota:21}])});
+  const e=entorno();await sincronizarAnuales(e.deps);
+  const lines=[...e.books.values()][0].tabs[0].values.slice(1);
+  assert.ok(e.requests.some(r=>r.opt.body?.includes('COUNTIF')));
+  assert.ok(!e.requests.some(r=>r.opt.body?.includes('COUNTA')));
+  assert.equal(lines.length,3);assert.deepEqual(lines.map(r=>r[9]),['','',335]);
+  assert.deepEqual(lines.map(r=>r[7]),[4,10,21]);assert.deepEqual(lines.map(r=>r[15]),['','','1']);
+  assert.equal(lines.reduce((s,r)=>s+Number(r[6]),0),300);
+  rows[0].total=336;
+  const invalid=filasAnuales(rows[0],'Empresa');assert.equal(invalid.length,1);assert.equal(invalid[0][9],336);
+ }finally{for(const k of Object.keys(rows[0]))delete rows[0][k];Object.assign(rows[0],antes);}
 });

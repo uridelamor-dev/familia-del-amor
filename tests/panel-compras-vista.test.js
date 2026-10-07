@@ -465,7 +465,7 @@ describe("corregir el proveedor al revisar una factura", () => {
 
   test("al elegir uno se rellena su CIF", () => {
     // Arreglar el nombre y dejar el NIF del proveedor anterior es peor que no tocar nada.
-    assert.match(panel, /if \(!nif\.value\.trim\(\) \|\| teniaOtro\) nif\.value = elegido\.nif;/);
+    assert.match(panel, /if \(!nif\.value\.trim\(\) \|\| teniaOtro\)\s*\{?\s*nif\.value = elegido\.nif;/);
   });
 
   test("pero un NIF escrito a mano no se pisa", () => {

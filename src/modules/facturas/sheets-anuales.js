@@ -1,10 +1,13 @@
+import {validarIva} from './iva.js';
 import { createHash } from 'node:crypto';
 import { fetchFactura as fetch, conPlazoFactura } from './red.js';
 import {carpetaEjercicio,carpetaDrive,moverVerificado,respaldoDatos} from './archivo-drive.js';
 
+import {indiceCategorias,categoriasDe,soloCategorias,colorCategoria} from './categorias.js';
+
 const PREFIX = 'facturas_anual_v1:';
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-export const HEADERS = ['Fecha','Nº documento','Tipo','Proveedor','NIF proveedor','Concepto','Base (€)','IVA (%)','Cuota IVA (€)','Total (€)','Canal','PDF original','Registrado','Local','Empresa','ID panel','Estado','Avisos','Contabiliza'];
+export const HEADERS = ['Fecha','Nº documento','Tipo','Proveedor','NIF proveedor','Categoría','Base (€)','IVA (%)','Cuota IVA (€)','Total (€)','Canal','PDF original','Registrado','Local','Empresa','ID panel','Estado','Avisos','Contabiliza'];
 const norm = s => String(s || '').normalize('NFD').replace(/\p{Diacritic}/gu,'').trim().replace(/\s+/g,' ').toLowerCase();
 const iso = v => v instanceof Date ? v.toISOString().slice(0,10) : String(v || '').slice(0,10);
 const dateOK = v => /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0,10) === v;
@@ -36,14 +39,37 @@ export function agruparAnuales(rows, locales) {
   return [...grupos.values()];
 }
 
+// Mismos pigmentos del panel, mezclados al 18 % sobre blanco.
+const PALETA = {uva:'#B98ECB',carne:'#E58B82',curado:'#DC9A66',mar:'#6FB9D8',huerta:'#8CC97C',pan:'#E0BB6A',hielo:'#93C2DD',despensa:'#C6B662',limpieza:'#71C7BB',envase:'#A3B2C6',menaje:'#B6A48A',marketing:'#D68CB0',gris:'#9AA08D'};
+export function categoriaSheets(pares=[]) {
+  const categorias=soloCategorias(pares), colores=[...new Set(categorias.map(colorCategoria))];
+  const hex=PALETA[colores.length===1?colores[0]:'gris'];
+  const rgb=[1,3,5].map(i=>1-(1-parseInt(hex.slice(i,i+2),16)/255)*.18);
+  return {texto:categorias.join(' · ')||'Sin categoría',fondo:{red:rgb[0],green:rgb[1],blue:rgb[2]}};
+}
+
 export function filaAnual(f, empresa) {
   for(const k of ['base_imponible','porcentaje_iva','cuota_iva','total']) if(f[k]!=null&&!Number.isFinite(Number(f[k]))) throw new Error(`Importe no válido en factura #${f.id}`);
   const pendiente = f.dup_estado === 'duda';
   const avisoFecha = !dateOK(iso(f.fecha)) ? 'Fecha pendiente de revisar' : Number(iso(f.fecha).slice(0,4)) > new Date().getFullYear() ? 'Fecha futura: revisar PDF' : '';
-  return [f.fecha??'',f.numero_factura??'',f.tipo??'',f.proveedor??'',f.nif??'',f.concepto??'',
+  return [f.fecha??'',f.numero_factura??'',f.tipo??'',f.proveedor??'',f.nif??'',categoriaSheets(f._categorias).texto,
     ...['base_imponible','porcentaje_iva','cuota_iva','total'].map(k=> f[k]==null ? '' : Number(f[k])),
     f.canal??'',f.drive_url??'',String(f.creado_en??''),f.local??'',empresa,String(f.id),
     pendiente ? 'Posible duplicado' : f._albaranContado ? `Albarán incluido en factura #${f.conciliado_con}` : 'Registrada',[f.revisar,avisoFecha].filter(Boolean).join(' · '),pendiente||f._albaranContado ? 'No' : 'Sí'];
+}
+export function filasAnuales(f,empresa) {
+  const original=filaAnual(f,empresa);
+  const v=validarIva(f.iva_desglose,f);
+  if(!v.ok || !['ok','manual'].includes(f.iva_estado)) {
+    if(f.tipo==='factura'||f.tipo==='ticket')original[17]=[original[17],f.iva_aviso||'Desglose de IVA pendiente de revisión'].filter(Boolean).join(' · ');
+    return [original];
+  }
+  return v.partes.map((p,i)=>{
+    const row=[...original];row[6]=p.base;row[7]=p.tipo;row[8]=p.cuota;
+    // El ID de cómputo y el total aparecen una sola vez, sin duplicar documentos en el resumen.
+    if(i<v.partes.length-1){row[9]='';row[15]='';}
+    return row;
+  });
 }
 const cell = v => ({userEnteredValue: typeof v === 'number' ? {numberValue:v} : {stringValue:String(v ?? '')}});
 const api = async (token,url,method='GET',body) => {
@@ -147,13 +173,14 @@ async function escribirLibro(token,id,g) {
   for(const [index,title] of [...nombres,'Resumen anual'].entries()) {
     let p=props.find(p=>p.title===title);
     if(!p) { p={sheetId:next++,title,gridProperties:{rowCount:1000,columnCount:HEADERS.length}}; requests.push({addSheet:{properties:p}}); }
+    const filasMes=g.rows.filter(f=>g.year==='Sin fecha'||f._mes===index+1);
     let values;
     if(title==='Resumen anual') {
       values=[[`Resumen · ${g.empresa} · ${g.year}`],['No suman los posibles duplicados ni los albaranes ya vinculados a una factura registrada. Se conservan todos los documentos.'],
         ['Mes','Documentos registrados','Base contabilizada (€)','IVA contabilizado (€)','Total contabilizado (€)','Documentos fuera del total'],
-        ...nombres.map(m=>[m,`=COUNTA('${m}'!P2:P)`,`=SUMIF('${m}'!S2:S,"Sí",'${m}'!G2:G)`,`=SUMIF('${m}'!S2:S,"Sí",'${m}'!I2:I)`,`=SUMIF('${m}'!S2:S,"Sí",'${m}'!J2:J)`,`=COUNTIF('${m}'!S2:S,"No")`]),
+        ...nombres.map(m=>[m,`=COUNTIF('${m}'!P2:P,"<>")`,`=SUMIF('${m}'!S2:S,"Sí",'${m}'!G2:G)`,`=SUMIF('${m}'!S2:S,"Sí",'${m}'!I2:I)`,`=SUMIF('${m}'!S2:S,"Sí",'${m}'!J2:J)`,`=COUNTIFS('${m}'!S2:S,"No",'${m}'!P2:P,"<>")`]),
         ['TOTAL',...['B','C','D','E','F'].map(c=>`=SUM(${c}4:${c}${3+nombres.length})`)]];
-    } else values=[HEADERS,...g.rows.filter(f=>g.year==='Sin fecha'||f._mes===index+1).map(f=>filaAnual(f,g.empresa))];
+    } else values=[HEADERS,...filasMes.flatMap(f=>filasAnuales(f,g.empresa))];
     datos.push({title,values});
     const rowCount=Math.max(p.gridProperties?.rowCount||1000,values.length+1);
     requests.push({updateSheetProperties:{properties:{sheetId:p.sheetId,index,gridProperties:{rowCount,columnCount:Math.max(HEADERS.length,p.gridProperties?.columnCount||0),frozenRowCount:title==='Resumen anual'?3:1}},fields:'index,gridProperties'}});
@@ -162,6 +189,9 @@ async function escribirLibro(token,id,g) {
     requests.push({repeatCell:{range:{sheetId:p.sheetId,startRowIndex:title==='Resumen anual'?2:0,endRowIndex:title==='Resumen anual'?3:1},cell:{userEnteredFormat:{backgroundColor:{red:.15,green:.29,blue:.25},textFormat:{bold:true,foregroundColor:{red:1,green:1,blue:1}},wrapStrategy:'WRAP'}},fields:'userEnteredFormat'}});
     requests.push({updateDimensionProperties:{range:{sheetId:p.sheetId,dimension:'COLUMNS',startIndex:0,endIndex:HEADERS.length},properties:{pixelSize:155},fields:'pixelSize'}});
     if(title!=='Resumen anual') {
+      // Limpia también el color de filas que ya no estén en este mes.
+      requests.push({updateCells:{range:{sheetId:p.sheetId,startRowIndex:1,endRowIndex:rowCount,startColumnIndex:5,endColumnIndex:6},rows:filasMes.flatMap(f=>filasAnuales(f,g.empresa).map(()=>({values:[{userEnteredFormat:{backgroundColor:categoriaSheets(f._categorias).fondo}}]}))),fields:'userEnteredFormat.backgroundColor'}});
+
       requests.push({setBasicFilter:{filter:{range:{sheetId:p.sheetId,startRowIndex:0,endRowIndex:Math.max(2,values.length),startColumnIndex:0,endColumnIndex:HEADERS.length}}}});
       for(const col of [6,8,9]) requests.push({repeatCell:{range:{sheetId:p.sheetId,startRowIndex:1,startColumnIndex:col,endColumnIndex:col+1},cell:{userEnteredFormat:{numberFormat:{type:'NUMBER',pattern:'#,##0.00'}}},fields:'userEnteredFormat.numberFormat'}});
     }
@@ -192,7 +222,8 @@ export async function sincronizarAnuales(deps, filtro=null) {
   return bloqueo(()=>conPlazoFactura(async()=>{
     const rows=await deps.dbAll('SELECT * FROM facturas ORDER BY id');
     const locales=await deps.dbAll('SELECT local, empresa, cif FROM facturas_locales');
-    const grupos=agruparAnuales(rows,locales);
+    const categorias=indiceCategorias(await deps.dbAll('SELECT prov_clave AS proveedor, categoria, subcategoria FROM facturas_proveedor_cats'));
+    const grupos=agruparAnuales(rows.map(f=>({...f,_categorias:categoriasDe(f.proveedor,categorias)})),locales);
     const token=await deps.getToken();
     if(!filtro) {
       const root=await deps.dbGet('SELECT value FROM config WHERE key = ?',['drive_facturas_root_id']);
@@ -215,7 +246,7 @@ export async function sincronizarAnuales(deps, filtro=null) {
       const libro=await escribirLibro(token,reg.id,g); libros.push(libro);
       await guardar(deps,g.key,{...reg,empresa:g.empresa,year:g.year,locales:g.locales,verificado_en:new Date().toISOString()});
       // No marca filas llegadas mientras Google trabajaba: sólo la instantánea verificada.
-      const keys=['fecha','numero_factura','tipo','proveedor','nif','concepto','base_imponible','porcentaje_iva','cuota_iva','total','canal','drive_url','local','empresa','dup_estado','revisar','conciliado_con'];
+      const keys=['fecha','numero_factura','tipo','proveedor','nif','concepto','base_imponible','porcentaje_iva','cuota_iva','total','canal','drive_url','local','empresa','dup_estado','revisar','conciliado_con','iva_desglose','iva_estado','iva_aviso'];
       for(const f of g.rows) await deps.dbRun(`UPDATE facturas SET sheet_id = ?, sheet_synced = 1 WHERE id = ? AND ROW(${keys.join(',')}) IS NOT DISTINCT FROM ROW(${keys.map(()=>'?').join(',')})`,[reg.id,f.id,...keys.map(k=>(k==='fecha'?f._fechaOriginal:f[k])??null)]);
     }
     const archivos=deps.trasVerificar ? await deps.trasVerificar() : {};

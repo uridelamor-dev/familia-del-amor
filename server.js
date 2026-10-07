@@ -1,3 +1,5 @@
+import {IVA_SCHEMA,validarIva,repasarIva} from './src/modules/facturas/iva.js';
+import {DRIVE_SYNC_SCHEMA,configurarBloqueoDrive} from './src/modules/facturas/drive-sync.js';
 import {periodoPago, aplicarPagosEmpresa, pagoPorEmpresa} from './src/modules/facturas/pago-empresa.js';
 import { configurarBloqueoSheets, planAnuales, avisoAnualesUnaVez } from "./src/modules/facturas/sheets-anuales.js";
 import { conocimientoCartas } from "./src/modules/messaging/sara-cartas-conocimiento.js";
@@ -40,7 +42,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
+import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, leerIvaOriginal, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -280,6 +282,7 @@ const REL = { ultimo: "lineas_ultimo_repaso", leidas: "lineas_ultimo_leidas",
 import { albaranCompatible, proponerConciliacion, resumenConciliacion, estadoConciliada } from "./src/modules/facturas/conciliacion.js";
 import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados.js";
 import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
+import { proveedoresUnibles, prepararUnion, resumenUnion, ejecutarUnion } from "./src/modules/facturas/unir-proveedores.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { nombresDeLaCasa, noEsProducto } from "./src/modules/facturas/no-es-producto.js";
@@ -351,6 +354,17 @@ async function dbRun(sql, params = []) {
   const result = await pool.query(toPositional(sql), params);
   return result.rows[0] || undefined;
 }
+configurarBloqueoDrive(async (id,fn) => {
+  const c=await pool.connect(); let adquirido=false;
+  try {
+    adquirido=(await c.query('SELECT pg_try_advisory_lock(70799136, $1::int) AS ok',[id])).rows[0].ok;
+    if(!adquirido) throw new Error('Archivo en sincronización; se reintentará');
+    return await fn();
+  } finally {
+    if(adquirido) await c.query('SELECT pg_advisory_unlock(70799136, $1::int)',[id]).catch(()=>{});
+    c.release();
+  }
+});
 configurarBloqueoSheets(async (fn) => {
   const c = await pool.connect();
   let ok = false;
@@ -1078,6 +1092,15 @@ async function initDB() {
             WHERE b.prov_clave = a.prov_clave AND b.categoria = a.categoria AND b.subcategoria <> '')`);
     } catch (e) { console.error("[DB] alter facturas_proveedor_cats:", e.message); }
 
+
+    // Actualiza los libros existentes una sola vez al desplegar esta proyección.
+    await client.query(`WITH nueva AS (
+      INSERT INTO config (key,value) VALUES ('facturas_sheets_categorias_v1','1')
+      ON CONFLICT(key) DO NOTHING RETURNING key
+    ) INSERT INTO config (key,value)
+      SELECT 'facturas_anuales_reintentar', clock_timestamp()::text FROM nueva
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
+
     // Nombres de proveedor corregidos a mano. «Viruta Bronco S.L.» es «Virutas Branco S.L.»:
     // la lectura se equivoca siempre igual, así que corregirlo una vez vale para las
     // siguientes. Se guarda por NIF y por clave del nombre; el NIF es lo que no cambia.
@@ -1641,7 +1664,11 @@ async function initDB() {
       )
     `);
 
+    await client.query(DRIVE_SYNC_SCHEMA);
+    await client.query(IVA_SCHEMA);
     await client.query("ALTER TABLE facturas_pendientes ADD COLUMN IF NOT EXISTS periodo_facturado TEXT");
+    await client.query("ALTER TABLE facturas_pendientes ADD COLUMN IF NOT EXISTS descartado_en TEXT");
+    await client.query("ALTER TABLE facturas_pendientes ADD COLUMN IF NOT EXISTS descartado_por TEXT");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS campanas_wa (
@@ -3085,8 +3112,19 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
       req.body.local = canon;
     }
     if(req.body.periodo_facturado && !/^\d{4}-(0[1-9]|1[0-2])$/.test(req.body.periodo_facturado)) return res.status(400).json({error:"Periodo no válido"});
+    if(!antes)return res.status(404).json({error:'Factura no encontrada'});
+    let ivaValidado;
+    if(req.body.iva_desglose!==undefined) {
+      ivaValidado=validarIva(req.body.iva_desglose,{...antes,...req.body});
+      if(!ivaValidado.ok)return res.status(400).json({error:ivaValidado.aviso});
+    }
     const sets = [], vals = [];
     for (const k of allowed) if (req.body[k] !== undefined) { sets.push(`${k} = ?`); vals.push(req.body[k] === "" ? null : req.body[k]); }
+    if(ivaValidado) {
+      sets.push('iva_desglose = ?', "iva_estado = 'manual'", 'iva_aviso = NULL');vals.push(JSON.stringify(ivaValidado.partes));
+    } else if(['base_imponible','cuota_iva','total'].some(k=>req.body[k]!==undefined && Number(req.body[k])!==Number(antes[k]))) {
+      sets.push("iva_estado = 'revisar'", "iva_aviso = 'Importes modificados: revisa el desglose de IVA.'");
+    }
     if (!sets.length) return res.json({ ok: true });
     if(req.body.pagado !== undefined) sets.push("pago_origen='manual'", "pago_automatico=0");
     if(req.body.periodo_facturado !== undefined) sets.push("periodo_origen='manual'");
@@ -3099,7 +3137,7 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     (async () => {
       try {
         const deps = { getToken: getDriveAccessToken, dbGet, dbAll, dbRun };
-        if(despues)await reubicarEnDrive({factura:despues,getToken:getDriveAccessToken,dbGet});
+        if(despues)await reubicarEnDrive({factura:despues,getToken:getDriveAccessToken,dbGet,dbRun});
         if (antes && antes.local && antes.fecha) await resincronizarSheetsFactura(deps, antes.local, antes.fecha);
         if (despues && despues.local && despues.fecha && (despues.local !== antes?.local || despues.fecha !== antes?.fecha)) await resincronizarSheetsFactura(deps, despues.local, despues.fecha);
       } catch (e) { console.error("[PATCH factura] resync:", e.message); }
@@ -3135,7 +3173,7 @@ app.post("/api/facturas/:id/fecha", requireAuth(["direccion", "contabilidad"]), 
       venc = calcularVencimiento({ fecha, vencimientoLeido: null,
         condiciones: await condicionesDePago(dbGet, f.proveedor, f.empresa) });
     }
-    await dbRun(`UPDATE facturas SET fecha = ?, vencimiento = ?, vencimiento_origen = ? WHERE id = ?`,
+    await dbRun(`UPDATE facturas SET fecha = ?, vencimiento = ?, vencimiento_origen = ?, sheet_synced = 0 WHERE id = ?`,
       [fecha, venc.vencimiento, venc.origen, f.id]);
     await ficAuditar('facturas',f.id,'fecha_corregida',req.user.nombre||req.user.username,{local:f.local,detalle:{antes:f.fecha,despues:fecha}});
     // El aviso de la fecha deja de tener sentido en cuanto alguien la decide a mano.
@@ -3149,7 +3187,7 @@ app.post("/api/facturas/:id/fecha", requireAuth(["direccion", "contabilidad"]), 
     // 2, 3 y 4: el papel y las hojas, en segundo plano y sin poder tumbar lo anterior.
     (async () => {
       try {
-        const r = await reubicarEnDrive({ factura: { ...f, fecha }, getToken: getDriveAccessToken, dbGet });
+        const r = await reubicarEnDrive({ factura: { ...f, fecha }, getToken: getDriveAccessToken, dbGet, dbRun });
         if (!r.movido && r.motivo && r.motivo !== "ya estaba en su sitio") console.warn(`[facturas] #${f.id} no se pudo mover en Drive: ${r.motivo}`);
         const deps = { getToken: getDriveAccessToken, dbGet, dbAll, dbRun };
         if (f.local && f.fecha) await resincronizarSheetsFactura(deps, f.local, f.fecha);   // el mes viejo
@@ -3262,7 +3300,7 @@ app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad", "encar
       let result;
       if (local) result = await procesarFactura({ buffer, mimeType: "application/pdf", filename: nombre, local, canal: "Manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
       else result = await procesarFacturaSinLocal({ buffer, mimeType: "application/pdf", filename: nombre, origen: "manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
-      const r = { filename: nombre, paginas: archivos.length, ok: true, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl };
+      const r = { filename: nombre, paginas: archivos.length, ok: true, descartado: !!result.descartado, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl };
       return res.json({ ok: true, total: 1, correctas: 1, resultados: [r] });
     } catch (e) {
       const r = e && e.isDuplicate
@@ -3284,7 +3322,7 @@ app.post("/api/facturas/subir", requireAuth(["direccion", "contabilidad", "encar
       let result;
       if (local) result = await procesarFactura({ buffer, mimeType: mimetype, filename: originalname, local, canal: "Manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
       else result = await procesarFacturaSinLocal({ buffer, mimeType: mimetype, filename: originalname, origen: "manual", getToken: getDriveAccessToken, dbGet, dbAll, dbRun });
-      resultados.push({ filename: originalname, ok: true, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl });
+      resultados.push({ filename: originalname, ok: true, descartado: !!result.descartado, pendiente: !!result.pendiente, proveedor: result.datos && result.datos.proveedor, total: result.datos && result.datos.total, empresa: result.empresa, driveUrl: result.driveUrl });
     } catch (e) {
       if (e && e.isDuplicate) resultados.push({ filename: originalname, ok: false, duplicate: true, error: e.message || "Esta factura ya está registrada" });
       else if (e.recibido) resultados.push({ filename:originalname, ok:true, recibido:true, recepcionId:e.recepcionId });
@@ -3454,8 +3492,8 @@ app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]),
     const filtro = ambitos.length ? "AND local = ANY(?::text[])" : "";
     const params = ambitos.length ? [ambitos] : [];
     const filas = await dbAll(`SELECT id,canal,local,nombre,estado,intentos,error,creado,original IS NOT NULL AS tiene_original FROM facturas_recepciones
-      WHERE estado NOT IN ('registrado','duplicado') ${filtro} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
-    const conteo = await dbGet(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE estado='error') AS errores FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado') ${filtro}`,params);
+      WHERE estado NOT IN ('registrado','duplicado','descartado') ${filtro} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
+    const conteo = await dbGet(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE estado='error') AS errores FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado','descartado') ${filtro}`,params);
     res.json({ok:true,data:filas.slice(0,50),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
   } catch(e) { next(e); }
 });
@@ -3481,7 +3519,7 @@ app.post("/api/facturas/recepciones/:id/reintentar", requireAuth(["direccion", "
 });
 
 app.get("/api/facturas/pendientes", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
-  const rows = await dbAll("SELECT * FROM facturas_pendientes ORDER BY creado_en DESC", []);
+  const rows = await dbAll("SELECT * FROM facturas_pendientes WHERE descartado_en IS NULL ORDER BY creado_en DESC", []);
   // Enriquecer cada pendiente con una sugerencia de local (para preseleccionar en el panel).
   let locales = [], historial = {};
   try {
@@ -3490,6 +3528,16 @@ app.get("/api/facturas/pendientes", requireAuth(["direccion", "contabilidad"]), 
   } catch (e) { console.error("[pendientes] sugerencia:", e.message); }
   const data = rows.map((p) => ({ ...p, sugerido: sugerirLocalPendiente({ pendiente: p, locales, historial }) }));
   res.json({ ok: true, data });
+});
+
+// Descartar es reversible: conserva registro y original, retirándolo de la bandeja.
+app.post("/api/facturas/pendientes/:id/descartar", requireAuth(["direccion", "contabilidad"]), async (req,res) => {
+  try {
+    const p = await dbGet("SELECT id FROM facturas_pendientes WHERE id = ?", [req.params.id]);
+    if (!p) return res.status(404).json({ok:false,error:"Documento no encontrado"});
+    await dbRun("UPDATE facturas_pendientes SET descartado_en = ?, descartado_por = ? WHERE id = ? AND descartado_en IS NULL", [new Date().toISOString(),req.user.username || req.user.nombre || 'usuario',p.id]);
+    res.json({ok:true});
+  } catch { res.status(500).json({ok:false,error:"No se pudo descartar el documento"}); }
 });
 
 // Vista previa del archivo pendiente SIN salir del panel: hacemos de proxy del fichero de
@@ -3665,7 +3713,7 @@ app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), asy
     local = suyos[0].local;
   }
   if (!local) return res.status(400).json({ ok: false, error: "Falta local" });
-  const pendienteBD = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ?", [req.params.id]);
+  const pendienteBD = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ? AND descartado_en IS NULL", [req.params.id]);
   if (!pendienteBD) return res.status(404).json({ ok: false, error: "No encontrado" });
   // Si el usuario corrigió datos en el modal, se aplican antes de asignar (van a BD y Sheet).
   const pendiente = mergePendienteEditado(pendienteBD, req.body || {});
@@ -3689,7 +3737,7 @@ app.post("/api/facturas/pendientes/fusionar", requireAuth(["direccion"]), async 
   try {
     const pendientes = [];
     for (const id of ids) {
-      const p = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ?", [id]);
+      const p = await dbGet("SELECT * FROM facturas_pendientes WHERE id = ? AND descartado_en IS NULL", [id]);
       if (!p) return res.status(404).json({ ok: false, error: `Pendiente #${id} no encontrado` });
       if (!p.drive_file_id) return res.status(400).json({ ok: false, error: `Pendiente #${id} no tiene archivo en Drive` });
       pendientes.push(p);
@@ -6063,6 +6111,31 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
   }
 });
 
+// Unión explícita de proveedores: revisión previa y confirmación sobre la misma versión.
+app.get('/api/facturas/proveedores-unir', requireAuth(['direccion','contabilidad']), async(req,res)=>{
+ try {res.json({ok:true,proveedores:await proveedoresUnibles((s,p)=>pool.query(s,p))});}
+ catch(e){res.status(500).json({error:'No se pudo cargar la lista de proveedores'});}
+});
+app.post('/api/facturas/proveedores-unir/preview', requireAuth(['direccion','contabilidad']), async(req,res)=>{
+ const client=await pool.connect();
+ try {
+  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+  const plan=await prepararUnion((s,p)=>client.query(s,p),req.body.origen,req.body.destino);
+  await client.query('COMMIT');res.json({ok:true,...resumenUnion(plan)});
+ }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message});}
+ finally{client.release();}
+});
+app.post('/api/facturas/proveedores-unir', requireAuth(['direccion','contabilidad']), async(req,res)=>{
+ const client=await pool.connect();
+ try {
+  await client.query('BEGIN');
+  await client.query("SET LOCAL lock_timeout='5s'");
+  const result=await ejecutarUnion((s,p)=>client.query(s,p),req.body,req.user.username||req.user.nombre);
+  await client.query('COMMIT');res.json({ok:true,...result});
+ }catch(e){await client.query('ROLLBACK');res.status(409).json({error:e.message});}
+ finally{client.release();}
+});
+
 // La versión evita sobrescribir una ficha que otra persona acaba de editar.
 app.get("/api/facturas/proveedor-ficha", requireAuth(["direccion","contabilidad"]), async(req,res)=>{
  try {
@@ -6676,6 +6749,9 @@ app.put("/api/facturas/categorias", requireAuth(["direccion", "contabilidad"]), 
                ON CONFLICT (prov_clave, categoria, subcategoria) DO NOTHING`,
         [clave, proveedor, par.categoria, par.subcategoria, isoConOffset(Date.now())]);
     }
+    // La cola reescribe también los documentos anteriores; se confirma junto a la categoría.
+    await q("INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      ['facturas_anuales_reintentar', Date.now()+':'+Math.random().toString(36).slice(2)]);
     await client.query("COMMIT");
     res.json({ ok: true, proveedor, categorias: pares });
   } catch (e) {
@@ -25435,6 +25511,10 @@ const server = app.listen(PORT, async () => {
         backupFn: null
       });
 
+      if(result.descartado) {
+        await sendMensajeAGrupo(groupJid,'Documento omitido: es una imagen corporativa o firma sin información de compra.');
+        return;
+      }
       const { datos, driveUrl, sheetUrl } = result;
       const tipoLabel = datos.tipo === "albaran" ? "Albarán" : datos.tipo === "ticket" ? "Ticket" : "Factura";
       const totalStr = datos.total != null ? `${Number(datos.total).toFixed(2)} €` : "importe no detectado";
@@ -25490,6 +25570,13 @@ const server = app.listen(PORT, async () => {
   setInterval(()=>actualizarPagosEmpresa().catch(e=>console.error('[Facturas] pagos por empresa:',e.message)),60*1000);
   setTimeout(reintentarSheets, 90 * 1000);
   setInterval(reintentarSheets, 10 * 60 * 1000);
+  const repasarIvaHistorico=async()=>{
+    if(!(await getConfig('google_drive_refresh_token')))return;
+    await repasarIva({dbAll,dbRun},f=>leerIvaOriginal(f,getDriveAccessToken));
+  };
+  setTimeout(()=>repasarIvaHistorico().catch(console.error),120000);
+  setInterval(()=>repasarIvaHistorico().catch(console.error),5*60*1000);
+
 
   // ── El detalle que se quedó sin leer, repasado solo ──────────────────────
   // Se PREGUNTA cada media hora y solo actúa si han pasado las horas del repaso. Poner aquí un

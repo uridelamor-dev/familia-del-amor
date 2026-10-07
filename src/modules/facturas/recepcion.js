@@ -33,13 +33,13 @@ export function crearRecepcion({db, lock, procesar, existeDestino, ahora = () =>
           await db.run('UPDATE facturas_recepciones SET original=NULL WHERE id=?',[id]);
         }
       }
-      if (f.estado === 'registrado') return f.resultado;
+      if (f.estado === 'registrado' || f.estado === 'descartado') return f.resultado;
       if (f.estado === 'duplicado') { const e = new Error('Este documento ya está registrado'); e.isDuplicate = true; throw e; }
       if (f.estado === 'error' || new Date(f.proximo) > ahora()) throw errorRecibido(id);
       await db.run(`UPDATE facturas_recepciones SET estado='leyendo', intentos=intentos+1, actualizado=NOW() WHERE id=?`, [id]);
       try {
         const r = await conPlazoFactura(() => procesar({buffer:f.original,mimeType:f.mime,filename:f.nombre,local:f.local,canal:f.canal,origen:f.canal}));
-        await db.run(`UPDATE facturas_recepciones SET estado='registrado', resultado=?::jsonb, original=NULL, error=NULL, actualizado=NOW() WHERE id=?`, [JSON.stringify(r),id]);
+        await db.run(`UPDATE facturas_recepciones SET estado=?, resultado=?::jsonb, original=NULL, error=NULL, actualizado=NOW() WHERE id=?`, [r?.descartado ? 'descartado' : 'registrado',JSON.stringify(r),id]);
         return r;
       } catch(e) {
         if (e.isDuplicate) {

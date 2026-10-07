@@ -1817,3 +1817,23 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 .fac-nav-actions{display:flex;align-items:center;flex-wrap:wrap;gap:14px 36px;margin-bottom:16px}.fac-nav-actions>.toolbar{margin:0}.fac-file-actions{display:flex;gap:10px;margin-left:auto;flex-shrink:0}#pagosRes>.grid{margin:16px 0}@media(max-width:600px){#pagosRes>.grid.g3{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .prev-dia{margin-bottom:12px}.prev-dia>summary{gap:18px}.prev-dia-total{display:flex;align-items:center;gap:12px;margin-left:auto}.prev-dia-total>b{font-size:22px;white-space:nowrap}.prev-proveedores{padding-top:12px}.prev-proveedores>.card{box-shadow:none;background:var(--surface2)}.prev-resumen{margin:12px 0 18px}@media(max-width:600px){.prev-dia-total{flex-wrap:wrap;justify-content:flex-end;gap:5px 10px}.prev-dia-total>.t2{flex-basis:100%;text-align:right}.prev-dia-total>b{font-size:19px}}
+
+/* Campos que necesitan revisión, sin bloquear la edición del formulario. */
+.fac-revision-summary{font-size:13px;line-height:1.5;margin:0 0 16px;color:var(--mut)}
+.fac-revision-field>label{color:var(--danger)}
+.fac-revision-field input,.fac-revision-field select{border-color:color-mix(in srgb,var(--danger) 65%,var(--border,#ddd));box-shadow:none}
+.fac-revision-note{font-size:12px;line-height:1.45;margin:7px 0 0;color:var(--danger)}
+
+/* El desglose fiscal se adapta al ancho disponible de la ficha. */
+[data-iva-editor]{min-width:0;width:100%;margin-top:12px}
+[data-iva-editor] .form-grid{grid-template-columns:repeat(auto-fit,minmax(100px,1fr));padding:10px 0;border-bottom:1px solid var(--border)}
+[data-iva-editor] .field{min-width:0}
+[data-iva-editor] input{width:100%;min-width:0;box-sizing:border-box}
+@media(max-width:700px){.ficha{grid-template-columns:minmax(0,1fr)}.ficha .fic-datos{display:block;min-width:0}.ficha .fic-doc{max-width:100%;position:static}.ficha .fic-ph{max-height:220px;aspect-ratio:auto;min-height:140px}}
+
+/* Unión de proveedores: etiqueta y selector separados, también en móvil. */
+.prov-union-field{margin:20px 0 8px}
+.prov-union-field label{display:block;font-size:12px;line-height:1.5;color:var(--ink2);font-weight:600}
+.prov-union-field select{display:block;width:100%;min-width:0;max-width:100%;box-sizing:border-box;margin-top:8px;min-height:46px;padding:11px 36px 11px 14px;border-radius:13px;font-size:14px;font-weight:400;box-shadow:none;text-overflow:ellipsis}
+.prov-union-field details{margin-top:10px}
+.prov-union-field input[type="checkbox"]{width:auto;margin-right:8px;vertical-align:middle}
