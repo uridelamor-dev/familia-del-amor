@@ -1,3 +1,5 @@
+import { rutasTienda } from "./src/modules/tienda/rutas.js";
+import { tiendaDemoPersistente } from "./src/modules/tienda/preparar.js";
 import {normalizarCentroBlanes} from "./src/modules/facturas/centro-blanes.js";
 import {IVA_SCHEMA,validarIva,repasarIva} from './src/modules/facturas/iva.js';
 import {DRIVE_SYNC_SCHEMA,configurarBloqueoDrive} from './src/modules/facturas/drive-sync.js';
@@ -557,8 +559,16 @@ app.use("/api/wallet/apple/v1", (err, req, res, next) => {
 });
 
 app.use(comprimir());
+app.use("/api/tienda", express.json({limit:"2mb"}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+// Presentación de tienda: datos propios, modo demo, sin cobros ni envíos.
+if (process.env.TIENDA_ENABLED !== "false") {
+  app.use("/api/tienda", rutasTienda({store:tiendaDemoPersistente(pool),auth:requireAuth(["direccion","marketing","contabilidad"]),root:__dirname,demo:true}));
+} else {
+  app.get("/api/tienda/status", (req,res)=>res.json({active:false}));
+  app.use("/api/tienda", (req,res)=>res.status(404).json({error:"Tienda no habilitada"}));
+}
 app.use(express.static(path.join(__dirname, "public"), {
   // Las fotos y los PDF de `uploads/` llevan el id en el nombre y no cambian nunca: se pueden
   // guardar un año sin volver a preguntar. El HTML/JS/CSS sí cambia en cada despliegue, así que

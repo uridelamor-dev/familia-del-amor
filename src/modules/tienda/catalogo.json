@@ -1,0 +1,1382 @@
+[
+  {
+    "id": "p01",
+    "category": "jamones",
+    "name": {
+      "es": "Paletilla Duroc",
+      "ca": "Espatlla Duroc"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 5990,
+    "costCents": 4193,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 1,
+    "alcohol": false,
+    "wholeHam": true,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p02",
+    "category": "jamones",
+    "name": {
+      "es": "Jamón Duroc",
+      "ca": "Pernil Duroc"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 9990,
+    "costCents": 6993,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 2,
+    "alcohol": false,
+    "wholeHam": true,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p03",
+    "category": "jamones",
+    "name": {
+      "es": "Paletilla ibérica de cebo",
+      "ca": "Espatlla ibèrica d’engreix"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 8990,
+    "costCents": 6293,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 3,
+    "alcohol": false,
+    "wholeHam": true,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p04",
+    "category": "jamones",
+    "name": {
+      "es": "Jamón ibérico de cebo",
+      "ca": "Pernil ibèric d’engreix"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 16990,
+    "costCents": 11893,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 4,
+    "alcohol": false,
+    "wholeHam": true,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p05",
+    "category": "jamones",
+    "name": {
+      "es": "Paletilla ibérica de cebo de campo",
+      "ca": "Espatlla ibèrica d’engreix de camp"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 11990,
+    "costCents": 8393,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 5,
+    "alcohol": false,
+    "wholeHam": true,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p06",
+    "category": "jamones",
+    "name": {
+      "es": "Jamón ibérico de cebo de campo",
+      "ca": "Pernil ibèric d’engreix de camp"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 21990,
+    "costCents": 15393,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 6,
+    "alcohol": false,
+    "wholeHam": true,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p07",
+    "category": "jamones",
+    "name": {
+      "es": "Paletilla ibérica de bellota 100%",
+      "ca": "Espatlla ibèrica de gla 100%"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 19990,
+    "costCents": 13993,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 7,
+    "alcohol": false,
+    "wholeHam": true,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p08",
+    "category": "jamones",
+    "name": {
+      "es": "Jamón ibérico de bellota 100%",
+      "ca": "Pernil ibèric de gla 100%"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 39990,
+    "costCents": 27993,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 8,
+    "alcohol": false,
+    "wholeHam": true,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p09",
+    "category": "embutidos",
+    "name": {
+      "es": "Fuet artesano",
+      "ca": "Fuet artesà"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 450,
+    "costCents": 315,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 9,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p10",
+    "category": "embutidos",
+    "name": {
+      "es": "Chorizo Duroc",
+      "ca": "Xoriço Duroc"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 690,
+    "costCents": 483,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 10,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p11",
+    "category": "embutidos",
+    "name": {
+      "es": "Salchichón Duroc",
+      "ca": "Llonganissa Duroc"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 690,
+    "costCents": 483,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 11,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p12",
+    "category": "embutidos",
+    "name": {
+      "es": "Chorizo ibérico de cebo",
+      "ca": "Xoriço ibèric d’engreix"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 990,
+    "costCents": 693,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 12,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p13",
+    "category": "embutidos",
+    "name": {
+      "es": "Salchichón ibérico de cebo",
+      "ca": "Llonganissa ibèrica d’engreix"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 990,
+    "costCents": 693,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 13,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p14",
+    "category": "embutidos",
+    "name": {
+      "es": "Lomo embuchado Duroc",
+      "ca": "Llom embotit Duroc"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1490,
+    "costCents": 1043,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 14,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p15",
+    "category": "embutidos",
+    "name": {
+      "es": "Lomo ibérico de cebo",
+      "ca": "Llom ibèric d’engreix"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 2990,
+    "costCents": 2093,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 15,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p16",
+    "category": "embutidos",
+    "name": {
+      "es": "Chorizo ibérico de bellota",
+      "ca": "Xoriço ibèric de gla"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 2490,
+    "costCents": 1743,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 16,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p17",
+    "category": "embutidos",
+    "name": {
+      "es": "Lomo ibérico de bellota",
+      "ca": "Llom ibèric de gla"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 5490,
+    "costCents": 3843,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 17,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p18",
+    "category": "quesos",
+    "name": {
+      "es": "Cuña de queso semicurado",
+      "ca": "Tascó de formatge semicurat"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 590,
+    "costCents": 413,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 18,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p19",
+    "category": "quesos",
+    "name": {
+      "es": "Cuña de queso curado",
+      "ca": "Tascó de formatge curat"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 790,
+    "costCents": 553,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 19,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p20",
+    "category": "quesos",
+    "name": {
+      "es": "Queso de oveja artesano 250 g",
+      "ca": "Formatge d’ovella artesà 250 g"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 990,
+    "costCents": 693,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 20,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p21",
+    "category": "quesos",
+    "name": {
+      "es": "Queso manchego curado 500 g",
+      "ca": "Formatge manxec curat 500 g"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1790,
+    "costCents": 1253,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 21,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p22",
+    "category": "quesos",
+    "name": {
+      "es": "Queso de cabra artesano",
+      "ca": "Formatge de cabra artesà"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1490,
+    "costCents": 1043,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 22,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p23",
+    "category": "quesos",
+    "name": {
+      "es": "Queso de oveja reserva entero",
+      "ca": "Formatge d’ovella reserva sencer"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 4990,
+    "costCents": 3493,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 23,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p24",
+    "category": "quesos",
+    "name": {
+      "es": "Queso añejo premium entero",
+      "ca": "Formatge anyenc prèmium sencer"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 7490,
+    "costCents": 5243,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 24,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p25",
+    "category": "vinos",
+    "name": {
+      "es": "Vino tinto joven",
+      "ca": "Vi negre jove"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 500,
+    "costCents": 350,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 25,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p26",
+    "category": "vinos",
+    "name": {
+      "es": "Vino blanco joven",
+      "ca": "Vi blanc jove"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 590,
+    "costCents": 413,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 26,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p27",
+    "category": "vinos",
+    "name": {
+      "es": "Vino rosado",
+      "ca": "Vi rosat"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 650,
+    "costCents": 455,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 27,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p28",
+    "category": "vinos",
+    "name": {
+      "es": "Vino blanco verdejo",
+      "ca": "Vi blanc verdejo"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 790,
+    "costCents": 553,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 28,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p29",
+    "category": "vinos",
+    "name": {
+      "es": "Vino tinto crianza Rioja",
+      "ca": "Vi negre criança Rioja"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 990,
+    "costCents": 693,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 29,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p30",
+    "category": "vinos",
+    "name": {
+      "es": "Vino tinto crianza Ribera del Duero",
+      "ca": "Vi negre criança Ribera del Duero"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1290,
+    "costCents": 903,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 30,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p31",
+    "category": "vinos",
+    "name": {
+      "es": "Vino blanco Albariño",
+      "ca": "Vi blanc Albariño"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1490,
+    "costCents": 1043,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 31,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p32",
+    "category": "vinos",
+    "name": {
+      "es": "Vino tinto reserva Rioja",
+      "ca": "Vi negre reserva Rioja"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1790,
+    "costCents": 1253,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 32,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p33",
+    "category": "vinos",
+    "name": {
+      "es": "Vino tinto Priorat",
+      "ca": "Vi negre Priorat"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 2490,
+    "costCents": 1743,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 33,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p34",
+    "category": "vinos",
+    "name": {
+      "es": "Vino tinto reserva premium",
+      "ca": "Vi negre reserva prèmium"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 2990,
+    "costCents": 2093,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 34,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p35",
+    "category": "vinos",
+    "name": {
+      "es": "Vino tinto gran reserva",
+      "ca": "Vi negre gran reserva"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 3990,
+    "costCents": 2793,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 35,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p36",
+    "category": "vinos",
+    "name": {
+      "es": "Vino tinto selección especial",
+      "ca": "Vi negre selecció especial"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 5000,
+    "costCents": 3500,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 36,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p37",
+    "category": "cavas",
+    "name": {
+      "es": "Cava brut",
+      "ca": "Cava brut"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 790,
+    "costCents": 553,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 37,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p38",
+    "category": "cavas",
+    "name": {
+      "es": "Cava brut nature reserva",
+      "ca": "Cava brut nature reserva"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1290,
+    "costCents": 903,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 38,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p39",
+    "category": "cavas",
+    "name": {
+      "es": "Cava rosado premium",
+      "ca": "Cava rosat prèmium"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1990,
+    "costCents": 1393,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 39,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p40",
+    "category": "cavas",
+    "name": {
+      "es": "Cava gran reserva",
+      "ca": "Cava gran reserva"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 3490,
+    "costCents": 2443,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 40,
+    "alcohol": true,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p41",
+    "category": "conservas",
+    "name": {
+      "es": "Mejillones en escabeche",
+      "ca": "Musclos en escabetx"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 490,
+    "costCents": 343,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 41,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p42",
+    "category": "conservas",
+    "name": {
+      "es": "Sardinillas en aceite de oliva",
+      "ca": "Sardinelles en oli d’oliva"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 590,
+    "costCents": 413,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 42,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p43",
+    "category": "conservas",
+    "name": {
+      "es": "Bonito del norte",
+      "ca": "Bonítol del nord"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 790,
+    "costCents": 553,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 43,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p44",
+    "category": "conservas",
+    "name": {
+      "es": "Anchoas del Cantábrico",
+      "ca": "Anxoves del Cantàbric"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1290,
+    "costCents": 903,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 44,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p45",
+    "category": "conservas",
+    "name": {
+      "es": "Berberechos al natural",
+      "ca": "Escopinyes al natural"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1490,
+    "costCents": 1043,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 45,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p46",
+    "category": "conservas",
+    "name": {
+      "es": "Navajas al natural",
+      "ca": "Navalles al natural"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1390,
+    "costCents": 973,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 46,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p47",
+    "category": "conservas",
+    "name": {
+      "es": "Ventresca de bonito premium",
+      "ca": "Ventresca de bonítol prèmium"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1690,
+    "costCents": 1183,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 47,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p48",
+    "category": "conservas",
+    "name": {
+      "es": "Conserva de marisco selección premium",
+      "ca": "Conserva de marisc selecció prèmium"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 2490,
+    "costCents": 1743,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 48,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p49",
+    "category": "dulces",
+    "name": {
+      "es": "Neules tradicionales",
+      "ca": "Neules tradicionals"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 450,
+    "costCents": 315,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 49,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p50",
+    "category": "dulces",
+    "name": {
+      "es": "Neules bañadas en chocolate",
+      "ca": "Neules banyades en xocolata"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 690,
+    "costCents": 483,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 50,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p51",
+    "category": "dulces",
+    "name": {
+      "es": "Turrón de chocolate crujiente",
+      "ca": "Torró de xocolata cruixent"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 590,
+    "costCents": 413,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 51,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p52",
+    "category": "dulces",
+    "name": {
+      "es": "Turrón de Jijona",
+      "ca": "Torró de Xixona"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 790,
+    "costCents": 553,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 52,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p53",
+    "category": "dulces",
+    "name": {
+      "es": "Turrón de Alicante",
+      "ca": "Torró d’Alacant"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 790,
+    "costCents": 553,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 53,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p54",
+    "category": "dulces",
+    "name": {
+      "es": "Turrón de yema tostada",
+      "ca": "Torró de crema cremada"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 890,
+    "costCents": 623,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 54,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p55",
+    "category": "dulces",
+    "name": {
+      "es": "Turrón artesano premium",
+      "ca": "Torró artesà prèmium"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1490,
+    "costCents": 1043,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 55,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p56",
+    "category": "dulces",
+    "name": {
+      "es": "Surtido de turrones artesanos",
+      "ca": "Assortiment de torrons artesans"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1790,
+    "costCents": 1253,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 56,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p57",
+    "category": "gourmet",
+    "name": {
+      "es": "Aceitunas gourmet",
+      "ca": "Olives gurmet"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 390,
+    "costCents": 273,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 57,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p58",
+    "category": "gourmet",
+    "name": {
+      "es": "Paté artesano",
+      "ca": "Paté artesà"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 590,
+    "costCents": 413,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 58,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p59",
+    "category": "gourmet",
+    "name": {
+      "es": "Aceite de oliva virgen extra 500 ml",
+      "ca": "Oli d’oliva verge extra 500 ml"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 1290,
+    "costCents": 903,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 59,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  },
+  {
+    "id": "p60",
+    "category": "gourmet",
+    "name": {
+      "es": "Foie mi-cuit",
+      "ca": "Foie mi-cuit"
+    },
+    "description": {
+      "es": "Selección de demostración. Formato y características pendientes de confirmar.",
+      "ca": "Selecció de demostració. Format i característiques pendents de confirmar."
+    },
+    "priceCents": 2490,
+    "costCents": 1743,
+    "costEstimated": true,
+    "taxBps": null,
+    "visible": true,
+    "sort": 60,
+    "alcohol": false,
+    "wholeHam": false,
+    "images": [],
+    "format": null,
+    "weight": null
+  }
+]

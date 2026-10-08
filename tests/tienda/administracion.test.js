@@ -1,0 +1,13 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {estadoDemo} from '../../src/modules/tienda/preparar.js';
+import {editarArticulo,valorar,crear} from '../../src/modules/tienda/servicio.js';
+import {publico} from '../../src/modules/tienda/calculo.js';
+import {excelDocumentos} from '../../src/modules/tienda/exportar.js';
+import fs from 'node:fs/promises';
+const u={id:1,rol:'direccion'};
+const request=()=>({lineas:[{id:'p09',unidades:1},{id:'box-kraft',unidades:1}],lotes:1,deliveryId:'recogida-demo',key:crypto.randomUUID(),contact:{name:'Prueba',email:'demo@example.invalid'},accepted:true,lang:'ca'});
+test('Formato y coste confirmado se editan desde administración',()=>{const s=estadoDemo();editarArticulo(s,u,'p09',{format:{es:'Pieza 250 g',ca:'Peça 250 g'},costCents:200,costEstimated:false});assert.equal(s.catalog.find(p=>p.id==='p09').format.ca,'Peça 250 g');assert.equal(s.catalog.find(p=>p.id==='p09').costEstimated,false);});
+test('Mínimo 30% considera preparación y descuento, sin filtrar costes al público',()=>{const s=estadoDemo();s.config.preparationCostCents=100;s.catalog.forEach(p=>{p.costEstimated=false;p.costCents=100;});let q=valorar(s,request());assert.equal(q.marginCheck.ok,true);assert.equal(publico(q).marginCheck,undefined);s.config.preparationCostCents=900;q=valorar(s,request());assert.equal(q.marginCheck.ok,false);s.config.demo=false;s.config.operationalApproved=true;assert.throws(()=>crear(s,request()),/30%/);});
+test('Costes provisionales nunca se validan para una venta real',()=>{const s=estadoDemo();s.config.demo=false;s.config.operationalApproved=true;assert.throws(()=>crear(s,request()),/30%/);});
+test('Personalización pendiente no solicita transferencia',()=>{const s=estadoDemo();const r=crear(s,{...request(),notes:'Añadir logotipo'});assert.equal(r.payment,'pendiente_valoracion');assert.equal(r.bank,null);});
+test('Excel conserva texto como texto y produce un archivo ZIP XLSX',async()=>{const s=estadoDemo();crear(s,{...request(),contact:{name:'=1+1',email:'demo@example.invalid'}});const b=excelDocumentos(s.orders);assert.equal(b.readUInt32LE(),0x04034b50);assert.ok(b.includes(Buffer.from('inlineStr')));assert.ok(b.includes(Buffer.from('=1+1')));await fs.writeFile('/tmp/tienda-export-test.xlsx',b);});

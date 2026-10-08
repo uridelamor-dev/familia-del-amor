@@ -7,3 +7,6 @@ latapeta.db
 .wwebjs_auth/
 .wwebjs_cache/
 auth_info_baileys/
+
+# Datos privados de la demo de tienda
+.tienda-demo/

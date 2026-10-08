@@ -1,0 +1,12 @@
+import {crearZip} from './zip-xlsx.js';
+const xml=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
+export function excelDocumentos(docs){
+ const rows=[['Referencia','Fecha','Empresa','Cliente','Email','Lotes','Base EUR','IVA EUR','Total EUR','Pago','Estado','Preparación','Observaciones'],...docs.map(d=>[d.reference,d.createdAt,d.contact.company,d.contact.name,d.contact.email,d.snapshot.lotes,d.snapshot.baseCents/100,d.snapshot.taxCents==null?'Pendiente':d.snapshot.taxCents/100,d.snapshot.totalCents==null?'Pendiente':d.snapshot.totalCents/100,d.payment,d.status,d.logistics,d.notes])];
+ const sheet='<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'+rows.map((row,i)=>`<row r="${i+1}">${row.map((v,j)=>{const ref=String.fromCharCode(65+j)+(i+1);return typeof v==='number'?`<c r="${ref}"><v>${v}</v></c>`:`<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xml(v)}</t></is></c>`;}).join('')}</row>`).join('')+'</sheetData></worksheet>';
+ return crearZip([
+ {nombre:'[Content_Types].xml',datos:'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'},
+ {nombre:'_rels/.rels',datos:'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'},
+ {nombre:'xl/workbook.xml',datos:'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Lotes" sheetId="1" r:id="rId1"/></sheets></workbook>'},
+ {nombre:'xl/_rels/workbook.xml.rels',datos:'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'},
+ {nombre:'xl/worksheets/sheet1.xml',datos:sheet}]);
+}

@@ -1,0 +1,17 @@
+// Servidor local de demostración. Nunca importa server.js ni abre PostgreSQL/WhatsApp.
+import express from 'express';
+import {lotes} from '../src/modules/tienda/catalogo.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {localStore} from '../src/modules/tienda/repositorio.js';
+import {rutasTienda} from '../src/modules/tienda/rutas.js';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const app=express(),store=localStore(path.join(root,'.tienda-demo/state.json'));
+await store.mutate(s=>{if(!s.config.demoInitialized){s.config.publicActive=true;s.config.demoInitialized=true;s.config.delivery=[{id:'recogida-demo',name:{es:'Recogida',ca:'Recollida'},active:true,priceCents:0,taxBps:0,pending:false},{id:'domicilio-demo',name:{es:'Domicilio',ca:'Domicili'},active:true,priceCents:1200,taxBps:2100,pending:false},{id:'multi',name:{es:'Varios destinos · a cotizar',ca:'Diverses destinacions · a valorar'},active:true,priceCents:0,taxBps:0,pending:true}];s.catalog.forEach(p=>p.taxBps=p.alcohol?2100:p.kind==='packaging'?2100:1000);s.config.demoTaxes=true;}if(s.config.demoBundlesRevision!==2){s.bundles=structuredClone(lotes);s.config.demoBundlesRevision=2;}for(const d of s.config.delivery){if(d.id==='recogida-demo')d.name={es:'Recogida',ca:'Recollida'};if(d.id==='domicilio-demo')d.name={es:'Domicilio',ca:'Domicili'};}const photos=JSON.parse(fs.readFileSync(path.join(root,'docs/tienda/imagenes-reales.json'),'utf8'));s.catalog.forEach(p=>{const photo=photos.find(q=>q.id===p.id);if(photo&&(!p.images.length||p.images[0].source?.includes('Generada')||p.images[0].provisional))p.images=[{url:`/tienda/images/${p.id}-cutout.png`,alt:p.name,source:photo.source,sourceUrl:photo.page,provisional:true,verified:false}];});});
+app.get('/tienda-panel-demo',(req,res)=>res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/panel/style.css"><style>body{background:#f3f0e7;color:#233f35;font:15px Arial;padding:24px}button,input,select{padding:10px;border:1px solid #dcd7ca;border-radius:10px}table{width:100%;text-align:left}td,th{padding:12px}.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:20px 0}.card{border:1px solid #dcd7ca;border-radius:16px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}dialog input{max-width:100%}</style><p>Panel de tienda · DEMO LOCAL · No conectado a producción</p><main id="demoAdmin"></main><p id="message" role="status"></p><script type="module">import {mostrarTienda} from '/panel/tienda.js';const request=async(p,method='GET',b)=>{const r=await fetch(p,{method,headers:{'Content-Type':'application/json'},...(b?{body:JSON.stringify(b)}:{})});const j=await r.json();if(!r.ok)throw Error(j.error);return j;};mostrarTienda({root:document.querySelector('#demoAdmin'),api:p=>request(p),send:(m,p,b)=>request(p,m,b),notify:s=>document.querySelector('#message').textContent=s});</script>`));
+app.get('/api/me',(req,res)=>res.json({id:1,rol:'direccion',nombre:'Demo tienda',modulos:null}));
+app.get('/tienda/calculo.js',(req,res)=>res.sendFile(path.join(root,'src/modules/tienda/calculo.js')));
+app.use('/api/tienda',rutasTienda({store,root,demo:true,auth:(req,res,next)=>{req.user={id:1,rol:'direccion'};next();}}));
+app.use(express.static(path.join(root,'public')));
+app.listen(Number(process.env.TIENDA_DEMO_PORT||5115),'127.0.0.1',()=>console.log('Demo tienda: http://127.0.0.1:5115/tienda/'));
