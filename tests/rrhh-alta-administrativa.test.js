@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { CAMPOS_PRIVADOS, puedeVerPrivado, sanearDatosAlta, estadoAlta, sanearConversacion, fechaValida } from '../src/modules/rrhh/alta-administrativa.js';
-import { avisarCumpleanos, cumpleanosHoy, CUMPLE_CONFIG } from '../src/modules/rrhh/cumpleanos.js';
+import { avisarCumpleanos, cumpleanosHoy, CUMPLE_CONFIG, configCumpleanos } from '../src/modules/rrhh/cumpleanos.js';
 import { validarAlta } from '../src/modules/rrhh/ciclo.js';
 import { validarFormatoPin } from '../src/modules/fichajes/pin.js';
 const hoy = '2026-09-23';
@@ -79,8 +79,8 @@ function sistemaCumple() {
   const deps={ahora:Date.parse('2026-09-23T07:00:00Z'),config:{...CUMPLE_CONFIG,activo:true},conectado:()=>online,personas:async()=>[cumple],reservar:async d=>{if(libro.has(d))return false;libro.set(d,'enviando');return true},enviar:async(t,m)=>{if(falla)throw Error('error');mensajes.push({t,m})},terminar:async(d,e)=>libro.set(d,e)};
   return {deps,libro,mensajes,online:v=>online=v,falla:()=>falla=true};
 }
-test('aviso apagado por defecto y respeta las 09:00 de Madrid',async()=>{
-  assert.equal(CUMPLE_CONFIG.activo,false);const s=sistemaCumple();
+test('aviso siempre activo incluso con configuración antigua apagada y respeta las 09:00 de Madrid',async()=>{
+  assert.equal(CUMPLE_CONFIG.activo,true);assert.equal(configCumpleanos({activo:false}).activo,true);const s=sistemaCumple();
   assert.equal(await avisarCumpleanos({...s.deps,ahora:Date.parse('2026-09-23T06:59:00Z')}),'temprano');
   assert.equal(await avisarCumpleanos(s.deps),'enviado');assert.equal(s.mensajes.length,1);
   assert.equal(s.mensajes[0].t,'34622065974');assert.match(s.mensajes[0].m,/Persona Prueba de Local de prueba/);

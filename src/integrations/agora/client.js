@@ -8,19 +8,25 @@
 // Autenticación por cookie de sesión (la API-Token de Haddock es otra API no accesible aquí).
 
 import { agregarVentasPorDia, parseAgoraVersion, extraerPosGroupIds } from "./mappers.js";
+import { normHost } from "./registry.js";
+import { mapearVentasHeatMap } from "./ventas-compatibles.js";
 
 const APP_NAME = "AgoraWebAdmin";
 
 export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
-  const base = String(cfg.host || "").replace(/\/+$/, "");
+  const fetchOriginal = fetchFn;
+  fetchFn = (url, opts = {}) => fetchOriginal(url, { ...opts, signal: opts.signal || AbortSignal.timeout(30000) });
+  const base = normHost(cfg.host);
   let cookie = cfg.cookie || null;
   let version = cfg.version || null;
   let posGroups = Array.isArray(cfg.posGroupsIds) && cfg.posGroupsIds.length ? cfg.posGroupsIds : null;
   let familias = null;
   let categorias = null;
   let timeFrameGroup = null;
+  let ventasHeatMap = false;
+  let sessionUserId = null;
 
-  const sender = (v) => ({ ApplicationName: APP_NAME, ApplicationVersion: v, LanguageCode: "es", MachineType: 4, MachineName: "Web Device", UserName: cfg.usuario || "" });
+  const sender = (v) => ({ ApplicationName: APP_NAME, ApplicationVersion: v, LanguageCode: "es", MachineType: 4, MachineName: "Web Device", UserName: cfg.usuario || "", ...(sessionUserId != null ? { UserId: sessionUserId } : {}) });
   const envelope = (clrType, extra, v) => JSON.stringify({ CLRType: clrType, Message: { CLRType: clrType, IsBlocking: true, OutOfBandMessages: [], Sender: sender(v), ...extra } });
 
   async function getVersion() {
@@ -44,6 +50,11 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
     const m = sc.match(/auth-token=[^;]+/);
     if (!m) throw new Error("login_sin_cookie");
     cookie = m[0];
+    // Las versiones antiguas exigen el usuario autenticado también en Sender.
+    // No inferirlo del nombre: tomarlo de la sesión devuelta por el servidor.
+    sessionUserId = null;
+    try { sessionUserId = (await r.json())?.Message?.Session?.UserId ?? null; }
+    catch { /* Algunas instalaciones solo devuelven la cookie. */ }
     return true;
   }
 
@@ -139,7 +150,7 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
     async ping(timeoutMs = 6000) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-      try { await fetchFn(base + "/version/", { signal: ctrl.signal }); return true; }
+      try { const r = await fetchFn(base + "/version/", { signal: ctrl.signal }); return r.ok; }
       catch { return false; }
       finally { clearTimeout(timer); }
     },
@@ -155,21 +166,43 @@ export function createAgoraClient(cfg, { fetchFn = fetch } = {}) {
         const txt = await r.text();
         const v = parseAgoraVersion(txt, null);
         if (v) version = v; // lo cacheamos: el bus exige que Sender.ApplicationVersion coincida
-        return { alive: true, version: v };
+        return { alive: r.ok && !!v, version: v };
       } catch { return { alive: false, version: null }; }
       finally { clearTimeout(timer); }
     },
 
     // Ventas agregadas por día en el rango [desde, hasta) (YYYY-MM-DD). Login + grupos automáticos.
     async getVentasRango(desde, hasta) {
-      const groups = await getPosGroups();
-      const j = await busJson("IGT.POS.Bus.Reporting.Messages.GetGlobalSalesReportRequest", {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta) || desde >= hasta) throw new Error("Rango de ventas inválido");
+      // Los informes de Ágora incluyen ambos extremos; nuestra API usa [desde,hasta).
+      const ultimo = new Date(hasta + "T00:00:00.000Z");
+      ultimo.setUTCDate(ultimo.getUTCDate() - 1);
+      const rango = {
         From: desde + "T00:00:00.000",
-        To: hasta + "T00:00:00.000",
-        PosGroupsIds: groups,
+        To: ultimo.toISOString().slice(0, 10) + "T00:00:00.000",
+      };
+      if (!ventasHeatMap) {
+        try {
+          const groups = await getPosGroups();
+          const j = await busJson("IGT.POS.Bus.Reporting.Messages.GetGlobalSalesReportRequest", { ...rango, PosGroupsIds: groups });
+          const sales = j?.Message?.Report?.Sales;
+          if (!Array.isArray(sales)) throw new Error("Ágora: respuesta de ventas no reconocida");
+          return agregarVentasPorDia(sales).filter((v) => v.dia >= desde && v.dia < hasta);
+        } catch (e) {
+          // Solo cambiar de informe cuando el servidor confirma que no existe el global.
+          if (e.code !== "METODO_NO_DISPONIBLE" || !e.clrType?.endsWith("GetGlobalSalesReportRequest")) throw e;
+          if (cfg.posGroupsIds?.length) throw e; // no ampliar un filtro explícito de TPV
+          ventasHeatMap = true;
+        }
+      }
+      const pedir = (tipo) => busJson(`IGT.POS.Bus.Reporting.Messages.GetWorkplace${tipo}HeatMapRequest`, {
+        ...rango, WorkplaceId: null, IncludeHalfHours: false,
       });
-      const sales = (j && j.Message && j.Message.Report && j.Message.Report.Sales) || [];
-      return agregarVentasPorDia(sales);
+      // Secuencial para no saturar los TPV antiguos.
+      const sales = await pedir("Sales");
+      const tickets = await pedir("Tickets");
+      const guests = await pedir("TableCompanions");
+      return mapearVentasHeatMap(sales, tickets, guests, desde, hasta);
     },
   };
 }

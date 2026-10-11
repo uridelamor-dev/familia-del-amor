@@ -31,7 +31,12 @@ export function normHost(h) {
   h = String(h || "").trim();
   if (!h) return "";
   if (!/^https?:\/\//i.test(h)) h = "http://" + h;
-  return h.replace(/\/+$/, "");
+  // Los enlaces copiados desde la web suelen terminar en /#/ o llevar ?v=.
+  // Un fragmento hace que /auth/ y /bus/ no lleguen nunca al servidor.
+  const url = new URL(h);
+  url.hash = "";
+  url.search = "";
+  return url.toString().replace(/\/+$/, "");
 }
 
 // Normaliza y filtra una lista de configuraciones (misma forma venga del env o de la BD):

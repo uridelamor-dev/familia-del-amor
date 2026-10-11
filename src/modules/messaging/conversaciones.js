@@ -1,3 +1,4 @@
+import { ARCHIVO_CTE, jidBandeja } from './bandeja-historial.js';
 import { IDENTIDAD_CTE, telefonoContacto } from './contacto-conversacion.js';
 // Las conversaciones internas y los grupos nunca entran en la bandeja de clientes.
 export const CLIENTE_SQL = `w.jid ~ '^[0-9]+@(s[.]whatsapp[.]net|lid)$'
@@ -9,7 +10,7 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
  const wrap=fn=>async(req,res)=>{try{await fn(req,res);}catch(e){console.error('[Conversaciones]',e.message);res.status(e.status||500).json({ok:false,error:e.status?e.message:'No se pudo completar. Actualiza la conversación antes de volver a enviar.'});}};
  const existe=async jid=>{
   if(!jidValido(jid)) throw Object.assign(Error('Conversación no válida'),{status:400});
-  const r=await pool.query(`SELECT w.jid FROM whatsapp_messages w WHERE w.jid=$1 AND ${CLIENTE_SQL} LIMIT 1`,[jid]);
+  const r=await pool.query(`WITH ${ARCHIVO_CTE} SELECT w.jid FROM ultimos w WHERE w.jid=$1 AND NOT w.interno AND w.jid NOT LIKE '%@g.us' LIMIT 1`,[jid]);
   if(!r.rows.length) throw Object.assign(Error('Conversación no disponible'),{status:404});
  };
  const estado=async(jid,pausa,usuario)=>{
@@ -19,29 +20,44 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
    [jid,jid.split('@')[0],pausa?'pausada':'activa',pausa?'manual':null,pausa?new Date().toISOString():null,pausa?usuario:null]);
   olvidar(jid);
  };
+ const conIdentidades=async(jid,fn)=>{
+  const r=await pool.query('SELECT jid FROM wa_bandeja_chats WHERE jid=$1 OR telefono_jid=$1 ORDER BY jid',[jid]);
+  const jids=[...new Set([jid,...r.rows.map(x=>x.jid)])].sort();
+  const tomar=i=>i===jids.length?fn(jids):bloquear(jids[i],()=>tomar(i+1));
+  return tomar(0);
+ };
+ const visibleSQL=`w.jid ~ '^[0-9-]+@(s[.]whatsapp[.]net|lid|g[.]us)$' AND ($1::boolean OR (NOT w.interno AND w.jid NOT LIKE '%@g.us'))`;
+ const identidadArchivo=IDENTIDAD_CTE.replace("NULLIF(trim(t.nombre_wa),'')","NULLIF(trim(t.nombre_wa),''),NULLIF(trim(t.nombre_archivo),'')")
+  .replace('LEFT JOIN wa_clientes c ON c.jid=w.jid',`LEFT JOIN LATERAL(SELECT x.* FROM wa_clientes x LEFT JOIN alias a ON a.jid=x.jid WHERE COALESCE(a.canon,x.jid)=w.jid ORDER BY (x.estado_ia='pausada') DESC NULLS LAST,(x.jid=w.jid) DESC LIMIT 1)c ON true`)
+  .replace('LEFT JOIN wa_contacto_vinculos v ON v.jid=t.jid',`LEFT JOIN LATERAL(SELECT x.* FROM wa_contacto_vinculos x LEFT JOIN alias a ON a.jid=x.jid WHERE COALESCE(a.canon,x.jid)=t.jid ORDER BY (x.jid=t.jid) DESC,x.actualizado_en DESC LIMIT 1)v ON true`);
  app.get(ruta,permiso,wrap(async(req,res)=>{
-  const q=String(req.query.q||'').slice(0,100), offset=Math.max(0,Math.min(100000,Math.floor(Number(req.query.offset)||0)));
-  const r=await pool.query(`WITH ultimos AS (SELECT DISTINCT ON(w.jid) w.* FROM whatsapp_messages w WHERE ${CLIENTE_SQL} ORDER BY w.jid,w.id DESC)
-   , ${IDENTIDAD_CTE}
-   SELECT w.jid,w.nombre,w.telefono_visible AS telefono,w.lead_id,w.telefono_ficha,w.vinculo_manual,w.mensaje,w.respuesta,w.tipo,w.creado_en,
-   COALESCE(w.estado_ia,'activa') AS estado_ia,w.pausado_por,
-   (COALESCE(w.estado_ia,'activa')='pausada' OR (COALESCE(w.tipo,'intercambio')='intercambio' AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)'))) AS pendiente
+  const q=String(req.query.q||'').slice(0,100), offset=Math.max(0,Math.floor(Number(req.query.offset)||0));
+  const r=await pool.query(`WITH ${ARCHIVO_CTE}, ${identidadArchivo}
+   SELECT w.*,w.telefono_visible AS telefono,
+   (w.interno OR w.jid LIKE '%@g.us') AS solo_lectura,
+   COALESCE(w.estado_ia,'activa') AS estado_ia,
+   (COALESCE(w.estado_ia,'activa')='pausada' OR (COALESCE(w.tipo,'') IN ('intercambio','recibido') AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)'))) AS pendiente,
+   count(*) OVER()::int AS total
    FROM identidades w
-   WHERE ($1='' OR w.nombre ILIKE '%'||$1||'%' OR COALESCE(w.telefono_visible,'') ILIKE '%'||$1||'%')
-   AND ($2::boolean=false OR w.estado_ia='pausada' OR (COALESCE(w.tipo,'intercambio')='intercambio' AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)')))
-   ORDER BY w.id DESC LIMIT 51 OFFSET $3`,[q,req.query.pendientes==='1',offset]);
-  res.json({ok:true,data:r.rows.slice(0,50),mas:r.rows.length>50,connected:listo()});
+   WHERE ${visibleSQL} AND ($2='' OR w.nombre ILIKE '%'||$2||'%' OR COALESCE(w.telefono_visible,'') ILIKE '%'||$2||'%')
+   AND ($3::boolean=false OR w.estado_ia='pausada' OR (w.tipo IN ('intercambio','recibido') AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)')))
+   ORDER BY COALESCE(w.fijado,0) DESC,w.creado_en::timestamptz DESC NULLS LAST,w.jid LIMIT 51 OFFSET $4`,[req.user?.rol==='direccion',q,req.query.pendientes==='1',offset]);
+  const sync=await pool.query('SELECT actualizado_en,estado FROM wa_bandeja_sync WHERE id=1');
+  res.json({ok:true,data:r.rows.slice(0,50),mas:r.rows.length>50,total:r.rows[0]?.total||0,sync:sync.rows[0]||null,connected:listo()});
  }));
  app.get(ruta+'/detalle',permiso,wrap(async(req,res)=>{
-  const jid=String(req.query.jid||'');await existe(jid);
+  const jid=String(req.query.jid||'');if(!jidBandeja(jid))return res.status(400).json({ok:false,error:'Conversación no válida'});
+  const c=await pool.query(`WITH ${ARCHIVO_CTE}, ${identidadArchivo} SELECT w.*,telefono_visible AS telefono,(w.interno OR w.jid LIKE '%@g.us') AS solo_lectura FROM identidades w WHERE ${visibleSQL} AND w.jid=$2`,[req.user?.rol==='direccion',jid]);
+  if(!c.rows.length)return res.status(404).json({ok:false,error:'Conversación no disponible'});
   if(jid.endsWith('@lid')&&resolverTelefono){
    const tel=telefonoContacto(await resolverTelefono(jid));
    if(tel)await pool.query(`INSERT INTO wa_clientes(jid,telefono) VALUES($1,$2) ON CONFLICT(jid) DO UPDATE SET telefono=EXCLUDED.telefono`,[jid,tel]);
   }
-  const antes=Number(req.query.antes)||2147483647;
-  const r=await pool.query('SELECT id,mensaje,respuesta,tipo,origen,creado_en,adjuntos FROM whatsapp_messages WHERE jid=$1 AND id<$2 ORDER BY id DESC LIMIT 101',[jid,antes]);
-  const c=await pool.query(`WITH ultimos AS (SELECT * FROM whatsapp_messages WHERE jid=$1 ORDER BY id DESC LIMIT 1), ${IDENTIDAD_CTE} SELECT nombre,telefono_visible AS telefono,lead_id,telefono_ficha,vinculo_manual,estado_ia,pausado_por,pausa_motivo FROM identidades`,[jid]);
-  res.json({ok:true,data:r.rows.slice(0,100).reverse(),mas:r.rows.length>100,cliente:c.rows[0]||{},connected:listo()});
+  let cursor=null;try{cursor=req.query.cursor?JSON.parse(String(req.query.cursor)):null;}catch{}
+  if(cursor&&(!Array.isArray(cursor)||cursor.length!==2||!Number.isFinite(Date.parse(cursor[0]))))return res.status(400).json({ok:false,error:'Página no válida'});
+  const r=await pool.query(`WITH ${ARCHIVO_CTE} SELECT clave AS id,mensaje,respuesta,tipo,fecha AS creado_en,adjuntos FROM eventos WHERE jid=$1 AND ($2::timestamptz IS NULL OR (fecha,clave)<($2::timestamptz,$3::text)) ORDER BY fecha DESC,clave DESC LIMIT 101`,[jid,cursor?.[0]||null,cursor?.[1]||'']);
+  const datos=r.rows.slice(0,100).reverse();
+  res.json({ok:true,data:datos,mas:r.rows.length>100,cursor:datos.length?[datos[0].creado_en,datos[0].id]:null,cliente:c.rows[0],connected:listo()});
  }));
  app.get(ruta+'/contactos',permiso,wrap(async(req,res)=>{
   const q=String(req.query.q||'').trim().slice(0,100);
@@ -60,13 +76,13 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
  app.post(ruta+'/control',permiso,wrap(async(req,res)=>{
   const {jid,pausa}=req.body||{};await existe(jid);
   if(typeof pausa!=='boolean')return res.status(400).json({ok:false,error:'Indica si quieres atender o devolver a Sara'});
-  await bloquear(jid,()=>estado(jid,pausa,req.user.username));res.json({ok:true});
+  await conIdentidades(jid,async jids=>{for(const id of jids)await estado(id,pausa,req.user.username);});res.json({ok:true});
  }));
  app.post(ruta+'/enviar',permiso,wrap(async(req,res)=>{
   const {jid,mensaje}=req.body||{};await existe(jid);
   if(typeof mensaje!=='string'||!mensaje.trim()||mensaje.length>4000)return res.status(400).json({ok:false,error:'Escribe un mensaje de hasta 4.000 caracteres'});
   if(!listo())return res.status(503).json({ok:false,error:'WhatsApp está desconectado. El mensaje no se ha enviado.'});
-  await bloquear(jid,async()=>{await estado(jid,true,req.user.username);await enviar(jid,mensaje.trim());});
+  await conIdentidades(jid,async jids=>{for(const id of jids)await estado(id,true,req.user.username);await enviar(jid,mensaje.trim());});
   res.json({ok:true});
  }));
 }

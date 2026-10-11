@@ -17,7 +17,7 @@ test('conversaciones: permisos propios y destinos exactos, nunca grupos',()=>{
  assert.ok(jidValido('123@lid'));assert.ok(!jidValido('123@g.us'));assert.ok(!jidValido('123@sXwhatsappXnet'));
 });
 test('el envío pausa y olvida la sesión antes de escribir, y no envía si falla la pausa',async()=>{
- const s=sistema();const r=await s.llamar('POST /api/conversaciones/enviar',{jid:'123@lid',mensaje:'Hola'});assert.equal(r.body.ok,true);assert.deepEqual(s.pasos,['consulta','pausa','olvidar','envio']);
+ const s=sistema();const r=await s.llamar('POST /api/conversaciones/enviar',{jid:'123@lid',mensaje:'Hola'});assert.equal(r.body.ok,true);assert.deepEqual(s.pasos,['consulta','consulta','pausa','olvidar','envio']);
  const f=sistema({falloPausa:true});assert.equal((await f.llamar('POST /api/conversaciones/enviar',{jid:'123@lid',mensaje:'Hola'})).codigo,500);assert.ok(!f.pasos.includes('envio'));
 });
 test('no envía a conversaciones no visibles, desconectado ni texto vacío',async()=>{

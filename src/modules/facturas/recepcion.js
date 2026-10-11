@@ -1,3 +1,5 @@
+import { ADJUNTOS_DECORATIVOS_VERIFICADOS } from './adjuntos-verificados.js';
+import { diagnosticarRecepcion } from './error-recepcion.js';
 import { conPlazoFactura } from "./red.js";
 import { createHash } from 'node:crypto';
 
@@ -33,6 +35,12 @@ export function crearRecepcion({db, lock, procesar, existeDestino, ahora = () =>
           await db.run('UPDATE facturas_recepciones SET original=NULL WHERE id=?',[id]);
         }
       }
+      if (!['registrado','duplicado','descartado'].includes(f.estado) && ADJUNTOS_DECORATIVOS_VERIFICADOS.has(f.hash)) {
+        const resultado = {descartado:true,motivo:'Imagen de correo verificada: no es un documento de compra.'};
+        // Conserva el original; solo lo aparta de la cola de lectura.
+        await db.run("UPDATE facturas_recepciones SET estado='descartado',resultado=?::jsonb,error=NULL,actualizado=NOW() WHERE id=?",[JSON.stringify(resultado),id]);
+        return resultado;
+      }
       if (f.estado === 'registrado' || f.estado === 'descartado') return f.resultado;
       if (f.estado === 'duplicado') { const e = new Error('Este documento ya está registrado'); e.isDuplicate = true; throw e; }
       if (f.estado === 'error' || new Date(f.proximo) > ahora()) throw errorRecibido(id);
@@ -46,11 +54,13 @@ export function crearRecepcion({db, lock, procesar, existeDestino, ahora = () =>
           await db.run(`UPDATE facturas_recepciones SET estado='duplicado', original=NULL, error=NULL, actualizado=NOW() WHERE id=?`, [id]);
           throw e;
         }
-        const n = f.intentos + 1;
+        const n = Number(f.intentos || 0) + 1;
+        const diagnostico = diagnosticarRecepcion(e);
+        console.error("[Recepción] procesamiento fallido", JSON.stringify({id, intento:n, codigo:diagnostico.codigo}));
         const proximo = new Date(ahora().getTime()+Math.min(60,5*2**(n-1))*60000).toISOString();
         // No se guarda el error crudo: los proveedores pueden incluir datos del documento.
         await db.run(`UPDATE facturas_recepciones SET estado=?, error=?, proximo=?, actualizado=NOW() WHERE id=?`,
-          [n >= 5 ? 'error' : 'pendiente','No se pudo completar la lectura o el archivo. El original está guardado.',proximo,id]);
+          [n >= 5 || diagnostico.permanente ? 'error' : 'pendiente',(n >= 5 ? diagnostico.texto.replace('Se volverá a intentar.', 'Se han agotado los intentos automáticos.') : diagnostico.texto) + ' El original está guardado.',proximo,id]);
         throw errorRecibido(id);
       }
     });
@@ -72,6 +82,9 @@ export function crearRecepcion({db, lock, procesar, existeDestino, ahora = () =>
     if (trabajando) return;
     trabajando = true;
     try {
+      // Recupera también los decorativos antiguos que agotaron los intentos.
+      const decorativos = await db.all("SELECT id FROM facturas_recepciones WHERE estado IN ('pendiente','leyendo','error') AND hash = ANY(?::text[])",[[...ADJUNTOS_DECORATIVOS_VERIFICADOS]]);
+      for (const f of decorativos) { try { await ejecutar(f.id); } catch(e) { if (!e.recibido) console.error('[Recepción] no se pudo apartar el adjunto verificado',f.id); } }
       const filas = await db.all(`SELECT id FROM facturas_recepciones WHERE (estado IN ('pendiente','leyendo') AND proximo <= NOW()) OR (estado IN ('registrado','duplicado') AND original IS NOT NULL) ORDER BY proximo,id LIMIT 10`);
       for (const f of filas) { try { await ejecutar(f.id); } catch(e) { if (!e.recibido && !e.isDuplicate) console.error('[Recepción] no se pudo recuperar el documento', f.id); } }
     } finally { trabajando = false; }

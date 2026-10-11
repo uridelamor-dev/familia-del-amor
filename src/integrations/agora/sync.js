@@ -22,7 +22,7 @@ export function diasFaltantes(existentes, { hoy, maxDias = 800 } = {}) {
 }
 
 // Sincroniza un local. Devuelve { local, reachable, insertados, error? }.
-// Trae el rango [primerFalta, últimoFalta+1) en UNA consulta (el informe agrega por día) y
+// Trae el rango en bloques de hasta 30 días (primero los más recientes) y
 // hace upsert SOLO de los días que faltaban (cerrados). Hoy nunca entra (diasFaltantes va a ayer).
 export async function syncVentasLocal(x, client, cfg, { hoy, maxDias = 800 } = {}) {
   let reachable = false;
@@ -40,18 +40,22 @@ export async function syncVentasLocal(x, client, cfg, { hoy, maxDias = 800 } = {
   const faltanSet = new Set(faltan);
   let insertados = 0, ultimoError = null;
   try {
-    const dias = await client.getVentasRango(desde, hasta);
-    for (const v of (dias || [])) {
-      if (!faltanSet.has(v.dia)) continue; // solo días cerrados que faltaban
-      await x.run(
-        `INSERT INTO ventas_diarias (local, dia, ventas, tickets, comensales, ticket_medio, base_imponible, cuota_iva, actualizado_en)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(local, dia) DO UPDATE SET ventas=EXCLUDED.ventas, tickets=EXCLUDED.tickets,
-           comensales=EXCLUDED.comensales, ticket_medio=EXCLUDED.ticket_medio,
-           base_imponible=EXCLUDED.base_imponible, cuota_iva=EXCLUDED.cuota_iva, actualizado_en=EXCLUDED.actualizado_en`,
-        [cfg.local, v.dia, v.ventas, v.tickets, v.comensales, v.ticket_medio, v.base_imponible ?? null, v.cuota_iva ?? null, new Date().toISOString()]
-      );
-      insertados++;
+    for (let fin = hasta; fin > desde;) {
+      const inicio = addDays(fin, -30) < desde ? desde : addDays(fin, -30);
+      const dias = await client.getVentasRango(inicio, fin);
+      for (const v of (dias || [])) {
+        if (!faltanSet.has(v.dia)) continue; // solo días cerrados que faltaban
+        await x.run(
+          `INSERT INTO ventas_diarias (local, dia, ventas, tickets, comensales, ticket_medio, base_imponible, cuota_iva, actualizado_en)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(local, dia) DO UPDATE SET ventas=EXCLUDED.ventas, tickets=EXCLUDED.tickets,
+             comensales=EXCLUDED.comensales, ticket_medio=EXCLUDED.ticket_medio,
+             base_imponible=EXCLUDED.base_imponible, cuota_iva=EXCLUDED.cuota_iva, actualizado_en=EXCLUDED.actualizado_en`,
+          [cfg.local, v.dia, v.ventas, v.tickets, v.comensales, v.ticket_medio, v.base_imponible ?? null, v.cuota_iva ?? null, new Date().toISOString()]
+        );
+        insertados++;
+      }
+      fin = inicio;
     }
   } catch (e) { ultimoError = e && e.message ? e.message : "error"; }
   return { local: cfg.local, reachable: true, insertados, error: ultimoError };

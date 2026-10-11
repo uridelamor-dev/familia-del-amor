@@ -1,11 +1,27 @@
 // Integración Ágora — lógica pura: config por local, mapeo de ventas y catch-up de sincronización.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { loadAgoraConfigs, configsFromRows, normalizeConfigs, publicConfig } from "../../src/integrations/agora/registry.js";
+import { loadAgoraConfigs, configsFromRows, normalizeConfigs, publicConfig, normHost } from "../../src/integrations/agora/registry.js";
+import { createAgoraClient } from "../../src/integrations/agora/client.js";
 import { agregarVentasPorDia, parseAgoraVersion, extraerPosGroupIds } from "../../src/integrations/agora/mappers.js";
 import { diasFaltantes, syncVentasLocal } from "../../src/integrations/agora/sync.js";
 
 describe("registry.loadAgoraConfigs", () => {
+  test("enlaces copiados del navegador no desvían auth ni bus al inicio", async () => {
+    assert.equal(normHost("http://girona:8984/#/home/sales"), "http://girona:8984");
+    assert.equal(normHost("girona:8984/?v=1#/"), "http://girona:8984");
+    const urls = [];
+    const client = createAgoraClient({host:"http://girona:8984/#/",usuario:"u",password:"p",version:"8.7.4"}, {
+      fetchFn: async (url) => {
+        urls.push(url);
+        return url.endsWith("/auth/")
+          ? new Response("{}", {headers:{"set-cookie":"auth-token=test; Path=/"}})
+          : new Response(JSON.stringify({Message:{All:[{Id:1}]}}));
+      },
+    });
+    assert.deepEqual(await client.posGroups(), [1]);
+    assert.deepEqual(urls, ["http://girona:8984/auth/", "http://girona:8984/bus/"]);
+  });
   test("parsea el JSON, normaliza host y filtra inválidos/inactivos", () => {
     const env = { AGORA_LOCALES: JSON.stringify([
       { local: "La Tapeta - Blanes", host: "blanes.chickenkiller.com:8984", token: "T1" },

@@ -54,3 +54,13 @@ test('A01 reimportación con lector ocupado conserva original y la recupera el t
  const f=await db.get('SELECT * FROM facturas_recepciones');
  assert.equal(n,2);assert.equal(f.estado,'registrado');assert.equal(f.original,null);
 }));
+test('decorativos verificados antiguos salen de la cola conservando el original sin llamar a IA',async t=>preparar(t,async db=>{
+ const {ADJUNTOS_DECORATIVOS_VERIFICADOS} = await import('../../src/modules/facturas/adjuntos-verificados.js');
+ let llamadas=0;const a=cola(db,async()=>{llamadas++;throw new Error('fallo');});
+ await assert.rejects(a.recibir(archivo));
+ await db.run("UPDATE facturas_recepciones SET hash=?,estado='error',intentos=5",[[...ADJUNTOS_DECORATIVOS_VERIFICADOS][0]]);
+ await a.reintentar();await a.reintentar();
+ const f=await db.get('SELECT * FROM facturas_recepciones');
+ assert.equal(f.estado,'descartado');assert.equal(f.resultado.descartado,true);
+ assert.deepEqual(f.original,archivo.buffer);assert.equal(llamadas,1);
+}));

@@ -1,0 +1,4 @@
+// Huellas de diez imágenes de correo inspeccionadas visualmente el 8/10/2026.
+// Logos, iconos sociales y anuncio MyCCEP: ninguna contiene datos de una compra.
+// No se excluyen imágenes por nombre, tamaño o proveedor.
+export const ADJUNTOS_DECORATIVOS_VERIFICADOS = new Set(["043e8c41495f51d17c423275e37b2457a81b4b3ee916f24d49e8c1dbcb2c3f96", "5612d1202102ea3fc7d9541bfc2c49129801b617cc3d3dba46a8a503cad2ad81", "ac5b75eb7c109487dc0363af62f4091a5d4355cc81831fd7a1374f3c444e26cb", "55f0b0ec32fbb188b5660fb723f60bb671378497c427b76958f9751788940431", "53bc06a75bf54f5d25f8eb71425dd86f729eff7d0ebcfa29adcb1a59ade39b38", "0db43d25b5eeb42e7da0eecdddf6e0aef759345e9b0e40933b8fb2767cd3f014", "12decd52da7d004c57f8f0e0aae4de1d47e816903dd585f5c1b66ed5609e85d4", "dd4a9678e6a7adba23a6e7f2b5dd9b99425ab35c2b667587c0b0a32f687b9ea6", "8d008f5a30407dfd9ecd2ae838540604bedf494edb6aa062426751f0456e6d85", "536321a04ff005662928b7948933ea688ae3dfbdd88007f5dc401a0cbcaed07b"]);

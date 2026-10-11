@@ -471,6 +471,21 @@ export function setOnReady(fn) { onReady = fn; }
 
 let entradaDiferidaPermitida = null;
 export function setEntradaDiferidaPermitida(fn) { entradaDiferidaPermitida = fn; }
+let onArchivoBandeja = null;
+export function setArchivoBandeja(fn) { onArchivoBandeja = fn; }
+// Serializar lotes evita carreras de metadatos; los mensajes son idempotentes por ID.
+let archivoPendiente = Promise.resolve();
+function archivarBandeja(datos) {
+ archivoPendiente=archivoPendiente.catch(()=>{}).then(async()=>{
+  if(!onArchivoBandeja)return;
+  const internos={};
+  const jids=new Set([...(datos.chats||[]).map(c=>c.id),...(datos.lidPnMappings||[]).flatMap(m=>[m.lid,m.pn]),...(datos.messages||[]).map(m=>m.key?.remoteJid)]);
+  for(const jid of jids)if(jid&&!jid.endsWith('@g.us'))internos[jid]=await esMensajeInterno(jid);
+  for(const m of datos.lidPnMappings||[])if(internos[m.pn])internos[m.lid]=true;
+  await onArchivoBandeja({...datos,internos});
+ }).catch(e=>console.error('[Bandeja] No se pudo guardar el historial:',e.message));
+ return archivoPendiente;
+}
 let onMessage = null;
 export function setOnMessage(fn) { onMessage = fn; }
 
@@ -1126,10 +1141,12 @@ async function connectToWhatsApp() {
     auth: state,
     version,
     printQRInTerminal: true,
+    syncFullHistory: true,
+    shouldSyncHistoryMessage: () => true,
     logger: logBaileys(),
     keepAliveIntervalMs: 25000,   // ping cada 25s para mantener viva la conexión TCP
     connectTimeoutMs: 60000,
-    browser: ["Mac OS", "Chrome", "124.0.0"],
+    browser: Browsers.macOS("Desktop"),
     getMessage: async () => ({ conversation: "" })
   });
 
@@ -1208,46 +1225,16 @@ async function connectToWhatsApp() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("messaging-history.set", async ({ messages }) => {
-    if (!onMessage) return;
-    const cutoff = Math.floor(Date.now() / 1000) - 5 * 24 * 3600;
-
-    const byJid = {};
-    for (const msg of messages) {
-      const jid = msg.key?.remoteJid;
-      if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
-      const ts = Number(msg.messageTimestamp) || 0;
-      if (ts < cutoff) continue;
-      if (!byJid[jid]) byJid[jid] = [];
-      byJid[jid].push(msg);
-    }
-
-    for (const [jid, msgs] of Object.entries(byJid)) {
-      // Una sola comprobación por conversación, no por mensaje.
-      const interno = await esMensajeInterno(jid);
-      msgs.sort((a, b) => Number(a.messageTimestamp) - Number(b.messageTimestamp));
-      for (let i = 0; i < msgs.length; i++) {
-        const msg = msgs[i];
-        if (msg.key.fromMe) continue;
-        const texto = msg.message?.conversation || msg.message?.extendedTextMessage?.text || "";
-        if (!texto.trim()) continue;
-
-        let respuesta = "(sin respuesta registrada)";
-        for (let j = i + 1; j < msgs.length; j++) {
-          const next = msgs[j];
-          if (!next.key.fromMe) break;
-          if (Number(next.messageTimestamp) - Number(msg.messageTimestamp) > 300) break;
-          const t = next.message?.conversation || next.message?.extendedTextMessage?.text || "";
-          if (t) { respuesta = t; break; }
-        }
-        onMessage({ jid, texto: texto.trim(), respuesta, historico: true, interno });
-      }
-    }
-    console.log(`📜 Historial WA procesado: ${Object.keys(byJid).length} conversaciones`);
-  });
+  sock.ev.on("messaging-history.set", datos => archivarBandeja({...datos,historico:true}));
+  sock.ev.on("chats.upsert", chats => archivarBandeja({chats}));
+  sock.ev.on("chats.update", chats => archivarBandeja({chats}));
+  sock.ev.on("contacts.upsert", contacts => archivarBandeja({contacts}));
+  sock.ev.on("contacts.update", contacts => archivarBandeja({contacts}));
+  sock.ev.on("lid-mapping.update", m => archivarBandeja({lidPnMappings:[m]}));
 
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify" && type !== "append") return;
+    void archivarBandeja({messages});
     for (const recibido of messages) {
       const msg = { ...recibido, message: mensajeNormalizado(recibido.message) };
       if (msg.key.fromMe) {

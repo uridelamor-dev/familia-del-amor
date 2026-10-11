@@ -1,6 +1,9 @@
 import { activoAhora } from './vigencia.js';
 import { instanteMadrid } from '../horarios/tiempo.js';
-export const CUMPLE_CONFIG = { activo: false, hora: '09:00', telefono: '34622065974' };
+export const CUMPLE_CONFIG = { activo: true, hora: '09:00', telefono: '34622065974' };
+export function configCumpleanos(saved = {}) {
+  return { ...CUMPLE_CONFIG, ...saved, activo: true };
+}
 export function cumpleanosHoy(personas, hoy) {
   return personas.filter(p => ['trabajador', 'encargado'].includes(p.rol) && activoAhora(p, hoy)
     && p.fecha_nac && p.fecha_nac.slice(5, 10) === hoy.slice(5, 10))

@@ -1,3 +1,5 @@
+import { BANDEJA_SCHEMA, crearArchivoBandeja } from './src/modules/messaging/bandeja-historial.js';
+import { setArchivoBandeja } from './whatsapp.js';
 import { VINCULOS_SCHEMA } from './src/modules/messaging/contacto-conversacion.js';
 import { registrarConversaciones } from './src/modules/messaging/conversaciones.js';
 import { conTurno } from './src/modules/messaging/turno.js';
@@ -27,7 +29,7 @@ import { registrarRechazo, claveRechazo } from "./src/modules/facturas/rechazos.
 import { filtrarGeografia, resolverPoblacion, sugerirPoblaciones } from './src/modules/captacion/geografia.js';
 import { encolarCumples, estadoCumple } from "./src/modules/campaigns/cumple-cola.js";
 import { CAMPOS_PRIVADOS, puedeVerPrivado, sanearDatosAlta, estadoAlta, sanearConversacion } from './src/modules/rrhh/alta-administrativa.js';
-import { CUMPLE_CONFIG, avisarCumpleanos } from './src/modules/rrhh/cumpleanos.js';
+import { CUMPLE_CONFIG, configCumpleanos, avisarCumpleanos } from './src/modules/rrhh/cumpleanos.js';
 import { COM_SCHEMA } from "./src/modules/comunicados/comunicados.js";
 import { registrarComunicados } from "./src/routes/comunicados.js";
 import { GESTION_SCHEMA } from "./src/modules/mantenimiento/gestion.js";
@@ -887,6 +889,7 @@ async function initDB() {
     `);
 
     await client.query(ADJUNTOS_SCHEMA);
+    await client.query(BANDEJA_SCHEMA);
 
     // ── POR QUÉ SALIÓ MAL UNA CONVERSACIÓN, Y QUÉ COLUMNAS LO ARREGLAN ───────────────────────
     //
@@ -8475,7 +8478,7 @@ app.post("/api/agora/locales", requireAuth(["direccion"]), async (req, res) => {
        ON CONFLICT (local) DO UPDATE SET host = EXCLUDED.host, token = EXCLUDED.token,
          usuario = COALESCE(EXCLUDED.usuario, agora_locales.usuario), pass_enc = EXCLUDED.pass_enc,
          local_id = EXCLUDED.local_id, activo = EXCLUDED.activo, updated_at = EXCLUDED.updated_at`,
-      [String(local).trim(), String(host).trim(), tokenStored, usuarioStored === undefined ? null : usuarioStored, passStored, localId, act, now]
+      [String(local).trim(), agoraNormHost(host), tokenStored, usuarioStored === undefined ? null : usuarioStored, passStored, localId, act, now]
     );
     res.json({ ok: true });
   } catch (e) {
@@ -8577,11 +8580,18 @@ app.post("/api/agora/probe", requireAuth(["direccion"]), async (req, res) => {
     if (!cfgs.length) return res.status(400).json({ ok: false, error: agoraFaltaQue(row) });
     const client = createAgoraClient(cfgs[0]);
     const { alive, version } = await client.pingInfo();
+    let ventas = false, lecturaError = null;
+    if (alive) {
+      try {
+        await client.getVentasRango(hoyMas(-1), hoyMas(1));
+        ventas = true;
+      } catch (e) { lecturaError = String(e.message || "No se pudieron leer las ventas").slice(0, 220); }
+    }
     res.json({
-      ok: true, alive, version,
-      mensaje: alive
-        ? `El TPV respondió (servidor vivo)${version ? ` · Ágora ${version}` : ""}`
-        : "Sin respuesta: el local está cerrado o inalcanzable",
+      ok: true, alive, version, ventas,
+      mensaje: ventas ? `Conexión y lectura de ventas correctas${version ? ` · Ágora ${version}` : ""}`
+        : alive ? `El TPV responde, pero falla la lectura de ventas: ${lecturaError}`
+          : "Sin respuesta: el local está cerrado o inalcanzable",
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error en la prueba de conexión" });
@@ -8640,12 +8650,19 @@ app.post("/api/agora/diagnostico", requireAuth(["direccion"]), async (req, res) 
 
 // Descubrir las rutas reales de la API leyendo el JavaScript de la web de administración de Ágora
 // (el :8984 sirve un SPA; sus scripts llaman a los endpoints de datos). Solo dirección; token redactado.
-async function fetchTextTimeout(url, headers, timeoutMs = 6000, maxBytes = 500000) {
+async function fetchTextTimeout(url, headers, timeoutMs = 20000, maxBytes = 20000000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const r = await fetch(url, { headers, signal: ctrl.signal });
-    const text = (await r.text()).slice(0, maxBytes);
+    const parts = [];
+    let bytes = 0;
+    for await (const part of r.body) {
+      bytes += part.length;
+      if (bytes > maxBytes) throw new Error("El script supera el límite de lectura; diagnóstico incompleto");
+      parts.push(part);
+    }
+    const text = Buffer.concat(parts).toString("utf8");
     return { status: r.status, ok: r.ok, text };
   } finally { clearTimeout(timer); }
 }
@@ -8665,10 +8682,12 @@ app.post("/api/agora/descubrir", requireAuth(["direccion"]), async (req, res) =>
     const cfg = cfgs[0];
     const token = cfg.token;
     const redact = (s) => (token ? String(s == null ? "" : s).split(token).join("«token»") : String(s == null ? "" : s));
-    const headers = { "Api-Token": token };
+    // El HTML y los scripts son públicos. No transmitir credenciales a sus recursos.
+    const headers = {};
     // 1) Raíz → HTML del SPA.
     const rootHtml = (await fetchTextTimeout(cfg.host + "/", headers)).text;
-    const scripts = extraerScripts(rootHtml, cfg.host).slice(0, 12);
+    const scripts = extraerScripts(rootHtml, cfg.host)
+      .filter((s) => new URL(s).origin === new URL(cfg.host).origin).slice(0, 12);
     const rutas = new Set(extraerRutasApi(rootHtml));
     // Los NOMBRES DE INFORME que ese Ágora conoce, sacados de su propio JavaScript. Es la
     // manera de saber qué informes existen sin adivinar: la web de administración los llama
@@ -8914,17 +8933,17 @@ app.post("/api/hr/applications/:id/contratar", requireAuth(["rrhh", "direccion"]
   }
 });
 
-// Cumpleaños: configuración privada; activación explícita cuando el equipo esté listo.
+// Cumpleaños del equipo: aviso permanente a Nerea, con historial de entregas.
 async function rrhhCumpleConfig() {
   let saved = {}; try { saved = JSON.parse(await getConfig('rrhh_cumple_config') || '{}'); } catch {}
-  return { ...CUMPLE_CONFIG, ...saved };
+  return configCumpleanos(saved);
 }
 app.get('/api/rrhh/cumpleanos/config', requireAuth(['direccion', 'rrhh']), async (req, res) => {
   try { res.json({ ok: true, config: await rrhhCumpleConfig(), avisos: await dbAll('SELECT * FROM rrhh_cumple_avisos ORDER BY dia DESC LIMIT 10') }); }
   catch { res.status(500).json({ ok: false, error: 'No se pudo consultar los avisos.' }); }
 });
 app.put('/api/rrhh/cumpleanos/config', requireAuth(['direccion', 'rrhh']), async (req, res) => {
-  const config = { ...CUMPLE_CONFIG, activo: req.body.activo === true };
+  const config = configCumpleanos();
   try { await setConfig('rrhh_cumple_config', JSON.stringify(config)); res.json({ ok: true, config }); }
   catch { res.status(500).json({ ok: false, error: 'No se pudo guardar.' }); }
 });
@@ -25167,6 +25186,8 @@ const server = app.listen(PORT, async () => {
       [jid, identidad.jidTelefono, identidad.telefono, identidad.nacional, Number(msg.messageTimestamp)]);
     return !contestado;
   });
+
+  setArchivoBandeja(crearArchivoBandeja(pool));
 
   setOnMessage(async ({ jid, texto, respuesta, historico = false, interno = false, adjuntos = [] }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
