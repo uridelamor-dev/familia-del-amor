@@ -23,7 +23,7 @@ test('la recuperación consulta respuestas previas usando el teléfono resuelto 
  assert.match(sql,/tipo = 'saliente'/);assert.match(sql,/sin respuesta registrada/);
  assert.ok(args.includes('34600000000'));return encontrado;
  }};
- vm.runInNewContext(server.slice(server.indexOf('  setEntradaDiferidaPermitida(async'),server.indexOf('  setOnMessage(async')),env);
+ vm.runInNewContext(server.slice(server.indexOf('  setEntradaDiferidaPermitida(async'),server.indexOf('  setArchivoBandeja(',server.indexOf('  setEntradaDiferidaPermitida(async'))),env);
  assert.equal(await callback(msg,'34600000000'),true);
  encontrado={id:12}; assert.equal(await callback(msg,'34600000000'),false);
  env.dbGet=async()=>{throw Error('BD caída');};await assert.rejects(callback(msg,'34600000000'),/BD caída/);
@@ -31,7 +31,7 @@ test('la recuperación consulta respuestas previas usando el teléfono resuelto 
 
 test('manejador real: append llega al procesamiento, se deduplica y no reabre conversaciones contestadas',async()=>{
  const wa=readFileSync(new URL('../whatsapp.js',import.meta.url),'utf8');let handler;const recibidos=[],vistos=new Set();let permitir=true;
- const env={console,Date,entradaDiferidaVigente,mensajeNormalizado:x=>x,
+ const env={console,Date,entradaDiferidaVigente,mensajeNormalizado:x=>x,archivarBandeja:()=>{},
  sock:{ev:{on:(_evento,fn)=>handler=fn}},entradaDiferidaPermitida:async()=>permitir,
  resolverTelefono:async()=> '34600000000',entradaNueva:key=>{if(vistos.has(key.id))return false;vistos.add(key.id);return true;},
  leerCitado:()=>null,esMensajeInterno:async()=>false,onContactoLead:null,
