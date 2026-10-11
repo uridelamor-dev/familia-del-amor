@@ -1,3 +1,6 @@
+import { registrarConversaciones } from './src/modules/messaging/conversaciones.js';
+import { conTurno } from './src/modules/messaging/turno.js';
+import { enviarConversacion } from './whatsapp.js';
 import { recuperarRespuestaAutorizada } from './src/modules/messaging/recuperacion-autorizada.js';
 import { rutasTienda } from "./src/modules/tienda/rutas.js";
 import { tiendaDemoPersistente } from "./src/modules/tienda/preparar.js";
@@ -21149,6 +21152,8 @@ app.post("/api/campanas-config", requireAuth(["direccion", "marketing"]), async 
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+
+registrarConversaciones(app, {auth:requireAuth,pool,enviar:enviarConversacion,listo:isReady,bloquear:conTurno,olvidar:olvidarSesionWA});
 
 app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {
   const { telefono, mensaje } = req.body;

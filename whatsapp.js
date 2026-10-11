@@ -1,3 +1,4 @@
+import { conTurno } from './src/modules/messaging/turno.js';
 import { entradaDiferidaVigente, indicarEscribiendo } from './src/modules/messaging/entrada-diferida.js';
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, downloadMediaMessage, fetchLatestWaWebVersion } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
@@ -965,7 +966,7 @@ async function procesarBatch(jid, items) {
     const idioma = idiomaSugerido({ mensajesCliente: items.map(i => i.textoFinal), idiomaContacto: ficha?.idioma_ultimo }).idioma;
     const respuesta = textoSeguro('adjunto', idioma);
     let enviada = false;
-    try { await sock.sendMessage(jid, { text: respuesta }); enviada = true; }
+    try { enviada = await conTurno(jid, async () => { const p = perfilLoader ? await perfilLoader(jid) : null; if (estaPausada(p) && p.pausado_por !== 'sara') return false; await sock.sendMessage(jid, { text: respuesta }); return true; }); }
     finally { if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: enviada ? respuesta : null, adjuntos: idsAdjuntos }); }
     return;
   }
@@ -996,8 +997,8 @@ async function procesarBatch(jid, items) {
           `Mensaje: ${textoCombinado}`
         );
       }
-      await sock.sendMessage(jid, { text: ack });
-      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: ack, adjuntos: idsAdjuntos });
+      const enviada = await conTurno(jid, async () => { const p = perfilLoader ? await perfilLoader(jid) : null; if (estaPausada(p) && p.pausado_por !== 'sara') return false; await sock.sendMessage(jid, { text: ack }); return true; });
+      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: enviada ? ack : null, adjuntos: idsAdjuntos });
     } catch (err) {
       console.error("Error gestionando follow-up reply:", err.message);
       if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, adjuntos: idsAdjuntos });
@@ -1035,7 +1036,16 @@ async function procesarBatch(jid, items) {
       if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, adjuntos: idsAdjuntos });
       return;
     }
-    await sock.sendMessage(jid, { text: respuesta });
+    const enviado = await conTurno(jid, async () => {
+      const actual = perfilLoader ? await perfilLoader(jid) : null;
+      if (estaPausada(actual) && actual.pausado_por !== 'sara') return false;
+      await sock.sendMessage(jid, { text: respuesta });
+      return true;
+    });
+    if (!enviado) {
+      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, adjuntos: idsAdjuntos });
+      return;
+    }
     controlAvisosSara.enviado(jid, respuesta);
     console.log(`📤 Respuesta enviada a ${jid}`);
     if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta, adjuntos: idsAdjuntos });
@@ -1681,4 +1691,14 @@ export function initWhatsApp() {
   // —`SessionEntry`, claves privadas, raíces, pares efímeros y cadenas— a los logs de producción.
   // El resto de `catch` de este fichero ya usaban `.message`; ésta era la única que no.
   connectToWhatsApp().catch((err) => console.error(lineaError("[WhatsApp] Error iniciando", err)));
+}
+
+// Destino ya validado por la bandeja: conservar también los identificadores privados @lid.
+export async function enviarConversacion(jid, texto) {
+  if (!clientReady || !sock) throw new Error('WhatsApp no conectado');
+  if (!/^\d+@(s\.whatsapp\.net|lid)$/.test(jid)) throw new Error('Destino inválido');
+  await sock.sendMessage(jid, {text:texto});
+  _marcarMensajeSistema(jid,texto);
+  addSaraToHistorial(jid,texto);
+  if (onMensajeSaliente) await onMensajeSaliente({jid,mensaje:texto,esManual:true,origen:CTX_ORIGEN.OPERADOR});
 }

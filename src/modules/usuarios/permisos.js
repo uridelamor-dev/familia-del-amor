@@ -11,6 +11,7 @@
 // Catálogo único de módulos del panel. `porLocal`: sus datos cambian según el local, así que
 // un usuario con local asignado (y rol distinto de dirección) queda limitado a su local.
 export const CATALOGO_MODULOS = [
+  { id: "conversaciones", label: "Conversaciones", roles: ["direccion", "marketing"], porLocal: false },
   { id: "tienda", label: "Tienda / Lotes", roles: ["direccion", "marketing"], porLocal: false },
   { id: "dashboard", label: "Dashboard", roles: ["direccion", "encargado", "contabilidad"], porLocal: true },
   { id: "reservas", label: "Reservas", roles: ["direccion", "encargado"], porLocal: true },
@@ -137,6 +138,7 @@ export function sanearModulos(rol, modulosGuardados, catalogo = CATALOGO_MODULOS
  * ENDURECE; no añadirla no rompe nada. Es la forma segura de cerrar esto por partes.
  */
 export const MODULO_POR_RUTA = [
+  ["/api/conversaciones", "conversaciones"],
   ["/api/tienda/admin", "tienda"],
   ["/api/reservas", "reservas"],
   ["/api/escandallos", "productos"],
