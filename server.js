@@ -1,6 +1,7 @@
+import { VINCULOS_SCHEMA } from './src/modules/messaging/contacto-conversacion.js';
 import { registrarConversaciones } from './src/modules/messaging/conversaciones.js';
 import { conTurno } from './src/modules/messaging/turno.js';
-import { enviarConversacion } from './whatsapp.js';
+import { enviarConversacion, resolverTelefono } from './whatsapp.js';
 import { recuperarRespuestaAutorizada } from './src/modules/messaging/recuperacion-autorizada.js';
 import { rutasTienda } from "./src/modules/tienda/rutas.js";
 import { tiendaDemoPersistente } from "./src/modules/tienda/preparar.js";
@@ -1617,6 +1618,7 @@ async function initDB() {
       try { await client.query(`ALTER TABLE wa_clientes ADD COLUMN IF NOT EXISTS ${col}`); }
       catch (e) { console.error("[wa] alter wa_clientes:", e.message); }
     }
+    await client.query(VINCULOS_SCHEMA);
     // Las pausadas son pocas y se piden enteras cada vez que se abre el panel.
     try {
       await client.query(
@@ -21153,7 +21155,7 @@ app.post("/api/campanas-config", requireAuth(["direccion", "marketing"]), async 
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-registrarConversaciones(app, {auth:requireAuth,pool,enviar:enviarConversacion,listo:isReady,bloquear:conTurno,olvidar:olvidarSesionWA});
+registrarConversaciones(app, {auth:requireAuth,pool,resolverTelefono,enviar:enviarConversacion,listo:isReady,bloquear:conTurno,olvidar:olvidarSesionWA});
 
 app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {
   const { telefono, mensaje } = req.body;

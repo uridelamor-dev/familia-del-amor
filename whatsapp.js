@@ -1381,7 +1381,7 @@ function formatPhone(telefono) {
 
 // Extrae el número de teléfono de un jid entrante. Para @s.whatsapp.net es directo.
 // Para @lid (sistema de privacidad de WhatsApp) intenta resolver a número real.
-async function resolverTelefono(jid) {
+export async function resolverTelefono(jid) {
   if (!jid) return null;
   if (jid.endsWith("@lid")) {
     try {
