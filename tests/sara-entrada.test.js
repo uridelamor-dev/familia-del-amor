@@ -1,3 +1,5 @@
+import { indicarEscribiendo } from '../src/modules/messaging/entrada-diferida.js';
+import { crearControlAvisos } from '../src/modules/messaging/sara-revision.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -25,10 +27,10 @@ test('el mismo mensaje no se procesa dos veces y la cola mantiene el orden por c
   assert.deepEqual(orden, ['inicio']); liberar(); await Promise.all([p1, p2]);
   assert.deepEqual(orden, ['inicio', 'fin', 'segundo']);
 });
-function entrada({ estado = 'activa', fallaLectura = false, tomaManual = false } = {}) {
+function entrada({ estado = 'activa', fallaLectura = false, tomaManual = false, fallaPresencia = false } = {}) {
   const guardados = [], envios = [], llamadas = [];
   const perfil = { estado_ia: estado, idioma_ultimo: 'ca', pausado_por: estado === 'pausada' ? 'operador' : null };
-  const env = { console, estaPausada, idiomaSugerido, pidePersona, MOTIVO_PAUSA, textoSeguro,
+  const env = { console, indicarEscribiendo, controlAvisosSara: crearControlAvisos(), estaPausada, idiomaSugerido, pidePersona, MOTIVO_PAUSA, textoSeguro,
     perfilLoader: async () => perfil, logBaileys: () => ({}), guardarAdjunto: async () => 'adjunto-1',
     downloadMediaMessage: async () => Readable.from([Buffer.from('%PDF-1.7')]),
     prepararAdjunto: args => prepararAdjunto({ ...args, interpretar: async () => {
@@ -36,7 +38,7 @@ function entrada({ estado = 'activa', fallaLectura = false, tomaManual = false }
       return { etiqueta: 'Lectura del archivo', texto: 'Vull reservar una taula per a quatre persones.' };
     } }),
     onMessage: async x => guardados.push(x), onPausarIA: null, followupAwaitingReply: new Map(), seguimientoResolver: null,
-    sock: { updateMediaMessage() {}, sendPresenceUpdate: async () => {}, sendMessage: async (_jid, x) => envios.push(x.text) },
+    sock: { updateMediaMessage() {}, sendPresenceUpdate: async () => { if(fallaPresencia) throw Error('presencia no disponible'); }, sendMessage: async (_jid, x) => envios.push(x.text) },
     responderConIA: async (_jid, texto) => {
       llamadas.push(texto);
       if (tomaManual) Object.assign(perfil, { estado_ia: 'pausada', pausado_por: 'operador' });
@@ -108,3 +110,5 @@ test('endpoint de adjuntos exige autenticación de dirección y aplica caducidad
   await handler({ params: { id: '00000000-0000-4000-8000-000000000001' } }, res);
   assert.equal(protegida, true); assert.equal(status, 404);
 });
+
+test('entrada real: responde aunque falle el indicador escribiendo', async () => { const e = entrada({ fallaPresencia: true }); await e.run(); assert.deepEqual(e.envios, ['Per a quin dia?']); });

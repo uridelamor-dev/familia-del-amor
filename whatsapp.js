@@ -1,3 +1,4 @@
+import { entradaDiferidaVigente, indicarEscribiendo } from './src/modules/messaging/entrada-diferida.js';
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, downloadMediaMessage, fetchLatestWaWebVersion } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
@@ -467,6 +468,8 @@ async function esMensajeInterno(jid) {
 let onReady = null;
 export function setOnReady(fn) { onReady = fn; }
 
+let entradaDiferidaPermitida = null;
+export function setEntradaDiferidaPermitida(fn) { entradaDiferidaPermitida = fn; }
 let onMessage = null;
 export function setOnMessage(fn) { onMessage = fn; }
 
@@ -984,7 +987,7 @@ async function procesarBatch(jid, items) {
     const ack = (plan && plan.texto)
       || ({ ca: 'Gràcies per explicar-nos-ho! La teva opinió ens ajuda a millorar. Fins aviat!', en: 'Thank you for telling us! Your feedback helps us improve. See you soon!', es: '¡Gracias por contárnoslo! Tu opinión nos ayuda a mejorar. ¡Hasta pronto!' }[idiomaSugerido({ mensajesCliente: [textoCombinado], idiomaContacto: ficha?.idioma_ultimo }).idioma]);
     try {
-      await sock.sendPresenceUpdate("composing", jid);
+      await indicarEscribiendo(sock, jid);
       // A una respuesta buena no se interrumpe a nadie; a una mala, sí y en el momento.
       if (!plan || plan.avisar !== false) {
         await notificarLaura(
@@ -1003,7 +1006,7 @@ async function procesarBatch(jid, items) {
   }
 
   try {
-    await sock.sendPresenceUpdate("composing", jid);
+    await indicarEscribiendo(sock, jid);
     // De varios mensajes seguidos manda la cita del ÚLTIMO: es a lo que se refiere ahora.
     const citado = [...items].reverse().map((x) => x.citado).find(Boolean) || null;
 
@@ -1234,7 +1237,7 @@ async function connectToWhatsApp() {
   });
 
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    if (type !== "notify") return;
+    if (type !== "notify" && type !== "append") return;
     for (const recibido of messages) {
       const msg = { ...recibido, message: mensajeNormalizado(recibido.message) };
       if (msg.key.fromMe) {
@@ -1264,6 +1267,7 @@ async function connectToWhatsApp() {
 
       // Grupos: solo procesar si hay adjunto y hay handler registrado
       if (jid?.endsWith("@g.us")) {
+        if (type === "append") continue;
         if (!onGroupAttachment) continue;
         const docMsg = msg.message?.documentMessage;
         const imgMsg = msg.message?.imageMessage;
@@ -1281,6 +1285,18 @@ async function connectToWhatsApp() {
         continue;
       }
 
+      if (type === 'append') {
+        if (!entradaDiferidaVigente(msg) || !entradaDiferidaPermitida) continue;
+        // No reabrir una conversación contestada desde el teléfono durante la caída.
+        if (messages.some(m => m.key?.fromMe && m.key?.remoteJid === jid
+          && Number(m.messageTimestamp) >= Number(msg.messageTimestamp))) continue;
+        try {
+          if (!(await entradaDiferidaPermitida(msg, await resolverTelefono(jid)))) continue;
+        } catch (e) {
+          console.error('[Sara] No se pudo comprobar el mensaje diferido:', e.message);
+          continue;
+        }
+      }
       if (!entradaNueva(msg.key)) continue;
       const texto =
         msg.message?.conversation ||

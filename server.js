@@ -1,3 +1,4 @@
+import { recuperarRespuestaAutorizada } from './src/modules/messaging/recuperacion-autorizada.js';
 import { rutasTienda } from "./src/modules/tienda/rutas.js";
 import { tiendaDemoPersistente } from "./src/modules/tienda/preparar.js";
 import {normalizarCentroBlanes} from "./src/modules/facturas/centro-blanes.js";
@@ -43,7 +44,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setEntradaDiferidaPermitida, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, leerIvaOriginal, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -24925,7 +24926,11 @@ const server = app.listen(PORT, async () => {
     );
   } catch (e) { console.error("[Migration] empresa post-restore fix:", e.message); }
 
-  setOnReady(procesarPendientesWA);
+  setOnReady(async () => {
+    try { await procesarPendientesWA(); } catch (e) { console.error('[WA] pendientes:', e.message); }
+    try { await recuperarRespuestaAutorizada({ dbGet, dbRun, enviar: sendMensajeLibre, listo: isReady }); }
+    catch (e) { console.error('[WA] recuperación autorizada: revisar entrega', e.message); }
+  });
 
   // Semilla única: Fiesta Mayor de Blanes 2026
   try {
@@ -25143,6 +25148,17 @@ const server = app.listen(PORT, async () => {
     // Los originales son privados y caducan a los 30 días; la lectura queda en el historial.
     await dbRun(`DELETE FROM wa_adjuntos WHERE creado_en < NOW() - INTERVAL '30 days'`);
     return row.id;
+  });
+
+  setEntradaDiferidaPermitida(async (msg, tel) => {
+    const jid = msg.key.remoteJid;
+    const identidad = identidadConversacion(jid, tel);
+    const contestado = await dbGet(`SELECT id FROM whatsapp_messages
+      WHERE (jid = ? OR jid = ? OR telefono = ? OR telefono = ?) AND creado_en::timestamptz >= to_timestamp(?::double precision)
+      AND (tipo = 'saliente' OR (NULLIF(respuesta, '') IS NOT NULL
+        AND respuesta != '(sin respuesta registrada)')) LIMIT 1`,
+      [jid, identidad.jidTelefono, identidad.telefono, identidad.nacional, Number(msg.messageTimestamp)]);
+    return !contestado;
   });
 
   setOnMessage(async ({ jid, texto, respuesta, historico = false, interno = false, adjuntos = [] }) => {
