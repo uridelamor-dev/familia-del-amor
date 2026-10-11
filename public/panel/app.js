@@ -959,10 +959,10 @@ function fijarPeriodoVista(p, from, to, label) {
 // dejaba la barra diciendo «Todo» con un rango puesto.
 function repintarSeg() {
   const cont = document.querySelector(".topbar .seg");
-  if (!cont) return;
   const per = periodoVista();
   const mobileLabel = document.querySelector("[data-mobile-period-label]");
   if (mobileLabel) mobileLabel.textContent = grupoPeriodo() === "dashboard" ? DASH_RANGE.label || "Hoy" : per.p === "todo" ? "Todo" : per.from ? fechaCorta(per.from) + " – " + fechaCorta(per.to) : "Elegir fechas";
+  if (!cont) return;
   const presets = grupoPeriodo() === "compras"
     ? [["todo", "Todo"], ["semana", "Semana"], ["mes", "Mes"]]
     : [["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Semana"], ["mes", "Mes"]];
@@ -973,6 +973,7 @@ function repintarSeg() {
 
 // Volver a pedir los datos con el periodo nuevo. Sin esto el rótulo cambiaba y la lista no.
 function recargarPorPeriodo() {
+  repintarSeg();
   if (CURRENT === "dashboard") return loadDashboard();
   if (CURRENT === "productos") return loadProductos();
   if (CURRENT === "facturas") return loadFacturas();
@@ -1296,7 +1297,8 @@ function renderDashboard(d) {
   const contexto = [d.ayer && d.ayer.disponible ? d.ayer.texto : "", d.hoy && d.hoy.disponible ? d.hoy.texto : ""].filter(Boolean).join(" ");
   DASH_PARTE = { titular: d.titular || "", contexto };
   const hayParte = !!(d.titular || contexto);
-  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${ambito}${fechaLarga(d.fecha) ? " · " + fechaLarga(d.fecha) : ""}</div></div><div class="acts">${hayParte ? `<button class="btn" data-act="dash-parte">${ic("chat", 15)} El parte de Sara</button>` : ""}<button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
+  const fechaSeleccionada = DASH_RANGE.from === DASH_RANGE.to ? fechaLarga(DASH_RANGE.from) : fechaCorta(DASH_RANGE.from) + " – " + fechaCorta(DASH_RANGE.to);
+  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${ambito}${fechaSeleccionada ? " · " + fechaSeleccionada : ""}</div></div><div class="acts">${hayParte ? `<button class="btn" data-act="dash-parte">${ic("chat", 15)} El parte de Sara</button>` : ""}<button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
   const sara = "";
   // Ventas del día: sin sustituir datos ausentes por cero ni por reservas.
   const diario = d.diario, actual = diario?.actual;
@@ -1311,7 +1313,14 @@ function renderDashboard(d) {
     actual?.ticketMedio != null ? kpi({ lab: "Ticket medio", icon: "receipt", val: eur(actual.ticketMedio), sub: "Por ticket · " + num(actual.tickets) + " tickets" + cobertura }) : "",
     variacion != null ? kpi({ lab: "Vs. semana pasada", icon: "cal", val: (variacion > 0 ? "+" : "") + dec1(variacion) + " %", sub: `Mismo día · ${esc(fechaMini(diario.anterior))}<br>Día completo${cobertura}` }) : "",
   ].filter(Boolean);
-  const kpis = tarjetasHoy.length ? `<div class="grid g${tarjetasHoy.length} dash-kpis">${tarjetasHoy.join("")}</div>` : `<p class="mut" role="status">${diario === undefined ? "Consultando las cifras de hoy…" : "Las cifras de hoy no están disponibles en este momento."}</p>`;
+  const esHoy = DASH_RANGE.from === todayStr() && DASH_RANGE.to === todayStr();
+  const periodo = DASH_PERIODO;
+  const tarjetasPeriodo = periodo ? [
+    periodo.ventas?.disponible ? kpi({lab:"Facturación · " + (DASH_RANGE.label || "Periodo"), icon:"euro", val:eur(periodo.ventas.total), sub:periodo.ventas.parcial ? "Datos parciales: faltan locales" : "Periodo seleccionado"}) : "",
+    periodo.ventas?.disponible && periodo.ventas.tickets > 0 ? kpi({lab:"Ticket medio", icon:"receipt", val:eur(periodo.ventas.ticket_medio), sub:num(periodo.ventas.tickets) + " tickets · periodo seleccionado"}) : "",
+    periodo.comparacion?.ventas != null ? kpi({lab:"Vs. " + periodo.comparacion.etiqueta, icon:"cal", val:dec1(periodo.comparacion.ventas) + " %", sub:fechaCorta(periodo.comparacion.desde) + " – " + fechaCorta(periodo.comparacion.hasta)}) : "",
+  ].filter(Boolean) : [];
+  const kpis = !esHoy ? (tarjetasPeriodo.length ? `<div class="grid g${tarjetasPeriodo.length} dash-kpis">${tarjetasPeriodo.join("")}</div>` : `<p class="mut" role="status">${DASH_PERIODO_ESTADO === "cargando" ? "Consultando el periodo seleccionado…" : "Las cifras del periodo no están disponibles."}</p>`) : tarjetasHoy.length ? `<div class="grid g${tarjetasHoy.length} dash-kpis">${tarjetasHoy.join("")}</div>` : `<p class="mut" role="status">${diario === undefined ? "Consultando las cifras de hoy…" : "Las cifras de hoy no están disponibles en este momento."}</p>`;
   if (d.errorResumen) return header + kpis + errorCard("No se ha podido cargar el resto del resumen. Puedes reintentarlo.");
 
 
@@ -1405,7 +1414,7 @@ async function loadDashboard() {
   let d = null;
   let diario;
   const pintar = () => { if (d && vigente()) view.innerHTML = renderDashboard(d); };
-  apiOptional("/api/dashboard/hoy" + (q ? "?" + q : "")).then((valor) => {
+  if (from === todayStr() && to === todayStr()) apiOptional("/api/dashboard/hoy" + (q ? "?" + q : "")).then((valor) => {
     if (!vigente()) return;
     diario = valor?.hoy ? valor : null;
     if (d) { d.diario = diario; pintar(); }

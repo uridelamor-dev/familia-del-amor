@@ -29,9 +29,9 @@ test('el mismo mensaje no se procesa dos veces y la cola mantiene el orden por c
   assert.deepEqual(orden, ['inicio', 'fin', 'segundo']);
 });
 function entrada({ estado = 'activa', fallaLectura = false, tomaManual = false, fallaPresencia = false } = {}) {
-  const guardados = [], envios = [], llamadas = [];
+  const guardados = [], envios = [], llamadas = [], marcados = [];
   const perfil = { estado_ia: estado, idioma_ultimo: 'ca', pausado_por: estado === 'pausada' ? 'operador' : null };
-  const env = { console, conTurno, indicarEscribiendo, controlAvisosSara: crearControlAvisos(), estaPausada, idiomaSugerido, pidePersona, MOTIVO_PAUSA, textoSeguro,
+  const env = { console, _marcarMensajeSistema: (jid, texto) => marcados.push(texto), conTurno, indicarEscribiendo, controlAvisosSara: crearControlAvisos(), estaPausada, idiomaSugerido, pidePersona, MOTIVO_PAUSA, textoSeguro,
     perfilLoader: async () => perfil, logBaileys: () => ({}), guardarAdjunto: async () => 'adjunto-1',
     downloadMediaMessage: async () => Readable.from([Buffer.from('%PDF-1.7')]),
     prepararAdjunto: args => prepararAdjunto({ ...args, interpretar: async () => {
@@ -49,11 +49,11 @@ function entrada({ estado = 'activa', fallaLectura = false, tomaManual = false, 
   const a = wa.indexOf('async function procesarBatch('), b = wa.indexOf('/**', a);
   vm.runInNewContext(wa.slice(a, b), env);
   return { run: () => env.procesarBatch('cliente', [{ textoFinal: '[Archivo adjunto sin texto]', tieneAdjunto: true,
-    msg: { key: { id: 'm1', remoteJid: 'cliente' }, message: { documentMessage: { mimetype: 'application/pdf' } } } }]), envios, guardados, llamadas };
+    msg: { key: { id: 'm1', remoteJid: 'cliente' }, message: { documentMessage: { mimetype: 'application/pdf' } } } }]), envios, guardados, llamadas, marcados };
 }
 test('entrada real: lectura y adjunto quedan en historial, no se envía la etiqueta vacía al modelo', async () => {
   const e = entrada(); await e.run();
-  assert.deepEqual(e.envios, ['Per a quin dia?']); assert.match(e.guardados[0].texto, /Vull reservar/);
+  assert.deepEqual(e.envios, ['Per a quin dia?']); assert.deepEqual(e.marcados, e.envios); assert.match(e.guardados[0].texto, /Vull reservar/);
   assert.deepEqual([...e.guardados[0].adjuntos], ['adjunto-1']); assert.doesNotMatch(e.llamadas[1], /Archivo adjunto sin texto/);
 });
 test('entrada real: estando pausada archiva y permanece en silencio', async () => {
@@ -112,4 +112,4 @@ test('endpoint de adjuntos exige autenticación de dirección y aplica caducidad
   assert.equal(protegida, true); assert.equal(status, 404);
 });
 
-test('entrada real: responde aunque falle el indicador escribiendo', async () => { const e = entrada({ fallaPresencia: true }); await e.run(); assert.deepEqual(e.envios, ['Per a quin dia?']); });
+test('entrada real: responde aunque falle el indicador escribiendo', async () => { const e = entrada({ fallaPresencia: true }); await e.run(); assert.deepEqual(e.envios, ['Per a quin dia?']); assert.deepEqual(e.marcados, e.envios); });

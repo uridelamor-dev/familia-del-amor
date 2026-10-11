@@ -9,7 +9,7 @@ import { anteponerCitado as ctxAnteponerCitado, ORIGEN as CTX_ORIGEN }
   from "./src/modules/messaging/contexto.js";
 import { estaPausada, MOTIVO_PAUSA, pidePersona, idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia, pulirCatalan }
   from "./src/modules/messaging/sara.js";
-import { revisarRespuesta, textoSeguro, pideExcepcionPromocion, crearControlAvisos } from "./src/modules/messaging/sara-revision.js";
+import { revisarRespuesta, textoSeguro, confirmacionDocumentoEnviado, pideExcepcionPromocion, crearControlAvisos } from "./src/modules/messaging/sara-revision.js";
 import { mensajeNormalizado, prepararAdjunto } from "./src/modules/messaging/sara-adjuntos.js";
 import { respuestaTrasHerramientas } from "./src/modules/messaging/respuesta-herramientas.js";
 import path from "path";
@@ -116,7 +116,7 @@ Si un cliente quiere cancelar su reserva: primero confirma con él de qué reser
 Si un cliente quiere CAMBIAR algo de una reserva que YA tiene (número de personas, hora, día o zona) — por ejemplo "al final seremos 4 en vez de 2" o "¿podemos cambiarlo a las 21:30?" — es una MODIFICACIÓN, NO una cancelación. Usa la herramienta \`modificar_reserva\` (localiza la reserva por su día actual y, si lo sabes, el local; pon en null lo que no cambie). NUNCA canceles y vuelvas a crear la reserva para un cambio: eso confunde al local. Solo usa \`cancelar_reserva\` si el cliente quiere anular la reserva del todo y no venir.
 
 ## Carta, platos y precios
-Si el cliente pregunta por un precio, plato, combo o condición, responde primero en texto usando el "CONTENIDO REVISADO DE LAS CARTAS" del local correcto. No sustituyas la respuesta por un PDF ni inventes datos ausentes. Puedes ofrecer la carta como complemento. Si pide que le envíes la carta, menú o documento y en el contexto ("DOCUMENTOS DISPONIBLES" / "CONFIGURACIÓN DEL EQUIPO") hay uno que encaje, envíaselo DIRECTAMENTE con la herramienta \`enviar_documento\` en cuanto lo pida — a la primera, sin derivar a ningún teléfono y sin esperar a que insista. Nunca digas que no tienes la carta si en el contexto hay un documento que encaja.
+Si el cliente pregunta por un precio, plato, combo o condición, responde primero en texto usando el "CONTENIDO REVISADO DE LAS CARTAS" del local correcto. No sustituyas la respuesta por un PDF ni inventes datos ausentes. Puedes ofrecer la carta como complemento. «¿Tienes la carta de Girona?» (también Gerona), «¿Puedo ver el menú?» y equivalentes son peticiones de envío, no preguntas que requieran una segunda confirmación. Si pide que le envíes la carta, menú o documento y en el contexto ("DOCUMENTOS DISPONIBLES" / "CONFIGURACIÓN DEL EQUIPO") hay uno que encaje, envíaselo DIRECTAMENTE con la herramienta \`enviar_documento\` en cuanto lo pida — a la primera, sin derivar a ningún teléfono y sin esperar a que insista. Nunca digas que no tienes la carta si en el contexto hay un documento que encaja.
 Solo si NO hay ningún documento configurado para lo que pregunta, dile que puede escribir directamente al 622149946 y le atienden encantados.
 
 ## Celebraciones y eventos privados
@@ -785,7 +785,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
     // `err.error` es un objeto del SDK: se redacta antes de escribirlo. No lleva material
     // criptográfico, pero un objeto de error de una librería no se imprime crudo y punto.
     console.error(lineaError("[IA] Error", err), JSON.stringify(redactar(err.error, { profundidad: 2 })));
-    if (resultadosAcciones.length) return textoSeguro('resultado', pista.idioma);
+    if (resultadosAcciones.length) return confirmacionDocumentoEnviado(resultadosAcciones, pista.idioma) || textoSeguro('resultado', pista.idioma);
     // Nota: el SDK 0.97 no exporta OverloadedError como clase; el 529 se detecta por status
     if (err instanceof Anthropic.RateLimitError || err?.status === 529) {
       return textoSeguro('error', pista.idioma);
@@ -893,7 +893,7 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
       if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
       const doc = await documentoResolver(input.documento_id);
       if (!doc || !doc.buffer) {
-        return { content: "No se encontró ese documento. No inventes que lo has enviado; ofrece ayudar de otro modo.", is_error: false };
+        return { content: "No se encontró ese documento. No inventes que lo has enviado; ofrece ayudar de otro modo.", is_error: true };
       }
       await sock.sendMessage(jid, {
         document: doc.buffer,
@@ -1054,6 +1054,7 @@ async function procesarBatch(jid, items) {
     const enviado = await conTurno(jid, async () => {
       const actual = perfilLoader ? await perfilLoader(jid) : null;
       if (estaPausada(actual) && actual.pausado_por !== 'sara') return false;
+      _marcarMensajeSistema(jid, respuesta);
       await sock.sendMessage(jid, { text: respuesta });
       return true;
     });

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { revisarRespuesta, textoSeguro, pideExcepcionPromocion } from '../src/modules/messaging/sara-revision.js';
+import { revisarRespuesta, textoSeguro, confirmacionDocumentoEnviado, pideExcepcionPromocion } from '../src/modules/messaging/sara-revision.js';
 import { condicionesPromociones, ADJUNTOS_SCHEMA } from '../src/modules/messaging/sara-promociones.js';
 import { respuestaTrasHerramientas } from '../src/modules/messaging/respuesta-herramientas.js';
 import { estaPausada, idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia } from '../src/modules/messaging/sara.js';
@@ -40,18 +40,18 @@ test('condiciones no mezclan cupón con oferta de caja ni revelan secretos', () 
 const wa = readFileSync(new URL('../whatsapp.js', import.meta.url), 'utf8');
 function conversacion({ respuesta = 'Dime algo', revision = { ...valido, respuesta: 'Digues-me què necessites.', evidencias: [] }, falloDerivacion = false, falloRevision = false, accion = false } = {}) {
   let llamadas = 0, acciones = [];
-  const env = { console, estaPausada, respuestaTrasHerramientas, revisarRespuesta, textoSeguro, pideExcepcionPromocion,
+  const env = { console, estaPausada, respuestaTrasHerramientas, revisarRespuesta, textoSeguro, confirmacionDocumentoEnviado, pideExcepcionPromocion,
     perfilLoader: async () => null, resolverTelefono: async () => '34600111222', campanaLoader: async () => ({ texto: 'Promoción: día 1', idioma: 'ca' }), reservaLoader: null,
     conversaciones: new Map(), historialLoader: null, MAX_HISTORIAL: 10, SESION_TTL_SEG: 100,
     getContextoFechaHora: () => '2026-10-04', idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia,
     onActualizarPerfil: null, saraConfigLoader: async () => 'Promoción: día 1', SYSTEM_PROMPT: '## Nuestros locales Local A ## Carta, platos',
     buildPerfilContext: () => '', ctxAnteponerCitado: anteponerCitado, TOOLS: [], Anthropic: { RateLimitError: class extends Error {} },
     lineaError: () => 'Error controlado', redactar: () => ({}),
-    ejecutarHerramienta: async b => { acciones.push(b.name); return { content: 'Acción registrada', is_error: falloDerivacion }; },
+    ejecutarHerramienta: async b => { acciones.push(b.name); return { content: b.name === 'enviar_documento' ? 'Documento enviado al cliente correctamente.' : 'Acción registrada', is_error: falloDerivacion }; },
     getAnthropic: () => ({ messages: { create: async args => {
       if (args.tool_choice) { if (falloRevision) throw new Error('proveedor'); return bloque(revision); }
       llamadas++;
-      if (accion && llamadas === 1) return { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'registrar_reserva', id: 't1', input: {} }] };
+      if (accion && llamadas === 1) return { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: typeof accion === 'string' ? accion : 'registrar_reserva', id: 't1', input: {} }] };
       return { stop_reason: 'end_turn', content: [{ type: 'text', text: respuesta }] };
     } } }),
   };
@@ -144,4 +144,25 @@ test('avisos consecutivos se suprimen por cliente, conservando respuestas válid
   assert.equal(control.omitir('a', aviso), false);
   control.enviado('a', aviso); tiempo += 60000;
   assert.equal(control.omitir('a', aviso), false);
+});
+
+test('la confirmación de un documento admite como evidencia el resultado real del envío', async () => {
+  const resultado = { content: 'Documento enviado al cliente correctamente.', is_error: false };
+  const args = { fuentes: '', resultadosAcciones: [{ herramienta: 'enviar_documento', resultado }],
+    crear: async () => bloque({ ...valido, evidencias: [resultado.content], respuesta: 'Aquí tens la carta.' }) };
+  assert.equal((await revisarRespuesta(args)).decision, 'enviar');
+  await assert.rejects(revisarRespuesta({ ...args, resultadosAcciones: [{ herramienta: 'enviar_documento', resultado: { ...resultado, is_error: true } }] }), /revision_no_valida/);
+});
+test('respaldo de entrega no confunde un PDF enviado con reservas o documentos fallidos', () => {
+  const doc = { herramienta: 'enviar_documento', resultado: { is_error: false, content: 'Documento enviado al cliente correctamente.' } };
+  assert.equal(confirmacionDocumentoEnviado([doc], 'es'), 'Aquí tienes el documento.');
+  for (const acciones of [[], [{ ...doc, resultado: { is_error: true } }], [{ ...doc, resultado: { is_error: false, content: 'No encontrado' } }], [doc, { herramienta: 'registrar_reserva', resultado: { is_error: false } }]]) {
+    assert.equal(confirmacionDocumentoEnviado(acciones), null);
+  }
+});
+
+test('turno real: tras enviar el PDF un fallo del revisor confirma la entrega sin reenviarlo', async () => {
+  const c = conversacion({ accion: 'enviar_documento', falloRevision: true });
+  assert.equal(await c.run('Tens la carta de Girona?'), 'Aquí tens el document.');
+  assert.deepEqual(c.acciones, ['enviar_documento']);
 });

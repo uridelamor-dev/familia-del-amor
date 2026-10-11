@@ -62,3 +62,23 @@ test('no oculta una excepción ni devuelve una promesa anterior como respuesta',
     ejecutar: async () => { throw new Error('Conexión interrumpida'); }
   }), /Conexión interrumpida/);
 });
+
+test('la carta se adjunta en el primer turno aunque el modelo solo prometa enviarla', async () => {
+  let ronda = 0, envios = 0;
+  const mensajes = [{ role: 'user', content: 'Hola, tienes la carta de gerona?' }];
+  const salida = await respuestaTrasHerramientas({ mensajes,
+    crear: async () => [final('¡Claro! Te envío la carta de La Tapeta - Girona.'), previo(), final('Aquí tienes la carta.')][ronda++],
+    ejecutar: async () => { envios++; return { content: 'Documento enviado al cliente correctamente.', is_error: false }; }
+  });
+  assert.equal(envios, 1);
+  assert.equal(salida, 'Aquí tienes la carta.');
+  assert.match(mensajes[2].content, /No se ha enviado/);
+});
+test('no envía promesas repetidas si el modelo nunca adjunta la carta', async () => {
+  let envios = 0;
+  const salida = await respuestaTrasHerramientas({ mensajes: [], maxRondas: 2,
+    crear: async () => final('Te envío la carta de Girona.'), ejecutar: async () => { envios++; }
+  });
+  assert.equal(envios, 0);
+  assert.doesNotMatch(salida, /Te envío/);
+});
