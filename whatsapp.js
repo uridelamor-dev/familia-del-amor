@@ -1146,7 +1146,9 @@ async function connectToWhatsApp() {
     logger: logBaileys(),
     keepAliveIntervalMs: 25000,   // ping cada 25s para mantener viva la conexión TCP
     connectTimeoutMs: 60000,
-    browser: Browsers.macOS("Desktop"),
+    // Desktop anuncia DARWIN y WhatsApp cierra el registro con 428 antes del QR.
+    // Chrome conserva WEB_BROWSER y permite solicitar también el historial completo.
+    browser: Browsers.macOS("Chrome"),
     getMessage: async () => ({ conversation: "" })
   });
 
