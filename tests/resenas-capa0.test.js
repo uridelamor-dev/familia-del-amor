@@ -10,7 +10,7 @@ describe("el banner de Reseñas no puede escupir código", () => {
     // Estaba escrito `${cond ? '${otraCosa ? `<button>` : ""}' : ""}`: como el interior iba
     // entre comillas simples, no se evaluaba, y en pantalla salía el texto del propio código
     // rodeando a los botones.
-    const banner = panel.slice(panel.indexOf("const estadoBanner = st ?"), panel.indexOf("const estadoBanner = st ?") + 2000);
+    const banner = panel.slice(panel.indexOf("const opciones = puedeActualizar"), panel.indexOf("const opciones = puedeActualizar") + 2000);
     assert.doesNotMatch(banner, /'\$\{/, "hay una plantilla dentro de comillas simples: se pintará como texto");
     assert.match(banner, /USER\.rol === "direccion" && revPuedeResponder\(\)/);
   });

@@ -44,6 +44,10 @@ export function clienteBusinessProfile({ token, fetchImpl = fetch }) {
         return { ...r, name };
       });
     },
+    async leer(name) {
+      if (!esNombreResena(name)) throw new Error('Reseña de Google inválida');
+      return pedir(`${API}${name}`);
+    },
     async publicar(name, comment) {
       if (!esNombreResena(name)) throw new Error('Esta reseña necesita sincronizarse con Business Profile');
       if (typeof comment !== 'string' || !comment.trim() || comment.length > 4096) throw new Error('La respuesta debe tener entre 1 y 4096 caracteres');

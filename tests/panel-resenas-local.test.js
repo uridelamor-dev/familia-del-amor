@@ -46,21 +46,21 @@ describe("Reseñas obedece al selector de la barra", () => {
   });
 });
 
-describe("«Sin respuesta» sigue estando, y solo una vez", () => {
+describe("«Nuevas pendientes» sigue estando, y solo una vez", () => {
   test("está en el desplegable de Estado", () => {
-    assert.match(bloqueReviews, /\["pendientes", "Sin respuesta"\]/);
+    assert.match(bloqueReviews, /\["pendientes", "Nuevas pendientes"\]/);
   });
 
   test("y viaja al servidor, que lo traduce a «sin respuesta»", () => {
     assert.match(bloqueReviews, /"rating", "estado", "q", "autor", "from", "to", "sort"/);
     const servicio = readFileSync(new URL("../src/modules/reviews/reviews.service.js", import.meta.url), "utf8");
     assert.match(servicio, /f\.estado === "pendientes"/);
-    assert.ok(servicio.includes("COALESCE(NULLIF(reply, ''), NULLIF(google_reply, '')) IS NULL"));
+    assert.ok(servicio.includes("COALESCE(google_reply, '') = ''"));
   });
 
   test("no se ha duplicado en un botón aparte: un solo sitio para el mismo filtro", () => {
-    const veces = (bloqueReviews.match(/Sin respuesta/g) || []).length;
-    assert.equal(veces, 1, "hay más de un «Sin respuesta» en la pantalla");
+    const veces = (bloqueReviews.match(/Nuevas pendientes/g) || []).length;
+    assert.equal(veces, 1, "hay más de un «Nuevas pendientes» en la pantalla");
   });
 });
 

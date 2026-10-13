@@ -8,7 +8,7 @@ const src=readFileSync(new URL('../server.js',import.meta.url),'utf8');
 const route=src.slice(src.indexOf('app.post("/api/reviews/:id/publish"'),src.indexOf('// Guardar un borrador no publica'));
 function setup({row,scope='',fail=false}={}) {
  let handler; const writes=[],sent=[]; const res={statusCode:200,status(code){this.statusCode=code;return this},json(body){this.body=body;return this}};
- vm.runInNewContext(route,{app:{post:(path,auth,fn)=>handler=fn},requireAuth:()=>{},dbGet:async()=>row,dbRun:async(...a)=>writes.push(a),localScope:()=>scope,locationNamesDeLocal,esNombreResena,getGoogleAccessToken:async()=>'test',clienteBusinessProfile:()=>({publicar:async(name,reply)=>{sent.push({name,reply});if(fail)throw Error('timeout');return {comment:reply,updateTime:'today'}}}),console:{error(){}}});
+ vm.runInNewContext(route,{app:{post:(path,auth,fn)=>handler=fn},requireAuth:()=>{},repasoReviews:{exclusive:fn=>fn()},dbGet:async()=>row,dbRun:async(...a)=>writes.push(a),localScope:()=>scope,locationNamesDeLocal,esNombreResena,getGoogleAccessToken:async()=>'test',clienteBusinessProfile:()=>({publicar:async(name,reply)=>{sent.push({name,reply});if(fail)throw Error('timeout');return {comment:reply,updateTime:'today'}}}),console:{error(){}}});
  return {async run(reply='Gracias'){await handler({params:{id:'1'},body:{reply}},res);return res},writes,sent};
 }
 const row={id:'1',location_name:'La Tapeta - Blanes',origen:'business_profile',google_name:'accounts/1/locations/2/reviews/3',reply:'Borrador anterior'};

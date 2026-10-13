@@ -24,9 +24,9 @@ describe("scope por local en reseñas (ERP local ↔ ficha de Google)", () => {
 });
 
 describe("mapManageRow", () => {
-  test("marca respondida y estrellas; fecha recortada", () => {
+  test("un borrador no equivale a respuesta publicada; estrellas y fecha", () => {
     const r = mapManageRow({ id: "x", location_name: "La Tapeta Blanes", author: "Ana", rating: 5, text: "genial", fecha: "2026-08-01T10:00:00Z", reply: "gracias", replied_at: "2026-08-02T09:00:00Z", reply_by: "Uri" });
-    assert.equal(r.respondida, true);
+    assert.equal(r.respondida, false);
     assert.equal(r.estrellas, "★★★★★");
     assert.equal(r.fecha, "2026-08-01");
     assert.equal(r.replied_at, "2026-08-02");
@@ -204,7 +204,7 @@ describe("buildManageQuery (bandeja: filtros/orden)", () => {
   test("rating + estado pendientes", () => {
     const q = buildManageQuery({ rating: "5", estado: "pendientes" });
     assert.match(q.where, /rating = \?/);
-    assert.match(q.where, /COALESCE\(NULLIF\(reply, ''\), NULLIF\(google_reply, ''\)\) IS NULL/);
+    assert.match(q.where, /COALESCE\(google_reply, ''\) = ''/);
     assert.deepEqual(q.params, [5]);
   });
   test("el local NO se filtra aquí: se traduce antes a los nombres de ficha de Google", () => {

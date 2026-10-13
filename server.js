@@ -68,6 +68,10 @@ import { resumenHoy } from "./src/modules/dashboard/hoy.js";
 import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fusion.js";
 import { resultadoRegistrado } from "./src/modules/dashboard/resultado.js";
 import { rangoAnterior, variacion } from "./src/modules/dashboard/periodos.js";
+import { compartirSincronizacion } from "./src/modules/reviews/sincronizacion.js";
+import { crearRepaso } from "./src/modules/reviews/repaso.js";
+import { registrarRepaso } from "./src/modules/reviews/repaso-routes.js";
+import { autorizarResenas } from "./src/modules/reviews/oauth.js";
 import { clienteBusinessProfile, esNombreResena } from "./src/modules/reviews/business-profile.js";
 import { mapManageRow, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry, locationNamesDeLocal } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
@@ -2092,6 +2096,8 @@ async function initDB() {
       "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS google_name TEXT",
       "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS google_reply TEXT",
       "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS google_replied_at TEXT",
+      "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS ai_context TEXT",
+      "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS ai_example TEXT",
     ];
     for (const sql of ALTERS) {
       try { await client.query(sql); } catch (e) { console.warn("Columna omitida (no crítica):", e.message); }
@@ -2411,7 +2417,8 @@ async function fetchPlacesReviews() {
 }
 
 // Orquesta la sincronización (Business → fallback Places) y persiste el estado.
-async function runReviewsSync() {
+const runReviewsSync = compartirSincronizacion(ejecutarReviewsSync);
+async function ejecutarReviewsSync() {
   const t0 = Date.now();
   const ahora = new Date().toISOString();
   await setConfig("reviews_last_attempt", ahora); // último INTENTO (aunque falle)
@@ -2437,37 +2444,24 @@ async function runReviewsSync() {
   return result;
 }
 
-// Refresco diario de reseñas (cada 24h). Fallback automático Business → Places.
-/**
- * Refresco de reseñas: MARCA EN LA BASE, no un temporizador de un día.
- *
- * Era `setInterval(..., 24 h)`, y en Replit eso no se dispara casi nunca: el proceso se
- * reinicia en cada despliegue y a veces solo, así que la cuenta atrás vuelve a empezar de cero
- * una y otra vez. Tampoco corría al arrancar. Resultado: la pantalla podía llevar semanas sin
- * traer una reseña nueva y el banner enseñaba una fecha de sincronización antigua sin que nada
- * dijera por qué.
- *
- * Es el mismo patrón que ya se usa en el repaso de facturas y en la caché de Ágora: preguntar
- * cada poco «¿cuánto hace de la última?» contra algo que sobrevive al reinicio.
- */
-const REVIEWS_CADA_HORAS = 24;
+// Refresco horario con marca persistida: los reinicios no reinician la espera.
+const REVIEWS_CADA_HORAS = 1;
 let _sincronizandoReviews = false;
 async function reviewsSyncSiToca() {
   if (_sincronizandoReviews) return;
+  _sincronizandoReviews = true;
   try {
     const refresh = await getConfig("google_refresh_token");
     if (!refresh && !GOOGLE_PLACES_API_KEY) return;      // sin conectar no hay nada que hacer
     const ultimo = await getConfig("reviews_last_attempt");
     if (!tocaRepasar({ ultimo, ahora: new Date().toISOString(), cadaHoras: REVIEWS_CADA_HORAS })) return;
-    _sincronizandoReviews = true;
     await runReviewsSync();       // ya escribe `reviews_last_attempt` él mismo
   } catch (e) {
     console.error("[Google Reviews] Auto-refresh:", e.message);
   } finally { _sincronizandoReviews = false; }
 }
-// Se pregunta cada media hora; la marca decide. Y al arrancar, tras dar tiempo a que la base
-// esté lista: si el último intento es de hace tres semanas, se hace ahora y no dentro de un día.
-setInterval(() => { reviewsSyncSiToca().catch(() => {}); }, 30 * 60 * 1000);
+// Cada cinco minutos se comprueba si ha pasado una hora, también tras arrancar.
+setInterval(() => { reviewsSyncSiToca().catch(() => {}); }, 5 * 60 * 1000);
 setTimeout(() => { reviewsSyncSiToca().catch(() => {}); }, 90 * 1000);
 
 // Sincronización de ventas de Ágora (oportunista + catch-up). No hace NADA si no hay locales
@@ -4022,37 +4016,22 @@ app.get("/auth/google", (req, res) => {
 });
 
 app.get("/auth/google/callback", async (req, res) => {
+  res.set("Cache-Control", "no-store");
   const { code, error } = req.query;
-  if (error) return res.send(`Error Google OAuth: ${error}`);
-  if (!code) return res.send("Sin código de autorización");
-
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code,
-      client_id: GOOGLE_CLIENT_ID,
-      client_secret: GOOGLE_CLIENT_SECRET,
-      redirect_uri: GOOGLE_REDIRECT_URI,
-      grant_type: "authorization_code"
-    })
-  });
-  const tokenData = await tokenRes.json();
-
-  if (!tokenData.refresh_token) {
-    return res.send("Error: Google no devolvió refresh_token. Ve a <a href='https://myaccount.google.com/permissions'>https://myaccount.google.com/permissions</a>, revoca el acceso a esta app y vuelve a intentarlo.");
-  }
-
-  await setConfig("google_refresh_token", tokenData.refresh_token);
-
+  if (error) return res.status(400).type("text").send("No se ha completado el permiso de Google. Puedes iniciar de nuevo la conexión desde Reseñas.");
+  if (typeof code !== "string" || !code) return res.status(400).type("text").send("Falta el código de autorización. Inicia la conexión desde Reseñas.");
+  const resultado = await autorizarResenas({ code, clientId: GOOGLE_CLIENT_ID, clientSecret: GOOGLE_CLIENT_SECRET, redirectUri: GOOGLE_REDIRECT_URI });
+  if (!resultado.ok) return res.status(resultado.status).type("text").send(resultado.error);
   try {
-    const r = await runReviewsSync(); // fallback automático Business → Places
-    res.redirect(`/panel/?google=connected&source=${r.source}&n=${r.imported + r.updated}`);
-  } catch (e) {
-    console.error("[Google Reviews] callback sync:", e.message);
-    const msg = encodeURIComponent(String(e.message || "").slice(0, 200));
-    res.redirect(`/panel/?google=token_ok&err=${msg}`);
+    await setConfig("google_refresh_token", resultado.refreshToken);
+  } catch {
+    return res.status(503).type("text").send("Google ha autorizado el acceso, pero no se ha podido guardar la conexión. Vuelve a iniciarla desde Reseñas.");
   }
+
+  // El permiso ya está guardado. Importar miles de reseñas no debe mantener abierto
+  // el callback: al recargarlo Google rechaza el código de un solo uso.
+  runReviewsSync().catch(() => console.error("[Google Reviews] No se pudo completar la sincronización tras conectar"));
+  res.redirect("/panel/#reviews");
 });
 
 // CON SESIÓN. Estaba abierto a cualquiera y contaba el último error de Google, si la conexión
@@ -4211,24 +4190,25 @@ app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabili
     const withScope = (whereStr) => scopeCond ? (whereStr && whereStr.trim() ? `${whereStr} AND ${scopeCond}` : `WHERE ${scopeCond}`) : whereStr;
     const scopeAnd = scopeCond ? `AND ${scopeCond}` : "";
 
-    const q = buildManageQuery(req.query);
+    const cutoff = await repasoReviews.cutoff();
+    const q = buildManageQuery({...req.query, cutoff});
     const where = withScope(q.where); const params = [...q.params, ...scopeParams]; const orderBy = q.orderBy;
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const rows = await dbAll(`SELECT * FROM google_reviews ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`, [...params, limit, offset]);
-    const data = (rows || []).map(mapManageRow);
+    const data = (rows || []).map(r => ({...mapManageRow(r), historica: !!cutoff && String(r.fecha || r.creado_en || "") < cutoff}));
     // Contadores sobre TODO el conjunto filtrado (no solo la página).
     const c = await dbGet(`SELECT COUNT(*) AS n,
-        SUM(CASE WHEN COALESCE(NULLIF(reply, ''), NULLIF(google_reply, '')) IS NULL THEN 1 ELSE 0 END) AS pend,
-        SUM(CASE WHEN COALESCE(NULLIF(reply, ''), NULLIF(google_reply, '')) IS NOT NULL THEN 1 ELSE 0 END) AS resp
-      FROM google_reviews ${where}`, params);
+        SUM(CASE WHEN COALESCE(google_reply, '') = '' ${cutoff ? 'AND COALESCE(fecha,creado_en) >= ?' : ''} THEN 1 ELSE 0 END) AS pend,
+        SUM(CASE WHEN COALESCE(google_reply, '') <> '' THEN 1 ELSE 0 END) AS resp
+      FROM google_reviews ${where}`, [...(cutoff ? [cutoff] : []),...params]);
     const total = parseInt(c?.n || 0);
     // Ya no se calcula el resumen por local (media y pendientes de cada ficha): lo pintaba una
     // fila de píldoras que no se podía pulsar y que se ha quitado. Era una lectura de la tabla
     // ENTERA en cada página de la bandeja para algo que nadie miraba.
     const locRows = await dbAll(`SELECT DISTINCT location_name FROM google_reviews WHERE location_name IS NOT NULL AND location_name <> '' ${scopeAnd} ORDER BY location_name`, scopeParams);
     res.json({
-      ok: true, data, total, offset, limit,
+      ok: true, data, total, offset, limit, cutoff,
       hasMore: offset + data.length < total,
       contadores: { total, pendientes: parseInt(c?.pend || 0), respondidas: parseInt(c?.resp || 0) },
       locales: (locRows || []).map((l) => l.location_name),
@@ -4239,10 +4219,25 @@ app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabili
   }
 });
 
+const repasoReviews = crearRepaso({
+  pool, enabled: PROD,
+  google: async () => clienteBusinessProfile({ token: await getGoogleAccessToken() }),
+  analizar: async ({system,messages}) => {
+    const ai = new Anthropic({apiKey:process.env.ANTHROPIC_API_KEY,maxRetries:0,timeout:30000});
+    const response = await ai.messages.create({model:"claude-haiku-4-5-20251001",max_tokens:750,system,messages});
+    const text = extractText(response).replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    return JSON.parse(text);
+  }
+});
+registrarRepaso(app, {repaso:repasoReviews,requireAuth,localesDe});
+
 // Genera un borrador de respuesta con IA (reutiliza el patrón de /api/sara/chat, sin tools).
 async function draftReplyForReview(review) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error("IA no configurada");
-  const { system, messages } = draftRequest(review);
+  const examples = await dbAll(`SELECT rating, ai_example FROM google_reviews
+    WHERE location_name = ? AND id <> ? AND ai_example IS NOT NULL AND ai_example <> ''
+    ORDER BY ABS(rating - ?) ASC, fecha DESC LIMIT 3`, [review.location_name, review.id, Number(review.rating) || 0]);
+  const { system, messages } = draftRequest(review, examples);
   const ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const response = await ai.messages.create({ model: "claude-haiku-4-5-20251001", max_tokens: 400, system, messages });
   return extractText(response);
@@ -4253,10 +4248,13 @@ async function draftReplyForReview(review) {
 // pasa en su local— pero no escriben. Esconder el botón no es la protección: es esto.
 app.post("/api/reviews/draft", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
-    let review = req.body || {};
-    if (review.id) {
-      const row = await dbGet(`SELECT * FROM google_reviews WHERE id = ?`, [String(review.id)]);
-      if (row) review = row;
+    const review = await dbGet(`SELECT * FROM google_reviews WHERE id = ?`, [String(req.body?.id || "")]);
+    if (!review) return res.status(404).json({ ok: false, error: "Reseña no encontrada" });
+    const scope = localScope(req);
+    if (scope && !locationNamesDeLocal(scope, [review.location_name]).length) return res.status(403).json({ ok: false, error: "Sin permiso sobre esta reseña" });
+    if (req.body.context !== undefined) {
+      if (typeof req.body.context !== "string" || req.body.context.length > 2000) return res.status(400).json({ ok: false, error: "Contexto máximo: 2000 caracteres" });
+      review.ai_context = req.body.context.trim();
     }
     const reply = await draftReplyForReview(review);
     if (!reply) return res.status(502).json({ ok: false, error: "La IA no devolvió texto" });
@@ -4275,11 +4273,28 @@ app.post("/api/reviews/draft-bulk", requireAuth(["direccion", "marketing"]), asy
     try {
       const row = await dbGet(`SELECT * FROM google_reviews WHERE id = ?`, [String(id)]);
       if (!row) { out.push({ id, ok: false }); continue; }
+      const scope = localScope(req);
+      if (scope && !locationNamesDeLocal(scope, [row.location_name]).length) { out.push({ id, ok: false, error: "Sin permiso sobre esta reseña" }); continue; }
       const reply = await draftReplyForReview(row);
       out.push({ id, ok: !!reply, reply });
     } catch (e) { out.push({ id, ok: false, error: e.message }); }
   }
   res.json({ ok: true, data: out });
+});
+
+// Contexto privado y aprobación explícita de ejemplos de estilo. Nunca publica en Google.
+app.post("/api/reviews/:id/ai-context", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  const { context, example } = req.body || {};
+  if (typeof context !== "string" || context.length > 2000 || typeof example !== "boolean") return res.status(400).json({ ok: false, error: "Contexto máximo: 2000 caracteres; indica si es un ejemplo de estilo" });
+  try {
+    const row = await dbGet(`SELECT id, location_name, google_reply FROM google_reviews WHERE id = ?`, [req.params.id]);
+    if (!row) return res.status(404).json({ ok: false, error: "Reseña no encontrada" });
+    const scope = localScope(req);
+    if (scope && !locationNamesDeLocal(scope, [row.location_name]).length) return res.status(403).json({ ok: false, error: "Sin permiso sobre esta reseña" });
+    if (example && !row.google_reply?.trim()) return res.status(400).json({ ok: false, error: "Solo puedes aprobar como ejemplo una respuesta publicada en Google" });
+    await dbRun(`UPDATE google_reviews SET ai_context = ?, ai_example = ? WHERE id = ?`, [context.trim(), example ? row.google_reply : null, req.params.id]);
+    res.json({ ok: true });
+  } catch { res.status(500).json({ ok: false, error: "No se pudo guardar el contexto" }); }
 });
 
 // Publicar es una acción explícita; guardar borrador conserva su comportamiento anterior.
@@ -4293,8 +4308,11 @@ app.post("/api/reviews/:id/publish", requireAuth(["direccion", "marketing"]), as
     const reply = typeof req.body?.reply === "string" ? req.body.reply.trim() : "";
     if (!reply || reply.length > 4096) return res.status(400).json({ ok: false, error: "Respuesta vacía o demasiado larga (máximo 4096 caracteres)" });
     const api = clienteBusinessProfile({ token: await getGoogleAccessToken() });
-    const result = await api.publicar(row.google_name, reply);
-    await dbRun(`UPDATE google_reviews SET google_reply = ?, google_replied_at = ?, reply = CASE WHEN reply IS NOT DISTINCT FROM ? THEN NULL ELSE reply END WHERE id = ?`, [result.comment, result.updateTime, row.reply || null, row.id]);
+    await repasoReviews.exclusive(async () => {
+      const result = await api.publicar(row.google_name, reply);
+      await dbRun(`UPDATE google_reviews SET google_reply = ?, google_replied_at = ?, reply = CASE WHEN reply IS NOT DISTINCT FROM ? THEN NULL ELSE reply END WHERE id = ?`, [result.comment, result.updateTime, row.reply || null, row.id]);
+      return true;
+    });
     return res.json({ ok: true, published: true });
   } catch (e) {
     console.error("[Google Reviews] publicar:", e.message);
@@ -4311,8 +4329,11 @@ app.post("/api/reviews/:id/reply", requireAuth(["direccion", "marketing"]), asyn
     if (!row) return res.status(404).json({ ok: false, error: "Reseña no encontrada" });
     const scope = localScope(req);
     if (scope && locationNamesDeLocal(scope, [row.location_name]).length === 0) return res.status(403).json({ ok: false, error: "Sin permiso sobre esta reseña" });
-    await dbRun(`UPDATE google_reviews SET reply = ?, replied_at = ?, reply_by = ? WHERE id = ?`,
-      [reply, new Date().toISOString(), req.user?.nombre || req.user?.username || null, req.params.id]);
+    await repasoReviews.exclusive(async () => {
+      await dbRun(`UPDATE google_reviews SET reply = ?, replied_at = ?, reply_by = ? WHERE id = ?`,
+        [reply, new Date().toISOString(), req.user?.nombre || req.user?.username || null, req.params.id]);
+      return true;
+    });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: "No se pudo guardar la respuesta" });
@@ -24810,6 +24831,8 @@ const server = app.listen(PORT, async () => {
   try {
     await initDB();
     await registrarPermisosConfirmados(pool);
+    await repasoReviews.init();
+    if (PROD) setInterval(() => repasoReviews.tick().catch(() => {}), 2000).unref();
     DB_LISTA = true;   // a partir de aquí la API puede contestar de verdad
   } catch (e) {
     console.error("[DB] Error inicializando esquema:", e.message);
