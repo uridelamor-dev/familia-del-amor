@@ -163,7 +163,7 @@ describe("dice todo lo que tiene que decir", () => {
     // tabla sigue rompiendo el test, que es lo que este candado protege: que las dos políticas
     // tengan los mismos apartados y en el mismo orden.
     const IGUALES = { galetes: "cookies" };
-    const ids = (t) => [...t.matchAll(/<h2 id="([a-z]+)">/g)].map((m) => m[1]);
+    const ids = (t) => [...t.matchAll(/<h[23] id="([a-z-]+)"[^>]*>/g)].map((m) => m[1]);
     assert.deepEqual(ids(CA).map((i) => IGUALES[i] || i), ids(ES));
     assert.ok(ids(CA).length >= 9, `solo hay ${ids(CA).length} apartados`);
   });
@@ -211,7 +211,7 @@ describe("LOS PROVEEDORES SON LOS QUE DE VERDAD INTERVIENEN", () => {
   test("NO SE INVENTA NINGÚN PROVEEDOR", () => {
     // Cada nombre propio de la lista de encargados tiene que corresponder a algo que esté en el
     // código. Los que no están, no se nombran.
-    const bloque = ES.slice(ES.indexOf('<h2 id="destinataris">'), ES.indexOf('<h2 id="drets">'));
+    const bloque = ES.slice(ES.indexOf('<h3 id="destinataris">'), ES.indexOf('<h3 id="drets">'));
     const nombrados = [...bloque.matchAll(/<li><b>([^<]+)<\/b>/g)].map((m) => m[1].trim());
     assert.deepEqual(nombrados, ["WhatsApp (Meta)", "Replit", "Google", "Anthropic"]);
     for (const falso of ["Mailchimp", "Stripe", "Amazon", "Cloudflare", "Sendgrid", "Twilio",

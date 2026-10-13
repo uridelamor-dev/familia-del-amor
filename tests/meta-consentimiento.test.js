@@ -674,8 +674,8 @@ describe("EL IDIOMA: castellano y catalán", () => {
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 describe("LOS ENLACES LLEVAN A LA SECCIÓN, no al principio", () => {
   test("las dos anclas existen en su política", () => {
-    assert.match(raiz("public/privacidad.html"), /<h2 id="cookies">/);
-    assert.match(raiz("public/privacitat.html"), /<h2 id="galetes">/);
+    assert.match(raiz("public/privacidad.html"), /<h[23] id="cookies">/);
+    assert.match(raiz("public/privacitat.html"), /<h[23] id="galetes">/);
   });
 
   test("y el aviso apunta a ellas, no al documento entero", () => {
