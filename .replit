@@ -41,3 +41,4 @@ externalPort = 3000
 [deployment]
 deploymentTarget = "vm"
 run = ["node", "server.js"]
+ignorePorts = false
