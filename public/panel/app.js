@@ -3276,6 +3276,7 @@ async function revRepaso(automatico = false, offset = 0) {
       <label style="display:flex;align-items:flex-start;gap:10px;margin:16px 0"><input type="checkbox" id="revRepasoConsent" style="margin-top:4px"><span>Autorizo este único repaso y la publicación automática según estas reglas.</span></label>
       <button class="btn primary" id="revRepasoStart" disabled>Autorizar y empezar</button>` : `
       <p><b>${esc(labels[c.state] || c.state)}${c.paused && activo ? ' · Pausado' : ''}</b></p>
+      <p><b>${num(total-(n.pendiente || 0))} de ${num(total)} evaluadas</b>. ${c.state==='analizando' ? 'Primero se termina el análisis; después empiezan los envíos cada cinco minutos.' : 'Las decisiones del análisis se conservan.'}</p>
       <p>${num(n.enviada || 0)} publicadas · ${num(n.cola || 0)} en cola · ${num(n.pendiente || 0)} por analizar · ${num(n.omitir || 0)} sin respuesta automática · ${num((n.error || 0)+(n.incierta || 0))} sin completar</p>
       ${c.error ? `<p class="pendingblock">${esc(c.error)}</p>` : ''}
       ${n.incierta ? '<p>Hay envíos sin confirmar. Comprueba esas reseñas en Google antes de responder manualmente; la cola no los repite.</p>' : ''}

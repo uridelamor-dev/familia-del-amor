@@ -83,8 +83,23 @@ test('ningún envío sin autorización y aviso solo una vez, incluso tras reinic
  assert.equal(await again.cutoff(),h.pool.campaign.cutoff);
  await assert.rejects(again.authorize('user','política diferente'));
 });
-test('no ejecuta nada en desarrollo',async()=>{
- const w=crearRepaso({enabled:false,pool:{query(){throw Error('No tocar BD');}}});await w.init();await w.tick();assert.equal(await w.cutoff(),null);assert.deepEqual(await w.status(),{available:false});
+test('desarrollo crea el mismo esquema, pero no crea campañas ni ejecuta análisis o envíos',async()=>{
+ const sql=[];
+ const w=crearRepaso({enabled:false,pool:{async query(q){sql.push(q);return {rows:[]};}}});
+ await w.init();await w.tick();
+ assert.equal(await w.cutoff(),null);assert.deepEqual(await w.status(),{available:false});
+ assert.equal(sql.length,3);assert.ok(sql.every(q=>q.startsWith('CREATE')));
+ assert.ok(sql.some(q=>q.includes('CREATE TABLE IF NOT EXISTS reviews_repaso (')));
+ assert.ok(sql.some(q=>q.includes('CREATE TABLE IF NOT EXISTS reviews_repaso_items (')));
+});
+test('reanudar tras despliegue conserva decisiones y analiza solo lo pendiente',async()=>{
+ const h=await harness({state:'analizando',count:3});
+ h.pool.items[0].state='omitir';h.pool.items[1].state='cola';h.pool.items[2].state='pendiente';
+ const saved=structuredClone(h.pool.items.slice(0,2));
+ let calls=0;const restarted=crearRepaso({...h.deps,analizar:async()=>{calls++;return positive;}});
+ await restarted.init();await restarted.tick();await restarted.tick();
+ assert.deepEqual(h.pool.items.slice(0,2),saved);assert.equal(calls,1);
+ assert.equal(h.pool.campaign.state,'cola');assert.equal(h.sent.length,0);assert.deepEqual(h.pool.errors,[]);
 });
 test('persistencia del intervalo de cinco minutos y exclusión entre dos trabajadores',async()=>{
  const h=await harness({count:2});const second=crearRepaso(h.deps);await second.init();

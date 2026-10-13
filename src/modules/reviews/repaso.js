@@ -15,7 +15,8 @@ export function crearRepaso({ pool, analizar, google, enabled = false }) {
     } finally { try { if (held) await c.query('SELECT pg_advisory_unlock(73992013)'); } finally { c.release(); } }
   }
   async function init() {
-    if (!enabled) return;
+    // El esquema debe existir también en desarrollo: Replit compara ambos esquemas
+    // al publicar y puede eliminar tablas que solo existen en producción.
     await query(`CREATE TABLE IF NOT EXISTS reviews_repaso (
       id TEXT PRIMARY KEY, cutoff TEXT NOT NULL, seen_at TIMESTAMPTZ,
       state TEXT NOT NULL DEFAULT 'nuevo', paused BOOLEAN NOT NULL DEFAULT FALSE,
@@ -27,6 +28,7 @@ export function crearRepaso({ pool, analizar, google, enabled = false }) {
       reason TEXT, reply TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0,
       sent_at TIMESTAMPTZ, PRIMARY KEY(campaign_id, review_id))`);
     await query('CREATE INDEX IF NOT EXISTS reviews_repaso_estado ON reviews_repaso_items(campaign_id,state)');
+    if (!enabled) return; // Sin campaña ni trabajo automático fuera de producción.
     await query('INSERT INTO reviews_repaso(id,cutoff) VALUES($1,$2) ON CONFLICT DO NOTHING', [REPASO_ID, new Date().toISOString()]);
     ready = true;
   }
