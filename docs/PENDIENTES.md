@@ -1,8 +1,10 @@
 # Pendientes de Familia del Amor
 
-Actualizado: 7 de octubre de 2026. Lista de seguimiento basada en los acuerdos de esta conversación. Las comprobaciones en producción pendientes no implican que siga existiendo el fallo: falta confirmar el resultado real.
+Actualizado: 13 de octubre de 2026. Lista de seguimiento basada en los acuerdos de esta conversación. Las comprobaciones en producción pendientes no implican que siga existiendo el fallo: falta confirmar el resultado real.
 
 ## Mejoras aplazadas
+
+- **Privacidad: incorporar el resto de empresas del grupo.** Solicitado por Uriel el 13/10/2026 para una siguiente fase. Inventariar servicios y entidades; confirmar razón social, NIF, domicilio, contacto, finalidades, bases jurídicas, origen, proveedores, conservación y derechos de cada responsable. Mantenerlos diferenciados y no presumir consentimientos compartidos. La versión 3 incorpora La Pepa; quedan por verificar los acuerdos de Fourvenues/Resend, garantías de transferencia, seguimiento, alcance del consentimiento y baja específica antes de campañas de La Pepa.
 
 - **Chat dentro del panel — aplazado expresamente por Uriel.** No implementarlo ahora. Primera fase propuesta: consultas, exportación de facturas con filtros y preparación de uniones de proveedores. Después, borradores de campañas y gestión de personas. Reutilizar funciones y permisos del panel; mostrar revisión antes de operaciones que modifican datos y confirmar antes de enviar campañas. Evaluar esfuerzo y utilidad antes de comenzar.
 - **Ágora: fidelización desde la pantalla de pagos.** Uriel envió a Satur la petición de poder añadir la fidelización al cobrar sin volver al ticket individual. Pendiente de respuesta/viabilidad de Ágora. Ya se encontró cómo gestionar varias fidelizaciones; no confundirlo con este atajo pendiente.
