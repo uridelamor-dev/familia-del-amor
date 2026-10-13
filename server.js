@@ -1,3 +1,4 @@
+import { SCHEMA as PEPA_EMAIL_SCHEMA, createQueue as createPepaEmailQueue, registerRoutes as registerPepaEmailRoutes } from './src/modules/pepa-email/queue.js';
 import { BANDEJA_SCHEMA, crearArchivoBandeja } from './src/modules/messaging/bandeja-historial.js';
 import { setArchivoBandeja } from './whatsapp.js';
 import { VINCULOS_SCHEMA } from './src/modules/messaging/contacto-conversacion.js';
@@ -573,6 +574,7 @@ app.use("/api/wallet/apple/v1", (err, req, res, next) => {
 
 app.use(comprimir());
 app.use("/api/tienda", express.json({limit:"2mb"}));
+app.use('/api/la-pepa/email/import', requireAuth(['direccion']), express.json({limit:'2mb'}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 // Presentación de tienda: datos propios, modo demo, sin cobros ni envíos.
@@ -1822,6 +1824,7 @@ async function initDB() {
     `);
     await client.query(EMAIL_SCHEMA);
     await client.query(ENVIOS_SCHEMA);
+    await client.query(PEPA_EMAIL_SCHEMA);
     await client.query(PERMISOS_CONFIRMADOS_SCHEMA);
     // Ampliación de campañas (multicanal + estados + programación). Aditivo.
     for (const col of [
@@ -24822,6 +24825,8 @@ async function procesarPendientesWA() {
 
 // Manejador de errores global (Iteración 1A): respuesta 500 genérica sin filtrar internos,
 // y log seguro en servidor. Debe registrarse DESPUÉS de todas las rutas.
+const pepaEmailQueue = createPepaEmailQueue({pool});
+registerPepaEmailRoutes(app,{pool,auth:requireAuth,urlencoded:express.urlencoded,queue:pepaEmailQueue});
 app.use(errorHandler);
 
 const server = app.listen(PORT, async () => {
@@ -24831,6 +24836,7 @@ const server = app.listen(PORT, async () => {
   try {
     await initDB();
     await registrarPermisosConfirmados(pool);
+    if (PROD) setInterval(() => pepaEmailQueue.tick(), 60_000).unref();
     await repasoReviews.init();
     if (PROD) setInterval(() => repasoReviews.tick().catch(() => {}), 2000).unref();
     DB_LISTA = true;   // a partir de aquí la API puede contestar de verdad
