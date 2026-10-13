@@ -15,7 +15,7 @@ const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "
 const ESCRIBEN = ["direccion", "marketing"];
 
 describe("en Reseñas solo escriben dirección y marketing", () => {
-  const rutas = [["/api/reviews/:id/reply", "responder"], ["/api/reviews/draft", "redactar con IA"],
+  const rutas = [["/api/reviews/:id/publish", "publicar en Google"], ["/api/reviews/:id/reply", "responder"], ["/api/reviews/draft", "redactar con IA"],
                  ["/api/reviews/draft-bulk", "redactar en lote"], ["/api/reviews/refresh", "traer de Google"]];
 
   for (const [ruta, que] of rutas) {

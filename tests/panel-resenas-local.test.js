@@ -46,20 +46,21 @@ describe("Reseñas obedece al selector de la barra", () => {
   });
 });
 
-describe("«Sin respuesta guardada» sigue estando, y solo una vez", () => {
+describe("«Sin respuesta» sigue estando, y solo una vez", () => {
   test("está en el desplegable de Estado", () => {
-    assert.match(bloqueReviews, /\["pendientes", "Sin respuesta guardada"\]/);
+    assert.match(bloqueReviews, /\["pendientes", "Sin respuesta"\]/);
   });
 
   test("y viaja al servidor, que lo traduce a «sin respuesta»", () => {
     assert.match(bloqueReviews, /"rating", "estado", "q", "autor", "from", "to", "sort"/);
     const servicio = readFileSync(new URL("../src/modules/reviews/reviews.service.js", import.meta.url), "utf8");
-    assert.match(servicio, /f\.estado === "pendientes"\) cond\.push\("\(reply IS NULL OR reply = ''\)"\)/);
+    assert.match(servicio, /f\.estado === "pendientes"/);
+    assert.ok(servicio.includes("COALESCE(NULLIF(reply, ''), NULLIF(google_reply, '')) IS NULL"));
   });
 
   test("no se ha duplicado en un botón aparte: un solo sitio para el mismo filtro", () => {
-    const veces = (bloqueReviews.match(/Sin respuesta guardada/g) || []).length;
-    assert.equal(veces, 1, "hay más de un «Sin respuesta guardada» en la pantalla");
+    const veces = (bloqueReviews.match(/Sin respuesta/g) || []).length;
+    assert.equal(veces, 1, "hay más de un «Sin respuesta» en la pantalla");
   });
 });
 

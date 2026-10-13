@@ -63,10 +63,12 @@ import { validarPlan, planesQueTocan, alCompletar } from "./src/modules/mantenim
 import { normalizarEstado, ABIERTOS as MANT_ABIERTOS } from "./src/modules/mantenimiento/estados.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { guardarHorasFicha } from "./src/modules/rrhh/horas-ficha.js";
+import { ventasRecientes } from "./src/modules/dashboard/ventas-recientes.js";
 import { resumenHoy } from "./src/modules/dashboard/hoy.js";
 import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fusion.js";
 import { resultadoRegistrado } from "./src/modules/dashboard/resultado.js";
 import { rangoAnterior, variacion } from "./src/modules/dashboard/periodos.js";
+import { clienteBusinessProfile, esNombreResena } from "./src/modules/reviews/business-profile.js";
 import { mapManageRow, draftRequest, extractText, syncReviews, mensajeEstadoReseñas, buildManageQuery, queryTextSearch, elegirSugerido, normalizarUbicacionBP, normalizarPlaceResult, placeIdsConfigurados, upsertPlaceEntry, locationNamesDeLocal } from "./src/modules/reviews/reviews.service.js";
 import crypto from "crypto";
 import QRCode from "qrcode";   // ya instalada (la usa el enlace de WhatsApp); emparejar la tablet escaneando
@@ -2088,6 +2090,8 @@ async function initDB() {
       "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS reply_by TEXT",
       "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS origen TEXT",
       "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS google_name TEXT",
+      "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS google_reply TEXT",
+      "ALTER TABLE google_reviews ADD COLUMN IF NOT EXISTS google_replied_at TEXT",
     ];
     for (const sql of ALTERS) {
       try { await client.query(sql); } catch (e) { console.warn("Columna omitida (no crítica):", e.message); }
@@ -2346,51 +2350,33 @@ function detectarMotivoGoogle(status, data) {
 
 // Business Profile: devuelve resultado ESTRUCTURADO (no lanza en casos recuperables).
 async function fetchBusinessReviews() {
-  console.log("[Google Reviews] Business Profile start");
-  const token = await getGoogleAccessToken(); // token inválido → lanza; lo captura syncReviews
-  const h = { Authorization: `Bearer ${token}` };
-  const accRes = await fetch("https://mybusinessaccountmanagement.googleapis.com/v1/accounts", { headers: h });
-  const accData = await accRes.json().catch(() => ({}));
-  if (!accRes.ok || accData.error) {
-    const reason = detectarMotivoGoogle(accRes.status, accData);
-    console.log(`[Google Reviews] Falling back to Places: ${reason}`);
-    return { imported: 0, updated: 0, accounts: 0, reason };
-  }
-  const accounts = accData.accounts || [];
-  console.log(`[Google Reviews] Accounts found: ${accounts.length}`);
-  if (!accounts.length) return { imported: 0, updated: 0, accounts: 0, reason: "sin_cuentas" };
-
-  let imported = 0, updated = 0, locsTotal = 0;
-  for (const account of accounts) {
-    const locRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title`, { headers: h });
-    const locData = await locRes.json().catch(() => ({}));
-    const locs = locData.locations || [];
-    locsTotal += locs.length;
-    for (const loc of locs) {
-      // Paginación: recorre TODAS las páginas de reseñas de la ficha (histórico completo).
-      let pageToken = null, pages = 0;
-      do {
-        const url = `https://mybusinessreviews.googleapis.com/v1/${loc.name}/reviews?pageSize=50` + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
-        const revRes = await fetch(url, { headers: h });
-        const revData = await revRes.json().catch(() => ({}));
-        for (const rev of (revData.reviews || [])) {
-          const r = await dbRun(
-            `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha, origen, google_name)
-             VALUES (?, ?, ?, ?, ?, ?, 'business_profile', ?)
-             ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating, text=EXCLUDED.text, fecha=EXCLUDED.fecha, origen='business_profile', google_name=EXCLUDED.google_name
-             RETURNING (xmax = 0)::int AS inserted`,
-            [rev.reviewId || rev.name, loc.title || loc.name, rev.reviewer?.displayName || "Cliente", STAR[rev.starRating] || 5, rev.comment || "", rev.createTime || new Date().toISOString(), rev.name || null]
-          );
-          if (r && (r.inserted === 1 || r.inserted === "1" || r.inserted === true)) imported++; else updated++;
-        }
-        pageToken = revData.nextPageToken || null;
-        pages++;
-      } while (pageToken && pages < 60); // tope de seguridad (~3000 reseñas/ficha)
+  const api = clienteBusinessProfile({ token: await getGoogleAccessToken() });
+  const { accounts, locations } = await api.ubicaciones();
+  const configuredRaw = await getConfig("places_ids");
+  let configured = [];
+  try { const parsed = JSON.parse(configuredRaw || "[]"); if (Array.isArray(parsed)) configured = parsed.filter(Boolean); } catch {}
+  let imported = 0, updated = 0;
+  for (const loc of locations) {
+    const linked = configured.find(p => p.placeId === loc.metadata?.placeId || p.google_location_id === loc.name);
+    for (const rev of await api.resenas(loc)) {
+      // Reutilizar la fila de Places conserva los borradores al pasar a la fuente completa.
+      const oldPlacesId = loc.metadata?.placeId && rev.createTime
+        ? `places_${loc.metadata.placeId}_${Math.floor(new Date(rev.createTime).getTime() / 1000)}` : '';
+      const previous = await dbGet(`SELECT id FROM google_reviews WHERE google_name = ? OR id = ? OR id = ? ORDER BY CASE WHEN google_name = ? THEN 0 ELSE 1 END LIMIT 1`, [rev.name, rev.reviewId, oldPlacesId, rev.name]);
+      const r = await dbRun(
+        `INSERT INTO google_reviews (id, location_name, author, rating, text, fecha, origen, google_name, google_reply, google_replied_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'business_profile', ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET author=EXCLUDED.author, rating=EXCLUDED.rating, text=EXCLUDED.text,
+           fecha=EXCLUDED.fecha, location_name=EXCLUDED.location_name, origen='business_profile', google_name=EXCLUDED.google_name,
+           google_reply=EXCLUDED.google_reply, google_replied_at=EXCLUDED.google_replied_at
+         RETURNING (xmax = 0)::int AS inserted`,
+        [previous?.id || rev.reviewId, linked?.name || loc.title || loc.name, rev.reviewer?.displayName || "Cliente", STAR[rev.starRating] || 0,
+         rev.comment || "", rev.createTime || new Date().toISOString(), rev.name,
+         rev.reviewReply?.comment || null, rev.reviewReply?.updateTime || null]);
+      if (r && [1, "1", true].includes(r.inserted)) imported++; else updated++;
     }
   }
-  console.log(`[Google Reviews] Locations found: ${locsTotal}`);
-  console.log(`[Google Reviews] Business Profile imported: ${imported} (updated: ${updated})`);
-  return { imported, updated, accounts: accounts.length, locations: locsTotal, reason: (imported + updated === 0 ? "sin_resenas" : null) };
+  return { imported, updated, accounts, locations: locations.length, reason: accounts ? (locations.length ? null : "sin_fichas") : "sin_cuentas" };
 }
 
 // Places API: resultado ESTRUCTURADO; un local que falle NO detiene a los demás.
@@ -4144,18 +4130,9 @@ app.post("/api/places/config", requireAuth(["direccion", "marketing"]), async (r
 // ── Auto-descubrimiento de fichas de Google (sin copiar Place IDs a mano) ──────
 // Lista las ubicaciones de Business Profile de la cuenta conectada (con metadata.placeId).
 async function listarUbicacionesBusiness() {
-  const token = await getGoogleAccessToken();
-  const h = { Authorization: `Bearer ${token}` };
-  const accRes = await fetch("https://mybusinessaccountmanagement.googleapis.com/v1/accounts", { headers: h });
-  const accData = await accRes.json().catch(() => ({}));
-  if (!accRes.ok || accData.error) throw new Error(detectarMotivoGoogle(accRes.status, accData));
-  const out = [];
-  for (const account of (accData.accounts || [])) {
-    const locRes = await fetch(`https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title,storefrontAddress,metadata`, { headers: h });
-    const locData = await locRes.json().catch(() => ({}));
-    for (const loc of (locData.locations || [])) { const c = normalizarUbicacionBP(loc); if (c && c.place_id) out.push(c); }
-  }
-  return out;
+  const api = clienteBusinessProfile({ token: await getGoogleAccessToken() });
+  const { locations } = await api.ubicaciones();
+  return locations.map(normalizarUbicacionBP).filter(c => c && c.place_id);
 }
 // Busca fichas por texto (nombre + ciudad) con Places Text Search — no necesita cuota Business.
 async function buscarPlacesTextSearch(query) {
@@ -4242,8 +4219,8 @@ app.get("/api/reviews/manage", requireAuth(["direccion", "encargado", "contabili
     const data = (rows || []).map(mapManageRow);
     // Contadores sobre TODO el conjunto filtrado (no solo la página).
     const c = await dbGet(`SELECT COUNT(*) AS n,
-        SUM(CASE WHEN reply IS NULL OR reply = '' THEN 1 ELSE 0 END) AS pend,
-        SUM(CASE WHEN reply IS NOT NULL AND reply <> '' THEN 1 ELSE 0 END) AS resp
+        SUM(CASE WHEN COALESCE(NULLIF(reply, ''), NULLIF(google_reply, '')) IS NULL THEN 1 ELSE 0 END) AS pend,
+        SUM(CASE WHEN COALESCE(NULLIF(reply, ''), NULLIF(google_reply, '')) IS NOT NULL THEN 1 ELSE 0 END) AS resp
       FROM google_reviews ${where}`, params);
     const total = parseInt(c?.n || 0);
     // Ya no se calcula el resumen por local (media y pendientes de cada ficha): lo pintaba una
@@ -4305,9 +4282,27 @@ app.post("/api/reviews/draft-bulk", requireAuth(["direccion", "marketing"]), asy
   res.json({ ok: true, data: out });
 });
 
-// Guarda la respuesta (modo borrador/registro interno). La publicación DIRECTA en Google
-// (updateReply) queda pendiente de aprobación de cuota de la Business Profile API + persistir
-// el resource name de cada reseña; hoy la respuesta solo se guarda aquí.
+// Publicar es una acción explícita; guardar borrador conserva su comportamiento anterior.
+app.post("/api/reviews/:id/publish", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    const row = await dbGet(`SELECT * FROM google_reviews WHERE id = ?`, [req.params.id]);
+    if (!row) return res.status(404).json({ ok: false, error: "Reseña no encontrada" });
+    const scope = localScope(req);
+    if (scope && !locationNamesDeLocal(scope, [row.location_name]).length) return res.status(403).json({ ok: false, error: "Sin permiso sobre esta reseña" });
+    if (row.origen !== "business_profile" || !esNombreResena(row.google_name)) return res.status(409).json({ ok: false, error: "Actualiza esta reseña desde Business Profile antes de publicar" });
+    const reply = typeof req.body?.reply === "string" ? req.body.reply.trim() : "";
+    if (!reply || reply.length > 4096) return res.status(400).json({ ok: false, error: "Respuesta vacía o demasiado larga (máximo 4096 caracteres)" });
+    const api = clienteBusinessProfile({ token: await getGoogleAccessToken() });
+    const result = await api.publicar(row.google_name, reply);
+    await dbRun(`UPDATE google_reviews SET google_reply = ?, google_replied_at = ?, reply = CASE WHEN reply IS NOT DISTINCT FROM ? THEN NULL ELSE reply END WHERE id = ?`, [result.comment, result.updateTime, row.reply || null, row.id]);
+    return res.json({ ok: true, published: true });
+  } catch (e) {
+    console.error("[Google Reviews] publicar:", e.message);
+    return res.status(502).json({ ok: false, error: "No se ha podido verificar la publicación. Actualiza desde Google antes de repetirla." });
+  }
+});
+
+// Guardar un borrador no publica en Google.
 app.post("/api/reviews/:id/reply", requireAuth(["direccion", "marketing"]), async (req, res) => {
   const reply = String(req.body?.reply || "").trim();
   if (!reply) return res.status(400).json({ ok: false, error: "Respuesta vacía" });
@@ -8070,10 +8065,18 @@ async function cacheGuardar(clave, valor) {
   } catch (e) { console.error("[Agora] no se pudo guardar la caché:", e.message); }
 }
 
+let _ventasVivoPendiente = null;
 async function ventasVivoData(force) {
+  // Una única lectura aunque Hoy y el periodo se carguen simultáneamente.
+  if (_ventasVivoPendiente) return _ventasVivoPendiente;
+  _ventasVivoPendiente = leerVentasVivo(force);
+  try { return await _ventasVivoPendiente; }
+  finally { _ventasVivoPendiente = null; }
+}
+async function leerVentasVivo(force) {
   const ahora = Date.now();
   const nowIso = new Date().toISOString();
-  if (!force && _ventasVivoCache.data && (ahora - _ventasVivoCache.ts) < 3 * 60 * 1000) {
+  if (!force && _ventasVivoCache.data?.hoy === hoyISO() && (ahora - _ventasVivoCache.ts) < 3 * 60 * 1000) {
     // La edad va SIEMPRE, también por este camino: es el más frecuente, y un número sin hora
     // al lado no se sabe si es de ahora o de hace media mañana.
     const g = _ventasVivoCache.guardadoEn || new Date(_ventasVivoCache.ts).toISOString();
@@ -8082,7 +8085,7 @@ async function ventasVivoData(force) {
   // Lo guardado en la BASE, que es lo que sobrevive a un reinicio. Si no toca refrescarlo
   // todavía, se devuelve tal cual: al instante y con la hora de cuándo se pidió.
   const dbc = await cacheLeer(CLAVE_VIVO);
-  if (dbc && !tocaRefrescar({ guardadoEn: dbc.guardadoEn, ahora: nowIso, forzar: force })) {
+  if (dbc && dbc.valor?.hoy === hoyISO() && !tocaRefrescar({ guardadoEn: dbc.guardadoEn, ahora: nowIso, forzar: force })) {
     _ventasVivoCache = { ts: ahora, data: dbc.valor, guardadoEn: dbc.guardadoEn };
     return { cache: true, guardadoEn: dbc.guardadoEn, edad: edadEnPalabras({ guardadoEn: dbc.guardadoEn, ahora: nowIso }), ...dbc.valor };
   }
@@ -8210,7 +8213,7 @@ async function ventasRangoLive(local, from, to) {
   // Y ANTES DE IR AL TPV, lo guardado en la base. Es lo que hacía esperar: la caché vivía solo
   // en memoria y con cada reinicio del proceso —que en Replit son muchos— volvía a estar vacía,
   // así que el Dashboard preguntaba a los ocho TPV con veinte segundos de margen cada uno.
-  const dbc = await cacheLeer(claveRango(local, from, to));
+  const dbc = await cacheLeer(claveRango(local, from, to) + "|inclusive-v2");
   if (dbc && !tocaRefrescar({ guardadoEn: dbc.guardadoEn, ahora: nowIso })) {
     _ventasRangoCache.set(key, { ts: Date.now(), serie: dbc.valor });
     return dbc.valor;
@@ -8218,7 +8221,7 @@ async function ventasRangoLive(local, from, to) {
   const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (local ? c.local === local : true));
   if (!configs.length) return null;
   const conTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
-  const results = await Promise.all(configs.map((cfg) => conTimeout(createAgoraClient(cfg).getVentasRango(from, to), 20000).then((d) => d).catch(() => null)));
+  const results = await Promise.all(configs.map((cfg) => conTimeout(createAgoraClient(cfg).getVentasRango(from, addDaysISO(to, 1)), 20000).then((d) => d).catch(() => null)));
   const ok = results.filter(Boolean);
   if (!ok.length) {
     // Ningún TPV ha respondido. Si hay algo guardado y no está rancio, mejor eso que nada: un
@@ -8230,7 +8233,7 @@ async function ventasRangoLive(local, from, to) {
   for (const dias of ok) for (const v of dias) { const e = byDia[v.dia] || (byDia[v.dia] = { dia: v.dia, ventas: 0, tickets: 0 }); e.ventas += v.ventas || 0; e.tickets += v.tickets || 0; }
   const serie = Object.values(byDia).map((e) => ({ dia: e.dia, ventas: Math.round(e.ventas * 100) / 100, tickets: e.tickets })).sort((a, b) => a.dia.localeCompare(b.dia));
   _ventasRangoCache.set(key, { ts: Date.now(), serie });
-  await cacheGuardar(claveRango(local, from, to), serie);
+  await cacheGuardar(claveRango(local, from, to) + "|inclusive-v2", serie);
   return serie;
 }
 
@@ -8358,28 +8361,28 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
     const resRows = await dbAll(`SELECT dia, COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia >= ? AND dia <= ?${lf} GROUP BY dia ORDER BY dia`, [from, to, ...lp]);
     const hoy = hoyISO();
     let ventasSerie = [], hoyEnVivo = false, fuenteVentas = "bd";
-    const live = await ventasRangoLive(local, from, to);
-    if (live) {
-      ventasSerie = live;
-      hoyEnVivo = to >= hoy && ventasSerie.some((x) => x.dia === hoy);
+    let ventasParcial = false;
+    // Hoy, ayer y esta semana usan la MISMA instantánea por día y local.
+    // No sumar copias del día de hoy persistidas en BD a su lectura en vivo.
+    const inicioReciente = addDaysISO(hoy, -7);
+    const recientesDesde = from > inicioReciente ? from : inicioReciente;
+    const barras = local ? barrasDelCentro(local, "ventas") : [...new Set(
+      INV_LOCALES.filter(l => !LOCALES_SIN_PUBLICO.has(l)).flatMap(l => barrasDelCentro(l, "ventas")))];
+    if (to >= inicioReciente) {
+      const vivo = await ventasVivoData(false);
+      const respaldo = await dbAll(`SELECT local, dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ? AND local = ANY(?)`, [recientesDesde, to, barras]);
+      const recientes = ventasRecientes({ vivo, respaldo, locales: barras, from: recientesDesde, to, hoy });
+      ventasSerie = recientes.serie;
+      ventasParcial = recientes.parcial;
+      hoyEnVivo = recientes.hoyEnVivo;
       fuenteVentas = "live";
-    } else {
-      // Respaldo: días cerrados en ventas_diarias (+ hoy en vivo si el TPV responde).
-      const venRows = await dbAll(`SELECT dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ?${lf} ORDER BY dia`, [from, to, ...lp]);
-      ventasSerie = venRows.map((r) => ({ dia: r.dia, ventas: r.ventas, tickets: r.tickets }));
-      if (from <= hoy && to >= hoy) {
-        try {
-          const vv = await ventasVivoData(false);
-          for (const L of (vv.locales || [])) {
-            if (local && L.local !== local) continue;
-            const t = (L.dias || []).find((d) => d.dia === hoy);
-            if (!t) continue; hoyEnVivo = true;
-            const ex = ventasSerie.find((x) => x.dia === hoy);
-            if (ex) { ex.ventas += t.ventas; ex.tickets += t.tickets; } else ventasSerie.push({ dia: hoy, ventas: t.ventas, tickets: t.tickets });
-          }
-          ventasSerie.sort((a, b) => a.dia.localeCompare(b.dia));
-        } catch { /* si el vivo falla, seguimos con lo cerrado */ }
-      }
+    }
+    if (from < inicioReciente) {
+      const finHistorico = to < inicioReciente ? to : addDaysISO(inicioReciente, -1);
+      const live = await ventasRangoLive(local, from, finHistorico);
+      const historico = live || await dbAll(`SELECT dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ?${lf} ORDER BY dia`, [from, finHistorico, ...lp]);
+      ventasSerie = [...historico, ...ventasSerie];
+      if (live) fuenteVentas = "live";
     }
     // Gastos (facturas) del MISMO rango, para cuadrar el resultado (ventas − gastos).
     //
@@ -8399,7 +8402,7 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
     return {
       from, to, hoy, hoyEnVivo,
       reservas: { total: reservasTotal, personas: personasTotal, serie: resRows },
-      ventas: { disponible: ventasSerie.length > 0, total: Math.round(ventasTotal * 100) / 100, tickets: ticketsTotal, ticket_medio: ticketsTotal ? Math.round(ventasTotal / ticketsTotal * 100) / 100 : 0, serie: ventasSerie, fuente: fuenteVentas },
+      ventas: { disponible: ventasSerie.length > 0, parcial: ventasParcial, total: Math.round(ventasTotal * 100) / 100, tickets: ticketsTotal, ticket_medio: ticketsTotal ? Math.round(ventasTotal / ticketsTotal * 100) / 100 : 0, serie: ventasSerie, fuente: fuenteVentas },
       gastos: {
         // `disponible` mira también la parte imputada: un local puede no tener ninguna factura
         // propia en el rango y aun así cargar con su trozo de la gestoría.
@@ -8411,7 +8414,7 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
         notaEmpresa: parteEmpresa ? (empresaPartes.texto || "") : "",
       },
       resultado: resultadoRegistrado(
-        { disponible: ventasSerie.length > 0, total: ventasTotal },
+        { disponible: ventasSerie.length > 0 && !ventasParcial, total: ventasTotal },
         { disponible: !!((gasRow && gasRow.n > 0) || parteEmpresa), total: gastosTotal }),
     };
   }

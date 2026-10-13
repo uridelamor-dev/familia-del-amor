@@ -1,16 +1,15 @@
 // Reseñas — lógica pura y testeable (sin BD ni red). El endpoint de server.js llama a Anthropic
 // reutilizando el patrón de /api/sara/chat; aquí solo se construye el prompt del borrador, se
 // limpia la respuesta del modelo y se normalizan las filas para el panel.
-// Modo borrador: se genera y guarda la respuesta localmente. La publicación DIRECTA en Google
-// (updateReply) queda pendiente de que se apruebe la cuota de la Business Profile API y de
-// persistir el resource name de cada reseña; por eso aquí NO se llama a Google.
+// Los borradores locales y las respuestas verificadas de Google se mantienen separados.
+import { esNombreResena } from './business-profile.js';
 
 const STAR = ["", "★", "★★", "★★★", "★★★★", "★★★★★"];
 
 // Normaliza una fila de google_reviews para el panel de gestión.
 export function mapManageRow(r) {
   const rating = Number(r.rating) || 0;
-  const reply = r.reply || null;
+  const reply = r.reply || r.google_reply || null;
   return {
     id: r.id,
     local: r.location_name || "",
@@ -20,6 +19,9 @@ export function mapManageRow(r) {
     text: r.text || "",
     fecha: String(r.fecha || r.creado_en || "").slice(0, 10),
     reply,
+    google_reply: r.google_reply || null,
+    publicada: !!r.google_reply,
+    puede_publicar: r.origen === "business_profile" && esNombreResena(r.google_name),
     replied_at: r.replied_at ? String(r.replied_at).slice(0, 10) : null,
     reply_by: r.reply_by || null,
     respondida: !!reply,
@@ -62,8 +64,8 @@ export function locationNamesDeLocal(localERP, names) {
 export function buildManageQuery(f = {}) {
   const cond = [], params = [];
   if (f.rating) { cond.push("rating = ?"); params.push(parseInt(f.rating)); }
-  if (f.estado === "pendientes") cond.push("(reply IS NULL OR reply = '')");
-  else if (f.estado === "respondidas") cond.push("(reply IS NOT NULL AND reply <> '')");
+  if (f.estado === "pendientes") cond.push("(COALESCE(NULLIF(reply, ''), NULLIF(google_reply, '')) IS NULL)");
+  else if (f.estado === "respondidas") cond.push("(COALESCE(NULLIF(reply, ''), NULLIF(google_reply, '')) IS NOT NULL)");
   if (f.q) { cond.push("(LOWER(text) LIKE ? OR LOWER(author) LIKE ?)"); const like = "%" + String(f.q).toLowerCase() + "%"; params.push(like, like); }
   if (f.autor) { cond.push("LOWER(author) LIKE ?"); params.push("%" + String(f.autor).toLowerCase() + "%"); }
   if (f.from) { cond.push("COALESCE(fecha, creado_en) >= ?"); params.push(String(f.from)); }

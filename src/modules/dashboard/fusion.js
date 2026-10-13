@@ -72,7 +72,7 @@ export function fusionarPeriodo(partes = []) {
       serie: serie((p) => p.reservas?.serie || [], ["n", "personas"]),
     },
     ventas: {
-      disponible: hayVentas, parcial: !buenas.every((p) => p.ventas?.disponible), total: red(ventasTotal), tickets,
+      disponible: hayVentas, parcial: !buenas.every((p) => p.ventas?.disponible && !p.ventas?.parcial), total: red(ventasTotal), tickets,
       ticket_medio: tickets ? red(ventasTotal / tickets) : 0,
       serie: serie((p) => p.ventas?.serie || [], ["ventas", "tickets"]),
       fuente: buenas.some((p) => p.ventas?.fuente === "live") ? "live" : primera.ventas?.fuente,
@@ -87,7 +87,7 @@ export function fusionarPeriodo(partes = []) {
       notaEmpresa: (buenas.find((p) => p.gastos?.notaEmpresa) || {}).gastos?.notaEmpresa || "",
     },
     resultado: resultadoRegistrado(
-      { disponible: buenas.every((p) => p.ventas?.disponible), total: ventasTotal },
+      { disponible: buenas.every((p) => p.ventas?.disponible && !p.ventas?.parcial), total: ventasTotal },
       { disponible: buenas.every((p) => p.gastos?.disponible), total: gastos }),
   };
 }

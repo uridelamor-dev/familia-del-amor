@@ -204,7 +204,7 @@ describe("buildManageQuery (bandeja: filtros/orden)", () => {
   test("rating + estado pendientes", () => {
     const q = buildManageQuery({ rating: "5", estado: "pendientes" });
     assert.match(q.where, /rating = \?/);
-    assert.match(q.where, /reply IS NULL/);
+    assert.match(q.where, /COALESCE\(NULLIF\(reply, ''\), NULLIF\(google_reply, ''\)\) IS NULL/);
     assert.deepEqual(q.params, [5]);
   });
   test("el local NO se filtra aquí: se traduce antes a los nombres de ficha de Google", () => {

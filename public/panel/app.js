@@ -3254,19 +3254,19 @@ function renderReviews() {
   const st = REV_STATUS;
   const fuenteTxt = (s) => s === "places" ? "Places" : s === "business_profile" ? "Business Profile" : (!s || s === "none") ? "Ninguna" : esc(s);
   const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "OAuth conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">Fuente: ${fuenteTxt(st.source)} · ${num(st.reviews_count || 0)} reseñas${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}${st.last_attempt ? ` · último intento ${esc(String(st.last_attempt).slice(0, 16).replace("T", " "))}` : ""}${st.last_error ? ` · último error: ${esc(String(st.last_error).slice(0, 80))}` : ""}</div></div><div style="display:flex;gap:8px;flex-wrap:wrap">${USER.rol === "direccion" && revPuedeResponder() ? `<button class="btn" data-act="rev-vincular">Vincular fichas de Google</button>` : ""}${puedeActualizar && revPuedeResponder() ? `<button class="btn primary" data-act="rev-refresh">Actualizar desde Google</button>` : ""}</div></div>` : "";
-  const cont = `<div class="grid g3" style="margin-bottom:14px">${stat("Total reseñas", "star", num(REV_CONT.total))}${stat("Pendientes", "bell", num(REV_CONT.pendientes))}${stat("Con respuesta guardada", "chat", num(REV_CONT.respondidas))}</div>`;
+  const cont = `<div class="grid g3" style="margin-bottom:14px">${stat("Total reseñas", "star", num(REV_CONT.total))}${stat("Pendientes", "bell", num(REV_CONT.pendientes))}${stat("Con respuesta", "chat", num(REV_CONT.respondidas))}</div>`;
   // Cero reseñas por falta de ficha vinculada NO es lo mismo que cero reseñas. Sin este aviso,
   // la pantalla vacía parece un local sin opiniones y nadie va a mirar el vínculo con Google.
   const avisoFicha = REV_SIN_FICHA ? `<div class="pendingblock" style="margin-bottom:14px"><b>Este establecimiento no tiene ninguna ficha de Google vinculada</b>, así que no hay reseñas que enseñar. ${USER.rol === "direccion" ? "Se vincula en «Vincular fichas de Google», aquí arriba." : "Díselo a dirección: se arregla desde «Vincular fichas de Google»."}</div>` : "";
   const ratingOpts = ['<option value="">Todas</option>'].concat([5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${REVF.rating === String(n) ? "selected" : ""}>${n}★</option>`)).join("");
   const sortOpts = [["recientes", "Más recientes"], ["antiguas", "Más antiguas"], ["mejor", "Mejor valoración"], ["peor", "Peor valoración"]].map(([v, t]) => `<option value="${v}" ${REVF.sort === v ? "selected" : ""}>${t}</option>`).join("");
   const toolbar = listFilterBar("reviews",{title:"Reseñas",state:REVF,placeholder:"Texto o autor…",sort:{key:"sort",options:[["recientes","Más recientes"],["antiguas","Más antiguas"],["mejor","Mejor valoración"],["peor","Peor valoración"]]},fields:[
-    {key:"estado",label:"Estado",options:[["","Todas"],["pendientes", "Sin respuesta guardada"],["respondidas","Con respuesta guardada"]]},
+    {key:"estado",label:"Estado",options:[["","Todas"],["pendientes", "Sin respuesta"],["respondidas","Con respuesta"]]},
     {key:"rating",label:"Estrellas",options:[["","Todas"],...[5,4,3,2,1].map(n=>[String(n),n+" estrellas"])]},
     {key:"autor",label:"Autor"},{key:"from",label:"Fecha de reseña · desde",type:"date"},{key:"to",label:"Fecha de reseña · hasta",type:"date"}
   ],ranges:[["from","to","Fecha de reseña"]],apply:()=>loadReviews(false)});
 
-  const nota = !revPuedeResponder() ? "" : `<div class="pendingblock" style="margin-bottom:16px"><b>Guardar aquí no publica en Google.</b> La publicación directa está pendiente de que Google apruebe la cuota de su API. Mientras tanto: redacta la respuesta (con IA si quieres), <b>guárdala</b> aquí y usa <b>Copiar</b> para pegarla en Google.</div>`;
+  const nota = !revPuedeResponder() ? "" : `<div class="pendingblock" style="margin-bottom:16px">Redacta una respuesta y elige <b>Guardar borrador</b> o <b>Publicar en Google</b>. La publicación está disponible para las reseñas sincronizadas con Business Profile.</div>`;
   const bulk = (REV_SEL.size && revPuedeResponder()) ? `<div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><b>${REV_SEL.size} seleccionada${REV_SEL.size === 1 ? "" : "s"}</b><div style="flex:1"></div><button class="btn" data-act="rev-sel-none">Quitar selección</button><button class="btn primary" data-act="rev-bulk">✨ Generar borradores IA</button></div>` : "";
   const vacio = REV_SIN_FICHA ? "No hay reseñas de este establecimiento porque su ficha de Google no está vinculada."
     : REV_CONT.total ? "Sin reseñas con este filtro." : "Aún no hay reseñas importadas. Pulsa «Actualizar desde Google».";
@@ -3290,14 +3290,15 @@ function renderReviews() {
 const revPuedeResponder = () => ["direccion", "marketing"].includes(USER.rol);
 
 function reviewCard(r) {
-  const badge = r.respondida ? '<span class="badge">Respuesta guardada</span>' : '<span class="badge warn">Pendiente</span>';
+  const badge = r.publicada ? '<span class="badge">Publicada en Google</span>' : r.respondida ? '<span class="badge">Borrador guardado</span>' : '<span class="badge warn">Pendiente</span>';
   const origen = r.origen ? `<span class="pill" style="font-size:10px" title="Origen">${r.origen === "places" ? "Places" : "Business"}</span>` : "";
   const check = (r.respondida || !revPuedeResponder()) ? "" : `<input type="checkbox" class="revsel" data-act="rev-sel" data-id="${esc(r.id)}" ${REV_SEL.has(String(r.id)) ? "checked" : ""} aria-label="Seleccionar reseña">`;
   const stars = `<span class="stars">${"★".repeat(r.rating)}<span class="mut">${"★".repeat(5 - r.rating)}</span></span>`;
   return `<div class="card revcard ${r.negativa ? "neg" : ""}" style="margin-bottom:12px"><div style="display:flex;gap:12px;align-items:flex-start">${check}<div class="grow" style="min-width:0;flex:1">
     <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">${stars}<b>${esc(r.author)}</b><span class="mut" style="font-size:12px">· ${esc(r.local)} · ${esc(r.fecha)}</span>${origen}<span style="flex:1"></span>${badge}</div>
     ${r.text ? `<p style="margin:8px 0 0;font-size:13.5px;line-height:1.5">${esc(r.text)}</p>` : '<p class="mut" style="margin:8px 0 0;font-size:13px">(sin texto, solo puntuación)</p>'}
-    ${r.reply ? `<div class="revreply"><span class="k">Respuesta guardada · publicación en Google no verificada</span><span>${esc(r.reply)}</span></div>` : ""}
+    ${r.google_reply ? `<div class="revreply"><span class="k">Publicada en Google</span><span>${esc(r.google_reply)}</span></div>` : ""}
+    ${r.reply && r.reply !== r.google_reply ? `<div class="revreply"><span class="k">Borrador · aún sin publicar</span><span>${esc(r.reply)}</span></div>` : ""}
     ${revPuedeResponder() ? `<div style="margin-top:10px;display:flex;gap:8px"><button class="btn sm" data-act="rev-responder" data-id="${esc(r.id)}">${r.respondida ? "Editar respuesta" : "Responder"}</button></div>` : ""}
   </div></div></div>`;
 }
@@ -3414,9 +3415,10 @@ function openResponder(id) {
       <button class="btn" id="revCopy">Copiar</button>
       <div style="flex:1"></div>
       <button class="btn" data-close>Cancelar</button>
-      <button class="btn primary" id="revSave">Guardar</button>
+      <button class="btn" id="revSave">Guardar borrador</button>
+      ${r.puede_publicar ? `<button class="btn primary" id="revPublish">${r.publicada ? "Actualizar en Google" : "Publicar en Google"}</button>` : ""}
     </div>
-    <div class="mut" style="font-size:11.5px;margin-top:10px">La publicación directa en Google se activará al aprobarse la cuota. Por ahora guarda aquí y usa "Copiar".</div>`;
+    <div class="mut" style="font-size:11.5px;margin-top:10px">${r.puede_publicar ? "Publicar hará visible esta respuesta en la ficha de Google del local." : "Esta reseña procede de la lectura pública. Actualiza desde Google para poder publicarla desde aquí."}</div>`;
   const ov = modal("Responder reseña", body);
   const ta = ov.querySelector("#revReply");
   ov.querySelector("#revIa").addEventListener("click", async (e) => {
@@ -3428,8 +3430,19 @@ function openResponder(id) {
   ov.querySelector("#revCopy").addEventListener("click", () => { navigator.clipboard ? navigator.clipboard.writeText(ta.value).then(() => toast("Respuesta copiada ✅"), () => toast("No se pudo copiar")) : toast("Copia manual"); });
   ov.querySelector("#revSave").addEventListener("click", async () => {
     const reply = ta.value.trim(); if (!reply) { toast("Escribe una respuesta"); return; }
-    try { await apiSend("POST", "/api/reviews/" + encodeURIComponent(r.id) + "/reply", { reply }); ov.remove(); toast("Respuesta guardada ✅"); loadReviews(); }
+    try { await apiSend("POST", "/api/reviews/" + encodeURIComponent(r.id) + "/reply", { reply }); ov.remove(); toast("Borrador guardado ✅"); loadReviews(); }
     catch (err) { toast("Error: " + err.message); }
+  });
+  ov.querySelector("#revPublish")?.addEventListener("click", async (e) => {
+    const reply = ta.value.trim();
+    if (!reply || reply.length > 4096) { toast("Escribe una respuesta de hasta 4096 caracteres"); return; }
+    const b = e.currentTarget; b.disabled = true;
+    try {
+      if (!(await confirmModal(`Se publicará en Google para ${r.author}, en ${r.local}:\n\n${reply}`, { ok: "Publicar en Google" }))) return;
+      await apiSend("POST", "/api/reviews/" + encodeURIComponent(r.id) + "/publish", { reply });
+      ov.remove(); toast("Respuesta publicada en Google ✅"); loadReviews();
+    } catch (err) { toast(err.message); }
+    finally { b.disabled = false; }
   });
 }
 

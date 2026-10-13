@@ -149,3 +149,11 @@ describe("variacion", () => {
     assert.equal(variacion(-50, -100), 50);
   });
 });
+
+// El lunes sigue siendo una semana en curso, aunque solo tenga un día.
+test("semana en lunes compara con lunes anterior, no con domingo", () => {
+  assert.deepEqual(rangoAnterior("2026-10-12", "2026-10-12", "semana"),
+    { from: "2026-10-05", to: "2026-10-05", etiqueta: "la semana pasada" });
+  assert.deepEqual(rangoAnterior("2026-10-12", "2026-10-12", "custom"),
+    { from: "2026-10-11", to: "2026-10-11", etiqueta: "ayer" });
+});

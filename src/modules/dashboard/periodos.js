@@ -89,14 +89,14 @@ export function rangoAnterior(from, to, preset) {
     };
   }
 
-  if (dias === 1) return { from: addDays(from, -1), to: addDays(to, -1), etiqueta: "ayer" };
-
   if (esSemanal) {
     return {
       from: addDays(from, -7), to: addDays(to, -7),
       etiqueta: "la semana pasada",
     };
   }
+
+  if (dias === 1) return { from: addDays(from, -1), to: addDays(to, -1), etiqueta: "ayer" };
 
   return { from: addDays(from, -dias), to: addDays(from, -1), etiqueta: "el periodo anterior" };
 }

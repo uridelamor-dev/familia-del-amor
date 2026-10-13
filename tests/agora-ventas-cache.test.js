@@ -25,8 +25,8 @@ describe("lo que cuesta pedir se guarda en la BASE, no en memoria", () => {
 
   test("y las del Dashboard también", () => {
     const fn = server.slice(server.indexOf("async function ventasRangoLive(local, from, to)"), server.indexOf("async function runInformeAgora("));
-    assert.match(fn, /const dbc = await cacheLeer\(claveRango\(local, from, to\)\)/);
-    assert.match(fn, /await cacheGuardar\(claveRango\(local, from, to\), serie\)/);
+    assert.match(fn, /const dbc = await cacheLeer\(claveRango\(local, from, to\) \+ "\|inclusive-v2"\)/);
+    assert.match(fn, /await cacheGuardar\(claveRango\(local, from, to\) \+ "\|inclusive-v2", serie\)/);
   });
 });
 
