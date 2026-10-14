@@ -70,6 +70,7 @@ import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fus
 import { resultadoRegistrado } from "./src/modules/dashboard/resultado.js";
 import { rangoAnterior, variacion } from "./src/modules/dashboard/periodos.js";
 import { compartirSincronizacion } from "./src/modules/reviews/sincronizacion.js";
+import { analizarInformeIA } from "./src/modules/reviews/informes-ia.js";
 import { crearInformes, seleccionar } from "./src/modules/reviews/informes.js";
 import { crearRepaso } from "./src/modules/reviews/repaso.js";
 import { registrarRepaso } from "./src/modules/reviews/repaso-routes.js";
@@ -4259,8 +4260,7 @@ const informesReviews = crearInformes({
   },
   analizar: async ({system,messages}) => {
     const ai=new Anthropic({apiKey:process.env.ANTHROPIC_API_KEY,maxRetries:0,timeout:60000});
-    const response=await ai.messages.create({model:'claude-haiku-4-5-20251001',max_tokens:4000,system,messages});
-    return JSON.parse(extractText(response).replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));
+    return analizarInformeIA(ai,{system,messages});
   }
 });
 app.get('/api/reviews/informes', requireAuth(['direccion']), async (req,res)=>{
