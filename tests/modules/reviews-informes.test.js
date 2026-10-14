@@ -74,3 +74,24 @@ test('el error de lectura identifica la etapa y no expone detalles privados',asy
  const state=JSON.parse(h.stored.get(ENTREGAS[0].id));
  assert.match(state.error,/Blanes: Fallo interno/);assert.doesNotMatch(state.error,/token secreto/);assert.equal(h.sent.length,0);
 });
+test('usa referencias cortas y restaura IDs largos de Google sin perder evidencias',async()=>{
+ const original='Google_ID_muy_largo_'+ 'a'.repeat(180);
+ const result=await analizarTemas([{id:original,text:'Servicio excelente',rating:5}],async request=>{
+  assert.doesNotMatch(JSON.stringify(request),/Google_ID/);
+  assert.match(JSON.stringify(request),/r1/);
+  return {positivos:[{tema:'Buen servicio',ids:['r1','r1']}],negativos:[]};
+ });
+ assert.deepEqual(result.positivos[0].ids,[original]);
+});
+test('las referencias cortas desconocidas siguen bloqueando el informe',async()=>{
+ await assert.rejects(()=>analizarTemas([{id:'Google',text:'Bien'}],async()=>({positivos:[{tema:'Servicio',ids:['r99']}],negativos:[]})),/evidencia válida/);
+});
+test('conserva referencias únicas entre lotes de cuarenta reseñas y consolidación',async()=>{
+ const rows=Array.from({length:41},(_,i)=>({id:'Google-'+i,text:'Buen servicio',rating:5}));let calls=0;
+ const result=await analizarTemas(rows,async request=>{
+  calls++;const data=JSON.parse(request.messages[0].content);
+  const ids=calls<=2?data.map(r=>r.id):data.flatMap(f=>f.positivos[0].ids);
+  return {positivos:[{tema:'Buen servicio',ids}],negativos:[]};
+ });
+ assert.deepEqual(result.positivos[0].ids,rows.map(r=>r.id));assert.equal(calls,3);
+});
