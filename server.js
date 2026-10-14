@@ -15004,6 +15004,7 @@ async function walConstruirPase(qr, cfg, base, { req = null } = {}) {
     // Ahora el estado va siempre. El servicio sigue colgando de su puerta.
     estado: proyeccion,
     servicio,
+    notificarPuntos: !!sw.wallet_visibles,
     // Un pase que no puede refrescarse solo lleva la fecha del día que se bajó, en el reverso. Un
     // número congelado sin fecha es una promesa; con fecha es una foto, y se entiende.
     congelado: !servicio,

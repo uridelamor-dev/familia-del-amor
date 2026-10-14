@@ -146,7 +146,7 @@ export function confirmacionValida(texto) {
  *
  * APAGAR SIEMPRE SE PUEDE. Encender exige la puerta abierta; los avisos exigen además que haya
  * registros —avisar a un móvil que no se ha registrado no es que falle: es que no existe—; y los
- * mensajes visibles exigen avisos y todavía no están implementados, así que no se dejan encender.
+ * mensajes visibles exigen registros y avisos activos.
  */
 export function puedeEncender(interruptor, valor, { estadoPuerta = "apagado", guardados = {} } = {}) {
   if (!INTERRUPTORES.includes(interruptor)) return { ok: false, error: "Ese interruptor no existe" };
@@ -158,9 +158,9 @@ export function puedeEncender(interruptor, valor, { estadoPuerta = "apagado", gu
   if (interruptor === "wallet_avisos" && !guardados.wallet_registros) {
     return { ok: false, error: "No se puede avisar a un dispositivo que no puede registrarse. Enciende primero los registros." };
   }
-  if (interruptor === "wallet_visibles") {
+  if (interruptor === "wallet_visibles" && (!guardados.wallet_registros || !guardados.wallet_avisos)) {
     return { ok: false,
-      error: "Los mensajes visibles todavía no están implementados. Primero hay que comprobar que la actualización silenciosa funciona." };
+      error: "Enciende primero los registros y los avisos automáticos." };
   }
   return { ok: true };
 }
@@ -170,11 +170,9 @@ export function aplicarPuerta(guardados, estadoPuerta) {
   const out = { ...APAGADOS, ...(guardados || {}) };
   if (!out.wallet_registros) { out.wallet_avisos = false; out.wallet_visibles = false; }
   if (!out.wallet_avisos) out.wallet_visibles = false;
-  // Nunca, mientras no se implementen.
-  out.wallet_visibles = false;
   if (estadoPuerta !== "activo") return { ...APAGADOS };
   return { wallet_registros: !!out.wallet_registros, wallet_avisos: !!out.wallet_avisos,
-           wallet_visibles: false };
+           wallet_visibles: !!out.wallet_visibles };
 }
 
 /**

@@ -344,7 +344,7 @@ function camposDe({ qr, base, promo, estado, textos, congelado = false, locales 
 
 export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales = [],
                                  estado = null, servicio = null, textos = {},
-                                 congelado = false } = {}) {
+                                 congelado = false, notificarPuntos = false } = {}) {
   const codigo = codigoLegible(qr.codigo);
   const pase = {
     formatVersion: 1,
@@ -386,6 +386,13 @@ export function pasePlanoApple({ qr, cfg = {}, base = "", promo = null, locales 
 
     storeCard: camposDe({ qr, base, promo, estado, textos, congelado, locales }),
   };
+
+  // Apple muestra el aviso solo cuando cambia el valor, no por volver a descargar
+  // el mismo pase. El texto neutral también es correcto ante devoluciones/correcciones.
+  if (notificarPuntos && servicio?.url && servicio?.token) {
+    const puntos = pase.storeCard.secondaryFields.find(c => c.key === "puntos");
+    if (puntos) puntos.changeMessage = "Tu saldo se ha actualizado. Tienes %@ puntos en Família del Amor.";
+  }
 
   // ── EL SERVICIO WEB, SOLO SI SE PIDE EXPRESAMENTE ─────────────────────────────────────────
   //

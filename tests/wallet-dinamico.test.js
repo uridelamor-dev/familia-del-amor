@@ -567,12 +567,13 @@ describe("el candado final", () => {
     assert.equal(r.wallet_avisos, false);
   });
 
-  test("los mensajes visibles NUNCA se encienden: no están implementados", () => {
-    assert.equal(aplicarPuerta(TODO, "activo").wallet_visibles, false);
+  test("los mensajes visibles exigen registros y avisos activos", () => {
+    assert.equal(aplicarPuerta(TODO, "activo").wallet_visibles, true);
     const r = puedeEncender("wallet_visibles", true, { estadoPuerta: "activo",
       guardados: { wallet_registros: true, wallet_avisos: true } });
-    assert.equal(r.ok, false);
-    assert.match(r.error, /no está|implementad/i);
+    assert.equal(r.ok, true);
+    assert.equal(puedeEncender("wallet_visibles", true, { estadoPuerta: "activo", guardados: { wallet_registros: true } }).ok, false);
+    assert.equal(aplicarPuerta({ ...TODO, wallet_avisos: false }, "activo").wallet_visibles, false);
   });
 
   test("`webServiceURL` SOLO con los registros permitidos", () => {
@@ -1108,8 +1109,8 @@ describe("el panel", () => {
     assert.match(panel, /NO enciende los puntos ni las promociones/);
   });
 
-  test("los mensajes visibles salen como pendientes, no como interruptor", () => {
-    assert.match(panel, /Todavía <b>no implementados<\/b>/);
+  test("las notificaciones de puntos se pueden configurar", () => {
+    assert.match(panel, /data-k="wallet_visibles"/);
   });
 
   test("el `select` del entorno se escucha por `change`, no por clic", () => {
@@ -2525,5 +2526,31 @@ describe("el pase, revisado como producto", () => {
     // comprueba allí, que es donde vive.
     const t = readFileSync(new URL("../tools/wallet-strip.mjs", import.meta.url), "utf8");
     assert.ok(t.includes('const LEMA = "MENJAR · BEURE · COMPARTIR"'), "el lema de marca sí se queda");
+  });
+});
+
+ describe('avisos visibles de saldo en Apple Wallet', () => {
+  const servicio = { url: 'https://familiadelamor.org/api/wallet/apple', token: 'servicio-de-prueba-distinto-del-carnet' };
+  const generar = (saldo, extras = {}) => pasePlanoApple({ qr: QR, cfg: CFG,
+    base: 'https://familiadelamor.org', servicio, notificarPuntos: true,
+    estado: { puntos: { activo: true, saldo }, premios: { cantidad: 0 } }, ...extras });
+  const campo = p => p.storeCard.secondaryFields.find(f => f.key === 'puntos');
+  test('el aviso contiene el saldo, conserva la identidad y no aparece en otros campos', () => {
+    const antes = generar(13), despues = generar(26);
+    assert.equal(campo(despues).value, '26');
+    assert.match(campo(despues).changeMessage, /%@ puntos/);
+    assert.equal(antes.serialNumber, despues.serialNumber);
+    assert.deepEqual(antes.barcodes, despues.barcodes);
+    const fields = Object.values(despues.storeCard).flat();
+    assert.deepEqual(fields.filter(f => f.changeMessage).map(f => f.key), ['puntos']);
+  });
+  test('reintentos con el mismo saldo no cambian el campo que dispara la notificación', () => {
+    assert.deepEqual(campo(generar(13)), campo(generar(13)));
+  });
+  test('sin autorización, sin servicio o con puntos apagados no hay aviso', () => {
+    for (const extras of [{ notificarPuntos: false }, { servicio: null },
+      { estado: { puntos: { activo: false }, premios: { cantidad: 0 } } }]) {
+      assert.equal(Object.values(generar(13, extras).storeCard).flat().some(f => f.changeMessage), false);
+    }
   });
 });
