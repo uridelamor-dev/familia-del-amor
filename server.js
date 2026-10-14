@@ -13798,9 +13798,11 @@ async function walProyeccion(qr, { local = null } = {}) {
   // se consulta nada: el pase no puede prometer lo que la barra no daría.
   const elegibles = [];
   if (swPromo.promociones_ofrecer) {
+    // PostgreSQL no puede inferir el tipo del parámetro usado solo en IS NULL (42P18).
+    // Sin el cast falla toda la proyección, incluidos los puntos, y sale un pase estático.
     const vivas = await dbAll(
       `SELECT * FROM fid_promos WHERE estado = 'publicada'
-        AND (local IS NULL OR local = ? OR ? IS NULL) LIMIT 50`, [local, local]) || [];
+        AND (local IS NULL OR local = ? OR CAST(? AS TEXT) IS NULL) LIMIT 50`, [local, local]) || [];
     for (const p of vivas) {
       const usos = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_usos
         WHERE clave = ? AND qr_id = ? AND estado = 'usado'`, [p.clave, qr.id]);
