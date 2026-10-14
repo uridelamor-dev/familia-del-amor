@@ -209,6 +209,9 @@ export function grupoDeSQL(fila = {}) {
   const proveedores = (fila.proveedores || []).filter(Boolean);
 
   return {
+    // Dato individual: se puede mostrar aunque no sea comparable con otras compras.
+    // Nunca se usa para sumar cantidades ni para alertas de evolución.
+    ultimaLectura: fila.ultima_lectura || null,
     clave: fila.clave,
     descripcion: fila.descripcion,
     unificado: !!fila.unificado,

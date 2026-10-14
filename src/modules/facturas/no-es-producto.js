@@ -66,6 +66,10 @@ export function nombresDeLaCasa({ empresas = [], extra = [] } = {}) {
 // albarán. Cada patrón es una forma que se ha visto DE VERDAD en las facturas de la casa, no
 // una categoría inventada: si no se ha visto, no está.
 const NO_ES_MERCANCIA = [
+  { re: /^recollir caixa$/, motivo: "instrucción de recogida, no un artículo" },
+  { re: /^(?:g e n e r e a r e t i r a r|genere a retirar|r e c o l l i r e n v a s o s b u i t s|recollir envasos buits)$/, motivo: "instrucción de retirada de envases" },
+  { re: /^rc genere pendent servir\b/, motivo: "nota de mercancía pendiente de servir" },
+
   { re: /\b(temps|hores?) (d )?operari/, motivo: "horas de operario" },
   { re: /\b(mano|hora|horas) de obra\b/, motivo: "mano de obra" },
   { re: /\bma d obra\b/, motivo: "mano de obra" },
@@ -108,7 +112,7 @@ export function noEsProducto(descripcion, nombres = nombresDeLaCasa()) {
 
   // 2. ¿Es algo que se paga pero no se compra?
   for (const p of NO_ES_MERCANCIA) {
-    if (p.re.test(clave)) return { motivo: p.motivo, detalle: null };
+    if (p.re.test(clave) || p.re.test(norm(texto))) return { motivo: p.motivo, detalle: null };
   }
 
   // 3. Una línea que es media hoja de texto no es el nombre de un artículo: es el concepto de

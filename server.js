@@ -5501,6 +5501,8 @@ async function comprasDeLocal(query, local) {
          -- La unidad, solo si TODAS las compras coinciden: «441» sin unidad no dice nada, y
          -- «441 kg» junto a «441 ud» sumados diría algo falso. Con dos unidades distintas se
          -- calla, que es la respuesta honesta.
+         (array_agg(jsonb_build_object('cantidad', l.cantidad, 'unidad', l.unidad,
+           'precio', l.precio_unitario, 'dudosa', l.dudosa) ORDER BY f.fecha DESC, l.id DESC))[1] AS ultima_lectura,
          array_agg(DISTINCT l.unidad) AS unidades
        FROM factura_lineas l
        JOIN facturas f ON f.id = l.factura_id

@@ -10484,6 +10484,20 @@ function compPrecioUnidad(precio, unidad) {
   return eur2(precio) + (u ? "/" + (aliases[u] || u) : " · unidad pendiente");
 }
 
+// Una lectura individual no desaparece por no poder comparar sus unidades.
+function compCantidadCelda(g) {
+  if (g.cantidad != null) return esc(num(g.cantidad)) + (g.unidad ? ` <span class="mut">${esc(g.unidad)}</span>` : "");
+  const l = g.ultimaLectura;
+  if (l?.cantidad == null) return '<span class="mut">Sin cantidad</span>';
+  return `${esc(num(l.cantidad))} ${esc(l.unidad || '')}<div class="t2">${g.veces > 1 ? 'Última compra · ' : ''}${l.dudosa ? 'Lectura por revisar' : !l.unidad ? 'Unidad sin indicar' : 'Sin sumar medidas distintas'}</div>`;
+}
+function compPrecioCelda(g) {
+  if (g.ultimoPrecio != null) return esc(compPrecioUnidad(g.ultimoPrecio, g.unidad)) + compChipPrecio(g);
+  const l = g.ultimaLectura;
+  if (l?.precio == null) return '<span class="mut">Sin precio fiable</span>';
+  return `${esc(compPrecioUnidad(l.precio, l.unidad))}<div class="t2">Última compra${l.dudosa ? ' · revisar lectura' : ' · sin comparar'}</div>`;
+}
+
 function compChipPrecio(g) {
   if (Number(g.dudosas) > 0 || !g.unidad) return ' <span class="pill warn" style="font-size:10px">Revisar unidad y lectura</span>';
   if (g.precioNormal == null || g.ultimoPrecio == null || g.precioNormal <= 0) return "";
@@ -10554,7 +10568,7 @@ async function comprasHistorial(clave, nombre) {
     ${/* El precio que se enseña es el que se PAGA. Si hay descuento se dice, con el de tarifa
           al lado: así se ve de un vistazo si un mes deja de aplicarse. */""}
     <td class="r tnum">${c.precio_unitario != null ? esc(compPrecioUnidad(c.precio_unitario, c.unidad)) : "—"}
-      ${c.descuento_pct ? `<div class="t2" style="white-space:nowrap">${esc(compPrecioUnidad(c.precio_bruto, c.unidad))} −${esc(String(c.descuento_pct))} %</div>` : ""}</td>
+      ${Number(c.descuento_pct) > 0 && Number(c.descuento_pct) <= 100 ? `<div class="t2" style="white-space:nowrap">${esc(compPrecioUnidad(c.precio_bruto, c.unidad))} −${esc(String(c.descuento_pct))} %</div>` : ""}</td>
     <td class="r tnum"><b>${c.importe != null ? esc(eur2(c.importe)) : "—"}</b></td>
     <td class="r" style="white-space:nowrap">
       <button class="btn sm" data-corregir="${c.linea_id}" data-cant="${esc(String(c.cantidad ?? ""))}" data-unidad="${esc(c.unidad || "")}"
@@ -10841,13 +10855,13 @@ async function refrescarCompras() {
       <td class="catcol">${catDe(g)
         ? `<span class="pill cat" style="--cat:var(--cat-${esc(colorCategoriaFE(catDe(g)))})">${esc(catDe(g))}</span>`
         : '<span class="mut" style="font-size:11.5px" title="Sale de la categoría del proveedor, que se pone en Proveedores">sin categoría</span>'}</td>
-      <td class="cantcel" style="text-align:right;white-space:nowrap">${g.cantidad != null ? esc(num(g.cantidad)) + (g.unidad ? ` <span class="mut" style="font-size:11px">${esc(g.unidad)}</span>` : "") : "—"}</td>
-      <td style="text-align:right;white-space:nowrap"><div class="gastocel"><b>${g.importe != null ? esc(eur(g.importe)) : "—"}</b>
+      <td class="cantcel" style="text-align:right;white-space:nowrap">${compCantidadCelda(g)}</td>
+      <td style="text-align:right;white-space:nowrap"><div class="gastocel"><b>${g.importe != null ? esc(eur2(g.importe)) : "—"}</b>
         <i class="gastobar" style="width:${Math.round(((Number(g.importe) || 0) / topeGasto) * 100)}%"></i></div></td>
       ${/* UNA SOLA COLUMNA DE PRECIO. «Precio normal» y «Último precio» traían casi siempre el
             mismo número, y cuando no, ya lo decía la píldora. Se queda el que se paga ahora, con
             su variación al lado y el normal en el rótulo al pasar por encima. */""}
-      <td style="text-align:right;white-space:nowrap"${g.precioNormal != null ? ` title="Lo normal es ${esc(compPrecioUnidad(g.precioNormal, g.unidad))}"` : ""}>${g.ultimoPrecio != null ? `${esc(compPrecioUnidad(g.ultimoPrecio, g.unidad))}${compChipPrecio(g)}` : "—"}</td>
+      <td style="text-align:right;white-space:nowrap"${g.precioNormal != null ? ` title="Lo normal es ${esc(compPrecioUnidad(g.precioNormal, g.unidad))}"` : ""}>${compPrecioCelda(g)}</td>
       <td class="sparkcel">${sparkPrecio(g)}</td>
       <td class="ultcel mut" style="white-space:nowrap;font-size:11.5px">${esc(g.veces)} ${g.veces === 1 ? "vez" : "veces"}<br>${esc(fechaCorta(g.ultima) || "")}</td>
     </tr>`;

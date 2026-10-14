@@ -1,7 +1,7 @@
 // No convierte unidades: solo normaliza alias inequívocos de la misma medida.
 export function unidadComparable(valor) {
   const u = String(valor || "").trim().toLowerCase().replace(/\.$/, "");
-  const aliases = {ud:"ud", uds:"ud", unidad:"ud", unidades:"ud", kg:"kg", kgs:"kg", kilo:"kg", kilos:"kg", g:"g", gr:"g", gramos:"g", l:"l", lt:"l", litros:"l", ml:"ml"};
+  const aliases = {u:"ud", und:"ud", unds:"ud", unit:"ud", units:"ud", litro:"l", gram:"g", gramo:"g", ud:"ud", uds:"ud", unidad:"ud", unidades:"ud", kg:"kg", kgs:"kg", kilo:"kg", kilos:"kg", g:"g", gr:"g", gramos:"g", l:"l", lt:"l", litros:"l", ml:"ml"};
   return aliases[u] || null; // envases sin tamaño comprobado y unidades desconocidas no se comparan
 }
 export function clavePrecio(clave, unidad) {

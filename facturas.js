@@ -125,7 +125,7 @@ IMPORTANTE: distingue el NOMBRE COMERCIAL DEL ESTABLECIMIENTO de la RAZÓN SOCIA
 
 En "lineas" pon UNA ENTRADA POR CADA LÍNEA DE PRODUCTO del detalle, en el orden en que aparecen.
 - "descripcion": el texto del producto tal cual está escrito en la factura, sin traducir ni abreviar.
-- "cantidad" y "unidad": lo que diga la línea (2 / "cajas", 1.5 / "kg", 12 / "ud"). Si la línea no indica unidad, pon null en "unidad".
+- "cantidad" y "unidad": lo que diga la línea (2 / "cajas", 1.5 / "kg", 12 / "ud"). Busca la unidad también en la cabecera de su columna (Uds., Kg, Litros), no solo junto al número. Si no consta explícitamente, pon null en "unidad", pero conserva la cantidad y el precio legibles. El peso del nombre del producto (p. ej. harina 1 kg) no demuestra que la cantidad esté facturada en kg.
 - CANTIDAD Y PRECIO TIENEN QUE HABLAR DE LO MISMO: cantidad × precio_unitario debe dar el
   importe. Hay facturas con DOS columnas de cantidad ("UDS. PACK" y "UDS. TOTALES", o
   "BULTOS" y "UNIDADES"): si el precio es por unidad suelta, la cantidad que va aquí es la de
@@ -136,6 +136,7 @@ En "lineas" pon UNA ENTRADA POR CADA LÍNEA DE PRODUCTO del detalle, en el orden
   "descuento_pct" y ese total de la línea en "importe_neto". Si no hay descuento, pon null en
   las dos. Es importante: sin esto se guarda un precio que nadie paga.
 - Usa PUNTO decimal, nunca coma. No pongas separador de miles.
+- NO incluyas notas sin operación económica (recogida de cajas, mercancía pendiente de servir), ni referencias de albarán aisladas. Conserva los abonos reales y los artículos gratuitos con su cantidad y su importe cero.
 - NO incluyas como líneas los subtotales, descuentos globales, portes, la base imponible, el IVA ni el total.
 - Si una línea no se lee con seguridad, ponla igualmente con "descripcion" con lo que se distinga y null en lo que no puedas leer. NO INVENTES cantidades ni importes: es preferible un null a un número que parezca correcto.
 - Si el documento no tiene detalle por líneas (por ejemplo un ticket resumido), devuelve "lineas": [].`;

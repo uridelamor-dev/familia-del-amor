@@ -45,6 +45,7 @@ export function fusionarGrupos(listas = []) {
     a.primera = antes(a.primera, g.primera);
     // El último precio es el de la compra más reciente de CUALQUIERA de los locales.
     if (g.ultima && (!a.ultima || String(g.ultima) >= String(a.ultima))) {
+      a.ultimaLectura = g.ultimaLectura || null;
       if (g.ultimoPrecio != null) a.ultimoPrecio = g.ultimoPrecio;
     }
     a.ultima = despues(a.ultima, g.ultima);
