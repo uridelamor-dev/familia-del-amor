@@ -12045,7 +12045,7 @@ async function fidpAcumular() {
   modal("Acumular puntos sin canje", `
     <p><b>1 punto por cada euro pagado</b>, en todos los locales. Por ejemplo, 32,30 € dan 32 puntos: se redondea hacia abajo por ticket.</p>
     <p>Sin descuentos, recompensas ni caducidad por ahora. El cliente debe identificarse en caja antes de cerrar el ticket. Los tickets anteriores no se recalculan.</p>
-    <div class="field"><label for="fidpAcumEstado">Guardar como</label><select id="fidpAcumEstado" style="width:100%"><option value="borrador">Borrador para revisar</option value="publicada">Regla vigente para probar en sombra</option></select></div>
+    <div class="field"><label for="fidpAcumEstado">Guardar como</label><select id="fidpAcumEstado" style="width:100%"><option value="borrador">Borrador para revisar</option><option value="publicada">Regla vigente para probar en sombra</option></select></div>
     <p class="mut">Guardar la regla no activa la concesión de puntos. Se revisa el cálculo y se activa después en «Resumen y activación», manteniendo apagados «Ofrecer» y «Consumir».</p>
     <button class="btn primary" data-act="fidp-acumular-guardar">Guardar regla</button>`);
 }
