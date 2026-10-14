@@ -70,6 +70,7 @@ import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fus
 import { resultadoRegistrado } from "./src/modules/dashboard/resultado.js";
 import { rangoAnterior, variacion } from "./src/modules/dashboard/periodos.js";
 import { compartirSincronizacion } from "./src/modules/reviews/sincronizacion.js";
+import { crearInformes, seleccionar } from "./src/modules/reviews/informes.js";
 import { crearRepaso } from "./src/modules/reviews/repaso.js";
 import { registrarRepaso } from "./src/modules/reviews/repaso-routes.js";
 import { autorizarResenas } from "./src/modules/reviews/oauth.js";
@@ -4233,6 +4234,38 @@ const repasoReviews = crearRepaso({
   }
 });
 registrarRepaso(app, {repaso:repasoReviews,requireAuth,localesDe});
+
+const informesReviews = crearInformes({
+  pool, enabled: PROD, conectado: isReady, enviar: sendMensajeLibre,
+  recopilar: async mes => {
+    const api = clienteBusinessProfile({token: await getGoogleAccessToken()});
+    const {locations} = await api.ubicaciones();
+    const configured = JSON.parse(await getConfig('places_ids') || '[]');
+    if (!Array.isArray(configured) || !configured.length) throw Error('No hay fichas vinculadas');
+    const locales=[], seen=new Set();
+    for (const p of configured) {
+      const loc=locations.find(l=>(p.placeId && l.metadata?.placeId===p.placeId) || (p.google_location_id && l.name===p.google_location_id));
+      if (!loc) throw Error('Falta acceso a una ficha configurada');
+      const key=loc.account+'/'+loc.name;
+      if(seen.has(key))continue;
+      seen.add(key);
+      const data=await api.informe(loc);
+      if(new Set(data.rows.map(r=>r.reviewId)).size!==data.total) throw Error('Lectura incompleta de reseñas');
+      locales.push({nombre:p.name || loc.title, ficha:key, global:data.average,totalGlobal:data.total,...seleccionar(data.rows,mes)});
+    }
+    return {mes,consultado:new Date().toISOString(),locales};
+  },
+  analizar: async ({system,messages}) => {
+    const ai=new Anthropic({apiKey:process.env.ANTHROPIC_API_KEY,maxRetries:0,timeout:60000});
+    const response=await ai.messages.create({model:'claude-haiku-4-5-20251001',max_tokens:4000,system,messages});
+    return JSON.parse(extractText(response).replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));
+  }
+});
+app.get('/api/reviews/informes', requireAuth(['direccion']), async (req,res)=>{
+  try {res.json({ok:true,data:await informesReviews.status(),produccion:PROD});}
+  catch {res.status(500).json({ok:false,error:'No se pudieron consultar los informes.'});}
+});
+
 
 // Genera un borrador de respuesta con IA (reutiliza el patrón de /api/sara/chat, sin tools).
 async function draftReplyForReview(review) {
@@ -24838,6 +24871,7 @@ const server = app.listen(PORT, async () => {
     await registrarPermisosConfirmados(pool);
     if (PROD) setInterval(() => pepaEmailQueue.tick(), 60_000).unref();
     await repasoReviews.init();
+    if (PROD) setInterval(() => informesReviews.tick().catch(e=>console.error('[Reseñas informes]', e.message)), 60_000).unref();
     if (PROD) setInterval(() => repasoReviews.tick().catch(() => {}), 2000).unref();
     DB_LISTA = true;   // a partir de aquí la API puede contestar de verdad
   } catch (e) {

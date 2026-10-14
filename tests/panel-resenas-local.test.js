@@ -46,9 +46,9 @@ describe("Reseñas obedece al selector de la barra", () => {
   });
 });
 
-describe("«Nuevas pendientes» sigue estando, y solo una vez", () => {
+describe("«Por responder» sigue estando, y solo una vez", () => {
   test("está en el desplegable de Estado", () => {
-    assert.match(bloqueReviews, /\["pendientes", "Nuevas pendientes"\]/);
+    assert.match(bloqueReviews, /\["pendientes", "Por responder"\]/);
   });
 
   test("y viaja al servidor, que lo traduce a «sin respuesta»", () => {
@@ -59,8 +59,8 @@ describe("«Nuevas pendientes» sigue estando, y solo una vez", () => {
   });
 
   test("no se ha duplicado en un botón aparte: un solo sitio para el mismo filtro", () => {
-    const veces = (bloqueReviews.match(/Nuevas pendientes/g) || []).length;
-    assert.equal(veces, 1, "hay más de un «Nuevas pendientes» en la pantalla");
+    const veces = (bloqueReviews.match(/\["pendientes", "Por responder"\]/g) || []).length;
+    assert.equal(veces, 1, "hay más de un «Por responder» en la pantalla");
   });
 });
 

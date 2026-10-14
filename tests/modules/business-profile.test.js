@@ -58,3 +58,10 @@ test('distingue borrador y respuesta pública sin atribuir publicación al borra
   assert.equal(mapManageRow({google_reply:'Ya respondida'}).respondida,true);
   assert.equal(mapManageRow({origen:'places',google_name:name}).puede_publicar,false);
 });
+test('informe lee nota global oficial y todas las páginas, sin inferirla de la muestra',async()=>{
+ const f=fake([{averageRating:4.3,totalReviewCount:2},{reviews:[{reviewId:'a'}],nextPageToken:'b'},{reviews:[{reviewId:'b'}]}]);
+ const data=await clienteBusinessProfile({token:'test',fetchImpl:f.fetchImpl}).informe({account:'accounts/1',name:'locations/2'});
+ assert.equal(data.average,4.3);assert.equal(data.total,2);assert.equal(data.rows.length,2);
+ const empty=fake([{totalReviewCount:0},{reviews:[]}]);
+ assert.equal((await clienteBusinessProfile({token:'test',fetchImpl:empty.fetchImpl}).informe({account:'accounts/1',name:'locations/2'})).average,null);
+});

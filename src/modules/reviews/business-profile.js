@@ -44,6 +44,14 @@ export function clienteBusinessProfile({ token, fetchImpl = fetch }) {
         return { ...r, name };
       });
     },
+    async informe(loc) {
+      const parent = `${loc.account}/${loc.name}`;
+      if (!/^accounts\/[A-Za-z0-9_-]+\/locations\/[A-Za-z0-9_-]+$/.test(parent)) throw new Error('Ficha de Google inválida');
+      const first = await pedir(`${API}${parent}/reviews?pageSize=1`);
+      const rows = await this.resenas(loc);
+      if ((!Number.isFinite(first.averageRating) && first.totalReviewCount !== 0) || !Number.isInteger(first.totalReviewCount)) throw new Error('Google no devolvió la nota global');
+      return { rows, average: first.totalReviewCount === 0 ? null : first.averageRating, total: first.totalReviewCount };
+    },
     async leer(name) {
       if (!esNombreResena(name)) throw new Error('Reseña de Google inválida');
       return pedir(`${API}${name}`);

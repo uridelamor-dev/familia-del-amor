@@ -3249,6 +3249,12 @@ let REV_PAGINA = 0, REV_SIN_FICHA = false;
 const REV_TAM = 50;
 
 let REV_CUTOFF = null;
+async function revInformes() {
+  const result=await apiSend('GET','/api/reviews/informes');
+  const states={pendiente:'Programado',preparada:'Envío en curso',enviando:'Esperando confirmación de WhatsApp',enviada:'Enviado',incierta:'Revisar envío en WhatsApp'};
+  modal('Informes mensuales de reseñas', `<p>Entrega privada a Uriel · 622149946. Septiembre: prueba al publicar. Octubre: 1 de noviembre, 10:00. Sin envíos a los locales ni entregas posteriores programadas.</p>${!result.produccion?'<p class="mut">Vista de desarrollo: los envíos están desactivados.</p>':''}${result.data.map(j=>`<section style="margin-top:20px"><h3>${esc(j.mes)}${j.prueba?' · Prueba de formato':''}</h3><p>${esc(states[j.estado] || j.estado)} · ${j.enviados || 0} de ${j.mensajes?.length || '—'} mensajes confirmados</p>${j.error?`<p class="pendingblock">${esc(j.error)}</p>`:''}${(j.mensajes||[]).map(m=>`<details style="margin:12px 0"><summary>${esc(m.split('\n')[1]?.replaceAll('*','') || 'Resumen')}</summary><p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(m)}</p></details>`).join('')}${(j.informe?.locales||[]).map(l=>`<details style="margin:12px 0"><summary>Reseñas originales · ${esc(l.nombre)} (${l.rows.length})</summary>${l.rows.map(r=>`<div style="border-top:1px solid var(--line);padding:12px 0;overflow-wrap:anywhere"><b>${r.rating}/5 · ${esc(r.fecha.slice(0,10))}</b><p>${esc(r.text || 'Solo puntuación')}</p>${['positivos','negativos'].flatMap(side=>(l[side]||[]).filter(t=>t.ids.includes(r.id)).map(t=>`<p class="mut">Tema: ${esc(t.tema)}</p>`)).join('')}</div>`).join('')}</details>`).join('')}</section>`).join('')}`);
+}
+
 async function revRepaso(automatico = false, offset = 0) {
   if (!revPuedeResponder()) return;
   if (automatico && document.querySelector('.modal-ov')) {
@@ -3262,7 +3268,7 @@ async function revRepaso(automatico = false, offset = 0) {
     if (!aviso.show) return;
   }
   const c = d.campaign, n = d.counts, total = Object.values(n).reduce((a,b)=>a+b,0);
-  const labels = {nuevo:'Por autorizar',analizando:'Analizando reseñas',cola:'Publicación en curso',terminada:'Repaso terminado',cancelada:'Repaso cancelado'};
+  const labels = {nuevo:'Por autorizar',analizando:'Analizando reseñas',cola:'Publicación en curso',terminada:'Repaso completado',cancelada:'Repaso cancelado'};
   const estados = {pendiente:'Por analizar',cola:'En cola',omitir:'Sin respuesta automática',enviando:'Verificando envío',enviada:'Publicada',incierta:'Envío sin confirmar',error:'No se pudo analizar'};
   const activo = ['analizando','cola'].includes(c.state);
   const fecha = new Date(c.cutoff).toLocaleString('es-ES');
@@ -3277,7 +3283,7 @@ async function revRepaso(automatico = false, offset = 0) {
       <button class="btn primary" id="revRepasoStart" disabled>Autorizar y empezar</button>` : `
       <p><b>${esc(labels[c.state] || c.state)}${c.paused && activo ? ' · Pausado' : ''}</b></p>
       <p><b>${num(total-(n.pendiente || 0))} de ${num(total)} evaluadas</b>. ${c.state==='analizando' ? 'Primero se termina el análisis; después empiezan los envíos cada cinco minutos.' : 'Las decisiones del análisis se conservan.'}</p>
-      <p>${num(n.enviada || 0)} publicadas · ${num(n.cola || 0)} en cola · ${num(n.pendiente || 0)} por analizar · ${num(n.omitir || 0)} sin respuesta automática · ${num((n.error || 0)+(n.incierta || 0))} sin completar</p>
+      <p>${num(n.enviada || 0)} respuestas nuevas publicadas · ${num(n.cola || 0)} en cola · ${num(n.pendiente || 0)} por analizar · ${num(n.omitir || 0)} sin respuesta automática · ${num((n.error || 0)+(n.incierta || 0))} sin completar</p>
       ${c.error ? `<p class="pendingblock">${esc(c.error)}</p>` : ''}
       ${n.incierta ? '<p>Hay envíos sin confirmar. Comprueba esas reseñas en Google antes de responder manualmente; la cola no los repite.</p>' : ''}
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px"><button class="btn" id="revRepasoReload">Actualizar estado</button>${activo ? `<button class="btn" data-repaso-control="${c.paused?'reanudar':'pausar'}">${c.paused?'Reanudar':'Pausar'}</button><button class="btn" data-repaso-control="cancelar">Cancelar envíos restantes</button>` : ''}</div>
@@ -3312,16 +3318,16 @@ function renderReviews() {
   const puedeActualizar = USER.rol === "direccion" || USER.rol === "marketing";
   const st = REV_STATUS;
   const fuenteTxt = (s) => s === "places" ? "Places" : s === "business_profile" ? "Business Profile" : (!s || s === "none") ? "Ninguna" : esc(s);
-  const opciones = puedeActualizar && revPuedeResponder() ? `<details class="cli-settings"><summary class="btn cli-settings-toggle" aria-label="Opciones de reseñas" title="Opciones de reseñas"><span aria-hidden="true">⚙</span></summary><div class="cli-settings-menu">${USER.rol === "direccion" && revPuedeResponder() ? `<button class="cli-settings-item" data-act="rev-vincular">Vincular fichas de Google</button>` : ""}${puedeActualizar && revPuedeResponder() ? `<button class="cli-settings-item" data-act="rev-refresh">Actualizar ahora</button><button class="cli-settings-item" data-act="rev-repaso">Repaso del histórico</button>` : ""}</div></details>` : "";
+  const opciones = puedeActualizar && revPuedeResponder() ? `<details class="cli-settings"><summary class="btn cli-settings-toggle" aria-label="Opciones de reseñas" title="Opciones de reseñas"><span aria-hidden="true">⚙</span></summary><div class="cli-settings-menu">${USER.rol === "direccion" && revPuedeResponder() ? `<button class="cli-settings-item" data-act="rev-vincular">Vincular fichas de Google</button><button class="cli-settings-item" data-act="rev-informes">Informes mensuales</button>` : ""}${puedeActualizar && revPuedeResponder() ? `<button class="cli-settings-item" data-act="rev-refresh">Actualizar ahora</button><button class="cli-settings-item" data-act="rev-repaso">Repaso del histórico</button>` : ""}</div></details>` : "";
   const estadoBanner = st ? `<div class="card" style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span class="pill ${st.reviews_count > 0 ? "ok" : st.connected ? "warn" : "bad"}">${st.connected ? "OAuth conectado" : "Sin conectar"}</span><div class="grow" style="min-width:0"><div class="t1">${esc(st.mensaje || "")}</div><div class="t2">Actualización automática cada hora · Fuente: ${fuenteTxt(st.source)} · ${num(st.reviews_count || 0)} reseñas${st.last_fetch ? ` · última sync ${esc(String(st.last_fetch).slice(0, 16).replace("T", " "))}` : ""}${st.last_attempt ? ` · último intento ${esc(String(st.last_attempt).slice(0, 16).replace("T", " "))}` : ""}${st.last_error ? ` · último error: ${esc(String(st.last_error).slice(0, 80))}` : ""}</div></div></div>` : "";
-  const cont = `<div class="grid g3" style="margin-bottom:14px">${stat("Total reseñas", "star", num(REV_CONT.total))}${stat("Pendientes", "bell", num(REV_CONT.pendientes))}${stat("Con respuesta", "chat", num(REV_CONT.respondidas))}</div>`;
+  const cont = `<div class="grid g3" style="margin-bottom:14px">${stat("Total reseñas", "star", num(REV_CONT.total))}${stat("Por responder", "bell", num(REV_CONT.pendientes))}${stat("Respondidas", "chat", num(REV_CONT.respondidas))}</div>`;
   // Cero reseñas por falta de ficha vinculada NO es lo mismo que cero reseñas. Sin este aviso,
   // la pantalla vacía parece un local sin opiniones y nadie va a mirar el vínculo con Google.
   const avisoFicha = REV_SIN_FICHA ? `<div class="pendingblock" style="margin-bottom:14px"><b>Este establecimiento no tiene ninguna ficha de Google vinculada</b>, así que no hay reseñas que enseñar. ${USER.rol === "direccion" ? "Se vincula en el engranaje junto al título → «Vincular fichas de Google»." : "Díselo a dirección: se arregla desde «Vincular fichas de Google»."}</div>` : "";
   const ratingOpts = ['<option value="">Todas</option>'].concat([5, 4, 3, 2, 1].map((n) => `<option value="${n}" ${REVF.rating === String(n) ? "selected" : ""}>${n}★</option>`)).join("");
   const sortOpts = [["recientes", "Más recientes"], ["antiguas", "Más antiguas"], ["mejor", "Mejor valoración"], ["peor", "Peor valoración"]].map(([v, t]) => `<option value="${v}" ${REVF.sort === v ? "selected" : ""}>${t}</option>`).join("");
   const toolbar = listFilterBar("reviews",{title:"Reseñas",state:REVF,placeholder:"Texto o autor…",sort:{key:"sort",options:[["recientes","Más recientes"],["antiguas","Más antiguas"],["mejor","Mejor valoración"],["peor","Peor valoración"]]},fields:[
-    {key:"estado",label:"Estado",options:[["","Todas"],["pendientes", "Nuevas pendientes"],["historicas","Histórico sin respuesta"],["respondidas","Con respuesta"]]},
+    {key:"estado",label:"Estado",options:[["","Todas"],["pendientes", "Por responder"],["historicas","Histórico archivado"],["respondidas","Respondidas"]]},
     {key:"rating",label:"Estrellas",options:[["","Todas"],...[5,4,3,2,1].map(n=>[String(n),n+" estrellas"])]},
     {key:"autor",label:"Autor"},{key:"from",label:"Fecha de reseña · desde",type:"date"},{key:"to",label:"Fecha de reseña · hasta",type:"date"}
   ],ranges:[["from","to","Fecha de reseña"]],apply:()=>loadReviews(false)});
@@ -3336,7 +3342,7 @@ function renderReviews() {
   // píldoras. El que manda es el selector de la barra de arriba.
   const amb = viendoVarios() ? etiquetaAmbito()
     : localActualFE() ? nombreCortoLocal(localActualFE()) : "";
-  return `<div class="ph"><div class="eyebrow">Reputación</div><div class="cli-heading"><h1>Reseñas de Google</h1>${opciones}</div><div class="sub">${revPuedeResponder() ? "Bandeja de gestión · filtra, ordena y responde" : "Lo que dicen los clientes · responder es cosa de dirección"}${amb ? ` · <b>${esc(amb)}</b>` : ""}</div></div>${estadoBanner}${cont}${REV_CUTOFF ? `<p class="mut">Pendientes: solo reseñas nuevas desde ${esc(new Date(REV_CUTOFF).toLocaleString("es-ES"))}. Las anteriores se consultan en «Histórico sin respuesta».</p>` : ""}${avisoFicha}${nota}${toolbar}${bulk}${body}${masBtn}`;
+  return `<div class="ph"><div class="eyebrow">Reputación</div><div class="cli-heading"><h1>Reseñas de Google</h1>${opciones}</div><div class="sub">${revPuedeResponder() ? "Bandeja de gestión · filtra, ordena y responde" : "Lo que dicen los clientes · responder es cosa de dirección"}${amb ? ` · <b>${esc(amb)}</b>` : ""}</div></div>${estadoBanner}${cont}${REV_CUTOFF ? `<p class="mut">Por responder: solo reseñas nuevas desde ${esc(new Date(REV_CUTOFF).toLocaleString("es-ES"))}. Las anteriores están en «Histórico archivado»: no requieren acción; puedes responderlas si lo necesitas.</p>` : ""}${avisoFicha}${nota}${toolbar}${bulk}${body}${masBtn}`;
 }
 
 /**
@@ -3350,7 +3356,7 @@ function renderReviews() {
 const revPuedeResponder = () => ["direccion", "marketing"].includes(USER.rol);
 
 function reviewCard(r) {
-  const badge = r.publicada ? '<span class="badge">Publicada en Google</span>' : r.reply ? '<span class="badge">Borrador guardado</span>' : r.historica ? '<span class="badge">Histórico · sin respuesta</span>' : '<span class="badge warn">Pendiente</span>';
+  const badge = r.publicada ? '<span class="badge">Publicada en Google</span>' : r.reply ? '<span class="badge">Borrador guardado</span>' : r.historica ? '<span class="badge">Histórico archivado</span>' : '<span class="badge warn">Por responder</span>';
   const origen = r.origen ? `<span class="pill" style="font-size:10px" title="Origen">${r.origen === "places" ? "Places" : "Business"}</span>` : "";
   const check = (r.respondida || !revPuedeResponder()) ? "" : `<input type="checkbox" class="revsel" data-act="rev-sel" data-id="${esc(r.id)}" ${REV_SEL.has(String(r.id)) ? "checked" : ""} aria-label="Seleccionar reseña">`;
   const stars = `<span class="stars">${"★".repeat(r.rating)}<span class="mut">${"★".repeat(5 - r.rating)}</span></span>`;
@@ -16967,6 +16973,7 @@ document.addEventListener("click", (e) => {
   else if (act === "rev-filtrar") applyRevFilter();
   else if (act === "rev-more") loadMoreReviews();
   else if (act === "rev-vincular") { t.closest(".cli-settings")?.removeAttribute("open"); revVincular(); }
+  else if (act === "rev-informes") { t.closest(".cli-settings")?.removeAttribute("open"); revInformes().catch(e=>toast(e.message)); }
   else if (act === "rev-repaso") { t.closest(".cli-settings")?.removeAttribute("open"); revRepaso().catch(e=>toast(e.message)); }
   else if (act === "rev-refresh") { t.closest(".cli-settings")?.removeAttribute("open"); refreshReviews(); }
   else if (act === "rev-responder") openResponder(t.getAttribute("data-id"));
