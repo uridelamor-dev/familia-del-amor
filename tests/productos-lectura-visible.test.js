@@ -43,6 +43,6 @@ test('alias de unidad inequívocos sin convertir cajas en unidades', () => {
 
 test('aviso de unidad abre el producto y desaparece cuando consta una unidad', () => {
  assert.match(ctx.compAvisoUnidad(group()), /Configurar unidad/);
- assert.match(ctx.compAvisoUnidad(group()), /data-act="comp-producto"/);
+ assert.match(ctx.compAvisoUnidad(group()), /data-act="comp-unidad"/);
  assert.equal(ctx.compAvisoUnidad(group({ultima_lectura:{unidad:'kg'}})), '');
 });

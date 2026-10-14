@@ -10487,7 +10487,7 @@ function compPrecioUnidad(precio, unidad) {
 // Una lectura individual no desaparece por no poder comparar sus unidades.
 function compAvisoUnidad(g) {
   if (!g.ultimaLectura || String(g.ultimaLectura.unidad || "").trim()) return "";
-  return `<button class="pill warn" style="margin-top:6px;cursor:pointer" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="Completar la unidad sin ocultar los datos leídos">⚠ Configurar unidad</button>`;
+  return `<button class="pill warn" style="margin-top:6px;cursor:pointer" data-act="comp-unidad" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="Completar la unidad sin ocultar los datos leídos">⚠ Configurar unidad</button>`;
 }
 function compCantidadCelda(g) {
   if (g.cantidad != null) return esc(num(g.cantidad)) + (g.unidad ? ` <span class="mut">${esc(g.unidad)}</span>` : "");
@@ -10548,13 +10548,23 @@ function compCategoriasHtml(g) {
  * saber cuando algo falta o ha subido: cuándo, a quién, cuánto y a qué precio — y luego ver
  * el papel. El enlace va a Drive, que es donde está el original.
  */
-async function comprasHistorial(clave, nombre) {
+async function comprasHistorial(clave, nombre, configurarUnidad = false) {
   const qs = new URLSearchParams({ clave });
   if (FACF.local) qs.set("local", FACF.local);
   if (COMP.from) qs.set("from", COMP.from);
   if (COMP.to) qs.set("to", COMP.to);
   let j;
   try { j = await apiRaw("/api/facturas/compras/producto?" + qs); } catch (e) { return toast(e.message); }
+  if (configurarUnidad) {
+    const c = j.compras.find(c => !String(c.unidad || "").trim());
+    if (!c) { toast("La unidad ya está configurada"); comprasDebounced(); return; }
+    const datos = document.createElement("button");
+    for (const [key, value] of Object.entries({ corregir: c.linea_id, cant: c.cantidad, unidad: c.unidad, importe: c.importe, desc: c.descripcion || nombre })) {
+      datos.setAttribute("data-" + key, String(value ?? ""));
+    }
+    corregirLinea(datos, comprasDebounced);
+    return;
+  }
   const r = j.resumen;
   const comprasConPrecio = j.compras.filter(c => c.precio_unitario != null);
   const ultimaUnidad = comprasConPrecio[0]?.unidad || r.unidad;
@@ -17116,6 +17126,7 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-prov-ficha") proveedorDetalle(t.getAttribute("data-prov"));
   else if (act === "fac-dup") facDupResolver(t.getAttribute("data-id"), t.getAttribute("data-accion"));
   else if (act === "fac-ir-cats") facTab("config", true);
+  else if (act === "comp-unidad") comprasHistorial(t.getAttribute("data-clave"), t.getAttribute("data-nombre"), true);
   else if (act === "comp-producto") comprasHistorial(t.getAttribute("data-clave"), t.getAttribute("data-nombre"));
   else if (act === "fac-sel-resumen") facSelResumen();
   else if (act === "fac-sel-export") facSelExport();
