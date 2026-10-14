@@ -10485,6 +10485,10 @@ function compPrecioUnidad(precio, unidad) {
 }
 
 // Una lectura individual no desaparece por no poder comparar sus unidades.
+function compAvisoUnidad(g) {
+  if (!g.ultimaLectura || String(g.ultimaLectura.unidad || "").trim()) return "";
+  return `<button class="pill warn" style="margin-top:6px;cursor:pointer" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="Completar la unidad sin ocultar los datos leídos">⚠ Configurar unidad</button>`;
+}
 function compCantidadCelda(g) {
   if (g.cantidad != null) return esc(num(g.cantidad)) + (g.unidad ? ` <span class="mut">${esc(g.unidad)}</span>` : "");
   const l = g.ultimaLectura;
@@ -10572,7 +10576,7 @@ async function comprasHistorial(clave, nombre) {
     <td class="r tnum"><b>${c.importe != null ? esc(eur2(c.importe)) : "—"}</b></td>
     <td class="r" style="white-space:nowrap">
       <button class="btn sm" data-corregir="${c.linea_id}" data-cant="${esc(String(c.cantidad ?? ""))}" data-unidad="${esc(c.unidad || "")}"
-        data-importe="${esc(String(c.importe ?? ""))}" data-desc="${esc(c.descripcion || "")}" title="La cantidad no es la que compraste">Corregir</button>
+        data-importe="${esc(String(c.importe ?? ""))}" data-desc="${esc(c.descripcion || "")}" title="Completar la unidad o corregir la cantidad">${!String(c.unidad || "").trim() ? "⚠ Configurar unidad" : "Corregir"}</button>
       ${c.drive_url ? `<a class="btn sm" href="${esc(c.drive_url)}" target="_blank" rel="noopener" title="Abrir la factura en Drive">Ver factura ↗</a>`
         : `<button class="btn sm" data-vfac="${c.factura_id}">Detalle</button>`}</td></tr>`;
 
@@ -10644,7 +10648,7 @@ function corregirLinea(btn, alGuardar) {
   const id = btn.getAttribute("data-corregir");
   const cant0 = Number(btn.getAttribute("data-cant")) || 0;
   const importe = Number(btn.getAttribute("data-importe")) || 0;
-  const ov = modal("Corregir la cantidad", `
+  const ov = modal("Configurar cantidad y unidad", `
     <p class="mut" style="margin:0 0 12px;line-height:1.55"><b>${esc(btn.getAttribute("data-desc") || "")}</b><br>
       Se pagaron <b>${esc(eur2(importe))}</b> — eso no se toca. Lo que se corrige es entre cuántas unidades se reparten:
       si la factura contaba paquetes, pon las unidades que hay dentro de todos ellos.</p>
@@ -10658,9 +10662,9 @@ function corregirLinea(btn, alGuardar) {
     </div>
     <p style="margin:12px 0 0;font-size:13.5px">Quedaría a <b id="corPrecio" class="tnum">—</b> cada una.</p>
     <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;cursor:pointer">
-      <input type="checkbox" id="corTodas" checked style="width:auto;margin-top:2px">
+      <input type="checkbox" id="corTodas" style="width:auto;margin-top:2px">
       <span>Aplicar la misma corrección a las demás compras de este producto a este proveedor.
-        <span class="mut">El mismo proveedor lo factura igual todos los meses: arreglar una y dejar treinta mal sería trabajo tirado.</span></span>
+        <span class="mut">Márcalo solo si has comprobado que las demás compras usan la misma unidad y formato.</span></span>
     </label>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
       <button class="btn" data-close>Cancelar</button>
@@ -10686,6 +10690,7 @@ function corregirLinea(btn, alGuardar) {
   ov.querySelector("#corOk").addEventListener("click", async () => {
     const cantidad = Number(inp.value);
     if (!(cantidad > 0)) return toast("La cantidad tiene que ser mayor que cero");
+    if (!ov.querySelector("#corUni").value.trim()) return toast("Indica la unidad: ud, kg, l, caja…");
     try {
       const r = await apiSend("PATCH", "/api/facturas/lineas/" + id, {
         cantidad, unidad: ov.querySelector("#corUni").value.trim(),
@@ -10850,7 +10855,7 @@ async function refrescarCompras() {
       ${/* El proveedor y la categoría, en columna propia. Debajo del nombre y en gris se leían
             como una nota al pie; en columna se recorren de arriba abajo, que es como se busca
             «todo lo de este proveedor» o «cuánto de limpieza». */""}
-      <td><div style="display:flex;align-items:center;gap:6px;min-width:0">${g.unificado ? `<span class="pill ok" style="font-size:9.5px;flex:none" title="Producto del diccionario: junta varias formas de escribirlo">✓</span>` : ""}<button class="linkbtn prod" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="${esc(g.descripcion)} — todas las veces que lo hemos comprado">${esc(g.descripcion)}</button></div></td>
+      <td><div style="display:flex;align-items:center;gap:6px;min-width:0">${g.unificado ? `<span class="pill ok" style="font-size:9.5px;flex:none" title="Producto del diccionario: junta varias formas de escribirlo">✓</span>` : ""}<button class="linkbtn prod" data-act="comp-producto" data-clave="${esc(g.clave || g.descripcion)}" data-nombre="${esc(g.descripcion)}" title="${esc(g.descripcion)} — todas las veces que lo hemos comprado">${esc(g.descripcion)}</button></div>${compAvisoUnidad(g)}</td>
       <td class="provcol"><button class="linkbtn provlink" data-comp="prov" data-prov="${esc(g.proveedores[0] || "")}" title="Ver solo lo que nos vende">${esc(g.proveedores[0] || "—")}</button>${g.proveedores.length > 1 ? `<span class="mut" style="font-size:11px" title="${esc(g.proveedores.join(" · "))}"> +${g.proveedores.length - 1}</span>` : ""}</td>
       <td class="catcol">${catDe(g)
         ? `<span class="pill cat" style="--cat:var(--cat-${esc(colorCategoriaFE(catDe(g)))})">${esc(catDe(g))}</span>`

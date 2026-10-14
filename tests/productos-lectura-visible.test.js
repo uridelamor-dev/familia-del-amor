@@ -40,3 +40,9 @@ test('alias de unidad inequívocos sin convertir cajas en unidades', () => {
  assert.equal(unidadComparable('litro'),'l');
  assert.equal(unidadComparable('caja'),null);
 });
+
+test('aviso de unidad abre el producto y desaparece cuando consta una unidad', () => {
+ assert.match(ctx.compAvisoUnidad(group()), /Configurar unidad/);
+ assert.match(ctx.compAvisoUnidad(group()), /data-act="comp-producto"/);
+ assert.equal(ctx.compAvisoUnidad(group({ultima_lectura:{unidad:'kg'}})), '');
+});
