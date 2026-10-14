@@ -4,6 +4,14 @@
 // Los borradores locales y las respuestas verificadas de Google se mantienen separados.
 import { esNombreResena } from './business-profile.js';
 
+// Solo separamos el formato explícito de Google; un texto ambiguo se conserva entero.
+export function reviewTextParts(value) {
+  const raw = String(value || "");
+  const match = raw.trim().match(/^\((?:Translated by Google|Traducido por Google)\)\s*([\s\S]+?)\s*\(Original\)\s*([\s\S]+)$/i);
+  if (!match || !match[1].trim() || !match[2].trim()) return { original: raw, translation: "" };
+  return { original: match[2].trim(), translation: match[1].trim() };
+}
+
 const STAR = ["", "★", "★★", "★★★", "★★★★", "★★★★★"];
 
 // Normaliza una fila de google_reviews para el panel de gestión.
@@ -16,7 +24,8 @@ export function mapManageRow(r) {
     author: r.author || "Cliente",
     rating,
     estrellas: STAR[rating] || "",
-    text: r.text || "",
+    text: reviewTextParts(r.text).original,
+    translation: reviewTextParts(r.text).translation,
     fecha: String(r.fecha || r.creado_en || "").slice(0, 10),
     reply,
     google_reply: r.google_reply || null,
@@ -113,11 +122,11 @@ export function draftRequest(review, examples = []) {
   const local = String(review.location_name || review.local || "el restaurante").trim();
   const author = String(review.author || "").trim();
   const rating = Number(review.rating) || 0;
-  const text = String(review.text || "").trim();
+  const text = reviewTextParts(review.text).original.trim();
   const positiva = rating >= 4;
   const system = [
     `Eres la persona responsable de "${local}", un restaurante familiar, respondiendo PÚBLICAMENTE en Google a una reseña de un cliente.`,
-    `Redacta la respuesta en español natural y cercano (si la reseña está claramente en otro idioma, responde en ese idioma).`,
+    `Responde en el idioma del texto original de la reseña, con naturalidad y cercanía. No uses el idioma de una traducción automática ni el de los ejemplos para elegirlo. Si no hay texto o no se puede identificar el idioma, responde en español.`,
     `Tono: cálido, humano y profesional; nunca corporativo ni robótico. Extensión: 2 a 4 frases, breve.`,
     author ? `Dirígete al cliente por su nombre ("${author}") si es natural.` : `No inventes el nombre del cliente.`,
     positiva

@@ -3355,6 +3355,10 @@ function renderReviews() {
  */
 const revPuedeResponder = () => ["direccion", "marketing"].includes(USER.rol);
 
+function reviewTranslation(r) {
+  return r.translation ? `<details style="margin:10px 0;font-size:13px;overflow-wrap:anywhere"><summary style="cursor:pointer;color:var(--mut)">Ver traducción de Google</summary><p style="white-space:pre-wrap;line-height:1.5">${esc(r.translation)}</p></details>` : "";
+}
+
 function reviewCard(r) {
   const badge = r.publicada ? '<span class="badge">Publicada en Google</span>' : r.reply ? '<span class="badge">Borrador guardado</span>' : r.historica ? '<span class="badge">Histórico archivado</span>' : '<span class="badge warn">Por responder</span>';
   const origen = r.origen ? `<span class="pill" style="font-size:10px" title="Origen">${r.origen === "places" ? "Places" : "Business"}</span>` : "";
@@ -3362,7 +3366,7 @@ function reviewCard(r) {
   const stars = `<span class="stars">${"★".repeat(r.rating)}<span class="mut">${"★".repeat(5 - r.rating)}</span></span>`;
   return `<div class="card revcard ${r.negativa ? "neg" : ""}" style="margin-bottom:12px"><div style="display:flex;gap:12px;align-items:flex-start">${check}<div class="grow" style="min-width:0;flex:1">
     <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">${stars}<b>${esc(r.author)}</b><span class="mut" style="font-size:12px">· ${esc(r.local)} · ${esc(r.fecha)}</span>${origen}<span style="flex:1"></span>${badge}</div>
-    ${r.text ? `<p style="margin:8px 0 0;font-size:13.5px;line-height:1.5">${esc(r.text)}</p>` : '<p class="mut" style="margin:8px 0 0;font-size:13px">(sin texto, solo puntuación)</p>'}
+    ${r.text ? `<p style="margin:8px 0 0;font-size:13.5px;line-height:1.5">${esc(r.text)}</p>` : '<p class="mut" style="margin:8px 0 0;font-size:13px">(sin texto, solo puntuación)</p>'}${reviewTranslation(r)}
     ${r.google_reply ? `<div class="revreply"><span class="k">Publicada en Google</span><span>${esc(r.google_reply)}</span></div>` : ""}
     ${r.reply && r.reply !== r.google_reply ? `<div class="revreply"><span class="k">Borrador · aún sin publicar</span><span>${esc(r.reply)}</span></div>` : ""}
     ${revPuedeResponder() ? `<div style="margin-top:10px;display:flex;gap:8px"><button class="btn sm" data-act="rev-responder" data-id="${esc(r.id)}">${r.respondida ? "Editar respuesta" : "Responder"}</button></div>` : ""}
@@ -3476,7 +3480,7 @@ function revSelNone() { REV_SEL.clear(); const v = document.getElementById("view
 function openResponder(id) {
   const r = REV_DATA.find((x) => String(x.id) === String(id)); if (!r) return;
   const body = `<div class="mut" style="font-size:12.5px;margin-bottom:6px">${"★".repeat(r.rating)} · ${esc(r.author)} · ${esc(r.local)} · ${esc(r.fecha)}</div>
-    <p style="margin:0 0 12px;font-size:13.5px;line-height:1.5">${esc(r.text || "(sin texto)")}</p>
+    <p style="margin:0 0 12px;font-size:13.5px;line-height:1.5">${esc(r.text || "(sin texto)")}</p>${reviewTranslation(r)}
     <details style="margin-bottom:14px"><summary style="cursor:pointer">Contexto interno y estilo de la IA</summary>
       <div class="field" style="margin-top:10px"><label for="revContext">Qué debe tener en cuenta el borrador</label>
       <textarea id="revContext" rows="3" maxlength="2000" style="width:100%;resize:vertical" placeholder="Ej.: el equipo aún está revisando lo ocurrido; no podemos confirmar el motivo de la espera.">${esc(r.ai_context || "")}</textarea></div>
