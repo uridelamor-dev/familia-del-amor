@@ -4237,13 +4237,15 @@ registrarRepaso(app, {repaso:repasoReviews,requireAuth,localesDe});
 
 const informesReviews = crearInformes({
   pool, enabled: PROD, conectado: isReady, enviar: sendMensajeLibre,
-  recopilar: async mes => {
+  recopilar: async (mes, progreso) => {
+    await progreso('Conexión y fichas de Google');
     const api = clienteBusinessProfile({token: await getGoogleAccessToken()});
     const {locations} = await api.ubicaciones();
     const configured = JSON.parse(await getConfig('places_ids') || '[]');
     if (!Array.isArray(configured) || !configured.length) throw Error('No hay fichas vinculadas');
     const locales=[], seen=new Set();
     for (const p of configured) {
+      await progreso(`Lectura de reseñas · ${p.name || 'Ficha configurada'}`);
       const loc=locations.find(l=>(p.placeId && l.metadata?.placeId===p.placeId) || (p.google_location_id && l.name===p.google_location_id));
       if (!loc) throw Error('Falta acceso a una ficha configurada');
       const key=loc.account+'/'+loc.name;

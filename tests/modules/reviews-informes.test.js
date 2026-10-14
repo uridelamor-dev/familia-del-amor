@@ -54,3 +54,23 @@ test('noviembre se entrega una sola vez y no hay recurrencia posterior',async()=
  const h=harness({date:'2026-11-01T09:00:00Z'});h.stored.set(ENTREGAS[0].id,JSON.stringify({estado:'enviada'}));
  await h.service.tick();await h.service.tick();await h.service.tick();assert.equal(h.sent.length,2);assert.equal(ENTREGAS.length,2);
 });
+test('conserva el análisis de cada local y reanuda sin repetirlo tras un fallo',async()=>{
+ const h=harness();let reads=0,calls=0;
+ const opts={...h.opts,recopilar:async(mes,progreso)=>{
+  reads++;await progreso('Lectura de reseñas · Local A');
+  return {...informe,locales:['Local A','Local B'].map(nombre=>({...informe.locales[0],nombre,rows:[{id:nombre,text:'Buen trato',rating:5}]}))};
+ },analizar:async()=>{calls++;if(calls===3)throw new SyntaxError('respuesta privada');return {positivos:[],negativos:[]};}};
+ await crearInformes(opts).tick();
+ let state=JSON.parse(h.stored.get(ENTREGAS[0].id));
+ assert.equal(h.sent.length,0);assert.equal(state.borrador.locales[0].analisisCompleto,true);
+ assert.match(state.error,/Local B/);assert.match(state.error,/formato válido/);assert.doesNotMatch(state.error,/privada/);
+ await crearInformes({...opts,now:()=>new Date('2026-10-14T09:31:00Z')}).tick();
+ assert.equal(reads,1);assert.equal(calls,5);assert.equal(h.sent.length,1);
+});
+test('el error de lectura identifica la etapa y no expone detalles privados',async()=>{
+ const h=harness();await crearInformes({...h.opts,recopilar:async(mes,progreso)=>{
+  await progreso('Lectura de reseñas · Blanes');throw Error('token secreto');
+ }}).tick();
+ const state=JSON.parse(h.stored.get(ENTREGAS[0].id));
+ assert.match(state.error,/Blanes: Fallo interno/);assert.doesNotMatch(state.error,/token secreto/);assert.equal(h.sent.length,0);
+});

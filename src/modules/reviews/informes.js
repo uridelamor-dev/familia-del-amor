@@ -4,6 +4,16 @@ export const ENTREGAS = [
   { id: 'resenas_informe_2026_09_v1', mes: '2026-09', prueba: true, desde: '2026-10-14T00:00:00Z' },
   { id: 'resenas_informe_2026_10_v1', mes: '2026-10', prueba: false, desde: '2026-11-01T09:00:00Z' }
 ];
+// No guardar cuerpos de errores de proveedores: pueden contener datos o credenciales.
+export function motivoInforme(error) {
+  const message=String(error?.message || '');
+  const known=['No hay fichas vinculadas','Falta acceso a una ficha configurada','Lectura incompleta de reseñas','Google no devolvió la nota global','Reseña incompleta: no se puede calcular el informe','Análisis incompleto','Tema sin evidencia válida','Evidencia de consolidación inválida','Google ha repetido una página','Respuesta de Google no reconocida'];
+  if(known.includes(message) || /^Google Business Profile: HTTP \d{3}$/.test(message)) return message;
+  if(error instanceof SyntaxError) return 'La respuesta del análisis no tiene un formato válido';
+  if(['TimeoutError','AbortError'].includes(error?.name)) return 'Se agotó el tiempo de espera del servicio';
+  if(Number.isInteger(error?.status)) return `El servicio devolvió HTTP ${error.status}`;
+  return 'Fallo interno de preparación';
+}
 const STARS = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 };
 export function mesMadrid(fecha) {
   const d = new Date(fecha);
@@ -92,8 +102,19 @@ export function crearInformes({pool,enabled=false,conectado,recopilar,analizar,e
         if(state.estado==='enviando') {state.estado='incierta';state.error='Envío interrumpido: comprobar WhatsApp antes de repetir. No se reenvía automáticamente.';await save(c,job.id,state);continue;}
         try {
           if(!state.informe){
-            const informe=await recopilar(job.mes);
-            for(const l of informe.locales) Object.assign(l,await analizarTemas(l.rows,analizar));
+            const progreso=async etapa=>{state.etapa=etapa;await save(c,job.id,state);};
+            if(!state.borrador){
+              await progreso('Lectura de Google');
+              state.borrador=await recopilar(job.mes,progreso);
+              await save(c,job.id,state);
+            }
+            const informe=state.borrador;
+            for(const l of informe.locales) {
+              if(l.analisisCompleto)continue;
+              await progreso(`Análisis de comentarios · ${l.nombre}`);
+              Object.assign(l,await analizarTemas(l.rows,analizar),{analisisCompleto:true});
+              await save(c,job.id,state);
+            }
             state={estado:'preparada',informe,mensajes:mensajesInforme(job,informe),enviados:0};
             await save(c,job.id,state);
           }
@@ -109,7 +130,7 @@ export function crearInformes({pool,enabled=false,conectado,recopilar,analizar,e
         }catch(e){
           // Un fallo al persistir tras enviar deja la marca «enviando» para el siguiente arranque.
           if(state.estado==='enviada' || state.intentado && state.enviados>0 || state.estado==='enviando') throw e;
-          state.error='No se pudo completar el informe. Se reintentará sin enviar datos parciales.';
+          state.error=`${state.etapa || 'Preparación'}: ${motivoInforme(e)}. Se reintentará sin enviar datos parciales.`;
           state.retryAt=new Date(now().getTime()+30*60_000).toISOString();await save(c,job.id,state);
         }
       }
