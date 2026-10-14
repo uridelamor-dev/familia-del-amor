@@ -202,7 +202,7 @@ export async function ensureSchemaFidelizacion(x) {
   // `nombre` y `descripcion` son LO QUE LEE EL CAMARERO en su pantalla, así que se configuran:
   // un texto escrito en el código no se puede cambiar sin un despliegue, y ahí es donde se explica
   // el mínimo de la compra. `estado` separa el borrador de lo publicado.
-  for (const col of ["reward_id TEXT", "gracia_minutos INTEGER", "nombre TEXT", "descripcion TEXT",
+  for (const col of ["reward_id TEXT", "gracia_minutos INTEGER", "nombre TEXT", "descripcion TEXT", "solo_acumular BOOLEAN NOT NULL DEFAULT FALSE",
                      // BORRADOR por defecto. La tabla es nueva y no hay ninguna fila que
                      // rellenar, así que un `DEFAULT 'publicada'` solo serviría para que un INSERT
                      // descuidado dejara una regla viva sin que nadie lo decidiera. El endpoint

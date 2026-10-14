@@ -171,6 +171,11 @@
     $("tjPtsN").textContent = String(f.disponible);
     $("tjPtsEti").textContent = f.disponible === 1 ? "punto disponible" : "puntos disponibles";
 
+    if (f.solo_acumular) {
+      $("tjPtsRegla").textContent = (f.puntos_por_euro || 1) + " punto por cada euro pagado. Las recompensas se anunciarán más adelante.";
+      $("tjPtsBarra").style.display = "none";
+      $("tjPtsFalta").textContent = "Por ahora acumulas puntos; todavía no se pueden canjear.";
+    }
     var eq = f.equivalencia;
     if (eq) {
       $("tjPtsRegla").textContent = eq.puntos + " puntos = " + eur(eq.euros)

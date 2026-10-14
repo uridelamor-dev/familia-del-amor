@@ -68,7 +68,7 @@ export function proyectarCarne({
   // `mostrar_puntos === false` es el interruptor de Marketing en la configuración publicada, y
   // manda igual: hay campañas en las que la casa prefiere no hablar de puntos todavía.
   const puntosActivos = !!interruptores.conceder && cfg.mostrar_puntos !== false;
-  const necesarios = regla ? Number(regla.puntos_necesarios) : null;
+  const necesarios = regla && !regla.solo_acumular ? Number(regla.puntos_necesarios) : null;
   const disponible = puntosActivos ? Number(saldo?.disponible) || 0 : null;
 
   const puntos = puntosActivos

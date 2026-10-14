@@ -14120,7 +14120,7 @@ app.get("/api/tarjeta/:token", async (req, res) => {
           `SELECT punto_tipo, unidades, caduca_en, creado_en, local FROM fid_movimientos
             WHERE qr_id = ? AND concepto = 'puntos' ORDER BY id DESC LIMIT 20`, [qr.id]) || [];
         const suma = (t) => movs.filter((m) => m.punto_tipo === t).reduce((a, m) => a + Number(m.unidades || 0), 0);
-        const necesarios = reglaCli ? Number(reglaCli.puntos_necesarios) : null;
+        const necesarios = reglaCli && !reglaCli.solo_acumular ? Number(reglaCli.puntos_necesarios) : null;
         fidelizacion = {
           estado: "activo", ...marca,
           texto_progreso: cfg.texto_progreso || null,
@@ -14130,7 +14130,9 @@ app.get("/api/tarjeta/:token", async (req, res) => {
           // El progreso hasta el próximo descuento, para que se vea cuánto falta.
           necesarios, faltan: necesarios ? Math.max(0, necesarios - sal.disponible) : null,
           progreso: necesarios ? Math.min(100, Math.round((sal.disponible / necesarios) * 100)) : null,
-          equivalencia: reglaCli
+          solo_acumular: !!reglaCli?.solo_acumular,
+          puntos_por_euro: reglaCli?.puntos_por_euro || null,
+          equivalencia: reglaCli && !reglaCli.solo_acumular
             ? { puntos: Number(reglaCli.puntos_necesarios), euros: Number(reglaCli.descuento_euros),
                 minimo: Number(reglaCli.consumo_minimo), caducidad_meses: Number(reglaCli.caducidad_meses) }
             : null,
@@ -14143,7 +14145,7 @@ app.get("/api/tarjeta/:token", async (req, res) => {
           movimientos: movs.map((m) => ({ tipo: m.punto_tipo, puntos: Number(m.unidades || 0),
             fecha: String(m.creado_en || "").slice(0, 10), local: m.local })),
           // Los descuentos que puede usar YA. Vacío mientras no se ofrezcan.
-          rewards: sw.ofrecer && reglaCli && sal.disponible >= Number(reglaCli.puntos_necesarios)
+          rewards: sw.ofrecer && reglaCli && !reglaCli.solo_acumular && sal.disponible >= Number(reglaCli.puntos_necesarios)
             ? [{ nombre: `${Number(reglaCli.descuento_euros)} € de descuento`,
                  minimo: Number(reglaCli.consumo_minimo) }]
             : [],
@@ -24208,12 +24210,13 @@ app.post("/api/fidelizacion/reglas", requireAuth(PROMOS_ROLES), async (req, res)
       if (!Number.isFinite(n) || n < min || n > max) return null;
       return entero ? (Number.isInteger(n) ? n : null) : n;
     };
+    const soloAcumular = b.solo_acumular === true;
     const campos = {
       puntos_por_euro: num(b.puntos_por_euro, { min: 0.01, max: 100 }),
-      puntos_necesarios: num(b.puntos_necesarios, { min: 1, max: 100000, entero: true }),
-      descuento_euros: num(b.descuento_euros, { min: 0.01, max: 1000 }),
-      consumo_minimo: num(b.consumo_minimo, { min: 0, max: 100000 }),
-      caducidad_meses: num(b.caducidad_meses, { min: 1, max: 120, entero: true }),
+      puntos_necesarios: soloAcumular ? 0 : num(b.puntos_necesarios, { min: 1, max: 100000, entero: true }),
+      descuento_euros: soloAcumular ? 0 : num(b.descuento_euros, { min: 0.01, max: 1000 }),
+      consumo_minimo: soloAcumular ? 0 : num(b.consumo_minimo, { min: 0, max: 100000 }),
+      caducidad_meses: soloAcumular ? 0 : num(b.caducidad_meses, { min: 1, max: 120, entero: true }),
       max_rewards_factura: num(b.max_rewards_factura, { min: 1, max: 1, entero: true }),
       // 0 es estricto y es un valor válido, así que el mínimo es 0 y no 1. Fuera del rango se
       // RECHAZA: recortar en silencio dejaría una gracia distinta de la que alguien escribió.
@@ -24248,7 +24251,7 @@ app.post("/api/fidelizacion/reglas", requireAuth(PROMOS_ROLES), async (req, res)
     // se soltaría al terminar esa otra transacción y no protegería nada.
     //
     // El `reward_id` se genera AQUÍ y no se vuelve a tocar: ver más abajo por qué es inmutable.
-    const rewardId = "fid:" + crypto.randomBytes(12).toString("base64url");
+    const rewardId = soloAcumular ? null : "fid:" + crypto.randomBytes(12).toString("base64url");
     const fila = await fidTransaccion(async (x) => {
       await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [FID_CERROJO_REGLAS, 0]);
       const ult = await x.get(
@@ -24261,22 +24264,22 @@ app.post("/api/fidelizacion/reglas", requireAuth(PROMOS_ROLES), async (req, res)
       // vigente NO es editar la versión — sus condiciones económicas no se tocan; lo único que se
       // escribe es el instante en que entró la siguiente, que es un hecho, no una decisión.
       const desde = b.vigente_desde || ahora;
-      await x.run(
+      if (estadoRegla === "publicada") await x.run(
         `UPDATE fid_reglas SET vigente_hasta = ?
-          WHERE ambito = ? AND COALESCE(local, '') = ? AND vigente_hasta IS NULL`,
+          WHERE ambito = ? AND COALESCE(local, '') = ? AND vigente_hasta IS NULL AND estado='publicada'`,
         [desde, ambito, local || ""]);
 
       const creada = await x.run(
         `INSERT INTO fid_reglas (ambito, local, version, activa, estado, nombre, descripcion,
            reward_id, gracia_minutos, puntos_por_euro, redondeo, puntos_necesarios, descuento_euros,
            consumo_minimo, caducidad_meses, max_rewards_factura, vigente_desde, vigente_hasta,
-           creado_en, creado_por)
-         VALUES (?,?,?,?,?,?,?,?,?,?,'floor',?,?,?,?,?,?,?,?,?) RETURNING id, version, reward_id`,
+           creado_en, creado_por, solo_acumular)
+         VALUES (?,?,?,?,?,?,?,?,?,?,'floor',?,?,?,?,?,?,?,?,?,?) RETURNING id, version, reward_id`,
         [ambito, local, Number(ult?.v || 0) + 1, estadoRegla === "publicada", estadoRegla, nombreR, descR,
          rewardId, campos.gracia_minutos,
          campos.puntos_por_euro, campos.puntos_necesarios, campos.descuento_euros,
          campos.consumo_minimo, campos.caducidad_meses, campos.max_rewards_factura,
-         desde, b.vigente_hasta || null, ahora, req.user.username]);
+         desde, b.vigente_hasta || null, ahora, req.user.username, soloAcumular]);
       // NUNCA SE DEVUELVE ÉXITO SIN `INSERT`. Si el `RETURNING` viene vacío, algo ha pasado que no
       // entendemos; se lanza y la transacción hace ROLLBACK en vez de contestar «guardada».
       if (!creada) throw new Error("la regla no se ha insertado");

@@ -340,7 +340,7 @@ describe("publicar una regla es ATÓMICO", () => {
 
   test("el reward_id se genera al publicar y es aleatorio", () => {
     // Derivado de las condiciones cambiaría al cambiar la regla, que es justo lo que no puede pasar.
-    assert.match(crear, /const rewardId = "fid:" \+ crypto\.randomBytes\(12\)\.toString\("base64url"\)/);
+    assert.match(crear, /const rewardId = soloAcumular \? null : "fid:" \+ crypto\.randomBytes\(12\)\.toString\("base64url"\)/);
     // Se inserta en la MISMA fila, no se actualiza después. El único UPDATE sobre `fid_reglas` es
     // el que cierra la versión anterior: sella un hecho —cuándo entró la siguiente— y no toca ni
     // el identificador ni una sola condición económica.

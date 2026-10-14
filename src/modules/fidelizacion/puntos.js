@@ -173,7 +173,7 @@ export const textoRewardPorDefecto = (regla) => ({
  * no puede exigir un despliegue. Si no se configuró, se compone uno que dice lo importante.
  */
 export function rewardDe(regla, local) {
-  if (!regla || !regla.reward_id) return null;
+  if (!regla || regla.solo_acumular || !regla.reward_id) return null;
   const pordefecto = textoRewardPorDefecto(regla);
   return {
     Id: idReward(regla),
@@ -202,6 +202,8 @@ export function simular(regla, { cuentas = [32.30, 56.20], sombra = null } = {})
     casos.push({ tipo: "compra", cuenta: euros, puntos: p,
       texto: `Con una cuenta de ${euros.toFixed(2)} €, ganará ${p} ${p === 1 ? "punto" : "puntos"}.` });
   }
+
+  if (regla.solo_acumular) return {ok:true,casos,coste:null,aviso:'Solo acumulación. Canje y recompensas pendientes de definir; sin caducidad por ahora.'};
 
   // El caso del descuento, calculado sobre el MÍNIMO configurado: es donde se ve si cuadra.
   const minimo = Number(regla.consumo_minimo);
@@ -438,7 +440,7 @@ export function evaluarFactura({ json, extracto, regla, reglaReward = null, prom
     // `reglaReward` es LA VERSIÓN HISTÓRICA, buscada por `reward_id` en la base. Todas las
     // condiciones —puntos, descuento y mínimo— salen de ella y no de la regla vigente hoy: entre
     // ofrecer el descuento y cerrar la factura puede haberse publicado otra versión.
-    if (!reglaReward) {
+    if (!reglaReward || reglaReward.solo_acumular) {
       return { ...base, accion: "rechazar", motivo: "reward_no_reconocido",
         razon: "Ese descuento ya no es válido. Quítalo y vuelve a intentarlo." };
     }
@@ -479,7 +481,7 @@ export function evaluarFactura({ json, extracto, regla, reglaReward = null, prom
   const puntos = puntosDe(pago.amount, regla);
   return {
     ...base, accion: "aceptar", motivo: MOTIVOS.OK, puntos, consumo, visitas,
-    caduca_en: caducaEn(ahora, regla.caducidad_meses),
+    caduca_en: regla.solo_acumular ? null : caducaEn(ahora, regla.caducidad_meses),
     importe_antes_reward: consumo ? consumo.importe_antes_reward : pago.amount,
   };
 }
@@ -504,7 +506,7 @@ export function evaluarFactura({ json, extracto, regla, reglaReward = null, prom
  * El minuto exacto del límite ya NO vale: la comparación es estricta, como la caducidad de un lote.
  */
 export function rewardVigente(reglaReward, { ahora }) {
-  if (!reglaReward) return { ok: false, motivo: "reward_no_reconocido" };
+  if (!reglaReward || reglaReward.solo_acumular) return { ok: false, motivo: "reward_no_reconocido" };
   if (!reglaReward.activa) return { ok: false, motivo: "reward_revocado" };
   if (reglaReward.vigente_desde && String(reglaReward.vigente_desde) > String(ahora)) {
     return { ok: false, motivo: "reward_no_reconocido" };

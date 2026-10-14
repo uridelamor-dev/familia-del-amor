@@ -11990,11 +11990,11 @@ function renderFidPrograma(suelto) {
 
   const eur = (v) => Number(v).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const vigentes = (FIDP.vigentes || []).map((v) => `<div class="row"><div class="grow"><div class="t1">${esc(v.local)}</div><div class="mut" style="font-size:12px">${v.regla
-    ? `${v.regla.ambito === "local" ? "Regla propia" : "Regla global"} · versión ${v.regla.version} · ${v.regla.puntos_por_euro} punto(s)/€ · ${v.regla.puntos_necesarios} puntos = ${eur(v.regla.descuento_euros)} € · mínimo ${eur(v.regla.consumo_minimo)} € · caducan a los ${v.regla.caducidad_meses} meses`
+    ? v.regla.solo_acumular ? `Solo acumulación · versión ${v.regla.version} · ${v.regla.puntos_por_euro} punto(s)/€ · sin canje ni caducidad por ahora` : `${v.regla.ambito === "local" ? "Regla propia" : "Regla global"} · versión ${v.regla.version} · ${v.regla.puntos_por_euro} punto(s)/€ · ${v.regla.puntos_necesarios} puntos = ${eur(v.regla.descuento_euros)} € · mínimo ${eur(v.regla.consumo_minimo)} € · caducan a los ${v.regla.caducidad_meses} meses`
     : "Sin programa vigente: no se conceden puntos aquí."}</div></div>${v.regla ? '<span class="pill ok">Vigente</span>' : '<span class="pill">Sin regla</span>'}</div>`).join("");
 
   const historial = (FIDP.reglas || []).length ? `<details style="margin-top:10px"><summary class="mut" style="font-size:12px;cursor:pointer">Todas las versiones (${FIDP.reglas.length})</summary>
-    <div class="rows" style="margin-top:6px">${FIDP.reglas.map((r) => `<div class="row"><div class="grow"><div class="t1">${esc(r.ambito === "local" ? r.local : "Global")} · v${r.version}</div><div class="mut" style="font-size:12px">${r.puntos_por_euro} p/€ · ${r.puntos_necesarios} p = ${eur(r.descuento_euros)} € · mín. ${eur(r.consumo_minimo)} € · ${r.caducidad_meses} meses · ${esc(String(r.creado_en || "").slice(0, 10))} ${esc(r.creado_por || "")}</div></div><span class="pill ${r.activa ? "ok" : ""}">${r.activa ? "Activa" : "Inactiva"}</span></div>`).join("")}</div></details>` : "";
+    <div class="rows" style="margin-top:6px">${FIDP.reglas.map((r) => `<div class="row"><div class="grow"><div class="t1">${esc(r.ambito === "local" ? r.local : "Global")} · v${r.version}</div><div class="mut" style="font-size:12px">${r.puntos_por_euro} p/€ · ${r.solo_acumular ? "Solo acumulación · sin canje ni caducidad por ahora" : `${r.puntos_necesarios} p = ${eur(r.descuento_euros)} € · mín. ${eur(r.consumo_minimo)} € · ${r.caducidad_meses} meses`} · ${esc(String(r.creado_en || "").slice(0, 10))} ${esc(r.creado_por || "")}</div></div><span class="pill ${r.activa ? "ok" : ""}">${r.activa ? "Activa" : "Inactiva"}</span></div>`).join("")}</div></details>` : "";
 
   // EL AVISO DE BLOQUEO. Lo primero que se ve, porque es lo que explica por qué tres de los
   // cuatro interruptores no se dejan encender. Sin esto, el botón que no responde parece un fallo.
@@ -12018,7 +12018,8 @@ function renderFidPrograma(suelto) {
     <div class="rows">${vigentes}</div>
     ${historial}
     <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn primary sm" data-act="fidp-nueva">Nueva versión…</button>
+      <button class="btn primary sm" data-act="fidp-acumular">Preparar solo acumulación</button>
+      <button class="btn sm" data-act="fidp-nueva">Nueva versión con recompensa…</button>
       <button class="btn sm" data-act="fidp-sombra">Ver cálculo en sombra</button>
     </div>${cierra}`;
 }
@@ -12038,6 +12039,23 @@ async function fidpSw(k, v) {
   if (encender && k !== "sombra" && !confirm(`Vas a ENCENDER «${t[1]}».\n\n${t[2]}\n\n¿Seguir?`)) return;
   try { await apiSend("POST", "/api/fidelizacion/interruptores", { [k]: encender }); await loadFidPiloto(); toast(encender ? "Encendido" : "Apagado"); }
   catch (e) { toast(e.message || "No se pudo cambiar"); }
+}
+
+async function fidpAcumular() {
+  modal("Acumular puntos sin canje", `
+    <p><b>1 punto por cada euro pagado</b>, en todos los locales. Por ejemplo, 32,30 € dan 32 puntos: se redondea hacia abajo por ticket.</p>
+    <p>Sin descuentos, recompensas ni caducidad por ahora. El cliente debe identificarse en caja antes de cerrar el ticket. Los tickets anteriores no se recalculan.</p>
+    <div class="field"><label for="fidpAcumEstado">Guardar como</label><select id="fidpAcumEstado" style="width:100%"><option value="borrador">Borrador para revisar</option value="publicada">Regla vigente para probar en sombra</option></select></div>
+    <p class="mut">Guardar la regla no activa la concesión de puntos. Se revisa el cálculo y se activa después en «Resumen y activación», manteniendo apagados «Ofrecer» y «Consumir».</p>
+    <button class="btn primary" data-act="fidp-acumular-guardar">Guardar regla</button>`);
+}
+async function fidpGuardarAcumulacion() {
+  const estado=document.getElementById("fidpAcumEstado")?.value || "borrador";
+  try {
+    await apiSend("POST","/api/fidelizacion/reglas",{ambito:"global",solo_acumular:true,puntos_por_euro:1,redondeo:"floor",max_rewards_factura:1,estado,nombre:"Acumulación · 1 punto por euro"});
+    document.querySelectorAll(".modal-ov").forEach(x=>x.remove());
+    await loadFidelizacion();toast("Regla guardada. La activación se revisa por separado.");
+  }catch(e){toast(e.message || "No se pudo guardar");}
 }
 
 /** Una versión nueva. Se enseñan los valores y se pide confirmación antes de guardarlos. */
@@ -17120,6 +17138,8 @@ document.addEventListener("click", (e) => {
   else if (act === "fid-wp-ok") fidConfirmarWorkplace(t.getAttribute("data-id"), t.getAttribute("data-wid"), t.getAttribute("data-wname"));
   else if (act === "fidp-sw") fidpSw(t.getAttribute("data-k"), t.getAttribute("data-v"));
   else if (act === "fidp-nueva") fidpNueva();
+  else if (act === "fidp-acumular") fidpAcumular();
+  else if (act === "fidp-acumular-guardar") fidpGuardarAcumulacion();
   else if (act === "fidp-guardar") fidpGuardar();
   else if (act === "fidp-sombra") fidpSombra();
   else if (act === "fidp-revisiones") fidpRevisiones();
