@@ -72,15 +72,24 @@ export async function analizarTemas(rows, analizar) {
   return {...combined,prioridades:combined.negativos.slice(0,2).map(t=>`Revisar con el equipo los comentarios sobre: ${t.tema}`)};
 }
 const nota=n=>n==null?'Sin reseñas':n.toLocaleString('es-ES',{maximumFractionDigits:2})+'/5';
+function accionSugerida(tema) {
+  const text=tema.toLowerCase();
+  if (/espera|demora|lentitud|orden de atención|priorización/.test(text)) return 'Revisar las esperas y el orden de atención.';
+  if (/queja|disculpa|respuesta.*problema|respuesta insatisfactoria/.test(text)) return 'Acordar cómo atender una queja y ofrecer una solución.';
+  return `Revisar «${tema}» y acordar una mejora concreta con el equipo.`;
+}
 export function mensajesInforme(job, informe) {
-  const label=new Date(job.mes+'-15T12:00:00Z').toLocaleDateString('es-ES',{month:'long',year:'numeric'});
-  const title=`Reseñas · ${label}${job.prueba?' · PRUEBA DE FORMATO':''}`;
+  const fecha=new Date(job.mes+'-15T12:00:00Z');
+  const label=fecha.toLocaleDateString('es-ES',{month:'long',year:'numeric',timeZone:'UTC'});
+  const anterior=new Date(Date.UTC(fecha.getUTCFullYear(),fecha.getUTCMonth()-1,15)).toLocaleDateString('es-ES',{month:'long',timeZone:'UTC'});
+  const comparacion=n=>n===0?`Las mismas reseñas que en ${anterior}`:`${Math.abs(n)} reseña${Math.abs(n)===1?'':'s'} ${n>0?'más':'menos'} que en ${anterior}`;
+  const prueba=job.prueba?' · PRUEBA DE FORMATO':'';
   const rows=informe.locales.flatMap(l=>l.rows);
-  const link='https://familiadelamor.org/panel/#reviews';
-  const general=`*${title}*\n*Resumen general · solo para Uriel*\n${rows.length} reseñas del mes · Media: ${nota(media(rows))}\n\n`+informe.locales.map(l=>`• ${l.nombre}: ${l.cantidad} reseñas (${l.diferencia>=0?'+':''}${l.diferencia} frente al mes anterior) · mes ${nota(l.media)} · global ${nota(l.global)}`).join('\n')+`\n\nLas notas globales son las consultadas el ${new Date(informe.consultado).toLocaleDateString('es-ES',{timeZone:'Europe/Madrid'})}; no son notas históricas de cierre.\nDetalle y reseñas: ${link}\nEngranaje → Informes mensuales.`;
-  const locales=informe.locales.map(l=>{
-    const temas=(list)=>list.length?list.map(t=>`• ${t.tema} (${t.ids.length} reseña${t.ids.length===1?' · comentario aislado':'s'})`).join('\n'):'Sin temas identificables en los comentarios de este mes.';
-    return `*${title}*\n*${l.nombre}*\n${l.cantidad} reseñas · Media del mes: ${nota(l.media)}\nNota global actual: ${nota(l.global)} (${l.totalGlobal} reseñas, consultada el ${new Date(informe.consultado).toLocaleDateString('es-ES',{timeZone:'Europe/Madrid'})})\n\n*Lo más valorado*\n${temas(l.positivos)}\n\n*Aspectos a revisar*\n${temas(l.negativos)}\n\n*Prioridades sugeridas*\n${l.prioridades.join('\n') || 'Sin acciones específicas respaldadas por los comentarios.'}\n\nResumen de opiniones de clientes; no confirma hechos ni responsabilidades.\nDetalle: ${link}\nEngranaje → Informes mensuales.`;
+  const general=`📊 *RESEÑAS · RESUMEN GENERAL*\n${label}${prueba} · Solo para Uriel\n\n⭐ *Nota del mes: ${nota(media(rows))}*\n${rows.length} reseñas recibidas\n\n`+informe.locales.map(l=>l.cantidad?`• ${l.nombre}: ${l.cantidad} reseñas · mes ${nota(l.media)} · global ${nota(l.global)}`:`• ${l.nombre}: sin reseñas este mes · global ${nota(l.global)}`).join('\n')+`\n\nNotas globales consultadas el ${new Date(informe.consultado).toLocaleDateString('es-ES',{timeZone:'Europe/Madrid'})}; no son notas históricas de cierre.\n\nDetalle y reseñas: https://familiadelamor.org/panel/#reviews\nEngranaje → Informes mensuales.`;
+  const locales=informe.locales.filter(l=>l.cantidad>0).map(l=>{
+    const temas=list=>list.length?list.map(t=>`• ${t.tema} · ${t.ids.length} menci${t.ids.length===1?'ón':'ones'}`).join('\n'):'Sin temas identificables en los comentarios de este mes.';
+    const acciones=[...new Set(l.negativos.slice(0,2).map(t=>accionSugerida(t.tema)))];
+    return `📍 *${l.nombre.toLocaleUpperCase('es-ES')}*\nReseñas de ${label}${prueba}\n\n⭐ *Nota del mes: ${nota(l.media)}*\n${l.cantidad} reseñas recibidas\n${comparacion(l.diferencia)}\nNota global actual en Google: ${nota(l.global)}\n\n🟢 *Lo que más gusta*\n${temas(l.positivos)}\n\n🟠 *Lo que debemos revisar*\n${temas(l.negativos)}\n\n🎯 *Qué propongo al equipo*\n${acciones.map((a,i)=>`${i+1}. ${a}`).join('\n') || 'Sin acciones específicas respaldadas por los comentarios.'}\n\nLos comentarios aislados son señales para revisar, no hechos comprobados.`;
   });
   return [general,...locales];
 }

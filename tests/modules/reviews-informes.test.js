@@ -95,3 +95,14 @@ test('conserva referencias únicas entre lotes de cuarenta reseñas y consolidac
  });
  assert.deepEqual(result.positivos[0].ids,rows.map(r=>r.id));assert.equal(calls,3);
 });
+
+test('formato breve: solo general para locales sin reseñas, enlace único y comparación legible',()=>{
+ const local={...informe.locales[0],diferencia:-17,negativos:[{tema:'Demoras en atención',ids:['a','b']}]};
+ const messages=mensajesInforme(ENTREGAS[0],{...informe,locales:[local,{...local,nombre:'Local vacío',rows:[],cantidad:0,media:null}]});
+ assert.equal(messages.length,2);
+ assert.match(messages[0],/Local vacío: sin reseñas este mes/);
+ assert.match(messages[1],/17 reseñas menos que en agosto/);
+ assert.match(messages[1],/2 menciones/);
+ assert.match(messages[1],/1\. Revisar las esperas y el orden de atención/);
+ assert.equal(messages.join('').match(/https:\/\//g).length,1);
+});

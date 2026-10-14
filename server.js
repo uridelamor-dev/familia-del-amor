@@ -1,3 +1,4 @@
+import {crearMensuales,desplazarMes} from './src/modules/informes/mensuales.js';
 import { SCHEMA as PEPA_EMAIL_SCHEMA, createQueue as createPepaEmailQueue, registerRoutes as registerPepaEmailRoutes } from './src/modules/pepa-email/queue.js';
 import { BANDEJA_SCHEMA, crearArchivoBandeja } from './src/modules/messaging/bandeja-historial.js';
 import { setArchivoBandeja } from './whatsapp.js';
@@ -25724,76 +25725,42 @@ const server = app.listen(PORT, async () => {
   setInterval(() => { recalcularMetricasSiToca().catch(() => {}); }, 30 * 60 * 1000);
   setTimeout(() => { recalcularMetricasSiToca().catch(() => {}); }, 60 * 1000);
 
-  // ── Resumen mensual por WhatsApp: día 10 de cada mes a las 9:00h (Madrid) ──
-  const MESES_CAP = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-
-  async function enviarResumenMensualFacturas() {
-    try {
-      const prev = new Date();
-      prev.setDate(1);
-      prev.setMonth(prev.getMonth() - 1);
-      const mesIdx = prev.getMonth();
-      const año    = prev.getFullYear();
-      const mesLabel   = `${MESES_CAP[mesIdx]} ${año}`;
-      const yearMonth  = `${año}-${String(mesIdx + 1).padStart(2, "0")}`;
-
-      const rows = await dbAll(
-        `SELECT local, COUNT(*) AS num_docs,
-           ROUND(SUM(COALESCE(base_imponible,0))::NUMERIC,2) AS base,
-           ROUND(SUM(COALESCE(cuota_iva,0))::NUMERIC,2) AS iva,
-           ROUND(SUM(COALESCE(total,0))::NUMERIC,2) AS total
-         FROM facturas
-         WHERE TO_CHAR(fecha::date, 'YYYY-MM') = ?
-         GROUP BY local ORDER BY total DESC`,
-        [yearMonth]
-      );
-
-      if (!rows.length) {
-        console.log(`[Resumen] Sin facturas para ${mesLabel} — resumen omitido`);
-        return;
-      }
-
-      const fmt  = n => Number(n || 0).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const sumB = rows.reduce((s, r) => s + (Number(r.base)  || 0), 0);
-      const sumI = rows.reduce((s, r) => s + (Number(r.iva)   || 0), 0);
-      const sumT = rows.reduce((s, r) => s + (Number(r.total) || 0), 0);
-      const sumD = rows.reduce((s, r) => s + (Number(r.num_docs) || 0), 0);
-
-      let msg = `*📊 Resumen de facturas — ${mesLabel}*\n\n`;
-      for (const r of rows) {
-        msg += `*${r.local}*\n`;
-        msg += `  ${r.num_docs} doc${r.num_docs !== 1 ? "s" : ""} · Base: ${fmt(r.base)} € · IVA: ${fmt(r.iva)} € · *Total: ${fmt(r.total)} €*\n\n`;
-      }
-      msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
-      msg += `*TOTAL · ${sumD} documentos*\n`;
-      msg += `  Base imponible: ${fmt(sumB)} €\n`;
-      msg += `  IVA soportado:  ${fmt(sumI)} €\n`;
-      msg += `  *Total gastos:  ${fmt(sumT)} €*`;
-
-      await sendMensajeLibre("622149946", msg);
-      await dbRun(
-        "INSERT INTO config (key, value, updated_at) VALUES ('resumen_mensual_ultimo', ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at",
-        [yearMonth]
-      );
-      console.log(`[Resumen] ✅ Resumen ${mesLabel} enviado a 622149946`);
-    } catch (err) {
-      console.error("[Resumen]", err.message);
+  // Informes mensuales: ventas el día 1 y compras el 10, con recuperación persistente.
+  const mensuales = crearMensuales({
+    pool, enabled: PROD, conectado: isReady, enviar: sendMensajeLibre,
+    compras: async mes => {
+      const rows = await dbAll(`SELECT
+        CASE WHEN reparto='empresa' THEN 'Empresa · ' || COALESCE(NULLIF(empresa,''),'Sin asignar') ELSE COALESCE(NULLIF(local,''),'Sin asignar') END AS local,
+        COUNT(*)::int AS documentos, SUM(COALESCE(total,0))::float AS total,
+        SUM(COALESCE(base_imponible,0))::float AS base, SUM(COALESCE(cuota_iva,0))::float AS iva
+        FROM facturas WHERE ${SIN_ALBARANES} AND ${SIN_DUDAS} AND TO_CHAR(fecha::date,'YYYY-MM')=? GROUP BY 1`, [mes]);
+      const avisos = await dbGet(`SELECT
+        COUNT(*) FILTER (WHERE COALESCE(dup_estado,'')='duda')::int AS excluidos,
+        COUNT(*) FILTER (WHERE ${SIN_DUDAS} AND (total IS NULL OR base_imponible IS NULL OR cuota_iva IS NULL))::int AS incompletos
+        FROM facturas WHERE ${SIN_ALBARANES} AND TO_CHAR(fecha::date,'YYYY-MM')=?`,[mes]);
+      return {rows,...avisos};
+    },
+    ventas: async mes => {
+      const locales=[...new Set(INV_LOCALES.filter(l=>!LOCALES_SIN_PUBLICO.has(l)).flatMap(l=>barrasDelCentro(l,'ventas')))];
+      const leer=async periodo=>{
+        const from=periodo+'-01';
+        const [year,month]=periodo.split('-').map(Number);
+        const to=new Date(Date.UTC(year,month,0)).toISOString().slice(0,10);
+        const rows=[];
+        for(const local of locales){
+          let serie;
+          try{serie=await ventasRangoLive(local,from,to);}catch{serie=null;}
+          const disponible=Array.isArray(serie) && serie.length>0 && serie.every(r=>r.ventas!=null && r.tickets!=null && Number.isFinite(Number(r.ventas)) && Number.isFinite(Number(r.tickets)));
+          rows.push({local,disponible,ventas:disponible?serie.reduce((n,r)=>n+Number(r.ventas),0):null,tickets:disponible?serie.reduce((n,r)=>n+Number(r.tickets),0):null});
+        }
+        return rows;
+      };
+      return {actual:await leer(mes),anterior:await leer(desplazarMes(mes,-1)),anual:await leer(desplazarMes(mes,-12))};
     }
-  }
+  });
+  const tickMensuales=()=>mensuales.tick().catch(()=>console.error('[Informes mensuales] Fallo; revisar estado persistido antes de repetir un envío'));
+  if(PROD){setTimeout(tickMensuales,60_000).unref();setInterval(tickMensuales,60_000).unref();}
 
-  // Chequeo cada hora; dispara solo el día 10 a las 9:00h si aún no se envió este mes
-  setInterval(async () => {
-    try {
-      if (!isReady()) return;
-      const now = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Madrid" }));
-      if (now.getDate() !== 10 || now.getHours() !== 9) return;
-      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const prevYM = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
-      const ultimo = await dbGet("SELECT value FROM config WHERE key = 'resumen_mensual_ultimo'");
-      if (ultimo?.value === prevYM) return;
-      await enviarResumenMensualFacturas();
-    } catch (e) { console.error("[Resumen cron]", e.message); }
-  }, 60 * 60 * 1000);
 });
 
 server.on("error", (err) => {
