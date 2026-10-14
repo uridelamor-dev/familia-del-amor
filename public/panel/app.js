@@ -12703,16 +12703,21 @@ async function fidgPromoNueva(desdeId) {
       <div class="mut" style="font-size:12px;margin:-4px 0 10px">Debe coincidir <b>exactamente</b> con el código creado en Ágora. Ejemplo: <code>ESMORZAR_GIRONA</code>.<br>Se guarda tal cual: solo se quitan los espacios de los extremos, y <b>no se cambian mayúsculas ni acentos</b>, porque Ágora compara el código letra a letra.</div>
       <div id="pmCodigoErr" class="hidden" style="color:var(--danger);font-size:12px;margin:-6px 0 10px"></div>
       <label class="chk"><input type="checkbox" id="pmComprobado"> He comprobado que ese código existe en Ágora</label>
-      <div class="mut" style="font-size:12px;margin:-4px 0 10px">Guardar el código <b>no crea la promoción dentro de Ágora</b>: tiene que existir allí antes. Si no existe, Ágora <b>ignora el premio en silencio</b> — el cliente se queda sin él y nosotros sin enterarnos.</div>
+      <div class="mut" style="font-size:12px;margin:-4px 0 10px">El precio de 9,50 € y los productos se configuran en Ágora; el campo Valor no fija ese precio. Guardar el código <b>no crea la promoción dentro de Ágora</b>: tiene que existir allí antes. Si no existe, Ágora <b>ignora el premio en silencio</b> — el cliente se queda sin él y nosotros sin enterarnos.</div>
     </div>
     <label class="chk" style="display:block;margin-bottom:4px"><input type="checkbox" id="pmDerecho"${fidgDerechoDefecto(base?.tipo || "descuento_euros", base) ? " checked" : ""}> Solo para quien se la haya ganado</label>
     <div class="mut" style="font-size:12px;margin:-4px 0 6px">Marcado, solo se le ofrece a quien tenga el derecho concedido: hoy, haberse apuntado a un formulario publicado y vinculado a esta misma clave.</div>
     <div id="pmGeneralAviso" class="pendingblock ${fidgDerechoDefecto(base?.tipo || "descuento_euros", base) ? "hidden" : ""}" style="margin:0 0 10px;padding:10px 12px;font-size:12.5px;border-color:var(--danger)"><b>⚠ Sin marcar, esto se le ofrece a CUALQUIER socio del local.</b> No hace falta apuntarse a nada: basta con enseñar el carnet. Para publicarla así habrá que escribir una confirmación.</div>
+    <fieldset style="border:1px solid var(--border);border-radius:12px;padding:12px;margin:12px 0"><legend>Días de la promoción</legend>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">${[[1,"Lunes"],[2,"Martes"],[3,"Miércoles"],[4,"Jueves"],[5,"Viernes"],[6,"Sábado"],[0,"Domingo"]].map(([d,n]) => `<label><input type="checkbox" name="pmDia" value="${d}"${fidgPromoDias(base?.dias).includes(d) ? " checked" : ""}> ${n}</label>`).join("")}</div>
+      <p class="mut" style="margin:8px 0 0">Sin marcar ninguno: todos los días. Se aplica la hora de Madrid. Para las cocas del martes, marca solo Martes.</p>
+    </fieldset>
+    <label class="chk"><input type="checkbox" id="pmAcumulable"${base?.acumulable ? " checked" : ""}> Compatible con otras promociones (comprobar también en Ágora)</label>
     ${fgCampo("pmDesde", "Desde", base?.desde || "", { type: "date" })}
     ${fgCampo("pmHasta", "Hasta", base?.hasta || "", { type: "date" })}
     ${fgCampo("pmHoraD", "Desde las", base?.hora_desde || "", { type: "time" })}
     ${fgCampo("pmHoraH", "Hasta las", base?.hora_hasta || "", { type: "time" })}
-    ${fgCampo("pmLimC", "Límite por cuenta (0 = sin límite)", base?.limite_cuenta ?? 1, { type: "number", step: "1", min: "0" })}
+    ${fgCampo("pmLimC", "Usos por cliente durante toda la promoción (0 = sin límite)", base?.limite_cuenta ?? 1, { type: "number", step: "1", min: "0" })}
     ${fgCampo("pmLimT", "Límite total (0 = sin límite)", base?.limite_total ?? 0, { type: "number", step: "1", min: "0" })}
     ${fgCampo("pmPrio", "Prioridad (gana la más alta)", base?.prioridad ?? 0, { type: "number", step: "1" })}
     ${fgCampo("pmGracia", "Margen para tickets abiertos (minutos)", base?.gracia_minutos ?? 180, { type: "number", step: "1", min: "0", max: "720" })}
@@ -12796,6 +12801,11 @@ const FIDG_TIPO_TXT = {
   premio_puntos: "Premio por puntos (probado)", premio_campana: "Premio por pertenecer a una campaña",
 };
 
+function fidgPromoDias(value) {
+  try { const dias = Array.isArray(value) ? value : JSON.parse(value || "[]");
+    return Array.isArray(dias) ? [...new Set(dias.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))] : [];
+  } catch { return []; }
+}
 function fidgPromoCuerpo() {
   return { clave: fgVal("pmClave"), nombre: fgVal("pmNombre"), tipo: fgVal("pmTipo"),
     local: fgVal("pmLocal") || null, texto_camarero: fgVal("pmCamarero"), texto_cliente: fgVal("pmCliente"),
@@ -12804,6 +12814,8 @@ function fidgPromoCuerpo() {
     codigo_agora: FIDG_TIPO_CODIGO.includes(fgVal("pmTipo")) ? fgVal("pmCodigo") : "",
     codigo_comprobado: fgChk("pmComprobado"), requiere_derecho: fgChk("pmDerecho"),
     desde: fgVal("pmDesde"), hasta: fgVal("pmHasta"), hora_desde: fgVal("pmHoraD"), hora_hasta: fgVal("pmHoraH"),
+    dias: [...document.querySelectorAll('input[name="pmDia"]:checked')].map(el => Number(el.value)),
+    acumulable: fgChk("pmAcumulable"),
     limite_cuenta: fgVal("pmLimC"), limite_total: fgVal("pmLimT"), prioridad: fgVal("pmPrio"),
     gracia_minutos: fgVal("pmGracia") };
 }
