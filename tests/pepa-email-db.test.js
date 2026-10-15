@@ -24,6 +24,10 @@ test('cola La Pepa: prioridad, baja persistente, concurrencia y respuestas incie
    assert.equal(await q.unsubscribe('c'.repeat(64)),true,'baja idempotente');
    assert.equal(await q.unsubscribe('mal'),false);
    await pool.query('UPDATE pepa_email_control SET active=TRUE,verified=TRUE');
+   await pool.query(SCHEMA);
+   assert.equal((await pool.query('SELECT active FROM pepa_email_control')).rows[0].active,true,'publicar de nuevo no desactiva');
+   assert.equal((await pool.query('SELECT count(*)::int AS n FROM pepa_email_queue')).rows[0].n,3,'inicialización conserva destinatarios');
+   assert.equal((await pool.query('SELECT count(*)::int AS n FROM pepa_email_exclusions')).rows[0].n,1,'inicialización conserva bajas');
    await Promise.all([q.tick(),make().tick()]);assert.deepEqual(sends,['first@example.com']);
    assert.equal((await pool.query("SELECT status FROM pepa_email_queue WHERE email='optout@example.com'")).rows[0].status,'excluded');
    fail=true;await q.tick();assert.deepEqual(sends,['first@example.com','last@example.com']);

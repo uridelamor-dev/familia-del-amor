@@ -86,3 +86,7 @@ una sola vez por organización en el servidor (incluso si se cierra), siguiendo 
 de `avisoAnualesUnaVez`. No volver a ejecutar revisiones anteriores ni mostrar un nuevo
 modal sin una migración concreta. Separar el registro del aviso del estado de ejecución:
 una operación iniciada debe conservar su progreso y poder reintentarse sin duplicar datos.
+
+## PEPAWEEN: conservar datos al publicar
+La campaña usa PostgreSQL de producción, nunca archivos del despliegue. Republicar código conserva la cola, bajas, tokens y estado activo. Nunca seleccionar «Copy your development database to production database»: reemplaza también los datos de campaña y del resto de la web. No borrar ni reimportar la cola como paso de despliegue. No activar una cola vacía.
+Ante pérdida de datos: importar la lista privada original completa (3286), recuperar historial desde el panel (solo lecturas de Resend, excluye conservadoramente a todos los previamente enviados y restaura sus enlaces originales), comprobar una baja y activar. No incluir listas de clientes ni tokens en Git. Fin obligatorio: 2026-11-01 00:00 Europe/Madrid. Respuestas inciertas de envío permanecen en revisión, sin reintentos automáticos.

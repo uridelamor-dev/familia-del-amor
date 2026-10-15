@@ -1,4 +1,5 @@
 import { randomBytes, createHash } from 'node:crypto';
+import { recoverCampaign, listCampaign } from './recovery.js';
 import { readFileSync } from 'node:fs';
 
 export const END = Date.parse('2026-10-31T23:00:00Z');
@@ -53,7 +54,7 @@ export function resendClient({env=process.env,fetcher=fetch}={}) {
    if(!credential) throw Error('Falta la clave de envío o la conexión de consulta de Resend');
    const r=await fetcher('https://api.resend.com'+path,{method,headers:{Authorization:'Bearer '+credential,'Content-Type':'application/json',...(key?{'Idempotency-Key':key}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(15000)});
    if(nullable && r.status===404) return null;
-   if(!r.ok) throw Error('Resend respondió '+r.status+'; no se reintenta ningún envío incierto');
+   if(!r.ok) { const error=Error('Resend respondió '+r.status+'; no se reintenta ningún envío incierto'); error.retryableRead=method==='GET'&&(r.status===429||r.status>=500); throw error; }
    return r.json();
  };
 }
@@ -75,7 +76,7 @@ export function createQueue({pool,api=resendClient(),now=()=>Date.now(),pause=ms
  async function tick() {
    if(running) return;
    running=true;
-   let c,locked=false;
+   let c,locked=false,claimed=false;
    try {
      c=await pool.connect();
      locked=(await c.query('SELECT pg_try_advisory_lock(810026) AS locked')).rows[0].locked;
@@ -103,6 +104,7 @@ export function createQueue({pool,api=resendClient(),now=()=>Date.now(),pause=ms
      await c.query('SELECT email FROM pepa_email_queue WHERE email=$1 FOR UPDATE',[row.email]);
      const gate=(await c.query('SELECT active,verified FROM pepa_email_control WHERE id=1')).rows[0];
      if(!gate.active || !gate.verified || now()>=END || (await c.query('SELECT 1 FROM pepa_email_exclusions WHERE email=$1',[row.email])).rowCount) {await c.query('ROLLBACK');return;}
+     claimed=true;
      await c.query("UPDATE pepa_email_queue SET status='sending',attempted_at=NOW() WHERE email=$1 AND status='pending'",[row.email]);
      await c.query('COMMIT');
      // The per-recipient lock serializes an unsubscribe with the final send operation.
@@ -121,7 +123,7 @@ export function createQueue({pool,api=resendClient(),now=()=>Date.now(),pause=ms
        throw e;
      }
    } catch(e) {
-     if(c) {await c.query('ROLLBACK').catch(()=>{});await c.query('UPDATE pepa_email_control SET active=FALSE,notice=$1,updated_at=NOW() WHERE id=1',[e.message]).catch(()=>{});}
+     if(c) {await c.query('ROLLBACK').catch(()=>{});const retry=!claimed&&(e.retryableRead||['TimeoutError','AbortError'].includes(e.name));await c.query('UPDATE pepa_email_control SET active=CASE WHEN $2 THEN active ELSE FALSE END,notice=$1,updated_at=NOW() WHERE id=1',[retry?'Consulta temporalmente no disponible; se volverá a comprobar sin enviar: '+e.message:e.message,retry]).catch(()=>{});}
    } finally {
      if(c) {if(locked) await c.query('SELECT pg_advisory_unlock(810026)').catch(()=>{});c.release();}
      running=false;
@@ -163,6 +165,9 @@ export function registerRoutes(app,{pool,auth,urlencoded,queue,api=resendClient(
    try {res.json({control:(await pool.query('SELECT * FROM pepa_email_control WHERE id=1')).rows[0],counts:(await pool.query('SELECT status,COUNT(*)::int AS total FROM pepa_email_queue GROUP BY status')).rows});}
    catch{res.status(503).json({error:'No se pudo consultar la cola'});}
  });
+ app.post('/api/la-pepa/email/recover',auth(['direccion']),async(req,res)=>{
+   try{res.json(await recoverCampaign({pool,api}));}catch(e){res.status(400).json({error:e.message});}
+ });
  app.post('/api/la-pepa/email/import',auth(['direccion']),async(req,res)=>{
    let c;
    try {
@@ -187,6 +192,10 @@ export function registerRoutes(app,{pool,auth,urlencoded,queue,api=resendClient(
    try {
      if(typeof req.body.active!=='boolean') throw Error('Indica activar o pausar');
      if(req.body.active) {
+       if(Number((await pool.query("SELECT count(*) AS n FROM pepa_email_queue WHERE basis<>'test'")).rows[0].n)!==3286) throw Error('La cola está vacía o incompleta: recuperar antes de activar');
+       if((await pool.query("SELECT 1 FROM pepa_email_queue WHERE reason='recuperar enlace original' LIMIT 1")).rowCount) throw Error('Termina la recuperación de enlaces antes de activar');
+       const history=await listCampaign(api);
+       for(const [email,row] of history){if(!(await pool.query("SELECT 1 FROM pepa_email_queue WHERE email=$1 AND resend_id=$2 AND status IN ('accepted','excluded')",[email,row.id])).rowCount) throw Error('El historial no coincide con Resend: recuperar antes de activar');}
        if(req.body.verified!==true) throw Error('Primero verifica una baja real de prueba y el alcance de los permisos');
        if(Date.now()>=END) throw Error('El evento ya ha llegado');
        await checkDomain(api);await new Promise(r=>setTimeout(r,600));remaining(await api('/usage'));
