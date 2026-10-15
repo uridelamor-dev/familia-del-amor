@@ -2,8 +2,8 @@
   {
     "reference": "115",
     "page": 40,
-    "costCents": 1750,
-    "suggestedRetailCents": 3090,
+    "costCents": 1610,
+    "suggestedRetailCents": 2783,
     "name": {
       "es": "Brindis Anna",
       "ca": "Brindis Anna"
@@ -14,13 +14,16 @@
     },
     "image": "/tienda/images/lot-nadal-115.webp",
     "alcohol": true,
-    "singleTaxBps": 2100
+    "singleTaxBps": 2100,
+    "catalogCostCents": 1750,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 3090
   },
   {
     "reference": "87",
     "page": 31,
-    "costCents": 1350,
-    "suggestedRetailCents": 3090,
+    "costCents": 1242,
+    "suggestedRetailCents": 2148,
     "name": {
       "ca": "Pernil serrà Gran Reserva Duroc",
       "es": "Jamón serrano Gran Reserva Duroc"
@@ -31,13 +34,16 @@
     },
     "image": "/tienda/images/lot-nadal-87.webp",
     "alcohol": false,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 1350,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 3090
   },
   {
     "reference": "113",
     "page": 39,
-    "costCents": 1990,
-    "suggestedRetailCents": 3500,
+    "costCents": 1831,
+    "suggestedRetailCents": 3165,
     "name": {
       "es": "Selección Vallformosa",
       "ca": "Selecció Vallformosa"
@@ -48,13 +54,16 @@
     },
     "image": "/tienda/images/lot-nadal-113.webp",
     "alcohol": true,
-    "singleTaxBps": 2100
+    "singleTaxBps": 2100,
+    "catalogCostCents": 1990,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 3500
   },
   {
     "reference": "110",
     "page": 39,
-    "costCents": 2380,
-    "suggestedRetailCents": 4500,
+    "costCents": 2190,
+    "suggestedRetailCents": 3786,
     "name": {
       "es": "Sabores del Cantábrico",
       "ca": "Sabors del Cantàbric"
@@ -65,13 +74,16 @@
     },
     "image": "/tienda/images/lot-nadal-110.webp",
     "alcohol": false,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 2380,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 4500
   },
   {
     "reference": "1",
     "page": 3,
-    "costCents": 3090,
-    "suggestedRetailCents": 5500,
+    "costCents": 2843,
+    "suggestedRetailCents": 4915,
     "name": {
       "es": "El primer detalle",
       "ca": "El primer detall"
@@ -82,13 +94,16 @@
     },
     "image": "/tienda/images/lot-nadal-1.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 3090,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 5500
   },
   {
     "reference": "109",
     "page": 39,
-    "costCents": 3390,
-    "suggestedRetailCents": 6000,
+    "costCents": 3119,
+    "suggestedRetailCents": 5392,
     "name": {
       "es": "Dulce Alemany",
       "ca": "Dolç Alemany"
@@ -99,13 +114,16 @@
     },
     "image": "/tienda/images/lot-nadal-109.webp",
     "alcohol": false,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 3390,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 6000
   },
   {
     "reference": "2",
     "page": 3,
-    "costCents": 3690,
-    "suggestedRetailCents": 6900,
+    "costCents": 3395,
+    "suggestedRetailCents": 5869,
     "name": {
       "es": "La sobremesa",
       "ca": "La sobretaula"
@@ -116,13 +134,54 @@
     },
     "image": "/tienda/images/lot-nadal-2.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 3690,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 6900
+  },
+  {
+    "reference": "101",
+    "page": 37,
+    "costCents": 3919,
+    "suggestedRetailCents": 6775,
+    "name": {
+      "es": "Ibérico y Rioja Reserva",
+      "ca": "Ibèric i Rioja Reserva"
+    },
+    "description": {
+      "es": "6 sobres de paleta de cebo ibérica de Huelva de 80 g (480 g en total) y 2 vinos LAN Reserva D.O.Ca. Rioja de 75 cl. Caja con ventana incluida. Foto con Viña Lanciano; este lote incluye LAN Reserva.",
+      "ca": "6 sobres d’espatlla d’engreix ibèrica de Huelva de 80 g (480 g en total) i 2 vins LAN Reserva D.O.Ca. Rioja de 75 cl. Caixa amb finestra inclosa. Foto amb Viña Lanciano; aquest lot inclou LAN Reserva."
+    },
+    "image": "/tienda/images/lot-nadal-101.webp",
+    "alcohol": true,
+    "singleTaxBps": null,
+    "catalogCostCents": 4260,
+    "supplierDiscountBps": 800
+  },
+  {
+    "reference": "104",
+    "page": 38,
+    "costCents": 3395,
+    "suggestedRetailCents": 5869,
+    "name": {
+      "es": "Selección sin alcohol",
+      "ca": "Selecció sense alcohol"
+    },
+    "description": {
+      "es": "Aceite de oliva virgen extra 500 ml, setas, hummus, frutos secos, melocotón, espárragos, membrillo, café, pasta, chocolate a la taza, tres turrones, polvorones y bombones. Caja decorada con asa incluida.",
+      "ca": "Oli d’oliva verge extra 500 ml, bolets, hummus, fruita seca, préssec, espàrrecs, codonyat, cafè, pasta, xocolata desfeta, tres torrons, polvorons i bombons. Caixa decorada amb nansa inclosa."
+    },
+    "image": "/tienda/images/lot-nadal-104.webp",
+    "alcohol": false,
+    "singleTaxBps": null,
+    "catalogCostCents": 3690,
+    "supplierDiscountBps": 800
   },
   {
     "reference": "3",
     "page": 4,
-    "costCents": 4450,
-    "suggestedRetailCents": 7900,
+    "costCents": 4094,
+    "suggestedRetailCents": 7077,
     "name": {
       "es": "Nadal a casa",
       "ca": "Nadal a casa"
@@ -133,13 +192,16 @@
     },
     "image": "/tienda/images/lot-nadal-3.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 4450,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 7900
   },
   {
     "reference": "4",
     "page": 4,
-    "costCents": 5180,
-    "suggestedRetailCents": 9500,
+    "costCents": 4766,
+    "suggestedRetailCents": 8239,
     "name": {
       "es": "Para compartir",
       "ca": "Per compartir"
@@ -150,13 +212,16 @@
     },
     "image": "/tienda/images/lot-nadal-4.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 5180,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 9500
   },
   {
     "reference": "15",
     "page": 10,
-    "costCents": 5490,
-    "suggestedRetailCents": 9900,
+    "costCents": 5051,
+    "suggestedRetailCents": 8731,
     "name": {
       "es": "Espatlla i brindis",
       "ca": "Espatlla i brindis"
@@ -167,13 +232,16 @@
     },
     "image": "/tienda/images/lot-nadal-15.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 5490,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 9900
   },
   {
     "reference": "5",
     "page": 5,
-    "costCents": 5940,
-    "suggestedRetailCents": 10900,
+    "costCents": 5465,
+    "suggestedRetailCents": 9448,
     "name": {
       "es": "El vermut de Nadal",
       "ca": "El vermut de Nadal"
@@ -184,13 +252,16 @@
     },
     "image": "/tienda/images/lot-nadal-5.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 5940,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 10900
   },
   {
     "reference": "6",
     "page": 5,
-    "costCents": 6690,
-    "suggestedRetailCents": 11900,
+    "costCents": 6155,
+    "suggestedRetailCents": 10640,
     "name": {
       "es": "Una mesa generosa",
       "ca": "Una taula generosa"
@@ -201,13 +272,16 @@
     },
     "image": "/tienda/images/lot-nadal-6.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 6690,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 11900
   },
   {
     "reference": "7",
     "page": 6,
-    "costCents": 7420,
-    "suggestedRetailCents": 13500,
+    "costCents": 6826,
+    "suggestedRetailCents": 11800,
     "name": {
       "es": "La celebración",
       "ca": "La celebració"
@@ -218,13 +292,16 @@
     },
     "image": "/tienda/images/lot-nadal-7.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 7420,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 13500
   },
   {
     "reference": "8",
     "page": 7,
-    "costCents": 8150,
-    "suggestedRetailCents": 14900,
+    "costCents": 7498,
+    "suggestedRetailCents": 12962,
     "name": {
       "es": "La gran sobremesa",
       "ca": "La gran sobretaula"
@@ -235,13 +312,16 @@
     },
     "image": "/tienda/images/lot-nadal-8.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 8150,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 14900
   },
   {
     "reference": "19",
     "page": 11,
-    "costCents": 8090,
-    "suggestedRetailCents": 15900,
+    "costCents": 7443,
+    "suggestedRetailCents": 12866,
     "name": {
       "es": "Pernil a taula",
       "ca": "Pernil a taula"
@@ -252,13 +332,16 @@
     },
     "image": "/tienda/images/lot-nadal-19.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 8090,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 15900
   },
   {
     "reference": "16",
     "page": 10,
-    "costCents": 11590,
-    "suggestedRetailCents": 20900,
+    "costCents": 10663,
+    "suggestedRetailCents": 18432,
     "name": {
       "es": "Paleta ibérica de campo",
       "ca": "Espatlla ibèrica de camp"
@@ -269,13 +352,16 @@
     },
     "image": "/tienda/images/lot-nadal-16.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 11590,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 20900
   },
   {
     "reference": "12",
     "page": 9,
-    "costCents": 12990,
-    "suggestedRetailCents": 22900,
+    "costCents": 11951,
+    "suggestedRetailCents": 20658,
     "name": {
       "es": "Ibérico para compartir",
       "ca": "Ibèric per compartir"
@@ -286,13 +372,16 @@
     },
     "image": "/tienda/images/lot-nadal-12.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 12990,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 22900
   },
   {
     "reference": "34",
     "page": 16,
-    "costCents": 12940,
-    "suggestedRetailCents": 24900,
+    "costCents": 11905,
+    "suggestedRetailCents": 20580,
     "name": {
       "es": "El gran Nadal",
       "ca": "El gran Nadal"
@@ -303,13 +392,16 @@
     },
     "image": "/tienda/images/lot-nadal-34.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 12940,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 24900
   },
   {
     "reference": "17",
     "page": 10,
-    "costCents": 15990,
-    "suggestedRetailCents": 28900,
+    "costCents": 14711,
+    "suggestedRetailCents": 25429,
     "name": {
       "es": "Paleta de bellota 100% ibérica",
       "ca": "Espatlla de gla 100% ibèrica"
@@ -320,13 +412,16 @@
     },
     "image": "/tienda/images/lot-nadal-17.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 15990,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 28900
   },
   {
     "reference": "40",
     "page": 19,
-    "costCents": 19420,
-    "suggestedRetailCents": 34900,
+    "costCents": 17866,
+    "suggestedRetailCents": 30883,
     "name": {
       "es": "Reserva en madera",
       "ca": "Reserva en fusta"
@@ -337,13 +432,16 @@
     },
     "image": "/tienda/images/lot-nadal-40.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 19420,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 34900
   },
   {
     "reference": "18",
     "page": 10,
-    "costCents": 19990,
-    "suggestedRetailCents": 37500,
+    "costCents": 18391,
+    "suggestedRetailCents": 31790,
     "name": {
       "es": "Cinco Jotas esencial",
       "ca": "Cinco Jotas essencial"
@@ -354,13 +452,16 @@
     },
     "image": "/tienda/images/lot-nadal-18.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 19990,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 37500
   },
   {
     "reference": "29",
     "page": 14,
-    "costCents": 24120,
-    "suggestedRetailCents": 42900,
+    "costCents": 22190,
+    "suggestedRetailCents": 38357,
     "name": {
       "es": "Cinco Jotas celebración",
       "ca": "Cinco Jotas celebració"
@@ -371,13 +472,54 @@
     },
     "image": "/tienda/images/lot-nadal-29.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 24120,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 42900
+  },
+  {
+    "reference": "100",
+    "page": 37,
+    "costCents": 3671,
+    "suggestedRetailCents": 6346,
+    "name": {
+      "es": "Ibérico y sabores gourmet",
+      "ca": "Ibèric i sabors gurmet"
+    },
+    "description": {
+      "es": "Paleta de cebo ibérica loncheada (80 g), queso curado (250 g), chorizo y salchichón de bellota (230 g cada uno), vino Viña Pomal Crianza (75 cl), pistachos, aceite de oliva virgen extra (50 cl), bonito, navajas y bombones. En caja decorada.",
+      "ca": "Espatlla d’engreix ibèrica a llesques (80 g), formatge curat (250 g), xoriço i llonganissa de gla (230 g cadascun), vi Viña Pomal Crianza (75 cl), festucs, oli d’oliva verge extra (50 cl), bonítol, navalles i bombons. En caixa decorada."
+    },
+    "image": "/tienda/images/lot-nadal-100.webp",
+    "alcohol": true,
+    "singleTaxBps": null,
+    "catalogCostCents": 3990,
+    "supplierDiscountBps": 800
+  },
+  {
+    "reference": "103",
+    "page": 37,
+    "costCents": 2843,
+    "suggestedRetailCents": 4915,
+    "name": {
+      "es": "Brindis e ibérico",
+      "ca": "Brindis i ibèric"
+    },
+    "description": {
+      "es": "2 botellas de cava Ars Collecta Blanc de Blancs Brut Reserva Ecológico (75 cl) y 2 sobres de paleta de cebo de campo ibérica (40 g cada uno). En estuche.",
+      "ca": "2 ampolles de cava Ars Collecta Blanc de Blancs Brut Reserva Ecològic (75 cl) i 2 sobres d’espatlla d’engreix de camp ibèrica (40 g cadascun). En estoig."
+    },
+    "image": "/tienda/images/lot-nadal-103.webp",
+    "alcohol": true,
+    "singleTaxBps": null,
+    "catalogCostCents": 3090,
+    "supplierDiscountBps": 800
   },
   {
     "reference": "43",
     "page": 20,
-    "costCents": 26440,
-    "suggestedRetailCents": 50000,
+    "costCents": 24325,
+    "suggestedRetailCents": 42048,
     "name": {
       "es": "La joya de Nadal",
       "ca": "La joia de Nadal"
@@ -388,6 +530,9 @@
     },
     "image": "/tienda/images/lot-nadal-43.webp",
     "alcohol": true,
-    "singleTaxBps": null
+    "singleTaxBps": null,
+    "catalogCostCents": 26440,
+    "supplierDiscountBps": 800,
+    "previousRetailCents": 50000
   }
 ]

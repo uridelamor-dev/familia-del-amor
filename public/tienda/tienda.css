@@ -19,3 +19,23 @@
 .shop-paths a{color:var(--forest)}
 
 .bundle .price small{display:block;font-size:11px;line-height:1.6;margin-top:7px;color:#697263}.selection-estimate{padding:16px;background:#eae5d8;border-radius:12px;font-size:12px}.selection-estimate strong{display:block;font:28px Georgia,serif;margin:8px 0}.selection-estimate small{display:block}
+
+/* Integrar el blanco de las fotos reales con el fondo de cada sección.
+   Sin sombras sobre el rectángulo de la imagen ni cambios en los originales. */
+.hero-art,.bundle-art,.product,.box-visual{isolation:isolate}
+.lots .hero-art img,.lots .bundle-art img,.lots .product img,.lots .box-visual img{mix-blend-mode:multiply;filter:none;background:transparent}
+
+/* Entrada breve: orientar sin bloquear los enlaces directos ni cambiar la cesta. */
+.lots dialog.shop-welcome{max-width:490px;padding:34px;overflow:auto;max-height:calc(100dvh - 32px)}
+.shop-welcome .eyebrow{margin:0 32px 18px 0;font-size:10px;letter-spacing:2px}
+.lots .shop-welcome h2{font-size:34px;letter-spacing:-.6px}
+.shop-welcome #welcomeDescription{font-size:14px;color:#687167;line-height:1.6;margin:12px 0 24px}
+.lots .shop-welcome .welcome-close{position:absolute;right:16px;top:12px;width:40px;height:40px;padding:0;border:0;font-size:25px}
+.welcome-options{display:grid;gap:12px}
+.lots .welcome-options button{display:flex;justify-content:space-between;text-align:left;border-radius:16px;padding:20px 16px;gap:14px;width:100%;background:#faf8f2}
+.welcome-options button>span:nth-child(2){flex:1;min-width:0}
+.welcome-number{font-size:11px;color:#816a44}
+.welcome-options strong{display:block;font:21px/1.2 Georgia,serif;font-weight:normal}
+.welcome-options small{display:block;font-size:12px;line-height:1.5;color:#687167;margin-top:7px}
+.lots .shop-welcome .welcome-browse{display:flex;width:100%;border:0;font-size:12px;margin-top:14px;padding:12px 4px;text-decoration:underline;text-underline-offset:4px}
+@media(max-width:650px){.lots dialog.shop-welcome{padding:28px 21px}.lots .shop-welcome h2{font-size:30px}.lots .welcome-options button{padding:18px 13px;gap:10px}.welcome-options strong{font-size:20px}}

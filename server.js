@@ -1,3 +1,4 @@
+import {crearAvisosSolicitudes} from './src/modules/tienda/solicitudes.js';
 import {crearMensuales,desplazarMes} from './src/modules/informes/mensuales.js';
 import { SCHEMA as PEPA_EMAIL_SCHEMA, createQueue as createPepaEmailQueue, registerRoutes as registerPepaEmailRoutes } from './src/modules/pepa-email/queue.js';
 import { BANDEJA_SCHEMA, crearArchivoBandeja } from './src/modules/messaging/bandeja-historial.js';
@@ -581,9 +582,10 @@ app.use("/api/tienda", express.json({limit:"2mb"}));
 app.use('/api/la-pepa/email/import', requireAuth(['direccion']), express.json({limit:'2mb'}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-// Presentación de tienda: datos propios, modo demo, sin cobros ni envíos.
+// Catálogo con solicitudes comerciales, sin compra directa.
+const tiendaStore=tiendaDemoPersistente(pool);
 if (process.env.TIENDA_ENABLED !== "false") {
-  app.use("/api/tienda", rutasTienda({store:tiendaDemoPersistente(pool),auth:requireAuth(["direccion","marketing","contabilidad"]),root:__dirname,demo:true}));
+  app.use("/api/tienda", rutasTienda({store:tiendaStore,auth:requireAuth(["direccion","marketing","contabilidad"]),root:__dirname,demo:true}));
 } else {
   app.get("/api/tienda/status", (req,res)=>res.json({active:false}));
   app.use("/api/tienda", (req,res)=>res.status(404).json({error:"Tienda no habilitada"}));
@@ -25762,6 +25764,10 @@ const server = app.listen(PORT, async () => {
   // Las métricas de cliente, en el mismo latido. La marca decide si toca de verdad.
   setInterval(() => { recalcularMetricasSiToca().catch(() => {}); }, 30 * 60 * 1000);
   setTimeout(() => { recalcularMetricasSiToca().catch(() => {}); }, 60 * 1000);
+
+  const avisosTienda=crearAvisosSolicitudes({pool,store:tiendaStore,conectado:isReady,enviar:sendMensajeLibre,enabled:PROD && process.env.TIENDA_ENABLED!=="false"});
+  const tickTienda=()=>avisosTienda().catch(()=>console.error('[Tienda] Revisar avisos de solicitudes pendientes'));
+  if(PROD){setTimeout(tickTienda,10_000).unref();setInterval(tickTienda,15_000).unref();}
 
   // Informes mensuales: ventas el día 1 y compras el 10, con recuperación persistente.
   const mensuales = crearMensuales({

@@ -20,6 +20,7 @@
 /** Lo que merece la pena saber. Una lista blanca, y no «lo que diga»: guardar cualquier frase
  *  de un cliente deja de ser un cuaderno y pasa a ser un perfil. */
 export const ETIQUETAS = {
+  interes_lotes: { label: "Interesado en lotes", ejemplo: "Navidad 2026 · solicitud de lotes" },
   dieta: { label: "Dieta o alergia", ejemplo: "celíaca, sin lactosa, vegetariano", sensible: true },
   no_le_gusta: { label: "No le gusta", ejemplo: "el cilantro, el picante" },
   prefiere_dia: { label: "Viene los", ejemplo: "martes, fines de semana" },

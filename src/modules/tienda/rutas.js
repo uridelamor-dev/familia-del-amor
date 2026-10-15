@@ -1,3 +1,4 @@
+import {prepararSolicitud,registrarLead} from './solicitudes.js';
 import express from 'express';
 import {datosPublicos,pedidoInterno} from './publicacion.js';
 import {excelDocumentos} from './exportar.js';
@@ -11,11 +12,15 @@ export function rutasTienda({store,auth,root,demo=false}) {
  const r=express.Router(), wrap=fn=>(req,res,next)=>Promise.resolve(fn(req,res)).catch(next);
  r.use(express.json({limit:'2mb'}));r.use((req,res,next)=>{res.set('Cache-Control','no-store');next();});
  const visits=new Map();
- r.use((req,res,next)=>{if(req.method==='GET')return next();const origin=req.headers.origin;if(origin){try{if(new URL(origin).host!==req.headers.host)return res.status(403).json({error:'Origen no permitido'});}catch{return res.sendStatus(403);}}const key=req.ip,now=Date.now(),v=visits.get(key)||{t:now,n:0};if(now-v.t>60000){v.t=now;v.n=0;}v.n++;visits.set(key,v);if(visits.size>10000)for(const [k,x]of visits)if(now-x.t>60000)visits.delete(k);if(v.n>100)return res.status(429).json({error:'Espera un momento antes de repetir'});next();});
+ r.use((req,res,next)=>{if(req.method==='GET')return next();const origin=req.headers.origin;if(origin){try{if(new URL(origin).host!==req.headers.host)return res.status(403).json({error:'Origen no permitido'});}catch{return res.sendStatus(403);}}const request=req.path==='/requests',key=req.ip+(request?':requests':':other'),now=Date.now(),v=visits.get(key)||{t:now,n:0};if(now-v.t>60000){v.t=now;v.n=0;}v.n++;visits.set(key,v);if(visits.size>10000)for(const [k,x]of visits)if(now-x.t>60000)visits.delete(k);if(v.n>(request?5:100))return res.status(429).json({error:'Espera un momento antes de repetir'});next();});
  r.get('/status',wrap(async(req,res)=>{const s=await store.read();res.json({active:s.config.publicActive,demo});}));
  r.get('/catalog',wrap(async(req,res)=>{const s=await store.read();disponible(s);res.json(datosPublicos({catalog:catalogoPublico(s),bundles:s.bundles.filter(b=>b.visible&&!b.archived),discounts:s.config.discounts,delivery:s.config.delivery,campaign:s.config.campaign,demo:s.config.demo}));}));
  r.post('/calculate',wrap(async(req,res)=>{const s=await store.read();disponible(s);res.json(datosPublicos(publico(valorar(s,pedidoInterno(s,req.body)))));}));
- for(const type of ['orders','quotes'])r.post('/'+type,wrap(async(req,res)=>res.json(datosPublicos(await store.mutate(s=>crear(s,pedidoInterno(s,req.body),type))))));
+ r.post('/requests',wrap(async(req,res)=>{
+ const result=await store.mutate(async(s,c)=>{const {doc,replayed}=prepararSolicitud(s,pedidoInterno(s,req.body));if(!replayed)await registrarLead(c,doc);return {reference:doc.reference};});res.json(result);
+ }));
+ // La tienda pública solo recoge solicitudes. No permite saltarse el formulario para comprar.
+ for(const type of ['orders','quotes'])r.post('/'+type,(req,res)=>res.status(409).json({error:'Utiliza Solicitar pedido. No hay compra directa disponible.'}));
  r.use('/admin',auth);
  r.get('/admin/export/:collection(orders|quotes)',wrap(async(req,res)=>{const s=await store.read();if(!permite(s,req.user,'exportar')||!permite(s,req.user,'pedidos'))return res.sendStatus(403);const q=String(req.query.q||'').toLowerCase();const docs=s[req.params.collection].filter(d=>(d.reference+' '+d.contact.company+' '+d.contact.name+' '+d.createdAt+' '+d.campaign+' '+d.payment+' '+d.status).toLowerCase().includes(q));res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').attachment('lotes.xlsx').send(excelDocumentos(docs));}));
  r.get('/admin/state',wrap(async(req,res)=>{const s=await store.read();if(!permite(s,req.user,'consultar'))return res.sendStatus(403);const caps=['consultar','catalogo','pedidos','pagos','descuentos','exportar','banco','activar'].filter(c=>permite(s,req.user,c));res.json({config:{...s.config,bank:caps.includes('banco')?s.config.bank:null,permissions:req.user.rol==='direccion'?s.config.permissions:{}},catalog:caps.includes('catalogo')?s.catalog:catalogoPublico(s),bundles:s.bundles,orders:caps.includes('pedidos')?s.orders:[],quotes:caps.includes('pedidos')?s.quotes:[],audit:req.user.rol==='direccion'?s.audit:[],outbox:caps.includes('pedidos')?s.outbox:[],capabilities:caps,demo:s.config.demo});}));

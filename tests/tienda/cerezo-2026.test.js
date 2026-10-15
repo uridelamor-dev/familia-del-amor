@@ -4,9 +4,9 @@ import {inicial} from '../../src/modules/tienda/catalogo.js';
 import {catalogoCerezo,aplicarCerezo2026} from '../../src/modules/tienda/cerezo-2026.js';
 import {calcular} from '../../src/modules/tienda/calculo.js';
 import {catalogoPublico} from '../../src/modules/tienda/servicio.js';
-test('23 referencias trazables, de unos 30 a 500 euros y margen de mercancía mínimo del 30%',()=>{
- const ps=catalogoCerezo();assert.equal(ps.length,23);assert.equal(new Set(ps.map(p=>p.id)).size,23);
- assert.equal(ps[0].suggestedRetailCents,3090);assert.equal(ps.at(-1).suggestedRetailCents,50000);
+test('27 referencias trazables, con coste negociado y margen de mercancía mínimo del 30%',()=>{
+ const ps=catalogoCerezo();assert.equal(ps.length,27);assert.equal(new Set(ps.map(p=>p.id)).size,27);
+ assert.equal(ps[0].suggestedRetailCents,2783);assert.equal(ps.at(-1).suggestedRetailCents,42048);
  for(const p of ps){assert.ok(p.costCents*100<=p.priceCents*70,p.id);assert.ok(p.sourcePage);assert.ok(p.images[0].url);assert.equal(p.packagingIncluded,true);}
 });
 test('migración una sola vez: conserva pedidos, productos, ediciones posteriores y lotes personalizados',()=>{
@@ -40,3 +40,34 @@ test('ampliación conserva cambios previos y añade ambas espatllas',()=>{
  aplicarCerezo2026(s);assert.equal(s.config.discounts.enabled,true);assert.equal(s.config.catalogBackups.length,backups);
  assert.ok(s.catalog.find(p=>p.id==='cerezo-2026-17'));assert.ok(s.catalog.find(p=>p.id==='cerezo-2026-16'));
 });
+
+ test('descuento de proveedor del 8% actualiza las 27 referencias existentes sin descontar dos veces ni alterar ventas',async()=>{
+ const {seleccionCerezo}=await import('../../src/modules/tienda/cerezo-2026.js');
+ const s=inicial();aplicarCerezo2026(s);s.config.cerezoRevision=3;
+ for(const r of seleccionCerezo){
+  const p=s.catalog.find(p=>p.id===`cerezo-2026-${r.reference}`);
+  p.costCents=r.catalogCostCents;
+  assert.equal(r.costCents,Math.round(r.catalogCostCents*9200/10000));
+  assert.equal(r.supplierDiscountBps,800);
+ }
+ s.catalog.find(p=>p.bundleOnly).priceCents=12345;
+ s.orders=[{id:'historico',costCents:3090}];
+ const prices=s.catalog.filter(p=>!p.bundleOnly).map(p=>p.priceCents),orders=structuredClone(s.orders),discounts=structuredClone(s.config.discounts);
+ assert.equal(aplicarCerezo2026(s),true);
+ for(const r of seleccionCerezo)assert.equal(s.catalog.find(p=>p.id===`cerezo-2026-${r.reference}`).costCents,r.costCents);
+ assert.deepEqual(s.catalog.filter(p=>!p.bundleOnly).map(p=>p.priceCents),prices);
+ for(const p of s.catalog.filter(p=>p.bundleOnly)){assert.equal(p.priceCents,Math.ceil(p.costCents*100/70));assert.equal(p.suggestedRetailCents,p.priceCents+Math.round(p.priceCents*(p.taxBps??2100)/10000));}assert.deepEqual(s.orders,orders);assert.deepEqual(s.config.discounts,discounts);
+ const after=structuredClone(s);assert.equal(aplicarCerezo2026(s),false);assert.deepEqual(s,after);
+ });
+
+ test('ampliar desde revisión 6 conserva precios editados y añade los dos lotes sin duplicarlos',()=>{
+ const s=inicial();aplicarCerezo2026(s);s.config.cerezoRevision=6;
+ const ids=['cerezo-2026-100','cerezo-2026-103'];
+ s.catalog=s.catalog.filter(p=>!ids.includes(p.id));s.bundles=s.bundles.filter(p=>!ids.includes(p.id));
+ const original=s.catalog.find(p=>p.bundleOnly);original.priceCents=12345;
+ assert.equal(aplicarCerezo2026(s),true);assert.equal(original.priceCents,12345);
+ for(const id of ids){assert.equal(s.catalog.filter(p=>p.id===id).length,1);assert.equal(s.bundles.filter(p=>p.id===id).length,1);}
+ assert.equal(s.catalog.find(p=>p.id===ids[0]).suggestedRetailCents,6346);
+ assert.equal(s.catalog.find(p=>p.id===ids[1]).suggestedRetailCents,4915);
+ assert.equal(aplicarCerezo2026(s),false);
+ });
