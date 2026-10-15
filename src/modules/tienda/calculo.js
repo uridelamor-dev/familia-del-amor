@@ -30,10 +30,10 @@ export function calcular(catalogo, pedido, reglas = {}) {
     const precio = entero(p.priceCents,'Precio');
     if(p.taxBps!=null) entero(p.taxBps,'IVA');
     return {id:p.id,name:p.name,kind:p.kind||'product',unidades,cantidad,priceCents:precio,costCents:p.costCents??null,
-      taxBps:p.taxBps??null,baseCents:entero(precio*cantidad,'Base'),eligible:(reglas.eligibleKinds||['product','packaging']).includes(p.kind||'product'),wholeHam:!!p.wholeHam,hamCompatible:!!p.hamCompatible};
+      taxBps:p.taxBps??null,baseCents:entero(precio*cantidad,'Base'),eligible:(reglas.eligibleKinds||['product','packaging']).includes(p.kind||'product'),wholeHam:!!p.wholeHam,hamCompatible:!!p.hamCompatible,packagingIncluded:!!p.packagingIncluded};
   });
   if(!lineas.some(l=>l.kind==='product')) throw new Error('Añade productos al lote');
-  if(!lineas.some(l=>l.kind==='packaging')) throw new Error('Elige un embalaje');
+  if(lineas.some(l=>l.kind==='product'&&!l.packagingIncluded)&&!lineas.some(l=>l.kind==='packaging')) throw new Error('Elige un embalaje');
   const jamones=lineas.filter(l=>l.wholeHam).reduce((s,l)=>s+l.unidades,0);
   if(jamones>lineas.filter(l=>l.kind==='packaging'&&l.hamCompatible).reduce((s,l)=>s+l.unidades,0)) throw new Error('Cada jamón o paletilla necesita una caja compatible');
   const elegible=lineas.filter(l=>l.eligible).reduce((s,l)=>entero(s+l.baseCents,'Base elegible'),0);

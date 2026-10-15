@@ -6,7 +6,7 @@ function must(s,u,c){if(!permite(s,u,c)){const e=new Error('Sin permiso para est
 const str=(s,n=500)=>typeof s==='string'?s.trim().slice(0,n):'';
 const fecha=()=>new Date().toISOString();
 export function audit(s,u,action,id){s.audit.push({id:randomUUID(),at:fecha(),actor:u?.id??'cliente',action,record:id});}
-export function catalogoPublico(s){return s.catalog.filter(p=>p.visible&&!p.archived).map(({costCents,costEstimated,...p})=>p);}
+export function catalogoPublico(s){return s.catalog.filter(p=>p.visible&&!p.archived).map(({costCents,costEstimated,supplierReference,sourcePage,...p})=>p);}
 export function valorar(s,b){
  const delivery=s.config.delivery.find(d=>d.id===b.deliveryId&&d.active);
  const transport=delivery?{pending:!!delivery.pending,priceCents:delivery.priceCents,taxBps:delivery.taxBps,id:delivery.id}: {pending:true};
@@ -70,7 +70,8 @@ export function configurar(s,u,b){
  audit(s,u,'configurar','config');return s.config;
 }
 export function editarArticulo(s,u,id,b){must(s,u,'catalogo');const p=s.catalog.find(x=>x.id===id);if(!p)throw new Error('Artículo no encontrado');
- for(const k of ['priceCents','costCents','taxBps','sort'])if(k in b){if(!Number.isSafeInteger(b[k])||b[k]<0)throw new Error('Importe o impuesto no válido');p[k]=b[k];}
+ for(const k of ['priceCents','costCents','taxBps','sort'])if(k in b){if(!(k==='taxBps'&&b[k]===null)&&(!Number.isSafeInteger(b[k])||b[k]<0))throw new Error('Importe o impuesto no válido');p[k]=b[k];}
+ if(p.bundleOnly&&('priceCents'in b||'taxBps'in b)){p.suggestedRetailCents=p.priceCents+Math.round(p.priceCents*(p.taxBps??2100)/10000);p.retailIndicative=p.taxBps==null||p.costEstimated!==false;}
  if(typeof b.costEstimated==='boolean')p.costEstimated=b.costEstimated;
  if('format'in b){if(!b.format||typeof b.format.es!=='string'||typeof b.format.ca!=='string')throw new Error('Formato no válido');p.format={es:str(b.format.es,160),ca:str(b.format.ca,160)};}
  for(const k of ['name','description'])if(b[k]){if(!str(b[k].es)||!str(b[k].ca))throw new Error('Completa ambos idiomas');p[k]={es:str(b[k].es,1000),ca:str(b[k].ca,1000)};}

@@ -1,0 +1,393 @@
+[
+  {
+    "reference": "115",
+    "page": 40,
+    "costCents": 1750,
+    "suggestedRetailCents": 3090,
+    "name": {
+      "es": "Brindis Anna",
+      "ca": "Brindis Anna"
+    },
+    "description": {
+      "es": "2 botellas Anna de Codorníu Blanc de Blancs Brut de Guarda, 75 cl, en estuche.",
+      "ca": "2 ampolles Anna de Codorníu Blanc de Blancs Brut de Guarda, 75 cl, en estoig."
+    },
+    "image": "/tienda/images/lot-nadal-115.webp",
+    "alcohol": true,
+    "singleTaxBps": 2100
+  },
+  {
+    "reference": "87",
+    "page": 31,
+    "costCents": 1350,
+    "suggestedRetailCents": 3090,
+    "name": {
+      "ca": "Pernil serrà Gran Reserva Duroc",
+      "es": "Jamón serrano Gran Reserva Duroc"
+    },
+    "description": {
+      "ca": "Estoig amb 6 sobres de pernil serrà Gran Reserva Duroc de 80 g. 480 g en total, tallat a llesques i a punt per compartir.",
+      "es": "Estuche con 6 sobres de jamón serrano Gran Reserva Duroc de 80 g. 480 g en total, loncheado y listo para compartir."
+    },
+    "image": "/tienda/images/lot-nadal-87.webp",
+    "alcohol": false,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "113",
+    "page": 39,
+    "costCents": 1990,
+    "suggestedRetailCents": 3500,
+    "name": {
+      "es": "Selección Vallformosa",
+      "ca": "Selecció Vallformosa"
+    },
+    "description": {
+      "es": "Gala de Vallformosa Brut Nature, Freyé tinto y Cultivare Xarel·lo, 75 cl, en maleta.",
+      "ca": "Gala de Vallformosa Brut Nature, Freyé negre i Cultivare Xarel·lo, 75 cl, en maleta."
+    },
+    "image": "/tienda/images/lot-nadal-113.webp",
+    "alcohol": true,
+    "singleTaxBps": 2100
+  },
+  {
+    "reference": "110",
+    "page": 39,
+    "costCents": 2380,
+    "suggestedRetailCents": 4500,
+    "name": {
+      "es": "Sabores del Cantábrico",
+      "ca": "Sabors del Cantàbric"
+    },
+    "description": {
+      "es": "Estuche Arroyabe con seis conservas: bonito, atún, ventresca y Arroyabitos.",
+      "ca": "Estoig Arroyabe amb sis conserves: bonítol, tonyina, ventresca i Arroyabitos."
+    },
+    "image": "/tienda/images/lot-nadal-110.webp",
+    "alcohol": false,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "1",
+    "page": 3,
+    "costCents": 3090,
+    "suggestedRetailCents": 5500,
+    "name": {
+      "es": "El primer detalle",
+      "ca": "El primer detall"
+    },
+    "description": {
+      "es": "Cava Musa, vinos Terra de Pau y Fortius, queso, embutidos, paté, frutos secos, turrones, neulas y trufas.",
+      "ca": "Cava Musa, vins Terra de Pau i Fortius, formatge, embotits, paté, fruita seca, torrons, neules i trufes."
+    },
+    "image": "/tienda/images/lot-nadal-1.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "109",
+    "page": 39,
+    "costCents": 3390,
+    "suggestedRetailCents": 6000,
+    "name": {
+      "es": "Dulce Alemany",
+      "ca": "Dolç Alemany"
+    },
+    "description": {
+      "es": "Tres turrones de 125 g, dos mieles de 250 g y dos cremas de frutos secos y cacao de 200 g, en estuche Alemany.",
+      "ca": "Tres torrons de 125 g, dues mels de 250 g i dues cremes de fruita seca i cacau de 200 g, en estoig Alemany."
+    },
+    "image": "/tienda/images/lot-nadal-109.webp",
+    "alcohol": false,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "2",
+    "page": 3,
+    "costCents": 3690,
+    "suggestedRetailCents": 6900,
+    "name": {
+      "es": "La sobremesa",
+      "ca": "La sobretaula"
+    },
+    "description": {
+      "es": "Dos cavas Codorníu, vinos Nuviana, paleta loncheada, queso, embutidos, aceite, turrones y chocolate.",
+      "ca": "Dos caves Codorníu, vins Nuviana, espatlla llescada, formatge, embotits, oli, torrons i xocolata."
+    },
+    "image": "/tienda/images/lot-nadal-2.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "3",
+    "page": 4,
+    "costCents": 4450,
+    "suggestedRetailCents": 7900,
+    "name": {
+      "es": "Nadal a casa",
+      "ca": "Nadal a casa"
+    },
+    "description": {
+      "es": "Anís Marie Brizard, dos cavas Musa, tres vinos Séptimo Sentido, paleta loncheada, embutidos y dulces navideños.",
+      "ca": "Anís Marie Brizard, dos caves Musa, tres vins Séptimo Sentido, espatlla llescada, embotits i dolços nadalencs."
+    },
+    "image": "/tienda/images/lot-nadal-3.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "4",
+    "page": 4,
+    "costCents": 5180,
+    "suggestedRetailCents": 9500,
+    "name": {
+      "es": "Para compartir",
+      "ca": "Per compartir"
+    },
+    "description": {
+      "es": "Crema catalana Teichenne, cava Bach, vino Faustino y Terra de Pau, queso, paleta loncheada, embutidos y dulces.",
+      "ca": "Crema catalana Teichenne, cava Bach, vi Faustino i Terra de Pau, formatge, espatlla llescada, embotits i dolços."
+    },
+    "image": "/tienda/images/lot-nadal-4.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "15",
+    "page": 10,
+    "costCents": 5490,
+    "suggestedRetailCents": 9900,
+    "name": {
+      "es": "Espatlla i brindis",
+      "ca": "Espatlla i brindis"
+    },
+    "description": {
+      "es": "Paleta serrana Serón de 4,90–5,20 kg, queso Torremilano de 600 g, cava Codorníu y vino Marqués de Vitoria.",
+      "ca": "Espatlla serrana Serón de 4,90–5,20 kg, formatge Torremilano de 600 g, cava Codorníu i vi Marqués de Vitoria."
+    },
+    "image": "/tienda/images/lot-nadal-15.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "5",
+    "page": 5,
+    "costCents": 5940,
+    "suggestedRetailCents": 10900,
+    "name": {
+      "es": "El vermut de Nadal",
+      "ca": "El vermut de Nadal"
+    },
+    "description": {
+      "es": "Vermut Bandarra, cava Codorníu, vinos Masia 1187, paleta ibérica loncheada, queso, embutidos y dulces.",
+      "ca": "Vermut Bandarra, cava Codorníu, vins Masia 1187, espatlla ibèrica llescada, formatge, embotits i dolços."
+    },
+    "image": "/tienda/images/lot-nadal-5.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "6",
+    "page": 5,
+    "costCents": 6690,
+    "suggestedRetailCents": 11900,
+    "name": {
+      "es": "Una mesa generosa",
+      "ca": "Una taula generosa"
+    },
+    "description": {
+      "es": "Ron Negrita, cava Vallformosa, vinos Bach, queso, paleta ibérica loncheada, embutidos, conservas y dulces.",
+      "ca": "Rom Negrita, cava Vallformosa, vins Bach, formatge, espatlla ibèrica llescada, embotits, conserves i dolços."
+    },
+    "image": "/tienda/images/lot-nadal-6.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "7",
+    "page": 6,
+    "costCents": 7420,
+    "suggestedRetailCents": 13500,
+    "name": {
+      "es": "La celebración",
+      "ca": "La celebració"
+    },
+    "description": {
+      "es": "Vermut Cinzano, cava Musa, vinos Marqués de Vitoria, queso, paleta loncheada, embutidos, panettone y dulces.",
+      "ca": "Vermut Cinzano, cava Musa, vins Marqués de Vitoria, formatge, espatlla llescada, embotits, panettone i dolços."
+    },
+    "image": "/tienda/images/lot-nadal-7.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "8",
+    "page": 7,
+    "costCents": 8150,
+    "suggestedRetailCents": 14900,
+    "name": {
+      "es": "La gran sobremesa",
+      "ca": "La gran sobretaula"
+    },
+    "description": {
+      "es": "Whisky Cutty Sark, cava Codorníu, vinos Faustino y Raimat, paleta ibérica loncheada, queso, embutidos y dulces.",
+      "ca": "Whisky Cutty Sark, cava Codorníu, vins Faustino i Raimat, espatlla ibèrica llescada, formatge, embotits i dolços."
+    },
+    "image": "/tienda/images/lot-nadal-8.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "19",
+    "page": 11,
+    "costCents": 8090,
+    "suggestedRetailCents": 15900,
+    "name": {
+      "es": "Pernil a taula",
+      "ca": "Pernil a taula"
+    },
+    "description": {
+      "es": "Jamón serrano Serón de 6,90–7,20 kg, queso Don Ismael de 770 g, cava Vallformosa y vino Ederra.",
+      "ca": "Pernil serrà Serón de 6,90–7,20 kg, formatge Don Ismael de 770 g, cava Vallformosa i vi Ederra."
+    },
+    "image": "/tienda/images/lot-nadal-19.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "16",
+    "page": 10,
+    "costCents": 11590,
+    "suggestedRetailCents": 20900,
+    "name": {
+      "es": "Paleta ibérica de campo",
+      "ca": "Espatlla ibèrica de camp"
+    },
+    "description": {
+      "es": "Paleta ibérica de cebo de campo de 4,90–5,20 kg, queso curado de 800 g, cava Musa y vino Faustino crianza.",
+      "ca": "Espatlla ibèrica de camp de 4,90–5,20 kg, formatge curat de 800 g, cava Musa i vi Faustino criança."
+    },
+    "image": "/tienda/images/lot-nadal-16.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "12",
+    "page": 9,
+    "costCents": 12990,
+    "suggestedRetailCents": 22900,
+    "name": {
+      "es": "Ibérico para compartir",
+      "ca": "Ibèric per compartir"
+    },
+    "description": {
+      "es": "14 sobres de paleta de cebo ibérica Altanza de 80 g, queso, embutidos, cava, vinos y dulces en caja jamonera.",
+      "ca": "14 sobres d’espatlla ibèrica d’engreix Altanza de 80 g, formatge, embotits, cava, vins i dolços en caixa de pernil."
+    },
+    "image": "/tienda/images/lot-nadal-12.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "34",
+    "page": 16,
+    "costCents": 12940,
+    "suggestedRetailCents": 24900,
+    "name": {
+      "es": "El gran Nadal",
+      "ca": "El gran Nadal"
+    },
+    "description": {
+      "es": "Jamón serrano Serón de 6,90–7,20 kg, queso de cabra, lomo, embutidos, cava, vinos, conservas y dulces.",
+      "ca": "Pernil serrà Serón de 6,90–7,20 kg, formatge de cabra, llom, embotits, cava, vins, conserves i dolços."
+    },
+    "image": "/tienda/images/lot-nadal-34.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "17",
+    "page": 10,
+    "costCents": 15990,
+    "suggestedRetailCents": 28900,
+    "name": {
+      "es": "Paleta de bellota 100% ibérica",
+      "ca": "Espatlla de gla 100% ibèrica"
+    },
+    "description": {
+      "es": "Paleta de bellota 100% ibérica de 4,90–5,20 kg, queso curado de oveja de 720 g, cava Raimat y vino Viña Pomal crianza ecológico.",
+      "ca": "Espatlla de gla 100% ibèrica de 4,90–5,20 kg, formatge curat d’ovella de 720 g, cava Raimat i vi Viña Pomal criança ecològic."
+    },
+    "image": "/tienda/images/lot-nadal-17.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "40",
+    "page": 19,
+    "costCents": 19420,
+    "suggestedRetailCents": 34900,
+    "name": {
+      "es": "Reserva en madera",
+      "ca": "Reserva en fusta"
+    },
+    "description": {
+      "es": "Paleta de bellota 100% ibérica Altanza de 4,30–4,60 kg, queso Torremilano, lomo, salchichón, cava, vinos y dulces.",
+      "ca": "Espatlla de gla 100% ibèrica Altanza de 4,30–4,60 kg, formatge Torremilano, llom, llonganissa, cava, vins i dolços."
+    },
+    "image": "/tienda/images/lot-nadal-40.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "18",
+    "page": 10,
+    "costCents": 19990,
+    "suggestedRetailCents": 37500,
+    "name": {
+      "es": "Cinco Jotas esencial",
+      "ca": "Cinco Jotas essencial"
+    },
+    "description": {
+      "es": "Paleta de bellota 100% ibérica Cinco Jotas de 4,60–4,90 kg, queso La Casota de 800 g, cava Parxet y vino Lan Reserva.",
+      "ca": "Espatlla de gla 100% ibèrica Cinco Jotas de 4,60–4,90 kg, formatge La Casota de 800 g, cava Parxet i vi Lan Reserva."
+    },
+    "image": "/tienda/images/lot-nadal-18.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "29",
+    "page": 14,
+    "costCents": 24120,
+    "suggestedRetailCents": 42900,
+    "name": {
+      "es": "Cinco Jotas celebración",
+      "ca": "Cinco Jotas celebració"
+    },
+    "description": {
+      "es": "Paleta Cinco Jotas de 4,60–4,90 kg, queso Viriato, chorizo Sánchez Romero Carvajal, longaniza, aceite, cava, vinos y dulces.",
+      "ca": "Espatlla Cinco Jotas de 4,60–4,90 kg, formatge Viriato, xoriço Sánchez Romero Carvajal, llonganissa, oli, cava, vins i dolços."
+    },
+    "image": "/tienda/images/lot-nadal-29.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  },
+  {
+    "reference": "43",
+    "page": 20,
+    "costCents": 26440,
+    "suggestedRetailCents": 50000,
+    "name": {
+      "es": "La joya de Nadal",
+      "ca": "La joia de Nadal"
+    },
+    "description": {
+      "es": "Paleta Cinco Jotas de 4,60–4,90 kg en caja de madera, queso Viriato, chorizo Altanza, longaniza, cava, vinos, turrones y chocolates.",
+      "ca": "Espatlla Cinco Jotas de 4,60–4,90 kg en caixa de fusta, formatge Viriato, xoriço Altanza, llonganissa, cava, vins, torrons i xocolates."
+    },
+    "image": "/tienda/images/lot-nadal-43.webp",
+    "alcohol": true,
+    "singleTaxBps": null
+  }
+]
