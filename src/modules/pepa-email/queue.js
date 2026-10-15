@@ -174,7 +174,7 @@ export function registerRoutes(app,{pool,auth,urlencoded,queue,api=resendClient(
      const rows=validateImport(req.body);c=await pool.connect();await c.query('BEGIN');
      const control=(await c.query('SELECT active FROM pepa_email_control WHERE id=1 FOR UPDATE')).rows[0];
      if(control.active) throw Error('Pausa la cola antes de importar');
-     for(const r of rows) await c.query('INSERT INTO pepa_email_queue(email,position,basis,source_hash,token) VALUES($1,$2,$3,$4,$5) ON CONFLICT(email) DO NOTHING',[r.email,r.position,r.basis,req.body.source_sha256,randomBytes(32).toString('hex')]);
+     await c.query(`INSERT INTO pepa_email_queue(email,position,basis,source_hash,token) SELECT email,position,basis,$2,token FROM jsonb_to_recordset($1::jsonb) AS r(email text,position integer,basis text,token text) ON CONFLICT(email) DO NOTHING`,[JSON.stringify(rows.map(r=>({...r,token:randomBytes(32).toString('hex')}))),req.body.source_sha256]);
      await c.query('COMMIT');res.json({ok:true,imported:rows.length});
    }catch(e){if(c)await c.query('ROLLBACK');res.status(400).json({error:e.message});}finally{if(c)c.release();}
  });

@@ -45,12 +45,11 @@ export async function recoverCampaign({pool,api,pause=ms=>new Promise(r=>setTime
   if(sent.length<158) throw Error('Resend no acredita los 158 envíos conocidos');
   // Primero todos los enviados quedan protegidos, incluso si la consulta de detalles falla.
   await c.query('BEGIN');
-  for(const [email,row] of sent) {
-   const exists=await c.query('SELECT email FROM pepa_email_queue WHERE email=$1',[email]);
-   if(!exists.rowCount) throw Error('Destinatario enviado ajeno a la lista recuperada');
-   await c.query("UPDATE pepa_email_queue SET status=CASE WHEN status='excluded' THEN status ELSE 'accepted' END,resend_id=$2,attempted_at=$3,reason=CASE WHEN resend_id IS DISTINCT FROM $2 THEN 'recuperar enlace original' ELSE reason END WHERE email=$1",[email,row.id,row.created_at]);
-   await c.query("INSERT INTO pepa_email_exclusions(email,reason) VALUES($1,'Recuperación: enviado anteriormente, no reenviar') ON CONFLICT DO NOTHING",[email]);
-  }
+  const records=JSON.stringify(sent.map(([email,r])=>({email,id:r.id,created_at:r.created_at})));
+  const missing=await c.query(`SELECT s.email FROM jsonb_to_recordset($1::jsonb) AS s(email text,id text,created_at text) LEFT JOIN pepa_email_queue q USING(email) WHERE q.email IS NULL LIMIT 1`,[records]);
+  if(missing.rowCount) throw Error('Destinatario enviado ajeno a la lista recuperada');
+  await c.query(`UPDATE pepa_email_queue q SET status=CASE WHEN q.status='excluded' THEN q.status ELSE 'accepted' END,resend_id=s.id,attempted_at=s.created_at::timestamptz,reason=CASE WHEN q.resend_id IS DISTINCT FROM s.id THEN 'recuperar enlace original' ELSE q.reason END FROM jsonb_to_recordset($1::jsonb) AS s(email text,id text,created_at text) WHERE q.email=s.email`,[records]);
+  await c.query(`INSERT INTO pepa_email_exclusions(email,reason) SELECT s.email,'Recuperación: enviado anteriormente, no reenviar' FROM jsonb_to_recordset($1::jsonb) AS s(email text,id text,created_at text) ON CONFLICT DO NOTHING`,[records]);
   await c.query('COMMIT');
   const pending=(await c.query("SELECT email,resend_id FROM pepa_email_queue WHERE reason='recuperar enlace original' ORDER BY position LIMIT 10")).rows;
   for(const row of pending) {
