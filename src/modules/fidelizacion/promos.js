@@ -162,10 +162,20 @@ export function enMadrid(iso) {
  * Devuelve siempre un motivo cuando no: es lo que se enseña en el simulador y lo que explica a un
  * camarero por qué un cliente no ve su premio.
  */
+export function localesPromo(promo) {
+  // Las filas antiguas conservan su ámbito. Una lista nueva vacía no significa todos.
+  if (promo?.locales != null) return [...new Set(leerLista(promo.locales).map(String))];
+  return promo?.local ? [String(promo.local)] : [];
+}
+export function promoEnLocal(promo, local) {
+  const ls = localesPromo(promo);
+  return ls.length ? ls.includes(String(local)) : promo?.locales == null && !promo?.local;
+}
+
 export function vigente(promo, { ahora, local }) {
   if (!promo) return { ok: false, motivo: "no_existe" };
   if (!estaPublicada(promo)) return { ok: false, motivo: `estado_${promo.estado || "desconocido"}` };
-  if (promo.local && String(promo.local) !== String(local)) return { ok: false, motivo: "otro_local" };
+  if (!promoEnLocal(promo, local)) return { ok: false, motivo: "otro_local" };
 
   const m = enMadrid(ahora);
   if (!m) return { ok: false, motivo: "fecha_no_valida" };
@@ -312,7 +322,7 @@ export function puedePublicar(promo, { grupos = {}, catalogo = null } = {}) {
     // hace creer que sí. Se dice, en vez de borrarlo por detrás.
     falta.push("Este tipo de premio no lleva código de Ágora. Bórralo o cambia el tipo a «Oferta de Ágora».");
   }
-  if (!promo?.local) falta.push("Falta el local, o marcarla como global.");
+  if (!localesPromo(promo).length) falta.push("Selecciona al menos un local para la promoción.");
   if (promo?.desde && promo?.hasta && String(promo.desde) > String(promo.hasta)) {
     falta.push("La fecha de inicio es posterior a la de final.");
   }

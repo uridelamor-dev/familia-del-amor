@@ -3252,7 +3252,7 @@ let REV_CUTOFF = null;
 async function revInformes() {
   const result=await apiSend('GET','/api/reviews/informes');
   const states={pendiente:'Programado',preparada:'Envío en curso',enviando:'Esperando confirmación de WhatsApp',enviada:'Enviado',incierta:'Revisar envío en WhatsApp'};
-  modal('Informes mensuales de reseñas', `<p>Entrega privada a Uriel · 622149946. Septiembre: prueba al publicar. Octubre: 1 de noviembre, 10:00. Sin envíos a los locales ni entregas posteriores programadas.</p>${!result.produccion?'<p class="mut">Vista de desarrollo: los envíos están desactivados.</p>':''}${result.data.map(j=>`<section style="margin-top:20px"><h3>${esc(j.mes)}${j.prueba?' · Prueba de formato':''}</h3><p>${esc(states[j.estado] || j.estado)} · ${j.enviados || 0} de ${j.mensajes?.length || '—'} mensajes confirmados</p>${j.error?`<p class="pendingblock">${esc(j.error)}</p>`:''}${(j.mensajes||[]).map(m=>`<details style="margin:12px 0"><summary>${esc(m.split('\n')[1]?.replaceAll('*','') || 'Resumen')}</summary><p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(m)}</p></details>`).join('')}${(j.informe?.locales||[]).map(l=>`<details style="margin:12px 0"><summary>Reseñas originales · ${esc(l.nombre)} (${l.rows.length})</summary>${l.rows.map(r=>`<div style="border-top:1px solid var(--line);padding:12px 0;overflow-wrap:anywhere"><b>${r.rating}/5 · ${esc(r.fecha.slice(0,10))}</b><p>${esc(r.text || 'Solo puntuación')}</p>${['positivos','negativos'].flatMap(side=>(l[side]||[]).filter(t=>t.ids.includes(r.id)).map(t=>`<p class="mut">Tema: ${esc(t.tema)}</p>`)).join('')}</div>`).join('')}</details>`).join('')}</section>`).join('')}`);
+  modal('Informes mensuales de reseñas', `<p>Entrega privada a Uriel · 622149946. Septiembre: prueba al publicar. Octubre: 1 de noviembre, 10:00. Sin envíos a los locales ni entregas posteriores programadas.</p>${!result.produccion?'<p class="mut">Vista de desarrollo: los envíos están desactivados.</p>':''}${result.data.map(j=>`<section style="margin-top:20px"><h3>${esc(j.mes)}${j.prueba?' · Prueba de formato':''}</h3><p>${esc(states[j.estado] || j.estado)} · ${j.enviados || 0} de ${j.mensajes?.length || '—'} mensajes confirmados</p>${j.error?`<p class="pendingblock">${esc(j.error)}</p>`:''}${(j.mensajes||[]).map(m=>`<details style="margin:12px 0"><summary>${esc(m.split('\n')[1]?.replaceAll('*','') || 'Resumen')}</summary><p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(m)}</p></details>`).join('')}${(j.informe?.locales||[]).map(l=>`<details style="margin:12px 0"><summary>Reseñas originales · ${esc(l.nombre)} (${l.rows.length})</summary>${l.rows.map(r=>`<div style="border-top:1px solid var(--border);padding:12px 0;overflow-wrap:anywhere"><b>${r.rating}/5 · ${esc(r.fecha.slice(0,10))}</b><p>${esc(r.text || 'Solo puntuación')}</p>${['positivos','negativos'].flatMap(side=>(l[side]||[]).filter(t=>t.ids.includes(r.id)).map(t=>`<p class="mut">Tema: ${esc(t.tema)}</p>`)).join('')}</div>`).join('')}</details>`).join('')}</section>`).join('')}`);
 }
 
 async function revRepaso(automatico = false, offset = 0) {
@@ -3272,7 +3272,7 @@ async function revRepaso(automatico = false, offset = 0) {
   const estados = {pendiente:'Por analizar',cola:'En cola',omitir:'Sin respuesta automática',enviando:'Verificando envío',enviada:'Publicada',incierta:'Envío sin confirmar',error:'No se pudo analizar'};
   const activo = ['analizando','cola'].includes(c.state);
   const fecha = new Date(c.cutoff).toLocaleString('es-ES');
-  const filas = d.items.map(r=>`<details style="padding:12px 0;border-top:1px solid var(--line)"><summary style="cursor:pointer"><b>${esc(r.author || 'Cliente')}</b> · ${esc(r.local)} · ${esc(estados[r.state] || r.state)}</summary><p class="mut">${esc(r.fecha || '')}</p><p>${esc(r.text || 'Solo puntuación')}</p><p>${esc(r.reason || 'Pendiente de análisis')}</p>${r.reply ? `<div class="revreply">${esc(r.reply)}</div>` : ''}</details>`).join('');
+  const filas = d.items.map(r=>`<details style="padding:12px 0;border-top:1px solid var(--border)"><summary style="cursor:pointer"><b>${esc(r.author || 'Cliente')}</b> · ${esc(r.local)} · ${esc(estados[r.state] || r.state)}</summary><p class="mut">${esc(r.fecha || '')}</p><p>${esc(r.text || 'Solo puntuación')}</p><p>${esc(r.reason || 'Pendiente de análisis')}</p>${r.reply ? `<div class="revreply">${esc(r.reply)}</div>` : ''}</details>`).join('');
   const ov = modal('Repaso único de reseñas', `
     <p>Las reseñas anteriores al <b>${esc(fecha)}</b> forman el histórico. Las pendientes de Laura cuentan solo las nuevas sin respuesta desde ese momento.</p>
     <p class="mut">El histórico sigue disponible y no se marca como respondido si no se ha publicado una respuesta en Google.</p>
@@ -4411,6 +4411,49 @@ async function rrNotaDel(id) {
  * sabe el nombre del operador y a qué hay que enlazarlo. Lo que NO se rellena solo es el rol,
  * las horas y las áreas — que es justo lo que el TPV no sabe y lo que decide una persona.
  */
+function rrAltaPasos(ov) {
+  const form = ov.querySelector('#fWorker');
+  const originales = [...form.children];
+  const crear = form.querySelector('[type="submit"]');
+  form.classList.remove('grid');
+  const flujo = marketingPasos(form, ['Datos de la persona', 'Local y trabajo', 'Acceso y datos adicionales', 'Revisar y crear']);
+  const mover = (i,n) => {
+    const el = form.querySelector(`[name="${n}"]`);
+    if (el) flujo.cuerpos[i].append(el.closest('.field') || el);
+  };
+  ['nombre','telefono','email','fecha_nac'].forEach(n=>mover(0,n));
+  ['local','rol','puesto','fecha_alta','tipo_jornada','tipo_contrato','horas_semana'].forEach(n=>mover(1,n));
+  flujo.cuerpos[1].append(form.querySelector('#altaAreas').parentElement);
+  const localFijo=form.querySelector('[name="local"][type="hidden"]');
+  if(localFijo)flujo.cuerpos[1].insertAdjacentHTML('afterbegin',`<p class="promo-note">Local: <b>${esc(localFijo.value)}</b></p>`);
+  if(form.querySelector('[name="horas_semana"]'))flujo.cuerpos[1].insertAdjacentHTML('beforeend','<p class="mut">Sin horas contratadas no se incluirá en el reparto automático de turnos.</p>');
+  ['username','pin'].forEach(n=>mover(2,n));
+  const extra=document.createElement('details');extra.className='promo-help';extra.innerHTML='<summary>Documentación y datos administrativos (puedes completarlos después)</summary>';
+  for(const n of ['dni','direccion','iban','talla_ropa']) {const el=form.querySelector(`[name="${n}"]`);if(el)extra.append(el.closest('.field'));}
+  if(extra.querySelector('input'))flujo.cuerpos[2].append(extra);
+  const resumen=document.createElement('div');resumen.className='promo-note';resumen.setAttribute('aria-live','polite');flujo.cuerpos[3].append(resumen);
+  // Las notas de acceso y del enlace de Ágora siguen visibles antes de confirmar.
+  originales.filter(el=>el.tagName==='P').forEach(el=>flujo.cuerpos[3].append(el));
+  flujo.cuerpos[3].insertAdjacentHTML('beforeend','<p class="mut">Se creará la ficha interna. Esto no solicita ni confirma el alta laboral en gestoría. Puedes completar los datos pendientes después.</p>');
+  flujo.cuerpos[3].append(crear);
+  originales.forEach(el=>{if(el.parentNode===form)el.remove();});
+  ov.querySelector('.modal').classList.add('campaign-modal');
+  form.querySelectorAll('.field > label').forEach((label,i)=>{const el=label.parentNode.querySelector('input:not([type="hidden"]),select');if(el){el.id ||= `rrAltaCampo${i}`;label.htmlFor=el.id;}});
+  const revisar=()=>{
+    const v=n=>form.querySelector(`[name="${n}"]`)?.value || '';
+    const filas=[['Nombre',v('nombre')||'Falta el nombre'],['Local',v('local')||'Falta el local'],['Rol',v('rol')],['Puesto',v('puesto')||'Pendiente'],['Incorporación',v('fecha_alta')||'Pendiente'],['Horas semanales',v('horas_semana')||'Pendientes de configurar'],['Usuario',v('username')||'Falta el usuario'],['PIN',v('pin')?'Configurado (no se muestra)':'Pendiente']];
+    resumen.innerHTML=`<dl class="promo-review">${filas.map(([k,v])=>`<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
+  };
+  form.addEventListener('input',revisar);form.addEventListener('change',revisar);flujo.pasos[3].addEventListener('toggle',revisar);revisar();
+  // Un requerido en un paso cerrado debe abrirse antes de mostrar el error del navegador.
+  form.noValidate=true;
+  form.addEventListener('submit',e=>{
+    const invalid=form.querySelector(':invalid');
+    if(invalid){e.preventDefault();e.stopImmediatePropagation();const i=flujo.pasos.findIndex(p=>p.contains(invalid));if(i>=0)flujo.abrir(i);invalid.reportValidity();return;}
+    if(!flujo.pasos[3].open){e.preventDefault();e.stopImmediatePropagation();flujo.abrir(3);}
+  },true);
+}
+
 function rrWorkerAdd(pre = {}) {
   // Alta vía endpoint propio de RRHH: el encargado puede crear en SU local (rol fijo trabajador).
   const enc = USER.rol === "encargado";
@@ -4463,21 +4506,26 @@ function rrWorkerAdd(pre = {}) {
       le sugerirá el sistema es cambiarla. El PIN de fichaje es independiente.</p>
     <button class="btn primary" type="submit">Crear trabajador</button></form>`);
 
+  rrAltaPasos(ov);
   const jornadaAlta = ov.querySelector('[name=tipo_jornada]');
   jornadaAlta?.addEventListener('change',()=>{ov.querySelector('[name=horas_semana]').required=jornadaAlta.value==='parcial';});
   // Las áreas son las del local elegido, y se recargan si se cambia: ofrecer las de Blanes
   // para alguien de Lloret sería regalar un id que el servidor va a rechazar.
+  let consultaAreas = 0;
   async function cargarAreas() {
+    const consulta = ++consultaAreas;
     const caja = ov.querySelector("#altaAreas");
     const local = ov.querySelector("[name=local]")?.value || USER.local || "";
+    caja.textContent = local ? "Cargando las áreas…" : "Selecciona un local para ver sus áreas.";
     if (!local) return;
     try {
       const r = await apiRaw("/api/horarios/plantilla?local=" + encodeURIComponent(local));
+      if (consulta !== consultaAreas || !ov.isConnected) return;
       const act = (r.areas || []).filter((a) => a.activo !== false);
       caja.innerHTML = act.length
         ? `<div class="chips">${act.map((a) => `<label class="chip"><input type="checkbox" class="altaArea" value="${a.id}" hidden> ${esc(a.nombre)}</label>`).join("")}</div>`
         : '<span class="mut">Este establecimiento todavía no tiene áreas.</span>';
-    } catch { caja.innerHTML = '<span class="mut">No se han podido cargar las áreas. Se pueden poner después.</span>'; }
+    } catch { if (consulta === consultaAreas) caja.innerHTML = '<span class="mut">No se han podido cargar las áreas. Se pueden poner después.</span>'; }
   }
   ov.querySelector("[name=local]")?.addEventListener("change", cargarAreas);
   cargarAreas();
@@ -8092,30 +8140,49 @@ async function proveedorUnir(origen, ficha) {
  let proveedores;
  try { proveedores=(await apiRaw('/api/facturas/proveedores-unir')).proveedores||[]; }
  catch(e){return toast(e.message);}
- const ov=modal('Unir proveedores',`<p>Estás uniendo <b>${esc(origen)}</b>. Elige la ficha que quieres conservar. Sus facturas quedarán juntas, sin eliminar documentos.</p>
- <div class="field prov-union-field"><label>Proveedor que se conserva<select id="puDestino"><option value="">Elegir proveedor…</option>${proveedores.filter(n=>n!==origen).map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select></label></div>
- <div id="puResumen" aria-live="polite"></div><div class="toolbar" style="justify-content:flex-end;margin-top:18px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="puRevisar">Revisar unión</button></div>`);
- const select=ov.querySelector('#puDestino'), result=ov.querySelector('#puResumen'), btn=ov.querySelector('#puRevisar');
- let plan=null;
- select.onchange=()=>{plan=null;result.innerHTML='';btn.textContent='Revisar unión';};
+ const ov=modal('Unir proveedores','<div id="puFlujo"></div>');
+ const flujo=marketingPasos(ov.querySelector('#puFlujo'),['Elegir la ficha que se conserva','Revisar las diferencias','Confirmar la unión']);
+ ov.querySelector('.modal').classList.add('campaign-modal');
+ flujo.cuerpos[0].innerHTML=`<p>Unirás la ficha <b>${esc(origen)}</b> con otro proveedor. Sus documentos quedarán juntos.</p><div class="field prov-union-field"><label for="puDestino">Proveedor que se conserva</label><select id="puDestino"><option value="">Elegir proveedor…</option>${proveedores.filter(n=>n!==origen).map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select></div>`;
+ flujo.cuerpos[1].innerHTML='<div id="puDiferencias" aria-live="polite">Elige primero el proveedor.</div><button class="btn" type="button" id="puRevisar">Comprobar diferencias</button>';
+ flujo.cuerpos[2].innerHTML='<div id="puResumen" aria-live="polite"></div><p class="mut">Se conservarán los originales, los importes y los NIF de las facturas. Guardaremos una copia de los datos anteriores y pondremos en cola la actualización de Sheets y Drive.</p><div class="promo-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="puConfirmar" disabled>Confirmar unión</button></div>';
+ const select=ov.querySelector('#puDestino'), result=ov.querySelector('#puDiferencias'), btn=ov.querySelector('#puConfirmar');
+ let plan=null, consulta=0, uniendo=false;
+ const elecciones=()=>Object.fromEntries((plan?.conflictos||[]).map((c,i)=>[c.id,c.id==='nifs'?(ov.querySelector(`[data-pu-nif="${i}"]`)?.checked?'destino':''):(ov.querySelector(`[data-pu-choice="${i}"]`)?.value||'')]));
+ const resumen=()=>{
+   const completo=plan && Object.values(elecciones()).every(Boolean);
+   btn.disabled=uniendo || !completo;
+   ov.querySelector('#puResumen').innerHTML=plan?`<p><b>Se conserva:</b> ${esc(plan.destino)}<br><b>Se une:</b> ${esc(origen)}</p><p>${num(plan.facturas)} documentos registrados y ${num(plan.pendientes)} pendientes quedarán bajo la ficha conservada.</p>${completo?'<p>Las diferencias están revisadas.</p>':'<p>Vuelve al paso 2 y elige qué datos conservar.</p>'}`:'<p>Selecciona el proveedor y comprueba las diferencias antes de confirmar.</p>';
+ };
+ const invalidar=()=>{consulta++;plan=null;result.textContent='Comprueba las diferencias del proveedor elegido.';resumen();};
+ select.onchange=invalidar;
  const mostrar=v=>typeof v==='string'?v:JSON.stringify(v,null,2);
+ const revisar=async()=>{
+   if(!select.value){flujo.abrir(0);select.focus();return;}
+   const n=++consulta,destino=select.value;
+   plan=null;result.textContent='Comprobando documentos y fichas…';resumen();
+   try {
+    const nuevo=await apiSend('POST','/api/facturas/proveedores-unir/preview',{origen,destino});
+    if(n!==consulta || destino!==select.value || !ov.isConnected)return;
+    plan=nuevo;
+    result.innerHTML=`${plan.conflictos.length?'<p>Elige qué dato conservar en cada diferencia.</p>':'<p>No hay datos en conflicto. Puedes continuar a la confirmación.</p>'}${plan.conflictos.map((c,i)=>c.id==='nifs'?`<div class="field prov-union-field"><label><input type="checkbox" data-pu-nif="${i}"> Confirmo que estos NIF corresponden al proveedor que quiero unir: ${esc(c.origen.join(', '))}</label></div>`:`<div class="field prov-union-field"><label>${esc(c.etiqueta)}<select data-pu-choice="${i}"><option value="">Elige qué conservar…</option><option value="destino">Conservar el de ${esc(plan.destino)}</option><option value="origen">Conservar el de ${esc(origen)}</option></select></label><details><summary>Comparar datos</summary><p><b>${esc(origen)}</b></p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(mostrar(c.origen))}</pre><p><b>${esc(plan.destino)}</b></p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(mostrar(c.destino))}</pre></details></div>`).join('')}`;
+    resumen();
+   }catch(e){if(n===consulta){result.textContent=e.message;resumen();}}
+ };
+ ov.querySelector('#puRevisar').onclick=revisar;
+ flujo.pasos[1].addEventListener('toggle',()=>{if(flujo.pasos[1].open && !plan)revisar();});
+ flujo.pasos[2].addEventListener('toggle',resumen);
+ result.addEventListener('change',resumen);resumen();
  btn.onclick=async()=>{
-  btn.disabled=true;
+  if(uniendo || !plan || Object.values(elecciones()).some(v=>!v))return;
+  uniendo=true;
+  btn.disabled=true;select.disabled=true;
+  const revision=plan;
   try {
-   if(!plan){
-    if(!select.value)throw new Error('Elige el proveedor que se conserva.');
-    plan=await apiSend('POST','/api/facturas/proveedores-unir/preview',{origen,destino:select.value});
-    result.innerHTML=`<p><b>${num(plan.facturas)} documentos registrados y ${num(plan.pendientes)} pendientes</b> quedarán bajo «${esc(plan.destino)}».</p><p class="mut">Se conservarán los originales, los importes y los NIF de las facturas. Guardaremos una copia de los datos anteriores y pondremos en cola la actualización de Sheets y Drive.</p>${plan.conflictos.length?'<h3>Revisa estas diferencias</h3>':'<p>No hay datos en conflicto.</p>'}${plan.conflictos.map((c,i)=>c.id==='nifs'?`<div class="field prov-union-field"><label><input type="checkbox" data-pu-nif="${i}"> Confirmo que estos NIF corresponden al proveedor que quiero unir: ${esc(c.origen.join(', '))}</label></div>`:`<div class="field prov-union-field"><label>${esc(c.etiqueta)}<select data-pu-choice="${i}"><option value="">Elige qué conservar…</option><option value="destino">Conservar el de ${esc(plan.destino)}</option><option value="origen">Conservar el de ${esc(origen)}</option></select></label><details><summary>Comparar datos</summary><p><b>${esc(origen)}</b></p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(mostrar(c.origen))}</pre><p><b>${esc(plan.destino)}</b></p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(mostrar(c.destino))}</pre></details></div>`).join('')}`;
-    btn.textContent='Confirmar unión';
-   }else{
-    const elecciones={};
-    plan.conflictos.forEach((c,i)=>{const el=ov.querySelector(`[data-pu-choice="${i}"]`);elecciones[c.id]=c.id==='nifs'?(ov.querySelector(`[data-pu-nif="${i}"]`).checked?'destino':''):el.value;});
-    if(Object.values(elecciones).some(v=>!v))throw new Error('Revisa todas las diferencias antes de confirmar.');
-    await apiSend('POST','/api/facturas/proveedores-unir',{origen,destino:plan.destino,revision:plan.revision,elecciones});
+    await apiSend('POST','/api/facturas/proveedores-unir',{origen,destino:revision.destino,revision:revision.revision,elecciones:elecciones()});
     ov.remove();ficha.remove();toast('Proveedores unidos. Sheets y Drive se actualizarán en segundo plano.');
     if(CURRENT==='proveedores')loadProveedores();
-   }
-  }catch(e){toast(e.message);if(e.message.includes('han cambiado')){plan=null;result.innerHTML='';btn.textContent='Revisar unión';}}finally{btn.disabled=false;}
+  }catch(e){toast(e.message);if(e.message.includes('han cambiado')){invalidar();flujo.abrir(1);}}finally{uniendo=false;select.disabled=false;resumen();}
  };
 }
 
@@ -9186,7 +9253,46 @@ function facFicha(id) {
     try { await apiSend("PATCH", "/api/facturas/" + id + "/pago"); ov.remove(); toast("Estado de pago actualizado"); loadFacturas(); } catch (e) { toast("Error: " + e.message); }
   });
 }
-async function facExport() { try { const r = await fetch("/api/facturas/export.csv" + (facQS() ? "?" + facQS() : ""), { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) { toast("No se pudo exportar"); return; } const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "facturas.csv"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); } catch { toast("No se pudo exportar"); } }
+function facExport(seleccion = false) {
+  const ids=[...FAC_SEL];
+  const filtros=new URLSearchParams(facQS());
+  const locales=visiblesFE(null,LOCALES);
+  const ov=modal('Exportar facturas','<div id="fxFlujo"></div>');
+  ov.querySelector('.modal').classList.add('campaign-modal');
+  const flujo=marketingPasos(ov.querySelector('#fxFlujo'),['Qué quieres exportar','Formato de descarga','Revisar y descargar']);
+  flujo.cuerpos[0].innerHTML=`<div class="field"><label for="fxAlcance">Documentos</label><select id="fxAlcance"><option value="filtro">Los que coinciden con los filtros</option>${ids.length?`<option value="seleccion" ${seleccion?'selected':''}>Solo las ${ids.length} facturas seleccionadas</option>`:''}</select></div><div id="fxFiltros"><div class="field"><label for="fxLocal">Local</label><select id="fxLocal"><option value="">Todos los locales permitidos</option>${[...new Set([...locales,...(filtros.get('local')?[filtros.get('local')]:[])])].map(l=>`<option value="${esc(l)}" ${filtros.get('local')===l?'selected':''}>${esc(l)}</option>`).join('')}</select></div><div class="promo-pair"><div class="field"><label for="fxDesde">Desde</label><input id="fxDesde" type="date" value="${esc(filtros.get('from')||'')}"></div><div class="field"><label for="fxHasta">Hasta</label><input id="fxHasta" type="date" value="${esc(filtros.get('to')||'')}"></div></div><p class="mut">Se mantienen los demás filtros de la lista. Estas fechas y local solo afectan a la descarga.</p></div>`;
+  flujo.cuerpos[1].innerHTML='<div class="field"><label for="fxFormato">Formato</label><select id="fxFormato"><option value="csv">Hoja de cálculo (CSV)</option><option value="zip">Documentos originales (ZIP)</option></select></div><p id="fxAyuda" class="promo-note"></p>';
+  flujo.cuerpos[2].innerHTML='<div id="fxResumen" class="promo-note" aria-live="polite"></div><p id="fxError" role="alert"></p><div class="promo-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="fxDescargar">Descargar CSV</button></div>';
+  const valor=id=>ov.querySelector(id).value;
+  const query=()=>{const q=new URLSearchParams(filtros);for(const [id,k] of [['#fxLocal','local'],['#fxDesde','from'],['#fxHasta','to']]){const v=valor(id);if(v)q.set(k,v);else q.delete(k);}return q.toString();};
+  const etiquetas={local:'Local',from:'Desde',to:'Hasta',categoria:'Categoría',subcategoria:'Subcategoría',empresa:'Empresa',proveedor:'Proveedor',estado:'Estado',tipo:'Tipo',q:'Búsqueda'};
+  const pintar=()=>{
+    const sel=valor('#fxAlcance')==='seleccion';
+    ov.querySelector('#fxFiltros').hidden=sel;
+    const formato=ov.querySelector('#fxFormato');formato.querySelector('[value="zip"]').disabled=!sel;
+    if(!sel && formato.value==='zip')formato.value='csv';
+    ov.querySelector('#fxAyuda').textContent=formato.value==='zip'?'Descarga los originales disponibles de las facturas seleccionadas. Se avisará si falta algún archivo.':'Exporta los datos para abrirlos en una hoja de cálculo. Para descargar originales, selecciona las facturas en la lista y elige ZIP.';
+    const datos=[...new URLSearchParams(query())];
+    ov.querySelector('#fxResumen').innerHTML=sel?`<p><b>${ids.length} facturas seleccionadas</b>. Se exportarán esas mismas, sin aplicar los filtros de fecha o local de este modal.</p>`:`<p><b>Todas las facturas que coincidan con estos filtros</b>, incluidas las que no estén visibles en la página actual.</p>${datos.length?`<dl class="promo-review">${datos.map(([k,v])=>`<div><dt>${esc(etiquetas[k]||k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`:'<p>Sin filtros adicionales: todos los documentos a los que tienes acceso.</p>'}`;
+    ov.querySelector('#fxDescargar').textContent=formato.value==='zip'?'Descargar ZIP':'Descargar CSV';
+  };
+  ov.addEventListener('change',pintar);pintar();
+  ov.querySelector('#fxDescargar').onclick=async()=>{
+    const sel=valor('#fxAlcance')==='seleccion',zip=valor('#fxFormato')==='zip';
+    if(!sel && valor('#fxDesde') && valor('#fxHasta') && valor('#fxDesde')>valor('#fxHasta')){flujo.abrir(0);toast('La fecha final debe ser posterior a la inicial.');return;}
+    const btn=ov.querySelector('#fxDescargar');btn.disabled=true;
+    try {
+      const url=sel?`/api/facturas/export.${zip?'zip':'csv'}`:'/api/facturas/export.csv'+(query()?'?'+query():'');
+      const opts=sel?{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token()},body:JSON.stringify({ids})}:{headers:{Authorization:'Bearer '+token()}};
+      const r=await fetch(url,opts);
+      if(!r.ok)throw Error('No se pudo preparar la descarga. Vuelve a intentarlo.');
+      bajarBlob(await r.blob(),`facturas${sel?'-seleccion-'+ids.length:''}.${zip?'zip':'csv'}`);
+      const faltan=Number(r.headers.get('X-Faltan'))||0;
+      ov.remove();toast(faltan?`Descargado. ${faltan} documentos no tenían archivo disponible.`:'Descarga preparada');
+    }catch(e){ov.querySelector('#fxError').textContent=e.message;}finally{btn.disabled=false;}
+  };
+}
+
 // ── Subir factura (pantalla del encargado) ──────────────────────────────────
 // Se hace desde el móvil, de pie en la barra y con el albarán en la mano, así que es una sola
 // pantalla: un botón grande de cámara, otro de archivo y la lista de lo que llevas subido hoy.
@@ -12308,7 +12414,11 @@ function fidgPromoResumen(p) {
   } else {
     trozos.push(esc(FIDG_TIPO_TXT[p.tipo] || p.tipo));
   }
-  trozos.push(esc(p.local || "todos los locales"));
+  trozos.push(esc(fidgPromoLocales(p).join(", ") || "todos los locales"));
+  const dias = fidgPromoDias(p.dias);
+  trozos.push(dias.length && dias.length < 7 ? dias.map(d => ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"][d]).join(", ") : "todos los días");
+  if (p.hora_desde || p.hora_hasta) trozos.push(`${esc(p.hora_desde || "00:00")} - ${esc(p.hora_hasta || "24:00")}`);
+  if (!p.codigo_agora && p.valor != null) trozos.push(esc(String(p.valor)) + (p.tipo === "descuento_pct" ? " %" : " €"));
   trozos.push(p.desde || p.hasta
     ? `${esc(p.desde || "sin inicio")} → ${esc(p.hasta || "sin final")}`
     : "sin fechas");
@@ -12324,9 +12434,22 @@ function fidgPromoResumen(p) {
 }
 
 function renderFidgPromos() {
-  const filas = (FIDG.promos || []).map((p) => fgFila(`<div class="t1">${esc(p.nombre)} <span class="mut">v${p.version}</span></div><div class="mut" style="font-size:12px">${fidgPromoResumen(p)}</div>`, `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${p.estado === "publicada" ? "ok" : p.estado === "pausada" ? "warn" : ""}">${esc(p.estado)}</span><button class="btn sm" data-act="fidg-promo-nueva" data-id="${p.id}">${p.estado === "borrador" ? "Seguir editando" : "Copiar"}</button>${p.estado === "publicada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="pausada">Pausar</button>` : ""}${p.estado === "pausada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="publicada">Reanudar</button>` : ""}</span>`)).join("");
-  return `<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn primary sm" data-act="fidg-promo-nueva">Nueva promoción…</button><button class="btn sm" data-act="fidg-propuesta" data-c="desayuno-girona">Propuesta: desayuno de Girona</button></div>
-    <div class="rows">${filas || '<div class="mut">Todavía no hay ninguna.</div>'}</div>`;
+  const lista = FIDG.promos || [];
+  const hoy = todayStr();
+  const vencida = p => p.hasta && String(p.hasta).slice(0, 10) < hoy;
+  const ultimas = new Map();
+  for (const p of lista) {
+    const actual = ultimas.get(p.clave);
+    if (!actual || Number(p.version) > Number(actual.version)) ultimas.set(p.clave, p);
+  }
+  // Una publicada sigue visible aunque haya un borrador posterior. Nada se elimina.
+  const visibles = lista.filter(p => (["publicada", "pausada"].includes(p.estado) && !vencida(p)) || (p.estado === "borrador" && ultimas.get(p.clave) === p));
+  const anteriores = lista.filter(p => !visibles.includes(p));
+  const fila = (p) => fgFila(`<div class="t1">${esc(p.nombre)}</div><div class="mut" style="font-size:12px">${fidgPromoResumen(p)}</div>`, `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${p.estado === "publicada" ? "ok" : p.estado === "pausada" ? "warn" : ""}">${esc(vencida(p) && p.estado !== "finalizada" ? "Periodo terminado" : p.estado)}</span><button class="btn sm" data-act="fidg-promo-nueva" data-id="${p.id}">${p.estado === "borrador" ? "Continuar borrador" : p.estado === "finalizada" ? "Reutilizar" : "Editar"}</button>${p.estado === "publicada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="pausada">Pausar</button>` : ""}${p.estado === "pausada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="publicada">Reanudar</button>` : ""}</span>`);
+  return `<div class="promo-actions"><button class="btn primary" data-act="fidg-promo-nueva">Crear promoción</button></div>
+    <div class="rows promo-list">${visibles.map(fila).join("") || '<p class="mut">Crea tu primera promoción para ofrecer un beneficio al escanear el carnet.</p>'}</div>
+    ${anteriores.length ? `<details class="promo-help"><summary>Historial y borradores anteriores (${anteriores.length})</summary><div class="rows promo-list">${anteriores.map(p => `<div><small class="mut">Versión ${esc(String(p.version))}</small>${fila(p)}</div>`).join("")}</div></details>` : ""}
+    <details class="promo-help"><summary>Plantillas de ejemplo</summary><p class="mut">Abren una propuesta para adaptar; no publican nada.</p><button class="btn sm" data-act="fidg-propuesta" data-c="desayuno-girona">Desayuno de Girona</button></details>`;
 }
 
 /**
@@ -12684,77 +12807,125 @@ const avisoCopia = (v, { editar = false } = {}) => {
 // ── PROMOCIONES ──────────────────────────────────────────────────────────────
 async function fidgPromoNueva(desdeId) {
   const base = desdeId ? (FIDG.promos || []).find((p) => String(p.id) === String(desdeId)) : null;
-  const locales = [["", "Todos los locales"], ...(FID.locales || []).map((l) => [l.local, l.local])];
-  const tipos = Object.keys(FIDG.tipos || {}).map((t) => [t, FIDG_TIPO_TXT[t] || t]);
-  const ov = modal(base ? "Copiar promoción" : "Nueva promoción", `
-    ${avisoCopia(base && base.estado === "publicada" ? base.version : null)}
-    ${fgCampo("pmClave", "Clave (no se puede repetir)", base?.clave || "")}
-    ${fgCampo("pmNombre", "Nombre interno", base?.nombre || "")}
-    ${fgSelec("pmTipo", "Tipo de premio", base?.tipo || "descuento_euros", tipos)}
-    ${fgSelec("pmLocal", "Ámbito", base?.local || "", locales)}
-    ${fgCampo("pmCamarero", "Texto para el camarero", base?.texto_camarero || "")}
-    ${fgArea("pmCliente", "Texto para el cliente", base?.texto_cliente || "", 2)}
-    ${fgCampo("pmValor", "Valor (€ o %, según el tipo)", base?.valor ?? "", { type: "number", step: "0.01", min: "0" })}
-    ${fgCampo("pmCoste", "Cuesta (puntos; 0 = gratis)", base?.coste_puntos ?? 0, { type: "number", step: "1", min: "0" })}
-    ${fgCampo("pmMinimo", "Compra mínima (€)", base?.compra_minima ?? 0, { type: "number", step: "0.01", min: "0" })}
-    <div id="pmAgora" class="${FIDG_TIPO_CODIGO.includes(base?.tipo || "descuento_euros") ? "" : "hidden"}">
-      ${fgCampo("pmCodigo", "Código de la promoción en Ágora", base?.codigo_agora || "",
-                { placeholder: "ESMORZAR_GIRONA", autocapitalize: "off", autocorrect: "off", spellcheck: "false" })}
-      <div class="mut" style="font-size:12px;margin:-4px 0 10px">Debe coincidir <b>exactamente</b> con el código creado en Ágora. Ejemplo: <code>ESMORZAR_GIRONA</code>.<br>Se guarda tal cual: solo se quitan los espacios de los extremos, y <b>no se cambian mayúsculas ni acentos</b>, porque Ágora compara el código letra a letra.</div>
-      <div id="pmCodigoErr" class="hidden" style="color:var(--danger);font-size:12px;margin:-6px 0 10px"></div>
-      <label class="chk"><input type="checkbox" id="pmComprobado"> He comprobado que ese código existe en Ágora</label>
-      <div class="mut" style="font-size:12px;margin:-4px 0 10px">El precio de 9,50 € y los productos se configuran en Ágora; el campo Valor no fija ese precio. Guardar el código <b>no crea la promoción dentro de Ágora</b>: tiene que existir allí antes. Si no existe, Ágora <b>ignora el premio en silencio</b> — el cliente se queda sin él y nosotros sin enterarnos.</div>
-    </div>
-    <label class="chk" style="display:block;margin-bottom:4px"><input type="checkbox" id="pmDerecho"${fidgDerechoDefecto(base?.tipo || "descuento_euros", base) ? " checked" : ""}> Solo para quien se la haya ganado</label>
-    <div class="mut" style="font-size:12px;margin:-4px 0 6px">Marcado, solo se le ofrece a quien tenga el derecho concedido: hoy, haberse apuntado a un formulario publicado y vinculado a esta misma clave.</div>
-    <div id="pmGeneralAviso" class="pendingblock ${fidgDerechoDefecto(base?.tipo || "descuento_euros", base) ? "hidden" : ""}" style="margin:0 0 10px;padding:10px 12px;font-size:12.5px;border-color:var(--danger)"><b>⚠ Sin marcar, esto se le ofrece a CUALQUIER socio del local.</b> No hace falta apuntarse a nada: basta con enseñar el carnet. Para publicarla así habrá que escribir una confirmación.</div>
+  const seleccionados = fidgPromoLocales(base);
+  const locales = [...new Set([...(FID.locales || []).map(l => l.local), ...seleccionados])];
+  const tipo = base?.tipo || "oferta_agora";
+  const tipos = [...new Set(["oferta_agora", "descuento_euros", "descuento_pct", ...Object.keys(FIDG.tipos || {})])].filter(t => t in (FIDG.tipos || {})).map((t) => [t, FIDG_TIPO_TXT[t] || t]);
+  const ov = modal(base ? "Editar promoción" : "Nueva promoción", `
+    <div class="promo-editor">
+    <p class="mut">Prepara el beneficio que se ofrecerá al escanear el carnet. Puedes guardar un borrador y continuar después.</p>
+    ${base?.estado === "publicada" ? '<p class="promo-note">Los cambios se aplicarán cuando publiques. Se conservará la versión anterior en el historial.</p>' : ""}
+    <details class="promo-step" open><summary>1. ¿Qué quieres ofrecer?</summary><div class="promo-step-body">
+      ${fgCampo("pmNombre", "Nombre de la promoción", base?.nombre || "", { placeholder: "Por ejemplo: Martes de cocas" })}
+      ${fgSelec("pmTipo", "Cómo se aplica en caja", tipo, tipos)}
+      <p id="pmTipoAyuda" class="promo-note"></p>
+      <div id="pmValorWrap">${fgCampo("pmValor", "Importe del descuento (€)", base?.valor ?? "", { type: "number", step: "0.01", min: "0" })}</div>
+      <div id="pmAgora" class="${FIDG_TIPO_CODIGO.includes(tipo) ? "" : "hidden"}">
+        ${fgCampo("pmCodigo", "Código que has creado en Ágora", base?.codigo_agora || "", { placeholder: "Por ejemplo: coqu", autocapitalize: "off", autocorrect: "off", spellcheck: "false" })}
+        <div id="pmCodigoErr" class="hidden" role="status" style="color:var(--danger)"></div>
+        <details class="promo-help"><summary>¿Dónde lo preparo en Ágora?</summary>
+          <ol><li>Entra en Administración → Promociones en el Ágora de cada local.</li><li>Elige los productos y el precio o regalo. Para una coca a 9,50 €, usa un pack de una unidad a precio fijo.</li><li>Selecciona «Sólo clientes y tickets seleccionados» y asigna un código.</li><li>Copia aquí ese código exactamente igual, incluidas las mayúsculas.</li></ol>
+          <p>Guardar el código aquí no crea ni cambia la oferta en Ágora. Comprueba allí también los días, fechas, horario y productos.</p>
+        </details>
+      </div>
+      <button type="button" class="btn sm" data-promo-next>Continuar: locales y fechas</button>
+    </div></details>
+    <details class="promo-step"><summary>2. ¿Dónde y cuándo?</summary><div class="promo-step-body">
+    <fieldset style="border:1px solid var(--border);border-radius:12px;padding:12px;margin:12px 0"><legend>Locales de la promoción</legend>
+      <div style="display:grid;gap:10px">${locales.map(l => `<label style="display:flex;align-items:center;gap:8px"><input style="width:auto" type="checkbox" name="pmLocal" value="${esc(l)}"${seleccionados.includes(l) || (base && !base.local && base.locales == null) ? " checked" : ""}> ${esc(l)}</label>`).join("")}</div>
+      <p class="mut" style="margin:8px 0 0">Marca uno o varios locales. Para todos, marca todas las casillas. </p>
+    </fieldset>
     <fieldset style="border:1px solid var(--border);border-radius:12px;padding:12px;margin:12px 0"><legend>Días de la promoción</legend>
       <div style="display:flex;gap:12px;flex-wrap:wrap">${[[1,"Lunes"],[2,"Martes"],[3,"Miércoles"],[4,"Jueves"],[5,"Viernes"],[6,"Sábado"],[0,"Domingo"]].map(([d,n]) => `<label><input type="checkbox" name="pmDia" value="${d}"${fidgPromoDias(base?.dias).includes(d) ? " checked" : ""}> ${n}</label>`).join("")}</div>
-      <p class="mut" style="margin:8px 0 0">Sin marcar ninguno: todos los días. Se aplica la hora de Madrid. Para las cocas del martes, marca solo Martes.</p>
+      <p class="mut" style="margin:8px 0 0">Sin marcar ninguno: todos los días. Se aplica la hora de Madrid. </p>
     </fieldset>
-    <label class="chk"><input type="checkbox" id="pmAcumulable"${base?.acumulable ? " checked" : ""}> Compatible con otras promociones (comprobar también en Ágora)</label>
-    ${fgCampo("pmDesde", "Desde", base?.desde || "", { type: "date" })}
-    ${fgCampo("pmHasta", "Hasta", base?.hasta || "", { type: "date" })}
-    ${fgCampo("pmHoraD", "Desde las", base?.hora_desde || "", { type: "time" })}
-    ${fgCampo("pmHoraH", "Hasta las", base?.hora_hasta || "", { type: "time" })}
-    ${fgCampo("pmLimC", "Usos por cliente durante toda la promoción (0 = sin límite)", base?.limite_cuenta ?? 1, { type: "number", step: "1", min: "0" })}
-    ${fgCampo("pmLimT", "Límite total (0 = sin límite)", base?.limite_total ?? 0, { type: "number", step: "1", min: "0" })}
-    ${fgCampo("pmPrio", "Prioridad (gana la más alta)", base?.prioridad ?? 0, { type: "number", step: "1" })}
-    ${fgCampo("pmGracia", "Margen para tickets abiertos (minutos)", base?.gracia_minutos ?? 180, { type: "number", step: "1", min: "0", max: "720" })}
-    <div class="pendingblock hidden" id="pmSim" style="margin-top:10px;padding:10px 12px;font-size:12.5px"></div>
-    <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn sm" data-act="fidg-promo-sim">Simular</button>
-      <button class="btn sm" data-act="fidg-promo-guardar" data-pub="0">Guardar borrador</button>
-      <button class="btn primary sm" data-act="fidg-promo-guardar" data-pub="1">Publicar…</button>
-    </div>`);
-  ov.addEventListener("input", () => { const s = document.getElementById("pmSim"); if (s) s.classList.add("hidden"); });
 
-  // El bloque de Ágora solo se enseña cuando el tipo lleva código. Pedirlo en un descuento en
-  // euros es pedir un dato que no se manda a ninguna parte.
-  // ── LA DECISIÓN DEL USUARIO MANDA SOBRE EL VALOR SEGURO ───────────────────────────────────
-  //
-  // `tocado` se pone en cuanto alguien pulsa la casilla. A partir de ahí, cambiar el tipo NO la
-  // vuelve a mover: si acaba de desmarcarla a propósito y cambia el tipo, volver a marcársela por
-  // detrás sería pelearse con quien está configurando.
-  //
-  // Mientras NADIE la haya tocado, pasar el tipo a `Offer` la marca. Es el valor seguro, y el que
-  // evita el descuido de publicar un desayuno para todo el local.
-  const avisoGeneral = () => {
-    const general = FIDG_TIPO_CODIGO.includes(fgVal("pmTipo")) && !fgChk("pmDerecho");
-    document.getElementById("pmGeneralAviso")?.classList.toggle("hidden", !general);
-  };
+      <div class="promo-pair">${fgCampo("pmDesde", "Fecha de inicio", base?.desde || "", { type: "date" })}${fgCampo("pmHasta", "Fecha de fin (opcional)", base?.hasta || "", { type: "date" })}</div>
+      <div class="promo-pair">${fgCampo("pmHoraD", "Desde las (opcional)", base?.hora_desde || "", { type: "time" })}${fgCampo("pmHoraH", "Hasta las (opcional)", base?.hora_hasta || "", { type: "time" })}</div>
+      <p class="mut">Sin horario: todo el día. Las pruebas también deben coincidir con los días y horas configurados en Ágora.</p>
+      <button type="button" class="btn sm" data-promo-next>Continuar: clientes y condiciones</button>
+    </div></details>
+    <details class="promo-step"><summary>3. ¿Quién puede usarla?</summary><div class="promo-step-body">
+      <label class="chk"><input type="checkbox" id="pmDerecho"${fidgDerechoDefecto(tipo, base) ? " checked" : ""}> Solo clientes inscritos en una campaña vinculada</label>
+      <p class="mut">Si la desmarcas, podrá usarla cualquier cliente con carnet que cumpla las condiciones.</p>
+      <div id="pmGeneralAviso" class="promo-note">Se ofrecerá a cualquier cliente con carnet en los locales y periodos seleccionados. Al publicar tendrás que confirmarlo.</div>
+      <p class="mut">La acumulación de puntos se configura por separado en «Programa de puntos».</p>
+      ${fgCampo("pmLimC", "Usos por cliente (0 = sin límite)", base?.limite_cuenta ?? 1, { type: "number", step: "1", min: "0" })}
+      ${fgArea("pmCliente", "Mensaje que verá el cliente", base?.texto_cliente || "", 2)}
+      ${fgCampo("pmCamarero", "Nombre que verá el camarero en caja", base?.texto_camarero || "")}
+      <details class="promo-help"><summary>Ajustes avanzados: límites, puntos y prioridad</summary>
+        <p class="mut">Puedes dejar estos valores como están si no necesitas condiciones especiales.</p>
+        ${fgCampo("pmMinimo", "Compra mínima (€; 0 = sin mínimo)", base?.compra_minima ?? 0, { type: "number", step: "0.01", min: "0" })}
+        ${fgCampo("pmCoste", "Puntos que cuesta usarla (0 = ninguno)", base?.coste_puntos ?? 0, { type: "number", step: "1", min: "0" })}
+        ${fgCampo("pmLimT", "Usos totales entre todos los clientes (0 = sin límite)", base?.limite_total ?? 0, { type: "number", step: "1", min: "0" })}
+        <label class="chk"><input type="checkbox" id="pmAcumulable"${base?.acumulable ? " checked" : ""}> Compatible con otras promociones (comprobar también en Ágora)</label>
+        ${fgCampo("pmPrio", "Prioridad si coinciden varias promociones (gana la mayor)", base?.prioridad ?? 0, { type: "number", step: "1" })}
+        ${fgCampo("pmGracia", "Margen para tickets ya abiertos (minutos)", base?.gracia_minutos ?? 180, { type: "number", step: "1", min: "0", max: "720" })}
+        ${fgCampo("pmClave", "Identificador interno", base?.clave || "")}
+        <p class="mut">Se genera a partir del nombre. Conserva el mismo identificador para actualizar esta promoción y sus campañas vinculadas.</p>
+      </details>
+      <button type="button" class="btn sm" data-promo-next>Continuar: revisar</button>
+    </div></details>
+    <details class="promo-step" id="pmRevision"><summary>4. Revisar antes de publicar</summary><div class="promo-step-body">
+      <div id="pmResumen" aria-live="polite"></div>
+      <div id="pmVerificacionAgora">
+        <label class="chk"><input type="checkbox" id="pmComprobado"> He comprobado en Ágora de cada local el código, los productos, el precio y el mismo calendario.</label>
+        <p class="mut">El panel no comprueba automáticamente la configuración de Ágora. Antes de anunciar la promoción, prueba un ticket con carnet, los productos incluidos y otro producto sin oferta.</p>
+      </div>
+      <div class="pendingblock hidden" id="pmSim" role="status"></div>
+      <button class="btn sm" data-act="fidg-promo-sim">Comprobar condiciones</button>
+      <button class="btn primary sm" data-act="fidg-promo-guardar" data-pub="1">Publicar promoción…</button>
+    </div></details>
+    <div class="promo-actions"><button class="btn" data-act="fidg-promo-guardar" data-pub="0">Guardar borrador</button><button class="btn" data-close>Cancelar</button></div>
+    </div>`);
+  // Los campos siguen en el mismo modal: avanzar nunca pierde lo escrito.
+  ov.querySelectorAll('[data-promo-next]').forEach(btn => btn.addEventListener('click', () => {
+    const paso = btn.closest('.promo-step');
+    paso.open = false;
+    const siguiente = paso.nextElementSibling;
+    siguiente.open = true;
+    siguiente.querySelector('summary').focus();
+    siguiente.scrollIntoView({ block: 'nearest' });
+  }));
+  const nombre = ov.querySelector('#pmNombre');
+  const clave = ov.querySelector('#pmClave');
+  let claveTocada = !!base;
+  clave.addEventListener('input', () => { claveTocada = true; });
+  nombre.addEventListener('input', () => {
+    if (!claveTocada) {
+      const slug = nombre.value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
+      clave.value = slug && (FIDG.promos || []).some(p => p.clave === slug) ? slug + '-' + Date.now().toString(36) : slug;
+    }
+  });
   let tocado = false;
-  const casilla = ov.querySelector("#pmDerecho");
-  casilla?.addEventListener("change", () => { tocado = true; avisoGeneral(); });
+  const casilla = ov.querySelector('#pmDerecho');
+  casilla.addEventListener('change', () => { tocado = true; });
   const pinta = () => {
-    const lleva = FIDG_TIPO_CODIGO.includes(fgVal("pmTipo"));
-    document.getElementById("pmAgora")?.classList.toggle("hidden", !lleva);
-    if (lleva && !tocado && casilla) casilla.checked = true;
+    const t = fgVal('pmTipo'), lleva = FIDG_TIPO_CODIGO.includes(t);
+    ov.querySelector('#pmAgora').classList.toggle('hidden', !lleva);
+    ov.querySelector('#pmVerificacionAgora').classList.toggle('hidden', !lleva);
+    ov.querySelector('#pmValorWrap').classList.toggle('hidden', lleva);
+    ov.querySelector('label[for="pmValor"]').textContent = t === 'descuento_pct' ? 'Porcentaje de descuento (%)' : 'Importe del descuento (€)';
+    ov.querySelector('#pmTipoAyuda').textContent = lleva
+      ? 'Para productos concretos, regalos o un precio especial: crea primero la oferta en Ágora y enlázala aquí mediante su código.'
+      : 'Este descuento se aplica a la cuenta, no a una lista de productos. Si quieres rebajar solo unas cocas, elige «Oferta creada en Ágora».';
+    ov.querySelector('#pmGeneralAviso').classList.toggle('hidden', casilla.checked);
     fidgCodigoPinta();
-    avisoGeneral();
+    const c = fidgPromoCuerpo();
+    ov.querySelector('#pmResumen').innerHTML = fidgPromoRevision(c);
   };
-  ov.querySelector("#pmTipo")?.addEventListener("change", pinta);
-  ov.querySelector("#pmCodigo")?.addEventListener("input", fidgCodigoPinta);
+  ov.querySelector('#pmTipo').addEventListener('change', () => {
+    if (FIDG_TIPO_CODIGO.includes(fgVal('pmTipo')) && !tocado) casilla.checked = true;
+  });
+  ov.addEventListener('input', (e) => {
+    ov.querySelector('#pmSim').classList.add('hidden');
+    if (['pmCodigo','pmTipo','pmDesde','pmHasta','pmHoraD','pmHoraH'].includes(e.target.id) || ['pmLocal','pmDia'].includes(e.target.name)) {
+      ov.querySelector('#pmComprobado').checked = false;
+    }
+    pinta();
+  });
+  ov.addEventListener('change', pinta);
+  pinta();
 }
 
 /**
@@ -12795,12 +12966,36 @@ function fidgCodigoPinta() {
 }
 
 const FIDG_TIPO_TXT = {
-  descuento_euros: "Descuento en euros (probado)", descuento_pct: "Descuento en porcentaje",
-  descuento_nombre: "Descuento con nombre", oferta_agora: "Oferta de Ágora (Offer)",
+  descuento_euros: "Descuento en euros sobre la cuenta", descuento_pct: "Descuento porcentual sobre la cuenta",
+  descuento_nombre: "Descuento con nombre", oferta_agora: "Oferta creada en Ágora",
   producto_gratis: "Producto gratis", campana_unica: "Campaña de un solo uso",
-  premio_puntos: "Premio por puntos (probado)", premio_campana: "Premio por pertenecer a una campaña",
+  premio_puntos: "Premio por puntos", premio_campana: "Premio por pertenecer a una campaña",
 };
 
+function fidgPromoRevision(c) {
+  const dias = fidgPromoDias(c.dias);
+  const filas = [
+    ["Promoción", c.nombre || "Falta el nombre"],
+    ["Beneficio", FIDG_TIPO_CODIGO.includes(c.tipo) ? `Oferta de Ágora · ${c.codigo_agora || "falta el código"}` : `${FIDG_TIPO_TXT[c.tipo] || c.tipo} · ${c.valor ? `${c.valor}${c.tipo === "descuento_pct" ? " %" : " €"}` : "falta el importe"}`],
+    ["Locales", c.locales.length ? c.locales.join(", ") : "Falta seleccionar los locales"],
+    ["Días", dias.length && dias.length < 7 ? dias.map(d => ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"][d]).join(", ") : "Todos los días"],
+    ["Fechas", `${c.desde || "Sin fecha de inicio"} → ${c.hasta || "Sin fecha de fin"}`],
+    ["Horario", c.hora_desde || c.hora_hasta ? `${c.hora_desde || "00:00"} – ${c.hora_hasta || "24:00"} (Madrid)` : "Todo el día"],
+    ["Clientes", c.requiere_derecho ? "Solo inscritos en una campaña vinculada" : "Cualquier cliente con carnet que cumpla las condiciones"],
+    ["Usos por cliente", Number(c.limite_cuenta) > 0 ? c.limite_cuenta : "Sin límite"],
+    ["Compra mínima", Number(c.compra_minima) > 0 ? `${c.compra_minima} €` : "Sin mínimo"],
+    ["Coste en puntos", Number(c.coste_puntos) > 0 ? `${c.coste_puntos} puntos` : "No consume puntos"],
+    ["Límite total", Number(c.limite_total) > 0 ? `${c.limite_total} usos entre todos los clientes` : "Sin límite"],
+  ];
+  return `<dl class="promo-review">${filas.map(([k,v]) => `<div><dt>${esc(k)}</dt><dd>${esc(String(v))}</dd></div>`).join("")}</dl><p class="promo-note"><b>Mensaje para el cliente</b><br>${esc(c.texto_cliente || "Falta escribir el mensaje")}</p>`;
+}
+
+function fidgPromoLocales(p) {
+  if (p?.locales != null) {
+    try { const ls = Array.isArray(p.locales) ? p.locales : JSON.parse(p.locales); return Array.isArray(ls) ? ls : []; } catch { return []; }
+  }
+  return p?.local ? [p.local] : [];
+}
 function fidgPromoDias(value) {
   try { const dias = Array.isArray(value) ? value : JSON.parse(value || "[]");
     return Array.isArray(dias) ? [...new Set(dias.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))] : [];
@@ -12808,7 +13003,7 @@ function fidgPromoDias(value) {
 }
 function fidgPromoCuerpo() {
   return { clave: fgVal("pmClave"), nombre: fgVal("pmNombre"), tipo: fgVal("pmTipo"),
-    local: fgVal("pmLocal") || null, texto_camarero: fgVal("pmCamarero"), texto_cliente: fgVal("pmCliente"),
+    locales: [...document.querySelectorAll('input[name="pmLocal"]:checked')].map(el => el.value), texto_camarero: fgVal("pmCamarero"), texto_cliente: fgVal("pmCliente"),
     valor: fgVal("pmValor"), coste_puntos: fgVal("pmCoste"), compra_minima: fgVal("pmMinimo"),
     // El código solo viaja si el tipo lo usa: mandarlo en los demás es lo que el servidor rechaza.
     codigo_agora: FIDG_TIPO_CODIGO.includes(fgVal("pmTipo")) ? fgVal("pmCodigo") : "",
@@ -12826,6 +13021,7 @@ async function fidgPromoSimular() {
     const j = await apiSend("POST", "/api/fidelizacion/promos/simular", fidgPromoCuerpo());
     const c = document.getElementById("pmSim");
     if (!c) return;
+    const revision = document.getElementById("pmRevision"); if (revision) revision.open = true;
     // CADA ESCENARIO, CON SUS REQUISITOS UNO A UNO. Antes era una línea por escenario con el
     // primer motivo que fallara, y una promoción que exige derecho pintaba «no se apuntó» cinco
     // veces seguidas: parecía que todo fallaba por lo mismo.
@@ -12840,8 +13036,8 @@ async function fidgPromoSimular() {
       </div>`).join("");
     c.innerHTML = `<b>Simulación — no se ha guardado nada.</b>
       ${j.madrid ? `<div class="mut" style="font-size:12px;margin-top:2px">Hora de Madrid: ${esc(j.madrid.fecha)} a las ${esc(j.madrid.hora)}. Cada escenario dice qué cambia respecto de la cuenta que sí se lo lleva.</div>` : ""}
-      ${escenarios}
-      ${j.publicar && !j.publicar.ok ? `<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);color:var(--danger)"><b>Para publicar falta:</b><br>${j.publicar.falta.map(esc).join("<br>")}</div>` : '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">Se puede publicar.</div>'}`;
+      <p class="mut">Se comprueban las reglas del panel; esta prueba no consulta el TPV ni garantiza el precio aplicado en Ágora.</p><details><summary>Ver casos de prueba y motivos</summary>${escenarios}</details>
+      ${j.publicar && !j.publicar.ok ? `<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);color:var(--danger)"><b>Para publicar falta:</b><br>${j.publicar.falta.map(esc).join("<br>")}</div>` : '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">Las condiciones del panel están completas. Revisa también Ágora antes de publicar.</div>'}`;
     c.classList.remove("hidden");
   } catch (e) { toast(e.message || "No se pudo simular"); }
 }
@@ -12857,11 +13053,11 @@ async function fidgPromoSimular() {
 function fidgConfirmarGeneral({ nombre, local, codigo }) {
   return new Promise((resolver) => {
     let hecho = false;
-    const ov = modal("⚠ Se ofrecerá a TODOS", `
+    const ov = modal("Confirmar destinatarios de la promoción", `
       <div class="pendingblock" style="padding:12px 14px;font-size:13px;border-color:var(--danger);margin-bottom:12px">
-        <b>Esta promoción NO exige haberse ganado nada.</b><br><br>
-        Cualquier socio que enseñe su carnet en ese local se la lleva, sin haberse apuntado a nada.
-        Si lo que querías era el premio de una campaña, <b>cierra esto y marca «Solo para quien se la haya ganado»</b>.
+        <b>Esta promoción es para clientes con carnet.</b><br><br>
+        Cualquier cliente con carnet que cumpla las condiciones podrá usarla en los locales seleccionados, sin inscribirse en una campaña.
+        Si lo que querías era el premio de una campaña, <b>cierra esto y marca «Solo clientes inscritos en una campaña vinculada»</b>.
       </div>
       <div class="rows" style="margin-bottom:12px">
         <div class="row"><div class="grow"><div class="t1">Promoción</div></div><b>${esc(nombre || "—")}</b></div>
@@ -12888,18 +13084,25 @@ function fidgConfirmarGeneral({ nombre, local, codigo }) {
 
 async function fidgPromoGuardar(publicar) {
   const cuerpo = { ...fidgPromoCuerpo(), estado: publicar === "1" ? "publicada" : "borrador" };
+  const enfocar = (selector) => {
+    const campo = document.querySelector(selector);
+    const paso = campo?.closest('.promo-step'); if (paso) paso.open = true;
+    campo?.focus(); campo?.scrollIntoView({ block: 'nearest' });
+  };
+  if (!cuerpo.nombre.trim()) { enfocar('#pmNombre'); toast("Escribe el nombre de la promoción"); return; }
+  if (!cuerpo.locales.length) { enfocar('input[name="pmLocal"]'); toast("Selecciona al menos un local"); return; }
   // El servidor lo vuelve a comprobar; esto es para no perder lo escrito en un viaje de ida y
   // vuelta por una errata que se ve desde aquí.
   if (FIDG_TIPO_CODIGO.includes(cuerpo.tipo)) {
     const err = fidgCodigoError(cuerpo.codigo_agora);
-    if (err) { fidgCodigoPinta(); toast(err); return; }
+    if (err) { enfocar("#pmCodigo"); fidgCodigoPinta(); toast(err); return; }
   }
-  if (publicar === "1" && !confirm(`Se PUBLICARÁ «${cuerpo.nombre}».\n\nA partir de ese momento se puede ofrecer a clientes, si el programa está activo.\n\nLas versiones anteriores de esta clave se dan por finalizadas. ¿Seguir?`)) return;
+  if (publicar === "1" && !(FIDG_TIPO_CODIGO.includes(cuerpo.tipo) && !cuerpo.requiere_derecho) && !confirm(`Se PUBLICARÁ «${cuerpo.nombre}».\n\nA partir de ese momento se puede ofrecer a clientes, si el programa está activo.\n\nLas versiones anteriores de esta clave se dan por finalizadas. ¿Seguir?`)) return;
 
   // Publicar un `Offer` sin derecho individual: confirmación escrita, con el local y el código
   // delante. El servidor la exige igual; esto solo evita el viaje perdido.
   if (publicar === "1" && FIDG_TIPO_CODIGO.includes(cuerpo.tipo) && !cuerpo.requiere_derecho) {
-    const txt = await fidgConfirmarGeneral({ nombre: cuerpo.nombre, local: cuerpo.local,
+    const txt = await fidgConfirmarGeneral({ nombre: cuerpo.nombre, local: cuerpo.locales.join(", "),
       codigo: cuerpo.codigo_agora });
     if (txt === null) return;
     cuerpo.confirmacion_general = txt;
@@ -12913,6 +13116,7 @@ async function fidgPromoGuardar(publicar) {
   } catch (e) {
     // Lo que falta para publicar se enseña entero, no en un aviso de una línea.
     const c = document.getElementById("pmSim");
+    const revision = document.getElementById("pmRevision"); if (revision) revision.open = true;
     if (c && e.falta) { c.innerHTML = `<b style="color:var(--danger)">No se puede publicar:</b><br>${e.falta.map(esc).join("<br>")}`; c.classList.remove("hidden"); }
     if (c && e.requiere_confirmacion_general) {
       c.innerHTML = `<b style="color:var(--danger)">No se ha publicado.</b><br>${esc(e.message || "")}`;
@@ -14650,7 +14854,7 @@ function renderCampanas() {
     let seg = ""; try { seg = describirAudiencia(JSON.parse(c.segmento_json || "{}")); } catch { /* */ }
     const est = c.estado || "enviada";
     const editable = est === "borrador" || est === "programada";
-    const acc = `<button class="linkbtn" style="color:var(--brand)" data-act="camp-detalle" data-id="${c.id}">Detalle</button>${editable ? ` · <button class="linkbtn" style="color:var(--brand)" data-act="camp-editar" data-id="${c.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="camp-enviar" data-id="${c.id}">Enviar</button>` : ""} · <button class="linkbtn" style="color:var(--brand)" data-act="camp-dup" data-id="${c.id}">Duplicar</button> · <button class="linkbtn" style="color:var(--danger)" data-act="camp-del" data-id="${c.id}">Eliminar</button>`;
+    const acc = `<button class="linkbtn" style="color:var(--brand)" data-act="camp-detalle" data-id="${c.id}">Detalle</button>${editable ? ` · <button class="linkbtn" style="color:var(--brand)" data-act="camp-editar" data-id="${c.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="camp-enviar" data-id="${c.id}">Revisar envío</button>` : ""} · <button class="linkbtn" style="color:var(--brand)" data-act="camp-dup" data-id="${c.id}">Duplicar</button> · <button class="linkbtn" style="color:var(--danger)" data-act="camp-del" data-id="${c.id}">Eliminar</button>`;
     return `<tr><td><button class="linkbtn" style="color:var(--brand);text-align:left" data-act="camp-detalle" data-id="${c.id}">${esc(c.nombre)}</button>${c.canal === "email" ? " 📧" : ""}${c.adjunto_url ? " 📎" : ""}</td><td class="mut">${esc(seg || "—")}</td><td><span class="pill ${CAMP_EST[est] || ""}">${cap(est)}</span>${(est === "programada" && c.programada_para) ? `<div class="t2">${esc(String(c.programada_para).slice(0, 16).replace("T", " "))}</div>` : ""}</td><td class="r tnum">${num(c.total_enviados)}</td><td class="r tnum">${num(c.total_errores || 0)}</td><td class="mut">${esc((c.creado_en || "").slice(0, 10))}</td><td class="r" style="white-space:nowrap">${acc}</td></tr>`;
   }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">Aún no hay campañas.</div></div>`;
   // La caja de escribir va ARRIBA DEL TODO: es por donde se empieza. Debajo queda lo de
@@ -14844,6 +15048,95 @@ function campElegirPlantilla(alElegir) {
     alElegir(p);
   });
 }
+/** Ordena campos existentes sin reconstruirlos: conserva valores, eventos y permisos. */
+function marketingPasos(root, titulos) {
+  root.classList.add("promo-editor", "campaign-editor");
+  const pasos = titulos.map((titulo, i) => {
+    const paso = document.createElement("details");
+    paso.className = "promo-step";
+    paso.open = i === 0;
+    paso.innerHTML = `<summary>${i + 1}. ${esc(titulo)}</summary><div class="promo-step-body"></div>`;
+    root.append(paso);
+    return paso;
+  });
+  const abrir = (i) => {
+    pasos.forEach((p, n) => { p.open = n === i; });
+    pasos[i].querySelector("summary").focus();
+    pasos[i].scrollIntoView({ block: "nearest" });
+  };
+  pasos.forEach((paso, i) => {
+    paso.addEventListener("toggle", () => {
+      if (!paso.open) return;
+      pasos.forEach(p => { if (p !== paso) p.open = false; });
+    });
+    const nav = document.createElement("div");
+    nav.className = "promo-actions";
+    if (i) {
+      const atras = document.createElement("button");
+      atras.type = "button"; atras.className = "btn"; atras.textContent = "Atrás";
+      atras.addEventListener("click", () => abrir(i - 1)); nav.append(atras);
+    }
+    if (i < pasos.length - 1) {
+      const next = document.createElement("button");
+      next.type = "button"; next.className = "btn primary"; next.textContent = "Continuar";
+      next.addEventListener("click", () => abrir(i + 1)); nav.append(next);
+    }
+    paso.append(nav);
+  });
+  return { cuerpos: pasos.map(p => p.querySelector(".promo-step-body")), pasos, abrir };
+}
+
+function marketingCampo(ov, selector) {
+  return ov.querySelector(selector)?.closest(".field");
+}
+
+function campanaOrganizar(ov, editar) {
+  const form = ov.querySelector("#fCamp"), grid = form.querySelector(".form-grid");
+  form.addEventListener("submit", e => e.preventDefault());
+  const acciones = form.lastElementChild;
+  const flujo = marketingPasos(form, ["Identificar la campaña", "Elegir destinatarios", "Preparar el mensaje", "Revisar y enviar"]);
+  const mover = (i, selector) => { const campo = marketingCampo(ov, selector); if (campo) flujo.cuerpos[i].append(campo); };
+  mover(0, '[name="nombre"]');
+  flujo.cuerpos[0].insertAdjacentHTML("beforeend", '<p class="promo-note">Enviarás un mensaje por WhatsApp a clientes existentes. Nada se envía al avanzar entre pasos o guardar un borrador.</p>');
+  ['#campAud','[name="local"]','[name="idioma"]'].forEach(q => mover(1,q));
+  const avanzados = document.createElement("details");
+  avanzados.className = "promo-help";
+  avanzados.innerHTML = '<summary>Más filtros de destinatarios</summary><div class="form-grid"></div>';
+  flujo.cuerpos[1].append(avanzados);
+  ['genero','poblacion','origen','from','to','con_email','con_telefono','cumple_mes'].forEach(n => avanzados.lastElementChild.append(marketingCampo(ov, `[name="${n}"]`)));
+  mover(1,'#campOptin');
+  flujo.cuerpos[1].append(ov.querySelector('#campHeredados'));
+  ['#campPlant','[data-obj]','#campMsg','#campPromo','#campTraducir'].forEach(q => mover(2,q));
+  const ayudas = document.createElement('details'); ayudas.className = 'promo-help';
+  ayudas.innerHTML = '<summary>Ideas y plantillas para el mensaje</summary>';
+  ayudas.append(marketingCampo(ov, '#campPlant'), marketingCampo(ov, '[data-obj]'));
+  flujo.cuerpos[2].prepend(ayudas);
+  const cupon = document.createElement('details'); cupon.className = 'promo-help';
+  cupon.innerHTML = '<summary>Añadir un cupón personal (opcional)</summary>';
+  const campoCupon = marketingCampo(ov, '#campPromo'); campoCupon.before(cupon); cupon.append(campoCupon);
+  cupon.open = !!ov.querySelector('#campPromo').value;
+  const resumen = document.createElement('div'); resumen.id = 'campRevision'; resumen.className = 'promo-note'; resumen.setAttribute('aria-live','polite');
+  flujo.cuerpos[3].append(resumen);
+  ['#campBubble','#campVerDests','#campWhen'].forEach(q => mover(3,q));
+  flujo.cuerpos[3].append(acciones);
+  const borrador = ov.querySelector(editar ? '#campGuardar' : '#campBorrador');
+  const pie = document.createElement('div'); pie.className = 'promo-actions';
+  pie.append(borrador, acciones.querySelector('[data-close]')); form.append(pie);
+  grid.remove();
+  ov.querySelector('#campEnviarYa').textContent = 'Enviar por WhatsApp…';
+  const prog = ov.querySelector('#campProg'); if (prog) prog.textContent = 'Programar envío';
+  ov.querySelector('#campVerDests').textContent = 'Comprobar destinatarios';
+  const optin = ov.querySelector('#campOptin');
+  optin.parentNode.lastChild.textContent = ' Solo clientes con consentimiento registrado';
+  marketingCampo(ov, '#campPromo').insertAdjacentHTML('beforeend', '<p class="promo-note">Este cupón es de un solo uso. Las ofertas de Ágora asociadas al carnet se configuran en «Promociones en caja»; no se crean al enviar este mensaje.</p>');
+  // Vincula etiquetas al control sin cambiar los nombres usados por el servidor.
+  form.querySelectorAll('.field > label').forEach((label, i) => {
+    const control = label.parentNode.querySelector('input:not([type="file"]),select,textarea');
+    if (control && !label.contains(control)) { if (!control.id) control.id = `campCampo${i}`; label.htmlFor = control.id; }
+  });
+  return flujo;
+}
+
 // Modal de campaña. mode: "nueva" | "editar" | "duplicar". pre: { id, nombre, mensaje, adjunto_url, seg }.
 function openCampana(mode = "nueva", pre = {}) {
   const s = pre.seg || {};
@@ -14889,7 +15182,8 @@ function openCampana(mode = "nueva", pre = {}) {
   </div>
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap"><button type="button" class="btn" data-close>Cerrar</button>${editar ? '<button type="button" class="btn primary" id="campGuardar">Guardar cambios</button><button type="button" class="btn" id="campEnviarYa">Enviar ya</button>' : '<button type="button" class="btn" id="campBorrador">Guardar borrador</button><button type="button" class="btn" id="campProg">Programar</button><button type="button" class="btn primary" id="campEnviarYa">Enviar ya</button>'}</div></form>`;
   const ov = modal(editar ? "Editar campaña" : mode === "duplicar" ? "Duplicar campaña" : "Nueva campaña", body);
-  ov.querySelector(".modal").classList.add("wide");
+  ov.querySelector(".modal").classList.add("campaign-modal");
+  const flujo = campanaOrganizar(ov, editar);
   let campAdjunto = pre.adjunto_url || "";
   const excluir = new Set(Array.isArray(s.excluir_telefonos) ? s.excluir_telefonos : []);
   // Construye el objeto de filtros desde el formulario (reflejo de construirSegmento del servicio).
@@ -14901,14 +15195,14 @@ function openCampana(mode = "nueva", pre = {}) {
   // reservaron entre el 20 y el 25» se convertía en «todos los del local» al pulsar continuar:
   // el contador subía —lo que parece que por fin funciona— y el mensaje salía a gente que no
   // tocaba. Sin error, sin aviso y sin vuelta atrás.
-  const HEREDABLES = ["cerca_de", "radio_km", "estado_comunicaciones", "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
+  const HEREDABLES = ["q", "locales", "visitas_min", "visitas_max", "sin_venir_desde", "visito_desde", "valor_min", "nunca_ha_venido", "es_nuevo", "cerca_de", "radio_km", "estado_comunicaciones", "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
                       "hecho_etiqueta", "hecho_valor", "sin_nacimiento", "sin_email", "sin_poblacion"];
   const heredados = {};
   for (const k of HEREDABLES) if (s[k] != null && s[k] !== "" && s[k] !== false) heredados[k] = s[k];
 
   const filtros = () => {
     const f = Object.fromEntries(new FormData(ov.querySelector("#fCamp")).entries());
-    const base = { ...heredados, q: f.q, genero: f.genero, poblacion: f.poblacion, local: f.local, idioma: f.idioma, origen: f.origen, from: f.from, to: f.to, con_email: !!f.con_email, con_telefono: !!f.con_telefono, cumple_mes: !!f.cumple_mes, soloOptIn: ov.querySelector("#campOptin").checked, excluir_telefonos: [...excluir] };
+    const base = { ...heredados, genero: f.genero, poblacion: f.poblacion, local: f.local, idioma: f.idioma, origen: f.origen, from: f.from, to: f.to, con_email: !!f.con_email, con_telefono: !!f.con_telefono, cumple_mes: !!f.cumple_mes, soloOptIn: ov.querySelector("#campOptin").checked, excluir_telefonos: [...excluir] };
     return construirSegmento(base);
   };
 
@@ -14945,6 +15239,7 @@ function openCampana(mode = "nueva", pre = {}) {
     const sel = ov.querySelector("#campPromo");
     const falta = pide && !sel.value;
     sel.style.borderColor = falta ? "var(--danger)" : "";
+    if (falta) sel.closest("details").open = true;
     const prev = ov.querySelector("#campPrev");
     if (falta) prev.textContent = "El mensaje dice {cupon}: elige de qué promoción es.";
   };
@@ -14979,6 +15274,9 @@ function openCampana(mode = "nueva", pre = {}) {
     ["genero", "poblacion", "local", "idioma", "origen", "from", "to"].forEach((k) => setV(k, flt[k]));
     ["con_email", "con_telefono", "cumple_mes"].forEach((k) => { const el = ov.querySelector(`[name="${k}"]`); if (el) el.checked = !!flt[k]; });
     ov.querySelector("#campOptin").checked = !!flt.soloOptIn;
+    for (const k of HEREDABLES) delete heredados[k];
+    for (const k of HEREDABLES) if (flt[k] != null && flt[k] !== "" && flt[k] !== false) heredados[k] = flt[k];
+    pintarHeredados();
     excluir.clear(); (Array.isArray(flt.excluir_telefonos) ? flt.excluir_telefonos : []).forEach((t) => excluir.add(t));
     toast(`Audiencia «${a.nombre}» cargada`);
   });
@@ -14996,10 +15294,26 @@ function openCampana(mode = "nueva", pre = {}) {
       return `<label class="agres" style="cursor:pointer"><input type="checkbox" class="cdest" data-tel="${esc(c.telefono)}" ${marcado ? "checked" : ""} style="width:auto"><div class="who"><div class="t1">${esc(nom)} ${c.enviable ? "" : '<span class="pill bad" style="font-size:10px">no enviable</span>'}</div><div class="t2">${esc(c.telefono || "")}</div></div></label>`;
     }).join("") : '<div class="mut" style="padding:12px">Sin destinatarios con esos filtros.</div>';
   };
-  ov.querySelector("#campVerDests").addEventListener("click", async () => {
-    try { const j = await apiSend("POST", "/api/campanas/preview", { ...filtros(), soloOptIn: ov.querySelector("#campOptin").checked }); ov.querySelector("#campPrev").textContent = `${j.enviables} enviables de ${j.total} (excluidos ${excluir.size}).`; pintarDests(j.lista || []); }
-    catch (e) { toast("Error: " + e.message); }
-  });
+  let consultaDest = 0;
+  const comprobarDestinatarios = async (mostrar = false) => {
+    const consulta = ++consultaDest, firma = JSON.stringify(filtros());
+    ov.querySelector('#campPrev').textContent = 'Comprobando destinatarios…';
+    try {
+      const j = await apiSend("POST", "/api/campanas/preview", { ...filtros(), soloOptIn: ov.querySelector("#campOptin").checked });
+      if (consulta !== consultaDest || firma !== JSON.stringify(filtros()) || !ov.isConnected) return;
+      ov.querySelector("#campPrev").textContent = `${j.enviables} pueden recibir el mensaje de ${j.total} contactos encontrados. Excluidos manualmente: ${excluir.size}.`;
+      if (mostrar) pintarDests(j.lista || []);
+    } catch (e) { if (consulta === consultaDest) ov.querySelector('#campPrev').textContent = 'No se pudo comprobar la audiencia. Vuelve a intentarlo.'; }
+  };
+  ov.querySelector("#campVerDests").addEventListener("click", () => comprobarDestinatarios(true));
+  flujo.pasos[3].addEventListener('toggle', () => { if (flujo.pasos[3].open) comprobarDestinatarios(); });
+  const invalidarDestinatarios = () => {
+    consultaDest++;
+    ov.querySelector('#campPrev').textContent = 'Destinatarios pendientes de comprobar.';
+    ov.querySelector('#campDests').style.display = 'none';
+  };
+  flujo.cuerpos[1].addEventListener('input', invalidarDestinatarios);
+  flujo.cuerpos[1].addEventListener('change', invalidarDestinatarios);
   ov.querySelector("#campDests").addEventListener("change", (e) => {
     const cb = e.target.closest(".cdest"); if (!cb) return; const tel = cb.getAttribute("data-tel");
     if (cb.checked) excluir.delete(tel); else excluir.add(tel);
@@ -15012,9 +15326,23 @@ function openCampana(mode = "nueva", pre = {}) {
     if (campAdjunto) d.adjunto_url = campAdjunto;
     return d;
   };
+  const revisar = () => {
+    const d = payload();
+    const promo = ov.querySelector('#campPromo');
+    const filas = [["Campaña", d.nombre || "Falta el nombre"], ["Destinatarios", describirAudiencia(filtros()).replace("Solo opt-in", "Con consentimiento registrado") || "Todos los contactos"],
+      ["Consentimiento", d.soloOptIn ? "Solo consentimiento registrado" : "Se aplican las comprobaciones de envío del servidor"],
+      ["Cupón", promo.value ? promo.selectedOptions[0].textContent : "Sin cupón personal"],
+      ["Idioma", d.traducir ? "Traducir al idioma del cliente" : "El mensaje tal como lo has escrito"],
+      ["Adjunto", campAdjunto ? "Incluido" : "Sin adjunto"]];
+    ov.querySelector('#campRevision').innerHTML = `<dl class="promo-review">${filas.map(([k,v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
+  };
+  ov.addEventListener('input', revisar);
+  ov.addEventListener('change', revisar);
+  flujo.pasos[3].addEventListener('toggle', () => { if (flujo.pasos[3].open) revisar(); });
+  revisar();
   const lanzarNueva = async (accion) => {
     const d = payload({ accion });
-    if (!d.nombre || !d.mensaje) { toast("Pon nombre y mensaje"); return; }
+    if (!d.nombre || !d.mensaje) { flujo.abrir(!d.nombre ? 0 : 2); ov.querySelector(!d.nombre ? '[name="nombre"]' : '#campMsg').focus(); toast("Completa el nombre y el mensaje"); return; }
     if (accion === "programar") { const w = ov.querySelector("#campWhen").value; if (!w) { toast("Elige fecha y hora"); return; } d.programada_para = w; }
     if (accion === "enviar") { if (!(await confirmModal("¿Enviar esta campaña ahora por WhatsApp?", { ok: "Enviar" }))) return; }
     try { const j = await apiSend("POST", "/api/campanas", d); ov.remove(); toast(accion === "enviar" ? `Enviando a ${j.enviables} contacto(s) ✅` : accion === "programar" ? "Campaña programada ✅" : "Borrador guardado ✅"); loadCampanas(); }
@@ -15022,7 +15350,7 @@ function openCampana(mode = "nueva", pre = {}) {
   };
   const guardarEdit = async (enviar) => {
     const d = payload();
-    if (!d.nombre || !d.mensaje) { toast("Pon nombre y mensaje"); return; }
+    if (!d.nombre || !d.mensaje) { flujo.abrir(!d.nombre ? 0 : 2); ov.querySelector(!d.nombre ? '[name="nombre"]' : '#campMsg').focus(); toast("Completa el nombre y el mensaje"); return; }
     if (enviar && !(await confirmModal("¿Guardar y enviar ahora por WhatsApp?", { ok: "Enviar" }))) return;
     try {
       await apiSend("PATCH", "/api/campanas/" + pre.id, d);
@@ -15039,11 +15367,12 @@ function openCampana(mode = "nueva", pre = {}) {
     ov.querySelector("#campProg").addEventListener("click", () => lanzarNueva("programar"));
     ov.querySelector("#campEnviarYa").addEventListener("click", () => lanzarNueva("enviar"));
   }
+  if (pre.revisarEnvio) flujo.abrir(3);
 }
-async function campEditar(id) {
+async function campEditar(id, revisarEnvio = false) {
   let c; try { c = (await apiRaw("/api/campanas/" + id)).data.campana; } catch (e) { toast("Error: " + e.message); return; }
   let seg = {}; try { seg = JSON.parse(c.segmento_json || "{}"); } catch { /* */ }
-  openCampana("editar", { id: c.id, nombre: c.nombre, mensaje: c.mensaje, adjunto_url: c.adjunto_url, promocion_id: c.promocion_id, seg });
+  openCampana("editar", { revisarEnvio, id: c.id, nombre: c.nombre, mensaje: c.mensaje, adjunto_url: c.adjunto_url, promocion_id: c.promocion_id, seg });
 }
 async function campDuplicar(id) {
   let c; try { c = (await apiRaw("/api/campanas/" + id)).data.campana; } catch (e) { toast("Error: " + e.message); return; }
@@ -15063,10 +15392,9 @@ async function campDetalle(id) {
   modal(c.nombre, `<div class="grid" style="gap:12px"><div class="card" style="padding:12px 14px"><div class="t2">Estado: ${esc(c.estado || "—")} · ${num(r.enviados || 0)} enviados · ${num(r.errores || 0)} errores</div><div style="margin-top:6px;white-space:pre-wrap">${esc(c.mensaje || "")}</div></div><div class="card p0"><div class="ch" style="padding:14px 14px 0"><h3>Destinatarios</h3></div><div class="rows">${envios}</div></div><div style="display:flex;justify-content:flex-end"><button class="btn" data-close>Cerrar</button></div></div>`);
 }
 async function campEnviar(id) {
-  if (!(await confirmModal("¿Enviar esta campaña ahora por WhatsApp?", { ok: "Enviar" }))) return;
-  try { const j = await apiSend("POST", "/api/campanas/" + id + "/enviar"); toast(`Enviando a ${j.enviables} contacto(s) ✅`); loadCampanas(); }
-  catch (e) { toast("Error: " + e.message); }
+  return campEditar(id, true);
 }
+
 async function campDel(id) {
   if (!(await confirmModal("¿Eliminar esta campaña?", { ok: "Eliminar", danger: true }))) return;
   try { await apiSend("DELETE", "/api/campanas/" + id); toast("Campaña eliminada ✅"); loadCampanas(); }
@@ -15721,8 +16049,8 @@ function renderFidgPuertaPromos() {
 
   return `${incoherente}
     <div class="row"><div class="grow"><div class="t1">Estado</div><div class="mut" style="font-size:12px">${esc(ayuda)}</div></div><span class="pill ${pill}">${esc(txt)}</span></div>
-    <div class="mut" style="font-size:12px;margin:12px 0 4px">Lo que comprueba el servidor</div>
-    <div class="rows">${req}</div>${firma}${pausa}${botones}${interruptores}`;
+    <details class="promo-help"${p.incoherente || p.estado !== "activo" ? " open" : ""}><summary>Configuración y comprobaciones del servicio</summary>
+    <div class="rows">${req}</div>${firma}${pausa}${botones}${interruptores}</details>`;
 }
 
 /**
@@ -15732,14 +16060,12 @@ function renderFidgPuertaPromos() {
  * no una copia.
  */
 function promoFidelizacion() {
-  return `<div class="card"><div class="ch"><h3>Promociones de Ágora · puesta en producción</h3></div>
-      <div class="mut" style="font-size:12.5px;padding:2px 2px 10px">Esto es <b>solo de las promociones</b>: regalar un producto porque alguien se apuntó a una campaña. <b>No es el programa de puntos</b>, que tiene su propia puerta en <b>Programa de puntos → Resumen y activación</b>. Encender esto <b>no enciende los puntos</b>, y al revés tampoco.</div>
+  return `<div class="card"><div class="ch"><h3>Servicio de promociones en caja</h3></div>
       ${renderFidgPuertaPromos()}</div>
-    <div class="card" style="margin-top:12px"><div class="ch"><h3>Premios de fidelización</h3></div>
-      <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Estos los aplica <b>Ágora dentro de la factura</b>, no la tablet de la barra. Cada uno se versiona: publicar crea una versión nueva y finaliza la anterior.</div>
-      <div class="pendingblock" style="margin:0 2px 10px;padding:10px 12px;font-size:12.5px">Una promoción con <b>código de Ágora</b> hay que crearla <b>primero en Ágora</b>. Guardar el código aquí <b>no la crea allí</b>: solo le dice a nuestro sistema qué <code>Offer</code> devolver cuando se escanee un carnet con derecho.</div>
+    <div class="card" style="margin-top:12px"><div class="ch"><h3>Tus promociones</h3></div>
+      <p class="mut">Elige el beneficio, sus locales y condiciones. El cliente lo utiliza con su carnet al pagar.</p>
       ${renderFidgPromos()}</div>
-    <div class="card" style="margin-top:12px"><div class="ch"><h3>Productos y grupos</h3></div>
+    <details class="card promo-help" style="margin-top:12px"><summary>Grupos de productos · opciones avanzadas</summary><p class="mut">Para promociones que utilizan grupos del catálogo. Si enlazas una oferta de Ágora, selecciona sus productos directamente en Ágora.</p>
       <div class="mut" style="font-size:12.5px;padding:2px 2px 8px">Los grupos —«Cafés», «Entrepans»— se eligen a mano del catálogo sincronizado. El catálogo se sincroniza en <b>Sistema → Ágora (TPV)</b>.</div>
       ${FIDG.grupos.length
         ? `<div class="rows">${FIDG.grupos.map((g) => `<div class="row"><div class="grow" style="min-width:0"><div class="t1">${esc(g.nombre)} <span class="mut">v${g.version}</span></div><div class="mut" style="font-size:12px">${esc(g.local || "")} · ${(g.productos || []).length} producto(s) · ${esc(g.estado)}</div></div></div>`).join("")}</div>`
@@ -15747,7 +16073,7 @@ function promoFidelizacion() {
       <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn sm" data-act="fidg-grupo-nuevo">Nuevo grupo…</button>
         <button class="btn sm" data-act="ir-vista" data-v="agora">Ir al catálogo</button>
-      </div></div>`;
+      </div></details>`;
 }
 
 let PROMO_LOAD_ID = 0;
@@ -16034,7 +16360,8 @@ function capForm(c) {
   };
 
   const ov = modal(esNueva ? "Nueva campaña" : "Editar campaña", `
-    <div class="field" style="width:100%"><label>Nombre (para vosotros)</label>
+    <div class="promo-editor" id="capEditor"><div id="capContenido">
+    <div class="field" style="width:100%"><label>Nombre de la campaña</label>
       <input id="capNombre" value="${esc(c.nombre)}" placeholder="Desayuno Girona · Meta octubre"></div>
     <div class="field" style="width:100%"><label>Clave (va en el enlace del anuncio)</label>
       <input id="capClave" value="${esc(c.clave)}" placeholder="girona-desayuno" ${esNueva ? "" : "readonly"}>
@@ -16056,21 +16383,51 @@ function capForm(c) {
     </div>
     <label class="chip" style="cursor:pointer;margin:4px 0 10px">
       <input type="checkbox" id="capActiva" ${c.activa ? "checked" : ""} style="margin-right:6px">Campaña abierta</label>
-    <label class="chip" style="cursor:pointer;margin:4px 0 10px">
+    <div id="capEntrega"><label class="chip" style="cursor:pointer;margin:4px 0 10px">
       <input type="checkbox" id="capWaOn" ${waOn ? "checked" : ""} style="margin-right:6px">Enviar el código por WhatsApp</label>
     <div class="mut" style="font-size:12px;margin:-2px 0 10px">
       Apagado, la campaña entrega su código en pantalla y no escribe a nadie. Dejar el texto en
-      blanco NO la apaga: usa el mensaje de la casa.</div>
+      blanco NO la apaga: usa el mensaje de la casa.</div></div>
 
-    <details style="margin-bottom:10px"><summary class="mut" style="cursor:pointer">Textos por idioma (opcional)</summary>
+    <details id="capTextos" style="margin-bottom:10px"><summary class="mut" style="cursor:pointer">Textos por idioma (opcional)</summary>
       <div style="padding-top:10px">${campoIdioma("ca", "Català")}${campoIdioma("es", "Castellano")}${campoIdioma("en", "English")}</div>
     </details>
 
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
       <button class="btn" data-close>Cancelar</button>
-      <button class="btn primary" id="capSave">Guardar</button></div>`);
+      <button class="btn primary" id="capSave">Guardar campaña</button></div></div></div>`);
+
+  ov.querySelector(".modal").classList.add("campaign-modal");
+  const contenido = ov.querySelector('#capContenido');
+  const acciones = contenido.lastElementChild;
+  const flujo = marketingPasos(ov.querySelector('#capEditor'), ['Elegir la promoción', 'Fechas e inscripciones', 'Página y mensaje', 'Revisar y guardar']);
+  const mover = (i, id) => flujo.cuerpos[i].append(marketingCampo(ov, id));
+  ['#capNombre','#capPromo','#capClave'].forEach(id => mover(0,id));
+  flujo.cuerpos[0].insertAdjacentHTML('beforeend', '<p class="promo-note">Esta campaña crea un enlace de inscripción para compartir en un anuncio. El beneficio y sus locales se configuran en la promoción seleccionada.</p>');
+  ['#capDesde','#capHasta','#capTope'].forEach(id => mover(1,id));
+  mover(2,'#capIdioma');
+  flujo.cuerpos[2].append(ov.querySelector('#capEntrega'), ov.querySelector('#capTextos'));
+  const resumen = document.createElement('div'); resumen.className = 'promo-note'; resumen.setAttribute('aria-live','polite');
+  flujo.cuerpos[3].append(resumen, ov.querySelector('#capActiva').closest('label'), acciones);
+  contenido.remove();
+  const revisar = () => {
+    const valor = id => ov.querySelector(id).value;
+    const activa = ov.querySelector('#capActiva').checked;
+    const promo = ov.querySelector('#capPromo');
+    const filas = [['Campaña',valor('#capNombre') || 'Falta el nombre'],['Promoción', promo.value ? promo.selectedOptions[0].textContent : 'Falta elegir la promoción'],
+      ['Inscripciones',`${valor('#capDesde') || 'Sin fecha inicial'} → ${valor('#capHasta') || 'Sin fecha final'}`],
+      ['Tope de códigos',Number(valor('#capTope')) > 0 ? valor('#capTope') : 'Sin límite'],
+      ['Entrega',ov.querySelector('#capWaOn').checked ? 'Código por WhatsApp al inscribirse' : 'Código en pantalla, sin WhatsApp'],
+      ['Al guardar',activa ? 'El enlace admitirá inscripciones cuando se cumplan las fechas y condiciones' : 'La campaña quedará cerrada a inscripciones']];
+    resumen.innerHTML = `<dl class="promo-review">${filas.map(([k,v])=>`<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl><p>Guardar no envía una campaña a tus contactos. Los mensajes de inscripción se preparan cuando una persona se registra.</p>`;
+  };
+  ov.addEventListener('input', revisar); ov.addEventListener('change', revisar); revisar();
+  ov.querySelectorAll('.field > label').forEach(label => { const el = label.parentNode.querySelector('input,select,textarea'); if (el?.id) label.htmlFor = el.id; });
 
   ov.querySelector("#capSave").addEventListener("click", async () => {
+    for (const id of ['#capNombre','#capPromo','#capClave']) {
+      if (!ov.querySelector(id).value.trim()) { flujo.abrir(0); ov.querySelector(id).focus(); toast('Completa el nombre, la promoción y la clave del enlace.'); return; }
+    }
     const textosOut = {};
     // EL INTERRUPTOR DEL WHATSAPP. Va dentro del propio JSON de textos —sin columna nueva ni
     // migración— y SOLO se escribe cuando está apagado: ausente significa encendido, que es como
@@ -17141,7 +17498,7 @@ document.addEventListener("click", (e) => {
   else if (act === "comp-unidad") comprasHistorial(t.getAttribute("data-clave"), t.getAttribute("data-nombre"), true);
   else if (act === "comp-producto") comprasHistorial(t.getAttribute("data-clave"), t.getAttribute("data-nombre"));
   else if (act === "fac-sel-resumen") facSelResumen();
-  else if (act === "fac-sel-export") facSelExport();
+  else if (act === "fac-sel-export") facExport(true);
   else if (act === "fac-sel-docs") facSelDocumentos();
   else if (act === "fac-sel-limpiar") facSelLimpiar();
   else if (act === "fac-sel-pagar") facSelPagar(t.getAttribute("data-pagado") === "1");

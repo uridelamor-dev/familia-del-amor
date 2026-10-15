@@ -271,7 +271,7 @@ describe("los escenarios dicen qué cambian", () => {
     assert.match(s, /\.\.\.\(cuestaPuntos > 0/);
     assert.match(s, /\.\.\.\(minimo > 0/);
     assert.match(s, /\.\.\.\(Number\.isFinite\(topeCuenta\) && topeCuenta > 0/);
-    assert.match(s, /\.\.\.\(promo\.local/);
+    assert.match(s, /\.\.\.\(fidLocalesPromo\(promo\)\.length/);
   });
 
   test("todos los escenarios llevan su `cambia`", () => {

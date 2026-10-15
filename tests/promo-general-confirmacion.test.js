@@ -76,8 +76,8 @@ describe("una promoción Offer nueva nace exigiendo derecho", () => {
 
   test("y cambiar el tipo a Offer la marca, salvo decisión explícita", () => {
     assert.match(panel, /let tocado = false;/);
-    assert.match(panel, /casilla\?\.addEventListener\("change", \(\) => \{ tocado = true;/);
-    assert.match(panel, /if \(lleva && !tocado && casilla\) casilla\.checked = true;/);
+    assert.match(panel, /casilla\.addEventListener\('change', \(\) => \{ tocado = true;/);
+    assert.match(panel, /if \(FIDG_TIPO_CODIGO\.includes\(fgVal\('pmTipo'\)\) && !tocado\) casilla\.checked = true;/);
   });
 });
 
@@ -144,7 +144,7 @@ describe("la confirmación se comprueba EN EL SERVIDOR", () => {
 
   test("la respuesta dice QUÉ se iba a abrir: local y código", () => {
     // Confirmar la promoción equivocada es tan caro como olvidar la casilla.
-    assert.match(ruta, /local: local \|\| null, codigo_agora: promo\.codigo_agora/);
+    assert.match(ruta, /local: locales\.join\(", "\) \|\| null, codigo_agora: promo\.codigo_agora/);
     assert.match(ruta, /confirmacion_exigida: FID_CONFIRMACION_GENERAL/);
   });
 
@@ -205,9 +205,9 @@ describe("las promociones históricas conservan su comportamiento", () => {
 
 describe("el panel avisa de lo que va a pasar", () => {
   test("el aviso en vivo mientras se configura", () => {
-    assert.match(panel, /Sin marcar, esto se le ofrece a CUALQUIER socio del local/);
+    assert.match(panel, /Se ofrecerá a cualquier cliente con carnet/);
     assert.match(panel, /id="pmGeneralAviso"/);
-    assert.match(panel, /pmGeneralAviso"\)\?\.classList\.toggle\("hidden", !general\)/);
+    assert.match(panel, /querySelector\('#pmGeneralAviso'\)\.classList\.toggle\('hidden', casilla\.checked\)/);
   });
 
   test("la ventana de confirmación enseña promoción, LOCAL y CÓDIGO", () => {
@@ -220,7 +220,7 @@ describe("el panel avisa de lo que va a pasar", () => {
     assert.match(fn, /esc\(local \|\| "TODOS LOS LOCALES"\)/);
     assert.match(fn, /Escribe <b>OFRECER A TODOS<\/b>/);
     // Y dice cuál es la salida correcta si te has equivocado.
-    assert.match(fn, /marca «Solo para quien se la haya ganado»/);
+    assert.match(fn, /marca «Solo clientes inscritos en una campaña vinculada»/);
   });
 
   test("cerrar la ventana por el fondo NO deja el guardado colgado", () => {

@@ -1837,3 +1837,48 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 .prov-union-field select{display:block;width:100%;min-width:0;max-width:100%;box-sizing:border-box;margin-top:8px;min-height:46px;padding:11px 36px 11px 14px;border-radius:13px;font-size:14px;font-weight:400;box-shadow:none;text-overflow:ellipsis}
 .prov-union-field details{margin-top:10px}
 .prov-union-field input[type="checkbox"]{width:auto;margin-right:8px;vertical-align:middle}
+
+/* Promociones: decisiones comerciales antes que ajustes técnicos. */
+.promo-editor { font-size:14px; }
+.promo-editor p { line-height:1.5; }
+.promo-step { border:1px solid var(--border);border-radius:12px;margin:12px 0; }
+.promo-step > summary { padding:15px;cursor:pointer;font-weight:650; }
+.promo-step[open] > summary { border-bottom:1px solid var(--border); }
+.promo-step-body { padding:15px; }
+.promo-note { background:var(--bg2);border-left:3px solid var(--border);padding:12px;border-radius:6px;line-height:1.5; }
+.promo-help { margin:16px 0; }
+.promo-help > summary { cursor:pointer;font-weight:600;line-height:1.5; }
+.promo-help > ol { padding-left:22px;line-height:1.6; }
+.promo-help > ol li { margin:8px 0; }
+.promo-pair { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px; }
+.promo-actions { display:flex;gap:8px;flex-wrap:wrap;margin:14px 0; }
+.promo-editor .chk { display:flex;align-items:flex-start;gap:8px;line-height:1.5; }
+.promo-editor .chk input { width:auto;flex:none;margin-top:4px; }
+.promo-step-body > .btn { margin-top:10px; }
+@media(max-width:520px) {
+ .promo-step-body { padding:12px; }
+ .promo-pair { grid-template-columns:1fr;gap:0; }
+ .promo-editor .btn { white-space:normal; }
+}
+.promo-editor .hidden { display:none !important; }
+.promo-editor .field { margin-bottom:12px; }
+
+.promo-review { margin:0 0 16px; }
+.promo-review > div { display:grid;grid-template-columns:110px minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--border); }
+.promo-review dt { color:var(--ink3); }
+.promo-review dd { margin:0;overflow-wrap:anywhere; }
+@media(max-width:520px) { .promo-review > div { grid-template-columns:1fr;gap:3px; } }
+
+.promo-list .row > .grow { flex:1 1 280px; }
+
+/* Campañas: un mismo formulario, una decisión por paso. */
+.modal.campaign-modal { width:min(700px,96vw); }
+.campaign-editor .promo-step > .promo-actions { padding:0 15px; }
+.campaign-editor .field { min-width:0;max-width:100%; }
+.campaign-editor input,.campaign-editor select,.campaign-editor textarea { max-width:100%;box-sizing:border-box; }
+.campaign-editor .promo-help > .field:first-of-type { margin-top:12px; }
+@media(max-width:520px) {
+ .campaign-editor .form-grid { grid-template-columns:minmax(0,1fr); }
+ .campaign-editor .form-grid .full { grid-column:auto; }
+ .campaign-editor .promo-actions > .btn { flex:1; }
+}

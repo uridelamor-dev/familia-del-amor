@@ -65,8 +65,12 @@ describe("todo se crea y se versiona DESDE EL PANEL", () => {
     for (const [fn, patron] of [["fidgPromoGuardar", /Se PUBLICARÁ/],
                                 ["fidgFormGuardar", /Se PUBLICARÁ/],
                                 ["fidgTarjetaGuardar", /Se PUBLICARÁ/]]) {
-      const f = panel.slice(panel.indexOf(`async function ${fn}(`), panel.indexOf(`async function ${fn}(`) + 1400);
-      assert.match(f, /if \(publicar === "1" && !confirm\(/, fn);
+      const f = panel.slice(panel.indexOf(`async function ${fn}(`), panel.indexOf(`async function ${fn}(`) + 2500);
+      if (fn === "fidgPromoGuardar") {
+        assert.match(f, /!confirm\(/);
+        assert.match(f, /await fidgConfirmarGeneral/);
+        assert.match(f, /FIDG_TIPO_CODIGO\.includes\(cuerpo\.tipo\) && !cuerpo\.requiere_derecho/);
+      } else assert.match(f, /if \(publicar === "1" && !confirm\(/, fn);
       assert.match(f, patron, fn);
     }
   });
@@ -90,9 +94,9 @@ describe("todo se crea y se versiona DESDE EL PANEL", () => {
     assert.ok(!/fidg-form-editar|fidg-form-guardar-en-sitio/.test(panel),
       "ha aparecido una acción de editar en sitio: una versión publicada no se reescribe");
 
-    // Las PROMOCIONES conservan su rótulo: el cambio de verbo es solo de formularios.
-    assert.match(panel, /p\.estado === "borrador" \? "Seguir editando" : "Copiar"/,
-      "la lista de promociones ha cambiado de rótulo sin haberlo pedido");
+    // Editar una promoción también mantiene el circuito de nueva versión.
+    assert.match(panel, /data-act="fidg-promo-nueva" data-id="\$\{p\.id\}"/);
+    assert.match(panel, /Se conservará la versión anterior en el historial/);
 
     // Y el aviso sigue existiendo y sigue diciendo que se crea una versión nueva, en las dos
     // redacciones: la de copiar y la de editar.

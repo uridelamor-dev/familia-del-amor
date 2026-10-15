@@ -363,6 +363,7 @@ export async function ensureSchemaFidelizacion(x) {
     creado_por TEXT NOT NULL,
     CHECK (estado IN ('borrador','publicada','pausada','finalizada'))
   )`);
+  await x.run(`ALTER TABLE fid_promos ADD COLUMN IF NOT EXISTS locales JSONB`);
   await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_promo_version ON fid_promos (clave, version)`);
   await x.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_fid_promo_reward
     ON fid_promos (reward_id) WHERE reward_id IS NOT NULL`);

@@ -25,7 +25,7 @@
 import { esLocalCanonico } from "../facturas/local-canonico.js";
 import { evaluarFactura, planConsumo, planCaducidad, claveMov, caducaEn, rewardsAplicados,
          rewardVigente, importePagado } from "./puntos.js";
-import { elegible as promoElegible, rewardDePromo, EXPLICACION as PROMO_EXPLICA } from "./promos.js";
+import { elegible as promoElegible, promoEnLocal, rewardDePromo, EXPLICACION as PROMO_EXPLICA } from "./promos.js";
 
 /**
  * La factura NO se puede cerrar y hay que decírselo a Ágora.
@@ -704,7 +704,7 @@ async function aplicarPrograma(x, { programa, extracto, conCarnet, integracion, 
       throw new FacturaRechazada("promo_sin_socio",
         "Ese premio necesita un socio identificado en la factura. Quítalo o asocia al cliente.");
     }
-    if (promoReward.local && String(promoReward.local) !== String(local)) {
+    if (!promoEnLocal(promoReward, local)) {
       throw new FacturaRechazada("promo_de_otro_local", "Ese premio es de otro local. Quítalo y vuelve a intentarlo.");
     }
     const usos = await x.get(

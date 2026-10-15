@@ -25,7 +25,7 @@
 // versiones internas, ni una sola factura. Hay un test que recorre la proyección entera buscando
 // esas claves. El carnet es de un cliente y esta foto se la enseña a quien tenga el móvil delante.
 
-import { elegirPromo, nivelDe, NIVEL } from "../fidelizacion/promos.js";
+import { elegirPromo, nivelDe, NIVEL, localesPromo } from "../fidelizacion/promos.js";
 
 /** Lo que se enseña cuando el programa de puntos todavía no está concediendo. */
 export const TEXTO_PREPARACION = "Programa de puntos en preparación";
@@ -106,14 +106,14 @@ export function proyectarCarne({
 
   const ficha = (p) => ({
     nombre: String(p.texto_cliente || p.nombre || "Regalo").slice(0, 120),
-    local: p.local || null,
+    local: localesPromo(p).join(", ") || null,
     hasta: p.hasta || null,
     hasta_texto: fechaCorta(p.hasta),
     horario: p.hora_desde && p.hora_hasta
       ? `de ${String(p.hora_desde).slice(0, 5)} a ${String(p.hora_hasta).slice(0, 5)}` : null,
     // ¿Este vale es SOLO de un local? Es lo que evita que el detalle contradiga al «Dónde vale»
     // general: la tarjeta vale en todos, pero este vale concreto puede que no.
-    solo_aqui: !!p.local,
+    solo_aqui: localesPromo(p).length > 0,
     // `personal` distingue «te lo has ganado» de «lo tiene todo el mundo». No sale ningún dato
     // del derecho: solo si lo es o no.
     personal: nivelDe(p) === NIVEL.CON_DERECHO,

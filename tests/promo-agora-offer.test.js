@@ -411,7 +411,7 @@ describe("la migración es aditiva", () => {
   });
 
   test("NINGUNA migración inserta ESMORZAR_GIRONA ni toca lo que ya hay en producción", () => {
-    assert.doesNotMatch(e, /ESMORZAR_GIRONA/i);
+    assert.doesNotMatch(e, /Por ejemplo: coqu/i);
     assert.doesNotMatch(sinComentarios(server), /INSERT INTO fid_promos[\s\S]{0,200}ESMORZAR/i);
     assert.doesNotMatch(e, /UPDATE fid_promos SET (codigo_agora|requiere_derecho|estado)/i);
   });
@@ -462,23 +462,23 @@ describe("el panel", () => {
   const p = sinComentarios(panel);
 
   test("el campo del código existe, con su ayuda y su ejemplo", () => {
-    assert.match(p, /Código de la promoción en Ágora/);
-    assert.match(p, /ESMORZAR_GIRONA/, "el ejemplo tiene que verse");
-    assert.match(p, /coincidir <b>exactamente<\/b> con el código creado en Ágora/);
+    assert.match(p, /Código que has creado en Ágora/);
+    assert.match(p, /Por ejemplo: coqu/, "el ejemplo tiene que verse");
+    assert.match(p, /exactamente igual, incluidas las mayúsculas/);
   });
 
   test("avisa de que guardar el código no crea la promoción en Ágora", () => {
-    assert.match(p, /no crea la promoción dentro de Ágora/);
+    assert.match(p, /no crea ni cambia la oferta en Ágora/);
   });
 
   test("solo se enseña para los tipos que llevan código", () => {
     assert.match(p, /FIDG_TIPO_CODIGO = \["oferta_agora", "producto_gratis", "campana_unica", "premio_campana"\]/);
-    assert.match(p, /pmAgora"\)\?\.classList\.toggle\("hidden", !lleva\)/);
+    assert.match(p, /querySelector\('#pmAgora'\)\.classList\.toggle\('hidden', !lleva\)/);
   });
 
   test("se valida en el navegador antes de mandar nada", () => {
     assert.match(p, /const err = fidgCodigoError\(cuerpo\.codigo_agora\);/);
-    assert.match(p, /if \(err\) \{ fidgCodigoPinta\(\); toast\(err\); return; \}/);
+    assert.match(p, /if \(err\) \{ enfocar\("#pmCodigo"\); fidgCodigoPinta\(\); toast\(err\); return; \}/);
   });
 
   test("y si el tipo no lo usa, el código ni se manda", () => {
@@ -488,7 +488,7 @@ describe("el panel", () => {
   test("el listado enseña mecanismo, local, vigencia, usos y estado", () => {
     assert.match(p, /Ágora · \$\{esc\(p\.codigo_agora\)\}/);
     assert.match(p, /uso\$\{lim === 1 \? "" : "s"\} por cliente/);
-    assert.match(p, /esc\(p\.local \|\| "todos los locales"\)/);
+    assert.match(p, /esc\(fidgPromoLocales\(p\)\.join\(", "\) \|\| "todos los locales"\)/);
   });
 
   test("hay un puente desde los cupones hacia Fidelización", () => {

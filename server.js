@@ -184,6 +184,7 @@ import { urlMaestro as fidUrlMaestro, normalizarMaestro as fidNormalizarMaestro,
   from "./src/modules/fidelizacion/catalogo.js";
 import { TIPOS as FID_PROMO_TIPOS, ESTADOS as FID_PROMO_ESTADOS, pendienteDeActivacion as fidPromoPreparada,
          elegible as fidPromoElegible, rewardDePromo as fidRewardDePromo,
+         localesPromo as fidLocalesPromo, promoEnLocal as fidPromoEnLocal,
          puedePublicar as fidPuedePublicar, simularPromo as fidSimularPromo,
          enMadrid as fidEnMadrid, leerLista as fidLeerLista, EXPLICACION as FID_PROMO_EXPLICA,
          normalizarCodigoAgora as fidCodigoAgora, exigeCodigo as fidExigeCodigo,
@@ -13804,7 +13805,7 @@ async function walProyeccion(qr, { local = null } = {}) {
     // Sin el cast falla toda la proyección, incluidos los puntos, y sale un pase estático.
     const vivas = await dbAll(
       `SELECT * FROM fid_promos WHERE estado = 'publicada'
-        AND (local IS NULL OR local = ? OR CAST(? AS TEXT) IS NULL) LIMIT 50`, [local, local]) || [];
+        AND ((locales IS NULL AND (local IS NULL OR local = ?)) OR locales @> CAST(? AS JSONB) OR CAST(? AS TEXT) IS NULL) LIMIT 50`, [local, JSON.stringify([local]), local]) || [];
     for (const p of vivas) {
       const usos = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_usos
         WHERE clave = ? AND qr_id = ? AND estado = 'usado'`, [p.clave, qr.id]);
@@ -13816,7 +13817,7 @@ async function walProyeccion(qr, { local = null } = {}) {
           WHERE clave = ? AND qr_id = ?`, [p.clave, qr.id]);
         derechos = d?.n || 0;
       }
-      const el = fidPromoElegible(p, { ahora, local: p.local || local, usos: usos?.n || 0,
+      const el = fidPromoElegible(p, { ahora, local: local || fidLocalesPromo(p)[0], usos: usos?.n || 0,
         usosTotales: tot?.n || 0, saldo: saldo.disponible, importeCentimos: null, derechos });
       if (el.ok) elegibles.push(p);
     }
@@ -21768,7 +21769,7 @@ async function fidPromoContexto() {
   for (const p of publicadas) {
     if (!fidPromoPreparada(p, ahora)) continue;
     ctx.promosVigentes += 1;
-    if (!p.local) ctx.promosSinLocal += 1; else locales.add(p.local);
+    if (!fidLocalesPromo(p).length) ctx.promosSinLocal += 1; else for (const l of fidLocalesPromo(p)) locales.add(l);
     if (fidExigeCodigo(p.tipo)) {
       if (!fidCodigoAgora(p.codigo_agora).ok) ctx.promosCodigoInvalido += 1;
       else if (!p.codigo_comprobado_en) ctx.promosSinComprobar += 1;
@@ -21944,8 +21945,8 @@ app.get("/api/fidelizacion/agora/:token/member/:memberId", async (req, res) => {
       let promoElegida = null;
       if (swPromo.promociones_ofrecer) {
         const vivas = await dbAll(
-          `SELECT * FROM fid_promos WHERE estado = 'publicada' AND (local IS NULL OR local = ?)
-            LIMIT 50`, [integ.fila.local]) || [];
+          `SELECT * FROM fid_promos WHERE estado = 'publicada' AND ((locales IS NULL AND (local IS NULL OR local = ?)) OR locales @> CAST(? AS JSONB))
+            LIMIT 50`, [integ.fila.local, JSON.stringify([integ.fila.local])]) || [];
         const elegibles = [];
         for (const p of vivas) {
           const usos = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_promo_usos
@@ -23470,7 +23471,7 @@ app.get("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res) 
   try {
     const locales = localesPermitidos(req.user);
     const filas = await dbAll(`SELECT * FROM fid_promos ORDER BY clave, version DESC LIMIT 500`) || [];
-    const mias = locales && locales.length ? filas.filter((f) => !f.local || locales.includes(f.local)) : filas;
+    const mias = locales && locales.length ? filas.filter((f) => locales.some(l => fidPromoEnLocal(f, l))) : filas;
     res.json({ ok: true, tipos: FID_PROMO_TIPOS, estados: FID_PROMO_ESTADOS,
       data: mias.map((p) => ({ ...p, grupos: fidLeerLista(p.grupos), dias: fidLeerLista(p.dias),
         // El código de Ágora se ve —hace falta para comprobarlo allí— pero nunca un token nuestro.
@@ -23486,12 +23487,16 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
   try {
     const b = req.body || {};
     if (!FID_PROMO_TIPOS[String(b.tipo)]) return res.status(400).json({ ok: false, error: "Tipo no válido" });
-    let local = null;
-    if (b.local) {
-      const pedido = fidLocalDePeticion(req, b.local);
+    if (b.locales != null && (!Array.isArray(b.locales) || !b.locales.length || b.locales.some(l => typeof l !== "string" || !l.trim())))
+      return res.status(400).json({ ok: false, error: "Selecciona al menos un local válido" });
+    const seleccion = b.locales != null ? b.locales : (b.local ? [b.local] : []);
+    const locales = [];
+    for (const l of [...new Set(seleccion)]) {
+      const pedido = fidLocalDePeticion(req, l);
       if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
-      local = pedido.local;
+      if (!locales.includes(pedido.local)) locales.push(pedido.local);
     }
+    const local = locales[0] || null;
     const clave = String(b.clave || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
     if (!clave) return res.status(400).json({ ok: false, error: "Falta la clave" });
 
@@ -23515,7 +23520,7 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
     }
 
     const promo = {
-      clave, local, tipo: String(b.tipo),
+      clave, local, locales, tipo: String(b.tipo),
       nombre: String(b.nombre || "").trim().slice(0, 120),
       texto_cliente: String(b.texto_cliente || "").trim().slice(0, 400),
       texto_camarero: String(b.texto_camarero || "").trim().slice(0, 120),
@@ -23556,6 +23561,17 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
     }
 
     const check = fidPuedePublicar(promo, { grupos, catalogo });
+    // Los grupos tienen versiones por local: validar cada ámbito antes de publicar.
+    for (const l of locales.slice(1)) {
+      const otrosGrupos = {};
+      const c = await dbGet(`SELECT COUNT(*)::int AS n FROM fid_productos WHERE local = ? AND activo`, [l]);
+      for (const g of fidLeerLista(promo.grupos)) {
+        const fila = await dbGet(`SELECT productos FROM fid_grupos WHERE local = ? AND clave = ? AND version = ?`, [l, String(g.clave), parseInt(g.version)]);
+        otrosGrupos[`${g.clave}:${g.version}`] = fila ? fidLeerLista(fila.productos) : null;
+      }
+      const otro = fidPuedePublicar(promo, { grupos: otrosGrupos, catalogo: c?.n || 0 });
+      if (!otro.ok) { check.ok = false; check.falta.push(...otro.falta.map(f => `${l}: ${f}`)); }
+    }
     if (quierePublicar && !check.ok) {
       return res.status(409).json({ ok: false, error: "No se puede publicar todavía", falta: check.falta });
     }
@@ -23571,9 +23587,9 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
     if (fidExigeConfirmacionGeneral(promo, { publicar: quierePublicar })
         && !fidConfirmacionGeneralValida(b.confirmacion_general)) {
       return res.status(409).json({ ok: false, requiere_confirmacion_general: true,
-        local: local || null, codigo_agora: promo.codigo_agora,
+        local: locales.join(", ") || null, codigo_agora: promo.codigo_agora,
         confirmacion_exigida: FID_CONFIRMACION_GENERAL,
-        error: `Esta promoción se ofrecerá a CUALQUIER socio de ${local || "todos los locales"}. Para publicarla así hay que escribir «${FID_CONFIRMACION_GENERAL}».` });
+        error: `Esta promoción se ofrecerá a CUALQUIER socio de ${locales.join(", ") || "todos los locales"}. Para publicarla así hay que escribir «${FID_CONFIRMACION_GENERAL}».` });
     }
     const estado = quierePublicar ? "publicada" : "borrador";
     // El `reward_id` solo se genera al PUBLICAR: un borrador no tiene nada que ofrecer.
@@ -23582,18 +23598,26 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
 
     const fila = await fidTransaccion(async (x) => {
       await x.run(`SELECT pg_advisory_xact_lock(?, ?)`, [FID_CERROJO_REGLAS, 2]);
+      const anteriores = await x.all(`SELECT local, locales FROM fid_promos WHERE clave = ?`, [clave]);
+      const permitidos = localesPermitidos(req.user);
+      if (permitidos?.length && (anteriores || []).some(p =>
+        !fidLocalesPromo(p).length || fidLocalesPromo(p).some(l => !fidPuedeVer(req, l)))) {
+        const error = new Error("No puedes sustituir una promoción que incluye otros locales");
+        error.status = 403;
+        throw error;
+      }
       const ult = await x.get(`SELECT COALESCE(MAX(version), 0) AS v FROM fid_promos WHERE clave = ?`, [clave]);
       // Publicar una versión nueva FINALIZA la anterior publicada de la misma clave.
       if (quierePublicar) {
         await x.run(`UPDATE fid_promos SET estado = 'finalizada' WHERE clave = ? AND estado = 'publicada'`, [clave]);
       }
       const creada = await x.run(
-        `INSERT INTO fid_promos (clave, version, local, nombre, texto_cliente, texto_camarero, tipo,
+        `INSERT INTO fid_promos (clave, version, local, locales, nombre, texto_cliente, texto_camarero, tipo,
            codigo_agora, codigo_comprobado_en, codigo_comprobado_por, valor, coste_puntos, compra_minima,
            grupos, dias, hora_desde, hora_hasta, desde, hasta, limite_cuenta, limite_total, acumulable,
            prioridad, estado, gracia_minutos, reward_id, campana, requiere_derecho, creado_en, creado_por)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
-        [clave, Number(ult?.v || 0) + 1, local, promo.nombre, promo.texto_cliente, promo.texto_camarero,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
+        [clave, Number(ult?.v || 0) + 1, local, JSON.stringify(locales), promo.nombre, promo.texto_cliente, promo.texto_camarero,
          promo.tipo, promo.codigo_agora, promo.codigo_comprobado_en,
          promo.codigo_comprobado_en ? req.user.username : null, promo.valor, promo.coste_puntos,
          promo.compra_minima, promo.grupos, promo.dias, promo.hora_desde, promo.hora_hasta,
@@ -23611,6 +23635,7 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
         abierta_a_todos: estado === "publicada" && fidExigeConfirmacionGeneral(promo, { publicar: true }) } });
     res.json({ ok: true, id: fila.id, version: fila.version, estado, falta: check.falta });
   } catch (e) {
+    if (e.status === 403) return res.status(403).json({ ok: false, error: e.message });
     console.error(lineaErrorSql("[fidelizacion] crear promo", e));
     res.status(500).json({ ok: false, error: "No se pudo guardar" });
   }
@@ -23625,7 +23650,7 @@ app.post("/api/fidelizacion/promos/:id/estado", requireAuth(PROMOS_ROLES), async
     }
     const p = await dbGet(`SELECT * FROM fid_promos WHERE id = ?`, [parseInt(req.params.id)]);
     if (!p) return res.status(404).json({ ok: false, error: "No existe" });
-    if (p.local && !fidPuedeVer(req, p.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
+    if (fidLocalesPromo(p).some(l => !fidPuedeVer(req, l))) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
     if (p.estado === "borrador") return res.status(409).json({ ok: false, error: "Un borrador se publica guardándolo." });
     if (p.estado === "finalizada") return res.status(409).json({ ok: false, error: "Ya está finalizada." });
 
@@ -23662,7 +23687,7 @@ app.post("/api/fidelizacion/promos/simular", requireAuth(PROMOS_ROLES), async (r
     const promo = { ...b, estado: "publicada", reward_id: b.reward_id || "fidp:simulacion",
       codigo_comprobado_en: b.codigo_comprobado ? isoConOffset(Date.now()) : (b.codigo_comprobado_en || null),
       grupos: fidLeerLista(b.grupos), dias: fidLeerLista(b.dias) };
-    const local = promo.local || (LOCALES_CANON[0] || null);
+    const local = fidLocalesPromo(promo)[0] || (LOCALES_CANON[0] || null);
     const cuando = b.ahora || isoConOffset(Date.now());
     const m = fidEnMadrid(cuando);
 
@@ -23720,8 +23745,8 @@ app.post("/api/fidelizacion/promos/simular", requireAuth(PROMOS_ROLES), async (r
         ? [{ ...base, nombre: "Cuenta por debajo del mínimo", importeCentimos: 0,
              cambia: `la cuenta es de 0 €, y el mínimo son ${minimo} €` }]
         : []),
-      ...(promo.local
-        ? [{ ...base, nombre: "Local incorrecto", local: "Oficina", cambia: "se escanea en «Oficina»" }]
+      ...(fidLocalesPromo(promo).length
+        ? [{ ...base, nombre: "Local incorrecto", local: "__fuera_de_promocion__", cambia: "se escanea fuera de los locales seleccionados" }]
         : []),
       ...(exigeDerecho
         ? [{ ...base, nombre: "Alguien que no se apuntó", derechos: 0,
@@ -23733,25 +23758,30 @@ app.post("/api/fidelizacion/promos/simular", requireAuth(PROMOS_ROLES), async (r
         : []),
     ];
 
-    // Los productos elegibles, resueltos: es lo que contesta «¿qué café entra exactamente?».
+    // Resolver los grupos en cada local, sin mezclar catálogos.
     const productos = [];
-    if (promo.local) {
+    const publicar = { ok: true, falta: [] };
+    for (const localPromo of fidLocalesPromo(promo)) {
+      const pedido = fidLocalDePeticion(req, localPromo);
+      if (!pedido.ok) return res.status(pedido.codigo).json({ ok: false, error: pedido.error });
+      const grupos = {};
       for (const g of fidLeerLista(promo.grupos)) {
         const fila = await dbGet(`SELECT nombre, productos FROM fid_grupos WHERE local = ? AND clave = ? AND version = ?`,
-          [promo.local, String(g.clave), parseInt(g.version)]);
+          [pedido.local, String(g.clave), parseInt(g.version)]);
         const ids = fila ? fidLeerLista(fila.productos) : [];
         const nombres = ids.length ? await dbAll(
           `SELECT producto_id, nombre, activo FROM fid_productos WHERE local = ? AND producto_id = ANY(?)`,
-          [promo.local, ids.map(String)]) : [];
-        productos.push({ grupo: g.clave, version: g.version, nombre: fila?.nombre || null,
+          [pedido.local, ids.map(String)]) : [];
+        grupos[`${g.clave}:${g.version}`] = fila ? ids : null;
+        productos.push({ local: pedido.local, grupo: g.clave, version: g.version, nombre: fila?.nombre || null,
           productos: (nombres || []).map((n) => ({ id: n.producto_id, nombre: n.nombre, activo: n.activo })) });
       }
+      const check = fidPuedePublicar(promo, { grupos });
+      if (!check.ok) { publicar.ok = false; publicar.falta.push(...check.falta.map(f => `${pedido.local}: ${f}`)); }
     }
-
+    if (!fidLocalesPromo(promo).length) Object.assign(publicar, fidPuedePublicar(promo, { grupos: {} }));
     res.json({ ok: true, madrid: m, escenarios: fidSimularPromo(promo, escenarios),
-      reward: fidRewardDePromo(promo), productos,
-      publicar: fidPuedePublicar(promo, { grupos: Object.fromEntries(productos.map((p) =>
-        [`${p.grupo}:${p.version}`, p.productos.map((q) => q.id)])) }),
+      reward: fidRewardDePromo(promo), productos, publicar,
       explicaciones: FID_PROMO_EXPLICA });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] simular promo", e));
@@ -25485,7 +25515,7 @@ const server = app.listen(PORT, async () => {
         partes.push(`INSTRUCCIONES DEL EQUIPO (síguelas siempre que apliquen):\n${instr.trim()}`);
       }
       const cupones = await dbAll(`SELECT id,nombre,descripcion,activa,locales,desde,hasta,usos_por_cliente FROM pro_promociones ORDER BY id DESC LIMIT 60`);
-      const caja = await dbAll(`SELECT id,nombre,campana,estado,local,texto_cliente,desde,hasta,dias,hora_desde,hora_hasta,compra_minima,coste_puntos,acumulable,limite_cuenta,tipo,valor
+      const caja = await dbAll(`SELECT id,nombre,campana,estado,local,locales,texto_cliente,desde,hasta,dias,hora_desde,hora_hasta,compra_minima,coste_puntos,acumulable,limite_cuenta,tipo,valor
         FROM fid_promos WHERE estado <> 'borrador' ORDER BY id DESC LIMIT 60`);
       partes.push('CONDICIONES REGISTRADAS DE PROMOCIONES (últimas 60 de cada tipo; si falta una, no inferir sus condiciones):\n' + condicionesPromociones(cupones, caja));
       const hoy = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
