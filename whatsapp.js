@@ -1,5 +1,5 @@
 import { conTurno } from './src/modules/messaging/turno.js';
-import { entradaDiferidaVigente, indicarEscribiendo } from './src/modules/messaging/entrada-diferida.js';
+import { entradaDiferidaVigente, adjuntoGrupoDiferidoVigente, indicarEscribiendo } from './src/modules/messaging/entrada-diferida.js';
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, downloadMediaMessage, fetchLatestWaWebVersion } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
@@ -513,6 +513,31 @@ export function setOnPausarIA(fn) { onPausarIA = fn; }
 
 let onGroupAttachment = null;
 export function setOnGroupAttachment(fn) { onGroupAttachment = fn; }
+let grupoFacturasPermitido = null;
+export function setGrupoFacturasPermitido(fn) { grupoFacturasPermitido = fn; }
+const adjuntosGrupoEnCurso = new Set();
+async function recibirAdjuntoGrupo(msg, diferido = false) {
+  const jid = msg.key?.remoteJid;
+  if (!onGroupAttachment || !grupoFacturasPermitido) return;
+  if (diferido && !adjuntoGrupoDiferidoVigente(msg)) return;
+  const doc = msg.message?.documentMessage, img = msg.message?.imageMessage;
+  if (!doc && !img) return;
+  const clave = `${jid}:${msg.key.id}`;
+  if (adjuntosGrupoEnCurso.has(clave)) return;
+  adjuntosGrupoEnCurso.add(clave);
+  try {
+    if (!(await grupoFacturasPermitido(jid))) return;
+    const buffer = await downloadMediaMessage(msg, "buffer", {});
+    await onGroupAttachment({
+      groupJid: jid, senderJid: msg.key.participant || jid, buffer,
+      mimeType: doc?.mimetype || img?.mimetype || "image/jpeg",
+      filename: doc?.fileName || `imagen_${msg.key.id}.jpg`,
+      caption: doc?.caption || img?.caption || "", recuperado: diferido
+    });
+  } catch (err) {
+    console.error("[WA] No se pudo recuperar el adjunto del grupo:", err.message);
+  } finally { adjuntosGrupoEnCurso.delete(clave); }
+}
 
 // Configuración editable de Sara (instrucciones de marketing, bloqueos, documentos).
 // Devuelve un bloque de texto que se inyecta en el system prompt en cada conversación.
@@ -1135,7 +1160,7 @@ async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   console.log(`[WhatsApp] Auth dir: ${AUTH_DIR} | Intento ${reconnectAttempts + 1}`);
 
-  const { version } = await fetchLatestWaWebVersion().catch(() => ({ version: [2, 3000, 1044015310] }));
+  const { version } = await fetchLatestWaWebVersion({ signal: AbortSignal.timeout(15000) }).catch(() => ({ version: [2, 3000, 1044015310] }));
   console.log(`[WhatsApp] Versión WaWeb: ${version.join(".")}`);
 
   sock = makeWASocket({
@@ -1228,7 +1253,17 @@ async function connectToWhatsApp() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("messaging-history.set", datos => archivarBandeja({...datos,historico:true}));
+  sock.ev.on("messaging-history.set", datos => {
+    void archivarBandeja({...datos,historico:true});
+    // El historial privado sigue siendo una copia de lectura. Solo recuperamos
+    // documentos recientes de grupos expresamente vinculados a facturas.
+    for (const recibido of datos.messages || []) {
+      if (!adjuntoGrupoDiferidoVigente(recibido)) continue;
+      const msg = {...recibido, message: mensajeNormalizado(recibido.message)};
+      void encolarPorJid("recuperacion-facturas", () => recibirAdjuntoGrupo(msg, true))
+        .catch(e => console.error("[WA] Recuperación de facturas:", e.message));
+    }
+  });
   sock.ev.on("chats.upsert", chats => archivarBandeja({chats}));
   sock.ev.on("chats.update", chats => archivarBandeja({chats}));
   sock.ev.on("contacts.upsert", contacts => archivarBandeja({contacts}));
@@ -1267,21 +1302,8 @@ async function connectToWhatsApp() {
 
       // Grupos: solo procesar si hay adjunto y hay handler registrado
       if (jid?.endsWith("@g.us")) {
-        if (type === "append") continue;
-        if (!onGroupAttachment) continue;
-        const docMsg = msg.message?.documentMessage;
-        const imgMsg = msg.message?.imageMessage;
-        if (!docMsg && !imgMsg) continue;
-        try {
-          const buffer = await downloadMediaMessage(msg, "buffer", {});
-          const mimeType = docMsg?.mimetype || imgMsg?.mimetype || "image/jpeg";
-          const filename = docMsg?.fileName || `imagen_${Date.now()}.jpg`;
-          const caption = docMsg?.caption || imgMsg?.caption || "";
-          const senderJid = msg.key.participant || jid;
-          onGroupAttachment({ groupJid: jid, senderJid, buffer, mimeType, filename, caption });
-        } catch (err) {
-          console.error("[WA] Error descargando adjunto de grupo:", err.message);
-        }
+        void encolarPorJid("recuperacion-facturas", () => recibirAdjuntoGrupo(msg, type === "append"))
+          .catch(e => console.error("[WA] Recepción de facturas:", e.message));
         continue;
       }
 

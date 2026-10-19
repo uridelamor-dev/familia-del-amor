@@ -11605,6 +11605,11 @@ function facRevisar(id) {
 
 // ════════════════════════ VISTA: WHATSAPP ════════════════════════
 let WA_POLL = null;
+let WA_POLL_BUSY = false;
+function waQRContent(qr) {
+  if (qr && qr.qr) return `<div style="text-align:center;padding:10px"><img src="${esc(qr.qr)}" alt="Código QR" style="width:240px;height:240px;border-radius:12px;background:#fff;padding:8px"></div><div class="mut" style="text-align:center;font-size:12px">El código se actualiza solo; en cuanto vincules, esta pantalla lo detectará.</div>`;
+  return '<p class="mut" role="status">Esperando el código de WhatsApp. Se comprobará automáticamente cada pocos segundos.</p>';
+}
 function waGroupOpts(cur, groups) {
   let opts = `<option value="">— sin vincular —</option>`;
   const has = (groups || []).some((g) => g.id === cur);
@@ -11615,7 +11620,7 @@ function waGroupOpts(cur, groups) {
 function renderWhatsApp(status, qr, links, groups) {
   const connected = status && status.connected;
   const linkMap = {}; (links || []).forEach((l) => { linkMap[l.local] = l.group_jid; });
-  const conn = `<div class="card"><div class="ch"><h3>Conexión de Sara</h3><span class="pill ${connected ? "ok" : "bad"}">${connected ? "Conectado" : "Desconectado"}</span></div>${connected ? `<p class="mut">Sara está conectada y atiende reservas por WhatsApp automáticamente.</p>` : `<p class="mut">Escanea este código desde WhatsApp → Dispositivos vinculados para reconectar a Sara:</p>${qr && qr.qr ? `<div style="text-align:center;padding:10px"><img src="${esc(qr.qr)}" alt="Código QR" style="width:240px;height:240px;border-radius:12px;background:#fff;padding:8px"></div><div class="mut" style="text-align:center;font-size:12px">El código se actualiza solo; en cuanto vincules, esta pantalla lo detectará.</div>` : '<p class="mut">Generando código QR…</p>'}`}</div>`;
+  const conn = `<div class="card"><div class="ch"><h3>Conexión de Sara</h3><span class="pill ${connected ? "ok" : "bad"}">${connected ? "Conectado" : "Desconectado"}</span></div>${connected ? `<p class="mut">Sara está conectada y atiende reservas por WhatsApp automáticamente.</p>` : `<p class="mut">Escanea este código desde WhatsApp → Dispositivos vinculados para reconectar a Sara:</p>${`<div id="wa-qr">${waQRContent(qr)}</div>`}`}</div>`;
   // Los establecimientos del panel: hay UN grupo de reservas y UNO de facturas para las dos
   // barras de Blanes, así que listar la Cooperativa aparte pedía vincular un grupo que no
   // existe. Si algún día tiene el suyo, se añade aquí y en centros.js a la vez.
@@ -11642,7 +11647,24 @@ async function loadWhatsApp() {
 }
 async function pollWa() {
   if (CURRENT !== "whatsapp") { clearInterval(WA_POLL); WA_POLL = null; return; }
-  try { const s = await apiRaw("/api/whatsapp/status"); if (s && s.connected) { clearInterval(WA_POLL); WA_POLL = null; loadWhatsApp(); } } catch { /* reintenta */ }
+  if (WA_POLL_BUSY) return;
+  WA_POLL_BUSY = true;
+  try {
+    const s = await apiRaw("/api/whatsapp/status");
+    if (CURRENT !== "whatsapp") return;
+    if (s && s.connected) {
+      clearInterval(WA_POLL); WA_POLL = null;
+      await loadWhatsApp();
+      return;
+    }
+    const qr = await apiRaw("/api/whatsapp/qr");
+    if (CURRENT !== "whatsapp") return;
+    const box = document.getElementById("wa-qr");
+    if (box) box.innerHTML = waQRContent(qr);
+  } catch {
+    const box = CURRENT === "whatsapp" && document.getElementById("wa-qr");
+    if (box) box.innerHTML = '<p class="mut" role="status">No se ha podido consultar el código. Volveremos a intentarlo automáticamente.</p>';
+  } finally { WA_POLL_BUSY = false; }
 }
 
 // ── Sara (IA): configurar el chatbot por conversación ─────────────────────────

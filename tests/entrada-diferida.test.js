@@ -18,13 +18,15 @@ import { readFileSync } from 'node:fs';
 import { identidadConversacion } from '../src/modules/messaging/contexto.js';
 test('la recuperación consulta respuestas previas usando el teléfono resuelto y propaga fallos de BD',async()=>{
  const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
- let callback, encontrado=null;
+ let callback, encontrado=null, movil=null;
  const env={setEntradaDiferidaPermitida:fn=>callback=fn,identidadConversacion,dbGet:async(sql,args)=>{
+ if (sql.includes('wa_bandeja_mensajes')) { assert.ok(args.includes('34600000000@s.whatsapp.net')); return movil; }
  assert.match(sql,/tipo = 'saliente'/);assert.match(sql,/sin respuesta registrada/);
  assert.ok(args.includes('34600000000'));return encontrado;
  }};
  vm.runInNewContext(server.slice(server.indexOf('  setEntradaDiferidaPermitida(async'),server.indexOf('  setArchivoBandeja(',server.indexOf('  setEntradaDiferidaPermitida(async'))),env);
  assert.equal(await callback(msg,'34600000000'),true);
+ movil={id:1}; assert.equal(await callback(msg,'34600000000'),false); movil=null;
  encontrado={id:12}; assert.equal(await callback(msg,'34600000000'),false);
  env.dbGet=async()=>{throw Error('BD caída');};await assert.rejects(callback(msg,'34600000000'),/BD caída/);
 });

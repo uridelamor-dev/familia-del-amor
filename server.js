@@ -53,7 +53,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setEntradaDiferidaPermitida, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setEntradaDiferidaPermitida, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, setGrupoFacturasPermitido, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, leerIvaOriginal, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -25288,6 +25288,11 @@ const server = app.listen(PORT, async () => {
   setEntradaDiferidaPermitida(async (msg, tel) => {
     const jid = msg.key.remoteJid;
     const identidad = identidadConversacion(jid, tel);
+    const respuestaMovil = await dbGet(`SELECT id FROM wa_bandeja_mensajes
+      WHERE jid IN (?, ?) AND enviado = true
+      AND fecha >= to_timestamp(?::double precision) LIMIT 1`,
+      [jid, identidad.jidTelefono, Number(msg.messageTimestamp)]);
+    if (respuestaMovil) return false;
     const contestado = await dbGet(`SELECT id FROM whatsapp_messages
       WHERE (jid = ? OR jid = ? OR telefono = ? OR telefono = ?) AND creado_en::timestamptz >= to_timestamp(?::double precision)
       AND (tipo = 'saliente' OR (NULLIF(respuesta, '') IS NOT NULL
@@ -25670,7 +25675,10 @@ const server = app.listen(PORT, async () => {
     } catch (e) { console.error(lineaErrorSql("[wa] pausar IA", e)); throw e; }
   });
 
-  setOnGroupAttachment(async ({ groupJid, senderJid, buffer, mimeType, filename, caption }) => {
+  setGrupoFacturasPermitido(async groupJid =>
+    !!(await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid])));
+
+  setOnGroupAttachment(async ({ groupJid, senderJid, buffer, mimeType, filename, caption, recuperado = false }) => {
     const grupo = await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid]);
     if (!grupo) return;
 
@@ -25678,7 +25686,8 @@ const server = app.listen(PORT, async () => {
     console.log(`[Facturas] Documento recibido en grupo ${local} de ${senderJid}`);
 
     try {
-      await sendMensajeAGrupo(groupJid, `⏳ Procesando documento para *${local}*...`);
+      // Un aviso de cortesía no puede impedir guardar el original en la cola.
+      if (!recuperado) void sendMensajeAGrupo(groupJid, `⏳ Procesando documento para *${local}*...`).catch(() => {});
 
       const result = await procesarFactura({
         buffer, mimeType, filename, local, caption,
@@ -25687,6 +25696,7 @@ const server = app.listen(PORT, async () => {
         backupFn: null
       });
 
+      if (recuperado) return; // Recuperar sin llenar el grupo de avisos antiguos.
       if(result.descartado) {
         await sendMensajeAGrupo(groupJid,'Documento omitido: es una imagen corporativa o firma sin información de compra.');
         return;
@@ -25705,6 +25715,10 @@ const server = app.listen(PORT, async () => {
         `📊 Sheet: ${sheetUrl || `https://docs.google.com/spreadsheets/d/${result.sheetId}`}`
       );
     } catch (err) {
+      if (recuperado) {
+        console.warn("[Facturas] Recuperación:", err.recibido ? "Original guardado, lectura pendiente" : err.message);
+        return;
+      }
       if (err instanceof FacturaDuplicadaError) {
         console.warn("[Facturas] Duplicado detectado:", err.message);
         await sendMensajeAGrupo(groupJid,

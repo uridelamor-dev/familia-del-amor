@@ -17,3 +17,11 @@ export async function indicarEscribiendo(sock, jid, espera = 1500) {
   } catch { /* La presencia es decorativa: nunca debe impedir responder. */ }
   finally { clearTimeout(timer); }
 }
+
+// Solo adjuntos recientes: no reimportar años de historial al vincular un dispositivo.
+export function adjuntoGrupoDiferidoVigente(msg, ahora = Date.now()) {
+  const fecha = Number(msg?.messageTimestamp) * 1000;
+  return !!msg?.key?.id && !msg.key.fromMe
+    && /@g\.us$/.test(msg.key.remoteJid || '')
+    && Number.isFinite(fecha) && fecha <= ahora + 60000 && fecha >= ahora - 72 * 3600000;
+}

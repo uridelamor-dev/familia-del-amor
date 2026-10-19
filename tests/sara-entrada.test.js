@@ -80,7 +80,7 @@ test('saludos catalanes breves y seguimiento mantienen su idioma', () => {
 });
 test('callback real: fallo al pausar se propaga y no permite afirmar que se ha derivado', async () => {
   let callback;
-  const a = server.indexOf('  setOnPausarIA(async'), b = server.indexOf('  setOnGroupAttachment(', a);
+  const a = server.indexOf('  setOnPausarIA(async'), b = server.indexOf('  setGrupoFacturasPermitido(', a);
   const env = { console, setOnPausarIA: fn => { callback = fn; }, saraMarcarPausa: () => ({}), isoConOffset: () => '',
     dbRun: async () => { throw new Error('base_no_disponible'); }, lineaErrorSql: () => 'error controlado' };
   vm.runInNewContext(server.slice(a, b), env);
