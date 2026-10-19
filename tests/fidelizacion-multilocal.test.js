@@ -51,7 +51,7 @@ const revocar = trozo('app.post("/api/fidelizacion/integracion/:id/revocar"',
 const wpVer = trozo('app.get("/api/fidelizacion/integracion/:id/workplace-observado"',
                     'app.post("/api/fidelizacion/integracion/:id/workplace"');
 const wpOk = trozo('app.post("/api/fidelizacion/integracion/:id/workplace"',
-                   'app.get("/api/fidelizacion/facturas", requireAuth');
+                   '// Operational reading:');
 const listado = trozo('app.get("/api/fidelizacion/facturas", requireAuth',
                       '/** El detalle. El cuerpo original');
 const purgar = trozo('app.post("/api/fidelizacion/facturas/purgar-cuerpos"',
@@ -292,11 +292,14 @@ describe("el Workplace se confirma a mano, y no promete lo que no puede", () => 
     }
   });
 
-  test("confirmar exige que el Id se haya VISTO en una factura de prueba", () => {
+  test("confirmar exige Id y nombre observados en una factura del mismo local, también real", () => {
     // Sin esto, confirmar sería pulsar un botón sin haber mirado nada.
     assert.match(wpOk, /if \(!coincide\) \{/);
     assert.match(wpOk, /res\.status\(409\)/);
-    assert.match(wpOk, /es_prueba AND cuerpo_enc IS NOT NULL/);
+    for (const ruta of [wpVer, wpOk]) {
+      assert.match(ruta, /WHERE local = \? AND cuerpo_enc IS NOT NULL/);
+      assert.ok(!ruta.includes("AND es_prueba"), "una compra real también permite comprobar la caja");
+    }
     assert.match(wpOk, /String\(doc\["Workplace\.Id"\]\) !== wid\) continue/);
     // Y el NOMBRE tiene que salir de esa MISMA factura: un rótulo inventado junto a un Id correcto
     // no sirve para comprobar después si el TPV es el que creemos.
@@ -710,18 +713,17 @@ describe("los botones de cada estado, de una tabla y no a ojo", () => {
   });
 });
 
-describe("Workplace observado: solo facturas de prueba, solo dos campos", () => {
-  test("SOLO se descifra el cuerpo de facturas marcadas es_prueba", () => {
-    // Sin este filtro, este endpoint sería una puerta a los importes de cualquier cliente por la
-    // vía de mirarle el Workplace. Va en las DOS rutas: la que mira y la que confirma.
+describe("Workplace observado: facturas del local, solo dos campos", () => {
+  test("la observación está limitada a facturas del local con cuerpo disponible", () => {
+    // Las dos rutas usan el mismo ámbito; solo devuelven datos de caja, nunca importes.
     for (const [nombre, r] of [["mirar", wpVer], ["confirmar", wpOk]]) {
       const selects = [...r.matchAll(/FROM fid_facturas\s*\n?\s*WHERE ([^`]*)`/g)].map((m) => m[1].trim());
       assert.equal(selects.length, 1, `${nombre}: hay más de una consulta a facturas`);
-      assert.match(selects[0], /^local = \? AND es_prueba AND cuerpo_enc IS NOT NULL/, nombre);
+      assert.match(selects[0], /^local = \? AND cuerpo_enc IS NOT NULL/, nombre);
     }
   });
 
-  test("una factura NORMAL no se puede usar para sacar el Workplace", () => {
+  test("ningún parámetro permite consultar facturas de otro local", () => {
     // No hay ningún parámetro que salte el filtro: ni un `?todas=1`, ni un id suelto.
     for (const r of [wpVer, wpOk]) {
       assert.ok(!/req\.query\.(todas|factura|id)/.test(r), "hay una vía para pedir otra factura");

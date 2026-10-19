@@ -1,3 +1,4 @@
+import { completarNifConocido } from './src/modules/facturas/nif-conocido.js';
 import {guardarIvaLeido} from './src/modules/facturas/iva.js';
 import {sincronizarArchivo,reintentarArchivos} from './src/modules/facturas/drive-sync.js';
 import {esAdjuntoDecorativo} from './src/modules/facturas/clasificacion.js';
@@ -617,6 +618,7 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   if (esAdjuntoDecorativo(datos)) return {descartado:true,motivo:"Adjunto corporativo sin información de compra"};
   await revisarEmisorReceptor(datos, dbAll);   // ver por qué en revisarEmisorReceptor
   await aplicarNombreProveedor(datos, dbAll);   // lo que ya se corrigió a mano, aprendido
+  await completarNifConocido(datos, dbAll);
   const coher = await revisarCoherenciaFactura(datos, dbAll, { hoy: hoyISOFactura(), recibida: hoyISOFactura() });
   console.log(`[Facturas] Datos extraídos para ${local}:`, JSON.stringify(datos));
 
@@ -947,6 +949,8 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
   const datos = await extraerDatosDocumento(buffer, mimeType);
   if (esAdjuntoDecorativo(datos)) return {descartado:true,motivo:"Adjunto corporativo sin información de compra"};
   await revisarEmisorReceptor(datos, dbAll);   // ver por qué en revisarEmisorReceptor
+  await aplicarNombreProveedor(datos, dbAll);
+  await completarNifConocido(datos, dbAll);
   console.log(`[Facturas] Email sin local — datos extraídos:`, JSON.stringify(datos));
 
   // 3. Intentar auto-detectar empresa y local por nif_receptor

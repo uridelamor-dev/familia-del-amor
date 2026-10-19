@@ -1,3 +1,4 @@
+import { crearAvisoRecuperacionFacturas } from './src/modules/messaging/aviso-recuperacion-facturas.js';
 import {crearAvisosSolicitudes} from './src/modules/tienda/solicitudes.js';
 import {crearMensuales,desplazarMes} from './src/modules/informes/mensuales.js';
 import { SCHEMA as PEPA_EMAIL_SCHEMA, createQueue as createPepaEmailQueue, registerRoutes as registerPepaEmailRoutes } from './src/modules/pepa-email/queue.js';
@@ -22619,10 +22620,9 @@ app.post("/api/fidelizacion/integracion/:id/revocar", requireAuth(["direccion"])
 });
 
 /**
- * LOS WORKPLACE QUE SE HAN VISTO en las facturas de PRUEBA de este local.
+ * LOS WORKPLACE QUE SE HAN VISTO en las facturas recibidas de este local.
  *
- * De aquí sale lo que Dirección tiene delante antes de confirmar. Se lee de las facturas marcadas
- * como prueba (Fase A), descifrando su cuerpo en memoria y sacando ÚNICAMENTE `Workplace.Id` y
+ * De aquí sale lo que Dirección tiene delante antes de confirmar. Se lee de las facturas recibidas del local (reales o de prueba), descifrando su cuerpo en memoria y sacando ÚNICAMENTE `Workplace.Id` y
  * `Workplace.Name` con la misma proyección de lista cerrada. Nada más del documento sale de aquí.
  *
  * NO ESCRIBE NADA, y muy a propósito: mirar qué Workplace manda un TPV no puede ser lo mismo que
@@ -22636,7 +22636,7 @@ app.get("/api/fidelizacion/integracion/:id/workplace-observado", requireAuth(["d
     if (!fidPuedeVer(req, fila.local)) return res.status(403).json({ ok: false, error: "Ese local no es tuyo" });
 
     const facturas = await dbAll(`SELECT id, cuerpo_enc, recibido_en FROM fid_facturas
-      WHERE local = ? AND es_prueba AND cuerpo_enc IS NOT NULL ORDER BY id DESC LIMIT 20`, [fila.local]);
+      WHERE local = ? AND cuerpo_enc IS NOT NULL ORDER BY id DESC LIMIT 20`, [fila.local]);
 
     const vistos = new Map();
     for (const f of facturas || []) {
@@ -22657,7 +22657,7 @@ app.get("/api/fidelizacion/integracion/:id/workplace-observado", requireAuth(["d
     }
     res.json({ ok: true, local: fila.local, confirmado: fila.workplace_id || null,
       observados: [...vistos.values()].sort((a, b) => b.n - a.n),
-      aviso: "Marca como prueba una factura de este local para poder ver su Workplace." });
+      aviso: "Todavía no hay una factura con datos de caja disponible. Cierra un ticket con carnet en este local y vuelve a consultar." });
   } catch (e) {
     console.error(lineaErrorSql("[fidelizacion] workplace observado", e));
     res.status(500).json({ ok: false, error: "No se pudo leer" });
@@ -22668,7 +22668,7 @@ app.get("/api/fidelizacion/integracion/:id/workplace-observado", requireAuth(["d
  * CONFIRMAR el Workplace de un local. Solo Dirección, y solo a mano.
  *
  * Hay que mandar el Id Y el Name, y los dos tienen que coincidir con algo que se haya OBSERVADO de
- * verdad en una factura de prueba de este local. No se puede confirmar a ciegas dándole a un botón:
+ * verdad en una factura recibida de este local. No se puede confirmar a ciegas dándole a un botón:
  * si el cliente no ha visto el Id y el Name, esto devuelve 409.
  *
  * ⚠️ ESTO NO IDENTIFICA LA INSTALACIÓN. Dos instalaciones distintas de Ágora pueden repetir el
@@ -22688,7 +22688,7 @@ app.post("/api/fidelizacion/integracion/:id/workplace", requireAuth(["direccion"
     if (fila.revocado_en) return res.status(409).json({ ok: false, error: "Está revocada" });
     if (fila.workplace_id) return res.status(409).json({ ok: false, error: "Ya tiene un Workplace confirmado. Para cambiarlo hay que revocar y volver a empezar." });
 
-    // TIENE QUE HABERSE VISTO, y el Id y el Name juntos, EN LA MISMA FACTURA y de ESTE local.
+    // TIENE QUE HABERSE VISTO, y el Id y el Name juntos, EN LA MISMA FACTURA recibida y de ESTE local.
     //
     // Comprobar solo el Id dejaría confirmar un nombre inventado —o el de otro local— junto a un
     // Id correcto, y ese nombre es lo que se leerá después en el panel para decidir si el TPV es
@@ -22697,7 +22697,7 @@ app.post("/api/fidelizacion/integracion/:id/workplace", requireAuth(["direccion"
     // Y el filtro `local = ?` sale de la FILA de la integración, no de la petición: no hay forma
     // de confirmar con una factura de otro local.
     const facturas = await dbAll(`SELECT cuerpo_enc FROM fid_facturas
-      WHERE local = ? AND es_prueba AND cuerpo_enc IS NOT NULL ORDER BY id DESC LIMIT 20`, [fila.local]);
+      WHERE local = ? AND cuerpo_enc IS NOT NULL ORDER BY id DESC LIMIT 20`, [fila.local]);
     let coincide = false;
     for (const f of facturas || []) {
       let json = null;
@@ -22713,7 +22713,7 @@ app.post("/api/fidelizacion/integracion/:id/workplace", requireAuth(["direccion"
     }
     if (!coincide) {
       return res.status(409).json({ ok: false,
-        error: "Ese Workplace no se ha visto en ninguna factura de prueba de este local. Cierra una factura de prueba y márcala antes de confirmar." });
+        error: "Ese Workplace no se ha visto en ninguna factura recibida de este local. Cierra un ticket con carnet en este local antes de confirmar." });
     }
 
     // `workplace_confirmado_en IS NULL` DENTRO del WHERE. El SELECT de arriba no basta: dos
@@ -25678,6 +25678,7 @@ const server = app.listen(PORT, async () => {
   setGrupoFacturasPermitido(async groupJid =>
     !!(await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid])));
 
+  const avisarRecuperacionFacturas = crearAvisoRecuperacionFacturas({dbGet, enviar: sendMensajeAGrupo});
   setOnGroupAttachment(async ({ groupJid, senderJid, buffer, mimeType, filename, caption, recuperado = false }) => {
     const grupo = await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid]);
     if (!grupo) return;
@@ -25691,6 +25692,7 @@ const server = app.listen(PORT, async () => {
 
       const result = await procesarFactura({
         buffer, mimeType, filename, local, caption,
+        onRecibido: recuperado ? () => avisarRecuperacionFacturas(groupJid) : null,
         getToken: getDriveAccessToken,
         dbGet, dbAll, dbRun,
         backupFn: null

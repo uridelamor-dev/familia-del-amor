@@ -12076,7 +12076,7 @@ function renderFidLocal(L) {
       workplace = `<div class="rows" style="margin-top:8px"><div class="row"><div class="grow"><div class="t1">Workplace confirmado</div><div class="mut" style="font-size:12px">${fecha(i.workplace_confirmado_en)} · ${esc(i.workplace_confirmado_por || "")}</div></div><b class="tnum">${esc(i.workplace_id)}${i.workplace_nombre ? " · " + esc(i.workplace_nombre) : ""}</b></div></div>`;
     } else {
       workplace = puede("workplace") ? `<div class="pendingblock" style="margin:8px 2px;padding:10px 12px;font-size:12.5px">
-        <b>Workplace sin confirmar.</b> Cierra una factura de prueba en este TPV, márcala como prueba y pulsa «Ver Workplace observado» para confirmar cuál es.
+        <b>Workplace sin confirmar.</b> Pulsa «Ver Workplace observado» para comprobar la caja en los tickets ya recibidos de este local. No hace falta marcar una compra real como prueba.
         <div style="margin-top:8px"><button class="btn sm" data-act="fid-workplace" data-id="${i.id}">Ver Workplace observado</button></div></div>` : "";
     }
   }
@@ -14230,12 +14230,12 @@ async function fidRevocar(id) {
   catch (e) { toast(e.message || "No se pudo revocar"); }
 }
 
-/** Los Workplace VISTOS en las facturas de prueba de este local, para confirmar uno a mano. */
+/** Los Workplace VISTOS en las facturas recibidas de este local, para confirmar uno a mano. */
 async function fidWorkplace(id) {
   try {
     const j = await apiRaw(`/api/fidelizacion/integracion/${id}/workplace-observado`);
     const obs = j.observados || [];
-    const filas = obs.map((o) => `<div class="row"><div class="grow"><div class="t1 tnum">${esc(o.id)}</div><div class="mut" style="font-size:12px">${esc(o.nombre || "(sin nombre)")} · visto en ${o.n} factura(s) de prueba</div></div><button class="btn sm primary" data-act="fid-wp-ok" data-id="${id}" data-wid="${esc(o.id)}" data-wname="${esc(o.nombre || "")}">Confirmar este</button></div>`).join("");
+    const filas = obs.map((o) => `<div class="row"><div class="grow"><div class="t1 tnum">${esc(o.id)}</div><div class="mut" style="font-size:12px">${esc(o.nombre || "(sin nombre)")} · visto en ${o.n} factura(s) recibida(s)</div></div><button class="btn sm primary" data-act="fid-wp-ok" data-id="${id}" data-wid="${esc(o.id)}" data-wname="${esc(o.nombre || "")}">Confirmar este</button></div>`).join("");
     modal(`Workplace observado · ${esc(j.local)}`, `
       <div class="pendingblock" style="margin-bottom:10px;padding:10px 12px;font-size:12.5px"><b>Esto no identifica la instalación.</b> Dos instalaciones distintas de Ágora pueden repetir el mismo <code>Workplace.Id</code>, y el nombre lo escribe una persona y se puede cambiar. Sirve para <b>detectar un token pegado en el TPV equivocado</b>, no como garantía.</div>
       ${filas ? `<div class="mut" style="font-size:12px;margin-bottom:6px">Confirma el que corresponda a <b>${esc(j.local)}</b>. Se guardará quién y cuándo.</div><div class="rows">${filas}</div>`

@@ -73,8 +73,12 @@ export function crearRecepcion({db, lock, procesar, existeDestino, ahora = () =>
     const clave = createHash('sha256').update(JSON.stringify([canal,o.local||'',hash])).digest('hex');
     const f = await db.run(`INSERT INTO facturas_recepciones (clave,hash,canal,local,nombre,mime,original)
       VALUES (?,?,?,?,?,?,?) ON CONFLICT(clave) DO UPDATE SET clave=EXCLUDED.clave,
-        original=CASE WHEN facturas_recepciones.estado IN ('registrado','duplicado') THEN EXCLUDED.original ELSE facturas_recepciones.original END RETURNING id`,
+        original=CASE WHEN facturas_recepciones.estado IN ('registrado','duplicado') THEN EXCLUDED.original ELSE facturas_recepciones.original END RETURNING id,estado`,
       [clave,hash,canal,o.local||null,String(o.filename||'documento').slice(0,240),o.mimeType,o.buffer]);
+    // Avisar solo después de guardar el original, sin bloquear su procesamiento.
+    if (o.onRecibido && !['registrado','duplicado','descartado'].includes(f.estado)) {
+      void Promise.resolve().then(() => o.onRecibido(f.id)).catch(() => {});
+    }
     return ejecutar(f.id);
   }
   let trabajando = false;
