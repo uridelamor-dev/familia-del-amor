@@ -5,6 +5,7 @@ import { SCHEMA as PEPA_EMAIL_SCHEMA, createQueue as createPepaEmailQueue, regis
 import { BANDEJA_SCHEMA, crearArchivoBandeja } from './src/modules/messaging/bandeja-historial.js';
 import { setArchivoBandeja } from './whatsapp.js';
 import { VINCULOS_SCHEMA } from './src/modules/messaging/contacto-conversacion.js';
+import { BANCOS_SCHEMA, registrarBancos, crearRecordatorioBancos } from './src/modules/bancos/servicio.js';
 import { ATENCION_SCHEMA, crearAtencion } from './src/modules/messaging/atencion.js';
 import { registrarConversaciones } from './src/modules/messaging/conversaciones.js';
 import { conTurno } from './src/modules/messaging/turno.js';
@@ -582,6 +583,7 @@ app.use("/api/wallet/apple/v1", (err, req, res, next) => {
 app.use(comprimir());
 app.use("/api/tienda", express.json({limit:"2mb"}));
 app.use('/api/la-pepa/email/import', requireAuth(['direccion']), express.json({limit:'2mb'}));
+app.use('/api/bancos', requireAuth(['direccion','contabilidad']), express.json({limit:'3mb'}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 // Catálogo con solicitudes comerciales, sin compra directa.
@@ -907,6 +909,7 @@ async function initDB() {
     await client.query(ADJUNTOS_SCHEMA);
     await client.query(BANDEJA_SCHEMA);
     await client.query(ATENCION_SCHEMA);
+    await client.query(BANCOS_SCHEMA);
     await client.query("ALTER TABLE whatsapp_messages ALTER COLUMN respuesta DROP NOT NULL");
 
     // ── POR QUÉ SALIÓ MAL UNA CONVERSACIÓN, Y QUÉ COLUMNAS LO ARREGLAN ───────────────────────
@@ -21251,6 +21254,8 @@ app.post("/api/campanas-config", requireAuth(["direccion", "marketing"]), async 
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+registrarBancos(app,{pool,auth:requireAuth});
+const recordarBancos=crearRecordatorioBancos({pool,enviar:sendMensajeLibre,listo:isReady});
 const atencionWA = crearAtencion({pool,enviar:sendMensajeLibre,listo:isReady,recuperar:recuperarEntradaSinAtender});
 registrarConversaciones(app, {atencion:atencionWA,auth:requireAuth,pool,resolverTelefono,enviar:enviarConversacion,listo:isReady,bloquear:conTurno,olvidar:olvidarSesionWA});
 
@@ -25066,8 +25071,10 @@ const server = app.listen(PORT, async () => {
   } catch (e) { console.error("[Migration] empresa post-restore fix:", e.message); }
 
   setAtencionEntrada(atencionWA);
+  if(PROD)setInterval(()=>recordarBancos().catch(e=>console.error('[Bancos] Recordatorio:',e.message)),60000).unref();
   if (PROD) setInterval(() => atencionWA.tick().catch(e => console.error("[Atención WA]", e.message)), 60000).unref();
   setOnReady(async () => {
+    if(PROD)try{await recordarBancos();}catch(e){console.error('[Bancos] Recordatorio:',e.message);}
     try { await atencionWA.tick(); } catch(e) { console.error("[Atención WA]", e.message); }
     try { await procesarPendientesWA(); } catch (e) { console.error('[WA] pendientes:', e.message); }
     try { await recuperarRespuestaAutorizada({ dbGet, dbRun, enviar: sendMensajeLibre, listo: isReady }); }
@@ -25718,7 +25725,7 @@ const server = app.listen(PORT, async () => {
         await sendMensajeAGrupo(groupJid,'Documento omitido: es una imagen corporativa o firma sin información de compra.');
         return;
       }
-      const { datos, driveUrl, sheetUrl } = result;
+      const { datos } = result;
       const tipoLabel = datos.tipo === "albaran" ? "Albarán" : datos.tipo === "ticket" ? "Ticket" : "Factura";
       const totalStr = datos.total != null ? `${Number(datos.total).toFixed(2)} €` : "importe no detectado";
       const provStr = datos.proveedor || "proveedor no detectado";
@@ -25727,9 +25734,7 @@ const server = app.listen(PORT, async () => {
         `✅ *${tipoLabel} registrado · ${local}*\n\n` +
         `🏢 ${provStr}\n` +
         `💶 ${totalStr}` + (datos.porcentaje_iva ? ` (IVA ${datos.porcentaje_iva}%)` : "") + `\n` +
-        `📅 ${datos.fecha || "fecha no detectada"}\n\n` +
-        `📁 Drive: ${driveUrl}\n` +
-        `📊 Sheet: ${sheetUrl || `https://docs.google.com/spreadsheets/d/${result.sheetId}`}`
+        `📅 ${datos.fecha || "fecha no detectada"}`
       );
     } catch (err) {
       if (recuperado) {

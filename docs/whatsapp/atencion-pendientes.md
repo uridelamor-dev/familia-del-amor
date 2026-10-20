@@ -12,3 +12,9 @@ Preparado el 20 de octubre de 2026. Pendiente de publicar y comprobar en producc
 Validación local: 169 pruebas correctas, 0 fallidas, 3 omitidas; incluye PostgreSQL temporal aislado. Vista de conversación comprobada con datos ficticios a 390 y 1440 píxeles.
 
 Tras publicar: comprobar conexión de WhatsApp, una solicitud nueva de reserva, una consulta derivada con un segundo mensaje y una conversación tomada manualmente. Verificar recepción real de los avisos. Los casos antiguos, incluido el de Carla, deben revisarse en el panel antes de confirmar o cancelar reservas.
+
+## Formato de avisos
+
+Los avisos separan las últimas 24 horas de las conversaciones anteriores. Muestran hasta tres casos por bloque, con nombre del CRM o WhatsApp cuando se conoce, teléfono válido, fecha del último mensaje entrante y extracto de hasta 140 caracteres. El resto se indica con «Y X más en el panel». El extracto es literal y no un diagnóstico automático. No se repite el responsable en cada fila. Identidades inválidas como `0@s.whatsapp.net` no generan nuevos pendientes, recuperación ni avisos; las filas existentes no se borran. Los LID nunca se muestran como teléfonos.
+
+Comprobación de este cambio: 7 pruebas correctas, incluida la consulta real de PostgreSQL en un esquema temporal. No se enviaron avisos de prueba ni se modificó producción.

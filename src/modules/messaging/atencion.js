@@ -1,4 +1,5 @@
 import { ARCHIVO_CTE } from './bandeja-historial.js';
+import { IDENTIDAD_CTE, telefonoContacto } from './contacto-conversacion.js';
 
 export const ATENCION_SCHEMA = `
 CREATE TABLE IF NOT EXISTS wa_atencion (
@@ -11,6 +12,37 @@ CREATE TABLE IF NOT EXISTS wa_entrada_procesada(jid TEXT NOT NULL,mensaje_id TEX
 CREATE TABLE IF NOT EXISTS wa_entrada_recuperada(jid TEXT NOT NULL,clave TEXT NOT NULL,creada_en TIMESTAMPTZ DEFAULT now(),PRIMARY KEY(jid,clave));
 CREATE INDEX IF NOT EXISTS wa_atencion_abiertas ON wa_atencion(estado,ultimo_cliente);
 `;
+// Un LID es una identidad, nunca un número que se deba mostrar como teléfono.
+export function contactoAtendible(jid) {
+ return /^[1-9]\d*@lid$/.test(String(jid||'')) || /^[1-9]\d{9,14}@s\.whatsapp\.net$/.test(String(jid||''));
+}
+const breve=(v,n)=>{const t=String(v||'').replace(/https?:\/\/\S+/gi,'[enlace]').replace(/[*_~`<>]/g,'').replace(/\s+/g,' ').trim();return t.length>n?t.slice(0,n-1)+'…':t;};
+export function avisoAtencion(tareas,nivel,ahora=new Date()) {
+ const validas=tareas.filter(t=>contactoAtendible(t.jid));
+ if(!validas.length)return '';
+ const antiguas=t=>+ahora-Date.parse(t.fecha_cliente||t.ultimo_cliente)>24*60*60000;
+ const lineas=[`📩 *${nivel===3?'Atención pendiente · Dirección':nivel===2?'Recordatorio · Atención al cliente':'Atención al cliente'}*`,
+  `${validas.length} ${validas.length===1?'conversación por revisar':'conversaciones por revisar'}.`];
+ for(const [anterior,titulo] of [[false,'Últimas 24 horas'],[true,'Conversaciones anteriores · más de 24 h']]) {
+  const grupo=validas.filter(t=>antiguas(t)===anterior).sort((a,b)=>Date.parse(b.fecha_cliente||b.ultimo_cliente)-Date.parse(a.fecha_cliente||a.ultimo_cliente));
+  if(!grupo.length)continue;
+  lineas.push('',`*${titulo}*`);
+  for(const t of grupo.slice(0,3)) {
+   const tel=telefonoContacto(t.telefono_visible)||(t.jid.endsWith('@s.whatsapp.net')?telefonoContacto(t.jid.split('@')[0]):null);
+   const nombre=breve(t.nombre,60),etiqueta=nombre&&nombre!==tel?nombre:tel?'+'+tel:'Contacto sin nombre';
+   const fecha=new Date(t.fecha_cliente||t.ultimo_cliente);
+   const cuando=Number.isFinite(+fecha)?fecha.toLocaleString('es-ES',{timeZone:'Europe/Madrid',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'Fecha no disponible';
+   lineas.push('',`• *${etiqueta}*${tel&&etiqueta!=='+'+tel?' · +'+tel:''}`,cuando);
+   if(t.ultimo_texto)lineas.push(`Último mensaje: «${breve(t.ultimo_texto,140)}»`);
+   else if(t.resumen&&!t.resumen.startsWith('Consulta anterior pendiente'))lineas.push(`Contexto: ${breve(t.resumen,140)}`);
+   lineas.push(t.estado==='en_curso'?'En atención por el equipo.':t.motivo==='sin_respuesta'?'Comprobar si ya se atendió.':t.motivo==='pidio_persona'?'Ha pedido hablar con el equipo.':t.motivo?.startsWith('error_')?'Revisar el historial antes de reintentar.':'Revisar la consulta y dar respuesta.');
+  }
+  if(grupo.length>3)lineas.push('',`Y ${grupo.length-3} más en el panel.`);
+ }
+ lineas.push('','*Revisar en el panel*','https://familiadelamor.org/panel/#conversaciones',
+  'Filtra «Solo necesitan atención». Comprueba el historial; marca «Resuelta» cuando esté atendida.');
+ return lineas.join('\n');
+}
 export function pausaBloqueante(ficha) {
  return ficha?.estado_ia === 'pausada' && !(ficha.pausado_por === 'sara' && ficha.pausa_motivo === 'consulta');
 }
@@ -26,7 +58,7 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
  const canon=async jid=>(await pool.query('SELECT COALESCE(telefono_jid,jid) AS jid FROM wa_bandeja_chats WHERE jid=$1',[jid])).rows[0]?.jid||jid;
  async function abrir(jid,motivo,resumen,fecha=new Date()) {
   jid=await canon(jid);
-  if(!/^\d+@(s\.whatsapp\.net|lid)$/.test(jid))return;
+  if(!contactoAtendible(jid))return;
   await pool.query(`INSERT INTO wa_atencion(jid,motivo,resumen,ultimo_cliente) VALUES($1,$2,$3,$4)
    ON CONFLICT(jid) DO UPDATE SET
     estado=CASE WHEN wa_atencion.estado='resuelta' THEN 'pendiente' ELSE wa_atencion.estado END,
@@ -75,7 +107,7 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
    AND NOT EXISTS(SELECT 1 FROM legados l WHERE l.canon=w.jid AND l.creado_en::timestamptz>=w.creado_en::timestamptz AND COALESCE(l.historico,0)=0)
    AND NOT EXISTS(SELECT 1 FROM wa_atencion a WHERE a.jid=w.jid AND (a.estado='en_curso' OR a.motivo IN ('error_respuesta','error_entrada') OR a.cerrada_en>=w.creado_en::timestamptz))
    ORDER BY w.creado_en::timestamptz DESC LIMIT 10`);
-  for(const m of rows) await recuperar(m,async()=>{
+  for(const m of rows.filter(m=>contactoAtendible(m.jid))) await recuperar(m,async()=>{
    // Releer bajo la cola del contacto; cualquier procesamiento previo, respuesta o cierre impide repetir acciones.
    const r=await pool.query(`WITH ${ARCHIVO_CTE} INSERT INTO wa_entrada_recuperada(jid,clave)
     SELECT $1,$2 WHERE EXISTS(SELECT 1 FROM ultimos WHERE jid=$1 AND id=$2 AND tipo='recibido')
@@ -105,7 +137,13 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
    await recuperarRecientes();
    await barrer();
    if(!listo())return;
-   const {rows}=await pool.query("SELECT * FROM wa_atencion WHERE estado<>'resuelta' ORDER BY abierta_en LIMIT 500");
+   const identidad=IDENTIDAD_CTE.replace("NULLIF(trim(t.nombre_wa),'')","NULLIF(trim(t.nombre_wa),''),NULLIF(trim(t.nombre_archivo),'')");
+   const {rows}=await pool.query(`WITH ${ARCHIVO_CTE}, ${identidad}
+    SELECT a.*,i.nombre,i.telefono_visible,e.mensaje AS ultimo_texto,COALESCE(e.fecha,a.ultimo_cliente) AS fecha_cliente
+    FROM wa_atencion a LEFT JOIN identidades i ON i.jid=a.jid
+    LEFT JOIN LATERAL(SELECT mensaje,fecha FROM eventos WHERE jid=a.jid AND tipo='recibido' ORDER BY fecha DESC,clave DESC LIMIT 1)e ON true
+    WHERE a.estado<>'resuelta' AND a.jid ~ '^([1-9][0-9]{9,14}@s[.]whatsapp[.]net|[1-9][0-9]*@lid)$'
+    AND NOT COALESCE(i.interno,false) ORDER BY a.abierta_en LIMIT 500`);
    for(const nivel of [1,2,3]) {
     const candidatas=rows.filter(t=>nivelAviso(t)===nivel).slice(0,20),tomadas=[];
     for(const t of candidatas) {
@@ -115,9 +153,7 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
      if(r.rows.length)tomadas.push(t);
     }
     if(!tomadas.length)continue;
-    const texto=`📩 *Consultas de WhatsApp pendientes*${nivel===3?' · Dirección':nivel===2?' · Recordatorio':''}\n\n`+
-     tomadas.map(t=>`• ${t.jid.endsWith('@lid')?'Contacto pendiente de identificar': '+'+t.jid.split('@')[0]} · ${t.motivo==='sin_respuesta'?'Sin respuesta registrada':'Pendiente de resolver'} · Responsable: ${t.responsable}`).join('\n')+
-     '\n\nRevisar y atender en https://familiadelamor.org/panel/#conversaciones. Marcar resuelta solo al terminar.';
+    const texto=avisoAtencion(tomadas,nivel);
     try{await enviar(nivel===3?'34622149946':'34633018834',texto);}
     catch(e){for(const t of tomadas)await pool.query('UPDATE wa_atencion SET aviso_error=true WHERE jid=$1 AND version=$2',[t.jid,t.version]);throw e;}
    }

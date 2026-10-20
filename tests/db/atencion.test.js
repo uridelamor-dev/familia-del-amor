@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {conEsquema,disponible,motivoSalto} from '../helpers/pgtmp.js';
 import {ATENCION_SCHEMA,crearAtencion,pausaBloqueante,nivelAviso} from '../../src/modules/messaging/atencion.js';
+import {VINCULOS_SCHEMA} from '../../src/modules/messaging/contacto-conversacion.js';
 import {BANDEJA_SCHEMA} from '../../src/modules/messaging/bandeja-historial.js';
 test('consulta automática no bloquea, persona y toma manual sí',()=>{
  assert.equal(pausaBloqueante({estado_ia:'pausada',pausado_por:'sara',pausa_motivo:'consulta'}),false);
@@ -20,7 +21,8 @@ test('SQL real: tareas, toma, cierre, nuevo mensaje y recuperación idempotente'
  try{
  await db.raw(BANDEJA_SCHEMA);await db.raw(ATENCION_SCHEMA);
  await db.raw('CREATE TABLE whatsapp_messages(id SERIAL PRIMARY KEY,jid TEXT,telefono TEXT,mensaje TEXT,respuesta TEXT,tipo TEXT,creado_en TEXT,adjuntos JSONB,historico INTEGER DEFAULT 0)');
- await db.raw('CREATE TABLE wa_clientes(jid TEXT PRIMARY KEY,estado_ia TEXT,pausa_motivo TEXT)');
+ await db.raw('CREATE TABLE wa_clientes(jid TEXT PRIMARY KEY,estado_ia TEXT,pausa_motivo TEXT,nombre TEXT,telefono TEXT,pausado_por TEXT)');
+ await db.raw('CREATE TABLE leads(id SERIAL PRIMARY KEY,nombre TEXT,apellidos TEXT,telefono TEXT)');await db.raw(VINCULOS_SCHEMA);
  const jid='34600000000@s.whatsapp.net',lid='123456789@lid',send=[],rec=[];
  await db.raw('INSERT INTO wa_bandeja_chats(jid,telefono_jid,tiene_chat) VALUES($1,$2,true)',[lid,jid]);
  const svc=crearAtencion({pool:{query:db.raw},listo:()=>true,enviar:async(...x)=>send.push(x),recuperar:async(m,claim)=>{if(await claim())rec.push(m);}});
