@@ -2,6 +2,12 @@
 let BANCO={empresa:'',cuenta:'',mes:'',config:null,datos:[],version:0};
 const banEuro=n=>((Number(n)||0)/100).toLocaleString('es-ES',{style:'currency',currency:'EUR'});
 const banMesAnterior=()=>{const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');};
+function banPeriodo(id,valor){
+ const [ano,mes]=valor.split('-'),actual=new Date().getFullYear();
+ const meses=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+ return `<div class="ban-periodo"><label>Mes<select id="${id}Mes">${meses.map((m,i)=>`<option value="${String(i+1).padStart(2,'0')}" ${Number(mes)===i+1?'selected':''}>${m}</option>`).join('')}</select></label><label>Año<select id="${id}Ano">${Array.from({length:actual-1999},(_,i)=>actual-i).map(a=>`<option ${String(a)===ano?'selected':''}>${a}</option>`).join('')}</select></label></div>`;
+}
+function banLeerPeriodo(root,id){return root.querySelector('#'+id+'Ano').value+'-'+root.querySelector('#'+id+'Mes').value;}
 async function loadBancos(){
  const version=++BANCO.version;BANCO.mes||=banMesAnterior();
  const view=document.getElementById('view');view.innerHTML='<p class="mut">Cargando cuentas…</p>';
@@ -12,14 +18,14 @@ async function loadBancos(){
   if(!cuentas.some(x=>String(x.id)===String(BANCO.cuenta)))BANCO.cuenta=cuentas[0]?.id||'';
   BANCO.datos=[];
   view.innerHTML=`<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Bancos</h1><p class="sub">Sube el extracto del mes y revisa qué cobros y pagos están justificados.</p></div>
-   <div class="toolbar"><button class="btn primary" id="banSubir" ${!BANCO.cuenta?'disabled':''}>Subir extracto</button><button class="btn" id="banCuentaNueva">Añadir cuenta</button></div>
-   <div class="card ban-card"><div class="toolbar"><label>Empresa o titular fiscal<select id="banEmpresa"><option value="">Elige el titular fiscal</option>${c.empresas.map(e=>`<option value="${esc(e)}" ${e===BANCO.empresa?'selected':''}>${esc(e)}</option>`).join('')}</select></label><label>Cuenta<select id="banCuenta" ${!cuentas.length?'disabled':''}>${!cuentas.length?'<option>Sin cuentas para este titular</option>':''}${cuentas.map(x=>`<option value="${x.id}" ${String(x.id)===String(BANCO.cuenta)?'selected':''}>${esc(x.nombre)} · ${esc(x.empresa)} · •••• ${esc(x.ultimos4)}</option>`).join('')}</select></label><label>Mes<input id="banMes" type="month" value="${esc(BANCO.mes)}"></label><label><input type="checkbox" id="banPend"> Solo por revisar</label></div><p class="mut">Importes en euros. Las entradas y salidas de banco no equivalen al beneficio. Cada cuenta pertenece a una empresa; las transferencias internas se identifican por separado.</p><div id="banResumen"></div></div>
+   <div class="toolbar"><button class="btn primary" id="banSubir">Subir extracto</button><button class="btn" id="banCuentaNueva">Añadir cuenta</button></div>
+   <div class="card ban-card"><div class="toolbar"><label>Empresa o titular fiscal<select id="banEmpresa"><option value="">Elige el titular fiscal</option>${c.empresas.map(e=>`<option value="${esc(e)}" ${e===BANCO.empresa?'selected':''}>${esc(e)}</option>`).join('')}</select></label><label>Cuenta<select id="banCuenta" ${!cuentas.length?'disabled':''}>${!cuentas.length?'<option>Sin cuentas para este titular</option>':''}${cuentas.map(x=>`<option value="${x.id}" ${String(x.id)===String(BANCO.cuenta)?'selected':''}>${esc(x.nombre)} · ${esc(x.empresa)} · •••• ${esc(x.ultimos4)}</option>`).join('')}</select></label>${banPeriodo('banFiltro',BANCO.mes)}<label><input type="checkbox" id="banPend"> Mostrar solo movimientos pendientes</label></div><p class="mut">Importes en euros. Las entradas y salidas de banco no equivalen al beneficio. La cuenta bancaria distingue las cuentas del mismo titular (por ejemplo, Sabadell y CaixaBank). El filtro de pendientes oculta los movimientos ya clasificados o conciliados.</p><div id="banResumen"></div></div>
    <div id="banMovimientos"></div><details class="card ban-card"><summary>Importaciones y ayuda</summary><div id="banHistorial"></div><p>Descarga Excel (.xlsx o .xls) o CSV de tu banco con los movimientos de un mes. No se admite PDF ni Norma 43.</p><p>Se comprueban coincidencias por fecha, concepto, importe, saldo y referencia. Revisa la vista previa si hay operaciones idénticas o exportaciones con un formato distinto.</p><p>Silvia recibirá un recordatorio mensual por WhatsApp a partir de las 10:00 del día 1. Si WhatsApp está desconectado, se intentará al reconectar. ${c.recordatorio?'Último estado: '+esc(c.recordatorio.mes)+' · '+esc(c.recordatorio.estado)+'.':''}</p></details>`;
   document.getElementById('banEmpresa').onchange=async e=>{BANCO.empresa=e.target.value;BANCO.cuenta='';await loadBancos();};
-  document.getElementById('banCuentaNueva').onclick=banCrearCuenta;
+  document.getElementById('banCuentaNueva').onclick=()=>banCrearCuenta();
   document.getElementById('banSubir').onclick=banImportar;
   document.getElementById('banCuenta').onchange=e=>{BANCO.cuenta=e.target.value;banCargar();};
-  document.getElementById('banMes').onchange=e=>{BANCO.mes=e.target.value;banCargar();};
+  for(const id of ['banFiltroMes','banFiltroAno'])document.getElementById(id).onchange=()=>{BANCO.mes=banLeerPeriodo(document,'banFiltro');banCargar();};
   document.getElementById('banPend').onchange=banPintar;
   await banCargar();
  }catch(e){if(CURRENT==='bancos')view.innerHTML=`<p role="alert">${esc(e.message)}</p>`;}
@@ -42,22 +48,22 @@ function banPintar(){
  document.getElementById('banMovimientos').innerHTML=filas.length?`<div class="card ban-card"><div class="ban-scroll"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Importe</th><th>Estado</th><th>Acción</th></tr></thead><tbody>${filas.map(m=>`<tr><td>${esc(m.fecha)}</td><td>${esc(m.concepto)}</td><td class="ban-num">${banEuro(m.importe)}</td><td>${m.factura_id?'Factura #'+Number(m.factura_id):esc(m.categoria)}</td><td><button class="btn sm" data-ban="${m.id}">Revisar</button></td></tr>`).join('')}</tbody></table></div></div>`:'<p class="mut">No hay movimientos con estos filtros.</p>';
  document.querySelectorAll('[data-ban]').forEach(b=>b.onclick=()=>banRevisar(BANCO.datos.find(m=>String(m.id)===b.dataset.ban)));
 }
-function banCrearCuenta(){
- const c=BANCO.config,ov=modal('Añadir cuenta bancaria',`<form id="banNueva" class="ban-form"><label>Nombre para reconocerla<input name="nombre" maxlength="100" placeholder="Sabadell · cuenta principal" required></label><label>Banco<select name="banco"><option>Sabadell</option><option>CaixaBank</option><option>BBVA</option><option>Santander</option><option>Otro banco</option></select></label><label>Empresa o titular fiscal<select name="empresa" required><option value="">Elige empresa</option>${c.empresas.map(e=>`<option ${e===BANCO.empresa?'selected':''}>${esc(e)}</option>`).join('')}</select></label><label>Últimos cuatro dígitos<input name="ultimos4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required></label><p class="mut">Solo cuentas en euros. No introduzcas contraseñas ni el IBAN completo. La empresa no se podrá cambiar después de importar.</p><p role="alert" id="banErr"></p><button class="btn primary">Guardar cuenta</button></form>`);
- ov.querySelector('form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{const r=await apiSend('POST','/api/bancos/cuentas',Object.fromEntries(new FormData(e.target)));BANCO.empresa=e.target.elements.empresa.value;BANCO.cuenta=r.id;ov.remove();await loadBancos();}catch(err){ov.querySelector('#banErr').textContent=err.message;}finally{b.disabled=false;}};
+function banCrearCuenta(continuar=false){
+ const c=BANCO.config,ov=modal('Añadir cuenta bancaria',`${continuar?'<p>Primero registra la cuenta de la que procede el extracto. Solo tendrás que hacerlo una vez; después podrás subir el archivo.</p>':''}<form id="banNueva" class="ban-form"><label>Nombre para reconocerla<input name="nombre" maxlength="100" placeholder="Sabadell · cuenta principal" required></label><label>Banco<select name="banco"><option>Sabadell</option><option>CaixaBank</option><option>BBVA</option><option>Santander</option><option>Otro banco</option></select></label><label>Empresa o titular fiscal<select name="empresa" required><option value="">Elige empresa</option>${c.empresas.map(e=>`<option ${e===BANCO.empresa?'selected':''}>${esc(e)}</option>`).join('')}</select></label><label>Últimos cuatro dígitos<input name="ultimos4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required></label><p class="mut">Solo cuentas en euros. No introduzcas contraseñas ni el IBAN completo. La empresa no se podrá cambiar después de importar.</p><p role="alert" id="banErr"></p><button class="btn primary">Guardar cuenta</button></form>`);
+ ov.querySelector('form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{const r=await apiSend('POST','/api/bancos/cuentas',Object.fromEntries(new FormData(e.target)));BANCO.empresa=e.target.elements.empresa.value;BANCO.cuenta=r.id;ov.remove();await loadBancos();if(continuar)banImportar();}catch(err){ov.querySelector('#banErr').textContent=err.message;}finally{b.disabled=false;}};
 }
 function banImportar(){
- const cuenta=BANCO.config.cuentas.find(c=>String(c.id)===String(BANCO.cuenta));if(!cuenta)return;
+ const cuenta=BANCO.config.cuentas.find(c=>String(c.id)===String(BANCO.cuenta));if(!cuenta){banCrearCuenta(true);return;}
  let mesCarga=BANCO.mes,texto='',archivo='',mapa=cuenta.mapa||{separador:';',cabecera:0,decimal:',',formatoFecha:'dmy'},filas=[];
  const ov=modal('Subir extracto · '+cuenta.nombre,'<div id="banPaso"></div>');ov.classList.add('ban-modal');const box=ov.querySelector('#banPaso');
  const fallo=e=>{box.querySelector('[role="alert"]').textContent=e.message;};
- function inicio(){box.innerHTML=`<p class="mut">1 de 3 · Archivo</p><p>${esc(cuenta.empresa)} · •••• ${esc(cuenta.ultimos4)}</p><div class="ban-form"><label>Mes del extracto<input id="banMesCarga" type="month" value="${esc(BANCO.mes)}" required></label><label>Archivo Excel o CSV<input id="banArchivo" type="file" accept=".xlsx,.xls,.csv,.txt"></label><p>Descarga los movimientos completos de ese mes. Admite Excel (.xlsx y .xls) y CSV. No se admite PDF ni Norma 43.</p><label>Separador<select id="banSep"><option value=";">Punto y coma (;)</option><option value=",">Coma (,)</option><option value="tab">Tabulador</option></select></label><p role="alert"></p><button class="btn primary" id="banLeer">Continuar</button></div>`;
+ function inicio(){box.innerHTML=`<p class="mut">1 de 3 · Archivo</p><p>${esc(cuenta.empresa)} · •••• ${esc(cuenta.ultimos4)}</p><div class="ban-form">${banPeriodo('banCarga',mesCarga)}<label>Archivo Excel o CSV<input id="banArchivo" type="file" accept=".xlsx,.xls,.csv,.txt"></label><p>Descarga los movimientos completos de ese mes. Admite Excel (.xlsx y .xls) y CSV. No se admite PDF ni Norma 43.</p><label>Separador<select id="banSep"><option value=";">Punto y coma (;)</option><option value=",">Coma (,)</option><option value="tab">Tabulador</option></select></label><p role="alert"></p><button class="btn primary" id="banLeer">Continuar</button></div>`;
  box.querySelector('#banSep').value=mapa.separador==='\t'?'tab':mapa.separador;
  box.querySelector('#banLeer').onclick=async e=>{e.target.disabled=true;try{
   const f=box.querySelector('#banArchivo').files[0];if(!f||!f.name.match(/\.(xlsx|xls|csv|txt)$/i))throw Error('Selecciona un Excel (.xlsx o .xls) o CSV.');if(f.size>2000000)throw Error('Máximo 2 MB. Exporta un mes cada vez.');
   const bytes=new Uint8Array(await f.arrayBuffer());
   if(/\.xlsx?$/i.test(f.name)){
-   archivo=f.name;mesCarga=box.querySelector('#banMesCarga').value;if(!mesCarga)throw Error('Elige el mes.');
+   archivo=f.name;mesCarga=banLeerPeriodo(box,'banCarga');if(!mesCarga)throw Error('Elige el mes.');
    const hojas=await banLeerExcel(bytes);mapa={...mapa,separador:';',decimal:',',formatoFecha:'dmy'};
    async function elegir(h){texto=h.texto;const r=await apiSend('POST','/api/bancos/columnas',{texto,separador:';'});filas=r.filas;columnas();}
    if(hojas.length===1)await elegir(hojas[0]);
@@ -65,7 +71,7 @@ function banImportar(){
    return;
   }
   texto=new TextDecoder(bytes[0]===255&&bytes[1]===254?'utf-16le':bytes[0]===254&&bytes[1]===255?'utf-16be':'utf-8').decode(bytes);if(texto.includes('\uFFFD'))texto=new TextDecoder('windows-1252').decode(bytes);
-  archivo=f.name;const sep=box.querySelector('#banSep').value;mapa={...mapa,separador:sep==='tab'?'\t':sep};const mes=box.querySelector('#banMesCarga').value;if(!mes)throw Error('Elige el mes.');mesCarga=mes;
+  archivo=f.name;const sep=box.querySelector('#banSep').value;mapa={...mapa,separador:sep==='tab'?'\t':sep};const mes=banLeerPeriodo(box,'banCarga');if(!mes)throw Error('Elige el mes.');mesCarga=mes;
   const r=await apiSend('POST','/api/bancos/columnas',{texto,separador:mapa.separador});filas=r.filas;if(!filas.length)throw Error('El archivo está vacío.');columnas();
  }catch(err){fallo(err);}finally{if(e.target.isConnected)e.target.disabled=false;}};}
  function columnas(){

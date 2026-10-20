@@ -12,3 +12,11 @@ test('seleccionar titular solo ofrece sus cuentas y borra la vista anterior',asy
  await nodo('banEmpresa').onchange({target:{value:'Empresa A'}});assert.match(nodo('view').innerHTML,/Cuenta A/);assert.doesNotMatch(nodo('view').innerHTML,/Cuenta B/);assert.match(peticiones.at(-1),/cuenta=1/);
  await nodo('banEmpresa').onchange({target:{value:'Empresa B'}});assert.match(nodo('view').innerHTML,/Cuenta B/);assert.doesNotMatch(nodo('view').innerHTML,/Cuenta A/);assert.match(peticiones.at(-1),/cuenta=2/);
 });
+test('periodo solo mes y año y subida sin cuenta abre el alta guiada',()=>{
+ let html='';const ov={querySelector:()=>({})};
+ const ctx=vm.createContext({Date,esc:String,modal:(t,h)=>{html=h;return ov;}});
+ vm.runInContext(fs.readFileSync(new URL('../public/panel/bancos.js',import.meta.url),'utf8'),ctx);
+ vm.runInContext("BANCO.config={cuentas:[],empresas:['Empresa A']};banImportar()",ctx);
+ assert.match(html,/Primero registra la cuenta/);
+ const periodo=ctx.banPeriodo('prueba','2026-09');assert.match(periodo,/Septiembre/);assert.match(periodo,/Año/);assert.doesNotMatch(periodo,/<input/);
+});
