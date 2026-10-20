@@ -246,13 +246,13 @@ describe("La pausa: Sara calla", () => {
   });
 
   test("EL CORTE ESTÁ ARRIBA DEL TODO, antes de cualquier llamada al modelo", () => {
-    const iCorte = PROCESAR.indexOf("estaPausada(");
+    const iCorte = PROCESAR.indexOf("pausaBloqueante(");
     const iIA = PROCESAR.indexOf("responderConIA(");
     const iSeguimiento = PROCESAR.indexOf("followupAwaitingReply.has(jid)");
     assert.ok(iCorte > -1 && iIA > -1);
     assert.ok(iCorte < iIA, "no puede preguntarse después de haber gastado la llamada");
     // Y tiene que ser incondicional: `if (false && estaPausada(...))` también pasaría lo anterior.
-    assert.match(sinComentarios(PROCESAR), /\n\s*if \(estaPausada\(ficha\)\) \{/,
+    assert.match(sinComentarios(PROCESAR), /\n\s*if \(pausaBloqueante\(ficha\)\) \{/,
       "el corte no puede ir detrás de ninguna otra condición");
     assert.ok(iSeguimiento === -1 || iCorte < iSeguimiento,
       "la pausa también manda sobre el seguimiento automático");
@@ -262,10 +262,10 @@ describe("La pausa: Sara calla", () => {
     const corte = PROCESAR.slice(PROCESAR.indexOf("if (pausada)"));
     const fin = corte.indexOf("if (adjuntos.some");
     const cuerpo = corte.slice(0, fin > 0 ? fin : 1500);
-    assert.match(cuerpo, /onMessage\(\{[^}]*respuesta: null/,
+    assert.match(cuerpo, /onMessage\(\{[^}]*respuesta/,
       "sin esto el trabajador no ve lo que el cliente escribe mientras tanto");
     assert.match(cuerpo, /return;/);
-    assert.doesNotMatch(cuerpo, /sock\.sendMessage/, "pausada significa que no sale nada");
+    assert.match(cuerpo, /ficha\?\.pausado_por==='sara'.*pidio_persona/, "solo permite acuse para petición de persona sin toma manual");
   });
 
   test("si no se puede LEER el estado, se sigue contestando", () => {
@@ -296,9 +296,9 @@ describe("Dónde vive el estado, y qué pasa al reactivar", () => {
     assert.match(cargador, /idioma_ultimo/);
   });
 
-  test("pausar dos veces no pisa el motivo original", () => {
-    assert.match(sinComentarios(PAUSAR), /pausa_motivo = COALESCE\(wa_clientes\.pausa_motivo/,
-      "lo que importa es por qué se paró la primera vez");
+  test("la pausa manual se conserva y pedir una persona prevalece sobre una consulta", () => {
+    assert.match(sinComentarios(PAUSAR), /COALESCE\(wa_clientes\.pausado_por,''\)<>'sara' THEN wa_clientes\.pausa_motivo/);
+    assert.match(sinComentarios(PAUSAR), /WHEN EXCLUDED\.pausa_motivo='pidio_persona' THEN EXCLUDED\.pausa_motivo/);
   });
 
   test("REACTIVAR OLVIDA LA SESIÓN EN MEMORIA", () => {

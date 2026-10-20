@@ -1,3 +1,4 @@
+import {pausaBloqueante} from '../src/modules/messaging/atencion.js';
 import { conTurno } from '../src/modules/messaging/turno.js';
 import { indicarEscribiendo } from '../src/modules/messaging/entrada-diferida.js';
 import { crearControlAvisos } from '../src/modules/messaging/sara-revision.js';
@@ -31,7 +32,7 @@ test('el mismo mensaje no se procesa dos veces y la cola mantiene el orden por c
 function entrada({ estado = 'activa', fallaLectura = false, tomaManual = false, fallaPresencia = false } = {}) {
   const guardados = [], envios = [], llamadas = [], marcados = [];
   const perfil = { estado_ia: estado, idioma_ultimo: 'ca', pausado_por: estado === 'pausada' ? 'operador' : null };
-  const env = { console, _marcarMensajeSistema: (jid, texto) => marcados.push(texto), conTurno, indicarEscribiendo, controlAvisosSara: crearControlAvisos(), estaPausada, idiomaSugerido, pidePersona, MOTIVO_PAUSA, textoSeguro,
+  const env = { atencionEntrada:null, pausaBloqueante, console, _marcarMensajeSistema: (jid, texto) => marcados.push(texto), conTurno, indicarEscribiendo, controlAvisosSara: crearControlAvisos(), estaPausada, idiomaSugerido, pidePersona, MOTIVO_PAUSA, textoSeguro,
     perfilLoader: async () => perfil, logBaileys: () => ({}), guardarAdjunto: async () => 'adjunto-1',
     downloadMediaMessage: async () => Readable.from([Buffer.from('%PDF-1.7')]),
     prepararAdjunto: args => prepararAdjunto({ ...args, interpretar: async () => {
@@ -81,7 +82,7 @@ test('saludos catalanes breves y seguimiento mantienen su idioma', () => {
 test('callback real: fallo al pausar se propaga y no permite afirmar que se ha derivado', async () => {
   let callback;
   const a = server.indexOf('  setOnPausarIA(async'), b = server.indexOf('  setGrupoFacturasPermitido(', a);
-  const env = { console, setOnPausarIA: fn => { callback = fn; }, saraMarcarPausa: () => ({}), isoConOffset: () => '',
+  const env = { console, setOnPausarIA: fn => { callback = fn; }, atencionWA:{abrir:async()=>{}}, saraMarcarPausa: () => ({}), isoConOffset: () => '',
     dbRun: async () => { throw new Error('base_no_disponible'); }, lineaErrorSql: () => 'error controlado' };
   vm.runInNewContext(server.slice(a, b), env);
   await assert.rejects(callback('cliente@s.whatsapp.net', {}), /base_no_disponible/);

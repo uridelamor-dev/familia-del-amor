@@ -1,3 +1,4 @@
+import {ATENCION_SCHEMA} from '../../src/modules/messaging/atencion.js';
 import {BANDEJA_SCHEMA} from '../../src/modules/messaging/bandeja-historial.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +11,7 @@ test('normalizar teléfonos sin confundir prefijos extranjeros ni LID',()=>{
 test('identidad automática única, manual reversible y búsqueda por nombre',async t=>{
  if(!await disponible())return t.skip(motivoSalto());const db=await conEsquema();
  try{
- for(const sql of ["CREATE TABLE leads(id SERIAL PRIMARY KEY,nombre TEXT,apellidos TEXT,telefono TEXT)","CREATE TABLE whatsapp_messages(id SERIAL PRIMARY KEY,jid TEXT,telefono TEXT,mensaje TEXT,respuesta TEXT,tipo TEXT,origen TEXT,creado_en TEXT,adjuntos JSONB,historico INTEGER DEFAULT 0)","CREATE TABLE wa_clientes(jid TEXT PRIMARY KEY,nombre TEXT,telefono TEXT,estado_ia TEXT,pausado_por TEXT,pausa_motivo TEXT)",VINCULOS_SCHEMA,BANDEJA_SCHEMA])await db.raw(sql);
+ for(const sql of ["CREATE TABLE leads(id SERIAL PRIMARY KEY,nombre TEXT,apellidos TEXT,telefono TEXT)","CREATE TABLE whatsapp_messages(id SERIAL PRIMARY KEY,jid TEXT,telefono TEXT,mensaje TEXT,respuesta TEXT,tipo TEXT,origen TEXT,creado_en TEXT,adjuntos JSONB,historico INTEGER DEFAULT 0)","CREATE TABLE wa_clientes(jid TEXT PRIMARY KEY,nombre TEXT,telefono TEXT,estado_ia TEXT,pausado_por TEXT,pausa_motivo TEXT)",VINCULOS_SCHEMA,BANDEJA_SCHEMA,ATENCION_SCHEMA])await db.raw(sql);
  await db.raw("INSERT INTO leads(nombre,apellidos,telefono) VALUES ('Maria','Garcia','622149946'),('Otra','Persona','447622149946'),('Duplicado','Uno','633123123'),('Duplicado','Dos','34633123123')");
  await db.raw("INSERT INTO whatsapp_messages(jid,telefono,tipo) VALUES ('34622149946@s.whatsapp.net','34622149946','intercambio'),('123456789012345@lid','123456789012345','intercambio'),('34633123123@s.whatsapp.net','34633123123','intercambio')");
  const rutas={};registrarConversaciones({get:(p,a,h)=>rutas[p]=h,post:(p,a,h)=>rutas[p]=h},{auth:()=>()=>{},pool:{query:db.raw},listo:()=>false});

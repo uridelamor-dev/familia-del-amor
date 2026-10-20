@@ -5,6 +5,7 @@ import { SCHEMA as PEPA_EMAIL_SCHEMA, createQueue as createPepaEmailQueue, regis
 import { BANDEJA_SCHEMA, crearArchivoBandeja } from './src/modules/messaging/bandeja-historial.js';
 import { setArchivoBandeja } from './whatsapp.js';
 import { VINCULOS_SCHEMA } from './src/modules/messaging/contacto-conversacion.js';
+import { ATENCION_SCHEMA, crearAtencion } from './src/modules/messaging/atencion.js';
 import { registrarConversaciones } from './src/modules/messaging/conversaciones.js';
 import { conTurno } from './src/modules/messaging/turno.js';
 import { enviarConversacion, resolverTelefono } from './whatsapp.js';
@@ -54,7 +55,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setEntradaDiferidaPermitida, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, setGrupoFacturasPermitido, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setAtencionEntrada, recuperarEntradaSinAtender, setEntradaDiferidaPermitida, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, setGrupoFacturasPermitido, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, leerIvaOriginal, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -905,6 +906,8 @@ async function initDB() {
 
     await client.query(ADJUNTOS_SCHEMA);
     await client.query(BANDEJA_SCHEMA);
+    await client.query(ATENCION_SCHEMA);
+    await client.query("ALTER TABLE whatsapp_messages ALTER COLUMN respuesta DROP NOT NULL");
 
     // ── POR QUÉ SALIÓ MAL UNA CONVERSACIÓN, Y QUÉ COLUMNAS LO ARREGLAN ───────────────────────
     //
@@ -21248,7 +21251,8 @@ app.post("/api/campanas-config", requireAuth(["direccion", "marketing"]), async 
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-registrarConversaciones(app, {auth:requireAuth,pool,resolverTelefono,enviar:enviarConversacion,listo:isReady,bloquear:conTurno,olvidar:olvidarSesionWA});
+const atencionWA = crearAtencion({pool,enviar:sendMensajeLibre,listo:isReady,recuperar:recuperarEntradaSinAtender});
+registrarConversaciones(app, {atencion:atencionWA,auth:requireAuth,pool,resolverTelefono,enviar:enviarConversacion,listo:isReady,bloquear:conTurno,olvidar:olvidarSesionWA});
 
 app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {
   const { telefono, mensaje } = req.body;
@@ -25061,7 +25065,10 @@ const server = app.listen(PORT, async () => {
     );
   } catch (e) { console.error("[Migration] empresa post-restore fix:", e.message); }
 
+  setAtencionEntrada(atencionWA);
+  if (PROD) setInterval(() => atencionWA.tick().catch(e => console.error("[Atención WA]", e.message)), 60000).unref();
   setOnReady(async () => {
+    try { await atencionWA.tick(); } catch(e) { console.error("[Atención WA]", e.message); }
     try { await procesarPendientesWA(); } catch (e) { console.error('[WA] pendientes:', e.message); }
     try { await recuperarRespuestaAutorizada({ dbGet, dbRun, enviar: sendMensajeLibre, listo: isReady }); }
     catch (e) { console.error('[WA] recuperación autorizada: revisar entrega', e.message); }
@@ -25398,7 +25405,11 @@ const server = app.listen(PORT, async () => {
     const row = await dbGet(
       `SELECT nombre, telefono, notas, ultima_interaccion,
               estado_ia, pausa_motivo, pausado_en, pausado_por, idioma_ultimo
-         FROM wa_clientes WHERE jid = ?`, [jid]);
+         FROM wa_clientes WHERE jid = ? OR jid=COALESCE((SELECT telefono_jid FROM wa_bandeja_chats WHERE jid=?),?) OR jid IN (
+           SELECT jid FROM wa_bandeja_chats WHERE COALESCE(telefono_jid,jid)=
+           COALESCE((SELECT telefono_jid FROM wa_bandeja_chats WHERE jid=?),?))
+         ORDER BY (estado_ia='pausada' AND COALESCE(pausado_por,'')<>'sara') DESC NULLS LAST,
+         (estado_ia='pausada') DESC NULLS LAST LIMIT 1`, [jid,jid,jid,jid,jid]);
     return row || null;
   });
 
@@ -25652,11 +25663,12 @@ const server = app.listen(PORT, async () => {
    * consultar al modelo. Escribe en `wa_clientes`, que es la ficha de ese jid: el estado tiene
    * que sobrevivir a un reinicio, a un redespliegue y a que Baileys se reconecte.
    *
-   * Es idempotente, y el motivo NO se pisa: lo que le importa a quien atienda es por qué se paró
-   * la primera vez, no la última.
+   * Conserva las pausas manuales. Una petición expresa de hablar con una persona
+   * prevalece sobre una consulta automática anterior.
    */
   setOnPausarIA(async (jid, { motivo, detalle = "", por = "sara" } = {}) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+    await atencionWA.abrir(jid, motivo || "consulta", detalle);
     const p = saraMarcarPausa({ motivo, por, ahora: isoConOffset(Date.now()) });
     try {
       await dbRun(
@@ -25664,7 +25676,10 @@ const server = app.listen(PORT, async () => {
          VALUES (?,?,?,?,?,?, EXTRACT(EPOCH FROM NOW())::BIGINT)
          ON CONFLICT(jid) DO UPDATE SET
            estado_ia = EXCLUDED.estado_ia,
-           pausa_motivo = COALESCE(wa_clientes.pausa_motivo, EXCLUDED.pausa_motivo),
+           pausa_motivo = CASE
+             WHEN wa_clientes.estado_ia='pausada' AND COALESCE(wa_clientes.pausado_por,'')<>'sara' THEN wa_clientes.pausa_motivo
+             WHEN EXCLUDED.pausa_motivo='pidio_persona' THEN EXCLUDED.pausa_motivo
+             ELSE COALESCE(wa_clientes.pausa_motivo, EXCLUDED.pausa_motivo) END,
            pausado_en   = COALESCE(wa_clientes.pausado_en, EXCLUDED.pausado_en),
            pausado_por  = COALESCE(wa_clientes.pausado_por, EXCLUDED.pausado_por),
            ultima_interaccion = EXTRACT(EPOCH FROM NOW())::BIGINT`,

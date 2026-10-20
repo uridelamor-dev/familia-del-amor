@@ -1,3 +1,4 @@
+import { pausaBloqueante } from './src/modules/messaging/atencion.js';
 import { conTurno } from './src/modules/messaging/turno.js';
 import { entradaDiferidaVigente, adjuntoGrupoDiferidoVigente, indicarEscribiendo } from './src/modules/messaging/entrada-diferida.js';
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, downloadMediaMessage, fetchLatestWaWebVersion } from "@whiskeysockets/baileys";
@@ -187,6 +188,9 @@ Entender de qué promoción habla NO es saber sus condiciones.
 Si la condición que te preguntan está en el mensaje anterior, en el citado o en la configuración del equipo, respóndela.
 Si NO la tienes —si vale otro día, si se puede cambiar la fecha, si hay excepciones, hasta cuándo dura—, NO la supongas y NO improvises una respuesta amable: no te la inventes ni para decir que sí ni para decir que no.
 Dile con naturalidad, en su idioma, que con la información que tienes no se lo puedes confirmar y que lo consultas con el equipo, y usa \`pasar_a_persona\`.
+
+## Recoger solicitudes antes de derivar
+Cuando falten datos de una reserva (local, día, hora, personas, nombre), pregúntalos. No derives solo por faltar esos datos ni porque alguien diga que ha llamado sin éxito. Si requiere un menú o presupuesto especial, recoge lo que ya sabe y pregunta solo los datos que faltan antes de pasar la propuesta al equipo. No prometas disponibilidad, precio ni confirmación sin respaldo.
 
 ## Reservas: sus horarios son SOLO suyos
 Las franjas de mediodía y cena son para RESERVAS de mesa. Úsalas solo cuando estés haciendo, cambiando o consultando una reserva.
@@ -486,6 +490,8 @@ function archivarBandeja(datos) {
  }).catch(e=>console.error('[Bandeja] No se pudo guardar el historial:',e.message));
  return archivoPendiente;
 }
+let atencionEntrada = null;
+export function setAtencionEntrada(servicio) { atencionEntrada = servicio; }
 let onMessage = null;
 export function setOnMessage(fn) { onMessage = fn; }
 
@@ -625,6 +631,7 @@ function buildPerfilContext(perfil) {
   const partes = [];
   if (perfil.nombre) partes.push(`Nombre: ${perfil.nombre}`);
   if (perfil.telefono) partes.push(`Teléfono: ${perfil.telefono}`);
+  if (perfil.estado_ia === "pausada" && perfil.pausa_motivo === "consulta") partes.push("Hay una consulta pendiente del equipo. No la des por resuelta ni confirmes lo desconocido. Puedes recoger datos faltantes y atender otras solicitudes verificables; no repitas la derivación si no aporta nada nuevo.");
   if (perfil.notas && perfil.notas !== "{}") {
     try {
       const lista = Object.values(JSON.parse(perfil.notas)).filter(Boolean);
@@ -856,7 +863,7 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
       });
       return {
         content: "Conversación marcada para atención humana. Confírmaselo al cliente en SU idioma, "
-          + "en una sola frase, y no le pidas más datos ni intentes resolverlo tú.",
+          + "sin prometer plazos. Si no ha pedido hablar con una persona, puedes recoger datos pendientes y atender otras solicitudes verificables. No inventes la solución ni cierres la consulta.",
         is_error: false,
       };
     }
@@ -955,9 +962,11 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
 }
 
 async function procesarBatch(jid, items) {
+  if(atencionEntrada){items=await atencionEntrada.iniciar(jid,items);if(!items.length)return;}
   let textoCombinado = items.map(i => i.textoFinal).join("\n");
   let ficha = null;
   let pausada = false;
+  await atencionEntrada?.entrada(jid,textoCombinado).catch(e=>console.error("[Atención]",e.message));
 
   // ── ¿ESTÁ ESTA CONVERSACIÓN EN MANOS DE UNA PERSONA? ──────────────────────────────────────
   //
@@ -971,7 +980,7 @@ async function procesarBatch(jid, items) {
   if (perfilLoader) {
     try {
       ficha = await perfilLoader(jid);
-      if (estaPausada(ficha)) {
+      if (pausaBloqueante(ficha)) {
         pausada = true;
         console.log(`[Sara] PAUSADA para ${jid} (${ficha.pausa_motivo || "sin motivo"}): no se responde`);
         // Se registra igual: es lo que verá quien atienda, y el contexto de cuando vuelva.
@@ -995,11 +1004,17 @@ async function procesarBatch(jid, items) {
   textoCombinado = items.map(i => i.textoFinal).join('\n');
   const idsAdjuntos = adjuntos.map(a => a.id).filter(Boolean);
   if (!pausada && perfilLoader && adjuntos.length) {
-    try { pausada = estaPausada(await perfilLoader(jid)); }
+    try { pausada = pausaBloqueante(await perfilLoader(jid)); }
     catch { pausada = true; }
   }
   if (pausada) {
-    if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, pausada: true, adjuntos: idsAdjuntos });
+    let respuesta=null;
+    if(ficha?.pausado_por==='sara' && ficha.pausa_motivo==='pidio_persona' && await atencionEntrada?.acuse(jid)) {
+      const idioma=idiomaSugerido({mensajesCliente:[textoCombinado],idiomaContacto:ficha.idioma_ultimo}).idioma;
+      const acuse={es:'He recibido tu mensaje. Tu consulta sigue pendiente del equipo.',ca:'He rebut el teu missatge. La teva consulta continua pendent de l’equip.',en:'I have received your message. Your request is still awaiting the team.'}[idioma]||'He recibido tu mensaje. Tu consulta sigue pendiente del equipo.';
+      await conTurno(jid,async()=>{const actual=await perfilLoader(jid);if(actual?.pausado_por!=='sara')return;_marcarMensajeSistema(jid,acuse);await sock.sendMessage(jid,{text:acuse});respuesta=acuse;});
+    }
+    if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta, pausada: true, adjuntos: idsAdjuntos });
     return;
   }
   if (adjuntos.some(a => a.error)) {
@@ -1065,6 +1080,8 @@ async function procesarBatch(jid, items) {
       } catch (e) { console.error("[Sara] no se pudo marcar la derivación:", e.message); }
     }
     const respuesta = await responderConIA(jid, textoCombinado, adjuntoInfo, contextoRetraso, citado);
+    if (['error','resultado','adjunto'].some(tipo=>['es','ca','en'].some(idioma=>respuesta===textoSeguro(tipo,idioma))))
+      await atencionEntrada?.abrir(jid,'error_respuesta',textoCombinado).catch(e=>console.error('[Atención]',e.message));
     if (perfilLoader) {
       const actual = await perfilLoader(jid);
       if (estaPausada(actual) && actual.pausado_por !== 'sara') {
@@ -1092,6 +1109,7 @@ async function procesarBatch(jid, items) {
     if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta, adjuntos: idsAdjuntos });
   } catch (err) {
     console.error("Error respondiendo:", err.message);
+    await atencionEntrada?.abrir(jid,"error_respuesta",textoCombinado).catch(e=>console.error("[Atención]",e.message));
     if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, adjuntos: idsAdjuntos });
   }
 }
@@ -1137,8 +1155,22 @@ function procesarConDebounce(jid, item) {
   batch.items.push(item);
   batch.timer = setTimeout(() => {
     batchPorJid.delete(jid);
-    encolarPorJid(jid, () => procesarBatch(jid, batch.items)).catch(err => console.error("Error en procesarBatch:", err.message));
+    encolarPorJid(jid, () => procesarBatch(jid, batch.items)).catch(async err => {
+      console.error("Error en procesarBatch:", err.message);
+      await atencionEntrada?.abrir(jid,'error_entrada',batch.items.map(i=>i.textoFinal).join('\n')).catch(()=>{});
+    });
   }, DEBOUNCE_MS);
+}
+
+// La recuperación nunca reproduce una entrada cuyo procesamiento ya quedó registrado.
+export async function recuperarEntradaSinAtender(m, reclamar) {
+ const jid=m.jid;
+ if(!clientReady||!sock||batchPorJid.has(jid)||colasPorJid.has(jid)||await esMensajeInterno(jid))return;
+ return encolarPorJid(jid,async()=>{
+  if(pausaBloqueante(perfilLoader?await perfilLoader(jid):null)||!await reclamar())return;
+  await procesarBatch(jid,[{textoFinal:m.mensaje,tieneAdjunto:false,
+   contextoRetraso:`[Mensaje pendiente enviado el ${new Date(m.creado_en).toLocaleString('es-ES',{timeZone:'Europe/Madrid'})}. Disculpa la demora. No confirmes ni tramites reservas para fechas ya pasadas; pregunta si sigue necesitando ayuda.]`}]);
+ });
 }
 
 function scheduleReconnect() {
@@ -1274,6 +1306,7 @@ async function connectToWhatsApp() {
     if (type !== "notify" && type !== "append") return;
     void archivarBandeja({messages});
     for (const recibido of messages) {
+     try {
       const msg = { ...recibido, message: mensajeNormalizado(recibido.message) };
       if (msg.key.fromMe) {
         // Capturar mensajes manuales del operador para que Sara tenga contexto
@@ -1378,6 +1411,10 @@ async function connectToWhatsApp() {
       }
 
       procesarConDebounce(jid, { textoFinal, tieneAdjunto, msgTimestamp, contextoRetraso, citado, msg });
+     } catch(e) {
+      console.error('[WA] Fallo procesando una entrada:',e.message);
+      await atencionEntrada?.abrir(recibido.key?.remoteJid,'error_entrada','Revisar el mensaje recibido en el historial.').catch(()=>{});
+     }
     }
   });
 }
