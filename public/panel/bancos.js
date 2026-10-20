@@ -53,17 +53,46 @@ function banCrearCuenta(continuar=false){
  ov.querySelector('form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{const r=await apiSend('POST','/api/bancos/cuentas',Object.fromEntries(new FormData(e.target)));BANCO.empresa=e.target.elements.empresa.value;BANCO.cuenta=r.id;ov.remove();await loadBancos();if(continuar)banImportar();}catch(err){ov.querySelector('#banErr').textContent=err.message;}finally{b.disabled=false;}};
 }
 function banImportar(){
- const cuenta=BANCO.config.cuentas.find(c=>String(c.id)===String(BANCO.cuenta));if(!cuenta){banCrearCuenta(true);return;}
- let mesCarga=BANCO.mes,texto='',archivo='',mapa=cuenta.mapa||{separador:';',cabecera:0,decimal:',',formatoFecha:'dmy'},filas=[];
- const ov=modal('Subir extracto · '+cuenta.nombre,'<div id="banPaso"></div>');ov.classList.add('ban-modal');const box=ov.querySelector('#banPaso');
+ let empresa=BANCO.empresa,cuenta=null,fichero=null;
+ let mesCarga=BANCO.mes||banMesAnterior(),texto='',archivo='',mapa={separador:';',cabecera:0,decimal:',',formatoFecha:'dmy'},filas=[];
+ const ov=modal('Subir extracto','<div id="banPaso"></div>');ov.classList.add('ban-modal');const box=ov.querySelector('#banPaso');
  const fallo=e=>{box.querySelector('[role="alert"]').textContent=e.message;};
- function inicio(){box.innerHTML=`<p class="mut">1 de 3 · Archivo</p><p>${esc(cuenta.empresa)} · •••• ${esc(cuenta.ultimos4)}</p><div class="ban-form">${banPeriodo('banCarga',mesCarga)}<label>Archivo Excel o CSV<input id="banArchivo" type="file" accept=".xlsx,.xls,.csv,.txt"></label><p>Descarga los movimientos completos de ese mes. Admite Excel (.xlsx y .xls) y CSV. No se admite PDF ni Norma 43.</p><label>Separador<select id="banSep"><option value=";">Punto y coma (;)</option><option value=",">Coma (,)</option><option value="tab">Tabulador</option></select></label><p role="alert"></p><button class="btn primary" id="banLeer">Continuar</button></div>`;
+ function titular(){
+  box.innerHTML=`<p class="mut">1 de 6 · Titular fiscal</p><h3>¿De quién es el extracto?</h3><label>Empresa o titular fiscal<select id="banTitular"><option value="">Selecciona un titular</option>${BANCO.config.empresas.map(e=>`<option ${e===empresa?'selected':''}>${esc(e)}</option>`).join('')}</select></label><p role="alert"></p><button class="btn primary" id="banSiguiente">Continuar</button>`;
+  box.querySelector('#banSiguiente').onclick=()=>{const valor=box.querySelector('select').value;if(!valor){fallo(Error('Selecciona el titular fiscal.'));return;}if(valor!==empresa)cuenta=null;empresa=valor;elegirCuenta();};
+ }
+ function elegirCuenta(){
+  const cuentas=BANCO.config.cuentas.filter(c=>c.empresa===empresa);
+  box.innerHTML=`<p class="mut">2 de 6 · Cuenta bancaria</p><h3>${esc(empresa)}</h3><p>Elige la cuenta de la que has descargado el archivo.</p><label>Cuenta bancaria<select id="banOrigen"><option value="">Selecciona una cuenta</option>${cuentas.map(c=>`<option value="${c.id}" ${c.id===cuenta?.id?'selected':''}>${esc(c.nombre)} · ${esc(c.banco)} · •••• ${esc(c.ultimos4)}</option>`).join('')}<option value="nueva">Añadir una cuenta nueva…</option></select></label><div id="banAlta"></div><p role="alert"></p><div class="toolbar"><button class="btn" id="banAnterior">Atrás</button><button class="btn primary" id="banSiguiente">Continuar</button></div>`;
+  const sel=box.querySelector('#banOrigen');
+  sel.onchange=()=>{box.querySelector('#banAlta').innerHTML=sel.value==='nueva'?`<div class="ban-form"><label>Nombre de la cuenta<input id="banNombre" maxlength="100" placeholder="Cuenta principal"></label><label>Banco<select id="banBanco">${['Sabadell','CaixaBank','BBVA','Santander','Otro banco'].map(b=>`<option>${b}</option>`).join('')}</select></label><label>Últimos cuatro dígitos<input id="banDigitos" maxlength="4" inputmode="numeric"></label><p>Al continuar se guardará la cuenta. Los movimientos no se importan hasta la confirmación final.</p></div>`:'';};
+  if(!cuentas.length){sel.value='nueva';sel.onchange();}
+  box.querySelector('#banAnterior').onclick=titular;
+  box.querySelector('#banSiguiente').onclick=async e=>{e.target.disabled=true;try{
+   let elegida;
+   if(sel.value==='nueva'){
+    const datos={empresa,nombre:box.querySelector('#banNombre').value.trim(),banco:box.querySelector('#banBanco').value,ultimos4:box.querySelector('#banDigitos').value};
+    if(!datos.nombre||!/^\d{4}$/.test(datos.ultimos4))throw Error('Indica el nombre y los cuatro últimos dígitos.');
+    const r=await apiSend('POST','/api/bancos/cuentas',datos);elegida={...datos,id:r.id};BANCO.config.cuentas.push(elegida);
+   }else elegida=cuentas.find(c=>String(c.id)===sel.value);
+   if(!elegida)throw Error('Selecciona una cuenta.');
+   if(cuenta?.id!==elegida.id)mapa=elegida.mapa||{separador:';',cabecera:0,decimal:',',formatoFecha:'dmy'};
+   cuenta=elegida;periodo();
+  }catch(err){fallo(err);}finally{if(e.target.isConnected)e.target.disabled=false;}};
+ }
+ function periodo(){
+  box.innerHTML=`<p class="mut">3 de 6 · Periodo</p><h3>¿De qué mes son los movimientos?</h3>${banPeriodo('banCarga',mesCarga)}<p role="alert"></p><div class="toolbar"><button class="btn" id="banAnterior">Atrás</button><button class="btn primary" id="banSiguiente">Continuar</button></div>`;
+  box.querySelector('#banAnterior').onclick=()=>{mesCarga=banLeerPeriodo(box,'banCarga');elegirCuenta();};
+  box.querySelector('#banSiguiente').onclick=()=>{mesCarga=banLeerPeriodo(box,'banCarga');inicio();};
+ }
+ function inicio(){box.innerHTML=`<p class="mut">4 de 6 · Archivo</p><p>${esc(cuenta.empresa)} · •••• ${esc(cuenta.ultimos4)}</p><div class="ban-form"><p>Periodo: ${esc(mesCarga)}</p><label>Archivo Excel o CSV<input id="banArchivo" type="file" accept=".xlsx,.xls,.csv,.txt"></label><p>Descarga los movimientos completos de ese mes. Admite Excel (.xlsx y .xls) y CSV. No se admite PDF ni Norma 43.</p><label>Separador<select id="banSep"><option value=";">Punto y coma (;)</option><option value=",">Coma (,)</option><option value="tab">Tabulador</option></select></label>${fichero?`<p>Archivo seleccionado: ${esc(fichero.name)}</p>`:''}<p role="alert"></p><button class="btn" id="banArchivoAtras">Atrás</button><button class="btn primary" id="banLeer">Continuar</button></div>`;
+ box.querySelector('#banArchivoAtras').onclick=()=>{fichero=box.querySelector('#banArchivo').files[0]||fichero;periodo();};
  box.querySelector('#banSep').value=mapa.separador==='\t'?'tab':mapa.separador;
  box.querySelector('#banLeer').onclick=async e=>{e.target.disabled=true;try{
-  const f=box.querySelector('#banArchivo').files[0];if(!f||!f.name.match(/\.(xlsx|xls|csv|txt)$/i))throw Error('Selecciona un Excel (.xlsx o .xls) o CSV.');if(f.size>2000000)throw Error('Máximo 2 MB. Exporta un mes cada vez.');
+  const f=box.querySelector('#banArchivo').files[0]||fichero;fichero=f;if(!f||!f.name.match(/\.(xlsx|xls|csv|txt)$/i))throw Error('Selecciona un Excel (.xlsx o .xls) o CSV.');if(f.size>2000000)throw Error('Máximo 2 MB. Exporta un mes cada vez.');
   const bytes=new Uint8Array(await f.arrayBuffer());
   if(/\.xlsx?$/i.test(f.name)){
-   archivo=f.name;mesCarga=banLeerPeriodo(box,'banCarga');if(!mesCarga)throw Error('Elige el mes.');
+   archivo=f.name;if(!mesCarga)throw Error('Elige el mes.');
    const hojas=await banLeerExcel(bytes);mapa={...mapa,separador:';',decimal:',',formatoFecha:'dmy'};
    async function elegir(h){texto=h.texto;const r=await apiSend('POST','/api/bancos/columnas',{texto,separador:';'});filas=r.filas;columnas();}
    if(hojas.length===1)await elegir(hojas[0]);
@@ -71,26 +100,26 @@ function banImportar(){
    return;
   }
   texto=new TextDecoder(bytes[0]===255&&bytes[1]===254?'utf-16le':bytes[0]===254&&bytes[1]===255?'utf-16be':'utf-8').decode(bytes);if(texto.includes('\uFFFD'))texto=new TextDecoder('windows-1252').decode(bytes);
-  archivo=f.name;const sep=box.querySelector('#banSep').value;mapa={...mapa,separador:sep==='tab'?'\t':sep};const mes=banLeerPeriodo(box,'banCarga');if(!mes)throw Error('Elige el mes.');mesCarga=mes;
+  archivo=f.name;const sep=box.querySelector('#banSep').value;mapa={...mapa,separador:sep==='tab'?'\t':sep};const mes=mesCarga;if(!mes)throw Error('Elige el mes.');mesCarga=mes;
   const r=await apiSend('POST','/api/bancos/columnas',{texto,separador:mapa.separador});filas=r.filas;if(!filas.length)throw Error('El archivo está vacío.');columnas();
  }catch(err){fallo(err);}finally{if(e.target.isConnected)e.target.disabled=false;}};}
  function columnas(){
   let cab=Number(mapa.cabecera)||0;if(cab>=filas.length)cab=0;
-  box.innerHTML=`<p class="mut">2 de 3 · Columnas</p><div class="ban-form"><label>Fila que contiene los títulos<select id="banCab">${filas.slice(0,31).map((f,i)=>`<option value="${i}" ${i===cab?'selected':''}>${i+1}: ${esc(f.join(' · ').slice(0,100))}</option>`).join('')}</select></label><div id="banCols"></div><label>Decimales<select id="banDecimal"><option value=",">1.234,56</option><option value=".">1,234.56</option></select></label><label>Fecha<select id="banFechaFmt"><option value="dmy">Día/mes/año</option><option value="ymd">Año-mes-día</option></select></label><p class="mut">Importe único: negativo para salidas y positivo para entradas. O elige columnas separadas de cargo y abono. El saldo y la referencia ayudan a distinguir operaciones iguales.</p><p role="alert"></p><div class="toolbar"><button class="btn" id="banAtras">Atrás</button><button class="btn primary" id="banVista">Ver resumen</button></div></div>`;
+  box.innerHTML=`<p class="mut">5 de 6 · Revisar columnas</p><div class="ban-form"><label>Fila que contiene los títulos<select id="banCab">${filas.slice(0,31).map((f,i)=>`<option value="${i}" ${i===cab?'selected':''}>${i+1}: ${esc(f.join(' · ').slice(0,100))}</option>`).join('')}</select></label><div id="banCols"></div><label>Decimales<select id="banDecimal"><option value=",">1.234,56</option><option value=".">1,234.56</option></select></label><label>Fecha<select id="banFechaFmt"><option value="dmy">Día/mes/año</option><option value="ymd">Año-mes-día</option></select></label><p class="mut">Importe único: negativo para salidas y positivo para entradas. O elige columnas separadas de cargo y abono. El saldo y la referencia ayudan a distinguir operaciones iguales.</p><p role="alert"></p><div class="toolbar"><button class="btn" id="banAtras">Atrás</button><button class="btn primary" id="banVista">Ver resumen</button></div></div>`;
   box.querySelector('#banDecimal').value=mapa.decimal;box.querySelector('#banFechaFmt').value=mapa.formatoFecha;
   function pintarCols(){const headers=filas[Number(box.querySelector('#banCab').value)],campos={fecha:'Fecha de operación',concepto:'Concepto',importe:'Importe único',cargo:'Cargo / debe',abono:'Abono / haber',saldo:'Saldo (opcional)',referencia:'Referencia (opcional)'};
    box.querySelector('#banCols').innerHTML=Object.entries(campos).map(([k,label])=>`<label>${label}<select data-col="${k}"><option value="-1">Sin columna</option>${headers.map((h,i)=>`<option value="${i}" ${mapa[k]===i?'selected':''}>${i+1} · ${esc(h)}</option>`).join('')}</select></label>`).join('');}
-  pintarCols();box.querySelector('#banCab').onchange=pintarCols;box.querySelector('#banAtras').onclick=inicio;
+  pintarCols();box.querySelector('#banCab').onchange=pintarCols;box.querySelector('#banAtras').onclick=()=>{mapa={...mapa,cabecera:Number(box.querySelector('#banCab').value),decimal:box.querySelector('#banDecimal').value,formatoFecha:box.querySelector('#banFechaFmt').value};box.querySelectorAll('[data-col]').forEach(x=>mapa[x.dataset.col]=Number(x.value));inicio();};
   box.querySelector('#banVista').onclick=async e=>{e.target.disabled=true;try{
    mapa={...mapa,cabecera:Number(box.querySelector('#banCab').value),decimal:box.querySelector('#banDecimal').value,formatoFecha:box.querySelector('#banFechaFmt').value};box.querySelectorAll('[data-col]').forEach(x=>mapa[x.dataset.col]=Number(x.value));
    const r=await apiSend('POST','/api/bancos/previsualizar',{cuenta_id:cuenta.id,mes:mesCarga,archivo,texto,mapa});
    if(r.errores?.length)throw Error(`${r.totalErrores} filas por corregir. `+r.errores.slice(0,5).map(e=>'Fila '+e.fila+': '+e.error).join(' · '));resumen(r);
   }catch(err){fallo(err);}finally{if(e.target.isConnected)e.target.disabled=false;}};
  }
- function resumen(r){box.innerHTML=`<p class="mut">3 de 3 · Confirmar</p><h3>${esc(cuenta.nombre)} · ${esc(mesCarga)}</h3><p><b>${r.nuevos} nuevos</b> · ${r.duplicados} coincidencias ya importadas · ${r.total} filas leídas</p><p>Entradas nuevas: <b>${banEuro(r.entradas)}</b><br>Salidas nuevas: <b>${banEuro(r.salidas)}</b></p>${r.repetidos?`<p role="status">Hay ${r.repetidos} filas idénticas dentro del archivo. Se conservan como operaciones distintas. Comprueba que el banco no las haya repetido.</p>`:''}<p class="mut">Las coincidencias se omiten por sus datos, no por el nombre del archivo. En extractos solapados con movimientos idénticos, comprueba las operaciones y el saldo.</p><div class="ban-scroll"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Importe</th></tr></thead><tbody>${r.muestra.map(m=>`<tr><td>${esc(m.fecha)}</td><td>${esc(m.concepto)}</td><td>${banEuro(m.importe)}</td></tr>`).join('')}</tbody></table></div><p class="mut">Muestra de las primeras diez filas. Las facturas solo cambiarán a pagadas al confirmar una conciliación.</p><label><input id="banCompleto" type="checkbox"> He comprobado que es el extracto completo de este mes.</label><p role="alert"></p><div class="toolbar"><button class="btn" id="banVolver">Revisar columnas</button><button class="btn primary" id="banConfirmar">Guardar movimientos</button></div>`;
-  box.querySelector('#banVolver').onclick=columnas;box.querySelector('#banConfirmar').onclick=async e=>{e.target.disabled=true;try{const x=await apiSend('POST','/api/bancos/confirmar',{id:r.id,completo:box.querySelector('#banCompleto').checked});BANCO.mes=mesCarga;ov.remove();toast(`${x.nuevos} movimientos guardados; ${x.duplicados} coincidencias omitidas.`);await loadBancos();}catch(err){fallo(err);}finally{if(e.target.isConnected)e.target.disabled=false;}};
+ function resumen(r){box.innerHTML=`<p class="mut">6 de 6 · Confirmar</p><h3>${esc(empresa)}</h3><p>${esc(cuenta.nombre)} · ${esc(cuenta.banco)} · •••• ${esc(cuenta.ultimos4)} · ${esc(mesCarga)}</p><p><b>${r.nuevos} nuevos</b> · ${r.duplicados} coincidencias ya importadas · ${r.total} filas leídas</p><p>Entradas nuevas: <b>${banEuro(r.entradas)}</b><br>Salidas nuevas: <b>${banEuro(r.salidas)}</b></p>${r.repetidos?`<p role="status">Hay ${r.repetidos} filas idénticas dentro del archivo. Se conservan como operaciones distintas. Comprueba que el banco no las haya repetido.</p>`:''}<p class="mut">Las coincidencias se omiten por sus datos, no por el nombre del archivo. En extractos solapados con movimientos idénticos, comprueba las operaciones y el saldo.</p><div class="ban-scroll"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Importe</th></tr></thead><tbody>${r.muestra.map(m=>`<tr><td>${esc(m.fecha)}</td><td>${esc(m.concepto)}</td><td>${banEuro(m.importe)}</td></tr>`).join('')}</tbody></table></div><p class="mut">Muestra de las primeras diez filas. Las facturas solo cambiarán a pagadas al confirmar una conciliación.</p><label><input id="banCompleto" type="checkbox"> He comprobado que es el extracto completo de este mes.</label><p role="alert"></p><div class="toolbar"><button class="btn" id="banVolver">Revisar columnas</button><button class="btn primary" id="banConfirmar">Confirmar importación</button></div>`;
+  box.querySelector('#banVolver').onclick=columnas;box.querySelector('#banConfirmar').onclick=async e=>{e.target.disabled=true;try{const x=await apiSend('POST','/api/bancos/confirmar',{id:r.id,completo:box.querySelector('#banCompleto').checked});BANCO.empresa=empresa;BANCO.cuenta=cuenta.id;BANCO.mes=mesCarga;ov.remove();toast(`${x.nuevos} movimientos guardados; ${x.duplicados} coincidencias omitidas.`);await loadBancos();}catch(err){fallo(err);}finally{if(e.target.isConnected)e.target.disabled=false;}};
  }
- inicio();
+ titular();
 }
 async function banRevisar(m){
  const ov=modal('Revisar movimiento',`<p>${esc(m.fecha)} · <b>${banEuro(m.importe)}</b></p><p>${esc(m.concepto)}</p><div id="banPropuestas">Buscando facturas…</div><p role="alert" id="banRevErr"></p>`);ov.classList.add('ban-modal');const box=ov.querySelector('#banPropuestas');

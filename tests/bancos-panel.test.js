@@ -12,11 +12,13 @@ test('seleccionar titular solo ofrece sus cuentas y borra la vista anterior',asy
  await nodo('banEmpresa').onchange({target:{value:'Empresa A'}});assert.match(nodo('view').innerHTML,/Cuenta A/);assert.doesNotMatch(nodo('view').innerHTML,/Cuenta B/);assert.match(peticiones.at(-1),/cuenta=1/);
  await nodo('banEmpresa').onchange({target:{value:'Empresa B'}});assert.match(nodo('view').innerHTML,/Cuenta B/);assert.doesNotMatch(nodo('view').innerHTML,/Cuenta A/);assert.match(peticiones.at(-1),/cuenta=2/);
 });
-test('periodo solo mes y año y subida sin cuenta abre el alta guiada',()=>{
- let html='';const ov={querySelector:()=>({})};
- const ctx=vm.createContext({Date,esc:String,modal:(t,h)=>{html=h;return ov;}});
+test('asistente empieza por titular sin exigir filtros y conserva el mismo modal',()=>{
+ const nodos=new Map();const nodo=id=>{if(!nodos.has(id))nodos.set(id,{value:'',innerHTML:''});return nodos.get(id);};
+ const box={innerHTML:'',querySelector:nodo};let modales=0;
+ const ctx=vm.createContext({Date,esc:String,modal:()=>{modales++;return {classList:{add(){}},querySelector:()=>box};}});
  vm.runInContext(fs.readFileSync(new URL('../public/panel/bancos.js',import.meta.url),'utf8'),ctx);
- vm.runInContext("BANCO.config={cuentas:[],empresas:['Empresa A']};banImportar()",ctx);
- assert.match(html,/Primero registra la cuenta/);
- const periodo=ctx.banPeriodo('prueba','2026-09');assert.match(periodo,/Septiembre/);assert.match(periodo,/Año/);assert.doesNotMatch(periodo,/<input/);
+ vm.runInContext("BANCO.config={cuentas:[{id:1,empresa:'Empresa A',nombre:'Principal'}],empresas:['Empresa A']};banImportar()",ctx);
+ assert.match(box.innerHTML,/1 de 6/);nodo('select').value='Empresa A';nodo('#banSiguiente').onclick();
+ assert.match(box.innerHTML,/2 de 6/);assert.match(box.innerHTML,/Principal/);assert.equal(modales,1);
+ const periodo=ctx.banPeriodo('prueba','2026-09');assert.match(periodo,/Septiembre/);assert.doesNotMatch(periodo,/<input/);
 });
