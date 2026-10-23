@@ -1,3 +1,4 @@
+import { datosRevision, controlesLectura } from './validacion-lectura.js';
 import { ADJUNTOS_DECORATIVOS_VERIFICADOS } from './adjuntos-verificados.js';
 import { diagnosticarRecepcion } from './error-recepcion.js';
 import { conPlazoFactura } from "./red.js";
@@ -41,15 +42,20 @@ export function crearRecepcion({db, lock, procesar, existeDestino, ahora = () =>
         await db.run("UPDATE facturas_recepciones SET estado='descartado',resultado=?::jsonb,error=NULL,actualizado=NOW() WHERE id=?",[JSON.stringify(resultado),id]);
         return resultado;
       }
-      if (f.estado === 'registrado' || f.estado === 'descartado') return f.resultado;
+      if (f.estado === 'registrado' || f.estado === 'descartado' || f.estado === 'sustituido') return f.resultado;
       if (f.estado === 'duplicado') { const e = new Error('Este documento ya está registrado'); e.isDuplicate = true; throw e; }
+      if (f.estado === 'revision') { const e=errorRecibido(id); e.message='Documento guardado para revisión en Compras. Todavía no está contabilizado.'; throw e; }
       if (f.estado === 'error' || new Date(f.proximo) > ahora()) throw errorRecibido(id);
       await db.run(`UPDATE facturas_recepciones SET estado='leyendo', intentos=intentos+1, actualizado=NOW() WHERE id=?`, [id]);
       try {
-        const r = await conPlazoFactura(() => procesar({buffer:f.original,mimeType:f.mime,filename:f.nombre,local:f.local,canal:f.canal,origen:f.canal}));
-        await db.run(`UPDATE facturas_recepciones SET estado=?, resultado=?::jsonb, original=NULL, error=NULL, actualizado=NOW() WHERE id=?`, [r?.descartado ? 'descartado' : 'registrado',JSON.stringify(r),id]);
+        const r = await conPlazoFactura(() => procesar({buffer:f.original,mimeType:f.mime,filename:f.nombre,local:f.local,canal:f.canal,origen:f.canal,datosAprobados:f.resultado?.aprobacion ? f.resultado.datos : null}));
+        await db.run(`UPDATE facturas_recepciones SET estado=?, resultado=?::jsonb, original=NULL, error=NULL, actualizado=NOW() WHERE id=?`, [r?.descartado ? 'descartado' : 'registrado',JSON.stringify({...r, revisionPrevia:f.resultado?.aprobacion ? f.resultado : undefined}),id]);
         return r;
       } catch(e) {
+        if(e.revisionDocumento) {
+          await db.run("UPDATE facturas_recepciones SET estado='revision',resultado=?::jsonb,error=?,actualizado=NOW() WHERE id=?",[JSON.stringify(e.resultado),'Comprueba los campos señalados. Original guardado; importes sin registrar.',id]);
+          const recibido=errorRecibido(id); recibido.message=e.message; throw recibido;
+        }
         if (e.isDuplicate) {
           await db.run(`UPDATE facturas_recepciones SET estado='duplicado', original=NULL, error=NULL, actualizado=NOW() WHERE id=?`, [id]);
           throw e;
@@ -75,9 +81,11 @@ export function crearRecepcion({db, lock, procesar, existeDestino, ahora = () =>
       VALUES (?,?,?,?,?,?,?) ON CONFLICT(clave) DO UPDATE SET clave=EXCLUDED.clave,
         original=CASE WHEN facturas_recepciones.estado IN ('registrado','duplicado') THEN EXCLUDED.original ELSE facturas_recepciones.original END RETURNING id,estado`,
       [clave,hash,canal,o.local||null,String(o.filename||'documento').slice(0,240),o.mimeType,o.buffer]);
-    // Avisar solo después de guardar el original, sin bloquear su procesamiento.
+    // Vincular el mensaje original incluso cuando el archivo ya estaba registrado.
+    if(o.onDocumentoGuardado) await o.onDocumentoGuardado(f.id);
+    // Avisar solo después de guardar el original.
     if (o.onRecibido && !['registrado','duplicado','descartado'].includes(f.estado)) {
-      void Promise.resolve().then(() => o.onRecibido(f.id)).catch(() => {});
+      await o.onRecibido(f.id);
     }
     return ejecutar(f.id);
   }
@@ -93,7 +101,24 @@ export function crearRecepcion({db, lock, procesar, existeDestino, ahora = () =>
       for (const f of filas) { try { await ejecutar(f.id); } catch(e) { if (!e.recibido && !e.isDuplicate) console.error('[Recepción] no se pudo recuperar el documento', f.id); } }
     } finally { trabajando = false; }
   }
-  return {recibir,ejecutar,reintentar};
+  async function aprobar(id,cambios,{autor,motivo,confirmado,aceptarAvisos}={}) {
+    const inicial=await db.get('SELECT hash FROM facturas_recepciones WHERE id=?',[id]);
+    if(!inicial) throw new Error('Documento no encontrado');
+    return lock(inicial.hash,async()=>{
+      const f=await db.get('SELECT * FROM facturas_recepciones WHERE id=?',[id]);
+      if(f.estado!=='revision' || !f.original) throw new Error('Este documento ya no está pendiente de revisión');
+      if(confirmado!==true) throw new Error('Confirma que has comprobado el original');
+      const datos=datosRevision(f.resultado?.datos,cambios);
+      const avisos=controlesLectura(datos);
+      if(avisos.some(a=>["fecha","proveedor","tipo"].includes(a.campo))) throw new Error("Completa proveedor, tipo y fecha válidos antes de registrar");
+      if(avisos.length && aceptarAvisos!==true) throw new Error("Quedan avisos. Corrígelos o confirma expresamente la excepción indicando el motivo");
+      if(!String(motivo||'').trim()) throw new Error('Indica qué has comprobado o corregido');
+      const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,fecha:ahora().toISOString(),motivo:String(motivo).trim().slice(0,2000)}};
+      await db.run("UPDATE facturas_recepciones SET estado='pendiente',resultado=?::jsonb,intentos=0,proximo=NOW(),error=NULL,actualizado=NOW() WHERE id=? AND estado='revision'",[JSON.stringify(resultado),id]);
+      return {ok:true};
+    });
+  }
+  return {recibir,ejecutar,reintentar,aprobar};
 }
 
 // Google devuelve páginas aunque todos los elementos de la primera ya estén procesados.

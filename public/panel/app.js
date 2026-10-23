@@ -3259,7 +3259,8 @@ async function revInformes() {
 async function revRepaso(automatico = false, offset = 0) {
   if (!revPuedeResponder()) return;
   if (automatico && document.querySelector('.modal-ov')) {
-    setTimeout(() => revRepaso(true).catch(() => {}), 15000); return;
+    setTimeout(() => facRepasoUnico(true).catch(() => {}),10000);
+  setTimeout(() => revRepaso(true).catch(() => {}), 15000); return;
   }
   const d = await apiSend('GET', '/api/reviews/repaso?offset=' + offset);
   if (!d.available) { if (!automatico) toast('El repaso se activará al publicar en producción.'); return; }
@@ -7696,6 +7697,7 @@ function facHeader() {
   const acciones = FACTAB !== "facturas" ? "" : `
     <div class="field filter-search"><label for="facQ">Buscar</label><input type="search" id="facQ" placeholder="Buscar proveedor, concepto, nº…" value="${esc(FACF.q)}"></div>
     <button class="btn" data-act="fac-filtros">${ic("filtro", 16)} Filtros${facFiltrosActivos().length ? `<span class="filter-count">${facFiltrosActivos().length}</span>` : ""}</button>
+    ${USER?.rol==='direccion' ? '<button class="btn" data-act="fac-repaso-unico">Repaso del histórico</button>' : ''}
     `;
   return `<div class="ph"><div class="eyebrow">Contabilidad</div>${contabilidadTitulo("Compras","Compras")}<div class="sub">Facturas y albaranes${donde ? ` · <b>${esc(donde)}</b>` : ""}</div></div><div class="fac-nav-actions"><div class="toolbar tabstrip">${pestanas}</div>${FACTAB==="facturas"?'<div class="fac-file-actions"><button class="btn primary" data-act="fac-subir">+ Subir</button><button class="btn" data-act="fac-export">Exportar</button></div>':""}</div>${acciones?`<div class="toolbar filter-toolbar">${acciones}</div>`:""}`;
 }
@@ -9491,6 +9493,60 @@ function renderFacturasConfig() {
   return `${facHeader()}<div id="facDrive"></div><div class="grid g2">${reg}</div><div class="grid g2" style="margin-top:16px">${grp}${m303}</div><div style="margin-top:16px">${drive}</div><div style="margin-top:16px">${librosGoogle}</div><div style="margin-top:16px">${integ}</div>`;
 }
 
+async function facRepasoUnico(automatico=false,pagina=0) {
+ if(USER?.rol!=='direccion')return;
+ if(automatico && document.querySelector('.modal-ov')){setTimeout(()=>facRepasoUnico(true).catch(()=>{}),10000);return;}
+ const j=await apiRaw('/api/facturas/repaso-unico'),d=j.data,c=d.contadores||{};
+ if(!j.habilitado && automatico)return;
+ if(automatico){if(d.visto||d.estado!=='disponible')return;const v=await apiSend('POST','/api/facturas/repaso-unico/visto',{});if(!v.mostrar)return;}
+ const disponible=d.estado==='disponible';
+ const resultados=disponible?{data:[]}:await apiRaw('/api/facturas/repaso-unico/resultados?pagina='+pagina);
+ const terminados=['sin_discrepancias','revisar','error','sin_original'].reduce((n,k)=>n+Number(c[k]||0),0);
+ const estados={en_curso:d.fase==='muestra'?'Primera tanda en curso':'Repaso en curso',pausado:'Repaso pausado',muestra_lista:'Primera tanda terminada',completado:'Repaso terminado'};
+ const control=d.estado==='en_curso'?['pausar','Pausar']:d.estado==='pausado'?['continuar','Continuar']:d.estado==='muestra_lista'?['ampliar',terminados<d.total?'Continuar con el resto':'Finalizar repaso']:null;
+ const filas=(resultados.data||[]).map((r,i)=>`<div class="card" style="padding:14px;margin:10px 0;overflow-wrap:anywhere"><b>${esc(r.guardado.proveedor||r.guardado.nombre||'Documento')} · ${esc(r.guardado.numero_factura||'#'+r.documento_id)}</b><p class="mut">${esc(r.guardado.local||'Por asignar')} · ${r.revision_humana?'Revisado por '+esc(r.revision_humana.autor):esc({revisar:'Para revisar',error:'Lectura fallida',sin_original:'Sin original',sin_discrepancias:'Sin discrepancias detectadas'}[r.estado])}</p><p>${esc(r.resultado?.avisos?.[0]?.texto||'Comprobar original')}</p><button class="btn sm" data-hist-revisar="${i}">${r.revision_humana?'Ver revisión':'Revisar documento'}</button></div>`).join('');
+ const ov=modal(disponible?'Repaso único de facturas y albaranes':'Repaso del histórico',disponible?`<p>Revisaremos los documentos existentes cuando lo inicies: registrados, por asignar y pendientes.</p><p><b>Primero, hasta 25 documentos variados.</b> Al acabar, se detendrá para que valores los resultados antes de continuar con el resto.</p><p>No cambiará datos contabilizados sin tu confirmación. Utilizará el servicio de lectura de IA, con su coste habitual. Podrás pausarlo y el progreso se conservará aunque vuelvas a publicar.</p><p class="mut">Este aviso solo aparece una vez. También encontrarás el repaso en Compras → Repaso del histórico.</p><p id="histError" role="alert"></p><div class="toolbar"><button class="btn" data-close>Ahora no</button><button class="btn primary" id="histIniciar" ${j.habilitado?'':'disabled'}>Iniciar primera tanda</button></div>`:`<p><b>${esc(estados[d.estado]||d.estado)}</b> · ${terminados} de ${d.total} procesados${d.fase==='muestra'?' · Primera tanda: hasta '+Math.min(25,d.total):''}.</p><p>${Number(c.sin_discrepancias||0)} sin discrepancias detectadas · ${Number(c.revisar||0)} con avisos · ${Number(c.error||0)+Number(c.sin_original||0)} no comprobados · ${Number(d.revisadas||0)} revisados por una persona.</p>${d.estado==='muestra_lista'?'<p><b>Comprueba los resultados de esta tanda antes de continuar.</b> Se incluyen también los documentos sin avisos para que puedas contrastarlos con el original antes de ampliar el repaso.</p>':''}<p class="mut">Primero se muestran los avisos de proveedor, NIF e importes; después fechas y otros datos. Las revisiones resueltas quedan al final. No se incluyen documentos recibidos después del inicio.</p><div class="toolbar">${control?`<button class="btn primary" id="histControl">${control[1]}</button>`:''}<button class="btn" id="histActualizar">Actualizar progreso</button></div>${d.estado==='pausado'?'<p>Si había una lectura iniciada, terminará esa. No empezará otra hasta que pulses Continuar.</p>':''}<p id="histError" role="alert"></p>${filas||'<p>No hay incidencias para mostrar en esta página.</p>'}<div class="toolbar">${pagina?'<button class="btn" id="histAnterior">Anterior</button>':''}${resultados.siguiente?'<button class="btn" id="histSiguiente">Siguiente</button>':''}<button class="btn" data-close>Cerrar</button></div>`);
+ ov.querySelector('.modal').style.cssText+=';width:min(900px,96vw);max-width:900px';
+ const abrir=async p=>{ov.remove();await facRepasoUnico(false,p);};
+ const ejecutar=async(b,url,body)=>{b.disabled=true;try{await apiSend('POST',url,body);await abrir(0);}catch(e){ov.querySelector('#histError').textContent=e.message;b.disabled=false;}};
+ if(disponible)ov.querySelector('#histIniciar').onclick=e=>ejecutar(e.target,'/api/facturas/repaso-unico/iniciar',{confirmado:true});
+ else{
+  if(control)ov.querySelector('#histControl').onclick=e=>ejecutar(e.target,'/api/facturas/repaso-unico/control',{accion:control[0]});
+  ov.querySelector('#histActualizar').onclick=()=>abrir(pagina).catch(e=>toast(e.message));
+  ov.querySelector('#histAnterior')?.addEventListener('click',()=>abrir(pagina-1).catch(e=>toast(e.message)));
+  ov.querySelector('#histSiguiente')?.addEventListener('click',()=>abrir(pagina+1).catch(e=>toast(e.message)));
+  ov.querySelectorAll('[data-hist-revisar]').forEach(b=>b.onclick=async()=>{try{await facRepasoDocumento(resultados.data[Number(b.dataset.histRevisar)],()=>facRepasoUnico(false,pagina));ov.remove();}catch(e){toast(e.message);}});
+ }
+}
+async function facRepasoDocumento(item,volver){
+ const ruta='/api/facturas/repaso-unico/documento/'+encodeURIComponent(item.origen)+'/'+encodeURIComponent(item.documento_id);
+ const d=(await apiRaw(ruta)).data,actual=d.actual,propuesta=d.resultado?.datos||{};
+ const campos=[['tipo','Tipo'],['proveedor','Proveedor'],['nif','NIF'],['fecha','Fecha'],['numero_factura','Número'],['base_imponible','Base'],['porcentaje_iva','IVA (%)'],['cuota_iva','Cuota IVA'],['total','Total']];
+ const numeros=new Set(['base_imponible','porcentaje_iva','cuota_iva','total']);
+ const editables=item.origen!=='recepcion'&&!d.revision_humana;
+ const ov=modal('Revisar documento · #'+item.documento_id,`<div class="hist-revision"><section><h3>Original</h3><div id="histOriginal">Cargando…</div><p id="histDescarga"></p><p class="mut">La lectura es una propuesta. Comprueba cada cambio con el documento.</p></section><section><h3>Datos y propuesta</h3>${(d.resultado?.avisos||[]).map(a=>`<p>${esc(a.texto)}</p>`).join('')}<form id="histForm">${campos.map(([k,l])=>{const valor=propuesta[k==='nif'?'nif_proveedor':k],distinto=String(valor??'')!==String(actual[k]??'');return `<div class="field" style="margin:12px 0"><label for="hist-${k}">${l}</label>${editables?k==='tipo'?`<select id="hist-${k}">${['factura','ticket','albaran','otro'].map(t=>`<option ${actual[k]===t?'selected':''}>${t}</option>`).join('')}</select>`:`<input id="hist-${k}" type="${numeros.has(k)?'number':k==='fecha'?'date':'text'}" ${numeros.has(k)?'step="any"':''} value="${esc(actual[k]??'')}">`:`<p>${esc(actual[k]??actual[k==='nif'?'nif_proveedor':k]??'—')}</p>`}${distinto?`<small>Propuesta: ${esc(valor??'No leído')}</small>`:''}${editables&&valor!=null&&distinto?` <button class="btn sm" type="button" data-propuesta="${k}">Usar propuesta</button>`:''}</div>`;}).join('')}${d.revision_humana?`<h3>Revisión guardada</h3><p>${esc(d.revision_humana.autor)} · ${esc(new Date(d.revision_humana.fecha).toLocaleString('es-ES'))}</p><p>${esc(d.revision_humana.motivo)}</p><details><summary>Ver cambios confirmados</summary>${(d.historial||[]).map(h=>`<p>${h.decision==='corregir'?'Corrección':'Se conservaron los datos'}</p>${campos.map(([k,l])=>`<p>${l}: ${esc(h.antes?.[k]??'—')} → ${esc(h.despues?.[k]??'—')}</p>`).join('')}`).join('')}</details>`:`${!editables?'<p>Esta recepción se corrige y registra desde Compras → Documentos recibidos. Aquí puedes dejar constancia de que has comprobado el aviso.</p>':''}<div class="field"><label for="histMotivo">Qué has comprobado o corregido</label><textarea id="histMotivo" required minlength="5" maxlength="2000"></textarea></div><p><label><input type="checkbox" id="histConfirmado" required> He comprobado el original y confirmo esta decisión.</label></p>${editables?'<p><label><input type="checkbox" id="histExcepcion"> Si persiste un aviso, he verificado la excepción y la explico en el motivo.</label></p><p class="mut">Cambiar importes requiere revisar también el desglose de IVA y los productos en la ficha. No se modifican automáticamente.</p>':''}<p id="histGuardarError" role="alert"></p><div class="toolbar"><button class="btn" type="submit" value="conservar">Conservar datos actuales</button>${editables?'<button class="btn primary" type="submit" value="corregir">Confirmar corrección</button>':''}</div>`}</form></section></div><div class="toolbar" style="margin-top:16px"><button class="btn" id="histVolver">Volver al repaso</button></div>`);
+ ov.querySelector('.modal').style.cssText+=';width:min(1100px,96vw);max-width:1100px';
+ ov.insertAdjacentHTML('beforeend','<style>.hist-revision{display:grid;grid-template-columns:1fr 1fr;gap:24px}.hist-revision section{min-width:0;overflow-wrap:anywhere}.hist-revision section:first-child{position:sticky;top:0;align-self:start}.hist-revision [data-propuesta]{width:auto;margin-top:6px}.hist-revision input:not([type=checkbox]),.hist-revision select,.hist-revision textarea{width:100%}.hist-revision small{display:block}@media(max-width:700px){.hist-revision{grid-template-columns:1fr}.hist-revision section:first-child{position:static}}</style>');
+ ov.querySelector('#histVolver').onclick=()=>{ov.remove();volver().catch(e=>toast(e.message));};
+ ov.querySelectorAll('[data-propuesta]').forEach(b=>b.onclick=()=>{const k=b.dataset.propuesta;ov.querySelector('#hist-'+k).value=propuesta[k==='nif'?'nif_proveedor':k];});
+ if(!d.revision_humana)ov.querySelector('#histForm').onsubmit=async e=>{
+  e.preventDefault();const decision=e.submitter?.value;if(!decision)return;
+  const botones=[...ov.querySelectorAll('button[type=submit]')];botones.forEach(b=>b.disabled=true);
+  const valores=editables?Object.fromEntries(campos.map(([k])=>{const v=ov.querySelector('#hist-'+k).value;return[k,v===''?null:numeros.has(k)?Number(v):v.trim()];})):null;
+  try{await apiSend('POST',ruta,{decision,campos:valores,esperado:actual,motivo:ov.querySelector('#histMotivo').value,confirmado:ov.querySelector('#histConfirmado').checked,excepcion:ov.querySelector('#histExcepcion')?.checked===true});ov.remove();await volver();}
+  catch(err){ov.querySelector('#histGuardarError').textContent=err.message;botones.forEach(b=>b.disabled=false);}
+ };
+ const archivo=item.origen==='factura'?`/api/facturas/${item.documento_id}/archivo`:item.origen==='pendiente'?`/api/facturas/pendientes/${item.documento_id}/archivo`:`/api/facturas/recepciones/${item.documento_id}/original`;
+ fetch(archivo,{headers:{Authorization:'Bearer '+token()}}).then(async r=>{
+  if(!r.ok)throw new Error('Original no disponible. No confirmes datos que no has podido comprobar.');
+  const blob=await r.blob();if(!ov.isConnected)return;
+  const url=URL.createObjectURL(blob),mime=blob.type.split(';')[0];
+  ov.querySelector('#histOriginal').innerHTML=['image/jpeg','image/png','image/webp'].includes(mime)?`<img src="${url}" alt="Original del documento" style="max-width:100%">`:mime==='application/pdf'?`<iframe src="${url}" title="Original del documento" style="width:100%;height:440px;border:0"></iframe>`:'Vista previa no disponible; descarga el archivo para comprobarlo.';
+  ov.querySelector('#histDescarga').innerHTML=`<a href="${url}" download="documento-${item.documento_id}">Descargar original</a>`;
+  const observer=new MutationObserver(()=>{if(!ov.isConnected){URL.revokeObjectURL(url);observer.disconnect();}});observer.observe(document.body,{childList:true});
+ }).catch(e=>{if(ov.isConnected)ov.querySelector('#histOriginal').textContent=e.message;});
+}
+
 let FAC_RECEPCIONES_ANTES = null;
 let FAC_RECEPCIONES_HIST = [];
 let FAC_RECEPCIONES_CARGA = 0;
@@ -9511,8 +9567,8 @@ async function facCargarRecepciones(antes = null, navegacion = "primera") {
   FAC_RECEPCIONES_ANTES = antes;
   if (!filas.length && !antes) { caja.innerHTML = ""; return; }
   const errores = Number(pagina.errores) || 0;
-  const estados = {pendiente:'Pendiente de lectura',leyendo:'Leyendo',error:'Necesita revisión'};
-  caja.innerHTML = `<details class="card fold p0" ${estaba ? "open" : ""} style="margin-bottom:12px"><summary style="padding:16px"><h3>Documentos recibidos</h3><span class="foldr"><span class="pill ${errores ? 'bad' : ''}">${errores ? `${errores} por revisar` : `${pagina.total} en curso`}</span><span class="car">${ic('chev',16)}</span></span></summary><p class="mut" style="padding:0 16px">Recepción de tus establecimientos · ${pagina.total} documentos en curso. Los fallos de lectura se reintentan hasta cinco veces.</p><div class="rows">${filas.map(f => `<div class="row"><div class="grow" style="min-width:0;overflow-wrap:anywhere"><div class="t1">${esc(!f.nombre || f.nombre === "noname" ? "Adjunto sin nombre · #" + f.id : f.nombre)}</div><div class="t2">${esc(f.canal)} · ${esc(f.local || 'Por asignar')} · ${esc(estados[f.estado] || f.estado)} · ${Number(f.intentos || 0)} intentos</div>${f.error ? `<div class="t2">${esc(f.error)}</div>` : ''}</div><div style="display:flex;flex-wrap:wrap;gap:6px;max-width:120px">${f.tiene_original === false ? '<span class="mut">Sube un archivo válido para continuar.</span>' : `<button class="btn sm" data-act="fac-recepcion-original" data-id="${esc(f.id)}" data-nombre="${esc(f.nombre)}">Original</button>`}${f.tiene_original !== false && f.estado==='error' ? `<button class="btn sm" data-act="fac-recepcion-reintentar" data-id="${esc(f.id)}">Reintentar</button>` : ''}</div></div>`).join('')}</div><div class="toolbar" style="padding:16px"><button class="btn sm" data-act="fac-recepcion-primera">Actualizar · primera página</button>${antes ? '<button class="btn sm" data-act="fac-recepcion-anterior">Anterior</button>' : ''}${pagina.siguiente ? `<button class="btn sm" data-act="fac-recepcion-siguiente" data-cursor="${esc(pagina.siguiente)}">Siguiente</button>` : ''}</div></details>`;
+  const estados = {pendiente:'Pendiente de lectura',leyendo:'Leyendo',error:'Error de lectura',revision:'Comprobar datos'};
+  caja.innerHTML = `<details class="card fold p0" ${estaba ? "open" : ""} style="margin-bottom:12px"><summary style="padding:16px"><h3>Documentos recibidos</h3><span class="foldr"><span class="pill ${errores ? 'bad' : ''}">${errores ? `${errores} por revisar` : `${pagina.total} en curso`}</span><span class="car">${ic('chev',16)}</span></span></summary><p class="mut" style="padding:0 16px">Recepción de tus establecimientos · ${pagina.total} documentos en curso. Los fallos de conexión se reintentan. Los documentos con datos dudosos no entran en los totales hasta que los revises.</p><div class="rows">${filas.map(f => `<div class="row"><div class="grow" style="min-width:0;overflow-wrap:anywhere"><div class="t1">${esc(!f.nombre || f.nombre === "noname" ? "Adjunto sin nombre · #" + f.id : f.nombre)}</div><div class="t2">${esc(f.canal)} · ${esc(f.local || 'Por asignar')} · ${esc(estados[f.estado] || f.estado)} · ${Number(f.intentos || 0)} intentos</div>${f.error ? `<div class="t2">${esc(f.error)}</div>` : ''}</div><div style="display:flex;flex-wrap:wrap;gap:6px;max-width:120px">${f.tiene_original === false ? '<span class="mut">Sube un archivo válido para continuar.</span>' : `<button class="btn sm" data-act="fac-recepcion-original" data-id="${esc(f.id)}" data-nombre="${esc(f.nombre)}">Original</button>`}${f.estado==='revision' ? `<button class="btn primary sm" data-act="fac-recepcion-revision" data-id="${esc(f.id)}">Revisar datos</button>` : ''}${f.tiene_original !== false && f.estado==='error' ? `<button class="btn sm" data-act="fac-recepcion-reintentar" data-id="${esc(f.id)}">Reintentar</button>` : ''}</div></div>`).join('')}</div><div class="toolbar" style="padding:16px"><button class="btn sm" data-act="fac-recepcion-primera">Actualizar · primera página</button>${antes ? '<button class="btn sm" data-act="fac-recepcion-anterior">Anterior</button>' : ''}${pagina.siguiente ? `<button class="btn sm" data-act="fac-recepcion-siguiente" data-cursor="${esc(pagina.siguiente)}">Siguiente</button>` : ''}</div></details>`;
 }
 async function facOriginalRecepcion(id,nombre) {
   try {
@@ -9523,6 +9579,39 @@ async function facOriginalRecepcion(id,nombre) {
     setTimeout(()=>URL.revokeObjectURL(url),60000);
   } catch(e) { toast(e.message); }
 }
+async function facRevisionRecepcion(id) {
+  try {
+    const j=await apiRaw(`/api/facturas/recepciones/${encodeURIComponent(id)}/revision`);
+    const f=j.data, d=f.resultado?.datos || {}, segunda=f.resultado?.segunda || {};
+    const campos=[['proveedor','Proveedor'],['nif_proveedor','NIF del proveedor'],['fecha','Fecha de emisión'],['numero_factura','Número de documento'],['base_imponible','Base imponible'],['porcentaje_iva','IVA (%)'],['cuota_iva','Cuota IVA'],['retencion','Retención'],['recargo_equivalencia','Recargo de equivalencia'],['otros_cargos','Otros cargos'],['total','Total']];
+    const numericos=new Set(['base_imponible','porcentaje_iva','cuota_iva','retencion','recargo_equivalencia','otros_cargos','total']);
+    const avisos=f.resultado?.avisos || [];
+    const ov=modal('Comprobar documento · #'+id, `<p>Compara los datos con el original. Hasta que confirmes, este documento no entra en los totales.</p><div class="grid g2"><div><div id="revOriginal" style="min-height:180px">Cargando original…</div><button type="button" class="btn sm" id="revDescargar">Descargar original</button><p><button type="button" class="btn sm" id="revPedirFoto">El original no se lee: pedir otra foto</button></p><p id="revFotoEstado" role="status">${esc(f.aviso_grupo?.resumen_error || (f.aviso_grupo?.solicitud_estado ? "Solicitud de foto: " + f.aviso_grupo.solicitud_estado : ""))}</p></div><form id="revForm"><div class="alert" style="overflow-wrap:anywhere">${[...new Set(avisos.map(a=>a.texto))].map(t=>`<p>${esc(t)}</p>`).join('')}</div><div class="field"><label for="revTipo">Tipo de documento</label><select id="revTipo">${['factura','ticket','albaran','otro'].map(t=>`<option ${d.tipo===t?'selected':''}>${t}</option>`).join('')}</select></div>${campos.map(([k,label])=>`<div class="field"><label for="rev-${k}">${label}</label><input id="rev-${k}" name="${k}" type="${k==='fecha'?'date':numericos.has(k)?'number':'text'}" ${numericos.has(k)?'step="any"':''} value="${esc(d[k]??'')}" ${['proveedor','fecha'].includes(k)?'required':''}><small class="mut">Segunda lectura: ${esc(segunda[k]??'No leído')}${k==='nif_proveedor' && d._origenNif ? ' · ' + esc(d._origenNif) : ''}</small></div>`).join('')}<div class="field"><label for="revMotivo">Qué has comprobado o corregido</label><textarea id="revMotivo" required maxlength="2000" placeholder="Por ejemplo: el total del original es 121 €, la primera lectura confundió un dígito."></textarea></div><label><input id="revConfirmado" type="checkbox" required> He comprobado los datos con el original, incluido el detalle de productos.</label><p><label><input id="revExcepcion" type="checkbox"> Si persiste algún aviso, he comprobado que es una excepción válida y he explicado el motivo.</label></p><p id="revError" role="alert"></p><div class="toolbar"><button type="button" class="btn" data-close>Revisar más tarde</button><button class="btn primary" type="submit">Confirmar y registrar</button></div></form></div>`);
+    ov.querySelector('.modal').style.width='min(1050px, 96vw)';
+    ov.querySelector('.modal').style.maxWidth='1050px';
+    ov.querySelector('.grid').classList.add('fac-revision-grid');
+    ov.insertAdjacentHTML('beforeend','<style>.fac-revision-grid .field{width:100%;margin-bottom:12px}.fac-revision-grid .field input,.fac-revision-grid .field textarea,.fac-revision-grid .field select{width:100%}@media(max-width:700px){.fac-revision-grid{grid-template-columns:1fr!important}}</style>');
+    ov.querySelector('#revDescargar').onclick=()=>facOriginalRecepcion(id,f.nombre);
+    ov.querySelector('#revPedirFoto').onclick=async e=>{e.target.disabled=true;try{await apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/pedir-foto`,{});ov.querySelector('#revFotoEstado').textContent='Solicitud preparada: se citará la foto en el grupo cuando termine la tanda.';}catch(err){ov.querySelector('#revFotoEstado').textContent=err.message;e.target.disabled=false;}};
+    let url;
+    const r=await fetch(`/api/facturas/recepciones/${encodeURIComponent(id)}/original?ver=1`,{headers:{Authorization:'Bearer '+token()}});
+    if(r.ok && ov.isConnected) {
+      const blob=await r.blob(); url=URL.createObjectURL(blob);
+      ov.querySelector('#revOriginal').innerHTML=blob.type.startsWith('image/') ? `<img src="${url}" alt="Original del documento" style="width:100%;height:auto">` : blob.type==='application/pdf' ? `<iframe src="${url}" title="Original del documento" style="width:100%;height:480px;border:0"></iframe>` : '<p>Descarga el original para comprobarlo.</p>';
+      const observer=new MutationObserver(()=>{if(!ov.isConnected){URL.revokeObjectURL(url);observer.disconnect();}}); observer.observe(document.body,{childList:true,subtree:true});
+    } else if(ov.isConnected) ov.querySelector('#revOriginal').textContent='No se ha podido cargar el original. Descárgalo para revisarlo.';
+    ov.querySelector('#revForm').onsubmit=async e=>{
+      e.preventDefault(); const boton=e.submitter; boton.disabled=true;
+      const datos={tipo:ov.querySelector('#revTipo').value};
+      for(const [k] of campos){const v=ov.querySelector('#rev-'+k).value;datos[k]=v===''?null:numericos.has(k)?Number(v):v;}
+      try {
+        await apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/revision`,{datos,motivo:ov.querySelector('#revMotivo').value,confirmado:ov.querySelector('#revConfirmado').checked,aceptarAvisos:ov.querySelector('#revExcepcion').checked});
+        ov.querySelector('[data-close]').click(); toast('Revisión guardada. El documento se registrará desde la cola.'); await facCargarRecepciones();
+      } catch(err){ov.querySelector('#revError').textContent=err.message;boton.disabled=false;}
+    };
+  } catch(e){toast(e.message);}
+}
+
 async function facReintentarRecepcion(id) {
   try { await apiSend('POST', `/api/facturas/recepciones/${encodeURIComponent(id)}/reintentar`, {}); toast('Documento pendiente de nueva lectura'); await facCargarRecepciones(); }
   catch(e) { toast(e.message); }
@@ -17476,10 +17565,12 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-pago") facPago(t.getAttribute("data-id"));
   else if (act === "fac-revisar") facRevisar(t.getAttribute("data-id"));
   else if (act === "fac-fusionar") facFusionarPendientes();
+  else if (act === "fac-repaso-unico") facRepasoUnico(false).catch(e=>toast(e.message));
   else if (act === "fac-recepcion-primera") facCargarRecepciones();
   else if (act === "fac-recepcion-anterior") facCargarRecepciones(FAC_RECEPCIONES_HIST.at(-1) || null, "prev");
   else if (act === "fac-recepcion-siguiente") facCargarRecepciones(t.dataset.cursor, "next");
   else if (act === "fac-recepcion-original") facOriginalRecepcion(t.getAttribute("data-id"),t.getAttribute("data-nombre"));
+  else if (act === "fac-recepcion-revision") facRevisionRecepcion(t.getAttribute("data-id"));
   else if (act === "fac-recepcion-reintentar") facReintentarRecepcion(t.getAttribute("data-id"));
   else if (act === "fac-tab") facTab(t.getAttribute("data-tab"));
   else if (act === "fac-loc-add") facLocAdd();
@@ -17766,6 +17857,7 @@ requireRole(["direccion", "encargado", "contabilidad", "marketing", "rrhh"]).the
   marketingRestaurarRuta(inicio, deUrl.sub);
   if (inicio === "facturas" && deUrl.sub) FACTAB = deUrl.sub;
   go(inicio, { desdeUrl: !!deUrl.vista });
+  setTimeout(() => facRepasoUnico(true).catch(() => {}),10000);
   setTimeout(() => revRepaso(true).catch(() => {}), 3000);
   facAvisoLibrosAnuales().catch(() => { /* El panel sigue disponible si el aviso no se puede cargar. */ });
 

@@ -1,8 +1,7 @@
 // Facturas — comprobar que lo leído se sostiene. Lógica PURA.
 //
 // LA IDEA DE FONDO: no vamos a conseguir que la lectura no falle nunca. Ni con visión, ni
-// pasándolo a texto, ni con un modelo mejor. Lo que sí se puede conseguir es que NINGÚN fallo
-// pase desapercibido, y eso no se hace leyendo mejor: se hace comprobando lo leído contra
+// pasándolo a texto, ni con un modelo mejor. Para detectar más fallos, comprobamos lo leído contra
 // cosas que tienen que cumplirse sí o sí.
 //
 // Todas las comprobaciones de aquí son DETERMINISTAS: aritmética y datos que ya tenemos. No
@@ -12,7 +11,7 @@
 // Y ninguna corrige nada. Avisan. Corregir un importe «porque no cuadra» es inventarse un dato
 // contable, y un dato inventado que parece revisado es peor que uno mal que se nota.
 
-const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : null; };
+const n = (v) => { if (v == null || v === "") return null; const x = Number(v); return Number.isFinite(x) ? x : null; };
 const red = (x) => Math.round(x * 100) / 100;
 
 /** Tolerancia por redondeos: un céntimo arriba o abajo es normal en cualquier factura. */
@@ -25,14 +24,15 @@ export const TOLERANCIA = 0.02;
  */
 export function cuadraTotal(d) {
   const base = n(d.base_imponible), iva = n(d.cuota_iva), total = n(d.total);
-  if (base == null || total == null) return null;          // falta un dato: no se afirma nada
-  const suma = red(base + (iva || 0));
+  if (base == null || iva == null || total == null) return null;          // falta un dato: no se afirma nada
+  const ajustes = (n(d.recargo_equivalencia) || 0) + (n(d.otros_cargos) || 0) - (n(d.retencion) || 0);
+  const suma = red(base + iva + ajustes);
   const dif = red(suma - total);
   if (Math.abs(dif) <= TOLERANCIA) return null;
   return {
     clave: "descuadre_total",
     grave: true,
-    texto: `Base ${base.toFixed(2)} € + IVA ${(iva || 0).toFixed(2)} € = ${suma.toFixed(2)} €, pero el total dice ${total.toFixed(2)} € (${dif > 0 ? "+" : ""}${dif.toFixed(2)} €). Alguno de los tres está mal leído.`,
+    texto: `Base ${base.toFixed(2)} € + IVA ${(iva || 0).toFixed(2)} €${ajustes ? ` + ajustes (${ajustes.toFixed(2)} €)` : ""} = ${suma.toFixed(2)} €, pero el total dice ${total.toFixed(2)} € (${dif > 0 ? "+" : ""}${dif.toFixed(2)} €). Comprueba los importes${ajustes ? ` y los ajustes/retenciones (${ajustes.toFixed(2)} €)` : ""}.`,
   };
 }
 
@@ -43,7 +43,7 @@ export function cuadraTotal(d) {
  */
 export function cuadraIva(d) {
   const base = n(d.base_imponible), iva = n(d.cuota_iva), pct = n(d.porcentaje_iva);
-  if (base == null || iva == null || pct == null || pct <= 0) return null;
+  if ((Array.isArray(d.iva_desglose) && d.iva_desglose.length > 1) || base == null || iva == null || pct == null || pct <= 0) return null;
   const esperada = red(base * pct / 100);
   const dif = red(iva - esperada);
   // Margen algo mayor: hay facturas con varios tipos de IVA en las que el porcentaje que se

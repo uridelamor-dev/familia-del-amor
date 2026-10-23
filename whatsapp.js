@@ -538,7 +538,9 @@ async function recibirAdjuntoGrupo(msg, diferido = false) {
       groupJid: jid, senderJid: msg.key.participant || jid, buffer,
       mimeType: doc?.mimetype || img?.mimetype || "image/jpeg",
       filename: doc?.fileName || `imagen_${msg.key.id}.jpg`,
-      caption: doc?.caption || img?.caption || "", recuperado: diferido
+      caption: doc?.caption || img?.caption || "", recuperado: diferido,
+      mensajeId:msg.key.id, citado:{key:msg.key,message:doc ? {documentMessage:{fileName:doc.fileName || "Documento",mimetype:doc.mimetype}} : {imageMessage:{caption:img.caption || "Foto del documento"}},miniatura:img?.jpegThumbnail ? Buffer.from(img.jpegThumbnail).toString("base64") : null},
+      respondeA:(doc?.contextInfo || img?.contextInfo)?.stanzaId || null
     });
   } catch (err) {
     console.error("[WA] No se pudo recuperar el adjunto del grupo:", err.message);
@@ -556,9 +558,9 @@ export function setSaraConfigLoader(fn) { saraConfigLoader = fn; }
 let documentoResolver = null;
 export function setDocumentoResolver(fn) { documentoResolver = fn; }
 
-export async function sendMensajeAGrupo(groupJid, texto) {
+export async function sendMensajeAGrupo(groupJid, texto, opciones = {}) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
-  await sock.sendMessage(groupJid, { text: texto });
+  return await sock.sendMessage(groupJid, { text: texto }, opciones);
 }
 
 // Un adjunto a un grupo. NO se puede usar sendDocumentoLibre para esto: aquel pasa el

@@ -1,3 +1,7 @@
+import {crearDecisionesHistorico,cabeceraHistorica} from './src/modules/facturas/repaso-decision.js';
+import { REPASO_HISTORICO_SCHEMA, crearRepasoHistorico } from './src/modules/facturas/repaso-historico.js';
+import { TANDAS_SCHEMA, crearTandas } from './src/modules/facturas/tandas-whatsapp.js';
+import { leerDocumentoVerificado, driveDescargar } from './facturas.js';
 import { crearAvisoRecuperacionFacturas } from './src/modules/messaging/aviso-recuperacion-facturas.js';
 import {crearAvisosSolicitudes} from './src/modules/tienda/solicitudes.js';
 import {crearMensuales,desplazarMes} from './src/modules/informes/mensuales.js';
@@ -422,7 +426,48 @@ const recepcionFacturas = crearRecepcion({
   existeDestino: async hash => !!(await dbGet("SELECT id FROM facturas WHERE file_hash=? UNION ALL SELECT id FROM facturas_pendientes WHERE file_hash=? LIMIT 1", [hash,hash])),
   procesar: o => (o.local ? procesarFacturaOriginal : procesarFacturaSinLocalOriginal)({
     ...o,getToken:getDriveAccessToken,dbGet,dbAll,dbRun,backupFn:null,
+    leerDocumento: o.datosAprobados ? async () => structuredClone(o.datosAprobados) : (buffer,mime) => leerDocumentoVerificado(buffer,mime,{dbAll}),
   }),
+});
+const tandasFacturas=crearTandas({db:{get:dbGet,run:dbRun,all:dbAll},enviar:sendMensajeAGrupo,permitido:async grupo=>!!await dbGet("SELECT local FROM facturas_grupos WHERE group_jid=?",[grupo]),lock:async fn=>{
+  const c=await pool.connect();let adquirido=false;
+  try{adquirido=(await c.query('SELECT pg_try_advisory_lock(70799135,2511) AS ok')).rows[0].ok;if(adquirido)return await fn();}
+  finally{try{if(adquirido)await c.query('SELECT pg_advisory_unlock(70799135,2511)');}finally{c.release();}}
+}});
+const repasoHistorico=crearRepasoHistorico({
+ db:{get:dbGet,all:dbAll,run:dbRun},
+ lock:async fn=>{
+  const c=await pool.connect();let adquirido=false;
+  try{
+   adquirido=(await c.query('SELECT pg_try_advisory_lock(70799135,2509) AS ok')).rows[0].ok;
+   if(!adquirido)return;
+   // La recepción del día tiene prioridad sobre el histórico.
+   if(await dbGet("SELECT id FROM facturas_recepciones WHERE estado IN ('pendiente','leyendo') AND proximo<=NOW() LIMIT 1"))return;
+   return await fn();
+  }finally{try{if(adquirido)await c.query('SELECT pg_advisory_unlock(70799135,2509)');}finally{c.release();}}
+ },
+ leer:(buffer,mime)=>leerDocumentoVerificado(buffer,mime,{dbAll}),
+ original:async f=>{
+  let url=f.guardado.drive_url;
+  if(f.origen==='recepcion'){
+   const r=await dbGet('SELECT original,mime,hash FROM facturas_recepciones WHERE id=?',[f.documento_id]);
+   if(r?.original)return {buffer:r.original,mimeType:r.mime};
+   const registrada=await dbGet('SELECT drive_url FROM facturas WHERE file_hash=? UNION ALL SELECT drive_url FROM facturas_pendientes WHERE file_hash=? LIMIT 1',[f.guardado.file_hash,f.guardado.file_hash]);
+   url=registrada?.drive_url;
+  }
+  const id=idDeDriveUrl(url)||f.guardado.drive_file_id;if(!id)return null;
+  return driveDescargar(await getDriveAccessToken(),id);
+ }
+});
+const decidirRepasoHistorico=crearDecisionesHistorico({
+ transaccion:async fn=>{
+  const c=await pool.connect();
+  const query=(sql,p=[])=>c.query(toPositional(sql),p);
+  const db={get:async(s,p)=>(await query(s,p)).rows[0],run:async(s,p)=>(await query(s,p)).rows[0]};
+  try{await c.query('BEGIN');const resultado=await fn(db);await c.query('COMMIT');return resultado;}
+  catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
+ },
+ prepararFecha:async(db,f,fecha)=>f.vencimiento_origen==='factura'?null:calcularVencimiento({fecha,vencimientoLeido:null,condiciones:await condicionesDePago(db.get,f.proveedor,f.empresa)})
 });
 const procesarFactura = o => recepcionFacturas.recibir({...o,canal:o.canal || "WhatsApp"});
 const procesarFacturaSinLocal = o => recepcionFacturas.recibir(o);
@@ -2163,6 +2208,8 @@ async function initDB() {
     }
 
     await client.query(RECEPCION_SCHEMA);
+    await client.query(TANDAS_SCHEMA);
+    await client.query(REPASO_HISTORICO_SCHEMA);
     await client.query(FICHA_COMERCIAL_SCHEMA);
     try { await ensureSchemaEscandallos((sql,p=[]) => client.query(sql,p)); }
     catch(e) { console.error("[DB] escandallos:",e.message); }
@@ -3501,6 +3548,61 @@ app.delete("/api/facturas/locales/:local", requireAuth(["direccion"]), async (re
   res.json({ ok: true });
 });
 
+// El repaso histórico es único para esta base de producción, no por navegador ni publicación.
+app.get('/api/facturas/repaso-unico',requireAuth(['direccion']),async(req,res,next)=>{
+ try{res.json({ok:true,habilitado:PROD,data:await repasoHistorico.estado()});}catch(e){next(e);}
+});
+app.post('/api/facturas/repaso-unico/visto',requireAuth(['direccion']),async(req,res,next)=>{
+ try{if(!PROD)return res.status(409).json({ok:false,error:'Disponible después de publicar'});res.json({ok:true,mostrar:await repasoHistorico.visto()});}catch(e){next(e);}
+});
+app.post('/api/facturas/repaso-unico/iniciar',requireAuth(['direccion']),async(req,res,next)=>{
+ try{
+  if(!PROD)return res.status(409).json({ok:false,error:'Disponible después de publicar'});
+  if(req.body.confirmado!==true)return res.status(400).json({ok:false,error:'Confirma el inicio del repaso'});
+  res.json({ok:true,data:await repasoHistorico.iniciar(String(req.user.username || req.user.nombre || 'direccion'))});
+ }catch(e){next(e);}
+});
+app.get('/api/facturas/repaso-unico/resultados',requireAuth(['direccion']),async(req,res,next)=>{
+ try{
+  const pagina=Math.max(0,Math.min(100000,parseInt(req.query.pagina)||0));
+  const filas=await dbAll("SELECT origen,documento_id,guardado,estado,resultado,prioridad,revision_humana FROM facturas_repaso_documentos WHERE (estado IN ('revisar','error','sin_original') OR revision_humana IS NOT NULL OR (estado='sin_discrepancias' AND EXISTS(SELECT 1 FROM facturas_repaso_unico WHERE id=1 AND fase='muestra'))) ORDER BY (revision_humana IS NOT NULL),prioridad,documento_id,origen LIMIT 51 OFFSET ?",[pagina*50]);
+  res.json({ok:true,data:filas.slice(0,50),siguiente:filas.length>50});
+ }catch(e){next(e);}
+});
+app.post('/api/facturas/repaso-unico/control',requireAuth(['direccion']),async(req,res,next)=>{
+ try{
+  if(!PROD)return res.status(409).json({error:'Disponible después de publicar'});
+  if(!['pausar','continuar','ampliar'].includes(req.body.accion))return res.status(400).json({error:'Acción no válida'});
+  res.json({ok:true,data:await repasoHistorico.controlar(req.body.accion,req.user.username||req.user.nombre)});
+ }catch(e){next(e);}
+});
+app.get('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(['direccion']),async(req,res,next)=>{
+ try{
+  const tablas={factura:'facturas',pendiente:'facturas_pendientes',recepcion:'facturas_recepciones'};
+  const {origen,id}=req.params;if(!tablas[origen]||!/^\d+$/.test(id))return res.status(400).json({error:'Documento no válido'});
+  const item=await dbGet('SELECT * FROM facturas_repaso_documentos WHERE origen=? AND documento_id=?',[origen,id]);
+  if(!item)return res.status(404).json({error:'No forma parte de este repaso'});
+  const actual=await dbGet(`SELECT * FROM ${tablas[origen]} WHERE id=?`,[id]);
+  if(!actual)return res.status(409).json({error:'El documento ha cambiado de bandeja. Consúltalo en Compras.'});
+  const historial=await dbAll('SELECT autor,fecha,decision,motivo,antes,despues FROM facturas_repaso_decisiones WHERE origen=? AND documento_id=? ORDER BY id',[origen,id]);
+  res.json({ok:true,data:{...item,actual:origen==='recepcion'?actual.resultado?.datos||{}:cabeceraHistorica(actual),historial}});
+ }catch(e){next(e);}
+});
+app.post('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(['direccion']),async(req,res)=>{
+ try{
+  if(!PROD)return res.status(409).json({error:'Disponible después de publicar'});
+  const r=await decidirRepasoHistorico({origen:req.params.origen,id:req.params.id,body:req.body,autor:String(req.user.nombre||req.user.username)});
+  res.json({ok:true});
+  if(r.origen==='factura'&&r.decision==='corregir'){
+   (async()=>{
+    const deps={getToken:getDriveAccessToken,dbGet,dbAll,dbRun};
+    await reubicarEnDrive({factura:r.despues,getToken:getDriveAccessToken,dbGet,dbRun});
+    if(r.antes.local&&r.antes.fecha)await resincronizarSheetsFactura(deps,r.antes.local,r.antes.fecha);
+    if(r.despues.local&&r.despues.fecha&&r.despues.fecha!==r.antes.fecha)await resincronizarSheetsFactura(deps,r.despues.local,r.despues.fecha);
+   })().catch(()=>console.error('[Facturas] corrección histórica guardada; sincronización externa pendiente'));
+  }
+ }catch(e){res.status(e.status||500).json({ok:false,error:e.status?e.message:'No se pudo guardar la revisión; vuelve a consultar el documento.'});}
+});
 app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
     const antes = /^\d+$/.test(String(req.query.antes || '')) ? String(req.query.antes) : null;
@@ -3508,19 +3610,47 @@ app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]),
     const filtro = ambitos.length ? "AND local = ANY(?::text[])" : "";
     const params = ambitos.length ? [ambitos] : [];
     const filas = await dbAll(`SELECT id,canal,local,nombre,estado,intentos,error,creado,original IS NOT NULL AS tiene_original FROM facturas_recepciones
-      WHERE estado NOT IN ('registrado','duplicado','descartado') ${filtro} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
-    const conteo = await dbGet(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE estado='error') AS errores FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado','descartado') ${filtro}`,params);
+      WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
+    const conteo = await dbGet(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE estado IN ('error','revision')) AS errores FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro}`,params);
     res.json({ok:true,data:filas.slice(0,50),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
   } catch(e) { next(e); }
 });
+app.get("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+  try {
+    const f=await dbGet(`SELECT id,local,nombre,estado,resultado,(SELECT jsonb_build_object('resumen_error',a.resumen_error,'solicitud_estado',a.solicitud_estado) FROM facturas_avisos_grupo a WHERE a.recepcion_id=facturas_recepciones.id ORDER BY a.id DESC LIMIT 1) AS aviso_grupo FROM facturas_recepciones WHERE id=?`,[req.params.id]);
+    if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
+    res.setHeader('Cache-Control','no-store'); res.json({ok:true,data:f});
+  } catch(e) {next(e);}
+});
+app.post("/api/facturas/recepciones/:id/pedir-foto", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+ try {
+  const f=await dbGet('SELECT local,estado FROM facturas_recepciones WHERE id=?',[req.params.id]);
+  if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
+  if(f.estado!=='revision') return res.status(409).json({ok:false,error:'El documento ya no está pendiente de revisión'});
+  const origen=await dbGet('SELECT id,solicitud_estado FROM facturas_avisos_grupo WHERE recepcion_id=? LIMIT 1',[req.params.id]);
+  if(!origen) return res.status(400).json({ok:false,error:'Este documento no tiene una foto de WhatsApp vinculada. Pide el original por su canal de recepción.'});
+  if(origen.solicitud_estado) return res.status(409).json({ok:false,error:'La solicitud ya se ha enviado o necesita comprobarse en el grupo. No se repetirá automáticamente.'});
+  await dbRun("UPDATE facturas_recepciones SET resultado=jsonb_set(resultado,'{solicitarFoto}','true'::jsonb),actualizado=NOW() WHERE id=? AND estado='revision'",[req.params.id]);
+  res.json({ok:true});
+ }catch(e){next(e);}
+});
+app.post("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+  try {
+    const f=await dbGet('SELECT local FROM facturas_recepciones WHERE id=?',[req.params.id]);
+    if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
+    await recepcionFacturas.aprobar(req.params.id,req.body.datos || {},{autor:String(req.user?.id || req.user?.username || req.user?.nombre || req.user?.rol || 'usuario'),motivo:req.body.motivo,confirmado:req.body.confirmado,aceptarAvisos:req.body.aceptarAvisos});
+    res.json({ok:true});
+  } catch(e) {res.status(400).json({ok:false,error:e.recibido ? 'Hay otra lectura en curso. Vuelve a confirmar en un momento.' : e.message});}
+});
 app.get("/api/facturas/recepciones/:id/original", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
-    const f = await dbGet('SELECT original,local FROM facturas_recepciones WHERE id=?',[req.params.id]);
+    const f = await dbGet('SELECT original,local,mime,nombre FROM facturas_recepciones WHERE id=?',[req.params.id]);
     if (f && !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
     if (!f?.original) return res.status(404).json({ok:false,error:'El original ya está archivado con la factura o no existe.'});
     res.setHeader('Cache-Control','no-store');
     res.setHeader('X-Content-Type-Options','nosniff');
-    res.type('application/octet-stream').attachment('documento').send(f.original);
+    if(req.query.ver==='1' && ['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mime)) res.type(f.mime).send(f.original);
+    else res.type('application/octet-stream').attachment(f.nombre || 'documento').send(f.original);
   } catch(e) { next(e); }
 });
 app.post("/api/facturas/recepciones/:id/reintentar", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
@@ -25701,7 +25831,7 @@ const server = app.listen(PORT, async () => {
     !!(await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid])));
 
   const avisarRecuperacionFacturas = crearAvisoRecuperacionFacturas({dbGet, enviar: sendMensajeAGrupo});
-  setOnGroupAttachment(async ({ groupJid, senderJid, buffer, mimeType, filename, caption, recuperado = false }) => {
+  setOnGroupAttachment(async ({ groupJid, senderJid, buffer, mimeType, filename, caption, recuperado = false, mensajeId, citado, respondeA }) => {
     const grupo = await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid]);
     if (!grupo) return;
 
@@ -25709,49 +25839,32 @@ const server = app.listen(PORT, async () => {
     console.log(`[Facturas] Documento recibido en grupo ${local} de ${senderJid}`);
 
     try {
-      // Un aviso de cortesía no puede impedir guardar el original en la cola.
-      if (!recuperado) void sendMensajeAGrupo(groupJid, `⏳ Procesando documento para *${local}*...`).catch(() => {});
-
+      // Guardar el original y su referencia antes de cualquier lectura.
       const result = await procesarFactura({
         buffer, mimeType, filename, local, caption,
+        onDocumentoGuardado: async id => {
+          if(mensajeId && citado) await tandasFacturas.registrar({grupo:groupJid,mensaje:mensajeId,recepcionId:id,citado,respondeA});
+        },
         onRecibido: recuperado ? () => avisarRecuperacionFacturas(groupJid) : null,
         getToken: getDriveAccessToken,
         dbGet, dbAll, dbRun,
         backupFn: null
       });
 
-      if (recuperado) return; // Recuperar sin llenar el grupo de avisos antiguos.
-      if(result.descartado) {
-        await sendMensajeAGrupo(groupJid,'Documento omitido: es una imagen corporativa o firma sin información de compra.');
-        return;
-      }
-      const { datos } = result;
-      const tipoLabel = datos.tipo === "albaran" ? "Albarán" : datos.tipo === "ticket" ? "Ticket" : "Factura";
-      const totalStr = datos.total != null ? `${Number(datos.total).toFixed(2)} €` : "importe no detectado";
-      const provStr = datos.proveedor || "proveedor no detectado";
-
-      await sendMensajeAGrupo(groupJid,
-        `✅ *${tipoLabel} registrado · ${local}*\n\n` +
-        `🏢 ${provStr}\n` +
-        `💶 ${totalStr}` + (datos.porcentaje_iva ? ` (IVA ${datos.porcentaje_iva}%)` : "") + `\n` +
-        `📅 ${datos.fecha || "fecha no detectada"}`
-      );
+      // El resumen persistente se enviará tras dos minutos sin nuevos documentos.
+      return result;
     } catch (err) {
       if (recuperado) {
         console.warn("[Facturas] Recuperación:", err.recibido ? "Original guardado, lectura pendiente" : err.message);
         return;
       }
+      if (err.recibido) return; // Original guardado: el resumen de la tanda informará del estado.
       if (err instanceof FacturaDuplicadaError) {
-        console.warn("[Facturas] Duplicado detectado:", err.message);
-        await sendMensajeAGrupo(groupJid,
-          `⚠️ *Documento duplicado · ${local}*\n\n` +
-          `${err.message}\n\n` +
-          `El documento NO se ha registrado de nuevo.`
-        ).catch(() => {});
+        return; // Ya queda identificado como duplicado en el resumen de la tanda.
       } else {
         console.error("[Facturas] Error procesando documento:", err.message);
         await sendMensajeAGrupo(groupJid,
-          `❌ No he podido procesar el documento: ${err.message.slice(0, 120)}\n\nRevisa que Google Drive esté conectado en el panel.`
+          `⚠️ No he podido confirmar la recepción de este documento. El equipo debe comprobarlo en el panel antes de reenviarlo.`
         ).catch(() => {});
       }
     }
@@ -25765,6 +25878,8 @@ const server = app.listen(PORT, async () => {
   // Ingesta por Drive (carpeta vigilada por local). Dormido si no hay carpetas configuradas.
   setTimeout(() => recepcionFacturas.reintentar().catch(console.error), 20000);
   setInterval(() => recepcionFacturas.reintentar().catch(console.error), 60000);
+  if(PROD) setInterval(() => repasoHistorico.paso().catch(e=>console.error("[Facturas] repaso histórico pendiente:",e.message)),30000);
+  setInterval(() => tandasFacturas.revisar().catch(e=>console.error("[Facturas] resumen de tanda pendiente:",e.message)),30000);
   setTimeout(pollDriveFacturas, 45 * 1000);
   setInterval(pollDriveFacturas, 5 * 60 * 1000);
   // Cola de reintentos de volcado a Sheets: reproyecta desde la BD lo que quedó sin sincronizar.

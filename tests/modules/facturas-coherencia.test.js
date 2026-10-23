@@ -15,7 +15,7 @@ describe("base + IVA = total", () => {
     const a = cuadraTotal({ ...BUENA, total: 112 });
     assert.ok(a && a.grave);
     assert.match(a.texto, /121\.00 €, pero el total dice 112\.00 €/);
-    assert.match(a.texto, /Alguno de los tres está mal leído/);
+    assert.match(a.texto, /Comprueba los importes/);
   });
   test("caza el clásico: dos cifras bailadas en el total", () => {
     assert.ok(cuadraTotal({ base_imponible: 1024.79, cuota_iva: 215.21, total: 1420 }));
@@ -24,9 +24,9 @@ describe("base + IVA = total", () => {
     assert.equal(cuadraTotal({ base_imponible: 100 }), null);
     assert.equal(cuadraTotal({}), null);
   });
-  test("sin IVA (una factura exenta) la base tiene que ser el total", () => {
-    assert.equal(cuadraTotal({ base_imponible: 100, total: 100 }), null);
-    assert.ok(cuadraTotal({ base_imponible: 100, total: 121 }));
+  test("con IVA cero explícito la base tiene que ser el total", () => {
+    assert.equal(cuadraTotal({ base_imponible: 100, cuota_iva: 0, total: 100 }), null);
+    assert.ok(cuadraTotal({ base_imponible: 100, cuota_iva: 0, total: 121 }));
   });
 });
 

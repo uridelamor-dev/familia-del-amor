@@ -24,6 +24,6 @@ export async function completarNifConocido(datos, dbAll) {
       WHERE LOWER(TRIM(proveedor)) = LOWER(TRIM(?))
       AND COALESCE(dup_estado,'') <> 'duda'`, [datos.proveedor]);
     const nif = nifConocido(datos, alias, historial);
-    if (nif) datos.nif_proveedor = nif;
+    if (nif) { datos.nif_proveedor = nif; datos._origenNif = "Ficha o historial inequívoco del proveedor"; }
   } catch { /* Si no se puede contrastar la ficha, conservar el campo vacío. */ }
 }
