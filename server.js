@@ -1,3 +1,4 @@
+import {crearPlanificacionPersonal,leerPersonal} from './src/modules/informes/planificacion-personal.js';
 import {crearDecisionesHistorico,cabeceraHistorica} from './src/modules/facturas/repaso-decision.js';
 import { REPASO_HISTORICO_SCHEMA, crearRepasoHistorico } from './src/modules/facturas/repaso-historico.js';
 import { TANDAS_SCHEMA, crearTandas } from './src/modules/facturas/tandas-whatsapp.js';
@@ -25922,6 +25923,19 @@ const server = app.listen(PORT, async () => {
   const avisosTienda=crearAvisosSolicitudes({pool,store:tiendaStore,conectado:isReady,enviar:sendMensajeLibre,enabled:PROD && process.env.TIENDA_ENABLED!=="false"});
   const tickTienda=()=>avisosTienda().catch(()=>console.error('[Tienda] Revisar avisos de solicitudes pendientes'));
   if(PROD){setTimeout(tickTienda,10_000).unref();setInterval(tickTienda,15_000).unref();}
+
+  // Día 20: planificación del mes siguiente; octubre se recupera al publicar.
+  const personalMensual=crearPlanificacionPersonal({pool,enabled:PROD,conectado:isReady,enviar:sendMensajeLibre,
+    preparar:async referencia=>leerPersonal(referencia,{configs:await loadAgoraConfigsActive(),
+      leer:async(cfg,desde,hasta)=>{
+        let timer;
+        try{return await Promise.race([createAgoraClient(cfg).getVentasRango(desde,hasta),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('timeout')),25000);})]);}
+        finally{clearTimeout(timer);}
+      }
+    })
+  });
+  const tickPersonal=()=>personalMensual.tick().catch(()=>console.error('[Personal] Revisar estado del informe mensual'));
+  if(PROD){setTimeout(tickPersonal,60_000).unref();setInterval(tickPersonal,60_000).unref();}
 
   // Informes mensuales: ventas el día 1 y compras el 10, con recuperación persistente.
   const mensuales = crearMensuales({
