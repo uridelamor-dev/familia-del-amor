@@ -28,19 +28,19 @@ Los datos de su propia solicitud que facilita el cliente (local elegido, número
 export function textoSeguro(tipo, idioma = 'es') {
   const textos = {
     resultado: {
-      ca: 'Em sap greu, hi ha hagut un problema en confirmar el resultat. Cal que l’equip comprovi la petició abans de repetir-la.',
-      es: 'Lo siento, ha habido un problema al confirmar el resultado. El equipo debe comprobar la petición antes de repetirla.',
-      en: 'Sorry, there was a problem confirming the outcome. The team needs to check the request before it is repeated.',
+      ca: 'He rebut la teva petició, però encara no puc confirmar que s’hagi completat. No cal que la repeteixis.',
+      es: 'He recibido tu petición, pero todavía no puedo confirmar que se haya completado. No necesitas repetirla.',
+      en: 'I have received your request, but I cannot yet confirm it has been completed. You do not need to repeat it.',
     },
     error: {
-      ca: 'Em sap greu, ara mateix no he pogut comprovar la informació. Pots tornar-m’ho a preguntar d’aquí a un moment?',
-      es: 'Lo siento, ahora mismo no he podido comprobar la información. ¿Puedes volver a preguntármelo dentro de un momento?',
-      en: 'Sorry, I could not check the information just now. Could you ask me again in a moment?',
+      ca: 'He rebut el teu missatge. Ara mateix no puc completar la gestió; encara no està confirmada.',
+      es: 'He recibido tu mensaje. Ahora mismo no puedo completar la gestión; todavía no está confirmada.',
+      en: 'I have received your message. I cannot complete the request right now; it is not yet confirmed.',
     },
     consulta: {
-      ca: 'No t’ho puc confirmar amb la informació disponible. He deixat la consulta a l’equip perquè t’ho aclareixi.',
-      es: 'No puedo confirmártelo con la información disponible. He dejado la consulta al equipo para que te lo aclare.',
-      en: 'I cannot confirm that with the information available. I have passed your question to the team for clarification.',
+      ca: 'He deixat la teva petició pendent de revisió amb l’equip. Encara no està confirmada; no cal que tornis a enviar les dades.',
+      es: 'He dejado tu petición pendiente de revisión con el equipo. Todavía no está confirmada; no hace falta que vuelvas a enviar los datos.',
+      en: 'I have passed your request to the team for review. It is not yet confirmed; you do not need to send your details again.',
     },
     adjunto: {
       ca: 'Ho sento, ara mateix no he pogut processar l’arxiu o l’àudio. Em pots escriure què necessites o tornar-ho a provar d’aquí a una estona?',
@@ -112,4 +112,24 @@ export function confirmacionDocumentoEnviado(acciones, idioma = 'es') {
   if (!acciones.length || !acciones.every(a => a.herramienta === 'enviar_documento'
     && a.resultado?.is_error === false && a.resultado.content === 'Documento enviado al cliente correctamente.')) return null;
   return ({ ca: 'Aquí tens el document.', es: 'Aquí tienes el documento.', en: 'Here is the document.' })[idioma] || 'Aquí tienes el documento.';
+}
+
+// Solo resultados literales producidos por nuestro ejecutor, nunca el borrador ni la solicitud.
+export function confirmacionAcciones(acciones,idioma='es') {
+ const documentos=confirmacionDocumentoEnviado(acciones,idioma);if(documentos)return documentos;
+ if(acciones.length!==1||acciones[0].resultado?.is_error!==false)return null;
+ const a=acciones[0],c=a.resultado.content;
+ const tipo=a.herramienta==='registrar_reserva'&&c==='Reserva registrada correctamente.'?'registrada':
+  a.herramienta==='registrar_reserva'&&c==='Reserva registrada como PENDIENTE. Un encargado contactará al cliente para confirmarla.'?'pendiente':
+  a.herramienta==='cancelar_reserva'&&c==='Reserva cancelada correctamente. Confírmale al cliente con amabilidad que su reserva ha quedado cancelada.'?'cancelada':null;
+ const textos={registrada:{es:'Tu reserva ha quedado registrada. ¡Te esperamos!',ca:'La teva reserva ha quedat registrada. T’hi esperem!',en:'Your reservation has been booked. We look forward to seeing you!'},pendiente:{es:'Tu solicitud de reserva está registrada y pendiente de confirmación del local.',ca:'La teva sol·licitud de reserva està registrada i pendent de confirmació del local.',en:'Your booking request is recorded and awaiting confirmation from the restaurant.'},cancelada:{es:'Tu reserva ha quedado cancelada. Gracias por avisarnos.',ca:'La teva reserva ha quedat cancel·lada. Gràcies per avisar-nos.',en:'Your reservation has been cancelled. Thank you for letting us know.'}};
+ return textos[tipo]?.[idioma]||textos[tipo]?.es||null;
+}
+export function acuseTrasIncidencia(mensaje,anterior,idioma='es'){
+ const normal=String(mensaje||'').normalize('NFD').replace(/\p{M}/gu,'').toLowerCase().replace(/[^a-z ]/g,'').trim();
+ if(!/^(ok|okay|vale|de acuerdo|gracias|muchas gracias|gracies|moltes gracies|thanks|thank you|dacord|entes)$/.test(normal))return null;
+ const consulta=['es','ca','en'].some(i=>anterior===textoSeguro('consulta',i));
+ const aviso=consulta||['error','resultado'].some(t=>['es','ca','en'].some(i=>anterior===textoSeguro(t,i)));
+ if(!aviso)return null;
+ return consulta?({es:'Gracias. Tu petición sigue pendiente de revisión por el equipo.',ca:'Gràcies. La teva petició continua pendent de revisió per part de l’equip.',en:'Thank you. Your request is still awaiting review by the team.'}[idioma]):({es:'Gracias. La gestión todavía no está confirmada.',ca:'Gràcies. La gestió encara no està confirmada.',en:'Thank you. The request is not yet confirmed.'}[idioma]);
 }

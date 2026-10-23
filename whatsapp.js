@@ -10,7 +10,7 @@ import { anteponerCitado as ctxAnteponerCitado, ORIGEN as CTX_ORIGEN }
   from "./src/modules/messaging/contexto.js";
 import { estaPausada, MOTIVO_PAUSA, pidePersona, idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia, pulirCatalan }
   from "./src/modules/messaging/sara.js";
-import { revisarRespuesta, textoSeguro, confirmacionDocumentoEnviado, pideExcepcionPromocion, crearControlAvisos } from "./src/modules/messaging/sara-revision.js";
+import { revisarRespuesta, textoSeguro, confirmacionDocumentoEnviado, confirmacionAcciones, acuseTrasIncidencia, pideExcepcionPromocion, crearControlAvisos } from "./src/modules/messaging/sara-revision.js";
 import { mensajeNormalizado, prepararAdjunto } from "./src/modules/messaging/sara-adjuntos.js";
 import { respuestaTrasHerramientas } from "./src/modules/messaging/respuesta-herramientas.js";
 import path from "path";
@@ -95,7 +95,7 @@ No hay un horario de apertura universal confirmado. Consulta la configuración v
 - **Botiga d'en Mateu - Tordera** · Camí Ral, 6, Tordera · 📞 930 317 169
 
 ## Reservas
-Puedes gestionar reservas por WhatsApp. Para una reserva necesitas: local, día, hora, número de personas, nombre y teléfono.
+Puedes gestionar reservas por WhatsApp. Para una reserva necesitas: local, día, hora, número de personas, nombre y teléfono. Si el teléfono del cliente ya está en su perfil/contexto, úsalo sin volver a pedirlo; solo pregunta si falta o reserva para otra persona. Si facilita su nombre o teléfono, continúa con los datos que falten: no es una pregunta comercial ni un motivo para derivar por sí solo.
 
 Pide los datos que te falten de dos en dos. Nunca pidas más de dos cosas por mensaje. La hora debe caer en mediodía (12:30–15:30) o cena (19:30–22:30).
 
@@ -750,6 +750,9 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
     historial.push({ role: 'assistant', content: respuesta });
     return respuesta;
   }
+  const ultimoAviso=[...historial].reverse().find(m=>m.role==='assistant')?.content;
+  const acuse=acuseTrasIncidencia(mensajeUsuario,ultimoAviso,pista.idioma);
+  if(acuse)return acuse;
   const cortesia = respuestaCortesia(mensajeUsuario, pista.idioma, !!campana?.texto);
   if (cortesia) {
     historial.push({ role: "assistant", content: cortesia });
@@ -810,8 +813,12 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
     if (revision.decision === 'consultar') {
       const yaDerivada = resultadosAcciones.some(a => a.herramienta === 'pasar_a_persona' && !a.resultado.is_error);
       const derivacion = yaDerivada ? { is_error: false } : await ejecutarHerramienta({ name: 'pasar_a_persona', input: { motivo: String(revision.motivo || mensajeUsuario).slice(0, 300), pidio_persona: false } }, adjuntoUrl, jid);
-      // Si ya hubo una acción, conserva su confirmación revisada; nunca repite la herramienta.
-      respuestaFinal = (resultadosAcciones.length && respuestaFinal ? respuestaFinal + '\n\n' : '') + textoSeguro(derivacion.is_error ? 'error' : 'consulta', revision.idioma);
+      // Separa la acción verificada de cualquier consulta adicional; no contradigas su éxito.
+      const confirmada = confirmacionAcciones(resultadosAcciones, revision.idioma);
+      const adicional = revision.idioma === 'ca' ? 'Hi ha una consulta addicional pendent de revisió amb l’equip.' : revision.idioma === 'en' ? 'An additional question is awaiting review by the team.' : 'Hay una consulta adicional pendiente de revisión con el equipo.';
+      respuestaFinal = confirmada
+        ? confirmada + (derivacion.is_error ? '' : '\n\n' + adicional)
+        : textoSeguro(derivacion.is_error ? 'error' : 'consulta', revision.idioma);
     }
     historial.push({ role: "assistant", content: respuestaFinal });
     return respuestaFinal;
@@ -819,12 +826,13 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
     // `err.error` es un objeto del SDK: se redacta antes de escribirlo. No lleva material
     // criptográfico, pero un objeto de error de una librería no se imprime crudo y punto.
     console.error(lineaError("[IA] Error", err), JSON.stringify(redactar(err.error, { profundidad: 2 })));
-    if (resultadosAcciones.length) return confirmacionDocumentoEnviado(resultadosAcciones, pista.idioma) || textoSeguro('resultado', pista.idioma);
-    // Nota: el SDK 0.97 no exporta OverloadedError como clase; el 529 se detecta por status
-    if (err instanceof Anthropic.RateLimitError || err?.status === 529) {
-      return textoSeguro('error', pista.idioma);
-    }
-    return textoSeguro('error', pista.idioma);
+    const confirmada=confirmacionAcciones(resultadosAcciones,pista.idioma);
+    if(confirmada){historial.push({role:'assistant',content:confirmada});return confirmada;}
+    const derivacion=await ejecutarHerramienta({name:'pasar_a_persona',input:{motivo:('Gestión sin completar: '+mensajeUsuario).slice(0,300),pidio_persona:false}},adjuntoUrl,jid);
+    const aviso=textoSeguro(!derivacion.is_error?'consulta':resultadosAcciones.length?'resultado':'error',pista.idioma);
+    historial.push({role:'assistant',content:aviso});
+    return aviso;
+
   }
 }
 

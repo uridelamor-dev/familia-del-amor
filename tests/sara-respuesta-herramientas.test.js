@@ -47,12 +47,10 @@ for (const idioma of ['ca', 'es', 'en']) {
   test(`sin respuesta final no afirma éxito (${idioma})`, async () => {
     for (const respuesta of [final(''), { stop_reason: 'max_tokens', content: [texto('¡Listo!'), accion()] }, previo()]) {
       let ejecuciones = 0;
-      const salida = await respuestaTrasHerramientas({ mensajes: [], idioma, maxRondas: 2,
+      await assert.rejects(respuestaTrasHerramientas({ mensajes: [], idioma, maxRondas: 2,
         crear: async () => respuesta,
         ejecutar: async () => { ejecuciones++; return { content: 'Hecho', is_error: false }; }
-      });
-      assert.match(salida, /no he pogut confirmar|no he podido confirmar|could not confirm/);
-      assert.doesNotMatch(salida, /Listo|Perfecte|Hecho/);
+      }), /respuesta_final_incompleta/);
       assert.equal(ejecuciones, respuesta.stop_reason === 'tool_use' ? 2 : 0);
     }
   });
@@ -76,9 +74,8 @@ test('la carta se adjunta en el primer turno aunque el modelo solo prometa envia
 });
 test('no envía promesas repetidas si el modelo nunca adjunta la carta', async () => {
   let envios = 0;
-  const salida = await respuestaTrasHerramientas({ mensajes: [], maxRondas: 2,
+  await assert.rejects(respuestaTrasHerramientas({ mensajes: [], maxRondas: 2,
     crear: async () => final('Te envío la carta de Girona.'), ejecutar: async () => { envios++; }
-  });
+  }), /respuesta_final_incompleta/);
   assert.equal(envios, 0);
-  assert.doesNotMatch(salida, /Te envío/);
 });

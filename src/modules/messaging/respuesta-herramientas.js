@@ -28,12 +28,8 @@ export async function respuestaTrasHerramientas({ mensajes, crear, ejecutar, idi
     }
     mensajes.push({ role: 'user', content: resultados });
   }
-  // Alguna acción puede haber ocurrido: no afirmar éxito ni sugerir repetirla.
-  return idioma === 'ca'
-    ? 'Em sap greu, no he pogut confirmar el resultat de la teva petició. Cal comprovar-lo abans de tornar-ho a intentar.'
-    : idioma === 'en'
-      ? 'Sorry, I could not confirm the outcome of your request. It needs to be checked before trying again.'
-      : 'Lo siento, no he podido confirmar el resultado de tu petición. Hay que comprobarlo antes de volver a intentarlo.';
+  // El llamador conserva los resultados y confirma el éxito real o registra atención.
+  throw new Error('respuesta_final_incompleta');
 }
 
 function prometeDocumento(texto) {

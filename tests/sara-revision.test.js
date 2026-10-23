@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { revisarRespuesta, textoSeguro, confirmacionDocumentoEnviado, pideExcepcionPromocion } from '../src/modules/messaging/sara-revision.js';
+import { revisarRespuesta, textoSeguro, confirmacionAcciones, acuseTrasIncidencia, confirmacionDocumentoEnviado, pideExcepcionPromocion } from '../src/modules/messaging/sara-revision.js';
 import { condicionesPromociones, ADJUNTOS_SCHEMA } from '../src/modules/messaging/sara-promociones.js';
 import { respuestaTrasHerramientas } from '../src/modules/messaging/respuesta-herramientas.js';
 import { estaPausada, idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia } from '../src/modules/messaging/sara.js';
@@ -38,16 +38,16 @@ test('condiciones no mezclan cupón con oferta de caja ni revelan secretos', () 
 });
 
 const wa = readFileSync(new URL('../whatsapp.js', import.meta.url), 'utf8');
-function conversacion({ respuesta = 'Dime algo', revision = { ...valido, respuesta: 'Digues-me què necessites.', evidencias: [] }, falloDerivacion = false, falloRevision = false, accion = false } = {}) {
+function conversacion({ respuesta = 'Dime algo', revision = { ...valido, respuesta: 'Digues-me què necessites.', evidencias: [] }, falloDerivacion = false, falloRevision = false, accion = false, resultadoAccion }  = {}) {
   let llamadas = 0, acciones = [];
-  const env = { console, estaPausada, respuestaTrasHerramientas, revisarRespuesta, textoSeguro, confirmacionDocumentoEnviado, pideExcepcionPromocion,
+  const env = { console, estaPausada, respuestaTrasHerramientas, revisarRespuesta, textoSeguro, confirmacionAcciones, acuseTrasIncidencia, confirmacionDocumentoEnviado, pideExcepcionPromocion,
     perfilLoader: async () => null, resolverTelefono: async () => '34600111222', campanaLoader: async () => ({ texto: 'Promoción: día 1', idioma: 'ca' }), reservaLoader: null,
     conversaciones: new Map(), historialLoader: null, MAX_HISTORIAL: 10, SESION_TTL_SEG: 100,
     getContextoFechaHora: () => '2026-10-04', idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia,
     onActualizarPerfil: null, saraConfigLoader: async () => 'Promoción: día 1', SYSTEM_PROMPT: '## Nuestros locales Local A ## Carta, platos',
     buildPerfilContext: () => '', ctxAnteponerCitado: anteponerCitado, TOOLS: [], Anthropic: { RateLimitError: class extends Error {} },
     lineaError: () => 'Error controlado', redactar: () => ({}),
-    ejecutarHerramienta: async b => { acciones.push(b.name); return { content: b.name === 'enviar_documento' ? 'Documento enviado al cliente correctamente.' : 'Acción registrada', is_error: falloDerivacion }; },
+    ejecutarHerramienta: async b => { acciones.push(b.name); return { content: resultadoAccion && b.name !== 'pasar_a_persona' ? resultadoAccion : b.name === 'enviar_documento' ? 'Documento enviado al cliente correctamente.' : 'Acción registrada', is_error: falloDerivacion }; },
     getAnthropic: () => ({ messages: { create: async args => {
       if (args.tool_choice) { if (falloRevision) throw new Error('proveedor'); return bloque(revision); }
       llamadas++;
@@ -77,8 +77,8 @@ test('turno real: respuesta sin fundamento se sustituye por consulta registrada'
 });
 test('fallar la revisión tras ejecutar una acción no invita a repetirla ni la duplica', async () => {
   const c = conversacion({ accion: true, falloRevision: true });
-  assert.equal(await c.run('Vull reservar una taula'), textoSeguro('resultado', 'ca'));
-  assert.deepEqual(c.acciones, ['registrar_reserva']);
+  assert.equal(await c.run('Vull reservar una taula'), textoSeguro('consulta', 'ca'));
+  assert.deepEqual(c.acciones, ['registrar_reserva', 'pasar_a_persona']);
 });
 test('migración SQL conserva originales privados, admite pausa y no duplica adjuntos', { skip: !process.env.TEST_PGLITE_MODULE }, async () => {
   const { PGlite } = await import(process.env.TEST_PGLITE_MODULE); const db = new PGlite();
@@ -165,4 +165,19 @@ test('turno real: tras enviar el PDF un fallo del revisor confirma la entrega si
   const c = conversacion({ accion: 'enviar_documento', falloRevision: true });
   assert.equal(await c.run('Tens la carta de Girona?'), 'Aquí tens el document.');
   assert.deepEqual(c.acciones, ['enviar_documento']);
+});
+
+for (const [accion, resultadoAccion, esperado] of [
+ ['registrar_reserva','Reserva registrada correctamente.','registrada'],
+ ['cancelar_reserva','Reserva cancelada correctamente. Confírmale al cliente con amabilidad que su reserva ha quedado cancelada.','cancel·lada'],
+]) test('fallo del revisor conserva el resultado real de '+accion, async()=>{
+ const c=conversacion({accion,resultadoAccion,falloRevision:true});
+ assert.match(await c.run('La meva reserva'),new RegExp(esperado));
+ assert.deepEqual(c.acciones,[accion]);
+});
+test('un Ok después de una incidencia no vuelve al modelo ni repite acciones',async()=>{
+ const c=conversacion({falloRevision:true});
+ await c.run('Vull reservar');const llamadas=c.llamadas();
+ const r=await c.run('Ok');assert.equal(c.llamadas(),llamadas);
+ assert.deepEqual(c.acciones,['pasar_a_persona']);assert.doesNotMatch(r,/torna|volver|again/i);
 });

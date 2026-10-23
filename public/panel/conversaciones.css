@@ -3,3 +3,6 @@
 .conv-layout [hidden]{display:none!important}
 
 .conv-phone{display:block;color:var(--ink3,#626b63);font-size:13px;margin:4px 0 8px;overflow-wrap:anywhere}.conv-list{max-height:72vh;overflow:auto}#convLinkResultados{max-height:45vh;overflow:auto}#convLinkSearch input{min-width:0;flex:1}@media(max-width:760px){.conv-list{max-height:300px}}
+
+.conv-contact.selected{background:#e0ece6;border-left:3px solid #315848;padding-left:10px}.conv-contact-options{margin:10px 0}.conv-contact-options summary{cursor:pointer;color:var(--ink3,#626b63);font-size:13px;padding:8px 0}.conv-contact-options .toolbar{margin-top:8px}#convTarea{background:#fff4dc;border-left:3px solid #bd852e;padding:12px;border-radius:8px;color:#604719;line-height:1.5}.conv-back{display:none}.conv-detail .ch{align-items:center}.conv-detail h3{margin:0}.conv-preview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.conv-detail #convConexion:empty{display:none}
+@media(max-width:760px){.conv-layout:not(.has-selection) .conv-detail{display:none}.conv-layout.has-selection .conv-list{display:none}.conv-back{display:inline-flex;margin-bottom:16px}.conv-list{max-height:75vh}.conv-hilo{height:45vh;min-height:240px}.conv-detail .toolbar{flex-wrap:wrap}.conv-detail{padding:16px}.conv-bubble{max-width:94%;box-sizing:border-box}}

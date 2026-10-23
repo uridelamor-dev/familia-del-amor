@@ -25585,8 +25585,11 @@ const server = app.listen(PORT, async () => {
       await dbRun(`DELETE FROM reservas WHERE id = ?`, [reserva.id]);
       console.log(`🗑️ Reserva cancelada por Sara (id ${reserva.id}): ${reserva.nombre_reserva} en ${reserva.local} ${reserva.dia}`);
 
-      const row = await dbGet(`SELECT group_jid FROM wa_links WHERE local = ?`, [reserva.local]);
-      if (row?.group_jid && isReady()) sendCancelacionGrupo(row.group_jid, reserva);
+      // La cancelación ya está guardada: un fallo del aviso no cambia su resultado.
+      try {
+        const row = await dbGet(`SELECT group_jid FROM wa_links WHERE local = ?`, [reserva.local]);
+        if (row?.group_jid && isReady()) await sendCancelacionGrupo(row.group_jid, reserva);
+      } catch (e) { console.error("Error avisando cancelación al local:", e.message); }
 
       return { ok: true, reserva };
     } catch (e) {
