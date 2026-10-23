@@ -12,24 +12,33 @@ export function cicloPersonal(now){
  if(mes<'2026-10'||+p.day<20||+p.hour<10||+p.hour>=21)return null;
  return {mes,objetivo:desplazarMes(mes,1),referencia:desplazarMes(mes,-11)};
 }
-export async function leerPersonal(referencia,{configs,leer}){
+export async function leerPersonal(referencia,{configs,leer,respaldo=async()=>null}){
  const desde=referencia+'-01',hasta=desplazarMes(referencia,1)+'-01',resultado=[];
  for(const local of LOCALES_PERSONAL){
   let base=0,ventas=0,sinBase=false;const faltan=[];
   for(const barra of barrasDelCentro(local,'ventas')){
    const fuentes=configs.filter(c=>c.local===barra&&c.usuario&&c.password);
-   if(!fuentes.length){faltan.push(barra);continue;}
-   for(const cfg of fuentes){
-    try{
-     const rows=await leer(cfg,desde,hasta);
-     if(!Array.isArray(rows)||!rows.length||rows.some(r=>!r.dia||r.dia<desde||r.dia>=hasta||!valido(r.ventas)))throw Error('sin histórico fiable');
-     ventas+=rows.reduce((s,r)=>s+Number(r.ventas),0);
-     if(rows.some(r=>!valido(r.base_imponible)||(Number(r.ventas)>0&&Number(r.base_imponible)===0)))sinBase=true;
-     else base+=rows.reduce((s,r)=>s+Number(r.base_imponible),0);
-    }catch{faltan.push(barra);}
+   let series=[];
+   try{
+    if(!fuentes.length)throw Error('sin configuración');
+    for(const cfg of fuentes)series.push(await leer(cfg,desde,hasta));
+    if(series.some(rows=>!Array.isArray(rows)||!rows.length))throw Error('sin histórico');
+   }catch{
+    const guardado=await respaldo(barra,desde,hasta).catch(()=>null);
+    series=guardado?[guardado]:[];
+   }
+   if(!series.length){faltan.push(barra);continue;}
+   for(const rows of series){
+    if(!Array.isArray(rows)||!rows.length||rows.some(r=>!r.dia||r.dia<desde||r.dia>=hasta||!valido(r.ventas))){faltan.push(barra);continue;}
+    for(const r of rows){
+     ventas+=Number(r.ventas);
+     if(!valido(r.base_imponible)||(Number(r.ventas)>0&&Number(r.base_imponible)===0)){
+      sinBase=true;base+=Number(r.ventas)/1.10;
+     }else base+=Number(r.base_imponible);
+    }
    }
   }
-  resultado.push({local,ventas:faltan.length?null:ventas,base:faltan.length||sinBase?null:base,faltan:[...new Set(faltan)],sinBase});
+  resultado.push({local,ventas:faltan.length?null:ventas,base:faltan.length?null:Math.round(base*100)/100,faltan:[...new Set(faltan)],sinBase});
  }
  return resultado;
 }
@@ -37,7 +46,7 @@ const nota='Referencia histórica, no previsión garantizada. El 35 % incluye sa
 function detalle(r){
  if(r.base==null)return `${r.ventas==null?'Ventas: datos pendientes':`Ventas con IVA: ${euros(r.ventas)}`}\n⚠️ ${r.faltan.length?'No se pudo obtener el histórico de: '+r.faltan.join(', '):'Ágora no facilita la base sin IVA en este informe'}. Presupuesto y plantilla pendientes; no se consideran cero.`;
  const presupuesto=Math.round(Math.max(0,r.base)*.35*100)/100;
- return `💶 Ventas sin IVA: *${euros(r.base)}*\n👥 Presupuesto de personal (35 %): *${euros(presupuesto)}*\nEquivale a *${(presupuesto/2200).toLocaleString('es-ES',{maximumFractionDigits:2})} jornadas completas* durante el mes.`;
+ return `💶 Ventas sin IVA: *${euros(r.base)}*${r.sinBase?" (estimadas: total ÷ 1,10)":""}\n👥 Presupuesto de personal (35 %): *${euros(presupuesto)}*\nEquivale a *${(presupuesto/2200).toLocaleString('es-ES',{maximumFractionDigits:2})} jornadas completas* durante el mes.`;
 }
 export function mensajesPersonal(ciclo,rows){
  if(rows.length!==5||!LOCALES_PERSONAL.every(l=>rows.some(r=>r.local===l)))throw Error('Faltan locales en el informe');
@@ -45,7 +54,7 @@ export function mensajesPersonal(ciclo,rows){
  const mensajes=rows.map(r=>`${cabecera}\n📍 *${r.local}*\n\n${detalle(r)}\n\n${nota}`);
  const completas=rows.every(r=>r.base!=null);
  const total=rows.reduce((s,r)=>s+(r.base??0),0);
- mensajes.push(`${cabecera}\n🏘️ *RESUMEN GENERAL · 5 LOCALES*\n\n${rows.map(r=>`📍 *${r.local}*\n${detalle(r)}`).join('\n\n')}\n\n${completas?'*TOTAL DEL GRUPO*\n'+detalle({base:total}):'⚠️ Total del grupo pendiente: hay locales sin datos suficientes.'}\n\n${nota}`);
+ mensajes.push(`${cabecera}\n🏘️ *RESUMEN GENERAL · 5 LOCALES*\n\n${rows.map(r=>`📍 *${r.local}*\n${detalle(r)}`).join('\n\n')}\n\n${completas?'*TOTAL DEL GRUPO*\n'+detalle({base:total,sinBase:rows.some(r=>r.sinBase)}):'⚠️ Total del grupo pendiente: hay locales sin datos suficientes.'}\n\n${nota}`);
  return mensajes;
 }
 // Estado persistente por ciclo y mensaje; nunca repetir una entrega de resultado incierto.
@@ -56,7 +65,7 @@ export function crearPlanificacionPersonal({pool,enabled,conectado,preparar,envi
   busy=true;let c,lock=false;
   try{
    c=await pool.connect();lock=(await c.query('SELECT pg_try_advisory_lock(73992023) AS locked')).rows[0].locked;if(!lock)return;
-   const key=`planificacion_personal_${ciclo.mes}_v1`;
+   const key=`planificacion_personal_${ciclo.mes}_v2`;
    const stored=await c.query('SELECT value FROM config WHERE key=$1',[key]);
    let state=stored.rows.length?JSON.parse(stored.rows[0].value):{};
    const save=()=>c.query('INSERT INTO config(key,value,updated_at) VALUES($1,$2,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=EXCLUDED.updated_at',[key,JSON.stringify(state)]);
@@ -64,7 +73,16 @@ export function crearPlanificacionPersonal({pool,enabled,conectado,preparar,envi
    if(state.estado==='enviando'){state.estado='incierta';await save();console.error('[Personal] Entrega incierta: revisar',key);return;}
    if(state.retryAt&&new Date(state.retryAt)>now())return;
    if(!state.mensajes){
-    try{state.mensajes=mensajesPersonal(ciclo,await preparar(ciclo.referencia));state.enviados=0;state.destino=DESTINO_PERSONAL;state.ciclo=ciclo;}
+    try{
+     const rows=await preparar(ciclo.referencia);
+     if(rows.some(r=>r.base==null)&&(state.intentosDatos||0)<3){
+      state.intentosDatos=(state.intentosDatos||0)+1;state.error='Reintentando históricos incompletos';state.retryAt=new Date(+now()+15*60000).toISOString();await save();return;
+     }
+     const anterior=await c.query('SELECT value FROM config WHERE key=$1',[`planificacion_personal_${ciclo.mes}_v1`]);
+     const rectificacion=anterior.rows.length>0;
+     state.mensajes=mensajesPersonal(ciclo,rows).map(m=>(rectificacion?'🔄 *INFORME ACTUALIZADO · sustituye al anterior*\n\n':'')+m);
+     state.enviados=0;state.destino=DESTINO_PERSONAL;state.ciclo=ciclo;
+    }
     catch{state.error='No se pudo preparar el informe';state.retryAt=new Date(+now()+30*60000).toISOString();await save();return;}
    }
    if(!conectado())return;

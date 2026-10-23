@@ -25927,6 +25927,18 @@ const server = app.listen(PORT, async () => {
   // Día 20: planificación del mes siguiente; octubre se recupera al publicar.
   const personalMensual=crearPlanificacionPersonal({pool,enabled:PROD,conectado:isReady,enviar:sendMensajeLibre,
     preparar:async referencia=>leerPersonal(referencia,{configs:await loadAgoraConfigsActive(),
+      respaldo:async(local,desde,hasta)=>{
+        const fin=addDaysISO(hasta,-1);
+        // Misma consulta y caché de rango que el dashboard, sin mezclar barras.
+        const rango=await ventasRangoLive(local,desde,fin).catch(()=>null);
+        if(Array.isArray(rango)&&rango.length)return rango;
+        const guardado=await cacheLeer(claveRango(local,desde,fin)+'|inclusive-v2');
+        if(Array.isArray(guardado?.valor)&&guardado.valor.length)return guardado.valor;
+        const dias=await dbAll('SELECT dia, ventas::float ventas, base_imponible::float base_imponible FROM ventas_diarias WHERE local = ? AND dia >= ? AND dia < ? ORDER BY dia',[local,desde,hasta]);
+        // Un puñado de días guardados no acredita el mes completo.
+        const nDias=Math.round((Date.parse(hasta)-Date.parse(desde))/86400000);
+        return dias.length===nDias?dias:null;
+      },
       leer:async(cfg,desde,hasta)=>{
         let timer;
         try{return await Promise.race([createAgoraClient(cfg).getVentasRango(desde,hasta),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('timeout')),25000);})]);}
