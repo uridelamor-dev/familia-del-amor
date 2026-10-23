@@ -74,7 +74,7 @@ import { validarPlan, planesQueTocan, alCompletar } from "./src/modules/mantenim
 import { normalizarEstado, ABIERTOS as MANT_ABIERTOS } from "./src/modules/mantenimiento/estados.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { guardarHorasFicha } from "./src/modules/rrhh/horas-ficha.js";
-import { ventasRecientes } from "./src/modules/dashboard/ventas-recientes.js";
+import { ventasRecientes, completarVentasRecientes } from "./src/modules/dashboard/ventas-recientes.js";
 import { resumenHoy } from "./src/modules/dashboard/hoy.js";
 import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fusion.js";
 import { resultadoRegistrado } from "./src/modules/dashboard/resultado.js";
@@ -8572,7 +8572,8 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
     const barras = local ? barrasDelCentro(local, "ventas") : [...new Set(
       INV_LOCALES.filter(l => !LOCALES_SIN_PUBLICO.has(l)).flatMap(l => barrasDelCentro(l, "ventas")))];
     if (to >= inicioReciente) {
-      const vivo = await ventasVivoData(false);
+      const instantanea = await ventasVivoData(false);
+      const vivo = await completarVentasRecientes({vivo:instantanea,locales:barras,from:recientesDesde,to,hoy,leer:ventasRangoLive});
       const respaldo = await dbAll(`SELECT local, dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ? AND local = ANY(?)`, [recientesDesde, to, barras]);
       const recientes = ventasRecientes({ vivo, respaldo, locales: barras, from: recientesDesde, to, hoy });
       ventasSerie = recientes.serie;

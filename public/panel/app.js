@@ -1317,7 +1317,7 @@ function renderDashboard(d) {
   const esHoy = DASH_RANGE.from === todayStr() && DASH_RANGE.to === todayStr();
   const periodo = DASH_PERIODO;
   const tarjetasPeriodo = periodo ? [
-    periodo.ventas?.disponible ? kpi({lab:"Facturación · " + (DASH_RANGE.label || "Periodo"), icon:"euro", val:eur(periodo.ventas.total), sub:periodo.ventas.parcial ? "Datos parciales: faltan locales" : "Periodo seleccionado"}) : "",
+    periodo.ventas?.disponible ? kpi({lab:(periodo.ventas.parcial ? "Facturación parcial · " : "Facturación · ") + (DASH_RANGE.label || "Periodo"), icon:"euro", val:eur(periodo.ventas.total), sub:periodo.ventas.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "Periodo seleccionado"}) : "",
     periodo.ventas?.disponible && periodo.ventas.tickets > 0 ? kpi({lab:"Ticket medio", icon:"receipt", val:eur(periodo.ventas.ticket_medio), sub:num(periodo.ventas.tickets) + " tickets · periodo seleccionado"}) : "",
     periodo.comparacion?.ventas != null ? kpi({lab:"Vs. " + periodo.comparacion.etiqueta, icon:"cal", val:dec1(periodo.comparacion.ventas) + " %", sub:fechaCorta(periodo.comparacion.desde) + " – " + fechaCorta(periodo.comparacion.hasta)}) : "",
   ].filter(Boolean) : [];
@@ -1350,7 +1350,7 @@ function renderDashboard(d) {
   const gEmp = gOk ? Number(per.gastos.empresa) || 0 : 0;
   const notaGasto = gEmp ? `incl. ${eur(gEmp)} de empresa` : "";
   const ventasBox = (vOk || gOk)
-    ? `<div class="dash-period-stats" style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Datos parciales: faltan locales" : "")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Datos parciales: faltan locales" : notaGasto)}${stat3("Resultado", res != null ? eur(res) : "—", resCol, res != null && cmp ? cmp.resultado : null)}</div>`
+    ? `<div class="dash-period-stats" style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : notaGasto)}${stat3("Resultado", res != null ? eur(res) : "—", resCol, res != null && cmp ? cmp.resultado : null)}</div>`
     : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y resultado<br><span class="hl">${per ? "Sin datos de ventas y gastos en este periodo" : esc(periodoMensaje)}</span></div>`;
   // Al pasar el ratón se ve el día, cuántas reservas y —si Ágora está conectado— lo que
   // se facturó ESE día. Es la pregunta que uno se hace mirando el pico del sábado.

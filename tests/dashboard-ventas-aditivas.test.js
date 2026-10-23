@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { ventasRecientes } from '../src/modules/dashboard/ventas-recientes.js';
+import { ventasRecientes, completarVentasRecientes } from '../src/modules/dashboard/ventas-recientes.js';
 import { resumenHoy } from '../src/modules/dashboard/hoy.js';
 const hoy = '2026-10-13';
 const vivo = { hoy, locales: [{ local:'Blanes', dias:[
@@ -84,7 +84,7 @@ for (const caso of [
       } }),
       hoyISO: () => fecha, addDaysISO: sumarDias,
       INV_LOCALES: ['Blanes'], LOCALES_SIN_PUBLICO: new Set(), barrasDelCentro: l => [l],
-      ventasRecientes,
+      ventasRecientes, completarVentasRecientes,
       ventasVivoData: async () => ({ hoy: fecha, locales: [{ local: 'Blanes', dias: filas.filter(f => f.dia >= inicioReciente) }] }),
       dbAll: async () => [], dbGet: async () => ({ n: 0, total: 0, base: 0 }),
       SIN_ALBARANES: 'TRUE', resultadoRegistrado: () => null,
@@ -106,3 +106,23 @@ for (const caso of [
     assert.equal(mes.ventas.total, sumaDias);
   });
 }
+
+test('semana con viernes ausente recupera el rango sin duplicar los días ya presentes',async()=>{
+ const hoy='2026-10-24';
+ const anterior={hoy,locales:[{local:'Blanes',dias:[{dia:'2026-10-19',ventas:7589,tickets:668}]}]};
+ const vivo=await completarVentasRecientes({vivo:anterior,locales:['Blanes'],from:'2026-10-19',to:hoy,hoy,leer:async()=>[{dia:'2026-10-19',ventas:7589,tickets:668},{dia:'2026-10-23',ventas:2981,tickets:200}]});
+ const r=ventasRecientes({vivo,locales:['Blanes'],from:'2026-10-19',to:hoy,hoy});
+ assert.equal(total(r),10570);assert.equal(r.parcial,false);
+});
+test('fallo de recuperación conserva parcial y no inventa cero para un local caído',async()=>{
+ const vivo=await completarVentasRecientes({vivo:{hoy,locales:[]},locales:['Girona'],from:hoy,to:hoy,hoy,leer:async()=>null});
+ assert.equal(ventasRecientes({vivo,locales:['Girona'],from:hoy,to:hoy,hoy}).parcial,true);
+});
+
+test('recupera cada barra afectada, conserva las completas y no mezcla locales',async()=>{
+ const hoy='2026-10-24',from='2026-10-23',calls=[];
+ const originales={hoy,locales:[{local:'A',dias:[{dia:from,ventas:10},{dia:hoy,ventas:20}]},{local:'B',error:'timeout',dias:[]}]};
+ const vivo=await completarVentasRecientes({vivo:originales,locales:['A','B','B','C'],from,to:hoy,hoy,leer:async local=>{calls.push(local);return local==='B'?[{dia:from,ventas:30}]:null;}});
+ assert.deepEqual(calls,['B','C']);
+ const r=ventasRecientes({vivo,locales:['A','B','C'],from,to:hoy,hoy});assert.equal(total(r),60);assert.equal(r.parcial,true);
+});
