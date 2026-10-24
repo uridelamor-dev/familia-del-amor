@@ -56,10 +56,26 @@ test('un fallo de TPV usa el respaldo por barra y no duplica resultados parciale
  assert.equal(r[0].base,1000*barrasDelCentro(LOCALES_PERSONAL[0],'ventas').length);
  const msg=mensajesPersonal(cicloPersonal(new Date('2026-10-23T12:00Z')),r);assert.match(msg[0],/total ÷ 1,10/);
 });
-test('datos ausentes se reintentan antes de enviar el aviso de falta de datos',async()=>{
+test('datos ausentes retienen el informe sin enviar cifras incompletas',async()=>{
  const f=fixture();let now=new Date('2026-10-23T12:00Z'),lecturas=0;
  const deps={...f.deps,now:()=>now,preparar:async()=>{lecturas++;return rows.map(r=>({...r,base:null,ventas:null,faltan:[r.local]}));}};
  await crearPlanificacionPersonal(deps).tick();assert.equal(f.entregas.length,0);assert.equal(lecturas,1);
  await crearPlanificacionPersonal(deps).tick();assert.equal(lecturas,1);
  now=new Date(+now+16*60000);await crearPlanificacionPersonal(deps).tick();assert.equal(lecturas,2);assert.equal(f.entregas.length,0);
+ for(let i=0;i<5;i++){now=new Date(+now+16*60000);await crearPlanificacionPersonal(deps).tick();}
+ assert.equal(lecturas,7);assert.equal(f.entregas.length,0);
+});
+
+test('desglose muestra total real, base e IVA en cada local y en el grupo',()=>{
+ const mensajes=mensajesPersonal(cicloPersonal(new Date('2026-10-24T12:00Z')),rows);
+ assert.match(mensajes[0],/Ventas con IVA: \*44.000,00 €/);
+ assert.match(mensajes[0],/Base sin IVA: \*40.000,00 €/);
+ assert.match(mensajes[0],/IVA: \*4\.?000,00 €/);
+ assert.match(mensajes[5],/220.000,00/);assert.match(mensajes[5],/20.000,00/);
+ assert.match(mensajes[0],/NOVIEMBRE DE 2026/);assert.match(mensajes[0],/noviembre de 2025/);
+});
+test('serie inválida intenta el respaldo sin sumar datos erróneos',async()=>{
+ const configs=LOCALES_PERSONAL.flatMap(l=>barrasDelCentro(l,'ventas')).map(local=>({local,usuario:'u',password:'p'}));
+ const r=await leerPersonal('2025-11',{configs,leer:async()=>[{dia:'2025-12-01',ventas:999999}],respaldo:async()=>[{dia:'2025-11-01',ventas:110}]});
+ assert.ok(r.every(x=>x.ventas>0&&x.ventas<1000&&x.base>0));
 });
