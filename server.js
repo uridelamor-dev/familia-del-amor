@@ -1,7 +1,7 @@
 import {crearPlanificacionPersonal,leerPersonal} from './src/modules/informes/planificacion-personal.js';
 import {crearDecisionesHistorico,cabeceraHistorica} from './src/modules/facturas/repaso-decision.js';
 import { REPASO_HISTORICO_SCHEMA, crearRepasoHistorico } from './src/modules/facturas/repaso-historico.js';
-import { TANDAS_SCHEMA, crearTandas } from './src/modules/facturas/tandas-whatsapp.js';
+import { TANDAS_SCHEMA, TANDAS_RESULTADO_SCHEMA, crearTandas } from './src/modules/facturas/tandas-whatsapp.js';
 import { leerDocumentoVerificado, driveDescargar } from './facturas.js';
 import { crearAvisoRecuperacionFacturas } from './src/modules/messaging/aviso-recuperacion-facturas.js';
 import {crearAvisosSolicitudes} from './src/modules/tienda/solicitudes.js';
@@ -2210,6 +2210,7 @@ async function initDB() {
 
     await client.query(RECEPCION_SCHEMA);
     await client.query(TANDAS_SCHEMA);
+    await client.query(TANDAS_RESULTADO_SCHEMA);
     await client.query(REPASO_HISTORICO_SCHEMA);
     await client.query(FICHA_COMERCIAL_SCHEMA);
     try { await ensureSchemaEscandallos((sql,p=[]) => client.query(sql,p)); }

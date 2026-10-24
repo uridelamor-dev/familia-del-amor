@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {conEsquema,disponible,motivoSalto} from '../helpers/pgtmp.js';
 import {RECEPCION_SCHEMA,crearRecepcion} from '../../src/modules/facturas/recepcion.js';
 import {RevisionDocumento} from '../../src/modules/facturas/validacion-lectura.js';
-import {TANDAS_SCHEMA,crearTandas} from '../../src/modules/facturas/tandas-whatsapp.js';
+import {TANDAS_SCHEMA,TANDAS_RESULTADO_SCHEMA,crearTandas} from '../../src/modules/facturas/tandas-whatsapp.js';
 const datos={tipo:'factura',proveedor:'Prueba',nif_proveedor:'B12345678',fecha:'2026-09-10',numero_factura:'123',base_imponible:100,cuota_iva:21,porcentaje_iva:21,total:121};
 const archivo={buffer:Buffer.from('prueba'),mimeType:'image/jpeg',filename:'foto.jpg',local:'La Tapeta - Lloret',canal:'WhatsApp'};
-async function caso(t,fn){if(!await disponible()){t.skip(motivoSalto());return;}const db=await conEsquema();try{await db.raw(RECEPCION_SCHEMA);await db.raw(TANDAS_SCHEMA);await fn(db);}finally{await db.fin();}}
+async function caso(t,fn){if(!await disponible()){t.skip(motivoSalto());return;}const db=await conEsquema();try{await db.raw(RECEPCION_SCHEMA);await db.raw(TANDAS_SCHEMA);await db.raw(TANDAS_RESULTADO_SCHEMA);await fn(db);}finally{await db.fin();}}
 test('revisión sobrevive reinicio, no reintenta IA y aprobación conserva auditoría',async t=>caso(t,async db=>{
  let lecturas=0;
  const q=crearRecepcion({db,lock:async(_h,fn)=>fn(),procesar:async o=>{lecturas++;if(!o.datosAprobados)throw new RevisionDocumento(datos,[{campo:'total',texto:'Duda'}]);return {datos:o.datosAprobados};}});
@@ -44,4 +44,18 @@ test('WhatsApp desconectado reintenta; envío incierto no se repite y deja diagn
  await tandas.revisar();assert.equal((await db.get('SELECT avisado FROM facturas_avisos_grupo')).avisado,false);
  tipo='incierto';await tandas.revisar();await tandas.revisar();assert.equal(n,2);
  assert.match((await db.get('SELECT resumen_error FROM facturas_avisos_grupo')).resumen_error,/incierto/);
+}));
+test('avisa del resultado después de la cola y después de aprobación sin repetirlo',async t=>caso(t,async db=>{
+ const q=crearRecepcion({db,lock:async(_h,fn)=>fn(),procesar:async()=>{throw new Error('temporal');}});
+ await assert.rejects(q.recibir(archivo));const f=await db.get('SELECT id FROM facturas_recepciones');
+ const enviados=[];const tandas=crearTandas({db,lock:fn=>fn(),enviar:async(_g,m)=>enviados.push(m)});
+ await tandas.registrar({grupo:'grupo',mensaje:'1',recepcionId:f.id,citado:{}});
+ await db.run("UPDATE facturas_avisos_grupo SET recibido=NOW()-INTERVAL '3 minutes'");
+ await tandas.revisar();assert.equal(enviados.length,1);assert.match(enviados[0],/en cola/);
+ await db.run("UPDATE facturas_recepciones SET estado='leyendo' WHERE id=?",[f.id]);
+ await tandas.revisar();assert.equal(enviados.length,1);
+ await db.run("UPDATE facturas_recepciones SET estado='revision',resultado=?::jsonb WHERE id=?",[JSON.stringify({datos}),f.id]);
+ await tandas.revisar();assert.equal(enviados.length,2);assert.match(enviados[1],/pendiente de revisión/);
+ await db.run("UPDATE facturas_recepciones SET estado='registrado' WHERE id=?",[f.id]);
+ await tandas.revisar();await tandas.revisar();assert.equal(enviados.length,3);assert.match(enviados[2],/Documento digitalizado/);assert.match(enviados[2],/121,00/);
 }));
