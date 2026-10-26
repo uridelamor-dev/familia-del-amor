@@ -17,6 +17,19 @@ export function contactoAtendible(jid) {
  return /^[1-9]\d*@lid$/.test(String(jid||'')) || /^[1-9]\d{9,14}@s\.whatsapp\.net$/.test(String(jid||''));
 }
 const breve=(v,n)=>{const t=String(v||'').replace(/https?:\/\/\S+/gi,'[enlace]').replace(/[*_~`<>]/g,'').replace(/\s+/g,' ').trim();return t.length>n?t.slice(0,n-1)+'…':t;};
+// No confundir una despedida inequívoca con una consulta sin atender.
+// «Ok», «sí» o «perfecto» podrían confirmar una reserva: no se excluyen.
+export function cierreCortesia(texto) {
+ const t=String(texto||'').normalize('NFD').replace(/\p{M}/gu,'').toLowerCase()
+  .replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim();
+ return /^(muchas gracias|gracias|moltes gracies|gracies|thank you|thanks|merci|hasta luego|hasta pronto|adeu|fins aviat)( (a ti|a tu|igualmente|igualment))?$/.test(t);
+}
+export function accionPendiente(t) {
+ if(t.motivo==='pidio_persona') return 'Atender personalmente: el cliente lo ha pedido.';
+ if(t.motivo==='sin_respuesta') return 'Comprobar si ya se atendió y responder si sigue pendiente.';
+ if(t.motivo?.startsWith('error_')) return 'Comprobar el resultado de la gestión antes de repetirla.';
+ return 'Resolver la duda indicada y responder al cliente.';
+}
 export function avisoAtencion(tareas,nivel,ahora=new Date()) {
  const validas=tareas.filter(t=>contactoAtendible(t.jid));
  if(!validas.length)return '';
@@ -35,7 +48,9 @@ export function avisoAtencion(tareas,nivel,ahora=new Date()) {
    lineas.push('',`• *${etiqueta}*${tel&&etiqueta!=='+'+tel?' · +'+tel:''}`,cuando);
    if(t.ultimo_texto)lineas.push(`Último mensaje: «${breve(t.ultimo_texto,140)}»`);
    else if(t.resumen&&!t.resumen.startsWith('Consulta anterior pendiente'))lineas.push(`Contexto: ${breve(t.resumen,140)}`);
-   lineas.push(t.estado==='en_curso'?'En atención por el equipo.':t.motivo==='sin_respuesta'?'Comprobar si ya se atendió.':t.motivo==='pidio_persona'?'Ha pedido hablar con el equipo.':t.motivo?.startsWith('error_')?'Revisar el historial antes de reintentar.':'Revisar la consulta y dar respuesta.');
+   if(t.resumen && t.motivo!=='sin_respuesta' && !t.resumen.startsWith('Consulta anterior pendiente')) lineas.push(`Motivo de revisión: ${breve(t.resumen,240)}`);
+   lineas.push(`Qué falta: ${accionPendiente(t)}`);
+   if(t.estado==='en_curso')lineas.push('El equipo ya está atendiendo esta conversación.');
   }
   if(grupo.length>3)lineas.push('',`Y ${grupo.length-3} más en el panel.`);
  }
@@ -51,8 +66,16 @@ export function nivelAviso(tarea, ahora = new Date()) {
  if(tarea.aviso_en && +ahora-Date.parse(tarea.aviso_en)<5*60000)return 0;
  if(hora<10 || hora>=21 || tarea.estado==='resuelta')return 0;
  const minutos=(+ahora-Date.parse(tarea.abierta_en))/60000;
- const nivel=minutos>=60?3:minutos>=30?2:1;
- return nivel>Number(tarea.aviso_nivel||0)?nivel:0;
+ const previo=Number(tarea.aviso_nivel||0);
+ // Siempre avisar primero a Laura, también al recuperar una tarea antigua.
+ if(previo===0)return 1;
+ const desdeAviso=(+ahora-Date.parse(tarea.aviso_en||tarea.abierta_en))/60000;
+ if(previo===1 && desdeAviso>=30)return 2;
+ // Dirección solo tras aviso y recordatorio, con tiempo real para intervenir.
+ const referencia=tarea.estado==='en_curso'?tarea.actualizada_en||tarea.abierta_en:tarea.abierta_en;
+ const espera=(+ahora-Date.parse(referencia))/60000;
+ if(previo===2 && desdeAviso>=60 && minutos>=120 && espera>=(tarea.estado==='en_curso'?240:120))return 3;
+ return 0;
 }
 export function crearAtencion({pool,enviar,listo,recuperar}) {
  const canon=async jid=>(await pool.query('SELECT COALESCE(telefono_jid,jid) AS jid FROM wa_bandeja_chats WHERE jid=$1',[jid])).rows[0]?.jid||jid;
@@ -64,7 +87,7 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
     estado=CASE WHEN wa_atencion.estado='resuelta' THEN 'pendiente' ELSE wa_atencion.estado END,
     motivo=EXCLUDED.motivo,resumen=EXCLUDED.resumen,ultimo_cliente=GREATEST(wa_atencion.ultimo_cliente,EXCLUDED.ultimo_cliente),
     abierta_en=CASE WHEN wa_atencion.estado='resuelta' THEN now() ELSE wa_atencion.abierta_en END,
-    cerrada_en=NULL,actualizada_en=now(),version=wa_atencion.version+1,aviso_nivel=0
+    cerrada_en=NULL,actualizada_en=now(),version=wa_atencion.version+1,aviso_nivel=CASE WHEN wa_atencion.estado='resuelta' THEN 0 ELSE wa_atencion.aviso_nivel END
    WHERE EXCLUDED.ultimo_cliente>COALESCE(wa_atencion.cerrada_en,wa_atencion.ultimo_cliente)`,
    [jid,motivo,String(resumen||'').slice(0,1000),fecha]);
  }
@@ -80,7 +103,9 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
  async function entrada(jid,texto,fecha=new Date()) {
   jid=await canon(jid);
   const r=await pool.query("SELECT estado,motivo FROM wa_atencion WHERE jid=$1 AND estado<>'resuelta'",[jid]);
-  if(r.rows[0])await abrir(jid,r.rows[0].motivo,texto,fecha);
+  // Conservar el motivo del bloqueo: el siguiente «gracias» no lo sustituye.
+  if(r.rows[0])await pool.query(`UPDATE wa_atencion SET ultimo_cliente=GREATEST(ultimo_cliente,$2),
+   actualizada_en=now(),version=version+1 WHERE jid=$1 AND estado<>'resuelta'`,[jid,fecha]);
  }
  async function iniciar(jid,items) {
   jid=await canon(jid);const nuevos=[];
@@ -107,7 +132,7 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
    AND NOT EXISTS(SELECT 1 FROM legados l WHERE l.canon=w.jid AND l.creado_en::timestamptz>=w.creado_en::timestamptz AND COALESCE(l.historico,0)=0)
    AND NOT EXISTS(SELECT 1 FROM wa_atencion a WHERE a.jid=w.jid AND (a.estado='en_curso' OR a.motivo IN ('error_respuesta','error_entrada') OR a.cerrada_en>=w.creado_en::timestamptz))
    ORDER BY w.creado_en::timestamptz DESC LIMIT 10`);
-  for(const m of rows.filter(m=>contactoAtendible(m.jid))) await recuperar(m,async()=>{
+  for(const m of rows.filter(m=>contactoAtendible(m.jid) && !cierreCortesia(m.mensaje))) await recuperar(m,async()=>{
    // Releer bajo la cola del contacto; cualquier procesamiento previo, respuesta o cierre impide repetir acciones.
    const r=await pool.query(`WITH ${ARCHIVO_CTE} INSERT INTO wa_entrada_recuperada(jid,clave)
     SELECT $1,$2 WHERE EXISTS(SELECT 1 FROM ultimos WHERE jid=$1 AND id=$2 AND tipo='recibido')
@@ -125,7 +150,7 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
    AND w.tipo='recibido' AND w.creado_en::timestamptz BETWEEN now()-interval '7 days' AND now()-interval '5 minutes'
    AND NOT EXISTS(SELECT 1 FROM wa_atencion a WHERE a.jid=w.jid AND (a.estado<>'resuelta' OR a.cerrada_en>=w.creado_en::timestamptz))
    ORDER BY w.creado_en::timestamptz DESC LIMIT 100`);
-  for(const m of r.rows)await abrir(m.jid,'sin_respuesta',m.mensaje,new Date(m.creado_en));
+  for(const m of r.rows.filter(m=>!cierreCortesia(m.mensaje)))await abrir(m.jid,'sin_respuesta',m.mensaje,new Date(m.creado_en));
   const pausadas=await pool.query(`SELECT c.jid,c.pausa_motivo FROM wa_clientes c WHERE c.estado_ia='pausada'
    AND NOT EXISTS(SELECT 1 FROM wa_atencion a WHERE a.jid=COALESCE((SELECT telefono_jid FROM wa_bandeja_chats WHERE jid=c.jid),c.jid)) LIMIT 100`);
   for(const c of pausadas.rows)await abrir(c.jid,c.pausa_motivo||'manual','Consulta anterior pendiente de revisión; consultar el historial antes de responder.');

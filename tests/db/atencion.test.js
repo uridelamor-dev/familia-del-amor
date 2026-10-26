@@ -11,7 +11,7 @@ test('consulta automática no bloquea, persona y toma manual sí',()=>{
 });
 test('avisos: horario Madrid, escalado, no duplicados ni resueltas',()=>{
  const ahora=new Date('2026-10-20T12:00:00Z');
- for(const [mins,n] of [[0,1],[31,2],[61,3]])assert.equal(nivelAviso({abierta_en:new Date(+ahora-mins*60000),aviso_nivel:0},ahora),n);
+ for(const [mins,n] of [[0,1],[31,1],[61,1]])assert.equal(nivelAviso({abierta_en:new Date(+ahora-mins*60000),aviso_nivel:0},ahora),n);
  assert.equal(nivelAviso({abierta_en:ahora,estado:'resuelta'},ahora),0);
  assert.equal(nivelAviso({abierta_en:ahora},new Date('2026-10-20T22:00:00Z')),0);
  assert.equal(nivelAviso({abierta_en:ahora,aviso_nivel:3},ahora),0);
@@ -30,8 +30,11 @@ test('SQL real: tareas, toma, cierre, nuevo mensaje y recuperación idempotente'
  assert.equal((await db.raw('SELECT * FROM wa_atencion')).rows.length,1);
  assert.equal((await db.raw('SELECT jid FROM wa_atencion')).rows[0].jid,jid);
  await svc.control(jid,'tomar','Laura');
+ await db.raw('UPDATE wa_atencion SET aviso_nivel=2 WHERE jid=$1',[jid]);
  await svc.entrada(lid,'Para 20 personas',new Date(Date.now()+100));
  assert.equal((await db.raw('SELECT estado FROM wa_atencion')).rows[0].estado,'en_curso');
+ const conservada=(await db.raw('SELECT resumen,aviso_nivel FROM wa_atencion')).rows[0];
+ assert.equal(conservada.resumen,'Conversación tomada desde el panel');assert.equal(conservada.aviso_nivel,2);
  assert.equal(await svc.acuse(lid),false);
  await svc.control(lid,'resolver','Laura');
  await svc.abrir(lid,'sin_respuesta','Antiguo',new Date('2026-01-01'));
@@ -41,6 +44,10 @@ test('SQL real: tareas, toma, cierre, nuevo mensaje y recuperación idempotente'
  await db.raw("INSERT INTO wa_bandeja_mensajes(jid,mensaje_id,enviado,texto,fecha) VALUES($1,'m1',false,'Reservar para mañana',now()-interval '10 minutes')",[otro]);
  await svc.tick();assert.equal(rec.length,1);await svc.tick();assert.equal(rec.length,1);
  assert.ok((await db.raw('SELECT * FROM wa_atencion WHERE jid=$1',[otro])).rows.length);
+ const despedida='34600000003@s.whatsapp.net';
+ await db.raw("INSERT INTO wa_bandeja_mensajes(jid,mensaje_id,enviado,texto,fecha) VALUES($1,'fin',false,'Muchas gracias!',now()-interval '10 minutes')",[despedida]);
+ await svc.tick();assert.equal((await db.raw('SELECT * FROM wa_atencion WHERE jid=$1',[despedida])).rows.length,0);
+ assert.equal(rec.length,1,'no recupera despedidas como solicitudes');
  const tercero='34600000002@s.whatsapp.net';
  await db.raw("INSERT INTO wa_bandeja_mensajes(jid,mensaje_id,enviado,texto,fecha) VALUES($1,'m2',false,'Reservar para mañana',now()-interval '10 minutes')",[tercero]);
  await svc.iniciar(tercero,[{msg:{key:{id:'m2'}}}]);await svc.tick();assert.equal(rec.length,1,'procesada antes de un corte no debe repetir acciones');

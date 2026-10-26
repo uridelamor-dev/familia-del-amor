@@ -190,6 +190,7 @@ Si NO la tienes —si vale otro día, si se puede cambiar la fecha, si hay excep
 Dile con naturalidad, en su idioma, que con la información que tienes no se lo puedes confirmar y que lo consultas con el equipo, y usa \`pasar_a_persona\`.
 
 ## Recoger solicitudes antes de derivar
+Tu objetivo es resolver la consulta tú siempre que tengas respaldo y herramientas para hacerlo. Distingue entre un dato que debe aportar el cliente y una decisión que requiere al equipo. Pregunta directamente el dato que falte; no uses pasar_a_persona para pedir un local, fecha, nombre o identificar una promoción. Si las condiciones oficiales responden la pregunta, explícalas aunque la respuesta sea negativa. No derives solo porque el borrador necesite reformularse. Una excepción no autorizada, un resultado de gestión incierto o una petición expresa de persona sí requieren intervención.
 Cuando falten datos de una reserva (local, día, hora, personas, nombre), pregúntalos. No derives solo por faltar esos datos ni porque alguien diga que ha llamado sin éxito. Si requiere un menú o presupuesto especial, recoge lo que ya sabe y pregunta solo los datos que faltan antes de pasar la propuesta al equipo. No prometas disponibilidad, precio ni confirmación sin respaldo.
 
 ## Reservas: sus horarios son SOLO suyos
@@ -226,12 +227,12 @@ const TOOLS = [
       + "responder con lo que tienes —condiciones de una promoción, excepciones, si algo vale "
       + "otro día— y no te lo dice ni el mensaje anterior, ni el citado, ni la configuración. "
       + "Antes de usarla por el segundo motivo, mira bien el contexto: si la respuesta está ahí, "
-      + "respóndela tú.",
+      + "respóndela tú. Si falta un dato que puede aportar el cliente, pregúntaselo sin derivar. No derives saludos, despedidas ni negativas respaldadas por condiciones oficiales.",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
-        motivo: { type: "string", description: "Qué necesita, en una frase, para que el equipo lo vea sin abrir el chat" },
+        motivo: { type: "string", description: "Resumen breve: qué pide el cliente, qué has comprobado realmente y qué decisión o dato falta al equipo. No inventes acciones realizadas." },
         pidio_persona: { type: "boolean", description: "true si el cliente pidió expresamente hablar con una persona" },
       },
       required: ["motivo", "pidio_persona"],

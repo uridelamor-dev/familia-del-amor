@@ -18,3 +18,25 @@ test('lista acotada, texto sin formato inyectado y sin teléfonos ficticios',()=
  const lid=avisoAtencion([tarea(1,{jid:'123456789012345@lid',nombre:'Contacto de WhatsApp'})],1,ahora);
  assert.doesNotMatch(lid,/123456789012345/);
 });
+test('solo descarta despedidas inequívocas, nunca confirmaciones o peticiones',async()=>{
+ const {cierreCortesia}=await import('../src/modules/messaging/atencion.js');
+ for(const m of ['Gracias!','Moltes gràcies 😊','Thank you','Hasta luego'])assert.equal(cierreCortesia(m),true);
+ for(const m of ['Ok','Sí','Perfecto','Gracias, quiero cancelar','Gracias ¿a qué hora?','Gracias 2 personas',''])assert.equal(cierreCortesia(m),false,m);
+});
+test('Dirección recibe solo después de Laura y su recordatorio; en curso tiene más plazo',async()=>{
+ const {nivelAviso}=await import('../src/modules/messaging/atencion.js');
+ const hace=m=>new Date(+ahora-m*60000).toISOString();
+ const t={abierta_en:hace(180),estado:'pendiente'};
+ assert.equal(nivelAviso({...t,aviso_nivel:0},ahora),1);
+ assert.equal(nivelAviso({...t,aviso_nivel:1,aviso_en:hace(31)},ahora),2);
+ assert.equal(nivelAviso({...t,aviso_nivel:2,aviso_en:hace(20)},ahora),0);
+ assert.equal(nivelAviso({...t,aviso_nivel:2,aviso_en:hace(61)},ahora),3);
+ assert.equal(nivelAviso({...t,estado:'en_curso',actualizada_en:hace(30),aviso_nivel:2,aviso_en:hace(61)},ahora),0);
+ assert.equal(nivelAviso({...t,abierta_en:hace(300),estado:'en_curso',actualizada_en:hace(241),aviso_nivel:2,aviso_en:hace(61)},ahora),3);
+});
+test('el aviso explica el bloqueo conservado aunque el cliente diga gracias',()=>{
+ const texto=avisoAtencion([tarea(1,{motivo:'consulta',resumen:'Quiere cambiar el día del descuento; falta autorizar la excepción.',ultimo_texto:'Gracias'})],1,ahora);
+ assert.match(texto,/Motivo de revisión: Quiere cambiar/);
+ assert.match(texto,/Qué falta: Resolver la duda/);
+ assert.match(texto,/Último mensaje: «Gracias»/);
+});
