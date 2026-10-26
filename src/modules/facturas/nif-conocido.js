@@ -17,6 +17,7 @@ export function nifConocido(datos, alias = [], historial = []) {
   return todos[0];
 }
 export async function completarNifConocido(datos, dbAll) {
+  if (datos?._contraste) return; // No deshacer la identidad ya contrastada con el historial OCR.
   if (!datos?.proveedor || String(datos.nif_proveedor || '').trim() || !dbAll) return;
   try {
     const alias = await dbAll('SELECT clave,nif,proveedor FROM facturas_proveedor_alias');

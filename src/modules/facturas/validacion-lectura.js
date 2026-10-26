@@ -22,6 +22,7 @@ export function controlesLectura(d = {}) {
     }
     for(const [campo,k] of [['base_imponible','base'],['cuota_iva','cuota']]) if(numero(d[campo])!=null && Math.abs(d.iva_desglose.reduce((s,f)=>s+(numero(f[k])||0),0)-Number(d[campo]))>0.05) aviso(campo,'La suma del desglose fiscal no coincide con el resumen.');
   }
+  if (numero(d.porcentaje_iva) === 0 && numero(d.cuota_iva) != null && Math.abs(numero(d.cuota_iva)) > 0.05) aviso('porcentaje_iva','El tipo figura como 0 % pero hay una cuota de IVA. Comprueba el resumen fiscal.');
   if (d._lecturaIncompleta) aviso('lineas','La respuesta se cortó: puede faltar parte del documento.');
   if (d.calidad_imagen === 'ilegible' || d.calidad_imagen === 'recortada') aviso('imagen','Hay partes ilegibles o recortadas. Comprueba el original antes de pedir otra foto.');
   for (const campo of (Array.isArray(d.campos_dudosos) ? d.campos_dudosos : [])) aviso(String(campo).slice(0,60),'La lectura señala dudas en este campo.');
@@ -37,6 +38,9 @@ export function compararLecturas(a,b) {
     const iguales=numerico ? (numero(x)===null && numero(y)===null) || (numero(x)!==null && numero(y)!==null && Math.abs(numero(x)-numero(y))<=0.02) : normal(x)===normal(y);
     if(!iguales) diferentes.push({campo,texto:`Las dos lecturas no coinciden en ${campo.replaceAll('_',' ')}.`});
   }
+  const desglose = d => (Array.isArray(d.iva_desglose) ? d.iva_desglose : [])
+    .map(f=>[numero(f.base),numero(f.tipo),numero(f.cuota)]).sort((x,y)=>JSON.stringify(x).localeCompare(JSON.stringify(y)));
+  if(JSON.stringify(desglose(a))!==JSON.stringify(desglose(b))) diferentes.push({campo:'iva_desglose',texto:'Las lecturas no coinciden en el desglose de IVA.'});
   return diferentes;
 }
 export class RevisionDocumento extends Error {
