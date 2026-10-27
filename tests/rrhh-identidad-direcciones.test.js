@@ -37,11 +37,11 @@ test('direcciones: separa código postal, población y país sin asumir orden',(
 function respuesta(){return {statusCode:200,set(){},status(v){this.statusCode=v;return this;},json(v){this.body=v;return this;}};}
 test('direcciones: consulta segura, timeout, mínimos y fallo de proveedor explícito',async()=>{
  let handler,called=0;const app={get:(p,auth,h)=>handler=h};
- registrarDirecciones(app,{auth:()=>{},key:'clave-ficticia',fetcher:async url=>{called++;assert.match(url,/maps.googleapis.com/);return {ok:true,json:async()=>({status:'OK',predictions:[{place_id:'abc',description:'Calle de prueba'}]})};}});
+ registrarDirecciones(app,{auth:()=>{},key:'clave-ficticia',fetcher:async url=>{called++;assert.match(url,/places.googleapis.com/);return {ok:true,json:async()=>({suggestions:[{placePrediction:{placeId:'abc',text:{text:'Calle de prueba'}}}]})};}});
  let res=respuesta();await handler({query:{q:'ab'}},res);assert.equal(called,0);
  res=respuesta();await handler({query:{q:'calle'}},res);assert.deepEqual(res.body.data,[{id:'abc',texto:'Calle de prueba'}]);
  registrarDirecciones(app,{auth:()=>{},key:'',fetcher:()=>{throw Error('No debe llamar');}});res=respuesta();await handler({query:{q:'calle'}},res);assert.equal(res.statusCode,503);
- registrarDirecciones(app,{auth:()=>{},key:'x',fetcher:async()=>({ok:true,json:async()=>({status:'REQUEST_DENIED'})})});res=respuesta();await handler({query:{q:'calle'}},res);assert.equal(res.statusCode,503);
+ registrarDirecciones(app,{auth:()=>{},key:'x',fetcher:async()=>({ok:false,status:403,json:async()=>({error:{status:'PERMISSION_DENIED'}})})});res=respuesta();await handler({query:{q:'calle'}},res);assert.equal(res.statusCode,503);
 });
 test('lectura: rechaza adjuntos ajenos antes de llamar al proveedor',async()=>{
  const routes=new Map();let leido=false;registrarIdentidad({post:(p,...h)=>routes.set(p,h.at(-1))},{auth:()=>{},pool:{query:async()=>({rows:[]})},subir:{single:()=>()=>{}},leer:async()=>{leido=true;}});

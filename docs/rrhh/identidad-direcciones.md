@@ -11,7 +11,7 @@ La dirección usa las sugerencias y detalles de Google Places. Al seleccionar un
 ## Configuración del servidor
 
 - `ANTHROPIC_API_KEY`: servicio de lectura ya utilizado por otras funciones de la app. Modelo `claude-haiku-4-5-20251001`, Messages API, imágenes y PDF en base64, sin herramientas. Una lectura por minuto y responsable.
-- `GOOGLE_PLACES_API_KEY`: clave existente del servidor, con Places API y acceso a Autocomplete y Details habilitados. No se expone al navegador. Las sugerencias muestran la atribución de Google.
+- `GOOGLE_PLACES_API_KEY`: clave existente del servidor, con **Places API (New)** habilitada y permitida en las restricciones de la clave. La conexión sale del servidor: no usar una clave restringida a referentes HTTP del navegador. El proyecto necesita facturación activa y cuota disponible. No se expone al navegador. Las sugerencias muestran la atribución de Google.
 - La migración de `initDB` crea `rrhh_identidad_adjuntos` y añade los componentes de dirección. No se necesita una migración manual ni nuevas dependencias.
 
 Si falta una clave o el proveedor falla, el formulario muestra el problema y permite completar los datos manualmente. La subida del DNI no depende de que la lectura automática funcione.
@@ -22,4 +22,12 @@ Si falta una clave o el proveedor falla, el formulario muestra el problema y per
 
 La batería general conserva fallos existentes en `b07baa4`; la comparación no detectó nuevos fallos. Las claves y PostgreSQL de producción no están disponibles en el equipo local: queda verificar la conexión real de los proveedores tras publicar, con un documento de prueba y una dirección pública.
 
-Referencias de integración: [Claude Vision](https://platform.claude.com/docs/en/build-with-claude/vision), [PDF](https://platform.claude.com/docs/en/build-with-claude/pdf-support), [Google Places Autocomplete](https://developers.google.com/maps/documentation/places/web-service/legacy/autocomplete).
+Referencias de integración: [Claude Vision](https://platform.claude.com/docs/en/build-with-claude/vision), [PDF](https://platform.claude.com/docs/en/build-with-claude/pdf-support), [Google Places Autocomplete](https://developers.google.com/maps/documentation/places/web-service/place-autocomplete).
+
+## Corrección de conexión de direcciones
+
+La verificación publicada detectó que la subida y lectura del documento ficticio funcionaban, pero las direcciones devolvían un error genérico. Se sustituye la llamada Legacy por Autocomplete (New), mediante POST, y Place Details (New), mediante GET y máscara limitada a dirección y componentes. El contrato del formulario se conserva. Las claves quedan únicamente en las cabeceras del servidor.
+
+El formulario distingue ahora servicio desactivado, clave inválida, restricciones de API, IP o referente, facturación, cuota y timeout. Solo muestra mensajes locales a partir de códigos conocidos; nunca devuelve el mensaje bruto de Google ni la dirección consultada en registros. No se ha confirmado todavía cuál de esas causas produjo el error en producción.
+
+Para verificar después de publicar: buscar una dirección pública, elegir la sugerencia y comprobar dirección, código postal, población y país. Si aparece un código de configuración, revisar en Google Cloud el proyecto de la clave guardada en Replit, sin pegar ni compartir su valor. El error SERVICE_DISABLED requiere habilitar Places API (New); API_KEY_SERVICE_BLOCKED requiere permitir esa API en la clave. Los cambios de código no activan servicios ni facturación en Google Cloud.
