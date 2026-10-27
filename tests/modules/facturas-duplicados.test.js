@@ -157,13 +157,13 @@ describe("cableado: lo dudoso no puede colarse en ningún total", () => {
     assert.match(facturas.slice(i, i + 1800), /catch \(e\) \{[\s\S]{0,200}return null;/);
   });
 
-  test("confirmar un duplicado queda en la auditoría antes de borrar nada", () => {
+  test("resolver duplicados conserva el original y registra la decisión en una transacción", () => {
     const i = server.indexOf('app.post("/api/facturas/duplicados/:id/resolver"');
-    const bloque = server.slice(i, i + 2200);
-    const posAudit = bloque.indexOf("duplicado_confirmado");
-    const posDelete = bloque.indexOf("DELETE FROM facturas WHERE id");
-    assert.ok(posAudit > 0 && posAudit < posDelete, "se apunta primero, se borra después");
-    assert.match(bloque, /drive_url/, "y se guarda dónde está el archivo por si hay que mirarlo");
+    const bloque = server.slice(i, i + 1200);
+    assert.match(bloque, /resolverDuplicado/);
+    assert.match(bloque, /BEGIN/); assert.match(bloque, /COMMIT/);assert.match(bloque,/ROLLBACK/);
+    const modulo=readFileSync(new URL("../../src/modules/facturas/duplicados-decision.js",import.meta.url),"utf8");
+    assert.doesNotMatch(modulo,/DELETE FROM/);assert.match(modulo,/INSERT INTO config/);assert.match(modulo,/antes:filas/);
   });
 
   test("descartar la sospecha reproyecta su mes al Sheet: vuelve a contar", () => {

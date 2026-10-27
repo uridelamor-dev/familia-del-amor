@@ -210,14 +210,14 @@ describe("server.js — el repaso está cableado y no borra nada", () => {
 describe("el panel — el botón está donde se busca y no dispara nada solo", () => {
   const app = readFileSync(new URL("../../public/panel/app.js", import.meta.url), "utf8");
 
-  test("el botón vive en Compras → Configuración y llama al repaso", () => {
-    assert.match(app, /data-act="fac-repaso"/);
-    assert.match(app, /act === "fac-repaso"\) facRepaso\(\)/);
+  test("el botón de Compras abre la revisión del histórico", () => {
+    assert.match(app, /data-act="fac-repaso-unico"/);
+    assert.match(app, /act === "fac-repaso-unico"\) facRepasoUnico\(false\)/);
   });
 
   test("abrirlo solo MIRA: la primera petición no escribe", () => {
     const fn = /async function facRepaso\(\)[\s\S]*?\n}/.exec(app)[0];
-    assert.match(fn, /apiRaw\("\/api\/facturas\/repaso"\)/);
+    assert.match(fn, /apiRaw\("\/api\/facturas\/repaso\?"\+facRevisionQS\(\)\)/);
     assert.doesNotMatch(fn, /apiSend\("POST"/, "aplicar es otro botón, y tiene que serlo");
   });
 

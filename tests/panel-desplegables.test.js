@@ -142,8 +142,7 @@ describe("las listas de personas respetan el establecimiento", () => {
     assert.match(panel, /const suyos = \[u\.local, \.\.\.\(Array\.isArray\(u\.locales\) \? u\.locales : \[\]\)\]\.filter\(Boolean\);/);
   });
 
-  test("y se dice a cuánta gente se está mirando de cuánta", () => {
-    // Una lista de seis cuando el grupo tiene sesenta se lee como que falta gente.
-    assert.match(panel, /\$\{num\(\(RRSEG\.workers \|\| \[\]\)\.length\)\} de \$\{num\(RRSEG\.todos \|\| 0\)\}/);
+  test("Equipo mantiene una cabecera compacta sin el subtítulo eliminado", () => {
+    assert.doesNotMatch(panel, /El equipo, uno a uno · seguimiento de/);
   });
 });

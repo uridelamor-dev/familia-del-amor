@@ -1,3 +1,4 @@
+import {conEsquema,disponible,motivoSalto} from '../helpers/pgtmp.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {prepararUnion, ejecutarUnion} from '../../src/modules/facturas/unir-proveedores.js';
@@ -6,11 +7,11 @@ import {FICHA_COMERCIAL_SCHEMA} from '../../src/modules/facturas/ficha-comercial
 import {DRIVE_SYNC_SCHEMA} from '../../src/modules/facturas/drive-sync.js';
 
 test('Unión real SQL: revisión, conflictos, conservación, alias y cola de sincronización',async t=>{
- if(!process.env.TEST_PGLITE_MODULE){t.skip('Requiere PostgreSQL embebido');return;}
- const {PGlite}=await import(process.env.TEST_PGLITE_MODULE);const pg=new PGlite();
- const q=(s,p=[])=>pg.query(s,p);
+ if(!await disponible()){t.skip(motivoSalto());return;}
+ const db=await conEsquema();
+ const q=(sql,p=[])=>{const ordered=[];sql=sql.replace(/\$(\d+)/g,(_,n)=>{ordered.push(p[Number(n)-1]);return '?';});return db.raw(sql,ordered);};
  try{
- await pg.exec(`CREATE TABLE facturas(id SERIAL PRIMARY KEY,proveedor TEXT,nif TEXT,total NUMERIC,sheet_synced INT DEFAULT 1,local TEXT,empresa TEXT,fecha TEXT,numero_factura TEXT,drive_url TEXT);
+ await q(`CREATE TABLE facturas(id SERIAL PRIMARY KEY,proveedor TEXT,nif TEXT,total NUMERIC,sheet_synced INT DEFAULT 1,local TEXT,empresa TEXT,fecha TEXT,numero_factura TEXT,drive_url TEXT);
  CREATE TABLE facturas_pendientes(id SERIAL PRIMARY KEY,proveedor TEXT,nif TEXT,total NUMERIC);
  CREATE TABLE config(key TEXT PRIMARY KEY,value TEXT);
  CREATE TABLE facturas_proveedor_cats(prov_clave TEXT,proveedor TEXT,categoria TEXT,subcategoria TEXT,creado_en TEXT,PRIMARY KEY(prov_clave,categoria,subcategoria));
@@ -60,5 +61,5 @@ test('Unión real SQL: revisión, conflictos, conservación, alias y cola de sin
  assert.equal((await q('SELECT nif FROM facturas_proveedor_alias WHERE clave=$1',[a])).rows[0].nif,null);
 
  await assert.rejects(()=>prepararUnion(q,origen,destino),/ya no existe/);
- }finally{await pg.close();}
+ }finally{await db.fin();}
 });

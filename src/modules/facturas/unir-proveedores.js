@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { claveProveedor } from './categorias.js';
 
-const TABLES = ['facturas', 'facturas_pendientes', 'facturas_proveedor_fichas', 'facturas_proveedor_cats', 'facturas_pago_reglas', 'facturas_proveedor_pago', 'facturas_proveedor_alias', 'inv_proveedores'];
-const fingerprint = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
+export const TABLES = ['facturas', 'facturas_pendientes', 'facturas_proveedor_fichas', 'facturas_proveedor_cats', 'facturas_pago_reglas', 'facturas_proveedor_pago', 'facturas_proveedor_alias', 'inv_proveedores'];
+export const fingerprint = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const nif = x => String(x || '').replace(/[\s.\-/]/g, '').toUpperCase();
 export async function proveedoresUnibles(q) {
   return (await q("SELECT DISTINCT proveedor FROM facturas WHERE proveedor IS NOT NULL AND proveedor<>'' ORDER BY proveedor")).rows.map(x => x.proveedor);
@@ -62,6 +62,10 @@ export async function ejecutarUnion(q, body, autor) {
   const p = await prepararUnion(q,body.origen,body.destino,body.elecciones);
   if (p.revision !== body.revision) throw new Error('Los datos han cambiado. Revisa de nuevo la unión antes de confirmar.');
   if (p.faltan.length) throw new Error('Resuelve todas las diferencias antes de unir.');
+  return aplicarUnion(q,p,autor);
+}
+export async function aplicarUnion(q,p,autor) {
+  const origenes=p.origenClaves||[p.a], todas=[...origenes,p.b];
   const stamp = new Date().toISOString();
   await q("INSERT INTO config(key,value) VALUES ($1,$2)", ['proveedores_union_'+Date.now()+'_'+p.revision.slice(0,12),JSON.stringify({autor,fecha:stamp,...p})]);
   const nombres = [...new Set([...p.snapshot.facturas,...p.snapshot.facturas_pendientes].map(r=>r.proveedor))];
@@ -69,18 +73,18 @@ export async function ejecutarUnion(q, body, autor) {
   await q('UPDATE facturas_pendientes SET proveedor=$1 WHERE proveedor=ANY($2)',[p.destino,nombres]);
   await q('UPDATE inv_proveedores SET factura_proveedor=$1 WHERE factura_proveedor=ANY($2)',[p.destino,[...nombres,...p.snapshot.inv_proveedores.map(r=>r.factura_proveedor)]]);
   await q(`INSERT INTO facturas_proveedor_fichas(clave,datos) VALUES ($1,$2::jsonb) ON CONFLICT(clave) DO UPDATE SET datos=excluded.datos,version=facturas_proveedor_fichas.version+1,actualizado=NOW()`,[p.b,JSON.stringify(p.datos)]);
-  await q('DELETE FROM facturas_proveedor_fichas WHERE clave=$1',[p.a]);
-  await q('DELETE FROM facturas_proveedor_cats WHERE prov_clave=ANY($1)',[[p.a,p.b]]);
+  await q('DELETE FROM facturas_proveedor_fichas WHERE clave=ANY($1)',[origenes]);
+  await q('DELETE FROM facturas_proveedor_cats WHERE prov_clave=ANY($1)',[todas]);
   for(const c of p.categorias) await q('INSERT INTO facturas_proveedor_cats(prov_clave,proveedor,categoria,subcategoria,creado_en) VALUES ($1,$2,$3,$4,$5)',[p.b,p.destino,c.categoria,c.subcategoria,stamp]);
-  await q('DELETE FROM facturas_pago_reglas WHERE prov_clave=ANY($1)',[[p.a,p.b]]);
+  await q('DELETE FROM facturas_pago_reglas WHERE prov_clave=ANY($1)',[todas]);
   for(const r of p.reglas) await q('INSERT INTO facturas_pago_reglas(prov_clave,proveedor,empresa,modo,dias,dia_pago,meses_despues,domiciliado,actualizado_por,actualizado_en) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.b,p.destino,r.empresa,r.modo,r.dias,r.dia_pago,r.meses_despues,r.domiciliado,autor,stamp]);
   // La tabla antigua se mantiene por compatibilidad con instalaciones anteriores.
-  await q('DELETE FROM facturas_proveedor_pago WHERE prov_clave=ANY($1)',[[p.a,p.b]]);
+  await q('DELETE FROM facturas_proveedor_pago WHERE prov_clave=ANY($1)',[todas]);
   if(p.pago) await q('INSERT INTO facturas_proveedor_pago(prov_clave,proveedor,dias,dia_pago,modo,meses_despues,domiciliado,actualizado_por,actualizado_en) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',[p.b,p.destino,p.pago.dias,p.pago.dia_pago,p.pago.modo,p.pago.meses_despues,p.pago.domiciliado,autor,stamp]);
   for(const r of p.snapshot.facturas_proveedor_alias) await q('UPDATE facturas_proveedor_alias SET proveedor=$1 WHERE clave=$2',[p.destino,r.clave]);
   // Con NIF contradictorios se aprende por nombre, sin extender la unión a otras empresas.
   const anchor = p.nifs.length === 1 ? p.nifs[0] : null;
-  for(const key of new Set([p.a,p.b,...nombres.map(claveProveedor)])) await q(`INSERT INTO facturas_proveedor_alias(clave,nif,proveedor,autor,creado_en) VALUES ($1,$2,$3,$4,$5) ON CONFLICT(clave) DO UPDATE SET proveedor=excluded.proveedor,nif=excluded.nif,autor=excluded.autor`,[key,anchor,p.destino,autor,stamp]);
+  for(const key of new Set([...todas,...nombres.map(claveProveedor)])) await q(`INSERT INTO facturas_proveedor_alias(clave,nif,proveedor,autor,creado_en) VALUES ($1,$2,$3,$4,$5) ON CONFLICT(clave) DO UPDATE SET proveedor=excluded.proveedor,nif=excluded.nif,autor=excluded.autor`,[key,anchor,p.destino,autor,stamp]);
   await q("INSERT INTO config(key,value) VALUES ('facturas_anuales_reintentar',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[stamp]);
   return resumenUnion(p);
 }

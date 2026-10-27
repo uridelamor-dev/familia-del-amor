@@ -1820,8 +1820,8 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 
 /* Campos que necesitan revisión, sin bloquear la edición del formulario. */
 .fac-revision-summary{font-size:13px;line-height:1.5;margin:0 0 16px;color:var(--mut)}
-.fac-revision-field>label{color:var(--danger)}
-.fac-revision-field input,.fac-revision-field select{border-color:color-mix(in srgb,var(--danger) 65%,var(--border,#ddd));box-shadow:none}
+.fac-revision-field>label{color:var(--ink3)}
+.fac-revision-field input,.fac-revision-field select{border-color:color-mix(in srgb,var(--danger) 25%,var(--border,#ddd));background:color-mix(in srgb,var(--danger) 7%,var(--surface));box-shadow:none}
 .fac-revision-note{font-size:12px;line-height:1.45;margin:7px 0 0;color:var(--danger)}
 
 /* El desglose fiscal se adapta al ancho disponible de la ficha. */
@@ -1984,3 +1984,76 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 .rr-worker-modal .rr-dni-caras input::file-selector-button{max-width:100%;white-space:normal;border:1px solid var(--line,#ddd);border-radius:8px;background:var(--card,#fff);padding:6px;font:inherit;color:inherit}
 @media(max-width:540px){.rr-admin-grid{grid-template-columns:minmax(0,1fr)}}
 .rr-identidad [hidden]{display:none!important}
+
+/* RR. HH.: cabecera compacta y calendario de cumpleaños. */
+.rr-ph-compact{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 18px;margin-bottom:16px}
+.rr-ph-compact h1{font-size:24px;margin:0;line-height:1.25}
+.rr-ph-compact .sub{margin:0;font-size:13px}
+.rr-equipo-toolbar{margin-bottom:16px;gap:8px}
+.rr-cumple-modal{width:min(940px,calc(100vw - 32px));max-width:940px}
+.rr-cumple-controls{display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.rr-cumple-controls .toolbar{margin:0;gap:6px;align-items:center}
+.rr-cumple-controls strong{text-transform:capitalize;min-width:120px;text-align:center}
+.rr-cumple-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+.rr-cumple-weekday{text-align:center;font-size:12px;color:var(--mut);padding:8px}
+.rr-cumple-day{min-height:84px;border:1px solid var(--border);border-radius:10px;padding:7px;min-width:0;background:var(--card)}
+.rr-cumple-day>b{font-size:12px;color:var(--mut)}
+.rr-cumple-day.is-today{border-color:var(--brand);box-shadow:inset 0 0 0 1px var(--brand)}
+.rr-cumple-persona{display:block;font-size:12px;line-height:1.35;padding:4px;margin-top:4px;border-radius:5px;background:rgba(42,75,63,.08);overflow-wrap:anywhere}
+.rr-cumple-year{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.rr-cumple-month{border:1px solid var(--border);border-radius:12px;padding:12px;min-width:0}
+.rr-cumple-month>button{text-transform:capitalize}
+.rr-cumple-month p{font-size:12px;margin-bottom:0}
+.rr-cumple-entry{display:flex;align-items:baseline;gap:8px;margin-top:6px}
+.rr-cumple-entry>b{font-size:12px;min-width:16px}
+@media(max-width:600px){
+ .rr-ph-compact{gap:6px;margin-bottom:12px}.rr-ph-compact h1{font-size:22px}
+ .rr-cumple-modal{width:calc(100vw - 16px)}.rr-cumple-modal .modal-b{padding:12px}
+ .rr-cumple-grid{gap:2px}.rr-cumple-day{padding:3px;min-height:72px;border-radius:6px}
+ .rr-cumple-persona{font-size:10px;padding:2px}.rr-cumple-year{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .rr-cumple-controls{gap:8px}.rr-cumple-controls strong{min-width:108px}
+}
+.drawer.estab-popover{right:auto;height:auto;transform:none;border:1px solid var(--border2);border-radius:16px;box-shadow:0 16px 44px rgba(20,35,28,.18);overflow:hidden;transition:opacity .12s;opacity:0;pointer-events:none}
+.drawer.estab-popover.open{opacity:1;pointer-events:auto}
+.drawer.estab-popover .dh{padding:12px 16px}.drawer.estab-popover .db{padding:4px 8px;overscroll-behavior:contain}
+.drawer.estab-popover .row{padding:10px 8px;gap:8px;border-radius:9px}.drawer.estab-popover .row:hover{background:var(--bg)}
+.drawer.estab-popover .row:has(.pill.brand){background:rgba(42,75,63,.07)}
+.ovl.estab-backdrop{background:transparent;backdrop-filter:none}
+@media(max-width:480px){.drawer.estab-popover .row{gap:5px}.drawer.estab-popover .t1{font-size:13px}.drawer.estab-popover .pill{font-size:10px;padding:3px 5px}}
+
+/* Documentos de la ficha, agrupados por su tipo sin mover los originales. */
+.rr-doc-zone{min-width:0}
+.rr-doc-zone>.ch{flex-wrap:wrap;gap:10px}
+.rr-doc-folders{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:12px;margin-top:18px}
+.rr-doc-folder{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:146px;padding:24px 12px 16px;border:1px solid var(--line,#ded9cb);border-radius:12px;background:var(--card,#faf9f5);color:var(--brand,#294b40);cursor:pointer;font:inherit;transition:background .15s,border-color .15s,transform .15s}
+.rr-doc-folder:hover{background:#eef2ed;border-color:var(--brand,#294b40);transform:translateY(-2px)}
+.rr-doc-folder:focus-visible{outline:3px solid var(--brand,#294b40);outline-offset:3px}
+.rr-doc-folder svg,.rr-doc-empty svg{width:52px;height:44px;flex-shrink:0}
+.rr-doc-folder strong{font-size:13px;font-weight:600;text-align:center;overflow-wrap:anywhere}
+.rr-doc-folder-count{position:absolute;top:9px;left:10px;min-width:23px;height:23px;border-radius:50%;background:#e8eee8;display:grid;place-items:center;font-size:11px;font-weight:600}
+.rr-doc-breadcrumb{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:12px 0 16px;border-bottom:1px solid var(--line,#ded9cb)}
+.rr-doc-empty{text-align:center;padding:30px 12px;color:var(--brand,#294b40)}
+.rr-doc-empty p{color:var(--mut,#7f8676);font-size:14px}
+.rr-doc-zone .row{flex-wrap:wrap;gap:8px}
+.rr-doc-zone .grow{min-width:120px;overflow-wrap:anywhere}
+.rr-doc-zone .linkbtn{text-align:left;overflow-wrap:anywhere}
+@media(max-width:600px){.rr-doc-folders{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.rr-doc-folder{min-height:126px}.rr-doc-zone .ch h3{margin:0}.rr-doc-zone .row>.grow{flex-basis:100%}}
+.rr-doc-folder strong{min-height:36px;display:flex;align-items:center;justify-content:center}
+
+/* Accounting: quiet field cues and explicit supplier choices. */
+.cont-field-missing{background:color-mix(in srgb,var(--danger) 7%,var(--surface))!important;border-color:color-mix(in srgb,var(--danger) 25%,var(--border))!important;color:var(--ink)!important}
+.prov-union-field{border:1px solid var(--border);border-radius:12px;margin:14px 0;padding:12px;min-width:0}
+.prov-union-field legend{font-weight:600;padding:0 6px}
+.prov-union-option{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:8px;cursor:pointer}
+.prov-union-option:hover{background:var(--surface2)}
+.prov-union-option input{width:auto;flex:none;margin-top:4px}
+.prov-union-option span{overflow-wrap:anywhere;min-width:0}
+.prov-union-option small{display:block;color:var(--ink3);margin-top:4px}
+.supplier-picker{max-height:45vh;overflow:auto;margin-top:12px}
+.supplier-picker .btn{justify-content:flex-start;white-space:normal;text-align:left}
+.cont-review-notice{margin:8px 0 12px}
+.cont-review-notice>summary{cursor:pointer}
+.prov-selection{padding:8px 0;gap:8px;flex-wrap:wrap}
+
+.ficha .fic-datos{display:block;min-width:0}
+.modal .prov-union-option{display:flex;align-items:flex-start;gap:10px}

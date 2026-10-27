@@ -9,7 +9,7 @@ export function cabeceraHistorica(f){
 }
 // La misma transacción guarda el cambio y su prueba. Si falla la auditoría no se cambia la factura.
 export function crearDecisionesHistorico({transaccion,prepararFecha=async()=>null}){
- return async function decidir({origen,id,body,autor}){
+ return async function decidir({origen,id,body,autor,puedeAcceder=()=>true}){
   if(!tablas[origen]||!/^\d+$/.test(String(id)))throw fallo('Documento no válido');
   if(body.confirmado!==true||!['conservar','corregir'].includes(body.decision))throw fallo('Confirma la decisión después de consultar el original');
   const motivo=String(body.motivo||'').trim();
@@ -20,6 +20,7 @@ export function crearDecisionesHistorico({transaccion,prepararFecha=async()=>nul
    if(item.revision_humana)throw fallo('Este documento ya se revisó. Actualiza la lista.',409);
    const antes=await db.get(`SELECT * FROM ${tablas[origen]} WHERE id=? FOR UPDATE`,[id]);
    if(!antes||antes.descartado_en)throw fallo('El documento ya no está disponible en esta bandeja',409);
+   if(!puedeAcceder(antes))throw fallo('Sin acceso a este documento',403);
    if(origen==='recepcion' && body.decision==='corregir')throw fallo('Corrige y registra esta recepción desde Documentos recibidos');
    const actual=origen==='recepcion'?antes.resultado?.datos||{}:cabeceraHistorica(antes);
    if(JSON.stringify(actual)!==JSON.stringify(body.esperado))throw fallo('El documento cambió mientras lo revisabas. Ábrelo de nuevo antes de guardar.',409);

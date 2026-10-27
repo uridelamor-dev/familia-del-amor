@@ -73,8 +73,8 @@ describe("colocar la raíz en Mi unidad no toca los archivos", () => {
     assert.match(bloque, /yaEstaba/);
   });
 
-  test("solo dirección puede hacerlo", () => {
-    assert.match(bloque, /requireAuth\(\["direccion"\]\)/);
+  test("dirección y contabilidad pueden hacerlo", () => {
+    assert.match(bloque, /requireAuth\(\["direccion", "contabilidad"\]\)/);
   });
 
   test("el botón está en el panel, donde se ve el problema", () => {

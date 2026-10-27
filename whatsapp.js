@@ -1328,7 +1328,7 @@ async function connectToWhatsApp() {
             msg.message?.extendedTextMessage?.text || "";
           const t = textoManual.trim();
           const deduKey = `${jidDest}:${t.slice(0, 100)}`;
-          if (t && !_mensajesSistema.has(deduKey)) {
+          if (t && !_mensajesSistema.has(deduKey) && !(t.includes('*¡Bienvenido/a a Familia del Amor!*') && t.includes('*Contraseña inicial:*') && t.includes('*PIN para fichar en el sistema de tu local:*'))) {
             // Mensaje escrito a mano por el operador — añadir al contexto de Sara
             if (!conversaciones.has(jidDest)) conversaciones.set(jidDest, []);
             const h = conversaciones.get(jidDest);
@@ -1512,7 +1512,7 @@ export async function sendMensajeLibre(telefono, texto, meta = {}) {
   if (onMensajeSaliente) {
     try {
       onMensajeSaliente({
-        jid, mensaje: texto, esManual: false,
+        jid, mensaje: meta.tipoMensaje === 'rrhh_acceso_inicial' ? '[Acceso inicial al panel y PIN para fichar enviados. Credenciales ocultas.]' : texto, esManual: false,
         origen: meta.origen || CTX_ORIGEN.SISTEMA,
         claveCampana: meta.claveCampana || null,
         tipoMensaje: meta.tipoMensaje || null,

@@ -27,7 +27,7 @@ export const CATALOGO_MODULOS = [
   //   · Contratación candidaturas y vacantes: currículums de gente de fuera.
   //   · Pulso       lo que el equipo contesta sobre cómo está. Se lee agregado, y aun así.
   //   · Preguntas   qué se les pregunta cada mes.
-  { id: "contratacion", label: "Contratación", roles: ["direccion", "rrhh"], porLocal: true, dentroDe: "rrhh" },
+  { id: "contratacion", label: "Contratación", roles: ["direccion", "rrhh"], porLocal: true, dentroDe: "rrhh", enMenu: true },
   { id: "pulso", label: "Pulso del equipo", roles: ["direccion", "rrhh"], porLocal: true, dentroDe: "rrhh" },
   { id: "preguntas", label: "Preguntas del mes", roles: ["direccion", "rrhh"], porLocal: false, dentroDe: "rrhh" },
   // Horarios y fichajes van SEPARADOS a propósito: contabilidad necesita los fichajes para
@@ -51,7 +51,7 @@ export const CATALOGO_MODULOS = [
   // el mismo botón y el mismo endpoint. Tenerlo además como módulo suelto les repetía en el
   // menú una entrada que no usaban y hacía pensar que era otro sitio con otra bandeja.
   { id: "subirfactura", label: "Subir factura", roles: ["encargado"], porLocal: true },
-  { id: "inventarios", label: "Inventarios", roles: ["direccion", "encargado"], porLocal: true },
+  { id: "inventarios", label: "Inventarios", roles: ["direccion", "encargado", "contabilidad"], porLocal: true },
   { id: "web", label: "Web", roles: ["direccion", "marketing"], porLocal: false },
   { id: "reviews", label: "Reseñas", roles: ["direccion", "encargado", "contabilidad", "marketing"], porLocal: true },
   { id: "campanas", label: "Campañas", roles: ["direccion", "marketing"], porLocal: false },

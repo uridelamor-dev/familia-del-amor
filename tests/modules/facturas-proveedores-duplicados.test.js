@@ -127,15 +127,15 @@ describe("cableado", () => {
     assert.match(fn, /COALESCE\(f\.dup_estado,''\) <> 'duda'/, "las apartadas por dudosas no cuentan");
   });
 
-  test("unir REUTILIZA el renombrado que ya existe, no una vía nueva", () => {
+  test("unir usa la misma revisión múltiple que la selección manual", () => {
     // Ese endpoint ya reescribe todas las facturas y aprende el alias para las próximas.
     // Hacer otra cosa sería tener dos maneras de renombrar y que una se quedara atrás.
     const fn = panel.slice(panel.indexOf("async function facProvUnir"), panel.indexOf("async function facProvUnir") + 900);
-    assert.match(fn, /apiSend\("PUT", "\/api\/facturas\/proveedor"/);
+    assert.match(fn, /proveedoresUnirSeleccion/);
   });
 
   test("y se dice cuántas facturas se mueven ANTES de moverlas", () => {
-    assert.match(panel, /factura\(s\) pasan a ese nombre/);
+    assert.match(panel, /Se reunirán \$\{num\(plan.facturas\)\} facturas/);
   });
 
   test("se puede elegir con qué nombre quedarse, no solo aceptar el propuesto", () => {

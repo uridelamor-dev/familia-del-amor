@@ -172,17 +172,17 @@ describe("espejo con el panel (public/panel/app.js)", () => {
   })();
 
   test("cada módulo-PANTALLA tiene su entrada de menú y su vista", () => {
-    for (const m of CATALOGO_MODULOS.filter((x) => !x.dentroDe)) {
+    for (const m of CATALOGO_MODULOS.filter((x) => !x.dentroDe || x.enMenu)) {
       assert.ok(new RegExp(`\\["${m.id}",`).test(NAV_TXT), `"${m.id}" no está en el menú (NAV)`);
       assert.ok(new RegExp(`\\b${m.id}\\s*:\\s*load`).test(panel), `"${m.id}" no está enrutado (VIEWS)`);
     }
   });
 
   test("y los que son PESTAÑA de otro no salen en el menú, que es lo que los distingue", () => {
-    // `contratacion`, `pulso` y `preguntas` viven dentro de Equipo: son casillas de permiso,
+    // `pulso` y `preguntas` viven dentro de Equipo: son casillas de permiso,
     // no entradas de menú. Si alguno apareciera en NAV, saldría una entrada suelta que al
     // pulsarla no llevaría a ninguna parte.
-    const hijos = CATALOGO_MODULOS.filter((x) => x.dentroDe);
+    const hijos = CATALOGO_MODULOS.filter((x) => x.dentroDe && !x.enMenu);
     assert.ok(hijos.length, "el desglose de Equipo tiene que existir");
     for (const m of hijos) {
       assert.ok(!new RegExp(`\\["${m.id}",`).test(NAV_TXT), `"${m.id}" no debería estar en el menú`);

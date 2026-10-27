@@ -1,11 +1,13 @@
 import { randomBytes, createHash } from 'node:crypto';
+import { ACCESO_SCHEMA } from './acceso-bienvenida.js';
 export const CONFIRMACION_SCHEMA = `CREATE TABLE IF NOT EXISTS rrhh_confirmaciones (
  id SERIAL PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, datos JSONB NOT NULL,
  autor_id INTEGER NOT NULL, estado TEXT NOT NULL DEFAULT 'pendiente',
  creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(), vence_en TIMESTAMPTZ NOT NULL DEFAULT NOW()+INTERVAL '7 days',
  respuesta TEXT, worker_id INTEGER, confirmado_en TIMESTAMPTZ, envio TEXT NOT NULL DEFAULT 'pendiente'
 );
-CREATE UNIQUE INDEX IF NOT EXISTS rrhh_confirmacion_usuario_pendiente ON rrhh_confirmaciones ((datos->>'username')) WHERE estado IN ('pendiente','corregir');`;
+CREATE UNIQUE INDEX IF NOT EXISTS rrhh_confirmacion_usuario_pendiente ON rrhh_confirmaciones ((datos->>'username')) WHERE estado IN ('pendiente','corregir');
+${ACCESO_SCHEMA}`;
 export const hashToken = token => createHash('sha256').update(token).digest('hex');
 export function resumenConfirmacion(d) {
  const campos={nombre:'Nombre completo',fecha_nac:'Nacimiento',telefono:'Teléfono',email:'Correo',local:'Local',puesto:'Categoría',fecha_alta:'Incorporación',tipo_jornada:'Jornada',tipo_contrato:'Contrato',horas_semana:'Horas semanales',direccion:'Dirección',codigo_postal:'Código postal',poblacion:'Población',pais:'País',talla_camiseta:'Camiseta',talla_sudadera:'Sudadera',username:'Usuario'};
@@ -13,7 +15,7 @@ export function resumenConfirmacion(d) {
  for(const [k,label] of [['dni','DNI/NIE'],['iban','IBAN']]) r.push([label,d[k] ? '•••• '+String(d[k]).slice(-4) : 'Pendiente']);
  return r;
 }
-export function registrarConfirmaciones(app,{auth,pool,validar,crear,enviar,listo,invalidar}) {
+export function registrarConfirmaciones(app,{auth,pool,validar,crear,enviar,listo,invalidar,procesarAccesos=async()=>{}}) {
  const seguro=fn=>async(req,res)=>{res.set('Cache-Control','no-store');try{await fn(req,res);}catch(e){res.status(e.code==='23505'?409:400).json({ok:false,error:e.code==='23505'?'Ya hay una solicitud pendiente con este usuario. Revísala en Confirmaciones.':e.message||'No se pudo completar la solicitud'});}};
  app.post('/api/rrhh/confirmaciones',auth,seguro(async(req,res)=>{
   const datos=await validar(req,req.body);
@@ -27,7 +29,13 @@ export function registrarConfirmaciones(app,{auth,pool,validar,crear,enviar,list
   res.json({ok:true,id:fila.id,mensaje:enviado?'WhatsApp enviado. Ficha pendiente de confirmación.':'Solicitud guardada, pero no se pudo confirmar el envío. Revísala en Confirmaciones antes de volver a enviar.'});
  }));
  app.get('/api/rrhh/confirmaciones',auth,seguro(async(req,res)=>{
-  const {rows}=await pool.query("SELECT id,datos,estado,respuesta,envio,vence_en FROM rrhh_confirmaciones WHERE estado IN ('pendiente','corregir') ORDER BY id DESC LIMIT 100");res.json({ok:true,data:rows});
+  const {rows}=await pool.query("SELECT id,datos,estado,respuesta,envio,vence_en,acceso_envio FROM rrhh_confirmaciones WHERE estado IN ('pendiente','corregir') OR (estado='confirmada' AND acceso_envio IN ('pendiente','enviando','revisar')) ORDER BY id DESC LIMIT 100");res.json({ok:true,data:rows});
+ }));
+ app.post('/api/rrhh/confirmaciones/:id/reenviar-acceso',auth,seguro(async(req,res)=>{
+  const {rows}=await pool.query("UPDATE rrhh_confirmaciones SET acceso_envio='pendiente' WHERE id=$1 AND estado='confirmada' AND acceso_envio='revisar' RETURNING id",[req.params.id]);
+  if(!rows.length)throw Error('Este envío no necesita un reintento.');
+  void procesarAccesos().catch(()=>{});
+  res.json({ok:true,mensaje:'Envío preparado. Se comprobará que los datos de acceso sigan siendo los iniciales.'});
  }));
  app.post('/api/rrhh/confirmaciones/:id/recuperar',auth,seguro(async(req,res)=>{
   const c=await pool.connect();try{
@@ -57,8 +65,11 @@ export function registrarConfirmaciones(app,{auth,pool,validar,crear,enviar,list
    let resultado;
    if(accion==='confirmar')resultado=await crear(c,r);
    await c.query('UPDATE rrhh_confirmaciones SET estado=$1,respuesta=$2,worker_id=$3,confirmado_en=NOW() WHERE id=$4',[accion==='confirmar'?'confirmada':'corregir',nota,resultado?.id||null,r.id]);
+   if(accion==='confirmar')await c.query("UPDATE rrhh_confirmaciones SET acceso_envio='pendiente' WHERE id=$1",[r.id]);
    await c.query('COMMIT');invalidar();
-   res.json({ok:true,mensaje:accion==='confirmar'?'Datos confirmados. Tu acceso está preparado; solicita a tu responsable las instrucciones de entrada. Se mantiene tu fecha de incorporación.':'Hemos registrado la corrección. Tu responsable revisará la ficha antes de activarla.'});
+   // El alta ya está confirmada: un fallo de WhatsApp no la revierte ni revela las claves.
+   if(accion==='confirmar')void procesarAccesos().catch(()=>{});
+   res.json({ok:true,mensaje:accion==='confirmar'?'Datos confirmados. Te enviaremos por WhatsApp el enlace al panel, tu usuario, la contraseña inicial y el PIN para fichar en el sistema de tu local. Se mantiene tu fecha de incorporación.':'Hemos registrado la corrección. Tu responsable revisará la ficha antes de activarla.'});
   }catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
  }));
 }

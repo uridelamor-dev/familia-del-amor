@@ -1,7 +1,14 @@
+import {prepararUnionGrupo,resumenGrupo,ejecutarUnionGrupo} from './src/modules/facturas/unir-proveedores-grupo.js';
+import { filtroRevision, documentoEnAmbito } from './src/modules/facturas/ambito-revision.js';
+import { resolverDuplicado } from './src/modules/facturas/duplicados-decision.js';
+import { FIRMAS_PANEL_SCHEMA, registrarFirmasPanel } from './src/modules/rrhh/firmas/panel.js';
+import { MASIVOS_SCHEMA, registrarDocumentosMasivos } from './src/modules/rrhh/documentos-masivos.js';
+import { registrarCalendarioCumpleanos } from './src/modules/rrhh/calendario-cumpleanos.js';
 import { IDENTIDAD_SCHEMA, registrarIdentidad, adjuntarIdentidad, idsIdentidad } from './src/modules/rrhh/documentos-identidad.js';
 import { registrarDirecciones } from './src/modules/rrhh/direcciones.js';
 import { avisosDatos } from './src/modules/rrhh/avisos-datos.js';
 import { guardarPinVisible, leerPinVisible } from './src/modules/rrhh/pin-visible.js';
+import { crearEnvioAccesos } from './src/modules/rrhh/acceso-bienvenida.js';
 import { CONFIRMACION_SCHEMA, registrarConfirmaciones } from './src/modules/rrhh/confirmacion-alta.js';
 import { generarPinProvisional } from './src/modules/rrhh/pin-provisional.js';
 import {crearPlanificacionPersonal,leerPersonal} from './src/modules/informes/planificacion-personal.js';
@@ -1971,6 +1978,8 @@ async function initDB() {
 
     await client.query(CONFIRMACION_SCHEMA);
     await client.query(IDENTIDAD_SCHEMA);
+    await client.query(MASIVOS_SCHEMA);
+    await client.query(FIRMAS_PANEL_SCHEMA);
     await client.query(`CREATE TABLE IF NOT EXISTS rrhh_datos_alta (
       worker_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       direccion TEXT, iban TEXT, tipo_jornada TEXT, tipo_contrato TEXT, talla_ropa TEXT
@@ -2994,7 +3003,7 @@ app.get("/api/facturas/drive-diagnostico", requireAuth(["direccion", "contabilid
  * lo de dentro va con ella conservando sus enlaces. Los `drive_url` guardados en la base de
  * datos siguen funcionando exactamente igual.
  */
-app.post("/api/facturas/drive-colocar-raiz", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/drive-colocar-raiz", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const rootId = await getConfig("drive_facturas_root_id");
     if (!rootId) return res.status(400).json({ ok: false, error: "Todavía no hay carpeta raíz." });
@@ -3036,12 +3045,17 @@ app.post("/api/facturas/reproyectar", requireAuth(["direccion", "contabilidad"])
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// Selector de canales contables: no concede acceso al panel general de WhatsApp.
+app.get('/api/facturas/grupos-disponibles',requireAuth(['direccion','contabilidad']),async(req,res)=>{
+ try{res.json({ok:true,data:(await getGroups()).map(g=>({id:g.id,name:g.name}))});}
+ catch{res.status(503).json({ok:false,error:'No se pudieron cargar los grupos. Comprueba la conexión de WhatsApp.'});}
+});
 app.get("/api/facturas/grupos", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const rows = await dbAll("SELECT * FROM facturas_grupos ORDER BY local", []);
   res.json({ ok: true, data: rows });
 });
 
-app.post("/api/facturas/grupos", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/grupos", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const { local, group_jid } = req.body;
   if (!local || !group_jid) return res.status(400).json({ ok: false, error: "Faltan local o group_jid" });
   // El canal es el que decide a qué local se apunta cada factura que llega por él. Si aquí se
@@ -3059,7 +3073,7 @@ app.post("/api/facturas/grupos", requireAuth(["direccion"]), async (req, res) =>
   }
 });
 
-app.delete("/api/facturas/grupos/:id", requireAuth(["direccion"]), async (req, res) => {
+app.delete("/api/facturas/grupos/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   await dbRun("DELETE FROM facturas_grupos WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
 });
@@ -3293,7 +3307,7 @@ app.get("/api/facturas/libros-anuales", requireAuth(["direccion", "contabilidad"
 });
 
 // Aviso de esta migración, una sola vez para la organización, también entre dispositivos.
-app.post('/api/facturas/libros-anuales/aviso', requireAuth(['direccion']), async (req,res) => {
+app.post('/api/facturas/libros-anuales/aviso', requireAuth(["direccion", "contabilidad"]), async (req,res) => {
   try {
     res.json({ok:true,...await avisoAnualesUnaVez({dbGet,dbAll,dbRun})});
   } catch(e) { res.status(500).json({ok:false,error:e.message}); }
@@ -3417,7 +3431,7 @@ app.get("/api/facturas/drive-carpetas", requireAuth(["direccion", "contabilidad"
   try { res.json({ ok: true, data: await dbAll("SELECT local, folder_id, folder_url FROM facturas_drive_carpetas ORDER BY local") }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
-app.post("/api/facturas/drive-carpetas", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/drive-carpetas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const { local, folder } = req.body || {};
   const folderId = extraerFolderId(folder);
   if (!local || !folderId) return res.status(400).json({ ok: false, error: "Falta local o el enlace/ID de la carpeta" });
@@ -3429,7 +3443,7 @@ app.post("/api/facturas/drive-carpetas", requireAuth(["direccion"]), async (req,
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
-app.delete("/api/facturas/drive-carpetas/:local", requireAuth(["direccion"]), async (req, res) => {
+app.delete("/api/facturas/drive-carpetas/:local", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try { await dbRun("DELETE FROM facturas_drive_carpetas WHERE local = ?", [req.params.local]); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -3439,7 +3453,7 @@ app.get("/api/facturas/master", requireAuth(["direccion", "contabilidad"]), asyn
   try { const id = await getConfig("drive_facturas_master_sheet_id"); res.json({ ok: true, sheet_id: id || null, url: id ? `https://docs.google.com/spreadsheets/d/${id}` : null }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
-app.post("/api/facturas/reconstruir-maestro", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/reconstruir-maestro", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try { const r = await reconstruirSheetMaestro({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun }); res.json({ ok: true, ...r }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -3490,7 +3504,7 @@ app.get("/api/facturas/email-reglas", requireAuth(["direccion", "contabilidad"])
   res.json({ ok: true, data: rows });
 });
 
-app.post("/api/facturas/email-reglas", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/email-reglas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const { email, local } = req.body;
   if (!email || !local) return res.status(400).json({ ok: false, error: "Faltan email o local" });
   const localCanon = canonizarLocal(local); // tercera puerta de entrada, misma regla
@@ -3506,7 +3520,7 @@ app.post("/api/facturas/email-reglas", requireAuth(["direccion"]), async (req, r
   }
 });
 
-app.delete("/api/facturas/email-reglas/:id", requireAuth(["direccion"]), async (req, res) => {
+app.delete("/api/facturas/email-reglas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   await dbRun("DELETE FROM facturas_email_reglas WHERE id = ?", [req.params.id]);
   res.json({ ok: true });
 });
@@ -3516,7 +3530,7 @@ app.get("/api/facturas/locales", requireAuth(["direccion", "contabilidad"]), asy
   res.json({ ok: true, data: rows });
 });
 
-app.post("/api/facturas/locales", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/locales", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const { local, empresa, cif, local_contable } = req.body;
   if (!local || !empresa) return res.status(400).json({ ok: false, error: "Faltan local o empresa" });
   try {
@@ -3532,7 +3546,7 @@ app.post("/api/facturas/locales", requireAuth(["direccion"]), async (req, res) =
 });
 
 // Edición fiscal compartida: todas las sedes del mismo titular se actualizan juntas.
-app.put("/api/facturas/locales-fiscal", requireAuth(["direccion"]), async (req, res) => {
+app.put("/api/facturas/locales-fiscal", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const {local, empresa, cif, local_contable, origenEmpresa, origenCif, compartir} = req.body || {};
   if (typeof local !== "string" || !esLocalCanonico(local) || typeof empresa !== "string" || !empresa.trim() || empresa.length > 200 || typeof cif !== "string" || cif.length > 30)
     return res.status(400).json({ok:false,error:"Revisa el local y los datos fiscales"});
@@ -3554,40 +3568,41 @@ app.put("/api/facturas/locales-fiscal", requireAuth(["direccion"]), async (req, 
   finally {client.release();}
 });
 
-app.delete("/api/facturas/locales/:local", requireAuth(["direccion"]), async (req, res) => {
+app.delete("/api/facturas/locales/:local", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   await dbRun("DELETE FROM facturas_locales WHERE local = ?", [decodeURIComponent(req.params.local)]);
   res.json({ ok: true });
 });
 
 // El repaso histórico es único para esta base de producción, no por navegador ni publicación.
-app.get('/api/facturas/repaso-unico',requireAuth(['direccion']),async(req,res,next)=>{
+app.get('/api/facturas/repaso-unico',requireAuth(["direccion", "contabilidad"]),async(req,res,next)=>{
  try{res.json({ok:true,habilitado:PROD,data:await repasoHistorico.estado()});}catch(e){next(e);}
 });
-app.post('/api/facturas/repaso-unico/visto',requireAuth(['direccion']),async(req,res,next)=>{
+app.post('/api/facturas/repaso-unico/visto',requireAuth(["direccion", "contabilidad"]),async(req,res,next)=>{
  try{if(!PROD)return res.status(409).json({ok:false,error:'Disponible después de publicar'});res.json({ok:true,mostrar:await repasoHistorico.visto()});}catch(e){next(e);}
 });
-app.post('/api/facturas/repaso-unico/iniciar',requireAuth(['direccion']),async(req,res,next)=>{
+app.post('/api/facturas/repaso-unico/iniciar',requireAuth(["direccion", "contabilidad"]),async(req,res,next)=>{
  try{
   if(!PROD)return res.status(409).json({ok:false,error:'Disponible después de publicar'});
   if(req.body.confirmado!==true)return res.status(400).json({ok:false,error:'Confirma el inicio del repaso'});
   res.json({ok:true,data:await repasoHistorico.iniciar(String(req.user.username || req.user.nombre || 'direccion'))});
  }catch(e){next(e);}
 });
-app.get('/api/facturas/repaso-unico/resultados',requireAuth(['direccion']),async(req,res,next)=>{
+app.get('/api/facturas/repaso-unico/resultados',requireAuth(["direccion", "contabilidad"]),async(req,res,next)=>{
  try{
   const pagina=Math.max(0,Math.min(100000,parseInt(req.query.pagina)||0));
-  const filas=await dbAll("SELECT origen,documento_id,guardado,estado,resultado,prioridad,revision_humana FROM facturas_repaso_documentos WHERE (estado IN ('revisar','error','sin_original') OR revision_humana IS NOT NULL OR (estado='sin_discrepancias' AND EXISTS(SELECT 1 FROM facturas_repaso_unico WHERE id=1 AND fase='muestra'))) ORDER BY (revision_humana IS NOT NULL),prioridad,documento_id,origen LIMIT 51 OFFSET ?",[pagina*50]);
+  const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa},{local:"CASE origen WHEN 'factura' THEN (SELECT f.local FROM facturas f WHERE f.id=documento_id) WHEN 'recepcion' THEN (SELECT r.local FROM facturas_recepciones r WHERE r.id=documento_id) END",empresa:"CASE origen WHEN 'factura' THEN (SELECT f.empresa FROM facturas f WHERE f.id=documento_id) WHEN 'pendiente' THEN (SELECT p.empresa_detectada FROM facturas_pendientes p WHERE p.id=documento_id) ELSE (SELECT COALESCE(r.resultado->'datos'->>'empresa',r.resultado->'datos'->>'empresa_detectada') FROM facturas_recepciones r WHERE r.id=documento_id) END"});
+  const filas=await dbAll(`SELECT origen,documento_id,guardado,estado,resultado,prioridad,revision_humana FROM facturas_repaso_documentos WHERE (estado IN ('revisar','error','sin_original') OR revision_humana IS NOT NULL OR (estado='sin_discrepancias' AND EXISTS(SELECT 1 FROM facturas_repaso_unico WHERE id=1 AND fase='muestra'))) ${ambito.sql} ORDER BY (revision_humana IS NOT NULL),prioridad,documento_id,origen LIMIT 51 OFFSET ?`,[...ambito.params,pagina*50]);
   res.json({ok:true,data:filas.slice(0,50),siguiente:filas.length>50});
  }catch(e){next(e);}
 });
-app.post('/api/facturas/repaso-unico/control',requireAuth(['direccion']),async(req,res,next)=>{
+app.post('/api/facturas/repaso-unico/control',requireAuth(["direccion", "contabilidad"]),async(req,res,next)=>{
  try{
   if(!PROD)return res.status(409).json({error:'Disponible después de publicar'});
   if(!['pausar','continuar','ampliar'].includes(req.body.accion))return res.status(400).json({error:'Acción no válida'});
   res.json({ok:true,data:await repasoHistorico.controlar(req.body.accion,req.user.username||req.user.nombre)});
  }catch(e){next(e);}
 });
-app.get('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(['direccion']),async(req,res,next)=>{
+app.get('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(["direccion", "contabilidad"]),async(req,res,next)=>{
  try{
   const tablas={factura:'facturas',pendiente:'facturas_pendientes',recepcion:'facturas_recepciones'};
   const {origen,id}=req.params;if(!tablas[origen]||!/^\d+$/.test(id))return res.status(400).json({error:'Documento no válido'});
@@ -3595,14 +3610,15 @@ app.get('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(['direcci
   if(!item)return res.status(404).json({error:'No forma parte de este repaso'});
   const actual=await dbGet(`SELECT * FROM ${tablas[origen]} WHERE id=?`,[id]);
   if(!actual)return res.status(409).json({error:'El documento ha cambiado de bandeja. Consúltalo en Compras.'});
+  if(!documentoEnAmbito(actual,localesScope({...req,query:{}})))return res.status(403).json({error:'Sin acceso a este local'});
   const historial=await dbAll('SELECT autor,fecha,decision,motivo,antes,despues FROM facturas_repaso_decisiones WHERE origen=? AND documento_id=? ORDER BY id',[origen,id]);
   res.json({ok:true,data:{...item,actual:origen==='recepcion'?actual.resultado?.datos||{}:cabeceraHistorica(actual),historial}});
  }catch(e){next(e);}
 });
-app.post('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(['direccion']),async(req,res)=>{
+app.post('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(["direccion", "contabilidad"]),async(req,res)=>{
  try{
   if(!PROD)return res.status(409).json({error:'Disponible después de publicar'});
-  const r=await decidirRepasoHistorico({origen:req.params.origen,id:req.params.id,body:req.body,autor:String(req.user.nombre||req.user.username)});
+  const r=await decidirRepasoHistorico({origen:req.params.origen,id:req.params.id,body:req.body,autor:String(req.user.nombre||req.user.username),puedeAcceder:d=>documentoEnAmbito(d,localesScope({...req,query:{}}))});
   res.json({ok:true});
   if(r.origen==='factura'&&r.decision==='corregir'){
    (async()=>{
@@ -3617,9 +3633,8 @@ app.post('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(['direcc
 app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
     const antes = /^\d+$/.test(String(req.query.antes || '')) ? String(req.query.antes) : null;
-    const ambitos = localesScope(req);
-    const filtro = ambitos.length ? "AND local = ANY(?::text[])" : "";
-    const params = ambitos.length ? [ambitos] : [];
+    const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa},{local:"local",empresa:"COALESCE(resultado->'datos'->>'empresa',resultado->'datos'->>'empresa_detectada')"});
+    const filtro=ambito.sql; const params=ambito.params;
     const filas = await dbAll(`SELECT id,canal,local,nombre,estado,intentos,error,creado,original IS NOT NULL AS tiene_original FROM facturas_recepciones
       WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
     const conteo = await dbGet(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE estado IN ('error','revision')) AS errores FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro}`,params);
@@ -3683,7 +3698,8 @@ app.get("/api/facturas/pendientes", requireAuth(["direccion", "contabilidad"]), 
     locales = await dbAll("SELECT local, empresa, cif, local_contable FROM facturas_locales", []);
     historial = indexarHistorialProveedor(await dbAll("SELECT proveedor, local FROM facturas WHERE proveedor IS NOT NULL", []));
   } catch (e) { console.error("[pendientes] sugerencia:", e.message); }
-  const data = rows.map((p) => ({ ...p, sugerido: sugerirLocalPendiente({ pendiente: p, locales, historial }) }));
+  const ambitos=localesScope(req),empresa=String(req.query.empresa||'').trim();
+  const data = rows.filter(p=>!ambitos.length && (!empresa||p.empresa_detectada===empresa)).map((p) => ({ ...p, sugerido: sugerirLocalPendiente({ pendiente: p, locales, historial }) }));
   res.json({ ok: true, data });
 });
 
@@ -3859,7 +3875,7 @@ function mergePendienteEditado(pendiente, body) {
   return out;
 }
 
-app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   let { local } = req.body || {};
   // «Toda la empresa»: el papel se archiva bajo uno de sus locales —en algún sitio tiene que
   // vivir— pero la factura queda marcada para repartirse entre todos al sumar por local.
@@ -3888,7 +3904,7 @@ app.post("/api/facturas/pendientes/:id/asignar", requireAuth(["direccion"]), asy
 // MISMA factura que entraron por separado (dos fotos, dos correos…). Se descargan
 // de Drive, se combinan en un PDF, se re-extraen los datos viendo todas las hojas,
 // y los registros/archivos antiguos se eliminan.
-app.post("/api/facturas/pendientes/fusionar", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/pendientes/fusionar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number).filter(Number.isFinite) : [];
   if (ids.length < 2) return res.status(400).json({ ok: false, error: "Elige al menos 2 documentos para fusionar" });
   try {
@@ -3943,7 +3959,7 @@ app.post("/api/facturas/pendientes/fusionar", requireAuth(["direccion"]), async 
 
 // Empezar de cero: limpia TODO el estado de facturas en la BD (no borra archivos de Drive,
 // eso se hace a mano). Deja el sistema listo para volcar desde cero, sin referencias colgando.
-app.post("/api/facturas/reset-test", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/reset-test", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     await dbRun("DELETE FROM facturas");
     await dbRun("DELETE FROM facturas_pendientes");
@@ -3961,7 +3977,7 @@ app.post("/api/facturas/reset-test", requireAuth(["direccion"]), async (req, res
   }
 });
 
-app.post("/api/facturas/migrar-estructura", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/migrar-estructura", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const resultado = await migrarEstructuraDrive({ getToken: getDriveAccessToken, dbAll, dbGet, dbRun });
     res.json({ ok: true, ...resultado });
@@ -6348,6 +6364,7 @@ app.post('/api/facturas/proveedores-unir/preview', requireAuth(['direccion','con
  const client=await pool.connect();
  try {
   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+  if(localesScope({...req,query:{}}).length)throw Error('La unión afecta a todos los locales. Debe realizarla un usuario de contabilidad con acceso global.');
   const plan=await prepararUnion((s,p)=>client.query(s,p),req.body.origen,req.body.destino);
   await client.query('COMMIT');res.json({ok:true,...resumenUnion(plan)});
  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message});}
@@ -6358,10 +6375,23 @@ app.post('/api/facturas/proveedores-unir', requireAuth(['direccion','contabilida
  try {
   await client.query('BEGIN');
   await client.query("SET LOCAL lock_timeout='5s'");
+  if(localesScope({...req,query:{}}).length)throw Error('La unión afecta a todos los locales. Debe realizarla un usuario de contabilidad con acceso global.');
   const result=await ejecutarUnion((s,p)=>client.query(s,p),req.body,req.user.username||req.user.nombre);
   await client.query('COMMIT');res.json({ok:true,...result});
  }catch(e){await client.query('ROLLBACK');res.status(409).json({error:e.message});}
  finally{client.release();}
+});
+
+// Unión múltiple: una única revisión y una transacción para todos los proveedores.
+for(const paso of ['preview','confirmar'])app.post('/api/facturas/proveedores-unir-grupo/'+paso,requireAuth(['direccion','contabilidad']),async(req,res)=>{
+ const client=await pool.connect();
+ try{
+  await client.query(paso==='preview'?'BEGIN ISOLATION LEVEL REPEATABLE READ':'BEGIN');
+  await client.query("SET LOCAL lock_timeout='5s'");
+  if(localesScope({...req,query:{}}).length)throw Error('La unión afecta a todos los locales. Debe realizarla un usuario de contabilidad con acceso global.');
+  const result=paso==='preview'?resumenGrupo(await prepararUnionGrupo((s,p)=>client.query(s,p),req.body.nombres)):await ejecutarUnionGrupo((s,p)=>client.query(s,p),req.body,req.user.username||req.user.nombre);
+  await client.query('COMMIT');res.json({ok:true,...result});
+ }catch(e){await client.query('ROLLBACK');res.status(409).json({ok:false,error:e.message});}finally{client.release();}
 });
 
 // La versión evita sobrescribir una ficha que otra persona acaba de editar.
@@ -6440,17 +6470,18 @@ app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
 // Los proveedores que son el mismo metido varias veces. NO se une nada: se propone.
 app.get("/api/facturas/proveedores-duplicados", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa});
     // Una fila por forma de escribirlo, con su NIF más repetido: es la señal que permite ver
     // que «GRAU» y «Vins i Licors Grau, S.A.» son la misma empresa, cosa que por el nombre no
     // se puede saber.
     const filas = await dbAll(
-      `SELECT f.proveedor, count(*)::int AS facturas, SUM(f.total)::float AS gasto,
-              (SELECT n.nif FROM facturas n
+      `WITH filtradas AS (SELECT * FROM facturas WHERE 1=1 ${ambito.sql}) SELECT f.proveedor, count(*)::int AS facturas, SUM(f.total)::float AS gasto,
+              (SELECT n.nif FROM filtradas n
                 WHERE n.proveedor = f.proveedor AND n.nif IS NOT NULL AND n.nif <> ''
                 GROUP BY n.nif ORDER BY count(*) DESC LIMIT 1) AS nif
-         FROM facturas f
+         FROM filtradas f
         WHERE f.proveedor IS NOT NULL AND f.proveedor <> '' AND COALESCE(f.dup_estado,'') <> 'duda' 
-        GROUP BY f.proveedor ORDER BY gasto DESC NULLS LAST`, []);
+        GROUP BY f.proveedor ORDER BY gasto DESC NULLS LAST`, ambito.params);
 
     // Nuestros CIF no pueden agrupar proveedores: si uno se cuela como NIF de proveedor, esta
     // pantalla propondría unir empresas que no tienen nada que ver.
@@ -6462,9 +6493,9 @@ app.get("/api/facturas/proveedores-duplicados", requireAuth(["direccion", "conta
     if (nuestros.length) {
       const r = await dbAll(
         `SELECT proveedor, count(*)::int AS n FROM facturas
-          WHERE REPLACE(REPLACE(REPLACE(UPPER(nif),'-',''),'.',''),' ','') = ANY(?)
+          WHERE REPLACE(REPLACE(REPLACE(UPPER(nif),'-',''),'.',''),' ','') = ANY(?) ${ambito.sql}
           GROUP BY proveedor ORDER BY n DESC`,
-        [nuestros.map((c) => String(c).replace(/[\s.\-/]/g, "").toUpperCase())]).catch(() => []);
+        [nuestros.map((c) => String(c).replace(/[\s.\-/]/g, "").toUpperCase()),...ambito.params]).catch(() => []);
       conNifNuestro = { n: r.reduce((a, x) => a + x.n, 0), proveedores: r.slice(0, 12) };
     }
     res.json({ ok: true, grupos: gruposDuplicados(filas, { nuestrosCif: nuestros }).slice(0, 40),
@@ -6527,15 +6558,16 @@ app.post("/api/facturas/somos-nosotros", requireAuth(["direccion", "contabilidad
 
 app.post("/api/facturas/nif-propio/limpiar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa});
     const nuestros = (await dbAll(`SELECT DISTINCT cif FROM facturas_locales WHERE cif IS NOT NULL AND cif <> ''`))
       .map((x) => String(x.cif).replace(/[\s.\-/]/g, "").toUpperCase()).filter(Boolean);
     if (!nuestros.length) return res.json({ ok: true, limpiadas: 0, mensaje: "No hay ningún CIF de empresa configurado." });
     const antes = await dbGet(
-      `SELECT count(*)::int AS n FROM facturas WHERE REPLACE(REPLACE(REPLACE(UPPER(nif),'-',''),'.',''),' ','') = ANY(?)`, [nuestros]);
+      `SELECT count(*)::int AS n FROM facturas WHERE REPLACE(REPLACE(REPLACE(UPPER(nif),'-',''),'.',''),' ','') = ANY(?) ${ambito.sql}`, [nuestros,...ambito.params]);
     const n = Number(antes?.n || 0);
     if (!n) return res.json({ ok: true, limpiadas: 0, mensaje: "No hay ninguna factura con un CIF vuestro como NIF de proveedor." });
     await dbRun(
-      `UPDATE facturas SET nif = NULL WHERE REPLACE(REPLACE(REPLACE(UPPER(nif),'-',''),'.',''),' ','') = ANY(?)`, [nuestros]);
+      `UPDATE facturas SET nif = NULL WHERE REPLACE(REPLACE(REPLACE(UPPER(nif),'-',''),'.',''),' ','') = ANY(?) ${ambito.sql}`, [nuestros,...ambito.params]);
     console.log(`[facturas] quitado nuestro CIF del NIF de proveedor en ${n} facturas`);
     res.json({ ok: true, limpiadas: n,
       mensaje: `${n} ${n === 1 ? "factura tenía" : "facturas tenían"} un CIF vuestro como NIF del proveedor. Se ha dejado en blanco.` });
@@ -6830,7 +6862,7 @@ app.post("/api/facturas/:id/conciliar", requireAuth(["direccion", "contabilidad"
 // importe, misma fecha y el número difiere en un carácter» se decide en dos segundos.
 app.get("/api/facturas/duplicados", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const scope = localScope(req);
+    const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa},{local:"f.local",empresa:"f.empresa"});
     const filas = await dbAll(
       `SELECT f.id, f.local, f.empresa, f.tipo, f.fecha, f.numero_factura, f.proveedor, f.nif,
               f.concepto, f.base_imponible::float AS base_imponible, f.total::float AS total,
@@ -6838,8 +6870,10 @@ app.get("/api/facturas/duplicados", requireAuth(["direccion", "contabilidad"]), 
               o.id AS o_id, o.fecha AS o_fecha, o.numero_factura AS o_numero, o.proveedor AS o_proveedor,
               o.total::float AS o_total, o.drive_url AS o_drive_url, o.canal AS o_canal, o.local AS o_local
          FROM facturas f LEFT JOIN facturas o ON o.id = f.dup_de
-        WHERE f.dup_estado = 'duda' ${scope ? "AND f.local = ?" : ""}
-        ORDER BY f.id DESC LIMIT 200`, scope ? [scope] : []);
+        WHERE f.dup_estado = 'duda' AND f.dup_resuelto_en IS NULL ${ambito.sql}
+        ORDER BY f.id DESC LIMIT 200`, ambito.params);
+    const permitidos=localesScope({...req,query:{}});
+    for(const f of filas)if(permitidos.length&&!permitidos.includes(f.o_local))for(const k of Object.keys(f))if(k.startsWith('o_'))f[k]=null;
     const data = filas.map((f) => ({
       ...f,
       motivos: (() => { try { return JSON.parse(f.dup_motivos || "[]"); } catch { return []; } })(),
@@ -6854,38 +6888,16 @@ app.get("/api/facturas/duplicados", requireAuth(["direccion", "contabilidad"]), 
   }
 });
 
-// Decidir. `duplicada` la borra —es la copia, el original se queda—; `distinta` la deja contar.
-app.post("/api/facturas/duplicados/:id/resolver", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
-  try {
-    const accion = String(req.body?.accion || "");
-    if (!["duplicada", "distinta"].includes(accion)) {
-      return res.status(400).json({ ok: false, error: "Hay que decir si es duplicada o distinta" });
-    }
-    const f = await dbGet(`SELECT * FROM facturas WHERE id = ? AND dup_estado = 'duda'`, [req.params.id]);
-    if (!f) return res.status(404).json({ ok: false, error: "Esa factura ya no está pendiente de decidir" });
-    if (localScope(req) && f.local !== localScope(req)) return res.status(403).json({ ok: false, error: "Sin acceso" });
-
-    const quien = req.user.nombre || req.user.username;
-    if (accion === "distinta") {
-      await dbRun(`UPDATE facturas SET dup_estado = 'distinta', dup_resuelto_por = ?, dup_resuelto_en = ? WHERE id = ?`,
-        [quien, isoConOffset(Date.now()), f.id]);
-      await ficAuditar("facturas", f.id, "duplicado_descartado", quien, { local: f.local, detalle: { parecida_a: f.dup_de } });
-      // Vuelve a contar, así que su mes hay que reproyectarlo al Sheet.
-      resincronizarSheetsFactura({ getToken: getDriveAccessToken, dbGet, dbAll, dbRun }, f.local, f.fecha).catch(() => {});
-      return res.json({ ok: true, accion, mensaje: "Marcada como distinta: ya cuenta en los totales." });
-    }
-
-    // Es duplicada: se borra la copia. El archivo de Drive NO se toca —borrar el papel de
-    // alguien no es reversible— pero se deja dicho dónde está por si hay que mirarlo.
-    await ficAuditar("facturas", f.id, "duplicado_confirmado", quien, { local: f.local,
-      detalle: { copia_de: f.dup_de, proveedor: f.proveedor, numero: f.numero_factura, total: f.total, drive_url: f.drive_url } });
-    await dbRun("DELETE FROM factura_lineas WHERE factura_id = ?", [f.id]).catch(() => {});
-    await dbRun("DELETE FROM facturas WHERE id = ?", [f.id]);
-    res.json({ ok: true, accion, mensaje: "Descartada como duplicada. El archivo sigue en Drive." });
-  } catch (e) {
-    console.error("[facturas] resolver duplicado:", e.message);
-    res.status(500).json({ ok: false, error: "No se pudo guardar la decisión" });
-  }
+// Decidir sin borrar los documentos: se excluye la copia o se conservan ambos.
+app.post("/api/facturas/duplicados/:id/resolver", requireAuth(["direccion", "contabilidad"]), async (req,res) => {
+ const client=await pool.connect();
+ try {
+  await client.query('BEGIN');
+  const r=await resolverDuplicado((s,p)=>client.query(s,p),{id:req.params.id,accion:req.body.accion,autor:req.user.nombre||req.user.username,locales:localesScope({...req,query:{}})});
+  await client.query('COMMIT');
+  for(const f of r.afectadas)resincronizarSheetsFactura({getToken:getDriveAccessToken,dbGet,dbAll,dbRun},f.local,f.fecha).catch(()=>{});
+  res.json({ok:true,mensaje:r.mensaje});
+ }catch(e){await client.query('ROLLBACK');res.status(409).json({ok:false,error:e.message});}finally{client.release();}
 });
 
 // ── Categorías de proveedor ─────────────────────────────────────────────────
@@ -7007,7 +7019,7 @@ app.get("/api/facturas/locales-raros", requireAuth(["direccion", "contabilidad"]
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo comprobar" }); }
 });
 
-app.post("/api/facturas/locales-raros/arreglar", requireAuth(["direccion"]), async (req, res) => {
+app.post("/api/facturas/locales-raros/arreglar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   const client = await pool.connect();
   try {
     // Cada cambio va explícito: {de: "Lloret", a: "La Tapeta - Lloret"}. No se aplica en
@@ -7477,16 +7489,17 @@ const REPASO_COLS = `id, local, tipo, fecha, numero_factura, proveedor, nif,
 // convierta en una petición que tumba el proceso en vez de en una que dice que no puede.
 const REPASO_MAX = 20000;
 
-async function repasoCargar(scope) {
-  return dbAll(`SELECT ${REPASO_COLS} FROM facturas ${scope ? "WHERE local = ?" : ""}
-                ORDER BY id LIMIT ${REPASO_MAX}`, scope ? [scope] : []);
+async function repasoCargar(scope,empresa="") {
+  const ambito=filtroRevision({locales:Array.isArray(scope)?scope:scope?[scope]:[],empresa});
+  return dbAll(`SELECT ${REPASO_COLS} FROM facturas WHERE 1=1 ${ambito.sql}
+                ORDER BY id LIMIT ${REPASO_MAX}`, ambito.params);
 }
 
 // Mirar. No escribe nada: dice qué cambiaría y cuánto.
 app.get("/api/facturas/repaso", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const scope = localScope(req);
-    const filas = await repasoCargar(scope);
+    const scope = localesScope(req);
+    const filas = await repasoCargar(scope,req.query.empresa);
     const r = repasarLote(filas, { hoy: hoyISO() });
     const alcance = esAlcanceValido(req.query?.alcance) ? String(req.query.alcance) : "faltan";
     const porReleer = filas.filter((f) => pideRelecturaDeLineas(f, alcance));
@@ -7517,9 +7530,9 @@ app.get("/api/facturas/repaso", requireAuth(["direccion", "contabilidad"]), asyn
 // Aplicar lo barato: escribir los avisos de coherencia y apartar las repetidas.
 app.post("/api/facturas/repaso", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const scope = localScope(req);
+    const scope = localesScope(req);
     const conDuplicados = req.body?.duplicados !== false;
-    const filas = await repasoCargar(scope);
+    const filas = await repasoCargar(scope,req.query.empresa);
     const r = repasarLote(filas, { hoy: hoyISO() });
 
     let avisos = 0;
@@ -9159,6 +9172,7 @@ app.get('/api/rrhh/cumpleanos/config', requireAuth(['direccion', 'rrhh']), async
   try { res.json({ ok: true, config: await rrhhCumpleConfig(), avisos: await dbAll('SELECT * FROM rrhh_cumple_avisos ORDER BY dia DESC LIMIT 10') }); }
   catch { res.status(500).json({ ok: false, error: 'No se pudo consultar los avisos.' }); }
 });
+registrarCalendarioCumpleanos(app,{auth:requireAuth(['direccion','rrhh']),dbAll,hoyISO,puedeLocal:rrhhPuedeLocal});
 app.put('/api/rrhh/cumpleanos/config', requireAuth(['direccion', 'rrhh']), async (req, res) => {
   const config = configCumpleanos();
   try { await setConfig('rrhh_cumple_config', JSON.stringify(config)); res.json({ ok: true, config }); }
@@ -9218,6 +9232,21 @@ function rrhhPuedeLocal(req, local) {
 }
 async function rrhhWorkerLocal(id) { const r = await dbGet("SELECT local FROM users WHERE id = ?", [id]); return r ? (r.local || "") : null; }
 
+registrarFirmasPanel(app,{
+ authAdmin:requireAuth(['direccion','rrhh']),authUser:requireAuth(),pool,puedeLocal:rrhhPuedeLocal,
+ leerPdf:async doc=>{
+  const url=String(doc.url||'');
+  if(url.startsWith('lote:')){const {rows:[r]}=await pool.query('SELECT contenido FROM rrhh_doc_archivos WHERE id=$1 AND worker_id=$2',[url.slice(5),doc.worker_id]);if(!r)throw Error('Archivo no disponible');return r.contenido;}
+  if(!url.startsWith('rrhh:')&&!url.startsWith('/uploads/'))throw Error('Sube el archivo en PDF antes de solicitar firma.');
+  const nombre=path.basename(url.startsWith('rrhh:')?url.slice(5):url),ruta=[path.join(rrhhDocsDir,nombre),path.join(uploadsDir,nombre)].find(p=>fs.existsSync(p));
+  if(!ruta)throw Error('Archivo no disponible');return fs.promises.readFile(ruta);
+ }
+});
+registrarDocumentosMasivos(app,{
+ auth:requireAuth(['direccion','rrhh']),pool,
+ upload:multer({storage:multer.memoryStorage(),limits:{fileSize:15*1024*1024,files:10,fields:2}}),
+ trabajadores:async req=>(await dbAll("SELECT id,nombre,local,dni FROM users WHERE rol IN ('trabajador','encargado') ORDER BY nombre")).filter(w=>rrhhPuedeLocal(req,w.local))
+});
 registrarDirecciones(app,{auth:requireAuth(['direccion','rrhh']),key:GOOGLE_PLACES_API_KEY});
 registrarIdentidad(app,{
  auth:requireAuth(['direccion','rrhh']),pool,disponible:()=>!!process.env.ANTHROPIC_API_KEY,
@@ -9460,8 +9489,20 @@ app.post("/api/rrhh/trabajador", requireAuth(RRHH_ROLES), async (req, res) => {
   }
 });
 
+const procesarAccesosRRHH=crearEnvioAccesos({
+ pool,listo:isReady,enviar:sendMensajeLibre,
+ credenciales:async id=>{
+  const {rows:[w]}=await pool.query('SELECT nombre,username,telefono,activo,pass_temporal,pin_temporal,pin_visible_enc,password_hash FROM users WHERE id=$1',[id]);
+  if(!w||!w.activo||!w.pass_temporal||!w.pin_temporal)return null;
+  const password=passwordInicial(w.username);
+  if(!await bcrypt.compare(password,w.password_hash))return null;
+  const pin=leerPinVisible(w.pin_visible_enc,LLAVERO,'rrhh');
+  return {nombre:w.nombre,username:w.username,telefono:w.telefono,password,pin};
+ }
+});
+
 registrarConfirmaciones(app, {
- auth: requireAuth(['direccion','rrhh']), pool, enviar: sendMensajeLibre, listo: isReady, invalidar: invalidarInternos,
+ auth: requireAuth(['direccion','rrhh']), pool, enviar: sendMensajeLibre, listo: isReady, invalidar: invalidarInternos, procesarAccesos:procesarAccesosRRHH,
  validar: async (req, input) => {
    const v=validarAlta(input,{locales:INV_LOCALES,hoy:hoyISO()});
    const a=sanearDatosAlta(input,hoyISO());
@@ -19329,6 +19370,12 @@ app.get("/api/rrhh/documento/:id/archivo", requireAuth(RRHH_ROLES), async (req, 
     // mientras la migración no los haya trasladado. En ninguno de los dos casos se acepta una
     // ruta del cliente: el nombre sale de la base y se le quita todo lo que no sea el fichero.
     const guardada = String(doc.url || "");
+    if(guardada.startsWith('lote:')){
+      const {rows:[adj]}=await pool.query('SELECT contenido FROM rrhh_doc_archivos WHERE id=$1 AND worker_id=$2',[guardada.slice(5),doc.worker_id]);
+      if(!adj)return res.status(404).json({ok:false,error:'Documento no encontrado'});
+      res.set({'Cache-Control':'private, no-store','Content-Type':'application/pdf','X-Content-Type-Options':'nosniff','Content-Disposition':"attachment; filename*=UTF-8''"+encodeURIComponent(doc.nombre||'documento.pdf')});
+      return res.send(adj.contenido);
+    }
     if(guardada.startsWith('dni:')){
       const {rows:[adj]}=await pool.query('SELECT mime,contenido FROM rrhh_identidad_adjuntos WHERE id=$1 AND worker_id=$2',[guardada.slice(4),doc.worker_id]);
       if(!adj)return res.status(404).json({ok:false,error:'Documento no encontrado'});
@@ -19360,6 +19407,8 @@ app.delete("/api/rrhh/documento/:id", requireAuth(RRHH_ROLES), async (req, res) 
     const wl = await rrhhWorkerLocal(doc.worker_id);
     if (!rrhhPuedeLocal(req, wl)) return res.status(403).json({ ok: false, error: "Sin acceso" });
     if (esEncargado(req) && (doc.sensible === 1 || doc.sensible === true)) return res.status(403).json({ ok: false, error: "Documento sensible" });
+    const firmaPanel=await dbGet("SELECT id FROM rrhh_firmas_panel WHERE documento_id=? LIMIT 1",[req.params.id]);
+    if(firmaPanel)return res.status(409).json({ok:false,error:'Este documento tiene un historial de firma y debe conservarse.'});
     const firma=await dbGet("SELECT id FROM rrhh_firma_borradores WHERE documento_id=? LIMIT 1",[req.params.id]);
     if(firma) return res.status(409).json({ok:false,error:"Este documento tiene un historial de preparación de firma y se conserva como evidencia. Puedes cancelar su borrador de firma."});
     await dbRun("DELETE FROM hr_documentos WHERE id = ?", [req.params.id]);
@@ -19367,6 +19416,7 @@ app.delete("/api/rrhh/documento/:id", requireAuth(RRHH_ROLES), async (req, res) 
     // quedado el original de antes de la migración y borrarlo a ciegas es tocar el disco de
     // otro módulo. El huérfano de `uploads` lo limpia la migración, no esto.
     const suelto = String(doc.url || "");
+    if(suelto.startsWith('lote:')) await pool.query('DELETE FROM rrhh_doc_archivos WHERE id=$1 AND worker_id=$2',[suelto.slice(5),doc.worker_id]);
     if(suelto.startsWith('dni:')) await pool.query('DELETE FROM rrhh_identidad_adjuntos WHERE id=$1 AND worker_id=$2',[suelto.slice(4),doc.worker_id]);
     if (suelto.startsWith("rrhh:")) {
       try { fs.unlinkSync(path.join(rrhhDocsDir, path.basename(suelto.slice(5)))); } catch { /* ya no estaba */ }
@@ -19796,7 +19846,7 @@ app.put("/api/maintenance/:id", requireAuth(["encargado", "direccion"]), async (
 // ════════════════════════ INVENTARIOS ════════════════════════
 // Flujo: local → proveedor → contar productos → comparar con stock necesario → proponer pedido.
 // Aislamiento por local SIEMPRE en backend (puedeAccederLocal). Solo lectura sobre facturas/Ágora.
-const INV_ROLES = ["direccion", "encargado"];
+const INV_ROLES = ["direccion", "encargado", "contabilidad"];
 const hoyMMDD = () => new Date().toISOString().slice(5, 10);
 const invBool = (v, def = true) => (v === undefined || v === null) ? def : !(v === false || v === 0 || v === "false" || v === "0" || v === "");
 const invNum = (v) => { const n = Number(v); return isFinite(n) && n >= 0 ? n : 0; };
@@ -25974,6 +26024,7 @@ const server = app.listen(PORT, async () => {
   setInterval(()=>actualizarPagosEmpresa().catch(e=>console.error('[Facturas] pagos por empresa:',e.message)),60*1000);
   setTimeout(reintentarSheets, 90 * 1000);
   setInterval(reintentarSheets, 10 * 60 * 1000);
+  setInterval(()=>procesarAccesosRRHH().catch(()=>console.error('[RRHH] Envío de accesos pendiente')),30_000).unref();
   const repasarIvaHistorico=async()=>{
     if(!(await getConfig('google_drive_refresh_token')))return;
     await repasarIva({dbAll,dbRun},f=>leerIvaOriginal(f,getDriveAccessToken));
